@@ -73,7 +73,7 @@ function response(data, status = 200) {return {ok: status >= 200 && status < 300
 
 function makeWidget(t, options = {}) {
   const env = makeDom(), {window, document} = env;
-  const visibility = mediaAndVisibility(window), network = [], instances = [], utterances = [], devices = [], speech = {cancels: 0, pauses: 0};
+  const visibility = mediaAndVisibility(window), network = [], instances = [], utterances = [], devices = [], speech = {cancels: 0, pauses: 0}, avatarCalls = {create: 0, retry: 0};
   const script = document.createElement('script'); script.src = 'https://growth-sandbox.example/brites-concierge.js'; script.dataset.sandbox = 'true';
   Object.defineProperty(document, 'currentScript', {configurable: true, get: () => script});
   if (options.saved) window.sessionStorage.setItem('brites-concierge-v1', JSON.stringify(options.saved));
@@ -87,12 +87,14 @@ function makeWidget(t, options = {}) {
   }
   if (!options.noAvatarGlobal) window.BritesConciergeAvatar = {
     create(config) {
+      avatarCalls.create++;
       if (options.createThrows) throw Error('Synthetic unavailable renderer');
       const record = {config, states: [], visible: config.visible === true, level: 0, state: config.initialState, visibility: [], destroyed: false};
       record.api = {
         ready: options.ready || Promise.resolve({mode: options.fallback ? 'fallback' : 'webgl'}),
         setState(value) {if (options.stateThrows) throw Error('Synthetic renderer draw failure'); record.state = value; record.states.push(value);},
         setVisible(value) {record.visible = value; record.visibility.push(value);},
+        retry() {avatarCalls.retry++;},
         setLevel(value) {record.level = value;}, lookAt() {},
         snapshot() {return {state: record.state, visible: record.visible, mode: options.fallback ? 'fallback' : 'webgl'};},
         destroy() {record.destroyed = true; record.visible = false;}
@@ -116,7 +118,7 @@ function makeWidget(t, options = {}) {
   async function ask(text = 'Something with a bunny') {input.value = text; root.querySelector('form').dispatchEvent(new window.Event('submit', {bubbles: true, cancelable: true})); await settle();}
   async function add() {button('Choose options').click(); button('Review adding to bag').click(); button('Confirm add to bag').click(); await settle();}
   t.after(() => {try {window.BritesConcierge?.close();} catch {} window.close();});
-  return {...env, visibility, network, instances, utterances, devices, speech, root, input, button, ask, add,
+  return {...env, visibility, network, instances, utterances, devices, speech, avatarCalls, root, input, button, ask, add,
     open() {root.querySelector('.launcher').click();},
     get avatar() {return instances.at(-1);}, get panel() {return root.querySelector('.panel');},
     get messages() {return root.querySelector('.messages');}
@@ -164,6 +166,39 @@ test('scene loading rejection resolves a static fallback', async t => {
   assert.equal(ready.mode, 'fallback'); assert.equal(ready.loading, false); assert.equal(h.api.element.dataset.rendering, 'fallback');
   h.api.setState('thinking'); h.api.setVisible(false); h.api.setVisible(true);
   await settle(); assert.equal(h.calls.loads.length, 1); assert.equal(h.calls.render.length, 0);
+});
+
+test('explicit retry recovers a transient scene import failure without an automatic loop', async t => {
+  let attempts = 0;
+  const h = makeAvatar(t, {visible: true, loader: async module => {if (++attempts === 1) throw Error('Synthetic transient import failure'); return module;}});
+  assert.equal((await h.api.ready).mode, 'fallback');
+  h.api.setState('thinking'); h.visibility.hide(true); h.visibility.hide(false); h.visibility.intersect(false); h.visibility.intersect(true);
+  await settle(); assert.equal(attempts, 1);
+  assert.equal(h.api.retry(), true); assert.equal(h.api.retry(), false);
+  await settle(); assert.equal(attempts, 2); assert.equal(h.api.snapshot().mode, 'webgl');
+  assert.equal(h.api.retry(), false); assert.equal(attempts, 2);
+});
+
+test('an explicit retry failure remains static until a later explicit request', async t => {
+  const h = makeAvatar(t, {visible: true, loader: async () => {throw Error('Synthetic persistent rendering failure');}});
+  await h.api.ready;
+  assert.equal(h.api.retry(), true); await settle();
+  assert.equal(h.api.snapshot().mode, 'fallback'); assert.equal(h.calls.loads.length, 2);
+  h.api.setState('thinking'); h.api.setLevel(.8); h.visibility.hide(true); h.visibility.hide(false);
+  await settle(); assert.equal(h.calls.loads.length, 2);
+  h.api.setVisible(false); assert.equal(h.api.retry(), false);
+  h.api.setVisible(true); h.visibility.hide(true); assert.equal(h.api.retry(), false);
+  h.visibility.hide(false); h.visibility.intersect(false); assert.equal(h.api.retry(), false);
+  h.api.destroy(); assert.equal(h.api.retry(), false); assert.equal(h.calls.loads.length, 2);
+});
+
+test('retry preserves browser context restoration and recovers a discarded failed engine', async t => {
+  const h = makeAvatar(t, {visible: true}); await h.api.ready;
+  h.sceneOptions.onContext(true); assert.equal(h.api.retry(), false); assert.equal(h.calls.loads.length, 1);
+  h.sceneOptions.onContext(false); h.calls.fail = 'render'; h.api.setState('thinking');
+  assert.equal(h.api.snapshot().mode, 'fallback'); assert.equal(h.calls.destroy, 1);
+  delete h.calls.fail; assert.equal(h.api.retry(), true); await settle();
+  assert.equal(h.calls.loads.length, 2); assert.equal(h.api.snapshot().mode, 'webgl');
 });
 
 test('renderer failure preserves loaded texture declarations without claiming created maps', async t => {
@@ -385,6 +420,43 @@ test('delayed avatar script completion after dismissal initializes hidden', asyn
   h.window.BritesConciergeAvatar = {create(value) {config = value; return {setState() {}, setVisible() {}, setLevel() {}, ready: Promise.resolve({mode: 'fallback'})};}};
   loader.dispatchEvent(new h.window.Event('load')); await settle();
   assert.equal(config.visible, false); assert.equal(h.panel.hidden, true); assert.equal(h.utterances.length, 0);
+});
+
+test('failed avatar script is cleaned up and a fresh explicit reopen loads it once', async t => {
+  const h = makeWidget(t, {noAvatarGlobal: true}); h.open();
+  const failedLoader = h.root.querySelector('script'); failedLoader.dispatchEvent(new h.window.Event('error')); await settle();
+  assert.equal(failedLoader.isConnected, false); assert.equal(failedLoader.onload, null); assert.equal(failedLoader.onerror, null);
+  await h.ask(); assert.equal(h.root.querySelector('script'), null, 'conversation does not retry optional loading');
+  h.window.BritesConcierge.close(); h.window.BritesConcierge.open();
+  const nextLoader = h.root.querySelector('script'); assert.ok(nextLoader); assert.notEqual(nextLoader, failedLoader);
+  h.window.BritesConcierge.open(); h.window.dispatchEvent(new h.window.PageTransitionEvent('pageshow', {persisted: true}));
+  assert.equal(h.root.querySelectorAll('script').length, 1, 'one in-flight load serves concurrent reopen/restoration');
+  let creates = 0;
+  h.window.BritesConciergeAvatar = {create(config) {creates++; return {setState() {}, setVisible() {}, setLevel() {}, destroy() {}};}};
+  nextLoader.dispatchEvent(new h.window.Event('load')); await settle();
+  assert.equal(creates, 1); assert.equal(nextLoader.isConnected, false); assert.equal(h.utterances.length, 0);
+});
+
+test('a transient avatar constructor failure recovers on explicit reopen', async t => {
+  const options = {createThrows: true}, h = makeWidget(t, options); h.open(); await settle();
+  assert.equal(h.avatarCalls.create, 1); assert.equal(h.instances.length, 0);
+  await h.ask(); assert.equal(h.avatarCalls.create, 1);
+  options.createThrows = false; h.window.BritesConcierge.close(); h.window.BritesConcierge.open(); await settle();
+  assert.equal(h.avatarCalls.create, 2); assert.equal(h.instances.length, 1); assert.equal(h.avatar.visible, true);
+  assert.equal(h.utterances.length, 0); await h.add(); assert.equal(JSON.parse(h.window.sessionStorage.getItem('brites-sandbox-cart')).length, 1);
+});
+
+test('destroyed avatar API is recreated only on explicit reopen or open pageshow', async t => {
+  const options = {stateThrows: true}, h = makeWidget(t, options); h.open(); await settle();
+  const previous = h.avatar; h.input.value = 'gift'; h.input.dispatchEvent(new h.window.Event('input'));
+  assert.equal(previous.destroyed, true); options.stateThrows = false;
+  await h.ask(); assert.equal(h.avatarCalls.create, 1, 'ordinary conversation does not retry');
+  h.window.dispatchEvent(new h.window.PageTransitionEvent('pageshow', {persisted: true})); await settle();
+  assert.equal(h.avatarCalls.create, 2); assert.notEqual(h.avatar, previous); assert.equal(h.avatar.visible, true);
+  h.window.BritesConcierge.close(); const retries = h.avatarCalls.retry;
+  h.window.dispatchEvent(new h.window.PageTransitionEvent('pageshow', {persisted: true})); assert.equal(h.avatarCalls.retry, retries);
+  h.window.BritesConcierge.open(); assert.equal(h.avatarCalls.retry, retries + 1);
+  assert.equal(h.utterances.length, 0);
 });
 
 test('missing speech support hides narration and preserves all product actions', async t => {

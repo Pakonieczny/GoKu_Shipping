@@ -303,7 +303,7 @@ function negatedAt(text,index) {
   // Contrast and punctuation terminate a negation. “Not gold, silver please”
   // therefore selects silver; “no gold or silver” excludes both.
   const prefix=text.slice(0,index).split(/[,;.!?]|\b(?:but|instead|however|i (?:want|prefer|like)|she (?:likes|loves|prefers)|he (?:likes|loves|prefers)|they (?:like|love|prefer))\b/).at(-1).replace(/\bno (?:price|budget|spending) limit\b/g,'').slice(-75);
-  return /\b(?:not|no|without|avoid|except|excluding|rather than|instead of|don'?t(?:\s+\w+){0,3}|doesn'?t(?:\s+\w+){0,3}|do not(?:\s+\w+){0,3}|does not(?:\s+\w+){0,3})\s+(?:\w+\s+){0,4}$/i.test(prefix);
+  return /\b(?:not|no|never|without|avoid|except|excluding|rather than|instead of|don'?t(?:\s+\w+){0,3}|doesn'?t(?:\s+\w+){0,3}|do not(?:\s+\w+){0,3}|does not(?:\s+\w+){0,3})\s+(?:\w+\s+){0,4}$/i.test(prefix);
 }
 
 function fieldMentions(text,pattern,canonical) {
@@ -535,11 +535,11 @@ function giftContext(intent){
 function shopperCommand(text){return /\b(?:open|take me to|go to|view (?:the )?page|show (?:me )?(?:the )?(?:product )?page)\b/.test(text)?'navigate':/\b(?:add|put)\b[\s\S]{0,500}\b(?:bag|cart)\b/.test(text)?'choose':null;}
 function explicitDestination(text){
   const tokens=[...text.matchAll(/(?:[a-z][a-z\d+.-]*:\/\/[^\s<>"']+|(?:javascript|data|file):[^\s<>"']+|\/\/[a-z\d.-]+[^\s<>"']*|(?:[a-z\d-]+\.)+[a-z]{2,}(?:\/[^\s<>"']*)?|(?<![\w/])\/[a-z0-9_-]+[^\s<>"']*)/gi)];
-  const handles=tokens.map(match=>{let raw=match[0].replace(/[),.;!?]+$/,'');if(raw.startsWith('/')&&!raw.startsWith('//'))raw='https://britesjewelry.com'+raw;else if(!/^[a-z][a-z\d+.-]*:|^\/\//i.test(raw))raw='https://'+raw;const allowed=publicUrl(raw,true);if(!allowed)return null;const path=new URL(allowed).pathname;if(path!==raw.replace(/^https:\/\/[^/]+/i,'').split(/[?#]/)[0])return null;return path.match(/^\/products\/([a-z0-9_-]{1,180})\/?$/)?.[1]||null;});
+  const handles=tokens.map(match=>{let raw=match[0].replace(/[),.;!?]+$/,'');if(raw.startsWith('/')&&!raw.startsWith('//'))raw='https://britesjewelry.com'+raw;else if(!/^[a-z][a-z\d+.-]*:|^\/\//i.test(raw))raw='https://'+raw;const allowed=publicUrl(raw,true);if(!allowed)return null;const path=new URL(allowed).pathname;if(path!==raw.replace(/^https:\/\/[^/]+/i,'').split(/[?#]/)[0])return null;return path.match(/^\/(?:[a-z]{2}(?:-[a-z]{2})?\/)?products\/([a-z0-9_-]{1,180})\/?$/i)?.[1]||null;});
   return {unsafe:handles.some(handle=>!handle),handles:[...new Set(handles.filter(Boolean))],plain:tokens.reduceRight((value,match)=>value.slice(0,match.index)+' '.repeat(match[0].length)+value.slice(match.index+match[0].length),text)};
 }
 function checkoutRequest(text){
-  text=clean(text,2000).toLowerCase().replace(/[’‘]/g,"'");const command=shopperCommand(text),destination=explicitDestination(text);
+  text=clean(text,2000).toLowerCase().replace(/[’‘]/g,"'");const destination=explicitDestination(text),command=shopperCommand(destination.plain);
   if(command&&destination.unsafe)return 'destination';
   const plain=destination.plain.replace(/\bpay\s+(?:homage|tribute|attention|respect)\b/g,' ');
   const positive=pattern=>fieldMentions(plain,pattern).some(hit=>!hit.negative);
@@ -567,13 +567,12 @@ function exactCurrentPageRequest(text,currentHandle){
 }
 
 function shopperAction(message,products,displayedHandles=[]) {
-  const text=clean(message,2000).toLowerCase(),command=shopperCommand(text);
+  const text=clean(message,2000).toLowerCase().replace(/[’‘]/g,"'"),destination=explicitDestination(text),command=shopperCommand(destination.plain);
   if(checkoutRequest(text))return null;
-  if(!command||/\b(?:do not|don'?t|not|never)\s+(?:open|take|go|view|show|add|put)\b/.test(text))return null;
-  const ordinal=/\b(first|second|third|fourth|fifth|sixth|[1-6])\b/.exec(text);
+  if(!command||/\b(?:do not|don'?t|not|never)\s+(?:open|take|go|view|show|add|put)\b/.test(destination.plain))return null;
+  const ordinal=/\b(first|second|third|fourth|fifth|sixth|[1-6])\b/.exec(destination.plain);
   const index=ordinal?['first','second','third','fourth','fifth','sixth'].includes(ordinal[1])?['first','second','third','fourth','fifth','sixth'].indexOf(ordinal[1]):Number(ordinal[1])-1:null;
   let product=index==null?products.filter(p=>text.includes(p.title.toLowerCase())||text.includes(p.handle)).at(0):displayedHandles.length?products.find(p=>p.handle===displayedHandles[index]):products[index];
-  const destination=explicitDestination(text);
   if(destination.handles.length){if(destination.handles.length!==1)return null;const exact=products.find(p=>p.handle===destination.handles[0]);if(!exact||(index!=null&&product?.id!==exact.id))return null;product=exact;}
   else if(!product&&products.length===1&&/\b(?:this|that|it|the piece)\b/.test(text))product=products[0];
   return product?{type:command,productId:product.id,url:product.url}:null;
@@ -590,11 +589,14 @@ async function concierge({service,shopify,message,history=[],preferences={},cont
   if(sharedBudgetRequest(text))return {schema:1,budgetClarification:true,reply:'I haven’t applied the overall budget as a per-item limit. I can compare individual pieces once you choose an item limit.',question:'What maximum item price should I use for each piece, before shipping and any applicable taxes?',preferences:shopperPreferences({...intent,budget:null,minBudget:null,unlimitedBudget:false,budgetCurrency:null}),products:[],meanings:[],actions:[],checkedAt:at,live:false,aiUsed:false};
   const currentHandle=/^[a-z0-9_-]{1,180}$/.test(context.currentHandle||'')?context.currentHandle:'';
   const exactCurrentContext=exactCurrentPageRequest(text,currentHandle);
-  const destination=explicitDestination(text),negatedCommand=/\b(?:do not|don'?t|not|never)\s+(?:open|take|go|view|show|add|put)\b/i.test(text);
-  // A shopper-supplied Brites product URL is an exact selection. Resolve it
-  // directly instead of letting stale cards or discovery preferences replace
-  // it with another product.
-  const destinationHandle=shopperCommand(text.toLowerCase())&&!negatedCommand&&!destination.unsafe&&destination.handles.length===1?destination.handles[0]:'';
+  const destination=explicitDestination(text);
+  // Positive inquiries about one safe Brites URL select its knowledge, but
+  // do not authorize navigation or cart actions. Ignore URL path words when
+  // checking inquiry language, negation and references to other cards.
+  const destinationPlain=destination.plain.toLowerCase().replace(/[’‘]/g,"'");
+  const command=shopperCommand(destinationPlain),negatedCommand=/\b(?:do not|don'?t|not|never)\s+(?:open|take|go|view|show|add|put)\b/.test(destinationPlain);
+  const destinationInquiry=!/\b(?:compare|comparison|versus|first|second|third|fourth|fifth|sixth|[1-6](?:st|nd|rd|th)?)\b/.test(destinationPlain)&&fieldMentions(destinationPlain,'tell me(?: more)? about|describe|explain|details? (?:about|for|on)|what (?:is|are|does)|meaning|means|symboli[sz]\\w*|history|story|stories').some(hit=>!hit.negative);
+  const destinationHandle=((command&&!negatedCommand)||destinationInquiry)&&!destination.unsafe&&destination.handles.length===1?destination.handles[0]:'';
   const exactProductContext=exactCurrentContext||!!destinationHandle;
   const displayedReference=fieldMentions(text.toLowerCase().replace(/[’‘]/g,"'"),'this piece|that piece|this one|that one').some(hit=>!hit.negative);
   const useContext=exactProductContext||displayedReference||/\b(?:meaning|means|symboli[sz]\w*|history|story|stories|compare|comparison|first|second|third|fourth|fifth|sixth|open|cart|bag)\b/i.test(text);
@@ -629,8 +631,8 @@ async function concierge({service,shopify,message,history=[],preferences={},cont
   // A direct selection never silently shifts to a different card when the
   // requested product or its matching option can no longer be confirmed.
   let unavailableSelection=null;
-  if(shopperCommand(text.toLowerCase())&&useContext&&handles.length){
-    const ordinal=/\b(first|second|third|fourth|fifth|sixth|[1-6])\b/i.exec(text),words=['first','second','third','fourth','fifth','sixth'];
+  if(command&&useContext&&handles.length){
+    const ordinal=/\b(first|second|third|fourth|fifth|sixth|[1-6])\b/i.exec(destinationPlain),words=['first','second','third','fourth','fifth','sixth'];
     const index=ordinal?(words.includes(ordinal[1].toLowerCase())?words.indexOf(ordinal[1].toLowerCase()):Number(ordinal[1])-1):exactProductContext||displayedReference?0:null;
     const targetHandle=index==null?null:handles[index],target=eligibleProducts.find(product=>product.handle===targetHandle);
     if(index!=null&&(!targetHandle||!target||!products.some(product=>product.handle===targetHandle))){

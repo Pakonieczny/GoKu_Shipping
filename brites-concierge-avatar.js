@@ -84,6 +84,9 @@
     }
     function setState(value) {if (destroyed) return; state = validState(value); stateAt = now(); frame.dataset.state = state; try {engine?.invalidate();} catch {renderingFailure();} emit('state', {state}); sync();}
     function setVisible(value) {if (destroyed) return; visible = value === true; sync();}
+    // Only an explicit reopen/restoration asks for another attempt. Ordinary
+    // state, visibility and intersection updates keep a failed guide static.
+    function retry() {if (destroyed || loading || engine || !failed || !visible || !intersecting || doc.hidden) return false; failed = false; sync(); return loading;}
     function lookAt(x, y) {gaze = {x: clamp(Number.isFinite(x) ? x : 0, -1, 1), y: clamp(Number.isFinite(y) ? y : 0, -1, 1)}; if (reducedMotion) sync();}
     function setLevel(value) {level = clamp(value, 0, 1); if (reducedMotion && state === 'speaking') sync();}
     const visibility = () => sync(), motion = event => {reducedMotion = event.matches; sync();};
@@ -94,7 +97,7 @@
     observer?.observe(frame);
     function destroy() {if (destroyed) return; destroyed = true; observer?.disconnect(); doc.removeEventListener('visibilitychange', visibility); media?.removeEventListener?.('change', motion); frame.removeEventListener('pointermove', pointer); frame.removeEventListener('pointerleave', resetGaze); try {engine?.destroy();} catch {} engine = null; frame.remove(); readyResolve(snapshot());}
     sync();
-    return {ready, setState, setVisible, setLevel, lookAt, snapshot, destroy, element: frame};
+    return {ready, setState, setVisible, retry, setLevel, lookAt, snapshot, destroy, element: frame};
   }
   const api = {create, STATES, validState, qualityFor, poseFor};
   if (typeof module !== 'undefined' && module.exports) module.exports = api;

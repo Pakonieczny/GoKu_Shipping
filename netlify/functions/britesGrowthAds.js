@@ -10,7 +10,7 @@ export const READ_ACTIONS = Object.freeze([
   'playbookVersions', 'designStudioStatus', 'campaignOptions', 'servingCheck',
   'adGroups', 'adGroupDetail', 'adDesignSavedWorkspaces', 'adDesignStatus',
   'creativeStatus', 'campaignVersions', 'campaignVersionDetail', 'genStatus',
-  'diagRunStatus', 'growthResearchStatus', 'growthResearchDossiers', 'campaignGoalEvidence', 'receiptDiagnostics', 'receiptReconciliationPreview', 'productDemandEvidence', 'growthProductDemand'
+  'diagRunStatus', 'growthResearchStatus', 'growthResearchDossiers', 'campaignGoalEvidence', 'receiptDiagnostics', 'receiptReconciliationPreview', 'productDemandEvidence', 'growthProductDemand', 'conversionActionTagEvidence'
 ]);
 const allowed = new Set(READ_ACTIONS);
 const demandReaders = new WeakMap();
@@ -45,6 +45,7 @@ export function createHandler(deps = {}) {
   const engine = deps.loadEngine || loadEngine;
   const research = deps.researchService || researchService;
   const readPasscode = deps.savedPasscode || savedPasscode;
+  const loadReviewProjection = deps.loadReviewProjection || (async () => { const module = await import('./googleAdsAdDesignResearch.js'); return module.default || module; });
   const readSavedDemand = deps.readSavedDemand || (async (env, ids) => {
     const module = await import('./_britesGrowthDemandStore.js');
     return (module.default || module).createDemandStore(research(env)).read(ids);
@@ -112,7 +113,35 @@ export function createHandler(deps = {}) {
         const service = research(env), dossiers = await service.research(ids);
         let productIssues = [], productIssueState = 'unavailable';
         if (typeof service.productIssues === 'function') try { productIssues = await service.productIssues(ids); productIssueState = 'available'; } catch {}
-        return json({ dossiers: (dossiers || []).filter(d => ids.includes(d.productId)), productIssues: (productIssues || []).filter(record => ids.includes(record.productId)), productIssueState, sandboxReadOnly: true });
+        const exactDossiers = (dossiers || []).filter(d => ids.includes(d.productId)), operatorReviews = [];
+        // Research() reads the current private document, not a caller-supplied
+        // historical version. Fresh live identity and issue evidence are still
+        // required before deriving a bounded proposal-only review packet.
+        let projection; try { projection = await loadReviewProjection(); } catch {}
+        for (const id of ids) {
+          const dossier = exactDossiers.find(d => d.productId === id), holds = core.productIssueHolds((productIssues || []).find(record => record.productId === id));
+          const entry = {productId: id, handle: dossier?.handle || null, dossierVersion: dossier?.version || null, state: 'unavailable'};
+          if (productIssueState !== 'available' || holds.recommendationHold || holds.meaningHold) entry.state = 'held';
+          else if (projection && dossier && typeof service.getProduct === 'function') try {
+            const product = await service.getProduct(id), current = {...dossier, currentDossierVersion: dossier.version, evidenceHolds: holds};
+            if (projection.sharedDossierIsCurrent(current, product)) {
+              const packet = projection.projectRecommendations(current, new Set(current.sources.map(source => source.id)))?.operatorReviewPacket;
+              if (packet) { entry.state = 'pending_operator_review'; entry.operatorReviewPacket = packet; }
+            }
+          } catch { /* Identity/provider failures leave only an unavailable state. */ }
+          operatorReviews.push(entry);
+        }
+        return json({ dossiers: exactDossiers, operatorReviews, productIssues: (productIssues || []).filter(record => ids.includes(record.productId)), productIssueState, sandboxReadOnly: true });
+      }
+      if (action === 'conversionActionTagEvidence') {
+        if (Object.keys(body).some(key => key !== 'action')) return json({error:'Tag evidence accepts only its fixed read action.'},400);
+        try {
+          const E = await engine();
+          const module = await import('./_britesGrowthConversionTagEvidence.js');
+          return json({...await (module.default || module).read({gaql:query => E.gaql(query)}),sandboxReadOnly:true});
+        } catch {
+          return json({ok:false,error:'Conversion-action tag evidence is unavailable. Retry this read later.',sandboxReadOnly:true,providerWrites:false,conversionUploads:0},503);
+        }
       }
       const E = await engine();
       if (action === 'productDemandEvidence') {

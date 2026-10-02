@@ -42,17 +42,21 @@
   var panel=el('section',null,'panel');panel.id='brites-concierge-panel';panel.hidden=true;panel.setAttribute('role','dialog');panel.setAttribute('aria-label','Brites gift concierge');
   var bar=el('header',null,'bar'),title=el('div');title.append(el('div','BRITES JEWELRY','brand'),el('h2','A little help finding meaning'));var close=el('button','×','icon');close.type='button';close.setAttribute('aria-label','Close gift concierge');bar.append(title,close);panel.appendChild(bar);
   var avatarStage=el('div',null,'concierge-avatar-stage');avatarStage.setAttribute('aria-hidden','true');panel.appendChild(avatarStage);
-  function avatarCall(method){if(!avatar)return;try{return avatar[method]?.apply(avatar,Array.prototype.slice.call(arguments,1));}catch(e){var failed=avatar;avatar=null;try{failed.destroy?.();}catch(ignore){}}}
+  function avatarCall(method){if(!avatar)return;try{return avatar[method]?.apply(avatar,Array.prototype.slice.call(arguments,1));}catch(e){var failed=avatar;avatar=null;avatarLoading=null;try{failed.destroy?.();}catch(ignore){}}}
   function setAvatarState(value){avatarState=value;avatarCall('setState',value);}
   function ensureAvatar(){
-    if(avatar){avatarCall('setVisible',state.open&&!document.hidden);return Promise.resolve(avatar);}
+    if(avatar){avatarCall('setVisible',state.open&&!document.hidden);if(avatar)avatarCall('retry');if(avatar)return Promise.resolve(avatar);}
     if(avatarLoading)return avatarLoading;
-    avatarLoading=new Promise(function(resolve){
-      function init(){try{if(!window.BritesConciergeAvatar){resolve(null);return;}avatar=window.BritesConciergeAvatar.create({container:avatarStage,assetBase:apiBase+'/',sceneModuleUrl:'assets/brites-concierge-avatar-scene.mjs',initialState:avatarState,visible:state.open&&!document.hidden});resolve(avatar);}catch(e){resolve(null);}}
+    var attempt=new Promise(function(resolve){
+      var loader=null,finished=false;
+      function finish(value){if(finished)return;finished=true;if(loader){loader.onload=loader.onerror=null;loader.remove();}resolve(value);}
+      function init(){if(finished)return;try{if(!window.BritesConciergeAvatar){finish(null);return;}avatar=window.BritesConciergeAvatar.create({container:avatarStage,assetBase:apiBase+'/',sceneModuleUrl:'assets/brites-concierge-avatar-scene.mjs',initialState:avatarState,visible:state.open&&!document.hidden});finish(avatar);}catch(e){finish(null);}}
       if(window.BritesConciergeAvatar){init();return;}
-      var loader=el('script');loader.src=apiBase+'/brites-concierge-avatar.js';loader.async=true;loader.onload=init;loader.onerror=function(){resolve(null);};root.appendChild(loader);
+      loader=el('script');loader.src=apiBase+'/brites-concierge-avatar.js';loader.async=true;loader.onload=init;loader.onerror=function(){finish(null);};root.appendChild(loader);
     });
-    return avatarLoading;
+    avatarLoading=attempt;
+    attempt.then(function(){if(avatarLoading===attempt)avatarLoading=null;});
+    return attempt;
   }
   var messages=el('div',null,'messages');messages.setAttribute('aria-live','polite');messages.setAttribute('aria-relevant','additions');panel.appendChild(messages);
   var compose=el('div',null,'composer'),status=el('div','','status');status.setAttribute('role','status');var form=el('form'),input=el('input');input.type='text';input.placeholder='Tell me who the gift is for…';input.maxLength=2000;input.setAttribute('aria-label','Message the gift concierge');var send=el('button','Send','send');send.type='submit';form.append(input,send);var foot=el('div',null,'foot'),clear=el('button','Start fresh','textbtn');clear.type='button';var speak=el('button','Read aloud','textbtn');speak.type='button';speak.hidden=!('speechSynthesis'in window);foot.append(el('span','Optional help · live shop selection'),speak,clear);compose.append(status,form,foot);panel.appendChild(compose);root.appendChild(panel);

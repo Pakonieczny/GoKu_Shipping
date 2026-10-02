@@ -195,6 +195,40 @@ test('a long exact Brites product URL remains an add-to-bag command and cannot f
   const answer=await core.concierge({...d,message:'Add https://britesjewelry.com/products/'+handle+' to my bag',preferences:core.intentFrom('Lion silver charm'),context:{productHandles:[stale.handle],currentHandle:stale.handle}});
   assert.deepEqual(calls,[handle]);assert.deepEqual(answer.products.map(product=>product.id),[exact.id]);assert.equal(answer.requestedAction.type,'choose');assert.equal(answer.requestedAction.productId,exact.id);assert.match(answer.reply,/confirm before/);assert.ok(!answer.actions.some(action=>action.type==='purchase'));
 });
+test('positive exact URL inquiries read only that live piece despite stale cards and preferences',async()=>{
+  const stale=piece(1),exact=piece(2,{handle:'cardinal-bird-necklace',url:'https://britesjewelry.com/products/cardinal-bird-necklace',title:'Cardinal Bird Necklace',tags:['cardinal'],description:'A cardinal design with an included chain.'}),knowledge=dossier(exact);
+  knowledge.sources[1]={id:'m',url:'https://example.edu/museum/cardinal',title:'Cardinal interpretation',excerpt:'The cardinal can be a personal reminder of companionship.',checkedAt:NOW,reviewed:true};knowledge.meanings=[{text:'A cardinal may be a personal reminder of companionship.',context:'A qualified personal interpretation, not a universal meaning.',kind:'interpretation',sourceIds:['m']}];
+  for(const message of ['Tell me about '+exact.url,'What can you tell me about this product: '+exact.url+'?','Describe '+exact.url,'Explain '+exact.url,'Details about '+exact.url,'What is special about '+exact.url,'What does '+exact.url+' mean?','Tell me the history of '+exact.url,'Tell me more about https://www.britesjewelry.com/en-ca/products/'+exact.handle+'?variant=201','Tell me about /en/products/'+exact.handle]){
+    const calls=[],d=deps([stale,exact],[knowledge]);d.shopify.byHandle=async handle=>{calls.push(handle);return handle===exact.handle?exact:null;};d.shopify.search=async()=>{calls.push('SEARCH');return{products:[stale]};};
+    const answer=await core.concierge({...d,message,preferences:core.intentFrom('Bunny silver earrings under $1'),context:{productHandles:[stale.handle],currentHandle:stale.handle}});
+    assert.deepEqual(calls,[exact.handle],message);assert.deepEqual(answer.products.map(p=>p.id),[exact.id],message);assert.equal(answer.meanings[0].productId,exact.id,message);assert.equal(answer.requestedAction,undefined,message);assert.ok(!answer.actions.some(action=>action.type==='purchase'),message);
+  }
+});
+test('negated, ambiguous and unsafe URL inquiries do not select an exact destination',async()=>{
+  const discovered=piece(1),url='https://britesjewelry.com/products/cardinal-bird-necklace';
+  for(const message of ["Don't tell me about "+url,'Do not describe '+url,'Never explain '+url,'Not the history of '+url,'Tell me about https://retailer.example/products/cardinal-bird-necklace','Tell me about https://britesjewelry.com@evil.example/products/cardinal-bird-necklace','Tell me about https://britesjewelry.com/products/../products/cardinal-bird-necklace','Tell me about '+url+' and https://britesjewelry.com/products/another-piece']){
+    const calls=[],d=deps([discovered],[]);d.shopify.byHandle=async handle=>{calls.push(handle);return null;};d.shopify.search=async()=>{calls.push('SEARCH');return{products:[discovered]};};
+    const answer=await core.concierge({...d,message});assert.deepEqual(calls,['SEARCH'],message);assert.equal(answer.requestedAction,undefined,message);
+  }
+});
+test('URL inquiries with comparison or ordinal references retain the displayed card set',async()=>{
+  const first=piece(1),second=piece(2),exact=piece(3,{handle:'cardinal-bird-necklace',url:'https://britesjewelry.com/products/cardinal-bird-necklace'});
+  for(const message of ['Compare '+exact.url+' with the first one','Tell me about '+exact.url+' versus the second piece','Explain the first and second pieces alongside '+exact.url]){
+    const calls=[],d=deps([first,second,exact],[]);d.shopify.byHandle=async handle=>{calls.push(handle);return [first,second,exact].find(p=>p.handle===handle)||null;};d.shopify.search=async()=>{calls.push('SEARCH');return{products:[exact]};};
+    const answer=await core.concierge({...d,message,preferences:core.intentFrom('Bunny necklace'),context:{productHandles:[first.handle,second.handle],currentHandle:exact.handle}});assert.deepEqual(calls,[first.handle,second.handle],message);assert.ok(!answer.products.some(p=>p.id===exact.id),message);assert.equal(answer.requestedAction,undefined,message);
+  }
+});
+test('a missing exact URL inquiry never substitutes discovery or a stale card',async()=>{
+  const stale=piece(1),calls=[],d=deps([stale],[]);d.shopify.byHandle=async handle=>{calls.push(handle);return null;};d.shopify.search=async()=>{calls.push('SEARCH');return{products:[stale]};};
+  const answer=await core.concierge({...d,message:'Tell me about https://britesjewelry.com/products/missing-piece',context:{productHandles:[stale.handle],currentHandle:stale.handle}});assert.deepEqual(calls,['missing-piece']);assert.deepEqual(answer.products,[]);assert.equal(answer.requestedAction,undefined);
+});
+test('command and ordinal words inside a product URL cannot authorize shopper actions',async()=>{
+  const exact=piece(2,{handle:'open-book-first-charm',url:'https://britesjewelry.com/products/open-book-first-charm',title:'Open Book Charm',type:'Charm',tags:['book']}),d=deps([exact],[]);
+  for(const message of ['Tell me about '+exact.url,'Describe '+exact.url]){const answer=await core.concierge({...d,message});assert.deepEqual(answer.products.map(p=>p.id),[exact.id]);assert.equal(answer.requestedAction,undefined);}
+  const open=await core.concierge({...d,message:'Open '+exact.url});assert.equal(open.requestedAction.type,'navigate');assert.equal(open.requestedAction.productId,exact.id);
+  const choose=await core.concierge({...d,message:'Add '+exact.url+' to my bag'});assert.equal(choose.requestedAction.type,'choose');assert.equal(choose.requestedAction.productId,exact.id);assert.match(choose.reply,/confirm before/);
+  const inquire=await core.concierge({...d,message:"Don't open "+exact.url+', tell me about it'});assert.deepEqual(inquire.products.map(p=>p.id),[exact.id]);assert.equal(inquire.requestedAction,undefined);
+});
 test('empty filtered results relax only a verified blocking preference and ask one question',async()=>{
   const goldOnly=piece(1,{variants:[{...piece().variants[1]}]});
   const answer=await core.concierge({...deps([goldOnly],[]),message:'A silver bunny necklace with no budget limit'});assert.equal(answer.products.length,0);assert.equal(answer.recoveryField,'metal');assert.equal(answer.question,'Would you like to see another metal option?');assert.equal((answer.question.match(/\?/g)||[]).length,1);

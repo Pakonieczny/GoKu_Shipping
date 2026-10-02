@@ -53,6 +53,44 @@
       (planner.keywords||[]).forEach(keyword=>parent.appendChild(node('p',keyword.text+' · '+(pooled?'pooled ':'')+'average monthly searches '+metric(keyword.averageMonthlySearches)+' · competition '+(keyword.competition||'unavailable'),'sub')));}
     parent.appendChild(node('p','Unreported terms or missing Planner values do not establish zero demand.','status'));
   }
+  const reviewTermKey=value=>String(value||'').normalize('NFKC').replace(/\s+/g,' ').trim().toLowerCase();
+  function operatorReviewFor(result,product,dossier,now=Date.now()){
+    const id=productId(product?.productId),version=dossier?.version,entry=(result?.operatorReviews||[]).find(value=>value.productId===id),packet=entry?.operatorReviewPacket;
+    const issues=selectProductIssues(result||{},product||{}),holds=issueHolds(issues);
+    if(!id||!product.handle||dossier?.productId!==id||dossier.handle!==product.handle||dossier.status!=='approved'||product.dossierVersion!==version||dossier.proposalOnly===true||dossier.privateProposal===true||dossier.reviewStatus==='proposed'||!(/^[a-f0-9]{64}$/i.test(version||''))||!Number.isFinite(dossier.savedAt)||dossier.savedAt>now+60000||result.productIssueState!=='available'||holds.recommendationHold||holds.meaningHold||entry?.state!=='pending_operator_review'||entry.productId!==id||entry.handle!==product.handle||entry.dossierVersion!==version||packet?.schema!==1||packet.productId!==id||packet.handle!==product.handle||packet.dossierVersion!==version||packet.state!=='pending_operator_review'||['providerWrites','campaignWrites','budgetWrites','automaticActivation'].some(key=>packet[key]!==false))return null;
+    if(!Array.isArray(dossier.sources)||!dossier.sources.length||dossier.sources.length>40)return null;
+    const sources=new Map();for(const source of dossier.sources){if(!source||!/^[a-zA-Z0-9:_-]{1,100}$/.test(source.id||'')||sources.has(source.id)||source.reviewed!==true||!safeLink(source.url)||!Number.isFinite(source.checkedAt)||source.checkedAt>now+60000||now-source.checkedAt>30*86400000)return null;sources.set(source.id,source);}
+    const text=(value,max)=>typeof value==='string'&&value.trim().length>0&&value.length<=max;
+    const unique=values=>Array.isArray(values)&&new Set(values).size===values.length;
+    const cited=ids=>unique(ids)&&ids.length>0&&ids.length<=12&&ids.every(id=>sources.has(id));
+    const terms=values=>values==null?[]:Array.isArray(values)&&values.length<=30&&values.every(value=>text(value,120))&&new Set(values.map(reviewTermKey)).size===values.length?values:null;
+    if(!unique(packet.candidateIds)||!Array.isArray(packet.candidates)||packet.candidates.length<1||packet.candidates.length>40||packet.candidateIds.length!==packet.candidates.length)return null;
+    const candidateMap=new Map();for(const candidate of packet.candidates){
+      if(!candidate||!/^rec_[a-f0-9]{24}$/.test(candidate.candidateId||'')||candidateMap.has(candidate.candidateId)||!packet.candidateIds.includes(candidate.candidateId)||!['ads','keywords','negatives'].includes(candidate.channel)||candidate.basis!=='hypothesis'||candidate.reviewState!=='pending_operator_review'||!text(candidate.action,2000)||!text(candidate.measure,1000)||!cited(candidate.sourceIds)||!terms(candidate.keywords)||!terms(candidate.negativeKeywords))return null;
+      const rec=(dossier.recommendations||[]).find(rec=>rec.channel===candidate.channel&&rec.basis==='hypothesis'&&rec.action===candidate.action&&rec.measure===candidate.measure&&JSON.stringify(rec.sourceIds)===JSON.stringify(candidate.sourceIds)&&JSON.stringify(rec.keywords||[])===JSON.stringify(candidate.keywords||[])&&JSON.stringify(rec.negativeKeywords||[])===JSON.stringify(candidate.negativeKeywords||[]));if(!rec)return null;
+      candidateMap.set(candidate.candidateId,candidate);
+    }
+    const eligible=(dossier.recommendations||[]).filter(value=>['ads','keywords','negatives'].includes(value.channel));
+    const signature=value=>JSON.stringify([value.channel,value.action,value.measure,value.sourceIds,value.keywords||[],value.negativeKeywords||[]]);
+    if(eligible.length!==packet.candidates.length||new Set(packet.candidates.map(signature)).size!==packet.candidates.length)return null;
+    const validateGroup=(entries,field)=>{
+      if(!Array.isArray(entries)||entries.length>1200)return false;const expected=new Map();
+      for(const c of packet.candidates)for(const term of c[field]||[]){const key=reviewTermKey(term),group=expected.get(key)||{ids:new Set(),sources:new Set()};group.ids.add(c.candidateId);c.sourceIds.forEach(id=>group.sources.add(id));expected.set(key,group);}
+      const seen=new Set();for(const value of entries){const key=reviewTermKey(value?.term),group=expected.get(key);if(!text(value?.term,120)||seen.has(key)||!group||value.basis!=='hypothesis'||value.reviewState!=='pending_operator_review'||!unique(value.candidateIds)||!unique(value.sourceIds)||value.candidateIds.length!==group.ids.size||value.sourceIds.length!==group.sources.size||value.candidateIds.some(id=>!group.ids.has(id))||value.sourceIds.some(id=>!group.sources.has(id)))return false;seen.add(key);}return seen.size===expected.size;
+    };
+    if(!validateGroup(packet.positiveKeywords,'keywords')||!validateGroup(packet.negativeKeywords,'negativeKeywords'))return null;
+    const negatives=new Set(packet.negativeKeywords.map(value=>reviewTermKey(value.term)));if(packet.positiveKeywords.some(value=>negatives.has(reviewTermKey(value.term))))return null;
+    return packet;
+  }
+  function renderOperatorReview(parent,result,product,dossier){
+    const section=node('section',null,'operator-review');section.setAttribute('aria-label','Advertising operator review');section.appendChild(node('h3','Advertising operator review'));
+    const packet=operatorReviewFor(result,product,dossier);
+    if(!packet){section.appendChild(node('p','Review packet held or unavailable. Current product identity, approved research version, fresh reviewed sources and issue checks must all agree. Research notes below remain context only.','status'));parent.appendChild(section);return;}
+    section.append(node('span','Pending operator review · hypotheses','tag'),node('p','Product: '+packet.handle,'sub'),node('p','Approved research version','status'),node('code',packet.dossierVersion,'review-version'),node('p','No provider, campaign or budget writes. No automatic activation. These proposals do not establish measured sales lift or returns.','status'));
+    const citations=(container,ids)=>{const p=node('p',null,'status');for(const [index,id]of ids.entries()){const source=dossier.sources.find(source=>source.id===id);if(index)p.append(' · ');const a=node('a',source.title||id);a.href=safeLink(source.url);a.target='_blank';a.rel='noopener noreferrer';p.appendChild(a);}container.appendChild(p);};
+    for(const c of packet.candidates){const card=node('article',null,'recommendation');card.append(node('b',c.channel+' · test hypothesis'),node('code',c.candidateId,'review-id'),node('p',c.action),node('p','Measure: '+c.measure,'sub'));citations(card,c.sourceIds);section.appendChild(card);}
+    for(const [heading,entries]of [['Positive keyword hypotheses',packet.positiveKeywords],['Negative keyword hypotheses',packet.negativeKeywords]]){const group=node('div',null,'review-keywords');group.appendChild(node('h4',heading));if(!entries.length)group.appendChild(node('p','No proposals in this group.','sub'));for(const value of entries){const item=node('article',null,'review-term');item.append(node('strong',value.term),node('p','Candidates: '+value.candidateIds.join(', '),'review-id'));citations(item,value.sourceIds);}section.appendChild(group);}parent.appendChild(section);
+  }
   function parseCsv(text){const rows=[];let row=[],cell='',q=false;for(let i=0;i<text.length;i++){const c=text[i];if(c==='"'){if(q&&text[i+1]==='"'){cell+='"';i++;}else q=!q;}else if(c===','&&!q){row.push(cell);cell='';}else if((c==='\n'||c==='\r')&&!q){if(c==='\r'&&text[i+1]==='\n')i++;row.push(cell);if(row.some(Boolean))rows.push(row);row=[];cell='';}else cell+=c;}row.push(cell);if(row.some(Boolean))rows.push(row);if(!rows.length)return [];const headers=rows.shift().map(h=>h.replace(/^\uFEFF/,'').trim());return rows.map(r=>Object.fromEntries(headers.map((h,i)=>[h,r[i]||''])));}
   function receiptPreviewFor(result){
     if(result?.readOnly!==true||result.receiptOnly!==true||result.dryRun!==true||result.queueUpdated!==false||result.individualOrdersUpdated!==0||result.individualOrderAttributionConfirmed!==false||result.providerAggregateUsedForConfirmation!==false||result.productionApplyAvailable!==false)throw Error('A read-only status repair preview could not be verified.');
@@ -119,7 +157,8 @@
         detail.appendChild(node('h3','Competitor offers'));
         if(!(dossier.competitors||[]).length)detail.appendChild(node('p','Inspected competitor offers are still pending.','sub'));
         (dossier.competitors||[]).forEach(c=>{const b=node('div',null,'recommendation'),url=safeLink(c.url);if(url){const a=node('a',c.name);a.href=url;a.target='_blank';a.rel='noopener noreferrer';b.appendChild(a);}else b.appendChild(node('b',c.name));let price='Price not verified';if(c.price!=null&&Number.isFinite(Number(c.price))&&/^[A-Z]{3}$/.test(c.currency||''))price=new Intl.NumberFormat('en',{style:'currency',currency:c.currency}).format(c.price)+' '+c.currency;b.append(node('p',price),node('p','Ad spending: '+(c.spend?.status||'unknown'),'status'),node('p',c.observation||''));if(c.spend?.status==='estimate')b.appendChild(node('p','Estimate method: '+c.spend.method+' · Assumptions: '+(c.spend.assumptions||[]).join('; '),'status'));links(b,dossier,c.sourceIds);detail.appendChild(b);});
-        detail.appendChild(node('h3','Recommendations to test'));
+        renderOperatorReview(detail,result,r,dossier);
+        detail.appendChild(node('h3','Research recommendations · context only'));
         if(!(dossier.recommendations||[]).length)detail.appendChild(node('p','Actionable test recommendations are still pending.','sub'));
         (dossier.recommendations||[]).forEach(rec=>{const b=node('div',null,'recommendation');b.append(node('b',rec.channel+' · hypothesis'),node('p',rec.action),node('p','Measure: '+rec.measure,'sub'));links(b,dossier,rec.sourceIds);detail.appendChild(b);});
         if((dossier.recommendations||[]).length&&global.navigator?.clipboard?.writeText){const corrective=held||dossier.status!=='approved',copy=node('button',corrective?'Copy corrective research notes':'Copy product test brief','btn');copy.type='button';copy.onclick=async()=>{try{await global.navigator.clipboard.writeText(briefFor(dossier,r.title,issues,issueState));copy.textContent=corrective?'Corrective notes copied':'Test brief copied';}catch{copy.textContent='Clipboard unavailable';}};detail.appendChild(copy);}
@@ -144,5 +183,5 @@
     auth.onsubmit=async e=>{e.preventDefault();key=pass.value.trim();pass.value='';try{sessionStorage.setItem('brites-growth-key',key);}catch(x){}await load();};refresh.onclick=load;if(opts.request||key)await load();else{status.textContent='Sign in to see private progress.';refresh.disabled=true;}
     return {refresh:load};
   }
-  global.BritesGrowth={mount,parseCsv,productId,selectDossier,selectProductIssues,issueHolds,briefFor,demandBriefFor,receiptPreviewFor,safeLink};if(document.querySelector('#growth-root'))mount(document.querySelector('#growth-root'));
+  global.BritesGrowth={operatorReviewFor,renderOperatorReview,mount,parseCsv,productId,selectDossier,selectProductIssues,issueHolds,briefFor,demandBriefFor,receiptPreviewFor,safeLink};if(document.querySelector('#growth-root'))mount(document.querySelector('#growth-root'));
 })(window);
