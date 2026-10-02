@@ -232,6 +232,40 @@ function createGrowthService({db,env={},shopify,now=Date.now}){
       .sort((a,b)=>hintScore(b)-hintScore(a)||clean(a.handle,180).localeCompare(clean(b.handle,180)))
       .slice(0,cap).map(row=>row.handle);
   }
+  async function milestoneCandidateHandles(value,limit=12){
+    // Recall hints must already be linked to a current approved dossier and a
+    // reviewed public interpretation. Product mirror rows still provide hints
+    // only: every returned handle is re-read from the live storefront before it
+    // can be ranked, displayed or acted on.
+    if(ns!=='Brites_Growth_Sandbox')return [];
+    const plan=milestoneDiscovery.discoveryIntent(value),bounds=milestoneDiscovery.recallBounds();
+    if(!plan)return [];
+    const cap=Math.max(1,Math.min(bounds.liveHandles,Number.isInteger(limit)?limit:bounds.liveHandles));
+    let snapshot;try{snapshot=await col('Research').where('status','==','approved').limit(bounds.researchScan).get();}catch{return [];}
+    const approved=[];
+    for(const doc of snapshot.docs||[]){
+      const dossier=doc.data();
+      if(validIdentity(dossier?.productId)&&/^[a-z0-9_-]{1,180}$/.test(dossier?.handle||'')&&/^[a-f0-9]{64}$/.test(dossier?.version||''))approved.push(dossier);
+    }
+    const supplements=await readProductRecords('StorySupplements',approved.map(x=>x.productId),bounds.supplementReads),supplementById=new Map(supplements.map(supplement=>[supplement?.productId,supplement])),baseById=new Map(approved.map(dossier=>[dossier.productId,dossier]));
+    const linked=[];
+    for(const dossier of mergeStorySupplements(approved,supplements,[],now())){
+      const meanings=publicMeanings([dossier],[dossier.productId],now(),[]);
+      if(milestoneDiscovery.matchingMeanings(meanings,plan.milestone).length){const baseMeanings=publicMeanings([baseById.get(dossier.productId)],[dossier.productId],now(),[]),baseLinked=milestoneDiscovery.matchingMeanings(baseMeanings,plan.milestone).length>0,supplement=supplementById.get(dossier.productId);linked.push({productId:dossier.productId,handle:dossier.handle,dossierVersion:dossier.version,supplementVersion:!baseLinked&&/^[a-f0-9]{64}$/.test(supplement?.version||'')?supplement.version:null});}
+    }
+    linked.sort((a,b)=>a.handle.localeCompare(b.handle));
+    const selected=linked.slice(0,bounds.mirrorReads),rows=await readProductRecords('Products',selected.map(x=>x.productId),bounds.mirrorReads),byId=new Map(rows.map(row=>[row?.id,row]));
+    const excluded=new Set(plainList(value?.excludedInterests,12)),wantedType=clean(value?.type,30).toLowerCase();
+    const candidates=[];
+    for(const hint of selected){
+      const row=byId.get(hint.productId);if(!row||row.handle!==hint.handle||!publicUrl(row.url,true))continue;
+      const searchable=clean(row.title,300)+' '+clean(row.type,100)+' '+(Array.isArray(row.tags)?row.tags.map(x=>clean(x,100)).join(' '):'');
+      const motifHits=plan.motifs.filter(motif=>!excluded.has(motif)&&new RegExp('\\b(?:'+motifPattern(motif)+')\\b','i').test(searchable));
+      if(!motifHits.length)continue;
+      candidates.push({...hint,score:motifHits.length*10+(wantedType&&typeMatches(row,wantedType)?4:0)});
+    }
+    return candidates.sort((a,b)=>b.score-a.score||a.handle.localeCompare(b.handle)).slice(0,cap).map(({score,...hint})=>hint);
+  }
   async function recordProductIssue(value){
     if(!validIdentity(value?.productId)||!Array.isArray(value.issues)||!value.issues.length||value.issues.length>20)throw Error('Provide an exact product ID and 1–20 reviewed issues.');
     const issues=value.issues.map(issue=>{
@@ -249,7 +283,7 @@ function createGrowthService({db,env={},shopify,now=Date.now}){
   async function block(value){if(!/^[a-z0-9-]{1,100}$/.test(value.id||''))throw Error('Invalid blocker ID.');await col('Blockers').doc(value.id).set({task:clean(value.task,300),detail:clean(value.detail,2500),status:clean(value.status||'queued_for_morning',100),at:now()},{merge:true});return {ok:true};}
   async function event(type,data={}){const allowed=['opened','dismissed','message','product_opened','cart_requested','cart_added','cart_failed','api_error','test'];if(!allowed.includes(type))throw Error('Invalid event.');await col('Events').add({type,productId:validIdentity(data.productId)?data.productId:null,scenario:clean(data.scenario,100),at:now()});return {ok:true};}
   async function rateLimit(key,limit=25){const bucket=Math.floor(now()/60000),ref=col('Rate').doc(hash(key+'-'+bucket));return db.runTransaction(async tx=>{const s=await tx.get(ref),count=s.exists?s.data().count:0;if(count>=limit)return false;tx.set(ref,{count:count+1,expiresAt:new Date((bucket+5)*60000)});return true;});}
-  return {setup,getProduct,saveProducts,syncCatalogue,importRanks,claim,release,saveDossier,research,productIssues,storySupplements,saveStorySupplement,catalogueCandidateHandles,recordProductIssue,status,block,event,rateLimit,col,state,namespace:ns};
+  return {setup,getProduct,saveProducts,syncCatalogue,importRanks,claim,release,saveDossier,research,productIssues,storySupplements,saveStorySupplement,catalogueCandidateHandles,milestoneCandidateHandles,recordProductIssue,status,block,event,rateLimit,col,state,namespace:ns};
 }
 function productIssueHolds(record){
   const open=(Array.isArray(record?.issues)?record.issues:[]).filter(x=>x&&x.status!=='resolved'),blocks=new Set(open.flatMap(x=>Array.isArray(x.blocks)?x.blocks:[]));
@@ -565,7 +599,7 @@ function giftContext(intent){
   return ' as a'+(occasion?' '+occasion:'')+' gift'+(intent.recipient?' for your '+intent.recipient:'');
 }
 
-function shopperCommand(text){return /\b(?:open|take me to|go to|view (?:the )?page|show (?:me )?(?:the )?(?:product )?page)\b/.test(text)?'navigate':/\b(?:add|put)\b[\s\S]{0,500}\b(?:bag|cart)\b/.test(text)?'choose':null;}
+function shopperCommand(text){return /\b(?:open|take me to|go to|view (?:the )?(?:product )?page|show (?:me )?(?:the )?(?:product )?page)\b/.test(text)||/\bview (?:the )?(?:this|that|first|second|third|fourth|fifth|sixth|[1-6](?:st|nd|rd|th)?)(?:\s+(?:piece|one|item|product))?\b/.test(text)?'navigate':/\b(?:add|put)\b[\s\S]{0,500}\b(?:bag|cart)\b/.test(text)?'choose':null;}
 function explicitDestination(text){
   const tokens=[...text.matchAll(/(?:[a-z][a-z\d+.-]*:\/\/[^\s<>"']+|(?:javascript|data|file):[^\s<>"']+|\/\/[a-z\d.-]+[^\s<>"']*|(?:[a-z\d-]+\.)+[a-z]{2,}(?:\/[^\s<>"']*)?|(?<![\w/])\/[a-z0-9_-]+[^\s<>"']*)/gi)];
   const handles=tokens.map(match=>{let raw=match[0].replace(/[),.;!?]+$/,'');if(raw.startsWith('/')&&!raw.startsWith('//'))raw='https://britesjewelry.com'+raw;else if(!/^[a-z][a-z\d+.-]*:|^\/\//i.test(raw))raw='https://'+raw;const allowed=publicUrl(raw,true);if(!allowed)return null;const path=new URL(allowed).pathname;if(path!==raw.replace(/^https:\/\/[^/]+/i,'').split(/[?#]/)[0])return null;return path.match(/^\/(?:[a-z]{2}(?:-[a-z]{2})?\/)?products\/([a-z0-9_-]{1,180})\/?$/i)?.[1]||null;});
@@ -599,13 +633,22 @@ function exactCurrentPageRequest(text,currentHandle){
   return fieldMentions(normalized,reference).some(hit=>!hit.negative);
 }
 
+function displayedProductFromText(message,products){
+  const text=clean(message,2000).toLowerCase().replace(/[’‘]/g,"'"),list=Array.isArray(products)?products:[];
+  const handleMatches=list.filter(product=>/^[a-z0-9_-]{1,180}$/.test(product?.handle||'')&&text.includes(product.handle));
+  if(handleMatches.length===1)return handleMatches[0];
+  if(handleMatches.length>1)return null;
+  const normalized=(' '+text.replace(/[^a-z0-9]+/g,' ').trim()+' '),titleMatches=list.filter(product=>{const title=clean(product?.title,300).toLowerCase().replace(/[^a-z0-9]+/g,' ').trim();return title&&normalized.includes(' '+title+' ');});
+  return titleMatches.length===1?titleMatches[0]:null;
+}
+
 function shopperAction(message,products,displayedHandles=[]) {
   const text=clean(message,2000).toLowerCase().replace(/[’‘]/g,"'"),destination=explicitDestination(text),command=shopperCommand(destination.plain);
   if(checkoutRequest(text))return null;
   if(!command||/\b(?:do not|don'?t|not|never)\s+(?:open|take|go|view|show|add|put)\b/.test(destination.plain))return null;
   const ordinal=/\b(first|second|third|fourth|fifth|sixth|[1-6])\b/.exec(destination.plain);
   const index=ordinal?['first','second','third','fourth','fifth','sixth'].includes(ordinal[1])?['first','second','third','fourth','fifth','sixth'].indexOf(ordinal[1]):Number(ordinal[1])-1:null;
-  let product=index==null?products.filter(p=>text.includes(p.title.toLowerCase())||text.includes(p.handle)).at(0):displayedHandles.length?products.find(p=>p.handle===displayedHandles[index]):products[index];
+  let product=index==null?displayedProductFromText(text,products):displayedHandles.length?products.find(p=>p.handle===displayedHandles[index]):products[index];
   if(destination.handles.length){if(destination.handles.length!==1)return null;const exact=products.find(p=>p.handle===destination.handles[0]);if(!exact||(index!=null&&product?.id!==exact.id))return null;product=exact;}
   else if(!product&&products.length===1&&/\b(?:this|that|it|the piece)\b/.test(text))product=products[0];
   return product?{type:command,productId:product.id,url:product.url}:null;
@@ -637,15 +680,40 @@ async function concierge({service,shopify,message,history=[],preferences={},cont
   if(!handles.length&&currentHandle)handles.push(currentHandle);
   const milestonePlan=!command&&!(useContext&&handles.length)?milestoneDiscovery.discoveryIntent(intent):null;
   const searchedMilestone=!!milestonePlan?.motifs.length;
-  const queried=useContext&&handles.length?{products:(await Promise.all(handles.map(h=>shopify.byHandle(h)))).filter(Boolean)}:searchedMilestone?{products:[...new Map((await Promise.all(milestonePlan.motifs.map(motif=>shopify.search(motif)))).flatMap(result=>(result.products||[]).slice(0,10)).map(product=>[product.id,product])).values()].slice(0,30)}:milestonePlan?{products:[]}:await shopify.search(intent.query||intent.type||'necklace');
+  let milestoneHints=[],recalledVersions=new Map();
+  let queried;
+  if(useContext&&handles.length)queried={products:(await Promise.all(handles.map(h=>shopify.byHandle(h)))).filter(Boolean)};
+  else if(searchedMilestone){
+    const bounds=milestoneDiscovery.recallBounds(),hintRead=typeof service.milestoneCandidateHandles==='function'?service.milestoneCandidateHandles(intent,bounds.liveHandles):typeof service.catalogueCandidateHandles==='function'?service.catalogueCandidateHandles({...intent,query:milestonePlan.motifs.join(' '),interests:milestonePlan.motifs},bounds.liveHandles):Promise.resolve([]);
+    const [searches,hints]=await Promise.all([Promise.all(milestonePlan.motifs.map(motif=>shopify.search(motif))),hintRead]);
+    const searched=[...new Map(searches.flatMap(result=>(result.products||[]).slice(0,10)).map(product=>[product.id,product])).values()].slice(0,30),seenHandles=new Set(searched.map(product=>product.handle));
+    milestoneHints=(Array.isArray(hints)?hints:[]).flatMap(hint=>{
+      if(typeof hint==='string')return /^[a-z0-9_-]{1,180}$/.test(hint)?[{handle:hint,productId:null,dossierVersion:null}]:[];
+      return /^[a-z0-9_-]{1,180}$/.test(hint?.handle||'')&&(!hint.productId||validIdentity(hint.productId))&&(!hint.dossierVersion||/^[a-f0-9]{64}$/.test(hint.dossierVersion))&&(!hint.supplementVersion||/^[a-f0-9]{64}$/.test(hint.supplementVersion))?[{handle:hint.handle,productId:hint.productId||null,dossierVersion:hint.dossierVersion||null,supplementVersion:hint.supplementVersion||null}]:[];
+    }).filter((hint,index,list)=>!seenHandles.has(hint.handle)&&list.findIndex(other=>other.handle===hint.handle)===index).slice(0,bounds.liveHandles);
+    const attempts=await Promise.allSettled(milestoneHints.map(hint=>shopify.byHandle(hint.handle))),recalled=[];
+    for(let i=0;i<attempts.length;i++){const attempt=attempts[i],hint=milestoneHints[i];if(attempt.status!=='fulfilled'||!attempt.value)continue;if(attempt.value.handle!==hint.handle||(hint.productId&&attempt.value.id!==hint.productId))continue;recalled.push(attempt.value);if(hint.dossierVersion)recalledVersions.set(attempt.value.id,{dossierVersion:hint.dossierVersion,supplementVersion:hint.supplementVersion});}
+    if(milestoneHints.length&&!searched.length&&!recalled.length&&attempts.some(x=>x.status==='rejected'))throw Error('The matching published pieces could not be checked.');
+    queried={products:[...new Map([...searched,...recalled].map(product=>[product.id,product])).values()].slice(0,30+bounds.liveHandles)};
+  } else queried=milestonePlan?{products:[]}:await shopify.search(intent.query||intent.type||'necklace');
   let checkedProducts=queried.products;
+  // An ordinal or unique exact title among the already displayed, freshly
+  // re-read cards is a selection command, not new discovery text. Resolve it
+  // before ranking so stale saved preferences cannot filter the selected live
+  // product away.
+  const displayedTitleProduct=command&&!destination.handles.length?displayedProductFromText(destinationPlain,checkedProducts):null;
+  const displayedOrdinal=/\b(first|second|third|fourth|fifth|sixth|[1-6])\b/i.exec(destinationPlain),displayedOrdinalWords=['first','second','third','fourth','fifth','sixth'];
+  const displayedOrdinalIndex=command&&displayedOrdinal?(displayedOrdinalWords.includes(displayedOrdinal[1].toLowerCase())?displayedOrdinalWords.indexOf(displayedOrdinal[1].toLowerCase()):Number(displayedOrdinal[1])-1):null;
+  const displayedOrdinalProduct=displayedOrdinalIndex==null?null:checkedProducts.find(product=>product.handle===handles[displayedOrdinalIndex]);
+  const displayedSelectedProduct=displayedTitleProduct||displayedOrdinalProduct;
   // Persisting a live catalogue mirror and reading independent reviewed holds
   // can overlap, but neither may be bypassed before ranking or recommending.
   let [,issueRecords]=await Promise.all([service.saveProducts(checkedProducts),service.productIssues?service.productIssues(checkedProducts.map(p=>p.id)):[]]);
   // An explicit exact-page reference selects that validated live product,
   // rather than letting stale discovery preferences filter it back out.
-  const exactCurrentType=exactProductContext&&checkedProducts.length===1&&/\bcharms?\b/i.test(checkedProducts[0]?.type||'')?'charm':null;
-  const rankingIntent=exactProductContext?shopperPreferences({currency:intent.currency,type:exactCurrentType}):searchedMilestone?{...intent,query:'',interests:milestonePlan.motifs}:intent;
+  const directProductContext=exactProductContext||!!displayedSelectedProduct;
+  const exactCurrentType=directProductContext&&/\bcharms?\b/i.test((displayedSelectedProduct||checkedProducts[0])?.type||'')?'charm':null;
+  const rankingIntent=directProductContext?shopperPreferences({currency:intent.currency,type:exactCurrentType}):searchedMilestone?{...intent,query:'',interests:milestonePlan.motifs}:intent;
   let eligibleProducts=applyProductIssues(checkedProducts,issueRecords);
   let products=searchedMilestone?[...new Map(milestonePlan.motifs.flatMap(motif=>rankProducts(eligibleProducts,{...rankingIntent,interests:[motif]},at)).map(product=>[product.id,product])).values()].slice(0,18):rankProducts(eligibleProducts,rankingIntent,at);
   const boundedRecall=plainList(intent.interests,4).length>0;
@@ -668,15 +736,20 @@ async function concierge({service,shopify,message,history=[],preferences={},cont
   let unavailableSelection=null;
   if(command&&useContext&&handles.length){
     const ordinal=/\b(first|second|third|fourth|fifth|sixth|[1-6])\b/i.exec(destinationPlain),words=['first','second','third','fourth','fifth','sixth'];
-    const index=ordinal?(words.includes(ordinal[1].toLowerCase())?words.indexOf(ordinal[1].toLowerCase()):Number(ordinal[1])-1):exactProductContext||displayedReference?0:null;
+    const index=ordinal?(words.includes(ordinal[1].toLowerCase())?words.indexOf(ordinal[1].toLowerCase()):Number(ordinal[1])-1):displayedTitleProduct?handles.indexOf(displayedTitleProduct.handle):exactProductContext||displayedReference?0:null;
     const targetHandle=index==null?null:handles[index],target=eligibleProducts.find(product=>product.handle===targetHandle);
     if(index!=null&&(!targetHandle||!target||!products.some(product=>product.handle===targetHandle))){
       unavailableSelection={kind:!targetHandle?'reference':!target?'missing':target.recommendationHold?'unconfirmed':(target.variants||[]).some(variant=>variant.available)?'option':'stock'};
       products=[];
     }
   }
-  let dossiers=[],knowledgeUnavailable=false;
-  try{const ids=products.map(p=>p.id),[research,supplements]=await Promise.all([service.research(ids),typeof service.storySupplements==='function'?service.storySupplements(ids):[]]);dossiers=mergeStorySupplements(research,supplements,issueRecords,at);}catch{knowledgeUnavailable=true;}
+  let dossiers=[],dossierSupplements=[],knowledgeUnavailable=false;
+  try{const ids=products.map(p=>p.id),[research,supplements]=await Promise.all([service.research(ids),typeof service.storySupplements==='function'?service.storySupplements(ids):[]]);dossierSupplements=supplements;dossiers=mergeStorySupplements(research,supplements,issueRecords,at);}catch{knowledgeUnavailable=true;}
+  if(recalledVersions.size){
+    const currentVersions=new Map(dossiers.map(dossier=>[dossier?.productId,dossier?.version])),currentSupplements=new Map(dossierSupplements.map(supplement=>[supplement?.productId,supplement?.version]));
+    const drifted=new Set([...recalledVersions].filter(([id,versions])=>currentVersions.get(id)!==versions.dossierVersion||(versions.supplementVersion&&currentSupplements.get(id)!==versions.supplementVersion)).map(([id])=>id));
+    if(drifted.size){products=products.filter(product=>!drifted.has(product.id));dossiers=dossiers.filter(dossier=>!drifted.has(dossier?.productId));}
+  }
   let allMeanings=publicMeanings(dossiers,products.map(p=>p.id),at,issueRecords);
   if(milestonePlan){
     allMeanings=milestoneDiscovery.matchingMeanings(allMeanings,intent.milestone);
@@ -721,7 +794,7 @@ async function concierge({service,shopify,message,history=[],preferences={},cont
   }
   // Runtime inference can refine a question only. It cannot supply product
   // facts, choose tools, browse, purchase, or read private research fields.
-  if(ai){try{const chosen=await ai({message:text,history:history.slice(-6).map(r=>({role:r.role,content:clean(r.content,1500)})),preferences:intent,products:products.map(p=>({id:p.id,title:p.title})),question:result.question});if(chosen&&['gift','self','comparison','meaning','shipping','engraving','discovery'].includes(chosen.intent)){result.intent=chosen.intent;result.aiUsed=true;const refined=result.question&&safeQuestionRefinement(result.question,chosen.question);if(refined&&!(intent.unlimitedBudget&&/\b(?:budget|spend(?:ing)?|price|cost|afford(?:able)?|how much)\b/i.test(refined)))result.question=refined;}}catch{result.aiUsed=false;result.providerUnavailable=true;}}
+  if(ai&&!milestonePlan){try{const chosen=await ai({message:text,history:history.slice(-6).map(r=>({role:r.role,content:clean(r.content,1500)})),preferences:intent,products:products.map(p=>({id:p.id,title:p.title})),question:result.question});if(chosen&&['gift','self','comparison','meaning','shipping','engraving','discovery'].includes(chosen.intent)){result.intent=chosen.intent;result.aiUsed=true;const refined=result.question&&safeQuestionRefinement(result.question,chosen.question);if(refined&&!(intent.unlimitedBudget&&/\b(?:budget|spend(?:ing)?|price|cost|afford(?:able)?|how much)\b/i.test(refined)))result.question=refined;}}catch{result.aiUsed=false;result.providerUnavailable=true;}}
   return result;
 }
 module.exports={CATALOG_QUERY,STOP_AT,clean,hash,textOf,publicUrl,sameSecret,namespace,makeDb,normalizeProduct,productProjection,validateDossier,validateStorySupplement,createShopify,createGrowthService,productIssueHolds,applyProductIssues,shopperPreferences,negatedAt,intentFrom,rankProducts,publicMeaningText,mergeStorySupplements,publicMeanings,shopperAction,concierge};

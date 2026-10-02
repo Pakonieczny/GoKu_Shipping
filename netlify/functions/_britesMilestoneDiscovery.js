@@ -13,6 +13,11 @@ const CONTEXTS=Object.freeze({
   season:{pattern:'spring|summer|autumn|winter|season(?:al|s)?|fall renewal',motifs:['flower','leaf','butterfly'],evidence:/\b(?:renewal|new beginnings?|nature|seasons?|growth|change|transformation|spring|summer|autumn|winter)\b/i,label:'the season or a fresh beginning',intro:'We can look for a personal connection to the season or a fresh beginning.',question:'Would a favourite part of the season or a personal symbol of a fresh beginning feel right?'},
   christmas:{pattern:'christmas|holiday gift|festive',motifs:['star','snowflake','tree'],evidence:/\b(?:family|connection|togetherness|hope|winter|season|christmas|celebration)\b/i,label:'a personal holiday connection',intro:'We can choose something that feels personal for the holidays.',question:'Would a favourite animal, interest or a personal holiday symbol feel right?'}
 });
+// Public predictive search remains the first discovery signal. These caps bound
+// the private approved-dossier scan, mirror reads and exact live rechecks used
+// only to repair an implicit milestone recall miss. They are not configurable
+// by shopper input.
+const RECALL_BOUNDS=Object.freeze({researchScan:60,supplementReads:60,mirrorReads:36,liveHandles:12});
 const validMilestone=value=>typeof value==='string'&&Object.prototype.hasOwnProperty.call(CONTEXTS,value)?value:null;
 function parseMilestone(message,previous,negatedAt){
   const text=String(message||'').slice(0,2000).toLowerCase().replace(/[’‘]/g,"'");
@@ -57,4 +62,5 @@ function matchingMeanings(meanings,milestone){
   });
 }
 function presentation(milestone){const spec=CONTEXTS[validMilestone(milestone)];return spec?{label:spec.label,intro:spec.intro,question:spec.question}:null;}
-module.exports={validMilestone,parseMilestone,contextOnlyQuery,contextResidual,discoveryIntent,matchingMeanings,presentation};
+function recallBounds(){return {...RECALL_BOUNDS};}
+module.exports={validMilestone,parseMilestone,contextOnlyQuery,contextResidual,discoveryIntent,matchingMeanings,presentation,recallBounds};

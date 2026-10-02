@@ -131,6 +131,11 @@ test('the milestone invitation routes a real contextual request without starting
   const h=harness(t);h.open();h.button('Celebrate a milestone').click();await settle();
   assert.equal(h.network.find(call=>call.body?.message)?.body.message,'I would like a meaningful piece to celebrate an achievement.');assert.equal(h.voiceCalls.create,0);assert.deepEqual(h.deviceCalls,[]);
 });
+
+test('the budget invitation says that its inclusive sixty-dollar cap includes exactly sixty dollars', async t => {
+  const h=harness(t);h.open();h.button('Help me choose for $60 or less').click();await settle();
+  assert.equal(h.network.find(call=>call.body?.message)?.body.message,'Help me choose for $60 or less');
+});
 test('the remembrance invitation uses a calm pose instead of a celebration', async t => {
   const h=harness(t,{answer:{reply:'Choose a personal way to mark that memory.',preferences:{milestone:'remembrance'},products:[product],meanings:[]}});
   h.open();h.button('Remember someone').click();await settle();

@@ -38,7 +38,7 @@
   }
   function qualityFor(hints = {}) {
     const mobile = hints.mobile === true || (hints.width > 0 && hints.width < 600) || (hints.memory > 0 && hints.memory <= 4);
-    return {name: mobile ? 'adaptive' : 'high', pixelRatio: Math.min(mobile ? 1.5 : 2, Math.max(1, hints.pixelRatio || 1)), shadowSize: mobile ? 1024 : 2048, textureSize: 2048, fps: mobile ? 30 : 60, geometryScale: mobile ? .8 : 1, bloom: hints.bloom !== false};
+    return {name: mobile ? 'adaptive' : 'high', pixelRatio: Math.min(mobile ? 1.5 : 2, Math.max(1, hints.pixelRatio || 1)), shadowSize: mobile ? 1024 : 2048, textureSize: mobile ? 1024 : 2048, fps: mobile ? 30 : 60, geometryScale: mobile ? .8 : 1, bloom: !mobile && hints.bloom !== false};
   }
   function poseFor({state = 'idle', time = 0, elapsed = 0, level = 0, gaze = {x: 0, y: 0}, reducedMotion = false, emotion = null, mannerism = null, mannerismElapsed = 0} = {}) {
     state = validState(state); time = reducedMotion ? 0 : Number.isFinite(time) ? time : 0; elapsed = Number.isFinite(elapsed) ? Math.max(0, elapsed) : 0;
