@@ -259,6 +259,7 @@ function productHandle(value){
 }
 function publicEvidenceUrl(raw){try{const u=new URL(String(raw||''));return u.protocol==='https:'&&!u.username&&!u.password&&u.hostname.includes('.')?u.href:null;}catch{return null;}}
 const BUYER_INTENT_FIELDS=new Set(['intent','query','text','label','theme','approach','rationale','observation','description','keywords','sourceIds','basis']);
+const RECOMMENDATION_FIELDS=new Set(['channel','basis','action','measure','sourceIds','keywords','negativeKeywords']);
 function buyerIntentText(value,limit){
   const text=typeof value==='string'?str(value,limit):'';
   if(!text||/[<>]|https?:\/\//i.test(text)||/(?:system|developer|assistant|author|internal|hidden)\s+(?:prompt|message|instructions?)|(?:prompt|instruct(?:ion)?)\s+(?:the\s+)?(?:assistant|model)|\b(?:assistant|model)\s+(?:must|should|shall|needs? to)\b|\bignore (?:all |any )?(?:prior|previous|system|developer) instructions?\b/i.test(text))return null;
@@ -283,13 +284,29 @@ function projectBuyerIntents(d,sourceIds){
   }
   return {buyerIntents,buyerIntentReadiness:{state:sourceQualifiedIntentCount===buyerIntents.length?'source_qualified':sourceQualifiedIntentCount?'mixed':'hypothesis_only',validIntentCount:buyerIntents.length,sourceQualifiedIntentCount,measuredAudience:false}};
 }
+function projectRecommendations(d,sourceIds){
+  const values=d?.recommendations;if(!Array.isArray(values)||values.length<1||values.length>40)return null;
+  const available=sourceIds instanceof Set?sourceIds:new Set(sourceIds||[]),recommendations=[];
+  const unsafeAction=/^(?:apply|activate|publish|launch|upload|enable|pause|delete)\b|^(?:set|raise|increase|change)\b[^.]{0,32}\bbudget\b|\b(?:automatic|auto)\s*-?\s*(?:apply|activation|publish)/i;
+  for(const value of values){
+    if(!value||typeof value!=='object'||Array.isArray(value)||Object.keys(value).some(key=>!RECOMMENDATION_FIELDS.has(key))||value.basis!=='hypothesis'||!['ads','keywords','negatives','listing','concierge'].includes(value.channel))return null;
+    const action=buyerIntentText(value.action,2000),measure=buyerIntentText(value.measure,1000),cited=value.sourceIds;
+    const cleanTerms=field=>{const terms=value[field]==null?[]:value[field];if(!Array.isArray(terms)||terms.length>30)return null;const clean=terms.map(term=>buyerIntentText(term,120));return clean.some(term=>!term)||new Set(clean.map(term=>term.toLowerCase())).size!==clean.length?null:clean;};
+    const keywords=cleanTerms('keywords'),negativeKeywords=cleanTerms('negativeKeywords');
+    if(!action||!measure||unsafeAction.test(action)||!keywords||!negativeKeywords||!Array.isArray(cited)||!cited.length||cited.length>12||new Set(cited).size!==cited.length||cited.some(id=>!available.has(id)))return null;
+    const adUse=['ads','keywords','negatives'].includes(value.channel)?'test_candidate':'context_only';
+    recommendations.push({channel:value.channel,basis:'hypothesis',action,measure,sourceIds:[...cited],...(keywords.length?{keywords}:{}),...(negativeKeywords.length?{negativeKeywords}:{}),evidenceState:'source_qualified',adUse,automaticActivation:false,operatorReviewRequired:true});
+  }
+  const adTestCandidateCount=recommendations.filter(value=>value.adUse==='test_candidate').length;
+  return {recommendations,recommendationReadiness:{state:'approved_dossier_hypotheses',validRecommendationCount:recommendations.length,adTestCandidateCount,contextOnlyCount:recommendations.length-adTestCandidateCount,measuredLift:false,automaticActivation:false,operatorReviewRequired:true}};
+}
 function sharedDossierIsCurrent(d,product,at=Date.now()){
-  if(!d||d.status!=='approved'||String(d.productId)!==String(product?.id)||d.handle!==product?.handle||!product?.handle||!(/^[a-f0-9]{64}$/i.test(String(d.version||'')))||d.currentDossierVersion!==d.version||!Number.isFinite(d.savedAt)||d.savedAt>at+60000)return false;
+  if(!d||d.status!=='approved'||d.privateProposal===true||d.proposalOnly===true||d.reviewStatus==='proposed'||String(d.productId)!==String(product?.id)||d.handle!==product?.handle||!product?.handle||!(/^[a-f0-9]{64}$/i.test(String(d.version||'')))||d.currentDossierVersion!==d.version||!Number.isFinite(d.savedAt)||d.savedAt>at+60000)return false;
   if(d.evidenceHolds?.recommendationHold===true||d.evidenceHolds?.meaningHold===true)return false;
   if(!Array.isArray(d.sources)||!d.sources.length||d.sources.length>40||!Array.isArray(d.recommendations)||!Array.isArray(d.competitors))return false;
   const ids=new Set();
   for(const s of d.sources){if(!s||!/^[a-zA-Z0-9:_-]{1,100}$/.test(String(s.id||''))||ids.has(s.id)||s.reviewed!==true||!publicEvidenceUrl(s.url)||!Number.isFinite(s.checkedAt)||s.checkedAt>at+60000||at-s.checkedAt>30*86400000)return false;ids.add(s.id);}
-  if(!projectBuyerIntents(d,ids))return false;
+  if(!projectBuyerIntents(d,ids)||!projectRecommendations(d,ids))return false;
   const cited=value=>Array.isArray(value?.sourceIds)&&value.sourceIds.length>0&&value.sourceIds.every(id=>ids.has(id));
   for(const value of [...(d.facts||[]),...(d.meanings||[]),...d.recommendations])if(!cited(value))return false;
   for(const rec of d.recommendations)if(rec.basis!=='hypothesis'||!['ads','keywords','negatives','listing','concierge'].includes(rec.channel)||!str(rec.action,2000)||!str(rec.measure,1000))return false;
@@ -438,7 +455,7 @@ function createAdDesignResearch(D){
       const currentProducts=new Map(products.map(p=>[productGid(p.id),{...p,id:productGid(p.id)}]));
       const approved=(dossiers||[]).filter(d=>ids.has(productGid(d.productId))&&sharedDossierIsCurrent({...d,productId:productGid(d.productId)},currentProducts.get(productGid(d.productId)),clock()));
       if(!approved.length)return null;
-      return {dossiers:approved.map(d=>({productId:d.productId,handle:d.handle,version:d.version,savedAt:d.savedAt,...projectBuyerIntents(d,new Set(d.sources.map(s=>s.id))),competitors:d.competitors,recommendations:d.recommendations,meanings:d.meanings,sources:d.sources.map(s=>({id:s.id,url:s.url,title:s.title,excerpt:s.excerpt,checkedAt:s.checkedAt,reviewed:true}))})),rules:'Only the current exact product handle, dossier version and fresh reviewed citations may inform hypotheses. Active recommendation or meaning holds exclude the dossier. Buyer-intent readiness is explicit: source-qualified means cited research context, not measured audience demand; hypothesis-only and mixed intents remain test framing only. Never copy competitor facts to the advertised product. Current product/landing sources remain authoritative for price, stock and commercial claims. Spend and ROI are unknown unless independently disclosed.'};
+      return {dossiers:approved.map(d=>({productId:d.productId,handle:d.handle,version:d.version,savedAt:d.savedAt,...projectBuyerIntents(d,new Set(d.sources.map(s=>s.id))),...projectRecommendations(d,new Set(d.sources.map(s=>s.id))),competitors:d.competitors,meanings:d.meanings,sources:d.sources.map(s=>({id:s.id,url:s.url,title:s.title,excerpt:s.excerpt,checkedAt:s.checkedAt,reviewed:true}))})),rules:'Only the current exact product handle, dossier version and fresh reviewed citations may inform hypotheses. Proposal-only supplements and proposed review states are excluded until merged into a newly approved current dossier. Active recommendation or meaning holds exclude the dossier. Recommendations are source-qualified test candidates, never measured lift or permission for automatic activation; operator review remains required. Listing and concierge recommendations are context only for Ads. Buyer-intent readiness is explicit: source-qualified means cited research context, not measured audience demand; hypothesis-only and mixed intents remain test framing only. Never copy competitor facts to the advertised product. Current product/landing sources remain authoritative for price, stock and commercial claims. Spend and ROI are unknown unless independently disclosed.'};
     });
     const offers=[...new Set(productInput.flatMap(p=>[p.offerId,p.itemId,...(p.offerIds||[])]).filter(Boolean).map(String))];
     const merchant=await read('merchant','Merchant Center','Recent exact-offer eligibility',async()=>offers.length&&D.merchantProducts?D.merchantProducts({itemIds:offers}):null);
@@ -638,4 +655,4 @@ function validateSubjectFocus(value,size){
   const contextFocus=validContext?{x:Math.min(context.left,left)/W,y:Math.min(context.top,top)/H,width:(Math.max(context.right,right)-Math.min(context.left,left))/W,height:(Math.max(context.bottom,bottom)-Math.min(context.top,top))/H}:null;
   return {...box,complete,cutEdges:complete?[]:listed.length?listed:touching,...(jewelryType?{jewelryType}:{}),...(contextFocus?{contextFocus}:{})};
 }
-module.exports={productSceneGuidance,buildSubjectFocusRequest,validateSubjectFocus,focusImageSize,FOCUS_LIMIT,SPECIALIZED_SCENES,specializedScenes,createAdDesignResearch,parseResponse,compactEvidence,sharedDossierIsCurrent,projectBuyerIntents,MODEL,schema,buildEditorRequest,buildResponsiveRequest,validateResponsivePlan,applyEditorPlan,EDITOR_FONTS,EDITOR_PROPERTIES};
+module.exports={productSceneGuidance,buildSubjectFocusRequest,validateSubjectFocus,focusImageSize,FOCUS_LIMIT,SPECIALIZED_SCENES,specializedScenes,createAdDesignResearch,parseResponse,compactEvidence,sharedDossierIsCurrent,projectBuyerIntents,projectRecommendations,MODEL,schema,buildEditorRequest,buildResponsiveRequest,validateResponsivePlan,applyEditorPlan,EDITOR_FONTS,EDITOR_PROPERTIES};

@@ -3,6 +3,12 @@
   const number=value=>Number.isFinite(value)?value:null;
   const rounded=value=>Number.isFinite(value)?Math.round(value*100)/100:null;
   const text=value=>typeof value==='string'&&value.trim()?value.trim():null;
+  const STATES=Object.freeze(['idle','listening','thinking','speaking','success','error']);
+  const MAX_EXPORT_BYTES=24576;
+  const boundedText=(value,limit=160)=>{const clean=text(value)?.replace(/[\u0000-\u001f\u007f]/g,' ');return clean?clean.slice(0,limit):null;};
+  const state=value=>STATES.includes(value)?value:null;
+  const finite=(value,min=-1e9,max=1e9)=>{value=number(value);return value==null?null:Math.max(min,Math.min(max,value));};
+  const wait=(win,ms)=>new Promise(resolve=>(win?.setTimeout||setTimeout)(resolve,ms));
   function buildDiagnostics(input={}){
     const before=input.before||{},after=input.after||{},gl=input.gl||{},display=input.display||{},sampleMs=Math.max(1,number(input.sampleMs)||750);
     const mode=after.mode||before.mode||'pending',contextLost=after.contextLost===true||gl.contextLost===true,webglAvailable=gl.available===true,webglUsable=mode==='webgl'&&webglAvailable&&!contextLost;
@@ -47,7 +53,61 @@
     const after=avatar.snapshot(),media=win?.matchMedia?.('(prefers-reduced-motion: reduce)');
     return {...buildDiagnostics({before,after,gl,sampleMs,reducedMotion:media?.matches===true,frameRendering:frame?.dataset?.rendering,frameHidden:frame?.hidden===true,display:{devicePixelRatio:number(win?.devicePixelRatio),cssWidth:number(box.width),bufferWidth:number(canvas?.width)}}),collectedAt:new Date().toISOString()};
   }
-  const api={buildDiagnostics,inspectWebGL,collect};
+  async function exerciseStates({avatar,win=scope,settleMs=120}={}){
+    if(!avatar||typeof avatar.snapshot!=='function'||typeof avatar.setState!=='function')return{status:'unavailable',visualAppearance:'unverified',states:[],gestures:[]};
+    settleMs=Math.max(32,Math.min(1000,number(settleMs)||120));
+    const original=state(avatar.snapshot()?.state)||'idle',rows=[];
+    try{
+      for(const requestedState of STATES){
+        const before=avatar.snapshot()||{},framesBefore=number(before.frames);
+        avatar.setState(requestedState);await wait(win,settleMs);
+        const after=avatar.snapshot()||{},framesAfter=number(after.frames),frameDelta=framesBefore!=null&&framesAfter!=null?Math.max(0,framesAfter-framesBefore):null,webgl=after.mode==='webgl'&&after.contextLost!==true;
+        rows.push({state:requestedState,observedState:state(after.state),mode:after.mode==='webgl'?'webgl':after.mode==='fallback'?'fallback':'pending',frameDelta,renderObserved:webgl&&frameDelta>0});
+      }
+    }finally{avatar.setState(original);}
+    const allAccepted=rows.length===STATES.length&&rows.every(row=>row.observedState===row.state),allRendered=allAccepted&&rows.every(row=>row.renderObserved);
+    return {status:allRendered?'state_pipeline_and_frames_observed_visual_unverified':allAccepted?'state_pipeline_observed_render_unverified':'state_pipeline_not_confirmed',visualAppearance:'unverified',states:rows,gestures:[{name:'speaking_arm_motion',state:'speaking',renderObserved:rows.find(row=>row.state==='speaking')?.renderObserved===true},{name:'success_arm_lift',state:'success',renderObserved:rows.find(row=>row.state==='success')?.renderObserved===true}]};
+  }
+  function acceptancePackage({diagnostics={},stateEvidence={}}={}){
+    const webgl=diagnostics.webgl||{},shadow=diagnostics.shadowMap||{},textures=diagnostics.textures||{},frames=diagnostics.frameSampling||{},motion=diagnostics.motion||{},fallback=diagnostics.staticFallback||{},contextLoss=diagnostics.contextLoss||{},pixel=diagnostics.pixelRatio||{};
+    const webglObserved=webgl.status==='available',stateRows=Array.isArray(stateEvidence.states)?stateEvidence.states.slice(0,STATES.length):[];
+    const states=stateRows.map(row=>({state:state(row?.state),observedState:state(row?.observedState),mode:['webgl','fallback','pending'].includes(row?.mode)?row.mode:'pending',frameDelta:finite(row?.frameDelta,0,1000000),renderObserved:row?.renderObserved===true})).filter(row=>row.state);
+    const gestures=(Array.isArray(stateEvidence.gestures)?stateEvidence.gestures:[]).slice(0,4).map(item=>({name:['speaking_arm_motion','success_arm_lift'].includes(item?.name)?item.name:null,state:state(item?.state),renderObserved:item?.renderObserved===true})).filter(item=>item.name&&item.state);
+    const packageValue={
+      schema:1,kind:'brites_avatar_runtime_acceptance',sanitized:true,collectedAt:boundedText(diagnostics.collectedAt,40),
+      evidenceLevel:webglObserved?'webgl_runtime_observed_visual_review_required':fallback.active===true?'fallback_only_webgl_unverified':'renderer_pending_unverified',
+      webgl:{status:boundedText(webgl.status,48),contextType:boundedText(webgl.contextType,32),vendor:boundedText(webgl.vendor),renderer:boundedText(webgl.renderer),version:boundedText(webgl.version),shadingLanguageVersion:boundedText(webgl.shadingLanguageVersion),maxTextureSize:finite(webgl.maxTextureSize,0,1000000),maxRenderbufferSize:finite(webgl.maxRenderbufferSize,0,1000000),depthBits:finite(webgl.depthBits,0,128),maxCombinedTextureUnits:finite(webgl.maxCombinedTextureUnits,0,100000),depthTexture:webgl.depthTexture===true,contextLost:webgl.contextLost===true},
+      shadows:{status:boundedText(shadow.status,64),configured:shadow.configured===true,casts:shadow.casts===true,receivingStage:shadow.receivingStage===true,type:boundedText(shadow.type,48),requestedSize:finite(shadow.requestedSize,0,1000000),capabilityObserved:shadow.capabilityObserved===true,appearance:'unverified'},
+      textures:{status:boundedText(textures.status,64),configuredSize:finite(textures.configuredSize,0,1000000),largestDeclaredSize:finite(textures.largestDeclaredSize,0,1000000),declaredMaps:finite(textures.declaredMaps,0,64),observedCreatedMaps:finite(textures.observedCreatedMaps,0,64),declarationSource:boundedText(textures.declarationSource,48),maxTextureSize:finite(textures.maxTextureSize,0,1000000),fitsObservedCapability:textures.fitsObservedCapability===true?true:textures.fitsObservedCapability===false?false:null},
+      frameSample:{status:boundedText(frames.status,64),sampleMs:finite(frames.sampleMs,0,60000),framesBefore:finite(frames.framesBefore,0,1e9),framesAfter:finite(frames.framesAfter,0,1e9),frameDelta:finite(frames.frameDelta,0,1e8),effectiveFps:finite(frames.effectiveFps,0,10000),frameRenderMs:finite(frames.frameRenderMs,0,60000),targetFps:finite(frames.targetFps,0,1000)},
+      pixelRatio:{status:boundedText(pixel.status,64),device:finite(pixel.device,0,16),requested:finite(pixel.requested,0,16),renderer:finite(pixel.renderer,0,16),backingStore:finite(pixel.backingStore,0,16)},
+      expressionsAndGestures:{status:boundedText(stateEvidence.status,80)||'not_exercised',visualAppearance:'unverified',states,gestures},
+      pauseAndFallback:{visible:motion.visible===true,intersecting:motion.intersecting===true,reducedMotion:motion.reducedMotion===true,animated:motion.animated===true,fallbackActive:fallback.active===true,fallbackVisible:fallback.visible===true,fallbackPreserved:fallback.preserved===true,contextLossStatus:boundedText(contextLoss.status,64)},
+      claims:{gpuAppearance:'unverified',shadowAppearance:'unverified',expressionAppearance:'unverified',gestureAppearance:'unverified'}
+    };
+    return packageValue;
+  }
+  function serializeAcceptancePackage(input){
+    const value=input?.kind==='brites_avatar_runtime_acceptance'?acceptancePackage({diagnostics:{collectedAt:input.collectedAt,webgl:input.webgl,shadowMap:input.shadows,textures:input.textures,frameSampling:input.frameSample,pixelRatio:input.pixelRatio,motion:input.pauseAndFallback,staticFallback:{active:input.pauseAndFallback?.fallbackActive,visible:input.pauseAndFallback?.fallbackVisible,preserved:input.pauseAndFallback?.fallbackPreserved},contextLoss:{status:input.pauseAndFallback?.contextLossStatus}},stateEvidence:input.expressionsAndGestures}):acceptancePackage(input);
+    const json=JSON.stringify(value,null,2),bytes=typeof TextEncoder==='function'?new TextEncoder().encode(json).length:json.length;
+    if(bytes>MAX_EXPORT_BYTES)throw Error('Avatar acceptance package exceeds its safe export bound.');
+    return{value,json,bytes};
+  }
+  async function collectAcceptancePackage(options={}){
+    const diagnostics=await collect(options),stateEvidence=await exerciseStates(options);
+    return acceptancePackage({diagnostics,stateEvidence});
+  }
+  async function copyAcceptancePackage(input,{navigator:nav=scope?.navigator}={}){
+    const exported=serializeAcceptancePackage(input);
+    if(typeof nav?.clipboard?.writeText!=='function')throw Error('Clipboard writing is unavailable.');
+    await nav.clipboard.writeText(exported.json);return{copied:true,bytes:exported.bytes};
+  }
+  function downloadAcceptancePackage(input,{document:doc=scope?.document,URL:urlApi=scope?.URL,Blob:BlobCtor=scope?.Blob}={}){
+    if(!doc?.createElement||!urlApi?.createObjectURL||typeof BlobCtor!=='function')throw Error('File download is unavailable.');
+    const exported=serializeAcceptancePackage(input),url=urlApi.createObjectURL(new BlobCtor([exported.json],{type:'application/json'})),link=doc.createElement('a');
+    link.href=url;link.download='brites-avatar-acceptance.json';link.rel='noopener';link.click();urlApi.revokeObjectURL(url);return{downloaded:true,bytes:exported.bytes,filename:link.download};
+  }
+  const api={buildDiagnostics,inspectWebGL,collect,exerciseStates,acceptancePackage,serializeAcceptancePackage,collectAcceptancePackage,copyAcceptancePackage,downloadAcceptancePackage};
   if(typeof module!=='undefined'&&module.exports)module.exports=api;
   if(scope)scope.BritesAvatarAcceptance=api;
 })(typeof window==='undefined'?null:window);

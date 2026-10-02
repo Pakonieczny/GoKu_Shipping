@@ -42,3 +42,32 @@ test('visual QA pages expose the diagnostics and explicitly prohibit fallback GP
   for(const term of ['vendor','renderer','shadowMap','textures','pixelRatio','frameSampling','reduced-motion','contextLoss','unverified'])assert.match(checklist,new RegExp(term,'i'),term);
   assert.match(checklist,/never changes browser graphics settings or fingerprinting/i);assert.match(checklist,/never forces a context loss/i);
 });
+
+test('bounded export package keeps only acceptance evidence and never upgrades visual claims',()=>{
+  const diagnostics={...qa.buildDiagnostics({before:webglSnapshot(),after:webglSnapshot({frames:180}),gl,display:{devicePixelRatio:2,cssWidth:400,bufferWidth:800},sampleMs:1000}),collectedAt:'2026-10-02T12:00:00.000Z',secret:'must-not-export',webgl:{...qa.buildDiagnostics({before:webglSnapshot(),after:webglSnapshot({frames:180}),gl,sampleMs:1000}).webgl,renderer:'Fixture renderer\u0000'.padEnd(500,'X'),privateUrl:'https://private.invalid/token'}};
+  const stateEvidence={status:'state_pipeline_and_frames_observed_visual_unverified',states:['idle','listening','thinking','speaking','success','error'].map(state=>({state,observedState:state,mode:'webgl',frameDelta:4,renderObserved:true,raw:'omit'})),gestures:[{name:'speaking_arm_motion',state:'speaking',renderObserved:true,unsafe:'omit'},{name:'success_arm_lift',state:'success',renderObserved:true}]};
+  const exported=qa.serializeAcceptancePackage({diagnostics,stateEvidence});
+  assert.equal(exported.value.evidenceLevel,'webgl_runtime_observed_visual_review_required');assert.equal(exported.value.webgl.vendor,'Fixture GPU vendor');assert.equal(exported.value.webgl.renderer.length,160);
+  assert.equal(exported.value.shadows.capabilityObserved,true);assert.equal(exported.value.textures.fitsObservedCapability,true);assert.equal(exported.value.frameSample.status,'sampled');
+  assert.equal(exported.value.expressionsAndGestures.states.length,6);assert.equal(exported.value.expressionsAndGestures.gestures.length,2);assert.equal(exported.value.claims.gestureAppearance,'unverified');
+  assert.ok(exported.bytes<24576);assert.doesNotMatch(exported.json,/must-not-export|private\.invalid|privateUrl|unsafe|raw/);assert.doesNotMatch(exported.json,/\u0000/);
+});
+
+test('fallback export remains truthful and omits unavailable GPU identity',()=>{
+  const diagnostics={...qa.buildDiagnostics({before:{mode:'fallback'},after:{mode:'fallback',visible:true,intersecting:true,quality:{textureSize:2048},declarations:{textures:[{name:'Declared',width:2048,height:2048}]}},gl:{available:false},frameRendering:'fallback'}),collectedAt:'2026-10-02T12:00:00.000Z'};
+  const value=qa.acceptancePackage({diagnostics,stateEvidence:{status:'state_pipeline_observed_render_unverified',states:[{state:'speaking',observedState:'speaking',mode:'fallback',frameDelta:99,renderObserved:false}]}});
+  assert.equal(value.evidenceLevel,'fallback_only_webgl_unverified');assert.equal(value.webgl.vendor,null);assert.equal(value.webgl.renderer,null);assert.equal(value.shadows.capabilityObserved,false);assert.equal(value.frameSample.status,'unverified_webgl_unavailable');assert.equal(value.pauseAndFallback.fallbackActive,true);assert.equal(value.expressionsAndGestures.states[0].renderObserved,false);assert.equal(value.claims.gpuAppearance,'unverified');
+});
+
+test('state exercise restores the original expression and records rendered gesture states',async()=>{
+  let current='thinking',frames=10;const avatar={snapshot:()=>({state:current,mode:'webgl',frames,contextLost:false}),setState:value=>{current=value;frames++;}};
+  const evidence=await qa.exerciseStates({avatar,win:{setTimeout:fn=>{frames+=2;fn();}},settleMs:32});
+  assert.equal(current,'thinking');assert.equal(evidence.states.length,6);assert.ok(evidence.states.every(row=>row.observedState===row.state&&row.renderObserved));assert.equal(evidence.status,'state_pipeline_and_frames_observed_visual_unverified');assert.deepEqual(evidence.gestures.map(item=>item.name),['speaking_arm_motion','success_arm_lift']);
+});
+
+test('copy and download export only the regenerated sanitized bounded package',async()=>{
+  const diagnostics={...qa.buildDiagnostics({before:webglSnapshot(),after:webglSnapshot({frames:150}),gl,sampleMs:500}),collectedAt:'2026-10-02T12:00:00.000Z'},input={diagnostics,stateEvidence:{states:[]}},writes=[];
+  const copied=await qa.copyAcceptancePackage(input,{navigator:{clipboard:{writeText:async value=>writes.push(value)}}});assert.equal(copied.copied,true);assert.equal(writes.length,1);assert.match(writes[0],/brites_avatar_runtime_acceptance/);
+  let clicked=false,revoked=null,blob=null;const downloaded=qa.downloadAcceptancePackage(input,{document:{createElement:()=>({click(){clicked=true;}})},URL:{createObjectURL:value=>(blob=value,'blob:fixture'),revokeObjectURL:value=>{revoked=value;}},Blob:class{constructor(parts,options){this.parts=parts;this.options=options;}}});
+  assert.equal(downloaded.filename,'brites-avatar-acceptance.json');assert.equal(clicked,true);assert.equal(revoked,'blob:fixture');assert.equal(blob.options.type,'application/json');assert.ok(downloaded.bytes<24576);
+});
