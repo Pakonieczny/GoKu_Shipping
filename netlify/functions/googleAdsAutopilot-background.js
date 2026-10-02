@@ -25,6 +25,9 @@ const sameSecret=EP.sameSecret;
 function internalToken(){const key=[process.env.GADS_REFRESH_TOKEN,process.env.GADS_CLIENT_SECRET,process.env.GADS_DEVELOPER_TOKEN].filter(Boolean).join("|");return key?"internal-"+require("crypto").createHmac("sha256",key).update("brites-gads-background-worker/v1").digest("hex"):undefined;}
 function workerToken(){return internalToken()||EP.envPasscode()||undefined;}
 
+// One more run of this worker for a follow-on task (the same request as googleAdsAutopilotKick's dispatchTask).
+async function dispatchTask(task,data){const base=process.env.URL||('https://'+(process.env.SITE_NAME||'goldenspike')+'.netlify.app');const r=await fetch(base+'/.netlify/functions/googleAdsAutopilot-background',{method:'POST',timeout:15000,headers:{'Content-Type':'application/json'},body:JSON.stringify({tasks:[task],...data,token:workerToken()})});if(!r.ok)throw new Error('Background dispatch failed: HTTP '+r.status);}
+
 async function continueMotion(next,task='adDesignMotion'){
  const base=process.env.URL||('https://'+(process.env.SITE_NAME||'goldenspike')+'.netlify.app');
  const r=await fetch(base+'/.netlify/functions/googleAdsAutopilot-background',{method:'POST',timeout:15000,headers:{'Content-Type':'application/json'},body:JSON.stringify({tasks:[task],workspaceId:next.workspaceId,jobId:next.jobId,token:workerToken()})});
@@ -90,7 +93,7 @@ exports.handler = async (event) => {
     : ["anomaly", "monthly", "conversions", "adjustments", "measure", "mine", "prune", "budgets", "ceiling", "events", "pruneLedger"];
 
   // Draft work and explicit operator publication remain available with scheduled automation off.
-  const MANUAL_OR_DRAFT = new Set(["adEvaluation", "adMotionPublication", "adDesignMotion", "adDesignEditorAI", "adDesign", "analyzeAd", "creativePrepare", "publishApproval", "scanOpportunities", "pmaxGenerate", "pmaxBackfillImages", "pmaxUpgradeAdStrength", "pruneLedger", "bestSellers", "diagnostics", "distill", "generate", "designStudioScan", "designStudioGenerate", "designStudioAnalyze", "designStudioLearn", "suggestOccasions"]); // publishApproval independently enforces exact operator approval
+  const MANUAL_OR_DRAFT = new Set(["adEvaluation", "adMotionPublication", "adDesignMotion", "adDesignEditorAI", "adDesign", "analyzeAd", "creativePrepare", "publishApproval", "publishSubmission", "scanOpportunities", "pmaxGenerate", "pmaxBackfillImages", "pmaxUpgradeAdStrength", "pruneLedger", "bestSellers", "diagnostics", "distill", "generate", "designStudioScan", "designStudioGenerate", "designStudioAnalyze", "designStudioLearn", "suggestOccasions"]); // publishApproval and publishSubmission independently enforce exact operator approval
   // The monthly stop is Paul's hard spending limit, not optimisation: it keeps checking with automation
   // off (e.g. after the anomaly breaker trips) and can only pause campaigns once his threshold is reached.
   const allReadOnly = tasks.every(t => MANUAL_OR_DRAFT.has(t) || t === "monthly");
@@ -162,6 +165,8 @@ exports.handler = async (event) => {
       }
       else if (task === "creativePrepare") { result.creativePrepare=await E.prepareCreativeApproval(body.id,{retry:!!body.retry}); }
       else if (task === "publishApproval") { result.publishApproval=await E.applyApproval(body.id,ctrl,{waitForLeaseMs:8*60*1000}); } // drafts approved together publish in turn
+      // A complete ad approved on its own card (Approve ad): its publication, films and their upload, as that request ran them.
+      else if (task === "publishSubmission") { result.publishSubmission=await E.publishApprovedSubmission(body.id,{ctrl,waitForLeaseMs:8*60*1000,startFilms:m=>dispatchTask('adMotionPublication',{workspaceId:m.workspaceId,jobId:m.jobId,productId:m.productId,groupRef:m.groupRef})}); }
       else if (task === "conversions") { result.conversions = await E.uploadConversions({ ctrl }); }
       else if (task === "scanOpportunities") { const sc = await E.opportunitiesWithStatus({ force: true, runId: body.scanRunId || null }); result.scanOpportunities = { n: (sc.opportunities || []).length, pmax: (sc.pmaxList || []).length, pmaxError: sc.pmaxError || null, runId: body.scanRunId || null, auditStatus: sc.scanAudit && sc.scanAudit.status || null }; }
       else if (task === "designStudioScan") {

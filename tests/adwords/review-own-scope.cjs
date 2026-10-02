@@ -143,7 +143,9 @@ const rgb=hex=>[1,3,5].map(i=>parseInt(hex.slice(i,i+2),16));
  ok((await prepare(saved.bunny,{budgets:{pmax:11,responsive_display:5}})).ok,'Bunny’s plan prepares while Duck is generating');
  // Approve and publish Saturn while Duck is selected and generating: every guard passes, including applyApproval's.
  e.bind({_deletedCampaignIds:async()=>{throw Error('SENTINEL: the publication guards passed');}});
- await assert.rejects(()=>e.E.publishAdDesignSubmission({id:saved.saturn,hash:hashOf(saved.saturn),planHash:plans.saturn,confirmed:true}),/SENTINEL/);
+ // Approve ad queues the publication; the background worker (publishApprovedSubmission) runs applyApproval.
+ ok((await e.E.publishAdDesignSubmission({id:saved.saturn,hash:hashOf(saved.saturn),planHash:plans.saturn,confirmed:true})).queued===true&&review(saved.saturn).status==='APPROVED','Saturn is approved from its card while Duck is generating; its publication is queued');
+ await assert.rejects(()=>e.E.publishApprovedSubmission(saved.saturn),/SENTINEL/);
  ok(review(saved.saturn).status==='PENDING'&&/SENTINEL/.test(review(saved.saturn).lastError)&&review(saved.saturn).pipelinePlan.hash===plans.saturn,'Saturn is approved and reaches publication as its own scope (stopped there, it returns to its card with its plan and the reason)');
  delete live.job.inFlight;live.job.leaseUntil=0;f.docs.set(WSP,live);
 

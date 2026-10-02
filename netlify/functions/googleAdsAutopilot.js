@@ -2026,7 +2026,7 @@ async function applyApproval(id, ctrl, { waitForLeaseMs = 0, submission = false 
     // Nothing reached Google, or Google refused it: a complete ad returns to its own card (its prepared plan kept) to approve again there.
     const unknown=dispatched&&!ctrl.dryRun&&!e.definiteResponse,onCard=!unknown&&it.type==='adDesignSubmission';
     await ref.update({status:unknown?"APPLY_UNKNOWN":onCard?"PENDING":"APPROVED",...(onCard?{pipelineReview:null}:{}),lastError:String(e.message||e).slice(0,600),lastErrorAt:Date.now(),applyAttempt:unknown?attempt:null,needsReconciliation:unknown}).catch(()=>{});
-    if(unknown)throw new Error("Google's result could not be confirmed. Automatic retry is blocked to avoid duplicating ads. Check this draft against Google Ads before another publication attempt.");
+    if(unknown)throw Object.assign(new Error("Google's result could not be confirmed. Automatic retry is blocked to avoid duplicating ads. Check this draft against Google Ads before another publication attempt."),{applyUnknown:true});
     throw e;
   } finally {await f.db.runTransaction(async tx=>{const lease=await tx.get(lock);if(lease.exists&&lease.data().owner===attempt)tx.delete(lock);});}
 }
@@ -12239,13 +12239,39 @@ async function publishAdDesignSubmission(input={}){
     // Refused only when no offer of the product can serve in any target country; Performance Max serves the eligible ones.
     const M=require('./_merchantHealth'),refused=M.noServableOffer(live,plan.payload.meta.itemIds,_pmaxIsEligible,plan.summary.merchant?plan.summary.merchant.countryCodes:plan.summary.pmaxTarget?[]:M.countryCodesFor(plan.summary.countries).codes);if(refused)throw Error(refused);
   }
-  await fb().db.runTransaction(async tx=>{const current=await tx.get(ref),workspace=await tx.get(_adDesignWorkspaceRef(r.workspaceId));if(current.data()?.status!=='PENDING'||current.data()?.pipelinePlan?.hash!==input.planHash||!_submissionSourceMatches(item,workspace.data()))throw Error('The reviewed plan changed.');tx.update(ref,{status:'APPROVED',pipelineReview:{hash:plan.hash,at:Date.now()},approvedAt:Date.now()});});
-  const result=await applyApproval(id,await control(),{submission:true});
+  // Publication itself runs in the background worker (task publishSubmission, publishApprovedSubmission below): a large plan
+  // outlasts the time a request may take. publishRequestedAt marks the hand-off; a new attempt clears the saved reason.
+  const requestedAt=Date.now();
+  await fb().db.runTransaction(async tx=>{const current=await tx.get(ref),workspace=await tx.get(_adDesignWorkspaceRef(r.workspaceId));if(current.data()?.status!=='PENDING'||current.data()?.pipelinePlan?.hash!==input.planHash||!_submissionSourceMatches(item,workspace.data()))throw Error('The reviewed plan changed.');tx.update(ref,{status:'APPROVED',pipelineReview:{hash:plan.hash,at:requestedAt},approvedAt:requestedAt,publishRequestedAt:requestedAt,lastError:null,lastErrorAt:null});});
+  return {ok:true,id,status:'APPROVED',queued:true,requestedAt,message:'Approved. Publishing to Google runs in the background; this card shows the result when Google answers.'};
+}
+// Approve ad's publication, run by the background worker (task publishSubmission): exactly what Approve ad ran after approving
+// the plan (applyApproval, then the films; startFilms queues their upload). Only a complete ad approved on its own card (its
+// pipelineReview is its prepared plan) is published. The outcome is saved on the approval (publishOutcome) for its card; a
+// failure returns it to its card with lastError and lastErrorAt (applyApproval), an unconfirmed result is APPLY_UNKNOWN.
+async function publishApprovedSubmission(id,{ctrl=null,waitForLeaseMs=0,startFilms=null}={}){
+  if(!/^design-review-[a-f0-9]{32}$/.test(String(id||'')))throw Error('Choose a saved complete-ad approval.');
+  const ref=fb().db.collection(COL.approvals).doc(id),row=await ref.get(),item=row.exists?row.data():null,plan=item&&item.pipelinePlan;
+  if(!item||item.type!=='adDesignSubmission'||item.status!=='APPROVED'||!plan||!item.pipelineReview||item.pipelineReview.hash!==plan.hash)return {ok:false,skipped:true,id,status:item?item.status:null,message:'Only a complete ad approved on its own card publishes here. Nothing was sent to Google.'};
+  const r=item.designReview;let result;
+  try{result=await applyApproval(id,ctrl||await control(),{waitForLeaseMs,submission:true});}
+  catch(e){if(e.applyUnknown)await ref.update({publishOutcome:{status:'APPLY_UNKNOWN',message:e.message,at:Date.now()}}).catch(()=>{});throw e;}
   // The new paused Performance Max group receives the product's reviewed films; never throws after creation.
-  const joined=(plan.summary.campaigns||[]).find(c=>c.joins),newCount=(plan.summary.campaigns||[]).filter(c=>!c.joins).length;
-  const films=r.includeVideos!==false&&result.status==='APPLIED'&&plan.summary.styles.includes('pmax')&&!(plan.summary.videoLinks||[]).length&&!(joined&&joined.campaignStatus==='ENABLED')?await _attachPublishedFilms({workspaceId:r.workspaceId,product,groupRef:r.groupRef,campaignIds:[...await ref.get().then(s=>s.data()?.publishedCampaignIds||[],()=>[]),...(joined?[joined.existingCampaignId]:[])],approved:plan.payload.meta?.motion||null,copy:r.copy,source:{kind:'campaign_styles',id}}):null;
+  const joined=(plan.summary.campaigns||[]).find(c=>c.joins),newCount=(plan.summary.campaigns||[]).filter(c=>!c.joins).length;let films=null;
+  if(r.includeVideos!==false&&result.status==='APPLIED'&&plan.summary.styles.includes('pmax')&&!(plan.summary.videoLinks||[]).length&&!(joined&&joined.campaignStatus==='ENABLED')){let product=null;try{product=(await _adDesignPublicationContext(r.workspaceId,r)).product;}catch(e){films={message:'The films were not attached: '+String(e.message||e).slice(0,300)+' Approve their upload in Animated ads to retry.'};}
+    if(product)films=await _attachPublishedFilms({workspaceId:r.workspaceId,product,groupRef:r.groupRef,campaignIds:[...await ref.get().then(s=>s.data()?.publishedCampaignIds||[],()=>[]),...(joined?[joined.existingCampaignId]:[])],approved:plan.payload.meta?.motion||null,copy:r.copy,source:{kind:'campaign_styles',id}});}
   const applied=(newCount?'Selected campaigns were created paused. ':'')+(joined?'The product joined \u201c'+joined.name+'\u201d as a new product group'+(joined.campaignStatus==='ENABLED'?', which can serve now. ':'; it runs once you enable that campaign. '):'')+'Google policy review and serving are checked separately.';
-  return {...result,message:(result.status==='APPLIED'?applied:'Google validated the selected '+(joined&&!newCount?'product group':'campaigns')+'; dry-run mode kept '+(joined&&!newCount?'it':'them')+' unpublished. Nothing was published; the ad stays in Approval, and Approve ad publishes it once dry run is off in Controls.')+(films&&films.message?' '+films.message:''),motionPublication:films&&films.publication||null};
+  const out={...result,message:(result.status==='APPLIED'?applied:'Google validated the selected '+(joined&&!newCount?'product group':'campaigns')+'; dry-run mode kept '+(joined&&!newCount?'it':'them')+' unpublished. Nothing was published; the ad stays in Approval, and Approve ad publishes it once dry run is off in Controls.')+(films&&films.message?' '+films.message:''),motionPublication:films&&films.publication||null};
+  if(out.motionPublication&&out.motionPublication.queued&&startFilms)try{await startFilms(out.motionPublication);}catch(e){out.message=(out.message||'')+' The film upload is saved but could not start yet; approve it again in Animated ads.';}
+  await ref.update({publishOutcome:{status:out.status,message:out.message,at:Date.now()}}).catch(()=>{});
+  return out;
+}
+// Approve ad's background publication could not be handed to the worker, so nothing was sent: the ad returns to its card with
+// the reason. Unless the worker already took it (the dispatch arrived after all): then null, and the card follows it.
+async function markSubmissionNotStarted(id,requestedAt,reason){
+  const ref=fb().db.collection(COL.approvals).doc(String(id)),error='Publishing could not start ('+String(reason||'unknown error').slice(0,200)+'). Nothing was sent to Google. Approve ad again.';let reverted=false;
+  await fb().db.runTransaction(async tx=>{reverted=false;const s=await tx.get(ref),d=s.data();if(!s.exists||d.status!=='APPROVED'||d.applyAttempt||Number(d.publishRequestedAt)!==Number(requestedAt))return;reverted=true;tx.update(ref,{status:'PENDING',pipelineReview:null,publishRequestedAt:null,lastError:error,lastErrorAt:Date.now()});});
+  return reverted?error:null;
 }
 // The exact Merchant offers of this design's product.
 function _designPmaxItemIds(w,product){return (product.offerIds||[product.itemId]).filter(Boolean).filter(id=>(w.context.itemIds||[]).some(x=>String(x).toLowerCase()===String(id).toLowerCase()));}
@@ -12717,7 +12743,7 @@ async function setApprovalTotalBudget({ id, on } = {}) {
 module.exports = {
   campaignOptionsStatus, draftBrandSearch, draftSeasonalityAdjustment, draftCustomerGoal, setApprovalTotalBudget,
   adGroups, adGroupDetail, adDesignSavedWorkspaces, draftAdGroupSplit, draftAdGroupActivation,
-  adDesignSubmissionStatus, updateAdDesignSubmission, fixAdDesignEditorAI, startAdEvaluation, adEvaluationStatus, runAdEvaluation, startAdMotionPublication, runAdMotionPublication, verifyAdMotionPublication, startAdDesignMotion, adDesignMotionStatus, runAdDesignMotion, adVersionApprovalStatus, reviewAdVersion, adDesignWorkspace, saveAdDesign, cropAdDesignImage, adDesignEditorSource, adDesignEditorState, adDesignResponsiveState, saveAdDesignEditor, startAdDesignEditorAI, adDesignEditorAIStatus, resumeAdDesignEditorAI, recordAnimationHandoff, applyAdDesignEditorScene, runAdDesignEditorAI, exportAdDesignEditor, adDesignSavedDesigns, openAdDesignSavedDesign, deleteAdDesignSavedDesign, deleteAdDesignGeneratedImage, adDesignGooglePreview, uploadAdDesignReference, resetAdDesignFailures, startAdDesign, adDesignStatus, runAdDesign, adDesignProductImages, adDesignGalleryPage, saveAdDesignCopy, adDesignDelivery, prepareAdDesignPublication, publishAdDesignSubmission, publishAdDesignPublication,
+  adDesignSubmissionStatus, updateAdDesignSubmission, fixAdDesignEditorAI, startAdEvaluation, adEvaluationStatus, runAdEvaluation, startAdMotionPublication, runAdMotionPublication, verifyAdMotionPublication, startAdDesignMotion, adDesignMotionStatus, runAdDesignMotion, adVersionApprovalStatus, reviewAdVersion, adDesignWorkspace, saveAdDesign, cropAdDesignImage, adDesignEditorSource, adDesignEditorState, adDesignResponsiveState, saveAdDesignEditor, startAdDesignEditorAI, adDesignEditorAIStatus, resumeAdDesignEditorAI, recordAnimationHandoff, applyAdDesignEditorScene, runAdDesignEditorAI, exportAdDesignEditor, adDesignSavedDesigns, openAdDesignSavedDesign, deleteAdDesignSavedDesign, deleteAdDesignGeneratedImage, adDesignGooglePreview, uploadAdDesignReference, resetAdDesignFailures, startAdDesign, adDesignStatus, runAdDesign, adDesignProductImages, adDesignGalleryPage, saveAdDesignCopy, adDesignDelivery, prepareAdDesignPublication, publishAdDesignSubmission, publishApprovedSubmission, markSubmissionNotStarted, publishAdDesignPublication,
   reviseCreativeApproval, markApprovalApproved, needsCreativeReview, prepareCreativeApproval, creativeApprovalStatus, reviewCreativeApproval, assertCreativeReviewed, creativeHash,
   COL, V, CID, OPPORTUNITY_ENGINE_VERSION, DESIGN_STUDIO_ENGINE_VERSION, DESIGN_STUDIO_URL,
   control, mintToken, gaql, mutate, mutateAll,

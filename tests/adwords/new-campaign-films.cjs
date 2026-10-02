@@ -138,7 +138,10 @@ const motionOf=job=>({jobId:job.id,reviewHash:reviewHash(job)});
   const styles=await e.get('_prepareCampaignStyles')({item,context:{w,product:{id:PRODUCT,title:'Duck necklace',url:DEST,offerIds:OFFERS}},choice:R.selection(['pmax','responsive_display'],{pmax:10,responsive_display:5},['2840']),identity:'d'.repeat(64)});
   ok(JSON.stringify(styles.payload.meta.motion)===JSON.stringify(motionOf(films({groupRef:e.scope.groupRef})))&&/paused Performance Max campaign/.test(styles.summary.videoStatus)&&/Display campaigns start without them/.test(styles.summary.videoStatus),(existing?'existing':'new')+' design: the plan names the films and where they attach');
   e.f.docs.set('Brites_GAds_Approvals/'+REVIEW,{type:'adDesignSubmission',status:'PENDING',reviewHash:'rh',sourceHash:'source',designReview:item.designReview,pipelinePlan:styles,payload:styles.payload});
-  out=await e.E.publishAdDesignSubmission({id:REVIEW,hash:'rh',planHash:styles.hash,confirmed:true});
+  // Approve ad queues the publication; the background worker (publishApprovedSubmission) publishes and starts the films.
+  const queued=await e.E.publishAdDesignSubmission({id:REVIEW,hash:'rh',planHash:styles.hash,confirmed:true}),started=[];ok(queued.queued===true&&e.f.docs.get('Brites_GAds_Approvals/'+REVIEW).status==='APPROVED'&&!e.job().publication,(existing?'existing':'new')+' design: Approve ad approves the plan and queues its publication');
+  out=await e.E.publishApprovedSubmission(REVIEW,{startFilms:async m=>{started.push(m);}});
+  ok(started.length===1&&started[0]===out.motionPublication&&e.f.docs.get('Brites_GAds_Approvals/'+REVIEW).publishOutcome?.message===out.message,(existing?'existing':'new')+' design: the worker starts the film upload and saves the outcome for the card');
   ok(out.status==='APPLIED'&&/uploading to YouTube/.test(out.message)&&out.motionPublication?.queued&&out.motionPublication.groupRef===e.scope.groupRef,(existing?'existing':'new')+' design: APPLIED Campaign Styles queue the reviewed films');
   ok(e.binding()?.campaignId==='777'&&e.binding().source.kind==='campaign_styles'&&e.job().publication.target.groupRef===groupOf(88),(existing?'existing':'new')+' design: films bind to the new Performance Max group, not the Display campaign');
  }

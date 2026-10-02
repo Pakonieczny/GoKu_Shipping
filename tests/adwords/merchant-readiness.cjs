@@ -182,8 +182,9 @@ const ready = (m, extra) => M.offerReadiness({ request: m.request, merchantId: '
   E.bind({ applyApproval: async () => { applied++; return { status: 'VALIDATED' }; }, _pmaxIsEligible: p => p.status === 'ELIGIBLE' && p.availability === 'IN_STOCK' });
   await apRef.update({ status: 'PENDING', 'pipelinePlan.summary.merchant': plan.summary.merchant });
   E.bind({ merchantProducts: async () => [{ itemId: 'shopify_us_100_1', status: 'ELIGIBLE', availability: 'IN_STOCK' }, { itemId: 'shopify_ca_100_1', status: 'NOT_ELIGIBLE', availability: 'IN_STOCK', issues: ['Image cannot be fetched'] }] });
-  const published = await E.E.publishAdDesignSubmission({ id, hash: 'rh', planHash: hash, confirmed: true });
-  check(applied === 1 && /dry-run/.test(published.message), 'one ineligible variant no longer refuses the whole product: Performance Max serves the eligible offer');
+  // Approve ad queues the publication; the background worker (publishApprovedSubmission) sends it.
+  const queued = await E.E.publishAdDesignSubmission({ id, hash: 'rh', planHash: hash, confirmed: true }), sentByRequest = applied, published = await E.E.publishApprovedSubmission(id);
+  check(queued.queued === true && sentByRequest === 0 && applied === 1 && /dry-run/.test(published.message), 'one ineligible variant no longer refuses the whole product: Performance Max serves the eligible offer');
   await apRef.update({ status: 'PENDING' });
   E.bind({ merchantProducts: async () => [{ itemId: 'shopify_us_100_1', status: 'ELIGIBLE', availability: 'OUT_OF_STOCK' }, { itemId: 'shopify_ca_100_1', status: 'NOT_ELIGIBLE', availability: 'IN_STOCK', issues: ['Image cannot be fetched'] }] });
   await assert.rejects(() => E.E.publishAdDesignSubmission({ id, hash: 'rh', planHash: hash, confirmed: true }), /none of this product's 2 Merchant Center offers can serve in Canada or United States right now.*out of stock/); passed++;

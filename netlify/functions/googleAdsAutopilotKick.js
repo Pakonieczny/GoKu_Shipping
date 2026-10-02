@@ -148,8 +148,10 @@ async function handleAction(body) {
   if (a === "dashboard") return await E.dashboard(body); // body.activity pages the activity feed by its dates
   if (a === "pmaxRecommendationEvidence") { try { return await E.pmaxRecommendationEvidence(body); } catch(e) { return {ok:false,error:e.message}; } }
   // A campaign created paused may queue its product's reviewed films; the upload runs in the background.
+  // Approve ad on a complete ad answers once its plan is approved; the background worker publishes it (publishSubmission)
+  // and saves the outcome on the approval. A hand-off that fails returns the ad to its card: nothing was sent.
   if (a === "publishAdDesignPublication" || a === "publishAdDesignSubmission") {
-    try {const out=await E[a](body),m=out&&out.motionPublication;if(m&&m.queued)try{await dispatchTask('adMotionPublication',{workspaceId:m.workspaceId,jobId:m.jobId,productId:m.productId,groupRef:m.groupRef});}catch(e){out.message=(out.message||'')+' The film upload is saved but could not start yet; approve it again in Animated ads.';}return out;} catch(e) { return {ok:false,error:e.message}; }
+    try {const out=await E[a](body),m=out&&out.motionPublication;if(a==="publishAdDesignSubmission"&&out&&out.queued){try{await dispatchTask('publishSubmission',{id:out.id});}catch(e){const error=await E.markSubmissionNotStarted(out.id,out.requestedAt,e.message);if(error)return {ok:false,error};}return out;}if(m&&m.queued)try{await dispatchTask('adMotionPublication',{workspaceId:m.workspaceId,jobId:m.jobId,productId:m.productId,groupRef:m.groupRef});}catch(e){out.message=(out.message||'')+' The film upload is saved but could not start yet; approve it again in Animated ads.';}return out;} catch(e) { return {ok:false,error:e.message}; }
   }
   if (["adDesignSubmissionStatus", "updateAdDesignSubmission", "adGroups", "adDesignSavedWorkspaces", "adGroupDetail", "draftAdGroupSplit", "draftAdGroupActivation", "adDesignWorkspace", "saveAdDesign", "cropAdDesignImage", "adDesignEditorSource", "adDesignEditorState", "adDesignResponsiveState", "adDesignMotionStatus", "verifyAdMotionPublication", "saveAdDesignEditor", "applyAdDesignEditorScene", "exportAdDesignEditor", "adDesignSavedDesigns", "openAdDesignSavedDesign", "deleteAdDesignSavedDesign", "deleteAdDesignGeneratedImage", "adDesignGooglePreview", "uploadAdDesignReference", "adDesignProductImages", "adDesignGalleryPage", "adDesignStatus", "resetAdDesignFailures", "saveAdDesignCopy", "adDesignDelivery", "prepareAdDesignPublication", "publishAdDesignSubmission", "publishAdDesignPublication"].includes(a)) {
     try { return await E[a](body); } catch(e) { return {ok:false,error:e.message}; }
@@ -251,7 +253,7 @@ async function handleAction(body) {
     if(d.status==="APPROVED"&&req&&!d.lastError&&!(Number(d.applyStartedAt)>=req)&&!(Number(d.validatedAt)>=req)){
       try{const l=await f.db.collection(E.COL.state).doc("publicationLease").get(),x=l.exists?l.data():null;queued=!!(x&&Number(x.until)>Date.now());}catch(e){}
     }
-    return {ok:true,id:body.id,status:d.status,error:d.lastError||null,validatedAt:d.validatedAt||null,startedAt:d.applyStartedAt||null,publishRequestedAt:req||null,queued};
+    return {ok:true,id:body.id,status:d.status,error:d.lastError||null,lastErrorAt:d.lastErrorAt||null,publishOutcome:d.publishOutcome||null,validatedAt:d.validatedAt||null,startedAt:d.applyStartedAt||null,publishRequestedAt:req||null,queued};
   }
   if (a === "creativePrepare") return await dispatchTask("creativePrepare", { id:String(body.id), retry:!!body.retry });
   if (a === "reject") {
