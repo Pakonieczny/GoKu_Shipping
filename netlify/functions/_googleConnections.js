@@ -194,7 +194,7 @@ const MERCHANT_PROBES = [
     body: { query: "SELECT offer_id, clicks, impressions, conversions, conversion_value FROM product_performance_view WHERE date DURING LAST_7_DAYS LIMIT 1", pageSize: 1 },
     why: "Free and paid results per offer, the Merchant side of the Shopify join." },
   { key: "accountIssues", used: true, method: "GET", path: a => "accounts/v1/accounts/" + a + "/issues",
-    why: "Account-level blockers that stop products serving. Not surfaced in the app today." },
+    why: "Account-level issues: a CRITICAL one stops offers serving (red), an ERROR one may affect them (yellow). Each is listed below with its countries, and every Performance Max plan checks them for its target countries." },
   { key: "productIssues", used: true, method: "POST", path: a => "reports/v1/accounts/" + a + "/reports:search",
     body: { query: "SELECT id, offer_id, item_issues FROM product_view LIMIT 5", pageSize: 5 },
     why: "Per-offer disapprovals. A disapproved offer silently earns nothing." },

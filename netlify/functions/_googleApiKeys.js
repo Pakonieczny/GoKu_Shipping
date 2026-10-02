@@ -4,7 +4,11 @@
 // variables, which are a limited resource on this site.
 //
 //   Firestore → config/googleApiKeys
-//   { "youtubeApiKey": "AIza..." }
+//   { "youtubeApiKey": "AIza...", "merchantId": "1234567890" }
+//
+// merchantId is the one value this application writes here itself: when the
+// Merchant account is found from the Google Ads Merchant link and the field is
+// still empty (saveStoredValueIfEmpty). Everything else is entered by hand.
 //
 // A key stored here is only as safe as the restrictions set on it in Google
 // Cloud Console. Restrict every key to the single API it serves; that, not
@@ -78,6 +82,26 @@ async function storedValue(field, deps) {
   return (typeof value === 'string' || typeof value === 'number') && String(value).trim() ? String(value).trim() : null;
 }
 
+// Records a discovered configuration value once, so later runs read it instead of
+// rediscovering it. Only the numeric fields named here may be written, only while
+// the field is empty (an operator's own value is never replaced), and only that
+// one field (merge). Never an API key or any other secret.
+const SAVEABLE = { merchantId: v => String(v == null ? '' : v).replace(/\D/g, '') };
+async function saveStoredValueIfEmpty(field, value, deps) {
+  if (!SAVEABLE[field]) throw new Error(field + ' is not a value this store records automatically.');
+  const clean = SAVEABLE[field](value);
+  if (!clean) throw new Error('Only a numeric ' + field + ' can be recorded.');
+  const db = deps && deps.db ? deps.db : require('./firebaseAdmin').firestore(), ref = db.doc(DOC_PATH);
+  const saved = await db.runTransaction(async tx => {
+    const snapshot = await tx.get(ref), current = snapshot.exists ? (snapshot.data() || {})[field] : null;
+    if ((typeof current === 'string' || typeof current === 'number') && String(current).trim()) return false;
+    tx.set(ref, { [field]: clean }, { merge: true });
+    return true;
+  });
+  if (saved && cache) cache = { ...cache, [field]: clean };
+  return saved;
+}
+
 function resetCache() { cache = null; cachedAt = 0; inFlight = null; }
 
-module.exports = { googleApiKey, googleApiKeyStatus, storedValue, resetCache, envNameFor, DOC_PATH };
+module.exports = { googleApiKey, googleApiKeyStatus, storedValue, saveStoredValueIfEmpty, resetCache, envNameFor, DOC_PATH };

@@ -84,6 +84,7 @@ check(C.remedyFor('200 — fine') === null, 'a healthy row carries no remedy');
 // 10. The executor runs the catalog: every probe is attempted, none is skipped
 //     silently, and a Google error becomes a failed row rather than a throw.
 const calls = [];
+let merchantIssues = {};
 const stub = async (url, options) => {
   calls.push(String(url));
   const reply = (status, body) => ({ ok: status < 400, status, json: async () => body, headers: { get: () => null } });
@@ -113,6 +114,7 @@ const stub = async (url, options) => {
       return reply(200, { results: [{ productLink: { merchantCenter: { merchantCenterId: '5550001' } } }] });
     return reply(200, { results: [{}] });
   }
+  if (/merchantapi\.googleapis\.com\/accounts\/v1\/accounts\/\d+\/issues$/.test(url)) return reply(200, merchantIssues);
   return reply(200, {});
 };
 const realResolve = Module._resolveFilename;
@@ -172,6 +174,31 @@ delete process.env.GMC_REFRESH_TOKEN; delete process.env.GEMINI_API_KEY; delete 
   check(mrows.find(r => r.name === 'products').status === 'ok' && calls.some(u => /merchantapi\.googleapis\.com\/products\/v1\/accounts\/5550001\//.test(u)),
     'the Merchant API probes run against the discovered account');
   check(calls.filter(u => /merchantapi\.googleapis\.com/.test(u)).every(u => !/mutate|:(create|delete|patch)/i.test(u)), 'discovery and probes stay read-only');
+  const idRow = mrows.find(r => r.name === 'GMC_MERCHANT_ID');
+  check(idRow.status === 'ok' && /not needed — Merchant account 5550001 is resolved from the Google Ads product_link/.test(idRow.detail), 'GMC_MERCHANT_ID is green when the Ads account\'s own Merchant link names the account');
+  const issuesRow = mrows.find(r => r.name === 'accountIssues');
+  check(issuesRow.status === 'ok' && /^No account issues/.test(issuesRow.detail) && !/Not surfaced/.test(issuesRow.why) && !mrows.some(r => /^account issue · /.test(r.name)), 'no account issue is a real green row that says so');
+
+  // The discovered id is saved to Firestore config/googleApiKeys.merchantId (empty field), and account issues become rows.
+  const keysPath = require.resolve(path.join(FN, '_googleApiKeys.js')), realKeys = require(keysPath), saves = [];
+  require.cache[keysPath].exports = { ...realKeys, storedValue: async () => null, saveStoredValueIfEmpty: async (field, id) => { saves.push([field, id]); return true; } };
+  merchantIssues = { accountIssues: [
+    { title: 'Misrepresentation', severity: 'CRITICAL', detail: 'Offers are disapproved.', documentationUri: 'https://support.google.com/merchants/answer/6150127', impactedDestinations: [{ reportingContext: 'SHOPPING_ADS', impacts: [{ regionCode: 'CA', severity: 'CRITICAL' }] }] },
+    { title: 'Missing return policy', severity: 'ERROR', impactedDestinations: [{ impacts: [{ regionCode: 'US', severity: 'ERROR' }] }] }] };
+  const flagged = await checker.run({ write: false }), frows = flagged.sections.flatMap(s => s.rows), named = n => frows.find(r => r.name === n);
+  check(saves.length === 1 && saves[0][0] === 'merchantId' && saves[0][1] === '5550001' && /saved to Firestore config\/googleApiKeys\.merchantId/.test(named('merchant account').detail) && /was saved to Firestore/.test(named('GMC_MERCHANT_ID').detail),
+    'an id found from the Ads Merchant link is saved once to Firestore config/googleApiKeys.merchantId, and the check says so');
+  check(named('accountIssues').status === 'FAIL' && /1 account issue stops offers serving: Misrepresentation \(Canada\)/.test(named('accountIssues').detail) && /1 issue may affect offers: Missing return policy/.test(named('accountIssues').detail),
+    'a CRITICAL account issue turns the accountIssues row red and names it');
+  check(named('account issue · Misrepresentation').status === 'FAIL' && /Stops offers serving in Canada — Offers are disapproved\./.test(named('account issue · Misrepresentation').detail) && /6150127/.test(named('account issue · Misrepresentation').remedy) &&
+    named('account issue · Missing return policy').status === 'warn', 'each issue is its own row with its countries and Google\'s guidance; one that may affect offers is yellow');
+  check(flagged.summary.total === frows.length && flagged.summary.failed === frows.filter(r => r.status === 'FAIL').length, 'issue rows are counted in the summary');
+  require.cache[keysPath].exports = { ...realKeys, storedValue: async () => '5550001', saveStoredValueIfEmpty: async () => { throw Error('a stored id must not be saved again'); } };
+  merchantIssues = {}; calls.length = 0;
+  const pinned = await checker.run({ write: false }), prow = pinned.sections.flatMap(s => s.rows);
+  check(/Firestore config\/googleApiKeys\.merchantId/.test(prow.find(r => r.name === 'merchant account').detail) && prow.find(r => r.name === 'GMC_MERCHANT_ID').status === 'ok' && !calls.some(u => /googleAds:search/.test(u) && /product_link/.test(u)),
+    'the next run reads the saved id from Firestore: green, with no Merchant link discovery');
+  require.cache[keysPath].exports = realKeys;
   delete process.env.GMC_REFRESH_TOKEN;
 
   console.log(passed + ' Google connection catalog and executor checks passed.');
