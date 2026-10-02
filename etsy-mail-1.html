@@ -6763,7 +6763,8 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
   <div class="em-toast" id="emToast"></div>
 
   <!-- Sign-in time per person and computer, and the midnight sign-out (New York time) -->
-  <script src="station-session.js?v=20260929-ss2"></script>
+  <script src="station-session.js?v=20261002-ea1"></script>
+  <script src="station-activity.js?v=20261002-ea1"></script>
   <script>
   (function(){
     "use strict";
@@ -14278,6 +14279,14 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
       smartAfterDataChange();
       try {
         await api("etsyMailThreads", { method: "POST", body: { action: "setStatus", threadId, status, reason } });
+        // Efficiency log (station-activity.js): a conversation this operator finished (archived) or reopened. Counts and ids only.
+        try {
+          const x = t;
+          if (window.StationActivity && (!prev || prev.status !== status)) {
+            if (status === "archived") StationActivity.log("complete", { orderId: String((x && x.etsyOrderId) || "").replace(/\D/g, ""), detail: "conversation done" });
+            else if (prev && prev.status === "archived") StationActivity.log("undo", { orderId: String((x && x.etsyOrderId) || "").replace(/\D/g, ""), detail: "conversation reopened" });
+          }
+        } catch (_) {}
         toast(smartStatusToast(status, prev && prev.status, t));
         smartDelta();
       } catch (e) {
@@ -21250,6 +21259,10 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
       try {
         resp = await queueSend(threadId, local, body);
       } catch (e) {
+        try {
+          const x = (state.threads || []).find(y => y && y.id === threadId);
+          window.StationActivity && StationActivity.log("error", { orderId: String((x && x.etsyOrderId) || "").replace(/\D/g, ""), detail: "reply not sent" });   // efficiency log
+        } catch (_) {}
         const why = e && e.status === 401 ? "" :
           (e && e.data && e.data.errorCode === "SEND_DISABLED") ? "sending is switched off (turn it back on from the banner)" :
           ((e && e.message) || "unknown error");
@@ -21269,6 +21282,12 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
         return false;
       }
 
+      // Efficiency log (station-activity.js): this operator's reply is in Etsy's queue. Counts and ids only: never the
+      // words, the customer or the address.
+      try {
+        const x = (state.threads || []).find(y => y && y.id === threadId);
+        window.StationActivity && StationActivity.log("note", { orderId: String((x && x.etsyOrderId) || "").replace(/\D/g, ""), detail: designNote ? "reply sent · design note" : "reply sent" });
+      } catch (_) {}
       // Queued. The bubble reads "sending…" until the extension reports it
       // delivered (noteDraftStatus), then like any message until Etsy's copy
       // replaces it.
@@ -22684,6 +22703,14 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
 
       try {
         await api("etsyMailThreads", { method: "POST", body: { action: "setStatus", threadId, status, reason } });
+        // Efficiency log (station-activity.js): a conversation this operator finished (archived) or reopened. Counts and ids only.
+        try {
+          const x = t;
+          if (window.StationActivity && previousStatus !== status) {
+            if (status === "archived") StationActivity.log("complete", { orderId: String((x && x.etsyOrderId) || "").replace(/\D/g, ""), detail: "conversation done" });
+            else if (previousStatus === "archived") StationActivity.log("undo", { orderId: String((x && x.etsyOrderId) || "").replace(/\D/g, ""), detail: "conversation reopened" });
+          }
+        } catch (_) {}
         toast(`Status → ${status}`);
         // Reconcile: refresh both the list and the counts from server
         // truth. Optimistic update was for instant feedback; server is
