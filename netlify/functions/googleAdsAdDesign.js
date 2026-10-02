@@ -1261,9 +1261,10 @@ function createAdDesignService(deps) {
     }
     return {ok:true,resetJobs,resetEditorJobs,unconfirmed,resetWorkspaceIds:[...new Set(resetWorkspaceIds)],resetEditorJobIds,before:cutoff,nextCursor};
   }
-  async function start({ workspaceId, expectedVersion, snapshotHash, retry = false, mode='design', newRequest=false } = {}) {
+  async function start({ workspaceId, expectedVersion, snapshotHash, retry = false, mode='design', newRequest=false, savedDesignId=null } = {}) {
     if(!['copy','design','image'].includes(mode))throw new Error('Choose image generation or messaging research.');
     const ref = refFor(workspaceId), value = await read(workspaceId), capability = provider();
+    if(savedDesignId){const found=token(savedDesignId)&&await savedDesignRecord(value,savedDesignId);if(mode!=='copy'||!found||found.design.deletedAt||productKey(found.design.productId)!==productKey(value.settings.productId))throw Error('Choose a saved design package for this product before researching its messaging.');}
     if(mode==='copy'&&value.job&&!['ready','draft'].includes(value.job.phase)&&value.job.mode!=='copy')throw new Error('Resume the saved image request before starting separate messaging research. Its paid work is preserved.');
     if (value.job && (value.job.phase === "ready"&&!newRequest || active(value.job))) return { ok: true, workspaceId, jobId: value.job.id, cached: true, queued: false };
     if (!capability.textAvailable) throw new Error(TEXT_MISSING);
@@ -1288,7 +1289,7 @@ function createAdDesignService(deps) {
       let recovered = null, recordedOutput = false;
       if (previous && previous.inFlight) { const receipt = await tx.get(ref.collection("outputs").doc(previous.id + "_" + previous.inFlight.key)); if (receipt.exists) { recovered = receipt.data().stageResult || null; recordedOutput = !!(recovered || receipt.data().rawResponse || receipt.data().asset); } }
       if (previous && previous.inFlight && !recordedOutput && !retry) throw new Error("A previous paid request has an unknown result. Saved outputs are retained; explicitly allow a new request only if you want to retry that unfinished step.");
-      const job = previous ? clean(previous) : { id: crypto.randomUUID(),mode,copyOverride:mode!=='copy'&&current.messaging&&current.messaging.edited?clean(current.messaging.copy):null, sourceVersion: current.sourceVersion, snapshotHash: current.snapshotHash, settingsHash: sha(current.settings), placements:clean(chosenPlacements(current)), phase: "queued", stages: {}, assets: {}, usage: [], requests: 0, createdAt: Date.now() };
+      const job = previous ? clean(previous) : { id: crypto.randomUUID(),mode,savedDesignId:mode==='copy'?savedDesignId:null,copyOverride:mode!=='copy'&&current.messaging&&current.messaging.edited?clean(current.messaging.copy):null, sourceVersion: current.sourceVersion, snapshotHash: current.snapshotHash, settingsHash: sha(current.settings), placements:clean(chosenPlacements(current)), phase: "queued", stages: {}, assets: {}, usage: [], requests: 0, createdAt: Date.now() };
       if (job.settingsHash !== sha(current.settings)) throw new Error("The direction changed. Save a new design revision first.");
       if (job.inFlight) { if (recovered) { job.stages[job.inFlight.key] = recovered; settle(job, job.inFlight.key, recovered); } else if (!recordedOutput) job.unknownRequests = (job.unknownRequests || []).concat({ ...job.inFlight, retriedAt: Date.now(), explicitRetry: true }); job.inFlight = null; }
       job.phase = "queued"; job.owner = null; job.error = null; job.leaseUntil = 0; job.progress = { pct: Number(job.progress && job.progress.pct) || 0, label: "Design queued; saved work will be reused" }; jobId = job.id;
@@ -1460,9 +1461,9 @@ function createAdDesignService(deps) {
       if(!job.copyOverride)copy=await fillCopy(copy);
       if(job.copyOverride)copy={...copy,copy:job.copyOverride};
       if(job.mode==='copy'){
-        job.result={copyOnly:true,copy:copy.copy,brief:copy.brief,evidence:job.evidence,keywords:researchGroup.keywords||[],sourceIds:copy.sourceIds,productIds:[String(product.id)],limitations:copy.limitations||[]};
+        job.result={copyOnly:true,savedDesignId:job.savedDesignId||null,copy:copy.copy,brief:copy.brief,evidence:job.evidence,keywords:researchGroup.keywords||[],sourceIds:copy.sourceIds,productIds:[String(product.id)],limitations:copy.limitations||[]};
         await saveJob({phase:'ready',completedAt:Date.now(),leaseUntil:0,inFlight:null,error:null,progress:{pct:100,label:'Messaging researched and saved. Review it with each image, then approve the update here.'}});
-        await ref.update({messaging:{copy:copy.copy,productId:value.settings.productId,groupRef:group.ref,researchedAt:Date.now(),evidenceHash:job.evidence.hash,edited:false}});
+        await ref.update({messaging:{copy:copy.copy,productId:value.settings.productId,groupRef:group.ref,savedDesignId:job.savedDesignId||null,researchedAt:Date.now(),evidenceHash:job.evidence.hash,edited:false}});
         return {ok:true,workspaceId,copyOnly:true};
       }
       await progress(25, "Copy and visual direction saved; composing each required format");

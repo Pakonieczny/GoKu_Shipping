@@ -31,6 +31,9 @@ async function approve(e){await e.E.reviewAdVersion({id:'design1',hash:e.E.creat
  const editedCopy={...copy,headlines:['Duck Charm',...copy.headlines.slice(1)]};workspace.messaging={copy:editedCopy,edited:true,savedDesignId:'selected-package',productId:'p',groupRef:'g'};await workRef.set(workspace);
  const edited=await queued.E.prepareAdDesignPublication({workspaceId:'saved',formats:['square','landscape','portrait'],includeCopy:true,queueOnly:true,savedDesignId:'selected-package'}),editedReview=mem.docs.get('Brites_GAds_Approvals/'+edited.approvalId).designReview;
  check(editedReview.copy.headlines[0]==='Duck Charm'&&editedReview.copyEdited&&editedReview.artworkCopy.headlines.includes('Duck Necklace'),'operator edits survive package recovery and retain original artwork messaging for fixed-ad compatibility');
+ workspace.messaging.edited=false;await workRef.set(workspace);
+ const researched=await queued.E.prepareAdDesignPublication({workspaceId:'saved',formats:['square','landscape','portrait'],includeCopy:true,queueOnly:true,savedDesignId:'selected-package'});
+ check(mem.docs.get('Brites_GAds_Approvals/'+researched.approvalId).designReview.copy.headlines[0]==='Duck Charm','new explicit package messaging research is used instead of reverting to archived copy');
  workspace.messaging.savedDesignId='different-package';await workRef.set(workspace);
  const other=await queued.E.prepareAdDesignPublication({workspaceId:'saved',formats:['square','landscape','portrait'],includeCopy:true,queueOnly:true,savedDesignId:'selected-package'});
  check(mem.docs.get('Brites_GAds_Approvals/'+other.approvalId).designReview.copy.headlines[0]===packageText.headlines[0],'edits from another saved package cannot replace selected package messaging');

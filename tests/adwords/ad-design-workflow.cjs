@@ -163,6 +163,9 @@ const fallbackResult={responsive:{plan:{nativeCopy:openedMessaging.copy}}};
 check(JSON.stringify(require('../../netlify/functions/googleAdsAdDesign').savedPackageCopy(fallbackResult))===JSON.stringify(openedMessaging.copy),'plan native copy remains recoverable when legacy result has no top-level native copy');
 check(require('../../netlify/functions/googleAdsAdDesign').savedPackageCopy({nativeCopy:{headlines:'bad'}}).headlines==='bad','malformed legacy copy remains invalid rather than throwing during package recovery');
 
+const researchPackageJob=await studio.svc.start({workspaceId:studio.id,mode:'copy',newRequest:true,savedDesignId:copy1});await studio.svc.run({workspaceId:studio.id,jobId:researchPackageJob.jobId});
+const researchPackageState=await studio.svc.status({workspaceId:studio.id});check(researchPackageState.messaging.savedDesignId===copy1&&researchPackageState.result.savedDesignId===copy1,'explicit messaging research stays associated with the selected saved package without generating replacement images');
+
 studio.D.cropImage=cropEnv.D.cropImage;
 const savedPlacementInput={workspaceId:studio.id,groupRef:refs.group,device:'desktop',format:'square',source:{kind:'savedDesign',imageId:copy1}};
 const placedDesign=await studio.svc.crop(savedPlacementInput),placedDesignId=placedDesign.placements[0].imageId,placedRecord=placedDesign.imageLibrary.find(p=>p.id===placedDesignId);
