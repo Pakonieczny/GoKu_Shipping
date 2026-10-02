@@ -187,13 +187,13 @@ async function main() {
       cases++;
     } finally { f.close(); }
   }
-  {
+  for (const legacy of [false,true]) {
     const f = fixture();
     try {
-      const decision = {id:'cloud-receipt',at:at-1000,by:'Seth',lines:{[key]:[{f:'cloud-file',i:0}]}}, ck = 'custom:4175152234:CUSTOM';
+      const decision = {id:legacy ? 'recorded-legacy-receipt' : 'cloud-receipt',at:at-1000,by:'Seth',lines:{[key]:[{f:'cloud-file',i:0}]}}, ck = 'custom:4175152234:CUSTOM';
       const cloud = {ck,rid:'4175152234',phase:'sent',sent:decision,files:[{id:'cloud-file',name:'Original.ai',state:'ready',metal:'gold',qty:1,pieces:1,cloud:{path:'custom/original.pdf',url:'https://saved.test/original.pdf'}}]};
       f.state.apiRecord = null; f.state.cloudRecords = {[ck]:cloud}; f.state.sent = null; f.state.files = [];
-      f.w.B.customDesigns = {}; f.w.B.orders = {byKey:new Map()};
+      f.w.B.customDesigns = {}; f.w.B.orders = {byKey:new Map()}; f.w.B.pool = {rows:new Map()}; f.w.allSheets = () => [];
       f.w.all = () => f.w.B.customDesigns; f.w.tasks = new Map(); f.w.busy = new Map(); f.w.ver = 0;
       f.w.Session = {schedule(){}}; f.w.redraw = () => {};
       f.w.eval(section('  function hydrate(', '  async function load(opts='));
@@ -201,6 +201,18 @@ async function main() {
       f.w.sentOf = r => Object.values(f.w.B.customDesigns).find(e => Object.hasOwn(e.sent?.lines || {},r.key));
       f.w.decisionOf = r => f.w.sentOf(r)?.sent || r._customSentDecision || f.w.B.maps.customSent[r.key];
       f.w.CustomSheet.sentOf = f.w.sentOf; f.w.CustomSheet.decisionOf = f.w.decisionOf;
+      f.w.CustomSheet.legacyKeys = f.w.legacyKeys;
+      if (legacy) {
+        const api = f.w.api;
+        f.w.api = async (name,arg) => {
+          const result = await api(name,arg);
+          if (arg.op === 'poolList') result.pools[0].custom = true;
+          if (arg.op === 'customSheetGet') {
+            assert.deepEqual([...arg.legacyLineKeys],[key], 'a regular old order with custom pool metadata requests its actual known legacy line key');
+          }
+          return result;
+        };
+      }
       f.w.ckOf = it => String(it.key).replace(/^[a-z]+:/,''); f.w.linesOf = it => it.rows || [it.row]; f.w.openLines = () => []; f.w.notReady = () => '';
       f.w.eval(section('  function cardOf(it) {', '  // the card\'s own designs only'));
       f.w.CustomSheet.cardOf = f.w.cardOf;
@@ -212,12 +224,14 @@ async function main() {
       assert.equal(old._customSentDecision,decision, 'new cloud receipt reaches a recovered historical row');
       assert.equal(f.w.B.maps.customSent[old.key],decision); assert.equal(old.spec.customDone,undefined);
       const read = f.calls.reads.filter(x => x.op === 'customSheetGet'); assert.equal(read.length,1,'all recovered line keys share one cloud read'); assert.deepEqual([...read[0].lineKeys],[key]);
+      assert.deepEqual([...read[0].legacyLineKeys],legacy ? [key] : [],'legacy discovery targets custom pool rows only');
       assert.equal(f.w.B.customDesigns[ck].sent.id,decision.id); assert.equal(f.w.B.customDesigns[ck].sent.by,'Seth');
       assert.equal(f.w.B.orders.byKey.size,0,'looking at an old order never adopts it into live intake or re-pools it');
+      if(legacy){assert.equal(old.spec.special,undefined,'ordinary legacy custom designs need no special/custom-order classification');assert.equal(f.w.B.pool.rows.size,0,'legacy lookup does not add pool copies');}
       f.w.paintCustom(old);
       const seal = f.bar().querySelector('.seal-sheet'); assert.equal(seal.dataset.at,String(decision.at)); assert.match(seal.getAttribute('aria-label'),/by Seth/);
       const designs = f.bar().querySelector('[data-cu-view-designs]'); assert(designs,'cloud-only source files expose a working View designs action'); designs.click();
-      assert.equal(f.calls.designs[0].record.id,'cloud-receipt'); assert(f.bar().querySelector('[data-cu-open-sheet]')); assert(f.bar().querySelector('[data-cu-history]'));
+      assert.equal(f.calls.designs[0].record.id,decision.id); assert(f.bar().querySelector('[data-cu-open-sheet]')); assert(f.bar().querySelector('[data-cu-history]'));
       cases++;
     } finally { f.close(); }
   }

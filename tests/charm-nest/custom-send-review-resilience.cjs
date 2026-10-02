@@ -18,6 +18,7 @@ function row(rid, state, special = true) {
 }
 const gf = row(4174476673, 'written'), ss = row(4171770802, 'pooled'), regular = row(4179999999, 'written', false), waiting = row(4180000000, 'pulled'), hand = row(4190000000, 'noDesign');
 hand.spec.customDone = { how: 'button', completedAt: now - 4 * day, completedBy: 'Seth', stamps: [{ how: 'button', at: now - 4 * day, by: 'Seth' }] };
+const pendingKeys = new Set();
 const decisions = new Map([[gf.key, { id: 'gf-original', at: now - 3 * day, by: 'paul', lines: { [gf.key]: [{}] } }],
   [ss.key, { id: 'ss-original', at: now - 2 * day, by: 'paul', lines: { [ss.key]: [{}] } }],
   [regular.key, { id: 'regular-original', at: now - 60000, by: 'Seth', lines: { [regular.key]: [{}] } }]]);
@@ -28,9 +29,11 @@ w.B = { review: { items: [{ kind: 'customOrder', key: 'ord:custom:' + gf.order.r
 w.Orders = { rows: () => rows, statePill: r => ['ok', r.state === 'written' ? 'on a sheet' : r.state === 'pooled' ? 'waiting for a sheet' : 'waiting'] };
 w.CustomSheet = {
   decisionOf: r => r && (decisions.get(r.key) || r._customSentDecision || w.B.maps.customSent?.[r.key]) || null,
+  sending: r => !!r && pendingKeys.has(r.key),
   sentOf: r => { const sent = r && decisions.get(r.key); return sent ? { sent, files: [] } : null; },
   stamp: it => String(w.CustomSheet.decisionOf(it.row)?.at || ''), prune() {},
-  cardOf: it => ({ files: [{ id: 'design' }], sent: !!w.CustomSheet.decisionOf(it.row), busy: '', why: '', open: !it.decided }),
+  cardOf: it => ({ files: [{ id: 'design' }], sent: !!w.CustomSheet.decisionOf(it.row), busy: '', why: '', e: pendingKeys.has(it.row?.key) ? { sendIntent: {} } : null,
+    open: !it.decided && (pendingKeys.has(it.row?.key) || (it.rows || [it.row]).some(r => !r.poolIds?.length)) }),
   buttonsHtml: it => it.decided ? '' : '<button data-cu-send>Send to Sheet</button>', stripHtml: () => '',
   wire: (node, it) => { node.querySelectorAll('[data-cu-designs]').forEach(b => b.onclick = () => calls.push(['designs', it.row.key])); }
 };
@@ -47,6 +50,9 @@ w.el = (tag, cls, markup) => { const n = d.createElement(tag); if (cls) n.classN
 // Neither a rerender, a restore or a switch should replay a wooden stamp or create fresh historical records.
 w.Seal.press = (...args) => { addCalls.push(args); }; w.Seal.pressPending = (...args) => { addCalls.push(args); };
 const source = fs.readFileSync(path.join(root, 'charm-nest-bridge.js'), 'utf8'), start = source.indexOf('const Review = window.Review ='), end = source.indexOf('/* ═══ 24b · Sandbox', start);
+const buttonsStart=source.indexOf('  function buttonsHtml(it, primary, hint = true)'),buttonsEnd=source.indexOf('  const hasFiles =',buttonsStart);
+w.eval('window._reviewButtons=(function(){const cardOf=it=>window.CustomSheet.cardOf(it),DROP_IC="";'+source.slice(buttonsStart,buttonsEnd)+'return buttonsHtml;})()');
+w.CustomSheet.buttonsHtml=w._reviewButtons;
 assert(start >= 0 && end > start); w.eval(source.slice(start, end));
 const R = w.Review, cards = () => [...d.querySelectorAll('#rvList .reviewListRow')], ids = () => cards().map(n => n.dataset.rid), get = r => cards().find(n => n.dataset.rid === r.order.receiptId);
 let checks = 0;
@@ -130,6 +136,27 @@ try {
   check('hand completion/reopen controls remain available in Completed', () => {
     mode('done'); const n = get(hand); assert(n.querySelector('[data-cu-print]')); assert(n.querySelector('[data-cu-reopen]'));
     n.querySelector('[data-cu-reopen]').click(); assert.deepEqual(calls.at(-1), ['reopen', hand.key]);
+  });
+  check('the recalled GF 4174476673 partial without any send record stays Open with actual sheet/history access and no invented ink', () => {
+    const original = decisions.get(gf.key); decisions.delete(gf.key); delete w.B.maps.customKept[gf.key];
+    gf.poolIds = [gf.key + '_1', gf.key + '_2', gf.key + '_3']; gf.spec.quantity = 5; gf.state = 'written';
+    w.B.review.items = w.B.review.items.filter(it => !it.rows?.includes(gf));
+    const before = JSON.stringify(gf); mode('open'); const n = get(gf); assert(n, 'the unproven partial is still visible in Open');
+    assert.equal(n.querySelectorAll('.seal').length, 0); assert(!n.querySelector('[data-cu-print],[data-cu-complete],[data-cu-send]'), 'already pooled copies do not offer another hand completion or send');
+    const start = calls.length; n.querySelector('[data-cu-sheet]').click(); n.querySelector('[data-cu-history]').click();
+    assert.deepEqual(calls.slice(start), [['sheet', gf.key], ['timeline', gf.key]]);
+    assert.equal(R.isDecided(gf), false); assert.equal(R.customItemFor(gf.key).record, null);
+    mode('sent'); assert(!ids().includes(gf.order.receiptId)); mode('done'); assert(!ids().includes(gf.order.receiptId));
+    assert.equal(JSON.stringify(gf), before); assert.deepEqual(addCalls, []); decisions.set(gf.key, original);
+  });
+  check('a partial failed multi-line send keeps Retry visible and prevents competing print/completion even after its spinner clears', () => {
+    const pooled = row(4120000000, 'pooled'), unpooled = row(4120000000, 'pulled'); unpooled.key += 'b';
+    pooled.hold = 'save retry'; unpooled.hold = 'save retry'; pendingKeys.add(pooled.key); pendingKeys.add(unpooled.key);
+    rows.push(pooled, unpooled); w.B.orders.byKey.set(pooled.key, pooled); w.B.orders.byKey.set(unpooled.key, unpooled);
+    mode('open'); const n = get(pooled); assert(n); assert(n.querySelector('[data-cu-send]'), 'the pending send can retry');
+    assert(!n.querySelector('[data-cu-print],[data-cu-complete]'), 'cannot compete with a retained send intent');
+    const it = R.customItemFor(pooled.key); assert.equal(R.printable(it), false); assert(!it.decided && !it.done);
+    mode('sent'); assert(!ids().includes(pooled.order.receiptId)); mode('done'); assert(!ids().includes(pooled.order.receiptId));
   });
   console.log(`PASS: ${checks} custom-send Review resilience checks.`);
 } finally { w.close(); }

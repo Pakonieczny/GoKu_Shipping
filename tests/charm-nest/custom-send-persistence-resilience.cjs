@@ -30,7 +30,7 @@ function fixture({holdStamp=false,holdRead=false,offline=false}={}){
  const uploadBytes=async(path)=>{control.uploads++;return {path,url:'https://saved.example/'+path};};
  const Session={schedule(){},flushNow:async()=>{if(control.checkpointFail)return false;control.checkpoints.push(JSON.parse(JSON.stringify({customDesigns:B.customDesigns,rows})));return true;}};
  const TL={line:(r,type,event)=>control.events.set(event.id,{type,...event})};
- const api=async(name,body)=>{control.cloudCalls.push(JSON.parse(JSON.stringify(body)));if(body.op==='customSheetPut'){control.cloud.set(body.record.ck,JSON.parse(JSON.stringify(body.record)));if(body.record.phase==='sent' && control.lossSent){control.lossSent=false;throw new Error('Lost cloud acknowledgement');}return {record:JSON.parse(JSON.stringify(body.record))};}if(body.op==='customSheetGet'){return {records:Object.fromEntries([...control.cloud].map(([ck,rec])=>[ck,JSON.parse(JSON.stringify(rec))]))};}return {url:'https://saved.example/file.pdf'};};
+ const api=async(name,body)=>{control.cloudCalls.push(JSON.parse(JSON.stringify(body)));if(body.op==='customSheetPut'){control.cloud.set(body.record.ck,JSON.parse(JSON.stringify(body.record)));if(body.record.phase==='sent' && control.lossSent){control.lossSent=false;throw new Error('Lost cloud acknowledgement');}return {record:JSON.parse(JSON.stringify(body.record))};}if(body.op==='customSheetGet'){return {records:Object.fromEntries([...control.cloud].filter(([,rec])=>!control.legacyOnly || Object.keys(rec.sent.lines).some(k=>(body.legacyLineKeys || []).includes(k))).map(([ck,rec])=>[ck,JSON.parse(JSON.stringify(rec))]))};}return {url:'https://saved.example/file.pdf'};};
  const Pool={charmOf:id=>chars.get(id),sheetOf:id=>chars.has(id)?sheet:null,onSheets:r=>r.poolIds.length && r.poolIds.every(id=>chars.has(id)),settle:r=>{r.state=r.poolIds.every(id=>B.pool.rows.get(id)?.sheetId)?'written':'pooled';r.reason=null;return true;}};
  const Review={render(){control.redraws++;},cardKey:r=>'custom:'+r.order.receiptId+':CUSTOM_6673',repool:async r=>{
  control.poolCalls.push(r.key);const prep=await CustomSheet.prepare(r,B.run);if(!prep)return;
@@ -113,6 +113,30 @@ function fixture({holdStamp=false,holdRead=false,offline=false}={}){
   const f=fixture();await f.run('CustomSheet.send(it,{from:button})');const record=JSON.parse(JSON.stringify(f.control.cloud.get(f.run('e.ck'))));
   const history=fixture();history.c.historyJSON=JSON.stringify(record);history.run('B.customDesigns={};B.orders.rows=[];B.orders.byKey=new Map();const historicalRow={...rows[0]};CustomSheet.hydrate([JSON.parse(historyJSON)]);');
   assert.equal(history.run('CustomSheet.decisionOf(historicalRow).by'),'Paul');assert.equal(history.run('CustomSheet.cardOf({key:"csent:changed-group",row:historicalRow}).files[0].cloud.path'),record.files[0].cloud.path);assert.equal(history.control.poolCalls.length,0);assert.equal(history.control.presses,0);assert.equal(history.control.cloudCalls.length,0);
+ });
+ await check('legacy cloud history restores only its recorded decision and never pools inferred old designs',async()=>{
+  const original=fixture();await original.run('CustomSheet.send(it,{from:button})');const record=JSON.parse(JSON.stringify(original.control.cloud.get(original.run('e.ck'))));record.legacy=true;
+  const f=fixture();f.run('B.customDesigns={};rows[0].spec.special={label:"Custom"};rows[0].poolIds=[rows[0].key+"_1"];rows[0].state="written";');
+  f.control.cloud.set(record.ck,record);await f.run('CustomSheet.load({force:true})');
+  const get=f.control.cloudCalls.find(x=>x.op==='customSheetGet');assert.deepEqual(Array.from(get.legacyLineKeys),['4174476673_1'],'only the known custom line with existing sheet copies needs a historical lookup');
+  assert.equal(f.run('CustomSheet.decisionOf(rows[0]).at'),record.sent.at);assert.equal(f.run('CustomSheet.decisionOf(rows[0]).by'),'Paul');assert.equal(f.run('CustomSheet.entries()[Object.keys(CustomSheet.entries())[0]].legacy'),true);
+  assert.equal(await f.run('CustomSheet.prepare(rows[0],B.run)'),null,'an inferred historical send cannot manufacture any new sheet copies');assert.equal(f.control.poolCalls.length,0);assert.equal(f.control.presses,0);assert.equal(f.control.events.size,0);assert.equal(f.run('sheet.charms.length'),0);assert.equal(f.control.uploads,0);
+  const calls=f.control.cloudCalls.length;f.run('const legacy=Object.values(B.customDesigns)[0];legacy.sendCloudPending=true;');await f.run('CustomSheet.recover()');assert.equal(f.control.cloudCalls.length,calls,'historical inference never creates or rewrites a cloud receipt');
+ });
+ await check('ordinary placed orders do not request legacy history and placement alone cannot manufacture approval facts',async()=>{
+  const f=fixture();f.run('B.customDesigns={};rows[0].poolIds=[rows[0].key+"_1"];rows[0].state="written";');await f.run('CustomSheet.load({force:true})');
+  assert.deepEqual(Array.from(f.control.cloudCalls[0].legacyLineKeys),[]);assert.equal(f.run('CustomSheet.decisionOf(rows[0])'),null);assert.equal(f.control.presses,0);assert.equal(f.control.events.size,0);
+  const custom=fixture();custom.run('B.customDesigns={};rows[0].poolIds=[rows[0].key+"_1"];rows[0].spec.special={label:"Custom"};');await custom.run('CustomSheet.load({force:true})');assert.deepEqual(Array.from(custom.control.cloudCalls[0].legacyLineKeys),['4174476673_1']);assert.equal(custom.run('CustomSheet.decisionOf(rows[0])'),null,'the server must return actual original designSent evidence; placement is insufficient');
+ });
+ await check('legacy pagination reaches every later proven send after40+ unproven candidates without duplicate modern reads',async()=>{
+  const original=fixture();await original.run('CustomSheet.send(it,{from:button})');const template=JSON.parse(JSON.stringify(original.control.cloud.get(original.run('e.ck'))));
+  const f=fixture();f.control.legacyOnly=true;
+  f.run('B.customDesigns={};const base=rows[0];rows.splice(0,rows.length,...Array.from({length:81},(_,n)=>({...base,key:"4174476673_"+(n+1),line:{...base.line,transactionId:n+1},spec:{...base.spec,special:{label:"Custom"}},state:"written",poolIds:["4174476673_"+(n+1)+"_1"]})));B.orders.byKey=new Map(rows.map(r=>[r.key,r]));');
+  for(const n of [41,81]){const key='4174476673_'+n,rec=JSON.parse(JSON.stringify(template));rec.legacy=true;rec.ck='legacy-custom:'+key+':'+rec.sent.at;rec.sent.id='original-send:'+key;rec.sent.lines={[key]:[{f:rec.files[0].id,i:0}]};f.control.cloud.set(rec.ck,rec);}
+  await f.run('CustomSheet.load({force:true})');const gets=f.control.cloudCalls.filter(x=>x.op==='customSheetGet');
+  assert.deepEqual(gets.map(x=>x.legacyLineKeys.length),[40,40,1]);assert.equal(gets.filter(x=>x.keys?.length || x.lineKeys?.length).length,1,'legacy pages must not repeat modern receipt reads');
+  const tried=gets.flatMap(x=>Array.from(x.legacyLineKeys));assert.equal(tried.length,81);assert.equal(new Set(tried).size,81,'each known candidate is attempted exactly once');
+  assert.equal(f.run('CustomSheet.decisionOf(rows[40]).by'),'Paul');assert.equal(f.run('CustomSheet.decisionOf(rows[80]).at'),template.sent.at);assert.equal(f.run('CustomSheet.decisionOf(rows[0])'),null,'an unproven placement still cannot fabricate a send');assert.equal(f.control.poolCalls.length,0);assert.equal(f.control.presses,0);assert.equal(f.control.events.size,0);
  });
  await check('known-key lookup coalesces and throttles but explicit reconnect refresh is permitted',async()=>{
   const f=fixture();await Promise.all([f.run('CustomSheet.load()'),f.run('CustomSheet.load()')]);await f.run('CustomSheet.load()');assert.equal(f.control.cloudCalls.filter(x=>x.op==='customSheetGet').length,1);

@@ -7279,6 +7279,7 @@ const CustomSheet = window.CustomSheet = (() => {
     }finally{stampHost?.remove();busy.delete(ck);if(!flying){nestHold?.releaseAll();if(snap?.ghost)snap.ghost.remove();letGo();redraw();}}
   }
   async function syncSent(e) {
+    if(e.legacy)return;
     if(syncing.has(e.ck))return syncing.get(e.ck);
     const task=syncSentOnce(e);syncing.set(e.ck,task);try{return await task;}finally{if(syncing.get(e.ck)===task)syncing.delete(e.ck);}
   }
@@ -7290,7 +7291,7 @@ const CustomSheet = window.CustomSheet = (() => {
   }
   async function recover() {
     let n=0;for(const e of Object.values(all())){
-      if(!e || tasks.has(e.ck) || busy.has(e.ck))continue;
+      if(!e || e.legacy || tasks.has(e.ck) || busy.has(e.ck))continue;
       if(e.sent){if(!e.sent.id && +e.sent.at>0){e.sent.id=`custom-sheet:${e.ck}:${e.sent.at}`;e.sendCloudPending=true;ver++;Session.schedule();}if(e.sendCloudPending && S.cloud.ok)await syncSent(e);continue;}
       if(!e.sendIntent)continue;
       const rows=currentRows(e);if(!rows.length || rows.length!==Object.keys(e.sendIntent.lines).length || rows.some(r=>r.state==="gone" || window.Cancelled?.has?.(r.order.receiptId)))continue;
@@ -7307,19 +7308,32 @@ const CustomSheet = window.CustomSheet = (() => {
           const e=had || {ck:rec.ck,rid:String(rec.rid),at:rec.at || rec.sent.at,files:[]};e.files=rec.files.map(F=>Object.assign({},F,localFiles.get(F.id) || {},{cloud:F.cloud || localFiles.get(F.id)?.cloud,state:"ready"}));
           const local=had && (had.sent || had.sendIntent), kept=Object.assign({},rec.sent,{lines:Object.fromEntries(Object.entries(rec.sent.lines).map(([key,pcs])=>[key,pcs.map((pc,n)=>{const old=local?.lines?.[key]?.[n];return old?.removed && old.f===pc.f && old.i===pc.i?Object.assign({},pc,{removed:old.removed}):Object.assign({},pc);})]))});
           if(rec.phase==="sent"){e.sent=kept;delete e.sendIntent;delete e.sendError;e.sendCloudPending=false;}else if(!e.sent)e.sendIntent=Object.assign({},kept,{pressed:true});
+          if(rec.legacy)e.legacy=true;
           owner[rec.ck]=e;updated++;
         }
     if(updated){ver++;Session.schedule();redraw();}return updated;
   }
+  // Old Send to Sheet receipts predate the durable card records. Ask only about
+  // explicitly known custom lines already on sheets; ordinary orders need no history reads.
+  function legacyKeys(rows=Orders.rows()) {
+    const customIds=new Set();for(const sh of allSheets())for(const charm of sh.charms || [])if(charm.custom || charm.customCk)customIds.add(charm.poolId);
+    return [...new Set(rows.filter(r=>!decisionOf(r) && (r.poolIds || []).length && (r.spec?.special || r._pools?.some(p=>p.custom) || r.poolIds.some(id=>B.pool.rows.get(id)?.custom || customIds.has(id)))).map(r=>r.key))];
+  }
   async function load(opts={}) {
     if(loading)return loading;if(!S.cloud.ok)return recover();
-    const owner=all(),rows=Orders.rows(),keys=[...new Set([...Object.keys(owner),...rows.map(r=>Review.cardKey(r)).filter(Boolean)])],lineKeys=rows.map(r=>r.key);
-    const sig=JSON.stringify([keys.slice().sort(),lineKeys.slice().sort()]);
+    const owner=all(),rows=Orders.rows(),keys=[...new Set([...Object.keys(owner),...rows.map(r=>Review.cardKey(r)).filter(Boolean)])],lineKeys=rows.map(r=>r.key),legacyLineKeys=legacyKeys(rows);
+    const sig=JSON.stringify([keys.slice().sort(),lineKeys.slice().sort(),legacyLineKeys.slice().sort()]);
     if(!opts.force && loadedOwner===owner && loadedSig===sig && Date.now()-loadedAt<60000)return recover();
     loadedOwner=owner;loadedSig=sig;loadedAt=Date.now();
     loading=(async()=>{let updated=0;
       try{for(let i=0;i<Math.max(keys.length,lineKeys.length);i+=800){
-        const reply=await api("charmNestLibrary",{op:"customSheetGet",keys:keys.slice(i,i+800),lineKeys:lineKeys.slice(i,i+800)},{quiet:true});if(all()!==owner)return 0;
+        const reply=await api("charmNestLibrary",{op:"customSheetGet",keys:keys.slice(i,i+800),lineKeys:lineKeys.slice(i,i+800),legacyLineKeys:i ? [] : legacyLineKeys.slice(0,40)},{quiet:true});if(all()!==owner)return 0;
+        updated+=hydrate(reply.records,owner);
+      }
+      // Legacy evidence has its own smaller server budget. Page every candidate
+      // without repeating modern reads or starving later lines behind missing history.
+      for(let i=40;i<legacyLineKeys.length;i+=40){
+        const reply=await api("charmNestLibrary",{op:"customSheetGet",legacyLineKeys:legacyLineKeys.slice(i,i+40)},{quiet:true});if(all()!==owner)return 0;
         updated+=hydrate(reply.records,owner);
       }if(updated){ver++;Session.schedule();redraw();}await recover();return updated;
       }catch(err){loadedAt=Date.now()-45000;console.warn("Custom design recovery",err);await recover();return 0;}
@@ -7328,6 +7342,7 @@ const CustomSheet = window.CustomSheet = (() => {
   /** preparePool for a line sent from its card: its pieces from the card's files, each on its own metal. */
   async function prepare(row, run) {
     const e = sentOf(row), mine = decisionLines(e)[row.key] || [];
+    if(e?.legacy)return null; // historical evidence may display a send, never manufacture new sheet pieces
     if(e?.sendIntent && !e.sendIntent.pressed)return null; // background intake waits until the original press has lifted
     if (!mine.length) { row.state = "noDesign"; row.reason = "made with its order's other line"; return null; }
     const sp = row.spec, rid = row.order.receiptId, pools = [], charms = [];
@@ -7798,7 +7813,7 @@ const CustomSheet = window.CustomSheet = (() => {
     }, delay || 0);
     return true;
   }
-  return { add, send, prepare, sentOf, decisionOf, sending, recover, load, hydrate, piecesOf, dropPieces, metalOf: metalOfRow, cardOf, stamp, stripHtml, buttonsHtml, wire, open, shut, prune, notReady, isOpen: () => !!(D.dlg && D.dlg.open), entries: all };
+  return { add, send, prepare, sentOf, decisionOf, sending, recover, load, hydrate, legacyKeys, piecesOf, dropPieces, metalOf: metalOfRow, cardOf, stamp, stripHtml, buttonsHtml, wire, open, shut, prune, notReady, isOpen: () => !!(D.dlg && D.dlg.open), entries: all };
 })();
 
 /* ═══ 23b · Custom Orders — is this line a custom order? ════════════════════
@@ -8521,11 +8536,11 @@ const Review = window.Review = (() => {
     const open = [], done = [], sent = [], recent = [], seen = new Set(), groups = new Map();
     const itemFor = (key, extra) => { const it = infoItems.get(key) || { kind: "customOrder", key, info: true, t: Date.now() }; Object.assign(it, extra); infoItems.set(key, it); seen.add(key); return it; };
     for (const row of Orders.rows()) {
-      const sp = row.spec, decision = CustomSheet.decisionOf(row);
-      if (!sp || !(sp.special || sp.customDone || decision) || row.state === "gone") continue;
+      const sp = row.spec, decision = CustomSheet.decisionOf(row), pending = CustomSheet.sending?.(row);
+      if (!sp || !(sp.special || sp.customDone || decision || pending) || row.state === "gone") continue;
       const isDone = !!sp.customDone && !sentToSheet(sp.customDone), isSent = !isDone && !!decision;
       if (!isSent && decided.has(row.key)) continue;
-      if (!isDone && !isSent && ((row.problems || []).length || row.hold || ["committed", "skipped"].includes(row.state))) continue;
+      if (!isDone && !isSent && !pending && ((row.problems || []).length || row.hold || ["committed", "skipped"].includes(row.state))) continue;
       const key = (isDone ? "cdone:" : isSent ? "csent:" : "cinfo:") + customKey(row).slice(4);
       if (!groups.has(key)) groups.set(key, { key, done: isDone, decided: isSent, rows: [] });
       groups.get(key).rows.push(row);
@@ -8546,7 +8561,7 @@ const Review = window.Review = (() => {
     return { open, done, sent, recent };
   }
   /** Lines of a Custom Orders card that can have a QR label printed: those not on their way to the laser. */
-  const printable = it => !it.decided && (it.kind === "customOrder" || !!it.act) && (it.done ? !!(it.row || (it.record && (it.record.label || it.record.hasLabel))) : rowsOf(it).some(r => !(r.poolIds || []).length));
+  const printable = it => !it.decided && !rowsOf(it).some(r=>CustomSheet.sending?.(r)) && (it.kind === "customOrder" || !!it.act) && (it.done ? !!(it.row || (it.record && (it.record.label || it.record.hasLabel))) : rowsOf(it).some(r => !(r.poolIds || []).length));
   /** The decision card inside another view (the order window): rebuilt only when its decision changed, and then with
    *  what was typed or picked carried over, as the Review list does. The window used to rebuild it on every repaint, so
    *  a repool elsewhere emptied the field being typed in. */
@@ -8606,11 +8621,15 @@ const Review = window.Review = (() => {
     // (each button keeps the seals it made, for good: a reopened order's too, Paul 29 Sep 00:35)
     const sentActs=it.decided?seals+(cs?.files?.length?'<button type="button" class="btn ghost sm" data-cu-designs>View designs</button>':'')
       +'<button type="button" class="btn ghost sm" data-cu-sheet>Open sheet</button><button type="button" class="btn ghost sm" data-cu-history>History</button>':'';
-    const acts=it.decided?sentActs:busy?busy
+    // Placement alone is not a recorded send. Keep its existing Open card useful while the original decision is
+    // absent: these are read-only links to its actual pool/sheet membership and timeline, with no inferred seal.
+    const placedActs=!it.decided&&row&&group.some(r=>(r.poolIds || []).length)
+      ?'<button type="button" class="btn ghost sm" data-cu-sheet>Open sheet</button><button type="button" class="btn ghost sm" data-cu-history>History</button>':'';
+    const acts=(it.decided?sentActs:busy?busy
       :cx&&!cx.done?column(cx)
       :(cu?CustomPrint.failNote(it):'')
       +(cu&&printable(it)&&!cs?.busy?CustomPrint.buttonHtml(it,'print',printed?'sealedPrint':'ghost',printed?'Print again':'Print QR label',`print this order's 1 × 1 in QR sticker for the sorting station${printed?' again':''}`,'sm','data-seal-btn'):'')+seals
-      +(cu&&it.done&&row?`<button class="btn ghost sm" data-cu-reopen title="move this order back to Open (a printed label stays printed)">Reopen</button>`:'');
+      +(cu&&it.done&&row?`<button class="btn ghost sm" data-cu-reopen title="move this order back to Open (a printed label stays printed)">Reopen</button>`:''))+placedActs;
     const media=row?ListMedia.pair(row):`<div class="compareUnavailable">${cu?'Order no longer in the pull':'Production review'}</div>`;
     const summary=row?purchaseMarkup(row):rec?`<div class="purchaseType"><span class="purchaseLabel">Listing</span><strong>${esc(rec.title || '—')}</strong></div>`:'<span class="purchaseMissing">Sheet-level decision</span>';
     node.innerHTML=media+`<div class="engravingIdentity"><span class="queueLabel">${esc(queue)}</span><div class="engravingOrder"><b class="mono">${esc(row?.order?.receiptId || it.rid || 'Production')}</b><span class="sku mono">${esc(row?.spec?.designSku || row?.line?.sku || rec?.sku || '')}</span></div><span class="purchaseLabel${aiChip?' aiLabel':''}">${esc(cu?(spc?.label || 'Custom order'):(KIND_WORDS[it.kind] || it.kind))}${aiChip}</span><span class="rowExcerpt reviewReason" title="${esc(it.why || '')}">${esc((cu&&!it.info&&row&&!row.spec?.special?.decided&&row.spec?.special?.read?.summary) || it.why || 'Decision needed')}</span>${group.length>1 ? `<span class="groupScope">${orders.size} orders · ${group.length} lines · first item shown</span>` : ''}</div><div class="purchaseSummary">${summary}</div><div class="rowActions">${acts}</div>${cs?CustomSheet.stripHtml(cx):''}`;
@@ -10841,7 +10860,7 @@ const OrderWin = window.OrderWin = (() => {
       // New sends keep artwork and their receipt separately from hand completion.
       // Read every known line in one bounded request; historical lookup never re-pools it.
       try {
-        const reply = await sheetRead({ op: "customSheetGet", lineKeys: rows.map(row => row.key) });
+        const reply = await sheetRead({ op: "customSheetGet", lineKeys: rows.map(row => row.key), legacyLineKeys: CustomSheet.legacyKeys?.(rows) || [] });
         const records = Array.isArray(reply.records) ? reply.records : Object.values(reply.records || {});
         const known = new Set(rows.map(row => row.key));
         for (const rec of records) {

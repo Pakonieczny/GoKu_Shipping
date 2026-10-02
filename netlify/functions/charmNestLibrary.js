@@ -2300,9 +2300,80 @@ async function op_customSheetPut(b) {
     return { ok: true, record: customSheetRow(next) };
   });
 }
+/* Older Send to Sheet saved its receipt only in that browser. Recover it from a recorded designSent decision plus
+   the exact custom pool copies and uploaded sources, never from a placement, a sheet's date or a screenshot.
+   Explicit candidate lines only: no scan of regular orders, no writes, and no inferred copies to put back on a sheet. */
+async function legacyCustomSheets(lineKeys, known) {
+  const lines = [...new Set(lineKeys.map(String).filter(k => lineKeyOk(k) && orderOfKey(k)))], candidates = lines.filter(k => !Object.values(known).some(r => r.sent?.lines && Object.prototype.hasOwnProperty.call(r.sent.lines, k))).slice(0, 40);
+  const records = Object.create(null), events = new Map(), sheets = new Map(), end = Date.now() + 3500;
+  let timedOut = false, next = 0;
+  async function read(task) {
+    const left = end - Date.now(); if (left <= 0) { timedOut = true; return null; }
+    let timer;
+    try { return await Promise.race([task, new Promise(resolve => { timer = setTimeout(() => { timedOut = true; resolve(null); }, left); })]); }
+    catch (_) { return null; } finally { clearTimeout(timer); }
+  }
+  const timelineFor = rid => {
+    if (!events.has(rid)) events.set(rid, read(db.collection(PREFIX + Timeline.COL).where("orderId", "==", rid).where("type", "==", "designSent").limit(101).select("orderId", "type", "lineKey", "at", "by", "source", "station", "data").get()));
+    return events.get(rid);
+  };
+  const sheetFor = id => {
+    if (!sheets.has(id)) sheets.set(id, read(db.getAll(col(SHEETS).doc(id), { fieldMask: ["sources", "charms"] })).then(rows => rows?.[0] || null));
+    return sheets.get(id);
+  };
+  async function recover(lineKey) {
+    const rid = orderOfKey(lineKey), history = await timelineFor(rid);
+    if (!history || history.size > 100 || Date.now() >= end) return;
+    const decisions = history.docs.map(d => ({ id: d.id, ...d.data() })).filter(e => e.orderId === rid && e.type === "designSent" && e.lineKey === lineKey && num(e.at) > 1e12 && str(e.by, 80).trim() && (!e.source || e.source === "sorter"));
+    if (!decisions.length) return;
+    const snap = await read(col(POOL).where("lineKey", "==", lineKey).limit(301).get());
+    if (!snap || snap.size > 300 || Date.now() >= end) return;
+    const pool = snap.docs.map(d => ({ ...d.data(), poolId: d.id })).filter(p => p.custom === true && String(p.orderId) === rid && p.lineKey === lineKey).sort((a, b) => num(a.copy) - num(b.copy));
+    if (!pool.length || pool.some((p, i) => p.copy !== i + 1 || p.poolId !== `${lineKey}_${i + 1}` || !/^charmnest\/(sandbox\/)?custom\//.test(p.aiPath || ""))) return;
+    const sheetIds = [...new Set(pool.map(p => p.sheetId).filter(isId))];
+    if (sheetIds.length > 40) return;
+    const loaded = [];
+    for (let i = 0; i < sheetIds.length && Date.now() < end; i += 8) loaded.push(...await Promise.all(sheetIds.slice(i, i + 8).map(sheetFor)));
+    if (Date.now() >= end) return;
+    const sheetRows = loaded.filter(d => d?.exists).map(d => d.data());
+    for (const event of decisions.sort((a, b) => num(b.at) - num(a.at)).slice(0, 10)) {
+      const metadata = event.data?.files, count = num(event.data?.pieces);
+      if (!Array.isArray(metadata) || !metadata.length || !Number.isInteger(count) || count !== pool.length || pool.some(p => num(p.quantity) !== count)) continue;
+      const paths = new Map(), files = [], mapping = [], seenCounts = new Map(); let valid = true, lastFile = -1;
+      for (const p of pool) {
+        const choices = metadata.map((f, i) => ({ f, i })).filter(({ f }) => f?.name === p.customFile && f.metal === p.material);
+        if (choices.length !== 1) { valid = false; break; }
+        const { f: original, i: fileNo } = choices[0], pieces = num(original.pieces), qty = num(original.qty);
+        if (!Number.isInteger(pieces) || pieces < 1 || pieces > 10000 || !Number.isInteger(qty) || qty < 1 || qty > 99 || fileNo < lastFile || (paths.has(fileNo) && paths.get(fileNo) !== p.aiPath) || files.some(f => f.cloud.path === p.aiPath && f.legacyFileNo !== fileNo)) { valid = false; break; }
+        paths.set(fileNo, p.aiPath); lastFile = fileNo;
+        const index = (seenCounts.get(fileNo) || 0) % pieces;
+        const descriptors = sheetRows.flatMap(sh => Array.isArray(sh.charms) ? sh.charms : []).filter(c => c?.poolId === p.poolId && c.custom === true), descriptor = descriptors[0];
+        if (descriptors.some(c => c.aiPath && c.aiPath !== p.aiPath || Number.isInteger(c.index) && c.index !== index)) { valid = false; break; }
+        let file = files.find(f => f.legacyFileNo === fileNo);
+        if (!file) {
+          const source = sheetRows.flatMap(sh => Array.isArray(sh.sources) ? sh.sources : []).find(src => src?.custom === true && src.path === p.aiPath && (!descriptor || src.id === descriptor.sourceId));
+          // Resolve its current download URL through the existing output helper when opened; old signed URLs can expire.
+          file = { id: "legacy-" + customSheetHash(p.aiPath).slice(0, 24), name: str(original.name, 200), kind: /\.dxf$/i.test(original.name) ? "dxf" : "ai", size: Math.max(0, num(source?.bytes)), hash: str(source?.hash, 100), cloud: { path: p.aiPath, url: "" },
+            metal: p.material, qty, pieces, wMm: 0, hMm: 0, maxPt: 0, minPt: 0, maxAreaPt2: 0, state: "ready", legacyFileNo: fileNo };
+          files.push(file);
+        }
+        if (descriptor) { file.maxPt = Math.max(file.maxPt, num(descriptor.widthPt), num(descriptor.heightPt)); file.minPt = Math.max(file.minPt, Math.min(num(descriptor.widthPt), num(descriptor.heightPt))); file.maxAreaPt2 = Math.max(file.maxAreaPt2, num(descriptor.areaPt2)); }
+        const pc = { f: file.id, i: index }; if (num(p.removedAt) > 0) pc.removed = str(p.removedReason, 120) || true;
+        mapping.push(pc); seenCounts.set(fileNo, (seenCounts.get(fileNo) || 0) + 1);
+      }
+      if (!valid || files.some(f => (seenCounts.get(f.legacyFileNo) || 0) % f.pieces || (seenCounts.get(f.legacyFileNo) || 0) / f.pieces > f.qty || !isMetal(f.metal))) continue;
+      files.forEach(f => { delete f.legacyFileNo; });
+      const ck = `legacy-custom:${lineKey}:${num(event.at)}`, sent = { id: event.data?.decisionId || event.id, at: num(event.at), by: str(event.by, 80).trim(), lines: { [lineKey]: mapping } };
+      records[ck] = { ck, rid, at: sent.at, phase: "sent", legacy: true, files, sent, history: [{ phase: "sent", id: sent.id, at: sent.at, by: sent.by }] };
+      return;
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(4, candidates.length) }, async () => { while (next < candidates.length && Date.now() < end) await recover(candidates[next++]); }));
+  return { records, truncated: timedOut || next < candidates.length || lines.length > 40 };
+}
 async function op_customSheetGet(b) {
-  if (!Array.isArray(b.keys) && !Array.isArray(b.lineKeys)) return { error: "known custom card keys or line keys required" };
-  const asked = [...new Set((b.keys || []).filter(customSheetKeyOk))], lines = [...new Set((b.lineKeys || []).map(String).filter(lineKeyOk))];
+  if (!Array.isArray(b.keys) && !Array.isArray(b.lineKeys) && !Array.isArray(b.legacyLineKeys)) return { error: "known custom card keys or line keys required" };
+  const asked = [...new Set((Array.isArray(b.keys) ? b.keys : []).filter(customSheetKeyOk))], lines = [...new Set((Array.isArray(b.lineKeys) ? b.lineKeys : []).map(String).filter(lineKeyOk))];
   const keys = new Set(asked.slice(0, 1000));
   for (let i = 0; i < Math.min(lines.length, 1000); i += 100) {
     const snaps = await db.getAll(...lines.slice(i, Math.min(i + 100, 1000)).map(customSheetLineRef));
@@ -2318,7 +2389,9 @@ async function op_customSheetGet(b) {
       if (budget.late()) return { records, keys: read, truncated: read < list.length || keys.size > 1000 || lines.length > 1000 };
     }
   }
-  return { records, keys: read, truncated: keys.size > 1000 || asked.length > 1000 || lines.length > 1000 };
+  const legacy = Array.isArray(b.legacyLineKeys) ? await legacyCustomSheets(b.legacyLineKeys, records) : null;
+  if (legacy) Object.assign(records, legacy.records);
+  return { records, keys: read, truncated: keys.size > 1000 || asked.length > 1000 || lines.length > 1000, ...(legacy ? { legacyTruncated: legacy.truncated } : {}) };
 }
 
 /* how: "print" (the QR label was printed, the default) or "button" (Complete Order, 27 Sep: completed with no label

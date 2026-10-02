@@ -182,11 +182,45 @@ const cards = prefix => [...store.entries()].filter(([key]) => key.startsWith((p
     assert.equal(result.record.sent.by, "Paul");
     await ok({ op: "customSheetGet", keys: [ck], sandbox: true });
     assert.equal(broadReads, 0); assert.equal([...store.keys()].some(key => key.includes("Charm_Pool/") || key.includes("Charm_Nest_Sheets/") || key.includes("Charm_Custom_Orders/")), false, "send persistence never changes nested copies, sheet stages, QR labels, engraving or completion");
+    // No modern receipt or local customDesigns: the real old ledger is the only decision authority.
+    const legacyOrder = "4174476673", legacyLine = legacyOrder + "_5218516944", legacyAt = at - 86400000, legacySheet = "sheet-custom-legacy", legacyPath = "charmnest/custom/" + legacyOrder + "/hash-Old_design.pdf";
+    const legacyEventKey = "Sandbox_Order_Timeline/" + legacyOrder + "~designSent~" + legacyLine + "." + legacyAt;
+    store.set(legacyEventKey, { orderId: legacyOrder, lineKey: legacyLine, type: "designSent", at: legacyAt, by: "Seth", source: "sorter", station: "sorter", data: { files: [{ name: "Old design.ai", qty: 2, pieces: 2, metal: "gold" }], pieces: 4, placed: true } });
+    for (let i = 1; i <= 4; i++) store.set("Sandbox_Charm_Pool/" + legacyLine + "_" + i, { poolId: legacyLine + "_" + i, orderId: legacyOrder, lineKey: legacyLine, copy: i, quantity: 4, custom: true, customFile: "Old design.ai", aiPath: legacyPath, material: "gold", sheetId: legacySheet, state: "written" });
+    store.set("Sandbox_Charm_Nest_Sheets/" + legacySheet, { id: legacySheet, sources: [{ id: "source-legacy", custom: true, hash: "original-file-hash", path: legacyPath, url: "https://saved.example/legacy.pdf?Expires=1", bytes: 3456 }], charms: Array.from({ length: 4 }, (_, i) => ({ poolId: legacyLine + "_" + (i + 1), custom: true, sourceId: "source-legacy", aiPath: legacyPath, index: i % 2, widthPt: 30, heightPt: 20, areaPt2: 450 })) });
+    const beforeLegacyRead = [...writes];
+    all = await ok({ op: "customSheetGet", legacyLineKeys: [legacyLine], sandbox: true });
+    let legacy = Object.values(all.records)[0]; assert(legacy);
+    assert.equal(legacy.legacy, true); assert.equal(legacy.phase, "sent"); assert.equal(legacy.sent.id, legacyEventKey.split("/")[1]);
+    assert.equal(legacy.sent.at, legacyAt); assert.equal(legacy.sent.by, "Seth", "restore uses the original recorded decision, never the current reviewer or today's time");
+    assert.deepEqual(legacy.sent.lines[legacyLine].map(pc => pc.i), [0, 1, 0, 1]); assert.equal(legacy.files[0].cloud.path, legacyPath); assert.equal(legacy.files[0].cloud.url, "", "legacy preview resolves the authoritative cloud path instead of reusing an expired signed URL");
+    assert.equal(legacy.files[0].hash, "original-file-hash"); assert.deepEqual([...writes], beforeLegacyRead, "legacy lookup creates no receipt, timeline, pool, sheet, approval or completion writes");
+    const removedPool = store.get("Sandbox_Charm_Pool/" + legacyLine + "_2"); removedPool.removedAt = at; removedPool.removedReason = "custom cleanup";
+    legacy = Object.values((await ok({ op: "customSheetGet", legacyLineKeys: [legacyLine], sandbox: true })).records)[0];
+    assert.equal(legacy.sent.lines[legacyLine][1].removed, "custom cleanup", "historical cleanup survives browser-independent reconstruction");
+    const savedEvent = store.get(legacyEventKey); store.delete(legacyEventKey);
+    store.set("Sandbox_Order_Timeline/" + legacyOrder + "~placed~old", { orderId: legacyOrder, lineKey: legacyLine, type: "placed", at, by: "Paul", sheetId: legacySheet });
+    all = await ok({ op: "customSheetGet", legacyLineKeys: [legacyLine], sandbox: true });
+    assert.equal(Object.keys(all.records).length, 0, "a normal custom placement with no actual Send to Sheet event cannot fabricate a send decision");
+    store.set(legacyEventKey, savedEvent);
+    store.get("Sandbox_Charm_Nest_Sheets/" + legacySheet).charms[0].index = 1;
+    assert.equal(Object.keys((await ok({ op: "customSheetGet", legacyLineKeys: [legacyLine], sandbox: true })).records).length, 0, "inconsistent multi-piece geometry is not silently assigned a made-up index");
+    store.get("Sandbox_Charm_Nest_Sheets/" + legacySheet).charms[0].index = 0;
+    const missingPoolKey = "Sandbox_Charm_Pool/" + legacyLine + "_4", savedPool = store.get(missingPoolKey); store.delete(missingPoolKey);
+    assert.equal(Object.keys((await ok({ op: "customSheetGet", legacyLineKeys: [legacyLine], sandbox: true })).records).length, 0, "a partial old pool cannot fabricate missing sent copies");
+    store.set(missingPoolKey, savedPool);
+    store.get(missingPoolKey).aiPath = null;
+    assert.equal(Object.keys((await ok({ op: "customSheetGet", legacyLineKeys: [legacyLine], sandbox: true })).records).length, 0, "a historic decision alone is insufficient without recoverable uploaded artwork evidence");
+    store.get(missingPoolKey).aiPath = legacyPath;
+    savedEvent.by = "";
+    assert.equal(Object.keys((await ok({ op: "customSheetGet", legacyLineKeys: [legacyLine], sandbox: true })).records).length, 0, "no historical signer is guessed from the later placement"); savedEvent.by = "Seth";
+    assert.equal(Object.keys((await ok({ op: "customSheetGet", keys: [], sandbox: true })).records).length, 0, "legacy scans require explicit candidate line keys");
+    assert.deepEqual([...writes], beforeLegacyRead);
     reads.clear();
     const keys = Array.from({ length: 1010 }, (_, i) => "custom:bounded:" + i);
     all = await ok({ op: "customSheetGet", keys });
     assert.equal(all.keys, 1000); assert.equal(all.truncated, true); assert.equal(reads.size, 1000, "known-key reads are bounded and report omitted keys");
-    console.log("Custom Send API resilience OK: durable intent, atomic sent history, exact retry, original signer/time/copy mapping, line lookup, monotonic cleanup metadata, conflict protection, sandbox isolation and bounded read-only recovery");
+    console.log("Custom Send API resilience OK: durable intent, atomic sent history, exact retry, original signer/time/copy mapping, line lookup, monotonic cleanup metadata, conflict protection, sandbox isolation, evidence-backed legacy recovery and bounded read-only recovery");
   } finally { console.warn = warn; console.error = error; }
 })().catch(error => { console.error(error); process.exitCode = 1; }).finally(() => {
   Module._load = originalLoad;
