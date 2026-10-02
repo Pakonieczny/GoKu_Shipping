@@ -51,6 +51,8 @@ const assets = [
   "brites-ad-format-policy.js",
   "brites-campaign-styles.js",
   "brites-ad-motion.js",
+  "brites-approval-review.js",
+  "brites-approval-review.css",
   "brites-brand-assets.js",
   "assets/brites-brand/logo-square.png",
   "assets/brites-brand/logo-wide.png",

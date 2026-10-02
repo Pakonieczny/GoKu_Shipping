@@ -324,6 +324,7 @@
     "googleAdsAdQuality.js",
     "googleAdsAutopilot.js",
     "googleAdsCampaignStyles.js",
+    "googleAdsSubmissionReview.js",
     "googleAdsDataManager.js",
     "googleAdsEvaluation.js",
     "googleAdsGeminiVideo.js",

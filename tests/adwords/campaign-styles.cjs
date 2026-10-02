@@ -40,13 +40,18 @@ vm.runInContext(source+'\nthis.factory=engine;this.memoryFactory=memory;',ctx);
  const refs=new Set(ops.map(o=>Object.values(o)[0]?.create?.resourceName).filter(Boolean));
  for(const match of JSON.stringify(ops).matchAll(/customers\/123\/(?:assets|campaigns|campaignBudgets|assetGroups|adGroups)\/-\d+/g))assert(refs.has(match[0]),'unresolved temporary reference '+match[0]);
  assert(plan.payload.generatedAssets.filter(a=>a.fixed).every(a=>a.asset.bytes<=150*1024&&a.asset.width===300&&a.asset.height===250));
+ // Excluding saved films never reads/attaches a motion job; fixed layouts cannot silently use obsolete copy.
+ E.bind({_latestMotionJob:async()=>{throw Error('Excluded videos must not be inspected for inclusion');}});
+ const withoutFilms=await E.get('_prepareCampaignStyles')({item:{...item,designReview:{...item.designReview,includeVideos:false}},context:{w,product:{id:'1',title:'Peach Charm',url:'https://britesjewelry.com/products/peach',offerIds:['shopify_US_1_2']}},choice:R.selection(['pmax'],{pmax:10},['2840']),identity:'c'.repeat(64)});
+ assert.match(withoutFilms.summary.videoStatus,/Saved videos are excluded/);assert(!withoutFilms.payload.meta.motion);assert(!withoutFilms.payload.mutateOperations.some(o=>o.assetGroupAssetOperation?.create.fieldType==='YOUTUBE_VIDEO'));
+ await assert.rejects(()=>E.get('_prepareCampaignStyles')({item:{...item,designReview:{...item.designReview,copyEdited:true}},context:{w,product:{id:'1',title:'Peach Charm'}},choice:R.selection(['fixed_display'],{fixed_display:5},['2840']),identity:'d'.repeat(64)}),/edited messaging differs/);
  // The daily ceiling is refused while preparing, before any plan is built; a plan inside it proceeds.
  const id='design-review-'+'a'.repeat(32),reviewHash='r'.repeat(64);let prepared=0;
  await f.db.collection('Brites_GAds_Approvals').doc(id).set({type:'adDesignSubmission',status:'PENDING',reviewHash,sourceHash:E.get('_adDesignSelectionHash')(w),designReview:{workspaceId:'test',context:w.context}});
  E.bind({_adDesignPublicationContext:async()=>({w,product:{id:'1',title:'Peach Charm',url:'https://britesjewelry.com/products/peach',offerIds:['shopify_US_1_2']}}),control:async()=>({maxDailyBudgetTotal:100,budgetCurrency:'CAD'}),_enabledBudgetTotal:async()=>28,_prepareCampaignStyles:async({identity})=>{prepared++;return {identity,hash:'plan',payload:{},summary:{campaigns:[]}};}});
  const ask=pmax=>E.E.publishAdDesignSubmission({id,hash:reviewHash,prepareOnly:true,styles:['pmax'],budgets:{pmax},countries:['2840'],durations:{pmax:42}});
  await assert.rejects(()=>ask(90),/Over your daily ceiling.*CAD 90\.00.*CAD 72\.00/);assert.equal(prepared,0);
- assert.equal((await ask(40)).planHash,'plan');assert.equal(prepared,1);
+ assert.equal((await ask(40)).planHash,'plan');assert.equal(prepared,1);await ask(40);assert.equal(prepared,1,'matching saved plan is reused');const reviewRef=f.db.collection('Brites_GAds_Approvals').doc(id);await reviewRef.update({reviewHash:'edited'});await E.E.publishAdDesignSubmission({id,hash:'edited',prepareOnly:true,styles:['pmax'],budgets:{pmax:40},countries:['2840'],durations:{pmax:42}});assert.equal(prepared,2,'copy review hash participates in plan identity');
  console.log('PASS campaign selection, budgets, all three routed builders, fixed-size filtering, disjoint references, frozen approval, image materialization, supported ad fields, the 4:1 brand logo, disclosed bidding and the ceiling checked at preparation');
  require('./suite-guard.cjs').done();
 })();
