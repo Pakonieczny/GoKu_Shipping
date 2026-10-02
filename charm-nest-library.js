@@ -200,6 +200,8 @@
       // Nothing disappears or gains a seal until the server accepts the laser-stage check.
       const r = await api('charmNestLibrary',{op:'laserDone',kind,id,done,by:by || undefined,stage:done?'laser':undefined,device:'charm-nest-1',via},{label:done?'Marking completed':'Returning to Laser cutting'});
       const t = r.at || Date.now();
+      // the efficiency record (station-activity.js): the laser operator's check, or taking it back (an undo); the pieces are the sheets' charms
+      try { window.CNAct && window.CNAct(done ? 'complete' : 'undo', { parts: (r.sheetIds && r.sheetIds.length ? r.sheetIds : ids).reduce((n, x) => n + (+((recordOf(x) || {}).pieces) || 0), 0), detail: `${name} ${done ? 'marked completed (laser)' : 'returned to Laser cutting'}` }); } catch (_) {}
       for (const x of r.sheetIds || []) note('sheet:' + x,done,t,r.by);
       if (kind === 'set') note(key,done,t,r.by);
       if (r.setId && r.setDone != null) note('set:' + r.setId,!!r.setDone,t,r.by);

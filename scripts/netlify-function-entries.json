@@ -26,6 +26,7 @@
     "designArchive.js",
     "duplicateListing.js",
     "emailCapture.js",
+    "employeeEfficiency.js",
     "essenceProxy-background.js",
     "etsyApiProbe.js",
     "etsySandbox.js",
