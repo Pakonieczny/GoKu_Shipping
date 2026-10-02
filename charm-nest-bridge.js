@@ -9359,7 +9359,7 @@ const OrderWin = window.OrderWin = (() => {
     W.dlg.addEventListener("close", () => {
       if (W.dlg.open) return; giveBack(0); clearTimeout(W.noteTimer); saveNote(); if (W.early) refreshNote({ order: { receiptId: W.early.rid } }); clearInterval(W.poll); W.poll = 0; W.key = null; stashTray();
       W.closing = false; stopMotion(); flightGone(); W.dlg.classList.remove("owGrow", "owBack"); endFind();
-      unmountTimeline(); W.row = null; W.rows = null; W.listed = null; W.look++; sheetReset(); W.dlg.classList.remove("owCancelled"); lookDone();
+      unmountTimeline(); W.row = null; W.rows = null; W.listed = null; W.look++; sheetReset(); SV.shown = null; W.dlg.classList.remove("owCancelled"); lookDone();
       try { window.CustomerMail?.orderClosed(); } catch (_) {}
     });
     // back from a Send to Sheet flight that took the view out of the way (SendTour): drawn as it is now, still unseen
@@ -10161,17 +10161,18 @@ const OrderWin = window.OrderWin = (() => {
   /* ── the Sheet view: the order's sheet(s) drawn large, its pieces in gold and ringed, every other charm on the sheet
      drawn whole and sharp beside them — nothing is ever laid over the sheet (SheetWin.drawOrder),
      its back engraving and every piece of the order; "Open full sheet" hands over to the sheet window and comes back ── */
-  const SV = { q: "", rid: null, list: null, at: 0, tok: 0, epoch: 0, info: null, pools: null, focus: null, finding: null, drawing: null, fade: null };
+  const SV = { q: "", rid: null, list: null, at: 0, tok: 0, epoch: 0, info: null, shown: null, pools: null, focus: null, finding: null, drawing: null, fade: null };
   // while a sheet is read the plate steps back a little; only one such fade at a time, and it is always let go of, so a
   // sheet switched while the last was still reading never leaves the plate half-faded (a haze over the charms)
   function plateFade(a) { if (SV.fade) tryDo(() => SV.fade.cancel()); SV.fade = a || null; }
   function sheetPause() { SV.tok++; SV.info = null; SV.drawing = null; const cv = byId("owSheetCv"); if (cv) { cv._order?.dispose?.(); cv._claim = {}; } plateFade(null); plateWait(null); const tip = byId("owPlateTip"); if (tip) tip.hidden = true; }
-  function sheetReset() { SV.q = ""; SV.rid = null; SV.list = null; SV.at = 0; SV.epoch++; SV.pools = null; SV.focus = null; SV.finding = null; sheetPause(); unpick();
+  function sheetReset() { SV.q = ""; SV.rid = null; SV.list = null; SV.at = 0; SV.epoch++; SV.pools = null; SV.focus = null; SV.finding = null; sheetPause();
     // (the way back holds only while the view shows the order it led to: closed, or walked to another order, it is let go of)
     const b = BK[BK.length - 1]; if (b && (!W.dlg || !W.dlg.open || W.closing || b.to !== W.rid)) BK.length = 0; }
-  /* another order's charm on the sheet (Paul, 28 Sep): a click offers "Open order" for it, and that moves this view to it
-     with the Previous / Next slide — never a view over the view; "Back to order N" returns to the order it came from, on
-     the same sheet, with the same charm chosen and on the same side. BK: the orders gone through, newest last. */
+  /* another order's charm on the sheet (Paul, 28 Sep; 2 Oct 21:02: "I should be able to click all of the orders on the sheet
+     and just have the page adjust to that order"): ONE click on it moves this view to that order with the Previous / Next
+     slide — never a view over the view, no "Open order" step; "Back to order N" returns to the order it came from, on the
+     same sheet, with the same charm chosen and on the same side. BK: the orders gone through, newest last. */
   const BK = [];
   let keepFor = null, slideP = null;
   const slid = () => slideP || Promise.resolve();
@@ -10277,7 +10278,7 @@ const OrderWin = window.OrderWin = (() => {
   async function sheetDrawOnce(r, cv, s, rid, tok, epoch) {
     const current = () => tok === SV.tok && epoch === SV.epoch && SV.rid === rid && W.dlg?.open && !W.closing && W.view === "sheet" && cv.isConnected && byId("owSheetCv") === cv && String(rowOf(W.key)?.order.receiptId || "") === rid;
     if (!current()) return;
-    SV.info = null; byId("owPlateTip").hidden = true; unpick();
+    SV.info = null; byId("owPlateTip").hidden = true;
     const none = byId("owPlateWrap").querySelector(".owPlateNone"); if (none) none.remove();
     if (!s) {
       cv.style.visibility = "hidden"; plateWait(null);
@@ -10286,13 +10287,15 @@ const OrderWin = window.OrderWin = (() => {
     }
     if (!window.SheetWin || !SheetWin.drawOrder) { plateWait(null); byId("owPlateWrap").insertAdjacentHTML("beforeend", `<div class="owPlateNone"><b>${esc(sheetName(s))}</b><span>The sheet window is not loaded on this page.</span></div>`); return; }
     plateWait("Reading " + sheetName(s) + "…");
-    const fade = cv.style.visibility === "hidden" || still() ? null : cv.animate([{ opacity: 1 }, { opacity: .55 }], { duration: 160, fill: "forwards" });
+    // (the sheet already on the plate, drawn again for another order of it: its pieces are told apart in place, no fade)
+    const same = !!(s.id && SV.shown && SV.shown.sheet && SV.shown.sheet.id === s.id && cv.style.visibility !== "hidden");
+    const fade = same || cv.style.visibility === "hidden" || still() ? null : cv.animate([{ opacity: 1 }, { opacity: .55 }], { duration: 160, fill: "forwards" });
     plateFade(fade);
     try {
       const info = await SheetWin.drawOrder(cv, s.id || s.page, rid, {
         isCurrent: current,
-        onInfo: inf => { if (!current()) return; inf.sheetAt = SV.at; SV.info = inf; if (SV.focus) inf.focus(SV.focus); plateFade(null); cv.style.visibility = "";
-          if (!still()) cv.animate([{ opacity: .55 }, { opacity: 1 }], { duration: 240, easing: "ease" });
+        onInfo: inf => { if (!current()) return; inf.sheetAt = SV.at; SV.info = SV.shown = inf; if (SV.focus) inf.focus(SV.focus); plateFade(null); cv.style.visibility = "";
+          if (!still() && !same) cv.animate([{ opacity: .55 }, { opacity: 1 }], { duration: 240, easing: "ease" });
           paintPanel(inf); paintFoot(inf); },
         onProgress: (d, n) => { if (current()) plateWait(d < n ? `Drawing the sheet · design ${d} of ${n}` : null); },
         // the back side waits on nothing: the plate is drawn, and this says what is still coming
@@ -10324,7 +10327,7 @@ const OrderWin = window.OrderWin = (() => {
   function paintFoot(inf) {
     const live = inf.pieces.length, orders = new Set(inf.pieces.map(x => x.rid).filter(Boolean)).size, rec = inf.rec;
     const eng = W.face === "back" && inf.engraved ? tryDo(() => inf.engraved()) || 0 : 0;
-    byId("owPlateFoot").innerHTML = `<span><b>${live}</b> charm${live === 1 ? "" : "s"}</span><span><b>${orders}</b> order${orders === 1 ? "" : "s"}</span>${rec.density ? `<span><b>${Math.round(rec.density * 100)}%</b> full</span>` : ""}<span class="r">${W.face === "back" ? `Back side, mirrored as the laser sees it${eng ? ` · ${eng} engraved` : " · nothing engraved on this sheet"}` : "Hover a charm for its order · click another order's charm to open it"}</span>`;
+    byId("owPlateFoot").innerHTML = `<span><b>${live}</b> charm${live === 1 ? "" : "s"}</span><span><b>${orders}</b> order${orders === 1 ? "" : "s"}</span>${rec.density ? `<span><b>${Math.round(rec.density * 100)}%</b> full</span>` : ""}<span class="r">${W.face === "back" ? `Back side, mirrored as the laser sees it${eng ? ` · ${eng} engraved` : " · nothing engraved on this sheet"}` : "Hover a charm for its order · click any charm to open its order"}</span>`;
   }
   /** The panel beside the plate: the sheets, the order, its charm, its back engraving and every piece of it. */
   function paintPanel(inf) {
@@ -10401,7 +10404,7 @@ const OrderWin = window.OrderWin = (() => {
     const full = panel.querySelector("[data-full]"); if (full) full.onclick = () => fullSheet(x0 && (x0.poolId || x0.id));
     const off = panel.querySelector("[data-off]"); if (off) off.onclick = () => fullSheet(x0 && (x0.poolId || x0.id));
     if(oldFind)panel.querySelector('#owSheetOrderFind')?.replaceWith(oldFind);
-    const find=byId('owSheetOrderFind');if(find){find.value=SV.q;find.oninput=()=>{SV.q=find.value;paintSheetMatches();};if(findActive)find.focus({preventScroll:true});}
+    const find=byId('owSheetOrderFind');if(find){find.value=SV.q;find.oninput=()=>{SV.q=find.value;paintSheetMatches();};find.onkeydown=e=>{if(e.key!=='Enter')return;const first=byId('owSheetMatches')?.querySelector('[data-order-rid]');if(first){e.preventDefault();first.click();}};if(findActive)find.focus({preventScroll:true});}
     paintSheetMatches();
   }
   function paintSheetMatches(){
@@ -10410,7 +10413,6 @@ const OrderWin = window.OrderWin = (() => {
     panel.classList.toggle('searching',!!q);host.hidden=!q;
     const groups=inf?.search ? inf.search(q) : O.orderGroups(inf?.pieces || [],q);
     if(!q){host.replaceChildren();return;}
-    unpick();
     host.innerHTML=groups.length ? groups.map(([rid,xs])=>`<button type="button" data-order-rid="${esc(rid)}" role="listitem"><b>${esc(rid)}</b><small>${xs.length} piece${xs.length===1?'':'s'} · ${esc([...new Set(xs.map(x=>x.sku))].join(', '))}</small></button>`).join('') : `<span class="sub">${inf?'No matching order numbers on this sheet.':'Loading sheet orders…'}</span>`;
     host.querySelectorAll('[data-order-rid]').forEach(b=>b.onclick=()=>{const x=groups.find(([rid])=>rid===b.dataset.orderRid)?.[1][0];if(!x)return;if(String(x.rid)===W.rid){SV.q='';SV.focus=x.poolId;paintPanel(inf);inf.focus(x.poolId);}else jumpTo({x,rid:String(x.rid),poolId:x.poolId || x.id});});
   }
@@ -10421,54 +10423,33 @@ const OrderWin = window.OrderWin = (() => {
     ctx.fillStyle = "rgba(200,162,78,.16)"; ctx.beginPath(); P.pathToCanvas(ctx, c.outline, t); ctx.fill("evenodd");
     tryDo(() => P.drawCharm(ctx, c, t, k)); ctx.restore();
   }
-  /** Hovering the plate names a charm's order; a click on another order's charm opens that order here. */
+  /** Hovering the plate names a charm's order; ONE click on a charm of another order opens that order here, on this sheet,
+      with that charm chosen (no label to press first, nothing laid over the neighbouring charms). The plate answers from
+      the plate as it is drawn (SV.shown), also while it is being drawn again for the order just opened, so a second click
+      in quick succession is taken as well. */
   function wirePlate() {
     const cv = byId("owSheetCv"), tip = byId("owPlateTip"); if (!cv) return;
     let raf = 0, last = null;
     cv.addEventListener("pointermove", e => {
       last = e; if (raf) return;
       raf = requestAnimationFrame(() => {
-        raf = 0; const inf = SV.info; if (!inf || !inf.hitAt || !last) return;
+        raf = 0; const inf = SV.info || SV.shown; if (!inf || !inf.hitAt || !last) return;
         const x = inf.hitAt(last.clientX, last.clientY), wrap = byId("owPlateWrap").getBoundingClientRect();
         cv.classList.toggle("hot", !!(x && x.rid));
-        if (!x || (SV.pick && SV.pick.x === x)) { tip.hidden = true; return; }   // (the charm offered already says whose it is)
+        if (!x) { tip.hidden = true; return; }
         tip.hidden = false; tip.textContent = (x.rid ? x.rid : "No order") + (x.sku ? " · " + x.sku : "");
         tip.style.left = last.clientX - wrap.left + "px"; tip.style.top = last.clientY - wrap.top + "px";
       });
     });
     cv.addEventListener("pointerleave", () => { tip.hidden = true; cv.classList.remove("hot"); });
     cv.addEventListener("click", e => {
-      const inf = SV.info; if (!inf || !inf.hitAt) return;
-      const x = inf.hitAt(e.clientX, e.clientY); if (!x || !x.rid) { unpick(); return; }
-      if (String(x.rid) === W.rid) { unpick(); SV.focus = x.poolId; inf.focus(x.poolId); paintPanel(inf); return; }
-      // another order's charm: "Open order" is offered on it (the click itself never leaves this order)
-      tip.hidden = true; pick(x);
+      const inf = SV.info || SV.shown; if (!inf || !inf.hitAt) return;
+      const x = inf.hitAt(e.clientX, e.clientY); if (!x || !x.rid) return;
+      tip.hidden = true;
+      if (String(x.rid) === W.rid) { SV.focus = x.poolId; if (SV.info) { SV.info.focus(x.poolId); paintPanel(SV.info); } return; }
+      jumpTo({ x, rid: String(x.rid), poolId: x.poolId || x.id }, inf.sheet && inf.sheet.id);
     });
-    // the offer stays on its charm as the plate is drawn at another size
-    let rs = 0; window.addEventListener("resize", () => { cancelAnimationFrame(rs); rs = requestAnimationFrame(() => { if (SV.pick) placePick(); }); });
   }
-  /** "Open order" on another order's charm: a small label on the charm itself, where the eye is (no bar, no height). */
-  function pick(x) {
-    const box = byId("owPlatePick"), inf = SV.info; if (!box || !inf) return;
-    SV.pick = { x, rid: String(x.rid), poolId: x.poolId || x.id };
-    box.innerHTML = `<span class="k">Order</span><b>${esc(SV.pick.rid)}</b>${x.sku ? `<span class="s">${esc(x.sku)}</span>` : ""}<button type="button" class="btn ghost xs" data-ow-go title="Open order ${esc(SV.pick.rid)} here — Back to order ${esc(W.rid)} brings this one back">Open order<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 17L17 7M9 7h8v8"/></svg></button>`;
-    box.hidden = false; box.classList.remove("below"); placePick();
-    const go = box.querySelector("[data-ow-go]"); go.onclick = () => jumpTo(SV.pick);
-    box.getAnimations().forEach(a => a.cancel());
-    if (!still()) { const up = box.classList.contains("below") ? -1 : 1; box.animate([{ opacity: 0, transform: `translate(-50%,${up > 0 ? "calc(-100% - 6px)" : "6px"})` }, { opacity: 1, transform: `translate(-50%,${up > 0 ? "calc(-100% - 12px)" : "12px"})` }], { duration: 200, easing: EASE }); }
-    // (the keyboard is on it at once: Enter or Space opens the order)
-    go.focus({ preventScroll: true });
-  }
-  function placePick() {
-    const box = byId("owPlatePick"), p = SV.pick, inf = SV.info; if (!box || !p || !inf || !inf.pointOf) return;
-    const pt = inf.pointOf(p.poolId), cv = byId("owSheetCv").getBoundingClientRect(), w = byId("owPlateWrap").getBoundingClientRect(); if (!pt || !cv.width) { unpick(); return; }
-    // just above the charm (below it when it sits at the top of the plate), by its size on screen
-    const st = inf.stock, px = p.x.p || {}, half = st && st.wPt ? Math.max(px.wPt || 0, px.hPt || 0) / 2 * cv.width / st.wPt : 12;
-    const below = pt.y - half - w.top < 44;
-    box.classList.toggle("below", below);
-    box.style.left = Math.round(pt.x - w.left) + "px"; box.style.top = Math.round(pt.y - w.top + (below ? half : -half)) + "px";
-  }
-  function unpick() { SV.pick = null; const box = byId("owPlatePick"); if (box && !box.hidden) { box.getAnimations().forEach(a => a.cancel()); box.hidden = true; box.innerHTML = ""; } }
   /** Keeps the side shown without a turn: the plate is drawn again on that side once the slide has landed. */
   function faceSet(f) { W.face = W.faceShown = f; byId("owFace").querySelectorAll("[data-face]").forEach(b => { const on = b.dataset.face === f; b.classList.toggle("on", on); b.setAttribute("aria-pressed", on ? "true" : "false"); }); }
   /** This view moves to another order with the Previous / Next slide; the plate is drawn for it once the slide has landed. */
@@ -10483,16 +10464,20 @@ const OrderWin = window.OrderWin = (() => {
     if (a) a.finished.then(end, end); else end();
     setTimeout(end, 700);
   }
-  function jumpTo(p) {
+  /** `onSheet`: the sheet the click was made on (the one drawn on the plate); else the sheet this view is showing. */
+  function jumpTo(p, onSheet) {
     if (!p || !p.rid || !W.dlg || !W.dlg.open || W.closing) return;
-    const s = SV.list && SV.list[SV.at], sheetId = (s && s.id) || (SV.info && SV.info.sheet.id) || null;
+    const s = SV.list && SV.list[SV.at], sheetId = onSheet || (s && s.id) || (SV.info && SV.info.sheet.id) || null;
     BK.push({ rid: W.rid, key: W.key, row: rowOf(W.key), rows: W.rows, walk: W.walk, hl: W.hl, sheetId, at: SV.at, poolId: SV.focus, face: W.face, to: p.rid });
-    unpick(); keepFor = p.rid;
-    slide(W.face, () => openOrder(p.rid, { view: "sheet", keepFrom: true, dir: 1, sheetId, poolId: p.poolId }));
+    keepFor = p.rid;
+    // (the plate shows the order's pieces and the charm clicked at once; the view is drawn for it once the slide has landed)
+    if (SV.info && SV.info.aim) SV.info.aim(String(p.rid), p.poolId);
+    // (Previous / Next keep walking the Orders list when the order is in it: the counter follows to its place)
+    slide(W.face, () => openOrder(p.rid, { view: "sheet", keepFrom: true, dir: 1, sheetId, poolId: p.poolId, walk: W.walk }));
   }
   function goBack() {
     const b = BK[BK.length - 1]; if (!b || b.to !== W.rid || !W.dlg || !W.dlg.open || W.closing) return;
-    BK.pop(); unpick(); keepFor = b.rid;
+    BK.pop(); keepFor = b.rid;
     const r = inPull(b.key) || (b.row && !b.row.loading ? b.row : null);
     slide(b.face, () => {
       if (!r) return openOrder(b.rid, { view: "sheet", keepFrom: true, dir: -1, sheetId: b.sheetId, poolId: b.poolId });
@@ -10511,7 +10496,7 @@ const OrderWin = window.OrderWin = (() => {
       a second press while it turns is taken up by that turn, and it ends on the side asked for last. */
   let plateTurn = null;
   function turnPlate(face) {
-    if (face === W.face) return; W.face = face; unpick();
+    if (face === W.face) return; W.face = face;
     byId("owFace").querySelectorAll("[data-face]").forEach(b => { const on = b.dataset.face === face; b.classList.toggle("on", on); b.setAttribute("aria-pressed", on ? "true" : "false"); });
     const redraw = f => { W.faceShown = f; if (SV.info) { SV.info.back(f === "back"); paintFoot(SV.info); paintPanel(SV.info); } };
     if (!window.Motion || !Motion.turner) return redraw(face);
@@ -10883,7 +10868,9 @@ const OrderWin = window.OrderWin = (() => {
   /** Opens an order by its number, wherever it is: the pull's line when it has one, else built from the records.
    *  opts: { highlight, from, view } (a search passes highlight: the number is lit as the view opens). */
   async function openOrder(rid, opts = {}) {
-    await window.Seal?.whenIdle?.();
+    // (waits only while a stamp is being made: otherwise the view moves in this very turn, so its slide is already on
+    // the page when the caller looks for it, and the plate is not drawn again until that slide has landed)
+    if (window.Seal?.busy?.()) await window.Seal.whenIdle();
     wire(); if (!W.dlg) return;
     rid = String(rid || "").replace(/\D/g, ""); if (!rid) return;
     // (back: called once as this view goes back into `from`, which it does even after Previous or Next, giveBack)
