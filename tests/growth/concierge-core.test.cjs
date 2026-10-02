@@ -190,6 +190,11 @@ test('an exact Brites product URL overrides stale cards and preferences without 
   const answer=await core.concierge({...d,message:'Add https://britesjewelry.com/products/penguin-charm to my bag',preferences:core.intentFrom('Bunny silver necklace under $55'),context:{productHandles:[stale.handle],currentHandle:stale.handle}});
   assert.deepEqual(calls,[exact.handle]);assert.deepEqual(answer.products.map(product=>product.id),[exact.id]);assert.equal(answer.products[0].partsOnly,true);assert.equal(answer.requestedAction.type,'choose');assert.equal(answer.requestedAction.productId,exact.id);assert.match(answer.reply,/confirm before/);assert.ok(!answer.actions.some(action=>action.type==='purchase'));
 });
+test('a long exact Brites product URL remains an add-to-bag command and cannot fall back to stale discovery',async()=>{
+  const stale=piece(1),handle='comedy-tragedy-theatre-mask-charm-pendant-for-everyday-layering',exact=piece(2,{handle,url:'https://britesjewelry.com/products/'+handle,title:'Theatre Masks Charm Pendant',type:'Charm',tags:['theatre'],description:'A paired theatre-mask charm.'}),calls=[],d=deps([stale,exact],[]);d.shopify.byHandle=async value=>{calls.push(value);return value===handle?exact:null;};
+  const answer=await core.concierge({...d,message:'Add https://britesjewelry.com/products/'+handle+' to my bag',preferences:core.intentFrom('Lion silver charm'),context:{productHandles:[stale.handle],currentHandle:stale.handle}});
+  assert.deepEqual(calls,[handle]);assert.deepEqual(answer.products.map(product=>product.id),[exact.id]);assert.equal(answer.requestedAction.type,'choose');assert.equal(answer.requestedAction.productId,exact.id);assert.match(answer.reply,/confirm before/);assert.ok(!answer.actions.some(action=>action.type==='purchase'));
+});
 test('empty filtered results relax only a verified blocking preference and ask one question',async()=>{
   const goldOnly=piece(1,{variants:[{...piece().variants[1]}]});
   const answer=await core.concierge({...deps([goldOnly],[]),message:'A silver bunny necklace with no budget limit'});assert.equal(answer.products.length,0);assert.equal(answer.recoveryField,'metal');assert.equal(answer.question,'Would you like to see another metal option?');assert.equal((answer.question.match(/\?/g)||[]).length,1);
