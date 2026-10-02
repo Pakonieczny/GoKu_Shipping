@@ -31,6 +31,7 @@ function selectVideos(job,copy,D) {
   const note=D.filmNote(job,copy);
   return {jobId:job?.id||null,reviewHash:!note?D.reviewHash(job):null,attached:[],pending:!note,note};
 }
+function snapshotHash(r,hash){return hash({schema:'saved-ad-v1',workspaceId:r.workspaceId,productId:r.productId,groupRef:r.groupRef,destination:r.destination,context:r.context,publicationImages:r.publicationImages,layoutReview:r.layoutReview||null,artworkCopy:r.artworkCopy||null});}
 
 // Pending-review edits never modify the source workspace or an already published ad.
 function createReview(D) {
@@ -38,9 +39,9 @@ function createReview(D) {
     if (!/^design-review-[a-f0-9]{32}$/.test(String(input.id || ''))) throw Error('Choose a saved complete-ad approval.');
     const ref = D.approval(input.id), snap = await ref.get(), item = snap.data();
     if (!snap.exists || item.type !== 'adDesignSubmission' || item.status !== 'PENDING' || input.hash !== item.reviewHash) throw Error('This review changed. Reload Approvals.');
-    const context = await D.context(item.designReview.workspaceId);
+    const context = await D.context(item.designReview.workspaceId,item.designReview);
     if (String(context.product.id) !== String(item.designReview.productId) || String(context.w.settings.groupRef) !== String(item.designReview.groupRef)) throw Error('This review belongs to a different product or ad group.');
-    const stale=D.sourceHash(context.w)!==item.sourceHash||D.hash(context.w.context)!==D.hash(item.designReview.context);
+    const stale=D.sourceMatches?!D.sourceMatches(item,context.w):D.sourceHash(context.w)!==item.sourceHash||D.hash(context.w.context)!==D.hash(item.designReview.context);
     if(stale&&!allowSourceChange)throw Error('The saved source changed. Reopen this approval to refresh its saved images and plan.');
     return {ref, item, context, stale};
   }
@@ -48,18 +49,20 @@ function createReview(D) {
   // renew it. Keep the exact package assets and operator copy when already pinned.
   async function refresh(input, persist=true) {
     const {ref,item,context,stale}=await load(input,true);
-    if(!stale)return {item,refreshed:false};
+    if(!stale&&(!D.snapshotHash||item.designReview.sourceMode==='saved-package'))return {item,refreshed:false};
     const r=item.designReview;
     if(String(context.w.context?.campaignId||'')!==String(r.context?.campaignId||''))throw Error('The campaign destination changed. Submit a separate review for that campaign.');
     if(item.applyAttempt||item.needsReconciliation)throw Error('This approval has a publication in progress. Refresh its publication status.');
-    const basis=await D.snapshot(context,r),sourceHash=D.sourceHash(context.w);
+    const basis=await D.snapshot(context,r);
     if(!D.copyValid(r.copy))throw Error('Complete the saved ad messaging before approval.');
-    const designReview={...r,...basis,context:context.w.context};
+    const designReview={...r,...basis,context:context.w.context,...(D.snapshotHash?{sourceMode:'saved-package'}:{})};
+    const sourceHash=D.snapshotHash?D.snapshotHash(designReview):D.sourceHash(context.w);
     const reviewHash=D.hash({sourceHash,designReview});
     const patch={sourceHash,designReview,reviewHash,pipelinePlan:null,pipelineReview:null,vetted:false,updatedAt:Date.now(),sourceRefresh:{at:Date.now(),previousSourceHash:item.sourceHash,previousReviewHash:item.reviewHash},payload:{adDesign:{workspaceId:r.workspaceId,productId:r.productId,groupRef:r.groupRef},meta:{existingCampaignId:context.w.context?.campaignId||null}}};
     if(persist)await D.transaction(async tx=>{
       const live=await tx.get(ref),workspace=await tx.get(context.ref),v=live.data();
-      if(!live.exists||v.status!=='PENDING'||v.reviewHash!==input.hash||v.applyAttempt||v.needsReconciliation||D.sourceHash(workspace.data())!==sourceHash||D.hash(workspace.data()?.context)!==D.hash(context.w.context))throw Error('The saved ad changed while refreshing. Reopen this approval.');
+      const baseline=context.originalW||context.w;
+      if(!live.exists||v.status!=='PENDING'||v.reviewHash!==input.hash||v.applyAttempt||v.needsReconciliation||D.sourceHash(workspace.data())!==D.sourceHash(baseline)||D.hash(workspace.data()?.context)!==D.hash(baseline.context))throw Error('The saved ad changed while refreshing. Reopen this approval.');
       tx.update(ref,patch);
     });
     return {item:{...item,...patch},patch,refreshed:true};
@@ -93,7 +96,7 @@ function createReview(D) {
       catch (_) { warnings.push('An included image preview could not be loaded.'); }
     }
     let motion = {variants:[], phase:'idle'};
-    try { motion = await D.motion({workspaceId:r.workspaceId,productId:r.productId,groupRef:r.groupRef}); }
+    try { motion = await D.motion({workspaceId:r.workspaceId,productId:r.productId,groupRef:r.groupRef},r); }
     catch (_) { warnings.push('Video previews could not be loaded. Retry to see the saved videos.'); }
     let selection={attached:[],pending:false,note:'Prepare the publishing plan to confirm video eligibility.'};
     if(r.includeVideos!==false&&D.videoSelection)try{selection=await D.videoSelection(r,context);}catch(_){warnings.push('Video eligibility could not be confirmed. Prepare the plan before approval.');}
@@ -136,11 +139,11 @@ function createReview(D) {
     const reviewHash = D.hash({sourceHash:item.sourceHash,designReview});
     await D.transaction(async tx => {
       const live = await tx.get(ref), workspace = await tx.get(context.ref);
-      if (live.data()?.status !== 'PENDING' || live.data()?.reviewHash !== input.hash || D.sourceHash(workspace.data()) !== item.sourceHash || D.hash(workspace.data()?.context) !== D.hash(r.context)) throw Error('This review changed while saving. Reload Approvals.');
+      if (live.data()?.status !== 'PENDING' || live.data()?.reviewHash !== input.hash || (D.sourceMatches?!D.sourceMatches(item,workspace.data()):D.sourceHash(workspace.data()) !== item.sourceHash || D.hash(workspace.data()?.context) !== D.hash(r.context))) throw Error('This review changed while saving. Reload Approvals.');
       tx.update(ref,{designReview,reviewHash,pipelinePlan:null,pipelineReview:null,vetted:false,updatedAt:Date.now(),payload:{adDesign:{workspaceId:r.workspaceId,productId:r.productId,groupRef:r.groupRef},meta:{existingCampaignId:item.payload?.meta?.existingCampaignId || null}}});
     });
     return {ok:true,reviewHash,designReview};
   }
   return {status,update,refresh};
 }
-module.exports = {createReview,campaignMedia,selectVideos};
+module.exports = {createReview,campaignMedia,selectVideos,snapshotHash};

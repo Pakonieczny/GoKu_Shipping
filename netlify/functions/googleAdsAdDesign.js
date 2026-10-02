@@ -420,8 +420,8 @@ function createAdDesignService(deps) {
   // workspace that saved the design), else the newest saved design's own photographs.
   // Resolve the selected saved package, including its original workspace, instead
   // of confusing an editor package with the legacy image-generation job.
-  async function editorPublicationBasis(input={}){
-    const w=await read(input.workspaceId);editorScope(w,input);let found=null;
+  async function editorPublicationBasis(input={},reviewScope=null){
+    const current=await read(input.workspaceId),w=reviewScope?{...current,context:reviewScope.context,settings:{...current.settings,productId:reviewScope.productId,groupRef:reviewScope.groupRef}}:current;editorScope(w,input);let found=null;
     if(input.savedDesignId){if(!token(input.savedDesignId))throw Error('Choose a saved design package.');found=await savedDesignRecord(w,input.savedDesignId);if(!found||found.design.deletedAt||productKey(found.design.productId)!==productKey(input.productId))throw Error('The selected saved package is unavailable for this product.');}
     const owners=found?[found.design.workspaceId]:[input.workspaceId],groups=found?[found.groupRef]:[input.groupRef];
     if(!found)for(const target of await savedDesignTargets(w)){const rows=await target.ref.get();for(const row of rows.docs){const d=row.data();if(!d.deletedAt&&productKey(d.productId)===productKey(input.productId)&&d.workspaceId&&!owners.includes(d.workspaceId)){owners.push(d.workspaceId);groups.push(target.groupRef);}}}

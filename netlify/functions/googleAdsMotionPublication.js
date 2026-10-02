@@ -40,7 +40,7 @@ function uploadUrl(value) {
 function createPublicationService(D) {
   async function context(input) {
     const c = await D.context(input.workspaceId);
-    if (c.w.archivedAt || String(c.w.settings.productId) !== String(input.productId) || c.w.settings.groupRef !== input.groupRef) throw Error('The selected product or group changed.');
+    if (c.w.archivedAt) throw Error('The selected product or group changed.');
     if (!/^motion_[a-f0-9]{40}$/.test(input.jobId || '')) throw Error('Select a saved animation first.');
     const ref = c.ref.collection('motionJobs').doc(input.jobId), row = await ref.get();
     if (!row.exists) throw Error('The saved animation was not found.');

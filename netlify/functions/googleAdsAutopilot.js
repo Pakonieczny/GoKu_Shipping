@@ -1930,7 +1930,7 @@ async function applyApproval(id, ctrl, { waitForLeaseMs = 0 } = {}) {
   try {
     const p=it.payload||{};
     if(it.archivedAt||it.deletedAt)throw new Error('This proposed ad was deleted.');
-    if(it.type==='adDesignSubmission'){const w=await _adDesignWorkspaceRef(it.designReview.workspaceId).get();if(!w.exists||_adDesignSelectionHash(w.data())!==it.sourceHash||creativeHash(w.data().context)!==creativeHash(it.designReview.context))throw Error('The design changed after approval. Submit the current version again.');}
+    if(it.type==='adDesignSubmission'){const w=await _adDesignWorkspaceRef(it.designReview.workspaceId).get();if(!w.exists||!_submissionSourceMatches(it,w.data()))throw Error('The design changed after approval. Submit the current version again.');}
     const deleted=await _deletedCampaignIds();for(const campaignId of deleted)if(_approvalForCampaign(it,campaignId))throw new Error('This campaign was deleted.');
     if(_isAdVersionApproval(it))await _guardAdVersionApproval(it);
     if(p.groupSplitGuard)await _guardProductGroupSplit(it);
@@ -11672,7 +11672,7 @@ function _motionPublication(){
  const assertTarget=async(job,target=null)=>{
   const productId=String(job.productId||'').match(/^(?:gid:\/\/shopify\/Product\/)?(\d+)$/)?.[1],groupRef=target?target.groupRef:job.groupRef;
   if(!new RegExp('^customers/'+CID+'/assetGroups/\\d+$').test(groupRef)||!productId)throw Error('Choose a product-specific Performance Max group.');
-  const {w,product,group}=await _adDesignPublicationContext(job.workspaceId);
+  const {w,product,group}=await _adDesignPublicationContext(job.workspaceId,{productId:job.productId,groupRef:job.groupRef});
   if(w.archivedAt||String(product.id)!==String(job.productId)||group.ref!==job.groupRef||product.url!==job.destination||group.requiresProductSplit)throw Error('The product or group changed; refresh and review again.');
   const ref=_gaqlString(groupRef),[groups,filters]=await Promise.all([
    gaql(`SELECT campaign.id, campaign.status, asset_group.resource_name, asset_group.status, asset_group.final_urls FROM asset_group WHERE asset_group.resource_name = ${ref}`),
@@ -11692,7 +11692,7 @@ function _motionPublication(){
  const upload=require('./googleAdsVideoUpload').createVideoUpload({fetch,headers:async()=>adsHeaders(await mintToken()),customerId:CID,version:V,beforeRequest:_assertGadsReadAllowed,onResponse:async(data,res)=>{const retryAt=_gadsQuotaDeadline(data,res);if(retryAt){await _saveGadsReadState({retryAt,quotaObservedAt:Date.now()});throw _gadsQuotaError(retryAt);}}});
  _motionPublicationEngine=require('./googleAdsMotionPublication').createPublicationService({fb,context,assertTarget,target:_motionFilmTarget,...upload,dryRun:async()=>!!(await control()).dryRun,
   prepareMerchant:async(job,videos)=>{
-   const {w,product}=await _adDesignPublicationContext(job.workspaceId);
+   const {w,product}=await _adDesignPublicationContext(job.workspaceId,{productId:job.productId,groupRef:job.groupRef});
    if(String(product.id)!==String(job.productId)||product.url!==job.destination)throw Error('The video product destination changed.');
    const plan=await _prepareDesignMerchant(product,w,null,'video');if(plan.requiresIdentity)return plan;
    const videoLinks=videos.map(v=>{if(!/^[a-zA-Z0-9_-]{11}$/.test(v.videoId||'')||v.state!=='PROCESSED')throw Error('The exact uploaded video is not ready.');return 'https://www.youtube.com/watch?v='+v.videoId;});
@@ -11812,13 +11812,15 @@ async function startAdDesign(input){return _designEngine().start(input);}
 async function adDesignStatus(input){return _designEngine().status(input);}
 async function runAdDesign(input){return _designEngine().run(input);}
 function _adDesignSelectionHash(w){return creativeHash({productId:w.settings.productId,groupRef:w.settings.groupRef,placements:require('./googleAdsAdDesign').chosenPlacements(w),messaging:w.messaging||null,jobId:w.job&&w.job.id||null,result:w.job&&w.job.result||null});}
-async function _adDesignPublicationContext(workspaceId){
-  const ref=_adDesignWorkspaceRef(workspaceId),s=await ref.get();if(!s.exists)throw new Error('Design workspace was not found.');const w=s.data();
-  if(w.job&&(w.job.inFlight||w.job.leaseUntil>Date.now()))throw new Error('Wait for the image or messaging request to finish before publishing.');
-  const rows=await ref.collection('sourceSets').doc(w.sourceSetId).collection('products').get(),products=rows.docs.map(d=>d.data()),product=products.find(p=>String(p.id)===String(w.settings.productId)),group=(w.context.groups||[]).find(g=>g.ref===w.settings.groupRef);
+async function _adDesignPublicationContext(workspaceId,reviewScope=null){
+  const ref=_adDesignWorkspaceRef(workspaceId),s=await ref.get();if(!s.exists)throw new Error('Design workspace was not found.');const originalW=s.data(),same=!reviewScope||String(originalW.settings.productId)===String(reviewScope.productId)&&originalW.settings.groupRef===reviewScope.groupRef,w=reviewScope?{...originalW,context:reviewScope.context||originalW.context,settings:{...originalW.settings,productId:reviewScope.productId,groupRef:reviewScope.groupRef},...(!same?{job:null,messaging:null}:{})}:originalW;
+  if(!reviewScope&&w.job&&(w.job.inFlight||w.job.leaseUntil>Date.now()))throw new Error('Wait for the image or messaging request to finish before publishing.');
+  const rows=await ref.collection('sourceSets').doc(reviewScope?.sourceSetId||w.sourceSetId).collection('products').get(),products=rows.docs.map(d=>d.data());let product=products.find(p=>String(p.id)===String(w.settings.productId));
+  if(!product&&reviewScope?.layoutReview){const layout=reviewScope.layoutReview,owner=_adDesignWorkspaceRef(layout.workspaceId||workspaceId),job=await owner.collection('editorAIJobs').doc(layout.jobId).get(),sourceSetId=job.data()?.sourceSetId;if(sourceSetId){const key=require('crypto').createHash('sha256').update(String(reviewScope.productId)).digest('hex').slice(0,32),saved=await owner.collection('sourceSets').doc(sourceSetId).collection('products').doc(key).get();if(saved.exists&&String(saved.data().id)===String(reviewScope.productId)){product=saved.data();products.push(product);w.sourceSetId=sourceSetId;}}}
+  const group=(w.context.groups||[]).find(g=>g.ref===w.settings.groupRef);
   if(!product||!group)throw new Error('Choose the product and ad group before publishing.');
   const scopedGroup={...group,requiresProductSplit:require('./googleAdsAdDesign').isSharedProductGroup(w,group)};
-  return {ref,w,products,product,group:scopedGroup};
+  return {ref,w,originalW,products,product,group:scopedGroup};
 }
 async function saveAdDesignCopy({workspaceId,copy,expectedRevision,savedDesignId=null}={}){
   const {ref,w,product,group}=await _adDesignPublicationContext(workspaceId);
@@ -12096,14 +12098,15 @@ async function prepareAdDesignPublication({workspaceId,target='ads',formats=[],i
       throw new Error(missing+' in Messaging below, then send to Approval. Your saved images and videos are retained.');
     }
     const layouts=packageBasis?(packageBasis.layoutReview||{}):await _designEngine().editorAIStatus({workspaceId,productId:product.id,groupRef:group.ref,allSizes:true});
-    const designReview={workspaceId,productId:product.id,groupRef:group.ref,productTitle:product.title,destination:w.context.campaignId?group.url:product.url,formats:selection.formats,copy:result.copy,context:w.context,layoutReview:layouts.jobId&&layouts.reviewVersion?{jobId:layouts.jobId,reviewVersion:layouts.reviewVersion,...(packageBasis?.layoutReview?{workspaceId:layouts.workspaceId,productId:layouts.productId,groupRef:layouts.groupRef}:{})}:null,...(packageBasis?{savedDesignId:packageBasis.savedDesignId,publicationImages:packageBasis.publicationImages,artworkCopy:packageBasis.copy||null,copyEdited:creativeHash(result.copy)!==creativeHash(packageBasis.copy)}: {})};
-    const reviewHash=creativeHash({sourceHash,designReview}),approvalId='design-review-'+reviewHash.slice(0,32),apRef=fb().db.collection(COL.approvals).doc(approvalId);
+    const designReview={workspaceId,sourceSetId:w.sourceSetId,productId:product.id,groupRef:group.ref,productTitle:product.title,destination:w.context.campaignId?group.url:product.url,formats:selection.formats,copy:result.copy,context:w.context,layoutReview:layouts.jobId&&layouts.reviewVersion?{jobId:layouts.jobId,reviewVersion:layouts.reviewVersion,...(packageBasis?.layoutReview?{workspaceId:layouts.workspaceId,productId:layouts.productId,groupRef:layouts.groupRef}:{})}:null,...(packageBasis?{savedDesignId:packageBasis.savedDesignId,publicationImages:packageBasis.publicationImages,artworkCopy:packageBasis.copy||null,copyEdited:creativeHash(result.copy)!==creativeHash(packageBasis.copy)}: {})};
+    designReview.publicationImages=designReview.publicationImages||selection.formats.map(format=>({format,asset:assets.desktop[format],productIds:[product.id]}));designReview.artworkCopy=designReview.artworkCopy||result.copy;designReview.sourceMode='saved-package';const reviewSourceHash=require('./googleAdsSubmissionReview').snapshotHash(designReview,creativeHash);
+    const reviewHash=creativeHash({sourceHash:reviewSourceHash,designReview}),approvalId='design-review-'+reviewHash.slice(0,32),apRef=fb().db.collection(COL.approvals).doc(approvalId);
     const outcome=await fb().db.runTransaction(async tx=>{const current=await tx.get(ref),prior=await tx.get(apRef);if(_adDesignSelectionHash(current.data())!==sourceHash||creativeHash(current.data().context)!==creativeHash(w.context))throw new Error('The ad changed while sending it to Approval. Try again.');
       if(prior.exists){const saved=prior.data();if(saved.status==='PENDING'&&!saved.deletedAt&&!saved.archivedAt)return {status:'PENDING',message:'This ad is already in Approval.'};
         if(saved.status!=='REJECTED'||saved.applyAttempt||saved.needsReconciliation)return {status:saved.status||'UNKNOWN',message:saved.status==='APPLIED'?'This ad has already been published. Its saved publication is unchanged.':'This ad already has a publication or review in progress. Its saved status is '+(saved.status||'unknown')+'.'};
         tx.set(apRef.collection('submissionHistory').doc(String(Date.now())),saved);
       }
-      tx.set(apRef,{type:'adDesignSubmission',summary:'Complete ad · '+product.title,status:'PENDING',vetted:false,createdAt:fb().FV.serverTimestamp(),reviewHash,sourceHash,designReview,payload:{adDesign:{workspaceId,productId:product.id,groupRef:group.ref},meta:{existingCampaignId:w.context.campaignId||null}}});return {status:'PENDING',message:prior.exists?'Ad returned to Approval. Previous review history preserved.':'Complete ad saved in Approval.'};});
+      tx.set(apRef,{type:'adDesignSubmission',summary:'Complete ad · '+product.title,status:'PENDING',vetted:false,createdAt:fb().FV.serverTimestamp(),reviewHash,sourceHash:reviewSourceHash,designReview,payload:{adDesign:{workspaceId,productId:product.id,groupRef:group.ref},meta:{existingCampaignId:w.context.campaignId||null}}});return {status:'PENDING',message:prior.exists?'Ad returned to Approval. Previous review history preserved.':'Complete ad saved in Approval.'};});
     return {ok:true,...outcome,approvalId,reviewHash};
   }
   let approvalId=null,payload=null,merchant=null,newCampaign=null,logo=null,approvalItem=null,assetReviewHash=null,films=null;
@@ -12149,14 +12152,15 @@ async function prepareAdDesignPublication({workspaceId,target='ads',formats=[],i
   });
   return {ok:true,...prepared,merchant:merchant?{field:merchant.field,offerId:merchant.identity.offerId,feedLabel:merchant.identity.feedLabel,contentLanguage:merchant.identity.contentLanguage,productTitle:merchant.productTitle,source:merchant.sourceName}:null,images:previewImages,copy:selection.copy?result.copy:null,newAd:!w.context.campaignId&&target==='ads',newCampaign,message:selection.destination?'Update only this asset group’s desktop and mobile destination to the verified product listing. Campaign URL expansion and inherited assets are separate settings.':target==='merchant'?'This changes the product photo in its existing feed. It remains free of promotional text, logos and borders. The owning store feed may resync its original image.':'Only the selected images and messaging shown here will be updated. Google selects responsive combinations and controls delivery.'+(films?' '+films.note:'')};
 }
+function _submissionSourceMatches(item,w){const r=item.designReview;return r.sourceMode==='saved-package'?require('./googleAdsSubmissionReview').snapshotHash(r,creativeHash)===item.sourceHash:_adDesignSelectionHash(w)===item.sourceHash&&creativeHash(w.context)===creativeHash(r.context);}
 function _submissionReview(){return require('./googleAdsSubmissionReview').createReview({
  approval:id=>fb().db.collection(COL.approvals).doc(id),workspace:_adDesignWorkspaceRef,context:_adDesignPublicationContext,
- sourceHash:_adDesignSelectionHash,hash:creativeHash,placements:require('./googleAdsAdDesign').chosenPlacements,
+ sourceMatches:_submissionSourceMatches,snapshotHash:r=>require('./googleAdsSubmissionReview').snapshotHash(r,creativeHash),sourceHash:_adDesignSelectionHash,hash:creativeHash,placements:require('./googleAdsAdDesign').chosenPlacements,
  fixedProofs:require('./googleAdsCampaignStyles').fixedProofs,sign:a=>_designEngineAdapters().signAsset(a,{required:true}),
  videoSelection:async(r,context)=>require('./googleAdsSubmissionReview').selectVideos(await _latestMotionJob(context.ref,context.product.id,r.groupRef),r.copy,{hash:creativeHash,qualityPass:require('./googleAdsAdMotion').qualityPass,ready:_motionFilmsReady,reviewHash:require('./googleAdsMotionPublication').reviewHash,filmNote:_motionFilmNote}),
  snapshot:async(context,r)=>{
    if(['landscape','square','portrait'].every(format=>r.publicationImages?.some(p=>p.format===format&&p.asset)))return {publicationImages:r.publicationImages};
-   let basis=null;try{basis=await _designEngine().editorPublicationBasis({workspaceId:r.workspaceId,productId:r.productId,groupRef:r.groupRef,savedDesignId:r.savedDesignId||null});}catch(e){if(r.savedDesignId)throw e;}
+   let basis=null;try{basis=await _designEngine().editorPublicationBasis({workspaceId:r.workspaceId,productId:r.productId,groupRef:r.groupRef,savedDesignId:r.savedDesignId||null},r);}catch(e){if(r.savedDesignId)throw e;}
    const placements=require('./googleAdsAdDesign').chosenPlacements(context.w),publicationImages=['landscape','square','portrait'].map(format=>{
      const p=basis?.publicationImages?.find(p=>p.format===format)||placements.find(p=>p.device==='desktop'&&p.format===format),asset=p?.asset||context.w.job?.result?.placementAssets?.desktop?.[format]||context.w.job?.result?.assets?.[format];
      if(!asset)throw Error('The saved '+format+' photograph is missing. Open Edit artwork to select its saved design package.');
@@ -12166,7 +12170,7 @@ function _submissionReview(){return require('./googleAdsSubmissionReview').creat
    const artworkCopy=basis?.copy||r.artworkCopy||context.w.messaging?.copy||context.w.job?.result?.copy||r.copy;
    return {publicationImages,artworkCopy,copyEdited:creativeHash(r.copy)!==creativeHash(artworkCopy),...(basis?.savedDesignId?{savedDesignId:basis.savedDesignId}:{}),...(basis?.layoutReview?{layoutReview:basis.layoutReview}:{})};
  },
- motion:adDesignMotionStatus,copyValid:c=>_copyValid(c,true),transaction:fn=>fb().db.runTransaction(fn)
+ motion:(input,r)=>_motionEngine().status(input,r),copyValid:c=>_copyValid(c,true),transaction:fn=>fb().db.runTransaction(fn)
 });}
 async function adDesignSubmissionStatus(input){return _submissionReview().status(input);}
 async function updateAdDesignSubmission(input){return _submissionReview().update(input);}
@@ -12178,8 +12182,8 @@ async function publishAdDesignSubmission(input={}){
   if(item.type!=='adDesignSubmission'||item.status!=='PENDING'||hash!==item.reviewHash)throw Error('This ad review changed. Reopen Approval.');
   if(prepareOnly){refresh=await _submissionReview().refresh({id,hash},false);item=refresh.item;}
   const r=item.designReview,reviewHash=item.reviewHash;
-  const context=await _adDesignPublicationContext(r.workspaceId),{w,product}=context;
-  if(_adDesignSelectionHash(w)!==item.sourceHash||creativeHash(w.context)!==creativeHash(r.context))throw Error('The ad changed after submission. Send the current complete ad to Approval again.');
+  const context=await _adDesignPublicationContext(r.workspaceId,r),{w,product}=context;
+  if(!_submissionSourceMatches(item,w))throw Error('The ad changed after submission. Send the current complete ad to Approval again.');
   const routing=require('./googleAdsCampaignStyles');
   if(prepareOnly){
     if(!input.durations||typeof input.durations!=="object")throw Error("Choose a duration for every selected campaign.");
@@ -12187,13 +12191,13 @@ async function publishAdDesignSubmission(input={}){
     // A product joining an existing Performance Max campaign: checked now, and the campaign as read is part of the
     // plan's identity, so a campaign that changed is prepared again instead of reusing an older plan.
     const join=choice.pmaxTarget?await _pmaxExistingDraft({campaignId:choice.pmaxTarget,merchantId:await merchantCenterId(),feedLabel:w.context.feedLabel,itemIds:_designPmaxItemIds(w,product),addBudget:choice.budgets.pmax}):null;
-    const identity=creativeHash(join?{reviewUiVersion:2,sourceHash:item.sourceHash,reviewHash:item.reviewHash,choice,join:{...join.guard,groups:join.target.assetGroupNames}}:{reviewUiVersion:2,sourceHash:item.sourceHash,reviewHash:item.reviewHash,choice});
+    const identity=creativeHash(join?{reviewUiVersion:3,sourceHash:item.sourceHash,reviewHash:item.reviewHash,choice,join:{...join.guard,groups:join.target.assetGroupNames}}:{reviewUiVersion:3,sourceHash:item.sourceHash,reviewHash:item.reviewHash,choice});
     // applyApproval refuses budgets above the ceiling; say so now, not after approval. A paused campaign's raise is
     // checked when that campaign is enabled, as publication counts it.
     const ctrl=await control();if(Number(ctrl.maxDailyBudgetTotal)>0){const counted=Math.round((choice.totalDaily-(join&&!join.spendable?join.add:0))*100)/100,over=routing.CAMPAIGN_STYLES.budgetCeilingMessage(counted,join?join.enabledTotal:await _enabledBudgetTotal(),ctrl.maxDailyBudgetTotal,ctrl.budgetCurrency);if(over)throw Error(over);}
     if(item.pipelinePlan?.identity===identity)return {ok:true,plan:item.pipelinePlan.summary,planHash:item.pipelinePlan.hash,cached:true,reviewHash,designReview:r,refreshed:!!refresh?.refreshed};
     const plan=await _prepareCampaignStyles({item,context,choice,identity,join});
-    await fb().db.runTransaction(async tx=>{const current=await tx.get(ref),latest=await tx.get(_adDesignWorkspaceRef(r.workspaceId));if(_adDesignSelectionHash(latest.data())!==item.sourceHash||creativeHash(latest.data()?.context)!==creativeHash(r.context)||current.data()?.status!=='PENDING'||current.data().reviewHash!==hash||current.data().applyAttempt||current.data().needsReconciliation)throw Error('Approval changed while preparing.');tx.update(ref,{...(refresh?.patch||{}),pipelinePlan:plan,payload:plan.payload,submissionPreferences:choice});});
+    await fb().db.runTransaction(async tx=>{const current=await tx.get(ref),latest=await tx.get(_adDesignWorkspaceRef(r.workspaceId));if(!_submissionSourceMatches(item,latest.data())||current.data()?.status!=='PENDING'||current.data().reviewHash!==hash||current.data().applyAttempt||current.data().needsReconciliation)throw Error('Approval changed while preparing.');tx.update(ref,{...(refresh?.patch||{}),pipelinePlan:plan,payload:plan.payload,submissionPreferences:choice});});
     return {ok:true,plan:plan.summary,planHash:plan.hash,reviewHash,designReview:r,refreshed:!!refresh?.refreshed};
   }
   const plan=item.pipelinePlan;
@@ -12211,7 +12215,7 @@ async function publishAdDesignSubmission(input={}){
     const live=await merchantProducts({force:true,itemIds:plan.payload.meta.itemIds,titles:[product.title]});
     if(plan.payload.meta.itemIds.some(id=>!live.some(p=>String(p.itemId).toLowerCase()===id.toLowerCase()&&_pmaxIsEligible(p))))throw Error('A selected Merchant product is no longer eligible. Refresh its product status before publishing.');
   }
-  await fb().db.runTransaction(async tx=>{const current=await tx.get(ref),workspace=await tx.get(_adDesignWorkspaceRef(r.workspaceId));if(current.data()?.status!=='PENDING'||current.data()?.pipelinePlan?.hash!==input.planHash||_adDesignSelectionHash(workspace.data())!==item.sourceHash)throw Error('The reviewed plan changed.');tx.update(ref,{status:'APPROVED',pipelineReview:{hash:plan.hash,at:Date.now()},approvedAt:Date.now()});});
+  await fb().db.runTransaction(async tx=>{const current=await tx.get(ref),workspace=await tx.get(_adDesignWorkspaceRef(r.workspaceId));if(current.data()?.status!=='PENDING'||current.data()?.pipelinePlan?.hash!==input.planHash||!_submissionSourceMatches(item,workspace.data()))throw Error('The reviewed plan changed.');tx.update(ref,{status:'APPROVED',pipelineReview:{hash:plan.hash,at:Date.now()},approvedAt:Date.now()});});
   const result=await applyApproval(id,await control());
   // The new paused Performance Max group receives the product's reviewed films; never throws after creation.
   const joined=(plan.summary.campaigns||[]).find(c=>c.joins),newCount=(plan.summary.campaigns||[]).filter(c=>!c.joins).length;
