@@ -134,6 +134,24 @@ function fitted(f,label){
     const button=panel.querySelector('.egApproveButton');assert.equal(button.textContent,'Approved');
     nearly(length(button,'min-width'),144,'Approved minimum width');nearly(length(button,'height'),36,'Approved height');nearly(length(button,'font-size'),18,'Approved text size');assert.equal(w.getComputedStyle(button).justifyContent,'center');
     const buttonSeal=panel.querySelector('.egButtonSeal');assert.equal(w.getComputedStyle(buttonSeal).position,'absolute');nearly(length(buttonSeal.firstElementChild,'width'),84,'button uses the same seal size');assert.equal(w.getComputedStyle(buttonSeal.firstElementChild).backgroundColor,'rgba(0, 0, 0, 0)');panel.remove();
+    // The reported pair must share the actual button row, not consume a separate history shelf.
+    const pair=d.createElement('section');pair.innerHTML=w.CNEngravingSeals.panel({kind:'approved',at:at+180000,by:'Seth',job:{key:'pair',state:'approved',approvedAt:at+180000,approvedBy:'Seth',seals:[{how:'engraveApproved',at,by},{how:'engraveApproved',at:at+180000,by:'Seth'}]}});d.body.appendChild(pair);
+    const wrap=pair.querySelector('.egApproveWrap'),pairRow=pair.querySelector('.egButtonSeal');
+    assert.equal(pair.querySelectorAll('.sealRow').length,1,'all panel approvals share one row');assert.equal(pair.querySelector('.egHistory'),null,'no extra vertical history shelf');assert.equal(pairRow.querySelectorAll('.seal').length,2,'both original approvals remain');
+    const originalPair=pairRow.innerHTML;
+    for(const available of [320,260,220,300]){
+      wrap._width=available;Seal.fitGroups(pair);const size=length(pairRow.firstElementChild,'width');
+      assert.equal(length(pairRow.lastElementChild,'width'),size,'siblings shrink equally');
+      const used=2*size+gap(pairRow)+pad(pairRow),room=available-144-8+size/2;
+      assert(used<=room+.03,'the whole row fits beside its half-button overlap');assert(size>0&&size<=84);
+      if(available===220)assert(size<40,'narrow inspectors dynamically reduce both stamps');
+      assert.equal(pairRow.innerHTML,originalPair,'resizing preserves original names/times/artwork');
+    }
+    const pressed=Seal.press;let lift;const lifting=new Promise(r=>lift=r);let newPending;
+    Seal.press=async seal=>{newPending=seal;assert.equal(pairRow.querySelectorAll('.seal').length,3,'a new press preserves both existing approvals');await lifting;seal.classList.remove('pending');};
+    const latest={how:'engraveApproved',at:at+360000,by:'Another Operator'},adding=w.CNEngravingSeals.press(pair.querySelector('button'),latest);await tick();
+    assert(newPending && newPending.classList.contains('pending'));assert.equal(pairRow.children[0].getAttribute('data-at'),String(at));assert.equal(pairRow.children[1].getAttribute('data-at'),String(at+180000));
+    lift();await adding;await w.CNEngravingSeals.press(pair.querySelector('button'),latest);assert.equal(pairRow.querySelectorAll('.seal').length,3,'repeating the identical receipt never adds another stamp');Seal.press=pressed;pair.remove();
     const overlay=rule(activity,'.pvApproval'),space=rule(activity,'.pvMain:has(.pvApproval:not(:empty))');assert.equal(overlay.style.getPropertyValue('position'),'absolute');
     for(const property of ['height','min-height','padding-top','padding-bottom'])assert.equal(space.style.getPropertyValue(property),'','approval overlay adds no vertical '+property);
     assert(!rule(main,'.librarySheet:has(.processSealRow)'),'no redundant trailing seal padding remains under the QR area');

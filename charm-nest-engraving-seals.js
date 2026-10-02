@@ -27,10 +27,10 @@
   function panel(e={kind:'none'}){
     const states={approve:'To approve',words:'Words to confirm',preparing:'Being prepared',approved:'Approved',skipped:'Cut plain'},kind=e.kind || 'none';
     const title=kind==='approve'?'Check the back, then approve':kind==='approved'?'Engraved on the back':kind==='words'?'The words need a decision':kind==='none'?'No back engraving':'Back engraving';
-    const all=list(record(e)),latest=kind==='approved'?all.filter(s=>s.how==='engraveApproved').at(-1):null;
-    const history=html({seals:all.filter(s=>s!==latest)});
+    const all=list(record(e));
     const approval=kind==='approve' && e.job || kind==='approved';
-    const approve=approval?`<span class="egApproveWrap"><button type="button" class="btn sage sm egApproveButton"${kind==='approved'?' disabled aria-label="Back engraving approved"':' data-e="approve"'}>Approved</button>${latest && root?.Seal?`<span class="sealRow egButtonSeal" data-seal-group data-seal-count="1">${root.Seal.html(latest,regularSize(),'engravingSeal')}</span>`:''}</span>`:'';
+    const history=approval?'':html({seals:all});
+    const approve=approval?`<span class="egApproveWrap"><button type="button" class="btn sage sm egApproveButton"${kind==='approved'?' disabled aria-label="Back engraving approved"':' data-e="approve"'}>Approved</button>${all.length && root?.Seal?`<span class="sealRow egButtonSeal" data-seal-group data-seal-count="${all.length}" role="group" aria-label="Engraving approval history">${all.map(s=>root.Seal.html(s,regularSize(),'engravingSeal')).join('')}</span>`:''}</span>`:'';
     const open=kind==='none' || kind==='skipped'?'':`<button type="button" class="btn ghost sm" data-e="engrave">${kind==='approve'?'Adjust in Engrave':kind==='approved'?'View in Engrave':kind==='words'?'Confirm the words in Engrave':'Open in Engrave'} <span aria-hidden="true">→</span></button>`;
     const preview=['approve','approved'].includes(kind)?'<div class="pv" data-engraving-preview></div>':'';
     return `<span class="fLabel">Back engraving</span><div class="swEng" data-state="${esc(kind)}"><div class="top"><b>${title}</b>${states[kind]?`<span>${states[kind]}</span>`:''}</div>${preview}${e.text?`<div class="words">${esc(e.text)}</div>`:''}${e.note?`<div class="by">${esc(e.note)}</div>`:''}<div class="acts">${approve}${open}</div>${history?`<div class="egHistory">${history}</div>`:''}</div>`;
@@ -49,10 +49,13 @@
     if(!button || !root?.Seal)return;
     let wrap=button.closest('.egApproveWrap');if(!wrap){wrap=root.document.createElement('span');wrap.className='egApproveWrap';button.before(wrap);wrap.append(button);}
     let row=wrap.querySelector('.sealRow');if(!row){row=root.document.createElement('span');row.className='sealRow egButtonSeal';wrap.append(row);}
-    row.dataset.sealGroup='';row.dataset.sealCount='1';
+    row.dataset.sealGroup='';
     const wasDisabled=button.disabled,wasBusy=button.getAttribute('aria-busy');
-    row.innerHTML=root.Seal.html(stamp,regularSize(),'engravingSeal pending');button.disabled=true;button.textContent='Approved';button.setAttribute('aria-busy','true');
-    try{await root.Seal.press(row.firstElementChild);}finally{button.disabled=wasDisabled;if(wasBusy==null)button.removeAttribute('aria-busy');else button.setAttribute('aria-busy',wasBusy);}
+    let seal=[...row.querySelectorAll('.seal')].find(s=>{try{const m=JSON.parse(s.querySelector('svg')?.getAttribute('data-seal-model'));return +m.at===+stamp.at && m.by===String(stamp.by || '') && m.action===(stamp.how==='engravePlain'?'CUT PLAIN':'BACK ENGRAVING');}catch(_){return false;}});
+    if(seal && !seal.classList.contains('pending'))return;
+    if(!seal){const holder=root.document.createElement('span');holder.innerHTML=root.Seal.html(stamp,regularSize(),'engravingSeal pending');seal=holder.firstElementChild;row.append(seal);}
+    row.dataset.sealCount=String(row.querySelectorAll('.seal').length);root.Seal.fit?.(row);button.disabled=true;button.textContent='Approved';button.setAttribute('aria-busy','true');
+    try{await root.Seal.press(seal);}finally{button.disabled=wasDisabled;if(wasBusy==null)button.removeAttribute('aria-busy');else button.setAttribute('aria-busy',wasBusy);}
   }
   return {merge,list,keep,add,html,press,record,panel,wirePanel,fromEvents};
 });

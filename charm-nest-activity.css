@@ -49,6 +49,8 @@
 .swEng .egApproveButton:disabled{opacity:1;cursor:default}
 .swEng .egHistory{border-top:1px solid var(--line2);padding-top:3px}
 .swEng .egHistory .engravingSeals{max-width:100%}
+.swEng .egApproveWrap{width:100%;min-width:0;margin-right:0}
+.swEng .egApproveWrap>.egButtonSeal{left:calc(144px - var(--seal-fit,var(--seal-size,84px)) / 2 + 8px);right:0;top:calc(36px - var(--seal-fit,var(--seal-size,84px)));width:auto;height:var(--seal-fit,var(--seal-size,84px));max-width:none;padding:0 8px;gap:16px}
 .swEng .acts:empty{display:none}
 .swEng .by{font:11px var(--sans);color:var(--ink45)}
 .swEng.flash{animation:swFlash 1.4s ease}

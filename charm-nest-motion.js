@@ -292,7 +292,7 @@
       engraving:{name:'Back Engraving',ink:'#296c58',d:'M4 60A56 48 0 1 1 116 60A56 48 0 1 1 4 60Z'},
       laser:{name:'Laser Cutting',ink:'#98721f',d:'M31 7H89L116 60L89 113H31L4 60Z'},
       finishing:{name:'Finishing',ink:'#276a74',d:'M60 5L112 20V73Q112 98 60 115Q8 98 8 73V20Z'},
-      fulfilment:{name:'Fulfilment',ink:'#77518a',d:'M60 8C77-4 85 15 88 23C111 20 121 39 108 60C121 81 111 100 88 97C85 105 77 124 60 112C43 124 35 105 32 97C9 100-1 81 12 60C-1 39 9 20 32 23C35 15 43-4 60 8Z'},
+      fulfilment:{name:'Fulfilment',ink:'#77518a',d:'M60 5C72-2 84 6 87 17C101 14 114 25 109 39C123 48 123 69 109 78C114 92 101 106 87 103C84 115 72 122 60 115C48 122 36 115 33 103C19 106 6 92 11 78C-3 69-3 48 11 39C6 25 19 14 33 17C36 6 48-2 60 5Z'},
       exceptions:{name:'Exceptions',ink:'#9f483d',d:'M36 6H84L114 36V84L84 114H36L6 84V36Z'},
       cancelled:{name:'Cancelled Orders',ink:'#982f48',d:'M27 6H93L114 27V40Q95 60 114 80V93L93 114H27L6 93V80Q25 60 6 40V27Z'}
     };
@@ -306,9 +306,9 @@
       fulfilment:'<path d="M2 7l9-5 8 5v11l-8 5-9-5zM2 7l9 5 8-5M11 12v11M7 4l8 5M16 14h8m-3-3 3 3-3 3"/>',
       exceptions:'<circle cx="10" cy="10" r="8"/><path d="M7 6v8m6-8v8M18 12l6 11H12zM18 16v3m0 2v.2"/>',
       cancelled:'<path d="M5 1h11l4 4v18H5zM16 1v5h4M8 7h8M8 10h7M8 13l9 8m0-8-9 8"/>',
-      qr:'<path d="M2 2h8v8H2zM14 2h8v8h-8zM2 14h8v8H2zM15 14h3v3h-3zM20 15h2v6h-2zM14 20h3v2h-3zM5 5h2v2H5zM17 5h2v2h-2zM5 17h2v2H5z"/>',
+      qr:'<path d="M6 8V2h12v6M3 8h18v11h-3M6 19H3V8M6 13h12v10H6zM8 15h2v2H8zM14 15h2v2h-2zM8 19h2m3 0h3M18 10h1"/>',
       plain:'<circle cx="9" cy="15" r="7"/><circle cx="9" cy="5" r="2"/><path d="M15 7h9m-3-3 3 3-3 3"/>',
-      complete:'<path d="M2 7l9-5 8 5v11l-8 5-9-5zM2 7l9 5 8-5M11 12v11M14 16l3 3 6-7"/>',
+      complete:'<path d="M3 7l8-4 8 4-8 4zM3 7v12l8 4V11M19 7v5M7 5l8 4M3 19l8 4 3-1M17 20l2 2 5-6"/>',
       set:'<path d="M2 5l10-4 10 4-10 4zM2 10l10 4 10-4M2 15l10 4 10-4M2 20l10 4 10-4M15 12l3 3 5-6"/>'
     };
     const familyOf = st => st.how==='button'?'fulfilment':st.how==='laserReady' || st.how==='laserDone'?'laser':st.how==='engraveApproved' || st.how==='engravePlain'?'engraving':'prepared';
@@ -320,9 +320,17 @@
       if (!model.date && +model.at > 0) model.date = dateOf(model.at);
       if (!model.time && +model.at > 0) model.time = timeOf(model.at);
       const f=FAMILY[model.family] || FAMILY.received, ink=opts.ghost?'#92968f':f.ink;
-      const action=String(model.action || f.name).toUpperCase(), words=action.split(/\s+/), lines=action==='BACK ENGRAVING'?['BACK','ENGRAVING']:action==='ORDER RECEIVED'?['ORDER','RECEIVED']:action.length>14 && words.length>1?[words.slice(0,Math.ceil(words.length/2)).join(' '),words.slice(Math.ceil(words.length/2)).join(' ')]:[action];
+      const action=String(model.action || f.name).toUpperCase(), words=action.split(/\s+/), lines=(['BACK ENGRAVING','ORDER RECEIVED','ORDER COMPLETE'].includes(action) || action.length>14) && words.length>1?[words.slice(0,Math.ceil(words.length/2)).join(' '),words.slice(Math.ceil(words.length/2)).join(' ')]:[action];
       const serifFree='system-ui,-apple-system,BlinkMacSystemFont,Segoe UI,Arial,sans-serif';
       const txt=(value,y,size,weight=700,color=ink)=>`<text x="60" y="${y}" text-anchor="middle" fill="${color}" stroke="none" font-family="${serifFree}" font-size="${size}" font-weight="${weight}" letter-spacing="0">${esc(value)}</text>`;
+      // Explicit typographic widths keep every glyph inside the actual family silhouette,
+      // including the oval's lower shoulder and the cancellation ticket's narrow waist.
+      const widths={' ': .3, I:.3,J:.5,L:.56,M:.86,W:.96,F:.6,E:.61,P:.65,S:.65,T:.62,O:.78,G:.78,C:.72,Q:.78,':':.28,'.':.28,'—':.8};
+      const fitted=(value,y,size,width,color=ink)=>{
+        value=String(value);const natural=[...value].reduce((n,c)=>n+(widths[c] ?? (/\d/.test(c)?.6:.68)),0)*size;
+        return txt(value,y,size,700,color).replace('<text ',`<text data-seal-text textLength="${Math.min(width,natural).toFixed(2)}" lengthAdjust="spacingAndGlyphs" `);
+      };
+      const labelWidth=model.family==='cancelled'?62:lines.length===2?84:model.family==='prepared'?96:88;
       const signer=String(model.by || '').trim() || 'Not recorded', sigLines=signer.match(/.{1,21}(?:\s|$)|\S+/g)?.map(s=>s.trim()) || [signer];
       const H=opts.signer?137+sigLines.length*12:120;
       let trim='';
@@ -332,10 +340,10 @@
       if(model.family==='laser')trim='<g fill="none" stroke-width="1.2"><circle cx="30" cy="22" r="2"/><circle cx="90" cy="22" r="2"/><circle cx="20" cy="75" r="2"/><circle cx="100" cy="75" r="2"/></g>';
       const symbol=model.path?`<path d="${esc(model.path)}"/>`:SYMBOL[model.icon || model.family] || SYMBOL[model.family] || SYMBOL.received;
       return `<svg viewBox="0 0 120 ${H}" aria-hidden="true" focusable="false" data-seal-family="${esc(model.family || 'received')}" data-seal-model="${esc(JSON.stringify(model))}"><g fill="${ink}" stroke="${ink}" stroke-linecap="round" stroke-linejoin="round"${opts.ghost?' opacity=".55"':''}>`+
-        `<path data-seal-outline d="${f.d}" fill="rgba(255,254,251,.96)" stroke-width="2.7"${opts.ghost?' stroke-dasharray="3 3"':''}/><path d="${f.d}" transform="translate(60 60) scale(.93) translate(-60 -60)" fill="none" stroke-width=".9"/>${trim}`+
-        `<g transform="translate(43 15) scale(1.4)" fill="none" stroke-width="1.45">${symbol}</g>`+
-        lines.map((line,i)=>txt(line,lines.length===2?56+i*14:69,line.length>14?10.8:lines.length===2?13.4:14.5)).join('')+
-        (opts.ghost || model.status?'':txt(model.date || 'NOT RECORDED',87,model.date?12.6:10.5,700,META_INK)+txt(model.time || '—',101,13,700,META_INK))+
+        `<path data-seal-outline d="${f.d}" fill="rgba(255,254,251,.08)" stroke-width="2.7"${opts.ghost?' stroke-dasharray="3 3"':''}/><path d="${f.d}" transform="translate(60 60) scale(.93) translate(-60 -60)" fill="none" stroke-width=".9"/>${trim}`+
+        `<g transform="translate(46.2 13) scale(1.15)" fill="none" stroke-width="1.45">${symbol}</g>`+
+        lines.map((line,i)=>fitted(line,lines.length===2?54+i*14:64,lines.length===2 || line.length>10?14.6:15.8,labelWidth)).join('')+
+        (opts.ghost || model.status?'':fitted(model.date || 'NOT RECORDED',82,model.date?14:11,model.family==='engraving'?82:86,META_INK)+fitted(model.time || '—',96,14.2,model.family==='engraving'?62:model.family==='finishing'?66:72,META_INK))+
         (opts.signer?'<path d="M32 124h56" fill="none" stroke-width=".7" opacity=".5"/>'+txt('Signed by',135,8,500,META_INK)+sigLines.map((s,i)=>txt(s,147+i*12,10,600,META_INK)).join(''):'')+'</g></svg>';
     }
     function enlarge(g) {try{return face(JSON.parse(g.getAttribute('data-seal-model')),{signer:true});}catch(_){return null;}}
@@ -474,7 +482,13 @@
       if(rowWidth>0)available=Math.min(available,rowWidth-(parseFloat(cs.paddingLeft)||0)-(parseFloat(cs.paddingRight)||0));
       const gap=parseFloat(cs.columnGap)||parseFloat(cs.gap)||4;
       const other=[...row.children].filter(n=>!seals.includes(n)).reduce((n,e)=>n+e.getBoundingClientRect().width,0);
-      const size=seals.length===1?BASE_SIZE:Math.max(1,Math.min(BASE_SIZE,(available-other-gap*(row.children.length-1))/seals.length));
+      let size=seals.length===1?BASE_SIZE:Math.max(1,Math.min(BASE_SIZE,(available-other-gap*(row.children.length-1))/seals.length));
+      if(row.classList.contains('egButtonSeal') && row.closest('.swEng')){
+        // This row intentionally overlaps half a seal onto its button. Solve the
+        // available width before applying the fit, rather than measuring the previous fit.
+        const button=parent?.querySelector('.egApproveButton'),room=(parent?.clientWidth || 0)-(button?.offsetWidth || 144)-8-(parseFloat(cs.paddingLeft)||0)-(parseFloat(cs.paddingRight)||0)-gap*(seals.length-1);
+        size=Math.max(1,Math.min(BASE_SIZE,room/(seals.length-.5)));
+      }
       const value=(Math.floor(size*100)/100)+'px';
       if(row.style.getPropertyValue('--seal-fit')!==value)row.style.setProperty('--seal-fit',value);
       row.dataset.sealCount=String(seals.length);return size;
