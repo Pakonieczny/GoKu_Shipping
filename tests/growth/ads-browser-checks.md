@@ -6,6 +6,8 @@ Open the fixture page in a browser, click **Product research**, then check each 
 
 Save any verification screenshot outside the repository in the operator's private evidence directory. A fixture screenshot demonstrates interface behavior only. Verify live research and Google Ads separately through authenticated, read-only sandbox requests and a secure owner browser session.
 
+The two labelled market scenarios check pooled-volume and research-language rendering. Pooled volumes must not imply country-specific demand or performance. The research-language scenario must call English a storefront-supported research hypothesis, retain unknown actual campaign language, and show a safe source link. Saved detail sampling must show omitted counts without changing the report totals.
+
 Local checks:
 
 ```sh
