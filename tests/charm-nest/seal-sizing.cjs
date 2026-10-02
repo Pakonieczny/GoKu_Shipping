@@ -4,9 +4,14 @@
 const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path');
 const {JSDOM}=require('jsdom');
 const ROOT=path.join(__dirname,'../..'),read=file=>fs.readFileSync(path.join(ROOT,file),'utf8');
+// jsdom's stylesheet parser (cssstyle) drops a declaration whose value has min(), max() or clamp() around var() -- valid CSS that every
+// browser keeps, such as the Library card cap `width:min(72px,var(--seal-fit,var(--seal-size)))` -- so the seal would measure 84 px here
+// whatever the stylesheet says. The production stylesheet is loaded with each such value held verbatim in a custom property (which jsdom
+// keeps) and the property set to var() of it: the same cascade and the same expression, resolved by the helpers below as any var() is.
+const jsdomCss=css=>css.replace(/([a-z-]+)\s*:\s*([^;{}]*\b(?:min|max|clamp)\([^;{}]*var\([^;{}]*)(?=[;}])/g,(_,prop,value)=>`--jsdom-${prop}:${value};${prop}:var(--jsdom-${prop})`);
 const catalog=new JSDOM('<style id="main"></style><style id="activity"></style>');
-catalog.window.document.querySelector('#main').textContent=read('charm-nest-1.html').match(/<style>([\s\S]*?)<\/style>/)[1];
-catalog.window.document.querySelector('#activity').textContent=read('charm-nest-activity.css');
+catalog.window.document.querySelector('#main').textContent=jsdomCss(read('charm-nest-1.html').match(/<style>([\s\S]*?)<\/style>/)[1]);
+catalog.window.document.querySelector('#activity').textContent=jsdomCss(read('charm-nest-activity.css'));
 const main=catalog.window.document.querySelector('#main').sheet,activity=catalog.window.document.querySelector('#activity').sheet;
 assert(main && activity,'both production stylesheets parse');
 const relevant=sheet=>[...sheet.cssRules].filter(r=>r.selectorText && (r.selectorText===':root' || /\.seal|\.laserSeal|\.processSealRow|\.egApprove|\.egButtonSeal|\.engravingSeals|\.pvMain|\.pvApproval/.test(r.selectorText))).map(r=>r.cssText).join('\n');

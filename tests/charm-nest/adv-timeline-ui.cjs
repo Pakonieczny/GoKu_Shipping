@@ -105,17 +105,20 @@ const Timeline = require(path.join(root, 'netlify/functions/_orderTimeline.js'))
     const E = '4100000300', ev6 = base.map(e => Object.assign({}, e, { id: e.id.replace(R, E), orderId: E }));
     await setFx(E, ev6, { at: Date.now() - 5e5, by: 'Paul', why: 'Asked' });
     await page.evaluate(id => window.__mount(id), E); await painted(sealsOf(ev6)); await page.waitForTimeout(1300);
-    const t1 = await page.evaluate(() => window.__el.querySelector('.tlCxStamp').textContent);
+    // (the stamp's face reads CANCELLED or ETSY CANCELLED with its date and time; who cancelled it is in its record, and said on hover)
+    const readCx = () => page.evaluate(() => [...window.__el.querySelectorAll('.tlCxStamp')].map(x => ({ text: x.textContent, face: JSON.parse(x.dataset.tlFace || 'null') })));
+    const t1 = (await readCx())[0];
     await setFx(E, ev6, { at: Date.now() - 2e5, by: 'Etsy', why: 'Buyer requested', source: 'etsy' });
     await page.evaluate(() => window.__tl.refresh()); await page.waitForTimeout(200);
-    const t2 = await page.evaluate(() => [...window.__el.querySelectorAll('.tlCxStamp')].map(x => x.textContent));
-    assert.match(t1, /BY PAUL/); assert.equal(t2.length, 1); assert.match(t2[0], /ON ETSY/, 'the stamp says who cancelled it now');
+    const t2 = await readCx();
+    assert.match(t1.text, /^CANCELLED/); assert.doesNotMatch(t1.text, /ETSY/); assert.deepEqual([t1.face.type, t1.face.by], ['cancelled', 'Paul'], 'the stamp is a person\'s cancel, by Paul');
+    assert.equal(t2.length, 1); assert.match(t2[0].text, /^ETSY CANCELLED/); assert.deepEqual([t2[0].face.type, t2[0].face.by, t2[0].face.source], ['etsyCancelled', 'Etsy', 'etsy'], 'the stamp says who cancelled it now');
     const O = '4100000400';
     await page.evaluate(id => { window.__fx[id] = { events: ['bogus', 'arrived', 'constructor', 'toString', 'placed'].map((type, i) => ({ id: `${id}~${type}~o${i}`, type, at: Date.now() - (5 - i) * 36e5 })), cancelled: null, where: null }; window.__mount(id); }, O);
     await painted(2);
     r = await page.evaluate(() => { for (const b of window.__el.querySelectorAll('.tlSt[data-key]')) b.click(); for (const c of window.__el.querySelectorAll('.tlChip')) c.click(); return { n: window.__el.querySelectorAll('.tlSt[data-key]').length, now: window.__el.querySelector('.tlNowT').textContent }; });
     assert.equal(r.n, 2, 'bogus, constructor and toString draw no seal; arrived and placed do'); assert.equal(r.now, 'On a sheet');
-    console.log('  ✓ 6 · the CANCELLED stamp goes from BY PAUL to ON ETSY with the record; unknown and prototype-named types draw and click');
+    console.log('  ✓ 6 · the CANCELLED stamp (by Paul) goes to ETSY CANCELLED with the record; unknown and prototype-named types draw and click');
 
     // ── 5 · keyboard ──
     await page.evaluate(id => window.__mount(id), R); await painted(sealsOf(base) + 1); await page.waitForTimeout(500);

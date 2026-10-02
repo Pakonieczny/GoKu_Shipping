@@ -2,9 +2,14 @@
 const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
 const {JSDOM}=require('jsdom'),R=require('../../charm-nest-readiness.js');
 const html=fs.readFileSync('charm-nest-1.html','utf8'),library=fs.readFileSync('charm-nest-library.js','utf8');
+// jsdom's stylesheet parser (cssstyle) drops a declaration whose value has min(), max() or clamp() around var() -- valid CSS that every
+// browser keeps, such as the Library card cap `width:min(72px,var(--seal-fit,var(--seal-size)))` -- so the seal would measure 84 px here
+// whatever the stylesheet says. The production stylesheet is loaded with each such value held verbatim in a custom property (which jsdom
+// keeps) and the property set to var() of it: the same cascade and the same expression, resolved by the helpers below as any var() is.
+const jsdomCss=css=>css.replace(/([a-z-]+)\s*:\s*([^;{}]*\b(?:min|max|clamp)\([^;{}]*var\([^;{}]*)(?=[;}])/g,(_,prop,value)=>`--jsdom-${prop}:${value};${prop}:var(--jsdom-${prop})`);
 const dom=new JSDOM('<body><style></style></body>',{runScripts:'outside-only',pretendToBeVisual:true}),w=dom.window,d=w.document;
 w.matchMedia=()=>({matches:true});w.requestAnimationFrame=()=>1;w.cancelAnimationFrame=()=>{};w.setInterval=()=>1;
-w.Element.prototype.getAnimations=()=>[];d.querySelector('style').textContent=html.match(/<style>([\s\S]*?)<\/style>/)[1];
+w.Element.prototype.getAnimations=()=>[];const production=d.querySelector('style');production.textContent=jsdomCss(html.match(/<style>([\s\S]*?)<\/style>/)[1]);   // (the seal renderer adds a stylesheet of its own ahead of this one: say which is meant)
 w.eval(fs.readFileSync('charm-nest-motion.js','utf8'));
 const Seal=w.Seal,context=vm.createContext({window:w,Seal,CharmNestReadiness:R,doc:d,L:{pendingSeals:new Set(),presses:new Set()}});
 const start=library.indexOf('  function processHtml('),end=library.indexOf('  function cards(',start);
@@ -56,7 +61,7 @@ try{
  }
  const plain=d.createElement('div');plain.className='sealRow';plain.innerHTML=Seal.html(history[0]);d.body.appendChild(plain);
  assert.equal(number(plain.firstChild,'width'),84,'non-Library seals keep their canonical viewport');
- const rules=[...d.querySelector('style').sheet.cssRules];
+ const rules=[...production.sheet.cssRules];
  assert.equal(rules.find(r=>r.selectorText==='.librarySheet:has(.processSealRow)>.productionRow').style.getPropertyValue('margin-top'),'38px','QR room follows the smaller card seal');
  console.log('PASS: no pending/readiness preview ink, compact counters unchanged, all historical seals survive stage changes without duplicates, Library cards cap at72 and shrink uniformly, standard84/hover168 elsewhere.');
 }finally{w.close();}

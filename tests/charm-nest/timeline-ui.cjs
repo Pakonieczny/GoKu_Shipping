@@ -247,20 +247,25 @@ function fixture({ MAIN, CX }) {
   await shot('tlui-2-hover-filter');
   await page.mouse.move(700, 880);
   await page.click('.tlChip[data-legend]'); await page.waitForTimeout(200);
-  const leg = await page.$$eval('.tlLegend figure', f => f.length);
-  assert(leg >= 14 && leg <= 22, 'the legend shows the seals that are drawn, not all 45 kinds: ' + leg);
+  // (the legend explains the eight seal families, each with the actions that use it, since 30 Sep; once it listed each kind drawn)
+  const leg = await page.$$eval('.tlLegend figure', f => f.map(n => [n.dataset.sealFamily, n.querySelector('figcaption small').textContent.trim() !== '']));
+  assert.deepEqual(leg, ['received', 'prepared', 'engraving', 'laser', 'finishing', 'fulfilment', 'exceptions', 'cancelled'].map(k => [k, true]), 'the legend shows the eight seal families, each naming its actions, not all 45 kinds: ' + JSON.stringify(leg));
   await page.click('.tlChip[data-legend]'); await page.waitForTimeout(250);
-  ok.push(`the noise draws no seal; the filter chips are gone (one quiet "Stamps" chip left) and the legend is ${leg} seals, not 45`);
+  ok.push(`the noise draws no seal; the filter chips are gone (one quiet "Stamps" chip left) and the legend is ${leg.length} seal families, not 45`);
 
-  // ── live: a new event from this page drops in and the rail moves on ──
+  // ── live: a new event from this page is pressed in by the shared physical stamp (Seal.press, since 30 Sep: it waits unseen
+  //    until contact, then the detail follows it) and the rail moves on ──
   await page.click('.tlSt[data-key="assembled~e28"]'); await page.waitForTimeout(200);
   await page.evaluate(MAIN => OrderTimeline.record({ orderId: MAIN, type: 'shipped', by: 'Dana K.', station: 'shipping', text: 'Shipped — USPS acceptance scan', id: 'live-ship-1', data: { carrier: 'USPS' } }), MAIN);
   await page.waitForTimeout(120);
-  r = await page.evaluate(() => { const q = s => [...window.__el.querySelectorAll(s)]; const s = q('.tlSt[data-key="shipped~live-ship-1"]')[0]; return { n: q('.tlSt[data-key]').length, anim: s ? s.getAnimations().length : -1, ring: q('.tlInkRing').length, cur: q('.tlStop.c').map(n => n.dataset.stage), done: q('.tlStop.d').length, now: q('.tlNowT')[0].textContent, h: q('.tlDetail h3')[0].textContent, ghosts: q('.tlSt.ghost').length, nowAnim: q('.tlNowLine')[0].getAnimations().length }; });
-  assert.equal(r.n, 11); assert(r.anim > 0, 'the new stamp drops in'); assert.equal(r.ring, 1, 'an ink ring spreads');
+  r = await page.evaluate(() => { const q = s => [...window.__el.querySelectorAll(s)]; const s = q('.tlSt[data-key="shipped~live-ship-1"]')[0]; return { n: q('.tlSt[data-key]').length, pending: !!s && s.classList.contains('pending'), hidden: s ? getComputedStyle(s.querySelector('svg')).visibility : null, cur: q('.tlStop.c').map(n => n.dataset.stage), done: q('.tlStop.d').length, now: q('.tlNowT')[0].textContent, ghosts: q('.tlSt.ghost').length, nowAnim: q('.tlNowLine')[0].getAnimations().length }; });
+  assert.equal(r.n, 11); assert(r.pending && r.hidden === 'hidden', 'the new stamp waits unseen for its press: ' + JSON.stringify(r));
   assert.deepEqual(r.cur, [], 'Shipped is the last step'); assert.equal(r.done, 8); assert.equal(r.now, 'Shipped', 'the page\'s own step moves Now ahead of the server\'s where');
-  assert.equal(r.h, 'Shipped — USPS acceptance scan', 'the reader was on the latest step, so the detail follows the new one');
   assert.equal(r.ghosts, 0); assert(r.nowAnim > 0, 'the NOW line glides');
+  await page.waitForFunction(() => !window.__el.querySelector('.tlSt.pending, .tlSt.wet') && /Shipped — USPS/.test(window.__el.querySelector('.tlDetail h3').textContent), null, { timeout: 15000 });
+  r = await page.evaluate(() => { const q = s => [...window.__el.querySelectorAll(s)]; const s = q('.tlSt[data-key="shipped~live-ship-1"]')[0]; return { shown: !!s && getComputedStyle(s.querySelector('svg')).visibility === 'visible', h: q('.tlDetail h3')[0].textContent, tools: document.querySelectorAll('.sealTool').length }; });
+  assert(r.shown && r.tools === 0, 'the stamp stays, pressed, and the press is cleared away: ' + JSON.stringify(r));
+  assert.equal(r.h, 'Shipped — USPS acceptance scan', 'the reader was on the latest step, so the detail follows the new one once it is pressed');
   await page.waitForTimeout(1300);
   await shot('tlui-1-live-timeline');
   // the refresh every pollMs while visible (20 s in the app) asks again and keeps the live step
@@ -269,7 +274,7 @@ function fixture({ MAIN, CX }) {
   await page.waitForTimeout(250);
   assert.equal(await page.$$eval('.tlSt[data-key]', s => s.length), 11);
   assert.equal(await page.$$eval('.tlStop.d', s => s.length), 8, 'the server\'s older where does not take the rail back');
-  ok.push('live: OrderTimeline.record drops the Shipped stamp in with an ink ring, NOW glides, the rail ends at Shipped; the timed refresh asks again and keeps it');
+  ok.push('live: OrderTimeline.record presses the Shipped stamp in (unseen until the stamp lands), NOW glides, the detail follows once it is pressed, the rail ends at Shipped; the timed refresh asks again and keeps it');
 
   // ── focus(eventId) ──
   assert.equal(await page.evaluate(MAIN => window.__tl.focus(`${MAIN}~sorted~e22`), MAIN), true);
@@ -295,7 +300,9 @@ function fixture({ MAIN, CX }) {
   await page.waitForTimeout(1300);
   r = await page.evaluate(() => { const q = s => [...window.__el.querySelectorAll(s)]; return { now: q('.tlNowT')[0].textContent, sub: q('.tlNowS')[0].textContent, stamp: q('.tlCxStamp text').map(t => t.textContent).join(' '), x: q('.tlStop.x').map(n => n.dataset.stage), gone: q('.tlStop.gone').length, line: (q('.tlNowLine.cx span')[0] || {}).textContent, hatch: q('.tlAfterCx').length, ghosts: q('.tlSt.ghost').length }; });
   assert.equal(r.now, 'Cancelled — do not proceed'); assert.match(r.sub, /Cancelled on Etsy/); assert.match(r.sub, /Buyer requested/);
-  assert.match(r.stamp, /CANCELLED/); assert.match(r.stamp, /DO NOT PROCEED/); assert.match(r.stamp, /ON ETSY/);
+  // (the cancellation seal has the regular footprint of every seal since 30 Sep: ETSY CANCELLED, its date and time; the warning is
+  //  the Now line's "Cancelled — do not proceed" above and the record's own, no longer words crowded onto the face)
+  assert.match(r.stamp, /^ETSY CANCELLED \d{1,2} [A-Z]{3} \d{4} \d{1,2}:\d\d [AP]M$/, 'the cancellation seal reads ETSY CANCELLED, its date and time: ' + r.stamp);
   assert.deepEqual(r.x, ['laser'], 'a clay ✕ where it stopped (engraved, never cut)'); assert.equal(r.gone, 4);
   assert.match(r.line, /^CANCELLED · /); assert.equal(r.hatch, 1); assert.equal(r.ghosts, 0);
   await page.click('.tlSt[data-key="removed~e37"]'); await page.waitForTimeout(350);
@@ -303,7 +310,7 @@ function fixture({ MAIN, CX }) {
   await page.click('.tlSt[data-key="etsyCancelled~e36"]'); await page.waitForTimeout(400);
   assert.match(await page.$eval('.tlDetail .tlWhy', d => d.textContent), /Why it was cancelled.*Buyer requested/);
   await shot('tlui-3-cancelled');
-  ok.push('cancelled: red CANCELLED · DO NOT PROCEED stamp across the rail, ✕ at Laser cut and later steps struck, clay line with hatching, no ghosts, reasons in the detail');
+  ok.push('cancelled: red ETSY CANCELLED seal on the rail, the Now line says do not proceed, ✕ at Laser cut and later steps struck, clay line with hatching, no ghosts, reasons in the detail');
   await page.evaluate(() => { window.__tl.destroy(); document.querySelector('.tlTestHost').remove(); });
 
   // ── an error says so, with Retry; compact draws the rail only ──
@@ -339,26 +346,29 @@ function fixture({ MAIN, CX }) {
     const evs = window.__fx[MAIN].events, last = evs[evs.length - 1];
     const a = OrderTimelineUI.nowStamps(evs, { ev: last }), a2 = OrderTimelineUI.nowStamps(evs, { ev: last });
     card.innerHTML = a.seal + '<div class="row">' + a.recent + '</div>'; OrderTimelineUI.wireNow(card, ev => { window.__opened = ev; });
-    const minis = card.querySelectorAll('.tlMini').length, seal = [...card.querySelectorAll('.tlNowSeal text')].map(t => t.textContent).join(' '), w = card.querySelector('.tlNowSeal').getBoundingClientRect().width;
+    const minis = card.querySelectorAll('.tlMini').length, seal = [...card.querySelectorAll('.tlNowSeal text')].map(t => t.textContent).join(' '), w = card.querySelector('.tlNowSeal').getBoundingClientRect().width, by = JSON.parse(card.querySelector('.tlNowSeal svg').dataset.sealModel).by;
     // an order held, and one with a question nobody answered: the blocker, in plain words
     const hold = OrderTimelineUI.nowStamps(evs.slice(0, 8), {});
     const ask = OrderTimelineUI.nowStamps([evs[0], { orderId: MAIN, id: 'q1', type: 'needsDecision', at: evs[0].at + 6e4, by: 'paul', text: 'Unknown SKU: BLOOMING_20239 (HUGGIE): its huggie design is not in any master file' }], {});
     const cx = window.__fx[CX].events.find(e => e.type === 'etsyCancelled'), c = OrderTimelineUI.nowStamps(window.__fx[CX].events, { ev: cx, cancelled: cx });
     card.innerHTML = c.seal + '<div class="row">' + c.recent + '</div>'; OrderTimelineUI.wireNow(card, () => {});
     const cxEl = card.querySelector('.tlNowSeal.cx');
-    return { same: a.seal === a2.seal && a.recent === a2.recent, minis, seal, w, recent: a.recent, blocker: a.blocker,
+    return { same: a.seal === a2.seal && a.recent === a2.recent, minis, seal, by, w, recent: a.recent, blocker: a.blocker,
       hold: hold.blocker, holdRow: hold.recent, ask: ask.blocker, askSeal: /ARRIVED|ORDER/i.test(ask.seal), cxBlock: c.blocker,
       cx: [...cxEl.querySelectorAll('text')].map(t => t.textContent).join(' '), cw: cxEl.getBoundingClientRect().width, drop: cxEl.getAnimations().length };
   }, { MAIN, CX });
   assert.equal(r.minis, 0, 'no row of small stamps any more');
-  assert.match(r.seal, /ASSEMBLED/); assert.match(r.seal, /LUISA T\./, 'the seal is the milestone it is at, not the last label printed');
+  // (the signer is no longer drawn on a seal's face, 2 Oct: it stays in the seal's record, its accessible name)
+  assert.match(r.seal, /ASSEMBLED/, 'the seal is the milestone it is at, not the last label printed'); assert.equal(r.by, 'Luisa T.', 'and keeps its signer'); assert.doesNotMatch(r.seal, /LUISA/i, 'off its face');
   assert(r.w > 85 && r.w < 140, 'the milestone seal at 92px: ' + r.w);
   assert.equal(r.recent, ''); assert.equal(r.blocker, null, 'nothing is holding this one up');
   assert(r.same, 'the same order draws the same markup (the view skips an unchanged card)');
   assert.equal(r.hold.label, 'On hold'); assert.match(r.hold.text, /H or K/); assert.match(r.holdRow, /On hold/);
   assert.equal(r.ask.label, 'Needs a decision'); assert.match(r.ask.text, /Unknown SKU/); assert(r.askSeal, 'and its seal is the milestone, not a "?"');
   assert.equal(r.cxBlock, null);
-  assert.match(r.cx, /CANCELLED ORDER/); assert.match(r.cx, /DO NOT PROCEED/); assert.equal(r.drop, 1, 'the cancel seal drops in');
+  assert.match(r.cx, /^ETSY CANCELLED \d{1,2} [A-Z]{3} \d{4} \d{1,2}:\d\d [AP]M$/, 'the cancel seal reads ETSY CANCELLED, its date and time: ' + r.cx);
+  // (the card no longer plays a drop of its own on a seal it draws, 30 Sep: a new seal is pressed by the shared stamp; the cancel seal is simply there, at the shared size, at rest)
+  assert.equal(r.drop, 0, 'the card plays no animation of its own on the cancel seal'); assert(r.cw > 60 && r.cw < 140, 'the cancel seal at the shared seal size: ' + r.cw);
   // explainOn: a rested seal says what its next step needs; a click opens that step on the Timeline
   await page.evaluate(MAIN => { const card = document.querySelector('.tlTestHost'), a = OrderTimelineUI.nowStamps(window.__fx[MAIN].events, {}); card.innerHTML = a.seal; OrderTimelineUI.explainOn(card, () => ({ events: window.__fx[MAIN].events }), st => { window.__pinned = st; }); }, MAIN);
   await page.mouse.move(0, 0); await page.hover('.tlTestHost .tlNowSeal'); await page.waitForTimeout(1500);
@@ -367,7 +377,7 @@ function fixture({ MAIN, CX }) {
   await page.click('.tlTestHost .tlNowSeal');
   assert.equal(await page.evaluate(() => window.__pinned && window.__pinned.stage), 'shipped', 'a click on the original seal asks for the next step on the Timeline');
   await page.evaluate(() => document.querySelector('.tlTestHost').remove());
-  ok.push('nowStamps: one seal — the milestone it is at (ASSEMBLED · LUISA T.) — no row of stamps, the blocker in plain words ("On hold — H or K", "Needs a decision — Unknown SKU"), and the 118px CANCELLED ORDER · DO NOT PROCEED seal dropping in');
+  ok.push('nowStamps: one seal — the milestone it is at (ASSEMBLED, signed Luisa T. in its record) — no row of stamps, the blocker in plain words ("On hold — H or K", "Needs a decision — Unknown SKU"), and the ETSY CANCELLED seal at the shared size');
 
   // ── the real client over the stand-in: record and send three steps, then timelineGet (with its where) paints them ──
   const REAL = '4170000001';

@@ -529,14 +529,23 @@
   // One size per group: the kind changes the silhouette, never the space occupied by its seal.
   const sealAttrs = e => `data-tl-face="${esc(JSON.stringify({ key: e.key, type: e.type, at: e.at, by: e.by, source: e.source, station: e.station, lane: e.lane, sheet: e.sheet, data: e.data, print: e.print }))}"`;
   function storedFace(b) { try { return b && b.dataset.tlFace ? JSON.parse(b.dataset.tlFace) : null; } catch (_) { return null; } }
-  function baseSealSize(host) { try { return Math.max(1, parseFloat(root.getComputedStyle(host).getPropertyValue("--seal-size")) || SEAL_SIZE); } catch (_) { return SEAL_SIZE; } }
-  function fitRail(rail) {
+  // (read once per host and again after a resize: a computed-style read in the middle of a redraw makes the page work out every style
+  //  the redraw has just changed, twice a step, and a live step over a hundred events then no longer fits a frame)
+  const sealBase = new WeakMap(); let sealBaseGen = 0;
+  try { root.addEventListener("resize", () => { sealBaseGen++; }); } catch (_) { /* no window to resize */ }
+  function baseSealSize(host) {
+    const hit = sealBase.get(host); if (hit && hit.gen === sealBaseGen) return hit.size;
+    let size = SEAL_SIZE; try { size = Math.max(1, parseFloat(root.getComputedStyle(host).getPropertyValue("--seal-size")) || SEAL_SIZE); } catch (_) { /* the default */ }
+    sealBase.set(host, { gen: sealBaseGen, size }); return size;
+  }
+  // m: what measure() read before the redraw wrote anything (without it, read now)
+  function fitRail(rail, m) {
     if (!rail) return;
     const wrap = rail.querySelector(".tlStops"), n = wrap && wrap.children.length; if (!n) return;
-    const base = baseSealSize(rail), width = wrap.clientWidth || rail.clientWidth, compactHost = rail.closest(".tlUI.compact");
+    const base = baseSealSize(rail), width = m ? m.stops : wrap.clientWidth || rail.clientWidth, compactHost = rail.closest(".tlUI.compact"), hostH = m ? m.host : compactHost ? compactHost.clientHeight : 0;
     let fit = width > 0 ? Math.min(base, Math.max(24, width / n - 8)) : base;
     // A compact header is already sized by its host. Its seals fit that space without making a taller toolbar.
-    if (compactHost && compactHost.clientHeight) fit = Math.min(fit, Math.max(24, compactHost.clientHeight - 20));
+    if (compactHost && hostH) fit = Math.min(fit, Math.max(24, hostH - 20));
     rail.style.setProperty("--seal-fit", Math.round(fit * 100) / 100 + "px");
   }
   function iconG(ic, x, y, s, ink, sw) {
@@ -1412,12 +1421,19 @@
     }
 
     /* ── painting ── */
+    /** The widths a redraw fits its seals to, read once before it writes anything: a read between its writes makes the page
+     *  work out every style those writes have changed, again for each read, and a live step then no longer fits a frame. */
+    function measure() {
+      const rail = $(".tlRail"), wrap = rail && rail.querySelector(".tlStops"), host = rail && rail.closest(".tlUI.compact");
+      S.M = { stops: wrap ? wrap.clientWidth || rail.clientWidth : 0, host: host ? host.clientHeight : 0, scroll: scroller.clientWidth };
+    }
     function repaint(o) {
       o = o || {};
       if (S.stamping) {
         const prev = S.deferredPaint || {}; S.deferredPaint = Object.assign({}, prev, o, { fresh: [...new Set((prev.fresh || []).concat(o.fresh || []))] });
         return;
       }
+      measure();
       sealHover.cancel(true); // a redraw cannot preserve hover just because a larger parent still matches :hover
       const D = S.D = deriveNow();
       // every event stays in S.events (the host, and the step explainer, read them all); only the seals are drawn
@@ -1540,7 +1556,7 @@
       // (the steps of the piece shown, or of all of them: drawn again when they change)
       const keys = R.map(r => r.s.k).join(" ");
       if (wrap.dataset.keys !== keys) { wrap.dataset.keys = keys; rail.style.setProperty("--n", R.length); wrap.innerHTML = R.map(r => `<button type="button" class="tlStop f" data-stage="${r.s.k}"><i class="tlSeal"></i><span>${esc(r.s.l)}</span><em class="tlCnt" hidden></em></button>`).join(""); }
-      fitRail(rail);
+      fitRail(rail, S.M);
       const nodes = [...wrap.children], presses = [];
       R.forEach(({ s, i }, j) => {
         const n = nodes[j], st = D.stages[i];
@@ -1625,7 +1641,7 @@
       const cv = $(".tlCanvas"), evs = S.shown, oldNow = S.nowX;
       paintLanes();
       const pending = D.cancelled || D.hand ? [] : (D.rail || STAGES.map((s, i) => ({ s, i }))).filter(g => g.i > D.step);
-      const base = baseSealSize(cv), count = Math.min(12, Math.max(1, evs.length + pending.length)), available = scroller.clientWidth;
+      const base = baseSealSize(cv), count = Math.min(12, Math.max(1, evs.length + pending.length)), available = S.M ? S.M.scroll : scroller.clientWidth;
       // Every member of a dense timeline shrinks by the same ratio; a sparse timeline uses the shared base size.
       // The existing timeline cells provide 50px by 58px. Fit the whole group inside them rather than making taller lists.
       const fit = Math.min(base, CELL_COL - 8, CELL_LANE - 12, available > 0 ? Math.max(24, (available - PAD * 2) / count - 8) : base);
@@ -2018,7 +2034,8 @@
     function fitAll() {
       if (S.dead) return;
       if (S.stamping) { S.deferredPaint = S.deferredPaint || {}; return; }
-      fitRail($(".tlRail"));
+      measure();
+      fitRail($(".tlRail"), S.M);
       if (!compact && S.loaded && S.D) paintCanvas(S.D, {});
     }
     root.addEventListener("resize", fitAll);

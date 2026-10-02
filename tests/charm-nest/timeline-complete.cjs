@@ -1,7 +1,7 @@
 // Complete Order and Reopen on the order's timeline (Paul, 29 Sep 02:08: "The timeline also doesn't have the seals or the
 // points for when an order was manually completed by pressing the completed button in the Review tab").
 // Each press of Complete Order (a Custom Orders card, any other Review card, the order window) is a point of its own on the
-// Office lane ("Operator"), with the card's green "Order completed" seal, its time, who pressed it and where; a Reopen is a
+// Office lane ("Operator"), with the shared "ORDER | COMPLETE" seal face, its time, who pressed it (in its accessible name) and where; a Reopen is a
 // point of its own and never takes the Complete point away; a later Complete adds another.
 // Part 1 runs the real charmNestLibrary ops (customPut, customReopen, timelineGet with the records' history derived) over
 // the in-memory store: what each press records, an order completed before (only its record, or its record and the event
@@ -82,18 +82,20 @@ const opsOf = evs => evs.filter(opOf).map(e => [opOf(e), e.by, (e.data && e.data
     }, [order(RID, '41765762721', 'RE_5460', 'MODIFICATION REWORK FREE SHIPPING', [['Price', '144']]), order(U, '41790000041', 'UNKNOWN_77', 'Mystery Charm', [['Metal', 'Sterling Silver']], { metalKey: 'silver', metalLabel: 'Sterling Silver' })]);
     const idle = () => page.waitForFunction(() => !document.querySelector('.cuStat, .btn.working'), null, { timeout: 30000 });
     const calm = () => page.evaluate(() => document.querySelectorAll('.mNote').forEach(n => n.close()));
+    // (the wooden stamp's whole sequence, and the card's flight, run to their end: a click during a stamp is held off by design, so no fixed wait stands in for it)
+    const stamped = async () => { await page.waitForTimeout(300); await page.waitForFunction(() => !Seal.busy() && !document.querySelector('#motionLayer .mGhost, .sealTool, .seal.pending'), null, { timeout: 20000 }); await page.waitForTimeout(250); };
     // Complete Order on its Custom Orders card, then Reopen under Completed
     await page.click('#reviewView .egTab[data-k="customOrder"]');
     await page.click(`#rvList .reviewListRow[data-rid="${RID}"] [data-cu-complete]`);
-    await page.waitForFunction(k => B.maps.customDone[k], K); await idle(); await page.waitForTimeout(1600); await calm();
+    await page.waitForFunction(k => B.maps.customDone[k], K); await idle(); await stamped(); await calm();
     await page.click('#reviewView .rvSeg [data-cseg="done"]');
     await page.click(`#rvList .reviewListRow[data-rid="${RID}"] [data-cu-reopen]`);
-    await page.waitForFunction(k => !B.maps.customDone[k], K); await idle(); await page.waitForTimeout(1600); await calm();
+    await page.waitForFunction(k => !B.maps.customDone[k], K); await idle(); await stamped(); await calm();
     await page.click('#reviewView .rvSeg [data-cseg="open"]');
     // Complete Order on another Review tab's card (Unknown SKU)
     await page.click('#reviewView .egTab[data-k="unmatchedSku"]');
     await page.click(`#rvList .reviewListRow[data-rid="${U}"] [data-cu-complete]`);
-    await page.waitForFunction(k => B.maps.customDone[k], KU); await idle(); await page.waitForTimeout(1600); await calm();
+    await page.waitForFunction(k => B.maps.customDone[k], KU); await idle(); await stamped(); await calm();
     // and in the order window
     await page.evaluate(k => OrderWin.open(k), K);
     await page.waitForSelector('#owCustom [data-cu-complete]', { state: 'visible' });
@@ -111,18 +113,20 @@ const opsOf = evs => evs.filter(opOf).map(e => [opOf(e), e.by, (e.data && e.data
     const lane = await page.evaluate(() => {
       const mid = r => r.top + r.height / 2, office = document.querySelector('#owTimeline .tlLane[data-lane="office"]'), L = mid(office.getBoundingClientRect());
       const ops = [...document.querySelectorAll('#owTimeline .tlSt[data-key^="sealCompleted~"], #owTimeline .tlSt[data-key^="reopened~"]')];
-      return { label: office.textContent, off: ops.map(b => Math.round(mid(b.getBoundingClientRect()) - L)), ink: ops.map(b => { const g = b.querySelector('svg g[fill]'); return g ? g.getAttribute('fill') : ''; }), drawn: [...document.querySelectorAll('#owTimeline .tlSt[data-key]')].map(b => b.dataset.key.split('~')[0]),
+      return { label: office.textContent, off: ops.map(b => Math.round(mid(b.getBoundingClientRect()) - L)), ink: ops.map(b => { const g = b.querySelector('svg g[fill]'); return g ? g.getAttribute('fill') : ''; }), family: ops.map(b => b.querySelector('svg').dataset.sealFamily), drawn: [...document.querySelectorAll('#owTimeline .tlSt[data-key]')].map(b => b.dataset.key.split('~')[0]),
         count: document.getElementById('owTlCount').textContent, sum: (document.querySelector('#owTlTools .tlSum') || document.querySelector('#owTimeline .tlSum') || {}).textContent };
     });
     assert.match(lane.label, /Office\s*Operator/, 'the Office lane, "Operator"');
     assert(lane.off.every(d => Math.abs(d) <= 3), 'every Complete and Reopen point sits on the Office lane: ' + lane.off);
-    assert.deepEqual(lane.ink, ['#19663f', '#3b362f', '#19663f'], 'the Complete seals in the card\'s own green (Seal: #19663f), the Reopen its own ink: ' + lane.ink);
+    // (each seal takes its family's ink since 30 Sep: Complete is a Fulfilment seal, the plum the Complete Order button takes; a Reopen is an Exceptions seal)
+    assert.deepEqual(lane.family, ['fulfilment', 'exceptions', 'fulfilment'], 'Complete is a Fulfilment seal, Reopen an Exceptions one: ' + lane.family);
+    assert.deepEqual(lane.ink, ['#77518a', '#9f483d', '#77518a'], 'the Complete seals in the card\'s own plum (Seal: #77518a), the Reopen its family ink: ' + lane.ink);
     assert.deepEqual(lane.drawn.filter(t => t === 'sealCompleted' || t === 'reopened'), ['sealCompleted', 'reopened', 'sealCompleted'], 'in the order they were pressed');
     const answer = await page.evaluate(rid => OrderTimeline.get(rid), RID);
     assert.equal(lane.count, String(answer.events.length), 'the Timeline tab counts each event once: ' + lane.count);
-    console.log(`  ✓ the Timeline: 2 Complete seals and the Reopen on the Office lane ("Operator"), in the card's green, in press order; the tab counts ${lane.count} (${lane.sum})`);
+    console.log(`  ✓ the Timeline: 2 Complete seals and the Reopen on the Office lane ("Operator"), in the card's plum, in press order; the tab counts ${lane.count} (${lane.sum})`);
 
-    // rest (750 ms): the seal itself grows with ORDER COMPLETED and the time; who and where are its accessible name, and the card under it says it in words
+    // rest (750 ms): the seal itself grows with ORDER COMPLETE and the time; who and where are its accessible name, and the card under it says it in words
     const hoverOn = async key => {
       await page.hover(`#owTimeline .tlSt[data-key="${key}"]`); await page.waitForTimeout(1100);
       return page.evaluate(key => { const S = document.querySelector(`#owTimeline .tlSt[data-key="${key}"]`), X = [...document.querySelectorAll('.tlExp')].find(x => getComputedStyle(x).display === 'block' && x.textContent.trim()); return { disp: S && S.dataset.sealZoom ? 'block' : 'none', copy: !!document.querySelector('.tlLoupe,.tlNowZoom,.sealLens'), face: S ? [...S.querySelectorAll('text')].map(t => t.textContent).join(' | ') : '', aria: S ? S.getAttribute('aria-label') || '' : '', exp: X ? X.textContent : '' }; }, key);
@@ -130,16 +134,16 @@ const opsOf = evs => evs.filter(opOf).map(e => [opOf(e), e.by, (e.data && e.data
     const keys = await page.evaluate(() => [...document.querySelectorAll('#owTimeline .tlSt[data-key^="sealCompleted~"], #owTimeline .tlSt[data-key^="reopened~"]')].map(b => b.dataset.key));
     let h = await hoverOn(keys[2]);
     assert.equal(h.disp, 'block'); assert(!h.copy, 'no second seal');
-    assert.match(h.face, /ORDER COMPLETED/); assert.match(h.face, /\d{1,2}:\d\d [AP]M/); assert.doesNotMatch(h.face, /TEST OPERATOR/, 'the signer is not on the face'); assert.match(h.aria, /Test Operator/);
+    assert.match(h.face, /^ORDER \| COMPLETE \|/); assert.match(h.face, /\d{1,2}:\d\d [AP]M/); assert.doesNotMatch(h.face, /TEST OPERATOR/, 'the signer is not on the face'); assert.match(h.aria, /Test Operator/);
     assert.match(h.exp, /Completed with Complete Order · Order window/); assert.match(h.exp, /Test Operator/);
     if (SHOTS) { fs.mkdirSync(SHOTS, { recursive: true }); await page.screenshot({ path: path.join(SHOTS, 'timeline-complete-hover.png') }); }
     h = await hoverOn(keys[1]);
     assert.match(h.face, /REOPENED/); assert.match(h.exp, /Reopened: back to Open · Review · Custom Orders/);
     h = await hoverOn(keys[0]);
-    assert.match(h.face, /ORDER COMPLETED/); assert.match(h.exp, /Review · Custom Orders/);
+    assert.match(h.face, /^ORDER \| COMPLETE \|/); assert.match(h.exp, /Review · Custom Orders/);
     await page.mouse.move(700, 930); await page.waitForTimeout(300);
     if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'timeline-complete.png') });
-    console.log('  ✓ rest: ORDER COMPLETED / REOPENED and the time on the grown seal, who and where in its accessible name, and in words under it');
+    console.log('  ✓ rest: ORDER | COMPLETE / REOPENED and the time on the grown seal, who in its accessible name (never on the face), where in words under it');
 
     /* ── 3 · completed by hand reads as completed everywhere in the order window; a Reopen puts it back; Complete again ── */
     assert(srv.st.list('Order_Timeline').some(e => e.orderId === RID && e.type === 'needsDecision'), 'the order\'s question was recorded (the Now card used to keep saying it)');
@@ -171,7 +175,7 @@ const opsOf = evs => evs.filter(opOf).map(e => [opOf(e), e.by, (e.data && e.data
     assert.match(h.exp, /Order completed by hand · nothing more to do/, 'the card under the Complete point: ' + h.exp);
     assert(!/move on|Next|Needs a person/.test(h.exp), 'no "Then, for the order to move on" list: ' + h.exp);
     // a step after it, hovered on the step row: skipped, by whom and when
-    await page.hover('#owRail .tlStop[data-stage="laser"]'); await page.waitForTimeout(450);
+    await page.hover('#owRail .tlStop[data-stage="laser"] .tlSeal'); await page.waitForTimeout(1500);   // (the card comes after the 750 ms rest on the step's seal)
     const railCard = await page.evaluate(() => { const X = [...document.querySelectorAll('.tlExp')].find(x => getComputedStyle(x).display === 'block' && x.textContent.trim()); return X ? X.textContent : ''; });
     assert.match(railCard, /Laser cut\s*Skipped/); assert.match(railCard, /Not needed: the order was completed by hand/); assert.match(railCard, /Test Operator/); assert(!/Needs a person|Next/.test(railCard), 'skipped, nothing owed: ' + railCard);
     await hoverOn(keys[2]);
@@ -226,7 +230,7 @@ const opsOf = evs => evs.filter(opOf).map(e => [opOf(e), e.by, (e.data && e.data
     assert.deepEqual(old.drawn, ['arrived', 'sealCompleted', 'sealPrinted'], 'Order in, the completion, and its QR label print (every print is a seal too): ' + old.drawn);
     assert.equal(old.lane, 'Operator');
     h = await (async () => { await page.hover('.tlTestHost .tlSt[data-key^="sealCompleted~"]'); await page.waitForTimeout(1100); return page.evaluate(() => { const S = window.__el.querySelector('.tlSt[data-key^="sealCompleted~"]'); return { face: [...S.querySelectorAll('text')].map(t => t.textContent).join(' | '), aria: S.getAttribute('aria-label') || '', grown: !!S.dataset.sealZoom }; }); })();
-    assert(h.grown); assert.match(h.face, /ORDER COMPLETED/); assert.match(h.aria, /paul/i);
+    assert(h.grown); assert.match(h.face, /^ORDER \| COMPLETE \|/); assert.match(h.aria, /paul/i);
     await page.evaluate(() => window.__t.destroy());
     assert.deepEqual(errors, [], 'no page errors');
     console.log('  ✓ an order completed before: its completion drawn from what its records keep, on the Office lane, by paul');

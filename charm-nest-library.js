@@ -220,7 +220,12 @@
         if (r.setDone) landed=leave('set',r.setId,true,ids,r.setId);
         else { cards(byId('libBody'),'current'); partials(byId('libBody')); LaserReview.changed(); }
       } else landed=leave(kind,id,done,ids,r.setId);
-      if (r.counts) setCounts(r.counts);
+      if (r.counts) {
+        // what is on its way to the Completed tab is counted as it lands there, where the count pulses (Paul, 27 Sep)
+        const was = L.counts ? { ...L.counts } : null;
+        setCounts(r.counts);
+        if (was && landed && done && L.tab !== 'done') for (const k of ['sheets', 'sets']) { const d = L.counts[k] - was[k]; if (d > 0) { L.counts[k] -= d; bump(k, d, false, landed); } }
+      }
       for (const [k,st] of L.lists) if (st!==L.list || L.tab!=='done') dropList(k);
       if (!done && r.setId && r.setChanged && L.list && L.list.kind==='sets') removeRows(L.list,['set:'+r.setId]);
       if (!done) keepCurrent(r.sheetIds || ids);

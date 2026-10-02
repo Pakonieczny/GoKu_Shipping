@@ -56,7 +56,7 @@ const ORDERS = [order(RID, [line(41767447521, 'CHAIN_8941', 'CHAIN REPLACEMENT',
     // the card's seals: each with the button just before its row, its time, its turn, and whether it waits to be pressed
     const seals = () => page.evaluate(sel => [...document.querySelectorAll(sel + ' .sealRow .seal')].map(s => {
       const r = s.closest('.sealRow'); let b = r.previousElementSibling; while (b && b.classList.contains('sealRow')) b = b.previousElementSibling;
-      return { how: s.classList.contains('seal-button') ? 'button' : 'print', at: +s.dataset.at, rot: s.style.getPropertyValue('--rot'), btn: b && b.matches('[data-seal-btn]') ? (b.matches('[data-cu-complete]') ? 'complete' : 'print') : null, pending: s.classList.contains('pending'), foot: s.querySelectorAll('textPath')[1].textContent };
+      return { how: s.classList.contains('seal-button') ? 'button' : 'print', at: +s.dataset.at, rot: s.style.getPropertyValue('--rot'), btn: b && b.matches('[data-seal-btn]') ? (b.matches('[data-cu-complete]') ? 'complete' : 'print') : null, pending: s.classList.contains('pending'), face: (m => [m.action, m.n])(JSON.parse(s.querySelector('svg').dataset.sealModel)) };
     }), card);
     const rec = () => srv.st.doc('Charm_Custom_Orders', KEY);
     const stamped = () => page.evaluate(() => __stamped);
@@ -67,7 +67,7 @@ const ORDERS = [order(RID, [line(41767447521, 'CHAIN_8941', 'CHAIN REPLACEMENT',
     await page.waitForFunction(k => B.maps.customDone[k], KEY); await settle();
     await seg('done');
     const first = await seals();
-    assert.deepEqual(first.map(s => [s.how, s.btn, s.foot]), [['print', 'print', 'PRINT Nº 1']], 'one print seal: ' + JSON.stringify(first));
+    assert.deepEqual(first.map(s => [s.how, s.btn, s.face]), [['print', 'print', ['QR LABEL PRINTED', 1]]], 'one print seal: ' + JSON.stringify(first));
 
     // 2 · Reopen: the record stays with its seal, open; history and a timeline note (not a seal) say who and when
     await page.click(card + ' [data-cu-reopen]');
@@ -97,10 +97,13 @@ const ORDERS = [order(RID, [line(41767447521, 'CHAIN_8941', 'CHAIN REPLACEMENT',
     assert.deepEqual(open.map(s => [s.how, s.btn]), [['print', 'print'], ['button', 'complete']], 'each seal on the button that made it: ' + JSON.stringify(open));
     const kept = open.map(s => [s.how, s.at, s.rot]);
 
-    // 4 · the order window keeps them too, small, beside their buttons
+    // 4 · the order window keeps them too, at the shared responsive seal size (never collapsed to a sliver, never past the
+    //     canonical 84 px), beside their buttons
     await page.evaluate(k => OrderWin.open(k), KEY);
-    await page.waitForFunction(() => document.querySelectorAll('#owCustom .sealRow.mini .seal').length === 2, null, { timeout: 15000 });
-    assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll('#owCustom .sealRow.mini')].map(r => [r.previousElementSibling.matches('[data-cu-complete]') ? 'complete' : 'print', r.querySelectorAll('.seal').length])), [['print', 1], ['complete', 1]]);
+    await page.waitForFunction(() => document.querySelectorAll('#owCustom .sealRow .seal').length === 2, null, { timeout: 15000 });
+    assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll('#owCustom .sealRow')].map(r => [r.previousElementSibling.matches('[data-cu-complete]') ? 'complete' : 'print', r.querySelectorAll('.seal').length])), [['print', 1], ['complete', 1]]);
+    const owSizes = await page.evaluate(() => [...document.querySelectorAll('#owCustom .sealRow .seal')].map(s => [s.offsetWidth, s.offsetHeight]));   // (unrotated box: a stamp lies at an angle)
+    assert.ok(owSizes.every(([w, h]) => w >= 24 && w <= 84 && h >= 24 && h <= 84), 'the order window seals are drawn at a readable size, within the 84 px canon: ' + JSON.stringify(owSizes));
     await page.keyboard.press('Escape'); await page.waitForTimeout(300);
 
     // 5 · a reload: the kept record is read again; the same seals, none stamped
@@ -117,7 +120,7 @@ const ORDERS = [order(RID, [line(41767447521, 'CHAIN_8941', 'CHAIN REPLACEMENT',
     r = rec(); assert.deepEqual([r.state, r.prints, r.stamps.map(x => x.how).join()], ['completed', 2, 'print,button,print']);
     await seg('done');
     const all = await seals();
-    assert.deepEqual(all.map(s => s.foot), ['PRINT Nº 1', 'NO LABEL PRINTED', 'PRINT Nº 2'], 'every seal: ' + JSON.stringify(all));
+    assert.deepEqual(all.map(s => s.face), [['QR LABEL PRINTED', 1], ['ORDER COMPLETE', 0], ['QR LABEL PRINTED', 2]], 'every seal: ' + JSON.stringify(all));
     assert.deepEqual(all.slice(0, 2).map(s => [s.how, s.at, s.rot]), kept, 'the old ones unchanged');
     assert.equal(new Set(all.map(s => s.at)).size, 3, 'no seal doubled');
     // the timeline: one event per seal, and the reopen notes

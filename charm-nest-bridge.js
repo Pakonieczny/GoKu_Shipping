@@ -7257,7 +7257,8 @@ const CustomSheet = window.CustomSheet = (() => {
       // A cloud receipt and local checkpoint complete the same immutable decision; a lost reply leaves it retryable.
       await saveCloud(e,"sent");if(!current())return;
       e.sent={id:intent.id,at:intent.at,by:intent.by,lines:intent.lines};delete e.sendIntent;delete e.sendError;ver++;
-      if(it.onDone)try{it.onDone(e.sent.by,"sheet",e.sent.at);}catch(err){console.warn("Custom send review",err);}
+      // (the answer it records reaches the order's timeline now, as the repool that used to follow it did: not at some later sync, which a reload in between would lose)
+      if(it.onDone)try{it.onDone(e.sent.by,"sheet",e.sent.at);Review.syncOrderItems();}catch(err){console.warn("Custom send review",err);}
       for(const r of rows)TL.line(r,"designSent",{id:`${r.key}.${e.sent.at}`,at:e.sent.at,by:e.sent.by,text:`Custom design${files.length===1?"":"s"} sent to the sheets by ${e.sent.by}: ${files.map(F=>`${F.name} × ${F.qty} → ${labelOf(F.metal)}`).join(", ")}`.slice(0,200),data:{decisionId:e.sent.id,files:files.map(F=>({name:F.name,qty:F.qty,metal:F.metal,pieces:F.pieces})).slice(0,12),pieces:(lines[r.key] || []).length,placed:["pooled","written","committed"].includes(r.state)}});
       Session.schedule();await Session.flushNow?.();
       if(nestHold)nestHold.bind(rows.flatMap(r=>r.poolIds || []).filter(id=>!Pool.sheetOf(id)));
