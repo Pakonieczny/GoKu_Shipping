@@ -12301,8 +12301,9 @@ async function _prepareCampaignStyles({item,context,choice,identity,join=null}){
     if(!proof.exists)throw Error('The exact reviewed fixed-size proofs are missing.');
     for(const image of routing.fixedProofs(proof.data().images)){
       const source=await _loadCreativeAsset(image.asset);let bytes;
-      for(const quality of [95,90,85,80,75]){bytes=await require('sharp')(source).resize(image.width,image.height,{fit:'fill'}).jpeg({quality,chromaSubsampling:'4:4:4'}).toBuffer();if(bytes.length<=150*1024)break;}
-      if(bytes.length>150*1024)throw Error('The '+image.width+'×'+image.height+' ad exceeds 150 KB. Simplify that layout before publishing.');
+      // Google's "150KB" may mean 150,000 bytes: cap at that, with the editor export's quality steps. The send-time check keeps 150×1024 so plans prepared earlier still pass it.
+      for(const quality of [95,90,85,80,75,70,65,60]){bytes=await require('sharp')(source).resize(image.width,image.height,{fit:'fill'}).jpeg({quality,chromaSubsampling:'4:4:4'}).toBuffer();if(bytes.length<=150000)break;}
+      if(bytes.length>150000)throw Error('The '+image.width+'×'+image.height+' ad exceeds 150 KB. Simplify that layout before publishing.');
       const asset=await _saveCreativeAsset(workspaceId,bytes,'fixed_'+identity.slice(0,16)+'_'+image.width+'x'+image.height,{width:image.width,height:image.height,kind:'finished display artwork'});
       fixed.push(await add(asset,null,true));
     }
