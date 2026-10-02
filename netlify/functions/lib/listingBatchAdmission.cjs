@@ -74,7 +74,7 @@ const stallCutoffMs = (requested) => {
 // (the work it started is safe to repeat: saves skip files that exist) and the
 // run goes on; the next run asks again. Never use this for a submission: an
 // abandoned create could be paid for twice.
-const SWEEP_CALL_LIMITS = { batch_status: 90 * 1000, batch_stall_cancel: 90 * 1000, batch_collect: 4 * 60 * 1000 };
+const SWEEP_CALL_LIMITS = { batch_status: 90 * 1000, batch_stall_cancel: 90 * 1000, batch_collect: 2 * 60 * 1000 };
 function withLimit(promise, ms, onTimeout) {
   let timer;
   const limit = new Promise((resolve) => { timer = setTimeout(() => resolve(onTimeout), ms); });

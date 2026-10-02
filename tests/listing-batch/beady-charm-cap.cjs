@@ -90,6 +90,15 @@ const run = (o) => cap.capBeadyCharmSize({ buf: IN, loadTemplate, log: quiet, ..
   // anything that throws: the model's picture is kept and nothing propagates
   assert.equal(await run({ category: "Beady_Necklace", slotIndex: 0, loadTemplate: async () => { throw new Error("gone"); } }), IN);
 
+  // a step that never answers gives its place back: the picture is kept, and the
+  // pictures after it are still processed (two hung downloads used to hold both
+  // places for the life of the process)
+  flatResult = { changed: true, buf: Buffer.from("flat-out") };
+  const hang = async () => new Promise(() => {});
+  const hungRuns = await Promise.all([0, 1].map(() => run({ category: "Beady_Necklace", slotIndex: 2, loadTemplate: hang, stepLimitMs: 30 })));
+  assert.deepEqual(hungRuns, [IN, IN], "a step that never answers leaves the model's picture");
+  assert.equal((await run({ category: "Beady_Necklace", slotIndex: 3 })).toString(), "flat-out", "a later picture is not held behind them");
+
   // at most two pictures at a time (each is decoded to raw 2048 x 2048 pixels)
   flatResult = { changed: true, buf: Buffer.from("flat-out") };
   maxLive = 0;

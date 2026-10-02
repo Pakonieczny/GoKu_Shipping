@@ -47,16 +47,28 @@ async function withSlot(fn) {
   }
 }
 
+// A step that never answers (a reference-photo download on a stale connection,
+// seen as 5 to 13 minute stalls of the batch collector on 2026-10-02) must not
+// keep one of the two places for the life of the process: every later picture
+// of the run would wait behind it. After this long the picture is saved as the
+// model made it, like any other failure of this best-effort step.
+const STEP_LIMIT_MS = 60 * 1000;
+function limited(promise, ms) {
+  let timer;
+  const stop = new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`took longer than ${ms / 1000} s`)), ms); });
+  return Promise.race([promise, stop]).finally(() => clearTimeout(timer));
+}
+
 function isCapped(category, slotIndex) {
   return category === "Beady_Necklace" && (FLAT_SLOTS.has(slotIndex) || PHOTO_SLOTS.has(slotIndex));
 }
 
 // buf: the PNG the model produced. loadTemplate: async () => Buffer of the
 // reference photo that was image 1 of the request. Returns the buffer to save.
-async function capBeadyCharmSize({ category, slotIndex, buf, loadTemplate, log = console, factor = CAP_FACTOR }) {
+async function capBeadyCharmSize({ category, slotIndex, buf, loadTemplate, log = console, factor = CAP_FACTOR, stepLimitMs = STEP_LIMIT_MS }) {
   if (!isCapped(category, slotIndex) || !Buffer.isBuffer(buf)) return buf;
   try {
-    return await withSlot(async () => {
+    return await withSlot(() => limited((async () => {
       const t0 = Date.now();
       const template = await loadTemplate();
       const run = require("./_beadyCharmCapFlat").capFlatSlot;
@@ -68,7 +80,7 @@ async function capBeadyCharmSize({ category, slotIndex, buf, loadTemplate, log =
       }
       log.warn(`[beady-cap] slot ${slotIndex + 1}: left as generated (${(r && r.reason) || "no reason"}) in ${ms} ms`);
       return buf;
-    });
+    })(), stepLimitMs));
   } catch (e) {
     log.warn(`[beady-cap] slot ${slotIndex + 1}: left as generated (${(e && e.message) || e})`);
     return buf;
