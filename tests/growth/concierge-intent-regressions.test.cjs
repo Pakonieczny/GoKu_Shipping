@@ -71,6 +71,11 @@ test('actual three-gift overall budget produces an honest bounded clarification 
   assert.match(answer.reply,/haven’t applied the overall budget as a per-item limit/);assert.match(answer.question,/maximum item price.*each piece.*before shipping.*taxes/);assert.doesNotMatch(answer.reply+' '+answer.question,/within|under.*150|is.*150.*total|name, initials|handwriting/i);noExternalWork(d.calls);
 });
 
+test('amount followed by currency and total is still an overall multi-gift budget',async()=>{
+  const d=deps([bunny]),answer=await core.concierge({...d,message:'I need three bridesmaid necklaces for 150 USD total.'});
+  assert.equal(answer.budgetClarification,true);assert.equal(answer.live,false);assert.deepEqual(answer.products,[]);assert.deepEqual(answer.actions,[]);assert.equal(answer.preferences.budget,null);assert.equal(answer.preferences.currency,'USD');assert.match(answer.question,/maximum item price.*each piece/);noExternalWork(d.calls);
+});
+
 test('explicit per-piece cap after shared-budget clarification filters live item prices honestly',async()=>{
   const first=await core.concierge({...deps([bunny]),message:'Three bunny silver necklaces with a total budget of 150 USD, no engraving.'});
   const cheaper=piece('106','synthetic-affordable-bunny','Bunny Necklace',{variants:[{...bunny.variants[0],price:45}]}),next=await core.concierge({...deps([bunny,cheaper]),message:'Under $50 each, before shipping and taxes.',preferences:first.preferences});

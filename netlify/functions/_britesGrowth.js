@@ -384,7 +384,12 @@ function checkoutRequest(text){
   if(!command&&positive('checkout|check out|checking out|payments?|pay|paying|paid|credit cards?|debit cards?|paypal|(?:apple|google|shop) pay|billing'))return 'payment';
   return null;
 }
-function sharedBudgetRequest(text){return fieldMentions(clean(text,2000).toLowerCase(),'(?:(?:total|overall|combined|shared) (?:item |jewelry |jewellery )?budget|budget (?:for |across )?(?:all|both|the whole)|(?:in |altogether |combined )?total (?:for |across )?(?:all|both))').some(hit=>!hit.negative);}
+function sharedBudgetRequest(text){
+  const normalized=clean(text,2000).toLowerCase();
+  const explicit='(?:(?:total|overall|combined|shared) (?:item |jewelry |jewellery )?budget|budget (?:for |across )?(?:all|both|the whole)|(?:in |altogether |combined )?total (?:for |across )?(?:all|both))';
+  const pluralAmountTotal='(?:\\b(?:two|three|four|five|six|seven|eight|nine|ten|\\d+)\\b[^.!?]{0,48}\\b(?:gifts?|pieces?|necklaces?|earrings?|bracelets?|charms?|items?|bridesmaids?)\\b[^.!?]{0,96}\\b(?:usd|cad|gbp|eur|c\\$|ca\\$|us\\$|\\$)?\\s*\\d+(?:\\.\\d{1,2})?\\s*(?:usd|cad|gbp|eur|dollars?)?\\s+total\\b)';
+  return fieldMentions(normalized,'(?:'+explicit+'|'+pluralAmountTotal+')').some(hit=>!hit.negative);
+}
 
 function shopperAction(message,products,displayedHandles=[]) {
   const text=clean(message,2000).toLowerCase(),command=shopperCommand(text);
