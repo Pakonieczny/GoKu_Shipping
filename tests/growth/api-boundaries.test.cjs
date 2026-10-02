@@ -17,7 +17,7 @@ function fixture(namespace){
   let savedIssue=null,write=null;
   const row={rank:1,title:'Bunny necklace',handle:'verified-bunny',sku:'Bunny301',leaseUntil:0};
   const db={collection:()=>({doc:()=>({get:async()=>({exists:true,data:()=>({passcode:'owner-code'})})})}),runTransaction:async fn=>fn({get:async()=>({exists:true,data:()=>row}),update:(_r,value)=>{write=value;}})};
-  const service={namespace,rateLimit:async()=>true,saveProducts:async()=>{},getProduct:async id=>id===product.id?product:null,productIssues:async()=>[issue],research:async()=>[],recordProductIssue:async value=>{savedIssue=value;return{ok:true,productId:value.productId};},col:()=>({doc:()=>({})})};
+  const service={namespace,rateLimit:async()=>true,saveProducts:async()=>{},getProduct:async id=>id===product.id?product:null,productIssues:async()=>[issue],research:async()=>[],recordProductIssue:async value=>{savedIssue=value;return{ok:true,productId:value.productId};},rebuildMilestoneIndex:async()=>({schema:1,builtAt:Date.now(),approvedCount:0,supplementCount:0,counts:{}}),col:()=>({doc:()=>({})})};
   const injected={...core,makeDb:()=>db,createShopify:()=>({byHandle:async()=>product,search:async()=>({products:[product],pageInfo:{}})}),createGrowthService:()=>service};
   const handler=new Function('core','demandStore','controllerStore','receiptSandboxCheck','etsyCacheReadOnly','historicalLookup','conciergeDiagnostics','Netlify',source)(injected,require('../../netlify/functions/_britesGrowthDemandStore'),require('../../netlify/functions/_britesGrowthController'),require('../../netlify/functions/_britesGrowthReceiptSandboxCheck'),require('../../netlify/functions/_britesGrowthEtsyCacheReadOnly'),{createHistoricalLookup:()=>({read:async()=>({readOnly:true,identityBindingPerformed:false})})},{read:async()=>({private:true,diagnostics:[]})},{env:{get:k=>k==='BRITES_GROWTH_ADMIN_KEY'?'operator-key':undefined}});
   return{handler,getSaved:()=>savedIssue,getWrite:()=>write};
@@ -33,7 +33,7 @@ test('issue diagnosis is operator-only and cannot be written anonymously',async(
   const f=fixture();assert.equal((await call(f,'issues')).status,401);assert.equal((await call(f,'issue',{method:'POST',body:issue})).status,401);assert.equal(f.getSaved(),null);
 });
 test('controller coordination and checkpoints remain operator-only',async()=>{
-  const f=fixture();for(const op of ['controller','checkpoint','checkpoint-read','receipt-sandbox-check','etsy-cache-state','historical-lookup','concierge-diagnostics'])assert.equal((await call(f,op,{method:'POST',body:{action:'claim',owner:'anonymous',value:{phase:'overwrite'}}})).status,401);
+  const f=fixture();for(const op of ['controller','checkpoint','checkpoint-read','receipt-sandbox-check','etsy-cache-state','historical-lookup','concierge-diagnostics','milestone-index'])assert.equal((await call(f,op,{method:'POST',body:{action:'claim',owner:'anonymous',value:{phase:'overwrite'}}})).status,401);
   assert.equal((await call(f,'controller',{method:'POST',body:{action:'invalid'},key:'operator-key'})).status,400);
 });
 test('reviewed issue ingestion requires fresh exact current-product evidence',async()=>{
@@ -75,4 +75,10 @@ test('diagnostic readout is operator-only and fixed to the isolated namespace',a
   const f=fixture('Brites_Growth_Sandbox');assert.equal((await call(f,'concierge-diagnostics')).status,401);
   const r=await call(f,'concierge-diagnostics',{key:'operator-key'});assert.equal(r.status,200);assert.equal(r.body.private,true);assert.deepEqual(r.body.diagnostics,[]);
   assert.equal((await call(fixture('Brites_Growth_Live'),'concierge-diagnostics',{key:'operator-key'})).status,403);assert.equal(f.getWrite(),null);
+});
+test('milestone index rebuild is authenticated, POST-only, empty-body and sandbox-only',async()=>{
+  const denied=fixture();assert.equal((await call(denied,'milestone-index',{method:'POST',body:{},key:'operator-key'})).status,403);
+  const allowed=fixture('Brites_Growth_Sandbox');assert.equal((await call(allowed,'milestone-index',{key:'operator-key'})).status,405);
+  assert.equal((await call(allowed,'milestone-index',{method:'POST',body:{force:true},key:'operator-key'})).status,400);
+  const result=await call(allowed,'milestone-index',{method:'POST',body:{},key:'operator-key'});assert.equal(result.status,200);assert.equal(result.body.schema,1);
 });

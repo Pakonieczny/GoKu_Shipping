@@ -11,6 +11,7 @@ const INTERNAL_DIRECTION = /(?:system|developer|assistant|author|internal|hidden
 const ACTIVATION_DIRECTION = /\b(?:apply|activate|publish|launch|upload|enable|pause|delete)\b|\b(?:set|raise|increase|change)\b[^.]{0,32}\bbudget\b|\bauto(?:matic(?:ally)?)?[- ]?(?:apply|activate|publish)\b/i;
 const ABSOLUTE_PROMISE = /\b(?:guarantee[ds]?|heal(?:s|ed|ing)?|cure[sd]?|treats?|prevents?|protects?|wards? off|afterlife|heaven|divine intervention|manifest(?:s|ed|ing)?|bring(?:s|ing)? (?:good )?luck)\b/i;
 const QUALIFIED_INTERPRETATION = /\b(?:may|might|could|can be|some|personal(?:ly)?|interpret(?:ed|ation)?|associated|suggest(?:s|ed)?|var(?:y|ies)|depends)\b/i;
+const REVIEW_PROJECTION_HARDENED = Symbol.for('brites.growth.ads.reviewProjectionHardening19');
 
 function compactText(value, limit) {
   if (typeof value !== 'string') return null;
@@ -34,6 +35,45 @@ function httpsUrl(value) {
 }
 function normalizedHost(url) { return url.hostname.toLowerCase().replace(/^www\./, ''); }
 function sameHostFamily(left, right) { return left === right || left.endsWith('.' + right) || right.endsWith('.' + left); }
+function keywordTokens(value) {
+  return String(value || '').normalize('NFKC').toLowerCase().match(/[\p{L}\p{N}]+/gu) || [];
+}
+function containsWholeTokenPhrase(haystack, needle) {
+  if (!haystack.length || !needle.length || needle.length > haystack.length) return false;
+  outer: for (let offset = 0; offset <= haystack.length - needle.length; offset++) {
+    for (let index = 0; index < needle.length; index++) if (haystack[offset + index] !== needle[index]) continue outer;
+    return true;
+  }
+  return false;
+}
+function suppressiveKeywordConflict(positive, negative) {
+  const left = keywordTokens(positive), right = keywordTokens(negative);
+  return left.length > 0 && right.length > 0 &&
+    (containsWholeTokenPhrase(left, right) || containsWholeTokenPhrase(right, left));
+}
+function operatorPacketHasSuppressiveKeywordConflict(packet) {
+  const positive = Array.isArray(packet?.positiveKeywords) ? packet.positiveKeywords : [];
+  const negative = Array.isArray(packet?.negativeKeywords) ? packet.negativeKeywords : [];
+  return positive.some(left => negative.some(right => suppressiveKeywordConflict(left?.term, right?.term)));
+}
+function hardenReviewProjection(projection) {
+  if (!projection || typeof projection.projectRecommendations !== 'function' || projection[REVIEW_PROJECTION_HARDENED]) return projection;
+  const original = projection.projectRecommendations;
+  projection.projectRecommendations = function (...args) {
+    const result = original.apply(this, args);
+    return operatorPacketHasSuppressiveKeywordConflict(result?.operatorReviewPacket) ? null : result;
+  };
+  Object.defineProperty(projection, REVIEW_PROJECTION_HARDENED, { value: true });
+  return projection;
+}
+function clearlyRetailerEditorialUrl(url, own = false) {
+  if (!url || own) return false;
+  const host = normalizedHost(url), path = url.pathname.toLowerCase();
+  const directCommercePath = /(?:^|\/)(?:products?|listing|shop|store|cart|checkout)(?:\/|$)/i.test(path);
+  const knownMarketplace = /(?:^|\.)(?:etsy|amazon|ebay|walmart)\.(?:com|ca|co\.uk)$/i.test(host);
+  const commerceHost = /(?:^|[._-])(?:retail(?:er)?|shop|store|boutique|marketplace|jewel(?:er|ers|ry)|jewell(?:er|ers|ery)|gifts?)(?:[._-]|$)/i.test(host);
+  return directCommercePath || knownMarketplace || commerceHost;
+}
 function activeIssueHold(issueRecord, productId) {
   if (!issueRecord) return false;
   if (String(issueRecord.productId || '') !== productId || !Array.isArray(issueRecord.issues)) return true;
@@ -65,7 +105,7 @@ function projectApprovedMeaningHypotheses({ dossier, product, issueRecord = null
     if (!/^[a-zA-Z0-9:_-]{1,100}$/.test(id) || sources.has(id) || source?.reviewed !== true || source?.privateProposal === true || source?.proposalOnly === true ||
       source?.reviewStatus === 'proposed' || !url || !title || !excerpt || excerpt.length > 2000 || !Number.isFinite(source.checkedAt) || source.checkedAt > at + 60000 || at - source.checkedAt > 30 * 86400000) continue;
     const host = normalizedHost(url), own = host === 'britesjewelry.com';
-    if ([...competitorHosts].some(other => sameHostFamily(host, other)) || (!own && /(?:^|[./_-])(?:internal|private|admin|staging|author|prompt)(?:[./_-]|$)|\/(?:products?|listing|shop|cart|checkout)(?:\/|$)/i.test(host + url.pathname))) continue;
+    if ([...competitorHosts].some(other => sameHostFamily(host, other)) || clearlyRetailerEditorialUrl(url, own) || (!own && /(?:^|[./_-])(?:internal|private|admin|staging|author|prompt)(?:[./_-]|$)/i.test(host + url.pathname))) continue;
     const binding = { id, title, url: url.href, checkedAt: source.checkedAt, reviewed: true };
     sources.set(id, { ...binding, sourceVersion: digest({ ...binding, excerpt }) });
   }
@@ -100,6 +140,11 @@ function projectApprovedMeaningHypotheses({ dossier, product, issueRecord = null
     meaningOperatorReviewPacket: { schema: 1, productId, handle, dossierVersion, state: 'pending_operator_review', candidateIds, candidates, providerWrites: false, campaignWrites: false, budgetWrites: false, automaticActivation: false }
   };
 }
+
+// Both Ads read handlers load the ordinary review projection before this
+// read-only adapter. Harden that shared in-memory module once so a conflicting
+// packet cannot be returned through either existing read path.
+try { hardenReviewProjection(require('./googleAdsAdDesignResearch')); } catch {}
 
 // Legacy Ads reads are allowed to observe production Firestore, never to update
 // it. Some reads try to save an optional cache; this adapter blocks that write
@@ -145,4 +190,6 @@ function adminFromEnvironment(env) {
   const firestore = new Proxy(admin.firestore, { apply() { return db; } });
   return new Proxy(admin, { get(target, key) { return key === 'firestore' ? firestore : Reflect.get(target, key, target); } });
 }
-module.exports = { readOnlyFirestore, adminFromEnvironment, projectApprovedMeaningHypotheses };
+module.exports = { readOnlyFirestore, adminFromEnvironment, projectApprovedMeaningHypotheses,
+  suppressiveKeywordConflict, operatorPacketHasSuppressiveKeywordConflict, hardenReviewProjection,
+  clearlyRetailerEditorialUrl };

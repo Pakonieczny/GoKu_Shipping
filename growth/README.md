@@ -33,6 +33,7 @@ Before writing or deploying, use authenticated `POST /api/growth/controller` wit
 | `POST /api/growth/release` | Operator | Save a match or retryable failure under its lease |
 | `POST /api/growth/save` | Operator | Validate and save a dossier/version |
 | `POST /api/growth/story-supplement` | Operator | Save a neutral, version-bound story supplement in the isolated sandbox without rewriting the base dossier |
+| `POST /api/growth/milestone-index` | Operator | Rebuild the derived private milestone recall index from current approved dossier versions; accepts no caller data |
 | `GET /api/growth/issues?ids=...` | Operator | Reviewed product conflicts and their evidence |
 | `POST /api/growth/issue` | Operator | Preserve or resolve product-specific recommendation, cart or meaning holds |
 | `GET /api/growth/demand?ids=...` | Operator | Saved, version-bound product outcomes and demand evidence |
@@ -90,6 +91,8 @@ The existing ad application's private read routes expose the same exact-version 
 ## Bounded meaning recall and shopper commands
 
 An implicit milestone may use the private catalogue mirror only as a bounded recall index. The service scans at most 60 approved dossiers and their version-bound supplements, reads at most 36 mirror records, and live-checks no more than 12 unique handles. Recalled candidates still pass exact identity, dossier/supplement version, current product, issue-hold, stock, type, metal, budget, currency and public-meaning gates. Explicit shopper motifs bypass this path, and the implicit path never calls runtime AI. Missing approved evidence still yields one question instead of an invented association.
+
+The authenticated sandbox can precompute those approved meaning links with an empty-body `POST /api/growth/milestone-index`. Shopper requests then read one milestone-specific private index record before the same bounded mirror and live checks, avoiding a full dossier/supplement scan on every broad occasion request. The index is derived evidence only: it cannot approve research, expose private fields, override a product hold, satisfy a stale dossier/supplement version, or replace the final live catalogue and public-meaning validation. If the index has not been built, the original bounded scan remains the compatibility fallback.
 
 Typed navigation is resolved only against products that were already displayed and then freshly read from the live storefront. A unique exact displayed title or a valid displayed ordinal may produce a navigation request. Typed add requests produce option selection and visible confirmation; they never mutate a cart or open checkout directly. Ambiguous titles, missing ordinals, unavailable products and held products fail closed. The quick budget invitation says “$60 or less” because the item cap is inclusive.
 

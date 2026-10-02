@@ -98,4 +98,5 @@ function rankLinkedCandidates(linked,rows,plan,intent={},limit=RECALL_BOUNDS.liv
 }
 function presentation(milestone){const spec=CONTEXTS[validMilestone(milestone)];return spec?{label:spec.label,intro:spec.intro,question:spec.question}:null;}
 function recallBounds(){return {...RECALL_BOUNDS};}
-module.exports={validMilestone,parseMilestone,contextOnlyQuery,contextResidual,discoveryIntent,matchingMeanings,rankLinkedCandidates,presentation,recallBounds};
+function milestoneNames(){return Object.keys(CONTEXTS);}
+module.exports={validMilestone,parseMilestone,contextOnlyQuery,contextResidual,discoveryIntent,matchingMeanings,rankLinkedCandidates,presentation,recallBounds,milestoneNames};

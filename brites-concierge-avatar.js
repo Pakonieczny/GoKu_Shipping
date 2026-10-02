@@ -14,6 +14,14 @@
   const EMOTIONS = Object.freeze(['calm', 'curious', 'celebrate', 'reassuring', 'warm']);
   const validEmotion = emotion => EMOTIONS.includes(emotion) ? emotion : null;
   const MANNERISMS = Object.freeze({greet: 1.12, acknowledge: .9, focus: .86, explain: 1.05, confirm: 1.2, reassure: 1.05});
+  // Authored timing is deliberately irregular: a rare blink reads as alive
+  // without turning the guide into a perpetual attention animation.
+  const BLINK_EVENTS = Object.freeze([
+    Object.freeze({at: 3.3, duration: .2}),
+    Object.freeze({at: 12.7, duration: .19}),
+    Object.freeze({at: 23.6, duration: .21})
+  ]);
+  const BLINK_CYCLE = 35;
   const BEHAVIOR_CUES = Object.freeze({
     greet: 'anticipation', acknowledge: 'listening', focus: 'thinking', explain: 'speaking', confirm: 'celebrate', reassure: 'reassure'
   });
@@ -21,6 +29,15 @@
   function pulse(elapsed, delay, duration) {
     const t = (elapsed - delay) / duration;
     return t <= 0 || t >= 1 ? 0 : t < .4 ? smooth(t / .4) : 1 - smooth((t - .4) / .6);
+  }
+  function blinkFor(time, reducedMotion = false) {
+    if (reducedMotion || !Number.isFinite(time)) return 0;
+    const phase = ((time % BLINK_CYCLE) + BLINK_CYCLE) % BLINK_CYCLE;
+    for (const event of BLINK_EVENTS) {
+      const progress = (phase - event.at) / event.duration;
+      if (progress >= 0 && progress <= 1) return Math.sin(progress * Math.PI) ** .72;
+    }
+    return 0;
   }
   // These timings are artistic hypotheses, not demographic conversion claims.
   // The luminous aperture anticipates first, the head follows, and only then a
@@ -57,21 +74,25 @@
     gaze = gaze && typeof gaze === 'object' ? gaze : {}; const gazeX = Number.isFinite(gaze.x) ? gaze.x : 0, gazeY = Number.isFinite(gaze.y) ? gaze.y : 0;
     emotion = validEmotion(emotion); const calm = emotion === 'calm' || emotion === 'reassuring';
     const motion = reducedMotion ? 0 : calm ? .4 : 1, talking = state === 'speaking', thoughtful = state === 'thinking', listening = state === 'listening', happy = state === 'success' && !calm, concerned = state === 'error';
-    const cycle = ((time + 1.4) % 4.7 + 4.7) % 4.7, blink = motion && cycle < .18 ? Math.sin(cycle / .18 * Math.PI) : 0;
+    const blink = motion ? blinkFor(time) : 0;
     const speech = talking ? (reducedMotion ? .3 : .25 + .45 * Math.abs(Math.sin(time * 7.6)) + .3 * clamp(level, 0, 1)) : 0;
     const expressive = mannerismFor({name: mannerism, elapsed: mannerismElapsed, reducedMotion, emotion});
     const lift = expressive.active ? expressive.lift : happy && motion ? Math.sin(Math.min(elapsed, 1.2) / 1.2 * Math.PI) * .12 : 0;
     const greeting = expressive.name === 'greet', acknowledgement = expressive.name === 'acknowledge', focus = expressive.name === 'focus';
     const apertureAccent = expressive.listen * .035 - expressive.think * .055 + expressive.speak * .025 - expressive.comfort * .018 + expressive.celebrate * .06;
+    const stateEnergy = talking ? speech : thoughtful ? (reducedMotion ? .22 : .22 + .08 * Math.sin(time * 2.15)) : listening ? (reducedMotion ? .1 : .1 + .035 * Math.sin(time * 1.05)) : happy ? .34 : concerned ? .08 : .035;
+    const attentionDriftX = motion && (listening || thoughtful) ? Math.sin(time * .73) * (listening ? .007 : .011) : 0;
+    const attentionDriftY = motion && thoughtful ? Math.sin(time * .47 + .8) * .006 : 0;
     const leftArm = calm ? .025 : thoughtful ? .18 : happy ? .1 : listening ? .045 : 0;
     const rightArm = calm ? .025 : thoughtful ? .25 : happy ? .16 : listening ? .07 : 0;
     return {
       mannerism: expressive.name, mannerismCue: expressive.cue, mannerismPhase: expressive.phase, mannerismActive: expressive.active, nod: expressive.nod, offer: expressive.offer, lean: expressive.body * (acknowledgement ? .025 : .012),
-      state, eyeColor: MOODS[state].color, emotion: emotion || MOODS[state].emotion,
+      state, eyeColor: MOODS[state].color, emotion: emotion || MOODS[state].emotion, blink,
       eyeDeformation: (calm ? -.025 : happy ? .24 : thoughtful ? -.14 : listening ? .1 : concerned ? -.08 : greeting ? expressive.eye * .1 : 0) + apertureAccent,
       eyeScaleX: (happy ? 1.08 : thoughtful ? .93 : 1) + expressive.comfort * .025,
       eyeScaleY: (happy ? .82 : listening ? 1.06 : concerned ? .9 : 1) + expressive.listen * .025 - expressive.speak * .015,
-      ringRotation: thoughtful ? time * .3 : expressive.celebrate * .18 - expressive.comfort * .06,
+      ringRotation: thoughtful ? time * .18 : expressive.celebrate * .18 - expressive.comfort * .06,
+      ringRipple: clamp(stateEnergy + expressive.listen * .08 + expressive.think * .14 + expressive.speak * .18 + expressive.celebrate * .16, 0, 1),
       antennaTilt: (thoughtful ? -.14 : listening ? .08 : happy ? .18 : 0) + expressive.anticipate * .055 + expressive.comfort * -.035,
       bob: Math.sin(time * 1.35) * .045 * motion + lift,
       bodyRoll: Math.sin(time * .7) * .018 * motion,
@@ -79,8 +100,8 @@
       headPitch: clamp(gazeY, -1, 1) * .065 + expressive.nod * .075 + expressive.head * (acknowledgement ? -.03 : focus ? .025 : 0) + (listening ? -.045 : 0) + (talking ? Math.sin(time * 2.5) * .025 * motion : 0),
       headRoll: (calm ? -.012 : concerned ? -.055 : thoughtful ? .055 : happy ? .025 : 0) + expressive.head * (greeting ? -.06 : acknowledgement ? -.035 : focus ? .025 : 0),
       eyeOpen: Math.max(.035, (happy ? .7 : concerned ? .85 : listening ? 1.06 : greeting ? 1 - expressive.eye * .12 : 1) * (1 - blink)),
-      gazeX: clamp(gazeX, -1, 1) * .045 + (thoughtful ? -.035 : 0),
-      gazeY: clamp(gazeY, -1, 1) * .038 + (thoughtful ? .04 : 0),
+      gazeX: clamp(gazeX, -1, 1) * .045 + (thoughtful ? -.035 : 0) + attentionDriftX,
+      gazeY: clamp(gazeY, -1, 1) * .038 + (thoughtful ? .04 : 0) + attentionDriftY,
       browLift: happy ? .08 : listening ? .045 : concerned ? .025 : thoughtful ? .02 : 0,
       browAngle: concerned ? .15 : thoughtful ? -.08 : happy ? -.08 : -.025,
       mouth: talking ? 'open' : concerned ? 'concern' : 'smile', mouthOpen: speech,
@@ -199,7 +220,7 @@
     sync();
     return {ready, triggerGreeting, setState, setVisible, setPaused, setEmotion, retry, setLevel, lookAt, snapshot, destroy, element: frame};
   }
-  const api = {create, MANNERISMS, BEHAVIOR_CUES, mannerismFor, STATES, EMOTIONS, validEmotion, validState, qualityFor, poseFor};
+  const api = {create, MANNERISMS, BEHAVIOR_CUES, BLINK_EVENTS, BLINK_CYCLE, blinkFor, mannerismFor, STATES, EMOTIONS, validEmotion, validState, qualityFor, poseFor};
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   if (scope) scope.BritesConciergeAvatar = api;
 })(typeof window === 'undefined' ? null : window);

@@ -30,6 +30,7 @@ export default async (req,context) => {
       if(op==='receipt-sandbox-check')return json({error:'Use POST for the isolated storage check.'},405);
       if(op==='historical-lookup')return json({error:'Use POST for the bounded historical lookup.'},405);
       if(op==='story-supplement')return json({error:'Use POST for story supplements.'},405);
+      if(op==='milestone-index')return json({error:'Use POST to rebuild the private milestone index.'},405);
       if(op==='catalogue-export'){const cursor=url.searchParams.get('after')||'';if(cursor&&!/^[a-f0-9]{40}$/.test(cursor))return json({error:'Invalid catalogue cursor.'},400);let query=service.col('Products').orderBy('__name__').limit(200);if(cursor)query=query.startAfter(cursor);const snap=await query.get();return json({products:snap.docs.map(d=>d.data()),after:snap.size===200?snap.docs[snap.docs.length-1].id:null});}
       if(op==='catalogue'){const r=await shopify.search(url.searchParams.get('q')||'necklace');await service.saveProducts(r.products);const issues=await service.productIssues(r.products.map(p=>p.id));return json({products:core.applyProductIssues(r.products,issues).map(core.productProjection),pageInfo:r.pageInfo,live:true});}
       if(op==='product'){const p=await shopify.byHandle(url.searchParams.get('handle'));if(!p)return json({error:'This piece is not currently published.'},404);await service.saveProducts([p]);const issues=await service.productIssues([p.id]);return json({product:core.productProjection(core.applyProductIssues([p],issues)[0]),live:true});}
@@ -65,6 +66,12 @@ export default async (req,context) => {
     if(op==='story-supplement'){
       if(Object.keys(body).length!==1||!body.supplement)return json({error:'Provide only one story supplement.'},400);
       return json(await service.saveStorySupplement(body.supplement));
+    }
+    if(op==='milestone-index'){
+      if(Object.keys(body).length)return json({error:'The milestone index rebuild accepts no caller data.'},400);
+      if(service.namespace!=='Brites_Growth_Sandbox')return json({error:'The isolated sandbox namespace is required.'},403);
+      if(Date.now()>=core.STOP_AT)return json({stopped:true},410);
+      return json(await service.rebuildMilestoneIndex());
     }
     if(op==='save'){if(!body.dossier)return json({error:'A dossier is required.'},400);return json(await service.saveDossier(body.dossier));}
     if(op==='demand')return json(await demandStore.createDemandStore(service).save(body.evidence));

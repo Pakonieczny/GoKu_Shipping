@@ -192,6 +192,36 @@ function createGrowthService({db,env={},shopify,now=Date.now}){
     if(ns!=='Brites_Growth_Sandbox')return [];
     return readProductRecords('StorySupplements',ids,20);
   }
+  async function rebuildMilestoneIndex(){
+    // This is a derived, private read index. It never approves research or
+    // bypasses the exact live-product, version, hold, stock and public-meaning
+    // checks in the shopper path. Rebuilding it is an authenticated sandbox
+    // operation so broad milestone requests do not rescan every dossier.
+    if(ns!=='Brites_Growth_Sandbox')throw Error('The milestone index requires the isolated sandbox namespace.');
+    const snapshot=await col('Research').where('status','==','approved').limit(150).get(),approved=[];
+    for(const doc of snapshot.docs||[]){const dossier=doc.data();if(validIdentity(dossier?.productId)&&/^[a-z0-9_-]{1,180}$/.test(dossier?.handle||'')&&/^[a-f0-9]{64}$/.test(dossier?.version||''))approved.push(dossier);}
+    const supplements=await readProductRecords('StorySupplements',approved.map(x=>x.productId),150),supplementById=new Map(supplements.map(x=>[x?.productId,x])),names=milestoneDiscovery.milestoneNames(),records=new Map(names.map(name=>[name,[]]));
+    for(const dossier of approved){
+      const supplement=supplementById.get(dossier.productId),merged=mergeStorySupplements([dossier],supplement?[supplement]:[],[],now())[0]||dossier,baseMeanings=publicMeanings([dossier],[dossier.productId],now(),[]),mergedMeanings=publicMeanings([merged],[dossier.productId],now(),[]);
+      for(const name of names){
+        if(!milestoneDiscovery.matchingMeanings(mergedMeanings,name).length)continue;
+        const supplementRequired=!milestoneDiscovery.matchingMeanings(baseMeanings,name).length;
+        records.get(name).push({productId:dossier.productId,handle:dossier.handle,dossierVersion:dossier.version,supplementVersion:supplementRequired&&/^[a-f0-9]{64}$/.test(supplement?.version||'')?supplement.version:null});
+      }
+    }
+    const builtAt=now(),entries=names.map(name=>{const candidates=records.get(name).sort((a,b)=>a.handle.localeCompare(b.handle));return [name,candidates];}),counts=Object.fromEntries(entries.map(([name,candidates])=>[name,candidates.length])),meta={schema:1,builtAt,approvedCount:approved.length,supplementCount:supplements.length,counts};
+    if(typeof db.batch==='function'){
+      // Firestore commits the eight milestone snapshots and the generation
+      // marker atomically, so shopper reads never see a half-rebuilt index.
+      const batch=db.batch();for(const [name,candidates] of entries)batch.set(col('State').doc('milestone-index-'+name),{schema:1,milestone:name,builtAt,candidates});batch.set(col('State').doc('milestone-index-meta'),meta);await batch.commit();
+    }else{
+      // Minimal in-memory adapters used by focused tests need not implement a
+      // Firestore batch; production makeDb always does.
+      await Promise.all(entries.map(([name,candidates])=>col('State').doc('milestone-index-'+name).set({schema:1,milestone:name,builtAt,candidates})));
+      await col('State').doc('milestone-index-meta').set(meta);
+    }
+    return {schema:1,builtAt,approvedCount:approved.length,supplementCount:supplements.length,counts};
+  }
   async function saveStorySupplement(value){
     if(ns!=='Brites_Growth_Sandbox')throw Error('Story supplements require the isolated sandbox namespace.');
     if(!exactFields(value,STORY_ROOT_FIELDS))throw Error('Story supplement fields are not allowed.');
@@ -241,6 +271,15 @@ function createGrowthService({db,env={},shopify,now=Date.now}){
     const plan=milestoneDiscovery.discoveryIntent(value),bounds=milestoneDiscovery.recallBounds();
     if(!plan)return [];
     const cap=Math.max(1,Math.min(bounds.liveHandles,Number.isInteger(limit)?limit:bounds.liveHandles));
+    // Prefer the authenticated derived index. Its entries remain only hints:
+    // current dossier/supplement versions and public meanings are rechecked
+    // later, and every product is still fetched from the live storefront.
+    let indexed=null;
+    try{const hit=await col('State').doc('milestone-index-'+plan.milestone).get();if(hit.exists&&hit.data()?.schema===1&&hit.data()?.milestone===plan.milestone&&Array.isArray(hit.data()?.candidates))indexed=hit.data().candidates;}catch{}
+    if(indexed){
+      const selected=indexed.filter(hint=>validIdentity(hint?.productId)&&/^[a-z0-9_-]{1,180}$/.test(hint?.handle||'')&&/^[a-f0-9]{64}$/.test(hint?.dossierVersion||'')&&(hint.supplementVersion==null||/^[a-f0-9]{64}$/.test(hint.supplementVersion))).slice(0,bounds.mirrorReads),rows=await readProductRecords('Products',selected.map(x=>x.productId),bounds.mirrorReads);
+      return milestoneDiscovery.rankLinkedCandidates(selected,rows,plan,value,cap);
+    }
     let snapshot;try{snapshot=await col('Research').where('status','==','approved').limit(bounds.researchScan).get();}catch{return [];}
     const approved=[];
     for(const doc of snapshot.docs||[]){
@@ -277,7 +316,7 @@ function createGrowthService({db,env={},shopify,now=Date.now}){
   async function block(value){if(!/^[a-z0-9-]{1,100}$/.test(value.id||''))throw Error('Invalid blocker ID.');await col('Blockers').doc(value.id).set({task:clean(value.task,300),detail:clean(value.detail,2500),status:clean(value.status||'queued_for_morning',100),at:now()},{merge:true});return {ok:true};}
   async function event(type,data={}){const allowed=['opened','dismissed','message','product_opened','cart_requested','cart_added','cart_failed','api_error','test'];if(!allowed.includes(type))throw Error('Invalid event.');await col('Events').add({type,productId:validIdentity(data.productId)?data.productId:null,scenario:clean(data.scenario,100),at:now()});return {ok:true};}
   async function rateLimit(key,limit=25){const bucket=Math.floor(now()/60000),ref=col('Rate').doc(hash(key+'-'+bucket));return db.runTransaction(async tx=>{const s=await tx.get(ref),count=s.exists?s.data().count:0;if(count>=limit)return false;tx.set(ref,{count:count+1,expiresAt:new Date((bucket+5)*60000)});return true;});}
-  return {setup,getProduct,saveProducts,syncCatalogue,importRanks,claim,release,saveDossier,research,productIssues,storySupplements,saveStorySupplement,catalogueCandidateHandles,milestoneCandidateHandles,recordProductIssue,status,block,event,rateLimit,col,state,namespace:ns};
+  return {setup,getProduct,saveProducts,syncCatalogue,importRanks,claim,release,saveDossier,research,productIssues,storySupplements,saveStorySupplement,rebuildMilestoneIndex,catalogueCandidateHandles,milestoneCandidateHandles,recordProductIssue,status,block,event,rateLimit,col,state,namespace:ns};
 }
 function productIssueHolds(record){
   const open=(Array.isArray(record?.issues)?record.issues:[]).filter(x=>x&&x.status!=='resolved'),blocks=new Set(open.flatMap(x=>Array.isArray(x.blocks)?x.blocks:[]));

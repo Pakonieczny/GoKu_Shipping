@@ -10,6 +10,7 @@ export const AVATAR_SCENE_DECLARATIONS = Object.freeze({
   schema: 2,
   identity: 'original single-eye pebble robot',
   expressionRig: 'deformable luminous aperture, no human iris or mouth',
+  interactionProfile: Object.freeze({authorship: 'original authored choreography', blink: 'rare irregular 0.19-0.21 second closure', transitionMs: 320, signal: 'colour plus aperture shape and motion'}),
   stateColors: Object.freeze({idle: '#4aa8ff', listening: '#49c9ff', thinking: '#ab87ff', speaking: '#ffcb79', success: '#72ddd1', error: '#ffc28e'}),
   textures: Object.freeze([
     Object.freeze({name: 'Ivory ceramic micro-surface', kind: 'porcelain'}),
@@ -184,29 +185,33 @@ export function createAvatarScene({container, quality, onFrame, onContext, onErr
     if (disposed) return; const box = container.getBoundingClientRect(); width = Math.max(1, Math.round(box.width)); height = Math.max(1, Math.round(box.height));
     renderer.setSize(width, height, false); camera.aspect = width / height; camera.position.z = Math.max(5.8, 2.85 / (camera.aspect * 2 * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)))); camera.lookAt(0, -.16, 0); camera.updateProjectionMatrix(); composer?.setSize(width, height); if (lastPose) render(lastPose, true);
   }
-  const whiteColor = new THREE.Color('#ffffff'), targetColor = new THREE.Color(), displayedColor = new THREE.Color(AVATAR_SCENE_DECLARATIONS.stateColors.idle);
-  let previousState = 'idle', transitionAt = 0, lastColorTime = 0;
+  const whiteColor = new THREE.Color('#ffffff'), targetColor = new THREE.Color(), displayedColor = new THREE.Color(AVATAR_SCENE_DECLARATIONS.stateColors.idle), transitionColor = displayedColor.clone();
+  let previousState = 'idle', transitionAt = 0;
   function applyPose(pose) {
     const state = Object.hasOwn(AVATAR_SCENE_DECLARATIONS.stateColors, pose.state) ? pose.state : 'idle';
-    if (state !== previousState) {previousState = state; transitionAt = sampleTime;}
-    const delta = Math.max(0, Math.min(.1, sampleTime - lastColorTime)); lastColorTime = sampleTime;
-    targetColor.set(AVATAR_SCENE_DECLARATIONS.stateColors[state]); displayedColor.lerp(targetColor, reducedMotion ? 1 : 1 - Math.exp(-delta * 8));
+    if (state !== previousState) {transitionColor.copy(displayedColor); previousState = state; transitionAt = sampleTime;}
+    targetColor.set(AVATAR_SCENE_DECLARATIONS.stateColors[state]);
+    const transitionMs = Number.isFinite(AVATAR_SCENE_DECLARATIONS.interactionProfile?.transitionMs) ? AVATAR_SCENE_DECLARATIONS.interactionProfile.transitionMs : 320;
+    const colorProgress = reducedMotion ? 1 : THREE.MathUtils.clamp((sampleTime - transitionAt + 1 / 60) / (transitionMs / 1000), 0, 1), colorEase = colorProgress * colorProgress * (3 - 2 * colorProgress);
+    displayedColor.copy(transitionColor).lerp(targetColor, colorEase);
     const speaking = state === 'speaking', thinking = state === 'thinking', calm = pose.emotion === 'calm' || pose.emotion === 'reassuring', happy = state === 'success' && !calm, reassuring = state === 'error' || calm;
     avatar.position.y = pose.bob; avatar.rotation.z = pose.bodyRoll; avatar.rotation.x = Number.isFinite(pose.lean) ? pose.lean : 0;
     head.rotation.set(pose.headPitch, pose.headYaw, pose.headRoll + (reassuring ? -.025 : pose.emotion === 'curious' ? .035 : 0));
-    const eyeOpen = THREE.MathUtils.clamp(pose.eyeOpen, .035, 1.08), eyeScaleX = THREE.MathUtils.clamp(pose.eyeScaleX || 1, .8, 1.2), eyeScaleY = THREE.MathUtils.clamp(pose.eyeScaleY || 1, .6, 1.2), deformation = THREE.MathUtils.clamp(pose.eyeDeformation || 0, -.3, .3), amplitude = speaking ? pose.mouthOpen : thinking ? .12 : happy ? .18 : 0;
+    const eyeOpen = THREE.MathUtils.clamp(pose.eyeOpen, .035, 1.08), eyeScaleX = THREE.MathUtils.clamp(pose.eyeScaleX || 1, .8, 1.2), eyeScaleY = THREE.MathUtils.clamp(pose.eyeScaleY || 1, .6, 1.2), deformation = THREE.MathUtils.clamp(pose.eyeDeformation || 0, -.3, .3), amplitude = speaking ? pose.mouthOpen : thinking ? .12 : happy ? .18 : 0, ringRipple = THREE.MathUtils.clamp(pose.ringRipple || 0, 0, 1);
     eye.position.x = THREE.MathUtils.clamp(pose.gazeX, -.12, .12); eye.position.y = .022 + THREE.MathUtils.clamp(pose.gazeY, -.08, .08);
     const attribute = apertureGeometry.attributes.position;
     for (let i = 0; i < attribute.count; i++) {
       const offset = i * 3, x = apertureRest[offset], y = apertureRest[offset + 1], z = apertureRest[offset + 2], angle = Math.atan2(y, x);
       // Local mesh deformation gives speech an elastic four-lobed pulse,
       // success an uplifted arc, and errors a gentle flattened listening shape.
-      const wave = reducedMotion ? 0 : Math.sin(angle * 4 + sampleTime * (speaking ? 7 : 2)) * amplitude * .025;
+      const wave = reducedMotion ? 0 : Math.sin(angle * 4 + sampleTime * (speaking ? 7 : 2)) * (amplitude * .025 + ringRipple * .005);
       attribute.setXYZ(i, x * eyeScaleX * (1 + wave) * (1 + (1 - eyeOpen) * .055), (y * (1 + wave) + Math.abs(x) * deformation * .2) * eyeOpen * eyeScaleY, z);
     }
     attribute.needsUpdate = true; apertureGeometry.computeVertexNormals();
-    halo.scale.set(eyeScaleX * (1 + amplitude * .025), eyeOpen * eyeScaleY, 1); innerHalo.scale.set(eyeScaleX, eyeOpen * eyeScaleY, 1); orbit.scale.y = eyeOpen * eyeScaleY;
-    orbit.rotation.z = -.8 + (thinking && !reducedMotion ? sampleTime * .8 : happy ? .35 : 0) + THREE.MathUtils.clamp(pose.ringRotation || 0, -.4, .4);
+    const ringBreath = reducedMotion ? 0 : Math.sin(sampleTime * (speaking ? 5.4 : thinking ? 2.2 : 1.15)) * ringRipple;
+    halo.scale.set(eyeScaleX * (1 + amplitude * .025 + ringRipple * .035 + ringBreath * .018), eyeOpen * eyeScaleY * (1 + ringRipple * .018 - ringBreath * .009), 1);
+    innerHalo.scale.set(eyeScaleX * (1 - ringRipple * .018 - ringBreath * .008), eyeOpen * eyeScaleY * (1 - ringRipple * .012 + ringBreath * .006), 1); orbit.scale.y = eyeOpen * eyeScaleY;
+    orbit.rotation.z = -.8 + (thinking && !reducedMotion ? sampleTime * .32 : speaking && !reducedMotion ? sampleTime * .06 : happy ? .35 : 0) + THREE.MathUtils.clamp(pose.ringRotation || 0, -.4, .4);
     irisMaterial.color.copy(displayedColor); irisMaterial.emissive.copy(displayedColor); eyeMaterial.color.copy(displayedColor); eyeMaterial.emissive.copy(displayedColor); mouthMaterial.color.copy(displayedColor); mouthMaterial.emissive.copy(displayedColor); glint.color.copy(displayedColor).lerp(whiteColor, .6);
     irisMaterial.emissiveIntensity = 1.05 + pose.lightPulse * .55 + (speaking ? pose.mouthOpen * .22 : 0);
     eyeLight.color.copy(displayedColor); eyeLight.intensity = .22 + pose.lightPulse * .16;
@@ -226,7 +231,7 @@ export function createAvatarScene({container, quality, onFrame, onContext, onErr
   renderer.domElement.addEventListener('webglcontextlost', contextLost); renderer.domElement.addEventListener('webglcontextrestored', contextRestored);
   const resizeObserver = win.ResizeObserver ? new win.ResizeObserver(resize) : null; resizeObserver?.observe(container); if (!resizeObserver) win.addEventListener('resize', resize);
   resize();
-  function snapshot() {return {revision: THREE.REVISION, animated: active && !reducedMotion && !lost, frames, frameRenderMs: Math.round(renderMs * 100) / 100, drawCalls, renderedTriangles, geometry: {model: modelStats, scene: sceneStats}, textures: maps.map(value => ({...value})), shadow: {enabled: true, size: quality.shadowSize, type: 'PCF soft', casts: true, receivingStage: true}, mannerism: {name: lastPose?.mannerism || null, active: lastPose?.mannerismActive === true, eventBound: true}, character: {identity: AVATAR_SCENE_DECLARATIONS.identity, digitalEyes: 1, humanFeatures: false, meshDeformation: true, state: previousState, color: '#' + displayedColor.getHexString()}, environment: {kind: AVATAR_SCENE_DECLARATIONS.environment.kind, faces: 6, size: skyboxSize, hdri: false}, materials: {physical: [...materials].filter(value => value.isMeshPhysicalMaterial).length, metallicAnisotropy: true, transmission: true, clearcoat: true, environmentReflection: true}, lights: 5, bloom: !!composer, width, height, pixelRatio: renderer.getPixelRatio(), contextLost: lost};}
+  function snapshot() {return {revision: THREE.REVISION, animated: active && !reducedMotion && !lost, frames, frameRenderMs: Math.round(renderMs * 100) / 100, drawCalls, renderedTriangles, geometry: {model: modelStats, scene: sceneStats}, textures: maps.map(value => ({...value})), shadow: {enabled: true, size: quality.shadowSize, type: 'PCF soft', casts: true, receivingStage: true}, mannerism: {name: lastPose?.mannerism || null, active: lastPose?.mannerismActive === true, eventBound: true}, character: {identity: AVATAR_SCENE_DECLARATIONS.identity, digitalEyes: 1, humanFeatures: false, meshDeformation: true, interactionProfile: {...AVATAR_SCENE_DECLARATIONS.interactionProfile}, state: previousState, color: '#' + displayedColor.getHexString()}, environment: {kind: AVATAR_SCENE_DECLARATIONS.environment.kind, faces: 6, size: skyboxSize, hdri: false}, materials: {physical: [...materials].filter(value => value.isMeshPhysicalMaterial).length, metallicAnisotropy: true, transmission: true, clearcoat: true, environmentReflection: true}, lights: 5, bloom: !!composer, width, height, pixelRatio: renderer.getPixelRatio(), contextLost: lost};}
   function destroy() {if (disposed) return; disposed = true; renderer.setAnimationLoop(null); resizeObserver?.disconnect(); win.removeEventListener('resize', resize); renderer.domElement.removeEventListener('webglcontextlost', contextLost); renderer.domElement.removeEventListener('webglcontextrestored', contextRestored); composer?.passes.forEach(pass => pass.dispose?.()); composer?.dispose(); geometries.forEach(value => value.dispose()); materials.forEach(value => value.dispose()); textures.forEach(value => value.dispose()); environmentTarget.dispose(); renderer.dispose(); renderer.forceContextLoss(); renderer.domElement.remove();}
   return {setMotion, invalidate, render, snapshot, destroy};
 }
