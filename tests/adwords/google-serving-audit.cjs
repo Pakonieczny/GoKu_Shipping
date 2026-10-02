@@ -520,7 +520,7 @@ const topic = (t, type, extra = {}) => ({ topic: t, type, ...extra });
 
   // ── 7. The console shows it ───────────────────────────────────────────────────────────
   const html = fs.readFileSync(path.join(REPO, 'brites-adwords.html'), 'utf8');
-  check(/^function renderServing\(s\)\{/m.test(html) && /^async function loadServing\(box\)\{[^\n]*\n(?:[^\n]*\n){0,6}[^\n]*renderServing\(s\)/m.test(html), 'the campaign details render the serving check');
+  check(/^function renderServing\(s\)\{/m.test(html) && /^async function loadServing\(box[^)]*\)\{[\s\S]{0,3500}?renderServing\(s\)/m.test(html), 'the campaign details render the serving check');
   const reasonLabels = html.match(/var REASON_LABEL=\{[^\n]*\};/)[0];
   check(/BUDGET_CONSTRAINED:/.test(reasonLabels) && /HAS_ASSET_GROUPS_DISAPPROVED:/.test(reasonLabels) && /MISSING_LOCATION_TARGETING:/.test(reasonLabels) && !/CAMPAIGN_BUDGET_LIMITED|BIDDING_STRATEGY_SUGGESTED/.test(reasonLabels), 'status reason labels use the reason names Google actually returns');
   const escSrc = html.match(/function esc\(s\)\{[^\n]*\}/)[0], block = html.slice(html.indexOf('var SERV_LV='), html.indexOf('\n}\n', html.indexOf('function renderServing(')) + 3);
