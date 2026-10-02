@@ -121,6 +121,8 @@ async function runSweep({ rejectRetry = false, activeCount = 30, waitingCount = 
       return require("../../netlify/functions/lib/listingBatchAdmission.cjs").neverStarted(record, ...args);
     },
     stallRestartPending: require("../../netlify/functions/lib/listingBatchAdmission.cjs").stallRestartPending,
+    SWEEP_CALL_LIMITS: require("../../netlify/functions/lib/listingBatchAdmission.cjs").SWEEP_CALL_LIMITS,
+    withLimit: require("../../netlify/functions/lib/listingBatchAdmission.cjs").withLimit,
     VALIDATION_WAIT_MS, PREPARATION_RESERVATION_MS, body: {}, stallCutoffMs: require("../../netlify/functions/lib/listingBatchAdmission.cjs").stallCutoffMs,
     BATCHES_COLL: "batches", ORCH_COLL: "orchestrations",
     admin: { firestore: { FieldPath: { documentId: () => "__name__" },

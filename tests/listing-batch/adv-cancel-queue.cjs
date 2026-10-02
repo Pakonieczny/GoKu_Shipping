@@ -13,7 +13,7 @@
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const vm = require("node:vm");
-const { quotaFailure, neverStarted, stallRestartPending, stallCutoffMs } = require("../../netlify/functions/lib/listingBatchAdmission.cjs");
+const { quotaFailure, neverStarted, stallRestartPending, stallCutoffMs, SWEEP_CALL_LIMITS, withLimit } = require("../../netlify/functions/lib/listingBatchAdmission.cjs");
 
 const server = fs.readFileSync("netlify/functions/geminiImageProxy-background.js", "utf8");
 const page = fs.readFileSync("Listing_Generator_1.html", "utf8");
@@ -63,7 +63,7 @@ async function runSweep(jobs, statuses = {}) {
     throw new Error(`unexpected ${p.kind}`);
   };
   const result = await vm.runInNewContext(`(async () => { ${sweepSrc} })()`, {
-    kind: "batch_sweep", body: {}, getDb: () => db, admissionControl: () => ({ reconcile: async () => {} }), quotaFailure, neverStarted, stallRestartPending, stallCutoffMs,
+    kind: "batch_sweep", body: {}, getDb: () => db, admissionControl: () => ({ reconcile: async () => {} }), quotaFailure, neverStarted, stallRestartPending, stallCutoffMs, SWEEP_CALL_LIMITS, withLimit,
     BATCHES_COLL: "batches", ORCH_COLL: "orchestrations",
     admin: { firestore: { FieldPath: { documentId: () => "__name__" }, FieldValue: { serverTimestamp: () => clock } } },
     module: { exports: { handler } }, json: (statusCode, body) => ({ statusCode, ...body }),

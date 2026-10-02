@@ -8,7 +8,8 @@ const { capBeadyCharmSize } = require("./_beadyCharmCap");
 const { SESSIONS_COLL, failureKind, isModelTask, compliantModelTask, reconcileSession } = require("./lib/listingBatchRecovery.cjs");
 const { batchCharmPaths, readReservedCharms } = require("./lib/listingBatchReservations.cjs");
 const { admissionControl, quotaFailure, queuedName, capacityRefusals, CAPACITY_REFUSAL_LIMIT,
-  neverStarted, stallRestartPending, VALIDATION_WAIT_MS, PREPARATION_RESERVATION_MS, stallCutoffMs } = require("./lib/listingBatchAdmission.cjs");
+  neverStarted, stallRestartPending, SWEEP_CALL_LIMITS, withLimit, VALIDATION_WAIT_MS, PREPARATION_RESERVATION_MS,
+  stallCutoffMs } = require("./lib/listingBatchAdmission.cjs");
 // const sharp = require("sharp"); // ensure sharp is installed in package.json
 const { initializeFirestore, getFirestore } = require("firebase-admin/firestore");
 
@@ -14237,6 +14238,10 @@ async function _handlerImpl(event) {
       try { parsed = res && res.body ? JSON.parse(res.body) : null; } catch (_) {}
       return parsed;
     };
+    // Status, stall-cancel and collect calls give up after SWEEP_CALL_LIMITS so
+    // one call that never answers cannot hold the whole run (see the limits).
+    const inProcessLimited = (payload) => withLimit(inProcess(payload), SWEEP_CALL_LIMITS[payload.kind],
+      { ok: false, error: { message: `${payload.kind} did not answer in time` } });
     const checkpoint = (stage, batchName = null) => guardRef.set({ stage,
       currentBatchName: batchName, lastProgressAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
     // History contains large task prompts and submission metadata. The sweep
@@ -14379,7 +14384,7 @@ async function _handlerImpl(event) {
         await checkpoint("checking provider job", b.batchName);
         let state = b.state;
         if (!isSucceeded(state) && !b.collectionPending) {
-          let st = await inProcess({ kind: "batch_status", batchName: b.batchName });
+          let st = await inProcessLimited({ kind: "batch_status", batchName: b.batchName });
           if (normState(st?.state) === "JOB_STATE_PENDING") {
             // Unconfirmed, it simply stays validating; admission keeps treating it so.
             try { st = await checkValidation(b.batchName, st, b.createdAt?.toMillis?.() || 0); }
@@ -14398,7 +14403,7 @@ async function _handlerImpl(event) {
           // still holds a place (cancelling counts as running until OpenAI
           // confirms); its set is queued again below once it is cancelled.
           if (!b.setComplete && neverStarted(b, st, Date.now(), stallAfterMs)) {
-            const stop = await inProcess({ kind: "batch_stall_cancel", batchName: b.batchName, minAgeMs: stallAfterMs, resetNow });
+            const stop = await inProcessLimited({ kind: "batch_stall_cancel", batchName: b.batchName, minAgeMs: stallAfterMs, resetNow });
             if (stop?.cancelRequested) {
               stalledCancelled++;
               b.stallCancelRequestedAt = true;
@@ -14409,7 +14414,7 @@ async function _handlerImpl(event) {
           }
         }
         if (isSucceeded(state) || b.collectionPending && b.responsesFile) {
-          const col = await inProcess({ kind: "batch_collect", batchName: b.batchName, force: !isSucceeded(state) });
+          const col = await inProcessLimited({ kind: "batch_collect", batchName: b.batchName, force: !isSucceeded(state) });
           if (col?.ok) { if (col.collected !== false) collected++; b.collected = col.collected !== false; } else collectErrors++;
         }
       }

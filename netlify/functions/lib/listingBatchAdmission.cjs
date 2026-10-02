@@ -67,6 +67,19 @@ const stallCutoffMs = (requested) => {
   const ms = Number(requested);
   return Number.isFinite(ms) && ms > 0 ? Math.min(STALL_RESTART_MS, Math.max(STALL_RESTART_MIN_MS, ms)) : STALL_RESTART_MS;
 };
+// The collector's own calls on a listing job: asking OpenAI for its status,
+// cancelling a stalled job, and saving a finished one. On 2026-10-02 one save
+// never answered, the run waited on it for 13 minutes, and nothing else was
+// checked or sent in that time. A call that does not answer is given up on
+// (the work it started is safe to repeat: saves skip files that exist) and the
+// run goes on; the next run asks again. Never use this for a submission: an
+// abandoned create could be paid for twice.
+const SWEEP_CALL_LIMITS = { batch_status: 90 * 1000, batch_stall_cancel: 90 * 1000, batch_collect: 4 * 60 * 1000 };
+function withLimit(promise, ms, onTimeout) {
+  let timer;
+  const limit = new Promise((resolve) => { timer = setTimeout(() => resolve(onTimeout), ms); });
+  return Promise.race([promise, limit]).finally(() => clearTimeout(timer));
+}
 const toMillis = (value) => typeof value?.toMillis === 'function' ? value.toMillis() : Number(value || 0);
 // A one-set listing job that has done nothing at all since it was sent.
 // `live` is a fresh provider answer: { providerStatus, batchStats }.
@@ -224,5 +237,5 @@ function admissionControl(db, collection, timestamp, now = Date.now) {
   return { reserve, progress, failPreparation, beforeCreate, complete, release, rejected, reconcile };
 }
 module.exports = { admissionControl, quotaFailure, queuedName, capacityRefusals, CAPACITY_REFUSAL_LIMIT,
-  neverStarted, stallRestartPending, STALL_RESTART_MS, STALL_RESTART_MIN_MS, STALL_RESTART_LIMIT,
+  neverStarted, stallRestartPending, SWEEP_CALL_LIMITS, withLimit, STALL_RESTART_MS, STALL_RESTART_MIN_MS, STALL_RESTART_LIMIT,
   VALIDATION_WAIT_MS, PREPARATION_RESERVATION_MS, PREPARATION_FAILURE_LIMIT, preparationFailurePatch, stallCutoffMs };

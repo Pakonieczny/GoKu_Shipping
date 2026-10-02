@@ -50,7 +50,7 @@ const openai = (status, completed = 0, failed = 0, extra = {}) =>
 
 // One project: Firestore, storage and OpenAI fakes, and the real handler
 // branches dispatched through module.exports.handler as in production.
-function world({ records = [], jobs = {}, files = [] } = {}) {
+function world({ records = [], jobs = {}, files = [], hangCollect = [] } = {}) {
   let now = START;
   class Clock extends Date { static now() { return now; } }
   const store = new Map(records.map((r) => [`batches/${r.batchName}`, { ...r }]));
@@ -102,6 +102,7 @@ function world({ records = [], jobs = {}, files = [] } = {}) {
       write(`batches/${body.retryOf}`, { retryBatchName: batchName, retryStatus: "submitted" }, { merge: true });
       return json(200, { ok: true, batchName });
     }
+    if (body.kind === "batch_collect" && hangCollect.includes(body.batchName)) return new Promise(() => {});
     if (body.kind === "batch_collect") {
       // Saves the images OpenAI finished (the first `completed` slots).
       collects.push(body);
@@ -336,6 +337,28 @@ function world({ records = [], jobs = {}, files = [] } = {}) {
   assert.equal(next.stalledRestarted, 1, "the restarted set goes back in the queue");
   assert.equal(asked.submits.length, 1);
   assert.equal(asked.submits[0].sets[0].setN, 42);
+
+  // 5b. A save that never answers (2026-10-02: one held a run for 13 minutes and
+  // nothing else was checked or sent): the run gives up on it and goes on to
+  // cancel the stalled job, restart the cancelled one and send the queue.
+  const savedLimit = lib.SWEEP_CALL_LIMITS.batch_collect;
+  lib.SWEEP_CALL_LIMITS.batch_collect = 40;
+  const hung = world({
+    records: [job("batch_hung", 70, { createdAt: at(START - 2 * HOUR) }),
+      job("batch_stalled_after", 71),
+      job("batch_cancelled_before", 72, { state: "JOB_STATE_CANCELLED", providerStatus: "cancelled", stallCancelRequestedAt: at(START - HOUR) })],
+    jobs: { batch_hung: openai("completed", 6), batch_stalled_after: openai("in_progress"), batch_cancelled_before: openai("cancelled") },
+    hangCollect: ["batch_hung"],
+  });
+  const heldRun = await hung.call({ kind: "batch_sweep" });
+  lib.SWEEP_CALL_LIMITS.batch_collect = savedLimit;
+  assert.equal(heldRun.statusCode, 200, heldRun.error?.message);
+  assert.equal(heldRun.collectErrors, 1, "the save that never answered is counted, not waited on");
+  assert.deepEqual(hung.cancels, ["batch_stalled_after"], "the stalled job is still cancelled in the same run");
+  assert.equal(heldRun.stalledRestarted, 1, "and the cancelled one is restarted in the same run");
+  assert.equal(hung.submits.length, 1);
+  assert.equal(hung.submits[0].sets[0].setN, 72);
+  assert.equal(await lib.withLimit(Promise.resolve("answered"), 1000, "late"), "answered", "an answer in time is used");
 
   // 6. A job stuck in validation: not waited on, then restarted at the usual wait.
   const v = world({
