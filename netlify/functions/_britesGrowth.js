@@ -254,17 +254,11 @@ function createGrowthService({db,env={},shopify,now=Date.now}){
       if(milestoneDiscovery.matchingMeanings(meanings,plan.milestone).length){const baseMeanings=publicMeanings([baseById.get(dossier.productId)],[dossier.productId],now(),[]),baseLinked=milestoneDiscovery.matchingMeanings(baseMeanings,plan.milestone).length>0,supplement=supplementById.get(dossier.productId);linked.push({productId:dossier.productId,handle:dossier.handle,dossierVersion:dossier.version,supplementVersion:!baseLinked&&/^[a-f0-9]{64}$/.test(supplement?.version||'')?supplement.version:null});}
     }
     linked.sort((a,b)=>a.handle.localeCompare(b.handle));
-    const selected=linked.slice(0,bounds.mirrorReads),rows=await readProductRecords('Products',selected.map(x=>x.productId),bounds.mirrorReads),byId=new Map(rows.map(row=>[row?.id,row]));
-    const excluded=new Set(plainList(value?.excludedInterests,12)),wantedType=clean(value?.type,30).toLowerCase();
-    const candidates=[];
-    for(const hint of selected){
-      const row=byId.get(hint.productId);if(!row||row.handle!==hint.handle||!publicUrl(row.url,true))continue;
-      const searchable=clean(row.title,300)+' '+clean(row.type,100)+' '+(Array.isArray(row.tags)?row.tags.map(x=>clean(x,100)).join(' '):'');
-      const motifHits=plan.motifs.filter(motif=>!excluded.has(motif)&&new RegExp('\\b(?:'+motifPattern(motif)+')\\b','i').test(searchable));
-      if(!motifHits.length)continue;
-      candidates.push({...hint,score:motifHits.length*10+(wantedType&&typeMatches(row,wantedType)?4:0)});
-    }
-    return candidates.sort((a,b)=>b.score-a.score||a.handle.localeCompare(b.handle)).slice(0,cap).map(({score,...hint})=>hint);
+    const selected=linked.slice(0,bounds.mirrorReads),rows=await readProductRecords('Products',selected.map(x=>x.productId),bounds.mirrorReads);
+    // A current, approved and version-linked interpretation is the evidence
+    // boundary. Literal motif words in catalogue metadata improve ordering,
+    // but must not discard an otherwise exact reviewed connection.
+    return milestoneDiscovery.rankLinkedCandidates(selected,rows,plan,value,cap);
   }
   async function recordProductIssue(value){
     if(!validIdentity(value?.productId)||!Array.isArray(value.issues)||!value.issues.length||value.issues.length>20)throw Error('Provide an exact product ID and 1–20 reviewed issues.');
@@ -325,7 +319,7 @@ const METALS = ['silver','gold','rose gold'];
 const RECIPIENTS = ['mom','mother','dad','father','wife','husband','daughter','son','friend','sister','brother','grandmother','grandfather','partner','teacher','nurse','doctor','myself'];
 const OCCASIONS = ['birthday','anniversary','graduation','memorial','christmas','wedding','retirement','thank you','just because'];
 const PROFESSION_HINT=/^(?:teachers?|teaching|nurses?|doctors?|medical|dentists?|dental|firefighters?|firem[ae]n|librarian|scientists?|police|officers?|actors?|photographers?|musicians?|pilots?|sailors?)$/;
-const GENERIC = new Set(('raise increase lower reduce expand between range limit price spend cost roughly approximately cheap cheaper expensive affordable i a an the for and or my me you your gift gifts find want wants wanted looking buy buying please someone jewellery jewelry under budget dollars dollar usd cad gbp eur is are was with to of her him them she he they it something show help can could would should like likes only actually prefer instead change stay within keep around no not without avoid dont don t do does doesn doesn t rather than but loves love enjoy enjoys into interested interest interests this that these those piece pieces one ones option options up less more below over above between maximum minimum max min from be at now need needs another anything give really very so also we our about what who how why when where choose choice lets let s have has happy thank thanks much tell meaningful pretty beautiful amazing someone some look looking still either any same fresh start reset clear forget nothing different second third first fourth fifth sixth open take page website bag cart add adding compare comparison versus vs meaning means symbolize symbolism history story stories know learn explain next previous read what else new stop cancel go back sure yes okay ok please'.split(' ')));
+const GENERIC = new Set(('raise increase lower reduce expand between range limit price spend cost roughly approximately cheap cheaper expensive affordable i a an the for and or my me you your gift gifts find want wants wanted looking buy buying please someone jewellery jewelry under budget dollars dollar usd cad gbp eur is are was with to of her him them she he they it something show help can could would should like likes only actually prefer instead change stay within keep around no not without avoid dont don t do does doesn doesn t rather than but loves love enjoy enjoys into interested interest interests this that these those piece pieces one ones option options up less more below over above between maximum minimum max min from be at now need needs another anything give really very so also we our about what who how why when where choose choice lets let s have has happy thank thanks much tell meaningful thoughtful pretty beautiful amazing someone some look looking still either any same fresh start reset clear forget nothing different second third first fourth fifth sixth open take page website bag cart add adding compare comparison versus vs meaning means symbolize symbolism history story stories know learn explain next previous read what else new stop cancel go back sure yes okay ok please'.split(' ')));
 const plainList = (v,n=8) => Array.isArray(v)?[...new Set(v.filter(x=>typeof x==='string').map(x=>clean(x,100).toLowerCase()))].slice(0,n):[];
 const amount = v => typeof v==='number'&&Number.isFinite(v)&&v>=0&&v<=1000000?v:null;
 const currencyCode = v => /^[A-Z]{3}$/.test(String(v||''))?String(v):null;
@@ -715,7 +709,16 @@ async function concierge({service,shopify,message,history=[],preferences={},cont
   const exactCurrentType=directProductContext&&/\bcharms?\b/i.test((displayedSelectedProduct||checkedProducts[0])?.type||'')?'charm':null;
   const rankingIntent=directProductContext?shopperPreferences({currency:intent.currency,type:exactCurrentType}):searchedMilestone?{...intent,query:'',interests:milestonePlan.motifs}:intent;
   let eligibleProducts=applyProductIssues(checkedProducts,issueRecords);
-  let products=searchedMilestone?[...new Map(milestonePlan.motifs.flatMap(motif=>rankProducts(eligibleProducts,{...rankingIntent,interests:[motif]},at)).map(product=>[product.id,product])).values()].slice(0,18):rankProducts(eligibleProducts,rankingIntent,at);
+  let products;
+  if(searchedMilestone){
+    const motifRanked=[...new Map(milestonePlan.motifs.flatMap(motif=>rankProducts(eligibleProducts,{...rankingIntent,interests:[motif]},at)).map(product=>[product.id,product])).values()];
+    // Exact live products recalled from version-pinned reviewed meanings still
+    // obey type, metal, price, stock, freshness and issue holds. They do not
+    // need a second literal motif match after the evidence link was verified.
+    const recalledIds=new Set(recalledVersions.keys()),contextualIntent={...rankingIntent,query:'',interests:[]};
+    const recalledRanked=rankProducts(eligibleProducts.filter(product=>recalledIds.has(product.id)),contextualIntent,at);
+    products=[...new Map([...recalledRanked,...motifRanked].map(product=>[product.id,product])).values()].slice(0,18);
+  }else products=rankProducts(eligibleProducts,rankingIntent,at);
   const boundedRecall=plainList(intent.interests,4).length>0;
   if(!useContext&&boundedRecall&&!products.length&&typeof service.catalogueCandidateHandles==='function'){
     const seen=new Set(checkedProducts.map(p=>p.handle)),candidateHandles=(await service.catalogueCandidateHandles(intent,15)).filter(h=>/^[a-z0-9_-]{1,180}$/.test(h)&&!seen.has(h)).slice(0,15);

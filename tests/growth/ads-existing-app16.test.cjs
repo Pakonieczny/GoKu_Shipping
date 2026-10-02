@@ -2,6 +2,7 @@
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),vm=require('node:vm');
 const {JSDOM}=require('jsdom');
 const root=path.resolve(__dirname,'../..'),core=require('../../netlify/functions/_britesGrowth'),projection=require('../../netlify/functions/googleAdsAdDesignResearch');
+const meaningProjection=require('../../netlify/functions/_britesGrowthAdsReadOnly');
 const id='gid://shopify/Product/10',foreign='gid://shopify/Product/99',version='a'.repeat(64);
 function fixture(){
   const at=Date.now(),dossier={schema:1,productId:id,handle:'fixture-bunny',status:'approved',version,savedAt:at,sources:[{id:'shop',url:'https://example.com/fixture',title:'Fixture',excerpt:'Synthetic fixture only.',reviewed:true,checkedAt:at}],facts:[],meanings:[],competitors:[],buyerIntents:['Fixture gift intent'],recommendations:[{channel:'keywords',basis:'hypothesis',action:'Test fixture gift intent.',measure:'Qualified visits.',sourceIds:['shop'],keywords:['fixture gift']}]};
@@ -23,6 +24,7 @@ function fixture(){
     if(name==='./_britesGrowth')return {...core,createGrowthService:()=>{state.serviceLoads++;return service;}};
     if(name==='./_britesGrowthDemandStore')return require('../../netlify/functions/_britesGrowthDemandStore');
     if(name==='./googleAdsAdDesignResearch')return projection;
+    if(name==='./_britesGrowthAdsReadOnly')return meaningProjection;
     throw Error('Unexpected require: '+name);
   };
   vm.runInNewContext(fs.readFileSync(path.join(root,'netlify/functions/googleAdsAutopilotKick.js'),'utf8'),{require:requireStub,exports,module:{exports},process:{env:{}},console,Buffer,URL,Date,Set,Map},{filename:'googleAdsAutopilotKick.js'});
@@ -38,6 +40,11 @@ test('existing HTTP handler returns a usable exact-version operator packet witho
   const u=ui(),product={productId:id,handle:f.state.dossier.handle,dossierVersion:version};assert.ok(u.api.operatorReviewFor(body,product,f.state.dossier));
   assert.equal(u.api.operatorReviewFor({dossiers:body.dossiers,productIssues:[]},product,f.state.dossier),null,'legacy response shape cannot drive the updated app review queue');u.dom.window.close();
   assert.equal(f.state.engineCalls,0);assert.equal(f.state.providerCalls,0);assert.equal(f.state.dbWrites,0);assert.ok(f.state.reads.every(r=>r.ids.length===1&&r.ids[0]===id));
+});
+test('approved meanings reach the existing Ads read response as immutable operator-only hypotheses',async()=>{
+  const f=fixture(),at=Date.now();f.state.dossier.sources=[{id:'museum',url:'https://museum.example.edu/collections/stars',title:'Reviewed museum interpretation',excerpt:'Stars appear in commemorative design.',reviewed:true,checkedAt:at}];f.state.dossier.meanings=[{kind:'interpretation',text:'A star may be a personal reminder of achievement and new beginnings.',context:'A personal interpretation, not a universal meaning.',sourceIds:['museum']}];f.state.dossier.recommendations[0].sourceIds=['museum'];
+  const body=JSON.parse((await f.post({action:'growthResearchDossiers',productIds:[id]})).body),review=body.operatorReviews[0],packet=review.meaningOperatorReviewPacket;
+  assert.equal(review.meaningReviewReadiness.state,'approved_milestone_hypotheses');assert.equal(packet.productId,id);assert.equal(packet.dossierVersion,version);assert.ok(packet.candidates.some(candidate=>candidate.milestone==='graduation'));for(const key of ['providerWrites','campaignWrites','budgetWrites','automaticActivation'])assert.equal(packet[key],false);assert.equal(f.state.providerCalls,0);assert.equal(f.state.dbWrites,0);
 });
 test('dossier identity, approval, reviewed-source and proposal failures withhold whole packets',async()=>{
   const changes=[f=>f.state.product.handle='foreign',f=>f.state.product.id=foreign,f=>f.state.dossier.status='draft',f=>f.state.dossier.proposalOnly=true,f=>f.state.dossier.reviewStatus='proposed',f=>f.state.dossier.version='invalid',f=>f.state.dossier.sources[0].reviewed=false,f=>f.state.dossier.sources[0].checkedAt=Date.now()-31*86400000,f=>f.state.dossier.sources[0].url='javascript:alert(1)',f=>f.state.dossier.recommendations[0].sourceIds=['missing']];

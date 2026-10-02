@@ -46,6 +46,7 @@ export function createHandler(deps = {}) {
   const research = deps.researchService || researchService;
   const readPasscode = deps.savedPasscode || savedPasscode;
   const loadReviewProjection = deps.loadReviewProjection || (async () => { const module = await import('./googleAdsAdDesignResearch.js'); return module.default || module; });
+  const loadMeaningProjection = deps.loadMeaningProjection || (async () => { const module = await import('./_britesGrowthAdsReadOnly.js'); return module.default || module; });
   const readSavedDemand = deps.readSavedDemand || (async (env, ids) => {
     const module = await import('./_britesGrowthDemandStore.js');
     return (module.default || module).createDemandStore(research(env)).read(ids);
@@ -117,7 +118,8 @@ export function createHandler(deps = {}) {
         // Research() reads the current private document, not a caller-supplied
         // historical version. Fresh live identity and issue evidence are still
         // required before deriving a bounded proposal-only review packet.
-        let projection; try { projection = await loadReviewProjection(); } catch {}
+        let projection, meaningProjection; try { projection = await loadReviewProjection(); } catch {}
+        try { meaningProjection = await loadMeaningProjection(); } catch {}
         for (const id of ids) {
           const dossier = exactDossiers.find(d => d.productId === id), holds = core.productIssueHolds((productIssues || []).find(record => record.productId === id));
           const entry = {productId: id, handle: dossier?.handle || null, dossierVersion: dossier?.version || null, state: 'unavailable'};
@@ -127,6 +129,8 @@ export function createHandler(deps = {}) {
             if (projection.sharedDossierIsCurrent(current, product)) {
               const packet = projection.projectRecommendations(current, new Set(current.sources.map(source => source.id)))?.operatorReviewPacket;
               if (packet) { entry.state = 'pending_operator_review'; entry.operatorReviewPacket = packet; }
+              const meaning = meaningProjection?.projectApprovedMeaningHypotheses?.({dossier: current, product, issueRecord: (productIssues || []).find(record => record.productId === id) || null, issueState: productIssueState});
+              if (meaning) { entry.meaningReviewReadiness = meaning.meaningReviewReadiness; entry.meaningOperatorReviewPacket = meaning.meaningOperatorReviewPacket; }
             }
           } catch { /* Identity/provider failures leave only an unavailable state. */ }
           operatorReviews.push(entry);

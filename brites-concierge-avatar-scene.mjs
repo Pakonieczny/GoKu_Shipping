@@ -206,12 +206,13 @@ export function createAvatarScene({container, quality, onFrame, onContext, onErr
     }
     attribute.needsUpdate = true; apertureGeometry.computeVertexNormals();
     halo.scale.set(eyeScaleX * (1 + amplitude * .025), eyeOpen * eyeScaleY, 1); innerHalo.scale.set(eyeScaleX, eyeOpen * eyeScaleY, 1); orbit.scale.y = eyeOpen * eyeScaleY;
-    orbit.rotation.z = -.8 + (thinking && !reducedMotion ? sampleTime * .8 : happy ? .35 : 0);
+    orbit.rotation.z = -.8 + (thinking && !reducedMotion ? sampleTime * .8 : happy ? .35 : 0) + THREE.MathUtils.clamp(pose.ringRotation || 0, -.4, .4);
     irisMaterial.color.copy(displayedColor); irisMaterial.emissive.copy(displayedColor); eyeMaterial.color.copy(displayedColor); eyeMaterial.emissive.copy(displayedColor); mouthMaterial.color.copy(displayedColor); mouthMaterial.emissive.copy(displayedColor); glint.color.copy(displayedColor).lerp(whiteColor, .6);
     irisMaterial.emissiveIntensity = 1.05 + pose.lightPulse * .55 + (speaking ? pose.mouthOpen * .22 : 0);
     eyeLight.color.copy(displayedColor); eyeLight.intensity = .22 + pose.lightPulse * .16;
-    statusBars.forEach((bar, index) => {bar.scale.y = speaking ? .7 + pose.mouthOpen * (.8 + .35 * Math.sin(sampleTime * 8 + index)) : thinking && !reducedMotion ? .8 + .3 * Math.sin(sampleTime * 3 - index * .7) : 1;});
-    arms.forEach(({group, side}) => {const invitation = state === 'listening' ? .065 : speaking ? .04 : reassuring ? .035 : 0, offer = side === 1 && Number.isFinite(pose.offer) ? pose.offer : 0; group.rotation.z = -side * (pose.armLift + invitation + offer * .24); group.rotation.x = -pose.armLift * .4 - offer * .065; group.rotation.y = side * offer * .12;});
+    const statusWave = THREE.MathUtils.clamp(pose.statusWave || 0, 0, 1);
+    statusBars.forEach((bar, index) => {const cueRipple = reducedMotion ? 0 : statusWave * .18 * Math.sin(sampleTime * 5.2 - index * .78); bar.scale.y = speaking ? .7 + pose.mouthOpen * (.8 + .35 * Math.sin(sampleTime * 8 + index)) : thinking && !reducedMotion ? .8 + .3 * Math.sin(sampleTime * 3 - index * .7) : 1 + cueRipple;});
+    arms.forEach(({group, side}) => {const invitation = state === 'listening' ? .065 : speaking ? .04 : reassuring ? .035 : 0, offer = side === 1 && Number.isFinite(pose.offer) ? pose.offer : 0, armLift = THREE.MathUtils.clamp(side === -1 ? pose.armLiftLeft ?? pose.armLift : pose.armLiftRight ?? pose.armLift, 0, .5); group.rotation.z = -side * (armLift + invitation + offer * .24); group.rotation.x = -armLift * .4 - offer * .065; group.rotation.y = side * offer * .12;});
     key.position.x = 3.2 + Math.sin(sampleTime * .25) * .11 * (reducedMotion ? 0 : 1);
   }
   function render(pose, force = false) {

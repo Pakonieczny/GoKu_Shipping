@@ -6,12 +6,12 @@
 const CONTEXTS=Object.freeze({
   remembrance:{pattern:'memorial|remembrance|in memory of|mourning|death celebration|death of (?:a |my |our |her |his |their )?(?:loved one|mother|father|mom|dad|friend|sister|brother|grandmother|grandfather|partner|wife|husband|dog|cat|pet)|remember(?:ing)? (?:my |our |her |his |their |a )?(?:mother|father|mom|dad|friend|sister|brother|grandmother|grandfather|partner|wife|husband|dog|cat|pet)|bereave(?:ment|d)?|grief|grieving|passed away|(?:mother|father|mom|dad|friend|sister|brother|grandmother|grandfather|partner|wife|husband|dog|cat|pet) (?:has |had )?(?:died|passed)|(?:lost|loss of) (?:my |our |her |his |their |a )?(?:mother|father|mom|dad|friend|sister|brother|grandmother|grandfather|partner|wife|husband|dog|cat|pet)',motifs:['cardinal','heart','tree'],evidence:/\b(?:remembrance|remember(?:ing)?|memor(?:y|ies|ial)|mourning|bereavement|grief|loved ones?|continuing bonds?|loss)\b/i,label:'remembrance',intro:'I can help you find a gentle way to mark that memory.',question:'Would a symbol connected with a happy memory, a favourite animal or something they loved feel right?'},
   graduation:{pattern:'graduat(?:ion|e[ds]?|ing)|finished (?:school|university|college)|complet(?:ed|ing) (?:a |my |the |her |his |their |our )?(?:degree|studies)',motifs:['star','butterfly','owl'],evidence:/\b(?:achievement|accomplishment|wisdom|learning|knowledge|new beginnings?|transformation|growth|ambition)\b/i,label:'graduation',intro:'That is a milestone worth marking in a way that feels personal.',question:'Would you like a symbol for the achievement, a fresh beginning or something they love?'},
-  wedding:{pattern:'wedding|getting married|just married|engagement|engaged|anniversary',motifs:['heart','circle','tree'],evidence:/\b(?:love|devotion|commitment|partnership|union|connection|togetherness|family|continuity)\b/i,label:'love and commitment',intro:'We can look for a piece that feels connected to your relationship.',question:'Would a personal symbol for your relationship or something you both love feel right?'},
-  birth:{pattern:'new baby|newborn|birth of|birth celebration|baby (?:was |is |has )?(?:born|arrived)|became (?:a |an )?(?:mother|father|parent)|new (?:mother|father|parent)|motherhood|fatherhood',motifs:['tree','heart','bunny'],evidence:/\b(?:family|parenthood|motherhood|fatherhood|new beginnings?|renewal|growth|connection|love)\b/i,label:'a new chapter in the family',intro:'We can choose a keepsake to mark that new chapter in the family.',question:'Would a symbol for family, a new beginning or a personal memory feel right?'},
+  wedding:{pattern:'wedding|getting married|just married|engagement|engaged|anniversary',motifs:['heart','circle','tree'],evidence:/\b(?:love|devotion|commitment|partnership|union|togetherness|relationship|marriage)\b/i,label:'love and commitment',intro:'We can look for a piece that feels connected to your relationship.',question:'Would a personal symbol for your relationship or something you both love feel right?'},
+  birth:{pattern:'new baby|newborn|birth of|birth celebration|baby (?:was |is |has )?(?:born|arrived)|became (?:a |an )?(?:mother|father|parent)|new (?:mother|father|parent)|motherhood|fatherhood',motifs:['tree','heart','bunny'],evidence:/\b(?:family|parenthood|motherhood|fatherhood|newborn|new baby|birth)\b/i,label:'a new chapter in the family',intro:'We can choose a keepsake to mark that new chapter in the family.',question:'Would a symbol for family, a new beginning or a personal memory feel right?'},
   achievement:{pattern:'new job|promot(?:ion|ed)|achievement|accomplishment|goal (?:achieved|reached)|achieved (?:a |my |the |her |his |their |our )?(?:major |personal |important |long-standing )?goal|milestone|retirement|retir(?:ed|ing)',motifs:['star','mountain','sunflower'],evidence:/\b(?:achievement|accomplishment|ambition|growth|resilience|strength|perseverance|courage|optimism|new beginnings?|hope)\b/i,label:'that achievement or new chapter',intro:'We can find a personal way to mark that achievement or new chapter.',question:'Would a symbol for the achievement, a fresh beginning or a personal interest feel right?'},
   recovery:{pattern:'recover(?:ed|ing|y)|courage after|after (?:an? |my )?(?:illness|treatment)|surviv(?:ed|or)',motifs:['phoenix','lotus','butterfly'],evidence:/\b(?:renewal|resilience|strength|courage|transformation|new beginnings?|hope|perseverance)\b/i,label:'a personal new chapter',intro:'We can look for a personal reminder of what this chapter means to you. Jewellery cannot promise healing or protection.',question:'Would strength, a fresh beginning or a personal interest feel most meaningful?'},
   season:{pattern:'spring|summer|autumn|winter|season(?:al|s)?|fall renewal',motifs:['flower','leaf','butterfly'],evidence:/\b(?:renewal|new beginnings?|nature|seasons?|growth|change|transformation|spring|summer|autumn|winter)\b/i,label:'the season or a fresh beginning',intro:'We can look for a personal connection to the season or a fresh beginning.',question:'Would a favourite part of the season or a personal symbol of a fresh beginning feel right?'},
-  christmas:{pattern:'christmas|holiday gift|festive',motifs:['star','snowflake','tree'],evidence:/\b(?:family|connection|togetherness|hope|winter|season|christmas|celebration)\b/i,label:'a personal holiday connection',intro:'We can choose something that feels personal for the holidays.',question:'Would a favourite animal, interest or a personal holiday symbol feel right?'}
+  christmas:{pattern:'christmas|holiday gift|festive',motifs:['star','snowflake','tree'],evidence:/\b(?:christmas|holiday|festive|winter|snowflake)\b/i,label:'a personal holiday connection',intro:'We can choose something that feels personal for the holidays.',question:'Would a favourite animal, interest or a personal holiday symbol feel right?'}
 });
 // Public predictive search remains the first discovery signal. These caps bound
 // the private approved-dossier scan, mirror reads and exact live rechecks used
@@ -61,6 +61,41 @@ function matchingMeanings(meanings,milestone){
     return [...text.matchAll(positive)].some(hit=>!/(?:\b(?:not|no|never|without|isn't|doesn't|is not|does not)\s+(?:[a-z]+\s+){0,4})$/i.test(text.slice(0,hit.index).split(/[,;.!?]|\bbut\b/i).at(-1)));
   });
 }
+function storeUrl(value){
+  try{const url=new URL(String(value||''));return url.protocol==='https:'&&!url.username&&!url.password&&!url.port&&['britesjewelry.com','www.britesjewelry.com'].includes(url.hostname.toLowerCase())?url.href:null;}catch{return null;}
+}
+function phrasePattern(value){return String(value||'').trim().replace(/[.*+?^${}()|[\]\\]/g,'\\$&').replace(/[\s_-]+/g,'[\\s_-]+');}
+function metadataHas(text,value){const pattern=phrasePattern(value);return !!pattern&&new RegExp('(?:^|[^a-z0-9])'+pattern+'(?=$|[^a-z0-9])','i').test(text);}
+function metadataTypeMatches(row,type){
+  const patterns={necklace:'necklaces?|pendants?',pendant:'pendants?|necklaces?',earrings:'earrings?|studs?|huggies?',studs:'studs?',huggie:'huggies?',bracelet:'bracelets?',ring:'rings?',charm:'charms?'};
+  const pattern=patterns[String(type||'').toLowerCase()];
+  return !type||(pattern?new RegExp('\\b(?:'+pattern+')\\b','i').test(String(row?.title||'')+' '+String(row?.type||'')):metadataHas(String(row?.title||'')+' '+String(row?.type||''),type));
+}
+// `linked` is deliberately a narrow input: callers must first establish an
+// approved, current-version dossier/supplement whose public interpretation
+// matches the milestone. Catalogue motif words then improve ordering; they are
+// not a second evidence requirement. Exact live product and variant guards are
+// still applied after these bounded mirror hints are selected.
+function rankLinkedCandidates(linked,rows,plan,intent={},limit=RECALL_BOUNDS.liveHandles){
+  if(!validMilestone(plan?.milestone)||!Array.isArray(linked)||!Array.isArray(rows))return [];
+  const cap=Math.max(1,Math.min(RECALL_BOUNDS.liveHandles,Number.isInteger(limit)?limit:RECALL_BOUNDS.liveHandles));
+  const motifs=(Array.isArray(plan.motifs)?plan.motifs:[]).filter(value=>typeof value==='string'&&value.length<=80);
+  const excluded=(Array.isArray(intent?.excludedInterests)?intent.excludedInterests:[]).filter(value=>typeof value==='string'&&value.length<=80);
+  const wantedType=typeof intent?.type==='string'?intent.type.trim().toLowerCase().slice(0,30):'';
+  const byId=new Map(rows.filter(row=>/^gid:\/\/shopify\/Product\/\d+$/.test(String(row?.id||''))).map(row=>[row.id,row]));
+  const seen=new Set(),candidates=[];
+  for(let index=0;index<linked.length;index++){
+    const hint=linked[index],row=byId.get(hint?.productId);
+    if(!row||seen.has(hint.productId)||!/^gid:\/\/shopify\/Product\/\d+$/.test(String(hint.productId||''))||!/^[a-z0-9_-]{1,180}$/.test(hint.handle||'')||!/^[a-f0-9]{64}$/.test(hint.dossierVersion||'')||(hint.supplementVersion!=null&&!/^[a-f0-9]{64}$/.test(hint.supplementVersion))||row.handle!==hint.handle||!storeUrl(row.url))continue;
+    const searchable=[row.title,row.type,...(Array.isArray(row.tags)?row.tags:[])].map(value=>String(value||'')).join(' ');
+    if(excluded.some(value=>metadataHas(searchable,value)))continue;
+    const motifHits=motifs.filter(value=>metadataHas(searchable,value)).length;
+    const typeHit=wantedType&&metadataTypeMatches(row,wantedType)?1:0;
+    seen.add(hint.productId);
+    candidates.push({hint:{productId:hint.productId,handle:hint.handle,dossierVersion:hint.dossierVersion,supplementVersion:hint.supplementVersion||null},score:typeHit*100+motifHits*10,index});
+  }
+  return candidates.sort((a,b)=>b.score-a.score||a.hint.handle.localeCompare(b.hint.handle)||a.index-b.index).slice(0,cap).map(candidate=>candidate.hint);
+}
 function presentation(milestone){const spec=CONTEXTS[validMilestone(milestone)];return spec?{label:spec.label,intro:spec.intro,question:spec.question}:null;}
 function recallBounds(){return {...RECALL_BOUNDS};}
-module.exports={validMilestone,parseMilestone,contextOnlyQuery,contextResidual,discoveryIntent,matchingMeanings,presentation,recallBounds};
+module.exports={validMilestone,parseMilestone,contextOnlyQuery,contextResidual,discoveryIntent,matchingMeanings,rankLinkedCandidates,presentation,recallBounds};

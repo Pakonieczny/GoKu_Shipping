@@ -14,20 +14,32 @@
   const EMOTIONS = Object.freeze(['calm', 'curious', 'celebrate', 'reassuring', 'warm']);
   const validEmotion = emotion => EMOTIONS.includes(emotion) ? emotion : null;
   const MANNERISMS = Object.freeze({greet: 1.12, acknowledge: .9, focus: .86, explain: 1.05, confirm: 1.2, reassure: 1.05});
+  const BEHAVIOR_CUES = Object.freeze({
+    greet: 'anticipation', acknowledge: 'listening', focus: 'thinking', explain: 'speaking', confirm: 'celebrate', reassure: 'reassure'
+  });
   const smooth = value => {const x = clamp(value, 0, 1); return x * x * (3 - 2 * x);};
   function pulse(elapsed, delay, duration) {
     const t = (elapsed - delay) / duration;
     return t <= 0 || t >= 1 ? 0 : t < .4 ? smooth(t / .4) : 1 - smooth((t - .4) / .6);
   }
   // These timings are artistic hypotheses, not demographic conversion claims.
-  // Eyes acknowledge first, the head follows, then a small intentional arm.
+  // The luminous aperture anticipates first, the head follows, and only then a
+  // small mechanical-arm accent. Each cue resolves instead of looping for attention.
   function mannerismFor({name = null, elapsed = 0, reducedMotion = false, emotion = null} = {}) {
     const quiet = emotion === 'calm' || emotion === 'reassuring';
-    if (!Object.hasOwn(MANNERISMS, name) || reducedMotion || !Number.isFinite(elapsed) || elapsed < 0 || elapsed >= MANNERISMS[name]) return {name: null, active: false, eye: 0, head: 0, body: 0, nod: 0, offer: 0, lift: 0};
     if (quiet && name === 'confirm') name = 'reassure';
-    const gain = quiet ? .35 : 1, eye = pulse(elapsed, .02, .65), head = pulse(elapsed, .12, .8) * gain, body = pulse(elapsed, .21, .82) * gain;
-    const nod = name === 'confirm' ? pulse(elapsed, .18, .33) - .55 * pulse(elapsed, .56, .38) : name === 'reassure' ? pulse(elapsed, .2, .55) * .4 : 0;
-    return {name, active: true, eye, head, body, nod: nod * gain, offer: ['greet', 'explain', 'confirm'].includes(name) && !quiet ? body : 0, lift: name === 'confirm' && !quiet ? Math.sin(Math.min(elapsed, 1.2) / 1.2 * Math.PI) * .12 : 0};
+    const inactive = {name: null, cue: null, phase: null, active: false, eye: 0, head: 0, body: 0, anticipate: 0, listen: 0, think: 0, speak: 0, comfort: 0, celebrate: 0, nod: 0, offer: 0, lift: 0};
+    if (!Object.hasOwn(MANNERISMS, name) || reducedMotion || !Number.isFinite(elapsed) || elapsed < 0 || elapsed >= MANNERISMS[name]) return inactive;
+    const duration = MANNERISMS[name], cue = BEHAVIOR_CUES[name], gain = quiet ? .35 : 1;
+    const eye = pulse(elapsed, .02, Math.min(.65, duration * .72));
+    const head = pulse(elapsed, .12, Math.min(.8, duration * .82)) * gain;
+    const body = pulse(elapsed, .21, Math.min(.82, duration * .76)) * gain;
+    const anticipate = pulse(elapsed, .01, .24) * (quiet ? .5 : 1);
+    const phase = elapsed < .12 ? 'anticipate' : elapsed < duration * .7 ? 'express' : 'settle';
+    const listen = name === 'acknowledge' ? eye : 0, think = name === 'focus' ? eye : 0, speak = name === 'explain' ? body : 0;
+    const comfort = name === 'reassure' ? head : 0, celebrate = name === 'confirm' && !quiet ? body : 0;
+    const nod = name === 'acknowledge' ? pulse(elapsed, .16, .34) * .24 - pulse(elapsed, .48, .28) * .08 : name === 'confirm' ? pulse(elapsed, .18, .33) - .55 * pulse(elapsed, .56, .38) : name === 'reassure' ? pulse(elapsed, .2, .55) * .4 : 0;
+    return {name, cue, phase, active: true, eye, head, body, anticipate, listen, think, speak, comfort, celebrate, nod: nod * gain, offer: ['greet', 'explain', 'confirm'].includes(name) && !quiet ? body : 0, lift: name === 'confirm' && !quiet ? Math.sin(Math.min(elapsed, duration) / duration * Math.PI) * .12 : 0};
   }
   let instanceCount = 0;
   function declaredScene(raw, textureSize) {
@@ -50,17 +62,20 @@
     const expressive = mannerismFor({name: mannerism, elapsed: mannerismElapsed, reducedMotion, emotion});
     const lift = expressive.active ? expressive.lift : happy && motion ? Math.sin(Math.min(elapsed, 1.2) / 1.2 * Math.PI) * .12 : 0;
     const greeting = expressive.name === 'greet', acknowledgement = expressive.name === 'acknowledge', focus = expressive.name === 'focus';
+    const apertureAccent = expressive.listen * .035 - expressive.think * .055 + expressive.speak * .025 - expressive.comfort * .018 + expressive.celebrate * .06;
+    const leftArm = calm ? .025 : thoughtful ? .18 : happy ? .1 : listening ? .045 : 0;
+    const rightArm = calm ? .025 : thoughtful ? .25 : happy ? .16 : listening ? .07 : 0;
     return {
-      mannerism: expressive.name, mannerismActive: expressive.active, nod: expressive.nod, offer: expressive.offer, lean: expressive.body * (acknowledgement ? .025 : .012),
+      mannerism: expressive.name, mannerismCue: expressive.cue, mannerismPhase: expressive.phase, mannerismActive: expressive.active, nod: expressive.nod, offer: expressive.offer, lean: expressive.body * (acknowledgement ? .025 : .012),
       state, eyeColor: MOODS[state].color, emotion: emotion || MOODS[state].emotion,
-      eyeDeformation: calm ? -.025 : happy ? .24 : thoughtful ? -.14 : listening ? .1 : concerned ? -.08 : greeting ? expressive.eye * .1 : 0,
-      eyeScaleX: happy ? 1.08 : thoughtful ? .93 : 1,
-      eyeScaleY: happy ? .82 : listening ? 1.06 : concerned ? .9 : 1,
-      ringRotation: thoughtful ? time * .3 : 0,
-      antennaTilt: thoughtful ? -.14 : listening ? .08 : happy ? .18 : 0,
+      eyeDeformation: (calm ? -.025 : happy ? .24 : thoughtful ? -.14 : listening ? .1 : concerned ? -.08 : greeting ? expressive.eye * .1 : 0) + apertureAccent,
+      eyeScaleX: (happy ? 1.08 : thoughtful ? .93 : 1) + expressive.comfort * .025,
+      eyeScaleY: (happy ? .82 : listening ? 1.06 : concerned ? .9 : 1) + expressive.listen * .025 - expressive.speak * .015,
+      ringRotation: thoughtful ? time * .3 : expressive.celebrate * .18 - expressive.comfort * .06,
+      antennaTilt: (thoughtful ? -.14 : listening ? .08 : happy ? .18 : 0) + expressive.anticipate * .055 + expressive.comfort * -.035,
       bob: Math.sin(time * 1.35) * .045 * motion + lift,
       bodyRoll: Math.sin(time * .7) * .018 * motion,
-      headYaw: clamp(gazeX, -1, 1) * .1 + (greeting ? -.025 * expressive.head : 0) + (thoughtful ? Math.sin(time * .65) * .055 * motion : 0),
+      headYaw: clamp(gazeX, -1, 1) * .1 + (greeting ? -.025 * expressive.head : 0) + (thoughtful ? Math.sin(time * .65) * .055 * motion : 0) - expressive.anticipate * .012,
       headPitch: clamp(gazeY, -1, 1) * .065 + expressive.nod * .075 + expressive.head * (acknowledgement ? -.03 : focus ? .025 : 0) + (listening ? -.045 : 0) + (talking ? Math.sin(time * 2.5) * .025 * motion : 0),
       headRoll: (calm ? -.012 : concerned ? -.055 : thoughtful ? .055 : happy ? .025 : 0) + expressive.head * (greeting ? -.06 : acknowledgement ? -.035 : focus ? .025 : 0),
       eyeOpen: Math.max(.035, (happy ? .7 : concerned ? .85 : listening ? 1.06 : greeting ? 1 - expressive.eye * .12 : 1) * (1 - blink)),
@@ -69,9 +84,10 @@
       browLift: happy ? .08 : listening ? .045 : concerned ? .025 : thoughtful ? .02 : 0,
       browAngle: concerned ? .15 : thoughtful ? -.08 : happy ? -.08 : -.025,
       mouth: talking ? 'open' : concerned ? 'concern' : 'smile', mouthOpen: speech,
-      armLift: calm ? .025 : thoughtful ? .23 : happy ? .15 : listening ? .06 : 0,
+      armLift: Math.max(leftArm, rightArm), armLiftLeft: leftArm + expressive.comfort * .02, armLiftRight: rightArm + expressive.speak * .06 + expressive.celebrate * .08,
       gesture: expressive.offer * .075,
-      lightPulse: thoughtful ? (reducedMotion ? .3 : .18 + .18 * Math.sin(time * 2)) : happy ? .45 : talking ? speech * .22 : 0
+      statusWave: expressive.listen * .2 + expressive.think * .45 + expressive.speak * .65 + expressive.comfort * .15 + expressive.celebrate * .8,
+      lightPulse: thoughtful ? (reducedMotion ? .3 : .18 + .18 * Math.sin(time * 2)) : happy ? .45 : talking ? speech * .22 : expressive.anticipate * .08
     };
   }
 
@@ -122,7 +138,7 @@
     function snapshot() {
       const scene = engine?.snapshot?.() || {};
       return {...scene, state, emotion, visible, intersecting, paused, reducedMotion, mode: engine && !failed ? 'webgl' : failed ? 'fallback' : 'pending', loading, destroyed,
-        mannerism: {name: mannerism, id: mannerismId, duration: MANNERISMS[mannerism] || 0, active: !!mannerism && canDisplay() && !paused && !reducedMotion, elapsed: mannerism ? Math.max(0, now() - mannerismAt) : 0},
+        mannerism: {name: mannerism, cue: BEHAVIOR_CUES[mannerism] || null, id: mannerismId, duration: MANNERISMS[mannerism] || 0, active: !!mannerism && canDisplay() && !paused && !reducedMotion, elapsed: mannerism ? Math.max(0, now() - mannerismAt) : 0},
         animated: engine && !failed ? active() && !reducedMotion && scene.animated === true : fallbackMoving(),
         fallback: {format: 'animated_svg_2d', active: canDisplay() && (!engine || failed), animated: fallbackMoving(), reason: failureReason},
         quality: {...quality}, declarations: declarations ? {schema: declarations.schema, source: declarations.source, textures: declarations.textures.map(value => ({...value}))} : null};
@@ -136,6 +152,8 @@
       frame.style.setProperty('--brites-gaze-y', (-pose.gazeY * 180).toFixed(2) + 'px');
       frame.style.setProperty('--brites-speech-level', String(level));
       frame.style.setProperty('--brites-speech-scale', String(1 + level * .14));
+      frame.dataset.cue = pose.mannerismCue || '';
+      frame.dataset.cuePhase = pose.mannerismPhase || '';
       frame.dataset.motion = canDisplay() && !paused && !reducedMotion ? 'running' : reducedMotion ? 'reduced' : 'paused';
       frame.dataset.fallbackFormat = 'animated-svg-2d';
       frame.dataset.emotion = emotion || MOODS[state].emotion;
@@ -181,7 +199,7 @@
     sync();
     return {ready, triggerGreeting, setState, setVisible, setPaused, setEmotion, retry, setLevel, lookAt, snapshot, destroy, element: frame};
   }
-  const api = {create, MANNERISMS, mannerismFor, STATES, EMOTIONS, validEmotion, validState, qualityFor, poseFor};
+  const api = {create, MANNERISMS, BEHAVIOR_CUES, mannerismFor, STATES, EMOTIONS, validEmotion, validState, qualityFor, poseFor};
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   if (scope) scope.BritesConciergeAvatar = api;
 })(typeof window === 'undefined' ? null : window);

@@ -171,7 +171,7 @@ async function handleAction(body) {
     let productIssues=[],productIssueState='unavailable';
     if(typeof service.productIssues==='function')try{productIssues=await service.productIssues(ids);productIssueState='available';}catch{}
     const exactDossiers=(dossiers||[]).filter(d=>ids.includes(d.productId)),operatorReviews=[];
-    let projection;try{projection=require('./googleAdsAdDesignResearch');}catch{}
+    let projection,meaningProjection;try{projection=require('./googleAdsAdDesignResearch');}catch{}try{meaningProjection=require('./_britesGrowthAdsReadOnly');}catch{}
     for(const id of ids){
       const dossier=exactDossiers.find(d=>d.productId===id),holds=core.productIssueHolds((productIssues||[]).find(record=>record.productId===id));
       const entry={productId:id,handle:dossier?.handle||null,dossierVersion:dossier?.version||null,state:'unavailable'};
@@ -181,6 +181,8 @@ async function handleAction(body) {
         if(projection.sharedDossierIsCurrent(current,product)){
           const packet=projection.projectRecommendations(current,new Set(current.sources.map(source=>source.id)))?.operatorReviewPacket;
           if(packet){entry.state='pending_operator_review';entry.operatorReviewPacket=packet;}
+          const meaning=meaningProjection?.projectApprovedMeaningHypotheses?.({dossier:current,product,issueRecord:(productIssues||[]).find(record=>record.productId===id)||null,issueState:productIssueState});
+          if(meaning){entry.meaningReviewReadiness=meaning.meaningReviewReadiness;entry.meaningOperatorReviewPacket=meaning.meaningOperatorReviewPacket;}
         }
       }catch{}
       operatorReviews.push(entry);

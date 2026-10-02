@@ -11,7 +11,7 @@ const STATUS_URL = 'https://datamanager.googleapis.com/v1/requestStatus:retrieve
 const TOKEN_URL = 'https://oauth2.googleapis.com/token';
 const DM_SCOPE = 'https://www.googleapis.com/auth/datamanager';
 const CLOUD_SCOPE = 'https://www.googleapis.com/auth/cloud-platform';
-const MAX_SCAN = 500, MAX_BATCH = 25, MAX_MS = 30000;
+const MAX_SCAN = 500, MAX_BATCH = 25, MAX_MS = 30000, MAX_CONCURRENCY = 5;
 const ALLOWED_OPTIONS = new Set(['limit', 'maxMs']);
 const STATES = new Set(['SUCCESS', 'FAILED', 'FAILURE', 'PARTIAL_SUCCESS', 'PROCESSING', 'REQUEST_STATUS_UNSPECIFIED']);
 
@@ -142,8 +142,21 @@ function createReceiptObserver({env = {}, db, fetch: fetcher = globalThis.fetch,
       out.authorization = {scopeReported: scopes !== null, dataManagerScope: scopes ? scopes.includes(DM_SCOPE) : null, cloudPlatformScope: scopes ? scopes.includes(CLOUD_SCOPE) : null};
       if (!scopes) throw observerError('SCOPE_UNCONFIRMED', 'The provider did not confirm the Data Manager observation scope.');
       if (!scopes.includes(DM_SCOPE)) throw observerError('SCOPE_MISSING', 'The existing connection does not include the Data Manager observation scope.');
-      for (const [requestId, rows] of candidates) {
-        if (now() >= deadline) {out.stopped = 'time_limit'; break;}
+      // Status reads are performed by a small cursor-driven worker pool. Fifteen sequential provider
+      // reads could consume the whole synchronous-function allowance even when
+      // every individual request stayed inside its own timeout. The pool remains
+      // bounded, preserves candidate order in the returned evidence, and stops
+      // launching work as soon as a global blocker is known.
+      //
+      // Small batches remain sequential so an authorization/rate-limit response
+      // cannot unnecessarily fan out. Larger batches use at most five GETs at a
+      // time; no cursor, receipt ID, or mutable checkpoint is accepted from the
+      // caller or written to storage.
+      const concurrency = candidates.length >= MAX_CONCURRENCY ? MAX_CONCURRENCY : 1;
+      const batchReceipts = new Array(candidates.length); let completedSelected = 0, incompleteBatch = false;
+      const observe = async (candidate, index) => {
+        const [requestId, rows] = candidate;
+        if (now() >= deadline) {incompleteBatch = true; return;}
         const first = rows[0], original = canonicalDestination(first.destination), conflictingDestinations = rows.some(row => !sameDestination(canonicalDestination(row.destination), original));
         const receipt = {receiptKey: crypto.createHash('sha256').update(requestId).digest('hex').slice(0, 20), savedRows: rows.length,
           submittedAt: Math.min(...rows.map(row => row.submittedAt || started)), neverChecked: rows.every(row => row.neverChecked),
@@ -152,7 +165,7 @@ function createReceiptObserver({env = {}, db, fetch: fetcher = globalThis.fetch,
           providerReceiptConfirmed: false, individualOrderConfirmed: false};
         if (!original || conflictingDestinations) {
           Object.assign(receipt, {outcome: 'unconfirmed', code: !original ? 'ORIGINAL_DESTINATION_MISSING' : 'CONFLICTING_SAVED_DESTINATIONS'});
-          out.receipts.push(receipt); out.unconfirmed++; continue;
+          batchReceipts[index] = receipt; completedSelected++; out.unconfirmed++; return;
         }
         out.requested++;
         try {
@@ -164,12 +177,31 @@ function createReceiptObserver({env = {}, db, fetch: fetcher = globalThis.fetch,
           else out.unconfirmed++;
         } catch (error) {
           Object.assign(receipt, {outcome: 'unavailable', code: error.code || 'PROVIDER_UNAVAILABLE', httpStatus: error.httpStatus || null}); out.unavailable++;
-          if (error.code === 'TIME_LIMIT') out.stopped = 'time_limit';
+          if (error.code === 'TIME_LIMIT') {out.stopped = 'time_limit'; incompleteBatch = true;}
           if ([401, 403, 429].includes(error.httpStatus)) {out.blocked = true; out.stopped = error.httpStatus === 429 ? 'rate_limit' : 'authorization';}
         }
-        out.receipts.push(receipt);
-        if (out.stopped) break;
-      }
+        batchReceipts[index] = receipt; completedSelected++;
+      };
+      let cursor = 0;
+      await Promise.all(Array.from({length: Math.min(concurrency, candidates.length)}, async () => {
+        while (cursor < candidates.length) {
+          if (out.stopped || now() >= deadline) {incompleteBatch = true; return;}
+          const index = cursor++;
+          await observe(candidates[index], index);
+        }
+      }));
+      out.receipts.push(...batchReceipts.filter(Boolean));
+      out.batchProgress = {completed: completedSelected, selected: candidates.length, concurrency};
+      out.batchComplete = !incompleteBatch && completedSelected === candidates.length;
+      // A partial provider batch may contain individually successful reads, but
+      // it is not an all-or-nothing reconciliation input. The trusted preview
+      // observes `blocked` and therefore emits zero repair proposals. A later
+      // invocation safely re-reads the same saved receipts; nothing is claimed,
+      // cached, advanced, or replayed here.
+      if (!out.batchComplete) {
+        out.blocked = true; out.code = out.code || 'INCOMPLETE_RECEIPT_BATCH'; out.reconciliationEligible = false;
+        out.stopped = out.stopped || 'time_limit';
+      } else out.reconciliationEligible = !out.blocked;
       if (!out.stopped && groups.size > limit) out.stopped = 'limit';
       out.selectionComplete = out.selected === out.uniqueReceipts && !out.stopped;
       out.elapsedMs = Math.max(0, now() - started);
