@@ -2450,8 +2450,9 @@ function metalToBadge(label){
               return;
             }
             var docDataEN = resultEN.data;
-            if(docDataEN[empNumber]){
-              var nameFound = docDataEN[empNumber];
+            /* the name as one tidy line (the session and the timeline read the same text); a number alone is never a name */
+            var nameFound = typeof docDataEN[empNumber] === "string" ? docDataEN[empNumber].replace(/\s+/g, " ").trim() : "";
+            if(nameFound && !/^\d+$/.test(nameFound)){
               M.toast({ html: "Welcome, " + nameFound + "!" });
 
               /* remember the current employee for future reloads */
@@ -2464,7 +2465,9 @@ function metalToBadge(label){
               window.isEmployeeLoggedIn = true;
               startScannedOrderListener();
             } else {
-              M.toast({ html: "Employee # " + empNumber + " not found in DB!" });
+              /* never the digits typed (the box masks them): say what to do, and clear the box for the next try */
+              M.toast({ html: "That Employee Number is not on the list. Check the 6 digits and try again." });
+              try { employeeNumberInput.dataset.raw = ""; employeeNumberInput.value = ""; } catch (_) {}
             }
           } catch(errEN){
             console.error("Error in employee login flow:", errEN);
