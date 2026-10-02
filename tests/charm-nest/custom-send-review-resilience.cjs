@@ -1,5 +1,6 @@
-// Actual Review list, shared seals and activity controls: completed sheet sends resolve to Decided, retain their
-// original decision and usable links, and never silently become completed production or generate new stamp history.
+// Actual Review list, shared seals and activity controls: sheet sends are listed under Completed (one tab with the orders
+// completed by hand: Paul, 2 Oct, "Combined a decided and completed together into one completed tab"), retain their
+// original decision and usable links, and never generate new stamp history.
 const assert = require('node:assert/strict'), fs = require('node:fs'), path = require('node:path');
 const { JSDOM } = require('jsdom');
 const root = path.resolve(__dirname, '../..');
@@ -61,14 +62,21 @@ function mode(seg) { R.view().cseg = seg; R.view().filter = null; R.view().q = '
 try {
   check('successful legacy sends leave Open even while their stale review question remains', () => {
     mode('open'); assert.deepEqual(ids(), [waiting.order.receiptId]); assert.equal(R.count(), 0);
-    assert.equal(d.querySelector('[data-cseg="sent"] b').textContent, '3');
+    assert.equal(d.querySelector('[data-cseg="done"] b').textContent, '4', 'one Completed count: the three sends and the hand completion');
     assert.equal(d.querySelector('[data-cseg="open"] b').textContent, '1');
+    assert.equal(d.querySelector('[data-cseg="sent"]'), null, 'no Decided segment');
   });
-  check('both screenshot orders and ordinary Review sends are in Decided, never Completed', () => {
-    mode('sent'); assert.deepEqual(ids(), [regular.order.receiptId, ss.order.receiptId, gf.order.receiptId]);
-    mode('done'); assert.deepEqual(ids(), [hand.order.receiptId]); mode('sent');
+  check('both screenshot orders and ordinary Review sends are in Completed with the hand-completed one, newest first', () => {
+    mode('done'); assert.deepEqual(ids(), [regular.order.receiptId, ss.order.receiptId, gf.order.receiptId, hand.order.receiptId]);
+    assert.equal(d.querySelector('[data-cseg="done"] b').textContent, String(cards().length), 'the count is the cards listed');
   });
-  check('all decided cards show one actual sent seal with original actor/time, without manufacturing a stamp', () => {
+  check('an old name for the Decided segment is Completed: it lands on the same list and is rewritten', () => {
+    mode('sent'); assert.equal(R.view().cseg, 'done'); assert.equal(d.querySelector('[data-cseg="done"]').getAttribute('aria-pressed'), 'true');
+    assert.deepEqual(ids(), [regular.order.receiptId, ss.order.receiptId, gf.order.receiptId, hand.order.receiptId]);
+    R.showCard('cu:custom:' + gf.order.receiptId + ':' + gf.spec.designSku, 'sent'); assert.equal(R.view().cseg, 'done', 'a Show for it opens Completed');
+    assert.deepEqual(w.document.querySelector('.ordBar').textContent.match(/Decided/), null, 'no Decided word in the bar');
+  });
+  check('all sent cards show one actual sent seal with original actor/time, without manufacturing a stamp', () => {
     for (const r of [gf, ss, regular]) {
       const n = get(r), seal = n.querySelector('.seal-sheet'), decision = decisions.get(r.key);
       assert(seal, 'sent-to-sheet seal exists'); assert.equal(n.querySelectorAll('.seal').length, 1);
@@ -82,27 +90,27 @@ try {
     const n = get(gf); n.querySelector('[data-cu-sheet]').click(); n.querySelector('[data-cu-history]').click(); n.querySelector('[data-cu-designs]').click();
     assert.deepEqual(calls, [['sheet', gf.key], ['timeline', gf.key], ['designs', gf.key]]);
   });
-  check('the third switch and minimal order search occupy the existing toolbar', () => {
+  check('the two-segment switch and minimal order search occupy the existing toolbar', () => {
     assert.equal(d.querySelectorAll('#reviewView .ordBar').length, 1); assert.equal(d.querySelectorAll('#reviewView .rvSeg').length, 1);
-    assert.equal(d.querySelectorAll('.rvSeg button').length, 3); assert.equal(d.querySelectorAll('#rvOrderFind').length, 1);
+    assert.equal(d.querySelectorAll('.rvSeg button').length, 2); assert.equal(d.querySelectorAll('#rvOrderFind').length, 1);
     const bar = d.querySelector('.ordBar'); assert(bar.contains(d.querySelector('.cnListTools'))); assert(bar.contains(d.querySelector('.cnOrderFind')));
   });
   check('each typed order digit removes impossible matches immediately and keeps matching cards highlighted', () => {
-    for (const [q, expected] of [['4', 3], ['41', 3], ['417', 3], ['4174', 1], ['41744', 1], ['4174476673', 1], ['41744766730', 0]]) {
+    for (const [q, expected] of [['4', 4], ['41', 4], ['417', 3], ['4174', 1], ['41744', 1], ['4174476673', 1], ['41744766730', 0]]) {
       const input = d.querySelector('#rvOrderFind'); input.value = q; input.dispatchEvent(new w.Event('input', { bubbles: true }));
       assert.equal(cards().length, expected, q); assert(cards().every(n => n.classList.contains('orderMatch')), q + ' highlighted');
     }
-    const input = d.querySelector('#rvOrderFind'); input.value = ''; input.dispatchEvent(new w.Event('input')); assert.equal(cards().length, 3);
+    const input = d.querySelector('#rvOrderFind'); input.value = ''; input.dispatchEvent(new w.Event('input')); assert.equal(cards().length, 4);
   });
   check('date ranges and ascending/descending sorting use recorded activity rather than rerender time', () => {
-    const scope = 'review-sent'; w.CNListActivity.set(scope, { range: 'today', direction: 'desc' }); R.render({ still: true }); assert.deepEqual(ids(), [regular.order.receiptId]);
-    w.CNListActivity.set(scope, { range: 'all', direction: 'asc' }); R.render({ still: true }); assert.deepEqual(ids(), [gf.order.receiptId, ss.order.receiptId, regular.order.receiptId]);
-    w.CNListActivity.set(scope, { range: 'all', direction: 'desc' }); R.render({ still: true }); assert.deepEqual(ids(), [regular.order.receiptId, ss.order.receiptId, gf.order.receiptId]);
+    const scope = 'review-done'; w.CNListActivity.set(scope, { range: 'today', direction: 'desc' }); R.render({ still: true }); assert.deepEqual(ids(), [regular.order.receiptId]);
+    w.CNListActivity.set(scope, { range: 'all', direction: 'asc' }); R.render({ still: true }); assert.deepEqual(ids(), [hand.order.receiptId, gf.order.receiptId, ss.order.receiptId, regular.order.receiptId], 'the hand completion (4 days ago) is dated by its seal, not by this page');
+    w.CNListActivity.set(scope, { range: 'all', direction: 'desc' }); R.render({ still: true }); assert.deepEqual(ids(), [regular.order.receiptId, ss.order.receiptId, gf.order.receiptId, hand.order.receiptId]);
     assert.equal(R.customItemFor(gf.key).t, decisions.get(gf.key).at);
   });
   check('repeated restore/rerender/switches neither duplicate nor replace the original send history', () => {
     const before = JSON.stringify([...decisions]); for (let i = 0; i < 5; i++) { mode('open'); mode('done'); mode('sent'); }
-    assert.equal(JSON.stringify([...decisions]), before); assert.equal(cards().length, 3); assert.equal(d.querySelectorAll('#rvList .seal-sheet').length, 3); assert.deepEqual(addCalls, []);
+    assert.equal(JSON.stringify([...decisions]), before); assert.equal(cards().length, 4); assert.equal(d.querySelectorAll('#rvList .seal-sheet').length, 3); assert.deepEqual(addCalls, []);
   });
   check('past print/hand seals survive on a newly resolved sheet decision without duplicating old ink', () => {
     const sent = decisions.get(gf.key); w.B.maps.customKept[gf.key] = { stamps: [{ how: 'print', at: sent.at - 1, by: 'Alex' }] };
@@ -113,7 +121,7 @@ try {
   check('pending durable sends remain actionable in Open until actually finalized', () => {
     const pending = row(4160000000, 'pulled'); rows.push(pending); w.B.orders.byKey.set(pending.key, pending);
     mode('open'); assert(ids().includes(pending.order.receiptId)); assert(get(pending).querySelector('[data-cu-send]'));
-    mode('sent'); assert(!ids().includes(pending.order.receiptId)); mode('done'); assert(!ids().includes(pending.order.receiptId));
+    mode('done'); assert(!ids().includes(pending.order.receiptId));
   });
   check('a shared question advances to its next unsent order rather than stranding that order behind a sent first row', () => {
     const unsent = row(4130000000, 'pulled', false); rows.push(unsent); w.B.orders.byKey.set(unsent.key, unsent);
@@ -123,10 +131,10 @@ try {
   });
   check('cloud-only sheet decision on a regular row is recovered with signer/time and usable history', () => {
     const cloud = row(4150000000, 'pooled', false); cloud._customSentDecision = { how: 'sheet', at: now - day, by: 'Paul', stamps: [{ how: 'sheet', at: now - day, by: 'Paul' }] };
-    rows.push(cloud); w.B.orders.byKey.set(cloud.key, cloud); mode('sent');
+    rows.push(cloud); w.B.orders.byKey.set(cloud.key, cloud); mode('done');
     assert(ids().includes(cloud.order.receiptId)); assert.equal(get(cloud).querySelectorAll('.seal-sheet').length, 1);
     assert.equal(R.customItemFor(cloud.key).record.by, 'Paul'); assert.equal(R.isDecided(cloud.key), true);
-    mode('open'); assert(!ids().includes(cloud.order.receiptId)); mode('done'); assert(!ids().includes(cloud.order.receiptId));
+    mode('open'); assert(!ids().includes(cloud.order.receiptId), 'a send is not open');
   });
   check('order lookup outside the pull accepts the authoritative sent-decision fallback row', () => {
     const archive = row(4140000000, 'written', false); archive._customSentDecision = { at: now - 6 * day, by: 'Seth' };
@@ -146,7 +154,7 @@ try {
     const start = calls.length; n.querySelector('[data-cu-sheet]').click(); n.querySelector('[data-cu-history]').click();
     assert.deepEqual(calls.slice(start), [['sheet', gf.key], ['timeline', gf.key]]);
     assert.equal(R.isDecided(gf), false); assert.equal(R.customItemFor(gf.key).record, null);
-    mode('sent'); assert(!ids().includes(gf.order.receiptId)); mode('done'); assert(!ids().includes(gf.order.receiptId));
+    mode('done'); assert(!ids().includes(gf.order.receiptId), 'without a send record it is not under Completed');
     assert.equal(JSON.stringify(gf), before); assert.deepEqual(addCalls, []); decisions.set(gf.key, original);
   });
   check('a partial failed multi-line send keeps Retry visible and prevents competing print/completion even after its spinner clears', () => {
@@ -156,7 +164,25 @@ try {
     mode('open'); const n = get(pooled); assert(n); assert(n.querySelector('[data-cu-send]'), 'the pending send can retry');
     assert(!n.querySelector('[data-cu-print],[data-cu-complete]'), 'cannot compete with a retained send intent');
     const it = R.customItemFor(pooled.key); assert.equal(R.printable(it), false); assert(!it.decided && !it.done);
-    mode('sent'); assert(!ids().includes(pooled.order.receiptId)); mode('done'); assert(!ids().includes(pooled.order.receiptId));
+    mode('done'); assert(!ids().includes(pooled.order.receiptId), 'a send still pending is not under Completed');
+  });
+  check('an order both completed by hand and sent is one card: its buttons, its hand seal and its sheet seal, counted once', () => {
+    const both = row(4100000001, 'noDesign'), at = now - 2 * day;
+    both.spec.customDone = { how: 'button', completedAt: now - 5 * day, completedBy: 'Seth', stamps: [{ how: 'button', at: now - 5 * day, by: 'Seth' }] };
+    decisions.set(both.key, { id: 'both-original', at, by: 'paul', stamps: [{ how: 'sheet', at, by: 'paul' }], lines: { [both.key]: [{}] } });
+    rows.push(both); w.B.orders.byKey.set(both.key, both); mode('done');
+    const mine = cards().filter(n => n.dataset.rid === '4100000001'); assert.equal(mine.length, 1, 'listed once');
+    const n = mine[0]; assert(n.querySelector('[data-cu-print]') && n.querySelector('[data-cu-reopen]'), 'its buttons');
+    assert.equal(n.querySelectorAll('.seal-button').length, 1, 'its hand seal'); assert.equal(n.querySelectorAll('.seal-sheet').length, 1, 'its sheet seal'); assert.match(n.querySelector('.reviewReason').textContent, /sent to Sheet by paul/);
+    assert.equal(d.querySelector('[data-cseg="done"] b').textContent, String(cards().length), 'counted once');
+    // the same order with one line completed by hand and another sent: two cards of the one order fold into the one
+    const a = row(4100000002, 'noDesign'), b = row(4100000002, 'pooled'); b.key += 'b'; a.spec.customDone = { how: 'button', completedAt: now - 3 * day, completedBy: 'Seth', stamps: [{ how: 'button', at: now - 3 * day, by: 'Seth' }] };
+    decisions.set(b.key, { id: 'split-original', at: now - day, by: 'paul', stamps: [{ how: 'sheet', at: now - day, by: 'paul' }], lines: { [b.key]: [{}] } });
+    rows.push(a, b); w.B.orders.byKey.set(a.key, a); w.B.orders.byKey.set(b.key, b); mode('done');
+    const split = cards().filter(x => x.dataset.rid === '4100000002'); assert.equal(split.length, 1, 'one card for the order');
+    assert(split[0].querySelector('[data-cu-reopen]'), 'the completed one, with its buttons'); assert.equal(split[0].querySelectorAll('.seal-sheet').length, 1);
+    assert.equal(d.querySelector('[data-cseg="done"] b').textContent, String(cards().length), 'counted once');
+    assert.equal(new Set(ids()).size, ids().length, 'no order is listed twice');
   });
   console.log(`PASS: ${checks} custom-send Review resilience checks.`);
 } finally { w.close(); }

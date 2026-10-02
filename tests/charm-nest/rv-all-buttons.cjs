@@ -5,8 +5,8 @@
 // drop zone, the markup, classes and sizes of a custom card's, run by the same code. No question is asked anywhere (Paul,
 // 29 Sep 01:01: the decision box removed "from the UI and the review tab, from all pop-up modals"): a click on any card,
 // a custom one's included, opens its order window, which shows no decision box, and the card unfolds nothing. A line
-// leaving Review by its buttons has its question answered on the order timeline with who, and a completed one is under
-// Completed with its seal. Runs the sorter in headless Chromium against the local
+// leaving Review by its buttons has its question answered on the order timeline with who, and a completed one, or one sent
+// to a sheet, is under Completed (the one tab for both) with its seal. Runs the sorter in headless Chromium against the local
 // fake site (bridge-server.cjs): every request that is not to the loopback is aborted and the label printer is a stub, so
 // nothing is printed or written live.
 //   node tests/charm-nest/rv-all-buttons.cjs [playwright-core dir]   (CN_SHOT=file saves an Unknown SKU and a custom card)
@@ -186,11 +186,15 @@ const COLUMN = sel => { const n = document.querySelector(sel); return [...n.quer
     await page.waitForFunction(k => __tl.some(e => e.key === k && e.type === 'decided'), eKey, { timeout: 10000 });
     const tlE = await page.evaluate(k => __tl.filter(e => e.key === k && ['decided', 'designSent'].includes(e.type)).map(e => [e.type, e.by]), eKey);
     assert.deepEqual(tlE.sort(), [['decided', 'Test Operator'], ['designSent', 'Test Operator']], JSON.stringify(tlE));
-    // a send is never listed under Completed (Paul, 29 Sep): its answer is on the timeline above, the line on the sheets
+    // a send is listed under Completed, once, and counted once (Paul, 2 Oct: Decided and Completed are one tab): its answer is
+    // on the timeline above, the line on the sheets, its card here with its sheet and history links
     const doneBefore = await page.evaluate(() => +document.querySelector('#reviewView .rvSeg [data-cseg="done"] b').textContent);
+    await page.evaluate(() => Seal.whenIdle());
     await page.click('#reviewView .rvSeg [data-cseg="done"]');
-    const res = await page.evaluate(sel => ({ card: !!document.querySelector(sel), n: +document.querySelector('#reviewView .rvSeg [data-cseg="done"] b').textContent, listed: document.querySelectorAll('#rvList .reviewListRow').length }), card('4178100001'));
-    assert.deepEqual(res, { card: false, n: doneBefore, listed: doneBefore }, 'sent to the sheets: not under Completed, not counted: ' + JSON.stringify(res));
+    await page.waitForSelector(card('4178100001'));
+    const res = await page.evaluate(sel => ({ cards: document.querySelectorAll(sel).length, n: +document.querySelector('#reviewView .rvSeg [data-cseg="done"] b').textContent, listed: document.querySelectorAll('#rvList .reviewListRow').length, sentSeg: !!document.querySelector('#reviewView [data-cseg="sent"]') }), card('4178100001'));
+    assert.deepEqual(res, { cards: 1, n: res.listed, listed: res.listed, sentSeg: false }, 'sent to the sheets: under Completed once, counted once: ' + JSON.stringify(res));
+    assert(res.n >= doneBefore, 'the count counts the sent order: ' + JSON.stringify({ doneBefore, res }));
     await page.click('#reviewView .rvSeg [data-cseg="open"]');
 
     // 6 · Options: the same column; a click opens its order, which asks nothing

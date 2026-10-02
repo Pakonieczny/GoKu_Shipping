@@ -8179,7 +8179,7 @@ const Review = window.Review = (() => {
     const v = document.getElementById("reviewView");
     if (v && v.classList.contains("hidden") && typeof setMode === "function") setMode("review");
     // (RV.want: the list is drawn down to this card, however old; raised to 400 cards, an older one was never drawn)
-    RV.cseg = seg === "done" ? "done" : seg === "sent" ? "sent" : "open"; RV.filter = kind && RV.cseg === "open" ? kind : null; RV.want = mk;
+    RV.cseg = seg === "done" || seg === "sent" ? "done" : "open"; RV.filter = kind && RV.cseg === "open" ? kind : null; RV.want = mk;
     render();
     const n = [...document.querySelectorAll("#rvList .reviewListRow")].find(x => x.dataset.mkey === mk);
     if (n) { n.scrollIntoView({ behavior: "smooth", block: "center" }); found(n); }
@@ -8440,11 +8440,16 @@ const Review = window.Review = (() => {
     missingSize: "Pick the size to cut — or, made by hand, print its QR label to complete it.",
     other: "Settle it below — or, made by hand, print its QR label to complete it."
   };
-  // One compact segment for each outcome, in the existing bar. Sending to a sheet resolves the decision, but does not
-  // complete its production: it belongs to Decided, with its original decision and live sheet/history links.
+  // Two segments in the bar, Open and Completed (Paul, 2 Oct 21:06: "Combined a decided and completed together into one
+  // completed tab that is global for the main Review Tab"). Completed holds everything finished or answered, whichever
+  // way: orders completed by hand, orders sent to a sheet (Send to Sheet: their original decision and live sheet/history
+  // links stay on the card) and every decision answered, in one list with one count.
   const RV = { filter: null, limit:40, open:null, cseg:"open", q:"" };
+  // The switch has no Decided segment now, but a workspace saved before (reviewView.cseg), a note's Show or an older
+  // caller may still name it ("sent"): it is Completed, so no state lands on a segment that is not drawn (showCard, render
+  // and the workspace restore each say so).
   // where things go (Paul, 27 Sep 20:09-20:24): the Open and Completed switches, the Orders tab
-  const DONE_SW = '#reviewView .rvSeg [data-cseg="done"]', SENT_SW = '#reviewView .rvSeg [data-cseg="sent"]', OPEN_SW = '#reviewView .rvSeg [data-cseg="open"]', ORDERS_TAB = '#modeSeg [data-mode="orders"]', NEST_TAB = '#modeSeg [data-mode="nest"]';
+  const DONE_SW = '#reviewView .rvSeg [data-cseg="done"]', OPEN_SW = '#reviewView .rvSeg [data-cseg="open"]', ORDERS_TAB = '#modeSeg [data-mode="orders"]', NEST_TAB = '#modeSeg [data-mode="nest"]';
   const chipSel = k => `#reviewView .ordBar .egTab[data-k="${k}"]`;
   // the card last acted on (its buttons, or its question in the order window): a card that leaves just after is seen
   // going where its answer sent it; one that leaves on its own (another station, a new pull) folds away where it was
@@ -8461,15 +8466,14 @@ const Review = window.Review = (() => {
      Options, a decision answered under Completed…) acts for the order it shows, its first item: Print QR label and
      Complete Order (CustomPrint), the order's own .ai / .dxf designs and Send to Sheet (CustomSheet), the very code a
      custom card runs. Its question is never skipped in silence: the line leaves Review as a custom one does, and the
-     answer is recorded with who gave it (the order timeline; a send is never listed under Completed). Since 29 Sep 00:38 it has no
+     answer is recorded with who gave it (the order timeline; a send is listed under Completed by its decision, customLists). Since 29 Sep 00:38 it has no
      "Review & resolve": the SKU is fixed (its question answered) in the order window a click on the card opens. ── */
   const actItems = new Map();
   const HOW_WORDS = { print: "QR label printed · completed by hand", button: "completed by hand (Complete Order)", sheet: "sent to the sheets with the order's own designs" };
-  /** A record of a line sent to the sheets from a Review card (Send to Sheet). Paul, 29 Sep: "None of the orders that are
-   *  Send to Sheet from the review tab should appear under the completed tab": Completed holds what was finished by hand
-   *  (Complete Order, a QR label printed) and the decisions answered, never a send. None is written now; the ones already
-   *  kept in the workspace (the older wording carries no flag) stay there, whole, and are only left out of the list, so a
-   *  reload shows Completed without them and nothing is deleted. */
+  /** A record of a line sent to the sheets from a Review card (Send to Sheet), as the older workspaces kept it (Paul, 29 Sep,
+   *  when sends were kept out of Completed). None is written now: a send is its decision on the line (CustomSheet.decisionOf),
+   *  listed under Completed with its seal, sheet and history links. The records already kept in the workspace (the older
+   *  wording carries no flag) stay there, whole, and are still only left out of the list: nothing is deleted. */
   const sentToSheet = d => !!d && (d.how === "sheet" || d.why === HOW_WORDS.sheet);
   /** The item a card's custom buttons act on (src: a decision, or { row, kind } for one answered), or null. */
   function actOf(src, answeredAs) {
@@ -8486,7 +8490,7 @@ const Review = window.Review = (() => {
       onDone: answeredAs ? null : (who, how) => {
         // every question these lines still ask is answered by it, each recorded with who (tlSettle, once it has left them)
         for (const r of rows) for (const k of new Set([kind, ...(r.problems || []).map(p => p.kind)])) answered({ kind: k, rows: [r] }, "decided", HOW_WORDS[how] || how, { how, completed: how !== "sheet" }, who);
-        // (a send leaves nothing under Completed: it goes to the sheets, and its answer stays on the order's timeline above)
+        // (a send is listed under Completed by its decision on the line, not by a record written here; its answer is on the order's timeline above)
       } });
     return x;
   }
@@ -8494,7 +8498,7 @@ const Review = window.Review = (() => {
   /** What a decision card is drawn from: while it reads the same, the card (and whatever is typed in it) is kept. */
   function stampOf(it) {
     const row=it.row || rowsOf(it)[0],group=rowsOf(it);
-    return JSON.stringify([it.kind,it.why,it.problem,it.problems,row?.spec,row?.line,row?.poolIds,row?.state,group.map(r=>[r.key,r.order.receiptId]),!!it.info,!!it.done,!!it.decided,it.record&&[it.record.lastPrintedAt,it.record.prints,it.record.stamps,it.record.completedAt,it.record.decidedAt,it.record.by],it.kind==="customOrder"?CustomPrint.stamp(it)+"|"+CustomSheet.stamp(it):actStamp(actOf(it)),CustomRead.stamp(row)]);
+    return JSON.stringify([it.kind,it.why,it.problem,it.problems,row?.spec,row?.line,row?.poolIds,row?.state,group.map(r=>[r.key,r.order.receiptId]),!!it.info,!!it.done,!!it.decided,it.record&&[it.record.lastPrintedAt,it.record.prints,it.record.stamps,it.record.completedAt,it.record.decidedAt,it.record.by],it.alsoSent&&[it.alsoSent.at,it.alsoSent.by,it.alsoSent.stamps],it.kind==="customOrder"?CustomPrint.stamp(it)+"|"+CustomSheet.stamp(it):actStamp(actOf(it)),CustomRead.stamp(row)]);
   }
   /* ── Custom Orders that ask nothing, and those completed ── */
   const infoItems = new Map();
@@ -8531,7 +8535,10 @@ const Review = window.Review = (() => {
   /** Special lines that ask nothing are listed under Custom Orders too; completed ones (their QR label printed) under
    *  Completed, with those whose order has left the pull, so a label can always be printed again, and with every
    *  line read as completed by hand, special or not (its SKU may have a design since), so each can be reopened. One just
-   *  completed from Open stays there too while its card offers Undo (recent). */
+   *  completed from Open stays there too while its card offers Undo (recent). A line sent to the sheets (`sent`) is
+   *  listed under Completed as well, in the one list with the completed ones (Paul, 2 Oct: "one completed tab"). An order
+   *  both completed by hand and sent is one card, the completed one with its buttons: it keeps the send as `alsoSent`
+   *  (its seal and its words) and the sent card is marked `foldedInto` it, so the list shows the order once. */
   function customLists(decided) {
     const open = [], done = [], sent = [], recent = [], seen = new Set(), groups = new Map();
     const itemFor = (key, extra) => { const it = infoItems.get(key) || { kind: "customOrder", key, info: true, t: Date.now() }; Object.assign(it, extra); infoItems.set(key, it); seen.add(key); return it; };
@@ -8545,20 +8552,38 @@ const Review = window.Review = (() => {
       if (!groups.has(key)) groups.set(key, { key, done: isDone, decided: isSent, rows: [] });
       groups.get(key).rows.push(row);
     }
+    // when a completed card was last completed or printed: the list is in the order of the latest activity, so the card is
+    // dated by this and not by the moment this page first drew it (which put every one of them first after a reload)
+    const doneTime = rec => (rec && Math.max(+rec.lastPrintedAt || 0, +rec.completedAt || 0, +rec.printedAt || 0)) || 0;
     for (const g of groups.values()) {
       const first = g.rows[0], record = g.done ? first.spec.customDone : g.decided ? sentRecord(first, CustomSheet.decisionOf(first)) : null;
-      const it = itemFor(g.key, { rows: g.rows, row: first, done: g.done, decided: g.decided, record, ...(g.decided ? { t: record.at } : {}), why: customWhy(first, g.done, record) });
+      // a line completed by hand that was also sent to the sheets: the send is part of the same card
+      const own = g.done ? g.rows.map(r => ({ r, d: CustomSheet.decisionOf(r) })).find(x => x.d) : null;
+      const it = itemFor(g.key, { rows: g.rows, row: first, done: g.done, decided: g.decided, record, alsoSent: own ? sentRecord(own.r, own.d) : null, foldedInto: null,
+        ...(g.decided ? { t: record.at } : g.done && doneTime(record) ? { t: doneTime(record) } : {}), why: customWhy(first, g.done, record) });
       (g.done ? done : g.decided ? sent : open).push(it); if (g.done && CustomPrint.undoing(g.rows)) recent.push(it);
     }
     for (const [lineKey, rec] of Object.entries(B.maps.customDone || {})) {
       const r0 = B.orders.byKey && B.orders.byKey.get(lineKey);
       if (!rec || sentToSheet(rec) || (r0 && r0.state !== "gone")) continue;
-      done.push(itemFor("cdone:rec:" + lineKey, { rows: [], row: null, done: true, record: rec, rid: rec.receiptId, why: customWhy(null, true, rec) }));
+      done.push(itemFor("cdone:rec:" + lineKey, { rows: [], row: null, done: true, record: rec, rid: rec.receiptId, alsoSent: null, foldedInto: null, ...(doneTime(rec) ? { t: doneTime(rec) } : {}), why: customWhy(null, true, rec) }));
     }
+    // one card for an order in both lists: the sent card folds into the completed one (the id after the prefix is the order's)
+    const doneBy = new Map(); for (const it of done) if (it.row) doneBy.set(it.key.slice(6), it);
+    for (const it of sent) { const d = doneBy.get(it.key.slice(6)); if (!d) continue; it.foldedInto = d.key; if (!d.alsoSent) d.alsoSent = it.record; }
+    for (const it of done) if (it.alsoSent) { it.why = customWhy(it.row, true, it.record) + sentNote(it.alsoSent); it.t = Math.max(+it.t || 0, +it.alsoSent.at || 0); }
     for (const k of [...infoItems.keys()]) if (!seen.has(k)) infoItems.delete(k);
-    const at = it => (it.record && Math.max(+it.record.lastPrintedAt || 0, +it.record.completedAt || 0, +it.record.printedAt || 0)) || 0;
-    done.sort((a, b) => at(b) - at(a));
+    done.sort((a, b) => doneTime(b.record) - doneTime(a.record));
     return { open, done, sent, recent };
+  }
+  /** What a completed card says of the send it also had: " · sent to Sheet by whom · when". */
+  const sentNote = rec => rec ? ` · sent to Sheet${rec.by ? " by " + rec.by : ""}${rec.at ? " · " + whenOf(rec.at) : ""}` : "";
+  /** A completed card's record with the sheet seals of its send added: every seal of an order stays on its card. */
+  function withSheetSeals(rec, sent) {
+    if (!rec || !sent || !window.Seal) return rec;
+    const idOf = s => [s.how, +s.at || 0, s.by || ""].join("|"), have = Seal.list(rec), seen = new Set(have.map(idOf));
+    const add = (sent.stamps || []).filter(s => s.how === "sheet" && !seen.has(idOf(s)));
+    return add.length ? { ...rec, stamps: have.concat(add.map(s => ({ ...s }))) } : rec;
   }
   /** Lines of a Custom Orders card that can have a QR label printed: those not on their way to the laser. */
   const printable = it => !it.decided && !rowsOf(it).some(r=>CustomSheet.sending?.(r)) && (it.kind === "customOrder" || !!it.act) && (it.done ? !!(it.row || (it.record && (it.record.label || it.record.hasLabel))) : rowsOf(it).some(r => !(r.poolIds || []).length));
@@ -8596,7 +8621,7 @@ const Review = window.Review = (() => {
     const aiChip=row&&!it.done&&!it.decided&&(cu||it.kind==='unmatchedSku')?CustomRead.chip(row):'',conf=cu&&!it.done&&!it.decided&&row?CustomRead.bandOf(row):'';
     const node=el('div','doneRow workRow reviewListRow'+(cu?' cuRow':'')+(ax?' rvCu':'')+(it.info?(it.done?' cuDone':' cuInfo'):'')+(conf?' conf-'+conf:''));node.dataset.row=row?.key || '';node.dataset.rid=String(row?.order?.receiptId || rec?.receiptId || '');node.dataset.mkey=mkeyOf(it);
     const orders=new Set(group.map(r=>r.order.receiptId));
-    const queue=it.decided?'Decided · sent to sheet':cu?(it.done?(row&&!row.spec?.special?'Completed by hand':'Custom order · completed'):it.info?'Custom order':'Review required'):'Review required';
+    const queue=it.decided?'Completed · sent to sheet':cu?(it.done?(row&&!row.spec?.special?'Completed by hand':'Custom order · completed'):it.info?'Custom order':'Review required'):'Review required';
     // no card asks its question anywhere (Paul: no "Review & resolve", 27 Sep 19:45 and 29 Sep 00:38; the decision box
     // gone from the order window, 28 Sep 16:45, and from the Review tab and every window, 29 Sep 01:01): a card is dealt
     // with by its buttons (Print QR label, Complete Order, Send to Sheet, its designs), and a click on it opens its order
@@ -8607,7 +8632,8 @@ const Review = window.Review = (() => {
     // completed: every seal of the order (each print, and Complete Order when it was used) beside its print button, which
     // takes the print seal's colour once a label was printed (Paul, 27 Sep 20:09-20:18)
     const mk=mkeyOf(it),printed=cu&&it.done&&rec&&window.Seal&&Seal.hasPrint(rec);
-    const seals=cu&&(it.done||it.decided)&&rec&&window.Seal?Seal.row(rec,it.decided?{}:{pending:CustomPrint.freshOf(mk)}):'';
+    // (a completed card of an order that was also sent to a sheet carries that send's seal too: withSheetSeals)
+    const seals=cu&&(it.done||it.decided)&&rec&&window.Seal?Seal.row(it.done?withSheetSeals(rec,it.alsoSent):rec,it.decided?{}:{pending:CustomPrint.freshOf(mk)}):'';
     // an open card of any tab (Paul, 29 Sep 00:38: "make all the buttons look the same as in the other tabs"): the custom
     // card's column, one code path for every tab, for what the card acts on (cx: the custom order, or the order another
     // tab's card shows): Print QR label, the primary until its designs are ready to send; Complete Order; Send to Sheet,
@@ -8688,9 +8714,10 @@ const Review = window.Review = (() => {
     const v = document.getElementById("reviewView"); LiveStrip.render(); if (!v || v.classList.contains("hidden")) return;
     try { CustomSheet.prune(); } catch (_) {}
     const active=v.contains(document.activeElement)?document.activeElement:null;
-    // the old Decided chip is Completed now
-    if (RV.filter === "done") { RV.filter = null; RV.cseg = "done"; }
-    const doneMode = RV.cseg === "done", sentMode = RV.cseg === "sent";
+    // the old Decided chip, and the Decided segment, are Completed now
+    if (RV.filter === "done" || RV.filter === "sent") { RV.filter = null; RV.cseg = "done"; }
+    RV.cseg = RV.cseg === "done" || RV.cseg === "sent" ? "done" : "open";
+    const doneMode = RV.cseg === "done";
     const scope = "review-" + RV.cseg;
     const view = RV.cseg + "|" + (RV.filter || "") + "|" + (RV.q || "") + "|" + CNListActivity.key(scope);
     let oldScroll=v.querySelector(".egPane.scroll")?.scrollTop || 0;
@@ -8706,26 +8733,27 @@ const Review = window.Review = (() => {
     const cl = customLists(decided);
     const ORDER = ["customOrder", "needsMapping", "unmatchedSku", "blockedSku", "missingSize", "oversize", "fontMissing", "engraveWords", "notRepresentable", "flipFailed", "placement", "orderChanged", "heldOrder"];
     // Every tab uses the latest actual change, including a completion or reopen.
-    // Completed, for every filter: custom orders whose QR label was printed (print again or reopen) and every decision
-    // answered, newest first. A custom order answered but not yet finished is still under Open, so its answer waits.
+    // Completed, for every filter, is one list: custom orders completed by hand (print again or reopen), orders sent to a
+    // sheet (their decision, seal, sheet and history) and every decision answered, newest first; an order in both lists is
+    // one card (customLists). A custom order answered but not yet finished is still under Open, so its answer waits.
     const openCustom = new Set(all.filter(it => it.kind === "customOrder").map(it => it.key.slice(4)).concat(cl.open.concat(cl.done,cl.sent).map(it => it.key.slice(6))));
-    const doneAt = it => it.settled ? it.settled.t || 0 : (it.record && Math.max(+it.record.lastPrintedAt || 0, +it.record.completedAt || 0, +it.record.printedAt || 0)) || 0;
-    const finished = cl.done.concat(settled.filter(d => !sentToSheet(d) && !(d.kind === "customOrder" && openCustom.has(String(d.key).slice(4)))).map(d => ({ key: "settled:" + d.key + ":" + d.t, kind: d.kind, settled: d }))).sort((a, b) => doneAt(b) - doneAt(a));
+    const doneAt = it => it.settled ? it.settled.t || 0 : (it.record && Math.max(+it.record.lastPrintedAt || 0, +it.record.completedAt || 0, +it.record.printedAt || 0, +it.record.at || 0)) || 0;
+    // (the records of older sends kept in the workspace, flagged or by their words, stay stored and are still not listed: sentToSheet)
+    const finished = cl.done.concat(cl.sent.filter(it => !it.foldedInto), settled.filter(d => !sentToSheet(d) && !(d.kind === "customOrder" && openCustom.has(String(d.key).slice(4)))).map(d => ({ key: "settled:" + d.key + ":" + d.t, kind: d.kind, settled: d }))).sort((a, b) => doneAt(b) - doneAt(a));
     const alive=new Set(all.concat(cl.open, cl.done, cl.sent).map(it=>it.key));for(const key of reviewRows.keys())if(!alive.has(key))reviewRows.delete(key);
     // the kinds present are the filter: one chip each, so a long mixed list becomes the one kind being worked through
     const byKind = new Map(); for (const it of all) byKind.set(tabOf(it), (byKind.get(tabOf(it)) || 0) + 1);
     const customAsk = byKind.get("customOrder") || 0, customN = customAsk + cl.open.length;
     if (customN) byKind.set("customOrder", customN); else byKind.delete("customOrder");
     const doneKind = new Map(); for (const it of finished) doneKind.set(tabOf(it), (doneKind.get(tabOf(it)) || 0) + 1);
-    const sentKind = new Map(); for (const it of cl.sent) sentKind.set(tabOf(it),(sentKind.get(tabOf(it)) || 0)+1);
-    const kinds = doneMode ? doneKind : sentMode ? sentKind : byKind;
+    const kinds = doneMode ? doneKind : byKind;
     // a filter emptied under Open goes back to Everything; under Completed it is only not shown, so Open keeps it
-    if (!doneMode && !sentMode && RV.filter && !byKind.has(RV.filter)) RV.filter = null;
+    if (!doneMode && RV.filter && !byKind.has(RV.filter)) RV.filter = null;
     const f = RV.filter && kinds.has(RV.filter) ? RV.filter : null;
     // what asks nothing comes after what does, in Everything as under Custom Orders; one just completed there stays in
     // place while its card offers Undo (not counted as open)
     const customOpen = all.filter(it => it.kind === "customOrder").concat(cl.open);
-    let list = doneMode ? (f ? finished.filter(it => tabOf(it) === f) : finished) : sentMode ? (f ? cl.sent.filter(it=>tabOf(it)===f) : cl.sent)
+    let list = doneMode ? (f ? finished.filter(it => tabOf(it) === f) : finished)
       : f === "customOrder" ? customOpen : f ? all.filter(it => tabOf(it) === f) : all.concat(cl.open);
     const orderQ=O.orderQuery(RV.q);
     if(orderQ)list=list.filter(it=>[it.rid,...(it.settled?.orders || []),...(it.settled ? [it.settled.row,...(it.settled.rows || [])] : rowsOf(it)).filter(Boolean).map(r=>r.order?.receiptId)].some(id=>O.orderMatches(id,orderQ)));
@@ -8736,12 +8764,13 @@ const Review = window.Review = (() => {
     // shows it: drawn down to it, brought into view and marked
     let back = null;
     if (RV.back && RV.back.until < Date.now()) RV.back = null;
-    if (RV.back && !doneMode && !sentMode) { const ks = new Set(RV.back.keys); back = list.find(it => rowsOf(it).some(r => ks.has(r.key))) || null; if (back) { RV.back = null; const i = list.indexOf(back); if (i >= RV.limit) RV.limit = Math.ceil((i + 1) / 40) * 40; } }
+    if (RV.back && !doneMode) { const ks = new Set(RV.back.keys); back = list.find(it => rowsOf(it).some(r => ks.has(r.key))) || null; if (back) { RV.back = null; const i = list.indexOf(back); if (i >= RV.limit) RV.limit = Math.ceil((i + 1) / 40) * 40; } }
     const chip = (id, label, n, cls, title) => `<button class="egTab${(f || "") === id ? " on" : ""}" data-k="${esc(id)}" title="${esc(title || label)}">${esc(label)}${n ? `<b class="${cls || "warn"}">${n}</b>` : ""}</button>`;
     // Open or Completed first, then the filters: the switch holds for every chip, and pressing it shows all it holds
+    // (one Completed count: the cards listed under it, an order in both kinds counted once)
     const openN = all.length + cl.open.length;
-    const seg = `<span class="rvSeg${f ? "" : " all"}" role="group" aria-label="Open, decided or completed"><button type="button" data-cseg="open" class="${!doneMode&&!sentMode ? "on" : ""}" aria-pressed="${!doneMode&&!sentMode}" title="everything that still waits">Open<b>${openN}</b></button><button type="button" data-cseg="sent" class="${sentMode ? "on" : ""}" aria-pressed="${sentMode}" title="decisions sent to the sheets; production continues">Decided<b>${cl.sent.length}</b></button><button type="button" data-cseg="done" class="${doneMode ? "on" : ""}" aria-pressed="${doneMode}" title="everything finished: custom orders whose QR label was printed (print again or reopen) and every decision answered">Completed<b>${finished.length}</b></button></span>`;
-    const chips = ORDER.filter(k => kinds.has(k)).map(k => doneMode || sentMode ? chip(k, KIND_WORDS[k] || k, kinds.get(k), "ok", `${KIND_WORDS[k] || k} ${sentMode ? 'decided' : 'completed'}`)
+    const seg = `<span class="rvSeg${f ? "" : " all"}" role="group" aria-label="Open or completed"><button type="button" data-cseg="open" class="${!doneMode ? "on" : ""}" aria-pressed="${!doneMode}" title="everything that still waits">Open<b>${openN}</b></button><button type="button" data-cseg="done" class="${doneMode ? "on" : ""}" aria-pressed="${doneMode}" title="everything finished: orders completed by hand (print again or reopen), orders sent to the sheets, and every decision answered">Completed<b>${finished.length}</b></button></span>`;
+    const chips = ORDER.filter(k => kinds.has(k)).map(k => doneMode ? chip(k, KIND_WORDS[k] || k, kinds.get(k), "ok", `${KIND_WORDS[k] || k} completed`)
       : k === "customOrder" ? chip(k, "Custom Orders", customN, customAsk ? "warn" : "info", `${customAsk} need a decision · ${cl.open.length} listed with nothing to decide`) : chip(k, KIND_WORDS[k] || k, kinds.get(k))).join("");
     if(!v.querySelector('#rvList'))v.innerHTML='<div class="ordBar egBar"></div><div class="egPane grow scroll"><div class="rvList" id="rvList"></div></div>';
     // no Everything chip (it always read the same as Open): Open or Completed, pressed, is everything in it
@@ -8760,13 +8789,12 @@ const Review = window.Review = (() => {
     // one keyed update (Motion.reconcile): what leaves is seen going where it went, what stays glides into the gap
     const where = new Map();
     for (const it of all.concat(cl.open)) where.set(mkeyOf(it), { seg: "open", kind: tabOf(it), it });
-    for (const it of cl.sent) where.set(mkeyOf(it), { seg: "sent", kind: tabOf(it), it });
     for (const it of finished) where.set(it.settled ? it.settled.key : mkeyOf(it), { seg: "done", kind: tabOf(it), it });
     const ridWhere = new Map(); for (const it of all.concat(cl.open)) for (const r of rowsOf(it)) if (!ridWhere.has(String(r.order.receiptId))) ridWhere.set(String(r.order.receiptId), { kind: tabOf(it), mk: mkeyOf(it) });
     const leave = (mk, node) => {
       const w = where.get(mk), rid = node && node.dataset.rid, mine = acted.mk === mk && Date.now() - acted.t < 10000;
       const who = rid ? "Order " + rid : "The decision";
-      if (w && w.seg !== RV.cseg) return { to: w.seg === "done" ? DONE_SW : w.seg === "sent" ? SENT_SW : OPEN_SW, note: mine ? { text: `${who} moved to ${w.seg === "done" ? "Completed" : w.seg === "sent" ? "Decided" : "Open"}`, actions: [{ label: "Show", fn: () => showCard(w.it.settled ? "settled:" + w.it.settled.key + ":" + w.it.settled.t : mk, w.seg) }] } : null };
+      if (w && w.seg !== RV.cseg) return { to: w.seg === "done" ? DONE_SW : OPEN_SW, note: mine ? { text: `${who} moved to ${w.seg === "done" ? "Completed" : "Open"}`, actions: [{ label: "Show", fn: () => showCard(w.it.settled ? "settled:" + w.it.settled.key + ":" + w.it.settled.t : mk, w.seg) }] } : null };
       if (w && f && w.kind !== f) return { to: chipSel(w.kind), note: mine ? { text: `${who} is now under ${KIND_WORDS[w.kind] || w.kind}`, actions: [{ label: "Show", fn: () => showCard(mk, w.seg, w.kind) }] } : null };
       // its line sent to the sheets with the order's own designs (Send to Sheet on any card): it goes to the sheets, whose
       // tab says what came (CustomSheet)
@@ -8784,7 +8812,7 @@ const Review = window.Review = (() => {
       }
       return null;
     };
-    const empty = () => { const n = el("div", "libEmpty"); n.innerHTML = `${orderQ ? "No matching order numbers." : sentMode ? "No orders sent to sheets yet." : doneMode ? (f === "customOrder" ? "No custom order completed yet. Print its QR label or press Complete Order under Open." : f ? `Nothing completed under ${esc(what)} yet.` : "Nothing completed yet.") : f === "customOrder" ? "No custom order is open." : "Nothing waits for a decision."}`; return n; };
+    const empty = () => { const n = el("div", "libEmpty"); n.innerHTML = `${orderQ ? "No matching order numbers." : doneMode ? (f === "customOrder" ? "No custom order completed yet. Print its QR label or press Complete Order under Open." : f ? `Nothing completed under ${esc(what)} yet.` : "Nothing completed yet.") : f === "customOrder" ? "No custom order is open." : "Nothing waits for a decision."}`; return n; };
     const desired = list.length ? list.slice(0,RV.limit).map(it=>({it,node:it.settled?settledRow(it.settled):reviewRow(it)})) : [];
     for(const {node} of desired)node.classList.toggle('orderMatch',!!orderQ);
     // A card the Send to Sheet tour is carrying (Motion.carry) stays where it stood, however the list sorts it now: sent,
@@ -8811,7 +8839,7 @@ const Review = window.Review = (() => {
     {const sc=v.querySelector('.egPane.scroll');if(sc.scrollTop!==oldScroll)sc.scrollTop=oldScroll;}
     if(back){const n=desired.find(x=>x.it===back)?.node;if(n?.isConnected)bringBack(n,back.key);}
     if(active?.isConnected)active.focus({preventScroll:true});
-    const notices = doneMode || sentMode ? [] : items().filter(it=>isNotice(it) && O.orderMatches(it.rid,orderQ));
+    const notices = doneMode ? [] : items().filter(it=>isNotice(it) && O.orderMatches(it.rid,orderQ));
     if (notices.length) {
       host.insertAdjacentHTML("beforeend", `<div class="rvNotices"><div class="nHead">Left open on the station — no decision needed here</div>${notices.map(n => `<div class="nRow"><b class="mono">${esc(n.rid)}</b><span class="w">${esc(n.note || String(n.why || "").replace(n.rid + " held — ", ""))}</span><button class="btn ghost xs" data-open="${esc(n.line || "")}" title="open this order on the cards">Open order ↗</button></div>`).join("")}</div>`);
       host.querySelectorAll("[data-open]").forEach(b => b.onclick = () => { if (b.dataset.open) OrderWin.open(b.dataset.open); });
@@ -12023,7 +12051,8 @@ const Session = window.Session = (() => {
       Engrave.recoverApprovals?.();
       CustomRead.later();                                                // the lines come back with their last reading: look again
       Engrave.restoreView?.(d.engravingView);
-      if (Review.view) Object.assign(Review.view(), d.reviewView || {});
+      // (a workspace saved while Review had a Decided segment says "sent": that segment is Completed now, so it is opened there)
+      if (Review.view) { const rv = Review.view(); Object.assign(rv, d.reviewView || {}); if (rv.cseg === "sent") rv.cseg = "done"; if (rv.filter === "sent") rv.filter = null; }
       if (Review.settled) Review.settled().splice(0, Review.settled().length, ...(d.settled || []));
       Object.assign(Gate.state(), d.gate || {}); Object.assign(Recall.state(), d.recall || {}); Object.assign(Orders.view(), d.orderView || {}, {sort:(!d.orderView?.sort || d.orderView.sort === "arrival") ? "activity" : d.orderView.sort,view:d.orderViewVersion === 1 ? (d.orderView?.view || S.settings.orderView) : S.settings.orderView});
       LiveStrip.rows.splice(0, LiveStrip.rows.length, ...(d.logs || []));
