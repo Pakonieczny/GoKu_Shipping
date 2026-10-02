@@ -182,6 +182,7 @@
     "_charmNestSolver.js",
     "_charmNestRoseStock.js",
     "_orderTimeline.js",
+    "_stationActivity.js",
     "_orderCancel.js",
     "_etsyApiMeter.js",
     "_etsyApiUsage.js",

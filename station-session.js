@@ -323,6 +323,20 @@
     computerId: () => { try { return computerId(); } catch (_) { return ""; } },
     computerLabel: () => { try { return label(); } catch (_) { return ""; } },
     current: () => (cur ? { id: cur.id, person: cur.name, startAt: cur.startAt, day: cur.day } : null),
+    /** who is working now, for station-activity.js: { person, station, device, computer, session, startAt, sandbox }, or null
+        when nobody is signed in (or this page's session is not running). The name only, never a PIN. */
+    who: () => {
+      try {
+        if (!ready || !cur) return null;
+        const p = person();
+        if (!p || p.name !== cur.name) return null;
+        return { person: p.name, station: cfg.station, device: cfg.device, computer: computerId(), session: cur.id, startAt: cur.startAt, sandbox: !!cfg.sandbox };
+      } catch (_) { return null; }
+    },
+    /** this page (known even when nobody is signed in): { station, device, computer, sandbox }, or null before init */
+    page: () => {
+      try { return ready ? { station: cfg.station, device: cfg.device, computer: computerId(), sandbox: !!cfg.sandbox } : null; } catch (_) { return null; }
+    },
     nyDay, nextMidnight
   };
 })();
