@@ -985,7 +985,8 @@
   <!-- Sign-in time per person and computer, and the midnight sign-out (station-session.js). The PIN is never kept or sent:
        the session carries the name only. At midnight (New York) the PIN box comes back; the order, the fields and the chat
        stay on screen. -->
-  <script src="station-session.js?v=20260929-ss2"></script>
+  <script src="station-session.js?v=20261002-ea1"></script>
+  <script src="station-activity.js?v=20261002-ea1"></script>
   <script>
     try {
       StationSession.init({
@@ -1078,6 +1079,51 @@
           return;
         }
         StationTimeline.did("welded", orderNumber, "Welded at Welding", data);
+      } catch (_) {}
+    }
+    /* Employee efficiency (station-activity.js): what the welder did, so each person's orders, parts and times can be
+       compared. Once the order has been read: `scan` (parts = the stud pieces on it); then ONE outcome for that scan:
+       `complete` (the order is welded: orders 1, parts = stud pieces, once per order) or `reject` (a cancelled order, an
+       order Etsy does not know, an order with no stud earrings); an Etsy lookup that failed is also an `error`. Logged
+       where the page already decides (no extra Etsy call, no extra read, nothing waits); nothing is logged with nobody
+       signed in; never a PIN, a name or an address. */
+    const weldCounted = new Map();                      // order → when this page counted it welded (an order counts once)
+    function weldAct(action, o) {
+      try {
+        if (!window.StationActivity) return;
+        let who = "";
+        try { if (localStorage.getItem("employee_id")) who = String(localStorage.getItem("employee_name") || "").trim(); } catch (_) {}
+        if (who) StationActivity.log(action, o);
+      } catch (_) {}
+    }
+    function weldLookup(d) {        // "ok" (a receipt), "missing" (Etsy says there is no such order), "failed" (no answer, or an Etsy error)
+      if (!d || typeof d !== "object") return "failed";
+      if (Array.isArray(d.transactions) || d.receipt_id || d.receipt) return "ok";
+      return /not.?found|could not find|no such|does not exist|invalid.{0,12}(receipt|order)/i.test(String(d.error || d.message || "")) ? "missing" : "failed";
+    }
+    function weldPieces(d) {
+      const lines = Array.isArray(d && d.transactions) ? d.transactions : [], studs = lines.filter(weldIsStud);
+      return { lines: lines.length, studs: studs.length, parts: studs.reduce((n, t) => n + (Math.floor(Number(t && t.quantity)) || 1), 0) };
+    }
+    const weldId = v => String(v == null ? "" : v).replace(/\D/g, "").slice(0, 30);
+    function weldActivityScan(orderNumber, orderData, how) {
+      try {
+        const id = weldId(orderNumber), p = weldPieces(orderData);
+        weldAct("scan", { orderId: id, parts: p.parts, detail: (how === "scan" ? "phone scan" : String(how || "typed")) + (weldCounted.has(id) ? " · again" : "") });
+      } catch (_) {}
+    }
+    function weldActivityOutcome(orderNumber, orderData, res) {
+      try {
+        const id = weldId(orderNumber), look = weldLookup(orderData), p = weldPieces(orderData);
+        if (res && res.cancelled) return weldAct("reject", { orderId: id, detail: "cancelled order" });
+        if (look === "missing") return weldAct("reject", { orderId: id, detail: "order not found" });
+        if (look === "ok" && p.lines && !p.studs) return weldAct("reject", { orderId: id, detail: "no stud earrings on this order" });
+        if (look === "failed") weldAct("error", { orderId: id, detail: "Etsy order lookup failed" + (orderData && orderData.error ? ": " + String(orderData.error).slice(0, 60) : "") });
+        if (weldCounted.has(id)) return;                // the same order scanned again: already counted
+        weldCounted.set(id, Date.now());
+        if (weldCounted.size > 500) weldCounted.delete(weldCounted.keys().next().value);
+        weldAct("complete", { orderId: id, parts: p.parts, orders: 1,
+          detail: look === "failed" ? "not checked: Etsy lookup failed" : p.lines ? `${p.studs} of ${p.lines} lines are studs` : "no line detail" });
       } catch (_) {}
     }
     try {
@@ -2450,8 +2496,9 @@ function metalToBadge(label){
               return;
             }
             var docDataEN = resultEN.data;
-            if(docDataEN[empNumber]){
-              var nameFound = docDataEN[empNumber];
+            /* the name as one tidy line (the session and the timeline read the same text); a number alone is never a name */
+            var nameFound = typeof docDataEN[empNumber] === "string" ? docDataEN[empNumber].replace(/\s+/g, " ").trim() : "";
+            if(nameFound && !/^\d+$/.test(nameFound)){
               M.toast({ html: "Welcome, " + nameFound + "!" });
 
               /* remember the current employee for future reloads */
@@ -2464,7 +2511,9 @@ function metalToBadge(label){
               window.isEmployeeLoggedIn = true;
               startScannedOrderListener();
             } else {
-              M.toast({ html: "Employee # " + empNumber + " not found in DB!" });
+              /* never the digits typed (the box masks them): say what to do, and clear the box for the next try */
+              M.toast({ html: "That Employee Number is not on the list. Check the 6 digits and try again." });
+              try { employeeNumberInput.dataset.raw = ""; employeeNumberInput.value = ""; } catch (_) {}
             }
           } catch(errEN){
             console.error("Error in employee login flow:", errEN);
@@ -2612,15 +2661,16 @@ function metalToBadge(label){
         if (!orderNumber) return;
 
         const orderData = await pullEtsyOrderDetails(orderNumber);
+        try { weldActivityScan(orderNumber, orderData, stHow); } catch (_) {}     // employee efficiency: the scan, once the order is read
         /* Order timeline: record the scan (who, where, how) and check for a cancel; a cancelled order raises the alert.
            Not awaited, so the order loads as before. The weld station has no "weld done" button, so a scan here is the weld
            (weldDone: who, and the stud lines). */
         try {
           if (window.StationTimeline) {
             StationTimeline.scanned(orderNumber, { how: stHow, extra: { etsyStatus: (orderData && orderData.status) || "" } })
-              .then(r => { if (r && !r.cancelled) weldDone(orderNumber, orderData); })
+              .then(r => { if (r && !r.cancelled) weldDone(orderNumber, orderData); weldActivityOutcome(orderNumber, orderData, r); })
               .catch(() => {});
-          }
+          } else weldActivityOutcome(orderNumber, orderData, null);
         } catch (_) {}
         await loadShipToAddress(orderNumber);
         await loadGiftMessage(orderNumber);
