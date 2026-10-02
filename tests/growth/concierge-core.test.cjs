@@ -15,6 +15,54 @@ test('changing recipient drops the previous motif and occasion',()=>{const p=cor
 test('rose gold is a metal and does not accidentally introduce a rose motif',()=>{const p=core.intentFrom('Rose gold necklace',[],core.intentFrom('Bunny necklace'));assert.equal(p.metal,'rose gold');assert.deepEqual(p.interests,['bunny']);});
 test('budget ranges, changes, currency and removing the limit are preserved accurately',()=>{let p=core.intentFrom('Between $40 and $80 CAD');assert.equal(p.minBudget,40);assert.equal(p.budget,80);assert.equal(p.budgetCurrency,'CAD');p=core.intentFrom('Under 65',[],p);assert.equal(p.minBudget,null);assert.equal(p.budget,65);assert.equal(p.budgetCurrency,'CAD');p=core.intentFrom('No budget limit',[],p);assert.equal(p.budget,null);assert.equal(p.budgetCurrency,null);});
 test('a bare budget answer and explicit reset work without inventing a motif',()=>{let p=core.intentFrom('Bunny earrings in gold');p=core.intentFrom('$75',[],p);assert.equal(p.budget,75);assert.equal(p.query,'bunny');p=core.intentFrom('Start fresh',[],p);assert.equal(p.query,'');assert.equal(p.type,null);assert.equal(p.budget,null);});
+test('explicit unlimited budget clears prior bounds and persists as a sanitized boolean',()=>{
+  let p=core.intentFrom('Bunny necklace between $40 and $80 CAD');p=core.intentFrom('No budget limit',[],p);
+  assert.equal(p.unlimitedBudget,true);assert.equal(p.budget,null);assert.equal(p.minBudget,null);assert.equal(p.budgetCurrency,null);assert.equal(p.currency,'CAD');assert.equal(p.query,'bunny');
+  p=core.intentFrom('Silver please',[],JSON.parse(JSON.stringify(p)));assert.equal(p.unlimitedBudget,true);assert.equal(p.budget,null);assert.equal(p.metal,'silver');assert.equal(p.query,'bunny');
+});
+test('unlimited and removal phrases preserve motif instead of searching for budget terminology',()=>{
+  for(const message of ['Unlimited budget','My budget is unlimited','Any price','Remove my budget','Forget the budget','No price limit']){const p=core.intentFrom(message,[],core.intentFrom('Bunny necklace under $60'));assert.equal(p.unlimitedBudget,true,message);assert.equal(p.budget,null,message);assert.equal(p.query,'bunny',message);}
+  const p=core.intentFrom('Unlimited budget; she likes origami',[],core.intentFrom('Bunny necklace under $60'));assert.equal(p.unlimitedBudget,true);assert.equal(p.query,'origami');
+});
+test('latest explicit maximum or range reinstates a numeric cap after unlimited choice',()=>{
+  const before=core.intentFrom('Bunny necklace, no budget limit');
+  for(const [message,budget,minBudget,currency] of [['Under $70 CAD',70,null,'CAD'],['Between 40 and 80 CAD',80,40,'CAD'],['$50',50,null,'USD'],['No more than $65',65,null,'USD'],['No more than $65 CAD',65,null,'CAD'],['Budget 0',0,null,'USD']]){const p=core.intentFrom(message,[],before);assert.equal(p.unlimitedBudget,false,message);assert.equal(p.budget,budget,message);assert.equal(p.minBudget,minBudget,message);assert.equal(p.budgetCurrency,currency,message);assert.equal(p.query,'bunny',message);}
+});
+test('latest budget instruction wins within one message in both directions',()=>{
+  let p=core.intentFrom('No budget limit, actually under $70 CAD',[],core.intentFrom('Bunny necklace'));assert.equal(p.unlimitedBudget,false);assert.equal(p.budget,70);assert.equal(p.budgetCurrency,'CAD');
+  p=core.intentFrom('Under $70 CAD, actually no budget limit',[],p);assert.equal(p.unlimitedBudget,true);assert.equal(p.budget,null);assert.equal(p.budgetCurrency,null);assert.equal(p.currency,'CAD');
+});
+test('negated price removal and maximum do not erase or replace an existing cap',()=>{
+  const before=core.intentFrom('Bunny necklace under $60 CAD');
+  for(const message of ["Don't remove my budget",'Do not forget my budget','Not unlimited budget','Not any price','Not under $40 USD','Not under $40.50 USD']){const p=core.intentFrom(message,[],before);assert.equal(p.unlimitedBudget,false,message);assert.equal(p.budget,60,message);assert.equal(p.budgetCurrency,'CAD',message);assert.equal(p.query,'bunny',message);}
+  const p=core.intentFrom('Not under $40, under $75 CAD instead',[],before);assert.equal(p.budget,75);assert.equal(p.unlimitedBudget,false);
+});
+test('unknown or undecided budget is not an unlimited choice or a new product interest',()=>{
+  const before=core.intentFrom('Bunny necklace under $60 CAD');
+  for(const message of ["I don't know my budget yet",'Not sure about my budget','No budget yet','My budget is unknown','No budget']){const p=core.intentFrom(message,[],before);assert.equal(p.unlimitedBudget,false,message);assert.equal(p.budget,null,message);assert.equal(p.minBudget,null,message);assert.equal(p.budgetCurrency,null,message);assert.equal(p.query,'bunny',message);}
+  const p=core.intentFrom('No budget yet, but under $80 CAD for now',[],before);assert.equal(p.budget,80);assert.equal(p.unlimitedBudget,false);
+});
+test('no-limit phrase does not negate a later affirmative metal, type or currency',()=>{
+  const p=core.intentFrom('No budget limit in CAD and gold bunny necklace');assert.equal(p.unlimitedBudget,true);assert.equal(p.currency,'CAD');assert.equal(p.budgetCurrency,null);assert.equal(p.metal,'gold');assert.equal(p.type,'necklace');assert.deepEqual(p.interests,['bunny']);
+});
+test('unlimited preference is strict and cannot contradict a valid numeric saved cap',()=>{
+  for(const unlimitedBudget of ['true',1,[],{}])assert.equal(core.shopperPreferences({unlimitedBudget}).unlimitedBudget,false);
+  const capped=core.shopperPreferences({unlimitedBudget:true,budget:0,currency:'CAD'});assert.equal(capped.unlimitedBudget,false);assert.equal(capped.budget,0);assert.equal(capped.budgetCurrency,'CAD');
+  const free=core.shopperPreferences({unlimitedBudget:true,minBudget:40,budgetCurrency:'CAD',currency:'CAD',privateFlag:'DO_NOT_EXPORT'});assert.equal(free.unlimitedBudget,true);assert.equal(free.minBudget,null);assert.equal(free.budgetCurrency,null);assert.equal(free.currency,'CAD');assert.ok(!('privateFlag' in free));
+});
+test('history reconstructs unlimited choice and a saved choice cannot replay an old price cap',()=>{
+  const history=[{role:'user',content:'Bunny necklace under $30 CAD'},{role:'user',content:'No budget limit'}];
+  const p=core.intentFrom('Silver please',history);assert.equal(p.query,'bunny');assert.equal(p.unlimitedBudget,true);assert.equal(p.budget,null);assert.equal(p.currency,'CAD');
+  const saved=core.intentFrom('Bunny necklace',history.slice(0,1),{unlimitedBudget:true,currency:'CAD'});assert.equal(saved.unlimitedBudget,true);assert.equal(saved.budget,null);
+});
+test('reset forgets old unlimited choice, and a new no-limit instruction survives reset',()=>{
+  const before=core.intentFrom('Bunny necklace, unlimited budget');let p=core.intentFrom('Start fresh',[],before);assert.equal(p.unlimitedBudget,false);assert.equal(p.budget,null);assert.equal(p.query,'');
+  p=core.intentFrom('Start fresh. Cat earrings, no budget limit',[],before);assert.equal(p.unlimitedBudget,true);assert.equal(p.type,'earrings');assert.deepEqual(p.interests,['cat']);assert.equal(p.budget,null);
+});
+test('invalid numeric caps and necklace length ranges do not replace an explicit unlimited choice',()=>{
+  const before=core.intentFrom('Bunny necklace, no budget limit');
+  for(const message of ['Budget 1000001','Between 90 and 40 CAD','Necklace length between 14 and 18 inches']){const p=core.intentFrom(message,[],before);assert.equal(p.unlimitedBudget,true,message);assert.equal(p.budget,null,message);}
+});
 test('unknown interests remain searchable, and short follow-up questions preserve them',()=>{let p=core.intentFrom('She loves origami');assert.equal(p.query,'origami');p=core.intentFrom('What does that symbolize?',[],p);assert.equal(p.query,'origami');});
 test('untrusted saved preference values are reduced to the public allowlist',()=>{const p=core.shopperPreferences({metal:'.*',budget:Infinity,type:'checkout',currency:'javascript:',privateKey:'SHOULD_NOT_SURVIVE',interests:['bunny',42]});assert.equal(p.metal,null);assert.equal(p.budget,null);assert.equal(p.type,null);assert.equal(p.currency,'USD');assert.deepEqual(p.interests,['bunny']);assert.ok(!('privateKey' in p));});
 test('history is used to reconstruct preferences only when there is no saved state',()=>{const p=core.intentFrom('Silver please',[{role:'user',content:'Bunny earrings under $60'},{role:'assistant',content:'Would you like gold?'}]);assert.equal(p.query,'bunny');assert.equal(p.type,'earrings');assert.equal(p.budget,60);assert.equal(p.metal,'silver');});
@@ -42,6 +90,29 @@ test('malformed dossier objects reject with a validation result instead of crash
 
 function deps(products=[piece()],research=[dossier()]){return {service:{saveProducts:async()=>{},research:async()=>research},shopify:{search:async()=>({products}),byHandle:async h=>products.find(p=>p.handle===h)||null},now:()=>NOW};}
 test('concierge handles ordinary discovery and exposes only shopper data',async()=>{const answer=await core.concierge({...deps(),message:'Bunny silver necklace under $60'});assert.equal(answer.products.length,1);assert.equal(answer.meanings.length,1);assert.equal(answer.question,null);assert.ok(!JSON.stringify(answer).includes('PRIVATE'));assert.ok(!JSON.stringify(answer).includes('orders'));});
+test('no budget limit is acknowledged without repeating the item-budget question across follow-ups',async()=>{
+  const first=await core.concierge({...deps(),message:'Bunny necklace, no budget limit'});assert.equal(first.preferences.unlimitedBudget,true);assert.equal(first.products.length,1);assert.match(first.question,/metal preference/);assert.ok(!/budget|price limit/i.test(first.question));
+  const next=await core.concierge({...deps(),message:'Silver please',preferences:first.preferences});assert.equal(next.preferences.unlimitedBudget,true);assert.equal(next.preferences.budget,null);assert.equal(next.products.length,1);assert.equal(next.question,null);
+});
+test('observed gift-reset request preserves new unlimited choice and asks about metal instead of budget',async()=>{
+  const cat=piece(2,{handle:'cat-studs',url:'https://britesjewelry.com/products/cat-studs',title:'Cat Stud Earrings',type:'Earrings',tags:['cat'],description:'Cat stud earrings.',options:[{name:'Metal',values:['Sterling Silver','Gold Filled']}]});
+  const answer=await core.concierge({...deps([cat],[]),message:'Start fresh. This gift is for my friend: cat earrings, no budget limit.',history:[{role:'user',content:'A gold bunny necklace for my daughter’s birthday under $60.'},{role:'assistant',content:'Here are bunny necklaces.'}],preferences:core.intentFrom('A gold bunny necklace for my daughter’s birthday under $60'),context:{productHandles:[piece().handle],currency:'USD'}});
+  assert.equal(answer.preferences.unlimitedBudget,true);assert.equal(answer.preferences.budget,null);assert.equal(answer.preferences.recipient,'friend');assert.equal(answer.preferences.metal,null);assert.equal(answer.preferences.occasion,null);assert.equal(answer.products[0].id,cat.id);assert.match(answer.question,/metal preference/);assert.ok(!/budget|price limit/.test(answer.question));
+});
+test('unknown budget still permits optional budget guidance rather than becoming unlimited',async()=>{
+  const answer=await core.concierge({...deps(),message:'Bunny silver necklace; I do not know my budget yet'});assert.equal(answer.preferences.unlimitedBudget,false);assert.equal(answer.preferences.budget,null);assert.match(answer.question,/item budget/);assert.equal(answer.products.length,1);
+});
+test('unlimited CAD preference applies no dollar filter or currency-conversion claim; a later CAD cap remains mismatched',async()=>{
+  const first=await core.concierge({...deps(),message:'Bunny silver necklace, no budget limit',context:{currency:'CAD'}});assert.equal(first.preferences.currency,'CAD');assert.equal(first.preferences.unlimitedBudget,true);assert.equal(first.preferences.budgetCurrency,null);assert.equal(first.currencyMismatch,undefined);assert.equal(first.products[0].currency,'USD');assert.equal(first.products[0].budgetApplied,false);assert.ok(!/convert|exchange rate|within your/.test(first.reply));
+  const next=await core.concierge({...deps(),message:'Actually under $50 CAD',preferences:first.preferences});assert.equal(next.preferences.unlimitedBudget,false);assert.equal(next.preferences.budget,50);assert.equal(next.currencyMismatch,true);assert.match(next.reply,/haven’t applied your CAD budget/);assert.equal(next.products[0].budgetApplied,false);
+});
+test('runtime question refinement cannot repeat a declined budget question',async()=>{
+  for(const question of ['What price range should I stay within?','Does cost matter to the gift choice?','Do you have a spending cap in mind?']){const answer=await core.concierge({...deps(),message:'Bunny necklace with unlimited budget',ai:async()=>({intent:'gift',question})});assert.equal(answer.preferences.unlimitedBudget,true);assert.match(answer.question,/metal preference/);assert.ok(!/budget|price|spending|cost/.test(answer.question));}
+});
+test('transient exact-context retrieval failure propagates rather than pretending catalogue has no stock',async()=>{
+  let searched=0,saved=0;const d=deps();d.shopify.byHandle=async()=>{throw Error('The published storefront could not be checked.');};d.shopify.search=async()=>{searched++;return {products:[piece()]};};d.service.saveProducts=async()=>{saved++;};
+  await assert.rejects(core.concierge({...d,message:'Tell me the meaning of the first necklace',context:{productHandles:[piece().handle]}}),/published storefront could not be checked/);assert.equal(searched,0);assert.equal(saved,0);
+});
 test('uncertain budget currency is explicit, and local browser pricing may resolve it',async()=>{const answer=await core.concierge({...deps(),message:'Bunny silver necklace under $50 CAD'});assert.equal(answer.currencyMismatch,true);assert.match(answer.reply,/haven’t applied your CAD budget/);assert.equal(answer.products[0].budgetApplied,false);});
 test('first explicit dollar budget adopts verified shopper storefront currency',async()=>{const answer=await core.concierge({...deps(),message:'Bunny necklace under $50',context:{currency:'CAD'}});assert.equal(answer.preferences.budgetCurrency,'CAD');assert.equal(answer.currencyMismatch,true);});
 test('missing reviewed symbolism is admitted instead of generated',async()=>{const answer=await core.concierge({...deps([piece()],[]),message:'What does the bunny symbolize?'});assert.equal(answer.meanings.length,0);assert.match(answer.reply,/don’t yet have reviewed symbolism/);});

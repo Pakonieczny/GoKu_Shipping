@@ -178,13 +178,14 @@ const amount = v => typeof v==='number'&&Number.isFinite(v)&&v>=0&&v<=1000000?v:
 const currencyCode = v => /^[A-Z]{3}$/.test(String(v||''))?String(v):null;
 
 function shopperPreferences(saved={}) {
+  const budget=amount(saved?.budget),unlimitedBudget=saved?.unlimitedBudget===true&&budget==null;
   return {
     query:clean(saved?.query,250),interests:plainList(saved?.interests),excludedInterests:plainList(saved?.excludedInterests),
     type:TYPES.includes(saved?.type)?saved.type:null,excludedTypes:plainList(saved?.excludedTypes).filter(x=>TYPES.includes(x)),
     metal:METALS.includes(saved?.metal)?saved.metal:null,excludedMetals:plainList(saved?.excludedMetals).filter(x=>METALS.includes(x)),
     recipient:RECIPIENTS.includes(saved?.recipient)?saved.recipient:null,occasion:OCCASIONS.includes(saved?.occasion)?saved.occasion:null,
-    budget:amount(saved?.budget),minBudget:amount(saved?.minBudget),currency:currencyCode(saved?.currency)||'USD',
-    budgetCurrency:currencyCode(saved?.budgetCurrency)||(amount(saved?.budget)!=null?(currencyCode(saved?.currency)||'USD'):null),
+    budget,minBudget:unlimitedBudget?null:amount(saved?.minBudget),unlimitedBudget,currency:currencyCode(saved?.currency)||'USD',
+    budgetCurrency:unlimitedBudget?null:currencyCode(saved?.budgetCurrency)||(budget!=null?(currencyCode(saved?.currency)||'USD'):null),
     personalization:['engraving','handwriting'].includes(saved?.personalization)?saved.personalization:null
   };
 }
@@ -192,12 +193,31 @@ function shopperPreferences(saved={}) {
 function negatedAt(text,index) {
   // Contrast and punctuation terminate a negation. “Not gold, silver please”
   // therefore selects silver; “no gold or silver” excludes both.
-  const prefix=text.slice(0,index).split(/[,;.!?]|\b(?:but|instead|however|i (?:want|prefer|like)|she (?:likes|loves|prefers)|he (?:likes|loves|prefers)|they (?:like|love|prefer))\b/).at(-1).slice(-75);
+  const prefix=text.slice(0,index).split(/[,;.!?]|\b(?:but|instead|however|i (?:want|prefer|like)|she (?:likes|loves|prefers)|he (?:likes|loves|prefers)|they (?:like|love|prefer))\b/).at(-1).replace(/\bno (?:price|budget|spending) limit\b/g,'').slice(-75);
   return /\b(?:not|no|without|avoid|except|excluding|rather than|instead of|don'?t(?:\s+\w+){0,3}|doesn'?t(?:\s+\w+){0,3}|do not(?:\s+\w+){0,3}|does not(?:\s+\w+){0,3})\s+(?:\w+\s+){0,4}$/i.test(prefix);
 }
 
 function fieldMentions(text,pattern,canonical) {
   return [...text.matchAll(new RegExp('\\b(?:'+pattern+')\\b','g'))].map(m=>({value:canonical?canonical(m[0]):m[0],index:m.index,negative:negatedAt(text,m.index)}));
+}
+
+function applyBudgetMessage(p,text,explicitCurrency){
+  const events=[],spans=[];
+  const add=(match,value)=>{spans.push({index:match.index,end:match.index+match[0].length});if(!negatedAt(text,match.index))events.push({index:match.index,...value});};
+  for(const m of text.matchAll(/\b(?:no (?:price|budget|spending) limit|unlimited budget|budget (?:is )?unlimited|any price|(?:forget|remove|drop|ignore) (?:the |my )?(?:budget|price limit))\b/g))add(m,{unlimitedBudget:true,budget:null,minBudget:null});
+  for(const m of text.matchAll(/\b(?:(?:don't|do not) know (?:the |my |a )?budget|not sure (?:about |of |what )?(?:the |my |a )?budget|(?:no|without) (?:set |decided )?budget yet|(?:haven't|have not) (?:set|decided) (?:the |my |a )?budget|budget (?:is )?(?:unknown|undecided))(?:\s+yet)?\b/g))add(m,{unlimitedBudget:false,budget:null,minBudget:null});
+  const bareUnknown=/^(?:i have )?no budget[.!]?$/.exec(text);if(bareUnknown){spans.push({index:0,end:text.length});events.push({index:0,unlimitedBudget:false,budget:null,minBudget:null});}
+  for(const m of text.matchAll(/\bbetween\s*(?:usd|cad|gbp|eur|c\$|ca\$|us\$|\$)?\s*(\d+(?:\.\d{1,2})?)\s*(?:and|to|-)\s*(?:usd|cad|gbp|eur|c\$|ca\$|us\$|\$)?\s*(\d+(?:\.\d{1,2})?)/g)){
+    const minBudget=amount(Number(m[1])),budget=amount(Number(m[2]));
+    if(minBudget!=null&&budget!=null&&minBudget<=budget&&!/^\s*(?:inches?|inch|cm|mm|days?|years?|business days?)\b/.test(text.slice(m.index+m[0].length)))add(m,{unlimitedBudget:false,budget,minBudget});
+  }
+  for(const m of text.matchAll(/(?:\b(?:under|below|budget|up to|less than|max(?:imum)?|at most|within|no more than|price limit)\s*(?:is|of|to|:)?\s*(?:usd|cad|gbp|eur|c\$|ca\$|us\$|\$)?\s*)(\d+(?:\.\d{1,2})?)/g)){const budget=amount(Number(m[1]));if(budget!=null)add(m,{unlimitedBudget:false,budget,minBudget:null});}
+  const lone=/^(?:about|around)?\s*(?:usd|cad|gbp|eur|c\$|ca\$|us\$|\$)?\s*(\d+(?:\.\d{1,2})?)\s*(?:usd|cad|gbp|eur|dollars?)?$/.exec(text);if(lone){const budget=amount(Number(lone[1]));if(budget!=null)add(lone,{unlimitedBudget:false,budget,minBudget:null});}
+  for(const event of events.sort((a,b)=>a.index-b.index))Object.assign(p,{budget:event.budget,minBudget:event.minBudget,unlimitedBudget:event.unlimitedBudget,budgetCurrency:event.budget!=null?(explicitCurrency||p.currency):null});
+  // Budget-only answers should not replace the gift motif with "unlimited",
+  // "unknown" or a currency name. Other interests in the same reply remain.
+  let queryText=text;for(const span of spans.sort((a,b)=>b.index-a.index))queryText=queryText.slice(0,span.index)+' '.repeat(span.end-span.index)+queryText.slice(span.end);
+  return spans.length?queryText.replace(/\b(?:us dollars?|canadian dollars?|usd|cad|gbp|pounds?|eur|euros?)\b/g,' '):queryText;
 }
 
 function applyPreferenceMessage(before,message) {
@@ -222,16 +242,12 @@ function applyPreferenceMessage(before,message) {
   }
   if(/\b(?:any|either|no preference (?:for|on))\s+(?:metal|silver or gold|gold or silver)\b/.test(text)){p.metal=null;p.excludedMetals=[];}
   if(/\b(?:any|either|no preference (?:for|on))\s+(?:type|style|necklace or earrings|earrings or necklace)\b/.test(text)){p.type=null;p.excludedTypes=[];}
-  const explicitCurrency=fieldMentions(text,'us dollars?|usd|us\$|canadian dollars?|cad|ca\$|c\$|gbp|pounds?|eur|euros?',v=>/^canadian|^cad|^ca\$|^c\$/.test(v)?'CAD':/^gbp|^pound/.test(v)?'GBP':/^eur/.test(v)?'EUR':'USD').at(-1)?.value;
+  // A negated monetary cap also negates its currency. Money punctuation must
+  // not turn "not under $40.50 USD" into an affirmative currency change.
+  const currencyText=text.replace(/[$€£]/g,' ').replace(/(?<=\d)\.(?=\d)/g,'_').replace(/\bno more than\b/g,m=>' '.repeat(m.length));
+  const explicitCurrency=fieldMentions(text,'us dollars?|usd|us\$|canadian dollars?|cad|ca\$|c\$|gbp|pounds?|eur|euros?',v=>/^canadian|^cad|^ca\$|^c\$/.test(v)?'CAD':/^gbp|^pound/.test(v)?'GBP':/^eur/.test(v)?'EUR':'USD').filter(x=>!negatedAt(currencyText,x.index)).at(-1)?.value;
   if(explicitCurrency){p.currency=explicitCurrency;if(p.budget!=null)p.budgetCurrency=explicitCurrency;}
-  if(/\b(?:no budget|no (?:price|budget) limit|any price|forget (?:the |my )?budget|remove (?:the |my )?budget)\b/.test(text)){p.budget=null;p.minBudget=null;p.budgetCurrency=null;}
-  else {
-    const range=[...text.matchAll(/\bbetween\s*(?:usd|cad|c\$|ca\$|us\$|\$)?\s*(\d+(?:\.\d{1,2})?)\s*(?:and|to|-)\s*\$?\s*(\d+(?:\.\d{1,2})?)/g)].at(-1);
-    const upper=[...text.matchAll(/(?:\b(?:under|below|budget|up to|less than|max(?:imum)?|at most|within)\s*(?:is|of|to|:)?\s*(?:usd|cad|gbp|eur|c\$|ca\$|us\$|\$)?\s*)(\d+(?:\.\d{1,2})?)/g)].at(-1);
-    const lone=/^(?:about|around)?\s*(?:usd|cad|gbp|eur|c\$|ca\$|us\$|\$)?\s*(\d+(?:\.\d{1,2})?)\s*(?:usd|cad|gbp|eur|dollars?)?$/.exec(text);
-    if(range&&Number(range[1])<=Number(range[2])){p.minBudget=amount(Number(range[1]));p.budget=amount(Number(range[2]));p.budgetCurrency=explicitCurrency||p.currency;}
-    else if(upper||lone){p.budget=amount(Number((upper||lone)[1]));p.minBudget=null;p.budgetCurrency=explicitCurrency||p.currency;}
-  }
+  const queryText=applyBudgetMessage(p,text,explicitCurrency);
   const hits=MOTIFS.flatMap(([value,pattern])=>fieldMentions(text,pattern,()=>value)).sort((a,b)=>a.index-b.index);
   const latest=[...new Map(hits.map(x=>[x.value,x])).values()];
   const positive=latest.filter(x=>!x.negative).map(x=>x.value);
@@ -246,7 +262,7 @@ function applyPreferenceMessage(before,message) {
   const nonShopping=/\b(?:meaning|means|symboli[sz]\w*|history|story|stories|shipping|deliver|arrive|return|refund|compare|comparison|nickel|hypoallergenic|second|third|first|fourth|fifth|sixth|open|cart|bag|cheaper|expensive|more options|what else|tell me more|secrets?|api keys?|credentials?|repository|system prompt|owner data|private records)\b/.test(text);
   if(!positive.length&&!negative.length&&!nonShopping){
     const controlled=new Set([...mentions.type,...mentions.metal,...mentions.recipient,...mentions.occasion].flatMap(x=>x.value.split(' ')));
-    const raw=(text.match(/[a-z][a-z-]{2,}/g)||[]).filter(t=>!GENERIC.has(t)&&!controlled.has(t)&&!controlled.has(t.replace(/s$/,''))&&!['sterling','filled','plated','handwritten','engraving','personalized','personalised'].includes(t)).slice(0,4).join(' ');
+    const raw=(queryText.match(/[a-z][a-z-]{2,}/g)||[]).filter(t=>!GENERIC.has(t)&&!controlled.has(t)&&!controlled.has(t.replace(/s$/,''))&&!['sterling','filled','plated','handwritten','engraving','personalized','personalised'].includes(t)).slice(0,4).join(' ');
     if(raw){p.query=raw;p.interests=[];}
   }
   return p;
@@ -254,7 +270,7 @@ function applyPreferenceMessage(before,message) {
 
 function intentFrom(message,history=[],saved={}) {
   let prefs=shopperPreferences(saved);
-  const hasSaved=Object.keys(saved||{}).some(k=>['query','type','metal','budget','recipient','interests'].includes(k));
+  const hasSaved=Object.keys(saved||{}).some(k=>['query','type','metal','budget','recipient','interests'].includes(k)||(k==='unlimitedBudget'&&saved.unlimitedBudget===true));
   if(!hasSaved)for(const row of (Array.isArray(history)?history:[]).filter(x=>x?.role==='user').slice(-8))prefs=applyPreferenceMessage(prefs,row.content);
   return applyPreferenceMessage(prefs,message);
 }
@@ -374,7 +390,7 @@ async function concierge({service,shopify,message,history=[],preferences={},cont
   try{dossiers=await service.research(products.map(p=>p.id));}catch{knowledgeUnavailable=true;}
   const meanings=publicMeanings(dossiers,products.map(p=>p.id),at,issueRecords).slice(0,3);
   let reply=products.length?'These available pieces connect with '+(intent.query||'the preferences you’ve shared')+'.':'I couldn’t confirm an available match for those preferences. We can adjust the selection together.';
-  let question=!products.length?(intent.budget!=null?'Would you like to change the item budget or try another style?':'Would you like to try a different symbol or jewelry type?'):!intent.query?'What does the person enjoy—an animal, hobby, profession or symbol?':!intent.type?'Would they enjoy a necklace, earrings or another jewelry style?':intent.budget==null?'Is there an item budget you’d like me to stay within?':!intent.metal?'Do you have a metal preference, or would you like to see both?':null;
+  let question=!products.length?(intent.budget!=null?'Would you like to change the item budget or try another style?':'Would you like to try a different symbol or jewelry type?'):!intent.query?'What does the person enjoy—an animal, hobby, profession or symbol?':!intent.type?'Would they enjoy a necklace, earrings or another jewelry style?':intent.budget==null&&!intent.unlimitedBudget?'Is there an item budget you’d like me to stay within?':!intent.metal?'Do you have a metal preference, or would you like to see both?':null;
   const result={schema:1,reply,question,preferences:intent,products,meanings,actions:products.map(p=>({type:'navigate',productId:p.id,url:p.url,label:'View '+p.title})),checkedAt:at,live:true,aiUsed:false};
   if(knowledgeUnavailable)result.knowledgeUnavailable=true;
   const mismatchedCurrency=products.some(p=>intent.budget!=null&&intent.budgetCurrency&&intent.budgetCurrency!==p.currency);
@@ -389,7 +405,7 @@ async function concierge({service,shopify,message,history=[],preferences={},cont
   if(requestedAction){result.requestedAction=requestedAction;result.question=null;result.reply=requestedAction.type==='navigate'?'Opening the piece you selected.':'Choose the exact available option below, then confirm before it is added to your bag.';}
   // Runtime inference can refine a question only. It cannot supply product
   // facts, choose tools, browse, purchase, or read private research fields.
-  if(ai){try{const chosen=await ai({message:text,history:history.slice(-6).map(r=>({role:r.role,content:clean(r.content,1500)})),preferences:intent,products:products.map(p=>({id:p.id,title:p.title})),question:result.question});if(chosen&&['gift','self','comparison','meaning','shipping','engraving','discovery'].includes(chosen.intent)){result.intent=chosen.intent;result.aiUsed=true;if(result.question&&typeof chosen.question==='string'&&chosen.question.length>10&&chosen.question.length<220&&!/[\d$]|https?:|guarantee|deliver|hypoallergenic|solid gold|password|credential|api key|email|phone|address/i.test(chosen.question))result.question=chosen.question;}}catch{result.aiUsed=false;result.providerUnavailable=true;}}
+  if(ai){try{const chosen=await ai({message:text,history:history.slice(-6).map(r=>({role:r.role,content:clean(r.content,1500)})),preferences:intent,products:products.map(p=>({id:p.id,title:p.title})),question:result.question});if(chosen&&['gift','self','comparison','meaning','shipping','engraving','discovery'].includes(chosen.intent)){result.intent=chosen.intent;result.aiUsed=true;if(result.question&&typeof chosen.question==='string'&&chosen.question.length>10&&chosen.question.length<220&&!/[\d$]|https?:|guarantee|deliver|hypoallergenic|solid gold|password|credential|api key|email|phone|address/i.test(chosen.question)&&!(intent.unlimitedBudget&&/\b(?:budget|spend(?:ing)?|price|cost|afford(?:able)?|how much)\b/i.test(chosen.question)))result.question=chosen.question;}}catch{result.aiUsed=false;result.providerUnavailable=true;}}
   return result;
 }
 module.exports={CATALOG_QUERY,STOP_AT,clean,hash,textOf,publicUrl,sameSecret,namespace,makeDb,normalizeProduct,productProjection,validateDossier,createShopify,createGrowthService,productIssueHolds,applyProductIssues,shopperPreferences,negatedAt,intentFrom,rankProducts,publicMeaningText,publicMeanings,shopperAction,concierge};

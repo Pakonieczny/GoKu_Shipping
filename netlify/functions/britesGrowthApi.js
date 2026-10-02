@@ -1,6 +1,8 @@
 import core from './_britesGrowth.js';
 import demandStore from './_britesGrowthDemandStore.js';
 import controllerStore from './_britesGrowthController.js';
+import receiptSandboxCheck from './_britesGrowthReceiptSandboxCheck.js';
+import etsyCacheReadOnly from './_britesGrowthEtsyCacheReadOnly.js';
 
 function environment(){const names=['FIREBASE_PROJECT_ID','FIREBASE_CLIENT_EMAIL','FIREBASE_PRIVATE_KEY','SHOPIFY_STORE','SHOPIFY_CLIENT_ID','SHOPIFY_CLIENT_SECRET','BRITES_GROWTH_NAMESPACE','BRITES_GROWTH_ADMIN_KEY'];return Object.fromEntries(names.map(k=>[k,Netlify.env.get(k)]));}
 function headers(req){const origin=req.headers.get('Origin');const allowed=origin&&(/https:\/\/(?:www\.)?britesjewelry\.com$/.test(origin)||origin===new URL(req.url).origin);return {'Content-Type':'application/json','Cache-Control':'no-store','Vary':'Origin',...(allowed?{'Access-Control-Allow-Origin':origin,'Access-Control-Allow-Headers':'Content-Type, X-Growth-Key, X-Edit-Passcode','Access-Control-Allow-Methods':'GET, POST, OPTIONS'}:{})};}
@@ -18,6 +20,8 @@ export default async (req,context) => {
     if(publicOps.has(op)&&!await service.rateLimit(context.ip||'public-api',60))return json({error:'Please wait a moment before trying again.'},429);
     if(req.method==='GET'){
       if(op==='status')return json(await service.status());
+      if(op==='etsy-cache-state')return json(await etsyCacheReadOnly.read({db}));
+      if(op==='receipt-sandbox-check')return json({error:'Use POST for the isolated storage check.'},405);
       if(op==='catalogue-export'){const cursor=url.searchParams.get('after')||'';if(cursor&&!/^[a-f0-9]{40}$/.test(cursor))return json({error:'Invalid catalogue cursor.'},400);let query=service.col('Products').orderBy('__name__').limit(200);if(cursor)query=query.startAfter(cursor);const snap=await query.get();return json({products:snap.docs.map(d=>d.data()),after:snap.size===200?snap.docs[snap.docs.length-1].id:null});}
       if(op==='catalogue'){const r=await shopify.search(url.searchParams.get('q')||'necklace');await service.saveProducts(r.products);const issues=await service.productIssues(r.products.map(p=>p.id));return json({products:core.applyProductIssues(r.products,issues).map(core.productProjection),pageInfo:r.pageInfo,live:true});}
       if(op==='product'){const p=await shopify.byHandle(url.searchParams.get('handle'));if(!p)return json({error:'This piece is not currently published.'},404);await service.saveProducts([p]);const issues=await service.productIssues([p.id]);return json({product:core.productProjection(core.applyProductIssues([p],issues)[0]),live:true});}
@@ -37,6 +41,12 @@ export default async (req,context) => {
       const research=(await service.research([p.id]))[0],ref=service.col('Queue').doc('rank-'+String(body.rank).padStart(3,'0'));
       await db.runTransaction(async tx=>{const s=await tx.get(ref);if(!s.exists)throw Error('Import this ranked entry first.');const row=s.data();if(row.leaseUntil>Date.now())throw Error('An active work lease owns this ranked entry.');if(m.method==='exact_handle'&&row.handle!==p.handle)throw Error('Exact handle evidence does not match the ranked entry.');if(m.method==='exact_title'&&core.textOf(row.title).toLowerCase()!==core.textOf(p.title).toLowerCase())throw Error('Exact title evidence does not match the ranked entry.');if(m.method==='exact_sku'&&!(p.variants||[]).some(v=>v.sku&&String(row.sku||'').split(/[\n,;|]+/).map(x=>x.trim()).includes(v.sku)))throw Error('Exact SKU evidence does not match a live product variant.');tx.update(ref,{productId:p.id,handle:p.handle,match:{method:m.method,evidence:core.clean(m.evidence,1000),checkedAt:m.checkedAt},status:research?.status==='approved'?'complete':'pending_research',dossierVersion:research?.status==='approved'?research.version:null,completedAt:research?.status==='approved'?Date.now():null,leaseToken:null,leaseOwner:null,leaseUntil:0,updatedAt:Date.now()});});
       return json({ok:true,status:research?.status==='approved'?'complete':'pending_research'});
+    }
+    if(op==='receipt-sandbox-check'){
+      if(Object.keys(body).length)return json({error:'The storage check accepts no caller data.'},400);
+      if(service.namespace!=='Brites_Growth_Sandbox')return json({error:'The isolated sandbox namespace is required.'},403);
+      if(Date.now()>=core.STOP_AT)return json({stopped:true},410);
+      return json(await receiptSandboxCheck.check({service,db,env:{...env,BRITES_GROWTH_NAMESPACE:service.namespace,BRITES_GROWTH_SANDBOX:'1'}}));
     }
     if(op==='save'){if(!body.dossier)return json({error:'A dossier is required.'},400);return json(await service.saveDossier(body.dossier));}
     if(op==='demand')return json(await demandStore.createDemandStore(service).save(body.evidence));

@@ -22,6 +22,8 @@ Before writing or deploying, use authenticated `POST /api/growth/controller` wit
 | `GET /api/growth/product?handle=...` | Public, rate limited | Current product/variant details |
 | `GET /api/growth/knowledge?ids=...` | Public | Approved symbolism with sources |
 | `GET /api/growth/status` | Operator | Queue, progress and access blockers |
+| `GET /api/growth/etsy-cache-state` | Operator | Fixed bounded existing-cache metadata; no customer, SKU or credential values |
+| `POST /api/growth/receipt-sandbox-check` | Operator | Internally generated synthetic receipt storage check in the exact isolated namespace |
 | `GET /api/growth/research?ids=...` | Operator | Product-bound research dossiers |
 | `POST /api/growth/import` | Operator | Import private ranked rows |
 | `POST /api/growth/match` | Operator | Bind an inspected current product without substituting a candidate |
@@ -47,6 +49,8 @@ Product issues require exact current-product evidence, a recent review and an ex
 The existing research collector receives `sharedProductKnowledge` for exact selected products. Saved competitor offers and intent inform test hypotheses; current landing/product sources remain the only commercial fact authority. `growthResearchStatus` and `growthResearchDossiers` are protected read actions in the ad app. Its Product research view shares the same dossiers, while styling is isolated from the existing console.
 
 The copyable research-and-demand brief accepts only fresh exact-product, current-dossier-version evidence. It retains native currencies, pooled-market labels, language hypotheses, missing values and tracking limitations. Product holds keep the export marked corrective research. Copying a brief never changes a campaign or runs inference.
+
+The receipt reconciliation module plans status updates from trusted exact saved request diagnostics. It defaults to dry-run and blocks production queue paths. Its internal storage check seeds only clearly synthetic sandbox rows and exercises transaction integrity, idempotency, concurrency and foreign leases. These checks do not confirm real orders or apply production reconciliation. Existing Google receipts are observed separately without reuploading events.
 
 ## Storefront installation
 
