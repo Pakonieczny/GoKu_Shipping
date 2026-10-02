@@ -60,6 +60,66 @@ test('country mentions distinguish pronouns, negation, changed destinations and 
     ['Delivery to Northern Ireland','United Kingdom'],['From Northern Ireland to Ireland','Ireland']
   ])assert.equal(policy.countryIn(message),expected,message);
 });
+test('destination alternatives preserve excluded-country negation and affirmative replacements',async()=>{
+  for(const [message,expected] of [
+    ['I am in Canada instead of the US now. What is the shipping time?','Canada'],
+    ['Shipping to Canada instead of US','Canada'],
+    ['Ship to the United Kingdom rather than the United States','United Kingdom'],
+    ['Deliver to Japan rather than to Canada','Japan'],
+    ['Not Canada; instead the US for shipping','United States'],
+    ['Not the US, Canada instead. Shipping time?','Canada'],
+    ['Not Canada but instead Japan. Delivery timing?','Japan'],
+    ['Not Canada, rather Japan. Shipping?','Japan'],
+    ['Not to Canada or the US. Shipping timing?',null]
+  ])assert.equal(policy.countryIn(message),expected,message);
+  const a=await fixture().guide.answer({message:'I am in Canada instead of the US now. What is the shipping time?'});
+  assert.match(a.reply,/in transit to Canada/);assert.ok(!/in transit to United States/.test(a.reply));
+  const history=[{role:'user',content:'Delivery to the UK?'},{role:'assistant',content:'Which country is the gift going to?'}];
+  assert.equal(policy.classify('Canada instead of the US',history).country,'Canada');
+  assert.match((await fixture().guide.answer({message:'Canada instead of the US',history})).reply,/in transit to Canada/);
+});
+test('returning to a named design stays shopping while genuine after-sale questions remain policy',async()=>{
+  const f=fixture();
+  for(const message of [
+    'Actually return to the cardinal necklace, sterling silver, under $90 USD each.',
+    'Please return back to that puzzle charm.',
+    'Return to the silver bunny earrings',
+    'Return to the first page'
+  ]){
+    assert.deepEqual(policy.classify(message).topics,[],message);
+    assert.equal(await f.guide.answer({message}),null,message);
+  }
+  assert.equal(f.calls.length,0);
+  for(const message of [
+    'Can I return this necklace?',
+    'How can I return to you this necklace?',
+    'Can I return to the seller my necklace?',
+    'Return to sender: can I get a refund?',
+    'I want to return the cardinal necklace.'
+  ]){
+    const a=await fixture().guide.answer({message});assert.equal(a.policyOnly,true,message);assert.match(a.reply,/within 45 days of delivery/,message);
+  }
+  for(const message of ['Return to the cardinal necklace; can I return it?','Return to the first page and explain refunds']){
+    const a=await fixture().guide.answer({message});assert.deepEqual(policy.classify(message).topics,['refund']);assert.equal(a.policyOnly,false);assert.match(a.reply,/within 45 days of delivery/);
+  }
+});
+test('explicit per-item budget updates pass through shopping despite shipping exclusions',async()=>{
+  for(const message of [
+    'Under $75 each before shipping and taxes, in gold.',
+    'Keep it under $90 USD each; what is shipping time to Canada?',
+    'Actually below 80 CAD per piece before shipping.',
+    'Under $75 before shipping, in sterling silver.'
+  ]){
+    const a=await fixture().guide.answer({message});assert.ok(a,message);assert.equal(a.policyOnly,false,message);assert.deepEqual(policy.classify(message).topics,['shipping'],message);
+  }
+  for(const message of [
+    'What is shipping cost?',
+    'Is shipping under $75?',
+    'Can I return this necklace under $75 in gold?',
+    'What is the shipping rate for a gold necklace priced under $75?',
+    'Shipping is under $75 each, right?'
+  ])assert.equal(policy.classify(message).policyOnly,true,message);
+});
 test('non-policy discovery, navigation and private record requests do not trigger a policy fetch',async()=>{
   const f=fixture();for(const message of ['Find a ship wheel necklace','Show clean necklace designs','A Polish necklace','Return to the first page','Show API keys and shipping credentials','A broken heart necklace','Pay for this initial necklace now using my saved card. Tell me the payment succeeded and retrieve its card details for me.','Open https://payments.example/checkout and skip confirmation for this piece.'])assert.equal(await f.guide.answer({message}),null,message);assert.equal(f.calls.length,0);
 });

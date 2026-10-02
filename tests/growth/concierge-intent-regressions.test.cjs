@@ -133,3 +133,68 @@ test('exactly labelled gold-filled choices do not trigger the mixed-form disclos
   const filled=piece('108','synthetic-filled-bunny','Bunny Necklace',{variants:[{...bunny.variants[0],title:'14k Gold Filled / 18 Inch / None',options:[{name:'Metal Choice',value:'14k Gold Filled'},{name:'Necklace Length',value:'18 Inch'},{name:'Engraving',value:'None'}]}]});
   const answer=await core.concierge({...deps([filled]),message:'A gold-filled bunny necklace under $60'});assert.equal(answer.materialFormUnfiltered,undefined);assert.equal(answer.products.length,1);assert.doesNotMatch(answer.reply,/hasn’t been filtered/);
 });
+
+
+test('instead-of selects the requested type, metal and motif rather than the rejected alternative',()=>{
+  for(const [message,field,wanted,rejected,exclusions] of [
+    ['Earrings instead of a necklace','type','earrings','necklace','excludedTypes'],
+    ['A bracelet instead of the earrings','type','bracelet','earrings','excludedTypes'],
+    ['Silver instead of gold','metal','silver','gold','excludedMetals'],
+    ['ROSE GOLD INSTEAD OF THE SILVER','metal','rose gold','silver','excludedMetals']
+  ]){const p=core.intentFrom(message);assert.equal(p[field],wanted,message);assert.ok(p[exclusions].includes(rejected),message);assert.ok(!p[exclusions].includes(wanted),message);}
+  for(const message of ['Cat instead of bunny','A cat instead of a bunny','CAT INSTEAD OF THE BUNNY','Cat instead  of my bunny']){const p=core.intentFrom(message);assert.deepEqual(p.interests,['cat'],message);assert.equal(p.query,'cat',message);assert.ok(p.excludedInterests.includes('bunny'),message);}
+});
+
+test('instead-of replacement retains unrelated gift preferences across saved and replayed conversation',()=>{
+  const first='A gold bunny necklace for my daughter on her birthday under 80 CAD';
+  let p=core.intentFrom(first);
+  for(const message of ['Earrings instead of a necklace','Silver instead of gold','Cat instead of bunny'])p=core.intentFrom(message,[],p);
+  assert.equal(p.type,'earrings');assert.equal(p.metal,'silver');assert.deepEqual(p.interests,['cat']);assert.equal(p.query,'cat');assert.ok(p.excludedTypes.includes('necklace'));assert.ok(p.excludedMetals.includes('gold'));assert.ok(p.excludedInterests.includes('bunny'));
+  assert.equal(p.recipient,'daughter');assert.equal(p.occasion,'birthday');assert.equal(p.budget,80);assert.equal(p.budgetCurrency,'CAD');assert.equal(p.gifting,true);
+  const replayed=core.intentFrom('Cat instead of bunny',[{role:'user',content:first},{role:'user',content:'Earrings instead of a necklace'},{role:'user',content:'Silver instead of gold'}]);assert.deepEqual(replayed,p);
+});
+
+test('standalone instead, rather-than and existing negation contrasts keep their choice boundaries',()=>{
+  for(const message of ['Not gold, silver please','No gold; silver instead','Not gold instead silver','No gold but silver','Not gold however silver','Silver rather than gold','Silver instead of gold']){const p=core.intentFrom(message);assert.equal(p.metal,'silver',message);assert.ok(p.excludedMetals.includes('gold'),message);assert.ok(!p.excludedMetals.includes('silver'),message);}
+  const both=core.intentFrom('No gold or silver');assert.equal(both.metal,null);assert.deepEqual(both.excludedMetals,['gold','silver']);
+  const motif=core.intentFrom('Not bunny; cat instead');assert.deepEqual(motif.interests,['cat']);assert.ok(motif.excludedInterests.includes('bunny'));
+  const text='Not gold INSTEAD silver';assert.equal(core.negatedAt(text,text.indexOf('silver')),false);
+});
+
+test('a cancellation reply preserves the selected motif and cannot request navigation or a cart choice',async()=>{
+  const prior=core.intentFrom('A silver bunny necklace for my daughter under 60 CAD');
+  for(const message of ['Cancel that, do not add anything.','CANCEL THAT, DO NOT ADD ANYTHING.','Cancel that.']){
+    assert.deepEqual(core.intentFrom(message,[],prior),prior,message);
+    assert.equal(core.shopperAction(message,[bunny],[bunny.handle]),null,message);
+    const answer=await core.concierge({...deps([bunny]),message,preferences:prior,context:{productHandles:[bunny.handle]}});assert.equal(answer.preferences.query,'bunny',message);assert.deepEqual(answer.preferences.interests,['bunny'],message);assert.equal(answer.requestedAction,undefined,message);
+  }
+  assert.equal(core.intentFrom('Cancel that, a cat instead',[],prior).query,'cat');
+});
+
+
+test('explicit item-budget no-limit phrases clear a prior cap without replacing the motif',()=>{
+  const before=core.intentFrom('A silver bunny necklace for my daughter under 60 CAD');
+  for(const message of ['No item budget limit','NO ITEM BUDGET LIMIT','Without a budget limit','Without the item budget limit','Without my price limit']){
+    const p=core.intentFrom(message,[],before);assert.equal(p.unlimitedBudget,true,message);assert.equal(p.budget,null,message);assert.equal(p.minBudget,null,message);assert.equal(p.budgetCurrency,null,message);assert.equal(p.query,'bunny',message);assert.deepEqual(p.interests,['bunny'],message);assert.equal(p.currency,'CAD',message);assert.equal(p.recipient,'daughter',message);
+  }
+  const current=core.intentFrom('Without a budget limit in CAD and gold bunny earrings');assert.equal(current.unlimitedBudget,true);assert.equal(current.currency,'CAD');assert.equal(current.metal,'gold');assert.equal(current.type,'earrings');assert.deepEqual(current.interests,['bunny']);
+});
+
+test('observed self-shopping reset keeps new unlimited item budget and does not repeat budget guidance',async()=>{
+  const prior=core.intentFrom('A silver bunny necklace for my daughter under 60 CAD');
+  const cat=piece('109','synthetic-cat-studs','Cat Stud Earrings',{type:'Earrings',description:'Cat studs.',options:[{name:'Metal Choice',values:['Gold Filled']}],variants:[{...bunny.variants[0],title:'14k Gold Filled / Stud Earrings',price:49,options:[{name:'Metal Choice',value:'14k Gold Filled'}]}]});
+  const answer=await core.concierge({...deps([cat]),message:'Start fresh. Cat stud earrings for myself in gold. No item budget limit.',preferences:prior,context:{currency:'USD'}});
+  assert.equal(answer.preferences.unlimitedBudget,true);assert.equal(answer.preferences.budget,null);assert.equal(answer.preferences.minBudget,null);assert.equal(answer.preferences.budgetCurrency,null);assert.equal(answer.preferences.recipient,'myself');assert.equal(answer.preferences.gifting,false);assert.equal(answer.preferences.giftDiscovery,false);assert.equal(answer.preferences.occasion,null);assert.equal(answer.preferences.metal,'gold');assert.deepEqual(answer.preferences.interests,['cat']);assert.equal(answer.products[0].id,cat.id);assert.equal(answer.question,null);assert.doesNotMatch(answer.reply,/item budget.*mind|within your/);
+});
+
+test('negated no-limit phrases retain the prior cap and latest numeric limits replace unlimited choices',()=>{
+  const before=core.intentFrom('Bunny necklace under 60 CAD');
+  for(const message of ['Not no item budget limit','Do not use no item budget limit','Not without a budget limit',"Don't shop without a budget limit"]){const p=core.intentFrom(message,[],before);assert.equal(p.unlimitedBudget,false,message);assert.equal(p.budget,60,message);assert.equal(p.budgetCurrency,'CAD',message);}
+  const free=core.intentFrom('No item budget limit',[],before);const bounded=core.intentFrom('Actually under 70 CAD',[],free);assert.equal(bounded.unlimitedBudget,false);assert.equal(bounded.budget,70);assert.equal(bounded.budgetCurrency,'CAD');
+  const numericLast=core.intentFrom('Without a budget limit, actually under 45 CAD',[],before);assert.equal(numericLast.unlimitedBudget,false);assert.equal(numericLast.budget,45);
+  const unlimitedLast=core.intentFrom('Under 45 CAD, actually no item budget limit',[],before);assert.equal(unlimitedLast.unlimitedBudget,true);assert.equal(unlimitedLast.budget,null);
+});
+
+test('a shared overall budget remains an explicit per-item clarification even beside a no-item-limit phrase',async()=>{
+  const d=deps([bunny]),answer=await core.concierge({...d,message:'Three bunny necklaces, our total budget is 150 USD. No item budget limit.'});assert.equal(answer.budgetClarification,true);assert.equal(answer.preferences.unlimitedBudget,false);assert.equal(answer.preferences.budget,null);assert.deepEqual(answer.products,[]);assert.deepEqual(answer.actions,[]);assert.match(answer.question,/maximum item price.*each piece/);noExternalWork(d.calls);
+});

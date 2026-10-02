@@ -33,7 +33,9 @@ function countryMentions(message){
 }
 function countryIn(message){
   const text=tidy(message,2000).replace(/[‘’]/g,"'"),matches=countryMentions(text).filter(m=>{
-    const prefix=text.slice(Math.max(0,m.index-65),m.index).split(/[,;.!?]|\b(?:but|instead|however)\b/i).at(-1);
+    // "Instead of" and "rather than" exclude the following destination;
+    // standalone "instead" begins a replacement clause and resets negation.
+    const prefix=text.slice(Math.max(0,m.index-100),m.index).split(/[,;.!?]|\b(?:but|instead(?!\s+of\b)|rather(?!\s+than\b)|however)\b/i).at(-1);
     return !/\b(?:not|instead of|rather than|don't ship to|do not ship to)\s+(?:\w+\s+){0,4}$/i.test(prefix);
   });
   return matches.sort((a,b)=>b.index-a.index)[0]?.name||null;
@@ -63,8 +65,12 @@ function parseRefund(blocks){
 function classify(message,history=[]){
   const text=tidy(message,2000).replace(/[‘’]/g,"'");history=Array.isArray(history)?history.slice(-12):[];if(PRIVATE_REQUEST.test(text))return {topics:[],policyOnly:false,country:null};
   const topics=[];const skipShipping=/\b(?:skip|forget|don't discuss|do not discuss|not asking about)\s+(?:the\s+)?(?:shipping|delivery)\b/i.test(text),skipReturns=/\b(?:skip|forget|don't discuss|do not discuss|not asking about)\s+(?:the\s+)?(?:returns?|refunds?)\b/i.test(text);
+  // A return to a previously discussed design is shopping/navigation. Remove
+  // only that return verb, so a separate refund question still takes its route.
+  // Merchant/sender objects remain after-sale language rather than selection.
+  const returnText=text.replace(/\breturn\s+(?:back\s+)?to\s+(?:(?:the|that|this)\s+)?(?:page|shop|store|catalogue|catalog|first|second|home)\b|\breturn\s+(?:back\s+)?to\s+(?!(?:(?:the|that|this)\s+)?(?:you|us|sender|seller|merchant|brites)\b)(?:(?:the|that|this)\s+)?(?:[a-z][a-z-]*\s+){0,5}(?:necklace|earrings?|bracelet|pendant|charm|ring|piece|design|selection)\b/gi,match=>match.replace(/^return\b/i,''));
   if(!skipShipping&&(/\b(?:shipping|delivery|deliver|delivered|arrive|arrival|postage|dispatch|production|turnaround|tracking|customs duties|import taxes)\b|\bship\s+(?:to|my|this|it)|\b(?:do|can|will) you ship\b|\btrack (?:my|the|this) order|\bwhere is my order|\bhas (?:my|the) order shipped\b/i.test(text)||SHIPPING_SCOPE.test(text)||CUSTOMS_REQUEST.test(text)))topics.push('shipping');
-  if(!skipReturns&&/\b(?:returns?|refunds?|exchanges?|repairs?|defect(?:ive)?|damaged|final sale)\b|\b(?:my|this|the) (?:necklace|chain|piece|jewelry|jewellery) (?:broke|is broken)\b|\b(?:arrived|arrives?) (?:broken|wrong)\b/i.test(text)&&!/\breturn\s+(?:back\s+)?to\s+(?:the\s+)?(?:page|shop|store|catalogue|catalog|first|second|home)\b/i.test(text))topics.push('refund');
+  if(!skipReturns&&/\b(?:returns?|refunds?|exchanges?|repairs?|defect(?:ive)?|damaged|final sale)\b|\b(?:my|this|the) (?:necklace|chain|piece|jewelry|jewellery) (?:broke|is broken)\b|\b(?:arrived|arrives?) (?:broken|wrong)\b/i.test(returnText))topics.push('refund');
   if(/\b(?:jewelry care|jewellery care|caring for|cleaning|waterproof|tarnish|showering|shower|swimming|swim|sleeping|storage)\b|\b(?:clean|polish)\s+(?:my|this|the|a|your)\s+(?:jewelry|jewellery|necklace|ring|earrings|piece|silver|gold)\b/i.test(text))topics.push('care');
   let country=countryIn(text);const lastAssistant=[...history].reverse().find(x=>x?.role==='assistant');
   const destinationQuestion=/which country|what country|gift going|destination/i.test(lastAssistant?.content||'');
@@ -79,7 +85,12 @@ function classify(message,history=[]){
   const selectionText=text.replace(/\b(?:show|find|view|open|recommend|suggest|choose|browse|looking for|want|need|buy|shopping for)\s+(?:me\s+)?(?:(?:a|an|the|your|my)\s+)?(?:(?:how\s+)?to\s+)?(?:(?:shipping|delivery|care)\s+(?:policy|policies|page|terms|conditions|instructions|help|guidance)|(?:returns?|refunds?|exchanges?|repairs?)(?:\s+(?:policy|policies|page|terms|conditions|instructions|help|guidance))?)\b/gi,'');
   const discovery=!policyPage&&(/\b(?:find|show|recommend|suggest|choose|browse|looking for|want|buy|shopping for)\b/i.test(selectionText)||(/\bneed\s+(?:a|an|some)\b/i.test(selectionText)&&/\b(?:necklace|earrings?|bracelet|ring|jewelry|jewellery|gift)\b/i.test(selectionText)));
   const action=!policyPage&&/\b(?:open|take me to|go to|view (?:the )?page|add|put)\b[^.]{0,100}\b(?:first|second|third|fourth|fifth|sixth|piece|one|bag|cart|page)\b/i.test(selectionText);
-  return {topics:[...new Set(topics)],policyOnly:topics.length>0&&!discovery&&!action,country};
+  // An explicit item-budget update can mention shipping merely to exclude it.
+  // Require a preference clause plus an item/metal qualifier; policy questions
+  // that merely quote a price ("shipping under $75?") remain policy-only.
+  const budgetPreference=/(?:^|[,;.!?]|\b(?:actually|prefer|want|keep(?: it)?|make it))\s*(?:(?:my\s+)?budget\s*(?:is|of|:)?\s*)?(?:under|below|up to|less than|max(?:imum)?|at most|within|no more than|price limit)\s*(?:is|of|to|:)?\s*(?:usd|cad|gbp|eur|c\$|ca\$|us\$|\$|€|£)?\s*\d+(?:\.\d{1,2})?\b/i.test(selectionText)&&/\b(?:each|per (?:piece|item|necklace|pair)|before (?:shipping|taxes)|in (?:sterling silver|silver|rose gold|gold(?: filled| plated)?))\b/i.test(selectionText);
+  const selectionReturn=returnText!==text;
+  return {topics:[...new Set(topics)],policyOnly:topics.length>0&&!discovery&&!action&&!budgetPreference&&!selectionReturn,country};
 }
 function rangeText(range){return range.min+'–'+range.max+' '+(range.unit==='unspecified'?'':range.unit+' ')+'days';}
 function shippingAnswer(facts,classification,message){
