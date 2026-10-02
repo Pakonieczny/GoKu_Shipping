@@ -1,5 +1,37 @@
 'use strict';
 
+// Read membership from the actual Google mutations, rather than treating every saved
+// file as an included asset. Shared uploads can belong to more than one lane.
+function campaignMedia(ops) {
+  const assets = new Map(ops.filter(o=>o.assetOperation?.create).map(o=>[o.assetOperation.create.resourceName,o.assetOperation.create]));
+  const images=[], videos=[], copy={headlines:[],longHeadlines:[],descriptions:[]}; let callToAction=null;
+  for(const o of ops) {
+    const link=o.assetGroupAssetOperation?.create, asset=link&&assets.get(link.asset);
+    if(link) {
+      const key={HEADLINE:'headlines',LONG_HEADLINE:'longHeadlines',DESCRIPTION:'descriptions'}[link.fieldType];
+      if(key&&asset?.textAsset)copy[key].push(asset.textAsset.text);
+      else if(link.fieldType==='CALL_TO_ACTION_SELECTION')callToAction=asset?.callToActionAsset?.callToAction;
+      else if(link.fieldType==='YOUTUBE_VIDEO')videos.push(link.asset);
+      else if(['MARKETING_IMAGE','SQUARE_MARKETING_IMAGE','PORTRAIT_MARKETING_IMAGE','LOGO','LANDSCAPE_LOGO'].includes(link.fieldType))images.push({resource:link.asset,role:link.fieldType});
+    }
+    const ad=o.adGroupAdOperation?.create?.ad, r=ad?.responsiveDisplayAd;
+    if(ad?.imageAd)images.push({resource:ad.imageAd.imageAsset.asset,role:'FINISHED_ARTWORK'});
+    if(r) {
+      for(const [field,role] of Object.entries({marketingImages:'MARKETING_IMAGE',squareMarketingImages:'SQUARE_MARKETING_IMAGE',logoImages:'LANDSCAPE_LOGO',squareLogoImages:'LOGO'}))
+        for(const i of r[field]||[])images.push({resource:i.asset,role});
+      for(const v of r.youtubeVideos||[])videos.push(v.asset);
+      copy.headlines=r.headlines.map(t=>t.text);copy.longHeadlines=[r.longHeadline.text];copy.descriptions=r.descriptions.map(t=>t.text);callToAction=r.callToActionText;
+    }
+  }
+  return {images,videos,copy,callToAction};
+}
+function selectVideos(job,copy,D) {
+  if(job&&job.phase==='ready'&&job.publication?.phase==='attached'&&D.hash(job.plan?.nativeCopy)===D.hash(copy)&&D.qualityPass(job.quality)&&job.publication.reviewHash===D.reviewHash(job))
+    return {jobId:job.id,reviewHash:D.reviewHash(job),attached:(job.publication.videos||[]).filter(v=>v.state==='PROCESSED'&&/^[a-zA-Z0-9_-]{11}$/.test(v.videoId||'')).map(v=>({key:v.key,videoId:v.videoId}))};
+  const note=D.filmNote(job,copy);
+  return {jobId:job?.id||null,reviewHash:!note?D.reviewHash(job):null,attached:[],pending:!note,note};
+}
+
 // Pending-review edits never modify the source workspace or an already published ad.
 function createReview(D) {
   async function load(input) {
@@ -34,13 +66,34 @@ function createReview(D) {
     // After preparation these are the exact compressed files destined for Google.
     const prepared = [];
     for (const g of item.pipelinePlan?.payload?.generatedAssets || []) {
-      try { prepared.push({kind:g.fixed?'fixed':'responsive',label:g.fixed?'Display artwork':g.asset.kind || 'Included image',width:g.asset.width,height:g.asset.height,url:await D.sign(g.asset),hash:g.asset.hash}); }
+      try { prepared.push({kind:g.fixed?'fixed':'responsive',resource:g.tempResourceName,label:g.fixed?'Display artwork':g.asset.kind || 'Included image',width:g.asset.width,height:g.asset.height,url:await D.sign(g.asset),hash:g.asset.hash}); }
       catch (_) { warnings.push('An included image preview could not be loaded.'); }
     }
     let motion = {variants:[], phase:'idle'};
     try { motion = await D.motion({workspaceId:r.workspaceId,productId:r.productId,groupRef:r.groupRef}); }
     catch (_) { warnings.push('Video previews could not be loaded. Retry to see the saved videos.'); }
-    return {ok:true,reviewHash:item.reviewHash,images,prepared,videos:motion.displayVariants || motion.variants || [],videoPhase:motion.phase,videoNote:item.pipelinePlan?.summary?.videoStatus || 'Saved videos are shown for preview. The prepared plan confirms which videos can be included.',copyEdited:r.copyEdited===true,warnings};
+    let selection={attached:[],pending:false,note:'Prepare the publishing plan to confirm video eligibility.'};
+    if(r.includeVideos!==false&&D.videoSelection)try{selection=await D.videoSelection(r,context);}catch(_){warnings.push('Video eligibility could not be confirmed. Prepare the plan before approval.');}
+    const variants=(motion.variants||[]).filter(v=>!v.previous);
+    const eligible=String(motion.jobId)===String(selection.jobId)?variants:[];
+    const roleFormat={MARKETING_IMAGE:'landscape',SQUARE_MARKETING_IMAGE:'square',PORTRAIT_MARKETING_IMAGE:'portrait'};
+    const byResource=new Map(prepared.map(p=>[p.resource,p]));
+    const styles={};
+    for(const key of ['pmax','responsive_display','fixed_display']) {
+      const campaign=item.pipelinePlan?.summary?.campaigns?.find(c=>c.style===key), media=campaign?.media;
+      const fixed=key==='fixed_display', formats=key==='pmax'?['landscape','square','portrait']:['landscape','square'];
+      const included=media?media.images.map(i=>byResource.has(i.resource)?{...byResource.get(i.resource),role:i.role,format:roleFormat[i.role],label:roleFormat[i.role]?roleFormat[i.role][0].toUpperCase()+roleFormat[i.role].slice(1):byResource.get(i.resource).label}:null).filter(Boolean):images.filter(i=>fixed?i.kind==='fixed':i.kind==='responsive'&&formats.includes(i.format));
+      let videos=[];
+      if(!fixed&&r.includeVideos!==false) {
+        const links=media?media.videos.map(resource=>item.pipelinePlan.payload.mutateOperations.find(o=>o.assetOperation?.create?.resourceName===resource)?.assetOperation.create.youtubeVideoAsset?.youtubeVideoId).filter(Boolean):selection.attached.map(v=>v.videoId);
+        videos=links.map(videoId=>{const pub=selection.attached.find(v=>v.videoId===videoId),v=pub&&eligible.find(v=>v.key===pub.key);return {...(v||{}),videoId,youtubeUrl:'https://www.youtube.com/watch?v='+videoId,label:v?.key||'Included YouTube video',inclusion:'Included YouTube video'};});
+        const approved=item.pipelinePlan?.payload?.meta?.motion;
+        const pending=key==='pmax'&&(media?approved&&approved.jobId===selection.jobId&&approved.reviewHash===selection.reviewHash:selection.pending);
+        if(!videos.length&&pending)videos=eligible.map(v=>({...v,inclusion:'Attaches after campaign creation'}));
+      }
+      styles[key]={prepared:!!media,selected:!!campaign,images:included,videos,copy:fixed?null:media?.copy||{headlines:(r.copy?.headlines||[]).slice(0,key==='pmax'?15:5),longHeadlines:(r.copy?.longHeadlines||[]).slice(0,key==='pmax'?5:1),descriptions:(r.copy?.descriptions||[]).slice(0,5)},callToAction:fixed?null:media?.callToAction||'Shop now',inheritedBrand:key==='pmax'&&item.pipelinePlan?.payload?.meta?.brandGuidelinesEnabled===true,videoNote:fixed?'Fixed Display uses finished image artwork; videos are not included.':videos.length?videos[0].inclusion:r.includeVideos===false?'Saved videos are excluded.':key==='responsive_display'&&selection.pending?'These films have not been uploaded to YouTube. Responsive Display starts without them.':selection.note||'No eligible videos are included.'};
+    }
+    return {ok:true,reviewHash:item.reviewHash,destination:context.product.url||r.destination,styles,images,prepared,videos:motion.displayVariants || motion.variants || [],videoPhase:motion.phase,videoNote:item.pipelinePlan?.summary?.videoStatus || 'Saved videos are shown for preview. The prepared plan confirms which videos can be included.',copyEdited:r.copyEdited===true,warnings};
   }
   async function update(input) {
     const {ref, item, context} = await load(input), r = item.designReview;
@@ -58,4 +111,4 @@ function createReview(D) {
   }
   return {status,update};
 }
-module.exports = {createReview};
+module.exports = {createReview,campaignMedia,selectVideos};

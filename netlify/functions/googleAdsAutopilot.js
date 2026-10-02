@@ -12142,6 +12142,7 @@ function _submissionReview(){return require('./googleAdsSubmissionReview').creat
  approval:id=>fb().db.collection(COL.approvals).doc(id),context:_adDesignPublicationContext,
  sourceHash:_adDesignSelectionHash,hash:creativeHash,placements:require('./googleAdsAdDesign').chosenPlacements,
  fixedProofs:require('./googleAdsCampaignStyles').fixedProofs,sign:a=>_designEngineAdapters().signAsset(a,{required:true}),
+ videoSelection:async(r,context)=>require('./googleAdsSubmissionReview').selectVideos(await _latestMotionJob(context.ref,context.product.id,r.groupRef),r.copy,{hash:creativeHash,qualityPass:require('./googleAdsAdMotion').qualityPass,reviewHash:require('./googleAdsMotionPublication').reviewHash,filmNote:_motionFilmNote}),
  motion:adDesignMotionStatus,copyValid:c=>_copyValid(c,true),transaction:fn=>fb().db.runTransaction(fn)
 });}
 async function adDesignSubmissionStatus(input){return _submissionReview().status(input);}
@@ -12161,7 +12162,7 @@ async function publishAdDesignSubmission(input={}){
     // A product joining an existing Performance Max campaign: checked now, and the campaign as read is part of the
     // plan's identity, so a campaign that changed is prepared again instead of reusing an older plan.
     const join=choice.pmaxTarget?await _pmaxExistingDraft({campaignId:choice.pmaxTarget,merchantId:await merchantCenterId(),feedLabel:w.context.feedLabel,itemIds:_designPmaxItemIds(w,product),addBudget:choice.budgets.pmax}):null;
-    const identity=creativeHash(join?{sourceHash:item.sourceHash,reviewHash:item.reviewHash,choice,join:{...join.guard,groups:join.target.assetGroupNames}}:{sourceHash:item.sourceHash,reviewHash:item.reviewHash,choice});
+    const identity=creativeHash(join?{reviewUiVersion:2,sourceHash:item.sourceHash,reviewHash:item.reviewHash,choice,join:{...join.guard,groups:join.target.assetGroupNames}}:{reviewUiVersion:2,sourceHash:item.sourceHash,reviewHash:item.reviewHash,choice});
     // applyApproval refuses budgets above the ceiling; say so now, not after approval. A paused campaign's raise is
     // checked when that campaign is enabled, as publication counts it.
     const ctrl=await control();if(Number(ctrl.maxDailyBudgetTotal)>0){const counted=Math.round((choice.totalDaily-(join&&!join.spendable?join.add:0))*100)/100,over=routing.CAMPAIGN_STYLES.budgetCeilingMessage(counted,join?join.enabledTotal:await _enabledBudgetTotal(),ctrl.maxDailyBudgetTotal,ctrl.budgetCurrency);if(over)throw Error(over);}
@@ -12214,8 +12215,9 @@ async function _prepareCampaignStyles({item,context,choice,identity,join=null}){
   const videoRefs=[],videoLinks=[];let films=null;
   if(r.includeVideos!==false&&choice.styles.some(s=>s!=='fixed_display')){
     const job=await _latestMotionJob(_adDesignWorkspaceRef(workspaceId),product.id,r.groupRef);
-    if(job&&job.phase==='ready'&&job.publication?.phase==='attached'&&creativeHash(job.plan?.nativeCopy)===creativeHash(r.copy)&&require('./googleAdsAdMotion').qualityPass(job.quality)&&job.publication.reviewHash===require('./googleAdsMotionPublication').reviewHash(job)){
-      for(const v of job.publication.videos||[]){if(v.state!=='PROCESSED'||!/^[a-zA-Z0-9_-]{11}$/.test(v.videoId||''))continue;const resourceName=`customers/${CID}/assets/${next--}`;ops.push({assetOperation:{create:{resourceName,name:product.title.slice(0,60)+' '+v.key,youtubeVideoAsset:{youtubeVideoId:v.videoId}}}});videoRefs.push(resourceName);videoLinks.push('https://www.youtube.com/watch?v='+v.videoId);}
+    const selected=require('./googleAdsSubmissionReview').selectVideos(job,r.copy,{hash:creativeHash,qualityPass:require('./googleAdsAdMotion').qualityPass,reviewHash:require('./googleAdsMotionPublication').reviewHash,filmNote:_motionFilmNote});
+    if(selected.attached.length){
+      for(const v of selected.attached){const resourceName=`customers/${CID}/assets/${next--}`;ops.push({assetOperation:{create:{resourceName,name:product.title.slice(0,60)+' '+v.key,youtubeVideoAsset:{youtubeVideoId:v.videoId}}}});videoRefs.push(resourceName);videoLinks.push('https://www.youtube.com/watch?v='+v.videoId);}
     }
     // Films not yet on YouTube attach to the new paused Performance Max group once Google creates it.
     if(!videoLinks.length&&choice.styles.includes('pmax'))films=await _motionFilmPlan(_adDesignWorkspaceRef(workspaceId),product,r.groupRef,r.copy);
@@ -12253,7 +12255,8 @@ async function _prepareCampaignStyles({item,context,choice,identity,join=null}){
     // Keep temporary IDs disjoint between campaign lanes while sharing image assets.
     const offset=(choice.styles.indexOf(style)+1)*10000;
     lane=JSON.parse(JSON.stringify(lane).replace(/(customers\/\d+\/(?:campaigns|campaignBudgets|adGroups|assetGroups|assets)\/)-(\d+)/g,(m,p,n)=>Number(n)>=900000?m:p+'-'+(Number(n)+offset)).replace(/(assetGroupListingGroupFilters\/)-(\d+)~-(\d+)/g,(m,p,a,b)=>p+'-'+(Number(a)+offset)+'~-'+(Number(b)+offset)));
-    if(style==='pmax'&&join){const t=join.target;ops.push(...lane);summaries.push({style,name:t.name,joins:true,existingCampaignId:t.id,campaignStatus:t.status,budgetBefore:t.budget,addedDaily:join.add,dailyBudget:join.after,sharedBudget:t.sharedBudget,assetGroups:t.assetGroupCount,countries:t.countryNames,bidding:(t.bidding||'The campaign\u2019s own bidding')+' · unchanged',audienceSignal,formats:photos.map(p=>p.shape)});continue;}
+    const media=require('./googleAdsSubmissionReview').campaignMedia(lane);
+    if(style==='pmax'&&join){const t=join.target;ops.push(...lane);summaries.push({style,media,name:t.name,joins:true,existingCampaignId:t.id,campaignStatus:t.status,budgetBefore:t.budget,addedDaily:join.add,dailyBudget:join.after,sharedBudget:t.sharedBudget,assetGroups:t.assetGroupCount,countries:t.countryNames,bidding:(t.bidding||'The campaign\u2019s own bidding')+' · unchanged',audienceSignal,formats:photos.map(p=>p.shape)});continue;}
     // The run length counts from the day the campaign is enabled: publishing and enabling move this end date
     // (meta.plannedDays), so a plan approved days before it starts still runs its full length.
     const days=Number(choice.durations?.[style]??w.context.days),runDays=Number.isFinite(days)&&days>0?Math.ceil(days):null,endDate=runDays?new Date(Date.parse((report.accountToday||new Date().toISOString().slice(0,10))+'T12:00:00Z')+(runDays-1)*86400000).toISOString().slice(0,10):null;
@@ -12261,7 +12264,7 @@ async function _prepareCampaignStyles({item,context,choice,identity,join=null}){
     // The plan states the bidding exactly as sent to Google, including any target ROAS.
     const bid=lane.find(o=>o.campaignOperation).campaignOperation.create,bidding=bid.maximizeConversionValue?'Maximize conversion value'+(bid.maximizeConversionValue.targetRoas?' · target ROAS '+Math.round(bid.maximizeConversionValue.targetRoas*100)+'%':' · '+TARGET_ROAS_LATER):bid.maximizeConversions?'Maximize conversions':'';
     if(runDays)plannedDays[bid.resourceName]=runDays;
-    ops.push(...lane);summaries.push({style,name,endDate,days:runDays,dailyBudget:choice.budgets[style],bidding,...(style==='pmax'?{audienceSignal}:{}),formats:style==='fixed_display'?fixed.map(p=>p.width+'×'+p.height):style==='pmax'?photos.map(p=>p.shape):['square','landscape']});
+    ops.push(...lane);summaries.push({style,media,name,endDate,days:runDays,dailyBudget:choice.budgets[style],bidding,...(style==='pmax'?{audienceSignal}:{}),formats:style==='fixed_display'?fixed.map(p=>p.width+'×'+p.height):style==='pmax'?photos.map(p=>p.shape):['square','landscape']});
   }
   // A logo only a dropped brand link used (brand guidelines keep it on the campaign) is not uploaded.
   const used=JSON.stringify(ops),uploads=generatedAssets.filter(g=>used.includes(JSON.stringify(g.tempResourceName)));
