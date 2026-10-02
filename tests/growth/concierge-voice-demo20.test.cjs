@@ -9,7 +9,7 @@ const checked={reply:'Checked.',question:'Which feels closest?',products:[{title
 
 test('demo route is sandbox-only, same-origin and explicitly capability gated',async()=>{
   let completions=0;const enabled=server.createHandler({env,completeTone:async()=>{completions++;return '{"tone":"warm"}';}});
-  assert.deepEqual(await (await enabled(req({action:'capabilities'}))).json(),{enabled:true,mode:'browser-speech-bridge',maxDurationMs:120000,maxTurns:12});
+  assert.deepEqual(await (await enabled(req({action:'capabilities'}))).json(),{enabled:true,aiAvailable:true,mode:'browser-speech-bridge',maxDurationMs:120000,maxTurns:12});
   assert.equal((await enabled(req({action:'turn',message:'hi',catalogue:checked},'https://evil.test'))).status,403);
   const disabled=server.createHandler({env:{...env,BRITES_GROWTH_SANDBOX:'0'},completeTone:async()=>'{"tone":"warm"}'});
   assert.equal((await disabled(req({action:'turn',message:'hi',catalogue:checked}))).status,503);assert.equal(completions,0);
@@ -32,6 +32,13 @@ test('provider failure is a marked deterministic fallback and never invents a pr
   const handler=server.createHandler({env,completeTone:async()=>{throw Error('provider secret');}});
   const result=await (await handler(req({action:'turn',message:'surprise me',catalogue:{products:[],question:'Necklace or earrings?'}}))).json();
   assert.equal(result.aiUsed,false);assert.equal(result.tone,'warm');assert.equal(result.speech,'Of course. Necklace or earrings?');assert.doesNotMatch(JSON.stringify(result),/secret|product/i);
+});
+
+test('missing provider still leaves the bounded browser voice demo usable and marked non-AI',async()=>{
+  const handler=server.createHandler({env,rateLimit:async()=>true});
+  assert.deepEqual(await (await handler(req({action:'capabilities'}))).json(),{enabled:true,aiAvailable:false,mode:'browser-speech-bridge',maxDurationMs:120000,maxTurns:12});
+  const result=await (await handler(req({action:'turn',message:'A Christmas gift',catalogue:checked}))).json();
+  assert.equal(result.enabled,true);assert.equal(result.aiUsed,false);assert.match(result.speech,/Christmas Tree Charm/);
 });
 
 test('catalogue sanitizer drops actions, URLs and malformed products',()=>{
