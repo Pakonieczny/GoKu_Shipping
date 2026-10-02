@@ -7,7 +7,7 @@
 //   · rejects: an unknown order, an order with no studs, a cancelled order: `scan` + `reject`, never `complete`
 //   · Etsy down: `scan`, `error`, and the order still counted (the page still seals it welded)
 //   · every event says who (the name), welding, weld-1, this computer and session; signed out again: nothing more
-//   · no request anywhere carries the PIN
+//   · no request carries the PIN but the login door's { pinLogin }
 //   NODE_PATH=$(npm root -g) PW_DIR=$(npm root -g)/playwright/node_modules CHROMIUM=… node tests/stations/ea-weld.cjs
 'use strict';
 const fs = require('fs'), path = require('path'), assert = require('assert');
@@ -15,7 +15,8 @@ const root = path.join(__dirname, '../..');
 const pwDir = process.argv[2] || process.env.PW_DIR || path.join(root, 'node_modules');
 const { chromium } = require(path.join(pwDir, 'playwright-core'));
 
-const ORIGIN = 'http://weld.test', PIN = '246813', WHO = 'Marco R.';
+const ORIGIN = 'http://weld.test', WHO = 'Marco R.';
+const PIN = String(100000 + Math.floor(Math.random() * 900000)).replace(/^(\d)\1{5}$/, '135792');   // made up per run: only the login door's request may carry it
 const NOBODY = '3521200001', STUD = '3521200002', MIXED = '3521200003', UNKNOWN = '3521200004', NOSTUD = '3521200005', CANC = '3521200006', DOWN = '3521200007';
 const TX = {
   [NOBODY]: [{ transaction_id: 94001, title: 'Stud earrings', quantity: 1, variations: [] }],
@@ -71,12 +72,13 @@ const acts = (order, action) => st.acts.filter(e => e.orderId === order && (!act
         }
         if (m === 'POST') {
           const b = JSON.parse(r.request().postData() || '{}');
+          if (b.pinLogin !== undefined) return json(r, b.pinLogin === PIN ? { ok: true, name: WHO } : { ok: false, error: 'not on the list' });   // the server's login door
           if (Array.isArray(b.activity)) { st.acts.push(...b.activity); return json(r, { success: true, written: b.activity.length, duplicate: 0, refused: 0, scrubbed: 0 }); }
           if (b.session) { st.sessions.push(b.session); return json(r, { success: true }); }
           if (Array.isArray(b.timeline)) { st.events.push(...b.timeline); return json(r, { ok: true, ids: b.timeline.map(e => e.id) }); }
           return json(r, { success: true });
         }
-        if (u.searchParams.get('orderId') === 'Employee Numbers') return json(r, { success: true, data: { [PIN]: WHO } });
+        if (/employee/i.test(u.searchParams.get('orderId') || '')) return json(r, { success: false, error: 'closed' }, 401);          // the roster is never read
         return json(r, { success: true, data: {} });
       }
       if (fn === 'etsyOrderProxy') {
@@ -115,7 +117,7 @@ const acts = (order, action) => st.acts.filter(e => e.orderId === order && (!act
   await wait(800); await flush();
   assert.strictEqual(st.acts.length, 0, 'nobody signed in: no activity events: ' + JSON.stringify(st.acts));
 
-  // 2 · PIN login (the fake PIN is only ever typed and compared on the page), then a typed stud order of 2 pieces
+  // 2 · PIN login (the fake PIN is only ever typed on the page and sent to the login door), then a typed stud order of 2 pieces
   await page.focus('#employeeNumberInput'); await page.keyboard.type(PIN);
   await page.click('#employeeLoginBtn');
   const start = await until(() => st.sessions.find(s => s.event === 'start' && s.person === WHO), 'the sign-in session');
@@ -173,8 +175,10 @@ const acts = (order, action) => st.acts.filter(e => e.orderId === order && (!act
   await wait(1200); await flush();
   assert.strictEqual(st.acts.length, before, 'signed out: no new activity');
 
-  // 9 · the PIN is in no request at all
-  assert(!st.reqs.some(q => q.includes(PIN)), 'the PIN was sent: ' + st.reqs.filter(q => q.includes(PIN)).map(q => q.slice(0, 140)).join(' | '));
+  // 9 · the PIN is in no request but the login door's { pinLogin } (never a URL), and the roster is never read
+  const doorReq = q => q.endsWith(' ' + JSON.stringify({ pinLogin: PIN })) && /^POST \S+\/\.netlify\/functions\/firebaseOrders /.test(q);
+  assert(!st.reqs.some(q => q.includes(PIN) && !doorReq(q)), 'the PIN was sent in a request that is not the login door\'s');
+  assert(st.reqs.some(doorReq) && !st.reqs.some(q => /employee/i.test(q.split(' ')[1] || '')), 'the sign-in must use the login door and never read the roster');
   assert(!JSON.stringify(st.acts).includes(PIN) && !JSON.stringify(st.sessions).includes(PIN) && !JSON.stringify(st.events).includes(PIN), 'the PIN is never recorded');
 
   assert.deepStrictEqual(ours, [], 'no page errors from the activity wiring');

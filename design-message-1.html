@@ -2359,6 +2359,33 @@ function metalToBadge(label){
                M.toast({html: "Please enter a valid 6-digit Employee Number!"});
               return;
             }
+            /* The server checks the number and answers with that person's name only (firebaseOrders {pinLogin}); the list of
+               everyone's numbers is not downloaded. Only when that check cannot be reached at all (no network, a timeout, a server
+               error, a server that does not know it yet) is the old list download tried. An answer, yes or no, is final. */
+            var answeredPL = false, tooManyPL = false, nameFound = "";
+            try {
+              var ctlPL = typeof AbortController === "function" ? new AbortController() : null;
+              var timerPL = ctlPL ? setTimeout(function(){ ctlPL.abort(); }, 15000) : 0;
+              try {
+                var responsePL = await fetch("/.netlify/functions/firebaseOrders", {
+                  method: "POST", headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ pinLogin: empNumber }), signal: ctlPL ? ctlPL.signal : undefined
+                });
+                var resultPL = null;
+                try { resultPL = await responsePL.json(); } catch (_) {}
+                if (resultPL && typeof resultPL.ok === "boolean") {
+                  answeredPL = true; tooManyPL = resultPL.tooMany === true;
+                  /* the name as one tidy line (the session and the timeline read the same text); a number alone is never a name */
+                  if (resultPL.ok === true && typeof resultPL.name === "string") nameFound = resultPL.name.replace(/\s+/g, " ").trim();
+                }
+              } finally { if (timerPL) clearTimeout(timerPL); }
+            } catch (_) { /* not reached: the list download below */ }
+            if (tooManyPL) {
+              M.toast({ html: "Too many tries, wait a minute" });
+              try { employeeNumberInput.dataset.raw = ""; employeeNumberInput.value = ""; } catch (_) {}
+              return;
+            }
+            if (!answeredPL) {
               var responseEN = await fetch(
                 "/.netlify/functions/firebaseOrders?orderId=" +
                 encodeURIComponent("Employee Numbers")
@@ -2374,8 +2401,8 @@ function metalToBadge(label){
               return;
             }
             var docDataEN = resultEN.data;
-            /* the name as one tidy line (the session and the timeline read the same text); a number alone is never a name */
-            var nameFound = typeof docDataEN[empNumber] === "string" ? docDataEN[empNumber].replace(/\s+/g, " ").trim() : "";
+            nameFound = typeof docDataEN[empNumber] === "string" ? docDataEN[empNumber].replace(/\s+/g, " ").trim() : "";
+            }
             if(nameFound && !/^\d+$/.test(nameFound)){
               M.toast({ html: "Welcome, " + nameFound + "!" });
 

@@ -132,7 +132,20 @@ exports.handler = async (event) => {
 
     /* ───────────────────────── POST ───────────────────────── */
     if (method === "POST") {
-      const body = JSON.parse(event.body || "{}");
+      let body;
+      try { body = JSON.parse(event.body || "{}"); }
+      catch (e) {
+        // a body that is not JSON and mentions a login never reaches the log: the parser's own message can quote it
+        if (/pinLogin/.test(String(event.body || ""))) return { statusCode: 400, headers: Object.assign({ "Cache-Control": "no-store" }, CORS), body: JSON.stringify({ ok: false, error: "an Employee Number is 6 digits" }) };
+        throw e;
+      }
+      /* the stations' Employee Number login (_stationPinLogin.js): the page sends the number typed and gets back that person's
+         name, or no. The roster document itself is never returned. The number is read from the body only, never from a URL,
+         is never logged, and a guesser is slowed and locked out for a minute. An answer carries `ok`; anything else is a failure. */
+      if (body && typeof body === "object" && body.pinLogin !== undefined) {
+        const out = await require("./_stationPinLogin").pinLogin(db, event, body.pinLogin);
+        return { statusCode: out.statusCode, headers: Object.assign({}, CORS, out.headers), body: JSON.stringify(out.body) };
+      }
       /* the production stations' own events on an order's timeline (_orderTimeline.js): scans and what was done with
          them, by whom, where. Only station event types pass this open door. */
       if (Array.isArray(body.timeline)) {
