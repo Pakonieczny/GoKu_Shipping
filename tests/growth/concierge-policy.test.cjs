@@ -156,6 +156,27 @@ test('standard shipping combines business-day ranges transparently and never pro
   assert.match(a.reply,/2–4 business days/);assert.match(a.reply,/4–6 business days in transit/);assert.match(a.reply,/6–10 business days/);assert.match(a.reply,/rather than a guaranteed arrival date/);assert.match(a.reply,/confirm the date with the shop before paying/);
   assert.equal(a.policyKnowledge.status,'verified');assert.equal(a.policyKnowledge.sources[0].url,policy.POLICIES.shipping.url);assert.equal(a.policyKnowledge.checkedAt,NOW);assert.equal(a.question,null);
 });
+test('shipping deadline reminders require timing rather than a before-cost qualifier',()=>{
+  const facts=policy.parseShipping(shipping);
+  for(const message of [
+    'Under $75 each before shipping and taxes, in gold.',
+    'What is the necklace price before shipping?',
+    'How much shipping tax is charged before checkout?',
+    'Does shipping come by mail?',
+    'Is shipping paid by the buyer?'
+  ])assert.ok(!/For a gift deadline/.test(policy.shippingAnswer(facts,policy.classify(message),message).text),message);
+  for(const message of [
+    'Will delivery to Canada arrive before Friday?',
+    'I need the gift before Christmas; what is shipping time?',
+    'Can it arrive by October 12?',
+    'Will delivery arrive by 2026-10-12?',
+    'Shipping to Canada by 10/12, please.',
+    'I need this gift in 3 days. How long is delivery?',
+    'Can shipping get this here tomorrow?',
+    'Is shipping fast enough for my birthday?',
+    'Under $75 each before shipping and taxes; can delivery arrive by Friday?'
+  ])assert.match(policy.shippingAnswer(facts,policy.classify(message),message).text,/For a gift deadline, confirm the date with the shop before paying/,message);
+});
 test('expedited production does not silently expedite the transit service',async()=>{
   const a=await fixture().guide.answer({message:'What is expedited production timing to the UK?'});assert.match(a.reply,/Expedited production is listed as 1–2 business days/);assert.match(a.reply,/7–9 business days in transit/);assert.match(a.reply,/8–11 business days/);assert.ok(!/guaranteed.*Friday/i.test(a.reply));
 });
