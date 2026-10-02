@@ -156,7 +156,7 @@ async function handleAction(body) {
   }
   if (a === "startAdDesign") {
     try {
-      const out=await E.startAdDesign({workspaceId:body.workspaceId,expectedVersion:body.expectedVersion,snapshotHash:body.snapshotHash,retry:!!body.retry,mode:body.mode||'design',newRequest:!!body.newRequest});
+      const out=await E.startAdDesign({workspaceId:body.workspaceId,expectedVersion:body.expectedVersion,snapshotHash:body.snapshotHash,retry:!!body.retry,mode:body.mode||'design',newRequest:!!body.newRequest,savedDesignId:body.savedDesignId||null});
       if(out.queued) await dispatchTask("adDesign",{workspaceId:out.workspaceId,jobId:out.jobId});
       return out;
     } catch(e) { return {ok:false,error:e.message}; }
