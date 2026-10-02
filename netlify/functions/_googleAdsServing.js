@@ -25,12 +25,14 @@
 //
 // settling: the check that runs right after Google accepted a publication. Google has
 // not listed a new campaign's products yet at that point, so "no products" is a note
-// until the next check, not a verdict.
+// until the next check, not a verdict. Only Google's own processing wording is softened:
+// a product that is not eligible for a real Merchant Center reason stays a finding.
 
 const SMART_BIDDING = new Set(['MAXIMIZE_CONVERSIONS', 'MAXIMIZE_CONVERSION_VALUE', 'TARGET_CPA', 'TARGET_ROAS']);
 const PRODUCT_LIMIT = 1000;
-// A one-product campaign's filter names its offers one by one. At most this many are asked for by id (the targeted read), and that read
-// starts only while at least this much of the check's time is left; otherwise the first PRODUCT_LIMIT products Google lists stand in for it.
+// A one-product campaign's filter names its offers one by one. At most this many values are asked for by id (the targeted read; each offer
+// is sent in up to three case forms, see ownIdValues), and that read starts only while at least this much of the check's time is left;
+// otherwise the first PRODUCT_LIMIT products Google lists stand in for it.
 const OWN_PRODUCT_LIMIT = 100;
 const OWN_PRODUCT_MIN_MS = 1500;
 const COUNTRY = { '2840': 'United States', '2124': 'Canada', '2826': 'United Kingdom', '2036': 'Australia', '2554': 'New Zealand', '2372': 'Ireland' };
@@ -151,12 +153,27 @@ function includedScope(listingGroupRows) {
   }
   return { ids, catchAll };
 }
-// Google answers shopping_product with the whole feed's scope (a 116K-product feed gives 116K rows), each with its status FOR this
-// campaign, and the plain read is cut at PRODUCT_LIMIT. This one asks for the campaign's own offers by id.
+// The values a targeted read sends for the offers a filter names: each id as given, in lower case and, for Shopify ids, with the market code in
+// upper case (shopify_US_...), because Google may store an item id in another case than the filter's and GAQL IN compares exactly. At most
+// OWN_PRODUCT_LIMIT values are sent, counted after that expansion; `covered` is how many of the ids, from the first, are asked for completely.
+function ownIdValues(ids) {
+  const values = new Set();
+  let covered = 0;
+  for (const id of ids || []) {
+    const s = String(id), low = s.toLowerCase(), market = low.match(/^shopify_([a-z]{2})_/);
+    const forms = [...new Set([s, low, market ? low.replace(market[0], 'shopify_' + market[1].toUpperCase() + '_') : low])].filter(v => !values.has(v));
+    if (values.size + forms.length > OWN_PRODUCT_LIMIT) break;
+    forms.forEach(v => values.add(v));
+    covered++;
+  }
+  return { values: [...values], covered };
+}
+// Google answers shopping_product with the whole feed's scope (a 116K-product feed gives 116K rows), each with its status FOR this campaign, and
+// the plain read is cut at PRODUCT_LIMIT. This one asks for the campaign's own offers by id.
 function ownProductsQuery({ customerId, campaignId, itemIds } = {}) {
   const id = String(campaignId || '').replace(/\D/g, ''), cid = String(customerId || '').replace(/\D/g, '');
   return `SELECT shopping_product.item_id, shopping_product.status, shopping_product.feed_label, shopping_product.issues
-      FROM shopping_product WHERE shopping_product.campaign = 'customers/${cid}/campaigns/${id}' AND shopping_product.item_id IN (${(itemIds || []).slice(0, OWN_PRODUCT_LIMIT).map(gaqlString).join(',')})`;
+      FROM shopping_product WHERE shopping_product.campaign = 'customers/${cid}/campaigns/${id}' AND shopping_product.item_id IN (${ownIdValues(itemIds).values.map(gaqlString).join(',')})`;
 }
 
 // ── Queries ──────────────────────────────────────────────────────────────────
@@ -254,6 +271,7 @@ function buildQueries({ customerId, campaignId, channel } = {}) {
 // raw: { key: rows } for every read that succeeded; a missing key means the read failed.
 function analyze(raw, { today = null, shippingCountries = null, apiVersion = '', reduced = [], ownedHosts = OWNED_HOSTS, settling = false } = {}) {
   const findings = [], facts = [], warnings = [], fewer = new Set(reduced || []);
+  let settleNotes = 0;   // findings that are only a note because Google was still processing a new campaign (they decide the headline when nothing else is found)
   const add = (level, area, text, extra = {}) => findings.push({ level, area, text, ...(extra.reason ? { reason: extra.reason } : {}), ...(extra.fix ? { fix: extra.fix } : {}) });
   const fact = (label, value) => { if (value != null && value !== '') facts.push({ label, value: String(value) }); };
   const row = (raw.campaign || [])[0] || {}, c = row.campaign || null, budget = row.campaignBudget || {};
@@ -523,23 +541,32 @@ function analyze(raw, { today = null, shippingCountries = null, apiVersion = '',
 
     // Products, for this campaign. Google lists the feed's whole scope here with a status FOR this campaign, so when the product filter
     // names its offers one by one (the usual one-product campaign) every other product comes back "Excluded product or listing group":
-    // the filter's deliberate exclusions, never a finding. Then only the named offers are judged, from the targeted read
-    // (raw.productsIncluded) or, if that failed, from the sample. The sample is cut at PRODUCT_LIMIT, so it cannot say that a named offer is
-    // missing. A filter that names no offers (all products), or that also includes something other than offers, is judged as a whole.
+    // the filter's deliberate exclusions, never a finding. Then only the named offers are judged, from the union of the targeted read
+    // (raw.productsIncluded) and the sample. A sample cut at PRODUCT_LIMIT cannot say that a named offer is missing; one that is not cut lists
+    // the whole feed scope and can. A filter that names no offers (all products), or that also includes something other than offers, is judged as a whole.
     if (retail && (raw.products || raw.productsIncluded)) {
       const sample = (raw.products || []).map(r => r.shoppingProduct).filter(Boolean), sampleCut = sample.length >= PRODUCT_LIMIT;
+      // A sample that is not cut lists the feed's whole scope: it is a complete view of every named offer, however short the targeted answer is.
+      const complete = !!raw.products && !sampleCut;
       const scope = includedScope(raw.listingGroups), scoped = scope.ids.length > 0 && !scope.catchAll;
       const targeted = scoped && raw.productsIncluded ? raw.productsIncluded.map(r => r.shoppingProduct).filter(Boolean) : null;
       const lower = p => String(p.itemId || '').toLowerCase(), named = new Set(scope.ids.map(id => id.toLowerCase()));
-      // The targeted read asked for the first OWN_PRODUCT_LIMIT ids only.
-      const wanted = scoped ? (targeted ? new Set(scope.ids.slice(0, OWN_PRODUCT_LIMIT).map(id => id.toLowerCase())) : named) : includedIds;
+      // With no complete view the targeted read answers for the first `asked` ids only (their case forms fill its cap); the rest are not checked.
+      const asked = scoped && targeted && !complete ? ownIdValues(scope.ids).covered : scope.ids.length;
+      const wanted = scoped ? new Set(scope.ids.slice(0, asked).map(id => id.toLowerCase())) : includedIds;
+      // Google may list one offer in two cases and under two feed labels: one row stands for an offer, never two products. The campaign's own
+      // feed label decides which row when it is known, else the most eligible one; rows are judged on the union of the targeted read and the sample.
+      const labelOf = p => String(p.feedLabel || '').toUpperCase(), mine = feedLabel.toUpperCase();
+      const rank = p => (mine && labelOf(p) === mine ? 0 : 10) + (p.status === 'ELIGIBLE' ? 0 : p.status === 'ELIGIBLE_LIMITED' ? 1 : 2);
+      const oneRowEach = list => { const best = new Map(); for (const p of list) { const k = lower(p), cur = best.get(k); if (!cur || rank(p) < rank(cur)) best.set(k, p); } return [...best.values()]; };
       const exclusionIssue = i => /\bexcluded (product|listing|by listing)/i.test(`${i.errorCode || ''} ${i.description || ''} ${i.detail || ''}`.replace(/_/g, ' '));
-      const rows = scoped ? (targeted || sample).filter(p => wanted.has(lower(p))) : sample;
+      const rows = scoped ? oneRowEach([...(targeted || []), ...sample].filter(p => wanted.has(lower(p)))) : sample;
       const filterExcluded = scoped ? rows.filter(p => !/^ELIGIBLE/.test(String(p.status || '')) && (p.issues || []).some(exclusionIssue)) : [];
       const products = scoped ? rows.filter(p => !filterExcluded.includes(p)) : rows, truncated = scoped ? !targeted && sampleCut : sampleCut;
       const noRows = !!raw.products && !sample.length && !(targeted && targeted.length);
       // While paused nothing advertises the products, so Google's "No campaigns advertising this product" is expected (same wording googleAdsAutopilot.js _pmaxIsEligible accepts).
-      const pauseIssue = i => /paus/i.test(`${i.errorCode || ''} ${i.description || ''} ${i.detail || ''}`) || /^no campaigns advertising this product\b/i.test(String(i.description || '').trim());
+      const noCampaigns = i => /^no campaigns advertising this product\b/i.test(String(i.description || '').trim());
+      const pauseIssue = i => /paus/i.test(`${i.errorCode || ''} ${i.description || ''} ${i.detail || ''}`) || noCampaigns(i);
       const blocking = p => (p.issues || []).filter(i => !(isPaused(c.status) && pauseIssue(i)) && i.adsSeverity !== 'WARNING');
       const notEligible = products.filter(p => p.status === 'NOT_ELIGIBLE' && (!isPaused(c.status) || blocking(p).length));
       const limited = products.filter(p => p.status === 'ELIGIBLE_LIMITED');
@@ -549,28 +576,36 @@ function analyze(raw, { today = null, shippingCountries = null, apiVersion = '',
       // A product that only says "Excluded product or listing group" is the filter's doing, not a Merchant Center problem.
       const realIssues = p => (p.issues || []).filter(i => !(isPaused(c.status) && pauseIssue(i)));
       const productFix = list => list.length && list.every(p => realIssues(p).length && realIssues(p).every(exclusionIssue)) ? 'Check the campaign\'s product filter in Google Ads.' : 'Fix the product issues in Merchant Center.';
+      // Google's wording for a campaign it has not finished processing: the filter's exclusion, or no campaign advertising the product yet. Only when every
+      // not-eligible product says nothing else is it a note while settling; any other reason (shipping, images, price...) is a real Merchant Center problem.
+      const processing = settling && notEligible.every(p => realIssues(p).every(i => exclusionIssue(i) || noCampaigns(i)));
+      const later = () => { settleNotes++; return 'note'; };
       const found = new Set(rows.map(lower)), absent = [...wanted].filter(id => !found.has(id)), missing = truncated ? [] : absent;
-      const others = scoped && raw.products ? sample.filter(p => !named.has(lower(p))).length : 0, beyond = scoped && targeted ? Math.max(0, scope.ids.length - OWN_PRODUCT_LIMIT) : 0;
+      const others = scoped && raw.products ? sample.filter(p => !named.has(lower(p))).length : 0, beyond = scoped && targeted && !complete ? new Set(scope.ids.slice(asked).map(id => id.toLowerCase()).filter(id => !wanted.has(id))).size : 0;
       if (scoped) fact('Products', noRows ? 'none found' : [`${named.size} included`, products.length ? `${products.length - notEligible.length - limited.length} can show${pauseOnly ? ' once enabled' : ''}` : '',
         limited.length ? `${limited.length} limited` : '', notEligible.length ? `${notEligible.length} not eligible` : '', filterExcluded.length ? `${filterExcluded.length} excluded by the product filter` : '',
         missing.length ? `${missing.length} not listed by Google` : '', truncated && absent.length ? `${absent.length} not checked (Google's list was cut at ${PRODUCT_LIMIT} products)` : '',
         beyond ? `${beyond} more not checked` : '', others ? `${others}${sampleCut ? '+' : ''} others left out by the product filter` : ''].filter(Boolean).join(' · '));
       else fact('Products', products.length ? `${truncated ? PRODUCT_LIMIT + '+' : products.length} in this campaign · ${products.length - notEligible.length - limited.length} eligible${pauseOnly ? ' once enabled' : ''}` + (limited.length ? ` · ${limited.length} limited` : '') + (notEligible.length ? ` · ${notEligible.length} not eligible` : '') : 'none found');
-      if (filterExcluded.length) add('block', 'Products', `The campaign's product filter excludes ${filterExcluded.length} of the ${wanted.size} products it includes: ${listOf(filterExcluded.map(p => String(p.itemId)), 3)}.`, { reason: topIssues(filterExcluded) || 'excluded product or listing group', fix: 'Re-publish the campaign or fix its product filter.' });
-      if (noRows && settling) add('note', 'Products', `Google has not listed products for this campaign yet (Merchant Center ${merchantId}${feedLabel ? ', feed ' + feedLabel : ''}). Right after a publication this can take a few hours; the next check confirms it.`);
+      // Google evaluates a new campaign's product filter asynchronously, so right after a publication an excluded offer is only a note.
+      if (filterExcluded.length) add(settling ? later() : 'block', 'Products', `The campaign's product filter excludes ${filterExcluded.length} of the ${wanted.size} products it includes: ${listOf(filterExcluded.map(p => String(p.itemId)), 3)}.`, { reason: topIssues(filterExcluded) || 'excluded product or listing group', fix: 'Re-publish the campaign or fix its product filter.' });
+      if (noRows && settling) add(later(), 'Products', `Google has not listed products for this campaign yet (Merchant Center ${merchantId}${feedLabel ? ', feed ' + feedLabel : ''}). Right after a publication this can take a few hours; the next check confirms it.`);
       else if (noRows) add('block', 'Products', `Google finds no products for this campaign (Merchant Center ${merchantId}${feedLabel ? ', feed ' + feedLabel : ''}), so it cannot show product ads.`, { fix: 'Check the feed label and that the products are approved in Merchant Center.' });
-      // Right after a publication Google may still be processing a new campaign: say so, keep its reason, and do not stop the campaign for it.
-      else if (products.length && notEligible.length === products.length) add(settling ? 'note' : 'block', 'Products', settling ? `Google lists all ${products.length} products as not eligible right now; it was still processing this new campaign. Check again in a few minutes.` : `None of the ${products.length} products can show.`, { reason: topIssues(notEligible) || 'not eligible', fix: productFix(notEligible) });
-      else if (notEligible.length) add(settling ? 'note' : 'risk', 'Products', settling ? `${notEligible.length} of ${products.length} products are not eligible right now; it was still processing this new campaign. Check again in a few minutes.` : `${notEligible.length} of ${products.length} products cannot show.`, { reason: topIssues(notEligible) || 'not eligible', fix: productFix(notEligible) });
+      // Right after a publication Google may still be processing a new campaign: when that is all its rows say, say so, keep its reason, and do not stop the campaign for it.
+      else if (products.length && notEligible.length === products.length) add(processing ? later() : 'block', 'Products', processing ? `Google lists all ${products.length} products as not eligible right now; it was still processing this new campaign. Check again in a few minutes.` : `None of the ${products.length} products can show.`, { reason: topIssues(notEligible) || 'not eligible', fix: productFix(notEligible) });
+      else if (notEligible.length) add(processing ? later() : 'risk', 'Products', processing ? `${notEligible.length} of ${products.length} products are not eligible right now; it was still processing this new campaign. Check again in a few minutes.` : `${notEligible.length} of ${products.length} products cannot show.`, { reason: topIssues(notEligible) || 'not eligible', fix: productFix(notEligible) });
       if (limited.length) add('note', 'Products', `${plural(limited.length, 'product')} can show only in some places.`, { reason: topIssues(limited) || undefined });
       if (pauseOnly && !notEligible.length) add('note', 'Products', 'Google lists the products as not eligible only because the campaign is paused.');
       if (missing.length) {
         // Right after a publication Google may not have applied a new product filter yet.
-        if (settling) add('note', 'Products', `${missing.length} of ${wanted.size} products in the product filter are not listed for this campaign yet: ${listOf(missing, 3)}. Right after a publication this can take a few hours; the next check confirms it.`);
+        if (settling) add(later(), 'Products', `${missing.length} of ${wanted.size} products in the product filter are not listed for this campaign yet: ${listOf(missing, 3)}. Right after a publication this can take a few hours; the next check confirms it.`);
         else add(missing.length === wanted.size ? 'block' : 'risk', 'Products', `${missing.length} of ${wanted.size} products in the product filter are not in Merchant Center under this campaign's feed: ${listOf(missing, 3)}.`, { fix: 'Remove them from the filter, or fix the feed label.' });
       }
-      // Only the first PRODUCT_LIMIT of the feed's products were listed and the targeted read did not run: nothing can be said about the named offers.
-      if (scoped && truncated && absent.length) add('note', 'Products', `Google's list was cut at ${PRODUCT_LIMIT} products, so the check could not look at this campaign's own products.`, { fix: 'Press "Check again with Google", or open the campaign\'s Products view in Google Ads.' });
+      // Offers past what one targeted read asks for, and no complete list to look them up in, were not looked at.
+      if (beyond) add(settling ? later() : 'risk', 'Products', `${plural(beyond, 'more product')} in the product filter ${beyond === 1 ? 'was' : 'were'} not checked.`, { fix: 'Open the campaign\'s Products view in Google Ads to see them.' });
+      // Only the first PRODUCT_LIMIT of the feed's products were listed and the targeted read did not run: nothing can be said about the named offers,
+      // so this is a risk, never a green result.
+      if (scoped && truncated && absent.length) add('risk', 'Products', `Google's list was cut at ${PRODUCT_LIMIT} products, so the check could not look at this campaign's own products.`, { fix: 'Press "Check again with Google", or open the campaign\'s Products view in Google Ads.' });
       if (noRows && raw.productLinks) {
         const linked = raw.productLinks.map(r => r.productLink && r.productLink.merchantCenter && String(r.productLink.merchantCenter.merchantCenterId)).filter(Boolean);
         if (!linked.includes(merchantId)) add('block', 'Merchant Center', `Merchant Center ${merchantId} is not linked to this Google Ads account${linked.length ? ' (linked: ' + listOf(linked, 3) + ')' : ''}.`, { fix: 'Link Merchant Center to Google Ads, or pick the linked account.' });
@@ -586,7 +621,8 @@ function analyze(raw, { today = null, shippingCountries = null, apiVersion = '',
   const verdict = counts.block ? 'blocked' : counts.risk ? 'attention' : 'ready';
   const headline = counts.block ? 'Will not serve as intended: ' + findings[0].text
     : counts.risk ? `${plural(counts.risk, 'setting')} to fix before enabling.`
-      : 'Google reports nothing that would stop it serving as intended.';
+      : settleNotes ? 'Nothing found so far; Google was still processing this new campaign.'
+        : 'Google reports nothing that would stop it serving as intended.';
   return { ok: true, verdict, headline, counts, findings, facts, warnings };
 }
 
