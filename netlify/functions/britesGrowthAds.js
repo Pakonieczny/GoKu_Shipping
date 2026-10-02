@@ -10,13 +10,14 @@ export const READ_ACTIONS = Object.freeze([
   'playbookVersions', 'designStudioStatus', 'campaignOptions', 'servingCheck',
   'adGroups', 'adGroupDetail', 'adDesignSavedWorkspaces', 'adDesignStatus',
   'creativeStatus', 'campaignVersions', 'campaignVersionDetail', 'genStatus',
-  'diagRunStatus', 'growthResearchStatus', 'growthResearchDossiers', 'campaignGoalEvidence', 'productDemandEvidence', 'growthProductDemand'
+  'diagRunStatus', 'growthResearchStatus', 'growthResearchDossiers', 'campaignGoalEvidence', 'receiptDiagnostics', 'productDemandEvidence', 'growthProductDemand'
 ]);
 const allowed = new Set(READ_ACTIONS);
 const demandReaders = new WeakMap();
 const ENV_NAMES = ['BRITES_GROWTH_ADMIN_KEY', 'BRITES_GROWTH_SANDBOX',
   'BRITES_GROWTH_NAMESPACE', 'FIREBASE_PROJECT_ID', 'FIREBASE_CLIENT_EMAIL',
-  'FIREBASE_PRIVATE_KEY'];
+  'FIREBASE_PRIVATE_KEY', 'GADS_CONVERSION_ACTION', 'GADS_DATAMANAGER_REFRESH_TOKEN',
+  'GADS_DATAMANAGER_CLIENT_ID', 'GADS_DATAMANAGER_CLIENT_SECRET', 'GADS_CLIENT_ID', 'GADS_CLIENT_SECRET'];
 const fields = (body, keys) => Object.fromEntries(keys.filter(k => body[k] !== undefined).map(k => [k, body[k]]));
 export function productId(value) {
   const raw = String(value || '').trim();
@@ -48,6 +49,10 @@ export function createHandler(deps = {}) {
     const module = await import('./_britesGrowthDemandStore.js');
     return (module.default || module).createDemandStore(research(env)).read(ids);
   });
+  const readReceipts = deps.readReceipts || (async (env, options) => {
+    const module = await import('./_britesGrowthReceiptObserver.js');
+    return (module.default || module).createReceiptObserver({env, db: core.makeDb(env)}).read(options);
+  });
   return async req => {
     const h = { 'Content-Type': 'application/json', 'Cache-Control': 'no-store',
       'X-Content-Type-Options': 'nosniff' };
@@ -76,6 +81,10 @@ export function createHandler(deps = {}) {
         return json({ ok: false, code: 'SANDBOX_READ_ONLY', error: 'This sandbox reads saved evidence and Google Ads reports. This action cannot change campaigns, spend, conversions or run paid AI.' }, 403);
       }
       if (action === 'growthResearchStatus') return json(await research(env).status());
+      if (action === 'receiptDiagnostics') {
+        if (Object.keys(body).some(key => !['action', 'limit', 'maxMs'].includes(key))) return json({error: 'Receipt diagnostics accept only bounded batch size and read budget. Request IDs come from saved server receipts.'}, 400);
+        return json({...await readReceipts(env, fields(body, ['limit', 'maxMs'])), sandboxReadOnly: true});
+      }
       if (action === 'growthProductDemand') {
         if (!Array.isArray(body.productIds) || body.productIds.length > 20) return json({ error: 'Request at most 20 exact product IDs.' }, 400);
         const requestedIds = body.productIds.map(productId);

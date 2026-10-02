@@ -1,5 +1,8 @@
 import core from './_britesGrowth.js';
 import claude from './_googleAdsClaude.js';
+import policy from './_britesConcierge.js';
+
+const policyGuide=policy.createPolicyGuide();
 
 function environment(){return Object.fromEntries(['FIREBASE_PROJECT_ID','FIREBASE_CLIENT_EMAIL','FIREBASE_PRIVATE_KEY','SHOPIFY_STORE','SHOPIFY_CLIENT_ID','SHOPIFY_CLIENT_SECRET','BRITES_GROWTH_NAMESPACE','ANTHROPIC_API_KEY'].map(k=>[k,Netlify.env.get(k)]));}
 function allowedOrigin(req){const origin=req.headers.get('Origin');return !origin||['https://britesjewelry.com','https://www.britesjewelry.com',new URL(req.url).origin].includes(origin);}
@@ -15,7 +18,22 @@ export default async (req,context) => {
     const history=Array.isArray(body.history)?body.history.filter(x=>x&&['user','assistant'].includes(x.role)).slice(-12).map(x=>({role:x.role,content:core.clean(x.content,2000)})):[];
     const preferences=body.preferences&&typeof body.preferences==='object'&&!Array.isArray(body.preferences)?core.shopperPreferences(body.preferences):{};
     const shopperContext=body.context&&typeof body.context==='object'&&!Array.isArray(body.context)?{currentHandle:core.clean(body.context.currentHandle,180),productHandles:Array.isArray(body.context.productHandles)?body.context.productHandles.slice(0,6).map(h=>core.clean(h,180)):[],currency:/^[A-Z]{3}$/.test(body.context.currency||'')?body.context.currency:null}:{};
-    const answer=await core.concierge({service,shopify,message:body.message,history,preferences,context:shopperContext,env,ai:await runtimeAI(service,env)});await service.event('message');return json(answer);
+    const policyTask=Promise.resolve().then(()=>policyGuide.answer({message:body.message,history})).catch(()=>policy.unavailableAnswer({message:body.message,history}));
+    const policyClassification=policy.classify(body.message,history);
+    if(policyClassification.policyOnly){const guidance=await policyTask||policy.unavailableAnswer({message:body.message,history});const answer={schema:1,...guidance,preferences:core.shopperPreferences({...preferences,...(!preferences.currency&&shopperContext.currency?{currency:shopperContext.currency}:{})}),products:[],meanings:[],actions:[],checkedAt:Date.now(),live:guidance?.policyKnowledge?.status==='verified',aiUsed:false};await service.event('message');return json(answer);}
+    const [answer,guidance]=await Promise.all([core.concierge({service,shopify,message:body.message,history,preferences,context:shopperContext,env,ai:await runtimeAI(service,env)}),policyTask]);
+    if(guidance){
+      const generic=/^Shipping timing and returns depend on the order and destination\./.test(answer.reply||'');
+      let prior=generic?'':answer.reply;
+      // Core's generic policy reply can obscure an unapplied foreign-currency
+      // item budget. Preserve that fact when a gift search includes policies.
+      if(generic&&answer.currencyMismatch&&answer.products?.[0]?.currency&&answer.preferences?.budgetCurrency)prior='Catalogue prices are shown in '+answer.products[0].currency+'. I haven’t applied your '+answer.preferences.budgetCurrency+' budget to those prices.';
+      answer.reply=(prior?prior+'\n\n':'')+guidance.reply;
+      answer.question=answer.requestedAction?null:guidance.question;
+      answer.policyOnly=false;
+      answer.policyLinks=guidance.policyLinks;answer.policyKnowledge=guidance.policyKnowledge;answer.policyUnavailable=guidance.policyUnavailable;
+    }
+    await service.event('message');return json(answer);
   }catch(error){return json({error:'I couldn’t check the live selection just now. Please try again or browse the shop.',retryable:true},503);}
 };
 export const config = { path: '/api/concierge' };

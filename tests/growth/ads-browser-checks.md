@@ -8,6 +8,8 @@ Save any verification screenshot outside the repository in the operator's privat
 
 The two labelled market scenarios check pooled-volume and research-language rendering. Pooled volumes must not imply country-specific demand or performance. The research-language scenario must call English a storefront-supported research hypothesis, retain unknown actual campaign language, and show a safe source link. Saved detail sampling must show omitted counts without changing the report totals.
 
+For a current exact-product fixture, **Copy research and measured demand** must retain pooled markets, research-language uncertainty and unvalidated conversion labels. Stale, foreign or changed-version demand must not expose that export. **Check saved conversion receipts** shows clearly simulated provider receipt counts, separate from unchanged individual order records; real provider verification uses the protected read-only API.
+
 Local checks:
 
 ```sh

@@ -12,6 +12,8 @@ The sandbox is `https://brites-growth-sandbox.netlify.app`, Netlify project ID `
 
 Private controller state is read through `GET /api/growth/status` and `POST /api/growth/checkpoint-read`. Use `POST /api/growth/checkpoint` to preserve implementation progress, test evidence, blockers, next work and deployment identity. Private execution instructions are stored separately from public code.
 
+Before writing or deploying, use authenticated `POST /api/growth/controller` with `{action:"claim",owner:<unique-run-name>,leaseMinutes:45}`. A busy result means another writer owns implementation; continue independent read-only research. Keep the returned token private. Renew it before expiry with `action:"renew"`; save the checkpoint with `owner`, `token`, `expectedUpdatedAt` from the last checkpoint read, and `value`. Active leases reject foreign writes, and revision checks reject stale snapshots. Release the lease after saving with `action:"release"`. `action:"read"` exposes only the owner/expiry, never the token. Claims and renewals respect the stored hard stop. Preserve legacy checkpoint leases during the initial transition.
+
 ## API operations
 
 | Route | Access | Purpose |
@@ -33,6 +35,7 @@ Private controller state is read through `GET /api/growth/status` and `POST /api
 | `POST /api/growth/sync` | Operator | Advance catalogue mirror by one page |
 | `POST /api/growth/blocker` | Operator | Queue a specific access blocker |
 | `POST /api/growth/control` | Operator | Pause/resume or configure bounded runtime inference |
+| `POST /api/growth/controller` | Operator | Atomically claim, renew, inspect or release an implementation lease |
 | `POST /api/concierge` | Public, rate limited | Live discovery, questions and approved knowledge |
 
 Research source schema: `{id,url,title,excerpt,checkedAt,reviewed:true}`. Factual claims require `{productId,claim,quote,sourceIds}`. Competitor records carry their own currency and explicitly unknown/disclosed/estimated spending. Recommendations use `basis:"hypothesis"` and include source IDs, a concrete action and measurement. Meanings use `kind:"interpretation"` and cultural context. Unmatched identities, unsupported quotes, absent citations and partial research cannot become approved dossiers. A partial draft cannot overwrite approved research. Completed dossiers mark every matching ranked entry complete without deleting its individual SKU sales evidence.
@@ -42,6 +45,8 @@ Product issues require exact current-product evidence, a recent review and an ex
 ## Advertising
 
 The existing research collector receives `sharedProductKnowledge` for exact selected products. Saved competitor offers and intent inform test hypotheses; current landing/product sources remain the only commercial fact authority. `growthResearchStatus` and `growthResearchDossiers` are protected read actions in the ad app. Its Product research view shares the same dossiers, while styling is isolated from the existing console.
+
+The copyable research-and-demand brief accepts only fresh exact-product, current-dossier-version evidence. It retains native currencies, pooled-market labels, language hypotheses, missing values and tracking limitations. Product holds keep the export marked corrective research. Copying a brief never changes a campaign or runs inference.
 
 ## Storefront installation
 

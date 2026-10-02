@@ -1,5 +1,6 @@
 import core from './_britesGrowth.js';
 import demandStore from './_britesGrowthDemandStore.js';
+import controllerStore from './_britesGrowthController.js';
 
 function environment(){const names=['FIREBASE_PROJECT_ID','FIREBASE_CLIENT_EMAIL','FIREBASE_PRIVATE_KEY','SHOPIFY_STORE','SHOPIFY_CLIENT_ID','SHOPIFY_CLIENT_SECRET','BRITES_GROWTH_NAMESPACE','BRITES_GROWTH_ADMIN_KEY'];return Object.fromEntries(names.map(k=>[k,Netlify.env.get(k)]));}
 function headers(req){const origin=req.headers.get('Origin');const allowed=origin&&(/https:\/\/(?:www\.)?britesjewelry\.com$/.test(origin)||origin===new URL(req.url).origin);return {'Content-Type':'application/json','Cache-Control':'no-store','Vary':'Origin',...(allowed?{'Access-Control-Allow-Origin':origin,'Access-Control-Allow-Headers':'Content-Type, X-Growth-Key, X-Edit-Passcode','Access-Control-Allow-Methods':'GET, POST, OPTIONS'}:{})};}
@@ -49,7 +50,15 @@ export default async (req,context) => {
     if(op==='blocker')return json(await service.block(body));
     if(op==='sync')return json(await service.syncCatalogue());
     if(op==='control'){const allowed={};for(const k of ['enabled','aiEnabled'])if(typeof body[k]==='boolean')allowed[k]=body[k];if(body.aiDailyUsdCap!=null){const n=Number(body.aiDailyUsdCap);if(!Number.isFinite(n)||n<0||n>25)return json({error:'Daily runtime cap must be between 0 and 25 USD.'},400);allowed.aiDailyUsdCap=n;}await service.state().set({...allowed,updatedAt:Date.now()},{merge:true});return json({ok:true});}
-    if(op==='checkpoint'){const value=body.value;if(!value||JSON.stringify(value).length>250000)return json({error:'A bounded checkpoint is required.'},400);await service.col('State').doc('checkpoint').set({...value,updatedAt:Date.now()});return json({ok:true});}
+    if(op==='controller'){
+      const controller=controllerStore.createController(service);
+      if(body.action==='read')return json(await controller.read());
+      if(body.action==='claim')return json(await controller.claim(body.owner,body.leaseMinutes));
+      if(body.action==='renew')return json(await controller.renew(body.owner,body.token,body.leaseMinutes));
+      if(body.action==='release')return json(await controller.release(body.owner,body.token));
+      return json({error:'Use a supported controller action.'},400);
+    }
+    if(op==='checkpoint')return json(await controllerStore.createController(service).save(body.value,{owner:body.owner,token:body.token,expectedUpdatedAt:body.expectedUpdatedAt}));
     if(op==='checkpoint-read'){const s=await service.col('State').doc('checkpoint').get();return json({checkpoint:s.exists?s.data():null});}
     if(op==='test'){await service.col('Tests').add({scenario:core.clean(body.scenario,150),result:core.clean(body.result,50),evidence:core.clean(body.evidence,6000),at:Date.now()});return json({ok:true});}
     return json({error:'Unknown operation.'},404);

@@ -346,6 +346,13 @@ test('missing speech support hides narration and preserves all product actions',
   assert.equal(h.button('Read aloud').hidden, true); assert.equal(h.errors.length, 0);
   assert.equal(JSON.parse(h.window.sessionStorage.getItem('brites-sandbox-cart')).length, 1);
 });
+test('policy answers preserve visible product ordinals and recheck them on the next shopper request', async t => {
+  const h=makeWidget(t,{answer:body=>response(body.message==='Can I return it?'?{schema:1,reply:'Check the current refund policy.',question:null,preferences:fixtureAnswer.preferences,products:[],meanings:[],actions:[],policyOnly:true,policyKnowledge:{status:'verified'}}:fixtureAnswer)});
+  h.open();await h.ask();const handles=fixtureAnswer.products.map(p=>p.handle);
+  await h.ask('Can I return it?');assert.equal(h.root.querySelector('.status').textContent,'Shop policy checked just now.');
+  const saved=JSON.parse(h.window.sessionStorage.getItem('brites-concierge-v1'));assert(saved);assert.deepEqual(saved.productHandles,handles);
+  await h.ask('Open the first piece');const requests=h.network.filter(n=>n.body?.message);assert.deepEqual(requests.at(-1).body.context.productHandles,handles);assert.equal(h.errors.length,0);
+});
 
 test('request errors show a recoverable expression without breaking ordinary shop controls', async t => {
   const h = makeWidget(t, {answer: async () => response({error: 'Synthetic service recovery'}, 503)}); h.open(); await h.ask();

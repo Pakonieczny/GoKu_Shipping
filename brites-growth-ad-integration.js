@@ -21,7 +21,7 @@
         if(op.startsWith('demand?')){const ids=new URLSearchParams(op.slice(op.indexOf('?')+1)).get('ids');if(!ids)throw Error('Choose an exact product.');return window.api('growthProductDemand',{productIds:ids.split(',')});}
         throw Error('This view reads saved product research.');
       };
-      if(!mounted)mounted=window.BritesGrowth.mount(content,{request});else(await mounted).refresh();
+      if(!mounted)mounted=window.BritesGrowth.mount(content,{request,receiptReader:()=>window.api('receiptDiagnostics',{limit:15,maxMs:20000})});else(await mounted).refresh();
     };
     nav.appendChild(button);
   }
