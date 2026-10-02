@@ -597,7 +597,7 @@
     if (!full) {
       const wash = opts.ghost ? "none" : Kd.sh === "m" ? ink + "24" : ink + "12";
       const edge = Kd.sh === "m" ? scallops(26, 52, 58, 6) : Kd.sh === "a" ? `<circle cx="60" cy="60" r="54" stroke-width="9" stroke-dasharray="14 6"/>` : `<circle cx="60" cy="60" r="54" stroke-width="7"/><circle cx="60" cy="60" r="43" stroke-width="2.4" fill="none"/>`;
-      return `<svg viewBox="0 0 120 120" aria-hidden="true" focusable="false"><defs>${tex}</defs><g${g} fill="${ink}" stroke="${ink}"><g fill="${opts.ghost ? "rgba(255,254,251,.9)" : "#fffefb"}"${opts.ghost ? ' stroke-dasharray="8 7"' : ""}>${edge}</g><circle cx="60" cy="60" r="${Kd.sh === "e" ? 41 : 48}" fill="${wash}" stroke="none"/>${iconG(Kd.ic, 60, 60, 2.1, ink, 2.8)}</g></svg>`;
+      return `<svg viewBox="0 0 120 120" aria-hidden="true" focusable="false"><defs>${tex}</defs><g${g} fill="${ink}" stroke="${ink}"><g fill="rgba(255,254,251,.08)"${opts.ghost ? ' stroke-dasharray="8 7"' : ""}>${edge}</g><circle cx="60" cy="60" r="${Kd.sh === "e" ? 41 : 48}" fill="${wash}" stroke="none"/>${iconG(Kd.ic, 60, 60, 2.1, ink, 2.8)}</g></svg>`;
     }
     const top = String((e.data && e.data.ring) || labelOf(e.type)).toUpperCase(), foot = footOf(e).toUpperCase().slice(0, 26);
     let nm = whoOf(e).toUpperCase().replace(/\s+/g, " ");
@@ -606,7 +606,7 @@
     const nfs = Math.min(9.4, (64 / Math.max(1, nm.length) - .5) / .68), tfs = top.length > 16 ? 7.4 : 8.6, ffs = foot.length > 18 ? 5.8 : 6.6;
     const sans = `font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif"`, mono = `font-family="ui-monospace,Menlo,Consolas,monospace"`;
     return `<svg viewBox="0 0 120 120" aria-hidden="true" focusable="false"><defs>${tex}<path id="${id}t" d="${arc(44.2, 158, 22, 1)}"/><path id="${id}b" d="${arc(50.6, 143, 37, 0)}"/></defs>` +
-      `<g${g} fill="${ink}" stroke="${ink}"><g fill="rgba(255,254,251,.92)">${edgeOf(Kd.sh)}</g><circle cx="60" cy="60" r="41.4" stroke-width="1.3" fill="none"/>` +
+      `<g${g} fill="${ink}" stroke="${ink}"><g fill="rgba(255,254,251,.08)">${edgeOf(Kd.sh)}</g><circle cx="60" cy="60" r="41.4" stroke-width="1.3" fill="none"/>` +
       `<text stroke="none" ${sans} font-size="${tfs}" font-weight="800" letter-spacing="1.2"><textPath href="#${id}t" startOffset="50%" text-anchor="middle">${esc(top)}</textPath></text>` +
       `<text stroke="none" ${sans} font-size="${ffs}" font-weight="800" letter-spacing="1.05"><textPath href="#${id}b" startOffset="50%" text-anchor="middle">${esc(foot)}</textPath></text>` +
       star(150, 47.4, 2.6) + star(30, 47.4, 2.6) + iconG(Kd.ic, 60, 31.5, .72, ink) +
