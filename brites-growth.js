@@ -103,7 +103,18 @@
     const header=node('header'),intro=node('div');intro.append(node('span','Shared product knowledge','eyebrow'),node('h1','Research that reaches the buyer'),node('p','Product evidence, competitor offers and recommendations for ads, buyer searches and the gift concierge.','sub'));
     const controls=node('div',null,'controls'),refresh=node('button','Refresh progress','btn'),preview=node('a','Open gift concierge','btn');refresh.type='button';preview.href=opts.conciergeUrl||'/concierge-sandbox.html';preview.target='_blank';preview.rel='noopener';controls.append(refresh,preview);header.append(intro,controls);workspace.appendChild(header);
     let key='';if(!opts.request){try{key=sessionStorage.getItem('brites-growth-key')||'';}catch(e){}}
-    async function request(op,payload){if(opts.request)return opts.request(op,payload);const r=await fetch('/api/growth/'+op,{method:payload?'POST':'GET',headers:{'Content-Type':'application/json','X-Growth-Key':key},...(payload?{body:JSON.stringify(payload)}:{})});const v=await r.json();if(!r.ok)throw Object.assign(Error(v.error||'Request failed.'),{status:r.status});return v;}
+    async function request(op,payload){
+      if(opts.request)return opts.request(op,payload);
+      let url='/api/growth/'+op,body=payload;
+      if(op.startsWith('research?')){
+        const params=new URL(op,'https://sandbox.invalid/').searchParams,raw=params.get('ids'),ids=raw?raw.split(',').map(productId):[];
+        if(payload!==undefined||params.getAll('ids').length!==1||[...params.keys()].some(name=>name!=='ids')||!ids.length||ids.length>20||ids.some(id=>!id))throw Error('Choose at most 20 exact catalogue products.');
+        // The same protected bridge supplies both dossier and its current,
+        // source-bound review packet to standalone and embedded workspaces.
+        url='/api/growth-ads';body={action:'growthResearchDossiers',productIds:[...new Set(ids)]};
+      }
+      const r=await fetch(url,{method:body?'POST':'GET',credentials:'same-origin',headers:{'Content-Type':'application/json','X-Growth-Key':key},...(body?{body:JSON.stringify(body)}:{})});const v=await r.json();if(!r.ok)throw Object.assign(Error(v.error||'Request failed.'),{status:r.status});return v;
+    }
     async function correctionRequest(body,{signal}={}){if(typeof opts.correctionRequest==='function')return opts.correctionRequest(body,{signal});if(opts.request)throw Error('An owner-authenticated correction reader is required.');const r=await fetch('/api/growth-corrections',{method:'POST',signal,headers:{'Content-Type':'application/json','X-Growth-Key':key},body:JSON.stringify(body)}),v=await r.json();if(!r.ok)throw Object.assign(Error(v.error||'Correction review is unavailable.'),{status:r.status});return v;}
     function clearCorrection(){correctionPanel?.destroy?.();correctionPanel=null;}
     const auth=node('form',null,'box auth'),pass=node('input');pass.type='password';pass.autocomplete='off';pass.placeholder='Operator access key';pass.setAttribute('aria-label','Operator access key');const sign=node('button','Open workspace','btn primary');sign.type='submit';auth.append(node('h2','Private research workspace'),node('p','Use the sandbox operator key to see saved research and sales evidence.','sub'),pass,sign);auth.hidden=!!opts.request;workspace.appendChild(auth);
