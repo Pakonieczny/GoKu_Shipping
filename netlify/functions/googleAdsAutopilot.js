@@ -1924,11 +1924,12 @@ async function applyApproval(id, ctrl, { waitForLeaseMs = 0, submission = false 
   // running one. Still busy after that: this draft stays APPROVED with the reason shown, to retry.
   // A complete ad publishes only from its own card (publishAdDesignSubmission: Merchant check, then its films);
   // one found Approved anywhere else returns to that card, with nothing sent.
+  // A saved reason keeps when it was saved (lastErrorAt) so its card shows the time; a new attempt clears both.
   for(const giveUp=Date.now()+(Number(waitForLeaseMs)||0);;){try{
-  await f.db.runTransaction(async tx=>{const s=await tx.get(ref);if(!s.exists)throw new Error("Draft not found.");it=s.data();reopened=it.type==='adDesignSubmission'&&!submission&&it.status==="APPROVED";if(reopened){tx.update(ref,{status:"PENDING",pipelineReview:null,publishRequestedAt:null,lastError:SUBMISSION_ON_CARD});return;}const lease=await tx.get(lock);if(lease.exists&&lease.data().until>Date.now())throw Object.assign(new Error("Another publication is still running. Its result must finish before this draft can be sent."),{leaseBusy:true});
+  await f.db.runTransaction(async tx=>{const s=await tx.get(ref);if(!s.exists)throw new Error("Draft not found.");it=s.data();reopened=it.type==='adDesignSubmission'&&!submission&&it.status==="APPROVED";if(reopened){tx.update(ref,{status:"PENDING",pipelineReview:null,publishRequestedAt:null,lastError:SUBMISSION_ON_CARD,lastErrorAt:Date.now()});return;}const lease=await tx.get(lock);if(lease.exists&&lease.data().until>Date.now())throw Object.assign(new Error("Another publication is still running. Its result must finish before this draft can be sent."),{leaseBusy:true});
     if(it.status!=="APPROVED")throw new Error(it.status==="APPLIED"?"This draft was already published.":"Draft is not available for publication; another attempt may be running.");
-    assertCreativeReviewed(it);tx.update(ref,{status:"APPLYING",applyAttempt:attempt,applyStartedAt:Date.now(),lastError:null});tx.set(lock,{owner:attempt,until:Date.now()+600000});
-  });break;}catch(e){if(!e.leaseBusy)throw e;if(Date.now()>=giveUp){if(it&&it.status==="APPROVED")await ref.update(it.type==='adDesignSubmission'?{status:"PENDING",pipelineReview:null,lastError:e.message+" Approve ad again once that finishes."}:{lastError:e.message+" Publish it again once that finishes."}).catch(()=>{});throw e;}await new Promise(r=>setTimeout(r,5000));}}
+    assertCreativeReviewed(it);tx.update(ref,{status:"APPLYING",applyAttempt:attempt,applyStartedAt:Date.now(),lastError:null,lastErrorAt:null});tx.set(lock,{owner:attempt,until:Date.now()+600000});
+  });break;}catch(e){if(!e.leaseBusy)throw e;if(Date.now()>=giveUp){if(it&&it.status==="APPROVED")await ref.update(it.type==='adDesignSubmission'?{status:"PENDING",pipelineReview:null,lastError:e.message+" Approve ad again once that finishes.",lastErrorAt:Date.now()}:{lastError:e.message+" Publish it again once that finishes.",lastErrorAt:Date.now()}).catch(()=>{});throw e;}await new Promise(r=>setTimeout(r,5000));}}
   if(reopened)throw new Error(SUBMISSION_ON_CARD);
   let dispatched=false, publicationResult=null, purchaseGoals=null, brandExclusions=null;
   try {
@@ -2024,7 +2025,7 @@ async function applyApproval(id, ctrl, { waitForLeaseMs = 0, submission = false 
   } catch(e) {
     // Nothing reached Google, or Google refused it: a complete ad returns to its own card (its prepared plan kept) to approve again there.
     const unknown=dispatched&&!ctrl.dryRun&&!e.definiteResponse,onCard=!unknown&&it.type==='adDesignSubmission';
-    await ref.update({status:unknown?"APPLY_UNKNOWN":onCard?"PENDING":"APPROVED",...(onCard?{pipelineReview:null}:{}),lastError:String(e.message||e).slice(0,600),applyAttempt:unknown?attempt:null,needsReconciliation:unknown}).catch(()=>{});
+    await ref.update({status:unknown?"APPLY_UNKNOWN":onCard?"PENDING":"APPROVED",...(onCard?{pipelineReview:null}:{}),lastError:String(e.message||e).slice(0,600),lastErrorAt:Date.now(),applyAttempt:unknown?attempt:null,needsReconciliation:unknown}).catch(()=>{});
     if(unknown)throw new Error("Google's result could not be confirmed. Automatic retry is blocked to avoid duplicating ads. Check this draft against Google Ads before another publication attempt.");
     throw e;
   } finally {await f.db.runTransaction(async tx=>{const lease=await tx.get(lock);if(lease.exists&&lease.data().owner===attempt)tx.delete(lock);});}
@@ -11017,7 +11018,7 @@ async function dashboard(input = {}) {
     // A draft left APPLYING by a stopped worker reads as unconfirmed so Paul can reconcile it.
     const st = await f.db.collection(COL.approvals).where("status", "in", ["APPROVED","APPLYING","APPLY_UNKNOWN"]).limit(25).get();
     let lease = null; if (st.docs.some(d => d.data().status === "APPLYING")) try { const l = await f.db.collection(COL.state).doc("publicationLease").get(); lease = l.exists ? l.data() : null; } catch (e) {}
-    st.forEach(d => { const x = d.data(), stale = _staleApplying(x, lease); out.stuck.push({ id: d.id, type: x.type, summary: x.summary, status: stale ? "APPLY_UNKNOWN" : x.status, staleApplying: stale, lastError: stale ? APPLY_STALE_NOTE : x.lastError || null, creative: x.creative || null, vetted: x.vetted, payload: x.payload, validatedAt: x.validatedAt || null, publishRequestedAt: x.publishRequestedAt || null, applyStartedAt: x.applyStartedAt || null }); });
+    st.forEach(d => { const x = d.data(), stale = _staleApplying(x, lease); out.stuck.push({ id: d.id, type: x.type, summary: x.summary, status: stale ? "APPLY_UNKNOWN" : x.status, staleApplying: stale, lastError: stale ? APPLY_STALE_NOTE : x.lastError || null, lastErrorAt: x.lastErrorAt || null, creative: x.creative || null, vetted: x.vetted, payload: x.payload, validatedAt: x.validatedAt || null, publishRequestedAt: x.publishRequestedAt || null, applyStartedAt: x.applyStartedAt || null }); });
   } catch (e) {}
   // The console's feed asks for its dates; without them (the plain Kick console) the latest 20 entries.
   if (activity) { try { out.activity = await _activityPage(f, activity); } catch (e) { out.activity = { error: String(e.message || e) }; } }

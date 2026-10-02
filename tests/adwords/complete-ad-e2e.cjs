@@ -1145,11 +1145,13 @@ scenario('S4', 'S4 idempotency and reconciliation', async () => {
     st.check('Saturn: a campaign with the planned name already in Google refuses publication, sends nothing and returns the ad to its card', () => dup && dup.ok === false && /already exists/.test(dup.error || '') && !reqsIn('saturn approve duplicate').length && approval(ap.id).status === 'PENDING', () => why(dup));
     if (name) ctx.google.campaigns.get(RN('campaigns', '9500')).status = 'REMOVED';
     ctx.google.faults.push({ kind: 'definite', when: rec => audit(rec).campaigns.length > 0 });
-    step('saturn approve rejected'); const rej = st.blocked ? null : await api('publishAdDesignSubmission', { id: ap.id, hash: ap.reviewHash, planHash: ap.planHash, confirmed: true });
+    step('saturn approve rejected'); const rejFrom = Date.now(), rej = st.blocked ? null : await api('publishAdDesignSubmission', { id: ap.id, hash: ap.reviewHash, planHash: ap.planHash, confirmed: true });
     st.check('Saturn: a definite Google rejection returns the ad to its Approval card (PENDING) with the error (no reconciliation needed)', () => { const d = approval(ap.id); return rej && rej.ok === false && d.status === 'PENDING' && !d.needsReconciliation && /mutate failed/.test(d.lastError || '') && campaignsNamed('Brites · ' + p.title).filter(c => c.id !== '9500').length === 0; },
       () => JSON.stringify({ status: (approval(ap.id) || {}).status, lastError: ((approval(ap.id) || {}).lastError || '').slice(0, 200) }));
+    st.check('Saturn: the rejected Approve saves when it failed (lastErrorAt), so its card shows that time', () => { const t = approval(ap.id).lastErrorAt; return Number.isFinite(t) && t >= rejFrom && t <= Date.now(); }, () => JSON.stringify({ lastErrorAt: approval(ap.id).lastErrorAt, rejFrom }));
     step('saturn approve'); const ok = st.blocked ? null : await api('publishAdDesignSubmission', { id: ap.id, hash: ap.reviewHash, planHash: ap.planHash, confirmed: true });
-    st.check('Saturn: Approve ad after the rejection creates exactly one PAUSED campaign', () => ok && ok.status === 'APPLIED' && approval(ap.id).status === 'APPLIED' && campaignsNamed('Brites · ' + p.title).filter(c => c.id !== '9500').length === 1, () => why(ok)); }
+    st.check('Saturn: Approve ad after the rejection creates exactly one PAUSED campaign', () => ok && ok.status === 'APPLIED' && approval(ap.id).status === 'APPLIED' && campaignsNamed('Brites · ' + p.title).filter(c => c.id !== '9500').length === 1, () => why(ok));
+    st.check('Saturn: the new Approve clears the saved reason and its time', () => approval(ap.id).lastError === null && approval(ap.id).lastErrorAt === null, () => JSON.stringify({ lastError: approval(ap.id).lastError, lastErrorAt: approval(ap.id).lastErrorAt })); }
 });
 
 scenario('S5', 'S5 films refused unless the destination isolates the product', async () => {
@@ -1311,19 +1313,21 @@ scenario('S8', 'S8 adversity: interrupted approvals, generic publish, two tabs, 
   const onCard = (name, re) => st.check(name, () => { const d = approval(ap.id); return d.status === 'PENDING' && re.test(d.lastError || '') && d.pipelinePlan && d.pipelinePlan.hash === ap.planHash && d.reviewHash === ap.reviewHash && !d.pipelineReview && !d.applyAttempt && !d.needsReconciliation; },
     () => JSON.stringify(approval(ap.id) && { status: approval(ap.id).status, lastError: approval(ap.id).lastError, pipelineReview: approval(ap.id).pipelineReview, plan: (approval(ap.id).pipelinePlan || {}).hash === ap.planHash }));
   ctx.store.docs.set('Brites_GAds_State/publicationLease', { owner: 'another-approval', until: Date.now() + 60000 });
-  step('duck approve busy'); const busy = st.blocked ? null : await api('publishAdDesignSubmission', { id: ap.id, hash: ap.reviewHash, planHash: ap.planHash, confirmed: true });
+  step('duck approve busy'); const busyFrom = Date.now(), busy = st.blocked ? null : await api('publishAdDesignSubmission', { id: ap.id, hash: ap.reviewHash, planHash: ap.planHash, confirmed: true });
   st.check('Duck: Approve while another publication runs is refused and sends nothing', () => busy && busy.ok === false && /Another publication is still running/.test(busy.error || '') && !reqsIn('duck approve busy').length, () => why(busy));
   onCard('Duck: the interrupted ad returns to its Approval card (PENDING) with its prepared plan and the reason, so Approve ad publishes it with its Merchant check and films', /Another publication is still running/);
+  st.check('Duck: the interrupted Approve saves when it failed (lastErrorAt), so its card shows that time', () => { const t = approval(ap.id).lastErrorAt; return Number.isFinite(t) && t >= busyFrom && t <= Date.now(); }, () => JSON.stringify({ lastErrorAt: approval(ap.id).lastErrorAt, busyFrom }));
   ctx.store.docs.delete('Brites_GAds_State/publicationLease');
   step('duck approve generic'); const gen = st.blocked ? null : await api('approve', { id: ap.id });
   st.check('Duck: the generic approve action cannot publish a complete ad; nothing is queued or sent and it stays PENDING', () => gen && !!gen.error && !callsIn('duck approve generic').some(c => c.task === 'publishApproval') && !reqsIn('duck approve generic').length && approval(ap.id).status === 'PENDING', () => why(gen));
   // A complete ad left Approved (by an earlier version, or a race) must not publish from the generic card: that route skips the Merchant check and the films.
-  if (!st.blocked) Object.assign(approval(ap.id), { status: 'APPROVED', pipelineReview: { hash: ap.planHash, at: Date.now() }, lastError: 'Over your daily ceiling (an earlier attempt).' });
+  if (!st.blocked) Object.assign(approval(ap.id), { status: 'APPROVED', pipelineReview: { hash: ap.planHash, at: Date.now() }, lastError: 'Over your daily ceiling (an earlier attempt).', lastErrorAt: Date.now() - 3600000 });
   ctx.google.products.filter(x => p.offers.includes(x.itemId)).forEach(x => Object.assign(x, { status: 'NOT_ELIGIBLE', availability: 'OUT_OF_STOCK' }));
-  step('duck publish again generic'); const again = st.blocked ? null : await api('apply', { id: ap.id }), worker = callsIn('duck publish again generic').find(c => c.task === 'publishApproval');
+  step('duck publish again generic'); const againFrom = Date.now(), again = st.blocked ? null : await api('apply', { id: ap.id }), worker = callsIn('duck publish again generic').find(c => c.task === 'publishApproval');
   st.check('Duck: "Publish again" on a complete ad left Approved sends nothing to Google (that route skips the Merchant check and the films)', () => !reqsIn('duck publish again generic · publishApproval').length && !ctx.google.uploads.size && ![...ctx.google.campaigns.values()].some(c => c.name.startsWith('Brites · ' + p.title)),
     () => JSON.stringify(worker && worker.worker || again).slice(0, 300));
   onCard('Duck: it returns to its Approval card with its prepared plan, saying to approve it there', /Approve ad/);
+  st.check('Duck: that reason is saved with its own time, not the earlier attempt\'s', () => approval(ap.id).lastErrorAt >= againFrom, () => JSON.stringify({ lastErrorAt: approval(ap.id).lastErrorAt, againFrom }));
   step('duck approve ineligible'); const inel = st.blocked ? null : await api('publishAdDesignSubmission', { id: ap.id, hash: ap.reviewHash, planHash: ap.planHash, confirmed: true });
   st.check('Duck: from its card, Approve is refused while none of its Merchant offers can serve; nothing is sent', () => inel && inel.ok === false && /none of this product.s 2 Merchant Center offers can serve/.test(inel.error || '') && !reqsIn('duck approve ineligible').length && approval(ap.id).status === 'PENDING', () => why(inel));
   // Merchant cannot be read at all: the final guard fails closed, nothing is sent, and the ad stays on its card.
