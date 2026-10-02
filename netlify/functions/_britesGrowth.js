@@ -1,0 +1,394 @@
+'use strict';
+
+// Shared, product-bound knowledge. Ranking/sales evidence and competitive
+// recommendations stay in authenticated storage; public projections are explicit.
+const crypto = require('node:crypto');
+const CATALOG_QUERY = `query GrowthProducts($query:String!, $after:String){products(first:50,query:$query,after:$after){nodes{id handle title status onlineStoreUrl descriptionHtml productType tags updatedAt featuredImage{url altText} options{name values} variants(first:100){nodes{id title sku price availableForSale selectedOptions{name value}} pageInfo{hasNextPage endCursor}}}pageInfo{hasNextPage endCursor}}shop{name currencyCode}}`;
+const STOP_AT = Date.parse('2026-10-11T02:00:00Z');
+const clean = (v,n=500) => String(v==null?'':v).replace(/\u0000/g,'').trim().slice(0,n);
+const hash = v => crypto.createHash('sha256').update(typeof v==='string'?v:JSON.stringify(v)).digest('hex');
+const textOf = v => clean(String(v||'').replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi,' ').replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi,' ').replace(/<[^>]+>/g,' ').replace(/&nbsp;/g,' ').replace(/&amp;/g,'&').replace(/&#39;/g,"'").replace(/&quot;/g,'"').replace(/\s+/g,' '),24000);
+function publicUrl(v,storeOnly=false){try{const u=new URL(String(v));if(u.protocol!=='https:'||u.username||u.password||u.port||!u.hostname.includes('.')||/^(localhost|127\.|0\.|10\.|192\.168\.|169\.254\.|172\.(1[6-9]|2\d|3[01])\.)/.test(u.hostname))return null;if(storeOnly&&!['britesjewelry.com','www.britesjewelry.com'].includes(u.hostname))return null;return u.href;}catch{return null;}}
+function sameSecret(a,b){if(!a||!b)return false;return crypto.timingSafeEqual(Buffer.from(hash(String(a))),Buffer.from(hash(String(b))));}
+function namespace(env){const n=env.BRITES_GROWTH_NAMESPACE||'Brites_Growth_Sandbox';if(!/^Brites_Growth_(Sandbox|Live)$/.test(n))throw Error('Invalid research namespace.');return n;}
+function makeDb(env){const {Firestore}=require('@google-cloud/firestore');if(!env.FIREBASE_PROJECT_ID||!env.FIREBASE_CLIENT_EMAIL||!env.FIREBASE_PRIVATE_KEY)throw Error('Research storage is not configured.');return new Firestore({projectId:env.FIREBASE_PROJECT_ID,credentials:{client_email:env.FIREBASE_CLIENT_EMAIL,private_key:env.FIREBASE_PRIVATE_KEY.replace(/\\n/g,'\n')}});}
+function normalizeProduct(p,currency='USD',now=Date.now()){
+  const url=publicUrl(p.onlineStoreUrl,true);if(!url||p.status!=='ACTIVE')throw Error('Product is not published in the live online store.');
+  return {id:p.id,handle:clean(p.handle,180),title:clean(p.title,300),url,currency,description:textOf(p.descriptionHtml),type:clean(p.productType,100),tags:(p.tags||[]).map(t=>clean(t,100)).slice(0,80),image:publicUrl(p.featuredImage?.url)||null,imageAlt:clean(p.featuredImage?.altText,300),options:(p.options||[]).map(o=>({name:clean(o.name,100),values:(o.values||[]).map(v=>clean(v,100))})),variants:(p.variants?.nodes||[]).map(v=>({id:v.id,numericId:String(v.id).split('/').pop(),title:clean(v.title,200),sku:clean(v.sku,200),price:Number(v.price),available:!!v.availableForSale,options:v.selectedOptions||[]})).filter(v=>Number.isFinite(v.price)&&v.price>=0),variantsComplete:p.variants?.pageInfo?.hasNextPage===false,updatedAt:typeof p.updatedAt==='string'?clean(p.updatedAt,100):null,checkedAt:now};
+}
+function productProjection(p){return {id:p.id,handle:p.handle,title:p.title,url:p.url,image:p.image,imageAlt:p.imageAlt,currency:p.currency,description:p.description,type:p.type,partsOnly:/\b(?:charms?|components?|add[ -]?ons?)\b/i.test(p.type||''),options:p.options,variants:p.variants.map(v=>({id:v.id,numericId:v.numericId,title:v.title,price:v.price,available:v.available,options:v.options})),variantsComplete:p.variantsComplete,checkedAt:p.checkedAt,cartHold:p.cartHold===true,recommendationHold:p.recommendationHold===true,meaningHold:p.meaningHold===true};}
+function validIdentity(id){return /^gid:\/\/shopify\/Product\/\d+$/.test(String(id));}
+function validateDossier(d,p,now=Date.now()){
+  const errors=[],warnings=[];const bad=x=>errors.push(x);
+  if(!d||typeof d!=='object'||Array.isArray(d))return {ok:false,status:'rejected',errors:['A dossier object is required.'],warnings};
+  for(const field of ['sources','facts','competitors','meanings','recommendations','buyerIntents'])if(d[field]!=null&&!Array.isArray(d[field]))bad(field+' must be an array.');
+  for(const field of ['sources','facts','competitors','meanings','recommendations'])if(Array.isArray(d[field])&&d[field].some(x=>!x||typeof x!=='object'||Array.isArray(x)))bad(field+' entries must be objects.');
+  if(errors.length)return {ok:false,status:'rejected',errors,warnings};
+  if(!d||d.schema!==1||!validIdentity(d.productId)||d.productId!==p?.id||d.handle!==p?.handle)bad('Exact live product identity is required.');
+  if(!d?.sources?.length||d.sources.length>40)bad('Provide 1–40 inspected sources.');
+  const ids=new Set();for(const s of d?.sources||[]){if(!/^[a-zA-Z0-9:_-]{1,100}$/.test(s.id||'')||ids.has(s.id))bad('Source IDs must be valid and unique.');ids.add(s.id);if(!publicUrl(s.url)||typeof s.title!=='string'||!clean(s.title,300)||typeof s.excerpt!=='string'||!clean(s.excerpt,2000))bad('Every source requires a public HTTPS URL, title and inspected excerpt.');if(!Number.isFinite(s.checkedAt)||s.checkedAt>now+60000||now-s.checkedAt>30*86400000)bad('Source review timestamp is missing or stale.');if(s.reviewed!==true)bad('Sources must be inspected, not inferred from search snippets.');}
+  const cited=(r,field)=>{if(!r||!Array.isArray(r.sourceIds)||!r.sourceIds.length||r.sourceIds.some(id=>!ids.has(id)))bad(field+' needs available source IDs.');};
+  const canonical=v=>{try{const u=new URL(v);return u.hostname.replace(/^www\./,'')+u.pathname.replace(/\/$/,'');}catch{return null;}};
+  for(const c of d?.facts||[]){cited(c,'Product fact');const src=(d.sources||[]).find(s=>s.id===c?.sourceIds?.[0]);if(typeof c?.quote!=='string'||!clean(c?.quote,2000)||typeof src?.excerpt!=='string'||!src.excerpt.includes(c.quote))bad('A factual claim needs an exact quote from its bound source.');if(c?.productId!==p?.id)bad('Facts cannot transfer between products.');if(!src||canonical(src.url)!==canonical(p?.url))bad('Commercial product facts require the exact live product page as their bound source.');}
+  for(const c of d?.competitors||[]){cited(c,'Competitor');if(!publicUrl(c?.url)||!clean(c?.name,180))bad('Competitor offer URL/name is required.');if(c?.price!=null&&(!Number.isFinite(c.price)||c.price<0||!/^[A-Z]{3}$/.test(c.currency||'')))bad('A competitor price needs a valid amount and currency.');if(c?.spend?.status==='known'){const s=c.spend;cited(s,'Known competitor spending');const source=(d.sources||[]).find(x=>x.id===s.sourceIds?.[0]);if(!clean(s.quote,2000)||(typeof source?.excerpt!=='string'||!source.excerpt.includes(s.quote))||!/\b(?:spent|spend|spending|advertising budget|ad budget|media budget|advertising expenditure|marketing expenditure)\b/i.test(s.quote))bad('Known competitor spending needs an exact quote that explicitly discloses spending; otherwise label it unknown.');}if(c?.spend?.status==='estimate'&&(!c.spend.method||!Array.isArray(c.spend.assumptions)||!c.spend.assumptions.length||!Number.isFinite(c.spend.low)||!Number.isFinite(c.spend.high)||c.spend.low<0||c.spend.high<c.spend.low))bad('Spending estimates need a method, assumptions and bounds.');}
+  for(const m of d?.meanings||[]){cited(m,'Meaning/history');if(!clean(m?.text,1500)||!clean(m?.context,300)||m?.kind!=='interpretation')bad('Symbolism needs reviewed text, cultural context and an interpretation label.');}
+  for(const r of d?.recommendations||[]){if(!['ads','keywords','negatives','listing','concierge'].includes(r.channel)||r.basis!=='hypothesis'||!clean(r.action,2000)||!clean(r.measure,1000))bad('Recommendations need a channel, hypothesis label, action and measurement.');cited(r,'Recommendation');}
+  if(!(d?.competitors||[]).length)warnings.push('Competitor offer research is incomplete.');
+  if(!(d?.recommendations||[]).length)warnings.push('No actionable recommendations yet.');
+  if(!(d?.buyerIntents||[]).length)warnings.push('Buyer-intent research is incomplete.');
+  if(!(d?.meanings||[]).length)warnings.push('No sourced symbolism/history is available.');
+  const status=errors.length?'rejected':warnings.some(w=>/Competitor|recommendations|Buyer/.test(w))?'draft':'approved';
+  return {ok:errors.length===0,status,errors:[...new Set(errors)],warnings};
+}
+function createShopify({env,fetch=globalThis.fetch,now=Date.now}){
+  let access=null,expires=0,publicCurrency=null,publicCurrencyAt=0,publicCurrencyPending=null;
+  const publicBase='https://britesjewelry.com';
+  const adminConfigured=()=>/^[a-z0-9-]+\.myshopify\.com$/.test(env.SHOPIFY_STORE||'')&&!!env.SHOPIFY_CLIENT_ID&&typeof env.SHOPIFY_CLIENT_SECRET==='string'&&env.SHOPIFY_CLIENT_SECRET.length>=16&&!/redact|\*{2,}|^[-x•●]+$/i.test(env.SHOPIFY_CLIENT_SECRET);
+  async function publicJson(path){const r=await fetch(publicBase+path,{headers:{Accept:'application/json','Cache-Control':'no-cache'},signal:AbortSignal.timeout(18000),redirect:'error'});if(r.status===404)return null;if(!r.ok)throw Error('The published storefront could not be checked.');const data=await r.json();if(!data||typeof data!=='object')throw Error('The published storefront response is invalid.');return data;}
+  async function storefrontCurrency(){if(publicCurrency&&now()-publicCurrencyAt<60000)return publicCurrency;if(publicCurrencyPending)return publicCurrencyPending;publicCurrencyPending=(async()=>{const cart=await publicJson('/cart.js');if(!/^[A-Z]{3}$/.test(cart?.currency||''))throw Error('Current storefront currency could not be verified.');publicCurrency=cart.currency;publicCurrencyAt=now();return publicCurrency;})();try{return await publicCurrencyPending;}finally{publicCurrencyPending=null;}}
+  function fromPublic(p,currency,priceInCents){
+    if(!p||!/^\d+$/.test(String(p.id))||!/^[-_a-z0-9]{1,180}$/.test(p.handle||''))throw Error('The published product identity could not be verified.');
+    const optionNames=(p.options||[]).map((o,i)=>typeof o==='string'?o:o.name||'Option '+(i+1));
+    const variants=(p.variants||[]).map(v=>({id:'gid://shopify/ProductVariant/'+v.id,title:v.title,sku:v.sku,price:priceInCents?Number(v.price)/100:Number(v.price),availableForSale:v.available===true,selectedOptions:optionNames.map((name,i)=>({name,value:clean(v.options?.[i]??v['option'+(i+1)],100)}))}));
+    const rawImage=p.featured_image||p.image?.src||p.images?.[0]?.src||p.images?.[0];const image=typeof rawImage==='string'?(rawImage.startsWith('//')?'https:'+rawImage:rawImage):null;
+    const result=normalizeProduct({id:'gid://shopify/Product/'+p.id,handle:p.handle,title:p.title,status:'ACTIVE',onlineStoreUrl:publicBase+'/products/'+p.handle,descriptionHtml:p.description||p.body_html,productType:p.type||p.product_type,tags:Array.isArray(p.tags)?p.tags:String(p.tags||'').split(',').map(x=>x.trim()),updatedAt:p.updated_at,featuredImage:{url:image,altText:p.title},options:optionNames.map((name,i)=>({name,values:[...new Set(variants.map(v=>v.selectedOptions[i]?.value).filter(Boolean))]})),variants:{nodes:variants,pageInfo:{hasNextPage:variants.length>=250}}},currency,now());
+    result.source=priceInCents?'published_product_ajax':'published_catalogue_json';return result;
+  }
+  async function publicByHandle(handle){if(!/^[a-z0-9_-]{1,180}$/.test(handle||''))throw Error('Invalid product handle.');const [p,currency]=await Promise.all([publicJson('/products/'+handle+'.js'),storefrontCurrency()]);if(!p)return null;if(p.handle!==handle)throw Error('Published product does not match the requested handle.');return fromPublic(p,currency,true);}
+  async function publicSearch(terms){
+    const tokens=[...new Set((clean(terms,250).toLowerCase().match(/[\p{L}\p{N}-]+/gu)||[]).filter(t=>!['or','and'].includes(t)).slice(0,8))];if(!tokens.length)return {products:[],pageInfo:{hasNextPage:false,endCursor:null},access:'public_storefront'};
+    async function suggestions(q){const params=new URLSearchParams({q,'resources[type]':'product','resources[limit]':'10','resources[options][unavailable_products]':'hide'}),d=await publicJson('/search/suggest.json?'+params);return d?.resources?.results?.products||[];}
+    let found=await suggestions(tokens.join(' '));if(!found.length&&tokens.length>1)found=(await Promise.all(tokens.slice(0,3).map(suggestions))).flat();
+    const handles=[...new Set(found.flatMap(p=>{if(/^[a-z0-9_-]{1,180}$/.test(p.handle||''))return [p.handle];try{const u=new URL(p.url,publicBase),m=u.pathname.match(/^\/(?:[a-z]{2}(?:-[a-z]{2})?\/)?products\/([a-z0-9_-]+)\/?$/i);return publicUrl(u.href,true)&&m?[m[1]]:[];}catch{return [];}}))].slice(0,15);
+    const checks=await Promise.allSettled(handles.map(publicByHandle)),verified=checks.filter(x=>x.status==='fulfilled'&&x.value).map(x=>x.value);
+    if(handles.length&&!verified.length&&checks.some(x=>x.status==='rejected'))throw Error('The matching published pieces could not be checked.');
+    return {products:verified,pageInfo:{hasNextPage:false,endCursor:null},access:'public_storefront',unverifiedCount:checks.filter(x=>x.status==='rejected').length};
+  }
+  async function publicProducts(query,after){
+    if(query){const h=/^handle:([a-z0-9_-]{1,180})$/.exec(query);if(h)return {products:[await publicByHandle(h[1])].filter(Boolean),pageInfo:{hasNextPage:false,endCursor:null},access:'public_storefront'};return publicSearch(query.replace(/\b(?:title|tag|sku|product_type):/g,''));}
+    const page=/^public:\d+$/.test(after||'')?Number(after.slice(7)):1;if(page<1||page>10000)throw Error('Invalid public catalogue page.');
+    // The public product list is an observed, read-only Shopify shop route,
+    // rather than the authenticated Admin API. Mirror only public records and
+    // refresh individual product.js before any shopper action.
+    const d=await publicJson('/products.json?limit=250&page='+page);if(!Array.isArray(d?.products))throw Error('Published catalogue pagination is unavailable.');
+    const currency=await storefrontCurrency();
+    return {products:d.products.map(p=>fromPublic(p,currency,false)),pageInfo:{hasNextPage:d.products.length===250,endCursor:d.products.length===250?'public:'+(page+1):null},access:'public_catalogue'};
+  }
+  async function token(){if(access&&now()<expires-60000)return access;const store=env.SHOPIFY_STORE;if(!/^[a-z0-9-]+\.myshopify\.com$/.test(store||'')||!env.SHOPIFY_CLIENT_ID||!env.SHOPIFY_CLIENT_SECRET)throw Error('Live Shopify catalogue access is not configured.');const r=await fetch('https://'+store+'/admin/oauth/access_token',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({grant_type:'client_credentials',client_id:env.SHOPIFY_CLIENT_ID,client_secret:env.SHOPIFY_CLIENT_SECRET}),signal:AbortSignal.timeout(12000)});const d=await r.json();if(!r.ok||!d.access_token)throw Error('Shopify authorization failed; queue reconnection and continue independent work.');access=d.access_token;expires=now()+Number(d.expires_in||86400)*1000;return access;}
+  async function products(query,after=null){if(!adminConfigured()||String(after||'').startsWith('public:'))return publicProducts(query,after);try{const r=await fetch('https://'+env.SHOPIFY_STORE+'/admin/api/2026-07/graphql.json',{method:'POST',headers:{'Content-Type':'application/json','X-Shopify-Access-Token':await token()},body:JSON.stringify({query:CATALOG_QUERY,variables:{query:'status:active AND published_status:published'+(query?' AND ('+query+')':''),after}}),signal:AbortSignal.timeout(20000)});const d=await r.json();if(!r.ok||d.errors?.length)throw Error('Live catalogue query failed.');return {products:d.data.products.nodes.map(p=>normalizeProduct(p,d.data.shop.currencyCode,now())),pageInfo:d.data.products.pageInfo,access:'admin'};}catch{return publicProducts(query,null);}}
+  async function search(terms){if(!adminConfigured())return publicSearch(terms);const tokens=clean(terms,250).toLowerCase().match(/[\p{L}\p{N}-]+/gu)||[];const stems=[...new Set(tokens.slice(0,8).map(t=>t.length>4&&t.endsWith('s')&&!t.endsWith('ss')?t.slice(0,-1):t))];const query=stems.flatMap(t=>['title:'+t+'*','tag:'+t+'*']).join(' OR ');return products(query);}
+  async function byHandle(handle){if(!/^[a-z0-9_-]{1,180}$/.test(handle||''))throw Error('Invalid product handle.');const r=await products('handle:'+handle);return r.products.find(p=>p.handle===handle)||null;}
+  return {products,search,byHandle};
+}
+function createGrowthService({db,env={},shopify,now=Date.now}){
+  const ns=namespace(env), col=suffix=>db.collection(ns+'_'+suffix), state=()=>col('State').doc('control'), pid=id=>hash(id).slice(0,40);
+  async function setup(){const ref=state();await db.runTransaction(async tx=>{const s=await tx.get(ref);if(!s.exists)tx.set(ref,{schema:1,enabled:true,stopAt:STOP_AT,createdAt:now(),catalogueCursor:null,catalogueComplete:false,aiEnabled:false,aiDailyUsdCap:1});});return (await ref.get()).data();}
+  async function getProduct(id){const s=await col('Products').doc(pid(id)).get();return s.exists?s.data():null;}
+  async function saveProducts(items){for(let i=0;i<items.length;i+=100){const b=db.batch();for(const p of items.slice(i,i+100)){if(!validIdentity(p.id)||!publicUrl(p.url,true))throw Error('Invalid catalogue product.');b.set(col('Products').doc(pid(p.id)),p);}await b.commit();}}
+  async function syncCatalogue(){const ctrl=await setup();if(!ctrl.enabled||now()>=Math.min(ctrl.stopAt||STOP_AT,STOP_AT))return {stopped:true};const result=await shopify.products('',ctrl.catalogueCursor||null);await saveProducts(result.products);await state().set({catalogueCursor:result.pageInfo.hasNextPage?result.pageInfo.endCursor:null,catalogueComplete:!result.pageInfo.hasNextPage,lastCatalogueSyncAt:now()}, {merge:true});return {count:result.products.length,complete:!result.pageInfo.hasNextPage};}
+  async function importRanks(rows){if(!Array.isArray(rows)||rows.length>200)throw Error('Import at most 200 ranked entries.');for(const row of rows){if(!Number.isInteger(row.rank)||row.rank<1||row.rank>200||!clean(row.title,300))throw Error('Rank and title are required.');if(row.productId&&!validIdentity(row.productId))throw Error('Invalid matched product ID.');const ref=col('Queue').doc('rank-'+String(row.rank).padStart(3,'0'));await db.runTransaction(async tx=>{const prior=await tx.get(ref);const old=prior.exists?prior.data():{};const data={rank:row.rank,title:clean(row.title,300),handle:clean(row.handle,180),sku:clean(row.sku,500),orders:Number(row.orders)||null,theme:clean(row.theme,180),updatedAt:now()};if(!prior.exists)Object.assign(data,{status:'pending_match',attempts:0,createdAt:now()});const changedProduct=!!(row.productId&&row.productId!==old.productId),changedHandle=!!(prior.exists&&old.handle&&data.handle&&old.handle!==data.handle);if(row.productId)data.productId=row.productId;if(changedProduct||changedHandle)Object.assign(data,{status:row.productId?'pending_research':'pending_match',productId:row.productId||null,attempts:0,retryAt:0,leaseToken:null,leaseOwner:null,leaseUntil:0,dossierVersion:null,completedAt:null,match:null});tx.set(ref,data,{merge:true});});}return {imported:rows.length};}
+  async function claim(kind='research',owner='work-controller'){const ctrl=await setup();if(!ctrl.enabled||now()>=Math.min(ctrl.stopAt||STOP_AT,STOP_AT))return {stopped:true};const all=await col('Queue').get();const candidates=all.docs.map(d=>({ref:d.ref,...d.data()})).filter(x=>x.rank<=100&&x.status!=='complete'&&x.status!=='blocked'&&Number(x.attempts||0)<5&&!(x.retryAt>now())&&(!x.leaseUntil||x.leaseUntil<=now())).sort((a,b)=>a.rank-b.rank);for(const x of candidates){const token=crypto.randomUUID();const result=await db.runTransaction(async tx=>{const s=await tx.get(x.ref);const row=s.data();if(row.status==='complete'||row.status==='blocked'||row.leaseUntil>now()||row.retryAt>now())return null;const patch={leaseToken:token,leaseOwner:clean(owner,100),leaseUntil:now()+45*60000,status:row.productId?'researching':'matching',attempts:Number(row.attempts||0)+1,claimedAt:now(),kind:clean(kind,40)};tx.update(x.ref,patch);return {...row,...patch,id:x.ref.id};});if(result)return result;}return {empty:true};}
+  async function release(id,token,patch={}){
+    const ref=col('Queue').doc(clean(id,100));let product=null,match=null;
+    if(patch.productId){
+      if(!validIdentity(patch.productId))throw Error('Invalid matched product ID.');
+      product=await getProduct(patch.productId);
+      if(!product||product.handle!==patch.handle||!publicUrl(product.url,true)||now()-product.checkedAt>3600000||product.checkedAt>now()+60000)throw Error('Match must agree with a recently checked live product and handle.');
+      const m=patch.match;
+      if(!m||!['exact_handle','exact_sku','exact_title','manual'].includes(m.method)||typeof m.evidence!=='string'||!clean(m.evidence,1000)||m.evidence.length>1000||!Number.isFinite(m.checkedAt)||now()-m.checkedAt>15*60000||m.checkedAt>now()+60000)throw Error('A product match needs a method, bounded inspected evidence and fresh verification time.');
+      match={method:m.method,evidence:clean(m.evidence,1000),checkedAt:m.checkedAt};
+    }
+    return db.runTransaction(async tx=>{
+      const s=await tx.get(ref),row=s.exists?s.data():null;
+      if(!row||!sameSecret(row.leaseToken,token)||!Number.isFinite(row.leaseUntil)||row.leaseUntil<=now())throw Error('Work lease is missing, expired or owned by another writer.');
+      const p={leaseToken:null,leaseOwner:null,leaseUntil:0,updatedAt:now()};
+      if(patch.error){p.lastError=clean(patch.error,2000);p.status=patch.blocked?'blocked':row.productId?'pending_research':'pending_match';p.retryAt=now()+Math.min(6*3600000,60000*Math.pow(2,Number(row.attempts)||1));}
+      if(product){
+        if(match.method==='exact_handle'&&row.handle!==product.handle)throw Error('Exact handle evidence does not match the ranked entry.');
+        if(match.method==='exact_title'&&textOf(row.title).toLowerCase()!==textOf(product.title).toLowerCase())throw Error('Exact title evidence does not match the ranked entry.');
+        if(match.method==='exact_sku'&&!(product.variants||[]).some(v=>v.sku&&(String(row.sku||'').split(/[\n,;|]+/).map(x=>x.trim())).includes(v.sku)))throw Error('Exact SKU evidence does not match a live product variant.');
+        Object.assign(p,{productId:product.id,handle:product.handle,match,status:'pending_research'});
+      }
+      tx.update(ref,p);return {ok:true};
+    });
+  }
+  async function saveDossier(d){const product=await getProduct(d.productId);const v=validateDossier(d,product,now());if(!v.ok)return {validation:v};const record={...d,validation:v,status:v.status,version:hash(d),savedAt:now()};const ref=col('Research').doc(pid(d.productId));await db.runTransaction(async tx=>{const prior=await tx.get(ref);if(prior.exists&&prior.data().status==='approved'&&v.status!=='approved')throw Error('A partial draft cannot overwrite approved research.');if(prior.exists)tx.set(col('ResearchVersions').doc(pid(d.productId)+'-'+prior.data().version),prior.data());tx.set(ref,record);});if(v.status==='approved'){const q=await col('Queue').where('productId','==',d.productId).get();const b=db.batch();for(const x of q.docs)b.update(x.ref,{status:'complete',dossierVersion:record.version,completedAt:now(),leaseToken:null,leaseUntil:0});await b.commit();}return {ok:true,productId:d.productId,version:record.version,validation:v};}
+  async function research(ids){const out=[];for(const id of [...new Set(ids)].slice(0,20)){if(!validIdentity(id))continue;const s=await col('Research').doc(pid(id)).get();if(s.exists)out.push(s.data());}return out;}
+  async function productIssues(ids){const out=[];for(const id of [...new Set(ids)].slice(0,100)){if(!validIdentity(id))continue;const s=await col('ProductIssues').doc(pid(id)).get();if(s.exists)out.push(s.data());}return out;}
+  async function recordProductIssue(value){
+    if(!validIdentity(value?.productId)||!Array.isArray(value.issues)||!value.issues.length||value.issues.length>20)throw Error('Provide an exact product ID and 1–20 reviewed issues.');
+    const issues=value.issues.map(issue=>{
+      if(!issue||!/^[a-z0-9_-]{1,100}$/.test(issue.id||'')||!['identity','style','options','material','matching','history','content'].includes(issue.kind)||typeof issue.detail!=='string'||!clean(issue.detail,3000)||!['open','resolved'].includes(issue.status||'open'))throw Error('Product issues need a valid ID, kind, detail and status.');
+      const critical=['identity','style','options','material','matching'].includes(issue.kind),blocks=[...new Set([...(critical?['recommendation','cart']:['meaning']),...(Array.isArray(issue.blocks)?issue.blocks.filter(x=>['recommendation','cart','meaning'].includes(x)):[])])];
+      const evidence=(Array.isArray(issue.evidence)?issue.evidence:[]).slice(0,12).map(e=>typeof e==='string'?{text:clean(e,1500),url:null,checkedAt:null}:{text:clean(e?.text||e?.quote,1500),url:publicUrl(e?.url)||null,checkedAt:Number.isFinite(e?.checkedAt)?e.checkedAt:null});
+      return {id:issue.id,kind:issue.kind,detail:clean(issue.detail,3000),status:issue.status||'open',blocks,evidence,updatedAt:now()};
+    });
+    if(new Set(issues.map(x=>x.id)).size!==issues.length)throw Error('Product issue IDs must be unique.');
+    const ref=col('ProductIssues').doc(pid(value.productId));
+    const record=await db.runTransaction(async tx=>{const old=await tx.get(ref),prior=old.exists?old.data():{productId:value.productId,issues:[],createdAt:now()};const merged=new Map((Array.isArray(prior.issues)?prior.issues:[]).map(x=>[x.id,x]));for(const issue of issues)merged.set(issue.id,issue);if(merged.size>100)throw Error('Review the issue archive before adding more; unresolved holds cannot be discarded.');const data={productId:value.productId,issues:[...merged.values()],createdAt:prior.createdAt||now(),updatedAt:now()};tx.set(ref,data);return data;});
+    return {ok:true,productId:value.productId,holds:productIssueHolds(record)};
+  }
+  async function status(){const [ctrl,q,rs,b]=await Promise.all([setup(),col('Queue').get(),col('Research').get(),col('Blockers').get()]);const rows=q.docs.map(x=>({id:x.id,...x.data()})).sort((a,b)=>a.rank-b.rank);return {schema:1,control:ctrl,queue:rows,counts:{ranked:rows.filter(x=>x.rank<=100).length,matched:rows.filter(x=>x.rank<=100&&x.productId).length,complete:rows.filter(x=>x.rank<=100&&x.status==='complete').length,approvedDossiers:rs.docs.filter(x=>x.data().status==='approved').length,drafts:rs.docs.filter(x=>x.data().status==='draft').length},blockers:b.docs.map(x=>({id:x.id,...x.data()})),at:now()};}
+  async function block(value){if(!/^[a-z0-9-]{1,100}$/.test(value.id||''))throw Error('Invalid blocker ID.');await col('Blockers').doc(value.id).set({task:clean(value.task,300),detail:clean(value.detail,2500),status:clean(value.status||'queued_for_morning',100),at:now()},{merge:true});return {ok:true};}
+  async function event(type,data={}){const allowed=['opened','dismissed','message','product_opened','cart_requested','cart_added','cart_failed','api_error','test'];if(!allowed.includes(type))throw Error('Invalid event.');await col('Events').add({type,productId:validIdentity(data.productId)?data.productId:null,scenario:clean(data.scenario,100),at:now()});return {ok:true};}
+  async function rateLimit(key,limit=25){const bucket=Math.floor(now()/60000),ref=col('Rate').doc(hash(key+'-'+bucket));return db.runTransaction(async tx=>{const s=await tx.get(ref),count=s.exists?s.data().count:0;if(count>=limit)return false;tx.set(ref,{count:count+1,expiresAt:new Date((bucket+5)*60000)});return true;});}
+  return {setup,getProduct,saveProducts,syncCatalogue,importRanks,claim,release,saveDossier,research,productIssues,recordProductIssue,status,block,event,rateLimit,col,state,namespace:ns};
+}
+function productIssueHolds(record){
+  const open=(Array.isArray(record?.issues)?record.issues:[]).filter(x=>x&&x.status!=='resolved'),blocks=new Set(open.flatMap(x=>Array.isArray(x.blocks)?x.blocks:[]));
+  // Even malformed older records must not remove a known critical hold.
+  if(open.some(x=>['identity','style','options','material','matching'].includes(x.kind))){blocks.add('recommendation');blocks.add('cart');}
+  if(open.some(x=>['history','content'].includes(x.kind)))blocks.add('meaning');
+  return {productId:record?.productId,cartHold:blocks.has('cart'),recommendationHold:blocks.has('recommendation'),meaningHold:blocks.has('meaning')};
+}
+function applyProductIssues(products,records){const holds=new Map((Array.isArray(records)?records:[]).filter(x=>validIdentity(x?.productId)).map(x=>[x.productId,productIssueHolds(x)]));return (Array.isArray(products)?products:[]).map(p=>{const h=holds.get(p.id);return h?{...p,cartHold:h.cartHold,recommendationHold:h.recommendationHold,meaningHold:h.meaningHold}:{...p,cartHold:false,recommendationHold:false,meaningHold:false};});}
+// Shopper preferences are deliberately a small public allowlist. Raw account,
+// owner or repository state never enters the conversation projection.
+const MOTIFS = [
+  ['bunny','bunn(?:y|ies)|rabbits?'],['cardinal','cardinals?'],
+  ['fire badge','firefighters?|firem[ae]n|fire badge'],['stethoscope','nurses?|doctors?|medical|stethoscopes?'],
+  ['tooth','dentists?|dental|teeth|tooths?'],['apple book','teachers?|teaching'],
+  ['book','readers?|reading|books?|librarian'],['hummingbird','hummingbirds?'],
+  ['sunflower','sunflowers?'],['cat','cats?|kittens?'],['dog','dogs?|pupp(?:y|ies)'],
+  ['ballet','ballet|dancers?'],['skating','skates?|skating|skaters?'],['wolf','wolves|wolf'],
+  ['dragonfly','dragonfl(?:y|ies)'],['phoenix','phoenix'],['rune','runes?|norse|vikings?'],
+  ['sun','sun|sunshine'],['horse','horses?|equestrian'],['butterfly','butterfl(?:y|ies)'],
+  ['bee','bees?|honeybee'],['dragon','dragons?'],['moon','moons?|lunar'],
+  ['elephant','elephants?'],['dolphin','dolphins?'],['whale','whales?'],['fox','fox(?:es)?'],
+  ['owl','owls?'],['turtle','turtles?'],['penguin','penguins?'],['sheep','sheep|lambs?'],
+  ['deer','deer'],['frog','frogs?'],['fish','fish|fishing'],['bird','birds?'],
+  ['heart','hearts?'],['tree','trees?|tree of life'],['flower','flowers?|floral'],
+  ['lotus','lotus'],['rose','roses?(?!\\s+gold)'],['dandelion','dandelions?'],['paw','paws?'],
+  ['star','stars?|celestial'],['music','music|musicians?|guitars?|piano'],
+  ['volleyball','volleyball'],['baseball','baseball'],['basketball','basketball'],
+  ['soccer','soccer|football'],['running','running|runners?|marathon'],
+  ['science','science|scientists?|laboratory|chemistry'],['police badge','police|officers?|police badge'],
+  ['theatre','theat(?:re|er)|actors?|drama'],['camera','photography|photographers?|cameras?'],
+  ['anchor','anchors?|sailing|sailors?'],['airplane','airplanes?|pilots?|aviation'],
+  ['mountain','mountains?|hiking|hikers?'],['leaf','leaves|leaf'],['clover','clovers?|shamrock'],
+  ['zodiac','zodiac|astrology'],['initial','initials?'],['engraved','engrave[ds]?|engraving|personalized|personalised|handwriting']
+];
+const TYPES = ['necklace','earrings','bracelet','pendant','huggie','studs','ring','charm'];
+const METALS = ['silver','gold','rose gold'];
+const RECIPIENTS = ['mom','mother','dad','father','wife','husband','daughter','son','friend','sister','brother','grandmother','grandfather','partner','teacher','nurse','doctor','myself'];
+const OCCASIONS = ['birthday','anniversary','graduation','memorial','christmas','wedding','retirement','thank you','just because'];
+const GENERIC = new Set(('raise increase lower reduce expand between range limit price spend cost roughly approximately cheap cheaper expensive affordable i a an the for and or my me you your gift gifts find want wants wanted looking buy buying please someone jewellery jewelry under budget dollars dollar usd cad gbp eur is are was with to of her him them she he they it something show help can could would should like likes only actually prefer instead change stay within keep around no not without avoid dont don t do does doesn doesn t rather than but loves love enjoy enjoys into interested interest interests this that these those piece pieces one ones option options up less more below over above between maximum minimum max min from be at now need needs another anything give really very so also we our about what who how why when where choose choice lets let s have has happy thank thanks much tell meaningful pretty beautiful amazing someone some look looking still either any same fresh start reset clear forget nothing different second third first fourth fifth sixth open take page website bag cart add adding compare comparison versus vs meaning means symbolize symbolism history story stories know learn explain next previous read what else new stop go back sure yes okay ok please'.split(' ')));
+const plainList = (v,n=8) => Array.isArray(v)?[...new Set(v.filter(x=>typeof x==='string').map(x=>clean(x,100).toLowerCase()))].slice(0,n):[];
+const amount = v => typeof v==='number'&&Number.isFinite(v)&&v>=0&&v<=1000000?v:null;
+const currencyCode = v => /^[A-Z]{3}$/.test(String(v||''))?String(v):null;
+
+function shopperPreferences(saved={}) {
+  return {
+    query:clean(saved?.query,250),interests:plainList(saved?.interests),excludedInterests:plainList(saved?.excludedInterests),
+    type:TYPES.includes(saved?.type)?saved.type:null,excludedTypes:plainList(saved?.excludedTypes).filter(x=>TYPES.includes(x)),
+    metal:METALS.includes(saved?.metal)?saved.metal:null,excludedMetals:plainList(saved?.excludedMetals).filter(x=>METALS.includes(x)),
+    recipient:RECIPIENTS.includes(saved?.recipient)?saved.recipient:null,occasion:OCCASIONS.includes(saved?.occasion)?saved.occasion:null,
+    budget:amount(saved?.budget),minBudget:amount(saved?.minBudget),currency:currencyCode(saved?.currency)||'USD',
+    budgetCurrency:currencyCode(saved?.budgetCurrency)||(amount(saved?.budget)!=null?(currencyCode(saved?.currency)||'USD'):null),
+    personalization:['engraving','handwriting'].includes(saved?.personalization)?saved.personalization:null
+  };
+}
+
+function negatedAt(text,index) {
+  // Contrast and punctuation terminate a negation. “Not gold, silver please”
+  // therefore selects silver; “no gold or silver” excludes both.
+  const prefix=text.slice(0,index).split(/[,;.!?]|\b(?:but|instead|however|i (?:want|prefer|like)|she (?:likes|loves|prefers)|he (?:likes|loves|prefers)|they (?:like|love|prefer))\b/).at(-1).slice(-75);
+  return /\b(?:not|no|without|avoid|except|excluding|rather than|instead of|don'?t(?:\s+\w+){0,3}|doesn'?t(?:\s+\w+){0,3}|do not(?:\s+\w+){0,3}|does not(?:\s+\w+){0,3})\s+(?:\w+\s+){0,4}$/i.test(prefix);
+}
+
+function fieldMentions(text,pattern,canonical) {
+  return [...text.matchAll(new RegExp('\\b(?:'+pattern+')\\b','g'))].map(m=>({value:canonical?canonical(m[0]):m[0],index:m.index,negative:negatedAt(text,m.index)}));
+}
+
+function applyPreferenceMessage(before,message) {
+  const text=clean(message,2000).toLowerCase().replace(/[’‘]/g,"'");
+  let p=shopperPreferences(before);
+  if(/\b(?:start (?:fresh|over|again)|reset (?:everything|preferences)|forget (?:everything|the previous|all that)|new gift|different person)\b/.test(text))p=shopperPreferences();
+  const mentions={
+    type:fieldMentions(text,'necklaces?|earrings?|bracelets?|pendants?|huggies?|studs?|rings?|charms?',v=>v.startsWith('stud')?'studs':v.startsWith('earring')?'earrings':v.replace(/s$/,'')),
+    metal:fieldMentions(text,'rose gold|sterling silver|silver|gold(?: filled| plated)?',v=>v.startsWith('rose')?'rose gold':v.includes('silver')?'silver':'gold'),
+    recipient:fieldMentions(text,RECIPIENTS.join('|'),v=>v),
+    occasion:fieldMentions(text,OCCASIONS.join('|'),v=>v)
+  };
+  const newRecipient=mentions.recipient.filter(x=>!x.negative).at(-1)?.value;
+  const changingRecipient=!!(newRecipient&&p.recipient&&newRecipient!==p.recipient&&/\b(?:actually|instead|this (?:one|gift)|now|different|for)\b/.test(text));
+  if(changingRecipient){p.query='';p.interests=[];p.excludedInterests=[];p.occasion=null;}
+  for(const field of ['type','metal','recipient','occasion']) {
+    const excluded=field==='type'?'excludedTypes':field==='metal'?'excludedMetals':null;
+    for(const hit of mentions[field]) {
+      if(hit.negative){if(p[field]===hit.value)p[field]=null;if(excluded&&!p[excluded].includes(hit.value))p[excluded].push(hit.value);}
+      else {p[field]=hit.value;if(excluded)p[excluded]=p[excluded].filter(x=>x!==hit.value);}
+    }
+  }
+  if(/\b(?:any|either|no preference (?:for|on))\s+(?:metal|silver or gold|gold or silver)\b/.test(text)){p.metal=null;p.excludedMetals=[];}
+  if(/\b(?:any|either|no preference (?:for|on))\s+(?:type|style|necklace or earrings|earrings or necklace)\b/.test(text)){p.type=null;p.excludedTypes=[];}
+  const explicitCurrency=fieldMentions(text,'us dollars?|usd|us\$|canadian dollars?|cad|ca\$|c\$|gbp|pounds?|eur|euros?',v=>/^canadian|^cad|^ca\$|^c\$/.test(v)?'CAD':/^gbp|^pound/.test(v)?'GBP':/^eur/.test(v)?'EUR':'USD').at(-1)?.value;
+  if(explicitCurrency){p.currency=explicitCurrency;if(p.budget!=null)p.budgetCurrency=explicitCurrency;}
+  if(/\b(?:no budget|no (?:price|budget) limit|any price|forget (?:the |my )?budget|remove (?:the |my )?budget)\b/.test(text)){p.budget=null;p.minBudget=null;p.budgetCurrency=null;}
+  else {
+    const range=[...text.matchAll(/\bbetween\s*(?:usd|cad|c\$|ca\$|us\$|\$)?\s*(\d+(?:\.\d{1,2})?)\s*(?:and|to|-)\s*\$?\s*(\d+(?:\.\d{1,2})?)/g)].at(-1);
+    const upper=[...text.matchAll(/(?:\b(?:under|below|budget|up to|less than|max(?:imum)?|at most|within)\s*(?:is|of|to|:)?\s*(?:usd|cad|gbp|eur|c\$|ca\$|us\$|\$)?\s*)(\d+(?:\.\d{1,2})?)/g)].at(-1);
+    const lone=/^(?:about|around)?\s*(?:usd|cad|gbp|eur|c\$|ca\$|us\$|\$)?\s*(\d+(?:\.\d{1,2})?)\s*(?:usd|cad|gbp|eur|dollars?)?$/.exec(text);
+    if(range&&Number(range[1])<=Number(range[2])){p.minBudget=amount(Number(range[1]));p.budget=amount(Number(range[2]));p.budgetCurrency=explicitCurrency||p.currency;}
+    else if(upper||lone){p.budget=amount(Number((upper||lone)[1]));p.minBudget=null;p.budgetCurrency=explicitCurrency||p.currency;}
+  }
+  const hits=MOTIFS.flatMap(([value,pattern])=>fieldMentions(text,pattern,()=>value)).sort((a,b)=>a.index-b.index);
+  const latest=[...new Map(hits.map(x=>[x.value,x])).values()];
+  const positive=latest.filter(x=>!x.negative).map(x=>x.value);
+  const negative=latest.filter(x=>x.negative).map(x=>x.value);
+  p.excludedInterests=[...new Set([...p.excludedInterests,...negative])].filter(x=>!positive.includes(x)).slice(0,12);
+  p.interests=p.interests.filter(x=>!negative.includes(x));
+  if(positive.length){p.interests=positive;p.query=positive.join(' ');}
+  else if(negative.length)p.query=p.interests.join(' ');
+  if(/\b(?:handwriting|handwritten|my (?:own )?writing)\b/.test(text)&&!negatedAt(text,text.search(/handwriting|handwritten|my (?:own )?writing/)))p.personalization='handwriting';
+  else if(/\b(?:engraving|engrave|personalized|personalised)\b/.test(text)&&!negatedAt(text,text.search(/engraving|engrave|personalized|personalised/)))p.personalization='engraving';
+  if(/\b(?:no|not|without)\s+(?:engraving|personalization|personalisation|handwriting)\b/.test(text)){p.personalization=null;p.excludedInterests=[...new Set([...p.excludedInterests,'engraved'])];p.interests=p.interests.filter(x=>x!=='engraved');p.query=p.interests.join(' ');}
+  const nonShopping=/\b(?:meaning|means|symboli[sz]\w*|history|story|stories|shipping|deliver|arrive|return|refund|compare|comparison|nickel|hypoallergenic|second|third|first|fourth|fifth|sixth|open|cart|bag|cheaper|expensive|more options|what else|tell me more|secrets?|api keys?|credentials?|repository|system prompt|owner data|private records)\b/.test(text);
+  if(!positive.length&&!negative.length&&!nonShopping){
+    const controlled=new Set([...mentions.type,...mentions.metal,...mentions.recipient,...mentions.occasion].flatMap(x=>x.value.split(' ')));
+    const raw=(text.match(/[a-z][a-z-]{2,}/g)||[]).filter(t=>!GENERIC.has(t)&&!controlled.has(t)&&!controlled.has(t.replace(/s$/,''))&&!['sterling','filled','plated','handwritten','engraving','personalized','personalised'].includes(t)).slice(0,4).join(' ');
+    if(raw){p.query=raw;p.interests=[];}
+  }
+  return p;
+}
+
+function intentFrom(message,history=[],saved={}) {
+  let prefs=shopperPreferences(saved);
+  const hasSaved=Object.keys(saved||{}).some(k=>['query','type','metal','budget','recipient','interests'].includes(k));
+  if(!hasSaved)for(const row of (Array.isArray(history)?history:[]).filter(x=>x?.role==='user').slice(-8))prefs=applyPreferenceMessage(prefs,row.content);
+  return applyPreferenceMessage(prefs,message);
+}
+
+function motifPattern(value) {
+  const entry=MOTIFS.find(([name])=>name===value);
+  if(value==='apple book')return 'apple|book|teacher';
+  if(value==='fire badge')return 'fire.?badge|firefighter|fireman';
+  if(value==='police badge')return 'police|officer.?badge';
+  if(value==='engraved')return 'engrave|engrav|personaliz|personalis|handwrit|initial';
+  return entry?entry[1]:clean(value,80).replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+}
+function typeMatches(product,type) {
+  const patterns={necklace:'necklace|pendant',pendant:'pendant|necklace',earrings:'earrings?|studs?|huggies?',studs:'studs?',huggie:'huggies?',bracelet:'bracelets?',ring:'rings?',charm:'charms?'};
+  return !type||new RegExp('\\b(?:'+patterns[type]+')\\b','i').test(product.title+' '+product.type);
+}
+function chainEvidence(product,variant){
+  const detail=product.description||'',variantText=variant.title+' '+(variant.options||[]).map(o=>o.value).join(' ');
+  if(/chain\s+(?:is\s+)?not included|without (?:a |the )?chain|no chain|pendant only|charm only|loose charm/i.test(detail+' '+variantText))return false;
+  const length=(variant.options||[]).some(o=>/(?:necklace|chain)\s*length/i.test(o.name)&&/\d/.test(o.value));
+  const lengthConfiguration=(product.options||[]).some(o=>/(?:necklace|chain)\s*length/i.test(o.name)&&(o.values||[]).some(value=>/\d/.test(value)));
+  return length||lengthConfiguration||/\b(?:chain|necklace)\b[^.!?]{0,70}\b(?:included|\d{1,2}(?:\.\d+)?\s*(?:inch(?:es)?|cm))\b/i.test(detail)||/\b(?:includes|comes with)\s+(?:a\s+)?(?:[^.!?]{0,35}\s)?chain\b/i.test(detail);
+}
+function variantTypeMatches(product,variant,type) {
+  const actualType=clean(product.type,100),part=/\b(?:charms?|components?|add[ -]?ons?)\b/i.test(actualType);
+  if(!type)return !part;
+  if(type==='charm')return /\bcharms?\b/i.test(actualType);
+  if(part)return false;
+  if(type==='necklace'&&(!/\bnecklaces?\b/i.test(actualType)||!chainEvidence(product,variant)))return false;
+  if(type==='pendant'&&!/\b(?:pendants?|necklaces?)\b/i.test(actualType))return false;
+  if(['earrings','studs','huggie'].includes(type)&&!/\b(?:earrings?|studs?|hoops?|huggies?)\b/i.test(actualType))return false;
+  if(type==='bracelet'&&!/\bbracelets?\b/i.test(actualType))return false;
+  if(type==='ring'&&!/\brings?\b/i.test(actualType))return false;
+  const detail=variant.title+' '+(variant.options||[]).filter(o=>/type|style|jewel|option|item/i.test(o.name)).map(o=>o.value).join(' ');
+  if(/\b(?:necklace|huggie|earring|bracelet)\s+charms?\b|charm\s*\+\s*engrav|pendant only|charm only|loose charm/i.test(detail))return false;
+  return /\b(?:necklaces?|earrings?|bracelets?|pendants?|huggies?|studs?|rings?)\b/i.test(detail)?typeMatches({title:detail,type:''},type):typeMatches(product,type);
+}
+function metalMatches(variant,metal) {
+  if(!metal)return true;
+  const material=variant.title+' '+(variant.options||[]).filter(o=>/metal|material|finish|colour|color/i.test(o.name)).map(o=>o.value).join(' ');
+  if(metal==='silver')return /\b(?:silver|sterling)\b/i.test(material);
+  if(metal==='rose gold')return /\brose\s*gold\b/i.test(material);
+  return /\bgold\b/i.test(material)&&!/\brose\s*gold\b/i.test(material);
+}
+function personalizedVariant(product,variant) {
+  const options=(variant.options||[]).filter(o=>/engrav|personali[sz]|custom/i.test(o.name));
+  const detail=variant.title+' '+options.map(o=>o.value).join(' ');
+  if(/no engraving|not engraved|without engraving|non[ -]?engraved|unengraved/i.test(detail)||options.some(o=>/^(?:no|none|without|not included)$/i.test(o.value)))return false;
+  return /engrav|personali[sz]|handwrit|custom|monogram/i.test(detail)||options.some(o=>/^(?:yes|included|with)$/i.test(o.value))||/handwrit|monogram|custom studio/i.test(product.title);
+}
+function rankProducts(items,intent,now=Date.now()) {
+  const p=shopperPreferences(intent),wanted=p.interests.length?p.interests:p.query.split(/\s+/).filter(Boolean);
+  const matches=[];
+  for(const product of Array.isArray(items)?items:[]) {
+    if(product?.recommendationHold===true)continue;
+    if(!validIdentity(product?.id)||!publicUrl(product.url,true)||!Number.isFinite(product.checkedAt)||now-product.checkedAt>5*60000||product.checkedAt>now+60000)continue;
+    const searchable=product.title+' '+product.type+' '+(product.tags||[]).join(' ');
+    if(p.excludedInterests.filter(value=>value!=='engraved').some(value=>new RegExp('\\b(?:'+motifPattern(value)+')\\b','i').test(product.title)))continue;
+    const interestHits=wanted.filter(value=>new RegExp('\\b(?:'+motifPattern(value)+')\\b','i').test(searchable));
+    if(wanted.length&&!interestHits.length)continue;
+    const budgetApplies=!p.budgetCurrency||p.budgetCurrency===product.currency;
+    const variants=(product.variants||[]).filter(v=>v.available&&Number.isFinite(v.price)&&v.price>=0&&variantTypeMatches(product,v,p.type)&&!p.excludedTypes.some(type=>variantTypeMatches(product,v,type))&&metalMatches(v,p.metal)&&!p.excludedMetals.some(metal=>metalMatches(v,metal))&&(!p.excludedInterests.includes('engraved')||!personalizedVariant(product,v))&&(!budgetApplies||((p.budget==null||v.price<=p.budget)&&(p.minBudget==null||v.price>=p.minBudget))));
+    if(!variants.length)continue;
+    const minPrice=Math.min(...variants.map(v=>v.price));
+    const why=[interestHits.length?interestHits.join(', '):null,p.type,p.metal,budgetApplies&&p.budget!=null?'within your '+(p.budgetCurrency||product.currency)+' item budget':null].filter(Boolean);
+    matches.push({score:interestHits.length*10+(p.type?3:0)+(p.metal?2:0),product:{...productProjection(product),variants:variants.map(v=>({id:v.id,numericId:v.numericId,title:v.title,price:v.price,available:v.available,options:v.options})),suggestedVariantId:variants.slice().sort((a,b)=>a.price-b.price)[0].id,minPrice,why:why.length?'Selected for '+why.join(' · '):'An available piece from the live shop selection',budgetApplied:budgetApplies&&p.budget!=null}});
+  }
+  return matches.sort((a,b)=>b.score-a.score||a.product.minPrice-b.product.minPrice||a.product.title.localeCompare(b.product.title)).slice(0,6).map(x=>x.product);
+}
+
+function publicMeaningText(value){return clean(value,1500).split(/(?<=[.!?])\s+/).filter(sentence=>!/^\s*(?:ask (?:whether|if|the|about|a question)|(?:prompt|tell|advise|remind) (?:the )?(?:user|shopper|customer|recipient)|use (?:this|the) (?:story|meaning|copy)|(?:do not|don't|never) (?:claim|promise|infer|say)|when (?:suggesting|recommending)|for (?:the )?concierge|(?:you|the assistant) should|recommend (?:this|the)|suggest (?:that|this|the)|avoid (?:claiming|saying)|include (?:this|the)|confirm (?:whether|if))\b/i.test(sentence)).join(' ').trim();}
+function publicMeanings(dossiers,productIds,now=Date.now(),issueRecords=[]) {
+  const held=new Set(issueRecords.filter(x=>productIssueHolds(x).meaningHold||productIssueHolds(x).recommendationHold).map(x=>x.productId));
+  const allowed=new Set(productIds||[]),out=[];
+  for(const d of Array.isArray(dossiers)?dossiers:[]) {
+    if(d?.status!=='approved'||!allowed.has(d.productId)||!validIdentity(d.productId)||held.has(d.productId))continue;
+    const competingHosts=(Array.isArray(d.competitors)?d.competitors:[]).flatMap(c=>{const url=publicUrl(c?.url);return url?[new URL(url).hostname.toLowerCase().replace(/^www\./,'')]:[];});
+    const competitorSource=s=>{const url=publicUrl(s?.url);if(!url)return false;const host=new URL(url).hostname.toLowerCase().replace(/^www\./,'');if(['britesjewelry.com'].includes(host))return false;return competingHosts.some(other=>host===other||host.endsWith('.'+other)||other.endsWith('.'+host));};
+    for(const m of Array.isArray(d.meanings)?d.meanings:[]) {
+      if(m?.kind!=='interpretation'||!clean(m.text,1500)||!clean(m.context,300)||!Array.isArray(m.sourceIds)||!m.sourceIds.length)continue;
+      const sources=m.sourceIds.map(id=>(Array.isArray(d.sources)?d.sources:[]).find(s=>s?.id===id));
+      if(sources.some(s=>!s||s.reviewed!==true||!publicUrl(s.url)||competitorSource(s)||!clean(s.title,300)||!Number.isFinite(s.checkedAt)||now-s.checkedAt>30*86400000||s.checkedAt>now+60000))continue;
+      const text=publicMeaningText(m.text),context=publicMeaningText(m.context);if(!text||!context)continue;
+      out.push({productId:d.productId,text,context:clean(context,300),kind:'interpretation',sources:sources.map(s=>({title:clean(s.title,300),url:publicUrl(s.url),checkedAt:s.checkedAt}))});
+      if(out.filter(x=>x.productId===d.productId).length>=2)break;
+    }
+  }
+  return out;
+}
+
+function shopperAction(message,products,displayedHandles=[]) {
+  const text=clean(message,2000).toLowerCase(),command=/\b(?:open|take me to|go to|view (?:the )?page|show (?:me )?(?:the )?(?:product )?page)\b/.test(text)?'navigate':/\b(?:add|put)\b[\s\S]{0,100}\b(?:bag|cart)\b/.test(text)?'choose':null;
+  if(!command||/\b(?:do not|don'?t|not|never)\s+(?:open|take|go|view|show|add|put)\b/.test(text))return null;
+  const ordinal=/\b(first|second|third|fourth|fifth|sixth|[1-6])\b/.exec(text);
+  const index=ordinal?['first','second','third','fourth','fifth','sixth'].includes(ordinal[1])?['first','second','third','fourth','fifth','sixth'].indexOf(ordinal[1]):Number(ordinal[1])-1:null;
+  let product=index==null?products.filter(p=>text.includes(p.title.toLowerCase())||text.includes(p.handle)).at(0):displayedHandles.length?products.find(p=>p.handle===displayedHandles[index]):products[index];
+  if(!product&&products.length===1&&/\b(?:this|that|it|the piece)\b/.test(text))product=products[0];
+  return product?{type:command,productId:product.id,url:product.url}:null;
+}
+
+async function concierge({service,shopify,message,history=[],preferences={},context={},env={},ai,now=Date.now}) {
+  const text=clean(message,2000);if(!text)throw Error('Write a message first.');
+  const shopperCurrency=currencyCode(context.currency);
+  const basePreferences=shopperCurrency&&!currencyCode(preferences.currency)?{...preferences,currency:shopperCurrency}:preferences;
+  const intent=intentFrom(text,history,basePreferences),at=now();
+  if(/\b(?:api keys?|credentials?|passwords?|system prompt|private (?:records|data)|owner data|repository|source code|sales history|customer (?:records|data))\b/i.test(text))return {schema:1,reply:'I can help with publicly listed pieces, gift ideas and the shop’s published information.',question:'What kind of piece are you looking for?',preferences:intent,products:[],meanings:[],actions:[],checkedAt:at,live:false,aiUsed:false};
+  const useContext=/\b(?:meaning|means|symboli[sz]\w*|history|story|stories|compare|comparison|first|second|third|fourth|fifth|sixth|this piece|that piece|this one|that one|open|cart|bag)\b/i.test(text);
+  const handles=plainList(context.productHandles,6).filter(h=>/^[a-z0-9_-]{1,180}$/.test(h));
+  if(!handles.length&&/^[a-z0-9_-]{1,180}$/.test(context.currentHandle||''))handles.push(context.currentHandle);
+  const queried=useContext&&handles.length?{products:(await Promise.all(handles.map(h=>shopify.byHandle(h)))).filter(Boolean)}:await shopify.search(intent.query||intent.type||'necklace');
+  await service.saveProducts(queried.products);
+  const issueRecords=service.productIssues?await service.productIssues(queried.products.map(p=>p.id)):[];
+  let products=rankProducts(applyProductIssues(queried.products,issueRecords),intent,at);
+  // Ordinals refer to the prior visible card order, never a new price sort.
+  if(useContext&&handles.length)products=products.sort((a,b)=>handles.indexOf(a.handle)-handles.indexOf(b.handle));
+  let dossiers=[],knowledgeUnavailable=false;
+  try{dossiers=await service.research(products.map(p=>p.id));}catch{knowledgeUnavailable=true;}
+  const meanings=publicMeanings(dossiers,products.map(p=>p.id),at,issueRecords).slice(0,3);
+  let reply=products.length?'These available pieces connect with '+(intent.query||'the preferences you’ve shared')+'.':'I couldn’t confirm an available match for those preferences. We can adjust the selection together.';
+  let question=!products.length?(intent.budget!=null?'Would you like to change the item budget or try another style?':'Would you like to try a different symbol or jewelry type?'):!intent.query?'What does the person enjoy—an animal, hobby, profession or symbol?':!intent.type?'Would they enjoy a necklace, earrings or another jewelry style?':intent.budget==null?'Is there an item budget you’d like me to stay within?':!intent.metal?'Do you have a metal preference, or would you like to see both?':null;
+  const result={schema:1,reply,question,preferences:intent,products,meanings,actions:products.map(p=>({type:'navigate',productId:p.id,url:p.url,label:'View '+p.title})),checkedAt:at,live:true,aiUsed:false};
+  if(knowledgeUnavailable)result.knowledgeUnavailable=true;
+  const mismatchedCurrency=products.some(p=>intent.budget!=null&&intent.budgetCurrency&&intent.budgetCurrency!==p.currency);
+  if(mismatchedCurrency){result.reply+=' Catalogue prices are shown in '+products[0].currency+'. I haven’t applied your '+intent.budgetCurrency+' budget to those prices.';result.question='Would you like to give an item budget in '+products[0].currency+', or check the current local price on a product page?';result.currencyMismatch=true;}
+  if(/\b(?:meaning|means|symboli[sz]\w*|history|story|stories)\b/i.test(text)){result.reply=meanings.length?'Here are reviewed interpretations associated with the displayed pieces. Meanings vary by culture and by the person wearing them.':'I don’t yet have reviewed symbolism or history for these pieces. I can still help you choose by the person’s interests and the published product details.';result.question=null;}
+  if(/\b(?:compare|comparison|versus)\b/i.test(text)){result.reply=products.length>=2?'Compare the live metal options, item prices and designs below. Each product page has the complete description.':'I need two available pieces to make a useful comparison.';result.question=products.length>=2?null:'Which other piece would you like to compare?';}
+  if(/\b(?:shipping|ship|deliver|delivery|arrive|return|returns|refund)\b/i.test(text)){result.reply='Shipping timing and returns depend on the order and destination. The current shop policies and checkout show the applicable details.';result.policyLinks=[{label:'Shipping policy',url:'https://britesjewelry.com/policies/shipping-policy'},{label:'Refund policy',url:'https://britesjewelry.com/policies/refund-policy'}];result.question=/\b(?:shipping|ship|deliver|delivery|arrive)\b/i.test(text)?'Which country is the gift going to, and when is it needed?':null;}
+  else if(/\b(?:engrave|engraving|personaliz|handwriting|handwritten)\b/i.test(text)){result.reply='I can help find a piece with personalization options. The product page confirms the exact engraving limits and any design upload before adding it to your bag.';result.question=intent.personalization==='handwriting'?'Would you like to explore a handwriting piece or the custom design studio?':/\b(?:name|initials?|message)\b/i.test(text)?null:'Are you thinking of a name, initials, a short message or handwriting?';}
+  if(/\b(?:hypoallergenic|nickel|allerg(?:y|ies|ic)|solid gold|waterproof|tarnish)\b/i.test(text)){result.reply='Materials and care requirements vary by piece. Please check the exact product description; I can’t infer allergy safety or material guarantees from its appearance.';result.question=null;}
+  const requestedAction=shopperAction(text,products,useContext?handles:[]);
+  if(requestedAction){result.requestedAction=requestedAction;result.question=null;result.reply=requestedAction.type==='navigate'?'Opening the piece you selected.':'Choose the exact available option below, then confirm before it is added to your bag.';}
+  // Runtime inference can refine a question only. It cannot supply product
+  // facts, choose tools, browse, purchase, or read private research fields.
+  if(ai){try{const chosen=await ai({message:text,history:history.slice(-6).map(r=>({role:r.role,content:clean(r.content,1500)})),preferences:intent,products:products.map(p=>({id:p.id,title:p.title})),question:result.question});if(chosen&&['gift','self','comparison','meaning','shipping','engraving','discovery'].includes(chosen.intent)){result.intent=chosen.intent;result.aiUsed=true;if(result.question&&typeof chosen.question==='string'&&chosen.question.length>10&&chosen.question.length<220&&!/[\d$]|https?:|guarantee|deliver|hypoallergenic|solid gold|password|credential|api key|email|phone|address/i.test(chosen.question))result.question=chosen.question;}}catch{result.aiUsed=false;result.providerUnavailable=true;}}
+  return result;
+}
+module.exports={CATALOG_QUERY,STOP_AT,clean,hash,textOf,publicUrl,sameSecret,namespace,makeDb,normalizeProduct,productProjection,validateDossier,createShopify,createGrowthService,productIssueHolds,applyProductIssues,shopperPreferences,negatedAt,intentFrom,rankProducts,publicMeaningText,publicMeanings,shopperAction,concierge};

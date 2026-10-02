@@ -71,6 +71,8 @@ const PASSCODE_UNSET = "Changes are locked until a passcode is saved in Firebase
 // change. Every other action — including any action not listed here — is treated as a change.
 const READ_ACTIONS = new Set(["adDesignSubmissionStatus", "dashboard", "pmaxRecommendationEvidence", "adGroups", "adDesignSavedWorkspaces", "adGroupDetail", "adDesignEditorSource", "adDesignEditorState", "adDesignResponsiveState", "adDesignMotionStatus", "adDesignSavedDesigns", "adDesignGooglePreview", "adDesignStatus", "adDesignDelivery", "adDesignEditorAIStatus", "adEvaluationStatus", "analyzeAdStatus", "adVersionApprovalStatus", "campaignVersionDetail", "campaignVersions", "metricsRange", "keywordDiag", "conversionHealth", "approvalStatus", "creativeStatus", "playbookVersions", "dailyStats", "diagnostics", "diagRunStatus", "playbook", "adReviewStatus", "remedyHistory", "servingCheck", "countries", "designStudioStatus", "collections", "genStatus"]);
 READ_ACTIONS.add("campaignOptions"); // the Campaign options panel: GAQL reads and saved drafts only
+READ_ACTIONS.add('growthResearchStatus');
+READ_ACTIONS.add('growthResearchDossiers');
 function isReadAction(a, body) { return READ_ACTIONS.has(a) || (a === "opportunities" && !(body && body.force)); }
 // true = allowed · "unset" = a change was requested while no passcode is configured · false = wrong passcode
 async function authed(event, body, resolved) {
@@ -142,6 +144,13 @@ async function dispatchTask(task, data) {
   return {queued:true,...data};
 }
 async function handleAction(body) {
+  if(['growthResearchStatus','growthResearchDossiers'].includes(body.action)){
+    const service=require('./_britesGrowth').createGrowthService({db:require('./firebaseAdmin').firestore(),env:process.env});
+    if(body.action==='growthResearchStatus')return service.status();
+    const ids=body.productIds||[];
+    const [dossiers,productIssues]=await Promise.all([service.research(ids),service.productIssues(ids)]);
+    return {dossiers,productIssues};
+  }
   const f = fb();
   const a = body.action;
   const ctrl = await E.control();

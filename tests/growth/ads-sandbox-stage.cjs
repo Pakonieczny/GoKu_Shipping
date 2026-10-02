@@ -1,0 +1,23 @@
+'use strict';
+const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path');
+const {build}=require('../../scripts/build-growth-ads-sandbox.cjs');
+const root=path.resolve(__dirname,'../..'),out=fs.mkdtempSync(path.join(path.dirname(root),'growth-ads-stage-test-'));
+try{
+  const result=build(out),html=fs.readFileSync(path.join(out,'public-site/brites-adwords.html'),'utf8');
+  assert.deepEqual(result.entries,['britesConcierge.js','britesGrowthAds.js','britesGrowthApi.js','britesGrowthCatalogue-background.js','britesGrowthTick.js']);
+  const prelude=fs.readFileSync(path.join(out,'public-site/brites-growth-ad-sandbox.js'),'utf8');
+  assert.match(prelude,/__GADS_ENDPOINT='\/api\/growth-ads'/);assert.match(html,/<script src="\/brites-growth-ad-sandbox.js"><\/script><\/head>/);
+  const live=html.slice(html.indexOf('async function livePull(){'),html.indexOf('/* Pending budget overrides:'));
+  for(const action of ['measureNow','enforceCeiling','monthlyGuard'])assert.ok(!live.includes(action),'automatic refresh must never request '+action);
+  assert.match(live,/api\("dashboard"/);assert.ok(!html.includes('renderAll();go("groups");loadDiagnostics();'),'startup opens the shared research view');
+  assert.match(fs.readFileSync(path.join(out,'netlify/functions/firebaseAdmin.js'),'utf8'),/_britesGrowthAdsReadOnly/);
+  const saved=fs.readFileSync(path.join(out,'netlify/functions/googleAdsAdDesign.js'),'utf8'),savedStatus=saved.slice(saved.indexOf('  async function status('),saved.indexOf('  async function workspace('));
+  assert.ok(!/\.(?:set|update|delete|runTransaction)\(/.test(savedStatus),'saved workspace previews cannot migrate images or repair jobs');
+  assert.ok(!saved.includes('await found.ref.update({appearance:item.appearance});'),'saved artwork appearance remains in memory only');
+  for(const bad of ['firebaseAdmin.js','googleAdsAutopilot.js','googleAdsAutopilotKick.js','googleAdsAutopilot-background.js','googleAdsAutopilotApi.js'])assert.ok(!fs.existsSync(path.join(out,'netlify/production-functions',bad)),'private server dependency is not an endpoint: '+bad);
+  assert.ok(!fs.existsSync(path.join(out,'public-site/netlify')),'server source cannot enter public assets');
+  assert.ok(!fs.readFileSync(path.join(out,'netlify.toml'),'utf8').includes('GADS_REFRESH_TOKEN'),'credentials are never staged into source');
+  assert.match(fs.readFileSync(path.join(out,'netlify.toml'),'utf8'),/BRITES_GROWTH_SANDBOX="1"/);
+  assert.match(fs.readFileSync(path.join(root,'brites-adwords.html'),'utf8'),/const GADS_FN_PRIMARY\s*= "googleAdsAutopilotApi"/,'primary app routing is preserved');
+  console.log('Growth Ads sandbox stage: isolated endpoint/asset/refresh checks passed.');
+}finally{fs.rmSync(out,{recursive:true,force:true});}

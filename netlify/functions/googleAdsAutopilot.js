@@ -1151,11 +1151,11 @@ async function uploadConversionAdjustments({ ctrl, limit = 500 } = {}) {
 async function conversionHealth({ force } = {}) {
   const f = fb();
   if (f && !force) {
-    try { const s = await f.db.collection(COL.state).doc("conv_health").get(); if (s.exists) { const x = s.data(); if (x.at && (Date.now() - x.at) < 15 * 60 * 1000 && x.data && x.data.schemaVersion === 6) return x.data; } } catch (e) {}
+    try { const s = await f.db.collection(COL.state).doc("conv_health").get(); if (s.exists) { const x = s.data(); if (x.at && (Date.now() - x.at) < 15 * 60 * 1000 && x.data && x.data.schemaVersion === 7) return x.data; } } catch (e) {}
   }
   const out = { status: "UNKNOWN", actionConfigured: !!ENV.GADS_CONVERSION_ACTION, actionId: ENV.GADS_CONVERSION_ACTION || null,
     actions: [], actionsChecked: false, recentConversions: null, queueDepth: null, adjQueueDepth: null, lastUpload: null,
-    healthy: false, validated: false, reasons: [], schemaVersion: 6, at: Date.now() };
+    healthy: false, validated: false, reasons: [], schemaVersion: 7, at: Date.now() };
   try {
     const r = await gaql(`SELECT customer.conversion_tracking_setting.conversion_tracking_status FROM customer`);
     const cs = r[0] && r[0].customer && r[0].customer.conversionTrackingSetting;
@@ -1178,6 +1178,10 @@ async function conversionHealth({ force } = {}) {
     const r = await gaql(`SELECT metrics.conversions, metrics.all_conversions FROM customer WHERE segments.date BETWEEN '${start}' AND '${end}'`);
     out.recentConversions = r[0] && r[0].metrics ? Number(r[0].metrics.conversions || 0) : 0;
   } catch (e) {}
+  if (force && ENV.GADS_CONVERSION_UPLOAD_API !== 'legacy' && ENV.BRITES_GROWTH_SANDBOX !== '1') {
+    try { out.receiptReconciliation = await dataManagerService().reconcile({ force: true, limit: 15, maxMs: 10000 }); }
+    catch (e) { out.reasons.push('Receipt reconciliation could not finish: ' + String(e.message).slice(0,160)); }
+  }
   if (f) {
     try { const q = await f.db.collection(COL.convQueue).where("uploaded", "==", false).limit(500).get(); out.queueDepth = q.size; } catch (e) {}
     // Sales Google Ads REFUSED. These are the ones that show in the store's own sales log
@@ -1186,8 +1190,9 @@ async function conversionHealth({ force } = {}) {
     // that just quietly isn't there.
     try {
       const q = await f.db.collection(COL.convQueue).where("failed", "==", true).limit(50).get();
-      out.failedCount = q.size; out.failedSamples = [];
-      q.forEach(d => { const x = d.data(); if (out.failedSamples.length < 5) out.failedSamples.push({ orderId: x.orderId || null, value: x.value, at: x.conversionDateTime || null, error: String(x.uploadError || "").slice(0, 200) }); });
+      const rejected = q.docs.filter(d => !["submission_unknown", "submitting"].includes(d.data().dmState));
+      out.failedCount = rejected.length; out.failedSamples = [];
+      rejected.forEach(d => { const x = d.data(); if (out.failedSamples.length < 5) out.failedSamples.push({ orderId: x.orderId || null, value: x.value, at: x.conversionDateTime || null, error: String(x.uploadError || "").slice(0, 200) }); });
       if (out.failedCount > 0) out.reasons.push(out.failedCount + " sale(s) rejected by Google Ads on upload — see Sales → conversion status");
     } catch (e) {}
     try { const q = await f.db.collection(COL.convAdj).where("uploaded", "==", false).limit(500).get(); out.adjQueueDepth = q.size; } catch (e) {}
@@ -1206,16 +1211,15 @@ async function conversionHealth({ force } = {}) {
   if (ENV.GADS_CONVERSION_UPLOAD_API !== "legacy") {
     try {
       out.dataManager = await dataManagerService().health({ probeScopes: true });
-      out.healthy = out.healthy && out.dataManager.configured;
+      out.healthy = out.healthy && out.dataManager.configured && !out.receiptReconciliation?.blocked;
       out.validated = !!(out.healthy && out.dataManager.confirmed > 0 && !out.failedCount && !out.dataManager.unknown);
       if (!out.dataManager.configured) out.reasons.push("Google requires Data Manager authorization for conversion uploads. Connect its dedicated OAuth scope before syncing orders.");
       const dmx = out.dataManager, stale = Number(dmx.staleProcessing) || 0;
       if (dmx.processing > stale) out.reasons.push((dmx.processing - stale) + " conversion(s) submitted to Google Data Manager; asynchronous processing is still pending (Google allows up to 24 hours).");
-      // Past Google's 24-hour window a submission is stuck, not slow: the pipeline is not
-      // working, whatever its settings say. Say since when, and why.
+      // Old unconfirmed receipts need investigation; their age does not prove rejection or loss.
       const top = map => Object.entries(map || {}).sort((a, b) => b[1] - a[1]).slice(0, 2).map(([k, n]) => n + " × " + k).join("; ");
       if (stale) { out.healthy = false; out.validated = false; const why = top(dmx.staleReasons);
-        out.reasons.push(stale + " submission(s) have waited more than 24 hours for Google's result (oldest sent " + new Date(dmx.oldestProcessingAt || Date.now()).toISOString().slice(0, 10) + "), so they are stuck rather than processing" + (why ? ": " + why : "") + "."); }
+        out.reasons.push(stale + " submission(s) have waited more than 24 hours for Google's result (oldest sent " + new Date(dmx.oldestProcessingAt || Date.now()).toISOString().slice(0, 10) + "), so their individual outcomes remain overdue and unconfirmed; investigate status checks" + (why ? ": " + why : "") + "."); }
       if (dmx.unsendable) { out.healthy = false; out.validated = false; out.reasons.push(dmx.unsendable + " queued sale(s) cannot be sent as stored: " + top(dmx.unsendableReasons) + "."); }
       if (dmx.unsent && dmx.oldestUnsentAt && Date.now() - dmx.oldestUnsentAt > 3 * 3600000) out.reasons.push(dmx.unsent + " sale(s) have waited more than 3 hours to be sent. The hourly sync sends sales only while automation is on; Sync now sends them at once.");
       // A submission is when the sale was sent; Google's confirmation can take a day.
@@ -1250,33 +1254,25 @@ async function conversionHealth({ force } = {}) {
       const pct = x => x == null ? "" : " (" + Math.round(x * 100) + "%)", named = "Google Ads' import diagnostics for the configured action" + (g.status ? " (" + g.status + ")" : "");
       if (g.alerts.length) out.reasons.push("Google Ads reports import errors for the configured action on its latest import day" + day + ": " + g.alerts.map(a => a.error + pct(a.share)).join(", ") + ". Those conversions are refused, not processing.");
       if (stuck) out.reasons.push(!(g.received || g.weekRecorded || g.weekFailed || g.weekPending)
-        ? named + " show no recent imports, so Google has no record of the " + stuck + " stuck submission(s) in this action. Check Goals → Conversions → the action → Diagnostics in Google Ads; if it shows no imports either, Google has not received them into this action."
+        ? named + " show no recent imports. These aggregate summaries do not confirm the " + stuck + " stored receipt(s); inspect each receipt and its exact destination before deciding whether to retry."
         : named + ": latest import day" + day + " " + g.received + " received, " + g.recorded + " recorded, " + g.pending + " pending; last 7 days " + g.weekRecorded + " recorded, " + g.weekFailed + " failed, " + g.weekPending + " pending."
-          + (g.recorded || g.weekRecorded ? " Google records imports into this action. If this console is its only import source, the stuck submissions were probably recorded, and it is our status check that has not seen Google's answer." : ""));
+          + (g.recorded || g.weekRecorded ? " Google records imports into this action, but this aggregate does not identify these stored receipts; verify their individual status and destination." : ""));
     } catch (e) { out.googleUploads = { error: String(e && e.message || e).slice(0, 160) }; }
   }
+  out.goalEvidence = await campaignGoalEvidence();
   const ca = out.configuredAction;
   if (ca) {
-    // Google can record every upload and still misuse it: a fixed default value replaces each
-    // order's value, one-per-click drops a repeat order, a secondary action is ignored by
-    // bidding, and a second primary purchase action counts the same sale twice.
     const purchase = out.actions.filter(a => a.id !== ca.id && a.status === "ENABLED" && a.category === "PURCHASE"), others = purchase.filter(a => a.primaryForGoal === true);
     const label = a => "\"" + a.name + "\" (" + a.id + ")", named = others.map(label).join(", ");
     out.doubleCounting = ca.primaryForGoal === true ? others.map(a => ({ id: a.id, name: a.name, type: a.type })) : [];
-    // Exactly one purchase action may be primary. The upload should be that one only once
-    // Google has confirmed it; until then the web tag is what bidding has been learning from.
-    const dm = out.dataManager, confirmedUploads = dm ? !!(dm.confirmed > 0 && !dm.staleProcessing && !dm.unknown && !out.failedCount) : !!(out.lastUpload && out.lastUpload.ok && out.lastUpload.count > 0 && !out.failedCount);
-    const tag = others[0] || purchase[0], where = "In Google Ads → Goals → Conversions, open each action's settings and set Action optimization: ";
-    const advice = tag ? where + (confirmedUploads ? "make " + label(ca) + " Primary and " + label(tag) + " Secondary; the upload carries each order's exact value and its refunds."
-      : "keep " + label(tag) + " Primary and set " + label(ca) + " to Secondary until Sales shows uploads confirmed by Google, then swap them.") : "";
+    out.goalMembershipVerified = out.goalEvidence.status === 'verified';
+    out.orderOverlapVerified = false;
     if (ca.alwaysUseDefaultValue === true) { out.healthy = false; out.validated = false; out.reasons.push("The configured conversion action always uses its default value, so Google replaces every order's real value. Set it to use a different value for each conversion."); }
-    if (ca.category && ca.category !== "PURCHASE") out.reasons.push("The configured conversion action's category is " + ca.category + ", not Purchase, so purchase goals and ROAS bidding may leave these sales out.");
-    if (ca.countingType === "ONE_PER_CLICK") out.reasons.push("The configured conversion action counts one conversion per click, so a second order from the same ad click is dropped. Set counting to Every.");
-    const unknownRole = purchase.filter(a => a.primaryForGoal == null);
-    if (ca.primaryForGoal === false && !others.length && !unknownRole.length) { out.healthy = false; out.validated = false; out.reasons.push("No purchase action is primary, so bidding optimizes toward no sales at all. " + where + "make " + label(ca) + " Primary."); }
-    else if (ca.primaryForGoal === false && others.length) out.reasons.push(label(ca) + " is Secondary, so bidding optimizes toward " + named + " and not these uploads" + (confirmedUploads ? ". Uploads are confirmed now: " + advice : "; keep it that way until Google confirms uploads."));
-    if (out.doubleCounting.length) { out.healthy = false; out.validated = false; out.reasons.push("Two primary purchase actions count the same sales, " + label(ca) + " and " + named + ", so an order both record is counted twice in bidding and ROAS. " + advice); }
-    else if ((ca.primaryForGoal == null && purchase.length) || (unknownRole.length && !(ca.primaryForGoal === false && others.length))) { out.validated = false; out.reasons.push("Google did not report which purchase action is primary, and " + [ca].concat(purchase).map(label).join(" and ") + " are all enabled. Exactly one may be primary. " + advice); }
+    if (ca.category && ca.category !== "PURCHASE") out.reasons.push("The configured conversion action's category is " + ca.category + ", so campaign purchase-goal membership needs verification.");
+    if (ca.countingType === "ONE_PER_CLICK") out.reasons.push("The configured conversion action counts one conversion per click. Review whether repeat purchases should count before changing counting settings.");
+    if (ca.primaryForGoal === false) out.reasons.push(label(ca) + " is Secondary. Active custom conversion goals can still use secondary actions for bidding; campaign goal membership has not been verified. Check that membership before changing roles.");
+    if (out.doubleCounting.length) { out.validated = false; out.reasons.push("Multiple purchase actions are Primary: " + label(ca) + " and " + named + ". If they record the same order and are included in the same campaign goal, it can be counted twice. Order overlap and campaign goals have not been verified; check them before changing action roles."); }
+    else if (ca.primaryForGoal == null || purchase.some(a => a.primaryForGoal == null)) { out.validated = false; out.reasons.push("Google did not report all purchase-action roles. Verify order overlap and campaign goal membership before choosing the action used for bidding."); }
   }
   if (!out.actionConfigured) out.reasons.push("GADS_CONVERSION_ACTION env var is not set");
   if (out.actionConfigured && out.actionsChecked && !out.configuredAction) out.reasons.push("The configured conversion action was not found in this account.");
@@ -1287,6 +1283,8 @@ async function conversionHealth({ force } = {}) {
   if (f) { try { await f.db.collection(COL.state).doc("conv_health").set({ data: out, at: Date.now() }); } catch (e) {} }
   return out;
 }
+
+async function campaignGoalEvidence(){return require('./googleAdsGoalEvidence').createGoalEvidence({gaql}).read({requiredActionResources:[ENV.GADS_CONVERSION_ACTION].filter(Boolean),maxMs:8000});}
 
 /* ===================== Store order log + organic intelligence ===================== */
 // Every Shopify order (ad-attributed or not) is logged here. Orders that DIDN'T come from a
@@ -11587,7 +11585,8 @@ function _designEngine(){
   if(!_adDesignEngine){
     _adDesignContextReader=require("./googleAdsAdDesignContext").createAdDesignContext({fb,COL,shopifyGql,gaql,verifiedBasis:_verifiedCampaignAnalysisBasis,creativeGroups:_creativeGroups,creativeHash,reportContext:_reportContext,validatedRange:_validatedReportRange});
     const keywordEvidence=require("./googleAdsAdKeywordResearch").createKeywordEvidence({gaql,keywordResearch,cacheGet:_kwCacheGet,cacheSet:_kwCacheSet});
-    const research=require("./googleAdsAdDesignResearch").createAdDesignResearch({creativeFetch:_creativeFetch,copyValid:_copyValid,copyLineValid:_copyLineValid,dailyStats,gaql,playbookSlice,storeSalesEvidence,conversionHealth,merchantProducts,keywordEvidence});
+    const sharedProductResearch=async ids=>{const f=fb();if(!f)return [];const productIds=ids.map(id=>/^\d+$/.test(String(id))?'gid://shopify/Product/'+id:String(id)).filter(id=>/^gid:\/\/shopify\/Product\/\d+$/.test(id));const growth=require('./_britesGrowth'),service=growth.createGrowthService({db:f.db,env:ENV});const [dossiers,issues]=await Promise.all([service.research(productIds),service.productIssues(productIds)]);const held=new Set(issues.filter(record=>growth.productIssueHolds(record).recommendationHold).map(record=>record.productId));return dossiers.filter(d=>!held.has(d.productId));};
+    const research=require("./googleAdsAdDesignResearch").createAdDesignResearch({creativeFetch:_creativeFetch,copyValid:_copyValid,copyLineValid:_copyLineValid,dailyStats,gaql,playbookSlice,storeSalesEvidence,conversionHealth,merchantProducts,keywordEvidence,sharedProductResearch});
     _adDesignEngine=require("./googleAdsAdDesign").createAdDesignService({fb,COL,env:ENV,control,..._designEngineAdapters(),loadContext:input=>_adDesignContextReader.loadContext(input),currentCreative:require("./googleAdsAdDesignContext").extractCurrentCreative,verifyBasis:_verifiedCampaignAnalysisBasis,verifyContext:_verifyAdDesignContext,findLegacyEditorWorkspaces:_findLegacyEditorWorkspaces,research,saveAsset:_saveCreativeAsset,loadAsset:_loadCreativeAsset,deleteAsset:_deleteCreativeAsset,deleteSavedDesignAsset:_deleteSavedDesignAsset,finish:_finishAdDesign,reviewStatus:_adDesignApprovalReview});
   }return _adDesignEngine;
 }
@@ -12645,7 +12644,7 @@ module.exports = {
   reviseCreativeApproval, markApprovalApproved, needsCreativeReview, prepareCreativeApproval, creativeApprovalStatus, reviewCreativeApproval, assertCreativeReviewed, creativeHash,
   COL, V, CID, OPPORTUNITY_ENGINE_VERSION, DESIGN_STUDIO_ENGINE_VERSION, DESIGN_STUDIO_URL,
   control, mintToken, gaql, mutate, mutateAll,
-  enqueueConversion, saveDataManagerConnection, uploadConversions, enqueueConversionAdjustment, uploadConversionAdjustments, recordRefund, conversionHealth, gAdsTime,
+  enqueueConversion, saveDataManagerConnection, uploadConversions, enqueueConversionAdjustment, uploadConversionAdjustments, recordRefund, conversionHealth, campaignGoalEvidence, gAdsTime,
   recordOrderEvent, recentOrders, storeSignals, storeSalesEvidence, clearOrderLog, backfillOrders,
   ledger, clearLedger, enqueueApproval, applyApproval, applyApprovalById: applyApproval, reconcileApproval, markPublishRequested, markPublishNotStarted, sanitizeOps,
   generateRSAAssets, buildSearchCampaignOps, buildCampaignAssets, planCampaign, accountCvr, collectionProfiles, productSalesMap, bumpBestSellers, keywordResearch, keywordResearchPool, researchOpportunity, mergeKeywordResearch, keywordDiag, metricsRange, textGuidelinesOp, brandSafe,

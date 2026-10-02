@@ -75,20 +75,16 @@ function eventFor(row) {
 }
 
 function summarizeDiagnostics(data, target) {
-  const rows = data?.requestStatusPerDestination || [];
+  const rows = Array.isArray(data?.requestStatusPerDestination) ? data.requestStatusPerDestination : [];
   // accountType replaced the deprecated `product`; Google accepts either.
   const type = d => d?.operatingAccount?.accountType || d?.operatingAccount?.product;
-  const exact = r => type(r.destination) === 'GOOGLE_ADS' &&
+  const exact = r => type(r?.destination) === 'GOOGLE_ADS' &&
     String(r.destination.operatingAccount.accountId) === target.operatingAccount.accountId &&
     String(r.destination.productDestinationId) === target.productDestinationId;
-  // Statuses come back in the order of the request's destinations, and every
-  // request here has exactly one. A lone status whose echo names no other
-  // account or action is that destination's, however sparsely it is echoed.
-  const compatible = r => { const d = r.destination || {}, a = d.operatingAccount || {};
-    return (!type(d) || type(d) === 'GOOGLE_ADS') && (a.accountId == null || String(a.accountId) === target.operatingAccount.accountId) &&
-      (d.productDestinationId == null || String(d.productDestinationId) === target.productDestinationId); };
-  let found = rows.filter(exact);
-  if (!found.length && rows.length === 1 && compatible(rows[0])) found = rows;
+  // A request receipt identifies its submitted payload, but a sparse or
+  // mismatched response is not confirmation of the saved account and action.
+  // Keep it unresolved rather than inferring success from a lone status row.
+  const found = rows.filter(exact);
   if (found.length !== 1) return { state: 'processing', status: rows.length ? 'DESTINATION_UNCONFIRMED' : 'NO_STATUS', error: 'Diagnostics have not confirmed the exact conversion destination.' };
   const row = found[0], state = row.requestStatus;
   const errors = (row.errorInfo?.errorCounts || []).map(e => `${e.reason || 'Processing error'} (${e.recordCount || e.count || '?'})`).join('; ');
@@ -143,8 +139,8 @@ function errorDetail(data, status) {
   return named || message || ('Google Data Manager returned HTTP ' + status);
 }
 
-  async function request(route, body, auth) {
-    const response = await fetch(BASE + route, { method: body ? 'POST' : 'GET', timeout: 20000,
+  async function request(route, body, auth, timeoutMs = 20000) {
+    const response = await fetch(BASE + route, { method: body ? 'POST' : 'GET', timeout: Math.max(1, Math.min(20000, timeoutMs)),
       headers: { Authorization: 'Bearer ' + auth, 'Content-Type': 'application/json' },
       ...(body ? { body: JSON.stringify(body) } : {}) });
     const data = await response.json().catch(() => ({}));
@@ -155,6 +151,80 @@ function errorDetail(data, status) {
       throw error;
     }
     return data;
+  }
+  // Receipt-only observation, shared by uploads and the health screen. Never
+  // builds a new event or calls events:ingest. A transactional lease prevents
+  // overlapping refreshes from confirming and auditing the same receipt twice.
+  async function checkReceipt(doc, auth, { force = false, timeoutMs = 20000, deadlineAt = Infinity } = {}) {
+    const f = fb(), lease = crypto.randomUUID();
+    const claimed = await f.db.runTransaction(async tx => {
+      const snapshot = await tx.get(doc.ref), row = snapshot.exists ? snapshot.data() : null;
+      const stamp = now();
+      if (!row || !row.dmRequestId || row.uploaded || ['success', 'failed'].includes(row.dmState) || row.dmReconcileLeaseUntil > stamp ||
+          (!force && stamp < Number(row.dmNextCheckAt || 0)) || (force && row.dmCheckedAt && stamp - row.dmCheckedAt < 60000)) return null;
+      tx.update(doc.ref, { dmReconcileLease: lease, dmReconcileLeaseUntil: stamp + 90000 });
+      return row;
+    });
+    if (!claimed) return { state: 'skipped' };
+    // Time spent claiming a contended receipt also consumes the refresh budget.
+    // Release only our own lease if no request can start before the deadline.
+    if (now() >= deadlineAt) {
+      await f.db.runTransaction(async tx => {
+        const current = await tx.get(doc.ref);
+        if (current.exists && current.data().dmReconcileLease === lease) tx.update(doc.ref, { dmReconcileLease: null, dmReconcileLeaseUntil: 0 });
+      });
+      return { state: 'skipped' };
+    }
+    const attempt = Number(claimed.dmChecks || 0) + 1;
+    const patch = { dmChecks: attempt, dmCheckedAt: now(), dmNextCheckAt: now() + Math.min(3600000, CHECK_DELAY * Math.pow(1.3, attempt)), dmReconcileLease: null, dmReconcileLeaseUntil: 0 };
+    let status;
+    try {
+      if (!claimed.dmDestination) throw Error('This receipt is missing its original conversion destination.');
+      const answer = await request('/requestStatus:retrieve?requestId=' + encodeURIComponent(claimed.dmRequestId), null, auth, Math.min(timeoutMs, deadlineAt - now()));
+      status = summarizeDiagnostics(answer, claimed.dmDestination);
+      Object.assign(patch, { dmWarnings: status.warnings || [], dmLastStatus: status.status || null, dmCheckError: null, uploadError: status.error || null });
+      if (status.state === 'success') Object.assign(patch, { uploaded: true, failed: false, uploadedAt: f.FV.serverTimestamp(), dmState: 'success' });
+      else if (status.state === 'failed') Object.assign(patch, { uploaded: false, failed: true, dmState: 'failed' });
+    } catch (error) { status = { state: 'processing', error: error.message, httpStatus: error.status || null }; patch.dmCheckError = String(error.message || error).slice(0, 300); }
+    const saved = await f.db.runTransaction(async tx => {
+      const current = await tx.get(doc.ref), row = current.exists ? current.data() : null;
+      if (!row || row.dmReconcileLease !== lease || row.dmRequestId !== claimed.dmRequestId || row.uploaded || ['success', 'failed'].includes(row.dmState) ||
+          JSON.stringify(row.dmDestination) !== JSON.stringify(claimed.dmDestination)) return false;
+      tx.update(doc.ref, patch); return true;
+    });
+    if (saved && status.state === 'success') {
+      try { await ledger({ kind: 'uploadConversions', transport: 'data_manager', requestId: claimed.dmRequestId, count: 1, accepted: 1, ok: true, processingVerified: true, validateOnly: false }); }
+      catch (error) { status.error = 'Receipt confirmed; audit write failed: ' + String(error.message).slice(0,200); }
+    }
+    return saved ? status : { state: 'skipped' };
+  }
+  async function reconcile({ force = false, limit = 15, maxMs = 12000 } = {}) {
+    await loadConnection();
+    const result = { receiptOnly: true, attempted: 0, checked: 0, confirmed: 0, failed: 0, processing: 0, errors: [] };
+    if (!configured()) return { ...result, blocked: true };
+    const f = fb(); if (!f) return { ...result, blocked: true };
+    const maximum = Number.isFinite(Number(limit)) ? Math.min(50, Math.max(0, Math.floor(Number(limit)))) : 15;
+    const budgetMs = Number.isFinite(Number(maxMs)) ? Math.min(120000, Math.max(0, Number(maxMs))) : 12000;
+    if (!maximum || !budgetMs) return { ...result, stopped: !maximum ? 'limit' : 'time_limit' };
+    const auth = await mintToken(), started = now();
+    const pending = await f.db.collection(COL.convQueue).where('uploaded', '==', false).limit(500).get();
+    const candidates = pending.docs.filter(d => { const row = d.data(); return row.dmRequestId && !['success', 'failed'].includes(row.dmState) &&
+      !(row.dmReconcileLeaseUntil > now()) && (force ? !(row.dmCheckedAt && now() - row.dmCheckedAt < 60000) : !(now() < Number(row.dmNextCheckAt || 0))); }).sort((a,b) => Number(a.data().dmCheckedAt||0) - Number(b.data().dmCheckedAt||0));
+    for (const doc of candidates) {
+      if (result.attempted >= maximum || now()-started >= budgetMs) { result.stopped = result.attempted >= maximum ? 'limit' : 'time_limit'; break; }
+      result.attempted++;
+      try {
+        const status = await checkReceipt(doc, auth, { force, deadlineAt: started + budgetMs });
+        if (status.state === 'skipped') continue;
+        result.checked++;
+        if (status.state === 'success') result.confirmed++;
+        else if (status.state === 'failed') result.failed++;
+        else result.processing++;
+        if (status.error) result.errors.push({ orderId: doc.data().orderId, error: status.error });
+        if ([401, 403, 429].includes(status.httpStatus)) { result.stopped = status.httpStatus === 429 ? 'rate_limit' : 'authorization'; result.blocked = true; break; }
+      } catch (error) { result.errors.push({ orderId: doc.data().orderId, error: String(error.message).slice(0,300) }); }
+    }
+    result.errors = result.errors.slice(0,10); return result;
   }
   const eligibleLegacyFailure = row => row.failed === true && MIGRATION_ERROR.test(row.uploadError || '') && !row.dmState;
   // Refused because the account is not allowlisted, not because the sale is
@@ -201,31 +271,10 @@ function errorDetail(data, status) {
         result.processing++;
         if (ctrl.dryRun || now() < Number(row.dmNextCheckAt || 0)) continue;
         handled++;
-        const attempt = Number(row.dmChecks || 0) + 1, nextCheck = now() + Math.min(3600000, CHECK_DELAY * Math.pow(1.3, attempt));
-        let data;
-        try {
-          if (!row.dmDestination) throw Error('This receipt is missing its original conversion destination.');
-          data = await request('/requestStatus:retrieve?requestId=' + encodeURIComponent(row.dmRequestId), null, auth);
-        } catch (error) {
-          // Keep the receipt, but record why Google's answer could not be read,
-          // so a confirmation that never arrives says why instead of "pending".
-          result.errors.push({ orderId: row.orderId, error: error.message });
-          try { await doc.ref.update({ dmChecks: attempt, dmCheckedAt: now(), dmNextCheckAt: nextCheck, dmCheckError: String(error.message || error).slice(0, 300) }); } catch (_) {}
-          continue;
-        }
-        try {
-          const state = summarizeDiagnostics(data, row.dmDestination);
-          const patch = { dmChecks: attempt, dmCheckedAt: now(), dmWarnings: state.warnings || [], dmLastStatus: state.status || null, dmCheckError: null,
-            dmNextCheckAt: nextCheck, uploadError: state.error || null };
-          if (state.state === 'success') {
-            Object.assign(patch, { uploaded: true, failed: false, uploadedAt: f.FV.serverTimestamp(), dmState: 'success' });
-            result.uploaded++; result.processing--;
-          } else if (state.state === 'failed') {
-            Object.assign(patch, { uploaded: false, failed: true, dmState: 'failed' }); result.rejected++; result.processing--;
-          }
-          await doc.ref.update(patch);
-          if (state.state === 'success') await ledger({ kind: 'uploadConversions', transport: 'data_manager', requestId: row.dmRequestId, count: 1, accepted: 1, ok: true, processingVerified: true, validateOnly: false });
-        } catch (error) { result.errors.push({ orderId: row.orderId, error: error.message }); }
+        const checked = await checkReceipt(doc, auth);
+        if (checked.state === 'success') { result.uploaded++; result.processing--; }
+        if (checked.state === 'failed') { result.rejected++; result.processing--; }
+        if (checked.error) result.errors.push({ orderId: row.orderId, error: checked.error });
         continue;
       }
       if (row.uploaded && !eligibleLegacyFailure(row)) continue;
@@ -329,6 +378,6 @@ function errorDetail(data, status) {
     info.confirmedComplete = confirmed.docs.length < 500;
     return info;
   }
-  return { run, health, configured, saveCredentials };
+  return { run, health, reconcile, configured, saveCredentials };
 }
 module.exports = { sealCredentials, openCredentials, createDataManager, destination, eventFor, summarizeDiagnostics, MIGRATION_ERROR, netValue, fullyRefunded, needsConsent, CONSENT_REGION };

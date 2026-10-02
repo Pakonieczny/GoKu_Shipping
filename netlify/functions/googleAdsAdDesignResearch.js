@@ -379,6 +379,15 @@ function createAdDesignResearch(D){
       }),
       read('keywordDemand','Google Keyword Planner','Product-specific historical search demand',async()=>D.keywordEvidence&&primary?D.keywordEvidence({campaignId,product:primary,keywords:primaryKeywords}):null)
     ]);
+    await read('sharedProductKnowledge','Brites reviewed research','Product-bound competitor offers, buyer intent and test recommendations',async()=>{
+      if(!D.sharedProductResearch)return null;
+      const dossiers=await D.sharedProductResearch(products.map(p=>p.id));
+      const productGid=id=>/^\d+$/.test(String(id))?'gid://shopify/Product/'+id:String(id);
+      const ids=new Set(products.map(p=>productGid(p.id)));
+      const approved=(dossiers||[]).filter(d=>d.status==='approved'&&ids.has(productGid(d.productId)));
+      if(!approved.length)return null;
+      return {dossiers:approved.map(d=>({productId:d.productId,handle:d.handle,version:d.version,savedAt:d.savedAt,buyerIntents:d.buyerIntents,competitors:d.competitors,recommendations:d.recommendations,meanings:d.meanings,sources:d.sources.map(s=>({id:s.id,url:s.url,title:s.title,excerpt:s.excerpt,checkedAt:s.checkedAt}))})),rules:'Competitor offers and interpretations inform hypotheses. Never copy competitor facts to the advertised product. Current product/landing sources remain authoritative for price, stock and commercial claims. Spend and ROI are unknown unless independently disclosed.'};
+    });
     const offers=[...new Set(productInput.flatMap(p=>[p.offerId,p.itemId,...(p.offerIds||[])]).filter(Boolean).map(String))];
     const merchant=await read('merchant','Merchant Center','Recent exact-offer eligibility',async()=>offers.length&&D.merchantProducts?D.merchantProducts({itemIds:offers}):null);
     if(assetOutcomes&&assetOutcomes.length)warnings.push('One converting ad can credit each participating asset. Asset reports use click date and cannot be added together or treated as isolated image lift; exact photo identity must be verified before linking an old asset outcome to the selected source.');

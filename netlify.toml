@@ -577,3 +577,9 @@
 [functions."investor*"]
   node_bundler = "zisi"
   included_files = ["investor/**", "investor.html", "netlify/functions/*investor*.js"]
+
+# This public, self-contained avatar module is imported by the storefront.
+[[headers]]
+  for = "/assets/brites-concierge-avatar-scene.mjs"
+  [headers.values]
+    Access-Control-Allow-Origin = "*"

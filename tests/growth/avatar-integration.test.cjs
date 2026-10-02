@@ -1,0 +1,424 @@
+'use strict';
+
+// Synthetic DOM/scene integration checks. These do not assert actual GPU frame
+// rate, visual quality, or live storefront behaviour: those need browser QA.
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const {JSDOM, VirtualConsole} = require('jsdom');
+const avatarFactory = require('../../brites-concierge-avatar.js');
+const widgetSource = fs.readFileSync(path.join(__dirname, '../../brites-concierge.js'), 'utf8');
+const tick = () => new Promise(resolve => setImmediate(resolve));
+async function settle() { await tick(); await tick(); }
+function deferred() { let resolve, reject; const promise = new Promise((a, b) => {resolve = a; reject = b;}); return {promise, resolve, reject}; }
+const clone = value => JSON.parse(JSON.stringify(value));
+
+function makeDom() {
+  const errors = [], virtualConsole = new VirtualConsole();
+  virtualConsole.on('jsdomError', error => errors.push(error));
+  const dom = new JSDOM('<!doctype html><html lang="en"><body><button id="shop-control">Shop</button></body></html>', {
+    url: 'https://growth-sandbox.example/concierge-sandbox.html',
+    runScripts: 'outside-only', pretendToBeVisual: true, virtualConsole
+  });
+  return {dom, window: dom.window, document: dom.window.document, errors};
+}
+
+function mediaAndVisibility(window, {reducedMotion = false} = {}) {
+  let hidden = false;
+  Object.defineProperty(window.document, 'hidden', {configurable: true, get: () => hidden});
+  const listeners = new Set(), observers = [];
+  const media = {matches: reducedMotion, media: '(prefers-reduced-motion: reduce)',
+    addEventListener(type, listener) {if (type === 'change') listeners.add(listener);},
+    removeEventListener(type, listener) {if (type === 'change') listeners.delete(listener);}
+  };
+  window.matchMedia = () => media;
+  window.IntersectionObserver = class {
+    constructor(callback) {this.callback = callback; this.disconnected = false; observers.push(this);}
+    observe(element) {this.element = element;}
+    disconnect() {this.disconnected = true;}
+  };
+  return {
+    observers, listeners,
+    hide(value) {hidden = value; window.document.dispatchEvent(new window.Event('visibilitychange'));},
+    motion(value) {media.matches = value; for (const listener of listeners) listener({matches: value});},
+    intersect(value) {for (const observer of observers) if (!observer.disconnected) observer.callback([{target: observer.element, isIntersecting: value}]);}
+  };
+}
+
+function makeAvatar(t, options = {}) {
+  const env = makeDom(), visibility = mediaAndVisibility(env.window, options), calls = {loads: [], motion: [], render: [], invalidate: 0, destroy: 0};
+  const engine = {
+    setMotion(value) {if (calls.fail === 'motion') throw Error('Synthetic motion failure'); calls.motion.push({...value});},
+    render(pose, force) {if (calls.fail === 'render') throw Error('Synthetic draw failure'); calls.render.push({pose: {...pose}, force});},
+    invalidate() {if (calls.fail === 'invalidate') throw Error('Synthetic invalidate failure'); calls.invalidate++;},
+    snapshot() {const m = calls.motion.at(-1) || {}; return {animated: m.active === true && m.reducedMotion !== true};},
+    destroy() {calls.destroy++; if (calls.fail === 'destroy') throw Error('Synthetic cleanup failure');}
+  };
+  let sceneOptions;
+  const module = {createAvatarScene(value) {sceneOptions = value; return engine;}};
+  const container = env.document.createElement('div'); env.document.body.appendChild(container);
+  const api = avatarFactory.create({container, assetBase: 'https://growth-sandbox.example/',
+    visible: options.visible === true,
+    loadScene: url => {calls.loads.push(url); return options.loader ? options.loader(module) : Promise.resolve(module);}
+  });
+  t.after(() => {api.destroy(); env.window.close();});
+  return {...env, api, visibility, calls, get sceneOptions() {return sceneOptions;}};
+}
+
+const fixtureVariant = {id: 'gid://shopify/ProductVariant/101', numericId: '101', title: 'Sterling Silver', price: 54, available: true, options: [{name: 'Metal', value: 'Sterling Silver'}]};
+const fixtureProduct = {id: 'gid://shopify/Product/1', handle: 'bunny-1', url: 'https://britesjewelry.com/products/bunny-1', title: 'Bunny Necklace', type: 'Necklace', currency: 'USD', variants: [fixtureVariant], variantsComplete: true, suggestedVariantId: fixtureVariant.id, why: 'A bunny design for the requested interest.', minPrice: 54};
+const fixtureAnswer = {reply: 'This bunny necklace could be a thoughtful match.', preferences: {}, products: [fixtureProduct], question: 'Would you like to compare the metal options?'};
+function response(data, status = 200) {return {ok: status >= 200 && status < 300, status, json: async () => clone(data)};}
+
+function makeWidget(t, options = {}) {
+  const env = makeDom(), {window, document} = env;
+  const visibility = mediaAndVisibility(window), network = [], instances = [], utterances = [], devices = [], speech = {cancels: 0};
+  const script = document.createElement('script'); script.src = 'https://growth-sandbox.example/brites-concierge.js'; script.dataset.sandbox = 'true';
+  Object.defineProperty(document, 'currentScript', {configurable: true, get: () => script});
+  if (options.saved) window.sessionStorage.setItem('brites-concierge-v1', JSON.stringify(options.saved));
+  const forbidden = name => {devices.push(name); throw Error('The concierge must not request microphone/camera access.');};
+  Object.defineProperty(window.navigator, 'mediaDevices', {configurable: true, value: {getUserMedia: () => forbidden('getUserMedia'), enumerateDevices: () => forbidden('enumerateDevices')}});
+  window.SpeechRecognition = function () {forbidden('SpeechRecognition');};
+  window.webkitSpeechRecognition = function () {forbidden('webkitSpeechRecognition');};
+  if (!options.noSpeech) {
+    window.SpeechSynthesisUtterance = class {constructor(text) {this.text = text;}};
+    window.speechSynthesis = {cancel() {speech.cancels++;}, speak(utterance) {utterances.push(utterance);}};
+  }
+  if (!options.noAvatarGlobal) window.BritesConciergeAvatar = {
+    create(config) {
+      if (options.createThrows) throw Error('Synthetic unavailable renderer');
+      const record = {config, states: [], visible: config.visible === true, level: 0, state: config.initialState, visibility: [], destroyed: false};
+      record.api = {
+        ready: options.ready || Promise.resolve({mode: options.fallback ? 'fallback' : 'webgl'}),
+        setState(value) {if (options.stateThrows) throw Error('Synthetic renderer draw failure'); record.state = value; record.states.push(value);},
+        setVisible(value) {record.visible = value; record.visibility.push(value);},
+        setLevel(value) {record.level = value;}, lookAt() {},
+        snapshot() {return {state: record.state, visible: record.visible, mode: options.fallback ? 'fallback' : 'webgl'};},
+        destroy() {record.destroyed = true; record.visible = false;}
+      };
+      instances.push(record); return record.api;
+    }
+  };
+  window.fetch = async (raw, init = {}) => {
+    const url = new URL(raw, window.location.href), body = init.body ? JSON.parse(init.body) : null;
+    network.push({url, body, init});
+    if (url.pathname === '/api/concierge' && body?.event) return response({});
+    if (url.pathname === '/api/concierge' && body?.message) return options.answer ? options.answer(body, init) : response(fixtureAnswer);
+    if (url.pathname === '/api/growth/product') return options.product ? options.product(url, init) : response({product: fixtureProduct});
+    throw Error('Unexpected synthetic request: ' + url.pathname);
+  };
+  window.HTMLElement.prototype.scrollIntoView = function () {};
+  window.eval(widgetSource);
+  const root = document.querySelector('brites-concierge').shadowRoot;
+  const button = label => Array.from(root.querySelectorAll('button')).find(node => node.textContent.trim() === label || node.getAttribute('aria-label') === label);
+  const input = root.querySelector('input[aria-label="Message the gift concierge"]');
+  async function ask(text = 'Something with a bunny') {input.value = text; root.querySelector('form').dispatchEvent(new window.Event('submit', {bubbles: true, cancelable: true})); await settle();}
+  async function add() {button('Choose options').click(); button('Review adding to bag').click(); button('Confirm add to bag').click(); await settle();}
+  t.after(() => {try {window.BritesConcierge?.close();} catch {} window.close();});
+  return {...env, visibility, network, instances, utterances, devices, speech, root, input, button, ask, add,
+    open() {root.querySelector('.launcher').click();},
+    get avatar() {return instances.at(-1);}, get panel() {return root.querySelector('.panel');},
+    get messages() {return root.querySelector('.messages');}
+  };
+}
+
+test('avatar imports no scene until the shopper opens it', async t => {
+  const h = makeAvatar(t);
+  await settle(); assert.equal(h.calls.loads.length, 0); assert.equal(h.api.element.hidden, true);
+  h.api.setState('thinking'); await settle(); assert.equal(h.calls.loads.length, 0);
+  h.api.setVisible(true); const ready = await h.api.ready;
+  assert.equal(h.calls.loads.length, 1); assert.equal(ready.mode, 'webgl'); assert.equal(ready.loading, false); assert.equal(h.api.element.hidden, false);
+  assert.equal(new URL(h.calls.loads[0]).pathname, '/assets/brites-concierge-avatar-scene.mjs');
+});
+
+test('closing and reopening pause and resume the existing scene', async t => {
+  const h = makeAvatar(t, {visible: true}); await h.api.ready;
+  assert.equal(h.calls.motion.at(-1).active, true);
+  h.api.setVisible(false); assert.equal(h.calls.motion.at(-1).active, false);
+  const frames = h.calls.render.length; h.api.setState('speaking'); assert.equal(h.calls.render.length, frames);
+  h.api.setVisible(true); assert.equal(h.calls.motion.at(-1).active, true); assert.equal(h.calls.loads.length, 1);
+});
+
+test('document visibility and intersection independently stop scene motion', async t => {
+  const h = makeAvatar(t, {visible: true}); await h.api.ready;
+  h.visibility.hide(true); assert.equal(h.calls.motion.at(-1).active, false);
+  h.visibility.intersect(false); h.visibility.hide(false); assert.equal(h.calls.motion.at(-1).active, false);
+  h.visibility.intersect(true); assert.equal(h.calls.motion.at(-1).active, true);
+  h.api.setVisible(false); h.visibility.hide(true); h.visibility.hide(false); assert.equal(h.calls.motion.at(-1).active, false);
+});
+
+test('reduced motion keeps expression changes but removes timed motion', async t => {
+  const h = makeAvatar(t, {visible: true, reducedMotion: true}); await h.api.ready;
+  assert.deepEqual(h.calls.motion.at(-1), {active: true, reducedMotion: true});
+  h.api.setState('speaking'); h.api.setLevel(.8);
+  const first = h.sceneOptions.onFrame(1), later = h.sceneOptions.onFrame(9);
+  assert.deepEqual(first, later); assert.equal(first.bob, 0); assert.equal(first.gesture, 0); assert.equal(first.bodyRoll, 0);
+  h.visibility.motion(false); assert.equal(h.calls.motion.at(-1).reducedMotion, false);
+  assert.notDeepEqual(h.sceneOptions.onFrame(1), h.sceneOptions.onFrame(9));
+});
+
+test('scene loading rejection resolves a static fallback', async t => {
+  const h = makeAvatar(t, {visible: true, loader: async () => {throw Error('Synthetic GPU unavailable');}});
+  const ready = await h.api.ready;
+  assert.equal(ready.mode, 'fallback'); assert.equal(ready.loading, false); assert.equal(h.api.element.dataset.rendering, 'fallback');
+  h.api.setState('thinking'); h.api.setVisible(false); h.api.setVisible(true);
+  await settle(); assert.equal(h.calls.loads.length, 1); assert.equal(h.calls.render.length, 0);
+});
+
+test('context loss pauses rendering and restoration respects current visibility', async t => {
+  const h = makeAvatar(t, {visible: true}); await h.api.ready;
+  h.sceneOptions.onContext(true); assert.equal(h.api.snapshot().mode, 'fallback'); assert.equal(h.calls.motion.at(-1).active, false);
+  h.api.setVisible(false); h.sceneOptions.onContext(false);
+  assert.equal(h.api.snapshot().mode, 'webgl'); assert.equal(h.calls.motion.at(-1).active, false);
+  h.api.setVisible(true); assert.equal(h.calls.motion.at(-1).active, true);
+});
+
+test('destroy during asynchronous import prevents scene creation', async t => {
+  const loading = deferred(); const h = makeAvatar(t, {visible: true, loader: () => loading.promise});
+  h.api.destroy(); assert.equal((await h.api.ready).destroyed, true);
+  loading.resolve({createAvatarScene() {throw Error('Destroyed avatar must not build a scene.');}}); await settle();
+  assert.equal(h.calls.render.length, 0); assert.equal(h.api.element.isConnected, false);
+});
+
+test('destroy disconnects motion observers and ignores late state/visibility calls', async t => {
+  const h = makeAvatar(t, {visible: true}); await h.api.ready;
+  h.api.destroy(); const motions = h.calls.motion.length, renders = h.calls.render.length;
+  h.api.destroy(); h.api.setVisible(true); h.api.setState('speaking'); h.api.lookAt(1, 1); h.api.setLevel(1);
+  h.visibility.hide(true); h.visibility.motion(true); h.visibility.intersect(true);
+  assert.equal(h.calls.destroy, 1); assert.equal(h.calls.motion.length, motions); assert.equal(h.calls.render.length, renders);
+  assert.equal(h.visibility.listeners.size, 0); assert.equal(h.visibility.observers[0].disconnected, true);
+});
+
+test('invalid avatar states and extreme pointer/speech values are bounded', async t => {
+  const h = makeAvatar(t, {visible: true}); await h.api.ready;
+  h.api.setState('untrusted arbitrary state'); assert.equal(h.api.snapshot().state, 'idle');
+  h.api.setState('speaking'); h.api.lookAt(100, -100); h.api.setLevel(100);
+  const pose = h.sceneOptions.onFrame(4);
+  assert.ok(Math.abs(pose.headYaw) <= .1); assert.ok(pose.mouthOpen <= 1); assert.ok(Math.abs(pose.gazeY) <= .038);
+});
+
+for (const failure of ['invalidate', 'motion', 'render']) test(failure + ' engine failure becomes a safe fallback after initialization', async t => {
+  const h = makeAvatar(t, {visible: true}); await h.api.ready; h.calls.fail = failure;
+  assert.doesNotThrow(() => h.api.setState('thinking'));
+  assert.equal(h.api.snapshot().mode, 'fallback');
+  assert.doesNotThrow(() => {h.api.setVisible(false); h.api.setState('speaking'); h.api.setVisible(true);});
+  await settle(); assert.equal(h.calls.loads.length, 1);
+});
+
+test('engine cleanup exceptions do not prevent DOM and listener cleanup', async t => {
+  const h = makeAvatar(t, {visible: true}); await h.api.ready; h.calls.fail = 'destroy';
+  assert.doesNotThrow(() => h.api.destroy());
+  assert.equal(h.api.element.isConnected, false); assert.equal(h.visibility.listeners.size, 0);
+  assert.equal(h.visibility.observers[0].disconnected, true);
+});
+
+test('closed widget stays unobtrusive and creates no avatar or speech', async t => {
+  const h = makeWidget(t); await settle();
+  assert.equal(h.panel.hidden, true); assert.equal(h.root.querySelector('.launcher').getAttribute('aria-expanded'), 'false');
+  assert.equal(h.instances.length, 0); assert.equal(h.utterances.length, 0); assert.equal(h.devices.length, 0);
+});
+
+test('open/close expose accessible controls and return keyboard focus', async t => {
+  const h = makeWidget(t); h.open(); await settle();
+  const launcher = h.root.querySelector('.launcher');
+  assert.equal(launcher.getAttribute('aria-controls'), h.panel.id); assert.equal(launcher.getAttribute('aria-expanded'), 'true');
+  assert.equal(h.panel.getAttribute('role'), 'dialog'); assert.ok(h.panel.getAttribute('aria-label'));
+  assert.equal(h.root.activeElement, h.input); assert.equal(h.avatar.visible, true);
+  assert.equal(h.root.querySelector('.concierge-avatar-stage').getAttribute('aria-hidden'), 'true');
+  h.button('Close gift concierge').click();
+  assert.equal(h.panel.hidden, true); assert.equal(h.avatar.visible, false); assert.equal(h.root.activeElement, launcher);
+  assert.equal(launcher.getAttribute('aria-expanded'), 'false');
+});
+
+test('typing is a silent listening expression and clear input returns idle', async t => {
+  const h = makeWidget(t); h.open(); h.input.value = 'A gift for my sister'; h.input.dispatchEvent(new h.window.Event('input'));
+  assert.equal(h.avatar.state, 'listening'); assert.equal(h.utterances.length, 0); assert.equal(h.devices.length, 0);
+  h.input.value = ''; h.input.dispatchEvent(new h.window.Event('input')); assert.equal(h.avatar.state, 'idle');
+});
+
+test('search moves from thinking to recommendation without automatic speech', async t => {
+  const reply = deferred(); const h = makeWidget(t, {answer: () => reply.promise}); h.open();
+  const pending = h.ask(); assert.equal(h.avatar.state, 'thinking'); assert.equal(h.input.disabled, true);
+  reply.resolve(response(fixtureAnswer)); await pending;
+  assert.equal(h.avatar.state, 'success'); assert.equal(h.input.disabled, false); assert.equal(h.root.querySelectorAll('.card').length, 1);
+  assert.equal(h.utterances.length, 0);
+});
+
+test('speech expression starts on actual onstart and stops on actual onend', async t => {
+  const h = makeWidget(t); h.open(); await h.ask(); h.button('Read aloud').click();
+  assert.equal(h.utterances.length, 1); assert.notEqual(h.avatar.state, 'speaking');
+  const utterance = h.utterances[0]; assert.match(utterance.text, /bunny necklace/i);
+  utterance.onstart(); assert.equal(h.avatar.state, 'speaking'); assert.ok(h.avatar.level > 0);
+  utterance.onboundary(); assert.ok(h.avatar.level > 0);
+  utterance.onend(); assert.equal(h.avatar.state, 'idle'); assert.equal(h.avatar.level, 0);
+});
+
+test('speech errors return the guide to a quiet usable state', async t => {
+  const h = makeWidget(t); h.open(); await h.ask(); h.button('Read aloud').click();
+  h.utterances[0].onstart(); h.utterances[0].onerror({error: 'synthesis-unavailable'});
+  assert.equal(h.avatar.state, 'idle'); assert.equal(h.avatar.level, 0); assert.equal(h.button('Send').disabled, false);
+  await h.add(); assert.equal(JSON.parse(h.window.sessionStorage.getItem('brites-sandbox-cart')).length, 1);
+});
+
+for (const close of ['button', 'Escape', 'public API']) test(close + ' dismissal cancels speech and ignores late callbacks', async t => {
+  const h = makeWidget(t); h.open(); await h.ask(); h.button('Read aloud').click();
+  const old = h.utterances[0]; old.onstart(); const cancels = h.speech.cancels;
+  if (close === 'button') h.button('Close gift concierge').click();
+  else if (close === 'Escape') h.input.dispatchEvent(new h.window.KeyboardEvent('keydown', {key: 'Escape', bubbles: true}));
+  else h.window.BritesConcierge.close();
+  assert.ok(h.speech.cancels > cancels); assert.equal(h.avatar.visible, false); assert.equal(h.avatar.level, 0);
+  old.onstart(); old.onboundary(); old.onend(); old.onerror();
+  assert.equal(h.avatar.visible, false); assert.notEqual(h.avatar.state, 'speaking'); assert.equal(h.avatar.level, 0); assert.equal(h.panel.hidden, true);
+});
+
+test('old utterance end/error cannot stop a newer spoken reply', async t => {
+  const h = makeWidget(t); h.open(); await h.ask(); h.button('Read aloud').click(); const old = h.utterances[0]; old.onstart();
+  h.button('Read aloud').click(); const current = h.utterances[1]; current.onstart();
+  old.onend(); old.onerror(); assert.equal(h.avatar.state, 'speaking'); assert.ok(h.avatar.level > 0);
+  current.onend(); assert.equal(h.avatar.state, 'idle');
+});
+
+test('hidden page cancels narration and late voice events stay silent', async t => {
+  const h = makeWidget(t); h.open(); await h.ask(); h.button('Read aloud').click(); const utterance = h.utterances[0]; utterance.onstart();
+  const cancels = h.speech.cancels; h.visibility.hide(true); assert.ok(h.speech.cancels > cancels);
+  utterance.onstart(); utterance.onboundary(); assert.notEqual(h.avatar.state, 'speaking'); assert.equal(h.avatar.level, 0);
+  h.visibility.hide(false); assert.equal(h.utterances.length, 1);
+});
+
+test('starting a new search cancels prior speech without letting its end overwrite thinking', async t => {
+  const replies = []; const h = makeWidget(t, {answer: () => {const reply = deferred(); replies.push(reply); return reply.promise;}});
+  h.open(); const first = h.ask(); replies[0].resolve(response(fixtureAnswer)); await first;
+  h.button('Read aloud').click(); const old = h.utterances[0]; old.onstart();
+  const second = h.ask('Another design'); assert.equal(h.avatar.state, 'thinking');
+  old.onend(); old.onerror(); assert.equal(h.avatar.state, 'thinking');
+  replies[1].resolve(response(fixtureAnswer)); await second;
+});
+
+test('start fresh resets narration and aborts a pending answer', async t => {
+  const replies = []; const h = makeWidget(t, {answer: () => {const reply = deferred(); replies.push(reply); return reply.promise;}});
+  h.open(); const first = h.ask(); replies[0].resolve(response(fixtureAnswer)); await first;
+  h.button('Read aloud').click(); const old = h.utterances[0]; old.onstart();
+  const pending = h.ask('Second request'); const signal = h.network.findLast(r => r.body?.message).init.signal;
+  h.button('Start fresh').click(); assert.equal(signal.aborted, true); assert.equal(h.avatar.state, 'idle');
+  old.onstart(); old.onend(); assert.equal(h.avatar.state, 'idle'); assert.equal(h.avatar.level, 0);
+  replies[1].resolve(response(fixtureAnswer)); await pending;
+  assert.equal(h.root.querySelectorAll('.card').length, 0); assert.match(h.messages.textContent, /Looking for something personal/);
+  assert.equal(h.button('Send').disabled, false);
+});
+
+test('late search results after dismissal stay hidden without stealing focus or speaking', async t => {
+  const reply = deferred(); const h = makeWidget(t, {answer: () => reply.promise}); h.open(); const pending = h.ask();
+  h.window.BritesConcierge.close(); h.document.getElementById('shop-control').focus();
+  reply.resolve(response(fixtureAnswer)); await pending;
+  assert.equal(h.panel.hidden, true); assert.equal(h.avatar.visible, false); assert.equal(h.utterances.length, 0);
+  assert.equal(h.document.activeElement.id, 'shop-control');
+  h.window.BritesConcierge.open(); assert.equal(h.panel.hidden, false); assert.equal(h.root.querySelectorAll('.card').length, 1);
+});
+
+test('avatar still loading does not block search, variant review, or sandbox cart', async t => {
+  const ready = deferred(); const h = makeWidget(t, {ready: ready.promise}); h.open(); await h.ask(); await h.add();
+  assert.equal(h.root.querySelectorAll('.card').length, 1); assert.equal(h.avatar.state, 'success');
+  assert.equal(JSON.parse(h.window.sessionStorage.getItem('brites-sandbox-cart'))[0].variantId, '101');
+  ready.resolve({mode: 'webgl'});
+});
+
+for (const mode of ['constructor failure', 'static fallback', 'script failure']) test(mode + ' leaves search and confirmed sandbox cart functional', async t => {
+  const h = makeWidget(t, {createThrows: mode === 'constructor failure', fallback: mode === 'static fallback', noAvatarGlobal: mode === 'script failure'});
+  h.open();
+  if (mode === 'script failure') h.root.querySelector('script').dispatchEvent(new h.window.Event('error'));
+  await h.ask(); await h.add();
+  assert.equal(h.errors.length, 0); assert.equal(h.root.querySelectorAll('.card').length, 1);
+  assert.equal(JSON.parse(h.window.sessionStorage.getItem('brites-sandbox-cart')).length, 1);
+  assert.match(h.messages.textContent, /Added to the sandbox bag/);
+});
+
+test('delayed avatar script completion after dismissal initializes hidden', async t => {
+  const h = makeWidget(t, {noAvatarGlobal: true}); h.open(); const loader = h.root.querySelector('script'); h.window.BritesConcierge.close();
+  let config;
+  h.window.BritesConciergeAvatar = {create(value) {config = value; return {setState() {}, setVisible() {}, setLevel() {}, ready: Promise.resolve({mode: 'fallback'})};}};
+  loader.dispatchEvent(new h.window.Event('load')); await settle();
+  assert.equal(config.visible, false); assert.equal(h.panel.hidden, true); assert.equal(h.utterances.length, 0);
+});
+
+test('missing speech support hides narration and preserves all product actions', async t => {
+  const h = makeWidget(t, {noSpeech: true}); h.open(); await h.ask(); await h.add();
+  assert.equal(h.button('Read aloud').hidden, true); assert.equal(h.errors.length, 0);
+  assert.equal(JSON.parse(h.window.sessionStorage.getItem('brites-sandbox-cart')).length, 1);
+});
+
+test('request errors show a recoverable expression without breaking ordinary shop controls', async t => {
+  const h = makeWidget(t, {answer: async () => response({error: 'Synthetic service recovery'}, 503)}); h.open(); await h.ask();
+  assert.equal(h.avatar.state, 'error'); assert.match(h.messages.textContent, /Synthetic service recovery/);
+  assert.equal(h.input.disabled, false); assert.equal(h.button('Send').disabled, false);
+  h.document.getElementById('shop-control').focus(); assert.equal(h.document.activeElement.id, 'shop-control');
+  h.window.BritesConcierge.close(); assert.equal(h.avatar.visible, false);
+});
+
+test('restored open session remains open, and restored closed session stays lazy', async t => {
+  const saved = {history: [{role: 'assistant', content: 'Prior conversation'}], preferences: {}, productHandles: [], uncertainVariants: [], updatedAt: Date.now()};
+  const open = makeWidget(t, {saved: {...saved, open: true}}), closed = makeWidget(t, {saved: {...saved, open: false}});
+  assert.equal(open.panel.hidden, false); assert.equal(open.instances.length, 1); assert.equal(open.avatar.visible, true);
+  assert.equal(closed.panel.hidden, true); assert.equal(closed.instances.length, 0);
+  assert.equal(open.utterances.length, 0); assert.equal(closed.utterances.length, 0);
+});
+
+test('the entire synthetic shopping/voice flow never requests microphone or camera', async t => {
+  const h = makeWidget(t); h.open(); await h.ask(); h.button('Read aloud').click(); h.utterances[0].onstart(); h.utterances[0].onend(); await h.add();
+  h.visibility.hide(true); h.window.BritesConcierge.close(); assert.deepEqual(h.devices, []);
+  assert.equal(h.root.querySelectorAll('video,audio,input[type="file"]').length, 0);
+  assert.ok(h.network.every(request => request.url.hostname === 'growth-sandbox.example'));
+});
+
+// These are correctness requirements beyond the normal factory fallback. A
+// browser lifecycle end must silence speech even if visibilitychange is skipped.
+test('pagehide stops narration and hides the avatar for navigation/bfcache', async t => {
+  const h = makeWidget(t); h.open(); await h.ask(); h.button('Read aloud').click(); const old = h.utterances[0]; old.onstart();
+  const cancels = h.speech.cancels;
+  h.window.dispatchEvent(new h.window.PageTransitionEvent('pagehide', {persisted: true}));
+  assert.ok(h.speech.cancels > cancels, 'pagehide must cancel the utterance');
+  assert.equal(h.avatar.visible, false, 'pagehide must pause avatar rendering');
+  old.onstart(); assert.notEqual(h.avatar.state, 'speaking');
+});
+
+test('pageshow restores avatar only for an open visible concierge', async t => {
+  const h = makeWidget(t); h.open(); await h.ask();
+  h.window.dispatchEvent(new h.window.PageTransitionEvent('pagehide', {persisted: true}));
+  assert.equal(h.avatar.visible, false);
+  h.window.dispatchEvent(new h.window.PageTransitionEvent('pageshow', {persisted: true}));
+  assert.equal(h.avatar.visible, true);
+  h.window.BritesConcierge.close();
+  h.window.dispatchEvent(new h.window.PageTransitionEvent('pageshow', {persisted: true}));
+  assert.equal(h.avatar.visible, false);
+  h.window.BritesConcierge.open(); h.visibility.hide(true);
+  h.window.dispatchEvent(new h.window.PageTransitionEvent('pagehide', {persisted: true}));
+  h.window.dispatchEvent(new h.window.PageTransitionEvent('pageshow', {persisted: true}));
+  assert.equal(h.avatar.visible, false);
+});
+
+test('narration ending during a new search restores the thinking expression', async t => {
+  const replies = []; const h = makeWidget(t, {answer: () => {const reply = deferred(); replies.push(reply); return reply.promise;}});
+  h.open(); const first = h.ask(); replies[0].resolve(response(fixtureAnswer)); await first;
+  const second = h.ask('Another design'); h.button('Read aloud').click(); const narration = h.utterances[0];
+  narration.onstart(); assert.equal(h.avatar.state, 'speaking'); narration.onend();
+  assert.equal(h.avatar.state, 'thinking', 'search remains pending after narration ends');
+  replies[1].resolve(response(fixtureAnswer)); await second;
+});
+
+test('narration ending during a cart recheck restores the thinking expression', async t => {
+  const product = deferred(); const h = makeWidget(t, {product: () => product.promise}); h.open(); await h.ask();
+  h.button('Choose options').click(); h.button('Review adding to bag').click(); h.button('Confirm add to bag').click();
+  h.button('Read aloud').click(); const narration = h.utterances[0]; narration.onstart(); narration.onend();
+  assert.equal(h.avatar.state, 'thinking', 'cart recheck remains pending after narration ends');
+  product.resolve(response({product: fixtureProduct})); await settle();
+  assert.equal(h.avatar.state, 'success'); assert.equal(JSON.parse(h.window.sessionStorage.getItem('brites-sandbox-cart')).length, 1);
+});
+
+test('a renderer draw exception cannot block text search or sandbox cart', async t => {
+  const h = makeWidget(t, {stateThrows: true}); h.open();
+  h.input.value = 'A bunny gift'; h.input.dispatchEvent(new h.window.Event('input'));
+  assert.equal(h.errors.length, 0, 'renderer errors must stay inside the optional avatar boundary');
+  await h.ask(); await h.add();
+  assert.equal(h.errors.length, 0); assert.equal(h.root.querySelectorAll('.card').length, 1);
+  assert.equal(JSON.parse(h.window.sessionStorage.getItem('brites-sandbox-cart')).length, 1);
+});

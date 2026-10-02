@@ -1,0 +1,23 @@
+(function(){'use strict';
+  const rows=[{id:'rank-001',rank:1,title:'Bunny necklace · UI fixture',handle:'fixture-bunny',sku:'FIXTURE-BUNNY',theme:'Test bunny gift intent',status:'complete',productId:'gid://shopify/Product/10'},{id:'rank-002',rank:2,title:'Cardinal necklace · UI fixture',handle:'fixture-cardinal',sku:'FIXTURE-CARDINAL',theme:'Test cardinal gift intent',status:'complete',productId:'gid://shopify/Product/20'}];
+  const source={id:'fixture-source',title:'Simulated source for browser QA',url:'https://example.com/fixture-source',excerpt:'Fixture text for testing a sourced recommendation.',checkedAt:Date.now()};
+  const dossier=row=>({schema:1,productId:row.productId,handle:row.handle,status:'approved',version:'fixture-v1',savedAt:Date.now(),facts:[{claim:row.title,quote:'Fixture text for testing a sourced recommendation.',sourceIds:[source.id],productId:row.productId}],sources:[source],buyerIntents:[{intent:'Simulated recipient interest',keywords:['fixture necklace gift'],rationale:'This text verifies buyer-intent rendering.',sourceIds:[source.id]}],competitors:[{name:'Simulated competitor offer',url:'https://example.com/fixture-offer',price:50,currency:'USD',observation:'Fixture offer; no competitor was researched here.',sourceIds:[source.id],spend:{status:'unknown'}}],recommendations:[{channel:'keywords',basis:'hypothesis',action:'Fixture recommendation for '+row.handle,measure:'Fixture test metric only.',sourceIds:[source.id]}],meanings:[{text:'Fixture symbolism text; not jewellery history.',context:'Browser verification',kind:'interpretation',sourceIds:[source.id]}],validation:{ok:true,warnings:[]}});
+  const scenario=document.querySelector('#fixture-scenario'),observed=document.querySelector('#fixture-observed');
+  let requests=0;
+  window.buildNav=function(){document.querySelector('#nav').replaceChildren();};window.navDrawer=function(){};window.__BRITES_GROWTH_AD_SANDBOX=true;
+  window.api=async function(action,body){requests++;observed.textContent='Fixture request '+requests+': '+action+' · scenario '+scenario.value;
+    if(action==='growthProductDemand'){const id=body.productIds[0];return {products:[{productId:id,state:'current',evidence:{at:Date.now(),range:'LAST_30_DAYS',currency:'USD',payloadBounds:{state:'detail_sampled',omittedDetails:{shoppingRows:3,searchTerms:2}},sources:{shopping:{state:'available'},searchTerms:{state:'available'}},shopping:{totals:{impressions:100,clicks:4,cost:2.5,reportedConversions:1}},search:{terms:[]},pmax:{terms:[]},planner:{state:'unavailable',reason:'Simulated missing market evidence; no default is used.'}}}]};}
+    if(action==='growthResearchStatus'){const complete=['approved','slow','held'].includes(scenario.value);return {schema:1,at:Date.now(),queue:rows.map(row=>({...row,status:complete?'complete':'pending_research'})),control:{catalogueComplete:true},counts:{ranked:2,matched:2,complete:complete?2:0,approvedDossiers:complete?2:0},blockers:[]};}
+    if(action!=='growthResearchDossiers')throw Error('This verification fixture has no write operations.');
+    const row=rows.find(r=>body.productIds.includes(r.productId));if(!row)throw Error('Unknown fixture product.');
+    const value=dossier(row),kind=scenario.value;
+    if(kind==='slow'&&row.rank===1)await new Promise(resolve=>setTimeout(resolve,1800));
+    if(kind==='error')throw Error('Simulated storage failure; current product selection must stay intact.');
+    if(kind==='unavailable')return {dossiers:[],productIssues:[],productIssueState:'available'};
+    if(kind==='foreign')return {dossiers:[dossier(rows.find(r=>r.id!==row.id))],productIssues:[],productIssueState:'available'};
+    if(kind==='draft'){value.status='draft';value.competitors=[];value.buyerIntents=[];value.validation.warnings=['Competitor and buyer-intent research is incomplete.'];}
+    return {dossiers:[value],productIssueState:'available',productIssues:kind==='held'?[{productId:row.productId,issues:[{id:'fixture-material',kind:'material',status:'open',detail:'Simulated material contradiction. Correction work remains available.',blocks:['recommendation','cart'],evidence:[{text:'Fixture issue evidence.',url:'https://example.com/fixture-source'}]}]}]:[]};
+  };
+  scenario.onchange=()=>document.querySelector('[data-v="research"]')?.click();
+  document.addEventListener('DOMContentLoaded',()=>window.buildNav());
+})();
