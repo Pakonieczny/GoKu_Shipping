@@ -720,10 +720,17 @@ async function concierge({service,shopify,message,history=[],preferences={},cont
     const bounds=milestoneDiscovery.recallBounds(),hintRead=typeof service.milestoneCandidateHandles==='function'?service.milestoneCandidateHandles(intent,bounds.liveHandles):typeof service.catalogueCandidateHandles==='function'?service.catalogueCandidateHandles({...intent,query:milestonePlan.motifs.join(' '),interests:milestonePlan.motifs},bounds.liveHandles):Promise.resolve([]);
     const [searches,hints]=await Promise.all([Promise.all(milestonePlan.motifs.map(motif=>shopify.search(motif))),hintRead]);
     const searched=[...new Map(searches.flatMap(result=>(result.products||[]).slice(0,10)).map(product=>[product.id,product])).values()].slice(0,30),seenHandles=new Set(searched.map(product=>product.handle));
-    milestoneHints=(Array.isArray(hints)?hints:[]).flatMap(hint=>{
+    const indexedHints=(Array.isArray(hints)?hints:[]).flatMap(hint=>{
       if(typeof hint==='string')return /^[a-z0-9_-]{1,180}$/.test(hint)?[{handle:hint,productId:null,dossierVersion:null}]:[];
       return /^[a-z0-9_-]{1,180}$/.test(hint?.handle||'')&&(!hint.productId||validIdentity(hint.productId))&&(!hint.dossierVersion||/^[a-f0-9]{64}$/.test(hint.dossierVersion))&&(!hint.supplementVersion||/^[a-f0-9]{64}$/.test(hint.supplementVersion))?[{handle:hint.handle,productId:hint.productId||null,dossierVersion:hint.dossierVersion||null,supplementVersion:hint.supplementVersion||null}]:[];
-    }).filter((hint,index,list)=>!seenHandles.has(hint.handle)&&list.findIndex(other=>other.handle===hint.handle)===index).slice(0,bounds.liveHandles);
+    }).filter((hint,index,list)=>list.findIndex(other=>other.handle===hint.handle)===index).slice(0,bounds.liveHandles);
+    // A version-pinned index hit can already be present in the predictive
+    // search set. Preserve that evidence link instead of discarding it merely
+    // because its handle was found. Otherwise a broad motif with more than six
+    // equally scored live results can sort the only reviewed product out before
+    // the public-meaning gate. Identity still has to agree exactly.
+    for(const hint of indexedHints){const found=searched.find(product=>product.handle===hint.handle);if(found&&(!hint.productId||found.id===hint.productId)&&hint.dossierVersion)recalledVersions.set(found.id,{dossierVersion:hint.dossierVersion,supplementVersion:hint.supplementVersion});}
+    milestoneHints=indexedHints.filter(hint=>!seenHandles.has(hint.handle));
     const attempts=await Promise.allSettled(milestoneHints.map(hint=>shopify.byHandle(hint.handle))),recalled=[];
     for(let i=0;i<attempts.length;i++){const attempt=attempts[i],hint=milestoneHints[i];if(attempt.status!=='fulfilled'||!attempt.value)continue;if(attempt.value.handle!==hint.handle||(hint.productId&&attempt.value.id!==hint.productId))continue;recalled.push(attempt.value);if(hint.dossierVersion)recalledVersions.set(attempt.value.id,{dossierVersion:hint.dossierVersion,supplementVersion:hint.supplementVersion});}
     if(milestoneHints.length&&!searched.length&&!recalled.length&&attempts.some(x=>x.status==='rejected'))throw Error('The matching published pieces could not be checked.');
