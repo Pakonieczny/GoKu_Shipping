@@ -629,7 +629,10 @@ async function op_backPreview(b) {
   return { dataUrl: "data:image/png;base64," + bytes.toString("base64"), approvedAt: back.approvedAt || null };
 }
 /** Links in a sheet record are rebuilt from the objects' current download tokens (older records may carry a token
- *  that a later re-upload replaced). Charm links missing at save time are filled from the charm library. */
+ *  that a later re-upload replaced). Charm links missing at save time are filled from the charm library.
+ *  This is optional enrichment, not a prerequisite for reading a saved layout: a slow Storage metadata lookup must
+ *  never keep getSheet waiting indefinitely. Existing URLs survive failures and the bounded refresh below. */
+const LINK_REFRESH_MS = 1500, LINK_REFRESH_CONCURRENCY = 12;
 async function refreshLinks(d) {
   const bucket = admin.storage().bucket();
   const urlFor = async (path) => {
@@ -637,17 +640,32 @@ async function refreshLinks(d) {
     try { const file = bucket.file(path); const [meta] = await file.getMetadata(); let t = meta.metadata && meta.metadata.firebaseStorageDownloadTokens; if (!t) return null; t = String(t).split(",")[0];
       return "https://firebasestorage.googleapis.com/v0/b/" + encodeURIComponent(bucket.name) + "/o/" + encodeURIComponent(path) + "?alt=media&token=" + encodeURIComponent(t); } catch (_) { return null; }
   };
-  const jobs = [];
-  for (const k of ["ai", "pdf", "labelled", "report", "preview"]) { const o = d.outputs && d.outputs[k]; if (o && o.path) jobs.push(urlFor(o.path).then(u => { if (u) o.url = u; })); }
-  for (const f of (d.label && d.label.files) || []) if (f.path) jobs.push(urlFor(f.path).then(u => { if (u) f.url = u; }));
-  for (const k of ["index", "report"]) { const o = d.backOutputs && d.backOutputs[k]; if (o && o.path) jobs.push(urlFor(o.path).then(u => { if (u) o.url = u; })); }
-  for (const bk of d.backPool || []) for (const k of ["ai", "png"]) { const o = bk.outputs && bk.outputs[k]; if (o && o.path) jobs.push(urlFor(o.path).then(u => { if (u) o.url = u; })); }
+  const paths = new Map();
+  const link = (path, apply) => { if (!path) return; if (!paths.has(path)) paths.set(path, []); paths.get(path).push(apply); };
+  for (const k of ["ai", "pdf", "labelled", "report", "preview"]) { const o = d.outputs && d.outputs[k]; if (o && o.path) link(o.path, u => { o.url = u; }); }
+  for (const f of (d.label && d.label.files) || []) if (f.path) link(f.path, u => { f.url = u; });
+  for (const k of ["index", "report"]) { const o = d.backOutputs && d.backOutputs[k]; if (o && o.path) link(o.path, u => { o.url = u; }); }
+  for (const bk of d.backPool || []) for (const k of ["ai", "png"]) { const o = bk.outputs && bk.outputs[k]; if (o && o.path) link(o.path, u => { o.url = u; }); }
   for (const c of d.charms || []) {
     const pngPath = c.pngPath || (c.hash ? "charmnest/charms/" + c.hash + ".png" : null), aiPath = c.aiPath || (c.hash ? "charmnest/charms/" + c.hash + ".ai" : null);
-    jobs.push(urlFor(pngPath).then(u => { if (u) c.thumbUrl = u; }));
-    jobs.push(urlFor(aiPath).then(u => { if (u) c.aiUrl = u; }));
+    link(pngPath, u => { c.thumbUrl = u; });
+    link(aiPath, u => { c.aiUrl = u; });
   }
-  await Promise.all(jobs);
+  const entries = [...paths]; if (!entries.length) return;
+  let cursor = 0, closed = false, timer;
+  const worker = async () => {
+    while (!closed && cursor < entries.length) {
+      const [path, targets] = entries[cursor++], url = await urlFor(path);
+      // A late lookup neither mutates the answer after its deadline nor starts another optional request.
+      if (!closed && url) for (const apply of targets) apply(url);
+    }
+  };
+  try {
+    await Promise.race([
+      Promise.all(Array.from({ length: Math.min(LINK_REFRESH_CONCURRENCY, entries.length) }, worker)),
+      new Promise(resolve => { timer = setTimeout(() => { closed = true; resolve(); }, LINK_REFRESH_MS); })
+    ]);
+  } finally { closed = true; clearTimeout(timer); }
 }
 /** Permanent delete of a sheet record and its output files, behind a passcode. Charm library copies are shared and stay. */
 const DELETE_CODE = process.env.CHARM_NEST_DELETE_CODE || "975311";
@@ -1293,13 +1311,15 @@ async function putBacks(tx, sheetId, list, expected) {
     const old = stored.get(x.poolId), currentBack = pool && pool.find(v => v.poolId === x.poolId);
     const refused = !sheet.exists || !poolIds.includes(x.poolId) ? "The target sheet does not contain this exact charm copy"
       : (old.invalidated && (+old.approvedAt || 0) >= +x.approvedAt) || (+old.approvedAt || 0) > +x.approvedAt || (+old.invalidatedAt || 0) >= +x.approvedAt ? "This approval has been superseded; reopen the engraving"
-      : expected != null && +expected !== +(currentBack?.approvedAt || old.approvedAt || 0) ? "This back was edited elsewhere. Reopen it before saving your changes."
       : null;
     if (refused) { out.errors.push({ row: x, error: refused }); continue; }
     x.engravingSeals=EngravingSeals.merge(old,x);
     const copy = sheetBack(x);
     // already recorded as sent, and the sheet already lists it so: nothing would change but the time stamps
+    // A committed edit retried after its response was lost still carries the prior expectedApprovedAt. Recognize only
+    // this exact, already-recorded approval before comparing that old expectation; a different payload still conflicts.
     if (old.invalidated === false && old.sheetId === sheetId && holds(old, x) && sameValue(currentBack, copy)) { out.skipped++; continue; }
+    if (expected != null && +expected !== +(currentBack?.approvedAt || old.approvedAt || 0)) { out.errors.push({ row: x, error: "This back was edited elsewhere. Reopen it before saving your changes." }); continue; }
     const record = Object.assign({}, x, {invalidated:false, updatedAt:FV.serverTimestamp()});
     /* A new approval of the same copy replaces the prior one's files. They were approved once, so they are archived, not
        deleted: moved to the archive path once this commits, and the record says where each went (a file whose move

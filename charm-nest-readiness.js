@@ -110,17 +110,11 @@
     }
     return stamps;
   }
-  const escape=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-  // The badge stays visible; only verified readiness lights it up.
-  function seal(r,scope='Sheet',source){
-    const Sl=typeof window!=='undefined' && window.Seal;if(!Sl?.face)return '';
-    const saved=r.ready && processStamps(source || r).filter(s=>s.how==='laserReady' && +s.at>0).at(-1);
-    const model=saved?Sl.modelOf(saved):{family:'laser',action:r.ready?'LASER READY':'AWAITING LASER',status:true,ghost:!r.ready,at:0,by:''};
-    const label=escape(scope+(r.ready?' ready for laser cutting':' not ready for laser cutting')+(saved?' · '+Sl.titleOf(saved):''));
-    return `<span class="laserSeal ${r.ready?'earned':'pending'}" tabindex="0" role="img" aria-label="${label}" title="${label}">${Sl.face(model)}</span>`;
-  }
+  // Readiness is expressed by the section and saved-back counter, never a preview stamp.
+  // Recorded process seals have their own historical row; rendering them here would duplicate them.
+  function seal(r,scope='Sheet',source){return '';}
   function counter(r,scope='Sheet',source){
-    // a sheet with no engraved backs has nothing to count: its cards read "0 / 0" beside the seal
+    // A sheet with no engraved backs has nothing to count.
     return (r.required ? `<span class="backSavedCount" title="Engraved backs saved" aria-label="${r.saved} of ${r.required} backs saved"><b>${r.saved} / ${r.required}</b></span>` : '')+seal(r,scope,source);
   }
   return {idsOf,orderIds,decisions,sheet,set,completedBefore,laserSheet,laserGroup,orderReports,orderBlockers,filed,processStamps,seal,counter};

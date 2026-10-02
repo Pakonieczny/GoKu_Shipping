@@ -64,13 +64,10 @@ async function exercise(seal,label){
  }
  assert.equal(outlines.size,8,'all eight families have distinguishable outlines');
  w.eval(fs.readFileSync('charm-nest-readiness.js','utf8'));const R=w.CharmNestReadiness;for(const ready of [true,false]){
-  const host=d.createElement('div');host.innerHTML=R.seal({ready});d.body.append(host);const seal=host.querySelector('.laserSeal');rectFor(seal);
-  assert.equal(seal.querySelector('svg').dataset.sealFamily,'laser','readiness uses the shared laser family');
-  point('pointerover',seal);await advance(1000);assert.equal(lens(),null,'readiness seal uses the same delay');point('pointerout',seal,outside);await advance(2000);await closed('readiness pass cancels');
-  point('pointerover',seal);await advance(1100);assert(lens());assert.equal(lens().style.width,'168px');assert.match(lens().querySelector('.lc').textContent,ready?/Sheet ready for laser cutting/:/Sheet not ready for laser cutting/);point('pointerout',seal,outside);await closed('readiness departure closes');host.remove();
+  assert.equal(R.seal({ready}),'','readiness has no unearned hover target');
  }
- const signedReadiness=d.createElement('div');signedReadiness.innerHTML=R.seal({ready:true},'Sheet',{processSeals:[{how:'laserReady',at,by:'Seth Signed'}]});d.body.append(signedReadiness);const readinessSeal=signedReadiness.querySelector('.laserSeal');rectFor(readinessSeal);
- assert.doesNotMatch(readinessSeal.querySelector('svg').textContent,/Seth Signed|Signed by/,'signed readiness keeps its signer off the regular face');point('pointerover',readinessSeal);await advance(1100);assert.match(lens().querySelector('.lf').textContent,/Seth Signed/,'readiness hover uses its saved employee');point('pointerout',readinessSeal,outside);await closed('signed readiness closes');signedReadiness.remove();
+ const signedReadiness=d.createElement('div');signedReadiness.innerHTML=w.Seal.html({how:'laserReady',at,by:'Seth Signed'});d.body.append(signedReadiness);const readinessSeal=signedReadiness.querySelector('.seal');rectFor(readinessSeal);
+ assert.doesNotMatch(readinessSeal.querySelector('svg').textContent,/Seth Signed|Signed by/,'recorded laser readiness keeps its signer off the regular face');point('pointerover',readinessSeal);await advance(1100);assert.match(lens().querySelector('.lf').textContent,/Seth Signed/,'recorded laser readiness hover uses its saved employee');point('pointerout',readinessSeal,outside);await closed('signed readiness closes');signedReadiness.remove();
  const dialog=d.querySelector('dialog');dialog.querySelector('.sealRow').innerHTML=w.Seal.html({how:'laserReady',at,by:'Paul'},84);const dialogSeal=dialog.querySelector('.seal');rectFor(dialogSeal);
  point('pointerover',dialogSeal);await advance(900);dialog.dispatchEvent(new w.Event('close'));await advance(2000);await closed('closing a dialog cancels its pending seal preview');
  // A redraw may recreate identical historical markup, but it must earn a new hover rest.
@@ -86,5 +83,5 @@ async function exercise(seal,label){
   point('pointerout',edgeSeal,outside);await closed('viewport-edge departure closes');
  }
  edgeHost.remove();
- console.log('PASS: 8 seal/scope variants across 4 legacy size requests, 8 shared designs, both readiness states and saved readiness actor; common 168 px preview, hover-only signer, unobstructed edge placement, 1.1-second rest, strict exit, descendant hit testing, scroll/resize/blur/tab/dialog/redraw dismissal and keyboard access');
+ console.log('PASS: 8 seal/scope variants across 4 legacy size requests, 8 shared designs, no unearned readiness seals and preserved saved readiness actor; common 168 px preview, hover-only signer, unobstructed edge placement, 1.1-second rest, strict exit, descendant hit testing, scroll/resize/blur/tab/dialog/redraw dismissal and keyboard access');
 }finally{w.close();}})().catch(e=>{console.error(e);process.exitCode=1;});

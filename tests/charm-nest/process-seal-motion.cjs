@@ -144,7 +144,7 @@ async function orderModalWaits(){
       const dialog=h.d.createElement('dialog');dialog.id='orderWin';dialog.open=true;h.d.body.appendChild(dialog);dialog.appendChild(h.card);
       const first=h.addSeal(),second=h.addSeal({...STAMP,id:'later-stamp',how:'laserDone'},510),a=h.w.Seal.press(first),b=h.w.Seal.press(second);await tick();
       let wired=0,stopped=0,shown=0,resolved=false;
-      const context={window:{Seal:h.w.Seal},W:{dlg:dialog,closing:false,anims:[]},Promise,setTimeout,still:()=>true,origin:()=>null,rectOf:()=>null,stopMotion:()=>stopped++,giveBack(){},wire:()=>wired++,Orders:{rows:()=>[{key:'row',state:'written',order:{receiptId:'3701000'}}]},show:()=>shown++};vm.createContext(context);
+      const context={window:{Seal:h.w.Seal},W:{dlg:dialog,closing:false,anims:[]},Promise,setTimeout,still:()=>true,origin:()=>null,rectOf:()=>null,stopMotion:()=>stopped++,sheetPause(){},giveBack(){},wire:()=>wired++,Orders:{rows:()=>[{key:'row',state:'written',order:{receiptId:'3701000'}}]},show:()=>shown++};vm.createContext(context);
       const start=bridge.indexOf(operation==='close'?'  async function shut()':'  async function openOrder(',base),end=bridge.indexOf(operation==='close'?'  /** The gold flash':'  // (a repaint asked from outside',start);assert(start>=0 && end>start);vm.runInContext(bridge.slice(start,end),context);
       const action=(operation==='close'?context.shut():context.openOrder('3701000')).then(()=>{resolved=true;});await tick();
       assert(!resolved,'an async order modal transition waits for the stamp queue');assert.equal(stopped,0);assert.equal(wired,0);assert.equal(shown,0);assert.equal(h.moves.filter(m=>m.el===dialog).length,0,'a queued close has not started its surface animation');

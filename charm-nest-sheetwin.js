@@ -1056,7 +1056,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     } else if (opts.slide) slidePlate(opts.slide);
     const ready = () => { if (W.flip && W.flip.readyNow) W.flip.readyNow(); };
     try {
-      const r = await api("charmNestLibrary", { op: "getSheet", id }, { quiet: true });
+      const r = await api("charmNestLibrary", { op: "getSheet", id }, { quiet: true, timeoutMs: 12000 });
       if (tok !== W.token) return;
       const rec = r.sheet; if (!rec) throw new Error("This sheet is no longer in the Library.");
       if (window.LaserReview) LaserReview.record(rec);
@@ -3967,9 +3967,15 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   const orderRecs = new Map();   // sheet id → { at, p }: a record read in the last minute is not read again
   function recFor(id) {
     const hit = orderRecs.get(id); if (hit && Date.now() - hit.at < 60000) return hit.p;
-    const p = api("charmNestLibrary", { op: "getSheet", id }, { quiet: true }).then(r => { if (!r || !r.sheet) throw new Error("This sheet is no longer in the Library."); return r.sheet; });
+    // Viewing a sheet is a short read, not the five-minute file-writing operation that getSheet otherwise inherits.
+    // A rejected read is evicted, so reopening (or Try again) really does ask again.
+    const entry = { at: Date.now(), p: null, rec: null };
+    const p = api("charmNestLibrary", { op: "getSheet", id }, { quiet: true, timeoutMs: 12000 }).then(r => {
+      if (!r || !r.sheet) throw new Error("This sheet is no longer in the Library.");
+      entry.rec = r.sheet; entry.at = Date.now(); return r.sheet;
+    });
     p.catch(() => { if (orderRecs.get(id) && orderRecs.get(id).p === p) orderRecs.delete(id); });
-    orderRecs.set(id, { at: Date.now(), p }); if (orderRecs.size > 12) orderRecs.delete(orderRecs.keys().next().value);
+    entry.p = p; orderRecs.set(id, entry); if (orderRecs.size > 12) orderRecs.delete(orderRecs.keys().next().value);
     return p;
   }
   const recOfPage = pg => ({ id: pg.sheetId || null, metal: pg.metal, sheetIndex: pg.sheetIndex || pg.page || 1, placements: pg.placements || [],
@@ -3989,7 +3995,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   const sheetBacks = new Map();   // sheet id → { at, p }: one read of a sheet's backs, kept for a minute
   function backsFor(id) {
     const hit = sheetBacks.get(id); if (hit && Date.now() - hit.at < 60000) return hit.p;
-    const p = api("charmNestLibrary", { op: "backList", sheetId: id }, { quiet: true }).then(r => (r && r.backs) || []);
+    const p = api("charmNestLibrary", { op: "backList", sheetId: id }, { quiet: true, timeoutMs: 12000 }).then(r => (r && r.backs) || []);
     p.catch(() => { if (sheetBacks.get(id) && sheetBacks.get(id).p === p) sheetBacks.delete(id); });
     sheetBacks.set(id, { at: Date.now(), p }); if (sheetBacks.size > 12) sheetBacks.delete(sheetBacks.keys().next().value);
     return p;
@@ -4024,13 +4030,13 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     // (a Library card draws from the backs its record carries, which getSheet read in full: the sheet's list of backs is
     //  read only when the record wants words and carries none, so a Library card is one read)
     const listed = !G.bare || (!((G.rec && G.rec.backPool) || []).length && Object.values((G.rec && G.rec.engraving) || {}).some(e => e && e.needed));
-    if (id && listed) { jobs.push(backsFor(id).then(list => { G.backs = backsOf(G.rec, G.live, list); }, () => {})); what.push("this sheet's back engraving"); }
+    if (id && listed) { jobs.push(backsFor(id).then(list => { G.backs = backsOf(G.rec, G.live, list); }, () => { G.backsAsked = false; })); what.push("this sheet's back engraving"); }
     if (window.Engrave && Engrave.loadFonts && !(F && F.ok)) { jobs.push(Promise.resolve(Engrave.loadFonts()).catch(() => {})); what.push("the engraving font"); }
     if (!jobs.length) return;
     wait("Reading " + what.join(" and ") + "…");
     Promise.all(jobs).then(() => {
       // (a plate still turning comes round on its plain back with its spinner, then the words fade in: Motion.landIn)
-      const land = () => { wait(null); for (const x of G.pieces) { x._engGeo = null; x._engGeoKey = null; } if (G.cv.isConnected && G.cv._order === G) { if (paintOrderBase(G)) paintOrder(G); } };
+      const land = () => { if (G.active && !G.active()) return; wait(null); for (const x of G.pieces) { x._engGeo = null; x._engGeoKey = null; } if (G.cv.isConnected && G.cv._order === G) { if (paintOrderBase(G)) paintOrder(G); } };
       if (G.backSide && G.cv.isConnected && window.Motion && Motion.landIn) Motion.landIn(G.cv, land); else land();
     });
   }
@@ -4183,25 +4189,42 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   async function drawOrder(cv, target, orderId, opts = {}) {
     const rid = String(orderId || ""), page = target && typeof target === "object" ? target : null, id = page ? page.sheetId || "" : String(target || "");
     const live = page || (id ? liveOf(id) : null), claim = cv._claim = {};
-    let rec = null;
-    if (id) { try { rec = await recFor(id); } catch (e) { if (!live) throw e; } }
+    const was = cv._order; if (was && was.dispose) was.dispose(); else if (was) { cancelAnimationFrame(was.raf); cancelAnimationFrame(was.soon); was.raf = was.soon = 0; }
+    cv._order = null;
+    const current = () => cv._claim === claim && cv.isConnected && (!opts.isCurrent || !!tryDo(opts.isCurrent));
+    const saved = id ? recFor(id) : null;
+    // The page already has the actual placed charms: draw it now. A slow metadata read must never blank it.
+    const hit = id && orderRecs.get(id);
+    let rec = live && hit && hit.rec || null;
+    if (saved && !live) rec = await saved;
     // a sheet this sorter holds is drawn as it is on its page (pieces merged, moved, taken off or the stock changed since it
     // was saved), with what only the saved record knows (its designs, backs, set, cut); else the Library's saved copy
-    if (live) rec = Object.assign({}, rec || {}, recOfPage(live), { id: (rec && rec.id) || live.sheetId || null, laserDoneAt: (rec && rec.laserDoneAt) || live.laserDoneAt || null,
-      roseCutAt: (rec && rec.roseCutAt) || live.roseCutAt || null, roseLine: !!(live.rosePlan || live.roseProtected), live: true });
+    const withLive = savedRec => live ? Object.assign({}, savedRec || {}, recOfPage(live), { id: (savedRec && savedRec.id) || live.sheetId || null, laserDoneAt: (savedRec && savedRec.laserDoneAt) || live.laserDoneAt || null,
+      roseCutAt: (savedRec && savedRec.roseCutAt) || live.roseCutAt || null, roseLine: !!(live.rosePlan || live.roseProtected), live: true }) : savedRec;
+    rec = withLive(rec);
     const pieces = piecesOf(rec);
     for (const x of pieces) x.eng = engOf(x, rec);
+    if (live) { const byId = new Map((live.charms || []).map(c => [c.id, c])); for (const x of pieces) x.c = byId.get(x.id) || null; }
     const G = { cv, rec, live, pieces, mine: pieces.filter(x => x.rid === rid), st: live ? stockFor(rec.metal, live) : rec.stock ? stockOf(rec) : stockFor(rec.metal), focus: null, img: null, k: 1, R: 0, dpr: 1, t0: 0, raf: 0, soon: 0, backSide: !!opts.back, thumb: !!opts.thumb, bare: !!opts.bare, backs: backsOf(rec, live), backsAsked: false };
     // (the plate belongs to the latest drawing asked of it: one still being read for another sheet or order never lays it
     // out or paints it again, and its ring stops, so a sheet switched while the last was drawing is not resized or painted over)
-    const was = cv._order; if (cv._claim === claim) { if (was && was !== G) { cancelAnimationFrame(was.raf); cancelAnimationFrame(was.soon); was.raf = was.soon = 0; } cv._order = G; }
-    const redraw = () => { if (paintOrderBase(G)) paintOrder(G); };
+    if (current()) cv._order = G;
+    const active = G.active = () => current() && cv._order === G;
+    G.dispose = () => { cancelAnimationFrame(G.raf); cancelAnimationFrame(G.soon); G.raf = G.soon = 0; if (G.ro) { G.ro.disconnect(); G.ro = null; } if (G.preview) { G.preview.onload = G.preview.onerror = null; G.preview = null; } };
+    const redraw = () => { if (active() && paintOrderBase(G)) paintOrder(G); };
+    // Delayed metadata, back-font reads and image recovery can finish after this canvas shows another sheet.
+    // Shared reads still finish into their caches; only their old view's callbacks and queued drawing stop.
+    const readOpts = Object.assign({}, opts, {
+      onInfo: inf => { if (active() && opts.onInfo) tryDo(() => opts.onInfo(inf)); },
+      onProgress: (d, n) => { if (active() && opts.onProgress) tryDo(() => opts.onProgress(d, n)); },
+      onWait: t => { if (active() && opts.onWait) tryDo(() => opts.onWait(t)); }
+    });
     const info = {
       rec, pieces, mine: G.mine, stock: G.st, sheet: { id: rec.id || id || null, metal: rec.metal, n: sheetNoOf(rec), name: rec.folder || rec.fileBase || "" },
       search: value => { G.search=CharmNestOrders.orderQuery(value);redraw();return CharmNestOrders.orderGroups(G.pieces,G.search); },
       redraw, focus: poolId => { G.focus = poolId || null; redraw(); },
       // the back side: the sheet's own backs and the engraving font, asked for once, and the plate drawn again as they land
-      back: on => { G.backSide = !!on; if (G.backSide) ensureBacks(G, opts); redraw(); },
+      back: on => { if (!active()) return; G.backSide = !!on; if (G.backSide) ensureBacks(G, readOpts); redraw(); },
       engraved: () => G.pieces.filter(x => engGeoOf(x, G.backs) || (x.eng && x.eng.text)).length,
       // what the back of this sheet says: every charm that carries words, whose it is, and where on the plate they are drawn
       words: () => G.pieces.map(x => { const geo = engGeoOf(x, G.backs); const text = (geo && geo.text) || (x.eng && x.eng.text) || ""; if (!text) return null;
@@ -4212,26 +4235,47 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       // a copy of what is drawn (the sheet window grows out of it)
       snap: () => { const c = document.createElement("canvas"); c.width = cv.width; c.height = cv.height; try { const x2 = c.getContext("2d"); x2.drawImage(G.base || cv, 0, 0); if (G.base) orderHalos(x2, G, 0, 0); } catch (_) { return null; } return c; }
     };
-    if (opts.onInfo) tryDo(() => opts.onInfo(info));
-    if (G.backSide) ensureBacks(G, opts);
-    const url = rec.outputs && rec.outputs.preview && rec.outputs.preview.url;
-    if (url && !live && !G.thumb && !opts.bare) { const im = new Image(); im.crossOrigin = "anonymous"; im.onload = () => { G.img = im; soonPaint(G); }; im.src = cors(url); }
+    const preview = () => {
+      const url = rec.outputs && rec.outputs.preview && rec.outputs.preview.url;
+      if (!active() || !url || live || G.thumb || opts.bare || G.preview) return;
+      const im = G.preview = new Image(); im.crossOrigin = "anonymous";
+      const land = () => { if (active() && G.preview === im) { G.img = im; soonPaint(G); } };
+      im.onload = land;
+      im.onerror = () => { im.onerror = null; if (active() && window.CharmNestAssets && CharmNestAssets.loadImage) CharmNestAssets.loadImage(im, url).then(land, () => {}); };
+      im.src = cors(url);
+    };
+    readOpts.onInfo(info);
+    if (active() && G.backSide) ensureBacks(G, readOpts);
+    preview();
     redraw();
-    if (live) { const byId = new Map((live.charms || []).map(c => [c.id, c])); for (const x of pieces) x.c = byId.get(x.id) || null; }
+    // A tab hidden during an early read has a zero-sized box. Observe that box so returning to Sheet draws it even
+    // when every source had already finished; no window resize or second approval is needed.
+    if (active() && window.ResizeObserver && cv.parentElement) {
+      G.ro = new ResizeObserver(() => { if (!active()) return G.dispose(); redraw(); });
+      G.ro.observe(cv.parentElement);
+    }
+    if (saved && live) saved.then(savedRec => {
+      if (!active()) return;
+      rec = G.rec = withLive(savedRec); info.rec = rec;
+      info.sheet.name = rec.folder || rec.fileBase || "";
+      G.backs = backsOf(rec, live, [...G.backs.values()]);
+      for (const x of pieces) { x.eng = engOf(x, rec); x._engGeo = null; x._engGeoKey = null; }
+      readOpts.onInfo(info); redraw();
+    }, e => { if (active()) console.warn("order view: sheet metadata", e.message); });
     const need = pieces.filter(x => !x.c), srcs = new Map((rec.sources || []).map(s => [s.id, s]));
     const ids = [...new Set(need.map(x => x.sourceId).filter(id2 => srcs.has(id2)))];
     ids.sort((a, b) => (G.mine.some(x => x.sourceId === b) ? 1 : 0) - (G.mine.some(x => x.sourceId === a) ? 1 : 0));
     let done = 0; const failed = [];
-    if (ids.length && opts.onProgress) tryDo(() => opts.onProgress(0, ids.length));
+    if (ids.length) readOpts.onProgress(0, ids.length);
     const one = async sid => {
       const s = srcs.get(sid);
-      try { const g = await sourceGeom(s); for (const x of need) if (x.sourceId === sid) attachGeom(x, g, rec); } catch (e) { failed.push(s.name || sid); console.warn("order view: design", s.name, e); }
-      done++; if (opts.onProgress) tryDo(() => opts.onProgress(done, ids.length)); if (cv.isConnected) soonPaint(G);
+      try { const g = await sourceGeom(s); if (active()) for (const x of need) if (x.sourceId === sid) attachGeom(x, g, rec); } catch (e) { if (active()) { failed.push(s.name || sid); console.warn("order view: design", s.name, e); } }
+      done++; readOpts.onProgress(done, ids.length); if (active()) soonPaint(G);
     };
     const queue = ids.slice();
-    await Promise.all(Array.from({ length: Math.min(4, queue.length) }, async () => { while (queue.length && cv.isConnected) await one(queue.shift()); }));
+    await Promise.all(Array.from({ length: Math.min(4, queue.length) }, async () => { while (queue.length && active()) await one(queue.shift()); }));
     info.failed = failed;
-    if (!cv.isConnected) return info;
+    if (!active()) { G.dispose(); return info; }
     G.t0 = performance.now();
     redraw();
     return info;

@@ -97,10 +97,7 @@ function fitted(f,label){
       const seal=host.firstElementChild;assert.equal(seal.style.getPropertyValue('--sz'),'84px',how+' normalizes a legacy requested size');
       seal.style.setProperty('--sz',requested+'px');nearly(length(seal,'width'),84,how+' CSS ignores a legacy width');nearly(length(seal,'height'),84,how+' CSS ignores a legacy height');host.remove();
     }
-    for(const ready of [true,false]){
-      const host=d.createElement('div');host.innerHTML=w.CharmNestReadiness.seal({ready});d.body.appendChild(host);
-      const badge=host.querySelector('.laserSeal');nearly(length(badge,'width'),84,'readiness has the same normal width');nearly(length(badge,'height'),84,'readiness has the same normal height');host.remove();
-    }
+    for(const ready of [true,false])assert.equal(w.CharmNestReadiness.seal({ready}),'','computed readiness never creates a preview stamp');
 
     // Twelve historical decisions remain available; shrinking never alters, hides or cuts off any seal.
     const history=fixture(12),faces=history.seals.map(s=>s.innerHTML);
@@ -126,12 +123,11 @@ function fitted(f,label){
     // These real stylesheet caps previously defeated parseFloat(maxWidth): min(), calc() and row padding matter.
     const engraving=fixture(12,600,'engravingSeals');assert(fitted(engraving,'engraving capped history')<20);assert(engraving.row.clientWidth<=240);engraving.parent.remove();
     const process=fixture(4,300,'processSealRow');process.parent.classList.add('libCard');
-    const status=d.createElement('span');status.className='sheetBackStatus';status.innerHTML=w.CharmNestReadiness.seal({ready:true});process.parent.appendChild(status);
-    // JSDOM's cascade does not rank :has() specificity correctly. Use the matching production rule's
-    // unchanged cap expression as the fixture's inline cap; browser layout itself is checked separately.
-    const processSelector='.libCard:has(.sheetBackStatus .laserSeal)>.processSealRow';assert(process.row.matches(processSelector));
-    process.row.style.maxWidth=rule(main,processSelector).style.getPropertyValue('max-width');
-    assert(fitted(process,'process history beside readiness')<84);assert(process.row.clientWidth<=214,'process seals respect the space reserved for readiness');process.parent.remove();
+    // Apply the matching production cap directly because JSDOM does not rank selector specificity.
+    process.row.style.maxWidth=rule(main,'.libCard>.processSealRow').style.getPropertyValue('max-width');
+    assert(fitted(process,'compact Library process history')<=65);assert(process.row.clientWidth<=260,'process history uses the card width without reserving an unearned badge');process.parent.remove();
+    const single=fixture(1,300,'processSealRow');single.parent.classList.add('libCard');
+    assert.equal(fitted(single,'single Library process seal'),72,'Library cards use the requested compact seal cap');single.parent.remove();
 
     // The existing Approved control keeps its footprint and label. Its seal and the workspace approval overlay stay out of flow.
     const panel=d.createElement('section');panel.innerHTML=w.CNEngravingSeals.panel({kind:'approved',at,by,job:{key:'test',state:'approved',approvedAt:at,approvedBy:by}});d.body.appendChild(panel);

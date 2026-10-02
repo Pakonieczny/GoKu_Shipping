@@ -13,24 +13,16 @@ L.record(s);L.sections(body);
 const card=document.createElement('article');card.dataset.laserCard='set';card._laserSheets=['sheet1'];card._laserSet={seq:1,sheetIds:['sheet1']};card.innerHTML='<div class="libCard"><span data-laser-seal></span><span data-sheet-status="sheet1"></span></div>'+L.labels(s);L.place(card,false,body);L.changed();frames.shift()();
 card.getBoundingClientRect=()=>({left:10,top:80,right:310,bottom:430,width:300,height:350});
 assert.equal(card.closest('[data-laser-area]').dataset.laserArea,'pending');assert.equal(card.querySelector('.productionRow').dataset.laserSheet,'sheet1');
-assert.equal(card.querySelectorAll('.laserSeal.pending').length,2,'unfinished sheets and sets show muted badges');
-for(const badge of card.querySelectorAll('.laserSeal.pending')){
- const svg=badge.querySelector('svg'),model=JSON.parse(svg.dataset.sealModel);
- assert.equal(svg.dataset.sealFamily,'laser','pending readiness uses the matching hexagonal laser family');
- assert.equal(model.at,0);assert.equal(model.status,true,'computed readiness is a status, not a historical approval');
- assert.doesNotMatch(svg.textContent,/\d{1,2}\s+[A-Z]{3}\s+\d{4}|\d{1,2}:\d{2}|Signed by|Paul/,'pending readiness invents neither time nor signer');
-}
-assert.equal(card.querySelectorAll('.laserSeal.earned').length,0,'muted badges cannot grant readiness');
+assert.equal(card.querySelectorAll('.laserSeal').length,0,'unfinished sheets and sets never show unearned process seals');
 assert.equal(card.querySelector('.libCard').nextElementSibling.className,'productionRow','QR remains below the sheet');
 assert.match(card.querySelector('[data-sheet-status]').textContent,/0 \/ 1/);
 assert(!/In preparation|awaiting approval|approved|Backs saved|checks complete|Layout checked/.test(card.textContent),'no repeated status panels');
 const qr=card.querySelector('.sheetQR img');
 const b={poolId:'c1',approvedBy:'Paul',approvedAt:1,verified:{geometry:{ok:true},file:{ok:true}},outputs:{ai:{path:'back',url:'url'}}};
 L.saved({sheetId:'sheet1',backPool:[b]});frames.shift()();
-assert.equal(card.closest('[data-laser-area]').dataset.laserArea,'ready');assert.equal(card.querySelector('[data-sheet-status]').lastElementChild.className,'laserSeal earned','badge follows counter at the right corner');assert.equal(card.querySelectorAll('.laserSeal').length,2,'only qualifying sheet and set earn badges');assert.equal(card.querySelector('.sheetQR img'),qr,'updating totals preserves loaded QR');
+assert.equal(card.closest('[data-laser-area]').dataset.laserArea,'ready');assert.match(card.querySelector('[data-sheet-status]').textContent,/1 \/ 1/,'saved-back counter stays visible');assert.equal(card.querySelectorAll('.laserSeal').length,0,'computed readiness does not stamp a sheet or duplicate its separate history');assert.equal(card.querySelector('.sheetQR img'),qr,'updating totals preserves loaded QR');
 jobs.set('j',{copies:['c1'],state:'words'});L.changed();frames.shift()();
 assert.equal(card.closest('[data-laser-area]').dataset.laserArea,'pending','reopening revokes whole set seal immediately');assert.match(card.querySelector('[data-sheet-status]').textContent,/0 \/ 1/);
-assert.equal(card.querySelectorAll('.laserSeal.pending').length,2,'reopening greys both badges');
-assert.equal(card.querySelectorAll('.laserSeal.earned').length,0);
+assert.equal(card.querySelectorAll('.laserSeal').length,0,'reopening does not add placeholder seals');
 jobs.clear();L.changed();frames.shift()();
-(async()=>{try{await L.poll(true);assert.equal(requests.length,1,'the visible card is refreshed against cloud state');assert.equal(requests[0].payload.sheetIds.join(','),'sheet1');frames.shift()();assert.equal(card.closest('[data-laser-area]').dataset.laserArea,'pending','deleted cloud sheet cannot retain readiness');console.log('Laser Library UI OK: compact counters, shared laser-family status seals without invented timestamps, immediate approvals/reopens, stable images and section movement');}finally{dom.window.close();}})().catch(e=>{console.error(e);process.exitCode=1;});
+(async()=>{try{await L.poll(true);assert.equal(requests.length,1,'the visible card is refreshed against cloud state');assert.equal(requests[0].payload.sheetIds.join(','),'sheet1');frames.shift()();assert.equal(card.closest('[data-laser-area]').dataset.laserArea,'pending','deleted cloud sheet cannot retain readiness');console.log('Laser Library UI OK: compact counters, no unearned or duplicate process seals, immediate approvals/reopens, stable images and unchanged section movement');}finally{dom.window.close();}})().catch(e=>{console.error(e);process.exitCode=1;});

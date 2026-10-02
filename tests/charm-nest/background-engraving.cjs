@@ -156,10 +156,11 @@ async function runTest() {
 /* ── 4 · only work that changed something wakes the run (else a pass with nothing to do would start it over and over) ── */
 async function wakeTest() {
   let settled = 0;
-  const jobs = new Map();
+  const jobs = new Map(),retryTimers=[];
   const ctx = { Promise, Map, Set, Object, Error, console, B: { run: null }, render() {}, refreshBacks() {}, agent() {},
     Orders: { render() {}, rows: () => [], lineRecord: r => [r.key, r] }, Session: { schedule() {} }, Review: { add() {} }, RunCtl: { backgroundSettled: () => { settled++; }, save: async () => {} },
-    items: () => jobs, isWorking: () => false, canFit: () => true, Pool: { sheetOf: () => ({ fileBase: 'GF_1' }) }, writeBacks: async () => {}, fitJob: async () => {} };
+    items: () => jobs, isWorking: () => false, canFit: () => true, Pool: { sheetOf: () => ({ fileBase: 'GF_1' }) }, writeBacks: async () => {}, fitJob: async () => {},
+    setTimeout:(fn,ms)=>(retryTimers.push({fn,ms}),retryTimers.length),clearTimeout(){} };
   vm.createContext(ctx);
   vm.runInContext(slice('  async function saveBacks(job) {', '  /** A reload while an approval') + slice('  /** Fits every job whose words are read', '  /* Reading the words and fitting them') + ';this.saveBacks=saveBacks;this.fitAll=fitAll;', ctx);
   const job = { key: 'k', state: 'approved', approvedAt: 1, backs: [], row: { order: { receiptId: 'o' }, engrave: {} } };
@@ -167,8 +168,12 @@ async function wakeTest() {
   assert.equal(settled, 0, 'a save that wrote nothing does not wake the run');
   ctx.writeBacks = async j => { j.backs.push({}); j.state = 'written'; };
   await ctx.saveBacks(job); assert.equal(settled, 1, 'a written back wakes it once');
-  job.state = 'approved'; ctx.writeBacks = async () => { throw new Error('upload failed'); };
-  await ctx.saveBacks(job); assert.equal(settled, 2); assert.equal(job.state, 'review', 'a failed save goes to review and wakes it');
+  job.state = 'approved';job.row.engrave={state:'approved',approved:true};ctx.writeBacks = async () => { throw new Error('upload failed'); };
+  await ctx.saveBacks(job); assert.equal(settled, 1); assert.equal(job.state, 'approved', 'an upload failure keeps the existing approval');
+  assert.equal(job.row.engrave.approved,true);assert.equal(job.backPending,'upload failed');assert.equal(job.backSaving,false,'failed save releases its in-flight guard');
+  assert.equal(retryTimers.length,1,'the pending upload is retried automatically');assert.equal(retryTimers[0].ms,30000);
+  ctx.writeBacks = async () => { throw Object.assign(new Error('written back failed geometry'),{engravingInvalid:true}); };
+  await ctx.saveBacks(job);assert.equal(settled,2);assert.equal(job.state,'review','invalid geometry still requires placement review');assert.equal(job.row.engrave.approved,false);
   // a fit that leaves the job ready (its charm not on the sheet yet) counts for nothing; one that moves it on counts
   const ready = { key: 'r', state: 'ready', copies: ['p'], row: { state: 'pooled', order: { receiptId: 'o' }, engrave: {} } };
   jobs.set('r', ready);
@@ -185,7 +190,7 @@ async function lockTest() {
   let uploadGate, uploaded = new Promise(r => { uploadGate = r; });
   const sh = { sheetId: 's1', fileBase: 'GF_1', folderPath: 'f', runId: 'run', metal: 'gold', backPool: [] };
   const job = { key: 'k', state: 'approved', approvedAt: 5, approvedBy: 'P', engravingSeals:[{how:'engraveApproved',at:3,by:'Seth'}], copies: ['p1'], fit: { glyphs: [], size: 5, capMm: 2, weight: 400, angle: 0, centre: [0, 0], rect: null, metrics: {} }, view: { cx: 0, cy: 0, angleDeg: 0, cutMembers: [], upAngle: 0 }, verify: { geometry: {} }, text: 'Hi', lines: ['Hi'], row: { order: { receiptId: 'o' }, line: { transactionId: 't' }, spec: { designSku: 'S' }, engrave: {} }, backs: [] };
-  const ctx = { window: { CharmNestOperations: ops }, CNEngravingSeals:E, B: { run: { runId: 'run' }, pool: { rows: new Map() } }, S: { cloud: { ok: true }, settings: {} }, Promise, Map, Set, Object, Error, JSON, console,
+  const ctx = { window: { CharmNestOperations: ops }, CNEngravingSeals:E,Session:{schedule(){},flushNow:async()=>true},retryBacksLater(){},B: { run: { runId: 'run' }, pool: { rows: new Map() } }, S: { cloud: { ok: true }, settings: {} }, Promise, Map, Set, Object, Error, JSON, console,
     charmFor: () => ({ sourceId: 'x' }), sourceOf: () => ({ parsed: {} }), sheetFor: () => sh, allSheets: () => [sh], PT: 72 / 25.4,
     renderBack: () => ({ toBlob: cb => cb(new Uint8Array(1)), _sizePt: { w: 1, h: 1 } }), fitOpts: () => ({ lineGap: 0.18 }),
     P: { buildBackFile: async () => ({ bytes: new Uint8Array(2), reference: {}, wPt: 1, hPt: 1 }) },

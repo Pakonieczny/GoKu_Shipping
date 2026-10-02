@@ -27,7 +27,9 @@ assert.equal(recordedWords[0].event.at,2000,'the timeline shares the actual cut-
 let finish,finishCheck,pressed=false,moved=0,saved=0,removed=0,checks=0,verification={ok:true};
 const wait=new Promise(r=>finish=r),checkWait=new Promise(r=>finishCheck=r);
 const job={key:'order',copies:['piece'],row:{order:{receiptId:'3701000'},spec:{designSku:'FROG'},engrave:{}},fit:{size:1,capMm:1,glyphs:[]},view:{cx:0,cy:0,cutMembers:[]},verify:{geometry:{ok:true}},text:'A',state:'review'};
+const approvalJobs=new Map([[job.key,job]]);
 const ctx={Date,Promise,PT:72/25.4,P:{buildBackFile:async()=>({bytes:new Uint8Array([1])})},S:{settings:{}},B:{pool:{rows:new Map()}},charmFor:()=>({sourceId:'source'}),sheetFor:()=>({}),sourceOf:()=>({parsed:{}}),fitOpts:()=>({lineGap:.18}),verifyBackFile:async()=>{checks++;await checkWait;return verification;},EG:{cardKey:null,card:null},CNListActivity:A,CNEngravingSeals:{...E,press:async()=>{pressed=true;await wait;}},employeeName:()=> 'Paul',Review:{remove(){removed++;}},goes(){moved++;},EG_TAB:()=>'',agent(){},render(){},saveBacks:async()=>saved++,toast(){},askEmployee:()=> 'Paul'};
+ctx.items=()=>approvalJobs;ctx.fitTasks=new WeakMap();
 vm.createContext(ctx);const start=source.indexOf('  async function prepareApproval('),end=source.indexOf('  /** An approval',start);vm.runInContext(source.slice(start,end),ctx);
 const button=()=>({textContent:'Approved',disabled:false,attrs:new Map(),setAttribute(k,v){this.attrs.set(k,v);},getAttribute(k){return this.attrs.get(k) ?? null;},removeAttribute(k){this.attrs.delete(k);}}),approvedButton=button();
 async function checkEditedHistory(copies,state='written'){
@@ -56,6 +58,7 @@ async function checkEditedHistory(copies,state='written'){
  await ctx.approve(job,'Paul',{});assert.equal(E.list(job).length,1,'an already-decided card cannot add another stamp');assert.equal(saved,1);
  verification={ok:false,why:'engraving intersects a cut-out or cut-edge clearance'};
  const failed={...job,key:'failed',state:'review',approvedAt:null,approvedBy:null,engravingSeals:[{how:'engraveApproved',at:1000,by:'Seth'}],row:{...job.row,engrave:{}}};
+ approvalJobs.set(failed.key,failed);
  const retryButton=button();await ctx.approve(failed,'Paul',retryButton);await ctx.approve(failed,'Paul',retryButton);
  assert.equal(failed.state,'review','a failed export remains an editable placement');assert(!failed.row.engrave.approved);assert(!failed.approvalPreparing);assert.equal(E.list(failed).length,1,'failed exports never accumulate approval seals');assert.equal(E.list(failed)[0].by,'Seth','existing historical seals remain');assert.equal(moved,1);assert.equal(saved,1);assert.equal(removed,1);
  assert.equal(retryButton.textContent,'Approved','failed verification keeps only Approved');assert.equal(retryButton.getAttribute('aria-busy'),null);assert.equal(retryButton.disabled,false,'failed verification enables a corrected retry');

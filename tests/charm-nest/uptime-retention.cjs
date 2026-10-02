@@ -54,7 +54,7 @@ function sessionContext() {
     O: Object.assign({}, require('../../charm-nest-orders.js'), { stepIndex: s => ['pull', 'pool', 'nest', 'checkpoint', 'engrave'].indexOf(s) }),
     Orders: { view: () => ({}), render() {}, lineRecord: row => [row.key, { state: row.state, orderId: row.order.receiptId, fromRow: true }] },
     Engrave: { render() {}, view: () => ({}), restoreView() {} }, Review: { render() {}, view: () => ({}), settled: () => [] },
-    Gate: { state: () => ({}) }, Recall: { state: () => ({}) }, LiveStrip: { rows: [] }, CN: { showPage() {} },
+    Gate: { state: () => ({}) }, Recall: { state: () => ({}) }, CustomRead:{later(){}}, LiveStrip: { rows: [] }, CN: { showPage() {} },
     Pool: { repairRecoveredGeometry: async () => 0 }, P: { parseSource: async () => ({}) }, RunCtl: { renderBanner() {} },
     api: async () => ({}), toast: msg => seen.toasts.push(msg), refreshAllCards() {}, renderRail() {}, updateTopSub() {}, setMode() {},
   };
@@ -173,7 +173,7 @@ function engraveContext() {
   };
   const sh = { sheetId: 'sh1', fileBase: 'GF_1', folderPath: 'f', runId: 'r', metal: 'gold', backPool: [] };
   const jobs = new Map();
-  const env = { window: {}, B: { run: { runId: 'r' }, pool: { rows: new Map() } }, S: { cloud: { ok: true }, settings: {} },
+  const env = { window: {}, CNEngravingSeals:require('../../charm-nest-engraving-seals.js'),Session:{schedule(){}},retryBacksLater(){},B: { run: { runId: 'r' }, pool: { rows: new Map() } }, S: { cloud: { ok: true }, settings: {} },
     F_: { ok: true }, G, EG: { cardKey: null }, items: () => jobs, isWorking: () => false, fontFor: w => ({ weight: w }), fitOpts: j => ({ lineGap: j.lineGap ?? 0.18 }), loadFonts: async () => {},
     charmFor: () => charm, sourceOf: () => ({ parsed: {} }), sheetFor: () => sh, allSheets: () => [sh], PT: 72 / 25.4,
     renderBack: () => ({ toBlob: cb => cb(new Uint8Array(1)), _sizePt: { w: 1, h: 1 } }),

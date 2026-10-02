@@ -2216,17 +2216,17 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
 .owSheetMatches b{font:600 13px var(--mono)}
 .owSheetMatches small{color:var(--ink70);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 @media(max-width:700px){#reviewView .cnOrderFind{flex-basis:120px}}
-/* The shared seal size straddles the sheet edge; a history row fits all of its seals together. */
+/* Library stamps use a compact 72px cap; the history group still shrinks uniformly when crowded. */
 /* Process seals share the wooden press, inked artwork and lens used by order seals. */
 .processSealRow.sealRow{gap:4px;justify-content:flex-end;margin:0;max-width:100%;flex-wrap:nowrap;pointer-events:none}
 .processSealRow.sealRow .seal+.seal{margin-left:0}
-.libCard>.processSealRow{position:absolute;right:20px;bottom:calc(var(--seal-fit,var(--seal-size)) / -2);z-index:3;max-width:calc(100% - 40px)}
+.libCard>.processSealRow{position:absolute;right:20px;bottom:calc(min(72px,var(--seal-fit,var(--seal-size))) / -2);z-index:3;max-width:calc(100% - 40px)}
 .libCard:has(>.processSealRow){padding-bottom:10px}
 .libCard:has(.sheetBackStatus .laserSeal)>.processSealRow{right:calc(var(--seal-size) / 2 + 24px);max-width:calc(100% - var(--seal-size) / 2 - 44px)}
 .processSealRow .seal{background:transparent;border-radius:0;cursor:zoom-in;mix-blend-mode:normal}
-.setProcessSeals.sealRow{margin:calc(var(--seal-fit,var(--seal-size)) * -.28) 12px calc(var(--seal-fit,var(--seal-size)) * -.28) auto;flex:0 1 auto}
+.setProcessSeals.sealRow{margin:calc(min(72px,var(--seal-fit,var(--seal-size))) * -.28) 12px calc(min(72px,var(--seal-fit,var(--seal-size))) * -.28) auto;flex:0 1 auto}
 .ldProcessSeals.sealRow{grid-column:2 / -1;justify-content:flex-start;margin:0 0 5px;gap:4px}
-.librarySheet:has(.processSealRow)>.productionRow{margin-top:calc(var(--seal-size) / 2 + 2px)}
+.librarySheet:has(.processSealRow)>.productionRow{margin-top:38px}
 .ldMark{position:absolute;top:-9px;right:-9px;z-index:2;width:26px;height:26px;border-radius:50%;border:1px solid var(--ink25);background:var(--card);color:var(--ink70);display:grid;place-items:center;padding:0;cursor:pointer;box-shadow:0 2px 6px rgba(30,26,20,.14);opacity:0;transform:scale(.8);transition:opacity .14s ease,transform .14s ease,background-color .14s,color .14s,border-color .14s}
 .ldMark svg{width:14px;height:14px;display:block}
 .libCard:hover>.ldMark,.libCard:focus-within>.ldMark,.ldMark:focus-visible,.ldMark.busy{opacity:1;transform:none}
@@ -2599,6 +2599,7 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 .sealRow .seal+.seal{margin-left:0}
 .sealRow.mini{margin:calc(var(--seal-fit,var(--seal-size)) * -.28) 0 calc(var(--seal-fit,var(--seal-size)) * -.28) -12px}
 .seal{position:relative;display:inline-block;flex:0 0 var(--seal-fit,var(--seal-size));width:var(--seal-fit,var(--seal-size));height:var(--seal-fit,var(--seal-size));border-radius:50%;transform:rotate(var(--rot,-8deg));mix-blend-mode:multiply;opacity:.94;pointer-events:auto;transition:filter .9s ease-out,opacity .2s}
+.libCard .seal,.setCard .seal,.ldProcessSeals .seal{flex:0 0 min(72px,var(--seal-fit,var(--seal-size)));width:min(72px,var(--seal-fit,var(--seal-size)));height:min(72px,var(--seal-fit,var(--seal-size)));opacity:1}
 .seal svg{display:block;width:100%;height:100%;overflow:visible;pointer-events:none}
 .seal.loose{position:absolute;z-index:3}
 .seal.pending{opacity:0}
@@ -2861,7 +2862,7 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-backs.js?v=20260928-backface"></script>
 <script src="charm-nest-activity.js?v=20261001-compact-controls"></script>
 <script src="charm-nest-engraving-seals.js?v=20261001-seal-family-c"></script>
-<script src="charm-nest-readiness.js?v=20261001-seal-family-c"></script>
+<script src="charm-nest-readiness.js?v=20261002-approval-resilience"></script>
 <script src="charm-nest-export.js"></script>
 <script src="charm-nest-text.js"></script>
 <script src="charm-nest-orders.js?v=20260930-live-search"></script>
@@ -6551,8 +6552,8 @@ async function boot() {
 boot();
 </script>
 <script src="order-timeline.js?v=20260929-om"></script>
-<script src="charm-nest-bridge.js?v=20261001-seal-family-c"></script>
-<script src="charm-nest-sheetwin.js?v=20261001-seal-family-c"></script>
+<script src="charm-nest-bridge.js?v=20261002-approval-resilience"></script>
+<script src="charm-nest-sheetwin.js?v=20261002-approval-resilience"></script>
 <script src="charm-nest-tour.js?v=20260929-m11"></script>
 <script src="charm-nest-mail.js?v=20260928-ov2"></script>
 <script src="charm-nest-rose-ui.js?v=20260929-cx"></script>

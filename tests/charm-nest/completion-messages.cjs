@@ -77,16 +77,16 @@ vm.runInContext(slice(html, 'async function markBritesDesigned(', '/**\n * Load 
 
   // Use the actual QR membership check and release validator on per-colour fixtures.
   const set = {runId:'run-1', setId:'set-1', seq:2, sheetIds:['s1'], labelFiles:[]};
-  const sh = {sheetId:'s1', setId:'set-1', metal:'gold', fileBase:'Set-1-gold', persistedDone:true, outputs:{}, releaseFull:true,
-    verification:{ok:true}, placements:[{id:'c1'}], charms:[{id:'c1', order:'101/line', poolId:'p1'}], backPool:[]};
-  let sheets = [sh], rows = [], jobs = new Map(), selected = {};
+  const sh = {sheetId:'s1', setId:'set-1', metal:'gold', fileBase:'Set-1-gold', persistedDone:true, outputs:{},cloud:{ai:'https://fixture/front.ai',preview:'https://fixture/front.png'},releaseFull:true,
+    orders:['101'],verification:{ok:true}, placements:[{id:'c1'}], charms:[{id:'c1', order:'101/line', poolId:'p1'}], backPool:[]};
+  let sheets = [sh], rows = [{key:'101_line',state:'written',order:{receiptId:'101'},poolIds:['p1'],spec:{quantity:1,engraveCandidate:false}}], jobs = new Map(), selected = {};
   const qr = () => {
-    const f = {sheetId:'s1', sheet:sh.fileBase, path:'labels/s1.png', url:'https://fixture/s1.png', part:1, payload:O.encodeOrderList(['101'], O.CARD_TO_METAL[sh.metal] || sh.metal)};
+    const f = {sheetId:'s1', sheet:sh.fileBase, path:'labels/s1.png', url:'https://fixture/s1.png', part:1,orders:['101'],payload:O.encodeOrderList(['101'], O.CARD_TO_METAL[sh.metal] || sh.metal)};
     sh.label = {files:[f]}; set.labelFiles = [f];
   };
   qr();
   const gate = vm.createContext({O, Gate:{modern:()=>true, policy:(s,seq)=>O.sheetRelease({material:s.metal, verified:s.verification.ok, placed:s.placements.length, full:s.releaseFull, dirty:s.dirty}, {seq, selected})},
-    sheetsOf:()=>sheets, Orders:{rows:()=>rows}, Engrave:{items:()=>jobs}, labelOf:x=>x});
+    window:{CharmNestReadiness:require('../../charm-nest-readiness.js')},allSheets:()=>sheets,sheetsOf:()=>sheets, Orders:{rows:()=>rows}, Engrave:{items:()=>jobs}, labelOf:x=>x});
   vm.runInContext(slice(bridge, '  function labelsReady(', '  async function onSheetSaved(') + '\n' + slice(bridge, '  function validateRelease(', '  async function finalize('), gate);
   const valid = () => gate.validateRelease(set);
   valid();
@@ -98,18 +98,18 @@ vm.runInContext(slice(html, 'async function markBritesDesigned(', '/**\n * Load 
     sh.metal=metal; qr(); assert.throws(valid); selected[metal]=true; valid();
   }
   sh.metal='gold'; qr();
-  sheets=[]; assert.throws(valid, /not all loaded/); sheets=[sh];
+  sheets=[]; assert.throws(valid, /not all loaded|not ready for laser/,'a missing member blocks the whole set'); sheets=[sh];
   sh.persistedDone=false; assert.throws(valid, /not saved/); sh.persistedDone=true;
   sh.label.files[0].payload='stale'; assert.throws(valid, /QR labels/); qr();
   set.labelFiles=[]; assert.throws(valid, /QR labels/); qr();
-  rows=[{order:{receiptId:'101'}, poolIds:['p1'], engrave:{needed:true,approved:true,state:'approved'}}];
+  rows=[{state:'written',spec:{quantity:1,engraveCandidate:true},order:{receiptId:'101'}, poolIds:['p1'], engrave:{needed:true,approved:true,state:'approved'}}];
   assert.throws(valid, /back engraving/);
   rows[0].engrave.state='written'; assert.throws(valid, /back engraving/);
-  sh.backPool=[{poolId:'p1', approvedAt:123, verified:{file:{ok:true}}, outputs:{ai:{path:'backs/p1.ai',url:'https://fixture/p1.ai'}}}];
+  sh.backPool=[{poolId:'p1',approvedBy:'Paul',approvedAt:123,verified:{geometry:{ok:true},file:{ok:true}},outputs:{ai:{path:'backs/p1.ai',url:'https://fixture/p1.ai'}}}];
   valid();
   jobs.set('edit', {copies:['p1'],state:'review'}); assert.throws(valid, /still needs/); jobs.clear();
   sh.backPool[0].verified.file.ok=false; assert.throws(valid, /back engraving/);
-  rows[0].engrave={needed:false,approved:true,state:'skipped'}; valid();
+  rows[0].engrave={needed:false,approved:true,state:'skipped'};sh.backPool=[];valid();
   const orderRows = [{state:'written',spec:{}},{state:'pooled',spec:{}}];
   assert.equal(O.evaluateOrder(orderRows).committable,false, 'a mixed-material order waits for its other sheet');
   orderRows[1].state='written'; assert.equal(O.evaluateOrder(orderRows).committable,true);

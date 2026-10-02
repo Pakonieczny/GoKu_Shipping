@@ -5,7 +5,7 @@ const bridge=fs.readFileSync('charm-nest-bridge.js','utf8'),station=fs.readFileS
  // Run actual handler code against a store that rejects collection downloads.
  let aggregates=0,documentReads=0;
  const query=()=>({where:()=>query(),limit:()=>({get:async()=>({empty:true,size:0,docs:[]})}),count:()=>({get:async()=>{aggregates++;return{data:()=>({count:420})}}}),get:async()=>{throw Error('Full collection read forbidden');},doc:()=>({get:async()=>{documentReads++;return {exists:false}}})});
- const c={Promise,Map,Date,db:{collection:query,getAll:async()=>[]},col:query,SHEETS:'sheets',LIB:'charms',SANDBOX:'sandbox',SANDBOXED:['pool','sheets','runs'],num:Number};vm.createContext(c);
+ const c={Promise,Map,Date,stamp:async()=>{},db:{collection:query,getAll:async()=>[]},col:query,SHEETS:'sheets',LIB:'charms',SANDBOX:'sandbox',SANDBOXED:['pool','sheets','runs'],num:Number};vm.createContext(c);
  for(const [start,end] of [['async function op_ping','async function op_lookupCharms'],['async function op_sandboxStatus','async function op_sandboxReset'],['async function op_arrivalRecord','// ── runs']])vm.runInContext(server.slice(server.indexOf(start),server.indexOf(end)),c);
  const counts=await c.op_ping({calibration:false});assert.equal(counts.sheets,420);assert.equal(aggregates,2);assert.equal(documentReads,0);
  await c.op_sandboxStatus();assert.equal(documentReads,1);assert.equal(aggregates,5);
@@ -22,7 +22,7 @@ const bridge=fs.readFileSync('charm-nest-bridge.js','utf8'),station=fs.readFileS
  await page().load('123');await page().load('123');assert.equal(requests,1,'reload reuses saved photos without function/Firebase calls');
  // Only visible production cards can poll; quiet/hidden tabs make zero reads.
  const visible={_laserSheets:['visible'],_laserSet:{setId:'set'},getBoundingClientRect:()=>({top:10,bottom:200,width:100,height:190}),querySelectorAll:()=>[]};const offscreen={...visible,_laserSheets:['offscreen'],getBoundingClientRect:()=>({top:2000,bottom:2200,width:100,height:200})};
- const p={polling:false,lastPoll:0,Date:{now:()=>1000000},S:{mode:'library',cloud:{ok:true}},document:{hidden:false,querySelectorAll:()=>[visible,offscreen]},innerHeight:800,Set,records:new Map(),changed:()=>{},console};let polls=[];p.api=async(_,b)=>{polls.push(b);return {sheets:[],sets:[]}};
+ const p={window:{},polling:false,lastPoll:0,Date:{now:()=>1000000},S:{mode:'library',cloud:{ok:true}},document:{hidden:false,querySelectorAll:()=>[visible,offscreen]},innerHeight:800,Set,records:new Map(),changed:()=>{},console};let polls=[];p.api=async(_,b)=>{polls.push(b);return {sheets:[],sets:[]}};
  const start=bridge.indexOf('  async function poll(force=false)');vm.runInNewContext(bridge.slice(start,bridge.indexOf('  function saved(sh)',start))+';this.poll=poll;',p);
  await p.poll();await p.poll();assert.equal(polls.length,1);assert.deepEqual(Array.from(polls[0].sheetIds),['visible']);p.document.hidden=true;await p.poll(true);assert.equal(polls.length,1);
  // Known arrivals are not re-read on later checks.

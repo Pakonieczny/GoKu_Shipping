@@ -1,20 +1,24 @@
 const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
 const {JSDOM}=require('jsdom');
 const source=fs.readFileSync('charm-nest-bridge.js','utf8');
-const dom=new JSDOM('<body><div id="engraveView"></div></body>'),document=dom.window.document;
+const dom=new JSDOM('<body><div id="engraveView"></div></body>',{url:'https://fixture.test'}),document=dom.window.document;
 const jobs=new Map(),readers=new Map(),fits=[],errors=[];
 const rows=Array.from({length:4},(_,i)=>({key:'order'+i,state:'pooled',poolIds:['copy'+i],order:{receiptId:String(100+i)},line:{sku:'CHARM'},spec:{designSku:'CHARM',engraveCandidate:true,personalization:['Name '+i]}}));
 const charm={outline:{subpaths:[]},members:[],bbox:[0,0,40,60]};
 dom.window.Worker=class {};
 dom.window.HTMLCanvasElement.prototype.getContext=()=>({fillRect(){}});
 dom.window.CharmNestEngraveFit={createClient:()=>({run:input=>new Promise((resolve,reject)=>fits.push({input,resolve,reject}))})};
-const ctx={window:dom.window,document,console:{error:(...x)=>errors.push(x)},B:{engrave:{items:jobs,fonts:{ok:true,Regular:{},workerFonts:{Regular:new ArrayBuffer(8)}}}},S:{settings:{},mode:'engrave'},PT:72/25.4,MM:25.4/72,SOURCE_LABEL:{},
-  Pool:{charmOf:()=>charm,sheetOf:()=>({fileBase:'sheet'}),update:async()=>{},sizeEntry:()=>({aiPath:'fixture.ai'}),masterCharm:async()=>({charms:[charm]})},
+const ctx={WORKSPACE_SANDBOX:true,window:dom.window,document,localStorage:dom.window.localStorage,console:{error:(...x)=>errors.push(x),warn:(...x)=>errors.push(x)},B:{orders:{},engrave:{items:jobs,fonts:{ok:true,Regular:{},workerFonts:{Regular:new ArrayBuffer(8)}}}},S:{settings:{},mode:'engrave',cloud:{ok:false}},PT:72/25.4,MM:25.4/72,SOURCE_LABEL:{},
+  CNListActivity:require('../../charm-nest-activity.js'),CNEngravingSeals:require('../../charm-nest-engraving-seals.js'),O:require('../../charm-nest-orders.js'),TL:{line(){},hash:()=>''},ListZoom:{clean(){},detach(){},bind(){}},
+  Pool:{charmOf:()=>charm,sheetOf:()=>({fileBase:'sheet'}),update:async()=>{},sizeEntry:()=>({aiPath:'fixture.ai'}),masterCharm:async()=>({charms:[charm]}),masterPreview:async()=>document.createElement('canvas')},
   P:{drawCharm(){}},Master:{entryFor:()=>({}),thumbOf:()=>'/cached-thumb.png'},G:{glyphCoverage:()=>({ok:true})},Gate:{modern:()=>false},
   Orders:{rows:()=>rows,render(){},lineRecord:r=>[r.key,{}]},Review:{items:()=>[],count:()=>0,remove(){},add(){}},LiveStrip:{render(){}},RunCtl:{poke(){},save:async()=>{}},
   agentCall:(_,payload)=>new Promise(resolve=>readers.set(payload.order,resolve)),agent(){},toast(){},cors:x=>x,setTimeout,clearTimeout,
   el:(tag,cls,html='')=>{const e=document.createElement(tag);e.className=cls;e.innerHTML=html;return e;},esc:v=>String(v??'').replace(/[&<>"']/g,x=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[x]))};
-vm.createContext(ctx);vm.runInContext(source.slice(source.indexOf('const Engrave = window.Engrave ='),source.indexOf('/* ═══ 22 · Sets')),ctx);
+vm.createContext(ctx);
+vm.runInContext(source.slice(source.indexOf('function purchaseMarkup('),source.indexOf('const ListZoom =')),ctx);
+vm.runInContext(source.slice(source.indexOf('const ListMedia ='),source.indexOf('const clockFormat =')),ctx);
+vm.runInContext(source.slice(source.indexOf('const Engrave = window.Engrave ='),source.indexOf('/* ═══ 22 · Sets')),ctx);
 const E=dom.window.Engrave;
 const tick=()=>new Promise(r=>setTimeout(r,5));
 async function until(fn){for(let i=0;i<100;i++){if(fn())return;await tick();}throw Error('timed out waiting for test event');}
