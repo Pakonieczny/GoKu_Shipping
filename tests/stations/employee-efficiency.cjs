@@ -18,7 +18,7 @@ class Ts { constructor(m) { this.m = m; } toMillis() { return this.m; } static f
 const kind = v => v instanceof Ts ? 'ts' : typeof v === 'number' ? 'num' : typeof v === 'string' ? 'str' : 'other';
 const val = v => v instanceof Ts ? v.m : v;
 function fakeStore() {
-  const colls = new Map(), reads = [], failing = new Set();
+  const colls = new Map(), reads = [], writes = [], failing = new Set();
   const data = n => { if (!colls.has(n)) colls.set(n, new Map()); return colls.get(n); };
   const keep = v => v instanceof Ts ? v : Array.isArray(v) ? v.map(keep) : v && typeof v === 'object' ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, keep(x)])) : v;
   function query(name, filters, order, lim) {
@@ -44,9 +44,9 @@ function fakeStore() {
   const db = { collection: name => Object.assign(query(name, [], null, null), {
     doc: id => ({ id,
       get: async () => { reads.push({ name, doc: id }); if (failing.has(name)) throw new Error('14 UNAVAILABLE'); const d = data(name).get(id); return { exists: !!d, data: () => keep(d) }; },
-      set: async v => { data(name).set(id, keep(v)); },
-      create: async v => { if (data(name).has(id)) throw Object.assign(new Error('6 ALREADY_EXISTS'), { code: 6 }); data(name).set(id, keep(v)); } }) }) };
-  return { db, put: (name, id, d) => data(name).set(id, keep(d)), reads, fail: n => failing.add(n), heal: n => failing.delete(n), count: n => data(name).size, colls,
+      set: async v => { writes.push([name, id]); data(name).set(id, keep(v)); },
+      create: async v => { writes.push([name, id]); if (data(name).has(id)) throw Object.assign(new Error('6 ALREADY_EXISTS'), { code: 6 }); data(name).set(id, keep(v)); } }) }) };
+  return { db, put: (name, id, d) => data(name).set(id, keep(d)), reads, writes, fail: n => failing.add(n), heal: n => failing.delete(n), count: n => data(name).size, colls,
     readsOf: name => reads.filter(r => r.name === name) };
 }
 
@@ -111,14 +111,15 @@ async function gate() {
   assert.strictEqual((await call(st, {})).status, 200, 'another address is unaffected');
   tick(61000);
   assert.strictEqual((await call(st, { key: PASS }, { ip })).status, 200, 'and a minute later it is open again');
-  assert.strictEqual(st.readsOf('config').length, 0, 'EDIT_PASSCODE wins: config/editPasscode is not read');
+  assert.strictEqual(st.readsOf('config').filter(r => r.doc === 'editPasscode').length, 0, 'EDIT_PASSCODE wins: config/editPasscode is not read');
+  assert(st.readsOf('config').every(r => r.doc === 'employeeAliases') && st.readsOf('config').length <= 2, 'the alias doc is read after the gate, cached for a minute');
   // the passcode kept in Firestore (no env)
   delete process.env.EDIT_PASSCODE;
   const s2 = fresh(); s2.put('config', 'editPasscode', { passcode: PASS2 });
   assert.strictEqual((await call(s2, { key: PASS })).status, 401, 'the old env value is not accepted');
   assert.strictEqual((await call(s2, { key: PASS2 })).status, 200, 'the Firestore passcode opens it');
   await call(s2, { key: PASS2 }); await call(s2, { key: 'x' });
-  assert.strictEqual(s2.readsOf('config').length, 1, 'read once, cached for the minute');
+  assert.strictEqual(s2.readsOf('config').filter(r => r.doc === 'editPasscode').length, 1, 'read once, cached for the minute');
   const s3 = fresh(); s3.put('config', 'editPasscode', { passcode: '' });
   const r3 = await call(s3, { key: 'anything' });
   assert.strictEqual(r3.status, 403); assert.strictEqual(r3.body.code, 'EDIT_PASSCODE_NOT_SET'); assert.strictEqual(r3.body.people, undefined);
@@ -243,7 +244,7 @@ async function merge() {
 async function delta() {
   const st = dataset();
   const a = (await call(st, {})).body;
-  assert.strictEqual(a.delta, false); assert.strictEqual(a.feed.length, 3, 'a full answer carries the newest events'); assert.strictEqual(a.feed[0].person, 'ray welder', 'newest first');
+  assert.strictEqual(a.delta, false); assert.strictEqual(a.feed.length, 3, 'a full answer carries the newest events'); assert.strictEqual(a.feed[0].person, 'Ray Welder', 'newest first, under the person\'s one display name');
   assert.deepStrictEqual(Object.keys(a.feed[0]).sort(), ['action', 'at', 'id', 'orderId', 'parts', 'person', 'station']);
   assert(/^\d+~.+/.test(a.cursor));
   const reads = st.reads.length; await call(st, {}); await call(st, {}); await call(st, { after: a.cursor });
@@ -389,8 +390,59 @@ async function rest() {
   say('sandbox separation, shapes (overview/person/orders), person days, order steps + waits, read counts and caps');
 }
 
+
+/* ── 7 · one person under several spellings: folded names, the alias map, overlapping sessions ── */
+async function aliases() {
+  const T0 = Z('2026-10-03T12:00:00Z');
+  const st = fresh(); NOW = Z('2026-10-03T16:00:00Z');
+  // the seeded alias: "Giovanna C." (PIN stations) and "Giovanna" (inbox) are one person; the two pages overlap 30 minutes
+  st.put('Station_Sessions', 'g-1', sess('g-1', 'Giovanna C.', 'sorting', T0, { end: T0 + 3600000, last: T0 + 3600000, reason: 'signOut' }));
+  st.put('Station_Sessions', 'g-2', sess('g-2', 'Giovanna', 'inbox', T0 + 1800000, { end: T0 + 5400000, last: T0 + 5400000, reason: 'signOut' }));
+  st.put('Efficiency_Daily', '2026-10-03__Giovanna C.', roll('2026-10-03', 'Giovanna C.', { sorting: stat({ scans: 10, scanParts: 10, completes: 5, parts: 30, orders: 5, activeMs: 1200000 }) }, { '08': { parts: 30, by: { sorting: { parts: 30 } } } }, { 3521000100: { sorting: true } }, T0, T0 + 3600000));
+  st.put('Efficiency_Daily', '2026-10-03__Giovanna', roll('2026-10-03', 'Giovanna', { inbox: stat({ scans: 4, scanParts: 0, completes: 2, parts: 0, orders: 2, activeMs: 600000 }) }, { '08': { parts: 0, by: {} } }, { 3521000100: { inbox: true }, 3521000101: { inbox: true } }, T0 + 1800000, T0 + 5400000));
+  const e1 = ev('g_AAAA_1_1', 'Giovanna C.', 'sorting', 'complete', T0 + 3000000, { orderId: '3521000100', parts: 30, orders: 1 }), e2 = ev('g_BBBB_1_2', 'Giovanna', 'inbox', 'complete', T0 + 3200000, { orderId: '3521000101', orders: 1 });
+  st.put('Station_Activity', e1.id, e1); st.put('Station_Activity', e2.id, e2);
+  let b = (await call(st, {})).body;
+  assert.deepStrictEqual(b.people.map(p => p.name), ['Giovanna'], 'one person, under the canonical display name');
+  const g = b.people[0];
+  assert.strictEqual(g.totals.signedInMin, 90, 'the 30 overlapping minutes are counted once (60 + 60 - 30)');
+  assert.deepStrictEqual(g.stations.map(s => [s.station, s.minutes]).sort(), [['inbox', 60], ['sorting', 60]], 'per-station minutes stay per page');
+  assert.strictEqual(g.totals.parts, 30); assert.strictEqual(g.totals.scans, 14); assert.strictEqual(g.totals.activeMin, 30); assert.strictEqual(g.totals.orders, 2, 'distinct orders across both spellings');
+  assert.strictEqual(g.firstIn, T0); assert.strictEqual(g.lastOut, T0 + 5400000);
+  assert.deepStrictEqual(b.feed.map(f => f.person), ['Giovanna', 'Giovanna'], 'the feed uses the one display name');
+  assert.deepStrictEqual(g.orders.map(o => o.orderId).sort(), ['3521000100', '3521000101']);
+  assert.strictEqual((await call(st, { op: 'person', name: 'giovanna c.', days: 1 })).body.days[0].signedInMin, 90, 'asking by either spelling');
+  assert.strictEqual((await call(st, { op: 'person', name: 'GIOVANNA', days: 1 })).body.name, 'Giovanna');
+  const ord = (await call(st, { op: 'orders', orderId: '3521000100' })).body; assert.deepStrictEqual(ord.steps.map(x => x.person), ['Giovanna']);
+  // the Firestore alias doc adds more; accents and spaces fold with no alias at all; it is read, never written
+  const s2 = fresh();
+  s2.put('config', 'employeeAliases', { 'José Pérez': ['Jose P.', 'Pepe'], 'Not A Name': ['123456'], '654321': ['Zed'], broken: 'x' });
+  s2.put('Station_Sessions', 'j-1', sess('j-1', 'Jose P.', 'welding', T0, { end: T0 + 1800000, last: T0 + 1800000, reason: 'signOut' }));
+  s2.put('Station_Sessions', 'j-2', sess('j-2', 'pepe', 'assembly', T0 + 3600000, { end: T0 + 4500000, last: T0 + 4500000, reason: 'signOut' }));
+  s2.put('Station_Sessions', 'j-3', sess('j-3', 'JOSE  PEREZ', 'welding', T0 + 7200000, { end: T0 + 7800000, last: T0 + 7800000, reason: 'signOut' }));
+  s2.put('Station_Sessions', 'z-1', sess('z-1', 'Zoë  Müller', 'sorting', T0, { end: T0 + 600000, last: T0 + 600000, reason: 'signOut' }));
+  s2.put('Station_Sessions', 'z-2', sess('z-2', 'ZOE MULLER', 'sorting', T0 + 1200000, { end: T0 + 1800000, last: T0 + 1800000, reason: 'signOut' }));
+  s2.put('Station_Sessions', 'z-3', sess('z-3', 'Zed', 'sorting', T0, { end: T0 + 600000, last: T0 + 600000, reason: 'signOut' }));
+  b = (await call(s2, {})).body;
+  assert.deepStrictEqual(b.people.map(p => p.name).sort(), ['José Pérez', 'Zed', 'Zoë  Müller'.replace('  ', ' ')].sort(), 'aliases from the doc; accents and case fold; a digits-only entry never becomes a person');
+  const jose = b.people.find(p => p.name === 'José Pérez');
+  assert.strictEqual(jose.totals.signedInMin, 30 + 15 + 10, 'three spellings, three sessions, one person'); assert.deepStrictEqual(jose.stations.map(s => s.station).sort(), ['assembly', 'welding']);
+  assert.strictEqual(b.people.find(p => p.name === 'Zoë Müller').totals.signedInMin, 20, 'Zoë Müller / ZOE MULLER fold together without an alias');
+  assert(!JSON.stringify(b).includes('123456') && !JSON.stringify(b).includes('654321'), 'no digits-only name anywhere');
+  assert.strictEqual(s2.writes.length, 0, 'the alias doc is never written (nothing is written)');
+  const before = s2.readsOf('config').length; tick(1000); await call(s2, {}); assert.strictEqual(s2.readsOf('config').length, before, 'the alias doc is cached for a minute');
+  tick(61000); await call(s2, {}); assert.strictEqual(s2.readsOf('config').length, before + 1, 'and read again after it');
+  // a failing alias read: the seeded aliases still apply, and it says so
+  const s3 = fresh(); s3.put('Station_Sessions', 'g-1', sess('g-1', 'Giovanna C.', 'sorting', T0, { end: T0 + 600000, last: T0 + 600000, reason: 'signOut' }));
+  s3.fail('config'); const fb = (await call(s3, {}));
+  assert.strictEqual(fb.status, 200, 'the passcode comes from the environment: the alias read fails alone');
+  assert.deepStrictEqual(fb.body.people.map(p => p.name), ['Giovanna']); assert.strictEqual(fb.body.partial, true); assert(fb.body.errors.some(x => /^aliases: /.test(x)));
+  assert.strictEqual(T.fold('  Zoë   MÜLLER '), 'zoe muller');
+  say('aliases: seeded Giovanna merge, overlap counted once with per-page minutes, doc aliases, accents/case/space fold, no digit names, never written, cached a minute, failing read is partial');
+}
+
 (async () => {
-  try { await gate(); await dayBoundary(); await merge(); await delta(); await partial(); await rest(); }
+  try { await gate(); await dayBoundary(); await merge(); await delta(); await partial(); await rest(); await aliases(); }
   finally { Date.now = realNow; }
   const all = logs.concat(bodies).join('\n');
   for (const s of [PASS, PASS2]) assert(!all.includes(s), 'a passcode appeared in a response or a log line');

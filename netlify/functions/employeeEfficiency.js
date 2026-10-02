@@ -46,7 +46,35 @@ const zeros = n => new Array(n).fill(0);
 const digits = (v, n = 30) => String(v == null ? "" : v).replace(/\D/g, "").slice(0, n);
 const cleanName = v => String(v == null ? "" : v).replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim().slice(0, 80);
 const okName = n => !!n && !/^\d+$/.test(n);                       // a digits-only name is a PIN, never data
-const nameKey = n => n.toLowerCase();
+/* One person, however the logins spelled the name: trim, collapse spaces, strip accents, case-fold, then the alias map
+   (below). The PIN list holds names as typed ("Giovanna C." at the PIN stations, "Giovanna" in the inbox). */
+const fold = n => cleanName(n).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/\s+/g, " ").trim();
+// seeded aliases (display name → other spellings); the Firestore doc config/employeeAliases adds to these, never written here
+const BUILTIN_ALIASES = { "Giovanna": ["Giovanna C."] };
+function buildAliases(extra) {
+  const display = new Map(), map = new Map();           // canonical key → display name · folded alias → canonical key
+  const add = (name, list) => {
+    const d = cleanName(name); if (!okName(d)) return;
+    const ck = fold(d); if (!display.has(ck)) display.set(ck, d);
+    if (!map.has(ck)) map.set(ck, ck);
+    for (const a of Array.isArray(list) ? list.slice(0, 50) : []) { const an = cleanName(a); if (okName(an)) map.set(fold(an), ck); }
+  };
+  for (const [k, v] of Object.entries(BUILTIN_ALIASES)) add(k, v);
+  if (extra && typeof extra === "object") for (const [k, v] of Object.entries(extra).slice(0, 200)) add(k, v);
+  return { display, map };
+}
+function nameKeyOf(ctx, name) {
+  let k = fold(name); const m = ctx.aliases && ctx.aliases.map;
+  if (m) for (let i = 0; i < 3 && m.has(k) && m.get(k) !== k; i++) k = m.get(k);
+  return k;
+}
+/** The name the console shows for a person: the alias map's own spelling, else the most used (mixed case preferred) of the spellings seen. */
+const canonOf = (ctx, key) => (ctx.aliases && ctx.aliases.display.get(key)) || "";
+function bestForm(forms) {
+  let best = "", score = -1;
+  for (const [form, n] of forms) { const v = n * 2 + (form !== form.toLowerCase() && form !== form.toUpperCase() ? 1 : 0); if (v > score || (v === score && form < best)) { best = form; score = v; } }
+  return best;
+}
 const GENERIC_BY = /^(etsy|system|unknown|n\/a|none)$/i;
 // what a detail may show: no digits-only text, no 6-digit run (a PIN) (the activity door already does this; again here)
 const scrub = v => { const s = String(v == null ? "" : v).replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim().slice(0, 120); return /^\d+$/.test(s) ? "" : s.replace(/\d{6,}/g, "[#]"); };
@@ -82,6 +110,13 @@ function cached(ctx, key, ttl, fn) {
   entry.p.catch(() => { if (memo.get(key) === entry) memo.delete(key); });
   if (memo.size > 400) for (const [k, e] of memo) { if (ctx.now - e.at > TTL_PAST) memo.delete(k); }
   return entry.p;
+}
+/** config/employeeAliases {"<Display name>": ["alias", ...]}: read-only, kept a minute, shared with every viewer. */
+function loadAliases(ctx) {
+  return cached(ctx, "aliases", 60000, async () => {
+    const snap = await ctx.db.collection("config").doc("employeeAliases").get();
+    return buildAliases(snap.exists ? snap.data() : null);
+  });
 }
 const safe = (p, label) => p.then(value => ({ ok: true, value }), e => ({ ok: false, label, error: String((e && (e.message || e.code)) || e || "failed").slice(0, 160) }));
 
@@ -240,25 +275,22 @@ function personsOf(ctx) {
   const people = new Map();
   const get = raw => {
     const name = cleanName(raw); if (!okName(name)) return null;
-    const key = nameKey(name); let P = people.get(key);
-    if (!P) people.set(key, P = { key, forms: new Map(), days: new Map(), live: [] });
+    const key = nameKeyOf(ctx, name); let P = people.get(key);
+    if (!P) people.set(key, P = { key, canon: canonOf(ctx, key), forms: new Map(), days: new Map(), live: [] });
     P.forms.set(name, (P.forms.get(name) || 0) + 1);
     return P;
   };
   const pd = (P, day) => { let x = P.days.get(day); if (!x) P.days.set(day, x = newPD(day)); return x; };
   return { people, get, pd };
 }
-function displayName(P) {
-  let best = "", score = -1;
-  for (const [form, n] of P.forms) { const s = n * 2 + (form !== form.toLowerCase() && form !== form.toUpperCase() ? 1 : 0); if (s > score || (s === score && form < best)) { best = form; score = s; } }
-  return best;
-}
+const displayName = P => P.canon || bestForm(P.forms);
 
 /** Reads and joins everything for the days winFrom..toDay. Returns the people (per day) and what could not be read. */
 async function assemble(ctx, winFrom, toDay) {
   const info = { errors: [], capped: [], sealsLeftOut: 0 };
   const winStart = nyMidnight(winFrom), winEnd = nyMidnight(addDays(toDay, 1));
   const [rr, sr, st0] = await Promise.all([safe(readRollups(ctx, winFrom, toDay), "rollups"), safe(readSessions(ctx, winStart - DAY_MS, winEnd), "sessions"), safe(readEventsStart(ctx), "start")]);
+  if (ctx.aliasError) info.errors.push("aliases: " + ctx.aliasError);
   if (!rr.ok) info.errors.push("rollups: " + rr.error);
   if (!sr.ok) info.errors.push("sessions: " + sr.error);
   if (!rr.ok && !sr.ok) { const e = new Error("both reads failed"); e.unavailable = info.errors; throw e; }
@@ -404,7 +436,7 @@ async function buildOverview(ctx, day, days) {
   const ordersOf = new Map();
   for (const e of inRange) {
     if (!e.orderId) continue;
-    const k = nameKey(e.person); let m = ordersOf.get(k); if (!m) ordersOf.set(k, m = new Map());
+    const k = nameKeyOf(ctx, e.person); let m = ordersOf.get(k); if (!m) ordersOf.set(k, m = new Map());
     let o = m.get(e.orderId); if (!o) m.set(e.orderId, o = { orderId: e.orderId, stations: new Set(), parts: 0, lastAt: 0 });
     if (e.station) o.stations.add(e.station);
     if (e.action === "complete") o.parts += e.parts; else if (e.action === "undo") o.parts = Math.max(0, o.parts - e.parts);
@@ -454,7 +486,7 @@ async function buildOverview(ctx, day, days) {
   if (info.errors.length) notes.push("Some data could not be read just now; the screen shows what was.");
   const partial = !src.events || info.errors.length > 0 || info.capped.length > 0;
   return { now: ctx.now, cursor: cursorOf(events), people, business: { totals, perHour, stations: stationList, trend },
-    feedAll: inRange.slice(0, LIM.feedDelta), sources: src, notes, partial, errors: info.errors };
+    feedAll: inRange.slice(0, LIM.feedDelta).map(e => { const P = asm.P.people.get(nameKeyOf(ctx, e.person)); return Object.assign({}, e, { person: P ? displayName(P) : canonOf(ctx, nameKeyOf(ctx, e.person)) || e.person }); }), sources: src, notes, partial, errors: info.errors };
 }
 
 async function opOverview(ctx, body) {
@@ -480,7 +512,7 @@ async function opPerson(ctx, body) {
   if (!validDay(to)) return json(400, { ok: false, error: "day must be YYYY-MM-DD" });
   if (to > ctx.today) to = ctx.today;
   const n = Math.floor(num(body.days)), days = n >= 1 ? Math.min(62, n) : 30, from = addDays(to, -(days - 1));
-  const asm = await assemble(ctx, from, to), info = asm.info, P = asm.P.people.get(nameKey(name));
+  const asm = await assemble(ctx, from, to), info = asm.info, P = asm.P.people.get(nameKeyOf(ctx, name));
   const list = dayList(from, to), pds = P ? list.map(d => P.days.get(d)).filter(Boolean) : [];
   const rows = list.map(d => {
     const pd = P && P.days.get(d), S = summarize(pd ? [pd] : []), t = S.totals;
@@ -511,25 +543,25 @@ async function opOrders(ctx, body) {
   const withEvents = new Set(act.map(e => e.station));
   const seals = sr.ok ? sr.value.docs.map(d => sealRow(d.data() || {})).filter(r => r && r.orderId === orderId && !withEvents.has(r.station)) : [];
   const steps = new Map();
-  const step = (station, person, source) => { const k = station + "|" + nameKey(person); let s = steps.get(k); if (!s) steps.set(k, s = { station, person, forms: new Map(), firstAt: 0, lastAt: 0, workMs: 0, scans: 0, completes: 0, prints: 0, parts: 0, source }); s.forms.set(person, (s.forms.get(person) || 0) + 1); return s; };
+  const step = (station, person, source) => { const k = station + "|" + nameKeyOf(ctx, person); let s = steps.get(k); if (!s) steps.set(k, s = { station, person, forms: new Map(), firstAt: 0, lastAt: 0, workMs: 0, scans: 0, completes: 0, prints: 0, parts: 0, source }); s.forms.set(person, (s.forms.get(person) || 0) + 1); return s; };
   const touch = (s, at) => { if (at > 0 && (!s.firstAt || at < s.firstAt)) s.firstAt = at; if (at > s.lastAt) s.lastAt = at; };
   const evOut = [];
   for (const e of act) {
     const s = step(e.station, e.person, "events"); touch(s, e.at);
     if (e.action === "scan") s.scans++; else if (e.action === "complete") { s.completes++; s.parts += e.parts; } else if (e.action === "print") s.prints++;
     if (e.sincePrevMs > 0 && e.sincePrevMs <= ACTIVE_GAP_MS) s.workMs += e.sincePrevMs;
-    evOut.push({ at: e.at, person: e.person, station: e.station, device: e.device, action: e.action, parts: e.parts, detail: e.detail, source: "events" });
+    evOut.push({ at: e.at, person: canonOf(ctx, nameKeyOf(ctx, e.person)) || e.person, station: e.station, device: e.device, action: e.action, parts: e.parts, detail: e.detail, source: "events" });
   }
   for (const r of seals) {
     const s = step(r.station, r.person, "seals"); touch(s, r.at);
     if (r.kind === "scan") s.scans++; else if (r.kind === "complete") s.completes++; else s.prints++;
-    evOut.push({ at: r.at, person: r.person, station: r.station, device: "", action: r.kind, parts: 0, detail: r.type, source: "seals" });
+    evOut.push({ at: r.at, person: canonOf(ctx, nameKeyOf(ctx, r.person)) || r.person, station: r.station, device: "", action: r.kind, parts: 0, detail: r.type, source: "seals" });
   }
   const list = [...steps.values()].sort((a, b) => a.firstAt - b.firstAt || a.lastAt - b.lastAt);
   let farthest = 0;
   const out = list.map((s, i) => {
     const wait = i === 0 ? 0 : Math.max(0, s.firstAt - farthest); farthest = Math.max(farthest, s.lastAt);
-    let name = "", sc = -1; for (const [f, c] of s.forms) { const v = c * 2 + (f !== f.toLowerCase() && f !== f.toUpperCase() ? 1 : 0); if (v > sc) { name = f; sc = v; } }
+    const name = canonOf(ctx, nameKeyOf(ctx, s.person)) || bestForm(s.forms);
     return { station: s.station, person: name, firstAt: s.firstAt, lastAt: s.lastAt, workMs: s.workMs, waitMs: wait, scans: s.scans, completes: s.completes, prints: s.prints, parts: s.parts, source: s.source };
   });
   evOut.sort((a, b) => a.at - b.at);
@@ -539,7 +571,7 @@ async function opOrders(ctx, body) {
   if (errors.length) notes.push("Some of this order's records could not be read just now.");
   const firstAt = out.length ? Math.min(...out.map(s => s.firstAt)) : 0, lastAt = out.length ? Math.max(...out.map(s => s.lastAt)) : 0;
   const res = { ok: true, now: ctx.now, orderId, steps: out, events: evCut,
-    totals: { firstAt: firstAt || null, lastAt: lastAt || null, spanMs: lastAt - firstAt, workMs: out.reduce((n, s) => n + s.workMs, 0), people: new Set(out.map(s => nameKey(s.person))).size, stations: new Set(out.map(s => s.station)).size },
+    totals: { firstAt: firstAt || null, lastAt: lastAt || null, spanMs: lastAt - firstAt, workMs: out.reduce((n, s) => n + s.workMs, 0), people: new Set(out.map(s => nameKeyOf(ctx, s.person))).size, stations: new Set(out.map(s => s.station)).size },
     sources: { events: act.length > 0, seals: seals.length > 0 }, notes };
   if (errors.length) { res.partial = true; res.errors = errors; }
   return json(200, res);
@@ -571,6 +603,8 @@ async function handle(event, handle_) {
   if (!EP.sameSecret(body.key, pass.value)) { noteFail(ctx.cache, ip, ctx.now); return json(401, { ok: false, error: "unauthorized" }); }
   const op = OPS[typeof body.op === "string" ? body.op : "overview"];
   if (!op) return json(400, { ok: false, error: "unknown op" });
+  const al = await safe(loadAliases(ctx), "aliases");
+  ctx.aliases = al.ok ? al.value : buildAliases(null); ctx.aliasError = al.ok ? "" : al.error;
   try { return await op(ctx, body); }
   catch (e) {
     if (e && e.unavailable) return json(503, { ok: false, error: "the data could not be read just now", errors: e.unavailable });
@@ -580,4 +614,4 @@ async function handle(event, handle_) {
 }
 
 exports.handler = event => handle(event, null);
-exports._t = { handle, nyDay, nyMidnight, addDays, clip, covered, spanOf, summarize, parseCursor, cacheOf, LIM };
+exports._t = { handle, buildAliases, fold, nyDay, nyMidnight, addDays, clip, covered, spanOf, summarize, parseCursor, cacheOf, LIM };
