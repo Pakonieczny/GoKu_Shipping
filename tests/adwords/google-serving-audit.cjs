@@ -12,6 +12,9 @@ const text = f => [f.text, f.reason || '', f.fix || ''].join(' | ');
 const has = (r, level, re) => r.findings.some(f => f.level === level && re.test(text(f)));
 const fact = (r, label) => (r.facts.find(f => f.label === label) || {}).value || '';
 
+// The quoted ids of a read's `item_id IN (...)` list, un-escaped.
+const idsOf = q => [...(q.match(/item_id IN \((.*)\)\s*$/s) || [, ''])[1].matchAll(/'((?:[^'\\]|\\.)*)'/g)].map(m => m[1].replace(/\\(.)/g, '$1'));
+
 function fakeGoogle(data, { fail = {}, hang = {} } = {}) {
   const queries = [];
   const gaql = async q => {
@@ -21,7 +24,13 @@ function fakeGoogle(data, { fail = {}, hang = {} } = {}) {
     if (hang[from]) return new Promise(() => {});
     const failure = typeof fail[from] === 'function' ? fail[from](q) : fail[from];
     if (failure) throw (failure instanceof Error ? failure : new Error(failure));
-    return JSON.parse(JSON.stringify(data[from] || []));
+    let rows = data[from] || [];
+    // Like Google, answer a shopping_product read by item_id only with the ids it names (exact case).
+    const named = from === 'shopping_product' && /shopping_product\.item_id IN \(/.test(q) ? idsOf(q) : null;
+    if (named) rows = rows.filter(r => named.includes(r.shoppingProduct.itemId));
+    const limit = (q.match(/\bLIMIT\s+(\d+)\s*$/) || [])[1];
+    if (limit) rows = rows.slice(0, Number(limit));
+    return JSON.parse(JSON.stringify(rows));
   };
   return { gaql, queries };
 }
@@ -157,11 +166,12 @@ const topic = (t, type, extra = {}) => ({ topic: t, type, ...extra });
     asset_group_signal: [
       { assetGroupSignal: { assetGroup: ag1, searchTheme: { text: 'fakebrand charms' }, approvalStatus: 'DISAPPROVED', disapprovalReasons: ['TRADEMARKS'] } },
       { assetGroupSignal: { assetGroup: ag1, audience: { audience: 'customers/123/audiences/5' } } }],
+    // The first row is one of the two offers the product filter above names; the other rows are products the filter leaves out.
     shopping_product: [
-      { shoppingProduct: { itemId: 'shopify_us_1_2', status: 'ELIGIBLE', feedLabel: 'US' } },
-      { shoppingProduct: { itemId: 'shopify_us_5_6', status: 'NOT_ELIGIBLE', issues: [{ errorCode: 'campaign_paused', description: 'Campaign is paused', adsSeverity: 'ERROR' }] } },
-      { shoppingProduct: { itemId: 'shopify_us_7_8', status: 'NOT_ELIGIBLE', issues: [{ errorCode: 'missing_shipping', description: 'Missing shipping information', adsSeverity: 'ERROR' }] } },
-      { shoppingProduct: { itemId: 'shopify_us_9_9', status: 'ELIGIBLE_LIMITED', issues: [{ description: 'Restricted in some countries', adsSeverity: 'WARNING' }] } }],
+      { shoppingProduct: { itemId: 'shopify_US_1_2', status: 'ELIGIBLE', feedLabel: 'US' } },
+      { shoppingProduct: { itemId: 'shopify_US_5_6', status: 'NOT_ELIGIBLE', issues: [{ errorCode: 'campaign_paused', description: 'Campaign is paused', adsSeverity: 'ERROR' }] } },
+      { shoppingProduct: { itemId: 'shopify_US_7_8', status: 'NOT_ELIGIBLE', issues: [{ errorCode: 'missing_shipping', description: 'Missing shipping information', adsSeverity: 'ERROR' }] } },
+      { shoppingProduct: { itemId: 'shopify_US_9_9', status: 'ELIGIBLE_LIMITED', issues: [{ description: 'Restricted in some countries', adsSeverity: 'WARNING' }] } }],
     product_link: [{ productLink: { type: 'MERCHANT_CENTER', merchantCenter: { merchantCenterId: '555' } } }]
   };
   g = fakeGoogle(pmax);
@@ -177,14 +187,26 @@ const topic = (t, type, extra = {}) => ({ topic: t, type, ...extra });
   check(has(r, 'note', /"Necklaces" has Average ad strength/) && has(r, 'note', /"Necklaces" has no text or images of its own/), 'a feed-only asset group is explained, not failed');
   check(has(r, 'note', /"Charms" has fewer assets than Google's minimum: 1 logo \(has 0\)/) && !has(r, 'block', /minimum/), "a retail group below the asset minimum is a note naming the missing field type");
   check(has(r, 'risk', /1 asset group has no product filter/), 'an asset group without a product filter in a retail campaign is flagged');
-  check(has(r, 'risk', /1 of 4 products cannot show.*Missing shipping information \(1\)/) && !/Campaign is paused/.test(JSON.stringify(r.findings)), 'product issues are shown with the pause-only issue ignored while paused');
-  check(has(r, 'note', /1 product can show only in some places.*Restricted in some countries/), 'a limited product is noted with its issue');
-  check(has(r, 'risk', /1 of 2 products in the product filter are not in Merchant Center under this campaign's feed: shopify_us_3_4/), 'a filtered product Google does not have is flagged (IDs compared case-insensitively)');
+  // The filter names two offers, so only those are judged: the three other products Google lists (not eligible, limited) are left out on purpose.
+  check(!/Missing shipping|Restricted in some countries|Campaign is paused/.test(JSON.stringify(r.findings)) && !r.findings.some(f => /products? (cannot show|can show)|None of the/.test(f.text)), 'products the product filter leaves out are never counted or named in a finding');
+  check(has(r, 'risk', /1 of 2 products in the product filter are not in Merchant Center under this campaign's feed: shopify_us_3_4/), 'a filtered product Google does not have is flagged');
   check(has(r, 'note', /1 search theme disapproved in "Charms".*trademarks/), 'a disapproved search theme shows its reason');
   check(!has(r, 'note', /Final URL expansion is on/) && /final URL expansion off · Google-written text off · image enhancement on \(Google default\)/.test(fact(r, 'Google automation')), 'asset automation facts reflect opt-outs and Google defaults');
-  check(fact(r, 'Merchant Center') === '555 · feed US' && /4 in this campaign · 2 eligible once enabled · 1 limited · 1 not eligible/.test(fact(r, 'Products')), 'Merchant Center and product facts are plain');
+  check(fact(r, 'Merchant Center') === '555 · feed US' && fact(r, 'Products') === '2 included · 1 can show · 1 not listed by Google · 3 others left out by the product filter', 'Merchant Center and product facts are plain: what the campaign includes, and how many others its filter leaves out');
   check(fact(r, 'New customers') === 'bids higher for new customers' && fact(r, 'Languages') === 'English' && /target ROAS 350%/.test(fact(r, 'Bidding')), 'goal, language and bidding facts are read');
   check(!has(r, 'risk', /Merchant Center 555 is not linked/) && !r.findings.some(f => f.area === 'Goals'), 'a working link and a single purchase goal produce no findings');
+
+  // The same campaign with an "all products" filter names no offers, so every product Google lists is judged, and no targeted read is made.
+  const everything = JSON.parse(JSON.stringify(pmax));
+  everything.asset_group_listing_group_filter = [{ assetGroupListingGroupFilter: { assetGroup: ag1, type: 'UNIT_INCLUDED' } }];
+  g = fakeGoogle(everything);
+  r = await S.auditCampaign({ gaql: g.gaql, customerId: '123', campaignId: '77', today: '2026-09-29', shippingCountries: ['2124', '2840'], apiVersion: 'v24' });
+  check(!g.queries.some(q => /item_id IN/.test(q)) && g.queries.filter(q => /FROM shopping_product/.test(q)).length === 1, 'with no offers named in the filter, only the plain products read is made');
+  check(has(r, 'risk', /1 of 4 products cannot show.*Missing shipping information \(1\)/) && !/Campaign is paused/.test(JSON.stringify(r.findings)), 'product issues are shown with the pause-only issue ignored while paused');
+  check(has(r, 'note', /1 product can show only in some places.*Restricted in some countries/), 'a limited product is noted with its issue');
+  check(!has(r, 'risk', /products in the product filter/) && !has(r, 'block', /products in the product filter/) && /^4 in this campaign · 2 eligible once enabled · 1 limited · 1 not eligible$/.test(fact(r, 'Products')), 'the whole-feed product fact is unchanged');
+  const missingFix = r.findings.find(f => /1 of 4 products cannot show/.test(f.text));
+  check(missingFix && missingFix.fix === 'Fix the product issues in Merchant Center.', 'a real product issue keeps the Merchant Center fix');
 
   // No products, and the campaign's Merchant Center is not the linked one.
   const unlinked = JSON.parse(JSON.stringify(pmax)); unlinked.shopping_product = []; unlinked.product_link = [{ productLink: { merchantCenter: { merchantCenterId: '999' } } }];
@@ -194,9 +216,110 @@ const topic = (t, type, extra = {}) => ({ topic: t, type, ...extra });
 
   // Every product not eligible for a real reason, campaign enabled.
   const allBad = JSON.parse(JSON.stringify(pmax)); allBad.campaign[0].campaign.status = 'ENABLED';
-  allBad.shopping_product = [{ shoppingProduct: { itemId: 'shopify_us_1_2', status: 'NOT_ELIGIBLE', issues: [{ description: 'Image too small', adsSeverity: 'ERROR' }] } }];
+  allBad.shopping_product = [{ shoppingProduct: { itemId: 'shopify_US_1_2', status: 'NOT_ELIGIBLE', issues: [{ description: 'Image too small', adsSeverity: 'ERROR' }] } }];
   r = await S.auditCampaign({ gaql: fakeGoogle(allBad).gaql, customerId: '123', campaignId: '77', channel: 'PERFORMANCE_MAX', today: '2026-09-29' });
   check(has(r, 'block', /None of the 1 products can show.*Image too small \(1\)/), 'no eligible product blocks serving, with Google\'s issue');
+
+  // ── 2b. A one-product campaign in a very large feed ──────────────────────────────────
+  // Google answers shopping_product with the whole feed's scope, each product with its status FOR this campaign. A campaign that includes
+  // only one product's offers gets every other product as "Excluded product or listing group"; the plain read is cut at 1000 of them, so it
+  // can hold none of the campaign's own products. The check asks for the campaign's own offers by id, and never counts the rest.
+  const ownIds = ['shopify_US_111_222', 'shopify_US_111_333'], EXCLUDED = 'Excluded product or listing group';
+  const leftOut = n => Array.from({ length: n }, (_, i) => ({ shoppingProduct: { itemId: 'shopify_US_9' + String(i).padStart(5, '0'), status: 'NOT_ELIGIBLE', feedLabel: 'US', issues: [{ description: EXCLUDED, adsSeverity: 'ERROR' }] } }));
+  const ownRow = (itemId, status = 'ELIGIBLE', issues) => ({ shoppingProduct: { itemId, status, feedLabel: 'US', ...(issues ? { issues } : {}) } });
+  const filterOf = ids => [{ assetGroupListingGroupFilter: { assetGroup: ag1, type: 'SUBDIVISION' } },
+    ...ids.map(id => ({ assetGroupListingGroupFilter: { assetGroup: ag1, type: 'UNIT_INCLUDED', caseValue: { productItemId: { value: id } } } })),
+    { assetGroupListingGroupFilter: { assetGroup: ag1, type: 'UNIT_EXCLUDED', caseValue: { productItemId: {} } } }];
+  // One asset group, one filter, nothing else wrong with the campaign: only its products can decide the verdict.
+  const oneProduct = (rows, { ids = ownIds, enabled = false } = {}) => {
+    const d = JSON.parse(JSON.stringify(pmax));
+    d.campaign[0].campaign = { ...d.campaign[0].campaign, status: enabled ? 'ENABLED' : 'PAUSED', primaryStatus: enabled ? 'ELIGIBLE' : 'PAUSED', primaryStatusReasons: enabled ? [] : ['CAMPAIGN_PAUSED'], endDateTime: '2026-12-31 23:59:59' };
+    d.campaign_criterion = d.campaign_criterion.filter(x => !/2124/.test(JSON.stringify(x)));
+    d.asset_group = [{ assetGroup: { ...d.asset_group[0].assetGroup, primaryStatus: 'ELIGIBLE', primaryStatusReasons: [], adStrength: 'GOOD' } }];
+    d.asset_group_asset = d.asset_group_asset.filter(x => !x.assetGroupAsset.policySummary).concat([link(ag1, 'LOGO')]);
+    d.asset_group_signal = []; d.asset_group_listing_group_filter = filterOf(ids); d.shopping_product = rows;
+    return d;
+  };
+  const audit = (data, extra = {}) => { const gg = fakeGoogle(data, extra.fake); return S.auditCampaign({ gaql: gg.gaql, customerId: '123', campaignId: '77', channel: 'PERFORMANCE_MAX', today: '2026-09-29', shippingCountries: ['2124', '2840'], ...extra.run }).then(res => ({ r: res, g: gg })); };
+  const productsOf = res => res.findings.filter(f => f.area === 'Products');
+
+  // (a) The real case: the first 1000 products are all left out by the filter; the two offers it includes are eligible.
+  ({ r, g } = await audit(oneProduct([...leftOut(1000), ownRow(ownIds[0]), ownRow(ownIds[1])])));
+  const targetedReads = g.queries.filter(q => /FROM shopping_product/.test(q) && /item_id IN \(/.test(q));
+  check(targetedReads.length === 1 && JSON.stringify(idsOf(targetedReads[0])) === JSON.stringify(ownIds) && /shopping_product\.campaign = 'customers\/123\/campaigns\/77' AND shopping_product\.item_id IN \('shopify_US_111_222','shopify_US_111_333'\)\s*$/.test(targetedReads[0]),
+    'the campaign\'s own offers are asked for by id, in the campaign scope, with the ids exactly as Google returned them');
+  check(g.queries.filter(q => /FROM shopping_product/.test(q) && !/item_id IN/.test(q) && /LIMIT 1000\s*$/.test(q)).length === 1 && g.queries.filter(q => /FROM shopping_product/.test(q)).length === 2, 'next to it the plain 1000-product read is still made, as the fallback');
+  check(productsOf(r).length === 0 && !JSON.stringify(r.findings).match(/None of the|Excluded product|1000/) && r.counts.block === 0 && r.verdict === 'ready', 'products the filter leaves out are not a finding: nothing blocks, and the verdict is ready');
+  check(fact(r, 'Products') === '2 included · 2 can show · 1000+ others left out by the product filter', 'the Products fact names what the campaign includes and that the others are left out by the product filter');
+  check(r.ok && !r.partial && r.warnings.length === 0, 'and the check is complete, with no warning');
+
+  // (b) The included offers themselves are not eligible for a real reason.
+  const noShipping = [{ description: 'Missing shipping settings', adsSeverity: 'ERROR' }];
+  ({ r, g } = await audit(oneProduct([...leftOut(1000), ownRow(ownIds[0], 'NOT_ELIGIBLE', noShipping), ownRow(ownIds[1], 'NOT_ELIGIBLE', noShipping)], { enabled: true })));
+  const noneShow = r.findings.find(f => f.level === 'block' && f.area === 'Products');
+  check(r.verdict === 'blocked' && noneShow && noneShow.text === 'None of the 2 products can show.' && noneShow.reason === 'Missing shipping settings (2)' && noneShow.fix === 'Fix the product issues in Merchant Center.',
+    'included offers that are not eligible block, with Google\'s reason and the Merchant Center fix');
+  check(!JSON.stringify(r.findings).includes('Excluded product') && fact(r, 'Products') === '2 included · 0 can show · 2 not eligible · 1000+ others left out by the product filter', 'and the 1000 left out are still not counted');
+  ({ r } = await audit(oneProduct([...leftOut(1000), ownRow(ownIds[0]), ownRow(ownIds[1], 'NOT_ELIGIBLE', noShipping)], { enabled: true })));
+  check(has(r, 'risk', /1 of 2 products cannot show.*Missing shipping settings \(1\).*Fix the product issues in Merchant Center/) && !r.findings.some(f => f.level === 'block'), 'one included offer not eligible is a risk, not a block');
+
+  // (c) An included offer whose own row says it is excluded: the product filter contradicts itself.
+  ({ r } = await audit(oneProduct([...leftOut(1000), ownRow(ownIds[0]), ownRow(ownIds[1], 'NOT_ELIGIBLE', [{ description: EXCLUDED, adsSeverity: 'ERROR' }])])));
+  const excl = r.findings.find(f => f.level === 'block' && f.area === 'Products');
+  check(r.verdict === 'blocked' && excl && /The campaign's product filter excludes 1 of the 2 products it includes: shopify_US_111_333\./.test(excl.text) && excl.reason === 'Excluded product or listing group (1)' && excl.fix === 'Re-publish the campaign or fix its product filter.', 'an included offer Google reports as excluded blocks, saying the product filter excludes it');
+  check(productsOf(r).length === 1 && !JSON.stringify(r.findings).includes('Fix the product issues in Merchant Center') && fact(r, 'Products') === '2 included · 1 can show · 1 excluded by the product filter · 1000+ others left out by the product filter', 'it is reported once, not also as a product issue');
+  ({ r } = await audit(oneProduct([...leftOut(5), ownRow(ownIds[0], 'NOT_ELIGIBLE', [{ description: EXCLUDED }, { description: 'Missing shipping settings', adsSeverity: 'ERROR' }]), ownRow(ownIds[1], 'NOT_ELIGIBLE', [{ description: EXCLUDED }])])));
+  check(productsOf(r).length === 1 && /excludes 2 of the 2 products it includes/.test(productsOf(r)[0].text), 'offers excluded by the filter are named even when Google lists another issue next to it; the filter is what to fix first');
+
+  // (d) The targeted read fails (for example item_id cannot be filtered): the sample stands, but it says nothing about the campaign's own products.
+  const refuse = { fake: { fail: { shopping_product: q => /item_id IN/.test(q) ? '[gads] search failed: queryError=UNRECOGNIZED_FIELD · item_id is not filterable' : null } } };
+  ({ r, g } = await audit(oneProduct([...leftOut(1000), ownRow(ownIds[0]), ownRow(ownIds[1])]), refuse));
+  check(r.ok && r.verdict !== 'blocked' && r.counts.block === 0 && !JSON.stringify(r.findings).match(/None of the|Excluded product|not in Merchant Center|not listed/), 'when the targeted read fails there is no false "None of the 1000" and nothing is claimed about the included offers');
+  const cutNote = r.findings.find(f => f.level === 'note' && f.area === 'Products');
+  check(productsOf(r).length === 1 && cutNote && /^Google's list was cut at 1000 products, so the check could not look at this campaign's own products\.$/.test(cutNote.text) && /Check again with Google/.test(cutNote.fix) && /Products view in Google Ads/.test(cutNote.fix), 'a note says the list was cut and tells the owner to check again or open the Products view in Google Ads');
+  check(r.partial && r.warnings.some(w => /The products this campaign includes could not be read \(Google Ads: queryError=UNRECOGNIZED_FIELD\); the check could only sample 1000 products\./.test(w)), 'a warning says the check could only sample 1000 products');
+  check(fact(r, 'Products') === "2 included · 2 not checked (Google's list was cut at 1000 products) · 1000+ others left out by the product filter" && g.queries.filter(q => /item_id IN/.test(q)).length === 1, 'the fact says they were not checked; the failing read is made once');
+  // A sample that is not cut is the whole list: it can be judged, and a missing offer is missing.
+  ({ r } = await audit(oneProduct([...leftOut(3), ownRow(ownIds[0])]), refuse));
+  check(has(r, 'risk', /1 of 2 products in the product filter are not in Merchant Center under this campaign's feed: shopify_us_111_333/) && !r.findings.some(f => /cut at/.test(f.text)) && r.warnings.length === 1, 'when the sample is complete (fewer than 1000 products) it is judged as the targeted read would have been');
+  // Too little time left for a second read: the same fallback, with its own warning.
+  ({ r, g } = await audit(oneProduct([...leftOut(1000), ownRow(ownIds[0]), ownRow(ownIds[1])]), { run: { deadlineMs: 1000 } }));
+  check(!g.queries.some(q => /item_id IN/.test(q)) && r.warnings.some(w => /The products this campaign includes were not read because too little time was left; the check could only sample 1000 products\./.test(w)) && has(r, 'note', /cut at 1000 products/) && r.counts.block === 0, 'with little of the deadline left the targeted read is skipped and the sample stands');
+  const quotaStop = Object.assign(new Error('Google Ads request quota is temporarily exhausted.'), { code: 'GADS_QUOTA_EXHAUSTED' });
+  ({ r } = await audit(oneProduct([...leftOut(1000), ownRow(ownIds[0])]), { fake: { fail: { shopping_product: q => /item_id IN/.test(q) ? quotaStop : null } }, run: { isQuotaError: e => e.code === 'GADS_QUOTA_EXHAUSTED' } }));
+  check(r.quotaExhausted === true && r.warnings.some(w => /The products this campaign includes could not be read \(Google Ads request quota is exhausted\)/.test(w)) && r.counts.block === 0, 'a quota error on the targeted read is reported and falls back too');
+
+  // The other way round: the plain sample cannot be read, the targeted read can. The included offers are judged; the others cannot be counted.
+  ({ r } = await audit(oneProduct([ownRow(ownIds[0]), ownRow(ownIds[1], 'NOT_ELIGIBLE', noShipping)], { enabled: true }), { fake: { fail: { shopping_product: q => /item_id IN/.test(q) ? null : '[gads] search failed: queryError=INTERNAL' } } }));
+  check(has(r, 'risk', /1 of 2 products cannot show.*Missing shipping settings/) && fact(r, 'Products') === '2 included · 1 can show · 1 not eligible' && r.warnings.some(w => /Products in this campaign could not be read/.test(w)) && !has(r, 'block', /Google finds no products/), 'the included offers are judged even when the plain sample could not be read');
+
+  // (e) No offers named: the whole list is judged as before (also covered by the all-products campaign above).
+  const everythingElse = oneProduct([...leftOut(3)]); everythingElse.asset_group_listing_group_filter = filterOf(ownIds).concat([{ assetGroupListingGroupFilter: { assetGroup: ag1, type: 'UNIT_INCLUDED' } }]);
+  ({ r, g } = await audit(everythingElse));
+  const wholeList = r.findings.find(f => f.level === 'block' && f.area === 'Products');
+  check(!g.queries.some(q => /item_id IN/.test(q)) && wholeList && wholeList.text === 'None of the 3 products can show.', 'a filter that includes more than named offers is judged on everything Google lists, as before');
+  check(wholeList.fix === "Check the campaign's product filter in Google Ads." && wholeList.reason === 'Excluded product or listing group (3)', 'and when every issue is the filter\'s exclusion, the fix is the filter, not Merchant Center');
+
+  // (f) Included offers Google does not list at all: a note right after a publication, otherwise a block (the targeted read answers with nothing).
+  ({ r, g } = await audit(oneProduct([...leftOut(1000)]), { run: { settling: true } }));
+  check(r.counts.block === 0 && has(r, 'note', /2 of 2 products in the product filter are not listed for this campaign yet: shopify_us_111_222, shopify_us_111_333/) && !has(r, 'block', /Google finds no products/) && !has(r, 'note', /cut at/), 'included offers Google does not list yet are a note while settling');
+  check(fact(r, 'Products') === '2 included · 2 not listed by Google · 1000+ others left out by the product filter', 'and the fact says so');
+  ({ r } = await audit(oneProduct([...leftOut(1000)])));
+  check(r.verdict === 'blocked' && has(r, 'block', /2 of 2 products in the product filter are not in Merchant Center under this campaign's feed.*Remove them from the filter, or fix the feed label/) && !has(r, 'block', /Google finds no products|None of the/), 'otherwise they block, without the false "None of the 1000"');
+  ({ r } = await audit(oneProduct([...leftOut(1000), ownRow(ownIds[0])])));
+  check(has(r, 'risk', /1 of 2 products in the product filter are not in Merchant Center under this campaign's feed: shopify_us_111_333/) && r.counts.block === 0, 'one offer missing is a risk');
+
+  // Offers are compared in lower case; more than 100 are asked for 100 at a time and the rest is said to be unchecked; quotes in an id are escaped.
+  const ownCase = S.analyze({ campaign: pmax.campaign, listingGroups: filterOf(['Shopify_US_1_2']), productsIncluded: [ownRow('shopify_us_1_2')], products: leftOut(2) }, { today: '2026-09-29' });
+  check(!ownCase.findings.some(f => f.area === 'Products') && /^1 included · 1 can show · 2 others left out/.test(ownCase.facts.find(f => f.label === 'Products').value), 'an offer Google lists in another case is still the included offer');
+  const many = Array.from({ length: 120 }, (_, i) => 'shopify_US_5_' + i);
+  ({ r, g } = await audit(oneProduct([...leftOut(2), ...many.map(id => ownRow(id))], { ids: many })));
+  const manyQuery = g.queries.find(q => /item_id IN/.test(q));
+  check(JSON.stringify(idsOf(manyQuery)) === JSON.stringify(many.slice(0, 100)) && fact(r, 'Products') === '120 included · 100 can show · 20 more not checked · 2 others left out by the product filter' && productsOf(r).length === 0, 'at most 100 ids are asked for; the others are said to be unchecked, never missing');
+  check(S.ownProductsQuery({ customerId: '123', campaignId: '77', itemIds: ["o'brien_1", 'a\\b', 'x\ny'] }).endsWith("item_id IN ('o\\'brien_1','a\\\\b','x y')") && JSON.stringify(idsOf(S.ownProductsQuery({ customerId: '1', campaignId: '2', itemIds: ["o'brien_1"] }))) === JSON.stringify(["o'brien_1"]), 'ids in the targeted read are quote-escaped like other GAQL literals');
+  const scope = S.includedScope([{ assetGroupListingGroupFilter: { type: 'SUBDIVISION' } }, { assetGroupListingGroupFilter: { type: 'UNIT_INCLUDED', caseValue: { productItemId: { value: 'A_1' } } } }, { assetGroupListingGroupFilter: { type: 'UNIT_INCLUDED', caseValue: { productItemId: { value: 'A_1' } } } },
+    { assetGroupListingGroupFilter: { type: 'UNIT_INCLUDED', caseValue: { productItemId: { value: 'a_1' } } } }, { assetGroupListingGroupFilter: { type: 'UNIT_EXCLUDED', caseValue: { productItemId: {} } } }]);
+  check(JSON.stringify(scope) === '{"ids":["A_1","a_1"],"catchAll":false}' && S.includedScope([{ assetGroupListingGroupFilter: { type: 'UNIT_INCLUDED' } }]).catchAll === true && S.includedScope(undefined).ids.length === 0, 'the offers of a filter are its included nodes, de-duplicated, in the case Google returns; an unnamed included node means everything');
 
   // ── 3. Reads that fail become warnings, never errors ─────────────────────────────────
   const withReason = JSON.parse(JSON.stringify(search)); withReason.campaign[0].campaign.primaryStatusReasons.push('MISSING_LOCATION_TARGETING');
@@ -324,8 +447,11 @@ const topic = (t, type, extra = {}) => ({ topic: t, type, ...extra });
   check(has(r, 'block', /Google finds no products/) && has(r, 'block', /2 of 2 products in the product filter/) && r.settling === false, 'later, a campaign with no products listed is blocked');
   r = await S.auditCampaign({ gaql: fakeGoogle(unlisted).gaql, customerId: '123', campaignId: '77', channel: 'PERFORMANCE_MAX', today: '2026-09-29', settling: true });
   check(r.settling === true && !r.findings.some(f => f.level === 'block' && f.area === 'Products') && has(r, 'note', /Google has not listed products for this campaign yet \(Merchant Center 555, feed US\)/) && has(r, 'note', /2 of 2 products in the product filter are not listed for this campaign yet/), 'right after a publication, products Google has not listed yet are a note');
-  r = await S.auditCampaign({ gaql: fakeGoogle(pmax).gaql, customerId: '123', campaignId: '77', channel: 'PERFORMANCE_MAX', today: '2026-09-29', settling: true });
-  check(has(r, 'note', /1 of 2 products in the product filter are not listed for this campaign yet: shopify_us_3_4/) && !has(r, 'risk', /products in the product filter/) && has(r, 'risk', /1 of 4 products cannot show/), 'a changed product filter Google has not applied yet is a note; product issues Google reports still count');
+  // The filter now also names an offer Google reports as not eligible (a real issue), next to the eligible one and the one Google does not list.
+  const named3 = JSON.parse(JSON.stringify(pmax));
+  named3.asset_group_listing_group_filter.push({ assetGroupListingGroupFilter: { assetGroup: ag1, type: 'UNIT_INCLUDED', caseValue: { productItemId: { value: 'shopify_US_7_8' } } } });
+  r = await S.auditCampaign({ gaql: fakeGoogle(named3).gaql, customerId: '123', campaignId: '77', channel: 'PERFORMANCE_MAX', today: '2026-09-29', settling: true });
+  check(has(r, 'note', /1 of 3 products in the product filter are not listed for this campaign yet: shopify_us_3_4/) && !has(r, 'risk', /products in the product filter/) && has(r, 'risk', /1 of 2 products cannot show.*Missing shipping information/), 'a changed product filter Google has not applied yet is a note; product issues Google reports for the included products still count');
   r = await S.auditCampaign({ gaql: q429.gaql, customerId: '123', campaignId: '5', isQuotaError: e => e.code === 'GADS_QUOTA_EXHAUSTED' });
   check(r.quotaExhausted === true && (await S.auditCampaign({ gaql: fakeGoogle(search).gaql, customerId: '123', campaignId: '101', channel: 'SEARCH', today: '2026-09-29' })).quotaExhausted === false, 'the result says when Google\'s request quota stopped it');
 
