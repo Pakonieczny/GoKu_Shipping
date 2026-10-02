@@ -14,7 +14,9 @@ const order = (rid, i) => ({ receiptId: String(rid), orderNumber: String(rid), c
   lines: [{ transactionId: String(rid) + '1', listingId: String(1800000100 + i), sku: 'RE_54' + (60 + i), title: 'MODIFICATION REWORK FREE SHIPPING', quantity: 1, expectedShipDate: SHIP, variations: [{ name: 'Price', value: String(100 + i) }], metalKey: '', metalLabel: '', personalization: [], buyerMessage: '' }] });
 // newest order first, as the list shows them
 const ORDERS = Array.from({ length: 9 }, (_, i) => order(4176576270 + i, i));
-const MID = 4, RID = ORDERS[MID].receiptId, KEY = RID + '_' + RID + '1';
+// (the middle one of the list as the page shows it: the lists stand newest activity first since 30 Sep, and orders of one pull whose
+//  events fall in different milliseconds stand in no fixed order of their own, so the card is chosen once the list is drawn)
+const MID = 4; let RID, KEY;
 
 (async () => {
   const pwDir = process.argv[2] || process.env.PW_DIR || path.join(root, 'node_modules');
@@ -44,7 +46,7 @@ const MID = 4, RID = ORDERS[MID].receiptId, KEY = RID + '_' + RID + '1';
       for (const order of orders) for (const line of order.lines) { const key = CharmNestOrders.lineKey(order, line); const row = { key, order, line, arrivedAt: at, spec: null, problems: [], state: 'pulled', reason: null, claimedBy: null, poolIds: [], engrave: null, material: null }; B.orders.rows.push(row); B.orders.byKey.set(key, row); }
       Orders.interpretAll(); Review.syncOrderItems(); CN.setMode('review'); Review.render();
     }, ORDERS);
-    const card = `#rvList .reviewListRow[data-rid="${RID}"]`;
+    let card;
     const order = () => page.evaluate(() => [...document.querySelectorAll('#rvList .reviewListRow')].map(n => n.dataset.rid));
     const settle = () => page.waitForFunction(() => !document.querySelector('.cuStat, .btn.working, .cuSealHost, #motionLayer .mGhost, .sealTool, .seal.pending'), null, { timeout: 15000 });
     const seg = async s => { await page.evaluate(() => document.querySelectorAll('.mNote').forEach(n => n.close && n.close())); await page.click(`#reviewView .rvSeg [data-cseg="${s}"]`); };
@@ -53,7 +55,8 @@ const MID = 4, RID = ORDERS[MID].receiptId, KEY = RID + '_' + RID + '1';
     // before: every card under Open, and under Custom Orders; the order window's place
     const open0 = await order();
     assert.equal(open0.length, 9, 'nine cards: ' + open0);
-    assert.equal(open0.indexOf(RID), MID, 'the middle one: ' + open0);
+    assert.equal(new Set(open0).size, 9, 'each once: ' + open0);
+    RID = open0[MID]; KEY = RID + '_' + RID + '1'; card = `#rvList .reviewListRow[data-rid="${RID}"]`;
     await page.click('#reviewView .egTab[data-k="customOrder"]');
     const custom0 = await order();
     const pos0 = await nOfM();
@@ -79,7 +82,10 @@ const MID = 4, RID = ORDERS[MID].receiptId, KEY = RID + '_' + RID + '1';
     assert.deepEqual(await order(), open0, 'Open: every card where it was');
     await page.click('#reviewView .egTab[data-k="customOrder"]');
     assert.deepEqual(await order(), custom0, 'Custom Orders: every card where it was');
-    assert.equal(await nOfM(), pos0, 'the order window: the same "N of M"');
+    // (the order window walks the Orders tab, which lists by latest activity, a reopen among it: the order stands first there now. Its "N of M"
+    //  still counts the same nine, and N is the order's place in that list)
+    const pos1 = await nOfM(), at1 = await page.evaluate(k => Orders.visibleRows().findIndex(r => r.key === k) + 1, KEY);
+    assert.equal(pos1, at1 + ' of 9', 'the order window: "N of M" is the order\'s place among the same nine: ' + pos1);
     const rec = srv.st.doc('Charm_Custom_Orders', KEY);
     assert.deepEqual([rec.state, (rec.stamps || []).map(s => s.how)], ['open', ['button']], 'the record keeps its seal: ' + JSON.stringify(rec));
 

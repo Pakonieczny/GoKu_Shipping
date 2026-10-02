@@ -8755,11 +8755,24 @@ const Review = window.Review = (() => {
     // what asks nothing comes after what does, in Everything as under Custom Orders; one just completed there stays in
     // place while its card offers Undo (not counted as open)
     const customOpen = all.filter(it => it.kind === "customOrder").concat(cl.open);
+    // A card keeps its place in Open through a Complete and a Reopen (Paul, 29 Sep 02:05: "go back in the same place where it came
+    // from"; a hard rule). Completed lists by the latest change, a completion and a reopen among them, but Open orders a card by
+    // what it had when it left, until something else happens to it more than a few seconds after the reopen.
+    const place = RV.place || (RV.place = new Map()), placeAt = new Map(), nowT = Date.now();
+    for (const it of finished) { if (it.settled) continue; const p = place.get(mkeyOf(it)); if (p) p.away = true; }
+    for (const it of all.concat(cl.open)) {
+      const k = mkeyOf(it), a = CNListActivity.at(it); let p = place.get(k);
+      if (!p) place.set(k, p = { at: a });
+      else if (p.away) { p.away = false; p.hold = { since: nowT }; }
+      if (p.hold) { if (a > p.hold.since + 20000) { p.hold = null; p.at = a; } } else p.at = a;
+      placeAt.set(k, p.at);
+    }
     let list = doneMode ? (f ? finished.filter(it => tabOf(it) === f) : finished)
       : f === "customOrder" ? customOpen : f ? all.filter(it => tabOf(it) === f) : all.concat(cl.open);
     const orderQ=O.orderQuery(RV.q);
     if(orderQ)list=list.filter(it=>[it.rid,...(it.settled?.orders || []),...(it.settled ? [it.settled.row,...(it.settled.rows || [])] : rowsOf(it)).filter(Boolean).map(r=>r.order?.receiptId)].some(id=>O.orderMatches(id,orderQ)));
     list=CNListActivity.select(scope,list);
+    if (!doneMode) { const dir = CNListActivity.state(scope).direction, pa = it => placeAt.has(mkeyOf(it)) ? placeAt.get(mkeyOf(it)) : CNListActivity.at(it); list = list.slice().sort((x, y) => (dir === "asc" ? pa(x) - pa(y) : pa(y) - pa(x)) || String(x.key || "").localeCompare(String(y.key || ""))); }
     // Show: drawn in pages of 40 down to the card it names (the cards are all here already: nothing is read for it)
     if (RV.want) { const i = list.findIndex(it => (it.settled ? "settled:" + it.settled.key + ":" + it.settled.t : mkeyOf(it)) === RV.want); if (i >= RV.limit) RV.limit = Math.ceil((i + 1) / 40) * 40; RV.want = null; }
     // a card just reopened (or its completion undone: CustomPrint sets RV.back) is found at its place the next time Open

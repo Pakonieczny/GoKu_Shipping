@@ -211,7 +211,7 @@ async function browserChecks() {
     const seg = await page.evaluate(() => ({ first: document.querySelector('#reviewView .ordBar').firstElementChild.className, b: [...document.querySelectorAll('#reviewView .ordBar .rvSeg button')].map(b => b.textContent.trim()), all: !!document.querySelector('#reviewView .egTab[data-k=""]'), n: Review.count() }));
     assert.equal(seg.first, 'rvSeg', 'the switch comes first in the bar'); assert.equal(seg.all, false, 'no Everything chip');
     const openAll = +seg.b[0].replace('Open', '');
-    assert.deepEqual(seg.b, ['Open' + openAll, 'Decided0', 'Completed0']);   // (Decided: custom sheet sends, since 1 Oct) assert(openAll >= 6, 'Open counts everything that waits: ' + JSON.stringify(seg));
+    assert.deepEqual(seg.b, ['Open' + openAll, 'Completed0']); assert(openAll >= 6, 'Open counts everything that waits: ' + JSON.stringify(seg));
     const barH = await page.evaluate(() => document.querySelector('#reviewView .ordBar').getBoundingClientRect().height);
     assert(barH < 40, 'the bar stays one line: ' + barH);
     // a click on the card opens the order window, which asks nothing (Paul, 29 Sep 01:01: no decision box in Review or
@@ -247,7 +247,7 @@ async function browserChecks() {
     const rec = srv.st.doc('Charm_Custom_Orders', '4176744752_41767447521');
     assert(rec && rec.state === 'completed' && rec.prints === 1 && rec.printedBy === 'Test Operator' && rec.category === 'Chain only', 'marked completed in the cloud: ' + JSON.stringify(rec));
     await page.waitForFunction(() => !CustomPrint.busy('cinfo:custom:4176744752:CHAIN_8941'));
-    assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll('#reviewView .ordBar .rvSeg button')].map(b => b.textContent.trim())), ['Open' + (openAll - 1), 'Decided0', 'Completed1']);
+    assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll('#reviewView .ordBar .rvSeg button')].map(b => b.textContent.trim())), ['Open' + (openAll - 1), 'Completed1']);
     await page.evaluate(() => document.querySelectorAll('.mNote').forEach(n => n.close()));
 
     // a decision printed by hand: completed, no longer a decision, never pooled
@@ -307,7 +307,7 @@ async function browserChecks() {
     const pb0 = await page.evaluate(() => window.__printed || 0);
     { const s = await page.$$('#rvList .reviewListRow[data-rid="4176744752"] .seal'); const bb = await s[1].boundingBox(); await page.mouse.click(bb.x + bb.width * .7, bb.y + bb.height / 2); }
     await page.waitForTimeout(300);
-    // (since 2 Oct a press elsewhere on a seal zooms it in place at once, in the lens's stead of the old wobble)
+    // (since 2 Oct a press elsewhere on a seal zooms it in place at once, where the lens used to wobble it)
     assert.equal(await page.evaluate(() => [window.__printed || 0, !!document.querySelector('.seal.sealZoomed'), OrderWin.isOpen()].join()), [pb0, true, false].join(), 'a press on the seal away from the button prints nothing and opens nothing, and zooms the seal');
     // a cancelled order is never printed silently (adversarial, 28 Sep): the first press asks in the button itself (clay,
     // no pop-up), a second within 4 s prints, and the order's timeline says it was printed although cancelled
@@ -424,7 +424,7 @@ async function browserChecks() {
     assert.match(strip.strip, /2 designs · 3 pieces/); assert.match(strip.gold, /gold/, 'Send to Sheet is the next step');
     if (shots) await page.screenshot({ path: path.join(shots, 'custom-designs-card.png') });
     await page.click(neck + ' [data-cu-send]');
-    // (sent for good: since 1 Oct sentOf is true from the saved intent on, decisionOf only once the decision is recorded)
+    // (sent for good: sentOf is true from the saved intent on, decisionOf once the decision is recorded and the line settled)
     await page.waitForFunction(k => CustomSheet.decisionOf(B.orders.byKey.get(k)) && !document.querySelector('#rvList .cuStat, #rvList .btn.working'), nKey, { timeout: 30000 });
     // no run here: the line waits for the next one, settled (its SKU asks nothing); a run puts it on as any line
     const w = await page.evaluate(k => { const r = B.orders.byKey.get(k); return { st: r.state, problems: r.problems.length, eng: r.spec.engraveCandidate, custom: Review.count() }; }, nKey);
@@ -440,13 +440,13 @@ async function browserChecks() {
     assert.deepEqual(placed.pieces.map(p => p[0]).sort(), ['gold', 'silver', 'silver'], 'each design on its own metal: ' + JSON.stringify(placed.pieces));
     assert.deepEqual(placed.pools, [['gold', true, 'heart-name.dxf'], ['silver', true, 'Tag Back.ai'], ['silver', true, 'Tag Back.ai']]);
     assert(placed.tag.includes('1 custom') && placed.tag.includes('2 custom'), 'each sheet says how many custom pieces it holds: ' + placed.tag);
-    // the card has left Open for Decided (since 1 Oct a sent decision stays there, with its designs, its sheet and its history)
+    // a card sent to the sheet leaves Open and is listed once under Completed (one tab with the orders completed by hand), with its designs, its sheet and its history
     assert.equal(placed.open, false, 'a card sent to the sheet is no longer under Open');
-    await page.click('#reviewView .rvSeg [data-cseg="sent"]'); await page.waitForSelector(neck + '.doneRow');
-    const dec = await page.evaluate(sel => { const n = document.querySelector(sel); return { why: n.querySelector('.reviewReason')?.textContent, sent: !!n.querySelector('.cuDesigns.sent'), buttons: [...n.querySelectorAll('button')].map(b => b.textContent.trim()), seals: n.querySelectorAll('.sealRow .seal').length, seg: [...document.querySelectorAll('#reviewView .ordBar .rvSeg button')].map(b => b.textContent.trim()) }; }, neck);
-    assert.match(dec.why, /^Sent to Sheet · /, 'Decided says it was sent: ' + JSON.stringify(dec)); assert(dec.sent, 'the card shows its designs as sent');
-    for (const b of ['View designs', 'Open sheet', 'History']) assert(dec.buttons.includes(b), b + ' on its Decided card: ' + dec.buttons.join(' | '));
-    assert.equal(dec.seals, 1, 'its Sent to Sheet seal'); assert(/^Decided1$/.test(dec.seg[1]), 'Decided counts it: ' + dec.seg.join(' | '));
+    await page.click('#reviewView .rvSeg [data-cseg="done"]'); await page.waitForSelector(neck + '.doneRow');
+    const dec = await page.evaluate(sel => { const n = document.querySelectorAll(sel); const c = n[0]; return { n: n.length, why: c.querySelector('.reviewReason')?.textContent, sent: !!c.querySelector('.cuDesigns.sent'), buttons: [...c.querySelectorAll('button')].map(b => b.textContent.trim()), seals: c.querySelectorAll('.sealRow .seal').length }; }, neck);
+    assert.equal(dec.n, 1, 'listed once under Completed'); assert.match(dec.why, /^Sent to Sheet · /, 'Completed says it was sent: ' + JSON.stringify(dec)); assert(dec.sent, 'the card shows its designs as sent');
+    for (const b of ['View designs', 'Open sheet', 'History']) assert(dec.buttons.includes(b), b + ' on its Completed card: ' + dec.buttons.join(' | '));
+    assert.equal(dec.seals, 1, 'its Sent to Sheet seal');
     await page.click('#reviewView .rvSeg [data-cseg="open"]');
     // a drop anywhere else in Review starts nothing
     await drop('#reviewView .ordBar', [{ name: 'stray.ai', b64: DESIGN_AI }]);
@@ -463,16 +463,19 @@ async function browserChecks() {
     await page.waitForFunction(() => B.orders.rows.length === 8 && document.querySelector('#rvList .reviewListRow.cuDone'), null, { timeout: 30000 });
     assert.deepEqual(await page.evaluate(k => ({ sent: !!CustomSheet.decisionOf(B.orders.byKey.get(k)), pieces: allSheets().reduce((n, p) => n + p.charms.filter(c => c.custom).length, 0), files: Object.values(B.customDesigns)[0].files.map(F => F.bytes.length > 100) }), nKey), { sent: true, pieces: 3, files: [true, true] }, 'the designs and their pieces survive a reload');
     list = await rows();
-    assert.deepEqual(list.map(x => x.rid), ['4176744752'], 'completed survives a reload'); assert.deepEqual(list[0].buttons, ['Print again', 'Reopen']);
+    // (Completed holds the sent card too, since 2 Oct: the order completed by hand and the order sent to its sheet, each once)
+    assert.deepEqual(list.map(x => x.rid).sort(), ['4175423829', '4176744752'], 'completed, and sent to the sheet, survive a reload');
+    assert.deepEqual(list.find(x => x.rid === '4176744752').buttons, ['Print again', 'Reopen']);
     assert.deepEqual(await page.evaluate(() => ({ st: B.orders.byKey.get('4176744752_41767447521').state, v: Review.view().cseg })), { st: 'noDesign', v: 'done' });
     // its order has left the pull (shipped, or another day's pull): its label can still be printed, from the record
     await page.evaluate(() => { B.orders.rows = B.orders.rows.filter(r => r.order.receiptId !== '4176744752'); B.orders.byKey.delete('4176744752_41767447521'); Review.syncOrderItems(); Review.render(); });
     await page.waitForFunction(() => { const n = document.querySelector('#rvList .reviewListRow.cuDone'); return n && !n.querySelector('[data-cu-reopen]'); });
     list = await rows();
-    assert.deepEqual(list.map(x => x.rid), ['4176744752']); assert.deepEqual(list[0].buttons, ['Print again'], 'no line to reopen');
+    assert.deepEqual(list.map(x => x.rid).sort(), ['4175423829', '4176744752']); assert.deepEqual(list.find(x => x.rid === '4176744752').buttons, ['Print again'], 'no line to reopen');
     const printedBefore = await page.evaluate(() => window.__printed || 0);
     await page.click('#rvList .reviewListRow[data-rid="4176744752"] [data-cu-print]');
     await page.waitForFunction(n => (window.__printed || 0) > n && !document.querySelector('.cuStat, .btn.working'), printedBefore, { timeout: 30000 });
+    for (const t0 = Date.now(); srv.st.doc('Charm_Custom_Orders', '4176744752_41767447521').prints < 4 && Date.now() - t0 < 8000; ) await new Promise(r => setTimeout(r, 100));   // (the record is written just after the sticker is made)
     assert.equal(srv.st.doc('Charm_Custom_Orders', '4176744752_41767447521').prints, 4, 'printed from the record (the fourth: one was printed despite a cancel above)');
     assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem('qrPrintAll')).userTypedOrderNum), '4176744752', 'the same sticker');
     // an Options card: no "Review & resolve" and no question anywhere (Paul, 29 Sep 00:38 and 01:01); a click opens its

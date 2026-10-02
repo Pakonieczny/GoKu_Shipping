@@ -100,10 +100,17 @@ async function main() {
     const f = fixture();
     try {
       f.rec.stamps.unshift({how:'print',at:at-60000,by:'Seth'}); f.w.paintCustom(f.row);
-      assert.equal(f.bar().querySelectorAll('.seal').length,2, 'previous QR history remains beside the sent seal');
-      assert.match(f.bar().querySelector('.seal-print').getAttribute('aria-label'), /Seth/);
+      // (the bar draws one small seal, the latest the card above does not show, and the Timeline through History holds the rest, since 2 Oct:
+      //  each seal once on the overview. Display only: every seal stays in the record, none is replaced, and each is reachable)
+      assert.equal(f.bar().querySelectorAll('.seal').length,1, 'one seal in the bar');
+      assert(f.bar().querySelector('.seal-sheet'), 'the latest is the sent seal');
+      assert.deepEqual(f.rec.stamps.map(x => [x.how,x.by]),[['print','Seth'],['sheet','Paul']], 'previous QR history remains in the record beside the sent seal');
+      f.bar().querySelector('[data-cu-history]').click(); assert.equal(f.calls.views[f.calls.views.length - 1],'timeline','and is reachable through History');
       f.rec.stamps.push({how:'engraveApproved',at:at+60000,by:'Paul'}); f.w.paintCustom(f.row);
-      assert.equal(f.bar().querySelectorAll('.seal').length,3, 'additional real history becomes visible without replacing earlier seals');
+      assert.equal(f.bar().querySelectorAll('.seal').length,1, 'still one seal in the bar: the latest real history');
+      assert(f.bar().querySelector('.seal-engraveApproved'), 'additional real history becomes the seal shown');
+      assert.deepEqual(f.rec.stamps.map(x => x.how),['print','sheet','engraveApproved'], 'every earlier seal is still in the record, none replaced');
+      assert(f.bar().querySelector('[data-cu-history]'), 'History still holds them all');
       cases++;
     } finally { f.close(); }
   }

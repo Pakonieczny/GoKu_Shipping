@@ -404,8 +404,8 @@ function fixture({ MAIN, CX }) {
   await page.evaluate(MAIN => { window.__el = document.createElement('div'); window.__host(window.__el); window.__tl = OrderTimelineUI.mount(window.__el, { orderId: MAIN, live: false }); }, MAIN);
   await page.waitForFunction(() => window.__el.querySelectorAll('.tlSt[data-key]').length === 10, null, { timeout: 3000 });
   await page.hover('.tlSt[data-key="welded~e25"]'); await page.click('.tlSt[data-key="placed~e4"]');
-  // what is left are the 1 ms stand-ins the reduced-motion rule leaves (instant); nothing lasts longer
-  r = await page.evaluate(() => window.__el.getAnimations({ subtree: true }).filter(a => { const t = a.effect.getComputedTiming(); return !(t.duration <= 1 && t.iterations === 1); }).map(a => a.animationName || a.transitionProperty || 'script').join());
+  // what is left are the 1 ms stand-ins the reduced-motion rule leaves (instant), plus the seal zoom's own short fade (at most 130 ms, once, no bounce; seal-zoom.cjs pins the same ceiling); no CSS animation or transition and nothing longer or repeating
+  r = await page.evaluate(() => window.__el.getAnimations({ subtree: true }).filter(a => { const t = a.effect.getComputedTiming(), css = !!(a.animationName || a.transitionProperty); return !(t.iterations === 1 && (t.duration <= 1 || (!css && t.duration <= 130))); }).map(a => (a.animationName || a.transitionProperty || 'script') + ':' + a.effect.getComputedTiming().duration).join());
   assert.equal(await page.evaluate(() => getComputedStyle(window.__el.querySelector('.tlBusy')).display), 'none', 'no stray spinner');
   assert.equal(r, '', 'reduced motion: nothing animates: ' + r);
   await page.evaluate(() => { window.__tl.destroy(); document.querySelector('.tlTestHost').remove(); });
