@@ -1,5 +1,5 @@
 // Approvals "Complete ad" cards: every card loads its saved previews the same way, collapsed or open, and never sits on
-// a loading text. Fake api only: no network, no paid calls.
+// a loading text; Approve ad polls the background publication to its end. Fake api / fetch only: no network, no paid calls.
 const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/strict'),{JSDOM}=require('jsdom');
 const html=fs.readFileSync('brites-adwords.html','utf8'),source=html.slice(html.indexOf('function campaignStyleChoices('),html.indexOf('function adApprovalDesignReviewHtml(')),component=fs.readFileSync('brites-approval-review.js','utf8');
 const copy={headlines:['Saved Charm','A Silver Saved Charm','Jewellery Gifts'],longHeadlines:['Discover the saved silver charm'],descriptions:['Shop the charm at Brites Jewelry.','Find a charm for your collection.']};
@@ -90,5 +90,103 @@ function assertFailed(card,label){
  assert.equal(reason({...approval(10,'comet','Comet'),lastError:'Over your daily ceiling.',lastErrorAt:at(0,12,17),applyStartedAt:at(0,12,16)}),'Approve ad at 12:17 pm failed: Over your daily ceiling.','a new reason shows the time it was saved');
  assert.match(c.salesDay(old),/^[A-Z][a-z]{2} \d{1,2}(, \d{4})?$/);assert.equal(reason({...approval(11,'comet','Comet'),lastError:'Over your daily ceiling.',applyStartedAt:old}),'Approve ad on '+c.salesDay(old)+' at 9:05 am failed: Over your daily ceiling.','an older reason shows its attempt\'s start with the short date');
  assert.match(reason({...approval(12,'comet','Comet'),lastError:'Over your daily ceiling.'}),/^Approve ad at \d{1,2}:\d{2} [ap]m failed: Over your daily ceiling\.$/,'with no time saved, it reads as today');
- dom.window.close();console.log('PASS every complete-ad card loads its own saved thumbnails collapsed with a labelled spinner, paced and cached requests, failure shows "Preview unavailable" on the tiles and the reason once on the strip (with Retry) and once beside Reload previews, Retry / Reload previews / Retry plan recover in place, CORS kept, a saved reason says when Approve ad failed');require('./suite-guard.cjs').done();
+ // 8. Approve ad: the server answers at once ({queued:true}) and Google publishes in the background. The card keeps its busy button, reads the
+ // approval's own saved state (approvalStatus) every 4 s for up to 10 min and shows how it ended; a 504 page / network error is never printed.
+ // Real api() and btnBusy from the page against a scripted server on a virtual clock: no network, no waiting.
+ {
+ const apiSource=html.slice(html.indexOf('async function api(action, extra){'),html.indexOf('/* ---- centralized post-mutation refresh')),busySource=html.slice(html.indexOf('function btnBusy('),html.indexOf('/* --- step runner')),clockSource=html.split('\n').filter(line=>/^(var _MON=|function salesDay\()/.test(line)).join('\n');
+ const gateway504='<HTML>\n<HEAD><TITLE>Inactivity Timeout</TITLE></HEAD>\n<BODY>Inactivity Timeout</BODY></HTML>';
+ function rig(server,item){
+  const dom2=new JSDOM('<body></body>',{url:'https://brites.example'}),d2=dom2.window.document;let clock=Date.now();const log={calls:[],toasts:[],flow:[],reloads:0,sleeps:[]};
+  class FakeDate extends Date{constructor(...x){if(x.length)super(...x);else super(clock);}static now(){return clock;}}
+  const ctx={document:d2,localStorage:dom2.window.localStorage,URL,console,Intl,Date:FakeDate,window:{},PASS:'p',gadsUrl:()=>'https://brites.example/gads',loadInfo:()=>({verb:'Working'}),API_MUTATING:new Set(),forgetDeletedCampaign:()=>{},scheduleReload:()=>{},
+   setTimeout:(fn,ms)=>{log.sleeps.push(ms);clock+=ms;setImmediate(fn);return 1;},clearTimeout:()=>{},
+   fetch:async(url,o)=>{const body=JSON.parse(o.body);log.calls.push(body);const r=await server(body,log,()=>clock,ctx);return {status:r.status||200,ok:(r.status||200)<400,text:async()=>r.text!==undefined?r.text:JSON.stringify(r.json),json:async()=>r.json};},
+   BritesCampaignStyles:require('../../brites-campaign-styles'),DASH:{pending:[],budgetCurrency:'CAD',pmaxTargets:[]},esc:x=>String(x),adAttr:x=>String(x),elFrom:x=>{const div=d2.createElement('div');div.innerHTML=x;return div.firstElementChild;},adApprovalDesignReviewHtml:()=>'',wireApprovalAllSizes:()=>{},campaignStyleIcon:()=>'',apCountries:()=>'United States',apMoney:n=>'CAD '+Number(n).toFixed(2),
+   toast:m=>log.toasts.push(m),reload:async()=>{log.reloads++;},openAdDesign:()=>{},BritesFlow:{published:(card,id,r)=>log.flow.push({id,status:r&&r.status,message:r&&r.message})}};
+  vm.createContext(ctx);vm.runInContext(busySource+'\n'+apiSource+'\n'+clockSource,ctx);vm.runInContext(source,ctx);
+  const a=item||approval(20,'owl','Owl'),card=ctx.adDesignSubmissionCard(a);d2.body.appendChild(card);ctx.wireAdDesignSubmission(card,a);
+  const q=x=>card.querySelector(x),draftKey=a.id+'|'+a.reviewHash;
+  return {ctx,log,card,a,q,button:()=>q('[data-publish-submission]'),now:()=>clock,error:()=>q('[data-submission-error]').textContent,text:()=>card.textContent,
+   snap:()=>({label:q('[data-publish-submission]').textContent,spinner:!!q('[data-publish-submission] .spin'),disabled:q('[data-publish-submission]').disabled,locked:q('.campaignStyleChoices').disabled}),
+   async open(){card.classList.add('open');await card.arPreparePlan();assert(!q('[data-publish-submission]').disabled,'the plan is ready, so Approve ad is enabled');ctx.CAMPAIGN_STYLE_DRAFTS[draftKey]={marker:true};},
+   press:()=>q('[data-publish-submission]').onclick(),
+   polls:()=>log.calls.filter(x=>x.action==='approvalStatus').length,presses:()=>log.calls.filter(x=>x.action==='publishAdDesignSubmission'&&x.confirmed).length,draft:()=>ctx.CAMPAIGN_STYLE_DRAFTS[draftKey]};
+ }
+ // The server script: prepare answers a plan, the confirmed press answers publish(), each poll answers the next step (the last one repeats).
+ const plan={ok:true,planHash:'plan-owl',plan:{currency:'CAD',totalDaily:12,campaigns:[{style:'pmax',name:'Owl',dailyBudget:12,formats:['square']}]}};
+ const script=(publish,steps)=>{let n=0;return async(body,log,now,ctx)=>{if(body.prepareOnly)return {json:plan};if(body.confirmed)return await publish(now,log);if(body.action==='approvalStatus'){const st=steps[Math.min(n++,steps.length-1)],out=typeof st==='function'?await st(now,log):st;if(out&&out.__throw)throw new TypeError('Failed to fetch');return {json:{ok:true,id:body.id,...out}};}throw Error('Unexpected '+body.action);};};
+ const queued=now=>({json:{ok:true,id:'x',status:'APPROVED',queued:true,requestedAt:now(),message:'Publishing started.'}});
+ const outcome=(status,message,now)=>({status,message,at:now()});
+ const noRaw=(r,label)=>assert(!/<\/?(HTML|HEAD|TITLE|BODY)|Inactivity Timeout|HTTP 504/i.test(r.text()),label+' never prints the gateway page or its raw HTTP text: '+r.text().slice(0,200));
+ const scenarios=[],scenario=(name,fn)=>scenarios.push([name,fn]);
+
+ scenario('queued, then APPROVED, APPLYING, APPLIED: busy button with its labelled spinner, locked card, no double press, saved outcome toasted, draft cleared, flow told, list reloaded',async()=>{
+  let during=null;const r=rig(script(queued,[{status:'APPROVED',publishRequestedAt:1},{status:'APPLYING'},async now=>{during=r.snap();r.button().onclick();r.button().onclick();return {status:'APPLIED',publishOutcome:outcome('APPLIED','Google accepted the update.',now)};}]));await r.open();
+  const run=r.press();await tick();const first=r.snap();await run;
+  assert.equal(first.label,'Publishing to Google…','the button says so as soon as the request is queued');assert(first.spinner,'with the existing small labelled spinner');assert(first.disabled&&first.locked,'and the card stays locked');assert.equal(during.label,'Publishing to Google…');assert(during.disabled&&during.locked&&during.spinner,'still busy on the third check');
+  assert.equal(r.presses(),1,'a second press while busy does nothing');assert.equal(r.polls(),3);assert(r.log.sleeps.length>=2&&r.log.sleeps.every(ms=>ms===4000),'polls every 4 seconds: '+r.log.sleeps);assert.deepEqual(r.log.calls.filter(x=>x.action==='approvalStatus').map(x=>x.id),Array(3).fill(r.a.id),'reads the approval by id');
+  assert.deepEqual(r.log.toasts,['Google accepted the update.'],'the saved outcome message is toasted');assert.equal(r.draft(),undefined,'the saved draft is cleared');assert.equal(r.log.flow.length,1);assert.equal(r.log.flow[0].status,'APPLIED');assert.equal(r.log.flow[0].id,r.a.id);assert.equal(r.log.reloads,1,'the list is reloaded');assert.equal(r.error(),'');
+  const end=r.snap();assert.equal(end.label,'Approve ad');assert(!end.disabled&&!end.locked&&!end.spinner,'the card unlocks once it ends');
+ });
+ scenario('APPLIED before the outcome is saved: waits for it; with none it falls back to the page\'s own text',async()=>{
+  let r=rig(script(queued,[{status:'APPLYING'},{status:'APPLIED',publishOutcome:null},async now=>({status:'APPLIED',publishOutcome:outcome('APPLIED','Google accepted it, with films.',now)})]));await r.open();await r.press();assert.deepEqual(r.log.toasts,['Google accepted it, with films.']);assert.equal(r.polls(),3);
+  r=rig(script(queued,[{status:'APPLIED',publishOutcome:null}]));await r.open();await r.press();assert.deepEqual(r.log.toasts,['Published to Google Ads. New campaigns start paused.']);assert(r.polls()<=6,'a missing outcome does not wait for ten minutes: '+r.polls());assert.equal(r.log.flow.length,1);assert.equal(r.log.reloads,1);
+ });
+ scenario('dry run: back to PENDING with a VALIDATED outcome newer than the press ends as validated, not as an error; an older outcome is ignored',async()=>{
+  const r=rig(script(queued,[async now=>({status:'PENDING',publishOutcome:{status:'VALIDATED',message:'Old dry run.',at:now()-60000}}),{status:'APPROVED'},async now=>({status:'PENDING',validatedAt:now(),publishOutcome:outcome('VALIDATED','Google validated the update in dry-run mode; it has not been published.',now)})]));await r.open();await r.press();
+  assert.equal(r.polls(),3,'the earlier dry run\'s outcome is not mistaken for this press');assert.deepEqual(r.log.toasts,['Google validated the update in dry-run mode; it has not been published.']);assert.equal(r.log.flow[0].status,'VALIDATED');assert.equal(r.draft(),undefined);assert.equal(r.log.reloads,1);assert.equal(r.error(),'');
+ });
+ scenario('back to PENDING with a lastError newer than the press shows it in the error line, in the saved-error wording; an older saved error is ignored',async()=>{
+  const old={...approval(21,'owl','Owl'),lastError:'Over your daily ceiling.',lastErrorAt:Date.now()-3600000};
+  const r=rig(script(queued,[async now=>({status:'PENDING',error:'Over your daily ceiling.',lastErrorAt:now()-3600000}),{status:'APPLYING'},async now=>({status:'PENDING',error:'Google rejected the asset: image too small.',lastErrorAt:now()+50})]),old);await r.open();await r.press();
+  assert.equal(r.polls(),3,'the hour-old error is not this press\'s failure');assert.match(r.error(),/^Approve ad at \d{1,2}:\d{2} [ap]m failed: Google rejected the asset: image too small\.$/);assert.deepEqual(r.log.toasts,[]);assert.equal(r.log.reloads,0);assert.deepEqual(r.draft(),{marker:true},'the saved draft stays so Approve can be pressed again');assert.equal(r.log.flow.length,0);
+  const end=r.snap();assert.equal(end.label,'Approve ad');assert(!end.disabled&&!end.locked,'the card unlocks for another try');
+ });
+ scenario('APPLY_UNKNOWN shows the unconfirmed wording (its saved outcome, else its lastError) and ends',async()=>{
+  let r=rig(script(queued,[{status:'APPLYING'},async now=>({status:'APPLY_UNKNOWN',error:'socket hang up',lastErrorAt:now(),publishOutcome:outcome('APPLY_UNKNOWN','Google\'s result could not be confirmed. Check this draft against Google Ads before another publication attempt.',now)})]));await r.open();await r.press();
+  assert.match(r.error(),/^Approve ad at \d{1,2}:\d{2} [ap]m failed: Google's result could not be confirmed\. Check this draft against Google Ads/);assert.equal(r.polls(),2);assert.equal(r.log.toasts.length,0);assert.equal(r.log.reloads,0);assert(!r.snap().spinner);
+  r=rig(script(queued,[{status:'APPLY_UNKNOWN',error:'socket hang up',startedAt:Date.now()}]));await r.open();await r.press();assert.match(r.error(),/failed: socket hang up$/);
+ });
+ scenario('polling that never ends stops after 10 minutes with a plain sentence, keeps Approve disabled and does not clear the draft',async()=>{
+  const r=rig(script(queued,[{status:'APPROVED'}]));await r.open();const t0=r.now();assert.equal(r.ctx.APPROVE_POLL.every,4000);assert.equal(r.ctx.APPROVE_POLL.limit,600000);await r.press();
+  const waited=r.now()-t0;assert(waited>=600000&&waited<=604000,'stops at 10 minutes, not before or long after: '+waited);assert(r.polls()>=150&&r.polls()<=152,'about one read every 4 seconds: '+r.polls());const polls=r.polls();
+  assert.equal(r.error(),'Publishing is still running. This card updates when it finishes.');assert.equal(r.log.toasts.length,0);assert.equal(r.log.reloads,0);assert.deepEqual(r.draft(),{marker:true});
+  assert(r.button().disabled&&r.button().textContent==='Approve ad'&&!r.snap().spinner,'it cannot be pressed again while Google may still be publishing');await tick();await tick();assert.equal(r.polls(),polls,'polling stopped');assert.equal(r.presses(),1);
+ });
+ scenario('a 504 HTML answer to Approve is never shown: the card polls, and APPLIED ends it as a success',async()=>{
+  let during=null;const r=rig(script(()=>({status:504,text:gateway504}),[async()=>{during=r.snap();noRaw(r,'while waiting');return {status:'APPROVED'};},{status:'APPLYING'},async now=>({status:'APPLIED',publishOutcome:outcome('APPLIED','Google accepted the update.',now)})]));await r.open();await r.press();
+  assert(during.disabled&&during.locked&&during.spinner,'the button stays busy while the card checks');assert.equal(r.polls(),3);assert.deepEqual(r.log.toasts,['Google accepted the update.']);assert.equal(r.draft(),undefined);assert.equal(r.log.flow.length,1);assert.equal(r.log.reloads,1);noRaw(r,'the end');assert.equal(r.error(),'');assert.equal(r.presses(),1);
+ });
+ scenario('a network error on Approve is polled the same way; a failed read in between is skipped',async()=>{
+  const inner=script(null,[{__throw:1},{status:'APPLYING'},async now=>({status:'APPLIED',publishOutcome:outcome('APPLIED','Google accepted the update.',now)})]);
+  const r=rig(async(body,log,now,ctx)=>{if(body.confirmed)throw new TypeError('Failed to fetch');return inner(body,log,now,ctx);});await r.open();await r.press();
+  assert.equal(r.polls(),3);assert.deepEqual(r.log.toasts,['Google accepted the update.']);assert(!/Failed to fetch/.test(r.text()));assert.equal(r.log.reloads,1);
+ });
+ scenario('a 504 whose status never changes ends after 10 minutes with the plain sentence, nothing raw, and the card usable again',async()=>{
+  const oldAt=Date.now()-7200000,r=rig(script(()=>({status:504,text:gateway504}),[{status:'PENDING',error:'Old reason.',lastErrorAt:oldAt}]),{...approval(22,'owl','Owl'),lastError:'Old reason.',lastErrorAt:oldAt});await r.open();const t0=r.now();await r.press();
+  const waited=r.now()-t0;assert(waited>=600000&&waited<=604000,'polls for the full 10 minutes before deciding: '+waited);assert(r.polls()>=150);assert.equal(r.error(),'Google did not answer in time. Check the card again in a minute; nothing is lost.');noRaw(r,'the end');assert.equal(r.log.toasts.length,0);assert.equal(r.log.reloads,0);assert.deepEqual(r.draft(),{marker:true});
+  const end=r.snap();assert.equal(end.label,'Approve ad');assert(!end.disabled&&!end.locked&&!end.spinner,'nothing happened on the server, so the card can be tried again');
+ });
+ scenario('a 504 followed by a new failure shows that failure; one followed by work that never finishes says it is still running and stays locked',async()=>{
+  let r=rig(script(()=>({status:504,text:gateway504}),[{status:'APPROVED'},async now=>({status:'PENDING',error:'Google rejected the asset: image too small.',lastErrorAt:now()+50})]));await r.open();await r.press();assert.match(r.error(),/failed: Google rejected the asset: image too small\.$/);noRaw(r,'the failure');assert.equal(r.polls(),2);assert(!r.button().disabled);
+  r=rig(script(()=>({status:504,text:gateway504}),[{status:'APPLYING'}]));await r.open();await r.press();assert.equal(r.error(),'Publishing is still running. This card updates when it finishes.');assert(r.button().disabled);noRaw(r,'the end');assert.equal(r.log.reloads,0);
+ });
+ scenario('refusals and the old synchronous answer behave exactly as before, with no polling',async()=>{
+  let r=rig(script(()=>({json:{ok:false,error:'This review changed. Reload Approvals.'}}),[{status:'APPROVED'}]));await r.open();await r.press();assert.equal(r.error(),'This review changed. Reload Approvals.');assert.equal(r.polls(),0);assert(!r.button().disabled&&!r.snap().locked);assert.equal(r.log.reloads,0);
+  r=rig(script(()=>({status:500,json:{error:'Over your daily ceiling.'}}),[{status:'APPROVED'}]));await r.open();await r.press();assert.equal(r.error(),'HTTP 500 · Over your daily ceiling.','a JSON refusal is shown, not polled');assert.equal(r.polls(),0);
+  r=rig(script(()=>({json:{ok:true,status:'APPLIED',message:'Created paused'}}),[{status:'APPROVED'}]));await r.open();await r.press();assert.deepEqual(r.log.toasts,['Created paused']);assert.equal(r.polls(),0,'an answer without queued is the old synchronous result');assert.equal(r.log.flow.length,1);assert.equal(r.log.reloads,1);assert.equal(r.draft(),undefined);assert.equal(r.error(),'');
+ });
+ scenario('api() turns a gateway page or other markup into one short plain sentence and marks the answer as unanswered; JSON refusals keep their own text',async()=>{
+  const r=rig(script(()=>({status:504,text:gateway504}),[{status:'APPROVED'}])),grab=text=>{return vm.runInContext('(async()=>{try{await api("x",{});return null}catch(e){return {message:e.message,unanswered:e.unanswered,status:e.status}}})()',r.ctx);},reply=(status,text)=>{r.ctx.fetch=async()=>({status,ok:false,text:async()=>text,json:async()=>JSON.parse(text)});};
+  reply(504,gateway504);let e=await grab();assert.equal(e.message,'HTTP 504 · The server took too long to answer.');assert.equal(e.unanswered,true);
+  reply(502,'');e=await grab();assert.equal(e.message,'HTTP 502 · The server took too long to answer.');assert.equal(e.unanswered,true);
+  reply(500,'<html><body>Oops</body></html>');e=await grab();assert.equal(e.message,'HTTP 500 · The server sent an unexpected answer.');
+  reply(500,'{"error":"Over your daily ceiling."}');e=await grab();assert.equal(e.message,'HTTP 500 · Over your daily ceiling.');assert.notEqual(e.unanswered,true);
+ });
+ const failed=[];for(const [name,fn] of scenarios){try{await fn();}catch(e){failed.push(name+'\n     '+String(e&&e.message||e).split('\n').slice(0,3).join(' | '));}}
+ assert(!failed.length,'Approve ad polling: '+failed.length+' of '+scenarios.length+' scenarios failed:\n  - '+failed.join('\n  - '));
+ }
+
+ dom.window.close();console.log('PASS every complete-ad card loads its own saved thumbnails collapsed with a labelled spinner, paced and cached requests, failure shows "Preview unavailable" on the tiles and the reason once on the strip (with Retry) and once beside Reload previews, Retry / Reload previews / Retry plan recover in place, CORS kept, a saved reason says when Approve ad failed, Approve ad polls its approval until Google finishes and never prints a gateway page');require('./suite-guard.cjs').done();
 })().catch(e=>{console.error(e);process.exit(1);});
