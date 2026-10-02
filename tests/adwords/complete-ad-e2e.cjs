@@ -37,8 +37,12 @@
 //      its own card; the generic approve / "Publish again" routes never publish a complete ad (they would skip the
 //      Merchant check and the films); Merchant offers ineligible, unreadable or partly eligible at Approve; two tabs
 //      saving and preparing one review; saved videos excluded; every action without the passcode; a dry-run join;
-//      joining a running campaign (no film promised); and a self-test that the fake rejects a campaign without the
-//      EU political-advertising declaration. Every scenario also checks no response carries a secret.
+//      joining a running campaign (no film promised); and self-tests that the fake rejects a campaign without the
+//      EU political-advertising declaration and an image ad without a display URL on its final URL's domain.
+//   S9 a Fixed Display plan saved on its approval before image ads carried Google's required display URL (Paul's waiting
+//      card): preparing again returns it as saved, and Check with Google and Approve send every image ad with the display
+//      URL of its own final URL, while the stored, reviewed plan and its hash stay unchanged.
+//   Every scenario also checks no response carries a secret.
 // Tags
 //   [SCOPE] depends on reviews using their own pinned product and group rather than the workspace's current
 //           selection (the review-scope fix, upstream commit 19635c8). Enforced by default; set
@@ -404,6 +408,8 @@ async function mutate(g, body, call) {
   const campaignOf = rn => campaignsIn.get(rn) || g.campaigns.get(rn) || null;
   const groupOf = rn => groupsIn.get(rn) || g.assetGroups.get(rn) || null;
   const https = u => { try { const x = new URL(u); return x.protocol === 'https:' && !!x.hostname; } catch (_) { return false; } };
+  // A URL's domain as the Destination mismatch policy compares a display URL with the final URL: its host, lower-cased, without "www.".
+  const domainOf = u => { try { return new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(String(u)) ? String(u) : 'http://' + u).hostname.toLowerCase().replace(/^www\./, ''); } catch (_) { return null; } };
   const imageOk = (info, spec) => info && info.kind === 'image' && info.width && Math.abs(info.width / info.height - spec[0]) <= spec[0] * 0.01 && info.width >= spec[1] && info.height >= spec[2] && info.bytes <= 5120 * 1024;
   const groupLinks = new Map(), groupFilters = new Map(), adGroupsIn = new Map();
   for (let i = 0; i < ops.length; i++) {
@@ -531,6 +537,10 @@ async function mutate(g, body, call) {
         if (!info || info.kind !== 'image' || !FIXED_SIZES.has(info.width + 'x' + info.height)) err(i, 'IMAGE_SIZE_NOT_SUPPORTED', 'Image ad size ' + (info ? info.width + 'x' + info.height : 'unknown') + ' is not a supported Display size', 'ad.image_ad', 'imageError');
         else if (info.bytes > 150 * 1024) err(i, 'FILE_TOO_LARGE', 'Image ads are limited to 150 KB', 'ad.image_ad', 'imageError');
         if (!ad.name) err(i, 'REQUIRED', 'Image ads need a name', 'ad.name', 'adError');
+        // v24 requires Ad.display_url on image ads (FieldError REQUIRED, as Google answered the first Fixed Display plan), and the
+        // Destination mismatch policy refuses a display URL whose domain is not the final URL's.
+        if (!ad.displayUrl) err(i, 'REQUIRED', 'The required field was not present.', 'ad_group_ad_operation.create.ad.display_url', 'fieldError');
+        else if (urls.some(u => domainOf(u) !== domainOf(ad.displayUrl))) err(i, 'POLICY_FINDING', 'Destination mismatch: display URL ' + ad.displayUrl + ' is not on the final URL\'s domain', 'ad_group_ad_operation.create.ad.display_url', 'policyFindingError');
       } else err(i, 'INVALID_AD_TYPE', 'Only responsive display and image ads are expected here', 'ad', 'adError');
     }
     if (type === 'campaignConversionGoalOperation') {
@@ -1404,6 +1414,41 @@ scenario('S8', 'S8 adversity: interrupted approvals, generic publish, two tabs, 
   const self = await fakeFetch(`https://googleads.googleapis.com/v24/customers/${CID}/googleAds:mutate`, { method: 'POST', body: JSON.stringify(bad) }), selfRec = reqsIn('fake self-test')[0]; if (selfRec) selfRec.fault = 'self-test';
   check(self.status === 400 && selfRec && selfRec.errors.some(e => e.code === 'REQUIRED' && /contains_eu_political_advertising/.test(e.field)) && selfRec.errors.some(e => e.code === 'UNKNOWN_FIELD'), 'the fake Google Ads rejects a new campaign missing the EU political-advertising declaration or carrying a removed field',
     { detail: JSON.stringify(selfRec && selfRec.errors) });
+  // ...and an image ad without its required display URL, or with one off its final URL's domain, while one on that domain passes.
+  step('fake self-test display url'); const banner = (await jpeg('selftest', 300, 250, '#d9c7b0')).toString('base64');
+  const imageAd = displayUrl => ({ adGroupAdOperation: { create: { adGroup: RN('adGroups', '-3'), status: 'ENABLED', ad: { name: 'Self-test 300x250', finalUrls: ['https://www.britesjewelry.com/products/self-test'], ...(displayUrl ? { displayUrl } : {}), imageAd: { imageAsset: { asset: RN('assets', '-4') } } } } } });
+  const urlTest = { mutateOperations: [{ campaignBudgetOperation: { create: { resourceName: RN('campaignBudgets', '-1'), name: 'Self-test display URL', amountMicros: '1000000', deliveryMethod: 'STANDARD', explicitlyShared: false } } },
+    { campaignOperation: { create: { resourceName: RN('campaigns', '-2'), name: 'Self-test display URL', status: 'PAUSED', advertisingChannelType: 'DISPLAY', campaignBudget: RN('campaignBudgets', '-1'), maximizeConversions: {}, containsEuPoliticalAdvertising: 'DOES_NOT_CONTAIN_EU_POLITICAL_ADVERTISING' } } },
+    { adGroupOperation: { create: { resourceName: RN('adGroups', '-3'), campaign: RN('campaigns', '-2'), name: 'Self-test display URL', type: 'DISPLAY_STANDARD', status: 'ENABLED' } } },
+    { assetOperation: { create: { resourceName: RN('assets', '-4'), name: 'Self-test 300x250', imageAsset: { data: banner } } } }, imageAd(null), imageAd('example.com'), imageAd('britesjewelry.com')], validateOnly: true };
+  const urlRes = await fakeFetch(`https://googleads.googleapis.com/v24/customers/${CID}/googleAds:mutate`, { method: 'POST', body: JSON.stringify(urlTest) }), urlBody = await urlRes.json(), urlRec = reqsIn('fake self-test display url')[0]; if (urlRec) urlRec.fault = 'self-test';
+  const errorsAt = i => (urlRec ? urlRec.errors : []).filter(e => e.i === i);
+  check(urlRes.status === 400 && urlBody.error.status === 'INVALID_ARGUMENT' && errorsAt(4).some(e => e.code === 'REQUIRED' && e.family === 'fieldError' && /\.ad\.display_url$/.test(e.field)) && errorsAt(5).some(e => e.code === 'POLICY_FINDING' && /\.ad\.display_url$/.test(e.field))
+    && !errorsAt(6).length && urlRec.errors.every(e => e.i === 4 || e.i === 5), 'the fake Google Ads rejects an image ad without its required display URL (REQUIRED, 400 INVALID_ARGUMENT) or with one off its final URL\'s domain, and accepts one on it',
+    { detail: JSON.stringify(urlRec && urlRec.errors) });
+});
+
+scenario('S9', 'S9 a waiting plan prepared before image ads carried a display URL', async () => {
+  await boot('S9 saved plan without display URLs');
+  const p = P.saturn, ws = await seedWorkspace({ id: 'design_saved_plan_saturn', products: [p], selectedKey: 'saturn', scoped: true }), st = stage(null, 'saved plan');
+  const ap = await submitAd(ws, p); if (!ap) st.blocked = 'submission failed'; else Object.assign(ap, { fx: ws.fx.saturn, wsId: ws.id });
+  await editMessaging(st, ws, p, ap, clone(COPY.saturn), false);
+  const choice = { styles: ['fixed_display'], budgets: { fixed_display: 4 }, countries: ['2840', '2124'], durations: { fixed_display: 10 } };
+  await preparePlan(st, p, ap, choice);
+  // The plan exactly as the earlier builder stored it on the approval: the same operations without displayUrl, hashed as stored.
+  const images = ops => ops.map(o => o.adGroupAdOperation && o.adGroupAdOperation.create.ad).filter(ad => ad && ad.imageAd), sizes = ap ? ap.fx.proofs.filter(x => x.supported).length : 0, d = st.blocked ? null : approval(ap.id);
+  if (d) { for (const payload of [d.payload, d.pipelinePlan.payload]) images(payload.mutateOperations).forEach(ad => { delete ad.displayUrl; }); d.pipelinePlan.hash = ap.planHash = ctx.E.creativeHash(d.payload); }
+  const saved = d && JSON.stringify(d.pipelinePlan.payload);
+  st.gate('Saturn: the waiting plan has the earlier shape (image ads without a display URL) and its own consistent hash', () => images(d.pipelinePlan.payload.mutateOperations).length === sizes && images(d.pipelinePlan.payload.mutateOperations).every(ad => !('displayUrl' in ad)) && ctx.E.creativeHash(d.pipelinePlan.payload) === d.pipelinePlan.hash);
+  step('saturn prepare again'); const again = st.blocked ? null : await api('publishAdDesignSubmission', { id: ap.id, hash: ap.reviewHash, prepareOnly: true, ...choice });
+  st.check('Saturn: preparing the same choices again returns the waiting plan as saved (its card keeps it)', () => again && again.cached === true && again.planHash === ap.planHash && JSON.stringify(approval(ap.id).pipelinePlan.payload) === saved, () => why(again));
+  const { rec } = await checkWithGoogle(st, p, ap);
+  step('saturn approve'); const r = st.blocked ? null : await api('publishAdDesignSubmission', { id: ap.id, hash: ap.reviewHash, planHash: ap.planHash, confirmed: true }), recs = reqsIn('saturn approve');
+  st.gate('Saturn: Approve ad publishes the waiting plan (status APPLIED)', () => r && r.status === 'APPLIED' && approval(ap.id).status === 'APPLIED', () => why(r) + ' · approval ' + JSON.stringify(approval(ap.id) && { status: approval(ap.id).status, lastError: approval(ap.id).lastError }));
+  if (!st.blocked) verifyPublication(st, p, ap, choice, recs, COPY.saturn);
+  st.check('Saturn: every image ad sent to Google (Check with Google, validation, publication) carries the display URL of its own final URL', () => { const sent = [rec, ...recs].filter(Boolean).flatMap(x => images(x.ops));
+    return sent.length === 3 * sizes && sent.every(ad => ad.displayUrl === 'britesjewelry.com' && JSON.stringify(ad.finalUrls) === JSON.stringify([p.url])); }, () => JSON.stringify([rec, ...recs].filter(Boolean).map(x => images(x.ops).map(ad => ad.displayUrl || null))));
+  st.check('Saturn: the stored, reviewed plan is unchanged (no display URL written into it, same hash)', () => { const pl = approval(ap.id).pipelinePlan; return JSON.stringify(pl.payload) === saved && pl.hash === ap.planHash && ctx.E.creativeHash(approval(ap.id).payload) === ap.planHash; });
 });
 
 /* ================================================================ run */
