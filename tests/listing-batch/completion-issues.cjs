@@ -6,7 +6,7 @@ const { reconcileSession } = require('../../netlify/functions/lib/listingBatchRe
 
 const sessionId = 'sess_123456789_abcdef';
 const path = n => `listing-generator-1/Beady_Necklace/Ready_To_List/Set_${n}`;
-async function audit({ issue = true, pending = null, unregistered = false } = {}) {
+async function audit({ issue = true, pending = null, unregistered = false, preparationFailed = false } = {}) {
   const records = Array.from({length: 300}, (_, i) => ({batchName: `batch_${i}`, sessionId,
     displayName: `lg1-Beady_Necklace-${unregistered ? 301 : 300}sets-test-part${i + 1}of300`,
     state: 'JOB_STATE_SUCCEEDED', collected: true, setComplete: true, createdAt: i + 1,
@@ -14,6 +14,9 @@ async function audit({ issue = true, pending = null, unregistered = false } = {}
     sets: [{category: 'Beady_Necklace', setN: i + 1, outputBasePath: path(i + 1),
       tasks: [{slotIndex: 0, type: 'edits'}]}]}));
   const last = records[299];
+  if(preparationFailed) Object.assign(last,{collected:false,state:'JOB_STATE_FAILED',locallyQueued:false,
+    responsesFile:null,retryRequested:false,retryStatus:'preparation_failed',preparationFailures:3,
+    recoveryReason:'Listing preparation failed 3 times. Reference download timed out.'});
   if (pending) Object.assign(last, {setComplete: false, collected: false,
     state: pending === 'active' ? 'JOB_STATE_RUNNING' : pending === 'queued' ? 'JOB_STATE_QUEUED' : 'JOB_STATE_SUCCEEDED',
     locallyQueued: pending === 'queued', retryRequested: pending === 'queued'});
@@ -75,5 +78,9 @@ function render(summary) {
   assert.equal(success.status, 'completed');
   assert.equal(success.processed, 300);
   assert.equal(success.issues, 0);
+  const preparation = await audit({preparationFailed:true});
+  assert.equal(preparation.status,'completed_with_issues','failed preparation cannot keep an otherwise finished batch open');
+  assert.equal(preparation.pending,0);assert.equal(preparation.issues,1);
+  assert.match(preparation.sets[299].note,/preparation failed 3 times/);
   console.log('Batch completion: all successes and terminal issues settle independently; active, queued, saving and unsubmitted work stay open');
 })().catch(err => {console.error(err); process.exitCode = 1;});

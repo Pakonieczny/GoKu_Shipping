@@ -96,6 +96,37 @@ async function abandonedPreparationScenario() {
   now+=6*60000;
   assert.equal((await gate.reserve('source2')).queued,true,'an uncertain paid create is reconciled rather than replaced');
 }
+async function failedPreparationIsolationScenario() {
+  let now=1000000;
+  const db=database(0), gate=admissionControl(db,'batches',()=>now,()=>now);
+  for(const id of ['broken','healthy']) db.data.set('batches/'+id,clone(sourceRecord));
+  const stopped=await gate.reserve('broken');
+  await gate.progress(stopped,'downloading reference images');
+  now+=6*60000;
+  const marker={batchName:'broken',stalledAt:now-6*60000};
+  await gate.reconcile(async()=>{throw new Error('preparation has no paid provider job to reconcile');},marker);
+  assert.equal(db.data.get('batches/broken').preparationFailures,1);
+  assert.match(db.data.get('batches/broken').retryError,/downloading reference images/);
+  await gate.reconcile(async()=>null,marker);
+  assert.equal(db.data.get('batches/broken').preparationFailures,1,'same dead worker is recorded once');
+  assert.equal((await gate.reserve('broken')).sourceError,true,'failed source is deferred rather than blocking healthy listings');
+  const healthy=await gate.reserve('healthy'); assert(healthy.token);
+  await assert.rejects(gate.beforeCreate(stopped,{inputFileName:'late-input'}),/reservation expired/);
+  await gate.release(healthy,null);
+  for(let attempt=2;attempt<=3;attempt++) {
+    now+=11*60000;
+    const claim=await gate.reserve('broken');assert(claim.token);
+    await gate.failPreparation(claim,new Error('Reference download timed out'));
+    await gate.release(claim,null);
+  }
+  const failed=db.data.get('batches/broken');
+  assert.equal(failed.preparationFailures,3);
+  assert.equal(failed.retryStatus,'preparation_failed');
+  assert.equal(failed.locallyQueued,false);assert.equal(failed.retryRequested,false);
+  assert.equal(failed.recoveryStatus,'blocked','repeated failure becomes a visible terminal issue');
+  assert.equal((await gate.reserve('broken')).sourceError,true,'stopped preparation is not paid again');
+  assert((await gate.reserve('healthy')).token,'terminal source failure does not hold the next listing');
+}
 async function originalSubmissionScenario() {
   const db=database(35); let uploads=0, creates=0, now=1000000;
   const body={kind:'batch_submit',sessionId:'sess_original',displayName:'lg1-Beady_Necklace-300sets-test-part282of300',
@@ -111,7 +142,7 @@ async function originalSubmissionScenario() {
     admin:{storage:()=>({bucket:()=>({})}),firestore:{FieldValue:{serverTimestamp:()=>now}}},
     process,Buffer,console:{log:()=>{}}, json:(statusCode,data)=>({statusCode,...data}), quotaFailure,
     setTimeout: fn => setTimeout(fn, 0), clearTimeout,
-    runBoundedConcurrent:async(items,_n,fn)=>Promise.all(items.map(fn)),
+    runBoundedConcurrent:async(items,_n,fn)=>Promise.all(items.map(async(item,i)=>{try{return await fn(item,i);}catch(__error){return {__error};}})),
     storagePathToBuffer:async path=>path === 'unreadable' ? new Promise(()=>{}) : ({mime:'image/png',buffer:Buffer.from('test image')}),
     buildOpenAIBatchJsonlLine:()=>({request:'test'}),listingImageSize:()=> '2048x2048',
     withCurrentBeadyCharmSize:(_set,_slot,prompt)=>prompt,
@@ -213,4 +244,4 @@ async function submitRefusalCountScenario() {
   assert.equal(result.queued,true);
   assert.deepEqual(db.data.get('batches/batch_src').capacityRefusals,{increment:1});
 }
-(async()=>{await unitScenarios();await staleProbeScenario();await abandonedPreparationScenario();await originalSubmissionScenario();await quotaRecoveryScenario();await cancellationFeedbackScenario();await submitRefusalCountScenario();console.log('Shared admission: concurrency, capacity, validation, abandoned preparation, quota cooldown, durable original queue, idempotency, timeout reconciliation and cancellation feedback passed');})().catch(e=>{console.error(e);process.exitCode=1;});
+(async()=>{await unitScenarios();await staleProbeScenario();await abandonedPreparationScenario();await failedPreparationIsolationScenario();await originalSubmissionScenario();await quotaRecoveryScenario();await cancellationFeedbackScenario();await submitRefusalCountScenario();console.log('Shared admission: concurrency, isolated bounded preparation failures, abandoned workers, capacity, validation, durable queue, idempotency and paid-create reconciliation passed');})().catch(e=>{console.error(e);process.exitCode=1;});

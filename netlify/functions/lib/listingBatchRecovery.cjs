@@ -94,6 +94,11 @@ async function reconcileSession({ db, bucket, collection, sessionId, timestamp, 
     if (complete) { status = isApproved ? 'approved' : 'complete'; summary.complete++; if (isApproved) summary.approved++;
       patch = { setComplete: true, repairPending: false, collectionPending: false, retryRequested: false, recoveryStatus: status };
     } else if (live) { status = 'active'; summary.active++; }
+    else if (latest?.retryStatus === 'preparation_failed') {
+      status = 'blocked'; summary.blocked++;
+      note = latest.recoveryReason || latest.retryError || 'Listing preparation failed. Check its reference images.';
+      patch = { recoveryStatus: 'blocked', recoveryReason: note, retryRequested: false, repairPending: false };
+    }
     else if (queued) { status = 'queued'; summary.queued++; }
     else if (restart) {
       status = 'queued'; summary.queued++;

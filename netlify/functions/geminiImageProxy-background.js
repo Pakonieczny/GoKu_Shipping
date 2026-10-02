@@ -14221,13 +14221,13 @@ async function _handlerImpl(event) {
       ...Object.fromEntries(["batchName", "state", "collected", "locallyQueued", "retryBatchName",
         "retryRequested", "retryAttempt", "retryStatus", "setComplete", "repairPending", "collectionPending",
         "providerError", "responsesFile", "createdAt", "stallCancelRequestedAt", "stallRestartBlocked",
-        "stallRestartClosed", "stallRestarts"].map(key => [key, record[key]])),
+        "stallRestartClosed", "stallRestarts", "retryNotBefore"].map(key => [key, record[key]])),
       sets: (record.sets || []).map(set => ({ outputBasePath: set.outputBasePath, setKind: set.setKind })),
     });
     const sweepFields = ["batchName", "state", "collected", "locallyQueued", "retryBatchName", "retryRequested",
       "retryAttempt", "retryStatus", "setComplete", "repairPending", "collectionPending", "providerError",
       "responsesFile", "createdAt", "stallCancelRequestedAt", "stallRestartBlocked", "stallRestartClosed",
-      "stallRestarts", "sets"];
+      "stallRestarts", "retryNotBefore", "sets"];
 
     try {
       // Overlap guard: skip if another sweep started < 12 minutes ago.
@@ -14272,7 +14272,7 @@ async function _handlerImpl(event) {
             after = result.data[result.data.length - 1].id;
           }
           return null;
-        });
+        }, stalledSubmission ? { batchName: guardData.currentBatchName, stalledAt: lastProgress } : null);
       } catch (err) {
         // Admission stays paused on that submission until a later run
         // confirms it; collecting finished jobs goes on.
@@ -14452,7 +14452,7 @@ async function _handlerImpl(event) {
         ((!b.collected && !b.responsesFile &&
           ["JOB_STATE_FAILED", "JOB_STATE_EXPIRED", "JOB_STATE_QUEUED"].includes(normState(b.state))) ||
           b.collected && b.repairPending) && !b.setComplete && b.batchName &&
-        Number(b.retryAttempt || 0) < 5);
+        Number(b.retryAttempt || 0) < 5 && Number(b.retryNotBefore || 0) <= Date.now());
       let refillNeedsContinuation = false, validationUnconfirmed = null, sourceErrors = 0;
       for (const b of waiting) {
         if (activeCount >= 30) {
@@ -15031,7 +15031,7 @@ async function _handlerImpl(event) {
         claim = await admission.reserve(batchDocIdFromName(sourceName));
         if (claim.existing) return json(200, { ok: true, batchName: claim.existing, alreadySubmitted: true });
         if (!claim.token) return json(200, { ok: true, batchName: sourceName, queued: true,
-          state: "JOB_STATE_QUEUED", setsCount: sets.length, reason: claim.reason });
+          state: "JOB_STATE_QUEUED", setsCount: sets.length, reason: claim.reason, sourceError: !!claim.sourceError });
       }
       try {
       // Step A: Run all "copy" tasks synchronously. They don't go through
@@ -15124,11 +15124,12 @@ async function _handlerImpl(event) {
       }
 
       // Fetch + build with low concurrency. See memory note above.
-      // Concurrency 10 means at most 10 base64 working sets exist at
-      // once. Each working set ≈ 5 MB peak (raw + base64 + stringified
-      // line + Buffer chunk). After the worker returns, only the
+      // Each worker holds raw, base64 and serialized copies. After it returns, only the
       // pushed Buffer chunk in jsonlChunks survives.
-      const FETCH_CONCURRENCY = 10;
+      // Repeated references in a single listing can be large. Two workers
+      // bound the temporary raw/base64/string copies while JSONL is prepared.
+      const FETCH_CONCURRENCY = 2;
+      if (claim?.token) await admission.progress(claim, "downloading reference images");
       const readReference = async (path) => {
         let timer;
         try {
@@ -15141,7 +15142,7 @@ async function _handlerImpl(event) {
       };
       memLog(`before fetch loop (${fetchJobs.length} jobs)`);
       let fetchCounter = 0;
-      await runBoundedConcurrent(fetchJobs, FETCH_CONCURRENCY, async (j, idx) => {
+      const preparedResults = await runBoundedConcurrent(fetchJobs, FETCH_CONCURRENCY, async (j, idx) => {
         const [ref, charm] = await Promise.all([
           readReference(j.refPath),
           j.charmPath ? readReference(j.charmPath) : Promise.resolve(null),
@@ -15172,6 +15173,8 @@ async function _handlerImpl(event) {
           memLog(`fetch ${c}/${fetchJobs.length}`);
         }
       });
+      const preparationError = preparedResults.find(result => result?.__error)?.__error;
+      if (preparationError) throw preparationError;
       memLog(`after fetch loop`);
 
       if (jsonlChunks.length === 0) {
@@ -15259,12 +15262,11 @@ async function _handlerImpl(event) {
 
       // OpenAI Batch input files must remain below 200 MB.
       if (jsonlBytes > 190000000 || routes.length > 50000) {
-        return json(400, {
-          error: { message: `JSONL too large (${(jsonlBytes / 1e9).toFixed(2)} GB). Reduce sets per batch.` }
-        });
+        throw new Error(`JSONL too large (${(jsonlBytes / 1e9).toFixed(2)} GB). Reduce sets per batch.`);
       }
 
       // Step C: Upload JSONL to Gemini Files API, then create the batch.
+      if (claim?.token) await admission.progress(claim, "uploading the batch input file");
       const fileName = await uploadOpenAIBatchFile(apiKey, jsonlBuffer, displayName);
       memLog(`after Files API upload`);
       // Store everything needed to reconcile an ambiguous provider response.
@@ -15323,10 +15325,11 @@ async function _handlerImpl(event) {
       });
       } catch (err) {
         if (!claim?.token) throw err;
-        await admission.release(claim, err);
         const refused = quotaFailure(err?.message);
+        const preparationFailed = !createStarted && !refused && await admission.failPreparation(claim, err);
+        await admission.release(claim, err);
         if (refused) await admission.rejected(sourceName);
-        await getDb().collection(BATCHES_COLL).doc(batchDocIdFromName(sourceName)).set({
+        if (!preparationFailed) await getDb().collection(BATCHES_COLL).doc(batchDocIdFromName(sourceName)).set({
           retryError: String(err?.message || err).slice(0, 500),
           // A refusal at submission counts toward the set's refusal ceiling too.
           ...(refused ? { capacityRefusals: admin.firestore.FieldValue.increment(1) } : {}),
@@ -16354,7 +16357,9 @@ async function _handlerImpl(event) {
       return json(200, { ok: true, batches: out.slice(0, limit), sessions, truncated, sweep, nextSweepAt,
         admission: { busy: !!admissionInfo.owner && (admissionInfo.phase === "creating" ||
           Date.now() - Number(admissionInfo.startedAt || 0) < PREPARATION_RESERVATION_MS),
-          cooldownUntil: admissionInfo.blockedAtActive === 0 ? Number(admissionInfo.blockedAt || 0) + 15 * 60000 : null },
+          cooldownUntil: admissionInfo.blockedAtActive === 0 ? Number(admissionInfo.blockedAt || 0) + 15 * 60000 : null,
+          phase: admissionInfo.phase || "idle", preparationStage: admissionInfo.preparationStage || null,
+          sourceName: admissionInfo.sourceName || null, startedAt: Number(admissionInfo.startedAt || 0) || null },
         retryActiveLimit: 30, admissionError: admissionInfo.lastError || null });
     }
 

@@ -29,6 +29,18 @@ const VALIDATION_WAIT_MS = 15 * 60 * 1000;
 // before creation, so a dead preparer can be replaced without duplicate jobs.
 // An uncertain create remains reserved until provider reconciliation confirms it.
 const PREPARATION_RESERVATION_MS = 5 * 60 * 1000;
+const PREPARATION_FAILURE_LIMIT = 3;
+function preparationFailurePatch(record, message, now, timestamp) {
+  const failures = Number(record?.preparationFailures || 0) + 1;
+  const stopped = failures >= PREPARATION_FAILURE_LIMIT;
+  return { preparationFailures: failures, retryError: String(message).slice(0, 500),
+    retryNotBefore: stopped ? null : now + 10 * 60000,
+    retryRequested: !stopped, repairPending: false,
+    ...(stopped ? { state: 'JOB_STATE_FAILED', locallyQueued: false,
+      retryStatus: 'preparation_failed', recoveryStatus: 'blocked',
+      recoveryReason: `Listing preparation failed ${failures} times. ${String(message).slice(0, 300)}` } : {}),
+    updatedAt: timestamp() };
+}
 // A person can ask the collector to restart stalled jobs sooner than
 // STALL_RESTART_MS (Paul, 2026-09-29: "please restart"), never sooner than
 // this: a job under half an hour old is normal, and each restart uses one of
@@ -76,6 +88,8 @@ function admissionControl(db, collection, timestamp, now = Date.now) {
       const [gs, live, ss] = await Promise.all([tx.get(gate), tx.get(activeQuery()), tx.get(source)]);
       const g = gs.data() || {}, s = ss.data() || {}, active = activeSize(live);
       if (s.retryBatchName) return { existing: s.retryBatchName };
+      if (s.retryStatus === 'preparation_failed' || Number(s.retryNotBefore || 0) > now())
+        return { queued: true, sourceError: true, reason: s.retryError || 'Listing preparation will be retried later' };
       if (s.state === 'JOB_STATE_CANCELLED') return { queued: true, reason: 'Cancelled' };
       if (g.owner && (g.phase === 'creating' || now() - Number(g.startedAt || 0) < PREPARATION_RESERVATION_MS))
         return { queued: true, reason: 'Another submission is being confirmed' };
@@ -93,8 +107,47 @@ function admissionControl(db, collection, timestamp, now = Date.now) {
           (active > 0 || now() - Number(g.blockedAt || 0) < 15 * 60000))
         return { queued: true, reason: 'Waiting for token capacity' };
       tx.set(gate, { owner: token, sourceName, startedAt: now(), phase: 'preparing',
-        probeName: null, lastError: null }, { merge: true });
+        preparationStage: 'checking copied images', probeName: null, lastError: null }, { merge: true });
       return { token, active, sourceName };
+    });
+  }
+  async function progress(claim, stage) {
+    await db.runTransaction(async tx => {
+      const gs = await tx.get(gate);
+      if (gs.data()?.owner !== claim.token) throw new Error('Submission reservation expired; job remains queued');
+      tx.set(gate, { preparationStage: stage }, { merge: true });
+    });
+  }
+  async function failPreparation(claim, error) {
+    return db.runTransaction(async tx => {
+      const [gs, ss] = await Promise.all([tx.get(gate), tx.get(batches.doc(claim.sourceName))]);
+      const g = gs.data() || {}, s = ss.data() || {};
+      if (g.owner !== claim.token || g.phase !== 'preparing' || s.retryBatchName) return false;
+      tx.set(batches.doc(claim.sourceName), preparationFailurePatch(s, error?.message || error, now(), timestamp), { merge: true });
+      tx.set(gate, { owner: null, phase: 'idle', sourceName: null,
+        lastError: String(error?.message || error).slice(0, 500) }, { merge: true });
+      return true;
+    });
+  }
+  async function recoverPreparation(stalled) {
+    return db.runTransaction(async tx => {
+      const gs = await tx.get(gate);
+      const g = gs.data() || {};
+      // A provider create may already have succeeded. Only preparation can be
+      // retired here; an uncertain create is always reconciled below.
+      if (g.phase === 'creating') return;
+      const expired = g.owner && now() - Number(g.startedAt || 0) >= PREPARATION_RESERVATION_MS;
+      if (g.owner && !expired) return;
+      const sourceName = expired ? g.sourceName : stalled?.batchName;
+      if (!sourceName) return;
+      const ss = await tx.get(batches.doc(sourceName));
+      const s = ss.data();
+      if (!s || s.retryBatchName || s.setComplete || s.retryStatus === 'preparation_failed' ||
+          !s.locallyQueued || stalled?.stalledAt && Number(s.preparationFailureAt || 0) >= stalled.stalledAt) return;
+      const message = `Listing preparation stopped before submission${g.preparationStage ? ` while ${g.preparationStage}` : ''}. Other listings can continue.`;
+      tx.set(batches.doc(sourceName), { ...preparationFailurePatch(s, message, now(), timestamp),
+        preparationFailureAt: stalled?.stalledAt || now() }, { merge: true });
+      if (expired) tx.set(gate, { owner: null, phase: 'idle', sourceName: null, lastError: null }, { merge: true });
     });
   }
   async function beforeCreate(claim, prepared) {
@@ -139,7 +192,8 @@ function admissionControl(db, collection, timestamp, now = Date.now) {
       tx.set(gate, { blockedAtActive: activeSize(live), blockedAt: now(), lastRejectedName: batchName }, { merge: true });
     });
   }
-  async function reconcile(listProviderBatches) {
+  async function reconcile(listProviderBatches, stalledPreparation = null) {
+    await recoverPreparation(stalledPreparation);
     const gs = await gate.get();
     const g = gs.data() || {};
     if (!g.owner || g.phase !== 'creating' || now() - Number(g.startedAt || 0) < 3 * 60000) return;
@@ -150,8 +204,8 @@ function admissionControl(db, collection, timestamp, now = Date.now) {
     if (raw) await complete({ token: g.owner, sourceName: g.sourceName }, raw.id, prepared, raw);
     else await gate.set({ lastError: 'A submission has an unconfirmed provider response. Admission is paused to prevent duplicate images.' }, { merge: true });
   }
-  return { reserve, beforeCreate, complete, release, rejected, reconcile };
+  return { reserve, progress, failPreparation, beforeCreate, complete, release, rejected, reconcile };
 }
 module.exports = { admissionControl, quotaFailure, queuedName, capacityRefusals, CAPACITY_REFUSAL_LIMIT,
   neverStarted, stallRestartPending, STALL_RESTART_MS, STALL_RESTART_MIN_MS, STALL_RESTART_LIMIT,
-  VALIDATION_WAIT_MS, PREPARATION_RESERVATION_MS, stallCutoffMs };
+  VALIDATION_WAIT_MS, PREPARATION_RESERVATION_MS, PREPARATION_FAILURE_LIMIT, preparationFailurePatch, stallCutoffMs };
