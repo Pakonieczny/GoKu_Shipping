@@ -1082,7 +1082,7 @@ scenario('S4', 'S4 idempotency and reconciliation', async () => {
   { const p = P.gecko, { st, ap } = await ready(p, pmaxOnly(10)), offer = ctx.google.products.find(x => x.itemId === p.offers[0]);
     Object.assign(offer, { status: 'NOT_ELIGIBLE', availability: 'OUT_OF_STOCK' });
     step('gecko approve ineligible'); const inel = st.blocked ? null : await api('publishAdDesignSubmission', { id: ap.id, hash: ap.reviewHash, planHash: ap.planHash, confirmed: true });
-    st.check('Gecko: Approve is refused while its Merchant offer is not eligible; the review stays pending and nothing is sent', () => inel && inel.ok === false && /no longer eligible/.test(inel.error || '') && approval(ap.id).status === 'PENDING' && !reqsIn('gecko approve ineligible').some(r => r.ops.length), () => why(inel));
+    st.check('Gecko: Approve is refused while its Merchant offer is not eligible; the review stays pending and nothing is sent', () => inel && inel.ok === false && /no longer eligible|none of this product.s \d+ Merchant Center offers? can serve/.test(inel.error || '') && /Nothing was created|no longer eligible/.test(inel.error || '') && approval(ap.id).status === 'PENDING' && !reqsIn('gecko approve ineligible').some(r => r.ops.length), () => why(inel));
     Object.assign(offer, { status: 'ELIGIBLE', availability: 'IN_STOCK' });
     ctx.google.faults.push({ kind: 'lost', when: rec => audit(rec).campaigns.length > 0 });
     step('gecko approve lost'); const lost = st.blocked ? null : await api('publishAdDesignSubmission', { id: ap.id, hash: ap.reviewHash, planHash: ap.planHash, confirmed: true });
