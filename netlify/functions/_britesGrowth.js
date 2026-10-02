@@ -498,6 +498,16 @@ function sharedBudgetRequest(text){
   return fieldMentions(normalized,'(?:'+explicit+'|'+pluralAmountTotal+')').some(hit=>!hit.negative);
 }
 
+function exactCurrentPageRequest(text,currentHandle){
+  if(!/^[a-z0-9_-]{1,180}$/.test(currentHandle||''))return false;
+  const normalized=clean(text,2000).toLowerCase().replace(/[’‘]/g,"'");
+  // Ordinals and comparisons refer to the prior visible card set, even when
+  // the shopper happens to be viewing one of those products in another page.
+  if(/\b(?:compare|comparison|versus|first|second|third|fourth|fifth|sixth|[1-6](?:st|nd|rd|th)?)\b/.test(normalized))return false;
+  const reference='this exact(?:\\s+[a-z0-9][a-z0-9\'_-]*){0,5}\\s+(?:product|piece|item|necklaces?|earrings?|bracelets?|pendants?|huggies?|studs?|rings?|charms?)|this (?:product|piece|one)|current (?:product|piece|item)|on this (?:product )?page';
+  return fieldMentions(normalized,reference).some(hit=>!hit.negative);
+}
+
 function shopperAction(message,products,displayedHandles=[]) {
   const text=clean(message,2000).toLowerCase(),command=shopperCommand(text);
   if(checkoutRequest(text))return null;
@@ -520,14 +530,19 @@ async function concierge({service,shopify,message,history=[],preferences={},cont
   const intent=intentFrom(text,history,basePreferences);
   if(/\b(?:api keys?|credentials?|passwords?|system prompt|private (?:records|data)|owner data|repository|source code|sales history|customer (?:records|data))\b/i.test(text))return {schema:1,reply:'I can help with publicly listed pieces, gift ideas and the shop’s published information.',question:'What kind of piece are you looking for?',preferences:intent,products:[],meanings:[],actions:[],checkedAt:at,live:false,aiUsed:false};
   if(sharedBudgetRequest(text))return {schema:1,budgetClarification:true,reply:'I haven’t applied the overall budget as a per-item limit. I can compare individual pieces once you choose an item limit.',question:'What maximum item price should I use for each piece, before shipping and any applicable taxes?',preferences:shopperPreferences({...intent,budget:null,minBudget:null,unlimitedBudget:false,budgetCurrency:null}),products:[],meanings:[],actions:[],checkedAt:at,live:false,aiUsed:false};
-  const useContext=/\b(?:meaning|means|symboli[sz]\w*|history|story|stories|compare|comparison|first|second|third|fourth|fifth|sixth|this piece|that piece|this one|that one|open|cart|bag)\b/i.test(text);
-  const handles=plainList(context.productHandles,6).filter(h=>/^[a-z0-9_-]{1,180}$/.test(h));
-  if(!handles.length&&/^[a-z0-9_-]{1,180}$/.test(context.currentHandle||''))handles.push(context.currentHandle);
+  const currentHandle=/^[a-z0-9_-]{1,180}$/.test(context.currentHandle||'')?context.currentHandle:'';
+  const exactCurrentContext=exactCurrentPageRequest(text,currentHandle);
+  const useContext=exactCurrentContext||/\b(?:meaning|means|symboli[sz]\w*|history|story|stories|compare|comparison|first|second|third|fourth|fifth|sixth|this piece|that piece|this one|that one|open|cart|bag)\b/i.test(text);
+  const handles=exactCurrentContext?[currentHandle]:plainList(context.productHandles,6).filter(h=>/^[a-z0-9_-]{1,180}$/.test(h));
+  if(!handles.length&&currentHandle)handles.push(currentHandle);
   const queried=useContext&&handles.length?{products:(await Promise.all(handles.map(h=>shopify.byHandle(h)))).filter(Boolean)}:await shopify.search(intent.query||intent.type||'necklace');
   let checkedProducts=queried.products;
   await service.saveProducts(checkedProducts);
   let issueRecords=service.productIssues?await service.productIssues(checkedProducts.map(p=>p.id)):[];
-  let products=rankProducts(applyProductIssues(checkedProducts,issueRecords),intent,at);
+  // An explicit exact-page reference selects that validated live product,
+  // rather than letting stale discovery preferences filter it back out.
+  const rankingIntent=exactCurrentContext?shopperPreferences({currency:intent.currency}):intent;
+  let products=rankProducts(applyProductIssues(checkedProducts,issueRecords),rankingIntent,at);
   const boundedRecall=plainList(intent.interests,4).length>0;
   if(!useContext&&boundedRecall&&!products.length&&typeof service.catalogueCandidateHandles==='function'){
     const seen=new Set(checkedProducts.map(p=>p.handle)),candidateHandles=(await service.catalogueCandidateHandles(intent,15)).filter(h=>/^[a-z0-9_-]{1,180}$/.test(h)&&!seen.has(h)).slice(0,15);
