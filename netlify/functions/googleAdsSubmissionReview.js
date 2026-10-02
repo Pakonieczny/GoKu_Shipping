@@ -131,7 +131,10 @@ function createReview(D) {
     return {ok:true,sourceStale:loaded.stale,reviewHash:item.reviewHash,destination:context.product.url||r.destination,videoScope:{workspaceId:motion.workspaceId||r.workspaceId,productId:r.productId,groupRef:motion.jobGroupRef||r.groupRef},videoReview:{advisory:true,publicationReady:motion.publicationReady===true,phase:motion.phase,score:Number.isFinite(motion.quality?.score)?motion.quality.score:null,target:motion.qualityTarget||null,issues:(motion.quality?.issues||[]).map(v=>String(typeof v==='string'?v:v.message||v.reason||'').slice(0,500)).filter(Boolean),error:motion.error||null},styles,images,prepared,videos:motion.displayVariants || motion.variants || [],videoPhase:motion.phase,videoNote:item.pipelinePlan?.summary?.videoStatus || 'Saved videos are shown for preview. The prepared plan confirms which videos can be included.',copyEdited:r.copyEdited===true,warnings};
   }
   async function update(input) {
-    const {ref, item, context} = await load(input), r = item.designReview;
+    // A review saved before frozen packages becomes its own saved package as it is edited, as preparation converts it.
+    const loaded = await load(input, true), converted = D.snapshotHash && loaded.item.designReview.sourceMode !== 'saved-package' ? await refresh(input, false) : null;
+    if (loaded.stale && !converted) throw Error('The saved source changed. Reopen this approval to refresh its saved images and plan.');
+    const {ref, context} = loaded, item = converted ? converted.item : loaded.item, r = item.designReview;
     const copy = Object.fromEntries(['headlines','longHeadlines','descriptions'].map(k => [k,Array.isArray(input.copy?.[k])?input.copy[k].map(v=>String(v).trim()):[]]));
     if (!D.copyValid(copy)) throw Error('Use 3–15 unique headlines (30 characters), 1–5 long headlines (90), and 2–5 descriptions (90). Include one headline of 15 characters or fewer and one description of 60 or fewer. Unsupported claims cannot be used.');
     if (typeof input.includeVideos !== 'boolean') throw Error('Choose whether to use saved videos.');
@@ -140,7 +143,7 @@ function createReview(D) {
     await D.transaction(async tx => {
       const live = await tx.get(ref), workspace = await tx.get(context.ref);
       if (live.data()?.status !== 'PENDING' || live.data()?.reviewHash !== input.hash || (D.sourceMatches?!D.sourceMatches(item,workspace.data()):D.sourceHash(workspace.data()) !== item.sourceHash || D.hash(workspace.data()?.context) !== D.hash(r.context))) throw Error('This review changed while saving. Reload Approvals.');
-      tx.update(ref,{designReview,reviewHash,pipelinePlan:null,pipelineReview:null,vetted:false,updatedAt:Date.now(),payload:{adDesign:{workspaceId:r.workspaceId,productId:r.productId,groupRef:r.groupRef},meta:{existingCampaignId:item.payload?.meta?.existingCampaignId || null}}});
+      tx.update(ref,{...(converted?.patch||{}),designReview,reviewHash,pipelinePlan:null,pipelineReview:null,vetted:false,updatedAt:Date.now(),payload:{adDesign:{workspaceId:r.workspaceId,productId:r.productId,groupRef:r.groupRef},meta:{existingCampaignId:item.payload?.meta?.existingCampaignId || null}}});
     });
     return {ok:true,reviewHash,designReview};
   }

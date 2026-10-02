@@ -276,7 +276,9 @@ const mutations=sent=>sent.filter(s=>/:mutate$/.test(s.url));
    check(creates(mat,'assetOperation').filter(c=>c.imageAsset).length===plan2.payload.generatedAssets.length&&!unlinked(mat).length&&S.existingTargetProblem({live:await e.get('_pmaxTargetFacts')('102'),guard:plan2.payload.existingPmaxGuard,ops:mat,customerId:'123'})===null,'materialized for publication, every uploaded image is linked and the guard still passes');
    // Preparing: the ceiling counts a running campaign's raise, a changed campaign is prepared again.
    const id='design-review-'+'a'.repeat(32),reviewHash='r'.repeat(64),prepared=[];
-   await mem.db.collection('Brites_GAds_Approvals').doc(id).set({type:'adDesignSubmission',status:'PENDING',reviewHash,sourceHash:e.get('_adDesignSelectionHash')(w),designReview:{workspaceId:'test',context:w.context}});
+   // A review is the product's frozen saved package (googleAdsSubmissionReview.snapshotHash), pinned to its own scope.
+   const reviewed={workspaceId:'test',productId:'1',groupRef:'g',context:w.context,sourceMode:'saved-package'};
+   await mem.db.collection('Brites_GAds_Approvals').doc(id).set({type:'adDesignSubmission',status:'PENDING',reviewHash,sourceHash:realRequire('./googleAdsSubmissionReview').snapshotHash(reviewed,e.E.creativeHash),designReview:reviewed});
    e.bind({_adDesignPublicationContext:async()=>({w,product}),_prepareCampaignStyles:async({identity,join})=>{prepared.push(join);return {identity,hash:'plan-'+prepared.length,payload:{},summary:{campaigns:[]}};}});
    const ask=(target,budgets,styles=['pmax'],durations={pmax:0})=>e.E.publishAdDesignSubmission({id,hash:reviewHash,prepareOnly:true,styles,budgets,countries:['2840'],durations,pmaxTarget:target});
    await assert.rejects(()=>ask('101',{pmax:9.01}),/Over your daily ceiling: these budgets total CAD 9\.01, but only CAD 9\.00 of your CAD 62\.00 ceiling is free \(enabled campaigns use CAD 53\.00\)/);
