@@ -103,6 +103,7 @@ const languageName = res => { const id = idOf(res); return LANGUAGE[id] || (id ?
 const fieldName = f => FIELD[f] || words(f);
 const moneyText = (micros, currency) => micros == null || micros === '' || !isFinite(Number(micros)) ? null : `${currency ? currency + ' ' : ''}${(Number(micros) / 1e6).toFixed(2)}`;
 const isPaused = s => s === 'PAUSED';
+const WAITING_TEXT = 'Google is still updating this campaign\'s product status.';
 const OWNED_HOSTS = ['britesjewelry.com', 'www.britesjewelry.com'];
 // The account's calendar date; end dates are stored in the account's time zone.
 function localDate(timeZone, now = Date.now()) {
@@ -272,6 +273,7 @@ function buildQueries({ customerId, campaignId, channel } = {}) {
 function analyze(raw, { today = null, shippingCountries = null, apiVersion = '', reduced = [], ownedHosts = OWNED_HOSTS, settling = false } = {}) {
   const findings = [], facts = [], warnings = [], fewer = new Set(reduced || []);
   let settleNotes = 0;   // findings that are only a note because Google was still processing a new campaign (they decide the headline when nothing else is found)
+  let pausedLag = 0;     // products of an ENABLED campaign that Google still lists as paused (a stale snapshot; a note that decides the headline when nothing else is found)
   const add = (level, area, text, extra = {}) => findings.push({ level, area, text, ...(extra.reason ? { reason: extra.reason } : {}), ...(extra.fix ? { fix: extra.fix } : {}) });
   const fact = (label, value) => { if (value != null && value !== '') facts.push({ label, value: String(value) }); };
   const row = (raw.campaign || [])[0] || {}, c = row.campaign || null, budget = row.campaignBudget || {};
@@ -566,9 +568,14 @@ function analyze(raw, { today = null, shippingCountries = null, apiVersion = '',
       const noRows = !!raw.products && !sample.length && !(targeted && targeted.length);
       // While paused nothing advertises the products, so Google's "No campaigns advertising this product" is expected (same wording googleAdsAutopilot.js _pmaxIsEligible accepts).
       const noCampaigns = i => /^no campaigns advertising this product\b/i.test(String(i.description || '').trim());
-      const pauseIssue = i => /paus/i.test(`${i.errorCode || ''} ${i.description || ''} ${i.detail || ''}`) || noCampaigns(i);
+      const pausedText = i => /paus/i.test(`${i.errorCode || ''} ${i.description || ''} ${i.detail || ''}`), pauseIssue = i => pausedText(i) || noCampaigns(i);
+      // Google keeps a per-product status for the campaign and updates it by itself after the campaign is enabled (Google documents up to 24 hours): an ENABLED campaign whose not-eligible product
+      // says only "paused" (case-insensitive; "Campaign paused", AD_GROUP_PAUSED...) is showing that stale snapshot, not a Merchant Center problem. Any other blocking
+      // issue on the product (shipping, images, price, disapproval, "No campaigns advertising" alone) keeps it not eligible, and a PAUSED campaign ignores pause reasons as before.
+      const hard = p => (p.issues || []).filter(i => i.adsSeverity !== 'WARNING');
+      const lagging = p => c.status === 'ENABLED' && p.status === 'NOT_ELIGIBLE' && hard(p).some(pausedText) && hard(p).every(pauseIssue);
       const blocking = p => (p.issues || []).filter(i => !(isPaused(c.status) && pauseIssue(i)) && i.adsSeverity !== 'WARNING');
-      const notEligible = products.filter(p => p.status === 'NOT_ELIGIBLE' && (!isPaused(c.status) || blocking(p).length));
+      const lagged = products.filter(lagging), notEligible = products.filter(p => p.status === 'NOT_ELIGIBLE' && !lagging(p) && (!isPaused(c.status) || blocking(p).length));
       const limited = products.filter(p => p.status === 'ELIGIBLE_LIMITED');
       const topIssues = list => { const n = new Map(); list.forEach(p => new Set((p.issues || []).filter(i => !(isPaused(c.status) && pauseIssue(i))).map(i => clip(i.description || words(i.errorCode), 60))).forEach(d => n.set(d, (n.get(d) || 0) + 1)));
         return [...n].sort((a, b) => b[1] - a[1]).slice(0, 3).map(([d, k]) => `${d} (${k})`).join('; '); };
@@ -582,11 +589,11 @@ function analyze(raw, { today = null, shippingCountries = null, apiVersion = '',
       const later = () => { settleNotes++; return 'note'; };
       const found = new Set(rows.map(lower)), absent = [...wanted].filter(id => !found.has(id)), missing = truncated ? [] : absent;
       const others = scoped && raw.products ? sample.filter(p => !named.has(lower(p))).length : 0, beyond = scoped && targeted && !complete ? new Set(scope.ids.slice(asked).map(id => id.toLowerCase()).filter(id => !wanted.has(id))).size : 0;
-      if (scoped) fact('Products', noRows ? 'none found' : [`${named.size} included`, products.length ? `${products.length - notEligible.length - limited.length} can show${pauseOnly ? ' once enabled' : ''}` : '',
-        limited.length ? `${limited.length} limited` : '', notEligible.length ? `${notEligible.length} not eligible` : '', filterExcluded.length ? `${filterExcluded.length} excluded by the product filter` : '',
+      if (scoped) fact('Products', noRows ? 'none found' : [`${named.size} included`, products.length ? `${products.length - notEligible.length - limited.length - lagged.length} can show${pauseOnly ? ' once enabled' : ''}` : '',
+        limited.length ? `${limited.length} limited` : '', notEligible.length ? `${notEligible.length} not eligible` : '', lagged.length ? `${lagged.length} still listed as paused by Google` : '', filterExcluded.length ? `${filterExcluded.length} excluded by the product filter` : '',
         missing.length ? `${missing.length} not listed by Google` : '', truncated && absent.length ? `${absent.length} not checked (Google's list was cut at ${PRODUCT_LIMIT} products)` : '',
         beyond ? `${beyond} more not checked` : '', others ? `${others}${sampleCut ? '+' : ''} others left out by the product filter` : ''].filter(Boolean).join(' · '));
-      else fact('Products', products.length ? `${truncated ? PRODUCT_LIMIT + '+' : products.length} in this campaign · ${products.length - notEligible.length - limited.length} eligible${pauseOnly ? ' once enabled' : ''}` + (limited.length ? ` · ${limited.length} limited` : '') + (notEligible.length ? ` · ${notEligible.length} not eligible` : '') : 'none found');
+      else fact('Products', products.length ? `${truncated ? PRODUCT_LIMIT + '+' : products.length} in this campaign · ${products.length - notEligible.length - limited.length - lagged.length} eligible${pauseOnly ? ' once enabled' : ''}` + (limited.length ? ` · ${limited.length} limited` : '') + (notEligible.length ? ` · ${notEligible.length} not eligible` : '') + (lagged.length ? ` · ${lagged.length} still listed as paused by Google` : '') : 'none found');
       // Google evaluates a new campaign's product filter asynchronously, so right after a publication an excluded offer is only a note.
       if (filterExcluded.length) add(settling ? later() : 'block', 'Products', `The campaign's product filter excludes ${filterExcluded.length} of the ${wanted.size} products it includes: ${listOf(filterExcluded.map(p => String(p.itemId)), 3)}.`, { reason: topIssues(filterExcluded) || 'excluded product or listing group', fix: 'Re-publish the campaign or fix its product filter.' });
       if (noRows && settling) add(later(), 'Products', `Google has not listed products for this campaign yet (Merchant Center ${merchantId}${feedLabel ? ', feed ' + feedLabel : ''}). Right after a publication this can take a few hours; the next check confirms it.`);
@@ -595,6 +602,7 @@ function analyze(raw, { today = null, shippingCountries = null, apiVersion = '',
       else if (products.length && notEligible.length === products.length) add(processing ? later() : 'block', 'Products', processing ? `Google lists all ${products.length} products as not eligible right now; it was still processing this new campaign. Check again in a few minutes.` : `None of the ${products.length} products can show.`, { reason: topIssues(notEligible) || 'not eligible', fix: productFix(notEligible) });
       else if (notEligible.length) add(processing ? later() : 'risk', 'Products', processing ? `${notEligible.length} of ${products.length} products are not eligible right now; it was still processing this new campaign. Check again in a few minutes.` : `${notEligible.length} of ${products.length} products cannot show.`, { reason: topIssues(notEligible) || 'not eligible', fix: productFix(notEligible) });
       if (limited.length) add('note', 'Products', `${plural(limited.length, 'product')} can show only in some places.`, { reason: topIssues(limited) || undefined });
+      if (lagged.length) { pausedLag = lagged.length; add('note', 'Products', `Google still lists ${plural(lagged.length, 'product')} of this campaign as paused. That is from before the campaign was enabled and Google updates it by itself, which can take up to 24 hours.`, { reason: topIssues(lagged) || 'paused', fix: 'Check again later. If it still says paused a day after enabling, tell us.' }); }
       if (pauseOnly && !notEligible.length) add('note', 'Products', 'Google lists the products as not eligible only because the campaign is paused.');
       if (missing.length) {
         // Right after a publication Google may not have applied a new product filter yet.
@@ -621,9 +629,13 @@ function analyze(raw, { today = null, shippingCountries = null, apiVersion = '',
   const verdict = counts.block ? 'blocked' : counts.risk ? 'attention' : 'ready';
   const headline = counts.block ? 'Will not serve as intended: ' + findings[0].text
     : counts.risk ? `${plural(counts.risk, 'setting')} to fix before enabling.`
-      : settleNotes ? 'Nothing found so far; Google was still processing this new campaign.'
-        : 'Google reports nothing that would stop it serving as intended.';
-  return { ok: true, verdict, headline, counts, findings, facts, warnings };
+      : pausedLag ? `Nothing found that stops it serving. Google still lists ${plural(pausedLag, 'product')} of this campaign as paused, from before it was enabled; Google updates that by itself, which can take up to 24 hours. Check again later.`
+        : settleNotes ? 'Nothing found so far; Google was still processing this new campaign.'
+          : 'Google reports nothing that would stop it serving as intended.';
+  // Waiting: the only reason the check is not green is that Google is still catching up (the stale "paused" products of an enabled campaign, or the settling notes
+  // right after a publication). Any block or risk, whatever its cause, means there is something real to fix, so it is not waiting; a green result is not waiting either.
+  const waiting = !counts.block && !counts.risk && (pausedLag > 0 || settleNotes > 0);
+  return { ok: true, verdict, headline, counts, findings, facts, warnings, ...(waiting ? { waiting: true, waitingText: WAITING_TEXT } : {}) };
 }
 
 // ── Reads (the only I/O) ─────────────────────────────────────────────────────
@@ -696,7 +708,8 @@ function summaryOf(result, source) {
     // Google's reason and the suggested fix ride along (clipped) so the stored card says why, not only what.
     top: (result.findings || []).filter(f => f && f.level !== 'note').slice(0, 3).map(f => { const reason = clip(f.reason, 160), fix = clip(f.fix, 160);
       return { level: f.level, area: clip(f.area, 40), text: clip(f.text, 200), ...(reason ? { reason } : {}), ...(fix ? { fix } : {}) }; }),
-    partial: !!result.partial, settling: !!result.settling, channel: result.channel || null, checkedAt: result.checkedAt || new Date().toISOString() };
+    partial: !!result.partial, settling: !!result.settling, channel: result.channel || null, checkedAt: result.checkedAt || new Date().toISOString(),
+    ...(result.waiting === true ? { waiting: true, waitingText: clip(result.waitingText || WAITING_TEXT, 120) } : {}) };
 }
 
 module.exports = { buildQueries, ownProductsQuery, includedScope, analyze, auditCampaign, summaryOf, policyText, localDate, PRODUCT_LIMIT, PMAX_MINIMUM, OWNED_HOSTS };

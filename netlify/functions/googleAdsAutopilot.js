@@ -11142,7 +11142,7 @@ const _servingOutdated = s => !!(s && s.changedAt && Date.parse(s.changedAt) > D
 async function _servingSummaries(f) {
   const out = {}, snap = await f.db.collection(COL.serving).limit(300).get();
   snap.forEach(d => { const x = d.data() || {}; out[d.id] = { verdict: x.verdict || null, headline: x.headline || "", counts: x.counts || null, top: Array.isArray(x.top) ? x.top : [],
-    source: x.source || null, settling: !!x.settling, partial: !!x.partial, checkedAt: x.checkedAt || null, changedAt: x.changedAt || null, lastAttempt: x.lastAttempt || null }; });
+    source: x.source || null, settling: !!x.settling, partial: !!x.partial, checkedAt: x.checkedAt || null, changedAt: x.changedAt || null, lastAttempt: x.lastAttempt || null, ...(x.waiting === true ? { waiting: true, waitingText: String(x.waitingText || "") } : {}) }; });
   return out;
 }
 // After a publication, one check per campaign per five minutes: a publication that sends several

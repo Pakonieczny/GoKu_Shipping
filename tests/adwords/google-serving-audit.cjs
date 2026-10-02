@@ -581,6 +581,81 @@ const topic = (t, type, extra = {}) => ({ topic: t, type, ...extra });
   check(has(r, 'block', /None of the 2 products can show.*No campaigns advertising this product \(2\)/) && /2 not eligible/.test(fact(r, 'Products')), 'the same issue on an enabled campaign still counts as not eligible');
   r = await auditPmax(pmaxWith('PAUSED', [prod('shopify_US_1_2', 'NOT_ELIGIBLE', noCampaigns, shipIssue), prod('shopify_US_3_4', 'NOT_ELIGIBLE', noCampaigns)]), false);
   check(has(r, 'risk', /1 of 2 products cannot show.*Missing shipping settings \(1\)/) && !/No campaigns advertising/.test(JSON.stringify(r.findings)), 'on a paused campaign a real issue still counts, and the expected "No campaigns advertising" issue is left out of Google\'s reason');
+  // An ENABLED campaign whose products Google still lists as "Campaign paused" (Google's per-product status lags behind enabling and can take up to 24 hours): a note, never a block.
+  // One asset group, one filter, nothing else wrong: only the two products can decide the verdict.
+  const lagAudit = async (issues, { enabled = true, settling = false, statuses = [] } = {}) => (await audit(oneProduct(ownIds.map((id, i) => ownRow(id, statuses[i] || 'NOT_ELIGIBLE', issues[i])), { enabled }), { run: { settling } })).r;
+  const pausedIssue = { errorCode: 'campaign_paused', description: 'Campaign paused', adsSeverity: 'ERROR' };
+  const lagWording = /Google still lists 2 products of this campaign as paused\. That is from before the campaign was enabled and Google updates it by itself, which can take up to 24 hours\./, lagFix = 'Check again later. If it still says paused a day after enabling, tell us.';
+  const lagNoteOf = res => res.findings.find(f => f.level === 'note' && f.area === 'Products' && /still lists/.test(f.text));
+  const hardOf = res => res.findings.filter(f => f.level !== 'note');
+  for (const settling of [false, true]) {
+    r = await lagAudit([[pausedIssue], [pausedIssue]], { settling });
+    const lagNote = lagNoteOf(r), kept = S.summaryOf(r, settling ? 'publication' : 'console');
+    check(r.verdict === 'ready' && r.counts.block === 0 && r.counts.risk === 0 && productsOf(r).length === 1 && !hardOf(r).length, `enabled, every product "Campaign paused": nothing blocks or needs fixing (settling ${settling})`);
+    check(lagNote && lagWording.test(lagNote.text) && lagNote.reason === 'Campaign paused (2)' && lagNote.fix === lagFix && !/Merchant Center/.test(text(lagNote)), `it is one note with the lag wording, Google's reason and a fix that does not send Paul to Merchant Center (settling ${settling})`);
+    check(!/None of the|Will not serve/.test(r.headline) && r.headline === 'Nothing found that stops it serving. Google still lists 2 products of this campaign as paused, from before it was enabled; Google updates that by itself, which can take up to 24 hours. Check again later.', `the headline says the products are listed as paused, not that none can show (settling ${settling})`);
+    check(fact(r, 'Products') === '2 included · 0 can show · 2 still listed as paused by Google', `the Products fact neither calls them not eligible nor says they can show (settling ${settling})`);
+    check(kept.verdict === 'ready' && kept.counts.block === 0 && kept.counts.risk === 0 && kept.headline === r.headline && kept.top.length === 0 && kept.settling === settling, `the stored summary keeps the ready verdict, the same headline and nothing under "Stops it" (settling ${settling})`);
+  }
+  // A product with any other issue still blocks; only the paused-only one is the stale snapshot.
+  r = await lagAudit([[pausedIssue], [shipIssue]]);
+  check(hardOf(r).length === 1 && hardOf(r)[0].level === 'risk' && hardOf(r)[0].text === '1 of 2 products cannot show.' && hardOf(r)[0].reason === 'Missing shipping settings (1)' && hardOf(r)[0].fix === 'Fix the product issues in Merchant Center.' && r.verdict === 'attention', 'enabled, one product paused-only and one with a real shipping issue: only the shipping product counts, with its own reason and fix');
+  check(has(r, 'note', /Google still lists 1 product of this campaign as paused/) && fact(r, 'Products') === '2 included · 0 can show · 1 not eligible · 1 still listed as paused by Google' && !/paused/i.test(JSON.stringify(hardOf(r))), 'and the paused-only one is a note beside it, never named in the blocking finding');
+  r = await lagAudit([[pausedIssue, shipIssue], [pausedIssue]]);
+  check(has(r, 'risk', /1 of 2 products cannot show.*Missing shipping settings \(1\)/) && has(r, 'note', /still lists 1 product of this campaign as paused/) && r.verdict === 'attention', 'a product that says "paused" and also has a real issue is still not eligible; its paused-only neighbour is the note');
+  r = await lagAudit([[pausedIssue, shipIssue], [shipIssue, pausedIssue]]);
+  check(has(r, 'block', /None of the 2 products can show.*Fix the product issues in Merchant Center/) && r.verdict === 'blocked' && !r.findings.some(f => /still lists/.test(f.text)) && !/still listed as paused/.test(fact(r, 'Products')), 'when every product has a real issue besides "paused", it still blocks with the original wording and no lag note');
+  // The match is case-insensitive and covers any "paus" reason (error code, description or detail); a WARNING beside it, or "No campaigns advertising", does not make it a real problem.
+  r = await lagAudit([[{ errorCode: 'AD_GROUP_PAUSED', adsSeverity: 'ERROR' }], [{ description: 'Not shown', detail: 'The ASSET GROUP is PAUSED', adsSeverity: 'ERROR' }]]);
+  check(r.verdict === 'ready' && !hardOf(r).length && lagWording.test(lagNoteOf(r).text) && lagNoteOf(r).reason === 'ad group paused (1); Not shown (1)', 'an AD_GROUP_PAUSED code, or a detail that says PAUSED in capitals, is the same stale pause');
+  r = await lagAudit([[pausedIssue, noCampaigns, { description: 'Image could be better', adsSeverity: 'WARNING' }], [{ errorCode: 'Campaign_Paused', adsSeverity: 'ERROR' }]]);
+  check(r.verdict === 'ready' && !hardOf(r).length && lagWording.test(lagNoteOf(r).text), 'a pause reason next to "No campaigns advertising" and a warning, or in mixed case, is still only the stale pause');
+  // A PAUSED campaign is unchanged: its pause reasons are expected and ignored.
+  r = await lagAudit([[pausedIssue], [pausedIssue]], { enabled: false });
+  check(r.verdict === 'ready' && has(r, 'note', /not eligible only because the campaign is paused/) && fact(r, 'Products') === '2 included · 2 can show once enabled' && !r.findings.some(f => /still lists/.test(f.text)) && /^Google reports nothing/.test(r.headline), 'a paused campaign keeps its own wording and gets no lag note');
+  // An ENABLED campaign whose products have no pause reason is unchanged.
+  r = await lagAudit([[{ description: 'Item disapproved', adsSeverity: 'ERROR' }], [{ description: 'Item disapproved', adsSeverity: 'ERROR' }]]);
+  check(has(r, 'block', /None of the 2 products can show.*Item disapproved \(2\).*Fix the product issues in Merchant Center/) && r.verdict === 'blocked' && !r.findings.some(f => /still lists/.test(f.text)) && fact(r, 'Products') === '2 included · 0 can show · 2 not eligible', 'an enabled campaign whose products have no pause reason still blocks with the original wording');
+  r = await lagAudit([[], []]);
+  check(has(r, 'block', /None of the 2 products can show/) && r.verdict === 'blocked', 'an enabled not-eligible product with no issue at all still blocks');
+  r = await lagAudit([[noCampaigns], [noCampaigns]]);
+  check(has(r, 'block', /None of the 2 products can show.*No campaigns advertising this product \(2\)/) && !r.findings.some(f => /still lists/.test(f.text)), '"No campaigns advertising" alone on an enabled campaign is not read as the stale pause');
+  r = await lagAudit([[], [pausedIssue]], { statuses: ['ELIGIBLE', 'ELIGIBLE_LIMITED'] });
+  check(!r.findings.some(f => /still lists/.test(f.text)) && r.verdict === 'ready', 'only a not-eligible product is read as the stale pause; an eligible or limited one is left as it was');
+  // "Waiting": the only reason the check is not green is that Google is still catching up. Real findings, and a green result, are not waiting.
+  const WAIT = "Google is still updating this campaign's product status.", asleep = res => res.waiting === true && res.waitingText === WAIT;
+  const idle = res => !('waiting' in res) && !('waitingText' in res);
+  for (const settling of [false, true]) {
+    r = await lagAudit([[pausedIssue], [pausedIssue]], { settling });
+    check(asleep(r) && S.summaryOf(r, 'daily').waiting === true && S.summaryOf(r, 'daily').waitingText === WAIT, `the stale "paused" products of an enabled campaign are waiting, on the result and in the stored summary (settling ${settling})`);
+  }
+  r = await lagAudit([[pausedIssue], [shipIssue]]);
+  check(idle(r) && idle(S.summaryOf(r, 'daily')), 'a stale "paused" product next to a real shipping issue is not waiting');
+  r = await auditPmax(pmaxWith('ENABLED', ['shopify_US_1_2', 'shopify_US_3_4'].map(id => prod(id, 'NOT_ELIGIBLE', pausedIssue))), false);
+  check(r.verdict === 'attention' && has(r, 'note', lagWording) && idle(r) && idle(S.summaryOf(r, 'daily')), 'the stale pause beside an unrelated risk elsewhere in the campaign is not waiting');
+  r = await lagAudit([[], []], { statuses: ['ELIGIBLE', 'ELIGIBLE'] });
+  check(r.verdict === 'ready' && idle(r) && idle(S.summaryOf(r, 'daily')), 'a green result is not waiting');
+  r = await lagAudit([[], []], { statuses: ['ELIGIBLE', 'ELIGIBLE'], settling: true });
+  check(r.verdict === 'ready' && idle(r) && idle(S.summaryOf(r, 'publication')), 'a green result right after a publication is not waiting either');
+  r = await lagAudit([[pausedIssue], [pausedIssue]], { enabled: false });
+  check(r.verdict === 'ready' && idle(r) && idle(S.summaryOf(r, 'daily')), 'a paused campaign\'s ordinary notes are not waiting');
+  // The existing settling notes: right after a publication Google may still be processing the product filter.
+  r = await lagAudit([[{ description: EXCLUDED, adsSeverity: 'ERROR' }], [{ description: EXCLUDED, adsSeverity: 'ERROR' }]], { settling: true });
+  check(r.verdict === 'ready' && r.headline === 'Nothing found so far; Google was still processing this new campaign.' && asleep(r) && S.summaryOf(r, 'publication').waiting === true, 'right after a publication, offers the product filter still excludes are a settling note and the result is waiting');
+  r = await lagAudit([[{ description: EXCLUDED, adsSeverity: 'ERROR' }], [{ description: EXCLUDED, adsSeverity: 'ERROR' }]]);
+  check(r.verdict === 'blocked' && idle(r) && idle(S.summaryOf(r, 'daily')), 'the same exclusions in a later check block and are not waiting');
+  r = await lagAudit([[noCampaigns], [noCampaigns]], { settling: true });
+  check(r.verdict === 'ready' && asleep(r) && /not eligible right now; it was still processing/.test(JSON.stringify(r.findings)), 'right after a publication, "No campaigns advertising" is a settling note and the result is waiting');
+  r = await lagAudit([[shipIssue], [noCampaigns]], { settling: true });
+  check(r.verdict === 'blocked' && idle(r) && idle(S.summaryOf(r, 'publication')), 'right after a publication, a real product issue is not waiting');
+  const noLink = oneProduct([], { enabled: true }); noLink.product_link = [];
+  r = (await audit(noLink, { run: { settling: true } })).r;
+  check(r.counts.block === 1 && has(r, 'block', /Merchant Center 555 is not linked/) && idle(r), 'products Google has not listed, with the Merchant Center link missing, block even while settling and are not waiting');
+  const linked = oneProduct([], { enabled: true });
+  r = (await audit(linked, { run: { settling: true } })).r;
+  check(r.verdict === 'ready' && asleep(r) && has(r, 'note', /Google has not listed products for this campaign yet/), 'right after a publication, products Google has not listed yet (Merchant Center linked) are a settling note and the result is waiting');
+  r = (await audit(linked)).r;
+  check(r.verdict === 'blocked' && idle(r), 'the same missing products in a later check block and are not waiting');
   r = await S.auditCampaign({ gaql: q429.gaql, customerId: '123', campaignId: '5', isQuotaError: e => e.code === 'GADS_QUOTA_EXHAUSTED' });
   check(r.quotaExhausted === true && (await S.auditCampaign({ gaql: fakeGoogle(search).gaql, customerId: '123', campaignId: '101', channel: 'SEARCH', today: '2026-09-29' })).quotaExhausted === false, 'the result says when Google\'s request quota stopped it');
 
@@ -618,6 +693,17 @@ const topic = (t, type, extra = {}) => ({ topic: t, type, ...extra });
   const summaries = await cx._servingSummaries(store.f);
   check(summaries['77'] && summaries['77'].verdict === 'attention' && summaries['77'].changedAt === doc.changedAt && summaries['77'].source === 'publication', 'the dashboard reads the kept verdicts from Firestore, with no Google read');
   check(/out\.servingChecks = await _servingSummaries\(f\)/.test(fs.readFileSync(enginePath, 'utf8')), 'the dashboard returns them as servingChecks');
+  // A waiting verdict is kept with its flag and passed to the dashboard; others carry none.
+  {
+    const keep = store, hoursAgo = h => new Date(Date.now() - h * 3600000).toISOString();
+    store = fakeStore(); const lagData = oneProduct(ownIds.map(id => ownRow(id, 'NOT_ELIGIBLE', [pausedIssue])), { enabled: true }); lagData.campaign[0].campaign.endDateTime = '2037-12-30 23:59:59';
+    E.__t.set({ fb: store.f, gaql: fakeGoogle(lagData).gaql });
+    await cx._servingCheck('77', { source: 'publication', settling: false });
+    const kept = store.serving('77'), sums = await (async () => { store.docs.set('Brites_GAds_Serving/78', { verdict: 'ready', counts: {}, top: [], headline: 'ok', source: 'daily', checkedAt: hoursAgo(1), waiting: false, waitingText: 'old' }); return cx._servingSummaries(store.f); })();
+    check(kept.verdict === 'ready' && kept.waiting === true && kept.waitingText === WAIT && /Google still lists 2 products of this campaign as paused/.test(kept.headline), 'the engine keeps the waiting flag in the stored serving verdict');
+    check(sums['77'].waiting === true && sums['77'].waitingText === WAIT && sums['77'].verdict === 'ready' && !('waiting' in sums['78']) && !('waitingText' in sums['78']), 'the dashboard passes the flag and its text through for a waiting campaign and nothing for the others');
+    store = keep; E.__t.set({ fb: store.f, gaql: async q => { pubQueries.push(q); return pubGoogle(q); } });
+  }
   vm.runInContext('_servingRecent.clear()', cx);
   await cx._recordMutationVersions('campaigns', [{ update: { resourceName: 'customers/123/campaigns/77', name: 'Fixture 3' }, updateMask: 'name' }],
     { results: [{ resourceName: 'customers/123/campaigns/77' }] }, 'fixture rename later', 'ledger-3');
