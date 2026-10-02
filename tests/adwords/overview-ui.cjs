@@ -10,10 +10,12 @@ const ctx={console,Number,String,Object,Array,Math,JSON,Set,Map,isFinite,URL,
   DASH:{currency:'USD',budgetCurrency:'CAD',lastMetrics:[]},cmdMetrics:null,cmdReport:{currency:'USD',budgetCurrency:'CAD'},convBasis:'conversion',cmdRangeLabel:'2026-09-01 → 2026-09-28',
   esc:s=>String(s??'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])),money:n=>'$'+Number(n||0).toFixed(2),
   campDates:c=>({s:c.startDate||'',e:c.endDate||''}),statusBadge:c=>'<span class="st">'+c.status+'</span>',campaignBadgeHtml:()=>'',
-  historicalBudget:()=>'recorded budget',historicalSchedule:()=>'recorded schedule',fmtMon:x=>x};
+  historicalBudget:()=>'recorded budget',historicalSchedule:()=>'recorded schedule',fmtMon:x=>x,document:{hidden:false}};
 vm.createContext(ctx);vm.runInContext(html.match(/var BASIS_NAMES=\{[^}]*\};/)[0],ctx);
 for(const name of ['basisName','basisLabel','CV','totals','reportNumber','cmdAttr','cmdMoney','campaignWhy','campaignIdle','idleToggleText','campaignTable','totalBudgetLine','groupReportMetrics','lcStep','lcTicks','feedLabel','feedError',
   'servingOf','servingClass','servingLabel','servingWhen','servingSourceText','servingChanged','servingBadgeAttrs','servingBadgeHtml','servingStoredHtml','servingBoxHtml'])vm.runInContext(pick(name),ctx);
+const pickIf=n=>{try{return pick(n);}catch(e){return '';}}; // the waiting-line pieces: absent in an older card, which then draws no line
+for(const name of ['servingWaiting','servWaitHtml','servStep','servClock'])vm.runInContext(pickIf(name),ctx);
 let passed=0;function test(name,fn){fn();passed++;console.log('PASS',name);}
 const plain=x=>JSON.parse(JSON.stringify(x));
 
@@ -101,6 +103,15 @@ test('the stored serving card shows Google\'s reason and the fix under a line, a
   const old=card([{level:'block',area:'Products',text:'None of the 1000 products can show.'}]);
   assert.ok(old.includes(line+'</li>'),'a summary stored before reasons were kept renders exactly as before');assert.doesNotMatch(old,/Google: |Fix: /);
   assert.doesNotMatch(card([{level:'block',area:'Products',text:'t',reason:'',fix:''}]),/class="muted" style="font-size:11px/,'empty reason and fix draw nothing');});
+
+test('a summary the server marks waiting draws the wait line with its text, and nothing else does; the rest of the card is unchanged',()=>{
+  const base={verdict:'blocked',headline:'Will not serve as intended.',counts:{block:1,risk:0,note:0},top:[{level:'block',area:'Products',text:'None of the 2 products can show.'}],source:'console',checkedAt:'2026-10-02T14:50:00Z'};
+  const card=over=>{ctx.DASH.servingChecks={'8':Object.assign({},base,over)};const h=ctx.servingBoxHtml({id:'8',status:'ENABLED'});delete ctx.DASH.servingChecks;return h;};
+  const plainCard=card({}),waiting=card({waiting:true,waitingText:'Google still lists the products as <paused>.'});
+  assert.doesNotMatch(plainCard,/servWait/,'no flag, no line');for(const v of [false,'true',1,null])assert.doesNotMatch(card({waiting:v,waitingText:'x'}),/servWait/,'only waiting===true counts: '+JSON.stringify(v));
+  assert.doesNotMatch(card({settling:true,headline:'Google was still processing; campaign paused'}),/servWait/,'wording is never guessed from');
+  assert.match(waiting,/<div class="servWait" role="status" data-sc="8"><span class="spin sm" aria-hidden="true"><\/span><span>Google is still updating this campaign\.[^<]*<span class="muted" style="display:block">Google still lists the products as &lt;paused&gt;\.<\/span><\/span><\/div>/);
+  assert.equal(waiting.replace(/<div class="servWait"[\s\S]*?<\/span><\/span><\/div>/,''),plainCard,'removing the line leaves the card exactly as before');});
 
 test('a Google total budget reads as its total, days and end date in one line, with no daily budget editor',()=>{
   const real=vm.createContext({});vm.runInContext(html.match(/var _MON=\[[^\]]*\];/)[0]+pick('fmtMon'),real);const stub=ctx.fmtMon;ctx.fmtMon=real.fmtMon;

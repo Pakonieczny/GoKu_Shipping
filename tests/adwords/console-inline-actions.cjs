@@ -47,7 +47,7 @@ const calls=[],toasts=[];let reply={};
 Object.assign(w,{DASH:{budgetCurrency:'CAD',lastMetrics:[{id:'77',budget:35,status:'ENABLED',endDate:'2026-10-20'}]},cmdMetrics:[{id:'77',budget:35,status:'ENABLED',endDate:'2026-10-20'}],cmdReport:{budgetCurrency:'CAD'},
   BUDGET_OVERRIDES:{},END_DATE_OVERRIDES:{},REPORT_CAMPAIGN_OPEN:new Set(),_cmdRestoring:false,_MON:['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'],
   api:async(action,body)=>{calls.push([action,JSON.parse(JSON.stringify(body))]);const r=reply[action];return typeof r==='function'?r(body):r||{ok:true};},
-  toast:m=>toasts.push(String(m)),renderDiag(){},loadCampaignTree(){}});
+  toast:m=>toasts.push(String(m)),renderDiag(){},loadCampaignTree(){},servWatch(){}});
 w.eval('var SERV_ASK={};\n'+['esc','cmdAttr','money','reportNumber','rpYmd','rpParse','fmtMon','cmdOpening','wireServing','wireCampRows','cmdEditRow','cmdEditMark','cmdEditOpen','cmdEditClose','cmdEditPaint','cmdEditFail','cmdEditSaved','cmdEditBudget','cmdEditSchedule','cmdEditStatus'].map(pick).join('\n'));
 const camp=()=>w.cmdMetrics[0];
 w.renderCommand=function(){const c=camp(),snap=d.getElementById('snapshot');
@@ -155,7 +155,7 @@ await test('a researched occasion date names its source; research lists the page
 
 await test('asking Google for the serving check asks for servingCheck alone and shows the standard spinner, through a redraw; a failure gives the button back',async()=>{
   const v=new JSDOM('<!doctype html><body><div id="host"></div></body>',{runScripts:'outside-only'}),vw=v.window,vd=vw.document,host=vd.getElementById('host');let answer;const asked=[];
-  Object.assign(vw,{DASH:{},api:(action,body)=>{asked.push([action,JSON.parse(JSON.stringify(body))]);return new Promise((res,rej)=>{answer={res,rej};});},servingOf:()=>null,servingClass:()=>'',servingBadgeAttrs:()=>({cls:'',text:'',title:''}),renderServing:s=>'<p class="answer">'+s.headline+'</p>',
+  Object.assign(vw,{DASH:{},api:(action,body)=>{asked.push([action,JSON.parse(JSON.stringify(body))]);return new Promise((res,rej)=>{answer={res,rej};});},servingOf:()=>null,servingClass:()=>'',servingBadgeAttrs:()=>({cls:'',text:'',title:''}),servWatch(){},servWaitPaint(){},servNote(){},servWaitHtml:()=>'',renderServing:s=>'<p class="answer">'+s.headline+'</p>',
     servingStoredHtml:()=>'<div class="servHead"><b>Google serving check</b><button type="button" class="btn ghost sm servRun">Check with Google</button></div>'});
   vw.eval([html.match(/^var SERV_ASK=\{\};$/m)[0]].concat(['esc','btnBusy','loadServing','wireServing'].map(pick)).join('\n'));
   const draw=()=>{host.innerHTML='<div class="servbox" data-sc="5">'+vw.servingStoredHtml()+'</div>';vw.wireServing(host);},btn=()=>host.querySelector('.servRun'),spin='<span class="spin bspin"></span>Asking Google…';
@@ -203,6 +203,113 @@ await test('the view title carries its full name as a tooltip and wraps on phone
   assert.match(html,/\n\.actbar \.alabel\{[^}]*flex:none\}/,'on wide screens the detail, not the label, takes the second line');
   assert(html.includes('#actbar .alabel{flex:0 1 auto;min-width:0}#actbar .aeta{max-width:18ch;white-space:normal}'),'on phones the label wraps and a long wait note takes two lines');
 });
+// ---- A campaign Google is still catching up on: a labelled wait line, and a quiet re-check until it settles ----
+// jsdom with a virtual clock (timers and Date) and a fake api: no Google, no real time. Each scenario drives the page's own card
+// code the way the page does (servingBoxHtml, wireServing, the Check again button), so an older card fails on what it shows and does.
+const MIN=60000,T0=Date.parse('2026-10-02T14:50:00'),pickIf=n=>{try{return pick(n);}catch(e){return '';}}; // the pieces an older card lacks: it then fails on what it shows and does
+const SERVING_FNS=['esc','btnBusy','servingOf','servingClass','servingLabel','servingWhen','servingSourceText','servingChanged','servingWaiting','servingBadgeAttrs','servingStoredHtml','servingBoxHtml','renderServing',
+  'servStep','servClock','servCamp','servLive','servWaitHtml','servWaitPaint','servNote','servWatch','servStop','servTick','servRun','servVisible','loadServing','wireServing'];
+const clock=ms=>new Date(ms).toLocaleTimeString([],{hour:'numeric',minute:'2-digit'}),flush=()=>new Promise(r=>setImmediate(r));
+function page(){
+  const dom=new JSDOM('<!doctype html><body><div id="scope"></div></body>',{url:'https://console.example/',runScripts:'outside-only'}),w=dom.window;
+  let now=T0,seq=0,timers=[],hidden=false;
+  w.Date=class extends w.Date{constructor(...a){if(a.length)super(...a);else super(now);}static now(){return now;}};
+  w.setTimeout=(fn,ms)=>{const id=++seq;timers.push({id,at:now+Math.max(0,+ms||0),fn});return id;};
+  w.clearTimeout=id=>{timers=timers.filter(t=>t.id!==id);};
+  Object.defineProperty(w.document,'hidden',{configurable:true,get:()=>hidden});
+  const P={w,calls:[],toasts:[],inflight:0,maxInflight:0,gate:null,pending:()=>timers.length,flush};
+  const res=(verdict,over)=>({serving:Object.assign({ok:true,verdict,headline:verdict==='ready'?'Google reports nothing that would stop it serving as intended.':'Will not serve as intended.',counts:{block:verdict==='blocked'?1:0,risk:0,note:0},
+    findings:verdict==='blocked'?[{level:'block',area:'Products',text:'None of the 2 products can show.'}]:[],facts:[],checkedAt:new Date(now).toISOString()},over)});
+  P.waitingReply=()=>res('blocked',{waiting:true,waitingText:'Google still lists the products as <paused> for a campaign that is already enabled.'});
+  P.greenReply=()=>res('ready');P.findingReply=()=>res('blocked',{findings:[{level:'block',area:'Products',text:'Images are too small.',reason:'Image too small'}]});
+  P.reply=()=>P.waitingReply();
+  P.waitingSummary=over=>Object.assign({verdict:'blocked',headline:'Will not serve as intended.',counts:{block:1,risk:0,note:0},top:[{level:'block',area:'Products',text:'None of the 2 products can show.'}],source:'daily',checkedAt:new Date(now).toISOString(),waiting:true,waitingText:'Google still lists the products as <paused> for a campaign that is already enabled.'},over);
+  w.toast=(m,ok)=>P.toasts.push([m,ok]);
+  w.api=async(action,extra)=>{const rec={action,id:String(extra.id),at:now,n:P.calls.length+1};P.calls.push(rec);P.inflight++;P.maxInflight=Math.max(P.maxInflight,P.inflight);
+    try{if(P.gate)await P.gate(rec);const r=P.reply(rec);if(r instanceof Error)throw r;return r;}finally{P.inflight--;}};
+  w.eval(html.match(/var SERV_LV=\{[^}]*\};/)[0]+SERVING_FNS.map(pickIf).join('\n'));
+  P.advance=async ms=>{const end=now+ms;for(;;){const t=timers.filter(x=>x.at<=end).sort((a,b)=>a.at-b.at||a.id-b.id)[0];if(!t)break;timers=timers.filter(x=>x!==t);now=Math.max(now,t.at);t.fn();await flush();}now=end;await flush();};
+  P.hide=v=>{hidden=v;w.document.dispatchEvent(new w.Event('visibilitychange'));};
+  P.show=(camps,sums,badge)=>{w.DASH={lastMetrics:camps,servingChecks:sums};w.cmdMetrics=null;const scope=w.document.getElementById('scope');
+    scope.innerHTML=camps.map(c=>(badge?'<span class="badge2 servBadge b-bad" data-serv="'+c.id+'">Google: won’t serve (1)</span>':'')+w.servingBoxHtml(c)).join('');w.wireServing(scope);return scope;};
+  P.box=id=>w.document.querySelector('.servbox[data-sc="'+id+'"]');P.line=id=>P.box(id).querySelector('.servWait');
+  P.said=id=>{const l=P.line(id),t=l&&l.querySelector('span:not(.spin)');return t?t.firstChild.textContent:null;};
+  P.sub=id=>{const l=P.line(id),m=l&&l.querySelector('.muted');return m?m.textContent:null;};
+  P.offsets=()=>P.calls.map(c=>(c.at-T0)/MIN);P.at=ms=>clock(T0+ms);
+  return P;}
+const CAMP={id:'11',name:'Performance Max <A>',status:'ENABLED'},CAMP2={id:'12',name:'Performance Max B',status:'ENABLED'};
+
+await test('a campaign Google is still catching up on says so with a small spinner, shows Google\'s waitingText, and is asked again after 2, 3, 5 and 5 minutes until Google shows green',async()=>{
+  const P=page();P.show([CAMP],{'11':P.waitingSummary()},true);
+  assert.ok(P.line('11'),'a waiting summary draws the wait line in the serving box');assert.ok(P.line('11').querySelector('.spin.sm'),'with the small labelled spinner every wait here uses');assert.equal(P.line('11').getAttribute('role'),'status');
+  assert.equal(P.said('11'),'Google is still updating this campaign. Checking again at '+P.at(2*MIN)+'.');assert.equal(P.sub('11'),'Google still lists the products as <paused> for a campaign that is already enabled.','the server\'s waitingText, as text');
+  assert.doesNotMatch(P.box('11').innerHTML,/<paused>/,'and escaped');assert.match(P.box('11').textContent,/None of the 2 products can show\./,'the red finding itself is unchanged');
+  assert.equal(P.pending(),1,'one timer for the one waiting campaign');
+  await P.advance(2*MIN-1);assert.equal(P.calls.length,0,'nothing is asked before 2 minutes');
+  let k=0;P.reply=()=>++k<5?P.waitingReply():P.greenReply();
+  await P.advance(1);assert.equal(P.calls.length,1);assert.equal(P.calls[0].action,'servingCheck','the same read the button makes');assert.equal(P.calls[0].id,'11');
+  assert.equal(P.said('11'),'Checked at '+P.at(2*MIN)+', still waiting. Next check at '+P.at(5*MIN)+'.','each check updates the line');assert.ok(P.line('11').querySelector('.spin.sm'));
+  assert.equal(P.box('11').querySelectorAll('button.servRun').length,1,'the Check again button stays');
+  await P.advance(40*MIN);assert.deepEqual(P.offsets(),[2,5,10,15,20],'2, 3, then 5 and 5 minutes apart, and the fifth answer is green');
+  assert.equal(P.line('11'),null,'green: the wait line is gone');assert.match(P.box('11').textContent,/Google reports nothing that would stop it serving as intended\./,'the normal result shows');
+  assert.equal(P.w.document.querySelector('.servBadge').textContent,'Google: ready');assert.equal(P.w.document.querySelector('.servBadge').className,'badge2 servBadge b-on');
+  assert.deepEqual(P.toasts,[['Google caught up with Performance Max <A>.',true]]);assert.equal(P.pending(),0,'no timer is left');assert.equal(P.w.DASH.servingChecks['11'].waiting,false);
+  await P.advance(3*60*MIN);assert.equal(P.calls.length,5,'and nothing is asked again');});
+
+await test('the campaigns are asked one at a time: a second one due waits for the first answer',async()=>{
+  const P=page();P.show([CAMP,CAMP2],{'11':P.waitingSummary(),'12':P.waitingSummary()});let release;P.gate=rec=>rec.n===1?new Promise(r=>{release=r;}):null;
+  await P.advance(2*MIN);assert.equal(P.calls.length,1,'both are due, one is asked');assert.equal(P.calls[0].id,'11');
+  await P.advance(30000);assert.equal(P.calls.length,1,'the second keeps waiting while the first is out');assert.equal(P.maxInflight,1);
+  release();await flush();assert.deepEqual(P.calls.map(c=>c.id),['11','12'],'then the second is asked');assert.equal(P.maxInflight,1,'never two at once');
+  await P.advance(10*MIN);assert.equal(P.maxInflight,1);assert.ok(P.calls.length>=4,'both keep their own schedule');});
+
+await test('a hidden tab pauses the checks and their 2 hours; showing it again asks what came due',async()=>{
+  const P=page();P.show([CAMP],{'11':P.waitingSummary()});await P.advance(MIN);P.hide(true);assert.equal(P.pending(),0,'no timer while the tab is hidden');
+  await P.advance(30*MIN);assert.equal(P.calls.length,0,'nothing is asked in the background');
+  P.hide(false);await P.advance(0);assert.deepEqual(P.offsets(),[31],'what came due is asked as the tab returns');assert.equal(P.said('11'),'Checked at '+P.at(31*MIN)+', still waiting. Next check at '+P.at(34*MIN)+'.');
+  await P.advance(2*60*MIN);const last=P.offsets().pop();assert.ok(last>=31+110&&last<=31+120,'the 2 hours did not run while hidden: the last check was at '+last+' minutes');
+  const q=page();q.show([CAMP],{'11':q.waitingSummary()});q.hide(true);await q.advance(10*MIN);q.hide(false);q.hide(true);q.hide(false);await q.advance(0);assert.equal(q.calls.length,1,'switching tabs back and forth never doubles a check');});
+
+await test('a real finding or a green result stops the checks at once and shows the normal result',async()=>{
+  const P=page();P.show([CAMP],{'11':P.waitingSummary()},true);P.reply=()=>P.findingReply();await P.advance(2*MIN);
+  assert.equal(P.line('11'),null);assert.match(P.box('11').textContent,/Images are too small\./);assert.equal(P.pending(),0);assert.deepEqual(P.toasts,[],'no "caught up" toast for a problem');
+  assert.equal(P.w.document.querySelector('.servBadge').className,'badge2 servBadge b-bad');await P.advance(5*60*MIN);assert.equal(P.calls.length,1);
+  const Q=page();Q.show([CAMP],{'11':Q.waitingSummary()});Q.reply=()=>Q.greenReply();await Q.advance(2*MIN);assert.equal(Q.pending(),0);assert.equal(Q.toasts.length,1);await Q.advance(60*MIN);assert.equal(Q.calls.length,1);});
+
+await test('after 2 hours of still waiting the card says to press Check again with Google later and stops',async()=>{
+  const P=page();P.show([CAMP],{'11':P.waitingSummary()});await P.advance(3*60*MIN);const o=P.offsets();
+  assert.deepEqual(o.slice(0,5),[2,5,10,15,20]);assert.equal(o[o.length-1],120,'the last check is at 2 hours');assert.equal(o.length,25);assert.ok(o.slice(2).every((v,i,a)=>!i||v-a[i-1]===5),'every 5 minutes after the first three');
+  assert.equal(P.said('11'),'Google is still updating. Press Check again with Google later.');assert.equal(P.line('11').querySelector('.spin'),null,'no spinner once it stopped');assert.equal(P.pending(),0);
+  await P.advance(5*60*MIN);assert.equal(P.calls.length,25,'and no more checks');});
+
+await test('only a waiting campaign gets a timer: green, real findings, never checked, older summaries and deleted campaigns get none',async()=>{
+  const P=page(),base=P.waitingSummary(),camps=[{id:'21',name:'g',status:'ENABLED'},{id:'22',name:'b',status:'ENABLED'},{id:'23',name:'n',status:'ENABLED'},{id:'24',name:'o',status:'ENABLED'},{id:'25',name:'d',status:'REMOVED',deleted:true},{id:'26',name:'s',status:'ENABLED'}];
+  const scope=P.show(camps,{'21':Object.assign({},base,{verdict:'ready',headline:'ready',counts:{block:0,risk:0,note:0},top:[],waiting:false}),'22':Object.assign({},base,{waiting:false,waitingText:''}),'24':Object.assign({},base,{waiting:undefined,waitingText:undefined,settling:true,headline:'Google was still processing; paused for a campaign'}),
+    '25':base,'26':Object.assign({},base,{waiting:'true'})});
+  assert.equal(scope.querySelectorAll('.servWait').length,0,'no wait line without waiting:true, and none for a deleted campaign');assert.equal(P.pending(),0);await P.advance(3*60*MIN);assert.equal(P.calls.length,0);
+  const Q=page(),waiting=Q.waitingSummary();Q.show([CAMP],{'11':waiting});assert.equal(Q.pending(),1);Q.show([CAMP],{'11':Object.assign({},waiting,{verdict:'ready',waiting:false})});assert.equal(Q.pending(),0,'a redraw that shows it green drops the watch');});
+
+await test('an automatic check never overlaps a check Paul started, in either order',async()=>{
+  const P=page();P.show([CAMP],{'11':P.waitingSummary()});let release;P.gate=()=>new Promise(r=>{release=r;});
+  await P.advance(2*MIN);assert.equal(P.calls.length,1);P.w.loadServing(P.box('11'));P.w.loadServing(P.box('11'));assert.equal(P.calls.length,1,'a press while the automatic check is out asks nothing more');release();await flush();
+  const Q=page();Q.show([CAMP],{'11':Q.waitingSummary()});let rel;Q.gate=()=>new Promise(r=>{rel=r;});await Q.advance(90000);Q.box('11').querySelector('.servRun').click();assert.equal(Q.calls.length,1);
+  await Q.advance(30000);assert.equal(Q.calls.length,1,'the automatic check came due at 2 minutes and left the one Paul started alone');assert.equal(Q.maxInflight,1);
+  await Q.advance(30000);Q.gate=null;rel();await flush();assert.equal(Q.said('11'),'Checked at '+Q.at(2.5*MIN)+', still waiting. Next check at '+Q.at(4.5*MIN)+'.','Paul\'s check, still waiting, shows the line and restarts the 2 minutes');
+  await Q.advance(2*MIN-1);assert.equal(Q.calls.length,1);await Q.advance(1);assert.deepEqual(Q.offsets(),[1.5,4.5],'the next automatic check is 2 minutes after his');});
+
+await test('right after Paul presses the button on a check that is still waiting, the wait line shows and the checks begin; a check that is not waiting draws none',async()=>{
+  const P=page();P.show([CAMP],{'11':P.waitingSummary({waiting:false,waitingText:'',top:[{level:'block',area:'Dates',text:'Ended early'}]})});assert.equal(P.line('11'),null);assert.equal(P.pending(),0);
+  P.box('11').querySelector('.servRun').click();await flush();assert.equal(P.calls.length,1);
+  assert.equal(P.said('11'),'Checked at '+P.at(0)+', still waiting. Next check at '+P.at(2*MIN)+'.');assert.ok(P.line('11').querySelector('.spin.sm'));assert.match(P.sub('11'),/already enabled/);
+  assert.match(P.box('11').textContent,/None of the 2 products can show\./);assert.equal(P.w.DASH.servingChecks['11'].waiting,true,'the page keeps the flag with the summary');
+  await P.advance(2*MIN);assert.deepEqual(P.offsets(),[0,2]);
+  const Q=page();Q.show([CAMP],{'11':Q.waitingSummary({waiting:false,waitingText:''})});Q.reply=()=>Q.findingReply();Q.box('11').querySelector('.servRun').click();await flush();assert.equal(Q.line('11'),null);assert.equal(Q.pending(),0);});
+
+await test('automatic checks Google does not answer are retried quietly, three times, without error alerts; the button keeps its own error',async()=>{
+  const P=page();P.show([CAMP],{'11':P.waitingSummary()});P.reply=()=>new Error('Google did not answer.');await P.advance(2*MIN);
+  assert.equal(P.w.document.querySelectorAll('[role=alert]').length,0,'a background check raises no alert');assert.equal(P.said('11'),'Google did not answer the last check. Next check at '+P.at(5*MIN)+'.');
+  await P.advance(60*MIN);assert.deepEqual(P.offsets(),[2,5,10]);assert.equal(P.said('11'),'Google did not answer the automatic checks. Press Check again with Google.');assert.equal(P.pending(),0);
+  P.box('11').querySelector('.servRun').click();await flush();assert.match(P.box('11').querySelector('.servErr[role=alert]').textContent,/Google serving check failed: Google did not answer\./,'Paul\'s own press still says so');});
 console.log(passed+' console inline action checks passed.');
 require('./suite-guard.cjs').done();
 })().catch(e=>{console.error(e);process.exit(1);});
