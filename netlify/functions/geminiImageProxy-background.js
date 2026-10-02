@@ -2305,15 +2305,27 @@ function batchApiKey(batchName) {
 async function openAIBatchRequest(apiKey, path, options = {}) {
   const timeoutMs = path === "/files" && options.method === "POST" ? 120000 : 30000;
   const ctl = new AbortController();
-  const timer = setTimeout(() => ctl.abort(), timeoutMs);
+  let timer;
+  const deadline = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      ctl.abort();
+      const timeout = new Error(`OpenAI Batch timed out after ${timeoutMs / 1000}s`);
+      timeout.status = 504;
+      reject(timeout);
+    }, timeoutMs);
+  });
   try {
-    const resp = await fetch(`https://api.openai.com/v1${path}`, {
-      ...options, signal: ctl.signal,
-      headers: { Authorization: `Bearer ${apiKey}`, ...options.headers },
-    });
-    // Headers are not completion. Keep the deadline through the body read,
-    // which otherwise leaves a submission reservation held until the worker dies.
-    return await readUpstreamJson(resp, "OpenAI Batch");
+    const response = (async () => {
+      const resp = await fetch(`https://api.openai.com/v1${path}`, {
+        ...options, signal: ctl.signal,
+        headers: { Authorization: `Bearer ${apiKey}`, ...options.headers },
+      });
+      return await readUpstreamJson(resp, "OpenAI Batch");
+    })();
+    // Abort is advisory. The worker must return even if fetch or a response
+    // body never settles after cancellation. An uncertain create stays
+    // reserved for reconciliation; a late file upload cannot create a batch.
+    return await Promise.race([response, deadline]);
   } catch (error) {
     if (ctl.signal.aborted) {
       const timeout = new Error(`OpenAI Batch timed out after ${timeoutMs / 1000}s`);
@@ -2514,12 +2526,24 @@ function buildOpenAIBatchJsonlLine(key, prompt, refMime, refBase64, charmMime, c
 }
 
 async function uploadOpenAIBatchFile(apiKey, buffer, displayName) {
-  const form = new FormData();
-  form.append("purpose", "batch");
-  form.append("file", new Blob([buffer], { type: "application/jsonl" }), "listing-images.jsonl");
-  const raw = await openAIBatchRequest(apiKey, "/files", { method: "POST", body: form });
-  if (!raw.id) throw new Error("OpenAI file upload returned no file ID");
-  return raw.id;
+  const fs = require("node:fs/promises");
+  const { openAsBlob } = require("node:fs");
+  const path = require("node:path");
+  const dir = await fs.mkdtemp(path.join(require("node:os").tmpdir(), "listing-batch-"));
+  try {
+    const input = path.join(dir, "listing-images.jsonl");
+    await fs.writeFile(input, buffer, { mode: 0o600 });
+    const form = new FormData();
+    form.append("purpose", "batch");
+    // A memory-backed Blob duplicates the entire JSONL, and multipart
+    // serialization can make another large copy in a 1 GB function.
+    form.append("file", await openAsBlob(input, { type: "application/jsonl" }), "listing-images.jsonl");
+    const raw = await openAIBatchRequest(apiKey, "/files", { method: "POST", body: form });
+    if (!raw.id) throw new Error("OpenAI file upload returned no file ID");
+    return raw.id;
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
 }
 
 async function createOpenAIImageBatch(apiKey, fileName, displayName) {
