@@ -1455,6 +1455,77 @@ scenario('S9', 'S9 a waiting plan prepared before image ads carried a display UR
   st.check('Saturn: the stored, reviewed plan is unchanged (no display URL written into it, same hash)', () => { const pl = approval(ap.id).pipelinePlan; return JSON.stringify(pl.payload) === saved && pl.hash === ap.planHash && ctx.E.creativeHash(approval(ap.id).payload) === ap.planHash; });
 });
 
+// S12 an Approve ad cut off by the 60-second function limit after Google created the three paused campaigns (Paul's 504), then "It was published".
+// The cut-off function never reached its catch or finally, so the approval is left APPLYING with an expired lease and nothing else was recorded
+// (no campaign IDs, image receipts, run lengths or film binding). "It was published" finds the campaigns by the plan's exact names, read-only,
+// and writes what a finished publication writes; with campaigns missing, or the read failing, it records only the status and says why.
+scenario('S12', 'S12 a cut-off Approve ad reconciled as "It was published"', async () => {
+  const choice = { styles: ['fixed_display', 'responsive_display', 'pmax'], budgets: { fixed_display: 5, responsive_display: 5, pmax: 10 }, countries: ['2124'], durations: { fixed_display: 7, responsive_display: 30, pmax: 45 } };
+  const cutOff = async label => {
+    await boot('S12 ' + label); const p = P.bunny, ws = await seedWorkspace({ id: 'design_cutoff_' + label.replace(/\W+/g, '_'), products: [p], selectedKey: 'bunny', scoped: true }), st = stage(null, label);
+    const ap = await submitAd(ws, p); if (!ap) st.blocked = 'submission failed'; else Object.assign(ap, { fx: ws.fx.bunny, wsId: ws.id });
+    await editMessaging(st, ws, p, ap, clone(COPY.bunny), false); await preparePlan(st, p, ap, choice);
+    ctx.google.faults.push({ kind: 'lost', when: rec => audit(rec).campaigns.length > 0 });
+    step('cut-off approve'); if (!st.blocked) await api('publishAdDesignSubmission', { id: ap.id, hash: ap.reviewHash, planHash: ap.planHash, confirmed: true });
+    const own = () => [...ctx.google.campaigns.values()].filter(c => c.name.startsWith('Brites · ' + p.title) && c.status !== 'REMOVED'), key = 'Brites_GAds_Approvals/' + ap.id;
+    st.gate(label + ': Google created the three paused campaigns; the response was lost', () => own().length === 3 && own().every(c => c.status === 'PAUSED') && approval(ap.id).status === 'APPLY_UNKNOWN', () => JSON.stringify([own().map(c => c.name), (approval(ap.id) || {}).status]));
+    // The function was killed mid-run: APPLYING, the lease long expired, and nothing else saved.
+    if (!st.blocked) { const d = clone(approval(ap.id)); for (const k of ['needsReconciliation', 'lastError', 'lastErrorAt', 'publishedCampaignIds', 'assetReceipts', 'purchaseGoals']) delete d[k]; ctx.store.docs.set(key, { ...d, status: 'APPLYING', applyAttempt: 'killed-at-60s', applyStartedAt: Date.now() - 20 * 60000 }); ctx.store.docs.delete('Brites_GAds_State/publicationLease'); }
+    const films = () => api('startAdMotionPublication', { workspaceId: ws.id, productId: p.gid, groupRef: GROUP.ref, jobId: ws.fx.bunny.motionJobId, reviewHash: require(path.join(FN, 'googleAdsMotionPublication.js')).reviewHash(motionJob(ws.id, ws.fx.bunny)) });
+    const pmaxGroup = () => [...ctx.google.assetGroups.values()].find(g => g.finalUrls && g.finalUrls[0] === p.url && ctx.google.campaigns.get(g.campaign).name.includes(' · Performance Max · '));
+    const flights = () => [...ctx.store.docs.keys()].filter(k => /\/plannedFlight_\d+$/.test(k) && ctx.store.docs.get(k).approvalId === ap.id);
+    const bindings = () => [...ctx.store.docs.keys()].filter(k => /\/(motionTargets|motionFilmLinks)\/[^/]+$/.test(k));
+    const mutates = () => ctx.google.requests.length, before = counts();
+    st.check(label + ': before reconciling, nothing is recorded: no campaign IDs, receipts, run lengths or film binding', () => { const d = approval(ap.id); return d.status === 'APPLYING' && !d.publishedCampaignIds && !d.assetReceipts && !flights().length && !bindings().length; });
+    return { p, ws, st, ap, own, flights, bindings, films, pmaxGroup, mutates, before, key };
+  };
+  const reconcile = async (c, name) => { step(name); const sent = c.mutates(), r = c.st.blocked ? null : await api('reconcileApproval', { id: c.ap.id, outcome: 'published' }); return { r, sentDuring: c.mutates() - sent }; };
+
+  // a) Google shows all three campaigns: everything a finished publication records is written, and the films attach to the paused Performance Max group.
+  { const c = await cutOff('all three campaigns exist'), { p, ap, st } = c, pre = st.blocked ? null : await c.films();
+    st.check('Bunny: before reconciling, the films cannot attach ("Publish this product\'s ad first")', () => pre && pre.ok === false && /Publish this product/.test(pre.error || ''), () => why(pre));
+    const { r, sentDuring } = await reconcile(c, 'reconcile all'), d = approval(ap.id), gen = ((d.pipelinePlan || { payload: {} }).payload.generatedAssets || []), nameOf = e => 'Brites reviewed ' + e.asset.width + 'x' + e.asset.height + ' ' + e.asset.hash.slice(0, 20);
+    const held = gen.filter(e => [...ctx.google.assets.values()].some(a => a.name === nameOf(e))), group = c.pmaxGroup();
+    st.check('Bunny: the result is {ok, id, status APPLIED} with a plain message of what was recorded', () => r && r.ok === true && r.id === ap.id && r.status === 'APPLIED' && /Recorded as published\. Google Ads shows all 3 planned campaigns, paused; saved their campaign IDs/.test(r.message || '') && !/does not show/.test(r.message), () => why(r));
+    st.check('Bunny: the status change is the same as before (APPLIED, reconciliation recorded, nothing pending)', () => d.status === 'APPLIED' && d.reconciliation.outcome === 'published' && d.reconciliation.priorStatus === 'APPLYING' && d.needsReconciliation === false && d.lastError === null && d.applyAttempt === null);
+    st.check('Bunny: publishedCampaignIds are exactly the three campaigns found in Google Ads', () => JSON.stringify((d.publishedCampaignIds || []).slice().sort()) === JSON.stringify(c.own().map(x => x.id).sort()) && d.publishedCampaignIds.length === 3, () => JSON.stringify(d.publishedCampaignIds));
+    st.check('Bunny: an image receipt (resource name, hash, saved path) is written for every reviewed image Google holds', () => held.length >= 3 && (d.assetReceipts || []).length === held.length && held.every(e => (d.assetReceipts || []).some(x => x.hash === e.asset.hash && ctx.google.assets.get(x.resourceName) && ctx.google.assets.get(x.resourceName).name === nameOf(e) && x.path === e.asset.path)), () => held.length + ' held, receipts ' + JSON.stringify(d.assetReceipts));
+    st.check('Bunny: each campaign has its planned run length record (days, approval, the end date Google holds, unstarted)', () => c.flights().length === 3 && c.own().every(x => { const style = Object.keys(STYLE_NAMES).find(s => x.name.includes(' · ' + STYLE_NAMES[s] + ' · ')), f = ctx.store.docs.get('Brites_GAds_State/plannedFlight_' + x.id);
+      return f && f.days === choice.durations[style] && f.approvalId === ap.id && f.endDate === String(x.endDateTime).slice(0, 10) && f.endDate === addDays(ymd(0), choice.durations[style] - 1) && !f.startedAt && f.publishedAt > 0; }), () => JSON.stringify(c.flights().map(k => ctx.store.docs.get(k))));
+    st.check('Bunny: the film binding points at the paused Performance Max asset group and the films are queued for it', () => { const job = motionJob(ap.wsId, ap.fx), b = c.bindings().map(k => ctx.store.docs.get(k)).find(x => x.assetGroupRef);
+      return group && b && b.assetGroupRef === group.resourceName && String(b.campaignId) === String(group.campaign.split('/').pop()) && job.publication && job.publication.phase === 'queued' && job.publication.target && job.publication.target.groupRef === group.resourceName && ctx.google.campaigns.get(group.campaign).status === 'PAUSED'; }, () => JSON.stringify([c.bindings(), (motionJob(ap.wsId, ap.fx) || {}).publication]).slice(0, 500));
+    st.check('Bunny: the message says what happens to the films; a queued upload is returned for the console to start', () => /three reviewed films/.test(r.message) && /Animated ads/.test(r.message) && r.motionPublication && r.motionPublication.queued === true && r.motionPublication.jobId === ap.fx.motionJobId, () => why(r));
+    st.check('Bunny: the saved note on the approval is the message shown', () => d.reconciliationNote === r.message);
+    st.check('Bunny: nothing was sent to Google while reconciling: no campaign-creating or changing request, no campaign created, enabled or removed', () => sentDuring === 0 && c.before === counts() && c.own().length === 3 && c.own().every(x => x.status === 'PAUSED') && !ctx.calls.some(x => x.step === 'reconcile all' && /:mutate$/.test(x.url)), () => 'requests during reconcile: ' + sentDuring);
+    step('films start'); const go = st.blocked ? null : await c.films();
+    st.check('Bunny: approving the queued upload (the console\'s dispatch) uploads the three films and attaches them to the paused Performance Max group', () => { const vids = ctx.google.links.filter(l => l.assetGroup === group.resourceName && l.fieldType === 'YOUTUBE_VIDEO'), job = motionJob(ap.wsId, ap.fx);
+      return go && go.ok !== false && vids.length === 3 && job.publication.phase === 'attached' && job.publication.target.groupRef === group.resourceName && ctx.google.campaigns.get(group.campaign).status === 'PAUSED' && c.own().every(x => x.status === 'PAUSED') && [...ctx.google.uploads.values()].length === 3; }, () => why(go) + ' ' + JSON.stringify((motionJob(ap.wsId, ap.fx) || {}).publication || null).slice(0, 300));
+    step('reconcile again'); const again = st.blocked ? null : await api('reconcileApproval', { id: ap.id, outcome: 'published' });
+    st.check('Bunny: reconciling again is refused and changes nothing (one record set, one binding)', () => again && again.ok !== true && /no unconfirmed publication/.test(again.error || '') && c.flights().length === 3 && (approval(ap.id).publishedCampaignIds || []).length === 3, () => why(again)); }
+
+  // b) Google Ads shows only two of the three (the Fixed Display campaign is gone): nothing is guessed, invented or recorded; the note names it.
+  { const c = await cutOff('two of three campaigns exist'), { ap, st } = c, gone = c.own().find(x => x.name.includes(' · Fixed Display · ')), planned = ((approval(ap.id) || { pipelinePlan: { summary: { campaigns: [] } } }).pipelinePlan.summary.campaigns || []).find(x => x.style === 'fixed_display');
+    if (gone) gone.status = 'REMOVED';
+    const { r, sentDuring } = await reconcile(c, 'reconcile two'), d = approval(ap.id);
+    st.check('Bunny (2 of 3): the status change is as before (APPLIED) and the message names the campaign Google Ads does not show', () => r && r.ok === true && r.status === 'APPLIED' && d.status === 'APPLIED' && gone && planned && planned.name === gone.name && r.message.includes('Google Ads does not show: “' + gone.name + '”') && /2 of 3 planned campaigns/.test(r.message) && c.own().length === 2 && c.own().every(x => !r.message.includes(x.name)), () => why(r));
+    st.check('Bunny (2 of 3): no campaign IDs, receipts, run lengths or film binding are invented; the same note is saved on the approval', () => !d.publishedCampaignIds && !d.assetReceipts && !c.flights().length && !c.bindings().length && !(motionJob(ap.wsId, ap.fx) || {}).publication && !r.motionPublication && d.reconciliationNote === r.message, () => JSON.stringify({ ids: d.publishedCampaignIds, receipts: d.assetReceipts, flights: c.flights(), bindings: c.bindings() }));
+    st.check('Bunny (2 of 3): nothing was sent to Google', () => sentDuring === 0 && c.before === counts() && !ctx.calls.some(x => x.step === 'reconcile two' && /:mutate$/.test(x.url)));
+    step('films start two'); const go = st.blocked ? null : await c.films();
+    st.check('Bunny (2 of 3): the films still cannot attach (no binding was invented)', () => go && go.ok === false && /Publish this product/.test(go.error || ''), () => why(go));
+    // None found: the same, with every planned campaign named.
+    ctx.google.campaigns.forEach(x => { if (x.name.startsWith('Brites · ' + c.p.title)) x.status = 'REMOVED'; });
+    { const d0 = clone(approval(ap.id)); delete d0.reconciliation; delete d0.reconciliationNote; ctx.store.docs.set(c.key, { ...d0, status: 'APPLYING', applyAttempt: 'killed-at-60s', applyStartedAt: Date.now() - 20 * 60000 }); }
+    const { r: r0 } = await reconcile(c, 'reconcile none');
+    st.check('Bunny (none found): the note names all three planned campaigns and nothing is recorded', () => r0 && r0.status === 'APPLIED' && /it shows 0 of 3 planned campaigns/.test(r0.message) && ((approval(ap.id).pipelinePlan.summary.campaigns || []).every(x => r0.message.includes('“' + x.name + '”'))) && !approval(ap.id).publishedCampaignIds && !c.flights().length, () => why(r0)); }
+
+  // c) The Google read fails: reconcile still succeeds as before and the note says what could not be recorded.
+  { const c = await cutOff('the Google read fails'), { ap, st } = c;
+    ctx.google.searchFault = /advertising_channel_type/;
+    const { r, sentDuring } = await reconcile(c, 'reconcile read fails'), d = approval(ap.id);
+    st.check('Bunny (read fails): reconcile still succeeds: APPLIED, ok, with a note that the records could not be filled in', () => r && r.ok === true && r.status === 'APPLIED' && d.status === 'APPLIED' && d.reconciliation.outcome === 'published' && /^Recorded as published\. Its campaign records could not be filled in from Google Ads \(.*Synthetic read failure.*\)\. Check the campaigns in Google Ads\.$/.test(r.message || ''), () => why(r));
+    st.check('Bunny (read fails): nothing is recorded or sent, and the note is saved on the approval', () => !d.publishedCampaignIds && !d.assetReceipts && !c.flights().length && !c.bindings().length && d.reconciliationNote === r.message && sentDuring === 0 && c.before === counts(), () => JSON.stringify(d).slice(0, 300)); }
+});
+
 /* ================================================================ run */
 (async () => {
   const started = Date.now();

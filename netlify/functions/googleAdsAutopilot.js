@@ -2061,7 +2061,55 @@ async function reconcileApproval({ id, outcome } = {}) {
       ? { status, appliedAt: f.FV.serverTimestamp(), applyAttempt: null, needsReconciliation: false, lastError: null, reconciliation }
       : { status, applyAttempt: null, needsReconciliation: false, ...(onCard ? { pipelineReview: null } : {}), lastError: onCard ? "You checked Google Ads and this ad was not published. Approve ad publishes it again, or delete it." : "You checked Google Ads and this change was not published. Publish it again or delete it.", reconciliation });
   });
-  return { ok: true, id: String(id), status };
+  // A complete ad: what a finished publication also records is filled in from what Google Ads shows (read-only; never throws).
+  let out = null;
+  if (outcome === "published") try { const d = (await ref.get()).data(); if (d && d.type === "adDesignSubmission" && d.pipelinePlan) out = await _recordPublishedCompleteAd(String(id), d); }
+  catch (e) { out = { message: "Recorded as published. Its campaign records could not be filled in from Google Ads (" + String(e && e.message || e).slice(0, 200) + "). Check the campaigns in Google Ads." }; await ref.update({ reconciliationNote: out.message }).catch(() => {}); }
+  return { ok: true, id: String(id), status, ...(out && out.message ? { message: out.message } : {}), ...(out && out.motionPublication ? { motionPublication: out.motionPublication } : {}) };
+}
+// "It was published" on a complete ad cut off after Google accepted it (Approve ad outran the function limit): the campaigns are found by
+// the exact names in the stored plan (never REMOVED ones), read-only. All found: their IDs, image receipts (by the reviewed image names),
+// planned run lengths and, for a still-PAUSED Performance Max campaign, the product's reviewed films are recorded as a finished
+// publication would. Any missing or ambiguous: nothing is guessed or recorded, and a plain note names them. Nothing is sent, created,
+// enabled or removed. The purchase-goals and brand-exclusion notes are not rebuilt: the plan holds no record of what they sent.
+async function _recordPublishedCompleteAd(id, d) {
+  const f = fb(), ref = f.db.collection(COL.approvals).doc(String(id)), plan = d.pipelinePlan || {}, ops = (plan.payload || {}).mutateOperations || [], summary = plan.summary || {}, r = d.designReview || {};
+  const save = async message => { await ref.update({ reconciliationNote: message }).catch(() => {}); return { message }; };
+  const created = ops.map(o => o && o.campaignOperation && o.campaignOperation.create).filter(c => c && c.name), joined = (summary.campaigns || []).find(c => c.joins);
+  const planned = created.length ? created.map(c => ({ ref: c.resourceName, name: c.name })) : (summary.campaigns || []).filter(c => !c.joins && c.name).map(c => ({ ref: null, name: c.name }));
+  if (!planned.length) return save("Recorded as published. The stored plan names no new campaign, so nothing could be checked in Google Ads.");
+  const live = await gaql("SELECT campaign.id, campaign.name, campaign.status, campaign.advertising_channel_type, campaign.end_date_time FROM campaign WHERE campaign.status != 'REMOVED'");
+  const named = n => live.map(x => x.campaign || {}).filter(c => c.name === n), found = [], missing = [], several = [];
+  for (const p of planned) { const m = named(p.name); if (m.length === 1) found.push({ ...p, id: String(m[0].id), status: m[0].status, channel: m[0].advertisingChannelType, endDate: _dateOnly(m[0].endDateTime) }); else (m.length ? several : missing).push("“" + p.name + "”"); }
+  if (missing.length || several.length) return save("Recorded as published, but nothing else was recorded from Google Ads (it shows " + found.length + " of " + planned.length + " planned campaigns). " + (missing.length ? "Google Ads does not show: " + missing.join("; ") + ". " : "") + (several.length ? "Google Ads shows more than one campaign named: " + several.join("; ") + ". " : "") + "Check Google Ads before enabling or publishing anything.");
+  const notes = [], saved = ["their campaign IDs"], patch = { publishedCampaignIds: [...new Set([...(d.publishedCampaignIds || []), ...found.map(c => c.id)])] };
+  try { // the image assets Google created, found by the reviewed names each was sent with; an ambiguous name is left out
+    const gen = ((plan.payload || {}).generatedAssets || []).filter(e => e && e.asset && e.asset.hash), nameOf = e => "Brites reviewed " + e.asset.width + "x" + e.asset.height + " " + e.asset.hash.slice(0, 20), had = (d.assetReceipts || []).length;
+    const rows = gen.length ? await gaql("SELECT asset.resource_name, asset.name FROM asset WHERE asset.type = 'IMAGE' AND asset.name IN (" + [...new Set(gen.map(nameOf))].map(_gaqlString).join(", ") + ")") : [], receipts = [...(d.assetReceipts || [])];
+    for (const e of gen) { const m = rows.map(x => x.asset || {}).filter(a => a.name === nameOf(e)); if (m.length === 1 && !receipts.some(x => x.hash === e.asset.hash)) receipts.push({ resourceName: m[0].resourceName, hash: e.asset.hash, ...(e.asset.path ? { path: e.asset.path } : {}) }); }
+    if (receipts.length > had) { patch.assetReceipts = receipts; saved.push((receipts.length - had) + " image receipts"); }
+  } catch (e) { notes.push("The image receipts could not be read."); }
+  // The planned run length counts from publication; a campaign that is not paused has started its run, so it is left as it is.
+  const days = ((plan.payload || {}).meta || {}).plannedDays || {}, flights = [];
+  for (const c of found) if (c.ref && Number(days[c.ref]) > 0) try {
+    if (c.status !== "PAUSED") { notes.push("“" + c.name + "” is not paused, so its planned run length was not recorded."); continue; }
+    const flight = _flightRef(c.id); if (!(await flight.get()).exists) { await flight.set({ days: Number(days[c.ref]), approvalId: String(id), endDate: c.endDate || null, publishedAt: Number(d.applyStartedAt) || Date.now() }); flights.push(c.id); }
+  } catch (e) { notes.push("The planned run length of “" + c.name + "” could not be saved. Check its end date after enabling."); }
+  if (flights.length) saved.push("the planned run length of " + flights.length + (flights.length === 1 ? " campaign" : " campaigns"));
+  await ref.update(patch);
+  // The product's reviewed films, only into a paused Performance Max campaign (the step Approve ad runs after APPLIED); never throws.
+  let films = null;
+  const pmax = found.filter(c => c.channel === "PERFORMANCE_MAX"), joinedLive = joined && live.map(x => x.campaign || {}).find(c => String(c.id) === String(joined.existingCampaignId));
+  if (r.includeVideos !== false && (summary.styles || []).includes("pmax") && !(summary.videoLinks || []).length && (pmax.length || joined)) {
+    const paused = [...pmax.filter(c => c.status === "PAUSED").map(c => c.id), ...(joinedLive && joinedLive.status === "PAUSED" ? [String(joined.existingCampaignId)] : [])];
+    if (!paused.length) films = { message: "The films were not attached: films attach only while the Performance Max campaign is paused." };
+    else try { films = await _attachPublishedFilms({ workspaceId: r.workspaceId, product: (await _adDesignPublicationContext(r.workspaceId, r)).product, groupRef: r.groupRef, campaignIds: paused, approved: (plan.payload.meta || {}).motion || null, copy: r.copy, source: { kind: "campaign_styles", id } }); }
+    catch (e) { films = { message: "The films were not attached: " + String(e && e.message || e).slice(0, 250) + " Approve their upload in Animated ads to retry." }; }
+    if (films && films.publication && films.publication.queued) films = { ...films, message: films.message + " If their upload has not started in a few minutes, approve it again in Animated ads." };
+  }
+  const message = "Recorded as published. Google Ads shows all " + found.length + " planned " + (found.length === 1 ? "campaign" : "campaigns") + (found.every(c => c.status === "PAUSED") ? ", paused" : "") + "; saved " + saved.join(", ") + "." + (notes.length ? " " + notes.join(" ") : "") + (films && films.message ? " " + films.message : "");
+  await save(message);
+  return { message, motionPublication: films && films.publication || null };
 }
 // Marks when an approved draft was handed to the worker, so its card can show that it is queued
 // behind another publication (the worker waits its turn) instead of offering to publish it again.
