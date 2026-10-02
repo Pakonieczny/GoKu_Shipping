@@ -90,6 +90,18 @@ test('each campaign row carries Google\'s last serving verdict as a badge that o
   assert.match(ctx.servingBoxHtml(camps[0]),/The last check could not read this campaign: Google Ads request &lt;quota&gt;/);
   delete ctx.DASH.servingChecks;});
 
+test('the stored serving card shows Google\'s reason and the fix under a line, and an older summary renders as before',()=>{
+  const base={verdict:'blocked',headline:'Will not serve as intended.',counts:{block:2,risk:0,note:0},source:'publication',checkedAt:'2026-09-28T10:00:00Z'};
+  const card=top=>{ctx.DASH.servingChecks={'7':Object.assign({},base,{top})};const h=ctx.servingBoxHtml({id:'7',status:'ENABLED'});delete ctx.DASH.servingChecks;return h;};
+  const line='<li><span class="badge2 b-bad" style="margin-right:6px">Stops it</span><b>Products:</b> None of the 1000 products can show.';
+  const full=card([{level:'block',area:'Products',text:'None of the 1000 products can show.',reason:'Image too small (900) <i>x</i>',fix:'Fix the product issues in Merchant Center.'},{level:'risk',area:'Dates',text:'Ends soon',reason:'Ends in 2 days'}]);
+  assert.ok(full.includes(line+'<div class="muted" style="font-size:11px;margin:1px 0 0 2px">Google: Image too small (900) &lt;i&gt;x&lt;/i&gt;</div><div class="muted" style="font-size:11px;margin:1px 0 0 2px">Fix: Fix the product issues in Merchant Center.</div></li>'),'reason then fix, in the same markup the full check uses');
+  assert.match(full,/<b>Dates:<\/b> Ends soon<div class="muted"[^>]*>Google: Ends in 2 days<\/div><\/li>/,'a finding with only a reason shows only the reason');
+  assert.doesNotMatch(full,/<i>x<\/i>/,'HTML in Google\'s reason is escaped');assert.equal((full.match(/Fix: /g)||[]).length,1);
+  const old=card([{level:'block',area:'Products',text:'None of the 1000 products can show.'}]);
+  assert.ok(old.includes(line+'</li>'),'a summary stored before reasons were kept renders exactly as before');assert.doesNotMatch(old,/Google: |Fix: /);
+  assert.doesNotMatch(card([{level:'block',area:'Products',text:'t',reason:'',fix:''}]),/class="muted" style="font-size:11px/,'empty reason and fix draw nothing');});
+
 test('a Google total budget reads as its total, days and end date in one line, with no daily budget editor',()=>{
   const real=vm.createContext({});vm.runInContext(html.match(/var _MON=\[[^\]]*\];/)[0]+pick('fmtMon'),real);const stub=ctx.fmtMon;ctx.fmtMon=real.fmtMon;
   try{

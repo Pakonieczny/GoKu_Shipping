@@ -2373,7 +2373,9 @@ function servingStoredHtml(s){var k=servingClass(s),run='<button type="button" c
   if(!k)return '<div class="servHead"><b>Google serving check</b><span class="muted">'+(s&&s.lastAttempt?'The last check could not read this campaign: '+esc(s.lastAttempt.error||'no answer'):'Not run for this campaign yet.')+'</span>'+run+'</div>';
   return '<div class="servHead"><b>Google serving check</b><span class="badge2 '+k+'">'+esc(servingLabel(s))+'</span>'+run+'</div>'
     +'<div style="margin-top:5px">'+esc(s.headline||'')+'</div>'
-    +((s.top||[]).length?'<ul>'+s.top.map(function(f){var b=f.level==="block";return '<li><span class="badge2 '+(b?'b-bad':'b-warn')+'" style="margin-right:6px">'+(b?'Stops it':'Fix first')+'</span><b>'+esc(f.area)+':</b> '+esc(f.text)+'</li>';}).join('')+'</ul>':'')
+    +((s.top||[]).length?'<ul>'+s.top.map(function(f){var b=f.level==="block";return '<li><span class="badge2 '+(b?'b-bad':'b-warn')+'" style="margin-right:6px">'+(b?'Stops it':'Fix first')+'</span><b>'+esc(f.area)+':</b> '+esc(f.text)
+      +(f.reason?'<div class="muted" style="font-size:11px;margin:1px 0 0 2px">Google: '+esc(f.reason)+'</div>':'')
+      +(f.fix?'<div class="muted" style="font-size:11px;margin:1px 0 0 2px">Fix: '+esc(f.fix)+'</div>':'')+'</li>';}).join('')+'</ul>':'')
     +'<div class="servMeta">'+esc(servingSourceText(s)+(servingWhen(s)?', '+servingWhen(s):''))+(s.settling?'; Google was still processing the change':'')+(servingChanged(s)?'; the campaign changed after this check':'')+(s.lastAttempt?'; a later check could not read the campaign':'')+'. Check again for Google’s reasons and every setting it holds.</div>';}
 function servingBoxHtml(c){if(!c||c.deleted||c.status==="REMOVED")return "";return '<div class="servbox" data-sc="'+esc(String(c.id))+'">'+servingStoredHtml(servingOf(c.id))+'</div>';}
 // Asks Google now (servingCheck: the serving check alone, which the server also keeps for the badge).

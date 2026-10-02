@@ -583,7 +583,9 @@ function summaryOf(result, source) {
   const counts = result.counts || {};
   return { verdict: result.verdict, headline: clip(result.headline, 240), source: String(source || 'console'),
     counts: { block: Number(counts.block) || 0, risk: Number(counts.risk) || 0, note: Number(counts.note) || 0 },
-    top: (result.findings || []).filter(f => f && f.level !== 'note').slice(0, 3).map(f => ({ level: f.level, area: clip(f.area, 40), text: clip(f.text, 200) })),
+    // Google's reason and the suggested fix ride along (clipped) so the stored card says why, not only what.
+    top: (result.findings || []).filter(f => f && f.level !== 'note').slice(0, 3).map(f => { const reason = clip(f.reason, 160), fix = clip(f.fix, 160);
+      return { level: f.level, area: clip(f.area, 40), text: clip(f.text, 200), ...(reason ? { reason } : {}), ...(fix ? { fix } : {}) }; }),
     partial: !!result.partial, settling: !!result.settling, channel: result.channel || null, checkedAt: result.checkedAt || new Date().toISOString() };
 }
 
