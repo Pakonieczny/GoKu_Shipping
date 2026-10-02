@@ -52,11 +52,11 @@ function createReview(D) {
       catch (_) { warnings.push('The '+meta.label+' preview could not be loaded.'); }
     }
     for (const format of ['landscape','square','portrait']) {
-      const p = placements.find(p => p.device === 'desktop' && p.format === format);
+      const p = r.publicationImages?.find(p=>p.format===format)||placements.find(p => p.device === 'desktop' && p.format === format);
       await image(p?.asset || w.job?.result?.placementAssets?.desktop?.[format] || w.job?.result?.assets?.[format], {kind:'responsive', format, label:format[0].toUpperCase()+format.slice(1)});
     }
     if (r.layoutReview) {
-      const proof = await ref.collection('editorAIJobs').doc(r.layoutReview.jobId).collection('data').doc('ad_proofs_v'+r.layoutReview.reviewVersion).get();
+      const proof = await (r.layoutReview.workspaceId&&D.workspace?D.workspace(r.layoutReview.workspaceId):ref).collection('editorAIJobs').doc(r.layoutReview.jobId).collection('data').doc('ad_proofs_v'+r.layoutReview.reviewVersion).get();
       if (proof.exists) {
         let rows = [];
         try { rows = D.fixedProofs(proof.data().images); } catch (_) { warnings.push('No Google-supported display layouts are saved.'); }
@@ -91,9 +91,18 @@ function createReview(D) {
         const pending=key==='pmax'&&(media?approved&&approved.jobId===selection.jobId&&approved.reviewHash===selection.reviewHash:selection.pending);
         if(!videos.length&&pending)videos=eligible.map(v=>({...v,inclusion:'Attaches after campaign creation'}));
       }
-      styles[key]={prepared:!!media,selected:!!campaign,images:included,videos,copy:fixed?null:media?.copy||{headlines:(r.copy?.headlines||[]).slice(0,key==='pmax'?15:5),longHeadlines:(r.copy?.longHeadlines||[]).slice(0,key==='pmax'?5:1),descriptions:(r.copy?.descriptions||[]).slice(0,5)},callToAction:fixed?null:media?.callToAction||'Shop now',inheritedBrand:key==='pmax'&&item.pipelinePlan?.payload?.meta?.brandGuidelinesEnabled===true,videoNote:fixed?'Fixed Display uses finished image artwork; videos are not included.':videos.length?videos[0].inclusion:r.includeVideos===false?'Saved videos are excluded.':key==='responsive_display'&&selection.pending?'These films have not been uploaded to YouTube. Responsive Display starts without them.':selection.note||'No eligible videos are included.'};
+      // Visibility is independent of upload eligibility. Completed paid clips stay
+      // playable during review, copy changes, exclusion and individual redo runs.
+      const matches=(a,b)=>!a.previous&&(!a.key||!b.key||a.key===b.key)&&((a.asset?.hash&&a.asset.hash===b.asset?.hash)||(a.url&&a.url===b.url));
+      const savedVideos=fixed?[]:(motion.displayVariants||motion.variants||[]).map(v=>{
+        const included=videos.find(i=>matches(v,i));
+        const status=included?included.inclusion:v.previous?'Previous version · preview only':r.includeVideos===false?'Excluded from publishing':motion.qualityTargetMet===false||['needs_attention','failed'].includes(motion.phase)?'Review required · not included':['running','queued'].includes(motion.phase)?'Saved clip · set still processing':'Saved clip · not included in this ad type';
+        return {...v,previewCopy:motion.copy||r.copy,included:!!included,inclusion:status};
+      });
+      for(const v of videos)if(!savedVideos.some(s=>matches(s,v)))savedVideos.push({...v,included:true,previewCopy:motion.copy||r.copy});
+      styles[key]={prepared:!!media,selected:!!campaign,images:included,videos,savedVideos,copy:fixed?null:media?.copy||{headlines:(r.copy?.headlines||[]).slice(0,key==='pmax'?15:5),longHeadlines:(r.copy?.longHeadlines||[]).slice(0,key==='pmax'?5:1),descriptions:(r.copy?.descriptions||[]).slice(0,5)},callToAction:fixed?null:media?.callToAction||'Shop now',inheritedBrand:key==='pmax'&&item.pipelinePlan?.payload?.meta?.brandGuidelinesEnabled===true,videoNote:fixed?'Fixed Display uses finished image artwork; videos are not included.':videos.length?videos[0].inclusion:r.includeVideos===false?'Saved videos are excluded.':key==='responsive_display'&&selection.pending?'These films have not been uploaded to YouTube. Responsive Display starts without them.':selection.note||'No eligible videos are included.'};
     }
-    return {ok:true,reviewHash:item.reviewHash,destination:context.product.url||r.destination,styles,images,prepared,videos:motion.displayVariants || motion.variants || [],videoPhase:motion.phase,videoNote:item.pipelinePlan?.summary?.videoStatus || 'Saved videos are shown for preview. The prepared plan confirms which videos can be included.',copyEdited:r.copyEdited===true,warnings};
+    return {ok:true,reviewHash:item.reviewHash,destination:context.product.url||r.destination,videoScope:{workspaceId:motion.workspaceId||r.workspaceId,productId:r.productId,groupRef:motion.jobGroupRef||r.groupRef},videoReview:{phase:motion.phase,score:Number.isFinite(motion.quality?.score)?motion.quality.score:null,target:motion.qualityTarget||null,issues:(motion.quality?.issues||[]).map(v=>String(typeof v==='string'?v:v.message||v.reason||'').slice(0,500)).filter(Boolean),error:motion.error||null},styles,images,prepared,videos:motion.displayVariants || motion.variants || [],videoPhase:motion.phase,videoNote:item.pipelinePlan?.summary?.videoStatus || 'Saved videos are shown for preview. The prepared plan confirms which videos can be included.',copyEdited:r.copyEdited===true,warnings};
   }
   async function update(input) {
     const {ref, item, context} = await load(input), r = item.designReview;

@@ -1,0 +1,10 @@
+const fs=require('fs'),assert=require('assert/strict'),{JSDOM}=require('jsdom');
+const html=fs.readFileSync('brites-adwords.html','utf8'),dom=new JSDOM('<div id="adDesignBody"><button><img src="/a.png"></button><button><img src="/b.png"></button></div>',{runScripts:'outside-only',url:'https://example.test'}),w=dom.window;
+w.eval(html.slice(html.indexOf('function adDesignImageStatus('),html.indexOf('function adDesignInlineBusy(')));
+const host=w.document.getElementById('adDesignBody'),[a,b]=host.querySelectorAll('img');
+Object.defineProperties(a,{complete:{value:true},naturalWidth:{value:100}});Object.defineProperties(b,{complete:{value:false}});
+host.setAttribute('data-ad-design-pending','true');w.wireAdDesignImages(host);assert(a._adDesignBadge.hidden,'already loaded image stays visible while product metadata loads');assert(!b._adDesignBadge.hidden);assert.equal(a.loading,'lazy');assert.equal(b.decoding,'async');
+b.dispatchEvent(new w.Event('load'));assert(b._adDesignBadge.hidden);b.dispatchEvent(new w.Event('error'));assert.equal(b._adDesignBadge.dataset.state,'error');assert(a._adDesignBadge.hidden,'other image status stays independent');
+w.wireAdDesignImages(host);assert.equal(host.querySelectorAll('[data-ad-design-runtime]').length,2,'re-render does not duplicate overlays');
+const old=a._adDesignBadge;a.replaceWith(w.document.createElement('img'));w.wireAdDesignImages(host);assert(!host.contains(old),'replaced thumbnail removes stale spinner');
+dom.window.close();console.log('PASS lazy independent thumbnail loading, cached images remain visible during metadata loading, error state and stale-overlay cleanup');require('./suite-guard.cjs').done();

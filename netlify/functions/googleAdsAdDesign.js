@@ -205,33 +205,33 @@ function createAdDesignService(deps) {
       });
     }return value; }
   async function productsFor(ref, workspace) { if (!workspace) { const s = await ref.get(); workspace = s.exists && s.data(); } if (!workspace || !token(workspace.sourceSetId)) throw new Error("Saved product sources are unavailable."); const result = await ref.collection("sourceSets").doc(workspace.sourceSetId).collection("products").get(); return result.docs.map(row => row.data()).sort((a, b) => (a.position || 0) - (b.position || 0)); }
+  async function batches(rows,fn){const results=[];for(let i=0;i<rows.length;i+=6)results.push(...await Promise.all(rows.slice(i,i+6).map(fn)));return results;}
   async function status({ workspaceId } = {}) {
-    const ref = refFor(workspaceId), workspace = await read(workspaceId), products = await productsFor(ref, workspace), job = workspace.job || {}, references = [];
-    for (const reference of workspace.references || []) references.push({ ...reference, url: await deps.signAsset(reference.asset) });
+    const ref = refFor(workspaceId), workspace = await read(workspaceId), job = workspace.job || {}, signatures=new Map();
+    const sign=asset=>{const key=asset?.path+'|'+asset?.hash;if(!signatures.has(key))signatures.set(key,deps.signAsset(asset));return signatures.get(key);};
+    const [products,library,gallery]=await Promise.all([productsFor(ref,workspace),ref.collection("imageLibrary").get(),savedDesignGallery(workspace,undefined,sign)]);
+    const references=await Promise.all((workspace.references||[]).map(async reference=>({...reference,url:await sign(reference.asset)})));
     const result = job.result ? clean(job.result) : null;
     const messaging=workspace.messaging&&workspace.messaging.groupRef===workspace.settings.groupRef&&productKey(workspace.messaging.productId)===productKey(workspace.settings.productId)?workspace.messaging:null;
     if(result&&messaging)result.copy=messaging.copy;
-    if (result) for (const asset of Object.values(result.assets || {})) asset.url = await deps.signAsset(asset);
-    if (result && result.logo) result.logo.url = await deps.signAsset(result.logo);
-    if(result)for(const assets of Object.values(result.placementAssets||{}))for(const asset of Object.values(assets))asset.url=await deps.signAsset(asset);
-    const library = await ref.collection("imageLibrary").get(), imageLibrary = [];
-    for (const doc of library.docs) { const image=doc.data(); imageLibrary.push({...image,url:await deps.signAsset(image.asset),...(image.originalAsset?{originalUrl:await deps.signAsset(image.originalAsset)}:{})}); }
+    if(result)await Promise.all([...Object.values(result.assets||{}),...(result.logo?[result.logo]:[]),...Object.values(result.placementAssets||{}).flatMap(Object.values)].map(async asset=>{asset.url=await sign(asset);}));
+    const imageLibrary=await Promise.all(library.docs.map(async doc=>{const image=doc.data(),[url,originalUrl]=await Promise.all([sign(image.asset),image.originalAsset?sign(image.originalAsset):null]);return {...image,url,...(image.originalAsset?{originalUrl}:{})};}));
     // Index already-paid images from workspaces created before the image library existed.
     for(const [format,asset] of Object.entries(job.assets||{})){
       if((job.placements||[]).some(p=>p.asset.hash===asset.hash)||imageLibrary.some(i=>i.asset.hash===asset.hash&&i.kind==='generated'))continue;
       const id='generated_'+sha(asset.path).slice(0,32),image={id,kind:'generated',groupRef:workspace.settings.groupRef,format,title:(products.find(p=>String(p.id)===String(workspace.settings.productId))||{}).title||'Saved design',productIds:job.result&&job.result.productIds||[String(workspace.settings.productId)],asset,createdAt:job.completedAt||job.createdAt||Date.now(),jobId:job.id};
-      await ref.collection('imageLibrary').doc(id).set(image);imageLibrary.push({...image,url:await deps.signAsset(asset)});
+      await ref.collection('imageLibrary').doc(id).set(image);imageLibrary.push({...image,url:await sign(asset)});
     }
     // AI originals belong to the listing/group, independent of workspace versions.
-    for(const image of imageLibrary.filter(i=>i.kind==='generated'&&i.groupRef===workspace.settings.groupRef&&(productKey(i.ownerProductId)===productKey(workspace.settings.productId)||(i.productIds||[]).some(id=>productKey(id)===productKey(workspace.settings.productId)))))await archiveGenerated(workspace,image);
-    for(const image of await generatedGallery(workspace)){
+    await batches(imageLibrary.filter(i=>i.kind==='generated'&&i.groupRef===workspace.settings.groupRef&&(productKey(i.ownerProductId)===productKey(workspace.settings.productId)||(i.productIds||[]).some(id=>productKey(id)===productKey(workspace.settings.productId)))),image=>archiveGenerated(workspace,image));
+    await batches(await generatedGallery(workspace,sign),async image=>{
       const index=imageLibrary.findIndex(i=>i.id===image.id);if(index>=0)imageLibrary[index]=image;else imageLibrary.push(image);
       await ref.collection('imageLibrary').doc(image.id).set(clean(image));
-    }
+    });
     let hasReceipt = false;
     if (job.inFlight && !active(job)) { const receipt = await ref.collection("outputs").doc(job.id + "_" + job.inFlight.key).get(); hasReceipt = !!(receipt.exists && (receipt.data().stageResult || receipt.data().rawResponse || receipt.data().asset)); }
     const approvalId = job.result && job.result.publication && job.result.publication.ready === false ? null : job.approvalId || workspace.context.approvalId || null, review = approvalId && deps.reviewStatus ? await deps.reviewStatus(approvalId) : null;
-    const gallery=await savedDesignGallery(workspace),imageAccess=deps.imageAccessStatus?deps.imageAccessStatus():null,warnings=[...new Set([...(workspace.context.warnings||[]),...(workspace.refreshWarnings||[]),...(imageAccess?.message?[imageAccess.message]:[])])];
+    const imageAccess=deps.imageAccessStatus?deps.imageAccessStatus():null,warnings=[...new Set([...(workspace.context.warnings||[]),...(workspace.refreshWarnings||[]),...(imageAccess?.message?[imageAccess.message]:[])])];
     return { ok: true, workspaceId, revision:Number(workspace.revision||0), sourceVersion: workspace.sourceVersion || null, snapshotHash: workspace.snapshotHash || null,
       context: {...workspace.context,warnings,currentCreative:creativeFor(workspace)}, imageAccess, products, references, imageLibrary, ...gallery, placements:chosenPlacements(workspace), settings: workspace.settings, messaging, jobMode:job.mode||null, publication:workspace.publication||null, status: job.phase || "draft", phase: job.phase || "draft",
       jobId:job.id||null,startedAt:job.createdAt||null,updatedAt:job.updatedAt||null,completedStages:Object.keys(job.stages||{}),
@@ -366,7 +366,11 @@ function createAdDesignService(deps) {
   async function generatedTargets(w){return (await galleryTargets(w)).map(t=>({ref:t.scope.collection('images'),groupRef:t.groupRef}));}
   async function linkPublishedWorkspaceGallery({workspaceId,campaignId,groups}){const w=await read(workspaceId),source=savedDesignScope(w);for(const group of groups||[]){const scope=savedDesignScope({context:{campaignId},settings:{productId:w.settings.productId,groupRef:group.ref}});if(scope.id===source.id)continue;const row=await scope.get(),meta=row.exists?row.data():{},sourceScopes=[...new Map([...(meta.sourceScopes||[]),{id:source.id,groupRef:w.settings.groupRef}].map(x=>[x.id,x])).values()];await scope.set({...meta,sourceScopes,productId:w.settings.productId,groupRef:group.ref,campaignId});}return {ok:true};}
   async function archiveGenerated(w,image){if(image.originGroupRef&&image.originGroupRef!==w.settings.groupRef)return;const target=savedDesignScope(w).collection('images').doc(image.id);await f().db.runTransaction(async tx=>{const old=await tx.get(target);if(!old.exists)tx.set(target,clean({...image,ownerProductId:w.settings.productId,workspaceId:w.workspaceId}));else if(image.deletedAt&&!old.data().deletedAt)tx.set(target,{...old.data(),deletedAt:image.deletedAt});});}
-  async function generatedGallery(w){const images=[];for(const target of await generatedTargets(w)){const result=await target.ref.get();for(const row of result.docs){const image=row.data();if(image.kind==='generated'&&productKey(image.ownerProductId)===productKey(w.settings.productId))images.push({...image,originGroupRef:target.groupRef,groupRef:w.settings.groupRef,url:await deps.signAsset(image.asset)});}}const unique=new Map();for(const image of images){const prior=unique.get(image.id);if(!prior||image.deletedAt||!prior.deletedAt)unique.set(image.id,image);}return [...unique.values()];}
+  async function generatedGallery(w,sign=deps.signAsset){
+    const targets=await generatedTargets(w),results=await Promise.all(targets.map(t=>t.ref.get()));
+    const images=await batches(results.flatMap((result,i)=>result.docs.map(row=>({image:row.data(),groupRef:targets[i].groupRef}))).filter(r=>r.image.kind==='generated'&&productKey(r.image.ownerProductId)===productKey(w.settings.productId)),async({image,groupRef})=>{return {...image,originGroupRef:groupRef,groupRef:w.settings.groupRef,url:await sign(image.asset)};});
+    const unique=new Map();for(const image of images){const prior=unique.get(image.id);if(!prior||image.deletedAt||!prior.deletedAt)unique.set(image.id,image);}return [...unique.values()];
+  }
   async function deleteGeneratedImage(input={}){
     const w=await read(input.workspaceId);editorScope(w,input);if(!token(input.id))throw new Error('Choose an AI image.');if(w.job&&(active(w.job)||w.job.inFlight||['queued','running'].includes(w.job.phase)))throw new Error('Wait for the current design to finish.');
     const targets=await generatedTargets(w);let found;
@@ -386,15 +390,36 @@ function createAdDesignService(deps) {
     for(const g of groups||[]){const w={context:{campaignId},settings:{productId:g.productId,groupRef:g.ref}},ref=savedDesignScope(w),row=await ref.get(),old=row.exists&&row.data().sourceGroups||[],sourceGroups=[...new Set([...old,sourceGroupRef,g.temporaryRef].filter(Boolean))];if(JSON.stringify(old)!==JSON.stringify(sourceGroups))await ref.set({sourceGroups,productId:g.productId,groupRef:g.ref,campaignId});}
     return {ok:true};
   }
-  async function savedDesignGallery(w,before){
+  async function savedDesignGallery(w,before,sign=deps.signAsset){
     const targets=await savedDesignTargets(w),results=await Promise.all(targets.map(t=>t.ref.select('id','name','productId','groupRef','artboard','device','asset','thumbnail','createdAt','deletedAt','destination','appearance').get()));
     const ordered=[...new Map(results.flatMap(rows=>rows.docs.map(d=>d.data())).filter(d=>!d.deletedAt&&(!before||d.createdAt<before)).map(d=>[d.id,d])).values()].sort((a,b)=>b.createdAt-a.createdAt||a.id.localeCompare(b.id)),page=ordered.slice(0,60);
     for(const item of page)if(!item.appearance){const found=await savedDesignRecord(w,item.id);if(found?.design.document){item.appearance=appearanceSummary(found.design.document);await found.ref.update({appearance:item.appearance});}}
-    return {savedDesigns:await Promise.all(page.map(async d=>({...d,url:await deps.signAsset(d.asset),thumbnailUrl:await deps.signAsset(d.thumbnail||d.asset)}))),savedDesignCursor:ordered.length>60?page[page.length-1].createdAt:null,imageAccess:deps.imageAccessStatus?deps.imageAccessStatus():null};
+    return {savedDesigns:await Promise.all(page.map(async d=>{const [url,thumbnailUrl]=await Promise.all([sign(d.asset),d.thumbnail?sign(d.thumbnail):null]);return {...d,url,thumbnailUrl:thumbnailUrl||url};})),savedDesignCursor:ordered.length>60?page[page.length-1].createdAt:null,imageAccess:deps.imageAccessStatus?deps.imageAccessStatus():null};
   }
   async function editorSavedDesigns(input={}){const w=await read(input.workspaceId);editorScope(w,input);return {ok:true,...await savedDesignGallery(w,input.before)};}
   // What an animated film can be made from without buying anything new: this product's finished AI design (it may sit in the
   // workspace that saved the design), else the newest saved design's own photographs.
+  // Resolve the selected saved package, including its original workspace, instead
+  // of confusing an editor package with the legacy image-generation job.
+  async function editorPublicationBasis(input={}){
+    const w=await read(input.workspaceId);editorScope(w,input);let found=null;
+    if(input.savedDesignId){if(!token(input.savedDesignId))throw Error('Choose a saved design package.');found=await savedDesignRecord(w,input.savedDesignId);if(!found||found.design.deletedAt||productKey(found.design.productId)!==productKey(input.productId))throw Error('The selected saved package is unavailable for this product.');}
+    const owners=found?[found.design.workspaceId]:[input.workspaceId],groups=found?[found.groupRef]:[input.groupRef];
+    if(!found)for(const target of await savedDesignTargets(w)){const rows=await target.ref.get();for(const row of rows.docs){const d=row.data();if(!d.deletedAt&&productKey(d.productId)===productKey(input.productId)&&d.workspaceId&&!owners.includes(d.workspaceId)){owners.push(d.workspaceId);groups.push(target.groupRef);}}}
+    for(let i=0;i<owners.length;i++){
+      if(!token(owners[i]))continue;const owner=refFor(owners[i]),rows=await owner.collection('editorAIJobs').get();
+      const jobs=rows.docs.map(d=>({...d.data(),id:d.data().id||d.id})).filter(j=>j.phase==='ready'&&!j.resetAt&&productKey(j.scope?.productId)===productKey(input.productId)&&j.scope?.groupRef===groups[i]&&(!found||Number(j.createdAt)<=Number(found.design.createdAt))).sort((a,b)=>Number(b.createdAt)-Number(a.createdAt));
+      for(const job of jobs){const row=await owner.collection('editorAIJobs').doc(job.id).collection('data').doc('result').get(),result=row.exists?row.data():null;
+        if(!result?.responsive||result.publicationImages?.length!==3)continue;
+        const ids=new Set((result.sources||[]).map(s=>s.id));if(found&&(!(found.design.sourceIds||[]).length||found.design.sourceIds.some(id=>!ids.has(id))))continue;
+        if(result.publicationImages.some(p=>(p.productIds||[result.productId]).some(id=>productKey(id)!==productKey(input.productId))))throw Error('A saved package photo belongs to another product.');
+        const versions=await Promise.all(Array.from({length:11},(_,n)=>owner.collection('editorAIJobs').doc(job.id).collection('data').doc('ad_quality_v'+(11-n)).get())),reviewVersion=versions.findIndex(r=>r.exists),version=reviewVersion<0?null:11-reviewVersion;
+        return clean({savedDesignId:found?.design.id||null,publicationImages:result.publicationImages,copy:result.nativeCopy,layoutReview:version?{workspaceId:owners[i],productId:job.scope.productId,groupRef:job.scope.groupRef,jobId:job.id,reviewVersion:version}:null});
+      }
+    }
+    if(found)throw Error('This saved package has no matching complete photographic set. Its artwork is retained; open the package to recover its original design.');
+    return null;
+  }
   async function editorMotionBasis(input={}){
     if(input.firstFrame===true)return editorMotionFirstFrame(input);
     const w=await read(input.workspaceId);editorScope(w,input);
@@ -509,7 +534,7 @@ function createAdDesignService(deps) {
   }
   async function editorState(input={}){
     const {workspaceId,productId,groupRef,device='shared',artboard}=input,ref=refFor(workspaceId),w=await read(workspaceId);editorScope(w,input);
-    const rows=await ref.collection('editorDesigns').get(),designs=rows.docs.map(d=>d.data()).filter(d=>d.productId===productId&&d.groupRef===groupRef),id=artboard?editorKey({...input,device}):null;
+    const [rows,gallery,exportRows]=await Promise.all([ref.collection('editorDesigns').get(),savedDesignGallery(w),ref.collection('editorExports').get()]),designs=rows.docs.map(d=>d.data()).filter(d=>d.productId===productId&&d.groupRef===groupRef),id=artboard?editorKey({...input,device}):null;
     if(!designs.some(d=>d.id===id))for(const legacyId of w.context.legacyEditorWorkspaceIds||[]){
       const legacy=await refFor(legacyId).collection('editorDesigns').get();
       for(const row of legacy.docs.map(d=>d.data()).filter(d=>productKey(d.productId)===productKey(productId)&&d.groupRef===groupRef))if(!designs.some(d=>d.id===row.id))designs.push({...row,revision:0,inheritedFrom:row.id,legacyWorkspaceId:legacyId});
@@ -527,9 +552,9 @@ function createAdDesignService(deps) {
       }
     }
     const sources=[];if(design)for(const key of design.sourceIds||[]){const p=await (design.legacyWorkspaceId?refFor(design.legacyWorkspaceId):ref).collection('editorSources').doc(key).get();if(!p.exists)throw new Error('A saved design image is unavailable. Your layers are retained.');const photo=p.data();if(productKey(photo.productId)!==productKey(productId)||photo.groupRef!==groupRef)throw new Error('The saved source belongs to another product or group.');if(design.legacyWorkspaceId)await ref.collection('editorSources').doc(key).set({...photo,productId});sources.push({...photo,url:await deps.signAsset(photo.asset)});}
-    const exportRows=await ref.collection('editorExports').get(),exports=[];
+    const exports=[];
     for(const row of exportRows.docs.map(d=>d.data()).filter(e=>!e.saveDesignId&&e.designId===(design&&design.id||id)).sort((a,b)=>b.createdAt-a.createdAt).slice(0,12))exports.push({...row,url:await deps.signAsset(row.asset),width:row.asset.width,height:row.asset.height});
-    return {ok:true,...await savedDesignGallery(w),design:design?{...design,...(!own?{id,revision:0,inheritedFrom:design.id,device}:{})}:null,sources,exports,designs:designs.map(({id,name,device,artboard,revision,updatedAt})=>({id,name,device,artboard,revision,updatedAt}))};
+    return {ok:true,...gallery,design:design?{...design,...(!own?{id,revision:0,inheritedFrom:design.id,device}:{})}:null,sources,exports,designs:designs.map(({id,name,device,artboard,revision,updatedAt})=>({id,name,device,artboard,revision,updatedAt}))};
   }
   async function editorResponsiveState(input={}){
     const w=await read(input.workspaceId);editorScope(w,input);editorKey(input);
@@ -1491,6 +1516,6 @@ function createAdDesignService(deps) {
       await saveJob({ phase: "needs_attention", error: String(error.message || error).slice(0, 900), leaseUntil: 0, progress: { pct: Number(job.progress && job.progress.pct) || 0, label: "Saved work retained — review the unfinished step" } }); throw error;
     }
   }
-  return { workspace, save, upload, crop, start, status, run, resetFailures, editorSource, editorState, editorResponsiveState, editorSave, editorExport, editorSavedDesigns, editorOpenSavedDesign, editorMotionBasis, editorMotionFirstFrame, editorDeleteSavedDesign, deleteGeneratedImage, linkPublishedDesignScopes, linkPublishedWorkspaceGallery, editorAIStart, editorAIStatus, editorAIResume, editorAIRun, editorAIApply, editorAIFix, editorIdentity, recordAnimationHandoff };
+  return { workspace, save, upload, crop, start, status, run, resetFailures, editorSource, editorState, editorResponsiveState, editorSave, editorExport, editorSavedDesigns, editorOpenSavedDesign, editorPublicationBasis, editorMotionBasis, editorMotionFirstFrame, editorDeleteSavedDesign, deleteGeneratedImage, linkPublishedDesignScopes, linkPublishedWorkspaceGallery, editorAIStart, editorAIStatus, editorAIResume, editorAIRun, editorAIApply, editorAIFix, editorIdentity, recordAnimationHandoff };
 }
 module.exports = { orderAssetGroupMutations, createAdDesignService, buildVersionDesignPayload, isSharedProductGroup, researchGroupFor, formatAssets, chosenPlacements, placementMatches, FORMATS, settingsFor, refreshedSettings, responseText, MAX_UPLOAD };

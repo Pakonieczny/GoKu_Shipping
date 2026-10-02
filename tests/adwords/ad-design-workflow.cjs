@@ -142,6 +142,15 @@ await studio.svc.editorExport({...scope,revision:2,format:'png',dataBase64:maste
 let gallery=await studio.svc.editorSavedDesigns(scope);check(gallery.savedDesigns.length===2&&gallery.savedDesigns.every(x=>x.url&&x.thumbnailUrl),'every save appears as a separate full-quality design and thumbnail');
 const archived=await studio.svc.editorOpenSavedDesign({...scope,id:copy1});check(archived.design.appearance.layers.some(l=>l.text==='Shop now'&&l.fontSize===15),'saved design gallery retains text styling in its rich hover metadata');
 check(archived.design.document.objects[1].objects[1].text==='Shop now'&&archived.sources[0].width===3000,'archive retains editable buttons and high-resolution original source');
+// A selected legacy package recovers its own paid photographs, never a later package.
+const basisJob='eai_'+'7'.repeat(40),basisPath=studio.p+'/editorAIJobs/'+basisJob;
+studio.f.docs.set(basisPath,{id:basisJob,createdAt:archived.design.createdAt-100,phase:'ready',scope:{productId:scope.productId,groupRef:scope.groupRef}});
+studio.f.docs.set(basisPath+'/data/result',{productId:scope.productId,sources:archived.sources,publicationImages:['square','landscape','portrait'].map(format=>({format,asset:archived.sources[0].asset,productIds:[scope.productId]})),nativeCopy:{headlines:['Saved package copy']},responsive:{}});
+studio.f.docs.set(basisPath+'/data/ad_quality_v3',{pass:true,score:97});
+const newerJob='eai_'+'8'.repeat(40);studio.f.docs.set(studio.p+'/editorAIJobs/'+newerJob,{id:newerJob,createdAt:archived.design.createdAt+100,phase:'ready',scope:{productId:scope.productId,groupRef:scope.groupRef}});
+studio.f.docs.set(studio.p+'/editorAIJobs/'+newerJob+'/data/result',{sources:archived.sources,publicationImages:['square','landscape','portrait'].map(format=>({format,asset:{hash:'wrong'},productIds:[scope.productId]})),responsive:{}});
+const packageRecovered=await studio.svc.editorPublicationBasis({...scope,savedDesignId:copy1});check(packageRecovered.layoutReview.jobId===basisJob&&packageRecovered.publicationImages.length===3&&packageRecovered.copy.headlines[0]==='Saved package copy','selected package restores its existing photographic set and exact review instead of a newer unrelated job');
+
 studio.D.cropImage=cropEnv.D.cropImage;
 const savedPlacementInput={workspaceId:studio.id,groupRef:refs.group,device:'desktop',format:'square',source:{kind:'savedDesign',imageId:copy1}};
 const placedDesign=await studio.svc.crop(savedPlacementInput),placedDesignId=placedDesign.placements[0].imageId,placedRecord=placedDesign.imageLibrary.find(p=>p.id===placedDesignId);
@@ -151,6 +160,8 @@ check(placedRecord.productIds.includes(product.id),'placed artwork retains the i
 const nextId='forked_workspace',fork=clone(studio.f.docs.get(studio.p));fork.workspaceId=nextId;studio.f.docs.set('State/adDesign/workspaces/'+nextId,fork);
 check((await studio.svc.editorSavedDesigns({...scope,workspaceId:nextId})).savedDesigns.length===2,'saved design gallery survives a campaign-version workspace fork');
 check((await studio.svc.editorOpenSavedDesign({...scope,workspaceId:nextId,id:copy1})).sources.length===1,'forked workspace restores original editable sources');
+const forkBasis=await studio.svc.editorPublicationBasis({...scope,workspaceId:nextId,savedDesignId:copy1});check(forkBasis.layoutReview.workspaceId===studio.id&&forkBasis.layoutReview.jobId===basisJob,'selected package approval follows its original workspace across a version fork');
+
 const changed=clone(fork);changed.settings.groupRef='customers/123/assetGroups/99';studio.f.docs.set('State/adDesign/workspaces/'+nextId,changed);check((await studio.svc.editorSavedDesigns({...scope,workspaceId:nextId,groupRef:changed.settings.groupRef})).savedDesigns.length===0,'another group cannot see these saved designs');
 changed.settings.productId='gid://shopify/Product/22';changed.settings.groupRef=scope.groupRef;studio.f.docs.set('State/adDesign/workspaces/'+nextId,changed);check((await studio.svc.editorSavedDesigns({...scope,workspaceId:nextId,productId:changed.settings.productId})).savedDesigns.length===0,'another listing in the same group cannot see these saved designs');
 await assert.rejects(()=>studio.svc.crop({...savedPlacementInput,workspaceId:nextId}),/unavailable for the selected product and group/);n++;
@@ -158,7 +169,7 @@ const wrongGroup=clone(fork);wrongGroup.context.groups.push({ref:'customers/123/
 await assert.rejects(()=>studio.svc.crop({...savedPlacementInput,workspaceId:nextId,groupRef:wrongGroup.settings.groupRef}),/unavailable for the selected product and group/);n++;
 const deletedAssets=[];studio.D.deleteSavedDesignAsset=async(a,id)=>{check(a.path.includes('saved_design_'+id),'delete only targets uniquely named copy assets');deletedAssets.push(a.path);studio.blobs.delete(a.path);};
 await studio.svc.editorDeleteSavedDesign({...scope,id:copy1});gallery=await studio.svc.editorSavedDesigns(scope);check(gallery.savedDesigns.length===1&&gallery.savedDesigns[0].id===copy2&&deletedAssets.length===2,'deleting a saved design removes only its raster and thumbnail');
-await assert.rejects(()=>studio.svc.editorOpenSavedDesign({...scope,id:copy1}),/deleted/);n++;check((await studio.svc.editorOpenSavedDesign({...scope,id:copy2})).sources.length===1,'deleting one copy preserves shared original photos for other designs');
+await assert.rejects(()=>studio.svc.editorOpenSavedDesign({...scope,id:copy1}),/deleted/);n++;await assert.rejects(()=>studio.svc.editorPublicationBasis({...scope,savedDesignId:copy1}),/unavailable/);n++;check((await studio.svc.editorOpenSavedDesign({...scope,id:copy2})).sources.length===1,'deleting one copy preserves shared original photos for other designs');
 await assert.rejects(()=>studio.svc.crop({...savedPlacementInput,expectedImageId:placedDesignId}),/unavailable/);n++;
 const retainedPlacement=await studio.svc.crop({...savedPlacementInput,source:{kind:'library',imageId:placedDesignId},expectedImageId:placedDesignId,rect:{x:.1,y:.1,width:.5,height:.5}});
 check(retainedPlacement.placements.every(p=>p.artwork)&&retainedPlacement.imageLibrary.some(p=>p.artwork&&p.originalAsset.path===placedRecord.originalAsset.path),'placed design remains recroppable after deleting its original gallery copy');
@@ -215,5 +226,6 @@ check(scopeDoc.job.stages.quality.score===82&&scopedRecovery.f.docs.get(scopedRe
 await scopedRecovery.svc.start({workspaceId:scopedRecovery.id});await scopedRecovery.svc.run({workspaceId:scopedRecovery.id,jobId:scopeRun.jobId});
 check(scopedRecovery.calls.quality===2,'resuming corrected review never repeats a completed paid call');
 
+const signedPaths=new Map(),oldSigner=aiArchive.D.signAsset;aiArchive.D.signAsset=async asset=>{signedPaths.set(asset.path,(signedPaths.get(asset.path)||0)+1);return oldSigner(asset);};await aiArchive.svc.status({workspaceId:aiArchive.id});check([...signedPaths.values()].every(n=>n===1),'popup status signs each shared saved image once across library, placements and galleries');
 console.log('PASS '+n+' Ad Design upload, source identity, paid-stage reuse, complete formats, exact approvals and quality checks');require('./suite-guard.cjs').done();})().catch(error=>{console.error(error);process.exit(1)});
 
