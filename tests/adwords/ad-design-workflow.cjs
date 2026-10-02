@@ -151,6 +151,18 @@ const newerJob='eai_'+'8'.repeat(40);studio.f.docs.set(studio.p+'/editorAIJobs/'
 studio.f.docs.set(studio.p+'/editorAIJobs/'+newerJob+'/data/result',{sources:archived.sources,publicationImages:['square','landscape','portrait'].map(format=>({format,asset:{hash:'wrong'},productIds:[scope.productId]})),responsive:{}});
 const packageRecovered=await studio.svc.editorPublicationBasis({...scope,savedDesignId:copy1});check(packageRecovered.layoutReview.jobId===basisJob&&packageRecovered.publicationImages.length===3&&packageRecovered.copy.headlines[0]==='Saved package copy','selected package restores its existing photographic set and exact review instead of a newer unrelated job');
 
+
+const packageResult=clone(studio.f.docs.get(basisPath+'/data/result'));
+packageResult.nativeCopy={headlines:['A Whimsical Duck Charm','Jewelry For Duck Lovers','Discover Duck Jewelry'],longHeadlines:['Discover a whimsical duck necklace'],descriptions:['Discover our whimsical duck necklace, a charming piece of jewelry for your collection.','Browse the duck charm necklace and discover its distinctive details at Brites Jewelry.']};
+packageResult.responsive={plan:{copy:{shortHeadline:'Duck Necklace',description:'Shop the duck necklace at Brites Jewelry.',cta:'Shop now'}}};
+studio.f.docs.set(basisPath+'/data/result',packageResult);
+const openedMessaging=await studio.svc.editorOpenSavedDesign({...scope,id:copy1,includePreviews:true,includeMessaging:true});
+check(openedMessaging.copy.headlines.includes('Duck Necklace')&&openedMessaging.copy.descriptions.includes('Shop the duck necklace at Brites Jewelry.'),'opening a legacy package restores compact messaging from its own saved artwork plan');
+check(openedMessaging.copy.descriptions[0]===packageResult.nativeCopy.descriptions[0]&&studio.f.docs.get(basisPath+'/data/result').nativeCopy.headlines.length===3,'recovery preserves complete original text and does not rewrite paid results');
+const fallbackResult={responsive:{plan:{nativeCopy:openedMessaging.copy}}};
+check(JSON.stringify(require('../../netlify/functions/googleAdsAdDesign').savedPackageCopy(fallbackResult))===JSON.stringify(openedMessaging.copy),'plan native copy remains recoverable when legacy result has no top-level native copy');
+check(require('../../netlify/functions/googleAdsAdDesign').savedPackageCopy({nativeCopy:{headlines:'bad'}}).headlines==='bad','malformed legacy copy remains invalid rather than throwing during package recovery');
+
 studio.D.cropImage=cropEnv.D.cropImage;
 const savedPlacementInput={workspaceId:studio.id,groupRef:refs.group,device:'desktop',format:'square',source:{kind:'savedDesign',imageId:copy1}};
 const placedDesign=await studio.svc.crop(savedPlacementInput),placedDesignId=placedDesign.placements[0].imageId,placedRecord=placedDesign.imageLibrary.find(p=>p.id===placedDesignId);

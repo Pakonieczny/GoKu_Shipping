@@ -10,6 +10,25 @@ const MAX_UPLOAD = 4 * 1024 * 1024;
 const TEXT_MODEL = require("./_googleAdsClaude").MODEL;
 const TEXT_MISSING = "Sonnet 5.5 is not connected: ANTHROPIC_API_KEY is missing, so AI research, copy and reviews cannot run. No AI request was sent.", IMAGE_MISSING = "Image generation is not connected: OPENAI_API_KEY is missing, so new product photographs cannot be generated. No image request was sent.";
 const productKey = id => String(id || '').split('/').pop();
+// Recover existing package text only. Compact alternatives reuse complete saved
+// strings; never truncate claims, fabricate offers or start another AI request.
+function savedPackageCopy(result,validate) {
+  const plan=result?.responsive?.plan||{},candidates=[result?.nativeCopy,plan.nativeCopy].filter(c=>c&&typeof c==='object');
+  const copies=candidates.map(c=>{
+    const copy=clean(c);
+    for(const [key,max,limit,alternatives]of [
+      ['headlines',15,15,[plan.copy?.shortHeadline,plan.copy?.cta]],
+      ['descriptions',5,60,[plan.copy?.description,...(Array.isArray(c.longHeadlines)?c.longHeadlines:[])]]
+    ]){
+      const rows=copy[key];if(!Array.isArray(rows)||rows.some(t=>typeof t==='string'&&t.trim()&&t.length<=limit))continue;
+      const text=alternatives.find(t=>typeof t==='string'&&t.trim()&&t.trim().length<=limit&&!rows.some(r=>typeof r==='string'&&r.toLowerCase()===t.trim().toLowerCase()));
+      if(text&&rows.length<max)rows.push(text.trim());
+    }
+    return copy;
+  });
+  const score=c=>(typeof validate==='function'&&validate(c)?100:0)+['headlines','longHeadlines','descriptions'].reduce((n,k)=>n+(Array.isArray(c[k])?Math.min(c[k].length,k==='headlines'?3:k==='descriptions'?2:1):0),0)+(Array.isArray(c.headlines)&&c.headlines.some(t=>typeof t==='string'&&t.trim()&&t.length<=15)?1:0)+(Array.isArray(c.descriptions)&&c.descriptions.some(t=>typeof t==='string'&&t.trim()&&t.length<=60)?1:0);
+  return copies.sort((a,b)=>score(b)-score(a))[0]||null;
+}
 function isSharedProductGroup(workspace, group) {
   const {offerParts, destination}=require('./googleAdsAdDesignContext'),parts=workspace.sourceSnapshot?.components||{};
   // Older saved workspaces predate context.campaignId. Their provider snapshot
@@ -413,8 +432,8 @@ function createAdDesignService(deps) {
         if(!result?.responsive||result.publicationImages?.length!==3)continue;
         const ids=new Set((result.sources||[]).map(s=>s.id));if(found&&(!(found.design.sourceIds||[]).length||found.design.sourceIds.some(id=>!ids.has(id))))continue;
         if(result.publicationImages.some(p=>(p.productIds||[result.productId]).some(id=>productKey(id)!==productKey(input.productId))))throw Error('A saved package photo belongs to another product.');
-        const versions=await Promise.all(Array.from({length:11},(_,n)=>owner.collection('editorAIJobs').doc(job.id).collection('data').doc('ad_quality_v'+(11-n)).get())),reviewVersion=versions.findIndex(r=>r.exists),version=reviewVersion<0?null:11-reviewVersion;
-        return clean({savedDesignId:found?.design.id||null,publicationImages:result.publicationImages,copy:result.nativeCopy,layoutReview:version?{workspaceId:owners[i],productId:job.scope.productId,groupRef:job.scope.groupRef,jobId:job.id,reviewVersion:version}:null});
+        const versions=input.includeReview===false?[]:await Promise.all(Array.from({length:11},(_,n)=>owner.collection('editorAIJobs').doc(job.id).collection('data').doc('ad_quality_v'+(11-n)).get())),reviewVersion=versions.findIndex(r=>r.exists),version=reviewVersion<0?null:11-reviewVersion;
+        return clean({savedDesignId:found?.design.id||null,publicationImages:result.publicationImages,copy:savedPackageCopy(result,deps.copyValid),layoutReview:version?{workspaceId:owners[i],productId:job.scope.productId,groupRef:job.scope.groupRef,jobId:job.id,reviewVersion:version}:null});
       }
     }
     if(found)throw Error('This saved package has no matching complete photographic set. Its artwork is retained; open the package to recover its original design.');
@@ -484,7 +503,9 @@ function createAdDesignService(deps) {
       const same=all.find(r=>r.device===design.device&&r.artboard?.key===design.artboard?.key&&JSON.stringify(r.document)===JSON.stringify(design.document));
       if(same){const ids=new Set(design.sourceIds||[]);previewDocuments=all.filter(r=>['square','landscape','portrait'].includes(r.artboard?.key)&&productKey(r.productId)===productKey(design.productId)&&r.groupRef===design.groupRef&&(r.sourceIds||[]).every(id=>ids.has(id))).map(({device,artboard,document})=>({device,artboard,document}));}
     }
-    return {ok:true,design,sources,...(input.includePreviews?{previewDocuments}: {})};
+    let messaging=null,messagingWarning=null;
+    if(input.includeMessaging)try{messaging=await editorPublicationBasis({...input,savedDesignId:input.id,includeReview:false});}catch(e){messagingWarning=e.message;}
+    return {ok:true,design,sources,...(input.includePreviews?{previewDocuments}: {}),...(input.includeMessaging?{copy:messaging?.copy||null,...(messagingWarning?{messagingWarning}: {})}: {})};
   }
   async function editorDeleteSavedDesign(input={}){
     const w=await read(input.workspaceId);editorScope(w,input);if(!token(input.id))throw new Error('Choose a saved design.');const found=await savedDesignRecord(w,input.id);if(!found)throw new Error('This saved design is unavailable.');const target=found.ref;let design;
@@ -1097,7 +1118,7 @@ function createAdDesignService(deps) {
       const placements=(latest.placements||[]).filter(p=>!placementMatches(p,latest.settings));
       for(const image of result.publicationImages)for(const device of ['desktop','mobile'])placements.push({groupRef:request.groupRef,productId:request.productId,device,format:image.format,imageId:image.id,asset:image.asset,productIds:[request.productId],artwork:false,rootSource:{kind:'library',imageId:image.id}});
       tx.set(ref.collection('history').doc(job.id+'_before_scene'),clean({placements:latest.placements||[],messaging:latest.messaging||null,job:latest.job||null,createdAt:Date.now()}));
-      tx.update(ref,{placements,messaging:{copy:result.nativeCopy,productId:request.productId,groupRef:request.groupRef,researchedAt:Date.now(),evidenceHash:result.evidenceHash,edited:false},job:null,revision:Number(latest.revision||0)+1,updatedAt:Date.now()});
+      tx.update(ref,{placements,messaging:{copy:savedPackageCopy(result,deps.copyValid),productId:request.productId,groupRef:request.groupRef,researchedAt:Date.now(),evidenceHash:result.evidenceHash,edited:false},job:null,revision:Number(latest.revision||0)+1,updatedAt:Date.now()});
       tx.update(target,{nativeAppliedAt:Date.now()});
     });
     return {ok:true};
@@ -1518,4 +1539,4 @@ function createAdDesignService(deps) {
   }
   return { workspace, save, upload, crop, start, status, run, resetFailures, editorSource, editorState, editorResponsiveState, editorSave, editorExport, editorSavedDesigns, editorOpenSavedDesign, editorPublicationBasis, editorMotionBasis, editorMotionFirstFrame, editorDeleteSavedDesign, deleteGeneratedImage, linkPublishedDesignScopes, linkPublishedWorkspaceGallery, editorAIStart, editorAIStatus, editorAIResume, editorAIRun, editorAIApply, editorAIFix, editorIdentity, recordAnimationHandoff };
 }
-module.exports = { orderAssetGroupMutations, createAdDesignService, buildVersionDesignPayload, isSharedProductGroup, researchGroupFor, formatAssets, chosenPlacements, placementMatches, FORMATS, settingsFor, refreshedSettings, responseText, MAX_UPLOAD };
+module.exports = { savedPackageCopy, orderAssetGroupMutations, createAdDesignService, buildVersionDesignPayload, isSharedProductGroup, researchGroupFor, formatAssets, chosenPlacements, placementMatches, FORMATS, settingsFor, refreshedSettings, responseText, MAX_UPLOAD };
