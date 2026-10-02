@@ -1876,6 +1876,7 @@ async function markApprovalApproved(id, expectedReview = {}) {
   const f=fb(),ref=f.db.collection(COL.approvals).doc(String(id));
   await f.db.runTransaction(async tx=>{const s=await tx.get(ref);if(!s.exists)throw new Error("Draft not found.");const it=s.data();
     if(it.status!=="PENDING"||(it.creativeLease&&it.creativeLease.until>Date.now()))throw new Error("This draft is not available for approval yet.");
+    if(it.type==='adDesignSubmission')throw new Error(SUBMISSION_ON_CARD);
     if(expectedReview.hash&&creativeHash(it.payload||{})!==expectedReview.hash||expectedReview.assetHash&&_creativeAssetHash(it.creative||{})!==expectedReview.assetHash)throw new Error('The reviewed images or messages changed. Prepare this update again.');
     assertCreativeReviewed(it);tx.update(ref,{status:"APPROVED",approvedAt:Date.now(),lastError:null});
   });return {ok:true,id};
@@ -1915,17 +1916,20 @@ async function _guardTargetRoasDraft(p) {
   if (cc.biddingStrategyType !== "MAXIMIZE_CONVERSION_VALUE" || Number((cc.maximizeConversionValue || {}).targetRoas) > 0)
     throw new Error("The campaign's bidding changed after this draft was made, so it no longer applies. Nothing was changed.");
 }
-async function applyApproval(id, ctrl, { waitForLeaseMs = 0 } = {}) {
+async function applyApproval(id, ctrl, { waitForLeaseMs = 0, submission = false } = {}) {
   const f=fb();if(!f)throw new Error("No Firestore connection.");
-  const ref=f.db.collection(COL.approvals).doc(String(id)),attempt=require("crypto").randomUUID(),lock=f.db.collection(COL.state).doc("publicationLease");let it;
+  const ref=f.db.collection(COL.approvals).doc(String(id)),attempt=require("crypto").randomUUID(),lock=f.db.collection(COL.state).doc("publicationLease");let it,reopened=false;
   ctrl=ctrl||await control();
   // Drafts approved together publish one at a time: the worker waits up to waitForLeaseMs for the
   // running one. Still busy after that: this draft stays APPROVED with the reason shown, to retry.
+  // A complete ad publishes only from its own card (publishAdDesignSubmission: Merchant check, then its films);
+  // one found Approved anywhere else returns to that card, with nothing sent.
   for(const giveUp=Date.now()+(Number(waitForLeaseMs)||0);;){try{
-  await f.db.runTransaction(async tx=>{const s=await tx.get(ref);if(!s.exists)throw new Error("Draft not found.");it=s.data();const lease=await tx.get(lock);if(lease.exists&&lease.data().until>Date.now())throw Object.assign(new Error("Another publication is still running. Its result must finish before this draft can be sent."),{leaseBusy:true});
+  await f.db.runTransaction(async tx=>{const s=await tx.get(ref);if(!s.exists)throw new Error("Draft not found.");it=s.data();reopened=it.type==='adDesignSubmission'&&!submission&&it.status==="APPROVED";if(reopened){tx.update(ref,{status:"PENDING",pipelineReview:null,publishRequestedAt:null,lastError:SUBMISSION_ON_CARD});return;}const lease=await tx.get(lock);if(lease.exists&&lease.data().until>Date.now())throw Object.assign(new Error("Another publication is still running. Its result must finish before this draft can be sent."),{leaseBusy:true});
     if(it.status!=="APPROVED")throw new Error(it.status==="APPLIED"?"This draft was already published.":"Draft is not available for publication; another attempt may be running.");
     assertCreativeReviewed(it);tx.update(ref,{status:"APPLYING",applyAttempt:attempt,applyStartedAt:Date.now(),lastError:null});tx.set(lock,{owner:attempt,until:Date.now()+600000});
-  });break;}catch(e){if(!e.leaseBusy)throw e;if(Date.now()>=giveUp){if(it&&it.status==="APPROVED")await ref.update({lastError:e.message+" Publish it again once that finishes."}).catch(()=>{});throw e;}await new Promise(r=>setTimeout(r,5000));}}
+  });break;}catch(e){if(!e.leaseBusy)throw e;if(Date.now()>=giveUp){if(it&&it.status==="APPROVED")await ref.update(it.type==='adDesignSubmission'?{status:"PENDING",pipelineReview:null,lastError:e.message+" Approve ad again once that finishes."}:{lastError:e.message+" Publish it again once that finishes."}).catch(()=>{});throw e;}await new Promise(r=>setTimeout(r,5000));}}
+  if(reopened)throw new Error(SUBMISSION_ON_CARD);
   let dispatched=false, publicationResult=null, purchaseGoals=null, brandExclusions=null;
   try {
     const p=it.payload||{};
@@ -2018,13 +2022,15 @@ async function applyApproval(id, ctrl, { waitForLeaseMs = 0 } = {}) {
     if(!ctrl.dryRun)for(const campaignId of (learningPublication&&learningPublication.campaignIds||[]))_invalidateCampaignImprovement(campaignId);
     return {ok:true,id,status:ctrl.dryRun?"VALIDATED":"APPLIED",dryRun:!!ctrl.dryRun,versionWarning:publicationResult&&publicationResult.versionWarning||null};
   } catch(e) {
-    const unknown=dispatched&&!ctrl.dryRun&&!e.definiteResponse;
-    await ref.update({status:unknown?"APPLY_UNKNOWN":"APPROVED",lastError:String(e.message||e).slice(0,600),applyAttempt:unknown?attempt:null,needsReconciliation:unknown}).catch(()=>{});
+    // Nothing reached Google, or Google refused it: a complete ad returns to its own card (its prepared plan kept) to approve again there.
+    const unknown=dispatched&&!ctrl.dryRun&&!e.definiteResponse,onCard=!unknown&&it.type==='adDesignSubmission';
+    await ref.update({status:unknown?"APPLY_UNKNOWN":onCard?"PENDING":"APPROVED",...(onCard?{pipelineReview:null}:{}),lastError:String(e.message||e).slice(0,600),applyAttempt:unknown?attempt:null,needsReconciliation:unknown}).catch(()=>{});
     if(unknown)throw new Error("Google's result could not be confirmed. Automatic retry is blocked to avoid duplicating ads. Check this draft against Google Ads before another publication attempt.");
     throw e;
   } finally {await f.db.runTransaction(async tx=>{const lease=await tx.get(lock);if(lease.exists&&lease.data().owner===attempt)tx.delete(lock);});}
 }
 
+const SUBMISSION_ON_CARD="A complete ad publishes from its own card in Approvals, where Approve ad checks Merchant Center and attaches its films. Nothing was sent to Google.";
 // A worker that stops mid-publication leaves its draft APPLYING. After 15 minutes without a live
 // lease held by that attempt, Google's result is unknown: the draft reads as APPLY_UNKNOWN so Paul
 // can check Google Ads and record what he found. Nothing is ever re-sent automatically.
@@ -2037,21 +2043,22 @@ function _staleApplying(d, lease, now = Date.now()) {
   return !(lease && Number(lease.until) > now && (!d.applyAttempt || lease.owner === d.applyAttempt));
 }
 // "published": Paul saw the change in Google Ads, so the draft is recorded as applied.
-// "not_published": it returns to Approved, from where it can be published again by hand or deleted.
+// "not_published": it returns to Approved, from where it can be published again by hand or deleted (a complete
+// ad returns to its own card, whose Approve ad checks Merchant Center and attaches its films).
 async function reconcileApproval({ id, outcome } = {}) {
   if (!/^[a-zA-Z0-9_-]{1,150}$/.test(String(id || ""))) throw new Error("Invalid proposed ad.");
   if (!["published", "not_published"].includes(outcome)) throw new Error("Choose whether Google Ads shows this change.");
   const f = fb(); if (!f) throw new Error("Approval storage is unavailable.");
   const ref = f.db.collection(COL.approvals).doc(String(id)), lock = f.db.collection(COL.state).doc("publicationLease");
-  const status = outcome === "published" ? "APPLIED" : "APPROVED";
+  let status = outcome === "published" ? "APPLIED" : "APPROVED";
   await f.db.runTransaction(async tx => {
     const s = await tx.get(ref); if (!s.exists) throw new Error("Draft not found.");
-    const d = s.data(), l = await tx.get(lock);
+    const d = s.data(), l = await tx.get(lock), onCard = outcome !== "published" && d.type === "adDesignSubmission"; status = outcome === "published" ? "APPLIED" : onCard ? "PENDING" : "APPROVED";
     if (d.status !== "APPLY_UNKNOWN" && !_staleApplying(d, l.exists ? l.data() : null)) throw new Error(d.status === "APPLYING" ? "This draft is still publishing. Wait for its result." : "This draft has no unconfirmed publication to resolve.");
     const reconciliation = { at: Date.now(), by: "authenticated operator", outcome, priorStatus: d.status, attempt: d.applyAttempt || null };
     tx.update(ref, outcome === "published"
       ? { status, appliedAt: f.FV.serverTimestamp(), applyAttempt: null, needsReconciliation: false, lastError: null, reconciliation }
-      : { status, applyAttempt: null, needsReconciliation: false, lastError: "You checked Google Ads and this change was not published. Publish it again or delete it.", reconciliation });
+      : { status, applyAttempt: null, needsReconciliation: false, ...(onCard ? { pipelineReview: null } : {}), lastError: onCard ? "You checked Google Ads and this ad was not published. Approve ad publishes it again, or delete it." : "You checked Google Ads and this change was not published. Publish it again or delete it.", reconciliation });
   });
   return { ok: true, id: String(id), status };
 }
@@ -12229,10 +12236,10 @@ async function publishAdDesignSubmission(input={}){
     const M=require('./_merchantHealth'),refused=M.noServableOffer(live,plan.payload.meta.itemIds,_pmaxIsEligible,plan.summary.merchant?plan.summary.merchant.countryCodes:plan.summary.pmaxTarget?[]:M.countryCodesFor(plan.summary.countries).codes);if(refused)throw Error(refused);
   }
   await fb().db.runTransaction(async tx=>{const current=await tx.get(ref),workspace=await tx.get(_adDesignWorkspaceRef(r.workspaceId));if(current.data()?.status!=='PENDING'||current.data()?.pipelinePlan?.hash!==input.planHash||!_submissionSourceMatches(item,workspace.data()))throw Error('The reviewed plan changed.');tx.update(ref,{status:'APPROVED',pipelineReview:{hash:plan.hash,at:Date.now()},approvedAt:Date.now()});});
-  const result=await applyApproval(id,await control());
+  const result=await applyApproval(id,await control(),{submission:true});
   // The new paused Performance Max group receives the product's reviewed films; never throws after creation.
   const joined=(plan.summary.campaigns||[]).find(c=>c.joins),newCount=(plan.summary.campaigns||[]).filter(c=>!c.joins).length;
-  const films=r.includeVideos!==false&&result.status==='APPLIED'&&plan.summary.styles.includes('pmax')&&!(plan.summary.videoLinks||[]).length?await _attachPublishedFilms({workspaceId:r.workspaceId,product,groupRef:r.groupRef,campaignIds:[...await ref.get().then(s=>s.data()?.publishedCampaignIds||[],()=>[]),...(joined?[joined.existingCampaignId]:[])],approved:plan.payload.meta?.motion||null,copy:r.copy,source:{kind:'campaign_styles',id}}):null;
+  const films=r.includeVideos!==false&&result.status==='APPLIED'&&plan.summary.styles.includes('pmax')&&!(plan.summary.videoLinks||[]).length&&!(joined&&joined.campaignStatus==='ENABLED')?await _attachPublishedFilms({workspaceId:r.workspaceId,product,groupRef:r.groupRef,campaignIds:[...await ref.get().then(s=>s.data()?.publishedCampaignIds||[],()=>[]),...(joined?[joined.existingCampaignId]:[])],approved:plan.payload.meta?.motion||null,copy:r.copy,source:{kind:'campaign_styles',id}}):null;
   const applied=(newCount?'Selected campaigns were created paused. ':'')+(joined?'The product joined \u201c'+joined.name+'\u201d as a new product group'+(joined.campaignStatus==='ENABLED'?', which can serve now. ':'; it runs once you enable that campaign. '):'')+'Google policy review and serving are checked separately.';
   return {...result,message:(result.status==='APPLIED'?applied:'Google validated the selected '+(joined&&!newCount?'product group':'campaigns')+'; dry-run mode kept '+(joined&&!newCount?'it':'them')+' unpublished. Nothing was published; the ad stays in Approval, and Approve ad publishes it once dry run is off in Controls.')+(films&&films.message?' '+films.message:''),motionPublication:films&&films.publication||null};
 }
@@ -12283,8 +12290,8 @@ async function _prepareCampaignStyles({item,context,choice,identity,join=null}){
     if(selected.attached.length){
       for(const v of selected.attached){const resourceName=`customers/${CID}/assets/${next--}`;ops.push({assetOperation:{create:{resourceName,name:product.title.slice(0,60)+' '+v.key,youtubeVideoAsset:{youtubeVideoId:v.videoId}}}});videoRefs.push(resourceName);videoLinks.push('https://www.youtube.com/watch?v='+v.videoId);}
     }
-    // Films not yet on YouTube attach to the new paused Performance Max group once Google creates it.
-    if(!videoLinks.length&&choice.styles.includes('pmax'))films=await _motionFilmPlan(_adDesignWorkspaceRef(workspaceId),product,r.groupRef,r.copy);
+    // Films not yet on YouTube attach to the new paused Performance Max group once Google creates it (never into a running campaign).
+    if(!videoLinks.length&&choice.styles.includes('pmax')&&!(join&&join.target.status==='ENABLED'))films=await _motionFilmPlan(_adDesignWorkspaceRef(workspaceId),product,r.groupRef,r.copy);
   }
   const fixed=[];
   if(choice.styles.includes('fixed_display')){
@@ -12335,7 +12342,7 @@ async function _prepareCampaignStyles({item,context,choice,identity,join=null}){
   const payload={mutateOperations:ops,generatedAssets:uploads,...(join?{existingPmaxGuard:join.guard}:{}),meta:{budgetCurrency:currency,itemIds,adDesignWorkspaceId:workspaceId,campaignStyles:choice.styles,...(join?{existingCampaignId:join.target.id,existingCampaignName:join.target.name,brandGuidelinesEnabled:join.target.brandGuidelinesEnabled}:{}),...(films?.motion?{motion:films.motion}:{}),...(Object.keys(plannedDays).length?{plannedDays}:{})}},hash=creativeHash(payload);
   const pmaxWhere=join?'its new product group in \u201c'+join.target.name+'\u201d':'the paused Performance Max campaign';
   const note=(join?'Only \u201c'+join.target.name+'\u201d changes: it gains this product group'+(join.add>0?' and the reviewed budget':'')+(join.target.status==='ENABLED'?', and the group can serve as soon as it is published because the campaign is running':'; the group runs once you enable that campaign')+'. Other campaigns are unchanged.':'Existing campaigns are unchanged.')+(merchant?' '+merchant.message:'');
-  return {identity,hash,payload,summary:{...choice,currency,campaigns:summaries,videoLinks,...(merchant?{merchant}:{}),videoStatus:r.includeVideos===false?'Saved videos are excluded. Google may still generate a video for Performance Max.':videoLinks.length?'Your reviewed YouTube video is included.':films?.motion?films.note.replace('the paused campaign',pmaxWhere)+(choice.styles.some(s=>s!=='pmax')?' Display campaigns start without them.':''):choice.styles.includes('pmax')?'No finished video is attached, so Google may make one from your images for Performance Max. '+(films&&!films.missing?films.note.replace('the paused campaign',pmaxWhere):'Publish this design’s animation first to use your own.'):choice.styles.includes('responsive_display')?'No finished video is attached; the Responsive Display ad runs without video.':'',status:'PAUSED',destination:product.url,note}};
+  return {identity,hash,payload,summary:{...choice,currency,campaigns:summaries,videoLinks,...(merchant?{merchant}:{}),videoStatus:r.includeVideos===false?'Saved videos are excluded. Google may still generate a video for Performance Max.':videoLinks.length?'Your reviewed YouTube video is included.':join&&join.target.status==='ENABLED'&&r.includeVideos!==false?'Your saved films are not attached: films attach only while a campaign is paused, and \u201c'+join.target.name+'\u201d is running. Google may make a video from your images for Performance Max.':films?.motion?films.note.replace('the paused campaign',pmaxWhere)+(choice.styles.some(s=>s!=='pmax')?' Display campaigns start without them.':''):choice.styles.includes('pmax')?'No finished video is attached, so Google may make one from your images for Performance Max. '+(films&&!films.missing?films.note.replace('the paused campaign',pmaxWhere):'Publish this design’s animation first to use your own.'):choice.styles.includes('responsive_display')?'No finished video is attached; the Responsive Display ad runs without video.':'',status:'PAUSED',destination:product.url,note}};
 }
 async function publishAdDesignPublication({workspaceId,id,hash,confirmed=false}={}){
   if(!confirmed||!/^publish_[a-f0-9]{32}$/.test(String(id||'')))throw new Error('Review and confirm this exact update first.');

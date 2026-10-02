@@ -33,6 +33,12 @@
 //      sourceSetId, no pinned publicationImages; sourceHash = the workspace selection hash when sent), with
 //      Duck selected and Gecko's messaging edited in Approvals before the upgrade: previews, the
 //      convert-on-prepare path, and publication of every one of them
+//   S8 adversity: an Approve interrupted before anything is sent (another publication running) returns the ad to
+//      its own card; the generic approve / "Publish again" routes never publish a complete ad (they would skip the
+//      Merchant check and the films); Merchant offers ineligible, unreadable or partly eligible at Approve; two tabs
+//      saving and preparing one review; saved videos excluded; every action without the passcode; a dry-run join;
+//      joining a running campaign (no film promised); and a self-test that the fake rejects a campaign without the
+//      EU political-advertising declaration. Every scenario also checks no response carries a secret.
 // Tags
 //   [SCOPE] depends on reviews using their own pinned product and group rather than the workspace's current
 //           selection (the review-scope fix, upstream commit 19635c8). Enforced by default; set
@@ -87,12 +93,14 @@ for (const k of ['GADS_CURRENCY', 'GADS_TARGET_ROAS', 'GADS_MAX_DAILY_BUDGET_TOT
   'MERCHANT_CENTER_ID', 'GADS_PMAX_AUDIENCE_RESOURCE', 'GADS_PMAX_AUDIENCE_ID', 'GADS_CONVERSION_ACTION', 'GADS_CONVERSION_UPLOAD_API', 'GADS_NEW_CAMPAIGN_BUDGET', 'GADS_TERM_EXCLUSIONS',
   'GADS_MESSAGING_RULES', 'SITE_NAME', 'KP_BACKOFF_MS']) delete process.env[k];
 Object.assign(process.env, {
-  GADS_CLIENT_ID: 'synthetic.apps.googleusercontent.com', GADS_CLIENT_SECRET: 'synthetic', GADS_REFRESH_TOKEN: 'synthetic', GADS_DEVELOPER_TOKEN: 'synthetic',
+  GADS_CLIENT_ID: 'synthetic.apps.googleusercontent.com', GADS_CLIENT_SECRET: 'synthetic-client-secret', GADS_REFRESH_TOKEN: 'synthetic-refresh-token', GADS_DEVELOPER_TOKEN: 'synthetic-developer-token',
   GADS_CUSTOMER_ID: CID, GADS_LOGIN_CUSTOMER_ID: CID, GMC_MERCHANT_ID: MERCHANT,
   // Present on purpose: a paid AI request is attempted (and caught by the fake) instead of being skipped silently.
   OPENAI_API_KEY: 'synthetic-never-sent', ANTHROPIC_API_KEY: 'synthetic-never-sent', GEMINI_API_KEY: 'synthetic-never-sent',
-  SHOPIFY_STORE: 'synthetic-store.myshopify.com', SHOPIFY_CLIENT_ID: 'synthetic', SHOPIFY_CLIENT_SECRET: 'synthetic', FIREBASE_PRIVATE_KEY: 'synthetic', URL: SITE, EDIT_PASSCODE: PASS
+  SHOPIFY_STORE: 'synthetic-store.myshopify.com', SHOPIFY_CLIENT_ID: 'synthetic', SHOPIFY_CLIENT_SECRET: 'synthetic-shopify-secret', FIREBASE_PRIVATE_KEY: 'synthetic-firebase-key', URL: SITE, EDIT_PASSCODE: PASS
 });
+// Every secret the functions can read; none may appear in a console or worker response.
+const SECRETS = [PASS, 'synthetic-never-sent', 'synthetic-token', 'synthetic-client-secret', 'synthetic-refresh-token', 'synthetic-developer-token', 'synthetic-shopify-secret', 'synthetic-firebase-key'];
 const sha = v => crypto.createHash('sha256').update(typeof v === 'string' ? v : JSON.stringify(v)).digest('hex');
 const sha256 = b => crypto.createHash('sha256').update(b).digest('hex');
 const creativeHash = v => crypto.createHash('sha256').update(JSON.stringify(v)).digest('hex'); // engine's creativeHash for a string
@@ -248,6 +256,9 @@ function createStore() {
 const FIXED_SIZES = new Set(['200x200', '240x400', '250x250', '250x360', '300x250', '336x280', '580x400', '120x600', '160x600', '300x600', '300x1050', '468x60', '728x90', '930x180', '970x90', '970x250', '980x120', '300x50', '320x50', '320x100']);
 const IMAGE_SPEC = { MARKETING_IMAGE: [1.91, 600, 314], SQUARE_MARKETING_IMAGE: [1, 300, 300], PORTRAIT_MARKETING_IMAGE: [0.8, 480, 600], LOGO: [1, 128, 128], LANDSCAPE_LOGO: [4, 512, 128] };
 const TEXT_SPEC = { HEADLINE: 30, LONG_HEADLINE: 90, DESCRIPTION: 90, BUSINESS_NAME: 25 };
+// The v24 Campaign fields this flow may send at creation (REST rejects any other name).
+const CAMPAIGN_FIELDS = new Set(['resourceName', 'name', 'status', 'advertisingChannelType', 'advertisingChannelSubType', 'campaignBudget', 'brandGuidelinesEnabled', 'containsEuPoliticalAdvertising', 'shoppingSetting', 'assetAutomationSettings', 'geoTargetTypeSetting',
+  'networkSettings', 'finalUrlSuffix', 'trackingUrlTemplate', 'startDateTime', 'endDateTime', 'maximizeConversionValue', 'maximizeConversions', 'manualCpc', 'targetSpend', 'targetRoas', 'targetCpa', 'biddingStrategy']);
 const GEO = { 2840: ['United States', 'US'], 2124: ['Canada', 'CA'], 2826: ['United Kingdom', 'GB'], 2036: ['Australia', 'AU'] };
 const OP_TYPES = {
   campaignBudgetOperation: ['campaignBudgets', 'campaignBudgetResult'], campaignOperation: ['campaigns', 'campaignResult'], campaignCriterionOperation: ['campaignCriteria', 'campaignCriterionResult'],
@@ -430,6 +441,10 @@ async function mutate(g, body, call) {
         names.add(c.name);
         if (!['PAUSED', 'ENABLED'].includes(c.status)) err(i, 'INVALID_ENUM_VALUE', 'Campaign status ' + c.status, 'status');
         if (!['PERFORMANCE_MAX', 'DISPLAY', 'SEARCH'].includes(c.advertisingChannelType)) err(i, 'INVALID_ENUM_VALUE', 'Channel ' + c.advertisingChannelType, 'advertising_channel_type');
+        // v24: every new campaign declares whether it contains EU political advertising; REST rejects unknown (removed) fields such as url_expansion_opt_out.
+        if (!['DOES_NOT_CONTAIN_EU_POLITICAL_ADVERTISING', 'CONTAINS_EU_POLITICAL_ADVERTISING'].includes(c.containsEuPoliticalAdvertising)) err(i, 'REQUIRED', 'contains_eu_political_advertising must be declared for a new campaign', 'contains_eu_political_advertising', 'fieldError');
+        const unknownFields = Object.keys(c).filter(k => !CAMPAIGN_FIELDS.has(k)); if (unknownFields.length) err(i, 'UNKNOWN_FIELD', 'Invalid JSON payload received. Unknown name ' + unknownFields.join(', ') + ' at campaign', unknownFields[0], 'requestError');
+        if (c.advertisingChannelType === 'PERFORMANCE_MAX' && !(c.maximizeConversionValue || c.maximizeConversions)) err(i, 'INVALID_BIDDING_STRATEGY_TYPE', 'Performance Max bids with maximize conversion value or maximize conversions', 'campaign_bidding_strategy', 'biddingError');
         if (!c.campaignBudget) err(i, 'REQUIRED', 'campaign_budget is required', 'campaign_budget');
         if (c.advertisingChannelType === 'PERFORMANCE_MAX') {
           if (!c.shoppingSetting || String(c.shoppingSetting.merchantId) !== MERCHANT) err(i, 'MERCHANT_NOT_LINKED', 'Performance Max retail campaigns must use the linked Merchant Center account', 'shopping_setting.merchant_id', 'shoppingSettingError');
@@ -507,6 +522,8 @@ async function mutate(g, body, call) {
         const images = (list, min, max, spec, field) => { if (!Array.isArray(list || []) || (list || []).length < min || (list || []).length > max || (list || []).some(x => !imageOk(infoOf(x.asset), spec))) err(i, 'ASPECT_RATIO_NOT_ALLOWED', field + ' must have ' + min + '-' + max + ' images of ' + spec.join('/'), 'ad.responsive_display_ad.' + field, 'mediaUploadError'); };
         images(r.marketingImages, 1, 15, IMAGE_SPEC.MARKETING_IMAGE, 'marketing_images'); images(r.squareMarketingImages, 1, 15, IMAGE_SPEC.SQUARE_MARKETING_IMAGE, 'square_marketing_images');
         images(r.squareLogoImages, 0, 5, IMAGE_SPEC.LOGO, 'square_logo_images'); images(r.logoImages, 0, 5, IMAGE_SPEC.LANDSCAPE_LOGO, 'logo_images');
+        // Marketing images (landscape + square) share one limit of 15, logos (square + landscape) one of 5.
+        if ((r.marketingImages || []).length + (r.squareMarketingImages || []).length > 15 || (r.squareLogoImages || []).length + (r.logoImages || []).length > 5) err(i, 'TOO_MANY_IMAGES', 'Too many marketing images or logos', 'ad.responsive_display_ad', 'adError');
         if ((r.youtubeVideos || []).length > 5 || (r.youtubeVideos || []).some(v => (infoOf(v.asset) || {}).kind !== 'video')) err(i, 'INVALID_VIDEO', 'youtube_videos', 'ad.responsive_display_ad.youtube_videos', 'adError');
         if (ad.name !== undefined) err(i, 'FIELD_NOT_SUPPORTED', 'Ad.name is not supported for responsive display ads', 'ad.name', 'adError');
       } else if (ad.imageAd) {
@@ -534,6 +551,8 @@ async function mutate(g, body, call) {
     if (grp._new && !texts('HEADLINE').some(t => len(t) <= 15)) err(i, 'SHORT_HEADLINE_REQUIRED', 'Asset group ' + grp.name + ' needs a headline of 15 characters or fewer', 'asset_group', 'assetGroupError');
     if (grp._new && !texts('DESCRIPTION').some(t => len(t) <= 60)) err(i, 'SHORT_DESCRIPTION_REQUIRED', 'Asset group ' + grp.name + ' needs a description of 60 characters or fewer', 'asset_group', 'assetGroupError');
     if (grp._new && new Set(texts('HEADLINE').map(t => t.toLowerCase())).size !== n('HEADLINE')) err(i, 'DUPLICATE_ASSETS_WITH_DIFFERENT_FIELD_VALUE', 'Duplicate headlines in ' + grp.name, 'asset_group', 'assetGroupError');
+    // Google deduplicates identical text assets, so a repeated long headline or description links one asset twice.
+    for (const ft of ['LONG_HEADLINE', 'DESCRIPTION']) if (grp._new && new Set(texts(ft)).size !== n(ft)) err(i, 'DUPLICATE_RESOURCE', 'Duplicate ' + ft + ' text in ' + grp.name, 'asset_group', 'assetGroupAssetError');
   }
   // Listing-group trees: one SUBDIVISION root, unit children of one dimension, one "everything else" node.
   for (const [rn, list] of groupFilters) {
@@ -647,7 +666,8 @@ async function fakeFetch(url, opts = {}) {
   const ads = url.match(/^https:\/\/googleads\.googleapis\.com\/(v\d+)\/customers\/(\d+)\/googleAds:(search|mutate)$/);
   if (ads) {
     if (ads[1] !== 'v24' || ads[2] !== CID) return reply(400, { error: { message: 'Unexpected Google Ads version or customer ' + ads[1] + '/' + ads[2] } });
-    if (ads[3] === 'search') { call.gaql = body && body.query; return reply(200, { results: runGaql(ctx.google, body && body.query) }); }
+    if (ads[3] === 'search') { call.gaql = body && body.query; if (ctx.google.searchFault && ctx.google.searchFault.test(call.gaql || '')) return reply(400, { error: { code: 400, status: 'INVALID_ARGUMENT', message: 'Synthetic read failure' } });
+      return reply(200, { results: runGaql(ctx.google, body && body.query) }); }
     return mutate(ctx.google, body, call);
   }
   if (/^https:\/\/(api\.openai\.com|api\.anthropic\.com|generativelanguage\.googleapis\.com|[a-z0-9-]+-aiplatform\.googleapis\.com)\//.test(url)) { call.violation = 'paid-ai'; return reply(500, { error: { message: 'complete-ad-e2e: paid AI requests are forbidden' } }); }
@@ -668,7 +688,7 @@ require.cache['SYNTHETIC:firebaseAdmin'] = { id: 'SYNTHETIC:firebaseAdmin', file
 async function boot(name, control = {}) {
   scenarioName = name;
   for (const k of Object.keys(require.cache)) if (k.startsWith(FN + path.sep) || (k.startsWith(ROOT + path.sep) && /[\\/]brites-[^\\/]+\.js$/.test(k) && !k.includes('node_modules'))) delete require.cache[k];
-  ctx = { name, step: 'setup', calls: [], background: [], store: createStore(), google: createGoogle(), beforeWorker: null };
+  ctx = { name, step: 'setup', calls: [], background: [], responses: [], store: createStore(), google: createGoogle(), beforeWorker: null };
   seedGoogle(ctx.google);
   ctx.store.docs.set('Brites_GAds_Control/control', { enabled: false, dryRun: false, maxDailyBudgetTotal: 100, ...control });
   ctx.kick = require(path.join(FN, 'googleAdsAutopilotKick.js'));
@@ -679,6 +699,7 @@ async function boot(name, control = {}) {
 async function api(action, data = {}) {
   const res = await ctx.kick.httpHandler({ httpMethod: 'POST', headers: { 'x-edit-passcode': PASS }, body: JSON.stringify({ action, ...data }) });
   while (ctx.background.length) await ctx.background.shift(); // dispatched worker tasks finish before the next console request
+  ctx.responses.push(String(res.body || ''));
   let json = {}; try { json = JSON.parse(res.body || '{}'); } catch (_) { json = { error: 'unparseable response ' + String(res.body).slice(0, 200) }; }
   return { http: res.statusCode, ...json };
 }
@@ -1027,7 +1048,8 @@ scenario('S2', 'S2 plan matrix, existing PMax, budget ceiling', async () => {
   step('gecko approve'); const b2 = counts(), r2 = cs.blocked ? null : await api('publishAdDesignSubmission', { id: ap2.id, hash: ap2.reviewHash, planHash: ap2.planHash, confirmed: true });
   cs.check('Gecko: Approve over the daily ceiling (enabled budgets grew to 90) is refused; nothing is created', () => r2 && r2.ok === false && /Over your daily ceiling/.test(r2.error || '') && /Nothing was published/.test(r2.error || '') && counts() === b2 && !reqsIn('gecko approve').some(x => !x.validateOnly),
     () => why(r2));
-  cs.check('Gecko: the refused approval keeps the reason and is not left publishing', () => { const d = approval(ap2.id); return d.status === 'APPROVED' && /Over your daily ceiling/.test(d.lastError || '') && !d.applyAttempt && !d.needsReconciliation; });
+  cs.check('Gecko: the refused ad returns to its Approval card (PENDING, plan kept) with the reason and is not left publishing', () => { const d = approval(ap2.id); return d.status === 'PENDING' && /Over your daily ceiling/.test(d.lastError || '') && d.pipelinePlan && d.pipelinePlan.hash === ap2.planHash && !d.pipelineReview && !d.applyAttempt && !d.needsReconciliation; },
+    () => JSON.stringify(approval(ap2.id) && { status: approval(ap2.id).status, lastError: approval(ap2.id).lastError }));
   ctx.google.budgets.get(RN('campaignBudgets', '91000')).amountMicros = '70000000';
 });
 
@@ -1099,23 +1121,25 @@ scenario('S4', 'S4 idempotency and reconciliation', async () => {
     step('duck approve partial'); const part = st.blocked ? null : await api('publishAdDesignSubmission', { id: ap.id, hash: ap.reviewHash, planHash: ap.planHash, confirmed: true });
     st.check('Duck: a partial-failure response is unconfirmed (APPLY_UNKNOWN) and nothing was created', () => part && part.ok === false && approval(ap.id).status === 'APPLY_UNKNOWN' && campaignsNamed('Brites · ' + p.title).length === 0, () => why(part));
     step('duck reconcile'); await api('reconcileApproval', { id: ap.id, outcome: 'not_published' });
-    st.check('Duck: reconciling as not published returns the approval to APPROVED with the reason', () => approval(ap.id).status === 'APPROVED' && /not published/.test(approval(ap.id).lastError || ''));
-    step('duck apply'); await api('apply', { id: ap.id });
-    st.check('Duck: publishing it again creates exactly one PAUSED campaign (validated first)', () => { const r = reqsIn('duck apply · publishApproval'); return approval(ap.id).status === 'APPLIED' && r.length === 2 && r[0].validateOnly && campaignsNamed('Brites · ' + p.title).length === 1 && campaignsNamed('Brites · ' + p.title)[0].status === 'PAUSED'; });
+    st.check('Duck: reconciling as not published returns the ad to its Approval card (PENDING, plan kept) with the reason', () => { const d = approval(ap.id); return d.status === 'PENDING' && /not published/.test(d.lastError || '') && d.pipelinePlan && d.pipelinePlan.hash === ap.planHash && !d.pipelineReview && !d.needsReconciliation; },
+      () => JSON.stringify(approval(ap.id) && { status: approval(ap.id).status, lastError: approval(ap.id).lastError }));
+    step('duck approve again'); const again = st.blocked ? null : await api('publishAdDesignSubmission', { id: ap.id, hash: ap.reviewHash, planHash: ap.planHash, confirmed: true });
+    st.check('Duck: Approve ad publishes it again: exactly one PAUSED campaign (validated first), with its films', () => { const r = reqsIn('duck approve again'); return again && again.status === 'APPLIED' && approval(ap.id).status === 'APPLIED' && r.length === 2 && r[0].validateOnly && campaignsNamed('Brites · ' + p.title).length === 1 && campaignsNamed('Brites · ' + p.title)[0].status === 'PAUSED' && /uploading to YouTube/.test(again.message || ''); },
+      () => why(again));
     step('duck apply again'); await api('apply', { id: ap.id });
     st.check('Duck: a further publish request creates nothing', () => !reqsIn('duck apply again · publishApproval').length && campaignsNamed('Brites · ' + p.title).length === 1); }
   // d) The duplicate-name guard, then a definite Google rejection.
   { const p = P.saturn, { st, ap } = await ready(p, pmaxOnly(9)), name = !st.blocked && approval(ap.id).pipelinePlan.summary.campaigns[0].name;
     if (name) ctx.google.campaigns.set(RN('campaigns', '9500'), { resourceName: RN('campaigns', '9500'), id: '9500', name, status: 'PAUSED', advertisingChannelType: 'PERFORMANCE_MAX', campaignBudget: RN('campaignBudgets', '91000') });
     step('saturn approve duplicate'); const dup = st.blocked ? null : await api('publishAdDesignSubmission', { id: ap.id, hash: ap.reviewHash, planHash: ap.planHash, confirmed: true });
-    st.check('Saturn: a campaign with the planned name already in Google refuses publication and sends nothing', () => dup && dup.ok === false && /already exists/.test(dup.error || '') && !reqsIn('saturn approve duplicate').length && approval(ap.id).status === 'APPROVED', () => why(dup));
+    st.check('Saturn: a campaign with the planned name already in Google refuses publication, sends nothing and returns the ad to its card', () => dup && dup.ok === false && /already exists/.test(dup.error || '') && !reqsIn('saturn approve duplicate').length && approval(ap.id).status === 'PENDING', () => why(dup));
     if (name) ctx.google.campaigns.get(RN('campaigns', '9500')).status = 'REMOVED';
     ctx.google.faults.push({ kind: 'definite', when: rec => audit(rec).campaigns.length > 0 });
-    step('saturn apply rejected'); await api('apply', { id: ap.id });
-    st.check('Saturn: a definite Google rejection returns the approval to APPROVED with the error (no reconciliation needed)', () => { const d = approval(ap.id); return d.status === 'APPROVED' && !d.needsReconciliation && /mutate failed/.test(d.lastError || '') && campaignsNamed('Brites · ' + p.title).filter(c => c.id !== '9500').length === 0; },
+    step('saturn approve rejected'); const rej = st.blocked ? null : await api('publishAdDesignSubmission', { id: ap.id, hash: ap.reviewHash, planHash: ap.planHash, confirmed: true });
+    st.check('Saturn: a definite Google rejection returns the ad to its Approval card (PENDING) with the error (no reconciliation needed)', () => { const d = approval(ap.id); return rej && rej.ok === false && d.status === 'PENDING' && !d.needsReconciliation && /mutate failed/.test(d.lastError || '') && campaignsNamed('Brites · ' + p.title).filter(c => c.id !== '9500').length === 0; },
       () => JSON.stringify({ status: (approval(ap.id) || {}).status, lastError: ((approval(ap.id) || {}).lastError || '').slice(0, 200) }));
-    step('saturn apply'); await api('apply', { id: ap.id });
-    st.check('Saturn: publishing again after the rejection creates exactly one PAUSED campaign', () => approval(ap.id).status === 'APPLIED' && campaignsNamed('Brites · ' + p.title).filter(c => c.id !== '9500').length === 1); }
+    step('saturn approve'); const ok = st.blocked ? null : await api('publishAdDesignSubmission', { id: ap.id, hash: ap.reviewHash, planHash: ap.planHash, confirmed: true });
+    st.check('Saturn: Approve ad after the rejection creates exactly one PAUSED campaign', () => ok && ok.status === 'APPLIED' && approval(ap.id).status === 'APPLIED' && campaignsNamed('Brites · ' + p.title).filter(c => c.id !== '9500').length === 1, () => why(ok)); }
 });
 
 scenario('S5', 'S5 films refused unless the destination isolates the product', async () => {
@@ -1266,6 +1290,122 @@ scenario('S7', 'S7 the four waiting ads as legacy reviews (sent before the snaps
   check(mine.length === 9 && mine.every(c => c.status === 'PAUSED'), 'the four legacy ads publish nine PAUSED campaigns (Duck 2, Gecko 2, Bunny 2, Saturn 3)', { detail: JSON.stringify(mine.map(c => [c.name, c.status])) });
 });
 
+scenario('S8', 'S8 adversity: interrupted approvals, generic publish, two tabs, no videos, passcode, dry-run join', async () => {
+  await boot('S8 adversity');
+  // a) An Approve interrupted before anything is sent returns the ad to its own card, never to a generic "Publish now".
+  const p = P.duck, ws = await seedWorkspace({ id: 'design_adverse_duck', products: [p], selectedKey: 'duck', scoped: true }), st = stage(null, 'interrupted');
+  const ap = await submitAd(ws, p); if (!ap) st.blocked = 'submission failed'; else Object.assign(ap, { fx: ws.fx.duck, wsId: ws.id });
+  await editMessaging(st, ws, p, ap, clone(COPY.duck), false);
+  const choice = { styles: ['pmax', 'responsive_display'], budgets: { pmax: 12, responsive_display: 6 }, countries: ['2840', '2124'], durations: { pmax: 30, responsive_display: 14 } };
+  await preparePlan(st, p, ap, choice); await checkWithGoogle(st, p, ap);
+  const onCard = (name, re) => st.check(name, () => { const d = approval(ap.id); return d.status === 'PENDING' && re.test(d.lastError || '') && d.pipelinePlan && d.pipelinePlan.hash === ap.planHash && d.reviewHash === ap.reviewHash && !d.pipelineReview && !d.applyAttempt && !d.needsReconciliation; },
+    () => JSON.stringify(approval(ap.id) && { status: approval(ap.id).status, lastError: approval(ap.id).lastError, pipelineReview: approval(ap.id).pipelineReview, plan: (approval(ap.id).pipelinePlan || {}).hash === ap.planHash }));
+  ctx.store.docs.set('Brites_GAds_State/publicationLease', { owner: 'another-approval', until: Date.now() + 60000 });
+  step('duck approve busy'); const busy = st.blocked ? null : await api('publishAdDesignSubmission', { id: ap.id, hash: ap.reviewHash, planHash: ap.planHash, confirmed: true });
+  st.check('Duck: Approve while another publication runs is refused and sends nothing', () => busy && busy.ok === false && /Another publication is still running/.test(busy.error || '') && !reqsIn('duck approve busy').length, () => why(busy));
+  onCard('Duck: the interrupted ad returns to its Approval card (PENDING) with its prepared plan and the reason, so Approve ad publishes it with its Merchant check and films', /Another publication is still running/);
+  ctx.store.docs.delete('Brites_GAds_State/publicationLease');
+  step('duck approve generic'); const gen = st.blocked ? null : await api('approve', { id: ap.id });
+  st.check('Duck: the generic approve action cannot publish a complete ad; nothing is queued or sent and it stays PENDING', () => gen && !!gen.error && !callsIn('duck approve generic').some(c => c.task === 'publishApproval') && !reqsIn('duck approve generic').length && approval(ap.id).status === 'PENDING', () => why(gen));
+  // A complete ad left Approved (by an earlier version, or a race) must not publish from the generic card: that route skips the Merchant check and the films.
+  if (!st.blocked) Object.assign(approval(ap.id), { status: 'APPROVED', pipelineReview: { hash: ap.planHash, at: Date.now() }, lastError: 'Over your daily ceiling (an earlier attempt).' });
+  ctx.google.products.filter(x => p.offers.includes(x.itemId)).forEach(x => Object.assign(x, { status: 'NOT_ELIGIBLE', availability: 'OUT_OF_STOCK' }));
+  step('duck publish again generic'); const again = st.blocked ? null : await api('apply', { id: ap.id }), worker = callsIn('duck publish again generic').find(c => c.task === 'publishApproval');
+  st.check('Duck: "Publish again" on a complete ad left Approved sends nothing to Google (that route skips the Merchant check and the films)', () => !reqsIn('duck publish again generic · publishApproval').length && !ctx.google.uploads.size && ![...ctx.google.campaigns.values()].some(c => c.name.startsWith('Brites · ' + p.title)),
+    () => JSON.stringify(worker && worker.worker || again).slice(0, 300));
+  onCard('Duck: it returns to its Approval card with its prepared plan, saying to approve it there', /Approve ad/);
+  step('duck approve ineligible'); const inel = st.blocked ? null : await api('publishAdDesignSubmission', { id: ap.id, hash: ap.reviewHash, planHash: ap.planHash, confirmed: true });
+  st.check('Duck: from its card, Approve is refused while none of its Merchant offers can serve; nothing is sent', () => inel && inel.ok === false && /none of this product.s 2 Merchant Center offers can serve/.test(inel.error || '') && !reqsIn('duck approve ineligible').length && approval(ap.id).status === 'PENDING', () => why(inel));
+  // Merchant cannot be read at all: the final guard fails closed, nothing is sent, and the ad stays on its card.
+  ctx.google.products.filter(x => p.offers.includes(x.itemId)).forEach(x => Object.assign(x, { status: 'ELIGIBLE', availability: 'IN_STOCK' }));
+  ctx.google.searchFault = /shopping_product/;
+  step('duck approve merchant down'); const down = st.blocked ? null : await api('publishAdDesignSubmission', { id: ap.id, hash: ap.reviewHash, planHash: ap.planHash, confirmed: true });
+  st.check('Duck: a Merchant read failure at Approve refuses publication; nothing is sent and the ad stays PENDING', () => down && down.ok === false && !reqsIn('duck approve merchant down').length && approval(ap.id).status === 'PENDING', () => why(down));
+  ctx.google.searchFault = null;
+  // One of its two offers is out of stock: Performance Max serves the other, so Approve publishes.
+  Object.assign(ctx.google.products.find(x => x.itemId === p.offers[0]), { status: 'NOT_ELIGIBLE', availability: 'OUT_OF_STOCK' });
+  step('duck approve'); const before = new Set(ctx.google.campaigns.keys()), pub = st.blocked ? null : await api('publishAdDesignSubmission', { id: ap.id, hash: ap.reviewHash, planHash: ap.planHash, confirmed: true });
+  st.gate('Duck: Approve from the same card publishes the same prepared plan once the earlier publication finished (one of two offers eligible)', () => pub && pub.status === 'APPLIED' && approval(ap.id).status === 'APPLIED' && !approval(ap.id).lastError, () => why(pub) + ' · ' + JSON.stringify(approval(ap.id) && { status: approval(ap.id).status, lastError: approval(ap.id).lastError }));
+  const recs = reqsIn('duck approve'), a = st.blocked ? null : verifyPublication(st, p, ap, choice, recs, COPY.duck);
+  const real = recs.find(x => !x.validateOnly), grp = real && a && real.idMap.get(a.groups[0].resourceName), camp = grp && ctx.google.assetGroups.get(grp).campaign;
+  if (!st.blocked) verifyFilms(st, p, ap, grp, camp, 'duck approve · adMotionPublication'); else ['three reviewed films upload', 'attachment is validated first', 'the group shows the three uploaded videos'].forEach(n => st.check(p.short + ' films: ' + n, () => false));
+  st.check('Duck: Google holds exactly the planned new campaigns', () => [...ctx.google.campaigns.keys()].filter(k => !before.has(k)).length === 2 && [...ctx.google.campaigns.values()].filter(c => c.name.startsWith('Brites · ' + p.title)).length === 2);
+  Object.assign(ctx.google.products.find(x => x.itemId === p.offers[0]), { status: 'ELIGIBLE', availability: 'IN_STOCK' });
+
+  // b) Two browser tabs on one review; videos excluded.
+  const g = P.gecko, ws2 = await seedWorkspace({ id: 'design_adverse_gecko', products: [g], selectedKey: 'gecko', scoped: true }), tb = stage(null, 'two tabs');
+  const tab = await submitAd(ws2, g); if (!tab) tb.blocked = 'submission failed'; else Object.assign(tab, { fx: ws2.fx.gecko, wsId: ws2.id });
+  const h0 = tab && tab.reviewHash, editA = clone(EDITED_GECKO), editB = { ...clone(COPY.gecko), headlines: COPY.gecko.headlines.map(h => h === 'Shop Gecko Jewelry' ? 'Gecko Jewelry Gift' : h) };
+  step('gecko two tabs edit'); const both = tb.blocked ? [] : await Promise.all([editA, editB].map((copy, i) => api('updateAdDesignSubmission', { id: tab.id, hash: h0, copy, includeVideos: i === 0 })));
+  tb.check('Gecko: two tabs saving the same review at once: one save wins, the other is refused (never merged or overwritten silently)', () => both.filter(r => r.ok === true).length === 1 && both.filter(r => r.ok === false && /changed/.test(r.error || '')).length === 1, () => both.map(why).join(' | '));
+  const winner = both.findIndex(r => r.ok === true), winCopy = [editA, editB][winner];
+  tb.check('Gecko: the review holds exactly the winning tab\'s messaging', () => JSON.stringify(approval(tab.id).designReview.copy) === JSON.stringify(winCopy) && approval(tab.id).reviewHash === both[winner].reviewHash);
+  if (both[winner]) tab.reviewHash = both[winner].reviewHash;
+  // Tab B reloads and excludes the saved videos; tab A still holds the older review and plan.
+  step('gecko tab b no videos'); const noVid = tb.blocked ? null : await api('updateAdDesignSubmission', { id: tab.id, hash: tab.reviewHash, copy: winCopy, includeVideos: false });
+  tb.gate('Gecko: tab B saves the review with saved videos excluded', () => noVid && noVid.ok === true, () => why(noVid));
+  const stale = { ...tab }; if (noVid && noVid.reviewHash) tab.reviewHash = noVid.reviewHash;
+  step('gecko tab a stale plan'); const staleA = tb.blocked ? null : await api('publishAdDesignSubmission', { id: tab.id, hash: stale.reviewHash, prepareOnly: true, styles: ['pmax'], budgets: { pmax: 10 }, countries: ['2840'], durations: { pmax: 30 } });
+  tb.check('Gecko: tab A, still showing the older review, cannot prepare a plan from it', () => staleA && staleA.ok === false && /changed/.test(staleA.error || '') && !reqsIn('gecko tab a stale plan').length, () => why(staleA));
+  const pmaxOnly = { styles: ['pmax'], budgets: { pmax: 9 }, countries: ['2840'], durations: { pmax: 30 } }, tabA = { ...tab };
+  await preparePlan(tb, g, tabA, { ...pmaxOnly, budgets: { pmax: 11 } }, 'plan tab a');
+  await preparePlan(tb, g, tab, pmaxOnly, 'plan tab b');
+  step('gecko tab a approve'); const oldPlan = tb.blocked ? null : await api('publishAdDesignSubmission', { id: tab.id, hash: tab.reviewHash, planHash: tabA.planHash, confirmed: true });
+  tb.check('Gecko: Approve from tab A with its replaced plan (11/day) is refused and sends nothing', () => tabA.planHash !== tab.planHash && oldPlan && oldPlan.ok === false && !reqsIn('gecko tab a approve').length && approval(tab.id).status === 'PENDING', () => why(oldPlan));
+  tb.check('Gecko: with saved videos excluded, the plan says so and promises no film upload', () => /Saved videos are excluded/.test(approval(tab.id).pipelinePlan.summary.videoStatus || '') && !approval(tab.id).pipelinePlan.payload.meta.motion, () => approval(tab.id).pipelinePlan.summary.videoStatus);
+  step('gecko approve'); const gpub = tb.blocked ? null : await api('publishAdDesignSubmission', { id: tab.id, hash: tab.reviewHash, planHash: tab.planHash, confirmed: true });
+  tb.gate('Gecko: tab B\'s plan (9/day) publishes', () => gpub && gpub.status === 'APPLIED', () => why(gpub));
+  tb.check('Gecko: the published campaign uses tab B\'s budget and messaging; no film is uploaded or promised', () => { const r = reqsIn('gecko approve').find(x => !x.validateOnly), au = r && audit(r);
+    return au && au.budgets.length === 1 && Number(au.budgets[0].amountMicros) === 9e6 && !/YouTube/.test(gpub.message || '') && !callsIn('gecko approve').some(c => c.task === 'adMotionPublication') && ![...ctx.google.uploads.values()].some(u => ctx.google.sessions.get(u._sid).step.startsWith('gecko')) && !motionJob(ws2.id, ws2.fx.gecko).publication
+      && JSON.stringify(au.linksOf(au.groups[0].resourceName, 'HEADLINE').map(l => l.info.text)) === JSON.stringify(winCopy.headlines); }, () => { const r = reqsIn('gecko approve').find(x => !x.validateOnly), au = r && audit(r); return why(gpub) + ' · ' + JSON.stringify(au && { budgets: au.budgets.map(x => x.amountMicros), pub: motionJob(ws2.id, ws2.fx.gecko).publication }); });
+
+  // c) The passcode gate: every write the complete-ad flow uses refuses a request without the passcode (or with a wrong one) and changes nothing.
+  step('no passcode'); const snapshot = JSON.stringify([...ctx.store.docs.entries()]), googleBefore = counts(), writes = [['publishAdDesignSubmission', { id: tab.id, hash: tab.reviewHash, planHash: tab.planHash, confirmed: true }],
+    ['publishAdDesignSubmission', { id: tab.id, hash: tab.reviewHash, prepareOnly: true, ...pmaxOnly }], ['updateAdDesignSubmission', { id: tab.id, hash: tab.reviewHash, copy: winCopy, includeVideos: true }],
+    ['prepareAdDesignPublication', { workspaceId: ws2.id, target: 'ads', formats: ['landscape'], includeCopy: true, queueOnly: true }], ['approve', { id: tab.id }], ['apply', { id: tab.id }], ['reconcileApproval', { id: tab.id, outcome: 'published' }],
+    ['reject', { id: tab.id }], ['startAdMotionPublication', { workspaceId: ws2.id, productId: g.gid, groupRef: GROUP.ref, jobId: ws2.fx.gecko.motionJobId }], ['saveAdDesignCopy', { workspaceId: ws2.id, copy: winCopy }], ['adDesignSubmissionStatus', { id: tab.id, hash: tab.reviewHash }]];
+  const refused = [];
+  for (const [action, data] of writes) for (const headers of [{}, { 'x-edit-passcode': 'wrong-' + PASS }]) { const res = await ctx.kick.httpHandler({ httpMethod: 'POST', headers, body: JSON.stringify({ action, ...data }) }); while (ctx.background.length) await ctx.background.shift(); refused.push([action, res.statusCode]); }
+  check(refused.every(([, code]) => code === 401) && JSON.stringify([...ctx.store.docs.entries()]) === snapshot && counts() === googleBefore && !callsIn('no passcode').length, 'every complete-ad action refuses a missing or wrong passcode (401) and changes nothing',
+    { detail: JSON.stringify(refused.filter(([, code]) => code !== 401)) });
+
+  // d) Dry run, joining the existing paused Performance Max campaign: Google validates, nothing changes, the budget stays.
+  ctx.store.docs.get('Brites_GAds_Control/control').dryRun = true;
+  const b = P.bunny, ws3 = await seedWorkspace({ id: 'design_adverse_bunny', products: [b], selectedKey: 'bunny', scoped: true }), dj = stage(null, 'dry-run join');
+  const bap = await submitAd(ws3, b); if (!bap) dj.blocked = 'submission failed'; else Object.assign(bap, { fx: ws3.fx.bunny, wsId: ws3.id });
+  await editMessaging(dj, ws3, b, bap, clone(COPY.bunny), false);
+  const join = { styles: ['pmax'], budgets: { pmax: 5 }, countries: ['2840', '2124'], durations: {}, pmaxTarget: '9001' };
+  await preparePlan(dj, b, bap, join, 'plan join'); await checkWithGoogle(dj, b, bap);
+  step('bunny approve dry join'); const groupsBefore = ctx.google.assetGroups.size, linksBefore = ctx.google.links.length, uploadsBefore = ctx.google.uploads.size, dry = dj.blocked ? null : await api('publishAdDesignSubmission', { id: bap.id, hash: bap.reviewHash, planHash: bap.planHash, confirmed: true });
+  dj.check('Bunny dry-run join: Approve only validates; the joined campaign\'s budget, groups and links are unchanged; the ad stays in Approval', () => dry && dry.status === 'VALIDATED' && reqsIn('bunny approve dry join').every(r => r.validateOnly) && ctx.google.budgets.get(RN('campaignBudgets', '90010')).amountMicros === '25000000'
+    && ctx.google.assetGroups.size === groupsBefore && ctx.google.links.length === linksBefore && approval(bap.id).status === 'PENDING' && ctx.google.uploads.size === uploadsBefore, () => why(dry));
+  ctx.store.docs.get('Brites_GAds_Control/control').dryRun = false;
+  step('bunny approve join'); const live = dj.blocked ? null : await api('publishAdDesignSubmission', { id: bap.id, hash: bap.reviewHash, planHash: bap.planHash, confirmed: true });
+  dj.check('Bunny join: with dry run off, the same card adds the product group and raises the budget 25 → 30 once', () => live && live.status === 'APPLIED' && ctx.google.budgets.get(RN('campaignBudgets', '90010')).amountMicros === '30000000' && ctx.google.assetGroups.size === groupsBefore + 1, () => why(live));
+
+  // f) Joining a running Performance Max campaign (the card's default when one matches): films attach only while a campaign
+  // is paused, so the plan must not promise them, and Approve must not report a film failure the owner cannot fix by retrying.
+  ctx.google.campaigns.get(RN('campaigns', '9001')).status = 'ENABLED';
+  const s = P.saturn, ws4 = await seedWorkspace({ id: 'design_adverse_saturn', products: [s], selectedKey: 'saturn', scoped: true }), rj = stage(null, 'running join');
+  const sap = await submitAd(ws4, s); if (!sap) rj.blocked = 'submission failed'; else Object.assign(sap, { fx: ws4.fx.saturn, wsId: ws4.id });
+  await editMessaging(rj, ws4, s, sap, clone(COPY.saturn), false);
+  await preparePlan(rj, s, sap, { styles: ['pmax'], budgets: { pmax: 0 }, countries: ['2840', '2124'], durations: {}, pmaxTarget: '9001' }, 'plan running join');
+  rj.check('Saturn running join: the plan says its saved films are not attached to a running campaign (and promises no upload)', () => { const pl = approval(sap.id).pipelinePlan; return !/uploaded to YouTube/.test(pl.summary.videoStatus || '') && /paused/.test(pl.summary.videoStatus || '') && !pl.payload.meta.motion; },
+    () => (approval(sap.id).pipelinePlan || { summary: {} }).summary.videoStatus);
+  await checkWithGoogle(rj, s, sap);
+  step('saturn approve running join'); const uploadsBefore2 = ctx.google.uploads.size, rjo = rj.blocked ? null : await api('publishAdDesignSubmission', { id: sap.id, hash: sap.reviewHash, planHash: sap.planHash, confirmed: true });
+  rj.check('Saturn running join: Approve adds the product group to the running campaign, uploads no film and reports no film failure', () => rjo && rjo.status === 'APPLIED' && /can serve now/.test(rjo.message || '') && !/films were not|YouTube/.test(rjo.message || '') && ctx.google.uploads.size === uploadsBefore2 && ctx.google.campaigns.get(RN('campaigns', '9001')).status === 'ENABLED',
+    () => why(rjo));
+  ctx.google.campaigns.get(RN('campaigns', '9001')).status = 'PAUSED';
+
+  // e) The fake itself: a new campaign without the EU political-advertising declaration is rejected (the rule is not vacuous).
+  step('fake self-test'); const bad = { mutateOperations: [{ campaignBudgetOperation: { create: { resourceName: RN('campaignBudgets', '-1'), name: 'Self-test', amountMicros: '1000000', deliveryMethod: 'STANDARD', explicitlyShared: false } } },
+    { campaignOperation: { create: { resourceName: RN('campaigns', '-2'), name: 'Self-test', status: 'PAUSED', advertisingChannelType: 'DISPLAY', campaignBudget: RN('campaignBudgets', '-1'), maximizeConversions: {}, urlExpansionOptOut: true } } }], validateOnly: true };
+  const self = await fakeFetch(`https://googleads.googleapis.com/v24/customers/${CID}/googleAds:mutate`, { method: 'POST', body: JSON.stringify(bad) }), selfRec = reqsIn('fake self-test')[0]; if (selfRec) selfRec.fault = 'self-test';
+  check(self.status === 400 && selfRec && selfRec.errors.some(e => e.code === 'REQUIRED' && /contains_eu_political_advertising/.test(e.field)) && selfRec.errors.some(e => e.code === 'UNKNOWN_FIELD'), 'the fake Google Ads rejects a new campaign missing the EU political-advertising declaration or carrying a removed field',
+    { detail: JSON.stringify(selfRec && selfRec.errors) });
+});
+
 /* ================================================================ run */
 (async () => {
   const started = Date.now();
@@ -1278,6 +1418,8 @@ scenario('S7', 'S7 the four waiting ads as legacy reviews (sent before the snaps
       const ai = ctx.calls.filter(c => c.violation === 'paid-ai'), unhandled = ctx.calls.filter(c => c.unhandled);
       check(!ai.length, 'no paid AI request was attempted', { detail: ai.map(c => c.step + ' ' + c.url).join(', ') });
       check(!unhandled.length, 'every outside request went to a synthetic endpoint (Google Ads, OAuth, YouTube upload, worker)', { detail: unhandled.map(c => c.step + ' ' + c.method + ' ' + c.url.split('?')[0]).join(', ') });
+      const leaked = ctx.responses.concat(ctx.calls.filter(c => c.worker).map(c => JSON.stringify(c.worker))).filter(b => SECRETS.some(s => b.includes(s)));
+      check(!leaked.length, 'no console or worker response carries the passcode, an API key or an access token', { detail: leaked.map(b => b.slice(0, 200)).join(' | ') });
       check(!enabledProblems(ctx.google.requests.filter(r => r.ok && !r.validateOnly)).length, 'no campaign was created or switched to ENABLED', { detail: enabledProblems(ctx.google.requests.filter(r => r.ok && !r.validateOnly)).join('; ') });
       if (ctx.google.unknownGaql.size) console.log('NOTE ' + ctx.name + ' GAQL the fake does not model (answered with no rows): ' + [...ctx.google.unknownGaql].join(' · '));
       const rejected = ctx.google.requests.filter(r => !r.ok && r.errors.length && !r.fault);
