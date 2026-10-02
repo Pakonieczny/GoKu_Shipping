@@ -193,6 +193,7 @@ async function consoleChecks(){
 
  // AI costs are billed in US dollars, and the edited scripts are re-fetched (new ?v= tags).
  const editor=fs.readFileSync(root+'/brites-ad-editor.js','utf8'),motion=fs.readFileSync(root+'/brites-ad-motion.js','utf8');
- check(/'AI cost'\)\+' · US\$'\+Number\(cost\.estimatedUsd\)/.test(editor)&&/about US\$'\+filmUsd\(\)/.test(motion)&&/Estimated cost US\$'\+Number/.test(motion)&&/video cost: US\$'\+filmUsd\(\)/.test(motion)&&!/[^S]\$(?:\d|'\+)/.test(editor+motion),'editor and motion AI costs read US$');
+ // Motion estimates: a new set (three films), a single redo, a multi-video redo and the saved job's cost.
+ check(/'AI cost'\)\+' · US\$'\+Number\(cost\.estimatedUsd\)/.test(editor)&&/Estimated video generation US\$'\+\(3\*filmUsd\)\.toFixed\(2\)/.test(motion)&&/Estimated video generation US\$'\+Number\(o\.estimatedUsd\|\|filmUsd\)\.toFixed\(2\)/.test(motion)&&/Estimated video generation US\$'\+cost\.toFixed\(2\)/.test(motion)&&/Estimated cost US\$'\+Number/.test(motion)&&!/Estimated (?:video generation|cost) (?!US\$)/.test(motion)&&!/[^S]\$(?:\d|'\+)/.test(editor+motion),'editor and motion AI costs read US$');
  check(!/brites-ad-editor\.js\?v=20260929-studio(?:-proofs)?'|brites-ad-motion\.js\?v=20260929-studio(?:-films)?"|pmax-recommendation\.js\?v=20260929-concise"/.test(html),'edited scripts carry new version tags');
 }

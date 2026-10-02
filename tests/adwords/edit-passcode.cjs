@@ -258,7 +258,8 @@ async function checkPages() {
   require.cache['STUB:firebaseAdmin'] = { id: 'STUB:firebaseAdmin', filename: 'STUB:firebaseAdmin', loaded: true, exports: admin };
   const savedEnv = { ...process.env };
   delete process.env.EDIT_PASSCODE;
-  Object.assign(process.env, { GADS_CLIENT_ID: 'x.apps.googleusercontent.com', GADS_CLIENT_SECRET: 'GOCSPX-x', GADS_REFRESH_TOKEN: '1//x', GADS_DEVELOPER_TOKEN: 'dev',
+  // Placeholder credentials only (every fetch is the stub above). Merchant Center has its own grant, so the health page needs GMC_REFRESH_TOKEN too.
+  Object.assign(process.env, { GADS_CLIENT_ID: 'x.apps.googleusercontent.com', GADS_CLIENT_SECRET: 'GOCSPX-x', GADS_REFRESH_TOKEN: '1//x', GMC_REFRESH_TOKEN: '1//x', GADS_DEVELOPER_TOKEN: 'dev',
     GADS_CUSTOMER_ID: '1234567890', GADS_LOGIN_CUSTOMER_ID: '1234567890', FIREBASE_PRIVATE_KEY: 'k', FIREBASE_PROJECT_ID: 'p',
     SHOPIFY_STORE: 'x.myshopify.com', SHOPIFY_CLIENT_ID: 'c', SHOPIFY_CLIENT_SECRET: 's' });
   Object.assign(console, quietConsole);

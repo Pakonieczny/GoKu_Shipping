@@ -5,11 +5,11 @@ const fixture=path.join(__dirname,'ad-design-workflow.cjs'),source=fs.readFileSy
 const ctx=vm.createContext({require:require('node:module').createRequire(fixture),__dirname,process,Buffer,console,Date,setTimeout,clearTimeout});
 vm.runInContext(source+'\nglobalThis.mem=memory;',ctx);
 (async()=>{
- const f=ctx.mem(),ref=f.db.collection('Workspace').doc('design_test'),scope={productId:'p',groupRef:'g'},id='eai_'+'a'.repeat(40);
+ const f=ctx.mem(),ref=f.db.collection('Workspace').doc('design_test'),scope={productId:'p',groupRef:'g',generationMode:'reference_to_video'},id='eai_'+'a'.repeat(40);
  const jpeg=await sharp({create:{width:100,height:100,channels:3,background:'#b69b74'}}).jpeg().toBuffer();
  await ref.set({settings:scope,editorAI:{id},context:{groups:[{ref:'g'}]}});
  const e=ref.collection('editorAIJobs').doc(id);await e.set({scope,phase:'ready',createdAt:1});
- await e.collection('data').doc('request').set({sources:[{asset:{path:'photo'}}]});
+ await e.collection('data').doc('request').set({sources:[{asset:{path:'photo'},source:{kind:'product',productId:'p'}}]});
  await e.collection('data').doc('result').set({responsive:{plan:{copy:{headline:'For your favorite gator fan',shortHeadline:'Crocodile Charm',description:'Gift-ready packaging',cta:'Shop now'},nativeCopy:{headlines:['Crocodile Charm','For your favorite gator fan']},style:{background:'#fff7ee',ink:'#30291f',accent:'#a67c35',headlineFont:'Georgia'},layouts:[]}},sources:[{asset:{path:'photo'},width:100,height:100}]});
  const calls={create:0,download:0,review:0,render:0};
  const blobs=new Map();
@@ -28,19 +28,22 @@ vm.runInContext(source+'\nglobalThis.mem=memory;',ctx);
     const master=format.key==='portrait'?'portrait':format.key==='landscape'?'landscape':(plan.squareMaster||'landscape');
     if(master!==orientation)continue;
     const layers=await captionLayers({...plan,sourceOrientation:orientation},format);
-    out.push({key:(format.key==='landscape'?'desktop':'mobile')+'_'+format.key,device:format.key==='landscape'?'desktop':'mobile',format:format.key,width:format.width,height:format.height,seconds:10,bytes:b,frames:[jpeg,jpeg,jpeg],composition:{mode:layers.mode}});
+    out.push({key:(format.key==='landscape'?'desktop':'mobile')+'_'+format.key,device:format.key==='landscape'?'desktop':'mobile',format:format.key,width:format.width,height:format.height,seconds:10,bytes:b,frames:Array(6).fill(jpeg),composition:{mode:layers.mode}});
    }
    return out;},
-  reviewImages:async()=>{calls.review++;return {productFaithful:true,mobileReadable:true,pass:true,score:94,scores:{messaging:95,layout:92,relevance:95,visualAppeal:93,productRecognition:100},categoryReviews:{},issues:[]};}};
+  // The complete-ad reviewer's weighted rubric (target 92); a pass also confirms the exact charm identity in every format, or the set is held.
+  reviewImages:async()=>{calls.review++;return {rubric:'complete-ad-v2',productFaithful:true,exactProductIdentity:true,footageLettering:false,multipleProducts:false,formatIdentity:Object.fromEntries(['mobile_portrait','mobile_square','desktop_landscape'].map(k=>[k,{sameOutline:true,noAddedDetail:true,noMissingDetail:true,sameFeatures:true}])),mobileReadable:true,pass:true,score:94,scores:{messaging:95,layout:92,relevance:95,visualAppeal:93,productRecognition:100},categoryReviews:{},issues:[]};}};
  const service=createMotionService(D);
  const start=await service.start({workspaceId:'design_test',...scope});
  // Recreate the exact stored production state: both films paid for and saved,
- // framing measured, square master never chosen, stopped by the old rule. That job is a version 2 job (start() now makes version 3).
- const jobRef=ref.collection('motionJobs').doc(start.jobId);
- await jobRef.update({pipelineVersion:2,renderVersion:10,phase:'needs_attention',compositionBlocked:true,inFlight:null,leaseUntil:0,owner:null,quality:null,squareMaster:null,
-  creativeDirection:Object.fromEntries(['rationale','setting','props','lighting','opening','middle','ending','portrait','landscape','identity','limitations'].map(k=>[k,'saved '+k])),
+ // framing measured, square master never chosen, stopped by the old rule. That job is a version 2 job (start() now makes version 8).
+ // Every paid master is bound to the job's original-reference set (the render refuses any other film), as the pipeline saves it.
+ const jobRef=ref.collection('motionJobs').doc(start.jobId),refs=require('../../netlify/functions/googleAdsMotionReferences'),original=(await jobRef.get()).data().originalSources[0];
+ const referenceHash=require('node:crypto').createHash('sha256').update(JSON.stringify({references:[{source:original.asset,sourceHash:refs.hash(jpeg),preparedHash:refs.hash((await refs.prepare(jpeg)).bytes)}]})).digest('hex');
+ await jobRef.update({pipelineVersion:2,renderVersion:10,phase:'needs_attention',compositionBlocked:true,inFlight:null,leaseUntil:0,owner:null,quality:null,squareMaster:null,referenceHash,
+  creativeDirection:{...Object.fromEntries(['rationale','setting','props','lighting','opening','middle','ending','portrait','landscape','identity','limitations'].map(k=>[k,'saved '+k])),supportingReferenceIndices:[]},
   composition:{portrait:{x:.05,y:.05,w:.9,h:.9,note:'large subject'},landscape:{x:.02,y:.05,w:.95,h:.9,note:'large subject'}},
-  masters:{portrait:{id:'v1_p',status:'completed',progress:100,size:'720x1280',asset:{path:'m_portrait',hash:'m_portrait'}},landscape:{id:'v1_l',status:'completed',progress:100,size:'1280x720',asset:{path:'m_landscape',hash:'m_landscape'}}},
+  masters:{portrait:{id:'v1_p',status:'completed',progress:100,size:'720x1280',referenceHash,asset:{path:'m_portrait',hash:'m_portrait'}},landscape:{id:'v1_l',status:'completed',progress:100,size:'1280x720',referenceHash,asset:{path:'m_landscape',hash:'m_landscape'}}},
   error:'Square film has insufficient clear space in either saved master for large messaging and the complete jewelry. Re-run with more clear space beside the product.',
   progress:{pct:65,label:'Animation interrupted · saved work retained'}});
  const stuck=await service.status({workspaceId:'design_test',...scope});

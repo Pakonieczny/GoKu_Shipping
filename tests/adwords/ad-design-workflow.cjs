@@ -231,7 +231,7 @@ check(scoped({context:{}},{keywords:['crocodile charm','snake charm'],url:'https
 check(scoped({context:{campaignId:'42'}},context.groups[0],product).keywords.includes('duck necklace'),'dedicated Google group keywords remain intact');
 const scopedRecovery=await setup(),scopeRun=await scopedRecovery.svc.start({workspaceId:scopedRecovery.id});
 const properReview=scopedRecovery.D.reviewImages;
-scopedRecovery.D.reviewImages=async()=>{scopedRecovery.calls.quality++;return {pass:false,productFaithful:true,mobileReadable:true,score:82,issues:['Keywords from unrelated products']};};
+scopedRecovery.D.reviewImages=async()=>{scopedRecovery.calls.quality++;return {pass:false,productFaithful:false,mobileReadable:true,score:82,issues:['Keywords from unrelated products']};};
 await assert.rejects(()=>scopedRecovery.svc.run({workspaceId:scopedRecovery.id,jobId:scopeRun.jobId}),/82/);
 const scopeDoc=scopedRecovery.f.docs.get(scopedRecovery.p);scopeDoc.job.evidence.group.keywords=['crocodile charm','snake charm'];
 scopedRecovery.D.reviewImages=properReview;

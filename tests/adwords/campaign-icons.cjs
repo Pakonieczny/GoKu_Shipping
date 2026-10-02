@@ -63,13 +63,14 @@ check(/CAD 90\.00/.test(overCeiling) && /CAD 72\.00/.test(overCeiling) && /Contr
 check(styles.budgetCeilingMessage(500, 0, 0, 'CAD') === null, 'no ceiling configured means no refusal');
 check(/data-style-recommend/.test(html) && /data-recommended=/.test(html), 'the recommendation can be taken in one click');
 check(/aria-describedby="budget-hint-/.test(html), 'the hint is associated with its input for a screen reader');
-check(/A daily budget is an average/.test(html), 'the page states what a daily budget actually means');
+// af7c170 simplified the approval card; the budget meaning now lives with the ceiling in Controls.
+check(/Google can bill up to twice a daily budget on one day/.test(html), 'the page states what a daily budget actually means');
 
 // 6. What is set up automatically is disclosed, and every line is true of the
 //    publishing code. An invented reassurance is worse than none.
 const publisher = fs.readFileSync(path.join(REPO, 'netlify/functions/googleAdsCampaignStyles.js'), 'utf8');
 const autopilot = fs.readFileSync(path.join(REPO, 'netlify/functions/googleAdsAutopilot.js'), 'utf8');
-check(/what we set up for you/i.test(html), 'the chooser discloses what is configured on the operator\'s behalf');
+check(/New campaigns start paused\./.test(html), 'the approval card states the setting that matters most: new campaigns start paused');
 for (const s of styles.STYLES) {
   check(s.autoSettings.length >= 4, s.key + ' discloses its automatic settings');
   check(s.autoSettings.some(l => /paused/i.test(l)), s.key + ' states that it starts paused');
