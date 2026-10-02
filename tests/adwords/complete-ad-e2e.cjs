@@ -725,7 +725,7 @@ async function api(action, data = {}) {
 async function approve(ap, planHash = ap && ap.planHash) {
   const from = ctx.google.requests.length, firstCall = ctx.calls.length;
   const res = await ctx.kick.httpHandler({ httpMethod: 'POST', headers: { 'x-edit-passcode': PASS }, body: JSON.stringify({ action: 'publishAdDesignSubmission', id: ap.id, hash: ap.reviewHash, planHash, confirmed: true }) });
-  const job = ctx.calls.slice(firstCall).find(c => c.task === 'publishSubmission'), meta = { sentDuringRequest: ctx.google.requests.slice(from).length, workerStartedBeforeAnswer: !!(job && job.started), job };
+  const job = ctx.calls.slice(firstCall).find(c => c.task === 'publishSubmission'), meta = { sentDuringRequest: ctx.google.requests.slice(from).length, workerStartedBeforeAnswer: !!(job && job.started), job, outcomeAtAnswer: approval(ap.id) ? approval(ap.id).publishOutcome : undefined };
   if (job && job.done) await job.done;
   while (ctx.background.length) await ctx.background.shift();
   ctx.responses.push(String(res.body || ''));
@@ -1119,6 +1119,7 @@ scenario('S3', 'S3 dry-run mode', async () => {
   step('gecko approve live'); const live = st.blocked ? null : await approve(ap), liveRecs = reqsIn('gecko approve live');
   st.gate('Gecko: after a dry-run check, turning dry run off and approving the same reviewed plan publishes it', () => live && live.status === 'APPLIED' && approval(ap.id).status === 'APPLIED', () => why(live) + ' · approval status ' + (approval(ap.id) || {}).status);
   const a = st.blocked ? null : verifyPublication(st, p, ap, choice, liveRecs, COPY.gecko), real = liveRecs.find(x => !x.validateOnly), grp = real && a && real.idMap.get(a.groups[0].resourceName), camp = grp && ctx.google.assetGroups.get(grp).campaign;
+  st.check('Gecko: the new Approve clears the dry run\'s saved outcome when it answers, so its card waits for this publication', () => live && live.meta && live.meta.outcomeAtAnswer === null && approval(ap.id).publishOutcome.status === 'APPLIED', () => JSON.stringify(live && live.meta && live.meta.outcomeAtAnswer));
   st.check('Gecko films: Approve after the dry run starts the reviewed film upload for the new group', () => /uploading to YouTube/.test(live.message || ''), () => live && live.message);
   if (!st.blocked) verifyFilms(st, p, ap, grp, camp, 'gecko approve live · adMotionPublication'); else ['three reviewed films upload', 'attachment is validated first', 'the group shows the three uploaded videos'].forEach(n => st.check(p.short + ' films: ' + n, () => false));
   step('gecko approve live again'); const again = st.blocked ? null : await approve(ap);

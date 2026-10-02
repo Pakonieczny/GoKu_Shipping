@@ -12240,9 +12240,9 @@ async function publishAdDesignSubmission(input={}){
     const M=require('./_merchantHealth'),refused=M.noServableOffer(live,plan.payload.meta.itemIds,_pmaxIsEligible,plan.summary.merchant?plan.summary.merchant.countryCodes:plan.summary.pmaxTarget?[]:M.countryCodesFor(plan.summary.countries).codes);if(refused)throw Error(refused);
   }
   // Publication itself runs in the background worker (task publishSubmission, publishApprovedSubmission below): a large plan
-  // outlasts the time a request may take. publishRequestedAt marks the hand-off; a new attempt clears the saved reason.
+  // outlasts the time a request may take. publishRequestedAt marks the hand-off; a new attempt clears the saved reason and outcome.
   const requestedAt=Date.now();
-  await fb().db.runTransaction(async tx=>{const current=await tx.get(ref),workspace=await tx.get(_adDesignWorkspaceRef(r.workspaceId));if(current.data()?.status!=='PENDING'||current.data()?.pipelinePlan?.hash!==input.planHash||!_submissionSourceMatches(item,workspace.data()))throw Error('The reviewed plan changed.');tx.update(ref,{status:'APPROVED',pipelineReview:{hash:plan.hash,at:requestedAt},approvedAt:requestedAt,publishRequestedAt:requestedAt,lastError:null,lastErrorAt:null});});
+  await fb().db.runTransaction(async tx=>{const current=await tx.get(ref),workspace=await tx.get(_adDesignWorkspaceRef(r.workspaceId));if(current.data()?.status!=='PENDING'||current.data()?.pipelinePlan?.hash!==input.planHash||!_submissionSourceMatches(item,workspace.data()))throw Error('The reviewed plan changed.');tx.update(ref,{status:'APPROVED',pipelineReview:{hash:plan.hash,at:requestedAt},approvedAt:requestedAt,publishRequestedAt:requestedAt,publishOutcome:null,lastError:null,lastErrorAt:null});});
   return {ok:true,id,status:'APPROVED',queued:true,requestedAt,message:'Approved. Publishing to Google runs in the background; this card shows the result when Google answers.'};
 }
 // Approve ad's publication, run by the background worker (task publishSubmission): exactly what Approve ad ran after approving
