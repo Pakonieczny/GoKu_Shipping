@@ -65,24 +65,29 @@
 
   // Every timeline/overview seal uses the same rest and departure rules. The original seal alone owns the hover;
   // the grown seal and explanatory cards cannot keep it alive, and moving to a neighbour starts a new full delay.
-  // (Paul, 2 Oct 18:56: 750 ms, so a pointer running across the screen zooms nothing.)
-  // The rest delay is the engine's one named constant (Seal.zoom.DELAY, 750); 750 here only covers a page without the engine.
-  const sealHoverDelay = () => { const z = zoomApi(); return z && z.DELAY > 0 ? z.DELAY : 750; };
-  function restOnSeal(host, pick, show, hide) {
-    let wanted = null, shown = null, timer = 0, point = null;
+  // (Paul, 2 Oct: 750 ms, then 500 ms, so a pointer running across the screen zooms nothing.)
+  // The rest delay is the engine's one named constant (Seal.zoom.DELAY, 500); 500 here only covers a page without the engine.
+  const sealHoverDelay = () => { const z = zoomApi(); return z && z.DELAY > 0 ? z.DELAY : 500; };
+  // A mouse click on a seal zooms it at once (the rest is skipped) and the zoom stays until the pointer leaves it, Esc, a scroll or a press
+  // elsewhere; a second click on a seal that is only to look at (not a button) puts it back; a seal whose click goes elsewhere (o.click(b)
+  // false) leaves the zoom to that. A zoom that came by resting is "second" only when it was already grown when the press began.
+  function restOnSeal(host, pick, show, hide, o) {
+    let wanted = null, shown = null, timer = 0, point = null, pre = null, held = null, clickAt = 0;
+    const lit = b => { const z = zoomApi(); return !z || !!z.rectOf(b); };   // still grown (a scroll or a redraw may have put it back)
     const at = node => { const b = node && pick(node); return b && host.contains(b) ? b : null; };
     const underPointer = b => !point || typeof doc.elementFromPoint !== "function" || at(doc.elementFromPoint(point.x, point.y)) === b;
     const cancel = now => { clearTimeout(timer); timer = 0; wanted = shown = null; hide(now); };
-    const open = (b, kb) => { clearTimeout(timer); timer = 0; wanted = null; shown = b; show(b, !!kb); };
+    const open = (b, kb, click) => { clearTimeout(timer); timer = 0; wanted = null; shown = b; show(b, !!kb, !!click); };
     const over = ev => {
       if (ev.pointerType === "touch") return;
-      const b = at(ev.target); if (!b || b === wanted || b === shown) return;
+      const b = at(ev.target); if (!b || b === wanted || b === shown || b === held) return;
       point = { x: ev.clientX, y: ev.clientY }; cancel(true); wanted = b;
       timer = setTimeout(() => { timer = 0; if (wanted === b && host.isConnected && b.isConnected && underPointer(b)) open(b); else cancel(true); }, sealHoverDelay());
     };
     const out = ev => {
       if (ev.pointerType === "touch") return;
       const b = at(ev.target);
+      if (b && b === held && !b.contains(ev.relatedTarget)) held = null;
       if (b && (b === wanted || b === shown) && !b.contains(ev.relatedTarget)) cancel();
     };
     const move = ev => {
@@ -96,16 +101,36 @@
       const b = at(ev.target);
       if (ev.pointerType === "touch" && b) { if (b === shown) cancel(); else { cancel(true); point = null; open(b); } return; }
       if ((wanted || shown) && b !== (wanted || shown)) cancel();
+      pre = b && b === shown && lit(b) ? b : null; if (held && b !== held) held = null;
+    };
+    const click = ev => {
+      if (ev.pointerType === "touch") return;   // a finger zoomed it on its press
+      const b = at(ev.target), was = pre; pre = null;
+      if (!b || (o && o.click && !o.click(b))) return;
+      if (b === shown && lit(b)) { if (was === b && ev.detail && !b.closest("button, a")) { held = b; cancel(); } return; }
+      cancel(true); open(b, !ev.detail, true); clickAt = Date.now(); if (ev.detail) point = { x: ev.clientX, y: ev.clientY };
+    };
+    const enter = ev => {   // Enter or Space on a seal that has the focus (not a button: that has its own press) grows it or puts it back
+      const b = (ev.key === "Enter" || ev.key === " ") && at(ev.target); if (!b || b !== ev.target || b.closest("button, a")) return;
+      ev.preventDefault(); if (b === shown && lit(b)) cancel(); else { cancel(true); open(b, true); }
     };
     const blur = () => cancel(true), vis = () => { if (doc.visibilityState === "hidden") cancel(true); };
     const key = ev => { if (ev.key === "Escape" && (wanted || shown)) { ev.preventDefault(); ev.stopPropagation(); cancel(true); } };
-    const check = () => { if ((wanted || shown) && !(wanted || shown).isConnected) cancel(true); };
+    const check = () => {
+      const cur = wanted || shown; if (!cur) return;
+      // (a click the page answers by drawing its seals again, as selecting a stamp does, puts the zoom back: the seal now under the pointer grows in its place)
+      const redrawn = shown === cur && Date.now() - clickAt < 1200 && (!cur.isConnected || !lit(cur));
+      if (cur.isConnected && !redrawn) return;
+      const idOf = b => { const n = b.closest("[data-key], [data-stage]"); return n ? (n.dataset.key || "") + "|" + (n.dataset.stage || "") : ""; };
+      const found = redrawn && point && typeof doc.elementFromPoint === "function" ? at(doc.elementFromPoint(point.x, point.y)) : null, again = found && idOf(found) !== "|" && idOf(found) === idOf(cur) ? found : null;   // (the very seal that was clicked, not a neighbour that has moved under the pointer)
+      cancel(true); if (again) open(again, false, true);
+    };
     const observer = new root.MutationObserver(check); observer.observe(host, { childList: true, subtree: true });
-    host.addEventListener("pointerover", over); host.addEventListener("pointerout", out);
+    host.addEventListener("pointerover", over); host.addEventListener("pointerout", out); host.addEventListener("click", click); host.addEventListener("keydown", enter);
     doc.addEventListener("pointermove", move, true); doc.addEventListener("pointerdown", down, true); doc.addEventListener("visibilitychange", vis); doc.addEventListener("keydown", key, true);
     root.addEventListener("blur", blur); root.addEventListener("scroll", blur, true); root.addEventListener("resize", blur);
     return { open, cancel, check, get current() { return wanted || shown; }, destroy() {
-      cancel(true); observer.disconnect(); host.removeEventListener("pointerover", over); host.removeEventListener("pointerout", out);
+      cancel(true); observer.disconnect(); host.removeEventListener("pointerover", over); host.removeEventListener("pointerout", out); host.removeEventListener("click", click); host.removeEventListener("keydown", enter);
       doc.removeEventListener("pointermove", move, true); doc.removeEventListener("pointerdown", down, true); doc.removeEventListener("visibilitychange", vis); doc.removeEventListener("keydown", key, true);
       root.removeEventListener("blur", blur); root.removeEventListener("scroll", blur, true); root.removeEventListener("resize", blur);
     } };
@@ -986,7 +1011,7 @@
       if (now) { if (a) { try { a.cancel(); } catch (_) {} } a = null; card.style.display = "none"; }
       else a = fadeExp(card, a);
     };
-    const hover = restOnSeal(host, node => node.closest?.(SEL), show, hide);
+    const hover = restOnSeal(host, node => node.closest?.(SEL), show, hide, { click: () => typeof host._tlExpPin !== "function" });   // (a click that opens the step on the Timeline takes the Overview away: nothing to zoom)
     host.addEventListener("focusin", ev => { const b = ev.target.closest?.(SEL); if (b && b.matches(":focus-visible")) hover.open(b, true); });
     host.addEventListener("focusout", ev => { if (ev.target.closest?.(SEL) === hover.current) hover.cancel(); });
     host.addEventListener("click", ev => {
@@ -1863,10 +1888,10 @@
       return `<div class="tlStepReq"><div class="tlPinH" style="justify-content:flex-start"><span class="tlLbl">Next for this order</span><span class="xs now">${esc(q.label)}</span></div>${reqLines(q, false)}<button type="button" class="tlLink" data-pin="${esc(q.k)}" style="margin-top:9px">All that ${esc(q.label)} needs</button></div>`;
     }
     const sealSelector = ".tlStop .tlSeal:not(.pending), .tlSt[data-key]:not(.pending), .tlSt.ghost[data-stage], .tlBig, .tlArw .sv, .tlPath2 .sv, .tlLegend .sv, .tlCxStamp";
-    const sealHover = restOnSeal(box, node => node.closest?.(sealSelector), (seal, kb) => {
+    const sealHover = restOnSeal(box, node => node.closest?.(sealSelector), (seal, kb, click) => {
       const b = seal.closest(".tlStop") || seal;
       showZoom(b, kb);
-      if (b.matches(".tlSt, .tlStop")) showExp(b);
+      if (!click && b.matches(".tlSt, .tlStop")) showExp(b);   // (a click does its own thing below: it selects, pins or opens the step)
     }, now => { hideZoom(now); hideExp(now); });
     function focusedSeal(ev) {
       const b = ev.target.closest?.(".tlStop, .tlSt[data-key], .tlBig, .tlArw, .tlPath2 button, .tlLegend .sv, .tlCxStamp");
@@ -2117,10 +2142,10 @@
     if (!card) return;
     if (!card._tlHover) {
       const sel = ".tlMini[data-tl-ev], .tlNowSeal";
-      card._tlHover = restOnSeal(card, node => node.closest?.(sel), (b, kb) => nowZoom(card, b, false, kb), now => nowZoom(card, null, now));
+      card._tlHover = restOnSeal(card, node => node.closest?.(sel), (b, kb) => nowZoom(card, b, false, kb), now => nowZoom(card, null, now), { click: b => typeof card._tlExpPin !== "function" && !b.matches(".tlMini") });
       card.addEventListener("focusin", ev => { const b = ev.target.closest?.(sel); if (b && b.matches(":focus-visible")) card._tlHover.open(b, true); });
       card.addEventListener("focusout", ev => { if (ev.target.closest?.(sel) === card._tlHover.current) card._tlHover.cancel(); });
-      card.addEventListener("click", ev => { if (ev.target.closest?.(sel)) card._tlHover.cancel(true); });
+      card.addEventListener("click", ev => { const b = ev.target.closest?.(sel); if (b && (b.matches(".tlMini") || typeof card._tlExpPin === "function")) card._tlHover.cancel(true); });   // (a click that opens something takes the zoom with it; one that does not has just grown the seal)
       card.closest("dialog")?.addEventListener("close", () => card._tlHover.cancel(true));
     }
     card._tlHover.check();

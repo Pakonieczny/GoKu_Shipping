@@ -731,16 +731,17 @@
     /* ── the seal zoom (Paul, 2 Oct 18:56: "get rid of the hover states on all the seals and just add a compelling zooming
        animation where the seal grows in size in its current position, almost like a magnifying glass ... it should zoom very
        little if it's already large, more if it's smaller, even more if it's very small: an adaptive system", and 18:56
-       "a 750 ms delay so the zoom does not happen immediately if the person runs the cursor quickly across the screen").
+       "a 750 ms delay so the zoom does not happen immediately if the person runs the cursor quickly across the screen"; then 2 Oct,
+       "change the delay before showing the zoom to 500 ms").
        There is no second seal and no bubble. The seal itself grows from its own centre, turns to stand upright, lifts on a
        soft shadow, takes a paper backing so nothing under it shows through, comes to the top and goes back the same way.
        Moved by transform, filter and opacity only (the paper is one path's opacity), interruptible at any frame, and always
        fully in view: it is nudged away from the viewport's edge, the top bar and any scrolling box that holds it; a box that
        only clips it (an overflow:hidden strip or card) is opened for as long as it is zoomed and closed again after.
-       Mouse: the pointer must rest on the same seal for ZOOM_DELAY. Tab (:focus-visible) and a tap zoom at once. Leaving,
+       Mouse: the pointer must rest on the same seal for ZOOM_DELAY, or a click zooms it at once. Tab (:focus-visible) and a tap zoom at once. Leaving,
        blur, Esc, scrolling, a tap elsewhere or the window going away puts it back. The one scale curve is pure
        (Seal.zoomScale, Motion.sealZoomScale), so large seals grow a little and tiny ones a lot. ── */
-    const ZOOM_DELAY = 750;
+    const ZOOM_DELAY = 500;
     const ZOOM_ANCHORS = [[24, 3.6], [28, 3.5], [36, 3.2], [40, 3.05], [48, 2.8], [56, 2.5], [60, 2.35], [72, 2.05], [84, 1.85], [100, 1.62], [110, 1.42], [120, 1.25], [140, 1.15], [160, 1.12]];
     /** The zoom of a seal as drawn `size` px across: 1.12 for a large one up to 3.6 for a tiny one, by one smooth curve. */
     function zoomScale(size) {
@@ -765,7 +766,7 @@
       return [1, 0, 0, 1, 0, 0];
     };
     const ZS = new WeakMap(), ACT = new Set();   // seal -> its zoom: { el, on, anim, paper, undo, k, rect, touch, keyboard, managed }; ACT: every zoom still on screen
-    const Zm = { cur: null, want: null, t: 0, watch: 0, point: null, hover: false };
+    const Zm = { cur: null, want: null, t: 0, watch: 0, point: null, hover: false, pre: null, off: null };   // pre: the seal already grown when a press began; off: the seal a click put back (the pointer resting on it must not bring it round again)
     const paperOf = s => s.querySelector("[data-seal-paper]");
     /** What clips or covers a grown seal, worked out for the seal's final rectangle; → what to open and where to nudge. */
     function zoomPlan(el, k, r, W, H) {
@@ -866,13 +867,14 @@
       const s = sealAt(e.target); if (!zoomable(s)) return;
       Zm.point = { x: e.clientX, y: e.clientY };
       if (Zm.cur && Zm.cur.el === s) { Zm.hover = true; Zm.cur.keyboard = false; return; }
-      if (Zm.want === s) return;   // moving between SVG descendants must not restart the wait
+      if (Zm.want === s || Zm.off === s) return;   // moving between SVG descendants must not restart the wait
       zoomHide(false); cancelWant(); Zm.hover = true; Zm.want = s;
       Zm.t = setTimeout(() => { Zm.t = 0; if (Zm.hover && Zm.want === s && zoomable(s) && pointed(s)) zoomShow(s); else cancelWant(); }, ZOOM_DELAY);
     }, true);
     doc.addEventListener("pointerout", e => {
       if (e.pointerType === "touch") return;
       const from = sealAt(e.target); if (!from || from.contains(e.relatedTarget)) return;
+      if (from === Zm.off) Zm.off = null;
       if (from === Zm.want) cancelWant();
       if (Zm.cur && Zm.cur.el === from && !atHome(Zm.cur, { x: e.clientX, y: e.clientY })) zoomHide(false);
     }, true);
@@ -891,20 +893,29 @@
     doc.addEventListener("focusin", e => { const s = sealAt(e.target); if (s && s === e.target && zoomable(s) && s.matches(":focus-visible")) zoomShow(s, { keyboard: true }); }, true);
     doc.addEventListener("focusout", e => { const s = sealAt(e.target); if (s && Zm.cur && s === Zm.cur.el && !Zm.hover && !(e.relatedTarget && zoomable(sealAt(e.relatedTarget)))) zoomHide(false); }, true);
     root.addEventListener("keydown", e => { if (e.key === "Escape" && (Zm.cur || Zm.want) && !(Zm.cur && Zm.cur.managed)) { e.preventDefault(); e.stopImmediatePropagation(); cancelWant(); zoomHide(false); } }, true);
-    // a click: on a seal over its button it presses the button; elsewhere it zooms the seal at once (a second tap with a finger puts it back)
+    // a click: on a seal over its button it presses the button; elsewhere it zooms the seal at once, no waiting for the rest, and a second
+    // click (or tap) on it, once it was already grown when the press began, puts it back (Zm.pre: a zoom that only just came by resting
+    // is not "second"). A press that comes from the keyboard (detail 0) never toggles.
     doc.addEventListener("click", e => {
       const s = sealAt(e.target); if (!s) return;
       const row = s.closest && s.closest(".sealRow .seal") === s;
       if (row) {
         const b = btnOf(s);
         e.stopPropagation(); e.preventDefault();
-        if (b && !b.disabled && inside(b, e)) { b.click(); return; }
+        if (b && !b.disabled && inside(b, e)) { Zm.pre = null; if (!(Zm.cur && Zm.cur.el === s)) { cancelWant(); Zm.off = s; } b.click(); return; }   // (the button answers: no zoom comes late on top of its answer)
       } else if (!zoomable(s)) return;
-      const touch = e.pointerType === "touch" || (e.pointerType == null && Zm.lastTouch);
-      if (touch && Zm.cur && Zm.cur.el === s) { zoomHide(false); return; }
+      const touch = e.pointerType === "touch" || (e.pointerType == null && Zm.lastTouch), was = Zm.pre === s; Zm.pre = null;
+      if (!touch && e.detail) { Zm.point = { x: e.clientX, y: e.clientY }; Zm.hover = true; }
+      if ((touch || e.detail) && was && Zm.cur && Zm.cur.el === s) { zoomHide(false); if (!touch) Zm.off = s; return; }
       if (zoomable(s)) zoomShow(s, { touch: !!touch });
     }, true);
-    doc.addEventListener("pointerdown", e => { Zm.lastTouch = e.pointerType === "touch"; }, true);
+    doc.addEventListener("pointerdown", e => { Zm.lastTouch = e.pointerType === "touch"; const s = sealAt(e.target); Zm.pre = s && Zm.cur && Zm.cur.on && Zm.cur.el === s ? s : null; }, true);
+    // Enter or Space on a seal that has the focus grows it, or puts it back
+    doc.addEventListener("keydown", e => {
+      const s = (e.key === "Enter" || e.key === " ") && sealAt(e.target); if (!s || s !== e.target || !zoomable(s) || s.closest("button, a")) return;
+      e.preventDefault(); e.stopPropagation();
+      if (Zm.cur && Zm.cur.el === s) zoomHide(false); else zoomShow(s, { keyboard: true });
+    }, true);
     const zoomAway = () => { cancelWant(); for (const st of [...ACT]) zoomHide(true, st.el); };
     root.addEventListener("scroll", () => {
       const st = Zm.cur;

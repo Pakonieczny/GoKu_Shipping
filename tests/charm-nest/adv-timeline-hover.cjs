@@ -1,7 +1,7 @@
 // The step explainer card kept in reach (Paul, 28 Sep 21:18: "the hover must persist"), in the real sorter page with
 // the fake site (bridge-server.cjs), every other request aborted:
 //  1 · the order view's "Where it is now" card (explainOn, inside a modal dialog as in the order view): the card stays
-//      after resting on the seal (750 ms) and closes on departure, including onto the card; the seal grows where it stands;
+//      after resting on the seal (500 ms) and closes on departure, including onto the card; the seal grows where it stands;
 //      clicking the original opens its step on the Timeline;
 //  2 · a very short screen: a rail at the top: the seal grows in place (nudged into the view) and the card goes clear of
 //      the grown seal, inside the view; no second seal is ever made.
@@ -58,9 +58,11 @@ const Timeline = require(path.join(root, 'netlify/functions/_orderTimeline.js'))
     const cb = await page.evaluate(() => { const r = document.querySelector('.tlTestDlg .tlExp').getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + 24 }; });
     await page.mouse.move(cb.x, cb.y, { steps: 8 }); await page.waitForTimeout(300);
     assert(!(await shown()), 'moving onto the card closes the original-seal hover');
-    await page.mouse.move(seal.x + seal.width / 2, seal.y + seal.height / 2, { steps: 6 }); await page.waitForTimeout(450);
-    assert(!(await shown()), 'a new hover waits its full 750 ms');
-    await page.waitForTimeout(750); assert(await shown(), 'resting on the original opens it again');
+    await page.mouse.move(seal.x + seal.width / 2, seal.y + seal.height / 2, { steps: 6 }); await page.waitForTimeout(300);
+    assert(!(await shown()), 'a new hover waits its full 500 ms');
+    await page.waitForTimeout(260);   // (560 ms of rest: the seal has grown; the card then fades in)
+    assert(await page.evaluate(() => !!document.querySelector('.tlTestHost .tlNowSeal[data-seal-zoom]')), 'resting 560 ms on the original zooms it');
+    await page.waitForTimeout(400); assert(await shown(), 'resting on the original opens it again');
     await page.mouse.move(away.x, away.y, { steps: 4 }); await page.waitForTimeout(300);
     assert(!(await shown()), 'it closes as soon as the pointer leaves');
     await page.mouse.click(seal.x + seal.width / 2, seal.y + seal.height / 2); await page.waitForTimeout(100);

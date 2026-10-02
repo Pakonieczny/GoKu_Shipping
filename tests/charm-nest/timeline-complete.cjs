@@ -126,7 +126,7 @@ const opsOf = evs => evs.filter(opOf).map(e => [opOf(e), e.by, (e.data && e.data
     assert.equal(lane.count, String(answer.events.length), 'the Timeline tab counts each event once: ' + lane.count);
     console.log(`  ✓ the Timeline: 2 Complete seals and the Reopen on the Office lane ("Operator"), in the card's plum, in press order; the tab counts ${lane.count} (${lane.sum})`);
 
-    // rest (750 ms): the seal itself grows with ORDER COMPLETE and the time; who and where are its accessible name, and the card under it says it in words
+    // rest (500 ms): the seal itself grows with ORDER | COMPLETE and the time; who and where are its accessible name, and the card under it says it in words
     const hoverOn = async key => {
       await page.hover(`#owTimeline .tlSt[data-key="${key}"]`); await page.waitForTimeout(1100);
       return page.evaluate(key => { const S = document.querySelector(`#owTimeline .tlSt[data-key="${key}"]`), X = [...document.querySelectorAll('.tlExp')].find(x => getComputedStyle(x).display === 'block' && x.textContent.trim()); return { disp: S && S.dataset.sealZoom ? 'block' : 'none', copy: !!document.querySelector('.tlLoupe,.tlNowZoom,.sealLens'), face: S ? [...S.querySelectorAll('text')].map(t => t.textContent).join(' | ') : '', aria: S ? S.getAttribute('aria-label') || '' : '', exp: X ? X.textContent : '' }; }, key);

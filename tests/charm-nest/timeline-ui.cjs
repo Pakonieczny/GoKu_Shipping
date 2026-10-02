@@ -171,7 +171,7 @@ function fixture({ MAIN, CX }) {
   assert.deepEqual(await page.evaluate(() => window.__sheet), [where[MAIN].sheetId, null], 'Open sheet on the where\'s sheet (the last one cut)');
   ok.push('Now reads the server\'s where ("Packed", Shipping · Dana K., next: Shipped, on RG Sheet 7 + Open sheet); the 8-step rail: 7 stamped, Shipped pulses; stagesFor: Welded only for stud earrings, Engraved only with a back engraving (unknown keeps it); 5 day columns + 1 idle; NOW · AT SHIPPING');
 
-  // ── rest on a stamp (750 ms): its seal grows where it stands, by the shared adaptive curve (Seal.zoom); no loupe, no second seal,
+  // ── rest on a stamp (500 ms): its seal grows where it stands, by the shared adaptive curve (Seal.zoom); no loupe, no second seal,
   //    no dark caption; the step explainer card sits under the grown seal; the dot keeps the hover (Paul, 2026-10-02) ──
   const welded = await page.$('.tlSt[data-key="welded~e25"]');
   const small = await welded.boundingBox();

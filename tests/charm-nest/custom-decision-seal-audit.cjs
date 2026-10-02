@@ -76,9 +76,9 @@ function auditReview() {
     const lists = w.auditLists(new Set());
     assert.equal(lists.open.length, 0, 'both already sent orders leave Open');
     assert.equal(lists.done.length, 0, 'partial nesting/writing is not a completed order');
-    assert.equal(lists.sent.length, 2, 'both screenshot cases are independently classified as Decided');
+    assert.equal(lists.sent.length, 2, 'both screenshot cases are independently classified as sent to a sheet');
     for (const it of lists.sent) { assert(it.decided); assert(!it.done); assert.equal(it.record.state, 'decided'); assert.equal(it.record.by, 'paul'); }
-    w.auditRV.cseg = 'sent'; w.auditRender({ still: true });
+    w.auditRV.cseg = 'done'; w.auditRender({ still: true });   // Completed: sent orders are listed there with the hand-completed ones (no Decided segment)
     const shown = () => Array.from(view.querySelectorAll('#rvList > .reviewListRow'), node => node.dataset.rid);
     assert.deepEqual(shown(), ['4171770802', '4174476673'], 'latest actual send is first, even while only some copies are nested/written');
     const field = view.querySelector('#rvOrderFind');
@@ -87,7 +87,7 @@ function auditReview() {
       for (let count = 1; count <= rec.rid.length; count++) {
         const query = rec.rid.slice(0, count); input(query);
         const wanted = count <= 3 ? ['4171770802', '4174476673'] : [rec.rid];
-        assert.deepEqual(shown(), wanted, 'Decided filters immediately after each digit ' + query);
+        assert.deepEqual(shown(), wanted, 'Completed filters immediately after each digit ' + query);
         assert.equal(view.querySelectorAll('#rvList .orderMatch').length, wanted.length, 'each possible order stays highlighted');
         assert.equal(d.activeElement, field, 'typing retains focus');
       }
@@ -95,11 +95,11 @@ function auditReview() {
     input('4170000000'); assert.deepEqual(shown(), [], 'no impossible result remains');
     input('417'); assert.equal(shown().length, 2, 'backspace restores possible orders');
     input(''); assert.equal(view.querySelectorAll('.orderMatch').length, 0, 'clear removes search highlights');
-    w.CNListActivity.set('review-sent', { direction: 'asc' }); w.auditRender({ still: true });
+    w.CNListActivity.set('review-done', { direction: 'asc' }); w.auditRender({ still: true });
     assert.deepEqual(shown(), ['4174476673', '4171770802'], 'Oldest first reverses actual send activity');
-    w.CNListActivity.set('review-sent', { direction: 'desc' }); w.auditRender({ still: true });
+    w.CNListActivity.set('review-done', { direction: 'desc' }); w.auditRender({ still: true });
     const row = view.querySelector('.reviewListRow[data-rid="4171770802"]');
-    assert.equal(row.querySelectorAll('.seal-sheet').length, 1, 'the actual Decided row has one original send seal');
+    assert.equal(row.querySelectorAll('.seal-sheet').length, 1, 'the actual Completed row of a send has one original send seal');
     assert.doesNotMatch(row.querySelector('.seal-sheet svg').textContent, /paul|COMPLETE|QR LABEL/);
     assert.match(row.textContent, /2\/5 nested/, 'live progress remains visible');
     assert.deepEqual(Array.from(row.querySelectorAll('.rowActions button'), button => button.textContent), ['View designs', 'Open sheet', 'History']);
@@ -108,7 +108,10 @@ function auditReview() {
     const first = row.querySelector('.seal-sheet').innerHTML; w.auditRender({ still: true });
     assert.equal(view.querySelector('.reviewListRow[data-rid="4171770802"] .seal-sheet').innerHTML, first, 'redraw keeps exact original face');
     w.auditRV.cseg = 'open'; w.auditRender({ still: true }); assert.deepEqual(shown(), []);
-    w.auditRV.cseg = 'done'; w.auditRender({ still: true }); assert.deepEqual(shown(), [], 'neither sent row is stranded in Completed');
+    w.auditRV.cseg = 'done'; w.auditRender({ still: true }); assert.deepEqual(shown(), ['4171770802', '4174476673'], 'both sent rows are listed under Completed');
+    assert.equal(view.querySelector('[data-cseg="done"] b').textContent, '2', 'and counted there'); assert.equal(view.querySelector('[data-cseg="sent"]'), null, 'there is no Decided segment');
+    w.auditRV.cseg = 'sent'; w.auditRender({ still: true }); assert.equal(w.auditRV.cseg, 'done', 'the old Decided name is Completed');
+    assert.deepEqual(shown(), ['4171770802', '4174476673']);
   } finally { w.Motion = originalMotion; }
 }
 function rectFor(el, left = 410, top = 560) {
@@ -176,8 +179,8 @@ async function audit() {
     seals.push(seal);
   }
   const first = seals[0], originalFace = first.innerHTML, zoomed = () => d.querySelector('[data-seal-zoom]'), DELAY = w.Seal.zoom.DELAY;
-  assert.equal(DELAY, 750, 'one named 750 ms hover rest');
-  point('pointerover', first); await advance(DELAY - 50); assert.equal(zoomed(), null, 'fast movement cannot zoom a send-seal');
+  assert.equal(DELAY, 500, 'one named 500 ms hover rest');
+  point('pointerover', first); await advance(300); assert.equal(zoomed(), null, 'fast movement (300 ms) cannot zoom a send-seal');
   point('pointerout', first, outside); await advance(2000); assert.equal(zoomed(), null, 'leaving cancels the delayed zoom');
   point('pointerover', first); await advance(DELAY); assert.equal(zoomed(), first, 'resting opens the send seal itself in place: no second seal');
   assert.match(first.getAttribute('aria-label'), /Sent to sheet by paul/, 'the recorded signer is its accessible name'); assert.doesNotMatch(first.outerHTML, /Different current viewer/);
@@ -208,6 +211,6 @@ async function audit() {
     assert.deepEqual(textsOf(timeline.querySelector('svg')), textsOf(small.querySelector('svg')), 'all surfaces agree across the Toronto date rollover');
     assert(textsOf(small.querySelector('svg')).includes(date)); assert(textsOf(small.querySelector('svg')).includes(time));
   }
-  console.log('PASS: reported partial GF/SS cases go only to Decided; each digit filters/highlights immediately; chronological sort and sheet/history controls work; original Sent to Sheet seals, matching timeline/Overview/wood outlines, immutable actor/date/time, silent old history, full hover delay/immediate exit and separate QR history');
+  console.log('PASS: reported partial GF/SS cases are listed under Completed; each digit filters/highlights immediately; chronological sort and sheet/history controls work; original Sent to Sheet seals, matching timeline/Overview/wood outlines, immutable actor/date/time, silent old history, full hover delay/immediate exit and separate QR history');
 }
 audit().catch(error => { console.error(error); process.exitCode = 1; }).finally(() => w.close());

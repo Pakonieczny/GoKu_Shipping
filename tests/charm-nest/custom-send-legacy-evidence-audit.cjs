@@ -84,7 +84,7 @@ async function main() {
     assert.equal(w.CustomSheet.decisionOf(rows[2]), null, 'custom pool placement alone does not invent a signed send');
     const mode = seg => { w.Review.view().cseg = seg; w.Review.view().q = ''; w.Review.view().filter = null; w.Review.render({ still: true }); };
     const shown = () => Array.from(d.querySelectorAll('#rvList .reviewListRow'), element => element.dataset.rid);
-    mode('sent'); assert.deepEqual(shown(), ['4171770802', '4174476673']);
+    mode('done'); assert.deepEqual(shown(), ['4171770802', '4174476673'], 'the recovered sends are listed under Completed (the one tab for sent and completed orders)');
     for (const rec of evidence) {
       const card = d.querySelector('.reviewListRow[data-rid="' + rec.rid + '"]'), seal = card.querySelector('.seal-sheet');
       assert(seal); assert.equal(card.querySelectorAll('.seal').length, 1); assert.equal(seal.dataset.at, String(rec.at));
@@ -94,13 +94,14 @@ async function main() {
       card.querySelector('[data-cu-sheet]').click(); card.querySelector('[data-cu-history]').click();
     }
     assert.deepEqual(opens, evidence.flatMap(rec => [[rec.line, 'sheet'], [rec.line, 'timeline']]));
-    mode('done'); assert.deepEqual(shown(), [], 'no recovered send falsely becomes a completed order');
+    assert.equal(d.querySelector('[data-cseg="done"] b').textContent, '2', 'one Completed count'); assert.equal(d.querySelector('[data-cseg="sent"]'), null, 'no Decided segment');
     mode('open'); assert.deepEqual(shown(), [unknown.rid], 'unproven metadata stays open');
-    await w.CustomSheet.load({ force: true }); mode('sent'); assert.equal(d.querySelectorAll('#rvList .seal-sheet').length, 2, 'repeated reads cannot add another stamp');
+    mode('done'); assert(!shown().includes(unknown.rid), 'unproven metadata is not listed as sent or completed');
+    await w.CustomSheet.load({ force: true }); mode('done'); assert.equal(d.querySelectorAll('#rvList .seal-sheet').length, 2, 'repeated reads cannot add another stamp');
     assert.deepEqual(mutations, [], 'recovery never stamps, pools, prints, completes or writes timeline history');
     assert.equal(snapshot(), originalStore, 'all original server records remain byte-for-byte unchanged');
     assert.equal(server.st.list('Charm_Custom_Sheet').length, 0, 'a read does not create a new receipt');
-    console.log('PASS: fresh client with no local entry/modern receipt reads genuine original timeline+pool/source evidence through real API, places both partial orders only in Decided, preserves historical signer/time/copies and usable sheet/history controls; missing proof stays open; zero remote writes, stamps, repools, prints or false completions');
+    console.log('PASS: fresh client with no local entry/modern receipt reads genuine original timeline+pool/source evidence through real API, lists both partial orders under Completed (never Open), preserves historical signer/time/copies and usable sheet/history controls; missing proof stays open; zero remote writes, stamps, repools, prints or false completions');
   } finally { w.close(); server.close(); }
 }
 main().catch(error => { console.error(error); process.exitCode = 1; });
