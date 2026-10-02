@@ -13,7 +13,7 @@ const METHODS = new Set(['aliasCandidates', 'listingVerification', 'receiptIdent
 const OPTION_KEYS = {
   aliasCandidates: new Set(['method', 'ranks', 'budgetMs']),
   listingVerification: new Set(['method', 'ranks', 'listingIds', 'budgetMs']),
-  receiptIdentityPage: new Set(['method', 'ranks', 'fromSec', 'untilSec', 'cursor', 'limit', 'budgetMs'])
+  receiptIdentityPage: new Set(['method', 'ranks', 'frozenRanks', 'fromSec', 'untilSec', 'cursor', 'limit', 'budgetMs'])
 };
 const STATE_FIELDS = ['rank', 'sku', 'productId', 'status'];
 const LISTING_FIELDS = ['listingId', 'title', 'state', 'active', 'listingUrl', 'images', 'lastSyncedAt'];
@@ -119,19 +119,21 @@ function createHistoricalLookup({ db, namespace = 'Brites_Growth_Sandbox', curso
     const snap = await bounded(() => db.collection(namespace + '_Queue').where('rank', '<=', 100)
       .orderBy('rank').select(...STATE_FIELDS).limit(LIMITS.queue).get(), deadline);
     if (!snap || !Array.isArray(snap.docs) || snap.docs.length > LIMITS.queue) throw failure('SOURCE_INVALID');
+    const frozen = own(options, 'frozenRanks'), frozenSet = frozen ? new Set(options.frozenRanks) : null;
     const result = [];
     for (const doc of snap.docs) {
       const d = doc.data();
       if (!object(d) || !Number.isInteger(d.rank) || d.rank < 1 || d.rank > 100) throw failure('SEEDS_INVALID');
-      if (d.productId || d.status === 'complete') continue;
-      if (typeof d.sku !== 'string' || d.sku.length > 500) throw failure('SEEDS_INVALID');
+      if (frozen ? !frozenSet.has(d.rank) : (d.productId || d.status === 'complete')) continue;
+      if (typeof d.sku !== 'string' || d.sku.length > 500) throw failure(frozen ? 'CURSOR_INVALID' : 'SEEDS_INVALID');
       const tokens = [...new Set(d.sku.split(/[\n,;|]+/).map(sku))];
-      if (!tokens.length || tokens.some(t => !t)) throw failure('SEEDS_INVALID');
+      if (!tokens.length || tokens.some(t => !t)) throw failure(frozen ? 'CURSOR_INVALID' : 'SEEDS_INVALID');
       result.push({ rank: d.rank, tokens });
     }
     result.sort((a, b) => a.rank - b.rank);
-    if (new Set(result.map(r => r.rank)).size !== result.length) throw failure('SEEDS_INVALID');
-    if (result.length > LIMITS.ranks) throw failure('SEEDS_TOO_MANY');
+    if (frozen && (result.length !== frozenSet.size || new Set(result.map(r => r.rank)).size !== result.length)) throw failure('CURSOR_INVALID');
+    if (!frozen && new Set(result.map(r => r.rank)).size !== result.length) throw failure('SEEDS_INVALID');
+    if (result.length > LIMITS.ranks) throw failure(frozen ? 'CURSOR_INVALID' : 'SEEDS_TOO_MANY');
     if (options.ranks != null) {
       if (!Array.isArray(options.ranks) || !options.ranks.length || options.ranks.length > LIMITS.ranks ||
           options.ranks.some(rank => !Number.isInteger(rank) || !result.some(r => r.rank === rank))) throw failure('RANK_NOT_UNRESOLVED');
@@ -139,7 +141,7 @@ function createHistoricalLookup({ db, namespace = 'Brites_Growth_Sandbox', curso
     const selected = options.ranks == null ? result : result.filter(r => options.ranks.includes(r.rank));
     const originalTokens = [...new Set(selected.flatMap(r => r.tokens))];
     const tokens = [...new Set(originalTokens.map(t => t.toUpperCase()))];
-    if (originalTokens.length > LIMITS.tokens) throw failure('SEEDS_TOO_MANY');
+    if (originalTokens.length > LIMITS.tokens) throw failure(frozen ? 'CURSOR_INVALID' : 'SEEDS_TOO_MANY');
     return { rows: selected, tokens, digest: digest(JSON.stringify(selected)), queueRowsObserved: snap.docs.length };
   }
   function seal(payload, seedDigest) {
@@ -378,6 +380,10 @@ function createHistoricalLookup({ db, namespace = 'Brites_Growth_Sandbox', curso
       if (method === 'receiptIdentityPage' && (epochSeconds(options.fromSec) === null || epochSeconds(options.untilSec) === null || options.fromSec > options.untilSec || options.untilSec > Math.floor(now() / 1000) ||
           (options.limit != null && (!Number.isInteger(options.limit) || options.limit < 1 || options.limit > LIMITS.receipts)))) throw failure('INVALID_WINDOW');
       if (method === 'receiptIdentityPage' && own(options, 'cursor') && (typeof options.cursor !== 'string' || !options.cursor || options.cursor.length > LIMITS.cursorBytes)) throw failure('CURSOR_INVALID');
+      if (method === 'receiptIdentityPage' && own(options, 'frozenRanks') &&
+          (!own(options, 'cursor') || own(options, 'ranks') || !Array.isArray(options.frozenRanks) || !options.frozenRanks.length ||
+           options.frozenRanks.length > LIMITS.ranks || new Set(options.frozenRanks).size !== options.frozenRanks.length ||
+           options.frozenRanks.some(rank => !Number.isInteger(rank) || rank < 1 || rank > 100))) throw failure('INVALID_OPTIONS');
       const deadline = Date.now() + (options.budgetMs || LIMITS.budgetMs);
       const seed = await seeds(options, deadline);
       if (!seed.rows.length) return { ...base, status: 'no_unresolved_seeds', candidates: [], witnesses: [], nextCursor: null, windowExhausted: null };

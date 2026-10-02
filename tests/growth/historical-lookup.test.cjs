@@ -480,6 +480,65 @@ test('cursor expires and original seed case changes invalidate authenticated con
   assert.ok(!g.calls.some(c => c.coll === 'EtsyMail_Receipts'));
 });
 
+test('frozen rank seed resumes an authenticated cursor after a queue row completes', async () => {
+  const f = receiptFixture(undefined, { seeds: [{ rank: 1, sku: 'TEST' }, { rank: 2, sku: 'OTHER' }] });
+  const helper = f.helper(), first = await helper.read(receiptOptions({ limit: 1 }));
+  assert.ok(first.nextCursor);
+  f.data[QUEUE]['rank-1'].status = 'complete';
+  f.data[QUEUE]['rank-1'].productId = 'gid://shopify/Product/999';
+  const resumed = await helper.read(receiptOptions({ limit: 1, cursor: first.nextCursor, frozenRanks: [1, 2] }));
+  assert.equal(resumed.code, undefined);
+  assert.equal(resumed.windowExhausted, true);
+  assert.equal(resumed.nextCursor, null);
+  assertPrivate(resumed);
+  assert.equal(f.writes(), 0);
+});
+
+test('missing, additional or wrong frozen ranks cannot authenticate the original cursor', async () => {
+  const seeds = [{ rank: 1, sku: 'TEST' }, { rank: 2, sku: 'OTHER' }, { rank: 3, sku: 'THIRD', status: 'complete' }];
+  const f = receiptFixture(undefined, { seeds }), helper = f.helper();
+  const first = await helper.read(receiptOptions({ limit: 1 }));
+  f.data[QUEUE]['rank-1'].status = 'complete';
+  const receiptReads = () => f.calls.filter(c => c.coll === 'EtsyMail_Receipts').length;
+  const before = receiptReads();
+  for (const frozenRanks of [[1], [1, 2, 3], [1, 3]]) {
+    const result = await helper.read(receiptOptions({ cursor: first.nextCursor, frozenRanks }));
+    assert.equal(result.code, 'CURSOR_INVALID');
+    assert.equal(receiptReads(), before);
+    assertPrivate(result);
+  }
+});
+
+test('frozen ranks require a receipt cursor and cannot combine with ranks or other methods', async () => {
+  const invalid = [
+    receiptOptions({ frozenRanks: [1] }),
+    { method: 'aliasCandidates', frozenRanks: [1] },
+    { method: 'listingVerification', listingIds: ['10000001'], frozenRanks: [1] },
+    receiptOptions({ cursor: 'h1.AA', ranks: [1], frozenRanks: [1] }),
+    receiptOptions({ cursor: 'h1.AA', frozenRanks: [] }),
+    receiptOptions({ cursor: 'h1.AA', frozenRanks: [1, 1] }),
+    receiptOptions({ cursor: 'h1.AA', frozenRanks: ['1'] }),
+    receiptOptions({ cursor: 'h1.AA', frozenRanks: Array.from({ length: LIMITS.ranks + 1 }, (_, i) => i + 1) })
+  ];
+  for (const options of invalid) {
+    const f = fixture(), result = await f.helper().read(options);
+    assert.equal(result.code, 'INVALID_OPTIONS');
+    assert.equal(f.calls.length, 0);
+  }
+});
+
+test('changed frozen SKU tokens invalidate the cursor before receipt access', async () => {
+  const f = receiptFixture(undefined, { seeds: [{ rank: 1, sku: 'TEST' }, { rank: 2, sku: 'OTHER' }] });
+  const helper = f.helper(), first = await helper.read(receiptOptions({ limit: 1 }));
+  f.data[QUEUE]['rank-1'].status = 'complete';
+  f.data[QUEUE]['rank-1'].sku = 'CHANGED';
+  const before = f.calls.filter(c => c.coll === 'EtsyMail_Receipts').length;
+  const result = await helper.read(receiptOptions({ cursor: first.nextCursor, frozenRanks: [1, 2] }));
+  assert.equal(result.code, 'CURSOR_INVALID');
+  assert.equal(f.calls.filter(c => c.coll === 'EtsyMail_Receipts').length, before);
+  assertPrivate(result);
+});
+
 test('1001-transaction receipt resumes the uninspected element instead of skipping it', async () => {
   const transactions = Array.from({ length: 1001 }, (_, i) => tx({ sku: i === 1000 ? 'TEST' : 'OTHER', transaction_id: 810000001 + i }));
   const f = receiptFixture(transactions), helper = f.helper(), first = await helper.read(receiptOptions());
