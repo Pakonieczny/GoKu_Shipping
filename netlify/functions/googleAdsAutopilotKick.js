@@ -73,6 +73,8 @@ const READ_ACTIONS = new Set(["adDesignSubmissionStatus", "dashboard", "pmaxReco
 READ_ACTIONS.add("campaignOptions"); // the Campaign options panel: GAQL reads and saved drafts only
 READ_ACTIONS.add('growthResearchStatus');
 READ_ACTIONS.add('growthResearchDossiers');
+READ_ACTIONS.add('growthProductDemand');
+const PRIVATE_GROWTH_READS = new Set(['growthResearchStatus', 'growthResearchDossiers', 'growthProductDemand']);
 function isReadAction(a, body) {
   if (a === "conversionHealth" && body && body.force) return false;
   return READ_ACTIONS.has(a) || (a === "opportunities" && !(body && body.force));
@@ -80,7 +82,7 @@ function isReadAction(a, body) {
 // true = allowed · "unset" = a change was requested while no passcode is configured · false = wrong passcode
 async function authed(event, body, resolved) {
   const pass = (resolved || await EP.resolve()).value;
-  if (!pass) return isReadAction(body && body.action, body) ? true : "unset"; // fail closed: reads only
+  if (!pass) return PRIVATE_GROWTH_READS.has(body && body.action) ? "unset" : isReadAction(body && body.action, body) ? true : "unset"; // private research and sales evidence always require owner sign-in
   const h = (event.headers && (event.headers["x-edit-passcode"] || event.headers["X-Edit-Passcode"])) || "";
   return sameSecret(h, pass) || !!(body && sameSecret(body.passcode, pass));
 }
@@ -147,12 +149,43 @@ async function dispatchTask(task, data) {
   return {queued:true,...data};
 }
 async function handleAction(body) {
-  if(['growthResearchStatus','growthResearchDossiers'].includes(body.action)){
-    const service=require('./_britesGrowth').createGrowthService({db:require('./firebaseAdmin').firestore(),env:process.env});
+  if(PRIVATE_GROWTH_READS.has(body.action)){
+    const core=require('./_britesGrowth');
+    let ids;
+    if(body.action!=='growthResearchStatus'){
+      if(!Array.isArray(body.productIds)||body.productIds.length>20)throw Object.assign(Error('Request at most 20 exact product IDs.'),{statusCode:400});
+      const requested=body.productIds.map(value=>{const raw=String(value||'').trim();return /^gid:\/\/shopify\/Product\/\d+$/.test(raw)?raw:/^\d+$/.test(raw)?'gid://shopify/Product/'+raw:null;});
+      if(requested.some(id=>!id))throw Object.assign(Error('Use exact Shopify Product IDs.'),{statusCode:400});
+      ids=[...new Set(requested)];
+    }
+    const service=core.createGrowthService({db:require('./firebaseAdmin').firestore(),env:process.env});
     if(body.action==='growthResearchStatus')return service.status();
-    const ids=body.productIds||[];
-    const [dossiers,productIssues]=await Promise.all([service.research(ids),service.productIssues(ids)]);
-    return {dossiers,productIssues};
+    // Read the existing exact-version demand store. Opening the app does not
+    // start a Planner query, provider job, inference or campaign change.
+    if(body.action==='growthProductDemand'){
+      const products=await require('./_britesGrowthDemandStore').createDemandStore(service).read(ids);
+      if(!Array.isArray(products))throw Error('Saved demand evidence returned an invalid response.');
+      return {products:products.filter(product=>ids.includes(product.productId))};
+    }
+    const dossiers=await service.research(ids);
+    let productIssues=[],productIssueState='unavailable';
+    if(typeof service.productIssues==='function')try{productIssues=await service.productIssues(ids);productIssueState='available';}catch{}
+    const exactDossiers=(dossiers||[]).filter(d=>ids.includes(d.productId)),operatorReviews=[];
+    let projection;try{projection=require('./googleAdsAdDesignResearch');}catch{}
+    for(const id of ids){
+      const dossier=exactDossiers.find(d=>d.productId===id),holds=core.productIssueHolds((productIssues||[]).find(record=>record.productId===id));
+      const entry={productId:id,handle:dossier?.handle||null,dossierVersion:dossier?.version||null,state:'unavailable'};
+      if(productIssueState!=='available'||holds.recommendationHold||holds.meaningHold)entry.state='held';
+      else if(projection&&dossier&&typeof service.getProduct==='function')try{
+        const product=await service.getProduct(id),current={...dossier,currentDossierVersion:dossier.version,evidenceHolds:holds};
+        if(projection.sharedDossierIsCurrent(current,product)){
+          const packet=projection.projectRecommendations(current,new Set(current.sources.map(source=>source.id)))?.operatorReviewPacket;
+          if(packet){entry.state='pending_operator_review';entry.operatorReviewPacket=packet;}
+        }
+      }catch{}
+      operatorReviews.push(entry);
+    }
+    return {dossiers:exactDossiers,productIssues:(productIssues||[]).filter(record=>ids.includes(record.productId)),productIssueState,operatorReviews};
   }
   const f = fb();
   const a = body.action;

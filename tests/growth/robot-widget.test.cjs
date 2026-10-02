@@ -18,9 +18,9 @@ function harness(t, options = {}) {
   Object.defineProperty(document, 'hidden', {get:()=>hidden});
   const current = document.createElement('script'); current.src = 'https://growth-sandbox.example/brites-concierge.js'; current.dataset.sandbox = 'true';
   Object.defineProperty(document, 'currentScript', {get:()=>current});
-  const deviceCalls = [], voiceCalls = {create:0,start:0,stop:0,dispose:0,interrupt:0}, avatarCalls = {create:0,states:[],emotions:[],paused:[],levels:[],visible:[]}, network = [];
+  const deviceCalls = [], voiceCalls = {create:0,start:0,stop:0,dispose:0,interrupt:0}, avatarCalls = {create:0,states:[],emotions:[],paused:[],levels:[],visible:[],greetings:0,options:[]}, network = [];
   win.navigator.mediaDevices = {getUserMedia:async() => {deviceCalls.push('microphone');return {};},enumerateDevices:async() => {deviceCalls.push('enumerate');return [];}};
-  win.BritesConciergeAvatar = {create:() => {avatarCalls.create++; return {setState:value=>avatarCalls.states.push(value),setEmotion:value=>avatarCalls.emotions.push(value),setPaused:value=>avatarCalls.paused.push(value),setLevel:value=>avatarCalls.levels.push(value),setVisible:value=>avatarCalls.visible.push(value),retry(){},destroy(){}};}};
+  win.BritesConciergeAvatar = {create:options => {avatarCalls.create++; avatarCalls.options.push(options); return {setState:value=>avatarCalls.states.push(value),setEmotion:value=>avatarCalls.emotions.push(value),setPaused:value=>avatarCalls.paused.push(value),setLevel:value=>avatarCalls.levels.push(value),setVisible:value=>avatarCalls.visible.push(value),retry(){},destroy(){},triggerGreeting(){avatarCalls.greetings++;return true;}};}};
   let voiceConfig;
   win.BritesConciergeVoice = {create:config => {voiceCalls.create++;if(options.createThrows)throw Error('Synthetic voice constructor unavailable');voiceConfig=config;return {
     start:async()=>{voiceCalls.start++;if(options.startThrows)throw Error('Disabled realtime provider');if(options.startMic)await win.navigator.mediaDevices.getUserMedia({audio:true});return options.started===true;},
@@ -119,4 +119,29 @@ test('voice constructor failure cannot strand the Talk control in a disabled loa
   assert.equal(h.voiceButton.disabled,false);assert.equal(h.voiceButton.getAttribute('aria-pressed'),'false');
   assert.equal(h.root.querySelector('.voice-state').textContent,'Here to help');
   await h.ask('A bunny necklace');assert.equal(h.root.querySelectorAll('.card').length,1);
+});
+
+test('the optional Meet invitation stays closed and silent until explicitly opened', async t => {
+  const h=harness(t);const launch=h.root.querySelector('.launcher');
+  assert.match(launch.textContent,/Meet your gift guide/);assert.equal(launch.getAttribute('aria-expanded'),'false');
+  assert.equal(h.root.querySelector('.panel').hidden,true);assert.equal(h.avatarCalls.create,0);assert.equal(h.voiceCalls.create,0);assert.deepEqual(h.deviceCalls,[]);
+  launch.click();await settle();assert.equal(launch.getAttribute('aria-expanded'),'true');assert.equal(h.avatarCalls.create,1);assert.equal(h.voiceCalls.create,0);
+});
+test('the milestone invitation routes a real contextual request without starting voice', async t => {
+  const h=harness(t);h.open();h.button('Celebrate a milestone').click();await settle();
+  assert.equal(h.network.find(call=>call.body?.message)?.body.message,'I would like a meaningful piece to celebrate an achievement.');assert.equal(h.voiceCalls.create,0);assert.deepEqual(h.deviceCalls,[]);
+});
+test('the remembrance invitation uses a calm pose instead of a celebration', async t => {
+  const h=harness(t,{answer:{reply:'Choose a personal way to mark that memory.',preferences:{milestone:'remembrance'},products:[product],meanings:[]}});
+  h.open();h.button('Remember someone').click();await settle();
+  assert.equal(h.network.find(call=>call.body?.message)?.body.message,'I would like a meaningful remembrance piece.');assert.equal(h.avatarCalls.emotions.at(-1),'calm');
+});
+test('a rejected memorial occasion does not suppress a corrected birthday celebration', async t => {
+  const h=harness(t);h.open();await h.ask('Not a memorial gift. A bunny birthday gift instead.');assert.equal(h.avatarCalls.emotions.at(-1),'celebrate');
+});
+
+
+test('the gesture greeting follows an explicit opening once and is never replayed by redundant open calls', async t => {
+  const h=harness(t);h.open();await settle();assert.equal(h.avatarCalls.options[0].greetingOnOpen,false);assert.equal(h.avatarCalls.greetings,1);
+  h.open();await settle();assert.equal(h.avatarCalls.greetings,1);h.close();h.open();await settle();assert.equal(h.avatarCalls.greetings,2);
 });

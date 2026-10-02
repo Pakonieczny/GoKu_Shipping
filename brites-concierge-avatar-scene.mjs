@@ -10,7 +10,7 @@ export const AVATAR_SCENE_DECLARATIONS = Object.freeze({
   schema: 2,
   identity: 'original single-eye pebble robot',
   expressionRig: 'deformable luminous aperture, no human iris or mouth',
-  stateColors: Object.freeze({idle: '#66cfff', listening: '#319dff', thinking: '#b29bff', speaking: '#ffc179', success: '#7ce3c3', error: '#e9c8a9'}),
+  stateColors: Object.freeze({idle: '#4aa8ff', listening: '#49c9ff', thinking: '#ab87ff', speaking: '#ffcb79', success: '#72ddd1', error: '#ffc28e'}),
   textures: Object.freeze([
     Object.freeze({name: 'Ivory ceramic micro-surface', kind: 'porcelain'}),
     Object.freeze({name: 'Champagne brushed metal grain', kind: 'brush'}),
@@ -191,10 +191,10 @@ export function createAvatarScene({container, quality, onFrame, onContext, onErr
     if (state !== previousState) {previousState = state; transitionAt = sampleTime;}
     const delta = Math.max(0, Math.min(.1, sampleTime - lastColorTime)); lastColorTime = sampleTime;
     targetColor.set(AVATAR_SCENE_DECLARATIONS.stateColors[state]); displayedColor.lerp(targetColor, reducedMotion ? 1 : 1 - Math.exp(-delta * 8));
-    const speaking = state === 'speaking', thinking = state === 'thinking', happy = state === 'success' || pose.emotion === 'celebrate', reassuring = state === 'error' || pose.emotion === 'reassuring', phase = Math.max(0, sampleTime - transitionAt);
-    avatar.position.y = pose.bob; avatar.rotation.z = pose.bodyRoll;
+    const speaking = state === 'speaking', thinking = state === 'thinking', calm = pose.emotion === 'calm' || pose.emotion === 'reassuring', happy = state === 'success' && !calm, reassuring = state === 'error' || calm;
+    avatar.position.y = pose.bob; avatar.rotation.z = pose.bodyRoll; avatar.rotation.x = Number.isFinite(pose.lean) ? pose.lean : 0;
     head.rotation.set(pose.headPitch, pose.headYaw, pose.headRoll + (reassuring ? -.025 : pose.emotion === 'curious' ? .035 : 0));
-    const eyeOpen = THREE.MathUtils.clamp(pose.eyeOpen, .035, 1.08), amplitude = speaking ? pose.mouthOpen : thinking ? .12 : happy ? .18 : 0;
+    const eyeOpen = THREE.MathUtils.clamp(pose.eyeOpen, .035, 1.08), eyeScaleX = THREE.MathUtils.clamp(pose.eyeScaleX || 1, .8, 1.2), eyeScaleY = THREE.MathUtils.clamp(pose.eyeScaleY || 1, .6, 1.2), deformation = THREE.MathUtils.clamp(pose.eyeDeformation || 0, -.3, .3), amplitude = speaking ? pose.mouthOpen : thinking ? .12 : happy ? .18 : 0;
     eye.position.x = THREE.MathUtils.clamp(pose.gazeX, -.12, .12); eye.position.y = .022 + THREE.MathUtils.clamp(pose.gazeY, -.08, .08);
     const attribute = apertureGeometry.attributes.position;
     for (let i = 0; i < attribute.count; i++) {
@@ -202,16 +202,16 @@ export function createAvatarScene({container, quality, onFrame, onContext, onErr
       // Local mesh deformation gives speech an elastic four-lobed pulse,
       // success an uplifted arc, and errors a gentle flattened listening shape.
       const wave = reducedMotion ? 0 : Math.sin(angle * 4 + sampleTime * (speaking ? 7 : 2)) * amplitude * .025;
-      attribute.setXYZ(i, x * (1 + wave) * (1 + (1 - eyeOpen) * .055), (y * (1 + wave) + (happy ? Math.abs(x) * .05 : 0)) * eyeOpen * (reassuring ? .89 : 1), z);
+      attribute.setXYZ(i, x * eyeScaleX * (1 + wave) * (1 + (1 - eyeOpen) * .055), (y * (1 + wave) + Math.abs(x) * deformation * .2) * eyeOpen * eyeScaleY, z);
     }
     attribute.needsUpdate = true; apertureGeometry.computeVertexNormals();
-    halo.scale.set(1 + amplitude * .025, eyeOpen, 1); innerHalo.scale.set(1, eyeOpen, 1); orbit.scale.y = eyeOpen;
+    halo.scale.set(eyeScaleX * (1 + amplitude * .025), eyeOpen * eyeScaleY, 1); innerHalo.scale.set(eyeScaleX, eyeOpen * eyeScaleY, 1); orbit.scale.y = eyeOpen * eyeScaleY;
     orbit.rotation.z = -.8 + (thinking && !reducedMotion ? sampleTime * .8 : happy ? .35 : 0);
     irisMaterial.color.copy(displayedColor); irisMaterial.emissive.copy(displayedColor); eyeMaterial.color.copy(displayedColor); eyeMaterial.emissive.copy(displayedColor); mouthMaterial.color.copy(displayedColor); mouthMaterial.emissive.copy(displayedColor); glint.color.copy(displayedColor).lerp(whiteColor, .6);
     irisMaterial.emissiveIntensity = 1.05 + pose.lightPulse * .55 + (speaking ? pose.mouthOpen * .22 : 0);
     eyeLight.color.copy(displayedColor); eyeLight.intensity = .22 + pose.lightPulse * .16;
     statusBars.forEach((bar, index) => {bar.scale.y = speaking ? .7 + pose.mouthOpen * (.8 + .35 * Math.sin(sampleTime * 8 + index)) : thinking && !reducedMotion ? .8 + .3 * Math.sin(sampleTime * 3 - index * .7) : 1;});
-    arms.forEach(({group, side}) => {const invitation = state === 'listening' ? .085 : speaking ? .06 : reassuring ? .09 : 0; group.rotation.z = -side * (pose.armLift + pose.gesture + invitation); group.rotation.x = -pose.armLift * .4 - (speaking ? .045 : 0); group.rotation.y = side * (happy && !reducedMotion ? Math.sin(Math.min(phase, 1.2) * Math.PI) * .12 : 0);});
+    arms.forEach(({group, side}) => {const invitation = state === 'listening' ? .065 : speaking ? .04 : reassuring ? .035 : 0, offer = side === 1 && Number.isFinite(pose.offer) ? pose.offer : 0; group.rotation.z = -side * (pose.armLift + invitation + offer * .24); group.rotation.x = -pose.armLift * .4 - offer * .065; group.rotation.y = side * offer * .12;});
     key.position.x = 3.2 + Math.sin(sampleTime * .25) * .11 * (reducedMotion ? 0 : 1);
   }
   function render(pose, force = false) {
@@ -225,7 +225,7 @@ export function createAvatarScene({container, quality, onFrame, onContext, onErr
   renderer.domElement.addEventListener('webglcontextlost', contextLost); renderer.domElement.addEventListener('webglcontextrestored', contextRestored);
   const resizeObserver = win.ResizeObserver ? new win.ResizeObserver(resize) : null; resizeObserver?.observe(container); if (!resizeObserver) win.addEventListener('resize', resize);
   resize();
-  function snapshot() {return {revision: THREE.REVISION, animated: active && !reducedMotion && !lost, frames, frameRenderMs: Math.round(renderMs * 100) / 100, drawCalls, renderedTriangles, geometry: {model: modelStats, scene: sceneStats}, textures: maps.map(value => ({...value})), shadow: {enabled: true, size: quality.shadowSize, type: 'PCF soft', casts: true, receivingStage: true}, character: {identity: AVATAR_SCENE_DECLARATIONS.identity, digitalEyes: 1, humanFeatures: false, meshDeformation: true, state: previousState, color: '#' + displayedColor.getHexString()}, environment: {kind: AVATAR_SCENE_DECLARATIONS.environment.kind, faces: 6, size: skyboxSize, hdri: false}, materials: {physical: [...materials].filter(value => value.isMeshPhysicalMaterial).length, metallicAnisotropy: true, transmission: true, clearcoat: true, environmentReflection: true}, lights: 5, bloom: !!composer, width, height, pixelRatio: renderer.getPixelRatio(), contextLost: lost};}
+  function snapshot() {return {revision: THREE.REVISION, animated: active && !reducedMotion && !lost, frames, frameRenderMs: Math.round(renderMs * 100) / 100, drawCalls, renderedTriangles, geometry: {model: modelStats, scene: sceneStats}, textures: maps.map(value => ({...value})), shadow: {enabled: true, size: quality.shadowSize, type: 'PCF soft', casts: true, receivingStage: true}, mannerism: {name: lastPose?.mannerism || null, active: lastPose?.mannerismActive === true, eventBound: true}, character: {identity: AVATAR_SCENE_DECLARATIONS.identity, digitalEyes: 1, humanFeatures: false, meshDeformation: true, state: previousState, color: '#' + displayedColor.getHexString()}, environment: {kind: AVATAR_SCENE_DECLARATIONS.environment.kind, faces: 6, size: skyboxSize, hdri: false}, materials: {physical: [...materials].filter(value => value.isMeshPhysicalMaterial).length, metallicAnisotropy: true, transmission: true, clearcoat: true, environmentReflection: true}, lights: 5, bloom: !!composer, width, height, pixelRatio: renderer.getPixelRatio(), contextLost: lost};}
   function destroy() {if (disposed) return; disposed = true; renderer.setAnimationLoop(null); resizeObserver?.disconnect(); win.removeEventListener('resize', resize); renderer.domElement.removeEventListener('webglcontextlost', contextLost); renderer.domElement.removeEventListener('webglcontextrestored', contextRestored); composer?.passes.forEach(pass => pass.dispose?.()); composer?.dispose(); geometries.forEach(value => value.dispose()); materials.forEach(value => value.dispose()); textures.forEach(value => value.dispose()); environmentTarget.dispose(); renderer.dispose(); renderer.forceContextLoss(); renderer.domElement.remove();}
   return {setMotion, invalidate, render, snapshot, destroy};
 }

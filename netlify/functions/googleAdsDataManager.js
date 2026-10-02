@@ -78,19 +78,38 @@ function eventFor(row) {
 function summarizeDiagnostics(data, target) {
   const rows = Array.isArray(data?.requestStatusPerDestination) ? data.requestStatusPerDestination : [];
   // accountType replaced the deprecated `product`; Google accepts either.
-  const type = d => d?.operatingAccount?.accountType || d?.operatingAccount?.product;
-  const exact = r => type(r?.destination) === 'GOOGLE_ADS' &&
-    String(r.destination.operatingAccount.accountId) === target.operatingAccount.accountId &&
-    String(r.destination.productDestinationId) === target.productDestinationId;
+  // Both present fields must agree. Account/action IDs are strings in the REST
+  // schema; coercing numbers or arrays can conceal a malformed identity.
+  const identity = d => {
+    const account = d?.operatingAccount, type = account?.accountType || account?.product;
+    if (type !== 'GOOGLE_ADS' || account.accountType && account.product && account.accountType !== account.product ||
+        typeof account.accountId !== 'string' || !/^\d+$/.test(account.accountId) ||
+        typeof d.productDestinationId !== 'string' || !/^\d+$/.test(d.productDestinationId)) return null;
+    return {accountId: account.accountId, actionId: d.productDestinationId};
+  };
+  const original = identity(target);
+  const exact = r => {
+    const received = identity(r?.destination);
+    return original && received && received.accountId === original.accountId && received.actionId === original.actionId;
+  };
   // A request receipt identifies its submitted payload, but a sparse or
   // mismatched response is not confirmation of the saved account and action.
   // Keep it unresolved rather than inferring success from a lone status row.
   const found = rows.filter(exact);
   if (found.length !== 1) return { state: 'processing', status: rows.length ? 'DESTINATION_UNCONFIRMED' : 'NO_STATUS', error: 'Diagnostics have not confirmed the exact conversion destination.' };
   const row = found[0], state = row.requestStatus;
+  // The API defines these as mutually exclusive status kinds. A mixture is
+  // malformed evidence even when it contains an otherwise convenient SUCCESS.
+  if (['audienceMembersIngestionStatus', 'audienceMembersRemovalStatus', 'removeAllAudienceMembersStatus']
+    .some(field => row[field] !== undefined && row[field] !== null)) {
+    return {state: 'processing', status: 'RECEIPT_STATUS_KIND_UNCONFIRMED', error: 'Diagnostics have not confirmed an event-only receipt status.'};
+  }
   const errors = (row.errorInfo?.errorCounts || []).map(e => `${e.reason || 'Processing error'} (${e.recordCount || e.count || '?'})`).join('; ');
   const warnings = (row.warningInfo?.warningCounts || []).map(e => String(e.reason || 'Processing warning'));
-  if (state === 'SUCCESS' && !errors && Number(row.eventsIngestionStatus?.recordCount) === 1) return { state: 'success', status: state, warnings };
+  // REST int64 values are decimal strings; retain numeric 1 compatibility while
+  // rejecting booleans, containers and formatted strings that Number coerces.
+  const count = row.eventsIngestionStatus?.recordCount;
+  if (state === 'SUCCESS' && !errors && (count === '1' || count === 1)) return { state: 'success', status: state, warnings };
   // The enum is FAILED; the diagnostics guide's prose calls it FAILURE.
   if (['FAILED', 'FAILURE', 'PARTIAL_SUCCESS'].includes(state)) return { state: 'failed', status: state, error: errors || 'Google did not process this conversion successfully.', warnings };
   return { state: 'processing', status: state === 'SUCCESS' ? 'SUCCESS with ' + (row.eventsIngestionStatus?.recordCount ?? 'no') + ' event count' : (state || null), error: errors || null, warnings };
