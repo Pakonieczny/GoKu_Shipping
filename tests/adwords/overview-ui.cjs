@@ -98,6 +98,7 @@ test('the stored serving card shows Google\'s reason and the fix under a line, a
   assert.ok(full.includes(line+'<div class="muted" style="font-size:11px;margin:1px 0 0 2px">Google: Image too small (900) &lt;i&gt;x&lt;/i&gt;</div><div class="muted" style="font-size:11px;margin:1px 0 0 2px">Fix: Fix the product issues in Merchant Center.</div></li>'),'reason then fix, in the same markup the full check uses');
   assert.match(full,/<b>Dates:<\/b> Ends soon<div class="muted"[^>]*>Google: Ends in 2 days<\/div><\/li>/,'a finding with only a reason shows only the reason');
   assert.doesNotMatch(full,/<i>x<\/i>/,'HTML in Google\'s reason is escaped');assert.equal((full.match(/Fix: /g)||[]).length,1);
+  const risk=card([{level:'risk',area:'Dates',text:'t',fix:'Do it'}]);assert.match(risk,/Fix: Do it/);assert.doesNotMatch(risk,/Optional: /,'a stored block or risk card prints Fix:, never Optional:');
   const old=card([{level:'block',area:'Products',text:'None of the 1000 products can show.'}]);
   assert.ok(old.includes(line+'</li>'),'a summary stored before reasons were kept renders exactly as before');assert.doesNotMatch(old,/Google: |Fix: /);
   assert.doesNotMatch(card([{level:'block',area:'Products',text:'t',reason:'',fix:''}]),/class="muted" style="font-size:11px/,'empty reason and fix draw nothing');});

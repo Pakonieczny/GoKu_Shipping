@@ -2520,7 +2520,7 @@ function renderServing(s){
   var item=function(f){var lv=SERV_LV[f.level]||SERV_LV.note;
     return '<li style="margin:5px 0;list-style:none;overflow-wrap:anywhere"><span class="badge2 '+lv[1]+'" style="margin-right:6px">'+lv[0]+'</span><b>'+esc(f.area)+':</b> '+esc(f.text)
       +(f.reason?'<div class="muted" style="font-size:11px;margin:1px 0 0 2px">Google: '+esc(f.reason)+'</div>':'')
-      +(f.fix?'<div class="muted" style="font-size:11px;margin:1px 0 0 2px">Fix: '+esc(f.fix)+'</div>':'')+'</li>';};
+      +(f.fix?'<div class="muted" style="font-size:11px;margin:1px 0 0 2px">'+(f.level==="note"?"Optional: ":"Fix: ")+esc(f.fix)+'</div>':'')+'</li>';};
   var all=s.findings||[],main=all.filter(function(f){return f.level!=="note";}),notes=all.filter(function(f){return f.level==="note";});
   var when=s.checkedAt?new Date(s.checkedAt):null;
   return box+'<div style="font-size:12px;font-weight:650;margin-bottom:4px">Google serving check <span style="font-weight:600;color:'+tone+'">· '+esc(s.headline||"")+'</span></div>'

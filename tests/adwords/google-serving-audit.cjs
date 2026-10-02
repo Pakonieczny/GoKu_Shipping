@@ -113,7 +113,7 @@ const topic = (t, type, extra = {}) => ({ topic: t, type, ...extra });
   check(has(r, 'risk', /Ad group "Beach charms" has no enabled keyword/), 'an ad group without keywords is flagged');
   check(has(r, 'risk', /1 ad group asset disapproved: image "nurse square".*image quality/), 'a disapproved ad group image shows its policy topic');
   check(has(r, 'note', /1 campaign asset limited by policy: callout "Free shipping".*misleading/) && has(r, 'note', /1 campaign asset still under review/), 'campaign assets show limited and under-review states');
-  check(has(r, 'risk', /budget limits how often/) && has(r, 'note', /API version \(v24\) cannot name/), 'primary status reasons are translated, UNKNOWN names the API version');
+  check(has(r, 'note', /daily budget limits how often it shows\. Raise it only if you want more traffic/) && !has(r, 'risk', /budget limits/) && !r.findings.some(f => /API version|cannot name|unknown/i.test(text(f))), 'primary status reasons are translated; a budget limit is a note; UNKNOWN is not a finding');
   check(has(r, 'risk', /example\.net, which is not your store/) && has(r, 'risk', /1 final URL is not a valid https address/), 'landing pages off the store or without https are flagged');
   check(has(r, 'note', /No language is set/) && fact(r, 'Languages') === 'all languages', 'no language targeting is noted');
   check(/United States, location 2250 · also people interested in them/.test(fact(r, 'Locations')) && fact(r, 'Networks') === 'Google Search + search partners + display expansion', 'facts describe locations and networks in plain words');
@@ -179,12 +179,12 @@ const topic = (t, type, extra = {}) => ({ topic: t, type, ...extra });
   check(r.ok && r.channel === 'PERFORMANCE_MAX' && r.verdict === 'attention' && r.counts.block === 0, 'the channel is discovered from the campaign row; no blocking problem here');
   check(g.queries.some(q => q.includes("FROM shopping_product WHERE shopping_product.campaign = 'customers/123/campaigns/77'")), 'products are read in the campaign scope, with their status for this campaign');
   check(!g.queries.some(q => /FROM (ad_group_criterion|ad_group_ad|ad_group)\b/.test(q)), 'a Performance Max check reads no Search resources');
-  check(has(r, 'risk', /It ends on 2026-10-02, in 3 days/), 'an end date within a week is flagged');
+  check(has(r, 'note', /It ends on 2026-10-02, in 3 days\..*Extend the end date if it should keep running/) && !has(r, 'risk', /It ends/), 'an end date within a week is a note with a fix');
   check(has(r, 'risk', /from the US feed, but the campaign also targets Canada/), 'a feed label for one country with other targeted countries is flagged');
   check(has(r, 'risk', /Asset group "Charms" is disapproved.*trademarks in ad text: "Fakebrand style"/), "a disapproved asset group shows Google's topic");
   check(has(r, 'risk', /1 asset disapproved in "Charms": headline "Fakebrand style charms"/), 'the disapproved asset itself is named');
-  check(has(r, 'risk', /"Charms" has Poor ad strength.*Google asks: add 2 long headlines, add 1 video \(vertical\)/), "Google's ad strength action items are shown as the fix");
-  check(has(r, 'note', /"Necklaces" has Average ad strength/) && has(r, 'note', /"Necklaces" has no text or images of its own/), 'a feed-only asset group is explained, not failed');
+  check(has(r, 'risk', /"Charms" has Poor ad strength, so it can show in fewer places\..*Add 2 long headlines, 1 video \(vertical\)\.$/) && !/Google asks|builds fewer/.test(JSON.stringify(r.findings)), "Google's ad strength action items are shown as the fix, as a list of what to add");
+  check(has(r, 'note', /"Necklaces" has Average ad strength\. That does not stop it showing; Good or Excellent only mean more variety\./) && has(r, 'note', /"Necklaces" has no text or images of its own/), 'a feed-only asset group is explained, not failed');
   check(has(r, 'note', /"Charms" has fewer assets than Google's minimum: 1 logo \(has 0\)/) && !has(r, 'block', /minimum/), "a retail group below the asset minimum is a note naming the missing field type");
   check(has(r, 'risk', /1 asset group has no product filter/), 'an asset group without a product filter in a retail campaign is flagged');
   // The filter names two offers, so only those are judged: the three other products Google lists (not eligible, limited) are left out on purpose.
@@ -192,7 +192,7 @@ const topic = (t, type, extra = {}) => ({ topic: t, type, ...extra });
   check(has(r, 'risk', /1 of 2 products in the product filter are not in Merchant Center under this campaign's feed: shopify_us_3_4/), 'a filtered product Google does not have is flagged');
   check(has(r, 'note', /1 search theme disapproved in "Charms".*trademarks/), 'a disapproved search theme shows its reason');
   check(!has(r, 'note', /Final URL expansion is on/) && /final URL expansion off · Google-written text off · image enhancement on \(Google default\)/.test(fact(r, 'Google automation')), 'asset automation facts reflect opt-outs and Google defaults');
-  check(fact(r, 'Merchant Center') === '555 · feed US' && fact(r, 'Products') === '2 included · 1 can show · 1 not listed by Google · 3 others left out by the product filter', 'Merchant Center and product facts are plain: what the campaign includes, and how many others its filter leaves out');
+  check(fact(r, 'Merchant Center') === '555 · feed US' && fact(r, 'Products') === '2 included · 1 can show · 1 not listed by Google · the rest of your feed is left out by the filter', 'Merchant Center and product facts are plain: what the campaign includes, and how many others its filter leaves out');
   check(fact(r, 'New customers') === 'bids higher for new customers' && fact(r, 'Languages') === 'English' && /target ROAS 350%/.test(fact(r, 'Bidding')), 'goal, language and bidding facts are read');
   check(!has(r, 'risk', /Merchant Center 555 is not linked/) && !r.findings.some(f => f.area === 'Goals'), 'a working link and a single purchase goal produce no findings');
 
@@ -250,7 +250,7 @@ const topic = (t, type, extra = {}) => ({ topic: t, type, ...extra });
     'the campaign\'s own offers are asked for by id, in the campaign scope, each as the filter names it and in its lower-case form');
   check(g.queries.filter(q => /FROM shopping_product/.test(q) && !/item_id IN/.test(q) && /LIMIT 1000\s*$/.test(q)).length === 1 && g.queries.filter(q => /FROM shopping_product/.test(q)).length === 2, 'next to it the plain 1000-product read is still made, as the fallback');
   check(productsOf(r).length === 0 && !JSON.stringify(r.findings).match(/None of the|Excluded product|1000/) && r.counts.block === 0 && r.verdict === 'ready', 'products the filter leaves out are not a finding: nothing blocks, and the verdict is ready');
-  check(fact(r, 'Products') === '2 included · 2 can show · 1000+ others left out by the product filter', 'the Products fact names what the campaign includes and that the others are left out by the product filter');
+  check(fact(r, 'Products') === '2 included · 2 can show · the rest of your feed is left out by the filter', 'the Products fact names what the campaign includes and that the others are left out by the product filter');
   check(r.ok && !r.partial && r.warnings.length === 0, 'and the check is complete, with no warning');
 
   // (b) The included offers themselves are not eligible for a real reason.
@@ -259,7 +259,7 @@ const topic = (t, type, extra = {}) => ({ topic: t, type, ...extra });
   const noneShow = r.findings.find(f => f.level === 'block' && f.area === 'Products');
   check(r.verdict === 'blocked' && noneShow && noneShow.text === 'None of the 2 products can show.' && noneShow.reason === 'Missing shipping settings (2)' && noneShow.fix === 'Fix the product issues in Merchant Center.',
     'included offers that are not eligible block, with Google\'s reason and the Merchant Center fix');
-  check(!JSON.stringify(r.findings).includes('Excluded product') && fact(r, 'Products') === '2 included · 0 can show · 2 not eligible · 1000+ others left out by the product filter', 'and the 1000 left out are still not counted');
+  check(!JSON.stringify(r.findings).includes('Excluded product') && fact(r, 'Products') === '2 included · 0 can show · 2 not eligible · the rest of your feed is left out by the filter', 'and the 1000 left out are still not counted');
   ({ r } = await audit(oneProduct([...leftOut(1000), ownRow(ownIds[0]), ownRow(ownIds[1], 'NOT_ELIGIBLE', noShipping)], { enabled: true })));
   check(has(r, 'risk', /1 of 2 products cannot show.*Missing shipping settings \(1\).*Fix the product issues in Merchant Center/) && !r.findings.some(f => f.level === 'block'), 'one included offer not eligible is a risk, not a block');
 
@@ -267,7 +267,7 @@ const topic = (t, type, extra = {}) => ({ topic: t, type, ...extra });
   ({ r } = await audit(oneProduct([...leftOut(1000), ownRow(ownIds[0]), ownRow(ownIds[1], 'NOT_ELIGIBLE', [{ description: EXCLUDED, adsSeverity: 'ERROR' }])])));
   const excl = r.findings.find(f => f.level === 'block' && f.area === 'Products');
   check(r.verdict === 'blocked' && excl && /The campaign's product filter excludes 1 of the 2 products it includes: shopify_US_111_333\./.test(excl.text) && excl.reason === 'Excluded product or listing group (1)' && excl.fix === 'Re-publish the campaign or fix its product filter.', 'an included offer Google reports as excluded blocks, saying the product filter excludes it');
-  check(productsOf(r).length === 1 && !JSON.stringify(r.findings).includes('Fix the product issues in Merchant Center') && fact(r, 'Products') === '2 included · 1 can show · 1 excluded by the product filter · 1000+ others left out by the product filter', 'it is reported once, not also as a product issue');
+  check(productsOf(r).length === 1 && !JSON.stringify(r.findings).includes('Fix the product issues in Merchant Center') && fact(r, 'Products') === '2 included · 1 can show · 1 excluded by the product filter · the rest of your feed is left out by the filter', 'it is reported once, not also as a product issue');
   ({ r } = await audit(oneProduct([...leftOut(5), ownRow(ownIds[0], 'NOT_ELIGIBLE', [{ description: EXCLUDED }, { description: 'Missing shipping settings', adsSeverity: 'ERROR' }]), ownRow(ownIds[1], 'NOT_ELIGIBLE', [{ description: EXCLUDED }])])));
   check(productsOf(r).length === 1 && /excludes 2 of the 2 products it includes/.test(productsOf(r)[0].text), 'offers excluded by the filter are named even when Google lists another issue next to it; the filter is what to fix first');
 
@@ -281,7 +281,7 @@ const topic = (t, type, extra = {}) => ({ topic: t, type, ...extra });
   const cutTop = (S.summaryOf(r, 'publication').top || []).find(f => f.area === 'Products');
   check(cutTop && cutTop.level === 'risk' && /cut at 1000 products/.test(cutTop.text) && /Check again with Google/.test(cutTop.fix), 'and it lands in the stored summary with its fix');
   check(r.partial && r.warnings.some(w => /The products this campaign includes could not be read \(Google Ads: queryError=UNRECOGNIZED_FIELD\); the check could only sample 1000 products\./.test(w)), 'a warning says the check could only sample 1000 products');
-  check(fact(r, 'Products') === "2 included · 2 not checked (Google's list was cut at 1000 products) · 1000+ others left out by the product filter" && g.queries.filter(q => /item_id IN/.test(q)).length === 1, 'the fact says they were not checked; the failing read is made once');
+  check(fact(r, 'Products') === "2 included · 2 not checked (Google's list was cut at 1000 products) · the rest of your feed is left out by the filter" && g.queries.filter(q => /item_id IN/.test(q)).length === 1, 'the fact says they were not checked; the failing read is made once');
   // A sample that is not cut is the whole list: it can be judged, and a missing offer is missing.
   ({ r } = await audit(oneProduct([...leftOut(3), ownRow(ownIds[0])]), refuse));
   check(has(r, 'risk', /1 of 2 products in the product filter are not in Merchant Center under this campaign's feed: shopify_us_111_333/) && !r.findings.some(f => /cut at/.test(f.text)) && r.warnings.length === 1, 'when the sample is complete (fewer than 1000 products) it is judged as the targeted read would have been');
@@ -306,7 +306,7 @@ const topic = (t, type, extra = {}) => ({ topic: t, type, ...extra });
   // (f) Included offers Google does not list at all: a note right after a publication, otherwise a block (the targeted read answers with nothing).
   ({ r, g } = await audit(oneProduct([...leftOut(1000)]), { run: { settling: true } }));
   check(r.counts.block === 0 && has(r, 'note', /2 of 2 products in the product filter are not listed for this campaign yet: shopify_us_111_222, shopify_us_111_333/) && !has(r, 'block', /Google finds no products/) && !has(r, 'note', /cut at/), 'included offers Google does not list yet are a note while settling');
-  check(fact(r, 'Products') === '2 included · 2 not listed by Google · 1000+ others left out by the product filter', 'and the fact says so');
+  check(fact(r, 'Products') === '2 included · 2 not listed by Google · the rest of your feed is left out by the filter', 'and the fact says so');
   ({ r } = await audit(oneProduct([...leftOut(1000)])));
   check(r.verdict === 'blocked' && has(r, 'block', /2 of 2 products in the product filter are not in Merchant Center under this campaign's feed.*Remove them from the filter, or fix the feed label/) && !has(r, 'block', /Google finds no products|None of the/), 'otherwise they block, without the false "None of the 1000"');
   ({ r } = await audit(oneProduct([...leftOut(1000), ownRow(ownIds[0])])));
@@ -314,13 +314,13 @@ const topic = (t, type, extra = {}) => ({ topic: t, type, ...extra });
 
   // (g) Google may store an offer's item id in another case than the product filter names it, and GAQL IN compares exactly: each offer is asked for
   // as the filter names it, in lower case and, for a Shopify id, with the market code in upper case.
-  const OK_HEAD = 'Google reports nothing that would stop it serving as intended.', SETTLING_HEAD = 'Nothing found so far; Google was still processing this new campaign.';
+  const OK_HEAD = 'Google reports nothing that would stop it serving as intended.', PAUSED_HEAD = 'It is paused. Nothing else found would stop it serving once you enable it.', SETTLING_HEAD = 'Nothing found so far; Google was still processing this new campaign.';
   const only = id => ({ ids: [id] }), idQuery = gg => idsOf(gg.queries.find(q => /item_id IN/.test(q)));
   ({ r, g } = await audit(oneProduct([...leftOut(1000), ownRow('shopify_US_111_222')], only('shopify_us_111_222'))));
-  check(JSON.stringify(idQuery(g)) === JSON.stringify(['shopify_us_111_222', 'shopify_US_111_222']) && r.verdict === 'ready' && r.counts.block === 0 && productsOf(r).length === 0 && fact(r, 'Products') === '1 included · 1 can show · 1000+ others left out by the product filter',
+  check(JSON.stringify(idQuery(g)) === JSON.stringify(['shopify_us_111_222', 'shopify_US_111_222']) && r.verdict === 'ready' && r.counts.block === 0 && productsOf(r).length === 0 && fact(r, 'Products') === '1 included · 1 can show · the rest of your feed is left out by the filter',
     'a filter in lower case finds the feed\'s upper-case market code: no false "not in Merchant Center"');
   ({ r } = await audit(oneProduct([...leftOut(1000), ownRow('shopify_us_111_222')], only('shopify_US_111_222'))));
-  check(r.verdict === 'ready' && productsOf(r).length === 0 && fact(r, 'Products') === '1 included · 1 can show · 1000+ others left out by the product filter', 'and a filter in upper case finds the feed\'s lower-case id');
+  check(r.verdict === 'ready' && productsOf(r).length === 0 && fact(r, 'Products') === '1 included · 1 can show · the rest of your feed is left out by the filter', 'and a filter in upper case finds the feed\'s lower-case id');
   ({ r } = await audit(oneProduct([...leftOut(3), ownRow('shopify_US_111_222')], only('shopify_us_111_222'))));
   check(r.verdict === 'ready' && productsOf(r).length === 0 && r.warnings.length === 0, 'the same with a feed small enough to be listed whole');
   const forms = S.ownProductsQuery({ customerId: '1', campaignId: '2', itemIds: ['Shopify_US_1_2', 'shopify_us_3_4', 'A_1', 'a_1', 'ABC', 'shopify_usa_5_6'] });
@@ -328,10 +328,10 @@ const topic = (t, type, extra = {}) => ({ topic: t, type, ...extra });
     'each id is sent as given, in lower case and with the Shopify market code upper-cased, without repeats; an id that is not a two-letter market is not given one');
   // Both case forms of one offer are one product, not two.
   const bothCases = S.analyze({ campaign: pmax.campaign, listingGroups: filterOf(['shopify_US_111_222']), productsIncluded: [ownRow('shopify_US_111_222'), ownRow('shopify_us_111_222')], products: leftOut(2) }, { today: '2026-09-29' });
-  check(/^1 included · 1 can show · 2 others left out/.test(fact(bothCases, 'Products')) && !bothCases.findings.some(f => f.area === 'Products'), 'one offer Google lists in both cases counts as one product');
+  check(/^1 included · 1 can show · the rest of your feed is left out/.test(fact(bothCases, 'Products')) && !bothCases.findings.some(f => f.area === 'Products'), 'one offer Google lists in both cases counts as one product');
   // A short targeted answer does not hide an offer that a complete list holds (every offer of a feed under 1000 products is in the plain read).
   ({ r } = await audit(oneProduct([...leftOut(3), ownRow('SHOPIFY_US_111_222'), ownRow('SHOPIFY_US_111_333')])));
-  check(r.verdict === 'ready' && productsOf(r).length === 0 && fact(r, 'Products') === '2 included · 2 can show · 3 others left out by the product filter', 'an empty targeted answer does not hide offers a complete list holds');
+  check(r.verdict === 'ready' && productsOf(r).length === 0 && fact(r, 'Products') === '2 included · 2 can show · the rest of your feed is left out by the filter', 'an empty targeted answer does not hide offers a complete list holds');
   ({ r } = await audit(oneProduct([...leftOut(3), ownRow('shopify_US_111_222'), { shoppingProduct: { itemId: 'SHOPIFY_US_111_333', status: 'NOT_ELIGIBLE', feedLabel: 'US', issues: noShipping } }], { enabled: true })));
   check(has(r, 'risk', /1 of 2 products cannot show.*Missing shipping settings \(1\)/) && !r.findings.some(f => /not in Merchant Center|not listed/.test(f.text)), 'a short targeted answer is completed from the list: the offer it left out is judged, not called missing');
   ({ r } = await audit(oneProduct([...leftOut(1000), ownRow('SHOPIFY_US_111_222'), ownRow('SHOPIFY_US_111_333')])));
@@ -365,9 +365,9 @@ const topic = (t, type, extra = {}) => ({ topic: t, type, ...extra });
   check(r.verdict === 'blocked' && has(r, 'block', /None of the 2 products can show.*Missing shipping settings \(1\)/), 'but not when one of them also has a real issue');
   // The headline only changes when a settling note is what keeps the result ready.
   ({ r } = await audit(oneProduct([...leftOut(1000), ownRow(ownIds[0]), ownRow(ownIds[1])]), settleRun));
-  check(r.verdict === 'ready' && r.settling === true && r.headline === OK_HEAD && !r.findings.some(f => f.area === 'Products'), 'a settling check with nothing to settle keeps the usual headline');
+  check(r.verdict === 'ready' && r.settling === true && r.headline === PAUSED_HEAD && !r.findings.some(f => f.area === 'Products'), 'a settling check with nothing to settle keeps the usual headline');
   ({ r } = await audit(oneProduct([...leftOut(1000), ownRow(ownIds[0]), ownRow(ownIds[1])])));
-  check(r.verdict === 'ready' && r.headline === OK_HEAD, 'and so does a later one');
+  check(r.verdict === 'ready' && r.headline === PAUSED_HEAD, 'and so does a later one');
   ({ r } = await audit(oneProduct([...leftOut(1000)]), settleRun));
   check(r.verdict === 'ready' && r.headline === SETTLING_HEAD && has(r, 'note', /not listed for this campaign yet/), 'offers Google does not list yet, while settling, give the settling headline');
 
@@ -383,7 +383,7 @@ const topic = (t, type, extra = {}) => ({ topic: t, type, ...extra });
   ({ r, g } = await audit(oneProduct([...leftOut(1000), ...simpleRows], { ids: simple, enabled: true })));
   const notChecked = r.findings.find(f => /not checked/.test(f.text));
   check(idQuery(g).length === 100 && notChecked && notChecked.level === 'risk' && notChecked.area === 'Products' && notChecked.text === '30 more products in the product filter were not checked.' && r.verdict === 'attention' && r.counts.block === 0
-    && fact(r, 'Products') === '130 included · 100 can show · 30 more not checked · 1000+ others left out by the product filter', '30 offers past the cap are reported as not checked, a risk');
+    && fact(r, 'Products') === '130 included · 100 can show · 30 more not checked · the rest of your feed is left out by the filter', '30 offers past the cap are reported as not checked, a risk');
   check(S.summaryOf(r, 'daily').top.some(f => f.area === 'Products' && /30 more products/.test(f.text)), 'and the offers past the cap are kept on the stored card');
   ({ r } = await audit(oneProduct([...leftOut(1000), ...simpleRows], { ids: simple, enabled: true }), settleRun));
   check(has(r, 'note', /^30 more products in the product filter were not checked\./) && r.verdict === 'ready' && r.headline === SETTLING_HEAD, 'while settling it is a note');
@@ -391,34 +391,34 @@ const topic = (t, type, extra = {}) => ({ topic: t, type, ...extra });
   check(has(r, 'risk', /^1 more product in the product filter was not checked\./), 'one offer past the cap reads in the singular');
   // A complete list holds every offer, so none is left unchecked: the offers past the cap are judged from it.
   ({ r } = await audit(oneProduct([...leftOut(2), ...simpleRows], { ids: simple, enabled: true })));
-  check(!r.findings.some(f => /not checked/.test(f.text)) && has(r, 'risk', /30 of 130 products cannot show.*Missing shipping settings \(30\)/) && fact(r, 'Products') === '130 included · 100 can show · 30 not eligible · 2 others left out by the product filter', 'with a complete list the offers past the cap are judged from it');
+  check(!r.findings.some(f => /not checked/.test(f.text)) && has(r, 'risk', /30 of 130 products cannot show.*Missing shipping settings \(30\)/) && fact(r, 'Products') === '130 included · 100 can show · 30 not eligible · the rest of your feed is left out by the filter', 'with a complete list the offers past the cap are judged from it');
 
   // (k) One offer under two feed labels is one product: the campaign's own feed label decides (here US), else the most eligible row.
   const labelled = (itemId, label, status = 'ELIGIBLE', issues) => ({ shoppingProduct: { itemId, status, feedLabel: label, ...(issues ? { issues } : {}) } });
   const oneOffer = only('shopify_US_111_222');
   ({ r } = await audit(oneProduct([...leftOut(1000), labelled('shopify_US_111_222', 'CA', 'NOT_ELIGIBLE', justExcluded), labelled('shopify_US_111_222', 'US')], oneOffer)));
-  check(r.verdict === 'ready' && r.counts.block === 0 && productsOf(r).length === 0 && fact(r, 'Products') === '1 included · 1 can show · 1000+ others left out by the product filter', 'a row under another feed label does not block an offer whose row under the campaign\'s label is fine');
+  check(r.verdict === 'ready' && r.counts.block === 0 && productsOf(r).length === 0 && fact(r, 'Products') === '1 included · 1 can show · the rest of your feed is left out by the filter', 'a row under another feed label does not block an offer whose row under the campaign\'s label is fine');
   ({ r } = await audit(oneProduct([...leftOut(1000), labelled('shopify_US_111_222', 'US', 'NOT_ELIGIBLE', justExcluded), labelled('shopify_US_111_222', 'CA')], oneOffer)));
   check(r.verdict === 'blocked' && has(r, 'block', /product filter excludes 1 of the 1 products it includes/), 'but the row under the campaign\'s own label decides when it is the bad one');
   ({ r } = await audit(oneProduct([...leftOut(3), labelled('shopify_US_111_222', 'CA', 'NOT_ELIGIBLE', justExcluded), labelled('SHOPIFY_US_111_222', 'US')], oneOffer)));
-  check(r.verdict === 'ready' && productsOf(r).length === 0 && fact(r, 'Products') === '1 included · 1 can show · 3 others left out by the product filter', 'also from a list read whole, in any case');
+  check(r.verdict === 'ready' && productsOf(r).length === 0 && fact(r, 'Products') === '1 included · 1 can show · the rest of your feed is left out by the filter', 'also from a list read whole, in any case');
   ({ r } = await audit(oneProduct([...leftOut(1000), labelled('shopify_US_111_222', 'CA'), labelled('shopify_US_111_222', 'DE')], oneOffer)));
-  check(fact(r, 'Products') === '1 included · 1 can show · 1000+ others left out by the product filter', 'two rows of one offer are never counted as two products, whatever their labels');
+  check(fact(r, 'Products') === '1 included · 1 can show · the rest of your feed is left out by the filter', 'two rows of one offer are never counted as two products, whatever their labels');
   const noLabel = oneProduct([...leftOut(1000), labelled('shopify_US_111_222', 'CA', 'NOT_ELIGIBLE', justExcluded), labelled('shopify_US_111_222', 'DE')], oneOffer); noLabel.campaign[0].campaign.shoppingSetting = { merchantId: '555' };
   ({ r } = await audit(noLabel));
-  check(r.verdict === 'ready' && fact(r, 'Products') === '1 included · 1 can show · 1000+ others left out by the product filter', 'when the campaign names no feed label, an offer is judged on its most eligible row');
+  check(r.verdict === 'ready' && fact(r, 'Products') === '1 included · 1 can show · the rest of your feed is left out by the filter', 'when the campaign names no feed label, an offer is judged on its most eligible row');
   // Campaigns without named offers are judged as before: every row Google lists counts.
   ({ r } = await audit(allOffers([labelled(ownIds[0], 'US'), labelled(ownIds[0], 'CA')])));
   check(/^2 in this campaign · 2 eligible$/.test(fact(r, 'Products')), 'a filter without named offers still counts every row');
 
   // Offers are compared in lower case; more than 100 are asked for 100 at a time and the rest is said to be unchecked; quotes in an id are escaped.
   const ownCase = S.analyze({ campaign: pmax.campaign, listingGroups: filterOf(['Shopify_US_1_2']), productsIncluded: [ownRow('shopify_us_1_2')], products: leftOut(2) }, { today: '2026-09-29' });
-  check(!ownCase.findings.some(f => f.area === 'Products') && /^1 included · 1 can show · 2 others left out/.test(ownCase.facts.find(f => f.label === 'Products').value), 'an offer Google lists in another case is still the included offer');
+  check(!ownCase.findings.some(f => f.area === 'Products') && /^1 included · 1 can show · the rest of your feed is left out/.test(ownCase.facts.find(f => f.label === 'Products').value), 'an offer Google lists in another case is still the included offer');
   // Each Shopify offer is asked for in two case forms, so 100 values cover 50 of them; with no complete list to look the rest up in, they are said to be unchecked, never missing.
   const many = Array.from({ length: 120 }, (_, i) => 'shopify_US_5_' + i);
   ({ r, g } = await audit(oneProduct([...leftOut(1000), ...many.map(id => ownRow(id))], { ids: many })));
   const manyQuery = g.queries.find(q => /item_id IN/.test(q));
-  check(idsOf(manyQuery).length === 100 && JSON.stringify(idsOf(manyQuery)) === JSON.stringify(many.slice(0, 50).flatMap(id => [id, id.toLowerCase()])) && fact(r, 'Products') === '120 included · 50 can show · 70 more not checked · 1000+ others left out by the product filter' && !productsOf(r).some(f => /not in Merchant Center|not listed/.test(f.text)), 'at most 100 values are asked for, counted after the case forms; the other offers are said to be unchecked, never missing');
+  check(idsOf(manyQuery).length === 100 && JSON.stringify(idsOf(manyQuery)) === JSON.stringify(many.slice(0, 50).flatMap(id => [id, id.toLowerCase()])) && fact(r, 'Products') === '120 included · 50 can show · 70 more not checked · the rest of your feed is left out by the filter' && !productsOf(r).some(f => /not in Merchant Center|not listed/.test(f.text)), 'at most 100 values are asked for, counted after the case forms; the other offers are said to be unchecked, never missing');
   check(S.ownProductsQuery({ customerId: '123', campaignId: '77', itemIds: ["o'brien_1", 'a\\b', 'x\ny'] }).endsWith("item_id IN ('o\\'brien_1','a\\\\b','x y')") && JSON.stringify(idsOf(S.ownProductsQuery({ customerId: '1', campaignId: '2', itemIds: ["o'brien_1"] }))) === JSON.stringify(["o'brien_1"]), 'ids in the targeted read are quote-escaped like other GAQL literals');
   const scope = S.includedScope([{ assetGroupListingGroupFilter: { type: 'SUBDIVISION' } }, { assetGroupListingGroupFilter: { type: 'UNIT_INCLUDED', caseValue: { productItemId: { value: 'A_1' } } } }, { assetGroupListingGroupFilter: { type: 'UNIT_INCLUDED', caseValue: { productItemId: { value: 'A_1' } } } },
     { assetGroupListingGroupFilter: { type: 'UNIT_INCLUDED', caseValue: { productItemId: { value: 'a_1' } } } }, { assetGroupListingGroupFilter: { type: 'UNIT_EXCLUDED', caseValue: { productItemId: {} } } }]);
@@ -442,6 +442,76 @@ const topic = (t, type, extra = {}) => ({ topic: t, type, ...extra });
   check(a.findings.some(f => /Final URL expansion is on/.test(f.text)) && /final URL expansion on \(Google default\)/.test(a.facts.find(f => f.label === 'Google automation').value), 'a full read with no automation settings means Google\'s defaults, final URL expansion on');
   const unspecified = JSON.parse(JSON.stringify(bare)); unspecified.campaign[0].campaign.containsEuPoliticalAdvertising = 'UNKNOWN';
   check(S.analyze(unspecified, { today: '2026-09-29' }).findings.some(f => /EU political ads declaration as missing/.test(f.text)), 'an unknown EU declaration is flagged from a full read');
+
+  // ── 3b. Plainer notes: what a fully green campaign shows must not be noise ─────────────
+  // pm(): a small enabled Performance Max campaign with nothing wrong, changed by `camp`, `raw` (other reads), `opts` and `budget`.
+  const pm = (camp = {}, raw = {}, opts = {}, budget = {}) => S.analyze({ campaign: [{ campaign: { id: '9', name: 'x', status: 'ENABLED', advertisingChannelType: 'PERFORMANCE_MAX', biddingStrategyType: 'MAXIMIZE_CONVERSION_VALUE',
+    geoTargetTypeSetting: { positiveGeoTargetType: 'PRESENCE' }, containsEuPoliticalAdvertising: 'DOES_NOT_CONTAIN_EU_POLITICAL_ADVERTISING',
+    shoppingSetting: { merchantId: '555' }, assetAutomationSettings: [{ assetAutomationType: 'FINAL_URL_EXPANSION_TEXT_ASSET_AUTOMATION', assetAutomationStatus: 'OPTED_OUT' }], ...camp }, campaignBudget: { amountMicros: '5000000', ...budget } }], ...raw }, { today: '2026-09-29', ...opts });
+  const LEARN = 'Google is still learning how to bid. This is normal for a new campaign. Changing the budget or bid settings now can restart it.';
+  const statusOf = x => x.findings.filter(f => f.area === 'Google status');
+  // An UNKNOWN reason is not a finding. Only when it is all Google says for a Limited campaign is one note kept, with a way to read it.
+  check(statusOf(pm({ primaryStatus: 'ELIGIBLE', primaryStatusReasons: ['UNKNOWN'] })).length === 0 && statusOf(pm({ status: 'PAUSED', primaryStatus: 'PAUSED', primaryStatusReasons: ['CAMPAIGN_PAUSED', 'UNKNOWN'] })).length === 0, 'an UNKNOWN primary status reason is not a finding');
+  let u = pm({ primaryStatus: 'LIMITED', primaryStatusReasons: ['UNKNOWN'] }, {}, { apiVersion: 'v24' });
+  check(statusOf(u).length === 1 && statusOf(u)[0].level === 'note' && statusOf(u)[0].text === 'Google marks it Limited but does not say why through its API.' && statusOf(u)[0].fix === 'Hover its status in Google Ads to read the reason.' && !/v24|cannot name/.test(JSON.stringify(u.findings)), 'a Limited campaign whose only reason is UNKNOWN gets one plain note with how to read it');
+  u = pm({ primaryStatus: 'LIMITED', primaryStatusReasons: ['BUDGET_CONSTRAINED', 'UNKNOWN'] });
+  check(statusOf(u).length === 1 && !/does not say why/.test(JSON.stringify(u.findings)), 'that note is not added when Google named a reason');
+  check(!JSON.stringify(pm({ primaryStatus: 'ELIGIBLE', primaryStatusReasons: ['UNKNOWN'] }).findings).includes('does not say why'), 'and not when the campaign is not Limited');
+  // Learning: one plain sentence, from either place Google says it, said once, with no repeat of the status word under it.
+  u = pm({ primaryStatus: 'ELIGIBLE', primaryStatusReasons: ['BIDDING_STRATEGY_LEARNING'], biddingStrategySystemStatus: 'LEARNING_NEW' });
+  check(u.findings.length === 1 && u.findings[0].level === 'note' && u.findings[0].text === LEARN && u.findings[0].reason === undefined && !/learning/i.test(fact(u, 'Bidding')), 'a bid strategy that is learning says it once in plain words, with no status words repeated as a reason or in the Bidding fact');
+  u = pm({ biddingStrategySystemStatus: 'LEARNING_SETTING_CHANGE' });
+  check(u.findings.length === 1 && u.findings[0].text === LEARN && !('reason' in u.findings[0]) && fact(u, 'Bidding') === 'maximize conversion value', 'the system status alone gives the same sentence');
+  u = pm({ biddingStrategySystemStatus: 'MULTIPLE_LEARNING', biddingStrategy: 'customers/1/biddingStrategies/2' });
+  check(u.findings.length === 1 && u.findings[0].text === LEARN && fact(u, 'Bidding') === 'maximize conversion value (portfolio strategy)', 'MULTIPLE_LEARNING (a shared strategy) reads the same, and its raw words are not added to the fact');
+  u = pm({ primaryStatus: 'ELIGIBLE', primaryStatusReasons: ['BIDDING_STRATEGY_LEARNING'], biddingStrategySystemStatus: 'MULTIPLE_LEARNING' });
+  check(u.findings.length === 1, 'the same sentence from the primary status and the system status is not shown twice');
+  u = pm({ primaryStatus: 'ELIGIBLE', primaryStatusReasons: ['SOME_NEW_REASON'] });
+  check(u.findings.length === 1 && u.findings[0].text === 'Google reports: some new reason.' && !('reason' in u.findings[0]), "Google's generic status note does not repeat itself as a reason");
+  u = pm({ primaryStatus: 'LIMITED', primaryStatusReasons: ['HAS_ADS_DISAPPROVED', 'NO_ASSET_GROUPS'] });
+  check(statusOf(u).length === 2 && statusOf(u).every(f => !('reason' in f)), 'a status reason that only repeats the sentence above it carries no reason line');
+  check(pm({ primaryStatus: 'NOT_ELIGIBLE', primaryStatusReasons: [] }).findings.some(f => f.level === 'block' && f.reason === 'not eligible') && pm({ biddingStrategySystemStatus: 'MISCONFIGURED_CONVERSION_TYPES' }).findings.some(f => f.level === 'risk' && f.reason === 'misconfigured conversion types'), "block and risk findings keep Google's own reason where it adds something");
+  // Notes that were risks: Google's own limits are information, not something to fix first.
+  for (const [reason, re] of [['BUDGET_CONSTRAINED', /^The daily budget limits how often it shows\. Raise it only if you want more traffic\.$/], ['BIDDING_STRATEGY_LIMITED', /^Google says the bid strategy is limited, usually by too few sales to learn from\.$/],
+    ['BIDDING_STRATEGY_CONSTRAINED', /^Google says a bid target is holding back results\.$/], ['SEARCH_VOLUME_LIMITED', /^Few people search for its keywords\.$/]]) {
+    u = pm({ primaryStatus: 'LIMITED', primaryStatusReasons: [reason] });
+    check(u.findings.length === 1 && u.findings[0].level === 'note' && re.test(u.findings[0].text) && u.verdict === 'ready' && u.counts.risk === 0, reason + ' is a note, so the verdict stays ready');
+  }
+  u = pm({ biddingStrategySystemStatus: 'LIMITED_BY_BUDGET' });
+  check(u.findings.length === 1 && u.findings[0].level === 'note' && u.verdict === 'ready', 'LIMITED_BY_BUDGET is a note too');
+  u = pm({ primaryStatus: 'LIMITED', primaryStatusReasons: ['BUDGET_CONSTRAINED'], biddingStrategySystemStatus: 'LIMITED_BY_BUDGET' });
+  check(u.findings.length === 1 && u.findings[0].level === 'note', 'the budget limit is said once when both Google statuses say it');
+  // Folded, hidden and moved.
+  u = pm({}, {}, {}, { hasRecommendedBudget: true, recommendedBudgetAmountMicros: '8000000' });
+  check(fact(u, 'Budget') === '5.00 a day (Google suggests 8.00)' && !u.findings.some(f => /suggests/.test(f.text)), "Google's suggested budget is part of the Budget fact, not a finding");
+  check(fact(pm({}, {}, {}, { hasRecommendedBudget: true, recommendedBudgetAmountMicros: '4000000' }), 'Budget') === '5.00 a day', 'a suggestion at or below the budget is not shown');
+  u = pm({ geoTargetTypeSetting: undefined });
+  check(!u.findings.some(f => f.area === 'Locations') && u.findings.length === 0, 'a location option Google did not report is not a finding');
+  u = pm({}, { goals: [], actions: [] });
+  check(!u.findings.some(f => f.area === 'Goals') && u.warnings.length === 1 && /^Google returned no conversion goals for this campaign, so what it optimizes for was not checked\.$/.test(u.warnings[0]) && u.verdict === 'ready', 'no conversion goals is a "not checked" warning, not a finding');
+  // End date.
+  const endsOn = d => pm({ endDateTime: d + ' 23:59:59' }).findings.filter(f => f.area === 'Dates');
+  check(endsOn('2026-09-29').length === 1 && endsOn('2026-09-29')[0].level === 'note' && endsOn('2026-09-29')[0].text === 'It ends today.' && endsOn('2026-09-29')[0].fix === 'Extend the end date if it should keep running.', 'an end date today is a note: It ends today.');
+  check(endsOn('2026-09-30')[0].text === 'It ends tomorrow.' && endsOn('2026-10-02')[0].text === 'It ends on 2026-10-02, in 3 days.' && endsOn('2026-10-06')[0].level === 'note' && endsOn('2026-10-07').length === 0, 'tomorrow, and a date within a week with its day count; later is not mentioned');
+  check(pm({ endDateTime: '2026-09-29 23:59:59' }).verdict === 'ready' && pm({ endDateTime: '2026-09-28 23:59:59' }).findings[0].text === 'The end date (2026-09-28) has passed. It will not serve.', 'an end date that is near does not stop the verdict; one that has passed says it will not serve');
+  // Goal fixes in plain words.
+  const goalFix = (goals, actions) => pm({}, { goals: goals.map(g => ({ campaignConversionGoal: { origin: 'WEBSITE', biddable: true, ...g } })), actions: actions.map(a => ({ conversionAction: { name: a, status: 'ENABLED', type: 'WEBPAGE', origin: 'WEBSITE', primaryForGoal: true, category: a } })) }).findings.filter(f => f.area === 'Goals').map(f => f.fix);
+  check(JSON.stringify(goalFix([{ category: 'PURCHASE', biddable: false }], ['PURCHASE'])) === JSON.stringify(['Set Purchase as a goal this campaign counts and keep one purchase action as Primary.']), 'no counted goal: the fix says Set Purchase as a goal this campaign counts');
+  check(JSON.stringify(goalFix([{ category: 'ADD_TO_CART' }], ['ADD_TO_CART'])) === JSON.stringify(['Set Purchase as a goal this campaign counts.']), 'a campaign that counts no purchase: the same plain fix');
+  check(JSON.stringify(goalFix([{ category: 'PURCHASE' }, { category: 'ADD_TO_CART' }], ['PURCHASE', 'ADD_TO_CART'])) === JSON.stringify(['Set only Purchase as a goal this campaign counts, or set these actions to Secondary.']), 'a campaign that also counts another goal: the fix says the same without "biddable"');
+  // Performance Max extensions and brand guidelines.
+  const callouts = n => Array.from({ length: n }, () => ({ campaignAsset: { fieldType: 'CALLOUT', status: 'ENABLED' }, asset: { calloutAsset: { calloutText: 'Free shipping' } } }));
+  u = pm({}, { campaignAssets: callouts(4) });
+  check(fact(u, 'Extensions') === '0 sitelinks · 4 callouts · 0 snippets (campaign level)' && fact(u, 'Brand guidelines') === 'off (business name and logo are on the asset group)', 'a Performance Max campaign without brand guidelines shows no business name or logo on the campaign, and says why');
+  u = pm({ brandGuidelinesEnabled: true }, { campaignAssets: callouts(4).concat([{ campaignAsset: { fieldType: 'BUSINESS_NAME', status: 'ENABLED' }, asset: {} }]) });
+  check(fact(u, 'Extensions') === '0 sitelinks · 4 callouts · 0 snippets · business name yes · logo none (campaign level)' && fact(u, 'Brand guidelines') === 'on (business name and logo live on the campaign)' && u.findings.some(f => /Brand guidelines are on but the campaign has no logo/.test(f.text)), 'with brand guidelines on they are shown, and the missing logo is still a risk');
+  check(!pm({}, {}, { reduced: ['campaign'] }).facts.some(f => f.label === 'Brand guidelines'), 'a reduced campaign read does not claim brand guidelines are off');
+  check(/business name none · logo none \(campaign and ad group level\)/.test(fact(S.analyze({ campaign: [{ campaign: { id: '9', status: 'ENABLED', advertisingChannelType: 'SEARCH' }, campaignBudget: {} }], campaignAssets: [] }, { today: '2026-09-29' }), 'Extensions')), 'a Search campaign keeps its business name and logo counts');
+  // Headlines.
+  const eu = { missingEuPoliticalAdvertisingDeclaration: true }, bid = { biddingStrategySystemStatus: 'MISCONFIGURED_CONVERSION_TYPES' };
+  check(pm({ status: 'PAUSED', ...eu }).headline === '1 setting to fix before enabling.' && pm({ ...eu }).headline === '1 setting to fix.' && pm({ status: 'PAUSED', ...eu, ...bid }).headline === '2 settings to fix before enabling.' && pm({ ...eu, ...bid }).headline === '2 settings to fix.', '"before enabling" is said only when the campaign is paused');
+  check(pm({ status: 'PAUSED' }).headline === 'It is paused. Nothing else found would stop it serving once you enable it.' && pm({}).headline === 'Google reports nothing that would stop it serving as intended.' && pm({ status: 'PAUSED', endDateTime: '2026-09-28 23:59:59' }).headline.startsWith('Will not serve as intended: '), 'a paused campaign with nothing to fix says so; an enabled one keeps the usual headline; a blocked one leads with the block');
+  check(pm({ status: 'PAUSED' }, {}, { settling: true }).verdict === 'ready', 'a paused campaign with only notes is ready');
 
   // The campaign itself unreadable: an answer, not an exception.
   r = await S.auditCampaign({ gaql: fakeGoogle({}, { fail: { campaign: '[gads] search failed: queryError=X' } }).gaql, customerId: '123', campaignId: '5', channel: 'SEARCH' });
@@ -529,6 +599,8 @@ const topic = (t, type, extra = {}) => ({ topic: t, type, ...extra });
     findings: [{ level: 'block', area: 'Dates', text: 'End <img src=x> passed', fix: 'Extend it' }, { level: 'note', area: 'Ads', text: 'Under review', reason: 'r' }], facts: [{ label: 'Budget', value: 'CAD 8.00 a day' }], warnings: ['Keywords could not be read'] });
   check(/Stops it/.test(shown) && /&lt;img src=x&gt;/.test(shown) && !/<img/.test(shown) && /&lt;b&gt;x&lt;\/b&gt;/.test(shown), 'findings render with their level and are HTML-escaped');
   check(/<summary>Notes <span class="xd-n">1<\/span><\/summary>/.test(shown) && /What Google has now/.test(shown) && /CAD 8\.00 a day/.test(shown) && /nothing was changed/.test(shown) && /Not checked: Keywords could not be read/.test(shown), 'notes and facts fold away; unread parts are named');
+  const opt = ui.renderServing({ ok: true, verdict: 'attention', headline: 'h', findings: [{ level: 'risk', area: 'Dates', text: 'Risk text', fix: 'Do this' }, { level: 'block', area: 'Ads', text: 'Block text', fix: 'Do that' }, { level: 'note', area: 'Ad strength', text: 'Note text', fix: 'Add 3 square images.' }] });
+  check(/Fix: Do this/.test(opt) && /Fix: Do that/.test(opt) && /Optional: Add 3 square images\./.test(opt) && !/Fix: Add 3 square/.test(opt) && !/Optional: Do th/.test(opt), 'a note\'s fix is printed as Optional:, a risk\'s and a block\'s as Fix:');
   check(/Google serving check unavailable: boom/.test(ui.renderServing({ ok: false, error: 'boom' })) && ui.renderServing(null) === '', 'an unavailable check says so and a missing one renders nothing');
   let scripts = 0; for (const m of html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/gi)) { if (/\bsrc\s*=/.test(m[1])) continue; new vm.Script(m[2]); scripts++; }
   check(scripts >= 1, 'every inline console script still compiles');

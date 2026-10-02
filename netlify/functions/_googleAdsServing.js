@@ -44,6 +44,8 @@ const FIELD = { SITELINK: 'sitelink', CALLOUT: 'callout', STRUCTURED_SNIPPET: 's
   CALL_TO_ACTION_SELECTION: 'call to action' };
 // Google's minimum per asset group when brand guidelines are off (developers.google.com/google-ads/api/performance-max/asset-requirements).
 const PMAX_MINIMUM = { HEADLINE: 3, LONG_HEADLINE: 1, DESCRIPTION: 2, MARKETING_IMAGE: 1, SQUARE_MARKETING_IMAGE: 1, BUSINESS_NAME: 1, LOGO: 1 };
+const LEARNING = 'Google is still learning how to bid. This is normal for a new campaign. Changing the budget or bid settings now can restart it.';
+const BUDGET_LIMITS = 'The daily budget limits how often it shows. Raise it only if you want more traffic.';
 // Campaign primary status reasons -> [level, plain words]. CAMPAIGN_PAUSED/ENDED/REMOVED/PENDING are
 // reported from the campaign's own status and dates instead, so they are not repeated here.
 const CAMPAIGN_REASON = {
@@ -63,11 +65,11 @@ const CAMPAIGN_REASON = {
   HAS_ADS_LIMITED_BY_POLICY: ['risk', 'Some ads are limited by policy.'],
   HAS_ASSET_GROUPS_DISAPPROVED: ['risk', 'Some asset groups are disapproved.'],
   HAS_ASSET_GROUPS_LIMITED_BY_POLICY: ['risk', 'Some asset groups are limited by policy.'],
-  BUDGET_CONSTRAINED: ['risk', 'The budget limits how often the ads show.'],
-  BIDDING_STRATEGY_LIMITED: ['risk', 'The bid strategy is limited.'],
-  BIDDING_STRATEGY_CONSTRAINED: ['risk', 'The bid strategy is held back by its targets.'],
-  SEARCH_VOLUME_LIMITED: ['risk', 'Few people search for its keywords.'],
-  BIDDING_STRATEGY_LEARNING: ['note', 'The bid strategy is learning.'],
+  BUDGET_CONSTRAINED: ['note', BUDGET_LIMITS],
+  BIDDING_STRATEGY_LIMITED: ['note', 'Google says the bid strategy is limited, usually by too few sales to learn from.'],
+  BIDDING_STRATEGY_CONSTRAINED: ['note', 'Google says a bid target is holding back results.'],
+  SEARCH_VOLUME_LIMITED: ['note', 'Few people search for its keywords.'],
+  BIDDING_STRATEGY_LEARNING: ['note', LEARNING],
   MOST_ADS_UNDER_REVIEW: ['note', 'Most ads are still under review.'],
   MOST_ASSET_GROUPS_UNDER_REVIEW: ['note', 'Most asset groups are still under review.']
 };
@@ -77,13 +79,16 @@ const SYSTEM_STATUS = {
   MISCONFIGURED_CONVERSION_SETTINGS: ['risk', 'The bid strategy\'s conversion settings are set up wrongly.'],
   MISCONFIGURED_SHARED_BUDGET: ['risk', 'The bid strategy does not fit its shared budget.'],
   MISCONFIGURED_STRATEGY_TYPE: ['risk', 'The bid strategy type does not suit this campaign.'],
-  LIMITED_BY_BUDGET: ['risk', 'The budget holds the bid strategy back.'],
+  LIMITED_BY_BUDGET: ['note', BUDGET_LIMITS],
   LIMITED_BY_DATA: ['note', 'The bid strategy does not have enough conversion data yet.'],
   LIMITED_BY_INVENTORY: ['note', 'The bid strategy is limited by available ad space.'],
   LIMITED_BY_LOW_QUALITY: ['note', 'The bid strategy is limited by low ad quality.'],
   LIMITED_BY_LOW_PRIORITY_SPEND: ['note', 'The bid strategy is limited by low-priority spend.'],
   LIMITED_BY_CPC_BID_CEILING: ['note', 'The bid strategy is limited by its maximum bid.'],
-  LIMITED_BY_CPC_BID_FLOOR: ['note', 'The bid strategy is limited by its minimum bid.']
+  LIMITED_BY_CPC_BID_FLOOR: ['note', 'The bid strategy is limited by its minimum bid.'],
+  MULTIPLE_LEARNING: ['note', LEARNING],
+  MULTIPLE_LIMITED: ['note', 'Google says the bid strategy is limited, usually by too few sales to learn from.'],
+  MULTIPLE_MISCONFIGURED: ['risk', 'The bid strategy is set up wrongly.']
 };
 const LABEL = { campaign: 'Campaign settings', criteria: 'Locations, languages and schedule', goals: 'Campaign conversion goals', goalConfig: 'Campaign goal setup',
   actions: 'Conversion actions', customer: 'Account settings', lifecycle: 'New-customer goal', campaignAssets: 'Campaign assets and their review',
@@ -294,42 +299,43 @@ function analyze(raw, { today = null, shippingCountries = null, apiVersion = '',
   if (customer.status && customer.status !== 'ENABLED') add('block', 'Account', `The Google Ads account is ${words(customer.status)}. No campaign in it can serve.`, { fix: 'Resolve the account status in Google Ads.' });
   if (c.status === 'REMOVED') add('block', 'Status', 'The campaign is removed in Google Ads. It cannot serve again.');
   else if (isPaused(c.status)) add('note', 'Status', 'Paused. It spends nothing until you enable it.');
-  if (endDate && today && endDate < today) add('block', 'Dates', `The end date (${endDate}) has passed. Enabling it will not make it serve.`, { fix: 'Set a later end date, or clear it, before enabling.' });
-  else if (endDate && today && dayDiff(today, endDate) <= 7) add('risk', 'Dates', `It ends on ${endDate}, in ${plural(dayDiff(today, endDate), 'day')}.`, { fix: 'Extend the end date if it should keep running.' });
+  if (endDate && today && endDate < today) add('block', 'Dates', `The end date (${endDate}) has passed. It will not serve.`, { fix: 'Set a later end date, or clear it, before enabling.' });
+  else if (endDate && today && dayDiff(today, endDate) <= 7) { const left = dayDiff(today, endDate); add('note', 'Dates', left === 0 ? 'It ends today.' : left === 1 ? 'It ends tomorrow.' : `It ends on ${endDate}, in ${plural(left, 'day')}.`, { fix: 'Extend the end date if it should keep running.' }); }
   if (startDate && today && startDate > today) add('note', 'Dates', `It starts on ${startDate}.`);
   if (c.servingStatus === 'SUSPENDED') add('block', 'Status', 'Google has suspended serving for this campaign.', { reason: words(c.servingStatus), fix: 'Check billing and account notifications in Google Ads.' });
 
   // Google's primary status reasons.
-  let reasonBlocks = 0;
+  let reasonBlocks = 0, namedReasons = 0;
   const locationsMissingReported = reasons.includes('MISSING_LOCATION_TARGETING');
   for (const r of [...new Set(reasons)]) {
     const known = CAMPAIGN_REASON[r];
     // The location read reports a missing location itself, with the countries it found.
-    if (known) { if (r === 'MISSING_LOCATION_TARGETING' && raw.criteria) continue; if (known[0] === 'block') reasonBlocks++; add(known[0], 'Google status', known[1], { reason: words(r) }); }
-    else if (r === 'UNKNOWN') add('note', 'Google status', `Google gave a reason that this API version (${apiVersion || 'in use'}) cannot name.`, { fix: 'Open the campaign in Google Ads to read it.' });
-    else if (!/^(CAMPAIGN_PAUSED|CAMPAIGN_ENDED|CAMPAIGN_REMOVED|CAMPAIGN_PENDING|UNSPECIFIED)$/.test(r)) add('note', 'Google status', 'Google reports: ' + words(r) + '.', { reason: words(r) });
+    if (known) { namedReasons++; if (r === 'MISSING_LOCATION_TARGETING' && raw.criteria) continue; if (known[0] === 'block') reasonBlocks++; add(known[0], 'Google status', known[1]); }
+    // UNKNOWN is a reason this API version cannot name: said only when it is all Google gives for a Limited campaign (below).
+    else if (!/^(CAMPAIGN_PAUSED|CAMPAIGN_ENDED|CAMPAIGN_REMOVED|CAMPAIGN_PENDING|UNSPECIFIED|UNKNOWN)$/.test(r)) { namedReasons++; add('note', 'Google status', 'Google reports: ' + words(r) + '.'); }
   }
+  if (c.primaryStatus === 'LIMITED' && reasons.includes('UNKNOWN') && !namedReasons) add('note', 'Google status', 'Google marks it Limited but does not say why through its API.', { fix: 'Hover its status in Google Ads to read the reason.' });
   if (['NOT_ELIGIBLE', 'MISCONFIGURED'].includes(c.primaryStatus) && !reasonBlocks && c.status !== 'REMOVED' && !(endDate && today && endDate < today))
     add('block', 'Google status', `Google says the campaign is ${words(c.primaryStatus)}.`, { reason: reasonWords(reasons) || words(c.primaryStatus), fix: 'Open the campaign in Google Ads to see what it needs.' });
 
   // Budget.
   const amount = budget.amountMicros != null ? Number(budget.amountMicros) : null;
   if (budget.period === 'CUSTOM_PERIOD') fact('Budget', (moneyText(budget.totalAmountMicros, currency) || '?') + ' for the whole campaign');
-  else fact('Budget', amount != null ? moneyText(amount, currency) + ' a day' + (budget.explicitlyShared ? ' (shared)' : '') : null);
+  else fact('Budget', amount != null ? moneyText(amount, currency) + ' a day' + (budget.explicitlyShared ? ' (shared)' : '') + (budget.hasRecommendedBudget && Number(budget.recommendedBudgetAmountMicros) > amount ? ` (Google suggests ${moneyText(budget.recommendedBudgetAmountMicros, currency)})` : '') : null);
   if (row.campaignBudget && budget.period !== 'CUSTOM_PERIOD' && !(amount > 0)) add('block', 'Budget', 'The daily budget is zero or missing.', { fix: 'Set a daily budget.' });
   if (budget.deliveryMethod === 'ACCELERATED') add('note', 'Budget', 'Accelerated delivery can spend the day\'s budget early.');
   if (budget.explicitlyShared) add('note', 'Budget', 'This budget is shared, so other campaigns draw from it too.');
-  if (budget.hasRecommendedBudget && Number(budget.recommendedBudgetAmountMicros) > amount) add('note', 'Budget', `Google suggests ${moneyText(budget.recommendedBudgetAmountMicros, currency)} a day.`);
 
   // Bidding.
   const bidType = String(c.biddingStrategyType || '');
   const targetRoas = (c.maximizeConversionValue && c.maximizeConversionValue.targetRoas) || (c.targetRoas && c.targetRoas.targetRoas);
   const targetCpa = (c.maximizeConversions && c.maximizeConversions.targetCpaMicros) || (c.targetCpa && c.targetCpa.targetCpaMicros);
   fact('Bidding', words(bidType) + (targetRoas ? ` · target ROAS ${Math.round(Number(targetRoas) * 100)}%` : '') + (targetCpa ? ` · target CPA ${moneyText(targetCpa, currency)}` : '')
-    + (c.biddingStrategySystemStatus && !['ENABLED', 'UNSPECIFIED', 'UNKNOWN'].includes(c.biddingStrategySystemStatus) ? ` · ${words(c.biddingStrategySystemStatus)}` : '') + (c.biddingStrategy ? ' (portfolio strategy)' : ''));
+    + (c.biddingStrategy ? ' (portfolio strategy)' : ''));
   const sys = SYSTEM_STATUS[c.biddingStrategySystemStatus];
-  if (sys) add(sys[0], 'Bidding', sys[1], { reason: words(c.biddingStrategySystemStatus) });
-  else if (/^LEARNING_/.test(String(c.biddingStrategySystemStatus || '')) && !reasons.includes('BIDDING_STRATEGY_LEARNING')) add('note', 'Bidding', 'The bid strategy is learning.', { reason: words(c.biddingStrategySystemStatus) });
+  // The same sentence is said once: a primary status reason can already have said it. A note repeats Google's status word, so only block and risk carry it.
+  if (sys) { if (!findings.some(f => f.text === sys[1])) add(sys[0], 'Bidding', sys[1], sys[0] === 'note' ? {} : { reason: words(c.biddingStrategySystemStatus) }); }
+  else if (/^LEARNING_/.test(String(c.biddingStrategySystemStatus || '')) && !reasons.includes('BIDDING_STRATEGY_LEARNING')) add('note', 'Bidding', LEARNING);
   if (bidType === 'MANUAL_CPC') add('note', 'Bidding', 'Manual CPC: you set every bid and Google does not use your sales to adjust them.');
   if (c.manualCpc && c.manualCpc.enhancedCpcEnabled) add('note', 'Bidding', 'Enhanced CPC is on; Google has retired it for Search, where it now behaves like manual CPC.');
 
@@ -363,7 +369,6 @@ function analyze(raw, { today = null, shippingCountries = null, apiVersion = '',
     if (negativeKeywords.length) fact('Negative keywords', String(negativeKeywords.length) + ' at campaign level');
   }
   if (geoType && geoType !== 'PRESENCE') add('risk', 'Locations', 'Location option is "presence or interest": people outside your countries who show interest in them can see and click the ads.', { reason: words(geoType), fix: 'Set the location option to Presence (people in or regularly in your locations).' });
-  if (!geoType && (search || pmax)) add('note', 'Locations', 'Google did not report the location option for this campaign.');
 
   // Landing pages: every final URL must be a valid https page on the store.
   const urls = [].concat(...(raw.ads || []).map(r => (((r.adGroupAd || {}).ad || {}).finalUrls) || []), ...(raw.assetGroups || []).map(r => (r.assetGroup || {}).finalUrls || []));
@@ -397,13 +402,13 @@ function analyze(raw, { today = null, shippingCountries = null, apiVersion = '',
     const name = a => `${clip(a.name, 40)} (${words(a.type)})`;
     fact('Conversion goals', config.customConversionGoal ? 'a custom goal' : counted.length ? listOf([...new Set(counted.map(a => words(a.category)))], 6) + ' · ' + plural(counted.length, 'action') : 'none counted');
     if (config.customConversionGoal) add('note', 'Goals', 'This campaign uses a custom conversion goal; check in Google Ads that it contains only your purchase action.');
-    else if (!raw.goals.length) add('note', 'Goals', 'Google returned no conversion goals for this campaign, so what it optimizes for could not be checked.');
+    else if (!raw.goals.length) warnings.push('Google returned no conversion goals for this campaign, so what it optimizes for was not checked.');
     else {
       const lvl = smart ? 'risk' : 'note';
-      if (!counted.length) add(smart ? 'block' : 'note', 'Goals', smart ? 'No conversion action counts for bidding in this campaign, so Smart Bidding has nothing to optimize for.' : 'No conversion action counts in this campaign\'s Conversions column.', { fix: 'Make the Purchase goal biddable and keep one purchase action as Primary.' });
-      else if (!purchases.length) add(lvl, 'Goals', `It optimizes for ${listOf(others.map(a => words(a.category)))} but not for purchases.`, { fix: 'Make the Purchase goal biddable for this campaign.' });
+      if (!counted.length) add(smart ? 'block' : 'note', 'Goals', smart ? 'No conversion action counts for bidding in this campaign, so Smart Bidding has nothing to optimize for.' : 'No conversion action counts in this campaign\'s Conversions column.', { fix: 'Set Purchase as a goal this campaign counts and keep one purchase action as Primary.' });
+      else if (!purchases.length) add(lvl, 'Goals', `It optimizes for ${listOf(others.map(a => words(a.category)))} but not for purchases.`, { fix: 'Set Purchase as a goal this campaign counts.' });
       if (purchases.length > 1) add(lvl, 'Goals', `${purchases.length} purchase actions count: ${listOf(purchases.map(name), 3)}. If they record the same sale, Google counts it twice${smart ? ' and bids too high' : ''}.`, { fix: 'In Google Ads Goals, keep one purchase action as Primary and set the others to Secondary.' });
-      if (purchases.length && others.length) add(lvl, 'Goals', `It also optimizes for ${listOf([...new Set(others.map(a => words(a.category)))])}${smart ? ', so Google can chase these cheaper actions instead of sales' : ''}.`, { reason: listOf(others.map(name), 4), fix: 'Make only the Purchase goal biddable for this campaign, or set these actions to Secondary.' });
+      if (purchases.length && others.length) add(lvl, 'Goals', `It also optimizes for ${listOf([...new Set(others.map(a => words(a.category)))])}${smart ? ', so Google can chase these cheaper actions instead of sales' : ''}.`, { reason: listOf(others.map(name), 4), fix: 'Set only Purchase as a goal this campaign counts, or set these actions to Secondary.' });
     }
   }
   const mode = (((raw.lifecycle || [])[0] || {}).campaignLifecycleGoal || {}).customerAcquisitionGoalSettings;
@@ -436,8 +441,9 @@ function analyze(raw, { today = null, shippingCountries = null, apiVersion = '',
   const groupLinks = raw.adGroupAssets ? linkCheck(raw.adGroupAssets, 'adGroupAsset', 'ad group') : [];
   if (raw.campaignAssets) {
     const n = f => campaignLinks.filter(x => x.link.fieldType === f && x.link.status !== 'PAUSED').length + groupLinks.filter(x => x.link.fieldType === f && x.link.status !== 'PAUSED').length;
+    // A Performance Max asset group carries its own business name and logo; the campaign has them only with brand guidelines.
     fact('Extensions', `${plural(n('SITELINK'), 'sitelink')} · ${plural(n('CALLOUT'), 'callout')} · ${plural(n('STRUCTURED_SNIPPET'), 'snippet')}` + (search ? ` · ${plural(n('AD_IMAGE'), 'image')}` : '')
-      + ` · business name ${n('BUSINESS_NAME') ? 'yes' : 'none'} · logo ${n('LOGO') ? 'yes' : 'none'} (${search ? 'campaign and ad group level' : 'campaign level'})`);
+      + (!pmax || c.brandGuidelinesEnabled ? ` · business name ${n('BUSINESS_NAME') ? 'yes' : 'none'} · logo ${n('LOGO') ? 'yes' : 'none'}` : '') + ` (${search ? 'campaign and ad group level' : 'campaign level'})`);
     if (search && !n('SITELINK')) add('note', 'Assets', 'No sitelinks on this campaign or its ad groups (unless the account adds them). Google recommends at least four.');
   }
 
@@ -487,7 +493,7 @@ function analyze(raw, { today = null, shippingCountries = null, apiVersion = '',
       fact('Google automation', `final URL expansion ${onOff('FINAL_URL_EXPANSION_TEXT_ASSET_AUTOMATION')} · Google-written text ${onOff('TEXT_ASSET_AUTOMATION')} · image enhancement ${onOff('GENERATE_IMAGE_ENHANCEMENT')} · video enhancement ${onOff('GENERATE_ENHANCED_YOUTUBE_VIDEOS')}`);
       if (onOff('FINAL_URL_EXPANSION_TEXT_ASSET_AUTOMATION') !== 'off') add('note', 'Settings', 'Final URL expansion is on: Google may send people to other pages of your site than the ones you chose.');
     }
-    if (c.brandGuidelinesEnabled) fact('Brand guidelines', 'on (business name and logo live on the campaign)');
+    if (!fewer.has('campaign')) fact('Brand guidelines', c.brandGuidelinesEnabled ? 'on (business name and logo live on the campaign)' : 'off (business name and logo are on the asset group)');
     const groups = (raw.assetGroups || []).map(r => r.assetGroup).filter(Boolean);
     if (raw.assetGroups && !groups.length && !reasons.includes('NO_ASSET_GROUPS')) add('block', 'Asset groups', 'It has no asset groups.', { fix: 'Add an asset group.' });
     const links = (raw.assetGroupAssets || []).map(r => ({ link: r.assetGroupAsset || {}, asset: r.asset || {} })).filter(x => x.link.fieldType);
@@ -505,9 +511,9 @@ function analyze(raw, { today = null, shippingCountries = null, apiVersion = '',
       if (gr.includes('ASSET_GROUP_UNDER_REVIEW')) add('note', 'Asset groups', `Asset group ${name} is still under review.`);
       if (g.status === 'PAUSED') add('note', 'Asset groups', `Asset group ${name} is paused.`);
       const items = ((g.assetCoverage || {}).adStrengthActionItems || []).map(i => i.addAssetDetails).filter(Boolean)
-        .map(d => `add ${d.assetCount ? d.assetCount + ' ' : ''}${fieldName(d.assetFieldType)}${Number(d.assetCount) > 1 ? 's' : ''}${d.videoAspectRatioRequirement && !/UNSPECIFIED|UNKNOWN/.test(d.videoAspectRatioRequirement) ? ' (' + words(d.videoAspectRatioRequirement) + ')' : ''}`);
-      if (g.adStrength === 'POOR') add('risk', 'Ad strength', `Asset group ${name} has Poor ad strength, so Google builds fewer and weaker ads from it.`, { fix: items.length ? 'Google asks: ' + listOf(items, 4) + '.' : 'Add more headlines, descriptions, images and a video.' });
-      else if (g.adStrength === 'AVERAGE') add('note', 'Ad strength', `Asset group ${name} has Average ad strength.`, { fix: items.length ? 'Google asks: ' + listOf(items, 4) + '.' : undefined });
+        .map(d => `${d.assetCount ? d.assetCount + ' ' : ''}${fieldName(d.assetFieldType)}${Number(d.assetCount) > 1 ? 's' : ''}${d.videoAspectRatioRequirement && !/UNSPECIFIED|UNKNOWN/.test(d.videoAspectRatioRequirement) ? ' (' + words(d.videoAspectRatioRequirement) + ')' : ''}`);
+      if (g.adStrength === 'POOR') add('risk', 'Ad strength', `Asset group ${name} has Poor ad strength, so it can show in fewer places.`, { fix: items.length ? 'Add ' + listOf(items, 4) + '.' : 'Add more headlines, descriptions, images and a video.' });
+      else if (g.adStrength === 'AVERAGE') add('note', 'Ad strength', `Asset group ${name} has Average ad strength. That does not stop it showing; Good or Excellent only mean more variety.`, { fix: items.length ? 'Add ' + listOf(items, 4) + '.' : undefined });
       if (own.length) {
         const short = Object.entries(PMAX_MINIMUM).filter(([f]) => !(c.brandGuidelinesEnabled && /^(BUSINESS_NAME|LOGO)$/.test(f)))
           .map(([f, min]) => [f, min, own.filter(x => x.link.fieldType === f).length]).filter(([, min, has]) => has < min);
@@ -585,7 +591,7 @@ function analyze(raw, { today = null, shippingCountries = null, apiVersion = '',
       if (scoped) fact('Products', noRows ? 'none found' : [`${named.size} included`, products.length ? `${products.length - notEligible.length - limited.length} can show${pauseOnly ? ' once enabled' : ''}` : '',
         limited.length ? `${limited.length} limited` : '', notEligible.length ? `${notEligible.length} not eligible` : '', filterExcluded.length ? `${filterExcluded.length} excluded by the product filter` : '',
         missing.length ? `${missing.length} not listed by Google` : '', truncated && absent.length ? `${absent.length} not checked (Google's list was cut at ${PRODUCT_LIMIT} products)` : '',
-        beyond ? `${beyond} more not checked` : '', others ? `${others}${sampleCut ? '+' : ''} others left out by the product filter` : ''].filter(Boolean).join(' · '));
+        beyond ? `${beyond} more not checked` : '', others ? 'the rest of your feed is left out by the filter' : ''].filter(Boolean).join(' · '));
       else fact('Products', products.length ? `${truncated ? PRODUCT_LIMIT + '+' : products.length} in this campaign · ${products.length - notEligible.length - limited.length} eligible${pauseOnly ? ' once enabled' : ''}` + (limited.length ? ` · ${limited.length} limited` : '') + (notEligible.length ? ` · ${notEligible.length} not eligible` : '') : 'none found');
       // Google evaluates a new campaign's product filter asynchronously, so right after a publication an excluded offer is only a note.
       if (filterExcluded.length) add(settling ? later() : 'block', 'Products', `The campaign's product filter excludes ${filterExcluded.length} of the ${wanted.size} products it includes: ${listOf(filterExcluded.map(p => String(p.itemId)), 3)}.`, { reason: topIssues(filterExcluded) || 'excluded product or listing group', fix: 'Re-publish the campaign or fix its product filter.' });
@@ -620,9 +626,9 @@ function analyze(raw, { today = null, shippingCountries = null, apiVersion = '',
   const counts = { block: 0, risk: 0, note: 0 }; findings.forEach(f => { counts[f.level]++; });
   const verdict = counts.block ? 'blocked' : counts.risk ? 'attention' : 'ready';
   const headline = counts.block ? 'Will not serve as intended: ' + findings[0].text
-    : counts.risk ? `${plural(counts.risk, 'setting')} to fix before enabling.`
+    : counts.risk ? `${plural(counts.risk, 'setting')} to fix${isPaused(c.status) ? ' before enabling' : ''}.`
       : settleNotes ? 'Nothing found so far; Google was still processing this new campaign.'
-        : 'Google reports nothing that would stop it serving as intended.';
+        : isPaused(c.status) ? 'It is paused. Nothing else found would stop it serving once you enable it.' : 'Google reports nothing that would stop it serving as intended.';
   return { ok: true, verdict, headline, counts, findings, facts, warnings };
 }
 
