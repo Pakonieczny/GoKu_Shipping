@@ -129,6 +129,7 @@ const assets = [
   "charm-nest-tour.js",
   "charm-nest-search.js",
   "charm-nest-signins.js",
+  "charm-nest-efficiency.js",
   "charm-nest-check.html",
   "vendor/opentype-1.3.4.min.js",
   "vendor/jszip-3.10.1.min.js",

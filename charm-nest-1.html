@@ -2678,7 +2678,7 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
         <details class="moreMenu" id="moreMenu"><summary title="Workspace tools and settings"><span id="moreLabel">Workspace</span><span aria-hidden="true">⌄</span><i class="apiAlert hidden" id="etsyAlert" title="Etsy API needs attention"></i></summary>
           <div class="moreList">
             <div class="menuLabel">Workspace</div>
-            <button data-mode="design">Design Station<i class="cnt" id="tabDesignN"></i></button><button data-mode="master">Master files</button>
+            <button data-mode="design">Design Station<i class="cnt" id="tabDesignN"></i></button><button data-mode="master">Master files</button><button data-mode="efficiency" title="Who is in, what they made and scanned, throughput by hour: the whole shop">Employee efficiency</button>
             <div class="menuSection"><label class="menuLabel" for="stockSel">Sheet preset · GF / SS / Rose</label><select class="topSel" id="stockSel" title="Solid gold uses its own custom size"></select></div>
             <button id="btnSettings">Settings<span class="menuHint">⚙</span></button>
             <div class="menuSection"><div class="menuLabel">Etsy API calls</div><span class="etsyPill" id="etsyPill" title="API calls counted by the Design Station"><b id="etsyPillN">Waiting for station…</b></span></div>
@@ -2691,6 +2691,7 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
       <div class="lib hidden" id="ordersView"></div>
       <div class="lib hidden dsView" id="designView"></div>
       <div class="lib hidden" id="masterView"></div>
+      <div class="lib hidden" id="efficiencyView"></div>
       <div class="lib hidden" id="engraveView"></div>
       <div class="lib hidden" id="reviewView"></div>
       <div class="lib hidden" id="libView">
@@ -6299,7 +6300,7 @@ function setMode(mode) {
   { const mm = $("#moreMenu"); if (mm) { const inMore = mm.querySelector(`button[data-mode="${mode}"]`); mm.classList.toggle("on", !!inMore); mm.querySelector("summary").title = inMore ? "Workspace · " + inMore.textContent.trim() : "Workspace tools and settings"; mm.open = false; } }
   // on a narrow window the tab strip scrolls: the tab you are on is always brought into view
   $("#sheets").classList.toggle("hidden", mode !== "nest"); if (mode === "nest") requestAnimationFrame(() => METALS.forEach(m => drawPreview(activePage(m.key)))); $("#libView").classList.toggle("hidden", mode !== "library"); $("#charmsView").classList.toggle("hidden", mode !== "charms");
-  for (const [m, id] of [["orders", "ordersView"], ["design", "designView"], ["master", "masterView"], ["engrave", "engraveView"], ["review", "reviewView"]]) $("#" + id).classList.toggle("hidden", mode !== m);
+  for (const [m, id] of [["orders", "ordersView"], ["design", "designView"], ["master", "masterView"], ["efficiency", "efficiencyView"], ["engrave", "engraveView"], ["review", "reviewView"]]) $("#" + id).classList.toggle("hidden", mode !== m);
   if (mode === "library") showLibrary(); if (mode === "charms") loadCharms();
   // The rail is the nesting station's own bench — files in, sheets out. On every other tab it was 344 px (a quarter of a
   // 1500 px screen) of controls that do not apply there, taking two columns off the order grid. It folds away unless a
@@ -6551,6 +6552,7 @@ boot();
 <script src="charm-nest-library.js?v=20261002-rg-lib"></script>
 <script src="charm-nest-search.js?v=20260929-m5"></script>
 <script src="charm-nest-signins.js?v=20260929-m5"></script>
+<script src="charm-nest-efficiency.js?v=20261002-ef1"></script>
 <!-- ══ one order line: what it is, what the customer said, what the shop said, and how to settle it ══ -->
 <dialog id="orderWin" class="owin owFull" aria-labelledby="owTitle" data-no-grow>
   <div class="owBox">
