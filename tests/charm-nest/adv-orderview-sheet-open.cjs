@@ -1,8 +1,9 @@
 // The order view's Sheet tab (Paul, 28 Sep: "a button that allows me to open that order's detailed view … a beautiful and
-// seamless animation"): a click on another order's charm offers "Open order" on that charm and stays on this order; the
-// button (Enter, from the keyboard) moves the view to that order with the Previous / Next slide — one view, never a view
-// over it — on the same sheet and the same side, that order's charm chosen; "Back to order N" brings N back as it was
-// (its sheet, its charm, its side); a charm of this order is only chosen; Esc closes the view. The slide is measured:
+// seamless animation"; 2 Oct: "I should be able to click all of the orders on the sheet and just have the page adjust to
+// that order"): ONE click on another order's charm moves the view to that order with the Previous / Next slide — one view,
+// never a view over it, no "Open order" label in between — on the same sheet and the same side, that order's charm
+// chosen; "Back to order N" brings N back as it was (its sheet, its charm, its side); a charm of this order is only
+// chosen; a click beside the charms does nothing; Esc closes the view. The slide is measured:
 // only transform and opacity animate, the plate is not drawn again until it has landed, and frames stay under 34 ms.
 // Headless Chromium against the fake site (bridge-server.cjs); every request that is not to the loopback is aborted.
 //   node tests/charm-nest/adv-orderview-sheet-open.cjs   (PW_DIR=<playwright node_modules>, CHROMIUM=<chrome>, SHOTS=<dir>)
@@ -68,30 +69,23 @@ async function main() {
     await page.click('#owFace [data-face=back]'); await page.waitForTimeout(900);
     assert.equal(await face(), 'back', 'turned to its Back');
 
-    // a click on T's charm offers Open order on it, and stays on S
-    await clickPiece(PT); await page.waitForTimeout(260);
-    const pick = await page.evaluate(() => { const b = document.getElementById('owPlatePick'); return { shown: !b.hidden, text: b.textContent, focused: document.activeElement === b.querySelector('[data-ow-go]'), open: document.querySelectorAll('dialog[open]').length }; });
-    assert(pick.shown && pick.text.includes(T.rid) && /Open order/.test(pick.text), 'the charm offers Open order for its order: ' + pick.text);
-    assert(pick.focused, 'the keyboard is on Open order');
-    assert(/4177000001/.test(await title()), 'the click alone stays on S');
-    if (shots) await page.screenshot({ path: path.join(shots, 'b-offer.png') });
-
-    // a click on the plate's bare edge puts the offer away; a click on S's own charm only chooses it
+    // a click on the plate's bare edge does nothing; a click on S's own charm only chooses it
     const edge = await page.evaluate(() => { const r = document.getElementById('owSheetCv').getBoundingClientRect(); return { x: r.left + r.width * .5, y: r.bottom - 6 }; });
-    await page.mouse.click(edge.x, edge.y); await page.waitForTimeout(80);
-    assert(await page.evaluate(() => document.getElementById('owPlatePick').hidden), 'a click beside the charms: the offer goes');
-    await clickPiece(PT); await page.waitForTimeout(120); await page.mouse.click(edge.x, edge.y); await page.waitForTimeout(80);
+    await page.mouse.click(edge.x, edge.y); await page.waitForTimeout(150);
+    assert(/4177000001/.test(await title()), 'a click beside the charms: still S');
+    assert(!(await page.evaluate(() => !!document.getElementById('owPlatePick'))), 'and no "Open order" label exists on the plate');
     await clickPiece(PS); await page.waitForTimeout(120);
-    assert(await page.evaluate(() => document.getElementById('owPlatePick').hidden), 'a charm of this order: no offer');
-    { const c = await chosen(); assert(/4177000001/.test(await title()) && c === S.sku, 'and it is chosen on S: ' + c + ' / ' + (await title())); }
+    { const c = await chosen(); assert(/4177000001/.test(await title()) && c === S.sku, 'a charm of this order is chosen on S: ' + c + ' / ' + (await title())); }
 
-    // Enter on Open order: the Previous / Next slide to T, measured
-    await clickPiece(PT); await page.waitForTimeout(260);
+    // ONE click on T's charm: the Previous / Next slide to T, measured
+    await page.mouse.move(edge.x, edge.y);
     await page.evaluate(() => {
-      const cv = document.getElementById('owSheetCv'), M = window.__s = { fr: [], vis: [], t0: performance.now(), on: true, infoAt: null };
-      const loop = t => { if (!M.on) return; M.fr.push(t); M.vis.push(cv.style.visibility); if (M.infoAt == null && OrderWin._sheet()) M.infoAt = t - M.t0; requestAnimationFrame(loop); }; requestAnimationFrame(loop);
+      // (measured from the click itself: the frames, the plate's visibility and the moment the plate is drawn again)
+      const cv = document.getElementById('owSheetCv'), M = window.__s = { fr: [], vis: [], t0: performance.now(), on: true, go: false, infoAt: null };
+      cv.addEventListener('click', () => { M.go = true; M.t0 = performance.now(); M.fr = []; M.vis = []; }, true);
+      const loop = t => { if (!M.on) return; if (M.go) { M.fr.push(t); M.vis.push(cv.style.visibility); if (M.infoAt == null && OrderWin._sheet()) M.infoAt = t - M.t0; } requestAnimationFrame(loop); }; requestAnimationFrame(loop);
     });
-    await page.keyboard.press('Enter');   // (the keyboard is on Open order)
+    await clickPiece(PT);
     const kf = await page.evaluate(() => { const a = document.querySelector('#orderWin .owBody').getAnimations().slice(-1)[0]; return a ? { keys: a.effect.getKeyframes().flatMap(k => Object.keys(k).filter(p => !['offset', 'easing', 'composite', 'computedOffset'].includes(p))), dur: a.effect.getTiming().duration } : { keys: [], dur: 0 }; });
     await page.waitForTimeout(1000);
     const m = await page.evaluate(({ keys, dur }) => {
@@ -101,7 +95,7 @@ async function main() {
       return { dur, keys, maxDt: Math.round(Math.max(0, ...dt)), over34: dt.filter(x => x > 34).length, lt: lt.length, ltMax: Math.round(Math.max(0, ...lt.map(x => x.d))), infoAt: M.infoAt == null ? null : Math.round(M.infoAt), hidden: M.vis.slice(0, 12).filter(v => v === 'hidden').length, dialogs: document.querySelectorAll('dialog[open]').length };
     }, kf);
     console.log(`  slide: ${m.dur} ms of ${[...new Set(m.keys || [])].join('+')} · max frame ${m.maxDt} ms · ${m.over34} over 34 ms · ${m.lt} long task(s) max ${m.ltMax} ms · plate drawn at ${m.infoAt} ms`);
-    assert(/4177000002/.test(await title()), 'Open order moved the view to T');
+    assert(/4177000002/.test(await title()), 'one click moved the view to T');
     assert.equal(m.dialogs, 1, 'one view: never a view over the view');
     assert(m.dur >= 280, 'the slide lasts at least 280 ms');
     assert.deepEqual([...new Set(m.keys)].filter(p => !['opacity', 'transform'].includes(p)), [], 'only transform and opacity animate');
@@ -128,7 +122,7 @@ async function main() {
     await page.keyboard.press('Escape'); await page.waitForTimeout(700);
     assert(!(await page.evaluate(() => OrderWin.isOpen())), 'Esc closes the view');
     assert.deepEqual(errors, [], 'no page errors');
-    console.log('  ✓ offer on the charm, keyboard, one view, slide, same sheet / side / charm, back, Esc');
+    console.log('  ✓ one click on the charm, one view, slide, same sheet / side / charm, back, Esc');
     await context.close();
   } finally { await browser.close(); srv.close(); }
 }
