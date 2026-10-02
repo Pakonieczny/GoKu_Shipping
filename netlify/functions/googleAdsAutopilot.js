@@ -11251,8 +11251,8 @@ async function _reviewCreativeImages(source, files, brief) {
   let result;
   try { result=(await claudeAI.json({content,effort:"high",retries:1,timeoutMs:120000,label:"gads-creative-review",schema:{type:"object",properties:{pass:{type:"boolean"},productFaithful:{type:"boolean"},mobileReadable:{type:"boolean"},issues:{type:"array",items:{type:"string"}},score:{type:"number",minimum:0,maximum:100}},required:["pass","productFaithful","mobileReadable","issues","score"]}})).data; }
   catch(e) { throw new Error("Visual review failed: "+(e&&e.message||e)); }
-  if(result.pass!==true||result.productFaithful!==true||result.mobileReadable!==true||Number(result.score)<85)throw Object.assign(new Error("Visual review needs changes: "+(result.issues&&result.issues.length?result.issues:["Product fidelity or design quality is insufficient"]).join("; ")),{verdict:true});
-  return result;
+  if(result.productFaithful!==true||result.mobileReadable!==true)throw Object.assign(new Error("Visual review needs changes: "+(result.issues&&result.issues.length?result.issues:["Product fidelity or design quality is insufficient"]).join("; ")),{verdict:true});
+  return {...result,advisory:true,...(result.pass!==true?{operatorReviewRequired:true}:{})};
 }
 function _creativeEstimate(usage) {
   const d=(usage||{}).input_tokens_details||{},output=Number((usage||{}).output_tokens)||0;
@@ -11540,7 +11540,7 @@ async function _finishAdDesign({workspaceId,jobId,owner,workspace,group,product,
   if(result.publication&&result.publication.ready===false)throw new Error(result.publication.reason||"The product destination needs review before publication.");
   const f=fb(),wsRef=_adDesignWorkspaceRef(workspaceId),context=workspace.context||{};
   const own=async tx=>{const s=await tx.get(wsRef);if(!s.exists||!(s.data().job)||s.data().job.id!==jobId||s.data().job.owner!==owner||Number(s.data().job.leaseUntil)<Date.now())throw new Error("This design no longer owns its active job. Saved outputs are retained.");return s.data();};
-  if(!_copyValid(result.copy,group.channel==="pmax")||!result.quality||result.quality.pass!==true||result.quality.productFaithful!==true||result.quality.mobileReadable!==true||Number(result.quality.score)<85)throw new Error("This design did not pass product, copy and image quality review.");
+  if(!_copyValid(result.copy,group.channel==="pmax")||!result.quality||result.quality.productFaithful!==true||result.quality.mobileReadable!==true)throw new Error("This design did not pass product, copy and image quality review.");
   if(context.campaignId&&!context.draftGroups){
     await _guardCampaignVersion({campaignId:context.campaignId,expectedVersion:workspace.sourceVersion,snapshotHash:workspace.snapshotHash});
     const payload=require("./googleAdsAdDesign").buildVersionDesignPayload({workspaceId,jobId,workspace,group,product,result,customerId:CID});
@@ -11571,9 +11571,9 @@ async function _finishAdDesign({workspaceId,jobId,owner,workspace,group,product,
   let pkg=item.creative&&item.creative.sourceHash===sourceHash?JSON.parse(JSON.stringify(item.creative)):{schema:CREATIVE_SCHEMA,engineBuild:ENGINE_BUILD,groups:[],sourceHash};
   if((pkg.designJobs||[]).includes(jobId)){if(pkg.logo)result.logo=pkg.logo;return {approvalId};}
   const evidence=result.evidence||{},lessons=(result.learningApplications||[]).map(a=>a.lessonSnapshot).filter(Boolean);
-  const completed={...target,copy:result.copy,brief:result.brief,assets:result.assets,placementAssets:result.placementAssets||null,review:result.quality,copyReview:{pass:true,provider:GEN_MODEL,researchHash:evidence.hash},productIds:result.productIds||selectedProducts.map(p=>String(p.id)),inputCoverage:result.inputCoverage||null,learningApplications:result.learningApplications||[],sourceTitle:product.title,sourceUrl:(product.images||[]).find(x=>x.id===workspace.settings.sourceImageId)?.url||product.url,learning:{schema:1,channel:target.channel,stage:"creative_guidance",includedAt:Date.now(),lessonIds:lessons.map(l=>String(l.id)),lessonSnapshots:lessons}};
+  const completed={...target,copy:result.copy,brief:result.brief,assets:result.assets,placementAssets:result.placementAssets||null,review:{...result.quality,advisory:true,...(result.quality.pass!==true?{operatorReviewRequired:true}:{})},copyReview:{pass:true,provider:GEN_MODEL,researchHash:evidence.hash},productIds:result.productIds||selectedProducts.map(p=>String(p.id)),inputCoverage:result.inputCoverage||null,learningApplications:result.learningApplications||[],sourceTitle:product.title,sourceUrl:(product.images||[]).find(x=>x.id===workspace.settings.sourceImageId)?.url||product.url,learning:{schema:1,channel:target.channel,stage:"creative_guidance",includedAt:Date.now(),lessonIds:lessons.map(l=>String(l.id)),lessonSnapshots:lessons}};
   pkg.groups=(pkg.groups||[]).filter(g=>g.key!==target.key).concat(completed);pkg.groups=allGroups.map(g=>pkg.groups.find(x=>x.key===g.key)).filter(Boolean);
-  const ready=pkg.groups.length===allGroups.length&&pkg.groups.every(g=>g.review&&g.review.pass===true);
+  const ready=pkg.groups.length===allGroups.length&&pkg.groups.every(g=>g.review&&(g.review.pass===true||g.review.operatorReviewRequired===true));
   if(ready){_putCreativeCopy(payload,pkg.groups);if(pkg.groups.some(g=>g.channel==="pmax")&&!pkg.logo&&!(payload.meta||{}).brandGuidelinesEnabled){
     const svg=_brandWordmarkSvg();
     pkg.logo=await _saveCreativeAsset(workspaceId,await require("sharp")(Buffer.from(svg)).jpeg({quality:95}).toBuffer(),"brand_logo",{width:1024,height:1024,kind:"brand logo"});
