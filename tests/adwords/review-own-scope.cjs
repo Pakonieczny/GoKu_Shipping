@@ -177,6 +177,16 @@ const rgb=hex=>[1,3,5].map(i=>parseInt(hex.slice(i,i+2),16));
  f.docs.delete(productDoc('s1',P.bunny));
  await assert.rejects(()=>status(saved.bunny),/no longer part of its design workspace/);checks++;
 
+ // 10. An older review edited in Approvals keeps its edit marked when conversion cannot find the artwork's own text
+ // (no saved package, messaging or image job for its scope): the edited copy is never its own baseline.
+ const ws=f.docs.get(WSP),geckoKey=sha([GROUP,P.gecko.id]).slice(0,32);ws.productDesigns[geckoKey]={...ws.productDesigns[geckoKey],messaging:null,jobId:null};f.docs.set(WSP,ws);
+ const editedCopy={...copyFor('gecko'),headlines:['Gecko Glow','A Little Gecko Necklace','Gift a Gecko Pendant']},older={workspaceId:WS,productId:P.gecko.id,groupRef:GROUP,productTitle:P.gecko.title,destination:P.gecko.url,formats:['landscape','portrait','square'],copy:editedCopy,includeVideos:true,copyEdited:true,context:clone(ws.context),layoutReview:null};
+ const olderHash=e.E.creativeHash({sourceHash:'older-selection',designReview:older}),olderId='design-review-'+olderHash.slice(0,32);
+ f.docs.set('Brites_GAds_Approvals/'+olderId,{type:'adDesignSubmission',summary:'Complete ad · '+P.gecko.title,status:'PENDING',vetted:false,createdAt:1,reviewHash:olderHash,sourceHash:'older-selection',designReview:older,payload:{adDesign:{workspaceId:WS,productId:P.gecko.id,groupRef:GROUP},meta:{existingCampaignId:null}}});
+ const olderPlan=await ownPlan(olderId,'gecko','older edited review converts',true);
+ ok(olderPlan.ok&&review(olderId).designReview.copyEdited===true,'an older review edited in Approvals stays marked edited when its artwork text cannot be found');
+ await assert.rejects(()=>prepare(olderId,{styles:['fixed_display'],budgets:{fixed_display:5},durations:{fixed_display:30}}),/edited messaging differs/);checks++;
+
  ok(!net.length,'no network request was made');
  console.log('PASS '+checks+' checks: each complete-ad review, frozen or saved before frozen packages, reads, edits, prepares, checks and publishes its own product scope whatever the workspace selects');
  require('./suite-guard.cjs').done();

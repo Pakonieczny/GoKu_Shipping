@@ -1042,11 +1042,18 @@ scenario('S3', 'S3 dry-run mode', async () => {
   step('gecko approve'); const before = counts(), r = st.blocked ? null : await api('publishAdDesignSubmission', { id: ap.id, hash: ap.reviewHash, planHash: ap.planHash, confirmed: true }), recs = reqsIn('gecko approve');
   st.gate('Gecko dry run: Approve reports validation only', () => r && r.status === 'VALIDATED' && r.dryRun === true && /dry-run mode kept them unpublished/.test(r.message || ''), () => why(r));
   st.check('Gecko dry run: exactly one request, validateOnly:true, accepted; nothing is created', () => recs.length === 1 && recs[0].validateOnly && recs[0].ok && counts() === before && !ctx.google.uploads.size, () => recs.map(x => x.validateOnly).join(','));
-  st.check('Gecko dry run: the approval stays APPROVED with validatedAt and no campaign IDs; no film upload starts', () => { const d = approval(ap.id); return d.status === 'APPROVED' && Number(d.validatedAt) > 0 && !d.publishedCampaignIds && !callsIn('gecko approve').some(c => c.task === 'adMotionPublication') && !motionJob(ws.id, ws.fx.gecko).publication; });
-  // With dry run off again, the same reviewed ad should still be publishable (with its films).
+  st.check('Gecko dry run: the ad returns to Approval (PENDING) with its reviewed plan and the dry-run check recorded; no campaign IDs; no film upload starts', () => { const d = approval(ap.id); return d.status === 'PENDING' && Number(d.validatedAt) > 0 && d.dryRunCheck && d.dryRunCheck.planHash === ap.planHash && d.pipelinePlan && d.pipelinePlan.hash === ap.planHash && d.reviewHash === ap.reviewHash && !d.pipelineReview && !d.publishedCampaignIds && !callsIn('gecko approve').some(c => c.task === 'adMotionPublication') && !motionJob(ws.id, ws.fx.gecko).publication; },
+    () => JSON.stringify(approval(ap.id) && { status: approval(ap.id).status, dryRunCheck: approval(ap.id).dryRunCheck, validatedAt: approval(ap.id).validatedAt }));
+  st.check('Gecko dry run: the response says the dry run only validated and the ad stays in Approval', () => /Nothing was published; the ad stays in Approval/.test(r.message || ''), () => why(r));
+  // With dry run off again, the same reviewed ad is published from the same Approve ad button, with its films.
   ctx.store.docs.get('Brites_GAds_Control/control').dryRun = false;
-  step('gecko approve live'); const live = st.blocked ? null : await api('publishAdDesignSubmission', { id: ap.id, hash: ap.reviewHash, planHash: ap.planHash, confirmed: true });
-  check(live && live.status === 'APPLIED', 'Gecko: after a dry-run check, turning dry run off and approving the same reviewed plan publishes it', { tag: 'known', detail: why(live) + ' · approval status ' + (approval(ap.id) || {}).status });
+  step('gecko approve live'); const live = st.blocked ? null : await api('publishAdDesignSubmission', { id: ap.id, hash: ap.reviewHash, planHash: ap.planHash, confirmed: true }), liveRecs = reqsIn('gecko approve live');
+  st.gate('Gecko: after a dry-run check, turning dry run off and approving the same reviewed plan publishes it', () => live && live.status === 'APPLIED' && approval(ap.id).status === 'APPLIED', () => why(live) + ' · approval status ' + (approval(ap.id) || {}).status);
+  const a = st.blocked ? null : verifyPublication(st, p, ap, choice, liveRecs, COPY.gecko), real = liveRecs.find(x => !x.validateOnly), grp = real && a && real.idMap.get(a.groups[0].resourceName), camp = grp && ctx.google.assetGroups.get(grp).campaign;
+  st.check('Gecko films: Approve after the dry run starts the reviewed film upload for the new group', () => /uploading to YouTube/.test(live.message || ''), () => live && live.message);
+  if (!st.blocked) verifyFilms(st, p, ap, grp, camp, 'gecko approve live · adMotionPublication'); else ['three reviewed films upload', 'attachment is validated first', 'the group shows the three uploaded videos'].forEach(n => st.check(p.short + ' films: ' + n, () => false));
+  step('gecko approve live again'); const again = st.blocked ? null : await api('publishAdDesignSubmission', { id: ap.id, hash: ap.reviewHash, planHash: ap.planHash, confirmed: true });
+  st.check('Gecko: approving the published ad again is refused and sends nothing; Google holds exactly one campaign per style', () => again && again.ok === false && !reqsIn('gecko approve live again').length && [...ctx.google.campaigns.values()].filter(c => c.name.startsWith('Brites · ' + p.title) && c.status !== 'REMOVED').length === choice.styles.length, () => why(again));
 });
 
 scenario('S4', 'S4 idempotency and reconciliation', async () => {
@@ -1226,22 +1233,30 @@ scenario('S7', 'S7 the four waiting ads as legacy reviews (sent before the snaps
     const p = P[key], ap = aps[key], f = ws.fx[key], st = stage(null, p.short + ' legacy'), selected = key === 'duck', copy = key === 'gecko' ? EDITED_GECKO : COPY[key];
     if (!ap) st.blocked = 'submission failed';
     const before = ap && clone(approval(ap.id)), r = await reviewPreviews(st, ws, p, ap, 'legacy review');
-    st.check(p.short + ' legacy: opening the review does not rewrite it; it reports ' + (selected ? 'a current source (selected and unchanged since it was sent)' : 'a stale source until the plan converts it'),
-      () => r.sourceStale === !selected && JSON.stringify(approval(ap.id)) === JSON.stringify(before), () => 'sourceStale=' + r.sourceStale);
-    if (!selected) { step(key + ' legacy edit before conversion'); const early = st.blocked ? null : await api('updateAdDesignSubmission', { id: ap.id, hash: ap.reviewHash, copy: clone(copy), includeVideos: true });
-      st.check(p.short + ' legacy: a messaging save before the plan converts the review is refused and changes nothing', () => early && early.ok === false && /saved source changed/.test(early.error || '') && JSON.stringify(approval(ap.id)) === JSON.stringify(before), () => why(early)); }
+    // A remembered product's older review reads its own scope (its saved settings, messaging and image job), so an
+    // unchanged review is as current as the selected product's.
+    st.check(p.short + ' legacy: opening the review does not rewrite it; it reports a current source (unchanged since it was sent' + (selected ? ')' : ', read from its own remembered scope)'),
+      () => r.sourceStale === false && JSON.stringify(approval(ap.id)) === JSON.stringify(before), () => 'sourceStale=' + r.sourceStale);
+    const converted = () => { const d = approval(ap.id), rv = d.designReview;
+      return rv.sourceMode === 'saved-package' && d.sourceHash === SR.snapshotHash(rv, H) && d.reviewHash === ap.reviewHash && d.reviewHash !== legacy[key].reviewHash && d.sourceRefresh && d.sourceRefresh.previousSourceHash === legacy[key].sourceHash
+        && (rv.publicationImages || []).length === 3 && Object.entries(f.images).every(([format, a]) => rv.publicationImages.some(x => x.format === format && x.asset.hash === a.hash)) && rv.productId === p.gid && JSON.stringify(rv.copy) === JSON.stringify(copy) && rv.layoutReview && rv.layoutReview.jobId === f.editorJobId; },
+      convertedDetail = () => { const d = approval(ap.id) || {}, rv = d.designReview || {}; return JSON.stringify({ sourceMode: rv.sourceMode, images: (rv.publicationImages || []).map(x => [x.format, x.asset.hash.slice(0, 10)]), own: Object.entries(f.images).map(([k, a]) => [k, a.hash.slice(0, 10)]), refresh: d.sourceRefresh, layout: rv.layoutReview }); };
+    // Bunny and Saturn: a messaging save before any plan converts the older review, exactly as preparing does.
+    if (!selected && key !== 'gecko') { await editMessaging(st, ws, p, ap, clone(copy), false);
+      st.check(p.short + ' legacy: saving its messaging before the plan converts it in place to a frozen saved package of its own photos (sourceMode, snapshot sourceHash, refresh history)', converted, convertedDetail); }
+    // Gecko carries an Approvals edit from before the upgrade: converting it keeps that edit marked against its own
+    // saved artwork text, so Fixed Display (whose artwork shows the original text) stays refused.
     if (key === 'gecko') { step('gecko legacy fixed after edit');
       const fixed = st.blocked ? null : await api('publishAdDesignSubmission', { id: ap.id, hash: ap.reviewHash, prepareOnly: true, styles: ['fixed_display'], budgets: { fixed_display: 5 }, countries: ['2840'], durations: { fixed_display: 7 } });
       if (fixed && fixed.reviewHash) ap.reviewHash = fixed.reviewHash;
       const d = () => (approval(ap.id) || { designReview: {} }).designReview;
-      check(fixed && fixed.ok === false && /edited messaging differs/.test(fixed.error || ''), 'Gecko legacy: converting the review keeps its Approvals edit marked (copyEdited), so Fixed Display stays refused',
-        { tag: 'known', detail: why(fixed) + ' · after conversion copyEdited=' + d().copyEdited + ', artworkCopy is ' + (JSON.stringify((d().artworkCopy || {}).headlines) === JSON.stringify(EDITED_GECKO.headlines) ? 'the edited copy' : 'the studio copy') }); }
+      st.check('Gecko legacy: converting the review keeps its Approvals edit marked (copyEdited), so Fixed Display stays refused', () => fixed && fixed.ok === false && /edited messaging differs/.test(fixed.error || ''),
+        () => why(fixed) + ' · after conversion copyEdited=' + d().copyEdited + ', artworkCopy is ' + (JSON.stringify((d().artworkCopy || {}).headlines) === JSON.stringify(EDITED_GECKO.headlines) ? 'the edited copy' : 'the studio copy')); }
     await preparePlan(st, p, ap, plans[key], 'legacy convert');
-    st.check(p.short + ' legacy: preparing converts it in place to a frozen saved package of its own photos (sourceMode, snapshot sourceHash, refresh history)', () => { const d = approval(ap.id), rv = d.designReview;
-      return rv.sourceMode === 'saved-package' && d.sourceHash === SR.snapshotHash(rv, H) && d.reviewHash === ap.reviewHash && d.reviewHash !== legacy[key].reviewHash && d.sourceRefresh && d.sourceRefresh.previousSourceHash === legacy[key].sourceHash
-        && (rv.publicationImages || []).length === 3 && Object.entries(f.images).every(([format, a]) => rv.publicationImages.some(x => x.format === format && x.asset.hash === a.hash)) && rv.productId === p.gid && JSON.stringify(rv.copy) === JSON.stringify(copy) && rv.layoutReview && rv.layoutReview.jobId === f.editorJobId; },
-      () => { const d = approval(ap.id) || {}, rv = d.designReview || {}; return JSON.stringify({ sourceMode: rv.sourceMode, images: (rv.publicationImages || []).map(x => [x.format, x.asset.hash.slice(0, 10)]), own: Object.entries(f.images).map(([k, a]) => [k, a.hash.slice(0, 10)]), refresh: d.sourceRefresh, layout: rv.layoutReview }); });
-    if (key !== 'gecko') await editMessaging(st, ws, p, ap, clone(copy), false);
+    if (selected || key === 'gecko') st.check(p.short + ' legacy: preparing converts it in place to a frozen saved package of its own photos (sourceMode, snapshot sourceHash, refresh history)', converted, convertedDetail);
+    if (key === 'gecko') st.check('Gecko legacy: the converted review keeps its Approvals edit (copyEdited) against its own saved artwork text, never the edited copy', () => { const rv = approval(ap.id).designReview; return rv.copyEdited === true && rv.artworkCopy && JSON.stringify(rv.artworkCopy) !== JSON.stringify(EDITED_GECKO); },
+      () => JSON.stringify({ copyEdited: approval(ap.id).designReview.copyEdited, artworkCopy: (approval(ap.id).designReview.artworkCopy || {}).headlines }));
+    if (selected) await editMessaging(st, ws, p, ap, clone(copy), false);
     await reviewPreviews(st, ws, p, ap, 'converted review');
     const selectedBefore = JSON.stringify(ctx.store.docs.get(wsPath(ws.id)).settings);
     await publishAd(st, ws, p, ap, plans[key], copy);
