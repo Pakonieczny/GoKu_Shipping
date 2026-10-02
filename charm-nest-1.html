@@ -6542,13 +6542,40 @@ async function boot() {
 boot();
 </script>
 <script src="order-timeline.js?v=20260929-om"></script>
-<script src="charm-nest-bridge.js?v=20261002-rg-br2"></script>
+<!-- How long each person is signed in here, and what they did (station-session.js, station-activity.js). The sorter has no
+     personal login: the person is the name it keeps (cn.employee: typed at the first approval, label or decision, or the
+     Design Station's sign-in), the same name every seal it stamps carries. -->
+<script src="station-session.js?v=20261002-ea1"></script>
+<script src="station-activity.js?v=20261002-ea1"></script>
+<script src="charm-nest-bridge.js?v=20261002-ea-br"></script>
+<script>
+try {
+  const nameNow = () => { try { const n = String((window.CNEmployee && CNEmployee.name()) || "").trim(); return /^\d+$/.test(n) ? "" : n; } catch (_) { return ""; } };
+  StationSession.init({
+    station: "sorter", device: "charm-nest-1",
+    person: () => { const n = nameNow(); return n ? { name: n, id: null } : null; },
+    // midnight (New York): the name is cleared, so the next approval, label or decision asks who is working; what is on
+    // screen and the run are left as they are
+    signOut: () => {
+      const was = nameNow();
+      try { localStorage.removeItem("cn.employee"); } catch (_) {}
+      try { if (window.B) B.employee = ""; } catch (_) {}
+      if (was) { try { window.CN && CN.toast("Signed out at midnight. Your name is asked again at your next approval, label or decision.", "", 7000); } catch (_) {} }
+    }
+  });
+  // a name set anywhere (an approval, a label, the sheet window, the Design Station's sign-in) is a sign-in at once
+  const d = Object.getOwnPropertyDescriptor(window.B, "employee");
+  if (d && typeof d.get === "function" && typeof d.set === "function")
+    Object.defineProperty(window.B, "employee", { configurable: true, enumerable: true, get: d.get,
+      set(v) { d.set.call(window.B, v); try { const n = String(v || "").trim(); if (n && !/^\d+$/.test(n)) StationSession.signedIn({ name: n, id: null }); } catch (_) {} } });
+} catch (_) {}
+</script>
 <script src="charm-nest-sheetwin.js?v=20261002-ck"></script>
 <script src="charm-nest-tour.js?v=20260929-m11"></script>
 <script src="charm-nest-mail.js?v=20260928-ov2"></script>
-<script src="charm-nest-rose-ui.js?v=20260929-cx"></script>
+<script src="charm-nest-rose-ui.js?v=20261002-ea-rose"></script>
 <script src="charm-nest-export-ui.js?v=20260925-done"></script>
-<script src="charm-nest-library.js?v=20261002-rg-lib"></script>
+<script src="charm-nest-library.js?v=20261002-ea-lib"></script>
 <script src="charm-nest-search.js?v=20260929-m5"></script>
 <script src="charm-nest-signins.js?v=20260929-m5"></script>
 <!-- ══ one order line: what it is, what the customer said, what the shop said, and how to settle it ══ -->

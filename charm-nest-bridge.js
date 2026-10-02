@@ -289,6 +289,13 @@ function askEmployee() {
   return employeeName();
 }
 window.CNEmployee = { name: employeeName, ask: askEmployee };   // (the Library's Completed marks record who, charm-nest-library.js)
+/* What a person did here, for the Employee efficiency console (station-activity.js, loaded before this file; the person is
+   the name above, as charm-nest-1.html hands it to StationSession). Called only where a person pressed something that
+   finished or undid work (print, complete, undo, engraving approved, sent to a sheet, laser/cut marked) and when a held-back
+   press or a failure is shown to them: never from a background step. It never throws and never waits, and records nothing
+   when nobody is signed in. */
+const humanAct = window.CNAct = (action, o) => { try { return !!(window.StationActivity && window.StationActivity.log(action, o)); } catch (_) { return false; } };
+const piecesOfRows = rows => { try { return (rows || []).reduce((n, r) => n + Math.max(1, Math.floor(+(r && r.line && r.line.quantity) || 1)), 0); } catch (_) { return 0; } };
 /* Who the server's Nested stamps name (placed, setCommitted: poolUpdate), Paul, 28 Sep (station tracking E). The sorter
    has no person login of its own (its passcode is shared): the person on duty is the name its sign-in keeps (cn.employee,
    asked at the first approval, decision or label), the one every other sorter event carries. Nobody named: by "" with
@@ -4048,7 +4055,7 @@ const Engrave = window.Engrave = (() => {
     // the card in front goes up into Decided, which says what arrived (Paul, 27 Sep 20:09-20:24); the tab is drawn at once, so
     // the next card is there while the pieces' record is saved (it used to wait for the cloud's answer first)
     revokeBacks(job); goes(job, { to: EG_TAB("done"), note: { text: `Order ${job.row.order.receiptId} · No engraving · in Decided`, ms: 6000, actions: [{ label: "Show", title: "open Decided at this order", fn: () => showDecided(job.key) }] } });
-    job.state = "skipped"; job.decidedAt=Date.now(); job.decidedBy=by; CNListActivity.touch(job.row,job.decidedAt); job.approvedBy = null; job.row.engrave = { ...job.row.engrave, needed: false, state: "skipped", text: job.text, approved: true, reason: `cut plain — skipped by ${by}` }; CNEngravingSeals.add(job,"engravePlain",by,job.decidedAt); wordsEvent(job, by, job.text, "skipped"); job.row.flag = `engraving skipped by ${by}`; Review.remove("eng:" + job.key); agent({ engrave: true }, "warn", `${job.row.order.receiptId} · ${job.row.spec.designSku}: engraving skipped by ${by} — cut plain, order flagged`);
+    job.state = "skipped"; job.decidedAt=Date.now(); job.decidedBy=by; CNListActivity.touch(job.row,job.decidedAt); job.approvedBy = null; job.row.engrave = { ...job.row.engrave, needed: false, state: "skipped", text: job.text, approved: true, reason: `cut plain — skipped by ${by}` }; CNEngravingSeals.add(job,"engravePlain",by,job.decidedAt); wordsEvent(job, by, job.text, "skipped"); try { humanAct("note", { orderId: String(job.row.order.receiptId), line: String(job.row.line.transactionId || ""), detail: "engraving skipped (cut plain)" }); } catch (_) {} job.row.flag = `engraving skipped by ${by}`; Review.remove("eng:" + job.key); agent({ engrave: true }, "warn", `${job.row.order.receiptId} · ${job.row.spec.designSku}: engraving skipped by ${by} — cut plain, order flagged`);
     const saved = Pool.update(job.copies, { engrave: false, engraveSkippedBy: by }); if (!job.editingBack) render(); await saved;
     if(job.editingBack) {await backQueue;await syncEditedBack(job);} Orders.render(); render(); if(!job.editingBack) RunCtl.poke(); }
   function sendBack(job, why) { CNListActivity.touch(job.row); CNListActivity.touch(job); revokeBacks(job); job.state = "words"; job.reason = why || "sent back from the placement review — a decision on the words is needed"; job.row.engrave.state = "words"; job.row.engrave.approved = false; Review.remove("eng:" + job.key); Review.add({ kind: "engraveWords", key: "eng:" + job.key, row: job.row, job, why: job.reason }); render(); Orders.render(); }
@@ -4141,6 +4148,8 @@ const Engrave = window.Engrave = (() => {
     job.stamping=true;try{await CNEngravingSeals.press(approvalButton,seal);}finally{job.stamping=false;}
     if(job.fit!==prepared.fit || job.view!==prepared.view){toast("The placement changed while it was approved. Review the current words.","bad");delete job.approvalIntent;return;}
     settleApproval(job);
+    // the person pressed Approve and the approval stands: engraving approved for this line's pieces (once per press)
+    if(job.state==="approved")try{humanAct("complete",{orderId:String(job.row.order.receiptId),line:String(job.row.line.transactionId||""),sku:String(job.row.spec&&job.row.spec.designSku||""),parts:(job.copies||[]).length||1,detail:"engraving approved"});}catch(_){}
     job.approvalPreparing=false;
     if(typeof Session!=="undefined"){Session.schedule();await Session.flushNow?.();}
     for(const show of [()=>goes(job,{to:EG_TAB("done")}),()=>Review.remove("eng:"+job.key),()=>agent({engrave:true},"ENGRAVE",`${job.row.order.receiptId} · ${job.row.spec.designSku}: placement approved by ${by} (${job.fit.size.toFixed(2)} pt, cap ${job.fit.capMm.toFixed(2)} mm${job.nudged ? ", nudged" : ""})`),render])try{show();}catch(e){console.warn("Engraving approval view",e);}
@@ -6683,6 +6692,7 @@ const CustomPrint = window.CustomPrint = (() => {
     const a = armed.get(k), now = Date.now();
     if (a && a.until > now) { if (now < a.from) return false; armed.delete(k); redraw(); return rid; }
     armed.set(k, { from: now + 350, until: now + 4000 }); redraw();
+    humanAct("reject", { orderId: rid, detail: `cancelled order: ${act === "print" ? "print" : "complete"} held (press again to go on)` });
     setTimeout(() => { const x = armed.get(k); if (x && x.until <= Date.now() && armed.delete(k)) redraw(); }, 4100);
     return false;
   }
@@ -6766,8 +6776,10 @@ const CustomPrint = window.CustomPrint = (() => {
       const out = await runPrinter(label, null, gate);
       await gate;                                           // (a label that failed early still lets its seal land first)
       stamping.delete(key);
-      if (!out.ok) { failed(key, out.error || "the printer failed", shown); say(key, null); unlay(); toast(`The print didn't open (${out.error || "the printer failed"}). Its seal stays and nothing is lost; press Retry print to try again`, "", 8000); return; }
+      if (!out.ok) { humanAct("error", { orderId: String(targets[0].receiptId || ""), detail: "QR label print did not open" }); failed(key, out.error || "the printer failed", shown); say(key, null); unlay(); toast(`The print didn't open (${out.error || "the printer failed"}). Its seal stays and nothing is lost; press Retry print to try again`, "", 8000); return; }
       labelled(targets[0].receiptId, who, { lines: targets.length, again: !!it.done, cancelled: !!cancelled, n: st.n });
+      // the efficiency record, beside the seal's own: the print dialog opened and closed (a print; the completion below is its own)
+      humanAct("print", { orderId: String(targets[0].receiptId || ""), parts: piecesOfRows(rows) || targets.length, detail: it.done ? "QR label, again" : "QR label" });
       acting.set(key, "print");
       // a line the run put on a sheet all the same is cut on the laser: it is not marked completed as well
       const cut = it.done ? new Set() : new Set(rows.filter(r => (r.poolIds || []).length).map(r => r.key));
@@ -6781,6 +6793,9 @@ const CustomPrint = window.CustomPrint = (() => {
       // printed from Open: the card, its seal on the button, flies to Completed, where a note offers Undo (a dialog
       // closed without printing looks the same here); printed again: the new seal shows on the card
       if (done.length) sealed(it, rows, saved, done, who, "print", shown);
+      // (a label printed again is a print only: the order was completed by the first)
+      if (done.length && !it.done) humanAct("complete", { orderId: String(targets[0].receiptId || ""), parts: piecesOfRows(rows.filter(r => saved[r.key])) || done.length, orders: 1, detail: "QR label printed, order completed" });
+      if (putErr) humanAct("error", { orderId: String(targets[0].receiptId || ""), detail: "label printed but not marked completed" });
       if (done.length && it.onDone) { try { it.onDone(who, "print"); } catch (_) {} }   // a Review card's question: answered, by who
       if (done.length && cancelled) printedAnyway(cancelled, who, "print", done.length);
       settle(); say(key, null); unlay(); pressSoon();
@@ -6826,6 +6841,8 @@ const CustomPrint = window.CustomPrint = (() => {
       keepDone(saved);
       release(); busy.delete(key); acting.delete(key);
       if (done.length) sealed(it, rows, saved, done, who, "button");
+      if (done.length) humanAct("complete", { orderId: String(rid), parts: piecesOfRows(rows.filter(r => saved[r.key])) || done.length, orders: 1, detail: "Complete Order" });
+      if (putErr) humanAct("error", { orderId: String(rid), detail: done.length ? "not every line was completed" : "order not completed" });
       if (done.length && it.onDone) { try { it.onDone(who, "button"); } catch (_) {} }
       if (done.length && cancelled) printedAnyway(cancelled, who, "complete", done.length);
       settle(); say(key, null); pressSoon(); if (done.length) tlFresh();
@@ -6917,6 +6934,10 @@ const CustomPrint = window.CustomPrint = (() => {
     catch (e) { settle(); say(key, null); toast(`${rid} ${did}, but its line could not be put back for cutting: ${e.message} — it is under Review → Open`, "bad", 9000); return; }
     say(key, null);
     agent({ bridge: true }, "DS", `${rid}: custom order ${did} by ${who}`); tlFresh();
+    // the person's own Undo of a completion is an undo (what was produced is taken back); a Reopen of a completed order is a
+    // note: the completion may be another person's or an earlier day's, and the next completion counts as the new work
+    if (how === "undo") humanAct("undo", { orderId: String(rid), parts: piecesOfRows(rows), orders: 1, detail: "completion undone" });
+    else humanAct("note", { orderId: String(rid), detail: "completed order reopened" });
   }
   /** What a card shows in place of its buttons, if anything: a spinner and what is happening, the name asked for (a small
    *  field and OK), or "Marked completed · Undo". sz: the buttons' size class ("sm" in Review, "xs" in the order window). */
@@ -7260,6 +7281,8 @@ const CustomSheet = window.CustomSheet = (() => {
       e.sent={id:intent.id,at:intent.at,by:intent.by,lines:intent.lines};delete e.sendIntent;delete e.sendError;ver++;
       // (the answer it records reaches the order's timeline now, as the repool that used to follow it did: not at some later sync, which a reload in between would lose)
       if(it.onDone)try{it.onDone(e.sent.by,"sheet",e.sent.at);Review.syncOrderItems();}catch(err){console.warn("Custom send review",err);}
+      // (a person's press only: a send finished again after a reload, how.recover, is not logged as new work)
+      if(!how.recover)try{humanAct("complete",{orderId:String(e.rid),parts:Object.values(lines).reduce((a,l)=>a+l.filter(pc=>!pc.removed).length,0),orders:1,detail:"custom designs sent to the sheets"});}catch(_){}
       for(const r of rows)TL.line(r,"designSent",{id:`${r.key}.${e.sent.at}`,at:e.sent.at,by:e.sent.by,text:`Custom design${files.length===1?"":"s"} sent to the sheets by ${e.sent.by}: ${files.map(F=>`${F.name} × ${F.qty} → ${labelOf(F.metal)}`).join(", ")}`.slice(0,200),data:{decisionId:e.sent.id,files:files.map(F=>({name:F.name,qty:F.qty,metal:F.metal,pieces:F.pieces})).slice(0,12),pieces:(lines[r.key] || []).length,placed:["pooled","written","committed"].includes(r.state)}});
       Session.schedule();await Session.flushNow?.();
       if(nestHold)nestHold.bind(rows.flatMap(r=>r.poolIds || []).filter(id=>!Pool.sheetOf(id)));
@@ -8042,6 +8065,9 @@ const Review = window.Review = (() => {
   }
   /** A card's answer, for each line it covers: type decided / skipped / held, what was answered in words, and detail. */
   function answered(it, type, say, detail, who) {
+    // a person's answer in Review: a note (decided) or a reject (held / skipped); the custom print, complete and send
+    // answers (detail.how) are recorded by their own steps
+    try { if (!(detail && detail.how)) { const r0 = rowsOf(it)[0]; humanAct(type === "decided" ? "note" : "reject", { orderId: r0 && r0.order ? String(r0.order.receiptId) : "", detail: `${type}: ${it.kind}`.slice(0, 120) }); } } catch (_) {}
     try { const by = who || employeeName(), at = Date.now(); for (const r of rowsOf(it)) { CNListActivity.touch(r,at); answers.set(r.key + "\u0000" + it.kind, { row: r, type, kind: it.kind, say: say || "", detail: detail || null, by, at }); } } catch (_) {}
   }
   const TYPE_WORDS = { decided: "Decided", skipped: "Skipped", held: "Held" };
