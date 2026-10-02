@@ -1307,6 +1307,73 @@ const DsTimeline = (() => {
   return { printed, who };
 })();
 
+/* ── the efficiency log (station-activity.js: who did what and when, for the Employee efficiency console). Only what a
+   person does on this page is recorded, once each, with counts and ids and never a name, address, message text or PIN:
+   a label print (one per label), a design completed (one per order, with its pieces), an undo (what it reversed), an
+   order held back from the labels, an order-chat message sent, a print or send that failed. Completions the Charm
+   Sorter commands are the sorter's own: this page's name is not who did them. The call is guarded and fire-and-forget:
+   it never waits, throws or changes what the page does. ── */
+const DsActivity = (() => {
+  const log = (action, o) => { try { return !!(window.StationActivity && window.StationActivity.log(action, o)); } catch (_) { return false; } };
+  const digits = x => String(x == null ? "" : x).replace(/\D/g, "");
+  const metalName = m => { try { return (METAL_BY_KEY[m] && METAL_BY_KEY[m].label) || String(m).toUpperCase(); } catch (_) { return String(m); } };
+  const credited = new Map();   // order -> pieces credited when it was completed here, so an undo reverses exactly that
+  const held = new Set();       // order|why already reported: the same order is not held back again on every try
+  /** Pieces in each order (quantity over its lines), read from what the page already holds: no request. Take it BEFORE
+      the order leaves orderCache. */
+  function pieces(ids) {
+    const out = {};
+    try { for (const id of ids || []) { const t = orderCache[String(id)]; out[String(id)] = Array.isArray(t) ? t.reduce((n, x) => n + (Number(x && x.quantity) || 1), 0) : 0; } } catch (_) {}
+    return out;
+  }
+  /** Labels the print page produced: one `print` per label (a label lists up to 50 orders, so it carries no order id). */
+  function printed(lists, jobs) {
+    try {
+      let labels = (jobs || []).filter(j => j && Array.isArray(j.ids) && j.ids.length);
+      if (!labels.length) labels = Object.keys(lists || {}).filter(m => (lists[m] || []).length).map(m => ({ metal: m, ids: lists[m] }));
+      for (const j of labels) {
+        const part = j.partTotal > 1 ? ` ${j.partIndex}/${j.partTotal}` : "";
+        log("print", { detail: `${metalName(j.metal)} order label${part} · ${j.ids.length} order${j.ids.length === 1 ? "" : "s"}`.slice(0, 120) });
+      }
+    } catch (_) {}
+  }
+  /** Designs completed by this person: one `complete` per order, with its pieces, finishing the order here once. */
+  function completed(ids, pcs) {
+    try {
+      for (const id of [...new Set((ids || []).map(digits).filter(Boolean))]) {
+        const n = Math.max(0, Math.floor((pcs && pcs[id]) || 0));
+        if (log("complete", { orderId: id, parts: n, orders: 1, detail: "design completed" })) credited.set(id, n);
+      }
+    } catch (_) {}
+  }
+  /** The undo of a completion: what this page credited is reversed (an order completed elsewhere reverses nothing). */
+  function undone(ids) {
+    try {
+      for (const id of [...new Set((ids || []).map(digits).filter(Boolean))]) {
+        const mine = credited.has(id);
+        log("undo", { orderId: id, parts: mine ? credited.get(id) : 0, orders: mine ? 1 : 0, detail: mine ? "completion undone" : "undid a completion made elsewhere" });
+        credited.delete(id);
+      }
+    } catch (_) {}
+  }
+  /** Orders the labels left out (no metal we recognise, "solid" without a karat): a refusal, once per order and reason. */
+  function heldBack(skipped, solid) {
+    try {
+      const one = (id, why) => { const k = digits(id) + "|" + why; if (digits(id) && !held.has(k)) { held.add(k); log("reject", { orderId: digits(id), detail: why }); } };
+      (skipped || []).forEach(id => one(id, "not labelled: no recognised metal"));
+      (solid || []).forEach(id => one(id, "not labelled: solid without a karat"));
+    } catch (_) {}
+  }
+  /** An order-chat message or image sent from here: counted, never its words. */
+  function chat(rid, what) { return log("note", { orderId: digits(rid), detail: `order chat ${what} sent` }); }
+  /** Something failed for the person (fixed wording; the print page's own message, digits stripped, may follow). */
+  function failed(what, orderId, more) {
+    const tail = more ? " · " + String(more).replace(/\d{4,}/g, "#").replace(/\s+/g, " ").trim() : "";
+    return log("error", { orderId: digits(orderId), detail: (what + tail).slice(0, 120) });
+  }
+  return { pieces, printed, completed, undone, heldBack, chat, failed };
+})();
+
 /* The sandbox streams orders many times faster than the shop, and its ledger shares this origin's storage quota with
    production: it keeps two days and at most 5,000 orders (sandbox.reset clears it anyway). Production keeps 60 days. */
 const LEDGER_TTL_DAYS = SANDBOX ? 2 : 60;
@@ -4695,7 +4762,7 @@ function pruneStaleSelection() {
   return gone.length;
 }
 
-async function handleCompleteClick() {
+async function handleCompleteClick(opts) {
   if (!selectedOrders.size) {
     toast("Select some orders first", "bad");
     return;
@@ -4787,6 +4854,7 @@ async function handleCompleteClick() {
     multi.push(rid);
   });
 
+  if (!(opts && opts.remote)) DsActivity.heldBack(skipped, solid);   // the efficiency log: orders left off the labels
   // Distinct orders, not label entries. With one-label allocation these are
   // now equal, but the summary keeps reporting both so any future divergence
   // is visible rather than silently averaged away.
@@ -5006,6 +5074,7 @@ async function proceedToPrint() {
   if (!page) {
     printBtn.disabled = false;
     printBtn.textContent = "Print labels";
+    DsActivity.failed("print page not found");
     toast("Print page not found — nothing was marked complete", "bad", 6000);
     console.error("Neither design-print-1.html nor designprint1.html could be reached.");
     return;
@@ -5019,6 +5088,7 @@ async function proceedToPrint() {
   } catch (e) {
     printBtn.disabled = false;
     printBtn.textContent = "Print labels";
+    DsActivity.failed("labels could not be handed to the print page");
     toast("Could not hand the labels to the print page", "bad");
     return;
   }
@@ -5034,12 +5104,14 @@ async function proceedToPrint() {
   printBtn.textContent = "Print labels";
 
   if (!outcome.ok) {
+    DsActivity.failed("print failed", "", outcome.error);
     toast(outcome.error || "Printing failed — nothing was marked complete", "bad", 7000);
     console.error("Print job failed:", outcome);
     return;                       // orders stay in the list, handoff stays put
   }
 
   DsTimeline.printed(lists, jobs, page);   // who printed which order's label, on its timeline (never waits or throws)
+  DsActivity.printed(lists, jobs);          // the efficiency log: one print per label
   closeDlg($("#qrPreviewModal"));
   try { localStorage.removeItem(LS.printJobs); localStorage.removeItem(LS.printLists); } catch (_) {}
 
@@ -5047,7 +5119,9 @@ async function proceedToPrint() {
   // De-duped: a mixed-metal order appears on several labels but is one order,
   // so it is completed, unlocked, messaged and archived exactly once.
   const printedIDs = [...new Set(Object.values(lists).flat().map(String))];
+  const designedPieces = DsActivity.pieces(printedIDs);   // before the orders leave orderCache
   await commitCompletion(printedIDs, { labels: null, completedBy: null });
+  DsActivity.completed(printedIDs, designedPieces);       // the efficiency log: one complete per order (the sorter's commits are its own)
   const labelEntries = Object.values(lists).flat().length;
   toast(`${printedIDs.length} order${printedIDs.length !== 1 ? "s" : ""} completed`
         + (labelEntries !== printedIDs.length ? ` · ${labelEntries} label entries` : ""), "ok");
@@ -5106,7 +5180,7 @@ async function commitCompletion(ids, { labels = null, setId = null, sheetIds = n
 
 /** Restore the most recent printed batch. */
 let __undoInFlight = 0;
-async function handleUndoComplete() {
+async function handleUndoComplete(opts) {
   if (!lastClearedReceipts.length) { toast("Nothing to undo"); return; }
   const ids = [...lastClearedReceipts];
 
@@ -5142,6 +5216,7 @@ async function handleUndoComplete() {
     applyMetalFilter();
     lastClearedReceipts = [];
     refreshChrome();
+    if (!(opts && opts.remote)) DsActivity.undone(ids);   // the efficiency log: what this person's completions credited is reversed
     toast("Orders restored", "ok");
   } finally { Activity.hide(); __undoInFlight = Math.max(0, __undoInFlight - 1); }
 }
@@ -5663,9 +5738,11 @@ const BritesChat = (() => {
         try { await postText(rid, text, staff); }
         catch (_) { await directWrite(rid, { text, senderName:staff, senderRole:"staff" }); }
         p.__sent = true; render();
+        DsActivity.chat(rid, "message");
       } catch (err) {
         console.error("chat send failed", err);
         p.__failed = true; render();
+        DsActivity.failed("order chat message failed", rid);
         toast("Message failed to send", "bad");
       }
     }
@@ -5690,9 +5767,11 @@ const BritesChat = (() => {
       p.imageUrl = url; p.__progress = 100; render();
       await directWrite(rid, { imageUrl:url, text:"Image attachment", senderName:staff, senderRole:"staff" });
       p.__sent = true; render();
+      DsActivity.chat(rid, "image");
     } catch (err) {
       console.error("chat image failed", err);
       p.__failed = true; render();
+      DsActivity.failed("order chat image failed", rid);
       toast(/uploader-unavailable|CORS|Failed to fetch|network/i.test(String(err?.message))
         ? "Image upload blocked — add design.goldenspike.app to the Storage CORS list"
         : "Image upload failed", "bad", 6000);
@@ -7976,7 +8055,7 @@ const Bridge = (() => {
       const others = [...selectedOrders].filter(id => !ids.includes(id));
       for (const id of others) { const row = rowFor(id); if (row) deselectRow(row); else selectedOrders.delete(id); }
       await Cursor.act("complete", null, `Generate QR labels for ${ids.length} order${ids.length === 1 ? "" : "s"}`);
-      await handleCompleteClick();
+      await handleCompleteClick({ remote: true });
       await Cursor.act("grid", null, "Preview the label jobs", { click: false, dwell: 250 });
       const lists = pendingLists || {}, jobs = pendingJobs || [];
       S.previewed = new Set(Object.values(lists).flat().map(String));
@@ -8014,7 +8093,7 @@ const Bridge = (() => {
       const undone = [...lastClearedReceipts];
       forgetCommits(undone);
       await Cursor.act("undo", null, `Undo the completion of ${undone.length} order${undone.length === 1 ? "" : "s"}`);
-      await handleUndoComplete();
+      await handleUndoComplete({ remote: true });
       return { restored: undone, selection: [...selectedOrders] };
     },
     async release() { await Cursor.act("release", null, "Release this station", { click: true }); endSession("released by the sorter"); return {}; }
@@ -8177,7 +8256,8 @@ window.DesignStation = {
   }
 </script>
 <!-- Sign-in time per person and computer, and the midnight sign-out (New York time) -->
-<script src="station-session.js?v=20260929-ss2"></script>
+<script src="station-session.js?v=20261002-ea1"></script>
+<script src="station-activity.js?v=20261002-ea1"></script>
 <script>
 (function () {
   const framed = (() => { try { return window.self !== window.top; } catch (_) { return true; } })();

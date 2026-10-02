@@ -508,7 +508,10 @@
   <!-- Sign-in time per person and computer, and the midnight sign-out (station-session.js). Here the sign-in is the
        "Sorting as" name: at midnight (New York) it is cleared and the chip asks for a name again; the batch on screen
        and the scanner stay as they are. -->
-  <script src="station-session.js?v=20260929-ss2"></script>
+  <script src="station-session.js?v=20261002-ea1"></script>
+  <!-- What each person did here (scans, stickers printed, orders sorted, rejects) for the Employee efficiency console: the
+       person, station and device are the StationSession's. Without the file nothing changes. -->
+  <script src="station-activity.js?v=20261002-ea1"></script>
   <script>
     try {
       StationSession.init({
@@ -1223,9 +1226,10 @@ etsyOrderInput.addEventListener("keydown", async function (e) {
       .filter((x) => x);
 
     // Order timeline: record every order of the batch as scanned and check each for a cancel (never throws)
-    try { window.SortTL && window.SortTL.batchStart(orderNumbers, scanSrc); } catch (_) {}
+    let batchRec = null;
+    try { batchRec = window.SortTL && window.SortTL.batchStart(orderNumbers, scanSrc); } catch (_) {}
     await loadBatchEtsyOrders(orderNumbers);
-    try { window.SortTL && window.SortTL.batchLoaded(); } catch (_) {}
+    try { window.SortTL && window.SortTL.batchLoaded(batchRec); } catch (_) {}
     updateOrderItemCounter(); // total after load completes
     updatePrintRowButtonLabel();
   }
@@ -1504,6 +1508,36 @@ window.SortTL = (function () {
   }
   const within = (p, ms, fallback) => Promise.race([Promise.resolve(p), new Promise(r => setTimeout(() => r(fallback), ms))]);
 
+  /* ---- what a person did here, for the Employee efficiency console (station-activity.js; Paul, 2 Oct) ----
+     Only human actions: a batch scanned or typed in (scan, or error when an order did not load), a cancelled order met
+     (reject), a printed order sticker (print, and complete once per order and day: the order is sorted). The person,
+     station and device are the StationSession's (the "Sorting as" name); with nobody set nothing is recorded. Never throws
+     and never waits: no extra Etsy or Firestore call. */
+  function act(action, o) { try { return !!(window.StationActivity && StationActivity.log(action, o)); } catch (_) { return false; } }
+  // the pieces on an order, from the lines already on screen (no extra call)
+  function piecesOf(id) {
+    try {
+      let n = 0;
+      for (const it of (window.cachedOrderItems || [])) if (idsOfItem(it).includes(String(id))) n += Math.max(1, Math.floor(+it.quantity) || 1);
+      return n;
+    } catch (_) { return 0; }
+  }
+  // the orders already counted as sorted today on this computer: a sticker printed again is a print, not a second sorted order
+  const DONE_KEY = "sorting.sortedToday";
+  function dayKey() { try { return (window.StationSession && StationSession.nyDay && StationSession.nyDay()) || new Date().toISOString().slice(0, 10); } catch (_) { return ""; } }
+  function sortedBefore(id) {
+    try { const o = JSON.parse(lsGet(DONE_KEY) || "{}") || {}; return o.day === dayKey() && Array.isArray(o.ids) && o.ids.includes(String(id)); } catch (_) { return false; }
+  }
+  function markSorted(id) {
+    try {
+      let o = JSON.parse(lsGet(DONE_KEY) || "{}") || {};
+      if (o.day !== dayKey() || !Array.isArray(o.ids)) o = { day: dayKey(), ids: [] };
+      o.ids.push(String(id)); if (o.ids.length > 2000) o.ids.splice(0, o.ids.length - 2000);
+      lsSet(DONE_KEY, JSON.stringify(o));
+    } catch (_) {}
+  }
+  let scanned = null;                  // the batch just entered (its orders and how), until it has loaded
+
   /* ---- the small spinner under the chip: says what it waits for ---- */
   function busy(k, text) { waiting.set(k, text); paintWait(); }
   function idle(k) { waiting.delete(k); paintWait(); }
@@ -1628,7 +1662,15 @@ window.SortTL = (function () {
 
   // A batch arrives (sheet QR scan or typed): every order is recorded as scanned and checked for a cancel. The module
   // is asked to stay quiet; this page shows one alert for all the cancelled orders of the batch.
+  // (the batch's efficiency record is kept apart from the timeline's: it is returned to the caller, who hands it back to
+  //  batchLoaded, so a second batch entered meanwhile never reports the first one's orders)
   function batchStart(orderIds, src) {
+    const sc = { ids: [...new Set((orderIds || []).map(x => String(x).trim()).filter(Boolean))], how: (src && src.how) || "typed", done: false };
+    scanned = sc;
+    try { trackBatch(orderIds, src); } catch (e) { console.warn("Timeline batch failed:", e); }
+    return sc;
+  }
+  function trackBatch(orderIds, src) {
     cur = null;
     if (!tl()) return;
     const ids = [...new Set((orderIds || []).map(x => String(x).trim()).filter(Boolean))];
@@ -1659,7 +1701,17 @@ window.SortTL = (function () {
     if (!me || !data || !/^cancel/i.test(String(data.status || ""))) return;
     flag(me, String(orderId), { why: "Cancelled on Etsy", source: "etsy" });
   }
-  function batchLoaded() {
+  function batchLoaded(sc) {
+    // one scan per order of the batch, with the pieces it holds; an order that did not load is an error (not found)
+    sc = sc || scanned;
+    if (sc && !sc.done) {
+      sc.done = true; if (scanned === sc) scanned = null;
+      for (const id of sc.ids) {
+        const parts = piecesOf(id);
+        if (parts) act("scan", { orderId: id, parts, detail: sc.how });
+        else act("error", { orderId: id, detail: "order not found or not loaded (" + sc.how + ")" });
+      }
+    }
     const me = cur;
     if (!me) return;
     me.loadDone = true;
@@ -1670,7 +1722,7 @@ window.SortTL = (function () {
   function raise(me) {
     const fresh = [...me.cancelled.keys()].filter(id => !me.alerted.has(id));
     if (!fresh.length) return;
-    fresh.forEach(id => me.alerted.add(id));
+    fresh.forEach(id => { me.alerted.add(id); act("reject", { orderId: id, detail: "cancelled order: do not sort" }); });
     showAlert(fresh.map(id => ({ id, rec: me.cancelled.get(id) })), me.batch);
   }
 
@@ -1747,10 +1799,10 @@ window.SortTL = (function () {
         const known = isKnownCancelled(id);
         if (known && !alertKnown) { skipped.push(id); return; }
         const pass = await within(call("guard", id), 10000, undefined);
-        if (pass === false) return;                              // blocked, and the module alerted
+        if (pass === false) { act("reject", { orderId: id, detail: "sticker blocked: cancelled order" }); return; }   // blocked, and the module alerted
         // "Do it anyway" to the module's own question goes ahead (the timeline says so); a cancel the module did not ask
         // about (only Etsy's answer here) or no answer at all: the alert again, not printed
-        if (known && !(pass === true && call("isCancelled", id))) { showAlert([{ id, rec: (cur && cur.cancelled.get(id)) || {} }], cur && cur.batch); return; }
+        if (known && !(pass === true && call("isCancelled", id))) { act("reject", { orderId: id, detail: "sticker blocked: cancelled order" }); showAlert([{ id, rec: (cur && cur.cancelled.get(id)) || {} }], cur && cur.batch); return; }
         ok.add(id);
       }));
       if (skipped.length) toast("Not printed — cancelled, do not sort: " + skipped.map(esc).join(", "));
@@ -1771,7 +1823,15 @@ window.SortTL = (function () {
   // A printed sticker is the Sorting station's "done" for its order (it has no other Done step): the order is sorted,
   // and its order QR sticker was printed here (QR Printer.html, the browser's print dialog: the printer is not known).
   function sorted(orderId, how) {
-    if (!orderId || !tl()) return;
+    if (!orderId) return;
+    // the efficiency record, next to the seals below: the sticker is a print; the first one of the order today is also the
+    // order sorted (complete, once). Nobody signed in records nothing and does not use the order up.
+    try {
+      const id = String(orderId), parts = piecesOf(id), again = sortedBefore(id);
+      act("print", { orderId: id, parts, detail: "order QR sticker" + (how === "row" ? " (Print Row)" : "") + (again ? ", again" : "") });
+      if (!again && act("complete", { orderId: id, parts, orders: 1, detail: "sorted" })) markSorted(id);
+    } catch (_) {}
+    if (!tl()) return;
     const by = getEmployee(), tail = by ? " by " + by : " (not signed in)";
     const base = { batch: (cur && cur.batch) || "", how };
     stamp("sorted", orderId, (how === "row" ? "Sorted (Print Row) at Sorting" : "Sorted at Sorting") + tail, base);

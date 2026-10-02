@@ -49,8 +49,9 @@ function designPage(file, { name, sandbox = false, timeline = true, printOk = tr
   });
   const ls = slice(html, '\nconst LS = {', '\n};\n');
   const ds = slice(html, 'const DsTimeline = (() => {', '\n})();\n');
+  const da = slice(html, 'const DsActivity = (() => {', '\n})();\n');   // the efficiency log (no station-activity.js here: it records nothing)
   const print = slice(html, 'async function proceedToPrint() {', '\n}\n');
-  vm.runInContext(`${ls}\n${ds}\nvar pendingJobs = null, pendingLists = null, lastClearedReceipts = [];\n${print}\nthis.__go = (jobs, lists) => { pendingJobs = jobs; pendingLists = lists; return proceedToPrint(); };`, ctx);
+  vm.runInContext(`${ls}\n${ds}\n${da}\nvar pendingJobs = null, pendingLists = null, lastClearedReceipts = [];\n${print}\nthis.__go = (jobs, lists) => { pendingJobs = jobs; pendingLists = lists; return proceedToPrint(); };`, ctx);
   return { ctx, posts, calls, store };
 }
 const A = '4100000001', B = '4100000002';
