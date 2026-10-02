@@ -6,11 +6,13 @@ const webglSnapshot=(overrides={})=>({mode:'webgl',state:'idle',visible:true,int
 const gl={available:true,contextType:'webgl2',vendor:'Fixture GPU vendor',renderer:'Fixture renderer',version:'WebGL 2.0 fixture',shadingLanguageVersion:'WebGL GLSL ES 3.00',maxTextureSize:16384,maxRenderbufferSize:16384,depthBits:24,maxCombinedTextureUnits:32,depthTexture:true,contextLost:false};
 
 test('WebGL report exposes observed identity, shadow capability, textures, ratio and sampled frames without claiming visual quality',()=>{
-  const report=qa.buildDiagnostics({before:webglSnapshot(),after:webglSnapshot({frames:165}),gl,display:{devicePixelRatio:2,cssWidth:400,bufferWidth:800},sampleMs:750});
+  const report=qa.buildDiagnostics({before:webglSnapshot(),after:webglSnapshot({frames:165}),gl,display:{devicePixelRatio:2,cssWidth:400,bufferWidth:800},sampleMs:750,performance:{fps:[58,60,59],renderMs:[5,6,8],firstFrame:{status:'ready_event_observed',milliseconds:412,relativeTo:'avatar_create'},longTasks:{supported:true,count:1,totalMs:55,maxMs:55}}});
   assert.equal(report.webgl.vendor,'Fixture GPU vendor');assert.equal(report.webgl.renderer,'Fixture renderer');assert.equal(report.webgl.status,'available');
   assert.equal(report.shadowMap.capabilityObserved,true);assert.equal(report.shadowMap.status,'capability_observed_visual_unverified');assert.equal(report.shadowMap.appearance,'unverified');
   assert.equal(report.textures.largestDeclaredSize,2048);assert.equal(report.textures.fitsObservedCapability,true);assert.equal(report.pixelRatio.backingStore,2);
   assert.equal(report.frameSampling.frameDelta,45);assert.equal(report.frameSampling.effectiveFps,60);assert.equal(report.frameSampling.status,'sampled');
+  assert.equal(report.frameSampling.sampleCount,3);assert.equal(report.frameSampling.medianFps,59);assert.equal(report.frameSampling.p95FrameRenderMs,7.8);assert.equal(report.frameSampling.firstFrame.milliseconds,412);
+  assert.deepEqual(report.longTasks,{supported:true,count:1,totalMs:55,maxMs:55,thresholdMs:50});
   assert.equal(report.gpu.visualQuality,'unverified');assert.equal(report.acceptance.gpu,'capability_observed_visual_unverified');
 });
 
@@ -54,6 +56,7 @@ test('visible pending avatar diagnostics use a bounded readiness wait and preser
 test('visual QA pages expose the diagnostics and explicitly prohibit fallback GPU claims',()=>{
   const root=path.join(__dirname,'../..'),studio=fs.readFileSync(path.join(root,'concierge-avatar-qa.html'),'utf8'),checklist=fs.readFileSync(path.join(root,'concierge-avatar-checklist.html'),'utf8');
   assert.match(studio,/concierge-avatar-qa\.js/);assert.match(studio,/Animated 2-D fallback confirmed\. GPU rendering, shadows and FPS were not tested\./);assert.match(studio,/BritesAvatarAcceptance\.collect/);
+  assert.match(studio,/id="pause"[^>]*>Pause animation/);assert.match(studio,/id="hide"[^>]*>Hide guide/);assert.match(studio,/id="run-states"[^>]*>Run all states/);assert.match(studio,/sampleMs:15000/);assert.match(studio,/visualCertification:'not_performed'/);
   for(const term of ['vendor','renderer','shadowMap','textures','pixelRatio','frameSampling','reduced-motion','contextLoss','unverified'])assert.match(checklist,new RegExp(term,'i'),term);
   assert.match(checklist,/never changes browser graphics settings or fingerprinting/i);assert.match(checklist,/never forces a context loss/i);
 });
@@ -64,6 +67,7 @@ test('bounded export package keeps only acceptance evidence and never upgrades v
   const exported=qa.serializeAcceptancePackage({diagnostics,stateEvidence});
   assert.equal(exported.value.evidenceLevel,'webgl_runtime_observed_visual_review_required');assert.equal(exported.value.webgl.vendor,'Fixture GPU vendor');assert.equal(exported.value.webgl.renderer.length,160);
   assert.equal(exported.value.shadows.capabilityObserved,true);assert.equal(exported.value.textures.fitsObservedCapability,true);assert.equal(exported.value.frameSample.status,'sampled');
+  assert.equal(exported.value.frameSample.firstFrame.status,'not_observed');assert.equal(exported.value.longTasks.supported,false);
   assert.equal(exported.value.runtime.readiness,'not_recorded');assert.equal(exported.value.runtime.onDemandDeferred,false);
   assert.equal(exported.value.expressionsAndGestures.states.length,6);assert.equal(exported.value.expressionsAndGestures.gestures.length,2);assert.equal(exported.value.claims.gestureAppearance,'unverified');
   assert.ok(exported.bytes<24576);assert.doesNotMatch(exported.json,/must-not-export|private\.invalid|privateUrl|unsafe|raw/);assert.doesNotMatch(exported.json,/\u0000/);
@@ -79,6 +83,24 @@ test('state exercise restores the original expression and records rendered gestu
   let current='thinking',frames=10;const avatar={snapshot:()=>({state:current,mode:'webgl',frames,contextLost:false}),setState:value=>{current=value;frames++;}};
   const evidence=await qa.exerciseStates({avatar,win:{setTimeout:fn=>{frames+=2;fn();}},settleMs:32});
   assert.equal(current,'thinking');assert.equal(evidence.states.length,6);assert.ok(evidence.states.every(row=>row.observedState===row.state&&row.renderObserved));assert.equal(evidence.status,'state_pipeline_and_frames_observed_visual_unverified');assert.deepEqual(evidence.gestures.map(item=>item.name),['speaking_arm_motion','success_arm_lift']);
+});
+
+test('15-second sampler emits bounded aggregate performance, first-frame and long-task evidence',async()=>{
+  let frames=0,clock=0,observerDisconnected=false;
+  class PerformanceObserver{constructor(callback){this.callback=callback;}observe(){this.callback({getEntries:()=>[{duration:61.25},{duration:12}]});}disconnect(){observerDisconnected=true;}}
+  const win={PerformanceObserver,performance:{now:()=>clock},setTimeout(callback,delay){frames++;clock+=delay;callback();},clearTimeout(){},matchMedia:()=>({matches:false}),devicePixelRatio:2};
+  const avatar={ready:Promise.resolve(),element:{hidden:false,dataset:{rendering:'webgl'},querySelector:()=>null},snapshot:()=>({mode:'webgl',state:'idle',visible:true,intersecting:true,paused:false,reducedMotion:false,animated:true,frames,frameRenderMs:4+frames/10,quality:{fps:60}})};
+  const report=await qa.collect({avatar,win,sampleMs:15000,sampleIntervalMs:250,knownFirstFrameMs:475});
+  assert.equal(report.frameSampling.sampleMs,15000);assert.equal(report.frameSampling.measuredMs,15000);assert.equal(report.frameSampling.sampleCount,60);assert.equal(report.frameSampling.medianFps,4);assert.equal(report.frameSampling.firstFrame.status,'ready_event_observed');assert.equal(report.frameSampling.firstFrame.milliseconds,475);
+  assert.equal(report.longTasks.supported,true);assert.equal(report.longTasks.count,1);assert.equal(report.longTasks.totalMs,61.25);assert.equal(observerDisconnected,true);
+  const packaged=qa.acceptancePackage({diagnostics:report,stateEvidence:{states:[]}});assert.equal(packaged.frameSample.sampleCount,60);assert.equal(packaged.frameSample.measuredMs,15000);assert.equal(packaged.longTasks.maxMs,61.25);assert.equal(packaged.claims.gpuAppearance,'unverified');
+});
+
+test('state sweep fails safely while the visible guide is paused or hidden',async()=>{
+  for(const snapshot of [{state:'idle',visible:false,paused:false},{state:'idle',visible:true,paused:true}]){
+    let changed=false;const result=await qa.exerciseStates({avatar:{snapshot:()=>snapshot,setState:()=>{changed=true;}}});
+    assert.equal(result.status,'blocked_avatar_not_active');assert.equal(result.visualAppearance,'unverified');assert.equal(changed,false);
+  }
 });
 
 test('copy and download export only the regenerated sanitized bounded package',async()=>{

@@ -54,10 +54,13 @@
     parent.appendChild(node('p','Unreported terms or missing Planner values do not establish zero demand.','status'));
   }
   const reviewTermKey=value=>String(value||'').normalize('NFKC').replace(/\s+/g,' ').trim().toLowerCase();
+  const reviewTermTokens=value=>String(value||'').normalize('NFKC').toLowerCase().match(/[\p{L}\p{N}]+/gu)||[];
+  function containsReviewPhrase(haystack,needle){if(!haystack.length||!needle.length||needle.length>haystack.length)return false;outer:for(let offset=0;offset<=haystack.length-needle.length;offset++){for(let index=0;index<needle.length;index++)if(haystack[offset+index]!==needle[index])continue outer;return true;}return false;}
+  function suppressiveReviewConflict(positive,negative){const left=reviewTermTokens(positive),right=reviewTermTokens(negative);return left.length>0&&right.length>0&&(containsReviewPhrase(left,right)||containsReviewPhrase(right,left));}
   function operatorReviewFor(result,product,dossier,now=Date.now()){
     const id=productId(product?.productId),version=dossier?.version,entry=(result?.operatorReviews||[]).find(value=>value.productId===id),packet=entry?.operatorReviewPacket;
     const issues=selectProductIssues(result||{},product||{}),holds=issueHolds(issues);
-    if(!id||!product.handle||dossier?.productId!==id||dossier.handle!==product.handle||dossier.status!=='approved'||product.dossierVersion!==version||dossier.proposalOnly===true||dossier.privateProposal===true||dossier.reviewStatus==='proposed'||!(/^[a-f0-9]{64}$/i.test(version||''))||!Number.isFinite(dossier.savedAt)||dossier.savedAt>now+60000||result.productIssueState!=='available'||holds.recommendationHold||holds.meaningHold||entry?.state!=='pending_operator_review'||entry.productId!==id||entry.handle!==product.handle||entry.dossierVersion!==version||packet?.schema!==1||packet.productId!==id||packet.handle!==product.handle||packet.dossierVersion!==version||packet.state!=='pending_operator_review'||['providerWrites','campaignWrites','budgetWrites','automaticActivation'].some(key=>packet[key]!==false))return null;
+    if(!id||!product.handle||dossier?.productId!==id||dossier.handle!==product.handle||dossier.status!=='approved'||product.dossierVersion!==version||dossier.proposalOnly===true||dossier.privateProposal===true||dossier.reviewStatus==='proposed'||!(/^[a-f0-9]{64}$/i.test(version||''))||!Number.isFinite(dossier.savedAt)||dossier.savedAt>now+60000||result.productIssueState!=='available'||holds.recommendationHold||holds.meaningHold||holds.cartHold||entry?.state!=='pending_operator_review'||entry.productId!==id||entry.handle!==product.handle||entry.dossierVersion!==version||packet?.schema!==1||packet.productId!==id||packet.handle!==product.handle||packet.dossierVersion!==version||packet.state!=='pending_operator_review'||['providerWrites','campaignWrites','budgetWrites','automaticActivation'].some(key=>packet[key]!==false))return null;
     if(!Array.isArray(dossier.sources)||!dossier.sources.length||dossier.sources.length>40)return null;
     const sources=new Map();for(const source of dossier.sources){if(!source||!/^[a-zA-Z0-9:_-]{1,100}$/.test(source.id||'')||sources.has(source.id)||source.reviewed!==true||!safeLink(source.url)||!Number.isFinite(source.checkedAt)||source.checkedAt>now+60000||now-source.checkedAt>30*86400000)return null;sources.set(source.id,source);}
     const text=(value,max)=>typeof value==='string'&&value.trim().length>0&&value.length<=max;
@@ -79,7 +82,7 @@
       const seen=new Set();for(const value of entries){const key=reviewTermKey(value?.term),group=expected.get(key);if(!text(value?.term,120)||seen.has(key)||!group||value.basis!=='hypothesis'||value.reviewState!=='pending_operator_review'||!unique(value.candidateIds)||!unique(value.sourceIds)||value.candidateIds.length!==group.ids.size||value.sourceIds.length!==group.sources.size||value.candidateIds.some(id=>!group.ids.has(id))||value.sourceIds.some(id=>!group.sources.has(id)))return false;seen.add(key);}return seen.size===expected.size;
     };
     if(!validateGroup(packet.positiveKeywords,'keywords')||!validateGroup(packet.negativeKeywords,'negativeKeywords'))return null;
-    const negatives=new Set(packet.negativeKeywords.map(value=>reviewTermKey(value.term)));if(packet.positiveKeywords.some(value=>negatives.has(reviewTermKey(value.term))))return null;
+    if(packet.positiveKeywords.some(positive=>packet.negativeKeywords.some(negative=>suppressiveReviewConflict(positive.term,negative.term))))return null;
     return packet;
   }
   function renderOperatorReview(parent,result,product,dossier){

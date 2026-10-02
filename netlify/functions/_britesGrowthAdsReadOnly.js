@@ -60,6 +60,9 @@ function hardenReviewProjection(projection) {
   if (!projection || typeof projection.projectRecommendations !== 'function' || projection[REVIEW_PROJECTION_HARDENED]) return projection;
   const original = projection.projectRecommendations;
   projection.projectRecommendations = function (...args) {
+    // Keep the read adapter fail-closed even when it is paired with an older
+    // projection module during a rolling deployment.
+    if (args[0]?.evidenceHolds?.cartHold === true) return null;
     const result = original.apply(this, args);
     return operatorPacketHasSuppressiveKeywordConflict(result?.operatorReviewPacket) ? null : result;
   };

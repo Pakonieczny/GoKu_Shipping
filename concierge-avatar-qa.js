@@ -9,13 +9,27 @@
   const state=value=>STATES.includes(value)?value:null;
   const finite=(value,min=-1e9,max=1e9)=>{value=number(value);return value==null?null:Math.max(min,Math.min(max,value));};
   const wait=(win,ms)=>new Promise(resolve=>(win?.setTimeout||setTimeout)(resolve,ms));
+  const percentile=(values,ratio)=>{
+    const ordered=(Array.isArray(values)?values:[]).filter(Number.isFinite).sort((a,b)=>a-b);
+    if(!ordered.length)return null;
+    const position=(ordered.length-1)*Math.max(0,Math.min(1,ratio)),lower=Math.floor(position),upper=Math.ceil(position);
+    return rounded(ordered[lower]+(ordered[upper]-ordered[lower])*(position-lower));
+  };
+  function performanceSummary(input={}){
+    const fps=(Array.isArray(input.fps)?input.fps:[]).filter(Number.isFinite),renderMs=(Array.isArray(input.renderMs)?input.renderMs:[]).filter(Number.isFinite),longTasks=input.longTasks||{};
+    return {
+      measuredMs:finite(input.measuredMs,0,120000),sampleCount:Math.max(fps.length,renderMs.length),medianFps:percentile(fps,.5),p95Fps:percentile(fps,.95),medianFrameRenderMs:percentile(renderMs,.5),p95FrameRenderMs:percentile(renderMs,.95),
+      firstFrame:{status:boundedText(input.firstFrame?.status,48)||'not_observed',milliseconds:finite(input.firstFrame?.milliseconds,0,60000),relativeTo:boundedText(input.firstFrame?.relativeTo,48)||'sample_start'},
+      longTasks:{supported:longTasks.supported===true,count:finite(longTasks.count,0,100000)||0,totalMs:finite(longTasks.totalMs,0,3600000)||0,maxMs:finite(longTasks.maxMs,0,3600000)||0,thresholdMs:50}
+    };
+  }
   function buildDiagnostics(input={}){
-    const before=input.before||{},after=input.after||{},gl=input.gl||{},display=input.display||{},sampleMs=Math.max(1,number(input.sampleMs)||750);
+    const before=input.before||{},after=input.after||{},gl=input.gl||{},display=input.display||{},sampleMs=Math.max(1,number(input.sampleMs)||15000),performance=performanceSummary(input.performance);
     const mode=after.mode||before.mode||'pending',contextLost=after.contextLost===true||gl.contextLost===true,webglAvailable=gl.available===true,webglUsable=mode==='webgl'&&webglAvailable&&!contextLost;
     const shadow=after.shadow||{},requestedShadow=number(shadow.size),maxTexture=number(gl.maxTextureSize),shadowCapable=webglUsable&&shadow.enabled===true&&shadow.casts===true&&shadow.receivingStage===true&&requestedShadow!=null&&maxTexture!=null&&requestedShadow<=maxTexture&&number(gl.depthBits)>0;
     const observedTextures=Array.isArray(after.textures)?after.textures:[],moduleDeclarations=Array.isArray(after.declarations?.textures)?after.declarations.textures:[],declaredTextures=moduleDeclarations.length?moduleDeclarations:observedTextures,declarationSource=moduleDeclarations.length?'loaded_scene_module':observedTextures.length?'renderer_snapshot':'unavailable',declaredTextureSize=declaredTextures.reduce((largest,item)=>Math.max(largest,number(item?.width)||0,number(item?.height)||0),0)||number(after.quality?.textureSize);
     const textureFits=webglUsable&&declaredTextureSize!=null&&maxTexture!=null?declaredTextureSize<=maxTexture:null;
-    const framesBefore=number(before.frames),framesAfter=number(after.frames),frameDelta=framesBefore!=null&&framesAfter!=null?Math.max(0,framesAfter-framesBefore):null,effectiveFps=frameDelta==null?null:rounded(frameDelta*1000/sampleMs);
+    const framesBefore=number(before.frames),framesAfter=number(after.frames),frameDelta=framesBefore!=null&&framesAfter!=null?Math.max(0,framesAfter-framesBefore):null,effectiveFps=frameDelta==null?null:rounded(frameDelta*1000/(performance.measuredMs||sampleMs));
     const reducedMotion=after.reducedMotion===true||input.reducedMotion===true,visible=after.visible===true,intersecting=after.intersecting!==false;
     const frameStatus=!webglUsable?(contextLost?'unverified_context_lost':mode==='pending'?'unverified_renderer_pending':'unverified_webgl_unavailable'):reducedMotion?'intentionally_paused_reduced_motion':!visible||!intersecting?'paused_not_visible':frameDelta>0?'sampled':'no_frames_observed';
     const rendererRatio=number(after.pixelRatio),deviceRatio=number(display.devicePixelRatio),cssWidth=number(display.cssWidth),bufferWidth=number(display.bufferWidth),backingRatio=cssWidth>0&&bufferWidth!=null?rounded(bufferWidth/cssWidth):null;
@@ -30,8 +44,9 @@
       shadowMap:{status:shadowCapable?'capability_observed_visual_unverified':webglUsable?'capability_not_confirmed':'unverified_'+unavailableReason,configured:shadow.enabled===true,casts:shadow.casts===true,receivingStage:shadow.receivingStage===true,type:text(shadow.type),requestedSize:requestedShadow,maxTextureSize:maxTexture,depthBits:number(gl.depthBits),capabilityObserved:shadowCapable,appearance:'unverified'},
       textures:{status:textureFits===true?'fits_observed_capability':textureFits===false?'exceeds_observed_capability':webglUsable?'capability_not_confirmed':'unverified_'+unavailableReason,configuredSize:number(after.quality?.textureSize),largestDeclaredSize:declaredTextureSize,declaredMaps:declaredTextures.length,observedCreatedMaps:observedTextures.length,declarationSource,maxTextureSize:maxTexture,fitsObservedCapability:textureFits},
       pixelRatio:{device:deviceRatio,requested:number(after.quality?.pixelRatio),renderer:rendererRatio,backingStore:backingRatio,status:webglUsable&&rendererRatio!=null?'observed':'unverified_'+unavailableReason},
-      frameSampling:{status:frameStatus,sampleMs,framesBefore,framesAfter,frameDelta,effectiveFps,frameRenderMs:number(after.frameRenderMs),targetFps:number(after.quality?.fps)},
-      motion:{visible,intersecting,reducedMotion,animated:after.animated===true},
+      frameSampling:{status:frameStatus,sampleMs,measuredMs:performance.measuredMs,framesBefore,framesAfter,frameDelta,effectiveFps,frameRenderMs:number(after.frameRenderMs),targetFps:number(after.quality?.fps),sampleCount:performance.sampleCount,medianFps:performance.medianFps,p95Fps:performance.p95Fps,medianFrameRenderMs:performance.medianFrameRenderMs,p95FrameRenderMs:performance.p95FrameRenderMs,firstFrame:performance.firstFrame},
+      longTasks:performance.longTasks,
+      motion:{visible,intersecting,reducedMotion,paused:after.paused===true,animated:after.animated===true},
       contextLoss:{status:contextLost?'lost_fallback_required':webglUsable?'not_observed':'unverified_no_webgl_context',reportedByScene:after.contextLost===true,reportedByWebGL:gl.contextLost===true,forcedForTest:false},
       fallback:{kind:after.fallback?.format||'animated_svg_2d',animated:after.fallback?.animated===true,gpu:false},
       staticFallback:{active:fallbackActive,visible:fallbackActive&&input.frameHidden!==true,preserved:fallbackActive&&input.frameHidden!==true},
@@ -48,8 +63,9 @@
     const webgl2=contextType==='webgl2',depthTexture=webgl2||(()=>{try{return!!gl.getExtension('WEBGL_depth_texture');}catch(e){return false;}})();
     return {available:true,contextType,vendor:parameter(debug?.UNMASKED_VENDOR_WEBGL)||parameter(gl.VENDOR),renderer:parameter(debug?.UNMASKED_RENDERER_WEBGL)||parameter(gl.RENDERER),version:parameter(gl.VERSION),shadingLanguageVersion:parameter(gl.SHADING_LANGUAGE_VERSION),maxTextureSize:parameter(gl.MAX_TEXTURE_SIZE),maxRenderbufferSize:parameter(gl.MAX_RENDERBUFFER_SIZE),depthBits:parameter(gl.DEPTH_BITS),maxCombinedTextureUnits:parameter(gl.MAX_COMBINED_TEXTURE_IMAGE_UNITS),depthTexture,contextLost:typeof gl.isContextLost==='function'&&gl.isContextLost()};
   }
-  async function collect({avatar,win=scope,sampleMs=750,readyWaitMs=2500}={}){
+  async function collect({avatar,win=scope,sampleMs=15000,sampleIntervalMs=250,readyWaitMs=2500,knownFirstFrameMs=null}={}){
     if(!avatar||typeof avatar.snapshot!=='function')throw Error('Avatar diagnostics require the QA avatar instance.');
+    sampleMs=Math.max(1,Math.min(60000,number(sampleMs)||15000));sampleIntervalMs=Math.max(50,Math.min(1000,number(sampleIntervalMs)||250));
     readyWaitMs=Math.max(0,Math.min(10000,number(readyWaitMs)??2500));
     const initial=avatar.snapshot()||{};let readiness={status:'already_settled',waitMs:0};
     if(initial.destroyed===true)readiness={status:'destroyed',waitMs:0};
@@ -61,15 +77,25 @@
         readiness={status:result,waitMs:Math.max(0,Date.now()-started)};
       }finally{if(timer!=null)(win?.clearTimeout||clearTimeout)(timer);}
     }
-    const before=avatar.snapshot(),frame=avatar.element,gl=inspectWebGL(frame),canvas=frame?.querySelector?.('canvas'),box=canvas?.getBoundingClientRect?.()||{};
-    await new Promise(resolve=>(win?.setTimeout||setTimeout)(resolve,sampleMs));
-    const after=avatar.snapshot(),media=win?.matchMedia?.('(prefers-reduced-motion: reduce)');
-    return {...buildDiagnostics({before,after,gl,sampleMs,readiness,reducedMotion:media?.matches===true,frameRendering:frame?.dataset?.rendering,frameHidden:frame?.hidden===true,display:{devicePixelRatio:number(win?.devicePixelRatio),cssWidth:number(box.width),bufferWidth:number(canvas?.width)}}),collectedAt:new Date().toISOString()};
+    const before=avatar.snapshot(),frame=avatar.element,gl=inspectWebGL(frame),canvas=frame?.querySelector?.('canvas'),box=canvas?.getBoundingClientRect?.()||{},fps=[],renderMs=[];
+    const baselineFrames=number(before.frames),longTasks={supported:false,count:0,totalMs:0,maxMs:0},clock=()=>number(win?.performance?.now?.())??Date.now();let observer=null,elapsed=0,measuredMs=0,previous=before,previousAt=clock(),firstObservedMs=baselineFrames>0?0:null;
+    if(typeof win?.PerformanceObserver==='function')try{
+      observer=new win.PerformanceObserver(list=>{for(const entry of list.getEntries?.()||[])if(number(entry?.duration)>=50){longTasks.count++;longTasks.totalMs+=entry.duration;longTasks.maxMs=Math.max(longTasks.maxMs,entry.duration);}});
+      observer.observe({type:'longtask',buffered:false});longTasks.supported=true;
+    }catch(error){observer=null;}
+    try{
+      while(elapsed<sampleMs){const step=Math.min(sampleIntervalMs,sampleMs-elapsed);await wait(win,step);elapsed+=step;const observedAt=clock(),observedStep=Math.max(1,observedAt-previousAt)||step,actualStep=observedStep===1&&observedAt===previousAt?step:observedStep,current=avatar.snapshot()||{},priorFrames=number(previous.frames),currentFrames=number(current.frames),delta=priorFrames!=null&&currentFrames!=null?Math.max(0,currentFrames-priorFrames):null;measuredMs+=actualStep;if(delta!=null)fps.push(delta*1000/actualStep);if(number(current.frameRenderMs)!=null)renderMs.push(current.frameRenderMs);if(firstObservedMs==null&&baselineFrames!=null&&currentFrames!=null&&currentFrames>baselineFrames)firstObservedMs=measuredMs;previous=current;previousAt=observedAt;}
+    }finally{observer?.disconnect?.();}
+    longTasks.totalMs=rounded(longTasks.totalMs)||0;longTasks.maxMs=rounded(longTasks.maxMs)||0;
+    const after=previous||avatar.snapshot(),media=win?.matchMedia?.('(prefers-reduced-motion: reduce)'),known=finite(knownFirstFrameMs,0,60000),firstFrame=known!=null?{status:'ready_event_observed',milliseconds:known,relativeTo:'avatar_create'}:firstObservedMs===0?{status:'already_rendered_before_sample',milliseconds:0,relativeTo:'sample_start'}:firstObservedMs!=null?{status:'observed_during_sample',milliseconds:firstObservedMs,relativeTo:'sample_start'}:{status:'not_observed',milliseconds:null,relativeTo:'sample_start'};
+    return {...buildDiagnostics({before,after,gl,sampleMs,readiness,reducedMotion:media?.matches===true,frameRendering:frame?.dataset?.rendering,frameHidden:frame?.hidden===true,display:{devicePixelRatio:number(win?.devicePixelRatio),cssWidth:number(box.width),bufferWidth:number(canvas?.width)},performance:{fps,renderMs,measuredMs,firstFrame,longTasks}}),collectedAt:new Date().toISOString()};
   }
   async function exerciseStates({avatar,win=scope,settleMs=120}={}){
     if(!avatar||typeof avatar.snapshot!=='function'||typeof avatar.setState!=='function')return{status:'unavailable',visualAppearance:'unverified',states:[],gestures:[]};
     settleMs=Math.max(32,Math.min(1000,number(settleMs)||120));
-    const original=state(avatar.snapshot()?.state)||'idle',rows=[];
+    const opening=avatar.snapshot()||{};
+    if(opening.visible===false||opening.paused===true)return{status:'blocked_avatar_not_active',visualAppearance:'unverified',states:[],gestures:[]};
+    const original=state(opening.state)||'idle',rows=[];
     try{
       for(const requestedState of STATES){
         const before=avatar.snapshot()||{},framesBefore=number(before.frames);
@@ -82,7 +108,7 @@
     return {status:allRendered?'state_pipeline_and_frames_observed_visual_unverified':allAccepted?'state_pipeline_observed_render_unverified':'state_pipeline_not_confirmed',visualAppearance:'unverified',states:rows,gestures:[{name:'speaking_arm_motion',state:'speaking',renderObserved:rows.find(row=>row.state==='speaking')?.renderObserved===true},{name:'success_arm_lift',state:'success',renderObserved:rows.find(row=>row.state==='success')?.renderObserved===true}]};
   }
   function acceptancePackage({diagnostics={},stateEvidence={}}={}){
-    const webgl=diagnostics.webgl||{},runtime=diagnostics.runtime||{},shadow=diagnostics.shadowMap||{},textures=diagnostics.textures||{},frames=diagnostics.frameSampling||{},motion=diagnostics.motion||{},fallback=diagnostics.staticFallback||{},contextLoss=diagnostics.contextLoss||{},pixel=diagnostics.pixelRatio||{};
+    const webgl=diagnostics.webgl||{},runtime=diagnostics.runtime||{},shadow=diagnostics.shadowMap||{},textures=diagnostics.textures||{},frames=diagnostics.frameSampling||{},longTasks=diagnostics.longTasks||{},motion=diagnostics.motion||{},fallback=diagnostics.staticFallback||{},contextLoss=diagnostics.contextLoss||{},pixel=diagnostics.pixelRatio||{};
     const webglObserved=webgl.status==='available',stateRows=Array.isArray(stateEvidence.states)?stateEvidence.states.slice(0,STATES.length):[];
     const states=stateRows.map(row=>({state:state(row?.state),observedState:state(row?.observedState),mode:['webgl','fallback','pending'].includes(row?.mode)?row.mode:'pending',frameDelta:finite(row?.frameDelta,0,1000000),renderObserved:row?.renderObserved===true})).filter(row=>row.state);
     const gestures=(Array.isArray(stateEvidence.gestures)?stateEvidence.gestures:[]).slice(0,4).map(item=>({name:['speaking_arm_motion','success_arm_lift'].includes(item?.name)?item.name:null,state:state(item?.state),renderObserved:item?.renderObserved===true})).filter(item=>item.name&&item.state);
@@ -93,16 +119,17 @@
       webgl:{status:boundedText(webgl.status,48),contextType:boundedText(webgl.contextType,32),vendor:boundedText(webgl.vendor),renderer:boundedText(webgl.renderer),version:boundedText(webgl.version),shadingLanguageVersion:boundedText(webgl.shadingLanguageVersion),maxTextureSize:finite(webgl.maxTextureSize,0,1000000),maxRenderbufferSize:finite(webgl.maxRenderbufferSize,0,1000000),depthBits:finite(webgl.depthBits,0,128),maxCombinedTextureUnits:finite(webgl.maxCombinedTextureUnits,0,100000),depthTexture:webgl.depthTexture===true,contextLost:webgl.contextLost===true},
       shadows:{status:boundedText(shadow.status,64),configured:shadow.configured===true,casts:shadow.casts===true,receivingStage:shadow.receivingStage===true,type:boundedText(shadow.type,48),requestedSize:finite(shadow.requestedSize,0,1000000),capabilityObserved:shadow.capabilityObserved===true,appearance:'unverified'},
       textures:{status:boundedText(textures.status,64),configuredSize:finite(textures.configuredSize,0,1000000),largestDeclaredSize:finite(textures.largestDeclaredSize,0,1000000),declaredMaps:finite(textures.declaredMaps,0,64),observedCreatedMaps:finite(textures.observedCreatedMaps,0,64),declarationSource:boundedText(textures.declarationSource,48),maxTextureSize:finite(textures.maxTextureSize,0,1000000),fitsObservedCapability:textures.fitsObservedCapability===true?true:textures.fitsObservedCapability===false?false:null},
-      frameSample:{status:boundedText(frames.status,64),sampleMs:finite(frames.sampleMs,0,60000),framesBefore:finite(frames.framesBefore,0,1e9),framesAfter:finite(frames.framesAfter,0,1e9),frameDelta:finite(frames.frameDelta,0,1e8),effectiveFps:finite(frames.effectiveFps,0,10000),frameRenderMs:finite(frames.frameRenderMs,0,60000),targetFps:finite(frames.targetFps,0,1000)},
+      frameSample:{status:boundedText(frames.status,64),sampleMs:finite(frames.sampleMs,0,60000),measuredMs:finite(frames.measuredMs,0,120000),framesBefore:finite(frames.framesBefore,0,1e9),framesAfter:finite(frames.framesAfter,0,1e9),frameDelta:finite(frames.frameDelta,0,1e8),effectiveFps:finite(frames.effectiveFps,0,10000),frameRenderMs:finite(frames.frameRenderMs,0,60000),targetFps:finite(frames.targetFps,0,1000),sampleCount:finite(frames.sampleCount,0,10000),medianFps:finite(frames.medianFps,0,10000),p95Fps:finite(frames.p95Fps,0,10000),medianFrameRenderMs:finite(frames.medianFrameRenderMs,0,60000),p95FrameRenderMs:finite(frames.p95FrameRenderMs,0,60000),firstFrame:{status:boundedText(frames.firstFrame?.status,48),milliseconds:finite(frames.firstFrame?.milliseconds,0,60000),relativeTo:boundedText(frames.firstFrame?.relativeTo,48)}},
+      longTasks:{supported:longTasks.supported===true,count:finite(longTasks.count,0,100000)||0,totalMs:finite(longTasks.totalMs,0,3600000)||0,maxMs:finite(longTasks.maxMs,0,3600000)||0,thresholdMs:50},
       pixelRatio:{status:boundedText(pixel.status,64),device:finite(pixel.device,0,16),requested:finite(pixel.requested,0,16),renderer:finite(pixel.renderer,0,16),backingStore:finite(pixel.backingStore,0,16)},
       expressionsAndGestures:{status:boundedText(stateEvidence.status,80)||'not_exercised',visualAppearance:'unverified',states,gestures},
-      pauseAndFallback:{visible:motion.visible===true,intersecting:motion.intersecting===true,reducedMotion:motion.reducedMotion===true,animated:motion.animated===true,fallbackActive:fallback.active===true,fallbackVisible:fallback.visible===true,fallbackPreserved:fallback.preserved===true,contextLossStatus:boundedText(contextLoss.status,64)},
+      pauseAndFallback:{visible:motion.visible===true,intersecting:motion.intersecting===true,reducedMotion:motion.reducedMotion===true,paused:motion.paused===true,animated:motion.animated===true,fallbackActive:fallback.active===true,fallbackVisible:fallback.visible===true,fallbackPreserved:fallback.preserved===true,contextLossStatus:boundedText(contextLoss.status,64)},
       claims:{gpuAppearance:'unverified',shadowAppearance:'unverified',expressionAppearance:'unverified',gestureAppearance:'unverified'}
     };
     return packageValue;
   }
   function serializeAcceptancePackage(input){
-    const value=input?.kind==='brites_avatar_runtime_acceptance'?acceptancePackage({diagnostics:{collectedAt:input.collectedAt,runtime:input.runtime,webgl:input.webgl,shadowMap:input.shadows,textures:input.textures,frameSampling:input.frameSample,pixelRatio:input.pixelRatio,motion:input.pauseAndFallback,staticFallback:{active:input.pauseAndFallback?.fallbackActive,visible:input.pauseAndFallback?.fallbackVisible,preserved:input.pauseAndFallback?.fallbackPreserved},contextLoss:{status:input.pauseAndFallback?.contextLossStatus}},stateEvidence:input.expressionsAndGestures}):acceptancePackage(input);
+    const value=input?.kind==='brites_avatar_runtime_acceptance'?acceptancePackage({diagnostics:{collectedAt:input.collectedAt,runtime:input.runtime,webgl:input.webgl,shadowMap:input.shadows,textures:input.textures,frameSampling:input.frameSample,longTasks:input.longTasks,pixelRatio:input.pixelRatio,motion:input.pauseAndFallback,staticFallback:{active:input.pauseAndFallback?.fallbackActive,visible:input.pauseAndFallback?.fallbackVisible,preserved:input.pauseAndFallback?.fallbackPreserved},contextLoss:{status:input.pauseAndFallback?.contextLossStatus}},stateEvidence:input.expressionsAndGestures}):acceptancePackage(input);
     const json=JSON.stringify(value,null,2),bytes=typeof TextEncoder==='function'?new TextEncoder().encode(json).length:json.length;
     if(bytes>MAX_EXPORT_BYTES)throw Error('Avatar acceptance package exceeds its safe export bound.');
     return{value,json,bytes};
@@ -121,7 +148,7 @@
     const exported=serializeAcceptancePackage(input),url=urlApi.createObjectURL(new BlobCtor([exported.json],{type:'application/json'})),link=doc.createElement('a');
     link.href=url;link.download='brites-avatar-acceptance.json';link.rel='noopener';link.click();urlApi.revokeObjectURL(url);return{downloaded:true,bytes:exported.bytes,filename:link.download};
   }
-  const api={buildDiagnostics,inspectWebGL,collect,exerciseStates,acceptancePackage,serializeAcceptancePackage,collectAcceptancePackage,copyAcceptancePackage,downloadAcceptancePackage};
+  const api={buildDiagnostics,inspectWebGL,collect,exerciseStates,acceptancePackage,serializeAcceptancePackage,collectAcceptancePackage,copyAcceptancePackage,downloadAcceptancePackage,performanceSummary};
   if(typeof module!=='undefined'&&module.exports)module.exports=api;
   if(scope)scope.BritesAvatarAcceptance=api;
 })(typeof window==='undefined'?null:window);

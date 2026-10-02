@@ -123,7 +123,7 @@ function build(out) {
   config = config.replace(' node_bundler="esbuild"\n', ' node_bundler="esbuild"\n included_files=["assets/brites-brand/**"]\n');
   fs.writeFileSync(path.join(out, 'netlify.toml'), config);
   const entries = fs.readdirSync(path.join(out, 'netlify/production-functions')).sort();
-  const expected = ['britesConcierge.js', 'britesConciergeVoice.js', 'britesConciergeVoiceDeadline-background.js', 'britesConciergeVoiceReaper.js', 'britesGrowthAds.js', 'britesGrowthApi.js', 'britesGrowthCatalogue-background.js', 'britesGrowthCorrections.js', 'britesGrowthTick.js'];
+  const expected = ['britesConcierge.js', 'britesConciergeDemoTurn.js', 'britesConciergeVoice.js', 'britesConciergeVoiceDeadline-background.js', 'britesConciergeVoiceReaper.js', 'britesGrowthAds.js', 'britesGrowthApi.js', 'britesGrowthCatalogue-background.js', 'britesGrowthCorrections.js', 'britesGrowthTick.js'];
   if (JSON.stringify(entries) !== JSON.stringify(expected)) throw Error('The sandbox contains an unexpected function entrypoint.');
   const summary = { schema: 1, entries, assets: [...assetSet].sort(), privateServerModules: [...modules].sort(), packages: Object.keys(manifest.dependencies).sort(), adsEndpoint: '/api/growth-ads', adsWrites: false, paidAiKeysRequired: false };
   fs.writeFileSync(path.join(out, 'sandbox-ad-manifest.json'), JSON.stringify(summary, null, 2) + '\n');

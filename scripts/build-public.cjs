@@ -26,6 +26,7 @@ const assets = [
   "concierge-sandbox.html",
   "concierge-sandbox.js",
   "brites-concierge.js",
+  "brites-concierge-voice.js",
   "brites-concierge.css",
   "brites-concierge-avatar.js",
   "brites-concierge-avatar.css",

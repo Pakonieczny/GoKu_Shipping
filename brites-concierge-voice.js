@@ -5,21 +5,24 @@
   function validateToolArguments(value){if(!value||typeof value!=='object'||Array.isArray(value)||Object.keys(value).some(k=>k!=='message')||typeof value.message!=='string'||!value.message.trim()||value.message.length>2000||/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/.test(value.message))return null;return {message:value.message.trim()};}
   function create(options={}){
     const rt=options.runtime||globalThis,doc=rt.document,nav=rt.navigator;
-    const endpoint=options.endpoint||'/api/concierge-voice';
+    const endpoint=options.endpoint||'/api/concierge-voice',demoEndpoint=options.demoEndpoint||'/api/concierge-demo-turn';
     const ownOrigin=rt.location?.origin||'https://preview.invalid';
-    if(new URL(endpoint,ownOrigin).origin!==ownOrigin)throw Error('Voice endpoint must be on this website.');
+    if(new URL(endpoint,ownOrigin).origin!==ownOrigin||new URL(demoEndpoint,ownOrigin).origin!==ownOrigin)throw Error('Voice endpoint must be on this website.');
     const notify=(key,...args)=>{try{if(typeof options[key]==='function')options[key](...args);}catch{}};
-    let epoch=0,state='idle',disposed=false,pc=null,dc=null,mic=null,audio=null,ctx=null,raf=null,deadline=null,abort=null,stopCredential=null,closing=null,closeResolve=null,closeTimer=null,toolCalls=new Set(),sources=[];
+    let epoch=0,state='idle',disposed=false,pc=null,dc=null,mic=null,audio=null,ctx=null,raf=null,deadline=null,abort=null,stopCredential=null,closing=null,closeResolve=null,closeTimer=null,toolCalls=new Set(),sources=[],recognition=null,demoMode=false,demoTurns=0,demoHistory=[],demoSpeaking=false;
     const timers=new Set(),pending=new Set();
     function timeout(ms,fn){const id=rt.setTimeout(()=>{timers.delete(id);fn();},ms);timers.add(id);return id;}
     function clear(id){if(id!=null){rt.clearTimeout(id);timers.delete(id);}}
     function setState(next){state=next;notify('onState',next);}
     function send(value){if(dc?.readyState==='open'){dc.send(JSON.stringify(value));return true;}return false;}
     function bounded(promise,ms,label){return new Promise((resolve,reject)=>{let finished=false;const complete=(fn,value)=>{if(finished)return;finished=true;clear(id);pending.delete(cancel);fn(value);};const cancel=()=>complete(reject,Error('Voice operation cancelled.'));const id=timeout(ms,()=>complete(reject,Error(label)));pending.add(cancel);Promise.resolve(promise).then(value=>complete(resolve,value),error=>complete(reject,error));});}
-    async function request(body,{signal,keepalive=false}={}){const headers={...(typeof options.headers==='function'?options.headers():options.headers||{}),'Content-Type':'application/json'};const response=await rt.fetch(endpoint,{method:'POST',headers,credentials:'same-origin',body:JSON.stringify(body),signal,keepalive});let data;try{data=await response.json();}catch{throw Error('Voice connection returned an invalid answer.');}if(!response.ok||data.enabled===false)throw Error(data.message||data.error||'Live voice is unavailable. Text remains available.');return data;}
+    async function post(target,body,{signal,keepalive=false}={}){const headers={...(typeof options.headers==='function'?options.headers():options.headers||{}),'Content-Type':'application/json'};const response=await rt.fetch(target,{method:'POST',headers,credentials:'same-origin',body:JSON.stringify(body),signal,keepalive});let data;try{data=await response.json();}catch{throw Error('Voice connection returned an invalid answer.');}if(!response.ok||data.enabled===false){const error=Error(data.message||data.error||'Live voice is unavailable. Text remains available.');error.code=data.code||'';throw error;}return data;}
+    const request=(body,config)=>post(endpoint,body,config),demoRequest=(body,config)=>post(demoEndpoint,body,config);
     function cleanup(){
       abort?.abort();abort=null;for(const cancel of [...pending])cancel();clear(deadline);deadline=null;clear(closeTimer);closeTimer=null;
       if(raf!=null){rt.cancelAnimationFrame?.(raf);raf=null;}
+      try{recognition?.abort?.();}catch{}recognition=null;demoMode=false;demoSpeaking=false;demoTurns=0;demoHistory=[];
+      try{rt.speechSynthesis?.cancel?.();}catch{}
       for(const id of timers)rt.clearTimeout(id);timers.clear();
       mic?.getTracks().forEach(track=>track.stop());mic=null;
       if(audio){audio.pause();audio.srcObject=null;audio.remove?.();audio=null;}
@@ -64,14 +67,39 @@
       else if(event.type==='conversation.item.input_audio_transcription.completed')notify('onTranscript',{role:'user',text:typeof event.transcript==='string'?event.transcript.slice(0,2000):'',final:true});
       else if(event.type==='error')notify('onError','Voice could not finish that turn. You can interrupt, stop or use text.');
     }
-    function interrupt(){send({type:'response.cancel'});send({type:'output_audio_buffer.clear'});notify('onLevel',{input:0,output:0});}
+    function interrupt(){send({type:'response.cancel'});send({type:'output_audio_buffer.clear'});try{rt.speechSynthesis?.cancel?.();}catch{}demoSpeaking=false;notify('onLevel',{input:0,output:0});if(demoMode&&state!=='closing'&&state!=='idle')listenDemo();}
+    function listenDemo(){if(!demoMode||disposed||state==='closing'||state==='idle'||demoSpeaking||!recognition)return;try{recognition.start();setState('listening');}catch(error){if(error?.name!=='InvalidStateError')notify('onError','Voice listening could not restart. Select Talk to me to retry.');}}
+    async function demoTurn(message,current){
+      message=String(message||'').trim().slice(0,600);if(!message||current!==epoch||!demoMode)return;
+      if(++demoTurns>12){await stop('limit');return;}
+      setState('thinking');notify('onTranscript',{role:'user',text:message,final:true,spokenOnly:true});
+      let catalogue;try{catalogue=await bounded(options.onTool?.({message}),14000,'The catalogue check timed out.');if(!catalogue||typeof catalogue!=='object'||Array.isArray(catalogue)||JSON.stringify(catalogue).length>20000)throw Error('Catalogue answer unavailable.');}catch{catalogue={products:[],meanings:[],question:'Would you tell me a little more about the person, occasion, or style you have in mind?'};}
+      if(current!==epoch||!demoMode||state==='closing')return;
+      let answer;try{answer=await bounded(demoRequest({action:'turn',message,history:demoHistory.slice(-6),catalogue},{signal:abort?.signal}),14000,'The voice answer timed out.');}catch(error){notify('onError',error?.message||'Voice could not answer. You can keep typing.');setState('listening');listenDemo();return;}
+      const speech=typeof answer.speech==='string'?answer.speech.trim().slice(0,1200):'';if(!speech){setState('listening');listenDemo();return;}
+      demoHistory.push({role:'user',content:message},{role:'assistant',content:speech});demoHistory=demoHistory.slice(-6);notify('onTranscript',{role:'assistant',text:speech,final:true,spokenOnly:true});
+      const Utterance=rt.SpeechSynthesisUtterance;if(!Utterance||!rt.speechSynthesis?.speak){notify('onError','Spoken replies are unavailable in this browser. You can keep typing.');setState('listening');listenDemo();return;}
+      const utterance=new Utterance(speech);utterance.rate=1;utterance.pitch=1.04;utterance.onstart=()=>{if(current===epoch&&demoMode){demoSpeaking=true;setState('speaking');notify('onLevel',{input:0,output:.55});}};utterance.onboundary=()=>{if(current===epoch&&demoMode)notify('onLevel',{input:0,output:.72});};utterance.onend=utterance.onerror=()=>{if(current!==epoch||!demoMode)return;demoSpeaking=false;notify('onLevel',{input:0,output:0});setState('listening');listenDemo();};
+      try{rt.speechSynthesis.cancel();rt.speechSynthesis.speak(utterance);}catch{utterance.onerror();}
+    }
+    async function startDemo(current){
+      const Recognition=rt.SpeechRecognition||rt.webkitSpeechRecognition;
+      if(!Recognition||!rt.speechSynthesis||!rt.SpeechSynthesisUtterance)return false;
+      let available;try{available=await bounded(demoRequest({action:'capabilities'},{signal:abort?.signal}),10000,'Voice demo availability check timed out.');}catch{return false;}
+      if(!available?.enabled||current!==epoch)return false;
+      recognition=new Recognition();recognition.lang=doc?.documentElement?.lang||'en-US';recognition.continuous=false;recognition.interimResults=true;recognition.maxAlternatives=1;demoMode=true;
+      recognition.onresult=event=>{if(current!==epoch||!demoMode)return;let final='';for(let i=event.resultIndex||0;i<event.results.length;i++)if(event.results[i].isFinal)final+=event.results[i][0]?.transcript||'';if(final.trim())void demoTurn(final,current);};
+      recognition.onerror=event=>{if(current!==epoch||state==='closing'||state==='idle')return;const denied=['not-allowed','service-not-allowed'].includes(event.error);notify('onError',denied?'Microphone permission was not granted. You can keep typing.':'Voice listening paused. Select Talk to me to retry.');void stop(denied?'permission':'recognition');};
+      recognition.onend=()=>{if(current===epoch&&demoMode&&!demoSpeaking&&state==='listening')timeout(120,listenDemo);};
+      deadline=timeout(Math.min(120000,Math.max(1000,Number(available.maxDurationMs)||120000)),()=>void stop('limit'));listenDemo();return true;
+    }
     async function start(){
       if(disposed)throw Error('Voice adapter is closed.');if(state!=='idle')return false;
-      if(!rt.RTCPeerConnection||!nav?.mediaDevices?.getUserMedia){notify('onError','Live voice is not supported here. Text and narration remain available.');return false;}
       const current=++epoch;setState('connecting');abort=new rt.AbortController();
       try{
         // Check disabled/provider/auth state BEFORE requesting the microphone.
-        await bounded(request({action:'capabilities'},{signal:abort.signal}),12000,'Voice availability check timed out.');
+        if(!rt.RTCPeerConnection||!nav?.mediaDevices?.getUserMedia){if(await startDemo(current))return true;throw Error('Live voice is not supported here. Text and narration remain available.');}
+        try{await bounded(request({action:'capabilities'},{signal:abort.signal}),12000,'Voice availability check timed out.');}catch(error){if(await startDemo(current))return true;throw error;}
         if(current!==epoch)throw Error('Voice start cancelled.');
         const gum=nav.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true},video:false});
         gum.then(stream=>{if(current!==epoch||disposed)stream.getTracks().forEach(track=>track.stop());},()=>{});

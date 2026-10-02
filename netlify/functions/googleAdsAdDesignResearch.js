@@ -266,8 +266,21 @@ function buyerIntentText(value,limit){
   return text;
 }
 function keywordKey(value){return String(value).normalize('NFKC').replace(/\s+/gu,' ').trim().toLowerCase();}
+function keywordTokens(value){return String(value||'').normalize('NFKC').toLowerCase().match(/[\p{L}\p{N}]+/gu)||[];}
+function containsWholeTokenPhrase(haystack,needle){
+  if(!haystack.length||!needle.length||needle.length>haystack.length)return false;
+  outer:for(let offset=0;offset<=haystack.length-needle.length;offset++){
+    for(let index=0;index<needle.length;index++)if(haystack[offset+index]!==needle[index])continue outer;
+    return true;
+  }
+  return false;
+}
+function suppressiveKeywordConflict(positive,negative){
+  const left=keywordTokens(positive),right=keywordTokens(negative);
+  return left.length>0&&right.length>0&&(containsWholeTokenPhrase(left,right)||containsWholeTokenPhrase(right,left));
+}
 function recommendationSourceGate(d,sourceIds,at=Date.now()){
-  if(!d||d.status!=='approved'||d.privateProposal===true||d.proposalOnly===true||d.reviewStatus==='proposed'||d.evidenceHolds?.recommendationHold===true||d.evidenceHolds?.meaningHold===true||!Number.isFinite(d.savedAt)||d.savedAt>at+60000||!Array.isArray(d.sources)||!d.sources.length||d.sources.length>40)return false;
+  if(!d||d.status!=='approved'||d.privateProposal===true||d.proposalOnly===true||d.reviewStatus==='proposed'||d.evidenceHolds?.recommendationHold===true||d.evidenceHolds?.meaningHold===true||d.evidenceHolds?.cartHold===true||!Number.isFinite(d.savedAt)||d.savedAt>at+60000||!Array.isArray(d.sources)||!d.sources.length||d.sources.length>40)return false;
   const available=sourceIds instanceof Set?sourceIds:new Set(sourceIds||[]),ids=new Set();
   for(const source of d.sources){if(!source||!/^[a-zA-Z0-9:_-]{1,100}$/.test(String(source.id||''))||ids.has(source.id)||!available.has(source.id)||source.reviewed!==true||!publicEvidenceUrl(source.url)||!Number.isFinite(source.checkedAt)||source.checkedAt>at+60000||at-source.checkedAt>30*86400000)return false;ids.add(source.id);}
   return ids.size===available.size;
@@ -321,14 +334,17 @@ function projectRecommendationContent(d,sourceIds){
     }
     return [...grouped.values()].map(value=>({...value,candidateIds:[...new Set(value.candidateIds)].sort(),sourceIds:[...new Set(value.sourceIds)].sort(),basis:'hypothesis',reviewState:'pending_operator_review'}));
   };
-  const positiveKeywords=terms('keywords'),negativeKeywords=terms('negativeKeywords'),negativeSet=new Set(negativeKeywords.map(value=>keywordKey(value.term)));
-  if(positiveKeywords.some(value=>negativeSet.has(keywordKey(value.term))))return null;
+  const positiveKeywords=terms('keywords'),negativeKeywords=terms('negativeKeywords');
+  // A broad negative can suppress a longer positive (and vice versa) even
+  // when the normalized strings are not equal. Reject the complete packet so
+  // neither the operator UI nor the lexical collect() path can miss the risk.
+  if(positiveKeywords.some(positive=>negativeKeywords.some(negative=>suppressiveKeywordConflict(positive.term,negative.term))))return null;
   const reviewCandidates=candidates.map(value=>({candidateId:value.candidateId,channel:value.channel,basis:'hypothesis',action:value.action,measure:value.measure,sourceIds:[...value.sourceIds],...(value.keywords?{keywords:[...value.keywords]}:{}),...(value.negativeKeywords?{negativeKeywords:[...value.negativeKeywords]}:{}),reviewState:'pending_operator_review'}));
   return {recommendations,recommendationReadiness:{state:'approved_dossier_hypotheses',dossierVersion,sourceVersionBound:true,validRecommendationCount:recommendations.length,adTestCandidateCount,contextOnlyCount:recommendations.length-adTestCandidateCount,reviewQueueCount:adTestCandidateCount,measuredLift:false,automaticActivation:false,operatorReviewRequired:true},operatorReviewPacket:{schema:1,productId,handle,dossierVersion,state:'pending_operator_review',candidateIds:candidates.map(value=>value.candidateId),candidates:reviewCandidates,positiveKeywords,negativeKeywords,providerWrites:false,campaignWrites:false,budgetWrites:false,automaticActivation:false}};
 }
 function sharedDossierIsCurrent(d,product,at=Date.now()){
   if(!d||d.status!=='approved'||d.privateProposal===true||d.proposalOnly===true||d.reviewStatus==='proposed'||String(d.productId)!==String(product?.id)||d.handle!==product?.handle||!product?.handle||!(/^[a-f0-9]{64}$/i.test(String(d.version||'')))||d.currentDossierVersion!==d.version||!Number.isFinite(d.savedAt)||d.savedAt>at+60000)return false;
-  if(d.evidenceHolds?.recommendationHold===true||d.evidenceHolds?.meaningHold===true)return false;
+  if(d.evidenceHolds?.recommendationHold===true||d.evidenceHolds?.meaningHold===true||d.evidenceHolds?.cartHold===true)return false;
   if(!Array.isArray(d.sources)||!d.sources.length||d.sources.length>40||!Array.isArray(d.recommendations)||!Array.isArray(d.competitors))return false;
   const ids=new Set();
   for(const s of d.sources){if(!s||!/^[a-zA-Z0-9:_-]{1,100}$/.test(String(s.id||''))||ids.has(s.id)||s.reviewed!==true||!publicEvidenceUrl(s.url)||!Number.isFinite(s.checkedAt)||s.checkedAt>at+60000||at-s.checkedAt>30*86400000)return false;ids.add(s.id);}
