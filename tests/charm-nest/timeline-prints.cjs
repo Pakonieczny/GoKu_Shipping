@@ -106,7 +106,7 @@ const ORDERS = [{ receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * DAY, up
     assert(!d.some(x => /shipping-1/.test(x.key)), 'a shipping label stays with Shipped: no QR seal');
     const count = await page.$eval('#owTlCount', c => c.textContent);
     assert.equal(count, String(mine().length), `the Timeline tab still counts the recorded steps (${count} of ${mine().length})`);
-    // rest on Nº 2 (750 ms): the seal itself grows with QR LABEL PRINTED; who is its accessible name, and the card under it says the number, when, who and where
+    // rest on Nº 2 (500 ms): the seal itself grows with QR LABEL PRINTED; who is its accessible name, and the card under it says the number, when, who and where
     await page.hover(`#owTimeline .tlSt[data-key="${d[1].key}"]`); await page.waitForTimeout(1100);
     const hov = await page.evaluate(key => { const S = document.querySelector(`#owTimeline .tlSt[data-key="${key}"]`), X = [...document.querySelectorAll('#owTimeline .tlExp, .tlExp')].find(x => getComputedStyle(x).display === 'block'); return { grown: !!S.dataset.sealZoom, copy: !!document.querySelector('.tlLoupe,.tlNowZoom,.sealLens'), face: [...S.querySelectorAll('text')].map(t => t.textContent).join(' '), aria: S.getAttribute('aria-label') || '', card: X ? X.textContent : '' }; }, d[1].key);
     assert(hov.grown && !hov.copy, 'the print seal itself has grown'); assert.match(hov.face, /QR LABEL PRINTED/); assert.doesNotMatch(hov.face, /PAUL/, 'no signer on the face'); assert.match(hov.aria, /Print Nº 2/); assert.match(hov.aria, /paul/i);

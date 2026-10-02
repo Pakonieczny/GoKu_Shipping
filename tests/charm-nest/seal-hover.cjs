@@ -1,4 +1,4 @@
-// The shared seal zoom (Seal.zoom, charm-nest-motion.js), with a clock and pointer hit testing. A seal that is rested on for 750 ms, reached with
+// The shared seal zoom (Seal.zoom, charm-nest-motion.js), with a clock and pointer hit testing. A seal that is rested on for 500 ms, reached with
 // Tab or tapped grows where it stands; there is no second seal, no bubble, no tooltip. No production data is written.
 const assert=require('node:assert/strict'),fs=require('node:fs'),{JSDOM}=require('jsdom');
 const dom=new JSDOM('<span class="sealRow"></span><p id="outside">Work area</p><dialog id="dialog"><span class="sealRow"></span></dialog>',{url:'http://127.0.0.1',runScripts:'outside-only',pretendToBeVisual:true}),w=dom.window,d=w.document;
@@ -28,7 +28,7 @@ const noSecondSeal=label=>assert.equal(d.querySelectorAll('.sealLens,.tlLoupe,.t
 const inView=(r,label)=>assert(r&&r.left>=0&&r.top>=0&&r.right<=w.innerWidth&&r.bottom<=w.innerHeight,label+' stays in the view '+JSON.stringify(r));
 async function exercise(seal,label){
  const history=seal.innerHTML,size=sizeOf(seal),k=Seal.zoomScale(size);
- point('pointerover',seal);await advance(DELAY-50);assert.equal(zoomed(),null,label+' waits through a pass shorter than '+DELAY+' ms');
+ point('pointerover',seal);await advance(300);assert.equal(zoomed(),null,label+' waits through a 300 ms pass, shorter than '+DELAY+' ms');
  assert(!seal.hasAttribute('title'),label+' has no native tooltip');point('pointerout',seal,outside);await advance(2000);await closed(label+' cancels on departure');
  point('pointerover',seal);await advance(DELAY);assert.equal(zoomed(),seal,label+' grows itself once rested on for '+DELAY+' ms');
  assert.equal(seal.dataset.sealZoom,k.toFixed(2),label+' grows by the one curve for its '+size+'px size');
@@ -47,15 +47,15 @@ async function exercise(seal,label){
  assert.equal(seal.innerHTML,history,label+' keeps the historical face unchanged');
 }
 (async()=>{try{
- assert.equal(DELAY,750,'one named hover delay of 750 ms');
+ assert.equal(DELAY,500,'one named hover delay of 500 ms');
  // A signed-in viewer is intentionally different from the employee stored on the old stamp.
  w.employee='Current Viewer';w.localStorage.setItem('cn.employee','Current Viewer');
  const row=d.querySelector('.sealRow');row.innerHTML=Seal.html({how:'engraveApproved',at,by:'Paul'},56)+Seal.html({how:'engraveApproved',at:at+1000,by:'Seth'},56);
  const [first,second]=row.querySelectorAll('.seal');rectFor(first);rectFor(second,506);
- point('pointerover',first);await advance(600);point('pointerout',first,second);point('pointerover',second,first);await advance(DELAY-100);assert.equal(zoomed(),null,'adjacent seals each get a full delay');
+ point('pointerover',first);await advance(300);point('pointerout',first,second);point('pointerover',second,first);await advance(DELAY-100);assert.equal(zoomed(),null,'adjacent seals each get a full delay');
  await advance(100);assert.equal(zoomed(),second);assert.match(second.getAttribute('aria-label'),/Seth/);assert.doesNotMatch(second.getAttribute('aria-label'),/Current Viewer/,'an old seal never acquires the current viewer name');point('pointerout',second,outside);await closed('adjacent zoom closes');
  const child=first.querySelector('svg');child.getBoundingClientRect=first.getBoundingClientRect;
- point('pointerover',first);await advance(600);point('pointerout',first,child);point('pointerover',child,first);await advance(DELAY-600+50);assert.equal(zoomed(),first,'moving between seal descendants does not restart its rest');point('pointerout',child,outside);await closed('leaving an SVG descendant puts it back');
+ point('pointerover',first);await advance(300);point('pointerout',first,child);point('pointerover',child,first);await advance(DELAY-300+50);assert.equal(zoomed(),first,'moving between seal descendants does not restart its rest');point('pointerout',child,outside);await closed('leaving an SVG descendant puts it back');
  point('pointerover',first);await advance(DELAY-100);hit=outside;await advance(1000);await closed('silent hit-test departure cannot start a pending zoom');
  // the keyboard: Tab (:focus-visible) zooms at once, Esc puts it back; a pointer leaving ends even a focused seal's zoom
  first.focus();assert.equal(zoomed(),first,'keyboard focus zooms a seal at once');point('pointerover',first);point('pointerout',first,outside);await closed('mouse departure puts back even a focused seal');
@@ -113,5 +113,5 @@ async function exercise(seal,label){
   noSecondSeal('edge '+x+','+y);point('pointerout',edgeSeal,outside);await closed('viewport-edge departure puts it back');
  }
  edgeHost.remove();
- console.log('PASS: 8 seal/scope variants across 4 legacy size requests, 8 shared designs, no unearned readiness seals and preserved saved readiness actor; one adaptive curve (smaller seals zoom more), 750 ms rest, no lens, caption or tooltip, signer for assistive text only, strict exit, descendant hit testing, scroll/resize/blur/tab/dialog/redraw dismissal, keyboard and click access, viewport edges');
+ console.log('PASS: 8 seal/scope variants across 4 legacy size requests, 8 shared designs, no unearned readiness seals and preserved saved readiness actor; one adaptive curve (smaller seals zoom more), 500 ms rest, no lens, caption or tooltip, signer for assistive text only, strict exit, descendant hit testing, scroll/resize/blur/tab/dialog/redraw dismissal, keyboard and click access, viewport edges');
 }finally{w.close();}})().catch(e=>{console.error(e);process.exitCode=1;});

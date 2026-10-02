@@ -98,7 +98,7 @@ const Timeline = require(path.join(root, 'netlify/functions/_orderTimeline.js'))
       const n = await page.locator(sel).count();
       for (let i = 0; i < n; i++) {
         await page.mouse.move(5, 895); await page.waitForTimeout(200);
-        const b = page.locator(sel).nth(i); await b.hover(); await page.waitForTimeout(1050);   // (750 ms of rest, then the card and the grown seal)
+        const b = page.locator(sel).nth(i); await b.hover(); await page.waitForTimeout(1050);   // (500 ms of rest, then the card and the grown seal)
         const r = await page.evaluate(sel => {
           const el = window.__el, exp = el.querySelector('.tlExp'), e = exp.getBoundingClientRect(), hov = [...el.querySelectorAll(sel)].find(x => x.matches(':hover'));
           const sealEl = hov && (hov.querySelector('.tlSeal') || hov), dot = sealEl && sealEl.getBoundingClientRect(), base = hov && hov.getBoundingClientRect();

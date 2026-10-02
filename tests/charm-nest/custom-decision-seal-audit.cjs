@@ -176,8 +176,8 @@ async function audit() {
     seals.push(seal);
   }
   const first = seals[0], originalFace = first.innerHTML, zoomed = () => d.querySelector('[data-seal-zoom]'), DELAY = w.Seal.zoom.DELAY;
-  assert.equal(DELAY, 750, 'one named 750 ms hover rest');
-  point('pointerover', first); await advance(DELAY - 50); assert.equal(zoomed(), null, 'fast movement cannot zoom a send-seal');
+  assert.equal(DELAY, 500, 'one named 500 ms hover rest');
+  point('pointerover', first); await advance(300); assert.equal(zoomed(), null, 'fast movement (300 ms) cannot zoom a send-seal');
   point('pointerout', first, outside); await advance(2000); assert.equal(zoomed(), null, 'leaving cancels the delayed zoom');
   point('pointerover', first); await advance(DELAY); assert.equal(zoomed(), first, 'resting opens the send seal itself in place: no second seal');
   assert.match(first.getAttribute('aria-label'), /Sent to sheet by paul/, 'the recorded signer is its accessible name'); assert.doesNotMatch(first.outerHTML, /Different current viewer/);

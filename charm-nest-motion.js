@@ -731,7 +731,8 @@
     /* ── the seal zoom (Paul, 2 Oct 18:56: "get rid of the hover states on all the seals and just add a compelling zooming
        animation where the seal grows in size in its current position, almost like a magnifying glass ... it should zoom very
        little if it's already large, more if it's smaller, even more if it's very small: an adaptive system", and 18:56
-       "a 750 ms delay so the zoom does not happen immediately if the person runs the cursor quickly across the screen").
+       "a 750 ms delay so the zoom does not happen immediately if the person runs the cursor quickly across the screen"; then 2 Oct,
+       "change the delay before showing the zoom to 500 ms").
        There is no second seal and no bubble. The seal itself grows from its own centre, turns to stand upright, lifts on a
        soft shadow, takes a paper backing so nothing under it shows through, comes to the top and goes back the same way.
        Moved by transform, filter and opacity only (the paper is one path's opacity), interruptible at any frame, and always
@@ -740,7 +741,7 @@
        Mouse: the pointer must rest on the same seal for ZOOM_DELAY. Tab (:focus-visible) and a tap zoom at once. Leaving,
        blur, Esc, scrolling, a tap elsewhere or the window going away puts it back. The one scale curve is pure
        (Seal.zoomScale, Motion.sealZoomScale), so large seals grow a little and tiny ones a lot. ── */
-    const ZOOM_DELAY = 750;
+    const ZOOM_DELAY = 500;
     const ZOOM_ANCHORS = [[24, 3.6], [28, 3.5], [36, 3.2], [40, 3.05], [48, 2.8], [56, 2.5], [60, 2.35], [72, 2.05], [84, 1.85], [100, 1.62], [110, 1.42], [120, 1.25], [140, 1.15], [160, 1.12]];
     /** The zoom of a seal as drawn `size` px across: 1.12 for a large one up to 3.6 for a tiny one, by one smooth curve. */
     function zoomScale(size) {

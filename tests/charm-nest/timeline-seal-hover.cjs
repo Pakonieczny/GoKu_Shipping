@@ -1,4 +1,4 @@
-// Every real timeline seal surface uses the shared face and the same delayed hover (750 ms): the seal itself grows where it stands (Seal.zoom), with no
+// Every real timeline seal surface uses the shared face and the same delayed hover (500 ms): the seal itself grows where it stands (Seal.zoom), with no
 // second seal, loupe or bubble; the step's explainer card is the only thing that opens beside it.
 const assert=require('node:assert/strict'),fs=require('node:fs'),{JSDOM}=require('jsdom');
 const dom=new JSDOM('<main id="timeline"></main><section id="overview"></section><section id="recent"></section><section id="cancelled"></section><p id="outside">Work area</p>',{url:'http://127.0.0.1',runScripts:'outside-only',pretendToBeVisual:true}),w=dom.window,d=w.document;
@@ -26,7 +26,7 @@ function checkZoom(seal,label,signer){const z=zoomedIn();assert(z,label+' grows 
  if(signer){const named=z.closest('[aria-label]')||seal.closest('[aria-label]'),said=named?named.getAttribute('aria-label'):((seal.closest('button')||seal).textContent||'');assert.match(said,new RegExp(signer.split(' ')[0]),label+' is named with its saved signer for assistive technology ('+said+')');}}
 async function exercise(seal,shown,label,signer=null,grows=true){
  rectFor(seal);const history=seal.innerHTML;
- point('pointerover',seal);await advance(DELAY-50);assert(!shown(),label+' cannot open during a quick pass');point('pointerout',seal,outside);await advance(2000);assert(!shown(),label+' cancels a pending timer');
+ point('pointerover',seal);await advance(300);assert(!shown(),label+' cannot open during a 300 ms pass');point('pointerout',seal,outside);await advance(2000);assert(!shown(),label+' cancels a pending timer');
  point('pointerover',seal);await advance(DELAY);assert(shown(),label+' opens after resting');if(grows){checkZoom(seal,label,signer);assert.doesNotMatch(seal.outerHTML,/Current Viewer/,label+' ignores the current viewer name');}
  point('pointerout',seal,outside);await advance(0);assert(!shown(),label+' closes on departure');
  point('pointerover',seal);await advance(DELAY-100);point('pointermove',outside);await advance(2000);assert(!shown(),label+' cancels without pointerout');
@@ -84,5 +84,5 @@ async function exercise(seal,shown,label,signer=null,grows=true){
  cancelTimeline=T.mount(d.querySelector('#cancelled'),{orderId:'555',live:false});await advance(0);const cancelBox=d.querySelector('#cancelled .tlUI'),overlay=cancelBox.querySelector('.tlCxStamp');assert(overlay,'a cancelled order has its historical cancellation overlay');
  const cxShown=()=>!!cancelBox.querySelector('[data-seal-zoom]')||cancelBox.querySelector('.tlExp').classList.contains('on');await exercise(overlay,cxShown,'cancelled rail overlay','Seth Signed');
  point('pointerover',seals[0]);await advance(DELAY-100);timeline.destroy();timeline=null;await advance(2000);assert(!d.querySelector('#timeline .tlUI'),'destroy cancels every pending zoom');
- console.log('PASS: '+seals.length+' chronology variants in 8 families, rail, detail, around/path, '+legends.length+' legend faces, current/cancelled overview, cancellation overlay and legacy mini; the seal itself grows in place (no loupe or copy), edges keep it in view, saved signer in assistive text, 750 ms rest, strict departure/dismissal, redraw safety and keyboard/navigation access');
+ console.log('PASS: '+seals.length+' chronology variants in 8 families, rail, detail, around/path, '+legends.length+' legend faces, current/cancelled overview, cancellation overlay and legacy mini; the seal itself grows in place (no loupe or copy), edges keep it in view, saved signer in assistive text, 500 ms rest, strict departure/dismissal, redraw safety and keyboard/navigation access');
 }finally{timeline?.destroy();cancelTimeline?.destroy();w.close();}})().catch(e=>{console.error(e);process.exitCode=1;});

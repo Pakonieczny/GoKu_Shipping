@@ -65,9 +65,9 @@
 
   // Every timeline/overview seal uses the same rest and departure rules. The original seal alone owns the hover;
   // the grown seal and explanatory cards cannot keep it alive, and moving to a neighbour starts a new full delay.
-  // (Paul, 2 Oct 18:56: 750 ms, so a pointer running across the screen zooms nothing.)
-  // The rest delay is the engine's one named constant (Seal.zoom.DELAY, 750); 750 here only covers a page without the engine.
-  const sealHoverDelay = () => { const z = zoomApi(); return z && z.DELAY > 0 ? z.DELAY : 750; };
+  // (Paul, 2 Oct: 750 ms, then 500 ms, so a pointer running across the screen zooms nothing.)
+  // The rest delay is the engine's one named constant (Seal.zoom.DELAY, 500); 500 here only covers a page without the engine.
+  const sealHoverDelay = () => { const z = zoomApi(); return z && z.DELAY > 0 ? z.DELAY : 500; };
   function restOnSeal(host, pick, show, hide) {
     let wanted = null, shown = null, timer = 0, point = null;
     const at = node => { const b = node && pick(node); return b && host.contains(b) ? b : null; };

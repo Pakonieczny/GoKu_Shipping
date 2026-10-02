@@ -6,7 +6,7 @@
 //  · the curve itself (a table), every size within its band, never rising as a seal gets larger;
 //  · a large, a medium and a tiny seal rested on: the ratios grow as the seal shrinks, each grown seal stays in the view
 //    and below the top bar, and unclipped; leaving puts every style back (transform, filter, overflow, z-index);
-//  · a pointer sweeping across a seal for 300 ms zooms nothing, one resting 750 ms does; Tab zooms at once; Esc returns it;
+//  · a pointer sweeping across a seal for 300 ms zooms nothing, one resting 560 ms does (the delay is 500 ms); Tab zooms at once; Esc returns it;
 //  · the real surfaces: the Review card's seals, the order window's header strip (24 px, in a 44 px box that clips), its
 //    custom-order bar (once 1 px wide), the timeline's lane stamps and detail seal: each grows, in view, unclipped;
 //  · only transform, filter and opacity move; a finger's tap zooms and a second tap returns it; reduced motion is short.
@@ -125,16 +125,16 @@ const ORDERS = [{ receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * DAY, up
     }
     await page.evaluate(() => document.querySelectorAll('#zcorner,#zedge').forEach(e => e.remove()));
 
-    // ═══ 3 · 750 ms: a pointer running across a seal zooms nothing; one that rests does ═══
+    // ═══ 3 · 500 ms: a pointer running across a seal zooms nothing; one that rests does ═══
     {
       const p = await X.point(labSel, 1), still = () => page.evaluate(() => !document.querySelector('[data-seal-zoom]'));
       await page.mouse.move(5, 880); await page.mouse.move(p.x, p.y, { steps: 2 }); await page.waitForTimeout(300); await page.mouse.move(5, 880, { steps: 2 }); await page.waitForTimeout(1000);
       check(await still(), 'a pointer across a seal for 300 ms zooms nothing (not even later)');
-      await page.mouse.move(p.x, p.y, { steps: 2 }); await page.waitForTimeout(500);
-      check(await still(), 'resting 500 ms: not yet');
-      await page.waitForFunction(() => document.querySelector('[data-seal-zoom]'), null, { timeout: 1200 });
+      await page.mouse.move(p.x, p.y, { steps: 2 }); await page.waitForTimeout(300);
+      check(await still(), 'resting 300 ms: not yet');
+      await page.waitForTimeout(260); await page.waitForFunction(() => document.querySelector('[data-seal-zoom]'), null, { timeout: 1200 });
       const timing = await page.evaluate(() => window.Seal.zoom.DELAY);
-      check(timing === 750, 'resting past 750 ms zooms it (one named delay: ' + timing + ' ms)'); await X.settle();
+      check(timing === 500, 'resting past 500 ms zooms it (one named delay: ' + timing + ' ms)'); await X.settle();
       await page.mouse.move(5, 880); await X.gone();
     }
 
