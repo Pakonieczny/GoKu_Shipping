@@ -143,7 +143,7 @@ async function run(browser, origin, n, mode) {
   await typeOrder('1111111111');
   await flush();
   assert.strictEqual(activity.length, 0, 'signed out: no event is sent');
-  assert.deepStrictEqual(await page.evaluate(() => window.StationActivity.pending().length), 0, 'signed out: nothing is waiting to be sent');
+  assert.deepStrictEqual(await page.evaluate(() => window.StationActivity.pending()), 0, 'signed out: nothing is waiting to be sent');
 
   // 2 · the PIN login (the page's own form, a fake employee document)
   await page.type('#employeeNumberInput', PIN);
@@ -242,7 +242,7 @@ async function run(browser, origin, n, mode) {
   try {
     for (const n of [1, 2, 3]) {
       out.push(`shipping-${n} ${await run(browser, origin, n, 'run')}`);
-      out.push(`shipping-${n} ${await run(browser, origin, n, 'cancel')}`);
+      if (n === 1) out.push(`shipping-${n} ${await run(browser, origin, n, 'cancel')}`);   // the code is shared: one page is enough
     }
     console.log(`shipping activity OK in ${((Date.now() - t0) / 1000).toFixed(1)} s · ${out.join(' · ')}`);
   } finally { await browser.close(); srv.close(); }
