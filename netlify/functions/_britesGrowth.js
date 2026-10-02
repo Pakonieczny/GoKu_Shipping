@@ -148,7 +148,7 @@ const MOTIFS = [
   ['bunny','bunn(?:y|ies)|rabbits?'],['cardinal','cardinals?'],
   ['fire badge','firefighters?|firem[ae]n|fire badge'],['stethoscope','nurses?|doctors?|medical|stethoscopes?'],
   ['tooth','dentists?|dental|teeth|tooths?'],['apple book','teachers?|teaching'],
-  ['book','readers?|reading|books?|librarian'],['hummingbird','hummingbirds?'],
+  ['apple','apples?'],['book','readers?|reading|books?|librarian'],['hummingbird','hummingbirds?'],
   ['sunflower','sunflowers?'],['cat','cats?|kittens?'],['dog','dogs?|pupp(?:y|ies)'],
   ['ballet','ballet|dancers?'],['skating','skates?|skating|skaters?'],['wolf','wolves|wolf'],
   ['dragonfly','dragonfl(?:y|ies)'],['phoenix','phoenix'],['rune','runes?|norse|vikings?'],
@@ -157,21 +157,23 @@ const MOTIFS = [
   ['elephant','elephants?'],['dolphin','dolphins?'],['whale','whales?'],['fox','fox(?:es)?'],
   ['owl','owls?'],['turtle','turtles?'],['penguin','penguins?'],['sheep','sheep|lambs?'],
   ['deer','deer'],['frog','frogs?'],['fish','fish|fishing'],['bird','birds?'],
-  ['heart','hearts?'],['tree','trees?|tree of life'],['flower','flowers?|floral'],
+  ['circle','circles?|circular'],['heart','hearts?'],['tree','trees?|tree of life'],['flower','flowers?|floral'],
   ['lotus','lotus'],['rose','roses?(?!\\s+gold)'],['dandelion','dandelions?'],['paw','paws?'],
   ['star','stars?|celestial'],['music','music|musicians?|guitars?|piano'],
   ['volleyball','volleyball'],['baseball','baseball'],['basketball','basketball'],
   ['soccer','soccer|football'],['running','running|runners?|marathon'],
-  ['science','science|scientists?|laboratory|chemistry'],['police badge','police|officers?|police badge'],
+  ['science','science|scientists?|laboratory|chemistry'],['police badge','police badge|police|officers?'],
+  ['movie slate','movie[ -]slates?|film[ -]slates?|clapper[ -]?boards?|clap[ -]?boards?|movies?|films?|cinema|filmmakers?|filmmaking'],
   ['theatre','theat(?:re|er)|actors?|drama'],['camera','photography|photographers?|cameras?'],
   ['anchor','anchors?|sailing|sailors?'],['airplane','airplanes?|pilots?|aviation'],
   ['mountain','mountains?|hiking|hikers?'],['leaf','leaves|leaf'],['clover','clovers?|shamrock'],
-  ['zodiac','zodiac|astrology'],['initial','initials?'],['engraved','engrave[ds]?|engraving|personalized|personalised|handwriting']
+  ['zodiac','zodiac|astrology'],['initial','initials?'],['engraved','engrave[ds]?|engraving|personali[sz](?:ed|ation|e)|handwriting|handwritten|my (?:own )?writing']
 ];
 const TYPES = ['necklace','earrings','bracelet','pendant','huggie','studs','ring','charm'];
 const METALS = ['silver','gold','rose gold'];
 const RECIPIENTS = ['mom','mother','dad','father','wife','husband','daughter','son','friend','sister','brother','grandmother','grandfather','partner','teacher','nurse','doctor','myself'];
 const OCCASIONS = ['birthday','anniversary','graduation','memorial','christmas','wedding','retirement','thank you','just because'];
+const PROFESSION_HINT=/^(?:teachers?|teaching|nurses?|doctors?|medical|dentists?|dental|firefighters?|firem[ae]n|librarian|scientists?|police|officers?|actors?|photographers?|musicians?|pilots?|sailors?)$/;
 const GENERIC = new Set(('raise increase lower reduce expand between range limit price spend cost roughly approximately cheap cheaper expensive affordable i a an the for and or my me you your gift gifts find want wants wanted looking buy buying please someone jewellery jewelry under budget dollars dollar usd cad gbp eur is are was with to of her him them she he they it something show help can could would should like likes only actually prefer instead change stay within keep around no not without avoid dont don t do does doesn doesn t rather than but loves love enjoy enjoys into interested interest interests this that these those piece pieces one ones option options up less more below over above between maximum minimum max min from be at now need needs another anything give really very so also we our about what who how why when where choose choice lets let s have has happy thank thanks much tell meaningful pretty beautiful amazing someone some look looking still either any same fresh start reset clear forget nothing different second third first fourth fifth sixth open take page website bag cart add adding compare comparison versus vs meaning means symbolize symbolism history story stories know learn explain next previous read what else new stop go back sure yes okay ok please'.split(' ')));
 const plainList = (v,n=8) => Array.isArray(v)?[...new Set(v.filter(x=>typeof x==='string').map(x=>clean(x,100).toLowerCase()))].slice(0,n):[];
 const amount = v => typeof v==='number'&&Number.isFinite(v)&&v>=0&&v<=1000000?v:null;
@@ -198,7 +200,7 @@ function negatedAt(text,index) {
 }
 
 function fieldMentions(text,pattern,canonical) {
-  return [...text.matchAll(new RegExp('\\b(?:'+pattern+')\\b','g'))].map(m=>({value:canonical?canonical(m[0]):m[0],index:m.index,negative:negatedAt(text,m.index)}));
+  return [...text.matchAll(new RegExp('\\b(?:'+pattern+')\\b','g'))].map(m=>({value:canonical?canonical(m[0]):m[0],raw:m[0],index:m.index,negative:negatedAt(text,m.index)}));
 }
 
 function applyBudgetMessage(p,text,explicitCurrency){
@@ -248,17 +250,20 @@ function applyPreferenceMessage(before,message) {
   const explicitCurrency=fieldMentions(text,'us dollars?|usd|us\$|canadian dollars?|cad|ca\$|c\$|gbp|pounds?|eur|euros?',v=>/^canadian|^cad|^ca\$|^c\$/.test(v)?'CAD':/^gbp|^pound/.test(v)?'GBP':/^eur/.test(v)?'EUR':'USD').filter(x=>!negatedAt(currencyText,x.index)).at(-1)?.value;
   if(explicitCurrency){p.currency=explicitCurrency;if(p.budget!=null)p.budgetCurrency=explicitCurrency;}
   const queryText=applyBudgetMessage(p,text,explicitCurrency);
-  const hits=MOTIFS.flatMap(([value,pattern])=>fieldMentions(text,pattern,()=>value)).sort((a,b)=>a.index-b.index);
-  const latest=[...new Map(hits.map(x=>[x.value,x])).values()];
-  const positive=latest.filter(x=>!x.negative).map(x=>x.value);
-  const negative=latest.filter(x=>x.negative).map(x=>x.value);
+  const hits=MOTIFS.flatMap(([value,pattern])=>fieldMentions(text,pattern,()=>value).map(hit=>({...hit,inferred:PROFESSION_HINT.test(hit.raw)}))).sort((a,b)=>a.index-b.index);
+  const selected=new Map();for(const hit of hits){const prior=selected.get(hit.value);if(!prior||!hit.inferred||prior.inferred)selected.set(hit.value,hit);}
+  const latest=[...selected.values()];
+  const explicit=latest.filter(x=>!x.negative&&!x.inferred);
+  // Profession-to-symbol associations are suggestions. A shopper's explicit
+  // movie slate, bunny, book or other motif takes precedence over that hint.
+  const positive=(explicit.length?explicit:latest.filter(x=>!x.negative)).map(x=>x.value);
+  // Rejecting a recipient's profession does not reject every related symbol.
+  const negative=latest.filter(x=>x.negative&&!x.inferred).map(x=>x.value);
   p.excludedInterests=[...new Set([...p.excludedInterests,...negative])].filter(x=>!positive.includes(x)).slice(0,12);
   p.interests=p.interests.filter(x=>!negative.includes(x));
   if(positive.length){p.interests=positive;p.query=positive.join(' ');}
   else if(negative.length)p.query=p.interests.join(' ');
-  if(/\b(?:handwriting|handwritten|my (?:own )?writing)\b/.test(text)&&!negatedAt(text,text.search(/handwriting|handwritten|my (?:own )?writing/)))p.personalization='handwriting';
-  else if(/\b(?:engraving|engrave|personalized|personalised)\b/.test(text)&&!negatedAt(text,text.search(/engraving|engrave|personalized|personalised/)))p.personalization='engraving';
-  if(/\b(?:no|not|without)\s+(?:engraving|personalization|personalisation|handwriting)\b/.test(text)){p.personalization=null;p.excludedInterests=[...new Set([...p.excludedInterests,'engraved'])];p.interests=p.interests.filter(x=>x!=='engraved');p.query=p.interests.join(' ');}
+  for(const hit of fieldMentions(text,'handwriting|handwritten|my (?:own )?writing|engraving|engrave[ds]?|personali[sz](?:ed|ation|e)',v=>/handwrit|writing/.test(v)?'handwriting':'engraving'))p.personalization=hit.negative?null:hit.value;
   const nonShopping=/\b(?:meaning|means|symboli[sz]\w*|history|story|stories|shipping|deliver|arrive|return|refund|compare|comparison|nickel|hypoallergenic|second|third|first|fourth|fifth|sixth|open|cart|bag|cheaper|expensive|more options|what else|tell me more|secrets?|api keys?|credentials?|repository|system prompt|owner data|private records)\b/.test(text);
   if(!positive.length&&!negative.length&&!nonShopping){
     const controlled=new Set([...mentions.type,...mentions.metal,...mentions.recipient,...mentions.occasion].flatMap(x=>x.value.split(' ')));
@@ -280,6 +285,7 @@ function motifPattern(value) {
   if(value==='apple book')return 'apple|book|teacher';
   if(value==='fire badge')return 'fire.?badge|firefighter|fireman';
   if(value==='police badge')return 'police|officer.?badge';
+  if(value==='movie slate')return 'movie[ -]slates?|film[ -]slates?|clapper[ -]?boards?|clap[ -]?boards?';
   if(value==='engraved')return 'engrave|engrav|personaliz|personalis|handwrit|initial';
   return entry?entry[1]:clean(value,80).replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
 }
@@ -361,13 +367,35 @@ function publicMeanings(dossiers,productIds,now=Date.now(),issueRecords=[]) {
   return out;
 }
 
+function shopperCommand(text){return /\b(?:open|take me to|go to|view (?:the )?page|show (?:me )?(?:the )?(?:product )?page)\b/.test(text)?'navigate':/\b(?:add|put)\b[\s\S]{0,100}\b(?:bag|cart)\b/.test(text)?'choose':null;}
+function explicitDestination(text){
+  const tokens=[...text.matchAll(/(?:[a-z][a-z\d+.-]*:\/\/[^\s<>"']+|(?:javascript|data|file):[^\s<>"']+|\/\/[a-z\d.-]+[^\s<>"']*|(?:[a-z\d-]+\.)+[a-z]{2,}(?:\/[^\s<>"']*)?|(?<![\w/])\/[a-z0-9_-]+[^\s<>"']*)/gi)];
+  const handles=tokens.map(match=>{let raw=match[0].replace(/[),.;!?]+$/,'');if(raw.startsWith('/')&&!raw.startsWith('//'))raw='https://britesjewelry.com'+raw;else if(!/^[a-z][a-z\d+.-]*:|^\/\//i.test(raw))raw='https://'+raw;const allowed=publicUrl(raw,true);if(!allowed)return null;const path=new URL(allowed).pathname;if(path!==raw.replace(/^https:\/\/[^/]+/i,'').split(/[?#]/)[0])return null;return path.match(/^\/products\/([a-z0-9_-]{1,180})\/?$/)?.[1]||null;});
+  return {unsafe:handles.some(handle=>!handle),handles:[...new Set(handles.filter(Boolean))],plain:tokens.reduceRight((value,match)=>value.slice(0,match.index)+' '.repeat(match[0].length)+value.slice(match.index+match[0].length),text)};
+}
+function checkoutRequest(text){
+  text=clean(text,2000).toLowerCase().replace(/[’‘]/g,"'");const command=shopperCommand(text),destination=explicitDestination(text);
+  if(command&&destination.unsafe)return 'destination';
+  const plain=destination.plain.replace(/\bpay\s+(?:homage|tribute|attention|respect)\b/g,' ');
+  const positive=pattern=>fieldMentions(plain,pattern).some(hit=>!hit.negative);
+  if(positive('(?:saved|stored|on file) (?:credit |debit |payment )?cards?|card (?:details|numbers?|security code)|cvv|cvc|billing details|(?:retrieve|show|reveal) (?:my )?(?:card|payment)'))return 'payment';
+  if(positive('pay (?:now|for|with|using|this|the)|charge (?:my|the)|(?:complete|submit|process|execute|make|confirm|place) (?:the |my |a )?(?:payment|purchase|order)|payment (?:succeeded|successful|success|status)'))return 'payment';
+  if(positive('(?:open|take me to|go to|view|show me) (?:the |my |a |secure )?(?:checkout|check out|payment(?: page| form)?)'))return 'checkout';
+  if(!command&&positive('checkout|check out|checking out|payments?|pay|paying|paid|credit cards?|debit cards?|paypal|(?:apple|google|shop) pay|billing'))return 'payment';
+  return null;
+}
+function sharedBudgetRequest(text){return fieldMentions(clean(text,2000).toLowerCase(),'(?:(?:total|overall|combined|shared) (?:item |jewelry |jewellery )?budget|budget (?:for |across )?(?:all|both|the whole)|(?:in |altogether |combined )?total (?:for |across )?(?:all|both))').some(hit=>!hit.negative);}
+
 function shopperAction(message,products,displayedHandles=[]) {
-  const text=clean(message,2000).toLowerCase(),command=/\b(?:open|take me to|go to|view (?:the )?page|show (?:me )?(?:the )?(?:product )?page)\b/.test(text)?'navigate':/\b(?:add|put)\b[\s\S]{0,100}\b(?:bag|cart)\b/.test(text)?'choose':null;
+  const text=clean(message,2000).toLowerCase(),command=shopperCommand(text);
+  if(checkoutRequest(text))return null;
   if(!command||/\b(?:do not|don'?t|not|never)\s+(?:open|take|go|view|show|add|put)\b/.test(text))return null;
   const ordinal=/\b(first|second|third|fourth|fifth|sixth|[1-6])\b/.exec(text);
   const index=ordinal?['first','second','third','fourth','fifth','sixth'].includes(ordinal[1])?['first','second','third','fourth','fifth','sixth'].indexOf(ordinal[1]):Number(ordinal[1])-1:null;
   let product=index==null?products.filter(p=>text.includes(p.title.toLowerCase())||text.includes(p.handle)).at(0):displayedHandles.length?products.find(p=>p.handle===displayedHandles[index]):products[index];
-  if(!product&&products.length===1&&/\b(?:this|that|it|the piece)\b/.test(text))product=products[0];
+  const destination=explicitDestination(text);
+  if(destination.handles.length){if(destination.handles.length!==1)return null;const exact=products.find(p=>p.handle===destination.handles[0]);if(!exact||(index!=null&&product?.id!==exact.id))return null;product=exact;}
+  else if(!product&&products.length===1&&/\b(?:this|that|it|the piece)\b/.test(text))product=products[0];
   return product?{type:command,productId:product.id,url:product.url}:null;
 }
 
@@ -375,8 +403,11 @@ async function concierge({service,shopify,message,history=[],preferences={},cont
   const text=clean(message,2000);if(!text)throw Error('Write a message first.');
   const shopperCurrency=currencyCode(context.currency);
   const basePreferences=shopperCurrency&&!currencyCode(preferences.currency)?{...preferences,currency:shopperCurrency}:preferences;
-  const intent=intentFrom(text,history,basePreferences),at=now();
+  const boundary=checkoutRequest(text),at=now();
+  if(boundary)return {schema:1,checkoutBoundary:true,reply:boundary==='destination'?'I can open an exact Brites product page when you select a piece. Complete payment yourself through the shop’s secure checkout; I can’t open an outside checkout or skip confirmation.':'Review your bag and complete payment yourself through the shop’s secure checkout. I can’t use saved cards, retrieve card details, place an order or confirm that a payment succeeded.',question:null,preferences:shopperPreferences(basePreferences),products:[],meanings:[],actions:[],checkedAt:at,live:false,aiUsed:false};
+  const intent=intentFrom(text,history,basePreferences);
   if(/\b(?:api keys?|credentials?|passwords?|system prompt|private (?:records|data)|owner data|repository|source code|sales history|customer (?:records|data))\b/i.test(text))return {schema:1,reply:'I can help with publicly listed pieces, gift ideas and the shop’s published information.',question:'What kind of piece are you looking for?',preferences:intent,products:[],meanings:[],actions:[],checkedAt:at,live:false,aiUsed:false};
+  if(sharedBudgetRequest(text))return {schema:1,budgetClarification:true,reply:'I haven’t applied the overall budget as a per-item limit. I can compare individual pieces once you choose an item limit.',question:'What maximum item price should I use for each piece, before shipping and any applicable taxes?',preferences:shopperPreferences({...intent,budget:null,minBudget:null,unlimitedBudget:false,budgetCurrency:null}),products:[],meanings:[],actions:[],checkedAt:at,live:false,aiUsed:false};
   const useContext=/\b(?:meaning|means|symboli[sz]\w*|history|story|stories|compare|comparison|first|second|third|fourth|fifth|sixth|this piece|that piece|this one|that one|open|cart|bag)\b/i.test(text);
   const handles=plainList(context.productHandles,6).filter(h=>/^[a-z0-9_-]{1,180}$/.test(h));
   if(!handles.length&&/^[a-z0-9_-]{1,180}$/.test(context.currentHandle||''))handles.push(context.currentHandle);
@@ -399,10 +430,13 @@ async function concierge({service,shopify,message,history=[],preferences={},cont
   if(/\b(?:compare|comparison|versus)\b/i.test(text)){result.reply=products.length>=2?'Compare the live metal options, item prices and designs below. Each product page has the complete description.':'I need two available pieces to make a useful comparison.';result.question=products.length>=2?null:'Which other piece would you like to compare?';}
   const policyTopics=require('./_britesConcierge').classify(text,history).topics;
   if(policyTopics.includes('shipping')||policyTopics.includes('refund')){result.reply='Shipping timing and returns depend on the order and destination. The current shop policies and checkout show the applicable details.';result.policyLinks=[{label:'Shipping policy',url:'https://britesjewelry.com/policies/shipping-policy'},{label:'Refund policy',url:'https://britesjewelry.com/policies/refund-policy'}];result.question=policyTopics.includes('shipping')?'Which country is the gift going to, and when is it needed?':null;}
-  else if(/\b(?:engrave|engraving|personaliz|handwriting|handwritten)\b/i.test(text)){result.reply='I can help find a piece with personalization options. The product page confirms the exact engraving limits and any design upload before adding it to your bag.';result.question=intent.personalization==='handwriting'?'Would you like to explore a handwriting piece or the custom design studio?':/\b(?:name|initials?|message)\b/i.test(text)?null:'Are you thinking of a name, initials, a short message or handwriting?';}
+  else if(intent.personalization&&/\b(?:engrave[ds]?|engraving|personali[sz](?:ed|ation|e)|handwriting|handwritten)\b/i.test(text)){result.reply='I can help find a piece with personalization options. The product page confirms the exact engraving limits and any design upload before adding it to your bag.';result.question=intent.personalization==='handwriting'?'Would you like to explore a handwriting piece or the custom design studio?':/\b(?:name|initials?|message)\b/i.test(text)?null:'Are you thinking of a name, initials, a short message or handwriting?';}
   if(/\b(?:hypoallergenic|nickel|allerg(?:y|ies|ic)|solid gold|waterproof|tarnish)\b/i.test(text)){result.reply='Materials and care requirements vary by piece. Please check the exact product description; I can’t infer allergy safety or material guarantees from its appearance.';result.question=null;}
   const requestedAction=shopperAction(text,products,useContext?handles:[]);
   if(requestedAction){result.requestedAction=requestedAction;result.question=null;result.reply=requestedAction.type==='navigate'?'Opening the piece you selected.':'Choose the exact available option below, then confirm before it is added to your bag.';}
+  // The current broad gold preference is not an exact material-form filter.
+  // Disclose mixed/unclear forms rather than calling solid gold gold-filled.
+  if(fieldMentions(text.toLowerCase(),'gold[ -]filled').some(hit=>!hit.negative)&&products.some(p=>p.variants.some(v=>!/\bgold[ -]filled\b/i.test(v.title+' '+(v.options||[]).filter(o=>/metal|material|finish/i.test(o.name)).map(o=>o.value).join(' '))))){result.materialFormUnfiltered=true;const note=' This selection hasn’t been filtered specifically to gold-filled. Check each exact variant’s metal label before choosing.';const split=result.reply.indexOf(' Catalogue prices are shown in ');result.reply=split<0?result.reply+note:result.reply.slice(0,split)+note+result.reply.slice(split);}
   // Runtime inference can refine a question only. It cannot supply product
   // facts, choose tools, browse, purchase, or read private research fields.
   if(ai){try{const chosen=await ai({message:text,history:history.slice(-6).map(r=>({role:r.role,content:clean(r.content,1500)})),preferences:intent,products:products.map(p=>({id:p.id,title:p.title})),question:result.question});if(chosen&&['gift','self','comparison','meaning','shipping','engraving','discovery'].includes(chosen.intent)){result.intent=chosen.intent;result.aiUsed=true;if(result.question&&typeof chosen.question==='string'&&chosen.question.length>10&&chosen.question.length<220&&!/[\d$]|https?:|guarantee|deliver|hypoallergenic|solid gold|password|credential|api key|email|phone|address/i.test(chosen.question)&&!(intent.unlimitedBudget&&/\b(?:budget|spend(?:ing)?|price|cost|afford(?:able)?|how much)\b/i.test(chosen.question)))result.question=chosen.question;}}catch{result.aiUsed=false;result.providerUnavailable=true;}}

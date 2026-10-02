@@ -15,7 +15,7 @@ function fixture(initial = order, options = {}) {
   });
   const f = { FV: { serverTimestamp: () => clock }, db: {
     collection: () => query(),
-    runTransaction: fn => { const next = serial.then(() => fn({ get: async r => doc(r.id), update: (r, patch) => r.update(patch) })); serial = next.catch(() => {}); return next; }
+    runTransaction: fn => { const next = serial.then(() => fn({ get: async r => typeof r.get === 'function' ? r.get() : doc(r.id), update: (r, patch) => r.update(patch) })); serial = next.catch(() => {}); return next; }
   } };
   const env = { GADS_DATAMANAGER_REFRESH_TOKEN: 'fixture-refresh', GADS_CLIENT_ID: 'fixture-client', GADS_CLIENT_SECRET: 'fixture-secret', GADS_CONVERSION_ACTION: 'customers/123/conversionActions/456', GADS_LOGIN_CUSTOMER_ID: '999', ...options.env };
   const fetch = async (url, init) => {

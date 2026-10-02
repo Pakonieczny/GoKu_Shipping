@@ -42,10 +42,12 @@ function engine(options = {}) {
   return { ctx, s, requests, ledger };
 }
 
-function health(actions, dataManager) {
+function health(actions, dataManager, goalEvidence = {readOnly: true, status: 'unavailable', receiptConfirmationChecked: false,
+  orderOverlapChecked: false, duplicateCountingVerified: false, campaignsComplete: false, campaigns: [], actions: []}) {
   const start = source.indexOf('async function conversionHealth('), end = source.indexOf('\n}', start) + 2;
-  const ctx = vm.createContext({ Date, ENV: { GADS_CONVERSION_ACTION: 'customers/123/conversionActions/456', GADS_CONVERSION_UPLOAD_API: dataManager ? '' : 'legacy' }, fb: () => null,
+  const ctx = vm.createContext({ Date, ENV: { GADS_CONVERSION_ACTION: 'customers/123/conversionActions/456', GADS_CONVERSION_UPLOAD_API: dataManager ? '' : 'legacy', BRITES_GROWTH_SANDBOX: '1' }, fb: () => null,
     dataManagerService: () => ({ health: async () => dataManager }), _accountTz: async () => 'UTC', _acctDateYmd: () => '2026-09-28',
+    campaignGoalEvidence: async () => clone(goalEvidence),
     gaql: async q => q.includes('FROM conversion_action') ? actions : q.includes('conversion_tracking_setting') ? [{ customer: { conversionTrackingSetting: { conversionTrackingStatus: 'CONVERSION_TRACKING_MANAGED_BY_SELF' } } }] : [{ metrics: { conversions: 3 } }] });
   vm.runInContext(source.slice(start, end), ctx); return ctx.conversionHealth({ force: true });
 }
@@ -80,9 +82,18 @@ async function test(name, fn) { await fn(); passed++; console.log('PASS ' + name
     const row = { orderId: '1', conversionDateTime: '2026-09-20 19:04:05+00:00', value: 120, currency: 'USD', gclid: 'g', refundedTotal: 45.5 };
     assert.equal(DM.eventFor(row).conversionValue, 74.5); assert.equal(DM.fullyRefunded(row), false); assert.equal(DM.fullyRefunded({ ...row, refundedTotal: 120 }), true);
   });
-  await test('diagnostics accept a sparse echo of the one destination, and never another account', () => {
+  await test('diagnostics require the exact account, account type and action before confirming a receipt', () => {
     const target = DM.destination('customers/123/conversionActions/456');
-    assert.equal(DM.summarizeDiagnostics({ requestStatusPerDestination: [{ destination: { operatingAccount: { accountId: '123' } }, requestStatus: 'SUCCESS', eventsIngestionStatus: { recordCount: '1' } }] }, target).state, 'success');
+    const status = destination => ({ requestStatusPerDestination: [{ destination, requestStatus: 'SUCCESS', eventsIngestionStatus: { recordCount: '1' } }] });
+    assert.equal(DM.summarizeDiagnostics(status(target), target).state, 'success');
+    for (const sparse of [
+      { operatingAccount: { accountId: '123' } },
+      { operatingAccount: { accountId: '123' }, productDestinationId: '456' },
+      { operatingAccount: { accountType: 'GOOGLE_ADS', accountId: '123' } }
+    ]) {
+      const unconfirmed = DM.summarizeDiagnostics(status(sparse), target);
+      assert.equal(unconfirmed.state, 'processing'); assert.equal(unconfirmed.status, 'DESTINATION_UNCONFIRMED');
+    }
     assert.equal(DM.summarizeDiagnostics({ requestStatusPerDestination: [{ destination: { operatingAccount: { product: 'GOOGLE_ADS', accountId: '123' }, productDestinationId: '456' }, requestStatus: 'FAILED', errorInfo: { errorCounts: [{ reason: 'INVALID_CLICK_ID', recordCount: '1' }] } }] }, target).state, 'failed');
     const other = DM.summarizeDiagnostics({ requestStatusPerDestination: [{ destination: { operatingAccount: { accountType: 'GOOGLE_ADS', accountId: '999' }, productDestinationId: '456' }, requestStatus: 'SUCCESS', eventsIngestionStatus: { recordCount: '1' } }] }, target);
     assert.equal(other.state, 'processing'); assert.equal(other.status, 'DESTINATION_UNCONFIRMED');
@@ -95,7 +106,7 @@ async function test(name, fn) { await fn(); passed++; console.log('PASS ' + name
     const h = await api.health();
     assert.equal(h.processing, 2); assert.equal(h.staleProcessing, 1); assert.equal(h.consentMissing, 1); assert.match(Object.keys(h.staleReasons)[0], /status request failed: HTTP 403/);
     const out = await health([{ conversionAction: { id: '456', name: 'offline (Upload)', status: 'ENABLED', type: 'UPLOAD_CLICKS', category: 'PURCHASE', primaryForGoal: true } }], { ...h, configured: true, confirmed: 3 });
-    assert.equal(out.validated, false); assert(out.reasons.some(r => /stuck rather than processing: 1 × the status request failed/.test(r))); assert(out.reasons.some(r => /EEA, UK or Switzerland/.test(r)));
+    assert.equal(out.validated, false); assert(out.reasons.some(r => /individual outcomes remain overdue and unconfirmed; investigate status checks: 1 × the status request failed/.test(r))); assert(out.reasons.some(r => /EEA, UK or Switzerland/.test(r)));
     assert.equal(out.healthy, false); assert(out.reasons.some(r => /oldest sent 2026-09-16/.test(r)));
     assert.equal(out.lastUpload.at, now - 3600000); assert.equal(out.lastUpload.confirmed, false);
   });
@@ -111,29 +122,47 @@ async function test(name, fn) { await fn(); passed++; console.log('PASS ' + name
     assert.equal(out.healthy, false); assert(out.reasons.some(r => /1 queued sale\(s\) cannot be sent as stored: 1 × The original conversion timestamp must include its time zone/.test(r)));
     assert(out.reasons.some(r => /2 sale\(s\) have waited more than 3 hours to be sent/.test(r))); assert.equal(out.lastUpload.at, now - 7200000); assert.equal(out.lastUpload.confirmed, false);
   });
-  await test('conversion health allows exactly one primary purchase action, and says which', async () => {
+  await test('purchase roles flag potential overlap while campaign membership and receipt evidence stay separate', async () => {
     const upload = { id: '456', name: 'offline (Upload)', status: 'ENABLED', type: 'UPLOAD_CLICKS', category: 'PURCHASE', primaryForGoal: true, countingType: 'MANY_PER_CLICK', valueSettings: { alwaysUseDefaultValue: false } };
     const web = { id: '789', name: 'Purchase', status: 'ENABLED', type: 'WEBPAGE', category: 'PURCHASE', primaryForGoal: true };
     const pending = { configured: true, confirmed: 0, processing: 2 }, confirmed = { configured: true, confirmed: 4, processing: 0 };
-    // Both primary: every order both record counts twice. Until Google confirms uploads, the tag stays primary.
+    // Two Primary flags alone prove neither shared orders nor shared campaign
+    // goals. Processing confirmation cannot justify switching bidding roles.
     const both = await health([{ conversionAction: upload }, { conversionAction: web }], pending);
-    assert.equal(both.doubleCounting.length, 1); assert.equal(both.healthy, false); assert.equal(both.validated, false);
-    assert(both.reasons.some(r => /Two primary purchase actions count the same sales/.test(r) && /keep "Purchase" \(789\) Primary and set "offline \(Upload\)" \(456\) to Secondary until Sales shows uploads confirmed/.test(r)));
+    assert.equal(both.doubleCounting.length, 1); assert.equal(both.healthy, true); assert.equal(both.validated, false);
+    assert.equal(both.orderOverlapVerified, false); assert.equal(both.goalMembershipVerified, false);
+    assert(both.reasons.some(r => /Multiple purchase actions are Primary/.test(r) && /If they record the same order and are included in the same campaign goal/.test(r)));
+    assert(!both.reasons.some(r => /count the same sales|make .*Primary|set .*Secondary/.test(r)));
     const bothConfirmed = await health([{ conversionAction: upload }, { conversionAction: web }], confirmed);
-    assert.equal(bothConfirmed.healthy, false); assert(bothConfirmed.reasons.some(r => /make "offline \(Upload\)" \(456\) Primary and "Purchase" \(789\) Secondary/.test(r)));
+    assert.equal(bothConfirmed.healthy, true); assert.equal(bothConfirmed.validated, false);
+    assert.equal(bothConfirmed.orderOverlapVerified, false);
+    assert(!bothConfirmed.reasons.some(r => /make .*Primary|set .*Secondary/.test(r)));
     const secondary = await health([{ conversionAction: { ...upload, primaryForGoal: false } }, { conversionAction: web }], pending);
     assert.equal(secondary.doubleCounting.length, 0); assert.equal(secondary.healthy, true);
-    assert(secondary.reasons.some(r => /"offline \(Upload\)" \(456\) is Secondary, so bidding optimizes toward "Purchase" \(789\).*keep it that way until Google confirms uploads/.test(r)));
+    assert(secondary.reasons.some(r => /is Secondary\. Active custom conversion goals can still use secondary actions for bidding/.test(r)));
+    assert.equal(secondary.goalMembershipVerified, false); assert.equal(secondary.orderOverlapVerified, false);
     const ready = await health([{ conversionAction: { ...upload, primaryForGoal: false } }, { conversionAction: web }], confirmed);
-    assert(ready.reasons.some(r => /Uploads are confirmed now: .*make "offline \(Upload\)" \(456\) Primary and "Purchase" \(789\) Secondary/.test(r)));
+    assert.equal(ready.dataManager.confirmed, 4); assert.equal(ready.orderOverlapVerified, false);
+    assert(!ready.reasons.some(r => /make .*Primary|set .*Secondary|bidding optimizes toward/.test(r)));
     const none = await health([{ conversionAction: { ...upload, primaryForGoal: false } }, { conversionAction: { ...web, primaryForGoal: false } }], confirmed);
-    assert.equal(none.healthy, false); assert(none.reasons.some(r => /No purchase action is primary/.test(r)));
+    assert.equal(none.goalMembershipVerified, false); assert.equal(none.orderOverlapVerified, false);
+    assert(!none.reasons.some(r => /No purchase action is primary/.test(r)), 'secondary flags alone cannot exclude custom-goal bidding');
     const unknown = await health([{ conversionAction: { id: '456', name: 'offline (Upload)', status: 'ENABLED', type: 'UPLOAD_CLICKS', category: 'PURCHASE' } }, { conversionAction: web }], pending);
-    assert.equal(unknown.healthy, true); assert.equal(unknown.validated, false); assert.equal(unknown.doubleCounting.length, 0); assert(unknown.reasons.some(r => /did not report which purchase action is primary/.test(r)));
+    assert.equal(unknown.healthy, true); assert.equal(unknown.validated, false); assert.equal(unknown.doubleCounting.length, 0); assert(unknown.reasons.some(r => /did not report all purchase-action roles/.test(r)));
     const tagUnknown = await health([{ conversionAction: { ...upload, primaryForGoal: false } }, { conversionAction: { id: '789', name: 'Purchase', status: 'ENABLED', type: 'WEBPAGE', category: 'PURCHASE' } }], confirmed);
-    assert.equal(tagUnknown.healthy, true); assert.equal(tagUnknown.validated, false); assert(tagUnknown.reasons.some(r => /did not report which purchase action is primary/.test(r))); assert(!tagUnknown.reasons.some(r => /No purchase action is primary|optimizes toward  /.test(r)));
+    assert.equal(tagUnknown.healthy, true); assert.equal(tagUnknown.validated, false); assert(tagUnknown.reasons.some(r => /did not report all purchase-action roles/.test(r))); assert(!tagUnknown.reasons.some(r => /No purchase action is primary|optimizes toward  /.test(r)));
     const alone = await health([{ conversionAction: upload }], confirmed);
     assert.equal(alone.healthy, true); assert.equal(alone.validated, true); assert(!alone.reasons.some(r => /primary/i.test(r)));
+    assert.equal(alone.goalMembershipVerified, false); assert.equal(alone.orderOverlapVerified, false);
+    assert.equal(alone.goalEvidence.receiptConfirmationChecked, false, 'goal settings do not confirm provider processing');
+    const verifiedCustom = {readOnly: true, status: 'verified', campaignsComplete: true,
+      campaigns: [{resourceName: 'customers/123/campaigns/10'}],
+      actions: [{resourceName: 'customers/123/conversionActions/456', optimizationStatus: 'included', eligible: true}],
+      receiptConfirmationChecked: false, orderOverlapChecked: false, duplicateCountingVerified: false};
+    const includedSecondary = await health([{ conversionAction: { ...upload, primaryForGoal: false } }, { conversionAction: web }], confirmed, verifiedCustom);
+    assert.equal(includedSecondary.goalMembershipVerified, true); assert.equal(includedSecondary.orderOverlapVerified, false);
+    assert.equal(includedSecondary.goalEvidence.actions[0].optimizationStatus, 'included');
+    assert(!includedSecondary.reasons.some(r => /make .*Primary|set .*Secondary/.test(r)));
     const fixed = await health([{ conversionAction: { ...upload, countingType: 'ONE_PER_CLICK', valueSettings: { alwaysUseDefaultValue: true } } }]);
     assert.equal(fixed.healthy, false); assert(fixed.reasons.some(r => /default value/.test(r))); assert(fixed.reasons.some(r => /one conversion per click/.test(r)));
   });

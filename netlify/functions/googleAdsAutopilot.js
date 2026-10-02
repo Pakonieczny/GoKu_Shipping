@@ -1270,9 +1270,15 @@ async function conversionHealth({ force } = {}) {
     if (ca.alwaysUseDefaultValue === true) { out.healthy = false; out.validated = false; out.reasons.push("The configured conversion action always uses its default value, so Google replaces every order's real value. Set it to use a different value for each conversion."); }
     if (ca.category && ca.category !== "PURCHASE") out.reasons.push("The configured conversion action's category is " + ca.category + ", so campaign purchase-goal membership needs verification.");
     if (ca.countingType === "ONE_PER_CLICK") out.reasons.push("The configured conversion action counts one conversion per click. Review whether repeat purchases should count before changing counting settings.");
-    if (ca.primaryForGoal === false) out.reasons.push(label(ca) + " is Secondary. Active custom conversion goals can still use secondary actions for bidding; campaign goal membership has not been verified. Check that membership before changing roles.");
-    if (out.doubleCounting.length) { out.validated = false; out.reasons.push("Multiple purchase actions are Primary: " + label(ca) + " and " + named + ". If they record the same order and are included in the same campaign goal, it can be counted twice. Order overlap and campaign goals have not been verified; check them before changing action roles."); }
-    else if (ca.primaryForGoal == null || purchase.some(a => a.primaryForGoal == null)) { out.validated = false; out.reasons.push("Google did not report all purchase-action roles. Verify order overlap and campaign goal membership before choosing the action used for bidding."); }
+    if (ca.primaryForGoal === false) out.reasons.push(label(ca) + " is Secondary. Active custom conversion goals can still use secondary actions for bidding; " + (out.goalMembershipVerified
+      ? "campaign goal membership has been checked in the read-only goal audit. Order overlap remains unverified; inspect that audit and order overlap before changing roles."
+      : "campaign goal membership has not been verified. Check that membership and order overlap before changing roles."));
+    if (out.doubleCounting.length) { out.validated = false; out.reasons.push("Multiple purchase actions are Primary: " + label(ca) + " and " + named + ". If they record the same order and are included in the same campaign goal, it can be counted twice. " + (out.goalMembershipVerified
+      ? "Campaign goal membership has been checked in the read-only goal audit. Order overlap remains unverified; inspect exact campaign/action inclusion and order overlap before changing action roles."
+      : "Order overlap and campaign goals have not been verified; check them before changing action roles.")); }
+    else if (ca.primaryForGoal == null || purchase.some(a => a.primaryForGoal == null)) { out.validated = false; out.reasons.push("Google did not report all purchase-action roles. " + (out.goalMembershipVerified
+      ? "Campaign goal membership has been checked in the read-only goal audit. Order overlap remains unverified; inspect that audit before choosing the action used for bidding."
+      : "Verify order overlap and campaign goal membership before choosing the action used for bidding.")); }
   }
   if (!out.actionConfigured) out.reasons.push("GADS_CONVERSION_ACTION env var is not set");
   if (out.actionConfigured && out.actionsChecked && !out.configuredAction) out.reasons.push("The configured conversion action was not found in this account.");

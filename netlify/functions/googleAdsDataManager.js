@@ -4,6 +4,7 @@
 // only exact-destination diagnostics can mark the original order as uploaded.
 // https://developers.google.com/data-manager/api/devguides/events/google-ads/offline/upgrade/field-mappings
 const crypto = require('node:crypto');
+const { rowFingerprint } = require('./_britesGrowthReceiptReconciliation');
 const CREDENTIAL_DOC = 'config/googleAdsDataManager';
 function credentialKey(env){if(!env.FIREBASE_PRIVATE_KEY)throw Error('Server encryption key unavailable.');return Buffer.from(crypto.hkdfSync('sha256',Buffer.from(env.FIREBASE_PRIVATE_KEY.replace(/\\n/g,'\n')),Buffer.from(env.FIREBASE_PROJECT_ID||''),Buffer.from('Brites Data Manager credentials v1'),32));}
 function sealCredentials(value,env){const iv=crypto.randomBytes(12),cipher=crypto.createCipheriv('aes-256-gcm',credentialKey(env),iv);cipher.setAAD(Buffer.from(CREDENTIAL_DOC));const encrypted=Buffer.concat([cipher.update(JSON.stringify(value),'utf8'),cipher.final()]);return {version:1,iv:iv.toString('base64'),tag:cipher.getAuthTag().toString('base64'),ciphertext:encrypted.toString('base64')};}
@@ -155,17 +156,38 @@ function errorDetail(data, status) {
   // Receipt-only observation, shared by uploads and the health screen. Never
   // builds a new event or calls events:ingest. A transactional lease prevents
   // overlapping refreshes from confirming and auditing the same receipt twice.
+  // Pin the complete original row, including monetary, click, refund, consent
+  // and order fields. Only the two lease fields are changed by this observer
+  // before the provider read; every other concurrent change invalidates it.
+  const receiptRowFingerprint = row => {
+    const original = { ...row };
+    delete original.dmReconcileLease;
+    delete original.dmReconcileLeaseUntil;
+    return rowFingerprint(original);
+  };
+  async function uniqueSavedReceipt(tx, doc, requestId) {
+    // Include terminal rows: a confirmed/failed duplicate still means the
+    // provider receipt cannot safely be assigned to this one saved order.
+    const matches = await tx.get(fb().db.collection(COL.convQueue).where('dmRequestId', '==', requestId).limit(2));
+    if (!Array.isArray(matches?.docs) || matches.docs.length !== 1) return false;
+    const match = matches.docs[0];
+    return match?.id === doc.id && match.exists !== false && typeof match.data === 'function' && match.data()?.dmRequestId === requestId;
+  }
   async function checkReceipt(doc, auth, { force = false, timeoutMs = 20000, deadlineAt = Infinity } = {}) {
     const f = fb(), lease = crypto.randomUUID();
-    const claimed = await f.db.runTransaction(async tx => {
+    const claim = await f.db.runTransaction(async tx => {
       const snapshot = await tx.get(doc.ref), row = snapshot.exists ? snapshot.data() : null;
       const stamp = now();
       if (!row || !row.dmRequestId || row.uploaded || ['success', 'failed'].includes(row.dmState) || row.dmReconcileLeaseUntil > stamp ||
           (!force && stamp < Number(row.dmNextCheckAt || 0)) || (force && row.dmCheckedAt && stamp - row.dmCheckedAt < 60000)) return null;
+      let fingerprint;
+      try { fingerprint = receiptRowFingerprint(row); } catch { return null; }
+      if (!await uniqueSavedReceipt(tx, doc, row.dmRequestId)) return null;
       tx.update(doc.ref, { dmReconcileLease: lease, dmReconcileLeaseUntil: stamp + 90000 });
-      return row;
+      return { row, fingerprint };
     });
-    if (!claimed) return { state: 'skipped' };
+    if (!claim) return { state: 'skipped' };
+    const { row: claimed, fingerprint: originalFingerprint } = claim;
     // Time spent claiming a contended receipt also consumes the refresh budget.
     // Release only our own lease if no request can start before the deadline.
     if (now() >= deadlineAt) {
@@ -189,7 +211,11 @@ function errorDetail(data, status) {
     const saved = await f.db.runTransaction(async tx => {
       const current = await tx.get(doc.ref), row = current.exists ? current.data() : null;
       if (!row || row.dmReconcileLease !== lease || row.dmRequestId !== claimed.dmRequestId || row.uploaded || ['success', 'failed'].includes(row.dmState) ||
-          JSON.stringify(row.dmDestination) !== JSON.stringify(claimed.dmDestination)) return false;
+          !(row.dmReconcileLeaseUntil > now())) return false;
+      try {
+        if (rowFingerprint(row.dmDestination) !== rowFingerprint(claimed.dmDestination) || receiptRowFingerprint(row) !== originalFingerprint) return false;
+      } catch { return false; }
+      if (!await uniqueSavedReceipt(tx, doc, claimed.dmRequestId)) return false;
       tx.update(doc.ref, patch); return true;
     });
     if (saved && status.state === 'success') {

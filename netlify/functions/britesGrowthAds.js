@@ -10,7 +10,7 @@ export const READ_ACTIONS = Object.freeze([
   'playbookVersions', 'designStudioStatus', 'campaignOptions', 'servingCheck',
   'adGroups', 'adGroupDetail', 'adDesignSavedWorkspaces', 'adDesignStatus',
   'creativeStatus', 'campaignVersions', 'campaignVersionDetail', 'genStatus',
-  'diagRunStatus', 'growthResearchStatus', 'growthResearchDossiers', 'campaignGoalEvidence', 'receiptDiagnostics', 'productDemandEvidence', 'growthProductDemand'
+  'diagRunStatus', 'growthResearchStatus', 'growthResearchDossiers', 'campaignGoalEvidence', 'receiptDiagnostics', 'receiptReconciliationPreview', 'productDemandEvidence', 'growthProductDemand'
 ]);
 const allowed = new Set(READ_ACTIONS);
 const demandReaders = new WeakMap();
@@ -53,6 +53,10 @@ export function createHandler(deps = {}) {
     const module = await import('./_britesGrowthReceiptObserver.js');
     return (module.default || module).createReceiptObserver({env, db: core.makeDb(env)}).read(options);
   });
+  const readReceiptPreview = deps.readReceiptPreview || (async (env, options) => {
+    const module = await import('./_britesGrowthReceiptReleasePreview.js');
+    return (module.default || module).createReceiptReleasePreview({env, db: core.makeDb(env)}).read(options);
+  });
   return async req => {
     const h = { 'Content-Type': 'application/json', 'Cache-Control': 'no-store',
       'X-Content-Type-Options': 'nosniff' };
@@ -60,10 +64,13 @@ export function createHandler(deps = {}) {
     if (req.method !== 'POST') return json({ error: 'Use POST to read the private Ads sandbox.' }, 405);
     const origin = req.headers.get('Origin');
     if (origin && origin !== new URL(req.url).origin) return json({ error: 'Use the sandbox website to open its private Ads data.' }, 403);
-    const env = getEnv();
-    if (env.BRITES_GROWTH_SANDBOX !== '1' || (env.BRITES_GROWTH_NAMESPACE && env.BRITES_GROWTH_NAMESPACE !== 'Brites_Growth_Sandbox')) {
+    const rawEnv = getEnv();
+    if (rawEnv.BRITES_GROWTH_SANDBOX !== '1' || (rawEnv.BRITES_GROWTH_NAMESPACE && rawEnv.BRITES_GROWTH_NAMESPACE !== 'Brites_Growth_Sandbox')) {
       return json({ error: 'This read-only Ads bridge is available only in the isolated growth sandbox.' }, 503);
     }
+    // Netlify build variables need not exist in the function runtime. Resolve
+    // the same default as the research service, after rejecting any live scope.
+    const env = {...rawEnv, BRITES_GROWTH_NAMESPACE: core.namespace(rawEnv)};
     const supplied = req.headers.get('X-Growth-Key') || req.headers.get('X-Edit-Passcode');
     let authenticated = core.sameSecret(supplied, env.BRITES_GROWTH_ADMIN_KEY);
     // The existing owner passcode remains a read-only sign-in option. No new
@@ -84,6 +91,10 @@ export function createHandler(deps = {}) {
       if (action === 'receiptDiagnostics') {
         if (Object.keys(body).some(key => !['action', 'limit', 'maxMs'].includes(key))) return json({error: 'Receipt diagnostics accept only bounded batch size and read budget. Request IDs come from saved server receipts.'}, 400);
         return json({...await readReceipts(env, fields(body, ['limit', 'maxMs'])), sandboxReadOnly: true});
+      }
+      if (action === 'receiptReconciliationPreview') {
+        if (Object.keys(body).some(key => !['action', 'limit', 'maxMs'].includes(key))) return json({error: 'Receipt repair previews accept only bounded read limits. Rows and diagnostics are loaded and verified by the server.'}, 400);
+        return json({...await readReceiptPreview(env, fields(body, ['limit', 'maxMs'])), sandboxReadOnly: true});
       }
       if (action === 'growthProductDemand') {
         if (!Array.isArray(body.productIds) || body.productIds.length > 20) return json({ error: 'Request at most 20 exact product IDs.' }, 400);

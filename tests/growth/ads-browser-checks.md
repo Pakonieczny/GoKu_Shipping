@@ -19,3 +19,5 @@ node tests/growth/ads-saved-workspace.cjs
 node tests/growth/ads-demand-evidence.cjs
 node tests/adwords/ad-design-research.cjs
 ```
+
+Click **Preview receipt status repairs** in the simulated fixture. It must show the proposed status-only count, unchanged records and recheck requirement; it must not provide a production apply control or treat a receipt as purchase attribution. The protected real action is tested separately using actual fresh receipts and unchanged production summaries.

@@ -73,7 +73,10 @@ const READ_ACTIONS = new Set(["adDesignSubmissionStatus", "dashboard", "pmaxReco
 READ_ACTIONS.add("campaignOptions"); // the Campaign options panel: GAQL reads and saved drafts only
 READ_ACTIONS.add('growthResearchStatus');
 READ_ACTIONS.add('growthResearchDossiers');
-function isReadAction(a, body) { return READ_ACTIONS.has(a) || (a === "opportunities" && !(body && body.force)); }
+function isReadAction(a, body) {
+  if (a === "conversionHealth" && body && body.force) return false;
+  return READ_ACTIONS.has(a) || (a === "opportunities" && !(body && body.force));
+}
 // true = allowed · "unset" = a change was requested while no passcode is configured · false = wrong passcode
 async function authed(event, body, resolved) {
   const pass = (resolved || await EP.resolve()).value;

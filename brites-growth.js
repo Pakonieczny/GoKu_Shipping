@@ -54,6 +54,12 @@
     parent.appendChild(node('p','Unreported terms or missing Planner values do not establish zero demand.','status'));
   }
   function parseCsv(text){const rows=[];let row=[],cell='',q=false;for(let i=0;i<text.length;i++){const c=text[i];if(c==='"'){if(q&&text[i+1]==='"'){cell+='"';i++;}else q=!q;}else if(c===','&&!q){row.push(cell);cell='';}else if((c==='\n'||c==='\r')&&!q){if(c==='\r'&&text[i+1]==='\n')i++;row.push(cell);if(row.some(Boolean))rows.push(row);row=[];cell='';}else cell+=c;}row.push(cell);if(row.some(Boolean))rows.push(row);if(!rows.length)return [];const headers=rows.shift().map(h=>h.replace(/^\uFEFF/,'').trim());return rows.map(r=>Object.fromEntries(headers.map((h,i)=>[h,r[i]||''])));}
+  function receiptPreviewFor(result){
+    if(result?.readOnly!==true||result.receiptOnly!==true||result.dryRun!==true||result.queueUpdated!==false||result.individualOrdersUpdated!==0||result.individualOrderAttributionConfirmed!==false||result.providerAggregateUsedForConfirmation!==false||result.productionApplyAvailable!==false)throw Error('A read-only status repair preview could not be verified.');
+    const count=value=>Number.isSafeInteger(value)&&value>=0?value:null;
+    const fields=['scannedRows','selectedReceipts','providerReceiptsConfirmed','proposedRepairs','blockedRows'];
+    return Object.fromEntries(fields.map(name=>[name,count(result[name])]));
+  }
   async function mount(root,opts={}){
     const workspace=node('main',null,'workspace');root.replaceChildren(workspace);let data=null,filter='',selected=null,detailRequest=0;
     const header=node('header'),intro=node('div');intro.append(node('span','Shared product knowledge','eyebrow'),node('h1','Research that reaches the buyer'),node('p','Product evidence, competitor offers and recommendations for ads, buyer searches and the gift concierge.','sub'));
@@ -73,6 +79,17 @@
           if(result.blocked||result.stopped)report.appendChild(node('p','Observation '+(result.blocked?'blocked':'bounded')+': '+(result.code||result.stopped||'unavailable')+'.','status'));
           for(const receipt of result.receipts||[])report.appendChild(node('p','Receipt '+receipt.receiptKey+' · '+receipt.outcome+' · '+receipt.code,'sub'));
         }catch(error){report.replaceChildren(node('h2','Saved receipt diagnostics'),node('p','Receipt diagnostics are unavailable: '+error.message,'error'));}finally{check.disabled=false;}
+      };
+    }
+    if(typeof opts.receiptPreviewReader==='function'){
+      const check=node('button','Preview receipt status repairs','btn');check.type='button';controls.appendChild(check);
+      const report=node('section',null,'box');report.hidden=true;report.setAttribute('aria-label','Read-only receipt repair preview');workspace.appendChild(report);
+      check.onclick=async()=>{check.disabled=true;report.hidden=false;report.replaceChildren(node('h2','Receipt status repair preview'),node('p','Checking fresh receipts and saved-row consistency…','status'));
+        try{const result=await opts.receiptPreviewReader(),summary=receiptPreviewFor(result);
+          report.replaceChildren(node('h2','Receipt status repair preview'),node('p','Preview only. No conversion or order records were changed. Provider receipt confirmation does not verify purchase attribution, deduplication or bidding goals.','sub'));
+          for(const [label,field]of [['Saved rows inspected','scannedRows'],['Unique receipts checked','selectedReceipts'],['Provider receipts confirmed','providerReceiptsConfirmed'],['Proposed status repairs','proposedRepairs'],['Rows requiring further evidence','blockedRows']])report.appendChild(node('p',label+': '+(summary[field]??'unavailable')));
+          report.appendChild(node('p','Fresh receipts and unchanged rows must be checked again before any status repair is applied.','status'));
+        }catch(error){report.replaceChildren(node('h2','Receipt status repair preview'),node('p','A safe status repair preview is unavailable. No records were changed.','error'));}finally{check.disabled=false;}
       };
     }
     const detail=node('article',null,'box dossier'),rows=node('div',null,'rows');detail.setAttribute('aria-label','Selected product research');
@@ -124,5 +141,5 @@
     auth.onsubmit=async e=>{e.preventDefault();key=pass.value.trim();pass.value='';try{sessionStorage.setItem('brites-growth-key',key);}catch(x){}await load();};refresh.onclick=load;if(opts.request||key)await load();else{status.textContent='Sign in to see private progress.';refresh.disabled=true;}
     return {refresh:load};
   }
-  global.BritesGrowth={mount,parseCsv,productId,selectDossier,selectProductIssues,issueHolds,briefFor,demandBriefFor,safeLink};if(document.querySelector('#growth-root'))mount(document.querySelector('#growth-root'));
+  global.BritesGrowth={mount,parseCsv,productId,selectDossier,selectProductIssues,issueHolds,briefFor,demandBriefFor,receiptPreviewFor,safeLink};if(document.querySelector('#growth-root'))mount(document.querySelector('#growth-root'));
 })(window);

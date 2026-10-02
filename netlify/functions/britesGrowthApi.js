@@ -3,6 +3,8 @@ import demandStore from './_britesGrowthDemandStore.js';
 import controllerStore from './_britesGrowthController.js';
 import receiptSandboxCheck from './_britesGrowthReceiptSandboxCheck.js';
 import etsyCacheReadOnly from './_britesGrowthEtsyCacheReadOnly.js';
+import historicalLookup from './_britesGrowthHistoricalLookup.js';
+import conciergeDiagnostics from './_britesConciergeDiagnostics.js';
 
 function environment(){const names=['FIREBASE_PROJECT_ID','FIREBASE_CLIENT_EMAIL','FIREBASE_PRIVATE_KEY','SHOPIFY_STORE','SHOPIFY_CLIENT_ID','SHOPIFY_CLIENT_SECRET','BRITES_GROWTH_NAMESPACE','BRITES_GROWTH_ADMIN_KEY'];return Object.fromEntries(names.map(k=>[k,Netlify.env.get(k)]));}
 function headers(req){const origin=req.headers.get('Origin');const allowed=origin&&(/https:\/\/(?:www\.)?britesjewelry\.com$/.test(origin)||origin===new URL(req.url).origin);return {'Content-Type':'application/json','Cache-Control':'no-store','Vary':'Origin',...(allowed?{'Access-Control-Allow-Origin':origin,'Access-Control-Allow-Headers':'Content-Type, X-Growth-Key, X-Edit-Passcode','Access-Control-Allow-Methods':'GET, POST, OPTIONS'}:{})};}
@@ -21,7 +23,12 @@ export default async (req,context) => {
     if(req.method==='GET'){
       if(op==='status')return json(await service.status());
       if(op==='etsy-cache-state')return json(await etsyCacheReadOnly.read({db}));
+      if(op==='concierge-diagnostics'){
+        if(service.namespace!=='Brites_Growth_Sandbox')return json({error:'The isolated sandbox namespace is required.'},403);
+        return json(await conciergeDiagnostics.read({db,namespace:service.namespace,limit:20}));
+      }
       if(op==='receipt-sandbox-check')return json({error:'Use POST for the isolated storage check.'},405);
+      if(op==='historical-lookup')return json({error:'Use POST for the bounded historical lookup.'},405);
       if(op==='catalogue-export'){const cursor=url.searchParams.get('after')||'';if(cursor&&!/^[a-f0-9]{40}$/.test(cursor))return json({error:'Invalid catalogue cursor.'},400);let query=service.col('Products').orderBy('__name__').limit(200);if(cursor)query=query.startAfter(cursor);const snap=await query.get();return json({products:snap.docs.map(d=>d.data()),after:snap.size===200?snap.docs[snap.docs.length-1].id:null});}
       if(op==='catalogue'){const r=await shopify.search(url.searchParams.get('q')||'necklace');await service.saveProducts(r.products);const issues=await service.productIssues(r.products.map(p=>p.id));return json({products:core.applyProductIssues(r.products,issues).map(core.productProjection),pageInfo:r.pageInfo,live:true});}
       if(op==='product'){const p=await shopify.byHandle(url.searchParams.get('handle'));if(!p)return json({error:'This piece is not currently published.'},404);await service.saveProducts([p]);const issues=await service.productIssues([p.id]);return json({product:core.productProjection(core.applyProductIssues([p],issues)[0]),live:true});}
@@ -33,6 +40,12 @@ export default async (req,context) => {
     }
     if(req.method!=='POST')return json({error:'Method not allowed.'},405);
     const raw=await req.text();if(raw.length>900000)return json({error:'Request is too large.'},413);const body=JSON.parse(raw||'{}');
+    if(!body||typeof body!=='object'||Array.isArray(body))return json({error:'Send a JSON object.'},400);
+    if(op==='historical-lookup'){
+      if(service.namespace!=='Brites_Growth_Sandbox')return json({error:'The isolated sandbox namespace is required.'},403);
+      if(Date.now()>=core.STOP_AT)return json({stopped:true},410);
+      return json(await historicalLookup.createHistoricalLookup({db,namespace:service.namespace,cursorSecret:env.BRITES_GROWTH_ADMIN_KEY}).read(body));
+    }
     if(op==='import')return json(await service.importRanks(body.rows));
     if(op==='match'){
       if(!Number.isInteger(body.rank)||body.rank<1||body.rank>100)return json({error:'A top-ranked entry is required.'},400);

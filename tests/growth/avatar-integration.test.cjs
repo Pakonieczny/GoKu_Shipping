@@ -73,7 +73,7 @@ function response(data, status = 200) {return {ok: status >= 200 && status < 300
 
 function makeWidget(t, options = {}) {
   const env = makeDom(), {window, document} = env;
-  const visibility = mediaAndVisibility(window), network = [], instances = [], utterances = [], devices = [], speech = {cancels: 0};
+  const visibility = mediaAndVisibility(window), network = [], instances = [], utterances = [], devices = [], speech = {cancels: 0, pauses: 0};
   const script = document.createElement('script'); script.src = 'https://growth-sandbox.example/brites-concierge.js'; script.dataset.sandbox = 'true';
   Object.defineProperty(document, 'currentScript', {configurable: true, get: () => script});
   if (options.saved) window.sessionStorage.setItem('brites-concierge-v1', JSON.stringify(options.saved));
@@ -82,8 +82,8 @@ function makeWidget(t, options = {}) {
   window.SpeechRecognition = function () {forbidden('SpeechRecognition');};
   window.webkitSpeechRecognition = function () {forbidden('webkitSpeechRecognition');};
   if (!options.noSpeech) {
-    window.SpeechSynthesisUtterance = class {constructor(text) {this.text = text;}};
-    window.speechSynthesis = {cancel() {speech.cancels++;}, speak(utterance) {utterances.push(utterance);}};
+    window.SpeechSynthesisUtterance = class {constructor(text) {if(options.utteranceThrows)throw Error('Synthetic voice constructor failure');this.text = text;}};
+    window.speechSynthesis = {cancel() {speech.cancels++;if(options.cancelThrows)throw Error('Synthetic cancellation failure');},pause(){speech.pauses++;},speak(utterance) {utterances.push(utterance);if(options.speakStartsThenThrows)utterance.onstart();if(options.speakThrows||options.speakStartsThenThrows)throw Error('Synthetic voice synthesis failure');}};
   }
   if (!options.noAvatarGlobal) window.BritesConciergeAvatar = {
     create(config) {
@@ -316,6 +316,44 @@ test('late search results after dismissal stay hidden without stealing focus or 
   h.window.BritesConcierge.open(); assert.equal(h.panel.hidden, false); assert.equal(h.root.querySelectorAll('.card').length, 1);
 });
 
+for(const completion of ['success','failure'])test('an open-widget '+completion+' preserves intentional outside-shop focus',async t=>{
+  const reply=deferred(),h=makeWidget(t,{answer:()=>reply.promise});h.open();const pending=h.ask();assert.equal(h.input.disabled,true);
+  const outside=h.document.getElementById('shop-control');outside.focus();assert.equal(h.document.activeElement,outside);
+  reply.resolve(completion==='success'?response(fixtureAnswer):response({error:'Synthetic service recovery'},503));await pending;
+  assert.equal(h.panel.hidden,false);assert.equal(h.document.activeElement,outside);assert.equal(h.root.activeElement,null);assert.equal(h.input.disabled,false);assert.equal(h.errors.length,0);assert.equal(h.utterances.length,0);
+  assert.equal(h.root.querySelectorAll('.card').length,completion==='success'?1:0);
+});
+test('search completion preserves keyboard focus on another concierge control',async t=>{
+  const reply=deferred(),h=makeWidget(t,{answer:()=>reply.promise});h.open();const pending=h.ask();const read=h.button('Read aloud');read.focus();
+  reply.resolve(response(fixtureAnswer));await pending;assert.equal(h.root.activeElement,read);assert.equal(h.input.disabled,false);assert.equal(h.utterances.length,0);
+});
+test('search completion restores the composer when disabling it caused blur and no shopper focus move',async t=>{
+  const reply=deferred(),h=makeWidget(t,{answer:()=>reply.promise});h.open();const pending=h.ask();
+  // jsdom cannot blur an already disabled element. Emulate the browser's
+  // automatic blur without a new user-initiated focusin on another control.
+  h.input.disabled=false;h.input.blur();h.input.disabled=true;assert.equal(h.document.activeElement,h.document.body);
+  reply.resolve(response(fixtureAnswer));await pending;assert.equal(h.root.activeElement,h.input);assert.equal(h.input.disabled,false);
+});
+test('a submit without composer focus ownership does not take shop focus on completion',async t=>{
+  const h=makeWidget(t);h.open();const outside=h.document.getElementById('shop-control');outside.focus();await h.ask();assert.equal(h.document.activeElement,outside);assert.equal(h.root.querySelectorAll('.card').length,1);
+});
+test('late failed search after dismissal keeps the panel hidden and ordinary shop focus intact',async t=>{
+  const reply=deferred(),h=makeWidget(t,{answer:()=>reply.promise});h.open();const pending=h.ask();h.window.BritesConcierge.close();const outside=h.document.getElementById('shop-control');outside.focus();
+  reply.resolve(response({error:'Synthetic service recovery'},503));await pending;assert.equal(h.document.activeElement,outside);assert.equal(h.panel.hidden,true);assert.equal(h.avatar.visible,false);assert.equal(h.utterances.length,0);
+});
+
+for(const failure of ['utteranceThrows','speakThrows','speakStartsThenThrows'])test(failure+' remains inside optional narration and preserves text shopping',async t=>{
+  const h=makeWidget(t,{[failure]:true});h.open();await h.ask();assert.equal(h.utterances.length,0);h.button('Read aloud').click();
+  assert.equal(h.errors.length,0);assert.match(h.root.querySelector('.status').textContent,/Read aloud is unavailable/);assert.equal(h.avatar.level,0);assert.equal(h.avatar.state,'idle');assert.equal(h.input.disabled,false);assert.equal(h.button('Send').disabled,false);
+  const utterance=h.utterances[0];if(utterance){utterance.onstart();utterance.onboundary();assert.equal(h.avatar.state,'idle');assert.equal(h.avatar.level,0);}
+  await h.ask('Another bunny necklace');assert.equal(h.errors.length,0);assert.equal(h.root.querySelectorAll('.card').length,2);assert.equal(h.avatar.state,'success');
+});
+test('synchronous speech cancellation failure tries pause and cannot break typing, search or dismissal',async t=>{
+  const h=makeWidget(t,{cancelThrows:true});h.open();h.input.value='A bunny gift';h.input.dispatchEvent(new h.window.Event('input'));assert.equal(h.avatar.state,'listening');await h.ask();assert.equal(h.errors.length,0);
+  h.button('Read aloud').click();h.utterances[0].onstart();assert.equal(h.avatar.state,'speaking');h.window.BritesConcierge.close();assert.equal(h.panel.hidden,true);assert.equal(h.avatar.visible,false);assert.equal(h.avatar.level,0);assert.ok(h.speech.pauses>0);assert.equal(h.errors.length,0);
+  h.utterances[0].onstart();assert.notEqual(h.avatar.state,'speaking');h.window.BritesConcierge.open();await h.ask('Another design');assert.equal(h.errors.length,0);assert.equal(h.button('Send').disabled,false);
+});
+
 test('avatar still loading does not block search, variant review, or sandbox cart', async t => {
   const ready = deferred(); const h = makeWidget(t, {ready: ready.promise}); h.open(); await h.ask(); await h.add();
   assert.equal(h.root.querySelectorAll('.card').length, 1); assert.equal(h.avatar.state, 'success');
@@ -352,6 +390,13 @@ test('policy answers preserve visible product ordinals and recheck them on the n
   await h.ask('Can I return it?');assert.equal(h.root.querySelector('.status').textContent,'Shop policy checked just now.');
   const saved=JSON.parse(h.window.sessionStorage.getItem('brites-concierge-v1'));assert(saved);assert.deepEqual(saved.productHandles,handles);
   await h.ask('Open the first piece');const requests=h.network.filter(n=>n.body?.message);assert.deepEqual(requests.at(-1).body.context.productHandles,handles);assert.equal(h.errors.length,0);
+});
+
+for(const boundary of ['checkoutBoundary','budgetClarification'])test(boundary+' informational replies preserve visible ordinals without claiming a new live selection',async t=>{
+  const boundaryMessage=boundary==='checkoutBoundary'?'Pay now using my saved card':'My total budget for three necklaces is $150',h=makeWidget(t,{answer:body=>response(body.message===boundaryMessage?{schema:1,reply:boundary==='checkoutBoundary'?'Complete payment yourself through the secure checkout.':'The overall budget has not been applied as an item limit.',question:null,preferences:fixtureAnswer.preferences,products:[],meanings:[],actions:[],[boundary]:true,live:false}:fixtureAnswer)});
+  h.open();await h.ask();const handles=fixtureAnswer.products.map(p=>p.handle),card=h.root.querySelector('.card');await h.ask(boundaryMessage);
+  assert.deepEqual(JSON.parse(h.window.sessionStorage.getItem('brites-concierge-v1')).productHandles,handles);assert.equal(h.root.querySelector('.card'),card);assert.doesNotMatch(h.root.querySelector('.status').textContent,/checked just now|live selection/i);assert.equal(h.utterances.length,0);assert.equal(h.network.filter(n=>n.url.pathname==='/api/growth/product').length,0);
+  await h.ask('Open the first piece');assert.deepEqual(h.network.filter(n=>n.body?.message).at(-1).body.context.productHandles,handles);assert.equal(h.errors.length,0);
 });
 
 test('request errors show a recoverable expression without breaking ordinary shop controls', async t => {

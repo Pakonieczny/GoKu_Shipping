@@ -66,6 +66,12 @@ class Db { collection(){return new Query();} doc(){return new Doc();} async runT
   eq((await call({action:'dashboard'},{'X-Growth-Key':'wrong'})).status,401);
   eq((await call({action:'dashboard'},{'X-Growth-Key':'existing-owner-passcode'})).status,200,'the existing owner passcode works without creating a new credential');
   eq((await call({action:'dashboard'},{Origin:'https://other.example'})).status,403);
+  const defaultScope={BRITES_GROWTH_SANDBOX:'1',BRITES_GROWTH_ADMIN_KEY:'test-operator-key'};let resolvedScope;
+  const defaultPreview=createHandler({environment:()=>defaultScope,readReceiptPreview:async(e)=>{resolvedScope=e.BRITES_GROWTH_NAMESPACE;return {readOnly:true};}});
+  const previewRequest=()=>new Request('https://sandbox.example/api/growth-ads',{method:'POST',headers:{'Content-Type':'application/json','X-Growth-Key':'test-operator-key'},body:JSON.stringify({action:'receiptReconciliationPreview'})});
+  eq((await defaultPreview(previewRequest())).status,200);eq(resolvedScope,'Brites_Growth_Sandbox','runtime namespace resolves the service default only after sandbox authorization');eq(defaultScope.BRITES_GROWTH_NAMESPACE,undefined,'caller environment is not mutated');
+  defaultScope.BRITES_GROWTH_NAMESPACE='Brites_Growth_Live';resolvedScope=null;eq((await defaultPreview(previewRequest())).status,503);eq(resolvedScope,null,'live namespace never reaches preview');
+  defaultScope.BRITES_GROWTH_NAMESPACE='';defaultScope.BRITES_GROWTH_SANDBOX='0';eq((await defaultPreview(previewRequest())).status,503,'missing explicit sandbox flag cannot use the default');
   env.BRITES_GROWTH_NAMESPACE='Brites_Growth_Live';eq((await call({action:'dashboard'})).status,503,'sandbox adapter refuses the live namespace');env.BRITES_GROWTH_NAMESPACE='Brites_Growth_Sandbox';
   env.BRITES_GROWTH_SANDBOX='0';eq((await call({action:'dashboard'})).status,503,'sandbox mode is mandatory');
   ok(!READ_ACTIONS.includes('syncConversions')&&!READ_ACTIONS.includes('startAdDesign'),'write/AI routes are absent from the compiled allowlist');

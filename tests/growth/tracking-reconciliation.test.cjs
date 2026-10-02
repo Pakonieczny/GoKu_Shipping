@@ -42,7 +42,7 @@ function fixture(initial = [receipt()], options = {}) {
       transactionCalls.push(sequence);
       if (options.transactionError?.(sequence)) throw Error('Synthetic transaction failure');
       if (options.transactionAdvance) clock += options.transactionAdvance(sequence);
-      const value = await fn({ get: async r => snapshot(r.id), update: (r, patch) => writes.push([r.id, clone(patch)]) });
+      const value = await fn({ get: async r => typeof r.get === 'function' ? r.get() : snapshot(r.id), update: (r, patch) => writes.push([r.id, clone(patch)]) });
       writes.forEach(([id, patch]) => rows.set(id, { ...rows.get(id), ...patch }));
       return value;
     });

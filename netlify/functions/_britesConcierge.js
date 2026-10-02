@@ -10,6 +10,8 @@ const COUNTRIES=[
   ['Australia',/\baustralia\b/i],['New Zealand',/\bnew zealand\b/i],['Ireland',/\bireland\b/i],['Netherlands',/\b(?:netherlands|holland)\b/i],['Norway',/\bnorway\b/i],['Denmark',/\bdenmark\b/i],['Switzerland',/\bswitzerland\b/i],['Mexico',/\bmexico\b/i],['India',/\bindia\b/i],['China',/\bchina\b/i],['Singapore',/\bsingapore\b/i]
 ];
 const PRIVATE_REQUEST=/\b(?:api keys?|credentials?|passwords?|system prompt|private (?:records|data)|owner data|repository|source code|sales history|customer (?:records|data))\b/i;
+const SHIPPING_SCOPE=/\b(?:ships?\s+(?:worldwide|abroad|internationally|overseas|anywhere|everywhere|to|my|this|it)|(?:worldwide|international|overseas)\s+shipping|(?:do|can|will|would)\s+you\s+ship)\b/i;
+const CUSTOMS_REQUEST=/\b(?:customs(?:[ -]+dut(?:y|ies))?|import[ -]+(?:dut(?:y|ies)|tax(?:es)?))\b/i;
 const tidy=(value,max=3000)=>String(value??'').replace(/\u0000/g,'').trim().slice(0,max);
 function decodeHtml(value){const entities={amp:'&',lt:'<',gt:'>',quot:'"',apos:"'",nbsp:' ',ndash:'–',mdash:'—',rsquo:"'",lsquo:"'",ldquo:'"',rdquo:'"'};return value.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi,(whole,code)=>{if(code[0]!=='#')return entities[code.toLowerCase()]??whole;const n=code[1].toLowerCase()==='x'?parseInt(code.slice(2),16):parseInt(code.slice(1),10);return Number.isInteger(n)&&n>31&&n<=0x10ffff&&!(n>=0xd800&&n<=0xdfff)?String.fromCodePoint(n):' ';});}
 function policyBlocks(html){
@@ -52,16 +54,16 @@ function parseShipping(blocks){
 }
 function parseRefund(blocks){
   const eligibility=blocks.find(x=>/\byou (?:may|can) return or exchange most items within/i.test(x))||'',window=/\bwithin\s+(\d{1,3})\s+(business |calendar )?days\s+(?:of|after)\s+(delivery|purchase|receipt)/i.exec(eligibility);
-  const personal=blocks.find(x=>/\bpersonalized.{0,20}custom items\b/i.test(x))||'',earrings=blocks.find(x=>/^earrings\b/i.test(x))||'',damage=blocks.find(x=>/^damaged or defective on arrival\b/i.test(x))||'',repairs=blocks.find(x=>/^free\s+\d+[- ]day repairs\b/i.test(x))||'',care=blocks.find(x=>/^caring for your jewelry\b/i.test(x))||'';
+  const personal=blocks.find(x=>/\bpersonalized.{0,20}custom items\b/i.test(x))||'',earrings=blocks.find(x=>/^earrings\b/i.test(x))||'',damage=blocks.find(x=>/^damaged or defective on arrival\b/i.test(x))||'',repairs=blocks.find(x=>/^free\s+\d+[- ]day repairs\b/i.test(x))||'',care=blocks.find(x=>/^caring for your jewelry\b/i.test(x))||'',postage=blocks.find(x=>/^return shipping[.:]/i.test(x))||'';
   const damageWindow=/\bwithin\s+(\d{1,3})\s+days\b/i.exec(damage),repairWindow=/\bwithin the first\s+(\d{1,3})\s+days\b/i.exec(repairs);
   const returnWindow=window&&Number(window[1])>0&&Number(window[1])<=365?{days:Number(window[1]),unit:window[2]?.trim()||'days',from:window[3].toLowerCase()}:null;
   const boundedDays=m=>m&&Number(m[1])>0&&Number(m[1])<=365?Number(m[1]):null;
-  return {returnWindow,unworn:/\bunworn\b/i.test(eligibility)&&!/\bnot unworn\b/i.test(eligibility),originalCondition:/\boriginal condition\b/i.test(eligibility)&&!/\bnot in original condition\b/i.test(eligibility),notPersonalized:/\bnot personalized\b/i.test(eligibility),directPurchasesOnly:/\bpurchased directly from britesjewelry\.com\b/i.test(eligibility),contactFirst:/message us first|contact us first/i.test(eligibility),personalizedFinalSale:/\bfinal sale\b/i.test(personal)&&!/\bnot final sale\b/i.test(personal),madeToOrderExcluded:/\bmade to order\b/i.test(personal),earringsExcluded:/\b(?:can't|cannot) be returned or exchanged\b/i.test(earrings),earringDefectException:/\bunless they arrive defective or we made an error\b/i.test(earrings),returnPostage:blocks.some(x=>/customers are responsible for return shipping/i.test(x)),damageDays:boundedDays(damageWindow),damageIncludesPersonalized:/including a personalized one/i.test(damage),damageOrderError:/isn't what you ordered|wrong item/i.test(damage),repairsDays:repairWindow&&/normal wear|repair it free of charge/i.test(repairs)?boundedDays(repairWindow):null,repairPostage:/you only cover return shipping/i.test(repairs),care:{sleeping:/remove jewelry before[^.]{0,120}\bsleeping\b/i.test(care),showering:/remove jewelry before[^.]{0,120}\bshowering\b/i.test(care),strenuousActivity:/remove jewelry before[^.]{0,120}\bstrenuous activity\b/i.test(care),dryStorage:/store it somewhere dry/i.test(care)},contactEmail:blocks.some(x=>/\binfo@britesjewelry\.com\b/i.test(x))?'info@britesjewelry.com':null};
+  return {returnWindow,unworn:/\bunworn\b/i.test(eligibility)&&!/\bnot unworn\b/i.test(eligibility),originalCondition:/\boriginal condition\b/i.test(eligibility)&&!/\bnot in original condition\b/i.test(eligibility),notPersonalized:/\bnot personalized\b/i.test(eligibility),directPurchasesOnly:/\bpurchased directly from britesjewelry\.com\b/i.test(eligibility),contactFirst:/message us first|contact us first/i.test(eligibility),personalizedFinalSale:/\bfinal sale\b/i.test(personal)&&!/\bnot final sale\b/i.test(personal),madeToOrderExcluded:/\bmade to order\b/i.test(personal),earringsExcluded:/\b(?:can't|cannot) be returned or exchanged\b/i.test(earrings),earringDefectException:/\bunless they arrive defective or we made an error\b/i.test(earrings),returnPostage:blocks.some(x=>/customers are responsible for return shipping/i.test(x)),returnLabelUnavailable:/\b(?:unable to|cannot|can't|do not|don't)\s+provide\s+(?:a\s+)?return labels?(?:\s+or\s+refund original or return shipping costs)?\s*(?:[.;]|$)/i.test(postage),shippingCostsNotRefunded:/\b(?:unable to|cannot|can't|do not|don't)\s+(?:provide\s+(?:a\s+)?return labels?\s+or\s+)?refund original or return shipping costs\s*(?:[.;]|$)/i.test(postage),damageDays:boundedDays(damageWindow),damageIncludesPersonalized:/including a personalized one/i.test(damage),damageOrderError:/isn't what you ordered|wrong item/i.test(damage),repairsDays:repairWindow&&/normal wear|repair it free of charge/i.test(repairs)?boundedDays(repairWindow):null,repairPostage:/you only cover return shipping/i.test(repairs),care:{sleeping:/remove jewelry before[^.]{0,120}\bsleeping\b/i.test(care),showering:/remove jewelry before[^.]{0,120}\bshowering\b/i.test(care),strenuousActivity:/remove jewelry before[^.]{0,120}\bstrenuous activity\b/i.test(care),dryStorage:/store it somewhere dry/i.test(care)},contactEmail:blocks.some(x=>/\binfo@britesjewelry\.com\b/i.test(x))?'info@britesjewelry.com':null};
 }
 function classify(message,history=[]){
   const text=tidy(message,2000).replace(/[‘’]/g,"'");history=Array.isArray(history)?history.slice(-12):[];if(PRIVATE_REQUEST.test(text))return {topics:[],policyOnly:false,country:null};
   const topics=[];const skipShipping=/\b(?:skip|forget|don't discuss|do not discuss|not asking about)\s+(?:the\s+)?(?:shipping|delivery)\b/i.test(text),skipReturns=/\b(?:skip|forget|don't discuss|do not discuss|not asking about)\s+(?:the\s+)?(?:returns?|refunds?)\b/i.test(text);
-  if(!skipShipping&&/\b(?:shipping|delivery|deliver|delivered|arrive|arrival|postage|dispatch|production|turnaround|tracking|customs duties|import taxes)\b|\bship\s+(?:to|my|this|it)|\b(?:do|can|will) you ship\b|\btrack (?:my|the|this) order|\bwhere is my order|\bhas (?:my|the) order shipped\b/i.test(text))topics.push('shipping');
+  if(!skipShipping&&(/\b(?:shipping|delivery|deliver|delivered|arrive|arrival|postage|dispatch|production|turnaround|tracking|customs duties|import taxes)\b|\bship\s+(?:to|my|this|it)|\b(?:do|can|will) you ship\b|\btrack (?:my|the|this) order|\bwhere is my order|\bhas (?:my|the) order shipped\b/i.test(text)||SHIPPING_SCOPE.test(text)||CUSTOMS_REQUEST.test(text)))topics.push('shipping');
   if(!skipReturns&&/\b(?:returns?|refunds?|exchanges?|repairs?|defect(?:ive)?|damaged|final sale)\b|\b(?:my|this|the) (?:necklace|chain|piece|jewelry|jewellery) (?:broke|is broken)\b|\b(?:arrived|arrives?) (?:broken|wrong)\b/i.test(text)&&!/\breturn\s+(?:back\s+)?to\s+(?:the\s+)?(?:page|shop|store|catalogue|catalog|first|second|home)\b/i.test(text))topics.push('refund');
   if(/\b(?:jewelry care|jewellery care|caring for|cleaning|waterproof|tarnish|showering|shower|swimming|swim|sleeping|storage)\b|\b(?:clean|polish)\s+(?:my|this|the|a|your)\s+(?:jewelry|jewellery|necklace|ring|earrings|piece|silver|gold)\b/i.test(text))topics.push('care');
   let country=countryIn(text);const lastAssistant=[...history].reverse().find(x=>x?.role==='assistant');
@@ -71,8 +73,12 @@ function classify(message,history=[]){
     for(let i=history.length-1;i>=Math.max(0,history.length-6);i--){const row=history[i];if(row?.role!=='user')continue;if(/start (?:fresh|over)|new gift|different person/i.test(row.content||''))break;const found=countryIn(row.content||'');if(found&&(/shipping|arrive|delivery|deliver|ship to/i.test(row.content||'')||(tidy(row.content,100).length<50&&/which country|what country|gift going|destination/i.test(history[i-1]?.content||'')))){country=found;break;}}
   }
   const policyPage=/^(?:please\s+)?(?:show|find|view|open)\s+(?:me\s+)?(?:the\s+)?(?:shipping|return|refund|exchange|care)\s+(?:policy|policies|page|terms)[.!?]?$/i.test(text);
-  const discovery=!policyPage&&(/\b(?:find|show|recommend|suggest|choose|browse|looking for|want|buy|shopping for)\b/i.test(text)||(/\bneed\s+(?:a|an|some)\b/i.test(text)&&/\b(?:necklace|earrings?|bracelet|ring|jewelry|jewellery|gift)\b/i.test(text)));
-  const action=!policyPage&&/\b(?:open|take me to|go to|view (?:the )?page|add|put)\b[^.]{0,100}\b(?:first|second|third|fourth|fifth|sixth|piece|one|bag|cart|page)\b/i.test(text);
+  // A verb requesting after-sale help is not itself a product-selection verb.
+  // Remove only that explicit verb/object phrase; separate shopping or cart
+  // requests in the same message remain available to the mixed-intent route.
+  const selectionText=text.replace(/\b(?:show|find|view|open|recommend|suggest|choose|browse|looking for|want|need|buy|shopping for)\s+(?:me\s+)?(?:(?:a|an|the|your|my)\s+)?(?:(?:how\s+)?to\s+)?(?:(?:shipping|delivery|care)\s+(?:policy|policies|page|terms|conditions|instructions|help|guidance)|(?:returns?|refunds?|exchanges?|repairs?)(?:\s+(?:policy|policies|page|terms|conditions|instructions|help|guidance))?)\b/gi,'');
+  const discovery=!policyPage&&(/\b(?:find|show|recommend|suggest|choose|browse|looking for|want|buy|shopping for)\b/i.test(selectionText)||(/\bneed\s+(?:a|an|some)\b/i.test(selectionText)&&/\b(?:necklace|earrings?|bracelet|ring|jewelry|jewellery|gift)\b/i.test(selectionText)));
+  const action=!policyPage&&/\b(?:open|take me to|go to|view (?:the )?page|add|put)\b[^.]{0,100}\b(?:first|second|third|fourth|fifth|sixth|piece|one|bag|cart|page)\b/i.test(selectionText);
   return {topics:[...new Set(topics)],policyOnly:topics.length>0&&!discovery&&!action,country};
 }
 function rangeText(range){return range.min+'–'+range.max+' '+(range.unit==='unspecified'?'':range.unit+' ')+'days';}
@@ -81,17 +87,32 @@ function shippingAnswer(facts,classification,message){
   if(production)parts.push((rush&&facts.rush?'Expedited production':'Standard production')+' is listed as '+rangeText(production)+'.');
   if(country&&facts.destinations&&!facts.destinations.includes(country)){parts.push(country+' is not listed among the current policy destinations; check availability with the shop before ordering.');}
   else if(country){const transit=facts.transit.find(x=>x.countries.includes(country));if(transit){parts.push('The policy lists '+rangeText(transit)+' in transit to '+country+', after production.');if(production?.unit==='business'&&transit.unit==='business')parts.push('Together that is '+(production.min+transit.min)+'–'+(production.max+transit.max)+' business days, rather than a guaranteed arrival date.');}}
+  if(!country&&facts.destinations&&SHIPPING_SCOPE.test(message)&&/\b(?:worldwide|abroad|internationally|overseas|anywhere|everywhere)\b/i.test(message))parts.push('The current policy lists specific destination countries; confirm the destination before ordering.');
   if(facts.freeShipping&&/\b(?:free|cost|price|rate|postage|shipping)\b/i.test(message))parts.push('Free standard shipping is listed for orders '+facts.freeShipping.comparison+' '+facts.freeShipping.display+'; checkout confirms eligibility, currency and rates.');
   if(facts.checkoutRates)parts.push('Checkout shows the available shipping services and charges.');
   if(/\btracking|track (?:my|the|this) order|where is my order|has (?:my|the) order shipped\b/i.test(message)){if(facts.tracking)parts.push('The policy says tracking is emailed when the order ships.');parts.push('I can explain the published policy, but I cannot access a customer’s private order or tracking record.');}
   if(/tomorrow|today|\bby\b|birthday|deadline|next (?:week|day)|before/i.test(message))parts.push('For a gift deadline, confirm the date with the shop before paying; production and transit are separate.');
   if(facts.customs&&country&&!['United States','Canada'].includes(country))parts.push('International duties or import taxes may be payable by the recipient.');
-  return {text:parts.join(' '),question:!country&&/\b(?:tim(?:e|ing)|long|when|arrive|arrival|deliver|delivery|deadline|tomorrow|birthday|expedited|rush)\b|\bship to\b|\b(?:do|can|will) you ship\b/i.test(message)?'Which country is the gift going to?':null};
+  return {text:parts.join(' '),question:!country&&(/\b(?:tim(?:e|ing)|long|when|arrive|arrival|deliver|delivery|deadline|tomorrow|birthday|expedited|rush)\b|\bship to\b|\b(?:do|can|will) you ship\b/i.test(message)||SHIPPING_SCOPE.test(message))?'Which country is the gift going to?':null};
+}
+function refundScenario(message){
+  const text=tidy(message,2000).replace(/[‘’]/g,"'");
+  const negated=match=>{
+    if(/^[- ]free\b/i.test(text.slice(match.index+match[0].length)))return true;
+    const prefix=text.slice(Math.max(0,match.index-100),match.index).split(/[,.!?;:]|\b(?:but|however|yet|because|although|if|unless|except)\b/i).at(-1).replace(/\bnot\s+(?:only|just|merely)\s+/gi,'');
+    if(/\b(?:non|un)[ -]$/i.test(prefix))return true;
+    // Local modifiers and coordinated conditions keep "not damaged or
+    // defective" negative without treating "don't want a damaged item" as
+    // proof that an existing item is undamaged.
+    return /\b(?:no|not|never|neither|nor|without|isn't|aren't|wasn't|weren't|hasn't|haven't|hadn't|doesn't|don't|didn't)\s+(?:(?:really|actually|currently|visibly|physically|otherwise|ever|still|been|longer|any|a|at all|in any way|evidence of|signs? of)\s+|(?:damage(?:d)?|defect(?:ive)?|broken|broke|wrong|mistakes?|errors?)\s+(?:or|and|nor)\s+){0,6}$/i.test(prefix);
+  };
+  const asserted=pattern=>[...text.matchAll(pattern)].some(match=>!negated(match));
+  return {damaged:asserted(/\b(?:damage(?:d)?|defect(?:ive)?|wrong|mistake|error)\b|\b(?:arrived|arrives?) (?:broken|wrong)\b/gi),repair:asserted(/\b(?:break|broken|broke|repairs?)\b/gi)};
 }
 function refundAnswer(facts,message,careOnly=false){
   const parts=[];
   if(careOnly){const steps=[];if(facts.care.sleeping)steps.push('sleeping');if(facts.care.showering)steps.push('showering');if(facts.care.strenuousActivity)steps.push('strenuous activity');if(steps.length)parts.push('The shop’s care guidance says to remove jewelry before '+steps.join(', ')+'.');if(facts.care.dryStorage)parts.push('Store it somewhere dry.');if(/waterproof|swim|allerg|nickel/i.test(message))parts.push('This care guidance does not establish waterproof or allergy-safe properties for a particular piece.');return parts.join(' ');}
-  const damaged=/\b(?:damage(?:d)?|defect(?:ive)?|wrong|mistake|error)\b|\b(?:arrived|arrives?) (?:broken|wrong)\b/i.test(message),repair=/\b(?:break|broken|broke|repairs?)\b/i.test(message);
+  const {damaged,repair}=refundScenario(message);
   if(damaged||repair){if(damaged&&facts.damageDays)parts.push('For an item that arrives damaged or defective'+(facts.damageOrderError?', or different from the order':'')+', the policy says to contact the shop within '+facts.damageDays+' days'+(facts.damageIncludesPersonalized?', including personalized items':'')+'.');if(repair&&facts.repairsDays)parts.push('The policy lists repairs for the first '+facts.repairsDays+' days of normal wear'+(facts.repairPostage?'; customers cover return shipping.':'.'));}
   else {
     if(facts.returnWindow){const conditions=[facts.unworn?'unworn':null,facts.originalCondition?'in original condition':null,facts.notPersonalized?'not personalized':null].filter(Boolean);parts.push('The policy allows returns or exchanges of most items within '+facts.returnWindow.days+' '+(facts.returnWindow.unit==='days'?'':facts.returnWindow.unit+' ')+'days of '+facts.returnWindow.from+(conditions.length?', provided they are '+conditions.join(', '):'')+'.');}
@@ -100,14 +121,18 @@ function refundAnswer(facts,message,careOnly=false){
   }
   if(facts.directPurchasesOnly)parts.push('This policy applies to purchases directly from britesjewelry.com.');
   if(facts.returnPostage&&!damaged&&!repair)parts.push('Customers cover return shipping.');
+  if(!damaged&&!repair){if(facts.returnLabelUnavailable)parts.push('The policy says the shop cannot provide a return label.');if(facts.shippingCostsNotRefunded)parts.push('Original and return shipping costs are not refunded.');}
   if(facts.contactFirst||facts.contactEmail)parts.push('Contact the shop'+(facts.contactEmail?' at '+facts.contactEmail:'')+' before sending anything back; keep order details in that direct conversation.');
   return parts.join(' ');
 }
 function policyCoverage(kind,facts,classification,message){
   if(kind==='care')return Object.values(facts.care).some(Boolean);
   if(kind==='refund'){
-    if(/\b(?:damage(?:d)?|defect(?:ive)?|wrong|mistake|error)\b|\b(?:arrived|arrives?) (?:broken|wrong)\b/i.test(message))return !!facts.damageDays;
-    if(/\b(?:repairs?|broken|broke)\b/i.test(message))return !!facts.repairsDays;
+    const {damaged,repair}=refundScenario(message);
+    if(damaged)return !!facts.damageDays;
+    if(repair)return !!facts.repairsDays;
+    if(/\b(?:prepaid|return labels?)\b/i.test(message)&&!facts.returnLabelUnavailable)return false;
+    if(/\boriginal (?:postage|shipping)|\brefund (?:the )?(?:original|return) (?:postage|shipping)\b/i.test(message)&&!facts.shippingCostsNotRefunded)return false;
     if(/\b(?:engraved|personalized|custom|final sale)\b/i.test(message)&&!facts.personalizedFinalSale)return false;
     if(/\bearrings?\b/i.test(message)&&!facts.earringsExcluded)return false;
     return !!facts.returnWindow;
@@ -119,7 +144,8 @@ function policyCoverage(kind,facts,classification,message){
     if(!facts.production||(/\b(?:expedited|rush)\b/i.test(message)&&!facts.rush))return false;
     if(classification.country&&(!facts.destinations||facts.destinations.includes(classification.country))&&!facts.transit.some(x=>x.countries.includes(classification.country)))return false;
   }
-  if(/\bship to\b|\b(?:do|can|will) you ship\b/i.test(message)&&!facts.destinations)return false;
+  if((/\bship to\b|\b(?:do|can|will) you ship\b/i.test(message)||SHIPPING_SCOPE.test(message))&&!facts.destinations)return false;
+  if(CUSTOMS_REQUEST.test(message)&&!facts.customs)return false;
   return !!(facts.production||facts.checkoutRates||facts.freeShipping||facts.transit.length||facts.destinations||facts.tracking);
 }
 function unavailableAnswer({message,history=[]}={}){
