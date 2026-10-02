@@ -138,7 +138,7 @@ function createReview(D) {
     const copy = Object.fromEntries(['headlines','longHeadlines','descriptions'].map(k => [k,Array.isArray(input.copy?.[k])?input.copy[k].map(v=>String(v).trim()):[]]));
     if (!D.copyValid(copy)) throw Error('Use 3–15 unique headlines (30 characters), 1–5 long headlines (90), and 2–5 descriptions (90). Include one headline of 15 characters or fewer and one description of 60 or fewer. Unsupported claims cannot be used.');
     if (typeof input.includeVideos !== 'boolean') throw Error('Choose whether to use saved videos.');
-    const designReview = {...r,copy,includeVideos:input.includeVideos,copyEdited:D.hash(copy)!==D.hash(r.artworkCopy || context.w.messaging?.copy || context.w.job?.result?.copy || r.copy)};
+    const designReview = {...r,copy,includeVideos:input.includeVideos,copyEdited:!sameCopy(copy, r.artworkCopy || context.w.messaging?.copy || context.w.job?.result?.copy || r.copy, D.hash)};
     const reviewHash = D.hash({sourceHash:item.sourceHash,designReview});
     await D.transaction(async tx => {
       const live = await tx.get(ref), workspace = await tx.get(context.ref);
@@ -149,4 +149,8 @@ function createReview(D) {
   }
   return {status,update,refresh};
 }
-module.exports = {createReview,campaignMedia,selectVideos,snapshotHash};
+// Messaging is the same when its three text lists read the same; stray whitespace or extra keys never make it "edited".
+const messageLists = copy => Object.fromEntries(['headlines','longHeadlines','descriptions'].map(k => [k, (Array.isArray(copy?.[k]) ? copy[k] : []).map(v => String(v ?? '').trim()).filter(Boolean)]));
+const sameCopy = (a, b, hash) => hash(messageLists(a)) === hash(messageLists(b));
+
+module.exports = {createReview,campaignMedia,selectVideos,snapshotHash,sameCopy};

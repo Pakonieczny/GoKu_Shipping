@@ -1012,7 +1012,7 @@ svg.lc:focus{outline:none}svg.lc:focus-visible{outline:2px solid var(--gold);out
 }
 </style>
 <link rel="stylesheet" href="/brites-groups.css?v=20260929-narrow-dates">
-<link rel="stylesheet" href="/brites-approval-review.css?v=20261002-approval-last-error">
+<link rel="stylesheet" href="/brites-approval-review.css?v=20261002-fixed-unlock">
 </head>
 <body>
 
@@ -1259,7 +1259,7 @@ svg.lc:focus{outline:none}svg.lc:focus-visible{outline:2px solid var(--gold);out
 <script src="/brites-progress.js?v=20260929-owner"></script>
 <script src="/brites-ad-format-policy.js?v=20260917-shapes"></script>
 <script src="/brites-campaign-styles.js?v=20260929-oppkinds"></script>
-<script src="/brites-approval-review.js?v=20261002-approval-last-error"></script>
+<script src="/brites-approval-review.js?v=20261002-fixed-unlock"></script>
 <script src="/brites-brand-assets.js?v=20260914"></script>
 <script src="/brites-ad-motion.js?v=20261001-multi-video-redo"></script>
 <script src="/assets/opportunity-timeline.js?v=20260929-visuals"></script>
@@ -3866,6 +3866,7 @@ function campaignStyleChoices(){
    return '<section class="campaignStyleOption" style="--campaign-accent:'+esc(s.accent)+'">'+
     '<label><input type="checkbox" data-campaign-style="'+esc(s.key)+'">'+campaignStyleIcon(s.key,16)+'<strong>'+esc(s.name)+'</strong></label>'+
     '<p class="arTypeVideoStatus" data-style-video-status="'+esc(s.key)+'">'+(s.key==='fixed_display'?'Images only · no video':'Checking saved videos…')+'</p>'+
+    (s.key==='fixed_display'?'<p class="arFixedLock" data-style-fixed-lock role="status" hidden>Locked: the messaging no longer matches the text on this finished artwork. <button type="button" class="btn ghost sm" data-style-fixed-match>Use the artwork\u2019s messaging</button></p>':'')+
     '<button type="button" class="arStylePreview" data-style-open="'+esc(s.key)+'" aria-label="Preview '+esc(s.name)+' ads"><div data-style-thumb="'+esc(s.key)+'"><span>Loading ad preview…</span></div><span data-style-media-count="'+esc(s.key)+'">Saved creative set</span></button>'+
     '<details class="arCampaignSettings"><summary>Budget &amp; settings</summary>'+
     (s.key==='pmax'?'<label class="campaignBudgetLabel" data-pmax-target-label hidden>Campaign<select data-pmax-target aria-label="Performance Max campaign" disabled></select></label><small class="campaignBudgetHint" data-pmax-join hidden></small>':'')+
