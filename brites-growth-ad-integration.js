@@ -21,7 +21,8 @@
         if(op.startsWith('demand?')){const ids=new URLSearchParams(op.slice(op.indexOf('?')+1)).get('ids');if(!ids)throw Error('Choose an exact product.');return window.api('growthProductDemand',{productIds:ids.split(',')});}
         throw Error('This view reads saved product research.');
       };
-      if(!mounted)mounted=window.BritesGrowth.mount(content,{request,receiptReader:()=>window.api('receiptDiagnostics',{limit:15,maxMs:20000}),receiptPreviewReader:window.__BRITES_GROWTH_AD_SANDBOX?()=>window.api('receiptReconciliationPreview',{limit:15,maxMs:20000}):undefined});else(await mounted).refresh();
+      const correctionRequest=async(body,{signal}={})=>{const response=await fetch('/api/growth-corrections',{method:'POST',signal,headers:{'Content-Type':'application/json','X-Edit-Passcode':PASS},body:JSON.stringify(body)}),value=await response.json();if(!response.ok)throw Object.assign(Error(value.error||'Correction review is unavailable.'),{status:response.status});return value;};
+      if(!mounted)mounted=window.BritesGrowth.mount(content,{request,correctionRequest,receiptReader:()=>window.api('receiptDiagnostics',{limit:15,maxMs:20000}),receiptPreviewReader:window.__BRITES_GROWTH_AD_SANDBOX?()=>window.api('receiptReconciliationPreview',{limit:15,maxMs:20000}):undefined});else(await mounted).refresh();
     };
     nav.appendChild(button);
   }

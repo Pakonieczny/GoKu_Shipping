@@ -10,6 +10,7 @@ try{
   assert.ok(fs.existsSync(path.join(out,'netlify/functions/_britesGrowthCorrectionReview.js')),'the deterministic correction review contract is staged');
   const prelude=fs.readFileSync(path.join(out,'public-site/brites-growth-ad-sandbox.js'),'utf8');
   assert.match(prelude,/__GADS_ENDPOINT='\/api\/growth-ads'/);assert.match(html,/<script src="\/brites-growth-ad-sandbox.js"><\/script><\/head>/);
+  assert.match(html,/<script src="\/brites-growth-corrections.js" defer><\/script>/);assert.match(fs.readFileSync(path.join(out,'public-site/brites-growth-ad-integration.js'),'utf8'),/correctionRequest/);
   const live=html.slice(html.indexOf('async function livePull(){'),html.indexOf('/* Pending budget overrides:'));
   for(const action of ['measureNow','enforceCeiling','monthlyGuard'])assert.ok(!live.includes(action),'automatic refresh must never request '+action);
   assert.match(live,/api\("dashboard"/);assert.ok(!html.includes('renderAll();go("groups");loadDiagnostics();'),'startup opens the shared research view');

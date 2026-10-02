@@ -5627,6 +5627,7 @@ document.getElementById('creativeDialog').addEventListener('cancel',creativeClos
 <script>
 BritesGroups.init({api:api,dashboard:function(){return DASH;},basis:function(){return convBasis;},design:openAdDesign,go:go,reload:reload,toast:toast,currentView:function(){return document.querySelector('.nav button.active')?.dataset.v||'groups';},changed:function(){if(DASH){renderApprovals();updateBadges();}}});
 </script>
+<script src="/brites-growth-corrections.js" defer></script>
 <script src="/brites-growth.js" defer></script>
 <script src="/brites-growth-ad-integration.js" defer></script>
 </body>
