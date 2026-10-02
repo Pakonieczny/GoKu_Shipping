@@ -41,6 +41,9 @@ const flood = {
   }
 };
 
+/* the same open-door guard for station-activity.js, with its own counter (a busy hour of scans must not starve the timeline) */
+const activityFlood = { seen: new Map(), PER_MIN: 1500, allow: flood.allow };
+
 /* The stations' sign-in sessions (station-session.js): one document per session in Station_Sessions, from sign-in to
    sign-out, for one person on one computer at one station or page:
      { id, person, employeeId, station, device, computerId, computerLabel, startAt, lastSeenAt, endAt, endReason, minutes }
@@ -147,6 +150,15 @@ exports.handler = async (event) => {
         if (!flood.allow(event, 1)) return { statusCode: 429, headers: CORS, body: JSON.stringify({ error: "too many requests, try again in a minute" }) };
         const [statusCode, out] = await sessionWrite(body.session);
         return { statusCode, headers: CORS, body: JSON.stringify(out) };
+      }
+      /* what a person did at a station (station-activity.js): a batch of small events, each created once, with the person's
+         daily rollup counted in the same transaction (_stationActivity.js). Write-only: the console reads through its own gate. */
+      if (Array.isArray(body.activity)) {
+        const A = require("./_stationActivity");
+        if (String(event.body || "").length > A.MAX_BODY_CHARS || body.activity.length > A.MAX_BATCH) return { statusCode: 413, headers: CORS, body: JSON.stringify({ error: `at most ${A.MAX_BATCH} events and ${A.MAX_BODY_CHARS} characters a request` }) };
+        if (!activityFlood.allow(event, body.activity.length)) return { statusCode: 429, headers: CORS, body: JSON.stringify({ error: "too many activity events, try again in a minute" }) };
+        const out = await A.add(db, admin.firestore.FieldValue, body.activity, { prefix: PREFIX });
+        return { statusCode: 200, headers: CORS, body: JSON.stringify(Object.assign({ success: true }, out)) };
       }
       const {
         orderNumber,
