@@ -32,6 +32,7 @@ Before writing or deploying, use authenticated `POST /api/growth/controller` wit
 | `POST /api/growth/claim` | Operator | Claim the next unfinished ranked entry |
 | `POST /api/growth/release` | Operator | Save a match or retryable failure under its lease |
 | `POST /api/growth/save` | Operator | Validate and save a dossier/version |
+| `POST /api/growth/story-supplement` | Operator | Save a neutral, version-bound story supplement in the isolated sandbox without rewriting the base dossier |
 | `GET /api/growth/issues?ids=...` | Operator | Reviewed product conflicts and their evidence |
 | `POST /api/growth/issue` | Operator | Preserve or resolve product-specific recommendation, cart or meaning holds |
 | `GET /api/growth/demand?ids=...` | Operator | Saved, version-bound product outcomes and demand evidence |
@@ -40,10 +41,12 @@ Before writing or deploying, use authenticated `POST /api/growth/controller` wit
 | `POST /api/growth/blocker` | Operator | Queue a specific access blocker |
 | `POST /api/growth/control` | Operator | Pause/resume or configure bounded runtime inference |
 | `POST /api/growth/controller` | Operator | Atomically claim, renew, inspect or release an implementation lease |
-| `POST /api/growth-corrections` | Operator | Read-only exact-product correction preview and baseline recheck; no apply action |
+| `POST /api/growth-corrections` | Operator | Save/load a validated private sandbox correction packet, or run an exact-product read-only preview/recheck; no apply action |
 | `POST /api/concierge` | Public, rate limited | Live discovery, questions and approved knowledge |
 
 Research source schema: `{id,url,title,excerpt,checkedAt,reviewed:true}`. Factual claims require `{productId,claim,quote,sourceIds}`. Competitor records carry their own currency and explicitly unknown/disclosed/estimated spending. Recommendations use `basis:"hypothesis"` and include source IDs, a concrete action and measurement. Meanings use `kind:"interpretation"` and cultural context. Unmatched identities, unsupported quotes, absent citations and partial research cannot become approved dossiers. A partial draft cannot overwrite approved research. Completed dossiers mark every matching ranked entry complete without deleting its individual SKU sales evidence.
+
+Additive shopper stories live in a separate `StorySupplements` collection. Each record is bound to the exact current Product ID, handle, product URL and approved dossier version, accepts only reviewed neutral institutional sources, and is suppressed on version drift or any open product hold. It is merged only in memory for shopper knowledge, so the approved dossier version and its Demand evidence remain unchanged. Retailer/competitor links, retrieval metadata, ranks, sales data and author instructions are rejected.
 
 Product issues require exact current-product evidence, a recent review and an explicit open/resolved state. They survive catalogue refreshes in a separate collection. Public callers receive only hold booleans; diagnoses and evidence remain private. A duplicated SKU is a matching warning for review and does not automatically prohibit a shopper recommendation.
 

@@ -12,6 +12,10 @@ function normalizeExactProductId(value) {
   const raw = String(value || '').trim();
   return /^gid:\/\/shopify\/Product\/[1-9]\d*$/.test(raw) ? raw : /^[1-9]\d*$/.test(raw) ? 'gid://shopify/Product/' + raw : null;
 }
+function correctionPacketDocumentId(value) {
+  const id = normalizeExactProductId(value);
+  return id ? hash(id).slice(0,40) : null;
+}
 const object = v => !!v && typeof v === 'object' && !Array.isArray(v);
 const digest = v => typeof v === 'string' && /^[a-f0-9]{64}$/.test(v);
 function ownProductSource(source, handle) {
@@ -48,6 +52,25 @@ function optionLabels(variants) {
   const map = new Map();
   for (const v of variants || []) for (const o of v.selectedOptions || []) { if (!map.has(o.name)) map.set(o.name, new Set()); map.get(o.name).add(o.value); }
   return [...map].map(([name, values]) => ({name, values:[...values].sort()})).sort((a,b) => a.name.localeCompare(b.name));
+}
+function storedPacket({record, productId, handle, dossier, issueRecord, product, now=Date.now()}) {
+  const id = normalizeExactProductId(productId), fail = reason => ({state:'unavailable',reason});
+  if (!object(record) || Buffer.byteLength(JSON.stringify(record),'utf8') > 80000) return fail('No bounded private correction packet is available for this exact product.');
+  const allowed = ['schemaVersion','mode','productId','handle','proposal','savedAt'];
+  if (Object.keys(record).some(k => !allowed.includes(k)) || record.schemaVersion !== 1 || record.mode !== 'sandbox_correction_packet' || !Number.isFinite(record.savedAt) || record.savedAt > now + 60000) return fail('The private correction packet schema is unavailable.');
+  if (normalizeExactProductId(record.productId) !== id || record.handle !== handle) return fail('The private correction packet identity differs from the selected product.');
+  let proposal;
+  try { proposal = validateCorrectionProposal(record.proposal); } catch { return fail('The private correction packet is not a valid typed proposal.'); }
+  if (!dossier || dossier.productId !== id || dossier.handle !== handle || dossier.status !== 'approved' || dossier.version !== proposal.dossierVersion) return fail('The private correction packet differs from current approved research.');
+  const sources = (dossier.sources || []).filter(s => proposal.sourceIds.includes(s.id));
+  if (sources.length !== proposal.sourceIds.length || sources.some(s => !ownProductSource(s,handle))) return fail('The private correction packet sources are no longer current exact own-product evidence.');
+  const activeIds = (issueRecord?.issues || []).filter(i => i?.status !== 'resolved').map(i => i.id).filter(Boolean).sort();
+  if (issueRecord?.productId !== id || issueRecord.updatedAt !== proposal.issueRecordUpdatedAt || canonical(activeIds) !== canonical([...proposal.reviewedIssueIds].sort())) return fail('The private correction packet differs from current exact-product issues.');
+  const variants = (product?.variants || []).map(v => ({id:v.id,selectedOptions:Array.isArray(v.selectedOptions)?v.selectedOptions:Array.isArray(v.options)?v.options:[]}));
+  const expectedOptions = proposal.expectedOptionLabels.map(o => ({name:o.name,values:[...new Set(o.values)].sort()})).sort((a,b)=>a.name.localeCompare(b.name));
+  if (product?.id !== id || product.handle !== handle || product.variantsComplete !== true || !Number.isFinite(product.checkedAt) || product.checkedAt > now + 60000 || now - product.checkedAt > 24*60*60*1000 || variantIdSetHash(variants) !== proposal.expectedVariantIdSetSha256 || hash(optionLabels(variants)) !== hash(expectedOptions)) return fail('The private correction packet differs from the recent complete shared catalogue variant structure.');
+  proposal.issueRecordHash = hash(issueRecord);
+  return {state:'available',packet:{schemaVersion:1,mode:'sandbox_correction_packet',readOnly:true,canApply:false,executionCompatibility:'not_established',productId:id,handle,proposal,packetVersion:hash({productId:id,handle,proposal})}};
 }
 function issueHolds(record) {
   const active = (record?.issues || []).filter(i => i.status !== 'resolved'), blocks = new Set(active.flatMap(i => i.blocks || []));
@@ -119,4 +142,4 @@ function createCorrectionPreview({productId, handle, proposal, dossier, issueRec
   result.warnings.push('Review does not resolve issues, clear holds, prove historic identity, or refresh saved Demand versions.');
   return result;
 }
-module.exports = {canonical,hash,normalizeExactProductId,validateCorrectionProposal,contentBaseline,variantStructure,variantIdSetHash,optionLabels,issueHolds,reviewCollectionImpact,compareCorrectionBaseline,createCorrectionPreview};
+module.exports = {canonical,hash,normalizeExactProductId,correctionPacketDocumentId,validateCorrectionProposal,contentBaseline,variantStructure,variantIdSetHash,optionLabels,storedPacket,issueHolds,reviewCollectionImpact,compareCorrectionBaseline,createCorrectionPreview};

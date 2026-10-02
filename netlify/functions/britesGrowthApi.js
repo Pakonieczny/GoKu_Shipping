@@ -29,13 +29,14 @@ export default async (req,context) => {
       }
       if(op==='receipt-sandbox-check')return json({error:'Use POST for the isolated storage check.'},405);
       if(op==='historical-lookup')return json({error:'Use POST for the bounded historical lookup.'},405);
+      if(op==='story-supplement')return json({error:'Use POST for story supplements.'},405);
       if(op==='catalogue-export'){const cursor=url.searchParams.get('after')||'';if(cursor&&!/^[a-f0-9]{40}$/.test(cursor))return json({error:'Invalid catalogue cursor.'},400);let query=service.col('Products').orderBy('__name__').limit(200);if(cursor)query=query.startAfter(cursor);const snap=await query.get();return json({products:snap.docs.map(d=>d.data()),after:snap.size===200?snap.docs[snap.docs.length-1].id:null});}
       if(op==='catalogue'){const r=await shopify.search(url.searchParams.get('q')||'necklace');await service.saveProducts(r.products);const issues=await service.productIssues(r.products.map(p=>p.id));return json({products:core.applyProductIssues(r.products,issues).map(core.productProjection),pageInfo:r.pageInfo,live:true});}
       if(op==='product'){const p=await shopify.byHandle(url.searchParams.get('handle'));if(!p)return json({error:'This piece is not currently published.'},404);await service.saveProducts([p]);const issues=await service.productIssues([p.id]);return json({product:core.productProjection(core.applyProductIssues([p],issues)[0]),live:true});}
       if(op==='research'){const ids=(url.searchParams.get('ids')||'').split(',');const [dossiers,productIssues]=await Promise.all([service.research(ids),service.productIssues(ids)]);return json({dossiers,productIssues});}
       if(op==='issues')return json({products:await service.productIssues((url.searchParams.get('ids')||'').split(','))});
       if(op==='demand')return json({products:await demandStore.createDemandStore(service).read((url.searchParams.get('ids')||'').split(',').filter(Boolean))});
-      if(op==='knowledge'){const ids=(url.searchParams.get('ids')||'').split(',');const [dossiers,issues]=await Promise.all([service.research(ids),service.productIssues(ids)]);return json({products:core.publicMeanings(dossiers,ids,Date.now(),issues)});}
+      if(op==='knowledge'){const ids=(url.searchParams.get('ids')||'').split(',');const [dossiers,issues,supplements]=await Promise.all([service.research(ids),service.productIssues(ids),typeof service.storySupplements==='function'?service.storySupplements(ids):[]]);const merged=core.mergeStorySupplements(dossiers,supplements,issues,Date.now());return json({products:core.publicMeanings(merged,ids,Date.now(),issues)});}
       return json({error:'Unknown operation.'},404);
     }
     if(req.method!=='POST')return json({error:'Method not allowed.'},405);
@@ -61,6 +62,10 @@ export default async (req,context) => {
       if(Date.now()>=core.STOP_AT)return json({stopped:true},410);
       return json(await receiptSandboxCheck.check({service,db,env:{...env,BRITES_GROWTH_NAMESPACE:service.namespace,BRITES_GROWTH_SANDBOX:'1'}}));
     }
+    if(op==='story-supplement'){
+      if(Object.keys(body).length!==1||!body.supplement)return json({error:'Provide only one story supplement.'},400);
+      return json(await service.saveStorySupplement(body.supplement));
+    }
     if(op==='save'){if(!body.dossier)return json({error:'A dossier is required.'},400);return json(await service.saveDossier(body.dossier));}
     if(op==='demand')return json(await demandStore.createDemandStore(service).save(body.evidence));
     if(op==='issue'){
@@ -85,6 +90,6 @@ export default async (req,context) => {
     if(op==='checkpoint-read'){const s=await service.col('State').doc('checkpoint').get();return json({checkpoint:s.exists?s.data():null});}
     if(op==='test'){await service.col('Tests').add({scenario:core.clean(body.scenario,150),result:core.clean(body.result,50),evidence:core.clean(body.evidence,6000),at:Date.now()});return json({ok:true});}
     return json({error:'Unknown operation.'},404);
-  }catch(error){return json({error:publicRequest?'The live selection could not be checked right now. Please try again shortly.':core.clean(error.message,400)},/lease|invalid|required|does not match|JSON|Unexpected/i.test(error.message)?400:503);}
+  }catch(error){return json({error:publicRequest?'The live selection could not be checked right now. Please try again shortly.':core.clean(error.message,400)},/lease|invalid|required|does not match|not allowed|neutral|reviewed|stale|hold|supplement|dossier version|JSON|Unexpected/i.test(error.message)?400:503);}
 };
 export const config = { path: '/api/growth/:op' };

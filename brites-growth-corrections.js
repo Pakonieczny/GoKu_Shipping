@@ -12,6 +12,10 @@
     if(!value||value.mode!=='sandbox_review'||value.readOnly!==true||value.canApply!==false||value.executionCompatibility!=='not_established'||value.productId!==id(productId)||value.handle!==handle)throw Error('A read-only exact-product review could not be verified.');
     return value;
   }
+  function assertPacketResponse(value,productId,handle){
+    if(!value||value.mode!=='sandbox_correction_packet'||value.readOnly!==true||value.canApply!==false||value.executionCompatibility!=='not_established'||value.productId!==id(productId)||value.handle!==handle||typeof value.packetVersion!=='string'||!/^[a-f0-9]{64}$/.test(value.packetVersion))throw Error('A private exact-product correction packet could not be verified.');
+    return packetToProposal(value,productId,handle);
+  }
   function mount(container,opts={}){
     const productId=id(opts.productId),handle=opts.handle;
     const section=node('section',null,'recommendation correction-review');container.appendChild(section);
@@ -58,13 +62,22 @@
       }catch{if(!destroyed&&current===seq){result=null;content.replaceChildren();status.textContent='Current correction review is unavailable. Retained proposals remain available; no write was attempted.';}return null;}
       finally{if(!destroyed&&current===seq)resetButtons();}
     }
+    async function loadStored(){
+      if(destroyed||!validSelection()||typeof request!=='function')return null;
+      const current=++seq;controller?.abort();controller=new AbortController();status.textContent='Checking for a saved private exact-product correction…';
+      try{
+        const value=await request({action:'loadPacket',productId,handle},{signal:controller.signal}),loaded=assertPacketResponse(value,productId,handle);
+        if(destroyed||current!==seq)return null;load(value);status.textContent='Saved private correction loaded. Reading the exact current baseline…';return run('preview');
+      }catch{if(!destroyed&&current===seq){status.textContent='No current saved correction is available for this exact product. A private packet can still be imported.';resetButtons();}return null;}
+    }
     input.onchange=async()=>{try{const f=input.files?.[0];if(!f)return;if(f.size>300000)throw Error('large');load(JSON.parse(await f.text()));}catch{++seq;controller?.abort();status.textContent='Import a valid private proposal for this exact product, with its reviewed source/version/variant baseline.';proposal=null;result=null;content.replaceChildren();resetButtons();}};
     preview.onclick=()=>run('preview');recheck.onclick=()=>run('verifyBaseline');
     copy.onclick=async()=>{if(destroyed||!result)return;try{assertReviewResponse(result,productId,handle);const packet={schemaVersion:1,mode:'sandbox_review',canApply:false,executionCompatibility:'not_established',productId,handle,proposal,previewBinding:result.binding||null,state:result.state,holds:result.holds,productIssueState:result.productIssueState,after:result.after||null,coverage:result.coverage,collectionImpact:result.collectionImpact||null,conflicts:result.conflicts,warnings:result.warnings,sourceReceipts:result.sourceReceipts};await global.navigator.clipboard.writeText(JSON.stringify(packet,null,2));if(!destroyed)copy.textContent='Reviewed packet copied';}catch{if(!destroyed)copy.textContent='Clipboard unavailable';}};
     function destroy(){if(destroyed)return;destroyed=true;++seq;controller?.abort();opts.signal?.removeEventListener('abort',destroy);section.remove();proposal=result=null;}
-    if(!validSelection()){input.disabled=true;status.textContent='An exact Product ID and handle are required for correction review.';}else status.textContent=typeof request==='function'?'Import the private proposal for this selected product.':'An owner-authenticated correction reader is required. Retained import can still be reviewed.';
+    let ready=Promise.resolve(null);
+    if(!validSelection()){input.disabled=true;status.textContent='An exact Product ID and handle are required for correction review.';}else if(typeof request==='function'&&opts.autoLoad!==false){status.textContent='Checking for a saved private correction for this selected product.';ready=loadStored();}else status.textContent=typeof request==='function'?'Import the private proposal for this selected product.':'An owner-authenticated correction reader is required. Retained import can still be reviewed.';
     if(opts.signal?.aborted)destroy();else opts.signal?.addEventListener('abort',destroy,{once:true});
-    return {destroy,load,review:async packet=>{if(packet)load(packet);return run('preview');},recheck:()=>run('verifyBaseline')};
+    return {destroy,load,review:async packet=>{if(packet)load(packet);return run('preview');},recheck:()=>run('verifyBaseline'),ready};
   }
-  global.BritesGrowthCorrections={mount,packetToProposal,assertReviewResponse};
+  global.BritesGrowthCorrections={mount,packetToProposal,assertReviewResponse,assertPacketResponse};
 })(window);
