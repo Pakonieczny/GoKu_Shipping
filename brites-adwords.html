@@ -913,7 +913,7 @@ svg.lc:focus{outline:none}svg.lc:focus-visible{outline:2px solid var(--gold);out
 .dayTable{width:100%;border-collapse:collapse;table-layout:fixed;margin-top:8px;font-size:12.5px}.dayTable th{font-size:10.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--ink-45);text-align:left;padding:6px 8px;border-bottom:1px solid var(--line)}.dayTable td{padding:8px;border-bottom:1px solid var(--line-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.dayTable th.r,.dayTable td.r{text-align:right;width:16%}.dayTable td .campaignBadge{vertical-align:-3px}.dayTable tfoot td{font-weight:700;border-bottom:0}.dayRow[data-cid]{cursor:pointer}.dayRow[data-cid]:hover>td{background:var(--paper)}.dayRow:focus-visible{outline:2px solid var(--gold);outline-offset:-2px}.dayRow.sel>td:first-child{box-shadow:inset 3px 0 0 var(--gold)}
 .statusWhy{display:block;margin-top:4px;max-width:200px;font-size:10.5px;line-height:1.35;color:var(--ink-70);white-space:normal}.campaignTree th small{margin-left:3px;font-weight:400;letter-spacing:.02em;color:var(--ink-45)}.campaignTree .idleToggle td{padding:12px 10px}.idleRows.opening>tr.crow{animation:cmdIn .24s ease-out}.crowFlash>td{animation:crowFlash 1.6s ease-out}@keyframes crowFlash{0%,35%{background:var(--gold-soft)}100%{background:transparent}}
 .servBadge{display:table;margin-top:4px;cursor:pointer;white-space:nowrap}.servBadge.b-none{background:transparent;box-shadow:inset 0 0 0 1px var(--line);color:var(--ink-70);font-weight:600}
-.servbox{padding:12px 0 14px;border-bottom:1px solid var(--line);font-size:12px}.servbox>div:first-child{margin-top:0!important;padding-top:0!important;border-top:0!important}.servHead{display:flex;align-items:center;flex-wrap:wrap;gap:6px 10px}.servbox ul{margin:6px 0 0;padding:0;list-style:none}.servbox li{margin:4px 0;overflow-wrap:anywhere}.servMeta{margin-top:5px;font-size:10.5px;color:var(--ink-70)}.servRunRow{margin-top:8px}
+.servbox{padding:12px 0 14px;border-bottom:1px solid var(--line);font-size:12px}.servbox>div:first-child{margin-top:0!important;padding-top:0!important;border-top:0!important}.servHead{display:flex;align-items:center;flex-wrap:wrap;gap:6px 10px}.servbox ul{margin:6px 0 0;padding:0;list-style:none}.servbox li{margin:4px 0;overflow-wrap:anywhere}.servMeta{margin-top:5px;font-size:10.5px;color:var(--ink-70)}.servRunRow{margin-top:8px}.servWait{display:flex;align-items:flex-start;gap:6px;margin-top:6px;font-size:11.5px;color:var(--ink-70)}.servWait .spin{margin-top:2px}
 .cdet.opening>td>*,.reportGroup.opening>.reportListings{animation:cmdIn .24s ease-out}.treeUpdating{display:flex;align-items:center;gap:8px;margin-top:0}.treeStale>:not(.treeUpdating){opacity:.55}.campaignTreeHost .reportListing b{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .reportGap{display:flex;align-items:center;gap:16px;padding:16px 4px 16px 28px;border-bottom:1px solid var(--line)}.reportGap>span{flex:1;min-width:100px}.reportGap small{display:block;color:var(--ink-70);font-size:11px;font-weight:400;margin-top:5px}@media(max-width:700px){.reportGap{flex-wrap:wrap;padding-left:4px}}
 @media(min-width:701px){.campaignTreeHost .reportListing+.reportListing .reportMetrics small{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}}
@@ -1414,6 +1414,7 @@ var LOADINFO={
   metricsRange:{verb:"Loading campaign metrics",detail:"",eta:"2\u20136s"}
 };
 function loadInfo(key,over){return Object.assign({verb:"Working",detail:"",eta:""},LOADINFO[key]||{},over||{});}
+LOADINFO.servingCheck={verb:"Asking Google about this campaign",detail:"Reading what Google holds for it",eta:"A few seconds"};
 Object.assign(LOADINFO,{campaignOptions:{verb:"Checking campaigns and goals",detail:"Bidding, new-customer settings and last year's sale days",eta:"A few seconds"},
   draftBrandSearch:{verb:"Drafting the brand Search campaign",detail:"Sent to Approvals; it starts paused",eta:"A few seconds"},
   draftSeasonalityAdjustment:{verb:"Drafting the sale-day adjustment",detail:"Sent to Approvals for your review",eta:"A few seconds"},
@@ -2368,39 +2369,96 @@ function servingWhen(s){var d=s&&s.checkedAt?new Date(s.checkedAt):null;return d
 function servingSourceText(s){return {publication:"Checked after publishing",daily:"Daily check",console:"Checked here"}[s&&s.source]||"Checked";}
 // A publication after the kept check (the server marks it): the verdict describes an older campaign.
 function servingChanged(s){return !!(servingClass(s)&&s.changedAt&&Date.parse(s.changedAt)>Date.parse(s.checkedAt||""));}
+// The server sets waiting:true (with a short waitingText) only when Google still catching up is the one reason the check is not green.
+function servingWaiting(s){return !!s&&s.waiting===true;}
 function servingBadgeAttrs(s){var k=servingClass(s),old=servingChanged(s);return {cls:"badge2 servBadge "+(k&&!old?k:"b-none"),text:"Google: "+(old?"changed, check again":servingLabel(s)),
   title:old?"The campaign changed after Google’s last check ("+(s.headline||"")+"). Click to ask Google again.":k?(s.headline||"")+" ("+servingSourceText(s)+(servingWhen(s)?", "+servingWhen(s):"")+")":"Google serving check has not run for this campaign yet. Click to ask Google."};}
 function servingBadgeHtml(c){if(!c||c.deleted||c.status==="REMOVED")return "";var a=servingBadgeAttrs(servingOf(c.id));
   return '<span class="'+a.cls+'" data-serv="'+esc(String(c.id))+'" title="'+cmdAttr(a.title)+'">'+esc(a.text)+'</span>';}
-function servingStoredHtml(s){var k=servingClass(s),run='<button type="button" class="btn ghost sm servRun">'+(k?'Check again with Google':'Check with Google')+'</button>';
+function servingStoredHtml(s,id){var k=servingClass(s),run='<button type="button" class="btn ghost sm servRun">'+(k?'Check again with Google':'Check with Google')+'</button>';
   if(!k)return '<div class="servHead"><b>Google serving check</b><span class="muted">'+(s&&s.lastAttempt?'The last check could not read this campaign: '+esc(s.lastAttempt.error||'no answer'):'Not run for this campaign yet.')+'</span>'+run+'</div>';
-  return '<div class="servHead"><b>Google serving check</b><span class="badge2 '+k+'">'+esc(servingLabel(s))+'</span>'+run+'</div>'
+  return '<div class="servHead"><b>Google serving check</b><span class="badge2 '+k+'">'+esc(servingLabel(s))+'</span>'+run+'</div>'+servWaitHtml(id,s)
     +'<div style="margin-top:5px">'+esc(s.headline||'')+'</div>'
     +((s.top||[]).length?'<ul>'+s.top.map(function(f){var b=f.level==="block";return '<li><span class="badge2 '+(b?'b-bad':'b-warn')+'" style="margin-right:6px">'+(b?'Stops it':'Fix first')+'</span><b>'+esc(f.area)+':</b> '+esc(f.text)
       +(f.reason?'<div class="muted" style="font-size:11px;margin:1px 0 0 2px">Google: '+esc(f.reason)+'</div>':'')
       +(f.fix?'<div class="muted" style="font-size:11px;margin:1px 0 0 2px">Fix: '+esc(f.fix)+'</div>':'')+'</li>';}).join('')+'</ul>':'')
     +'<div class="servMeta">'+esc(servingSourceText(s)+(servingWhen(s)?', '+servingWhen(s):''))+(s.settling?'; Google was still processing the change':'')+(servingChanged(s)?'; the campaign changed after this check':'')+(s.lastAttempt?'; a later check could not read the campaign':'')+'. Check again for Google’s reasons and every setting it holds.</div>';}
-function servingBoxHtml(c){if(!c||c.deleted||c.status==="REMOVED")return "";return '<div class="servbox" data-sc="'+esc(String(c.id))+'">'+servingStoredHtml(servingOf(c.id))+'</div>';}
+function servingBoxHtml(c){if(!c||c.deleted||c.status==="REMOVED")return "";return '<div class="servbox" data-sc="'+esc(String(c.id))+'">'+servingStoredHtml(servingOf(c.id),c.id)+'</div>';}
 // Asks Google now (servingCheck: the serving check alone, which the server also keeps for the badge).
 // SERV_ASK holds the campaigns being asked: a refresh that redraws the table keeps the spinner on the
-// new button, and the answer lands in the box on screen.
+// new button, and the answer lands in the box on screen. It is also the one in-flight guard: a check
+// never overlaps another for the same campaign, so an automatic one never overlaps one Paul started.
 var SERV_ASK={};
-async function loadServing(box){if(!box)return;var id=box.getAttribute("data-sc");if(SERV_ASK[id])return;SERV_ASK[id]=1;
-  var done=btnBusy(box.querySelector(".servRun"),"Asking Google…"),live=function(){var now=!box.isConnected&&document.querySelector('.servbox[data-sc="'+id+'"]');if(now){box=now;done=function(){box.innerHTML=servingStoredHtml(servingOf(id));};}delete SERV_ASK[id];return box;};
+// Google's product status can lag a change (up to 24 hours by its own account, usually minutes). A summary the
+// server marks waiting:true (with a short waitingText: Google still catching up is the ONLY reason it is not green)
+// is asked again by itself, one campaign at a time, with the same servingCheck read as the button: after 2, 3, then
+// every 5 minutes, for at most 2 hours of open tab per page load, until it is green or shows a real finding.
+// A hidden tab pauses it and its 2 hours. SERV_WAIT[id]={start,n,fails,last,next,over}: no entry, no timer.
+var SERV_WAIT={},SERV_TIMER=null,SERV_BUSY=false,SERV_HID=document.hidden?Date.now():0,SERV_SPAN=7200000;
+function servStep(n){return [120000,180000,300000][n]||300000;}
+function servClock(ms){return new Date(ms).toLocaleTimeString([],{hour:"numeric",minute:"2-digit"});}
+function servCamp(id){var f=null;[(typeof DASH!=="undefined"&&DASH&&DASH.lastMetrics)||[],(typeof cmdMetrics!=="undefined"&&cmdMetrics)||[]].forEach(function(l){l.forEach(function(c){if(!f&&String(c.id)===String(id))f=c;});});return f;}
+function servLive(id){var c=servCamp(id);return !!c&&!c.deleted&&c.status!=="REMOVED";}
+// The labelled wait line of a waiting campaign: a small spinner, when Google is asked next, and the server's waitingText.
+function servWaitHtml(id,s){if(!servingWaiting(s))return "";id=String(id==null?"":id);var w=SERV_WAIT[id],t,spin=true;
+  if(w&&w.over){spin=false;t=w.over==="fail"?"Google did not answer the automatic checks. Press Check again with Google.":"Google is still updating. Press Check again with Google later.";}
+  else if(SERV_ASK[id])t="Checking with Google now…";
+  else if(!w)t="Google is still updating this campaign.";
+  else if(w.fails)t="Google did not answer the last check. Next check at "+servClock(w.next)+".";
+  else t=w.last?"Checked at "+servClock(w.last)+", still waiting. Next check at "+servClock(w.next)+".":"Google is still updating this campaign. Checking again at "+servClock(w.next)+".";
+  return '<div class="servWait" role="status" data-sc="'+esc(id)+'">'+(spin?'<span class="spin sm" aria-hidden="true"></span>':'')+'<span>'+esc(t)+(s.waitingText?'<span class="muted" style="display:block">'+esc(s.waitingText)+'</span>':'')+'</span></div>';}
+function servWaitPaint(scope){Array.prototype.forEach.call((scope||document).querySelectorAll(".servWait"),function(e){var id=e.getAttribute("data-sc"),h=servWaitHtml(id,servingOf(id));if(h){var d=document.createElement("div");d.innerHTML=h;e.replaceWith(d.firstChild);}else e.remove();});}
+// What a finished check means for the watch: a verdict that is not waiting (green, or a real finding) ends it;
+// a waiting one schedules the next ask; no verdict at all counts against an automatic check's three tries.
+function servNote(id,s,auto){id=String(id);var w=SERV_WAIT[id],now=Date.now();
+  if(servingClass(s)&&!servingWaiting(s)){delete SERV_WAIT[id];if(auto&&w&&s.verdict==="ready"){var c=servCamp(id);toast("Google caught up"+(c&&c.name?" with "+c.name:"")+".",true);}return;}
+  if(servingClass(s)){w=SERV_WAIT[id]=w||{start:now,n:0,fails:0,last:null,next:0};if(auto)w.n++;else if(w.over==="fail")delete w.over;w.fails=0;w.last=now;w.next=now+servStep(w.n);
+    if(auto&&s.quotaExhausted)w.over="fail";else if(w.next-w.start>SERV_SPAN)w.over="time";return;}
+  if(auto&&w){w.fails++;w.n++;w.next=now+servStep(w.n);if(w.fails>=3)w.over="fail";else if(w.next-w.start>SERV_SPAN)w.over="time";}}
+// Starts a watch for each waiting campaign still on the page and drops the ones that are not (called after every redraw).
+function servWatch(scope){var m=(typeof DASH!=="undefined"&&DASH&&DASH.servingChecks)||{},now=Date.now();
+  Object.keys(SERV_WAIT).forEach(function(id){if(!SERV_ASK[id]&&!(servingWaiting(m[id])&&servLive(id)))delete SERV_WAIT[id];});
+  Object.keys(m).forEach(function(id){if(servingWaiting(m[id])&&servLive(id)&&!SERV_WAIT[id])SERV_WAIT[id]={start:now,n:0,fails:0,last:null,next:now+servStep(0)};});
+  servWaitPaint(scope);servTick();}
+// One timer for the earliest due campaign; none while the tab is hidden, a check is running, or nothing is waiting.
+function servStop(){if(SERV_TIMER){clearTimeout(SERV_TIMER);SERV_TIMER=null;}}
+function servTick(){servStop();if(SERV_BUSY||document.hidden)return;var at=Infinity;
+  Object.keys(SERV_WAIT).forEach(function(id){var w=SERV_WAIT[id];if(!w.over&&!SERV_ASK[id]&&w.next<at)at=w.next;});
+  if(at<Infinity)SERV_TIMER=setTimeout(servRun,Math.max(0,at-Date.now()));}
+// The queue: the due campaigns one after another, never two at once, never one Paul is asking now.
+async function servRun(){SERV_TIMER=null;if(SERV_BUSY||document.hidden)return;SERV_BUSY=true;
+  try{for(;;){var now=Date.now(),id=null,at=Infinity;
+    Object.keys(SERV_WAIT).forEach(function(k){var w=SERV_WAIT[k];if(!w.over&&!SERV_ASK[k]&&w.next<=now&&w.next<at){id=k;at=w.next;}});
+    if(!id||document.hidden)break;
+    await loadServing(document.querySelector('.servbox[data-sc="'+id+'"]'),true,id);
+    var w=SERV_WAIT[id];if(w&&w.next<=now)w.next=Date.now()+servStep(w.n);}}
+  finally{SERV_BUSY=false;servTick();}}
+// Hidden: no timer. Shown again: the 2 hours resume where they stopped and whatever came due is asked at once.
+function servVisible(){var now=Date.now();
+  if(document.hidden){SERV_HID=now;servStop();return;}
+  var gap=SERV_HID?now-SERV_HID:0;SERV_HID=0;Object.keys(SERV_WAIT).forEach(function(id){SERV_WAIT[id].start+=gap;});servWaitPaint();servTick();}
+document.addEventListener("visibilitychange",servVisible);
+// box: the card on screen (or none: an automatic check of a campaign whose card is not drawn). auto: asked by the watch, not by Paul.
+async function loadServing(box,auto,cid){var id=cid!=null?String(cid):box&&box.getAttribute("data-sc");if(!id||!(box||auto)||SERV_ASK[id])return;SERV_ASK[id]=1;
+  if(!box){box=document.createElement("div");box.className="servbox";box.setAttribute("data-sc",id);}
+  var done=btnBusy(box.querySelector(".servRun"),"Asking Google…"),noted=false,live=function(){var now=!box.isConnected&&document.querySelector('.servbox[data-sc="'+id+'"]');if(now){box=now;done=function(){box.innerHTML=servingStoredHtml(servingOf(id),id);};}delete SERV_ASK[id];return box;};
+  servWaitPaint();
   try{var t=await api("servingCheck",{id:id});if(!t||t.error)throw new Error(t&&t.error||"Google did not answer.");
     var s=t.serving||null;
     if(servingClass(s)&&typeof DASH!=="undefined"&&DASH){DASH.servingChecks=DASH.servingChecks||{};
-      DASH.servingChecks[String(id)]={verdict:s.verdict,headline:s.headline||"",counts:s.counts||null,top:(s.findings||[]).filter(function(f){return f.level!=="note";}).slice(0,3),source:"console",checkedAt:s.checkedAt||new Date().toISOString(),settling:false,partial:!!s.partial,lastAttempt:null};}
-    live().innerHTML=(s?renderServing(s):'<div class="muted">Google returned no serving check for this campaign.</div>')+'<div class="servRunRow"><button type="button" class="btn ghost sm servRun">Check again with Google</button></div>';
+      DASH.servingChecks[String(id)]={verdict:s.verdict,headline:s.headline||"",counts:s.counts||null,top:(s.findings||[]).filter(function(f){return f.level!=="note";}).slice(0,3),source:"console",checkedAt:s.checkedAt||new Date().toISOString(),settling:false,partial:!!s.partial,waiting:s.waiting===true,waitingText:s.waiting===true?String(s.waitingText||"").slice(0,240):"",lastAttempt:null};}
+    servNote(id,s,auto);noted=true;
+    live().innerHTML=servWaitHtml(id,s)+(s?renderServing(s):'<div class="muted">Google returned no serving check for this campaign.</div>')+'<div class="servRunRow"><button type="button" class="btn ghost sm servRun">Check again with Google</button></div>';
     var a=servingBadgeAttrs(servingOf(id));Array.prototype.forEach.call(document.querySelectorAll('.servBadge[data-serv="'+id+'"]'),function(b){b.className=a.cls;b.textContent=a.text;b.title=a.title;});
-  }catch(x){live();done();Array.prototype.forEach.call(box.querySelectorAll(".servErr"),function(e){e.remove();});
-    box.insertAdjacentHTML("beforeend",'<div class="servMeta servErr" role="alert">Google serving check failed: '+esc(String(x.message||x).slice(0,160))+'</div>');}
-  finally{delete SERV_ASK[id];var nb=box.querySelector(".servRun");if(nb)nb.onclick=function(ev){ev.stopPropagation();loadServing(box);};}}
+  }catch(x){if(!noted)servNote(id,null,auto);live();done();Array.prototype.forEach.call(box.querySelectorAll(".servErr"),function(e){e.remove();});
+    if(!auto)box.insertAdjacentHTML("beforeend",'<div class="servMeta servErr" role="alert">Google serving check failed: '+esc(String(x.message||x).slice(0,160))+'</div>');}
+  finally{delete SERV_ASK[id];var nb=box.querySelector(".servRun");if(nb)nb.onclick=function(ev){ev.stopPropagation();loadServing(box);};servWatch();}}
 function wireServing(scope){
   Array.prototype.forEach.call(scope.querySelectorAll(".servRun"),function(b){b.onclick=function(ev){ev.stopPropagation();loadServing(b.closest(".servbox"));};var sb=b.closest(".servbox");if(sb&&SERV_ASK[sb.getAttribute("data-sc")])btnBusy(b,"Asking Google…");});
   Array.prototype.forEach.call(scope.querySelectorAll(".servBadge"),function(b){b.onclick=function(ev){var id=b.getAttribute("data-serv"),d=scope.querySelector('.cdet[data-cid="'+id+'"]');
     if(d&&d.style.display!=="none")ev.stopPropagation(); // already open: keep it open. Closed: the row's own click opens it next.
     setTimeout(function(){var box=d&&d.style.display!=="none"&&d.querySelector(".servbox");if(box){loadServing(box);if(box.scrollIntoView)box.scrollIntoView({block:"nearest"});}},0);};});
+  servWatch(scope);
 }
 function wireCampRows(scope){wireServing(scope);scope.querySelectorAll(".crow").forEach(function(r){r.onkeydown=function(e){if(e.target===r&&(e.key==="Enter"||e.key===" ")){e.preventDefault();r.click();}};});Array.prototype.forEach.call(scope.querySelectorAll(".crow"),function(r){r.onclick=function(){var i=this.getAttribute("data-i");var d=scope.querySelector('.cdet[data-d="'+i+'"]');if(d){var opening=d.style.display==="none",cid=this.dataset.cid;d.style.display=opening?"":"none";this.setAttribute("aria-expanded",String(opening));if(opening){if(!_cmdRestoring)cmdOpening(d);REPORT_CAMPAIGN_OPEN.add(cid);loadCampaignTree(d.querySelector(".adlvl"));if(CMD_EDIT&&CMD_EDIT.cid===cid)cmdEditPaint(false);}else{REPORT_CAMPAIGN_OPEN.delete(cid);if(CMD_EDIT&&CMD_EDIT.cid===cid&&!CMD_EDIT.busy)cmdEditClose(false);}}};});
   scope.querySelectorAll(".idleBtn").forEach(function(b){b.onclick=function(){var body=scope.querySelector("tbody.idleRows");if(!body)return;cmdShowIdle=body.hidden;body.hidden=!cmdShowIdle;b.setAttribute("aria-expanded",String(cmdShowIdle));b.textContent=idleToggleText(+b.getAttribute("data-n")||0,cmdShowIdle);if(cmdShowIdle)cmdOpening(body);};});
@@ -2520,7 +2578,7 @@ function renderServing(s){
   var item=function(f){var lv=SERV_LV[f.level]||SERV_LV.note;
     return '<li style="margin:5px 0;list-style:none;overflow-wrap:anywhere"><span class="badge2 '+lv[1]+'" style="margin-right:6px">'+lv[0]+'</span><b>'+esc(f.area)+':</b> '+esc(f.text)
       +(f.reason?'<div class="muted" style="font-size:11px;margin:1px 0 0 2px">Google: '+esc(f.reason)+'</div>':'')
-      +(f.fix?'<div class="muted" style="font-size:11px;margin:1px 0 0 2px">Fix: '+esc(f.fix)+'</div>':'')+'</li>';};
+      +(f.fix?'<div class="muted" style="font-size:11px;margin:1px 0 0 2px">'+(f.level==="note"?"Optional: ":"Fix: ")+esc(f.fix)+'</div>':'')+'</li>';};
   var all=s.findings||[],main=all.filter(function(f){return f.level!=="note";}),notes=all.filter(function(f){return f.level==="note";});
   var when=s.checkedAt?new Date(s.checkedAt):null;
   return box+'<div style="font-size:12px;font-weight:650;margin-bottom:4px">Google serving check <span style="font-weight:600;color:'+tone+'">· '+esc(s.headline||"")+'</span></div>'
