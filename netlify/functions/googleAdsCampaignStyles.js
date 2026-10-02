@@ -33,6 +33,14 @@ async function landscapeLogo(){
   const mark=await sharp(Buffer.from(brand.dataUrl(a.id).split(',')[1],'base64')).flatten({background:'#ffffff'}).extract({left:a.crop.x,top:a.crop.y,width:a.crop.width,height:a.crop.height}).resize({height:260}).toBuffer();
   return sharp({create:{width:1200,height:300,channels:3,background:'#ffffff'}}).composite([{input:mark,gravity:'center'}]).jpeg({quality:95}).toBuffer();
 }
+// Google requires a display URL on image ads (Ad.display_url) and disapproves one whose domain is not the final URL's
+// (Destination mismatch), so it is the final URL's own host, lower-cased, without "www.": a named domain, never an IP address.
+function displayUrl(finalUrl){
+  let url=null;try{url=new URL(String(finalUrl||''));}catch(_){}
+  const host=url&&/^https?:$/.test(url.protocol)?url.hostname.toLowerCase().replace(/^www\./,''):'';
+  if(!/^([a-z0-9-]+\.)+[a-z][a-z0-9-]*$/.test(host))throw Error('Fixed Display needs the product page’s web address (http or https, on a named domain) for its display URL. Check the product URL.');
+  return host;
+}
 function displayOps({customerId,style,name,dailyBudget,countries,destination,images,copy,logo,wideLogo=null,videos=[]}){
   if(!['fixed_display','responsive_display'].includes(style))throw Error('Invalid Display style.');
   const budget=`customers/${customerId}/campaignBudgets/-1`,campaign=`customers/${customerId}/campaigns/-2`,group=`customers/${customerId}/adGroups/-3`;
@@ -41,7 +49,8 @@ function displayOps({customerId,style,name,dailyBudget,countries,destination,ima
     ...countries.map(c=>({campaignCriterionOperation:{create:{campaign,location:{geoTargetConstant:'geoTargetConstants/'+c}}}})),
     {adGroupOperation:{create:{resourceName:group,campaign,name,type:'DISPLAY_STANDARD',status:'ENABLED'}}}];
   if(style==='fixed_display'){
-    for(const image of images)ops.push({adGroupAdOperation:{create:{adGroup:group,status:'ENABLED',ad:{name:name+' '+image.width+'x'+image.height,finalUrls:[destination],imageAd:{imageAsset:{asset:image.resourceName}}}}}});
+    const shown=displayUrl(destination);
+    for(const image of images)ops.push({adGroupAdOperation:{create:{adGroup:group,status:'ENABLED',ad:{name:name+' '+image.width+'x'+image.height,finalUrls:[destination],displayUrl:shown,imageAd:{imageAsset:{asset:image.resourceName}}}}}});
   }else{
     const text=(values,max,label)=>{if(!Array.isArray(values)||!values.length||values.some(t=>!t||[...t].length>max))throw Error('Review the '+label+' before publishing.');return values.slice(0,5).map(text=>({text}));};
     const headlines=text(copy.headlines,30,'headlines'),descriptions=text(copy.descriptions,90,'descriptions'),longHeadline=text(copy.longHeadlines,90,'long headline')[0];
@@ -58,4 +67,4 @@ function attribution(url,attributes=[]){
   const id=k=>/^\d+$/.test(get(k))?get(k):null,style=get('bt_pipeline');
   return {campaignId:id('utm_campaign'),adGroupId:id('bt_group'),adId:id('bt_ad'),pipeline:STYLES.includes(style)?style:null,designId:/^[a-f0-9]{8,64}$/.test(get('bt_design'))?get('bt_design'):null};
 }
-module.exports={attribution,STYLES,NAMES,CAMPAIGN_STYLES,FIXED_SIZES,selection,fixedProofs,validatePhoto,landscapeLogo,displayOps};
+module.exports={attribution,STYLES,NAMES,CAMPAIGN_STYLES,FIXED_SIZES,selection,fixedProofs,validatePhoto,landscapeLogo,displayUrl,displayOps};

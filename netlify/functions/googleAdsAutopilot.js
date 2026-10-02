@@ -11454,6 +11454,9 @@ async function _resolveBrandLogo(ops){
   if(!same)out.unshift({assetOperation:{create:{resourceName:target,name:"Brites reviewed 1024x1024 "+creativeHash(data).slice(0,20),imageAsset:{data}}}});
   return out;
 }
+// Google requires a display URL on image ads. A plan prepared before Fixed Display set one (a card still waiting in Approvals)
+// gets it here, from each ad's own final URL, on the copy that is sent: the stored, reviewed plan and its hash stay as they are.
+function _imageAdDisplayUrls(ops){for(const o of ops){const ad=o&&o.adGroupAdOperation&&o.adGroupAdOperation.create&&o.adGroupAdOperation.create.ad;if(ad&&ad.imageAd&&!ad.displayUrl)ad.displayUrl=require("./googleAdsCampaignStyles").displayUrl((ad.finalUrls||[])[0]);}return ops;}
 async function materializeReviewedCreative(it) {return _resolveBrandLogo(await _materializeReviewedCreativeOps(it));}
 async function _materializeReviewedCreativeOps(it) {
   assertCreativeReviewed(it);const p=it.payload||{},c=it.creative||{};
@@ -11466,12 +11469,12 @@ async function _materializeReviewedCreativeOps(it) {
       if(meta.width!==entry.asset.width||meta.height!==entry.asset.height)throw new Error("The saved image dimensions differ from the reviewed design.");
       ops.push({assetOperation:{create:{resourceName:entry.tempResourceName,name:("Brites reviewed "+entry.asset.width+"x"+entry.asset.height+" "+entry.asset.hash.slice(0,20)),imageAsset:{data:bytes.toString("base64")}}}});
     }
-    return ops.concat(JSON.parse(JSON.stringify(p.mutateOperations||[])));
+    return ops.concat(_imageAdDisplayUrls(JSON.parse(JSON.stringify(p.mutateOperations||[]))));
   }
   if(!needsCreativeReview(it))return p.mutateOperations||null;
   if(p.designStudioSpec) {const b=await buildDesignStudioPmaxCampaignOps({...p.designStudioSpec,reviewedCreative:c},{ctrl:await control()});return b.ops;}
   if(p.service||!p.mutateOperations)return null;
-  const ops=JSON.parse(JSON.stringify(p.mutateOperations));
+  const ops=_imageAdDisplayUrls(JSON.parse(JSON.stringify(p.mutateOperations)));
   if(!(c.groups||[]).some(g=>g.channel==="pmax"||g.channel==="search"&&Object.keys(g.assets||{}).length))return ops;
   // Brand guidelines keep the logo on the campaign: no logo asset or asset-group LOGO link is sent.
   const brand=!!(p.meta&&p.meta.brandGuidelinesEnabled);

@@ -7,6 +7,10 @@ assert.throws(()=>R.selection(['pmax'],{pmax:10},[]));
 assert.equal(R.fixedProofs([{width:2048,height:2048,asset:{}},{width:300,height:250,asset:{}},{width:300,height:250,asset:{}}]).length,1);
 assert.throws(()=>R.validatePhoto({width:1080,height:1920,bytes:100},'portrait'));
 assert.doesNotThrow(()=>R.validatePhoto({width:1200,height:300,bytes:100},'landscape_logo'));assert.throws(()=>R.validatePhoto({width:600,height:300,bytes:100},'landscape_logo'));
+// Image ads carry Google's required display URL: the final URL's host, lower-cased, without www.; anything else is refused before Google sees it.
+assert.equal(R.displayUrl('https://WWW.BritesJewelry.com/products/peach?variant=1'),'britesjewelry.com');assert.equal(R.displayUrl('http://shop.britesjewelry.com/x'),'shop.britesjewelry.com');
+for(const bad of [undefined,'','britesjewelry.com/products/peach','ftp://britesjewelry.com/x','https://192.168.0.1/x','https://[::1]/x','https://localhost/x'])assert.throws(()=>R.displayUrl(bad),/display URL/);
+assert.throws(()=>R.displayOps({customerId:'1',style:'fixed_display',name:'n',dailyBudget:5,countries:['2840'],destination:'not a url',images:[{width:300,height:250,resourceName:'customers/1/assets/-9'}]}),/display URL/);
 const fixture=path.join(__dirname,'design-publication.cjs'),source=fs.readFileSync(fixture,'utf8').split('(async()=>{')[0];
 const ctx=vm.createContext({require:require('node:module').createRequire(fixture),__dirname,process,console,Buffer,Date,URL,setTimeout,clearTimeout});
 vm.runInContext(source+'\nthis.factory=engine;this.memoryFactory=memory;',ctx);
@@ -45,6 +49,8 @@ vm.runInContext(source+'\nthis.factory=engine;this.memoryFactory=memory;',ctx);
  assert.equal(timed.payload.meta.plannedDays[timedCampaign.resourceName],30);assert.equal(timed.summary.campaigns[0].days,30);assert(!plan.payload.meta.plannedDays&&plan.summary.campaigns.every(c=>c.days===null));
  assert('audienceSignal' in plan.summary.campaigns.find(c=>c.style==='pmax'));assert(/may make one from your images/.test(plan.summary.videoStatus));
  assert.equal(ops.filter(o=>o.adGroupAdOperation?.create.ad.imageAd).length,1);
+ // Google requires a display URL on every image ad, on its final URL's domain: the destination host without www., built into the plan itself.
+ for(const list of [plan.payload.mutateOperations,ops]){const ads=list.filter(o=>o.adGroupAdOperation?.create.ad.imageAd).map(o=>o.adGroupAdOperation.create.ad);assert.equal(ads.length,1);for(const ad of ads){assert.equal(JSON.stringify(ad.finalUrls),'["https://britesjewelry.com/products/peach"]');assert.equal(ad.displayUrl,'britesjewelry.com','a fixed image ad carries Google’s required display URL: the destination host without www.');}}
  const refs=new Set(ops.map(o=>Object.values(o)[0]?.create?.resourceName).filter(Boolean));
  for(const match of JSON.stringify(ops).matchAll(/customers\/123\/(?:assets|campaigns|campaignBudgets|assetGroups|adGroups)\/-\d+/g))assert(refs.has(match[0]),'unresolved temporary reference '+match[0]);
  assert(plan.payload.generatedAssets.filter(a=>a.fixed).every(a=>a.asset.bytes<=150*1024&&a.asset.width===300&&a.asset.height===250));
