@@ -751,15 +751,8 @@ dialog.phv.layer.phvIn{background:transparent}
 .owPlateWait[hidden]{display:none}
 .owPlateTip{position:absolute;z-index:3;pointer-events:none;background:var(--velvet);color:#f4ecdc;border-radius:8px;padding:4px 9px;font:600 11px var(--mono);white-space:nowrap;transform:translate(-50%,calc(-100% - 10px))}
 .owPlateTip[hidden]{display:none}
-/* another order's charm, chosen: its order and "Open order", on the charm (the order view moves to it, never a view over it) */
-.owPlatePick{position:absolute;z-index:4;display:flex;align-items:center;gap:7px;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:3px 3px 3px 10px;box-shadow:0 6px 18px rgba(20,16,10,.12);font:11px var(--sans);color:var(--ink70);white-space:nowrap;transform:translate(-50%,calc(-100% - 12px))}
-.owPlatePick.below{transform:translate(-50%,12px)}
-.owPlatePick[hidden]{display:none}
-.owPlatePick .k{font:700 9px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--ink45)}
-.owPlatePick b{font:600 11.5px var(--mono);color:var(--ink)}
-.owPlatePick .s{max-width:150px;overflow:hidden;text-overflow:ellipsis}
-.owPlatePick .btn,.owOrdHd .btn{display:inline-flex;align-items:center;gap:4px}
-.owPlatePick .btn svg,.owOrdHd .btn svg{width:11px;height:11px;flex:none}
+.owOrdHd .btn{display:inline-flex;align-items:center;gap:4px}
+.owOrdHd .btn svg{width:11px;height:11px;flex:none}
 .owOrdHd{display:flex;align-items:center;justify-content:space-between;gap:8px;height:18px}
 .owPanel .owOrdHd .fLabel{margin:0}
 .owOrdHd .btn{padding:2px 8px 2px 5px}
@@ -779,7 +772,7 @@ dialog.phv.layer.phvIn{background:transparent}
 .owShTabs button i{width:8px;height:8px;border-radius:50%;background:var(--c,var(--ink25))}
 .owShTabs button.on{background:var(--velvet);border-color:var(--velvet);color:#fff}
 .owCharm{display:grid;grid-template-columns:92px minmax(0,1fr);gap:12px;align-items:center}
-.owCharm .pic{width:92px;height:92px;box-sizing:border-box;border:1px solid var(--line);border-radius:12px;display:grid;place-items:center;background:var(--card2);overflow:hidden;font:11px var(--sans);color:var(--ink45);text-align:center;padding:4px}
+.owCharm .pic{position:relative;width:92px;height:92px;box-sizing:border-box;border:1px solid var(--line);border-radius:12px;display:grid;place-items:center;background:var(--card2);overflow:hidden;font:11px var(--sans);color:var(--ink45);text-align:center;padding:4px}
 .owCharm .pic img,.owCharm .pic canvas{display:block;width:100%;height:100%;min-width:0;min-height:0;object-fit:contain}
 .owCharm b{font:600 13px var(--mono);display:block;overflow-wrap:anywhere}
 .owCharm span{display:block;font:12.5px var(--sans);color:var(--ink70)}
@@ -2048,7 +2041,7 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
 .comparePair figcaption{text-align:center;font:500 9px/1.3 var(--sans);color:var(--ink45);letter-spacing:.02em}
 .doneRow .comparePair .placementThumb,.comparePair .placementThumb{width:88px;height:88px;box-sizing:border-box;grid-row:auto;position:relative}
 .comparePair .placementThumb img,.comparePair .placementThumb canvas{object-fit:contain;width:100%;height:100%}
-.thumbLoading{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:#fff;z-index:1}
+.thumbLoading{position:absolute;inset:0;pointer-events:none;display:flex;align-items:center;justify-content:center;background:#fff;z-index:1}
 .thumbLoading .spin{width:16px;height:16px;border-width:2px}
 .placementThumb[role=button]{cursor:pointer}.placementThumb:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
 .doneRow.placementRow{grid-template-columns:184px minmax(160px,.85fr) minmax(260px,1.4fr)}
@@ -6549,7 +6542,7 @@ boot();
 </script>
 <script src="order-timeline.js?v=20260929-om"></script>
 <script src="charm-nest-bridge.js?v=20261002-os"></script>
-<script src="charm-nest-sheetwin.js?v=20261002-custom-decisions"></script>
+<script src="charm-nest-sheetwin.js?v=20261002-ck"></script>
 <script src="charm-nest-tour.js?v=20260929-m11"></script>
 <script src="charm-nest-mail.js?v=20260928-ov2"></script>
 <script src="charm-nest-rose-ui.js?v=20260929-cx"></script>
@@ -6628,7 +6621,7 @@ boot();
       <section class="owView owVTime" data-view="timeline" role="tabpanel" aria-label="Timeline" hidden><div class="owTimeline" id="owTimeline"></div></section>
       <section class="owView owVSheet" data-view="sheet" role="tabpanel" aria-label="Sheet" hidden>
         <div class="owPlateArea">
-          <div class="owPlateWrap" id="owPlateWrap"><canvas class="owPlate" id="owSheetCv" aria-label="The order's sheet, its pieces in gold"></canvas><div class="owPlateTip" id="owPlateTip" hidden></div><div class="owPlatePick" id="owPlatePick" role="group" aria-label="Another order's charm" hidden></div><div class="owPlateWait" id="owPlateWait" hidden><span class="owSpin"></span><span></span></div></div>
+          <div class="owPlateWrap" id="owPlateWrap"><canvas class="owPlate" id="owSheetCv" aria-label="The order's sheet, its pieces in gold"></canvas><div class="owPlateTip" id="owPlateTip" hidden></div><div class="owPlateWait" id="owPlateWait" hidden><span class="owSpin"></span><span></span></div></div>
           <div class="owPlateFoot" id="owPlateFoot"></div>
         </div>
         <div class="owSide" id="owSheetSide"><aside class="owPanel" id="owSheetPanel"></aside></div>
