@@ -4186,15 +4186,17 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     let x = (clientX - r.left) * cv.width / r.width - G.R; const y = (clientY - r.top) * cv.height / r.height - G.R;
     if (x < 0 || y < 0 || x > G.Wp || y > G.Hp) return null;
     if (G.backSide) x = G.Wp - x;
-    const probe = G.probe || (G.probe = document.createElement("canvas").getContext("2d"));
+    const probe = G.probe || (G.probe = document.createElement("canvas").getContext("2d")); let near = null;
     for (let i = G.pieces.length - 1; i >= 0; i--) {
-      const pc = G.pieces[i], p = pc.p, dx = x - p.cxPt * G.k, dy = y - p.cyPt * G.k, reach = Math.max(p.wPt, p.hPt) * G.k;
+      const pc = G.pieces[i], p = pc.p, dx = x - p.cxPt * G.k, dy = y - p.cyPt * G.k, reach = Math.max(p.wPt, p.hPt) * G.k + 8 * G.dpr;
       if (Math.abs(dx) > reach || Math.abs(dy) > reach) continue;
       const a = -p.angle * Math.PI / 180, sc = p.scale || 1, lx = (dx * Math.cos(a) - dy * Math.sin(a)) / sc, ly = (dx * Math.sin(a) + dy * Math.cos(a)) / sc;
       probe.setTransform(1, 0, 0, 1, 0, 0); orderOutline(probe, G, pc);
       if (probe.isPointInPath(lx, ly)) return pc;
+      // (a click a few pixels outside a charm's edge still counts for it, when it is on no charm itself)
+      if (!near) { probe.lineWidth = 8 * G.dpr / sc; if (probe.isPointInStroke(lx, ly)) near = pc; }
     }
-    return null;
+    return near;
   }
   async function drawOrder(cv, target, orderId, opts = {}) {
     const rid = String(orderId || ""), page = target && typeof target === "object" ? target : null, id = page ? page.sheetId || "" : String(target || "");
@@ -4233,6 +4235,8 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       rec, pieces, mine: G.mine, stock: G.st, sheet: { id: rec.id || id || null, metal: rec.metal, n: sheetNoOf(rec), name: rec.folder || rec.fileBase || "" },
       search: value => { G.search=CharmNestOrders.orderQuery(value);redraw();return CharmNestOrders.orderGroups(G.pieces,G.search); },
       redraw, focus: poolId => { G.focus = poolId || null; redraw(); },
+      // another order of this sheet is the one pointed at (a click on its charm): its pieces take the gold now, its charm the firmer line
+      aim: (orderId, poolId) => { if (!active()) return; G.mine = G.pieces.filter(x => x.rid === String(orderId)); G.focus = poolId || null; redraw(); },
       // the back side: the sheet's own backs and the engraving font, asked for once, and the plate drawn again as they land
       back: on => { if (!active()) return; G.backSide = !!on; if (G.backSide) ensureBacks(G, readOpts); redraw(); },
       engraved: () => G.pieces.filter(x => engGeoOf(x, G.backs) || (x.eng && x.eng.text)).length,
