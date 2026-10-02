@@ -144,7 +144,7 @@ const rgb=hex=>[1,3,5].map(i=>parseInt(hex.slice(i,i+2),16));
  // Approve and publish Saturn while Duck is selected and generating: every guard passes, including applyApproval's.
  e.bind({_deletedCampaignIds:async()=>{throw Error('SENTINEL: the publication guards passed');}});
  await assert.rejects(()=>e.E.publishAdDesignSubmission({id:saved.saturn,hash:hashOf(saved.saturn),planHash:plans.saturn,confirmed:true}),/SENTINEL/);
- ok(review(saved.saturn).status==='APPROVED'&&/SENTINEL/.test(review(saved.saturn).lastError),'Saturn is approved and reaches publication as its own scope');
+ ok(review(saved.saturn).status==='PENDING'&&/SENTINEL/.test(review(saved.saturn).lastError)&&review(saved.saturn).pipelinePlan.hash===plans.saturn,'Saturn is approved and reaches publication as its own scope (stopped there, it returns to its card with its plan and the reason)');
  delete live.job.inFlight;live.job.leaseUntil=0;f.docs.set(WSP,live);
 
  // 7. The workspace refreshes its product sources. Without Bunny in the current source set, Bunny's older review
@@ -171,7 +171,7 @@ const rgb=hex=>[1,3,5].map(i=>parseInt(hex.slice(i,i+2),16));
  await sees(saved.gecko,'gecko','after a studio edit');
  const first=await ownPlan(saved.gecko,'gecko','after a studio edit'),again=await prepare(saved.gecko);ok(again.cached===true&&again.planHash===first.planHash,'Gecko’s prepared plan is reused after a studio edit');
  const copyId='design-review-'+'f'.repeat(32),tampered={...clone(review(saved.gecko)),status:'APPROVED',pipelineReview:{hash:review(saved.gecko).pipelinePlan.hash}};tampered.designReview.publicationImages[0].asset.hash=images.duck.square.hash;f.docs.set('Brites_GAds_Approvals/'+copyId,tampered);
- await assert.rejects(()=>e.get('applyApproval')(copyId,clone(control)),/design changed after approval/);checks++;
+ await assert.rejects(()=>e.get('applyApproval')(copyId,clone(control),{submission:true}),/design changed after approval/);checks++;
 
  // 9. A product whose saved source no longer exists gives a clear message instead of another product's ad.
  f.docs.delete(productDoc('s1',P.bunny));

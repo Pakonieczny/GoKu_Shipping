@@ -49,6 +49,8 @@ function assertFailed(card,label){
  assert.equal(statusCalls(),4,'the fourth card loads as soon as a slot frees');assert(maxInFlight<=3,'never more than three preview requests in flight');
  four.forEach((card,i)=>assertFilled(card,['Duck','Gecko','Bunny','Planet Saturn'][i]));
  assert.match(four[1].querySelector('[data-review-cover] img').getAttribute('src'),/gecko-landscape/,'each card shows its own product');assert.match(four[3].querySelector('[data-review-cover] img').getAttribute('src'),/saturn-landscape/);
+ // A saved film whose file cannot load (expired link, 403/404, unsupported codec) says so instead of "Loading video…" forever: browsers fire that error on its <source>.
+ {const video=four[0].querySelector('video'),source=video&&video.querySelector('source');assert(source,'the card shows its saved film');source.dispatchEvent(new dom.window.Event('error'));const badge=video.parentElement.querySelector('.arImageLoading');assert(badge&&!badge.hidden&&badge.textContent==='Video unavailable','a film that cannot load says so instead of loading forever: '+(badge&&badge.textContent));}
  // A list refresh rebuilding the cards reuses the cache: no request storm.
  d.body.replaceChildren();const again=mount([duck,gecko,bunny,saturn]);await settle();assert.equal(statusCalls(),4,'rebuilt cards reuse cached previews');again.forEach((card,i)=>assertFilled(card,'rebuilt '+i));
  // A typed render does not rebuild a loaded cover (no flashing image badges).
