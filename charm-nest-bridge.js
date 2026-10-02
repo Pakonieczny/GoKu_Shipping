@@ -9812,7 +9812,7 @@ const OrderWin = window.OrderWin = (() => {
     bar._stamp = stamp; bar.className = "owCustom" + (it.done ? " done" : "");
     // (a spinner and what is happening, the name asked for, or "Marked completed · Undo" in place of the buttons)
     // Completed: the same seals and signer history as Review, fitted together beside the print button.
-    const seals = (it.done || decided) && rec && window.Seal ? Seal.row(rec, { pending: decided ? false : CustomPrint.freshOf("cu:" + String(it.key).replace(/^[a-z]+:/, "")) }) : "";
+    const seals = (it.done || decided) && rec && window.Seal ? Seal.row(rec, { size: 34, pending: decided ? false : CustomPrint.freshOf("cu:" + String(it.key).replace(/^[a-z]+:/, "")) }) : "";
     bar.innerHTML = `<span class="tag">${decided ? "Designs · Sent to sheet" : `Custom Orders · ${esc(label)}${it.done ? " · completed" : ""}`}</span><span class="w" title="${esc(why)}">${esc(why)}</span>` +
       (decided ? seals + (designs && designs.files.length ? '<button type="button" class="btn ghost xs" data-cu-view-designs>View designs</button>' : '') + '<button type="button" class="btn ghost xs" data-cu-open-sheet>Open sheet</button><button type="button" class="btn ghost xs" data-cu-history>History</button>'
         : busy && !busy.includes("cuUndo") ? busy

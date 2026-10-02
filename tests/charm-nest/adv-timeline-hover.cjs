@@ -1,10 +1,10 @@
 // The step explainer card kept in reach (Paul, 28 Sep 21:18: "the hover must persist"), in the real sorter page with
 // the fake site (bridge-server.cjs), every other request aborted:
 //  1 · the order view's "Where it is now" card (explainOn, inside a modal dialog as in the order view): the card stays
-//      after resting on the original seal and closes on departure, including onto the enlargement;
+//      after resting on the seal (750 ms) and closes on departure, including onto the card; the seal grows where it stands;
 //      clicking the original opens its step on the Timeline;
-//  2 · a very short screen: a rail at the top flips the zoomed seal under its dot and the card goes beside them, clear of
-//      the seal and inside the view.
+//  2 · a very short screen: a rail at the top: the seal grows in place (nudged into the view) and the card goes clear of
+//      the grown seal, inside the view; no second seal is ever made.
 //   node tests/charm-nest/adv-timeline-hover.cjs     (PW_DIR=<playwright node_modules>, CHROMIUM=<chrome>)
 const path = require('path'), assert = require('assert/strict');
 const root = path.join(__dirname, '../..');
@@ -53,13 +53,14 @@ const Timeline = require(path.join(root, 'netlify/functions/_orderTimeline.js'))
     await page.mouse.move(away.x, away.y);
     await page.mouse.move(seal.x + seal.width / 2, seal.y + seal.height / 2, { steps: 4 }); await page.waitForTimeout(1500);
     assert(await shown(), 'hovering the seal shows its card');
-    // the enlarged card cannot keep the hover alive: only the actual original seal can
+    assert(await page.evaluate(() => !!document.querySelector('.tlTestHost .tlNowSeal[data-seal-zoom]') && !document.querySelector('.tlLoupe,.tlNowZoom')), 'the seal itself has grown, with no second seal');
+    // the step card cannot keep the hover alive: only the actual original seal can
     const cb = await page.evaluate(() => { const r = document.querySelector('.tlTestDlg .tlExp').getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + 24 }; });
     await page.mouse.move(cb.x, cb.y, { steps: 8 }); await page.waitForTimeout(300);
-    assert(!(await shown()), 'moving onto the enlargement closes the original-seal hover');
-    await page.mouse.move(seal.x + seal.width / 2, seal.y + seal.height / 2, { steps: 6 }); await page.waitForTimeout(1000);
-    assert(!(await shown()), 'a new hover waits its full delay');
-    await page.waitForTimeout(500); assert(await shown(), 'resting on the original opens it again');
+    assert(!(await shown()), 'moving onto the card closes the original-seal hover');
+    await page.mouse.move(seal.x + seal.width / 2, seal.y + seal.height / 2, { steps: 6 }); await page.waitForTimeout(450);
+    assert(!(await shown()), 'a new hover waits its full 750 ms');
+    await page.waitForTimeout(750); assert(await shown(), 'resting on the original opens it again');
     await page.mouse.move(away.x, away.y, { steps: 4 }); await page.waitForTimeout(300);
     assert(!(await shown()), 'it closes as soon as the pointer leaves');
     await page.mouse.click(seal.x + seal.width / 2, seal.y + seal.height / 2); await page.waitForTimeout(100);
@@ -67,7 +68,7 @@ const Timeline = require(path.join(root, 'netlify/functions/_orderTimeline.js'))
     await page.mouse.move(away.x, away.y, { steps: 4 }); await page.waitForTimeout(300);
     assert(!(await shown()), 'a click cannot leave a floating hover pinned');
     await page.evaluate(() => { const d = document.querySelector('.tlTestDlg'); d.close(); d.remove(); });
-    console.log('  ✓ 1 · the Overview card: delayed rest on the original seal; departure dismisses it, including onto the enlargement; clicking the seal opens the Timeline');
+    console.log('  ✓ 1 · the Overview card: delayed rest on the original seal; departure dismisses it, including onto the card; clicking the seal opens the Timeline');
 
     // ── 2 · a very short screen: the card beside a flipped seal, clear of it and in the view ──
     await page.setViewportSize({ width: 1440, height: 280 });
@@ -83,16 +84,16 @@ const Timeline = require(path.join(root, 'netlify/functions/_orderTimeline.js'))
       await page.mouse.move(700, 275); await page.waitForTimeout(250);
       await page.locator(`.tlStop[data-stage="${k}"] .tlSeal`).hover(); await page.waitForTimeout(1500);
       out.push(await page.evaluate(k => {
-        const el = window.__el, X = el.querySelector('.tlExp'), L = el.querySelector('.tlLoupe'), e = X.getBoundingClientRect(), l = L.getBoundingClientRect(), d = el.querySelector(`.tlStop[data-stage="${k}"] .tlSeal`).getBoundingClientRect();
-        return { k, card: getComputedStyle(X).display === 'block', loupe: getComputedStyle(L).display === 'block', flipped: l.top >= d.bottom - 1,
-          apart: l.bottom <= e.top + 1 || l.top >= e.bottom - 1 || l.right <= e.left + 1 || l.left >= e.right - 1, dot: d.bottom <= e.top + 1 || d.top >= e.bottom - 1 || d.right <= e.left + 1 || d.left >= e.right - 1,
-          inView: e.left >= 0 && e.right <= innerWidth && e.top >= 0 && e.bottom <= innerHeight };
+        const el = window.__el, X = el.querySelector('.tlExp'), s = el.querySelector(`.tlStop[data-stage="${k}"] .tlSeal`), e = X.getBoundingClientRect(), z = s.getBoundingClientRect();
+        return { k, card: getComputedStyle(X).display === 'block', grown: !!s.dataset.sealZoom && z.width > 60, copy: !!document.querySelector('.tlLoupe,.tlNowZoom,.sealLens'),
+          apart: z.bottom <= e.top + 1 || z.top >= e.bottom - 1 || z.right <= e.left + 1 || z.left >= e.right - 1,
+          inView: e.left >= 0 && e.right <= innerWidth && e.top >= 0 && e.bottom <= innerHeight, zoomInView: z.left >= 0 && z.right <= innerWidth && z.top >= 0 && z.bottom <= innerHeight };
       }, k));
     }
-    const bad = out.filter(r => !r.card || !r.loupe || !r.flipped || !r.apart || !r.dot || !r.inView);
-    assert.deepEqual(bad, [], 'each card clear of its flipped seal and its dot, inside the view: ' + JSON.stringify(out));
+    const bad = out.filter(r => !r.card || !r.grown || r.copy || !r.apart || !r.inView || !r.zoomInView);
+    assert.deepEqual(bad, [], 'each card clear of its grown seal, both inside the view, no second seal: ' + JSON.stringify(out));
     await page.evaluate(() => { window.__tl.destroy(); document.querySelectorAll('.tlTestHost2').forEach(x => x.remove()); });
-    console.log(`  ✓ 2 · a 280 px tall screen: ${out.length} done steps, each seal flipped under its dot and its card beside them, clear of both and inside the view`);
+    console.log(`  ✓ 2 · a 280 px tall screen: ${out.length} done steps, each seal grown in place and its card clear of it, both inside the view`);
 
     assert.deepEqual(errors, [], 'no page errors');
     console.log('adv-timeline-hover OK');

@@ -283,7 +283,7 @@
 
   /* ════ Seals ════ */
   const Seal = (() => {
-    const BASE_SIZE = 84, HOVER_SIZE = 168, META_INK = '#12294c';
+    const BASE_SIZE = 84, META_INK = '#12294c';
     const INK = { print: "#65737f", sheet: "#65737f", button: "#77518a", laserReady: "#98721f", laserDone: "#98721f", engraveApproved:"#296c58", engravePlain:"#296c58" };
     // One outline drives both the ink face and the wooden/rubber head. Signatures remain record data, never a live viewer name.
     const FAMILY = {
@@ -340,13 +340,13 @@
       if(model.family==='laser')trim='<g fill="none" stroke-width="1.2"><circle cx="30" cy="22" r="2"/><circle cx="90" cy="22" r="2"/><circle cx="20" cy="75" r="2"/><circle cx="100" cy="75" r="2"/></g>';
       const symbol=model.path?`<path d="${esc(model.path)}"/>`:SYMBOL[model.icon || model.family] || SYMBOL[model.family] || SYMBOL.received;
       return `<svg viewBox="0 0 120 ${H}" aria-hidden="true" focusable="false" data-seal-family="${esc(model.family || 'received')}" data-seal-model="${esc(JSON.stringify(model))}"><g fill="${ink}" stroke="${ink}" stroke-linecap="round" stroke-linejoin="round"${opts.ghost?' opacity=".55"':''}>`+
+        `<path data-seal-paper d="${f.d}" fill="#fffefb" stroke="none" opacity="0"/>`+
         `<path data-seal-outline d="${f.d}" fill="rgba(255,254,251,.08)" stroke-width="2.7"${opts.ghost?' stroke-dasharray="3 3"':''}/><path d="${f.d}" transform="translate(60 60) scale(.93) translate(-60 -60)" fill="none" stroke-width=".9"/>${trim}`+
         `<g transform="translate(46.2 13) scale(1.15)" fill="none" stroke-width="1.45">${symbol}</g>`+
         lines.map((line,i)=>fitted(line,lines.length===2?54+i*14:64,lines.length===2 || line.length>10?14.6:15.8,labelWidth)).join('')+
         (opts.ghost || model.status?'':fitted(model.date || 'NOT RECORDED',82,model.date?14:11,model.family==='engraving'?82:86,META_INK)+fitted(model.time || '—',96,14.2,model.family==='engraving'?62:model.family==='finishing'?66:72,META_INK))+
         (opts.signer?'<path d="M32 124h56" fill="none" stroke-width=".7" opacity=".5"/>'+txt('Signed by',135,8,500,META_INK)+sigLines.map((s,i)=>txt(s,147+i*12,10,600,META_INK)).join(''):'')+'</g></svg>';
     }
-    function enlarge(g) {try{return face(JSON.parse(g.getAttribute('data-seal-model')),{signer:true});}catch(_){return null;}}
     // A rounded wooden contact, with a faint cushioned paper tail. Generated locally: no network/audio-file delay.
     const Sound=(()=>{
       let context=null, buffer=null, contacts=0, lastContact=0;
@@ -446,7 +446,7 @@
     function html(st, size = BASE_SIZE, extra) {
       size = BASE_SIZE;
       const reach = /\bloose\b/.test(extra || "") ? "" : ` tabindex="0" role="img" aria-label="${esc(titleOf(st))}"`;
-      return `<span class="seal seal-${kindOf(st)}${extra ? " " + extra : ""}" style="--rot:${rotOf(st)}deg;--sz:${size}px" title="${esc(titleOf(st))}" data-at="${+st.at || 0}"${processOf(st)?` data-process-seal="${esc(st.id || '')}" data-seal-owner="${esc(st.owner || '')}" data-seal-caption="${esc(titleOf(st))}"`:''}${reach}>${svg(st)}</span>`;
+      return `<span class="seal seal-${kindOf(st)}${extra ? " " + extra : ""}" style="--rot:${rotOf(st)}deg;--sz:${size}px" data-at="${+st.at || 0}"${processOf(st)?` data-process-seal="${esc(st.id || '')}" data-seal-owner="${esc(st.owner || '')}"`:''}${reach}>${svg(st)}</span>`;
     }
     const sizeFor = () => BASE_SIZE;
     /** The card's seals, oldest first, beside the button they belong with. pending: the time of a seal just pressed
@@ -454,7 +454,7 @@
     function row(rec, opts = {}) {
       const st = list(rec); if (!st.length) return "";
       const shown = st, more = 0, size = BASE_SIZE;
-      return `<span class="sealRow n${Math.min(shown.length, 5)}${opts.size ? " mini" : ""}" data-seal-group data-seal-count="${shown.length}" role="group" aria-label="${st.length === 1 ? "Seal" : st.length + " seals"}">` +
+      return `<span class="sealRow n${Math.min(shown.length, 5)}${opts.size ? " mini" : ""}"${opts.size ? ` data-seal-max="${Math.round(+opts.size) || BASE_SIZE}"` : ""} data-seal-group data-seal-count="${shown.length}" role="group" aria-label="${st.length === 1 ? "Seal" : st.length + " seals"}">` +
         (more ? `<span class="sealMore" title="${esc(st.slice(0, more).map(titleOf).join("\n"))}">+${more} earlier</span>` : "") +
         shown.map(s => html(s, size, opts.pending && +s.at >= opts.pending ? "pending" : "")).join("") + `</span>`;
     }
@@ -463,26 +463,32 @@
     const fitParents=new Set();
     function fit(row) {
       const seals=[...row.children].filter(n=>n.classList.contains('seal'));
-      if(!seals.length)return BASE_SIZE;
-      row.style.setProperty('--seal-fit',BASE_SIZE+'px');
+      // a strip that asks for smaller seals (the order window's one line, data-seal-max) never grows them past that
+      const MAX=Math.max(16,Math.min(BASE_SIZE,+row.dataset.sealMax||BASE_SIZE));
+      if(!seals.length)return MAX;
+      row.style.setProperty('--seal-fit',MAX+'px');
       const parent=row.parentElement, cs=getComputedStyle(row), ps=parent?getComputedStyle(parent):null;
       if(parent && groupSizeObserver && !fitParents.has(parent)){fitParents.add(parent);groupSizeObserver.observe(parent);}
       let available=parent?.clientWidth || parent?.getBoundingClientRect().width || row.clientWidth || seals.length*BASE_SIZE;
       if(ps)available-= (parseFloat(ps.paddingLeft)||0)+(parseFloat(ps.paddingRight)||0);
-      const cap=cs.maxWidth;if(cap && cap!=='none')available=Math.min(available,cap.endsWith('%')?available*parseFloat(cap)/100:parseFloat(cap)||available);
+      const cap=cs.maxWidth;let capW=Infinity;if(cap && cap!=='none')capW=cap.endsWith('%')?available*parseFloat(cap)/100:parseFloat(cap)||Infinity;
       if(cs.position==='absolute'){
+        available=Math.min(available,capW);
         for(const side of ['left','right'])if(/^[\d.]+px$/.test(cs[side] || ''))available-=parseFloat(cs[side]);
       } else if(ps && /flex/.test(ps.display) && ps.flexDirection!=='column') {
-        const siblings=[...parent.children].filter(n=>n!==row && getComputedStyle(n).position!=='absolute');
+        // a sibling that grows to take what is left (the order window's one line of words) gives its room up: it is not a cost
+        const siblings=[...parent.children].filter(n=>n!==row && getComputedStyle(n).position!=='absolute' && !(parseFloat(getComputedStyle(n).flexGrow)>0));
         for(const n of siblings){const ns=getComputedStyle(n);available-=n.getBoundingClientRect().width+(parseFloat(ns.marginLeft)||0)+(parseFloat(ns.marginRight)||0);}
         available-=(parseFloat(ps.columnGap)||0)*siblings.length;
-      }
+        // (the cap and the room the siblings leave are two limits on the one width, not two costs to add up)
+        available=Math.min(available,capW);
+      } else available=Math.min(available,capW);
       available-=(parseFloat(cs.marginLeft)||0)+(parseFloat(cs.marginRight)||0);
       const rowWidth=row.clientWidth || row.getBoundingClientRect().width;
       if(rowWidth>0)available=Math.min(available,rowWidth-(parseFloat(cs.paddingLeft)||0)-(parseFloat(cs.paddingRight)||0));
       const gap=parseFloat(cs.columnGap)||parseFloat(cs.gap)||4;
       const other=[...row.children].filter(n=>!seals.includes(n)).reduce((n,e)=>n+e.getBoundingClientRect().width,0);
-      let size=seals.length===1?BASE_SIZE:Math.max(1,Math.min(BASE_SIZE,(available-other-gap*(row.children.length-1))/seals.length));
+      let size=seals.length===1?MAX:Math.max(1,Math.min(MAX,(available-other-gap*(row.children.length-1))/seals.length));
       if(row.classList.contains('egButtonSeal') && row.closest('.swEng')){
         // This row intentionally overlaps half a seal onto its button. Solve the
         // available width before applying the fit, rather than measuring the previous fit.
@@ -501,7 +507,7 @@
     }
     let fitting=0;
     const scheduleFit=()=>{if(!fitting)fitting=requestAnimationFrame(()=>{fitting=0;fitGroups();});};
-    const rowObserver=new MutationObserver(()=>{scheduleFit();if(Z.want && !Z.want.isConnected || Z.seal && !Z.seal.isConnected)lensOff(true);});
+    const rowObserver=new MutationObserver(()=>{scheduleFit();zoom.check();});
     rowObserver.observe(doc.documentElement,{subtree:true,childList:true});
     if(root.ResizeObserver){groupSizeObserver=new root.ResizeObserver(scheduleFit);groupSizeObserver.observe(doc.documentElement);}
     root.addEventListener('resize',scheduleFit);scheduleFit();
@@ -721,167 +727,202 @@
     });
     const release = () => { if (!pressed) return; pressed.classList.remove("act"); const row = rowOf(pressed); if (row) { row.classList.remove("press"); row.classList.remove("spring"); void row.offsetWidth; row.classList.add("spring"); } pressed = null; };
     doc.addEventListener("pointerup", release); doc.addEventListener("pointercancel", release);
-    doc.addEventListener("click", e => {
-      const s = e.target.closest && e.target.closest(".sealRow .seal"); if (!s) return;
-      e.stopPropagation(); e.preventDefault();
-      const b = btnOf(s);
-      if (b && !b.disabled && inside(b, e)) { b.click(); return; }
-      s.classList.remove("wobble"); void s.offsetWidth; s.classList.add("wobble");
-      if (Z.el && Z.seal === s && Z.pinned) lensOff(); else lensOn(s, true);
-    }, true);
 
-    /* ── the lens (Paul, 29 Sep 02:08: "when I click or hover over these two small seals, they don't show me a zoom
-       version so I can't really read them"). A seal hovered, or reached with Tab, grows out of itself into the same
-       artwork drawn large beside it (above, else below), where its date, time, name and print number read, with one
-       line under it saying what it is. A lens on the motion layer, never a window, moved by transform and opacity only.
-       Each seal requires its own full rest, including neighbouring seals. The enlargement takes no pointer and closes
-       when the pointer leaves the original seal, even after a click or while that seal retains focus. Tab still opens
-       a readable version for keyboard users; mouse movement takes over from keyboard focus. ── */
-    const LG = 12, LM = 8, HOVER_DELAY = 1100, EASE = "cubic-bezier(.2,.8,.2,1)";
-    const Z = { el: null, seal: null, pinned: false, keyboard: false, hover: false, point: null, want: null, t: 0, watch: 0, n: 0 };
+    /* ── the seal zoom (Paul, 2 Oct 18:56: "get rid of the hover states on all the seals and just add a compelling zooming
+       animation where the seal grows in size in its current position, almost like a magnifying glass ... it should zoom very
+       little if it's already large, more if it's smaller, even more if it's very small: an adaptive system", and 18:56
+       "a 750 ms delay so the zoom does not happen immediately if the person runs the cursor quickly across the screen").
+       There is no second seal and no bubble. The seal itself grows from its own centre, turns to stand upright, lifts on a
+       soft shadow, takes a paper backing so nothing under it shows through, comes to the top and goes back the same way.
+       Moved by transform, filter and opacity only (the paper is one path's opacity), interruptible at any frame, and always
+       fully in view: it is nudged away from the viewport's edge, the top bar and any scrolling box that holds it; a box that
+       only clips it (an overflow:hidden strip or card) is opened for as long as it is zoomed and closed again after.
+       Mouse: the pointer must rest on the same seal for ZOOM_DELAY. Tab (:focus-visible) and a tap zoom at once. Leaving,
+       blur, Esc, scrolling, a tap elsewhere or the window going away puts it back. The one scale curve is pure
+       (Seal.zoomScale, Motion.sealZoomScale), so large seals grow a little and tiny ones a lot. ── */
+    const ZOOM_DELAY = 750;
+    const ZOOM_ANCHORS = [[24, 3.6], [28, 3.5], [36, 3.2], [40, 3.05], [48, 2.8], [56, 2.5], [60, 2.35], [72, 2.05], [84, 1.85], [100, 1.62], [110, 1.42], [120, 1.25], [140, 1.15], [160, 1.12]];
+    /** The zoom of a seal as drawn `size` px across: 1.12 for a large one up to 3.6 for a tiny one, by one smooth curve. */
+    function zoomScale(size) {
+      const n = +size, A = ZOOM_ANCHORS;
+      if (!(n > 0)) return A[A.length - 1][1];
+      if (n <= A[0][0]) return A[0][1];
+      if (n >= A[A.length - 1][0]) return A[A.length - 1][1];
+      let i = 0; while (n > A[i + 1][0]) i++;
+      const [s0, k0] = A[i], [s1, k1] = A[i + 1], t = Math.log(n / s0) / Math.log(s1 / s0), e = t * t * (3 - 2 * t);
+      return Math.round((k0 + (k1 - k0) * e) * 1000) / 1000;
+    }
+    const ZOOM_GROW = 300, ZOOM_BACK = 230, ZOOM_EASE = "cubic-bezier(.2,.9,.25,1.14)", ZOOM_BACK_EASE = "cubic-bezier(.3,0,.2,1)", ZOOM_SHADOW = "drop-shadow(0 10px 16px rgba(30,26,20,.26))", ZOOM_Z = 900, ZOOM_M = 6;
+    (() => {
+      if (doc.getElementById("sealZoomCss")) return;
+      const st = doc.createElement("style"); st.id = "sealZoomCss";
+      st.textContent = ".sealZoomed,.sealZoomed svg{mix-blend-mode:normal!important}.sealZoomed,.sealZoomed:focus-visible{outline:0!important}";   // (a grown seal needs no square focus ring: its growing is the sign of focus)
+      (doc.head || doc.documentElement).appendChild(st);
+    })();
+    const parseM = t => {
+      let m = /^matrix\(([^)]+)\)$/.exec(t || ""); if (m) { const v = m[1].split(",").map(Number); if (v.length === 6 && v.every(isFinite)) return v; }
+      m = /^matrix3d\(([^)]+)\)$/.exec(t || ""); if (m) { const v = m[1].split(",").map(Number); if (v.length === 16 && v.every(isFinite)) return [v[0], v[1], v[4], v[5], v[12], v[13]]; }
+      return [1, 0, 0, 1, 0, 0];
+    };
+    const ZS = new WeakMap(), ACT = new Set();   // seal -> its zoom: { el, on, anim, paper, undo, k, rect, touch, keyboard, managed }; ACT: every zoom still on screen
+    const Zm = { cur: null, want: null, t: 0, watch: 0, point: null, hover: false };
+    const paperOf = s => s.querySelector("[data-seal-paper]");
+    /** What clips or covers a grown seal, worked out for the seal's final rectangle; → what to open and where to nudge. */
+    function zoomPlan(el, k, r, W, H) {
+      const cx = r.left + r.width / 2, cy = r.top + r.height / 2, hw = W * k / 2, hh = H * k / 2, vw = root.innerWidth || 1200, vh = root.innerHeight || 800;
+      let L = ZOOM_M, T = ZOOM_M, R = vw - ZOOM_M, B = vh - ZOOM_M;
+      if (!el.closest("dialog")) {   // below the top bar, as the page's own views are
+        const tb = doc.querySelector(".topbar"), q = tb && tb.getClientRects().length ? tb.getBoundingClientRect() : null;
+        if (q && q.bottom <= cy && q.bottom < vh / 2) T = Math.max(T, q.bottom + 4);
+      }
+      const clippers = [];
+      for (let a = el.parentElement; a && a !== doc.body && a !== doc.documentElement; a = a.parentElement) {
+        const cs = getComputedStyle(a), clip = cs.overflowX !== "visible" || cs.overflowY !== "visible", cv = cs.contentVisibility === "auto";
+        if (!clip && !cv) continue;
+        const ar = a.getBoundingClientRect(); if (!(a.clientWidth > 0 && a.clientHeight > 0)) continue;
+        const box = { l: ar.left + a.clientLeft, t: ar.top + a.clientTop, r: ar.left + a.clientLeft + a.clientWidth, b: ar.top + a.clientTop + a.clientHeight };
+        const scrolls = /auto|scroll/.test(cs.overflowX + cs.overflowY) && (a.scrollWidth > a.clientWidth + 1 || a.scrollHeight > a.clientHeight + 1) || a.scrollLeft || a.scrollTop;
+        clippers.push({ a, box, scrolls: !!scrolls, cv });
+      }
+      // a box that scrolls cannot be opened (its content would move): the seal stays inside it, if it fits there
+      for (const c of clippers) if (c.scrolls && 2 * hw <= c.box.r - c.box.l && 2 * hh <= c.box.b - c.box.t) { L = Math.max(L, c.box.l + 2); T = Math.max(T, c.box.t + 2); R = Math.min(R, c.box.r - 2); B = Math.min(B, c.box.b - 2); }
+      // (never so far that the seal's own place is left uncovered: the pointer there would leave and come back)
+      const nudge = (c, h, lo, hi, base) => Math.max(-(h - base / 2), Math.min(h - base / 2, hi - lo < 2 * h ? (lo + hi) / 2 - c : Math.max(lo + h, Math.min(hi - h, c)) - c));
+      const dx = nudge(cx, hw, L, R, W), dy = nudge(cy, hh, T, B, H);
+      const rect = { left: cx + dx - hw, top: cy + dy - hh, right: cx + dx + hw, bottom: cy + dy + hh };
+      const open = clippers.filter(c => !c.scrolls && (rect.left < c.box.l - .5 || rect.top < c.box.t - .5 || rect.right > c.box.r + .5 || rect.bottom > c.box.b + .5));
+      return { dx, dy, rect, open };
+    }
+    /** Raises the seal over everything and opens what would clip it; → a function that puts every one of them back. */
+    function zoomLift(el, open) {
+      const saved = [], keep = (n, ...props) => saved.push([n, props.map(p => [p, n.style.getPropertyValue(p), n.style.getPropertyPriority(p)])]);
+      for (const c of open) { keep(c.a, "overflow", "content-visibility"); c.a.style.setProperty("overflow", "visible"); if (c.cv) c.a.style.setProperty("content-visibility", "visible"); }
+      for (let a = el; a && a !== doc.body && a !== doc.documentElement; a = a.parentElement) {
+        if (a !== el && a.matches && a.matches("dialog")) break;
+        const cs = getComputedStyle(a), pos = cs.position;
+        const ctx = a === el || pos === "fixed" || pos === "sticky" || (pos !== "static" && cs.zIndex !== "auto") || +cs.opacity < 1 || cs.transform !== "none" || cs.filter !== "none" || cs.isolation === "isolate" || cs.mixBlendMode !== "normal" || /layout|paint|strict|content/.test(cs.contain) || (cs.containerType && cs.containerType !== "normal") || /transform|opacity|filter/.test(cs.willChange) || cs.perspective !== "none";
+        if (ctx) { keep(a, "position", "z-index"); if (pos === "static") a.style.setProperty("position", "relative"); a.style.setProperty("z-index", String(ZOOM_Z)); }
+      }
+      el.classList.add("sealZoomed");
+      return () => { el.classList.remove("sealZoomed"); for (const [n, props] of saved) for (const [p, v, pr] of props) { if (v) n.style.setProperty(p, v, pr); else n.style.removeProperty(p); } };
+    }
+    /** Starts (or resumes, from wherever a return had got to) the zoom of `el`. → true when it is zooming. */
+    function zoomShow(el, o = {}) {
+      if (!canZoom(el)) return false;
+      cancelWant();
+      if (Zm.cur && Zm.cur.el !== el) zoomHide(false);
+      let st = ZS.get(el); if (st && st.on) { if (o.keyboard != null) st.keyboard = !!o.keyboard; return true; }
+      const cs = getComputedStyle(el), from = { transform: cs.transform, filter: cs.filter, opacity: cs.opacity }, pfrom = paperOf(el) ? getComputedStyle(paperOf(el)).opacity : "0";
+      if (st) { st.anim && st.anim.cancel(); st.paper && st.paper.cancel(); if (st.undo) { st.undo(); st.undo = null; } } else st = { undo: null };
+      // the place it rests in, measured with no zoom on it and nothing opened
+      const bs = getComputedStyle(el), base = parseM(bs.transform), r = el.getBoundingClientRect();
+      const W = el.offsetWidth || r.width, H = el.offsetHeight || r.height, size = Math.min(W, H) || Math.min(r.width, r.height), k = zoomScale(size);
+      const p = zoomPlan(el, k, r, W, H);
+      st.undo = zoomLift(el, p.open);
+      const to = { transform: `matrix(${k},0,0,${k},${base[4] + p.dx},${base[5] + p.dy})`, filter: ZOOM_SHADOW, opacity: "1" };
+      const quick = reduced(), ms = quick ? 120 : ZOOM_GROW, ease = quick ? "ease-out" : ZOOM_EASE;
+      st.anim = el.animate ? el.animate([from, to], { duration: ms, easing: ease, fill: "forwards" }) : null;
+      const pp = paperOf(el); st.paper = pp && pp.animate ? pp.animate([{ opacity: pfrom }, { opacity: 1 }], { duration: quick ? 100 : 220, delay: quick ? 0 : 30, easing: "ease-out", fill: "forwards" }) : null;
+      Object.assign(st, { el, on: true, k, rect: p.rect, home: { l: r.left, t: r.top, r: r.right, b: r.bottom }, keyboard: !!o.keyboard, touch: !!o.touch, managed: !!o.managed });
+      ZS.set(el, st); ACT.add(st); Zm.cur = st; el.dataset.sealZoom = k.toFixed(2);
+      if (!Zm.watch) Zm.watch = setInterval(zoomWatch, 250);
+      return true;
+    }
+    /** Puts the seal back (now: at once; else the way it came, from where it is). */
+    function zoomHide(now, el) {
+      const st = el ? ZS.get(el) : Zm.cur; if (!st) return;
+      const e = st.el, done = () => { if (st.on || ZS.get(e) !== st) return; st.anim && st.anim.cancel(); st.paper && st.paper.cancel(); if (st.undo) st.undo(); st.undo = null; delete e.dataset.sealZoom; ZS.delete(e); ACT.delete(st); };
+      if (!st.on) { if (now) done(); return; }
+      st.on = false; if (Zm.cur === st) Zm.cur = null;
+      if (!Zm.cur && Zm.watch) { clearInterval(Zm.watch); Zm.watch = 0; }
+      if (now || !e.isConnected || !e.animate) { done(); return; }
+      const cs = getComputedStyle(e), from = { transform: cs.transform, filter: cs.filter, opacity: cs.opacity }, pp = paperOf(e), pfrom = pp ? getComputedStyle(pp).opacity : "0";
+      st.anim && st.anim.cancel(); st.paper && st.paper.cancel();
+      const bs = getComputedStyle(e), to = { transform: bs.transform, filter: bs.filter, opacity: bs.opacity }, quick = reduced();
+      const a = st.anim = e.animate([from, to], { duration: quick ? 100 : ZOOM_BACK, easing: quick ? "ease-out" : ZOOM_BACK_EASE });
+      st.paper = pp && pp.animate ? pp.animate([{ opacity: pfrom }, { opacity: 0 }], { duration: quick ? 80 : 160, easing: "ease-in", fill: "forwards" }) : null;
+      a.finished.then(done, () => {});
+    }
+    function zoomWatch() {
+      const st = Zm.cur; if (!st) return;
+      const s = st.el;
+      if (!canZoom(s) || !visible(s)) return zoomHide(true);
+      if (!st.keyboard && !st.touch && !st.managed && !pointed(s) && !atHome(st, Zm.point)) zoomHide(false);
+    }
+    function cancelWant() { clearTimeout(Zm.t); Zm.t = 0; Zm.want = null; }
     const sealAt = t => t && t.closest ? t.closest(".seal, .laserSeal") : null;
-    const zoomable = s => !!(s && s.isConnected && s.matches(".seal:not(.pending), .laserSeal") && !s.closest(".mGhost,[inert]") && s.getClientRects().length);
-    function ago(t) {
-      const m = Math.round((Date.now() - t) / 60000), h = Math.round(m / 60), d = Math.round(h / 24);
-      return m < 1 ? "just now" : m < 60 ? m + " min ago" : h < 24 ? h + (h === 1 ? " hour ago" : " hours ago") : d < 2 ? "yesterday" : d < 7 ? d + " days ago"
-        : "on " + new Date(t).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
-    }
-    /** The line under the lens, in words: what the seal records, who, and how long ago. */
-    function capOf(s) {
-      if (s.classList.contains("laserSeal")) return s.getAttribute("aria-label") || s.getAttribute("title") || "Laser cutting readiness";
-      if(s.dataset.sealCaption)return s.dataset.sealCaption;
-      const m = / by (.+?) · /.exec(s.getAttribute("aria-label") || s.getAttribute("title") || ""), who = m ? " by " + m[1] : "", at = +s.dataset.at;
-      return (s.classList.contains("seal-button") ? `Completed${who}, no label printed` : `QR label printed${who}`) + (at ? " · " + ago(at) : "");
-    }
-    /** The seal's own artwork, its ids renamed so the page never holds two of one id. */
-    function faceOf(s) {
-      const g = s.querySelector("svg"); if (!g) return "";
-      const enlarged=enlarge(g);if(enlarged)return enlarged;
-      let face = g;
-      if (s.classList.contains("laserSeal")) {
-        face = g.cloneNode(true); const style = getComputedStyle(g);
-        for (const name of ["color", "fill", "stroke", "strokeWidth", "strokeLinecap", "strokeLinejoin"]) face.style[name] = style[name];
-      }
-      let h = face.outerHTML; const k = "-z" + (++Z.n);
-      for (const id of new Set([...h.matchAll(/\bid="([^"]+)"/g)].map(m => m[1]))) h = h.split(`id="${id}"`).join(`id="${id}${k}"`).split(`#${id})`).join(`#${id}${k})`).split(`#${id}"`).join(`#${id}${k}"`);
-      return h;
-    }
-    /** The lens's transform: resting beside the seal, or (at) shrunk into the seal itself, turned as it lies. */
-    function lensAt(el, s, at) {
-      const r = s.getBoundingClientRect(), D = el.offsetWidth, o = el._o, cx = r.left + r.width / 2, cy = r.top + r.height / 2;
-      if (at) { const k = Math.max(.05, s.offsetWidth / (D * .91)), rot = parseFloat(getComputedStyle(s).getPropertyValue("--rot")) || 0; return `translate(${cx - D / 2 - o.left}px,${cy - D / 2 - o.top}px) scale(${k}) rotate(${rot}deg)`; }
-      const c = el.lastElementChild, cw = c ? c.offsetWidth : 0, ch = c ? c.offsetHeight + 8 : 0, vw = root.innerWidth, vh = root.innerHeight;
-      const above=r.top-LG-ch-D>=LM,below=r.bottom+LG+D+ch<=vh-LM, groupWidth=Math.max(D,cw), half=groupWidth/2;
-      if(!above && !below){
-        const right=r.right+LG,left=r.left-LG-groupWidth;
-        if(right+groupWidth<=vw-LM || left>=LM){
-          const groupX=right+groupWidth<=vw-LM?right:left, y=Math.max(LM,Math.min(vh-LM-D-ch,r.top+(r.height-D-ch)/2));
-          return `translate(${Math.round(groupX+(groupWidth-D)/2-o.left)}px,${Math.round(y-o.top)}px) scale(1) rotate(0deg)`;
-        }
-        // Very short/narrow windows may clip the preview at the viewport edge, but it never covers its original.
-        const x=Math.max(LM+half,Math.min(vw-LM-half,cx))-D/2;
-        return `translate(${Math.round(x-o.left)}px,${Math.round(r.top-LG-ch-D-o.top)}px) scale(1) rotate(0deg)`;
-      }
-      const up = above;
-      const x = Math.max(LM + half, Math.min(vw - LM - half, cx)) - D / 2, y = Math.max(LM, Math.min(vh - LM - D - ch, up ? r.top - LG - ch - D : r.bottom + LG));
-      return `translate(${Math.round(x - o.left)}px,${Math.round(y - o.top)}px) scale(1) rotate(0deg)`;
-    }
-    const untitle = (s, back) => { if (!s) return; if (back) { if (s.dataset.sealTitle != null) { s.setAttribute("title", s.dataset.sealTitle); delete s.dataset.sealTitle; } } else if (s.hasAttribute("title")) { s.dataset.sealTitle = s.getAttribute("title"); s.removeAttribute("title"); } };
-    /** Shows s in the lens: grown out of it when none shows, else glided over from the seal shown (pin: kept open). */
-    function lensOn(s, pin, keyboard = false) {
-      if (!zoomable(s)) return;
-      cancelHover();
-      const L = layer(s); if (Z.el && Z.el.parentNode !== L) lensOff(true);
-      let el = Z.el; const fresh = !el, same = !fresh && Z.seal === s, was = fresh ? "" : getComputedStyle(el).transform;
-      if (fresh) {
-        el = Z.el = doc.createElement("div"); el.className = "sealLens"; el.setAttribute("aria-hidden", "true");
-        el.addEventListener("click", e => { e.stopPropagation(); lensOff(); });
-        L.appendChild(el); el.style.transform = "none"; const o = el.getBoundingClientRect(); el._o = { left: o.left, top: o.top };
-      }
-      Z.keyboard = keyboard; Z.pinned = pin ? true : same && Z.pinned; el.classList.toggle("pinned", Z.pinned);
-      if (!same) {
-        if (Z.seal) untitle(Z.seal, true);
-        Z.seal = s; untitle(s);   // (its tooltip would only say again what the lens says)
-        el.innerHTML = `<div class="lf">${faceOf(s)}</div><div class="lc">${esc(capOf(s))}</div>`;
-      }
-      el.classList.toggle('processLens',s.hasAttribute('data-process-seal'));
-      el.style.width=el.style.height=HOVER_SIZE+'px';
-      const to = lensAt(el, s);
-      for (const a of el.getAnimations()) a.cancel();
-      el.style.transform = to;
-      if (reduced()) { if (fresh) el.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 120, easing: "ease" }); }
-      else if (fresh) {
-        el.animate([{ transform: lensAt(el, s, true), opacity: 0 }, { opacity: 1, offset: .3 }, { transform: to, opacity: 1 }], { duration: 300, easing: EASE });
-        el.lastElementChild.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 180, delay: 150, easing: "ease", fill: "backwards" });
-      } else if (!same) {
-        el.animate([{ transform: was }, { transform: to }], { duration: 220, easing: EASE });
-        for (const c of el.children) c.animate([{ opacity: .15 }, { opacity: 1 }], { duration: 200, easing: "ease" });
-      }
-      if (!Z.watch) Z.watch = setInterval(watch, 250);
-    }
-    /** The lens goes back into its seal (at once: now, or when the seal is gone). */
-    function lensOff(now) {
-      cancelHover(); if (Z.watch) { clearInterval(Z.watch); Z.watch = 0; }
-      const el = Z.el, s = Z.seal; Z.el = Z.seal = null; Z.pinned = Z.hover = Z.keyboard = false;
-      untitle(s, true); if (!el) return;
-      if (now || reduced() || !zoomable(s) || !visible(s)) { el.remove(); return; }
-      const was = getComputedStyle(el).transform; for (const a of el.getAnimations()) a.cancel();
-      el.classList.remove("pinned"); el.style.transform = was;
-      el.animate([{ transform: was, opacity: 1 }, { transform: lensAt(el, s, true), opacity: 0 }], { duration: 180, easing: "cubic-bezier(.4,0,1,1)", fill: "forwards" }).finished.then(() => el.remove(), () => el.remove());
-    }
-    /** While it shows: it follows its seal (a scroll, a redraw that drew the same seal anew), and goes when the seal does. */
-    function watch() {
-      const el = Z.el; if (!el) return;
-      const s = Z.seal;
-      if (!zoomable(s) || !visible(s)) return lensOff(true);
-      if (!Z.keyboard && !pointed(s)) return lensOff(true);
-      if (el.getAnimations().some(a => a.playState === "running")) return;
-      const to = lensAt(el, s); if (el.style.transform !== to) el.style.transform = to;
-    }
-    function cancelHover() {
-      clearTimeout(Z.t); Z.t = 0;
-      if (Z.want && Z.want !== Z.seal) untitle(Z.want, true);
-      Z.want = null;
-    }
+    /** Any seal on the page that is drawn and ready (a pending one, still waiting for its stamp, is not). */
+    const canZoom = s => !!(s && s.isConnected && !s.classList.contains("pending") && !s.closest(".mGhost,[inert]") && s.getClientRects().length);
+    const zoomable = s => canZoom(s) && s.matches(".seal, .laserSeal");
+    /** The pointer is still where the seal stood (a seal nudged well away from a screen edge may no longer cover that spot: the pointer
+     *  there is still resting on it, and taking the zoom back would only bring it round again). */
+    const atHome = (st, p) => !!(st && st.home && p && p.x >= st.home.l && p.x <= st.home.r && p.y >= st.home.t && p.y <= st.home.b);
     function pointed(s) {
-      return Z.point && typeof doc.elementFromPoint === "function" ? sealAt(doc.elementFromPoint(Z.point.x, Z.point.y)) === s : Z.hover;
+      if (!Zm.point || typeof doc.elementFromPoint !== "function") return Zm.hover;
+      const t = doc.elementFromPoint(Zm.point.x, Zm.point.y); return !!t && (t === s || s.contains(t));
     }
     doc.addEventListener("pointerover", e => {
       if (e.pointerType === "touch") return;
       const s = sealAt(e.target); if (!zoomable(s)) return;
-      Z.point = { x: e.clientX, y: e.clientY };
-      if (Z.el && Z.seal === s) { Z.hover = true; Z.keyboard = false; return; }
-      if (Z.want === s) return; // moving between SVG descendants must not restart the delay
-      lensOff(true); Z.hover = true; Z.want = s; untitle(s);
-      Z.t = setTimeout(() => { Z.t = 0; if (Z.hover && Z.want === s && zoomable(s) && pointed(s)) lensOn(s); else cancelHover(); }, HOVER_DELAY);
+      Zm.point = { x: e.clientX, y: e.clientY };
+      if (Zm.cur && Zm.cur.el === s) { Zm.hover = true; Zm.cur.keyboard = false; return; }
+      if (Zm.want === s) return;   // moving between SVG descendants must not restart the wait
+      zoomHide(false); cancelWant(); Zm.hover = true; Zm.want = s;
+      Zm.t = setTimeout(() => { Zm.t = 0; if (Zm.hover && Zm.want === s && zoomable(s) && pointed(s)) zoomShow(s); else cancelWant(); }, ZOOM_DELAY);
     }, true);
     doc.addEventListener("pointerout", e => {
       if (e.pointerType === "touch") return;
       const from = sealAt(e.target); if (!from || from.contains(e.relatedTarget)) return;
-      if (from === Z.want || from === Z.seal) lensOff();
+      if (from === Zm.want) cancelWant();
+      if (Zm.cur && Zm.cur.el === from && !atHome(Zm.cur, { x: e.clientX, y: e.clientY })) zoomHide(false);
     }, true);
     doc.addEventListener("pointermove", e => {
       if (e.pointerType === "touch") return;
-      Z.point = { x: e.clientX, y: e.clientY };
+      Zm.point = { x: e.clientX, y: e.clientY };
       const s = sealAt(e.target);
-      if (Z.want && s !== Z.want || Z.el && s !== Z.seal) lensOff();
-      else if (Z.el) { Z.keyboard = false; Z.hover = true; }
+      if (Zm.want && s !== Zm.want) cancelWant();
+      if (Zm.cur && !Zm.cur.touch && !Zm.cur.managed && s !== Zm.cur.el) { if (!atHome(Zm.cur, Zm.point)) zoomHide(false); }
+      else if (Zm.cur && s === Zm.cur.el) { Zm.cur.keyboard = false; Zm.hover = true; }
     }, true);
-    doc.addEventListener("pointerdown", e => { if ((Z.el || Z.want) && sealAt(e.target) !== (Z.seal || Z.want)) lensOff(); }, true);
-    // the keyboard: Tab onto a seal shows it; Enter or Space keeps it; Esc puts it away (and only that: a window it lies in stays open)
-    doc.addEventListener("focusin", e => { const s = sealAt(e.target); if (s && s === e.target && zoomable(s) && s.matches(":focus-visible")) lensOn(s, false, true); }, true);
-    doc.addEventListener("focusout", e => { const s = sealAt(e.target); if (s && s === Z.seal && !Z.hover && !(e.relatedTarget && zoomable(sealAt(e.relatedTarget)))) lensOff(); }, true);
-    root.addEventListener("keydown", e => {
-      if (e.key === "Escape" && Z.el) { e.preventDefault(); e.stopImmediatePropagation(); lensOff(); return; }
-      const s = sealAt(e.target);
-      if ((e.key === "Enter" || e.key === " ") && s && s === e.target && zoomable(s)) { e.preventDefault(); e.stopImmediatePropagation(); if (Z.el && Z.seal === s && Z.pinned) lensOff(); else lensOn(s, true, true); }
+    // a tap or a press elsewhere puts a zoomed seal back
+    // (a zoom its owner manages, the timeline's, is put back by that owner: it knows which of its own dots a press is on)
+    doc.addEventListener("pointerdown", e => { if (Zm.cur && Zm.cur.managed) return; if ((Zm.cur || Zm.want) && sealAt(e.target) !== (Zm.cur ? Zm.cur.el : Zm.want)) { zoomHide(false); cancelWant(); } }, true);
+    // the keyboard: Tab onto a seal zooms it at once; Esc (and only that: a window it lies in stays open) puts it back
+    doc.addEventListener("focusin", e => { const s = sealAt(e.target); if (s && s === e.target && zoomable(s) && s.matches(":focus-visible")) zoomShow(s, { keyboard: true }); }, true);
+    doc.addEventListener("focusout", e => { const s = sealAt(e.target); if (s && Zm.cur && s === Zm.cur.el && !Zm.hover && !(e.relatedTarget && zoomable(sealAt(e.relatedTarget)))) zoomHide(false); }, true);
+    root.addEventListener("keydown", e => { if (e.key === "Escape" && (Zm.cur || Zm.want) && !(Zm.cur && Zm.cur.managed)) { e.preventDefault(); e.stopImmediatePropagation(); cancelWant(); zoomHide(false); } }, true);
+    // a click: on a seal over its button it presses the button; elsewhere it zooms the seal at once (a second tap with a finger puts it back)
+    doc.addEventListener("click", e => {
+      const s = sealAt(e.target); if (!s) return;
+      const row = s.closest && s.closest(".sealRow .seal") === s;
+      if (row) {
+        const b = btnOf(s);
+        e.stopPropagation(); e.preventDefault();
+        if (b && !b.disabled && inside(b, e)) { b.click(); return; }
+      } else if (!zoomable(s)) return;
+      const touch = e.pointerType === "touch" || (e.pointerType == null && Zm.lastTouch);
+      if (touch && Zm.cur && Zm.cur.el === s) { zoomHide(false); return; }
+      if (zoomable(s)) zoomShow(s, { touch: !!touch });
     }, true);
-    const follow = () => { if (!Z.keyboard) lensOff(true); else if (Z.el) requestAnimationFrame(watch); };
-    root.addEventListener("scroll", follow, true); root.addEventListener("resize", follow);
-    root.addEventListener("blur", () => lensOff(true));
-    doc.addEventListener("visibilitychange", () => { if (doc.visibilityState === "hidden") lensOff(true); });
-    doc.addEventListener("close", e => { if (e.target?.contains?.(Z.el || Z.want)) lensOff(true); }, true);
-    return { list, html, row, svg, face, modelOf, tool, sound:Sound, stampOn, press, pressPending, hasPrint, titleOf, INK, FAMILY, BASE_SIZE, HOVER_SIZE, busy, whenIdle, defer, fit, fitGroups };
+    doc.addEventListener("pointerdown", e => { Zm.lastTouch = e.pointerType === "touch"; }, true);
+    const zoomAway = () => { cancelWant(); for (const st of [...ACT]) zoomHide(true, st.el); };
+    root.addEventListener("scroll", () => {
+      const st = Zm.cur;
+      if (st && st.keyboard) { const el = st.el; zoomHide(true); requestAnimationFrame(() => { if (doc.activeElement === el) zoomShow(el, { keyboard: true }); }); return; }   // (its place moved: worked out again)
+      zoomAway();
+    }, true);
+    root.addEventListener("resize", zoomAway);
+    root.addEventListener("blur", zoomAway);
+    doc.addEventListener("visibilitychange", () => { if (doc.visibilityState === "hidden") zoomAway(); });
+    doc.addEventListener("close", e => { if (e.target && e.target.contains && (e.target.contains(Zm.cur && Zm.cur.el) || e.target.contains(Zm.want))) zoomAway(); }, true);
+    const zoom = {
+      DELAY: ZOOM_DELAY, scale: zoomScale, show: zoomShow, hide: zoomHide, away: zoomAway,
+      get current() { return Zm.cur ? Zm.cur.el : null; },
+      /** Where the seal is, or will be once zoomed (the page rectangle that tooltips and cards stay clear of). */
+      rectOf(el) { const st = ZS.get(el); return st && st.on ? Object.assign({}, st.rect) : null; },
+      check() { if (Zm.want && !Zm.want.isConnected) cancelWant(); for (const st of [...ACT]) if (!st.el.isConnected) zoomHide(true, st.el); }
+    };
+    return { list, html, row, svg, face, modelOf, tool, sound:Sound, stampOn, press, pressPending, hasPrint, titleOf, INK, FAMILY, BASE_SIZE, zoom, zoomScale, busy, whenIdle, defer, fit, fitGroups };
   })();
 
   /* ════ Pop-ups: every window grows out of what opened it, and goes back into it ════
@@ -1228,6 +1269,6 @@
     wait();
   }
 
-  root.Motion = { T, ghost, fly, flyIn, grow, shut, fade, arrive, pulse, note, expect, expectIn, pending, carry, carrying: isCarried, reconcile, reduced, wait, layer, dialogOpen, dialogClose, from, popIn, turner, landIn };
+  root.Motion = { sealZoomScale: Seal.zoomScale, T, ghost, fly, flyIn, grow, shut, fade, arrive, pulse, note, expect, expectIn, pending, carry, carrying: isCarried, reconcile, reduced, wait, layer, dialogOpen, dialogClose, from, popIn, turner, landIn };
   root.Seal = Seal;
 })(typeof window !== "undefined" ? window : globalThis);

@@ -106,17 +106,17 @@ const ORDERS = [{ receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * DAY, up
     assert(!d.some(x => /shipping-1/.test(x.key)), 'a shipping label stays with Shipped: no QR seal');
     const count = await page.$eval('#owTlCount', c => c.textContent);
     assert.equal(count, String(mine().length), `the Timeline tab still counts the recorded steps (${count} of ${mine().length})`);
-    // hover Nº 2: the card's QR LABEL PRINTED seal, and the card under it says the number, when, who and where
-    await page.hover(`#owTimeline .tlSt[data-key="${d[1].key}"]`); await page.waitForTimeout(450);
-    const hov = await page.evaluate(() => { const X = [...document.querySelectorAll('#owTimeline .tlExp, .tlExp')].find(x => getComputedStyle(x).display === 'block'); return { face: [...document.querySelectorAll('#owTimeline .tlLoupe text')].map(t => t.textContent).join(' | '), card: X ? X.textContent : '' }; });
-    assert.match(hov.face, /QR LABEL PRINTED/); assert.match(hov.face, /PRINT Nº 2/); assert.match(hov.face, /PAUL/);
+    // rest on Nº 2 (750 ms): the seal itself grows with QR LABEL PRINTED; who is its accessible name, and the card under it says the number, when, who and where
+    await page.hover(`#owTimeline .tlSt[data-key="${d[1].key}"]`); await page.waitForTimeout(1100);
+    const hov = await page.evaluate(key => { const S = document.querySelector(`#owTimeline .tlSt[data-key="${key}"]`), X = [...document.querySelectorAll('#owTimeline .tlExp, .tlExp')].find(x => getComputedStyle(x).display === 'block'); return { grown: !!S.dataset.sealZoom, copy: !!document.querySelector('.tlLoupe,.tlNowZoom,.sealLens'), face: [...S.querySelectorAll('text')].map(t => t.textContent).join(' '), aria: S.getAttribute('aria-label') || '', card: X ? X.textContent : '' }; }, d[1].key);
+    assert(hov.grown && !hov.copy, 'the print seal itself has grown'); assert.match(hov.face, /QR LABEL PRINTED/); assert.doesNotMatch(hov.face, /PAUL/, 'no signer on the face'); assert.match(hov.aria, /Print Nº 2/); assert.match(hov.aria, /paul/i);
     assert.match(hov.card, /QR label printed · Print Nº 2 · Charm Sorter/); assert.match(hov.card, /[A-Z]{3} \d{1,2}:\d{2} [AP]M · paul/);
     await shot(page, 'timeline-prints-1-hover');
     await page.mouse.move(5, 5);
     await page.click(`#owTimeline .tlSt[data-key="${d[0].key}"]`); await page.waitForTimeout(400);
     const det = await page.evaluate(() => ({ h: document.querySelector('#owTimeline .tlDetail h3').textContent, badge: document.querySelector('#owTimeline .tlDetail .tlBadge em').textContent, big: [...document.querySelectorAll('#owTimeline .tlBig text')].map(t => t.textContent).join(' | ') }));
-    assert.equal(det.h, 'QR label printed · Print Nº 1 · Charm Sorter'); assert.equal(det.badge, 'Charm Sorter'); assert.match(det.big, /QR LABEL PRINTED.*PRINT Nº 1/);
-    console.log(`  ✓ Timeline: 3 print seals (Charm Sorter Nº 1, Nº 2 on Office; Sorting station Nº 1 on Sorting), none for the shipping label; hover and detail say the number, time, who and where; the tab still says ${count}`);
+    assert.equal(det.h, 'QR label printed · Print Nº 1 · Charm Sorter'); assert.equal(det.badge, 'Charm Sorter'); assert.match(det.big, /QR LABEL \| PRINTED/);
+    console.log(`  ✓ Timeline: 3 print seals (Charm Sorter Nº 1, Nº 2 on Office; Sorting station Nº 1 on Sorting), none for the shipping label; rest and detail say the number, time, who and where; the tab still says ${count}`);
 
     // 5 · a third print from the order window: a new seal, the others stay
     await page.click('[data-ow-view="info"]');

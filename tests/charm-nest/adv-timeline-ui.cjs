@@ -2,7 +2,7 @@
 //  1 · the rail logic stays in step with the server's whereOf (random histories, unknown types, the record rule);
 //  2 · a live step redraws 100 events inside a frame (< 16 ms) and keeps the stamps already drawn;
 //  3 · a restore whose cancelRestored event was not written: the server's where (the record) says not cancelled;
-//  4 · the header rail's loupe goes when the hovered ✕ turns back into a step (a restore arrives while hovering);
+//  4 · the header rail's grown seal goes back when the hovered ✕ turns back into a step (a restore arrives while hovering);
 //  5 · ← → from an "Around this step" row keep the keyboard there, and from a stamp the focus follows the step;
 //  6 · the CANCELLED stamp follows the cancel (a person's, then Etsy's); unknown and odd types still draw.
 //   node tests/charm-nest/adv-timeline-ui.cjs     (PW_DIR=<playwright node_modules>, CHROMIUM=<chrome>)
@@ -138,17 +138,16 @@ const Timeline = require(path.join(root, 'netlify/functions/_orderTimeline.js'))
     await setFx(C, ev4.concat([cx4]), { at: cx4.at, by: 'Paul', why: 'Asked' });
     await page.evaluate(id => window.__mount(id, { compact: true }, 'position:fixed;left:200px;top:100px;width:720px;height:52px;z-index:2147480000;background:var(--card);display:flex'), C);
     await page.waitForSelector('.tlUI.compact .tlStop.x'); await page.waitForTimeout(900);
-    await page.hover('.tlUI.compact .tlStop.x'); await page.waitForTimeout(300);
-    assert.equal(await page.evaluate(() => getComputedStyle(window.__el.querySelector('.tlLoupe')).display), 'block');
-    // a rail 100px from the top has no room above: the seal flips under the step (its name too), inside the view
-    r = await page.evaluate(() => { const L = window.__el.querySelector('.tlLoupe'), b = L.getBoundingClientRect(), s = window.__el.querySelector('.tlUI.compact .tlStop.x').getBoundingClientRect(); return { side: L.dataset.side, top: b.top, left: b.left, right: b.right, sb: s.bottom, vw: innerWidth }; });
-    assert.equal(r.side, 'below'); assert(r.top >= r.sb && r.top <= r.sb + 16 && r.left >= 0 && r.right <= r.vw, 'flipped under the step: ' + JSON.stringify(r));
+    await page.hover('.tlUI.compact .tlCxStamp:not(.out)'); await page.waitForTimeout(1200);   // (the CANCELLED stamp lies over the ✕ step and answers for it)
+    // a rail 100px from the top: the ✕ seal grows where it stands (nudged if need be), inside the view, with no second seal
+    r = await page.evaluate(() => { const s = window.__el.querySelector('.tlUI.compact .tlCxStamp'), b = s.getBoundingClientRect(); return { zoomed: !!s.dataset.sealZoom, w: b.width, top: b.top, left: b.left, right: b.right, bottom: b.bottom, vw: innerWidth, vh: innerHeight, copy: !!document.querySelector('.tlLoupe,.sealLens') }; });
+    assert(r.zoomed && r.w > 50 && !r.copy && r.top >= 0 && r.left >= 0 && r.right <= r.vw && r.bottom <= r.vh, 'the CANCELLED stamp grew in place, inside the view: ' + JSON.stringify(r));
     await setFx(C, ev4.concat([cx4, { id: `${C}~cancelRestored~r`, orderId: C, type: 'cancelRestored', at: Date.now(), by: 'Paul' }]), null);
     await page.evaluate(() => window.__tl.refresh()); await page.waitForTimeout(300);
-    await page.mouse.move(700, 600); await page.waitForTimeout(300);
-    r = await page.evaluate(() => ({ loupe: getComputedStyle(window.__el.querySelector('.tlLoupe')).display, x: window.__el.querySelectorAll('.tlStop.x').length, lifted: window.__el.querySelectorAll('.lifted').length }));
-    assert.equal(r.x, 0); assert.equal(r.loupe, 'none', 'the loupe does not stay over the page'); assert.equal(r.lifted, 0);
-    console.log('  ✓ 4 · header rail: the ✕ turned back into a step under the pointer, and its loupe went with it');
+    await page.mouse.move(700, 600); await page.waitForTimeout(500);
+    r = await page.evaluate(() => ({ zoomed: document.querySelectorAll('[data-seal-zoom]').length, x: window.__el.querySelectorAll('.tlStop.x').length, lifted: document.querySelectorAll('[style*="z-index: 900"]').length }));
+    assert.equal(r.x, 0); assert.equal(r.zoomed, 0, 'no grown seal stays over the page'); assert.equal(r.lifted, 0, 'nothing is left lifted');
+    console.log('  ✓ 4 · header rail: the ✕ turned back into a step under the pointer, and its grown seal went back with it');
 
     await page.evaluate(() => { window.__tl.destroy(); document.querySelectorAll('.tlTestHost').forEach(x => x.remove()); });
     assert.deepEqual(errors, []);

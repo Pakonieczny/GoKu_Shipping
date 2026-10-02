@@ -50,10 +50,10 @@ const evB = [ev(B, 'arrived', 0, { by: 'Etsy', source: 'etsy' }), ev(B, 'laserDo
 (async () => {
   const pwDir = process.env.PW_DIR || path.join(root, 'node_modules');
   let chromium; try { ({ chromium } = require(path.join(pwDir, 'playwright-core'))); } catch (_) { console.log('  – no playwright-core: the browser checks were not run'); return; }
-  const files = { '/order-timeline.js': 'order-timeline.js', '/charm-nest-timeline-ui.js': 'charm-nest-timeline-ui.js' };
+  const files = { '/order-timeline.js': 'order-timeline.js', '/charm-nest-motion.js': 'charm-nest-motion.js', '/charm-nest-timeline-ui.js': 'charm-nest-timeline-ui.js' };   // (the seal zoom lives in the motion module)
   const srv = http.createServer((q, r) => {
     const u = q.url.split('?')[0];
-    if (u === '/') { r.writeHead(200, { 'Content-Type': 'text/html' }); r.end('<!doctype html><meta charset="utf-8"><body style="margin:0"><div id="host" style="width:1400px;min-height:700px;padding-top:200px"></div><script src="/order-timeline.js"></script><script src="/charm-nest-timeline-ui.js"></script>'); return; }
+    if (u === '/') { r.writeHead(200, { 'Content-Type': 'text/html' }); r.end('<!doctype html><meta charset="utf-8"><body style="margin:0"><div id="host" style="width:1400px;min-height:700px;padding-top:200px"></div><script src="/order-timeline.js"></script><script src="/charm-nest-motion.js"></script><script src="/charm-nest-timeline-ui.js"></script>'); return; }
     if (files[u]) { r.writeHead(200, { 'Content-Type': 'text/javascript' }); r.end(fs.readFileSync(path.join(root, files[u]))); return; }
     r.writeHead(404); r.end('{}');
   });
@@ -80,16 +80,16 @@ const evB = [ev(B, 'arrived', 0, { by: 'Etsy', source: 'etsy' }), ev(B, 'laserDo
     assert.match(r.sheet.say, /^Nested · Paul · Sorter · done /, r.sheet.say);
     assert.match(r.sorted.say, /^Sorted · Not signed in · Sorting · done /, r.sorted.say);
 
-    // the Sorted seal, hovered: its face names the person (nobody signed in) and the station; its card says where the
-    // label was printed and by whom
-    await page.hover('.tlStop[data-stage="sorted"]'); await page.waitForTimeout(350);
-    r = await page.evaluate(() => ({ face: [...document.querySelectorAll('.tlLoupe text')].map(t => t.textContent).join(' | '), card: (document.querySelector('.tlExp.on') || {}).textContent || '' }));
-    assert.match(r.face, /SORTED/); assert.match(r.face, /NOT SIGNED IN/); assert.match(r.face, /SORTING STATION/);
+    // the Sorted seal, rested on (it grows where it stands): its face says SORTED, its accessible name the person (nobody
+    // signed in) and the station; its card says where the label was printed and by whom
+    await page.hover('.tlStop[data-stage="sorted"]'); await page.waitForTimeout(1100);
+    r = await page.evaluate(() => { const S = document.querySelector('.tlStop[data-stage="sorted"] .tlSeal'), N = S.closest('.tlStop'); return { grown: !!S.dataset.sealZoom, copy: !!document.querySelector('.tlLoupe,.tlNowZoom,.sealLens'), face: [...S.querySelectorAll('text')].map(t => t.textContent).join(' | '), aria: N.getAttribute('aria-label') || '', card: (document.querySelector('.tlExp.on') || {}).textContent || '' }; });
+    assert(r.grown && !r.copy, 'the seal itself grows'); assert.match(r.face, /SORTED/); assert.match(r.aria, /Not signed in/); assert.match(r.aria, /Sorting/);
     assert.match(r.card, /Sorted · Not signed in · Sorting/, r.card);
     assert.match(r.card, /Label printed at the Sorting station by Ana P\./, r.card);
     assert.match(r.card, /Label printed at the Design Station by Yuki S\./, r.card);
     assert.match(r.card, /order QR label/); assert.doesNotMatch(r.card, /not printed yet|Part done/, r.card);
-    console.log('  ✓ rail: each step says who and where ("Laser cut · Marco R. · Laser"); Sorted with nobody signed in reads NOT SIGNED IN · SORTING STATION on its seal; its card: label printed at the Sorting station by Ana P. and at the Design Station by Yuki S.');
+    console.log('  ✓ rail: each step says who and where ("Laser cut · Marco R. · Laser"); Sorted with nobody signed in is named Not signed in · Sorting for assistive technology; its card: label printed at the Sorting station by Ana P. and at the Design Station by Yuki S.');
 
     // the pure step card: no label anywhere; a shipping label under Shipped; a scan is "Seen at …"
     r = await page.evaluate(({ B, evA }) => {

@@ -92,37 +92,38 @@ const Timeline = require(path.join(root, 'netlify/functions/_orderTimeline.js'))
     assert.equal(early, 0, 'nothing is before the arrival');
     console.log('  ✓ 2 · a necklace: 4 seals in order from the arrival (the early read and the second arrival not drawn), no Welded or Engraved, Assembled next, 2 dashed steps to come');
 
-    // ── 3 · the explainer card on every step, the seal above its dot, the card kept under the pointer ──
+    // ── 3 · the explainer card on every step, a done step's seal grown in place with the card clear of it, the card kept under the pointer ──
     const cards = [];
     for (const sel of ['.tlStop[data-stage]', '.tlSt.ghost[data-stage]', '.tlSt[data-key]']) {
       const n = await page.locator(sel).count();
       for (let i = 0; i < n; i++) {
         await page.mouse.move(5, 895); await page.waitForTimeout(200);
-        const b = page.locator(sel).nth(i); await b.hover(); await page.waitForTimeout(320);
+        const b = page.locator(sel).nth(i); await b.hover(); await page.waitForTimeout(1050);   // (750 ms of rest, then the card and the grown seal)
         const r = await page.evaluate(sel => {
-          const el = window.__el, exp = el.querySelector('.tlExp'), L = el.querySelector('.tlLoupe'), e = exp.getBoundingClientRect(), hov = [...el.querySelectorAll(sel)].find(x => x.matches(':hover'));
-          const dot = hov && (hov.querySelector('.tlSeal') || hov).getBoundingClientRect(), l = L.getBoundingClientRect();
+          const el = window.__el, exp = el.querySelector('.tlExp'), e = exp.getBoundingClientRect(), hov = [...el.querySelectorAll(sel)].find(x => x.matches(':hover'));
+          const sealEl = hov && (hov.querySelector('.tlSeal') || hov), dot = sealEl && sealEl.getBoundingClientRect(), base = hov && hov.getBoundingClientRect();
           return { sel, stage: hov && (hov.dataset.stage || hov.dataset.key.split('~')[0]), card: getComputedStyle(exp).display === 'block' && +getComputedStyle(exp).opacity > .9, head: exp.querySelector('.xh') ? exp.querySelector('.xh').textContent : '',
             lines: exp.querySelectorAll('.rq').length, below: dot ? e.top >= dot.bottom - 1 || e.left >= dot.right || e.right <= dot.left : false,
-            loupe: getComputedStyle(L).display === 'block', above: dot ? l.bottom <= dot.top + 1 || l.top >= dot.bottom - 1 : false, apart: l.bottom <= e.top + 1 || l.top >= e.bottom - 1 || l.right <= e.left + 1 || l.left >= e.right - 1, inView: l.left >= 0 && l.right <= innerWidth && l.top >= 0, done: hov && (hov.classList.contains('d') || !!hov.dataset.key) };
+            grown: !!(sealEl && sealEl.dataset.sealZoom) && dot.width > 40, copy: !!document.querySelector('.tlLoupe,.tlNowZoom,.sealLens'), apart: !!dot && (dot.bottom <= e.top + 1 || dot.top >= e.bottom - 1 || dot.right <= e.left + 1 || dot.left >= e.right - 1),
+            inView: !!dot && dot.left >= 0 && dot.right <= innerWidth && dot.top >= 0, done: hov && (hov.classList.contains('d') || !!hov.dataset.key) };
         }, sel);
         cards.push(r);
       }
     }
-    const bad = cards.filter(r => !r.card || !r.lines || !r.head || !r.below || (r.done && !(r.loupe && r.above && r.apart && r.inView)) || (!r.done && r.loupe));
+    const bad = cards.filter(r => !r.card || !r.lines || !r.head || !r.below || r.copy || (r.done && !(r.grown && r.apart && r.inView)));
     if (process.env.E2E_DEBUG) console.log(JSON.stringify(cards));
-    assert.deepEqual(bad, [], 'every step shows its card under the dot, and a done one its seal clear of the dot and of the card, in the view');
-    // the pointer moves from the dot onto its card: the card stays; off the card, it goes
+    assert.deepEqual(bad, [], 'every step shows its card under the dot, and a done one its seal grown in place, clear of the card, in the view, with no second seal');
+    // the pointer moves from the dot onto its card: only the seal itself owns the hover (Paul), so the card and the grown seal go; a fresh rest brings them back
     await page.mouse.move(5, 895); await page.waitForTimeout(200);
-    const stop = page.locator('.tlStop[data-stage="assembled"]'); await stop.hover(); await page.waitForTimeout(300);
+    const stop = page.locator('.tlStop[data-stage="assembled"]'); await stop.hover(); await page.waitForTimeout(1050);
     const cb = await page.evaluate(() => { const r = window.__el.querySelector('.tlExp').getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + 14, b: r.bottom }; });
     await page.mouse.move(cb.x, cb.y, { steps: 6 }); await page.waitForTimeout(400);
-    const kept = await page.evaluate(() => { const x = window.__el.querySelector('.tlExp'); return getComputedStyle(x).display === 'block' && +getComputedStyle(x).opacity > .9 && /Assembled/.test(x.textContent); });
-    assert(kept, 'the card stays while the pointer is over it');
+    const gone = await page.evaluate(() => { const x = window.__el.querySelector('.tlExp'); return getComputedStyle(x).display === 'none' && !document.querySelector('[data-seal-zoom]'); });
+    assert(gone, 'the card cannot keep the hover alive: moving onto it puts the card and the grown seal away');
     await page.mouse.move(5, 895); await page.waitForTimeout(500);
-    assert.equal(await page.evaluate(() => getComputedStyle(window.__el.querySelector('.tlExp')).display), 'none', 'and goes when the pointer leaves it');
+    assert.equal(await page.evaluate(() => getComputedStyle(window.__el.querySelector('.tlExp')).display), 'none', 'and it stays away when the pointer leaves');
     if (shots) { await page.locator('.tlStop[data-stage="sorted"]').hover(); await page.waitForTimeout(400); await page.screenshot({ path: path.join(shots, 'e2e-necklace-hover.png') }); }
-    console.log(`  ✓ 3 · ${cards.length} steps hovered (rail, dashed, seals): each shows its card under the dot, a done one its seal clear of the dot and the card (under the seal when a rail at the top flips it), in the view; the card stays under the pointer`);
+    console.log(`  ✓ 3 · ${cards.length} steps hovered (rail, dashed, seals): each shows its card under the dot, a done one its seal grown in place and clear of the card, in the view; moving onto the card puts both away`);
 
     // ── 4 · three pieces: a necklace, an engraved necklace, a stud earring ──
     const M = '4200000002', kA = `${M}_1`, kB = `${M}_2`, kC = `${M}_3`;

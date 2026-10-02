@@ -122,24 +122,24 @@ const opsOf = evs => evs.filter(opOf).map(e => [opOf(e), e.by, (e.data && e.data
     assert.equal(lane.count, String(answer.events.length), 'the Timeline tab counts each event once: ' + lane.count);
     console.log(`  ✓ the Timeline: 2 Complete seals and the Reopen on the Office lane ("Operator"), in the card's green, in press order; the tab counts ${lane.count} (${lane.sum})`);
 
-    // hover: the seal zooms up with ORDER COMPLETED, who and where; the card under it says the same in words
+    // rest (750 ms): the seal itself grows with ORDER COMPLETED and the time; who and where are its accessible name, and the card under it says it in words
     const hoverOn = async key => {
-      await page.hover(`#owTimeline .tlSt[data-key="${key}"]`); await page.waitForTimeout(450);
-      return page.evaluate(() => { const L = document.querySelector('#owTimeline .tlLoupe'), X = [...document.querySelectorAll('.tlExp')].find(x => getComputedStyle(x).display === 'block' && x.textContent.trim()); return { disp: L && getComputedStyle(L).display, face: L ? [...L.querySelectorAll('text')].map(t => t.textContent).join(' | ') : '', exp: X ? X.textContent : '' }; });
+      await page.hover(`#owTimeline .tlSt[data-key="${key}"]`); await page.waitForTimeout(1100);
+      return page.evaluate(key => { const S = document.querySelector(`#owTimeline .tlSt[data-key="${key}"]`), X = [...document.querySelectorAll('.tlExp')].find(x => getComputedStyle(x).display === 'block' && x.textContent.trim()); return { disp: S && S.dataset.sealZoom ? 'block' : 'none', copy: !!document.querySelector('.tlLoupe,.tlNowZoom,.sealLens'), face: S ? [...S.querySelectorAll('text')].map(t => t.textContent).join(' | ') : '', aria: S ? S.getAttribute('aria-label') || '' : '', exp: X ? X.textContent : '' }; }, key);
     };
     const keys = await page.evaluate(() => [...document.querySelectorAll('#owTimeline .tlSt[data-key^="sealCompleted~"], #owTimeline .tlSt[data-key^="reopened~"]')].map(b => b.dataset.key));
     let h = await hoverOn(keys[2]);
-    assert.equal(h.disp, 'block');
-    assert.match(h.face, /ORDER COMPLETED/); assert.match(h.face, /ORDER WINDOW/); assert.match(h.face, /TEST OPERATOR/); assert.match(h.face, /\d{1,2}:\d\d [AP]M/);
+    assert.equal(h.disp, 'block'); assert(!h.copy, 'no second seal');
+    assert.match(h.face, /ORDER COMPLETED/); assert.match(h.face, /\d{1,2}:\d\d [AP]M/); assert.doesNotMatch(h.face, /TEST OPERATOR/, 'the signer is not on the face'); assert.match(h.aria, /Test Operator/);
     assert.match(h.exp, /Completed with Complete Order · Order window/); assert.match(h.exp, /Test Operator/);
     if (SHOTS) { fs.mkdirSync(SHOTS, { recursive: true }); await page.screenshot({ path: path.join(SHOTS, 'timeline-complete-hover.png') }); }
     h = await hoverOn(keys[1]);
-    assert.match(h.face, /REOPENED/); assert.match(h.face, /REVIEW · CUSTOM ORDERS/); assert.match(h.exp, /Reopened: back to Open · Review · Custom Orders/);
+    assert.match(h.face, /REOPENED/); assert.match(h.exp, /Reopened: back to Open · Review · Custom Orders/);
     h = await hoverOn(keys[0]);
-    assert.match(h.face, /ORDER COMPLETED/); assert.match(h.face, /REVIEW · CUSTOM ORDERS/);
+    assert.match(h.face, /ORDER COMPLETED/); assert.match(h.exp, /Review · Custom Orders/);
     await page.mouse.move(700, 930); await page.waitForTimeout(300);
     if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'timeline-complete.png') });
-    console.log('  ✓ hover: ORDER COMPLETED / REOPENED, the time, who and where pressed on the seal, and in words under it');
+    console.log('  ✓ rest: ORDER COMPLETED / REOPENED and the time on the grown seal, who and where in its accessible name, and in words under it');
 
     /* ── 3 · completed by hand reads as completed everywhere in the order window; a Reopen puts it back; Complete again ── */
     assert(srv.st.list('Order_Timeline').some(e => e.orderId === RID && e.type === 'needsDecision'), 'the order\'s question was recorded (the Now card used to keep saying it)');
@@ -225,8 +225,8 @@ const opsOf = evs => evs.filter(opOf).map(e => [opOf(e), e.by, (e.data && e.data
     const old = await page.evaluate(() => ({ drawn: [...window.__el.querySelectorAll('.tlSt[data-key]')].map(b => b.dataset.key.split('~')[0]), lane: window.__el.querySelector('.tlLane[data-lane="office"] span').textContent }));
     assert.deepEqual(old.drawn, ['arrived', 'sealCompleted', 'sealPrinted'], 'Order in, the completion, and its QR label print (every print is a seal too): ' + old.drawn);
     assert.equal(old.lane, 'Operator');
-    h = await (async () => { await page.hover('.tlTestHost .tlSt[data-key^="sealCompleted~"]'); await page.waitForTimeout(450); return page.evaluate(() => [...window.__el.querySelectorAll('.tlLoupe text')].map(t => t.textContent).join(' | ')); })();
-    assert.match(h, /ORDER COMPLETED/); assert.match(h, /PAUL/); assert.match(h, /SORTER/);
+    h = await (async () => { await page.hover('.tlTestHost .tlSt[data-key^="sealCompleted~"]'); await page.waitForTimeout(1100); return page.evaluate(() => { const S = window.__el.querySelector('.tlSt[data-key^="sealCompleted~"]'); return { face: [...S.querySelectorAll('text')].map(t => t.textContent).join(' | '), aria: S.getAttribute('aria-label') || '', grown: !!S.dataset.sealZoom }; }); })();
+    assert(h.grown); assert.match(h.face, /ORDER COMPLETED/); assert.match(h.aria, /paul/i);
     await page.evaluate(() => window.__t.destroy());
     assert.deepEqual(errors, [], 'no page errors');
     console.log('  ✓ an order completed before: its completion drawn from what its records keep, on the Office lane, by paul');

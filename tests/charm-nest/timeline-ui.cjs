@@ -1,7 +1,7 @@
 // Browser test of the order timeline component (charm-nest-timeline-ui.js) inside the sorter page, over the local
 // stand-in for the site (bridge-server.cjs). OrderTimeline.get is stubbed with one order of 31 events over six days and a
 // cancelled one, each with the `where` the server's whereOf gives; one more order goes through the real client and the
-// stand-in's timelineAdd/timelineGet. Checks the Now line and the milestone rail, the lanes and their stamps, hover (the loupe), click
+// stand-in's timelineAdd/timelineGet. Checks the Now line and the milestone rail, the lanes and their stamps, rest (the grown seal), click
 // (inline detail: reason, Open sheet, Around this step), the noise that draws no seal, a live event arriving, the 20 s
 // refresh (shortened here), focus(), an error with Retry, compact mode, reduced motion and destroy() leaving no timers.
 //   node tests/charm-nest/timeline-ui.cjs [playwright-core dir]      (SHOTS=<dir> saves the three screenshots there)
@@ -171,29 +171,28 @@ function fixture({ MAIN, CX }) {
   assert.deepEqual(await page.evaluate(() => window.__sheet), [where[MAIN].sheetId, null], 'Open sheet on the where\'s sheet (the last one cut)');
   ok.push('Now reads the server\'s where ("Packed", Shipping · Dana K., next: Shipped, on RG Sheet 7 + Open sheet); the 8-step rail: 7 stamped, Shipped pulses; stagesFor: Welded only for stud earrings, Engraved only with a back engraving (unknown keeps it); 5 day columns + 1 idle; NOW · AT SHIPPING');
 
-  // ── hover a stamp: its seal zooms onto the loupe ABOVE the dot at 122px (90% of the old 136px) with its full face;
-  //    the dot stays in sight and keeps the hover (Paul, 2026-09-28) ──
+  // ── rest on a stamp (750 ms): its seal grows where it stands, by the shared adaptive curve (Seal.zoom); no loupe, no second seal,
+  //    no dark caption; the step explainer card sits under the grown seal; the dot keeps the hover (Paul, 2026-10-02) ──
   const welded = await page.$('.tlSt[data-key="welded~e25"]');
   const small = await welded.boundingBox();
   await welded.hover();
   await page.waitForTimeout(1500);
-  const zoomAt = () => page.evaluate(() => { const L = window.__el.querySelector('.tlLoupe'), b = L.getBoundingClientRect(), s = window.__el.querySelector('.tlSt[data-key="welded~e25"]'), d = s.getBoundingClientRect(), cap = L.querySelector('.cap'), X = [...window.__el.querySelectorAll('.tlExp')].find(x => getComputedStyle(x).display === 'block'); return { disp: getComputedStyle(L).display, w: b.width, h: b.height, top: b.top, bottom: b.bottom, cx: b.left + b.width / 2, dTop: d.top, dBottom: d.bottom, dcx: d.left + d.width / 2, dOp: getComputedStyle(s).opacity, pe: getComputedStyle(L).pointerEvents, side: L.dataset.side, capTop: X ? X.getBoundingClientRect().top : null, expText: X ? X.textContent : '', texts: [...L.querySelectorAll('text')].map(t => t.textContent).join(' | '), cap: (cap || {}).textContent, lifted: s.classList.contains('lifted'), hov: s.matches(':hover'), shadow: getComputedStyle(L).boxShadow }; });
+  const zoomAt = () => page.evaluate(() => { const s = window.__el.querySelector('.tlSt[data-key="welded~e25"]'), d = s.getBoundingClientRect(), X = [...window.__el.querySelectorAll('.tlExp')].find(x => getComputedStyle(x).display === 'block'); return { grown: s.dataset.sealZoom || '', k: window.Seal.zoomScale(s.offsetWidth), w: d.width, top: d.top, bottom: d.bottom, cx: d.left + d.width / 2, left: d.left, right: d.right, copy: !!document.querySelector('.tlLoupe,.tlNowZoom,.sealLens'), capTop: X ? X.getBoundingClientRect().top : null, expText: X ? X.textContent : '', texts: [...s.querySelectorAll('text')].map(t => t.textContent).join(' | '), aria: s.getAttribute('aria-label') || '', hov: s.matches(':hover'), shadow: getComputedStyle(s).filter, titled: s.hasAttribute('title'), op: getComputedStyle(s).opacity }; });
   r = await zoomAt();
-  assert.equal(r.disp, 'block'); assert(small.width < 40, 'a small dot: ' + small.width);
-  assert(Math.abs(r.w - 136 * .9) <= 1.5 && Math.abs(r.h - 136 * .9) <= 1.5, `the zoomed seal is 90% of the old 136px: ${r.w}×${r.h}`);
-  assert.equal(r.side, 'above'); assert(r.bottom <= r.dTop && r.bottom >= r.dTop - 16, `the seal sits just above the dot, not over it: seal bottom ${r.bottom}, dot top ${r.dTop}`);
-  assert(Math.abs(r.cx - r.dcx) <= 1.5, 'centred over the dot');
-  assert.equal(r.pe, 'none', 'the seal takes no pointer'); assert(+r.dOp > .9 && r.hov, 'the dot stays in sight and keeps the hover');
-  assert(r.capTop >= r.dBottom, 'the step explainer card sits under the dot, not over it (it replaced the dark caption)');
-  assert.match(r.texts, /WELDED/); assert.match(r.texts, /MARCO R\./); assert.match(r.texts, /WELDING STATION/); assert.match(r.texts, /\d{1,2}:\d\d [AP]M/);
-  assert.equal(r.cap, undefined, 'no dark caption on the loupe'); assert.match(r.expText, /Welded/); assert(r.lifted && /rgba/.test(r.shadow));
+  assert(r.grown && !r.copy, 'the seal itself has grown, with no second seal: ' + JSON.stringify(r.grown)); assert(small.width < 60, 'a small dot: ' + small.width);
+  assert(Math.abs(r.w / small.width - r.k) <= .25 * r.k, `the dot grows by the shared curve (×${r.k}): ${small.width.toFixed(1)}px → ${r.w.toFixed(1)}px`);
+  assert(r.left >= 0 && r.right <= 1440 && r.top >= 0, 'and stays in the view');
+  assert(+r.op > .9 && r.hov && !r.titled, 'the dot stays in sight, keeps the hover and has no tooltip');
+  assert(r.capTop >= r.bottom - 1, 'the step explainer card sits under the grown seal, not over it (it replaced the dark caption): card ' + r.capTop + ', seal bottom ' + r.bottom);
+  assert.match(r.texts, /WELDED/); assert.match(r.texts, /\d{1,2}:\d\d [AP]M/); assert.doesNotMatch(r.texts, /MARCO R\.|WELDING STATION|Signed by/, 'no signer on the face: it is for assistive text');
+  assert.match(r.aria, /Marco R\./, 'the signer is the dot\'s accessible name'); assert.match(r.expText, /Welded/); assert(r.shadow !== 'none', 'lifted on a soft shadow: ' + r.shadow);
   // moving within the dot keeps the seal, still and in place
   for (const [dx, dy] of [[-.3, -.3], [.3, .25], [0, .35], [-.35, 0]]) { await page.mouse.move(small.x + small.width * (.5 + dx), small.y + small.height * (.5 + dy)); await page.waitForTimeout(40); }
-  await page.waitForTimeout(120);
-  const r2 = await zoomAt(); assert.equal(r2.disp, 'block', 'moving within the dot keeps the seal'); assert(Math.abs(r2.top - r.top) < 1 && Math.abs(r2.cx - r.cx) < 1, 'and it does not move');
-  ok.push(`hover: the seal zooms ${Math.round(small.width)}px → ${Math.round(r.w)}px (90% of 136) just above its dot (${Math.round(r.dTop - r.bottom)}px gap), not over it, with shadow, no pointer, reading WELDED, the time, MARCO R. and the station; the dot stays in sight and keeps the hover`);
-  await page.mouse.move(700, 880); await page.waitForTimeout(260);
-  assert.equal(await page.evaluate(() => getComputedStyle(window.__el.querySelector('.tlLoupe')).display), 'none', 'the loupe goes away');
+  await page.waitForTimeout(160);
+  const r2 = await zoomAt(); assert(r2.grown, 'moving within the dot keeps the seal grown'); assert(Math.abs(r2.top - r.top) < 1 && Math.abs(r2.cx - r.cx) < 1, 'and it does not move');
+  ok.push(`rest: the seal grows ${Math.round(small.width)}px → ${Math.round(r.w)}px (×${r.k}) where it stands, with shadow, no loupe, copy or caption, the step card under it; the dot stays in sight and keeps the hover; the signer is its accessible name`);
+  await page.mouse.move(700, 880); await page.waitForTimeout(500);
+  assert.equal(await page.evaluate(() => document.querySelectorAll('[data-seal-zoom]').length + ([...window.__el.querySelectorAll('.tlExp')].filter(x => getComputedStyle(x).display === 'block').length)), 0, 'the seal and its card go back');
 
   // ── the step explainer (Paul, 28 Sep, point 5): a step to come, hovered, says below its dot what is still missing ──
   const futs = await page.$$eval('.tlStop:not(.d)', s => s.map(n => n.dataset.stage)), futK = futs[futs.length - 1];
@@ -210,6 +209,7 @@ function fixture({ MAIN, CX }) {
   const pinned = await page.evaluate(() => ({ pin: !!window.__el.querySelector('.tlDetail .tlPin'), path: window.__el.querySelectorAll('.tlDetail .tlPath2 button').length, need: window.__el.querySelectorAll('.tlDetail .tlPin .rq:not(.ok)').length }));
   assert(pinned.pin && pinned.need > 0 && pinned.path >= 7, 'a click pins the step inline with the whole path: ' + JSON.stringify(pinned));
   await shot('tlui-d-pinned');
+  await page.mouse.move(700, 880); await page.waitForTimeout(300);   // (a seal rested on has its own Escape first: it goes back, then the pin)
   await page.keyboard.press('Escape'); await page.waitForTimeout(100);
   assert.equal(await page.evaluate(() => !!window.__el.querySelector('.tlDetail .tlPin')), false, 'Escape unpins');
   await page.mouse.move(700, 880); await page.waitForTimeout(200);

@@ -22,8 +22,8 @@ function fixture(options = {}) {
     records.animations.push(animation);
     return animation;
   };
-  Object.defineProperty(w.HTMLElement.prototype, 'offsetWidth', { get() { return this.classList.contains('sealLens') ? parseFloat(this.style.width) || 200 : 84; } });
-  Object.defineProperty(w.HTMLElement.prototype, 'offsetHeight', { get() { return this.classList.contains('sealLens') ? parseFloat(this.style.height) || 200 : 84; } });
+  Object.defineProperty(w.HTMLElement.prototype, 'offsetWidth', { get() { return 84; } });
+  Object.defineProperty(w.HTMLElement.prototype, 'offsetHeight', { get() { return 84; } });
   class FakeAudioContext {
     constructor(settings) { this.settings = settings; this.state = control.initialState; this.sampleRate = 48000; this.destination = {}; this.resumes = 0; records.contexts.push(this); }
     createBuffer(channels, length, rate) {

@@ -19,8 +19,8 @@ w.matchMedia = () => ({ matches: false });
 w.Element.prototype.getAnimations = () => [];
 w.Element.prototype.animate = () => ({ finished: Promise.resolve(), cancel() {}, playState: 'finished' });
 d.elementFromPoint = () => hit;
-Object.defineProperty(w.HTMLElement.prototype, 'offsetWidth', { get() { return this.classList.contains('sealLens') ? 168 : this.classList.contains('lc') ? 350 : 84; } });
-Object.defineProperty(w.HTMLElement.prototype, 'offsetHeight', { get() { return this.classList.contains('sealLens') ? 168 : this.classList.contains('lc') ? 28 : 84; } });
+Object.defineProperty(w.HTMLElement.prototype, 'offsetWidth', { get() { return 84; } });
+Object.defineProperty(w.HTMLElement.prototype, 'offsetHeight', { get() { return 84; } });
 w.eval(fs.readFileSync(path.join(root, 'charm-nest-motion.js'), 'utf8'));
 w.eval(fs.readFileSync(path.join(root, 'charm-nest-timeline-ui.js'), 'utf8'));
 w.localStorage.setItem('cn.employee', 'Different current viewer');
@@ -117,7 +117,8 @@ function rectFor(el, left = 410, top = 560) {
 }
 function point(type, node, relatedTarget = null) {
   hit = type === 'pointerout' ? relatedTarget : node;
-  const rect = node.getBoundingClientRect();
+  // (a pointerout carries where the pointer has gone to)
+  const rect = (type === 'pointerout' ? relatedTarget && relatedTarget.getBoundingClientRect() : node.getBoundingClientRect()) || { left: -9, width: 0, top: -9, height: 0 };
   node.dispatchEvent(new w.MouseEvent(type, { bubbles: true, relatedTarget, clientX: rect.left + rect.width / 2, clientY: rect.top + rect.height / 2 }));
 }
 async function advance(ms) {
@@ -174,15 +175,16 @@ async function audit() {
     assert(tool.querySelector('path[d="' + svg.querySelector('[data-seal-outline]').getAttribute('d') + '"]'), 'the head uses the exact earned seal outline');
     seals.push(seal);
   }
-  const first = seals[0], originalFace = first.innerHTML, lens = () => d.querySelector('.sealLens');
-  point('pointerover', first); await advance(1000); assert.equal(lens(), null, 'fast movement cannot show a send-seal hover');
-  point('pointerout', first, outside); await advance(2000); assert.equal(lens(), null, 'leaving cancels the delayed hover');
-  point('pointerover', first); await advance(1100); assert(lens(), 'resting opens its shared enlargement');
-  assert.match(lens().textContent, /Signed bypaul/); assert.doesNotMatch(lens().textContent, /Different current viewer/);
-  const [, x, y] = /translate\(([-\d.]+)px,([-\d.]+)px\)/.exec(lens().style.transform);
-  assert.equal(lens().style.width, '168px'); assert(+y + 168 + 36 <= first.getBoundingClientRect().top, 'hover and signer stay above the original');
-  assert(Number.isFinite(+x)); point('pointerout', first, outside); await advance(0); assert.equal(lens(), null, 'hover closes immediately on pointer exit');
-  assert.equal(first.innerHTML, originalFace, 'hover never edits historical face data');
+  const first = seals[0], originalFace = first.innerHTML, zoomed = () => d.querySelector('[data-seal-zoom]'), DELAY = w.Seal.zoom.DELAY;
+  assert.equal(DELAY, 750, 'one named 750 ms hover rest');
+  point('pointerover', first); await advance(DELAY - 50); assert.equal(zoomed(), null, 'fast movement cannot zoom a send-seal');
+  point('pointerout', first, outside); await advance(2000); assert.equal(zoomed(), null, 'leaving cancels the delayed zoom');
+  point('pointerover', first); await advance(DELAY); assert.equal(zoomed(), first, 'resting opens the send seal itself in place: no second seal');
+  assert.match(first.getAttribute('aria-label'), /Sent to sheet by paul/, 'the recorded signer is its accessible name'); assert.doesNotMatch(first.outerHTML, /Different current viewer/);
+  assert.equal(d.querySelectorAll('.sealLens,.tlLoupe,[data-seal-caption]').length, 0, 'no lens or caption exists');
+  const grown = w.Seal.zoom.rectOf(first); assert(grown && grown.left >= 0 && grown.top >= 0 && grown.right <= w.innerWidth && grown.bottom <= w.innerHeight, 'the grown seal stays in the view');
+  point('pointerout', first, outside); await advance(0); assert.equal(zoomed(), null, 'the zoom goes back immediately on pointer exit');
+  assert.equal(first.innerHTML, originalFace, 'zoom never edits historical face data');
   const mixed = w.Seal.list({ prints: 1, stamps: [stampOf(records[0]), { how: 'print', at: records[0].at + 60000, by: 'Seth' }] });
   assert.equal(mixed[0].how, 'sheet'); assert(!mixed[0].n, 'send does not consume a print sequence number');
   assert.equal(mixed[1].how, 'print'); assert.equal(mixed[1].n, 1, 'a later genuine QR print starts at one');

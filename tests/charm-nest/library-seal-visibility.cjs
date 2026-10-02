@@ -33,7 +33,7 @@ try{
   assert.equal(JSON.stringify({report,source}),before,'rendering preserves readiness data and all historical records');
  }
  assert.equal(R.counter({ready:false,required:0,saved:0}),'','plain sheets get no placeholder');
- assert.equal(Seal.BASE_SIZE,84);assert.equal(Seal.HOVER_SIZE,168,'enlargement remains shared everywhere');
+ assert.equal(Seal.BASE_SIZE,84);assert.equal(Seal.HOVER_SIZE,undefined,'no fixed enlarged size: every seal, in the Library too, zooms in place by the one adaptive curve');assert.equal(Seal.zoomScale(72),2.05,'a 72px Library card seal grows by the shared curve');
  for(const owner of ['sheet:sheet1','set:set1']){
   const card=d.createElement('section');card.className=owner.startsWith('set:')?'setCard':'libCard';
   const record={id:'sheet1',processReady:false,processSeals:history};
@@ -43,7 +43,7 @@ try{
   for(const seal of seals){
    assert.equal(number(seal,'width'),72,'Library card seal is compact');assert.equal(number(seal,'height'),72);
    assert.equal(w.getComputedStyle(seal).opacity,'1','actual seals remain fully visible');
-   assert.doesNotMatch(seal.querySelector('svg').textContent,/AWAITING LASER|Paul|Seth|Alex/,'regular face stays legible and signer stays in hover metadata');
+   assert.doesNotMatch(seal.querySelector('svg').textContent,/AWAITING LASER|Paul|Seth|Alex/,'regular face stays legible and signer stays in assistive metadata');
   }
   context.processSeals(card,record,owner);assert.equal(card.querySelectorAll('.seal').length,3,'refreshing history does not duplicate seals');
   record.processReady=true;context.processSeals(card,record,owner);record.processReady=false;context.processSeals(card,record,owner);

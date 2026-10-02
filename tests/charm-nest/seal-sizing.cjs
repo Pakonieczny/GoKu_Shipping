@@ -70,10 +70,10 @@ async function resizeParent(parent,width){
   await tick();for(let n=0;frames.length&&n<8;n++){const batch=frames.splice(0);for(const frame of batch)frame(0);await tick();}
 }
 
-function fixture(count,parentWidth=1200,classes=''){
+function fixture(count,parentWidth=1200,classes='',size=0){
   const parent=d.createElement('section');parent._width=parentWidth;parent.style.cssText='display:block;padding:0;position:relative';
   const record={stamps:Array.from({length:count},(_,i)=>({how:i%3===0?'button':'print',at:at+i*60000,by}))};
-  parent.innerHTML=Seal.row(record,{size:34});const row=parent.firstElementChild;row.classList.add(...classes.split(' ').filter(Boolean));row.style.margin='0';
+  parent.innerHTML=Seal.row(record,size?{size}:{});const row=parent.firstElementChild;row.classList.add(...classes.split(' ').filter(Boolean));row.style.margin='0';
   d.body.appendChild(parent);return {parent,row,seals:[...row.querySelectorAll('.seal')]};
 }
 function fitted(f,label){
@@ -87,9 +87,9 @@ function fitted(f,label){
 
 (async()=>{
   try{
-    assert.equal(Seal.BASE_SIZE,84);assert.equal(Seal.HOVER_SIZE,168);
+    assert.equal(Seal.BASE_SIZE,84);assert.equal(Seal.HOVER_SIZE,undefined,'no fixed enlarged size remains: the zoom is adaptive');assert.equal(typeof Seal.zoomScale,'function');assert.equal(Seal.zoomScale(84),1.85);assert(Seal.zoomScale(24)>Seal.zoomScale(84)&&Seal.zoomScale(84)>Seal.zoomScale(140),'smaller seals zoom more');
     assert.equal(typeof Seal.fitGroups,'function');assert.equal(typeof Seal.fit,'function');
-    assert.equal(custom(d.documentElement,'--seal-size'),'84px');assert.equal(custom(d.documentElement,'--seal-hover-size'),'168px');
+    assert.equal(custom(d.documentElement,'--seal-size'),'84px');assert.equal(custom(d.documentElement,'--seal-hover-size'),'','no fixed hover size is left in the stylesheet');
 
     // Old rendering calls and previously generated inline --sz values cannot create a different normal size.
     for(const how of ['print','button','engraveApproved','engravePlain','laserReady','laserDone'])for(const requested of [0,34,56,112,180]){
@@ -108,6 +108,20 @@ function fitted(f,label){
     history.parent._width=1200;assert.equal(fitted(history,'restored wide history'),84,'seals grow back to the canonical size');
     assert.deepEqual(history.seals.map(s=>s.innerHTML),faces,'fitting never rewrites historical artwork');history.parent.remove();
 
+    // A strip that asks for small seals (the order window's one line, Seal.row size) never grows them past it, and still shrinks below it when short of room.
+    for(const count of [1,2,3]){
+      const f=fixture(count,1200,'',34);assert.equal(fitted(f,count+' small-strip seals'),34,'a requested strip size is the most a seal grows to');
+      if(count>1){f.parent._width=count*20+4*(count-1);assert(fitted(f,count+' constrained small-strip seals')<=20,'a short strip still shrinks them together');}
+      f.parent.remove();
+    }
+    // (the order window's custom bar: a row beside words that take what is left, in a flex line, never collapses to a pixel)
+    {
+      const bar=d.createElement('div');bar.style.cssText='display:flex;gap:8px;padding:5px 8px 5px 10px';bar.style.width='772px';bar._width=772;
+      bar.innerHTML='<span class="tag"></span><span class="w"></span>'+Seal.row({stamps:[{how:'print',at,by},{how:'button',at:at+6e4,by}]},{size:34})+'<button></button>';
+      const tag=bar.children[0],words=bar.children[1],btn=bar.children[3];tag._width=259;btn._width=65;words._width=306;words.style.cssText='flex:1 1 auto;min-width:0';
+      d.body.appendChild(bar);const row=bar.querySelector('.sealRow');row.style.margin='0';row.style.maxWidth='50%';row.style.flex='0 0 auto';
+      Seal.fitGroups(bar);assert.equal(parseFloat(row.style.getPropertyValue('--seal-fit')),34,'the custom bar\'s seals are 34px, not squeezed to the width the line gave a previous fit');bar.remove();
+    }
     for(const count of [1,2,3,4,6,8]){
       const f=fixture(count,1200);assert.equal(fitted(f,count+' spacious siblings'),84);
       if(count>1){f.parent._width=count*64+4*(count-1);assert(fitted(f,count+' constrained siblings')<=64,'adding siblings reduces them together');f.parent._width=1200;assert.equal(fitted(f,count+' expanded siblings'),84);}
@@ -156,17 +170,18 @@ function fitted(f,label){
     for(const property of ['height','min-height','padding-top','padding-bottom'])assert.equal(space.style.getPropertyValue(property),'','approval overlay adds no vertical '+property);
     assert(!rule(main,'.librarySheet:has(.processSealRow)'),'no redundant trailing seal padding remains under the QR area');
 
-    // Every chosen family shares one regular viewport and one enlarged hover viewport. The saved signer stays historical.
+    // Every chosen family shares one regular viewport and grows in place by the one adaptive curve: no second surface, the signer stays historical (assistive text only).
     const families=Object.keys(Seal.FAMILY);assert.equal(families.length,8);
     for(const family of families){
       const host=d.createElement('span');host.className='sealRow';host.innerHTML=`<span class="seal" tabindex="0" role="img" aria-label="Stamped by ${by} · Sep 30" data-at="${at}">${Seal.face({family,action:Seal.FAMILY[family].name,at,by})}</span>`;d.body.appendChild(host);
       const seal=host.firstElementChild;nearly(length(seal,'width'),84,family+' regular size');assert.doesNotMatch(seal.querySelector('svg').textContent,/Recorded Operator|Signed by/);
+      const box={left:400,top:560,width:84,height:84,right:484,bottom:644};seal.getBoundingClientRect=()=>box;seal.getClientRects=()=>[box];
       seal.dispatchEvent(new w.MouseEvent('click',{bubbles:true,clientX:452,clientY:602}));await tick();
-      const lens=d.querySelector('.sealLens');assert(lens,family+' has an enlarged hover surface');nearly(length(lens,'width'),168,family+' enlarged width');nearly(length(lens,'height'),168,family+' enlarged height');assert.equal(lens.querySelector('svg').dataset.sealFamily,family);
-      assert.equal(w.getComputedStyle(lens).backgroundColor,'rgba(0, 0, 0, 0)',family+' enlargement has no unrelated paper disc');assert.equal(w.getComputedStyle(lens).borderRadius,'0');assert.equal(w.getComputedStyle(lens).boxShadow,'none');assert.equal(w.getComputedStyle(lens.querySelector('.lf')).inset,'0');
-      assert.match(lens.querySelector('svg').textContent,/Recorded Operator/);assert.doesNotMatch(lens.textContent,/Current Viewer/);
-      seal.dispatchEvent(new w.MouseEvent('pointerout',{bubbles:true,relatedTarget:outside}));await tick();assert.equal(d.querySelector('.sealLens'),null,family+' preview leaves with its original seal');host.remove();
+      assert.equal(d.querySelector('[data-seal-zoom]'),seal,family+' grows where it stands');assert.equal(seal.dataset.sealZoom,Seal.zoomScale(84).toFixed(2),family+' takes the 84px size\'s scale');
+      assert.equal(d.querySelectorAll('.sealLens,.tlLoupe').length,0,family+' makes no second surface');assert.equal(seal.querySelectorAll('svg').length,1,family+' keeps its one face');assert.equal(seal.querySelector('svg').dataset.sealFamily,family);
+      assert.match(seal.getAttribute('aria-label'),/Recorded Operator/);assert.doesNotMatch(seal.outerHTML,/Current Viewer/);assert(!seal.hasAttribute('title'),family+' has no tooltip');
+      seal.dispatchEvent(new w.MouseEvent('pointerout',{bubbles:true,relatedTarget:outside,clientX:-9,clientY:-9}));await tick();assert.equal(d.querySelector('[data-seal-zoom]'),null,family+' goes back with the pointer');host.remove();
     }
-    console.log('PASS: canonical84 normal/168 hover across all8 families; legacy sizes ignored; all12 historical seals retained; equal groups shrink, recover and respect calc/min caps; compact Approved control and workspace overlay preserved; no redundant Library padding.');
+    console.log('PASS: canonical84 normal / adaptive in-place zoom across all8 families; legacy sizes ignored; all12 historical seals retained; equal groups shrink, recover and respect calc/min caps; compact Approved control and workspace overlay preserved; no redundant Library padding.');
   }finally{w.close();}
 })().catch(error=>{console.error(error);process.exitCode=1;});
