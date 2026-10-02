@@ -22,7 +22,7 @@ function savedPackageCopy(result,validate) {
     ]){
       const rows=copy[key];if(!Array.isArray(rows)||rows.some(t=>typeof t==='string'&&t.trim()&&t.length<=limit))continue;
       const text=alternatives.find(t=>typeof t==='string'&&t.trim()&&t.trim().length<=limit&&!rows.some(r=>typeof r==='string'&&r.toLowerCase()===t.trim().toLowerCase()));
-      if(text&&rows.length<max)rows.push(text.trim());
+      if(text){if(rows.length<max)rows.push(text.trim());else if(rows.length===max)rows[max-1]=text.trim();}
     }
     return copy;
   });
