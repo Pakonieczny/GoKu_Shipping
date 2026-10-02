@@ -28,6 +28,8 @@ Private controller state is read through `GET /api/growth/status` and `POST /api
 | `POST /api/growth/save` | Operator | Validate and save a dossier/version |
 | `GET /api/growth/issues?ids=...` | Operator | Reviewed product conflicts and their evidence |
 | `POST /api/growth/issue` | Operator | Preserve or resolve product-specific recommendation, cart or meaning holds |
+| `GET /api/growth/demand?ids=...` | Operator | Saved, version-bound product outcomes and demand evidence |
+| `POST /api/growth/demand` | Operator | Save bounded read-only evidence with provenance and explicit limits |
 | `POST /api/growth/sync` | Operator | Advance catalogue mirror by one page |
 | `POST /api/growth/blocker` | Operator | Queue a specific access blocker |
 | `POST /api/growth/control` | Operator | Pause/resume or configure bounded runtime inference |
@@ -45,7 +47,7 @@ The existing research collector receives `sharedProductKnowledge` for exact sele
 
 Load `brites-concierge.js` with a `data-api` attribute pointing at the chosen backend. The optional launcher uses a Shadow DOM and never opens or speaks unsolicited. Customer conversation state stays in their browser session. Navigation targets verified store products; actual cart mutations use Shopify's locale-aware Ajax API in the shopper's browser and only after confirmation. Current price, currency and availability are checked again before adding. Engraving/custom-upload flows hand off to the exact product customizer until their requirements are verified. The standalone sandbox uses its own session bag and never places an order.
 
-The guide loads an original Three.js character when opened. `brites-concierge-avatar-scene.mjs` is bundled into the local `assets` file by `node scripts/build-concierge-avatar.cjs`. It uses physical ceramic, metal and glass materials, detailed meshes and texture maps, live lighting and shadow casting. Facial and gesture states are driven by actual typing, product checks, confirmed results and optional speech events. Dismissal, offscreen state and hidden tabs pause rendering; reduced motion retains a still pose. The generated concept portrait is a loading/WebGL fallback, clearly distinct from the real mesh renderer. Check `/concierge-avatar-qa.html` in the isolated sandbox for rendering state and diagnostics. No microphone or camera is requested.
+The guide loads an original Three.js character when opened. `brites-concierge-avatar-scene.mjs` is bundled into the local `assets` file by `node scripts/build-concierge-avatar.cjs`. It uses physical ceramic, metal and glass materials, detailed meshes and texture maps, live lighting and shadow casting. Facial and gesture states are driven by actual typing, product checks, confirmed results and optional speech events. Dismissal, offscreen state and hidden tabs pause rendering; reduced motion retains a still pose. The generated concept portrait is a loading/WebGL fallback, clearly distinct from the real mesh renderer. Check `/concierge-avatar-checklist.html` and `/concierge-avatar-qa.html` in the isolated sandbox for visual acceptance and diagnostics. `node scripts/inspect-concierge-avatar.cjs` checks the actual mesh construction without a GPU; this cannot certify rendered appearance, shadows or frame rate. No microphone or camera is requested.
 
 ## Resumptions and costs
 

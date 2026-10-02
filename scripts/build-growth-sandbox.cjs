@@ -5,7 +5,7 @@ const fs=require('node:fs'),path=require('node:path');
 const root=path.resolve(__dirname,'..'),out=path.resolve(process.argv[2]||path.join(root,'growth-sandbox-source'));
 if(out===root||!out.startsWith(path.dirname(root)+path.sep))throw Error('Choose an isolated staging directory.');
 fs.mkdirSync(out,{recursive:true});
-const assets=['brites-growth.html','brites-growth.js','brites-growth.css','brites-growth-ad-integration.js','concierge-sandbox.html','concierge-sandbox.js','brites-concierge.js','brites-concierge.css','brites-concierge-avatar.js','brites-concierge-avatar.css','assets/brites-concierge-avatar-scene.mjs','assets/brites-concierge/avatar-concept.png','concierge-avatar-qa.html'];
+const assets=['brites-growth.html','brites-growth.js','brites-growth.css','brites-growth-ad-integration.js','concierge-sandbox.html','concierge-sandbox.js','brites-concierge.js','brites-concierge.css','brites-concierge-avatar.js','brites-concierge-avatar.css','assets/brites-concierge-avatar-scene.mjs','assets/brites-concierge/avatar-concept.png','concierge-avatar-qa.html','concierge-avatar-checklist.html'];
 for(const file of assets){const target=path.join(out,'public-site',file);fs.mkdirSync(path.dirname(target),{recursive:true});fs.copyFileSync(path.join(root,file),target);}
 fs.writeFileSync(path.join(out,'public-site','index.html'),'<meta http-equiv="refresh" content="0;url=/concierge-sandbox.html">');
 const endpoints=['britesGrowthApi.js','britesConcierge.js','britesGrowthCatalogue-background.js','britesGrowthTick.js'];

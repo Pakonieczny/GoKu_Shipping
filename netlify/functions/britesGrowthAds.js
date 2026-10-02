@@ -101,7 +101,7 @@ export function createHandler(deps = {}) {
         const service = research(env), [product, dossiers] = await Promise.all([service.getProduct(id), service.research([id])]);
         const dossier = (dossiers || []).find(d => d.productId === id && d.status === 'approved' && d.handle === product?.handle);
         if (!dossier || !product) return json({ ok: false, code: 'PRODUCT_EVIDENCE_UNAVAILABLE', error: 'Approved research for this exact catalogue product is not yet available.', sandboxReadOnly: true }, 409);
-        if (!demandReaders.has(E)) demandReaders.set(E, demandModule.createDemandEvidence({ gaql: E.gaql, keywordResearch: E.keywordResearch }));
+        if (!demandReaders.has(E)) demandReaders.set(E, demandModule.createDemandEvidence({ gaql: E.gaql, keywordResearch: E.keywordResearch, readStorefrontLanguage: () => demandModule.readOwnStorefrontLanguage() }));
         let issueRecords = [], issueState = 'unavailable';
         if (typeof service.productIssues === 'function') try { issueRecords = await service.productIssues([id]); issueState = 'available'; } catch {}
         const holds = core.productIssueHolds((issueRecords || []).find(record => record.productId === id));
