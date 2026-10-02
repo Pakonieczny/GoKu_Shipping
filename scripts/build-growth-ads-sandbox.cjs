@@ -29,7 +29,7 @@ function build(out) {
   if (out === root || !out.startsWith(path.dirname(root) + path.sep)) throw Error('Choose an isolated staging directory.');
   // Refuse to repurpose a stale stage that might contain unrelated entrypoints.
   if (fs.existsSync(path.join(out, 'netlify', 'production-functions'))) fs.rmSync(path.join(out, 'netlify', 'production-functions'), { recursive: true });
-  const base = cp.spawnSync(process.execPath, [path.join(__dirname, 'build-growth-sandbox.cjs'), out], { encoding: 'utf8' });
+  const base = cp.spawnSync(process.execPath, [path.join(__dirname, 'build-growth-sandbox.cjs'), out], { encoding: 'utf8', env: { ...process.env, BRITES_GROWTH_CORE_STAGE: '1' } });
   if (base.status !== 0) throw Error(base.stderr || base.stdout || 'The isolated growth stage could not be built.');
   const publicDir = path.join(out, 'public-site'), modules = new Set(), packages = new Set();
   const builtins = new Set(builtinModules.flatMap(x => [x, 'node:' + x]));

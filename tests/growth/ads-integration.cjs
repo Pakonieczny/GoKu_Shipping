@@ -8,7 +8,7 @@ const {readOnlyFirestore}=require('../../netlify/functions/_britesGrowthAdsReadO
 let checks=0;const eq=(a,b,m)=>{assert.deepEqual(a,b,m);checks++;},ok=(x,m)=>{assert.ok(x,m);checks++;};
 const product={id:'10',title:'Bunny Necklace',url:'https://britesjewelry.com/products/bunny-necklace',description:'Bunny charm necklace.',images:[{id:'bunny-photo',url:'https://cdn.shopify.com/bunny.jpg'}]};
 const group={key:'bunny',ref:'customers/9/ads/11',name:'Bunny necklaces',channel:'search',url:product.url,keywords:['bunny necklace']};
-const approved={schema:1,productId:'gid://shopify/Product/10',handle:'bunny-necklace',status:'approved',version:'v1',savedAt:Date.now(),facts:[],sources:[{id:'shop',title:'Bunny necklace',url:product.url,excerpt:'Bunny charm necklace.',checkedAt:Date.now()}],buyerIntents:['rabbit lover gift'],competitors:[],recommendations:[{channel:'keywords',basis:'hypothesis',keywords:['rabbit lover gift'],action:'Test rabbit necklace gift intent.',measure:'Qualified clicks and validated purchases.',sourceIds:['shop']}],meanings:[]};
+const approved={schema:1,productId:'gid://shopify/Product/10',handle:'bunny-necklace',status:'approved',version:'a'.repeat(64),currentDossierVersion:'a'.repeat(64),savedAt:Date.now(),facts:[],sources:[{id:'shop',title:'Bunny necklace',url:product.url,excerpt:'Bunny charm necklace.',checkedAt:Date.now(),reviewed:true}],buyerIntents:['rabbit lover gift'],competitors:[],recommendations:[{channel:'keywords',basis:'hypothesis',keywords:['rabbit lover gift'],action:'Test rabbit necklace gift intent.',measure:'Qualified clicks and validated purchases.',sourceIds:['shop']}],meanings:[]};
 const collectInput={campaignId:'42',sourceVersion:1,group,selectedProducts:[product],settings:{productId:'10',sourceImageId:'bunny-photo'}};
 async function collect(dossiers){let ids;const api=createAdDesignResearch({creativeFetch:async()=>'<h1>Bunny Necklace</h1><p>'+('This is the current Brites bunny necklace and its available product choices. '.repeat(4))+'</p>',conversionHealth:async()=>({validated:true}),sharedProductResearch:async values=>{ids=values;return dossiers;}});const evidence=await api.collect(collectInput);return {api,evidence,ids};}
 async function endpoint(){const file=path.join(root,'netlify/functions/britesGrowthAds.js');let source=fs.readFileSync(file,'utf8');for(const name of ['_britesGrowth.js','_britesGrowthDemand.js'])source=source.replace("'./"+name+"'",JSON.stringify(pathToFileURL(path.join(root,'netlify/functions',name)).href));return import('data:text/javascript;base64,'+Buffer.from(source).toString('base64'));}
@@ -29,6 +29,19 @@ class Db { collection(){return new Query();} doc(){return new Doc();} async runT
   ok(!factIds.includes('sharedProductKnowledge'),'a shared competitor/meaning dossier cannot authorize commercial claim citations');
   for(const dossiers of [[],[{...approved,status:'draft'}],[{...approved,productId:'gid://shopify/Product/99'}]]){
     const e=(await collect(dossiers)).evidence;eq(e.sources.find(s=>s.id==='sharedProductKnowledge').status,'unavailable','missing, partial or foreign knowledge stays unavailable');ok(e.sources.some(s=>s.id==='product:10'&&s.status==='available'),'missing deep research does not replace the current exact product page');
+  }
+  const competitor={name:'Example jeweller',url:'https://example.com/bunny',spend:{status:'unknown'},sourceIds:['shop']};
+  for(const [label,changed] of [
+    ['obsolete handle',{...approved,handle:'old-bunny-handle'}],
+    ['changed current version',{...approved,currentDossierVersion:'b'.repeat(64)}],
+    ['stale source',{...approved,sources:approved.sources.map(s=>({...s,checkedAt:Date.now()-31*86400000}))}],
+    ['unreviewed source',{...approved,sources:approved.sources.map(s=>({...s,reviewed:false}))}],
+    ['arbitrary competitor spending',{...approved,competitors:[{...competitor,spend:{status:'fabricated'}}]}],
+    ['active meaning hold',{...approved,evidenceHolds:{cartHold:false,recommendationHold:false,meaningHold:true}}]
+  ]){
+    const e=(await collect([changed])).evidence,shared=e.sources.find(s=>s.id==='sharedProductKnowledge');
+    eq(shared.status,'unavailable',label+' cannot enter ad-design evidence');
+    ok(!JSON.stringify(shared).includes('fabricated'),'rejected private evidence is not projected');
   }
   const window={};vm.runInNewContext(fs.readFileSync(path.join(root,'brites-growth.js'),'utf8'),{window,document:{querySelector:()=>null},URL});const ui=window.BritesGrowth;
   eq(ui.productId('10'),approved.productId);eq(ui.productId('gid://shopify/ProductVariant/10'),null);

@@ -253,6 +253,31 @@ compositionSchema.properties.brief.required.push('productIds','sourceImageIds');
 compositionSchema.properties.factClaims.items.properties.productId=text;
 compositionSchema.properties.factClaims.items.required.push('productId');
 function ownedPage(raw){const u=new URL(String(raw||''));if(u.protocol!=='https:'||u.username||u.password||!['britesjewelry.com','www.britesjewelry.com'].includes(u.hostname))throw new Error('Research requires a verified Brites landing page.');return u.toString();}
+function productHandle(value){
+  if(/^[a-z0-9_-]{1,180}$/.test(String(value?.handle||'')))return String(value.handle);
+  try{const u=new URL(ownedPage(value?.url)),m=u.pathname.match(/^\/(?:[a-z]{2}(?:-[a-z]{2})?\/)?products\/([a-z0-9_-]+)\/?$/i);return m?m[1]:null;}catch{return null;}
+}
+function publicEvidenceUrl(raw){try{const u=new URL(String(raw||''));return u.protocol==='https:'&&!u.username&&!u.password&&u.hostname.includes('.')?u.href:null;}catch{return null;}}
+function sharedDossierIsCurrent(d,product,at=Date.now()){
+  if(!d||d.status!=='approved'||String(d.productId)!==String(product?.id)||d.handle!==product?.handle||!product?.handle||!(/^[a-f0-9]{64}$/i.test(String(d.version||'')))||d.currentDossierVersion!==d.version||!Number.isFinite(d.savedAt)||d.savedAt>at+60000)return false;
+  if(d.evidenceHolds?.recommendationHold===true||d.evidenceHolds?.meaningHold===true)return false;
+  if(!Array.isArray(d.sources)||!d.sources.length||d.sources.length>40||!Array.isArray(d.recommendations)||!Array.isArray(d.competitors))return false;
+  const ids=new Set();
+  for(const s of d.sources){if(!s||!/^[a-zA-Z0-9:_-]{1,100}$/.test(String(s.id||''))||ids.has(s.id)||s.reviewed!==true||!publicEvidenceUrl(s.url)||!Number.isFinite(s.checkedAt)||s.checkedAt>at+60000||at-s.checkedAt>30*86400000)return false;ids.add(s.id);}
+  const cited=value=>Array.isArray(value?.sourceIds)&&value.sourceIds.length>0&&value.sourceIds.every(id=>ids.has(id));
+  for(const value of [...(d.facts||[]),...(d.meanings||[]),...d.recommendations])if(!cited(value))return false;
+  for(const rec of d.recommendations)if(rec.basis!=='hypothesis'||!['ads','keywords','negatives','listing','concierge'].includes(rec.channel)||!str(rec.action,2000)||!str(rec.measure,1000))return false;
+  for(const competitor of d.competitors){
+    if(!cited(competitor)||!publicEvidenceUrl(competitor.url)||!str(competitor.name,180))return false;
+    const spend=competitor.spend||{};if(!['unknown','known','estimate'].includes(spend.status))return false;
+    if(spend.status==='known'){
+      const source=(d.sources||[]).find(s=>s.id===spend.sourceIds?.[0]);
+      if(!cited(spend)||!str(spend.quote,2000)||!String(source?.excerpt||'').includes(spend.quote)||!/\b(?:spent|spend|spending|advertising budget|ad budget|media budget|advertising expenditure|marketing expenditure)\b/i.test(spend.quote))return false;
+    }
+    if(spend.status==='estimate'&&(!str(spend.method,1000)||!Array.isArray(spend.assumptions)||!spend.assumptions.length||!Number.isFinite(spend.low)||!Number.isFinite(spend.high)||spend.low<0||spend.high<spend.low))return false;
+  }
+  return true;
+}
 function readable(html){return str(String(html||'').replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi,' ').replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi,' ').replace(/<[^>]*>/g,' ').replace(/&(?:amp|nbsp|quot|#39);/g,' ').replace(/\s+/g,' '),14000);}
 function parseResponse(response){
   const parts=(response&&response.output||[]).flatMap(v=>v.content||[]);
@@ -344,7 +369,7 @@ function createAdDesignResearch(D){
     if(composition&&(!compositionSources.length||compositionSources.length>144||new Set(compositionSources.map(s=>s.id)).size!==compositionSources.length||compositionSources.some(s=>!s.id||!['product','inspiration'].includes(s.role))))throw new Error('The composition must retain every uniquely identified selected photo, within the readable reference allowance.');
     const selectedProductKeys=new Set(compositionSources.filter(s=>s.role==='product'&&s.productId).map(s=>idKey(s.productId)));
     const productInput=composition?selectedProducts.filter(p=>selectedProductKeys.has(idKey(p.id||p.productId))):selectedProducts.slice(0,6);
-    const products=productInput.map(p=>({id:str(p.id||p.productId,160),title:str(p.title,250),url:p.url?ownedPage(p.url):null,description:str(p.description,composition?1200:5000),images:composition?[]:[...(p.images||[]).filter(i=>String(i.id||i.url)===String(settings.sourceImageId||'')),...(p.images||[]).filter(i=>String(i.id||i.url)!==String(settings.sourceImageId||''))].slice(0,12).map(i=>({id:str(i.id||i.url,250),url:str(i.url,2000),alt:str(i.alt,300),width:i.width||null,height:i.height||null})),offerId:p.offerId||p.itemId||null,feedLabel:p.feedLabel||null,language:p.language||null,merchantId:p.merchantId||null,variantId:p.variantId||null})).filter(p=>p.id&&p.title);
+    const products=productInput.map(p=>({id:str(p.id||p.productId,160),handle:productHandle(p),title:str(p.title,250),url:p.url?ownedPage(p.url):null,description:str(p.description,composition?1200:5000),images:composition?[]:[...(p.images||[]).filter(i=>String(i.id||i.url)===String(settings.sourceImageId||'')),...(p.images||[]).filter(i=>String(i.id||i.url)!==String(settings.sourceImageId||''))].slice(0,12).map(i=>({id:str(i.id||i.url,250),url:str(i.url,2000),alt:str(i.alt,300),width:i.width||null,height:i.height||null})),offerId:p.offerId||p.itemId||null,feedLabel:p.feedLabel||null,language:p.language||null,merchantId:p.merchantId||null,variantId:p.variantId||null})).filter(p=>p.id&&p.title&&p.handle);
     if(composition&&[...selectedProductKeys].some(id=>!products.some(p=>idKey(p.id)===id)))throw new Error('Every selected catalog product needs its verified product facts.');
     if(!composition&&!products.length)throw new Error('Choose the exact product before designing its ad. A generic product photograph cannot be substituted.');
     const chosen=composition?compositionSources[0]:products.flatMap(p=>p.images.map(i=>({...i,productId:p.id}))).find(i=>settings.sourceImageId?i.id===String(settings.sourceImageId):true);
@@ -384,9 +409,10 @@ function createAdDesignResearch(D){
       const dossiers=await D.sharedProductResearch(products.map(p=>p.id));
       const productGid=id=>/^\d+$/.test(String(id))?'gid://shopify/Product/'+id:String(id);
       const ids=new Set(products.map(p=>productGid(p.id)));
-      const approved=(dossiers||[]).filter(d=>d.status==='approved'&&ids.has(productGid(d.productId)));
+      const currentProducts=new Map(products.map(p=>[productGid(p.id),{...p,id:productGid(p.id)}]));
+      const approved=(dossiers||[]).filter(d=>ids.has(productGid(d.productId))&&sharedDossierIsCurrent({...d,productId:productGid(d.productId)},currentProducts.get(productGid(d.productId)),clock()));
       if(!approved.length)return null;
-      return {dossiers:approved.map(d=>({productId:d.productId,handle:d.handle,version:d.version,savedAt:d.savedAt,buyerIntents:d.buyerIntents,competitors:d.competitors,recommendations:d.recommendations,meanings:d.meanings,sources:d.sources.map(s=>({id:s.id,url:s.url,title:s.title,excerpt:s.excerpt,checkedAt:s.checkedAt}))})),rules:'Competitor offers and interpretations inform hypotheses. Never copy competitor facts to the advertised product. Current product/landing sources remain authoritative for price, stock and commercial claims. Spend and ROI are unknown unless independently disclosed.'};
+      return {dossiers:approved.map(d=>({productId:d.productId,handle:d.handle,version:d.version,savedAt:d.savedAt,buyerIntents:d.buyerIntents,competitors:d.competitors,recommendations:d.recommendations,meanings:d.meanings,sources:d.sources.map(s=>({id:s.id,url:s.url,title:s.title,excerpt:s.excerpt,checkedAt:s.checkedAt,reviewed:true}))})),rules:'Only the current exact product handle, dossier version and fresh reviewed citations may inform hypotheses. Active recommendation or meaning holds exclude the dossier. Never copy competitor facts to the advertised product. Current product/landing sources remain authoritative for price, stock and commercial claims. Spend and ROI are unknown unless independently disclosed.'};
     });
     const offers=[...new Set(productInput.flatMap(p=>[p.offerId,p.itemId,...(p.offerIds||[])]).filter(Boolean).map(String))];
     const merchant=await read('merchant','Merchant Center','Recent exact-offer eligibility',async()=>offers.length&&D.merchantProducts?D.merchantProducts({itemIds:offers}):null);
@@ -586,4 +612,4 @@ function validateSubjectFocus(value,size){
   const contextFocus=validContext?{x:Math.min(context.left,left)/W,y:Math.min(context.top,top)/H,width:(Math.max(context.right,right)-Math.min(context.left,left))/W,height:(Math.max(context.bottom,bottom)-Math.min(context.top,top))/H}:null;
   return {...box,complete,cutEdges:complete?[]:listed.length?listed:touching,...(jewelryType?{jewelryType}:{}),...(contextFocus?{contextFocus}:{})};
 }
-module.exports={productSceneGuidance,buildSubjectFocusRequest,validateSubjectFocus,focusImageSize,FOCUS_LIMIT,SPECIALIZED_SCENES,specializedScenes,createAdDesignResearch,parseResponse,compactEvidence,MODEL,schema,buildEditorRequest,buildResponsiveRequest,validateResponsivePlan,applyEditorPlan,EDITOR_FONTS,EDITOR_PROPERTIES};
+module.exports={productSceneGuidance,buildSubjectFocusRequest,validateSubjectFocus,focusImageSize,FOCUS_LIMIT,SPECIALIZED_SCENES,specializedScenes,createAdDesignResearch,parseResponse,compactEvidence,sharedDossierIsCurrent,MODEL,schema,buildEditorRequest,buildResponsiveRequest,validateResponsivePlan,applyEditorPlan,EDITOR_FONTS,EDITOR_PROPERTIES};

@@ -3,6 +3,13 @@
 // sending, ad-budget mutation, or trading schedules are copied into it.
 const fs=require('node:fs'),path=require('node:path');
 const root=path.resolve(__dirname,'..'),out=path.resolve(process.argv[2]||path.join(root,'growth-sandbox-source'));
+// The deployable sandbox must include the read-only Ads bridge. The Ads stage
+// invokes this file with BRITES_GROWTH_CORE_STAGE=1 to prepare its dependency-
+// minimal core before adding the protected bridge and existing Ads UI.
+if(require.main===module&&process.env.BRITES_GROWTH_CORE_STAGE!=='1'){
+  console.log(JSON.stringify(require('./build-growth-ads-sandbox.cjs').build(out)));
+  process.exit(0);
+}
 if(out===root||!out.startsWith(path.dirname(root)+path.sep))throw Error('Choose an isolated staging directory.');
 fs.mkdirSync(out,{recursive:true});
 const assets=['brites-growth.html','brites-growth.js','brites-growth.css','brites-growth-ad-integration.js','brites-growth-corrections.js','concierge-sandbox.html','concierge-sandbox.js','brites-concierge.js','brites-concierge.css','brites-concierge-avatar.js','brites-concierge-avatar.css','assets/brites-concierge-avatar-scene.mjs','assets/brites-concierge/avatar-concept.png','concierge-avatar-qa.html','concierge-avatar-checklist.html'];

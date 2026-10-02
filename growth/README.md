@@ -2,7 +2,7 @@
 
 ## Development
 
-Work on the isolated feature branch. `scripts/build-growth-sandbox.cjs` creates a separate source package containing only the research and concierge endpoints. It intentionally excludes unrelated application schedules and campaign mutations. Run `node --test tests/growth/*.test.cjs`, the existing Data Manager tests and relevant advertising research tests before deployment. Test actual flows in a browser; fixture tests are not proof of live integrations.
+Work on the isolated feature branch. `scripts/build-growth-sandbox.cjs` creates the complete separate sandbox package: research and concierge endpoints plus the existing Ads UI behind the protected read-only `/api/growth-ads` bridge. It intentionally excludes unrelated application schedules, campaign mutations, conversion uploads and paid-AI dispatch. Run `node --test tests/growth/*.test.cjs`, the existing Data Manager tests and relevant advertising research tests before deployment. Test actual flows in a browser; fixture tests are not proof of live integrations.
 
 ## Storage and access
 
@@ -54,7 +54,7 @@ Historical lookup accepts only the stored unresolved ranked identities and fixed
 
 ## Advertising
 
-The existing research collector receives `sharedProductKnowledge` for exact selected products. Saved competitor offers and intent inform test hypotheses; current landing/product sources remain the only commercial fact authority. `growthResearchStatus` and `growthResearchDossiers` are protected read actions in the ad app. Its Product research view shares the same dossiers, while styling is isolated from the existing console.
+The existing research collector receives `sharedProductKnowledge` for exact selected products. Ingestion independently requires the current product handle and dossier version, fresh reviewed citations, hypothesis-labelled recommendations, allowlisted competitor-spend evidence, and no active recommendation or meaning hold. Saved competitor offers and intent inform test hypotheses; current landing/product sources remain the only commercial fact authority. `growthResearchStatus` and `growthResearchDossiers` are protected read actions in the ad app. Its Product research view shares the same dossiers, while styling is isolated from the existing console.
 
 The copyable research-and-demand brief accepts only fresh exact-product, current-dossier-version evidence. It retains native currencies, pooled-market labels, language hypotheses, missing values and tracking limitations. Product holds keep the export marked corrective research. Copying a brief never changes a campaign or runs inference.
 
