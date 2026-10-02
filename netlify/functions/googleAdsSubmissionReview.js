@@ -26,7 +26,7 @@ function campaignMedia(ops) {
   return {images,videos,copy,callToAction};
 }
 function selectVideos(job,copy,D) {
-  if(job&&job.phase==='ready'&&job.publication?.phase==='attached'&&D.hash(job.plan?.nativeCopy)===D.hash(copy)&&D.qualityPass(job.quality)&&job.publication.reviewHash===D.reviewHash(job))
+  if(job&&(D.ready?D.ready(job):job.phase==='ready'&&D.hash(job.plan?.nativeCopy)===D.hash(copy)&&D.qualityPass(job.quality))&&job.publication?.phase==='attached'&&job.publication.reviewHash===D.reviewHash(job))
     return {jobId:job.id,reviewHash:D.reviewHash(job),attached:(job.publication.videos||[]).filter(v=>v.state==='PROCESSED'&&/^[a-zA-Z0-9_-]{11}$/.test(v.videoId||'')).map(v=>({key:v.key,videoId:v.videoId}))};
   const note=D.filmNote(job,copy);
   return {jobId:job?.id||null,reviewHash:!note?D.reviewHash(job):null,attached:[],pending:!note,note};
@@ -34,17 +34,40 @@ function selectVideos(job,copy,D) {
 
 // Pending-review edits never modify the source workspace or an already published ad.
 function createReview(D) {
-  async function load(input) {
+  async function load(input, allowSourceChange=false) {
     if (!/^design-review-[a-f0-9]{32}$/.test(String(input.id || ''))) throw Error('Choose a saved complete-ad approval.');
     const ref = D.approval(input.id), snap = await ref.get(), item = snap.data();
     if (!snap.exists || item.type !== 'adDesignSubmission' || item.status !== 'PENDING' || input.hash !== item.reviewHash) throw Error('This review changed. Reload Approvals.');
     const context = await D.context(item.designReview.workspaceId);
-    if (D.sourceHash(context.w) !== item.sourceHash || D.hash(context.w.context) !== D.hash(item.designReview.context)) throw Error('The artwork changed. Send the current complete ad to Approvals again.');
     if (String(context.product.id) !== String(item.designReview.productId) || String(context.w.settings.groupRef) !== String(item.designReview.groupRef)) throw Error('This review belongs to a different product or ad group.');
-    return {ref, item, context};
+    const stale=D.sourceHash(context.w)!==item.sourceHash||D.hash(context.w.context)!==D.hash(item.designReview.context);
+    if(stale&&!allowSourceChange)throw Error('The saved source changed. Reopen this approval to refresh its saved images and plan.');
+    return {ref, item, context, stale};
+  }
+  // Preparation can renew a pending review, but validation and publication never
+  // renew it. Keep the exact package assets and operator copy when already pinned.
+  async function refresh(input, persist=true) {
+    const {ref,item,context,stale}=await load(input,true);
+    if(!stale)return {item,refreshed:false};
+    const r=item.designReview;
+    if(String(context.w.context?.campaignId||'')!==String(r.context?.campaignId||''))throw Error('The campaign destination changed. Submit a separate review for that campaign.');
+    if(item.applyAttempt||item.needsReconciliation)throw Error('This approval has a publication in progress. Refresh its publication status.');
+    const basis=await D.snapshot(context,r),sourceHash=D.sourceHash(context.w);
+    if(!D.copyValid(r.copy))throw Error('Complete the saved ad messaging before approval.');
+    const designReview={...r,...basis,context:context.w.context};
+    const reviewHash=D.hash({sourceHash,designReview});
+    const patch={sourceHash,designReview,reviewHash,pipelinePlan:null,pipelineReview:null,vetted:false,updatedAt:Date.now(),sourceRefresh:{at:Date.now(),previousSourceHash:item.sourceHash,previousReviewHash:item.reviewHash},payload:{adDesign:{workspaceId:r.workspaceId,productId:r.productId,groupRef:r.groupRef},meta:{existingCampaignId:context.w.context?.campaignId||null}}};
+    if(persist)await D.transaction(async tx=>{
+      const live=await tx.get(ref),workspace=await tx.get(context.ref),v=live.data();
+      if(!live.exists||v.status!=='PENDING'||v.reviewHash!==input.hash||v.applyAttempt||v.needsReconciliation||D.sourceHash(workspace.data())!==sourceHash||D.hash(workspace.data()?.context)!==D.hash(context.w.context))throw Error('The saved ad changed while refreshing. Reopen this approval.');
+      tx.update(ref,patch);
+    });
+    return {item:{...item,...patch},patch,refreshed:true};
   }
   async function status(input) {
-    const {item, context} = await load(input), r = item.designReview, {w, ref} = context;
+    const loaded=await load(input,true),context=loaded.context;
+    const item=loaded.stale?{...loaded.item,designReview:{...loaded.item.designReview,...await D.snapshot(context,loaded.item.designReview)},pipelinePlan:null}:loaded.item;
+    const r=item.designReview,{w,ref}=context;
     const placements = D.placements(w), images = [], warnings = [];
     async function image(asset, meta) {
       if (!asset) { warnings.push('The '+meta.label+' image is missing.'); return; }
@@ -96,13 +119,13 @@ function createReview(D) {
       const matches=(a,b)=>!a.previous&&(!a.key||!b.key||a.key===b.key)&&((a.asset?.hash&&a.asset.hash===b.asset?.hash)||(a.url&&a.url===b.url));
       const savedVideos=fixed?[]:(motion.displayVariants||motion.variants||[]).map(v=>{
         const included=videos.find(i=>matches(v,i));
-        const status=included?included.inclusion:v.previous?'Previous version · preview only':r.includeVideos===false?'Excluded from publishing':motion.qualityTargetMet===false||['needs_attention','failed'].includes(motion.phase)?'Review required · not included':['running','queued'].includes(motion.phase)?'Saved clip · set still processing':'Saved clip · not included in this ad type';
+        const status=included?included.inclusion:v.previous?'Previous version · preview only':r.includeVideos===false?'Excluded from publishing':motion.publicationReady===true?'Saved clip · not uploaded to this ad type':motion.qualityTargetMet===false||['needs_attention','failed'].includes(motion.phase)?'Saved clip · upload not ready':['running','queued'].includes(motion.phase)?'Saved clip · set still processing':'Saved clip · not included in this ad type';
         return {...v,previewCopy:motion.copy||r.copy,included:!!included,inclusion:status};
       });
       for(const v of videos)if(!savedVideos.some(s=>matches(s,v)))savedVideos.push({...v,included:true,previewCopy:motion.copy||r.copy});
       styles[key]={prepared:!!media,selected:!!campaign,images:included,videos,savedVideos,copy:fixed?null:media?.copy||{headlines:(r.copy?.headlines||[]).slice(0,key==='pmax'?15:5),longHeadlines:(r.copy?.longHeadlines||[]).slice(0,key==='pmax'?5:1),descriptions:(r.copy?.descriptions||[]).slice(0,5)},callToAction:fixed?null:media?.callToAction||'Shop now',inheritedBrand:key==='pmax'&&item.pipelinePlan?.payload?.meta?.brandGuidelinesEnabled===true,videoNote:fixed?'Fixed Display uses finished image artwork; videos are not included.':videos.length?videos[0].inclusion:r.includeVideos===false?'Saved videos are excluded.':key==='responsive_display'&&selection.pending?'These films have not been uploaded to YouTube. Responsive Display starts without them.':selection.note||'No eligible videos are included.'};
     }
-    return {ok:true,reviewHash:item.reviewHash,destination:context.product.url||r.destination,videoScope:{workspaceId:motion.workspaceId||r.workspaceId,productId:r.productId,groupRef:motion.jobGroupRef||r.groupRef},videoReview:{phase:motion.phase,score:Number.isFinite(motion.quality?.score)?motion.quality.score:null,target:motion.qualityTarget||null,issues:(motion.quality?.issues||[]).map(v=>String(typeof v==='string'?v:v.message||v.reason||'').slice(0,500)).filter(Boolean),error:motion.error||null},styles,images,prepared,videos:motion.displayVariants || motion.variants || [],videoPhase:motion.phase,videoNote:item.pipelinePlan?.summary?.videoStatus || 'Saved videos are shown for preview. The prepared plan confirms which videos can be included.',copyEdited:r.copyEdited===true,warnings};
+    return {ok:true,sourceStale:loaded.stale,reviewHash:item.reviewHash,destination:context.product.url||r.destination,videoScope:{workspaceId:motion.workspaceId||r.workspaceId,productId:r.productId,groupRef:motion.jobGroupRef||r.groupRef},videoReview:{advisory:true,publicationReady:motion.publicationReady===true,phase:motion.phase,score:Number.isFinite(motion.quality?.score)?motion.quality.score:null,target:motion.qualityTarget||null,issues:(motion.quality?.issues||[]).map(v=>String(typeof v==='string'?v:v.message||v.reason||'').slice(0,500)).filter(Boolean),error:motion.error||null},styles,images,prepared,videos:motion.displayVariants || motion.variants || [],videoPhase:motion.phase,videoNote:item.pipelinePlan?.summary?.videoStatus || 'Saved videos are shown for preview. The prepared plan confirms which videos can be included.',copyEdited:r.copyEdited===true,warnings};
   }
   async function update(input) {
     const {ref, item, context} = await load(input), r = item.designReview;
@@ -118,6 +141,6 @@ function createReview(D) {
     });
     return {ok:true,reviewHash,designReview};
   }
-  return {status,update};
+  return {status,update,refresh};
 }
 module.exports = {createReview,campaignMedia,selectVideos};

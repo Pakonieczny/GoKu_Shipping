@@ -3,16 +3,17 @@
 const crypto = require('crypto');
 const digest = value => crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const clone = value => JSON.parse(JSON.stringify(value));
-const rubric=require('./googleAdsAdQuality');
 const KEYS = ['mobile_portrait', 'mobile_square', 'desktop_landscape'];
 function selection(job) {
   if(!require('./googleAdsMotionReferences').complete(job))throw Error('Generate these videos from the original product references before publication.');
-  if(!require('./googleAdsAdMotion').qualityPass(job.quality))throw Error('Exact product identity and the complete-ad quality target must both pass before publication.');
-  if (job.phase !== 'ready' || job.quality?.pass !== true || job.quality?.productFaithful !== true) throw Error('The animation must pass its jewelry quality review before Google publication.');
-  const variants = KEYS.map(key => job.variants.find(v => v.key === key));
+  // Ratings and visual findings inform the operator's explicit approval. They
+  // never decide upload eligibility; incomplete or changing files still cannot ship.
+  if(!['ready','needs_attention'].includes(job.phase)||(!job.quality&&!job.completedAt)||job.inFlight||job.leaseUntil>Date.now()||job.resetAt)throw Error('Finish the saved video files before approving their upload.');
+  const variants = KEYS.map(key => (job.variants||[]).find(v => v.key === key&&!v.previous));
   if (variants.some(v => !v?.asset?.hash || !v.asset.path || v.seconds !== 10)) throw Error('Three complete reviewed video formats are required.');
   return variants;
 }
+function publicationReady(job){try{selection(job);return true;}catch(_){return false;}}
 function reviewHash(job) {
   return digest({jobId:job.id, productId:job.productId, groupRef:job.groupRef, destination:job.destination, ...(job.pipelineVersion>=2?{quality:job.quality,copy:job.plan?.copy,nativeCopy:job.plan?.nativeCopy}:{}), variants:selection(job).map(v => ({key:v.key, asset:v.asset}))});
 }
@@ -50,7 +51,6 @@ function createPublicationService(D) {
   async function start(input) {
     const {ref, job} = await context(input), expectedHash = reviewHash(job);
     if (input.reviewHash !== expectedHash) throw Error('Review the current video files before publishing.');
-    if(job.publication?.phase!=='attached'&&(!Number.isFinite(job.quality?.score)||job.quality.score<(job.quality.rubric===rubric.RUBRIC?rubric.TARGET:97)||job.quality.score>100||job.quality.mobileReadable!==true))throw Error('The saved animation has not met its complete-ad quality target. Improve the product scene before a new Google upload.');
     if(job.publication?.phase==='attached'||job.publication?.leaseUntil>Date.now()||job.publication?.nextCheckAt>Date.now())return {ok:true,cached:true,queued:false,publication:safePublication(job.publication)};
     // The exact attachment target is fixed when the publication is created. A new-ad
     // workspace targets the paused asset group its own publication created.
@@ -160,7 +160,7 @@ function createPublicationService(D) {
 
   async function prepareMerchant(input){
     const {ref,job}=await context(input);selection(job);
-    if(!require('./googleAdsAdMotion').qualityPass(job.quality))throw Error('The video set must pass its saved quality target first.');
+    selection(job);
     const p=job.publication;if(p?.phase!=='attached'||p.merchant?.inFlight)throw Error('Finish or reconcile the Google video upload first.');
     const plan=await D.prepareMerchant(job,p.videos);
     if(plan.requiresIdentity)throw Error('More than one Merchant market or language matches. Select the exact product feed in the design workspace first.');
@@ -170,16 +170,15 @@ function createPublicationService(D) {
   }
   async function publishMerchant(input){
     const {ref,job}=await context(input),m=job.publication?.merchant;
-    if(!require('./googleAdsAdMotion').qualityPass(job.quality))throw Error('The video set must pass its saved quality target first.');
+    selection(job);
     if(!m||m.reviewHash!==input.merchantReviewHash||m.videoReviewHash!==reviewHash(job))throw Error('Review the exact Merchant video links first.');
     if(m.phase==='accepted')return {ok:true,cached:true};
     if(m.inFlight||m.phase==='blocked')throw Error('The prior Merchant update needs reconciliation before another request.');
-    await D.fb().db.runTransaction(async tx=>{const row=await tx.get(ref),current=row.data();if(!require('./googleAdsAdMotion').qualityPass(current.quality)||current.publication?.phase!=='attached'||current.publication?.merchant?.reviewHash!==m.reviewHash||current.publication?.merchant?.inFlight||current.publication?.merchant?.phase!=='review'||reviewHash(current)!==m.videoReviewHash)throw Error('The Merchant video review changed.');tx.update(ref,{'publication.merchant':{...m,inFlight:true}});});
+    await D.fb().db.runTransaction(async tx=>{const row=await tx.get(ref),current=row.data();if(!publicationReady(current)||current.publication?.phase!=='attached'||current.publication?.merchant?.reviewHash!==m.reviewHash||current.publication?.merchant?.inFlight||current.publication?.merchant?.phase!=='review'||reviewHash(current)!==m.videoReviewHash)throw Error('The Merchant video review changed.');tx.update(ref,{'publication.merchant':{...m,inFlight:true}});});
     try{const receipt=await D.publishMerchant(m.plan);const merchant={...m,inFlight:false,phase:receipt.status==='VALIDATED'?'validated':'accepted',receipt,updatedAt:Date.now()};await ref.update({'publication.merchant':merchant});return {ok:true,merchant:safePublication({...job.publication,merchant}).merchant};}
     catch(e){await ref.update({'publication.merchant':{...m,phase:'blocked',inFlight:true,error:String(e.message||e),updatedAt:Date.now()}});throw e;}
   }
 
   return {start, run, verify,prepareMerchant,publishMerchant};
 }
-module.exports = {createPublicationService, reviewHash, safePublication, uploadUrl, selection,nativeCompatibility};
-
+module.exports = {createPublicationService, reviewHash, safePublication, uploadUrl, selection,publicationReady,nativeCompatibility};
