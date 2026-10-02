@@ -80,6 +80,22 @@ async function staleProbeScenario() {
   now+=60*60000;
   assert.equal((await gate.reserve('source2')).reason,'Waiting for provider validation','a probe with no send time is still waited for');
 }
+async function abandonedPreparationScenario() {
+  let now=1000000;
+  const db=database(0), gate=admissionControl(db,'batches',()=>now,()=>now);
+  for(const id of ['source0','source1','source2']) db.data.set('batches/'+id,clone(sourceRecord));
+  const abandoned=await gate.reserve('source0');
+  now+=6*60000;
+  const replacement=await gate.reserve('source1');
+  assert(replacement.token,'a preparer that stopped cannot hold the queue indefinitely');
+  await assert.rejects(gate.beforeCreate(abandoned,{inputFileName:'late-upload'}),/reservation expired/i,
+    'a late abandoned preparer cannot create a duplicate paid job');
+  await gate.release(abandoned,new Error('late failure'));
+  assert.equal(db.data.get('LG1_Config/batchAdmission').owner,replacement.token);
+  await gate.beforeCreate(replacement,{inputFileName:'file-unconfirmed'});
+  now+=6*60000;
+  assert.equal((await gate.reserve('source2')).queued,true,'an uncertain paid create is reconciled rather than replaced');
+}
 async function originalSubmissionScenario() {
   const db=database(35); let uploads=0, creates=0, now=1000000;
   const body={kind:'batch_submit',sessionId:'sess_original',displayName:'lg1-Beady_Necklace-300sets-test-part282of300',
@@ -197,4 +213,4 @@ async function submitRefusalCountScenario() {
   assert.equal(result.queued,true);
   assert.deepEqual(db.data.get('batches/batch_src').capacityRefusals,{increment:1});
 }
-(async()=>{await unitScenarios();await staleProbeScenario();await originalSubmissionScenario();await quotaRecoveryScenario();await cancellationFeedbackScenario();await submitRefusalCountScenario();console.log('Shared admission: concurrency, capacity, validation, stuck validation, quota cooldown, durable original queue, idempotency, timeout reconciliation and cancellation feedback passed');})().catch(e=>{console.error(e);process.exitCode=1;});
+(async()=>{await unitScenarios();await staleProbeScenario();await abandonedPreparationScenario();await originalSubmissionScenario();await quotaRecoveryScenario();await cancellationFeedbackScenario();await submitRefusalCountScenario();console.log('Shared admission: concurrency, capacity, validation, abandoned preparation, quota cooldown, durable original queue, idempotency, timeout reconciliation and cancellation feedback passed');})().catch(e=>{console.error(e);process.exitCode=1;});

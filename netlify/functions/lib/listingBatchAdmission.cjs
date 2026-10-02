@@ -25,6 +25,10 @@ const STALL_RESTART_LIMIT = 60;
 // 2026-09-29 one sat in validation for over half an hour and every queued set
 // waited behind it). It is cancelled and sent again at STALL_RESTART_MS.
 const VALIDATION_WAIT_MS = 15 * 60 * 1000;
+// Preparation has not created a paid batch. Its owner is checked again just
+// before creation, so a dead preparer can be replaced without duplicate jobs.
+// An uncertain create remains reserved until provider reconciliation confirms it.
+const PREPARATION_RESERVATION_MS = 5 * 60 * 1000;
 // A person can ask the collector to restart stalled jobs sooner than
 // STALL_RESTART_MS (Paul, 2026-09-29: "please restart"), never sooner than
 // this: a job under half an hour old is normal, and each restart uses one of
@@ -73,7 +77,7 @@ function admissionControl(db, collection, timestamp, now = Date.now) {
       const g = gs.data() || {}, s = ss.data() || {}, active = activeSize(live);
       if (s.retryBatchName) return { existing: s.retryBatchName };
       if (s.state === 'JOB_STATE_CANCELLED') return { queued: true, reason: 'Cancelled' };
-      if (g.owner && (g.phase === 'creating' || now() - Number(g.startedAt || 0) < 15 * 60000))
+      if (g.owner && (g.phase === 'creating' || now() - Number(g.startedAt || 0) < PREPARATION_RESERVATION_MS))
         return { queued: true, reason: 'Another submission is being confirmed' };
       // One unvalidated batch at a time: a delayed token refusal must stop
       // admission before an entire refill is sent into the same full queue.
@@ -149,4 +153,5 @@ function admissionControl(db, collection, timestamp, now = Date.now) {
   return { reserve, beforeCreate, complete, release, rejected, reconcile };
 }
 module.exports = { admissionControl, quotaFailure, queuedName, capacityRefusals, CAPACITY_REFUSAL_LIMIT,
-  neverStarted, stallRestartPending, STALL_RESTART_MS, STALL_RESTART_MIN_MS, STALL_RESTART_LIMIT, VALIDATION_WAIT_MS, stallCutoffMs };
+  neverStarted, stallRestartPending, STALL_RESTART_MS, STALL_RESTART_MIN_MS, STALL_RESTART_LIMIT,
+  VALIDATION_WAIT_MS, PREPARATION_RESERVATION_MS, stallCutoffMs };

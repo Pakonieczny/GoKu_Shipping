@@ -8,7 +8,7 @@ const { capBeadyCharmSize } = require("./_beadyCharmCap");
 const { SESSIONS_COLL, failureKind, isModelTask, compliantModelTask, reconcileSession } = require("./lib/listingBatchRecovery.cjs");
 const { batchCharmPaths, readReservedCharms } = require("./lib/listingBatchReservations.cjs");
 const { admissionControl, quotaFailure, queuedName, capacityRefusals, CAPACITY_REFUSAL_LIMIT,
-  neverStarted, stallRestartPending, VALIDATION_WAIT_MS, stallCutoffMs } = require("./lib/listingBatchAdmission.cjs");
+  neverStarted, stallRestartPending, VALIDATION_WAIT_MS, PREPARATION_RESERVATION_MS, stallCutoffMs } = require("./lib/listingBatchAdmission.cjs");
 // const sharp = require("sharp"); // ensure sharp is installed in package.json
 const { initializeFirestore, getFirestore } = require("firebase-admin/firestore");
 
@@ -2303,11 +2303,25 @@ function batchApiKey(batchName) {
 }
 
 async function openAIBatchRequest(apiKey, path, options = {}) {
-  const resp = await studioFetchWithTimeout(`https://api.openai.com/v1${path}`, {
-    ...options,
-    headers: { Authorization: `Bearer ${apiKey}`, ...options.headers },
-  }, 120000, "OpenAI Batch");
-  return readUpstreamJson(resp, "OpenAI Batch");
+  const timeoutMs = path === "/files" && options.method === "POST" ? 120000 : 30000;
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), timeoutMs);
+  try {
+    const resp = await fetch(`https://api.openai.com/v1${path}`, {
+      ...options, signal: ctl.signal,
+      headers: { Authorization: `Bearer ${apiKey}`, ...options.headers },
+    });
+    // Headers are not completion. Keep the deadline through the body read,
+    // which otherwise leaves a submission reservation held until the worker dies.
+    return await readUpstreamJson(resp, "OpenAI Batch");
+  } catch (error) {
+    if (ctl.signal.aborted) {
+      const timeout = new Error(`OpenAI Batch timed out after ${timeoutMs / 1000}s`);
+      timeout.status = 504;
+      throw timeout;
+    }
+    throw error;
+  } finally { clearTimeout(timer); }
 }
 
 function normalizeOpenAIBatch(raw) {
@@ -14218,8 +14232,12 @@ async function _handlerImpl(event) {
     try {
       // Overlap guard: skip if another sweep started < 12 minutes ago.
       const guard = await guardRef.get();
-      const runningSince = guard.exists ? (guard.data().runningSince?.toMillis?.() || 0) : 0;
-      if (runningSince && Date.now() - runningSince < 12 * 60 * 1000) {
+      const guardData = guard.exists ? guard.data() : {};
+      const runningSince = guardData.runningSince?.toMillis?.() || 0;
+      const lastProgress = guardData.lastProgressAt?.toMillis?.() || runningSince;
+      const stalledSubmission = guardData.stage === "submitting queued sets" &&
+        lastProgress && Date.now() - lastProgress >= PREPARATION_RESERVATION_MS;
+      if (runningSince && Date.now() - runningSince < 12 * 60 * 1000 && !stalledSubmission) {
         return json(200, { ok: true, skipped: "sweep already running" });
       }
       await guardRef.set({
@@ -14479,7 +14497,11 @@ async function _handlerImpl(event) {
           if (isFinal(fresh.state)) {
             console.warn("[batch_sweep] provider rejected retry:", retry.batchName,
               fresh.providerError || "reason pending");
-            break;
+            // A file-specific validation failure must not hold other listings.
+            // Capacity refusals and unknown reasons still pause shared admission.
+            if (!fresh.providerError || quotaFailure(fresh.providerError)) break;
+            sourceErrors++;
+            continue;
           }
           if (!isSucceeded(fresh.state)) activeCount++;
           if (normState(fresh.state) === "JOB_STATE_PENDING") {
@@ -16331,7 +16353,7 @@ async function _handlerImpl(event) {
         (await db.collection(SESSIONS_COLL).doc(sessionId).get()).data()))).filter(Boolean);
       return json(200, { ok: true, batches: out.slice(0, limit), sessions, truncated, sweep, nextSweepAt,
         admission: { busy: !!admissionInfo.owner && (admissionInfo.phase === "creating" ||
-          Date.now() - Number(admissionInfo.startedAt || 0) < 15 * 60000),
+          Date.now() - Number(admissionInfo.startedAt || 0) < PREPARATION_RESERVATION_MS),
           cooldownUntil: admissionInfo.blockedAtActive === 0 ? Number(admissionInfo.blockedAt || 0) + 15 * 60000 : null },
         retryActiveLimit: 30, admissionError: admissionInfo.lastError || null });
     }

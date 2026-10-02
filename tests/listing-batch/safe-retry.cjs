@@ -169,6 +169,7 @@ async function scenario({ approved = false, present = [1, 3, 6], responseFile = 
       checkpoint: async () => {},
       BATCHES_COLL: "batches", batchDocIdFromName: (x) => x,
       stallRestartPending: require("../../netlify/functions/lib/listingBatchAdmission.cjs").stallRestartPending,
+      quotaFailure: require("../../netlify/functions/lib/listingBatchAdmission.cjs").quotaFailure,
       console: { warn: () => {} },
     };
     const outcome = await vm.runInNewContext(

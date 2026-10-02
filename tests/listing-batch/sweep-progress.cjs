@@ -9,12 +9,12 @@ const start = source.indexOf('  if (kind === "batch_sweep") {');
 const end = source.indexOf('  if (kind === "job_status") {', start);
 assert(start > 0 && end > start, "scheduled sweep handler exists");
 
-const { VALIDATION_WAIT_MS } = require("../../netlify/functions/lib/listingBatchAdmission.cjs");
+const { VALIDATION_WAIT_MS, PREPARATION_RESERVATION_MS } = require("../../netlify/functions/lib/listingBatchAdmission.cjs");
 
 async function runSweep({ rejectRetry = false, activeCount = 30, waitingCount = 2,
   finishOne = true, validationPolls = 0, existingPending = false, pendingSentAgo = 0,
   neverValidates = false, validationError = false, finishDuringRefill = false, failedAnswers = [], extraJobs = [],
-  firstSourceError = false } = {}) {
+  firstSourceError = false, rejectSource = false, priorSweepAge = 0, priorStage = "submitting queued sets" } = {}) {
   const T0 = Date.parse("2026-09-29T17:00:00Z");
   let clock = T0;
   let providerActive = activeCount;
@@ -30,6 +30,8 @@ async function runSweep({ rejectRetry = false, activeCount = 30, waitingCount = 
       state: "JOB_STATE_FAILED", collected: false, retryRequested: true, retryAttempt: 0 })),
   ];
   const guard = {};
+  if (priorSweepAge) Object.assign(guard,{stage:priorStage,
+    runningSince:{toMillis:()=>T0-priorSweepAge},lastProgressAt:{toMillis:()=>T0-priorSweepAge}});
   const submissions = [], collections = [], stages = [], continuations = [], postponed = [];
   const checks = new Map();
   let validating = existingPending ? "batch_running_0" : null;
@@ -50,7 +52,7 @@ async function runSweep({ rejectRetry = false, activeCount = 30, waitingCount = 
   };
   const db = { collection: (name) => {
     if (name === "LG1_Config") return { doc: () => ({
-      get: async () => ({ exists: false }),
+      get: async () => ({ exists: !!priorSweepAge, data: () => guard }),
       set: async (value) => { if (value.stage) stages.push(value.stage); Object.assign(guard, value); },
     }) };
     if (name === "orchestrations") return { where: () => ({ limit: () => ({
@@ -76,13 +78,15 @@ async function runSweep({ rejectRetry = false, activeCount = 30, waitingCount = 
       }
       const finished = finishOne && payload.batchName === "batch_running_0";
       if (finished && !originalFinished) { providerActive--; originalFinished = true; }
-      const rejected = rejectRetry && payload.batchName === "batch_new_1";
+      const rejected = (rejectRetry || rejectSource) && payload.batchName === "batch_new_1";
       const count = (checks.get(payload.batchName) || 0) + 1;
       checks.set(payload.batchName, count);
       const pending = payload.batchName === validating && (neverValidates || count <= validationPolls);
+      if (rejectSource && rejected && !pending && count === 1) providerActive--;
       if (!pending && payload.batchName === validating) validating = null;
       response = { ok: true, state: finished ? "JOB_STATE_SUCCEEDED" :
-        pending ? "JOB_STATE_PENDING" : rejected ? "JOB_STATE_FAILED" : "JOB_STATE_RUNNING" };
+        pending ? "JOB_STATE_PENDING" : rejected ? "JOB_STATE_FAILED" : "JOB_STATE_RUNNING",
+        ...(rejectSource && rejected ? {providerError:"Invalid input image for this listing"} : {}) };
       if (validationError && payload.batchName.startsWith("batch_new_") && !pending)
         response = { ok: false, error: { message: "Provider status unavailable" } };
     } else if (payload.kind === "batch_collect") {
@@ -117,7 +121,7 @@ async function runSweep({ rejectRetry = false, activeCount = 30, waitingCount = 
       return require("../../netlify/functions/lib/listingBatchAdmission.cjs").neverStarted(record, ...args);
     },
     stallRestartPending: require("../../netlify/functions/lib/listingBatchAdmission.cjs").stallRestartPending,
-    VALIDATION_WAIT_MS, body: {}, stallCutoffMs: require("../../netlify/functions/lib/listingBatchAdmission.cjs").stallCutoffMs,
+    VALIDATION_WAIT_MS, PREPARATION_RESERVATION_MS, body: {}, stallCutoffMs: require("../../netlify/functions/lib/listingBatchAdmission.cjs").stallCutoffMs,
     BATCHES_COLL: "batches", ORCH_COLL: "orchestrations",
     admin: { firestore: { FieldPath: { documentId: () => "__name__" },
       FieldValue: { serverTimestamp: () => clock } } },
@@ -174,6 +178,16 @@ async function runSweep({ rejectRetry = false, activeCount = 30, waitingCount = 
       preparedSubmission: {ignored: true}}))});
   assert.equal(history.submissions.length, 29, "paged historical failures do not hide the live queue");
   assert.equal(history.guard.stage, "idle");
+  const validationFailure = await runSweep({activeCount:1,waitingCount:40,finishOne:false,rejectSource:true});
+  assert.equal(validationFailure.submissions.length,30,'a rejected listing does not hold the other twenty-nine open places');
+  assert.equal(validationFailure.guard.lastResult.activeAtAdmission,30);
+  assert.equal(validationFailure.guard.lastResult.sourceErrors,1);
+  const abandonedSweep = await runSweep({activeCount:1,waitingCount:40,finishOne:false,priorSweepAge:6*60000});
+  assert.equal(abandonedSweep.submissions.length,29,'a worker stopped in submission preparation can be recovered safely');
+  const liveSweep = await runSweep({priorSweepAge:2*60000});
+  assert.equal(liveSweep.result.skipped,'sweep already running','a working preparation is left alone');
+  const validatingSweep = await runSweep({priorSweepAge:6*60000,priorStage:'validating new job'});
+  assert.equal(validatingSweep.result.skipped,'sweep already running','provider validation is not mistaken for failed preparation');
   const finishedDuring = await runSweep({ activeCount: 7, waitingCount: 40, finishOne: false, validationPolls: 2, finishDuringRefill: true });
   assert.equal(finishedDuring.submissions.length, 24, "a place freed during refill is filled before the worker stops");
   assert.equal(finishedDuring.guard.lastResult.activeAtAdmission, 30);
