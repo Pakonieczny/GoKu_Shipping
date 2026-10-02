@@ -106,7 +106,7 @@ async function designMessage(browser) {
   const { ctx, page } = await context(browser, st, () => {
     if (sessionStorage.getItem('seeded')) return; sessionStorage.setItem('seeded', '1');
     localStorage.setItem('employee_id', '424242'); localStorage.setItem('employee_name', 'Rosa Designer');
-    localStorage.setItem('station_signin_day', new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date()));
+    localStorage.setItem('station_signin_day', new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date(Date.parse('2026-09-29T03:58:00Z'))));
   });
   await page.goto(ORIGIN + '/design-message.html');
   await until(() => page.evaluate(() => window.__ss && window.__ss.calls.length && window.isEmployeeLoggedIn === true), 'design-message signed in on load');
@@ -138,7 +138,7 @@ async function design(browser) {
   const { ctx, page } = await context(browser, st, () => {
     if (sessionStorage.getItem('seeded')) return; sessionStorage.setItem('seeded', '1');
     sessionStorage.setItem('designStation.passcode', 'pc-1'); localStorage.setItem('employee_name', 'Dana Design');
-    localStorage.setItem('station_signin_day', new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date()));
+    localStorage.setItem('station_signin_day', new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date(Date.parse('2026-09-29T03:58:00Z'))));
   });
   await page.goto(ORIGIN + '/design.html');
   await until(() => page.evaluate(() => window.__ss && window.__ss.calls.length > 0), 'design init');
@@ -181,7 +181,7 @@ async function inbox(browser) {
     if (sessionStorage.getItem('seeded')) return; sessionStorage.setItem('seeded', '1');
     localStorage.setItem('etsymail_session', 'tok-1');
     localStorage.setItem('etsymail_session_profile', JSON.stringify({ username: 'tess', displayName: 'Tess Inbox', role: 'operator', cachedAtMs: Date.now() }));
-    localStorage.setItem('station_signin_day', new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date()));
+    localStorage.setItem('station_signin_day', new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date(Date.parse('2026-09-29T03:58:00Z'))));
   });
   await page.goto(ORIGIN + '/etsy-mail-1.html');
   await until(() => page.evaluate(() => window.__ss && window.__ss.calls.length > 0), 'inbox init');

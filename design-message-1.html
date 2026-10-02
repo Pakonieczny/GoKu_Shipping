@@ -2374,8 +2374,9 @@ function metalToBadge(label){
               return;
             }
             var docDataEN = resultEN.data;
-            if(docDataEN[empNumber]){
-              var nameFound = docDataEN[empNumber];
+            /* the name as one tidy line (the session and the timeline read the same text); a number alone is never a name */
+            var nameFound = typeof docDataEN[empNumber] === "string" ? docDataEN[empNumber].replace(/\s+/g, " ").trim() : "";
+            if(nameFound && !/^\d+$/.test(nameFound)){
               M.toast({ html: "Welcome, " + nameFound + "!" });
 
               /* remember the current employee for future reloads */
@@ -2389,7 +2390,9 @@ function metalToBadge(label){
               /* sign-in time: the name only; employee_id is the PIN itself and is never sent */
               try { if (window.StationSession) StationSession.signedIn({ name: nameFound, id: "" }); } catch (_) {}
             } else {
-              M.toast({ html: "Employee # " + empNumber + " not found in DB!" });
+              /* never the digits typed (the box masks them): say what to do, and clear the box for the next try */
+              M.toast({ html: "That Employee Number is not on the list. Check the 6 digits and try again." });
+              try { employeeNumberInput.dataset.raw = ""; employeeNumberInput.value = ""; } catch (_) {}
             }
           } catch(errEN){
             console.error("Error in employee login flow:", errEN);
@@ -2449,6 +2452,7 @@ function metalToBadge(label){
             inp.focus();
             setTimeout(() => {
               const ev = new KeyboardEvent("keydown", { key: "Enter", bubbles: true });
+              ev.stationHow = "paste";   // efficiency log: how the order came in
               inp.dispatchEvent(ev);
             }, 100);
           } catch (err) {
@@ -2533,6 +2537,15 @@ function metalToBadge(label){
         if (!orderNumber) return;
 
         const orderData = await pullEtsyOrderDetails(orderNumber);
+        /* Efficiency log (station-activity.js): this order was opened here, by the phone scanner, a paste or typing. Counts and
+           ids only; the pieces come from the order just read (no extra request); never a name, address or message. */
+        try {
+          if (window.StationActivity && /^\d{6,}$/.test(orderNumber)) {
+            const txs = orderData && Array.isArray(orderData.transactions) ? orderData.transactions : [];
+            StationActivity.log("scan", { orderId: orderNumber, parts: txs.reduce((n, t) => n + (Number(t && t.quantity) || 1), 0),
+              detail: e.stationHow === "scan" ? "phone scan" : e.stationHow === "paste" ? "pasted" : "typed" });
+          }
+        } catch (_) {}
         await loadShipToAddress(orderNumber);
         await loadGiftMessage(orderNumber);
 
@@ -2773,8 +2786,10 @@ function metalToBadge(label){
           const json = await resp.json();
           if (!resp.ok || !json.success) throw new Error(json.error || "Server error");
           newMsgInp.value = "";                // clear box on success
+          try { window.StationActivity && StationActivity.log("note", { orderId: orderId.replace(/\D/g, ""), detail: "order chat message sent" }); } catch (_) {}   // efficiency log: counted, never the words
         } catch (err) {
           console.error("Send error:", err);
+          try { window.StationActivity && StationActivity.log("error", { orderId: orderId.replace(/\D/g, ""), detail: "order chat message failed" }); } catch (_) {}
           M.toast({ html: "Error: " + err.message });
         }
       });
@@ -3438,6 +3453,7 @@ function metalToBadge(label){
               etsyOrderInput.focus();
               setTimeout(() => {
                 const ev = new KeyboardEvent("keydown", { key:"Enter", bubbles:true });
+                ev.stationHow = "scan";   // efficiency log: how the order came in
                 etsyOrderInput.dispatchEvent(ev);
               }, 100);
 
@@ -7084,7 +7100,8 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
 
 
 <!-- Sign-in time per person and computer, and the midnight sign-out (New York time) -->
-<script src="station-session.js?v=20260929-ss2"></script>
+<script src="station-session.js?v=20261002-ea1"></script>
+<script src="station-activity.js?v=20261002-ea1"></script>
 <script>
   (function () {
     /* The PIN login keeps employee_id (the PIN itself) and employee_name. A session carries the name only. */
