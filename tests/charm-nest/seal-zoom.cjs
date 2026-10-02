@@ -167,11 +167,11 @@ const ORDERS = [{ receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * DAY, up
 
     // ═══ 6 · the order window ═══
     await page.evaluate(k => OrderWin.open(k), KEY);
-    await page.waitForFunction(() => document.querySelectorAll('#owRail .tlStop .tlSeal').length > 3 && document.querySelectorAll('#owCustom .sealRow .seal').length >= 2, null, { timeout: 15000 });
+    await page.waitForFunction(() => document.querySelectorAll('#owRail .tlStop .tlSeal').length > 3 && document.querySelectorAll('#owCustom .sealRow .seal').length >= 1, null, { timeout: 15000 });
     await page.waitForTimeout(1200); await page.mouse.move(700, 600);
     // the order window's custom-order bar: its seals were 1px wide
     const bar = await page.evaluate(() => [...document.querySelectorAll('#owCustom .sealRow .seal')].map(s => s.offsetWidth));
-    check(bar.length >= 2 && bar.every(w => w >= 24), 'the custom-order bar\'s seals have a real size again: ' + bar.join(', ') + ' px');
+    check(bar.length === 1 && bar.every(w => w >= 24), 'the custom-order bar\'s one seal (the others are on the Timeline: +N) has a real size again: ' + bar.join(', ') + ' px');
     // 6a · the header strip: 24px seals in a 44px box that clips
     const stops = '#owRail .tlStop .tlSeal:not(.pending)', nStops = await page.evaluate(sel => document.querySelectorAll(sel).length, stops);
     const done = await page.evaluate(sel => [...document.querySelectorAll(sel)].map((s, i) => [i, s.closest('.tlStop').className]).filter(([, c]) => /\bd\b/.test(c)).map(([i]) => i), stops);
