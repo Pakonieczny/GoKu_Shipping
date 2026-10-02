@@ -350,7 +350,7 @@ function applyPreferenceMessage(before,message) {
   const mentions={
     type:fieldMentions(text,'necklaces?|earrings?|bracelets?|pendants?|huggies?|studs?|rings?|charms?',v=>v.startsWith('stud')?'studs':v.startsWith('earring')?'earrings':v.replace(/s$/,'')),
     metal:fieldMentions(text,'rose gold|sterling silver|silver|gold(?: filled| plated)?',v=>v.startsWith('rose')?'rose gold':v.includes('silver')?'silver':'gold'),
-    recipient:fieldMentions(text,RECIPIENTS.join('|'),v=>v).filter(hit=>!['teacher','nurse','doctor'].includes(hit.value)||!/\b(?:as|became) (?:a |an )?$/.test(text.slice(0,hit.index))),
+    recipient:fieldMentions(text,RECIPIENTS.join('|'),v=>v).filter(hit=>(!['teacher','nurse','doctor'].includes(hit.value)||!/\b(?:as|became|becoming) (?:a |an )?$/.test(text.slice(0,hit.index)))&&(!['mother','father'].includes(hit.value)||!/\b(?:became|becoming) (?:a |an )?$/.test(text.slice(0,hit.index)))),
     occasion:fieldMentions(text,OCCASIONS.join('|'),v=>v)
   };
   const newRecipient=mentions.recipient.filter(x=>!x.negative).at(-1)?.value;
@@ -395,7 +395,10 @@ function applyPreferenceMessage(before,message) {
   const nonShopping=/\b(?:meaning|means|symboli[sz]\w*|history|story|stories|shipping|deliver|arrive|return|refund|compare|comparison|nickel|hypoallergenic|second|third|first|fourth|fifth|sixth|open|cart|bag|cheaper|expensive|more options|what else|tell me more|skip|pass on|prefer not|gift details?|secrets?|api keys?|credentials?|repository|system prompt|owner data|private records)\b/.test(text);
   if(!positive.length&&!negative.length&&!nonShopping){
     const controlled=new Set([...mentions.type,...mentions.metal,...mentions.recipient,...mentions.occasion].flatMap(x=>x.value.split(' ')));
-    const raw=(queryText.match(/[a-z][a-z-]{2,}/g)||[]).filter(t=>!GENERIC.has(t)&&!controlled.has(t)&&!controlled.has(t.replace(/s$/,''))&&!['sterling','filled','plated','handwritten','engraving','personalized','personalised'].includes(t)).slice(0,4).join(' ');
+    const words=(queryText.match(/[a-z][a-z-]{2,}/g)||[]).filter(t=>!GENERIC.has(t)&&!controlled.has(t)&&!controlled.has(t.replace(/s$/,''))&&!['sterling','filled','plated','handwritten','engraving','personalized','personalised'].includes(t));
+    const messageMilestone=milestoneDiscovery.parseMilestone(text,p.milestone,negatedAt);
+    const residual=messageMilestone?milestoneDiscovery.contextResidual(words.join(' '),messageMilestone):words.join(' ');
+    const raw=residual.split(/\s+/).filter(Boolean).slice(0,4).join(' ');
     if(raw){p.query=raw;p.interests=[];}
   }
   const milestone=milestoneDiscovery.parseMilestone(text,p.milestone,negatedAt);
@@ -409,9 +412,9 @@ function applyPreferenceMessage(before,message) {
   }
   // A milestone is shopping context, not a literal motif. Preserve a previous
   // explicit motif through contextual follow-ups and never store inferred ones.
-  if(milestone&&!positive.length&&!negative.length&&milestoneDiscovery.contextOnlyQuery(p.query)){
+  if(milestone&&!positive.length&&!negative.length&&milestoneDiscovery.contextOnlyQuery(p.query,milestone)){
     const prior=shopperPreferences(before);
-    const preserve=!changingRecipient&&!/\b(?:start (?:fresh|over|again)|reset|forget|new gift|different gift|different person)\b/.test(text)&&(prior.interests.length||prior.query&&!milestoneDiscovery.contextOnlyQuery(prior.query));
+    const preserve=!changingRecipient&&!/\b(?:start (?:fresh|over|again)|reset|forget|new gift|different gift|different person)\b/.test(text)&&(prior.interests.length||prior.query&&!milestoneDiscovery.contextOnlyQuery(prior.query,prior.milestone));
     p.interests=preserve?prior.interests:[];p.query=preserve?prior.query:'';
   }
   return p;

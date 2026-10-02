@@ -26,14 +26,22 @@ function parseMilestone(message,previous,negatedAt){
   if(remembrance&&hits.some(x=>!x.negative&&['christmas','season'].includes(x.name))&&!/\b(?:instead|actually|not a memorial)\b/.test(text))value='remembrance';
   return value;
 }
-function contextOnlyQuery(query){
+function contextResidual(query,milestone){
   const ignored=new Set(('gentle reminder reminders finally major important long-standing mourning bereaved commemorate welcoming welcome symbol symbols keepsake keepsakes courage strength meaningful personal memory remember remembering remembrance memorial memories mother father mom dad friend grandmother grandfather sister brother partner wife husband passed away died death loss lost grieving grief bereavement after recovering recovered recovery illness treatment survivor survive new newborn baby birth born arrived parent parents parenthood motherhood fatherhood became graduation graduate graduated graduating finished school university college completed completing degree studies goal goals achieved reached achievement accomplishment milestone promotion promoted job career retirement retired retiring spring summer autumn winter fall renewal season seasons seasonal christmas holiday holidays festive celebrate celebrating celebration mark honor honour keep close bring daughter son wedding married getting engagement engaged anniversary relationship hope fresh beginning beginnings chapter special proud today yesterday recently months years she her he him they their them us our birthday gift gifts something symbol celebrate birth seasonal january february march april may june july august september october november december'.split(' ')));
-  const words=String(query||'').toLowerCase().match(/[a-z][a-z-]{2,}/g)||[];
-  return !words.length||words.every(word=>ignored.has(word));
+  let text=String(query||'').toLowerCase();
+  // Remove complete life-context phrases, not arbitrary unfamiliar motifs.
+  // “journey together” is relationship framing; “journey origami” still leaves
+  // an explicit searchable interest. Do this before the four-token query cap.
+  if(milestone==='graduation')text=text.replace(/\bjust (?=graduat(?:ed|ing|ion|e)\b)/g,'').replace(/\bmarks? (?:a |the |new )?(?:beginning|chapter|achievement|milestone)\b/g,'');
+  if(milestone==='birth')text=text.replace(/\b(?:had|has|have) (?:a |the |new )?(?:baby|newborn)\b/g,'').replace(/\bbecoming(?: (?:a |an )?(?:mother|father|parent))?\b/g,'');
+  if(milestone==='wedding')text=text.replace(/\b(?:our )?journey together\b/g,'');
+  const words=text.match(/[a-z][a-z-]{2,}/g)||[];
+  return words.filter(word=>!ignored.has(word)).join(' ');
 }
+function contextOnlyQuery(query,milestone){return !contextResidual(query,milestone);}
 function discoveryIntent(intent){
   const milestone=validMilestone(intent?.milestone);
-  if(!milestone||intent.interests?.length||!contextOnlyQuery(intent.query)||intent.personalization)return null;
+  if(!milestone||intent.interests?.length||!contextOnlyQuery(intent.query,milestone)||intent.personalization)return null;
   const spec=CONTEXTS[milestone],excluded=new Set(intent.excludedInterests||[]);
   const motifs=spec.motifs.filter(x=>!excluded.has(x)).slice(0,3);
   return {milestone,motifs,label:spec.label,intro:spec.intro,question:spec.question};
@@ -49,4 +57,4 @@ function matchingMeanings(meanings,milestone){
   });
 }
 function presentation(milestone){const spec=CONTEXTS[validMilestone(milestone)];return spec?{label:spec.label,intro:spec.intro,question:spec.question}:null;}
-module.exports={validMilestone,parseMilestone,contextOnlyQuery,discoveryIntent,matchingMeanings,presentation};
+module.exports={validMilestone,parseMilestone,contextOnlyQuery,contextResidual,discoveryIntent,matchingMeanings,presentation};
