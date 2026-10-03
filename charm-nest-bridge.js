@@ -9209,7 +9209,7 @@ const Sandbox = window.Sandbox = (() => {
   /* The build this file is (keep it the same as the ?v= of its script tag in charm-nest-1.html, which a test checks). A
      page kept open across a deploy, or a page file kept by a cache, runs an older build than the one on the server:
      Settings shows both (Paul, 3 Oct: "it still didn't purge the system fully" — which build was he running?). */
-  const BUILD = "20261003-reset-quiet";
+  const BUILD = "20261003-approve-btn";
   const pageBuild = () => { try { const s = Array.from(document.scripts || []).find(x => /charm-nest-bridge\.js/.test(x.src || "")); return s ? new URL(s.src, location.href).searchParams.get("v") || "" : ""; } catch (_) { return ""; } };
   /* ── the sandbox that was cleaned waits (Paul, 3 Oct: "it still didn't purge the system fully"). After the reload a
      reset ends with, the stream used to start again at step 0, and in Auto the run began, within seconds: the emulated
