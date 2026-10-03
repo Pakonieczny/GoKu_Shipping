@@ -3057,8 +3057,10 @@ function metalToBadge(label){
                   senderRole: "staff",
                   timestamp : firebase.firestore.FieldValue.serverTimestamp()
                 });
+              try { window.shipTimeline && window.shipTimeline.noted(orderId, "image sent to the order chat"); } catch (_) {}   // employee efficiency: one note per picture
             } catch(err) {
               console.error("upload error:", err);
+              try { window.shipTimeline && window.shipTimeline.failed(orderId, "Order chat image", err); } catch (_) {}
               M.toast({ html: "Upload failed: " + err.message });
             }
           }
@@ -3108,6 +3110,7 @@ function metalToBadge(label){
           try { window.shipTimeline && window.shipTimeline.noted(orderId, "message to the order chat sent"); } catch (_) {}
         } catch (err) {
           console.error("Send error:", err);
+          try { window.shipTimeline && window.shipTimeline.failed(orderId, "Order chat message", err); } catch (_) {}   // employee efficiency: the failure shown
           M.toast({ html: "Error: " + err.message });
         }
       });

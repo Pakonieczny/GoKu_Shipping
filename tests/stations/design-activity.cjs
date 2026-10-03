@@ -6,9 +6,10 @@
 //     label; a finished design = one `complete` per order with its pieces; Undo reverses exactly that; orders left off
 //     the labels = `reject` once; an order-chat message = `note` (never its words); a failed print = `error`
 //   · design-message.html, design-message-1.html: 6-digit PIN sign-in; an order opened (typed or the phone's scan) = `scan`
-//     with its pieces; a message sent = `note`; nothing after Sign Out
+//     with its pieces, and an `error` too when Etsy has no answer for it; a message sent = `note`; a picture dropped into the
+//     chat = `note` (an `error` when it fails); nothing after Sign Out
 //   · etsy-mail-1.html: operator account; a reply queued = `note`, a conversation done = `complete`, a reply that did
-//     not go = `error`
+//     not go = `error`, a Done that the server refused = `error`
 // Every /.netlify/functions call goes to a fake in this file; every other host is aborted (stand-ins for the CDN scripts).
 //   NODE_PATH=$(npm root -g) PW_DIR=$(npm root -g)/playwright/node_modules CHROMIUM=… node tests/stations/design-activity.cjs
 'use strict';
@@ -19,7 +20,7 @@ const { chromium } = require(path.join(pwDir, 'playwright-core'));
 
 const PIN = '424242';
 const CUSTOMER = ['Jane Doe', '12 Main St', 'Test Buyer', 'engrave her initials'];
-let mapGets = 0;
+let mapGets = 0, failStatus = false;
 const acts = [], sent = [];                        // every activity event the door got; every request (url + body) the pages made
 const ts = ms => ({ _ts: true, ms });
 const T0 = Date.now();
@@ -66,6 +67,8 @@ function fake(method, url, body) {
     return { success: true };
   }
   if (name === 'authGate') return { locked: false, ok: true };
+  if (name === 'etsyOrderProxy' && q.orderId === '3521009995') return { __status: 404, error: 'Resource not found' };   // Etsy has no answer for this one
+  if (name === 'etsyMailThreads' && b.action === 'setStatus' && failStatus) return { __status: 500, error: 'the server is down' };
   if (name === 'etsyOrderProxy') {
     const txs = [{ transaction_id: 1, quantity: 2, title: 'Charm', sku: 'A1' }, { transaction_id: 2, quantity: 1, title: 'Chain', sku: 'B2' }];
     return q.include ? { transactions: txs } : { status: 'open', name: 'Test Buyer', transactions: txs, receipt: { receipt_id: q.orderId, name: 'Test Buyer' } };
@@ -233,9 +236,24 @@ async function messagePage(browser, file, device) {
   assert.deepStrictEqual(got.map(e => e.detail), ['typed', 'phone scan', 'order chat message sent']);
   look(got, { person: 'Rosa Designer', station: 'design', device });
 
+  // an order Etsy has no answer for: the scan stands (0 pieces) and the failure is one error; then a picture dropped into the chat
+  // that uploads (a note) and one that does not (an error): fixed words, never the picture
+  await enter('3521009995'); await until(async () => { await flush(page); return mine(device).length >= 5; }, 'the failed lookup');
+  for (const ok of [true, false]) {
+    await page.evaluate(async ok => {
+      window.uploadViaResumable = async () => { if (!ok) throw new Error('storage down'); return 'http://127.0.0.1/x.png'; };
+      const dt = new DataTransfer(); dt.items.add(new File(['x'], 'a.png', { type: 'image/png' }));
+      document.getElementById('customerMessageHistory').dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true, cancelable: true }));
+    }, ok);
+    await wait(400);
+  }
+  await until(async () => { await flush(page); return mine(device).length >= 7; }, 'the picture events');
+  assert.deepStrictEqual(brief(mine(device).slice(3)), ['scan|3521009995|0|0', 'error|3521009995|0|0', 'note|3521009995|0|0', 'error|3521009995|0|0'], device + ': a failed lookup is a scan and an error; a picture a note, a failed one an error');
+  assert.deepStrictEqual(mine(device).slice(3).map(e => e.detail), ['typed', 'order lookup failed', 'order chat image sent', 'order chat image failed']);
+
   await page.evaluate(() => document.getElementById('signOutBtn').click());
   await enter('3521009996'); await wait(600); await flush(page);
-  assert.strictEqual(mine(device).length, 3, device + ': nothing after Sign Out');
+  assert.strictEqual(mine(device).length, 7, device + ': nothing after Sign Out');
   await ctx.close();
   console.log(device + ': PIN sign-in, two scans with pieces, a message note; nothing signed out');
 }
@@ -255,11 +273,14 @@ async function inbox(browser) {
   await reply(IDS.B, 'A second reply that will not go.');
   await until(async () => { await flush(page); return mine(device).some(e => e.action === 'error'); }, 'the failed reply');
   await page.waitForSelector("#emArchiveBtn", { timeout: 10000 });   // thread B, whose reply did not go, is still open
+  failStatus = true; await page.click('#emArchiveBtn');                 // the server refuses the Done: an error, nothing completed
+  await until(async () => { await flush(page); return mine(device).filter(e => e.action === 'error').length >= 2; }, 'the refused Done');
+  failStatus = false; await wait(500); await page.waitForSelector("#emArchiveBtn", { timeout: 10000 });
   await page.click('#emArchiveBtn');
   await until(async () => { await flush(page); return mine(device).some(e => e.action === 'complete'); }, 'the conversation done');
   const got = mine(device);
-  assert.deepStrictEqual(brief(got), ['note|3521000444|0|0', 'error||0|0', 'complete||0|0'], 'inbox: a reply, a failed reply, a conversation done, once each');
-  assert.deepStrictEqual(got.map(e => e.detail), ['reply sent', 'reply not sent', 'conversation done']);
+  assert.deepStrictEqual(brief(got), ['note|3521000444|0|0', 'error||0|0', 'error||0|0', 'complete||0|0'], 'inbox: a reply, a failed reply, a refused Done, a conversation done, once each');
+  assert.deepStrictEqual(got.map(e => e.detail), ['reply sent', 'reply not sent', 'status change not saved', 'conversation done']);
   look(got, { person: 'Paul Inbox', station: 'inbox', device });
   await ctx.close();
   console.log('inbox: reply note, failed-reply error, conversation-done complete, once each');

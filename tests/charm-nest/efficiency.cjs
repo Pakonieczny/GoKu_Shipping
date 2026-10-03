@@ -25,6 +25,8 @@ const F = require('./efficiency-fixture.cjs');
   assert.equal(p.on, true); assert.equal(p.t.rate, 120, 'parts per active hour worked out when the server sent none'); assert.equal(p.t.secPerScan, 120, 'seconds per scan too');
   assert.equal(p.t.orders, 0); assert.equal(p.perHour.length, 24); assert.deepEqual(p.stations.map(s => s.station), ['sorting', 'welding'], 'longest first');
   assert.equal(M.biz.parts, 120, 'business parts from the people when the server sent none'); assert.equal(M.biz.rate, 120); assert.equal(M.biz.on, 1);
+  const FD = j(E.norm({ feed: [{ id: 'a', at: 5, person: 'Ivy', station: 'design', action: 'note', orderId: '', parts: 0 }, { id: 'b', at: 4, person: 'Ivy', station: 'design', action: 'note', orderId: '3521000999', parts: 0 }, { id: 'c', at: 3, person: 'Ivy', station: 'design', action: 'note', orderId: '', parts: 0, detail: 'opened order' }, { id: 'd', at: 2, person: 'Ivy', station: 'design', action: 'note', orderId: '', parts: 0, detail: 'Held for a customer question' }, { id: 'e', at: 1, person: 'Ivy', station: 'design', action: 'scan', orderId: '', parts: 0 }] }).feed.map(f => f.id));
+  assert.deepEqual(FD, ['b', 'd', 'e'], 'the design stations\' fixed-text note is time use, not a feed line; real notes and other actions stay');
   assert.deepEqual(j(E.norm(null).people), []); assert.deepEqual(j(E.normHist({}).days), []);
   assert.equal(E.niceMax(0), 4); assert.equal(E.niceMax(87), 100); assert.equal(E.niceMax(101), 120); assert.equal(E.niceMax(55), 60);
   console.log('  ✓ the view model: missing fields are zero, rates worked out, axis maximum');
@@ -300,6 +302,12 @@ const F = require('./efficiency-fixture.cjs');
     assert.equal(await page.inputValue(`${V} .efKey input`), '', 'and the field is cleared');
     fx.setHttp(0); await page.fill(`${V} .efKey input`, F.KEY); await page.press(`${V} .efKey input`, 'Enter');
     await page.waitForSelector(`${V} .efBody:not(.hidden) .efP`);
+    // the design stations' fixed-text note (no order, no parts) is time use only: not a line of the feed; a real note with an order stays
+    if (!(await page.locator(`${V} .efFeedWrap.open`).count())) await page.click(`${V} .efFeedBtn`);
+    fx.setHook(j => { j.feed.unshift({ id: 'mk1', at: j.now - 1000, person: 'Ivy', station: 'design', action: 'note', orderId: '', parts: 0 }, { id: 'mk2', at: j.now - 2000, person: 'Ivy', station: 'design', action: 'note', orderId: '3521000999', parts: 0 }); return j; });
+    await page.waitForFunction(() => /3521000999/.test(document.querySelector('#efficiencyView .efFeed').textContent), null, { timeout: 8000 });
+    assert.equal((await page.$$eval(`${V} .efFl`, ls => ls.filter(l => /noted/.test(l.textContent)).length)), 1, 'only the real note is a line');
+    fx.setHook(null);
     // the passcode changes on the server: it asks again, inside the console
     fx.setKey('rotated-pass-456');
     await page.waitForSelector(`${V} .efKey:not(.hidden)`, { timeout: 8000 });

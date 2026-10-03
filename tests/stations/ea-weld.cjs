@@ -6,6 +6,8 @@
 //   · the same order again: a `scan` ("again"), no second `complete`
 //   · rejects: an unknown order, an order with no studs, a cancelled order: `scan` + `reject`, never `complete`
 //   · Etsy down: `scan`, `error`, and the order still counted (the page still seals it welded)
+//   · text with no digits is one error (no scan, no completed order); an order welded before a page reload is not counted again
+//   · the order chat: a message and a picture are notes, a failure of either an error
 //   · every event says who (the name), welding, weld-1, this computer and session; signed out again: nothing more
 //   · no request carries the PIN but the login door's { pinLogin }
 //   NODE_PATH=$(npm root -g) PW_DIR=$(npm root -g)/playwright/node_modules CHROMIUM=… node tests/stations/ea-weld.cjs
@@ -75,6 +77,7 @@ const acts = (order, action) => st.acts.filter(e => e.orderId === order && (!act
           if (b.pinLogin !== undefined) return json(r, b.pinLogin === PIN ? { ok: true, name: WHO } : { ok: false, error: 'not on the list' });   // the server's login door
           if (Array.isArray(b.activity)) { st.acts.push(...b.activity); return json(r, { success: true, written: b.activity.length, duplicate: 0, refused: 0, scrubbed: 0 }); }
           if (b.session) { st.sessions.push(b.session); return json(r, { success: true }); }
+          if (b.newMessage && st.msgFail) return json(r, { success: false, error: 'down' }, 500);
           if (Array.isArray(b.timeline)) { st.events.push(...b.timeline); return json(r, { ok: true, ids: b.timeline.map(e => e.id) }); }
           return json(r, { success: true });
         }
@@ -166,6 +169,40 @@ const acts = (order, action) => st.acts.filter(e => e.orderId === order && (!act
   assert.strictEqual(new Set(st.acts.map(e => e.id)).size, st.acts.length, 'every event once');
   assert.strictEqual(st.acts.filter(e => e.action === 'complete').length, 3, 'three orders completed: ' + keys.join(' / '));
   assert.strictEqual(st.acts.filter(e => e.action === 'reject').length, 3);
+
+  // 7b · text with no digits is not an order: one error, no scan, nothing completed (the timeline has no order to seal either)
+  const completesBefore = st.acts.filter(e => e.action === 'complete').length;
+  await page.fill('#etsyOrderNumber', ''); await enter('not an order');
+  await until(async () => { await flush(); return st.acts.some(e => /not an order number/.test(e.detail)); }, 'the no-digits error');
+  await wait(700); await flush();
+  const junk = st.acts.filter(e => e.orderId === '' && e.action !== 'note');
+  assert.deepStrictEqual(junk.map(e => e.action), ['error'], 'junk text: one error, no scan, no complete: ' + JSON.stringify(junk));
+  assert.strictEqual(st.acts.filter(e => e.action === 'complete').length, completesBefore, 'junk text completes nothing');
+
+  // 7c · a page reload does not forget a welded order: the same order scanned again is a scan, never a second complete
+  const stScans = acts(STUD, 'scan').length;
+  await page.reload();
+  await page.waitForFunction(() => window.StationTimeline && window.StationSession && window.StationActivity && window.__snaps && window.StationActivity.who && window.StationActivity.who(), null, { timeout: 15000 });
+  await enter(STUD);
+  await until(async () => { await flush(); return acts(STUD, 'scan').length === stScans + 1; }, 'the scan after the reload'); await wait(700); await flush();
+  assert.strictEqual(acts(STUD, 'complete').length, 1, 'an order welded before the reload is not counted again');
+  assert(/again/.test(acts(STUD, 'scan').pop().detail), 'the scan says it is a repeat');
+
+  // 7d · the order chat: a message and a picture are notes, a failure of either an error (fixed words, never the text)
+  const chatFrom = st.acts.length;
+  const say = async text => { await page.fill('#britesMsgInput', text); await page.evaluate(() => document.getElementById('goScreenTwoBtn').click()); await wait(500); };
+  const drop = async ok => { await page.evaluate(async ok => {
+    window.uploadViaResumable = async () => { if (!ok) throw new Error('storage down'); return 'http://weld.test/x.png'; };
+    const dt = new DataTransfer(); dt.items.add(new File(['x'], 'a.png', { type: 'image/png' }));
+    document.getElementById('customerMessageHistory').dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true, cancelable: true }));
+  }, ok); await wait(500); };
+  await say('secret words about the stud');
+  st.msgFail = true; await say('words that fail'); st.msgFail = false;
+  await drop(true); await drop(false);
+  await flush();
+  assert.deepStrictEqual(st.acts.slice(chatFrom).map(e => e.action + ':' + e.orderId + ':' + e.detail), [
+    'note:' + STUD + ':order chat message sent', 'error:' + STUD + ':order chat message failed',
+    'note:' + STUD + ':order chat image sent', 'error:' + STUD + ':order chat image failed'], 'chat: one event per message and picture');
 
   // 8 · signed out again: nothing more is recorded, and the session ends
   const before = st.acts.length;

@@ -90,7 +90,9 @@
     const hoursAll = Object.keys(ph).length ? sum24(Object.keys(ph).map(k => hours24(ph[k]))) : sum24(people.map(p => p.perHour));
     const sumP = k => people.reduce((n, p) => n + p.t[k], 0);
     const activeMin = sumP("activeMin"), parts = bt.parts == null ? sumP("parts") : N(bt.parts);
-    const feed = (Array.isArray(r.feed) ? r.feed : []).filter(f => f && N(f.at) > 0).map(f => ({ id: String(f.id || `${f.at}|${f.person}|${f.action}|${f.orderId}`), at: N(f.at), person: String(f.person || ""), station: String(f.station || ""), action: String(f.action || ""), orderId: f.orderId ? String(f.orderId) : "", parts: N(f.parts) }));
+    // Design stations log a fixed-text "note" (no order, no parts) only to make work time exact: it stays in time use on the server, but is never a line of the feed
+    const marker = f => f.action === "note" && !f.orderId && !N(f.parts) && (f.detail == null || /^(opened|selected) order$/i.test(String(f.detail).trim()));
+    const feed = (Array.isArray(r.feed) ? r.feed : []).filter(f => f && N(f.at) > 0 && !marker(f)).map(f => ({ id: String(f.id || `${f.at}|${f.person}|${f.action}|${f.orderId}`), at: N(f.at), person: String(f.person || ""), station: String(f.station || ""), action: String(f.action || ""), orderId: f.orderId ? String(f.orderId) : "", parts: N(f.parts) }));
     return {
       day: String(r.day || ""), days: N(r.days) || 1, now: N(r.now), cursor: r.cursor == null ? "" : String(r.cursor), delta: !!r.delta, people,
       biz: { parts, scans: bt.scans == null ? sumP("scans") : N(bt.scans), orders: bt.orders == null ? sumP("orders") : N(bt.orders), people: bt.people == null ? people.length : N(bt.people), on: people.filter(p => p.on).length, rate: activeMin >= 1 ? parts / (activeMin / 60) : 0, hours: hoursAll, stations: stRows,

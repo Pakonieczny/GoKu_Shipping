@@ -36,9 +36,11 @@ const O_CANC = '3812345680';                // cancelled
 const O_GONE = '3812345681';                // Etsy cannot find it
 const O_FAIL = '3812345682';                // the Team message fails to send
 const O_OUT = '3812345683';                 // used while signed out
+const O_QA2 = '3812345684';                 // two pieces: a QA 2 check before and after the first assembled stamp, and a picture to the Team
 const LINES = {
   [O_TWO]: [{ quantity: 2, sku: 'AAA-1' }, { quantity: 1, sku: 'BBB-2' }],
   [O_ONE]: [{ quantity: 3, sku: 'SOLO-9' }],
+  [O_QA2]: [{ quantity: 2, sku: 'Q-1' }],
 };
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css' };
 
@@ -109,6 +111,14 @@ async function main() {
       await page.waitForTimeout(700);           // the lookup, the cancel check and the grid
     };
     const flush = () => page.evaluate(() => window.StationActivity.flush());
+    const drop = async ok => {                  // a picture dropped into the order chat (the upload is a stub that works, or fails)
+      await page.evaluate(async ok => {
+        window.uploadViaResumable = async () => { if (!ok) throw new Error('storage down'); return 'http://127.0.0.1/x.png'; };
+        const dt = new DataTransfer(); dt.items.add(new File(['x'], 'a.png', { type: 'image/png' }));
+        document.getElementById('customerMessageHistory').dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true, cancelable: true }));
+      }, ok);
+      await page.waitForTimeout(300);
+    };
     const mine = () => events.filter(e => e.device === 'assembly-1');
     const by = (a, id) => mine().filter(e => e.action === a && (id == null || e.orderId === id));
 
@@ -141,6 +151,14 @@ async function main() {
     await send('QA1').catch(() => {});                                       // (for O_GONE: a stamp with no loaded order)
     await page.fill('#etsyOrderNumber', O_FAIL);
     await send('Done');                                                      // the Team message fails to send
+    await open(O_QA2);                                                       // QA 2: a check of finished work is a note, never a second completion
+    await send('QA 2');                                                      // before anyone's first assembled stamp: a note
+    await send('qa2 ok');                                                    // another spelling: a note
+    await send('QA1');                                                       // the first assembled stamp: the completion
+    await send('QA 2');                                                      // a check after it: a note
+    await send('QA3');                                                       // a later check: a note too
+    await send('Done 2');                                                    // (2 is only a number here, no QA stage): a stamp again, a note
+    await drop(true); await drop(false);                                     // a picture to the Team (a note), one that fails (an error)
     await flush();
 
     await check('every event is this person at this station and device, with a session and a computer, and ids are unique', async () => {
@@ -172,6 +190,20 @@ async function main() {
       const notes = by('note', O_TWO).filter(e => e.detail === 'message to Team'); assert.equal(notes.length, 1);
       const rej = by('reject', O_TWO); assert.equal(rej.length, 1); assert.equal(rej[0].detail, 'flag to Team: wrong');
       for (const e of [...notes, ...rej]) assert(!/chain|rework/.test(e.detail.replace('flag to Team: wrong', '')), 'text leaked: ' + e.detail);
+    });
+    await check('a QA 2 stamp is a note with fixed words, no pieces and no order, never a completion; QA1 still completes once, with its 2 pieces', async () => {
+      const notes = by('note', O_QA2).filter(e => /^QA \d+ check$/.test(e.detail));
+      assert.deepEqual(notes.map(e => e.detail), ['QA 2 check', 'QA 2 check', 'QA 2 check', 'QA 3 check']);
+      for (const n of notes) { assert.equal(n.parts, 0); assert.equal(n.orders, 0); assert.equal(n.sku, ''); }
+      const c = by('complete', O_QA2); assert.equal(c.length, 1, JSON.stringify(c));
+      assert.equal(c[0].orders, 1); assert.equal(c[0].parts, 2); assert.match(c[0].detail, /^Team stamp QA1/);
+      assert.equal(mine().filter(e => e.action === 'complete' && /QA ?[2-9]/i.test(e.detail)).length, 0, 'no QA 2 completion anywhere');
+      const again = by('note', O_QA2).filter(e => /stamp again: Done 2/.test(e.detail)); assert.equal(again.length, 1);
+      const total = mine().filter(e => e.action === 'complete' && e.orderId === O_QA2).reduce((s, e) => s + e.orders, 0); assert.equal(total, 1, 'the order is counted once');
+    });
+    await check('a picture to the Team is a note and a failed one an error, never the picture', async () => {
+      const ok = by('note', O_QA2).filter(e => e.detail === 'image to Team'); assert.equal(ok.length, 1); assert.equal(ok[0].parts, 0); assert.equal(ok[0].orders, 0);
+      const bad = by('error', O_QA2); assert.equal(bad.length, 1); assert.equal(bad[0].detail, 'Team image not sent');
     });
     await check('a cancelled order is one scan and one reject', async () => {
       assert.equal(by('scan', O_CANC).length, 1);
