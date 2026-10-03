@@ -6,12 +6,13 @@
   function sourceLinks(dossier,ids){return (ids||[]).map(id=>(dossier.sources||[]).find(s=>s.id===id)).filter(s=>s&&safeLink(s.url));}
   function selectProductIssues(result,product){const id=productId(product.productId),records=(result.productIssues||[]).filter(record=>id&&productId(record.productId)===id);return {productId:id,issues:records.flatMap(record=>Array.isArray(record.issues)?record.issues:[])};}
   function issueHolds(record){const open=(record?.issues||[]).filter(issue=>issue&&issue.status!=='resolved'),blocks=new Set(open.flatMap(issue=>Array.isArray(issue.blocks)?issue.blocks:[]));if(open.some(issue=>['identity','style','options','material','matching'].includes(issue.kind))){blocks.add('recommendation');blocks.add('cart');}if(open.some(issue=>['history','content'].includes(issue.kind)))blocks.add('meaning');return {recommendationHold:blocks.has('recommendation'),cartHold:blocks.has('cart'),meaningHold:blocks.has('meaning')};}
-  function briefFor(dossier,title,issues=null,issueState='available'){const held=Object.values(issueHolds(issues)).some(Boolean)||issueState!=='available'||dossier.status!=='approved';return [title,held?'CORRECTIVE RESEARCH ONLY · Keep these hypotheses out of automatic ad promotion until product issues and evidence are resolved.':'Product advertising test brief','Product: '+dossier.handle,'Research status: '+dossier.status,...(issues?.issues||[]).filter(issue=>issue.status!=='resolved').map(issue=>'Open product issue · '+issue.kind+': '+issue.detail),'Research recommendations (hypotheses):',...(dossier.recommendations||[]).map(r=>r.channel+': '+r.action+'\nMeasure: '+r.measure+'\nSources: '+sourceLinks(dossier,r.sourceIds).map(s=>s.url).join(', '))].join('\n\n');}
-  function demandBriefFor(dossier,title,entry,issues=null,issueState='available',now=Date.now()){
+  function briefFor(dossier,title,issues=null,issueState='available'){return [title,'CORRECTIVE RESEARCH ONLY · Context notes. A fresh, exact-version operator-review packet is required before using any advertising proposals.','Product: '+dossier.handle,'Research status: '+dossier.status,'Research version: '+(dossier.version||'unavailable'),...((Object.values(issueHolds(issues)).some(Boolean)||issueState!=='available')?['Product holds or issue evidence require review.']:[]),...(issues?.issues||[]).filter(issue=>issue.status!=='resolved').map(issue=>'Open product issue · '+issue.kind+': '+issue.detail),'Research recommendations (hypotheses; context only):',...(dossier.recommendations||[]).map(r=>r.channel+': '+r.action+'\nMeasure: '+r.measure+'\nSources: '+sourceLinks(dossier,r.sourceIds).map(s=>s.url).join(', '))].join('\n\n');}
+  function demandBriefFor(dossier,title,entry,issues=null,issueState='available',now=Date.now(),reviewContext=null){
     const e=entry?.evidence,id=productId(dossier?.productId);
     if(!id||dossier.status!=='approved'||!dossier.version||entry?.state!=='current'||productId(entry.productId)!==id||e?.productId!==id||e.handle!==dossier.handle||e.dossierVersion!==dossier.version||e.schemaVersion!==1||e.evidenceRevision!==3||e.evidenceKind!=='product_demand_and_ad_outcomes'||e.readOnly!==true||e.sandboxReadOnly!==true||!Number.isFinite(e.at)||e.at>now+60000||now-e.at>86400000)return null;
-    const held=entry.promotionAllowed!==true||entry.productIssueState!=='available'||['recommendationHold','cartHold','meaningHold'].some(k=>entry.productHolds?.[k]===true)||Object.values(issueHolds(issues)).some(Boolean);
-    const metric=value=>typeof value==='number'&&Number.isFinite(value)&&value>=0?String(value):'unavailable',currency=/^[A-Z]{3}$/.test(e.currency||'')?e.currency:'currency unavailable',lines=[briefFor(dossier,title,issues,held?'unavailable':issueState),'MEASURED DEMAND · '+e.range+' · checked '+new Date(e.at).toISOString(),'Source: authenticated read-only Google Ads reports and Google Keyword Planner; exact product and research version.','Tracking has not been validated by this read. Reported conversions do not establish sales, revenue, profit or ROAS.'];
+    const demandHeld=entry.promotionAllowed!==true||entry.productIssueState!=='available'||['recommendationHold','cartHold','meaningHold'].some(k=>entry.productHolds?.[k]===true)||Object.values(issueHolds(issues)).some(Boolean)||issueState!=='available';
+    const research=reviewContext?operatorBriefFor(reviewContext.result,reviewContext.product,dossier,title,now,demandHeld):briefFor(dossier,title,issues,demandHeld?'unavailable':issueState),held=demandHeld||research.includes('CORRECTIVE RESEARCH ONLY');
+    const metric=value=>typeof value==='number'&&Number.isFinite(value)&&value>=0?String(value):'unavailable',currency=/^[A-Z]{3}$/.test(e.currency||'')?e.currency:'currency unavailable',lines=[research,'MEASURED DEMAND · '+e.range+' · checked '+new Date(e.at).toISOString(),'Source: authenticated read-only Google Ads reports and Google Keyword Planner; exact product and research version.','Tracking has not been validated by this read. Reported conversions do not establish sales, revenue, profit or ROAS.'];
     if(held)lines.push('Promotion remains held; these measurements are for correction research.');
     if(e.sources?.shopping?.state==='available'){
       const t=e.shopping?.totals||{};lines.push('Shopping: exact verified product/variant offer IDs. Impressions '+metric(t.impressions)+'; clicks '+metric(t.clicks)+'; reported spend '+metric(t.cost)+' '+currency+'; reported conversions (unvalidated) '+metric(t.reportedConversions)+'.');
@@ -92,6 +93,22 @@
     if(!validateGroup(packet.positiveKeywords,'keywords')||!validateGroup(packet.negativeKeywords,'negativeKeywords'))return null;
     if(packet.positiveKeywords.some(positive=>packet.negativeKeywords.some(negative=>suppressiveReviewConflict(positive.term,negative.term))))return null;
     return packet;
+  }
+  function operatorBriefFor(result,product,dossier,title,now=Date.now(),forceCorrective=false){
+    const issues=selectProductIssues(result||{},product||{}),issueState=result?.productIssueState||'unavailable';
+    // Exports always require source bindings, including older compatibility responses.
+    const packet=forceCorrective?null:operatorReviewFor({...result,operatorReviewBindingRequired:true},product,dossier,now);
+    if(!packet)return briefFor(dossier,title,issues,forceCorrective?'unavailable':issueState);
+    const lines=[title,'Product advertising test brief · pending operator review · hypotheses','Product: '+packet.handle+' · '+packet.productId,'Approved research version: '+packet.dossierVersion,'Source-bound packet version: '+packet.packetVersion,'Candidate IDs: '+packet.candidateIds.join(', '),'Review only. No provider, campaign or budget writes. No automatic activation. These hypotheses do not establish measured sales lift, profit or returns.','Advertising test candidates:'];
+    for(const candidate of packet.candidates)lines.push(candidate.candidateId+' · '+candidate.channel+' · hypothesis\nAction: '+candidate.action+'\nMeasure: '+candidate.measure+'\nSource IDs: '+candidate.sourceIds.join(', '));
+    for(const [label,entries]of [['Positive keyword hypotheses',packet.positiveKeywords],['Negative keyword hypotheses',packet.negativeKeywords]]){
+      lines.push(label+':');
+      if(!entries.length)lines.push('No structured proposals in this group.');
+      for(const entry of entries)lines.push(entry.term+'\nCandidates: '+entry.candidateIds.join(', ')+'\nSource IDs: '+entry.sourceIds.join(', '));
+    }
+    lines.push('Keyword match types and campaign scope require separate operator review; none are selected by this brief.','Reviewed source bindings:');
+    for(const source of packet.sourceBindings)lines.push(source.id+' · '+source.title+'\nURL: '+source.url+'\nReviewed: '+new Date(source.checkedAt).toISOString()+'\nSource version: '+source.sourceVersion+'\nInspected excerpt: '+source.excerpt);
+    return lines.join('\n\n');
   }
   function renderOperatorReview(parent,result,product,dossier){
     const section=node('section',null,'operator-review');section.setAttribute('aria-label','Advertising operator review');section.appendChild(node('h3','Advertising operator review'));
@@ -185,7 +202,25 @@
         detail.appendChild(node('h3','Research recommendations · context only'));
         if(!(dossier.recommendations||[]).length)detail.appendChild(node('p','Actionable test recommendations are still pending.','sub'));
         (dossier.recommendations||[]).forEach(rec=>{const b=node('div',null,'recommendation');b.append(node('b',rec.channel+' · hypothesis'),node('p',rec.action),node('p','Measure: '+rec.measure,'sub'));links(b,dossier,rec.sourceIds);detail.appendChild(b);});
-        if((dossier.recommendations||[]).length&&global.navigator?.clipboard?.writeText){const corrective=held||dossier.status!=='approved',copy=node('button',corrective?'Copy corrective research notes':'Copy product test brief','btn');copy.type='button';copy.onclick=async()=>{try{await global.navigator.clipboard.writeText(briefFor(dossier,r.title,issues,issueState));copy.textContent=corrective?'Corrective notes copied':'Test brief copied';}catch{copy.textContent='Clipboard unavailable';}};detail.appendChild(copy);}
+        async function copyCurrentResearch(copy,includeDemand=false){
+          copy.disabled=true;copy.textContent='Rechecking current evidence…';
+          try{
+            const reads=[request('research?ids='+encodeURIComponent(productId(r.productId)))];
+            if(includeDemand)reads.push(request('demand?ids='+encodeURIComponent(productId(r.productId))));
+            const [freshResult,freshDemand]=await Promise.all(reads);
+            if(seq!==detailRequest||selected!==r.id||!copy.isConnected)return;
+            const current=selectDossier(freshResult,r);
+            if(!current){copy.textContent='Evidence changed · refresh first';return;}
+            const currentIssues=selectProductIssues(freshResult,r),currentIssueState=freshResult.productIssueState||'unavailable';
+            const entry=(freshDemand?.products||[]).find(product=>productId(product.productId)===productId(r.productId));
+            const text=includeDemand?demandBriefFor(current,r.title,entry,currentIssues,currentIssueState,Date.now(),{result:freshResult,product:r}):operatorBriefFor(freshResult,r,current,r.title);
+            if(!text){copy.textContent='Evidence expired or changed · refresh first';return;}
+            await global.navigator.clipboard.writeText(text);
+            if(seq===detailRequest&&selected===r.id&&copy.isConnected)copy.textContent=text.includes('CORRECTIVE RESEARCH ONLY')?(includeDemand?'Corrective research and demand copied':'Corrective notes copied'):(includeDemand?'Research and demand copied':'Test brief copied');
+          }catch{if(seq===detailRequest&&selected===r.id&&copy.isConnected)copy.textContent='Current evidence or clipboard unavailable · refresh first';}
+          finally{if(copy.isConnected)copy.disabled=false;}
+        }
+        if((dossier.recommendations||[]).length&&global.navigator?.clipboard?.writeText){const corrective=!operatorReviewFor({...result,operatorReviewBindingRequired:true},r,dossier),copy=node('button',corrective?'Copy corrective research notes':'Copy product test brief','btn');copy.type='button';copy.onclick=()=>copyCurrentResearch(copy);detail.appendChild(copy);}
         detail.appendChild(node('h3','Meanings and stories'));
         if(!(dossier.meanings||[]).length)detail.appendChild(node('p','Sourced meanings or history are not available for this piece yet.','sub'));
         (dossier.meanings||[]).forEach(m=>{detail.append(node('p',m.text),node('p',m.context+' · interpretation','status'));links(detail,dossier,m.sourceIds);});
@@ -193,7 +228,7 @@
         (dossier.sources||[]).forEach(s=>{const p=node('p'),url=safeLink(s.url);if(url){const a=node('a',s.title);a.href=url;a.target='_blank';a.rel='noopener noreferrer';p.appendChild(a);}else p.appendChild(node('span',s.title));p.appendChild(node('small',' · '+new Date(s.checkedAt).toLocaleDateString()));detail.appendChild(p);});
         (dossier.validation?.warnings||[]).forEach(w=>detail.appendChild(node('p',w,'status')));
         const demandBox=node('section',null,'recommendation');demandBox.append(node('h3','Saved demand and advertising outcomes'),node('p','Reading saved demand evidence…','status'));detail.appendChild(demandBox);
-        try{const saved=await request('demand?ids='+encodeURIComponent(productId(r.productId)));if(seq!==detailRequest||selected!==r.id)return;const entry=(saved.products||[]).find(product=>productId(product.productId)===productId(r.productId));demandBox.replaceChildren(node('h3','Saved demand and advertising outcomes'));renderDemand(demandBox,entry);const measured=demandBriefFor(dossier,r.title,entry,issues,issueState);if(measured&&global.navigator?.clipboard?.writeText){const corrective=measured.includes('CORRECTIVE RESEARCH ONLY'),copy=node('button',corrective?'Copy corrective research and demand':'Copy research and measured demand','btn');copy.type='button';copy.onclick=async()=>{const fresh=demandBriefFor(dossier,r.title,entry,issues,issueState);if(!fresh){copy.textContent='Evidence expired · refresh first';return;}try{await global.navigator.clipboard.writeText(fresh);copy.textContent=fresh.includes('CORRECTIVE RESEARCH ONLY')?'Corrective research and demand copied':'Research and demand copied';}catch{copy.textContent='Clipboard unavailable';}};demandBox.appendChild(copy);}}catch(error){if(seq===detailRequest&&selected===r.id){demandBox.replaceChildren(node('h3','Saved demand and advertising outcomes'),node('p','Saved demand evidence is unavailable: '+error.message,'status'));}}
+        try{const saved=await request('demand?ids='+encodeURIComponent(productId(r.productId)));if(seq!==detailRequest||selected!==r.id)return;const entry=(saved.products||[]).find(product=>productId(product.productId)===productId(r.productId));demandBox.replaceChildren(node('h3','Saved demand and advertising outcomes'));renderDemand(demandBox,entry);const measured=demandBriefFor(dossier,r.title,entry,issues,issueState,Date.now(),{result,product:r});if(measured&&global.navigator?.clipboard?.writeText){const corrective=measured.includes('CORRECTIVE RESEARCH ONLY'),copy=node('button',corrective?'Copy corrective research and demand':'Copy research and measured demand','btn');copy.type='button';copy.onclick=()=>copyCurrentResearch(copy,true);demandBox.appendChild(copy);}}catch(error){if(seq===detailRequest&&selected===r.id){demandBox.replaceChildren(node('h3','Saved demand and advertising outcomes'),node('p','Saved demand evidence is unavailable: '+error.message,'status'));}}
       }catch(e){if(seq===detailRequest&&selected===r.id){pending.remove();detail.appendChild(node('p',e.message,'error'));}}
     }
     function render(){
@@ -207,5 +242,5 @@
     auth.onsubmit=async e=>{e.preventDefault();key=pass.value.trim();pass.value='';try{sessionStorage.setItem('brites-growth-key',key);}catch(x){}await load();};refresh.onclick=load;if(opts.request||key)await load();else{status.textContent='Sign in to see private progress.';refresh.disabled=true;}
     return {refresh:load};
   }
-  global.BritesGrowth={operatorReviewFor,renderOperatorReview,mount,parseCsv,productId,selectDossier,selectProductIssues,issueHolds,briefFor,demandBriefFor,receiptPreviewFor,safeLink};if(document.querySelector('#growth-root'))mount(document.querySelector('#growth-root'));
+  global.BritesGrowth={operatorReviewFor,operatorBriefFor,renderOperatorReview,mount,parseCsv,productId,selectDossier,selectProductIssues,issueHolds,briefFor,demandBriefFor,receiptPreviewFor,safeLink};if(document.querySelector('#growth-root'))mount(document.querySelector('#growth-root'));
 })(window);

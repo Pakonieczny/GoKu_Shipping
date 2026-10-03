@@ -28,7 +28,7 @@ function harness(t, options = {}) {
   };}};
   win.fetch = async (raw, init = {}) => {const url = new URL(raw,win.location.href), body = init.body ? JSON.parse(init.body) : null;network.push({url,body});
     if(url.pathname==='/api/concierge'&&body?.event)return response({});
-    if(url.pathname==='/api/concierge'&&body?.message)return response(options.answer || {reply:'This might hold a personal meaning for you.',preferences:{},products:[product],meanings:[]});
+    if(url.pathname==='/api/concierge'&&body?.message)return response(options.answer || {live:true,reply:'This might hold a personal meaning for you.',preferences:{},products:[product],meanings:[]});
     if(url.pathname==='/api/growth/product')return response({product});
     throw Error('Unexpected provider or cart request: '+url.pathname);
   };
@@ -99,12 +99,12 @@ test('final voice transcripts update contextual emotion and conversation but do 
   assert.doesNotMatch(h.root.querySelector('.messages').textContent,/I can help you find a personal symbol/);
 });
 for(const requestedType of ['navigate','choose','add'])test('voice catalogue tool returns a public whitelist and cannot automatically '+requestedType,async t=>{
-  const h=harness(t,{started:true,answer:{reply:'A bunny may suggest a new beginning.',question:'Which metal?',preferences:{budget:60},products:[{...product,accountId:'private-account',rank:7,credentials:'private-key',internalInstructions:'private instructions'}],meanings:[{productId:product.id,text:'A personal new beginning.',context:'Your interpretation',sources:[{title:'Museum symbol reference',url:'https://www.metmuseum.org/',credentials:'private-key',internalInstructions:'private instructions'}],privateRank:4}],requestedAction:{type:requestedType,productId:product.id,url:product.url},accountId:'private-account',internalInstructions:'private instructions'}});
+  const h=harness(t,{started:true,answer:{live:true,reply:'A bunny may suggest a new beginning.',question:'Which metal?',preferences:{budget:60},products:[{...product,accountId:'private-account',rank:7,credentials:'private-key',internalInstructions:'private instructions'}],meanings:[{productId:product.id,text:'A personal new beginning.',context:'Your interpretation',sources:[{title:'Museum symbol reference',url:'https://www.metmuseum.org/',credentials:'private-key',internalInstructions:'private instructions'}],privateRank:4}],requestedAction:{type:requestedType,productId:product.id,url:product.url},accountId:'private-account',internalInstructions:'private instructions'}});
   h.open();await h.activate();const before=h.win.location.href;
   const result=await h.voiceConfig.onTool({message:'Please '+requestedType+' the bunny'});
-  assert.deepEqual(Object.keys(result).sort(),['actions','meanings','products','question','reply']);assert.equal(JSON.stringify(result.actions),'[]');
-  assert.deepEqual(Object.keys(result.products[0]).sort(),['currency','minPrice','title','url','why']);
-  assert.deepEqual(Object.keys(result.meanings[0]).sort(),['context','sources','text']);assert.deepEqual(Object.keys(result.meanings[0].sources[0]).sort(),['title','url']);assert.doesNotMatch(JSON.stringify(result),/private-account|private-key|private instructions|privateRank/);
+  assert.deepEqual(Object.keys(result).sort(),['actions','displayedPieces','meanings','products','question','reply','verified']);assert.equal(result.verified,true);assert.equal(JSON.stringify(result.actions),'[]');
+  assert.deepEqual(Object.keys(result.products[0]).sort(),['cartHold','currency','handle','id','minPrice','partsOnly','recommendationHold','title','type','url','variantsComplete','why']);
+  assert.deepEqual(Object.keys(result.meanings[0]).sort(),['context','productId','sources','text']);assert.deepEqual(Object.keys(result.meanings[0].sources[0]).sort(),['title','url']);assert.doesNotMatch(JSON.stringify(result),/private-account|private-key|private instructions|privateRank/);
   assert.equal(h.win.location.href,before);assert.equal(h.root.querySelector('.options'),null);assert.equal(h.root.querySelector('.review'),null);assert.equal(h.win.sessionStorage.getItem('brites-sandbox-cart'),null);
   assert.ok(h.network.every(call=>call.url.pathname==='/api/concierge'));assert.ok(!h.errors.some(error=>/navigation/i.test(error.message)));
 });

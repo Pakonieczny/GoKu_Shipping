@@ -11,7 +11,7 @@ async function settle(){await tick();await tick();}
 function deferred(){let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b;});return {promise,resolve,reject};}
 const variant={id:'gid://shopify/ProductVariant/101',numericId:'101',title:'Sterling Silver',price:54,available:true,options:[{name:'Metal',value:'Sterling Silver'}]};
 const product={id:'gid://shopify/Product/1',handle:'bunny-1',url:'https://britesjewelry.com/products/bunny-1',title:'Bunny Necklace',type:'Necklace',currency:'USD',variants:[variant],variantsComplete:true,suggestedVariantId:variant.id,minPrice:54,why:'A personal symbol for your milestone.'};
-const answer={reply:'DETERMINISTIC RETRIEVAL SUMMARY',preferences:{},products:[product],meanings:[]};
+const answer={live:true,reply:'DETERMINISTIC RETRIEVAL SUMMARY',preferences:{},products:[product],meanings:[]};
 function fixture(t,options={}){
   const errors=[],console=new VirtualConsole();console.on('jsdomError',e=>errors.push(e));
   const dom=new JSDOM('<!doctype html><html><body><button id="ordinary">Browse</button></body></html>',{url:'https://growth-sandbox.example/concierge-sandbox.html',pretendToBeVisual:true,runScripts:'outside-only',virtualConsole:console});

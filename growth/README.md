@@ -122,8 +122,16 @@ The robot uses matte ceramic, a dark satin visor, restrained lighting and bloom,
 
 The wider interface centers the robot and one voice action. Live captions, typing and history are optional; checked product options stay in a separate tray. Connecting can be cancelled, End/Hide close local media immediately, and interrupted or timed-out catalogue checks cannot overwrite newer selections. Switching to typing ends voice. No microphone or provider call starts on a fresh visit or merely opening the guide.
 
-All **1,192** growth checks pass across **63** files, with complete TAP evidence. Native provider, physical microphone and visual acceptance are recorded separately in the private checkpoint so fixture tests cannot stand in for live proof.
+All **1,316** growth checks pass across **67** files, with complete TAP evidence. Native provider, physical microphone and visual acceptance are recorded separately in the private checkpoint so fixture tests cannot stand in for live proof.
 
 The one-shot WebRTC exchange waits for ICE gathering to complete before sending the refreshed local SDP, with a ten-second limit and cancellation cleanup. It never changes browser networking or graphics settings.
 
 Known microphone permission, unavailable-device, busy-device and media-connection failures show fixed friendly guidance. Unknown provider or account text is withheld; failure cleanup preserves the keyboard path.
+
+## Spoken selection and reviewed advertising exports
+
+Native voice has separate live discovery, displayed-piece inspection and prepared-control tools. Inspection returns bounded public current options in their native storefront currency; incomplete sets are labelled. A direct final shopper transcript, its exact input item and echoed client-created response metadata are required to prepare controls. At most three tools can chain within a spoken turn. New speech, interruption, replaced selections and End invalidate earlier authority. Prepared navigation shows an Open button; an exact non-personalized variant can open a visible review, and adding still requires the customer's separate Confirm click and another live price/availability check. Advice questions, historic/quoted commands, ambiguity, holds and unspecified options cannot supply action authority. The helper loads on demand without preventing the read-only voice fallback.
+
+`/concierge-actions-qa.html` exercises the actual widget using explicitly synthetic native events and the live public catalogue. It requests no microphone and makes no provider inference call. Its results do not prove physical voice, provider latency or WebGL quality. The normal demo always uses the native adapter; the fixture is restricted to the exact isolated QA route and explicit test flag.
+
+Copying an advertising brief re-fetches protected research and independently applies the current operator-review packet's identity, dossier version, source bindings, freshness, issue holds and keyword-conflict gates. Valid exports retain all structured positive and negative proposals in separate sections with candidate IDs, packet and dossier versions, measurements and citations. Missing, stale or held packets remain corrective context. Saved measured demand must still be fresh, exact-version evidence, with original currencies and attribution limits. Copying never changes a campaign or activates proposals.

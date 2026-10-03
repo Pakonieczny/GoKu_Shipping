@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="robots" content="noindex,nofollow"><title>Synthetic advertising export quality check</title>
+  <link rel="stylesheet" href="/brites-growth.css">
+  <style>body{margin:0;background:#f7f5ef;color:#172d35;font:15px system-ui,sans-serif}.qa-tools{max-width:1200px;margin:20px auto;padding:22px;background:white;border:1px solid #d6dfdf;border-radius:16px}.qa-tools h1{font-size:24px}.qa-tools p{line-height:1.5}.qa-actions{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin:14px 0}.qa-actions button,.qa-actions select{padding:10px;font:inherit}.qa-tools textarea{width:100%;min-height:220px;box-sizing:border-box;font:12px ui-monospace,monospace}.qa-tools pre{white-space:pre-wrap;overflow-wrap:anywhere;font:12px ui-monospace,monospace}.qa-tools details{margin:14px 0}</style>
+  <script src="/brites-growth.js" defer></script><script src="/ads-export-qa.js" defer></script>
+</head>
+<body>
+  <section class="qa-tools" aria-label="Synthetic advertising export controls">
+    <h1>Synthetic advertising export quality check</h1>
+    <p>This page mounts the actual research workspace and export helpers with explicitly simulated, delayed reads. Every product, metric and citation below is a synthetic fixture. It never reads private research, contacts a provider, requests credentials or changes campaigns.</p>
+    <div class="qa-actions">
+      <label for="qa-scenario">Copy recheck scenario</label>
+      <select id="qa-scenario">
+        <option value="current">Current reviewed packet</option>
+        <option value="stale-source">Source expires before copying</option>
+        <option value="version-drift">Dossier changes before copying</option>
+        <option value="new-hold">New product hold before copying</option>
+        <option value="failed-read">Fresh read fails before copying</option>
+        <option value="selection-change">Selection changes during delayed copy</option>
+      </select>
+      <button id="qa-reset" type="button">Reset synthetic workspace</button>
+      <button id="qa-sentinel" type="button">Put synthetic sentinel on clipboard</button>
+      <button id="qa-inspect" type="button">Inspect actual clipboard</button>
+    </div>
+    <p id="qa-status" role="status">Preparing synthetic source-bound fixtures…</p>
+    <p>Choose the first synthetic product, then use its real copy button. In the selection-change case, choose the second product while “Rechecking current evidence…” is visible. Set the sentinel first to check that failed or cancelled reads leave the clipboard unchanged.</p>
+    <label for="qa-clipboard">Actual clipboard readback (explicit inspect click only)</label>
+    <textarea id="qa-clipboard" readonly></textarea>
+    <details><summary>Expected synthetic versions, IDs and terms</summary><pre id="qa-expected"></pre></details>
+    <details open><summary>Simulated read events</summary><pre id="qa-events" aria-live="polite"></pre></details>
+  </section>
+  <div id="qa-workspace"></div>
+</body>
+</html>
