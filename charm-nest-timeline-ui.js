@@ -1232,6 +1232,12 @@
 .tlExp.side::before{display:none}
 .tlStop.pinned .tlSeal::before{content:"";position:absolute;inset:-5px;border-radius:50%;border:1.5px solid var(--gold);box-shadow:0 0 0 4px rgba(202,168,97,.18);animation:tlSelIn .32s var(--tlSpring) both}
 .tlStop.pinned>span{color:#7a5a1d}
+/* a grown seal's own ring or glow stays a thin ring round it (Paul, 3 Oct: the ring that came with the zoom was bigger than the seal's own
+   growing): Seal.zoom puts the grown seal's scale in --zk, so these are drawn at 1 / --zk of their size and come out the same thin ring once grown */
+.tlSt.sel[data-seal-zoom]::before{inset:calc(-3px / var(--zk, 1));border-width:calc(1.5px / var(--zk, 1));box-shadow:0 0 0 calc(2px / var(--zk, 1)) rgba(202,168,97,.18)}
+.tlSt.hl[data-seal-zoom]::after{inset:calc(-4px / var(--zk, 1))}
+.tlStop.pinned .tlSeal[data-seal-zoom]::before{inset:calc(-3px / var(--zk, 1));border-width:calc(1.5px / var(--zk, 1));box-shadow:0 0 0 calc(2px / var(--zk, 1)) rgba(202,168,97,.18)}
+.tlStop.c .tlSeal[data-seal-zoom]::after{inset:calc(-3px / var(--zk, 1));border-width:calc(1.5px / var(--zk, 1));animation:none;opacity:.9}
 @media (prefers-reduced-motion:reduce){.tlUI *,.tlUI *::before,.tlUI *::after,.tlMini>span{animation-duration:.001s!important;animation-iteration-count:1!important;transition-duration:.001s!important}.tlUI .tlSpin{animation:tlSpin 1.4s linear infinite!important}}
 `;
   function css() {

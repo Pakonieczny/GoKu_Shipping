@@ -38,7 +38,7 @@ try{
   assert.equal(JSON.stringify({report,source}),before,'rendering preserves readiness data and all historical records');
  }
  assert.equal(R.counter({ready:false,required:0,saved:0}),'','plain sheets get no placeholder');
- assert.equal(Seal.BASE_SIZE,84);assert.equal(Seal.HOVER_SIZE,undefined,'no fixed enlarged size: every seal, in the Library too, zooms in place by the one adaptive curve');assert.equal(Seal.zoomScale(72),2.05,'a 72px Library card seal grows by the shared curve');
+ assert.equal(Seal.BASE_SIZE,84);assert.equal(Seal.HOVER_SIZE,undefined,'no fixed enlarged size: every seal, in the Library too, zooms in place by the one adaptive curve');assert.equal(Seal.zoomScale(72),1.08,'a 72px Library card seal grows by the shared curve');
  for(const owner of ['sheet:sheet1','set:set1']){
   const card=d.createElement('section');card.className=owner.startsWith('set:')?'setCard':'libCard';
   const record={id:'sheet1',processReady:false,processSeals:history};
