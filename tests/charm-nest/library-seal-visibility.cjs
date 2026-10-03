@@ -3,7 +3,7 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('nod
 const {JSDOM}=require('jsdom'),R=require('../../charm-nest-readiness.js');
 const html=fs.readFileSync('charm-nest-1.html','utf8'),library=fs.readFileSync('charm-nest-library.js','utf8');
 // jsdom's stylesheet parser (cssstyle) drops a declaration whose value has min(), max() or clamp() around var() -- valid CSS that every
-// browser keeps, such as the Library card cap `width:min(72px,var(--seal-fit,var(--seal-size)))` -- so the seal would measure 84 px here
+// browser keeps, such as the Library card cap `width:min(44px,var(--seal-fit,var(--seal-base)))` -- so the seal would measure 50 px here
 // whatever the stylesheet says. The production stylesheet is loaded with each such value held verbatim in a custom property (which jsdom
 // keeps) and the property set to var() of it: the same cascade and the same expression, resolved by the helpers below as any var() is.
 const jsdomCss=css=>css.replace(/([a-z-]+)\s*:\s*([^;{}]*\b(?:min|max|clamp)\([^;{}]*var\([^;{}]*)(?=[;}])/g,(_,prop,value)=>`--jsdom-${prop}:${value};${prop}:var(--jsdom-${prop})`);
@@ -38,7 +38,7 @@ try{
   assert.equal(JSON.stringify({report,source}),before,'rendering preserves readiness data and all historical records');
  }
  assert.equal(R.counter({ready:false,required:0,saved:0}),'','plain sheets get no placeholder');
- assert.equal(Seal.BASE_SIZE,84);assert.equal(Seal.HOVER_SIZE,undefined,'no fixed enlarged size: every seal, in the Library too, zooms in place by the one adaptive curve');assert.equal(Seal.zoomScale(72),1.08,'a 72px Library card seal grows by the shared curve');
+ assert.equal(Seal.BASE_SIZE,50);assert.equal(Seal.HOVER_SIZE,undefined,'no fixed enlarged size: every seal, in the Library too, zooms in place by the one adaptive curve');assert(Seal.zoomScale(44)>=Seal.zoomScale(50),'a 44px Library card seal grows by the shared curve, at least as much as a regular one');
  for(const owner of ['sheet:sheet1','set:set1']){
   const card=d.createElement('section');card.className=owner.startsWith('set:')?'setCard':'libCard';
   const record={id:'sheet1',processReady:false,processSeals:history};
@@ -46,7 +46,7 @@ try{
   const seals=[...card.querySelectorAll('.seal')];assert.equal(seals.length,3,'every actual historical process seal stays visible');
   assert.deepEqual(seals.map(n=>n.dataset.processSeal),history.map(x=>x.id));
   for(const seal of seals){
-   assert.equal(number(seal,'width'),72,'Library card seal is compact');assert.equal(number(seal,'height'),72);
+   assert.equal(number(seal,'width'),44,'Library card seal is compact');assert.equal(number(seal,'height'),44);
    assert.equal(w.getComputedStyle(seal).opacity,'1','actual seals remain fully visible');
    assert.doesNotMatch(seal.querySelector('svg').textContent,/AWAITING LASER|Paul|Seth|Alex/,'regular face stays legible and signer stays in assistive metadata');
   }
@@ -54,14 +54,14 @@ try{
   record.processReady=true;context.processSeals(card,record,owner);record.processReady=false;context.processSeals(card,record,owner);
   assert.deepEqual([...card.querySelectorAll('.seal')],seals,'moving stages or reopening never removes historical ink');
   record.processReady=false;assert.equal(JSON.stringify(record),before,'only the explicit test stage changes');
-  const row=card.querySelector('.processSealRow');row.style.setProperty('--seal-fit','46px');
-  assert(seals.every(n=>number(n,'width')===46 && number(n,'height')===46),'crowded groups can shrink below the compact cap uniformly');
-  row.style.setProperty('--seal-fit','84px');assert(seals.every(n=>number(n,'width')===72),'more room restores the same compact card cap');
+  const row=card.querySelector('.processSealRow');row.style.setProperty('--seal-fit','30px');
+  assert(seals.every(n=>number(n,'width')===30 && number(n,'height')===30),'crowded groups can shrink below the compact cap uniformly');
+  row.style.setProperty('--seal-fit','50px');assert(seals.every(n=>number(n,'width')===44),'more room restores the same compact card cap');
   card.remove();
  }
  const plain=d.createElement('div');plain.className='sealRow';plain.innerHTML=Seal.html(history[0]);d.body.appendChild(plain);
- assert.equal(number(plain.firstChild,'width'),84,'non-Library seals keep their canonical viewport');
+ assert.equal(number(plain.firstChild,'width'),50,'non-Library seals keep their canonical viewport');
  const rules=[...production.sheet.cssRules];
- assert.equal(rules.find(r=>r.selectorText==='.librarySheet:has(.processSealRow)>.productionRow').style.getPropertyValue('margin-top'),'38px','QR room follows the smaller card seal');
- console.log('PASS: no pending/readiness preview ink, compact counters unchanged, all historical seals survive stage changes without duplicates, Library cards cap at72 and shrink uniformly, standard84/hover168 elsewhere.');
+ assert.equal(rules.find(r=>r.selectorText==='.librarySheet:has(.processSealRow)>.productionRow').style.getPropertyValue('margin-top'),'24px','QR room follows the smaller card seal (half of 44 and 2)');
+ console.log('PASS: no pending/readiness preview ink, compact counters unchanged, all historical seals survive stage changes without duplicates, Library cards cap at44 and shrink uniformly, standard50 elsewhere (the zoom is adaptive).');
 }finally{w.close();}

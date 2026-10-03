@@ -48,7 +48,10 @@
     warn: '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="7" fill="currentColor" opacity=".16"/><path d="M8 4.6v4M8 11v.1" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></svg>'
   };
   const flow = () => { const f = W.LibraryFlow; return f && typeof f.targets === 'function' && typeof f.plan === 'function' && typeof f.commit === 'function' ? f : null; };
-  const D = { pending: null, drag: null, move: null, menu: null, noClick: 0, seq: 0, pt: null };
+  const D = { pending: null, drag: null, move: null, menu: null, noClick: 0, seq: 0, pt: null, settling: 0 };
+  /** A card is held, flying home or being moved (the Library's live read leaves its lists alone meanwhile). */
+  const busy = () => !!(D.drag || D.move || D.settling > 0);
+  const sync = () => { try { html.toggleAttribute('data-library-drag', busy()); } catch (_) { /* no attribute */ } };
   const specKey = s => s.area ? 'area:' + s.area : s.set ? 'set:' + s.set : 'newSet';
   const cleanSpec = s => s.area ? { area: s.area } : s.set ? { set: s.set } : { newSet: true };
   const visible = e => { if (!e || !e.isConnected) return false; const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
@@ -387,7 +390,8 @@ html.dndOn,html.dndOn *{cursor:grabbing!important;-webkit-user-select:none!impor
   }
   /** A card let go over nothing, or over a place that is not allowed: it settles back where it was. */
   async function settleBack(item, lift) {
-    const home = elOf(item), finish = () => { if (lift) lift.remove(); if (home) { home.classList.remove('dndSource'); ring(home); } };
+    D.settling++; sync();
+    const home = elOf(item), finish = () => { if (lift) lift.remove(); if (home) { home.classList.remove('dndSource'); ring(home); } D.settling = Math.max(0, D.settling - 1); sync(); };
     if (!lift || !home || reduced() || !lift.el.animate) { finish(); return; }
     const hr = home.getBoundingClientRect(), tf = (x, y, rot) => `translate3d(${x - lift.ox}px,${y - lift.oy}px,0) rotate(${rot}deg) scale(1)`;
     const a = lift.el.animate([{ transform: tf(lift.x, lift.y, lift.r) }, { transform: tf(hr.left + lift.ox, hr.top + lift.oy, 0) }], { duration: 360, easing: 'cubic-bezier(.3,1.2,.4,1)', fill: 'forwards' });
@@ -545,9 +549,10 @@ html.dndOn,html.dndOn *{cursor:grabbing!important;-webkit-user-select:none!impor
     const f = flow(); if (!f || !item || !to) return null;
     if (D.move) { if (D.move.state !== 'review') return null; cancelMove(D.move, true); }
     const m = D.move = { id: ++D.seq, item, to: cleanSpec(to), state: 'planning', lift: o.lift || null, skip: null, resolve: null, fast: false };
+    sync();
     try { return await run(f, m, o); }
     catch (e) { console.warn('Library move', e); return { ok: false, error: String(e && e.message || e) }; }
-    finally { clearSources(); if (D.move === m) D.move = null; }
+    finally { clearSources(); if (D.move === m) D.move = null; sync(); }
   }
   async function run(f, m, o) {
     const item = m.item, name = targetName(m.to), kind = item.kind, label = labelOf(item), zone = o.zone || null;
@@ -671,7 +676,8 @@ html.dndOn,html.dndOn *{cursor:grabbing!important;-webkit-user-select:none!impor
     try {
       const LD = W.LibraryDone, LR = W.LaserReview;
       if (LD && typeof LD.reload === 'function') await LD.reload(keys); else if (W.CN && W.CN.loadLibrary && (!LD || LD.tab() !== 'done')) await Promise.resolve(W.CN.loadLibrary()).catch(() => {});
-      if (LR) { LR.changed && LR.changed(); LR.poll && LR.poll(true); }
+      // (the live read at once and again a moment later: LaserReview.poll(force, now); never the slow check, whose seals the move itself recorded)
+      if (LR) { LR.changed && LR.changed(); if (LR.nudge) LR.nudge(); else if (LR.poll) LR.poll(true, true); }
     } catch (e) { console.warn('Library refresh after a move', e); }
     clearSources();
     for (let i = 0; i < 24; i++) {
@@ -728,7 +734,7 @@ html.dndOn,html.dndOn *{cursor:grabbing!important;-webkit-user-select:none!impor
     if (D.move && D.move.state === 'review') cancelMove(D.move, true);
     closeMenu();
     const d = D.drag = { item, x, y, px: x, py: y, tilt: 0, hot: null, zones: [], dock: null, lift: null, pid: p.pid, raf: 0, token: ++D.seq };
-    html.classList.add('dndOn'); elOf(item).classList.add('dndSource');
+    html.classList.add('dndOn'); elOf(item).classList.add('dndSource'); sync();
     try { W.getSelection().removeAllRanges(); } catch (_) { /* none */ }
     d.lift = makeLift(item, { x, y });
     try { html.setPointerCapture(p.pid); } catch (_) { /* a stand-in pointer */ }
@@ -753,7 +759,7 @@ html.dndOn,html.dndOn *{cursor:grabbing!important;-webkit-user-select:none!impor
     else if (d.y > r.bottom - 66) st.scrollTop += Math.ceil((d.y - (r.bottom - 66)) / 3);
   }
   function stopDrag(d) {
-    D.drag = null; cancelAnimationFrame(d.raf); html.classList.remove('dndOn'); D.noClick = performance.now() + 450;
+    D.drag = null; cancelAnimationFrame(d.raf); html.classList.remove('dndOn'); D.noClick = performance.now() + 450; sync();
     try { html.releasePointerCapture(d.pid); } catch (_) { /* not held */ }
   }
   function abort(d) {
@@ -892,7 +898,7 @@ html.dndOn,html.dndOn *{cursor:grabbing!important;-webkit-user-select:none!impor
     decorate(doc);
   }
   W.LibraryDnd = {
-    decorate, enabled: () => !!flow(), move, openMenu: (item, g) => openMenu(item, g),
+    decorate, enabled: () => !!flow(), busy, move, openMenu: (item, g) => openMenu(item, g),
     cancel() { if (D.drag) abort(D.drag); if (D.move) cancelMove(D.move); closeMenu(); },
     state: () => ({ dragging: !!D.drag, move: D.move ? D.move.state : null, menu: !!D.menu })
   };

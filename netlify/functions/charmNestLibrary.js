@@ -196,17 +196,18 @@ async function filingRecords(records) {
   for(let i=0;i<ids.length;i+=100) for(const d of await db.getAll(...ids.slice(i,i+100).map(id=>col(SETS).doc(id)),{fieldMask:["laserDoneAt"]})) sets.set(d.id,d.exists?d.data():null);
   return records.map(s=>({...s,laserSetPending:!!(s.setId && !s.draft && s.solidIncluded!==false && !(num(sets.get(s.setId)?.laserDoneAt)>0))}));
 }
-async function readinessRecords(records) {
+async function readinessRecords(records,{revs=null}={}) {
   records=await filingRecords(records);
-  await productionReadiness(records);
+  await productionReadiness(records,{revs});
   return records.map(s=>({...s,laser:Readiness.laserSheet(s)}));
 }
 // Verify whole orders from their current saved lines, including archived lines and copies on another sheet.
 // The caller's transaction reads the live run and every dependent sheet before it writes a seal or completion.
-async function productionReadiness(records,{tx=null}={}) {
+async function productionReadiness(records,{tx=null,revs=null}={}) {
   const get=ref=>tx?tx.get(ref):ref.get(),runs=new Map(),lines=new Map(),wanted=new Set(records.flatMap(Readiness.orderIds));
   for(const id of [...new Set(records.map(s=>s.runId).filter(isId))]){
     const snap=await get(col(RUNS).doc(id)),run=snap.exists?await withLiveLines(id,snap.data()):null;
+    if(revs)revs['r:'+id]=revOf(snap);
     runs.set(id,run || {});
     const archived=run?.lineArchive?await archivedLines(id,{orders:wanted}):{lines:{}};
     for(const [key,l] of Object.entries({...archived.lines,...run?.lines}))if(wanted.has(String(l.orderId || key.split('_')[0])))lines.set(key,{...l,key,orderId:String(l.orderId || key.split('_')[0])});
@@ -215,13 +216,13 @@ async function productionReadiness(records,{tx=null}={}) {
   const present=new Set(records.flatMap(Readiness.idsOf)),missingOrders=[...new Set([...lines.values()].filter(l=>(l.poolIds || []).some(id=>!present.has(id))).map(l=>l.orderId))];
   for(let i=0;i<missingOrders.length;i+=30){
     const snap=await get(col(SHEETS).where('orders','array-contains-any',missingOrders.slice(i,i+30)).select(...SLIM_SHEET));
-    for(const d of snap.docs)if(!d.data().archived && !evidence.has(d.id))evidence.set(d.id,{...d.data(),id:d.id});
+    for(const d of snap.docs){if(revs)revs['s:'+d.id]=revOf(d);if(!d.data().archived && !evidence.has(d.id))evidence.set(d.id,{...d.data(),id:d.id});}
   }
   // A dependent sheet can also carry other orders. Read their engraving evidence too;
   // otherwise its plain pieces would incorrectly become "unknown" just because this view shows another set.
   const dependencies=[...evidence.values()].filter(s=>!records.includes(s));
   for(const id of [...new Set(dependencies.map(s=>s.runId).filter(isId))]){
-    if(!runs.has(id)){const snap=await get(col(RUNS).doc(id));runs.set(id,snap.exists?await withLiveLines(id,snap.data()):{});}
+    if(!runs.has(id)){const snap=await get(col(RUNS).doc(id));if(revs)revs['r:'+id]=revOf(snap);runs.set(id,snap.exists?await withLiveLines(id,snap.data()):{});}
     const run=runs.get(id),orders=new Set(dependencies.filter(s=>s.runId===id).flatMap(Readiness.orderIds));
     const archived=run?.lineArchive?await archivedLines(id,{orders}):{lines:{}};
     for(const [key,l] of Object.entries({...archived.lines,...run?.lines}))if(orders.has(String(l.orderId || key.split('_')[0])))lines.set(key,{...l,key,orderId:String(l.orderId || key.split('_')[0])});
@@ -354,15 +355,42 @@ async function decisionsOfRun(runId, run, poolIds = null) {
   for (const [k, d] of Object.entries(byLine)) if (!lines[k]) Object.assign(out, d);
   return Object.assign(out, live);
 }
+/* ── The Library's live read (Paul, 3 Oct 04:47: "real-time", and what is still remaining for a sheet or a set). laserStatus
+   with recordSeals !== true is a pure read: it reads sheet, set, run, archive and rule documents and writes none (the only
+   writes in this operation are recordProcessReadiness, behind recordSeals === true, which the Library's slow check asks
+   for and its fast reads never do). A full answer is heavy, though (whole sheet records, the runs' lines, the archive), so
+   a reader that wants to follow the cloud every few seconds asks for the answer's revisions (wantRevs) and sends them back
+   (ifRevs) with its next read: the documents the answer was made from are then read for their update times alone, and
+   when none is newer the answer is just { unchanged: true } and nothing is read or worked out again. A document's update
+   time changes with every write to it, whoever made it, so this cannot miss a change in a document it watches. It watches
+   the sheets and sets asked for, a set's other sheets, the runs of those sheets and the other sheets that carry their
+   orders; the learned no-design rules and a hand-completed special item are not watched (the Library's slow check
+   reads them). ── */
+const revOf = snap => (snap && snap.exists && snap.updateTime ? `${snap.updateTime.seconds}.${snap.updateTime.nanoseconds}` : "0");
+const REV_KEY = /^[str]:[\w\-]{4,80}$/, MAX_REVS = 700;
+/** The number of documents read when nothing a laserStatus answer was made from (revs) is newer, 0 when something is. */
+async function laserUnchanged(sheetIds, setIds, revs) {
+  const keys = Object.keys(revs || {});
+  if (!keys.length || keys.length > MAX_REVS || !keys.every(k => REV_KEY.test(k))) return 0;
+  const asked = [...new Set((sheetIds || []).filter(isId))].map(id => "s:" + id).concat([...new Set([].concat(setIds || []).filter(isId))].map(id => "t:" + id));
+  if (!asked.length || !asked.every(k => Object.prototype.hasOwnProperty.call(revs, k))) return 0;   // (a card not read before: read in full)
+  const coll = { s: SHEETS, t: SETS, r: RUNS }, parts = [];
+  for (let i = 0; i < keys.length; i += 100) parts.push(keys.slice(i, i + 100));
+  const answers = await Promise.all(parts.map(part => db.getAll(...part.map(k => col(coll[k[0]]).doc(k.slice(2))), { fieldMask: ["updatedAt"] })));
+  for (let i = 0; i < parts.length; i++) for (let j = 0; j < parts[i].length; j++) if (revOf(answers[i][j]) !== String(revs[parts[i][j]])) return 0;
+  return keys.length;
+}
 async function op_laserStatus(b) {
   const ids=[...new Set((b.sheetIds || []).filter(isId))].slice(0,500), records=[];
-  for(let i=0;i<ids.length;i+=100){const docs=await db.getAll(...ids.slice(i,i+100).map(id=>col(SHEETS).doc(id)));for(const d of docs)if(d.exists&&!d.data().archived)records.push({...d.data(),id:d.id});}
+  if(b.recordSeals!==true && b.ifRevs && typeof b.ifRevs==='object'){const probed=await laserUnchanged(ids,b.setIds,b.ifRevs);if(probed)return {unchanged:true,probed,checkedAt:Date.now()};}
+  const revs=b.wantRevs===true && b.recordSeals!==true?{}:null;
+  for(let i=0;i<ids.length;i+=100){const docs=await db.getAll(...ids.slice(i,i+100).map(id=>col(SHEETS).doc(id)));for(const d of docs){if(revs)revs['s:'+d.id]=revOf(d);if(d.exists&&!d.data().archived)records.push({...d.data(),id:d.id});}}
   const setIds=[...new Set(records.map(s=>s.setId).concat(b.setIds || []).filter(isId))].slice(0,500),sets=[];
-  for(let i=0;i<setIds.length;i+=100){const docs=await db.getAll(...setIds.slice(i,i+100).map(id=>col(SETS).doc(id)));for(const d of docs){const s=d.exists?d.data():{};sets.push({setId:d.id,sheetIds:s.sheetIds || [],laserDoneAt:num(s.laserDoneAt) || null,laserDoneBy:s.laserDoneBy || null,processSeals:Readiness.processStamps(s),processReady:!!s.processReady});}}
+  for(let i=0;i<setIds.length;i+=100){const docs=await db.getAll(...setIds.slice(i,i+100).map(id=>col(SETS).doc(id)));for(const d of docs){if(revs)revs['t:'+d.id]=revOf(d);const s=d.exists?d.data():{};sets.push({setId:d.id,sheetIds:s.sheetIds || [],laserDoneAt:num(s.laserDoneAt) || null,laserDoneBy:s.laserDoneBy || null,processSeals:Readiness.processStamps(s),processReady:!!s.processReady});}}
   // The Sheets view may show only one metal or one member in the viewport. Read its
   // siblings too, so it follows the same complete-set gate as the Sets view.
   const have=new Set(records.map(s=>s.id)),missing=[...new Set(sets.flatMap(s=>s.sheetIds))].filter(id=>isId(id)&&!have.has(id)).slice(0,Math.max(0,500-records.length));
-  for(let i=0;i<missing.length;i+=100){const docs=await db.getAll(...missing.slice(i,i+100).map(id=>col(SHEETS).doc(id)));for(const d of docs)if(d.exists&&!d.data().archived)records.push({...d.data(),id:d.id});}
+  for(let i=0;i<missing.length;i+=100){const docs=await db.getAll(...missing.slice(i,i+100).map(id=>col(SHEETS).doc(id)));for(const d of docs){if(revs)revs['s:'+d.id]=revOf(d);if(d.exists&&!d.data().archived)records.push({...d.data(),id:d.id});}}
   const added=[];
   // Only the active production view asks to record transitions. Ordinary status reads stay read-only.
   if(b.recordSeals===true){
@@ -373,7 +401,7 @@ async function op_laserStatus(b) {
       added.push(...result.added);
     }
   }
-  return {sheets:(await readinessRecords(records)).map(slim),sets,added,checkedAt:Date.now()};
+  return {sheets:(await readinessRecords(records,{revs})).map(slim),sets,added,checkedAt:Date.now(),...(revs?{revs}:{})};
 }
 
 // All process seals are append-only. No trimming, replacement on re-completion, or client-written history.

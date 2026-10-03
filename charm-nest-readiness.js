@@ -138,7 +138,7 @@
   const sentence=t=>{t=String(t || '').replace(/\s+/g,' ').trim().replace(/[.\s]+$/,'');return t?t[0].toUpperCase()+t.slice(1)+'.':'';};
   const brief=(t,max)=>{t=String(t || '').replace(/\s+/g,' ').trim();return t.length>max?t.slice(0,max-1)+'…':t;};
   // where an order's other piece stands, in words (orderReports names the step that holds it)
-  const MISSING={layout:'its layout needs verification',front:'its cutting files are missing',approval:'its engraving needs approval',backs:'its back engraving files are not saved',qr:'its QR labels are missing',held:'it is held back from Laser cutting',included:'it is not in a set yet'};
+  const MISSING={layout:'its layout needs verification',front:'its cutting files are missing',approval:'its engraving needs approval',backs:'its back engraving files are not saved',qr:'its QR labels are missing',held:'it is held back from Laser cutting',included:'it is not in a set yet',held:'it is held back from Laser cutting'};
   // what a piece's engraving still waits for (the page's job states, and the server's)
   const ENGRAVE_WAIT={unknown:'Its engraving has not been read yet',classify:'Its engraving has not been read yet',words:'Its engraving words wait for a decision',review:'Its back engraving waits for approval',blocked:'Its back engraving needs attention first'};
   function names(ctx){
@@ -176,6 +176,7 @@
     if(s.archived)own('nesting','This sheet was removed (archived), so it cannot be cut',true);
     else if(s.draft)own('nesting','Not in a set yet: it joins a set when it is full or released');
     else if(s.solidIncluded===false)own('nesting','Not included in its set yet: turn Include on for this metal',true);
+    else if(held(s))own('nesting','Held back from Laser cutting (it was moved back to In progress): press Approve for laser cutting to release it',true);
     else if(held(s))own('nesting',`Held back from Laser cutting${s.laserHold.by?` by ${s.laserHold.by}`:''}: move it to Laser cutting to release it. Its approvals and seals are kept`);
     if(again){
       // cut once before: reopening keeps that approval (laserSheet), only a place in a set is still asked
@@ -268,8 +269,10 @@
    *  rows: they name the buyer and the piece) · sheets (a set's member records; for a sheet in a set, the set's sheets) · set (the
    *  sheet's set record) · setMissing (the sheet's set is not loaded, so it cannot be released alone). Records are read as laserSheet
    *  and laserGroup read them, so ready is exactly the gate's answer. */
+  // ctx.lookup: a names() result, or a function giving one (built once by the caller and only when a name is needed)
+  const wrap=ctx=>{const get=()=>typeof ctx.lookup==='function'?ctx.lookup():ctx.lookup;return ctx.lookup?{order:id=>get().order(id),charm:id=>get().charm(id)}:names(ctx);};
   function explain(subject,ctx={}){
-    const s=subject || {},N=names(ctx),kind=ctx.kind || (s.kind==='set' || (Array.isArray(s.sheetIds) && !s.poolIds && !s.id && !s.sheetId)?'set':'sheet');
+    const s=subject || {},N=wrap(ctx),kind=ctx.kind || (s.kind==='set' || (Array.isArray(s.sheetIds) && !s.poolIds && !s.id && !s.sheetId)?'set':'sheet');
     if(kind==='set')return explainSet(s,ctx,N);
     const e=sheetSteps(s,N),done=+s.laserDoneAt>0;
     let ready=e.r.included && (e.again || e.r.ready),laserWords='Starts once the steps before it are done.',laserShort='',laserItems=[];
@@ -299,7 +302,7 @@
       else{
         items=[];
         for(const i of k==='nesting'?gone:[]){const a=raw.find(y=>(y.id || y.sheetId)===i);items.push({kind:'sheet',id:i,label:a?sheetLabel(a):'A sheet of this set',why:a?.archived?'It was removed (archived) but is still listed in this set':'It is listed in this set but cannot be found, so the set is incomplete'});}
-        for(const p of behind)items.push({kind:'sheet',id:p.id,label:p.label,why:p.detail[k]});
+        for(const p of behind)items.push({kind:'sheet',id:p.id,label:p.label,why:p.detail[k].replace(/[.\s]+$/,'')});
         if(k==='orders'){const seen=new Set();for(const p of behind)for(const i of p.items.orders)if(i.kind==='order' && !seen.has(i.id)){seen.add(i.id);items.push(i);}}
       }
       x[k]={ok:!n,hard:lost>0 || parts.some(p=>p.hard[k]),items,
@@ -316,5 +319,5 @@
     }
     return e;
   }
-  return {idsOf,orderIds,decisions,held,sheet,set,completedBefore,laserSheet,laserGroup,orderReports,orderBlockers,filed,processStamps,seal,counter,explain,STEPS:STEPS.map(([key,label])=>({key,label})),sheetLabel};
+  return {idsOf,orderIds,decisions,held,sheet,set,completedBefore,laserSheet,laserGroup,orderReports,orderBlockers,filed,processStamps,seal,counter,explain,lookup:names,STEPS:STEPS.map(([key,label])=>({key,label})),sheetLabel};
 });

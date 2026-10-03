@@ -106,10 +106,10 @@ function seed(st, blobUrl) {
   assert(b.h < 44 && b.over <= 0 && b.tabs <= b.input + 1 && Math.abs(b.tabsTop + b.tabs / 2 - (b.inputTop + b.input / 2)) < 2, 'one line of bar at 1500: ' + JSON.stringify(b));
   const current0 = await page.$$eval('#libBody .libCard[data-id]', cs => cs.map(c => c.dataset.id));
   assert(current0.length === 24 && !current0.some(id => id.startsWith('old')), 'Current holds what the laser has not done: ' + current0.length);
-  // (the Library card's seal cap of 72 px, in a real browser: the jsdom tests of it read the stylesheet through custom properties, as jsdom cannot parse min() around var())
+  // (the Library card's seal cap of 44 px, in a real browser: the jsdom tests of it read the stylesheet through custom properties, as jsdom cannot parse min() around var())
   const caps = await page.$$eval('#libBody .libCard .seal', ss => ss.map(x => Math.round(x.offsetWidth)));
-  assert(caps.length > 0 && caps.every(w => w > 0 && w <= 72) && Math.max(...caps) === 72, 'Library card seals are capped at 72 px: ' + caps.slice(0, 12));
-  ok.push('Current lists only what is not completed; the tab counts 120 completed sheets; one line of bar at 1500; the Library card seals stand at the 72 px cap');
+  assert(caps.length > 0 && caps.every(w => w > 0 && w <= 44) && Math.max(...caps) === 44, 'Library card seals are capped at 44 px: ' + caps.slice(0, 12));
+  ok.push('Current lists only what is not completed; the tab counts 120 completed sheets; one line of bar at 1500; the Library card seals stand at the 44 px cap');
   await shot('01-current-1500');
 
   // mark a sheet completed from its corner: it leaves, the count grows, the cloud records who and when; Undo brings it back

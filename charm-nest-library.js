@@ -1085,7 +1085,7 @@
     if (S.mode === 'library') { writeHash(); if (L.tab === 'done') showDone(); else { const b = byId('libBody'); if (b.querySelector('.libCard, .libEmpty')) decorate(b); } }
   }
 
-  window.LibraryDone = { mark, isDone, isFiled, canComplete, addedSeals, refreshCards: root => { cards(root, L.tab); partials(root); }, tab: () => L.tab, setTab, show, focus, rows, decorate, input, fromHash, glide, counts: () => L.counts && Object.assign({}, L.counts) };
+  window.LibraryDone = { mark, isDone, isFiled, canComplete, addedSeals, refreshCards: root => { cards(root, L.tab); partials(root); }, tab: () => L.tab, setTab, show, focus, rows, decorate, input, fromHash, glide, snapshot, glideFrom, counts: () => L.counts && Object.assign({}, L.counts) };
   window.LibraryDone.reload = reload;
   if (doc.readyState === 'loading') doc.addEventListener('DOMContentLoaded', init); else init();
 })();

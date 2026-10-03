@@ -726,7 +726,7 @@ dialog.phv.layer.phvIn{background:transparent}
 /* where it is now: the latest step, who did it, the last stamps, and the sheets it is on */
 .owNowCard{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:18px;align-items:center;border:1px solid var(--line);border-radius:14px;padding:14px 16px;background:var(--card2);margin-bottom:20px}
 .owNowCard[hidden]{display:none}
-.owNowCard.sealed,.owNowCard.sealed.bad{grid-template-columns:var(--seal-size) minmax(0,1fr) auto}
+.owNowCard.sealed,.owNowCard.sealed.bad{grid-template-columns:var(--seal-base) minmax(0,1fr) auto}
 .owNowCard .k{font:700 9.5px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--ink45)}
 .owNowCard .t{font:19px var(--serif);margin:3px 0 6px;color:var(--ink)}
 .owNowCard .who{display:inline-flex;align-items:center;gap:7px;border:1px solid var(--line);border-radius:999px;padding:2px 10px 2px 4px;background:var(--card);font:12px var(--sans);color:var(--ink70)}
@@ -2021,14 +2021,14 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
 .qrPart figcaption {font-size:11px;line-height:1.35;color:var(--ink45);white-space:nowrap}
 .qrPart figcaption b {display:block;font-weight:600;color:var(--ink70)}
 .qrWaiting {width:84px;height:84px;display:grid;place-items:center;text-align:center;padding:6px;border:1px dashed var(--line);border-radius:6px;color:var(--ink45);font-size:11px}
-.laserSeal {display:inline-flex;align-items:center;flex:0 0 var(--seal-size);width:var(--seal-size);height:var(--seal-size);color:#4e7147;vertical-align:middle}
+.laserSeal {display:inline-flex;align-items:center;flex:0 0 var(--seal-base);width:var(--seal-base);height:var(--seal-base);color:#4e7147;vertical-align:middle}
 .laserSeal.pending {color:#a9a59d}
 .laserSeal.pending svg {fill:#efede8}
 .laserSeal svg {display:block;width:100%;height:100%;fill:#e8f0e2;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;pointer-events:none}
 .sheetBackStatus {display:inline-flex;align-items:center;gap:7px;margin-left:auto}
 /* Readiness rests half across the card's right edge, outside the compact footer's flow. */
-.libCard .m:has(.sheetBackStatus .laserSeal){position:relative;padding-right:calc(var(--seal-size) / 2 + 8px)}
-.libCard .sheetBackStatus .laserSeal{position:absolute;right:calc(var(--seal-size) / -2 - 12px);top:50%;transform:translateY(-50%)}
+.libCard .m:has(.sheetBackStatus .laserSeal){position:relative;padding-right:calc(var(--seal-base) / 2 + 8px)}
+.libCard .sheetBackStatus .laserSeal{position:absolute;right:calc(var(--seal-base) / -2 - 12px);top:50%;transform:translateY(-50%)}
 .backSavedCount {font:11px var(--sans);font-variant-numeric:tabular-nums;line-height:1.4;white-space:nowrap}
 .backSavedCount>b {font-size:inherit;font-weight:650}
 [data-laser-seal]:empty {display:none}
@@ -2210,17 +2210,17 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
 .owSheetMatches b{font:600 13px var(--mono)}
 .owSheetMatches small{color:var(--ink70);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 @media(max-width:700px){#reviewView .cnOrderFind{flex-basis:120px}}
-/* Library stamps use a compact 72px cap; the history group still shrinks uniformly when crowded. */
+/* Library stamps use a compact 44px cap (it was 72px); the history group still shrinks uniformly when crowded. */
 /* Process seals share the wooden press, inked artwork and lens used by order seals. */
 .processSealRow.sealRow{gap:4px;justify-content:flex-end;margin:0;max-width:100%;flex-wrap:nowrap;pointer-events:none}
 .processSealRow.sealRow .seal+.seal{margin-left:0}
-.libCard>.processSealRow{position:absolute;right:20px;bottom:calc(min(72px,var(--seal-fit,var(--seal-size))) / -2);z-index:3;max-width:calc(100% - 40px)}
+.libCard>.processSealRow{position:absolute;right:20px;bottom:calc(min(44px,var(--seal-fit,var(--seal-base))) / -2);z-index:3;max-width:calc(100% - 40px)}
 .libCard:has(>.processSealRow){padding-bottom:10px}
-.libCard:has(.sheetBackStatus .laserSeal)>.processSealRow{right:calc(var(--seal-size) / 2 + 24px);max-width:calc(100% - var(--seal-size) / 2 - 44px)}
+.libCard:has(.sheetBackStatus .laserSeal)>.processSealRow{right:calc(var(--seal-base) / 2 + 24px);max-width:calc(100% - var(--seal-base) / 2 - 44px)}
 .processSealRow .seal{background:transparent;border-radius:0;cursor:zoom-in;mix-blend-mode:normal}
-.setProcessSeals.sealRow{margin:calc(min(72px,var(--seal-fit,var(--seal-size))) * -.28) 12px calc(min(72px,var(--seal-fit,var(--seal-size))) * -.28) auto;flex:0 1 auto}
+.setProcessSeals.sealRow{margin:calc(min(44px,var(--seal-fit,var(--seal-base))) * -.28) 12px calc(min(44px,var(--seal-fit,var(--seal-base))) * -.28) auto;flex:0 1 auto}
 .ldProcessSeals.sealRow{grid-column:2 / -1;justify-content:flex-start;margin:0 0 5px;gap:4px}
-.librarySheet:has(.processSealRow)>.productionRow{margin-top:38px}
+.librarySheet:has(.processSealRow)>.productionRow{margin-top:24px}
 .ldMark{position:absolute;top:-9px;right:-9px;z-index:2;width:26px;height:26px;border-radius:50%;border:1px solid var(--ink25);background:var(--card);color:var(--ink70);display:grid;place-items:center;padding:0;cursor:pointer;box-shadow:0 2px 6px rgba(30,26,20,.14);opacity:0;transform:scale(.8);transition:opacity .14s ease,transform .14s ease,background-color .14s,color .14s,border-color .14s}
 .ldMark svg{width:14px;height:14px;display:block}
 .libCard:hover>.ldMark,.libCard:focus-within>.ldMark,.ldMark:focus-visible,.ldMark.busy{opacity:1;transform:none}
@@ -2613,13 +2613,18 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 .mNoteBar{position:absolute;left:12px;right:12px;bottom:5px;height:2px;border-radius:2px;background:rgba(202,168,97,.6);transform-origin:left;animation:mNoteBar linear forwards}
 .mNote.paused .mNoteBar{animation-play-state:paused}
 @keyframes mNoteBar{from{transform:scaleX(1)}to{transform:scaleX(0)}}
-/* A regular seal has one shared size everywhere. The fitter sets --seal-fit on a crowded group,
-   so every sibling shrinks by the same amount without making another line. Legacy --sz is ignored. */
-.sealRow{display:inline-flex;align-items:center;flex-wrap:nowrap;gap:4px;pointer-events:none;margin:calc(var(--seal-fit,var(--seal-size)) * -.30) 0 calc(var(--seal-fit,var(--seal-size)) * -.18) 22px;min-width:0;max-width:100%;flex:0 1 auto;overflow:visible}
+/* A regular seal has one shared size everywhere outside the Timeline: --seal-base, 50px (Paul, 3 Oct: "all of these seals
+   are too big ... they can be much smaller"; it was 84px), the same as Seal.BASE_SIZE in charm-nest-motion.js. The fitter sets
+   --seal-fit on a crowded group, so every sibling shrinks by the same amount without making another line. Legacy --sz is
+   ignored. --seal-size stays the Timeline's own size (charm-nest-timeline-ui.js reads it); the "Where it is now" card is on
+   the Overview, so it takes the regular size here. */
+:root{--seal-base:50px}
+.owNowCard{--seal-size:var(--seal-base)}
+.sealRow{display:inline-flex;align-items:center;flex-wrap:nowrap;gap:4px;pointer-events:none;margin:calc(var(--seal-fit,var(--seal-base)) * -.30) 0 calc(var(--seal-fit,var(--seal-base)) * -.18) 22px;min-width:0;max-width:100%;flex:0 1 auto;overflow:visible}
 .sealRow .seal+.seal{margin-left:0}
-.sealRow.mini{margin:calc(var(--seal-fit,var(--seal-size)) * -.28) 0 calc(var(--seal-fit,var(--seal-size)) * -.28) -12px}
-.seal{position:relative;display:inline-block;flex:0 0 var(--seal-fit,var(--seal-size));width:var(--seal-fit,var(--seal-size));height:var(--seal-fit,var(--seal-size));border-radius:50%;transform:rotate(var(--rot,-8deg));mix-blend-mode:multiply;opacity:.94;pointer-events:auto;transition:filter .9s ease-out,opacity .2s}
-.libCard .seal,.setCard .seal,.ldProcessSeals .seal{flex:0 0 min(72px,var(--seal-fit,var(--seal-size)));width:min(72px,var(--seal-fit,var(--seal-size)));height:min(72px,var(--seal-fit,var(--seal-size)));opacity:1}
+.sealRow.mini{margin:calc(var(--seal-fit,var(--seal-base)) * -.28) 0 calc(var(--seal-fit,var(--seal-base)) * -.28) -12px}
+.seal{position:relative;display:inline-block;flex:0 0 var(--seal-fit,var(--seal-base));width:var(--seal-fit,var(--seal-base));height:var(--seal-fit,var(--seal-base));border-radius:50%;transform:rotate(var(--rot,-8deg));mix-blend-mode:multiply;opacity:.94;pointer-events:auto;transition:filter .9s ease-out,opacity .2s}
+.libCard .seal,.setCard .seal,.ldProcessSeals .seal{flex:0 0 min(44px,var(--seal-fit,var(--seal-base)));width:min(44px,var(--seal-fit,var(--seal-base)));height:min(44px,var(--seal-fit,var(--seal-base)));opacity:1}
 .seal svg{display:block;width:100%;height:100%;overflow:visible;pointer-events:none}
 .seal.loose{position:absolute;z-index:3}
 .seal.pending{opacity:0}
@@ -2640,7 +2645,7 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 .btn.hov{opacity:.9}.btn.ghost.hov{background:var(--card2)}.btn.act{transform:translateY(1px)}
 .btn.working{opacity:1;cursor:progress}
 .btn.working:disabled{opacity:1}
-@container(max-width:1100px){.doneRow .rowActions .sealRow:not(.mini){margin:calc(var(--seal-fit,var(--seal-size)) * -.28) 0 calc(var(--seal-fit,var(--seal-size)) * -.28) 0}}
+@container(max-width:1100px){.doneRow .rowActions .sealRow:not(.mini){margin:calc(var(--seal-fit,var(--seal-base)) * -.28) 0 calc(var(--seal-fit,var(--seal-base)) * -.28) 0}}
 @media(prefers-reduced-motion:reduce){.seal,.sealRow.press .seal{transition:none}.seal.wobble,.sealRow.spring .seal,.mFound{animation:none}}
 /* A rested, focused or tapped seal grows where it stands (charm-nest-motion.js, Seal.zoom): no copy, no bubble. */
 .rvItem .cuStep>.rvItem{border:0;box-shadow:none;background:transparent;padding:0;border-left:0}
@@ -2654,7 +2659,7 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 .owCustom.done .tag{color:#3f5b3a}
 .owCustom .w{flex:1 1 auto;min-width:0;font-size:12px;color:var(--ink70);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .owCustom .btn{flex:0 0 auto}
-.owCustom .sealRow{margin:calc(var(--seal-fit,var(--seal-size)) * -.28) 0;max-width:50%;flex:0 0 auto}
+.owCustom .sealRow{margin:calc(var(--seal-fit,var(--seal-base)) * -.28) 0;max-width:50%;flex:0 0 auto}
 .owCustom .owCuMore{flex:0 0 auto;border:0;background:transparent;color:var(--ink45);font:700 10.5px var(--sans);padding:3px 5px;margin-left:-4px;border-radius:6px;cursor:pointer;white-space:nowrap}
 .owCustom .owCuMore:hover,.owCustom .owCuMore:focus-visible{color:var(--ink);background:var(--card2)}
 .owNoteField .fLabel{color:var(--ink)}
@@ -2662,7 +2667,7 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 .owNoteField .owIn.has{background:#fdf7e6;border-color:var(--gold2);font-size:13.5px}
 </style>
 <link rel="preload" href="charm-nest-stamp-walnut.png" as="image">
-<link rel="stylesheet" href="charm-nest-activity.css?v=20261002-seal-fit">
+<link rel="stylesheet" href="charm-nest-activity.css?v=20261003-seal-small">
 </head>
 <body>
 <div class="app" id="app">
@@ -2872,15 +2877,15 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-vector.js"></script>
 <script src="charm-nest-pdf.js?v=20260924-followup"></script>
 <script src="charm-nest-dxf.js?v=20260927-custom"></script>
-<script src="charm-nest-motion.js?v=20261003-zg"></script>
+<script src="charm-nest-motion.js?v=20261003-zg-seal-small"></script>
 <script src="charm-nest-timeline-ui.js?v=20261003-tl-seal-zg-live-fast"></script>
 <script src="charm-nest-geom.js?v=20260921-material"></script>
 <script src="charm-nest-engrave-fit.js"></script>
 <script src="charm-nest-assets.js"></script>
 <script src="charm-nest-backs.js?v=20260928-backface"></script>
 <script src="charm-nest-activity.js?v=20261001-compact-controls"></script>
-<script src="charm-nest-engraving-seals.js?v=20261002-seal-fit"></script>
-<script src="charm-nest-readiness.js?v=20261003-explain"></script>
+<script src="charm-nest-engraving-seals.js?v=20261003-seal-small"></script>
+<script src="charm-nest-readiness.js?v=20261003-explain-held"></script>
 <script src="charm-nest-export.js"></script>
 <script src="charm-nest-text.js"></script>
 <script src="charm-nest-orders.js?v=20260930-live-search"></script>
@@ -3086,6 +3091,9 @@ function cloudWords(text, status) {
 window.CNWipe = window.CNWipe || { active: false };
 const READ_OP = /^(get|list|ping|lookup|history|check)|(Get|List|Check|Status|Preview|Read|Url|Info)$/;
 const TL_WRITE = /^(pool|back|laser|rose|custom|arrival|cancel|set|putSheet|deleteSheet|restoreSheet|sandboxCancel)/;   // (the writes an order's timeline shows)
+// the writes that change where a sheet or a set stands in the Library, or what it still waits for (its backs, label, set, green
+// line, cut mark, hold and seals, and the orders' own answers): the Library's cards read the cloud again at once after any of them
+const LIBRARY_WRITE = /^(poolPut|poolUpdate|backPut|backInvalidate|setAllocate|setUpdate|runPut|runArchive|laserDone|putSheet|deleteSheet|restoreSheet|archiveEmptySheet|roseRecordCut|roseTakeOff|roseClaim|roseRelease|flowApply|customDecide|customPut|customReopen|customDelete|customSheetPut|cancelPut|cancelRestore|noDesignPut|noDesignDelete)$/;
 async function api(fn, body, opts = {}) {
   if (opts.all) return apiAll(fn, body, opts);
   if (window.CNWipe.active && !opts.wipe && !READ_OP.test(String((body && body.op) || ""))) throw Object.assign(new Error("the sandbox is being reset: try again once the page has reloaded"), { transient: true, wiping: true });
@@ -3112,6 +3120,9 @@ async function api(fn, body, opts = {}) {
     // committed, a cancel): the order view that is open reads its timeline again now and 1.5 s later, not at its next poll
     // (Paul, 3 Oct 04:03). Reads, and writes that no order's timeline shows, do not ask.
     if (fn === "charmNestLibrary" && TL_WRITE.test(String((body && body.op) || "")) && !READ_OP.test(String((body && body.op) || ""))) { try { if (window.OrderWin && OrderWin.isOpen()) OrderWin.nudge(); } catch (_) {} }
+    // ... and the Library's cards (a sheet's or a set's place and readiness) read the cloud again now and 1.5 s after the last write
+    // (Paul, 3 Oct 04:47: real time). The slow check that records seals (laserStatus) is not a write and never lands here.
+    if (fn === "charmNestLibrary" && LIBRARY_WRITE.test(String((body && body.op) || ""))) { try { window.LaserReview?.nudge?.(); } catch (_) {} }
     return data;
   } catch (e) {
     if (e && e.name === "TimeoutError") throw Object.assign(new Error(`${fn}: no answer in ${Math.round(ms / 1000)} s — timed out`), { transient: true });
@@ -6604,7 +6615,7 @@ boot();
      Design Station's sign-in), the same name every seal it stamps carries. -->
 <script src="station-session.js?v=20261002-ea1"></script>
 <script src="station-activity.js?v=20261003-reset-clean"></script>
-<script src="charm-nest-bridge.js?v=20261003-approve-btn-live-fast"></script>
+<script src="charm-nest-bridge.js?v=20261003-why-rail-seal-small-live1"></script>
 <script>
 try {
   const nameNow = () => { try { const n = String((window.CNEmployee && CNEmployee.name()) || "").trim(); return /^\d+$/.test(n) ? "" : n; } catch (_) { return ""; } };
@@ -6632,16 +6643,16 @@ try {
       set(v) { d.set.call(window.B, v); try { const n = String(d.get.call(window.B) || "").trim(); if (n && !/^\d+$/.test(n)) StationSession.signedIn({ name: n, id: null }); } catch (_) {} } });
 } catch (_) {}
 </script>
-<script src="charm-nest-sheetwin.js?v=20261002-ck"></script>
+<script src="charm-nest-sheetwin.js?v=20261003-fl1"></script>
 <script src="charm-nest-tour.js?v=20260929-m11"></script>
 <script src="charm-nest-mail.js?v=20261003-reset-clean"></script>
 <script src="charm-nest-rose-ui.js?v=20261003-rg1"></script>
 <script src="charm-nest-flow-rose.js?v=20261003-rg2"></script>
 <script src="charm-nest-export-ui.js?v=20260925-done"></script>
 <script src="charm-nest-library.js?v=20261003-dnd1"></script>
-<script src="charm-nest-flow.js?v=20261003-flow1"></script>
+<script src="charm-nest-flow.js?v=20261003-flow2"></script>
 <script src="charm-nest-library-approval-ui.js?v=20261003-fb1"></script>
-<script src="charm-nest-library-fx.js?v=20261003-fx1"></script>
+<script src="charm-nest-library-fx.js?v=20261003-fx2"></script>
 <script src="charm-nest-library-dnd.js?v=20261003-dnd1"></script>
 <script src="charm-nest-search.js?v=20260929-m5"></script>
 <script src="charm-nest-signins.js?v=20260929-m5"></script>
