@@ -14296,6 +14296,7 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
           if (prev.awaitingReplySince) t.awaitingReplySince = prev.awaitingReplySince;
         }
         smartAfterDataChange();
+        try { window.StationActivity && StationActivity.log("error", { orderId: String((t && t.etsyOrderId) || "").replace(/\D/g, ""), detail: "status change not saved" }); } catch (_) {}   // efficiency log: the failure shown
         toast("Error: " + e.message);
       }
     }
@@ -22721,6 +22722,7 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
         // Revert optimistic delta + the in-memory status mutation.
         if (didOptimisticUpdate) applyOptimisticCountDelta(status, previousStatus);
         if (t && previousStatus) t.status = previousStatus;
+        try { window.StationActivity && StationActivity.log("error", { orderId: String((t && t.etsyOrderId) || "").replace(/\D/g, ""), detail: "status change not saved" }); } catch (_) {}   // efficiency log: the failure shown
         toast("Error: " + e.message);
       }
     }

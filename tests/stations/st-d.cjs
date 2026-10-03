@@ -155,7 +155,7 @@ function fakeDb() {
       Review: { render() {}, cardKey: r => r.key }, OrderWin: { isOpen: () => false }, Orders: { interpretAll() {}, render() {} }, renderRail() {}, updateTopSub() {}, RunCtl: { poke() {} },
       O: { sortingLabel: () => ({ userTypedOrderNum: '4100000009', items: [] }) }, esc: x => String(x),
       api: async (fn, body) => { api.push(body); return { record: { key: body.key, stamps: [] } }; },
-      toast: (m, k) => msgs.push([m, k || '']), agent() {},
+      toast: (m, k) => msgs.push([m, k || '']), agent() {}, humanAct: () => true, piecesOfRows: rows => (rows || []).length,
       SheetEvents: { order: e => events.push(e) }
     });
     vm.runInContext(cpCode, ctx);
@@ -166,9 +166,9 @@ function fakeDb() {
   }
   let cp = await customPrint({ ok: true });
   assert.equal(cp.events.length, 1, 'one event for the printed sticker');
-  const e = cp.events[0], m = Math.floor(e.at / 60000);
+  const e = cp.events[0];
   assert.deepEqual({ type: e.type, orderId: e.orderId, by: e.by, station: e.station, device: e.device, id: e.id, data: e.data },
-    { type: 'labelPrinted', orderId: '4100000009', by: 'Paul K.', station: 'design', device: 'charm-nest-1', id: `charm-nest-1-4100000009-labelPrinted-${m}`, data: { label: 'custom', printPage: 'QR Printer.html', lines: 1 } });
+    { type: 'labelPrinted', orderId: '4100000009', by: 'Paul K.', station: 'design', device: 'charm-nest-1', id: `charm-nest-1-4100000009-labelPrinted-${e.at}`, data: { label: 'custom', printPage: 'QR Printer.html', lines: 1, print: 1 } });
   assert.match(e.text, /^Custom QR label printed at the Design Station \(Review\)$/);
   assert(cp.api.some(b => b.op === 'customPut' && b.by === 'Paul K.'), 'the completion (server sealPrinted stamp) is saved as before');
   const kept = TL.clean(e, { source: 'sorter' });
