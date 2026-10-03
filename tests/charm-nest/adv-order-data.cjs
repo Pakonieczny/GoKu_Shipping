@@ -80,6 +80,11 @@ async function main() {
     // 1 · the reads per open
     let perOpen = [];
     await check('one timelineGet per open: Overview, the header rail and the Timeline tab share it', async () => {
+      // (3 Oct: the open view now reads every 2.5 s and again after what this page records — timeline-live-fast.cjs tests that. Here
+      // the poll is set far off and only an open's own reads are counted: its first read, and — because this page records
+      // "interpreted" / "needsDecision" for the order as it opens — one read for them at once and one 1.5 s later for the
+      // server's copy. Not one per mount, and none at a return to the tab.)
+      await page.evaluate(() => { OrderTimelineUI.pollOpenMs = 600000; });
       let t0 = Date.now(); const t1 = t0; const fns = {}, onReq = r => { const m = /\/\.netlify\/functions\/([\w-]+)/.exec(r.url()); if (m) { let op = ''; try { op = JSON.parse(r.postData() || '{}').op || ''; } catch (_) {} const k = m[1] + (op ? ':' + op : ''); fns[k] = (fns[k] || 0) + 1; } };
       page.on('request', onReq);
       await page.evaluate(k => OrderWin.open(k), keyOf(A)); await railReady(page); await sleep(600);
@@ -94,7 +99,8 @@ async function main() {
       console.log('      masterGet for its SKU (no Library entry), over both opens:', mg);
       assert(mg <= 1, 'a missing Library entry is remembered: masterGet ' + mg + ' times for ' + A.sku);
       console.log('      timelineGet per open (Overview then Timeline tab, back and forth; opened on Timeline):', perOpen.join(', '));
-      assert.deepEqual(perOpen, [1, 1], 'timelineGet calls per open');
+      assert(perOpen[0] >= 1 && perOpen[0] <= 3, 'timelineGet calls of the first open (1 + the two for what the page records): ' + perOpen[0]);
+      assert.equal(perOpen[1], 1, 'timelineGet calls of the second open');
     });
     await check('a refresh dedupes: three at once from the view, the rail and the Timeline are one read', async () => {
       const t0 = Date.now();
@@ -199,7 +205,8 @@ async function main() {
       const t0 = Date.now();
       await sp.evaluate(k => OrderWin.open(k, { view: 'timeline' }), keyOf(A)); await fullReady(sp); await sleep(300);
       const s = await shown(sp); const g = ctl.gets.filter(x => x.t >= t0);
-      assert.equal(g.length, 1); assert.equal(g[0].sandbox, true); assert.equal(s.count, await stepsOf(sp, A.rid)); assert.match(s.full, /Welded/i, s.full);
+      // (every read is the sandbox's: the open's own, and the one this page's records for the order ask for — 3 Oct, live timeline)
+      assert(g.length >= 1 && g.length <= 3, 'reads: ' + g.length); assert(g.every(x => x.sandbox === true), 'every read says sandbox:true'); assert.equal(s.count, await stepsOf(sp, A.rid)); assert.match(s.full, /Welded/i, s.full);
       const prodOnly = await sp.evaluate(() => [...document.querySelectorAll('#owTimeline .tlSt[data-key]')].map(b => b.dataset.key).filter(k => /~(placed|held|cancelled|decided)~/.test(k)));
       assert.deepEqual(prodOnly, [], 'no production step in the sandbox view');
       await context.close();

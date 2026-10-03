@@ -2317,6 +2317,32 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
 .setUndoChip .spin{width:10px;height:10px;flex:0 0 10px;border:2px solid var(--line);border-top-color:var(--ink70);border-radius:50%;animation:spin .7s linear infinite}
 .setUndoChip.ok{color:#3c5a39;background:var(--sageSoft);border-color:#cddcc9}
 @media (prefers-reduced-motion:reduce){.setUndoChip,.ldSign{animation:none}}
+/* Approve for laser cutting (charm-nest-bridge.js, LaserReview): one button on every sheet and set card still in progress; disabled, with its plain reason beside it, while a person's own step comes first */
+.approveBox{display:grid;gap:6px;min-width:0}
+.approveRow{display:flex;align-items:center;gap:6px 10px;flex-wrap:wrap;min-width:0}
+.approveBtn{flex:0 0 auto}
+.approveBtn:disabled{background:var(--paper2);border-color:var(--line);color:var(--ink45);opacity:1}
+.approveBtn .spin{vertical-align:-2px}
+.approveWhy{min-width:0;font:600 11.5px/1.35 var(--sans);color:#7a5a1d}
+button.approveReason{border:0;background:none;padding:0;font:inherit;color:inherit;text-align:left;cursor:pointer;text-decoration:underline;text-decoration-style:dotted;text-underline-offset:3px}
+button.approveReason:hover{color:var(--ink)}
+.approveBox[data-mode=done] .approveRow{display:none}
+.approvePlan{position:relative;border:1px solid var(--line);border-radius:9px;background:var(--card2);padding:8px 28px 8px 11px;font:12px/1.45 var(--sans);color:var(--ink70);animation:ldFade .25s ease}
+.approvePlan[hidden]{display:none}
+.approvePlan p{margin:0}
+.approvePlan .apHead{font-weight:700;color:#3c5a39;margin-top:2px}
+.approvePlan .apHead.bad{color:#8a3a26}.approvePlan .apHead.warn{color:#7a5a1d}
+.approvePlan ul{list-style:none;margin:2px 0 4px;padding:0;display:grid;gap:2px}
+.approvePlan li{padding-left:15px;position:relative}
+.approvePlan li::before{content:"";position:absolute;left:3px;top:.55em;width:6px;height:6px;border-radius:50%;background:var(--sage)}
+.approvePlan .apNeeds>li::before{background:var(--clay)}.approvePlan .apAsk>li::before{background:var(--gold)}
+.approvePlan li li::before{width:4px;height:4px;background:var(--ink25)}
+.approvePlan li b{color:var(--ink);font-weight:650}
+.approvePlan .apBtns{display:inline-flex;gap:6px;margin-left:6px;vertical-align:middle}
+.approvePlan .apNote{color:var(--ink45)}
+.approvePlan .apClose{position:absolute;top:6px;right:8px;border:0;background:none;padding:0;font:600 11px var(--sans);color:var(--ink45);cursor:pointer}
+.approvePlan .apClose:hover{color:var(--ink)}
+@media (prefers-reduced-motion:reduce){.approvePlan{animation:none}}
 /* the sheet cards: the same sheet with less around it */
 .sheets{gap:10px}
 .shHead{padding-top:6px;padding-bottom:3px}
@@ -2847,14 +2873,14 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-pdf.js?v=20260924-followup"></script>
 <script src="charm-nest-dxf.js?v=20260927-custom"></script>
 <script src="charm-nest-motion.js?v=20261003-zg"></script>
-<script src="charm-nest-timeline-ui.js?v=20261003-tl-seal-zg"></script>
+<script src="charm-nest-timeline-ui.js?v=20261003-tl-seal-zg-live-fast"></script>
 <script src="charm-nest-geom.js?v=20260921-material"></script>
 <script src="charm-nest-engrave-fit.js"></script>
 <script src="charm-nest-assets.js"></script>
 <script src="charm-nest-backs.js?v=20260928-backface"></script>
 <script src="charm-nest-activity.js?v=20261001-compact-controls"></script>
 <script src="charm-nest-engraving-seals.js?v=20261002-seal-fit"></script>
-<script src="charm-nest-readiness.js?v=20261002-approval-resilience"></script>
+<script src="charm-nest-readiness.js?v=20261003-explain"></script>
 <script src="charm-nest-export.js"></script>
 <script src="charm-nest-text.js"></script>
 <script src="charm-nest-orders.js?v=20260930-live-search"></script>
@@ -3059,6 +3085,7 @@ function cloudWords(text, status) {
    clean-up writes to the cloud: a queued message, a retry or a recovery would put back a record it just deleted. Reads pass. */
 window.CNWipe = window.CNWipe || { active: false };
 const READ_OP = /^(get|list|ping|lookup|history|check)|(Get|List|Check|Status|Preview|Read|Url|Info)$/;
+const TL_WRITE = /^(pool|back|laser|rose|custom|arrival|cancel|set|putSheet|deleteSheet|restoreSheet|sandboxCancel)/;   // (the writes an order's timeline shows)
 async function api(fn, body, opts = {}) {
   if (opts.all) return apiAll(fn, body, opts);
   if (window.CNWipe.active && !opts.wipe && !READ_OP.test(String((body && body.op) || ""))) throw Object.assign(new Error("the sandbox is being reset: try again once the page has reloaded"), { transient: true, wiping: true });
@@ -3081,6 +3108,10 @@ async function api(fn, body, opts = {}) {
     // returned as the result, so a sheet or a run record counted as saved when nothing was (audit, 25 Sep)
     if (page) throw Object.assign(new Error(data.error || "The cloud sent back an empty answer"), { status: res.status, data, transient: true });
     if (S.cloud.ok === false && !S.cloud.locked) cloudRecovered();   // any answer says the cloud is back
+    // a write to the library can be a step of an order (a piece placed or taken off, a sheet cut, a back saved, a set
+    // committed, a cancel): the order view that is open reads its timeline again now and 1.5 s later, not at its next poll
+    // (Paul, 3 Oct 04:03). Reads, and writes that no order's timeline shows, do not ask.
+    if (fn === "charmNestLibrary" && TL_WRITE.test(String((body && body.op) || "")) && !READ_OP.test(String((body && body.op) || ""))) { try { if (window.OrderWin && OrderWin.isOpen()) OrderWin.nudge(); } catch (_) {} }
     return data;
   } catch (e) {
     if (e && e.name === "TimeoutError") throw Object.assign(new Error(`${fn}: no answer in ${Math.round(ms / 1000)} s — timed out`), { transient: true });
@@ -6573,7 +6604,7 @@ boot();
      Design Station's sign-in), the same name every seal it stamps carries. -->
 <script src="station-session.js?v=20261002-ea1"></script>
 <script src="station-activity.js?v=20261003-reset-clean"></script>
-<script src="charm-nest-bridge.js?v=20261003-reset-quiet"></script>
+<script src="charm-nest-bridge.js?v=20261003-approve-btn-live-fast"></script>
 <script>
 try {
   const nameNow = () => { try { const n = String((window.CNEmployee && CNEmployee.name()) || "").trim(); return /^\d+$/.test(n) ? "" : n; } catch (_) { return ""; } };
@@ -6604,9 +6635,11 @@ try {
 <script src="charm-nest-sheetwin.js?v=20261002-ck"></script>
 <script src="charm-nest-tour.js?v=20260929-m11"></script>
 <script src="charm-nest-mail.js?v=20261003-reset-clean"></script>
-<script src="charm-nest-rose-ui.js?v=20261003-id1"></script>
+<script src="charm-nest-rose-ui.js?v=20261003-rg1"></script>
+<script src="charm-nest-flow-rose.js?v=20261003-rg2"></script>
 <script src="charm-nest-export-ui.js?v=20260925-done"></script>
 <script src="charm-nest-library.js?v=20261003-id1"></script>
+<script src="charm-nest-library-approval-ui.js?v=20261003-fb1"></script>
 <script src="charm-nest-library-fx.js?v=20261003-fx1"></script>
 <script src="charm-nest-search.js?v=20260929-m5"></script>
 <script src="charm-nest-signins.js?v=20260929-m5"></script>
