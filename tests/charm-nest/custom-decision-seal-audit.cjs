@@ -152,7 +152,7 @@ async function audit() {
     assert.doesNotMatch(svg.textContent, /QR LABEL|COMPLETE|LASER CUT|paul|Different current viewer/, 'a send does not claim print/completion/cutting or show identity on its small face');
     assert(textsOf(svg).includes('01 OCT 2026'), 'the send date is legible');
     assert(textsOf(svg).some(t => t === (rec.metal === 'gold' ? '5:46 PM' : '7:25 PM')), 'the original Toronto time is shown');
-    assert.equal(seal.style.getPropertyValue('--sz'), '84px', 'send uses the standardized seal size');
+    assert.equal(seal.style.getPropertyValue('--sz'), '50px', 'send uses the standardized seal size');
     assert.match(w.Seal.titleOf(stamp), /^Sent to sheet by paul/);
     assert.doesNotMatch(w.Seal.titleOf(stamp), /completed|QR label/i);
     assert.equal(w.Seal.hasPrint({ stamps: [stamp] }), false, 'a send must never claim that a QR label was printed');

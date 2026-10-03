@@ -43,7 +43,7 @@ const root=path.join(__dirname,'../..');
   assert.equal(readyCard.querySelectorAll('.seal-laserReady').length,1,'completion retains the readiness seal');
   assert.equal(readyCard.querySelectorAll('.seal-laserDone').length,1);
   assert.match(readyCard.querySelector('.seal-laserDone').getAttribute('aria-label'),/DOM tester/);
-  assert.equal(readyCard.querySelector('.seal-laserDone').style.getPropertyValue('--sz'),'84px','sheet completion uses the shared regular size');
+  assert.equal(readyCard.querySelector('.seal-laserDone').style.getPropertyValue('--sz'),'50px','sheet completion uses the shared regular size');
   assert.equal(readyCard.querySelector('.seal-laserDone svg').dataset.sealFamily,'laser','completion preserves the selected hexagonal laser family');
   assert.equal(readyCard.querySelector('.seal-laserReady svg').dataset.sealFamily,'laser','readiness and completion remain recognisable siblings');
   assert.equal(body.querySelector('.ldPartial').textContent,'2 of 3 sheets completed');

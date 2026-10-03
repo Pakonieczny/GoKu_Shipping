@@ -283,7 +283,7 @@
 
   /* ════ Seals ════ */
   const Seal = (() => {
-    const BASE_SIZE = 84, META_INK = '#12294c';
+    const BASE_SIZE = 50, META_INK = '#12294c';
     const INK = { print: "#65737f", sheet: "#65737f", button: "#77518a", laserReady: "#98721f", laserDone: "#98721f", engraveApproved:"#296c58", engravePlain:"#296c58" };
     // One outline drives both the ink face and the wooden/rubber head. Signatures remain record data, never a live viewer name.
     const FAMILY = {

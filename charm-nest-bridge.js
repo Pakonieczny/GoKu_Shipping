@@ -6816,7 +6816,7 @@ const CustomPrint = window.CustomPrint = (() => {
     const rec = keptOf(it); if (!rec || !window.Seal) return "";
     // (only: the one stamp the order window's custom-order bar draws, small; {} for none of this kind)
     const st = Seal.list(rec).filter(x => (x.how === "button") === (how === "button") && (!only || (x.how === only.how && x.at === only.at)));
-    return st.length ? Seal.row({ stamps: st, prints: only ? st[0].n || 0 : +rec.prints || 0 }, only ? { size: 34 } : undefined) : "";
+    return st.length ? Seal.row({ stamps: st, prints: only ? st[0].n || 0 : +rec.prints || 0 }, only ? { size: 22 } : undefined) : "";
   }
   /** Records just written: a completed one is read as completed, and no longer as reopened. */
   function keepDone(saved) {
@@ -10276,7 +10276,7 @@ const OrderWin = window.OrderWin = (() => {
     // Completed: one seal of the record's (above), beside the print button, and "+N" to the Timeline for the others
     // (a line sent to its sheet has its History button for that).
     const moreBtn = more ? `<button type="button" class="owCuMore" data-cu-more title="${more} more seal${more > 1 ? "s" : ""}: open the Timeline" aria-label="${more} more seal${more > 1 ? "s" : ""}: open the Timeline">+${more}</button>` : "";
-    const seals = (pick && (it.done || decided) ? Seal.row({ stamps: [pick], prints: pick.n || 0 }, { size: 34, pending: decided ? false : CustomPrint.freshOf("cu:" + String(it.key).replace(/^[a-z]+:/, "")) }) : "") + (it.done || decided ? moreBtn : "");
+    const seals = (pick && (it.done || decided) ? Seal.row({ stamps: [pick], prints: pick.n || 0 }, { size: 22, pending: decided ? false : CustomPrint.freshOf("cu:" + String(it.key).replace(/^[a-z]+:/, "")) }) : "") + (it.done || decided ? moreBtn : "");
     const keptP = pick && pick.how !== "button" ? pick : {}, keptC = pick && pick.how === "button" ? pick : {};
     bar.innerHTML = `<span class="tag">${decided ? "Designs · Sent to sheet" : `Custom Orders · ${esc(label)}${it.done ? " · completed" : ""}`}</span><span class="w" title="${esc(why)}">${esc(why)}</span>` +
       (decided ? seals + (designs && designs.files.length ? '<button type="button" class="btn ghost xs" data-cu-view-designs>View designs</button>' : '') + '<button type="button" class="btn ghost xs" data-cu-open-sheet>Open sheet</button><button type="button" class="btn ghost xs" data-cu-history>History</button>'

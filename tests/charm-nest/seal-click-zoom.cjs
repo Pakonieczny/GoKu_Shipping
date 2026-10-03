@@ -147,7 +147,7 @@ const ORDERS = [{ receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * DAY, up
       await page.evaluate(() => {
         window.__zb = 0; const d = document.createElement('div'); d.id = 'zbl'; d.style.cssText = 'position:fixed;left:700px;top:520px;z-index:5;display:flex;align-items:center';
         d.innerHTML = '<button type="button" class="btn sealedPrint sm" id="zbtn" data-seal-btn style="width:160px;height:44px">Print QR label</button>' + Seal.row({ stamps: [{ how: 'print', at: Date.now() - 3600e3, by: 'Paul' }], prints: 1 });
-        d.lastElementChild.style.marginLeft = '-70px'; document.body.appendChild(d); document.getElementById('zbtn').addEventListener('click', () => window.__zb++);
+        d.lastElementChild.style.marginLeft = '-30px'; document.body.appendChild(d); document.getElementById('zbtn').addEventListener('click', () => window.__zb++);
       });
       const sel = '#zbl .seal', over = await point(sel, 0, 'over'), clear = await point(sel, 0, 'clear'), pressed = () => page.evaluate(() => __zb);
       assert(over && clear, 'a seal that lies partly over its button');

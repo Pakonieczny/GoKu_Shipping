@@ -155,7 +155,8 @@ const ORDERS = [{ receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * DAY, up
     assert(rp, 'a point on the Complete Order seal clear of its button');
     await page.mouse.move(rp.x, rp.y, { steps: 3 }); await page.waitForFunction(sel => document.querySelector(sel + '[data-seal-zoom]'), rs + '.seal-button', { timeout: 3000 }); await X.settle();
     const rz = await X.probe(rs + '.seal-button');
-    check(rz.size === 84 && rz.k === 1.85 && rz.inView && rz.rect.t >= rz.top && !rz.clipped.length, `Review card seal: 84px grown ×${rz.k}, in the view below the top bar (${rz.top.toFixed(0)}), not clipped ${JSON.stringify(rz.clipped)}`);
+    const want50 = await page.evaluate(() => +Motion.sealZoomScale(50).toFixed(2));   // (the regular seal is 50px since 3 Oct; its scale is whatever the one curve says)
+    check(rz.size === 50 && Math.abs(rz.k - want50) < .011 && rz.inView && rz.rect.t >= rz.top && !rz.clipped.length, `Review card seal: 50px grown ×${rz.k}, in the view below the top bar (${rz.top.toFixed(0)}), not clipped ${JSON.stringify(rz.clipped)}`);
     check(await page.evaluate(() => !document.querySelector('.sealLens') && !document.querySelector('.seal[title]')), 'no lens, no caption, no tooltip on any seal of the page');
     if (shots) await page.screenshot({ path: path.join(shots, '1-review-card-seal.png'), clip: { x: 0, y: 40, width: 1440, height: 520 } });
     await page.mouse.click(rp.x, rp.y); await page.waitForTimeout(200);
@@ -171,7 +172,7 @@ const ORDERS = [{ receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * DAY, up
     await page.waitForTimeout(1200); await page.mouse.move(700, 600);
     // the order window's custom-order bar: its seals were 1px wide
     const bar = await page.evaluate(() => [...document.querySelectorAll('#owCustom .sealRow .seal')].map(s => s.offsetWidth));
-    check(bar.length === 1 && bar.every(w => w >= 24), 'the custom-order bar\'s one seal (the others are on the Timeline: +N) has a real size again: ' + bar.join(', ') + ' px');
+    check(bar.length === 1 && bar.every(w => w >= 18), 'the custom-order bar\'s one seal (the others are on the Timeline: +N) has a real size again: ' + bar.join(', ') + ' px');
     // 6a · the header strip: 24px seals in a 44px box that clips
     const stops = '#owRail .tlStop .tlSeal:not(.pending)', nStops = await page.evaluate(sel => document.querySelectorAll(sel).length, stops);
     const done = await page.evaluate(sel => [...document.querySelectorAll(sel)].map((s, i) => [i, s.closest('.tlStop').className]).filter(([, c]) => /\bd\b/.test(c)).map(([i]) => i), stops);
@@ -216,7 +217,7 @@ const ORDERS = [{ receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * DAY, up
       const sel = '#orderWin .tlNowSeal', p = await X.point(sel, 0); await page.mouse.move(5, 880); await page.mouse.move(p.x, p.y, { steps: 4 });
       await page.waitForFunction(sel => document.querySelector(sel).dataset.sealZoom, sel, { timeout: 4000 }); await X.settle();
       const z = await X.probe(sel, 0);
-      check(z.inView && !z.clipped.length && z.k >= 1.1 && z.size >= 60, `Now card seal (${z.size}px): grown ×${z.k}, in view, not clipped ${JSON.stringify(z.clipped)}`);
+      check(z.inView && !z.clipped.length && z.k >= 1.1 && z.size >= 50, `Now card seal (${z.size}px): grown ×${z.k}, in view, not clipped ${JSON.stringify(z.clipped)}`);
       await page.mouse.move(5, 880, { steps: 3 }); await X.gone();
     }
     await page.evaluate(() => {
@@ -247,7 +248,8 @@ const ORDERS = [{ receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * DAY, up
     const tp = await Y.point('#zlab .seal');
     await B.page.touchscreen.tap(tp.x, tp.y); await B.page.waitForFunction(() => document.querySelector('#zlab .seal[data-seal-zoom]'), null, { timeout: 1500 }); await B.page.waitForTimeout(250);
     const tz = await Y.probe('#zlab .seal'), dur = await B.page.evaluate(() => Math.max(0, ...document.getAnimations().map(a => a.effect && a.effect.getTiming().duration || 0)));
-    check(tz.k === 1.85 && tz.inView, 'a tap zooms at once (×' + tz.k + ')');
+    const want2 = await B.page.evaluate(n => +Motion.sealZoomScale(n).toFixed(2), 50);
+    check(Math.abs(tz.k - want2) < .011 && tz.inView, 'a tap zooms at once (×' + tz.k + ')');
     check(await B.page.evaluate(() => Math.max(0, ...[...document.querySelectorAll('#zlab .seal')[0].getAnimations()].map(a => +a.effect.getTiming().duration)) <= 130), 'with reduced motion it is a short fade, no bounce');
     await B.page.touchscreen.tap(tp.x, tp.y); await Y.gone();
     check((await Y.zoomed()) === 0, 'a second tap puts it back');

@@ -82,7 +82,7 @@ async function movingSource(){
     actualRect(host,{left:40,top:100,right:340,bottom:300,width:300,height:200});actualRect(btn,{left:100,top:150,right:240,bottom:186,width:140,height:36});
     const stamping=w.Seal.stampOn(host,{btn,stamp:{how:'engraveApproved',at:Date.UTC(2026,8,30,18,35),by:'Paul Konieczny'}});await wait(1);
     const seal=host.querySelector('.seal'),tool=host.querySelector('.sealTool');assert(seal && tool,'button stamp has a matching tool and face');
-    approx(parseFloat(tool.style.width),84,'button uses canonical seal width');approx(parseFloat(tool.style.height),84,'button uses canonical seal height');approx(parseFloat(tool.style.left),parseFloat(seal.style.left),'button stamp and face share the same horizontal origin');approx(parseFloat(tool.style.top),parseFloat(seal.style.top),'button stamp and face share the same vertical origin');
+    approx(parseFloat(tool.style.width),w.Seal.BASE_SIZE,'button uses canonical seal width');approx(parseFloat(tool.style.height),w.Seal.BASE_SIZE,'button uses canonical seal height');approx(parseFloat(tool.style.left),parseFloat(seal.style.left),'button stamp and face share the same horizontal origin');approx(parseFloat(tool.style.top),parseFloat(seal.style.top),'button stamp and face share the same vertical origin');
     assert.equal(tool.querySelector('[data-stamp-contact]').getAttribute('d'),seal.querySelector('[data-seal-outline]').getAttribute('d'),'button uses the actual face outline');
     pending.shift()();await wait(1);pending.shift()();await stamping;assert.equal(d.querySelector('.sealTool'),null);
     await movingSource();
