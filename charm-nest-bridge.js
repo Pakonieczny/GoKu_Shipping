@@ -4974,7 +4974,7 @@ const Engrave = window.Engrave = (() => {
         // it opens as is marked where it landed
         const go = () => {
           const rw = doneRowOf(j2.key), r = rw && MO() && rw.getBoundingClientRect(), g = r && r.height ? Motion.ghost(rw, r, null, rw) : null;
-          try { sendBack(j2, `reopened by ${who}`); EG.tab = "place"; EG.focus = j2.key; EG.list = false; EG.chosen = true; render(); } catch (e) { if (g) g.remove(); throw e; }
+          try { sendBack(j2, `reopened by ${who}`); humanAct("note", { orderId: String(j2.row.order.receiptId), detail: "decided engraving reopened" }); EG.tab = "place"; EG.focus = j2.key; EG.list = false; EG.chosen = true; render(); } catch (e) { if (g) g.remove(); throw e; }
           if (!g) return;
           if (EG.cardKey === j2.key && EG.card && EG.card.isConnected) enter(EG.card, "slide");
           Motion.fly(g, EG_TAB("place"), {}).then(() => { if (EG.cardKey === j2.key && EG.card) mark(EG.card.querySelector(".pvWords") || EG.card); });
@@ -5263,7 +5263,7 @@ const Engrave = window.Engrave = (() => {
         const q = queuedJobs([...items().values()].filter(matchesQ).filter(j2 => j2.row.state !== "gone"));
         const i = q.findIndex(j2 => j2.key === job.key), j3 = q[(i + (a === "next" ? 1 : q.length - 1)) % q.length];
         if (j3) { if (j3.key !== job.key) goes(job, { enter: "fade", quick: true }, card); EG.focus = j3.key; EG.card = null; EG.cardKey = null; render(); }
-      } else if (a === "resplit") resplit(job); else if (a === "skip") skip(job); else if (a === "back") sendBack(job);
+      } else if (a === "resplit") resplit(job); else if (a === "skip") skip(job); else if (a === "back") { humanAct("reject", { orderId: String(job.row.order.receiptId), detail: "engraving sent back to the words" }); sendBack(job); }
     };
     card.querySelectorAll("[data-a]").forEach(b => { const a = b.dataset.a; if (a === "usewords" || a === "linecount" || a === "spacing") return; if (a === "angle") { b.onchange = () => { if (approvalBusy()) return; card._flushSpacing?.(); const v = +b.value; if (Number.isFinite(v)) rotateTo(job, v); }; b.addEventListener("keydown", e => e.stopPropagation()); return; } b.onclick = () => cardAction(a, b); });
     const lineControl=card.querySelector('[data-a="linecount"]');
@@ -6803,7 +6803,7 @@ const CustomPrint = window.CustomPrint = (() => {
       if (putErr) toast(`The QR label was printed but ${done.length ? "not every line was" : "the order was not"} marked completed: ${putErr.message} — press Print again to retry`, "bad", 9000);
       else if (cut.size) toast(`${targets[0].receiptId}: ${cut.size === targets.length ? "its line" : cut.size + " of its lines"} went on a sheet while the label printed — cut on the laser, not marked completed`, "bad", 9000);
       else if (it.done) toast(`${targets[0].receiptId} · QR label printed again`, "ok", 3000);
-    }).catch(e => { stamping.delete(key); failed(key, e.message, shown); acting.delete(key); say(key, null); unlay(); toast("QR label: " + e.message, "bad", 7000); }).finally(() => { release(); acting.delete(key); stamping.delete(key); });
+    }).catch(e => { humanAct("error", { orderId: String(targets[0].receiptId || ""), detail: "QR label press failed" }); stamping.delete(key); failed(key, e.message, shown); acting.delete(key); say(key, null); unlay(); toast("QR label: " + e.message, "bad", 7000); }).finally(() => { release(); acting.delete(key); stamping.delete(key); });
   }
   /** Complete Order (Paul, 27 Sep 19:45): the card's lines completed at once, no label printed, and the card moves to
    *  Completed (with the same "Marked completed · Undo" for a while). The sticker is kept with each record, so it can
@@ -6849,7 +6849,7 @@ const CustomPrint = window.CustomPrint = (() => {
       agent({ bridge: true }, putErr ? "warn" : "DS", `${rid}: custom order completed by ${who} (no label printed)${putErr ? ` — not every line was saved (${putErr.message})` : " · Review → Completed"}`);
       if (putErr) toast(`${rid}: ${done.length ? "not every line was" : "the order was not"} completed: ${putErr.message} — press Complete Order to try again`, "bad", 9000);
       else if (cut) toast(`${rid}: ${cut} of its lines went on a sheet meanwhile — cut on the laser, not completed`, "bad", 8000);
-    }).catch(e => { failed(key, e.message); acting.delete(key); say(key, null); toast("Complete Order: " + e.message, "bad", 7000); }).finally(() => { release(); acting.delete(key); });
+    }).catch(e => { humanAct("error", { orderId: String(rows[0].order.receiptId || ""), detail: "Complete Order failed" }); failed(key, e.message); acting.delete(key); say(key, null); toast("Complete Order: " + e.message, "bad", 7000); }).finally(() => { release(); acting.delete(key); });
   }
   /* ── the seal and the move (Paul, 27 Sep 20:09-20:24): what was pressed is stamped on the button that did it, with
      who and when; from Open the card then flies to Completed, where a note says what arrived and offers Undo ── */
@@ -6917,6 +6917,8 @@ const CustomPrint = window.CustomPrint = (() => {
       let back = null;
       try { back = await api("charmNestLibrary", { op: "customReopen", key: r.key, by: who, how, from }, { quiet: true }); }
       catch (e) {
+        if (gone && how === "undo") humanAct("undo", { orderId: String(rid), parts: piecesOfRows(rows.slice(0, gone)), orders: 0, detail: "completion partly undone" });   // only the lines already reopened
+        humanAct("error", { orderId: String(rid), detail: (how === "undo" ? "Undo" : "Reopen") + " not completed" });
         busy.delete(key); settle(); say(key, null);
         toast(gone ? `${rid}: ${gone} of ${rows.length} lines ${did}; the completion of the others could not be removed (${e.message}) — they stay completed: press Reopen to try again` : `${rid} not ${did}: its completion could not be removed (${e.message})${how === "undo" ? " — it stays completed: press Reopen to try again" : ""}`, "bad", 9000);
         return;
@@ -6928,16 +6930,17 @@ const CustomPrint = window.CustomPrint = (() => {
       wrote([r.key]); gone++;
     }
     busy.delete(key);
+    // the person's own Undo of a completion is an undo (what was produced is taken back); a Reopen of a completed order is a
+    // note: the completion may be another person's or an earlier day's, and the next completion counts as the new work.
+    // Recorded here, once the completion is off every line: a failure afterwards (putting the lines back for cutting) does not undo it.
+    if (how === "undo") humanAct("undo", { orderId: String(rid), parts: piecesOfRows(rows), orders: 1, detail: "completion undone" });
+    else humanAct("note", { orderId: String(rid), detail: "completed order reopened" });
     // (its card is found where it stood in Open: Review brings it into view there, however it was reopened)
     Review.view().back = { keys: rows.map(r => r.key), until: Date.now() + 180000 };
     try { for (const r of rows) if (r.state === "noDesign") await Review.repool(r); else Orders.interpretAll(); }
-    catch (e) { settle(); say(key, null); toast(`${rid} ${did}, but its line could not be put back for cutting: ${e.message} — it is under Review → Open`, "bad", 9000); return; }
+    catch (e) { humanAct("error", { orderId: String(rid), detail: "lines not put back for cutting" }); settle(); say(key, null); toast(`${rid} ${did}, but its line could not be put back for cutting: ${e.message} — it is under Review → Open`, "bad", 9000); return; }
     say(key, null);
     agent({ bridge: true }, "DS", `${rid}: custom order ${did} by ${who}`); tlFresh();
-    // the person's own Undo of a completion is an undo (what was produced is taken back); a Reopen of a completed order is a
-    // note: the completion may be another person's or an earlier day's, and the next completion counts as the new work
-    if (how === "undo") humanAct("undo", { orderId: String(rid), parts: piecesOfRows(rows), orders: 1, detail: "completion undone" });
-    else humanAct("note", { orderId: String(rid), detail: "completed order reopened" });
   }
   /** What a card shows in place of its buttons, if anything: a spinner and what is happening, the name asked for (a small
    *  field and OK), or "Marked completed · Undo". sz: the buttons' size class ("sm" in Review, "xs" in the order window). */
@@ -7300,7 +7303,7 @@ const CustomSheet = window.CustomSheet = (() => {
       return e.sent;
     }catch(err){
       if(owner[e.ck]===e){e.sendError=String(err.message || err);Session.schedule();await Session.flushNow?.().catch(()=>{});}
-      if(!how.recover)toast(`${e.rid}: send saved for retry — ${err.message}`,"bad",8000);
+      if(!how.recover){humanAct("error",{orderId:String(e.rid),detail:"send to the sheets not finished, kept for retry"});toast(`${e.rid}: send saved for retry — ${err.message}`,"bad",8000);}
     }finally{stampHost?.remove();busy.delete(ck);if(!flying){nestHold?.releaseAll();if(snap?.ghost)snap.ghost.remove();letGo();redraw();}}
   }
   async function syncSent(e) {

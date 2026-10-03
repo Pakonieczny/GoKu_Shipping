@@ -7,7 +7,8 @@
 //       day, the order sorted (complete, once); the same sticker again is a print only; Print Row does the same per order.
 //   2 · the sorter (charm-nest-1.html, its own fake server): the typed name is the person (station sorter, device
 //       charm-nest-1); nothing before a name is set; Print QR label is a print and the order completed (once); printing it
-//       again is a print only; Reopen is a note; Complete Order is the order completed again; Undo is an undo.
+//       again is a print only; Reopen is a note; Complete Order is the order completed again; Undo is an undo; an Undo
+//       the server refuses is one error and not an undo.
 //   NODE_PATH=$(npm root -g) PW_DIR=$(npm root -g)/playwright/node_modules CHROMIUM=... node tests/stations/sorting-activity.cjs
 const path = require('path'), assert = require('assert'), fs = require('fs');
 const root = path.join(__dirname, '../..');
@@ -268,6 +269,7 @@ const brief = e => [e.action, e.orderId, e.parts, e.orders, e.person, e.station,
     const { start } = require('../charm-nest/bridge-server.cjs');
     const srv = await start({ receipts: [] });
     const rec = recorder();
+    let refuseReopen = false;                          // the server refuses a customReopen while this is on
     try {
       const context = await browser.newContext({ viewport: { width: 1440, height: 950 } });
       const js = body => ({ status: 200, contentType: 'text/javascript', headers: { 'Cross-Origin-Resource-Policy': 'cross-origin', 'Access-Control-Allow-Origin': '*' }, body });
@@ -285,6 +287,11 @@ const brief = e => [e.action, e.orderId, e.parts, e.orders, e.person, e.station,
         const body = r.request().postData() || '';
         let j = null; try { j = JSON.parse(body || 'null'); } catch (_) {}
         if (r.request().method() === 'POST' && j && (Array.isArray(j.activity) || j.session)) { rec.take(new URL(r.request().url()).pathname, body); return r.fulfill({ status: 200, contentType: 'application/json', headers: { 'Access-Control-Allow-Origin': '*' }, body: JSON.stringify({ success: true }) }); }
+        return r.fallback();
+      });
+      await context.route(u => /\/\.netlify\/functions\/charmNestLibrary/.test(u.pathname), r => {
+        let j = null; try { j = JSON.parse(r.request().postData() || 'null'); } catch (_) {}
+        if (refuseReopen && j && j.op === 'customReopen') return r.fulfill({ status: 400, contentType: 'application/json', headers: { 'Access-Control-Allow-Origin': '*' }, body: JSON.stringify({ ok: false, error: 'refused for the test' }) });
         return r.fallback();
       });
       await context.addInitScript(() => { try { localStorage.setItem('cn.settings', JSON.stringify({ v: 26, dsOrigin: 'http://127.0.0.1:9', runMode: 'manual', sound: 'off', notify: 'off', review: 'on' })); } catch (_) {} });
@@ -346,7 +353,22 @@ const brief = e => [e.action, e.orderId, e.parts, e.orders, e.person, e.station,
       await page.click('#owCustom [data-cu-undo]');
       await page.waitForFunction(k => !B.maps.customDone[k], KEY); await settle(); await flush();
       assert.deepStrictEqual(rec.ev('undo').map(brief), [['undo', RID, 2, 1, 'Tess Sorter', 'sorter', 'charm-nest-1']], 'Undo is an undo');
-      console.log('sorter: Print QR label → print + complete once; print again → print only; Reopen → note; Complete Order → complete; Undo → undo');
+      // 5 · an Undo the server refuses is one error, and not an undo (nothing was taken back); the completion stands
+      await page.evaluate(() => { const d = document.getElementById('orderWin'); if (d && d.open) d.close(); });   // (the order window of step 4 is still open)
+      await page.click('#reviewView .rvSeg [data-cseg="open"]'); await page.waitForSelector(card + ' [data-cu-complete]');
+      await page.click(card + ' [data-cu-complete]');
+      await page.waitForFunction(k => B.maps.customDone[k], KEY); await settle(); await dismiss(); await flush();
+      const undos0 = rec.ev('undo').length;
+      refuseReopen = true;
+      await page.evaluate(k => OrderWin.open(k), KEY);
+      await page.waitForSelector('#owCustom [data-cu-undo]');
+      await page.click('#owCustom [data-cu-undo]');
+      for (let i = 0; i < 40 && !rec.ev('error').some(e => /Undo not completed/.test(e.detail)); i++) { await wait(250); await flush(); }
+      refuseReopen = false;
+      assert.deepStrictEqual(rec.ev('error').filter(e => /Undo not completed/.test(e.detail)).map(brief), [['error', RID, 0, 0, 'Tess Sorter', 'sorter', 'charm-nest-1']], 'a refused Undo is one error');
+      assert.strictEqual(rec.ev('undo').length, undos0, 'and not an undo');
+      assert(await page.evaluate(k => !!B.maps.customDone[k], KEY), 'the completion stands');
+      console.log('sorter: Print QR label → print + complete once; print again → print only; Reopen → note; Complete Order → complete; Undo → undo; a refused Undo → error');
 
       const all = rec.raw.join('\n');
       assert(!/"employeeId":"\d{4,}"/.test(all), 'no PIN-like id in any request');

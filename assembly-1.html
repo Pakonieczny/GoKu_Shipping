@@ -2342,7 +2342,8 @@ function metalToBadge(label){
 
         /* Employee efficiency (station-activity.js): one event per real action, with the person signed in, this station and
            the time added by the helper. scan = an order opened here (pieces from the receipt the scan already read), complete =
-           the Team's done stamp (the order counts once per person, pieces assembled), reject = a flag to the Team or a cancelled
+           the Team's first assembled stamp (QA1, Done, Assembled: the order counts once per person, pieces assembled; a QA 2
+           check is only a note), reject = a flag to the Team or a cancelled
            order, error = a lookup or send that failed, note = any other message. No PIN, no message text, no address. It never
            throws and never waits, and it does not depend on the Assembled seal. */
         const actLog = (action, o) => { try { return !!(window.StationActivity && window.StationActivity.log(action, o || {})); } catch (_) { return false; } };
@@ -2364,11 +2365,22 @@ function metalToBadge(label){
             if (!data || data.error) actLog("error", { orderId, detail: "order lookup failed" });
           } catch (_) {}
         }
-        function actStamp(orderId, text) {          // the Team's done stamp: the first one per person and order is the completion
+        /* the QA number a stamp names: "QA1" is 1, "QA 2" is 2, "qa2 ok" is 2; 0 when it names none ("Done", "Assembled") */
+        function actQaStage(text) {
+          let n = 0;
+          String(text || "").toLowerCase().replace(/[^a-z0-9\s]/g, " ").replace(/\bqa\s*(\d{1,2})\b/g, (m, d) => { n = Math.max(n, +d); return m; });
+          return n;
+        }
+        function actStamp(orderId, text) {          // the Team's done stamp: the first assembled stamp per person and order is the completion
           try {
             orderId = /^\d{6,}$/.test(orderId) ? orderId : "";
             const who = actWho(), key = orderId + "|" + who, now = Date.now(), known = actLoaded.id === orderId;
             if (!who) return;
+            /* A QA 2 (or later) stamp is a second person's check of work that QA1, Done or Assembled already finished: it is
+               that person's time and touch (a note, fixed words, no pieces, no order) and never a second completion, so the
+               shop's parts and orders are not counted twice. It does not use up their own first-stamp slot either. */
+            const stage = actQaStage(text);
+            if (stage >= 2) { actLog("note", { orderId, detail: "QA " + stage + " check" }); return; }
             const d = String(text).replace(/\s+/g, " ").slice(0, 40);
             if (now - (actDone[key] || 0) < 12 * 3600e3) { actLog("note", { orderId, detail: "stamp again: " + d }); return; }
             if (!actLog("complete", { orderId, sku: known ? actLoaded.sku : "", parts: known ? actLoaded.parts : 0, orders: 1, detail: "Team stamp " + d + (known ? "" : " (pieces unknown)") })) return;
@@ -2377,6 +2389,9 @@ function metalToBadge(label){
             for (const k of ks.slice(0, Math.max(0, ks.length - 60))) delete actDone[k];
             try { localStorage.setItem("assembly_activity_done", JSON.stringify(actDone)); } catch (_) {}
           } catch (_) {}
+        }
+        function actImage(orderId, ok) {            // a photo dropped into the order chat: counted (or its failure), never the picture
+          try { actLog(ok ? "note" : "error", { orderId: /^\d{6,}$/.test(orderId) ? orderId : "", detail: ok ? "image to Team" : "Team image not sent" }); } catch (_) {}
         }
         function actMessage(orderId, text) {        // any other message to the Team: a flag when it says rework or a problem
           try {
@@ -2860,8 +2875,10 @@ function metalToBadge(label){
                   senderRole: "staff",
                   timestamp : firebase.firestore.FieldValue.serverTimestamp()
                 });
+              actImage(orderId, true);              // employee efficiency: one note per picture sent
             } catch(err) {
               console.error("upload error:", err);
+              actImage(orderId, false);
               M.toast({ html: "Upload failed: " + err.message });
             }
           }
