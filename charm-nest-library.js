@@ -124,10 +124,28 @@
     const mark = L.marks.get('set:' + r.setId);
     return mark ? mark.done : !r.laserSetPending;
   }
-  function canComplete(kind, id) {
+  /** The cards of Current found once for a whole pass: canComplete asked each card's own question with a search of the whole list
+      (300 cards, a few thousand elements each), which made a refresh frame slower the more sheets there were. */
+  function cardIndex(root) {
+    let sheets = null, sets = null;
+    return {
+      sheet(id) {
+        if (!sheets) { sheets = new Map(); for (const c of root.querySelectorAll('.libCard[data-id]')) if (!sheets.has(c.dataset.id)) sheets.set(c.dataset.id, c); }
+        return sheets.get(String(id)) || null;
+      },
+      set(id) {
+        if (!sets) { sets = new Map(); for (const c of root.querySelectorAll('.setCard')) { const k = c._laserSet?.setId; if (k !== undefined && !sets.has(k)) sets.set(k, c); } }
+        return sets.get(id) || null;
+      }
+    };
+  }
+  /** One pass over the cards (LaserReview.batch): what every order row says about its pieces is worked out once for it. */
+  const pass = fn => LaserReview.batch ? LaserReview.batch(fn) : fn();
+  function canComplete(kind, id, at) {
     const root = byId('libBody');
     if (S.mode !== 'library' || L.tab === 'done' || !root) return false;
-    const card = kind === 'set' ? [...root.querySelectorAll('.setCard')].find(c=>c._laserSet?.setId===id)
+    const card = at ? (kind === 'set' ? at.set(id) : at.sheet(id))
+      : kind === 'set' ? [...root.querySelectorAll('.setCard')].find(c=>c._laserSet?.setId===id)
       : root.querySelector(`.libCard[data-id="${CSS.escape(id)}"]`);
     const group = card && (card.closest('[data-laser-card]') || card);
     if (!card || !card.closest('[data-laser-area="ready"]') || !group._laserSheets) return false;
@@ -526,11 +544,12 @@
   }
   function cards(root, mode) {
     if (!root) return;
+    const at = cardIndex(byId('libBody') || root);   // (canComplete looks a card up in the Library's list, whatever root is drawn)
     for (const c of root.querySelectorAll('.libCard[data-id]')) {
       const r=LaserReview.projected(recordOf(c.dataset.id) || {}), done=isDone(r);
       processSeals(c,r,'sheet:'+c.dataset.id);
       let b=c.querySelector(':scope > .ldMark');
-      const allowed=done || canComplete('sheet',c.dataset.id);
+      const allowed=done || canComplete('sheet',c.dataset.id,at);
       if (!allowed) { if(b)b.remove(); continue; }
       if(!b){b=doc.createElement('button');b.type='button';b.className='ldMark';c.appendChild(b);}
       b.dataset.ld='sheet:'+c.dataset.id;b.dataset.done=done?'1':'0';b.innerHTML=done?ICON.undo:ICON.check;
@@ -540,7 +559,7 @@
       const st=card._laserSet,head=card.querySelector(':scope > .sh');if(!head)continue;
       if(st?.setId && !st.standalone && !st.working)processSeals(head,st,'set:'+st.setId,'setProcessSeals');
       let b=head.querySelector(':scope > .ldMarkSet');
-      const done=isDone(st),allowed=st?.setId && !st.standalone && !st.working && (done || canComplete('set',st.setId));
+      const done=isDone(st),allowed=st?.setId && !st.standalone && !st.working && (done || canComplete('set',st.setId,at));
       if(!allowed){if(b)b.remove();continue;}
       if(!b){b=doc.createElement('button');b.type='button';b.className='ldMark ldMarkSet';(head.querySelector('.nm') || head.firstChild).after(b);}
       b.dataset.ld='set:'+st.setId;b.dataset.done=done?'1':'0';
@@ -751,7 +770,7 @@
   function decorate(body) {
     body = body || byId('libBody'); if (!body) return;
     L.currentQ = query();
-    cards(body, 'current'); partials(body);
+    pass(() => { cards(body, 'current'); partials(body); });
     body.querySelectorAll(':scope > .ldFound').forEach(n => n.remove());
     const empty = body.querySelector(':scope > .libEmpty'); if (empty && !empty.textContent.trim()) empty.remove();
     const line = foundLine('current'); if (line) body.prepend(line);
@@ -1085,7 +1104,7 @@
     if (S.mode === 'library') { writeHash(); if (L.tab === 'done') showDone(); else { const b = byId('libBody'); if (b.querySelector('.libCard, .libEmpty')) decorate(b); } }
   }
 
-  window.LibraryDone = { mark, isDone, isFiled, canComplete, addedSeals, refreshCards: root => { cards(root, L.tab); partials(root); }, tab: () => L.tab, setTab, show, focus, rows, decorate, input, fromHash, glide, snapshot, glideFrom, counts: () => L.counts && Object.assign({}, L.counts) };
+  window.LibraryDone = { mark, isDone, isFiled, canComplete, addedSeals, refreshCards: root => pass(() => { cards(root, L.tab); partials(root); }), tab: () => L.tab, setTab, show, focus, rows, decorate, input, fromHash, glide, snapshot, glideFrom, counts: () => L.counts && Object.assign({}, L.counts) };
   window.LibraryDone.reload = reload;
   if (doc.readyState === 'loading') doc.addEventListener('DOMContentLoaded', init); else init();
 })();

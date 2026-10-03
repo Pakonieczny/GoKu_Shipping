@@ -6219,13 +6219,13 @@ function renderLibrary() {
   const place = S.mode === "library" && body.querySelector(".libCard") ? libraryPlace() : null;
   const card = (r, i) => { const m = metalOf(r), sn = setNo(r); return `<div class="libCard hoverItem" data-m="${r.metal}" data-id="${r.id}" data-page="${r.page || 1}" style="--i:${i || 0}" title="${esc(r.folder || r.id)}">${sheetHead(r, {inFan:r._inFan})}<div data-back-sheet="${esc(r.id)}">${window.Engrave ? Engrave.backsMarkup(r) : ""}</div><img class="pv" data-sheet-preview="${esc(r.id)}"${pvRatio(r)} crossorigin="anonymous"${r.preview ? ` src="${esc(cors(r.preview))}"` : ""} loading="lazy" alt="Sheet preview"><div class="m"><span title="charms placed of the charms asked for"><b>${r.placedCount}</b>/${r.charmCount}</span><span title="how full the sheet is"><b>${Math.round((r.density || 0) * 100)}%</b></span><span title="metal left free">${fmt.area(r.freePt2 || 0)} free</span><span class="sheetBackStatus" data-sheet-status="${esc(r.id)}" aria-live="polite">${CharmNestReadiness.counter(LaserReview.sheet(r),'Sheet',r)}</span></div></div>`; };
   LaserReview.sections(body);
-  for(const r of rows){
+  LaserReview.batch(()=>{for(const r of rows){
     LaserReview.record(r);
     const item=document.createElement('article');item.className='librarySheet';item.dataset.laserCard='sheet';item._laserSheets=[r.id];
     item.innerHTML=card(r,0)+LaserReview.labels(r);
     item.querySelector('.libCard').onclick=()=>openLibrarySheet(r.id);
     LaserReview.place(item,LaserReview.canCut(r),body);
-  }
+  }});
   LaserReview.changed();
   libraryReturn(place);
   if (LD) LD.decorate(body);
@@ -6615,7 +6615,7 @@ boot();
      Design Station's sign-in), the same name every seal it stamps carries. -->
 <script src="station-session.js?v=20261002-ea1"></script>
 <script src="station-activity.js?v=20261003-reset-clean"></script>
-<script src="charm-nest-bridge.js?v=20261003-why-rail-seal-small-live1"></script>
+<script src="charm-nest-bridge.js?v=20261003-many1"></script>
 <script>
 try {
   const nameNow = () => { try { const n = String((window.CNEmployee && CNEmployee.name()) || "").trim(); return /^\d+$/.test(n) ? "" : n; } catch (_) { return ""; } };
@@ -6649,7 +6649,7 @@ try {
 <script src="charm-nest-rose-ui.js?v=20261003-rg2"></script>
 <script src="charm-nest-flow-rose.js?v=20261003-rg2"></script>
 <script src="charm-nest-export-ui.js?v=20260925-done"></script>
-<script src="charm-nest-library.js?v=20261003-dnd1"></script>
+<script src="charm-nest-library.js?v=20261003-many1"></script>
 <script src="charm-nest-flow.js?v=20261003-flow3"></script>
 <script src="charm-nest-library-approval-ui.js?v=20261003-fb1"></script>
 <script src="charm-nest-library-fx.js?v=20261003-fx2"></script>

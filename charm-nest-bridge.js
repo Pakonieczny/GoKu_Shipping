@@ -5466,6 +5466,14 @@ const Engrave = window.Engrave = (() => {
 /* ═══ 22 · Sets — production evidence and release ═══ */
 const LaserReview = window.LaserReview = (()=>{
   const R=window.CharmNestReadiness, records=new Map(), sets=new Map();let frame=0,polling=false,lastPoll=0,sealPoll=0;
+  /* One pass over the cards (batch: a refresh frame, the Library's first drawing, a Sets view) reads each sheet's projection once,
+     and what every order row says about its pieces once. projected() worked both out again each time it was called, which is
+     several times for each card: with a few hundred sheets and as many open orders a frame spent most of its time there (Paul,
+     3 Oct: the Library felt slow with many sheets). A pass only draws, nothing in it changes an order row, an engraving job or a
+     record (a changed record is a new object, so it is read again); outside a pass every call reads everything afresh. */
+  let passDepth=0,passRows=null,passProjected=null;
+  const rowDecisions=()=>passDepth?(passRows || (passRows=R.decisions(Orders.rows()))):R.decisions(Orders.rows());
+  function batch(fn){passDepth++;try{return fn();}finally{if(!--passDepth){passRows=null;passProjected=null;}}}
   /* The live read (below): its state. `sigs` and `shape` are what the last answers said (to redraw only what changed, and to see
      a sheet that moved to another set or was cut elsewhere); `revs` are the revisions of the documents the last full answer
      was made from, sent back so the cloud can answer "unchanged" without working anything out. */
@@ -5473,12 +5481,13 @@ const LaserReview = window.LaserReview = (()=>{
   function record(s){const id=s.id || s.sheetId,old=records.get(id);if(id && (!old || (s.updatedAt || 0)>=(old.updatedAt || 0)))records.set(id,s);return s;}
   function projected(s){
     const id=s.id || s.sheetId,base=records.get(id) || s;
+    const known=passDepth && passProjected?.get(base);if(known)return known;
     const live=allSheets().find(x=>x.sheetId===id && !x.recalled);
     const ids=base.poolIds || (live?.placements || []).map(p=>live.charms.find(c=>c.id===p.id)?.poolId).filter(Boolean);
     const d={...base,poolIds:ids,engraving:{...base.engraving},backPool:(base.backPool || base.backs || []).slice()};
     if(window.LibraryDone)d.laserDoneAt=LibraryDone.isDone(base)?(base.laserDoneAt || 1):null;
-    const rows=R.decisions(Orders.rows());
-    for(const pid of ids)if(rows[pid] && !d.engraving[pid])d.engraving[pid]=rows[pid];
+    const rows=rowDecisions();
+    for(const pid of ids)if(rows[pid] && !d.engraving[pid])d.engraving[pid]={...rows[pid]};
     for(const j of Engrave.items().values())for(const pid of j.copies || [])if(ids.includes(pid)) {
       if(j.state==='written' && !j.backSaving)continue; // cloud evidence wins once saved
       d.engraving[pid]={needed:!['none','skipped'].includes(j.state),state:j.state,approved:['none','skipped','approved'].includes(j.state)};
@@ -5486,6 +5495,7 @@ const LaserReview = window.LaserReview = (()=>{
       if(j.state==='approved')d.backPool.push(...(j.backs || []).filter(b=>b.poolId===pid));
     }
     if(live?.dirty || live?.runHold || live?.saving || ['nesting','finishing'].includes(live?.status))d.dirty=true;
+    if(passDepth)(passProjected || (passProjected=new Map())).set(base,d);
     return d;
   }
   const sheet=s=>R.laserSheet(projected(s));
@@ -5663,6 +5673,9 @@ const LaserReview = window.LaserReview = (()=>{
     frame=0;
     if(window.Seal?.defer("laser-refresh",refresh))return;
     if(S.mode!=='library')return;   // its cards are the Library's: a closed Library has let its records go (below)
+    batch(paint);
+  }
+  function paint(){
     let needsSeals=false,names=null,before=null,home=null;const lookup=()=>names || (names=R.lookup({rows:Orders.rows()})),moved=[];
     document.querySelectorAll('[data-laser-card]').forEach(card=>{
       if(!card._laserSheets)return;   // (a copy of a card flying to a tab, charm-nest-motion.js, is not a card: it holds none of its records)
@@ -5984,7 +5997,7 @@ const LaserReview = window.LaserReview = (()=>{
   window.addEventListener?.('online',()=>{live.fails=0;readSoon(false);resumeReload();});
   /** What the live read is doing (the test reads it): reads in flight, failures in a row, whether the cloud knows ifRevs. */
   const liveState=()=>({busy:live.busy,fails:live.fails,legacy:live.legacy,armed:!!live.timer,revs:live.revs?Object.keys(live.revs).length:0,reload:live.reload});
-  return {record,sheet,group,canCut,labels,sections,place,changed,saved,poll,nudge,liveState,projected,acceptProcess,openChecklist,explain:(kind,id,card)=>explainOf({kind,id},card || {_laserSheets:[id]},()=>R.lookup({rows:Orders.rows()}))};
+  return {record,sheet,group,canCut,labels,sections,place,changed,saved,poll,nudge,liveState,projected,batch,acceptProcess,openChecklist,explain:(kind,id,card)=>explainOf({kind,id},card || {_laserSheets:[id]},()=>R.lookup({rows:Orders.rows()}))};
 })();
 
 /* ═══ 22 · Sets — one run, one date, one folder, one numbering across materials ═══ */
@@ -6364,12 +6377,12 @@ const Sets = window.Sets = (() => {
       sets=CNListActivity.select("library",sets);
       if (!sets.length) { body.innerHTML = `<div class="libEmpty">${focus ? "" : q || metal ? "No sets match this filter." : "No sets yet."}</div>`; if (LD) LD.decorate(body); return; }
       LaserReview.sections(body);
-      for (const st of sets) {
+      LaserReview.batch(() => { for (const st of sets) {
         const all = st.sheets.slice().sort((a, b) => (a.metal || "").localeCompare(b.metal || "") || (a.sheetIndex || 0) - (b.sheetIndex || 0));
         // (after Undo set the view is read again, and each card glides from where it was rather than being redrawn in one go)
         const card = libraryCard(st, all, all, {onUndo: () => LD && LD.glide ? LD.glide(body, () => renderLibrary(body)) : renderLibrary(body)});
         LaserReview.place(card,LaserReview.group(st,all).ready,body);
-      }
+      } });
       LaserReview.changed();
       if (LD) LD.decorate(body);
     } catch (e) { if (request === libraryRequest && S.library.kind === "sets") body.innerHTML = `<div class="libEmpty">Could not load sets: ${esc(e.message)}</div>`; }
