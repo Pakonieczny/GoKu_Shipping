@@ -1794,9 +1794,10 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
      · a sheet no open run can take into a set (an earlier or given-up run, a record restored from the Library) gets a
        label of its own: the same code of the orders placed on it, named by the sheet, saved beside its files.
      Rose Gold gets its label with Cut Sheet, and a sheet being changed or saved waits until it is done. */
-  function labelPlan() {
-    const rec = W.rec; if (!rec || W.flow) return null;
-    const sh = allSheets().find(p => p.sheetId === W.id), run = window.B && B.run;
+  function labelPlan() { return W.rec && !W.flow ? labelPlanOf(W.rec, W.id) : null; }
+  function labelPlanOf(rec, id) {
+    if (!rec) return null;
+    const sh = allSheets().find(p => p.sheetId === id), run = window.B && B.run;
     if (sh && busy(sh)) return null;
     const openRun = !!sh && !!run && sh.runId === run.runId && !!window.Gate && Gate.modern(run.runId) && !["complete", "abandoned"].includes(run.status) && !sh.recalled && !sentToStation(sh);
     if (openRun) {
@@ -1823,6 +1824,12 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     }
     const box = W.el.foot.querySelector("[data-r2=qr]"), text = box && box.querySelector("[data-r2=qrText]");
     btn.disabled = true; if (box) box.classList.add("remaking"); if (text) text.textContent = "Making the QR label…";
+    try { await doLabel(plan, rec, sh, sheets, run); } catch (e) { toast("No QR label made: " + e.message, "bad", 8000); }
+    if (W.id === id && W.dlg.open && !W.flow) open2(id);
+  }
+  /* What Make QR label does, without the window: the button's own path, and the Library's moves' (SheetWin.remakeLabel,
+     joinSet). It puts back what it changed, and throws, when no label was made. */
+  async function doLabel(plan, rec, sh, sheets, run) {
     const reason = () => { const set = Sets.ofRun(run.runId).find(s => s.group === "dispatch" && !s.committedAt); return set ? Gate.policy(sh, set.seq).reason : "there is no open set to join"; };
     let undo = null;
     try {
@@ -1845,9 +1852,8 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       if (S.mode === "library") CN.loadLibrary().catch(() => {});
     } catch (e) {
       if (undo) undo();
-      toast("No QR label made: " + e.message, "bad", 8000);
+      throw e;
     }
-    if (W.id === id && W.dlg.open && !W.flow) open2(id);
   }
   /** A label of its own for a sheet outside any open set: the orders placed on it, in the code the set labels use. */
   async function ownLabel(rec, sh) {
@@ -4369,7 +4375,34 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
 
   // (asked to open from outside while the order view holds this window's place, as its Sheet tab does: the window is
   // back at once, under the order view closing)
-  window.SheetWin = { open: (id, opts) => { if (W.away) comeBack(W.away, { ms: 0 }); return open(id, opts); }, close, isOpen: () => !!(W.dlg && W.dlg.open), current: () => W.id, drawOrder, cardBack, armBack, _W: W };
+  /* The Library's moves (charm-nest-flow.js; Paul, 3 Oct: drag a sheet to a set, or approve one) reach the Make QR label and
+     Include paths above without opening this window. Each throws, having put back what it changed, when it did not do it.
+       joinInfo(id)         what the open run can do for the sheet now: { runHere, draft, dispatchSetId, can: { ok, byHand, reason }, split: [{ label, orders }] }
+       joinSet(id, o)       the sheet of the open run joins its set with its QR label (Release as it stands, or Include for 10K / 14K);
+                            o.split "this": only this sheet when an order of it is also on a sheet that stays out
+       remakeLabel(id)      the QR label of a sheet in its set (or of its own) made again */
+  const savedSheet = async id => { const r = await api("charmNestLibrary", { op: "getSheet", id }, { quiet: true, timeoutMs: 12000 }); if (!r.sheet) throw new Error("This sheet is no longer in the Library."); return r.sheet; };
+  function joinInfo(id) {
+    const sh = allSheets().find(p => p.sheetId === id), run = window.B && B.run;
+    if (!sh || !run || !window.Gate) return null;
+    const open = window.Sets && Sets.ofRun(run.runId).find(s => s.group === "dispatch" && !s.committedAt), plan = labelPlanOf({}, id), ok = !!plan && (plan.kind === "release" || plan.kind === "include");
+    const runHere = sh.runId === run.runId && !["complete", "abandoned"].includes(run.status) && Gate.modern(run.runId) && !sh.recalled && !sentToStation(sh);
+    const why = ok ? "" : !runHere ? "It is not on a page of the open run." : sh.roseCutAt || sh.laserDoneAt ? "It is already cut." : sh.metal === "rose" ? "A Rose Gold sheet joins its set when Cut Sheet is pressed, on the Nest tab." : busy(sh) ? "It is still being nested or saved." : !sh.placements.length ? "No charms are placed on it." : !sh.verification?.ok ? "Its layout has not been verified yet." : !sh.persistedDone ? "It is still being saved." : sh.setId && !sh.draft ? "It is already in a set." : "Nest and verify it first.";
+    const split = ok && plan.kind === "include" && Gate.splitWith ? Gate.splitWith(sh, true).map(x => ({ label: `${CODE[x.sheet.metal] || ""} Sheet ${x.sheet.page}`, orders: x.orders })) : [];
+    return { runHere, draft: !!sh.draft, dispatchSetId: open ? open.setId : null, can: { ok, byHand: ok && plan.kind === "release", reason: why }, split };
+  }
+  async function joinSet(id, o = {}) {
+    const sh = allSheets().find(p => p.sheetId === id), run = window.B && B.run, plan = labelPlanOf({}, id);
+    if (!sh || !run || !plan || (plan.kind !== "release" && plan.kind !== "include")) throw new Error("This sheet cannot join a set from here: open it and press Make QR label");
+    if (plan.kind === "include" && Gate.splitWith && Gate.splitWith(sh, true).length && o.split !== "this") throw new Error("An order on this sheet is also on a sheet that is not in the set: it needs your choice first");
+    await doLabel(plan, null, sh, [sh], run);
+  }
+  async function remakeLabel(id) {
+    const sh = allSheets().find(p => p.sheetId === id), run = window.B && B.run, rec = await savedSheet(id), plan = labelPlanOf(rec, id);
+    if (!plan || (plan.kind !== "relabel" && plan.kind !== "own")) throw new Error("The QR label cannot be made from here: open the sheet and press Make QR label");
+    await doLabel(plan, rec, sh, [sh], run);
+  }
+  window.SheetWin = { remakeLabel, joinSet, joinInfo, open: (id, opts) => { if (W.away) comeBack(W.away, { ms: 0 }); return open(id, opts); }, close, isOpen: () => !!(W.dlg && W.dlg.open), current: () => W.id, drawOrder, cardBack, armBack, _W: W };
 })();
 
 /* Charm Nest · the Library turned over (Paul, 28 Sep 21:22: "add the back engraving view … to all places where a sheet is
