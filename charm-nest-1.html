@@ -3091,6 +3091,9 @@ function cloudWords(text, status) {
 window.CNWipe = window.CNWipe || { active: false };
 const READ_OP = /^(get|list|ping|lookup|history|check)|(Get|List|Check|Status|Preview|Read|Url|Info)$/;
 const TL_WRITE = /^(pool|back|laser|rose|custom|arrival|cancel|set|putSheet|deleteSheet|restoreSheet|sandboxCancel)/;   // (the writes an order's timeline shows)
+// the writes that change where a sheet or a set stands in the Library, or what it still waits for (its backs, label, set, green
+// line, cut mark, hold and seals, and the orders' own answers): the Library's cards read the cloud again at once after any of them
+const LIBRARY_WRITE = /^(poolPut|poolUpdate|backPut|backInvalidate|setAllocate|setUpdate|runPut|runArchive|laserDone|putSheet|deleteSheet|restoreSheet|archiveEmptySheet|roseRecordCut|roseTakeOff|roseClaim|roseRelease|flowApply|customDecide|customPut|customReopen|customDelete|customSheetPut|cancelPut|cancelRestore|noDesignPut|noDesignDelete)$/;
 async function api(fn, body, opts = {}) {
   if (opts.all) return apiAll(fn, body, opts);
   if (window.CNWipe.active && !opts.wipe && !READ_OP.test(String((body && body.op) || ""))) throw Object.assign(new Error("the sandbox is being reset: try again once the page has reloaded"), { transient: true, wiping: true });
@@ -3117,6 +3120,9 @@ async function api(fn, body, opts = {}) {
     // committed, a cancel): the order view that is open reads its timeline again now and 1.5 s later, not at its next poll
     // (Paul, 3 Oct 04:03). Reads, and writes that no order's timeline shows, do not ask.
     if (fn === "charmNestLibrary" && TL_WRITE.test(String((body && body.op) || "")) && !READ_OP.test(String((body && body.op) || ""))) { try { if (window.OrderWin && OrderWin.isOpen()) OrderWin.nudge(); } catch (_) {} }
+    // ... and the Library's cards (a sheet's or a set's place and readiness) read the cloud again now and 1.5 s after the last write
+    // (Paul, 3 Oct 04:47: real time). The slow check that records seals (laserStatus) is not a write and never lands here.
+    if (fn === "charmNestLibrary" && LIBRARY_WRITE.test(String((body && body.op) || ""))) { try { window.LaserReview?.nudge?.(); } catch (_) {} }
     return data;
   } catch (e) {
     if (e && e.name === "TimeoutError") throw Object.assign(new Error(`${fn}: no answer in ${Math.round(ms / 1000)} s — timed out`), { transient: true });
@@ -6609,7 +6615,7 @@ boot();
      Design Station's sign-in), the same name every seal it stamps carries. -->
 <script src="station-session.js?v=20261002-ea1"></script>
 <script src="station-activity.js?v=20261003-reset-clean"></script>
-<script src="charm-nest-bridge.js?v=20261003-why-rail-seal-small"></script>
+<script src="charm-nest-bridge.js?v=20261003-why-rail-seal-small-live1"></script>
 <script>
 try {
   const nameNow = () => { try { const n = String((window.CNEmployee && CNEmployee.name()) || "").trim(); return /^\d+$/.test(n) ? "" : n; } catch (_) { return ""; } };
@@ -6643,7 +6649,7 @@ try {
 <script src="charm-nest-rose-ui.js?v=20261003-rg2"></script>
 <script src="charm-nest-flow-rose.js?v=20261003-rg2"></script>
 <script src="charm-nest-export-ui.js?v=20260925-done"></script>
-<script src="charm-nest-library.js?v=20261003-id1"></script>
+<script src="charm-nest-library.js?v=20261003-live1"></script>
 <script src="charm-nest-flow.js?v=20261003-flow3"></script>
 <script src="charm-nest-library-approval-ui.js?v=20261003-fb1"></script>
 <script src="charm-nest-library-fx.js?v=20261003-fx2"></script>

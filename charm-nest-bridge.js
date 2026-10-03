@@ -5466,6 +5466,10 @@ const Engrave = window.Engrave = (() => {
 /* ═══ 22 · Sets — production evidence and release ═══ */
 const LaserReview = window.LaserReview = (()=>{
   const R=window.CharmNestReadiness, records=new Map(), sets=new Map();let frame=0,polling=false,lastPoll=0,sealPoll=0;
+  /* The live read (below): its state. `sigs` and `shape` are what the last answers said (to redraw only what changed, and to see
+     a sheet that moved to another set or was cut elsewhere); `revs` are the revisions of the documents the last full answer
+     was made from, sent back so the cloud can answer "unchanged" without working anything out. */
+  const live={timer:0,second:0,reloadTimer:0,busy:false,again:false,want:false,checking:false,local:0,nudged:0,fails:0,start:0,end:0,seq:0,applied:0,revs:null,legacy:false,reload:false,seen:0,reloadAt:0,sigs:new Map(),shape:new Map()};
   function record(s){const id=s.id || s.sheetId,old=records.get(id);if(id && (!old || (s.updatedAt || 0)>=(old.updatedAt || 0)))records.set(id,s);return s;}
   function projected(s){
     const id=s.id || s.sheetId,base=records.get(id) || s;
@@ -5629,7 +5633,7 @@ const LaserReview = window.LaserReview = (()=>{
     if(open)openFlow.add(box.dataset.flowFor);else openFlow.delete(box.dataset.flowFor);
   }
   function flowDraw(box,e,own){
-    const checking=!!sealPoll || checkingNow,open=openFlow.has(box.dataset.flowFor),line=!e.ready && !e.done;
+    const checking=!!sealPoll || checkingNow || live.checking,open=openFlow.has(box.dataset.flowFor),line=!e.ready && !e.done;
     const sig=JSON.stringify([e.ready,e.done,e.step,e.nextText,e.steps.map(s=>[s.state,s.detail,s.items.map(i=>i.id+'|'+i.why)]),checking,line]);
     if(box._sig===sig)return;
     box._sig=sig;
@@ -5659,7 +5663,7 @@ const LaserReview = window.LaserReview = (()=>{
     frame=0;
     if(window.Seal?.defer("laser-refresh",refresh))return;
     if(S.mode!=='library')return;   // its cards are the Library's: a closed Library has let its records go (below)
-    let needsSeals=false,names=null;const lookup=()=>names || (names=R.lookup({rows:Orders.rows()}));
+    let needsSeals=false,names=null,before=null,home=null;const lookup=()=>names || (names=R.lookup({rows:Orders.rows()})),moved=[];
     document.querySelectorAll('[data-laser-card]').forEach(card=>{
       if(!card._laserSheets)return;   // (a copy of a card flying to a tab, charm-nest-motion.js, is not a card: it holds none of its records)
       const sheets=(card._laserSheets || []).map(id=>records.get(id)).filter(Boolean),report=card._laserSet?group(card._laserSet,sheets):{...sheet(sheets[0] || {}),ready:canCut(sheets[0] || {})};
@@ -5669,7 +5673,9 @@ const LaserReview = window.LaserReview = (()=>{
       const seal=card.querySelector('[data-laser-seal]');if(seal){const html=R.seal(report,card._laserSet?'Set':'Sheet',card._laserSet || sheets[0]);if(seal.innerHTML!==html)seal.innerHTML=html;}
       const title=card.querySelector('[data-set-title]');if(title)title.textContent=O.setLabel(card._laserSet.seq)+(card._laserSet.day?' · '+card._laserSet.day:'');
       card.querySelectorAll('[data-sheet-status]').forEach(n=>{const s=records.get(n.dataset.sheetStatus);if(s){const html=R.counter(sheet(s),'Sheet',s);if(n.innerHTML!==html)n.innerHTML=html;}});
-      const body=card.closest('#libBody');if(body && card.parentElement!==body.querySelector(`[data-laser-area="${report.ready?'ready':'pending'}"] .laserAreaItems`))place(card,report.ready,body);
+      // a card whose readiness changed moves between In progress and Laser cutting: where it stood is measured first, so it glides
+      // there (the Library's own glide, charm-nest-library.js) instead of jumping; while a flight is drawing (LibraryFx) that is its to show
+      const body=card.closest('#libBody');if(body && card.parentElement!==body.querySelector(`[data-laser-area="${report.ready?'ready':'pending'}"] .laserAreaItems`)){if(!before && !body.querySelector('[data-fx-hide]')){home=body;before=window.LibraryDone?.snapshot?.(body) || null;}place(card,report.ready,body);moved.push([card,report.ready]);}
       syncApprove(card,report,sheets);   // the manual "Approve for laser cutting" button (below)
     });
     for(const list of document.querySelectorAll('#libBody .laserAreaItems')){
@@ -5680,6 +5686,16 @@ const LaserReview = window.LaserReview = (()=>{
     if(window.LibraryDone)LibraryDone.refreshCards(document.getElementById('libBody'));
     if(needsSeals && !polling && !sealPoll && S.cloud.ok)sealPoll=setTimeout(()=>{sealPoll=0;poll(true);},Math.max(0,5100-(Date.now()-lastPoll)));
     document.querySelectorAll('[data-laser-area]').forEach(area=>{const hasItems=!!area.querySelector('.laserAreaItems')?.children.length;area.hidden=area.dataset.laserArea!=='ready' && !hasItems;const empty=area.querySelector('.laserEmpty');if(empty)empty.hidden=hasItems;});
+    if(moved.length)landed(home,before,moved);
+  }
+  // the cards that moved are drawn at their new place: they glide from where they stood, and a card that reached Laser cutting
+  // leaves a soft ring when it has settled (never over a glide: both move the same card)
+  function landed(body,before,moved){
+    try{
+      if(before && body?.isConnected)window.LibraryDone?.glideFrom?.(body,before);
+      const fx=window.LibraryFx;
+      if(fx?.pulse && !document.querySelector('[data-fx-hide]'))setTimeout(()=>{for(const [card,ready] of moved)if(ready && card.isConnected && !document.querySelector('[data-fx-hide]'))fx.pulse(card);},window.Motion?.T?.slide || 760);
+    }catch(e){console.warn('Library glide',e);}
   }
   /* ── Approve for laser cutting (Paul, 3 Oct: "There is also no way for the user to manually approve a given sheet or set of
      sheets.") Every sheet and set card under In progress carries one button. A press asks LibraryFlow (charm-nest-flow.js)
@@ -5688,7 +5704,6 @@ const LaserReview = window.LaserReview = (()=>{
      person's decision can move on (back engravings not approved) keeps the button, disabled, with the plain reason beside
      it. Nothing here approves, stamps or writes: LibraryFlow does, and records the person's seal. No LibraryFlow on the
      page, no button. The card then moves to Laser cutting by the same refresh and read every other change goes through. */
-  let pollAgain=0;
   const approving=new Set(),boxKey=(kind,id)=>kind+':'+id,plural=(n,w)=>`${n} ${w}${n===1?'':'s'}`;
   const flowReady=()=>typeof window.LibraryFlow?.approve==='function';
   const laying=p=>!!(p.dirty || p.saving || ['nesting','finishing','queued','error'].includes(p.status));
@@ -5826,29 +5841,150 @@ const LaserReview = window.LaserReview = (()=>{
     else{box._ui=false;showPlan(box,error?null:{ok:true,auto:(res?.applied || []).map(a=>({label:a.label || a.key})),needs:[],confirm:[]},error);}
     afterApprove(box,!error);
   }
-  function changed(){if(!frame)frame=requestAnimationFrame(refresh);}
-  // `now`: asked for by a press that has just changed cloud state (Approve for laser cutting): it skips the five-second
-  // wait, and when a read is already in flight it asks again right after that one, so the card never shows old state.
-  async function poll(force=false,now=false){
-    if(polling){if(now && !pollAgain)pollAgain=setTimeout(()=>{pollAgain=0;poll(true,true);},700);return;}
-    if(S.mode!=='library' || document.hidden || !S.cloud.ok || (!now && Date.now()-lastPoll<(force?5000:60000)))return;
+  function changed(){if(!frame)frame=requestAnimationFrame(refresh);ensureLive();}
+  /* ── The Library follows the cloud (Paul, 3 Oct 04:47: "real-time", and "I'm often wondering what is still remaining for a
+     sheet or set of sheets to move to the next step"). The slow check below (poll) records process seals and runs every minute
+     (and about five seconds after a saved back); this one only reads, about every three seconds, and only while the Library is
+     the page in view and the browser tab is visible, for the sheets and sets of the cards on screen:
+       · the read is laserStatus with recordSeals:false (a pure read, charmNestLibrary.js) and never writes a seal; it carries
+         the revisions of what the last full answer was made from (ifRevs), and the cloud answers { unchanged: true } from a
+         read of those documents' update times alone when none is newer: nothing is worked out, and nothing here is redrawn;
+       · one read at a time, starting 3 s apart (never closer than 600 ms: on return, when the network comes back (online), and
+         for a change a person makes, which may read at once even a moment after the loop's own read began, but never twice in
+         600 ms), 6 s, 12 s, 24 s, 30 s apart after failures (back to 3 s at the first answer), none while the tab is hidden;
+       · what a person does here (an approval, a saved back, a label, a move, a green line: any write to the Library's records,
+         see api() in charm-nest-1.html) asks for a read at once, and for another 1.5 s after the last such write (nudge);
+       · an answer that changes a card draws it again (the cards in place; a card that crossed between In progress and Laser
+         cutting glides there); a sheet that moved to another set, or was cut or removed on another computer, has the Library's
+         list read again (once the person's own work on it, a Moving bar or a drag, is done). */
+  const LIVE={every:3000,gap:600,max:30000,old:20000,second:1500,settle:1000,reloadEvery:10000};
+  const liveOn=()=>S.mode==='library' && !document.hidden && !!S.cloud.ok;
+  // the sheets and sets of the cards in view
+  function shown(){
     const cards=[...document.querySelectorAll('[data-laser-card]')].filter(x=>{const r=x.getBoundingClientRect();return r.width>0&&r.height>0&&r.bottom>0&&r.top<innerHeight;});
-    const ids=[...new Set(cards.flatMap(x=>(x._laserSheets || []).concat([...x.querySelectorAll('[data-laser-sheet]')].map(n=>n.dataset.laserSheet))))];if(!ids.length)return;
+    return {ids:[...new Set(cards.flatMap(x=>(x._laserSheets || []).concat([...x.querySelectorAll('[data-laser-sheet]')].map(n=>n.dataset.laserSheet))))],setIds:[...new Set(cards.map(x=>x._laserSet?.setId).filter(Boolean))]};
+  }
+  /** An answer, taken in: only what differs from the last answer is replaced (`always`: all of it, as the slow check always did).
+      True when a card has to be drawn again. */
+  function applyStatus(response,ids,always){
+    let diff=!!always,shape=false;
+    const differs=(key,value)=>{const sig=JSON.stringify(value),was=live.sigs.get(key);live.sigs.set(key,sig);return was!==sig;};
+    const shaped=(key,value)=>{const was=live.shape.get(key);live.shape.set(key,value);if(was!==undefined && was!==value)shape=true;};
+    for(const set of response.sets || []){
+      shaped('t:'+set.setId,(set.sheetIds || []).slice().sort().join(',')+'|'+(set.laserDoneAt?'cut':''));
+      if(!differs('t:'+set.setId,set) && !always)continue;
+      diff=true;sets.set(set.setId,set);
+      for(const card of document.querySelectorAll('[data-laser-card]'))if(card._laserSet?.setId===set.setId)card._laserSet={...card._laserSet,...set};
+    }
+    const found=new Set();
+    for(const s of response.sheets || []){
+      found.add(s.id);
+      shaped('s:'+s.id,(!s.draft && s.solidIncluded!==false?s.setId || '':'')+'|'+(s.laserDoneAt?'cut':''));
+      if(!differs('s:'+s.id,s) && !always)continue;
+      diff=true;records.set(s.id,s);
+    }
+    for(const id of ids)if(!found.has(id) && records.has(id)){
+      shaped('s:'+id,'gone');
+      if(always || !records.get(id).archived){diff=true;records.set(id,{...records.get(id),archived:true});}
+    }
+    if(shape)wantReload();
+    return diff;
+  }
+  const arm=ms=>{clearTimeout(live.timer);live.timer=setTimeout(tick,Math.max(0,ms));};
+  function tick(){live.timer=0;if(!liveOn())return;const local=live.want;live.want=false;readLive(local).catch(e=>{console.warn('Library live read',e);live.busy=false;live.checking=false;scheduleNext();});}
+  // the next read of the loop: 3 s after the last one started, 600 ms after it ended, further out while reads fail
+  function scheduleNext(){
+    if(live.timer || live.busy || !liveOn())return;
+    const every=live.legacy?LIVE.old:Math.min(LIVE.max,LIVE.every*2**Math.min(live.fails,5));
+    arm(Math.max(live.start+every,live.end+LIVE.gap)-Date.now());
+  }
+  function ensureLive(){if(!live.timer && !live.busy)scheduleNext();}
+  // a read soon (600 ms after the last one started at the soonest, a person's change: after the last such read); one in flight:
+  // another follows it
+  function readSoon(local){
+    if(!liveOn())return;
+    if(local)live.want=true;
+    if(live.busy){live.again=true;return;}
+    arm((local?live.nudged:live.start)+LIVE.gap-Date.now());
+  }
+  /** Something that changes a sheet's or a set's place or readiness was just done here: read now, and again 1.5 s after the last one. */
+  function nudge(){
+    if(!liveOn())return false;
+    live.local=Date.now();
+    readSoon(true);
+    clearTimeout(live.second);live.second=setTimeout(()=>{live.second=0;readSoon(false);},LIVE.second);
+    return true;
+  }
+  async function readLive(local){
+    if(live.busy){live.again=true;return;}
+    if(polling){arm(400);return;}   // (the slow check is in flight with the same answer; this read follows it)
+    if(!liveOn())return;
+    const {ids,setIds}=shown();
+    live.start=Date.now();
+    if(!ids.length){live.end=live.start;scheduleNext();return;}
+    live.busy=true;live.checking=!!local;if(local)live.nudged=live.start;
+    const seq=++live.seq,ask={op:'laserStatus',sheetIds:ids,setIds,recordSeals:false,wantRevs:true};
+    if(live.revs && ids.every(id=>records.has(id)))ask.ifRevs=live.revs;
+    try{
+      const r=await api('charmNestLibrary',ask,{quiet:true});
+      if(!r || r.error)throw new Error((r && r.error) || 'No answer came back');
+      live.fails=0;
+      if(!r.unchanged){
+        live.revs=r.revs || null;live.legacy=!r.revs;   // (a cloud that does not know ifRevs answers in full every time: asked less often)
+        if(seq>live.applied){live.applied=seq;if(applyStatus(r,ids,false))changed();}
+      }
+    }catch(e){if(++live.fails===1)console.warn('Library live read',e);}
+    finally{
+      live.busy=false;live.end=Date.now();
+      if(live.checking){live.checking=false;changed();}
+      if(live.again){live.again=false;arm(live.want?0:live.start+LIVE.gap-Date.now());}else scheduleNext();   // (a change made while this read ran may have missed it: the next read is at once)
+    }
+  }
+  /* A sheet in another set, or cut or removed on another computer: the cards on screen no longer stand as the Library drew
+     them. Its list is read again by the page's own read (loadLibrary), a moment after the change was seen (the person's own
+     changes have been drawn by then, and a list read since says it already), never over a Moving bar, a flight or a drag,
+     and at most every ten seconds. */
+  function wantReload(){live.reload=true;live.seen=Date.now();if(!live.reloadTimer)live.reloadTimer=setTimeout(tryReload,LIVE.settle);}
+  const resumeReload=()=>{if(live.reload && !live.reloadTimer)live.reloadTimer=setTimeout(tryReload,LIVE.settle);};
+  function tryReload(){
+    live.reloadTimer=0;
+    if(!live.reload || !liveOn())return;
+    if((S.library?.loadedAt || 0)>live.seen){live.reload=false;return;}
+    const holding=approving.size>0 || !!document.querySelector('[data-library-approval],[data-fx-hide],[data-library-drag]') || !!window.LibraryDnd?.busy?.() || !!window.LibraryFx?.active?.();
+    const wait=Math.max(holding?1500:0,live.reloadAt+LIVE.reloadEvery-Date.now());
+    if(wait>0){live.reloadTimer=setTimeout(tryReload,wait);return;}
+    live.reload=false;live.reloadAt=Date.now();
+    try{Promise.resolve(window.CN?.loadLibrary?.()).catch(()=>{});}catch(e){console.warn('Library read',e);}
+  }
+  // `now`: asked for by a press that has just changed cloud state (Approve for laser cutting): the live read, at once and again
+  // a moment later, never the slow check (whose seals the press itself recorded).
+  async function poll(force=false,now=false){
+    if(now){nudge();return;}
+    if(polling)return;
+    if(S.mode!=='library' || document.hidden || !S.cloud.ok || Date.now()-lastPoll<(force?5000:60000))return;
+    const {ids,setIds}=shown();if(!ids.length)return;
     polling=true;lastPoll=Date.now();checkingNow=force;
-    try{const response=await api('charmNestLibrary',{op:'laserStatus',sheetIds:ids,setIds:cards.map(x=>x._laserSet?.setId).filter(Boolean),recordSeals:true,by:window.CNEmployee?.name() || undefined},{quiet:true});for(const set of response.sets || []){sets.set(set.setId,set);for(const card of document.querySelectorAll('[data-laser-card]'))if(card._laserSet?.setId===set.setId)card._laserSet={...card._laserSet,...set};}const found=new Set();for(const s of response.sheets || []){found.add(s.id);records.set(s.id,s);}for(const id of ids)if(!found.has(id) && records.has(id))records.set(id,{...records.get(id),archived:true});window.LibraryDone?.addedSeals(response.added);changed();}
+    const seq=++live.seq;
+    try{const response=await api('charmNestLibrary',{op:'laserStatus',sheetIds:ids,setIds,recordSeals:true,by:window.CNEmployee?.name() || undefined},{quiet:true});if(seq>live.applied){live.applied=seq;applyStatus(response,ids,true);}window.LibraryDone?.addedSeals(response.added);changed();}
     catch(e){console.warn('Production readiness refresh',e);}
     finally{polling=false;if(checkingNow){checkingNow=false;changed();}}
   }
   function saved(sh){
     const old=records.get(sh.sheetId);if(old)record({...old,backPool:(sh.backPool || []).slice(),engraving:{...old.engraving,...R.decisions(Orders.rows())}});
-    changed();
+    changed();nudge();
     if(!sealPoll)sealPoll=setTimeout(()=>{sealPoll=0;poll(true);},Math.max(0,5100-(Date.now()-lastPoll)));
   }
   // Paul, 24 Sep: nothing may pile up on a page left open. The records are the Library's, read again each time it opens
   // (renderLibrary, openLibrarySheet); while it is closed they are let go at the minute's check.
-  setInterval(()=>{if(S.mode!=='library'){records.clear();sets.clear();}poll();},60000);
-  document.addEventListener('visibilitychange',()=>{if(!document.hidden)poll(true);});
-  return {record,sheet,group,canCut,labels,sections,place,changed,saved,poll,projected,acceptProcess,openChecklist,explain:(kind,id,card)=>explainOf({kind,id},card || {_laserSheets:[id]},()=>R.lookup({rows:Orders.rows()}))};
+  setInterval(()=>{if(S.mode!=='library'){records.clear();sets.clear();live.revs=null;live.sigs.clear();live.shape.clear();}poll();},60000);
+  document.addEventListener('visibilitychange',()=>{
+    if(document.hidden){for(const k of ['timer','second','reloadTimer']){clearTimeout(live[k]);live[k]=0;}}   // (nothing is read while the tab is hidden)
+    else{poll(true);readSoon(false);resumeReload();}
+  });
+  window.addEventListener?.('online',()=>{live.fails=0;readSoon(false);resumeReload();});
+  /** What the live read is doing (the test reads it): reads in flight, failures in a row, whether the cloud knows ifRevs. */
+  const liveState=()=>({busy:live.busy,fails:live.fails,legacy:live.legacy,armed:!!live.timer,revs:live.revs?Object.keys(live.revs).length:0,reload:live.reload});
+  return {record,sheet,group,canCut,labels,sections,place,changed,saved,poll,nudge,liveState,projected,acceptProcess,openChecklist,explain:(kind,id,card)=>explainOf({kind,id},card || {_laserSheets:[id]},()=>R.lookup({rows:Orders.rows()}))};
 })();
 
 /* ═══ 22 · Sets — one run, one date, one folder, one numbering across materials ═══ */
