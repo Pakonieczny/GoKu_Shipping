@@ -677,6 +677,9 @@
     if (op) e.orig = Object.fromEntries(["type", "text", "data"].filter(k => was[k] != null).map(k => [k, was[k]]));
     return e;
   }
+  // the same event again (norm of the same record): nothing in what it says has changed
+  const FACTS = ["key", "id", "type", "at", "by", "source", "station", "device", "lineKey", "transactionId", "sheetId", "sheet", "setId", "text", "milestone", "pending", "derived"];
+  const sameFacts = (a, b) => FACTS.every(k => a[k] === b[k]) && (a.data === b.data || JSON.stringify([a.data, a.orig]) === JSON.stringify([b.data, b.orig]));
   // an event as the host gets it (onOpen, onEvents, onNow): the record's own fields, without the drawing's
   const PUB = ["id", "key", "type", "at", "by", "source", "station", "device", "lineKey", "transactionId", "sheetId", "sheet", "setId", "text", "data", "milestone", "pending", "derived"];
   const pubOf = (e, orderId) => { const o = { orderId }; for (const k of PUB) if (e[k] != null && e[k] !== "" && e[k] !== false) o[k] = e[k]; return e.orig ? Object.assign(o, e.orig) : o; };
@@ -1488,7 +1491,9 @@
     /** The server's answer, merged with what this page recorded meanwhile (still on its way to the server). */
     function apply(j) {
       const next = new Map();
-      for (const x of Array.isArray(j.events) ? j.events : []) { const e = norm(x); if (e) next.set(e.key, e); }
+      // (an event the answer repeats as it was keeps its own object: the open view's answer comes every 2.5 s, and what was
+      // derived from the events at the last redraw (S.D, the explainer's "completed by hand" one) must still be them)
+      for (const x of Array.isArray(j.events) ? j.events : []) { const e = norm(x); if (e) { const o = S.allKeys.get(e.key); next.set(e.key, o && sameFacts(o, e) ? o : e); } }
       for (const [k, e] of S.allKeys) if (e.live && !next.has(k) && Date.now() - e.live < 180000) next.set(k, e);
       const first = !S.loaded, fresh = first ? [] : [...next.keys()].filter(k => !S.allKeys.has(k));
       S.allKeys = next; S.every = [...next.values()].sort(byAt); narrow();
