@@ -59,47 +59,18 @@ test('Netlify AI Gateway bridge uses the injected key and canonical OpenAI v1 en
   assert.equal(server.createGatewayTone({base:'http://unsafe.test',key:'x'}),null);
 });
 
-function browserFixture(){
-  const states=[],transcripts=[],levels=[],errors=[],requests=[],recognitions=[],spoken=[],timers=new Set();let utterance;
-  class Recognition{constructor(){recognitions.push(this);this.started=0;this.aborted=0;}start(){this.started++;}abort(){this.aborted++;}emit(text,{final=true}={}){this.onresult?.({resultIndex:0,results:Object.assign([[{transcript:text}]],{0:Object.assign([{transcript:text}],{isFinal:final}),length:1})});}fail(error){this.onerror?.({error});}end(){this.onend?.();}}
-  class Utterance{constructor(text){this.text=text;utterance=this;}}
-  const runtime={location:{origin:'https://preview.test'},document:{documentElement:{lang:'en-US'},hidden:false,addEventListener(){},removeEventListener(){}},navigator:{},SpeechRecognition:Recognition,SpeechSynthesisUtterance:Utterance,speechSynthesis:{cancelled:0,cancel(){this.cancelled++;},speak(value){spoken.push(value.text);value.onstart?.();}},AbortController,fetch:async(url,init)=>{const body=JSON.parse(init.body);requests.push({url,body});if(body.action==='capabilities')return Response.json({enabled:true,mode:'browser-speech-bridge',maxDurationMs:120000,maxTurns:12});return Response.json({enabled:true,speech:'Of course. Christmas Tree Charm from $35.00.',tone:'warm',aiUsed:true});},setTimeout(fn,ms){const id=setTimeout(fn,ms);timers.add(id);return id;},clearTimeout(id){clearTimeout(id);timers.delete(id);},addEventListener(){},removeEventListener(){}};
-  const voice=client.create({runtime,onState:value=>states.push(value),onTranscript:value=>transcripts.push(value),onLevel:value=>levels.push(value),onError:value=>errors.push(value),onTool:async()=>checked});
-  return {runtime,voice,states,transcripts,levels,errors,requests,recognitions,spoken,get utterance(){return utterance;}};
+// The former browser-speech bridge remains tested above for compatibility,
+// but the shopper adapter must never silently fall back to that synthetic voice.
+function unavailableNativeFixture({native=false,denied=false}={}){
+  let recognition=0,synthesis=0,microphones=0;const requests=[],errors=[];
+  const runtime={location:{origin:'https://preview.test'},document:{hidden:false,addEventListener(){},removeEventListener(){}},navigator:{mediaDevices:{getUserMedia:async()=>{microphones++;throw Error('must not request mic');}}},SpeechRecognition:class{constructor(){recognition++;}},SpeechSynthesisUtterance:class{},speechSynthesis:{speak(){synthesis++;},cancel(){synthesis++;}},AbortController,setTimeout,clearTimeout,addEventListener(){},removeEventListener(){},fetch:async(url,init)=>{requests.push({url,body:JSON.parse(init.body)});return Response.json(denied?{enabled:false,message:'Preview allocation is paused.'}:{enabled:true});}};
+  if(native)runtime.RTCPeerConnection=class{};
+  const voice=client.create({runtime,onError:value=>errors.push(value)});
+  return {voice,requests,errors,counts:()=>({recognition,synthesis,microphones})};
 }
-
-test('browser fallback is opt-in, listens, checks catalogue, speaks and animates bounded states',async()=>{
-  const f=browserFixture();assert.equal(f.recognitions.length,0);assert.equal(f.requests.length,0);assert.equal(await f.voice.start(),true);assert.equal(f.recognitions.length,1);assert.equal(f.states.at(-1),'listening');
-  f.recognitions[0].emit('A Christmas gift');await new Promise(resolve=>setImmediate(resolve));await new Promise(resolve=>setImmediate(resolve));
-  assert.ok(f.states.includes('thinking'));assert.equal(f.states.at(-1),'speaking');assert.deepEqual(f.spoken,['Of course. Christmas Tree Charm from $35.00.']);assert.equal(f.requests.filter(x=>x.body.action==='turn').length,1);assert.equal(f.requests.find(x=>x.body.action==='turn').body.catalogue.internal,'never expose');
-  assert.equal(f.transcripts[0].spokenOnly,true);assert.equal(f.transcripts.at(-1).spokenOnly,true);const starts=f.recognitions[0].started,cancels=f.runtime.speechSynthesis.cancelled;f.voice.interrupt();assert.ok(f.runtime.speechSynthesis.cancelled>cancels);assert.ok(f.recognitions[0].started>starts);assert.equal(f.states.at(-1),'listening');await f.voice.stop();assert.equal(f.voice.state,'idle');assert.ok(f.recognitions[0].aborted>0);
+test('synthetic browser voice cannot masquerade as native OpenAI conversation',async()=>{
+  const f=unavailableNativeFixture();assert.equal(await f.voice.start(),false);assert.equal(f.voice.state,'idle');assert.equal(f.requests.length,0);assert.deepEqual(f.counts(),{recognition:0,synthesis:0,microphones:0});assert.match(f.errors[0],/OpenAI voice/);await f.voice.dispose();
 });
-
-test('foreign fallback endpoint is rejected before microphone or fetch',()=>{assert.throws(()=>client.create({runtime:{location:{origin:'https://preview.test'}},demoEndpoint:'https://evil.test/demo'}),/must be on this website/);});
-
-test('browser recognition keeps listening after silence and publishes interim words without sending a turn',async()=>{
-  const f=browserFixture();await f.voice.start();const recognition=f.recognitions[0],starts=recognition.started;
-  recognition.emit('a gift for',{final:false});assert.equal(f.transcripts.at(-1).text,'a gift for');assert.equal(f.transcripts.at(-1).final,false);assert.equal(f.requests.filter(x=>x.body.action==='turn').length,0);
-  recognition.fail('no-speech');recognition.end();await new Promise(resolve=>setTimeout(resolve,190));
-  assert.ok(recognition.started>starts);assert.equal(f.voice.state,'listening');assert.equal(f.errors.length,0);await f.voice.stop();
-});
-
-test('browser interruption aborts a pending answer and stale completion never speaks',async()=>{
-  const f=browserFixture();let turnSignal,turnResolve;
-  f.runtime.fetch=async(url,init)=>{const body=JSON.parse(init.body);f.requests.push({url,body});if(body.action==='capabilities')return Response.json({enabled:true,mode:'browser-speech-bridge',maxDurationMs:120000,maxTurns:12});turnSignal=init.signal;return new Promise((resolve,reject)=>{turnResolve=resolve;turnSignal.addEventListener('abort',()=>reject(Object.assign(Error('aborted'),{name:'AbortError'})),{once:true});});};
-  await f.voice.start();f.recognitions[0].emit('A gift for my mother');await new Promise(resolve=>setImmediate(resolve));await new Promise(resolve=>setImmediate(resolve));
-  assert.equal(f.voice.state,'thinking');assert.equal(turnSignal.aborted,false);f.voice.interrupt();assert.equal(turnSignal.aborted,true);assert.equal(f.voice.state,'listening');
-  turnResolve?.(Response.json({enabled:true,speech:'This stale answer must not play.'}));await new Promise(resolve=>setImmediate(resolve));assert.deepEqual(f.spoken,[]);assert.equal(f.errors.length,0);await f.voice.stop();
-});
-
-test('duplicate final recognition events cannot create parallel catalogue or speech turns',async()=>{
-  const f=browserFixture();let release;f.runtime.fetch=async(url,init)=>{const body=JSON.parse(init.body);f.requests.push({url,body});if(body.action==='capabilities')return Response.json({enabled:true,mode:'browser-speech-bridge',maxDurationMs:120000,maxTurns:12});await new Promise(resolve=>{release=resolve;});return Response.json({enabled:true,speech:'One checked answer.'});};
-  await f.voice.start();f.recognitions[0].emit('Graduation gift');f.recognitions[0].emit('Graduation gift');await new Promise(resolve=>setImmediate(resolve));
-  assert.equal(f.requests.filter(x=>x.body.action==='turn').length,1);release();await new Promise(resolve=>setImmediate(resolve));await new Promise(resolve=>setImmediate(resolve));assert.deepEqual(f.spoken,['One checked answer.']);await f.voice.stop();
-});
-
-test('permission errors stop cleanly while two transient network failures retry',async()=>{
-  const f=browserFixture();await f.voice.start();const recognition=f.recognitions[0],starts=recognition.started;
-  recognition.fail('network');recognition.end();await new Promise(resolve=>setTimeout(resolve,550));assert.ok(recognition.started>starts);assert.equal(f.voice.state,'listening');
-  recognition.fail('not-allowed');await new Promise(resolve=>setImmediate(resolve));await f.voice.stop();assert.equal(f.voice.state,'idle');assert.ok(f.errors.some(x=>x.includes('permission')));
+test('native preview allocation denial preserves typing without launching old speech bridge',async()=>{
+  const f=unavailableNativeFixture({native:true,denied:true});assert.equal(await f.voice.start(),false);assert.equal(f.requests.length,1);assert.equal(f.requests[0].url,'/api/concierge-voice');assert.deepEqual(f.counts(),{recognition:0,synthesis:0,microphones:0});assert.equal(f.voice.state,'idle');assert.match(f.errors[0],/allocation/);await f.voice.dispose();
 });

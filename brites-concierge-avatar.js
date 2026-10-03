@@ -14,8 +14,7 @@
   const EMOTIONS = Object.freeze(['calm', 'curious', 'celebrate', 'reassuring', 'warm']);
   const validEmotion = emotion => EMOTIONS.includes(emotion) ? emotion : null;
   const MANNERISMS = Object.freeze({greet: 1.12, acknowledge: .9, focus: .86, explain: 1.05, confirm: 1.2, reassure: 1.05});
-  // Authored timing is deliberately irregular: a rare blink reads as alive
-  // without turning the guide into a perpetual attention animation.
+  // Irregular blinks avoid a perpetual attention animation.
   const BLINK_EVENTS = Object.freeze([
     Object.freeze({at: 3.3, duration: .2}),
     Object.freeze({at: 12.7, duration: .19}),
@@ -39,9 +38,6 @@
     }
     return 0;
   }
-  // These timings are artistic hypotheses, not demographic conversion claims.
-  // The luminous aperture anticipates first, the head follows, and only then a
-  // small mechanical-arm accent. Each cue resolves instead of looping for attention.
   function mannerismFor({name = null, elapsed = 0, reducedMotion = false, emotion = null} = {}) {
     const quiet = emotion === 'calm' || emotion === 'reassuring';
     if (quiet && name === 'confirm') name = 'reassure';
@@ -75,18 +71,22 @@
     emotion = validEmotion(emotion); const calm = emotion === 'calm' || emotion === 'reassuring';
     const motion = reducedMotion ? 0 : calm ? .4 : 1, talking = state === 'speaking', thoughtful = state === 'thinking', listening = state === 'listening', happy = state === 'success' && !calm, concerned = state === 'error';
     const blink = motion ? blinkFor(time) : 0;
-    const speech = talking ? (reducedMotion ? .3 : .25 + .45 * Math.abs(Math.sin(time * 7.6)) + .3 * clamp(level, 0, 1)) : 0;
+    // Speech expression follows native audio energy.
+    const audioEnergy = clamp(level, 0, 1), speech = talking ? (reducedMotion ? .3 : .1 + .82 * audioEnergy) : 0;
     const expressive = mannerismFor({name: mannerism, elapsed: mannerismElapsed, reducedMotion, emotion});
     const lift = expressive.active ? expressive.lift : happy && motion ? Math.sin(Math.min(elapsed, 1.2) / 1.2 * Math.PI) * .12 : 0;
     const greeting = expressive.name === 'greet', acknowledgement = expressive.name === 'acknowledge', focus = expressive.name === 'focus';
     const apertureAccent = expressive.listen * .035 - expressive.think * .055 + expressive.speak * .025 - expressive.comfort * .018 + expressive.celebrate * .06;
     const stateEnergy = talking ? speech : thoughtful ? (reducedMotion ? .22 : .22 + .08 * Math.sin(time * 2.15)) : listening ? (reducedMotion ? .1 : .1 + .035 * Math.sin(time * 1.05)) : happy ? .34 : concerned ? .08 : .035;
-    const attentionDriftX = motion && (listening || thoughtful) ? Math.sin(time * .73) * (listening ? .007 : .011) : 0;
-    const attentionDriftY = motion && thoughtful ? Math.sin(time * .47 + .8) * .006 : 0;
+    const attentionDriftX = motion ? Math.sin(time * .73) * (listening ? .012 : thoughtful ? .014 : .009) : 0;
+    const attentionDriftY = motion && (thoughtful || state === 'idle') ? Math.sin(time * .47 + .8) * .008 : 0;
+    // Real audio weights a bounded phrase gesture, including soft rests.
+    const phraseGesture = talking && motion ? (Math.max(0, Math.sin(time * 1.8 + .4)) ** 2) * audioEnergy : 0;
+    const helloWave = greeting && motion ? Math.sin(mannerismElapsed * 15) * expressive.body : 0;
     const leftArm = calm ? .025 : thoughtful ? .18 : happy ? .1 : listening ? .045 : 0;
     const rightArm = calm ? .025 : thoughtful ? .25 : happy ? .16 : listening ? .07 : 0;
     return {
-      mannerism: expressive.name, mannerismCue: expressive.cue, mannerismPhase: expressive.phase, mannerismActive: expressive.active, nod: expressive.nod, offer: expressive.offer, lean: expressive.body * (acknowledgement ? .025 : .012),
+      mannerism: expressive.name, mannerismCue: expressive.cue, mannerismPhase: expressive.phase, mannerismActive: expressive.active, nod: expressive.nod, offer: expressive.offer, helloWave, speechEnergy: audioEnergy, phraseGesture, lean: expressive.body * (acknowledgement ? .04 : .02) + phraseGesture * .018,
       state, eyeColor: MOODS[state].color, emotion: emotion || MOODS[state].emotion, blink,
       eyeDeformation: (calm ? -.025 : happy ? .24 : thoughtful ? -.14 : listening ? .1 : concerned ? -.08 : greeting ? expressive.eye * .1 : 0) + apertureAccent,
       eyeScaleX: (happy ? 1.08 : thoughtful ? .93 : 1) + expressive.comfort * .025,
@@ -94,18 +94,18 @@
       ringRotation: thoughtful ? time * .18 : expressive.celebrate * .18 - expressive.comfort * .06,
       ringRipple: clamp(stateEnergy + expressive.listen * .08 + expressive.think * .14 + expressive.speak * .18 + expressive.celebrate * .16, 0, 1),
       antennaTilt: (thoughtful ? -.14 : listening ? .08 : happy ? .18 : 0) + expressive.anticipate * .055 + expressive.comfort * -.035,
-      bob: Math.sin(time * 1.35) * .045 * motion + lift,
+      bob: Math.sin(time * 1.35) * .045 * motion + lift + phraseGesture * .02,
       bodyRoll: Math.sin(time * .7) * .018 * motion,
-      headYaw: clamp(gazeX, -1, 1) * .1 + (greeting ? -.025 * expressive.head : 0) + (thoughtful ? Math.sin(time * .65) * .055 * motion : 0) - expressive.anticipate * .012,
-      headPitch: clamp(gazeY, -1, 1) * .065 + expressive.nod * .075 + expressive.head * (acknowledgement ? -.03 : focus ? .025 : 0) + (listening ? -.045 : 0) + (talking ? Math.sin(time * 2.5) * .025 * motion : 0),
-      headRoll: (calm ? -.012 : concerned ? -.055 : thoughtful ? .055 : happy ? .025 : 0) + expressive.head * (greeting ? -.06 : acknowledgement ? -.035 : focus ? .025 : 0),
+      headYaw: clamp(clamp(gazeX, -1, 1) * .1 + (greeting ? -.035 * expressive.head : 0) + (thoughtful ? Math.sin(time * .65) * .055 * motion : state === 'idle' ? Math.sin(time * .48) * .038 * motion : 0) - expressive.anticipate * .012, -.1, .1),
+      headPitch: clamp(clamp(gazeY, -1, 1) * .065 + expressive.nod * .1 + expressive.head * (acknowledgement ? -.045 : focus ? .035 : 0) + (listening ? -.055 : 0) + (talking ? Math.sin(time * 2.5) * .038 * motion * audioEnergy : state === 'idle' ? Math.sin(time * .85 + .3) * .026 * motion : 0), -.09, .09),
+      headRoll: (calm ? -.012 : concerned ? -.055 : thoughtful ? .075 : listening ? -.065 : happy ? .025 : 0) + expressive.head * (greeting ? -.09 : acknowledgement ? -.055 : focus ? .035 : 0) + (state === 'idle' ? Math.sin(time * .61) * .028 * motion : 0),
       eyeOpen: Math.max(.035, (happy ? .7 : concerned ? .85 : listening ? 1.06 : greeting ? 1 - expressive.eye * .12 : 1) * (1 - blink)),
       gazeX: clamp(gazeX, -1, 1) * .045 + (thoughtful ? -.035 : 0) + attentionDriftX,
       gazeY: clamp(gazeY, -1, 1) * .038 + (thoughtful ? .04 : 0) + attentionDriftY,
       browLift: happy ? .08 : listening ? .045 : concerned ? .025 : thoughtful ? .02 : 0,
       browAngle: concerned ? .15 : thoughtful ? -.08 : happy ? -.08 : -.025,
       mouth: talking ? 'open' : concerned ? 'concern' : 'smile', mouthOpen: speech,
-      armLift: Math.max(leftArm, rightArm), armLiftLeft: leftArm + expressive.comfort * .02, armLiftRight: rightArm + expressive.speak * .06 + expressive.celebrate * .08,
+      armLift: Math.max(leftArm, rightArm), armLiftLeft: leftArm + expressive.comfort * .02 + phraseGesture * .09, armLiftRight: rightArm + expressive.speak * .1 + expressive.celebrate * .08 + phraseGesture * .24,
       gesture: expressive.offer * .075,
       statusWave: expressive.listen * .2 + expressive.think * .45 + expressive.speak * .65 + expressive.comfort * .15 + expressive.celebrate * .8,
       lightPulse: thoughtful ? (reducedMotion ? .3 : .18 + .18 * Math.sin(time * 2)) : happy ? .45 : talking ? speech * .22 : expressive.anticipate * .08
@@ -122,8 +122,6 @@
     const frame = doc.createElement('div'); frame.className = 'brites-avatar'; frame.dataset.state = validState(options.initialState); frame.setAttribute('role', 'img'); frame.setAttribute('aria-label', 'Brites jewellery gift guide');
     const surface = doc.createElement('div'); surface.className = 'brites-avatar__surface';
     const fallback = doc.createElement('div'); fallback.className = 'brites-avatar__fallback';
-    // This is an animated vector companion, visibly separate from the PBR
-    // WebGL mesh. It keeps state feedback usable without pretending to be 3-D.
     const id = 'britesRobot' + (++instanceCount);
     fallback.innerHTML = `<svg viewBox="0 0 320 280" aria-hidden="true" xmlns="http://www.w3.org/2000/svg"><defs><linearGradient id="${id}Ivory" x2=".4" y2="1"><stop stop-color="#fffefa"/><stop offset="1" stop-color="#d9dfe4"/></linearGradient><linearGradient id="${id}Gold" x2=".2" y2="1"><stop stop-color="#f2dda8"/><stop offset=".5" stop-color="#ac824b"/><stop offset="1" stop-color="#e4c78e"/></linearGradient><radialGradient id="${id}Glass"><stop stop-color="#1e3848"/><stop offset="1" stop-color="#09121d"/></radialGradient></defs><ellipse class="brites-avatar__shadow" cx="160" cy="246" rx="53" ry="8" fill="#243745" opacity=".13"/><g class="brites-avatar__robot"><g class="brites-avatar__antenna"><path d="M160 63V40" stroke="url(#${id}Gold)" stroke-width="5" stroke-linecap="round"/><circle cx="160" cy="36" r="5" class="brites-avatar__signal"/></g><ellipse cx="160" cy="197" rx="34" ry="38" fill="url(#${id}Ivory)" stroke="#ccd5dc"/><path d="M131 214Q160 226 189 214" fill="none" stroke="url(#${id}Gold)" stroke-width="4"/><path d="M154 188l6-7 6 7-6 8z" fill="url(#${id}Gold)"/><g class="brites-avatar__arm brites-avatar__arm--left"><rect x="107" y="180" width="14" height="31" rx="7" fill="url(#${id}Ivory)" stroke="#ccd5dc"/></g><g class="brites-avatar__arm brites-avatar__arm--right"><rect x="199" y="180" width="14" height="31" rx="7" fill="url(#${id}Ivory)" stroke="#ccd5dc"/></g><g class="brites-avatar__head"><circle cx="160" cy="118" r="66" fill="url(#${id}Ivory)" stroke="#ccd5dc"/><circle cx="160" cy="118" r="55" fill="url(#${id}Gold)"/><circle cx="160" cy="118" r="51" fill="url(#${id}Glass)"/><circle class="brites-avatar__halo" cx="160" cy="118" r="40" fill="none" stroke-width="2" stroke-dasharray="185 66"/><g class="brites-avatar__eye-gaze"><g class="brites-avatar__eye"><circle cx="160" cy="118" r="28" fill="none" stroke-width="10"/><circle cx="160" cy="118" r="15" fill="none" stroke-width="1.4" opacity=".36"/><circle cx="176" cy="102" r="3" fill="#eefaff" opacity=".9"/></g></g><path d="M134 83Q145 77 155 78" fill="none" stroke="#fff" opacity=".16" stroke-width="3" stroke-linecap="round"/></g></g></svg>`;
     const caption = doc.createElement('div'); caption.className = 'brites-avatar__caption';
@@ -136,7 +134,7 @@
     let reducedMotion = !!media?.matches, readyResolve;
     const ready = new Promise(resolve => {readyResolve = resolve;});
     const quality = qualityFor({width: win.innerWidth, mobile: options.mobile, memory: win.navigator?.deviceMemory, pixelRatio: win.devicePixelRatio, bloom: options.bloom});
-    const now = () => (win.performance?.now?.() || Date.now()) / 1000;
+    const now = () => {const stamp = win.performance?.now?.(); return (Number.isFinite(stamp) ? stamp : Date.now()) / 1000;};
     stateAt = now();
     function cancelMannerism() {if (mannerismTimer !== null) win.clearTimeout(mannerismTimer); mannerismTimer = null; mannerism = null; delete frame.dataset.mannerism;}
     function playMannerism(name) {
@@ -144,12 +142,10 @@
       if (!Object.hasOwn(MANNERISMS, name) || !canDisplay() || paused || reducedMotion) return;
       if ((emotion === 'calm' || emotion === 'reassuring') && name === 'confirm') name = 'reassure';
       mannerism = name; mannerismAt = now(); mannerismId++; frame.dataset.mannerism = name;
-      // A finite deadline removes the action; repeated state events never replay.
       mannerismTimer = win.setTimeout(() => {cancelMannerism(); if (!destroyed) sync();}, MANNERISMS[name] * 1000);
       emit('mannerism', {name, id: mannerismId, duration: MANNERISMS[name]});
     }
-    // Restored sessions can disable automatic greetings. A genuine shopper click
-    // may call this method, which still permits only one greeting per opening.
+    // One optional shopper-initiated greeting per opening.
     function triggerGreeting() {if (destroyed || greetedThisOpening || !canDisplay() || paused || reducedMotion) return false; playMannerism('greet'); greetedThisOpening = mannerism === 'greet'; sync(); return greetedThisOpening;}
     function poseAt(time) {return poseFor({state, time, elapsed: time - stateAt, level, gaze, reducedMotion, emotion, mannerism, mannerismElapsed: time - mannerismAt});}
     function emit(type, detail) {frame.dispatchEvent(new win.CustomEvent('brites-avatar:' + type, {detail, bubbles: true, composed: true})); try {options.onStatus?.(type, detail);} catch {}}
@@ -202,8 +198,7 @@
     }
     function setState(value) {if (destroyed) return; const next = validState(value); if (next === state) return; state = next; stateAt = now(); playMannerism({listening: 'acknowledge', thinking: 'focus', speaking: 'explain', success: 'confirm', error: 'reassure'}[state]); frame.dataset.state = state; try {engine?.invalidate();} catch {renderingFailure();} emit('state', {state}); sync();}
     function setVisible(value) {if (destroyed) return; const opening = value === true && !visible; visible = value === true; if (!visible || opening) greetedThisOpening = false; if (opening && options.greetingOnOpen !== false) triggerGreeting(); sync();}
-    // A failed 3-D scene is retried only explicitly; state updates still animate
-    // the separate vector companion within the same visibility/pause bounds.
+    // Scene retry is explicit; fallback respects visibility and pause.
     function retry() {if (destroyed || loading || engine || !failed || !visible || !intersecting || doc.hidden) return false; failed = false; sync(); return loading;}
     function setEmotion(value) {if (destroyed) return; emotion = validEmotion(value); if ((emotion === 'calm' || emotion === 'reassuring') && mannerism === 'confirm') playMannerism('reassure'); sync(); emit('emotion', {emotion});}
     function setPaused(value) {if (destroyed) return; paused = value === true; sync(); emit('pause', {paused});}

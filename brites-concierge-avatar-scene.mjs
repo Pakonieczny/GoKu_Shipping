@@ -20,7 +20,8 @@ export const AVATAR_SCENE_DECLARATIONS = Object.freeze({
     Object.freeze({name: 'Ivory ceramic base colour', kind: 'albedo'}),
     Object.freeze({name: 'Ivory ceramic tangent-space normal', kind: 'normal'})
   ]),
-  environment: Object.freeze({kind: 'procedural studio cubemap', faces: 6, dynamicLights: true, hdri: false})
+  environment: Object.freeze({kind: 'procedural studio cubemap with HDR radiance lighting', faces: 6, dynamicLights: true, hdr: true, hdri: false}),
+  finish: Object.freeze({porcelain: 'satin matte', visor: 'dark satin', bloom: 'aperture highlights only'})
 });
 export function createAvatarScene({container, quality, onFrame, onContext, onError}) {
   const doc = container.ownerDocument, win = doc.defaultView;
@@ -28,7 +29,8 @@ export function createAvatarScene({container, quality, onFrame, onContext, onErr
   renderer.setPixelRatio(quality.pixelRatio);
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.08;
+  renderer.toneMappingExposure = .88;
+  renderer.setClearColor('#e6edf2', 1);
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   renderer.info.autoReset = false;
@@ -68,22 +70,24 @@ export function createAvatarScene({container, quality, onFrame, onContext, onErr
   }
   const porcelainMap = textureMap(AVATAR_SCENE_DECLARATIONS.textures[0].name, AVATAR_SCENE_DECLARATIONS.textures[0].kind), goldMap = textureMap(AVATAR_SCENE_DECLARATIONS.textures[1].name, AVATAR_SCENE_DECLARATIONS.textures[1].kind), roughnessMap = textureMap(AVATAR_SCENE_DECLARATIONS.textures[2].name, AVATAR_SCENE_DECLARATIONS.textures[2].kind);
   const ceramicAlbedo = textureMap(AVATAR_SCENE_DECLARATIONS.textures[4].name, 'albedo'), ceramicNormal = textureMap(AVATAR_SCENE_DECLARATIONS.textures[5].name, 'normal');
-  const ivory = material({color: '#ffffff', map: ceramicAlbedo, normalMap: ceramicNormal, normalScale: new THREE.Vector2(.25, .25), roughness: .23, metalness: .03, clearcoat: .94, clearcoatRoughness: .16, bumpMap: porcelainMap, bumpScale: .006, sheen: .2, sheenColor: new THREE.Color('#fff7e3'), iridescence: .06, iridescenceIOR: 1.32, iridescenceThicknessRange: [180, 260]});
-  const gold = material({color: '#dcc091', metalness: .91, roughness: .3, roughnessMap, bumpMap: goldMap, bumpScale: .0025, anisotropy: .72, anisotropyRotation: Math.PI / 2, clearcoat: .28, clearcoatRoughness: .24});
-  const paleGold = material({color: '#e8d5b3', metalness: .74, roughness: .25, roughnessMap, bumpMap: goldMap, bumpScale: .002, clearcoat: .5});
+  const ivory = material({color: '#eee7dc', map: ceramicAlbedo, normalMap: ceramicNormal, normalScale: new THREE.Vector2(.18, .18), roughness: .66, metalness: 0, clearcoat: .12, clearcoatRoughness: .62, bumpMap: porcelainMap, bumpScale: .003, sheen: .04, sheenColor: new THREE.Color('#dfd5c2')});
+  const gold = material({color: '#b79a69', metalness: .86, roughness: .54, roughnessMap, bumpMap: goldMap, bumpScale: .0025, anisotropy: .54, anisotropyRotation: Math.PI / 2, clearcoat: .04, clearcoatRoughness: .58});
+  const paleGold = material({color: '#c8b187', metalness: .74, roughness: .52, roughnessMap, bumpMap: goldMap, bumpScale: .002, clearcoat: .06, clearcoatRoughness: .6});
   const glassMap = textureMap(AVATAR_SCENE_DECLARATIONS.textures[3].name, 'glass');
-  const face = material({color: '#071526', metalness: .16, roughness: .17, clearcoat: 1, clearcoatRoughness: .075, bumpMap: glassMap, bumpScale: .0008});
+  const face = material({color: '#061322', metalness: .06, roughness: .48, clearcoat: .08, clearcoatRoughness: .48, envMapIntensity: .32, bumpMap: glassMap, bumpScale: .0008});
   // These retained material names keep diagnostics compatible; they describe
   // machined parts and light, never skin, human eyes or organic features.
   const lidMaterial = material({color: '#162b40', metalness: .7, roughness: .26});
   const eyeMaterial = material({color: '#76cfff', metalness: .1, roughness: .2, emissive: '#4bbaff', emissiveIntensity: 1.4, clearcoat: 1});
   const pupilMaterial = material({color: '#030e1c', roughness: .19, metalness: .1, clearcoat: 1});
   const mouthMaterial = material({color: '#9cddff', emissive: '#52bfff', emissiveIntensity: 1.2, roughness: .25});
-  const corneaMaterial = material({color: '#bbdfff', roughness: .06, transmission: .72, thickness: .055, ior: 1.45, clearcoat: 1, clearcoatRoughness: .035, opacity: .2, transparent: true, depthWrite: false, bumpMap: glassMap, bumpScale: .0006});
+  // A low-opacity satin protective cover must not turn the whole dark visor
+  // into a white transmission/reflection veil. Refraction stays on the gem.
+  const corneaMaterial = material({color: '#16384e', roughness: .56, transmission: 0, metalness: 0, clearcoat: .08, clearcoatRoughness: .62, envMapIntensity: .16, opacity: .035, transparent: true, depthWrite: false, bumpMap: glassMap, bumpScale: .0006});
   const glint = basic({color: '#bfeaff', toneMapped: false});
   const gemMaterial = material({color: '#3b72d7', roughness: .065, metalness: .02, transmission: .75, thickness: .45, ior: 1.77, dispersion: .035, clearcoat: 1, attenuationColor: new THREE.Color('#acd9ff'), attenuationDistance: .85});
-  const stageMaterial = material({color: '#f2e8d7', roughness: .5, metalness: .05, clearcoat: .15, bumpMap: porcelainMap, bumpScale: .005});
-  const floorMaterial = material({color: '#f4eee4', roughness: .87, metalness: 0});
+  const stageMaterial = material({color: '#d7dee2', roughness: .78, metalness: .02, clearcoat: .02, bumpMap: porcelainMap, bumpScale: .005});
+  const floorMaterial = material({color: '#dce4e9', roughness: .94, metalness: 0});
   const avatar = new THREE.Group(); scene.add(avatar);
   const irisMaterial = material({color: '#78d7ff', emissive: '#52bfff', emissiveIntensity: 1.35, roughness: .2, metalness: .15, clearcoat: .7});
   const head = new THREE.Group(); head.position.set(0, .65, .01); avatar.add(head);
@@ -150,10 +154,10 @@ export function createAvatarScene({container, quality, onFrame, onContext, onErr
   const floor = mesh(geometry(new THREE.PlaneGeometry(200, 200)), floorMaterial, scene, 0, -1.655, 0); floor.rotation.x = -Math.PI / 2; floor.castShadow = false;
   const pedestal = mesh(geometry(new THREE.CylinderGeometry(1.2, 1.25, .11, segments(180, 120))), stageMaterial, scene, 0, -1.575, 0);
   const stageRing = mesh(geometry(new THREE.TorusGeometry(1.22, .014, 16, segments(192, 128))), paleGold, scene, 0, -1.553, 0); stageRing.rotation.x = Math.PI / 2;
-  const hemisphere = new THREE.HemisphereLight('#fdf7ee', '#b9c7bf', 1.85); scene.add(hemisphere);
-  const key = new THREE.SpotLight('#fff0d9', 78, 20, Math.PI / 5, .7, 2); key.position.set(3.2, 4.8, 5.6); key.target.position.set(0, -.4, 0); key.castShadow = true; key.shadow.mapSize.set(quality.shadowSize, quality.shadowSize); key.shadow.bias = -.00016; key.shadow.normalBias = .025; key.shadow.radius = 3; key.shadow.camera.near = .5; key.shadow.camera.far = 18; scene.add(key, key.target);
-  const fill = new THREE.DirectionalLight('#c8eceb', 1.7); fill.position.set(-3, 1.1, 4); scene.add(fill);
-  const rim = new THREE.DirectionalLight('#ffe3b5', 2.8); rim.position.set(-1.5, 3.8, -3); scene.add(rim);
+  const hemisphere = new THREE.HemisphereLight('#e9f2fc', '#6b747d', .46); scene.add(hemisphere);
+  const key = new THREE.SpotLight('#fff1db', 32, 20, Math.PI / 5, .7, 2); key.position.set(3.2, 4.8, 5.6); key.target.position.set(0, -.4, 0); key.castShadow = true; key.shadow.mapSize.set(quality.shadowSize, quality.shadowSize); key.shadow.bias = -.00016; key.shadow.normalBias = .025; key.shadow.radius = 3; key.shadow.camera.near = .5; key.shadow.camera.far = 18; scene.add(key, key.target);
+  const fill = new THREE.DirectionalLight('#c9e4f2', .44); fill.position.set(-3, 1.1, 4); scene.add(fill);
+  const rim = new THREE.DirectionalLight('#ffe3b5', .8); rim.position.set(-1.5, 3.8, -3); scene.add(rim);
   const eyeLight = new THREE.PointLight('#79e9e5', .28, 2.7, 2); eyeLight.position.set(0, .4, .8); avatar.add(eyeLight);
   // Six locally generated faces form a complete, seamless studio skybox.
   // It is a procedural LDR studio environment, not a claimed photographic HDRI.
@@ -171,14 +175,28 @@ export function createAvatarScene({container, quality, onFrame, onContext, onErr
     context.putImageData(image, 0, 0); cubeFaces.push(canvas);
   }
   const skybox = new THREE.CubeTexture(cubeFaces); skybox.colorSpace = THREE.SRGBColorSpace; skybox.needsUpdate = true; textures.add(skybox);
-  const pmrem = new THREE.PMREMGenerator(renderer), environmentTarget = pmrem.fromCubemap(skybox);
-  scene.background = skybox; scene.backgroundBlurriness = .55; scene.backgroundIntensity = 1; scene.environment = environmentTarget.texture; scene.environmentIntensity = .85; pmrem.dispose();
+  // Separate display background from lighting. Float radiance retains studio
+  // softboxes above 1.0, without whitening the skybox or dark display glass.
+  // This is an authored HDR environment, not photographic HDRI footage.
+  const hdrWidth = 512, hdrHeight = 256, hdrPixels = new Float32Array(hdrWidth * hdrHeight * 4), direction = new THREE.Vector3();
+  for (let y = 0; y < hdrHeight; y++) for (let x = 0; x < hdrWidth; x++) {
+    const phi = (x + .5) / hdrWidth * Math.PI * 2, theta = (y + .5) / hdrHeight * Math.PI;
+    direction.set(Math.sin(theta) * Math.cos(phi), Math.cos(theta), Math.sin(theta) * Math.sin(phi));
+    const ceiling = (direction.y + 1) * .5, warm = Math.pow(Math.max(0, direction.dot(lightDirections[0])), 36) * 3.4, cool = Math.pow(Math.max(0, direction.dot(lightDirections[1])), 52) * 1.7, edge = Math.pow(Math.max(0, direction.dot(lightDirections[2])), 42) * 1.2, index = (y * hdrWidth + x) * 4;
+    hdrPixels[index] = .055 + ceiling * .13 + warm + cool * .72 + edge;
+    hdrPixels[index + 1] = .065 + ceiling * .135 + warm * .89 + cool * .9 + edge * .82;
+    hdrPixels[index + 2] = .085 + ceiling * .14 + warm * .7 + cool + edge * .65;
+    hdrPixels[index + 3] = 1;
+  }
+  const hdrEnvironment = new THREE.DataTexture(hdrPixels, hdrWidth, hdrHeight, THREE.RGBAFormat, THREE.FloatType); hdrEnvironment.mapping = THREE.EquirectangularReflectionMapping; hdrEnvironment.colorSpace = THREE.LinearSRGBColorSpace; hdrEnvironment.needsUpdate = true; textures.add(hdrEnvironment);
+  const pmrem = new THREE.PMREMGenerator(renderer), environmentTarget = pmrem.fromEquirectangular(hdrEnvironment);
+  scene.background = skybox; scene.backgroundBlurriness = .55; scene.backgroundIntensity = .84; scene.environment = environmentTarget.texture; scene.environmentIntensity = .68; pmrem.dispose();
   let composer = null, bloom = null;
   if (quality.bloom) {
     const target = new THREE.WebGLRenderTarget(1, 1, {type: THREE.HalfFloatType, samples: quality.name === 'high' ? 4 : 0});
-    composer = new EffectComposer(renderer, target); composer.addPass(new RenderPass(scene, camera)); bloom = new UnrealBloomPass(new THREE.Vector2(1, 1), .18, .3, 1.15); composer.addPass(bloom); composer.addPass(new OutputPass());
+    composer = new EffectComposer(renderer, target); composer.addPass(new RenderPass(scene, camera)); bloom = new UnrealBloomPass(new THREE.Vector2(1, 1), .055, .16, 2.4); composer.addPass(bloom); composer.addPass(new OutputPass());
   }
-  let active = false, reducedMotion = false, disposed = false, lost = false, last = 0, frames = 0, lastPose = null, renderMs = 0, drawCalls = 0, renderedTriangles = 0, sampleTime = 0, width = 1, height = 1;
+  let active = false, reducedMotion = false, disposed = false, lost = false, last = 0, loopRunning = false, lastAnimationFrameMs = null, frames = 0, lastPose = null, renderMs = 0, drawCalls = 0, renderedTriangles = 0, sampleTime = 0, width = 1, height = 1;
   const geometryStats = root => {let triangles = 0, vertices = 0, meshes = 0; root.traverse(object => {if (!object.isMesh) return; const multiplier = object.isInstancedMesh ? object.count : 1; triangles += (object.geometry.index ? object.geometry.index.count : object.geometry.attributes.position.count) / 3 * multiplier; vertices += object.geometry.attributes.position.count * multiplier; meshes += 1;}); return {triangles: Math.round(triangles), vertices, meshes};};
   const modelStats = geometryStats(avatar), sceneStats = geometryStats(scene);
   function resize() {
@@ -217,21 +235,21 @@ export function createAvatarScene({container, quality, onFrame, onContext, onErr
     eyeLight.color.copy(displayedColor); eyeLight.intensity = .22 + pose.lightPulse * .16;
     const statusWave = THREE.MathUtils.clamp(pose.statusWave || 0, 0, 1);
     statusBars.forEach((bar, index) => {const cueRipple = reducedMotion ? 0 : statusWave * .18 * Math.sin(sampleTime * 5.2 - index * .78); bar.scale.y = speaking ? .7 + pose.mouthOpen * (.8 + .35 * Math.sin(sampleTime * 8 + index)) : thinking && !reducedMotion ? .8 + .3 * Math.sin(sampleTime * 3 - index * .7) : 1 + cueRipple;});
-    arms.forEach(({group, side}) => {const invitation = state === 'listening' ? .065 : speaking ? .04 : reassuring ? .035 : 0, offer = side === 1 && Number.isFinite(pose.offer) ? pose.offer : 0, armLift = THREE.MathUtils.clamp(side === -1 ? pose.armLiftLeft ?? pose.armLift : pose.armLiftRight ?? pose.armLift, 0, .5); group.rotation.z = -side * (armLift + invitation + offer * .24); group.rotation.x = -armLift * .4 - offer * .065; group.rotation.y = side * offer * .12;});
+    arms.forEach(({group, side, palm}) => {const invitation = state === 'listening' ? .065 : speaking ? .06 : reassuring ? .035 : 0, offer = side === 1 && Number.isFinite(pose.offer) ? pose.offer : 0, wave = side === 1 && Number.isFinite(pose.helloWave) ? THREE.MathUtils.clamp(pose.helloWave, -1, 1) : 0, armLift = THREE.MathUtils.clamp(side === -1 ? pose.armLiftLeft ?? pose.armLift : pose.armLiftRight ?? pose.armLift, 0, .5); group.rotation.z = -side * (armLift + invitation + offer * .5 + wave * .16); group.rotation.x = -armLift * .4 - offer * .11; group.rotation.y = side * offer * .18; palm.rotation.z = -side * .15 + wave * .16;});
     key.position.x = 3.2 + Math.sin(sampleTime * .25) * .11 * (reducedMotion ? 0 : 1);
   }
   function render(pose, force = false) {
-    if (disposed || lost || (!active && !force)) return; const start = win.performance.now(); lastPose = pose; applyPose(pose); renderer.info.reset(); if (composer) composer.render(); else renderer.render(scene, camera); renderMs = win.performance.now() - start; frames += 1; drawCalls = renderer.info.render.calls; renderedTriangles = renderer.info.render.triangles;
+    if (disposed || lost || (!active && !force)) return; const start = win.performance.now(); if (force) sampleTime = start / 1000; lastPose = pose; applyPose(pose); renderer.info.reset(); if (composer) composer.render(); else renderer.render(scene, camera); renderMs = win.performance.now() - start; frames += 1; drawCalls = renderer.info.render.calls; renderedTriangles = renderer.info.render.triangles;
   }
-  function tick(milliseconds) {const time = milliseconds / 1000; if (time - last < 1 / quality.fps) return; last = time; sampleTime = time; try {render(onFrame(time));} catch {active = false; renderer.setAnimationLoop(null); onError?.();}}
-  function setMotion(value) {active = value.active === true; reducedMotion = value.reducedMotion === true; renderer.setAnimationLoop(active && !reducedMotion && !lost ? tick : null);}
+  function tick(milliseconds) {if (!Number.isFinite(milliseconds) || !active || reducedMotion || lost || disposed) return; const time = milliseconds / 1000, interval = 1 / quality.fps; if (time - last + .000001 < interval) return; last = time - Math.max(0, (time - last) % interval); sampleTime = time; try {render(onFrame(time)); lastAnimationFrameMs = milliseconds;} catch {active = false; loopRunning = false; renderer.setAnimationLoop(null); onError?.();}}
+  function setMotion(value) {active = value.active === true; reducedMotion = value.reducedMotion === true; const shouldRun = active && !reducedMotion && !lost && !disposed; if (shouldRun === loopRunning) return; loopRunning = shouldRun; if (shouldRun) last = 0; renderer.setAnimationLoop(shouldRun ? tick : null);}
   function invalidate() {last = 0;}
-  function contextLost(event) {event.preventDefault(); lost = true; renderer.setAnimationLoop(null); onContext?.(true);}
+  function contextLost(event) {event.preventDefault(); lost = true; loopRunning = false; renderer.setAnimationLoop(null); onContext?.(true);}
   function contextRestored() {lost = false; onContext?.(false);}
   renderer.domElement.addEventListener('webglcontextlost', contextLost); renderer.domElement.addEventListener('webglcontextrestored', contextRestored);
   const resizeObserver = win.ResizeObserver ? new win.ResizeObserver(resize) : null; resizeObserver?.observe(container); if (!resizeObserver) win.addEventListener('resize', resize);
   resize();
-  function snapshot() {return {revision: THREE.REVISION, animated: active && !reducedMotion && !lost, frames, frameRenderMs: Math.round(renderMs * 100) / 100, drawCalls, renderedTriangles, geometry: {model: modelStats, scene: sceneStats}, textures: maps.map(value => ({...value})), shadow: {enabled: true, size: quality.shadowSize, type: 'PCF soft', casts: true, receivingStage: true}, mannerism: {name: lastPose?.mannerism || null, active: lastPose?.mannerismActive === true, eventBound: true}, character: {identity: AVATAR_SCENE_DECLARATIONS.identity, digitalEyes: 1, humanFeatures: false, meshDeformation: true, interactionProfile: {...AVATAR_SCENE_DECLARATIONS.interactionProfile}, state: previousState, color: '#' + displayedColor.getHexString()}, environment: {kind: AVATAR_SCENE_DECLARATIONS.environment.kind, faces: 6, size: skyboxSize, hdri: false}, materials: {physical: [...materials].filter(value => value.isMeshPhysicalMaterial).length, metallicAnisotropy: true, transmission: true, clearcoat: true, environmentReflection: true}, lights: 5, bloom: !!composer, width, height, pixelRatio: renderer.getPixelRatio(), contextLost: lost};}
+  function snapshot() {return {revision: THREE.REVISION, animated: !disposed && !lost && loopRunning && lastAnimationFrameMs !== null && win.performance.now() - lastAnimationFrameMs < 800, animation: {loopRequested: loopRunning, sampledFrames: frames, lastFrameMs: lastAnimationFrameMs}, frames, frameRenderMs: Math.round(renderMs * 100) / 100, drawCalls, renderedTriangles, geometry: {model: modelStats, scene: sceneStats}, textures: maps.map(value => ({...value})), shadow: {enabled: true, size: quality.shadowSize, type: 'PCF soft', casts: true, receivingStage: true}, mannerism: {name: lastPose?.mannerism || null, active: lastPose?.mannerismActive === true, eventBound: true}, character: {identity: AVATAR_SCENE_DECLARATIONS.identity, digitalEyes: 1, humanFeatures: false, meshDeformation: true, interactionProfile: {...AVATAR_SCENE_DECLARATIONS.interactionProfile}, state: previousState, color: '#' + displayedColor.getHexString()}, environment: {kind: AVATAR_SCENE_DECLARATIONS.environment.kind, faces: 6, size: skyboxSize, hdr: true, hdri: false, radiance: {width: hdrWidth, height: hdrHeight, format: 'linear float RGBA'}}, finish: {...AVATAR_SCENE_DECLARATIONS.finish}, materials: {physical: [...materials].filter(value => value.isMeshPhysicalMaterial).length, metallicAnisotropy: true, transmission: true, clearcoat: true, environmentReflection: true}, lights: 5, bloom: !!composer, width, height, pixelRatio: renderer.getPixelRatio(), contextLost: lost};}
   function destroy() {if (disposed) return; disposed = true; renderer.setAnimationLoop(null); resizeObserver?.disconnect(); win.removeEventListener('resize', resize); renderer.domElement.removeEventListener('webglcontextlost', contextLost); renderer.domElement.removeEventListener('webglcontextrestored', contextRestored); composer?.passes.forEach(pass => pass.dispose?.()); composer?.dispose(); geometries.forEach(value => value.dispose()); materials.forEach(value => value.dispose()); textures.forEach(value => value.dispose()); environmentTarget.dispose(); renderer.dispose(); renderer.forceContextLoss(); renderer.domElement.remove();}
   return {setMotion, invalidate, render, snapshot, destroy};
 }

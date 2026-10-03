@@ -37,13 +37,13 @@ function harness(t,{saved=null,reply=answer,voice=false}={}) {
   return {window,root,button,ask,requests,utterances,errors,get voiceConfig(){return voiceConfig;}};
 }
 
-test('completed cards, meanings and narration survive a session reload',async t=>{
+test('completed cards, meanings and optional captions survive a session reload',async t=>{
   const first=harness(t);first.button('Meet your gift guide').click();await first.ask('Something with a bunny');
   const saved=JSON.parse(first.window.sessionStorage.getItem('brites-concierge-v1'));
   assert.equal(saved.products.length,1);assert.equal(saved.meanings.length,1);assert.match(saved.latestReply,/thoughtful match/);
   const restored=harness(t,{saved});
   assert.equal(restored.root.querySelectorAll('.card').length,1);assert.match(restored.root.querySelector('.meaning').textContent,/beloved pet/);
-  restored.button('Read aloud').click();assert.equal(restored.utterances.length,1);assert.match(restored.utterances[0].text,/thoughtful match/);
+  assert.equal(restored.button('Read aloud'),undefined);assert.equal(restored.utterances.length,0);assert.match(restored.root.querySelector('.caption-text').textContent,/thoughtful match/);
 });
 
 test('an interrupted turn is marked, removed from trusted context and not silently resumed',async t=>{

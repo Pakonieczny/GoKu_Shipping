@@ -1,8 +1,9 @@
 import core from './_britesGrowth.js';
 import voice from './_britesConciergeVoice.js';
-const names=['FIREBASE_PROJECT_ID','FIREBASE_CLIENT_EMAIL','FIREBASE_PRIVATE_KEY','BRITES_GROWTH_NAMESPACE','BRITES_GROWTH_ADMIN_KEY','OPENAI_API_KEY','BRITES_CONCIERGE_REALTIME_ENABLED','BRITES_CONCIERGE_REALTIME_MODEL','BRITES_CONCIERGE_REALTIME_RESERVE_USD'];
+const names=['FIREBASE_PROJECT_ID','FIREBASE_CLIENT_EMAIL','FIREBASE_PRIVATE_KEY','BRITES_GROWTH_NAMESPACE','BRITES_GROWTH_ADMIN_KEY','OPENAI_API_KEY','BRITES_CONCIERGE_OPENAI_API_KEY','BRITES_CONCIERGE_REALTIME_ENABLED','BRITES_CONCIERGE_REALTIME_MODEL','BRITES_CONCIERGE_REALTIME_RESERVE_USD','BRITES_CONCIERGE_REALTIME_PUBLIC_DEMO','BRITES_CONCIERGE_REALTIME_DEMO_USD_CAP'];
 export default async(req)=>{
   const env=Object.fromEntries(names.map(k=>[k,Netlify.env.get(k)]));
+  env.OPENAI_API_KEY=env.BRITES_CONCIERGE_OPENAI_API_KEY||env.OPENAI_API_KEY;
   env.BRITES_GROWTH_SANDBOX=core.namespace(env)==='Brites_Growth_Sandbox'?'1':'0';
   // A disabled preview needs neither storage nor a provider connection.
   if(env.BRITES_CONCIERGE_REALTIME_ENABLED!=='1')return voice.createHandler({env})(req);
@@ -19,6 +20,6 @@ export default async(req)=>{
       return r.status===202;
     }
     return await voice.createHandler({env,authorize,service,scheduleHangup})(req);
-  }catch{return new Response(JSON.stringify({enabled:false,code:'VOICE_PREVIEW_UNAVAILABLE',message:'Voice is unavailable in this preview. Text and optional narration remain available.'}),{status:503,headers:{'Content-Type':'application/json','Cache-Control':'no-store'}});}
+  }catch{return new Response(JSON.stringify({enabled:false,code:'VOICE_PREVIEW_UNAVAILABLE',message:'OpenAI voice is unavailable in this preview. You can still type.'}),{status:503,headers:{'Content-Type':'application/json','Cache-Control':'no-store'}});}
 };
 export const config={path:'/api/concierge-voice'};

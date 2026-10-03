@@ -51,8 +51,15 @@ test('eyes anticipate head and body and all mannerisms settle to neutral on dead
   const early = avatar.mannerismFor({name: 'greet', elapsed: .09}); assert.ok(early.eye > 0); assert.equal(early.head, 0); assert.equal(early.body, 0);
   const head = avatar.mannerismFor({name: 'greet', elapsed: .18}); assert.ok(head.head > 0); assert.equal(head.body, 0);
   for (const [name, duration] of Object.entries(avatar.MANNERISMS)) {
-    for (let elapsed = 0; elapsed <= duration; elapsed += .05) {const pose = avatar.poseFor({mannerism: name, mannerismElapsed: elapsed}); for (const value of Object.values(pose)) if (typeof value === 'number') assert.ok(Number.isFinite(value)); assert.ok(pose.offer >= 0 && pose.offer <= 1); assert.ok(Math.abs(pose.lean) < .03);}
+    for (let elapsed = 0; elapsed <= duration; elapsed += .05) {
+      const neutral = avatar.poseFor({time: elapsed, elapsed});
+      const pose = avatar.poseFor({time: elapsed, elapsed, mannerism: name, mannerismElapsed: elapsed});
+      for (const value of Object.values(pose)) if (typeof value === 'number') assert.ok(Number.isFinite(value));
+      assert.ok(pose.offer >= 0 && pose.offer <= 1);
+      assert.ok(Math.abs(pose.lean - neutral.lean) <= .04, 'gesture lean stays bounded relative to the contemporaneous idle pose');
+    }
     const settled = avatar.mannerismFor({name, elapsed: duration}); assert.equal(settled.active, false); assert.equal(settled.offer, 0); assert.equal(settled.lift, 0);
+    assert.deepEqual(avatar.poseFor({time: duration, elapsed: duration, mannerism: name, mannerismElapsed: duration}), avatar.poseFor({time: duration, elapsed: duration}), 'expired gesture returns to the current neutral pose, preserving ordinary idle motion');
   }
 });
 test('reduced motion keeps static state cues and schedules no animation timer', t => {

@@ -267,7 +267,7 @@ test('open/close expose accessible controls and return keyboard focus', async t 
   const launcher = h.root.querySelector('.launcher');
   assert.equal(launcher.getAttribute('aria-controls'), h.panel.id); assert.equal(launcher.getAttribute('aria-expanded'), 'true');
   assert.equal(h.panel.getAttribute('role'), 'dialog'); assert.ok(h.panel.getAttribute('aria-label'));
-  assert.equal(h.root.activeElement, h.input); assert.equal(h.avatar.visible, true);
+  assert.equal(h.root.activeElement, h.button('Talk to me')); assert.equal(h.avatar.visible, true);
   assert.equal(h.root.querySelector('.concierge-avatar-stage').getAttribute('aria-hidden'), 'true');
   h.button('Close gift concierge').click();
   assert.equal(h.panel.hidden, true); assert.equal(h.avatar.visible, false); assert.equal(h.root.activeElement, launcher);
@@ -288,63 +288,15 @@ test('search moves from thinking to recommendation without automatic speech', as
   assert.equal(h.utterances.length, 0);
 });
 
-test('speech expression starts on actual onstart and stops on actual onend', async t => {
-  const h = makeWidget(t); h.open(); await h.ask(); h.button('Read aloud').click();
-  assert.equal(h.utterances.length, 1); assert.notEqual(h.avatar.state, 'speaking');
-  const utterance = h.utterances[0]; assert.match(utterance.text, /bunny necklace/i);
-  utterance.onstart(); assert.equal(h.avatar.state, 'speaking'); assert.ok(h.avatar.level > 0);
-  utterance.onboundary(); assert.ok(h.avatar.level > 0);
-  utterance.onend(); assert.equal(h.avatar.state, 'idle'); assert.equal(h.avatar.level, 0);
-});
+// Native speech state, interruption and late callback coverage is exercised
+// in concierge-voice-ui22.test.cjs. Browser synthesis is no longer a feature.
 
-test('speech errors return the guide to a quiet usable state', async t => {
-  const h = makeWidget(t); h.open(); await h.ask(); h.button('Read aloud').click();
-  h.utterances[0].onstart(); h.utterances[0].onerror({error: 'synthesis-unavailable'});
-  assert.equal(h.avatar.state, 'idle'); assert.equal(h.avatar.level, 0); assert.equal(h.button('Send').disabled, false);
-  await h.add(); assert.equal(JSON.parse(h.window.sessionStorage.getItem('brites-sandbox-cart')).length, 1);
-});
-
-for (const close of ['button', 'Escape', 'public API']) test(close + ' dismissal cancels speech and ignores late callbacks', async t => {
-  const h = makeWidget(t); h.open(); await h.ask(); h.button('Read aloud').click();
-  const old = h.utterances[0]; old.onstart(); const cancels = h.speech.cancels;
-  if (close === 'button') h.button('Close gift concierge').click();
-  else if (close === 'Escape') h.input.dispatchEvent(new h.window.KeyboardEvent('keydown', {key: 'Escape', bubbles: true}));
-  else h.window.BritesConcierge.close();
-  assert.ok(h.speech.cancels > cancels); assert.equal(h.avatar.visible, false); assert.equal(h.avatar.level, 0);
-  old.onstart(); old.onboundary(); old.onend(); old.onerror();
-  assert.equal(h.avatar.visible, false); assert.notEqual(h.avatar.state, 'speaking'); assert.equal(h.avatar.level, 0); assert.equal(h.panel.hidden, true);
-});
-
-test('old utterance end/error cannot stop a newer spoken reply', async t => {
-  const h = makeWidget(t); h.open(); await h.ask(); h.button('Read aloud').click(); const old = h.utterances[0]; old.onstart();
-  h.button('Read aloud').click(); const current = h.utterances[1]; current.onstart();
-  old.onend(); old.onerror(); assert.equal(h.avatar.state, 'speaking'); assert.ok(h.avatar.level > 0);
-  current.onend(); assert.equal(h.avatar.state, 'idle');
-});
-
-test('hidden page cancels narration and late voice events stay silent', async t => {
-  const h = makeWidget(t); h.open(); await h.ask(); h.button('Read aloud').click(); const utterance = h.utterances[0]; utterance.onstart();
-  const cancels = h.speech.cancels; h.visibility.hide(true); assert.ok(h.speech.cancels > cancels);
-  utterance.onstart(); utterance.onboundary(); assert.notEqual(h.avatar.state, 'speaking'); assert.equal(h.avatar.level, 0);
-  h.visibility.hide(false); assert.equal(h.utterances.length, 1);
-});
-
-test('starting a new search cancels prior speech without letting its end overwrite thinking', async t => {
+test('start fresh resets the guide and aborts a pending answer', async t => {
   const replies = []; const h = makeWidget(t, {answer: () => {const reply = deferred(); replies.push(reply); return reply.promise;}});
   h.open(); const first = h.ask(); replies[0].resolve(response(fixtureAnswer)); await first;
-  h.button('Read aloud').click(); const old = h.utterances[0]; old.onstart();
-  const second = h.ask('Another design'); assert.equal(h.avatar.state, 'thinking');
-  old.onend(); old.onerror(); assert.equal(h.avatar.state, 'thinking');
-  replies[1].resolve(response(fixtureAnswer)); await second;
-});
-
-test('start fresh resets narration and aborts a pending answer', async t => {
-  const replies = []; const h = makeWidget(t, {answer: () => {const reply = deferred(); replies.push(reply); return reply.promise;}});
-  h.open(); const first = h.ask(); replies[0].resolve(response(fixtureAnswer)); await first;
-  h.button('Read aloud').click(); const old = h.utterances[0]; old.onstart();
   const pending = h.ask('Second request'); const signal = h.network.findLast(r => r.body?.message).init.signal;
   h.button('Start fresh').click(); assert.equal(signal.aborted, true); assert.equal(h.avatar.state, 'idle');
-  old.onstart(); old.onend(); assert.equal(h.avatar.state, 'idle'); assert.equal(h.avatar.level, 0);
+  assert.equal(h.avatar.state, 'idle'); assert.equal(h.avatar.level, 0);
   replies[1].resolve(response(fixtureAnswer)); await pending;
   assert.equal(h.root.querySelectorAll('.card').length, 0); assert.match(h.messages.textContent, /Looking for something personal/);
   assert.equal(h.button('Send').disabled, false);
@@ -367,11 +319,11 @@ for(const completion of ['success','failure'])test('an open-widget '+completion+
   assert.equal(h.root.querySelectorAll('.card').length,completion==='success'?1:0);
 });
 test('search completion preserves keyboard focus on another concierge control',async t=>{
-  const reply=deferred(),h=makeWidget(t,{answer:()=>reply.promise});h.open();const pending=h.ask();const read=h.button('Read aloud');read.focus();
+  const reply=deferred(),h=makeWidget(t,{answer:()=>reply.promise});h.open();const pending=h.ask();const read=h.button('Pause animation');read.focus();
   reply.resolve(response(fixtureAnswer));await pending;assert.equal(h.root.activeElement,read);assert.equal(h.input.disabled,false);assert.equal(h.utterances.length,0);
 });
 test('search completion restores the composer when disabling it caused blur and no shopper focus move',async t=>{
-  const reply=deferred(),h=makeWidget(t,{answer:()=>reply.promise});h.open();const pending=h.ask();
+  const reply=deferred(),h=makeWidget(t,{answer:()=>reply.promise});h.open();h.button('Type instead').click();const pending=h.ask();
   // jsdom cannot blur an already disabled element. Emulate the browser's
   // automatic blur without a new user-initiated focusin on another control.
   h.input.disabled=false;h.input.blur();h.input.disabled=true;assert.equal(h.document.activeElement,h.document.body);
@@ -383,18 +335,6 @@ test('a submit without composer focus ownership does not take shop focus on comp
 test('late failed search after dismissal keeps the panel hidden and ordinary shop focus intact',async t=>{
   const reply=deferred(),h=makeWidget(t,{answer:()=>reply.promise});h.open();const pending=h.ask();h.window.BritesConcierge.close();const outside=h.document.getElementById('shop-control');outside.focus();
   reply.resolve(response({error:'Synthetic service recovery'},503));await pending;assert.equal(h.document.activeElement,outside);assert.equal(h.panel.hidden,true);assert.equal(h.avatar.visible,false);assert.equal(h.utterances.length,0);
-});
-
-for(const failure of ['utteranceThrows','speakThrows','speakStartsThenThrows'])test(failure+' remains inside optional narration and preserves text shopping',async t=>{
-  const h=makeWidget(t,{[failure]:true});h.open();await h.ask();assert.equal(h.utterances.length,0);h.button('Read aloud').click();
-  assert.equal(h.errors.length,0);assert.match(h.root.querySelector('.status').textContent,/Read aloud is unavailable/);assert.equal(h.avatar.level,0);assert.equal(h.avatar.state,'idle');assert.equal(h.input.disabled,false);assert.equal(h.button('Send').disabled,false);
-  const utterance=h.utterances[0];if(utterance){utterance.onstart();utterance.onboundary();assert.equal(h.avatar.state,'idle');assert.equal(h.avatar.level,0);}
-  await h.ask('Another bunny necklace');assert.equal(h.errors.length,0);assert.equal(h.root.querySelectorAll('.card').length,2);assert.equal(h.avatar.state,'success');
-});
-test('synchronous speech cancellation failure tries pause and cannot break typing, search or dismissal',async t=>{
-  const h=makeWidget(t,{cancelThrows:true});h.open();h.input.value='A bunny gift';h.input.dispatchEvent(new h.window.Event('input'));assert.equal(h.avatar.state,'listening');await h.ask();assert.equal(h.errors.length,0);
-  h.button('Read aloud').click();h.utterances[0].onstart();assert.equal(h.avatar.state,'speaking');h.window.BritesConcierge.close();assert.equal(h.panel.hidden,true);assert.equal(h.avatar.visible,false);assert.equal(h.avatar.level,0);assert.ok(h.speech.pauses>0);assert.equal(h.errors.length,0);
-  h.utterances[0].onstart();assert.notEqual(h.avatar.state,'speaking');h.window.BritesConcierge.open();await h.ask('Another design');assert.equal(h.errors.length,0);assert.equal(h.button('Send').disabled,false);
 });
 
 test('avatar still loading does not block search, variant review, or sandbox cart', async t => {
@@ -459,9 +399,9 @@ test('destroyed avatar API is recreated only on explicit reopen or open pageshow
   assert.equal(h.utterances.length, 0);
 });
 
-test('missing speech support hides narration and preserves all product actions', async t => {
+test('no browser speech support is needed for typed product actions', async t => {
   const h = makeWidget(t, {noSpeech: true}); h.open(); await h.ask(); await h.add();
-  assert.equal(h.button('Read aloud').hidden, true); assert.equal(h.errors.length, 0);
+  assert.equal(h.button('Read aloud'), undefined); assert.equal(h.errors.length, 0);
   assert.equal(JSON.parse(h.window.sessionStorage.getItem('brites-sandbox-cart')).length, 1);
 });
 test('policy answers preserve visible product ordinals and recheck them on the next shopper request', async t => {
@@ -495,8 +435,8 @@ test('restored open session remains open, and restored closed session stays lazy
   assert.equal(open.utterances.length, 0); assert.equal(closed.utterances.length, 0);
 });
 
-test('the entire synthetic shopping/voice flow never requests microphone or camera', async t => {
-  const h = makeWidget(t); h.open(); await h.ask(); h.button('Read aloud').click(); h.utterances[0].onstart(); h.utterances[0].onend(); await h.add();
+test('typed shopping and confirmed cart never request microphone or camera', async t => {
+  const h = makeWidget(t); h.open(); await h.ask(); await h.add();
   h.visibility.hide(true); h.window.BritesConcierge.close(); assert.deepEqual(h.devices, []);
   assert.equal(h.root.querySelectorAll('video,audio,input[type="file"]').length, 0);
   assert.ok(h.network.every(request => request.url.hostname === 'growth-sandbox.example'));
@@ -504,13 +444,10 @@ test('the entire synthetic shopping/voice flow never requests microphone or came
 
 // These are correctness requirements beyond the normal factory fallback. A
 // browser lifecycle end must silence speech even if visibilitychange is skipped.
-test('pagehide stops narration and hides the avatar for navigation/bfcache', async t => {
-  const h = makeWidget(t); h.open(); await h.ask(); h.button('Read aloud').click(); const old = h.utterances[0]; old.onstart();
-  const cancels = h.speech.cancels;
+test('pagehide hides the avatar for navigation/bfcache', async t => {
+  const h = makeWidget(t); h.open(); await h.ask();
   h.window.dispatchEvent(new h.window.PageTransitionEvent('pagehide', {persisted: true}));
-  assert.ok(h.speech.cancels > cancels, 'pagehide must cancel the utterance');
-  assert.equal(h.avatar.visible, false, 'pagehide must pause avatar rendering');
-  old.onstart(); assert.notEqual(h.avatar.state, 'speaking');
+  assert.equal(h.avatar.visible, false); assert.equal(h.avatar.level, 0);
 });
 
 test('pageshow restores avatar only for an open visible concierge', async t => {
@@ -526,24 +463,6 @@ test('pageshow restores avatar only for an open visible concierge', async t => {
   h.window.dispatchEvent(new h.window.PageTransitionEvent('pagehide', {persisted: true}));
   h.window.dispatchEvent(new h.window.PageTransitionEvent('pageshow', {persisted: true}));
   assert.equal(h.avatar.visible, false);
-});
-
-test('narration ending during a new search restores the thinking expression', async t => {
-  const replies = []; const h = makeWidget(t, {answer: () => {const reply = deferred(); replies.push(reply); return reply.promise;}});
-  h.open(); const first = h.ask(); replies[0].resolve(response(fixtureAnswer)); await first;
-  const second = h.ask('Another design'); h.button('Read aloud').click(); const narration = h.utterances[0];
-  narration.onstart(); assert.equal(h.avatar.state, 'speaking'); narration.onend();
-  assert.equal(h.avatar.state, 'thinking', 'search remains pending after narration ends');
-  replies[1].resolve(response(fixtureAnswer)); await second;
-});
-
-test('narration ending during a cart recheck restores the thinking expression', async t => {
-  const product = deferred(); const h = makeWidget(t, {product: () => product.promise}); h.open(); await h.ask();
-  h.button('Choose options').click(); h.button('Review adding to bag').click(); h.button('Confirm add to bag').click();
-  h.button('Read aloud').click(); const narration = h.utterances[0]; narration.onstart(); narration.onend();
-  assert.equal(h.avatar.state, 'thinking', 'cart recheck remains pending after narration ends');
-  product.resolve(response({product: fixtureProduct})); await settle();
-  assert.equal(h.avatar.state, 'success'); assert.equal(JSON.parse(h.window.sessionStorage.getItem('brites-sandbox-cart')).length, 1);
 });
 
 test('a renderer draw exception cannot block text search or sandbox cart', async t => {

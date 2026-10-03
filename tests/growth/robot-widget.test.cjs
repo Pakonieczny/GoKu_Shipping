@@ -56,7 +56,7 @@ test('load and opening remain silent: no voice adapter, microphone or provider r
 });
 test('explicit Talk loads the adapter once; feature-disabled start returns an inactive usable control', async t => {
   const h=harness(t,{started:false});h.open();h.voiceButton.click();await settle();
-  assert.ok(h.loader());assert.equal(h.voiceButton.disabled,true);assert.equal(h.voiceCalls.start,0);
+  assert.ok(h.loader());assert.equal(h.voiceButton.disabled,false);assert.equal(h.voiceButton.textContent,'Cancel connection');assert.equal(h.voiceButton.getAttribute('aria-pressed'),'true');assert.equal(h.voiceCalls.start,0);
   h.loader().dispatchEvent(new h.win.Event('load'));await settle();
   assert.equal(h.voiceCalls.create,1);assert.equal(h.voiceCalls.start,1);assert.equal(h.voiceButton.disabled,false);assert.equal(h.voiceButton.textContent,'Talk to me');assert.equal(h.voiceButton.getAttribute('aria-pressed'),'false');
   assert.equal(h.root.querySelector('.voice-state').dataset.active,'false');assert.deepEqual(h.deviceCalls,[]);
