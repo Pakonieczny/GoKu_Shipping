@@ -73,18 +73,18 @@ test('only an exact ProductVariant GID on review is accepted, without guessing o
   }
 });
 
-test('native session exposes exactly three bounded tools with no mutation or navigation tool',()=>{
+test('native session exposes three bounded shop tools and one presentation-only tool',()=>{
   const config=server.sessionConfig();
-  assert.deepEqual(config.tools.map(value=>value.name),['find_jewellery','inspect_jewellery','prepare_jewellery_action']);
+  assert.deepEqual(config.tools.map(value=>value.name),['find_jewellery','inspect_jewellery','prepare_jewellery_action','set_avatar_performance']);
   for(const tool of config.tools){assert.equal(tool.parameters.additionalProperties,false);assert.equal(tool.type,'function');}
   assert.deepEqual(config.tools[1].parameters.required,['handle']);
   assert.deepEqual(config.tools[2].parameters.required,['handle','action']);
   assert.deepEqual(config.tools[2].parameters.properties.action.enum,['view','options','review']);
-  assert.equal(config.max_output_tokens,350);assert.equal(config.audio.output.voice,'marin');
+  assert.equal(config.max_output_tokens,1200);assert.equal(config.audio.output.voice,'marin');
   assert.equal(config.audio.input.turn_detection.create_response,false);assert.equal(config.audio.input.turn_detection.interrupt_response,true);
   assert.match(config.instructions,/call inspect_jewellery.*before claims about its options, materials/);
   assert.match(config.instructions,/only when the shopper specifically asks/);
-  assert.match(config.instructions,/Never claim that a prepared result means an action was done/);
+  assert.match(config.instructions,/Say a page is being opened only when navigationRequested is true/);
   assert.match(config.instructions,/host verifies the actual current shopper request/);
 });
 

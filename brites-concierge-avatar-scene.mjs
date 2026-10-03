@@ -5,7 +5,8 @@ import {UnrealBloomPass} from 'three/addons/postprocessing/UnrealBloomPass.js';
 import {OutputPass} from 'three/addons/postprocessing/OutputPass.js';
 
 // Original Brites guide, generated as real mesh geometry. No raster character,
-// remotely hosted model, camera, microphone, tracking or external texture URL.
+// remotely hosted model, camera, microphone or tracking. An explicit verified
+// product selection may load its allowlisted Shopify photograph.
 export const AVATAR_SCENE_DECLARATIONS = Object.freeze({
   schema: 2,
   identity: 'original single-eye pebble robot',
@@ -21,7 +22,7 @@ export const AVATAR_SCENE_DECLARATIONS = Object.freeze({
     Object.freeze({name: 'Ivory ceramic tangent-space normal', kind: 'normal'})
   ]),
   environment: Object.freeze({kind: 'procedural studio cubemap with HDR radiance lighting', faces: 6, dynamicLights: true, hdr: true, hdri: false}),
-  finish: Object.freeze({porcelain: 'satin matte', visor: 'dark satin', bloom: 'aperture highlights only'})
+  finish: Object.freeze({porcelain: 'satin matte', visor: 'dark satin', bloom: 'disabled pending GPU verification', ornamentalOrbits: false, stableLighting: true, microdetail: 'band-limited satin'})
 });
 export function createAvatarScene({container, quality, onFrame, onContext, onError}) {
   const doc = container.ownerDocument, win = doc.defaultView;
@@ -54,12 +55,13 @@ export function createAvatarScene({container, quality, onFrame, onContext, onErr
     let seed = kind === 'porcelain' ? 982451653 : 961748941;
     const noise = () => {seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0; return seed / 4294967296;};
     for (let y = 0; y < size; y++) {
-      const brush = (noise() - .5) * 18 + Math.sin(y * .9) * 3;
+      // Band-limited texture variation avoids sparkling one-pixel microfacets.
+      const brush = Math.sin(y / size * Math.PI * 12) * 2;
       for (let x = 0; x < size; x++) {
-        let value = kind === 'porcelain' ? 128 + (noise() - .5) * 14 : kind === 'roughness' ? 215 + brush * .4 + (noise() - .5) * 8 : 128 + brush + (noise() - .5) * 6;
+        let value = kind === 'porcelain' ? 128 + Math.sin(x / size * Math.PI * 8) * 2 + brush : kind === 'roughness' ? 242 + brush : 128 + brush;
         const index = (y * size + x) * 4; value = Math.max(0, Math.min(255, Math.round(value)));
         if (kind === 'albedo') {const grain = (value - 128) * .16; pixels[index] = 249 + grain; pixels[index + 1] = 244 + grain; pixels[index + 2] = 232 + grain;}
-        else if (kind === 'normal') {pixels[index] = 128 + (noise() - .5) * 8; pixels[index + 1] = 128 + (noise() - .5) * 8; pixels[index + 2] = 255;}
+        else if (kind === 'normal') {pixels[index] = 128 + Math.sin(x / size * Math.PI * 8) * .8; pixels[index + 1] = 128 + Math.sin(y / size * Math.PI * 8) * .8; pixels[index + 2] = 255;}
         else pixels[index] = pixels[index + 1] = pixels[index + 2] = value; pixels[index + 3] = 255;
       }
     }
@@ -70,26 +72,26 @@ export function createAvatarScene({container, quality, onFrame, onContext, onErr
   }
   const porcelainMap = textureMap(AVATAR_SCENE_DECLARATIONS.textures[0].name, AVATAR_SCENE_DECLARATIONS.textures[0].kind), goldMap = textureMap(AVATAR_SCENE_DECLARATIONS.textures[1].name, AVATAR_SCENE_DECLARATIONS.textures[1].kind), roughnessMap = textureMap(AVATAR_SCENE_DECLARATIONS.textures[2].name, AVATAR_SCENE_DECLARATIONS.textures[2].kind);
   const ceramicAlbedo = textureMap(AVATAR_SCENE_DECLARATIONS.textures[4].name, 'albedo'), ceramicNormal = textureMap(AVATAR_SCENE_DECLARATIONS.textures[5].name, 'normal');
-  const ivory = material({color: '#eee7dc', map: ceramicAlbedo, normalMap: ceramicNormal, normalScale: new THREE.Vector2(.18, .18), roughness: .66, metalness: 0, clearcoat: .12, clearcoatRoughness: .62, bumpMap: porcelainMap, bumpScale: .003, sheen: .04, sheenColor: new THREE.Color('#dfd5c2')});
-  const gold = material({color: '#b79a69', metalness: .86, roughness: .54, roughnessMap, bumpMap: goldMap, bumpScale: .0025, anisotropy: .54, anisotropyRotation: Math.PI / 2, clearcoat: .04, clearcoatRoughness: .58});
-  const paleGold = material({color: '#c8b187', metalness: .74, roughness: .52, roughnessMap, bumpMap: goldMap, bumpScale: .002, clearcoat: .06, clearcoatRoughness: .6});
+  const ivory = material({color: '#eee7dc', map: ceramicAlbedo, normalMap: ceramicNormal, normalScale: new THREE.Vector2(.06, .06), roughness: .66, metalness: 0, clearcoat: .12, clearcoatRoughness: .62, bumpMap: porcelainMap, bumpScale: .001, sheen: .04, sheenColor: new THREE.Color('#dfd5c2')});
+  const gold = material({color: '#b79a69', metalness: .86, roughness: .66, roughnessMap, bumpMap: goldMap, bumpScale: .0005, anisotropy: .18, anisotropyRotation: Math.PI / 2, clearcoat: .04, clearcoatRoughness: .58});
+  const paleGold = material({color: '#c8b187', metalness: .74, roughness: .64, roughnessMap, bumpMap: goldMap, bumpScale: .0005, clearcoat: .06, clearcoatRoughness: .6});
   const glassMap = textureMap(AVATAR_SCENE_DECLARATIONS.textures[3].name, 'glass');
-  const face = material({color: '#061322', metalness: .06, roughness: .48, clearcoat: .08, clearcoatRoughness: .48, envMapIntensity: .32, bumpMap: glassMap, bumpScale: .0008});
+  const face = material({color: '#061322', metalness: .06, roughness: .48, clearcoat: .08, clearcoatRoughness: .48, envMapIntensity: .18, bumpMap: glassMap, bumpScale: .0001});
   // These retained material names keep diagnostics compatible; they describe
   // machined parts and light, never skin, human eyes or organic features.
   const lidMaterial = material({color: '#162b40', metalness: .7, roughness: .26});
-  const eyeMaterial = material({color: '#76cfff', metalness: .1, roughness: .2, emissive: '#4bbaff', emissiveIntensity: 1.4, clearcoat: 1});
+  const eyeMaterial = material({color: '#76cfff', metalness: .1, roughness: .72, emissive: '#4bbaff', emissiveIntensity: 1.4, clearcoat: 0});
   const pupilMaterial = material({color: '#030e1c', roughness: .19, metalness: .1, clearcoat: 1});
   const mouthMaterial = material({color: '#9cddff', emissive: '#52bfff', emissiveIntensity: 1.2, roughness: .25});
   // A low-opacity satin protective cover must not turn the whole dark visor
   // into a white transmission/reflection veil. Refraction stays on the gem.
-  const corneaMaterial = material({color: '#16384e', roughness: .56, transmission: 0, metalness: 0, clearcoat: .08, clearcoatRoughness: .62, envMapIntensity: .16, opacity: .035, transparent: true, depthWrite: false, bumpMap: glassMap, bumpScale: .0006});
+  const corneaMaterial = material({color: '#16384e', roughness: .56, transmission: 0, metalness: 0, clearcoat: .08, clearcoatRoughness: .62, envMapIntensity: .16, opacity: .035, transparent: true, depthWrite: false, bumpMap: glassMap, bumpScale: .0001});
   const glint = basic({color: '#bfeaff', toneMapped: false});
-  const gemMaterial = material({color: '#3b72d7', roughness: .065, metalness: .02, transmission: .75, thickness: .45, ior: 1.77, dispersion: .035, clearcoat: 1, attenuationColor: new THREE.Color('#acd9ff'), attenuationDistance: .85});
-  const stageMaterial = material({color: '#d7dee2', roughness: .78, metalness: .02, clearcoat: .02, bumpMap: porcelainMap, bumpScale: .005});
-  const floorMaterial = material({color: '#dce4e9', roughness: .94, metalness: 0});
+  const gemMaterial = material({color: '#3b72d7', roughness: .66, metalness: 0, transmission: 0, thickness: .45, ior: 1.77, dispersion: 0, clearcoat: 0, attenuationColor: new THREE.Color('#acd9ff'), attenuationDistance: .85});
+  const stageMaterial = material({color: '#e5ded1', roughness: .78, metalness: .02, clearcoat: .02, bumpMap: porcelainMap, bumpScale: .005});
+  const floorMaterial = material({color: '#eee9e1', roughness: .94, metalness: 0});
   const avatar = new THREE.Group(); scene.add(avatar);
-  const irisMaterial = material({color: '#78d7ff', emissive: '#52bfff', emissiveIntensity: 1.35, roughness: .2, metalness: .15, clearcoat: .7});
+  const irisMaterial = material({color: '#78d7ff', emissive: '#52bfff', emissiveIntensity: 1.35, roughness: .72, metalness: 0, clearcoat: 0});
   const head = new THREE.Group(); head.position.set(0, .65, .01); avatar.add(head);
   function roundedGeometry(width, height, depth, radius, bevel = .065) {
     const x = -width / 2, y = -height / 2, s = new THREE.Shape();
@@ -113,10 +115,10 @@ export function createAvatarScene({container, quality, onFrame, onContext, onErr
   const innerHalo = mesh(geometry(new THREE.TorusGeometry(.28, .007, 16, segments(192, 112))), glint, eye, 0, 0, .001); innerHalo.castShadow = false;
   const lens = mesh(sphere, corneaMaterial, head, 0, .015, .677); lens.scale.set(.72, .674, .062); lens.castShadow = false; lens.receiveShadow = false; lens.renderOrder = 3;
   const eyes = [{group: eye, aperture, halo, innerHalo, apertureRest, lens, digital: true}];
-  const orbit = mesh(geometry(new THREE.TorusGeometry(.447, .011, 20, 128, Math.PI * .38)), paleGold, eye, 0, 0, -.025); orbit.rotation.z = -.8;
+  const orbit = mesh(geometry(new THREE.TorusGeometry(.447, .011, 20, 128, Math.PI * .38)), paleGold, eye, 0, 0, -.025); orbit.rotation.z = -.8; orbit.visible = false; orbit.castShadow = false; orbit.name = 'retired-aperture-ornament'; // Decorative rotating arcs were sub-pixel noise.
   const statusBars = [], statusBarGeometry = geometry(new THREE.CapsuleGeometry(.012, .016, 4, 16));
   for (let i = 0; i < 5; i++) {
-    const bar = mesh(statusBarGeometry, mouthMaterial, head, (i - 2) * .056, -.516, .666); bar.castShadow = false; bar.scale.z = .3; statusBars.push(bar);
+    const bar = mesh(statusBarGeometry, mouthMaterial, head, (i - 2) * .056, -.516, .666); bar.castShadow = false; bar.scale.z = .3; bar.visible = false; statusBars.push(bar);
   }
   for (const side of [-1, 1]) {
     const hinge = mesh(smallSphere, paleGold, head, side * .935, -.14, -.09); hinge.scale.set(.074, .144, .17);
@@ -139,7 +141,7 @@ export function createAvatarScene({container, quality, onFrame, onContext, onErr
   // are visibly mechanical and helpful without suggesting human hands.
   const chainCurve = new THREE.CatmullRomCurve3([new THREE.Vector3(-.135, -.43, .23), new THREE.Vector3(-.18, -.60, .325), new THREE.Vector3(0, -.765, .37), new THREE.Vector3(.18, -.60, .325), new THREE.Vector3(.135, -.43, .23)]);
   const linkGeometry = geometry(new THREE.TorusGeometry(.013, .0035, 8, 20)), links = new THREE.InstancedMesh(linkGeometry, gold, 28), transform = new THREE.Object3D();
-  for (let i = 0; i < 28; i++) {transform.position.copy(chainCurve.getPoint(i / 27)); transform.rotation.set(0, i % 2 ? Math.PI / 2 : 0, (i - 14) * .04); transform.updateMatrix(); links.setMatrixAt(i, transform.matrix);} links.castShadow = true; avatar.add(links);
+  for (let i = 0; i < 28; i++) {transform.position.copy(chainCurve.getPoint(i / 27)); transform.rotation.set(0, i % 2 ? Math.PI / 2 : 0, (i - 14) * .04); transform.updateMatrix(); links.setMatrixAt(i, transform.matrix);} links.castShadow = false; links.visible = false; links.name = 'retired-chain-ornament'; avatar.add(links); // Keep compatibility geometry out of the composed silhouette.
   const arms = [];
   for (const side of [-1, 1]) {
     const arm = new THREE.Group(); arm.position.set(side * .495, -.66, -.03); avatar.add(arm);
@@ -150,10 +152,34 @@ export function createAvatarScene({container, quality, onFrame, onContext, onErr
     const palmInset = mesh(smallSphere, paleGold, arm, side * .176, -.469, .139); palmInset.scale.set(.056, .065, .011);
     arms.push({group: arm, side, palm});
   }
-  const decoration = mesh(geometry(new THREE.TorusGeometry(1.52, .009, 12, 220, Math.PI * 1.06)), paleGold, scene, 0, -.05, -.75); decoration.rotation.z = -.35; decoration.rotation.x = .12; decoration.castShadow = false;
+  const decoration = mesh(geometry(new THREE.TorusGeometry(1.52, .009, 12, 220, Math.PI * 1.06)), paleGold, scene, 0, -.05, -.75); decoration.rotation.z = -.35; decoration.rotation.x = .12; decoration.castShadow = false; decoration.visible = false; decoration.name = 'retired-background-orbit';
+  const productShowcase = new THREE.Group(); productShowcase.visible = false; productShowcase.name = 'verified-product-photo-showcase'; scene.add(productShowcase);
+  const photoBacking = mesh(geometry(new THREE.BoxGeometry(.82, .9, .035)), ivory, productShowcase); photoBacking.castShadow = false;
+  const photoMaterial = basic({color: '#ffffff', toneMapped: false}), photoPlane = mesh(geometry(new THREE.PlaneGeometry(1, 1)), photoMaterial, productShowcase, 0, .025, .024); photoPlane.castShadow = false; photoPlane.receiveShadow = false;
+  let photoEpoch = 0, photoTimer = null, pendingPhotoResolve = null, photoTexture = null, showcaseProduct = null;
+  const retiredPhotoTextures = new WeakSet();
+  function disposePhoto(value) {if (!value || retiredPhotoTextures.has(value)) return; retiredPhotoTextures.add(value); textures.delete(value); value.dispose();}
+  function clearProduct() {photoEpoch++; if (photoTimer !== null) win.clearTimeout(photoTimer); photoTimer = null; pendingPhotoResolve?.(false); pendingPhotoResolve = null; disposePhoto(photoTexture); photoTexture = null; photoMaterial.map = null; photoMaterial.needsUpdate = true; productShowcase.visible = false; showcaseProduct = null;}
+  function showProduct(value) {
+    let url; try {if (typeof value?.image !== 'string' || value.image.length > 2048) return Promise.resolve(false); url = new URL(value?.image); if (url.protocol !== 'https:' || url.hostname !== 'cdn.shopify.com' || !url.pathname.startsWith('/s/files/') || url.port || url.username || url.password || !/^gid:\/\/shopify\/Product\/\d+$/.test(value?.id || '')) return Promise.resolve(false);} catch {return Promise.resolve(false);}
+    url.searchParams.set('width', '768'); url.searchParams.delete('height'); if (disposed) return Promise.resolve(false); clearProduct(); const epoch = photoEpoch;
+    return new Promise(resolve => {pendingPhotoResolve = resolve; const settle = ok => {if (epoch !== photoEpoch) return; if (photoTimer !== null) win.clearTimeout(photoTimer); photoTimer = null; pendingPhotoResolve = null; resolve(ok);};
+      photoTimer = win.setTimeout(() => {if (epoch !== photoEpoch) return; clearProduct();}, 6000);
+      const loader = new THREE.TextureLoader(); loader.setCrossOrigin('anonymous');
+      const pendingTexture = loader.load(url.href, texture => {if (disposed || epoch !== photoEpoch) {disposePhoto(texture); resolve(false); return;} texture.colorSpace = THREE.SRGBColorSpace; texture.anisotropy = Math.min(4, renderer.capabilities.getMaxAnisotropy()); photoTexture = texture; textures.add(texture); photoMaterial.map = texture; photoMaterial.needsUpdate = true;
+        const image = texture.image || {}, ratio = Math.max(.1, Math.min(10, (image.naturalWidth || image.width || 1) / (image.naturalHeight || image.height || 1))); photoPlane.scale.set(ratio >= 1 ? .74 : .74 * ratio, ratio >= 1 ? .74 / ratio : .74, 1); productShowcase.visible = true; showcaseProduct = {id: value.id, handle: value.handle, format: 'product-photo'}; settle(true); if (lastPose) render(lastPose, true);
+      }, undefined, () => {if (epoch === photoEpoch) {productShowcase.visible = false; disposePhoto(photoTexture); photoTexture = null; settle(false);} else resolve(false);}); photoTexture = pendingTexture; if (pendingTexture) textures.add(pendingTexture);
+    });
+  }
   const floor = mesh(geometry(new THREE.PlaneGeometry(200, 200)), floorMaterial, scene, 0, -1.655, 0); floor.rotation.x = -Math.PI / 2; floor.castShadow = false;
+  const sweepPoints = [new THREE.Vector2(-1.655, -3), new THREE.Vector2(-1.62, -3.8), new THREE.Vector2(-1.3, -4.6), new THREE.Vector2(-.65, -5.15), new THREE.Vector2(.4, -5.45), new THREE.Vector2(6, -5.5)];
+  const sweepPositions = [], sweepIndices = [];
+  for (const point of sweepPoints) {sweepPositions.push(-14, point.x, point.y, 14, point.x, point.y);}
+  for (let i = 0; i < sweepPoints.length - 1; i++) {const n = i * 2; sweepIndices.push(n, n + 1, n + 2, n + 1, n + 3, n + 2);}
+  const sweepGeometry = geometry(new THREE.BufferGeometry()); sweepGeometry.setAttribute('position', new THREE.Float32BufferAttribute(sweepPositions, 3)); sweepGeometry.setIndex(sweepIndices); sweepGeometry.computeVertexNormals();
+  const studioSweep = mesh(sweepGeometry, floorMaterial, scene); studioSweep.castShadow = false; studioSweep.name = 'continuous-studio-sweep'; studioSweep.material.side = THREE.DoubleSide;
   const pedestal = mesh(geometry(new THREE.CylinderGeometry(1.2, 1.25, .11, segments(180, 120))), stageMaterial, scene, 0, -1.575, 0);
-  const stageRing = mesh(geometry(new THREE.TorusGeometry(1.22, .014, 16, segments(192, 128))), paleGold, scene, 0, -1.553, 0); stageRing.rotation.x = Math.PI / 2;
+  const stageRing = mesh(geometry(new THREE.TorusGeometry(1.22, .014, 16, segments(192, 128))), paleGold, scene, 0, -1.553, 0); stageRing.rotation.x = Math.PI / 2; stageRing.visible = false; stageRing.castShadow = false; stageRing.name = 'retired-stage-ornament';
   const hemisphere = new THREE.HemisphereLight('#e9f2fc', '#6b747d', .46); scene.add(hemisphere);
   const key = new THREE.SpotLight('#fff1db', 32, 20, Math.PI / 5, .7, 2); key.position.set(3.2, 4.8, 5.6); key.target.position.set(0, -.4, 0); key.castShadow = true; key.shadow.mapSize.set(quality.shadowSize, quality.shadowSize); key.shadow.bias = -.00016; key.shadow.normalBias = .025; key.shadow.radius = 3; key.shadow.camera.near = .5; key.shadow.camera.far = 18; scene.add(key, key.target);
   const fill = new THREE.DirectionalLight('#c9e4f2', .44); fill.position.set(-3, 1.1, 4); scene.add(fill);
@@ -194,7 +220,7 @@ export function createAvatarScene({container, quality, onFrame, onContext, onErr
   let composer = null, bloom = null;
   if (quality.bloom) {
     const target = new THREE.WebGLRenderTarget(1, 1, {type: THREE.HalfFloatType, samples: quality.name === 'high' ? 4 : 0});
-    composer = new EffectComposer(renderer, target); composer.addPass(new RenderPass(scene, camera)); bloom = new UnrealBloomPass(new THREE.Vector2(1, 1), .055, .16, 2.4); composer.addPass(bloom); composer.addPass(new OutputPass());
+    composer = new EffectComposer(renderer, target); composer.addPass(new RenderPass(scene, camera)); bloom = new UnrealBloomPass(new THREE.Vector2(1, 1), 0, .16, 2.4); bloom.enabled = false; composer.addPass(bloom); composer.addPass(new OutputPass());
   }
   let active = false, reducedMotion = false, disposed = false, lost = false, last = 0, loopRunning = false, lastAnimationFrameMs = null, frames = 0, lastPose = null, renderMs = 0, drawCalls = 0, renderedTriangles = 0, sampleTime = 0, width = 1, height = 1;
   const geometryStats = root => {let triangles = 0, vertices = 0, meshes = 0; root.traverse(object => {if (!object.isMesh) return; const multiplier = object.isInstancedMesh ? object.count : 1; triangles += (object.geometry.index ? object.geometry.index.count : object.geometry.attributes.position.count) / 3 * multiplier; vertices += object.geometry.attributes.position.count * multiplier; meshes += 1;}); return {triangles: Math.round(triangles), vertices, meshes};};
@@ -213,7 +239,7 @@ export function createAvatarScene({container, quality, onFrame, onContext, onErr
     const colorProgress = reducedMotion ? 1 : THREE.MathUtils.clamp((sampleTime - transitionAt + 1 / 60) / (transitionMs / 1000), 0, 1), colorEase = colorProgress * colorProgress * (3 - 2 * colorProgress);
     displayedColor.copy(transitionColor).lerp(targetColor, colorEase);
     const speaking = state === 'speaking', thinking = state === 'thinking', calm = pose.emotion === 'calm' || pose.emotion === 'reassuring', happy = state === 'success' && !calm, reassuring = state === 'error' || calm;
-    avatar.position.y = pose.bob; avatar.rotation.z = pose.bodyRoll; avatar.rotation.x = Number.isFinite(pose.lean) ? pose.lean : 0;
+    avatar.position.y = pose.bob; avatar.position.z = THREE.MathUtils.clamp(pose.bodyDepth || 0, -.1, .14); avatar.scale.setScalar(THREE.MathUtils.clamp(pose.stanceScale || 1, .94, 1.06)); avatar.rotation.z = pose.bodyRoll; avatar.rotation.y = pose.bodyYaw || 0; avatar.rotation.x = Number.isFinite(pose.lean) ? pose.lean : 0;
     head.rotation.set(pose.headPitch, pose.headYaw, pose.headRoll + (reassuring ? -.025 : pose.emotion === 'curious' ? .035 : 0));
     const eyeOpen = THREE.MathUtils.clamp(pose.eyeOpen, .035, 1.08), eyeScaleX = THREE.MathUtils.clamp(pose.eyeScaleX || 1, .8, 1.2), eyeScaleY = THREE.MathUtils.clamp(pose.eyeScaleY || 1, .6, 1.2), deformation = THREE.MathUtils.clamp(pose.eyeDeformation || 0, -.3, .3), amplitude = speaking ? pose.mouthOpen : thinking ? .12 : happy ? .18 : 0, ringRipple = THREE.MathUtils.clamp(pose.ringRipple || 0, 0, 1);
     eye.position.x = THREE.MathUtils.clamp(pose.gazeX, -.12, .12); eye.position.y = .022 + THREE.MathUtils.clamp(pose.gazeY, -.08, .08);
@@ -222,34 +248,43 @@ export function createAvatarScene({container, quality, onFrame, onContext, onErr
       const offset = i * 3, x = apertureRest[offset], y = apertureRest[offset + 1], z = apertureRest[offset + 2], angle = Math.atan2(y, x);
       // Local mesh deformation gives speech an elastic four-lobed pulse,
       // success an uplifted arc, and errors a gentle flattened listening shape.
-      const wave = reducedMotion ? 0 : Math.sin(angle * 4 + sampleTime * (speaking ? 7 : 2)) * (amplitude * .025 + ringRipple * .005);
-      attribute.setXYZ(i, x * eyeScaleX * (1 + wave) * (1 + (1 - eyeOpen) * .055), (y * (1 + wave) + Math.abs(x) * deformation * .2) * eyeOpen * eyeScaleY, z);
+      const energy = speaking ? THREE.MathUtils.clamp(pose.speechEnergy || 0, 0, 1) : 0;
+      const wave = reducedMotion ? 0 : Math.sin(angle * 8 + sampleTime * 10) * energy * .035 + Math.sin(angle * 4 + sampleTime * 2) * (thinking ? .004 : 0);
+      const heart = THREE.MathUtils.clamp(pose.heart || 0, 0, 1), t = Math.PI / 2 - angle, thickness = Math.hypot(x, y) - .338;
+      const heartX = Math.sin(t) ** 3 * .39 + Math.cos(angle) * thickness, heartY = (13 * Math.cos(t) - 5 * Math.cos(2 * t) - 2 * Math.cos(3 * t) - Math.cos(4 * t)) * .022 - .035 + Math.sin(angle) * thickness;
+      const shapedX = THREE.MathUtils.lerp(x, heartX, heart), shapedY = THREE.MathUtils.lerp(y, heartY, heart);
+      attribute.setXYZ(i, shapedX * eyeScaleX * (1 + wave) * (1 + (1 - eyeOpen) * .055), (shapedY * (1 + wave) + Math.abs(x) * deformation * .2) * (heart > .01 ? 1 : eyeOpen * eyeScaleY), z);
     }
     attribute.needsUpdate = true; apertureGeometry.computeVertexNormals();
-    const ringBreath = reducedMotion ? 0 : Math.sin(sampleTime * (speaking ? 5.4 : thinking ? 2.2 : 1.15)) * ringRipple;
+    const ringBreath = reducedMotion ? 0 : Math.sin(sampleTime * (speaking ? 8.5 : thinking ? 2.2 : 1.15)) * (speaking ? THREE.MathUtils.clamp(pose.speechEnergy || 0, 0, 1) : thinking ? ringRipple : 0);
     halo.scale.set(eyeScaleX * (1 + amplitude * .025 + ringRipple * .035 + ringBreath * .018), eyeOpen * eyeScaleY * (1 + ringRipple * .018 - ringBreath * .009), 1);
     innerHalo.scale.set(eyeScaleX * (1 - ringRipple * .018 - ringBreath * .008), eyeOpen * eyeScaleY * (1 - ringRipple * .012 + ringBreath * .006), 1); orbit.scale.y = eyeOpen * eyeScaleY;
     orbit.rotation.z = -.8 + (thinking && !reducedMotion ? sampleTime * .32 : speaking && !reducedMotion ? sampleTime * .06 : happy ? .35 : 0) + THREE.MathUtils.clamp(pose.ringRotation || 0, -.4, .4);
+    const heartColor = new THREE.Color('#ed93aa'), warmth = THREE.MathUtils.clamp(pose.heart || 0, 0, 1);
+    displayedColor.lerp(heartColor, warmth);
+    halo.visible = warmth < .05; innerHalo.visible = warmth < .05;
     irisMaterial.color.copy(displayedColor); irisMaterial.emissive.copy(displayedColor); eyeMaterial.color.copy(displayedColor); eyeMaterial.emissive.copy(displayedColor); mouthMaterial.color.copy(displayedColor); mouthMaterial.emissive.copy(displayedColor); glint.color.copy(displayedColor).lerp(whiteColor, .6);
     irisMaterial.emissiveIntensity = 1.05 + pose.lightPulse * .55 + (speaking ? pose.mouthOpen * .22 : 0);
     eyeLight.color.copy(displayedColor); eyeLight.intensity = .22 + pose.lightPulse * .16;
     const statusWave = THREE.MathUtils.clamp(pose.statusWave || 0, 0, 1);
     statusBars.forEach((bar, index) => {const cueRipple = reducedMotion ? 0 : statusWave * .18 * Math.sin(sampleTime * 5.2 - index * .78); bar.scale.y = speaking ? .7 + pose.mouthOpen * (.8 + .35 * Math.sin(sampleTime * 8 + index)) : thinking && !reducedMotion ? .8 + .3 * Math.sin(sampleTime * 3 - index * .7) : 1 + cueRipple;});
-    arms.forEach(({group, side, palm}) => {const invitation = state === 'listening' ? .065 : speaking ? .06 : reassuring ? .035 : 0, offer = side === 1 && Number.isFinite(pose.offer) ? pose.offer : 0, wave = side === 1 && Number.isFinite(pose.helloWave) ? THREE.MathUtils.clamp(pose.helloWave, -1, 1) : 0, armLift = THREE.MathUtils.clamp(side === -1 ? pose.armLiftLeft ?? pose.armLift : pose.armLiftRight ?? pose.armLift, 0, .5); group.rotation.z = -side * (armLift + invitation + offer * .5 + wave * .16); group.rotation.x = -armLift * .4 - offer * .11; group.rotation.y = side * offer * .18; palm.rotation.z = -side * .15 + wave * .16;});
-    key.position.x = 3.2 + Math.sin(sampleTime * .25) * .11 * (reducedMotion ? 0 : 1);
+    arms.forEach(({group, side, palm}) => {const invitation = state === 'listening' ? .065 : speaking ? .06 : reassuring ? .035 : 0, pointsThisSide = pose.productFocused && Math.sign(pose.targetX || 1) === side, offer = (pointsThisSide || !pose.productFocused && side === 1) && Number.isFinite(pose.offer) ? pose.offer : 0, wave = side === 1 && Number.isFinite(pose.helloWave) ? THREE.MathUtils.clamp(pose.helloWave, -1, 1) : 0, armLift = THREE.MathUtils.clamp(side === -1 ? pose.armLiftLeft ?? pose.armLift : pose.armLiftRight ?? pose.armLift, 0, .5); group.rotation.z = -side * (armLift + invitation + offer * .5 + wave * .16); group.rotation.x = -armLift * .4 - offer * .11; group.rotation.y = side * offer * .18; group.position.z = -.03 + (pointsThisSide ? pose.armReach || 0 : 0); palm.rotation.z = -side * .15 + wave * .16;});
+    // The studio softbox stays fixed: articulation moves, specular lighting does not.
+    key.position.x = 3.2;
   }
   function render(pose, force = false) {
-    if (disposed || lost || (!active && !force)) return; const start = win.performance.now(); if (force) sampleTime = start / 1000; lastPose = pose; applyPose(pose); renderer.info.reset(); if (composer) composer.render(); else renderer.render(scene, camera); renderMs = win.performance.now() - start; frames += 1; drawCalls = renderer.info.render.calls; renderedTriangles = renderer.info.render.triangles;
+    if (disposed || lost || (!active && !force)) return; const start = win.performance.now(); if (force) sampleTime = start / 1000; lastPose = pose; applyPose(pose); productShowcase.position.set(.94, -.68 + (pose.bob || 0), .45); productShowcase.rotation.y = -.12 + (pose.headYaw || 0) * .25; productShowcase.scale.setScalar(reducedMotion ? 1 : .95 + (pose.present || 0) * .05); renderer.info.reset(); if (composer) composer.render(); else renderer.render(scene, camera); renderMs = win.performance.now() - start; frames += 1; drawCalls = renderer.info.render.calls; renderedTriangles = renderer.info.render.triangles;
   }
   function tick(milliseconds) {if (!Number.isFinite(milliseconds) || !active || reducedMotion || lost || disposed) return; const time = milliseconds / 1000, interval = 1 / quality.fps; if (time - last + .000001 < interval) return; last = time - Math.max(0, (time - last) % interval); sampleTime = time; try {render(onFrame(time)); lastAnimationFrameMs = milliseconds;} catch {active = false; loopRunning = false; renderer.setAnimationLoop(null); onError?.();}}
-  function setMotion(value) {active = value.active === true; reducedMotion = value.reducedMotion === true; const shouldRun = active && !reducedMotion && !lost && !disposed; if (shouldRun === loopRunning) return; loopRunning = shouldRun; if (shouldRun) last = 0; renderer.setAnimationLoop(shouldRun ? tick : null);}
+  function setMotion(value) {active = value.active === true; if (!active) clearProduct(); reducedMotion = value.reducedMotion === true; const shouldRun = active && !reducedMotion && !lost && !disposed; if (shouldRun === loopRunning) return; loopRunning = shouldRun; if (shouldRun) last = 0; renderer.setAnimationLoop(shouldRun ? tick : null);}
   function invalidate() {last = 0;}
   function contextLost(event) {event.preventDefault(); lost = true; loopRunning = false; renderer.setAnimationLoop(null); onContext?.(true);}
   function contextRestored() {lost = false; onContext?.(false);}
   renderer.domElement.addEventListener('webglcontextlost', contextLost); renderer.domElement.addEventListener('webglcontextrestored', contextRestored);
   const resizeObserver = win.ResizeObserver ? new win.ResizeObserver(resize) : null; resizeObserver?.observe(container); if (!resizeObserver) win.addEventListener('resize', resize);
   resize();
-  function snapshot() {return {revision: THREE.REVISION, animated: !disposed && !lost && loopRunning && lastAnimationFrameMs !== null && win.performance.now() - lastAnimationFrameMs < 800, animation: {loopRequested: loopRunning, sampledFrames: frames, lastFrameMs: lastAnimationFrameMs}, frames, frameRenderMs: Math.round(renderMs * 100) / 100, drawCalls, renderedTriangles, geometry: {model: modelStats, scene: sceneStats}, textures: maps.map(value => ({...value})), shadow: {enabled: true, size: quality.shadowSize, type: 'PCF soft', casts: true, receivingStage: true}, mannerism: {name: lastPose?.mannerism || null, active: lastPose?.mannerismActive === true, eventBound: true}, character: {identity: AVATAR_SCENE_DECLARATIONS.identity, digitalEyes: 1, humanFeatures: false, meshDeformation: true, interactionProfile: {...AVATAR_SCENE_DECLARATIONS.interactionProfile}, state: previousState, color: '#' + displayedColor.getHexString()}, environment: {kind: AVATAR_SCENE_DECLARATIONS.environment.kind, faces: 6, size: skyboxSize, hdr: true, hdri: false, radiance: {width: hdrWidth, height: hdrHeight, format: 'linear float RGBA'}}, finish: {...AVATAR_SCENE_DECLARATIONS.finish}, materials: {physical: [...materials].filter(value => value.isMeshPhysicalMaterial).length, metallicAnisotropy: true, transmission: true, clearcoat: true, environmentReflection: true}, lights: 5, bloom: !!composer, width, height, pixelRatio: renderer.getPixelRatio(), contextLost: lost};}
-  function destroy() {if (disposed) return; disposed = true; renderer.setAnimationLoop(null); resizeObserver?.disconnect(); win.removeEventListener('resize', resize); renderer.domElement.removeEventListener('webglcontextlost', contextLost); renderer.domElement.removeEventListener('webglcontextrestored', contextRestored); composer?.passes.forEach(pass => pass.dispose?.()); composer?.dispose(); geometries.forEach(value => value.dispose()); materials.forEach(value => value.dispose()); textures.forEach(value => value.dispose()); environmentTarget.dispose(); renderer.dispose(); renderer.forceContextLoss(); renderer.domElement.remove();}
-  return {setMotion, invalidate, render, snapshot, destroy};
+  function setFloating(value) {const floats = value === true; scene.background = floats ? null : skybox; renderer.setClearColor('#e6edf2', floats ? 0 : 1); for (const surface of [floor, pedestal, studioSweep]) surface.visible = !floats; if (lastPose) render(lastPose, true);}
+  function snapshot() {return {revision: THREE.REVISION, animated: !disposed && !lost && loopRunning && lastAnimationFrameMs !== null && win.performance.now() - lastAnimationFrameMs < 800, animation: {loopRequested: loopRunning, sampledFrames: frames, lastFrameMs: lastAnimationFrameMs}, frames, frameRenderMs: Math.round(renderMs * 100) / 100, drawCalls, renderedTriangles, geometry: {model: modelStats, scene: sceneStats}, textures: maps.map(value => ({...value})), shadow: {enabled: true, size: quality.shadowSize, type: 'PCF soft', casts: true, receivingStage: true}, mannerism: {name: lastPose?.mannerism || null, active: lastPose?.mannerismActive === true, eventBound: true}, character: {identity: AVATAR_SCENE_DECLARATIONS.identity, digitalEyes: 1, humanFeatures: false, meshDeformation: true, interactionProfile: {...AVATAR_SCENE_DECLARATIONS.interactionProfile}, state: previousState, color: '#' + displayedColor.getHexString()}, environment: {kind: AVATAR_SCENE_DECLARATIONS.environment.kind, faces: 6, size: skyboxSize, hdr: true, hdri: false, radiance: {width: hdrWidth, height: hdrHeight, format: 'linear float RGBA'}}, finish: {...AVATAR_SCENE_DECLARATIONS.finish}, materials: {physical: [...materials].filter(value => value.isMeshPhysicalMaterial).length, metallicAnisotropy: true, transmission: true, clearcoat: true, environmentReflection: true}, lights: 5, bloom: !!composer && bloom?.enabled !== false, showcase: showcaseProduct ? {...showcaseProduct} : null, width, height, pixelRatio: renderer.getPixelRatio(), contextLost: lost};}
+  function destroy() {if (disposed) return; disposed = true; clearProduct(); renderer.setAnimationLoop(null); resizeObserver?.disconnect(); win.removeEventListener('resize', resize); renderer.domElement.removeEventListener('webglcontextlost', contextLost); renderer.domElement.removeEventListener('webglcontextrestored', contextRestored); composer?.passes.forEach(pass => pass.dispose?.()); composer?.dispose(); geometries.forEach(value => value.dispose()); materials.forEach(value => value.dispose()); textures.forEach(value => value.dispose()); environmentTarget.dispose(); renderer.dispose(); renderer.forceContextLoss(); renderer.domElement.remove();}
+  return {setMotion, invalidate, render, snapshot, showProduct, clearProduct, setFloating, destroy};
 }

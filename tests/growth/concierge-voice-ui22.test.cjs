@@ -31,7 +31,7 @@ function fixture(t,options={}){
   return {w,d,root,button,calls,errors,activate,open:()=>w.BritesConcierge.open(),get config(){return voiceConfig;},saved:()=>JSON.parse(w.sessionStorage.getItem('brites-concierge-v1')),hide(v){hidden=v;d.dispatchEvent(new w.Event('visibilitychange'));}};
 }
 test('voice is the initial focus while optional captions, typing and history remain independent',async t=>{
-  const h=fixture(t);h.open();await settle();assert.equal(h.root.activeElement,h.button('Talk to me'));assert.equal(h.root.querySelector('.composer').hidden,true);assert.equal(h.root.querySelector('.messages').hidden,true);assert.equal(h.root.querySelector('.captions').hidden,false);
+  const h=fixture(t);h.open();await settle();assert.equal(h.root.activeElement,h.button('Talk to me'));assert.equal(h.root.querySelector('.composer').hidden,true);assert.equal(h.root.querySelector('.messages').hidden,true);assert.equal(h.root.querySelector('.captions').hidden,true);
   h.button('Type instead').click();assert.equal(h.root.querySelector('.composer').hidden,false);assert.equal(h.root.activeElement,h.root.querySelector('input'));assert.equal(h.button('Hide typing').getAttribute('aria-expanded'),'true');
   h.button('History').click();assert.equal(h.root.querySelector('.messages').hidden,false);assert.equal(h.button('History').getAttribute('aria-expanded'),'true');
   h.button('Captions').click();assert.equal(h.root.querySelector('.captions').hidden,true);assert.equal(h.button('Captions').getAttribute('aria-pressed'),'false');assert.equal(h.root.querySelector('.messages').hidden,false);assert.equal(h.calls.start,0);assert.equal(h.button('Read aloud'),undefined);

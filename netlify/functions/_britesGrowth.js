@@ -401,6 +401,35 @@ function semanticInquiry(message){
   return [...text.matchAll(/\bwhat\s+(?:do|does|did|would|can|could)\b[^.!?\n]{0,180}\bmean\b/g)].some(hit=>!negatedAt(text,hit.index));
 }
 
+// Social turns are conversation, not catalogue keywords. Keep this classifier
+// deliberately narrow: a mixed greeting/product/action request stays on the
+// existing live, grounded route. No page context is an action authorization.
+function conversationReply(message){
+  const raw=clean(message,2000).toLowerCase().replace(/[’‘]/g,"'");
+  if(/https?:|www\.|\b(?:api keys?|credentials?|passwords?|system prompt|private (?:records|data)|owner data|repository|source code|sales history|customer (?:records|data)|checkout|check out|pay|payment)\b/.test(raw))return null;
+  const text=raw.replace(/[^a-z0-9'\s]/g,' ').replace(/\s+/g,' ').trim();
+  const greeting='(?:hello|hi|hey|hiya|greetings|good morning|good afternoon|good evening|hello there|hi there|hey there)';
+  const body=text.replace(new RegExp('^'+greeting+'(?:\\s+(?:brite|brites|robot|friend))?(?:\\s+|$)'), '').trim();
+  const social=(kind,reply,needsModelConversation=false)=>({kind,reply,needsModelConversation});
+  if(new RegExp('^'+greeting+'(?:\\s+(?:brite|brites|robot|friend))?$').test(text))return social('greeting','Hello! Good to meet you. We can chat, explore a piece together, or find something with a personal meaning.');
+  if(/^(?:how are you(?: doing)?(?: today)?|how's (?:it going|your day)|how is (?:it going|your day)|how have you been|are you doing (?:well|okay)|what's up|whats up)$/.test(body||text))return social('wellbeing','I’m here and ready to help—no coffee required. How’s your day going?');
+  if(/^(?:thanks|thank you|thank you so much|thanks so much|that helps|that was helpful|you are helpful|you're helpful|nice to meet you|pleased to meet you|nice meeting you)(?: so much| a lot)?$/.test(body||text))return social('thanks','You’re very welcome. Take your time; I’m here when you want to continue.');
+  if(/^(?:who are you|what are you|what's your name|what is your name|are you (?:a robot|human|an ai|real)|are you an? (?:ai|assistant)|do you have feelings)$/.test(body||text))return social('identity','I’m Brites’ AI guide—a little robot here to help you explore the shop and talk through ideas. I don’t have human feelings, but I can listen carefully and help you find what matters to you.');
+  if(/^(?:what can you do|how can you help(?: me)?|can you (?:help me|navigate|navigate the (?:site|website)|show (?:me )?options|control the website)|how does this work)$/.test(body||text))return social('capabilities','We can chat about your ideas, explore the shop’s current pieces and their reviewed stories, or compare options. When you ask, I can help you open a piece or prepare its options; you choose and confirm any addition to your bag.');
+  if(/^(?:tell (?:me )?(?:a |another )?joke|make me laugh|say something funny|can you tell (?:me )?a joke)$/.test(body||text))return social('humour','Why did the little robot bring a ladder? To take the conversation to another level. I’ll keep my day job.');
+  if(/^(?:i(?:'m| am) (?:just looking|just browsing|not ready|taking my time)|just (?:looking|browsing)|let me (?:think|look|browse)|give me (?:a minute|a moment|some time)|no rush)$/.test(body||text))return social('pause','Of course. Take your time. I’ll stay out of the way until you’d like a hand.');
+  if(/^(?:bye|goodbye|good night|goodnight|see you|talk (?:to you )?later)$/.test(body||text))return social('pause','Take care. I’m here whenever you’d like to come back.');
+  if(/^(?:i(?:'m| am) )?(?:good|great|pretty good|doing well|not bad|fine)(?: today)?$/.test(body||text))return social('wellbeing','Good to hear. We can chat or explore whenever you feel like it.');
+  if(/^(?:i(?:'m| am) )?(?:having a rough day|having a bad day|not doing (?:well|great)|having a hard time)$/.test(body||text))return social('general','I’m sorry it’s a rough day. We can take this slowly.',true);
+  // Explicit small talk and unambiguously general questions may use the
+  // separately bounded conversational endpoint. Jewellery/motif terms are
+  // excluded so broad dialogue cannot invent an actual shop recommendation.
+  const commerce=/\b(?:jewellery|jewelry|necklaces?|earrings?|bracelets?|pendants?|huggies?|studs?|rings?|charms?|silver|gold|metal|budget|prices?|stock|available|shipping|deliver|returns?|refund|engraving|personaliz\w*|pieces?|products?|options?|first|second|third|fourth|fifth|sixth|open|navigate|cart|bag|buy|order|gift|meaning|symbol\w*|history|story|stories)\b/;
+  const hasMotif=MOTIFS.some(([,pattern])=>new RegExp('\\b(?:'+pattern+')\\b','i').test(text));
+  if(!commerce.test(text)&&!hasMotif&&(/^(?:can we|let's|lets|i (?:want|would like) to) (?:just )?(?:chat|talk)\b/.test(body||text)||/^(?:tell me (?:something interesting|about yourself)|what(?:'s\s+|\s+(?:do you think|makes you|inspires you|is|are)\b)|why (?:is|are|do|does)|how (?:does|do))/.test(body||text)||/^(?:i(?:'m| am) (?:bored|tired|stressed|excited|happy|sad|nervous|lonely)|my day (?:is|was)|it(?:'s| is) been (?:a |an )?\w+ day)\b/.test(body||text)))return social('general','I’m listening. We can take this at your pace.',true);
+  return null;
+}
+
 function applyBudgetMessage(p,text,explicitCurrency){
   const events=[],spans=[];
   const add=(match,value)=>{spans.push({index:match.index,end:match.index+match[0].length});if(!negatedAt(text,match.index))events.push({index:match.index,...value});};
@@ -423,6 +452,7 @@ function applyBudgetMessage(p,text,explicitCurrency){
 function applyPreferenceMessage(before,message) {
   const text=clean(message,2000).toLowerCase().replace(/[’‘]/g,"'");
   let p=shopperPreferences(before);
+  if(conversationReply(message))return p;
   if(/\b(?:start (?:fresh|over|again)|reset (?:everything|preferences)|forget (?:everything|the previous|all that)|new gift|different gift|different person)\b/.test(text))p=shopperPreferences();
   const mentions={
     type:fieldMentions(text,'necklaces?|earrings?|bracelets?|pendants?|huggies?|studs?|rings?|charms?',v=>v.startsWith('stud')?'studs':v.startsWith('earring')?'earrings':v.replace(/s$/,'')),
@@ -703,6 +733,8 @@ async function concierge({service,shopify,message,history=[],preferences={},cont
   const basePreferences=shopperCurrency&&!currencyCode(preferences.currency)?{...preferences,currency:shopperCurrency}:preferences;
   const boundary=checkoutRequest(text),at=now();
   if(boundary)return {schema:1,checkoutBoundary:true,reply:boundary==='destination'?'I can open an exact Brites product page when you select a piece. Complete payment yourself through the shop’s secure checkout; I can’t open an outside checkout or skip confirmation.':'Review your bag and complete payment yourself through the shop’s secure checkout. I can’t use saved cards, retrieve card details, place an order or confirm that a payment succeeded.',question:null,preferences:shopperPreferences(basePreferences),products:[],meanings:[],actions:[],checkedAt:at,live:false,aiUsed:false};
+  const conversation=conversationReply(text);
+  if(conversation)return {schema:1,conversationOnly:true,preserveSelection:true,conversationKind:conversation.kind,needsModelConversation:conversation.needsModelConversation,reply:conversation.reply,question:null,preferences:intentFrom('',history,basePreferences),products:[],meanings:[],actions:[],checkedAt:at,live:false,aiUsed:false};
   const intent=intentFrom(text,history,basePreferences);
   if(/\b(?:api keys?|credentials?|passwords?|system prompt|private (?:records|data)|owner data|repository|source code|sales history|customer (?:records|data))\b/i.test(text))return {schema:1,reply:'I can help with publicly listed pieces, gift ideas and the shop’s published information.',question:'What kind of piece are you looking for?',preferences:intent,products:[],meanings:[],actions:[],checkedAt:at,live:false,aiUsed:false};
   if(sharedBudgetRequest(text))return {schema:1,budgetClarification:true,reply:'I haven’t applied the overall budget as a per-item limit. I can compare individual pieces once you choose an item limit.',question:'What maximum item price should I use for each piece, before shipping and any applicable taxes?',preferences:shopperPreferences({...intent,budget:null,minBudget:null,unlimitedBudget:false,budgetCurrency:null}),products:[],meanings:[],actions:[],checkedAt:at,live:false,aiUsed:false};
@@ -857,4 +889,4 @@ async function concierge({service,shopify,message,history=[],preferences={},cont
   if(ai&&!milestonePlan){try{const chosen=await ai({message:text,history:history.slice(-6).map(r=>({role:r.role,content:clean(r.content,1500)})),preferences:intent,products:products.map(p=>({id:p.id,title:p.title})),question:result.question});if(chosen&&['gift','self','comparison','meaning','shipping','engraving','discovery'].includes(chosen.intent)){result.intent=chosen.intent;result.aiUsed=true;const refined=result.question&&safeQuestionRefinement(result.question,chosen.question);if(refined&&!(intent.unlimitedBudget&&/\b(?:budget|spend(?:ing)?|price|cost|afford(?:able)?|how much)\b/i.test(refined)))result.question=refined;}}catch{result.aiUsed=false;result.providerUnavailable=true;}}
   return result;
 }
-module.exports={CATALOG_QUERY,STOP_AT,clean,hash,textOf,publicUrl,sameSecret,namespace,makeDb,normalizeProduct,productProjection,validateDossier,validateStorySupplement,createShopify,createGrowthService,productIssueHolds,applyProductIssues,shopperPreferences,negatedAt,intentFrom,rankProducts,publicMeaningText,mergeStorySupplements,publicMeanings,shopperAction,concierge};
+module.exports={CATALOG_QUERY,STOP_AT,clean,hash,textOf,publicUrl,sameSecret,namespace,makeDb,normalizeProduct,productProjection,validateDossier,validateStorySupplement,createShopify,createGrowthService,productIssueHolds,applyProductIssues,shopperPreferences,negatedAt,conversationReply,intentFrom,rankProducts,publicMeaningText,mergeStorySupplements,publicMeanings,shopperAction,concierge};

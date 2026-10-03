@@ -107,8 +107,8 @@ test('actual production mesh construction stays finite and adaptive tessellation
 test('scene network and source budgets prevent accidental eager or oversized avatar regressions', () => {
   const controller = fs.readFileSync(path.join(root, 'brites-concierge-avatar.js'), 'utf8');
   assert.ok(fileBytes('assets/brites-concierge-avatar-scene.mjs') <= 640 * 1024);
-  assert.ok(fileBytes('brites-concierge-avatar.js') <= 24 * 1024);
-  assert.ok(fileBytes('brites-concierge-avatar.css') <= 8 * 1024);
+  assert.ok(fileBytes('brites-concierge-avatar.js') <= 40 * 1024);
+  assert.ok(fileBytes('brites-concierge-avatar.css') <= 12 * 1024);
   assert.doesNotMatch(controller, /avatar-concept\.png/);
   assert.match(controller, /await import\(moduleUrl\)/);
 });

@@ -6,18 +6,16 @@
   function money(value,currency){try{return new Intl.NumberFormat('en',{style:'currency',currency}).format(value)+' '+currency;}catch{return value+' '+currency;}}
   function cartItem(value){if(!value||!/^gid:\/\/shopify\/Product\/\d+$/.test(value.productId||'')||!/^\d+$/.test(value.variantId||'')||typeof value.title!=='string'||typeof value.variant!=='string'||!Number.isFinite(value.price)||value.price<0||!/^[A-Z]{3}$/.test(value.currency||''))return null;return {productId:value.productId,title:value.title.slice(0,300),variantId:value.variantId,variant:value.variant.slice(0,300),price:value.price,currency:value.currency};}
   async function get(path){const response=await fetch(path,{cache:'no-store'}),data=await response.json();if(!response.ok)throw Error('The live selection could not be checked.');return data;}
-  if(params.has('cart')){
-    main.replaceChildren(text('h1','Your sandbox bag'));
-    let cart=[];try{const saved=JSON.parse(sessionStorage.getItem('brites-sandbox-cart')||'[]');if(Array.isArray(saved))cart=saved.slice(-50).map(cartItem).filter(Boolean);}catch{}
-    if(!cart.length)main.appendChild(text('p','Your sandbox bag is empty.'));
-    cart.forEach(p=>main.appendChild(text('p',p.title+' · '+p.variant+' · '+money(p.price,p.currency))));
-    main.appendChild(text('p','This test bag never places a shop order.'));
-    return;
+  function validProduct(p,handle){
+    if(!p||p.handle!==handle||!/^gid:\/\/shopify\/Product\/[1-9][0-9]{0,19}$/.test(p.id||'')||typeof p.title!=='string'||!p.title||typeof p.description!=='string'||!/^[A-Z]{3}$/.test(p.currency||'')||!Array.isArray(p.variants))return false;
+    try{const url=new URL(p.url);if(url.protocol!=='https:'||!['britesjewelry.com','www.britesjewelry.com'].includes(url.hostname)||url.username||url.password||url.search||url.hash||url.pathname!=='/products/'+handle&&url.pathname!=='/products/'+handle+'/')return false;}catch{return false;}
+    return p.variants.every(v=>v&&/^gid:\/\/shopify\/ProductVariant\/[1-9][0-9]{0,19}$/.test(v.id||'')&&typeof v.title==='string'&&Number.isFinite(v.price)&&v.price>=0&&typeof v.available==='boolean');
   }
-  try{
-    if(params.has('product')){
-      const handle=params.get('product');if(!/^[a-z0-9_-]{1,180}$/.test(handle))throw Error('Choose a product from the live selection.');
-      const data=await get('/api/growth/product?handle='+encodeURIComponent(handle)),p=data.product;
+  let navigationVersion=0;
+  async function openProduct(handle,{push=true}={}){
+    if(typeof handle!=='string'||handle.length>180||!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(handle))return false;const version=++navigationVersion;
+    try{
+      const data=await get('/api/growth/product?handle='+encodeURIComponent(handle)),p=data.product;if(version!==navigationVersion||!validProduct(p,handle))return false;
       main.replaceChildren(text('span','LIVE PRODUCT · SANDBOX VIEW','eyebrow'),text('h1',p.title));
       const photo=image(p,'demo-hero');if(photo)main.appendChild(photo);
       main.appendChild(text('p',p.description.slice(0,1800)));
@@ -30,8 +28,24 @@
         const link=text('a','Open the real product page','pill');link.href=p.url;link.target='_blank';link.rel='noopener noreferrer';main.appendChild(link);
       }
       main.appendChild(text('p','The optional concierge stays with you while browsing. Personalization uses the product page’s own customizer.'));
-      return;
-    }
+      if(version!==navigationVersion)return false;
+      if(push)history.pushState({},'', '/concierge-sandbox.html?product='+encodeURIComponent(handle));
+      document.dispatchEvent(new CustomEvent('brites-concierge:page'));return true;
+    }catch{return false;}
+  }
+  window.BritesSandboxNavigate=handle=>openProduct(handle);
+  document.addEventListener('click',event=>{const link=event.target.closest?.('a[href]');if(!link||event.defaultPrevented||event.button!==0||event.ctrlKey||event.metaKey||event.shiftKey||event.altKey||link.target==='_blank')return;const target=new URL(link.href,location.href);if(target.origin!==location.origin||target.pathname!=='/concierge-sandbox.html')return;const handle=target.searchParams.get('product');if(!handle)return;event.preventDefault();void openProduct(handle);});
+  addEventListener('popstate',()=>{const handle=new URLSearchParams(location.search).get('product');if(handle)void openProduct(handle,{push:false});else location.reload();});
+  if(params.has('cart')){
+    main.replaceChildren(text('h1','Your sandbox bag'));
+    let cart=[];try{const saved=JSON.parse(sessionStorage.getItem('brites-sandbox-cart')||'[]');if(Array.isArray(saved))cart=saved.slice(-50).map(cartItem).filter(Boolean);}catch{}
+    if(!cart.length)main.appendChild(text('p','Your sandbox bag is empty.'));
+    cart.forEach(p=>main.appendChild(text('p',p.title+' · '+p.variant+' · '+money(p.price,p.currency))));
+    main.appendChild(text('p','This test bag never places a shop order.'));
+    return;
+  }
+  try{
+    if(params.has('product')){await openProduct(params.get('product'),{push:false});return;}
     const data=await get('/api/growth/catalogue?q=bunny'),list=document.querySelector('#demo-products');
     data.products.slice(0,8).forEach(p=>{
       const a=document.createElement('a');a.href='/concierge-sandbox.html?product='+encodeURIComponent(p.handle);

@@ -308,7 +308,7 @@ test('late search results after dismissal stay hidden without stealing focus or 
   reply.resolve(response(fixtureAnswer)); await pending;
   assert.equal(h.panel.hidden, true); assert.equal(h.avatar.visible, false); assert.equal(h.utterances.length, 0);
   assert.equal(h.document.activeElement.id, 'shop-control');
-  h.window.BritesConcierge.open(); assert.equal(h.panel.hidden, false); assert.equal(h.root.querySelectorAll('.card').length, 1);
+  h.window.BritesConcierge.open(); assert.equal(h.panel.hidden, false); assert.equal(h.root.querySelectorAll('.card').length, 0);
 });
 
 for(const completion of ['success','failure'])test('an open-widget '+completion+' preserves intentional outside-shop focus',async t=>{
