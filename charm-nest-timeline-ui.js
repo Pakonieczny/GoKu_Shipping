@@ -26,8 +26,9 @@
  *  compact: true draws the rail alone, sized to its host (the order view's header); a rail stamp asks the host to open
  *  it on the Timeline: opts.onOpen(event), or else a bubbling "timeline:focus" event, detail { eventId }.
  *  nowStamps()/wireNow(): the order view's "Where it is now" seal and latest stamps (see the end of this file).
- *  Live: OrderTimeline.onRecord for this order plus a refresh every 20 s while the tab is visible; a new stamp comes
- *  down on its lane, the NOW line glides and the rail moves on. Motion is transform and opacity only; none under
+ *  Live: OrderTimeline.onRecord for this order, plus a refresh while the tab is visible: every 2.5 s for the order view that
+ *  is open (its shared feed, below; a change made on this page is read again at once and 1.5 s later), every 20 s for a
+ *  mount of its own; a new stamp comes down on its lane, the NOW line glides and the rail moves on. Motion is transform and opacity only; none under
  *  prefers-reduced-motion. destroy() clears every timer and listener it set. */
 (function (root) {
   "use strict";
@@ -35,6 +36,11 @@
   const doc = root.document;
   const E = "cubic-bezier(.2,.8,.2,1)", SLIDE = "cubic-bezier(.3,.1,.2,1)", SPRING = "cubic-bezier(.3,1.7,.5,1)";
   const POLL = 20000;
+  // the order view that is open (Paul, 3 Oct 04:03: "within two or three seconds maximum to reflect whatever the user is
+  // doing"): its feed reads every POLL_OPEN while the tab is visible, and again at once and POLL_AGAIN after a change made
+  // on this page; reads are never closer than POLL_GAP, fail with a back-off up to POLL_FAIL, and a seal this page stamped
+  // is kept for LOCAL_TTL until the server's answer has it
+  const POLL_OPEN = 2500, POLL_AGAIN = 1500, POLL_GAP = 600, POLL_FAIL = 30000, LOCAL_TTL = 180000;
   const reduced = () => { try { return !!root.matchMedia && root.matchMedia("(prefers-reduced-motion: reduce)").matches; } catch (_) { return false; } };
   const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const digits = v => String(v == null ? "" : v).replace(/\D/g, "").slice(0, 30);
@@ -671,6 +677,9 @@
     if (op) e.orig = Object.fromEntries(["type", "text", "data"].filter(k => was[k] != null).map(k => [k, was[k]]));
     return e;
   }
+  // the same event again (norm of the same record): nothing in what it says has changed
+  const FACTS = ["key", "id", "type", "at", "by", "source", "station", "device", "lineKey", "transactionId", "sheetId", "sheet", "setId", "text", "milestone", "pending", "derived"];
+  const sameFacts = (a, b) => FACTS.every(k => a[k] === b[k]) && (a.data === b.data || JSON.stringify([a.data, a.orig]) === JSON.stringify([b.data, b.orig]));
   // an event as the host gets it (onOpen, onEvents, onNow): the record's own fields, without the drawing's
   const PUB = ["id", "key", "type", "at", "by", "source", "station", "device", "lineKey", "transactionId", "sheetId", "sheet", "setId", "text", "data", "milestone", "pending", "derived"];
   const pubOf = (e, orderId) => { const o = { orderId }; for (const k of PUB) if (e[k] != null && e[k] !== "" && e[k] !== false) o[k] = e[k]; return e.orig ? Object.assign(o, e.orig) : o; };
@@ -1281,48 +1290,109 @@
   const pathD = pts => { let d = ""; pts.forEach((e, i) => { if (!i) { d = `M${e.x} ${e.y}`; return; } const p = pts[i - 1], mx = (p.x + e.x) / 2; d += ` C${mx} ${p.y} ${mx} ${e.y} ${e.x} ${e.y}`; }); return d; };
 
   /* ════ one order's timeline, read once and shared (adversarial wave 2) ════
-     feed(orderId, { pollMs }) → { orderId, answer, error, loading, refresh({ force }), subscribe(fn(kind)) → off, destroy() }
+     feed(orderId, { pollMs }) → { orderId, answer, error, loading, refresh({ force }), nudge(), subscribe(fn(kind)) → off, destroy() }
      The order view's Overview, header rail and Timeline tab each read the order's timeline for themselves (three
      timelineGet an open, a fourth at every return to the tab, and two polls): they now take one feed (mount's
      opts.feed). A refresh while one is on its way joins it; one not forced reuses an answer younger than the poll (the
-     feed is live), so a return to the tab reads nothing; Retry and the poll force. While anyone listens it reads again
-     every pollMs with the tab visible; kinds: "wait", "data", "error". destroy() stops it, and an answer still on its
-     way is dropped. */
+     feed is live), so a return to the tab reads nothing; Retry forces. While anyone listens it reads again every pollMs
+     (POLL_OPEN, 2.5 s: only an open order view has a feed) with the tab visible; kinds: "wait", "data", "error".
+     Paul, 3 Oct 04:03 (an engraving approved took 30 s to reach the open view: its own record had to be saved first, and
+     the view then waited out a 20 s poll): what the view shows now follows what is done, within 2-3 s.
+       · nudge() says something changed here: read at once, and again POLL_AGAIN later for the server's own copy. A read
+         already on its way may be older than the change, so another follows it (never two at once, never closer than
+         POLL_GAP). Every event this page records for the order nudges it (OrderTimeline.onRecord), and is kept in the
+         answer (`pending`) until the server's answer has the same key, so a read that raced its delivery never takes a
+         seal away. The page's writes nudge it too (OrderWin.nudge).
+       · polls and nudges read quietly (no "wait" once something is drawn: no spinner every 2.5 s); a failed read backs the
+         poll off (x2 up to POLL_FAIL) and is said (kind "error") only when nothing is drawn yet or it failed 3 times.
+       · an answer whose derived steps are missing (its derivation timed out, a query failed) is not drawn over the one
+         before it: it would take their seals away until the next read (twice at most; then it is the answer).
+     destroy() stops it, and an answer still on its way is dropped. */
+  const keyOfRaw = x => { if (!x || typeof x !== "object" || !x.type) return ""; const at = Number(x.at) || 0, type = String(x.type); return type + "~" + String(x.id || `${at}-${type}`).split("~").pop().replace(/[^\w.:-]/g, "_"); };
+  const partial = j => !!(j && j.derived && (j.derived.timedOut || (Array.isArray(j.derived.errors) && j.derived.errors.length)));
+  const openPoll = () => { const v = +(root.OrderTimelineUI && root.OrderTimelineUI.pollOpenMs); return v >= 250 ? v : POLL_OPEN; };   // (pollOpenMs: tests only)
   function feed(orderId, o) {
     o = o || {};
-    const id = digits(orderId), pollMs = Math.max(250, +o.pollMs || POLL), subs = new Set();
-    const F = { orderId: id, answer: null, error: "", loading: null, at: 0, tried: 0, dead: false };
-    let pollT = 0, seq = 0;
+    const id = digits(orderId), pollMs = Math.max(250, +o.pollMs || openPoll()), gap = Math.min(POLL_GAP, pollMs / 2), subs = new Set(), local = new Map();
+    const F = { orderId: id, answer: null, error: "", loading: null, at: 0, tried: 0, began: 0, fails: 0, skips: 0, dirty: false, dead: false };
+    let pollT = 0, againT = 0, seq = 0, unrec = null;
     const emit = kind => { for (const fn of [...subs]) { try { fn(kind, F); } catch (err) { warn("feed", err); } } };
-    function arm() {
+    const seen = () => doc.visibilityState !== "hidden";
+    /** The next read in `ms` (by default pollMs after the last one began, and a longer wait after failures). */
+    function arm(ms) {
       clearTimeout(pollT); pollT = 0;
       if (F.dead || !subs.size) return;
-      pollT = setTimeout(() => { pollT = 0; if (!F.dead && doc.visibilityState !== "hidden") F.refresh({ force: true }); }, pollMs);
+      const wait = ms != null ? ms : F.fails ? Math.min(POLL_FAIL, pollMs * 2 ** Math.min(F.fails, 5)) : F.began ? Math.max(gap, pollMs - (Date.now() - F.began)) : pollMs;
+      pollT = setTimeout(() => { pollT = 0; if (!F.dead && seen()) { F.dirty = false; F.refresh({ force: true, quiet: true }); } }, wait);
     }
-    function done(my, fn) { if (F.dead || my !== seq) return F.answer; F.loading = null; F.tried = Date.now(); fn(); arm(); return F.answer; }
+    function done(my, fn) {
+      if (F.dead || my !== seq) return F.answer;
+      F.loading = null; F.tried = Date.now(); fn();
+      if (F.dirty && !F.dead && seen()) { F.dirty = false; arm(Math.max(0, F.began + gap - Date.now())); } else arm();   // (a change came while it was reading: the next read follows at once)
+      return F.answer;
+    }
+    /** The answer with this page's own events the server has not answered for (a read can pass them in flight). */
+    function withLocal(j) {
+      if (!local.size) return j;
+      const evs = Array.isArray(j.events) ? j.events : [], have = new Set(evs.map(keyOfRaw)), now = Date.now(), extra = [];
+      for (const [k, x] of local) { if (have.has(k) || now - x.live > LOCAL_TTL) local.delete(k); else extra.push(x.ev); }
+      return extra.length ? Object.assign({}, j, { events: evs.concat(extra).sort((a, b) => (+a.at || 0) - (+b.at || 0)) }) : j;
+    }
     F.refresh = r => {
       if (F.dead) return Promise.resolve(F.answer);
       if (F.loading) return F.loading;
       if (!(r && r.force) && F.answer && Date.now() - F.at < pollMs) return Promise.resolve(F.answer);
       const my = ++seq, api = root.OrderTimeline;
+      F.began = Date.now();
       // (deferred: a throw before the read still reaches the subscribers after "wait", never before it)
       const p = F.loading = Promise.resolve().then(() => {
         if (!id) throw new Error("no order number");
         if (!api || typeof api.get !== "function") throw new Error("the timeline is not loaded on this page");
         return api.get(id);
-      }).then(j => done(my, () => { F.answer = j || {}; F.error = ""; F.at = F.tried; emit("data"); }),
-        e => done(my, () => { F.error = String((e && e.message) || e || "failed"); emit("error"); }));
-      emit("wait");
+      }).then(j => done(my, () => {
+        F.fails = 0; F.error = "";
+        if (partial(j) && F.answer && F.skips < 2) { F.skips++; return; }   // (what is drawn keeps its seals; the next read tries again)
+        F.skips = 0; F.answer = withLocal(j || {}); F.at = F.tried; emit("data");
+      }), e => done(my, () => { F.fails++; F.error = String((e && e.message) || e || "failed"); if (!F.answer || F.fails >= 3) emit("error"); }));
+      if (!(r && r.quiet) || !F.answer) emit("wait");
       return p;
     };
-    F.subscribe = fn => { subs.add(fn); if (!pollT && !F.loading) arm(); return () => { subs.delete(fn); if (!subs.size) { clearTimeout(pollT); pollT = 0; } }; };
+    /** A read now, if the view is seen and none is on its way (one on its way is followed by another). */
+    function want() {
+      if (F.dead || !subs.size) return;
+      if (!seen() || F.loading) { F.dirty = true; return; }
+      const wait = F.began + gap - Date.now();
+      if (wait > 0) { arm(wait); return; }
+      F.refresh({ force: true, quiet: true });
+    }
+    /** Something changed on this page (an event recorded, a write to the cloud): read now, and again for the server's copy. */
+    F.nudge = () => {
+      if (F.dead || !subs.size) return;
+      want();
+      clearTimeout(againT); againT = setTimeout(() => { againT = 0; want(); }, POLL_AGAIN);
+    };
+    F.subscribe = fn => { subs.add(fn); if (!pollT && !F.loading) arm(); return () => { subs.delete(fn); if (!subs.size) { clearTimeout(pollT); pollT = 0; clearTimeout(againT); againT = 0; } }; };
     const onVis = () => {
       if (F.dead || !subs.size) return;
-      if (doc.visibilityState === "hidden") { clearTimeout(pollT); pollT = 0; return; }
-      if (!F.loading && Date.now() - F.tried >= pollMs) F.refresh({ force: true }); else if (!F.loading && !pollT) arm();
+      if (!seen()) { clearTimeout(pollT); pollT = 0; return; }
+      if (!F.loading && (F.dirty || Date.now() - F.tried >= pollMs)) { F.dirty = false; F.refresh({ force: true, quiet: true }); } else if (!F.loading && !pollT) arm();
     };
-    doc.addEventListener("visibilitychange", onVis);
-    F.destroy = () => { if (F.dead) return; F.dead = true; clearTimeout(pollT); pollT = 0; subs.clear(); doc.removeEventListener("visibilitychange", onVis); };
+    const onNet = () => { F.fails = 0; want(); };   // (the network is back: the poll waits no longer)
+    const onRec = x => {
+      if (F.dead || !x || digits(x.orderId) !== id) return;
+      const k = keyOfRaw(x); if (!k) return;
+      local.set(k, { live: Date.now(), ev: Object.assign({ pending: true }, x) });
+      if (local.size > 200) local.delete(local.keys().next().value);
+      F.nudge();
+    };
+    doc.addEventListener("visibilitychange", onVis); root.addEventListener("online", onNet);
+    try { if (root.OrderTimeline && typeof root.OrderTimeline.onRecord === "function") unrec = root.OrderTimeline.onRecord(onRec); } catch (_) {}
+    F.destroy = () => {
+      if (F.dead) return; F.dead = true; clearTimeout(pollT); pollT = 0; clearTimeout(againT); againT = 0; subs.clear(); local.clear();
+      doc.removeEventListener("visibilitychange", onVis); root.removeEventListener("online", onNet);
+      try { if (typeof unrec === "function") unrec(); } catch (_) {}
+      unrec = null;
+    };
     return F;
   }
 
@@ -1379,7 +1449,7 @@
     function waiting() {
       if (!S.loaded) {
         message("wait", compact ? "Loading the steps…" : `Loading the timeline of order ${orderId || "—"}…`);
-        $(".tlNowS").innerHTML = `<i class="tlSpin"></i><span>Loading the timeline</span>`;
+        const ns = $(".tlNowS"); ns._h = null; ns.innerHTML = `<i class="tlSpin"></i><span>Loading the timeline</span>`;
       } else if (!busyT) busyT = later(() => busy(true), 350);
     }
     /** The shared feed's news: its wait, its answer (merged as this mount's own would be), its failure. */
@@ -1419,7 +1489,7 @@
       if (!S.loaded) {
         message("err", compact ? "Couldn't load the steps" : `Couldn't load the timeline: ${S.error}.`);
         $(".tlNowT").textContent = "Couldn't load the timeline";
-        $(".tlNowS").innerHTML = `<span>${esc(S.error)}</span><button type="button" class="tlLink tlRetry">Retry</button>`;
+        const ns = $(".tlNowS"); ns._h = null; ns.innerHTML = `<span>${esc(S.error)}</span><button type="button" class="tlLink tlRetry">Retry</button>`;
       } else {
         const r = $(".tlSum"); if (r) r.innerHTML = `<span class="err">Couldn't check for new steps <button type="button" class="tlLink tlRetry">Retry</button></span>`;
       }
@@ -1427,7 +1497,9 @@
     /** The server's answer, merged with what this page recorded meanwhile (still on its way to the server). */
     function apply(j) {
       const next = new Map();
-      for (const x of Array.isArray(j.events) ? j.events : []) { const e = norm(x); if (e) next.set(e.key, e); }
+      // (an event the answer repeats as it was keeps its own object: the open view's answer comes every 2.5 s, and what was
+      // derived from the events at the last redraw (S.D, the explainer's "completed by hand" one) must still be them)
+      for (const x of Array.isArray(j.events) ? j.events : []) { const e = norm(x); if (e) { const o = S.allKeys.get(e.key); next.set(e.key, o && sameFacts(o, e) ? o : e); } }
       for (const [k, e] of S.allKeys) if (e.live && !next.has(k) && Date.now() - e.live < 180000) next.set(k, e);
       const first = !S.loaded, fresh = first ? [] : [...next.keys()].filter(k => !S.allKeys.has(k));
       S.allKeys = next; S.every = [...next.values()].sort(byAt); narrow();
@@ -1576,17 +1648,19 @@
     function paintNowSub() {
       const D = S.D; if (!D) return;
       const s = $(".tlNowS");
+      // (written only when it changed: an answer that repeats every 2.5 s must not rebuild "Open sheet" under a click)
+      const put = h => { if (s._h !== h) { s._h = h; s.innerHTML = h; } };
       if (D.cancelled) {
         const c = D.cancelled, who = c.source === "etsy" || c.by === "Etsy" ? "on Etsy" : "by " + (c.by || "a person");
-        s.innerHTML = `<span>Cancelled ${esc(who)} · ${esc(shortWhen(c.at))} · ${esc(ago(c.at))}</span>${c.why ? `<span class="why" title="${esc(c.why)}">${esc(c.why)}</span>` : ""}`;
+        put(`<span>Cancelled ${esc(who)} · ${esc(shortWhen(c.at))} · ${esc(ago(c.at))}</span>${c.why ? `<span class="why" title="${esc(c.why)}">${esc(c.why)}</span>` : ""}`);
         return;
       }
-      const W = D.W, e = D.last; if (!e) { s.innerHTML = ""; return; }
+      const W = D.W, e = D.last; if (!e) { put(""); return; }
       const st = W.station || e.station || "", at = +W.at || e.at;
       const who = { station: st, by: W.by || whoOf(e), lane: STATION_LANE[st] || e.lane, source: e.source };
       const next = D.cur >= 0 && !D.hold ? STAGES[D.cur].l : "", pool = W.sheetId ? S.events.filter(x => x.sheetId === W.sheetId).map(poolOf).filter(Boolean).pop() || "" : "";
-      s.innerHTML = `${badge(who, true)}<span>${esc(shortWhen(at))} · ${esc(ago(at))}</span>${next ? `<span>next: ${esc(next)}</span>` : ""}` +
-        (W.sheetId ? `<span>on ${esc(W.sheet || W.sheetId)}</span>${opts.onSheet ? `<button type="button" class="tlLink tlOpenSheet" data-sheet="${esc(W.sheetId)}" data-pool="${esc(pool)}">Open sheet</button>` : ""}` : "");
+      put(`${badge(who, true)}<span>${esc(shortWhen(at))} · ${esc(ago(at))}</span>${next ? `<span>next: ${esc(next)}</span>` : ""}` +
+        (W.sheetId ? `<span>on ${esc(W.sheet || W.sheetId)}</span>${opts.onSheet ? `<button type="button" class="tlLink tlOpenSheet" data-sheet="${esc(W.sheetId)}" data-pool="${esc(pool)}">Open sheet</button>` : ""}` : ""));
     }
     function paintRail(D, o) {
       const wrap = $(".tlStops"), rail = $(".tlRail"), R = D.rail || STAGES.map((s, i) => ({ s, i }));
@@ -1654,7 +1728,8 @@
       if (lv) lv.hidden = !live || !S.loaded;
       const e = S.shown[S.shown.length - 1] || S.events[S.events.length - 1];
       const n = S.shown.length;
-      r.textContent = e ? `${n} milestone${n === 1 ? "" : "s"}${leftOutNote()} · last ${shortWhen(e.at)} · ${whoOf(e)}` : "";
+      const t = e ? `${n} milestone${n === 1 ? "" : "s"}${leftOutNote()} · last ${shortWhen(e.at)} · ${whoOf(e)}` : "";
+      if (r.textContent !== t) r.textContent = t;
     }
     /* What a cut-short read left out, said plainly (the server's leftOut: a type past its first 500 is not read further,
        and at most 2000 recorded events are read). Only repeats nobody would miss (scans, reads, moves) cut: nothing said. */
@@ -2181,4 +2256,5 @@
 
   root.OrderTimelineUI = { mount, feed, stampSvg, derive, STAGES, stagesFor, ofPiece, summary, isStud, engraveOf, KIND, labelOf, nowStamps, wireNow, iconOf, sealed, sealsOf, blockerOf, requirementsOf, explainOn,
     stepOf, labelStepOf, personOf, placeOf, opStepOf, handOf, faceModel };
+  root.OrderTimelineUI.pollOpenMs = POLL_OPEN;   // how often the open order view's feed reads (tests may set another before it opens)
 })(typeof window !== "undefined" ? window : globalThis);

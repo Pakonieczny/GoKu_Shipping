@@ -2878,14 +2878,14 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-pdf.js?v=20260924-followup"></script>
 <script src="charm-nest-dxf.js?v=20260927-custom"></script>
 <script src="charm-nest-motion.js?v=20261003-zg-seal-small"></script>
-<script src="charm-nest-timeline-ui.js?v=20261003-tl-seal-zg"></script>
+<script src="charm-nest-timeline-ui.js?v=20261003-tl-seal-zg-live-fast"></script>
 <script src="charm-nest-geom.js?v=20260921-material"></script>
 <script src="charm-nest-engrave-fit.js"></script>
 <script src="charm-nest-assets.js"></script>
 <script src="charm-nest-backs.js?v=20260928-backface"></script>
 <script src="charm-nest-activity.js?v=20261001-compact-controls"></script>
 <script src="charm-nest-engraving-seals.js?v=20261003-seal-small"></script>
-<script src="charm-nest-readiness.js?v=20261003-explain"></script>
+<script src="charm-nest-readiness.js?v=20261003-explain-held"></script>
 <script src="charm-nest-export.js"></script>
 <script src="charm-nest-text.js"></script>
 <script src="charm-nest-orders.js?v=20260930-live-search"></script>
@@ -3090,6 +3090,7 @@ function cloudWords(text, status) {
    clean-up writes to the cloud: a queued message, a retry or a recovery would put back a record it just deleted. Reads pass. */
 window.CNWipe = window.CNWipe || { active: false };
 const READ_OP = /^(get|list|ping|lookup|history|check)|(Get|List|Check|Status|Preview|Read|Url|Info)$/;
+const TL_WRITE = /^(pool|back|laser|rose|custom|arrival|cancel|set|putSheet|deleteSheet|restoreSheet|sandboxCancel)/;   // (the writes an order's timeline shows)
 async function api(fn, body, opts = {}) {
   if (opts.all) return apiAll(fn, body, opts);
   if (window.CNWipe.active && !opts.wipe && !READ_OP.test(String((body && body.op) || ""))) throw Object.assign(new Error("the sandbox is being reset: try again once the page has reloaded"), { transient: true, wiping: true });
@@ -3112,6 +3113,10 @@ async function api(fn, body, opts = {}) {
     // returned as the result, so a sheet or a run record counted as saved when nothing was (audit, 25 Sep)
     if (page) throw Object.assign(new Error(data.error || "The cloud sent back an empty answer"), { status: res.status, data, transient: true });
     if (S.cloud.ok === false && !S.cloud.locked) cloudRecovered();   // any answer says the cloud is back
+    // a write to the library can be a step of an order (a piece placed or taken off, a sheet cut, a back saved, a set
+    // committed, a cancel): the order view that is open reads its timeline again now and 1.5 s later, not at its next poll
+    // (Paul, 3 Oct 04:03). Reads, and writes that no order's timeline shows, do not ask.
+    if (fn === "charmNestLibrary" && TL_WRITE.test(String((body && body.op) || "")) && !READ_OP.test(String((body && body.op) || ""))) { try { if (window.OrderWin && OrderWin.isOpen()) OrderWin.nudge(); } catch (_) {} }
     return data;
   } catch (e) {
     if (e && e.name === "TimeoutError") throw Object.assign(new Error(`${fn}: no answer in ${Math.round(ms / 1000)} s — timed out`), { transient: true });
@@ -6604,7 +6609,7 @@ boot();
      Design Station's sign-in), the same name every seal it stamps carries. -->
 <script src="station-session.js?v=20261002-ea1"></script>
 <script src="station-activity.js?v=20261003-reset-clean"></script>
-<script src="charm-nest-bridge.js?v=20261003-approve-btn-seal-small"></script>
+<script src="charm-nest-bridge.js?v=20261003-why-rail-seal-small"></script>
 <script>
 try {
   const nameNow = () => { try { const n = String((window.CNEmployee && CNEmployee.name()) || "").trim(); return /^\d+$/.test(n) ? "" : n; } catch (_) { return ""; } };
@@ -6635,9 +6640,13 @@ try {
 <script src="charm-nest-sheetwin.js?v=20261002-ck"></script>
 <script src="charm-nest-tour.js?v=20260929-m11"></script>
 <script src="charm-nest-mail.js?v=20261003-reset-clean"></script>
-<script src="charm-nest-rose-ui.js?v=20261003-id1"></script>
+<script src="charm-nest-rose-ui.js?v=20261003-rg1"></script>
+<script src="charm-nest-flow-rose.js?v=20261003-rg2"></script>
 <script src="charm-nest-export-ui.js?v=20260925-done"></script>
 <script src="charm-nest-library.js?v=20261003-id1"></script>
+<script src="charm-nest-flow.js?v=20261003-flow1"></script>
+<script src="charm-nest-library-approval-ui.js?v=20261003-fb1"></script>
+<script src="charm-nest-library-fx.js?v=20261003-fx2"></script>
 <script src="charm-nest-search.js?v=20260929-m5"></script>
 <script src="charm-nest-signins.js?v=20260929-m5"></script>
 <script src="charm-nest-efficiency.js?v=20261003-ef5"></script>
