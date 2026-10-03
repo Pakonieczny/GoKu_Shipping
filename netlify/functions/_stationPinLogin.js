@@ -17,9 +17,11 @@
  *    · per address (per warm instance, as firebaseOrders' other limits): 10 wrong tries a minute, or 40 requests a minute, start
  *      a one-minute lockout (nothing is answered meanwhile, not even a right number: a guesser must never learn a hit);
  *    · everybody together: 30 wrong tries a minute start the same lockout. This count is kept in Firestore
- *      (Station_PinLogin/limits) so it holds across instances; it is read and written only around WRONG tries (a few a day
- *      in a shop) and it FAILS OPEN: a Firestore error here never keeps an employee out. The in-memory count of this
- *      instance still applies. A right number never adds to any count.
+ *      (Station_PinLogin/limits) so it holds across instances; it is WRITTEN only by wrong tries (a few a day in a shop),
+ *      read once per request beside the roster, and it FAILS OPEN: a Firestore error here never keeps an employee out. The
+ *      in-memory count of this instance still applies. A right number never adds to any count.
+ *    · a burst cannot slip past a lockout that starts while it is in flight: every request checks again, after the roster
+ *      is read and before it answers, and is refused if its address (or everybody) has been locked meanwhile.
  *    · a wrong try is answered no sooner than about 0.4 s after it arrived, so a guess is slow and an unknown number looks
  *      the same as a refused record;
  *    · an address that went quiet starts clean after the minute; nothing is stored per address.
@@ -71,7 +73,12 @@ function admit(event) {
   if (e.n > IP_MAX_REQS) { e.lockedUntil = now + LOCK_MS; console.warn("[pinLogin] one address asked too often: a minute's lockout"); return { locked: retryAfter(e.lockedUntil, now) }; }
   return null;
 }
-/** a wrong try (or a wrong manager key): counted for this address and for this instance's view of everybody */
+/** seconds left of a lockout that began while a request was waiting for the roster (counts nothing); 0 when none */
+function lockedNow(event) {
+  const now = deps.now(), e = ips.get(clientIp(event)), until = Math.max((e && e.lockedUntil) || 0, glob.lockedUntil);
+  return until > now ? retryAfter(until, now) : 0;
+}
+/** a wrong try: counted for this address and for this instance's view of everybody */
 function failed(event) {
   const now = deps.now(), e = entry(clientIp(event), now);
   e.f++;
@@ -125,6 +132,8 @@ async function pinLogin(db, event, rawPin) {
 
   const [snap, until] = await Promise.all([db.collection(ROSTER_COLL).doc(ROSTER_DOC).get(), sharedLockedUntil(db)]);
   if (until > deps.now()) { if (until > glob.lockedUntil) glob.lockedUntil = until; return tooMany(retryAfter(until, deps.now())); }
+  const late = lockedNow(event);
+  if (late) return tooMany(late);                                                                   // locked while this request waited
   if (!snap || !snap.exists) return resp(503, { error: "the sign-in list is not available" });      // no `ok`: not an answer
   const data = snap.data() || {};
   const name = Object.prototype.hasOwnProperty.call(data, rawPin) ? tidyName(data[rawPin]) : "";
@@ -137,4 +146,4 @@ async function pinLogin(db, event, rawPin) {
   return resp(200, { ok: false, error: "that Employee Number is not on the list" });
 }
 
-module.exports = { pinLogin, admit, failed, tidyName, clientIp, reset, deps, ROSTER_COLL, ROSTER_DOC, LIMITS_COLL, LIMITS_DOC, WINDOW_MS, LOCK_MS, IP_MAX_FAILS, IP_MAX_REQS, GLOBAL_MAX_FAILS, FAIL_MIN_MS, MAX_BODY_CHARS, TOO_MANY };
+module.exports = { pinLogin, admit, failed, lockedNow, tidyName, clientIp, reset, deps, ROSTER_COLL, ROSTER_DOC, LIMITS_COLL, LIMITS_DOC, WINDOW_MS, LOCK_MS, IP_MAX_FAILS, IP_MAX_REQS, GLOBAL_MAX_FAILS, FAIL_MIN_MS, MAX_BODY_CHARS, TOO_MANY };

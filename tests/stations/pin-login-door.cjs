@@ -9,7 +9,8 @@
 //   3 · malformed input (not six digits, not text, a huge body, a body that is not JSON) is refused with 400/413 before
 //       the roster is read, and a number in a URL (GET) is never looked up
 //   4 · guessing: 10 wrong tries from one address start a one-minute lockout (a right number is refused too), another address
-//       is unaffected, and the address works again after the minute; 40 requests a minute from one address do the same
+//       is unaffected, and the address works again after the minute; 40 requests a minute from one address do the same;
+//       a burst sent at once cannot slip past a lockout that starts while it is in flight
 //   5 · everybody together: 30 wrong tries in a minute lock all addresses, across instances (the count is in Firestore) and
 //       recover after the minute; a right number never adds to a count
 //   6 · fails open: a Firestore failure around the counters never keeps a right number out; a missing roster or a failed
@@ -188,6 +189,18 @@ const check = async (name, fn) => { try { await fn(); results.push([name, true])
     reset(); const A = '203.0.113.21';
     for (let i = 1; i <= 30; i++) assert.strictEqual((await call([GIO, ANNA, MICH, IVY][i % 4], { ip: A })).status, 200);
     assert.strictEqual(docs.has('Station_PinLogin/limits'), false);
+  });
+
+  await check('4d a burst cannot slip past a lockout that starts while it is in flight (right numbers included)', async () => {
+    reset(); const A = '203.0.113.22';
+    const burst = await Promise.all(Array.from({ length: 30 }, (_, i) => call(i % 5 === 4 ? GIO : fakePin(), { ip: A })));
+    const answered = burst.filter(r => r.status === 200 && r.body.ok === false).length;
+    assert(answered <= 10, 'at most ten wrong tries of one burst are answered no: ' + answered);
+    assert(burst.every(r => r.status === 200 || r.status === 429), 'the rest are told to wait');
+    assert(burst.filter(r => r.status === 429).length >= 15, 'most of the burst is told to wait');
+    assert(!burst.some(r => seesPin(r.raw)));
+    advance(61000);
+    assert.strictEqual((await call(GIO, { ip: A })).body.name, 'Giovanna', 'the address works again after the minute');
   });
 
   /* 5 · everybody together */
