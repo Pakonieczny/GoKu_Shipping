@@ -66,7 +66,7 @@ async function main() {
         skip: !document.getElementById('owSkipBox').hidden, dialogs: document.querySelectorAll('dialog[open]').length }; });
     assert.deepEqual(v1.full, [1440, 900], 'it fills the screen'); assert.match(v1.cls, /owFull/);
     assert.equal(v1.title, `Order ${A.rid}`); assert.equal(v1.tab, 'info'); assert(v1.info, 'Overview in front');
-    assert(v1.prev && /^\d+ of \d+$/.test(v1.pos), 'Previous and Next walk the Orders list: ' + v1.pos); assert(v1.skip, 'Skip this line, in the tab row');
+    assert(v1.prev && /^\d+ of \d+$/.test(v1.pos), 'Previous and Next walk the Orders list: ' + v1.pos); assert(v1.skip, 'Skip this Order, in the tab row');
     assert.match(v1.sub, /Hannah Whitford · 1 piece · ship by Oct/);
     assert(v1.meta.includes('Order') && v1.meta.includes('Buyer')); assert.match(v1.note, /^Order notes/);
     assert.deepEqual(v1.tabs, ['Team internal', 'Customer on Etsy']); assert.equal(v1.dialogs, 1, 'one window');

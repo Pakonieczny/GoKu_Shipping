@@ -92,7 +92,7 @@ function fitted(f,label){
 
 (async()=>{
   try{
-    assert.equal(Seal.BASE_SIZE,84);assert.equal(Seal.HOVER_SIZE,undefined,'no fixed enlarged size remains: the zoom is adaptive');assert.equal(typeof Seal.zoomScale,'function');assert.equal(Seal.zoomScale(84),1.85);assert(Seal.zoomScale(24)>Seal.zoomScale(84)&&Seal.zoomScale(84)>Seal.zoomScale(140),'smaller seals zoom more');
+    assert.equal(Seal.BASE_SIZE,84);assert.equal(Seal.HOVER_SIZE,undefined,'no fixed enlarged size remains: the zoom is adaptive');assert.equal(typeof Seal.zoomScale,'function');assert.equal(Seal.zoomScale(84),1.08);assert(Seal.zoomScale(24)>Seal.zoomScale(56)&&Seal.zoomScale(56)>Seal.zoomScale(84)&&Seal.zoomScale(84)===Seal.zoomScale(140),'smaller seals zoom more (the gentle curve: 64px and up ×1.08, 56 ×1.15, 24 ×1.55)');
     assert.equal(typeof Seal.fitGroups,'function');assert.equal(typeof Seal.fit,'function');
     assert.equal(custom(d.documentElement,'--seal-size'),'84px');assert.equal(custom(d.documentElement,'--seal-hover-size'),'','no fixed hover size is left in the stylesheet');
 

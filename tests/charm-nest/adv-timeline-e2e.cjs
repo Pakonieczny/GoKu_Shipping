@@ -104,7 +104,7 @@ const Timeline = require(path.join(root, 'netlify/functions/_orderTimeline.js'))
           const sealEl = hov && (hov.querySelector('.tlSeal') || hov), dot = sealEl && sealEl.getBoundingClientRect(), base = hov && hov.getBoundingClientRect();
           return { sel, stage: hov && (hov.dataset.stage || hov.dataset.key.split('~')[0]), card: getComputedStyle(exp).display === 'block' && +getComputedStyle(exp).opacity > .9, head: exp.querySelector('.xh') ? exp.querySelector('.xh').textContent : '',
             lines: exp.querySelectorAll('.rq').length, below: dot ? e.top >= dot.bottom - 1 || e.left >= dot.right || e.right <= dot.left : false,
-            grown: !!(sealEl && sealEl.dataset.sealZoom) && dot.width > 40, copy: !!document.querySelector('.tlLoupe,.tlNowZoom,.sealLens'), apart: !!dot && (dot.bottom <= e.top + 1 || dot.top >= e.bottom - 1 || dot.right <= e.left + 1 || dot.left >= e.right - 1),
+            grown: !!(sealEl && sealEl.dataset.sealZoom) && dot.width >= Math.min(sealEl.offsetWidth * 1.15, 72) - .5, copy: !!document.querySelector('.tlLoupe,.tlNowZoom,.sealLens'), apart: !!dot && (dot.bottom <= e.top + 1 || dot.top >= e.bottom - 1 || dot.right <= e.left + 1 || dot.left >= e.right - 1),
             inView: !!dot && dot.left >= 0 && dot.right <= innerWidth && dot.top >= 0, done: hov && (hov.classList.contains('d') || !!hov.dataset.key) };
         }, sel);
         cards.push(r);

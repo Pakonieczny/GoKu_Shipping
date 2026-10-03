@@ -90,16 +90,16 @@ const ORDERS = [{ receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * DAY, up
     // ═══ 1 · a large, a medium and a tiny seal on a bare strip ═══
     await page.evaluate(() => {
       const d = document.createElement('div'); d.id = 'zlab'; d.style.cssText = 'position:fixed;left:470px;top:420px;display:flex;gap:110px;align-items:center;z-index:5';
-      d.innerHTML = '<button type="button" id="zpre" style="position:absolute;left:-60px;width:20px;height:20px">·</button>' + [140, 84, 24].map((s, i) => Seal.html({ how: i % 2 ? 'button' : 'print', at: Date.now() - 3600e3 * (i + 1), by: 'Paul' }, 84).replace('class="seal ', `style="--seal-fit:${s}px" class="seal `)).join('');
+      d.innerHTML = '<button type="button" id="zpre" style="position:absolute;left:-60px;width:20px;height:20px">·</button>' + [84, 56, 24].map((s, i) => Seal.html({ how: i % 2 ? 'button' : 'print', at: Date.now() - 3600e3 * (i + 1), by: 'Paul' }, 84).replace('class="seal ', `style="--seal-fit:${s}px" class="seal `)).join('');
       document.body.appendChild(d);
     });
-    const lab = '#zlab .seal', sizes = [140, 84, 24];
+    const lab = '#zlab .seal', sizes = [84, 56, 24];   // (the gentle curve, 3 Oct: ×1.08, ×1.15, ×1.55; none wider than 96 px)
     { const p = await point(lab, 0); await click(lab, 0, p); await page.mouse.click(40, 700); await gone(); }   // (a first run warms the page and the protocol up, so the rests below are real)
     for (let i = 0; i < 3; i++) {
       const p = await point(lab, i), r = await click(lab, i, p), st = await sealState(lab, i);   // (p: a point on the seal at rest, which the grown seal covers too)
       check(r.rest < 100 && r.rest < DELAY && r.before, `${sizes[i]}px seal: the pointer had rested ${r.rest.toFixed(0)} ms (the zoom waits ${DELAY} ms) and the seal was still at rest at the click`);
       check(r.t105 != null && r.t105 <= 120, `…a click grew it past ×1.05 within ${r.t105 == null ? '–' : r.t105.toFixed(0)} ms`);
-      check(r.tTarget != null && r.tTarget <= 400 && r.k === (await page.evaluate(n => Motion.sealZoomScale(n), st.size)), `…and reached its adaptive target ×${r.k} within ${r.tTarget == null ? '–' : r.tTarget.toFixed(0)} ms`);
+      check(r.tTarget != null && r.tTarget <= 400 && r.k === (await page.evaluate(n => Motion.sealZoomScale(n, 96), st.size)) && r.k > 1, `…and reached its adaptive target ×${r.k} within ${r.tTarget == null ? '–' : r.tTarget.toFixed(0)} ms`);
       check(st.inView && await page.evaluate(() => !document.querySelector('.sealLens,.tlLoupe,.tlExp.on,.seal[title]')), '…in the view, no copy, no card, no tooltip');
       if (shots && i === 1) await page.screenshot({ path: path.join(shots, '1-clicked-seal.png'), clip: { x: 300, y: 250, width: 800, height: 400 } });
       // a second click puts it back, and the pointer resting on it does not bring it round again
@@ -202,7 +202,8 @@ const ORDERS = [{ receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * DAY, up
         await away();
       }
       const big = '#orderWin .tlBig', rb = await click(big, 0);
-      check(rb.t105 != null && rb.t105 <= 120 && rb.tTarget != null && rb.tTarget <= 400, `timeline detail seal: a click grew it (×1.05 in ${rb.t105 == null ? '–' : rb.t105.toFixed(0)} ms, target ×${rb.k} in ${rb.tTarget == null ? '–' : rb.tTarget.toFixed(0)} ms)`);
+      // (a detail seal drawn wider than the order window's 72px cap is not grown at all, only lifted: its zoom then has no ×1.05 to reach)
+      check((rb.k === 1 || (rb.t105 != null && rb.t105 <= 120)) && rb.tTarget != null && rb.tTarget <= 400, `timeline detail seal: a click grew it (×1.05 in ${rb.t105 == null ? '–' : rb.t105.toFixed(0)} ms, target ×${rb.k} in ${rb.tTarget == null ? '–' : rb.tTarget.toFixed(0)} ms)`);
       const pb = await point(big, 0); await page.mouse.click(pb.x, pb.y); await gone();
       check(await zoomed() === 0, '…and a second click puts it back'); await away();
     }

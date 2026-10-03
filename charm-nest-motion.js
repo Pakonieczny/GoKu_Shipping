@@ -740,20 +740,37 @@
        only clips it (an overflow:hidden strip or card) is opened for as long as it is zoomed and closed again after.
        Mouse: the pointer must rest on the same seal for ZOOM_DELAY, or a click zooms it at once. Tab (:focus-visible) and a tap zoom at once. Leaving,
        blur, Esc, scrolling, a tap elsewhere or the window going away puts it back. The one scale curve is pure
-       (Seal.zoomScale, Motion.sealZoomScale), so large seals grow a little and tiny ones a lot. ── */
+       (Seal.zoomScale, Motion.sealZoomScale), so large seals grow a little and tiny ones a little more.
+       Gentle (Paul, 3 Oct: "all of these seals are too big ... they don't have to zoom in so large it's obsessive. Especially on the
+       flow chart, zoom is way excessive for the seal"): a seal of 64 px or more grows ×1.08, 56 px ×1.15, 40 px ×1.3, 24 px ×1.55 and
+       16 px or less ×1.8, and whatever the curve says the grown seal is never wider than ZOOM_CAP (96 px), or ZOOM_CAP_TIGHT (72 px) in
+       the order timeline and the order window. A seal already wider than its cap only lifts and stands upright (×1, never smaller). ── */
     const ZOOM_DELAY = 500;
-    const ZOOM_ANCHORS = [[24, 3.6], [28, 3.5], [36, 3.2], [40, 3.05], [48, 2.8], [56, 2.5], [60, 2.35], [72, 2.05], [84, 1.85], [100, 1.62], [110, 1.42], [120, 1.25], [140, 1.15], [160, 1.12]];
-    /** The zoom of a seal as drawn `size` px across: 1.12 for a large one up to 3.6 for a tiny one, by one smooth curve. */
-    function zoomScale(size) {
-      const n = +size, A = ZOOM_ANCHORS;
-      if (!(n > 0)) return A[A.length - 1][1];
-      if (n <= A[0][0]) return A[0][1];
-      if (n >= A[A.length - 1][0]) return A[A.length - 1][1];
-      let i = 0; while (n > A[i + 1][0]) i++;
-      const [s0, k0] = A[i], [s1, k1] = A[i + 1], t = Math.log(n / s0) / Math.log(s1 / s0), e = t * t * (3 - 2 * t);
-      return Math.round((k0 + (k1 - k0) * e) * 1000) / 1000;
+    const ZOOM_ANCHORS = [[16, 1.8], [24, 1.55], [40, 1.3], [56, 1.15], [64, 1.08]];
+    const ZOOM_CAP = 96, ZOOM_CAP_TIGHT = 72, ZOOM_TIGHT = ".tlUI, #orderWin, .owNowCard";
+    /** The zoom of a seal as drawn `size` px across: 1.08 for a large one up to 1.8 for a tiny one, by one smooth curve. With a `cap`
+     *  (the widest the grown seal may be, px) it is held to that, but never below 1. */
+    function zoomScale(size, cap) {
+      const n = +size, A = ZOOM_ANCHORS, c = +cap;
+      let k;
+      if (!(n > 0) || n >= A[A.length - 1][0]) k = A[A.length - 1][1];
+      else if (n <= A[0][0]) k = A[0][1];
+      else {
+        let i = 0; while (n > A[i + 1][0]) i++;
+        const [s0, k0] = A[i], [s1, k1] = A[i + 1], t = Math.log(n / s0) / Math.log(s1 / s0), e = t * t * (3 - 2 * t);
+        k = k0 + (k1 - k0) * e;
+      }
+      if (n > 0 && c > 0) k = Math.max(1, Math.min(k, c / n));
+      return Math.round(k * 1000) / 1000;
     }
-    const ZOOM_GROW = 300, ZOOM_BACK = 230, ZOOM_EASE = "cubic-bezier(.2,.9,.25,1.14)", ZOOM_BACK_EASE = "cubic-bezier(.3,0,.2,1)", ZOOM_SHADOW = "drop-shadow(0 10px 16px rgba(30,26,20,.26))", ZOOM_Z = 900, ZOOM_M = 6;
+    /** The widest `el` may grow to: a seal of the order timeline or the order window 72 px, any other 96 (data-seal-cap on it or a parent says otherwise). */
+    function zoomCap(el) {
+      const own = el && el.closest ? el.closest("[data-seal-cap]") : null, n = own ? +own.getAttribute("data-seal-cap") : 0;
+      return n > 0 ? n : el && el.closest && el.closest(ZOOM_TIGHT) ? ZOOM_CAP_TIGHT : ZOOM_CAP;
+    }
+    const ZOOM_GROW = 300, ZOOM_BACK = 230, ZOOM_EASE = "cubic-bezier(.2,.9,.25,1.14)", ZOOM_BACK_EASE = "cubic-bezier(.3,0,.2,1)", ZOOM_Z = 900, ZOOM_M = 6;
+    /** The lift's soft shadow, drawn in the seal's own pixels (the grow scales it): about 8% down and 13% blurred of the grown seal, so a small seal gets a small one. */
+    const zoomShadow = size => `drop-shadow(0 ${Math.max(1.5, size * .08).toFixed(1)}px ${Math.max(2.5, size * .13).toFixed(1)}px rgba(30,26,20,.26))`;
     (() => {
       if (doc.getElementById("sealZoomCss")) return;
       const st = doc.createElement("style"); st.id = "sealZoomCss";
@@ -795,8 +812,9 @@
       return { dx, dy, rect, open };
     }
     /** Raises the seal over everything and opens what would clip it; → a function that puts every one of them back. */
-    function zoomLift(el, open) {
+    function zoomLift(el, open, k) {
       const saved = [], keep = (n, ...props) => saved.push([n, props.map(p => [p, n.style.getPropertyValue(p), n.style.getPropertyPriority(p)])]);
+      keep(el, "--zk"); el.style.setProperty("--zk", String(k));   // (the grown seal's scale, for a ring or glow of the seal's own that must stay thin: calc(3px / var(--zk, 1)))
       for (const c of open) { keep(c.a, "overflow", "content-visibility"); c.a.style.setProperty("overflow", "visible"); if (c.cv) c.a.style.setProperty("content-visibility", "visible"); }
       for (let a = el; a && a !== doc.body && a !== doc.documentElement; a = a.parentElement) {
         if (a !== el && a.matches && a.matches("dialog")) break;
@@ -817,10 +835,10 @@
       if (st) { st.anim && st.anim.cancel(); st.paper && st.paper.cancel(); if (st.undo) { st.undo(); st.undo = null; } } else st = { undo: null };
       // the place it rests in, measured with no zoom on it and nothing opened
       const bs = getComputedStyle(el), base = parseM(bs.transform), r = el.getBoundingClientRect();
-      const W = el.offsetWidth || r.width, H = el.offsetHeight || r.height, size = Math.min(W, H) || Math.min(r.width, r.height), k = zoomScale(size);
+      const W = el.offsetWidth || r.width, H = el.offsetHeight || r.height, size = Math.min(W, H) || Math.min(r.width, r.height), k = zoomScale(size, zoomCap(el));
       const p = zoomPlan(el, k, r, W, H);
-      st.undo = zoomLift(el, p.open);
-      const to = { transform: `matrix(${k},0,0,${k},${base[4] + p.dx},${base[5] + p.dy})`, filter: ZOOM_SHADOW, opacity: "1" };
+      st.undo = zoomLift(el, p.open, k);
+      const to = { transform: `matrix(${k},0,0,${k},${base[4] + p.dx},${base[5] + p.dy})`, filter: zoomShadow(size), opacity: "1" };
       const quick = reduced(), ms = quick ? 120 : ZOOM_GROW, ease = quick ? "ease-out" : ZOOM_EASE;
       st.anim = el.animate ? el.animate([from, to], { duration: ms, easing: ease, fill: "forwards" }) : null;
       const pp = paperOf(el); st.paper = pp && pp.animate ? pp.animate([{ opacity: pfrom }, { opacity: 1 }], { duration: quick ? 100 : 220, delay: quick ? 0 : 30, easing: "ease-out", fill: "forwards" }) : null;
@@ -927,7 +945,7 @@
     doc.addEventListener("visibilitychange", () => { if (doc.visibilityState === "hidden") zoomAway(); });
     doc.addEventListener("close", e => { if (e.target && e.target.contains && (e.target.contains(Zm.cur && Zm.cur.el) || e.target.contains(Zm.want))) zoomAway(); }, true);
     const zoom = {
-      DELAY: ZOOM_DELAY, scale: zoomScale, show: zoomShow, hide: zoomHide, away: zoomAway,
+      DELAY: ZOOM_DELAY, scale: zoomScale, cap: zoomCap, show: zoomShow, hide: zoomHide, away: zoomAway,
       get current() { return Zm.cur ? Zm.cur.el : null; },
       /** Where the seal is, or will be once zoomed (the page rectangle that tooltips and cards stay clear of). */
       rectOf(el) { const st = ZS.get(el); return st && st.on ? Object.assign({}, st.rect) : null; },
