@@ -135,7 +135,7 @@ export function createHandler(deps = {}) {
           } catch { /* Identity/provider failures leave only an unavailable state. */ }
           operatorReviews.push(entry);
         }
-        return json({ dossiers: exactDossiers, operatorReviews, productIssues: (productIssues || []).filter(record => ids.includes(record.productId)), productIssueState, sandboxReadOnly: true });
+        return json({ dossiers: exactDossiers, operatorReviews, productIssues: (productIssues || []).filter(record => ids.includes(record.productId)), productIssueState, operatorReviewBindingRequired: true, sandboxReadOnly: true });
       }
       if (action === 'conversionActionTagEvidence') {
         if (Object.keys(body).some(key => key !== 'action')) return json({error:'Tag evidence accepts only its fixed read action.'},400);

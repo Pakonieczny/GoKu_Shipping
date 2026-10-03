@@ -9,7 +9,7 @@
     const ownOrigin=rt.location?.origin||'https://preview.invalid';
     if(new URL(endpoint,ownOrigin).origin!==ownOrigin||new URL(demoEndpoint,ownOrigin).origin!==ownOrigin)throw Error('Voice endpoint must be on this website.');
     const notify=(key,...args)=>{try{if(typeof options[key]==='function')options[key](...args);}catch{}};
-    let epoch=0,state='idle',disposed=false,pc=null,dc=null,mic=null,audio=null,ctx=null,raf=null,deadline=null,abort=null,stopCredential=null,closing=null,closeResolve=null,closeTimer=null,toolCalls=new Set(),sources=[],recognition=null,demoMode=false,demoTurns=0,demoHistory=[],demoSpeaking=false;
+    let epoch=0,state='idle',disposed=false,pc=null,dc=null,mic=null,audio=null,ctx=null,raf=null,deadline=null,abort=null,stopCredential=null,closing=null,closeResolve=null,closeTimer=null,toolCalls=new Set(),sources=[],recognition=null,demoMode=false,demoTurns=0,demoHistory=[],demoSpeaking=false,demoTurnPending=false,demoTurnSeq=0,demoTurnAbort=null,recognitionRetryCount=0,recognitionRestart=null;
     const timers=new Set(),pending=new Set();
     function timeout(ms,fn){const id=rt.setTimeout(()=>{timers.delete(id);fn();},ms);timers.add(id);return id;}
     function clear(id){if(id!=null){rt.clearTimeout(id);timers.delete(id);}}
@@ -21,7 +21,8 @@
     function cleanup(){
       abort?.abort();abort=null;for(const cancel of [...pending])cancel();clear(deadline);deadline=null;clear(closeTimer);closeTimer=null;
       if(raf!=null){rt.cancelAnimationFrame?.(raf);raf=null;}
-      try{recognition?.abort?.();}catch{}recognition=null;demoMode=false;demoSpeaking=false;demoTurns=0;demoHistory=[];
+      clear(recognitionRestart);recognitionRestart=null;++demoTurnSeq;try{demoTurnAbort?.abort?.();}catch{}demoTurnAbort=null;demoTurnPending=false;
+      try{recognition?.abort?.();}catch{}recognition=null;demoMode=false;demoSpeaking=false;demoTurns=0;demoHistory=[];recognitionRetryCount=0;
       try{rt.speechSynthesis?.cancel?.();}catch{}
       for(const id of timers)rt.clearTimeout(id);timers.clear();
       mic?.getTracks().forEach(track=>track.stop());mic=null;
@@ -67,19 +68,22 @@
       else if(event.type==='conversation.item.input_audio_transcription.completed')notify('onTranscript',{role:'user',text:typeof event.transcript==='string'?event.transcript.slice(0,2000):'',final:true});
       else if(event.type==='error')notify('onError','Voice could not finish that turn. You can interrupt, stop or use text.');
     }
-    function interrupt(){send({type:'response.cancel'});send({type:'output_audio_buffer.clear'});try{rt.speechSynthesis?.cancel?.();}catch{}demoSpeaking=false;notify('onLevel',{input:0,output:0});if(demoMode&&state!=='closing'&&state!=='idle')listenDemo();}
-    function listenDemo(){if(!demoMode||disposed||state==='closing'||state==='idle'||demoSpeaking||!recognition)return;try{recognition.start();setState('listening');}catch(error){if(error?.name!=='InvalidStateError')notify('onError','Voice listening could not restart. Select Talk to me to retry.');}}
+    function interrupt(){send({type:'response.cancel'});send({type:'output_audio_buffer.clear'});if(demoMode){++demoTurnSeq;try{demoTurnAbort?.abort?.();}catch{}demoTurnAbort=null;demoTurnPending=false;}try{rt.speechSynthesis?.cancel?.();}catch{}demoSpeaking=false;notify('onLevel',{input:0,output:0});if(demoMode&&state!=='closing'&&state!=='idle')listenDemo();}
+    function scheduleDemoListen(delay=120){if(!demoMode||disposed||state==='closing'||state==='idle')return;clear(recognitionRestart);recognitionRestart=timeout(delay,()=>{recognitionRestart=null;listenDemo();});}
+    function listenDemo(){if(!demoMode||disposed||state==='closing'||state==='idle'||demoSpeaking||demoTurnPending||!recognition)return;try{recognition.start();setState('listening');}catch(error){if(error?.name!=='InvalidStateError'){notify('onError','Voice listening paused briefly. I will keep trying.');scheduleDemoListen(Math.min(1500,250*(1+recognitionRetryCount++)));}}}
     async function demoTurn(message,current){
-      message=String(message||'').trim().slice(0,600);if(!message||current!==epoch||!demoMode)return;
+      message=String(message||'').trim().slice(0,600);if(!message||current!==epoch||!demoMode||demoTurnPending)return;
       if(++demoTurns>12){await stop('limit');return;}
+      demoTurnPending=true;const turn=++demoTurnSeq;demoTurnAbort=new rt.AbortController();
       setState('thinking');notify('onTranscript',{role:'user',text:message,final:true,spokenOnly:true});
       let catalogue;try{catalogue=await bounded(options.onTool?.({message}),14000,'The catalogue check timed out.');if(!catalogue||typeof catalogue!=='object'||Array.isArray(catalogue)||JSON.stringify(catalogue).length>20000)throw Error('Catalogue answer unavailable.');}catch{catalogue={products:[],meanings:[],question:'Would you tell me a little more about the person, occasion, or style you have in mind?'};}
-      if(current!==epoch||!demoMode||state==='closing')return;
-      let answer;try{answer=await bounded(demoRequest({action:'turn',message,history:demoHistory.slice(-6),catalogue},{signal:abort?.signal}),14000,'The voice answer timed out.');}catch(error){notify('onError',error?.message||'Voice could not answer. You can keep typing.');setState('listening');listenDemo();return;}
+      if(current!==epoch||!demoMode||state==='closing'||turn!==demoTurnSeq)return;
+      let answer;try{answer=await bounded(demoRequest({action:'turn',message,history:demoHistory.slice(-6),catalogue},{signal:demoTurnAbort.signal}),14000,'The voice answer timed out.');}catch(error){if(turn!==demoTurnSeq||current!==epoch||!demoMode)return;demoTurnPending=false;demoTurnAbort=null;notify('onError',error?.message||'Voice could not answer. You can keep typing.');setState('listening');listenDemo();return;}
+      if(turn!==demoTurnSeq||current!==epoch||!demoMode||state==='closing')return;demoTurnPending=false;demoTurnAbort=null;
       const speech=typeof answer.speech==='string'?answer.speech.trim().slice(0,1200):'';if(!speech){setState('listening');listenDemo();return;}
       demoHistory.push({role:'user',content:message},{role:'assistant',content:speech});demoHistory=demoHistory.slice(-6);notify('onTranscript',{role:'assistant',text:speech,final:true,spokenOnly:true});
       const Utterance=rt.SpeechSynthesisUtterance;if(!Utterance||!rt.speechSynthesis?.speak){notify('onError','Spoken replies are unavailable in this browser. You can keep typing.');setState('listening');listenDemo();return;}
-      const utterance=new Utterance(speech);utterance.rate=1;utterance.pitch=1.04;utterance.onstart=()=>{if(current===epoch&&demoMode){demoSpeaking=true;setState('speaking');notify('onLevel',{input:0,output:.55});}};utterance.onboundary=()=>{if(current===epoch&&demoMode)notify('onLevel',{input:0,output:.72});};utterance.onend=utterance.onerror=()=>{if(current!==epoch||!demoMode)return;demoSpeaking=false;notify('onLevel',{input:0,output:0});setState('listening');listenDemo();};
+      const utterance=new Utterance(speech);let utteranceFinished=false;utterance.rate=1;utterance.pitch=1.04;utterance.onstart=()=>{if(current===epoch&&demoMode&&turn===demoTurnSeq){demoSpeaking=true;setState('speaking');notify('onLevel',{input:0,output:.55});}};utterance.onboundary=()=>{if(current===epoch&&demoMode&&turn===demoTurnSeq)notify('onLevel',{input:0,output:.72});};utterance.onend=utterance.onerror=()=>{if(utteranceFinished)return;utteranceFinished=true;if(current!==epoch||!demoMode||turn!==demoTurnSeq)return;demoSpeaking=false;notify('onLevel',{input:0,output:0});setState('listening');listenDemo();};
       try{rt.speechSynthesis.cancel();rt.speechSynthesis.speak(utterance);}catch{utterance.onerror();}
     }
     async function startDemo(current){
@@ -88,9 +92,9 @@
       let available;try{available=await bounded(demoRequest({action:'capabilities'},{signal:abort?.signal}),10000,'Voice demo availability check timed out.');}catch{return false;}
       if(!available?.enabled||current!==epoch)return false;
       recognition=new Recognition();recognition.lang=doc?.documentElement?.lang||'en-US';recognition.continuous=false;recognition.interimResults=true;recognition.maxAlternatives=1;demoMode=true;
-      recognition.onresult=event=>{if(current!==epoch||!demoMode)return;let final='';for(let i=event.resultIndex||0;i<event.results.length;i++)if(event.results[i].isFinal)final+=event.results[i][0]?.transcript||'';if(final.trim())void demoTurn(final,current);};
-      recognition.onerror=event=>{if(current!==epoch||state==='closing'||state==='idle')return;const denied=['not-allowed','service-not-allowed'].includes(event.error);notify('onError',denied?'Microphone permission was not granted. You can keep typing.':'Voice listening paused. Select Talk to me to retry.');void stop(denied?'permission':'recognition');};
-      recognition.onend=()=>{if(current===epoch&&demoMode&&!demoSpeaking&&state==='listening')timeout(120,listenDemo);};
+      recognition.onresult=event=>{if(current!==epoch||!demoMode)return;let final='',interim='';for(let i=event.resultIndex||0;i<event.results.length;i++){const text=event.results[i][0]?.transcript||'';if(event.results[i].isFinal)final+=text;else interim+=text;}if(final.trim()||interim.trim())recognitionRetryCount=0;if(interim.trim())notify('onTranscript',{role:'user',text:interim.trim().slice(0,600),final:false,spokenOnly:true});if(final.trim()&&!demoTurnPending)void demoTurn(final,current);};
+      recognition.onerror=event=>{if(current!==epoch||state==='closing'||state==='idle')return;const kind=String(event?.error||'');if(['not-allowed','service-not-allowed'].includes(kind)){notify('onError','Microphone permission was not granted. You can keep typing.');void stop('permission');return;}if(kind==='aborted'){scheduleDemoListen(120);return;}if(kind==='no-speech'){recognitionRetryCount++;scheduleDemoListen(Math.min(1200,150*recognitionRetryCount));return;}if(kind==='network'&&recognitionRetryCount++<2){notify('onError','Voice listening paused briefly. I will keep trying.');scheduleDemoListen(500*recognitionRetryCount);return;}notify('onError','Voice listening could not continue. Select Talk to me to retry.');void stop('recognition');};
+      recognition.onend=()=>{if(current===epoch&&demoMode&&!demoSpeaking&&!demoTurnPending&&state==='listening')scheduleDemoListen(120);};
       deadline=timeout(Math.min(120000,Math.max(1000,Number(available.maxDurationMs)||120000)),()=>void stop('limit'));listenDemo();return true;
     }
     async function start(){

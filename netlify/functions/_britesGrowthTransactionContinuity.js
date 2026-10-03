@@ -16,7 +16,7 @@ const TOP_FIELDS = new Set(['pixel', 'shopify', 'webhook', 'configuredDestinatio
 const PIXEL_FIELDS = new Set(['sourceOwner', 'eventName', 'fired', 'hitCount', 'sendTo', 'transactionId', 'conversionValue', 'currency', 'observedAt', 'consentState']);
 const SHOPIFY_FIELDS = new Set(['eventName', 'eventId', 'orderId', 'conversionValue', 'currency', 'observedAt']);
 const WEBHOOK_FIELDS = new Set(['topic', 'payloadId', 'serverTransactionId', 'conversionValue', 'currency', 'observedAt']);
-const PII_KEYS = /^(?:email|e-mail|phone|telephone|customer|buyer|contact|address|first_?name|last_?name|full_?name|shipping|billing)$/i;
+const PII_KEYS = /^(?:email|e-mail|phone|telephone|customer|customer_?id|buyer|buyer_?id|contact|address|street|city|province|state|country|postal(?:_?code)?|zip(?:_?code)?|first_?name|last_?name|full_?name|shipping|billing|ip(?:_?address)?|user_?agent)$/i;
 const PLACEHOLDER = /^(?:undefined|null|not set|unknown|button-confirm|congrats|thank_you|buy|page view|conversion tracking google ads|\{\{.*\}\}|\[object object\])$/i;
 
 const plainObject = value => !!value && typeof value === 'object' && !Array.isArray(value)
@@ -26,13 +26,17 @@ function base() {
   return {
     schemaVersion: 1,
     evidenceKind: 'controlled_transaction_continuity_contract',
+    offlineAssessment: true,
+    receiptOnly: true,
     readOnly: true,
+    providerReads: 0,
     providerWrites: false,
     conversionUploads: 0,
     conversionReplays: 0,
     cartWrites: 0,
     orderWrites: 0,
     runtimeDispatchVerified: false,
+    providerReceiptStatusVerified: false,
     transactionIdentityVerified: false,
     duplicateCountingVerified: false,
     artifactContractPassed: false,
@@ -59,12 +63,12 @@ function validTime(value, now, maxAgeMs) {
 }
 
 function validMoney(value) {
-  return typeof value === 'number' && Number.isFinite(value) && value >= 0;
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 && !Object.is(value, -0);
 }
 
 function validIdentity(value, maximum = 256) {
   return typeof value === 'string' && value.length > 0 && Buffer.byteLength(value, 'utf8') <= maximum
-    && !/[\u0000-\u001f\u007f]/.test(value);
+    && value === value.trim() && !/[\u0000-\u001f\u007f]/.test(value);
 }
 
 function invalidPixelIdentity(value) {
@@ -78,7 +82,7 @@ function hmac(salt, kind, value) {
   return crypto.createHmac('sha256', salt).update(kind).update('\0').update(value, 'utf8').digest('hex');
 }
 
-function assess(input, {salt, now = Date.now(), maxAgeMs = 15 * 60 * 1000} = {}) {
+function assessUnsafe(input, {salt, now = Date.now(), maxAgeMs = 15 * 60 * 1000} = {}) {
   const out = base();
   const codes = new Set();
   const fail = code => codes.add(code);
@@ -93,8 +97,10 @@ function assess(input, {salt, now = Date.now(), maxAgeMs = 15 * 60 * 1000} = {})
   const pixel = input.pixel, shopify = input.shopify, webhook = input.webhook;
   const times = [pixel.observedAt, shopify.observedAt, webhook.observedAt];
   if (times.some(value => !validTime(value, now, maxAgeMs))) fail('EVIDENCE_STALE');
+  if (times.every(Number.isFinite) && webhook.observedAt < Math.max(pixel.observedAt, shopify.observedAt)) fail('EVIDENCE_SEQUENCE_UNCONFIRMED');
 
   if (!SOURCE_OWNERS.has(pixel.sourceOwner) || !CONSENT_STATES.has(pixel.consentState)) fail('PIXEL_OWNER_UNCONFIRMED');
+  if (pixel.consentState !== 'GRANTED') fail('CONSENT_NOT_GRANTED');
   if (pixel.eventName !== 'conversion' || pixel.fired !== true) fail('PIXEL_CONVERSION_NOT_FIRED');
   if (!Number.isSafeInteger(pixel.hitCount) || pixel.hitCount !== 1) fail(pixel.hitCount > 1 ? 'MULTIPLE_PURCHASE_HITS' : 'PIXEL_HIT_COUNT_UNCONFIRMED');
   const pixelIdentityProblem = invalidPixelIdentity(pixel.transactionId);
@@ -130,7 +136,6 @@ function assess(input, {salt, now = Date.now(), maxAgeMs = 15 * 60 * 1000} = {})
   if (money.some(item => !validMoney(item.conversionValue) || !CURRENCY.test(item.currency))
       || !money.every(item => item.conversionValue === pixel.conversionValue && item.currency === pixel.currency)) fail('VALUE_CURRENCY_MISMATCH');
 
-  const safeToHash = typeof salt === 'string' && Buffer.byteLength(salt, 'utf8') >= 16;
   const identity = {
     pixelToServerExact: exactPixelServer,
     webhookPayloadToServerExact: exactWebhookServer,
@@ -138,11 +143,14 @@ function assess(input, {salt, now = Date.now(), maxAgeMs = 15 * 60 * 1000} = {})
     shopifyToWebhookCanonical: canonicalEquivalent,
     canonicalization: {rule, applied: canonicalized, equivalent: shopifyWebhookExact || canonicalEquivalent}
   };
-  if (safeToHash && !pixelIdentityProblem) identity.transactionFingerprint = hmac(salt, 'transaction', pixel.transactionId);
-  if (safeToHash && validIdentity(shopify.eventId, 256)) identity.shopifyEventFingerprint = hmac(salt, 'shopify-event', shopify.eventId);
-  if (safeToHash && DESTINATION.test(pixel.sendTo || '')) identity.destinationFingerprint = hmac(salt, 'destination', pixel.sendTo);
-
   const passed = codes.size === 0;
+  // Fingerprints are success evidence, not a partial-validation oracle. A
+  // refused artifact never emits even one independently valid fingerprint.
+  if (passed) {
+    identity.transactionFingerprint = hmac(salt, 'transaction', pixel.transactionId);
+    identity.shopifyEventFingerprint = hmac(salt, 'shopify-event', shopify.eventId);
+    identity.destinationFingerprint = hmac(salt, 'destination', pixel.sendTo);
+  }
   return {
     ...out,
     artifactContractPassed: passed,
@@ -157,6 +165,16 @@ function assess(input, {salt, now = Date.now(), maxAgeMs = 15 * 60 * 1000} = {})
       ? 'The sanitized controlled artifacts establish exact website-to-server transaction identity. Provider counted status and cross-action duplicate handling remain unverified.'
       : 'The supplied artifacts do not establish exact website-to-server transaction continuity.'
   };
+}
+
+function assess(input, options = {}) {
+  try {
+    return assessUnsafe(input, options);
+  } catch (_) {
+    // Artifacts are untrusted and may contain throwing getters/proxies. The
+    // validator must fail closed without echoing a value or an exception.
+    return {...base(), codes: ['ARTIFACT_READ_FAILED']};
+  }
 }
 
 module.exports = {assess, SHOPIFY_GID_RULE, NO_RULE};

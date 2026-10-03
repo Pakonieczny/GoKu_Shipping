@@ -1,6 +1,8 @@
 'use strict';
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path');
 const qa=require('../../concierge-avatar-qa.js');
+const avatarFactory=require('../../brites-concierge-avatar.js');
+const {JSDOM}=require('jsdom');
 
 const webglSnapshot=(overrides={})=>({mode:'webgl',state:'idle',visible:true,intersecting:true,reducedMotion:false,animated:true,frames:120,frameRenderMs:5.2,pixelRatio:2,quality:{name:'high',pixelRatio:2,shadowSize:2048,textureSize:2048,fps:60},textures:[{name:'Porcelain',width:2048,height:2048},{name:'Iris',width:2048,height:2048}],shadow:{enabled:true,size:2048,type:'PCF soft',casts:true,receivingStage:true},contextLost:false,...overrides});
 const gl={available:true,contextType:'webgl2',vendor:'Fixture GPU vendor',renderer:'Fixture renderer',version:'WebGL 2.0 fixture',shadingLanguageVersion:'WebGL GLSL ES 3.00',maxTextureSize:16384,maxRenderbufferSize:16384,depthBits:24,maxCombinedTextureUnits:32,depthTexture:true,contextLost:false};
@@ -108,4 +110,44 @@ test('copy and download export only the regenerated sanitized bounded package',a
   const copied=await qa.copyAcceptancePackage(input,{navigator:{clipboard:{writeText:async value=>writes.push(value)}}});assert.equal(copied.copied,true);assert.equal(writes.length,1);assert.match(writes[0],/brites_avatar_runtime_acceptance/);
   let clicked=false,revoked=null,blob=null;const downloaded=qa.downloadAcceptancePackage(input,{document:{createElement:()=>({click(){clicked=true;}})},URL:{createObjectURL:value=>(blob=value,'blob:fixture'),revokeObjectURL:value=>{revoked=value;}},Blob:class{constructor(parts,options){this.parts=parts;this.options=options;}}});
   assert.equal(downloaded.filename,'brites-avatar-acceptance.json');assert.equal(clicked,true);assert.equal(revoked,'blob:fixture');assert.equal(blob.options.type,'application/json');assert.ok(downloaded.bytes<24576);
+});
+
+test('CPU pose audit confirms distinct bounded state contracts without certifying their appearance',()=>{
+  const report=qa.auditCpuPoses({poseFor:avatarFactory.poseFor,states:avatarFactory.STATES});
+  assert.equal(report.status,'cpu_pose_contract_observed_visual_unverified');
+  assert.equal(report.evidenceLevel,'cpu_only_visual_unverified');
+  assert.equal(report.states.length,6);
+  assert.ok(Object.values(report.checks).every(Boolean));
+  assert.equal(report.claims.expressionAppearance,'unverified');
+  assert.equal(report.claims.gestureAppearance,'unverified');
+});
+
+test('source declaration audit checks PBR, shadows, deformation and safe fallback controls without a GPU claim',()=>{
+  const root=path.join(__dirname,'../..'),controllerSource=fs.readFileSync(path.join(root,'brites-concierge-avatar.js'),'utf8');
+  for(const relative of ['brites-concierge-avatar-scene.mjs','assets/brites-concierge-avatar-scene.mjs']){
+    const report=qa.auditSceneSource({sceneSource:fs.readFileSync(path.join(root,relative),'utf8'),controllerSource});
+    assert.equal(report.status,'source_contract_declared_visual_unverified',relative);
+    assert.equal(report.evidenceLevel,'source_only_visual_unverified');
+    assert.ok(Object.values(report.checks).every(Boolean));
+    assert.equal(report.claims.gpuAppearance,'unverified');
+    assert.equal(report.claims.shadowAppearance,'unverified');
+    assert.equal(report.claims.materialAppearance,'unverified');
+  }
+});
+
+test('DOM control audit exercises every expression plus pause and live fallback semantics, then restores state',async t=>{
+  const dom=new JSDOM('<!doctype html><main id="avatar"></main>',{url:'https://growth-sandbox.example/concierge-avatar-qa.html',pretendToBeVisual:true});
+  const {window}=dom;window.matchMedia=()=>({matches:false,addEventListener(){},removeEventListener(){}});window.IntersectionObserver=class{observe(){}disconnect(){}};
+  const avatar=avatarFactory.create({container:window.document.querySelector('#avatar'),visible:true,greetingOnOpen:false,loadScene:async()=>{throw Error('Synthetic WebGL unavailable');}});
+  t.after(()=>{avatar.destroy();window.close();});
+  await avatar.ready;avatar.setState('thinking');
+  const report=await qa.exerciseDomControls({avatar,win:window,settleMs:16});
+  assert.equal(report.status,'dom_state_pause_fallback_contract_observed_visual_unverified');
+  assert.equal(report.evidenceLevel,'dom_only_visual_unverified');
+  assert.equal(report.mode,'fallback');
+  assert.ok(Object.values(report.checks).every(Boolean));
+  assert.equal(report.states.length,6);
+  assert.equal(avatar.snapshot().state,'thinking');
+  assert.equal(avatar.snapshot().paused,false);
+  assert.equal(report.claims.fallbackAppearance,'unverified');
 });

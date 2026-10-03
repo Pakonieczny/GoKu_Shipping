@@ -4,10 +4,11 @@
   function text(tag,value,className){const e=document.createElement(tag);e.textContent=value;if(className)e.className=className;return e;}
   function image(p,className){if(!p.image)return null;const img=document.createElement('img');img.src=p.image;img.alt=p.imageAlt||p.title;img.loading='lazy';if(className)img.className=className;return img;}
   function money(value,currency){try{return new Intl.NumberFormat('en',{style:'currency',currency}).format(value)+' '+currency;}catch{return value+' '+currency;}}
+  function cartItem(value){if(!value||!/^gid:\/\/shopify\/Product\/\d+$/.test(value.productId||'')||!/^\d+$/.test(value.variantId||'')||typeof value.title!=='string'||typeof value.variant!=='string'||!Number.isFinite(value.price)||value.price<0||!/^[A-Z]{3}$/.test(value.currency||''))return null;return {productId:value.productId,title:value.title.slice(0,300),variantId:value.variantId,variant:value.variant.slice(0,300),price:value.price,currency:value.currency};}
   async function get(path){const response=await fetch(path,{cache:'no-store'}),data=await response.json();if(!response.ok)throw Error('The live selection could not be checked.');return data;}
   if(params.has('cart')){
     main.replaceChildren(text('h1','Your sandbox bag'));
-    let cart=[];try{const saved=JSON.parse(sessionStorage.getItem('brites-sandbox-cart')||'[]');if(Array.isArray(saved))cart=saved;}catch{}
+    let cart=[];try{const saved=JSON.parse(sessionStorage.getItem('brites-sandbox-cart')||'[]');if(Array.isArray(saved))cart=saved.slice(-50).map(cartItem).filter(Boolean);}catch{}
     if(!cart.length)main.appendChild(text('p','Your sandbox bag is empty.'));
     cart.forEach(p=>main.appendChild(text('p',p.title+' · '+p.variant+' · '+money(p.price,p.currency))));
     main.appendChild(text('p','This test bag never places a shop order.'));

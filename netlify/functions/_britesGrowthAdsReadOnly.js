@@ -56,6 +56,54 @@ function operatorPacketHasSuppressiveKeywordConflict(packet) {
   const negative = Array.isArray(packet?.negativeKeywords) ? packet.negativeKeywords : [];
   return positive.some(left => negative.some(right => suppressiveKeywordConflict(left?.term, right?.term)));
 }
+function sourceEvidenceBinding(source) {
+  const id = String(source?.id || ''), url = httpsUrl(source?.url);
+  const title = compactText(source?.title, 300);
+  const excerpt = typeof source?.excerpt === 'string' ? source.excerpt.replace(/\s+/g, ' ').trim() : '';
+  if (!/^[a-zA-Z0-9:_-]{1,100}$/.test(id) || !url || !title || !excerpt || excerpt.length > 2000 ||
+    source?.reviewed !== true || !Number.isFinite(source?.checkedAt)) return null;
+  const evidence = { id, title, url: url.href, excerpt, checkedAt: source.checkedAt, reviewed: true };
+  return { ...evidence, sourceVersion: digest(evidence) };
+}
+function bindOperatorPacketSources(result, dossier) {
+  const packet = result?.operatorReviewPacket;
+  if (!packet) return result;
+  const cited = new Set();
+  for (const candidate of packet.candidates || []) for (const id of candidate?.sourceIds || []) cited.add(id);
+  for (const group of [...(packet.positiveKeywords || []), ...(packet.negativeKeywords || [])]) for (const id of group?.sourceIds || []) cited.add(id);
+  if (!cited.size || !Array.isArray(dossier?.sources)) return null;
+  const available = new Map();
+  for (const source of dossier.sources) {
+    const binding = sourceEvidenceBinding(source);
+    if (!binding || available.has(binding.id)) return null;
+    available.set(binding.id, binding);
+  }
+  const sourceBindings = [...cited].sort().map(id => available.get(id));
+  if (sourceBindings.some(binding => !binding)) return null;
+  // Rebinding is deliberately idempotent so a rolling deployment cannot hash
+  // a prior adapter's fingerprint into the next fingerprint.
+  const { packetVersion: _oldPacketVersion, sourceBindings: _oldSourceBindings,
+    sourceBindingSchema: _oldBindingSchema, sourceVersionBound: _oldBoundFlag, ...packetCore } = packet;
+  const boundPacket = { ...packetCore, sourceBindingSchema: 1, sourceVersionBound: true, sourceBindings };
+  boundPacket.packetVersion = digest(boundPacket);
+  return { ...result, operatorReviewPacket: boundPacket };
+}
+function operatorPacketHasExactSourceBindings(packet, dossier) {
+  if (!packet || packet.sourceBindingSchema !== 1 || packet.sourceVersionBound !== true ||
+    !/^[a-f0-9]{64}$/i.test(packet.packetVersion || '') || !Array.isArray(packet.sourceBindings) || !packet.sourceBindings.length) return false;
+  const packetCore = { ...packet }; delete packetCore.packetVersion;
+  if (digest(packetCore) !== packet.packetVersion) return false;
+  const sources = new Map((dossier?.sources || []).map(source => [String(source?.id || ''), sourceEvidenceBinding(source)]));
+  const cited = new Set();
+  for (const candidate of packet.candidates || []) for (const id of candidate?.sourceIds || []) cited.add(id);
+  for (const group of [...(packet.positiveKeywords || []), ...(packet.negativeKeywords || [])]) for (const id of group?.sourceIds || []) cited.add(id);
+  if (cited.size !== packet.sourceBindings.length) return false;
+  return packet.sourceBindings.every((binding, index) => {
+    if (!binding || index && packet.sourceBindings[index - 1].id >= binding.id || !cited.has(binding.id)) return false;
+    const current = sources.get(binding.id);
+    return current && JSON.stringify(canonical(current)) === JSON.stringify(canonical(binding));
+  });
+}
 function hardenReviewProjection(projection) {
   if (!projection || typeof projection.projectRecommendations !== 'function' || projection[REVIEW_PROJECTION_HARDENED]) return projection;
   const original = projection.projectRecommendations;
@@ -64,7 +112,8 @@ function hardenReviewProjection(projection) {
     // projection module during a rolling deployment.
     if (args[0]?.evidenceHolds?.cartHold === true) return null;
     const result = original.apply(this, args);
-    return operatorPacketHasSuppressiveKeywordConflict(result?.operatorReviewPacket) ? null : result;
+    if (operatorPacketHasSuppressiveKeywordConflict(result?.operatorReviewPacket)) return null;
+    return bindOperatorPacketSources(result, args[0]);
   };
   Object.defineProperty(projection, REVIEW_PROJECTION_HARDENED, { value: true });
   return projection;
@@ -195,4 +244,5 @@ function adminFromEnvironment(env) {
 }
 module.exports = { readOnlyFirestore, adminFromEnvironment, projectApprovedMeaningHypotheses,
   suppressiveKeywordConflict, operatorPacketHasSuppressiveKeywordConflict, hardenReviewProjection,
+  sourceEvidenceBinding, bindOperatorPacketSources, operatorPacketHasExactSourceBindings,
   clearlyRetailerEditorialUrl };

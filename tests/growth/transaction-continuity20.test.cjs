@@ -31,6 +31,10 @@ test('exact numeric browser/server identity with explicit Shopify GID mapping pa
   assert.equal(result.artifactContractPassed, true);
   assert.equal(result.transactionIdentityVerified, true);
   assert.equal(result.runtimeDispatchVerified, false);
+  assert.equal(result.offlineAssessment, true);
+  assert.equal(result.receiptOnly, true);
+  assert.equal(result.providerReads, 0);
+  assert.equal(result.providerReceiptStatusVerified, false);
   assert.equal(result.duplicateCountingVerified, false);
   assert.deepEqual(result.codes, []);
   assert.deepEqual(result.identity.canonicalization, {rule:SHOPIFY_GID_RULE, applied:true, equivalent:true});
@@ -96,16 +100,64 @@ test('value, currency, time, owner and event failures stay explicit', () => {
   assert.ok(run(fixture({pixel:{sourceOwner:'UNKNOWN_OWNER'}})).codes.includes('PIXEL_OWNER_UNCONFIRMED'));
   assert.ok(run(fixture({shopify:{eventName:'checkout_started'}})).codes.includes('SHOPIFY_EVENT_UNCONFIRMED'));
   assert.ok(run(fixture({webhook:{topic:'refunds/create'}})).codes.includes('WEBHOOK_TOPIC_UNCONFIRMED'));
+  assert.ok(run(fixture({pixel:{consentState:'DENIED'}})).codes.includes('CONSENT_NOT_GRANTED'));
+  assert.ok(run(fixture({pixel:{consentState:'MIXED'}})).codes.includes('CONSENT_NOT_GRANTED'));
+  assert.ok(run(fixture({pixel:{consentState:'UNKNOWN'}})).codes.includes('CONSENT_NOT_GRANTED'));
+  assert.ok(run(fixture({pixel:{conversionValue:-0},shopify:{conversionValue:-0},webhook:{conversionValue:-0}})).codes.includes('VALUE_CURRENCY_MISMATCH'));
+});
+
+test('future-ordered browser evidence cannot be explained by an earlier webhook receipt', () => {
+  const result=run(fixture({webhook:{observedAt:NOW-4000}}));
+  assert.equal(result.artifactContractPassed,false);
+  assert.ok(result.codes.includes('EVIDENCE_SEQUENCE_UNCONFIRMED'));
+});
+
+test('identity values with surrounding whitespace are not silently normalized', () => {
+  for (const patch of [
+    {pixel:{transactionId:' '+TRANSACTION},webhook:{payloadId:' '+TRANSACTION,serverTransactionId:' '+TRANSACTION},shopify:{orderId:' '+TRANSACTION},canonicalizationRule:'NONE'},
+    {shopify:{eventId:' shopify-event-fixture'}},
+    {webhook:{serverTransactionId:TRANSACTION+' '}}
+  ]) {
+    const result=run(fixture(patch));
+    assert.equal(result.artifactContractPassed,false);
+    assert.equal(Object.prototype.hasOwnProperty.call(result.identity||{},'transactionFingerprint'),false);
+  }
 });
 
 test('PII and unexpected fields are rejected before any identity is returned', () => {
-  for (const input of [fixture({pixel:{email:'buyer@example.invalid'}}), fixture({webhook:{customer:{id:'1'}}}), fixture({extra:'x'})]) {
+  for (const input of [fixture({pixel:{email:'buyer@example.invalid'}}), fixture({webhook:{customer:{id:'1'}}}),
+    fixture({shopify:{postalCode:'A1A 1A1'}}), fixture({pixel:{ipAddress:'192.0.2.1'}}), fixture({extra:'x'})]) {
     const result=run(input), encoded=JSON.stringify(result);
     assert.equal(result.artifactContractPassed,false); assert.equal(result.identity,undefined);
     assert.equal(encoded.includes('buyer@example.invalid'),false); assert.equal(encoded.includes(TRANSACTION),false);
   }
   assert.ok(run(fixture({pixel:{email:'buyer@example.invalid'}})).codes.includes('UNSAFE_PII_PRESENT'));
   assert.ok(run(fixture({extra:'x'})).codes.includes('UNEXPECTED_FIELD'));
+});
+
+test('every refused late-stage contract withholds all fingerprints', () => {
+  for (const input of [fixture({pixel:{conversionValue:62}}), fixture({webhook:{topic:'refunds/create'}}),
+    fixture({pixel:{consentState:'DENIED'}}), fixture({webhook:{observedAt:NOW-4000}})]) {
+    const result=run(input), encoded=JSON.stringify(result);
+    assert.equal(result.artifactContractPassed,false);
+    assert.equal(encoded.includes('Fingerprint'),false);
+  }
+});
+
+test('throwing artifact getters and proxies return a generic refusal instead of throwing or leaking', () => {
+  const throwing=fixture();
+  Object.defineProperty(throwing.pixel,'transactionId',{enumerable:true,get(){throw Error('PRIVATE_VALUE');}});
+  assert.doesNotThrow(()=>run(throwing));
+  assert.deepEqual(run(throwing),{
+    schemaVersion:1,evidenceKind:'controlled_transaction_continuity_contract',offlineAssessment:true,receiptOnly:true,
+    readOnly:true,providerReads:0,providerWrites:false,conversionUploads:0,conversionReplays:0,cartWrites:0,orderWrites:0,
+    runtimeDispatchVerified:false,providerReceiptStatusVerified:false,transactionIdentityVerified:false,
+    duplicateCountingVerified:false,artifactContractPassed:false,codes:['ARTIFACT_READ_FAILED']
+  });
+  const proxy=new Proxy(fixture(),{ownKeys(){throw Error('PRIVATE_PROXY_VALUE');}});
+  const result=run(proxy);
+  assert.deepEqual(result.codes,['ARTIFACT_READ_FAILED']);
+  assert.equal(JSON.stringify(result).includes('PRIVATE'),false);
 });
 
 test('salt and validation window are mandatory and never appear in output', () => {

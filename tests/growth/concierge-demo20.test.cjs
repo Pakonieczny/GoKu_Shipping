@@ -66,6 +66,37 @@ test('changing a variant invalidates the stale review before confirmation',async
   assert.equal(h.window.sessionStorage.getItem('brites-sandbox-cart'),null);
 });
 
+test('an exact available variant choice survives reload but cart review and confirmation never do',async t=>{
+  const first=harness(t);first.button('Meet your gift guide').click();await first.ask('A bunny necklace');
+  first.button('Choose options').click();const select=first.root.querySelector('select');select.value=gold.id;select.dispatchEvent(new first.window.Event('change',{bubbles:true}));
+  first.button('Review adding to bag').click();assert.match(first.root.querySelector('.review').textContent,/14k Gold Filled/);
+  const saved=JSON.parse(first.window.sessionStorage.getItem('brites-concierge-v1'));
+  assert.equal(saved.selectedVariants[product.id],gold.id);
+
+  const restored=harness(t,{saved});restored.button('Choose options').click();
+  assert.equal(restored.root.querySelector('select').value,gold.id);
+  assert.equal(restored.root.querySelector('.review'),null);
+  assert.equal(restored.button('Confirm add to bag'),undefined);
+  assert.equal(restored.window.sessionStorage.getItem('brites-sandbox-cart'),null);
+  restored.button('Review adding to bag').click();assert.match(restored.root.querySelector('.review').textContent,/14k Gold Filled/);
+});
+
+test('a stale or unavailable restored variant is discarded in favor of a current available option',async t=>{
+  const stale={...product,variants:[silver,{...gold,available:false}],suggestedVariantId:gold.id};
+  const saved={history:[],preferences:{},products:[stale],meanings:[],policyLinks:[],productHandles:[stale.handle],selectedVariants:{[stale.id]:gold.id},uncertainVariants:[],pendingTurn:null,open:true,updatedAt:Date.now()};
+  const h=harness(t,{saved});h.button('Choose options').click();
+  assert.equal(h.root.querySelector('select').value,silver.id);
+  assert.equal(JSON.parse(h.window.sessionStorage.getItem('brites-concierge-v1')).selectedVariants[stale.id],silver.id);
+  assert.equal(h.root.querySelector('.review'),null);
+});
+
+test('corrupt sandbox bag storage cannot strand an explicitly reconfirmed add',async t=>{
+  const h=harness(t);h.window.sessionStorage.setItem('brites-sandbox-cart','{"unexpected":true}');h.button('Meet your gift guide').click();await h.ask('A bunny necklace');
+  h.button('Choose options').click();h.button('Review adding to bag').click();h.button('Confirm add to bag').click();await settle();
+  const cart=JSON.parse(h.window.sessionStorage.getItem('brites-sandbox-cart'));
+  assert.equal(cart.length,1);assert.equal(cart[0].variantId,silver.numericId);
+});
+
 test('voice audio transcripts do not duplicate the checked tool-rendered turn',async t=>{
   const h=harness(t,{voice:true});h.button('Meet your gift guide').click();h.button('Talk to me').click();
   const loader=h.root.querySelector('script[src$="brites-concierge-voice.js"]');assert.ok(loader);loader.onload();await settle();assert.ok(h.voiceConfig);

@@ -107,6 +107,46 @@
     const allAccepted=rows.length===STATES.length&&rows.every(row=>row.observedState===row.state),allRendered=allAccepted&&rows.every(row=>row.renderObserved);
     return {status:allRendered?'state_pipeline_and_frames_observed_visual_unverified':allAccepted?'state_pipeline_observed_render_unverified':'state_pipeline_not_confirmed',visualAppearance:'unverified',states:rows,gestures:[{name:'speaking_arm_motion',state:'speaking',renderObserved:rows.find(row=>row.state==='speaking')?.renderObserved===true},{name:'success_arm_lift',state:'success',renderObserved:rows.find(row=>row.state==='success')?.renderObserved===true}]};
   }
+  function auditCpuPoses({poseFor,states=STATES}={}){
+    if(typeof poseFor!=='function')return{status:'unavailable',evidenceLevel:'cpu_only_visual_unverified',checks:{},states:[],claims:{expressionAppearance:'unverified'}};
+    const requested=(Array.isArray(states)?states:[]).filter(value=>STATES.includes(value));
+    const rows=requested.map(requestedState=>{
+      const pose=poseFor({state:requestedState,time:7.25,elapsed:.6,level:.8,gaze:{x:.2,y:-.1}})||{};
+      const numeric=Object.entries(pose).filter(([,value])=>typeof value==='number');
+      return{state:requestedState,observedState:state(pose.state),finite:numeric.every(([,value])=>Number.isFinite(value)),eyeColor:boundedText(pose.eyeColor,24),eyeOpen:finite(pose.eyeOpen,0,2),eyeDeformation:finite(pose.eyeDeformation,-2,2),browLift:finite(pose.browLift,-2,2),gazeY:finite(pose.gazeY,-2,2),mouth:boundedText(pose.mouth,24),mouthOpen:finite(pose.mouthOpen,0,2),armLift:finite(pose.armLift,0,2),bob:finite(pose.bob,-2,2),headRoll:finite(pose.headRoll,-2,2)};
+    });
+    const byState=Object.fromEntries(rows.map(row=>[row.state,row])),idle=byState.idle||{};
+    const reducedStable=requested.every(requestedState=>{
+      const first=poseFor({state:requestedState,time:1,elapsed:1,level:.8,reducedMotion:true}),later=poseFor({state:requestedState,time:101,elapsed:101,level:.8,reducedMotion:true});
+      return JSON.stringify(first)===JSON.stringify(later);
+    });
+    const checks={allStates:rows.length===STATES.length&&STATES.every(value=>byState[value]?.observedState===value),finite:rows.every(row=>row.finite),bounded:rows.every(row=>row.eyeOpen!=null&&row.eyeOpen>=.035&&row.eyeOpen<=1.1&&row.mouthOpen!=null&&row.mouthOpen>=0&&row.mouthOpen<=1),distinctStateColours:new Set(rows.map(row=>row.eyeColor)).size===rows.length,listeningCue:(byState.listening?.browLift||0)>(idle.browLift||0),thinkingCue:(byState.thinking?.armLift||0)>(idle.armLift||0)&&byState.thinking?.gazeY!==idle.gazeY,speakingCue:byState.speaking?.mouth==='open'&&(byState.speaking?.mouthOpen||0)>0,successCue:byState.success?.eyeDeformation!==idle.eyeDeformation,errorCue:byState.error?.mouth==='concern'&&byState.error?.headRoll!==idle.headRoll,reducedMotionDeterministic:reducedStable};
+    const passed=Object.values(checks).every(Boolean);
+    return{status:passed?'cpu_pose_contract_observed_visual_unverified':'cpu_pose_contract_not_confirmed',evidenceLevel:'cpu_only_visual_unverified',checks,states:rows,claims:{expressionAppearance:'unverified',gestureAppearance:'unverified'}};
+  }
+  function auditSceneSource({sceneSource='',controllerSource=''}={}){
+    sceneSource=typeof sceneSource==='string'?sceneSource:'';controllerSource=typeof controllerSource==='string'?controllerSource:'';
+    const compiled=/shadow:\{enabled:!0,[^}]*type:"PCF soft",casts:!0,receivingStage:!0\}/.test(sceneSource)&&/materials:\{physical:[^}]*metallicAnisotropy:!0,[^}]*environmentReflection:!0\}/.test(sceneSource);
+    const checks={physicalMaterials:/new THREE\.MeshPhysicalMaterial\s*\(|isMeshPhysicalMaterial/.test(sceneSource),declaredTextureInventory:/textures:\s*Object\.freeze\s*\(\s*\[/.test(sceneSource)&&/tangent-space normal/.test(sceneSource),generatedPbrMaps:/normalMap\s*:|normalMap\s*,/.test(sceneSource)&&/roughnessMap/.test(sceneSource)&&/bumpMap/.test(sceneSource),clearcoat:/clearcoat\s*:/.test(sceneSource),transmission:/transmission\s*:/.test(sceneSource),metallicAnisotropy:/anisotropy\s*:|metallicAnisotropy:!0/.test(sceneSource),environmentReflection:/scene\.environment\s*=\s*environmentTarget\.texture/.test(sceneSource)||compiled,shadowMapEnabled:/shadowMap\.enabled\s*=\s*true/.test(sceneSource)||compiled,softShadowDeclaration:/shadowMap\.type\s*=\s*THREE\.PCFSoftShadowMap/.test(sceneSource)||compiled,castingLight:/key\.castShadow\s*=\s*true/.test(sceneSource)||compiled,shadowMapBounded:/key\.shadow\.mapSize\.set\s*\(\s*quality\.shadowSize/.test(sceneSource)||compiled,receivingGeometry:/receiveShadow\s*=\s*true/.test(sceneSource)&&/const floor\s*=\s*mesh\(/.test(sceneSource)||compiled,stateDeformation:/attribute\.setXYZ\s*\(/.test(sceneSource)&&/apertureGeometry\.computeVertexNormals\s*\(/.test(sceneSource)||/meshDeformation:!0/.test(sceneSource)&&/computeVertexNormals/.test(sceneSource),pauseControl:/function setPaused\s*\(/.test(controllerSource)&&/engine\.setMotion\s*\(/.test(controllerSource),fallbackControl:/animated_svg_2d/.test(controllerSource)&&/renderingFailure/.test(controllerSource)};
+    const passed=Object.values(checks).every(Boolean);
+    return{status:passed?'source_contract_declared_visual_unverified':'source_contract_incomplete',evidenceLevel:'source_only_visual_unverified',checks,claims:{gpuAppearance:'unverified',shadowAppearance:'unverified',materialAppearance:'unverified',expressionAppearance:'unverified'}};
+  }
+  async function exerciseDomControls({avatar,win=scope,settleMs=40}={}){
+    if(!avatar||typeof avatar.snapshot!=='function'||typeof avatar.setState!=='function'||typeof avatar.setPaused!=='function'||!avatar.element?.querySelector)return{status:'unavailable',evidenceLevel:'dom_only_visual_unverified',checks:{},states:[],claims:{expressionAppearance:'unverified'}};
+    settleMs=Math.max(16,Math.min(500,number(settleMs)||40));
+    const opening=avatar.snapshot()||{},frame=avatar.element;
+    if(opening.destroyed===true||opening.visible===false)return{status:'blocked_avatar_not_active',evidenceLevel:'dom_only_visual_unverified',checks:{},states:[],claims:{expressionAppearance:'unverified'}};
+    const originalState=state(opening.state)||'idle',originalPaused=opening.paused===true,rows=[];
+    try{
+      if(originalPaused)avatar.setPaused(false);
+      for(const requestedState of STATES){avatar.setState(requestedState);await wait(win,settleMs);const snap=avatar.snapshot()||{};rows.push({state:requestedState,observedState:state(snap.state),datasetState:state(frame.dataset?.state),ariaLabelPresent:!!boundedText(frame.getAttribute?.('aria-label'),240),fallbackVectorPresent:!!frame.querySelector('.brites-avatar__fallback svg')});}
+      avatar.setPaused(true);await wait(win,settleMs);
+      const paused=avatar.snapshot()||{},pauseMotion=boundedText(frame.dataset?.motion,24),fallbackVector=frame.querySelector('.brites-avatar__fallback svg'),fallbackActive=paused.mode==='fallback';
+      const checks={stateDatasetSynchronized:rows.every(row=>row.observedState===row.state&&row.datasetState===row.state),accessibleStatus:rows.every(row=>row.ariaLabelPresent),fallbackVectorPreserved:rows.every(row=>row.fallbackVectorPresent)&&!!fallbackVector,pauseSnapshot:paused.paused===true,pauseDomSignal:pauseMotion==='paused'||pauseMotion==='reduced',pauseStopsAnimation:paused.animated!==true,fallbackTruthful:!fallbackActive||(paused.fallback?.format==='animated_svg_2d'&&frame.dataset?.rendering==='fallback'),fallbackPaused:!fallbackActive||paused.fallback?.animated===false};
+      const passed=Object.values(checks).every(Boolean);
+      return{status:passed?'dom_state_pause_fallback_contract_observed_visual_unverified':'dom_state_pause_fallback_contract_not_confirmed',evidenceLevel:'dom_only_visual_unverified',checks,states:rows,mode:boundedText(paused.mode,24),claims:{gpuAppearance:'unverified',shadowAppearance:'unverified',expressionAppearance:'unverified',fallbackAppearance:'unverified'}};
+    }finally{avatar.setPaused(originalPaused);avatar.setState(originalState);}
+  }
   function acceptancePackage({diagnostics={},stateEvidence={}}={}){
     const webgl=diagnostics.webgl||{},runtime=diagnostics.runtime||{},shadow=diagnostics.shadowMap||{},textures=diagnostics.textures||{},frames=diagnostics.frameSampling||{},longTasks=diagnostics.longTasks||{},motion=diagnostics.motion||{},fallback=diagnostics.staticFallback||{},contextLoss=diagnostics.contextLoss||{},pixel=diagnostics.pixelRatio||{};
     const webglObserved=webgl.status==='available',stateRows=Array.isArray(stateEvidence.states)?stateEvidence.states.slice(0,STATES.length):[];
@@ -148,7 +188,7 @@
     const exported=serializeAcceptancePackage(input),url=urlApi.createObjectURL(new BlobCtor([exported.json],{type:'application/json'})),link=doc.createElement('a');
     link.href=url;link.download='brites-avatar-acceptance.json';link.rel='noopener';link.click();urlApi.revokeObjectURL(url);return{downloaded:true,bytes:exported.bytes,filename:link.download};
   }
-  const api={buildDiagnostics,inspectWebGL,collect,exerciseStates,acceptancePackage,serializeAcceptancePackage,collectAcceptancePackage,copyAcceptancePackage,downloadAcceptancePackage,performanceSummary};
+  const api={buildDiagnostics,inspectWebGL,collect,exerciseStates,auditCpuPoses,auditSceneSource,exerciseDomControls,acceptancePackage,serializeAcceptancePackage,collectAcceptancePackage,copyAcceptancePackage,downloadAcceptancePackage,performanceSummary};
   if(typeof module!=='undefined'&&module.exports)module.exports=api;
   if(scope)scope.BritesAvatarAcceptance=api;
 })(typeof window==='undefined'?null:window);
