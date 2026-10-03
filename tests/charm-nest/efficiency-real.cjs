@@ -74,6 +74,9 @@ seed();
   assert.equal(M.biz.trend.length, 14); assert(M.feed.length > 0 && M.feed.length <= 40); assert.equal(M.sources.events, true);
   const per = (await answer({ op: 'person', name: 'Anna', days: 7 })).body, H = j(win.Efficiency.normHist(per));
   assert.equal(H.days.length, 7); assert(H.worked >= 6 && H.parts > 0, 'a week of Anna: ' + JSON.stringify([H.worked, H.parts]));
+  const ord = (await answer({ op: 'orders', orderId: '3521000100' })).body, O = j(win.Efficiency.normOrder(ord));
+  assert.equal(O.orderId, '3521000100'); assert(O.steps.length >= 1 && O.steps[0].station === 'assembly' && O.steps[0].person === 'Anna' && O.steps[0].firstAt > 0 && O.steps[0].source === 'events', 'an order\'s step: ' + JSON.stringify(O.steps[0]));
+  assert.equal(O.steps[0].waitMs, 0, 'the first step waited for nothing');
   console.log('  ✓ the real function\'s answer is taken whole: people, totals, rates, hours, trend, feed, one person\'s days');
 
   /* ── and drawn ── */
@@ -104,9 +107,12 @@ seed();
     assert.equal(await page.locator('#efficiencyView .efKpi[data-k="on"] .efKV').innerText(), '3');
     await page.click('#efficiencyView .efP:nth-child(2) .efWho'); await page.waitForFunction(() => /days worked/.test((document.querySelector('#efficiencyView .efP:nth-child(2) .efSum') || {}).textContent || ''), null, { timeout: 8000 });
     await page.click('#efficiencyView .efFeedBtn'); await page.waitForSelector('#efficiencyView .efFl');
+    await page.fill('#efficiencyView .efFind input', '3521000100'); await page.press('#efficiencyView .efFind input', 'Enter');
+    await page.waitForSelector('#efficiencyView .efOView:not(.hidden) .efTr:not(.head)', { timeout: 8000 });
+    assert(/Assembly/.test(await page.locator('#efficiencyView .efOView .efTr:not(.head)').first().innerText()), 'the order trace is drawn from the real answer');
     await page.waitForTimeout(500);
     if (process.env.SHOTS) await page.screenshot({ path: path.join(process.env.SHOTS, 'ef-real.png') });
     assert.deepEqual(errs, [], 'no page errors: ' + errs.join(' | '));
-    console.log('  ✓ drawn from the real function\'s answer: numbers agree, a person\'s days load, the feed opens, no page errors');
+    console.log('  ✓ drawn from the real function\'s answer: numbers agree, a person\'s days load, the feed opens, an order is traced, no page errors');
   } finally { await browser.close(); srv.close(); }
 })().catch(e => { console.error(e); process.exit(1); });

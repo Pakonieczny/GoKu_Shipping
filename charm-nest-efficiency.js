@@ -295,7 +295,7 @@
 .efN{text-align:right;font-variant-numeric:tabular-nums;min-width:0}.efN>b{font-weight:650;font-size:14px;display:block;white-space:nowrap}.efN:before{content:attr(data-l);display:none;font-size:10px;letter-spacing:.07em;text-transform:uppercase;color:var(--ink45);font-weight:700;margin-bottom:1px}
 .efOrd{border:0;background:transparent;border-radius:7px;padding:3px 4px;margin:-3px -4px;color:inherit}.efOrd:hover{background:var(--paper2)}.efOrd>b{display:inline-flex;align-items:center;gap:4px}
 .efOrd i{font-style:normal;color:var(--ink45);font-size:9px;transition:transform .25s ease}.efP.o-orders .efOrd i{transform:rotate(180deg)}
-.efAct{display:flex;align-items:center;gap:7px;min-width:0}.efAct i{flex:1;height:5px;border-radius:3px;background:var(--line);overflow:hidden;display:block;min-width:36px}
+.efAct{display:flex;align-items:center;gap:7px;min-width:0}.efAct:before{content:"Active";display:none;grid-column:1/-1;font-size:10px;letter-spacing:.07em;text-transform:uppercase;color:var(--ink45);font-weight:700}.efAct i{flex:1;height:5px;border-radius:3px;background:var(--line);overflow:hidden;display:block;min-width:36px}
 .efAct b{display:block;height:100%;background:var(--sage);border-radius:3px;width:0;transition:width .5s ease}.efAct span{font-size:11px;color:var(--ink70);font-variant-numeric:tabular-nums;min-width:30px;text-align:right}
 .efPanel{display:grid;grid-template-rows:0fr;visibility:hidden;transition:grid-template-rows .3s ease,visibility 0s .3s}
 .efP.open .efPanel{grid-template-rows:1fr;visibility:visible;transition:grid-template-rows .3s ease}
@@ -365,13 +365,13 @@
  .efSR{grid-template-columns:minmax(0,1fr) auto auto;grid-template-areas:"n p o" "w w w";gap:3px 12px;padding:10px 14px}.efSR .efSN{grid-area:n}.efSR .efSW{grid-area:w}.efSV[data-c=parts]{grid-area:p}.efSV[data-c=orders]{grid-area:o}.efSR .efSp{display:none}
  .efDay{min-width:0;flex:1}.efBar{gap:2px 10px;padding:4px 12px}.efGrow{display:none}.efHead{flex:1 1 100%}.efNav{flex:1 1 0;min-width:0}.efSeg{margin-left:auto}.efLive .lg{display:none}
  .efKL .l{display:none}.efKL .s{display:inline}
- .efPRow{grid-template-columns:repeat(3,minmax(0,1fr));padding:12px 14px}.efSp{grid-column:1/-1}.efAct{grid-column:1/-1}
+ .efPRow{grid-template-columns:repeat(3,minmax(0,1fr));padding:12px 14px}.efSp{grid-column:1/-1;order:2}.efAct{grid-column:auto;order:1;align-self:end;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 6px}.efAct:before{display:block}
  .efOr{grid-template-columns:100px minmax(0,1fr) 58px 26px}.efOr .pt{display:none}
  .efSR .efSW.none{display:none}
- .efFind input{width:104px}.efFind input:focus{width:140px}
+ .efFind input{width:120px}.efFind input:focus{width:150px}
  .efTr{grid-template-columns:repeat(6,minmax(0,1fr));gap:2px 8px}.efTr.head{display:none}.efTst{grid-column:1/3}.efTp{grid-column:3/-1}.efTt{grid-column:1/-1}
  .efTn{grid-column:span 2;text-align:left}.efTn:before{content:attr(data-l) " ";color:var(--ink45);font-size:10.5px}.efTb{grid-column:1/-1;margin-top:3px}
- .efFl{grid-template-columns:56px minmax(0,1fr) auto;grid-template-areas:"t p a" "t s o"}.efFl>time{grid-area:t}.efFl>b{grid-area:p}.efFl>span:nth-of-type(1){grid-area:s}.efFl>span:nth-of-type(2){grid-area:a}.efFl>span:nth-of-type(3){grid-area:o}
+ .efFl{grid-template-columns:56px minmax(0,1fr) 128px;grid-template-areas:"t p a" "t s o"}.efFl>time{grid-area:t}.efFl>b{grid-area:p}.efFl>span:nth-of-type(1){grid-area:s}.efFl>span:nth-of-type(2){grid-area:a}.efFl>span:nth-of-type(3){grid-area:o}
  .efFeedBtn,.efFeed{padding-left:14px;padding-right:14px}.efKey{margin-top:3vh}
 }
 @media (prefers-reduced-motion:reduce){.ef *{transition:none!important;animation:none!important}}`;
@@ -497,7 +497,7 @@
   async function call(body, key, signal) {
     const k = key || st.key, payload = Object.assign({}, body, { key: k }); st.sandbox = isSandbox(); if (st.sandbox) payload.sandbox = true;
     if (payload.day === undefined) delete payload.day;
-    let res; try { res = await fetch(endpoint(), { method: "POST", headers: { "Content-Type": "application/json", "X-Edit-Passcode": k }, body: JSON.stringify(payload), cache: "no-store", signal }); } catch (e) { if (e && e.name === "AbortError") throw e; throw failure(0, null, true); }
+    let res; try { res = await fetch(endpoint(), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload), cache: "no-store", signal }); } catch (e) { if (e && e.name === "AbortError") throw e; throw failure(0, null, true); }
     const txt = await res.text(); let j = null; try { j = JSON.parse(txt); } catch (_) {}
     if (!res.ok || !j || j.ok === false) throw failure(res.status, j);
     return j;
@@ -654,7 +654,7 @@
   function updatePerson(r, p, M, first) {
     const on = p.on && !M.past;
     r.st.classList.toggle("on", on); r.st.title = on ? "On now" : "Locked out"; r.who.setAttribute("aria-label", `${p.name}, ${on ? "on now" : "locked out"}. ${whenText(p, M)}`);
-    setText(r.when, whenText(p, M));
+    const wt = whenText(p, M); setText(r.when, wt); r.when.title = wt;
     const chipSig = p.stations.map(s => s.station + s.minutes).join() + "|" + p.nowAt.join() + on;
     if (chipSig !== r.chipSig) { r.chipSig = chipSig; r.chips.innerHTML = p.stations.length ? p.stations.map(s => `<span class="efChip${p.nowAt.includes(s.station) && on ? " now" : ""}"><b>${esc(stName(s.station))}</b>${esc(dur(s.minutes))}</span>`).join("") : `<span class="efMuted">—</span>`; }
     const t = p.t, src = p.source, kParts = src !== "seals" && src !== "sessions", kOther = src !== "sessions";   // seals know orders and scans, not parts; sessions know only time
@@ -723,7 +723,7 @@
   function stepsHtml(d) {
     if (!d.steps.length) return `<div class="efMuted">No activity recorded for this order yet.</div>`;
     const t0 = d.firstAt || d.steps[0].firstAt || 0, span = Math.max(1, (d.lastAt || t0) - t0), wait = d.steps.reduce((n, s) => n + s.waitMs, 0), sealed = d.steps.some(s => s.source === "seals");
-    const sum = [["Elapsed", durMs(d.spanMs || span)], ["Work", sealed && !d.workMs ? "—" : durMs(d.workMs)], ["Waiting", d.steps.length > 1 ? durMs(wait) : "—"]].map(([k, v]) => `<span>${k} <b>${esc(v)}</b></span>`).join("");
+    const one = d.steps.length === 1, sum = (one ? [["Work", sealed && !d.workMs ? "—" : durMs(d.workMs)]] : [["Elapsed", durMs(d.spanMs || span)], ["Work", sealed && !d.workMs ? "—" : durMs(d.workMs)], ["Waiting", durMs(wait)]]).map(([k, v]) => `<span>${k} <b>${esc(v)}</b></span>`).join("");
     const rows = d.steps.map(s => {
       const a = s.firstAt, b = s.lastAt, seal = s.source === "seals", when = !a ? "—" : !b || b - a < 60000 ? stamp(a) : `${stamp(a)} – ${nyDay(b) === nyDay(a) ? clock(b) : stamp(b)}`;
       const wd = a && b ? Math.max(4, Math.min(100, (b - a) / span * 100)) : 4, left = a ? Math.max(0, Math.min(100 - wd, (a - t0) / span * 100)) : 0;
@@ -858,5 +858,5 @@
     setInterval(tickLive, Math.max(250, +options.tickMs || 1000));
   }
   if (doc.getElementById("efficiencyView")) mount(); else doc.addEventListener("DOMContentLoaded", mount, { once: true });
-  root.Efficiency = { open, options, norm, normHist, niceMax, get state() { return { key: !!st.key, days: st.days, day: st.day, shown: st.shown, fails: st.fails, busy: st.busy, at: st.at, rows: [...st.rows.keys()] }; } };
+  root.Efficiency = { open, options, norm, normHist, normOrder, niceMax, get state() { return { key: !!st.key, days: st.days, day: st.day, shown: st.shown, fails: st.fails, busy: st.busy, at: st.at, rows: [...st.rows.keys()] }; } };
 })(window);
