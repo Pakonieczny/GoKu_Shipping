@@ -48,7 +48,7 @@
     warn: '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="7" fill="currentColor" opacity=".16"/><path d="M8 4.6v4M8 11v.1" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></svg>'
   };
   const flow = () => { const f = W.LibraryFlow; return f && typeof f.targets === 'function' && typeof f.plan === 'function' && typeof f.commit === 'function' ? f : null; };
-  const D = { pending: null, drag: null, move: null, menu: null, noClick: 0, seq: 0 };
+  const D = { pending: null, drag: null, move: null, menu: null, noClick: 0, seq: 0, pt: null };
   const specKey = s => s.area ? 'area:' + s.area : s.set ? 'set:' + s.set : 'newSet';
   const cleanSpec = s => s.area ? { area: s.area } : s.set ? { set: s.set } : { newSet: true };
   const visible = e => { if (!e || !e.isConnected) return false; const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
@@ -128,6 +128,13 @@ html.dndOn,html.dndOn *{cursor:grabbing!important;-webkit-user-select:none!impor
 .dndSpin{flex:0 0 12px;width:12px;height:12px;border:2px solid var(--line);border-top-color:var(--ink70);border-radius:50%;animation:dndSpin .7s linear infinite}
 @keyframes dndSpin{to{transform:rotate(360deg)}}
 .dndApprove{display:grid;gap:2px}
+.dndMovingWrap.ui .dndMoving{border:0;background:none;box-shadow:none;border-radius:0}
+.dndMovingWrap.ui.settled .dndMoving{overflow:visible}
+.dndMovingWrap.ui .dndMovingIn{padding:0;gap:0}
+.dndMovingWrap.ui .dndMovingHead,.dndMovingWrap.ui .dndWait{display:none}
+.dndMovingWrap.ui .dndApprove{gap:0}
+.dndDock.bar.ui{border-color:transparent;background:none;box-shadow:none;-webkit-backdrop-filter:none;backdrop-filter:none;padding:0}
+.dndDock.bar.ui .dndDockHead{display:none}
 .dndHead{font:600 12.5px var(--sans);color:var(--ink);padding:2px 0 3px}
 .dndHead.bad{color:#8a3a26}
 .dndHead.warn{color:#7a5a1d}
@@ -224,10 +231,16 @@ html.dndOn,html.dndOn *{cursor:grabbing!important;-webkit-user-select:none!impor
     for (const r of records()) if (r.setId && !r.draft && r.solidIncluded !== false && !out.has(r.setId)) out.set(r.setId, { id: r.setId, seq: r.setSeq, day: r.day });
     return out;
   }
-  const setName = k => k ? (k.seq ? `Set ${k.seq}` : 'Set') + (k.day ? ' · ' + dayShort(k.day) : '') : 'Set';
+  const setName = k => k ? (k.seq ? `Set ${k.seq}` : k.name || 'Set') + (k.day ? ' · ' + dayShort(k.day) : '') : 'Set';
   async function targetsOf(item) {
     const f = flow(); if (!f) return [];
-    try { const t = await Promise.resolve(f.targets({ kind: item.kind, id: item.id })); return Array.isArray(t) ? t : t && Array.isArray(t.targets) ? t.targets : []; }
+    const it = { kind: item.kind, id: item.id };
+    // the real LibraryFlow says why a place is not allowed (explainTargets); a plain one only lists the allowed places
+    if (typeof f.explainTargets === 'function') {
+      try { const z = await Promise.resolve(f.explainTargets(it)); if (Array.isArray(z) && z.length) return z; }
+      catch (e) { console.warn('LibraryFlow.explainTargets', e); }
+    }
+    try { const t = await Promise.resolve(f.targets(it)); return Array.isArray(t) ? t : t && Array.isArray(t.targets) ? t.targets : []; }
     catch (e) { console.warn('LibraryFlow.targets', e); return []; }
   }
   function defaultReason(item, spec, reasons) {
@@ -252,7 +265,7 @@ html.dndOn,html.dndOn *{cursor:grabbing!important;-webkit-user-select:none!impor
     for (const a of ['progress', 'laser', 'completed']) add({ area: a }, AREA[a].name, AREA[a].sub);
     add({ newSet: true }, 'New set', 'start a new set');
     const sets = knownSets();
-    for (const t of legal.values()) if (t.set && !sets.has(t.set)) sets.set(t.set, { id: t.set });
+    for (const t of legal.values()) if (t.set && !sets.has(t.set)) sets.set(t.set, { id: t.set, name: t.name });
     const order = [...sets.values()].sort((a, b) => String(b.day || '').localeCompare(String(a.day || '')) || (+b.seq || 0) - (+a.seq || 0)).slice(0, 80);
     for (const k of order) add({ set: k.id }, setName(k), k.sheets ? plural(k.sheets, 'sheet') : 'a set');
     return zones;
@@ -322,13 +335,24 @@ html.dndOn,html.dndOn *{cursor:grabbing!important;-webkit-user-select:none!impor
     ], { duration: ms, easing: 'cubic-bezier(.5,.05,.3,1)', fill: 'forwards' });
     await a.finished.catch(() => {}); el.remove();
   }
-  /** The copy goes to `targetEl`: window.LibraryFx.fly when it is there, a plain flight here when it is not. Never throws. */
-  async function flyTo(lift, targetEl, kind) {
-    if (!lift) return;
-    const Fx = W.LibraryFx;
-    if (Fx && typeof Fx.fly === 'function' && !reduced()) {
-      try { const p = Fx.fly(lift.el, targetEl, { kind, duration: 720, onDone() {} }); requestAnimationFrame(() => { lift.el.style.visibility = 'hidden'; }); await p; lift.remove(); pulse(targetEl); return; }
-      catch (e) { lift.el.style.visibility = ''; }
+  /** The copy goes to `targetEl`: window.LibraryFx.fly when it is there (and motion is allowed), a plain flight here when
+   *  not. LibraryFx takes the copy over where it is (it is laid out by left and top for it), hides the card's old place
+   *  while it is away and lands on the real card as soon as the page draws it. Never throws. */
+  async function flyTo(m, targetEl) {
+    const lift = m.lift; if (!lift) return;
+    const Fx = W.LibraryFx, item = m.item, kind = item.kind;
+    if (Fx && typeof Fx.fly === 'function' && !reduced() && lift.el.isConnected) {
+      try {
+        const home = elOf(item);
+        const el = lift.el; el.classList.remove('on');
+        Object.assign(el.style, { left: (lift.x - lift.ox) + 'px', top: (lift.y - lift.oy) + 'px', transform: 'none', transformOrigin: '50% 50%' });
+        m.fx = true;
+        const r = await Fx.fly(el, targetEl, { kind, duration: 720, home: home || undefined, onDone() { if (home) home.classList.remove('dndSource'); } });
+        lift.remove(); if (r && r.ok === false) pulse(targetEl);
+        // (the card is still where it was until the move is done: it shows again, a little faint, while the plan is read)
+        const h = elOf(item); if (h && D.move === m && (m.state === 'planning' || m.state === 'review' || m.state === 'committing')) h.classList.add('dndSource');
+        return;
+      } catch (e) { m.fx = false; lift.el.style.visibility = ''; }
     }
     await plainFly(lift, targetEl); pulse(targetEl);
   }
@@ -345,8 +369,12 @@ html.dndOn,html.dndOn *{cursor:grabbing!important;-webkit-user-select:none!impor
     const Fx = W.LibraryFx;
     rest.el.style.transform = tf(Tx, Ty, s);
     if (Fx && typeof Fx.flyBack === 'function') {
-      try { const p = Fx.flyBack(rest.el, home, { kind, duration: 760, onDone() {} }); requestAnimationFrame(() => { rest.el.style.visibility = 'hidden'; }); await p; rest.remove(); done(); return; }
-      catch (e) { rest.el.style.visibility = ''; }
+      try {
+        // (LibraryFx makes its own copy of the card and sets it off from where the resting one is: this one goes at once)
+        const p = Fx.flyBack(rest.el, home, { kind, duration: 760, onDone() { done(); } });
+        rest.el.style.visibility = 'hidden';
+        await p; rest.remove(); done(); return;
+      } catch (e) { rest.el.style.visibility = ''; }
     }
     const dx = Hx - Tx, dy = Hy - Ty, bend = Math.min(90, 30 + Math.hypot(dx, dy) * .08);
     const a = rest.el.animate([
@@ -411,7 +439,7 @@ html.dndOn,html.dndOn *{cursor:grabbing!important;-webkit-user-select:none!impor
     }
   }
   function zoneAt(x, y) {
-    for (const e of doc.elementsFromPoint(x, y)) { const h = e.closest && e.closest('.dndChip, [data-dnd-state]'); if (h && h._z) return h._z; }
+    for (const e of doc.elementsFromPoint(x, y)) { const h = e.closest && e.closest('.dndChip, [data-dnd-state]'); if (h && h._z) { h._z.via = h.classList.contains('dndChip') ? 'chip' : 'place'; return h._z; } }
     return null;
   }
   function setHot(d, z) {
@@ -432,10 +460,22 @@ html.dndOn,html.dndOn *{cursor:grabbing!important;-webkit-user-select:none!impor
     const bar = { wrap, ap, over: false, hover: false };
     const attach = () => { if (!wrap.isConnected) slot.mount(wrap); };
     attach();
+    // the Library draws its lists anew after a move: the bar is put back in its place, as it was, until it is taken away
+    const body = byId('libBody');
+    if (body && W.MutationObserver) {
+      let q = 0;
+      const mo = new MutationObserver(() => { if (q || wrap.isConnected) return; q = requestAnimationFrame(() => { q = 0; if (!wrap.isConnected && !bar.gone) { try { slot.mount(wrap); } catch (_) { /* stays out */ } } }); });
+      mo.observe(body, { childList: true, subtree: true });
+      bar.unwatch = () => { mo.disconnect(); if (q) cancelAnimationFrame(q); };
+    }
     requestAnimationFrame(() => wrap.classList.add('on'));
     if (reduced()) wrap.classList.add('on');
-    wrap.addEventListener('pointerenter', () => { bar.hover = true; }); wrap.addEventListener('pointerleave', () => { bar.hover = false; });
+    // a hand that moves over the bar holds it open (to read it, to press in it); a pointer that simply stayed where the drop left it does not
+    wrap.addEventListener('pointermove', e => { if (!D.pt || Math.hypot(e.clientX - D.pt.x, e.clientY - D.pt.y) > 10) bar.hover = true; });
+    wrap.addEventListener('pointerleave', () => { bar.hover = false; });
     bar.title = t => { attach(); titleEl.textContent = t; };
+    // LibraryApprovalUI draws its own card: this one is only the room it grows in
+    bar.ui = on => { wrap.classList.toggle('ui', !!on); if (on) setTimeout(() => wrap.classList.add('settled'), 400); else wrap.classList.remove('settled'); };
     bar.wait = text => { attach(); waitEl.hidden = !text; waitEl.querySelector('span').textContent = text || ''; };
     bar.close = fn => { x.hidden = !fn; x.onclick = fn || null; };
     bar.clear = () => { ap.replaceChildren(); };
@@ -479,6 +519,7 @@ html.dndOn,html.dndOn *{cursor:grabbing!important;-webkit-user-select:none!impor
     };
     bar.note = text => { attach(); const d = doc.createElement('div'); d.className = 'dndLine note'; d.style.setProperty('--i', 0); d.innerHTML = `<span style="flex:0 0 15px"></span><span class="dndTxt"></span>`; d.querySelector('.dndTxt').textContent = text; ap.appendChild(d); };
     bar.remove = async (animate = true) => {
+      bar.gone = true; if (bar.unwatch) bar.unwatch();
       if (!wrap.isConnected) return;
       if (animate && !reduced() && wrap.animate) { wrap.classList.remove('on'); await wait(340); }
       wrap.remove();
@@ -489,7 +530,7 @@ html.dndOn,html.dndOn *{cursor:grabbing!important;-webkit-user-select:none!impor
   function linger(bar, ms, m) {
     return new Promise(res => {
       let left = ms, last = Date.now(); m.skip = () => { left = 0; };
-      const t = setInterval(() => { const now = Date.now(), dt = now - last; last = now; if (!bar.hover) left -= dt; if (left <= 0 || m.fast || !bar.wrap.isConnected) { clearInterval(t); m.skip = null; res(); } }, 100);
+      const t = setInterval(() => { const now = Date.now(), dt = now - last; last = now; if (bar.hover && !(bar.wrap.isConnected && bar.wrap.matches(':hover'))) bar.hover = false; if (!bar.hover) left -= dt; if (left <= 0 || m.fast || !bar.wrap.isConnected) { clearInterval(t); m.skip = null; res(); } }, 100);
     });
   }
 
@@ -513,31 +554,38 @@ html.dndOn,html.dndOn *{cursor:grabbing!important;-webkit-user-select:none!impor
     let dk = o.dock || null;
     // where the plan is shown: on the place where it was dropped (a set card, a section), or in the dock
     const seen = e => { if (!visible(e)) return false; const r = e.getBoundingClientRect(), s = stage().getBoundingClientRect(); return r.bottom > s.top && r.top < s.bottom; };
-    let place = zone && zone.place && zone.place.isConnected ? zone.place : (!zone || !zone.chip) && (o.via !== 'menu' || seen(placeEl(m.to))) ? placeEl(m.to) : null;
-    const chip = zone && zone.chip && zone.chip.isConnected ? zone.chip : null;
+    // (let go on a chip of the dock: the card, the plan and the bar all stay with the dock; let go on the place itself: they go there)
+    const onChip = !!(zone && zone.via === 'chip' && zone.chip && zone.chip.isConnected);
+    let place = onChip ? null : zone && zone.place && zone.place.isConnected ? zone.place : (!zone || !zone.chip) && (o.via !== 'menu' || seen(placeEl(m.to))) ? placeEl(m.to) : null;
+    const chip = onChip ? zone.chip : null;
+    const inDock = () => { if (!dk || !dk.el.isConnected) { dk = openDock([], item, 'bar'); dk.toBar(`Moving ${label} to ${name}`); } return dk; };
+    if (!place && !dk) inDock();
     const first = chip || place || (dk && dk.el) || null;
     // (the copy leaves for the place before anything on the page changes shape: a chip it is dropped on still stands where it was)
-    const flight = flyTo(m.lift, first, kind);
+    const flight = flyTo(m, first);
     if (zone) clearMarks(o.zones);
-    const inDock = () => { if (!dk || !dk.el.isConnected) { dk = openDock([], item, 'bar'); dk.toBar(`Moving ${label} to ${name}`); } return dk; };
-    if (place) { if (dk) { dk.close(); dk = null; } }
-    else if (!dk) inDock();
+    if (place && dk) { dk.close(); dk = null; }
     const slot = { mount(wrap) {
-      const p = place && place.isConnected ? place : null;
+      let p = place && place.isConnected ? place : null;
+      if (!p && place) { p = placeEl(m.to); if (p) place = p; }          // (the Library drew its lists anew: the same place, as it is now)
       if (p && p.matches('[data-laser-area]')) { const h = p.querySelector(':scope > h2'); (h || p).after(wrap); return; }
       if (p && p.matches('.setCard')) { const h = p.querySelector(':scope > .sh'); if (h) { h.after(wrap); return; } p.prepend(wrap); return; }
       place = null; inDock().slot.appendChild(wrap);
     } };
-    const bar = m.bar = mountMoving(slot, `Moving ${label} to ${name}`);
-    bar.wait('Checking the move…');
+    const title = `Moving ${label} to ${name}`;
+    const bar = m.bar = mountMoving(slot, title);
     // the dock folds into the bar once the card has landed on its chip
-    if (dk && !place) flight.then(() => { if (dk && dk.el.isConnected) dk.toBar(`Moving ${label} to ${name}`); });
-    const UI = W.LibraryApprovalUI, ui = UI && typeof UI.show === 'function' ? UI : null;
+    if (dk && !place) flight.then(() => { if (dk && dk.el.isConnected) dk.toBar(title); });
+    // the answer to "may it go?" is a person's press: only a press ever resolves it with keys
+    let answer; const asked = new Promise(res => { answer = res; }); m.resolve = answer;
+    const UI = W.LibraryApprovalUI, ui = UI && typeof UI.show === 'function' && typeof UI.update === 'function' ? UI : null;
     let shown = false;
+    const keysOf = keys => (Array.isArray(keys) ? { keys } : null);
+    const cb = { onConfirm: keys => { answer(keysOf(keys)); }, onCancel: () => { answer(null); m.skip && m.skip(); } };
     const homeEl = () => bar.wrap.isConnected && visible(bar.wrap) ? bar.wrap : place && place.isConnected ? place : dk && dk.el.isConnected ? dk.el : null;
     const end = async (ms, noteText) => {
       bar.wait(null);
-      if (noteText) bar.note(noteText);
+      if (noteText && !shown) bar.note(noteText);
       bar.close(() => { m.skip && m.skip(); });
       if (ms && !m.fast) await linger(bar, ms, m);
       if (ui && shown && typeof ui.hide === 'function') { try { ui.hide(bar.ap); } catch (_) { /* the bar is taken away below */ } }
@@ -546,64 +594,74 @@ html.dndOn,html.dndOn *{cursor:grabbing!important;-webkit-user-select:none!impor
     };
     const back = async (ms, noteText) => {
       m.state = 'back'; await flight;
-      const h = flyHome(item, homeEl(), kind); bar.clear(); bar.note(noteText || 'Nothing was changed.');
+      const h = flyHome(item, homeEl(), kind);
+      if (!shown) { bar.clear(); bar.note(noteText || 'Nothing was changed.'); }
       await h; refocus(item, o); await end(ms);
     };
-    // the plan
-    let plan;
-    try { plan = normPlan(await timeout(f.plan({ kind, id: item.id, to: m.to }), 45000, 'Checking the move')); }
+    // the plan (read only; nothing is written until it is committed)
+    const planP = timeout(f.plan({ kind, id: item.id, to: m.to, by: who() }), 45000, 'Checking the move');
+    const viewOf = raw => { const v = normPlan(raw); return m.to.set ? Object.assign({}, v, { to: Object.assign({}, v.to || {}, { label: name }) }) : v; };
+    bar.wait('Checking the move…');
+    let raw;
+    try { raw = await planP; }
     catch (e) {
-      bar.wait(null); bar.result({ ok: false, error: `Could not check this move: ${e && e.message || e}` });
+      if (!shown) { bar.wait(null); bar.result({ ok: false, error: `Could not check this move: ${e && e.message || e}` }); }
       await flight; m.state = 'back'; const h = flyHome(item, homeEl(), kind); await h; refocus(item, o); await end(5200, 'Nothing was changed.'); return { ok: false };
     }
-    const title = `Moving ${label} to ${name}`;
-    const show = cb => {
+    const plan = normPlan(raw);
+    // the plan is shown: by LibraryApprovalUI (its own card stands in the room of this one), else by the plain bar below
+    const present = () => {
       bar.clear(); bar.wait(null);
-      if (ui) { try { ui.show(bar.ap, plan, { title, onConfirm: cb.onConfirm, onCancel: cb.onCancel }); shown = true; return; } catch (e) { console.warn('LibraryApprovalUI.show', e); bar.clear(); } }
-      shown = false;
+      if (ui) {
+        bar.ui(true); if (dk && !place) dk.el.classList.add('ui');
+        try { ui.show(bar.ap, viewOf(raw), { title, kind, onConfirm: cb.onConfirm, onCancel: cb.onCancel, onClose() { m.skip && m.skip(); } }); shown = true; return; }
+        catch (e) { console.warn('LibraryApprovalUI.show', e); bar.ui(false); if (dk) dk.el.classList.remove('ui'); bar.clear(); shown = false; }
+      }
+      // (the plain bar: green, red, amber; Rose Gold's last check is LibraryFlowRose's own bar)
       bar.plain(plan, { target: name, onConfirm: cb.onConfirm, onCancel: cb.onCancel });
-      // a Rose Gold green line: the last verification is LibraryFlowRose's own bar when it is there (never the drop itself)
       const R = W.LibraryFlowRose, rose = plan.confirm.find(c => c.key === 'roseLine');
       if (rose && R && typeof R.confirmBar === 'function' && !plan.needs.length) {
         const row = bar.ap.querySelector('.dndLine.warn'), acts = bar.ap.querySelector('.dndActs');
-        if (row && acts) { try { const hostEl = doc.createElement('div'); row.replaceWith(hostEl); acts.remove(); R.confirmBar(hostEl, { sheetLabel: label, onConfirm: () => cb.onConfirm(['roseLine']), onCancel: cb.onCancel }); } catch (e) { console.warn('LibraryFlowRose.confirmBar', e); } }
+        if (row && acts) { try { const hostEl = doc.createElement('div'); row.replaceWith(hostEl); acts.remove(); R.confirmBar(hostEl, { sheetLabel: label, item: { kind, id: item.id }, onConfirm: () => cb.onConfirm(['roseLine']), onCancel: cb.onCancel }); } catch (e) { console.warn('LibraryFlowRose.confirmBar', e); } }
       }
     };
     // 1. something is missing: it is told, the card flies back, nothing has changed
     if (plan.needs.length || plan.ok === false) {
       m.state = 'review';
-      show({ onConfirm() {}, onCancel() { m.skip && m.skip(); } });
+      present();
       await flight;
       await linger(bar, Math.max(3400, 1400 + 1100 * (plan.needs.length + plan.auto.length)), m);
-      await back(2400); return { ok: false, plan };
+      await back(2400); return { ok: false, plan: raw };
     }
     // 2. something needs a person's own yes: the bar waits for it, and only a press passes a key on to commit
     let confirmed = [];
     if (plan.confirm.length) {
       m.state = 'review';
-      const answer = await new Promise(res => { m.resolve = res; show({ onConfirm: keys => res(Array.isArray(keys) ? { keys } : null), onCancel: () => res(null) }); });
-      m.resolve = null;
+      present();
+      const got = await asked;
       const allowed = new Set(plan.confirm.map(c => c.key));
-      confirmed = answer ? answer.keys.filter(k => allowed.has(k)) : [];
-      if (!answer || [...allowed].some(k => !confirmed.includes(k))) { await back(1800); return { ok: false, plan, cancelled: true }; }
-    } else show({ onConfirm() {}, onCancel() {} });
-    // 3. the write starts now (the flight is not waited for)
+      confirmed = got ? got.keys.filter(k => allowed.has(k)) : [];
+      if (!got || !confirmed.length) { await back(1800); return { ok: false, plan: raw, cancelled: true }; }
+    } else present();
+    // 3. the write starts now (the flight is not waited for); the engine itself refuses what was not confirmed
     m.state = 'committing';
-    bar.wait('Moving…');
+    if (!shown) bar.wait('Moving…');
     let res;
-    try { res = await timeout(f.commit(plan, { confirmed, by: who() }), 120000, 'The move'); }
+    try { res = await timeout(f.commit(raw, { confirmed, by: who() }), 120000, 'The move'); }
     catch (e) { res = { ok: false, error: e && e.message || String(e) }; }
     if (!res || typeof res !== 'object') res = { ok: false, error: 'No answer came back, nothing was changed.' };
     bar.wait(null);
-    if (ui && shown && typeof ui.update === 'function') { try { ui.update(bar.ap, res); } catch (e) { bar.result(res, { plain: true }); } }
-    else bar.result(res, { plain: !ui || !shown });
+    if (shown) { try { ui.update(bar.ap, res); } catch (e) { shown = false; bar.clear(); bar.result(res, { plain: true }); } }
+    else bar.result(res, { plain: true });
+    // with LibraryFx the real card is drawn at its new place while the copy is still in the air (it lands on it)
+    let ready = res.ok && m.fx ? refresh(item, o) : null;
     await flight;
-    if (!res.ok) { m.state = 'back'; const h = flyHome(item, homeEl(), kind); await h; refocus(item, o); await end(5200, 'Nothing was changed.'); return Object.assign({ plan }, res); }
+    if (!res.ok) { m.state = 'back'; const h = flyHome(item, homeEl(), kind); await h; refocus(item, o); await end(5200, 'Nothing was changed.'); return Object.assign({ plan: raw }, res); }
+    if (!ready) ready = refresh(item, o);
     bar.title(`Moved ${label} to ${name}`);
-    const ready = refresh(item, o);
     await end(4600);
     await ready;
-    return Object.assign({ plan }, res);
+    return Object.assign({ plan: raw }, res);
   }
   const clearSources = () => { for (const e of doc.querySelectorAll('.dndSource')) e.classList.remove('dndSource'); };
   function refocus(item, o) { if (!o || o.via !== 'menu') return; try { item.el = null; const e = elOf(item), g = e && e.querySelector('.dndGrip'); if (g) g.focus({ preventScroll: true }); } catch (_) { /* focus stays */ } }
@@ -655,7 +713,7 @@ html.dndOn,html.dndOn *{cursor:grabbing!important;-webkit-user-select:none!impor
   }
   function onUp(e) {
     const p = D.pending; if (p && e.pointerId === p.pid) { clearTimeout(p.arm); clearPending(); return; }
-    const d = D.drag; if (d && e.pointerId === d.pid) { d.x = e.clientX; d.y = e.clientY; drop(d); }
+    const d = D.drag; if (d && e.pointerId === d.pid) { d.x = e.clientX; d.y = e.clientY; D.pt = { x: e.clientX, y: e.clientY }; drop(d); }
   }
   function onCancel(e) {
     const p = D.pending; if (p && e.pointerId === p.pid) { clearTimeout(p.arm); clearPending(); return; }
@@ -708,7 +766,7 @@ html.dndOn,html.dndOn *{cursor:grabbing!important;-webkit-user-select:none!impor
     if (z && z.legal) { setHot(d, null); return move(d.item, z.spec, { lift: d.lift, zone: z, dock: d.dock, zones: d.zones }); }
     if (z) {
       // not allowed: the reason is told on the place itself, and the card settles back
-      setHot(d, null); const place = z.place && z.place.isConnected ? z.place : null; clearMarks(d.zones);
+      setHot(d, null); const place = z.via !== 'chip' && z.place && z.place.isConnected ? z.place : null; clearMarks(d.zones);
       const dk = place ? null : d.dock; if (place && d.dock) d.dock.close();
       if (dk) dk.toBar(`${labelOf(d.item)} cannot go to ${z.name}`);
       const slot = { mount(wrap) { if (place && place.matches('[data-laser-area]')) { const h = place.querySelector(':scope > h2'); (h || place).after(wrap); } else if (place && place.matches('.setCard')) { const h = place.querySelector(':scope > .sh'); if (h) h.after(wrap); else place.prepend(wrap); } else if (dk) dk.slot.appendChild(wrap); } };
@@ -772,6 +830,7 @@ html.dndOn,html.dndOn *{cursor:grabbing!important;-webkit-user-select:none!impor
     if (first && (!doc.activeElement || doc.activeElement === grip || doc.activeElement === doc.body)) first.focus({ preventScroll: true });
   }
   async function runMenuMove(item, z) {
+    D.pt = null;
     const lift = makeLift(item, null, { still: true }), home = elOf(item); if (home) home.classList.add('dndSource');
     const zoneEl = placeEl(z.spec); if (zoneEl) z.place = zoneEl;
     return move(item, z.spec, { lift, zone: z.place ? z : null, via: 'menu' });
