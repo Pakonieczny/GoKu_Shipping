@@ -55,6 +55,11 @@ function seed() {
     for (let d = 1; d <= 6; d++) { const day = new Date(Z('2026-10-02T12:00:00Z') - d * 86400000).toISOString().slice(0, 10), p2 = 180 + ((d * 37 + i * 11) % 120); data('Efficiency_Daily').set(day + '__' + name, roll(day, name, { [st]: stat({ scans: 90, scanParts: 90, completes: 20, parts: p2, orders: 20 + d, activeMs: 300 * MIN, idleMs: 50 * MIN, firstAt: 1, lastAt: 2 }) }, hrs({ 10: p2 }, st), touch(20 + d, d * 1000, st), 1, 2)); }
     for (let k = 0; k < 12; k++) { const id = `${st}-1_AAAA_${i}${k}_${k}`, t = NOW - (k * 4 + i) * MIN; data('Station_Activity').set(id, { id, station: st, device: st + '-1', computer: 'pc-AAAA', session: '', person: name, action: k % 3 ? 'scan' : 'complete', orderId: String(3521000000 + i * 100 + k), line: '', sku: '', parts: k % 3 ? 1 : 4, orders: 0, detail: '', at: t, seq: k, sincePrevMs: 60000, ts: Ts.fromMillis(t), serverAt: t, day: '2026-10-02', hour: '14', v: 1 }); }
   });
+  // one person under two spellings: "Paul_K" (the PIN list, shipping) and "Paul K" (an inbox account): the screen shows ONE row, "Paul K."
+  data('Efficiency_Daily').set('2026-10-02__Paul_K', roll('2026-10-02', 'Paul_K', { shipping: stat({ scans: 20, scanParts: 20, completes: 5, parts: 20, orders: 5, activeMs: 40 * MIN, idleMs: 10 * MIN, firstAt: at(8, 0), lastAt: at(9, 0) }) }, hrs({ 8: 20 }, 'shipping'), touch(5, 500, 'shipping'), at(8, 0), at(9, 0)));
+  data('Efficiency_Daily').set('2026-10-02__Paul K', roll('2026-10-02', 'Paul K', { inbox: stat({ completes: 3, activeMs: 10 * MIN, firstAt: at(8, 30), lastAt: at(9, 30) }) }, {}, {}, at(8, 30), at(9, 30)));
+  data('Station_Sessions').set('s-Paul_K', sess('s-Paul_K', 'Paul_K', 'shipping', at(8, 0), { end: at(9, 0), last: at(9, 0), reason: 'signOut' }));
+  data('Station_Sessions').set('s-Paul K', sess('s-Paul K', 'Paul K', 'inbox', at(8, 30), { end: at(9, 30), last: at(9, 30), reason: 'signOut' }));
 }
 seed();
 
@@ -65,7 +70,9 @@ seed();
   const j = o => JSON.parse(JSON.stringify(o));
   const r = await answer({ op: 'overview' }); assert.equal(r.status, 200, JSON.stringify(r.body).slice(0, 300));
   const M = j(win.Efficiency.norm(r.body));
-  assert.equal(M.people.length, 4, 'four people'); assert.deepEqual(M.people.map(p => p.name).sort(), ['Anna', 'Giovanna', 'Ivy', 'Michael']);
+  assert.equal(M.people.length, 5, 'four people and Paul under two spellings (Paul_K, Paul K) = five'); assert.deepEqual(M.people.map(p => p.name).sort(), ['Anna', 'Giovanna', 'Ivy', 'Michael', 'Paul K.'], 'one Paul K., nice name, no underscore');
+  const paul = M.people.find(p => p.name === 'Paul K.');
+  assert.equal(paul.t.parts, 20); assert.equal(paul.t.signedInMin, 90, 'two spellings, 60 + 60 minutes with 30 overlapping'); assert.deepEqual(paul.stations.map(s => s.station).sort(), ['inbox', 'shipping']); assert.equal(paul.on, false);
   const gio = M.people.find(p => p.name === 'Giovanna');
   assert.equal(gio.on, true); assert.equal(gio.t.parts, 178); assert.equal(gio.t.scans, 186); assert.equal(gio.t.orders, 37); assert.equal(gio.source, 'events');
   assert(gio.t.rate > 0 && gio.t.secPerScan > 0 && gio.stations[0].station === 'welding' && gio.stations[0].minutes > 300, 'rate, seconds per scan, station minutes: ' + JSON.stringify(gio.t));
@@ -102,7 +109,8 @@ seed();
     await page.click('#moreMenu > summary'); await page.click('#moreMenu button[data-mode="efficiency"]');
     await page.fill('#efficiencyView .efKey input', PASS); await page.press('#efficiencyView .efKey input', 'Enter');
     await page.waitForSelector('#efficiencyView .efBody:not(.hidden) .efP');
-    assert.equal(await page.locator('#efficiencyView .efP').count(), 4);
+    assert.equal(await page.locator('#efficiencyView .efP').count(), 5);
+    assert.deepEqual((await page.locator('#efficiencyView .efP .efName').allInnerTexts()).map(s => s.trim()).sort(), ['Anna', 'Giovanna', 'Ivy', 'Michael', 'Paul K.'], 'the screen draws one Paul K. (never Paul_K, never twice)');
     assert.equal((await page.locator('#efficiencyView .efKpi[data-k="parts"] .efKV').innerText()).replace(/,/g, ''), String(M.biz.parts), 'the number on the screen is the function\'s');
     assert.equal(await page.locator('#efficiencyView .efKpi[data-k="on"] .efKV').innerText(), '3');
     await page.click('#efficiencyView .efP:nth-child(2) .efWho'); await page.waitForFunction(() => /days worked/.test((document.querySelector('#efficiencyView .efP:nth-child(2) .efSum') || {}).textContent || ''), null, { timeout: 8000 });

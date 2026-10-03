@@ -27,6 +27,10 @@ const F = require('./efficiency-fixture.cjs');
   assert.equal(M.biz.parts, 120, 'business parts from the people when the server sent none'); assert.equal(M.biz.rate, 120); assert.equal(M.biz.on, 1);
   const FD = j(E.norm({ feed: [{ id: 'a', at: 5, person: 'Ivy', station: 'design', action: 'note', orderId: '', parts: 0 }, { id: 'b', at: 4, person: 'Ivy', station: 'design', action: 'note', orderId: '3521000999', parts: 0 }, { id: 'c', at: 3, person: 'Ivy', station: 'design', action: 'note', orderId: '', parts: 0, detail: 'opened order' }, { id: 'd', at: 2, person: 'Ivy', station: 'design', action: 'note', orderId: '', parts: 0, detail: 'Held for a customer question' }, { id: 'e', at: 1, person: 'Ivy', station: 'design', action: 'scan', orderId: '', parts: 0 }] }).feed.map(f => f.id));
   assert.deepEqual(FD, ['b', 'd', 'e'], 'the design stations\' fixed-text note is time use, not a feed line; real notes and other actions stay');
+  // names go through as the reader spelled them (nice names from the server; nothing here splits, folds or mangles an initial, a dot or an underscore)
+  const NM = j(E.norm({ people: ['Michael V.', 'Ana M.', 'Giovanna', 'Giovanna C.', 'Shelly_R', 'Empress D.', 'Paul K.'].map(name => ({ name, status: 'out', totals: { parts: 1 } })), feed: [{ id: 'n1', at: 5, person: 'Paul K.', station: 'shipping', action: 'scan', orderId: '3521000001', parts: 1 }, { id: 'n2', at: 4, person: 'Michael V.', station: 'welding', action: 'complete', orderId: '3521000002', parts: 3 }] }));
+  assert.deepEqual(NM.people.map(p => p.name).sort(), ['Ana M.', 'Empress D.', 'Giovanna', 'Giovanna C.', 'Michael V.', 'Paul K.', 'Shelly_R'], 'every name arrives as sent, each once');
+  assert.deepEqual(NM.feed.map(f => f.person), ['Paul K.', 'Michael V.']);
   assert.deepEqual(j(E.norm(null).people), []); assert.deepEqual(j(E.normHist({}).days), []);
   assert.equal(E.niceMax(0), 4); assert.equal(E.niceMax(87), 100); assert.equal(E.niceMax(101), 120); assert.equal(E.niceMax(55), 60);
   console.log('  ✓ the view model: missing fields are zero, rates worked out, axis maximum');

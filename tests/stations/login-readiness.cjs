@@ -1,11 +1,11 @@
-// Login readiness for the four employees (Giovanna, Anna, Michael, Ivy) at the PIN stations: the real station pages
+// Login readiness for the seven names on Paul's PIN list (Giovanna C., Empress D., Michael_V, Michelle_R, Ivy_Y, Ana_M, Paul_K: the older style with a period next to the underscore style) at the PIN stations: the real station pages
 // (weld-1, assembly-1..4, shipping-1..3, design-message, design-message-1), the real station-session.js and the real
 // firebaseOrders handler (its {pinLogin} door) over a fake Firestore. The sign-in goes through the server's login door: no page
 // may ask for the roster document, and a PIN may be in no URL and in no request body except the login door's own.
 // Fake employees only: the PINs are made up when this test runs, never written anywhere and never put in a message
 // (the checks below assert booleans only, so a failure cannot print one). Every request that is not the page itself or
 // its stubs is aborted. The clock is Playwright's, set to 23:35 New York and run past midnight.
-//   1 · each of the four signs in: a session starts with that name, and no PIN is in any URL, in any request but the login
+//   1 · each of the seven signs in: a session starts with that name, and no PIN is in any URL, in any request but the login
 //       door's, in the sessions store, in the toasts or (the login's own employee_id apart) in the browser's storage; Sign Out
 //       ends it ("signOut")
 //   2 · a PIN that is not on the list, or a short one, is refused with a clear message that does not echo the digits;
@@ -20,7 +20,7 @@ const pwDir = process.argv[2] || process.env.PW_DIR || path.join(root, 'node_mod
 const { chromium } = require(path.join(pwDir, 'playwright-core'));
 const ORIGIN = 'http://station.test';
 const MIDNIGHT = Date.parse('2026-09-29T04:00:00Z');               // 00:00 on 29 Sep in New York (EDT)
-const NAMES = ['Giovanna', 'Anna', 'Michael', 'Ivy'];
+const NAMES = ['Giovanna C.', 'Empress D.', 'Michael_V', 'Michelle_R', 'Ivy_Y', 'Ana_M', 'Paul_K'];   // as stored in the list: the underscore and the period must survive the login, the session and the welcome
 const PAGES = [['weld-1', 'welding'], ['assembly-1', 'assembly'], ['assembly-2', 'assembly'], ['assembly-3', 'assembly'], ['assembly-4', 'assembly'],
   ['shipping-1', 'shipping'], ['shipping-2', 'shipping'], ['shipping-3', 'shipping'], ['design-message', 'design'], ['design-message-1', 'design']];
 
@@ -112,7 +112,7 @@ async function run(browser, dev, station, all, allReqs, ip) {
   const sessionsOf = name => stored().filter(s => s.person === name && s.device === dev);
   const events = () => seen.filter(t => t.startsWith('POST') && t.includes('"session"')).map(t => JSON.parse(t.slice(t.indexOf('{')))).map(b => b.session);
 
-  // 1 · each of the four signs in and out
+  // 1 · each of the seven signs in and out
   for (const name of NAMES) {
     await login(pins.get(name));
     const start = await until(async () => events().find(e => e.event === 'start' && e.person === name), dev + ': a session starts for ' + name);
@@ -142,7 +142,7 @@ async function run(browser, dev, station, all, allReqs, ip) {
   ok(events().length === before, dev + ': a refused PIN starts no session');
 
   // 3 · midnight ends it; the next day the same person signs in again
-  const name = 'Michael', n0 = events().length;
+  const name = 'Michael_V', n0 = events().length;
   await login(pins.get(name));
   const s1 = await until(async () => events().slice(n0).find(e => e.event === 'start' && e.person === name), dev + ': midnight session starts');
   await page.clock.runFor(30 * 60000);                                           // past midnight
