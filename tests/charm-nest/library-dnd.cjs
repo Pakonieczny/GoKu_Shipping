@@ -163,9 +163,12 @@ const until = async (fn, ms = 20000, what = '') => { const t0 = Date.now(); for 
       const d = await page.evaluate(() => ({ state: LibraryDnd.state(), docks: document.querySelectorAll('.dndDock').length, lifts: document.querySelectorAll('.dndLift').length, chips: document.querySelectorAll('.dndChip').length, html: document.querySelector('.dndDock') ? document.querySelector('.dndDock').outerHTML.slice(0, 600) : null, rect: document.querySelector('.dndChip') ? JSON.stringify(document.querySelector('.dndChip').getBoundingClientRect()) : null, cls: document.documentElement.className, calls: window.__calls }));
       console.log('DIAG', JSON.stringify(d)); throw e;
     }
-    const b = typeof to === 'string' ? await box(page, to) : to;
+    let b = typeof to === 'string' ? await box(page, to) : to;
     await page.mouse.move(b.x, b.y, { steps: o.steps || 12 });
-    await page.evaluate(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))));   // (the place under the hand is worked out once a frame)
+    const frames = () => page.evaluate(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))));   // (the place under the hand is worked out once a frame)
+    await frames();
+    // (the page may have moved the place while the hand was on its way: pictures arriving, a list drawn again; the hand follows it)
+    for (let i = 0; i < 4 && typeof to === 'string'; i++) { const b2 = await box(page, to); if (Math.hypot(b2.x - b.x, b2.y - b.y) < 2) break; b = b2; await page.mouse.move(b.x, b.y, { steps: 4 }); await frames(); }
     return b;
   }
   /** Put the bar away: its own X when it has one, and the pointer taken off it (a pointer that rests on a bar holds it open). */
@@ -297,6 +300,7 @@ const until = async (fn, ms = 20000, what = '') => { const t0 = Date.now(); for 
     assert.equal(await area(page, 'dC01'), 'progress', 'dC01 starts in progress');
     assert.equal(await page.evaluate(() => LibraryDnd.busy()), false, 'nothing is held yet: the Library may read its lists');
     const hot = await carry(page, sheetSel('dC01'), chipSel('Laser cutting'));
+    assert.deepEqual(await page.evaluate(() => { const c = document.querySelector('.dndLift .librarySheet'); const cs = getComputedStyle(c); return [cs.opacity, c.classList.contains('dndSource'), cs.outlineStyle]; }), ['1', false, 'none'], 'the lifted copy is the card as it rests, solid: not the faint outline the real card leaves in its place');
     assert.deepEqual(await page.evaluate(() => [LibraryDnd.busy(), document.documentElement.hasAttribute('data-library-drag')]), [true, true], 'a card held: LibraryDnd.busy() and data-library-drag tell the Library to hold its live reload back');
     const dock = await page.evaluate(() => {
       const d = document.querySelector('.dndDock'), s = document.querySelector('#stage').getBoundingClientRect(), r = d.getBoundingClientRect();

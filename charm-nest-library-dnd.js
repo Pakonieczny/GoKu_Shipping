@@ -71,7 +71,9 @@
 html.dndOn,html.dndOn *{cursor:grabbing!important;-webkit-user-select:none!important;user-select:none!important}
 .dndSource{opacity:.4!important;outline:1.5px dashed var(--gold2);outline-offset:3px;border-radius:12px;transition:opacity .2s ease}
 .dndArming{transform:scale(.985);transition:transform .32s ease}
-.dndLift{position:fixed;left:0;top:0;border-radius:12px;pointer-events:none;will-change:transform;z-index:1}
+.mGhost .dndSource,.dndLift .dndSource,.fxBox .dndSource{opacity:1!important;outline:0!important}
+.mGhost .dndArming,.dndLift .dndArming,.fxBox .dndArming{transform:none!important}
+.dndLift{position:fixed;left:0;top:0;border-radius:12px;pointer-events:none;will-change:transform;z-index:1;transition:opacity .16s ease}
 .dndLift::before{content:"";position:absolute;inset:0;border-radius:inherit;box-shadow:0 28px 56px rgba(30,24,16,.3),0 4px 12px rgba(30,24,16,.16);opacity:0;transition:opacity .22s ease}
 .dndLift.on::before{opacity:1}
 .dndClip{position:absolute;inset:0;overflow:hidden;border-radius:inherit}
@@ -137,7 +139,7 @@ html.dndOn,html.dndOn *{cursor:grabbing!important;-webkit-user-select:none!impor
 .dndMovingWrap.ui .dndMovingHead,.dndMovingWrap.ui .dndWait{display:none}
 .dndMovingWrap.ui .dndApprove{gap:0}
 .dndDock.bar.ui{border-color:transparent;background:none;box-shadow:none;-webkit-backdrop-filter:none;backdrop-filter:none;padding:0}
-.dndDock.bar.ui .dndDockHead{display:none}
+.dndDock.bar.ui .dndDockHead,.dndDock.bar:has(.dndMovingWrap) .dndDockHead{display:none}
 .dndHead{font:600 12.5px var(--sans);color:var(--ink);padding:2px 0 3px}
 .dndHead.bad{color:#8a3a26}
 .dndHead.warn{color:#7a5a1d}
@@ -302,8 +304,8 @@ html.dndOn,html.dndOn *{cursor:grabbing!important;-webkit-user-select:none!impor
     if (r.width > w + 2) el.classList.add('cropX'); if (r.height > h + 2) el.classList.add('cropY');
     let ghost = null;
     try { ghost = M && M.ghost ? M.ghost(node, r, null, node) : null; } catch (_) { ghost = null; }
-    if (ghost) { Object.assign(ghost.style, { position: 'absolute', left: '0px', top: '0px' }); clip.appendChild(ghost); }
-    else { const c = node.cloneNode(true); Object.assign(c.style, { position: 'absolute', left: '0', top: '0', width: r.width + 'px', height: r.height + 'px', margin: '0', pointerEvents: 'none' }); clip.appendChild(c); }
+    if (ghost) { Object.assign(ghost.style, { position: 'absolute', left: '0px', top: '0px' }); for (const n of [ghost, ...ghost.querySelectorAll('.dndSource, .dndArming')]) n.classList.remove('dndSource', 'dndArming'); clip.appendChild(ghost); }
+    else { const c = node.cloneNode(true); c.classList.remove('dndSource', 'dndArming'); Object.assign(c.style, { position: 'absolute', left: '0', top: '0', width: r.width + 'px', height: r.height + 'px', margin: '0', pointerEvents: 'none' }); clip.appendChild(c); }
     const layer = M && M.layer ? M.layer(node) : (byId('motionLayer') || doc.body);
     layer.appendChild(el);
     const lift = { el, w, h, ox: opts.center ? w / 2 : pt ? Math.max(0, Math.min(w, pt.x - r.left)) : w / 2, oy: opts.center ? h / 2 : pt ? Math.max(0, Math.min(h, pt.y - r.top)) : h / 2, x: 0, y: 0, r: 0, rect: r };
@@ -347,7 +349,7 @@ html.dndOn,html.dndOn *{cursor:grabbing!important;-webkit-user-select:none!impor
     if (Fx && typeof Fx.fly === 'function' && !reduced() && lift.el.isConnected) {
       try {
         const home = elOf(item);
-        const el = lift.el; el.classList.remove('on');
+        const el = lift.el; el.classList.remove('on'); el.style.transition = 'none'; el.style.opacity = '';
         Object.assign(el.style, { left: (lift.x - lift.ox) + 'px', top: (lift.y - lift.oy) + 'px', transform: 'none', transformOrigin: '50% 50%' });
         m.fx = true;
         const r = await Fx.fly(el, targetEl, { kind, duration: 720, home: home || undefined, onDone() { if (home) home.classList.remove('dndSource'); } });
@@ -742,7 +744,12 @@ html.dndOn,html.dndOn *{cursor:grabbing!important;-webkit-user-select:none!impor
       if (D.drag !== d) return; d.raf = requestAnimationFrame(frame);
       const dx = d.x - d.px; d.px = d.x; d.py = d.y;
       d.tilt += ((reduced() ? 0 : Math.max(-5, Math.min(5, dx * .5))) - d.tilt) * .22;
-      if (d.lift) d.lift.place(d.x, d.y, d.tilt);
+      if (d.lift) {
+        d.lift.place(d.x, d.y, d.tilt);
+        const dr = d.dock && d.dock.el.isConnected ? d.dock.el.getBoundingClientRect() : null;
+        const over = !!dr && d.y < dr.bottom + 4 && d.y > dr.top - 4 && d.x > dr.left && d.x < dr.right;
+        if (over !== !!d.lift.thin) { d.lift.thin = over; d.lift.el.style.opacity = over ? '.46' : ''; }
+      }
       scrollNear(d);
       const z = zoneAt(d.x, d.y); if (z !== d.hot) setHot(d, z);
     });
