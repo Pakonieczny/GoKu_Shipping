@@ -65,7 +65,7 @@ function page(stream) {
     assert.deepEqual(left.map(e => e.id), [], "a rehearsal event waits on the disk for the reloaded page: " + JSON.stringify(left.map(e => e.id)));
     assert(p.disk().some(e => e.id === "prod-scan"), "production's waiting event is kept");
   }
-  /* ── 2 · the whole snapshot at once: no reload, the replay's events are recorded again ── */
+  /* ── 2 · the whole snapshot at once: the page reloads here too (its saved workspace goes with the records), and the replay's events are recorded again ── */
   {
     const p = page("off"), { c } = p;
     c.OrderTimeline.config({ mode: "sorter", sandbox: true, by: "Tester" });

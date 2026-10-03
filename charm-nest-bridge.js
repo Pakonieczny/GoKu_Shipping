@@ -7458,6 +7458,7 @@ const CustomSheet = window.CustomSheet = (() => {
     } catch(err) {e.sendCloudPending=true;e.sendError=String(err.message || err);Session.schedule();}
   }
   async function recover() {
+    if(window.CNWipe?.active)return 0;   // a sandbox clean-up is under way: nothing is sent or placed again from this browser's copies
     let n=0;for(const e of Object.values(all())){
       if(!e || e.legacy || tasks.has(e.ck) || busy.has(e.ck))continue;
       if(e.sent){if(!e.sent.id && +e.sent.at>0){e.sent.id=`custom-sheet:${e.ck}:${e.sent.at}`;e.sendCloudPending=true;ver++;Session.schedule();}if(e.sendCloudPending && S.cloud.ok)await syncSent(e);continue;}
@@ -9129,6 +9130,8 @@ const Sandbox = window.Sandbox = (() => {
   /** After the reload that switched the sandbox on: straight to the Orders tab and a pull (Auto mode starts its run instead).
       With the stream the orders come by themselves, one simulated ten minutes per check. */
   function afterReload() {
+    // what the clean-up before this reload did, said on the clean page (a toast under the Settings dialog was not seen)
+    try { const n = JSON.parse(sessionStorage.getItem("cn.sandboxResetNote") || "null"); sessionStorage.removeItem("cn.sandboxResetNote"); if (n && n.text) setTimeout(() => toast(n.text, n.bad ? "bad" : "ok", 8000), 600); } catch (_) {}
     let want = false; try { want = sessionStorage.getItem("cn.sandboxAutoPull") === "1"; sessionStorage.removeItem("cn.sandboxAutoPull"); } catch (_) {}
     if (streaming()) ready(); else if (on()) streamApi("off").catch(() => {});   // this sorter asks for the whole snapshot: a stream left playing would hide it
     if (!want || !on()) return;
@@ -9140,34 +9143,156 @@ const Sandbox = window.Sandbox = (() => {
     }, 900);
   }
   /** The station keeps the orders it finished in a browser ledger of its own, which the records' reset cannot reach: an
-      order replayed under the same number would stay hidden there as finished. (A station without the command keeps it.) */
-  const forgetCompletions = () => DesignLink.ensure().then(() => (DesignLink.state()?.commands || []).includes("sandbox.reset") && DesignLink.call("sandbox.reset", {}, { timeoutMs: 15000 }))
-    .catch(e => agent({ bridge: true }, "warn", `Sandbox reset: the station kept its own list of finished orders (${e.message})`));
-  async function reset() {
+      order replayed under the same number would stay hidden there as finished. (A station without the command keeps it.)
+      Answers true when the station cleared its own, false when it could not (said, never silently). */
+  const forgetCompletions = () => DesignLink.ensure().then(() => (DesignLink.state()?.commands || []).includes("sandbox.reset") ? DesignLink.call("sandbox.reset", {}, { timeoutMs: 15000 }).then(() => true) : false)
+    .catch(e => { agent({ bridge: true }, "warn", `Sandbox reset: the station kept its own list of finished orders (${e.message})`); return false; });
+
+  /* ── Reset the sandbox (and Purge all run history while the sandbox is on) ──────────────────────────────────────────
+     Paul, 3 Oct: "I press reset and the same records keep coming back". The records in the cloud went, but this browser
+     kept its own copy of them: the saved workspace (IndexedDB: the answered cards, the designs sent to the sheets, the sets),
+     queued messages and drafts, a journal of sheet moves. The page reloaded and restored all of it, and the designs sent
+     re-recorded themselves in the cloud. A clean-up now ends with everything the sandbox side kept in this browser gone,
+     nothing writing to the cloud meanwhile (CNWipe), and a reload that restores nothing. The production side's keys, and
+     its records, are never matched. */
+  const W = window.CNWipe || (window.CNWipe = { active: false });
+  const SB_KEY = /(^|[:.])sandbox($|[:.])/;
+  // kept: how listing photos are cropped (not a record), Claude's paid readings of lines (the cloud keeps them too and a
+  // reset never buys them again), and the epoch itself
+  const SB_KEEP = k => k === "cn.listImageFraming.sandbox" || k === "cn.customRead.sandbox" || k.startsWith("cn.resetEpoch.");
+  // lists both sides share, whose items say which side they are of: only the sandbox's items go
+  const sharedKey = k => k === "orderTimeline.outbox.v1" || k === "cn.mail.outbox" || k.startsWith("station_activity_q.");
+  const sandboxItem = (k, e) => !!(e && (k === "cn.mail.outbox" ? e.body && e.body.sandbox === true : e.sandbox === true));
+  /** What may be written under a key while a clean-up runs: null is nothing, else the value (a shared list without the sandbox's items). */
+  function scrub(k, v) {
+    if (SB_KEY.test(k)) return SB_KEEP(k) ? v : null;
+    if (sharedKey(k)) { try { const a = JSON.parse(v); if (Array.isArray(a)) { const keep = a.filter(e => !sandboxItem(k, e)); return keep.length === a.length ? v : JSON.stringify(keep); } } catch (_) {} }
+    return v;
+  }
+  let barred = false;
+  /** From the first press to the reload, no timer, queue or pagehide of this page writes the sandbox's keys back. */
+  function bar() {
+    if (barred || typeof Storage === "undefined" || !Storage.prototype || !Storage.prototype.setItem) return; barred = true;
+    const real = Storage.prototype.setItem;
+    Storage.prototype.setItem = function (k, v) { try { if (W.active && this === window.localStorage) { const s = scrub(String(k), String(v)); if (s === null) return; v = s; } } catch (_) {} return real.call(this, k, v); };
+  }
+  /** Every sandbox key this browser holds goes, and the sandbox's items leave the shared lists. Returns how many it touched. */
+  function sweepStorage() {
+    let n = 0;
+    try {
+      const keys = []; for (let i = 0; i < localStorage.length; i++) keys.push(localStorage.key(i));
+      for (const k of keys) {
+        if (!k) continue;
+        if (SB_KEY.test(k)) { if (!SB_KEEP(k)) { localStorage.removeItem(k); n++; } continue; }
+        if (sharedKey(k)) { const v = localStorage.getItem(k), s = v == null ? v : scrub(k, v); if (s !== v) { if (JSON.parse(s).length) localStorage.setItem(k, s); else localStorage.removeItem(k); n++; } }
+      }
+    } catch (_) {}
+    return n;
+  }
+  /** What this page holds in memory of the records that are gone (it is about to reload; this keeps the next second honest). */
+  function clearMemory() {
+    try { B.customDesigns = {}; B.cleared = {}; B.sets = new Map(); if (B.maps) { B.maps.customDone = {}; B.maps.customKept = {}; B.maps.customSent = {}; if (B.maps.customWrites && B.maps.customWrites.clear) B.maps.customWrites.clear(); } } catch (_) {}
+    try { if (window.Review && Review.settled) Review.settled().splice(0); } catch (_) {}
+    try { if (window.Orders) Orders.render(); if (window.Review) Review.render(); } catch (_) {}
+  }
+  /** What this browser kept of the sandbox: the saved workspace (IndexedDB), the queues, drafts and journals (localStorage).
+      own: this page is the sandbox's (it stops saving and sending, and its memory goes); else only the stored sandbox side goes. */
+  async function wipeBrowser(own) {
+    let workspace = 0; const SS = window.Session;
+    try { if (!own && SS && SS.bumpEpoch) SS.bumpEpoch("sandbox"); if (own) { if (SS && SS.discard) workspace = await SS.discard(); } else if (SS && SS.forgetScope) workspace = await SS.forgetScope("sandbox"); }
+    catch (e) { console.warn("sandbox workspace", e); }
+    try { if (window.OrderTimeline && OrderTimeline.discard) OrderTimeline.discard(true); } catch (_) {}
+    if (own) {
+      try { if (window.CNTimeline && CNTimeline.forget) CNTimeline.forget(); } catch (_) {}
+      try { if (window.TeamMail && TeamMail.wipe) TeamMail.wipe(); } catch (_) {}
+      try { if (window.CustomerMail && CustomerMail.wipeSandbox) CustomerMail.wipeSandbox(); } catch (_) {}
+      try { if (window.StationActivity && StationActivity.discard) StationActivity.discard(true); } catch (_) {}
+      // the cancelled orders' set-aside notices and jobs were the deleted records' (AutoCancel, the sandbox side only)
+      try { localStorage.removeItem("cn.autoCancel.v1:sandbox"); if (window.AutoCancel && AutoCancel.resetSandbox) AutoCancel.resetSandbox(); } catch (_) {}
+      // the stream's clock, arrivals and orders went with the records: a replay starts from nothing, as the first one did
+      try { adopt(null); Arrivals.reset(); } catch (_) {}
+      clearMemory();
+    }
+    const keys = sweepStorage();
+    // (the last writers, a pagehide of this page's own, run before this one)
+    try { window.addEventListener("pagehide", sweepStorage); } catch (_) {}
+    return { workspace, keys };
+  }
+  /** Another tab of this browser reset the sandbox (Session.listen sees the new epoch): what this page still holds of the records
+      that are gone must not be saved or sent, so it stops writing and its queues are cleared; the caller reloads. */
+  function standDown() {
+    bar(); W.active = true;
+    try { if (window.Session && Session.freeze) Session.freeze(); } catch (_) {}
+    try { if (window.OrderTimeline && OrderTimeline.discard) OrderTimeline.discard(true); } catch (_) {}
+    try { if (window.CNTimeline && CNTimeline.forget) CNTimeline.forget(); } catch (_) {}
+    try { if (window.TeamMail && TeamMail.wipe) TeamMail.wipe(); } catch (_) {}
+    try { if (window.CustomerMail && CustomerMail.wipeSandbox) CustomerMail.wipeSandbox(); } catch (_) {}
+    try { if (window.StationActivity && StationActivity.discard) StationActivity.discard(true); } catch (_) {}
+    clearMemory();
+  }
+  /** The browser's side of a Purge made from a production page: the sandbox's records went in the cloud too. */
+  async function forgetStores() { return wipeBrowser(false); }
+  const nf = n => Number(n || 0).toLocaleString("en-US");
+  /** The whole clean-up, once a person has agreed: the cloud's sandbox records (until the server says none is left and a
+      count agrees), then this browser's copy of them, then a reload that restores nothing. ui: { button, note } — the button
+      shows a spinner and what it is doing, the note is the calm line under it. Never says done while any record remains. */
+  async function wipe(ui = {}, how = {}) {
+    const btn = ui.button, note = ui.note, was = ui.was || (btn ? Array.from(btn.childNodes) : []);
+    const line = (text, bad) => { if (note) { note.textContent = text; note.style.color = bad ? "var(--clay)" : ""; } };
+    const spin = text => { if (btn) { btn.disabled = true; btn.setAttribute("aria-busy", "true"); const sp = document.createElement("span"); sp.className = "spin"; sp.setAttribute("aria-hidden", "true"); btn.replaceChildren(sp, document.createTextNode(text)); } line(text); };
+    const rest = () => { if (btn) { btn.disabled = false; btn.removeAttribute("aria-busy"); btn.replaceChildren(...was); } };
+    const stop = text => { line(text, true); toast(text, "bad", 12000); return { ok: false, text }; };
     const replay = streaming();
-    if (!confirm(`Delete every sandbox record (sandbox pools, sets, runs, sheets, locks, ledger, archive) and the sandbox's files? The snapshot stays, and so do the engraving readings Claude was paid for. Production data is untouched.${replay ? " The order stream starts over, and the sorter clears its run and reloads." : ""}`)) return;
+    spin(`${how.verb || "Resetting"} the sandbox…`);
     // no arrivals check may sweep while the records go: with the stream deleted the emulator lists the whole snapshot
     await Arrivals.pause(); let reloading = false;
+    bar(); W.active = true;   // from here nothing but this clean-up writes to the cloud (api, the queues and the recoveries look at it)
     try {
-      if (replay && RunCtl.clearRunState(null, { drop: "all" }) === false) return;   // a Rose Gold sheet still saving: nothing is deleted
+      if (RunCtl.clearRunState(null, { drop: "all" }) === false) return stop("Nothing was deleted: a Rose Gold sheet is still being nested or saved. Wait until it finishes, then press again.");   // (its own toast says so too)
       // the rehearsal's timeline events still waiting to be sent (kept on the disk across the reload) go with its records,
       // before the wipe and again after it: sent later, they would stand on the replay of the same real order numbers
       const dropEvents = () => { try { window.CNTimeline?.forget?.(); } catch (_) {} };
       dropEvents();
       // a sandbox that streamed for days holds more than one call can delete: each works a few seconds and says if more is left
-      let r = null, records = 0, files = 0;
-      for (let i = 0; i < 400; i++) { r = await api("charmNestLibrary", { op: "sandboxReset" }); records += r.deleted || 0; files += r.files || 0; if (!r.more) break; }
+      let r = null, records = 0, files = 0, filesError = null, errors = 0, idle = 0;
+      try {
+        for (let i = 0; i < 400; i++) {
+          try { r = await api("charmNestLibrary", { op: "sandboxReset" }, { wipe: true, label: "Resetting the sandbox" }); errors = 0; }
+          catch (e) { if (!e.transient || ++errors > 3) throw e; await new Promise(res => setTimeout(res, 1500 * errors)); continue; }
+          records += r.deleted || 0; files += r.files || 0; if (r.filesError) filesError = r.filesError;
+          idle = r.deleted || r.files ? 0 : idle + 1;
+          if (!r.more || idle >= 6) break;   // (six calls in a row that removed nothing: the cloud is not getting anywhere)
+          line(`${how.verb || "Resetting"} the sandbox… ${nf(records)} record(s) and ${nf(files)} file(s) removed so far`);
+        }
+      } catch (e) { return stop(`The sandbox was not fully reset: ${e.message}${records || files ? ` (${nf(records)} record(s) and ${nf(files)} file(s) were removed first)` : ""}. Press again to finish.`); }
       dropEvents();
-      if (r.more) throw new Error(`it stopped part way (${records} record(s) and ${files} file(s) removed): press Reset again to finish`);
-      toast(`Sandbox reset — ${records} record(s) and ${files} file(s) removed${r.filesError ? ` · files not deleted: ${r.filesError}` : ""}`, r.filesError ? "bad" : "ok");
-      await forgetCompletions();
-      // the cancelled orders' set-aside notices and jobs were the deleted records' (AutoCancel, the sandbox side only)
-      try { localStorage.removeItem("cn.autoCancel.v1:sandbox"); window.AutoCancel?.resetSandbox?.(); } catch (_) {}
-      // the stream's clock, arrivals and orders went with the records: a replay starts from nothing, as the first one did
-      adopt(null); Arrivals.reset();
-      if (replay) { reloading = true; setTimeout(() => location.reload(), 1200); return; }
-    } finally { if (!reloading) Arrivals.resume(); }
-    await refresh();
+      if (!r || r.more) return stop(`The sandbox was not fully reset: the cloud stopped part way (${nf(records)} record(s) and ${nf(files)} file(s) removed) and says more are left. Press again to finish.`);
+      // the cloud's own count of what is left (only a count that says none lets this say done)
+      let left = null;
+      try { const st = await api("charmNestLibrary", { op: "sandboxStatus" }, { quiet: true }); left = Object.entries(st.records || {}).filter(([, n]) => n > 0); } catch (_) { left = null; }
+      if (left && left.length) return stop(`The sandbox was not fully reset: ${nf(left.reduce((a, [, n]) => a + n, 0))} record(s) are still in the cloud (${left.map(([k, n]) => `${k.replace(/^Charm_(Nest_)?/, "")} ${n}`).join(", ")}); ${nf(records)} were removed. Press again to finish.`);
+      spin("Clearing this browser's copy…");
+      // the cloud is clean: every other tab of this browser learns it now (Session.listen) and stands down before it can send
+      // or save anything it still holds
+      try { if (window.Session && Session.bumpEpoch) Session.bumpEpoch("sandbox"); } catch (_) {}
+      const stationOk = await forgetCompletions();
+      await wipeBrowser(true);
+      const bad = !!filesError || stationOk === false;
+      const text = `${how.prefix || ""}Sandbox cleaned — ${nf(records)} record(s) and ${nf(files)} file(s) removed${left === null ? "; what is left could not be checked" : "; nothing is left"}${filesError ? ` · files not deleted: ${filesError}` : ""}${stationOk === false ? " · the Design Station kept its own list of finished orders (open the Station tab and press again)" : ""}`;
+      // said on the clean page after the reload too (a toast under this dialog is not seen)
+      try { sessionStorage.setItem("cn.sandboxResetNote", JSON.stringify({ text, bad })); if (!replay) sessionStorage.setItem("cn.sandboxAutoPull", "1"); } catch (_) {}
+      line(`${text} · reloading`, bad); toast(text, bad ? "bad" : "ok", 7000);
+      if (btn) { const sp = document.createElement("span"); sp.className = "spin"; sp.setAttribute("aria-hidden", "true"); btn.replaceChildren(sp, document.createTextNode("Reloading…")); }
+      reloading = true; setTimeout(() => location.reload(), 1500);
+      return { ok: true, records, files, text };
+    } catch (e) {
+      return stop(`The sandbox was not reset: ${e.message}`);
+    } finally { if (!reloading) { W.active = false; Arrivals.resume(); rest(); refresh().catch(() => {}); } }
+  }
+  /** Settings → Reset the sandbox: one question, then the clean-up. Answers null when it was not agreed to. */
+  async function reset(ui = {}) {
+    if (!confirm(`Delete every sandbox record (sandbox pools, sets, runs, sheets, custom orders, locks, ledger, archive) and the sandbox's files, and everything this browser kept of them (its saved workspace, queued messages, drafts)? The snapshot stays, and so do the engraving readings Claude was paid for. Production data is untouched. The order stream starts over, and the sorter reloads.`)) return null;
+    return wipe(ui, { verb: "Resetting" });
   }
   /* No strip of its own any more: the SANDBOX pill in the top bar says the mode, the station's own banner says it again,
      and Reset and the switch live in Settings. */
@@ -9182,7 +9307,7 @@ const Sandbox = window.Sandbox = (() => {
     const pill = document.getElementById("sandboxPill"); if (pill) { pill.classList.toggle("hidden", !on()); if (on()) { const text = label(), m = /^Sandbox (\S+) · sim (.+?)( · all orders in)?$/.exec(text); if (pill.dataset.label !== text) { pill.dataset.label = text; pill.innerHTML = m ? `<span>Sandbox<span class="sbSpeed"> ${esc(m[1])}</span><span class="sbTime"> · <span class="sbSim">sim </span>${esc(m[2])}</span>${m[3] ? esc(m[3]) : ""}</span>` : esc(text); } pill.title = streamText() ? `Sandbox: emulated Etsy; all records and files use sandbox copies. ${streamText()}` : "Sandbox: emulated Etsy; all records and files use sandbox copies"; } }
     document.documentElement.classList.toggle("sandbox", on());
   }
-  return { on, refresh, snapshot, enable, afterReload, reset, mountPanel, render, status: () => status, streaming, done, speed, ready, advance, restream, label, streamText, seed: () => stream && stream.seed, stream: () => stream };
+  return { on, refresh, snapshot, enable, afterReload, reset, wipe, forgetStores, standDown, mountPanel, render, status: () => status, streaming, done, speed, ready, advance, restream, label, streamText, seed: () => stream && stream.seed, stream: () => stream };
 })();
 
 
@@ -9243,8 +9368,16 @@ const TeamMail = window.TeamMail = (() => {
     const j = await res.json().catch(() => ({}));
     if (!res.ok || (j && j.success === false)) throw Object.assign(new Error((j && j.error) || `the order's record answered ${res.status}`), { status: res.status });
   }
+  /** A sandbox reset: the sandbox's drafts, queued messages and read marks go, and nothing is sent meanwhile. */
+  function wipe() {
+    if (!WORKSPACE_SANDBOX) return 0;
+    T.wiping = true; clearTimeout(T.timer);
+    const n = outbox().length;
+    for (const k of [LS_D, LS_O, LS_S]) try { localStorage.removeItem(k); } catch (_) {}
+    changed(null); return n;
+  }
   async function flush() {
-    if (T.busy) return;
+    if (T.busy || T.wiping || (window.CNWipe && CNWipe.active)) return;
     T.busy = true; clearTimeout(T.timer);
     try {
       for (;;) {
@@ -9417,7 +9550,7 @@ const TeamMail = window.TeamMail = (() => {
       + (t.loading && !t.fullAt ? `<div class="owWait small">${WAIT}Checking for newer messages…</div>` : "");
   }
 
-  return { draftOf, setDraft, syncDraft, queue, pending, drop, retry, flush, read, isNew, markSeen, mark, slot, stamp, auto, thread, load, html, drawKey,
+  return { wipe, draftOf, setDraft, syncDraft, queue, pending, drop, retry, flush, read, isNew, markSeen, mark, slot, stamp, auto, thread, load, html, drawKey,
     onThread: f => { tsubs.add(f); return () => tsubs.delete(f); }, onDraft: f => { dsubs.add(f); return () => dsubs.delete(f); },
     ok: () => T.ok, error: () => T.err, waiting: rid => pending(rid).filter(x => !x.error).length, on: f => { T.subs.add(f); return () => T.subs.delete(f); } };
 })();
@@ -11991,6 +12124,14 @@ const Kin = window.Kin = (() => {
 const Session = window.Session = (() => {
   let dbP, db0 = null, ready = false, timer = 0, chain = Promise.resolve(), saving = false, forced = false, listening = false, quiet = false, early = false;
   const key = () => WORKSPACE_SANDBOX ? "sandbox" : "production";
+  /* A reset of the sandbox (Sandbox.wipe) puts a new "epoch" on the sandbox side (a localStorage key every tab of this
+     browser sees). A checkpoint carries the epoch of the page that wrote it: one from before the reset (a tab that kept
+     running, a write in the last second before the reload) is never restored, and a tab that sees the epoch change stops
+     saving and reloads. `frozen` is a page that will not write a checkpoint again (it is about to reload). */
+  const EPOCH = scope => "cn.resetEpoch." + scope;
+  const epochOf = scope => { try { return localStorage.getItem(EPOCH(scope)) || ""; } catch (_) { return ""; } };
+  const pageEpoch = epochOf(key());
+  let frozen = false;
   /* The sorter stays on for days (Paul, 24 Sep: "everything must be able to stay on indefinitely"). A checkpoint copies
      every sheet, order and decision, and one used to be written a second after every change, back to back while a sheet
      nested. Now one is written at most every ten seconds, never straight after the last, and not at all when nothing
@@ -12000,6 +12141,7 @@ const Session = window.Session = (() => {
   const bestPending = new Map(); let bestSaving = false, bestChain = Promise.resolve();
   const DROP = {};                                                      // a best-layout record to delete, in turn with the writes
   function queueBest(id, value) {
+    if (frozen) return bestChain;
     bestPending.set(id, value);
     if (bestSaving) return bestChain;
     bestSaving = true;
@@ -12119,7 +12261,7 @@ const Session = window.Session = (() => {
   }
   function capture() {
     const seen = new Map();
-    return { v: 1, at: Date.now(), packingCatalog:copy(S.packingCatalog, seen), carry: copy(B.carry, seen), run: runCopy(seen), orders: copy(B.orders, seen),
+    return { v: 1, at: Date.now(), epoch: pageEpoch, packingCatalog:copy(S.packingCatalog, seen), carry: copy(B.carry, seen), run: runCopy(seen), orders: copy(B.orders, seen),
       sources: copy(S.sources, seen), poolSources: copy(poolSourcesInUse(), seen), unassigned: copy(S.unassigned, seen),
       sheets: METALS.map(m => ({ metal: m.key, active: S.sheets[m.key].active, pages: allSheets().filter(p => p.metal === m.key).map(p => copy(p, seen)) })),
       pools: copy(B.pool.rows, seen), sets: copy(B.sets, seen), customDesigns: copy(B.customDesigns || {}, seen), cleared: copy(B.cleared || {}, seen), jobs: [...B.engrave.items.values()].map(j => ({...copy(j, seen), ...(j.editingBack ? {editRow:copy(j.row, new WeakMap())} : {})})),
@@ -12148,10 +12290,11 @@ const Session = window.Session = (() => {
     return failures ? Math.max(t, lastEnd + Math.min(300000, 15000 * 2 ** (failures - 1))) : t;
   }
   function arm(delay) {
-    if (!ready || timer || saving || rev === savedRev) return;
+    if (frozen || !ready || timer || saving || rev === savedRev) return;
     timer = setTimeout(() => { timer = 0; flush(); }, Math.max(delay, due() - Date.now(), 0));
   }
   async function pass() {
+    if (frozen) return;
     const scope = key(); lastStart = Date.now();
     try {
       await window.CharmNestInteraction?.idle();
@@ -12165,7 +12308,7 @@ const Session = window.Session = (() => {
   /** flush(true) writes now (after a pass in flight); flush() only when something changed and the pace allows. */
   function flush(force) {
     // (a save asked for before the page listens, a cleanup put on the restored workspace: made as soon as it does)
-    clearTimeout(timer); timer = 0; if (!ready) { if (force) early = true; return chain; }
+    clearTimeout(timer); timer = 0; if (frozen) return chain; if (!ready) { if (force) early = true; return chain; }
     if (force) forced = true;
     else if (rev === savedRev) return chain;
     else if (due() > Date.now()) { arm(0); return chain; }
@@ -12177,13 +12320,13 @@ const Session = window.Session = (() => {
     });
     return chain;
   }
-  function schedule() { if (quiet) return; rev++; arm(1000); }
+  function schedule() { if (quiet || frozen) return; rev++; arm(1000); }
   /** Leaving the page (reload, close, another tab): write the workspace now. flush() first waits for the pointer and the
       keyboard to rest and for a save already in flight, and a reloading page is gone before either happens, so whatever
       was done in the last second before a reload (a nudge, a word, a decision) was lost. The write is issued here, in the
       same task; IndexedDB orders it after any earlier write. Nothing changed since the last checkpoint: nothing to write. */
   function flushNow() {
-    clearTimeout(timer); timer = 0; if (!ready) {early=true;return Promise.resolve(false);} if(rev === savedRev)return Promise.resolve(true);
+    clearTimeout(timer); timer = 0; if (frozen) return Promise.resolve(false); if (!ready) {early=true;return Promise.resolve(false);} if(rev === savedRev)return Promise.resolve(true);
     let snapshot; const scope = key(), at = rev;
     try { snapshot = capture(); } catch (_) { return flush(true).then(()=>!failure); }
     // synchronously on the open connection and committed at once: a transaction left to auto-commit, or created a
@@ -12194,6 +12337,9 @@ const Session = window.Session = (() => {
   async function restore() {
     let d; try { d = await io(); } catch (e) { toast(`Workspace recovery unavailable: ${e.message}`, "bad"); return false; }
     if (!d || d.v !== 1) { sweepBest(new Set()); return false; }
+    // a checkpoint written before the sandbox's last reset is of records that are gone (a tab that kept running, or the write
+    // of the last second before the reload): it is deleted, never restored
+    if ((d.epoch || "") !== epochOf(key())) { await remove(key()).catch(() => {}); sweepBest(new Set()); return false; }
     // the sheets cut short while nesting, whose best-layout records restore reads (and a reload before the next checkpoint reads again)
     const cutShort = cutShortIn((d.sheets || []).flatMap(g => g.pages || []));
     try {
@@ -12276,10 +12422,33 @@ const Session = window.Session = (() => {
     for (const type of ["input", "change", "pointerup", "keyup"]) document.addEventListener(type, schedule, true);
     window.addEventListener("pagehide", flushNow);
     document.addEventListener("visibilitychange", () => { if (document.hidden) flushNow(); });
+    // the sandbox was reset in another tab of this browser: this tab's memory is of records that are gone, so it stops
+    // saving (its checkpoint would bring them back) and reloads
+    window.addEventListener("storage", e => {
+      if (e.key !== EPOCH(key()) || (e.newValue || "") === pageEpoch || frozen) return;
+      freeze(); try { if (window.Sandbox && Sandbox.standDown) Sandbox.standDown(); toast("The sandbox was reset in another tab — reloading this one", "", 4000); } catch (_) {}
+      setTimeout(() => location.reload(), 1200);
+    });
     // asked once, never waited for: a browser short of space may otherwise clear this workspace while the tab is closed
     try { navigator.storage?.persisted?.().then(p => p || navigator.storage.persist?.()).catch(() => {}); } catch (_) {}
   }
-  return { copy, capture, restore, listen, flush, flushNow, schedule, checkpointBest, dropBest, poolSourcesInUse, ready: () => ready, failure: () => failure || bestFailure };
+  function freeze() { frozen = true; clearTimeout(timer); timer = 0; bestPending.clear(); }
+  /** Deletes a side's checkpoint and its best-layout records from this browser (IndexedDB). Returns how many it deleted. */
+  async function forgetScope(scope) {
+    try {
+      const db = await open();
+      const keys = await new Promise(resolve => { try { const store = db.transaction("workspaces", "readonly").objectStore("workspaces"); if (typeof store.getAllKeys !== "function") return resolve([scope]); const req = store.getAllKeys(); req.onsuccess = () => resolve(req.result || []); req.onerror = () => resolve([scope]); } catch (_) { resolve([scope]); } });
+      const doomed = keys.filter(k => k === scope || (typeof k === "string" && k.startsWith(scope + ":best:")));
+      if (!doomed.length) return 0;
+      await new Promise((resolve, reject) => { const tx = db.transaction("workspaces", "readwrite"), store = tx.objectStore("workspaces"); doomed.forEach(k => store.delete(k)); tx.oncomplete = () => resolve(); tx.onerror = () => reject(tx.error); tx.onabort = () => reject(tx.error || new Error("Workspace clean-up interrupted")); });
+      return doomed.length;
+    } catch (e) { console.warn("workspace clean-up", e); return 0; }
+  }
+  /** This page will not save again; what it saved goes (after a save still in flight lands). */
+  async function discard() { freeze(); await chain.catch(() => {}); await bestChain.catch(() => {}); return forgetScope(key()); }
+  /** A side's reset: a new epoch every tab and every older checkpoint of it can tell. */
+  function bumpEpoch(scope) { const v = Date.now().toString(36) + Math.random().toString(36).slice(2, 8); try { localStorage.setItem(EPOCH(scope), v); } catch (_) {} return v; }
+  return { copy, capture, restore, listen, flush, flushNow, schedule, checkpointBest, dropBest, poolSourcesInUse, ready: () => ready, failure: () => failure || bestFailure, freeze, discard, forgetScope, bumpEpoch };
 })();
 
 /* ═══ 24g · Cleanups — a change made on a saved sheet's record, put on this page's own copy of the sheet ═══════════════

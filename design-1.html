@@ -7978,8 +7978,10 @@ const Bridge = (() => {
       allOpenReceipts = []; S.lastSweepAt = 0;   // the next read sweeps the emulator again
       // and the rest of what the sandbox kept in this browser (its keys all carry the ":sandbox" suffix): the memory of
       // the sorter's commits, the order-detail copy and the listing photos, so a replayed order is read afresh
-      [LSK.commits, CACHE_KEY, __imagesKey].forEach(k => { try { localStorage.removeItem(k); } catch (_) {} });
+      [LSK.commits, CACHE_KEY, __imagesKey, LSK.selected, LS.selection, "designStation.chatDrafts.v1" + NS].forEach(k => { try { localStorage.removeItem(k); } catch (_) {} });
       detailCache.clear(); __imagesCache.clear(); __imagesSaved.clear(); __imagesMiss.clear(); notesCache.clear(); msgCache.clear();
+      // the History's copy of the sandbox archive (its own IndexedDB, mirrored from the records the reset deleted)
+      try { archiveIndex = []; archiveById = new Map(); archiveDetail.clear(); archiveSyncAt = 0; archiveFloor = 0; archiveOlderDone = false; await Promise.all([idbClear("index"), idbClear("meta"), idbClear("detail")]); } catch (_) {}
       return { ok: true };
     },
     /** The open receipts exactly as Etsy returned them (transactions included), for the sandbox snapshot. */

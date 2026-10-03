@@ -540,8 +540,18 @@
     flushOut();
   }
   function dropOut(id) { put(LS.out, pendingOut().filter(x => x.id !== id)); }
+  /** A sandbox reset (the sorter's Sandbox.wipe): the sandbox's own drafts and queued messages go. Production's stay. */
+  function wipeSandbox() {
+    if (!SANDBOX) return 0;
+    clearTimeout(draftTimer); draftTimer = 0;
+    for (const k of Object.keys(drafts)) delete drafts[k];
+    put(LS.drafts, null);
+    const list = pendingOut(), keep = list.filter(x => !(x.body && x.body.sandbox));
+    if (keep.length !== list.length) put(LS.out, keep.length ? keep : null);
+    return list.length - keep.length;
+  }
   async function flushOut() {
-    if (outBusy || !M.key) return;
+    if (outBusy || !M.key || (window.CNWipe && window.CNWipe.active)) return;
     outBusy = true;
     try {
       for (;;) {
@@ -1736,7 +1746,7 @@
     orderWindow, orderShown, orderClosed, setTab, lineBox, cardPane, cardAsk, badge, badgeStamp, slot, teamButtons, teamTranslation, teamTrState: () => teamTrV,
     // for the engraving card's Customer tab dot: a new reply, or a message that did not go
     tabNews: rid => { const b = badgeState(String(rid)); return b ? { unread: !!b.unread, bad: !!b.bad } : null; },
-    openConversation, connect, connected: () => !!M.key,
+    openConversation, connect, connected: () => !!M.key, wipeSandbox,
     _state: M
   };
 })();

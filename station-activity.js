@@ -179,8 +179,23 @@
     } catch (e) { warn("start:", e); }
   }
 
+  /** A sandbox reset (the sorter): the sandbox's events still waiting, in memory and on the disk, go with its records. */
+  function discard(sandbox) {
+    let n = 0;
+    try {
+      const keep = e => !!(e && e.sandbox) !== !!sandbox;
+      const before = queue.length; queue = queue.filter(keep); n += before - queue.length;
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i); if (!k || k.indexOf(K.q) !== 0) continue;
+        const list = lsJson(k, []); if (!Array.isArray(list)) continue;
+        const rest = list.filter(keep); if (rest.length === list.length) continue;
+        n += list.length - rest.length; if (rest.length) lsSet(k, JSON.stringify(rest)); else lsDel(k);
+      }
+    } catch (e) { warn("discard:", e); }
+    return n;
+  }
   window.StationActivity = {
-    log, flush: () => flush(true), pending: () => queue.length,
+    log, flush: () => flush(true), pending: () => queue.length, discard,
     who: () => { const w = whoNow(); return w ? { person: w.person, station: w.station, device: w.device, computer: w.computer, session: w.session } : null; }
   };
   // events left from an earlier page load (offline, closed too fast) go out soon after the station has set itself up
