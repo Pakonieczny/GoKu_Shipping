@@ -65,10 +65,11 @@ const ORDERS = [{ receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * DAY, up
     // a point on the nth seal that the seal itself answers for (clear: and none of the page's buttons does, over: the part that lies over a sealed button)
     const point = (sel, n = 0, mode = '') => page.evaluate(([sel, n, mode]) => {
       const s = document.querySelectorAll(sel)[n]; if (!s) return null; const r = s.getBoundingClientRect(), own = e => e && (e === s || s.contains(e)), bs = [...document.querySelectorAll('[data-seal-btn]')].map(b => b.getBoundingClientRect());
-      const onBtn = (x, y) => bs.some(b => x >= b.left && x <= b.right && y >= b.top && y <= b.bottom), cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+      // (m: a click's own position is a whole pixel and the button's edge moves a hair as it settles, so a "clear" point keeps 3 px off every button and an "over" point 3 px in)
+      const onBtn = (x, y, m = 0) => bs.some(b => x >= b.left - m && x <= b.right + m && y >= b.top - m && y <= b.bottom + m), cx = r.left + r.width / 2, cy = r.top + r.height / 2;
       const f = mode === 'over' ? 0 : .25;   // (a seal hangs over its button by its edge only); the point nearest the seal's heart is the steadiest
       let best = null;
-      for (let y = r.top + r.height * f + 2; y < r.bottom - 2; y += 2) for (let x = r.left + r.width * f + 2; x < r.right - 2; x += 2) if (own(document.elementFromPoint(x, y)) && (mode === 'over' ? onBtn(x, y) : mode === 'clear' ? !onBtn(x, y) : true)) { const d = Math.hypot(x - cx, y - cy); if (!best || d < best.d) best = { x, y, d }; }
+      for (let y = r.top + r.height * f + 2; y < r.bottom - 2; y += 2) for (let x = r.left + r.width * f + 2; x < r.right - 2; x += 2) if (own(document.elementFromPoint(x, y)) && (mode === 'over' ? onBtn(x, y, -3) : mode === 'clear' ? !onBtn(x, y, 3) : true)) { const d = Math.hypot(x - cx, y - cy); if (!best || d < best.d) best = { x, y, d }; }
       return best && { x: best.x, y: best.y };
     }, [sel, n, mode]);
     const sealState = (sel, n = 0) => page.evaluate(([sel, n]) => { const s = document.querySelectorAll(sel)[n]; if (!s) return null; const m = new DOMMatrix(getComputedStyle(s).transform), r = s.getBoundingClientRect(); return { k: s.dataset.sealZoom ? +s.dataset.sealZoom : 0, scale: Math.hypot(m.a, m.b), inView: r.left >= 0 && r.top >= 0 && r.right <= innerWidth && r.bottom <= innerHeight, size: Math.min(s.offsetWidth, s.offsetHeight) }; }, [sel, n]);
@@ -147,7 +148,7 @@ const ORDERS = [{ receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * DAY, up
       await page.evaluate(() => {
         window.__zb = 0; const d = document.createElement('div'); d.id = 'zbl'; d.style.cssText = 'position:fixed;left:700px;top:520px;z-index:5;display:flex;align-items:center';
         d.innerHTML = '<button type="button" class="btn sealedPrint sm" id="zbtn" data-seal-btn style="width:160px;height:44px">Print QR label</button>' + Seal.row({ stamps: [{ how: 'print', at: Date.now() - 3600e3, by: 'Paul' }], prints: 1 });
-        d.lastElementChild.style.marginLeft = '-70px'; document.body.appendChild(d); document.getElementById('zbtn').addEventListener('click', () => window.__zb++);
+        d.lastElementChild.style.marginLeft = '-30px'; document.body.appendChild(d); document.getElementById('zbtn').addEventListener('click', () => window.__zb++);
       });
       const sel = '#zbl .seal', over = await point(sel, 0, 'over'), clear = await point(sel, 0, 'clear'), pressed = () => page.evaluate(() => __zb);
       assert(over && clear, 'a seal that lies partly over its button');

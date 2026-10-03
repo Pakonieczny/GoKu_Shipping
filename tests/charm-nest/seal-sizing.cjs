@@ -5,7 +5,7 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('n
 const {JSDOM}=require('jsdom');
 const ROOT=path.join(__dirname,'../..'),read=file=>fs.readFileSync(path.join(ROOT,file),'utf8');
 // jsdom's stylesheet parser (cssstyle) drops a declaration whose value has min(), max() or clamp() around var() -- valid CSS that every
-// browser keeps, such as the Library card cap `width:min(72px,var(--seal-fit,var(--seal-size)))` -- so the seal would measure 84 px here
+// browser keeps, such as the Library card cap `width:min(44px,var(--seal-fit,var(--seal-base)))` -- so the seal would measure 50 px here
 // whatever the stylesheet says. The production stylesheet is loaded with each such value held verbatim in a custom property (which jsdom
 // keeps) and the property set to var() of it: the same cascade and the same expression, resolved by the helpers below as any var() is.
 const jsdomCss=css=>css.replace(/([a-z-]+)\s*:\s*([^;{}]*\b(?:min|max|clamp)\([^;{}]*var\([^;{}]*)(?=[;}])/g,(_,prop,value)=>`--jsdom-${prop}:${value};${prop}:var(--jsdom-${prop})`);
@@ -60,11 +60,12 @@ function width(node){
 }
 Object.defineProperty(w.HTMLElement.prototype,'clientWidth',{get(){return width(this);}});
 Object.defineProperty(w.HTMLElement.prototype,'offsetWidth',{get(){return width(this);}});
-Object.defineProperty(w.HTMLElement.prototype,'offsetHeight',{get(){return length(this,'height') ?? (this.classList.contains('lc')?28:84);}});
+Object.defineProperty(w.HTMLElement.prototype,'offsetHeight',{get(){return length(this,'height') ?? (this.classList.contains('lc')?28:50);}});
 w.HTMLElement.prototype.getBoundingClientRect=function(){const size=width(this),h=this.offsetHeight;return {left:410,top:560,right:410+size,bottom:560+h,width:size,height:h};};
 w.HTMLElement.prototype.getClientRects=function(){return [this.getBoundingClientRect()];};
 w.eval(read('charm-nest-motion.js'));w.eval(read('charm-nest-engraving-seals.js'));w.eval(read('charm-nest-readiness.js'));
 const Seal=w.Seal,at=Date.UTC(2026,9,1,1,44),by='Recorded Operator',outside=d.querySelector('#outside');
+const BASE=50,CAP=44,BAR=22;   // the regular seal, the Library card's cap and the order window's one-line bar (Paul, 3 Oct: 84, 72 and 34 were too big)
 const nearly=(actual,expected,message)=>assert(Math.abs(actual-expected)<.02,`${message}: ${actual} vs ${expected}`);
 const rule=(sheet,selector)=>[...sheet.cssRules].find(r=>r.selectorText===selector);
 const tick=async()=>{for(let i=0;i<6;i++)await Promise.resolve();};
@@ -87,72 +88,72 @@ function fitted(f,label){
   assert(widths.every(n=>n===widths[0]),label+' fits every sibling uniformly');assert.deepEqual(heights,widths,label+' preserves square seal viewports');
   const used=widths.reduce((sum,n)=>sum+n,0)+gap(f.row)*Math.max(0,f.seals.length-1);
   const capacity=f.row.clientWidth-pad(f.row);assert(used<=capacity+.02,label+' fits inside its actual CSS width cap');
-  assert(widths.every(n=>n>0&&n<=84),label+' only shrinks below the canonical size');return widths[0];
+  assert(widths.every(n=>n>0&&n<=BASE),label+' only shrinks below the canonical size');return widths[0];
 }
 
 (async()=>{
   try{
-    assert.equal(Seal.BASE_SIZE,84);assert.equal(Seal.HOVER_SIZE,undefined,'no fixed enlarged size remains: the zoom is adaptive');assert.equal(typeof Seal.zoomScale,'function');assert.equal(Seal.zoomScale(84),1.08);assert(Seal.zoomScale(24)>Seal.zoomScale(56)&&Seal.zoomScale(56)>Seal.zoomScale(84)&&Seal.zoomScale(84)===Seal.zoomScale(140),'smaller seals zoom more (the gentle curve: 64px and up ×1.08, 56 ×1.15, 24 ×1.55)');
+    assert.equal(Seal.BASE_SIZE,BASE);assert.equal(Seal.HOVER_SIZE,undefined,'no fixed enlarged size remains: the zoom is adaptive');assert.equal(typeof Seal.zoomScale,'function');assert.equal(Seal.zoomScale(84),1.08);assert(Seal.zoomScale(24)>Seal.zoomScale(56)&&Seal.zoomScale(56)>Seal.zoomScale(84)&&Seal.zoomScale(84)===Seal.zoomScale(140),'smaller seals zoom more (the gentle curve: 64px and up ×1.08, 56 ×1.15, 24 ×1.55)');
     assert.equal(typeof Seal.fitGroups,'function');assert.equal(typeof Seal.fit,'function');
-    assert.equal(custom(d.documentElement,'--seal-size'),'84px');assert.equal(custom(d.documentElement,'--seal-hover-size'),'','no fixed hover size is left in the stylesheet');
+    assert.equal(custom(d.documentElement,'--seal-base'),BASE+'px','the regular seal size is one variable (Paul, 3 Oct: much smaller than the old 84px)');assert.equal(custom(d.documentElement,'--seal-hover-size'),'','no fixed hover size is left in the stylesheet');
 
     // Old rendering calls and previously generated inline --sz values cannot create a different normal size.
     for(const how of ['print','button','engraveApproved','engravePlain','laserReady','laserDone'])for(const requested of [0,34,56,112,180]){
       const host=d.createElement('span');host.innerHTML=Seal.html({how,at,by},requested);d.body.appendChild(host);
-      const seal=host.firstElementChild;assert.equal(seal.style.getPropertyValue('--sz'),'84px',how+' normalizes a legacy requested size');
-      seal.style.setProperty('--sz',requested+'px');nearly(length(seal,'width'),84,how+' CSS ignores a legacy width');nearly(length(seal,'height'),84,how+' CSS ignores a legacy height');host.remove();
+      const seal=host.firstElementChild;assert.equal(seal.style.getPropertyValue('--sz'),BASE+'px',how+' normalizes a legacy requested size');
+      seal.style.setProperty('--sz',requested+'px');nearly(length(seal,'width'),BASE,how+' CSS ignores a legacy width');nearly(length(seal,'height'),BASE,how+' CSS ignores a legacy height');host.remove();
     }
     for(const ready of [true,false])assert.equal(w.CharmNestReadiness.seal({ready}),'','computed readiness never creates a preview stamp');
 
     // Twelve historical decisions remain available; shrinking never alters, hides or cuts off any seal.
     const history=fixture(12),faces=history.seals.map(s=>s.innerHTML);
     assert.equal(history.seals.length,12,'the entire history is rendered');assert.equal(history.row.querySelector('.sealMore'),null,'no historical seal is replaced by an earlier-count marker');
-    assert.equal(fitted(history,'wide 12-seal history'),84);
-    history.parent._width=440;const narrow=fitted(history,'narrow 12-seal history');assert(narrow<84);
+    assert.equal(fitted(history,'wide 12-seal history'),BASE);
+    history.parent._width=440;const narrow=fitted(history,'narrow 12-seal history');assert(narrow<BASE);
     const stable=history.row.style.getPropertyValue('--seal-fit');fitted(history,'repeated narrow fit');assert.equal(history.row.style.getPropertyValue('--seal-fit'),stable,'repeated fitting does not oscillate');
-    history.parent._width=1200;assert.equal(fitted(history,'restored wide history'),84,'seals grow back to the canonical size');
+    history.parent._width=1200;assert.equal(fitted(history,'restored wide history'),BASE,'seals grow back to the canonical size');
     assert.deepEqual(history.seals.map(s=>s.innerHTML),faces,'fitting never rewrites historical artwork');history.parent.remove();
 
     // A strip that asks for small seals (the order window's one line, Seal.row size) never grows them past it, and still shrinks below it when short of room.
     for(const count of [1,2,3]){
-      const f=fixture(count,1200,'',34);assert.equal(fitted(f,count+' small-strip seals'),34,'a requested strip size is the most a seal grows to');
+      const f=fixture(count,1200,'',BAR);assert.equal(fitted(f,count+' small-strip seals'),BAR,'a requested strip size is the most a seal grows to');
       if(count>1){f.parent._width=count*20+4*(count-1);assert(fitted(f,count+' constrained small-strip seals')<=20,'a short strip still shrinks them together');}
       f.parent.remove();
     }
     // (the order window's custom bar: a row beside words that take what is left, in a flex line, never collapses to a pixel)
     {
       const bar=d.createElement('div');bar.style.cssText='display:flex;gap:8px;padding:5px 8px 5px 10px';bar.style.width='772px';bar._width=772;
-      bar.innerHTML='<span class="tag"></span><span class="w"></span>'+Seal.row({stamps:[{how:'print',at,by},{how:'button',at:at+6e4,by}]},{size:34})+'<button></button>';
+      bar.innerHTML='<span class="tag"></span><span class="w"></span>'+Seal.row({stamps:[{how:'print',at,by},{how:'button',at:at+6e4,by}]},{size:BAR})+'<button></button>';
       const tag=bar.children[0],words=bar.children[1],btn=bar.children[3];tag._width=259;btn._width=65;words._width=306;words.style.cssText='flex:1 1 auto;min-width:0';
       d.body.appendChild(bar);const row=bar.querySelector('.sealRow');row.style.margin='0';row.style.maxWidth='50%';row.style.flex='0 0 auto';
-      Seal.fitGroups(bar);assert.equal(parseFloat(row.style.getPropertyValue('--seal-fit')),34,'the custom bar\'s seals are 34px, not squeezed to the width the line gave a previous fit');bar.remove();
+      Seal.fitGroups(bar);assert.equal(parseFloat(row.style.getPropertyValue('--seal-fit')),BAR,'the custom bar\'s seals are '+BAR+'px, not squeezed to the width the line gave a previous fit');bar.remove();
     }
     for(const count of [1,2,3,4,6,8]){
-      const f=fixture(count,1200);assert.equal(fitted(f,count+' spacious siblings'),84);
-      if(count>1){f.parent._width=count*64+4*(count-1);assert(fitted(f,count+' constrained siblings')<=64,'adding siblings reduces them together');f.parent._width=1200;assert.equal(fitted(f,count+' expanded siblings'),84);}
+      const f=fixture(count,1200);assert.equal(fitted(f,count+' spacious siblings'),BASE);
+      if(count>1){f.parent._width=count*40+4*(count-1);assert(fitted(f,count+' constrained siblings')<=40,'adding siblings reduces them together');f.parent._width=1200;assert.equal(fitted(f,count+' expanded siblings'),BASE);}
       f.parent.remove();
     }
-    const changing=fixture(2,256);const two=fitted(changing,'two siblings');
+    const changing=fixture(2,130);const two=fitted(changing,'two siblings');
     const extra=d.createElement('span');extra.innerHTML=Seal.html({how:'print',at:at+9e5,by},56);changing.row.appendChild(extra.firstChild);changing.seals=[...changing.row.querySelectorAll('.seal')];
-    assert(fitted(changing,'third sibling added')<two,'a new seal triggers a smaller equal fit');changing.row.lastChild.remove();changing.seals=[...changing.row.querySelectorAll('.seal')];assert.equal(fitted(changing,'third sibling removed'),84);changing.parent.remove();
-    const responsive=fixture(4,600);assert.equal(fitted(responsive,'observed group starts full-size'),84);
-    await resizeParent(responsive.parent,224);assert(responsive.seals.every(s=>length(s,'width')<84),'a container resize refits without an explicit render or window resize');
-    await resizeParent(responsive.parent,600);assert(responsive.seals.every(s=>length(s,'width')===84),'a wider container restores the same canonical size automatically');responsive.parent.remove();
+    assert(fitted(changing,'third sibling added')<two,'a new seal triggers a smaller equal fit');changing.row.lastChild.remove();changing.seals=[...changing.row.querySelectorAll('.seal')];assert.equal(fitted(changing,'third sibling removed'),BASE);changing.parent.remove();
+    const responsive=fixture(4,600);assert.equal(fitted(responsive,'observed group starts full-size'),BASE);
+    await resizeParent(responsive.parent,150);assert(responsive.seals.every(s=>length(s,'width')<BASE),'a container resize refits without an explicit render or window resize');
+    await resizeParent(responsive.parent,600);assert(responsive.seals.every(s=>length(s,'width')===BASE),'a wider container restores the same canonical size automatically');responsive.parent.remove();
 
     // These real stylesheet caps previously defeated parseFloat(maxWidth): min(), calc() and row padding matter.
     const engraving=fixture(12,600,'engravingSeals');assert(fitted(engraving,'engraving capped history')<20);assert(engraving.row.clientWidth<=240);engraving.parent.remove();
     const process=fixture(4,300,'processSealRow');process.parent.classList.add('libCard');
     // Apply the matching production cap directly because JSDOM does not rank selector specificity.
     process.row.style.maxWidth=rule(main,'.libCard>.processSealRow').style.getPropertyValue('max-width');
-    assert(fitted(process,'compact Library process history')<=65);assert(process.row.clientWidth<=260,'process history uses the card width without reserving an unearned badge');process.parent.remove();
+    assert(fitted(process,'compact Library process history')<=CAP);assert(process.row.clientWidth<=260,'process history uses the card width without reserving an unearned badge');process.parent.remove();
     const single=fixture(1,300,'processSealRow');single.parent.classList.add('libCard');
-    assert.equal(fitted(single,'single Library process seal'),72,'Library cards use the requested compact seal cap');single.parent.remove();
+    assert.equal(fitted(single,'single Library process seal'),CAP,'Library cards use the requested compact seal cap');single.parent.remove();
 
     // The existing Approved control keeps its footprint and label. Its seal and the workspace approval overlay stay out of flow.
     const panel=d.createElement('section');panel.innerHTML=w.CNEngravingSeals.panel({kind:'approved',at,by,job:{key:'test',state:'approved',approvedAt:at,approvedBy:by}});d.body.appendChild(panel);
     const button=panel.querySelector('.egApproveButton');assert.equal(button.textContent,'Approved');
     nearly(length(button,'min-width'),144,'Approved minimum width');nearly(length(button,'height'),36,'Approved height');nearly(length(button,'font-size'),18,'Approved text size');assert.equal(w.getComputedStyle(button).justifyContent,'center');
-    const buttonSeal=panel.querySelector('.egButtonSeal');assert.equal(w.getComputedStyle(buttonSeal).position,'absolute');nearly(length(buttonSeal.firstElementChild,'width'),84,'button uses the same seal size');assert.equal(w.getComputedStyle(buttonSeal.firstElementChild).backgroundColor,'rgba(0, 0, 0, 0)');panel.remove();
+    const buttonSeal=panel.querySelector('.egButtonSeal');assert.equal(w.getComputedStyle(buttonSeal).position,'absolute');nearly(length(buttonSeal.firstElementChild,'width'),BASE,'button uses the same seal size');assert.equal(w.getComputedStyle(buttonSeal.firstElementChild).backgroundColor,'rgba(0, 0, 0, 0)');panel.remove();
     // The reported pair must share the actual button row, not consume a separate history shelf.
     const pair=d.createElement('section');pair.innerHTML=w.CNEngravingSeals.panel({kind:'approved',at:at+180000,by:'Seth',job:{key:'pair',state:'approved',approvedAt:at+180000,approvedBy:'Seth',seals:[{how:'engraveApproved',at,by},{how:'engraveApproved',at:at+180000,by:'Seth'}]}});d.body.appendChild(pair);
     const wrap=pair.querySelector('.egApproveWrap'),pairRow=pair.querySelector('.egButtonSeal');
@@ -162,7 +163,7 @@ function fitted(f,label){
       wrap._width=available;Seal.fitGroups(pair);const size=length(pairRow.firstElementChild,'width');
       assert.equal(length(pairRow.lastElementChild,'width'),size,'siblings shrink equally');
       const used=2*size+gap(pairRow)+pad(pairRow),room=available-144-8+size/2;
-      assert(used<=room+.03,'the whole row fits beside its half-button overlap');assert(size>0&&size<=84);
+      assert(used<=room+.03,'the whole row fits beside its half-button overlap');assert(size>0&&size<=BASE);
       if(available===220)assert(size<40,'narrow inspectors dynamically reduce both stamps');
       assert.equal(pairRow.innerHTML,originalPair,'resizing preserves original names/times/artwork');
     }
@@ -179,14 +180,14 @@ function fitted(f,label){
     const families=Object.keys(Seal.FAMILY);assert.equal(families.length,8);
     for(const family of families){
       const host=d.createElement('span');host.className='sealRow';host.innerHTML=`<span class="seal" tabindex="0" role="img" aria-label="Stamped by ${by} · Sep 30" data-at="${at}">${Seal.face({family,action:Seal.FAMILY[family].name,at,by})}</span>`;d.body.appendChild(host);
-      const seal=host.firstElementChild;nearly(length(seal,'width'),84,family+' regular size');assert.doesNotMatch(seal.querySelector('svg').textContent,/Recorded Operator|Signed by/);
-      const box={left:400,top:560,width:84,height:84,right:484,bottom:644};seal.getBoundingClientRect=()=>box;seal.getClientRects=()=>[box];
-      seal.dispatchEvent(new w.MouseEvent('click',{bubbles:true,clientX:452,clientY:602}));await tick();
-      assert.equal(d.querySelector('[data-seal-zoom]'),seal,family+' grows where it stands');assert.equal(seal.dataset.sealZoom,Seal.zoomScale(84).toFixed(2),family+' takes the 84px size\'s scale');
+      const seal=host.firstElementChild;nearly(length(seal,'width'),BASE,family+' regular size');assert.doesNotMatch(seal.querySelector('svg').textContent,/Recorded Operator|Signed by/);
+      const box={left:400,top:560,width:BASE,height:BASE,right:400+BASE,bottom:560+BASE};seal.getBoundingClientRect=()=>box;seal.getClientRects=()=>[box];
+      seal.dispatchEvent(new w.MouseEvent('click',{bubbles:true,clientX:400+BASE/2,clientY:560+BASE/2}));await tick();
+      assert.equal(d.querySelector('[data-seal-zoom]'),seal,family+' grows where it stands');assert.equal(seal.dataset.sealZoom,Seal.zoomScale(BASE).toFixed(2),family+' takes the '+BASE+'px size\'s scale');
       assert.equal(d.querySelectorAll('.sealLens,.tlLoupe').length,0,family+' makes no second surface');assert.equal(seal.querySelectorAll('svg').length,1,family+' keeps its one face');assert.equal(seal.querySelector('svg').dataset.sealFamily,family);
       assert.match(seal.getAttribute('aria-label'),/Recorded Operator/);assert.doesNotMatch(seal.outerHTML,/Current Viewer/);assert(!seal.hasAttribute('title'),family+' has no tooltip');
       seal.dispatchEvent(new w.MouseEvent('pointerout',{bubbles:true,relatedTarget:outside,clientX:-9,clientY:-9}));await tick();assert.equal(d.querySelector('[data-seal-zoom]'),null,family+' goes back with the pointer');host.remove();
     }
-    console.log('PASS: canonical84 normal / adaptive in-place zoom across all8 families; legacy sizes ignored; all12 historical seals retained; equal groups shrink, recover and respect calc/min caps; compact Approved control and workspace overlay preserved; no redundant Library padding.');
+    console.log('PASS: canonical50 normal / adaptive in-place zoom across all8 families; legacy sizes ignored; all12 historical seals retained; equal groups shrink, recover and respect calc/min caps; compact Approved control and workspace overlay preserved; no redundant Library padding.');
   }finally{w.close();}
 })().catch(error=>{console.error(error);process.exitCode=1;});
