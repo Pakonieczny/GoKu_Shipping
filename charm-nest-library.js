@@ -547,6 +547,7 @@
       b.innerHTML=(done?ICON.undo:ICON.check)+`<span>${done?'Reopen set':'Mark set completed'}</span>`;
       b.title=done?'Return the set and its sheets to Laser cutting':'Confirm laser cutting is finished for every remaining sheet';
     }
+    if (window.LibraryDnd) window.LibraryDnd.decorate(root);   // the grip (drag, or Move to…) on each card: charm-nest-library-dnd.js
   }
   function act(kind, id, done, btn) {
     if (btn) btn.classList.add('busy');
@@ -581,6 +582,24 @@
     try { setCounts((await api('charmNestLibrary', { op: 'laserDoneList', countOnly: true }, { quiet: true })).counts); }
     catch (_) { L.countsAt = Date.now(); }
     finally { L.countsBusy = false; }
+  }
+
+  /** A sheet or set was moved by drag and drop (charm-nest-library-dnd.js, LibraryFlow.commit wrote to the cloud): what this
+      page had marked for `keys` ("sheet:<id>" | "set:<id>") is let go, Current is read again (it opens from a cache a
+      minute old otherwise) and Completed takes its rows out and in again in place; the counts follow. */
+  async function reload(keys) {
+    for (const k of keys || []) L.marks.delete(k);
+    if (S.library) S.library.loadedAt = 0;
+    refreshCounts(true);
+    if (S.mode !== 'library') { for (const k of [...L.lists.keys()]) dropList(k); return; }
+    if (L.tab === 'done') {
+      const st = L.list;
+      for (const [k, x] of [...L.lists]) if (x !== st) dropList(k);
+      if (st) { removeRows(st, (keys || []).filter(k => st.byKey.has(k))); await freshen(st, true); } else showDone(true);
+      return;
+    }
+    for (const k of [...L.lists.keys()]) dropList(k);
+    try { await loadLibrary(); } catch (_) { /* the list on screen stays */ }
   }
 
   /* ── search ── */
@@ -1067,5 +1086,6 @@
   }
 
   window.LibraryDone = { mark, isDone, isFiled, canComplete, addedSeals, refreshCards: root => { cards(root, L.tab); partials(root); }, tab: () => L.tab, setTab, show, focus, rows, decorate, input, fromHash, glide, counts: () => L.counts && Object.assign({}, L.counts) };
+  window.LibraryDone.reload = reload;
   if (doc.readyState === 'loading') doc.addEventListener('DOMContentLoaded', init); else init();
 })();
