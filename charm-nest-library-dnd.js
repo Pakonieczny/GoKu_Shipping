@@ -50,7 +50,7 @@
   const flow = () => { const f = W.LibraryFlow; return f && typeof f.targets === 'function' && typeof f.plan === 'function' && typeof f.commit === 'function' ? f : null; };
   const D = { pending: null, drag: null, move: null, menu: null, noClick: 0, seq: 0, pt: null, settling: 0 };
   /** A card is held, flying home or being moved (the Library's live read leaves its lists alone meanwhile). */
-  const busy = () => !!(D.drag || D.move || D.settling > 0);
+  const busy = () => !!(D.pending || D.drag || D.move || D.menu || D.settling > 0);
   const sync = () => { try { html.toggleAttribute('data-library-drag', busy()); } catch (_) { /* no attribute */ } };
   const specKey = s => s.area ? 'area:' + s.area : s.set ? 'set:' + s.set : 'newSet';
   const cleanSpec = s => s.area ? { area: s.area } : s.set ? { set: s.set } : { newSet: true };
@@ -457,7 +457,7 @@ html.dndOn,html.dndOn *{cursor:grabbing!important;-webkit-user-select:none!impor
   /* ═══ the "Moving" bar: where the plan is shown ═══ */
   /** `slot`: { mount(wrap), anchor }. Returns the bar: wait(text) · plan(plan, opts) → Promise · done(res) · fail(text) · note(text) · hold(ms) · remove(). */
   function mountMoving(slot, title) {
-    const wrap = doc.createElement('div'); wrap.className = 'dndMovingWrap';
+    const wrap = doc.createElement('div'); wrap.className = 'dndMovingWrap'; wrap.setAttribute('data-library-approval', '');
     wrap.innerHTML = `<div class="dndMoving" role="status" aria-live="polite"><div class="dndMovingIn"><div class="dndMovingHead"><span class="dndMovingTitle"></span><button type="button" class="dndX" aria-label="Dismiss" hidden>×</button></div><div class="dndWait" hidden><i class="dndSpin" aria-hidden="true"></i><span></span></div><div class="dndApprove"></div></div></div>`;
     const q = s => wrap.querySelector(s), titleEl = q('.dndMovingTitle'), waitEl = q('.dndWait'), ap = q('.dndApprove'), x = q('.dndX');
     titleEl.textContent = title || '';
@@ -689,7 +689,7 @@ html.dndOn,html.dndOn *{cursor:grabbing!important;-webkit-user-select:none!impor
   function cancelMove(m, fast) { if (!m || m.state !== 'review') return; if (fast) m.fast = true; if (m.resolve) m.resolve(null); if (m.skip) m.skip(); }
 
   /* ═══ dragging ═══ */
-  function clearPending() { const p = D.pending; if (!p) return; clearTimeout(p.timer); clearTimeout(p.arm); if (p.armEl) p.armEl.classList.remove('dndArming'); D.pending = null; }
+  function clearPending() { const p = D.pending; if (!p) return; clearTimeout(p.timer); clearTimeout(p.arm); if (p.armEl) p.armEl.classList.remove('dndArming'); D.pending = null; sync(); }
   function onDown(e) {
     if (!e.isPrimary || (e.pointerType === 'mouse' && e.button !== 0)) return;
     clearPending();
@@ -704,7 +704,7 @@ html.dndOn,html.dndOn *{cursor:grabbing!important;-webkit-user-select:none!impor
       p.timer = setTimeout(() => { if (D.pending === p) { try { navigator.vibrate && navigator.vibrate(8); } catch (_) { /* quiet */ } begin(p, p.x, p.y); } }, 380);
       p.arm = setTimeout(() => { if (D.pending === p && p.armEl) p.armEl.classList.add('dndArming'); }, 120);
     }
-    p.x = e.clientX; p.y = e.clientY;
+    p.x = e.clientX; p.y = e.clientY; sync();
   }
   function onMove(e) {
     const p = D.pending;
@@ -788,7 +788,7 @@ html.dndOn,html.dndOn *{cursor:grabbing!important;-webkit-user-select:none!impor
 
   /* ═══ the keyboard way: Move to… ═══ */
   function closeMenu() {
-    const m = D.menu; if (!m) return; D.menu = null;
+    const m = D.menu; if (!m) return; D.menu = null; sync();
     m.grip.setAttribute('aria-expanded', 'false');
     const w = m.wrap; w.classList.remove('on');
     if (reduced()) w.remove(); else setTimeout(() => w.remove(), 280);
@@ -808,7 +808,7 @@ html.dndOn,html.dndOn *{cursor:grabbing!important;-webkit-user-select:none!impor
     const head = item.kind === 'sheet' && el.matches('.librarySheet') ? sheetCard(el).querySelector(':scope > .h') : item.kind === 'set' && el.matches('.setCard') ? el.querySelector(':scope > .sh') : el.closest('.ldItem') && el.closest('.ldItem').querySelector(':scope > .ldLine');
     if (!head) return;
     head.after(wrap);
-    const menu = D.menu = { item, wrap, grip };
+    const menu = D.menu = { item, wrap, grip }; sync();
     if (grip) grip.setAttribute('aria-expanded', 'true');
     requestAnimationFrame(() => wrap.classList.add('on'));
     const ts = await targetsOf(item);

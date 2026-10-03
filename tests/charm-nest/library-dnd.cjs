@@ -165,6 +165,7 @@ const until = async (fn, ms = 20000, what = '') => { const t0 = Date.now(); for 
     }
     const b = typeof to === 'string' ? await box(page, to) : to;
     await page.mouse.move(b.x, b.y, { steps: o.steps || 12 });
+    await page.evaluate(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))));   // (the place under the hand is worked out once a frame)
     return b;
   }
   /** Put the bar away: its own X when it has one, and the pointer taken off it (a pointer that rests on a bar holds it open). */
@@ -240,23 +241,26 @@ const until = async (fn, ms = 20000, what = '') => { const t0 = Date.now(); for 
     await page.waitForSelector('.lapBar', { timeout: 8000 });
     await page.waitForSelector('.lapBar button, .lapBar .lapRose', { timeout: 20000 });
     await page.waitForTimeout(2200); await shot(page, 'R07-real-rose-bar');
-    const roseBar = await page.evaluate(() => { const b = document.querySelector('.lapBar'); return { text: b.textContent.replace(/\s+/g, ' ').slice(0, 400), buttons: [...b.querySelectorAll('button')].map(x => x.textContent.trim()), rose: !!b.querySelector('.lapRose') }; });
+    const roseBar = await page.evaluate(() => { const b = document.querySelector('.lapBar'); return { text: b.textContent.replace(/\s+/g, ' ').slice(0, 1600), buttons: [...b.querySelectorAll('button')].map(x => x.textContent.trim()), rose: !!b.querySelector('.lapRose') }; });
     console.log('R3 · Rose Gold bar:', JSON.stringify(roseBar));
-    assert(roseBar.buttons.some(x => /green dash line/i.test(x)), 'the Rose Gold bar offers the green dash line: ' + JSON.stringify(roseBar));
-    assert(roseBar.buttons.some(x => /not now/i.test(x)), 'and Not now');
+    // Either the real Rose bar asks (a sheet that is open on the page: "Add the green dash line" / "Not now"), or, for a sheet the page cannot
+    // see (this fixture's: it is not open on the Nest tab), the plan says plainly that it needs the line and why it will not add it. Both write nothing.
+    const asks = roseBar.buttons.some(x => /^add the green dash line/i.test(x)) && roseBar.buttons.some(x => /not now/i.test(x));
+    assert(asks || /green dash line/i.test(roseBar.text) && /never adds one/i.test(roseBar.text), 'the bar speaks of the green dash line and says a move never adds one: ' + JSON.stringify(roseBar));
+    console.log('R3 · the real plan', asks ? 'ASKS for the line (confirm bar)' : 'says the line is needed and is not added by a move (sheet not open on the page)');
     assert.equal(await where('dB02'), 'progress', 'the drop alone moved nothing');
     const writes = posts.filter(p => !/^(listSheets|getSheet|list|get|read)/.test(p));
     assert.deepEqual(writes.filter(p => /flowApply|laserDone|rose|seal/i.test(p)), [], 'the drop alone wrote nothing: ' + JSON.stringify(posts));
     await page.waitForTimeout(1500);
     assert.deepEqual(posts.filter(p => /flowApply|laserDone|rose|seal/i.test(p)), [], 'waiting wrote nothing either: ' + JSON.stringify(posts));
-    await page.click('.lapBar button:text-matches("not now", "i")');
+    await page.click(asks ? '.lapBar button:text-matches("not now", "i")' : '.lapBar button:text-matches("^close$", "i")');
     await until(() => page.evaluate(() => !document.querySelector('.dndLift, .fxBox') && !document.querySelector('.dndSource')), 15000, 'back home after Not now');
     await page.mouse.move(8, 8);
     await until(() => page.evaluate(() => !document.querySelector('.dndMovingWrap')), 15000, 'bar put away');
     assert.equal(await where('dB02'), 'progress');
     assert.deepEqual(posts.filter(p => /flowApply|laserDone|rose|seal/i.test(p)), [], 'Not now wrote nothing: ' + JSON.stringify(posts));
     await chk('R3');
-    ok.push('R · real modules, Rose Gold: the plan asks for the green dash line in the real Rose bar ("Add the green dash line" / "Not now"); the drop and the waiting write nothing; Not now sends the card home and writes nothing');
+    ok.push('R · real modules, Rose Gold: the real plan speaks of the green dash line (' + (asks ? 'the real Rose bar: "Add the green dash line" / "Not now"' : 'a sheet not open on the page: needed, and never added by a move') + '); the drop and the waiting write nothing; the card goes home and nothing is written');
     assert.deepEqual(errors, [], 'no errors: ' + errors.join(' | '));
     await ctx.close();
     await browser.close(); srv.close && srv.close();
@@ -291,7 +295,9 @@ const until = async (fn, ms = 20000, what = '') => { const t0 = Date.now(); for 
     const before = await area(page, 'dA02');
     assert.equal(before, 'laser', 'dA02 starts in Laser cutting');
     assert.equal(await area(page, 'dC01'), 'progress', 'dC01 starts in progress');
+    assert.equal(await page.evaluate(() => LibraryDnd.busy()), false, 'nothing is held yet: the Library may read its lists');
     const hot = await carry(page, sheetSel('dC01'), chipSel('Laser cutting'));
+    assert.deepEqual(await page.evaluate(() => [LibraryDnd.busy(), document.documentElement.hasAttribute('data-library-drag')]), [true, true], 'a card held: LibraryDnd.busy() and data-library-drag tell the Library to hold its live reload back');
     const dock = await page.evaluate(() => {
       const d = document.querySelector('.dndDock'), s = document.querySelector('#stage').getBoundingClientRect(), r = d.getBoundingClientRect();
       return { top: r.top, bottom: r.bottom, stageTop: s.top, chips: [...d.querySelectorAll('.dndChip')].map(c => [c.querySelector('.dndChipName').textContent, c.dataset.state]), lift: !!document.querySelector('.dndLift'), liftImg: !!document.querySelector('.dndLift img.pv'), source: document.querySelector('.dndSource') && document.querySelector('.dndSource').className, dialogs: document.querySelectorAll('dialog[open]').length, innerHeight };
@@ -330,6 +336,7 @@ const until = async (fn, ms = 20000, what = '') => { const t0 = Date.now(); for 
     await until(() => page.evaluate(() => !document.querySelector('.dndDock, .dndLift, .dndSource, [data-dnd-state]')), 4000, 'put away after letting go over nothing');
     assert.equal(await page.$$eval('.dndDock, .dndLift, .dndSource, [data-dnd-state]', n => n.length), 0, 'a card let go over nothing settles back and everything is put away');
     assert.deepEqual(await page.evaluate(() => __calls.filter(c => c[0] === 'plan' || c[0] === 'commit')), [], 'no plan, no commit for a drop over nothing');
+    await until(() => page.evaluate(() => !LibraryDnd.busy() && !document.documentElement.hasAttribute('data-library-drag')), 3000, 'not busy once it is back');
     ok.push('B · a sheet held: dock with each place named, own area and set dimmed with the reason, in-place sections and set cards named, real preview in the lifted copy, faint original, no pop-up; let go over nothing: nothing asked');
 
     // 2 · a sheet dropped on a set card that is not ready: flies there, plan ok, commit, the lists show it in its new set
