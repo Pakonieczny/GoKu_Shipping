@@ -13,15 +13,15 @@
 .hBar:has(>.cnListTools){gap:8px}
 @media(max-width:600px){.cnListTools{gap:3px}.cnListTools .cnDatePresets button{padding:4px 5px}.cnListTools .cnActivitySort{max-width:110px}}
 .btn.sm.egApproveButton{display:inline-flex;align-items:center;justify-content:center;font-size:18px;line-height:1.1;text-align:center;padding:6px 12px;min-width:144px;height:36px;box-sizing:border-box;border-radius:9px;white-space:nowrap}
-.egApproveWrap{position:relative;display:inline-flex;align-items:center;margin-right:calc(var(--seal-size,84px) / 2 + 12px);overflow:visible}
-.egApproveWrap>.egButtonSeal{position:absolute;left:calc(100% - var(--seal-size,84px) / 2 + 8px);top:calc(var(--seal-size,84px) / -2);width:var(--seal-size,84px);height:var(--seal-size,84px);margin:0;padding:0;z-index:4}
+.egApproveWrap{position:relative;display:inline-flex;align-items:center;margin-right:calc(var(--seal-base,50px) / 2 + 12px);overflow:visible}
+.egApproveWrap>.egButtonSeal{position:absolute;left:calc(100% - var(--seal-base,50px) / 2 + 8px);top:calc(var(--seal-base,50px) / -2);width:var(--seal-base,50px);height:var(--seal-base,50px);margin:0;padding:0;z-index:4}
 .pvMain{position:relative}
-.pvMain:has(.pvApproval:not(:empty)){padding-right:calc(156px + var(--seal-size,84px) / 2);box-sizing:border-box}
-.pvApproval{position:absolute;top:calc(var(--seal-size,84px) / 2);right:0;display:flex;flex-direction:column;align-items:flex-end;gap:8px;width:calc(156px + var(--seal-size,84px) / 2)}
+.pvMain:has(.pvApproval:not(:empty)){padding-right:calc(156px + var(--seal-base,50px) / 2);box-sizing:border-box}
+.pvApproval{position:absolute;top:calc(var(--seal-base,50px) / 2);right:0;display:flex;flex-direction:column;align-items:flex-end;gap:8px;width:calc(156px + var(--seal-base,50px) / 2)}
 .pvApproval>.sealRow.engravingSeals{padding:0;max-width:100%;min-height:0;justify-content:flex-end}
 .egButtonSeal>.seal{background:transparent;border-radius:0;mix-blend-mode:normal}
 .sealRow.engravingSeals{display:inline-flex;flex-wrap:nowrap;align-items:center;gap:4px;margin:0;padding:4px;max-width:min(240px,100%);min-height:0;overflow:visible}
-.sealRow.engravingSeals>.seal,.egButtonSeal>.seal{position:relative;flex:0 0 var(--seal-fit,var(--seal-size,84px));margin:0;width:var(--seal-fit,var(--seal-size,84px));height:var(--seal-fit,var(--seal-size,84px));max-width:none;max-height:none}
+.sealRow.engravingSeals>.seal,.egButtonSeal>.seal{position:relative;flex:0 0 var(--seal-fit,var(--seal-base,50px));margin:0;width:var(--seal-fit,var(--seal-base,50px));height:var(--seal-fit,var(--seal-base,50px));max-width:none;max-height:none}
 .decisionStatus:has(.engravingSeals){gap:2px;overflow:visible}
 .egPlacementSeals:empty{display:none}
 .egPlacementSeals{justify-self:end;overflow:visible}
@@ -50,7 +50,7 @@
 .swEng .egHistory{border-top:1px solid var(--line2);padding-top:3px}
 .swEng .egHistory .engravingSeals{max-width:100%}
 .swEng .egApproveWrap{width:100%;min-width:0;margin-right:0}
-.swEng .egApproveWrap>.egButtonSeal{left:calc(144px - var(--seal-fit,var(--seal-size,84px)) / 2 + 8px);right:0;top:calc(36px - var(--seal-fit,var(--seal-size,84px)));width:auto;height:var(--seal-fit,var(--seal-size,84px));max-width:none;padding:0 8px;gap:16px}
+.swEng .egApproveWrap>.egButtonSeal{left:calc(144px - var(--seal-fit,var(--seal-base,50px)) / 2 + 8px);right:0;top:calc(36px - var(--seal-fit,var(--seal-base,50px)));width:auto;height:var(--seal-fit,var(--seal-base,50px));max-width:none;padding:0 8px;gap:16px}
 .swEng .acts:empty{display:none}
 .swEng .by{font:11px var(--sans);color:var(--ink45)}
 .swEng.flash{animation:swFlash 1.4s ease}

@@ -189,7 +189,7 @@ const ORDERS = [{ receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * DAY, up
     await page.waitForTimeout(1200); await page.mouse.move(700, 600);
     // the order window's custom-order bar: its seals were 1px wide
     const bar = await page.evaluate(() => [...document.querySelectorAll('#owCustom .sealRow .seal')].map(s => s.offsetWidth));
-    check(bar.length === 1 && bar.every(w => w >= 24), 'the custom-order bar\'s one seal (the others are on the Timeline: +N) has a real size again: ' + bar.join(', ') + ' px');
+    check(bar.length === 1 && bar.every(w => w >= 18), 'the custom-order bar\'s one seal (the others are on the Timeline: +N) has a real size again: ' + bar.join(', ') + ' px');
     // 6a · the header strip: 24px seals in a 44px box that clips
     const stops = '#owRail .tlStop .tlSeal:not(.pending)', nStops = await page.evaluate(sel => document.querySelectorAll(sel).length, stops);
     const done = await page.evaluate(sel => [...document.querySelectorAll(sel)].map((s, i) => [i, s.closest('.tlStop').className]).filter(([, c]) => /\bd\b/.test(c)).map(([i]) => i), stops);
@@ -277,7 +277,7 @@ const ORDERS = [{ receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * DAY, up
     const tp = await Y.point('#zlab .seal');
     await B.page.touchscreen.tap(tp.x, tp.y); await B.page.waitForFunction(() => document.querySelector('#zlab .seal[data-seal-zoom]'), null, { timeout: 1500 }); await B.page.waitForTimeout(250);
     const tz = await Y.probe('#zlab .seal'), dur = await B.page.evaluate(() => Math.max(0, ...document.getAnimations().map(a => a.effect && a.effect.getTiming().duration || 0)));
-    check(near(tz.k, await Y.scale(84, 96)) && tz.k > 1 && tz.inView, 'a tap zooms at once (×' + tz.k + ')');
+    check(near(tz.k, await Y.scale(tz.size, 96)) && tz.k > 1 && tz.inView, 'a tap zooms at once (×' + tz.k + ')');
     check(await B.page.evaluate(() => Math.max(0, ...[...document.querySelectorAll('#zlab .seal')[0].getAnimations()].map(a => +a.effect.getTiming().duration)) <= 130), 'with reduced motion it is a short fade, no bounce');
     await B.page.touchscreen.tap(tp.x, tp.y); await Y.gone();
     check((await Y.zoomed()) === 0, 'a second tap puts it back');

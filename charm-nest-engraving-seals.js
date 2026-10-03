@@ -19,7 +19,7 @@
     return merge({seals:(events || []).filter(e=>(e.type==='engraveApproved' || e.type==='engraveChanged' && e.data?.how==='skipped') && (!e.orderId || String(e.orderId)===rid) && (e.lineKey===row.key || tx && String(e.transactionId)===tx || copies.has(e.data?.poolId))).map(e=>({id:e.id,how:e.type==='engraveApproved'?'engraveApproved':'engravePlain',at:+(e.type==='engraveChanged'?e.data?.decidedAt ?? e.at:e.at) || 0,by:e.by || ''}))});
   }
   function add(job,how,by,at=Date.now()){keep(job);const seal={id:`${how}:${at}:${String(by).trim()}`,how,at,by};job.engravingSeals=merge(job,{seals:[seal]});if(job.row){job.row.engrave ||= {};job.row.engrave.seals=job.engravingSeals;}return seal;}
-  const regularSize=()=>root?.Seal?.BASE_SIZE || 84;
+  const regularSize=()=>root?.Seal?.BASE_SIZE || 50;
   function html(job){const seals=list(job);return seals.length && root?.Seal?`<span class="sealRow engravingSeals" data-seal-group data-seal-count="${seals.length}" role="group" aria-label="Engraving approval history">${seals.map(s=>root.Seal.html(s,regularSize(),'engravingSeal')).join('')}</span>`:'';}
   const esc=s=>String(s ?? '').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   function record(e){return {key:e.job?.key,engravingSeals:merge(e.job,e.job?.row?.engrave,...(e.job?.backs || []),e.job?.editOriginal,e.back,e.saved),state:e.kind==='approved'?'approved':e.kind==='skipped'?'skipped':e.job?.state,approvedAt:e.kind==='approved'?e.at:0,approvedBy:e.kind==='approved'?e.by:'',decidedAt:e.kind==='skipped'?e.at:0,decidedBy:e.kind==='skipped'?e.by:''};}
