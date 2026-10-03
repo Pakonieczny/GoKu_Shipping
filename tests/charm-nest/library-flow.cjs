@@ -92,7 +92,11 @@ const S = 'Charm_Nest_Sheets', SET = 'Charm_Nest_Sets', RUN = 'Charm_Nest_Runs',
     assert.equal(await area('sheet', 'noqr'), 'progress');
     p = await LF.plan({ kind: 'sheet', id: 'noqr', to: { area: 'laser' } });
     assert(p.ok, JSON.stringify(p.needs)); assert(p.auto.some(a => /QR label made/.test(a.label)) && p.auto.some(a => a.key === 'seal'));
+    // what the approval screen reads: the kind, plain names of both ends, and real stamps flagged as such
+    assert.equal(p.kind, 'sheet'); assert.equal(p.from.label, 'In progress'); assert.equal(p.to.label, 'Laser cutting');
+    assert(p.auto.find(a => a.key === 'seal').stamp === true && p.auto.find(a => /^qrLabel/.test(a.key)).stamp === true, 'a seal and a remade QR label are stamps'); assert(!p.auto.find(a => a.check && a.stamp));
     r = await LF.commit(p, { by: 'Paul' }); assert.equal(r.ok, true, JSON.stringify(r)); assert.deepEqual(labels, ['noqr']); assert.equal(await area('sheet', 'noqr'), 'laser'); assert(seals('noqr').includes('laserReady:Paul'));
+    assert(r.applied.find(a => a.key === 'seal').stamp === true && r.applied.find(a => a.key === 'seal').detail, 'applied lines carry the keys of the auto lines'); assert(r.applied.every(a => a.key && a.label));
     p = await LF.plan({ kind: 'sheet', id: 'noback', to: { area: 'laser' } });
     assert.equal(p.ok, false); const eng = p.needs.find(x => x.key === 'engraving'); assert(eng, JSON.stringify(p.needs)); assert(/back engraving/.test(eng.label)); assert(eng.items.length, 'it says which charms');
     const before = JSON.stringify(st.doc(S, 'noback'));
@@ -102,6 +106,7 @@ const S = 'Charm_Nest_Sheets', SET = 'Charm_Nest_Sets', RUN = 'Charm_Nest_Runs',
     st.put(S, 'noqr', { label: null, laserDoneAt: undefined }); st.doc(S, 'noqr').label = undefined; st.put(S, 'noqr', { processSeals: [] });
     labels.length = 0; a = await LF.approve({ kind: 'sheet', id: 'noqr', by: 'Paul' });
     assert.equal(a.approved, true, JSON.stringify(a)); assert.deepEqual(labels, ['noqr']); assert(a.applied.some(x => /QR label/.test(x.label)));
+    assert.equal(a.mode, 'approve'); assert(a.auto.every(x => x.done), 'an approval lists only what is done'); assert(a.applied.find(x => /^qrLabel/.test(x.key)).stamp === true);
     const a2 = await LF.approve({ kind: 'sheet', id: 'noqr', by: 'Paul' }); assert.equal(a2.approved, true); assert.deepEqual(labels, ['noqr'], 'the second press finds everything done'); assert.deepEqual(a2.applied, []);
     p = await LF.plan({ kind: 'sheet', id: 'draft', to: { area: 'laser' } }); assert(p.needs.some(x => x.key === 'membership'), 'a held-back sheet has to join a set first');
     p = await LF.plan({ kind: 'sheet', id: 'noqr', to: { area: 'completed' } });
@@ -131,19 +136,32 @@ const S = 'Charm_Nest_Sheets', SET = 'Charm_Nest_Sets', RUN = 'Charm_Nest_Runs',
     assert.equal(p.ok, true, JSON.stringify(p.needs)); assert.deepEqual(p.confirm.map(c => c.key), ['roseLine'], 'the fallback confirm without the Rose Gold module'); assert(/green dash line/i.test(p.confirm[0].label));
     r = await LF.commit(p, { by: 'Paul' }); assert.equal(r.ok, false); assert(/yes/i.test(r.error)); assert.equal(st.doc(S, 'rose').rosePlanHash, undefined);
     r = await LF.commit(p, { by: 'Paul', confirmed: ['roseLine'] }); assert.equal(r.ok, false, 'confirmed, but nothing can calculate it'); assert(/cannot be calculated/.test(r.error)); assert.equal(st.doc(S, 'rose').rosePlanHash, undefined); assert(!held('rose'));
+    let roseSheet = { sheetId: 'rose', label: 'RG Sheet 1', needsLine: true, source: 'live', blocked: '', why: 'No green dash line yet' }, roseRefuse = '';
     LF.configure({ rose: () => ({
-      check: async item => { roseCalls.push('check:' + item.id); return { needsLine: true, sheets: [{ sheetId: 'rose', needsLine: true }], confirm: { key: 'roseLine', label: 'Add the green dash line to RG Sheet 1?', detail: 'This calculates the cut contour for these charms' } }; },
-      calculate: async (item, o) => { roseCalls.push('calculate:' + item.id + ':' + o.by); o.onStep({ key: 'calculating', label: 'Calculating' }); st.put(S, item.id, { rosePlanHash: 'hash-1' }); o.onStep({ key: 'saved', label: 'Saved' }); return { ok: true, lines: 4 }; }
+      check: async item => { roseCalls.push('check:' + item.id); return { needsLine: true, sheets: [roseSheet], confirm: { key: 'roseLine', label: 'Add the green dash line to RG Sheet 1?', detail: 'This calculates the cut contour for these charms' } }; },
+      calculate: async (item, o) => { roseCalls.push('calculate:' + item.id + ':' + o.by); if (roseRefuse) return { ok: false, lines: 0, error: roseRefuse, sheets: [] }; o.onStep({ key: 'calculating', label: 'Calculating' }); st.put(S, item.id, { rosePlanHash: 'hash-1' }); o.onStep({ key: 'saved', label: 'Saved' }); return { ok: true, lines: 4, sheets: [{ sheetId: 'rose', label: 'RG Sheet 1', lineAdded: true, lines: 4 }] }; }
     }) });
+    // a sheet the page does not have open, or still saving, cannot be given a line from a move: a hard need, no yes is asked for
+    roseSheet = { ...roseSheet, source: 'record' }; p = await LF.plan({ kind: 'sheet', id: 'rose', to: { area: 'laser' } });
+    assert.equal(p.ok, false); assert(p.needs.some(x => x.key === 'roseOpen' && /Cut Sheet/.test(x.detail) && /Nest tab/.test(x.detail) && x.items[0].label === 'RG Sheet 1'), JSON.stringify(p.needs)); assert.deepEqual(p.confirm, []);
+    r = await LF.commit(p, { by: 'Paul', confirmed: ['roseLine'] }); assert.equal(r.ok, false); assert(/Cut Sheet/.test(r.error)); assert(!roseCalls.some(c => /calculate/.test(c)));
+    roseSheet = { ...roseSheet, source: 'live', blocked: 'Its layout is still being nested or saved' }; p = await LF.plan({ kind: 'sheet', id: 'rose', to: { area: 'laser' } });
+    assert(p.needs.some(x => x.key === 'roseBusy') && !p.confirm.length, JSON.stringify(p)); roseSheet = { ...roseSheet, blocked: '' }; roseCalls.length = 0;
+    // calculate itself refuses (cloud off, layout saving, not open): nothing was written, the hold/release it took is put back
+    p = await LF.plan({ kind: 'sheet', id: 'rose', to: { area: 'laser' } }); roseRefuse = 'RG Sheet 1 is not open on this page, so its green dash line cannot be worked out here. Open it on the Nest tab and press Cut Sheet there';
+    r = await LF.commit(p, { by: 'Paul', confirmed: ['roseLine'] }); assert.equal(r.ok, false); assert(/Nest tab/.test(r.error)); assert.equal(st.doc(S, 'rose').rosePlanHash, undefined); assert.equal(await area('sheet', 'rose'), 'progress'); roseRefuse = ''; roseCalls.length = 0;
     p = await LF.plan({ kind: 'sheet', id: 'rose', to: { area: 'laser' } }); assert.equal(p.confirm[0].label, 'Add the green dash line to RG Sheet 1?'); assert.deepEqual(roseCalls, ['check:rose']);
     r = await LF.commit(p, { by: 'Paul' }); assert.equal(r.ok, false); assert(!roseCalls.some(c => /calculate/.test(c)), 'no calculation without its press');
     const steps = []; r = await LF.commit(p, { by: 'Paul', confirmed: ['roseLine'], onStep: x => steps.push(x.key + ':' + (x.state || '')) });
-    assert.equal(r.ok, true, JSON.stringify(r)); assert.equal(roseCalls.filter(c => /calculate/.test(c)).length, 1); assert(roseCalls.includes('calculate:rose:Paul')); assert.equal(st.doc(S, 'rose').rosePlanHash, 'hash-1');
+    assert.equal(r.ok, true, JSON.stringify(r)); assert(r.applied.some(a => a.key === 'roseLine' && /Green dash line added to RG Sheet 1/.test(a.label)), JSON.stringify(r.applied)); assert.equal(roseCalls.filter(c => /calculate/.test(c)).length, 1); assert(roseCalls.includes('calculate:rose:Paul')); assert.equal(st.doc(S, 'rose').rosePlanHash, 'hash-1');
     assert(steps.some(x => /^roseLine:start/.test(x)) && steps.some(x => /^calculating/.test(x)), steps.join());
     assert.equal(await area('sheet', 'rose'), 'laser');
     // moving it elsewhere (back, completed) adds no line either: from Laser cutting there is nothing to calculate
     roseCalls.length = 0; p = await LF.plan({ kind: 'sheet', id: 'rose', to: { area: 'completed' } }); assert.deepEqual(p.confirm, []); assert(!roseCalls.length);
     LF.configure({ rose: () => null });
+    // a Rose Gold sheet gets its QR label with Cut Sheet: a move does not make it, and says where it is made
+    mk('rose-nl', { metal: 'rose', roseStockId: 'stock-1', noLabel: true }); labels.length = 0;
+    p = await LF.plan({ kind: 'sheet', id: 'rose-nl', to: { area: 'laser' } }); assert(p.needs.some(x => x.key === 'qr' && /Cut Sheet/.test(x.detail)), JSON.stringify(p.needs)); assert(!labels.length);
 
     // ── E. a failed write changes nothing ──
     mk('boom', {}); let q = await LF.plan({ kind: 'sheet', id: 'boom', to: { area: 'progress' } }); assert(q.ok);
