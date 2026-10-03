@@ -350,8 +350,8 @@
   ></script>
 
   <!-- Who is sorting here, how long they are signed in (station-session.js, with the midnight sign-out) and what they did
-       (station-activity.js), as on sorting.html: the "Sorting as" name or 6-digit employee number (looked up once in
-       "Employee Numbers"; the number is never kept, sent or logged). Each piece is optional: the page works without it. -->
+       (station-activity.js), as on sorting.html: the "Sorting as" name or 6-digit employee number (checked by the
+       server against "Employee Numbers"; the number is never kept or logged). Each piece is optional: the page works without it. -->
   <script src="station-session.js?v=20261002-ea1"></script>
   <script src="station-activity.js?v=20261002-ea1"></script>
   <script>
@@ -377,10 +377,28 @@
       if (signingIn) return;
       signingIn = true; toast("Checking the employee number…");
       try {
-        const r = await fetch("/.netlify/functions/firebaseOrders?orderId=" + encodeURIComponent("Employee Numbers"));
-        const j = r.ok ? await r.json().catch(() => null) : null;
-        const name = j && j.success && j.data && typeof j.data[num] === "string" ? j.data[num].replace(/\s+/g, " ").trim().slice(0, 40) : "";
-        if (!j) toast("Could not check the employee number — try again");
+        /* The server checks the number and answers with that person's name only (firebaseOrders {pinLogin}); the list of everyone's
+           numbers is not downloaded. Only when that check cannot be reached at all (no network, a timeout, a server error, a server
+           that does not know it yet) is the old list download tried. An answer, yes or no, is final. */
+        let answered = false, many = false, got = "";
+        try {
+          const ctl = typeof AbortController === "function" ? new AbortController() : null;
+          const timer = ctl ? setTimeout(() => ctl.abort(), 15000) : 0;
+          try {
+            const r = await fetch("/.netlify/functions/firebaseOrders", { method: "POST", headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ pinLogin: num }), signal: ctl ? ctl.signal : undefined });
+            const j = await r.json().catch(() => null);
+            if (j && typeof j.ok === "boolean") { answered = true; many = j.tooMany === true; if (j.ok === true && typeof j.name === "string") got = j.name; }
+          } finally { if (timer) clearTimeout(timer); }
+        } catch (_) { /* not reached: the list download below */ }
+        if (!answered) {
+          const r = await fetch("/.netlify/functions/firebaseOrders?orderId=" + encodeURIComponent("Employee Numbers"));
+          const j = r.ok ? await r.json().catch(() => null) : null;
+          if (!j) { toast("Could not check the employee number — try again"); return; }
+          got = j.success && j.data && typeof j.data[num] === "string" ? j.data[num] : "";
+        }
+        const name = got.replace(/\s+/g, " ").trim().slice(0, 40);
+        if (many) toast("Too many tries, wait a minute");
         else if (!name || /^\d+$/.test(name)) toast("That employee number is not on the list");
         else { lsSet(EMP_KEY, name); lsSet(VIA_KEY, "employee number"); sessionIn(name); renderChip(); toast("Sorting as " + name.replace(/[<>&"']/g, "")); }
       } catch (_) { toast("Could not check the employee number — try again"); }

@@ -28,7 +28,7 @@ const MATERIALIZE = `window.M = { AutoInit() {}, updateTextFields() {}, toast() 
   Modal: { init(el) { const i = { open() {}, close() {}, isOpen: false }; if (el) el.__m = i; return i; }, getInstance(el) { return (el && el.__m) || { open() {}, close() {} }; } },
   FormSelect: { init(el) { const i = { destroy() {}, getSelectedValues: () => [el && el.value] }; if (el) el.__fs = i; return i; }, getInstance(el) { return el && el.__fs; } },
   Dropdown: { init() {} } };`;
-const PIN = '907531';                       // a fake test PIN: it must never appear in any request
+const PIN = String(100000 + Math.floor(Math.random() * 900000)).replace(/^(\d)\1{5}$/, '482913');   // a fake test PIN made up per run: only the login door's request may carry it
 const NAME = 'Marco R.';
 const O_TWO = '3812345678';                 // two lines: 2 + 1 pieces
 const O_ONE = '3812345679';                 // one line: 3 pieces, SKU SOLO-9, arrives from the phone
@@ -66,6 +66,7 @@ async function main() {
       reqs.push({ method: req.method(), url: req.url(), raw: req.postData() || '' });
       if (req.method() === 'POST') {
         let b = {}; try { b = JSON.parse(req.postData() || '{}'); } catch (_) {}
+        if (fn === 'firebaseOrders' && b.pinLogin !== undefined) return json(b.pinLogin === PIN ? { ok: true, name: NAME } : { ok: false, error: 'not on the list' });   // the server's login door
         if (fn === 'firebaseOrders' && Array.isArray(b.activity)) { events.push(...b.activity); return json({ success: true, written: b.activity.length, duplicate: 0, refused: 0, scrubbed: 0 }); }
         if (fn === 'firebaseOrders' && b.newMessage && b.orderNumber === O_FAIL) return json({ success: false, error: 'down' }, 500);
         return json({ success: true });
@@ -80,7 +81,7 @@ async function main() {
         for (const id of u.searchParams.get('cancelCheck').split(',')) if (id === O_CANC) out[id] = { at: Date.now() - 3600e3, by: 'Sam', why: 'Buyer cancelled', source: 'sheet' };
         return json({ success: true, cancelled: out, now: Date.now() });
       }
-      if (fn === 'firebaseOrders' && u.searchParams.get('orderId') === 'Employee Numbers') return json({ success: true, data: { [PIN]: NAME } });
+      if (fn === 'firebaseOrders' && /employee/i.test(u.searchParams.get('orderId') || '')) return json({ success: false, error: 'closed' }, 401);   // the roster is never read
       if (fn === 'firebaseOrders') return json({ success: true, data: {} });
       return json({});
     });
@@ -198,8 +199,10 @@ async function main() {
       assert.equal(by('scan', O_OUT).length, 0);
       assert.equal(await page.evaluate(() => window.StationActivity.pending()), 0);
     });
-    await check('the PIN is in no request: not in a URL, not in any body', async () => {
-      for (const q of reqs) { assert(!q.url.includes(PIN), 'PIN in a URL: ' + q.url.replace(PIN, '*')); assert(!q.raw.includes(PIN), 'PIN in a body to ' + q.url.split('/').pop()); }
+    await check('the PIN is in no request but the login door\'s: not in a URL, not in any other body; the roster is never read', async () => {
+      for (const q of reqs) { assert(!q.url.includes(PIN), 'PIN in a URL: ' + q.url.replace(PIN, '*')); assert(!q.raw.includes(PIN) || q.raw === JSON.stringify({ pinLogin: PIN }), 'PIN in a body to ' + q.url.split('/').pop()); }
+      assert(reqs.some(q => q.raw === JSON.stringify({ pinLogin: PIN })), 'the sign-in did not use the login door');
+      assert(!reqs.some(q => /employee/i.test(q.url)), 'the roster document was read');
       assert(reqs.some(q => /"activity"/.test(q.raw)), 'no activity request was made');
     });
     await check('no page error from the activity wiring', async () => assert.deepEqual(errors.filter(m => /StationActivity|actLog|actScan|actStamp|actMessage|actDone|actLoaded/.test(m)), []));

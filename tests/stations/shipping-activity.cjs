@@ -65,6 +65,7 @@ function staticServer() {
 
 async function run(browser, origin, n, mode) {
   const requests = [];      // every request to the loopback server: { url, method, text }
+  const doorBodies = []; let mapGets = 0;   // the server's login door ({ pinLogin }) is the one request that carries the number: kept apart
   const activity = [];      // every event sent to the station door ({ activity: [...] })
   const state = { etsyPost: 200 };
   const ctx = await browser.newContext({ viewport: { width: 1500, height: 950 } });
@@ -85,7 +86,8 @@ async function run(browser, origin, n, mode) {
           return route.fulfill(json(200, Object.assign({ receipt_id: Number(id), name: 'Test Buyer', status: 'Paid', is_shipped: false }, ORDERS[id])));
         }
         if (fn === 'firebaseOrders') {
-          if (req.method() === 'GET' && url.searchParams.get('orderId') === 'Employee Numbers') return route.fulfill(json(200, { success: true, data: { [PIN]: WHO } }));
+          if (body && body.pinLogin !== undefined) { requests.pop(); doorBodies.push(text); return route.fulfill(json(200, body.pinLogin === PIN ? { ok: true, name: WHO } : { ok: false, error: 'not on the list' })); }
+          if (req.method() === 'GET' && /employee/i.test(url.searchParams.get('orderId') || '')) { mapGets++; return route.fulfill(json(401, { success: false })); }   // the roster is never asked for
           if (body && Array.isArray(body.activity)) { activity.push(...body.activity); return route.fulfill(json(200, { success: true, written: body.activity.length, duplicate: 0, refused: 0, scrubbed: 0 })); }
           if (body && (body.session || body.timeline || body.newMessage)) return route.fulfill(json(200, { success: true }));
           return route.fulfill(json(404, { error: 'Order not found' }));
@@ -226,7 +228,9 @@ async function run(browser, origin, n, mode) {
       'cancelled: a scan and a reject, then the refused Complete and Buy & Print are notes; no print, no complete');
   }
 
-  // no request carries the PIN (URL or body), and no event does
+  // the sign-in went to the server's login door only, and the roster was never read
+  assert(doorBodies.length >= 1 && doorBodies.every(b => /^\{"pinLogin":"\d{6}"\}$/.test(b)) && mapGets === 0, 'the sign-in used the login door only');
+  // no other request carries the PIN (URL or body), and no event does
   for (const r of requests) assert(!r.url.includes(PIN) && !r.text.includes(PIN), 'the PIN is in no request: ' + r.url);
   assert(!JSON.stringify(activity).includes(PIN), 'the PIN is in no event');
   assert.deepStrictEqual(errors, [], 'no page errors');

@@ -19,6 +19,7 @@ const { chromium } = require(path.join(pwDir, 'playwright-core'));
 
 const PIN = '424242';
 const CUSTOMER = ['Jane Doe', '12 Main St', 'Test Buyer', 'engrave her initials'];
+let mapGets = 0;
 const acts = [], sent = [];                        // every activity event the door got; every request (url + body) the pages made
 const ts = ms => ({ _ts: true, ms });
 const T0 = Date.now();
@@ -57,7 +58,8 @@ function fake(method, url, body) {
   const u = new URL(url, 'http://x'), name = u.pathname.split('/').pop(), q = Object.fromEntries(u.searchParams);
   let b = {}; try { b = body ? JSON.parse(body) : {}; } catch (_) {}
   if (name === 'firebaseOrders') {
-    if (method === 'GET' && q.orderId === 'Employee Numbers') return { success: true, data: { [PIN]: 'Rosa Designer' } };
+    if (b.pinLogin !== undefined) return { ok: b.pinLogin === PIN, ...(b.pinLogin === PIN ? { name: 'Rosa Designer' } : { error: 'not on the list' }) };   // the server's login door
+    if (method === 'GET' && /employee/i.test(q.orderId || '')) { mapGets++; return { __status: 401, success: false }; }   // the roster is never asked for
     if (method === 'GET') return { __status: 404, error: 'not found' };
     if (Array.isArray(b.activity)) { acts.push(...b.activity); return { success: true, written: b.activity.length, duplicate: 0, refused: 0, scrubbed: 0 }; }
     if (b.newMessage) return { success: true, messageId: b.designSetId ? 'designed-set-' + encodeURIComponent(b.designSetId) : 'm1' };
@@ -273,7 +275,10 @@ async function inbox(browser) {
     await inbox(browser);
     // no PIN anywhere (it is only ever typed into the keypad); no customer text or address in anything recorded about the
     // people (the activity and session requests; the order chat's own post carries its message, as it always did)
-    const all = sent.filter(s => !/orderId=Employee%20Numbers/.test(s)).join('\n');
+    // (the login door's own request, { pinLogin }, is the one place the number goes: it is checked apart)
+    const door = sent.filter(s => /\{"pinLogin":/.test(s));
+    assert(door.length >= 2 && door.every(s => / \{"pinLogin":"\d{6}"\}$/.test(s)) && mapGets === 0, 'the sign-ins went to the login door only; the roster was never read');
+    const all = sent.filter(s => !/\{"pinLogin":/.test(s)).join('\n');
     assert(!all.includes(PIN), 'the PIN reached a request');
     const recorded = sent.filter(s => /"activity"|"session"/.test(s)).join('\n') + '\n' + JSON.stringify(acts);
     for (const bad of CUSTOMER) assert(!recorded.includes(bad), 'customer text in an activity or session request: ' + bad);

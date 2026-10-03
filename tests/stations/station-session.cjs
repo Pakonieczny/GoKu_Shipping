@@ -11,6 +11,11 @@ const fs = require('fs'), path = require('path'), assert = require('assert'), Mo
 const root = path.join(__dirname, '../..');
 const MIDNIGHT = Date.parse('2026-09-29T04:00:00Z');          // 00:00 on 29 Sep in New York (EDT)
 
+/* two made-up numbers for this run: never written down, never printed */
+const fakePin = used => { for (;;) { const p = String(100000 + Math.floor(Math.random() * 900000)); if (!/^(\d)\1{5}$/.test(p) && p !== used) return p; } };
+const P1 = fakePin(), P2 = fakePin(P1);
+const ROSTER = { [P1]: 'Tess Welder', [P2]: 'Ray Welder' };
+
 /* ── 1 · the door ── */
 async function door() {
   const docs = new Map();
@@ -28,14 +33,14 @@ async function door() {
   try {
     const post = (session, ip = '203.0.113.' + Math.floor(Math.random() * 200), sandbox) => fn.handler({ httpMethod: 'POST', headers: { 'x-nf-client-connection-ip': ip }, body: JSON.stringify({ session }), queryStringParameters: sandbox ? { sandbox: '1' } : {} })
       .then(r => ({ status: r.statusCode, body: JSON.parse(r.body || '{}') }));
-    const S = (o = {}) => Object.assign({ id: 'weld-1-ABCD-k1', event: 'start', person: 'Tess Welder', employeeId: '123456', station: 'welding', device: 'weld-1', computerId: 'pc-ABCDEFGHJKMN', computerLabel: 'Welding weld-1 · ABCD', at: now }, o);
+    const S = (o = {}) => Object.assign({ id: 'weld-1-ABCD-k1', event: 'start', person: 'Tess Welder', employeeId: P1, station: 'welding', device: 'weld-1', computerId: 'pc-ABCDEFGHJKMN', computerLabel: 'Welding weld-1 · ABCD', at: now }, o);
     const doc = id => docs.get('Station_Sessions/' + id);
 
     let r = await post(S());
     assert.strictEqual(r.status, 200, JSON.stringify(r.body));
     assert.deepStrictEqual(Object.keys(doc('weld-1-ABCD-k1')).sort(), ['computerId', 'computerLabel', 'device', 'employeeId', 'endAt', 'endReason', 'id', 'lastSeenAt', 'minutes', 'person', 'startAt', 'station'].sort(), 'the Station_Sessions shape');
     assert.strictEqual(doc('weld-1-ABCD-k1').employeeId, '', 'a PIN (digits only) is never kept');
-    assert(!JSON.stringify([...docs.values()]).includes('123456'), 'the PIN is nowhere in the store');
+    assert(!JSON.stringify([...docs.values()]).includes(P1), 'the PIN is nowhere in the store');
     assert.strictEqual(doc('weld-1-ABCD-k1').startAt, now);
     now += 5 * 60000; r = await post(S({ event: 'beat', at: now + 9e6 }));
     assert.strictEqual(doc('weld-1-ABCD-k1').lastSeenAt, now, 'the server stamps its own time, not the client\'s');
@@ -75,7 +80,7 @@ async function station() {
   const pwDir = process.argv[2] || process.env.PW_DIR || path.join(root, 'node_modules');
   const { chromium } = require(path.join(pwDir, 'playwright-core'));
   const ORIGIN = 'http://weld.test';
-  const sessions = [], bodies = [];
+  const sessions = [], bodies = [], doorBodies = []; let mapGets = 0;
   const fbStub = `window.firebase = (() => {
     const snap = (exists, data) => ({ exists, data: () => data || {}, get: f => (data || {})[f] });
     const doc = (c, id) => ({ id, onSnapshot(cb) { try { cb(snap(false)); } catch (_) {} return () => {}; },
@@ -106,10 +111,15 @@ async function station() {
         if (m === 'POST') {
           const text = r.request().postData() || '{}'; bodies.push(text);
           const b = JSON.parse(text);
+          if (b.pinLogin !== undefined) {                                         // the server's login door: the only request that carries a number
+            bodies.pop(); doorBodies.push(text);
+            const name = typeof b.pinLogin === 'string' && Object.prototype.hasOwnProperty.call(ROSTER, b.pinLogin) ? ROSTER[b.pinLogin] : '';
+            return json(r, name ? { ok: true, name } : { ok: false, error: 'not on the list' });
+          }
           if (b.session) { sessions.push(b.session); return json(r, { success: true }); }
           return json(r, { success: true });
         }
-        if (u.searchParams.get('orderId') === 'Employee Numbers') return json(r, { success: true, data: { '123456': 'Tess Welder', '654321': 'Ray Welder' } });
+        if (/employee/i.test(u.searchParams.get('orderId') || '')) { mapGets++; return json(r, { success: false }, 401); }   // the roster is never asked for
         if (u.searchParams.get('cancelCheck')) return json(r, { cancelled: {}, now: Date.now() });
         return json(r, { success: true, data: {} });
       }
@@ -131,7 +141,7 @@ async function station() {
     };
     const until = async (fn, what) => { for (let i = 0; i < 100; i++) { const v = await fn(); if (v) return v; await page.clock.runFor(100); } throw new Error('timed out: ' + what); };
 
-    await login('123456');
+    await login(P1);
     const start = await until(() => sessions.find(s => s.event === 'start'), 'a session start');
     assert.strictEqual(start.person, 'Tess Welder'); assert.strictEqual(start.employeeId, ''); assert.strictEqual(start.station, 'welding'); assert.strictEqual(start.device, 'weld-1');
     assert(/^pc-[2-9A-Z]{12}$/.test(start.computerId), start.computerId);
@@ -149,7 +159,7 @@ async function station() {
     assert(after.opens >= 1, 'the PIN box is back'); assert.strictEqual(after.order, '3521000777', 'the order typed on screen stays');
     assert(/midnight/i.test(after.toast), after.toast);
 
-    await login('654321');
+    await login(P2);
     const start2 = await until(() => sessions.find(s => s.event === 'start' && s.id !== start.id), 'a new session');
     assert.strictEqual(start2.person, 'Ray Welder');
     assert.strictEqual(await page.evaluate(() => localStorage.getItem('station_signin_day')), '2026-09-29');
@@ -159,7 +169,7 @@ async function station() {
 
     // a page loaded after the day turned: signed out before anything else, no session for yesterday's person
     const pc = start.computerId, n0 = sessions.length;
-    await page.evaluate(() => { localStorage.setItem('employee_id', '123456'); localStorage.setItem('employee_name', 'Tess Welder'); localStorage.setItem('station_signin_day', '2026-09-28'); });
+    await page.evaluate(p => { localStorage.setItem('employee_id', p); localStorage.setItem('employee_name', 'Tess Welder'); localStorage.setItem('station_signin_day', '2026-09-28'); }, P1);
     await page.reload();
     await page.waitForFunction(() => window.StationSession && window.__opens >= 1, null, { timeout: 15000 });
     const reloaded = await page.evaluate(() => ({ id: localStorage.getItem('employee_id'), in: window.isEmployeeLoggedIn, pc: localStorage.getItem('station_computer_id') }));
@@ -167,7 +177,8 @@ async function station() {
     assert.strictEqual(reloaded.pc, pc, 'the computer id stays');
     await page.clock.runFor(2000);
     assert(!sessions.slice(n0).some(s => s.event === 'start'), 'no session starts for yesterday\'s login');
-    assert(!bodies.some(b => b.includes('123456') || b.includes('654321')), 'no PIN is ever sent');
+    assert(!bodies.some(b => b.includes(P1) || b.includes(P2)), 'no PIN is sent except to the login door');
+    assert(doorBodies.length === 2 && doorBodies.every(b => /^\{"pinLogin":"\d{6}"\}$/.test(b)) && mapGets === 0, 'the two sign-ins went to the login door only, and the roster was never read');
     assert.deepStrictEqual(errors, [], 'no page errors: ' + errors.join('; '));
     console.log('weld-1: PIN login → session (name only), beats, midnight ends it and brings the PIN box back with the work kept, sign-in again, Sign Out, stale day on load');
   } finally { await browser.close(); }

@@ -75,7 +75,11 @@ async function context(browser, st, init) {
     st.sent.push(u.pathname + u.search + ' ' + body + ' ' + JSON.stringify(r.request().headers()));
     if (u.pathname.startsWith('/.netlify/functions/')) {
       const fn = u.pathname.split('/').pop();
-      if (fn === 'firebaseOrders' && u.searchParams.get('orderId') === 'Employee Numbers') return json(r, { success: true, data: { '424242': 'Rosa Designer' } });
+      if (fn === 'firebaseOrders' && /\{"pinLogin":/.test(body)) {                            // the server's login door: the one request that carries the number
+        st.door = (st.door || 0) + 1; st.sent.pop();
+        return json(r, JSON.parse(body).pinLogin === '424242' ? { ok: true, name: 'Rosa Designer' } : { ok: false, error: 'not on the list' });
+      }
+      if (fn === 'firebaseOrders' && /employee/i.test(u.searchParams.get('orderId') || '')) { st.mapGets = (st.mapGets || 0) + 1; return json(r, { success: false }, 401); }   // the roster is never asked for
       if (fn === 'authGate') {
         if (m === 'GET') return json(r, { locked: true });
         return r.request().headers()['x-edit-passcode'] === 'pc-1' ? json(r, { ok: true }) : json(r, { ok: false }, 401);
@@ -127,8 +131,9 @@ async function designMessage(browser) {
   assert.deepStrictEqual(has(await calls(page), 'signedIn')[0][1], { name: 'Rosa Designer', id: '' });
   await page.click('#signOutBtn');
   assert.deepStrictEqual(has(await calls(page), 'signedOut').map(x => x[1]), ['signOut'], 'the Sign Out button ends the session');
-  const leak = [...st.sent.filter(s => /424242/.test(s) && !/Employee%20Numbers/.test(s)), ...(await calls(page)).map(JSON.stringify).filter(s => /424242/.test(s))];
-  assert.deepStrictEqual(leak, [], 'the PIN is never sent nor handed to the session');
+  const leak = [...st.sent.filter(s => /424242/.test(s)), ...(await calls(page)).map(JSON.stringify).filter(s => /424242/.test(s))];
+  assert.deepStrictEqual(leak, [], 'the PIN is never sent (but to the login door) nor handed to the session');
+  assert(st.door >= 1 && !st.mapGets, 'the sign-ins went to the login door and the roster was never read');
   await ctx.close();
   console.log('design-message: name only, midnight → PIN box with the order kept, PIN sign-in and Sign Out reported');
 }

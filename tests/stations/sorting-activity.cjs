@@ -43,6 +43,7 @@ const stationStub = `
     scanned(id) { return new Promise(r => setTimeout(() => r(TL.has(id) ? { cancelled: true, record: { by: 'Paul', why: 'Buyer asked to cancel', at: Date.now() } } : { cancelled: false }), 30)); }
   };`;
 
+const doorBodies = []; let mapGets = 0;
 const wait = ms => new Promise(r => setTimeout(r, ms));
 const iso = ms => new Date(Date.now() - ms).toISOString();
 // the events the door received, flattened, with the raw requests kept for the "no PIN anywhere" check
@@ -86,8 +87,11 @@ const brief = e => [e.action, e.orderId, e.parts, e.orders, e.person, e.station,
         return id === D ? r.fulfill({ status: 404, contentType: 'application/json', body: '{}' }) : r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(receipt(id)) });
       }
       if (p === '/.netlify/functions/firebaseOrders') {
+        // the server's login door ({pinLogin}) is the one request that carries the number; it is kept apart from the rest
+        const pl = (() => { try { return JSON.parse(r.request().postData() || 'null'); } catch (_) { return null; } })();
+        if (pl && pl.pinLogin !== undefined) { doorBodies.push(r.request().postData()); return r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(pl.pinLogin === PIN ? { ok: true, name: 'Maya Sorter' } : { ok: false, error: 'not on the list' }) }); }
         rec.take(u.pathname + u.search, r.request().postData() || '');
-        if (u.searchParams.get('orderId') === 'Employee Numbers') return r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: true, data: { [PIN]: 'Maya Sorter' } }) });
+        if (/employee/i.test(u.searchParams.get('orderId') || '')) { mapGets++; return r.fulfill({ status: 401, contentType: 'application/json', body: JSON.stringify({ success: false }) }); }   // the roster is never asked for
         if (r.request().method() === 'POST') return r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: true }) });
         return r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: true, cancelled: {} }) });
       }
@@ -179,7 +183,8 @@ const brief = e => [e.action, e.orderId, e.parts, e.orders, e.person, e.station,
 
     // nothing in any request carries the PIN, and every event is one of the contract's
     const all = rec.raw.join('\n');
-    assert(!all.includes(PIN), 'the PIN is never sent');
+    assert(!all.includes(PIN), 'the PIN is never sent (but to the login door)');
+    assert(doorBodies.length >= 1 && doorBodies.every(b => /^\{"pinLogin":"\d{6}"\}$/.test(b)) && mapGets === 0, 'the sign-in went to the login door only; the roster was never read');
     assert(rec.events.every(e => ['scan', 'reject', 'complete', 'print', 'undo', 'error', 'note'].includes(e.action) && e.person === 'Maya Sorter' && e.station === 'sorting' && e.device === 'sorting-1'));
     assert(rec.events.every(e => e.session && e.computer), 'every event joins its session and computer');
     assert(rec.sessions.length && rec.sessions.every(s => s.person === 'Maya Sorter' && !('employeeId' in s && /\d{6}/.test(s.employeeId))), 'the session names the person');
@@ -204,7 +209,10 @@ const brief = e => [e.action, e.orderId, e.parts, e.orders, e.person, e.station,
       if (p === '/QR Printer.html') return r.fulfill({ status: 200, contentType: 'text/html', body: '<!doctype html><title>printer stub</title>' });
       if (p === '/.netlify/functions/etsyOrderProxy') return r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(receipt(u.searchParams.get('orderId'))) });
       if (p === '/.netlify/functions/firebaseOrders') {
+        const pl = (() => { try { return JSON.parse(r.request().postData() || 'null'); } catch (_) { return null; } })();
+        if (pl && pl.pinLogin !== undefined) { doorBodies.push(r.request().postData()); return r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(pl.pinLogin === PIN ? { ok: true, name: 'Maya Sorter' } : { ok: false, error: 'not on the list' }) }); }
         rec.take(u.pathname + u.search, r.request().postData() || '');
+        if (/employee/i.test(u.searchParams.get('orderId') || '')) { mapGets++; return r.fulfill({ status: 401, contentType: 'application/json', body: JSON.stringify({ success: false }) }); }
         return r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: true }) });
       }
       if (p === '/.netlify/functions/etsyImages') return r.fulfill({ status: 200, contentType: 'application/json', body: '[]' });
@@ -243,6 +251,15 @@ const brief = e => [e.action, e.orderId, e.parts, e.orders, e.person, e.station,
     assert.strictEqual(rec.ev('print').length, 2, 'sorting-2: each sticker is a print');
     assert(rec.sessions.some(s => s.station === 'sorting' && s.device === 'sorting-2' && s.person === 'Ivy Two'), 'sorting-2 now has its sign-in session');
     console.log('sorting-2.html: the chip, a StationSession and scans, prints and the order sorted once');
+    // the chip takes a 6-digit number too: the server's login door answers with the name, and the roster is never read
+    const door0 = doorBodies.length, map0 = mapGets;
+    await page.click('#sortingAsChip .st-as-name');
+    await page.waitForSelector('#sortingAsChip .st-as-input:not([hidden])');
+    await page.keyboard.type(PIN); await page.keyboard.press('Enter');
+    await page.waitForFunction(() => StationActivity.who() && StationActivity.who().person === 'Maya Sorter', null, { timeout: 5000 });
+    assert(doorBodies.length === door0 + 1 && /^\{"pinLogin":"\d{6}"\}$/.test(doorBodies[door0]) && mapGets === map0, 'sorting-2: the number goes to the login door only; the roster is not read');
+    assert(!(await page.evaluate(() => JSON.stringify(Object.assign({}, localStorage)))).includes(PIN), 'sorting-2: the number is kept nowhere');
+    console.log('sorting-2.html: a 6-digit number signs in through the login door and is kept nowhere');
     await ctx.close();
   }
 

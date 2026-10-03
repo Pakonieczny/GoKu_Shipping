@@ -184,6 +184,7 @@
     "_charmNestRoseStock.js",
     "_orderTimeline.js",
     "_stationActivity.js",
+    "_stationPinLogin.js",
     "_orderCancel.js",
     "_etsyApiMeter.js",
     "_etsyApiUsage.js",
