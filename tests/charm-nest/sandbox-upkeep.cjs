@@ -52,6 +52,8 @@ function query(coll, filters = [], order = null, lim = 0) {
       return { size: rows.length, docs: rows, empty: !rows.length, forEach: fn => rows.forEach(fn) };
     },
     doc: id => docRef(coll, id || 'auto' + Math.random().toString(36).slice(2, 10)),
+    // as Firestore: every document that exists, and every one that only holds a subcollection (never written)
+    async listDocuments() { return [...new Set([...store.keys()].filter(k => k.startsWith(coll + '/')).map(k => k.slice(coll.length + 1).split('/')[0]))].sort().map(id => docRef(coll, id)); },
     async add(data) { const r = q.doc(); await r.set(data); return r; }
   };
   return q;
@@ -83,7 +85,7 @@ const bucket = {
     return [page.map(n => this.file(n)), names.length > page.length ? Object.assign({}, q, { pageToken: page[page.length - 1] }) : null];
   }
 };
-const admin = { firestore: Object.assign(() => db, { FieldValue, Timestamp: { fromMillis: TS } }), storage: () => ({ bucket: () => bucket }) };
+const admin = { firestore: Object.assign(() => db, { FieldValue, Timestamp: { fromMillis: TS }, FieldPath: { documentId: () => '__name__' } }), storage: () => ({ bucket: () => bucket }) };
 const kicks = [];
 const Module = require('module'), realLoad = Module._load;
 Module._load = function (req, ...rest) {

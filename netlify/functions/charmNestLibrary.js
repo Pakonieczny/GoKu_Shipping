@@ -1109,15 +1109,27 @@ async function op_sandboxStatus() {
 /* The reset works against a clock: a sandbox that streamed for days holds more than one call can delete. A call deletes
    in pages, a parent only once its subcollections are empty, and answers more:true when its time is up; the page calls
    again until it is done, and nothing is lost between calls. The records go first, then the sandbox's files (every one
-   under charmnest/sandbox/ but the snapshot the stream plays and the master files the shared index points to), then the
-   stream. The cache of engraving readings Claude was paid for (AGENT_CACHE) is not a record of a replay and stays. */
-async function op_sandboxReset(b) {
-  const until = Date.now() + 7000, late = () => Date.now() > until;
+   under charmnest/sandbox/ but the snapshot the stream plays and the master files the shared index points to, and the
+   archive's design-archive/sandbox/), then the stream. The cache of engraving readings Claude was paid for (AGENT_CACHE)
+   is not a record of a replay and stays.
+   EVERY family the sandbox can write goes (Paul, 3 Oct: "the same records just keep on coming back"): the sorter's own
+   (every SANDBOXED name, so Review's custom orders and custom sheets with their seals, the cancel records and their
+   history: production keeps those for good, the sandbox's explicit Reset and Purge clear them), the order timeline, the
+   stations' Sandbox_ copies (orders and their messages, locks, finished orders, sign-in sessions, activity and its daily
+   rollups, the archive), the engraving jobs and shape guidance, the Rose Gold rehearsals, a person's sandbox decision on
+   the shared line readings (decidedSandbox), and the customer messages the sorter's sandbox keeps in the inbox's own
+   collection (EtsyMail_OrderLinks: flagged sandbox:true and named olsb_…, which production never makes). Only ever the
+   sandbox's: every collection is named Sandbox_…, and the two shared places are cut by the sandbox's own marks.
+   Used by sandboxReset and, after production's own part, by purgeHistory. */
+const ORDERLINKS = "EtsyMail_OrderLinks";
+async function sandboxWipe(budgetMs) {
+  const until = Date.now() + budgetMs, late = () => Date.now() > until;
   let deleted = 0, files = 0;
-  const names = ["Brites_Orders", "Design_Completed Orders", "Design_RealTime_Selected_Orders", "Design_Order_Archive", ...SANDBOXED, "Order_Timeline", "Charm_Nest_Rose_Rehearsals", SHAPE_CACHE, AGENT];   // (the play's timeline events go with the records they tell of)
+  const names = ["Brites_Orders", "Design_Completed Orders", "Design_RealTime_Selected_Orders", "Design_Order_Archive", ...SANDBOXED, "Order_Timeline", "Charm_Nest_Rose_Rehearsals", SHAPE_CACHE, AGENT, "Station_Sessions", "Station_Activity", "Efficiency_Daily"];   // (the play's timeline events go with the records they tell of)
   const SUBS = { Design_Bridge: ["log"], Brites_Orders: ["messages"], Charm_Nest_Rose_Stock: ["cuts"] };   // deleting a document never deletes its subcollections
   // an order's messages can sit under a Brites_Orders document that was never written (a message posted on its own),
-  // which no query of that collection returns: they go with the order's other records, which name it
+  // which no query of that collection returns: they go with the order's other records, which name it, and last of all
+  // with the collection's list of such parents (listDocuments names a document that only holds a subcollection too)
   const KIN = new Set(["Design_Completed Orders", "Design_RealTime_Selected_Orders", "Design_Order_Archive", "Charm_Nest_Arrivals"]), kinDone = new Set();
   const wipe = async q => { for (;;) { if (late()) return false; const s = await q.select().limit(300).get(); if (s.empty) return true; const batch = db.batch(); s.docs.forEach(d => batch.delete(d.ref)); await batch.commit(); deleted += s.size; if (s.size < 300) return true; } };
   const more = () => ({ ok: true, more: true, deleted, files });
@@ -1143,6 +1155,27 @@ async function op_sandboxReset(b) {
       if (gone.length < page.size) return more();   // the clock ran out inside a page
     }
   }
+  // messages under an order nothing else names (a parent never written): the collection's parents, written or not
+  {
+    const brites = db.collection("Sandbox_Brites_Orders"), parents = typeof brites.listDocuments === "function" ? await brites.listDocuments() : []; let cursor = 0, incomplete = false;
+    await Promise.all(Array.from({ length: Math.min(16, parents.length) }, async () => { while (cursor < parents.length) { if (!(await wipe(parents[cursor++].collection("messages")))) incomplete = true; } }));
+    if (incomplete || late()) return more();
+  }
+  // the sorter's customer messages the sandbox keeps in the inbox's collection: only a document that says sandbox:true AND
+  // is named olsb_… (production's engagements are ol_… and say sandbox:false), a page at a time by name
+  {
+    let after = null;
+    for (;;) {
+      if (late()) return more();
+      const id = admin.firestore.FieldPath.documentId();
+      let q = db.collection(ORDERLINKS).where(id, ">=", "olsb_").where(id, "<", "olsb`").orderBy(id).select("sandbox").limit(300);
+      if (after) q = q.startAfter(after);
+      const s = await q.get(); if (s.empty) break;
+      const doomed = s.docs.filter(d => /^olsb_/.test(d.id) && (d.data() || {}).sandbox === true);
+      if (doomed.length) { const batch = db.batch(); doomed.forEach(d => batch.delete(d.ref)); await batch.commit(); deleted += doomed.length; }
+      after = s.docs[s.docs.length - 1].id; if (s.size < 300) break;
+    }
+  }
   // the readings of lines are shared with production and stay, and so does production's own decision (decided); the
   // sandbox's decision beside them (decidedSandbox) is the rehearsal's and goes with it, or the replay of the same real
   // order meets its line already decided and its timeline says so
@@ -1155,18 +1188,22 @@ async function op_sandboxReset(b) {
   let filesError = null;
   try {
     const cur = await db.collection(SANDBOX).doc("current").get(), keep = cur.exists ? cur.data().path : null;
-    const bucket = admin.storage().bucket(); let pageToken;
-    do {
-      if (late()) return more();
-      const [list, next] = await bucket.getFiles({ prefix: "charmnest/sandbox/", autoPaginate: false, maxResults: 500, pageToken });
-      const doomed = list.filter(f => f.name !== keep && !f.name.startsWith("charmnest/sandbox/master/")); let cursor = 0;
-      await Promise.all(Array.from({ length: Math.min(16, doomed.length) }, async () => { while (cursor < doomed.length) { await doomed[cursor++].delete({ ignoreNotFound: true }); files++; } }));
-      pageToken = next && next.pageToken;
-    } while (pageToken);
+    const bucket = admin.storage().bucket();
+    for (const prefix of ["charmnest/sandbox/", "design-archive/sandbox/"]) {
+      let pageToken;
+      do {
+        if (late()) return more();
+        const [list, next] = await bucket.getFiles({ prefix, autoPaginate: false, maxResults: 500, pageToken });
+        const doomed = list.filter(f => f.name !== keep && !f.name.startsWith("charmnest/sandbox/master/")); let cursor = 0;
+        await Promise.all(Array.from({ length: Math.min(16, doomed.length) }, async () => { while (cursor < doomed.length) { await doomed[cursor++].delete({ ignoreNotFound: true }); files++; } }));
+        pageToken = next && next.pageToken;
+      } while (pageToken);
+    }
   } catch (e) { console.warn("[charmNestLibrary] sandbox files not deleted:", e.message); filesError = e.message; }
   await db.collection(SANDBOX).doc("stream").delete();   // the order stream starts over with the records it fed
-  void b; return { ok: true, more: false, deleted, files, filesError };
+  return { ok: true, more: false, deleted, files, filesError };
 }
+async function op_sandboxReset() { return sandboxWipe(7000); }
 /* ── the sandbox order stream: in place of the whole snapshot at once, the emulated Etsy lists a few of the snapshot's own
    orders per simulated ten minutes, oldest first, under their real Etsy numbers (etsySandbox.js plans them from this seed
    and step). The sorter moves the clock one step per check, and only once it has taken in the last step's orders, so a
@@ -1227,8 +1264,9 @@ async function op_sandboxStream(b) {
     return { ok: true, stream: s, advanced };
   });
 }
-/* ── purge: every RECORD of past runs, in production and in the sandbox. Master files, the SKU index, aliases, option
-   maps, calibration and the sandbox snapshot are not history and stay. Files in Storage are not touched here: a sheet
+/* ── purge: every RECORD of past runs in production (its history families only: its seals, custom orders and cancel
+   records are permanent), and the sandbox COMPLETELY (sandboxWipe: every family, the stream included). Master files, the
+   SKU index, aliases, option maps, calibration and the sandbox snapshot are not history and stay. Files in Storage are not touched here: a sheet
    folder nothing refers to is an orphan the app never shows, and clearing folders is a decision made in the console.
    Gated by the delete passcode. ── */
 async function op_purgeHistory(b) {
@@ -1246,12 +1284,20 @@ async function op_purgeHistory(b) {
   const SUBS = { [BRIDGE]: ["log"] };
   const wipe = async q => { let n = 0; for (;;) { const s = await q.limit(300).get(); if (s.empty) break; const batch = db.batch(); s.docs.forEach(d => batch.delete(d.ref)); await batch.commit(); n += s.size; if (s.size < 300) break; } return n; };
   const docs = {};
-  for (const prefix of ["", "Sandbox_"]) for (const name of names) {
-    const coll = db.collection(prefix + name);
+  // production's own part, exactly as it was: its history families only (never its seals, custom orders or cancel records)
+  for (const name of names) {
+    const coll = db.collection(name);
     for (const sub of SUBS[name] || []) { const parents = await coll.select().get(); for (const d of parents.docs) await wipe(d.ref.collection(sub)); }
-    docs[prefix + name] = await wipe(coll);
+    docs[name] = await wipe(coll);
   }
-  return { ok: true, docs };
+  /* The sandbox goes completely, on the reset's clock (Paul, 3 Oct: the purge left the sandbox's custom orders, custom
+     sheets, cancel records, timeline, arrivals, stations' copies, files… and they came back): the same wipe as "Reset the
+     sandbox", the stream included. When its time is up it says so with a 503 the page shows as a failure ("press Purge
+     again", more:true in the answer): a purge that has not finished is never reported as done. */
+  const sb = await sandboxWipe(7000);
+  docs.Sandbox_all = sb.deleted;   // (the page adds the counts up)
+  if (sb.more) return { error: `The purge removed ${sb.deleted} sandbox record(s) and is not finished: press Purge again`, more: true, docs, status: 503 };
+  return { ok: true, docs, sandbox: { deleted: sb.deleted, files: sb.files, filesError: sb.filesError } };
 }
 /* ── restore: a sheet record rebuilt from the files its run wrote (the nest report, the outputs, the preview), for a
    record that was lost while its files were not. The folder is the sheet's own: …/sets/<day>/Set-<n>/<fileBase>/ ── */

@@ -40,6 +40,8 @@ function query(coll, filters = [], order = null, lim = 0, after = null) {
       if (lim) rows = rows.slice(0, lim);
       return { size: rows.length, docs: rows, empty: !rows.length };
     },
+    // as Firestore: every document that exists, and every one that only holds a subcollection (never written)
+    async listDocuments() { return [...new Set([...store.keys()].filter(k => k.startsWith(coll + '/')).map(k => k.slice(coll.length + 1).split('/')[0]))].sort().map(id => docRef(coll, id)); },
     async add(data) { const id = 'auto' + Math.random().toString(36).slice(2, 8); await docRef(coll, id).set(data); return docRef(coll, id); },
     doc(id) { return docRef(coll, id || 'auto' + Math.random().toString(36).slice(2, 10)); }
   };
