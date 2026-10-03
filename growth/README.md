@@ -81,7 +81,7 @@ Realtime voice is opt-in and disabled by default. `/api/concierge-voice` support
 
 The demo’s primary conversation now uses native OpenAI WebRTC audio. Browser speech synthesis is removed from the widget and is not used as a silent substitute for native speech. Optional captions track the spoken response; the separate compact product tray shows only checked catalogue results. Typing and conversation history remain available as secondary controls. The legacy `/api/concierge-demo-turn` endpoint remains for compatibility with saved work, but the widget does not call it for voice.
 
-`/concierge-voice-qa.html` receives one short native spoken greeting after an explicit click without requesting or simulating a microphone. It stops after twenty seconds and displays connection, received-track, provider-audio and real RMS evidence. This is a provider-output integration check, not proof of physical microphone capture, human-perceived voice quality, complete shopper dialogue or GPU appearance. Operator-only `readiness` checks the configured provider model without inference.
+`/concierge-voice-qa.html` receives one short native spoken greeting after an explicit click without requesting or simulating a microphone. It stops after twenty seconds and displays connection phases, gathered-candidate counts, received-track creation, provider-audio, real RMS and server hangup evidence. Track creation alone does not prove received audio. This is a provider-output integration check, not proof of physical microphone capture, human-perceived voice quality, complete shopper dialogue or GPU appearance. Operator-only `readiness` checks the configured provider model without inference.
 
 
 ## Context and mannerisms
@@ -122,4 +122,6 @@ The robot uses matte ceramic, a dark satin visor, restrained lighting and bloom,
 
 The wider interface centers the robot and one voice action. Live captions, typing and history are optional; checked product options stay in a separate tray. Connecting can be cancelled, End/Hide close local media immediately, and interrupted or timed-out catalogue checks cannot overwrite newer selections. Switching to typing ends voice. No microphone or provider call starts on a fresh visit or merely opening the guide.
 
-All **1,180** growth checks pass across **63** files, with complete TAP evidence. Native provider, physical microphone and visual acceptance are recorded separately in the private checkpoint so fixture tests cannot stand in for live proof.
+All **1,184** growth checks pass across **63** files, with complete TAP evidence. Native provider, physical microphone and visual acceptance are recorded separately in the private checkpoint so fixture tests cannot stand in for live proof.
+
+The one-shot WebRTC exchange waits for ICE gathering to complete before sending the refreshed local SDP, with a ten-second limit and cancellation cleanup. It never changes browser networking or graphics settings.

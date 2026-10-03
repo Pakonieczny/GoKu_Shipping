@@ -15,6 +15,19 @@
     function setState(next){if(state===next)return;state=next;notify('onState',next);}
     function send(value){if(dc?.readyState==='open'){dc.send(JSON.stringify(value));return true;}return false;}
     function bounded(promise,ms,label){return new Promise((resolve,reject)=>{let finished=false;const complete=(fn,value)=>{if(finished)return;finished=true;clear(id);pending.delete(cancel);fn(value);};const cancel=()=>complete(reject,Error('Voice operation cancelled.'));const id=timeout(ms,()=>complete(reject,Error(label)));pending.add(cancel);Promise.resolve(promise).then(value=>complete(resolve,value),error=>complete(reject,error));});}
+    async function gatherIce(connection,current){
+      if(current!==epoch||disposed)throw Error('Voice start cancelled.');
+      if(connection.iceGatheringState==='complete')return;
+      // This connection posts one SDP offer rather than trickling candidates.
+      // Wait for the browser's local SDP to contain its gathered candidates.
+      // The existing bounded operation cancels on End/Hide/dispose and always
+      // removes the temporary event listener, including timeout/error paths.
+      let ready;const completed=new Promise(resolve=>{ready=resolve;});
+      const onState=()=>{if(connection.iceGatheringState==='complete')ready();};
+      connection.addEventListener('icegatheringstatechange',onState);
+      try{onState();await bounded(completed,10000,'OpenAI voice network setup timed out while gathering connection candidates.');}
+      finally{connection.removeEventListener('icegatheringstatechange',onState);}
+    }
     async function request(body,{signal,keepalive=false}={}){
       const headers={...(typeof options.headers==='function'?options.headers():options.headers||{}),'Content-Type':'application/json'};
       const response=await rt.fetch(endpoint,{method:'POST',headers,credentials:'same-origin',body:JSON.stringify(body),signal,keepalive});let data;
@@ -107,6 +120,7 @@
         pc.onconnectionstatechange=()=>{if(['failed','closed'].includes(pc?.connectionState)&&state!=='closing')void stop('connection');};
         const ready=new Promise((resolve,reject)=>{dc.onopen=resolve;dc.onclose=()=>{if(state==='connecting')reject(Error('OpenAI voice connection closed.'));else if(state!=='closing'&&state!=='idle')void stop('connection');};});ready.catch(()=>{});
         const offer=await bounded(pc.createOffer(),5000,'Voice negotiation timed out.');await bounded(pc.setLocalDescription(offer),5000,'Voice negotiation timed out.');
+        await gatherIce(pc,current);if(current!==epoch)throw Error('Voice start cancelled.');
         const opening=request({action:'start',sdp:pc.localDescription?.sdp||offer.sdp,...(capabilities.demoToken?{demoToken:capabilities.demoToken}:{})},{signal:abort.signal});
         opening.then(answer=>{if(current!==epoch)void stopLateAnswer(answer);},()=>{});
         const answer=await bounded(opening,15000,'OpenAI voice setup timed out.');
