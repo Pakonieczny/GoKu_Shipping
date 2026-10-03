@@ -3,6 +3,7 @@
 (function(root,factory){const api=factory();if(typeof module==='object'&&module.exports)module.exports=api;else root.CharmNestReadiness=api;})(typeof self!=='undefined'?self:this,function(){
   'use strict';
   const idsOf=s=>[...new Set((s.poolIds || []).filter(Boolean))];
+  const held=s=>!!(s && s.laserHold && +s.laserHold.at>0);
   const url=x=>typeof x==='string'?x:x?.url;
   function decisions(rows){
     const out={};
@@ -40,7 +41,8 @@
       qr:labels.length>0 && labels.every(f=>f.path && f.url && f.payload) && orders.every(id=>covered.has(String(id))),
       orders:options.physicalOnly===true || orderIds(s).every(id=>s.orderReadiness?.[id]?.ready===true)
     };
-    const included=!s.draft && s.solidIncluded!==false && !s.archived;
+    // a person's hold (Library move back to In progress, LibraryFlow) keeps every approval and seal but takes it out of Laser cutting
+    const included=!s.draft && s.solidIncluded!==false && !s.archived && !held(s);
     return {total,required,approved,waiting,saved,plain,saving:Math.max(0,approved-saved),stages,included,ready:included && Object.values(stages).every(Boolean)};
   }
   function set(s,sheets){
@@ -87,9 +89,9 @@
           if(!on.some(s=>+s.laserDoneAt>0 || physical.get(s).ready)){
             const s=on[0],r=s && physical.get(s),stage=r && Object.keys(r.stages).find(k=>!r.stages[k]);
             const missing={layout:'layout needs verification',front:'cutting files are missing',approval:'engraving needs approval',backs:'back engraving files are not saved',qr:'QR labels are missing'};
-            why=s?`${s.metalLabel || s.metal || 'Sheet'}: ${missing[stage] || (r.included?'not ready for laser cutting':'not in a set yet')}`:'An item is not on a saved sheet';
+            why=s?`${s.metalLabel || s.metal || 'Sheet'}: ${missing[stage] || (held(s)?'held back from Laser cutting':r.included?'not ready for laser cutting':'not in a set yet')}`:'An item is not on a saved sheet';
             // which sheet and which step hold the order back (explain() names them; the words above are unchanged)
-            if(s)other={sheetId:s.id || s.sheetId,sheetLabel:sheetLabel(s),stage:stage || (r.included?'':'included')};
+            if(s)other={sheetId:s.id || s.sheetId,sheetLabel:sheetLabel(s),stage:stage || (held(s)?'held':r.included?'':'included')};
             break;
           }
         }
@@ -136,7 +138,7 @@
   const sentence=t=>{t=String(t || '').replace(/\s+/g,' ').trim().replace(/[.\s]+$/,'');return t?t[0].toUpperCase()+t.slice(1)+'.':'';};
   const brief=(t,max)=>{t=String(t || '').replace(/\s+/g,' ').trim();return t.length>max?t.slice(0,max-1)+'…':t;};
   // where an order's other piece stands, in words (orderReports names the step that holds it)
-  const MISSING={layout:'its layout needs verification',front:'its cutting files are missing',approval:'its engraving needs approval',backs:'its back engraving files are not saved',qr:'its QR labels are missing',included:'it is not in a set yet'};
+  const MISSING={layout:'its layout needs verification',front:'its cutting files are missing',approval:'its engraving needs approval',backs:'its back engraving files are not saved',qr:'its QR labels are missing',held:'it is held back from Laser cutting',included:'it is not in a set yet',held:'it is held back from Laser cutting'};
   // what a piece's engraving still waits for (the page's job states, and the server's)
   const ENGRAVE_WAIT={unknown:'Its engraving has not been read yet',classify:'Its engraving has not been read yet',words:'Its engraving words wait for a decision',review:'Its back engraving waits for approval',blocked:'Its back engraving needs attention first'};
   function names(ctx){
@@ -174,6 +176,8 @@
     if(s.archived)own('nesting','This sheet was removed (archived), so it cannot be cut',true);
     else if(s.draft)own('nesting','Not in a set yet: it joins a set when it is full or released');
     else if(s.solidIncluded===false)own('nesting','Not included in its set yet: turn Include on for this metal',true);
+    else if(held(s))own('nesting','Held back from Laser cutting (it was moved back to In progress): press Approve for laser cutting to release it',true);
+    else if(held(s))own('nesting',`Held back from Laser cutting${s.laserHold.by?` by ${s.laserHold.by}`:''}: move it to Laser cutting to release it. Its approvals and seals are kept`);
     if(again){
       // cut once before: reopening keeps that approval (laserSheet), only a place in a set is still asked
       for(const k of GATED)ok[k]=k==='nesting'?r.included:true;
@@ -315,5 +319,5 @@
     }
     return e;
   }
-  return {idsOf,orderIds,decisions,sheet,set,completedBefore,laserSheet,laserGroup,orderReports,orderBlockers,filed,processStamps,seal,counter,explain,lookup:names,STEPS:STEPS.map(([key,label])=>({key,label})),sheetLabel};
+  return {idsOf,orderIds,decisions,held,sheet,set,completedBefore,laserSheet,laserGroup,orderReports,orderBlockers,filed,processStamps,seal,counter,explain,lookup:names,STEPS:STEPS.map(([key,label])=>({key,label})),sheetLabel};
 });

@@ -115,6 +115,7 @@ const flagged=sheet('f1');flagged.verification={ok:false};e=R.explain(flagged);a
 const unverified=sheet('f2');unverified.verification=null;assert.equal(states(R.explain(unverified)).nesting,'waiting');
 const rose=sheet('f3',{metal:'rose'});rose.roseStockId='stock';e=R.explain(rose);assert.equal(states(e).nesting,'blocked');assert.match(step(e,'nesting').items[0].why,/green dash line/);
 assert.equal(R.explain({id:'x',poolIds:[]}).ready,false,'an empty record never reads as ready');
+const held=sheet('h1');held.laserHold={at:5,by:'Paul'};e=R.explain(held);assert.equal(R.laserSheet(held).ready,false);assert.equal(e.ready,false);assert.equal(e.step,'nesting');assert.equal(states(e).nesting,'blocked');assert.match(step(e,'nesting').items[0].why,/Held back from Laser cutting/);
 
 // every item carries a label and a reason; no ids without a label
 for(const x of [eng,bf,qr2,a,m1]){const r=R.explain(x,{rows:names});for(const s of r.steps)for(const i of s.items){assert(['order','charm','sheet'].includes(i.kind));assert(i.id && i.label && i.why,JSON.stringify(i));}}
