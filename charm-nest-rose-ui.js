@@ -292,7 +292,7 @@
       if(!sh.roseCutAt&&sh.rosePlan&&!sh.dirty){const view=shown(sh.rosePlan,sh);stroke(ctx,view.lines,k,'#008974',Math.max(2.5,.2*k),true);numberLines(ctx,view,k);}
     }ctx.restore();
   }
-  window.RoseStock={protect,prepare,takeOff,plan,ensurePlan:sh=>sh.rosePlanHash && sh.rosePlanKey===fingerprint(sh) ? Promise.resolve() : plan(sh),load,restore,render,paint,record,waiting,waitWords,showCut,addsLine,unlined};   // addsLine/unlined: read-only questions for LibraryFlowRose.check
+  window.RoseStock={protect,prepare,takeOff,plan,ensurePlan:sh=>sh.rosePlanHash && sh.rosePlanKey===fingerprint(sh) ? Promise.resolve() : plan(sh),load,restore,render,paint,record,waiting,waitWords,showCut,addsLine,unlined,full:sheetFull};   // addsLine/unlined: read-only questions for LibraryFlowRose.check
   C.allSheets().forEach(render);
 })();
 

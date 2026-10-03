@@ -57,7 +57,13 @@ const plain = x => JSON.parse(JSON.stringify(x));   // (objects made inside the 
   // ── what the open run can do for a sheet now ──
   reset([sheet(), sheet({ sheetId: 'rose-1', metal: 'rose', page: 2 }), sheet({ sheetId: 'in-set', draft: false, setId: 'set-9', label: { files: [] } }), sheet({ sheetId: 'busy-1', status: 'nesting' }), sheet({ sheetId: 'other-run', runId: 'run-0' })]);
   let i = joinInfo('gold-1'); assert.deepEqual(plain(i), { runHere: true, draft: true, dispatchSetId: 'set-9', can: { ok: true, byHand: true, reason: '' }, split: [] });
-  i = joinInfo('rose-1'); assert.equal(i.can.ok, false); assert(/Cut Sheet/.test(i.can.reason), i.can.reason);
+  // Rose Gold: it joins by its own Cut Sheet press, so it is ready when its layout is saved and verified; full says there is no press
+  i = joinInfo('rose-1'); assert.deepEqual(plain(i.can), { ok: true, byHand: false, reason: '' }); assert.deepEqual(plain(i.rose), { full: false }); assert.equal(i.draft, true);
+  c.setSheets(c.getSheets().concat([sheet({ sheetId: 'rose-full', metal: 'rose', page: 3, rosePlan: { full: true } })])); i = joinInfo('rose-full'); assert.deepEqual(plain(i.rose), { full: true });
+  c.setSheets(c.getSheets().concat([sheet({ sheetId: 'rose-cut', metal: 'rose', roseCutAt: 5, draft: false, setId: 'set-9' }), sheet({ sheetId: 'rose-dirty', metal: 'rose', dirty: true }), sheet({ sheetId: 'rose-bare', metal: 'rose', verification: null })]));
+  i = joinInfo('rose-cut'); assert.equal(i.can.ok, false); assert(/already cut/.test(i.can.reason), i.can.reason);
+  i = joinInfo('rose-dirty'); assert.equal(i.can.ok, false); assert(/still being saved/.test(i.can.reason), i.can.reason); assert.equal(i.rose.full, false);
+  i = joinInfo('rose-bare'); assert.equal(i.can.ok, false); assert(/not been verified/.test(i.can.reason), i.can.reason);
   i = joinInfo('in-set'); assert.equal(i.can.ok, false); assert.equal(i.draft, false); assert(/already in a set/.test(i.can.reason), i.can.reason);
   i = joinInfo('busy-1'); assert.equal(i.can.ok, false); assert(/nested or saved/.test(i.can.reason), i.can.reason);
   i = joinInfo('other-run'); assert.equal(i.runHere, false); assert.equal(i.can.ok, false);

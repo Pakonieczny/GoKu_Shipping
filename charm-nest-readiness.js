@@ -138,7 +138,7 @@
   const sentence=t=>{t=String(t || '').replace(/\s+/g,' ').trim().replace(/[.\s]+$/,'');return t?t[0].toUpperCase()+t.slice(1)+'.':'';};
   const brief=(t,max)=>{t=String(t || '').replace(/\s+/g,' ').trim();return t.length>max?t.slice(0,max-1)+'…':t;};
   // where an order's other piece stands, in words (orderReports names the step that holds it)
-  const MISSING={layout:'its layout needs verification',front:'its cutting files are missing',approval:'its engraving needs approval',backs:'its back engraving files are not saved',qr:'its QR labels are missing',held:'it is held back from Laser cutting',included:'it is not in a set yet',held:'it is held back from Laser cutting'};
+  const MISSING={layout:'its layout needs verification',front:'its cutting files are missing',approval:'its engraving needs approval',backs:'its back engraving files are not saved',qr:'its QR labels are missing',held:'it is held back from Laser cutting',included:'it is not in a set yet'};
   // what a piece's engraving still waits for (the page's job states, and the server's)
   const ENGRAVE_WAIT={unknown:'Its engraving has not been read yet',classify:'Its engraving has not been read yet',words:'Its engraving words wait for a decision',review:'Its back engraving waits for approval',blocked:'Its back engraving needs attention first'};
   function names(ctx){
@@ -176,8 +176,7 @@
     if(s.archived)own('nesting','This sheet was removed (archived), so it cannot be cut',true);
     else if(s.draft)own('nesting','Not in a set yet: it joins a set when it is full or released');
     else if(s.solidIncluded===false)own('nesting','Not included in its set yet: turn Include on for this metal',true);
-    else if(held(s))own('nesting','Held back from Laser cutting (it was moved back to In progress): press Approve for laser cutting to release it',true);
-    else if(held(s))own('nesting',`Held back from Laser cutting${s.laserHold.by?` by ${s.laserHold.by}`:''}: move it to Laser cutting to release it. Its approvals and seals are kept`);
+    else if(held(s))own('nesting',`Held back from Laser cutting${s.laserHold.by?` by ${s.laserHold.by}`:''} (it was moved back to In progress): press Approve for laser cutting, or move it to Laser cutting, to release it. Its approvals and seals are kept`,true);
     if(again){
       // cut once before: reopening keeps that approval (laserSheet), only a place in a set is still asked
       for(const k of GATED)ok[k]=k==='nesting'?r.included:true;

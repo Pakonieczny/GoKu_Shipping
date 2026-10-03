@@ -34,6 +34,11 @@ const S = 'Charm_Nest_Sheets', SET = 'Charm_Nest_Sets', RUN = 'Charm_Nest_Runs',
   mk('rose', { metal: 'rose', roseStockId: 'stock-1', noLabel: false });
   mk('live1', { draft: true, runId: 'run-live' });
   mk('opn-1', { setId: 'set-3', setSeq: 3, runId: 'run-live' });
+  mk('rg-new', { metal: 'rose', draft: true, runId: 'run-live', roseStockId: 'stock-1', noLabel: true });                       // no line yet
+  mk('rg-line', { metal: 'rose', draft: true, runId: 'run-live', roseStockId: 'stock-1', noLabel: true, rosePlanHash: 'h-1' });   // has its line
+  mk('rg-full', { metal: 'rose', draft: true, runId: 'run-live', roseStockId: 'stock-1', noLabel: true, rosePlanHash: 'h-2' });   // full: no line, no cut
+  mk('rg-cut', { metal: 'rose', setId: 'set-1', setSeq: 1, roseStockId: 'stock-1', roseCutAt: now - 5000, rosePlanHash: 'h-3' });
+  mkSet('set-4', ['cmt-2'], { status: 'complete', committedAt: now - 2000 }); mk('cmt-2', { setId: 'set-4', setSeq: 4, runId: 'run-live' });   // committed, not cut, its run still open
   st.put(RUN, 'run-x', { runId: 'run-x', status: 'complete', lines }); st.put(RUN, 'run-live', { runId: 'run-live', status: 'review', lines: {} });
 
   const labels = [], joins = [], roseCalls = [], marks = [];
@@ -41,7 +46,9 @@ const S = 'Charm_Nest_Sheets', SET = 'Charm_Nest_Sets', RUN = 'Charm_Nest_Runs',
     api: post, employee: () => 'Paul', rows: () => [],
     remakeLabel: async id => { labels.push(id); const rec = st.doc(S, id); st.put(S, id, { label: { files: [{ path: id + '-qr.png', url: image, payload: rec.orders[0], orders: rec.orders }], orders: rec.orders } }); },
     include: async (id, o) => { joins.push({ id, ...o }); st.put(S, id, { draft: false, setId: o.setId || 'set-9', setSeq: 3 }); },
-    live: id => id === 'live1' ? { runHere: true, draft: true, dispatchSetId: 'set-3', can: { ok: true, byHand: true }, split: [] } : id === 'opn-1' ? { runHere: true, draft: false, dispatchSetId: 'set-3', can: { ok: true } } : null
+    live: id => id === 'live1' ? { runHere: true, draft: true, dispatchSetId: 'set-3', can: { ok: true, byHand: true }, split: [] } : id === 'opn-1' ? { runHere: true, draft: false, dispatchSetId: 'set-3', can: { ok: true } }
+      : /^rg-(new|line)$/.test(id) ? { runHere: true, draft: true, dispatchSetId: 'set-3', can: { ok: true }, rose: { full: false }, split: [] } : id === 'rg-full' ? { runHere: true, draft: true, dispatchSetId: 'set-3', can: { ok: true }, rose: { full: true }, split: [] }
+      : id === 'cmt-2' ? { runHere: false, draft: false, dispatchSetId: 'set-3', can: { ok: false, reason: 'It is not on a page of the open run.' }, split: [] } : null
   });
   const held = id => !!(st.doc(S, id).laserHold && st.doc(S, id).laserHold.at);
   const area = async (kind, id) => (await LF.plan({ kind, id, to: { area: 'nowhere' } })).from.area;
@@ -207,6 +214,61 @@ const S = 'Charm_Nest_Sheets', SET = 'Charm_Nest_Sets', RUN = 'Charm_Nest_Runs',
     assert.deepEqual(LF.targets({ kind: 'set', id: 'set-1' }).map(t => t.area), ['laser', 'completed']);
     const z = LF.explainTargets({ kind: 'sheet', id: 'solo' }); assert(/committed/.test(z.find(x => x.set === 'set-2').reason)); assert(/already/.test(z.find(x => x.area === 'laser').reason));
     assert.equal(LF.targets({ kind: 'sheet', id: 'solo', area: 'completed' }).some(t => t.set), false, 'a completed sheet goes back to Laser cutting first');
+    // ── H. Rose Gold into a set (Paul: "dragging and dropping a rose gold sheet between sets"): its own yes, never assumed ──
+    const joinsRose = [], roseAsk = { 'rg-new': true, 'rg-line': false, 'rg-full': false }, rr = [];
+    const roseMod = (o = {}) => ({
+      check: async item => { rr.push('check:' + item.id); const need = !!roseAsk[item.id]; return { needsLine: need, sheets: [{ sheetId: item.id, label: 'RG Sheet 1', needsLine: need, source: o.source || 'live', blocked: o.blocked || '' }], confirm: need ? { key: 'roseLine', label: 'Add the green dash line to RG Sheet 1?', detail: 'This calculates the cut contour for these charms' } : null }; },
+      calculate: async (item, x) => { rr.push('calculate:' + item.id + ':' + !!x.recordCut); return { ok: true, lines: 1 }; }
+    });
+    LF.configure({ rose: () => roseMod(), roseJoin: async (id, o) => { joinsRose.push({ id, line: o.line, full: o.full, by: o.by }); st.put(S, id, { draft: false, setId: 'set-3', setSeq: 3, ...(o.full ? {} : { roseCutAt: Date.now(), rosePlanHash: 'h-new' }) }); return { ok: true, sheets: o.full ? [] : [{ sheetId: id, label: 'RG Sheet 1', lineAdded: !!o.line, lines: o.line ? 1 : 0, cut: true }], warnings: [] }; } });
+    // a sheet with no line yet: both yes keys, the line is added only in the same press
+    p = await LF.plan({ kind: 'sheet', id: 'rg-new', to: { set: 'set-3' } });
+    assert.equal(p.ok, true, JSON.stringify(p.needs)); assert.deepEqual(p.confirm.map(c => c.key), ['roseSet', 'roseLine']);
+    assert.equal(p.confirm[0].label, 'Add RG Sheet 1 to Set 3?'); assert(/Rose Gold joins a set the way Cut Sheet does, with its green dash line/.test(p.confirm[0].detail)); assert(/permanent/.test(p.confirm[0].detail));
+    assert(/Cut Sheet press/.test(p.auto.find(a => a.key === 'membership').detail), 'the auto line says it is the Cut Sheet press'); assert.equal(joinsRose.length, 0, 'plan writes nothing'); assert.equal(st.doc(S, 'rg-new').draft, true);
+    for (const keys of [[], ['roseSet'], ['roseLine']]) { r = await LF.commit(p, { by: 'Paul', confirmed: keys }); assert.equal(r.ok, false, keys.join()); assert(/yes first/.test(r.error)); }
+    assert.equal(joinsRose.length, 0); assert.equal(st.doc(S, 'rg-new').draft, true, 'nothing without both yes keys');
+    r = await LF.commit(p, { by: 'Paul', confirmed: ['roseSet', 'roseLine'] }); assert.equal(r.ok, true, JSON.stringify(r));
+    assert.deepEqual(joinsRose, [{ id: 'rg-new', line: true, full: false, by: 'Paul' }]); assert(r.applied.some(a => a.key === 'membership' && /RG Sheet 1 added to Set 3/.test(a.label)) && r.applied.some(a => a.key === 'roseLine') && r.applied.some(a => a.key === 'roseCut'), JSON.stringify(r.applied));
+    assert.equal(st.doc(S, 'rg-new').draft, false); r = await LF.commit(p, { by: 'Paul', confirmed: ['roseSet', 'roseLine'] }); assert.equal(r.noop, true, 'asked again: already in the set'); assert.equal(joinsRose.length, 1);
+    // a sheet that already has its line: only roseSet is asked
+    p = await LF.plan({ kind: 'sheet', id: 'rg-line', to: { set: 'set-3' } }); assert.deepEqual(p.confirm.map(c => c.key), ['roseSet']); assert(!p.steps.some(x => x.type === 'roseLine'));
+    r = await LF.commit(p, { by: 'Paul', confirmed: ['roseSet'] }); assert.equal(r.ok, true, JSON.stringify(r)); assert.deepEqual(joinsRose[1], { id: 'rg-line', line: false, full: false, by: 'Paul' });
+    // a full sheet: it only joins, and no cut is said to be recorded
+    p = await LF.plan({ kind: 'sheet', id: 'rg-full', to: { set: 'set-3' } }); assert.deepEqual(p.confirm.map(c => c.key), ['roseSet']); assert(/no cut is recorded/.test(p.confirm[0].detail));
+    r = await LF.commit(p, { by: 'Paul', confirmed: ['roseSet'] }); assert.equal(r.ok, true); assert.equal(joinsRose[2].full, true); assert(!r.applied.some(a => a.key === 'roseCut'));
+    // the Rose Gold module cannot reach the sheet: a hard need, no yes is asked for
+    st.put(S, 'rg-new', { draft: true, setId: null, roseCutAt: null, rosePlanHash: null }); st.doc(S, 'rg-new').roseCutAt = undefined; st.doc(S, 'rg-new').rosePlanHash = undefined; joinsRose.length = 0;
+    LF.configure({ rose: () => roseMod({ source: 'record' }) }); p = await LF.plan({ kind: 'sheet', id: 'rg-new', to: { set: 'set-3' } });
+    assert.equal(p.ok, false); assert(p.needs.some(x => x.key === 'roseOpen' && /Cut Sheet/.test(x.detail)), JSON.stringify(p.needs)); assert.deepEqual(p.confirm, []);
+    LF.configure({ rose: () => roseMod({ blocked: 'Its layout is still being nested or saved' }) }); p = await LF.plan({ kind: 'sheet', id: 'rg-new', to: { set: 'set-3' } }); assert(p.needs.some(x => x.key === 'roseBusy'));
+    // without the page's roseJoin the join says where it can be done; without the Rose Gold module a line cannot be asked for from here
+    LF.configure({ rose: () => roseMod(), roseJoin: null }); LF.hooks.roseJoin = null; p = await LF.plan({ kind: 'sheet', id: 'rg-new', to: { set: 'set-3' } });
+    assert(p.needs.some(x => x.key === 'join' && /Nest tab/.test(x.detail)), JSON.stringify(p.needs));
+    const calc = []; LF.configure({ rose: () => null, roseJoin: async () => { calc.push('join'); return { ok: true, sheets: [] }; } }); p = await LF.plan({ kind: 'sheet', id: 'rg-new', to: { set: 'set-3' } });
+    assert.deepEqual(p.confirm.map(c => c.key), ['roseSet', 'roseLine'], 'the fallback words stand when the module is absent');
+    r = await LF.commit(p, { by: 'Paul', confirmed: ['roseSet', 'roseLine'] }); assert.equal(r.ok, false); assert(/cannot be calculated/.test(r.error)); assert(!calc.length && st.doc(S, 'rg-new').draft === true, 'checked before anything is done');
+    // the page's own hook: the Cut Sheet press, the yes-gated order of things (fakes for the page's parts)
+    const parts = { log: [], sh: { sheetId: 'rg-x', page: 2, metal: 'rose', draft: true, setId: null } };
+    const page = { RoseStock: { record: async (sh, x) => { parts.log.push('record:' + x.by); sh.draft = false; sh.setId = 'set-3'; sh.roseCutAt = 1; }, render() {} }, Gate: { changeMembership: async () => { parts.log.push('include'); parts.sh.draft = false; parts.sh.setId = 'set-3'; }, policy: () => ({ reason: 'x' }) },
+      CN: { allSheets: () => [parts.sh] }, LibraryFlowRose: { calculate: async (item, x) => { parts.log.push('calculate:' + x.recordCut + ':' + x.by); parts.sh.draft = false; parts.sh.setId = 'set-3'; parts.sh.roseCutAt = 1; return { ok: true, sheets: [{ sheetId: 'rg-x', label: 'RG Sheet 2', lineAdded: true, lines: 1, cut: true }] }; } } };
+    const hook = LF.core.makeRoseJoin(() => page);
+    let h = await hook('rg-x', { by: 'Paul', line: true }); assert.equal(h.ok, true); assert.deepEqual(parts.log, ['calculate:true:Paul'], 'a line goes through calculate with recordCut: the one cut a move records');
+    parts.log.length = 0; Object.assign(parts.sh, { draft: true, setId: null, roseCutAt: 0 }); h = await hook('rg-x', { by: 'Paul', line: false }); assert.deepEqual(parts.log, ['record:Paul'], 'a sheet with its line is pressed as its Cut Sheet button does');
+    parts.log.length = 0; Object.assign(parts.sh, { draft: true, setId: null, roseCutAt: 0 }); h = await hook('rg-x', { by: 'Paul', full: true }); assert.deepEqual(parts.log, ['include'], 'a full sheet only joins'); assert.equal(h.sheets[0].cut, false);
+    parts.log.length = 0; Object.assign(parts.sh, { draft: true, setId: null, roseCutAt: 0 }); page.LibraryFlowRose.calculate = async () => ({ ok: false, error: 'RG Sheet 2 is not open on this page' }); h = await hook('rg-x', { by: 'Paul', line: true }); assert.equal(h.ok, false); assert(!parts.log.length && parts.sh.draft === true, 'refused before anything was written');
+    page.RoseStock.record = async () => { throw new Error('Not cut: Nest and verify first'); }; h = await hook('rg-x', { by: 'Paul', line: false }); assert.equal(h.ok, false); assert(/Not cut/.test(h.error)); assert.equal(parts.sh._roseAction, false, 'the busy flag is let go');
+    h = await LF.core.makeRoseJoin(() => ({ CN: { allSheets: () => [] } }))('nope', { by: 'P' }); assert.equal(h.ok, false); assert(/Cut Sheet/.test(h.error));
+    LF.configure({ rose: () => null, roseJoin: null }); LF.hooks.roseJoin = null;
+
+    // ── I. a sheet out of a committed or finished set: the exact reason, and the way through ──
+    p = await LF.plan({ kind: 'sheet', id: 'cmt-2', to: { set: 'set-3' } }); assert.equal(p.ok, false);
+    const lc = p.needs.find(x => x.key === 'leaveCommitted'); assert(lc && /Set 4, which was committed to the Design Station/.test(lc.label) && /Undo set/.test(lc.detail) && /undo that commit/.test(lc.detail), JSON.stringify(p.needs)); assert.deepEqual(p.confirm, []);
+    r = await LF.commit(p, { by: 'Paul', confirmed: ['leaveSet', 'roseSet'] }); assert.equal(r.ok, false, 'no yes key lifts a block'); assert(/committed to the Design Station/.test(r.error));
+    p = await LF.plan({ kind: 'sheet', id: 'cmt-1', to: { set: 'set-3' } }); assert(p.needs.some(x => x.key === 'leaveCommitted'), 'a sheet of a committed set of a finished run: the same plain reason');
+    p = await LF.plan({ kind: 'sheet', id: 'rg-cut', to: { set: 'set-3' } }); assert(p.needs.some(x => x.key === 'sheetCut' && /permanent/.test(x.detail) && /stays in the set it was cut in/.test(x.detail)), JSON.stringify(p.needs));
+    st.put(S, 'solo', { laserDoneAt: now - 100 }); p = await LF.plan({ kind: 'sheet', id: 'solo', to: { set: 'set-3' } }); assert(p.needs.some(x => x.key === 'sheetCompleted' && /cut record/.test(x.detail)), JSON.stringify(p.needs)); st.doc(S, 'solo').laserDoneAt = undefined;
+
     console.log('PASS: library flow: plan/commit forwards and backwards, holds keep every seal, a sheet into a set, Rose Gold only on its press, hard blockers, idempotent repeat, failed writes change nothing');
   } finally { srv.close(); }
 })().catch(e => { console.error(e); process.exitCode = 1; });
