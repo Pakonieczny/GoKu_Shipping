@@ -643,6 +643,15 @@ exports.handler = async (event) => {
         };
       }
 
+      /* The stations' Employee Number list (Brites_Orders/"Employee Numbers": every number next to its name) is not served to a
+         page any more: a login asks the server ({ pinLogin }, _stationPinLogin.js) and is given one name. This old read answers
+         only a request carrying the manager passcode (X-Manager-Key); any other is refused before anything is read. It holds
+         for the sandbox copy as well. */
+      if (require("./_stationPinLogin").isRosterId(orderId)) {
+        const refused = await require("./_stationPinLogin").rosterGate(db, event);
+        if (refused) return { statusCode: refused.statusCode, headers: Object.assign({}, CORS, refused.headers), body: JSON.stringify(refused.body) };
+      }
+
       const docSnap = await db.collection(PREFIX + "Brites_Orders").doc(String(orderId)).get();
 
       if (!docSnap.exists) {

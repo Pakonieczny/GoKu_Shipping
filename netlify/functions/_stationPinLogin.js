@@ -26,7 +26,13 @@
  *      the same as a refused record;
  *    · an address that went quiet starts clean after the minute; nothing is stored per address.
  *  The number is never logged and never put in a response, an error message or a document; the only thing written is the
- *  global counter (a time window, a count and a lockout time).  Nothing here calls Etsy. */
+ *  global counter (a time window, a count and a lockout time).  Nothing here calls Etsy.
+ *
+ *  The old whole-list read (GET firebaseOrders?orderId=Employee Numbers) is closed with rosterGate(): it answers only a request
+ *  that carries the manager passcode (the same one as the Ads console and the Employee efficiency console, _editPasscode.js)
+ *  in the X-Manager-Key header, never in a URL. A request without a key is refused 401 before anything is read, the
+ *  passcode store included; ten wrong keys a minute from one address start a one-minute lockout; the key is compared in
+ *  constant time and is never logged, stored or returned. */
 "use strict";
 
 const ROSTER_COLL = "Brites_Orders", ROSTER_DOC = "Employee Numbers";
@@ -146,4 +152,29 @@ async function pinLogin(db, event, rawPin) {
   return resp(200, { ok: false, error: "that Employee Number is not on the list" });
 }
 
-module.exports = { pinLogin, admit, failed, lockedNow, tidyName, clientIp, reset, deps, ROSTER_COLL, ROSTER_DOC, LIMITS_COLL, LIMITS_DOC, WINDOW_MS, LOCK_MS, IP_MAX_FAILS, IP_MAX_REQS, GLOBAL_MAX_FAILS, FAIL_MIN_MS, MAX_BODY_CHARS, TOO_MANY };
+/* ───────── the old whole-list read: the manager passcode or nothing ───────── */
+const KEY_FAILS_PER_MIN = 10, KEY_MAX_CHARS = 300;
+const keyFails = new Map();
+
+/** is this orderId the roster document (Brites_Orders/"Employee Numbers")? Firestore ids are exact; a looser test costs nothing. */
+const isRosterId = id => /^\s*employee[\s_+-]*numbers?\s*$/i.test(String(id == null ? "" : id));
+
+/** null when the request carries the manager passcode (the read may go on); otherwise the refusal to send: { statusCode, body, headers }. */
+async function rosterGate(db, event, EP) {
+  const h = (event && event.headers) || {};
+  let key = ""; for (const k in h) if (k.toLowerCase() === "x-manager-key") key = String(h[k] == null ? "" : h[k]);
+  if (!key.trim() || key.length > KEY_MAX_CHARS) return resp(401, { success: false, error: "unauthorized" });   // nothing is read, not even the passcode
+  const now = deps.now(), ip = clientIp(event), w = keyFails.get(ip);
+  if (w && now - w.t0 < WINDOW_MS && w.n >= KEY_FAILS_PER_MIN) return resp(429, { success: false, error: "too many tries, wait a minute" });
+  EP = EP || require("./_editPasscode");
+  let pass; try { pass = await EP.resolve({ db }); } catch (e) { pass = { value: "" }; }
+  if (!pass || !pass.value) return resp(403, { success: false, error: "locked" });
+  if (!EP.sameSecret(key, pass.value)) {
+    if (!w || now - w.t0 >= WINDOW_MS) { if (keyFails.size > 2000) keyFails.clear(); keyFails.set(ip, { t0: now, n: 1 }); } else w.n++;
+    return resp(401, { success: false, error: "unauthorized" });
+  }
+  return null;
+}
+function resetGate() { keyFails.clear(); }
+
+module.exports = { isRosterId, rosterGate, resetGate, pinLogin, admit, failed, lockedNow, tidyName, clientIp, reset, deps, ROSTER_COLL, ROSTER_DOC, LIMITS_COLL, LIMITS_DOC, WINDOW_MS, LOCK_MS, IP_MAX_FAILS, IP_MAX_REQS, GLOBAL_MAX_FAILS, FAIL_MIN_MS, MAX_BODY_CHARS, TOO_MANY };

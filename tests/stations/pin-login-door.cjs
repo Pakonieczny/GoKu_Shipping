@@ -16,6 +16,9 @@
 //   6 · fails open: a Firestore failure around the counters never keeps a right number out; a missing roster or a failed
 //       read is an error WITHOUT `ok` (so a page may fall back); the sandbox flag does not give a fresh counter
 //   7 · no PIN in any response, any log line, or any stored document (the counter holds a window, a count, a lockout time)
+//   8 · the old whole-list read (GET orderId=Employee Numbers) answers only the manager passcode (X-Manager-Key): no key, a wrong
+//       key, no passcode configured, the sandbox flag and other spellings all get no data; ten wrong keys lock an address;
+//       other orders are read as before
 //   NODE_PATH=… node tests/stations/pin-login-door.cjs
 'use strict';
 const path = require('path'), assert = require('assert'), Module = require('module');
@@ -259,6 +262,53 @@ const check = async (name, fn) => { try { await fn(); results.push([name, true])
     assert(!bodies.some(b => seesPin(b)), 'a response held a number');
     assert(!logs.some(l => seesPin(l)), 'a log line held a number');
     assert(logs.length > 0, 'the lockouts were logged (without a number)');
+  });
+
+  /* 8 · the old whole-list read: the manager passcode or nothing */
+  await check('8 the old whole-list read (GET orderId=Employee Numbers) answers only the manager passcode', async () => {
+    reset(); P.resetGate();
+    const KEY = 'mk-' + fakePin() + '-' + fakePin();                             // made up now, never printed
+    const saved = process.env.EDIT_PASSCODE; process.env.EDIT_PASSCODE = KEY;
+    try {
+      const get = (orderId, { key, ip, sandbox } = {}) => call(null, { method: 'GET', ip, query: Object.assign({ orderId }, sandbox ? { sandbox: '1' } : {}), headers: key !== undefined ? { 'X-Manager-Key': key } : {} });
+      const b0 = bodies.length, l0 = logs.length;
+      // no key: refused before anything is read (not the roster, not the passcode store), whatever the spelling and the workspace
+      for (const id of ['Employee Numbers', 'employee numbers', ' Employee  Numbers ', 'Employee_Numbers', 'EMPLOYEE NUMBER']) for (const sandbox of [false, true]) {
+        const r = await get(id, { sandbox });
+        assert.strictEqual(r.status, 401, 'a keyless read of the list is refused'); assert.deepStrictEqual(r.body, { success: false, error: 'unauthorized' });
+        assert(!('data' in r.body) && !seesPin(r.raw) && !r.raw.includes('Giovanna'), 'nothing of the list comes back');
+      }
+      for (const k of ['', '   ']) assert.strictEqual((await get('Employee Numbers', { key: k })).status, 401, 'an empty key is no key');
+      assert.strictEqual(rosterReads(), 0, 'the roster was never read for them'); assert.strictEqual(reads.get('Sandbox_Brites_Orders/Employee Numbers') || 0, 0);
+      assert.strictEqual(reads.get('config/editPasscode') || 0, 0, 'the passcode store was not even asked');
+      // a wrong key: refused; ten a minute from one address lock that address (even for the right key); another address is unaffected
+      const A = '203.0.113.60', B = '203.0.113.61';
+      for (let i = 0; i < 10; i++) { const r = await get('Employee Numbers', { key: 'wrong-' + i, ip: A }); assert.strictEqual(r.status, 401); assert(!r.raw.includes(KEY)); }
+      assert.strictEqual((await get('Employee Numbers', { key: KEY, ip: A })).status, 429, 'ten wrong keys lock the address for a minute');
+      assert.strictEqual(rosterReads(), 0);
+      // the right key still reads the list (read here without keeping the answer: it holds every number)
+      const hit = await door.handler({ httpMethod: 'GET', headers: { 'x-nf-client-connection-ip': B, 'x-manager-key': KEY }, queryStringParameters: { orderId: 'Employee Numbers' }, body: null });
+      const hitBody = JSON.parse(hit.body);
+      assert.strictEqual(hit.statusCode, 200); assert(hitBody.success === true && hitBody.data && hitBody.data[GIO] === 'Giovanna', 'the manager passcode reads the list as before');
+      advance(61000);
+      const again = await door.handler({ httpMethod: 'GET', headers: { 'x-nf-client-connection-ip': A, 'x-manager-key': KEY }, queryStringParameters: { orderId: 'Employee Numbers' }, body: null });
+      assert.strictEqual(again.statusCode, 200, 'the locked address works again after the minute');
+      // no passcode configured at all: locked (reads only), never open
+      delete process.env.EDIT_PASSCODE; require(path.join(root, 'netlify/functions/_editPasscode.js')).resetCache();
+      const none = await get('Employee Numbers', { key: 'anything-at-all', ip: '203.0.113.62' });
+      assert.strictEqual(none.status, 403); assert(!('data' in none.body) && !seesPin(none.raw));
+      process.env.EDIT_PASSCODE = KEY;
+      // every other order read is untouched
+      docs.set('Brites_Orders/3521000777', { 'Staff Note': 'n', clientName: 'Test Buyer' });
+      const order = await get('3521000777');
+      assert.strictEqual(order.status, 200); assert.deepStrictEqual(order.body, { success: true, data: { 'Staff Note': 'n', clientName: 'Test Buyer' } });
+      const gone = await get('3521000778'); assert.deepStrictEqual(gone.body, { success: false, notFound: true });
+      assert.strictEqual((await get('3521000777', { sandbox: true })).body.notFound, true, 'the sandbox copy of an order is its own');
+      // the login door is untouched, and nothing above put the key or a number in a response or a log line
+      assert.strictEqual((await call(ANNA)).body.name, 'Anna');
+      assert(!bodies.slice(b0).some(b => seesPin(b) || b.includes(KEY)), 'a response held a number or the key');
+      assert(!logs.slice(l0).some(l => seesPin(l) || l.includes(KEY)), 'a log line held a number or the key');
+    } finally { if (saved === undefined) delete process.env.EDIT_PASSCODE; else process.env.EDIT_PASSCODE = saved; require(path.join(root, 'netlify/functions/_editPasscode.js')).resetCache(); }
   });
 
   const failed = results.filter(r => !r[1]).length;
