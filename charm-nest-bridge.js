@@ -312,7 +312,7 @@ function askEmployee() {
    station panel), and it is what appears, calmly, when something a person did could not be put under a name. */
 const NameBar = (() => {
   let bar = null, finish = null, pr = null, quietUntil = 0;   // (a hint put away with ✕ or Esc does not come back for 90 s: calm, not nagging)
-  const CSS = ".cnNameBar{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);z-index:2147483000;display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;box-sizing:border-box;max-width:min(540px,calc(100vw - 24px));padding:8px 10px;background:var(--card,#fff);border:1px solid var(--line,#ddd);border-radius:12px;box-shadow:0 10px 28px rgba(0,0,0,.14);font:12px var(--sans,system-ui,sans-serif);color:var(--ink70,#555)}"
+  const CSS = ".cnNameBar{position:fixed;right:18px;top:var(--chromeH,96px);z-index:2147483000;display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;box-sizing:border-box;max-width:min(540px,calc(100vw - 24px));padding:8px 10px;background:var(--card,#fff);border:1px solid var(--line,#ddd);border-radius:12px;box-shadow:0 10px 28px rgba(0,0,0,.14);font:12px var(--sans,system-ui,sans-serif);color:var(--ink70,#555)}"
     + ".cnNameBar label{display:flex;flex-direction:column;line-height:1.3;min-width:0;flex:1 1 210px}.cnNameBar label b{font-weight:600;color:var(--ink,#222)}.cnNameBar .cnNbWhy{font-size:11px;color:var(--ink45,#777)}"
     + ".cnNameBar input{flex:0 1 160px;min-width:120px;border:1px solid var(--line,#ddd);border-radius:8px;padding:5px 8px;font:13px var(--sans,system-ui,sans-serif);background:var(--card2,#fafafa);color:var(--ink,#222)}"
     + ".cnNameBar input:focus{outline:2px solid rgba(74,107,120,.35);border-color:var(--slate,#4a6b78);background:var(--card,#fff)}"
