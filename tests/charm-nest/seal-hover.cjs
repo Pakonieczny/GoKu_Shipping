@@ -27,7 +27,7 @@ async function closed(label){await advance(0);assert.equal(zoomed(),null,label);
 const noSecondSeal=label=>assert.equal(d.querySelectorAll('.sealLens,.tlLoupe,.tlNowZoom,[data-seal-caption],.seal[title]').length,0,label+': no lens, loupe, caption or tooltip is ever made');
 const inView=(r,label)=>assert(r&&r.left>=0&&r.top>=0&&r.right<=w.innerWidth&&r.bottom<=w.innerHeight,label+' stays in the view '+JSON.stringify(r));
 async function exercise(seal,label){
- const history=seal.innerHTML,size=sizeOf(seal),k=Seal.zoomScale(size);
+ const history=seal.innerHTML,size=sizeOf(seal),k=Seal.zoomScale(size,Seal.zoom.cap(seal));
  point('pointerover',seal);await advance(300);assert.equal(zoomed(),null,label+' waits through a 300 ms pass, shorter than '+DELAY+' ms');
  assert(!seal.hasAttribute('title'),label+' has no native tooltip');point('pointerout',seal,outside);await advance(2000);await closed(label+' cancels on departure');
  point('pointerover',seal);await advance(DELAY);assert.equal(zoomed(),seal,label+' grows itself once rested on for '+DELAY+' ms');
@@ -83,13 +83,17 @@ async function exercise(seal,label){
  assert.equal(outlines.size,8,'all eight families have distinguishable outlines');
  // The adaptive system: whatever the size a seal is fitted to, the smaller it is the more it grows, by one curve.
  const ladder=[];
- for(const size of [140,112,84,56,40,30,24]){
+ for(const size of [84,60,48,40,30,24,16]){
   const host=d.createElement('span');host.className='sealRow';host.innerHTML=Seal.html({how:'print',at,by:'Paul'});d.body.append(host);const seal=host.firstElementChild;seal.style.setProperty('--seal-fit',size+'px');rectFor(seal,300,300,size);
   point('pointerover',seal);await advance(DELAY);assert.equal(zoomed(),seal,size+'px seal zooms');ladder.push(+seal.dataset.sealZoom);
-  assert.equal(seal.dataset.sealZoom,Seal.zoomScale(size).toFixed(2),size+'px takes its size\'s scale');point('pointerout',seal,outside);await closed(size+'px puts back');host.remove();
+  assert.equal(seal.dataset.sealZoom,Seal.zoomScale(size,96).toFixed(2),size+'px takes its size\'s scale');point('pointerout',seal,outside);await closed(size+'px puts back');host.remove();
  }
  assert(ladder.every((k,i)=>i===0||k>ladder[i-1]),'smaller seals zoom more: '+ladder.join(' < '));
- assert(ladder[0]<=1.2&&ladder.at(-1)>=3.5,'a large seal grows a little, a tiny one a lot: '+ladder.join(', '));
+ assert(ladder[0]===1.08&&ladder.at(-1)===1.8,'a large seal grows a little (×1.08), a tiny one a little more (×1.8): '+ladder.join(', '));
+ // the gentle curve (Paul, 3 Oct) and its caps: 64px and up 1.08, 56 1.15, 40 1.3, 24 1.55, 16 and less 1.8; a grown seal is never wider than 96px (72 in the order timeline and window), never below its own size
+ assert.deepEqual([64,84,140,56,40,24,16,10].map(n=>Seal.zoomScale(n)),[1.08,1.08,1.08,1.15,1.3,1.55,1.8,1.8],'the curve at its anchors');
+ for(const [n,cap] of [[84,96],[84,72],[64,72],[56,72],[40,72],[24,72],[96,96],[140,96],[120,72]]){const k=Seal.zoomScale(n,cap);assert(k>=1&&(k===1||n*k<=cap+.01)&&k<=Seal.zoomScale(n),n+'px under a '+cap+'px cap grows to ×'+k);}
+ assert.equal(Seal.zoomScale(140,96),1,'a seal wider than its cap is not grown');assert.equal(Seal.zoomScale(84,72),1,'an 84px seal in the 72px order window only lifts');
  w.eval(fs.readFileSync('charm-nest-readiness.js','utf8'));const R=w.CharmNestReadiness;for(const ready of [true,false]){
   assert.equal(R.seal({ready}),'','readiness has no unearned zoom target');
  }

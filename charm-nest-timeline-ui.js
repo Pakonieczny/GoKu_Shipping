@@ -52,6 +52,12 @@
      adaptive curve of Seal.zoom (charm-nest-motion.js), and goes back the same way. There is no second seal. The room under
      the grown seal belongs to the step's explainer card, which is placed below the seal's grown rectangle. ── */
   const SEAL_SIZE = 84;
+  /* ── the Timeline page's own seal sizes (Paul, 3 Oct 2026, on an order's Timeline: "All of these seals are too big ... they can be
+     much smaller, and then they don't have to zoom in so large"): about 40% under the shared 84 px, on this page only (every other
+     page keeps the shared size). The chart's stamps and ghosts, the header rail's steps, the detail's big seal (--tl-big) and the
+     "Around this step" and step lists (--tl-around) each keep one size of their own, and the lanes, columns and rows are cut to
+     fit them. A seal still shows everything it showed; the zoom (Seal.zoom) is what reads it. ── */
+  const TL_CHART_SEAL = 26, TL_RAIL_SEAL = 20;
   const zoomApi = () => (root.Seal && root.Seal.zoom) || null;
   const zoomOn = (el, kb) => { const z = zoomApi(); return !!(z && el && z.show(el, { keyboard: !!kb, managed: true })); };
   const zoomOff = (el, now) => { const z = zoomApi(); if (z && el) z.hide(!!now, el); };
@@ -570,7 +576,7 @@
     const base = baseSealSize(rail), width = m ? m.stops : wrap.clientWidth || rail.clientWidth, compactHost = rail.closest(".tlUI.compact"), hostH = m ? m.host : compactHost ? compactHost.clientHeight : 0;
     let fit = width > 0 ? Math.min(base, Math.max(24, width / n - 8)) : base;
     // A compact header is already sized by its host. Its seals fit that space without making a taller toolbar.
-    if (compactHost && hostH) fit = Math.min(fit, Math.max(24, hostH - 20));
+    if (compactHost && hostH) fit = Math.min(fit, Math.max(TL_RAIL_SEAL - 2, hostH - (44 - TL_RAIL_SEAL)));
     rail.style.setProperty("--seal-fit", Math.round(fit * 100) / 100 + "px");
   }
   function iconG(ic, x, y, s, ink, sw) {
@@ -1025,7 +1031,7 @@
 
   /* ════ the component's look (once per page) ════ */
   const CSS = `
-.tlUI{position:relative;min-width:0;min-height:0;display:flex;flex-direction:column;color:var(--ink,#1c1a17);font:13px/1.45 var(--sans,system-ui,sans-serif);--tlE:cubic-bezier(.2,.8,.2,1);--tlSpring:cubic-bezier(.3,1.7,.5,1);--tlSlate:#2f5563}
+.tlUI{position:relative;min-width:0;min-height:0;display:flex;flex-direction:column;color:var(--ink,#1c1a17);font:13px/1.45 var(--sans,system-ui,sans-serif);--tlE:cubic-bezier(.2,.8,.2,1);--tlSpring:cubic-bezier(.3,1.7,.5,1);--tlSlate:#2f5563;--tl-big:54px;--tl-around:46px}
 .tlUI *{box-sizing:border-box}
 .tlUI button{font:inherit;color:inherit;cursor:pointer}
 .tlUI [hidden]{display:none!important}
@@ -1086,7 +1092,7 @@
 @keyframes tlSpin{to{transform:rotate(360deg)}}
 .tlGrid{display:grid;grid-template-columns:140px minmax(0,1fr);border-bottom:1px solid var(--line);position:relative;flex:none}
 .tlLanes{border-right:1px solid var(--line);background:var(--card);padding-top:40px;padding-bottom:26px}
-.tlLane{position:relative;height:var(--tl-lane-height,58px);display:flex;flex-direction:column;justify-content:center;padding:0 14px;border-bottom:1px solid var(--line2);min-width:0}
+.tlLane{position:relative;height:var(--tl-lane-height,42px);display:flex;flex-direction:column;justify-content:center;padding:0 14px;border-bottom:1px solid var(--line2);min-width:0}
 .tlLane::before{content:"";position:absolute;inset:0;background:linear-gradient(90deg,rgba(202,168,97,.16),transparent);opacity:0;transition:opacity .24s}
 .tlLane.on::before{opacity:1}
 .tlLane b{position:relative;font:700 9.5px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--ink70);display:flex;align-items:center;gap:6px}
@@ -1094,7 +1100,7 @@
 .tlLane span{position:relative;font-size:11px;color:var(--ink45);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .tlLane.stn b{color:var(--tlSlate)}
 .tlScroll{overflow-x:auto;overflow-y:hidden;position:relative;min-width:0}
-.tlCanvas{position:relative;height:472px;min-width:100%}
+.tlCanvas{position:relative;height:360px;min-width:100%}
 .tlPath{position:absolute;left:0;top:0;overflow:visible;pointer-events:none}
 .tlDay{position:absolute;top:0;bottom:0;border-right:1px dashed var(--line)}
 .tlDay.alt{background:rgba(250,247,241,.7)}
@@ -1125,8 +1131,8 @@
 .tlMsg{position:absolute;left:158px;top:50%;transform:translateY(-50%);display:flex;align-items:center;gap:9px;font-size:12.5px;color:var(--ink70);background:var(--card);border:1px solid var(--line);border-radius:10px;padding:9px 13px;box-shadow:var(--sh);z-index:4;max-width:calc(100% - 176px)}
 .tlMsg.err{color:#8a3a26;background:var(--claySoft);border-color:#e7b9aa}
 .tlDetail{position:relative;flex:1 1 auto;min-height:0;overflow:auto;padding:22px 28px 26px}
-.tlDetIn{display:grid;grid-template-columns:var(--seal-size,84px) minmax(0,1fr) 290px;gap:24px;align-content:start}
-.tlBig{display:block;width:var(--seal-fit,var(--seal-size,84px));height:var(--seal-fit,var(--seal-size,84px));transform:rotate(var(--rot,0deg))}
+.tlDetIn{display:grid;grid-template-columns:var(--tl-big) minmax(0,1fr) 290px;gap:20px;align-content:start}
+.tlBig{display:block;width:var(--tl-big);height:var(--tl-big);transform:rotate(var(--rot,0deg))}
 .tlBig svg{width:100%;height:100%;display:block;overflow:visible}
 .tlDetail h3{font:500 24px/1.2 var(--serif);margin:6px 0 4px}
 .tlWhen{font:11.5px var(--mono);color:var(--ink45)}
@@ -1150,19 +1156,19 @@
 .tlBadge.sm{font-size:11px;padding:1px 8px 1px 2px;gap:5px}.tlBadge.sm i{width:17px;height:17px}.tlBadge.sm em{font-size:8.5px}
 .tlAround{border-left:1px solid var(--line);padding-left:24px;display:grid;gap:4px;align-content:start}
 .tlAround .tlLbl{margin-bottom:6px}
-.tlArw{position:relative;display:grid;grid-template-columns:var(--seal-size,84px) minmax(0,1fr);gap:10px;align-items:center;border:0;background:transparent;text-align:left;padding:6px 8px;border-radius:10px;transition:transform .18s var(--tlE)}
+.tlArw{position:relative;display:grid;grid-template-columns:var(--tl-around) minmax(0,1fr);gap:10px;align-items:center;border:0;background:transparent;text-align:left;padding:6px 8px;border-radius:10px;transition:transform .18s var(--tlE)}
 .tlArw::before{content:"";position:absolute;inset:0;border-radius:inherit;background:var(--card2);opacity:0;transition:opacity .18s}
 .tlArw:hover::before{opacity:1}.tlArw:hover{transform:translateX(2px)}
 .tlArw.cur::before{opacity:1;background:var(--goldSoft)}
-.tlArw .sv{position:relative;display:block;width:var(--seal-fit,var(--seal-size,84px));height:var(--seal-fit,var(--seal-size,84px))}
+.tlArw .sv{position:relative;display:block;width:var(--tl-around);height:var(--tl-around)}
 .tlArw .sv svg{width:100%;height:100%;display:block}
 .tlArw div{position:relative;min-width:0}
 .tlArw b{display:block;font:600 12px var(--sans);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .tlArw span{font:10.5px var(--mono);color:var(--ink45)}
 .tlEmpty{color:var(--ink45);font-size:12.5px}
-.tlLegend{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,calc(var(--seal-size,84px) + 18px)),1fr));gap:14px 8px}
+.tlLegend{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,calc(var(--tl-big) + 26px)),1fr));gap:14px 8px}
 .tlLegend figure{margin:0;display:grid;justify-items:center;gap:6px;text-align:center}
-.tlLegend .sv{display:block;width:var(--seal-fit,var(--seal-size,84px));height:var(--seal-fit,var(--seal-size,84px))}.tlLegend .sv svg{width:100%;height:100%;display:block}
+.tlLegend .sv{display:block;width:var(--tl-big);height:var(--tl-big)}.tlLegend .sv svg{width:100%;height:100%;display:block}
 .tlLegend figcaption{font:600 10.5px var(--sans);color:var(--ink70)}
 .tlLegend figcaption small{display:block;font:9px var(--mono);color:var(--ink45);letter-spacing:.06em;text-transform:uppercase;font-weight:400}
 .tlUI.compact .tlBar,.tlUI.compact .tlGrid,.tlUI.compact .tlDetail,.tlUI.compact .tlNow{display:none}
@@ -1170,14 +1176,14 @@
 .tlUI.compact .tlTop{border-bottom:0;padding:0;flex:1 1 auto;align-items:center;flex-wrap:nowrap}
 .tlUI.compact .tlRail{flex:1 1 auto;max-width:none;margin:0}
 .tlUI.compact .tlStops{grid-template-columns:repeat(var(--n,9),minmax(0,1fr))!important;row-gap:0}
-.tlUI.compact .tlStop .tlCnt{top:3px;left:calc(50% + 15px);font-size:7.5px;padding:1.5px 4px}
+.tlUI.compact .tlStop .tlCnt{top:3px;left:calc(50% + 13px);font-size:7.5px;padding:1.5px 4px}
 .tlUI.compact .tlTrack,.tlUI.compact .tlFill{display:block;top:calc(var(--seal-fit,var(--seal-size,84px)) / 2)}
 .tlUI.compact .tlStop{gap:2px}
 .tlUI.compact .tlStop .tlSeal{width:var(--seal-fit,var(--seal-size,84px));height:var(--seal-fit,var(--seal-size,84px))}
 .tlUI.compact .tlStop>span{font-size:7.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .tlUI.compact .tlCxStamp{width:var(--seal-fit,var(--seal-size,84px));height:var(--seal-fit,var(--seal-size,84px))}
 .tlUI.compact .tlMsg{left:50%;top:50%;transform:translate(-50%,-50%);max-width:100%;padding:3px 10px;font-size:11px;gap:6px;box-shadow:none;white-space:nowrap}
-@media (max-width:1100px){.tlDetIn{grid-template-columns:var(--seal-size,84px) minmax(0,1fr)}.tlAround{grid-column:1/-1;border-left:0;padding-left:0;border-top:1px solid var(--line);padding-top:14px}}
+@media (max-width:1100px){.tlDetIn{grid-template-columns:var(--tl-big) minmax(0,1fr)}.tlAround{grid-column:1/-1;border-left:0;padding-left:0;border-top:1px solid var(--line);padding-top:14px}}
 @media (max-width:900px){.tlRail{flex-basis:100%}.tlStops{grid-template-columns:repeat(6,minmax(0,1fr));row-gap:10px}.tlTrack,.tlFill{display:none}}
 .tlNowSeal{position:relative;width:var(--seal-fit,var(--seal-size,84px));height:var(--seal-fit,var(--seal-size,84px));flex:none;transform:rotate(var(--rot,0deg))}
 .tlNowSeal svg,.tlMini svg{display:block;width:100%;height:100%;overflow:visible}
@@ -1223,15 +1229,21 @@
 .tlStepReq .tlPinH b{font:500 15px var(--serif)}
 .tlPin .tlReq{max-width:620px;margin-top:14px;gap:9px}.tlPin .tlReq .rq{font-size:13px}
 .tlPath2{display:grid;gap:2px}
-.tlPath2 button{display:grid;grid-template-columns:var(--seal-size,84px) minmax(0,1fr) auto;gap:10px;align-items:center;border:0;background:transparent;text-align:left;padding:5px 8px;border-radius:9px;transition:background .18s,transform .18s var(--tlE)}
+.tlPath2 button{display:grid;grid-template-columns:var(--tl-around) minmax(0,1fr) auto;gap:10px;align-items:center;border:0;background:transparent;text-align:left;padding:5px 8px;border-radius:9px;transition:background .18s,transform .18s var(--tlE)}
 .tlPath2 button:hover{background:var(--card2)}.tlPath2 button.cur{background:var(--goldSoft)}
-.tlPath2 .sv{display:block;width:var(--seal-fit,var(--seal-size,84px));height:var(--seal-fit,var(--seal-size,84px))}.tlPath2 .sv svg{width:100%;height:100%;display:block}
+.tlPath2 .sv{display:block;width:var(--tl-around);height:var(--tl-around)}.tlPath2 .sv svg{width:100%;height:100%;display:block}
 .tlPath2 b{font:600 12px var(--sans)}.tlPath2 span{font:9.5px var(--mono);color:var(--ink45);letter-spacing:.04em;text-transform:uppercase}
 .tlPath2 button.later .sv,.tlPath2 button.gone .sv{opacity:.45}
 .tlSt.ghost[data-stage]{cursor:pointer}
 .tlExp.side::before{display:none}
 .tlStop.pinned .tlSeal::before{content:"";position:absolute;inset:-5px;border-radius:50%;border:1.5px solid var(--gold);box-shadow:0 0 0 4px rgba(202,168,97,.18);animation:tlSelIn .32s var(--tlSpring) both}
 .tlStop.pinned>span{color:#7a5a1d}
+/* a grown seal's own ring or glow stays a thin ring round it (Paul, 3 Oct: the ring that came with the zoom was bigger than the seal's own
+   growing): Seal.zoom puts the grown seal's scale in --zk, so these are drawn at 1 / --zk of their size and come out the same thin ring once grown */
+.tlSt.sel[data-seal-zoom]::before{inset:calc(-3px / var(--zk, 1));border-width:calc(1.5px / var(--zk, 1));box-shadow:0 0 0 calc(2px / var(--zk, 1)) rgba(202,168,97,.18)}
+.tlSt.hl[data-seal-zoom]::after{inset:calc(-4px / var(--zk, 1))}
+.tlStop.pinned .tlSeal[data-seal-zoom]::before{inset:calc(-3px / var(--zk, 1));border-width:calc(1.5px / var(--zk, 1));box-shadow:0 0 0 calc(2px / var(--zk, 1)) rgba(202,168,97,.18)}
+.tlStop.c .tlSeal[data-seal-zoom]::after{inset:calc(-3px / var(--zk, 1));border-width:calc(1.5px / var(--zk, 1));animation:none;opacity:.9}
 @media (prefers-reduced-motion:reduce){.tlUI *,.tlUI *::before,.tlUI *::after,.tlMini>span{animation-duration:.001s!important;animation-iteration-count:1!important;transition-duration:.001s!important}.tlUI .tlSpin{animation:tlSpin 1.4s linear infinite!important}}
 `;
   function css() {
@@ -1241,7 +1253,7 @@
   const badge = (e, sm) => `<span class="tlBadge${sm ? " sm" : ""}"><i>${iconSvg((LANE[e.lane] || LANE.office).ic)}</i><em>${esc(e.print ? e.print.where : stationName(e))}</em>${esc(whoOf(e))}</span>`;
   // roomier than it was (Paul, 28 Sep: "this entire section is way too crowded"): the seals sit further apart on a
   //  taller lane, and a day is wider, so nothing crowds even when a day holds three or four of them
-  const CELL_COL = 50, CELL_LANE = 58, TOP = 40, PAD = 18, IDLE = 34, DAYMIN = 150, AXIS = 26;
+  const CELL_COL = TL_CHART_SEAL + 8, CELL_LANE = TL_CHART_SEAL + 16, TOP = 40, PAD = 18, IDLE = 34, DAYMIN = 150, AXIS = 26;
   const laneY = (k, laneH) => TOP + (LANE[k] || LANE.office).i * laneH + laneH / 2;
   const dayKey = t => { const d = new Date(t); return d.getFullYear() * 10000 + (d.getMonth() + 1) * 100 + d.getDate(); };
   const midnight = t => { const d = new Date(t); d.setHours(0, 0, 0, 0); return +d; };
@@ -1668,7 +1680,7 @@
       const pending = D.cancelled || D.hand ? [] : (D.rail || STAGES.map((s, i) => ({ s, i }))).filter(g => g.i > D.step);
       const base = baseSealSize(cv), count = Math.min(12, Math.max(1, evs.length + pending.length)), available = S.M ? S.M.scroll : scroller.clientWidth;
       // Every member of a dense timeline shrinks by the same ratio; a sparse timeline uses the shared base size.
-      // The existing timeline cells provide 50px by 58px. Fit the whole group inside them rather than making taller lists.
+      // The timeline cells provide 34px by 42px (the chart seal's 26px and its room). Fit the whole group inside them rather than making taller lists.
       const fit = Math.min(base, CELL_COL - 8, CELL_LANE - 12, available > 0 ? Math.max(24, (available - PAD * 2) / count - 8) : base);
       const COL = Math.max(CELL_COL, fit + 8), LANE_H = Math.max(CELL_LANE, fit + 12), H = TOP + LANES.length * LANE_H + AXIS;
       box.style.setProperty("--tl-lane-height", LANE_H + "px"); cv.style.setProperty("--seal-fit", fit + "px");

@@ -3,7 +3,9 @@
 // so the zoom does not happen immediately if the person runs the cursor quickly across the screen").
 // There is no second seal, no bubble, no tooltip: the seal itself grows from its own centre by one scale curve
 // (Motion.sealZoomScale). Runs in headless Chromium against the local fake site (bridge-server.cjs):
-//  · the curve itself (a table), every size within its band, never rising as a seal gets larger;
+//  · the curve itself (a table: 64 px and up ×1.08, 56 ×1.15, 40 ×1.3, 24 ×1.55, 16 and below ×1.8, Paul 3 Oct "much gentler, it should not
+//    zoom in so large it's obsessive"), every size within its band, never rising as a seal gets larger, and the widest a grown seal may
+//    be (72 px in the order timeline and the order window, 96 px anywhere else, never below its own size);
 //  · a large, a medium and a tiny seal rested on: the ratios grow as the seal shrinks, each grown seal stays in the view
 //    and below the top bar, and unclipped; leaving puts every style back (transform, filter, overflow, z-index);
 //  · a pointer sweeping across a seal for 300 ms zooms nothing, one resting 560 ms does (the delay is 500 ms); Tab zooms at once; Esc returns it;
@@ -85,28 +87,35 @@ const ORDERS = [{ receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * DAY, up
   try {
     // ═══ 1 · the curve ═══
     const A = await open(), { page } = A, X = api(page);
-    const table = await page.evaluate(() => [12, 20, 24, 26, 30, 36, 40, 48, 56, 60, 72, 84, 100, 120, 140, 168, 240].map(n => [n, Motion.sealZoomScale(n)]));
-    const bands = { 120: [1.1, 1.3], 140: [1.1, 1.25], 168: [1.1, 1.2], 240: [1.1, 1.2], 100: [1.5, 1.7], 84: [1.6, 2.2], 72: [1.6, 2.2], 60: [1.6, 2.5], 56: [2.4, 3.2], 48: [2.6, 3.2], 40: [2.6, 3.2], 36: [2.6, 3.3], 30: [3.3, 3.6], 26: [3.5, 3.6], 24: [3.5, 3.6], 20: [3.5, 3.6], 12: [3.5, 3.6] };
+    // what the curve gives a seal of `size` px under `cap` (what the page shows as data-seal-zoom has two decimals)
+    const scaleOf = (size, cap) => page.evaluate(([n, c]) => Motion.sealZoomScale(n, c), [size, cap]), near = (a, b) => Math.abs(a - b) < .006, fits = (z, cap) => z.w <= Math.max(cap, z.size) + .5;   // (grown no wider than the cap; a seal wider than that already only lifts)
+    const table = await page.evaluate(() => [12, 16, 20, 24, 26, 30, 36, 40, 48, 56, 60, 64, 72, 84, 100, 120, 140, 168, 240].map(n => [n, Motion.sealZoomScale(n)]));
+    const bands = { 240: [1.08, 1.08], 168: [1.08, 1.08], 140: [1.08, 1.08], 120: [1.08, 1.08], 100: [1.08, 1.08], 84: [1.08, 1.08], 72: [1.08, 1.08], 64: [1.08, 1.08], 60: [1.09, 1.13], 56: [1.15, 1.15], 48: [1.17, 1.25], 40: [1.3, 1.3], 36: [1.3, 1.36], 30: [1.4, 1.5], 26: [1.5, 1.55], 24: [1.55, 1.55], 20: [1.55, 1.7], 16: [1.8, 1.8], 12: [1.8, 1.8] };
     check(table.every(([n, k]) => k >= bands[n][0] && k <= bands[n][1]), 'the curve: ' + table.map(([n, k]) => n + 'px→×' + k).join(' '));
-    check(table.every(([, k], i) => i === 0 || k <= table[i - 1][1] + 1e-9) && table.every(([, k]) => k >= 1.12 && k <= 3.6), 'it never rises as a seal gets larger, between 1.12 and 3.6');
+    check(table.every(([, k], i) => i === 0 || k <= table[i - 1][1] + 1e-9) && table.every(([, k]) => k >= 1.08 && k <= 1.8), 'it never rises as a seal gets larger, between 1.08 and 1.8');
+    // the widest a grown seal may be: 72 px (order timeline, order window), 96 px (anywhere else); never below its own size; the curve itself is unchanged by a cap that does not bind
+    const capped = await page.evaluate(() => [8, 12, 16, 24, 30, 40, 48, 56, 64, 72, 84, 96, 140].map(n => [n, Motion.sealZoomScale(n, 72), Motion.sealZoomScale(n, 96), Motion.sealZoomScale(n)]));
+    check(capped.every(([n, a, b, c]) => (n * a <= 72.01 || a === 1) && (n * b <= 96.01 || b === 1) && a >= 1 && b >= 1 && a <= c && b <= c && (n * c > 72 || a === c) && (n * c > 96 || b === c)),
+      'a cap holds the grown seal to 72 / 96 px (never below ×1, never above the curve): ' + capped.map(([n, a, b]) => n + 'px→×' + a + '/×' + b).join(' '));
+    check(await page.evaluate(() => Seal.zoom.cap(document.body) === 96 && Seal.zoom.cap(document.querySelector('#orderWin')) === 72), 'the cap is 96 px on the page and 72 px in the order window (and the timeline)');
 
     // ═══ 2 · a large, a medium and a tiny seal, on a bare strip (one engine, whatever the page) ═══
     const lab = await page.evaluate(() => {
       const d = document.createElement('div'); d.id = 'zlab'; d.style.cssText = 'position:fixed;left:470px;top:420px;display:flex;gap:110px;align-items:center;z-index:5';
-      d.innerHTML = '<button type="button" id="zpre" style="position:absolute;left:-60px;width:20px;height:20px">·</button>' + [140, 84, 56, 24].map((s, i) => Seal.html({ how: i % 2 ? 'button' : 'print', at: Date.now() - 3600e3 * (i + 1), by: 'Paul' }, 84).replace('class="seal ', `data-lab="${s}" style="--seal-fit:${s}px" class="seal `)).join('');
+      d.innerHTML = '<button type="button" id="zpre" style="position:absolute;left:-60px;width:20px;height:20px">·</button>' + [84, 56, 40, 24].map((s, i) => Seal.html({ how: i % 2 ? 'button' : 'print', at: Date.now() - 3600e3 * (i + 1), by: 'Paul' }, 84).replace('class="seal ', `data-lab="${s}" style="--seal-fit:${s}px" class="seal `)).join('');
       document.body.appendChild(d);
       // a seal tucked against the very top left corner, under the bar, and one against the right edge
       for (const [id, css] of [['zcorner', 'left:3px;top:50px'], ['zedge', 'right:2px;top:300px']]) { const e = document.createElement('div'); e.id = id; e.style.cssText = 'position:fixed;z-index:5;' + css; e.innerHTML = Seal.html({ how: 'print', at: Date.now() - 7200e3, by: 'Paul' }, 84).replace('class="seal ', 'style="--seal-fit:30px" class="seal '); document.body.appendChild(e); }
       return [...d.querySelectorAll('.seal')].length;
     });
     assert.equal(lab, 4);
-    const labSel = '#zlab .seal', want = [140, 84, 56, 24], ks = [];
+    const labSel = '#zlab .seal', want = [84, 56, 40, 24], ks = [];
     for (let i = 0; i < 4; i++) {
       const base = await X.probe(labSel, i), p = await X.point(labSel, i); assert(p, 'a point on lab seal ' + i);
       await page.mouse.move(5, 880); await page.mouse.move(p.x, p.y, { steps: 4 });
       await page.waitForFunction(i => document.querySelectorAll('#zlab .seal')[i].dataset.sealZoom, i, { timeout: 4000 }); await X.settle();
       const z = await X.probe(labSel, i); ks.push(z.k);
-      check(z.size === want[i] && z.k === (await page.evaluate(n => Motion.sealZoomScale(n), z.size)) && Math.abs(z.w / z.size - z.k) < .25 * z.k, `${z.size}px seal rested on: grown ×${z.k} (drawn ${z.w.toFixed(0)}px wide)`);
+      check(z.size === want[i] && z.k === (await page.evaluate(n => Motion.sealZoomScale(n, 96), z.size)) && Math.abs(z.w / z.size - z.k) < .25 * z.k && fits(z, 96), `${z.size}px seal rested on: grown ×${z.k} (drawn ${z.w.toFixed(0)}px wide, at most 96)`);
       check(z.inView && z.rect.t >= z.top && !z.clipped.length && z.tf.startsWith('matrix(' + z.k + ', 0, 0, ' + z.k), `…upright, in the view, below the top bar (${z.top.toFixed(0)}), nothing clipping it ${JSON.stringify(z.clipped)}`);
       check(z.sealZoomed && z.filter !== 'none' && !z.titled, '…lifted on a shadow, no tooltip');
       check(z.animated.length > 0 && z.animated.every(k => ['filter', 'opacity', 'transform'].includes(k)), 'only transform, filter and opacity move: ' + z.animated);
@@ -115,6 +124,15 @@ const ORDERS = [{ receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * DAY, up
       check(back.tf === base.tf && back.filter === base.filter && !back.running && !back.sealZoomed, '…and leaving puts every style back (transform ' + back.tf.slice(0, 30) + ')');
     }
     check(ks[0] < ks[1] && ks[1] < ks[2] && ks[2] < ks[3], `the smaller the seal the more it grows: ×${ks.join(' < ×')} for ${want.join(', ')} px`);
+    // a seal already wider than its cap (96 px) does not grow at all, and is never made smaller: it still lifts and stands upright
+    {
+      await page.evaluate(() => { const e = document.createElement('div'); e.id = 'zbig'; e.style.cssText = 'position:fixed;z-index:5;left:150px;top:520px'; e.innerHTML = Seal.html({ how: 'print', at: Date.now() - 7200e3, by: 'Paul' }, 84).replace('class="seal ', 'style="--seal-fit:120px" class="seal '); document.body.appendChild(e); });
+      const p = await X.point('#zbig .seal'); await page.mouse.move(5, 880); await page.mouse.move(p.x, p.y, { steps: 3 });
+      await page.waitForFunction(() => document.querySelector('#zbig .seal').dataset.sealZoom, null, { timeout: 4000 }); await X.settle();
+      const z = await X.probe('#zbig .seal');
+      check(z.size === 120 && z.k === 1 && Math.abs(z.w - 120) < 1.5 && z.sealZoomed && z.filter !== 'none', `a ${z.size}px seal (wider than the 96px cap) is not grown (×${z.k}, ${z.w.toFixed(0)}px wide), only lifted`);
+      await page.mouse.move(5, 880); await X.gone(); await page.evaluate(() => document.getElementById('zbig').remove());
+    }
     // against the top corner and the right edge: nudged in, never out of the view
     for (const [sel, name] of [['#zcorner .seal', 'the top left corner'], ['#zedge .seal', 'the right edge']]) {
       const p = await X.point(sel); await page.mouse.move(5, 880); await page.mouse.move(p.x, p.y, { steps: 3 });
@@ -155,8 +173,7 @@ const ORDERS = [{ receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * DAY, up
     assert(rp, 'a point on the Complete Order seal clear of its button');
     await page.mouse.move(rp.x, rp.y, { steps: 3 }); await page.waitForFunction(sel => document.querySelector(sel + '[data-seal-zoom]'), rs + '.seal-button', { timeout: 3000 }); await X.settle();
     const rz = await X.probe(rs + '.seal-button');
-    const want50 = await page.evaluate(() => +Motion.sealZoomScale(50).toFixed(2));   // (the regular seal is 50px since 3 Oct; its scale is whatever the one curve says)
-    check(rz.size === 50 && Math.abs(rz.k - want50) < .011 && rz.inView && rz.rect.t >= rz.top && !rz.clipped.length, `Review card seal: 50px grown ×${rz.k}, in the view below the top bar (${rz.top.toFixed(0)}), not clipped ${JSON.stringify(rz.clipped)}`);
+    check(near(rz.k, await scaleOf(rz.size, 96)) && fits(rz, 96) && rz.inView && rz.rect.t >= rz.top && !rz.clipped.length, `Review card seal: ${rz.size}px grown ×${rz.k} to ${rz.w.toFixed(0)}px (at most 96), in the view below the top bar (${rz.top.toFixed(0)}), not clipped ${JSON.stringify(rz.clipped)}`);
     check(await page.evaluate(() => !document.querySelector('.sealLens') && !document.querySelector('.seal[title]')), 'no lens, no caption, no tooltip on any seal of the page');
     if (shots) await page.screenshot({ path: path.join(shots, '1-review-card-seal.png'), clip: { x: 0, y: 40, width: 1440, height: 520 } });
     await page.mouse.click(rp.x, rp.y); await page.waitForTimeout(200);
@@ -182,7 +199,7 @@ const ORDERS = [{ receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * DAY, up
       await page.waitForFunction(([s, i]) => document.querySelectorAll(s)[i].dataset.sealZoom, [stops, i], { timeout: 4000 }); await X.settle();
       const z = await X.probe(stops, i);
       const pop = await page.evaluate(() => { const c = document.querySelector('.tlExp.on'); if (!c) return null; const r = c.getBoundingClientRect(); return { l: r.left, t: r.top, r: r.right, b: r.bottom }; });
-      check(z.k >= 3 && z.size <= 30 && z.inView && !z.clipped.length, `header strip seal ${i} (${z.size}px, in a box 44px tall): grown ×${z.k} to ${z.w.toFixed(0)}px, in the view, nothing clips it ${JSON.stringify(z.clipped)}`);
+      check(near(z.k, await scaleOf(z.size, 72)) && z.k > 1.4 && z.size <= 30 && fits(z, 72) && z.inView && !z.clipped.length, `header strip seal ${i} (${z.size}px, in a box 44px tall): grown ×${z.k} to ${z.w.toFixed(0)}px, in the view, nothing clips it ${JSON.stringify(z.clipped)}`);
       check(!pop || pop.t >= z.rect.b - 1 || pop.l >= z.rect.r - 1 || pop.r <= z.rect.l + 1, 'the step card (Engraved · done …) stays where it was and clear of the grown seal ' + JSON.stringify(pop));
       if (shots && i === done[Math.floor(done.length / 2)]) await page.screenshot({ path: path.join(shots, '2-header-strip-seal.png'), clip: { x: 0, y: 0, width: 1440, height: 330 } });
       await page.mouse.move(5, 880, { steps: 3 }); await X.gone();
@@ -194,7 +211,7 @@ const ORDERS = [{ receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * DAY, up
       const sel = '#owCustom .sealRow .seal', p = await X.point(sel, 0); await page.mouse.move(p.x, p.y, { steps: 3 });
       await page.waitForFunction(sel => document.querySelector(sel).dataset.sealZoom, sel, { timeout: 4000 }); await X.settle();
       const z = await X.probe(sel, 0);
-      check(z.inView && !z.clipped.length && z.k >= 1.8, `the bar's ${z.size}px seal: grown ×${z.k}, in view, not clipped ${JSON.stringify(z.clipped)}`);
+      check(near(z.k, await scaleOf(z.size, 72)) && z.k > 1.2 && fits(z, 72) && z.inView && !z.clipped.length, `the bar's ${z.size}px seal: grown ×${z.k}, in view, not clipped ${JSON.stringify(z.clipped)}`);
       if (shots) await page.screenshot({ path: path.join(shots, '3-completed-card-seal.png'), clip: { x: 0, y: 40, width: 1440, height: 440 } });
       await page.mouse.move(5, 880); await X.gone();
     }
@@ -207,9 +224,21 @@ const ORDERS = [{ receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * DAY, up
       await page.mouse.move(5, 880); await page.mouse.move(p.x, p.y, { steps: 4 });
       await page.waitForFunction(([s, i]) => document.querySelectorAll(s)[i].dataset.sealZoom, [sel, i], { timeout: 4000 }); await X.settle();
       const z = await X.probe(sel, i);
-      check(z.inView && !z.clipped.length && z.k > 1.5, `Timeline ${sel.includes('tlSt') ? 'lane stamp ' + i + (i === 0 ? ' (at the left edge, the first)' : '') : 'detail seal'} (${z.size}px): grown ×${z.k}, in view, not clipped ${JSON.stringify(z.clipped)}`);
+      check(near(z.k, await scaleOf(z.size, 72)) && fits(z, 72) && z.inView && !z.clipped.length, `Timeline ${sel.includes('tlSt') ? 'lane stamp ' + i + (i === 0 ? ' (at the left edge, the first)' : '') : 'detail seal'} (${z.size}px): grown ×${z.k}, in view, not clipped ${JSON.stringify(z.clipped)}`);
       if (shots && sel.includes('tlSt') && i === 1) await page.screenshot({ path: path.join(shots, '4-timeline-page-seal.png') });
       await page.mouse.move(5, 880, { steps: 3 }); await X.gone();
+    }
+    // 6c' · the selected stamp's own gold ring and glow come out a thin ring round the grown stamp (they used to grow with it: 6 + 4 px at ×3)
+    {
+      const sel = '#orderWin .tlSt.sel';
+      if (await page.evaluate(s => !!document.querySelector(s), sel)) {
+        const p = await X.point(sel, 0); await page.mouse.move(5, 880); await page.mouse.move(p.x, p.y, { steps: 4 });
+        await page.waitForFunction(s => document.querySelector(s).dataset.sealZoom, sel, { timeout: 4000 }); await X.settle();
+        const r = await page.evaluate(s => { const e = document.querySelector(s), k = +e.dataset.sealZoom, b = getComputedStyle(e, '::before'), sh = /([\d.]+)px\s*$/.exec(b.boxShadow); return { k, out: (-parseFloat(b.top) + parseFloat(b.borderTopWidth) + (sh ? +sh[1] : 0)) * k, size: Math.min(e.offsetWidth, e.offsetHeight), w: e.getBoundingClientRect().width }; }, sel);
+        check(r.out > 0 && r.out <= 7.5 && r.w + 2 * r.out <= 72 + 15, `the selected stamp's ring and glow, grown ×${r.k}: ${r.out.toFixed(1)}px beyond the seal (a thin ring), the whole ${(r.w + 2 * r.out).toFixed(0)}px across`);
+        if (shots) await page.screenshot({ path: path.join(shots, '4b-timeline-selected-ring.png'), clip: { x: 0, y: 90, width: 760, height: 480 } });
+        await page.mouse.move(5, 880, { steps: 3 }); await X.gone();
+      } else check(false, 'a selected stamp on the timeline');
     }
     // 6d · the Overview's Now card seal, and the engraving approval seals in a window that clips (the sheet window's engraving inspector)
     await page.click('#orderWin [data-ow-view="info"]'); await page.waitForSelector('#orderWin .tlNowSeal', { timeout: 8000 }); await page.waitForTimeout(700);
@@ -217,7 +246,7 @@ const ORDERS = [{ receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * DAY, up
       const sel = '#orderWin .tlNowSeal', p = await X.point(sel, 0); await page.mouse.move(5, 880); await page.mouse.move(p.x, p.y, { steps: 4 });
       await page.waitForFunction(sel => document.querySelector(sel).dataset.sealZoom, sel, { timeout: 4000 }); await X.settle();
       const z = await X.probe(sel, 0);
-      check(z.inView && !z.clipped.length && z.k >= 1.1 && z.size >= 50, `Now card seal (${z.size}px): grown ×${z.k}, in view, not clipped ${JSON.stringify(z.clipped)}`);
+      check(near(z.k, await scaleOf(z.size, 72)) && fits(z, 72) && z.inView && !z.clipped.length, `Now card seal (${z.size}px): grown ×${z.k}, in view, not clipped ${JSON.stringify(z.clipped)}`);
       await page.mouse.move(5, 880, { steps: 3 }); await X.gone();
     }
     await page.evaluate(() => {
@@ -231,7 +260,7 @@ const ORDERS = [{ receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * DAY, up
       const sel = '#zsw .seal', p = await X.point(sel, i); await page.mouse.move(5, 880); await page.mouse.move(p.x, p.y, { steps: 4 });
       await page.waitForFunction(([sel, i]) => document.querySelectorAll(sel)[i].dataset.sealZoom, [sel, i], { timeout: 4000 }); await X.settle();
       const z = await X.probe(sel, i);
-      check(z.inView && !z.clipped.length && z.k >= 1.6, `engraving approval seal ${i} in the clipped window (${z.size}px): grown ×${z.k}, in view, nothing clips it ${JSON.stringify(z.clipped)}`);
+      check(near(z.k, await scaleOf(z.size, 96)) && fits(z, 96) && z.inView && !z.clipped.length, `engraving approval seal ${i} in the clipped window (${z.size}px): grown ×${z.k}, in view, nothing clips it ${JSON.stringify(z.clipped)}`);
       if (shots && i === 1) await page.screenshot({ path: path.join(shots, '5-engrave-window-seal.png'), clip: { x: 340, y: 200, width: 760, height: 500 } });
       await page.mouse.move(5, 880, { steps: 3 }); await X.gone();
     }
@@ -243,13 +272,12 @@ const ORDERS = [{ receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * DAY, up
     await A.context.close();
 
     // ═══ 7 · a finger and reduced motion ═══
-    const B = await open({ hasTouch: true, reducedMotion: 'reduce', viewport: { width: 1100, height: 800 } }), Y = api(B.page);
+    const B = await open({ hasTouch: true, reducedMotion: 'reduce', viewport: { width: 1100, height: 800 } }), Y = api(B.page); Y.scale = (n, c) => B.page.evaluate(([n, c]) => Motion.sealZoomScale(n, c), [n, c]);
     await B.page.evaluate(() => { const d = document.createElement('div'); d.id = 'zlab'; d.style.cssText = 'position:fixed;left:400px;top:360px;z-index:5'; d.innerHTML = Seal.html({ how: 'print', at: Date.now() - 3600e3, by: 'Paul' }, 84); document.body.appendChild(d); });
     const tp = await Y.point('#zlab .seal');
     await B.page.touchscreen.tap(tp.x, tp.y); await B.page.waitForFunction(() => document.querySelector('#zlab .seal[data-seal-zoom]'), null, { timeout: 1500 }); await B.page.waitForTimeout(250);
     const tz = await Y.probe('#zlab .seal'), dur = await B.page.evaluate(() => Math.max(0, ...document.getAnimations().map(a => a.effect && a.effect.getTiming().duration || 0)));
-    const want2 = await B.page.evaluate(n => +Motion.sealZoomScale(n).toFixed(2), 50);
-    check(Math.abs(tz.k - want2) < .011 && tz.inView, 'a tap zooms at once (×' + tz.k + ')');
+    check(near(tz.k, await Y.scale(tz.size, 96)) && tz.k > 1 && tz.inView, 'a tap zooms at once (×' + tz.k + ')');
     check(await B.page.evaluate(() => Math.max(0, ...[...document.querySelectorAll('#zlab .seal')[0].getAnimations()].map(a => +a.effect.getTiming().duration)) <= 130), 'with reduced motion it is a short fade, no bounce');
     await B.page.touchscreen.tap(tp.x, tp.y); await Y.gone();
     check((await Y.zoomed()) === 0, 'a second tap puts it back');

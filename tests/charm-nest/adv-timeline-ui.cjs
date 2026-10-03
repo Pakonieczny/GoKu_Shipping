@@ -143,8 +143,8 @@ const Timeline = require(path.join(root, 'netlify/functions/_orderTimeline.js'))
     await page.waitForSelector('.tlUI.compact .tlStop.x'); await page.waitForTimeout(900);
     await page.hover('.tlUI.compact .tlCxStamp:not(.out)'); await page.waitForTimeout(1200);   // (the CANCELLED stamp lies over the ✕ step and answers for it)
     // a rail 100px from the top: the ✕ seal grows where it stands (nudged if need be), inside the view, with no second seal
-    r = await page.evaluate(() => { const s = window.__el.querySelector('.tlUI.compact .tlCxStamp'), b = s.getBoundingClientRect(); return { zoomed: !!s.dataset.sealZoom, w: b.width, top: b.top, left: b.left, right: b.right, bottom: b.bottom, vw: innerWidth, vh: innerHeight, copy: !!document.querySelector('.tlLoupe,.sealLens') }; });
-    assert(r.zoomed && r.w > 50 && !r.copy && r.top >= 0 && r.left >= 0 && r.right <= r.vw && r.bottom <= r.vh, 'the CANCELLED stamp grew in place, inside the view: ' + JSON.stringify(r));
+    r = await page.evaluate(() => { const s = window.__el.querySelector('.tlUI.compact .tlCxStamp'), b = s.getBoundingClientRect(); return { zoomed: !!s.dataset.sealZoom, w: b.width, base: s.offsetWidth, top: b.top, left: b.left, right: b.right, bottom: b.bottom, vw: innerWidth, vh: innerHeight, copy: !!document.querySelector('.tlLoupe,.sealLens') }; });
+    assert(r.zoomed && r.w > r.base * 1.2 && r.w < r.base * 1.9 && !r.copy && r.top >= 0 && r.left >= 0 && r.right <= r.vw && r.bottom <= r.vh, 'the CANCELLED stamp grew in place, inside the view: ' + JSON.stringify(r));
     await setFx(C, ev4.concat([cx4, { id: `${C}~cancelRestored~r`, orderId: C, type: 'cancelRestored', at: Date.now(), by: 'Paul' }]), null);
     await page.evaluate(() => window.__tl.refresh()); await page.waitForTimeout(300);
     await page.mouse.move(700, 600); await page.waitForTimeout(500);

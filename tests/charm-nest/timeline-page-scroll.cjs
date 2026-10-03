@@ -77,6 +77,15 @@ const ORDERS = [{ receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * DAY, up
       assert(a.sw <= a.cw + 1, `${tag}: nothing scrolls sideways: ${a.sw} > ${a.cw}`);
       assert(a.cw <= w + 1, `${tag}: the page is no wider than the screen (a phone shows all of it): ${a.cw}`);
       if (w > 900) assert(a.rail > 10, `${tag}: the header's compact rail is still drawn: ${a.rail}`);   // (under 900 px the page hides it, as before)
+      // the seals on this page are small (Paul, 3 Oct: "All of these seals are too big ... they can be much smaller"): about 40% under the shared
+      // 84 px, each place with its own size, the lanes cut to fit them (the zoom, not the resting size, is what reads a seal)
+      const z = await page.evaluate(() => { const px = (s, p) => { const e = document.querySelector(s); return e ? parseFloat(getComputedStyle(e)[p || 'width']) : 0; };
+        return { chart: px('#owTimeline .tlSt[data-key]'), big: px('#owTimeline .tlBig'), around: px('#owTimeline .tlArw .sv'), rail: px('#owRail .tlStop .tlSeal'), lane: px('#owTimeline .tlLane', 'height'), canvas: px('#owTimeline .tlCanvas', 'height') }; });
+      assert(z.chart >= 20 && z.chart <= 28, `${tag}: a chart seal rests at about 26px, not 42: ${z.chart}`);
+      assert(z.big >= 40 && z.big <= 58, `${tag}: the detail's seal is about 54px, not 84: ${z.big}`);
+      assert(z.around >= 36 && z.around <= 50, `${tag}: a seal under Around this step is about 46px, not 84: ${z.around}`);
+      if (w > 900) assert(z.rail >= 16 && z.rail <= 22, `${tag}: the header rail's seals are about 20px, not 24: ${z.rail}`);
+      assert(z.lane >= 36 && z.lane <= 46 && z.canvas <= 380, `${tag}: the lanes are cut to fit the smaller seals (lane ${z.lane}px, chart ${z.canvas}px)`);
       if (shots) await page.screenshot({ path: path.join(shots, `${tag}-top.png`) });
       // the wheel over the chart scrolls the whole page, not the chart alone
       const box = await page.evaluate(() => { const r = document.querySelector('#owTimeline .tlScroll').getBoundingClientRect(); return { x: r.left + r.width / 2, y: Math.min(r.top + 60, innerHeight - 30) }; });
