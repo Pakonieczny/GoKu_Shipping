@@ -122,6 +122,8 @@ span.lapItem{cursor:default;border-style:dashed}
 .lapCBtns{display:flex;flex-wrap:wrap;gap:7px;margin-top:7px}
 .lapConfirm .lapBtn:not(.go){background:var(--card,#fffefb)}
 .lapConfirm.locked .lapBtn{pointer-events:none;opacity:.5}
+.lapConfirm.lapPlain{padding:0;background:none;border:0}
+.lapConfirm.lapPlain .lfrBar{margin:0;max-width:none}
 .lapNotes{margin-top:7px;display:grid;gap:2px;color:var(--ink70,#5b554c);font-size:11.5px}
 .lapBusy{display:flex;align-items:center;gap:8px;margin-top:8px;color:var(--ink70,#5b554c);font-size:12px}
 .lapSpin{width:12px;height:12px;flex:none;box-sizing:border-box;border:2px solid var(--line,#e4ddd0);border-top-color:var(--ink70,#5b554c);border-radius:50%;animation:lapSpin .7s linear infinite}
@@ -229,7 +231,7 @@ span.lapItem{cursor:default;border-style:dashed}
       if (!reduced()) el.addEventListener('animationend', () => el.classList.remove('enter'), { once: true });
       if (opts.where === 'end') host.appendChild(el); else host.insertBefore(el, host.firstChild);
       bar = { host, el, timers: new Set(), token: 0, rose: null }; bars.set(host, bar); live.add(bar);
-    } else { stop(bar); bar.rose = null; }
+    } else { stop(bar); if (bar.rose) { try { bar.rose.destroy && bar.rose.destroy(); } catch (_) {} } bar.rose = null; }
     stop(bar);
     Object.assign(bar, { opts, plan: null, state: 'checking', lines: new Map(), items: [], pressed: false, ended: false, staggering: false, pending: null, ghost: false, by: String(opts.by || (window.CNEmployee && CNEmployee.name && tryName()) || '').trim() });
     bar.el.innerHTML = `<div class="lapHead"><span class="lapTitle"></span><span class="lapHeadAct"></span></div><div class="lapList"></div><div class="lapNeeds" hidden></div><div class="lapConfirm" hidden></div><div class="lapNotes" hidden></div><div class="lapBusy" hidden></div><div class="lapSummary" hidden></div><div class="lapLive" role="status" aria-live="polite"></div>`;
@@ -320,7 +322,8 @@ span.lapItem{cursor:default;border-style:dashed}
   function plainRoseSheet(c) {
     if (c.sheetLabel) return String(c.sheetLabel);
     if (Array.isArray(c.sheets) && c.sheets.length) return c.sheets.map(s => s && (s.label || s.sheetLabel || s)).filter(Boolean).join(', ');
-    const m = /\b(?:RG|Rose Gold)\s+Sheet\s+[\w-]+/i.exec(`${c.label || ''} ${c.detail || ''}`); return m ? m[0] : 'this sheet';
+    const all = [...new Set([...`${c.label || ''} ${c.detail || ''}`.matchAll(/\b(?:RG|Rose Gold)\s+Sheet\s+[\w-]+/gi)].map(m => m[0]))];
+    return all.length ? all.join(', ') : 'This sheet';
   }
   const actionOf = c => c.button || c.action || c.yes || (c.key === 'roseLine' ? 'Add the green dash line' : 'Yes, go ahead');
   function renderConfirm(bar, confirm) {
@@ -334,8 +337,10 @@ span.lapItem{cursor:default;border-style:dashed}
       const item = box.querySelector(`[data-confirm="${CSS.escape(String(c.key))}"]`), slot = doc.createElement('div'); slot.className = 'lapRose';
       try {
         item.appendChild(slot);
-        LibraryFlowRose.confirmBar(slot, { sheetLabel: plainRoseSheet(c), onConfirm: () => press(bar, [...bar.picked || [], 'roseLine']), onCancel: () => closeIt(bar) });
-        if (slot.childNodes.length) item.replaceChildren(slot); else { slot.remove(); }
+        /* its own press guard, spinner, drawn line and Try again stay as they are; a press is the explicit yes for roseLine */
+        const ctl = LibraryFlowRose.confirmBar(slot, { sheetLabel: plainRoseSheet(c), item: bar.opts.item || bar.plan.item, sheet: bar.opts.sheet, count: c.count,
+          onConfirm: () => { if (bar.state === 'failed') reopen(bar); return press(bar, [...bar.picked || [], 'roseLine']); }, onCancel: () => closeIt(bar) });
+        if (slot.childNodes.length) { for (const n of [...item.children]) if (n !== slot) n.remove(); bar.rose = ctl || null; if (confirm.length === 1) box.classList.add('lapPlain'); } else { slot.remove(); }
       } catch (e) { warn('rose bar', e); try { slot.remove(); } catch (_) {} }
     });
   }
@@ -347,10 +352,20 @@ span.lapItem{cursor:default;border-style:dashed}
     head(bar, q(bar, '.lapTitle').textContent, '');
     q(bar, '.lapConfirm').classList.add('locked');
     for (const r of bar.lines.values()) ink(bar, r);
-    busy(bar, bar.opts.moving || 'Moving');
+    if (!roseOn(bar)) busy(bar, bar.opts.moving || 'Moving');
     if (inside) { try { bar.el.focus({ preventScroll: true }); } catch (_) {} }
-    let r; try { r = bar.opts.onConfirm && bar.opts.onConfirm(keys.slice()); } catch (e) { warn('onConfirm', e); return update(bar.host, { ok: false, error: errText(e) }); }
+    let r; try { r = bar.opts.onConfirm && bar.opts.onConfirm(keys.slice()); } catch (e) { warn('onConfirm', e); update(bar.host, { ok: false, error: errText(e) }); return; }
     if (then(r)) r.then(v => { if (bars.get(bar.host) === bar && bar.state === 'moving' && v && typeof v === 'object' && 'ok' in v) update(bar.host, v); }, e => { if (bars.get(bar.host) === bar && bar.state === 'moving') update(bar.host, { ok: false, error: errText(e) }); });
+    return r;
+  }
+  /* the Rose Gold module's own bar is on screen (it shows its own spinner, the drawn line and the saved line) */
+  const roseOn = bar => !!(bar.rose && bar.rose.el && bar.rose.el.isConnected);
+  /* a failed commit and the Rose bar's own "Try again": the bar asks again */
+  function reopen(bar) {
+    bar.ended = false; bar.pressed = false; bar.result = null; state(bar, 'plan'); tone(bar, 'wait');
+    for (const r of bar.lines.values()) r.el.classList.remove('off');
+    for (const sel of ['.lapSummary', '.lapNotes']) { const n = q(bar, sel); n.hidden = true; n.innerHTML = ''; }
+    head(bar, q(bar, '.lapTitle').textContent, '');
   }
 
   /* the buttons */
@@ -456,8 +471,9 @@ span.lapItem{cursor:default;border-style:dashed}
   function focusIn(bar) {
     if (bar.opts.focus === false || bar.state !== 'plan' || bar.pressed) return;
     const a = doc.activeElement, typing = a && !bar.el.contains(a) && (/^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName || '') || a.isContentEditable);
-    if (typing) return;
-    const first = q(bar, '.lapConfirm [data-yes]') || q(bar, '.lapItem[data-item]') || q(bar, '.lapHeadAct button');
+    if (typing || (a && bar.el.contains(a) && a !== bar.el)) return;
+    /* the safe button takes the focus: an Enter right after a drop never says yes */
+    const first = q(bar, '.lapConfirm [data-act="cancel"]') || q(bar, '.lapItem[data-item]') || q(bar, '.lapHeadAct button');
     if (first) { try { first.focus({ preventScroll: true }); } catch (_) {} }
   }
 
@@ -478,7 +494,8 @@ span.lapItem{cursor:default;border-style:dashed}
       green(bar, rec);
     }
     const confirmBox = q(bar, '.lapConfirm'), cap = q(bar, '.lapCap');
-    confirmBox.hidden = true; confirmBox.innerHTML = ''; if (cap) cap.remove();
+    if (!roseOn(bar)) { confirmBox.hidden = true; confirmBox.innerHTML = ''; }
+    if (cap) cap.remove();
     if (!ok && result.error) {
       const nb = q(bar, '.lapNotes'); nb.hidden = false; nb.innerHTML = `<span style="color:#8a3a26;font-weight:600">${esc(errText(result.error))}</span>`;
     }
@@ -521,6 +538,7 @@ span.lapItem{cursor:default;border-style:dashed}
     try {
       const bar = host && bars.get(host); if (!bar) return false;
       stop(bar); bars.delete(host); live.delete(bar);
+      if (bar.rose) { try { bar.rose.destroy && bar.rose.destroy(); } catch (_) {} bar.rose = null; }
       const el = bar.el;
       if (!el.isConnected) return true;
       if (reduced() || !el.animate) { el.remove(); }
