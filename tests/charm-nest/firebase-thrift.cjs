@@ -5,11 +5,11 @@ const bridge=fs.readFileSync('charm-nest-bridge.js','utf8'),station=fs.readFileS
  // Run actual handler code against a store that rejects collection downloads.
  let aggregates=0,documentReads=0;
  const query=()=>({where:()=>query(),limit:()=>({get:async()=>({empty:true,size:0,docs:[]})}),count:()=>({get:async()=>{aggregates++;return{data:()=>({count:420})}}}),get:async()=>{throw Error('Full collection read forbidden');},doc:()=>({get:async()=>{documentReads++;return {exists:false}}})});
- const c={Promise,Map,Date,stamp:async()=>{},db:{collection:query,getAll:async()=>[]},col:query,SHEETS:'sheets',LIB:'charms',SANDBOX:'sandbox',SANDBOXED:['pool','sheets','runs'],num:Number};vm.createContext(c);
+ const c={Promise,Map,Date,stamp:async()=>{},db:{collection:query,getAll:async()=>[]},col:query,SHEETS:'sheets',LIB:'charms',SANDBOX:'sandbox',SANDBOXED:['pool','sheets','runs'],SANDBOX_MAPS:['aliases','options','nodesign'],num:Number};vm.createContext(c);
  for(const [start,end] of [['async function op_ping','async function op_lookupCharms'],['async function op_sandboxStatus','async function op_sandboxReset'],['async function op_arrivalRecord','// ── runs']])vm.runInContext(server.slice(server.indexOf(start),server.indexOf(end)),c);
  const counts=await c.op_ping({calibration:false});assert.equal(counts.sheets,420);assert.equal(aggregates,2);assert.equal(documentReads,0);
- await c.op_sandboxStatus();assert.equal(documentReads,1);assert.equal(aggregates,5);
- const arrivals=await c.op_arrivalRecord({orders:[]});assert.equal(arrivals.count24,420);assert.equal(arrivals.count1,420);assert.equal(aggregates,7);assert.equal(documentReads,1,'no downloads of all historical arrivals');
+ await c.op_sandboxStatus();assert.equal(documentReads,1);assert.equal(aggregates,8,'one count for each sandbox collection, the sandbox copies of the learned maps too');
+ const arrivals=await c.op_arrivalRecord({orders:[]});assert.equal(arrivals.count24,420);assert.equal(arrivals.count1,420);assert.equal(aggregates,10);assert.equal(documentReads,1,'no downloads of all historical arrivals');
  // Simultaneous sandbox receipt calls share one metadata read and Storage download.
  let metaReads=0,streamReads=0,downloads=0;const sandbox={exports:{},console,Date,require:name=>{
   if(name==='./firebaseAdmin')return{firestore:()=>({collection:()=>({doc:id=>({get:async()=>{if(id==='stream'){streamReads++;return{exists:false}}metaReads++;return{exists:true,data:()=>({path:'snapshot.json'})}}})})}),storage:()=>({bucket:()=>({file:()=>({download:async()=>{downloads++;return[Buffer.from(JSON.stringify([{receipt_id:123,transactions:[]}]))]}})})})};

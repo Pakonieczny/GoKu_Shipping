@@ -12442,6 +12442,25 @@ const Session = window.Session = (() => {
     const write = db => new Promise(resolve=>{try{const tx = db.transaction("workspaces", "readwrite"); tx.objectStore("workspaces").put(snapshot, scope); tx.oncomplete = () => { savedRev = Math.max(savedRev, at); saved(null);resolve(true); }; const failed=()=>{saved(tx.error || new Error("Workspace save interrupted"));resolve(false);};tx.onerror=failed;tx.onabort=failed;tx.commit?.();}catch(e){saved(e);resolve(false);}});
     return db0 ? write(db0) : open().then(write).catch(e=>{saved(e);return false;});
   }
+  /** The cards of a checkpoint's custom designs that were sent and recorded in the cloud (not waiting to be: sendCloudPending),
+      and that the cloud no longer holds: { cks: their card keys, all: the checkpoint holds no custom design but those, so
+      none is left that the cloud has not been told of yet (the page's own to send) }. Nothing is gone when there are none,
+      or when the cloud cannot be asked (a reload offline must not lose a workspace). */
+  async function forgottenSends(d) {
+    const every = Object.values(d.customDesigns || {}).filter(e => e && typeof e.ck === "string" && e.ck), none = { all: false, cks: [] };
+    const sent = every.filter(e => e.sent && !e.sendCloudPending && !e.legacy);
+    if (!sent.length) return none;
+    const held = new Set();
+    try {
+      for (let i = 0; i < sent.length; i += 500) {
+        const r = await api("charmNestLibrary", { op: "customSheetGet", keys: sent.slice(i, i + 500).map(e => e.ck) }, { quiet: true });
+        if (!r || typeof r.records !== "object") return none;
+        for (const [ck, rec] of Object.entries(r.records)) if (rec && rec.sent) held.add(ck);
+      }
+    } catch (_) { return none; }
+    const cks = sent.filter(e => !held.has(e.ck)).map(e => e.ck);
+    return { all: cks.length > 0 && cks.length === every.length, cks };
+  }
   async function restore() {
     let d; try { d = await io(); } catch (e) { toast(`Workspace recovery unavailable: ${e.message}`, "bad"); return false; }
     if (!d || d.v !== 1) { sweepBest(new Set()); return false; }
@@ -12457,6 +12476,21 @@ const Session = window.Session = (() => {
         try { cloud = await api("charmNestLibrary", { op: "runGet", runId: d.run.runId }, { quiet: true }); }
         catch (e) { d.run.saveError = "Cloud check unavailable: " + e.message; }
         if (cloud?.run?.status === "abandoned" || cloud?.run?.status === "complete" && d.run.status !== "complete" || cloud && !cloud.run && d.run.cloudSavedAt && !d.run.saveError) { sweepBest(new Set()); return false; }
+      }
+      // The cloud is the authority on which custom designs were sent to the sheets. A sandbox checkpoint whose custom designs
+      // are all sent AND recorded in the cloud, of which the cloud holds none, is of a sandbox that was reset from another page
+      // (an older page's Reset cleared only the cloud, and this reload brought the designs and their order links back: Paul,
+      // 3 Oct, the lion on a triceratops order): it is not restored, as a purged run is not. When the cloud holds some, or the
+      // checkpoint holds a send still waiting to be recorded (the page's own to make), only the designs the cloud does not
+      // hold are dropped. A cloud that cannot be asked leaves the checkpoint as it is.
+      if (WORKSPACE_SANDBOX) {
+        const gone = await forgottenSends(d);
+        if (gone.all) {
+          await remove(key()).catch(() => {}); sweepBest(new Set());
+          toast("This sandbox was reset from another page: its old saved workspace was not restored", "", 7000);
+          return false;
+        }
+        for (const ck of gone.cks) delete d.customDesigns[ck];
       }
       for (const src of (d.sources || []).concat(Object.values(d.poolSources || {}))) {
         if (src.bytes?.length) src.parsed = await P.parseSource(src.bytes, src.name);

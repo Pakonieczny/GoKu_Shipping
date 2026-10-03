@@ -48,8 +48,13 @@ const EngravingSeals = require("../../charm-nest-engraving-seals.js");
 // under another version of Readiness.decisions is decided again from its lines when read (decisionsOfRun).
 const DECISIONS_VERSION = require("crypto").createHash("sha256").update(String(Readiness.decisions)).digest("hex").slice(0, 16);
 /* ── sandbox: when a request says sandbox:true, the sorter's OWN records (sheets, pools, backs, sets, counters, runs,
-   bridge log) go to Sandbox_-prefixed collections; the master index, the charm library, maps and calibration stay
-   shared and are only read. Set per request; a function instance handles one request at a time. ── */
+   bridge log) go to Sandbox_-prefixed collections; the master index, the charm library and calibration stay shared and
+   are only read. The learned maps (Charm_Sku_Aliases, Charm_Option_Map, Charm_Sku_NoDesign) are READ shared but WRITTEN
+   to the sandbox's own copy (Sandbox_Charm_Sku_Aliases …): a person's answer in the sandbox ("Use this charm", a mapped
+   option, a no-design SKU) is a relationship between a listing/SKU and a design, and it must reach neither production nor
+   the next replay of the same real order (Paul, 3 Oct: the sandbox kept the relationships he had given). Reads merge the
+   two, the sandbox's own answer first; Reset deletes the copy. Set per request; a function instance handles one request
+   at a time. ── */
 let PREFIX = "";
 const SANDBOXED = new Set(["Charm_Nest_Rose_Stock", "Charm_Nest_Sheets", "Charm_Pool", "Charm_Pool_Back", "Charm_Nest_Sets", "Charm_Nest_Counters", "Charm_Nest_Runs", "Charm_Nest_Run_Lines", "Charm_Nest_Run_Live", "Charm_Nest_Release", "Charm_Nest_Arrivals", "Charm_Nest_Cancelled", "Charm_Nest_Cancelled_History", "Design_Bridge"]);
 const col = name => db.collection(SANDBOXED.has(name) ? PREFIX + name : name);
@@ -224,8 +229,8 @@ async function productionReadiness(records,{tx=null}={}) {
   // No-design exemptions are explicit in new records; an older committed chain may only name its approved SKU.
   const candidates=[...lines.values()].filter(l=>!l.poolIds?.length && !l.noDesign && ['committed','written','labelled'].includes(l.state));
   if(candidates.length){
-    const snap=await get(db.collection(NODESIGN)),rules={skus:[],patterns:[]};
-    for(const d of snap.docs){const x=d.data();if(x.sku)rules.skus.push(x.sku);if(x.pattern)rules.patterns.push(x.pattern);}
+    const rules={skus:[],patterns:[]};
+    for(const x of await noDesignRows(get)){if(x.sku)rules.skus.push(x.sku);if(x.pattern)rules.patterns.push(x.pattern);}
     for(const l of candidates){
       const line={sku:l.sku,title:l.snap?.title || '',variations:(l.snap?.vars || []).map(v=>{const [name,value]=v.split('␟');return {name,value};})};
       if(OrderRules.isNoDesign(l.sku || line.title,rules) || OrderRules.specialOf(line)?.notCut){l.noDesign=true;continue;}
@@ -483,6 +488,8 @@ async function op_putCharms(b) {
   return { ok: true, count };
 }
 async function op_renameCharm(b) {
+  // (as putCharms: a name given in the sandbox must not rename the shared library production reads)
+  if (PREFIX) return { ok: true, skipped: "the sandbox reads the shared charm library and does not write to it" };
   if (!isHash(b.hash)) return { error: "bad hash" };
   const name = str(b.name, 80).trim(); if (!name) return { error: "empty name" };
   await db.collection(LIB).doc(b.hash).set({ hash: b.hash, name, slug: name, namedBy: "operator", updatedAt: FV.serverTimestamp() }, { merge: true });
@@ -835,6 +842,8 @@ async function op_getAgent(b) {
    Every query below is a single-field equality or range, like the rest of this file: no composite indexes. */
 const Master = require("./_charmNestMaster");
 const POOL = "Charm_Pool", BACK = "Charm_Pool_Back", SETS = "Charm_Nest_Sets", COUNTERS = "Charm_Nest_Counters", RUNS = "Charm_Nest_Runs", RUN_LINES = "Charm_Nest_Run_Lines", RUN_LIVE = "Charm_Nest_Run_Live", RELEASE = "Charm_Nest_Release", BRIDGE = "Design_Bridge", ALIASES = "Charm_Sku_Aliases", NODESIGN = "Charm_Sku_NoDesign", OPTMAP = "Charm_Option_Map";
+// the learned maps: shared and read by both sides, but a sandbox answer is written to Sandbox_<name> only (see the top of this file)
+const SANDBOX_MAPS = [ALIASES, NODESIGN, OPTMAP];
 const isDay = d => /^\d{4}-\d{2}-\d{2}$/.test(String(d || ""));
 const isPoolId = s => /^\d{5,20}_\d{5,20}_\d{1,3}$/.test(String(s || ""));
 const tokenUrl = async (path) => { if (!path) return null; try { const bucket = admin.storage().bucket(); const [meta] = await bucket.file(path).getMetadata(); let t = meta.metadata && meta.metadata.firebaseStorageDownloadTokens; if (!t) return null; t = String(t).split(",")[0]; return "https://firebasestorage.googleapis.com/v0/b/" + encodeURIComponent(bucket.name) + "/o/" + encodeURIComponent(path) + "?alt=media&token=" + encodeURIComponent(t); } catch (_) { return null; } };
@@ -1103,7 +1112,7 @@ async function op_sandboxPut(b) {
 async function op_sandboxStatus() {
   const doc = await db.collection(SANDBOX).doc("current").get();
   const counts = {};
-  for (const name of SANDBOXED) { const s = await db.collection("Sandbox_" + name).count().get(); counts[name] = s.data().count; }
+  for (const name of [...SANDBOXED, ...SANDBOX_MAPS]) { const s = await db.collection("Sandbox_" + name).count().get(); counts[name] = s.data().count; }
   return { ok: true, snapshot: doc.exists ? doc.data() : null, records: counts };
 }
 /* The reset works against a clock: a sandbox that streamed for days holds more than one call can delete. A call deletes
@@ -1118,14 +1127,17 @@ async function op_sandboxStatus() {
    stations' Sandbox_ copies (orders and their messages, locks, finished orders, sign-in sessions, activity and its daily
    rollups, the archive), the engraving jobs and shape guidance, the Rose Gold rehearsals, a person's sandbox decision on
    the shared line readings (decidedSandbox), and the customer messages the sorter's sandbox keeps in the inbox's own
-   collection (EtsyMail_OrderLinks: flagged sandbox:true and named olsb_…, which production never makes). Only ever the
-   sandbox's: every collection is named Sandbox_…, and the two shared places are cut by the sandbox's own marks.
+   collection (EtsyMail_OrderLinks: flagged sandbox:true and named olsb_…, which production never makes), and the
+   sandbox's own copy of the learned maps (the listing → SKU aliases, option maps and no-design SKUs a person answered in
+   the sandbox: SANDBOX_MAPS). Only ever the sandbox's: every collection is named Sandbox_…, and the two shared places
+   are cut by the sandbox's own marks. The sandbox's custom design files (charmnest/custom/{order}/…, which the file
+   door moves to charmnest/sandbox/custom/…) go with the files below.
    Used by sandboxReset and, after production's own part, by purgeHistory. */
 const ORDERLINKS = "EtsyMail_OrderLinks";
 async function sandboxWipe(budgetMs) {
   const until = Date.now() + budgetMs, late = () => Date.now() > until;
   let deleted = 0, files = 0;
-  const names = ["Brites_Orders", "Design_Completed Orders", "Design_RealTime_Selected_Orders", "Design_Order_Archive", ...SANDBOXED, "Order_Timeline", "Charm_Nest_Rose_Rehearsals", SHAPE_CACHE, AGENT, "Station_Sessions", "Station_Activity", "Efficiency_Daily"];   // (the play's timeline events go with the records they tell of)
+  const names = ["Brites_Orders", "Design_Completed Orders", "Design_RealTime_Selected_Orders", "Design_Order_Archive", ...SANDBOXED, ...SANDBOX_MAPS, "Order_Timeline", "Charm_Nest_Rose_Rehearsals", SHAPE_CACHE, AGENT, "Station_Sessions", "Station_Activity", "Efficiency_Daily"];   // (the play's timeline events go with the records they tell of)
   const SUBS = { Design_Bridge: ["log"], Brites_Orders: ["messages"], Charm_Nest_Rose_Stock: ["cuts"] };   // deleting a document never deletes its subcollections
   // an order's messages can sit under a Brites_Orders document that was never written (a message posted on its own),
   // which no query of that collection returns: they go with the order's other records, which name it, and last of all
@@ -2186,8 +2198,8 @@ async function sweepBridge(session) {
 /** Every document of a map, read 500 at a time in document order, as much as fits in one answer and is read within
     ANSWER_MS (truncated says what that left out). Each map used to stop at a count (3,000 aliases, 2,000 option maps,
     1,000 no-design rows) and a map past it lost the rest without a word. */
-async function mapDocs(name) {
-  const budget = answerBudget(), docs = []; let after = null;
+async function pagedDocs(name, budget) {
+  const docs = []; let after = null;
   for (;;) {
     let page = db.collection(name).orderBy(docOrder()).limit(500); if (after) page = page.startAfter(after);
     const snap = await page.get();
@@ -2196,7 +2208,30 @@ async function mapDocs(name) {
     if (budget.late()) return { docs, truncated: true };
   }
 }
-async function op_aliasGet() { const { docs, truncated } = await mapDocs(ALIASES); const out = {}; docs.forEach(d => { out[d.id] = d.data(); }); return { aliases: out, truncated }; }
+/** A map as this request sees it: the shared documents, and in the sandbox `own` too, the sandbox's copy (Sandbox_<name>),
+    which only a sandbox answer ever wrote. One answer's room is shared by both. */
+async function mapDocs(name) {
+  const budget = answerBudget(), shared = await pagedDocs(name, budget);
+  if (!PREFIX) return shared;
+  const own = await pagedDocs(PREFIX + name, budget);
+  return { docs: shared.docs, own: own.docs, truncated: shared.truncated || own.truncated };
+}
+/** The no-design rows (the shared ones the sandbox did not take off its own list, then the sandbox's own) as plain objects
+    with their id; `get` reads a collection (a query, or a transaction's read). */
+async function noDesignRows(get) {
+  const shared = (await get(db.collection(NODESIGN))).docs.map(d => Object.assign({ id: d.id }, d.data()));
+  if (!PREFIX) return shared;
+  const own = (await get(db.collection(PREFIX + NODESIGN))).docs.map(d => Object.assign({ id: d.id }, d.data()));
+  const hidden = new Set(own.filter(r => r.tombstone).map(r => r.tombstone));
+  return shared.filter(r => !hidden.has(r.id)).concat(own.filter(r => !r.tombstone));
+}
+async function op_aliasGet() {
+  const { docs, own = [], truncated } = await mapDocs(ALIASES), out = {};
+  docs.forEach(d => { out[d.id] = d.data(); });
+  // the sandbox's own answer for a listing stands over the shared one's, field by field (its per-SKU answers join the shared ones)
+  own.forEach(d => { const mine = d.data(), was = out[d.id]; out[d.id] = was ? Object.assign({}, was, mine, was.bySku || mine.bySku ? { bySku: Object.assign({}, was.bySku, mine.bySku) } : {}) : mine; });
+  return { aliases: out, truncated };
+}
 /* "Use this charm": for the listing and the SKU the line came with (fromSku, kept under bySku), so on a listing whose
    variations each have a SKU one variation's answer is never another's; a line with no SKU answers for the listing (sku).
    v: 2 marks the listing's sku as answered this way (charm-nest-orders.js resolveSku). An answer for one SKU leaves v as it
@@ -2207,12 +2242,32 @@ async function op_aliasPut(b) {
   if (!lid || !Master.isSku(sku)) return { error: "listingId and sku required" };
   const doc = { listingId: lid, by: str(b.by || "operator", 80), title: str(b.title, 200), updatedAt: FV.serverTimestamp() };
   if (from) doc.bySku = { [from]: sku }; else if (b.huggie === true) doc.huggie = sku; else { doc.sku = sku; doc.v = 2; }
-  await db.collection(ALIASES).doc(lid).set(doc, { merge: true }); return { ok: true };
+  await db.collection(PREFIX + ALIASES).doc(lid).set(doc, { merge: true }); return { ok: true };   // (a sandbox answer is the sandbox's own copy only)
 }
-async function op_noDesignGet() { const { docs, truncated } = await mapDocs(NODESIGN); const rows = docs.map(d => Object.assign({ id: d.id }, d.data())); return { list: { patterns: rows.filter(r => r.pattern).map(r => r.pattern), skus: rows.filter(r => r.sku).map(r => r.sku), rows }, truncated }; }
-async function op_noDesignPut(b) { const doc = { by: str(b.by || "operator", 80), note: str(b.note, 200), createdAt: FV.serverTimestamp() }; if (b.pattern) { try { new RegExp(String(b.pattern)); } catch (_) { return { error: "bad pattern" }; } doc.pattern = str(b.pattern, 120); } else if (b.sku) doc.sku = String(b.sku).trim().toUpperCase().slice(0, 40); else return { error: "pattern or sku required" }; const ref = await db.collection(NODESIGN).add(doc); return { ok: true, id: ref.id }; }
-async function op_noDesignDelete(b) { if (!isId(b.id)) return { error: "bad id" }; await db.collection(NODESIGN).doc(b.id).delete(); return { ok: true }; }
-async function op_optionMapGet() { const { docs, truncated } = await mapDocs(OPTMAP); const out = {}; docs.forEach(d => { out[d.id] = d.data().map || {}; }); return { maps: out, truncated }; }
+async function op_noDesignGet() {
+  const { docs, own = [], truncated } = await mapDocs(NODESIGN);
+  const hidden = new Set(own.map(d => d.data()).filter(r => r.tombstone).map(r => r.tombstone));
+  const rows = docs.filter(d => !hidden.has(d.id)).concat(own.filter(d => !d.data().tombstone)).map(d => Object.assign({ id: d.id }, d.data()));
+  return { list: { patterns: rows.filter(r => r.pattern).map(r => r.pattern), skus: rows.filter(r => r.sku).map(r => r.sku), rows }, truncated };
+}
+async function op_noDesignPut(b) { const doc = { by: str(b.by || "operator", 80), note: str(b.note, 200), createdAt: FV.serverTimestamp() }; if (b.pattern) { try { new RegExp(String(b.pattern)); } catch (_) { return { error: "bad pattern" }; } doc.pattern = str(b.pattern, 120); } else if (b.sku) doc.sku = String(b.sku).trim().toUpperCase().slice(0, 40); else return { error: "pattern or sku required" }; const ref = await db.collection(PREFIX + NODESIGN).add(doc); return { ok: true, id: ref.id }; }
+/* In the sandbox only the sandbox's own row is deleted. A shared row (production's) is never touched from there: the
+   sandbox takes it off its own list with a mark in its copy (tombstone: the row's id), which Reset deletes too. */
+async function op_noDesignDelete(b) {
+  if (!isId(b.id)) return { error: "bad id" };
+  if (!PREFIX) { await db.collection(NODESIGN).doc(b.id).delete(); return { ok: true }; }
+  const own = db.collection(PREFIX + NODESIGN).doc(b.id);
+  if ((await own.get()).exists) { await own.delete(); return { ok: true }; }
+  await db.collection(PREFIX + NODESIGN).doc("del_" + b.id).set({ tombstone: b.id, by: str(b.by || "operator", 80), createdAt: FV.serverTimestamp() });
+  return { ok: true };
+}
+async function op_optionMapGet() {
+  const { docs, own = [], truncated } = await mapDocs(OPTMAP), out = {};
+  docs.forEach(d => { out[d.id] = d.data().map || {}; });
+  // the sandbox's own answer for an option value stands over the shared one's (the listing's other answers are kept)
+  own.forEach(d => { const mine = d.data().map || {}, was = out[d.id] || {}, next = {}; for (const n of new Set([...Object.keys(was), ...Object.keys(mine)])) next[n] = Object.assign({}, was[n], mine[n]); out[d.id] = next; });
+  return { maps: out, truncated };
+}
 async function op_optionMapPut(b) {
   const lid = b.listingId === "*" ? "*" : str(b.listingId, 30).replace(/\D/g, ""); const name = str(b.optionName, 80).toLowerCase().trim(), value = str(b.optionValue, 200).toLowerCase().replace(/\s+/g, " ").trim();
   if (!lid || !name || !value) return { error: "listingId, optionName and optionValue required" };
@@ -2220,7 +2275,7 @@ async function op_optionMapPut(b) {
   // design: the option picks the charm (Zodiac Sign: Pisces), for one listing, a SKU of the master index
   const design = field === "design" ? String(m.value || "").trim().toUpperCase() : "";
   if (field === "design" && (lid === "*" || !Master.isSku(design))) return { error: "the charm an option picks is saved for one listing, as a master SKU" };
-  const ref = db.collection(OPTMAP).doc(lid); const snap = await ref.get(); const cur = snap.exists ? (snap.data().map || {}) : {};
+  const ref = db.collection(PREFIX + OPTMAP).doc(lid); const snap = await ref.get(); const cur = snap.exists ? (snap.data().map || {}) : {};   // (the sandbox's copy starts from its own answers, never from production's)
   cur[name] = cur[name] || {}; cur[name][value] = { field, value: field === "ignore" ? null : design || str(m.value, 80), by: str(b.by || "operator", 80), at: Date.now() };
   await ref.set({ listingId: lid, map: cur, updatedAt: FV.serverTimestamp() }, { merge: true });
   return { ok: true };
