@@ -6,12 +6,12 @@
  *  Read-only: the gated function employeeEfficiency (ops overview and person). It asks for the manager passcode once, in the
  *  console itself; the passcode is held in memory and in sessionStorage for the tab only (never in localStorage, a URL or a log).
  *  Polls every 10 s while the tab is shown and the page is in sight, backs off after errors, catches up when shown again.
- *    Efficiency.open()   Efficiency.options = { pollMs, tickMs, maxBackoffMs, growMs }   Efficiency.norm(answer) → the view model   */
+ *    Efficiency.open()   Efficiency.options = { pollMs, tickMs, maxBackoffMs, holdMs, growMs }   Efficiency.norm(answer) → the view model   */
 (function (root) {
   "use strict";
   if (root.Efficiency) return;
   const doc = root.document, TZ = "America/New_York", DAY_MS = 86400000;
-  const options = { pollMs: 10000, tickMs: 1000, maxBackoffMs: 60000, growMs: 480 };
+  const options = { pollMs: 10000, tickMs: 1000, maxBackoffMs: 60000, holdMs: 60000, growMs: 480 };
   const KEY_STORE = "cn.eff.key", DAYS_STORE = "cn.eff.days";
   const NAMES = { shipping: "Shipping", assembly: "Assembly", welding: "Welding", sorting: "Sorting", design: "Design", laser: "Laser", sorter: "Sorter", qr: "QR printer", inbox: "Inbox" };
   const CORE = ["shipping", "assembly", "welding", "sorting", "design"], EXTRA = ["laser", "sorter", "qr", "inbox"];
@@ -34,7 +34,7 @@
   const clock = t => clockFmt.format(new Date(t));
   const dayFmt = new Intl.DateTimeFormat("en-US", { timeZone: "UTC", weekday: "short", month: "short", day: "numeric" });
   const mdFmt = new Intl.DateTimeFormat("en-US", { timeZone: "UTC", month: "short", day: "numeric" });
-  const wdFmt = new Intl.DateTimeFormat("en-US", { timeZone: "UTC", weekday: "short", day: "numeric" });
+  const wdFmt = new Intl.DateTimeFormat("en-US", { timeZone: "UTC", weekday: "short", day: "numeric" }), wdOnly = new Intl.DateTimeFormat("en-US", { timeZone: "UTC", weekday: "short" });
   const dayDate = day => { const [y, m, d] = String(day).split("-").map(Number); return new Date(Date.UTC(y, m - 1, d, 12)); };
   const hourLabel = h => `${h % 12 || 12} ${h < 12 ? "AM" : "PM"}`, hourShort = h => `${h % 12 || 12}${h < 12 ? "a" : "p"}`;
   /* ── numbers ── */
@@ -42,6 +42,7 @@
   const T = v => { v = +v; return Number.isFinite(v) && v > 0 ? v : null; };
   const nf = n => Math.round(N(n)).toLocaleString("en-US");
   const dur = min => { const m = Math.round(Math.max(0, N(min))); if (m < 1) return "0 m"; return m < 60 ? `${m} m` : `${Math.floor(m / 60)} h${m % 60 ? ` ${m % 60} m` : ""}`; };
+  const durMs = ms => { ms = Math.max(0, N(ms)); if (ms < 1000) return "—"; if (ms < 60000) return `${Math.round(ms / 1000)} s`; const m = Math.round(ms / 60000); if (m < 120) return `${m} m`; const h = Math.floor(m / 60); if (h < 48) return `${h} h${m % 60 ? ` ${m % 60} m` : ""}`; const d = Math.floor(h / 24); return `${d} d${h % 24 ? ` ${h % 24} h` : ""}`; };
   const rateTxt = v => (v > 0 ? (v >= 10 ? nf(v) : (Math.round(v * 10) / 10).toString()) : "—");
   const secTxt = s => (s > 0 ? (s < 90 ? `${Math.round(s)} s` : `${(Math.round(s / 6) / 10).toString()} min`) : "—");
   const ago = s => (s < 2 ? "just now" : s < 60 ? `${Math.round(s)}s ago` : s < 3600 ? `${Math.floor(s / 60)}m ago` : `${Math.floor(s / 3600)}h ago`);
@@ -76,7 +77,7 @@
     const people = (Array.isArray(r.people) ? r.people : []).filter(p => p && p.name).map(p => {
       const t = p.totals || {}, orders = (Array.isArray(p.orders) ? p.orders : []).filter(o => o && o.orderId).map(o => ({ orderId: String(o.orderId), stations: (Array.isArray(o.stations) ? o.stations : []).map(String), parts: N(o.parts), lastAt: T(o.lastAt) }));
       const stations = (Array.isArray(p.stations) ? p.stations : []).filter(s => s && s.station).map(s => ({ station: String(s.station), minutes: N(s.minutes), parts: N(s.parts), scanParts: N(s.scanParts), scans: N(s.scans), completes: N(s.completes), prints: N(s.prints), orders: N(s.orders) })).sort((a, b) => b.minutes - a.minutes);
-      const x = { parts: N(t.parts), scanParts: N(t.scanParts), scans: N(t.scans), orders: t.orders == null ? orders.length : N(t.orders), activeMin: N(t.activeMin), idleMin: N(t.idleMin), signedInMin: N(t.signedInMin), rate: N(t.rate), secPerScan: N(t.secPerScan) };
+      const x = { parts: N(t.parts), scanParts: N(t.scanParts), scans: N(t.scans), rejects: N(t.rejects), errors: N(t.errors), orders: t.orders == null ? orders.length : N(t.orders), activeMin: N(t.activeMin), idleMin: N(t.idleMin), signedInMin: N(t.signedInMin), rate: N(t.rate), secPerScan: N(t.secPerScan) };
       if (!x.rate && x.activeMin >= 1 && x.parts) x.rate = x.parts / (x.activeMin / 60);
       if (!x.secPerScan && x.activeMin >= 1 && x.scans) x.secPerScan = x.activeMin * 60 / x.scans;
       return { name: String(p.name), on: p.status === "on", inDay: p.inDay ? String(p.inDay) : "", firstIn: T(p.firstIn), lastOut: T(p.lastOut), onSince: T(p.onSince), nowAt: (Array.isArray(p.nowAt) ? p.nowAt : []).map(String), source: String(p.source || ""), stations, t: x, perHour: hours24(p.perHour), orders };
@@ -93,7 +94,7 @@
     return {
       day: String(r.day || ""), days: N(r.days) || 1, now: N(r.now), cursor: r.cursor == null ? "" : String(r.cursor), delta: !!r.delta, people,
       biz: { parts, scans: bt.scans == null ? sumP("scans") : N(bt.scans), orders: bt.orders == null ? sumP("orders") : N(bt.orders), people: bt.people == null ? people.length : N(bt.people), on: people.filter(p => p.on).length, rate: activeMin >= 1 ? parts / (activeMin / 60) : 0, hours: hoursAll, stations: stRows,
-        trend: (Array.isArray(b.trend) ? b.trend : []).filter(d => d && d.day).map(d => ({ day: String(d.day), parts: N(d.parts), orders: N(d.orders), people: N(d.people) })) },
+        trend: (Array.isArray(b.trend) ? b.trend : []).filter(d => d && d.day).map(d => ({ day: String(d.day), parts: N(d.parts), orders: N(d.orders), people: N(d.people), source: String(d.source || "") })) },
       feed, sources: r.sources || {}, notes: (Array.isArray(r.notes) ? r.notes : []).map(String).filter(Boolean), partial: !!r.partial, errors: Array.isArray(r.errors) ? r.errors : []
     };
   }
@@ -103,6 +104,13 @@
     const days = (Array.isArray(r.days) ? r.days : []).filter(d => d && d.day).map(d => ({ day: String(d.day), parts: N(d.parts), scans: N(d.scans), orders: N(d.orders), signedInMin: N(d.signedInMin), activeMin: N(d.activeMin), idleMin: N(d.idleMin), firstIn: T(d.firstIn), lastOut: T(d.lastOut), source: String(d.source || "") }));
     const t = r.totals || {};
     return { days, parts: N(t.parts), orders: N(t.orders), signedInMin: N(t.signedInMin), worked: days.filter(d => d.parts || d.orders || d.signedInMin || d.scans).length, notes: (Array.isArray(r.notes) ? r.notes : []).map(String).filter(Boolean) };
+  }
+
+  /** One order (op orders): who touched it where, how long they worked and how long it waited between steps. */
+  function normOrder(r) {
+    r = r || {}; const t = r.totals || {};
+    const steps = (Array.isArray(r.steps) ? r.steps : []).filter(s => s && s.station).map(s => ({ station: String(s.station), person: String(s.person || ""), firstAt: T(s.firstAt), lastAt: T(s.lastAt), workMs: N(s.workMs), waitMs: N(s.waitMs), scans: N(s.scans), completes: N(s.completes), prints: N(s.prints), parts: N(s.parts), source: String(s.source || "events") }));
+    return { orderId: String(r.orderId || ""), steps, events: Array.isArray(r.events) ? r.events.length : 0, firstAt: T(t.firstAt), lastAt: T(t.lastAt), spanMs: N(t.spanMs), workMs: N(t.workMs), people: N(t.people), stations: N(t.stations), notes: (Array.isArray(r.notes) ? r.notes : []).map(String).filter(Boolean), partial: !!r.partial };
   }
 
   /* ── charts: inline SVG, thin marks, one baseline, the current hour in gold ── */
@@ -168,7 +176,7 @@
       S.d = d;
       if (!S.svg || S.W !== W || S.n !== n) build(W, n);
       d.labels.forEach((t, i) => { if (S.xl[i]) { setText(S.xl[i], i % S.geo.step === 0 || i === d.hi ? t : ""); S.xl[i].classList.toggle("on", i === d.hi); } });
-      S.svg.setAttribute("aria-label", `${o.name}: ` + d.labels.map((t, i) => `${t} ${nf(d.values[i])}`).join(", "));
+      S.svg.setAttribute("aria-label", `${d.name || o.name}: ` + d.labels.map((t, i) => `${t} ${nf(d.values[i])}`).join(", "));
       const max = niceMax(Math.max(0, ...d.values)), to = { vals: d.values.slice(), max }, sig = JSON.stringify([to.vals, max, d.hi, S.W]);
       if (S.sig === sig) { if (S.idx >= 0) show(S.idx); return; }
       S.sig = sig; if (S.stop) S.stop();
@@ -199,7 +207,7 @@
 
   /* ── state ── */
   const st = { built: false, shown: false, key: store.get(KEY_STORE), keyErr: "", checking: false, days: +store.get(DAYS_STORE) || 1, day: null, gen: 0, data: null, M: null, off: 0, at: 0, fails: 0, busy: false, err: "", timer: 0, tick: 0, ctl: null,
-    rows: new Map(), stRows: new Map(), open: new Map(), hist: new Map(), feed: [], feedOpen: false, feedSig: "", win: { lo: 7, hi: 18, nowH: -1, today: true }, charts: {}, sandbox: false, lastNames: [] };
+    rows: new Map(), stRows: new Map(), open: new Map(), hist: new Map(), ord: new Map(), ordOpen: new Set(), find: "", feed: [], feedOpen: false, feedSig: "", win: { lo: 7, hi: 18, nowH: -1, today: true }, charts: {}, sandbox: false, lastNames: [] };
   if (![1, 7, 30].includes(st.days)) st.days = 1;
   const now = () => Date.now() + st.off;
   let host = null, E = {};
@@ -262,7 +270,7 @@
 .efTip[hidden]{display:none}.efTipT{color:#cdc4b2;font-size:10.5px}.efTipV{font:650 14px var(--sans)}
 .efTipR{display:flex;justify-content:space-between;gap:16px;color:#cdc4b2}.efTipR b{color:#fff;font-weight:650}
 .efLabel{font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink45);font-weight:750;display:flex;align-items:center;gap:8px;margin:0 2px 7px}
-.efLabel:after{content:"";flex:1;height:1px;background:var(--line)}.efLabel b{color:var(--ink70);letter-spacing:0;font-weight:700}
+.efLabel:after{content:"";flex:1;height:1px;background:var(--line);order:1}.efLabel b{color:var(--ink70);letter-spacing:0;font-weight:700}
 .efSR{display:grid;grid-template-columns:96px minmax(0,1fr) 72px 72px 112px;align-items:center;gap:14px;padding:6px 18px;min-height:34px}
 .efSR+.efSR{border-top:1px solid var(--line2)}
 .efSN{font-weight:700;font-size:12.5px}.efSN:before{content:"";display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--ink25);margin-right:8px;vertical-align:1px;transition:background .3s}
@@ -297,8 +305,30 @@
 .efMini{width:100%;border-collapse:collapse;font-size:12px}.efMini th{font-size:10px;letter-spacing:.07em;text-transform:uppercase;color:var(--ink45);font-weight:700;text-align:right;padding:3px 0 5px}
 .efMini th:first-child,.efMini td:first-child{text-align:left}.efMini td{padding:4px 0;border-top:1px solid var(--line2);text-align:right;font-variant-numeric:tabular-nums}
 .efOl{display:grid;max-height:268px;overflow:auto;margin:0 -4px;padding:0 4px;gap:0}
-.efOr{display:grid;grid-template-columns:116px minmax(0,1fr) auto 62px;gap:10px;align-items:center;padding:5px 0;border-top:1px solid var(--line2);font-size:12px}
-.efOr:first-child{border-top:0}.efOid{border:0;background:transparent;padding:2px 6px;margin:0 -6px;border-radius:6px;font:650 12px var(--mono);color:var(--ink);text-align:left;white-space:nowrap}
+.efOw+.efOw{border-top:1px solid var(--line2)}
+.efOr{display:grid;grid-template-columns:116px minmax(0,1fr) auto 62px 26px;gap:10px;align-items:center;padding:5px 0;font-size:12px}
+.efOx{border:0;background:transparent;border-radius:6px;width:24px;height:22px;padding:0;color:var(--ink45);font-size:9px;display:grid;place-items:center}.efOx:hover{background:var(--paper2);color:var(--ink)}
+.efOx i{font-style:normal;transition:transform .25s ease}.efOw.open .efOx i{transform:rotate(180deg)}.efOw.open .efOx{color:var(--ink)}
+.efOxw{display:grid;grid-template-rows:0fr;visibility:hidden;transition:grid-template-rows .3s ease,visibility 0s .3s}.efOw.open .efOxw{grid-template-rows:1fr;visibility:visible;transition:grid-template-rows .3s ease}
+.efOxi{min-height:0;overflow:hidden}.efOxw .efOxb{padding:2px 4px 12px 2px}
+.efOView{padding:12px 18px 14px;margin-bottom:10px;scroll-margin-top:48px;animation:efIn2 .3s ease}@keyframes efIn2{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
+.efOVH{display:flex;align-items:center;gap:12px;min-height:26px}.efOVT{font:700 13px var(--sans)}
+.efOVopen{border:0;background:transparent;font:700 11px var(--sans);color:var(--gold);padding:4px 7px;border-radius:6px}.efOVopen:hover{background:var(--goldSoft)}.efOVx{margin-left:auto}
+.efOView .efOxb{padding:6px 0 0}
+.efFind{display:flex;align-items:center;gap:2px;order:2;margin:-3px 0}
+.efFind input{width:118px;border:1px solid var(--line);background:var(--card);border-radius:999px;padding:3px 11px;font:500 11.5px var(--sans);letter-spacing:0;text-transform:none;color:var(--ink);transition:width .25s ease,border-color .2s,background .2s}
+.efFind input::placeholder{color:var(--ink45)}.efFind input:focus{width:168px;outline:none;border-color:var(--gold);background:#fff}
+.efFind .efIcon{width:22px;height:22px;font-size:15px}
+.efTabRow{display:flex;align-items:center;gap:14px;min-height:26px}.efQ{font-size:11.5px;color:var(--ink45)}
+.efTsum{display:flex;flex-wrap:wrap;gap:2px 18px;font-size:11.5px;color:var(--ink45);margin-bottom:5px}.efTsum b{color:var(--ink);font-weight:650;margin-left:3px;font-variant-numeric:tabular-nums}
+.efTr{display:grid;grid-template-columns:88px minmax(80px,1fr) 150px 44px 56px 60px minmax(70px,1.1fr);gap:10px;align-items:center;padding:5px 0;border-top:1px solid var(--line2);font-size:12px}
+.efTr.head{border-top:0;font-size:10px;letter-spacing:.07em;text-transform:uppercase;color:var(--ink45);font-weight:700;padding:2px 0 4px}.efTr.head span:nth-child(n+4):nth-child(-n+6){text-align:right}
+.efTst{font-weight:700}.efTp{color:var(--ink70);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.efTt{color:var(--ink45);font-size:11.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-variant-numeric:tabular-nums}
+.efTn{text-align:right;font-variant-numeric:tabular-nums}.efTr.seal .efTn,.efTr.seal .efTt{color:var(--ink45)}
+.efTb{position:relative;height:6px;border-radius:3px;background:var(--line2);overflow:hidden}.efTb i{position:absolute;top:0;bottom:0;border-radius:3px;background:var(--gold);min-width:3px}
+.efTr.seal .efTb i{background:repeating-linear-gradient(45deg,var(--ink25) 0 3px,transparent 3px 6px)}
+.efTnote{margin-top:6px;font-size:11.5px}
+.efOid{border:0;background:transparent;padding:2px 6px;margin:0 -6px;border-radius:6px;font:650 12px var(--mono);color:var(--ink);text-align:left;white-space:nowrap}
 .efOid:hover{background:var(--goldSoft);text-decoration:underline;text-decoration-color:var(--gold2);text-underline-offset:3px}
 .efOr .st{color:var(--ink70);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.efOr .pt{color:var(--ink45);font-size:11px;white-space:nowrap}.efOr time{color:var(--ink45);text-align:right;font-variant-numeric:tabular-nums;font-size:11.5px}
 .efMuted{color:var(--ink45);font-size:12px}.efHist{display:grid;gap:8px}.efHist .efSum{font-size:12px;color:var(--ink70)}
@@ -315,6 +345,8 @@
 .efPeopleEmpty{padding:26px 18px;text-align:center;color:var(--ink45);font-size:12.5px}
 /* nothing recorded yet (sign-ins only): no empty columns of dashes, just who is in and where */
 .ef[data-nofig] :is(.efPH,.efN,.efSp,.efAct,.efSV,.efGraph),.ef[data-nofig] .efKpi:not([data-k=on]){display:none}
+.ef[data-noparts] :is(.efKpi[data-k=parts],.efKpi[data-k=rate],.efSV[data-c=parts]){display:none}
+.ef[data-noparts] .efKpis{grid-template-columns:repeat(2,minmax(0,1fr))}.ef[data-noparts] .efSR{grid-template-columns:96px minmax(0,1fr) 72px 112px}
 .ef[data-nofig] .efKpis{grid-template-columns:1fr}.ef[data-nofig] .efKpi{padding-bottom:12px}
 .ef[data-nofig] .efPRow{grid-template-columns:minmax(170px,1fr) minmax(214px,3fr)}
 .ef[data-nofig] .efSR{grid-template-columns:96px minmax(0,1fr);grid-template-areas:none}.ef[data-nofig] .efSR>*{grid-area:auto!important}
@@ -328,12 +360,17 @@
 }
 @container ef (max-width:640px){
  .efKpis{grid-template-columns:repeat(2,minmax(0,1fr))}.efKpi{padding:14px 16px 8px}.efKpi:nth-child(3){border-left:0}.efKpi:nth-child(n+3){border-top:1px solid var(--line2)}.efKpi:nth-child(2){border-left:1px solid var(--line2)}
+ .ef[data-noparts] .efKpi:nth-child(n){border-top:0}.ef[data-noparts] .efKpi[data-k=orders]{border-left:0}.ef[data-noparts] .efKpi[data-k=on]{border-left:1px solid var(--line2)}
  .efKV{font-size:30px}.efGraph{padding:4px 14px 12px}.efGraph.two{grid-template-columns:1fr}
  .efSR{grid-template-columns:minmax(0,1fr) auto auto;grid-template-areas:"n p o" "w w w";gap:3px 12px;padding:10px 14px}.efSR .efSN{grid-area:n}.efSR .efSW{grid-area:w}.efSV[data-c=parts]{grid-area:p}.efSV[data-c=orders]{grid-area:o}.efSR .efSp{display:none}
  .efDay{min-width:0;flex:1}.efBar{gap:2px 10px;padding:4px 12px}.efGrow{display:none}.efHead{flex:1 1 100%}.efNav{flex:1 1 0;min-width:0}.efSeg{margin-left:auto}.efLive .lg{display:none}
  .efKL .l{display:none}.efKL .s{display:inline}
  .efPRow{grid-template-columns:repeat(3,minmax(0,1fr));padding:12px 14px}.efSp{grid-column:1/-1}.efAct{grid-column:1/-1}
- .efOr{grid-template-columns:100px minmax(0,1fr) 58px}.efOr .pt{display:none}
+ .efOr{grid-template-columns:100px minmax(0,1fr) 58px 26px}.efOr .pt{display:none}
+ .efSR .efSW.none{display:none}
+ .efFind input{width:104px}.efFind input:focus{width:140px}
+ .efTr{grid-template-columns:repeat(6,minmax(0,1fr));gap:2px 8px}.efTr.head{display:none}.efTst{grid-column:1/3}.efTp{grid-column:3/-1}.efTt{grid-column:1/-1}
+ .efTn{grid-column:span 2;text-align:left}.efTn:before{content:attr(data-l) " ";color:var(--ink45);font-size:10.5px}.efTb{grid-column:1/-1;margin-top:3px}
  .efFl{grid-template-columns:56px minmax(0,1fr) auto;grid-template-areas:"t p a" "t s o"}.efFl>time{grid-area:t}.efFl>b{grid-area:p}.efFl>span:nth-of-type(1){grid-area:s}.efFl>span:nth-of-type(2){grid-area:a}.efFl>span:nth-of-type(3){grid-area:o}
  .efFeedBtn,.efFeed{padding-left:14px;padding-right:14px}.efKey{margin-top:3vh}
 }
@@ -365,21 +402,24 @@
       <div class="efKpi" data-k="rate"><span class="efKL"><span class="l">Parts per active hour</span><span class="s">Per active hour</span></span><b class="efKV">0</b><span class="efKS"></span></div>
     </div>
     <div class="efGraph" data-g="hours"><div class="efGH"><span class="efGT">Parts per hour</span><span class="efGP"></span></div><div class="efChart"></div></div>
-    <div class="efGraph two hidden" data-g="trend"><div><div class="efGH"><span class="efGT">Parts per day</span></div><div class="efChartA"></div></div><div><div class="efGH"><span class="efGT">Orders per day</span></div><div class="efChartB"></div></div></div>
+    <div class="efGraph two hidden" data-g="trend"><div data-t="parts"><div class="efGH"><span class="efGT">Parts per day</span></div><div class="efChartA"></div></div><div data-t="orders"><div class="efGH"><span class="efGT">Orders per day</span></div><div class="efChartB"></div></div></div>
   </section>
   <section aria-label="Stations"><div class="efLabel">Stations</div><div class="efCard efStations"></div></section>
-  <section aria-label="People"><div class="efLabel">People <b class="efPN"></b></div><div class="efCard"><div class="efPH" aria-hidden="true"><span>Person</span><span>Stations</span><span>Parts</span><span>Scans</span><span>Orders</span><span>Per hr</span><span>Per scan</span><span class="efPHs">By hour</span><span>Active</span></div><div class="efPeople"></div></div></section>
+  <section aria-label="People"><div class="efLabel">People <b class="efPN"></b><form class="efFind" autocomplete="off"><input inputmode="numeric" name="eforder" aria-label="Trace an order: who worked it, where and for how long" placeholder="Trace an order" autocomplete="off" spellcheck="false"><button type="submit" class="efIcon" aria-label="Trace this order">›</button></form></div>
+  <div class="efCard efOView hidden" aria-label="Order trace"><div class="efOVH"><b class="efOVT"></b><button type="button" class="efOVopen" data-order="">Open order</button><button type="button" class="efIcon efOVx" data-find-close aria-label="Close the trace">✕</button></div><div class="efOxb"></div></div>
+  <div class="efCard"><div class="efPH" aria-hidden="true"><span>Person</span><span>Stations</span><span>Parts</span><span>Scanned</span><span>Orders</span><span>Per hr</span><span>Per scan</span><span class="efPHs">By hour</span><span>Active</span></div><div class="efPeople"></div></div></section>
   <section class="efCard efFeedCard" aria-label="Live activity"><button type="button" class="efFeedBtn" aria-expanded="false"><i aria-hidden="true">▶</i>Live activity <b class="efFC"></b></button><div class="efFeedWrap"><div class="efFeedIn"><div class="efFeed"></div></div></div></section>
 </div>`;
     E = { bar: host.querySelector(".efBar"), live: host.querySelector(".efLive"), liveT: host.querySelector(".efLiveT"), flag: host.querySelector(".efFlag"), day: host.querySelector(".efDay"), today: host.querySelector(".efToday"), next: host.querySelector('[data-nav="1"]'), prev: host.querySelector('[data-nav="-1"]'),
       key: host.querySelector(".efKey"), keyIn: host.querySelector(".efKey input"), keyErr: host.querySelector(".efKeyErr"), keyBtn: host.querySelector(".efKey .btn"), wait: host.querySelector(".efWait"), waitT: host.querySelector(".efWaitT"), body: host.querySelector(".efBody"), note: host.querySelector(".efNote"),
       kpi: Object.fromEntries([...host.querySelectorAll(".efKpi")].map(k => [k.dataset.k, k])), gHours: host.querySelector('[data-g="hours"]'), gTrend: host.querySelector('[data-g="trend"]'), gp: host.querySelector(".efGP"),
+      find: host.querySelector(".efFind"), findIn: host.querySelector(".efFind input"), ov: host.querySelector(".efOView"), ovT: host.querySelector(".efOVT"), ovOpen: host.querySelector(".efOVopen"), ovBox: host.querySelector(".efOView .efOxb"),
       stations: host.querySelector(".efStations"), people: host.querySelector(".efPeople"), pn: host.querySelector(".efPN"), feedBtn: host.querySelector(".efFeedBtn"), feedWrap: host.querySelector(".efFeedWrap"), feed: host.querySelector(".efFeed"), fc: host.querySelector(".efFC") };
     st.charts.hours = columns(host.querySelector(".efChart"), { height: 124, name: "Parts per hour", maxW: 24, unit: "parts", labelW: 26, thin: true });
     st.charts.tA = columns(host.querySelector(".efChartA"), { height: 118, name: "Parts per day", maxW: 18, unit: "parts", labelW: 40 });
     st.charts.tB = columns(host.querySelector(".efChartB"), { height: 118, name: "Orders per day", maxW: 18, unit: "orders", labelW: 40 });
     host.addEventListener("click", onClick);
-    E.keyIn.form.addEventListener("submit", onKey);
+    E.keyIn.form.addEventListener("submit", onKey); E.find.addEventListener("submit", onFind);
     E.keyIn.addEventListener("input", () => { if (st.keyErr) { st.keyErr = ""; setText(E.keyErr, ""); } });
     st.sandbox = isSandbox(); E.flag.classList.toggle("hidden", !st.sandbox);
     segs(); paintDay();
@@ -412,7 +452,7 @@
     if (!st.key) { s = "off"; t = "Locked"; }
     else if (st.busy && !st.data) { s = "load"; t = "Reading…"; }
     else if (st.busy && st.loadingDay) { s = "load"; t = "Reading…"; }
-    else if (st.err && st.data) { s = "slow"; t = `Reconnecting… · last update ${ago((Date.now() - st.at) / 1000)}`; }
+    else if (st.err && st.data) { s = "slow"; t = `${esc(st.errShort || "Reconnecting…")} · last update ${ago((Date.now() - st.at) / 1000)}`; }
     else if (!st.data) { s = "off"; t = st.err ? "Not connected" : "Connecting…"; }
     else if (!live()) { s = "off"; t = `Updated ${ago((Date.now() - st.at) / 1000)}`; }
     else { s = "live"; t = `Live · <span class="lg">updated </span>${ago((Date.now() - st.at) / 1000)}`; }
@@ -434,18 +474,32 @@
       const r = await call({ op: "overview", day: st.day || undefined, days: st.days }, k);
       st.key = k; store.set(KEY_STORE, k); E.keyIn.value = ""; E.key.classList.add("hidden"); unlockBar(); accept(r, true); schedule(options.pollMs);
     } catch (x) {
-      E.keyIn.value = ""; setText(E.keyErr, x.auth ? "That passcode was not accepted. Try again." : x.status === 429 ? "Too many tries. Wait a minute and try again." : x.status === 403 ? "No manager passcode is set up yet." : `Could not check it (${x.message}). Try again.`); E.keyIn.focus();
+      E.keyIn.value = ""; setText(E.keyErr, x.auth ? "That passcode was not accepted. Try again." : x.message); E.keyIn.focus();
     } finally { st.checking = false; E.keyBtn.disabled = false; E.keyBtn.textContent = "Open"; }
   }
 
   /* ── the wire ── */
+  /** What a refused or failed call says on screen, in plain words (never the passcode, never raw HTML). */
+  function failure(status, j, net) {
+    const code = j && j.code ? String(j.code) : "", srv = j && j.error ? String(j.error).replace(/\s+/g, " ").slice(0, 100) : "";
+    let msg, short = "Reconnecting…";
+    if (net) msg = "The service cannot be reached from here. Check the connection.";
+    else if (status === 401) msg = "That passcode was not accepted.";
+    else if (status === 403) msg = "No manager passcode is set up yet. Add EDIT_PASSCODE in Netlify (or the passcode in Firebase, config/editPasscode), then open this again.";
+    else if (status === 429) { msg = "Too many attempts from this address. Wait a minute and try again."; short = "Paused · too many requests"; }
+    else if (status === 405) { msg = "The efficiency service refused this request (405). It may still be updating."; short = "Service refused the request (405)"; }
+    else if (status === 404) { msg = "The efficiency service is not published yet (404)."; short = "Service not found (404)"; }
+    else if (status === 400 || status === 413) { msg = `The request was refused${srv ? `: ${srv}` : ""}.`; short = "Request refused"; }
+    else if (status >= 500) msg = `The data could not be read just now${srv ? ` (${srv})` : ""}.`;
+    else msg = srv ? `${srv}.` : `The service answered ${status || "with an error"}.`;
+    return Object.assign(new Error(msg), { status: status || 0, auth: status === 401, locked: status === 403 || code === "EDIT_PASSCODE_NOT_SET", limited: status === 429, short, code });
+  }
   async function call(body, key, signal) {
     const k = key || st.key, payload = Object.assign({}, body, { key: k }); st.sandbox = isSandbox(); if (st.sandbox) payload.sandbox = true;
     if (payload.day === undefined) delete payload.day;
-    const res = await fetch(endpoint(), { method: "POST", headers: { "Content-Type": "application/json", "X-Edit-Passcode": k }, body: JSON.stringify(payload), cache: "no-store", signal });
+    let res; try { res = await fetch(endpoint(), { method: "POST", headers: { "Content-Type": "application/json", "X-Edit-Passcode": k }, body: JSON.stringify(payload), cache: "no-store", signal }); } catch (e) { if (e && e.name === "AbortError") throw e; throw failure(0, null, true); }
     const txt = await res.text(); let j = null; try { j = JSON.parse(txt); } catch (_) {}
-    if (res.status === 401) throw Object.assign(new Error("passcode"), { auth: true, status: 401 });
-    if (!res.ok || !j || j.ok === false) throw Object.assign(new Error(j && j.error ? String(j.error).slice(0, 120) : `HTTP ${res.status}`), { status: res.status });
+    if (!res.ok || !j || j.ok === false) throw failure(res.status, j);
     return j;
   }
   const active = () => st.built && st.shown && doc.visibilityState !== "hidden" && !!st.key;
@@ -459,20 +513,21 @@
     try {
       const r = await call({ op: "overview", day: st.day || undefined, days: st.days, after: delta || undefined }, null, st.ctl && st.ctl.signal);
       if (gen !== st.gen) return;
-      st.fails = 0; st.err = ""; accept(r, false);
+      st.fails = 0; st.err = ""; st.errShort = ""; accept(r, false);
     } catch (e) {
       if (gen !== st.gen || (e && e.name === "AbortError")) return;
-      if (e.auth) { st.key = ""; store.set(KEY_STORE, ""); st.data = null; showKey("The passcode was not accepted. Enter it again."); return; }
-      st.fails++; st.err = String(e.message || e).slice(0, 120); if (!st.data) { setText(E.waitT, "Could not read employee activity · trying again"); E.wait.querySelector(".spin").style.visibility = "hidden"; } paintLive();
-    } finally { if (gen === st.gen) { st.busy = false; st.loadingDay = false; st.reset = false; E.body.classList.remove("dim"); paintLive(); schedule(st.err ? backoff() : (live() ? options.pollMs : Math.max(options.pollMs * 3, 30000))); } }
+      if (e.auth || e.locked) { st.key = ""; store.set(KEY_STORE, ""); st.data = null; showKey(e.auth ? "The passcode was not accepted. Enter it again." : e.message); return; }
+      st.fails++; st.err = String(e.message || e).slice(0, 200); st.errShort = e.short || "Reconnecting…"; st.hold = e.limited ? options.holdMs : 0;
+      if (!st.data) { setText(E.waitT, `${st.err} Trying again.`); E.wait.querySelector(".spin").style.visibility = "hidden"; } paintLive();
+    } finally { if (gen === st.gen) { st.busy = false; st.loadingDay = false; st.reset = false; E.body.classList.remove("dim"); paintLive(); schedule(st.err ? Math.max(backoff(), st.hold || 0) : (live() ? options.pollMs : Math.max(options.pollMs * 3, 30000))); } }
   }
   /** A fresh answer: its numbers into the page in place. With a feed delta (`after`), the new lines join the old by id. */
   function accept(r, first) {
     const M = norm(r); first = first || !st.data;
     if (r.delta && st.data && st.feed.length) { const seen = new Set(M.feed.map(f => f.id)); M.feed = M.feed.concat(st.feed.filter(f => !seen.has(f.id))).sort((a, b) => b.at - a.at).slice(0, 40); }
     st.off = M.now ? M.now - Date.now() : st.off; st.at = Date.now(); st.data = r; st.M = M; st.feed = M.feed;
-    E.flag.classList.toggle("hidden", !st.sandbox); host.removeAttribute("data-lock"); E.wait.classList.add("hidden"); E.key.classList.add("hidden"); E.body.classList.remove("hidden"); E.wait.querySelector(".spin").style.visibility = "";
-    render(M, first);
+    E.flag.classList.toggle("hidden", !st.sandbox); host.removeAttribute("data-lock"); E.wait.classList.add("hidden"); E.key.classList.add("hidden"); E.body.classList.remove("hidden"); E.wait.querySelector(".spin").style.visibility = ""; setText(E.waitT, "Reading employee activity…");
+    render(M, first); refreshOrders();
   }
 
   /* ── render: every part updates what is there ── */
@@ -487,12 +542,13 @@
     st.win = window24(M); M.past = !!M.day && M.day < today();
     M.nofig = M.sources.events === false && !M.sources.seals && !M.people.some(p => p.t.parts || p.t.scans || p.t.orders);
     host.toggleAttribute("data-nofig", M.sources.events === false && !M.sources.seals && !M.people.some(p => p.t.parts || p.t.scans || p.t.orders));
+    host.toggleAttribute("data-noparts", M.sources.events === false && !M.nofig);   // history from seals: orders and scans only, no columns of dashes for parts
     host.setAttribute("data-range", M.days > 1 ? "n" : "1"); paintDay(); paintLive();
     renderKpis(M, first); renderGraph(M); renderStations(M, first); renderPeople(M, first); renderFeed(M); renderNote(M);
   }
   function renderNote(M) {
     let lines = M.notes.slice();
-    if (!lines.length && M.partial) lines = ["Activity logging starts when stations send events."];
+    if (!lines.length && M.partial) lines = [M.sources.events === false ? "Activity logging starts when stations send events." : "Part of the data could not be read just now, so some figures may be low."];
     if (!lines.length && !M.people.length) lines = [M.days > 1 ? "No sign-ins or activity in these days." : "Nobody has signed in on this day yet."];
     else if (!lines.length && M.sources.events === false && !M.people.some(p => p.t.parts)) lines = ["Activity logging starts when stations send events."];
     const sig = lines.join("|"); if (E.note._sig === sig) return; E.note._sig = sig;
@@ -510,24 +566,29 @@
   }
   const hoursOf = (win) => { const o = []; for (let h = win.lo; h <= win.hi; h++) o.push(h); return o; };
   function renderGraph(M) {
-    const trend = M.days > 1;
-    const ev = M.sources.events !== false;
-    E.gHours.classList.toggle("hidden", trend || !ev); E.gTrend.classList.toggle("hidden", !trend || !ev);
-    if (!ev) return;
+    const trend = M.days > 1, ev = M.sources.events !== false, sl = !!M.sources.seals;
+    // seals know orders, not parts: where they fill in, the hourly line counts order steps and says so
+    const noun = ev && !sl ? "parts" : !ev ? "steps" : "parts and steps", title = ev && !sl ? "Parts per hour" : !ev ? "Order steps per hour" : "Parts and order steps per hour";
+    const showH = !trend && (ev || sl), showT = trend && (ev || sl);
+    E.gHours.classList.toggle("hidden", !showH); E.gTrend.classList.toggle("hidden", !showT);
+    E.gTrend.querySelector('[data-t="parts"]').classList.toggle("hidden", !ev); E.gTrend.classList.toggle("two", ev);
+    if (!showH && !showT) return;
     if (!trend) {
       const w = st.win, hrs = hoursOf(w), vals = hrs.map(h => M.biz.hours[h]), sts = [...M.biz.stations.values()];
-      const tips = hrs.map((h, i) => ({ t: hourLabel(h) + (h === w.nowH ? " · now" : ""), v: `${nf(vals[i])} parts`, rows: sts.filter(s => s.hours && s.hours[h] > 0).sort((a, b) => b.hours[h] - a.hours[h]).map(s => [stName(s.station), nf(s.hours[h])]) }));
-      st.charts.hours.set({ labels: hrs.map(hourShort), values: vals, hi: w.today ? hrs.indexOf(w.nowH) : -1, tips });
+      setText(E.gHours.querySelector(".efGT"), title);
+      const tips = hrs.map((h, i) => ({ t: hourLabel(h) + (h === w.nowH ? " · now" : ""), v: `${nf(vals[i])} ${noun}`, rows: sts.filter(s => s.hours && s.hours[h] > 0).sort((a, b) => b.hours[h] - a.hours[h]).map(s => [stName(s.station), nf(s.hours[h])]) }));
+      st.charts.hours.set({ name: title, labels: hrs.map(hourShort), values: vals, hi: w.today ? hrs.indexOf(w.nowH) : -1, tips });
       let pk = -1; vals.forEach((v, i) => { if (v > 0 && (pk < 0 || v > vals[pk])) pk = i; });
-      setText(E.gp, pk >= 0 ? `Busiest hour · ${hourLabel(hrs[pk])}` : M.biz.parts ? "" : "No parts recorded yet");
+      setText(E.gp, pk >= 0 ? `Busiest hour · ${hourLabel(hrs[pk])}` : M.biz.parts ? "" : `No ${ev ? "parts" : "steps"} recorded yet`);
     } else {
       const end = M.day || today(), n = M.days, byDay = new Map(M.biz.trend.map(d => [d.day, d])), days = [];
       for (let i = n - 1; i >= 0; i--) days.push(addDays(end, -i));
-      const rows = days.map(d => byDay.get(d) || { day: d, parts: 0, orders: 0, people: 0 }), lab = days.map((d, i) => (n <= 7 ? wdFmt.format(dayDate(d)) : (i % 5 === (n - 1) % 5 || i === 0 ? mdFmt.format(dayDate(d)).replace(/ /, " ") : "")));
-      const hi = end === today() ? n - 1 : -1;
-      const tip = (d, key, noun) => ({ t: dayFmt.format(dayDate(d.day)), v: `${nf(d[key])} ${noun}`, rows: [[key === "parts" ? "Orders" : "Parts", nf(key === "parts" ? d.orders : d.parts)], ["People", nf(d.people)]] });
-      st.charts.tA.set({ labels: lab, values: rows.map(d => d.parts), hi, tips: rows.map(d => tip(d, "parts", "parts")) });
-      st.charts.tB.set({ labels: lab, values: rows.map(d => d.orders), hi, tips: rows.map(d => tip(d, "orders", "orders")) });
+      const rows = days.map(d => byDay.get(d) || { day: d, parts: 0, orders: 0, people: 0, source: "none" }), lab = days.map((d, i) => (n <= 7 ? wdFmt.format(dayDate(d)) : (i % 5 === (n - 1) % 5 || i === 0 ? mdFmt.format(dayDate(d)) : "")));
+      const hi = end === today() ? n - 1 : -1, logged = d => d.source === "events" || d.source === "mixed" || !d.source;
+      const tipP = d => ({ t: dayFmt.format(dayDate(d.day)), v: logged(d) ? `${nf(d.parts)} parts` : d.source === "seals" ? "Parts not logged" : "No activity", rows: [["Orders", nf(d.orders)], ["People", nf(d.people)]] });
+      const tipO = d => ({ t: dayFmt.format(dayDate(d.day)), v: `${nf(d.orders)} orders`, rows: (logged(d) ? [["Parts", nf(d.parts)]] : []).concat([["People", nf(d.people)]]) });
+      if (ev) st.charts.tA.set({ labels: lab, values: rows.map(d => (logged(d) ? d.parts : 0)), hi, tips: rows.map(tipP) });
+      st.charts.tB.set({ labels: lab, values: rows.map(d => d.orders), hi, tips: rows.map(tipO) });
     }
   }
   /* the stations: one thin row each; the same four columns for every one */
@@ -568,7 +629,7 @@
     e.innerHTML = `<div class="efPRow">
   <button type="button" class="efWho" aria-expanded="false" title="Open ${esc(name)}'s days"><i class="efSt" aria-hidden="true"></i><span class="efName"></span><span class="efWhen"></span></button>
   <div class="efChips"></div>
-  <div class="efN" data-l="Parts"><b data-r="parts">0</b></div><div class="efN" data-l="Scans"><b data-r="scans">0</b></div>
+  <div class="efN" data-l="Parts"><b data-r="parts">0</b></div><div class="efN" data-l="Scanned"><b data-r="scans">0</b></div>
   <button type="button" class="efN efOrd" data-l="Orders" aria-expanded="false" title="Open the newest orders"><b><span data-r="orders">0</span><i aria-hidden="true">▼</i></b></button>
   <div class="efN" data-l="Per hour"><b data-r="rate">—</b></div><div class="efN" data-l="Per scan"><b data-r="sec">—</b></div>
   <div class="efSp" data-l="By hour"></div>
@@ -579,13 +640,15 @@
     r.sp = spark(r.spEl, { w: 100, h: 22 }); setText(r.nm, name);
     return r;
   }
+  /** "Parts scanned" is the pieces scanned; when a station logged scans without a piece count, the scans themselves. */
+  const scanned = t => (t.scanParts > 0 ? { n: t.scanParts, tip: t.scans && t.scans !== t.scanParts ? `${nf(t.scanParts)} pieces scanned in ${nf(t.scans)} scans` : "Pieces scanned" } : { n: t.scans, tip: t.scans ? `${nf(t.scans)} scans (pieces were not counted)` : "" });
   function whenText(p, M) {
     if (!p.firstIn) return p.source === "sessions" || !p.source ? "No sign-in recorded" : "From sealed work";
-    const pre = p.inDay && (M.days > 1 || p.inDay !== M.day) ? wdFmt.format(dayDate(p.inDay)).replace(/ \d+$/, "") + " " : "";
+    const pre = p.inDay && (M.days > 1 || p.inDay !== M.day) ? wdOnly.format(dayDate(p.inDay)) + " " : "";
     let s = `In ${pre}${clock(p.firstIn)}`;
     if (p.on) { if (p.onSince && p.onSince - p.firstIn > 90000) s += ` · back ${clock(p.onSince)}`; }
     else if (p.lastOut) s += ` · Out ${clock(p.lastOut)}`;
-    if (p.source === "seals") s += " · sealed work"; else if (p.source === "sessions" && !M.nofig) s += " · sign-in only";
+    if (M.sources.events !== false) { if (p.source === "seals") s += " · sealed work"; else if (p.source === "sessions" && !M.nofig) s += " · sign-in only"; }   // the note says it once when nobody has events
     return s;
   }
   function updatePerson(r, p, M, first) {
@@ -595,15 +658,17 @@
     const chipSig = p.stations.map(s => s.station + s.minutes).join() + "|" + p.nowAt.join() + on;
     if (chipSig !== r.chipSig) { r.chipSig = chipSig; r.chips.innerHTML = p.stations.length ? p.stations.map(s => `<span class="efChip${p.nowAt.includes(s.station) && on ? " now" : ""}"><b>${esc(stName(s.station))}</b>${esc(dur(s.minutes))}</span>`).join("") : `<span class="efMuted">—</span>`; }
     const t = p.t, src = p.source, kParts = src !== "seals" && src !== "sessions", kOther = src !== "sessions";   // seals know orders and scans, not parts; sessions know only time
-    fig(r.parts, t.parts, kParts, nf, first); fig(r.scans, t.scans, kOther, nf, first); fig(r.orders, t.orders, kOther, nf, first);
+    const sc = scanned(t);
+    fig(r.parts, t.parts, kParts, nf, first); fig(r.scans, sc.n, kOther, nf, first); fig(r.orders, t.orders, kOther, nf, first);
     fig(r.rate, t.rate, kParts && t.rate > 0, rateTxt, first); fig(r.sec, t.secPerScan, kOther && t.secPerScan > 0, secTxt, first);
-    r.scans.title = kOther && t.scanParts && t.scanParts !== t.scans ? `${nf(t.scanParts)} pieces scanned in ${nf(t.scans)} scans` : "";
+    r.parts.title = kParts ? "" : src === "seals" ? "Parts were not logged then; sealed work counts orders and scans" : "";
+    r.scans.title = kOther && sc.n ? sc.tip : "";
     r.rate.title = t.rate ? "Parts per active hour" : ""; r.sec.title = t.secPerScan ? "Active seconds per scan" : "";
     const tot = t.activeMin + t.idleMin, pc = tot >= 1 ? Math.round(t.activeMin / tot * 100) : null;
     r.bar.style.width = pc == null ? "0%" : pc + "%"; setText(r.pct, pc == null ? "—" : pc + "%");
     r.act.title = pc == null ? "No activity timing yet" : `Active ${dur(t.activeMin)} · idle ${dur(t.idleMin)}${t.signedInMin ? ` · signed in ${dur(t.signedInMin)}` : ""}`;
-    r.spEl.style.visibility = M.days > 1 || !kParts ? "hidden" : "";
-    if (M.days === 1 && kParts) { const w = st.win, vals = []; for (let h = w.lo; h <= w.hi; h++) vals.push(p.perHour[h] || 0); r.sp.set(vals, w.today ? Math.min(vals.length - 1, w.nowH - w.lo) : vals.length - 1); }
+    const steps = src === "seals"; r.spEl.style.visibility = M.days > 1 || !(kParts || steps) ? "hidden" : ""; r.spEl.title = steps ? "Order steps by hour" : "Parts by hour";
+    if (M.days === 1 && (kParts || steps)) { const w = st.win, vals = []; for (let h = w.lo; h <= w.hi; h++) vals.push(p.perHour[h] || 0); r.sp.set(vals, w.today ? Math.min(vals.length - 1, w.nowH - w.lo) : vals.length - 1); }
     if (r.built) paintPanel(r, p);
     r.p = p;
   }
@@ -627,7 +692,7 @@
   function togglePanel(r, tab) {
     const cur = st.open.get(r.name);
     if (cur === tab) { st.open.delete(r.name); } else st.open.set(r.name, tab);
-    if (!r.built) { r.built = true; r.box.innerHTML = `<div class="seg efTabs" role="tablist" aria-label="${esc(r.name)}"><button type="button" role="tab" data-t="orders">Orders</button><button type="button" role="tab" data-t="days">Days</button></div><div class="efPane" data-p="orders"></div><div class="efPane hidden" data-p="days"></div>`;
+    if (!r.built) { r.built = true; r.box.innerHTML = `<div class="efTabRow"><div class="seg efTabs" role="tablist" aria-label="${esc(r.name)}"><button type="button" role="tab" data-t="orders">Orders</button><button type="button" role="tab" data-t="days">Days</button></div><span class="efQ"></span></div><div class="efPane" data-p="orders"></div><div class="efPane hidden" data-p="days"></div>`;
       r.box.querySelectorAll(".efTabs button").forEach(b => b.onclick = () => { st.open.set(r.name, b.dataset.t); paintPanel(r, r.p); }); }
     paintPanel(r, r.p);
   }
@@ -638,16 +703,79 @@
     if (!open || !p) return;
     r.box.querySelectorAll(".efTabs button").forEach(b => { const on = b.dataset.t === tab; b.classList.toggle("on", on); b.setAttribute("aria-selected", on); });
     r.box.querySelectorAll(".efPane").forEach(x => x.classList.toggle("hidden", x.dataset.p !== tab));
+    const q = [p.t.rejects ? `${nf(p.t.rejects)} rejected` : "", p.t.errors ? `${nf(p.t.errors)} error${p.t.errors === 1 ? "" : "s"}` : ""].filter(Boolean).join(" · "); setText(r.box.querySelector(".efQ"), q);
     if (tab === "orders") paintOrders(r, p); else paintHistory(r, p);
   }
   function paintOrders(r, p) {
     const pane = r.box.querySelector('[data-p="orders"]'), multi = p.stations.length > 1;
     const sig = JSON.stringify([p.orders, multi ? p.stations : 0]); if (r.ordSig === sig) return; r.ordSig = sig;
-    const table = multi ? `<div><div class="efLabel" style="margin-top:0">By station</div><table class="efMini"><thead><tr><th>Station</th><th>Parts</th><th>Scans</th><th>Orders</th></tr></thead><tbody>${p.stations.map(s => `<tr><td>${esc(stName(s.station))}</td><td>${nf(s.parts)}</td><td>${nf(s.scans)}</td><td>${nf(s.orders)}</td></tr>`).join("")}</tbody></table></div>` : "";
-    const orders = p.orders.length ? `<div class="efOl">${p.orders.map(o => `<div class="efOr"><button type="button" class="efOid" data-order="${esc(o.orderId)}" title="Open this order">${esc(o.orderId)}</button><span class="st">${esc(o.stations.map(stName).join(" · "))}</span><span class="pt">${o.parts ? nf(o.parts) + " parts" : ""}</span><time>${o.lastAt ? esc(clock(o.lastAt)) : ""}</time></div>`).join("")}</div>`
+    const table = multi ? `<div><div class="efLabel" style="margin-top:0">By station</div><table class="efMini"><thead><tr><th>Station</th><th>Parts</th><th>Scanned</th><th>Orders</th></tr></thead><tbody>${p.stations.map(s => `<tr><td>${esc(stName(s.station))}</td><td>${nf(s.parts)}</td><td>${nf(scanned(s).n)}</td><td>${nf(s.orders)}</td></tr>`).join("")}</tbody></table></div>` : "";
+    const row = o => `<div class="efOw" data-oid="${esc(o.orderId)}"><div class="efOr"><button type="button" class="efOid" data-order="${esc(o.orderId)}" title="Open this order">${esc(o.orderId)}</button><span class="st">${esc(o.stations.map(stName).join(" · "))}</span><span class="pt">${o.parts ? nf(o.parts) + " parts" : ""}</span><time>${o.lastAt ? esc(clock(o.lastAt)) : ""}</time><button type="button" class="efOx" data-steps="${esc(o.orderId)}" aria-expanded="false" aria-label="Who worked order ${esc(o.orderId)}, where and for how long" title="Who, where and for how long"><i aria-hidden="true">▼</i></button></div><div class="efOxw"><div class="efOxi"><div class="efOxb"></div></div></div></div>`;
+    const orders = p.orders.length ? `<div class="efOl">${p.orders.map(row).join("")}</div>`
       : `<div class="efMuted">${p.t.orders ? "The newest orders are listed once stations send events." : "No orders yet."}</div>`;
+    const keep = pane.querySelector(".efOl"), top = keep ? keep.scrollTop : 0;
     pane.innerHTML = `<div class="${multi ? "efCols2" : ""}">${table}<div>${multi ? `<div class="efLabel" style="margin-top:0">Newest orders</div>` : ""}${orders}</div></div>`;
+    const list = pane.querySelector(".efOl"); if (list) list.scrollTop = top;
+    pane.querySelectorAll(".efOw").forEach(syncOrderRow);
   }
+  /* ── one order, traced: who touched it where, the work and the waiting between steps (op orders) ── */
+  const stamp = t => (nyDay(t) === today() ? clock(t) : `${mdFmt.format(dayDate(nyDay(t)))}, ${clock(t)}`);
+  function stepsHtml(d) {
+    if (!d.steps.length) return `<div class="efMuted">No activity recorded for this order yet.</div>`;
+    const t0 = d.firstAt || d.steps[0].firstAt || 0, span = Math.max(1, (d.lastAt || t0) - t0), wait = d.steps.reduce((n, s) => n + s.waitMs, 0), sealed = d.steps.some(s => s.source === "seals");
+    const sum = [["Elapsed", durMs(d.spanMs || span)], ["Work", sealed && !d.workMs ? "—" : durMs(d.workMs)], ["Waiting", d.steps.length > 1 ? durMs(wait) : "—"]].map(([k, v]) => `<span>${k} <b>${esc(v)}</b></span>`).join("");
+    const rows = d.steps.map(s => {
+      const a = s.firstAt, b = s.lastAt, seal = s.source === "seals", when = !a ? "—" : !b || b - a < 60000 ? stamp(a) : `${stamp(a)} – ${nyDay(b) === nyDay(a) ? clock(b) : stamp(b)}`;
+      const wd = a && b ? Math.max(4, Math.min(100, (b - a) / span * 100)) : 4, left = a ? Math.max(0, Math.min(100 - wd, (a - t0) / span * 100)) : 0;
+      const facts = seal ? "From the order's seals: no part counts or work time" : [s.parts ? `${nf(s.parts)} parts` : "", s.scans ? `${nf(s.scans)} scan${s.scans === 1 ? "" : "s"}` : "", s.prints ? `${nf(s.prints)} print${s.prints === 1 ? "" : "s"}` : ""].filter(Boolean).join(" · ");
+      return `<div class="efTr${seal ? " seal" : ""}" title="${esc(facts)}"><b class="efTst">${esc(stName(s.station))}</b><span class="efTp">${esc(s.person || "—")}</span><span class="efTt">${esc(when)}</span><span class="efTn" data-l="Parts">${seal || !s.parts ? "—" : nf(s.parts)}</span><span class="efTn" data-l="Work">${seal ? "—" : esc(durMs(s.workMs))}</span><span class="efTn" data-l="Waited">${d.steps[0] === s ? "—" : esc(durMs(s.waitMs))}</span><span class="efTb"><i style="left:${left.toFixed(2)}%;width:${wd.toFixed(2)}%"></i></span></div>`;
+    }).join("");
+    return `<div class="efTs"><div class="efTsum">${sum}</div><div class="efTr head" aria-hidden="true"><span>Station</span><span>Person</span><span>When</span><span>Parts</span><span>Work</span><span>Waited</span><span></span></div>${rows}${d.notes.length ? `<div class="efMuted efTnote">${d.notes.map(esc).join(" ")}</div>` : ""}</div>`;
+  }
+  function paintSteps(box, id) {
+    const o = st.ord.get(id) || {}, sig = o.data ? JSON.stringify([o.data.steps, o.data.notes, o.data.spanMs]) : o.err ? "err:" + o.err : "wait";
+    if (box._sig === sig) return; box._sig = sig;
+    if (o.data) box.innerHTML = stepsHtml(o.data);
+    else if (o.err) box.innerHTML = `<div class="efMuted">Not read: ${esc(o.err)} Trying again.</div>`;
+    else box.innerHTML = `<div class="efPanelBusy"><span class="spin" aria-hidden="true"></span>Reading who worked on ${esc(id)}…</div>`;
+  }
+  function syncOrderRow(w) {
+    const id = w.dataset.oid, open = st.ordOpen.has(id);
+    w.classList.toggle("open", open); w.querySelector(".efOx").setAttribute("aria-expanded", open);
+    if (open) { paintSteps(w.querySelector(".efOxb"), id); loadOrder(id, false); }
+  }
+  function paintOrderViews(id) {
+    host.querySelectorAll(".efOw").forEach(w => { if (w.dataset.oid === id && st.ordOpen.has(id)) paintSteps(w.querySelector(".efOxb"), id); });
+    if (st.find === id) paintSteps(E.ovBox, id);
+  }
+  async function loadOrder(id, force) {
+    let o = st.ord.get(id); if (!o) st.ord.set(id, o = { data: null, busy: false, err: "", at: 0, gen: 0 });
+    if (o.busy || !st.key || !active()) return;
+    if (!force && o.at && Date.now() - o.at < 30000) return;
+    const gen = ++o.gen; o.busy = true; paintOrderViews(id);
+    try { const j = await call({ op: "orders", orderId: id }); if (gen !== o.gen) return; o.data = normOrder(j); o.err = ""; o.at = Date.now(); }
+    catch (e) { if (gen !== o.gen || (e && e.name === "AbortError")) return; if (e.auth || e.locked) { st.key = ""; store.set(KEY_STORE, ""); st.data = null; showKey(e.auth ? "The passcode was not accepted. Enter it again." : e.message); return; } o.err = String(e.message || e).slice(0, 120); o.at = Date.now() - 20000; }
+    finally { if (gen === o.gen) { o.busy = false; paintOrderViews(id); } }
+  }
+  /** Open traces are read again with the next polls (at most every 30 s each). */
+  function refreshOrders() { for (const id of st.ordOpen) loadOrder(id, false); if (st.find) loadOrder(st.find, false); }
+  function toggleSteps(id) {
+    if (st.ordOpen.has(id)) st.ordOpen.delete(id); else st.ordOpen.add(id);
+    host.querySelectorAll(".efOw").forEach(w => { if (w.dataset.oid === id) syncOrderRow(w); });
+  }
+  function traceOrder(id) {
+    st.find = id; const show = !!id;
+    E.ov.classList.toggle("hidden", !show); if (!show) { E.findIn.value = ""; return; }
+    setText(E.ovT, `Order ${id}`); E.ovOpen.dataset.order = id; E.ovBox._sig = ""; paintSteps(E.ovBox, id); loadOrder(id, true);
+    try { E.ov.scrollIntoView({ block: "nearest", behavior: still() ? "auto" : "smooth" }); } catch (_) {}
+  }
+  function onFind(e) {
+    e.preventDefault(); const id = E.findIn.value.replace(/\D/g, "");
+    if (!id) { E.findIn.focus(); return; }
+    if (id.length < 5) { st.find = ""; E.ov.classList.remove("hidden"); setText(E.ovT, "Order number"); E.ovOpen.dataset.order = ""; E.ovBox._sig = "short"; E.ovBox.innerHTML = `<div class="efMuted">Enter the whole order number (digits only).</div>`; return; }
+    E.findIn.value = id; traceOrder(id);
+  }
+
   /* the days: op person, once on opening and again each minute while open */
   function histKey(r) { const h = st.hist.get(r.name); return h; }
   function paintHistory(r, p) {
@@ -701,7 +829,9 @@
   function go(change) { Object.assign(st, change); st.gen++; if (st.ctl) { try { st.ctl.abort(); } catch (_) {} } st.busy = false; st.loadingDay = true; st.reset = true; st.fails = 0; st.err = ""; paintDay(); segs(); E.body.classList.add("dim"); st.hist.forEach(h => { h.data = null; h.sig = ""; h.at = 0; }); poll(); }
   function onClick(e) {
     const b = e.target.closest && e.target.closest("button"); if (!b || !host.contains(b)) return;
-    if (b.dataset.order) return openOrder(b, b.dataset.order);
+    if (b.dataset.steps) return toggleSteps(b.dataset.steps);
+    if (b.hasAttribute("data-find-close")) { traceOrder(""); return; }
+    if (b.dataset.order !== undefined) return b.dataset.order ? openOrder(b, b.dataset.order) : undefined;
     if (b.dataset.nav) { const step = +b.dataset.nav * st.days, base = st.day || today(), to = addDays(base, step); return go({ day: to >= today() ? null : to }); }
     if (b.hasAttribute("data-today")) return go({ day: null });
     if (b.dataset.days && +b.dataset.days !== st.days) { const n = +b.dataset.days; store.set(DAYS_STORE, String(n)); return go({ days: n }); }

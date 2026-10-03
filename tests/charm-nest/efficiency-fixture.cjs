@@ -85,15 +85,38 @@ function make(opts = {}) {
     const ppl = st.mode === 'empty' ? [] : full.people.map(p => Object.assign({}, p, { source: 'sessions', stations: p.stations.map(x => ({ station: x.station, minutes: x.minutes, parts: 0, scanParts: 0, scans: 0, completes: 0, prints: 0, orders: 0 })), totals: Object.assign({}, zero, { signedInMin: p.totals.signedInMin }), perHour: new Array(24).fill(0), orders: [] }));
     return Object.assign({}, full, { people: ppl, business: { totals: { parts: 0, scans: 0, orders: 0, people: ppl.length }, perHour: {}, stations: ['sorting', 'welding', 'assembly', 'shipping'].map(n => ({ station: n, parts: 0, scans: 0, orders: 0, peopleNow: ppl.filter(p => p.status === 'on' && p.nowAt.includes(n)).map(p => p.name) })), trend: full.business.trend.map(d => Object.assign({}, d, { parts: 0, orders: 0 })) }, feed: [], sources: { events: false, seals: false, sessions: true }, notes: [note], partial: true });
   }
+  /** History from before the events began (source "seals"): orders and scans, no parts; hourly lines count order steps. */
+  function sealed(b) {
+    const full = overview(b), note = 'Activity events have not been recorded for these days yet: showing sign-in time and order seals only.';
+    const ppl = full.people.map((p, i) => Object.assign({}, p, { source: 'seals', stations: p.stations.map(x => ({ station: x.station, minutes: x.minutes, parts: 0, scanParts: 0, scans: x.scans, completes: 0, prints: 0, orders: x.orders })), totals: Object.assign({}, p.totals, { parts: 0, scanParts: 0, rejects: 0, errors: 0, activeMin: 0, idleMin: 0, rate: 0, secPerScan: 0 }), orders: [] }));
+    const perHour = {}; for (const p of ppl) for (const s of p.stations) perHour[s.station] = sum(perHour[s.station] || new Array(24).fill(0), arr({ 9: 6, 10: 9, 11: 7, 13: 8, 14: 10 }));
+    return Object.assign({}, full, { people: ppl, business: { totals: { parts: 0, scans: ppl.reduce((n, p) => n + p.totals.scans, 0), orders: 90, people: ppl.length }, perHour, stations: Object.keys(perHour).map(n => ({ station: n, parts: 0, scans: 40, orders: 20, peopleNow: [] })), trend: full.business.trend.map(d => Object.assign({}, d, { parts: 0, source: 'seals' })) }, feed: [], sources: { events: false, seals: true, sessions: true }, notes: [note], partial: true });
+  }
+  /** One order across the stations: who, where, when, the work and the waiting (op orders). */
+  function order(b) {
+    const id = String(b.orderId || '').replace(/\D/g, ''); if (!id) return { status: 400, json: { ok: false, error: 'orderId required' } };
+    const base = now() - 6 * 3600000;
+    if (st.orderMode === 'none' || id === '999999999') return { status: 200, json: { ok: true, now: now(), orderId: id, steps: [], events: [], totals: { firstAt: null, lastAt: null, spanMs: 0, workMs: 0, people: 0, stations: 0 }, sources: { events: false, seals: false }, notes: [] } };
+    const mins = x => x * 60000, S = [
+      { station: 'sorting', person: 'Giovanna', a: 0, b: 6, work: 4, scans: 3, completes: 1, prints: 0, parts: 4, source: 'events' },
+      { station: 'welding', person: 'Giovanna', a: 48, b: 71, work: 17, scans: 2, completes: 1, prints: 0, parts: 4, source: 'events' },
+      { station: 'assembly', person: 'Anna', a: 130, b: 152, work: 15, scans: 2, completes: 1, prints: 1, parts: 4, source: 'events' },
+      { station: 'shipping', person: 'Michael', a: 301, b: 306, work: 4, scans: 2, completes: 1, prints: 2, parts: 4, source: st.orderMode === 'seals' ? 'seals' : 'events' }];
+    let far = 0; const steps = S.map((x, i) => { const first = base + mins(x.a), last = base + mins(x.b), wait = i ? Math.max(0, first - far) : 0; far = Math.max(far, last); return { station: x.station, person: x.person, firstAt: first, lastAt: last, workMs: x.source === 'seals' ? 0 : mins(x.work), waitMs: wait, scans: x.scans, completes: x.completes, prints: x.prints, parts: x.source === 'seals' ? 0 : x.parts, source: x.source }; });
+    const notes = st.orderMode === 'seals' ? ["Steps marked seals come from the order's timeline seals (before activity events), with no part counts or work time."] : [];
+    return { status: 200, json: { ok: true, now: now(), orderId: id, steps, events: steps.map(x => ({ at: x.firstAt, person: x.person, station: x.station, device: x.station + '-1', action: 'complete', parts: x.parts, detail: '', source: x.source })), totals: { firstAt: steps[0].firstAt, lastAt: steps[3].lastAt, spanMs: steps[3].lastAt - steps[0].firstAt, workMs: steps.reduce((n, x) => n + x.workMs, 0), people: 3, stations: 4 }, sources: { events: true, seals: st.orderMode === 'seals' }, notes } };
+  }
   /** What the harness answers to a POST body (the passcode is the only gate). */
   function answer(body, headers = {}) {
-    st.calls.push({ op: body.op, key: body.key, days: body.days, day: body.day, after: body.after, name: body.name });
+    st.calls.push({ op: body.op, key: body.key, days: body.days, day: body.day, after: body.after, name: body.name, orderId: body.orderId });
+    if (st.http) { const h = st.http; return { status: h.status, json: h.json }; }
     if (body.key !== st.key) { st.wrong++; return { status: 401, json: { ok: false, error: 'unauthorized' } }; }
     if (st.fail > 0) { st.fail--; return { status: 503, json: { ok: false, error: 'both reads failed' } }; }
-    if (body.op === 'overview') { const j = st.mode ? early(body) : overview(body); return { status: 200, json: st.hook ? st.hook(j, body) : j }; }
+    if (body.op === 'orders') return order(body);
+    if (body.op === 'overview') { const j = st.mode === 'seals' ? sealed(body) : st.mode ? early(body) : overview(body); return { status: 200, json: st.hook ? st.hook(j, body) : j }; }
     if (body.op === 'person') return { status: 200, json: person(body) };
     return { status: 400, json: { ok: false, error: 'bad op' } };
   }
-  return { answer, state: st, setKey(k) { st.key = k; }, setMode(m) { st.mode = m || ''; }, setHook(f) { st.hook = f || null; }, now, today, bump() { st.bumps++; }, KEY };
+  return { answer, state: st, setKey(k) { st.key = k; }, setMode(m) { st.mode = m || ''; }, setHook(f) { st.hook = f || null; }, setHttp(status, json) { st.http = status ? { status, json: json || { ok: false, error: 'x' } } : null; }, setOrderMode(m) { st.orderMode = m || ''; }, now, today, bump() { st.bumps++; }, KEY };
 }
 module.exports = { make, KEY, ymd, addDays, nyAt };

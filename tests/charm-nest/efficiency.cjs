@@ -52,7 +52,7 @@ const F = require('./efficiency-fixture.cjs');
     });
     await ctx.addInitScript(() => { try { localStorage.setItem('cn.employee', 'Tester'); } catch (_) {} window.confirm = () => true; window.alert = () => {}; window.__prompted = 0; window.prompt = () => { window.__prompted++; return null; }; });
   };
-  const track = page => { const errs = [], logs = []; page.on('pageerror', e => errs.push(e.message)); page.on('console', m => { logs.push(m.text()); /* the browser's own notice for the 401s and 503s this test forces on purpose is not an error of the page */ if (m.type() === 'error' && !(/status of (401|503)/.test(m.text()) && /employeeEfficiency/.test((m.location() && m.location().url) || ''))) errs.push('console: ' + m.text()); }); return { errs, logs }; };
+  const track = page => { const errs = [], logs = []; page.on('pageerror', e => errs.push(e.message)); page.on('console', m => { logs.push(m.text()); /* the browser's own notice for the 401s, 403s, 405s, 429s and 503s this test forces on purpose is not an error of the page */ if (m.type() === 'error' && !(/status of (401|403|405|429|503)/.test(m.text()) && /employeeEfficiency/.test((m.location() && m.location().url) || ''))) errs.push('console: ' + m.text()); }); return { errs, logs }; };
   const openConsole = async page => { await page.click('#moreMenu > summary'); await page.click('#moreMenu .moreList button[data-mode="efficiency"]'); };
   const V = '#efficiencyView';
   const calls = () => fx.state.calls.filter(c => c.op === 'overview');
@@ -62,7 +62,7 @@ const F = require('./efficiency-fixture.cjs');
     const page = await ctx.newPage(), { errs, logs } = track(page);
     await page.goto(`${srv.sorterOrigin}/charm-nest-1.html`);
     await page.waitForFunction(() => window.Efficiency && window.CN && window.OrderWin && document.readyState === 'complete', null, { timeout: 60000 });
-    await page.evaluate(() => { Efficiency.options.pollMs = 400; Efficiency.options.growMs = 0; });
+    await page.evaluate(() => { Efficiency.options.pollMs = 400; Efficiency.options.growMs = 0; Efficiency.options.holdMs = 900; });
 
     /* ── 2 · the menu, the tab, the passcode ── */
     await page.click('#moreMenu > summary');
@@ -127,7 +127,8 @@ const F = require('./efficiency-fixture.cjs');
     assert.deepEqual(chips, ['Welding5 h 30 m', 'Sorting1 h 35 m'], 'stations worked with minutes: ' + chips.join('|'));
     assert.equal(await page.locator(`${V} .efP:nth-child(1) .efChip.now`).count(), 1, 'where they are now');
     const fig = await page.$$eval(`${V} .efP:nth-child(1) .efN b`, bs => bs.map(b => b.textContent.replace(/[^\d.a-z ]/gi, '').trim()));
-    assert.deepEqual(fig.slice(0, 3), ['223', '186', '37'], 'parts, scans, orders: ' + fig.join('|'));
+    assert.deepEqual(fig.slice(0, 3), ['223', '195', '37'], 'parts, pieces scanned, orders: ' + fig.join('|'));
+    assert.equal(await page.locator(`${V} .efP:nth-child(1) [data-r="scans"]`).getAttribute('title'), '195 pieces scanned in 186 scans', 'the scan actions are one hover away');
     assert(await page.locator(`${V} .efP:nth-child(1) .efSpark`).count() === 1 && await page.locator(`${V} .efP:nth-child(1) .efAct i`).count() === 1, 'a sparkline and the active-vs-idle bar');
     // no figure twice in a card (a collapsed card's visible text; the figures are distinct in the fixture)
     for (const i of [1, 2, 3, 4]) {
@@ -151,6 +152,29 @@ const F = require('./efficiency-fixture.cjs');
     const first = (await page.locator(`${V} .efP:nth-child(1) .efOid`).first().innerText()).trim();
     await page.locator(`${V} .efP:nth-child(1) .efOid`).first().click();
     assert.deepEqual(await page.evaluate(() => window.__opened), [[first, true]], 'the order id opens that order in the order window, from the button');
+    // one order, step by step (op orders): who, where, the work and the waiting between steps
+    await page.evaluate(() => { OrderWin.openOrder = window.__o0; });
+    await page.click(`${V} .efP:nth-child(1) .efOw:nth-child(1) .efOx`);
+    await page.waitForSelector(`${V} .efP:nth-child(1) .efOw.open .efTr:not(.head)`);
+    assert.equal(await page.locator(`${V} .efP:nth-child(1) .efOw.open .efTr:not(.head)`).count(), 4, 'four steps');
+    const steps = await page.$$eval(`${V} .efP:nth-child(1) .efOw.open .efTr:not(.head)`, rs => rs.map(r => r.innerText.replace(/\s+/g, ' ').trim()));
+    assert(/^Sorting Giovanna .*4 4 m —/.test(steps[0]) && /^Welding Giovanna .* 4 17 m 42 m/.test(steps[1]) && /^Assembly Anna .* 4 15 m 59 m/.test(steps[2]) && /^Shipping Michael .* 4 4 m 2 h 29 m/.test(steps[3]), 'station, person, when, parts, work, waited: ' + steps.join(' | '));
+    assert(/Elapsed 5 h 6 m/.test(await page.locator(`${V} .efP:nth-child(1) .efOw.open .efTsum`).innerText()) && /Work 40 m/.test(await page.locator(`${V} .efP:nth-child(1) .efOw.open .efTsum`).innerText()) && /Waiting 4 h 10 m/.test(await page.locator(`${V} .efP:nth-child(1) .efOw.open .efTsum`).innerText()), 'elapsed, work, waiting');
+    assert(fx.state.calls.some(c => c.op === 'orders' && /^\d{10}$/.test(c.orderId)), 'op orders for that order');
+    assert.equal(await page.locator(`${V} .efP:nth-child(1) .efOw.open .efOx`).getAttribute('aria-expanded'), 'true');
+    // the trace box: any order number, an unknown one says so, a short one asks for the whole number
+    await page.fill(`${V} .efFind input`, '3521000777'); await page.press(`${V} .efFind input`, 'Enter');
+    await page.waitForSelector(`${V} .efOView:not(.hidden) .efTr:not(.head)`);
+    assert.equal((await txt(`${V} .efOVT`)).trim(), 'Order 3521000777'); assert.equal(await page.locator(`${V} .efOView .efTr:not(.head)`).count(), 4);
+    await page.evaluate(() => { window.__opened = []; OrderWin.openOrder = (id, opts) => { window.__opened.push([id, !!(opts && opts.from)]); return Promise.resolve(); }; });
+    await page.click(`${V} .efOVopen`); assert.deepEqual(await page.evaluate(() => window.__opened), [['3521000777', true]], 'Open order opens it in the sorter');
+    await page.evaluate(() => { OrderWin.openOrder = window.__o0; });
+    await page.fill(`${V} .efFind input`, '999999999'); await page.press(`${V} .efFind input`, 'Enter');
+    await page.waitForFunction(() => /No activity recorded/.test(document.querySelector('#efficiencyView .efOView').textContent), null, { timeout: 8000 });
+    await page.fill(`${V} .efFind input`, '123'); await page.press(`${V} .efFind input`, 'Enter');
+    assert(/whole order number/.test(await txt(`${V} .efOView`)), 'a short number is not looked up');
+    await page.click(`${V} .efOVx`); assert.equal(await page.locator(`${V} .efOView`).isVisible(), false, 'the trace closes');
+    await page.click(`${V} .efP:nth-child(1) .efOw:nth-child(1) .efOx`); assert.equal(await page.locator(`${V} .efP:nth-child(1) .efOw.open`).count(), 0, 'and an order closes again');
     // a person's days (op person), inline
     await page.click(`${V} .efP:nth-child(3) .efWho`);
     await page.waitForFunction(() => /days worked/.test((document.querySelector('#efficiencyView .efP:nth-child(3) .efSum') || {}).textContent || ''), null, { timeout: 8000 });
@@ -237,6 +261,45 @@ const F = require('./efficiency-fixture.cjs');
     assert(/Nobody has signed in/.test(await txt(`${V} .efPeopleEmpty`)), 'never blank space: ' + await txt(`${V} .efPeopleEmpty`));
     fx.setMode('');
     await page.waitForFunction(() => document.querySelectorAll('#efficiencyView .efP').length === 4 && !document.getElementById('efficiencyView').hasAttribute('data-nofig'), null, { timeout: 8000 });
+    // history from seals (before activity events): orders and scans, no parts; the hourly line counts order steps and says so
+    fx.setMode('seals');
+    await page.waitForFunction(() => document.getElementById('efficiencyView').hasAttribute('data-noparts'), null, { timeout: 8000 });
+    assert.equal((await page.locator(`${V} [data-g="hours"] .efGT`).textContent()).trim(), 'Order steps per hour', 'the graph does not call order steps parts');
+    assert(/steps/.test(await page.locator(`${V} .efChart svg`).getAttribute('aria-label')), 'and neither does its label');
+    assert.equal(await page.locator(`${V} .efKpi[data-k="parts"]`).isVisible(), false, 'no Parts figure that would read as zero'); assert.equal(await page.locator(`${V} .efKpi[data-k="orders"]`).isVisible(), true);
+    assert.equal((await txt(`${V} .efP:nth-child(1) [data-r="parts"]`)).trim(), '—', 'a dash, not a zero'); assert.equal((await txt(`${V} .efP:nth-child(1) [data-r="rate"]`)).trim(), '—');
+    assert.equal(await page.locator(`${V} .efP:nth-child(1) [data-r="scans"]`).getAttribute('title'), '186 scans (pieces were not counted)', 'scans without a piece count say so');
+    assert.equal(await page.locator(`${V} .efP:nth-child(1) .efSp`).getAttribute('title'), 'Order steps by hour');
+    assert.equal((await page.locator(`${V} .efWhen`).allInnerTexts()).some(t => /sealed work/.test(t)), false, 'the note says it once');
+    await page.click(`${V} [data-days="7"]`); await page.waitForFunction(() => !document.querySelector('#efficiencyView [data-g="trend"]').classList.contains('hidden'), null, { timeout: 8000 });
+    assert.equal(await page.locator(`${V} [data-g="trend"] [data-t="parts"]`).isVisible(), false, 'no parts per day from history that has none'); assert.equal(await page.locator(`${V} [data-g="trend"] [data-t="orders"]`).isVisible(), true);
+    await page.click(`${V} [data-days="1"]`); fx.setMode('');
+    await page.waitForFunction(() => !document.getElementById('efficiencyView').hasAttribute('data-noparts') && document.querySelectorAll('#efficiencyView .efP').length === 4, null, { timeout: 8000 });
+    // a week where one day is history from seals: its parts say "not logged", not zero
+    fx.setHook(j => { const d = j.business.trend.find(x => x.day === F.addDays(j.day, -6)); if (d) { d.source = 'seals'; d.parts = 0; } return j; });
+    await page.click(`${V} [data-days="7"]`); await page.waitForFunction(() => document.querySelectorAll('#efficiencyView [data-g="trend"] .efChartA .efCol').length === 7, null, { timeout: 8000 });
+    await page.focus(`${V} [data-g="trend"] .efChartA svg.efSvg`); await page.keyboard.press('Home');
+    assert(/Parts not logged/.test(await txt(`${V} [data-g="trend"] .efChartA .efTip`)), 'a history day is not a zero day: ' + await txt(`${V} [data-g="trend"] .efChartA .efTip`));
+    await page.keyboard.press('Escape'); fx.setHook(null); await page.click(`${V} [data-days="1"]`);
+    await page.waitForFunction(() => !document.querySelector('#efficiencyView [data-g="hours"]').classList.contains('hidden'), null, { timeout: 8000 });
+    // the service says no: each refusal is named, the last numbers stay, and it recovers
+    const keep = +await kpi('parts');
+    fx.setHttp(429, { ok: false, error: 'too many attempts, try again in a minute' });
+    await page.waitForFunction(() => /Paused · too many requests/.test(document.querySelector('#efficiencyView .efLiveT').textContent), null, { timeout: 8000 });
+    assert.equal(+await kpi('parts'), keep, 'the numbers stay');
+    fx.setHttp(0); await page.waitForFunction(() => /^Live/.test(document.querySelector('#efficiencyView .efLiveT').textContent), null, { timeout: 15000 });
+    fx.setHttp(405, { ok: false, error: 'POST only' });
+    await page.waitForFunction(() => /refused the request \(405\)/.test(document.querySelector('#efficiencyView .efLiveT').textContent), null, { timeout: 8000 });
+    fx.setHttp(0); await page.waitForFunction(() => /^Live/.test(document.querySelector('#efficiencyView .efLiveT').textContent), null, { timeout: 15000 });
+    fx.setHttp(403, { ok: false, error: 'locked', code: 'EDIT_PASSCODE_NOT_SET' });
+    await page.waitForSelector(`${V} .efKey:not(.hidden)`, { timeout: 8000 });
+    assert(/No manager passcode is set up yet/.test(await txt(`${V} .efKeyErr`)) && /EDIT_PASSCODE/.test(await txt(`${V} .efKeyErr`)), 'a missing passcode on the server is explained: ' + await txt(`${V} .efKeyErr`));
+    fx.setHttp(429, { ok: false, error: 'too many attempts, try again in a minute' });
+    await page.fill(`${V} .efKey input`, F.KEY); await page.press(`${V} .efKey input`, 'Enter');
+    await page.waitForFunction(() => /Too many attempts/.test(document.querySelector('#efficiencyView .efKeyErr').textContent), null, { timeout: 8000 });
+    assert.equal(await page.inputValue(`${V} .efKey input`), '', 'and the field is cleared');
+    fx.setHttp(0); await page.fill(`${V} .efKey input`, F.KEY); await page.press(`${V} .efKey input`, 'Enter');
+    await page.waitForSelector(`${V} .efBody:not(.hidden) .efP`);
     // the passcode changes on the server: it asks again, inside the console
     fx.setKey('rotated-pass-456');
     await page.waitForSelector(`${V} .efKey:not(.hidden)`, { timeout: 8000 });
