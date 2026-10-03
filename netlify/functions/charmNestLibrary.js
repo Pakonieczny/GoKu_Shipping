@@ -150,7 +150,7 @@ function slim(d) {
     names: str(d.names, 2000), sources: (d.sources || []).map(s => ({ name: s.name, hash: s.hash || null })), runId: d.runId || null, page: num(d.page) || 1,
     setId: d.setId || null, setSeq: num(d.setSeq) || null, sheetIndex: num(d.sheetIndex) || null, orders: (d.orders || []).slice(0, 500), backCount: (d.backPool || []).length, label: d.label ? { files: (d.label.files || []).map(f => ({ path: f.path, url: f.url, payload:f.payload || null, orders:f.orders || [], part:f.part || 1 })) } : null,
     // cut on the laser and marked so (op_laserDone), and the listings its pieces were bought from (the Library's search)
-    laserDoneAt: num(d.laserDoneAt) || null, laserDoneBy: d.laserDoneBy || null, processSeals: Readiness.processStamps(d), processReady: !!d.processReady, laserSetPending: !!d.laserSetPending, listings: (d.listings || []).slice(0, 500),
+    laserDoneAt: num(d.laserDoneAt) || null, laserDoneBy: d.laserDoneBy || null, processSeals: Readiness.processStamps(d), processReady: !!d.processReady, laserSetPending: !!d.laserSetPending, laserHold: d.laserHold && num(d.laserHold.at) > 0 ? { at: num(d.laserHold.at), by: str(d.laserHold.by, 80), note: str(d.laserHold.note, 200) } : null, listings: (d.listings || []).slice(0, 500),
     cardStartedAt: ms(d.cardStartedAt) || ms(d.createdAt), updatedAt: ms(d.updatedAt), createdAt: ms(d.createdAt),
     // a cleanup made on the record (the pieces it took off, the green line it removed): a page whose own copy of the sheet
     // is older puts the same change on it (Cleanups, charm-nest-bridge.js). Only on a record that has one
@@ -160,7 +160,7 @@ function slim(d) {
 /* The fields of a sheet record that its list entry (slim) and its laser readiness (Readiness.sheet) read, and the lists
    filter on. A list reads only these: the rest of a record (its charms with their outlines, its placements) is most of
    its up to 900 KB, and a list of 500 sheets used to read all of it to send none of it. */
-const SLIM_SHEET = ["id", "sheetId", "roseStockId", "roseCutAt", "rosePlanHash", "solidIncluded", "draft", "releaseFull", "folder", "fileBase", "saving", "dirty", "metal", "metalLabel", "day", "status", "endedBy", "charmCount", "placedCount", "rejectCount", "density", "freePt2", "verification", "preview", "outputs", "stock", "poolIds", "backPool", "backs", "names", "sources", "runId", "page", "setId", "setSeq", "sheetIndex", "orders", "label", "archived", "laserDoneAt", "laserDoneBy", "listings", "cardStartedAt", "cleanup", "createdAt", "updatedAt", "processSeals", "processReady", "archivedLaserDoneAt", "archivedLaserDoneBy", "activityAt"];
+const SLIM_SHEET = ["id", "sheetId", "roseStockId", "roseCutAt", "rosePlanHash", "solidIncluded", "draft", "releaseFull", "folder", "fileBase", "saving", "dirty", "metal", "metalLabel", "day", "status", "endedBy", "charmCount", "placedCount", "rejectCount", "density", "freePt2", "verification", "preview", "outputs", "stock", "poolIds", "backPool", "backs", "names", "sources", "runId", "page", "setId", "setSeq", "sheetIndex", "orders", "label", "archived", "laserDoneAt", "laserDoneBy", "listings", "cardStartedAt", "cleanup", "createdAt", "updatedAt", "processSeals", "processReady", "archivedLaserDoneAt", "archivedLaserDoneBy", "activityAt", "laserHold"];
 /** Readiness counts a record's placements where it has no placedCount (Readiness.sheet): read for those alone. */
 async function withPlacements(rows) {
   const want = rows.filter(([, d]) => !(+d.placedCount)), byId = new Map(want);
@@ -538,6 +538,8 @@ async function op_putSheet(b) {
   delete doc.log;
   // a sheet is marked cut only by op_laserDone: a save of the open run's copy of it keeps the mark it has
   delete doc.laserDoneAt; delete doc.laserDoneBy; delete doc.processSeals; delete doc.processReady;
+  // a hold back from Laser cutting and the Library's move history are server-owned too (op_flowApply): a stale page cannot clear them
+  delete doc.laserHold; delete doc.flowHistory;
   // the listings its pieces were bought from, as the Library's listing search reads them (array-contains)
   if (Object.prototype.hasOwnProperty.call(s, "listings")) doc.listings = [...new Set((Array.isArray(s.listings) ? s.listings : []).map(v => String(v)).filter(v => /^\d{1,24}$/.test(v)))].slice(0, 500);
   // Physical stock and immutable cuts are only changed through transactional stock operations.
@@ -1486,7 +1488,8 @@ async function op_setUpdate(b) {
       const ids=[...new Set(next.sheetIds || [])];
       if(!ids.length)throw new Error('A set without sheets is not ready for laser');
       const docs=[];for(const sheetId of ids)docs.push(await tx.get(col(SHEETS).doc(sheetId)));
-      const records=docs.filter(d=>d.exists).map(d=>({...d.data(),id:d.id}));
+      // (a person's hold back from Laser cutting is about the laser, not about whether this set may be recorded complete)
+      const records=docs.filter(d=>d.exists).map(d=>({...d.data(),id:d.id,laserHold:null}));
       await productionReadiness(records,{tx});
       if(records.some(s=>s.setId!==id) || !Readiness.set(next,records).ready)throw new Error('Set cannot be completed: every sheet needs approved engraving, verified back files, front files and QR labels');
     }
@@ -1494,6 +1497,7 @@ async function op_setUpdate(b) {
     // merged a map into the stored one key by key, so an order taken off a set stayed on its record for good
     const doc=Object.assign({}, patch,{setId:id,updatedAt:FV.serverTimestamp()});
     delete doc.laserDoneAt;delete doc.laserDoneBy;delete doc.processSeals;delete doc.processReady;   // process records are server-owned
+    delete doc.flowHistory;
     if(old.exists)tx.update(ref,doc);else tx.set(ref,doc);
   });
   return { ok: true };
@@ -2751,6 +2755,94 @@ async function op_sessionsList(b) {
   return { sessions: rows.slice(0, limit), truncated: rows.length > limit, since, until, now, goneAfterMs: SESSION_GONE_MS };
 }
 OPS.sessionsList = op_sessionsList;
+
+/* ── The Library's moves (charm-nest-flow.js, window.LibraryFlow; Paul, 3 Oct: drag a sheet or a set between In progress,
+   Laser cutting and Completed, forwards and backwards). Where a sheet or set stands is read from its records, never stored:
+   completed = laserDoneAt, Laser cutting = every check passed, In progress = the rest. What a move can do itself is
+   written by the ops that already own it (laserDone: marking, process seals, op_laserStatus' recordProcessReadiness);
+   the only new fact is a person's HOLD (`laserHold` on a sheet: {at, by, note}), which takes a ready sheet back to In
+   progress without touching one approval, seal or cut record (Readiness.sheet: a held sheet is not included).
+   · flowState  {sheetIds, setIds}   read only: laserStatus' records and sets, each set's own record, and whether each run is open
+   · flowApply  {steps:[{type:"hold"|"release", sheetIds, note}], expect?, by}   all steps in ONE transaction: every sheet is read first and
+     checked against `expect` ({sheetId:{held:bool}}, what the plan saw), so a sheet changed since the plan was made refuses the
+     whole call and nothing is written. A repeat finds the sheets as asked and writes nothing (idempotent). Each change adds an
+     entry to the sheet's flowHistory (append only, newest 100) and a note on each of its orders' timelines.
+   · flowApply  {steps:[{type:"seal", kind:"sheet"|"set", id}], by}   records the readiness seal by the person, exactly as laserStatus
+     does for the active view (recordProcessReadiness: only when the group is ready and has none yet; history is never replaced). ── */
+async function op_flowState(b) {
+  const sheetIds = [...new Set((b.sheetIds || []).filter(isId))].slice(0, 300), askedSets = [...new Set((b.setIds || []).filter(isId))].slice(0, 100);
+  const status = await op_laserStatus({ sheetIds, setIds: askedSets, recordSeals: false });
+  const ids = [...new Set(askedSets.concat((status.sets || []).map(x => x.setId)))].filter(isId).slice(0, 200), docs = [];
+  for (let i = 0; i < ids.length; i += 100) for (const d of await db.getAll(...ids.slice(i, i + 100).map(id => col(SETS).doc(id)))) {
+    if (!d.exists) continue;
+    const x = d.data();
+    docs.push({ setId: d.id, seq: num(x.seq) || null, day: x.day || null, name: x.name || null, runId: x.runId || null, status: x.status || null, committedAt: ms(x.committedAt) || num(x.committedAt) || null, sheetIds: x.sheetIds || [], materials: x.materials || [], laserDoneAt: num(x.laserDoneAt) || null, laserDoneBy: x.laserDoneBy || null, processReady: !!x.processReady, processSeals: Readiness.processStamps(x) });
+  }
+  const runIds = [...new Set((status.sheets || []).map(x => x.runId).concat(docs.map(x => x.runId)).filter(isId))].slice(0, 100), runs = {};
+  for (const id of runIds) { const r = await col(RUNS).doc(id).get(); runs[id] = { exists: r.exists, open: r.exists && !["complete", "abandoned"].includes(String((r.data() || {}).status || "")) }; }
+  return { sheets: status.sheets || [], sets: status.sets || [], setDocs: docs, runs, checkedAt: Date.now() };
+}
+async function op_flowApply(b) {
+  const by = str(b.by, 80).trim();
+  if (!by) return { error: "Say who made this change", status: 400 };
+  const steps = (Array.isArray(b.steps) ? b.steps : []).slice(0, 12);
+  if (!steps.length) return { error: "no step to apply", status: 400 };
+  const process = [], added = [], applied = [];
+  const holds = steps.filter(x => x && (x.type === "hold" || x.type === "release")), seals = steps.filter(x => x && x.type === "seal");
+  if (holds.length + seals.length !== steps.length) return { error: "unknown step", status: 400 };
+  const device = str(b.device, 40).replace(/[^\w.-]/g, ""), via = str(b.via, 24).replace(/[^\w .-]/g, "").trim();
+  let events = [];
+  if (holds.length) {
+    const at = Date.now(), want = new Map(holds.map(x => [x.type + ":" + str(x.note, 200), [...new Set((x.sheetIds || []).filter(isId))].slice(0, 300)]));
+    const ids = [...new Set([...want.values()].flat())];
+    if (!ids.length) return { error: "no sheet to change", status: 400 };
+    const expect = b.expect && typeof b.expect === "object" ? b.expect : {};
+    const res = await db.runTransaction(async tx => {
+      const facts = new Map();
+      for (let i = 0; i < ids.length; i += 100) for (const d of await tx.getAll(...ids.slice(i, i + 100).map(id => col(SHEETS).doc(id)))) facts.set(d.id, d.exists ? d.data() : null);
+      const isHeld = d => num(d && d.laserHold && d.laserHold.at) > 0;
+      for (const id of ids) {
+        const f = facts.get(id);
+        if (!f) return { error: "There is no such sheet", status: 404 };
+        if (f.archived) return { error: "That sheet was repacked into other sheets: it is no longer in the Library", status: 409 };
+        const e = expect[id];
+        if (e && typeof e.held === "boolean" && e.held !== isHeld(f)) return { error: "The sheet changed since this move was planned: nothing was changed. Try the move again", status: 409 };
+      }
+      const changed = [];
+      for (const [k, list] of want) {
+        const type = k.slice(0, k.indexOf(":")), note = k.slice(k.indexOf(":") + 1);
+        for (const id of list) {
+          const f = facts.get(id);
+          if ((type === "hold") === isHeld(f)) continue;                      // already as asked: a repeat writes nothing
+          const entry = { id: `${type}-${at}-${id}`, at, by, type, note: note || null, setId: f.setId || null, laserDoneAt: num(f.laserDoneAt) || null };
+          const history = (Array.isArray(f.flowHistory) ? f.flowHistory : []).concat([entry]).slice(-100);
+          tx.set(col(SHEETS).doc(id), { laserHold: type === "hold" ? { at, by, note: note || null } : FV.delete(), flowHistory: history, updatedAt: FV.serverTimestamp() }, { merge: true });
+          facts.set(id, { ...f, laserHold: type === "hold" ? { at, by, note } : null, flowHistory: history });
+          changed.push({ id, type, d: f });
+          process.push({ kind: "sheet", id, patch: { laserHold: type === "hold" ? { at, by, note: note || null } : null } });
+        }
+      }
+      return { ok: true, changed, at };
+    });
+    if (res.error) return res;
+    for (const c of res.changed) applied.push({ id: c.id, type: c.type });
+    // one note on each order of each sheet that changed (the id carries the time, so a retry of the same call writes it once)
+    events = res.changed.flatMap(c => {
+      const sheet = sheetLabel(c.d), orders = [...new Set((Array.isArray(c.d.orders) && c.d.orders.length ? c.d.orders : (Array.isArray(c.d.poolIds) ? c.d.poolIds : []).map(orderOfKey)).filter(Boolean).map(String))].slice(0, 300);
+      return orders.map(orderId => ({ orderId, type: "note", at: res.at, by, station: "laser", device, sheetId: c.id, sheet, setId: c.d.setId || "", text: c.type === "hold" ? `held back from Laser cutting · ${sheet}` : `released to Laser cutting · ${sheet}`, data: { flow: c.type, signedIn: true, via: via || undefined }, id: `flow-${c.type}-${c.id}-${res.at}` }));
+    });
+  }
+  for (const x of seals) {
+    const kind = x.kind === "set" ? "set" : "sheet", id = str(x.id, 80);
+    if (!isId(id)) return { error: "bad sheet or set id", status: 400 };
+    const r = await recordProcessReadiness(kind, id, by);
+    process.push(...r.records); added.push(...r.added); applied.push({ id, type: "seal", kind });
+  }
+  if (events.length) await stamp(() => events, "library move");
+  return { ok: true, applied, process, added, at: Date.now() };
+}
+OPS.flowState = op_flowState;
+OPS.flowApply = op_flowApply;
 
 exports.ops = OPS;   // the connections check runs the same queries the app runs
 exports.handler = async (event) => {

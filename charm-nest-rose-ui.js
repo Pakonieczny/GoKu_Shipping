@@ -99,7 +99,7 @@
   // Cut Sheet: one press draws this layout's green line with today's date and
   // records the cut. Its charms turn grey, and the next charms nest past the
   // line on the same physical sheet until it is full.
-  async function record(sh){
+  async function record(sh,o={}){   // o.by: the person who pressed (charm-nest-flow-rose.js passes it); else the signed-in one
     // A held sheet joins the current set first (Paul, 25 Sep: "the Cut Sheet button is not working"): it was greyed
     // until the sheet was ticked in Options, with only a hover note to say so. A cut sheet stays in its set, and its
     // charms must be made, so pressing Cut Sheet is taken as including it.
@@ -113,7 +113,7 @@
     if(!sh.rosePlanHash||(!sh.recalled&&sh.rosePlanKey!==fingerprint(sh)))await plan(sh,{cut:true});
     // who cut it: the sorter's signed-in person (its own name, or the Design Station's sign-in); nobody is sent as ""
     // and the server keeps 'operator' in the stock ledger only, the order's roseCut then says "not signed in"
-    let who='';try{who=String(window.CNEmployee?.name?.()||window.B?.employee||'').trim();}catch(_){who=String(window.B?.employee||'').trim();}
+    let who='';try{who=String(o.by||window.CNEmployee?.name?.()||window.B?.employee||'').trim();}catch(_){who=String(o.by||window.B?.employee||'').trim();}
     const r=await api('roseRecordCut',{sheetId:sh.sheetId,stockId:sh.roseStock.id,revision:sh.roseRevision,planHash:sh.rosePlanHash,by:who,device:'charm-nest-1'});
     sh.roseCutAt=r.cut.at;sh.roseStock=r.stock;sh.roseHistory=[...decode([r.cut]),...(sh.roseHistory||[]).filter(c=>c.sheetId!==sh.sheetId)];
     refresh(sh);C.toast('Sheet cut · the next Rose Gold charms nest past this green line','ok');
@@ -292,7 +292,7 @@
       if(!sh.roseCutAt&&sh.rosePlan&&!sh.dirty){const view=shown(sh.rosePlan,sh);stroke(ctx,view.lines,k,'#008974',Math.max(2.5,.2*k),true);numberLines(ctx,view,k);}
     }ctx.restore();
   }
-  window.RoseStock={protect,prepare,takeOff,plan,ensurePlan:sh=>sh.rosePlanHash && sh.rosePlanKey===fingerprint(sh) ? Promise.resolve() : plan(sh),load,restore,render,paint,record,waiting,waitWords,showCut};
+  window.RoseStock={protect,prepare,takeOff,plan,ensurePlan:sh=>sh.rosePlanHash && sh.rosePlanKey===fingerprint(sh) ? Promise.resolve() : plan(sh),load,restore,render,paint,record,waiting,waitWords,showCut,addsLine,unlined};   // addsLine/unlined: read-only questions for LibraryFlowRose.check
   C.allSheets().forEach(render);
 })();
 
