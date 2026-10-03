@@ -1,0 +1,512 @@
+/* LibraryFlow: the engine behind dragging a sheet or a set between In progress, Laser cutting and Completed in the
+ * Library, and behind the manual "Approve for laser cutting" (Paul, 3 Oct 2026). No screen of its own: the drag, the
+ * flight and the bars are charm-nest-library-dnd.js and its neighbours, and they call this.
+ *
+ *   LibraryFlow.targets(item)            where a sheet or set may be dropped: [{area}|{set}|{newSet:true}]  (sync, from the page)
+ *   LibraryFlow.explainTargets(item)     the same, every zone with {name, ok, reason}: a dimmed zone says why on hover
+ *   LibraryFlow.plan({kind,id,to,by})    Promise<Plan>: reads, never writes
+ *   LibraryFlow.commit(plan,{confirmed,by,onStep})   Promise<{ok,applied:[{key,label}],error}>
+ *   LibraryFlow.approve({kind,id,by,confirmed})      Promise<Plan>: runs every safe automatic step now, lists what is still missing
+ *
+ *   Plan = { ok, from:{area,setId}, to:{area,setId}, auto:[{key,label,detail}], needs:[{key,label,detail,items}],
+ *            confirm:[{key,label,detail}], notes:[string], kind, id, move:{kind,id,to}, noop?:true }
+ *   (an auto line with check:true is a check that already passed, shown so the person sees what was verified; every other
+ *   auto line is something the move does by itself, and commit reports it back in `applied`.)
+ *
+ * Where a sheet or set stands is READ, never stored (charm-nest-readiness.js): Completed = marked cut (laserDoneAt), Laser
+ * cutting = every check passed, In progress = the rest. A move therefore does the things that make the destination true,
+ * each with the code that already owns it, and nothing else:
+ *   to Laser cutting     the checks, the QR label (made again when missing), a person's hold lifted, the readiness seal by
+ *                        the person (op flowApply "seal" = laserStatus' recordProcessReadiness)
+ *   to Completed         the above, then LibraryDone.mark (op laserDone: the same stage gate, seals and timeline)
+ *   Completed to Laser   LibraryDone.mark(…, false) (Undo: every seal and cut record stays)
+ *   back to In progress  a HOLD (laserHold on the sheets, op flowApply): approvals, seals and cut records are all kept, the
+ *                        sheet just is not offered to the laser; moving it to Laser cutting again lifts it
+ *   into a set           the sheet window's own Include / Make QR label paths (Gate.changeMembership, release): a set of a
+ *                        run still open is made by that run's release rules, a committed set is fixed
+ * Rose Gold: a move NEVER adds a green dash line by itself. A Rose Gold sheet without one that the move needs gets the
+ * confirm key `roseLine`; commit calculates it (LibraryFlowRose.calculate, the Cut Sheet path) only when `confirmed` holds
+ * that key, and does not move anything without it.
+ * Restart-safe: commit reads the records again and plans again before it writes; every step is idempotent; a hold or a
+ * release that a later step makes pointless is undone; a failed commit changes nothing. No Etsy calls anywhere here. */
+(function (root, factory) { const api = factory(root); if (typeof module === 'object' && module.exports) module.exports = api; else root.LibraryFlow = api; })(typeof self !== 'undefined' ? self : this, function (root) {
+  'use strict';
+  const RD = () => root.CharmNestReadiness || (typeof require === 'function' ? require('./charm-nest-readiness.js') : null);
+  const AREAS = ['progress', 'laser', 'completed'], AREA = { progress: 'In progress', laser: 'Laser cutting', completed: 'Completed' };
+  const CODE = { gold: 'GF', silver: 'SS', rose: 'RG', gold10k: '10K', gold14k: '14K' };
+  const LISTED = 30;
+  const held = s => !!(s && s.laserHold && +s.laserHold.at > 0);
+  const sid = s => s.id || s.sheetId;
+  // a sheet is included unless it is a draft or left out of its set (Readiness.sheet reads the same fields); it is in a set when it also has one
+  const joined = s => !!s && !s.draft && s.solidIncluded !== false;
+  const inSet = s => !!(s && s.setId && joined(s));
+  const sheetName = s => `${CODE[s.metal] || s.metalLabel || ''} Sheet ${s.sheetIndex || s.page || 1}`.trim();
+  const setName = d => d && (d.seq || d.setSeq) ? `Set ${d.seq || d.setSeq}` : (d && d.name) || 'This set';
+  const count = (n, one, more) => `${n} ${n === 1 ? one : (more || one + 's')}`;
+  const laserOf = s => (s.laser && typeof s.laser === 'object' && s.laser.stages) ? s.laser : RD().laserSheet(s);
+  const committedSet = d => !!(d && (+d.committedAt > 0 || /^complete/.test(String(d.status || ''))));
+  const needsRoseLine = s => !!s && s.metal === 'rose' && !s.roseCutAt && !s.rosePlanHash;
+
+  /* ── reading the records ────────────────────────────────────────────────────────────────────────────────────────
+   * state = { sheets:{id:record}, sets:{id:setRecord}, runs:{runId:{open}}, live:{sheetId:{…}} }: what op flowState
+   * answers (laserStatus' sheets with their `laser` report, each set's own record, whether each run is open) and what
+   * the page knows of the sheets the open run holds. */
+  function view(state, kind, id) {
+    if (kind === 'set') {
+      const set = state.sets[id];
+      if (!set) return { error: 'There is no such set' };
+      const ids = [...new Set(set.sheetIds || [])], got = ids.map(i => state.sheets[i]);
+      return { kind, id, set, members: got.filter(s => s && !s.archived), missing: ids.filter((i, n) => !got[n] || got[n].archived), label: setName(set) };
+    }
+    const sheet = state.sheets[id];
+    if (!sheet || sheet.archived) return { error: 'There is no such sheet' };
+    if (!inSet(sheet)) return { kind, id, sheet, set: null, members: [sheet], missing: [], label: sheetName(sheet) };
+    const set = state.sets[sheet.setId] || null;
+    if (!set) return { kind, id, sheet, set: null, members: [sheet], missing: [], setMissing: true, label: sheetName(sheet) };
+    const ids = [...new Set(set.sheetIds || [])], got = ids.map(i => state.sheets[i]);
+    return { kind, id, sheet, set, members: got.filter(s => s && !s.archived), missing: ids.filter((i, n) => !got[n] || got[n].archived), label: sheetName(sheet) };
+  }
+  const memberReady = m => laserOf(m).ready;
+  const groupReady = v => !v.setMissing && v.missing.length === 0 && v.members.length > 0 && v.members.every(memberReady);
+  const readyNow = v => v.kind === 'set' || v.set ? groupReady(v) : memberReady(v.sheet);
+  function areaOf(v) {
+    if (v.kind === 'set') return +v.set.laserDoneAt > 0 ? 'completed' : groupReady(v) ? 'laser' : 'progress';
+    if (+v.sheet.laserDoneAt > 0 && !v.sheet.laserSetPending) return 'completed';
+    return readyNow(v) ? 'laser' : 'progress';
+  }
+  const normTo = to => typeof to === 'string' ? (AREAS.includes(to) ? { area: to } : { set: to }) : (to || {});
+  // the group a seal belongs to is the one laserStatus records for the active view: a set for a sheet in a set
+  const sealTarget = v => v.kind === 'set' ? { kind: 'set', id: v.id } : v.set ? { kind: 'set', id: v.set.setId } : { kind: 'sheet', id: v.id };
+  const sealed = (v, t) => t.kind === 'set' ? !!(v.set && v.set.processReady) : !!v.sheet.processReady;
+
+  /* ── what a sheet still lacks before Laser cutting, in the words of CharmNestReadiness.explain ──────────────────── */
+  function explainSteps(rec, env) {
+    const R = RD();
+    if (!R || typeof R.explain !== 'function') return {};
+    try { return Object.fromEntries(R.explain(rec, { kind: 'sheet', rows: env.rows || [] }).steps.map(t => [t.key, t])); } catch (_) { return {}; }
+  }
+  /** One sheet's own gaps: needs (hard), steps and auto (the move does it), checks (already passed). */
+  function sheetGaps(rec, env) {
+    const L = laserOf(rec), st = L.stages || {}, id = sid(rec), label = sheetName(rec), g = { needs: [], auto: [], steps: [], checks: {} };
+    const ex = explainSteps(rec, env);
+    const need = (key, lab, detail, items, n) => g.needs.push({ key, lab, n: n || 1, detail, items: (items || []).slice(0, LISTED), sheet: label });
+    if (held(rec)) {
+      g.auto.push({ key: 'release:' + id, label: `${label} released from its hold`, detail: `Held back${rec.laserHold.by ? ' by ' + rec.laserHold.by : ''}; every approval and seal it had is kept.` });
+      g.steps.push({ type: 'release', sheetIds: [id], key: 'release:' + id });
+    }
+    if (!joined(rec)) need('membership', () => `${label} is not in a set yet`, rec.draft ? 'It joins a set when it is full, or when you drop it on a set.' : 'It is not included in its set. Include it in a set first.');
+    // layout: a verified layout the page is not changing, and (Rose Gold) a calculated green dash line
+    if (!st.layout) {
+      const lineOnly = needsRoseLine(rec) && !!rec.roseStockId && rec.verification?.ok === true && L.total > 0;
+      if (!lineOnly) {
+        const working = !!(rec.saving || ['nesting', 'finishing', 'queued'].includes(rec.status));
+        const why = L.total === 0 ? 'No charms are placed on it.' : rec.status === 'error' ? 'Nesting stopped with an error: nest this sheet again.' : working ? 'The sheet is still being nested or saved. Try again when it is done.' : rec.verification?.ok === false ? 'The layout check found a problem: open the sheet and nest it again.' : rec.verification?.ok !== true ? 'The layout has not been checked yet.' : 'The sheet is being changed.';
+        need('nesting', () => 'Layout not ready', ex.nesting && ex.nesting.state !== 'done' && ex.nesting.detail ? ex.nesting.detail : why, ex.nesting && ex.nesting.items);
+      }
+    } else g.checks.layout = { ok: true };
+    if (st.layout && !st.front) need('files', () => 'Cutting files missing', 'The cutting file (.ai) or the sheet picture is not saved yet.');
+    else if (!st.layout && !st.front) need('files', () => 'Cutting files missing', 'The cutting file (.ai) or the sheet picture is not saved yet.');
+    if (!st.approval) need('engraving', n => `${count(n, 'back engraving')} not approved`, ex.engraving && ex.engraving.detail || `${count(L.waiting, 'back engraving')} still need approval.`, ex.engraving && ex.engraving.items, Math.max(1, L.waiting));
+    else if (L.required) g.checks.engraving = { ok: true, a: L.approved, r: L.required };
+    if (!st.backs && st.approval) need('backFiles', n => `${count(n, 'back file')} not saved`, ex.backFiles && ex.backFiles.detail || `${L.saved} of ${L.required} approved backs are saved as files.`, ex.backFiles && ex.backFiles.items, Math.max(1, L.required - L.saved));
+    else if (st.backs && L.required) g.checks.backFiles = { ok: true, a: L.saved, r: L.required };
+    if (!st.qr) {
+      const orders = (rec.orders || (rec.label && rec.label.orders) || []).length, can = orders > 0 && rec.verification?.ok === true && !!(rec.outputs && (rec.outputs.ai || rec.outputs.preview)) && env.canRelabel !== false;
+      if (can) {
+        g.auto.push({ key: 'qrLabel:' + id, label: `${label}: QR label made`, detail: `A QR label for ${count(orders, 'order')} is made and saved with the sheet.` });
+        g.steps.push({ type: 'qrLabel', sheetId: id, key: 'qrLabel:' + id });
+      } else need('qr', () => 'QR label missing', orders ? 'The QR label cannot be made from here: open the sheet and press Make QR label.' : 'There is no order on this sheet to put on a label.', ex.qr && ex.qr.items);
+    }
+    // an order waits for every piece of it. A piece on this sheet, or on a sheet of the same move, is no wait of its own:
+    // that sheet's own gaps are listed (or done) above, and the order passes when they are
+    const together = id => !!(env.own && env.own.has(id));
+    const blockers = Object.entries(rec.orderReadiness || {}).filter(([, v]) => v && v.ready !== true && !together(v.sheetId));
+    if (!st.orders && blockers.length) {
+      need('orders', n => `${count(n, 'order')} waiting for other pieces`, ex.orders && ex.orders.detail || 'Every piece of an order must be ready before any of it is cut.',
+        ex.orders && ex.orders.items && ex.orders.items.length ? ex.orders.items : blockers.map(([oid, v]) => ({ kind: 'order', id: oid, label: `Order ${oid}`, why: v.why || 'Another piece of this order is not ready' })), Math.max(1, blockers.length));
+    } else if (Object.keys(rec.orderReadiness || {}).length && !blockers.length) g.checks.orders = { ok: true };
+    return g;
+  }
+  // the needs of several sheets as one line each: counts add up, the sheets are named in the words when there are several
+  function foldNeeds(list, several) {
+    const out = new Map();
+    for (const n of list) {
+      const e = out.get(n.key) || { key: n.key, lab: n.lab, n: 0, detail: [], items: [], sheets: [] };
+      e.n += n.n; e.detail.push(several ? `${n.sheet}: ${n.detail}` : n.detail); e.items.push(...n.items); e.sheets.push(n.sheet);
+      out.set(n.key, e);
+    }
+    return [...out.values()].map(e => ({ key: e.key, label: e.lab(e.n) + (several && e.sheets.length > 1 && !/\d/.test(e.lab(e.n)) ? ` (${e.sheets.length} sheets)` : ''), detail: e.detail.join(' '), items: e.items.slice(0, LISTED) }));
+  }
+  // the checks that passed on every sheet, said once ("Layout verified", not once a sheet)
+  function checkLines(gaps, mine) {
+    const out = [], every = t => gaps.every(g => g.checks[t] && g.checks[t].ok), n = mine.length, tail = n > 1 ? ` · ${count(n, 'sheet')}` : '';
+    const sum = (t, k) => gaps.reduce((a, g) => a + ((g.checks[t] && g.checks[t][k]) || 0), 0);
+    if (every('layout')) out.push({ key: 'check:layout', label: 'Layout verified' + tail, detail: 'The saved layout passed its check.', check: true });
+    if (every('engraving')) out.push({ key: 'check:engraving', label: `Back engravings approved · ${sum('engraving', 'a')} of ${sum('engraving', 'r')}`, detail: 'Every back engraving on it is approved.', check: true });
+    if (every('backFiles')) out.push({ key: 'check:backFiles', label: `Back files saved · ${sum('backFiles', 'a')} of ${sum('backFiles', 'r')}`, detail: 'Every approved back is saved as a verified file.', check: true });
+    if (every('orders')) out.push({ key: 'check:orders', label: "Every order's other pieces ready" + tail, detail: 'Nothing on it waits for a piece on another sheet.', check: true });
+    return out;
+  }
+
+  /* ── planning ───────────────────────────────────────────────────────────────────────────────────────────────── */
+  const blank = (kind, id, move) => Object.defineProperty({ ok: false, kind, id, move, from: { area: null, setId: null }, to: { area: null, setId: null }, auto: [], needs: [], confirm: [], notes: [] }, 'steps', { value: [], writable: true, enumerable: false });
+  const nameOf = env => env.by ? env.by : 'you';
+  const finish = plan => { plan.ok = plan.needs.length === 0; return plan; };
+  /**
+   * The plan of one move over what the records say. Pure: state in, plan out; plan.steps (not enumerable) is what commit runs.
+   * env: by · rows (the page's order rows) · rose (LibraryFlowRose.check's answer, when that module is there) ·
+   *      canRelabel · canJoin (the sheet window's own paths are on this page)
+   */
+  function planMove(state, move, env = {}) {
+    const kind = move.kind === 'set' ? 'set' : 'sheet', id = String(move.id || ''), to = normTo(move.to), plan = blank(kind, id, { kind, id, to });
+    const v = view(state, kind, id);
+    if (v.error) { plan.needs.push({ key: 'missing', label: v.error, detail: 'It may have been removed. Refresh the Library.', items: [] }); return finish(plan); }
+    const from = areaOf(v);
+    plan.from = { area: from, setId: v.set ? v.set.setId : null };
+    if (to.set || to.newSet) return planMembership(state, v, to, plan, env);
+    if (!AREAS.includes(to.area)) { plan.needs.push({ key: 'target', label: 'That is not a place a sheet can go', detail: 'Drop it on In progress, Laser cutting, Completed or a set.', items: [] }); return finish(plan); }
+    plan.to = { area: to.area, setId: plan.from.setId };
+    if (from === to.area) { plan.noop = true; plan.notes.push(`${v.label} is already in ${AREA[from]}.`); return finish(plan); }
+    const mine = v.kind === 'set' ? v.members : [v.sheet], grouped = v.kind === 'sheet' && !!v.set && v.set.sheetIds.length > 1;
+    if (grouped) plan.notes.push(`${v.label} travels with ${setName(v.set)}: its sheets are cut together.`);
+    if (from === 'progress') {               // forwards: Laser cutting, or Completed through it
+      const gaps = mine.map(m => sheetGaps(m, { ...env, own: new Set(v.members.map(sid)) }));
+      plan.needs.push(...foldNeeds(gaps.flatMap(g => g.needs), v.kind === 'set' && mine.length > 1));
+      for (const g of gaps) { plan.steps.push(...g.steps); plan.auto.push(...g.auto); }
+      plan.auto.push(...checkLines(gaps, mine));
+      if (v.setMissing) plan.needs.push({ key: 'set', label: `The set of ${v.label} could not be read`, detail: 'Refresh the Library and try again.', items: [] });
+      if (v.kind === 'set' && !mine.length) plan.needs.push({ key: 'members', label: 'This set has no sheets', detail: 'A set without sheets cannot be cut.', items: [] });
+      for (const i of v.missing) plan.needs.push({ key: 'members', label: 'A sheet of this set cannot be found', detail: `Sheet ${i} is listed in ${setName(v.set)} but is missing or removed.`, items: [] });
+      if (grouped) {             // a sheet is cut with its set: the other sheets must be ready too
+        const others = v.members.filter(m => sid(m) !== v.id && !memberReady(m)), R = RD();
+        if (others.length) plan.needs.push({ key: 'members', label: `${count(others.length, 'other sheet')} of ${setName(v.set)} not ready`, detail: `${setName(v.set)} is cut together, so every sheet in it must be ready first.`,
+          items: others.slice(0, LISTED).map(m => { let why = 'is not ready'; try { why = R.explain(m, { kind: 'sheet', rows: env.rows || [] }).nextText.replace(/\.$/, ''); } catch (_) { /* the plain words stand */ } return { kind: 'sheet', id: sid(m), label: sheetName(m), why }; }) });
+      }
+      roseConfirm(plan, mine, env);                // (adds the roseLine confirm and its step: only an explicit press runs it)
+      const t = sealTarget(v);
+      if (!sealed(v, t)) plan.auto.push({ key: 'seal', label: `Ready seal recorded by ${nameOf(env)}`, detail: 'The blue seal that says it is ready for Laser cutting, with your name and the time.' });
+      plan.steps.push({ type: 'seal', ...t, key: 'seal' });
+      if (to.area === 'completed') addMark(plan, v, env);
+      return finish(plan);
+    }
+    if (from === 'laser' && to.area === 'completed') { addMark(plan, v, env); return finish(plan); }
+    if (from === 'completed' && to.area === 'laser') { addReopen(plan, v); return finish(plan); }
+    // back to In progress (from Laser cutting, or from Completed through it): held first, so a failed reopen leaves it as it was
+    const holdIds = mine.filter(m => !held(m)).map(sid);
+    if (holdIds.length) plan.steps.push({ type: 'hold', sheetIds: holdIds, key: 'hold', note: `Moved back to In progress from ${AREA[from]}` });
+    if (from === 'completed') addReopen(plan, v);
+    if (holdIds.length) plan.auto.push({ key: 'hold', label: `${v.kind === 'set' || mine.length === 1 ? v.label : 'The sheets'} held back from Laser cutting`, detail: 'Every approval, seal and cut record is kept. Move it to Laser cutting again when it is ready.' });
+    if (grouped) plan.notes.push(`${setName(v.set)} goes back to In progress with it.`);
+    plan.notes.push('Seals and cut records stay on record; this move adds its own entry to the history.');
+    return finish(plan);
+  }
+  function roseConfirm(plan, mine, env) {
+    const want = mine.filter(needsRoseLine);
+    if (!want.length) return;
+    let c = null;
+    if (env.rose && typeof env.rose === 'object') {      // the Rose Gold module knows the page: its answer stands
+      if (env.rose.needsLine === false) return;
+      c = env.rose.confirm || null;
+    }
+    const names = want.map(sheetName);
+    plan.confirm.push(c && c.key === 'roseLine' ? { key: 'roseLine', label: c.label, detail: c.detail } : { key: 'roseLine', label: `Add the green dash line to ${names.length === 1 ? names[0] : count(names.length, 'Rose Gold sheet')}?`, detail: `This calculates the cut contour for ${names.length === 1 ? 'these charms' : 'the charms on ' + names.join(', ')}. Nothing is added until you press the button.` });
+    plan.steps.push({ type: 'roseLine', sheetIds: want.map(sid), key: 'roseLine', label: 'Green dash line calculated' });
+  }
+  function addMark(plan, v, env) {
+    plan.auto.push({ key: 'mark', label: `Marked completed by ${nameOf(env)}`, detail: 'The completed seal is stamped with your name and the time, and its orders get their milestone.' });
+    plan.steps.push({ type: 'mark', kind: v.kind, id: v.id, done: true, key: 'mark' });
+    if (v.kind === 'sheet' && v.set && v.set.sheetIds.length > 1) {
+      const rest = v.members.filter(m => sid(m) !== v.id && !(+m.laserDoneAt > 0));
+      if (rest.length) plan.notes.push(`It stays with ${setName(v.set)} until the other ${count(rest.length, 'sheet')} ${rest.length === 1 ? 'is' : 'are'} completed too.`);
+    }
+  }
+  function addReopen(plan, v) {
+    plan.auto.push({ key: 'reopen', label: 'Completion taken back', detail: 'Its completed seal and cut record stay on record; it returns to Laser cutting with its approvals.' });
+    plan.steps.push({ type: 'mark', kind: v.kind, id: v.id, done: false, key: 'reopen' });
+    if (v.kind === 'sheet' && v.set && v.set.sheetIds.length > 1) plan.notes.push(`${setName(v.set)} returns to Laser cutting with it.`);
+  }
+
+  /* A sheet into a set, or into a new one. A set is made by its run (a sheet joins the open one by the release rules, a full
+     sheet always does), so a drop is the sheet window's own Include / Make QR label for a sheet the open run holds here, and
+     is refused, with the reason, for every set that is fixed. */
+  function planMembership(state, v, to, plan, env) {
+    const need = (key, label, detail, items) => plan.needs.push({ key, label, detail, items: items || [] });
+    plan.to = { area: null, setId: to.set || null };
+    if (v.kind !== 'sheet') { need('wholeSet', 'A whole set cannot be dropped into a set', 'Move its sheets one at a time.'); return finish(plan); }
+    const s = v.sheet, T = to.set ? state.sets[to.set] : null, live = (state.live || {})[v.id] || null, run = (state.runs || {})[s.runId] || null;
+    if (to.set && !T) { need('noSet', 'That set could not be found', 'Refresh the Library and try again.'); return finish(plan); }
+    if (T) plan.to = { area: null, setId: T.setId };
+    if (+s.laserDoneAt > 0) { need('sheetCompleted', `${v.label} is completed`, 'Move it back to Laser cutting first.'); return finish(plan); }
+    if (T && inSet(s) && T.setId === s.setId) { plan.noop = true; plan.notes.push(`${v.label} is already in ${setName(T)}.`); return finish(plan); }
+    if (T && +T.laserDoneAt > 0) need('setCompleted', `${setName(T)} is completed`, 'A completed set takes no more sheets.');
+    else if (T && committedSet(T)) need('setCommitted', `${setName(T)} was already committed to the station`, 'Its sheets, labels and orders are fixed. The next set takes new sheets.');
+    else if (T && /superseded/.test(String(T.status || ''))) need('setClosed', `${setName(T)} was replaced`, 'Drop it on a current set.');
+    if (plan.needs.length) return finish(plan);
+    if (run && run.open && !(live && live.runHere)) { need('runElsewhere', 'This sheet belongs to a run that is open on another screen', 'Move it from the screen that runs it, so the two screens do not undo each other.'); return finish(plan); }
+    if (!live) { need('fixedSet', `${inSet(s) && state.sets[s.setId] ? setName(state.sets[s.setId]) : 'Its set'} is fixed`, 'This sheet is from a finished run, whose sets can no longer change.'); return finish(plan); }
+    const open = live.dispatchSetId || null, openName = open && state.sets[open] ? setName(state.sets[open]) : 'the open set';
+    if (inSet(s)) { need('runOwned', `${v.label} is already in ${state.sets[s.setId] ? setName(state.sets[s.setId]) : 'a set'}`, 'The open run puts sheets in its sets by its release rules, so a sheet in a set cannot be moved to another one.'); return finish(plan); }
+    if (to.set && T.setId !== open) need('notOpenSet', `${setName(T)} is not the open set`, open ? `Drop it on ${openName}, the set that is open now.` : 'There is no open set; drop it on New set.');
+    else if (to.newSet && open) need('openSetExists', `${openName} is still open`, `A new set is made when the open one is committed. Drop the sheet on ${openName}.`);
+    else if (live.can && live.can.ok === false) need('include', `${v.label} cannot join a set yet`, live.can.reason || 'Nest and verify it first.');
+    else if (env.canJoin === false) need('join', 'Joining a set is not available here', 'Open the sheet and use Include or Make QR label.');
+    if (plan.needs.length) return finish(plan);
+    const target = to.newSet ? 'a new set' : setName(T);
+    plan.auto.push({ key: 'membership', label: `${v.label} added to ${target}`, detail: live.can && live.can.byHand ? 'Released as it stands, with the QR label of its orders.' : 'Included in the set by its own Include switch.' });
+    plan.auto.push({ key: 'qrLabel', label: `QR label made for ${target}`, detail: 'The label names the set and the sheet, and covers every order on it.' });
+    roseConfirm(plan, [s], env);
+    plan.steps.push({ type: 'include', sheetId: v.id, setId: T ? T.setId : null, newSet: !!to.newSet, key: 'membership' });
+    for (const sp of live.split || []) plan.confirm.push({ key: 'splitOrders', label: `${count(sp.orders.length, 'order')} also on ${sp.label}`, detail: `${sp.orders.slice(0, 4).map(o => 'Order ' + o).join(', ')}${sp.orders.length > 4 ? ' and more' : ''} would be cut in two parts, at different times, if only ${v.label} joins. Press to include only ${v.label}.` });
+    return finish(plan);
+  }
+
+  /* ── where it may be dropped (sync, from the page) ──────────────────────────────────────────────────────────── */
+  function zones(item, page) {
+    const it = { kind: item && item.kind === 'set' ? 'set' : 'sheet', id: String(item && item.id || '') };
+    const cur = (item && (item.area || item.from)) || (page.area ? page.area(it) : null);
+    const own = (item && item.setId) || (page.setOf ? page.setOf(it) : null);
+    const out = AREAS.map(a => ({ area: a, name: AREA[a], ok: a !== cur, reason: a === cur ? `It is already in ${AREA[a]}.` : '' }));
+    if (it.kind === 'sheet') {
+      const done = cur === 'completed';
+      for (const st of page.sets ? page.sets() : []) {
+        if (!st || !st.setId || st.setId === own) continue;
+        const why = done ? 'Move it back to Laser cutting first.' : +st.laserDoneAt > 0 ? `${setName(st)} is completed.` : committedSet(st) ? `${setName(st)} was already committed to the station: its sheets are fixed.` : /superseded/.test(String(st.status || '')) ? `${setName(st)} was replaced.` : '';
+        out.push({ set: st.setId, name: setName(st), ok: !why, reason: why });
+      }
+      const live = page.live ? page.live(it.id) : null;
+      out.push({ newSet: true, name: 'New set', ok: !done && !!(live && live.draft && !live.dispatchSetId), reason: done ? 'Move it back to Laser cutting first.' : !live ? 'Only a sheet of the open run can start a new set.' : !live.draft ? 'It is already in a set.' : live.dispatchSetId ? 'The open set takes it: drop it there.' : '' });
+    }
+    return out;
+  }
+  const keyOfZone = z => z.area ? { area: z.area } : z.set ? { set: z.set } : { newSet: true };
+
+  /* ── the browser's side: reading the cloud, running the steps with the code that owns each ─────────────────────── */
+  const mine = {};             // hooks a caller configured: the page never wires over them
+  const hooks = {
+    api: null,                 // (body) -> Promise<answer>: op of charmNestLibrary
+    employee: () => { try { return (root.CNEmployee && root.CNEmployee.name && root.CNEmployee.name()) || ''; } catch (_) { return ''; } },
+    ask: () => { try { return (root.CNEmployee && root.CNEmployee.ask && root.CNEmployee.ask()) || ''; } catch (_) { return ''; } },
+    rows: () => { try { return (root.Orders && root.Orders.rows && root.Orders.rows()) || []; } catch (_) { return []; } },
+    mark: null,                // (kind, id, done, {by}) -> Promise: LibraryDone.mark on the page
+    remakeLabel: null,         // (sheetId) -> Promise: the sheet's QR label made again (the sheet window's own path)
+    include: null,             // (sheetId, {setId, newSet, split}) -> Promise: the sheet window's own Include / release
+    live: null,                // (sheetId) -> null | {runHere, draft, dispatchSetId, can:{ok,reason,byHand}, split:[{label,orders}]}
+    areaOf: null, sets: null, setOf: null,
+    sync: null,                // (process) -> void: the page's own records and cards follow what the cloud now says
+    rose: () => root.LibraryFlowRose || null,
+    wait: ms => new Promise(r => setTimeout(r, ms))
+  };
+  const cloud = body => {
+    if (hooks.api) return hooks.api(body);
+    if (root.CN && typeof root.CN.api === 'function') return root.CN.api('charmNestLibrary', body, { quiet: true });
+    return Promise.reject(new Error('The Library is not connected to the cloud'));
+  };
+  const answer = r => { if (r && r.error) throw Object.assign(new Error(r.error), { status: r.status }); return r; };
+  async function readState(item, extraSets) {
+    const r = answer(await cloud({ op: 'flowState', sheetIds: item.kind === 'sheet' ? [item.id] : [], setIds: [...(item.kind === 'set' ? [item.id] : []), ...(extraSets || [])] }));
+    const state = { sheets: {}, sets: {}, runs: r.runs || {}, live: {} };
+    for (const s of r.sheets || []) state.sheets[sid(s)] = s;
+    for (const x of r.sets || []) state.sets[x.setId] = x;
+    for (const d of r.setDocs || []) state.sets[d.setId] = { ...(state.sets[d.setId] || {}), ...d };
+    if (hooks.live) for (const id of Object.keys(state.sheets)) { let l = null; try { l = hooks.live(id); } catch (_) { /* not live */ } if (l) state.live[id] = l; }
+    return state;
+  }
+  const itemOf = req => ({ kind: req.kind === 'set' ? 'set' : 'sheet', id: String(req.id || '') });
+  async function plan(req) {
+    req = req || {};
+    if (typeof document !== 'undefined' && !hooks.remakeLabel) { try { wirePage(); } catch (_) { /* as it was */ } }   // (the sheet window loads after this file)
+    const item = itemOf(req), to = normTo(req.to), state = await readState(item, to.set ? [to.set] : []);
+    let env = { by: req.by || hooks.employee(), rows: hooks.rows(), canRelabel: typeof hooks.remakeLabel === 'function', canJoin: typeof hooks.include === 'function' };
+    let p = planMove(state, { ...item, to }, env);
+    const M = hooks.rose();
+    if (p.confirm.some(c => c.key === 'roseLine') && M && typeof M.check === 'function') {
+      try { const c = await M.check(item); if (c && typeof c === 'object') { env = { ...env, rose: c }; p = planMove(state, { ...item, to }, env); } } catch (_) { /* the fallback confirm stands */ }
+    }
+    return p;
+  }
+  const bySure = by => by || hooks.employee() || hooks.ask();
+  async function sync(process) { if (hooks.sync && process && process.length) { try { hooks.sync(process); } catch (_) { /* the next refresh draws it */ } } }
+  async function flow(steps, by, extra) { const r = answer(await cloud({ op: 'flowApply', steps, by, device: 'charm-nest-1', via: 'Library move', ...extra })); await sync(r.process); return r; }
+  async function markIt(s, by) {
+    if (hooks.mark) return hooks.mark(s.kind, s.id, s.done, { by });
+    const r = answer(await cloud({ op: 'laserDone', kind: s.kind, id: s.id, done: s.done, by: by || undefined, stage: s.done ? 'laser' : undefined, device: 'charm-nest-1', via: 'Library move' }));
+    await sync(r.process); return r;
+  }
+  /**
+   * Runs a plan's steps in order. `only` (a Set of step types) limits it to those (approve). A hold or a release is undone
+   * when a later step fails, so a failed commit leaves what it found.
+   */
+  async function run(p, o) {
+    const applied = [], undo = [], by = bySure(o.by);
+    const tell = (s, label, state) => { try { o.onStep && o.onStep({ key: s.key, label, state }); } catch (_) { /* a listener never stops the move */ } };
+    const lineOf = s => s.label || (p.auto.find(a => a.key === s.key) || {}).label || s.key;
+    const todo = p.steps.filter(s => !o.only || o.only.has(s.type));
+    if (todo.some(s => s.type !== 'qrLabel' && s.type !== 'roseLine' && s.type !== 'include') && !by) throw new Error('Say who is making this change');
+    for (const s of todo) {
+      const label = lineOf(s);
+      tell(s, label, 'start');
+      try {
+        if (s.type === 'release') {
+          await flow([{ type: 'release', sheetIds: s.sheetIds }], by, { expect: Object.fromEntries(s.sheetIds.map(i => [i, { held: true }])) });
+          undo.push({ key: s.key, fn: () => flow([{ type: 'hold', sheetIds: s.sheetIds, note: 'Hold restored: the move was not completed' }], by) });
+        } else if (s.type === 'hold') {
+          await flow([{ type: 'hold', sheetIds: s.sheetIds, note: s.note }], by, { expect: Object.fromEntries(s.sheetIds.map(i => [i, { held: false }])) });
+          undo.push({ key: s.key, fn: () => flow([{ type: 'release', sheetIds: s.sheetIds }], by) });
+        } else if (s.type === 'qrLabel') {
+          if (typeof hooks.remakeLabel !== 'function') throw new Error('The QR label cannot be made from here: open the sheet and press Make QR label');
+          await hooks.remakeLabel(s.sheetId);
+        } else if (s.type === 'roseLine') {
+          const M = hooks.rose();
+          if (!(o.confirmed || []).includes('roseLine')) throw new Error('The green dash line is only added when you press its button');
+          if (!M || typeof M.calculate !== 'function') throw new Error('The green dash line cannot be calculated from here: press Cut Sheet on the sheet');
+          for (const id of s.sheetIds) {
+            const r = await M.calculate({ kind: 'sheet', id }, { by, onStep: x => { try { o.onStep && o.onStep({ ...x, key: x.key || 'roseLine' }); } catch (_) { /* never stops it */ } } });
+            if (!r || r.ok === false) throw new Error((r && r.error) || 'The green dash line could not be calculated');
+          }
+        } else if (s.type === 'seal') {
+          if (o.verify) await o.verify();          // every check holds now: only then a ready seal
+          await flow([{ type: 'seal', kind: s.kind, id: s.id }], by);
+        } else if (s.type === 'mark') {
+          if (s.done && o.verify) await o.verify();
+          const r = await markIt(s, by);
+          if (r && r.error) throw new Error(r.error);
+        } else if (s.type === 'include') {
+          if (typeof hooks.include !== 'function') throw new Error('Joining a set is not available here: open the sheet and use Include');
+          await hooks.include(s.sheetId, { setId: s.setId, newSet: s.newSet, split: (o.confirmed || []).includes('splitOrders') ? 'this' : null });
+        }
+        applied.push({ key: s.key, label });
+        tell(s, label, 'done');
+      } catch (e) {
+        tell(s, label, 'error');
+        const left = [], undone = new Set();
+        for (const u of undo.reverse()) { try { await u.fn(); undone.add(u.key); } catch (x) { left.push(x.message); } }
+        throw Object.assign(new Error(e.message || String(e)), { quiet: e.quiet, applied: applied.filter(a => !undone.has(a.key)), left });
+      }
+    }
+    return applied;
+  }
+  const inflight = new Map();
+  /**
+   * commit(plan, {confirmed, by, onStep}): the move, planned again from the records right now. Refuses (and changes nothing)
+   * when something is still missing or a confirm has not been given. A move already done answers ok with nothing applied.
+   */
+  function commit(planned, o = {}) {
+    const m = (planned && planned.move) || { kind: planned && planned.kind, id: planned && planned.id, to: planned && planned.to };
+    const key = JSON.stringify([m.kind, m.id, m.to]);
+    if (inflight.has(key)) return inflight.get(key);
+    const job = (async () => {
+      try {
+        const confirmed = [].concat(o.confirmed || []), item = itemOf(m);
+        const fresh = await plan({ kind: item.kind, id: item.id, to: m.to, by: o.by });
+        if (fresh.needs.length) return { ok: false, applied: [], error: `${fresh.needs[0].label}. ${fresh.needs[0].detail}`.trim(), plan: fresh };
+        const open = fresh.confirm.filter(c => !confirmed.includes(c.key));
+        if (open.length) return { ok: false, applied: [], error: `Needs your yes first: ${open[0].label}`, plan: fresh };
+        if (fresh.noop || !fresh.steps.length) return { ok: true, applied: [], noop: true, plan: fresh };
+        // after the label, the hold and the green line, every check is read again: nothing is sealed or marked on a guess
+        const verify = async () => {
+          const v = view(await readState(item, m.to && m.to.set ? [m.to.set] : []), item.kind, item.id);
+          if (v.error) throw new Error(v.error);
+          if (!readyNow(v)) throw new Error(`${v.label} is still not ready for Laser cutting. Refresh the Library to see what is left`);
+        };
+        const applied = await run(fresh, { by: o.by, confirmed, onStep: o.onStep, verify });
+        return { ok: true, applied: applied.concat(fresh.auto.filter(a => a.check).map(a => ({ key: a.key, label: a.label }))) };
+      } catch (e) {
+        return { ok: false, applied: e.applied || [], error: e.message || String(e), ...(e.left && e.left.length ? { notUndone: e.left } : {}) };
+      }
+    })().finally(() => inflight.delete(key));
+    inflight.set(key, job);
+    return job;
+  }
+  const SAFE = ['release', 'qrLabel', 'seal'];
+  /**
+   * approve({kind,id,by,confirmed}): "Approve for laser cutting". Runs every safe automatic step now (the hold lifted, the
+   * QR label made, the readiness seal by the person once everything is in place) and says what is still missing. It never
+   * marks anything completed and never adds a green dash line unless `confirmed` holds roseLine (the person pressed it).
+   * The Plan it returns can be handed to commit(plan, {confirmed}) for what still needs a yes.
+   */
+  async function approve(req) {
+    req = req || {};
+    const item = itemOf(req), confirmed = [].concat(req.confirmed || []), by = bySure(req.by);
+    const p = await plan({ ...item, to: { area: 'laser' }, by });
+    p.applied = []; p.approved = false;
+    if (p.noop) {                                    // already in Laser cutting: only the person's seal can still be missing
+      const state = await readState(item), v = view(state, item.kind, item.id);
+      if (!v.error && by) { const t = sealTarget(v); if (!sealed(v, t)) { try { await flow([{ type: 'seal', ...t }], by); p.auto.push({ key: 'seal', label: `Ready seal recorded by ${by}`, detail: 'The blue seal that says it is ready for Laser cutting.', done: true }); p.applied.push({ key: 'seal', label: `Ready seal recorded by ${by}` }); } catch (_) { /* the next refresh records it */ } } }
+      p.approved = true;
+      return p;
+    }
+    if (p.from.area === 'completed') { p.ok = false; p.notes.push(`${p.move.kind === 'set' ? 'This set' : 'This sheet'} is already completed.`); return p; }
+    const only = new Set(SAFE);
+    if (confirmed.includes('roseLine') && p.confirm.some(c => c.key === 'roseLine')) only.add('roseLine');
+    const doneKeys = new Set();
+    const noSeal = { ...p, steps: p.steps.filter(s => s.type !== 'seal') }, sealStep = p.steps.find(s => s.type === 'seal');
+    try {
+      for (const g of await run(noSeal, { by, confirmed, only, onStep: req.onStep })) doneKeys.add(g.key);
+      if (sealStep) {
+        try {
+          const v = view(await readState(item), item.kind, item.id);
+          if (!v.error && readyNow(v)) for (const g of await run({ ...p, steps: [sealStep] }, { by, confirmed, only, onStep: req.onStep })) doneKeys.add(g.key);
+        } catch (e) { if (!/not ready/i.test(e.message)) throw e; }
+      }
+    } catch (e) { p.error = e.message || String(e); p.ok = false; p.applied = e.applied || []; return p; }
+    // what is true now, in the same shape: the lines that were done turn into `done`, what is left stays to do
+    const after = await plan({ ...item, to: { area: 'laser' }, by });
+    const doneLines = p.auto.filter(a => a.check || doneKeys.has(a.key) || [...doneKeys].some(k => a.key.startsWith(k + ':') || k.startsWith(a.key + ':'))).map(a => ({ ...a, done: true }));
+    after.auto = doneLines.concat(after.auto.filter(a => !a.check && !doneLines.some(d => d.key === a.key)));
+    after.applied = doneLines.filter(a => !a.check).map(a => ({ key: a.key, label: a.label }));
+    after.approved = after.needs.length === 0 && after.confirm.length === 0 && (after.noop === true || !after.steps.length);
+    if (after.noop) { after.notes = [...new Set(p.notes.concat(after.notes))]; }
+    return after;
+  }
+
+  function targets(item) { return zones(item, pageAdapter()).filter(z => z.ok).map(keyOfZone); }
+  function explainTargets(item) { return zones(item, pageAdapter()); }
+  function pageAdapter() { return { area: hooks.areaOf, sets: hooks.sets, setOf: hooks.setOf, live: hooks.live }; }
+
+  /* ── the page: how the code that owns each thing is reached. Each falls back to nothing, and a move that needs one
+     then says so in `needs` or in its error instead of working around it. ──────────────────────────────────────────── */
+  function wirePage() {
+    if (typeof document === 'undefined') return;
+    const LR = () => root.LaserReview, LD = () => root.LibraryDone;
+    const cards = () => [...document.querySelectorAll('.setCard[data-laser-card]')];
+    const cardOf = it => it.kind === 'set' ? cards().find(c => c._laserSet && c._laserSet.setId === it.id) : cards().find(c => (c._laserSheets || []).includes(it.id));
+    hooks.setOf = it => { if (it.kind !== 'sheet') return null; const c = cardOf(it); return c && c._laserSet && !c._laserSet.standalone && !c._laserSet.working ? c._laserSet.setId : null; };
+    hooks.areaOf = it => {
+      const c = cardOf(it), a = c && c.closest('[data-laser-area]');
+      return a ? (a.dataset.laserArea === 'ready' ? 'laser' : 'progress') : null;
+    };
+    hooks.sets = () => cards().map(c => c._laserSet).filter(st => st && st.setId && !st.standalone && !st.working);
+    hooks.sync = process => {
+      const lr = LR(); if (!lr) return;
+      lr.acceptProcess(process);
+      for (const p of process) {
+        if (p.kind !== 'sheet') continue;
+        for (const c of cards()) for (const s of c._sheets || []) if (s.id === p.id) Object.assign(s, p.patch);
+        try { const rows = (typeof S !== 'undefined' && S.library && S.library.rows) || []; for (const r of rows) if (r.id === p.id) Object.assign(r, p.patch); } catch (_) { /* not shown */ }
+      }
+      lr.changed();
+    };
+    hooks.mark = async (kind, id, done, o) => {
+      const ld = LD(), lr = LR();
+      // a sheet that has just become ready is placed in Laser cutting by the page's next refresh: LibraryDone.mark waits for that
+      let shown = !done || (ld && ld.canComplete(kind, id));
+      for (let i = 0; ld && !shown && i < 24; i++) { if (i === 0 && lr) { lr.changed(); if (lr.poll) lr.poll(true); } await hooks.wait(150); shown = ld.canComplete(kind, id); }
+      if (ld && shown) return (await ld.mark(kind, id, done, { by: o && o.by, via: 'Library move' })) || { ok: true };
+      const r = answer(await cloud({ op: 'laserDone', kind, id, done, by: (o && o.by) || undefined, stage: done ? 'laser' : undefined, device: 'charm-nest-1', via: 'Library move' }));
+      await sync(r.process);
+      if (ld && ld.addedSeals) ld.addedSeals(r.added);
+      try { if (root.CN && root.CN.loadLibrary) root.CN.loadLibrary(); } catch (_) { /* refreshed at its next read */ }
+      return r;
+    };
+    // the sheet window's own paths (charm-nest-sheetwin.js): present once that file offers them
+    const sw = () => root.SheetWin || {};
+    hooks.remakeLabel = sw().remakeLabel ? id => sw().remakeLabel(id) : null;
+    hooks.include = sw().joinSet ? (id, o) => sw().joinSet(id, o) : null;
+    hooks.live = id => (sw().joinInfo ? sw().joinInfo(id) : null);
+    Object.assign(hooks, mine);
+  }
+  if (typeof document !== 'undefined') { try { wirePage(); document.addEventListener('DOMContentLoaded', () => { try { wirePage(); } catch (_) { /* hooks stay as they were */ } }, { once: true }); } catch (_) { /* a page without these parts */ } }
+  const configure = o => { Object.assign(hooks, o || {}); Object.assign(mine, o || {}); return api; };
+  const api = { targets, explainTargets, plan, commit, approve, configure, hooks, core: { planMove, view, areaOf, groupReady, sheetGaps, zones, sheetName, setName }, AREAS, AREA_NAMES: AREA };
+  return api;
+});
