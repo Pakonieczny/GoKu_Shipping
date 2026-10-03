@@ -316,13 +316,14 @@ const brief = e => [e.action, e.orderId, e.parts, e.orders, e.person, e.station,
 
       // nobody named: nothing is recorded, and the helper says so
       assert.strictEqual(await page.evaluate(() => CNAct('note', { detail: 'x' })), false, 'no name yet: nothing recorded');
+      assert.strictEqual(await page.evaluate(() => StationActivity.pending()), 0, 'and nothing is queued under nobody (the press is kept, and offered a name: tests/stations/sorter-identity.cjs)');
       assert.strictEqual(await page.evaluate(() => StationActivity.who()), null);
       // the typed name is the person (as the sorter's own prompts set it: B.employee + cn.employee)
       await page.evaluate(() => { B.employee = 'Tess Sorter'; localStorage.setItem('cn.employee', 'Tess Sorter'); });
       const who = await page.evaluate(() => StationActivity.who());
       assert.deepStrictEqual([who && who.person, who && who.station, who && who.device], ['Tess Sorter', 'sorter', 'charm-nest-1'], 'the typed name is the person, at the sorter');
       assert.strictEqual(await page.evaluate(() => CNAct('note', { detail: 'hello' })), true); await flush();
-      assert.deepStrictEqual(rec.ev('note').map(e => e.detail), ['hello']);
+      assert.deepStrictEqual(rec.ev('note').map(e => e.detail), ['x', 'hello'], 'the press made before the name was typed is recorded under it, then the next one');
       rec.events.length = 0;
 
       // 1 · Print QR label: a print, and the order completed (once, its two pieces)

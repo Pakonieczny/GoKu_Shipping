@@ -632,6 +632,14 @@ dialog.lmChat #modalListingDetails{flex:0 0 auto}
       font-weight:750;display:flex;align-items:center;justify-content:center;flex:0 0 auto}
 .bcWhoName{font-size:11.5px;font-weight:650;color:var(--ink70);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .bcWho input{border:0;outline:none;background:transparent;font-size:11.5px;font-weight:650;width:124px;color:var(--ink);padding:0}
+/* the name gate: a small labelled field, shown only when Generate QR or Print labels needs a name and none is set */
+.dsGate{display:flex;align-items:center;gap:8px;flex-wrap:wrap;min-width:0;font-size:12px;color:var(--ink70)}
+.dsGate[hidden]{display:none}
+.dsGate label{font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--ink45);font-weight:750}
+.dsGate .inp{width:172px;padding:6px 9px}
+.dsGateHint{flex:1 1 100%;font-size:11.5px;color:var(--ink45)}
+.dsGate[data-bad="1"] .dsGateHint{color:var(--clay)}
+.dsGate.float{position:fixed;top:62px;right:16px;z-index:60;background:var(--card);border:1px solid var(--goldLine);border-radius:12px;padding:10px 12px;box-shadow:var(--sh);max-width:min(360px,calc(100vw - 32px))}
 
 .bcThread{flex:1 1 auto;min-height:0;overflow-y:auto;overscroll-behavior:contain;
           padding:14px 14px 16px;display:flex;flex-direction:column;gap:2px;background:var(--card2)}
@@ -1354,7 +1362,7 @@ const DsActivity = (() => {
   /** Orders the labels left out (no metal we recognise, "solid" without a karat): a refusal, once per order and reason. */
   function heldBack(skipped, solid) {
     try {
-      const one = (id, why) => { const k = digits(id) + "|" + why; if (digits(id) && !held.has(k)) { held.add(k); log("reject", { orderId: digits(id), detail: why }); } };
+      const one = (id, why) => { const k = digits(id) + "|" + why; if (digits(id) && !held.has(k) && log("reject", { orderId: digits(id), detail: why })) held.add(k); };   // reported once, but only once it was really recorded
       (skipped || []).forEach(id => one(id, "not labelled: no recognised metal"));
       (solid || []).forEach(id => one(id, "not labelled: solid without a karat"));
     } catch (_) {}
@@ -1366,7 +1374,100 @@ const DsActivity = (() => {
     const tail = more ? " · " + String(more).replace(/\d{4,}/g, "#").replace(/\s+/g, " ").trim() : "";
     return log("error", { orderId: digits(orderId), detail: (what + tail).slice(0, 120) });
   }
-  return { pieces, printed, completed, undone, heldBack, chat, failed };
+  /** A person opened an order, or picked one in the list: a low-weight `note` with a fixed text, no order id (so it never makes
+      an order "worked"), no parts, no scan. It is here so the time between prints is working time, not idle: every action carries
+      the gap since the one before. Only the person's own clicks (the Charm Sorter's remote selections do not come through
+      here), and at most one every 30 s however fast they click, which keeps the error under 30 s a stretch of work. */
+  let lastLow = 0;
+  function opened(what) {
+    try {
+      const t = Date.now();
+      if (t - lastLow < 30000) return false;
+      if (!log("note", { detail: what === "selected order" ? "selected order" : "opened order" })) return false;
+      lastLow = t; return true;
+    } catch (_) { return false; }
+  }
+  return { pieces, printed, completed, undone, heldBack, chat, failed, opened };
+})();
+
+/* ── the name at this station. There is no PIN here: the person is whoever set a name (the order chat's "Set your name"
+   control, or the small field below when Generate QR or Print labels needs one and none is set). One person, one name: a
+   typed name is tidied before it is stored or sent (spaces collapsed, capitals made consistent, a lone initial gets its
+   dot), so "dana  d" and "Dana D." are one person in the efficiency log. A number is never a name (it could be a PIN):
+   digit runs of four or more are dropped, and a name with no letter is refused. A name that the PIN station left in this
+   browser goes through the same tidy once at load; it is idempotent and keeps mixed capitals ("McDonald") as they are. ── */
+const DsName = (() => {
+  const MAX = 80;
+  const startsOnly = w => !/\p{Lu}/u.test(w.replace(/(^|[-'\u2019.])\p{L}/gu, "$1"));          // no capital except at the start of a part
+  const recase = w => (w === w.toUpperCase() || startsOnly(w)) ? w.toLowerCase().replace(/(^|[-'\u2019.])(\p{L})/gu, (_, a, b) => a + b.toUpperCase()) : w;
+  /** "  dana   d " → "Dana D.", "O'BRIEN-smith" → "O'Brien-Smith"; "" when nothing usable is left. */
+  function normalize(raw) {
+    let s = String(raw == null ? "" : raw);
+    try { s = s.normalize("NFC"); } catch (_) {}
+    s = s.replace(/[\u0000-\u001f\u007f<>]/g, " ").replace(/\d{4,}/g, " ").replace(/\s+/g, " ").trim()
+         .replace(/^[^\p{L}\p{N}]+/u, "").replace(/[^\p{L}\p{N}.]+$/u, "");
+    let words = s.split(" ").filter(Boolean).map(recase);
+    if (words.length > 1) words = words.map(w => /^\p{L}$/u.test(w) ? w + "." : w);
+    const out = words.join(" ").slice(0, MAX).trim();
+    return /\p{L}/u.test(out) ? out : "";
+  }
+  const stored = () => { try { return String(localStorage.getItem(LS.employee) || ""); } catch (_) { return ""; } };
+  const current = () => normalize(stored());
+  try { const raw = stored().trim(), n = raw ? normalize(raw) : raw; if (raw && n !== raw) { if (n) localStorage.setItem(LS.employee, n); else localStorage.removeItem(LS.employee); } } catch (_) {}
+
+  /** Store the tidied name and make it the person signed in on this computer. Returns it, or "" when nothing usable was typed
+      (then nothing changes). The order chat's "Set your name" control and the gate below both end here. */
+  function set(raw) {
+    const v = normalize(raw), before = current();
+    if (!v) return "";
+    try { localStorage.setItem(LS.employee, v); } catch (_) {}
+    if (v !== before) { try { if (window.StationSession) StationSession.signedIn({ name: v, id: "" }); } catch (_) {} }
+    return v;
+  }
+
+  let box = null, input = null, hint = null, what = "", timer = 0;
+  const say = (text, bad) => { hint.textContent = text; if (bad) box.dataset.bad = "1"; else delete box.dataset.bad; };
+  function hide() { try { clearTimeout(timer); if (box) { box.hidden = true; delete box.dataset.bad; } } catch (_) {} }
+  function commit() {
+    const v = set(input.value);
+    if (!v) { if (input.value.trim()) { input.value = ""; say("Please type your name (letters, not a number).", true); } return false; }   // a number is not left on screen
+    input.value = ""; try { BritesChat.whoChanged(); } catch (_) {}
+    say(`Thanks, ${v}. Press ${what} again.`, false);
+    clearTimeout(timer); timer = setTimeout(hide, 7000);
+    return true;
+  }
+  function build() {
+    if (box) return;
+    box = document.createElement("div"); box.id = "dsNameGate"; box.className = "dsGate"; box.hidden = true;
+    box.setAttribute("role", "group"); box.setAttribute("aria-label", "Set your name");
+    const lab = document.createElement("label"); lab.htmlFor = "dsNameInput"; lab.textContent = "Set your name";
+    input = document.createElement("input"); input.id = "dsNameInput"; input.type = "text"; input.className = "inp";
+    input.placeholder = "First name and initial"; input.autocomplete = "off"; input.maxLength = MAX; input.setAttribute("enterkeyhint", "done");
+    hint = document.createElement("div"); hint.className = "dsGateHint"; hint.setAttribute("aria-live", "polite");
+    box.append(lab, input, hint);
+    input.addEventListener("keydown", ev => {
+      ev.stopPropagation();                                   // don't trip the page's shortcuts while typing
+      if (ev.key === "Enter") { ev.preventDefault(); commit(); }
+      else if (ev.key === "Escape") { ev.preventDefault(); input.value = ""; hide(); }
+    });
+    input.addEventListener("blur", () => { if (input.value.trim()) commit(); });   // clicking the action next just works
+    (document.body || document.documentElement).appendChild(box);
+  }
+  /** True when a name is set. Otherwise show the small field right beside the action that needed one (host: an element in the
+      open dialog; none: a corner of the page), focus it, and return false: the caller stops, nothing is cleared or lost, and
+      the person presses the action again once named. */
+  function need(action, host) {
+    if (current()) { hide(); return true; }
+    try {
+      build(); what = String(action || "the action");
+      if (host) { host.insertBefore(box, host.firstChild); box.classList.remove("float"); }
+      else { document.body.appendChild(box); box.classList.add("float"); }
+      say(`Your prints and completions are counted under it. Press Enter, then press ${what} again.`, false);
+      box.hidden = false; input.focus();
+    } catch (_) {}
+    return false;
+  }
+  return { normalize, current, set, need, hide };
 })();
 
 const LEDGER_TTL_DAYS = 60;
@@ -3515,7 +3616,7 @@ function makeTile(tx) {
   body.querySelector(".tMetal .lbl").textContent = mLbl;
   body.querySelector(".tRow .v").textContent = tx.sku || "N/A";
   body.title = "Open details";
-  body.addEventListener("click", ev => { ev.stopPropagation(); openListingModal(txid); });
+  body.addEventListener("click", ev => { ev.stopPropagation(); try { DsActivity.opened("opened order"); } catch (_) {} openListingModal(txid); });
 
   const findBtn = body.querySelector(".tFind");
   findBtn.title = `Scroll the order list to ${rid} and highlight it`;
@@ -3657,13 +3758,14 @@ function wireQueueInteractions() {
     if (lastRowIdx === null) lastRowIdx = idx;
 
     if (ev.shiftKey || ev.ctrlKey || ev.metaKey) {
+      try { DsActivity.opened("selected order"); } catch (_) {}
       const [from, to] = idx > lastRowIdx ? [lastRowIdx, idx] : [idx, lastRowIdx];
       for (let i = from; i <= to; i++) {
         if (!rows[i].classList.contains("rtLocked")) await selectRow(rows[i], { silent:true });
       }
     } else {
       if (selectedOrders.has(String(row.dataset.receipt))) deselectRow(row);
-      else await selectRow(row);
+      else { try { DsActivity.opened("selected order"); } catch (_) {} await selectRow(row); }
     }
     lastRowIdx = idx;
   });
@@ -4884,10 +4986,10 @@ const BritesChat = (() => {
     el.who.appendChild(inp);
     inp.focus(); inp.select();
     const commit = () => {
-      const v = (inp.value || "").trim();
-      if (v) { try { localStorage.setItem(LS.employee, v); } catch (_) {} }
-      // sign-in time: a name set here is the person signed in on this computer (the station has no PIN)
-      if (v && v !== cur) { try { if (window.StationSession) StationSession.signedIn({ name: v, id: "" }); } catch (_) {} }
+      // tidied (spaces, capitals) before it is stored or sent, so one person is one name; it is also the sign-in time for this
+      // computer (the station has no PIN). Nothing usable typed (empty, or only a number): the old name stays.
+      DsName.set(inp.value);
+      try { DsName.hide(); } catch (_) {}
       el.who.dataset.editing = "0";
       el.who.replaceChildren();
       const av = document.createElement("span"); av.className = "bcAv"; av.id = "bcWhoAv";
@@ -6711,6 +6813,7 @@ function wireUI() {
 
   const qrBtn = $("#completeBtn");
   qrBtn?.addEventListener("click", withLock(qrBtn, async function () {
+    if (selectedOrders.size && !DsName.need("Generate QR")) return;   // work is only counted under a name: ask first, lose nothing
     this.disabled = true;
     this.innerHTML = `<span class="spin"></span>Building`;
     try { await handleCompleteClick(); }
@@ -6719,7 +6822,11 @@ function wireUI() {
 
   $("#undoCompleteBtn")?.addEventListener("click", withLock($("#undoCompleteBtn"), handleUndoComplete, 800));
 
-  $("#qrPreviewPrintBtn")?.addEventListener("click", ev => { ev.preventDefault(); proceedToPrint(); });
+  $("#qrPreviewPrintBtn")?.addEventListener("click", ev => {
+    ev.preventDefault();
+    if (!DsName.need("Print labels", $("#qrPreviewModal .dlgFoot .left"))) return;   // no name: the dialog and its labels stay as they are
+    proceedToPrint();
+  });
   $("#qrCancelBtn")?.addEventListener("click", () => closeDlg($("#qrPreviewModal")));
 
   $("#lmClose")?.addEventListener("click", () => closeDlg($("#listingModal")));

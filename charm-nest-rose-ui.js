@@ -117,8 +117,9 @@
     const r=await api('roseRecordCut',{sheetId:sh.sheetId,stockId:sh.roseStock.id,revision:sh.roseRevision,planHash:sh.rosePlanHash,by:who,device:'charm-nest-1'});
     sh.roseCutAt=r.cut.at;sh.roseStock=r.stock;sh.roseHistory=[...decode([r.cut]),...(sh.roseHistory||[]).filter(c=>c.sheetId!==sh.sheetId)];
     refresh(sh);C.toast('Sheet cut · the next Rose Gold charms nest past this green line','ok');
-    // the efficiency record (station-activity.js): the person pressed Cut Sheet and the cut is recorded; the pieces are the sheet's charms
-    try{window.CNAct&&window.CNAct('complete',{parts:(sh.placements||[]).length,detail:'Rose Gold sheet cut (Cut Sheet)'});}catch(_){}
+    // the efficiency record (station-activity.js): the person pressed Cut Sheet and the cut is recorded; the pieces are the sheet's charms.
+    // Cutting is the Laser station's work, not the sorter's: station 'laser' (its own column in the Employee efficiency console)
+    try{window.CNAct&&window.CNAct('complete',{station:'laser',parts:(sh.placements||[]).length,detail:'Rose Gold sheet cut (Cut Sheet)'});}catch(_){}
   }
   const inSet=sh=>!!sh.setId&&!sh.draft;
   const observed=new WeakMap();
