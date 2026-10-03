@@ -1058,13 +1058,36 @@
         return WELD_STUD.test(text) && !WELD_NOT_STUD.test(text);
       } catch (_) { return false; }
     }
+    /* Why this order is NOT welded here, "" when it is (Paul, 3 Oct 2026: "only stud earrings get welded"). Used by the
+       seal (weldDone) and by the activity log (weldActivityOutcome), so the two always agree:
+         "order not found"                  Etsy says there is no such order
+         "no stud earrings on this order"   the receipt has lines and none of them is a stud
+         ""                                 it has a stud line, or the receipt cannot say (Etsy down, no line detail): as before */
+    function weldRefusal(d) {
+      const look = weldLookup(d);
+      if (look === "missing") return "order not found";
+      if (look === "ok") { const p = weldPieces(d); if (p.lines && !p.studs) return "no stud earrings on this order"; }
+      return "";
+    }
+    /* The one plain line for the person scanning an order that is not sealed Welded for lack of studs. An unknown order
+       keeps the page's own "(Not found)" ship-to line. Never on top of a pop-up: not while nobody is signed in (the PIN box
+       is up) and not under the cancelled-order alert. */
+    function weldTell(why) {
+      try {
+        if (why !== "no stud earrings on this order" || window.isEmployeeLoggedIn !== true || document.querySelector(".sttl-alert")) return;
+        if (window.M && M.toast) M.toast({ html: "No stud earrings on this order, so it is not marked Welded." });
+      } catch (_) {}
+    }
     /* The weld is done: the station has no "weld done" button, and its flow is "weld the studs, then scan at the Welding
        station", so the scan that loads the order here (phone scanner weld-scan-1 or typed) completes it. One `welded` for
        the order; on an order that mixes stud earrings with other pieces, one per stud line (its transaction), so only the
-       studs are stamped. Uses the receipt the page already loaded (no Etsy call); fire-and-forget, never throws. */
+       studs are stamped. An order Etsy does not know, or one with no stud line, is not sealed at all (weldRefusal).
+       Uses the receipt the page already loaded (no Etsy call); fire-and-forget, never throws. */
     function weldDone(orderNumber, orderData) {
       try {
         if (!window.StationTimeline) return;
+        const why = weldRefusal(orderData);
+        if (why) { weldTell(why); return; }                 // the single `reject` activity is logged by weldActivityOutcome
         const by = weldSignedIn(), data = by ? {} : { signedIn: false };
         const lines = Array.isArray(orderData && orderData.transactions) ? orderData.transactions : [];
         const studs = lines.filter(weldIsStud);
@@ -1126,8 +1149,8 @@
         const id = weldId(orderNumber), look = weldLookup(orderData), p = weldPieces(orderData);
         if (!id) return;                                // (reported once, at the scan)
         if (res && res.cancelled) return weldAct("reject", { orderId: id, detail: "cancelled order" });
-        if (look === "missing") return weldAct("reject", { orderId: id, detail: "order not found" });
-        if (look === "ok" && p.lines && !p.studs) return weldAct("reject", { orderId: id, detail: "no stud earrings on this order" });
+        const why = weldRefusal(orderData);               // the same test the seal uses: no seal, one `reject`
+        if (why) return weldAct("reject", { orderId: id, detail: why });
         if (look === "failed") weldAct("error", { orderId: id, detail: "Etsy order lookup failed" + (orderData && orderData.error ? ": " + String(orderData.error).slice(0, 60) : "") });
         if (weldCounted.has(id)) return;                // the same order scanned again: already counted
         weldCounted.set(id, Date.now());

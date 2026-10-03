@@ -5,7 +5,10 @@
 //   · the phone scanner relay (weld-scan-1) with a mixed order: `scan` "phone scan" and ONE `complete` for the order
 //   · the same order again: a `scan` ("again"), no second `complete`
 //   · rejects: an unknown order, an order with no studs, a cancelled order: `scan` + `reject`, never `complete`
-//   · Etsy down: `scan`, `error`, and the order still counted (the page still seals it welded)
+//   · the order timeline agrees with the activity (Paul, 3 Oct 2026: "only stud earrings get welded"): a stud order is sealed
+//     `welded` once; an unknown order and a no-stud order are NOT sealed (one `reject` each, the `scan` seal stays, the no-stud
+//     order gets one plain toast, the unknown one keeps the page's own lines); a cancelled order is not sealed and raises the alert
+//   · Etsy down: `scan`, `error`, and the order still counted (the page still seals it welded: it cannot tell)
 //   · text with no digits is one error (no scan, no completed order); an order welded before a page reload is not counted again
 //   · the order chat: a message and a picture are notes, a failure of either an error
 //   · every event says who (the name), welding, weld-1, this computer and session; signed out again: nothing more
@@ -45,7 +48,7 @@ const fbStub = `window.firebase = (() => {
   firestore.FieldValue = { delete: () => null, serverTimestamp: () => null, arrayUnion: () => null };
   return { initializeApp() {}, firestore, auth: () => ({ signInAnonymously: async () => ({}), onAuthStateChanged() {} }) };
 })();`;
-const mStub = `window.M = { AutoInit() {}, toast() {}, updateTextFields() {},
+const mStub = `window.M = { AutoInit() {}, toast(o) { (window.__toasts = window.__toasts || []).push(String(o && o.html || '')); }, updateTextFields() {},
   Modal: { init() { return { open() {}, close() {} }; }, getInstance() { return { open() {}, close() {} }; } },
   FormSelect: { init() { return {}; }, getInstance() { return { getSelectedValues: () => [] }; } } };`;
 const json = (r, body, status = 200) => r.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
@@ -55,6 +58,7 @@ async function until(fn, what, ms = 8000) {
   for (;;) { const v = await fn(); if (v) return v; if (Date.now() - t0 > ms) throw new Error('timed out waiting for ' + what); await wait(60); }
 }
 const acts = (order, action) => st.acts.filter(e => e.orderId === order && (!action || e.action === action));
+const seals = (order, type = 'welded') => st.events.filter(e => e.orderId === order && e.type === type);   // what reached the order timeline
 
 (async () => {
   const browser = await chromium.launch({ executablePath: process.env.CHROMIUM || '/opt/pw-browsers/chromium-1194/chrome-linux/chrome', args: ['--no-sandbox'] });
@@ -113,6 +117,8 @@ const acts = (order, action) => st.acts.filter(e => e.orderId === order && (!act
   const phone = id => page.evaluate(o => { const s = window.__snaps.filter(x => x.id === 'weld-scan-1').pop(); s.cb({ exists: true, data: () => ({ 'Order Number': o }) }); }, id);
   const flush = async () => { await page.evaluate(() => window.StationActivity.flush && window.StationActivity.flush()); await wait(150); };
   const outcome = async (id, action) => { await until(async () => { await flush(); return acts(id, action).length; }, `${action} for ${id}`); await wait(500); await flush(); };
+  const tl = async () => { await page.evaluate(() => window.OrderTimeline.flush()); await wait(250); await page.evaluate(() => window.OrderTimeline.flush()); await wait(150); };   // everything the page recorded has been sent
+  const noStudToasts = () => page.evaluate(() => (window.__toasts || []).filter(t => /No stud earrings on this order/.test(t)).length);
 
   // 1 · nobody signed in: the scan is read and sealed as before (not signed in), but no activity is recorded
   await enter(NOBODY);
@@ -131,6 +137,11 @@ const acts = (order, action) => st.acts.filter(e => e.orderId === order && (!act
   const [s1, c1] = acts(STUD);
   assert.strictEqual(s1.parts, 2, 'the scan carries the stud pieces'); assert(/typed/.test(s1.detail), 'how: ' + s1.detail);
   assert.strictEqual(c1.parts, 2, 'the weld produced 2 pieces'); assert.strictEqual(c1.orders, 1, 'and finished the order once');
+  await tl();                                                        // the timeline: a stud order is sealed welded once, by the person
+  assert.strictEqual(seals(STUD).length, 1, 'a stud order is sealed welded once: ' + JSON.stringify(seals(STUD)));
+  assert.strictEqual(seals(STUD)[0].by, WHO, 'by the person signed in'); assert.strictEqual(seals(STUD)[0].station, 'welding');
+  assert.strictEqual(seals(STUD, 'scan').length, 1, 'and scanned once');
+  assert.strictEqual(await noStudToasts(), 0, 'a stud order gets no "no stud earrings" line');
   for (const e of st.acts) {
     assert.strictEqual(e.person, WHO, 'who'); assert.strictEqual(e.station, 'welding'); assert.strictEqual(e.device, 'weld-1');
     assert.strictEqual(e.session, start.id, 'this sign-in session'); assert.strictEqual(e.computer, start.computerId, 'this computer');
@@ -142,6 +153,8 @@ const acts = (order, action) => st.acts.filter(e => e.orderId === order && (!act
   assert.deepStrictEqual(acts(MIXED).map(e => e.action), ['scan', 'complete'], 'one scan and ONE complete for a two-stud-line order: ' + JSON.stringify(acts(MIXED)));
   assert.strictEqual(acts(MIXED, 'scan')[0].detail, 'phone scan'); assert.strictEqual(acts(MIXED, 'scan')[0].parts, 3);
   assert.strictEqual(acts(MIXED, 'complete')[0].parts, 3); assert.strictEqual(acts(MIXED, 'complete')[0].orders, 1);
+  await tl();                                                        // the timeline: one welded per stud line, none for the necklace
+  assert.deepStrictEqual(seals(MIXED).map(e => String(e.transactionId)).sort(), ['94201', '94203'], 'a mixed order seals its two stud lines only: ' + JSON.stringify(seals(MIXED)));
 
   // 4 · the same order again: a scan, no second complete
   await enter(STUD);
@@ -152,17 +165,36 @@ const acts = (order, action) => st.acts.filter(e => e.orderId === order && (!act
   await enter(UNKNOWN); await outcome(UNKNOWN, 'reject');
   assert.deepStrictEqual(acts(UNKNOWN).map(e => e.action), ['scan', 'reject'], 'unknown: scan + reject, never complete');
   assert.strictEqual(acts(UNKNOWN, 'reject')[0].detail, 'order not found');
+  await tl();                                                        // the timeline agrees: scanned, never sealed welded, ONE reject
+  assert.strictEqual(seals(UNKNOWN, 'scan').length, 1, 'an unknown order is still scanned on the timeline');
+  assert.strictEqual(seals(UNKNOWN).length, 0, 'an unknown order is NOT sealed welded: ' + JSON.stringify(seals(UNKNOWN)));
+  assert.strictEqual(acts(UNKNOWN, 'reject').length, 1, 'one reject, not two');
+  assert.strictEqual(await noStudToasts(), 0, 'an unknown order keeps the page\'s own lines (no new message)');
   await enter(NOSTUD); await outcome(NOSTUD, 'reject');
   assert.deepStrictEqual(acts(NOSTUD).map(e => e.action), ['scan', 'reject'], 'no studs: scan + reject');
+  assert.strictEqual(acts(NOSTUD, 'reject')[0].detail, 'no stud earrings on this order');
+  await tl();
+  assert.strictEqual(seals(NOSTUD, 'scan').length, 1, 'a no-stud order is still scanned on the timeline');
+  assert.strictEqual(seals(NOSTUD).length, 0, 'a no-stud order is NOT sealed welded: ' + JSON.stringify(seals(NOSTUD)));
+  assert.strictEqual(acts(NOSTUD, 'reject').length, 1, 'one reject, not two');
+  assert.strictEqual(await noStudToasts(), 1, 'the person scanning is told, once, in one plain line');
+  assert.strictEqual(await page.locator('.sttl-alert').count(), 0, 'no alert for a no-stud order');
   await enter(CANC); await outcome(CANC, 'reject');
   assert.deepStrictEqual(acts(CANC).map(e => e.action), ['scan', 'reject'], 'cancelled: scan + reject');
   assert.strictEqual(acts(CANC, 'reject')[0].detail, 'cancelled order');
+  await tl();                                                        // a cancelled order: as before (scan seal marked cancelled, no weld, red alert)
+  assert.strictEqual(seals(CANC).length, 0, 'a cancelled order is not sealed welded');
+  assert(seals(CANC, 'scan').length === 1 && /cancelled order/.test(seals(CANC, 'scan')[0].text), 'the scan is recorded as a cancelled order');
+  assert.strictEqual(await page.locator('.sttl-alert').count(), 1, 'the red cancelled-order alert is up');
+  assert.strictEqual(await noStudToasts(), 1, 'no extra line on top of the alert');
   await page.click('.sttl-ok');                                      // Understood
 
   // 6 · Etsy down: the scan, an error, and the order still counted (the weld is sealed as before)
   await enter(DOWN); await outcome(DOWN, 'complete');
   assert.deepStrictEqual(acts(DOWN).map(e => e.action), ['scan', 'error', 'complete'], 'Etsy down: scan, error, complete: ' + JSON.stringify(acts(DOWN)));
   assert.strictEqual(acts(DOWN, 'complete')[0].parts, 0, 'pieces unknown'); assert(/not checked/.test(acts(DOWN, 'complete')[0].detail));
+  await tl();                                                        // the page cannot tell, so seal and activity both stand (as before)
+  assert.strictEqual(seals(DOWN).length, 1, 'Etsy down: the order is still sealed welded, as the activity counts it: ' + JSON.stringify(seals(DOWN)));
 
   // 7 · no duplicates anywhere, and the order the page logged them in
   const keys = st.acts.map(e => e.action + '|' + e.orderId + '|' + e.detail);
