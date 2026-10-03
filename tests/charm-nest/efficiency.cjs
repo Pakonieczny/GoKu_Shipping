@@ -52,7 +52,7 @@ const F = require('./efficiency-fixture.cjs');
     });
     await ctx.addInitScript(() => { try { localStorage.setItem('cn.employee', 'Tester'); } catch (_) {} window.confirm = () => true; window.alert = () => {}; window.__prompted = 0; window.prompt = () => { window.__prompted++; return null; }; });
   };
-  const track = page => { const errs = [], logs = []; page.on('pageerror', e => errs.push(e.message)); page.on('console', m => { logs.push(m.text()); /* the browser's own notice for the 401s and 503s this test forces on purpose is not an error of the page */ if (m.type() === 'error' && !/status of (401|503)/.test(m.text())) errs.push('console: ' + m.text()); }); return { errs, logs }; };
+  const track = page => { const errs = [], logs = []; page.on('pageerror', e => errs.push(e.message)); page.on('console', m => { logs.push(m.text()); /* the browser's own notice for the 401s and 503s this test forces on purpose is not an error of the page */ if (m.type() === 'error' && !(/status of (401|503)/.test(m.text()) && /employeeEfficiency/.test((m.location() && m.location().url) || ''))) errs.push('console: ' + m.text()); }); return { errs, logs }; };
   const openConsole = async page => { await page.click('#moreMenu > summary'); await page.click('#moreMenu .moreList button[data-mode="efficiency"]'); };
   const V = '#efficiencyView';
   const calls = () => fx.state.calls.filter(c => c.op === 'overview');

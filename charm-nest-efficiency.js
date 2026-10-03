@@ -266,7 +266,7 @@
 .efSR{display:grid;grid-template-columns:96px minmax(0,1fr) 72px 72px 112px;align-items:center;gap:14px;padding:6px 18px;min-height:34px}
 .efSR+.efSR{border-top:1px solid var(--line2)}
 .efSN{font-weight:700;font-size:12.5px}.efSN:before{content:"";display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--ink25);margin-right:8px;vertical-align:1px;transition:background .3s}
-.efSR.on .efSN:before{background:var(--sage)}
+.efSR.on .efSN:before{background:var(--sage)}.efSR.idle .efSN,.efSR.idle .efSV{color:var(--ink45)}.efSR.idle .efSV b{font-weight:500}
 .efSW{color:var(--ink70);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.efSW.none{color:var(--ink25)}.efQuiet{font-style:normal;color:var(--ink45);font-size:11px;margin-left:10px}.efQuiet:before{content:"";display:inline-block;width:5px;height:5px;border-radius:50%;background:var(--gold2);margin-right:6px;vertical-align:1px}
 .efSV{text-align:right;font-variant-numeric:tabular-nums;font-weight:650;white-space:nowrap}.efSV small{font-weight:500;color:var(--ink45);margin-left:4px;font-size:10.5px}
 .efSpark{display:block;overflow:visible}.efSL{fill:none;stroke:#6f6a62;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}.efSA{fill:rgba(93,90,82,.08);stroke:none}.efSD{fill:var(--gold);stroke:var(--card);stroke-width:1.5}
@@ -505,7 +505,7 @@
     // "on now" is only now: a day gone by shows who worked it
     setText(k.on.querySelector(".efKL"), M.past ? (M.days > 1 ? "People in range" : "People that day") : "People on now");
     setNum(k.on.querySelector(".efKV"), M.past ? b.people : b.on, nf, first); setNum(k.rate.querySelector(".efKV"), b.rate, rateTxt, first);
-    setText(k.parts.querySelector(".efKS"), ev && b.scans ? `${nf(b.scans)} scanned` : "");
+    setText(k.parts.querySelector(".efKS"), ev && b.scans ? `${nf(b.scans)} scans` : "");
     setText(k.on.querySelector(".efKS"), M.past ? "" : `of ${nf(b.people)} ${M.days > 1 ? `in ${M.days} days` : "today"}`);
   }
   const hoursOf = (win) => { const o = []; for (let h = win.lo; h <= win.hi; h++) o.push(h); return o; };
@@ -555,7 +555,8 @@
       const sig = names + "|" + quiet; if (r.sig !== sig) { r.sig = sig; r.w.textContent = names || "—"; if (quiet) r.w.appendChild(el("em", "efQuiet")).textContent = quiet; r.w.classList.toggle("none", !names); r.w.title = names + (quiet ? " · " + quiet : ""); }
       const evS = M.sources.events !== false;
       fig(r.parts, s.parts, evS, nf, first); fig(r.orders, s.orders, evS || !!M.sources.seals, nf, first);
-      r.spEl.style.visibility = trend || !evS ? "hidden" : "";
+      const idle = evS && !s.parts && !s.orders && !now.length; r.e.classList.toggle("idle", idle);   // a station with nothing yet is quiet on screen too
+      r.spEl.style.visibility = trend || !evS || idle ? "hidden" : "";
       if (!trend && evS) { const w = st.win, vals = []; for (let h = w.lo; h <= w.hi; h++) vals.push((s.hours || [])[h] || 0); r.sp.set(vals, w.today ? Math.min(vals.length - 1, w.nowH - w.lo) : vals.length - 1); }
     }
     // keep the rows in the same order, add late ones at the end, drop none that were shown
@@ -596,6 +597,7 @@
     const t = p.t, src = p.source, kParts = src !== "seals" && src !== "sessions", kOther = src !== "sessions";   // seals know orders and scans, not parts; sessions know only time
     fig(r.parts, t.parts, kParts, nf, first); fig(r.scans, t.scans, kOther, nf, first); fig(r.orders, t.orders, kOther, nf, first);
     fig(r.rate, t.rate, kParts && t.rate > 0, rateTxt, first); fig(r.sec, t.secPerScan, kOther && t.secPerScan > 0, secTxt, first);
+    r.scans.title = kOther && t.scanParts && t.scanParts !== t.scans ? `${nf(t.scanParts)} pieces scanned in ${nf(t.scans)} scans` : "";
     r.rate.title = t.rate ? "Parts per active hour" : ""; r.sec.title = t.secPerScan ? "Active seconds per scan" : "";
     const tot = t.activeMin + t.idleMin, pc = tot >= 1 ? Math.round(t.activeMin / tot * 100) : null;
     r.bar.style.width = pc == null ? "0%" : pc + "%"; setText(r.pct, pc == null ? "—" : pc + "%");
