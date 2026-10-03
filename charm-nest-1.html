@@ -6548,35 +6548,40 @@ boot();
      Design Station's sign-in), the same name every seal it stamps carries. -->
 <script src="station-session.js?v=20261002-ea1"></script>
 <script src="station-activity.js?v=20261002-ea1"></script>
-<script src="charm-nest-bridge.js?v=20261002-ea-br"></script>
+<script src="charm-nest-bridge.js?v=20261003-id1"></script>
 <script>
 try {
   const nameNow = () => { try { const n = String((window.CNEmployee && CNEmployee.name()) || "").trim(); return /^\d+$/.test(n) ? "" : n; } catch (_) { return ""; } };
+  // The sandbox (Settings; the page reloads when it is switched) is a rehearsal on emulated orders: its sign-in times and its
+  // work are written to the Sandbox_ copies only (the same door, ?sandbox=1), so they never reach the real Efficiency numbers.
+  const sandboxNow = () => { try { return (typeof WORKSPACE_SANDBOX !== "undefined" ? !!WORKSPACE_SANDBOX : S.settings.sandbox === "on") || /[?&]sandbox=1\b/.test(location.search); } catch (_) { return /[?&]sandbox=1\b/.test(location.search); } };
   StationSession.init({
-    station: "sorter", device: "charm-nest-1",
+    station: "sorter", device: "charm-nest-1", sandbox: sandboxNow(),
     person: () => { const n = nameNow(); return n ? { name: n, id: null } : null; },
     // midnight (New York): the name is cleared, so the next approval, label or decision asks who is working; what is on
-    // screen and the run are left as they are
+    // screen and the run are left as they are. What was pressed before a name was set is not put under tomorrow's name.
     signOut: () => {
       const was = nameNow();
       try { localStorage.removeItem("cn.employee"); } catch (_) {}
       try { if (window.B) B.employee = ""; } catch (_) {}
+      try { window.CNAct && CNAct.drop && CNAct.drop(); } catch (_) {}
       if (was) { try { window.CN && CN.toast("Signed out at midnight. Your name is asked again at your next approval, label or decision.", "", 7000); } catch (_) {} }
     }
   });
-  // a name set anywhere (an approval, a label, the sheet window, the Design Station's sign-in) is a sign-in at once
+  // a name set anywhere (an approval, a label, the sheet window, the small name field, the Design Station's sign-in) is a
+  // sign-in at once; the name is the one B.employee's setter made (trimmed, one spelling), never the raw typing
   const d = Object.getOwnPropertyDescriptor(window.B, "employee");
   if (d && typeof d.get === "function" && typeof d.set === "function")
     Object.defineProperty(window.B, "employee", { configurable: true, enumerable: true, get: d.get,
-      set(v) { d.set.call(window.B, v); try { const n = String(v || "").trim(); if (n && !/^\d+$/.test(n)) StationSession.signedIn({ name: n, id: null }); } catch (_) {} } });
+      set(v) { d.set.call(window.B, v); try { const n = String(d.get.call(window.B) || "").trim(); if (n && !/^\d+$/.test(n)) StationSession.signedIn({ name: n, id: null }); } catch (_) {} } });
 } catch (_) {}
 </script>
 <script src="charm-nest-sheetwin.js?v=20261002-ck"></script>
 <script src="charm-nest-tour.js?v=20260929-m11"></script>
 <script src="charm-nest-mail.js?v=20260928-ov2"></script>
-<script src="charm-nest-rose-ui.js?v=20261002-ea-rose"></script>
+<script src="charm-nest-rose-ui.js?v=20261003-id1"></script>
 <script src="charm-nest-export-ui.js?v=20260925-done"></script>
-<script src="charm-nest-library.js?v=20261002-ea-lib"></script>
+<script src="charm-nest-library.js?v=20261003-id1"></script>
 <script src="charm-nest-search.js?v=20260929-m5"></script>
 <script src="charm-nest-signins.js?v=20260929-m5"></script>
 <script src="charm-nest-efficiency.js?v=20261003-ef4"></script>

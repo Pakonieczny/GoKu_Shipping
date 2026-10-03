@@ -281,20 +281,142 @@ const fmtT = t => clockFormat.format(new Date(t));
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 // only for someone not looking at the sorter, as the sheet-complete alert does: on screen, the toast already says it
 const notifyPerson = (title, body) => { if (document.hidden && S.settings.notify === "on" && "Notification" in window && Notification.permission === "granted") { try { new Notification(title, { body }); } catch (_) {} } };
+/* Who is working. The sorter has no PIN sign-in (a plan decision): the person is a typed name kept in this browser
+   (cn.employee) and cleared at New York midnight, or the Design Station frame's sign-in when it brings one. One person must
+   be one name, so every name that is set, however it was typed, is made the same way here: trimmed, spaces collapsed, Title
+   Case ("tess  WELDER" and "Tess Welder" are one person), a lone initial gets its dot ("Marco R" = "Marco R."), and a name
+   typed with capitals of its own ("McDonald", "DeShawn") is kept as typed: the same rules the Design Stations use, so the name the
+   Design Station's sign-in brings is already in this form. A number is never a name (it would be a PIN): digit runs of four or
+   more are dropped and a name with no letter is refused. Idempotent. */
+const normName = raw => {
+  let s = String(raw == null ? "" : raw);
+  try { s = s.normalize("NFC"); } catch (_) {}
+  s = s.replace(/[\u0000-\u001f\u007f<>]/g, " ").replace(/\d{4,}/g, " ").replace(/\s+/g, " ").trim().replace(/^[^\p{L}\p{N}]+/u, "").replace(/[^\p{L}\p{N}.]+$/u, "");
+  // a part (between - ' . or a space) that is all small, all capitals or already Capitalised is made Capitalised; one with capitals of its own stays
+  const part = p => { const lo = p.toLowerCase(), cap = lo.charAt(0).toUpperCase() + lo.slice(1); return p === lo || p === p.toUpperCase() || p === cap ? cap : p; };
+  let words = s.split(" ").filter(Boolean).map(w => w.split(/([-'’.])/).map((seg, i) => (i % 2 ? seg : part(seg))).join(""));
+  if (words.length > 1) words = words.map(w => (/^\p{L}$/u.test(w) ? w + "." : w));
+  const out = words.join(" ").slice(0, 80).trim();
+  return /\p{L}/u.test(out) ? out : "";
+};
 const employeeName = () => B.employee || (B.link && B.link.state() && B.link.state().employee) || "";
+/* The prompt stays for the steps that cannot go on without a name (an approval, a label, a decision): they ask first. */
 function askEmployee() {
   const cur = employeeName();
   const v = prompt("Your name — recorded with every approval and decision:", cur || "");
-  if (v && v.trim()) { B.employee = v.trim(); localStorage.setItem("cn.employee", B.employee); }
+  if (v && v.trim()) B.employee = v;      // (B.employee's setter makes it one name, keeps it in this browser and signs the person in)
   return employeeName();
 }
-window.CNEmployee = { name: employeeName, ask: askEmployee };   // (the Library's Completed marks record who, charm-nest-library.js)
+/* The small name field: inline, never a browser pop-up and never modal, so it can sit over an open window (the order window,
+   the sheet window) without being a pop-up on a pop-up. It is what the name buttons open (Review, the order window, the
+   station panel), and it is what appears, calmly, when something a person did could not be put under a name. */
+const NameBar = (() => {
+  let bar = null, finish = null, pr = null, quietUntil = 0;   // (a hint put away with ✕ or Esc does not come back for 90 s: calm, not nagging)
+  const CSS = ".cnNameBar{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);z-index:2147483000;display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;box-sizing:border-box;max-width:min(540px,calc(100vw - 24px));padding:8px 10px;background:var(--card,#fff);border:1px solid var(--line,#ddd);border-radius:12px;box-shadow:0 10px 28px rgba(0,0,0,.14);font:12px var(--sans,system-ui,sans-serif);color:var(--ink70,#555)}"
+    + ".cnNameBar label{display:flex;flex-direction:column;line-height:1.3;min-width:0;flex:1 1 210px}.cnNameBar label b{font-weight:600;color:var(--ink,#222)}.cnNameBar .cnNbWhy{font-size:11px;color:var(--ink45,#777)}"
+    + ".cnNameBar input{flex:0 1 160px;min-width:120px;border:1px solid var(--line,#ddd);border-radius:8px;padding:5px 8px;font:13px var(--sans,system-ui,sans-serif);background:var(--card2,#fafafa);color:var(--ink,#222)}"
+    + ".cnNameBar input:focus{outline:2px solid rgba(74,107,120,.35);border-color:var(--slate,#4a6b78);background:var(--card,#fff)}"
+    + ".cnNameBar .cnNbX{border:0;background:transparent;color:var(--ink45,#777);cursor:pointer;font-size:14px;line-height:1;padding:4px 6px;border-radius:6px}.cnNameBar .cnNbX:hover{background:var(--paper2,#eee)}"
+    + ".cnNameBar .cnNbErr{flex:1 0 100%;font-size:11px;color:var(--ink70,#555)}.cnNameBar [hidden]{display:none}";
+  const css = () => { if (document.getElementById("cnNameBarCss")) return; const s = document.createElement("style"); s.id = "cnNameBarCss"; s.textContent = CSS; document.head.appendChild(s); };
+  // inside the window that is open (a modal window makes the rest of the page unreachable), else on the page
+  const host = () => { try { const open = [...document.querySelectorAll("dialog[open]")].filter(d => { try { return d.matches(":modal"); } catch (_) { return true; } }); return open[open.length - 1] || document.body; } catch (_) { return document.body; } };
+  function close(name) { const b = bar, f = finish; bar = null; finish = null; pr = null; if (b && !name && b.dataset.kind === "hint") quietUntil = Date.now() + 90000; try { if (b) b.remove(); } catch (_) {} if (f) f(name || ""); }
+  /** Shows the field. o: why (the calm line under the label), kind ("hint": nobody asked for it, so it takes no focus),
+      onSet(name) (after a name is saved). Resolves with the name saved, or "" when it is put away. */
+  function open(o) {
+    o = o || {};
+    try {
+      css();
+      const hint = o.kind === "hint", why = o.why || (hint ? "Add it and the work you just did is counted under it." : "Kept with your work on this computer today.");
+      if (hint && !bar && Date.now() < quietUntil) return Promise.resolve("");
+      if (bar && !bar.isConnected) { bar = null; finish = null; pr = null; }
+      if (bar) {
+        if (hint && bar.dataset.kind === "edit") return pr;       // (someone is already typing a name: nothing to add)
+        if (!hint) bar.dataset.kind = "edit";
+        bar.querySelector(".cnNbWhy").textContent = why; if (bar.parentNode !== host()) host().appendChild(bar);
+        if (!hint) { const i = bar.querySelector("input"); i.focus(); i.select(); }
+        return pr;
+      }
+      pr = new Promise(res => { finish = res; });
+      const id = "cnNb" + Math.random().toString(36).slice(2, 7);
+      bar = document.createElement("form"); bar.className = "cnNameBar"; bar.dataset.kind = hint ? "hint" : "edit"; bar.setAttribute("role", "group"); bar.setAttribute("aria-label", "Your name"); bar.noValidate = true;
+      bar.innerHTML = `<label for="${id}"><b>Your name</b><span class="cnNbWhy" aria-live="polite"></span></label><input id="${id}" type="text" maxlength="40" autocomplete="name" spellcheck="false" placeholder="e.g. Tess Welder"><button type="submit" class="btn sage xs">Save</button><button type="button" class="cnNbX" title="Not now" aria-label="Not now">✕</button><span class="cnNbErr" role="alert" hidden></span>`;
+      const input = bar.querySelector("input"), err = bar.querySelector(".cnNbErr");
+      bar.querySelector(".cnNbWhy").textContent = why;
+      input.value = hint ? "" : employeeName();
+      const me = bar;
+      bar.onsubmit = e => {
+        e.preventDefault(); e.stopPropagation();
+        const n = normName(input.value);
+        if (!n) { err.textContent = "Please type your name (letters, not a number)."; err.hidden = false; input.focus(); return; }
+        B.employee = n;
+        const saved = B.employee; close(saved);
+        try { if (typeof o.onSet === "function") o.onSet(saved); } catch (_) {}
+      };
+      bar.querySelector(".cnNbX").onclick = e => { e.preventDefault(); close(""); };
+      input.oninput = () => { err.hidden = true; };
+      // (the page's own keys never see what is typed here, and Esc puts only this field away, not the window under it)
+      bar.onkeydown = e => { e.stopPropagation(); if (e.key === "Escape") { e.preventDefault(); close(""); } };
+      bar.onclick = e => e.stopPropagation();
+      host().appendChild(bar);
+      if (!hint) requestAnimationFrame(() => { if (bar === me) { input.focus(); input.select(); } });
+      return pr;
+    } catch (_) { return Promise.resolve(""); }
+  }
+  /** A name was set somewhere else: a field that only offered to take one is no longer needed. */
+  const settled = () => { if (bar && bar.dataset.kind === "hint") close(employeeName()); };
+  return { open, close: () => close(""), settled, isOpen: () => !!(bar && bar.isConnected) };
+})();
+window.CNEmployee = { name: employeeName, ask: askEmployee, normalize: normName, edit: NameBar.open };   // (the Library's Completed marks record who, charm-nest-library.js)
 /* What a person did here, for the Employee efficiency console (station-activity.js, loaded before this file; the person is
    the name above, as charm-nest-1.html hands it to StationSession). Called only where a person pressed something that
    finished or undid work (print, complete, undo, engraving approved, sent to a sheet, laser/cut marked) and when a held-back
-   press or a failure is shown to them: never from a background step. It never throws and never waits, and records nothing
-   when nobody is signed in. */
-const humanAct = window.CNAct = (action, o) => { try { return !!(window.StationActivity && window.StationActivity.log(action, o)); } catch (_) { return false; } };
+   press or a failure is shown to them: never from a background step. It never throws and never waits.
+   Station: `sorter` for the sorter's own work (approvals, labels, decisions, sends to a sheet); a laser or cutting mark (the
+   Library's laser check, back to Laser cutting, the sheet window's Completed, Rose Gold's Cut Sheet) passes { station: "laser" }
+   and is recorded at the Laser station, so each shows in its own column of the console. station-activity.js takes the station
+   from the sign-in and has no option for it, so the one call is made with the page's sign-in reporting that station.
+   Nobody named: the press is never blocked and never silently dropped. It is kept (25 at most, 20 minutes, in this tab only)
+   and the small name field offers itself; when a name is set the kept presses are recorded under it.
+   The sandbox: its sign-in and its events write only the Sandbox_ copies (charm-nest-1.html hands StationSession the sandbox
+   flag); an event that would go to the real numbers from a sandbox sorter is dropped here as well. */
+const HERE = new Set(["sorter", "laser"]), HELD_MAX = 25, HELD_MS = 20 * 60 * 1000, held = [];
+const sessionWho = () => { try { const SS = window.StationSession; return SS && typeof SS.who === "function" ? SS.who() : null; } catch (_) { return null; } };
+const sessionUp = () => { try { const SS = window.StationSession; return !!(SS && typeof SS.page === "function" && SS.page()); } catch (_) { return false; } };
+function logAs(action, o, station) {
+  const SS = window.StationSession, real = SS && SS.who;
+  let swapped = false;
+  try {
+    if (station && station !== "sorter" && typeof real === "function") { SS.who = function () { const w = real.apply(SS, arguments); return w ? Object.assign({}, w, { station }) : w; }; swapped = true; }
+    return !!(window.StationActivity && window.StationActivity.log(action, o));
+  } catch (_) { return false; }
+  finally { if (swapped) { try { SS.who = real; } catch (_) {} } }
+}
+const humanAct = window.CNAct = (action, o) => {
+  try {
+    if (!window.StationActivity || !sessionUp()) return false;
+    const opts = Object.assign({}, o), station = HERE.has(opts.station) ? opts.station : "sorter"; delete opts.station;
+    const w = sessionWho();
+    if (!w) {
+      held.push({ action, opts, station, at: Date.now() }); if (held.length > HELD_MAX) held.shift();
+      NameBar.open({ kind: "hint", why: "Add it and the work you just did is counted under it." });
+      return false;
+    }
+    if (WORKSPACE_SANDBOX && !w.sandbox) return false;
+    return logAs(action, opts, station);
+  } catch (_) { return false; }
+};
+/** A name is set: what was pressed before it, in the last 20 minutes, is recorded under it. */
+humanAct.release = () => {
+  try {
+    if (!held.length || !sessionWho()) return;
+    const now = Date.now();
+    for (const h of held.splice(0)) if (now - h.at <= HELD_MS) humanAct(h.action, Object.assign({}, h.opts, { station: h.station }));
+  } catch (_) {}
+};
+humanAct.drop = () => { held.length = 0; };       // (the midnight sign-out: yesterday's presses are never put under tomorrow's name)
+humanAct.held = () => held.length;
 const piecesOfRows = rows => { try { return (rows || []).reduce((n, r) => n + Math.max(1, Math.floor(+(r && r.line && r.line.quantity) || 1)), 0); } catch (_) { return 0; } };
 /* Who the server's Nested stamps name (placed, setCommitted: poolUpdate), Paul, 28 Sep (station tracking E). The sorter
    has no person login of its own (its passcode is shared): the person on duty is the name its sign-in keeps (cn.employee,
@@ -378,6 +500,24 @@ const CNFrame = window.CNFrame = (() => {
   }
   return { later, cancel: key => due.delete(key) };
 })();
+/* B.employee: the one place a name is set. Every way of typing it ends here (the prompt, the card's field, the sheet window's
+   bar, the small name field, the Design Station's sign-in), so they all make it one name (normName), keep it in this browser,
+   and refuse a number. The accessor is the order timeline's (above), wrapped: it still re-syncs the timeline's `by`. After the
+   setter returns (charm-nest-1.html signs the person in right after it) what was pressed before a name existed is recorded
+   under it. */
+try {
+  const base = Object.getOwnPropertyDescriptor(B, "employee");
+  if (base && typeof base.get === "function" && typeof base.set === "function") {
+    base.set.call(B, normName(base.get.call(B)));
+    Object.defineProperty(B, "employee", { configurable: true, enumerable: true, get: base.get, set: v => {
+      const raw = String(v == null ? "" : v).trim(), n = normName(raw);
+      base.set.call(B, n);
+      try { if (n) localStorage.setItem("cn.employee", n); else if (raw) localStorage.removeItem("cn.employee"); } catch (_) {}
+      if (raw && !n) { try { toast("That isn't a name. Please type your name (letters, not a number).", "bad", 5000); } catch (_) {} }
+      if (n) queueMicrotask(() => { try { humanAct.release(); NameBar.settled(); } catch (_) {} });
+    } });
+  }
+} catch (_) {}
 
 /* ═══ 17 · DesignLink — the Design Station as a slave ═════════════════════ */
 const LiveStrip = window.LiveStrip = (() => {
@@ -526,7 +666,7 @@ const DesignLink = window.DesignLink = (() => {
       try { st = await call("hello", { sorterClientId: S_.nonce, runId: B.run ? B.run.runId : null }, { timeoutMs: 30000 }); } catch (e2) { if (S_.up && S_.state) return S_.state; reloadFrame("two hellos went unanswered"); throw e2; } }
     S_.state = st; S_.up = true; S_.misses = 0; S_.lastHello = Date.now(); if (st.etsy && st.etsy.meter) etsyReadout(st.etsy.meter);
     if (!!st.sandbox !== (WORKSPACE_SANDBOX)) { S_.control = false; S_.up = false; const why = `the station is in ${st.sandbox ? "SANDBOX" : "production"} mode but this sorter is in ${WORKSPACE_SANDBOX ? "SANDBOX" : "production"} mode`; agent({ bridge: true }, "warn", `Session refused: ${why}`); toast(`Session refused — ${why}. Reload the frame.`, "bad", 9000); throw new Error(why); }
-    if (st.employee && !B.employee) { B.employee = st.employee; localStorage.setItem("cn.employee", st.employee); }
+    if (st.employee && !B.employee) B.employee = st.employee;   // (the station's own sign-in: kept, as before; the setter keeps it in this browser)
     S_.veil && S_.veil.classList.add("hidden"); Dock.layout();
     agent({ bridge: true }, "DS", `Session ${S_.nonce.slice(0, 4)} open on ${st.bench} · ${st.counts.open} open orders (${st.counts.hydrated} read) · ${st.selection.length} selected · Etsy ${st.etsy.signedIn ? "signed in" : "NOT signed in"}${st.releasedFromPreviousSession && st.releasedFromPreviousSession.length ? ` · released ${st.releasedFromPreviousSession.length} lock(s) from a previous session` : ""}`);
     if (!st.etsy.signedIn) toast("The Design Station is not signed in to Etsy — press Connect Etsy", "bad", 8000);
@@ -807,7 +947,7 @@ const Views = window.Views = (() => {
     v.querySelector("#dsControl").onclick = async () => { if (DesignLink.inControl()) { if (B.run && B.run.status === "running" && !confirm("The run is working through the station right now. Releasing the station stops the run until you take control again and press Resume.\n\nRelease anyway?")) return; await DesignLink.release(); } else { try { await DesignLink.ensure(); } catch (e) { toast("Could not open the session: " + e.message, "bad", 6000); } } DesignLink.renderConsole(); };
     v.querySelector("#dsConnectEtsy").onclick = () => DesignLink.connectEtsy().catch(e => toast(e.message, "bad", 6000));
     v.querySelector("#dsReload").onclick = () => { const f = document.getElementById("dsFrame"); if (f) f.src = DesignLink.frameUrl(); };
-    v.querySelector("#dsSetEmployee").onclick = () => { askEmployee(); document.getElementById("dsEmployee").textContent = employeeName() || "— not set —"; };
+    v.querySelector("#dsSetEmployee").onclick = () => { NameBar.open({ onSet: () => { const d = document.getElementById("dsEmployee"); if (d) d.textContent = employeeName() || "— not set —"; } }); };
     return host;
   }
   function onShow(mode) {
@@ -6606,8 +6746,8 @@ const CustomPrint = window.CustomPrint = (() => {
   /** A step that records a name: straight on when one is saved, else once it is typed in the card (withName). */
   function withName(key, go) { const who = employeeName(); if (who) { go(who); return; } asking.set(key, go); redraw(); }
   function named(key, name) {
-    const go = asking.get(key); name = String(name || "").trim(); if (!go || !name) return false;
-    B.employee = name; try { localStorage.setItem("cn.employee", name); } catch (_) {}
+    const go = asking.get(key); name = normName(name); if (!go || !name) return false;
+    B.employee = name;
     asking.delete(key); redraw(); go(employeeName());
     return true;
   }
@@ -7588,7 +7728,7 @@ const CustomSheet = window.CustomSheet = (() => {
       if (!D.it || busy.get(D.ck)) return;
       if (notReady(all()[D.ck])) { nudge(); return; }
       const who = d.querySelector("#cuWho input");
-      if (!employeeName()) { const v = who.value.trim(); if (!v) { D.askName = true; paint(); who.focus(); lit(who, "cuNudge"); return; } B.employee = v; try { localStorage.setItem("cn.employee", v); } catch (_) {} }
+      if (!employeeName()) { const v = normName(who.value); if (!v) { D.askName = true; paint(); who.focus(); lit(who, "cuNudge"); return; } B.employee = v; }
       send(D.it);
     };
     d.querySelector("#cuWho input").onkeydown = ev => { ev.stopPropagation(); if (ev.key === "Enter") { ev.preventDefault(); d.querySelector("[data-send]").click(); } };
@@ -8821,7 +8961,7 @@ const Review = window.Review = (() => {
     if(keptFind)v.querySelector('#rvOrderFind').closest('label').replaceWith(keptFind);
     const find=v.querySelector('#rvOrderFind');find.value=RV.q || '';
     find.oninput=()=>{RV.q=find.value;render({still:true});};
-    v.querySelector("#rvName").onclick = () => { askEmployee(); render(); };
+    v.querySelector("#rvName").onclick = () => { NameBar.open({ onSet: () => render() }); };
     // a chip pressed again lets go of its filter
     v.querySelectorAll("[data-k]").forEach(b => b.onclick = () => { RV.filter = b.dataset.k === f ? null : b.dataset.k; render(); });
     v.querySelectorAll("[data-cseg]").forEach(b => b.onclick = () => { RV.cseg = b.dataset.cseg; RV.filter = null; render(); });
@@ -9435,7 +9575,7 @@ const OrderWin = window.OrderWin = (() => {
     W.dlg.addEventListener("tour:back", () => { if (W.dlg.open && !W.closing) tryDo(paint); });
     byId("owPhoto").onclick = e => e.currentTarget.classList.toggle("zoom");
     byId("owCopy").onclick = async () => { const r = rowOf(W.key); const sku = r && ((r.spec && r.spec.designSku) || r.line.sku); if (!sku) return; try { await navigator.clipboard.writeText(sku); toast("SKU copied", "ok", 1800); } catch (_) {} };
-    byId("owWhoBtn").onclick = () => { askEmployee(); paintWho(); };
+    byId("owWhoBtn").onclick = () => { NameBar.open({ onSet: paintWho }); };
     const note = byId("owNote");
     note.oninput = () => {
       note.classList.toggle("has", !!note.value.trim());
@@ -9536,6 +9676,7 @@ const OrderWin = window.OrderWin = (() => {
   }
   function paintWho() {
     const w = byId("owWho"); if (w) w.textContent = me() || "Set your name";
+    const wb = byId("owWhoBtn"); if (wb) wb.title = me() ? "The name your messages and your work carry · press to change it" : "No name set yet · press to add yours, so your work is counted";
     // messages and the staff note go to the order's record itself: this says whether it can be reached right now, and a
     // message typed meanwhile waits here and goes by itself
     const st = byId("owLink"); if (!st) return;
