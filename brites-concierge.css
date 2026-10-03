@@ -5,3 +5,5 @@
 @media(prefers-reduced-motion:reduce){.messages{scroll-behavior:auto}}
 
 .card[data-attentive="true"]{border-color:#6c9ba9;box-shadow:0 3px 14px #356c7c18}.card{transition:border-color .22s,box-shadow .22s}@media(prefers-reduced-motion:reduce){.card{transition:none}}
+
+.bag-next{grid-column:1/-1;justify-self:start;white-space:nowrap}

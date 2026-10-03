@@ -14,8 +14,8 @@
     const w = clamp(width * .17, 144, 210), h = Math.min(244, Math.max(176, w * 1.16));
     const cx = (target.left + target.right) / 2, cy = (target.top + target.bottom) / 2;
     const candidates = [
-      {left: target.right + gap, top: clamp(cy - h / 2, edge, height - h - edge), side: 'right'},
       {left: target.left - gap - w, top: clamp(cy - h / 2, edge, height - h - edge), side: 'left'},
+      {left: target.right + gap, top: clamp(cy - h / 2, edge, height - h - edge), side: 'right'},
       {left: clamp(cx - w / 2, edge, width - w - edge), top: target.top - gap - h, side: 'above'},
       {left: clamp(cx - w / 2, edge, width - w - edge), top: target.bottom + gap, side: 'below'}
     ];
@@ -54,6 +54,7 @@
       // fixed child escapes the panel's normal flex layout without reparenting.
       const style = stage.style;
       style.position = 'fixed'; style.left = position.left + 'px'; style.top = position.top + 'px'; style.width = position.width + 'px'; style.height = position.height + 'px'; style.minHeight = '0'; style.minWidth = '0'; style.maxWidth = 'none'; style.maxHeight = 'none'; style.right = 'auto'; style.bottom = 'auto'; style.flex = 'none'; style.zIndex = '2147483005'; style.pointerEvents = 'none'; style.overflow = 'visible'; style.background = 'transparent';
+      try {options.onPlacement?.({...position}, next);} catch {}
       return true;
     }
     function schedule() {
