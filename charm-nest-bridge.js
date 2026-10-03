@@ -5503,16 +5503,169 @@ const LaserReview = window.LaserReview = (()=>{
     body.innerHTML='<section class="laserSection readyArea" data-laser-area="ready"><h2>Laser cutting <span>Ready sheets and sets</span></h2><p class="laserEmpty">No sheets are ready for cutting yet.</p><div class="laserAreaItems"></div></section><section class="laserSection" data-laser-area="pending"><h2>In progress</h2><div class="laserAreaItems"></div></section>';
   }
   function place(card,ready,body){body.querySelector(`[data-laser-area="${ready?'ready':'pending'}"] .laserAreaItems`).appendChild(card);}
+  /* ── The step rail, the "what is left" line and the checklist (Paul, 3 Oct: "I'm not sure why this sheet did not advance to
+     Laser Cutting ... I often find myself wondering what is still remaining"). Every sheet card and set card shows where it
+     stands on the process steps; a card still In progress says in one line what it waits for, and a tap lists it: each item
+     names the order, charm or sheet and opens it. The words come from CharmNestReadiness.explain, which reads the same stages
+     the sections do, so a card can never say ready where it sits In progress. Drawn from refresh(): whatever changes a card
+     (an approval, a saved back, a label, a poll) re-draws it with the next frame, and only when its words changed. */
+  const openFlow=new Set(),CHECK='<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2.6 6.3l2.2 2.2 4.6-4.9"/></svg>';
+  let checkingNow=false;
+  function flowCss(){
+    if(document.getElementById('flowWhyCss'))return;
+    const s=document.createElement('style');s.id='flowWhyCss';
+    s.textContent=`.flowBox{container-type:inline-size;display:grid;gap:5px;font:12px/1.4 var(--sans);color:var(--ink70)}
+.flowRail{list-style:none;margin:0;padding:0;display:flex;align-items:flex-start}
+.flowStep{flex:1 1 0;min-width:0;position:relative;display:flex;flex-direction:column;align-items:center;gap:3px;font-size:10px;line-height:1.15;color:var(--ink45);text-align:center}
+.flowStep::before{content:"";position:absolute;top:7px;right:50%;width:100%;height:2px;background:var(--line)}
+.flowStep:first-child::before{display:none}
+.flowStep.done+.flowStep::before{background:var(--sage)}
+.flowDot{position:relative;z-index:1;width:16px;height:16px;border-radius:50%;border:2px solid var(--ink25);background:var(--card);display:grid;place-items:center;font:700 9px/1 var(--sans);color:#fff}
+.flowDot svg{width:9px;height:9px;fill:none;stroke:#fff;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.flowStep.done .flowDot{background:var(--sage);border-color:var(--sage)}
+.flowStep.waiting.current .flowDot{border-color:var(--gold2);box-shadow:0 0 0 3px rgba(202,168,97,.28)}
+.flowStep.waiting.current .flowDot::after{content:"";width:6px;height:6px;border-radius:50%;background:var(--gold)}
+.flowStep.blocked .flowDot{background:var(--clay);border-color:var(--clay)}
+.flowStep.blocked.current .flowDot{box-shadow:0 0 0 3px rgba(176,86,63,.22)}
+.flowStep.ready .flowDot{border-color:var(--sage);background:var(--sageSoft);box-shadow:0 0 0 3px rgba(95,122,91,.22)}
+.flowStep.ready .flowDot::after{content:"";width:6px;height:6px;border-radius:50%;background:var(--sage)}
+.flowStep span{display:none;white-space:nowrap}
+.flowStep.current span{color:var(--ink);font-weight:600}
+.flowStep.blocked.current span{color:var(--clay)}
+.flowNow{font-size:11px;color:var(--ink45)}.flowNow b{color:var(--ink);font-weight:600}
+.flowBox[data-state=blocked] .flowNow b{color:var(--clay)}
+@container (min-width:430px){.flowStep span{display:block}.flowNow{display:none}}
+.flowLine{all:unset;box-sizing:border-box;display:flex;align-items:flex-start;gap:7px;width:100%;padding:3px 0;cursor:pointer;font:12px/1.4 var(--sans);color:var(--ink70)}
+.flowLine:focus-visible{outline:2px solid var(--gold);outline-offset:2px;border-radius:6px}
+.flowMark{flex:0 0 7px;height:7px;margin-top:5px;border-radius:50%;background:var(--gold2)}
+.flowBox[data-state=blocked] .flowMark{background:var(--clay)}
+.flowBox[data-state=blocked] .flowText{color:#8a3a26}
+.flowText{flex:1 1 auto;min-width:0;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.flowLine[aria-expanded=true] .flowText{display:block;overflow:visible}
+.flowCaret{flex:none;font:600 15px/1.1 var(--sans);color:var(--ink45);transition:transform .15s}
+.flowLine[aria-expanded=true] .flowCaret{transform:rotate(90deg)}
+.flowBusy{flex:none;display:inline-flex;align-items:center;gap:5px;font-size:11px;color:var(--ink45)}
+.flowBusy .spin{width:10px;height:10px;border:2px solid rgba(0,0,0,.15);border-top-color:var(--ink45);border-radius:50%;animation:spin .7s linear infinite}
+.flowList{list-style:none;margin:0;padding:8px 0 2px;display:grid;gap:8px;border-top:1px solid var(--line2)}
+.flowList[hidden]{display:none}
+.flowRow{display:grid;grid-template-columns:16px minmax(0,1fr);gap:1px 8px;align-items:start}
+.flowRow>i{grid-row:1/3;width:16px;height:16px;border-radius:50%;margin-top:1px;display:grid;place-items:center;font:700 9px/1 var(--sans);font-style:normal;color:#fff;background:var(--ink25)}
+.flowRow>i svg{width:9px;height:9px;fill:none;stroke:#fff;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.flowRow.done>i{background:var(--sage)}.flowRow.waiting>i{background:var(--gold2)}.flowRow.blocked>i{background:var(--clay)}
+.flowRow>b{font-weight:600;color:var(--ink)}
+.flowRow>small{grid-column:2;font-size:11.5px;color:var(--ink70);line-height:1.4}
+.flowItems{grid-column:2;list-style:none;margin:3px 0 0;padding:0;display:grid;gap:4px}
+.flowItem{all:unset;box-sizing:border-box;display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;padding:5px 9px;border:1px solid var(--line);border-radius:8px;background:var(--card2);cursor:pointer;font:12px/1.35 var(--sans);color:var(--ink)}
+.flowItem:hover{border-color:var(--gold2)}.flowItem:focus-visible{outline:2px solid var(--gold);outline-offset:1px}
+.flowItem>span{min-width:0}.flowItem b{font-weight:600}.flowItem small{display:block;font-size:11px;color:var(--ink70)}
+.flowItem>em{flex:none;font:600 14px/1 var(--sans);font-style:normal;color:var(--ink45)}
+.flowMore{all:unset;cursor:pointer;font:11.5px var(--sans);color:var(--slate);padding:2px 9px}.flowMore:hover{text-decoration:underline}
+.flowItems>li[hidden]{display:none}`;
+    document.head.appendChild(s);
+  }
+  // the chain of what to show on a card: a set card for a real set (its sheets only when it holds several), and each sheet
+  // card; a loose group (14K / 10K solids, sheets held for a later set) is not a set, so its sheets each carry their own
+  function flowSlots(card){
+    const kind=card.dataset.laserCard,st=card._laserSet,out=[],articles=kind==='sheet'?[card]:[...card.querySelectorAll('.librarySheet')];
+    const real=kind==='set' && !!st?.setId && !st.standalone && !st.working;
+    if(real)out.push({host:card,kind:'set',id:st.setId});
+    if(!real || articles.length>1)for(const a of articles){
+      const id=a.querySelector('.libCard')?.dataset.id || a.querySelector('[data-laser-sheet]')?.dataset.laserSheet || (kind==='sheet'?card._laserSheets?.[0]:'');
+      if(id)out.push({host:a,kind:'sheet',id});
+    }
+    return out;
+  }
+  function explainOf(slot,card,lookup){
+    if(slot.kind==='set'){
+      const st=card._laserSet || sets.get(slot.id) || {};
+      return R.explain({...st,setId:slot.id},{kind:'set',lookup,sheets:(card._laserSheets || []).map(id=>records.get(id)).filter(Boolean).map(projected)});
+    }
+    const s=records.get(slot.id);if(!s)return null;
+    const p=projected(s),ctx={lookup};
+    if(p.setId && !p.draft && p.solidIncluded!==false){
+      const st=sets.get(p.setId) || (card._laserSet?.setId===p.setId?card._laserSet:null);
+      if(st){ctx.set=st;ctx.sheets=(st.sheetIds || []).map(id=>records.get(id)).filter(Boolean).map(projected);}else ctx.setMissing=true;
+    }
+    return R.explain(p,ctx);
+  }
+  function railHtml(e){
+    const at=e.steps.findIndex(s=>s.current),now=e.steps[at];
+    return `<ol class="flowRail" aria-label="Process steps">${e.steps.map(s=>`<li class="flowStep ${s.state}${s.current?' current':''}${s.current && e.ready && s.key==='laser'?' ready':''}"${s.current?' aria-current="step"':''} title="${esc(`${s.label}: ${s.detail}`)}"><i class="flowDot">${s.state==='done'?CHECK:s.state==='blocked'?'!':''}</i><span>${esc(s.label)}</span></li>`).join('')}</ol>${now?`<div class="flowNow"><b>${esc(now.label)}</b> · step ${at+1} of ${e.steps.length}</div>`:''}`;
+  }
+  function listHtml(e,own){
+    // (a sheet's own card leaves out the items that only point back at that sheet)
+    const itemsOf=s=>s.state==='done'?[]:s.items.filter(it=>!(own && it.kind==='sheet' && it.id===own));
+    const itemHtml=(it,n)=>`<li${n>=8?' hidden data-more':''}><button type="button" class="flowItem" data-fi-kind="${esc(it.kind)}" data-fi-id="${esc(it.id)}"><span><b>${esc(it.label)}</b><small>${esc(it.why)}</small></span><em aria-hidden="true">›</em></button></li>`;
+    return e.steps.filter(s=>s.key!=='completed' && (s.key!=='laser' || (!e.ready && s.items.length))).map(s=>{
+      const items=itemsOf(s);
+      return `<li class="flowRow ${s.state}"><i>${s.state==='done'?CHECK:s.state==='blocked'?'!':''}</i><b>${esc(s.label)}</b><small>${esc(s.detail)}</small>${items.length?`<ul class="flowItems">${items.map(itemHtml).join('')}${items.length>8?`<li><button type="button" class="flowMore" data-fi-more>Show ${items.length-8} more</button></li>`:''}</ul>`:''}</li>`;
+    }).join('');
+  }
+  function openItem(btn){
+    const kind=btn.dataset.fiKind,id=btn.dataset.fiId;
+    if(kind==='sheet'){if(typeof window.openLibrarySheet==='function')return window.openLibrarySheet(id);return window.SheetWin?.open?.(id);}
+    const rid=String(id).split('_')[0].replace(/\D/g,'');if(!rid)return;
+    if(typeof window.openOrderFrom==='function')return window.openOrderFrom(btn,rid,kind==='charm'?{poolId:id}:{});
+    return window.OrderWin?.openOrder?.(rid,{from:btn});
+  }
+  function flowBox(slot){
+    const key=`${slot.kind}:${slot.id}`;let box=[...slot.host.children].find(x=>x.classList?.contains('flowBox') && x.dataset.flowFor===key);
+    if(box)return box;
+    for(const old of [...slot.host.children])if(old.classList?.contains('flowBox'))old.remove();   // (the card now stands for another record)
+    box=document.createElement('div');box.className='flowBox';box.dataset.flowFor=key;
+    box.addEventListener('click',ev=>{
+      const t=ev.target.closest?.('button');if(!t)return;
+      if(t.hasAttribute('data-flow-toggle')){ev.stopPropagation();setFlowOpen(box,box.querySelector('.flowList')?.hidden!==false);}
+      else if(t.hasAttribute('data-fi-more')){ev.stopPropagation();t.closest('ul').querySelectorAll('[data-more]').forEach(n=>n.hidden=false);t.closest('li').remove();}
+      else if(t.hasAttribute('data-fi-kind')){ev.stopPropagation();openItem(t);}
+    });
+    const after=slot.kind==='set'?slot.host.querySelector(':scope > .sheetsRow'):null,last=slot.host.querySelector(':scope > .approveBox');
+    if(after)slot.host.insertBefore(box,after);else slot.host.insertBefore(box,last || null);
+    return box;
+  }
+  function setFlowOpen(box,open){
+    const list=box.querySelector('.flowList'),line=box.querySelector('.flowLine');if(!list || !line)return;
+    list.hidden=!open;line.setAttribute('aria-expanded',open?'true':'false');
+    if(open)openFlow.add(box.dataset.flowFor);else openFlow.delete(box.dataset.flowFor);
+  }
+  function flowDraw(box,e,own){
+    const checking=!!sealPoll || checkingNow,open=openFlow.has(box.dataset.flowFor),line=!e.ready && !e.done;
+    const sig=JSON.stringify([e.ready,e.done,e.step,e.nextText,e.steps.map(s=>[s.state,s.detail,s.items.map(i=>i.id+'|'+i.why)]),checking,line]);
+    if(box._sig===sig)return;
+    box._sig=sig;
+    const state=e.done?'done':e.ready?'ready':e.steps.some(s=>s.current && s.state==='blocked')?'blocked':'waiting',hadFocus=box.contains(document.activeElement)?document.activeElement.className:'';
+    box.dataset.state=state;
+    box.innerHTML=railHtml(e)+(line?`<button type="button" class="flowLine" data-flow-toggle aria-expanded="${open}"><i class="flowMark"></i><span class="flowText">${esc(e.nextText)}</span>${checking?'<span class="flowBusy" role="status"><i class="spin"></i>Checking…</span>':''}<b class="flowCaret" aria-hidden="true">›</b></button><ul class="flowList"${open?'':' hidden'}>${listHtml(e,own)}</ul>`:'');
+    if(hadFocus==='flowLine')box.querySelector('.flowLine')?.focus({preventScroll:true});
+  }
+  function flowDecorate(card,lookup){
+    try{
+      flowCss();
+      const slots=flowSlots(card);
+      for(const old of card.querySelectorAll('.flowBox'))if(!slots.some(s=>old.dataset.flowFor===`${s.kind}:${s.id}` && old.parentElement===s.host))old.remove();
+      for(const slot of slots){const e=explainOf(slot,card,lookup);if(e)flowDraw(flowBox(slot),e,slot.kind==='sheet'?slot.id:'');}
+    }catch(err){console.warn('Library step rail',err);}
+  }
+  /** Open a card's checklist (the plain reason on a disabled button points here): {kind:'sheet'|'set', id}. */
+  function openChecklist(card,which){
+    if(!card)return false;
+    const key=`${which?.kind || (card._laserSet?.setId?'set':'sheet')}:${which?.id || card._laserSet?.setId || card._laserSheets?.[0]}`;
+    flowDecorate(card,()=>R.lookup({rows:Orders.rows()}));
+    const box=[...card.querySelectorAll('.flowBox')].find(b=>b.dataset.flowFor===key);if(!box || !box.querySelector('.flowList'))return false;   // (a ready card has no list)
+    setFlowOpen(box,true);box.scrollIntoView?.({block:'nearest',behavior:'smooth'});box.querySelector('.flowLine')?.focus?.({preventScroll:true});return true;
+  }
+  document.addEventListener('library-checklist-open',ev=>{const card=ev.target?.closest?.('[data-laser-card]');if(card)openChecklist(card,ev.detail);});
   function refresh(){
     frame=0;
     if(window.Seal?.defer("laser-refresh",refresh))return;
     if(S.mode!=='library')return;   // its cards are the Library's: a closed Library has let its records go (below)
-    let needsSeals=false;
+    let needsSeals=false,names=null;const lookup=()=>names || (names=R.lookup({rows:Orders.rows()}));
     document.querySelectorAll('[data-laser-card]').forEach(card=>{
       if(!card._laserSheets)return;   // (a copy of a card flying to a tab, charm-nest-motion.js, is not a card: it holds none of its records)
       const sheets=(card._laserSheets || []).map(id=>records.get(id)).filter(Boolean),report=card._laserSet?group(card._laserSet,sheets):{...sheet(sheets[0] || {}),ready:canCut(sheets[0] || {})};
       if(sheets.some(s=>!s.laserDoneAt && sheet(s).ready!==!!s.processReady))needsSeals=true;
       if(card._laserSet?.setId && !card._laserSet.standalone && !card._laserSet.working && !card._laserSet.laserDoneAt && report.ready!==!!card._laserSet.processReady)needsSeals=true;
+      flowDecorate(card,lookup);
       const seal=card.querySelector('[data-laser-seal]');if(seal){const html=R.seal(report,card._laserSet?'Set':'Sheet',card._laserSet || sheets[0]);if(seal.innerHTML!==html)seal.innerHTML=html;}
       const title=card.querySelector('[data-set-title]');if(title)title.textContent=O.setLabel(card._laserSet.seq)+(card._laserSet.day?' · '+card._laserSet.day:'');
       card.querySelectorAll('[data-sheet-status]').forEach(n=>{const s=records.get(n.dataset.sheetStatus);if(s){const html=R.counter(sheet(s),'Sheet',s);if(n.innerHTML!==html)n.innerHTML=html;}});
@@ -5681,10 +5834,10 @@ const LaserReview = window.LaserReview = (()=>{
     if(S.mode!=='library' || document.hidden || !S.cloud.ok || (!now && Date.now()-lastPoll<(force?5000:60000)))return;
     const cards=[...document.querySelectorAll('[data-laser-card]')].filter(x=>{const r=x.getBoundingClientRect();return r.width>0&&r.height>0&&r.bottom>0&&r.top<innerHeight;});
     const ids=[...new Set(cards.flatMap(x=>(x._laserSheets || []).concat([...x.querySelectorAll('[data-laser-sheet]')].map(n=>n.dataset.laserSheet))))];if(!ids.length)return;
-    polling=true;lastPoll=Date.now();
+    polling=true;lastPoll=Date.now();checkingNow=force;
     try{const response=await api('charmNestLibrary',{op:'laserStatus',sheetIds:ids,setIds:cards.map(x=>x._laserSet?.setId).filter(Boolean),recordSeals:true,by:window.CNEmployee?.name() || undefined},{quiet:true});for(const set of response.sets || []){sets.set(set.setId,set);for(const card of document.querySelectorAll('[data-laser-card]'))if(card._laserSet?.setId===set.setId)card._laserSet={...card._laserSet,...set};}const found=new Set();for(const s of response.sheets || []){found.add(s.id);records.set(s.id,s);}for(const id of ids)if(!found.has(id) && records.has(id))records.set(id,{...records.get(id),archived:true});window.LibraryDone?.addedSeals(response.added);changed();}
     catch(e){console.warn('Production readiness refresh',e);}
-    finally{polling=false;}
+    finally{polling=false;if(checkingNow){checkingNow=false;changed();}}
   }
   function saved(sh){
     const old=records.get(sh.sheetId);if(old)record({...old,backPool:(sh.backPool || []).slice(),engraving:{...old.engraving,...R.decisions(Orders.rows())}});
@@ -5695,7 +5848,7 @@ const LaserReview = window.LaserReview = (()=>{
   // (renderLibrary, openLibrarySheet); while it is closed they are let go at the minute's check.
   setInterval(()=>{if(S.mode!=='library'){records.clear();sets.clear();}poll();},60000);
   document.addEventListener('visibilitychange',()=>{if(!document.hidden)poll(true);});
-  return {record,sheet,group,canCut,labels,sections,place,changed,saved,poll,projected,acceptProcess};
+  return {record,sheet,group,canCut,labels,sections,place,changed,saved,poll,projected,acceptProcess,openChecklist,explain:(kind,id,card)=>explainOf({kind,id},card || {_laserSheets:[id]},()=>R.lookup({rows:Orders.rows()}))};
 })();
 
 /* ═══ 22 · Sets — one run, one date, one folder, one numbering across materials ═══ */

@@ -193,18 +193,21 @@
       const body = doc.getElementById("libBody"), before = F.before;
       if (!body || !before || !before.size || reducedNow() || F.opts.glide === false) return;
       const now = [];
-      for (const el of body.querySelectorAll(GLIDE)) { const k = gkey(el); if (k && before.has(k) && !el.hasAttribute("data-fx-hide")) now.push([k, el]); }
+      for (const el of body.querySelectorAll(GLIDE)) { const k = gkey(el); if (k && before.has(k) && !el.closest("[data-fx-hide]")) now.push([k, el]); }
       for (const [, el] of now) if (el._fxGlide) { el._fxGlide.forEach(a => { try { a.cancel(); } catch (_) {} }); el._fxGlide = null; }
+      // (every place measured first, then every glide started: a card inside a glider is moved with it, so it only glides what the glider does not)
+      const at = new Map(); for (const [, el] of now) at.set(el, rectOf(el));
       const moved = new Map();
       for (const [k, el] of now) {
         if (el._glide) continue;                                  // (the Library's own glide has it)
-        const b = before.get(k), r = rectOf(el); if (!sized(r)) continue;
+        const b = before.get(k), r = at.get(el); if (!sized(r)) continue;
         let p = el.parentElement; while (p && p !== body && !moved.has(p)) p = p.parentElement;
         const pd = p && p !== body ? moved.get(p) : { dx: 0, dy: 0 };
         const dx = b.left - r.left, dy = b.top - r.top, ox = dx - pd.dx, oy = dy - pd.dy;
+        moved.set(el, { dx, dy });
         if (Math.abs(ox) < 1 && Math.abs(oy) < 1) continue;
         const a = animate(el, [{ transform: `translate(${ox}px,${oy}px)` }, { transform: "none" }], { duration: D.glide, easing: "cubic-bezier(.3,.1,.2,1)", fill: "backwards" });
-        if (a) { el._fxGlide = [a]; moved.set(el, { dx, dy }); }
+        if (a) el._fxGlide = [a];
       }
       F.before = snapshot();
     } catch (_) {}
@@ -443,22 +446,26 @@
     const sEnd = T.how === "absorb" ? clamp(Math.min((T.h * 1.4) / h0, (T.w * 1.2) / w0), .03, .4) : T.how === "edge" ? .5 : clamp(T.w / w0, .5, 1.6);
     const base = (k0 + (sEnd - k0) * q) * (1 - (1 - F.ts) * Math.sin(Math.PI * q));
     const lift = easeOut(clamp(el / D.lift, 0, 1));
-    let hover = 1 + .03 * lift, shadow = lift * (.7 + .3 * Math.sin(Math.PI * q)), op = 1;
+    const rise = Math.min(.03, 10 / (Math.max(w0, h0) / 2));   // (lifted by a few percent, never more than ~10 px at a corner of a wide card)
+    let hover = 1 + rise * lift, shadow = lift * (.7 + .3 * Math.sin(Math.PI * q)), op = 1;
     let rot = (dx >= 0 ? 1 : -1) * 1.5 * Math.sin(Math.PI * q) * Math.min(1, d / 180);
     if (!settling && T.how !== "land") op = p < .84 ? 1 : Math.max(0, 1 - (p - .84) / .16);
     const reg = F.reg || region();
     y = Math.max(y, reg.top - 20 + (h0 * base) / 2);           // (its top edge never rises above the bar that holds the list)
     if (settling) {
       const s = clamp((now - F.tT) / D.settle, 0, 1), o = easeOut(s);
-      hover = 1 + .03 * (1 - o) - .006 * Math.sin(Math.PI * s); shadow = .65 * (1 - o); rot = 0; x = x1; y = y1;
-      // (set down; the copy fades out over the real card for the last of it, and the caller clears what it left in the card's place just before)
-      if (s >= .3) { callDone(F, "landed"); op = Math.max(0, 1 - (s - .3) / .7); }
+      hover = 1 + rise * (1 - o) - rise * .2 * Math.sin(Math.PI * s); shadow = .65 * (1 - o); rot = 0; x = x1; y = y1;
+      // (set down; for the last of it the real card comes in under the copy and the copy fades out over it; the caller clears what it left in the card's place just before)
+      if (s >= .3) {
+        callDone(F, "landed"); op = Math.max(0, 1 - (s - .3) / .7);
+        if (!F.revealed) { F.revealed = true; if (T.real && T.el) show(F, T.el, true, Math.round(D.settle * .7)); }
+      }
       if (s >= 1) { F.state = "out"; return finish(F, T && T.real ? "landed" : "faded"); }
     } else if (el >= span) {
       // down: at once on a tab (it is absorbed); on a card as soon as the card is there, or the wait for the page is over
       if (T.how === "absorb" || T.how === "edge") { put(F, x1, y1, sEnd, 0, 0, 0); return arrived(F, T); }
       if (T.real || el >= WAIT_UNTIL) touchdown(F, T, now);
-      else { hover = 1.03; shadow = .7; }                      // (waiting above its place for the page to draw the card)
+      else { hover = 1 + rise; shadow = .7; }                  // (waiting above its place for the page to draw the card)
     }
     put(F, x, y, base * hover, rot, op, shadow);
   }
@@ -470,8 +477,7 @@
   }
   function touchdown(F, T, now) {
     F.state = "settle"; F.tT = now;
-    if (T.real && T.el) { show(F, T.el, true, D.settle + D.fade); pulse(T.el, F.back ? { tone: "back" } : null); }
-    else if (T.el && T.el.isConnected) pulse(T.el);
+    if (T.el && T.el.isConnected) pulse(T.el, F.back ? { tone: "back" } : null);
   }
   /** Into a tab: the copy has shrunk into it and faded, the tab answers. The card's old place stays hidden until the
       page has taken it away (or the cap). */

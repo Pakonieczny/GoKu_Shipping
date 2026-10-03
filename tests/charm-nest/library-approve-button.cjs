@@ -60,6 +60,7 @@ L.place(cards.set,L.group(cards.set._laserSet,['A','B','D'].map(id=>recs[id])).r
   assert.equal(bBox.querySelector('[data-approve-btn]').disabled,true);assert.equal(bBox.querySelector('[data-approve-why]').textContent,'Waiting on 2 back engravings');
   assert.equal(setBox.querySelector('[data-approve-btn]').disabled,true);assert.equal(setBox.querySelector('[data-approve-why]').textContent,'Waiting on 2 back engravings');
   assert.equal(boxOf(cards.set,'sheet:A').querySelector('[data-approve-btn]').disabled,false,'a sheet that only waits on automatic steps can be pressed');
+  delete win.LaserReview.openChecklist;L.changed();flush();   // (the real one now ships in LaserReview: take it away to see the reason without it)
   assert.equal(bBox.querySelector('[data-approve-reason]'),null,'the reason is plain text until the checklist exists');
   bBox.querySelector('[data-approve-btn]').click();assert.equal(calls.length,0,'a disabled button presses nothing');
   win.LaserReview.openChecklist=(card,info)=>opened.push({card,...info});
