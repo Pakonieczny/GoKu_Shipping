@@ -277,6 +277,7 @@ const buttons = bar => ({ go: bar.querySelector('.lfrGo'), no: bar.querySelector
   assert.equal(painted.at(-1).plan, 0, 'before the press the preview has no green line'); const pv = bar.el.querySelector('.lfrPv');
   press(buttons(bar.el).go); await sleep(1200);
   assert.equal(bar.state, 'done'); assert.match(bar.el.querySelector('.lfrStatus').textContent, /Saved as green line 1/); assert(bar.el.querySelector('.lfrStatus .lfrTick'), 'a tick says it is saved');
+  assert.match(bar.el.querySelector('.lfrTitle').textContent, /^RG Sheet 9 now has its green dash line$/, 'the bar says what is now true'); assert(bar.el.querySelector('.lfrText').hidden, 'and drops its explanation');
   assert(pv.classList.contains('drawn'), 'the drawn green dash line appears on the sheet preview'); assert(painted.some(p => p.id === 'rg-visual' && p.plan > 0), 'the preview was painted again with the line in it');
   assert.equal(spy.plan.length, 1); assert.equal(stagesOf('rg-visual').length, 1);
   bar.destroy();
@@ -287,10 +288,25 @@ const buttons = bar => ({ go: bar.querySelector('.lfrGo'), no: bar.querySelector
   press(buttons(bar.el).go); assert.equal(bar.state, 'working'); await sleep(1200);
   assert.equal(bar.state, 'done', 'a pressed bar follows the calculation that runs for its sheet'); assert.match(bar.el.textContent, /Saved as green line 1/); assert.equal(stagesOf('rg-visual-2').length, 1);
   bar.destroy();
-  // a bar for another sheet ignores it
-  const other = LFR.confirmBar(host, { sheetLabel: 'RG Sheet 99', armMs: 0, onConfirm() {} }); press(buttons(other.el).go);
+  // nothing to add (a stale press): said plainly
+  bar = mount({ armMs: 0 }); press(buttons(bar.el).go); bar.finish({ ok: true, lines: 0, sheets: [] }); assert.match(bar.el.querySelector('.lfrStatus').textContent, /Nothing to add: it already has its green dash line/); assert.match(bar.el.querySelector('.lfrTitle').textContent, /already has its green dash line/); bar.destroy();
+  // two bars waiting: each follows its own sheet only (RG Sheet 1 is not RG Sheet 11)
+  const host2 = doc.createElement('div'); doc.body.append(host2);
+  const first = LFR.confirmBar(host, { sheetLabel: 'RG Sheet 1', armMs: 0, onConfirm() {} }), second = LFR.confirmBar(host2, { sheetLabel: 'Add the green dash line to RG Sheet 11?', armMs: 0, onConfirm() {} });
+  assert.match(second.el.textContent, /^\s*RG Sheet 11 has no green dash line yet/, 'a label that came as a question is shown as a name'); press(buttons(first.el).go); press(buttons(second.el).go);
   const X = live('rg-visual-3', 'pool-f', { sheetIndex: 11, charms: [{ id: 'pool-f', outline, centerPt: [5, 5], members: [] }], placements: [{ id: 'pool-f', cxPt: 20, cyPt: 20, angle: 0, scale: 1 }] });
-  await LFR.calculate({ kind: 'sheet', id: 'rg-visual-3' }, {}); assert.equal(other.state, 'working', 'a bar for RG Sheet 99 is not moved by RG Sheet 11'); other.destroy();
+  await LFR.calculate({ kind: 'sheet', id: 'rg-visual-3' }, {}); await sleep(1100);
+  assert.equal(first.state, 'working', 'a bar for RG Sheet 1 is not moved by RG Sheet 11'); assert.equal(second.state, 'done', 'the bar for RG Sheet 11 follows it'); first.destroy(); second.destroy();
+  // a bar its owner cleared away (hide, a re-render) lets go: it neither follows later steps nor makes another bar share them
+  const gone1 = LFR.confirmBar(host, { sheetLabel: 'RG Sheet 40', armMs: 0, onConfirm() {} }); press(buttons(gone1.el).go); host.innerHTML = '';
+  const live1 = LFR.confirmBar(host2, { sheetLabel: 'Whatever the caller called it', armMs: 0, onConfirm() {} }); press(buttons(live1.el).go);
+  live('rg-visual-4', 'pool-g', { sheetIndex: 12 }); await LFR.calculate({ kind: 'sheet', id: 'rg-visual-4' }, {}); await sleep(1100);
+  assert.equal(live1.state, 'done', 'the one bar waiting takes the steps whatever label it was given'); assert.equal(gone1.state, 'working', 'a cleared bar stays as it was'); live1.destroy(); host2.innerHTML = '';
+  // a touch tap: the pointer leaves after it lifts, and the click comes after that
+  confirmed = 0; bar = mount({ armMs: 0 }); ({ go } = buttons(bar.el));
+  const touch = (type, extra = {}) => { const e = new w.MouseEvent(type, { bubbles: true, button: 0, ...extra }); Object.defineProperty(e, 'pointerType', { value: 'touch' }); go.dispatchEvent(e); };
+  touch('pointerdown'); touch('pointerup'); touch('pointerleave'); click(go, { detail: 1 }); assert.equal(confirmed, 1, 'a touch tap is a press'); bar.destroy();
+  confirmed = 0; bar = mount({ armMs: 0 }); ({ go } = buttons(bar.el)); touch('pointerdown'); touch('pointercancel'); click(go, { detail: 1 }); assert.equal(confirmed, 0, 'a touch the browser took over (a scroll) is not a press'); bar.destroy();
   // a bar with a refusal shows it
   const refused = LFR.confirmBar(host, { sheetLabel: 'RG Sheet 1', armMs: 0, onConfirm() {} }); press(buttons(refused.el).go);
   await LFR.calculate({ kind: 'sheet', id: 'rg-bad-1' }, {}); assert.equal(refused.state, 'failed'); assert.match(refused.el.textContent, /Nothing more was changed/); refused.destroy();
