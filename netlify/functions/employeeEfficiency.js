@@ -47,9 +47,24 @@ const zeros = n => new Array(n).fill(0);
 const digits = (v, n = 30) => String(v == null ? "" : v).replace(/\D/g, "").slice(0, n);
 const cleanName = v => String(v == null ? "" : v).replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim().slice(0, 80);
 const okName = n => !!n && /\p{L}/u.test(n);                       // a name with no letter ("123456", "123 456") is a PIN, never data
-/* One person, however the logins spelled the name: trim, collapse spaces, strip accents, case-fold, then the alias map
-   (below). The PIN list holds names as typed ("Giovanna C." at the PIN stations, "Giovanna" in the inbox). */
-const fold = n => cleanName(n).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/\s+/g, " ").trim();
+/* One person, however the logins spelled the name: strip accents, case-fold, drop apostrophes, and treat every other
+   punctuation mark (underscore, period, hyphen, comma ...) as a space, so "Michael_V" (the PIN list), "Michael V." (typed at
+   the design pages or the sorter), "michael v" and "MICHAEL  V" are ONE person; then the alias map (below). The initial still
+   counts: "Michael V" and "Michael T" stay two people, and "Giovanna C." joins "Giovanna" only through the alias map. */
+const fold = n => cleanName(n).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase()
+  .replace(/['\u2018\u2019`\u00b4]/g, "").replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+/* How a name reads on the screen: underscores become spaces, a lone initial gets its dot ("Michael_V" → "Michael V.",
+   "Ana_M" → "Ana M.", "Giovanna C." stays), and a name that is ALL lower or ALL upper case gets capitals ("MICHAEL V" →
+   "Michael V."). Display only: what the stations store and send is never changed, and an alias's own spelling is shown as written. */
+function niceName(raw) {
+  const s = cleanName(raw).replace(/_+/g, " ").replace(/\s+/g, " ").trim();
+  if (!s) return "";
+  let words = s.split(" ");
+  if (/\p{L}{3}/u.test(s) && (s === s.toLowerCase() || s === s.toUpperCase()))      // (a two-letter "JJ" is left alone)
+    words = words.map(w => w.toLowerCase().replace(/(^|[-'\u2019.])(\p{L})/gu, (_, a, b) => a + b.toUpperCase()));
+  if (words.length > 1) words = words.map(w => /^\p{L}$/u.test(w) ? w + "." : w);
+  return words.join(" ");
+}
 // seeded aliases (display name → other spellings); the Firestore doc config/employeeAliases adds to these, never written here
 const BUILTIN_ALIASES = { "Giovanna": ["Giovanna C."] };
 function buildAliases(extra) {
@@ -286,7 +301,7 @@ function personsOf(ctx) {
   const pd = (P, day) => { let x = P.days.get(day); if (!x) P.days.set(day, x = newPD(day)); return x; };
   return { people, get, pd };
 }
-const displayName = P => P.canon || bestForm(P.forms);
+const displayName = P => P.canon || niceName(bestForm(P.forms));
 
 /** Reads and joins everything for the days winFrom..toDay. Returns the people (per day) and what could not be read. */
 async function assemble(ctx, winFrom, toDay) {
@@ -496,7 +511,7 @@ async function buildOverview(ctx, day, days) {
   if (info.errors.length) notes.push("Some data could not be read just now; the screen shows what was.");
   const partial = !src.events || info.errors.length > 0 || info.capped.length > 0;
   return { now: ctx.now, cursor: cursorOf(events), people, business: { totals, perHour, stations: stationList, trend },
-    feedAll: inRange.slice(0, LIM.feedDelta).map(e => { const P = asm.P.people.get(nameKeyOf(ctx, e.person)); return Object.assign({}, e, { person: P ? displayName(P) : canonOf(ctx, nameKeyOf(ctx, e.person)) || e.person }); }), sources: src, notes, partial, errors: info.errors };
+    feedAll: inRange.slice(0, LIM.feedDelta).map(e => { const P = asm.P.people.get(nameKeyOf(ctx, e.person)); return Object.assign({}, e, { person: P ? displayName(P) : canonOf(ctx, nameKeyOf(ctx, e.person)) || niceName(e.person) }); }), sources: src, notes, partial, errors: info.errors };
 }
 
 async function opOverview(ctx, body) {
@@ -535,7 +550,7 @@ async function opPerson(ctx, body) {
   if (src.seals) notes.push("Days before activity events began come from order seals: orders, scans and label prints, with no part counts.");
   if (info.capped.length) notes.push("Some lists were cut at their size limit: " + [...new Set(info.capped)].join(", ") + ".");
   const partial = info.errors.length > 0 || info.capped.length > 0;
-  const out = { ok: true, now: ctx.now, name: P ? displayName(P) : name, from, to, days: rows, totals: S.totals, sources: src, notes };
+  const out = { ok: true, now: ctx.now, name: P ? displayName(P) : niceName(name), from, to, days: rows, totals: S.totals, sources: src, notes };
   if (partial) { out.partial = true; if (info.errors.length) out.errors = info.errors; }
   return json(200, out);
 }
@@ -561,18 +576,18 @@ async function opOrders(ctx, body) {
     const s = step(e.station, e.person, "events"); touch(s, e.at);
     if (e.action === "scan") s.scans++; else if (e.action === "complete") { s.completes++; s.parts += e.parts; } else if (e.action === "print") s.prints++; else if (e.action === "undo") s.parts = Math.max(0, s.parts - e.parts);
     if (e.sincePrevMs > 0 && e.sincePrevMs <= ACTIVE_GAP_MS) s.workMs += e.sincePrevMs;
-    evOut.push({ at: e.at, person: canonOf(ctx, nameKeyOf(ctx, e.person)) || e.person, station: e.station, device: e.device, action: e.action, parts: e.parts, detail: e.detail, source: "events" });
+    evOut.push({ at: e.at, person: canonOf(ctx, nameKeyOf(ctx, e.person)) || niceName(e.person), station: e.station, device: e.device, action: e.action, parts: e.parts, detail: e.detail, source: "events" });
   }
   for (const r of seals) {
     const s = step(r.station, r.person, "seals"); touch(s, r.at);
     if (r.kind === "scan") s.scans++; else if (r.kind === "complete") s.completes++; else s.prints++;
-    evOut.push({ at: r.at, person: canonOf(ctx, nameKeyOf(ctx, r.person)) || r.person, station: r.station, device: "", action: r.kind, parts: 0, detail: r.type, source: "seals" });
+    evOut.push({ at: r.at, person: canonOf(ctx, nameKeyOf(ctx, r.person)) || niceName(r.person), station: r.station, device: "", action: r.kind, parts: 0, detail: r.type, source: "seals" });
   }
   const list = [...steps.values()].sort((a, b) => a.firstAt - b.firstAt || a.lastAt - b.lastAt);
   let farthest = 0;
   const out = list.map((s, i) => {
     const wait = i === 0 ? 0 : Math.max(0, s.firstAt - farthest); farthest = Math.max(farthest, s.lastAt);
-    const name = canonOf(ctx, nameKeyOf(ctx, s.person)) || bestForm(s.forms);
+    const name = canonOf(ctx, nameKeyOf(ctx, s.person)) || niceName(bestForm(s.forms));
     return { station: s.station, person: name, firstAt: s.firstAt, lastAt: s.lastAt, workMs: s.workMs, waitMs: wait, scans: s.scans, completes: s.completes, prints: s.prints, parts: s.parts, source: s.source };
   });
   evOut.sort((a, b) => a.at - b.at);
@@ -625,4 +640,4 @@ async function handle(event, handle_) {
 }
 
 exports.handler = event => handle(event, null);
-exports._t = { handle, buildAliases, fold, nyDay, nyMidnight, addDays, clip, covered, spanOf, summarize, parseCursor, cacheOf, LIM };
+exports._t = { handle, buildAliases, fold, niceName, nyDay, nyMidnight, addDays, clip, covered, spanOf, summarize, parseCursor, cacheOf, LIM };

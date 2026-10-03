@@ -223,4 +223,27 @@ const reset = () => { docs.clear(); txRuns = 0; };
     fakeDb.runTransaction = keep; assert.strictEqual(docs.size, 0);
     console.log('5 limits (50/600/40000), vocabulary, clocks, sandbox, flood, store error');
   }
+  /* 6 · the PIN list's real names: underscore style and a trailing period pass as sent, are never a PIN, make valid rollup ids */
+  {
+    reset();
+    const NAMES = ['Giovanna C.', 'Empress D.', 'Michael_V', 'Michelle_R', 'Ivy_Y', 'Ana_M', 'Paul_K'];
+    const validId = s => s.length > 0 && Buffer.byteLength(s) <= 1500 && !s.includes('/') && s !== '.' && s !== '..' && !/^__.*__$/.test(s);
+    let r = await send(NAMES.flatMap((p, i) => [E({ person: p, action: 'scan', parts: 2, orderId: '35210001' + String(i).padStart(2, '0') }), E({ person: p, action: 'complete', parts: 2, orders: 1, orderId: '35210001' + String(i).padStart(2, '0') })]));
+    assert.deepStrictEqual([r.status, r.body.written, r.body.refused], [200, 14, 0], 'all seven names pass the door');
+    assert.deepStrictEqual(acts().map(e => e.person).sort(), NAMES.concat(NAMES).sort(), 'each is stored exactly as sent: the underscore stays, the period stays');
+    const ids = [...docs.keys()].filter(k => k.startsWith('Efficiency_Daily/')).map(k => k.slice('Efficiency_Daily/'.length));
+    assert.deepStrictEqual(ids.sort(), NAMES.map(p => '2026-10-02__' + p).sort(), 'one rollup per name, id = day__name');
+    assert(ids.every(validId), 'every rollup id is a valid Firestore id');
+    for (const p of NAMES) { const d = roll('2026-10-02', p); assert.deepStrictEqual([d.person, d.events, d.stations.welding.parts, d.stations.welding.completes], [p, 2, 2, 1], p + ': its own rollup'); }
+    // two spellings of one person are two documents (the reader merges them); nothing here folds names
+    r = await send([E({ person: 'Michael V.', action: 'complete', parts: 3, orders: 1 }), E({ person: 'MICHAEL  V', action: 'complete', parts: 4, orders: 1 })]);
+    assert.strictEqual(r.body.written, 2);
+    assert.deepStrictEqual([roll('2026-10-02', 'Michael_V').stations.welding.parts, roll('2026-10-02', 'Michael V.').stations.welding.parts, roll('2026-10-02', 'MICHAEL V').stations.welding.parts], [2, 3, 4], 'three spellings, three rollups; a doubled space is collapsed, nothing else');
+    // no letter, no person: underscores, periods and digits alone could be a PIN
+    reset();
+    r = await send(['___', '. .', '_', '123_456', '12-34-56', '+', '.'].map(p => E({ person: p })));
+    assert.deepStrictEqual([r.body.written, r.body.refused], [0, 7], 'a name without a letter is refused');
+    assert.strictEqual(docs.size, 0);
+    console.log('6 the PIN list names (Giovanna C., Empress D., Michael_V, Michelle_R, Ivy_Y, Ana_M, Paul_K): stored as sent, one valid rollup id each, spellings stay separate documents, no letter = refused');
+  }
 })().then(() => { Date.now = realNow; console.log('activity door: all passed'); }, e => { Date.now = realNow; console.error(e); process.exit(1); });

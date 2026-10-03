@@ -441,8 +441,43 @@ async function aliases() {
   say('aliases: seeded Giovanna merge, overlap counted once with per-page minutes, doc aliases, accents/case/space fold, no digit names, never written, cached a minute, failing read is partial');
 }
 
+/* ── 8 · names: the PIN list's underscore style and the typed style are one person; the screen shows a nice name ── */
+async function names() {
+  const same = ['Michael_V', 'Michael V', 'Michael V.', 'michael v.', 'MICHAEL  V', ' michael_v. ', 'Michael__V', 'MICHAEL_V', 'Michael _ V.'];
+  assert.strictEqual(new Set(same.map(T.fold)).size, 1, 'underscore, period, case and spacing do not make a second person');
+  assert.strictEqual(T.fold('Michael_V'), 'michael v');
+  assert.strictEqual(new Set(["O'Brien", 'OBRIEN', 'O’Brien'].map(T.fold)).size, 1, 'an apostrophe is not a word break');
+  const apart = ['Michael V.', 'Michael T.', 'Michael', 'Michael Vega', 'Michelle_R', 'Ivy_Y', 'Ana_M', 'Empress D.', 'Paul_K', 'Giovanna C.', 'Giovanna'];
+  assert.strictEqual(new Set(apart.map(T.fold)).size, apart.length, 'a different initial (or none) is a different person: Michael V. is not Michael T. or Michael');
+  const seed = T.buildAliases(null);
+  assert.strictEqual(seed.map.get(T.fold('Giovanna C.')), T.fold('Giovanna'), 'Giovanna C. still joins Giovanna, through the built-in alias');
+  assert.strictEqual(seed.map.get(T.fold('giovanna_c')), T.fold('Giovanna'), '... however it is spelled'); assert.strictEqual(seed.display.get(T.fold('Giovanna')), 'Giovanna');
+  const custom = T.buildAliases({ 'Mike V.': ['Michael_V'], 'Shelly_R': ['Michelle R.'] });
+  assert.strictEqual(custom.map.get(T.fold('Michael V.')), T.fold('Mike V.'), 'an alias entry folds like a name: "Michael_V" catches "Michael V."');
+  assert.strictEqual(custom.map.get(T.fold('MICHELLE_R')), T.fold('Shelly_R'));
+  assert.strictEqual(custom.display.get(T.fold('Shelly_R')), 'Shelly_R', 'an alias keeps its own spelling for the screen, underscore and all');
+  const nice = { 'Michael_V': 'Michael V.', 'Ana_M': 'Ana M.', 'Paul_K': 'Paul K.', 'Michelle_R': 'Michelle R.', 'Ivy_Y': 'Ivy Y.', 'Giovanna C.': 'Giovanna C.', 'Empress D.': 'Empress D.',
+    'Michael V.': 'Michael V.', 'Paul K': 'Paul K.', 'michael v': 'Michael V.', 'MICHAEL  V': 'Michael V.', 'ana_m': 'Ana M.', 'Giovanna': 'Giovanna', 'Shell': 'Shell', 'SHELL': 'Shell',
+    'Zoë Müller': 'Zoë Müller', 'McDonald_J': 'McDonald J.', "O'BRIEN": "O'Brien", 'Mary-Jane K': 'Mary-Jane K.', 'JJ': 'JJ', 'Michael V. Smith': 'Michael V. Smith', 'Mary J Blige': 'Mary J. Blige' };
+  for (const [raw, want] of Object.entries(nice)) assert.strictEqual(T.niceName(raw), want, 'the screen shows "' + raw + '" as "' + want + '"');
+  assert.strictEqual(T.niceName('Michael_V'), T.niceName(T.niceName('Michael_V')), 'tidying twice changes nothing');
+  // through the reader: sessions of the PIN-list spelling and the typed spelling are one person with a nice name; nothing is written
+  const T0 = Z('2026-10-03T12:00:00Z'), st = fresh(); NOW = Z('2026-10-03T16:00:00Z');
+  st.put('Station_Sessions', 'm-1', sess('m-1', 'Michael_V', 'welding', T0, { end: T0 + 3600000, last: T0 + 3600000, reason: 'signOut' }));
+  st.put('Station_Sessions', 'm-2', sess('m-2', 'Michael V.', 'design', T0 + 1800000, { end: T0 + 5400000, last: T0 + 5400000, reason: 'signOut' }));
+  st.put('Station_Sessions', 'm-3', sess('m-3', 'Michael T.', 'welding', T0, { end: T0 + 600000, last: T0 + 600000, reason: 'signOut' }));
+  st.put('Station_Sessions', 'm-4', sess('m-4', 'Ana_M', 'assembly', T0, { end: T0 + 600000, last: T0 + 600000, reason: 'signOut' }));
+  const b = (await call(st, {})).body;
+  assert.deepStrictEqual(b.people.map(p => p.name).sort(), ['Ana M.', 'Michael T.', 'Michael V.'], 'Michael_V + Michael V. are one Michael V.; Michael T. is another person; Ana_M shows as Ana M.');
+  assert.strictEqual(b.people.find(p => p.name === 'Michael V.').totals.signedInMin, 90, '60 + 60 - 30 minutes of overlap');
+  for (const spelling of ['Michael_V', 'michael v', 'MICHAEL V.']) assert.strictEqual((await call(st, { op: 'person', name: spelling, days: 1 })).body.days[0].signedInMin, 90, 'asking as "' + spelling + '"');
+  assert.strictEqual((await call(st, { op: 'person', name: 'ana m', days: 1 })).body.name, 'Ana M.');
+  assert.strictEqual(st.writes.length, 0, 'nothing is written');
+  say('names: Michael_V / Michael V. / michael v. / MICHAEL  V are one person, a different initial is not, aliases fold the same way, nice names for the screen (Michael V., Ana M., Paul K.), the alias spelling wins');
+}
+
 (async () => {
-  try { await gate(); await dayBoundary(); await merge(); await delta(); await partial(); await rest(); await aliases(); }
+  try { await gate(); await dayBoundary(); await merge(); await delta(); await partial(); await rest(); await aliases(); await names(); }
   finally { Date.now = realNow; }
   const all = logs.concat(bodies).join('\n');
   for (const s of [PASS, PASS2]) assert(!all.includes(s), 'a passcode appeared in a response or a log line');
