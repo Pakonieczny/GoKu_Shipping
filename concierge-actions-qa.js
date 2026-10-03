@@ -21,4 +21,4 @@
   bind('prepare-view',async function(){var p=await checkedFirst();fresh('Please open the '+p.title+'.');lastAction={handle:first.handle,action:'view'};lastContext={inputItemId:currentItem,turnVersion:turn,currentTurn:true};await tool('prepare_jewellery_action',lastAction,lastContext);});
   bind('invalidate',async function(){if(!active||!config)throw Error('Activate the adapter.');previousItem=currentItem;previousTurn=turn;currentItem='qa-shopper-'+(++turn);config.onSpeechStarted?.({itemId:currentItem,turnVersion:turn});command.textContent='Synthetic shopper: new speech is in progress; no final transcript.';show({transport:'synthetic-event-fixture',providerCalls:0,microphoneRequests:0,phase:'new-input-without-authority'});});
   bind('late-action',async function(){if(!lastAction)throw Error('Prepare a request first.');config.onTranscript?.({role:'user',itemId:previousItem,turnVersion:previousTurn,currentTurn:false,final:true,text:'Add the first one to my bag.'});await tool('prepare_jewellery_action',lastAction,lastContext);});
-});
+})();
