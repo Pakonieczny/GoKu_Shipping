@@ -39,11 +39,12 @@ function clean(e, now, prefix) {
   let bytes = 0; try { bytes = Buffer.byteLength(JSON.stringify(e)); } catch (_) { return { refused: true }; }
   if (bytes > MAX_EVENT_BYTES) return { refused: true };
   if (typeof e.sandbox === "boolean" && e.sandbox !== !!prefix) return { refused: true };   // an event keeps the store it was recorded for
-  const id = typeof e.id === "string" && /^[\w.:-]{8,100}$/.test(e.id) ? e.id : "";
+  // (a document id like "__x__" is reserved by Firestore: it would fail the whole batch with a 5xx the client retries forever)
+  const id = typeof e.id === "string" && /^[\w.:-]{8,100}$/.test(e.id) && !/^__.*__$/.test(e.id) && !/^\.+$/.test(e.id) ? e.id : "";
   const station = typeof e.station === "string" && STATIONS.has(e.station) ? e.station : "";
   const action = typeof e.action === "string" && ACTIONS.has(e.action) ? e.action : "";
   const person = str(e.person, 80);
-  if (!id || !station || !action || !person || /^\d+$/.test(person)) return { refused: true };
+  if (!id || !station || !action || !person || !/\p{L}/u.test(person)) return { refused: true };   // no letter (digits, "123 456", "12-34-56") = a PIN, never a name
   const at0 = Number(e.at);
   let at = Number.isFinite(at0) && at0 > 1e12 ? Math.round(at0) : now;
   if (at > now) at = now;                                       // a clock ahead never puts an event in the future
@@ -96,11 +97,11 @@ function rollupPatch(FV, prev, day, person, evs, prefix) {
     tally(st[ev.station] || (st[ev.station] = {}), ev);
     const sp = span[ev.station] || (span[ev.station] = { first: Infinity, last: 0 });
     sp.first = Math.min(sp.first, ev.at); sp.last = Math.max(sp.last, ev.at);
-    const sc = ev.action === "scan" ? 1 : 0, pr = ev.action === "complete" ? ev.parts : 0;
-    if (sc || pr) {
+    const sc = ev.action === "scan" ? 1 : 0, pr = ev.action === "complete" ? ev.parts : 0, un = ev.action === "undo" ? ev.parts : 0;
+    if (sc || pr || un) {
       const h = hours[ev.hour] || (hours[ev.hour] = { tot: {}, by: {} });
-      bump(h.tot, "scans", sc); bump(h.tot, "parts", pr);
-      const b = h.by[ev.station] || (h.by[ev.station] = {}); bump(b, "scans", sc); bump(b, "parts", pr);
+      bump(h.tot, "scans", sc); bump(h.tot, "parts", pr); bump(h.tot, "undoParts", un);
+      const b = h.by[ev.station] || (h.by[ev.station] = {}); bump(b, "scans", sc); bump(b, "parts", pr); bump(b, "undoParts", un);
     }
     if (ev.orderId) {
       const had = prev.touched && prev.touched[ev.orderId] != null || touched[ev.orderId] != null;

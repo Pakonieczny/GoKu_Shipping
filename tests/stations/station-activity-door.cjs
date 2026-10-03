@@ -94,7 +94,7 @@ const reset = () => { docs.clear(); txRuns = 0; };
     assert.strictEqual(w.firstAt, t0); assert.strictEqual(w.lastAt, t0 + 15 * 60000);
     assert.strictEqual(d.stations.assembly.parts, 5); assert.strictEqual(d.stations.assembly.orders, 1);
     assert.strictEqual(d.stations.assembly.activeMs, undefined, 'a counter never added is missing, read as 0');
-    assert.deepStrictEqual(d.hours['09'], { scans: 2, parts: 12, by: { welding: { scans: 2, parts: 12 } } });
+    assert.deepStrictEqual(d.hours['09'], { scans: 2, parts: 12, undoParts: 2, by: { welding: { scans: 2, parts: 12, undoParts: 2 } } });
     assert.deepStrictEqual(d.hours['10'], { parts: 5, by: { assembly: { parts: 5 } } });
     assert.deepStrictEqual(d.touched, { 3521000777: { welding: true, assembly: true }, 3521000888: { welding: true } }, 'distinct orders worked');
     const ev = acts().find(e => e.action === 'complete' && e.station === 'welding');

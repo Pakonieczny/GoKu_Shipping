@@ -42,10 +42,11 @@ const FAILS_PER_MIN = 10;
 const json = (statusCode, body) => ({ statusCode, headers: CORS, body: JSON.stringify(body) });
 const ms = v => v == null ? 0 : typeof v.toMillis === "function" ? v.toMillis() : v instanceof Date ? v.getTime() : Number.isFinite(+v) ? +v : 0;
 const r1 = x => Math.round(x * 10) / 10;
+const shown = x => Math.max(0, r1(x));                              // an hour that nets below zero (an undo in a later hour) is drawn as 0
 const zeros = n => new Array(n).fill(0);
 const digits = (v, n = 30) => String(v == null ? "" : v).replace(/\D/g, "").slice(0, n);
 const cleanName = v => String(v == null ? "" : v).replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim().slice(0, 80);
-const okName = n => !!n && !/^\d+$/.test(n);                       // a digits-only name is a PIN, never data
+const okName = n => !!n && /\p{L}/u.test(n);                       // a name with no letter ("123456", "123 456") is a PIN, never data
 /* One person, however the logins spelled the name: trim, collapse spaces, strip accents, case-fold, then the alias map
    (below). The PIN list holds names as typed ("Giovanna C." at the PIN stations, "Giovanna" in the inbox). */
 const fold = n => cleanName(n).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/\s+/g, " ").trim();
@@ -76,8 +77,8 @@ function bestForm(forms) {
   return best;
 }
 const GENERIC_BY = /^(etsy|system|unknown|n\/a|none)$/i;
-// what a detail may show: no digits-only text, no 6-digit run (a PIN) (the activity door already does this; again here)
-const scrub = v => { const s = String(v == null ? "" : v).replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim().slice(0, 120); return /^\d+$/.test(s) ? "" : s.replace(/\d{6,}/g, "[#]"); };
+// what a detail may show: no digits-only text, no lone 6-digit number (a PIN) (the activity door already does this, the same way; again here)
+const scrub = v => { const s = String(v == null ? "" : v).replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim().slice(0, 120); return /^\d+$/.test(s) ? "" : s.replace(/(?<!\d)\d{6}(?!\d)/g, "[#]"); };
 const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 /* ── New York days (the shop's midnight, daylight saving included) ── */
@@ -103,8 +104,8 @@ function cacheOf(handle) { let c = caches.get(handle); if (!c) { c = { memo: new
 /** A shared, time-limited read. A failed read is forgotten at once. */
 function cached(ctx, key, ttl, fn) {
   const memo = ctx.cache.memo, hit = memo.get(key);
-  if (hit && ctx.now - hit.at < ttl) return hit.p;
-  const entry = { at: ctx.now, p: null };
+  if (hit && ctx.now - hit.at < Math.min(ttl, hit.ttl)) return hit.p;   // (an entry read while its day was live stays short-lived after midnight)
+  const entry = { at: ctx.now, ttl, p: null };
   entry.p = Promise.resolve().then(fn);
   memo.set(key, entry);
   entry.p.catch(() => { if (memo.get(key) === entry) memo.delete(key); });
@@ -132,7 +133,7 @@ async function readRollups(ctx, from, to) {
   const days = dayList(from, to), stale = [], entries = new Map();
   for (const d of days) {
     const e = ctx.cache.memo.get(`roll|${ctx.prefix}|${d}`);
-    if (e && ctx.now - e.at < (d === ctx.today ? TTL_LIVE : TTL_PAST)) entries.set(d, e.p); else stale.push(d);
+    if (e && ctx.now - e.at < Math.min(d === ctx.today ? TTL_LIVE : TTL_PAST, e.ttl)) entries.set(d, e.p); else stale.push(d);
   }
   if (stale.length) {
     const a = stale[0], z = stale[stale.length - 1];
@@ -142,7 +143,7 @@ async function readRollups(ctx, from, to) {
       return { by, capped: snap.docs.length > LIM.rollups };
     });
     for (const d of stale) {
-      const entry = { at: ctx.now, p: fetchP.then(r => ({ docs: r.by.get(d) || [], capped: r.capped })) };
+      const entry = { at: ctx.now, ttl: d === ctx.today ? TTL_LIVE : TTL_PAST, p: fetchP.then(r => ({ docs: r.by.get(d) || [], capped: r.capped })) };
       ctx.cache.memo.set(`roll|${ctx.prefix}|${d}`, entry);
       entry.p.catch(() => { if (ctx.cache.memo.get(`roll|${ctx.prefix}|${d}`) === entry) ctx.cache.memo.delete(`roll|${ctx.prefix}|${d}`); });
       entries.set(d, entry.p);
@@ -196,7 +197,9 @@ function eventRow(id, d, ctx) {
   const person = cleanName(d.person), action = String(d.action || "");
   if (!okName(person) || !action || !!d.sandbox !== !!ctx.prefix) return null;
   const at = ms(d.at), tsMs = ms(d.ts), serverAt = ms(d.serverAt) || tsMs || at;
-  return { id: String(d.id || id).slice(0, 100), at, k: serverAt, tsMs: tsMs || serverAt, person, station: String(d.station || ""), device: String(d.device || "").slice(0, 40), action,
+  // the feed's order and cursor follow the COMMIT time (ts): serverAt is read before the write, and a transaction that waits
+  // for a retry commits later, so a poll could pass an event whose serverAt is older than its cursor and never show it
+  return { id: String(d.id || id).slice(0, 100), at, k: tsMs || serverAt, tsMs: tsMs || serverAt, person, station: String(d.station || ""), device: String(d.device || "").slice(0, 40), action,
     orderId: digits(d.orderId), parts: Math.max(0, Math.floor(num(d.parts))), detail: scrub(d.detail), sincePrevMs: Math.max(0, num(d.sincePrevMs)), day: typeof d.day === "string" ? d.day : "" };
 }
 const byNewest = (a, b) => b.k - a.k || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0);
@@ -266,7 +269,7 @@ function covered(spans) {
 /* ── the people: rollups + sessions + seals, per person per day ── */
 const tmpl = () => ({ scans: 0, scanParts: 0, completes: 0, parts: 0, orders: 0, prints: 0, rejects: 0, errors: 0, notes: 0, undos: 0, undoParts: 0, undoOrders: 0, activeMs: 0, idleMs: 0 });
 const KEYS = Object.keys(tmpl());
-const newPD = day => ({ day, src: "", st: {}, hours: zeros(24), hs: {}, orders: new Map(), spans: [], inFirst: 0, inLast: 0, signedMs: 0, stMs: {}, firstIn: 0, lastOut: 0, liveSpan: false });
+const newPD = day => ({ day, src: "", st: {}, hours: zeros(24), hs: {}, orders: new Map(), spans: [], inFirst: 0, inLast: 0, signedMs: 0, rawMs: 0, stMs: {}, firstIn: 0, lastOut: 0, liveSpan: false });
 const stAgg = (pd, st) => pd.st[st] || (pd.st[st] = tmpl());
 const addOrder = (pd, orderId, st) => { if (!orderId) return; let s = pd.orders.get(orderId); if (!s) pd.orders.set(orderId, s = new Set()); s.add(st); };
 const addHour = (pd, st, h, n) => { if (!(h >= 0 && h < 24) || !n) return; pd.hours[h] += n; (pd.hs[st] || (pd.hs[st] = zeros(24)))[h] += n; };
@@ -312,8 +315,8 @@ async function assemble(ctx, winFrom, toDay) {
       }
       for (const [hh, h] of Object.entries(x.hours && typeof x.hours === "object" ? x.hours : {})) {
         const hr = parseInt(hh, 10); if (!(hr >= 0 && hr < 24) || !h || typeof h !== "object") continue;
-        pd.hours[hr] += Math.max(0, num(h.parts));
-        for (const [st, b] of Object.entries(h.by && typeof h.by === "object" ? h.by : {})) if (b && typeof b === "object") (pd.hs[st] || (pd.hs[st] = zeros(24)))[hr] += Math.max(0, num(b.parts));
+        pd.hours[hr] += Math.max(0, num(h.parts)) - Math.max(0, num(h.undoParts));          // produced minus undone, the same net as the totals
+        for (const [st, b] of Object.entries(h.by && typeof h.by === "object" ? h.by : {})) if (b && typeof b === "object") (pd.hs[st] || (pd.hs[st] = zeros(24)))[hr] += Math.max(0, num(b.parts)) - Math.max(0, num(b.undoParts));
       }
       for (const [id, m] of Object.entries(x.touched && typeof x.touched === "object" ? x.touched : {})) {
         const oid = digits(id); if (!oid) continue;
@@ -372,7 +375,7 @@ async function assemble(ctx, winFrom, toDay) {
   for (const person of P.people.values()) {
     for (const pd of person.days.values()) {
       if (pd.spans.length) {
-        pd.signedMs = covered(pd.spans.map(x => [x.s, x.e]));
+        pd.signedMs = covered(pd.spans.map(x => [x.s, x.e])); pd.rawMs = pd.spans.reduce((n, x) => n + (x.e - x.s), 0);
         const per = {}; for (const x of pd.spans) (per[x.station] || (per[x.station] = [])).push([x.s, x.e]);
         for (const [st, list] of Object.entries(per)) pd.stMs[st] = covered(list);
         pd.firstIn = Math.min(...pd.spans.map(x => x.s));
@@ -386,12 +389,12 @@ async function assemble(ctx, winFrom, toDay) {
 
 /** Everything about some person-days at once: stations, totals, per hour, order ids. */
 function summarize(pds) {
-  const acc = {}, ids = new Map(), hours = zeros(24), hs = {}, stMs = {}; let signed = 0, hasE = false, hasS = false, hasAny = false;
+  const acc = {}, ids = new Map(), hours = zeros(24), hs = {}, stMs = {}; let signed = 0, evScans = 0, hasE = false, hasS = false, hasAny = false;
   for (const pd of pds) {
     if (pd.src === "events") hasE = true; else if (pd.src === "seals") hasS = true;
     if (pd.src) hasAny = true;
     signed += pd.signedMs;
-    for (const [st, a] of Object.entries(pd.st)) { const t = acc[st] || (acc[st] = tmpl()); for (const k of KEYS) t[k] += a[k]; }
+    for (const [st, a] of Object.entries(pd.st)) { const t = acc[st] || (acc[st] = tmpl()); for (const k of KEYS) t[k] += a[k]; if (pd.src === "events") evScans += a.scans; }
     for (const [st, v] of Object.entries(pd.stMs)) stMs[st] = (stMs[st] || 0) + v;
     for (let h = 0; h < 24; h++) hours[h] += pd.hours[h];
     for (const [st, arr] of Object.entries(pd.hs)) { const t = hs[st] || (hs[st] = zeros(24)); for (let h = 0; h < 24; h++) t[h] += arr[h]; }
@@ -405,12 +408,19 @@ function summarize(pds) {
   }).sort((x, y) => y.parts - x.parts || y.minutes - x.minutes || order(x.station) - order(y.station));
   const sum = k => stations.reduce((n, s) => n + s[k], 0);
   let active = 0, idle = 0, rejects = 0, errors = 0;
-  for (const a of Object.values(acc)) { active += a.activeMs; idle += a.idleMs; rejects += a.rejects; errors += a.errors; }
+  for (const a of Object.values(acc)) { rejects += a.rejects; errors += a.errors; }
+  // working and quiet time: each station keeps its own gaps, so a person signed in at two computers at once (overlapping
+  // sessions, counted once in signedInMin) adds the gaps of both. Active plus idle can never exceed the time signed in.
+  for (const pd of pds) {
+    let a = 0, i = 0; for (const x of Object.values(pd.st)) { a += x.activeMs; i += x.idleMs; }
+    if (pd.rawMs > pd.signedMs) { a = Math.min(a, pd.signedMs); i = Math.min(i, Math.max(0, pd.signedMs - a)); }
+    active += a; idle += i;
+  }
   const parts = sum("parts"), scans = sum("scans");
   const totals = { parts, scanParts: sum("scanParts"), scans, orders: ids.size || sum("orders"), rejects, errors, activeMin: r1(active / 60000), idleMin: r1(idle / 60000), signedInMin: r1(signed / 60000),
-    rate: active >= 60000 ? r1(parts / (active / 3600000)) : 0, secPerScan: scans > 0 && active > 0 ? r1(active / 1000 / scans) : 0 };
+    rate: active >= 60000 ? r1(parts / (active / 3600000)) : 0, secPerScan: evScans > 0 && active > 0 ? r1(active / 1000 / evScans) : 0 };   // (seal scans carry no time: only logged scans divide the active time)
   const source = hasE && hasS ? "mixed" : hasE ? "events" : hasS ? "seals" : hasAny || signed > 0 ? "sessions" : "none";
-  return { stations, totals, perHour: hours.map(r1), hs, ids, source, hasAny: hasAny || signed > 0 };
+  return { stations, totals, perHour: hours.map(shown), hs, ids, source, hasAny: hasAny || signed > 0 };
 }
 
 /* ── overview ── */
@@ -437,9 +447,9 @@ async function buildOverview(ctx, day, days) {
   for (const e of inRange) {
     if (!e.orderId) continue;
     const k = nameKeyOf(ctx, e.person); let m = ordersOf.get(k); if (!m) ordersOf.set(k, m = new Map());
-    let o = m.get(e.orderId); if (!o) m.set(e.orderId, o = { orderId: e.orderId, stations: new Set(), parts: 0, lastAt: 0 });
+    let o = m.get(e.orderId); if (!o) m.set(e.orderId, o = { orderId: e.orderId, stations: new Set(), made: 0, undone: 0, lastAt: 0 });
     if (e.station) o.stations.add(e.station);
-    if (e.action === "complete") o.parts += e.parts; else if (e.action === "undo") o.parts = Math.max(0, o.parts - e.parts);
+    if (e.action === "complete") o.made += e.parts; else if (e.action === "undo") o.undone += e.parts;      // (events arrive newest first: an undo is met before its completion)
     o.lastAt = Math.max(o.lastAt, e.at);
   }
   const allIds = new Map(), stIds = {}, stNow = {}, perStationHours = {};
@@ -451,7 +461,7 @@ async function buildOverview(ctx, day, days) {
     const live = day === ctx.today ? P.live : [];   // "on" is now: a past day shows nobody on
     const inPd = pds.filter(pd => pd.firstIn).sort((a, b) => b.day < a.day ? -1 : 1)[0] || null;
     const nowAt = [...new Set(live.map(s => s.station))];
-    const name = displayName(P), orders = [...(ordersOf.get(P.key) || new Map()).values()].sort((a, b) => b.lastAt - a.lastAt).slice(0, LIM.orders).map(o => ({ orderId: o.orderId, stations: [...o.stations], parts: o.parts, lastAt: o.lastAt }));
+    const name = displayName(P), orders = [...(ordersOf.get(P.key) || new Map()).values()].sort((a, b) => b.lastAt - a.lastAt).slice(0, LIM.orders).map(o => ({ orderId: o.orderId, stations: [...o.stations], parts: Math.max(0, o.made - o.undone), lastAt: o.lastAt }));
     for (const [id, set] of S.ids) { let s = allIds.get(id); if (!s) allIds.set(id, s = new Set()); set.forEach(x => s.add(x)); for (const st of set) (stIds[st] || (stIds[st] = new Set())).add(id); }
     for (const [st, arr] of Object.entries(S.hs)) { const t = perStationHours[st] || (perStationHours[st] = zeros(24)); for (let h = 0; h < 24; h++) t[h] += arr[h]; }
     for (const st of nowAt) (stNow[st] || (stNow[st] = [])).push(name);
@@ -467,7 +477,7 @@ async function buildOverview(ctx, day, days) {
   const order = st => { const i = STATIONS.indexOf(st); return i < 0 ? 99 : i; };
   const stationList = [...new Set(CORE.concat(Object.keys(perSt), Object.keys(stNow)))].sort((a, b) => order(a) - order(b) || (a < b ? -1 : 1))
     .map(st => ({ station: st, parts: (perSt[st] || {}).parts || 0, scans: (perSt[st] || {}).scans || 0, orders: stIds[st] ? stIds[st].size : 0, peopleNow: (stNow[st] || []).slice().sort() }));
-  const perHour = {}; for (const [st, arr] of Object.entries(perStationHours)) if (arr.some(Boolean)) perHour[st] = arr.map(r1);
+  const perHour = {}; for (const [st, arr] of Object.entries(perStationHours)) if (arr.some(v => v > 0)) perHour[st] = arr.map(shown);
   const trend = dayList(winFrom, day).map(d => {
     let parts = 0, n = 0, rank = 0; const ids = new Set();
     for (const P of asm.P.people.values()) {
@@ -540,6 +550,7 @@ async function opOrders(ctx, body) {
   if (!ar.ok && !sr.ok) return json(503, { ok: false, error: "the order could not be read", errors: [ar.error, sr.error] });
   const errors = [ar, sr].filter(r => !r.ok).map(r => r.label + ": " + r.error), notes = [];
   const act = ar.ok ? ar.value.docs.map(d => eventRow(d.id, d.data() || {}, ctx)).filter(e => e && e.orderId === orderId) : [];
+  act.sort((a, b) => a.at - b.at || a.k - b.k || (a.id < b.id ? -1 : 1));      // oldest first, so an undo lands after the completion it reverses
   const withEvents = new Set(act.map(e => e.station));
   const seals = sr.ok ? sr.value.docs.map(d => sealRow(d.data() || {})).filter(r => r && r.orderId === orderId && !withEvents.has(r.station)) : [];
   const steps = new Map();
@@ -548,7 +559,7 @@ async function opOrders(ctx, body) {
   const evOut = [];
   for (const e of act) {
     const s = step(e.station, e.person, "events"); touch(s, e.at);
-    if (e.action === "scan") s.scans++; else if (e.action === "complete") { s.completes++; s.parts += e.parts; } else if (e.action === "print") s.prints++;
+    if (e.action === "scan") s.scans++; else if (e.action === "complete") { s.completes++; s.parts += e.parts; } else if (e.action === "print") s.prints++; else if (e.action === "undo") s.parts = Math.max(0, s.parts - e.parts);
     if (e.sincePrevMs > 0 && e.sincePrevMs <= ACTIVE_GAP_MS) s.workMs += e.sincePrevMs;
     evOut.push({ at: e.at, person: canonOf(ctx, nameKeyOf(ctx, e.person)) || e.person, station: e.station, device: e.device, action: e.action, parts: e.parts, detail: e.detail, source: "events" });
   }

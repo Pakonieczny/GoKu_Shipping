@@ -22,7 +22,7 @@
   const FLUSH_MS = 10000, BACKOFF_MAX = 120000, MAX_QUEUE = 500, BATCH = 50, EVENT_BYTES = 600, GAP_CAP = 3600000;
   const K = { q: "station_activity_q.", seq: "station_activity_seq.", last: "station_activity_last." };
   let queue = [], loadedFor = "", sending = null, failures = 0, nextTry = 0, batchMax = BATCH, started = false;
-  const beaconed = new Set();
+  const beaconed = new Set(), memSeq = {}, memLast = {};      // (kept in memory too: localStorage can be blocked or full)
 
   const warn = (...a) => { try { console.warn("[StationActivity]", ...a); } catch (_) {} };
   const lsGet = k => { try { return localStorage.getItem(k) || ""; } catch (_) { return ""; } };
@@ -41,7 +41,7 @@
       if (!S || typeof S.who !== "function") return null;
       const w = S.who();
       if (!w || !w.person || !w.station || !w.device) return null;
-      if (/^\d+$/.test(String(w.person))) return null;          // a name is never only digits (that would be a PIN)
+      if (!/\p{L}/u.test(String(w.person))) return null;        // a name has a letter: "123456" or "123 456" would be a PIN
       return w;
     } catch (_) { return null; }
   }
@@ -63,8 +63,8 @@
     try { if (queue.length) lsSet(K.q + device, JSON.stringify(queue)); else lsDel(K.q + device); } catch (_) {}
   }
   function nextSeq(device) {
-    const n = (parseInt(lsGet(K.seq + device), 10) || 0) + 1;
-    lsSet(K.seq + device, String(n));
+    const n = Math.max(parseInt(lsGet(K.seq + device), 10) || 0, memSeq[device] || 0) + 1;
+    memSeq[device] = n; lsSet(K.seq + device, String(n));
     return n;
   }
 
@@ -77,7 +77,7 @@
       load(w.device);
       o = o && typeof o === "object" ? o : {};
       const now = Date.now(), seq = nextSeq(w.device);
-      const last = lsJson(K.last + w.device, null);
+      const last = lsJson(K.last + w.device, null) || memLast[w.device] || null;
       const base = last && last.person === w.person && last.session === w.session && Number(last.at) > 0 ? Number(last.at) : Number(w.startAt) || now;
       let detail = clean(o.detail, 120);
       if (/^\d+$/.test(detail)) detail = "";
@@ -97,9 +97,9 @@
         while (bytes(JSON.stringify(ev)) > EVENT_BYTES && ev[k]) ev[k] = ev[k].length > 20 ? ev[k].slice(0, ev[k].length - 20) : "";
       }
       if (bytes(JSON.stringify(ev)) > EVENT_BYTES) return false;
-      lsSet(K.last + w.device, JSON.stringify({ person: w.person, session: w.session, at: now }));
+      memLast[w.device] = { person: w.person, session: w.session, at: now }; lsSet(K.last + w.device, JSON.stringify(memLast[w.device]));
       queue.push(ev);
-      if (queue.length > MAX_QUEUE) queue = queue.slice(-MAX_QUEUE);
+      if (queue.length > MAX_QUEUE) { warn("the queue is full: the oldest " + (queue.length - MAX_QUEUE) + " event(s) were dropped"); queue = queue.slice(-MAX_QUEUE); }
       save(w.device);
       start();
       return true;
@@ -143,7 +143,7 @@
         const st = r ? r.status : 0;
         if (st >= 200 && st < 300) { failures = 0; nextTry = 0; batchMax = BATCH; settle(events); }
         else if (st === 413 && events.length > 1) { batchMax = Math.max(1, Math.floor(events.length / 2)); nextTry = 0; }
-        else if (st === 413 || (st >= 400 && st < 500 && st !== 429 && st !== 408)) { failures = 0; settle(events); warn("a batch was refused for good:", st); }
+        else if (st === 413 || st === 400 || st === 422) { failures = 0; settle(events); warn("a batch of " + events.length + " event(s) was refused for good:", st); }
         else { failures = Math.min(failures + 1, 6); nextTry = Date.now() + Math.min(BACKOFF_MAX, FLUSH_MS * Math.pow(2, failures)); }
       }).catch(() => { failures = Math.min(failures + 1, 6); nextTry = Date.now() + Math.min(BACKOFF_MAX, FLUSH_MS * Math.pow(2, failures)); })
         .then(() => { sending = null; if (queue.length && failures === 0) return flush(); });
