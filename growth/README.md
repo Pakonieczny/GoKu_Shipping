@@ -122,7 +122,7 @@ The robot uses matte ceramic, a dark satin visor, restrained lighting and bloom,
 
 The wider interface centers the robot and one voice action. Live captions, typing and history are optional; checked product options stay in a separate tray. Connecting can be cancelled, End/Hide close local media immediately, and interrupted or timed-out catalogue checks cannot overwrite newer selections. Switching to typing ends voice. No microphone or provider call starts on a fresh visit or merely opening the guide.
 
-All **1,316** growth checks pass across **67** files, with complete TAP evidence. Native provider, physical microphone and visual acceptance are recorded separately in the private checkpoint so fixture tests cannot stand in for live proof.
+All **1,356** growth checks pass across **69** files, with one complete regression run recorded privately. Native provider, physical microphone and visual acceptance are recorded separately in the private checkpoint so fixture tests cannot stand in for live proof.
 
 The one-shot WebRTC exchange waits for ICE gathering to complete before sending the refreshed local SDP, with a ten-second limit and cancellation cleanup. It never changes browser networking or graphics settings.
 
@@ -135,3 +135,11 @@ Native voice has separate live discovery, displayed-piece inspection and prepare
 `/concierge-actions-qa.html` exercises the actual widget using explicitly synthetic native events and the live public catalogue. It requests no microphone and makes no provider inference call. Its results do not prove physical voice, provider latency or WebGL quality. The normal demo always uses the native adapter; the fixture is restricted to the exact isolated QA route and explicit test flag.
 
 Copying an advertising brief re-fetches protected research and independently applies the current operator-review packet's identity, dossier version, source bindings, freshness, issue holds and keyword-conflict gates. Valid exports retain all structured positive and negative proposals in separate sections with candidate IDs, packet and dossier versions, measurements and citations. Missing, stale or held packets remain corrective context. Saved measured demand must still be fresh, exact-version evidence, with original currencies and attribution limits. Copying never changes a campaign or activates proposals.
+
+## Semantic follow-ups and voice lifecycle
+
+Ordinary meaning questions, including “What do these mean?” and plural “meanings,” reuse the displayed live-checked pieces and saved shopper preferences. Discourse corrections such as “I mean silver instead” still change preferences. Reply overrides retain disclosure when a foreign-currency item budget was not applied; selected actions keep their existing separate confirmation flow. No exchange rate is invented.
+
+Voice authority is bound to the displayed selection generation at speech start as well as the exact audio input. Delayed final transcripts may preserve an in-flight read-only inspection for that same input and unchanged selection, but cannot authorize controls on later discoveries. A page restored from the browser back/forward cache keeps harmless conversation and requires a fresh explicit voice start. Callbacks from disposed loaders, media elements, channels or peers cannot affect a newer session.
+
+The isolated `/concierge-actions-qa.html` includes explicit synthetic checks for matching ASR arriving during a real live inspection and for an old ordinal arriving during new discovery. These make no microphone or provider calls and do not certify native conversation, latency or GPU rendering.

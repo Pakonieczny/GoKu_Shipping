@@ -391,6 +391,16 @@ function fieldMentions(text,pattern,canonical) {
   return [...text.matchAll(new RegExp('\\b(?:'+pattern+')\\b','g'))].map(m=>({value:canonical?canonical(m[0]):m[0],raw:m[0],index:m.index,negative:negatedAt(text,m.index)}));
 }
 
+// Semantic follow-ups share one route through preference preservation,
+// displayed-card recall and response presentation. Bare “mean” is only an
+// inquiry in a what-does/do question; “I mean silver instead” is a correction.
+function semanticInquiry(message){
+  const text=clean(message,2000).toLowerCase().replace(/[’‘]/g,"'");
+  const nouns=fieldMentions(text,'meanings?|means|symboli[sz]\\w*|history|story|stories');
+  if(nouns.some(hit=>!hit.negative))return true;
+  return [...text.matchAll(/\bwhat\s+(?:do|does|did|would|can|could)\b[^.!?\n]{0,180}\bmean\b/g)].some(hit=>!negatedAt(text,hit.index));
+}
+
 function applyBudgetMessage(p,text,explicitCurrency){
   const events=[],spans=[];
   const add=(match,value)=>{spans.push({index:match.index,end:match.index+match[0].length});if(!negatedAt(text,match.index))events.push({index:match.index,...value});};
@@ -459,10 +469,10 @@ function applyPreferenceMessage(before,message) {
   if(positive.length){p.interests=positive;p.query=positive.join(' ');}
   else if(negative.length)p.query=p.interests.join(' ');
   for(const hit of fieldMentions(text,'handwriting|handwritten|my (?:own )?writing|engraving|engrave[ds]?|personali[sz](?:ed|ation|e)',v=>/handwrit|writing/.test(v)?'handwriting':'engraving'))p.personalization=hit.negative?null:hit.value;
-  const nonShopping=/\b(?:meaning|means|symboli[sz]\w*|history|story|stories|shipping|deliver|arrive|return|refund|compare|comparison|nickel|hypoallergenic|second|third|first|fourth|fifth|sixth|open|cart|bag|cheaper|expensive|more options|what else|tell me more|skip|pass on|prefer not|gift details?|secrets?|api keys?|credentials?|repository|system prompt|owner data|private records)\b/.test(text);
+  const nonShopping=semanticInquiry(text)||/\b(?:shipping|deliver|arrive|return|refund|compare|comparison|nickel|hypoallergenic|second|third|first|fourth|fifth|sixth|open|cart|bag|cheaper|expensive|more options|what else|tell me more|skip|pass on|prefer not|gift details?|secrets?|api keys?|credentials?|repository|system prompt|owner data|private records)\b/.test(text);
   if(!positive.length&&!negative.length&&!nonShopping){
     const controlled=new Set([...mentions.type,...mentions.metal,...mentions.recipient,...mentions.occasion].flatMap(x=>x.value.split(' ')));
-    const words=(queryText.match(/[a-z][a-z-]{2,}/g)||[]).filter(t=>!GENERIC.has(t)&&!controlled.has(t)&&!controlled.has(t.replace(/s$/,''))&&!['sterling','filled','plated','handwritten','engraving','personalized','personalised'].includes(t));
+    const words=(queryText.replace(/\b(?:i|we) mean\b/g,' ').match(/[a-z][a-z-]{2,}/g)||[]).filter(t=>!GENERIC.has(t)&&!controlled.has(t)&&!controlled.has(t.replace(/s$/,''))&&!['sterling','filled','plated','handwritten','engraving','personalized','personalised'].includes(t));
     const messageMilestone=milestoneDiscovery.parseMilestone(text,p.milestone,negatedAt);
     const residual=messageMilestone?milestoneDiscovery.contextResidual(words.join(' '),messageMilestone):words.join(' ');
     const raw=residual.split(/\s+/).filter(Boolean).slice(0,4).join(' ');
@@ -704,11 +714,11 @@ async function concierge({service,shopify,message,history=[],preferences={},cont
   // checking inquiry language, negation and references to other cards.
   const destinationPlain=destination.plain.toLowerCase().replace(/[’‘]/g,"'");
   const command=shopperCommand(destinationPlain),negatedCommand=/\b(?:do not|don'?t|not|never)\s+(?:open|take|go|view|show|add|put)\b/.test(destinationPlain);
-  const destinationInquiry=!/\b(?:compare|comparison|versus|first|second|third|fourth|fifth|sixth|[1-6](?:st|nd|rd|th)?)\b/.test(destinationPlain)&&fieldMentions(destinationPlain,'tell me(?: more)? about|describe|explain|details? (?:about|for|on)|what (?:is|are|does)|meaning|means|symboli[sz]\\w*|history|story|stories').some(hit=>!hit.negative);
+  const destinationInquiry=!/\b(?:compare|comparison|versus|first|second|third|fourth|fifth|sixth|[1-6](?:st|nd|rd|th)?)\b/.test(destinationPlain)&&(semanticInquiry(destinationPlain)||fieldMentions(destinationPlain,'tell me(?: more)? about|describe|explain|details? (?:about|for|on)|what (?:is|are|does)').some(hit=>!hit.negative));
   const destinationHandle=((command&&!negatedCommand)||destinationInquiry)&&!destination.unsafe&&destination.handles.length===1?destination.handles[0]:'';
   const exactProductContext=exactCurrentContext||!!destinationHandle;
   const displayedReference=fieldMentions(text.toLowerCase().replace(/[’‘]/g,"'"),'this piece|that piece|this one|that one').some(hit=>!hit.negative);
-  const useContext=exactProductContext||displayedReference||/\b(?:meaning|means|symboli[sz]\w*|history|story|stories|compare|comparison|first|second|third|fourth|fifth|sixth|open|cart|bag)\b/i.test(text);
+  const useContext=exactProductContext||displayedReference||semanticInquiry(text)||/\b(?:compare|comparison|first|second|third|fourth|fifth|sixth|open|cart|bag)\b/i.test(text);
   const handles=destinationHandle?[destinationHandle]:exactCurrentContext?[currentHandle]:plainList(context.productHandles,6).filter(h=>/^[a-z0-9_-]{1,180}$/.test(h));
   if(!handles.length&&currentHandle)handles.push(currentHandle);
   const milestonePlan=!command&&!(useContext&&handles.length)?milestoneDiscovery.discoveryIntent(intent):null;
@@ -824,7 +834,7 @@ async function concierge({service,shopify,message,history=[],preferences={},cont
   if(knowledgeUnavailable)result.knowledgeUnavailable=true;
   const mismatchedCurrency=products.some(p=>intent.budget!=null&&intent.budgetCurrency&&intent.budgetCurrency!==p.currency);
   if(mismatchedCurrency){result.reply+=' Catalogue prices are shown in '+products[0].currency+'. I haven’t applied your '+intent.budgetCurrency+' budget to those prices.';result.question='Would you like to give an item budget in '+products[0].currency+', or check the current local price on a product page?';result.currencyMismatch=true;}
-  if(/\b(?:meaning|means|symboli[sz]\w*|history|story|stories)\b/i.test(text)){result.reply=meanings.length?'Here are reviewed interpretations associated with the displayed pieces. Meanings vary by culture and by the person wearing them.':'I don’t yet have reviewed symbolism or history for these pieces. I can still help you choose by the person’s interests and the published product details.';result.question=null;}
+  if(semanticInquiry(text)){result.reply=meanings.length?'Here are reviewed interpretations associated with the displayed pieces. Meanings vary by culture and by the person wearing them.':'I don’t yet have reviewed symbolism or history for these pieces. I can still help you choose by the person’s interests and the published product details.';result.question=null;}
   if(/\b(?:compare|comparison|versus)\b/i.test(text)){result.reply=products.length>=2?'Compare the live metal options, item prices and designs below. Each product page has the complete description.':'I need two available pieces to make a useful comparison.';result.question=products.length>=2?null:'Which other piece would you like to compare?';}
   const policyTopics=require('./_britesConcierge').classify(text,history).topics;
   if(policyTopics.includes('shipping')||policyTopics.includes('refund')){result.reply='Shipping timing and returns depend on the order and destination. The current shop policies and checkout show the applicable details.';result.policyLinks=[{label:'Shipping policy',url:'https://britesjewelry.com/policies/shipping-policy'},{label:'Refund policy',url:'https://britesjewelry.com/policies/refund-policy'}];result.question=policyTopics.includes('shipping')?'Which country is the gift going to, and when is it needed?':null;}
@@ -835,11 +845,12 @@ async function concierge({service,shopify,message,history=[],preferences={},cont
   // The current broad gold preference is not an exact material-form filter.
   // Disclose mixed/unclear forms rather than calling solid gold gold-filled.
   if(fieldMentions(text.toLowerCase(),'gold[ -]filled').some(hit=>!hit.negative)&&products.some(p=>p.variants.some(v=>!/\bgold[ -]filled\b/i.test(v.title+' '+(v.options||[]).filter(o=>/metal|material|finish/i.test(o.name)).map(o=>o.value).join(' '))))){result.materialFormUnfiltered=true;const note=' This selection hasn’t been filtered specifically to gold-filled. Check each exact variant’s metal label before choosing.';const split=result.reply.indexOf(' Catalogue prices are shown in ');result.reply=split<0?result.reply+note:result.reply.slice(0,split)+note+result.reply.slice(split);}
-  // A meaning request must not erase the currency disclosure attached to
-  // contextual cards. This does not convert prices or relax the item cap.
-  if(result.currencyMismatch&&milestonePlan&&!result.reply.includes('I haven’t applied your ')){
+  // Reply-specific presentation must not hide an unapplied foreign-currency
+  // item cap. Keep direct actions focused on the shopper's selected control;
+  // the disclosure neither converts prices nor treats that cap as satisfied.
+  if(result.currencyMismatch&&!result.reply.includes('I haven’t applied your ')){
     result.reply+=' Catalogue prices are shown in '+products[0].currency+'. I haven’t applied your '+intent.budgetCurrency+' budget to those prices.';
-    result.question='Would you like to give an item budget in '+products[0].currency+', or check the current local price on a product page?';
+    if(!result.requestedAction)result.question='Would you like to give an item budget in '+products[0].currency+', or check the current local price on a product page?';
   }
   // Runtime inference can refine a question only. It cannot supply product
   // facts, choose tools, browse, purchase, or read private research fields.
