@@ -54,6 +54,8 @@
     const m = /_Sheet-(\d+)/.exec(String(x.fileBase || x.folder || '')); return m ? +m[1] : 0;
   }
   const labelOf = x => 'RG Sheet' + (sheetNo(x || {}) ? ' ' + sheetNo(x) : '');
+  // whether a name ("RG Sheet 1") is one of the names in a text (not "RG Sheet 10")
+  const mentions = (text, name) => !!name && new RegExp('(^|\\W)' + String(name).replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?!\\d)', 'i').test(String(text || ''));
   const joinLabels = ls => ls.length <= 1 ? ls[0] || '' : ls.slice(0, -1).join(', ') + ' and ' + ls[ls.length - 1];
 
   /* ── what a sheet has ───────────────────────────────────────────────────────────────────────────────────────── */
@@ -182,7 +184,8 @@
 
   /* ── calculate: only after an explicit press ────────────────────────────────────────────────────────────────── */
   const bars = new Set(), inflight = new WeakMap();
-  const broadcast = (kind, payload) => { for (const b of [...bars]) { try { b.hear(kind, payload); } catch (_) {} } };
+  // the one bar that is waiting on a calculation takes every step of it; with several, each takes the steps that name its sheets
+const broadcast = (kind, payload) => { const all = [...bars].filter(b => b.working()); for (const b of all) { try { b.hear(kind, payload, all.length === 1); } catch (_) {} } };
   function refresh(sh) {
     try { W.Session && W.Session.schedule && W.Session.schedule(); if (sh.el) { const C = cn(); C.renderCard(sh); C.drawPreview(sh); } } catch (_) {}
   }
@@ -297,7 +300,7 @@
       const mine = live.filter(sh => ids.has(sh.sheetId) || (sh.setId && sets.has(sh.setId) && !sh.draft));
       return mine.find(sh => verdictLive(sh).needsLine) || mine[0] || null;
     }
-    return live.find(sh => label && label.includes(labelOf(sh)) && verdictLive(sh).needsLine) || null;
+    return live.find(sh => label && mentions(label, labelOf(sh)) && verdictLive(sh).needsLine) || null;
   }
   function paintInto(cv, sh) {
     const C = cn(); if (!C || !C.paintPreview || !C.stockFor) return false;
@@ -313,25 +316,25 @@
     o = o || {};
     if (!host || typeof host.appendChild !== 'function') return null;
     css();
-    const label = String(o.sheetLabel || 'This sheet'), count = Math.max(1, +o.count || (label.split(/,| and /).length));
+    const label = String(o.sheetLabel || 'This sheet').replace(/^\s*add the green dash line to\s+/i, '').replace(/[?\s]+$/, '') || 'This sheet', count = Math.max(1, +o.count || (label.split(/,| and /).length));
     const armMs = o.armMs == null ? 700 : Math.max(0, +o.armMs || 0);
     for (const old of [...host.querySelectorAll(':scope > .lfrBar')]) { if (old._lfr) old._lfr.destroy(); else old.remove(); }
     const bar = doc.createElement('div');
     bar.className = 'lfrBar lfrNoPv'; bar.setAttribute('role', 'group'); bar.setAttribute('aria-label', 'Green dash line check'); bar.dataset.lfr = 'ask';
     bar.innerHTML = `<div class="lfrPv" hidden><canvas class="before" aria-hidden="true"></canvas><canvas class="after" aria-hidden="true"></canvas></div>
       <div class="lfrBody"><p class="lfrTitle">${escape(label)} ${count > 1 ? 'have' : 'has'} no green dash line yet</p>
-        <p class="lfrText">A Rose Gold sheet needs one to go to Laser cutting. Moving or dropping ${count > 1 ? 'them' : 'it'} never adds one: only the button below does.</p>
+        <p class="lfrText">${escape(o.reason || 'A Rose Gold sheet needs one to go to Laser cutting.')} Moving or dropping ${count > 1 ? 'them' : 'it'} never adds one: only the button below does.</p>
         <div class="lfrStatus" role="status" aria-live="polite"></div>
         <div class="lfrActions"><button type="button" class="btn gold sm lfrGo" aria-disabled="true">Add the green dash line</button><button type="button" class="btn ghost sm lfrNo">Not now</button></div></div>`;
     const pv = bar.querySelector('.lfrPv'), before = pv.querySelector('.before'), after = pv.querySelector('.after');
     const status = bar.querySelector('.lfrStatus'), actions = bar.querySelector('.lfrActions'), go = bar.querySelector('.lfrGo'), no = bar.querySelector('.lfrNo');
-    let state = 'ask', fired = false, armed = armMs === 0, destroyed = false, cancelled = false, pressed = false, pressT = 0, armT = 0, slowT = 0, drawnAt = 0, lastSaved = '';
-    const shown = previewSheet(o, label), ids = new Set(shown && shown.sheetId ? [shown.sheetId] : []), names = new Set(label.split(/, | and /));
+    let seen = false, state = 'ask', fired = false, armed = armMs === 0, destroyed = false, cancelled = false, pressed = false, pressT = 0, armT = 0, slowT = 0, drawnAt = 0, lastSaved = '';
+    const shown = previewSheet(o, label), ids = new Set(shown && shown.sheetId ? [shown.sheetId] : []);
     if (!armed) { bar.style.setProperty('--lfr-arm', armMs + 'ms'); armT = setTimeout(() => { armed = true; go.removeAttribute('aria-disabled'); }, armMs); } else go.removeAttribute('aria-disabled');
     if (shown && paintInto(before, shown)) { pv.hidden = false; bar.classList.remove('lfrNoPv'); }
     const set = (next, html, cls) => { state = next; bar.dataset.lfr = next; status.className = 'lfrStatus' + (cls ? ' ' + cls : ''); status.innerHTML = html || ''; actions.hidden = !(next === 'ask' || next === 'failed'); };
     const spin = text => `<i class="lfrSpin" aria-hidden="true"></i><span>${escape(text)}</span>`;
-    const matches = ev => !ev || label === 'This sheet' || (ev.sheetId && ids.has(ev.sheetId)) || names.has(ev.sheetLabel);
+    const matches = ev => !ev || label === 'This sheet' || (ev.sheetId && ids.has(ev.sheetId)) || mentions(label, ev.sheetLabel);
     function draw(sh, wipe) {
       if (!sh || !paintInto(after, sh)) return;
       if (pv.hidden) { paintInto(before, sh); pv.hidden = false; bar.classList.remove('lfrNoPv'); }
@@ -357,7 +360,11 @@
       if (destroyed) return; clearTimeout(slowT);
       if (!res || res.ok === false) return fail((res && res.error) || 'The green dash line could not be added');
       const text = res.lines === 0 && !lastSaved ? 'Nothing to add: it already has its green dash line' : lastSaved || `Green dash line saved${res.lines > 1 ? ` (${res.lines} lines)` : ''}`;
-      const done = () => { if (destroyed) return; set('done', TICK + `<span>${escape(text)}</span>`); (res.warnings || []).forEach(w => { const p = doc.createElement('p'); p.className = 'lfrNote'; p.textContent = w; status.after(p); }); };
+      const done = () => {
+        if (destroyed) return;
+        // the question is answered: the bar says what is now true, and drops the explanation
+        bar.querySelector('.lfrTitle').textContent = `${label} ${res.lines === 0 && !lastSaved ? 'already ' : 'now '}${count > 1 ? 'have their' : 'has its'} green dash line`; bar.querySelector('.lfrText').hidden = true;
+        set('done', TICK + `<span>${escape(text)}</span>`); (res.warnings || []).forEach(w => { const p = doc.createElement('p'); p.className = 'lfrNote'; p.textContent = w; status.after(p); }); };
       const wait = drawnAt && !reduced() ? Math.max(0, 900 - (Date.now() - drawnAt)) : 0; if (wait) setTimeout(done, wait); else done();
     }
     function fail(err) {
@@ -387,7 +394,7 @@
     const release = () => { clearTimeout(pressT); pressT = setTimeout(() => { pressed = false; }, 600); };
     go.addEventListener('pointerdown', e => { if (e.button === 0 || e.button === undefined) hold(); });
     go.addEventListener('pointerup', () => { if (pressed) release(); });
-    go.addEventListener('pointerleave', () => { clearTimeout(pressT); pressed = false; });
+    go.addEventListener('pointerleave', e => { if (!e.pointerType || e.pointerType === 'mouse') { clearTimeout(pressT); pressed = false; } });   // (a touch or pen leaves after it lifts, and its click comes after that)
     go.addEventListener('pointercancel', () => { clearTimeout(pressT); pressed = false; });
     go.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') hold(); });
     go.addEventListener('keyup', () => { if (pressed) release(); });
@@ -399,23 +406,25 @@
       fire();
     });
     no.addEventListener('click', e => { if (e.preventDefault) e.preventDefault(); cancel(); });
+    // a bar its owner took out of the page (hide, a re-render) lets go of everything the next time it is asked
+    const gone = () => { if (bar.isConnected) { seen = true; return false; } return seen; };
     function onKey(e) {
-      if (!bar.isConnected) { if (!destroyed) destroy(); return; }
+      if (gone()) { if (!destroyed) destroy(); return; }
       if (e.key !== 'Escape' || !(state === 'ask' || state === 'failed')) return;
       const a = doc.activeElement; if (a && a !== doc.body && !bar.contains(a)) return;
       cancel();
     }
     doc.addEventListener('keydown', onKey);
-    const entry = { hear(kind, payload) {
+    const entry = { working: () => { if (!destroyed && gone()) destroy(); return !destroyed && state === 'working'; }, hear(kind, payload, only) {
       if (destroyed || state !== 'working') return;
-      if (!bar.isConnected) { destroy(); return; }
-      if (kind === 'step' && matches(payload)) step(payload);
-      else if (kind === 'finish') { const hit = !payload || !(payload.sheets || []).length || (payload.sheets || []).some(s => s && (ids.has(s.sheetId) || names.has(s.label))); if (hit) finish(payload); }
+      if (gone()) { destroy(); return; }
+      if (kind === 'step' && (only || matches(payload))) step(payload);
+      else if (kind === 'finish') { const hit = only || !payload || !(payload.sheets || []).length || (payload.sheets || []).some(s => s && (ids.has(s.sheetId) || mentions(label, s.label))); if (hit) finish(payload); }
     } };
     bars.add(entry);
     const ctl = { el: bar, step, finish, fail, cancel, destroy, onStep: step, get state() { return state; } };
     bar._lfr = ctl;
-    host.appendChild(bar);
+    host.appendChild(bar); seen = bar.isConnected;
     try { no.focus({ preventScroll: true }); } catch (_) {}   // the safe button takes the focus: an Enter right after a drop cancels
     return ctl;
   }
