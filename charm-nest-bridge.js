@@ -428,7 +428,10 @@ const stampWho = () => { const n = String(employeeName() || "").trim().slice(0, 
    window, the station's hello) is the one the next event carries, whoever records it. An emit here never waits and
    never throws: it is queued and handed over a few at a time while the page is idle (all at once in a hidden tab), so a
    pull of three hundred lines holds no frame. `once` sends an event (its type and id) one time from this browser; the
-   ids are kept across reloads, but not in the sandbox, whose records a reset clears. */
+   ids are kept across reloads, but not in the sandbox, whose records a reset clears. An event for the order whose view is
+   open is handed over at once and sent at once (Paul, 3 Oct 04:03: the open view shows what is done within 2-3 s): it is
+   one event, so nothing is held up, and the view stamps it as it happens, not at the next idle moment. */
+const openRid = () => { try { return window.OrderWin && OrderWin.isOpen() ? String(OrderWin.rid() || "") : ""; } catch (_) { return ""; } };
 const TL = window.CNTimeline = (() => {
   const T = () => window.OrderTimeline || null;
   function sync() { try { const t = T(); if (t) t.config({ mode: "sorter", sandbox: !!WORKSPACE_SANDBOX, by: employeeName(), passcode: S.passcode || "" }); } catch (_) {} }
@@ -449,12 +452,15 @@ const TL = window.CNTimeline = (() => {
     for (const e of queue.splice(0, document.hidden ? queue.length : 25)) { try { t.record(e); } catch (_) {} }
     if (queue.length) { pumping = true; idle(pump); }
   }
-  /** Records one event, fire-and-forget. With `once`, an event already sent from here (its type, order and id) is not. */
-  function rec(e, once) {
+  /** Records one event, fire-and-forget. With `once`, an event already sent from here (its type, order and id) is not.
+   *  With `now` (or when the order's own view is open) it is recorded and sent at once, not at the next idle moment. */
+  function rec(e, once, now) {
     try {
       if (!e || !e.orderId || !e.type || !T()) return false;
       if (once) { const k = hash2(`${e.type}~${e.orderId}~${e.id}`); if (seenSet().has(k)) return false; mark(k); }
-      queue.push(Object.assign({}, e, { at: +e.at > 1e12 ? +e.at : Date.now() }));
+      const ev = Object.assign({}, e, { at: +e.at > 1e12 ? +e.at : Date.now() });
+      if (now || openRid() === String(e.orderId)) { const t = T(); sync(); t.record(ev); try { if (typeof t.flush === "function") t.flush(); } catch (_) {} return true; }
+      queue.push(ev);
       if (!pumping) { pumping = true; idle(pump); }
       return true;
     } catch (_) { return false; }
@@ -2553,7 +2559,13 @@ const SheetEvents = window.SheetEvents = (() => {
   /** true the first time a key is seen (kept across reloads, per side of the sandbox) */
   const once = key => { const s = store(); if (s[key]) return false; s[key] = Date.now(); save(); return true; };
   const idle = fn => { const go = () => { try { fn(); } catch (e) { console.warn("[SheetEvents]", e); } }; if (typeof requestIdleCallback === "function") requestIdleCallback(go, { timeout: 1500 }); else setTimeout(go, 0); };
-  const send = list => { if (list.length) idle(() => { const T = window.OrderTimeline; if (T && typeof T.record === "function") for (const e of list) T.record(e); }); };
+  // (an event of the order whose view is open is recorded and sent at once, the rest when the page is idle)
+  const send = list => {
+    if (!list.length) return;
+    const open = openRid(), now = open ? list.filter(e => String(e && e.orderId) === open) : [], later = now.length ? list.filter(e => !now.includes(e)) : list;
+    if (now.length) { const T = window.OrderTimeline; try { if (T && typeof T.record === "function") { for (const e of now) T.record(e); if (typeof T.flush === "function") T.flush(); } } catch (e) { console.warn("[SheetEvents]", e); } }
+    if (later.length) idle(() => { const T = window.OrderTimeline; if (T && typeof T.record === "function") for (const e of later) T.record(e); });
+  };
   const who = () => { try { return employeeName() || ""; } catch (_) { return ""; } };
   const ridOf = c => { if (!c || !c.poolId) return ""; const v = String(c.order || c.orderInfo?.receiptId || "").split("/")[0]; return /^\d{4,}$/.test(v) ? v : ""; };
   const label = sh => sh ? `${METAL_TAG[sh.metal] || sh.metal || ""} Sheet ${sh.sheetIndex || sh.page || 1}` : "";
@@ -4215,6 +4227,24 @@ const Engrave = window.Engrave = (() => {
     if(!verified.ok)throw new Error(`The back file needs adjustment (${verified.why}). Move or resize the words before approving.`);
     return {fit,view};
   }
+  /* Paul, 3 Oct 04:03: "I just approved the engraving ... the above timeline took like 30 seconds to update". backPut stamps
+     the engraving approved on the order's timeline only once the back files are built again, uploaded and recorded (the
+     last step of an approval), and the open order view then waited out its poll. The approval stands here, so each copy's
+     event is recorded now with the id backPut gives it (poolId-approvedAt): the open view stamps its Engraved seal at
+     once, and the server's copy, whichever writes it first, lands on the same key: one seal, written once. */
+  function timelineApproved(job) {
+    try {
+      const row = job.row, rid = String(row?.order?.receiptId || ""), at = +job.approvedAt, by = String(job.approvedBy || "").trim();
+      if (!/^\d{4,}$/.test(rid) || !(at > 1e12) || !by) return;
+      const text = String(job.text || ""), words = text.trim().replace(/\s*\n\s*/g, " / ").slice(0, 180);
+      for (const poolId of job.copies || []) {
+        const sh = sheetFor(job, poolId), copy = B.pool.rows.get(poolId)?.copy || 1;
+        TL.rec({ orderId: rid, type: "engraveApproved", id: `${poolId}-${at}`, at, by, station: "sorter", device: "charm-nest-1", lineKey: String(poolId).replace(/_\d+$/, ""), transactionId: String(row.line?.transactionId || String(poolId).split("_")[1] || ""),
+          ...(sh?.sheetId ? { sheetId: sh.sheetId, sheet: SheetEvents.label(sh), setId: sh.setId && !sh.draft ? sh.setId : "" } : {}),
+          text: words ? `“${words}”` : "", data: { text: text.slice(0, 400), poolId, copy, sku: String(row.spec?.designSku || "").slice(0, 60), signedIn: true } }, true, true);
+      }
+    } catch (e) { console.warn("[Engrave] timeline", e); }
+  }
   // A verified decision is checkpointed before its visual stamp. A reload can finish
   // that same decision, with its original signer/time, without asking for approval again.
   function settleApproval(job) {
@@ -4225,6 +4255,7 @@ const Engrave = window.Engrave = (() => {
     CNListActivity.touch(job.row,job.approvedAt);
     job.row.engrave=Object.assign(job.row.engrave || {},{needed:true,state:"approved",approved:true,text:job.text,approvedBy:job.approvedBy,approvedAt:job.approvedAt});
     delete job.approvalIntent;
+    timelineApproved(job);
     return true;
   }
   function recoverApprovals() {
@@ -5429,7 +5460,7 @@ const Engrave = window.Engrave = (() => {
     void it;
     return card;
   }
-  return { loadBackPreview: identity => api("charmNestLibrary", {op:"backPreview", ...identity}, {quiet:true}), openBack, sheetBacks, backsMarkup, refreshBacks, reconcileSheet, saveSheetBacks, refreshBackIndexes, view: () => ({ tab: EG.tab, focus: EG.focus, chosen: EG.chosen, q: EG.q, list: EG.list, drafts: pruneDrafts() }), restoreView: v => Object.assign(EG, v || {}, { card: null, cardKey: null, reread: 0, drafts: Object.assign({}, v?.drafts || EG.drafts || {}) }), loadFonts, classify, classifyAll, background, settled: () => settledPasses, canFit, isWorking, fitJob, fitAll, approve, recoverApprovals, nudge, hasPlacement, shelveWritten, resize, rotateTo, setLineSpacing, resplit, skip, sendBack, decideWords, invalidate, render, fromRecall, placementCard, renderBack, renderFront, pendingCount, reviewedCount, items, jobOf, ensureJob, setReady, writeBacks, saveBacks, resumeBacks, verifyBackFile, sheetBackOutputs, fonts: F_ };
+  return { loadBackPreview: identity => api("charmNestLibrary", {op:"backPreview", ...identity}, {quiet:true}), openBack, sheetBacks, backsMarkup, refreshBacks, reconcileSheet, saveSheetBacks, refreshBackIndexes, view: () => ({ tab: EG.tab, focus: EG.focus, chosen: EG.chosen, q: EG.q, list: EG.list, drafts: pruneDrafts() }), restoreView: v => Object.assign(EG, v || {}, { card: null, cardKey: null, reread: 0, drafts: Object.assign({}, v?.drafts || EG.drafts || {}) }), loadFonts, classify, classifyAll, background, settled: () => settledPasses, canFit, isWorking, fitJob, fitAll, approve, recoverApprovals, timelineApproved, nudge, hasPlacement, shelveWritten, resize, rotateTo, setLineSpacing, resplit, skip, sendBack, decideWords, invalidate, render, fromRecall, placementCard, renderBack, renderFront, pendingCount, reviewedCount, items, jobOf, ensureJob, setReady, writeBacks, saveBacks, resumeBacks, verifyBackFile, sheetBackOutputs, fonts: F_ };
 })();
 
 /* ═══ 22 · Sets — production evidence and release ═══ */
@@ -7114,8 +7145,8 @@ const CustomPrint = window.CustomPrint = (() => {
     try { if (OrderWin.isOpen()) return "Order window"; } catch (_) {}
     return !it ? "Review" : "Review · " + (it.kind === "customOrder" ? "Custom Orders" : it.category || "a card");
   }
-  /** The open order window's timeline reads the new point now (its feed otherwise reads again only within 20 s). */
-  function tlFresh() { try { const f = OrderWin.isOpen() && OrderWin._feed(); if (f && f.refresh) f.refresh({ force: true }); } catch (_) {} }
+  /** The open order window's timeline reads the new point now (its feed otherwise reads again within 2.5 s), and again 1.5 s later. */
+  function tlFresh() { try { if (OrderWin.isOpen()) OrderWin.nudge(); } catch (_) {} }
   function completeAs(it, who, cancelled) {
     const key = it.key; if (busy.has(key)) return;
     const from = pressedIn(it);
@@ -11542,7 +11573,9 @@ const OrderWin = window.OrderWin = (() => {
     show(rows[0], { walk: false, view: W.view, sheetId: o.sheetId, poolId: o.poolId }); shown();
   }
   // (a repaint asked from outside, an image or a record arriving, waits for the view to land)
-  return { open, openOrder, focusSearch, paint: () => hold("paint", () => { if (W.dlg && W.dlg.open && !W.closing) paint(); }), close: () => shut(), isOpen: () => !!(W.dlg && W.dlg.open && !W.closing), key: () => W.key, view: () => W.view, setView: v => setView(v), repaintThread: () => paintThread(true), _sheet: () => SV.info, _feed: () => W.feed };
+  return { open, openOrder, focusSearch, paint: () => hold("paint", () => { if (W.dlg && W.dlg.open && !W.closing) paint(); }), close: () => shut(), isOpen: () => !!(W.dlg && W.dlg.open && !W.closing), key: () => W.key, view: () => W.view, setView: v => setView(v), repaintThread: () => paintThread(true), _sheet: () => SV.info, _feed: () => W.feed,
+    // the order number of the open view, and "something was just done here": its timeline reads now and again 1.5 s later
+    rid: () => W.rid, nudge: () => { try { if (W.dlg && W.dlg.open && !W.closing && W.feed && W.feed.nudge) W.feed.nudge(); } catch (_) {} } };
 })();
 
 /* ═══ 24c · RunHistory — every run that ever ran, and the way back into one ═══════════════════════════════════════════

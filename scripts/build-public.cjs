@@ -87,6 +87,7 @@ const assets = [
   "charm-nest-solver.js",
   "charm-nest-rose.js",
   "charm-nest-rose-ui.js",
+  "charm-nest-flow-rose.js",
   "charm-nest-learned.js",
   "charm-nest-worker.js",
   "charm-nest-gpu.js",
