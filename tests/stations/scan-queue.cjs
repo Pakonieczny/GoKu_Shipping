@@ -1,6 +1,6 @@
-// Phone scans while nobody is signed in (weld-1.html and assembly-1.html, which carry the same relay; assembly-2..4 are copies
-// of assembly-1 and are checked below only for the same wiring). The real pages, the real station-session.js, station-activity.js,
-// station-timeline.js and station-scan-queue.js run in headless Chromium; Firebase, Materialize and every Netlify function are
+// Phone scans while nobody is signed in (weld-1, assembly-1, shipping-1 and design-message, which carry the same relay; the other
+// copies, assembly-2..4, shipping-2..3 and design-message-1, are checked below only for the same wiring). The real pages, the real
+// station-session.js, station-activity.js, station-timeline.js (where the page has it) and station-scan-queue.js run in headless Chromium; Firebase, Materialize and every Netlify function are
 // fakes, and every request that is not to 127.0.0.1 is aborted. Fake PINs, made up when the test runs: they are only ever typed
 // on the page and sent to the fake login door, and no message of this test can print one.
 //   1 · the relay listener is attached ONCE at page load, with nobody signed in
@@ -11,7 +11,8 @@
 //   4 · after the next sign-in they load ONCE each, in the order they arrived, recorded under the person who signed in
 //   5 · sign out, a scan, a sign-in by somebody else, and more re-logins: still one listener, nothing processed twice, and
 //       the late scan is recorded under the person who processed it
-//   6 · the red CANCELLED alert still holds the next scan until Understood, and none is lost
+//   6 · where the page has the red CANCELLED alert (weld, assembly, shipping), it still holds the next scan until Understood,
+//       and none is lost
 //   NODE_PATH=$(npm root -g) PW_DIR=$(npm root -g)/playwright/node_modules CHROMIUM=... node tests/stations/scan-queue.cjs
 'use strict';
 const http = require('http'), fs = require('fs'), path = require('path'), assert = require('assert/strict');
@@ -89,7 +90,7 @@ async function scenario(browser, base, P) {
   page.on('pageerror', e => errors.push(e.message));
   const ready = async () => {
     await page.goto(base + '/' + P.file);
-    await page.waitForFunction(() => window.StationActivity && window.StationSession && window.StationTimeline && window.StationScanQueue, null, { timeout: 20000 });
+    await page.waitForFunction(t => window.StationActivity && window.StationSession && (!t || window.StationTimeline) && window.StationScanQueue, P.timeline, { timeout: 20000 });
     await page.waitForTimeout(400);
   };
   const doc = 'Brites_Orders/' + P.relay;
@@ -183,7 +184,7 @@ async function scenario(browser, base, P) {
     assert.equal(await note(), null); assert.equal(await stored(), null);
   });
 
-  await check(tag('the red CANCELLED alert holds the next scan until Understood; none is lost'), async () => {
+  if (P.timeline) await check(tag('the red CANCELLED alert holds the next scan until Understood; none is lost'), async () => {
     await phone(CANC);
     await until(() => page.evaluate(() => !!document.querySelector('.sttl-ok')), 'the cancelled alert');
     await phone(E);
@@ -216,17 +217,23 @@ async function main() {
   const base = `http://127.0.0.1:${server.address().port}`;
   const browser = await chromium.launch({ executablePath: process.env.CHROMIUM || '/opt/pw-browsers/chromium-1194/chrome-linux/chrome', args: ['--no-sandbox'] });
   try {
-    await scenario(browser, base, { file: 'weld-1.html', device: 'weld-1', relay: 'weld-scan-1', id: n => '35223000' + String(n).padStart(2, '0') });
-    await scenario(browser, base, { file: 'assembly-1.html', device: 'assembly-1', relay: 'assembly-scan-1', id: n => '38223000' + String(n).padStart(2, '0') });
-    // assembly-2..4 are copies of assembly-1: the same wiring, each with its own relay document and device name
-    await check('assembly-2..4: the same queue wiring, each on its own relay and device', async () => {
-      for (const i of [2, 3, 4]) {
-        const s = fs.readFileSync(path.join(root, `assembly-${i}.html`), 'utf8');
-        assert.ok(s.includes('<script src="station-scan-queue.js?v=20261003-sq1"></script>'), i + ': script tag');
-        assert.ok(s.includes(`device: "assembly-${i}",\n          signedIn:`), i + ': queue device');
-        assert.equal((s.match(new RegExp(`\\.doc\\("assembly-scan-${i}"\\)`, 'g')) || []).length, 2, i + ': relay doc (listen + clear)');
-        assert.ok(!/assembly-scan-[1-4]/.test(s.replace(new RegExp(`assembly-scan-${i}`, 'g'), '')), i + ': no other relay');
-        assert.ok(s.includes('startScannedOrderListener();\n') && s.includes('if (scanRelayOn)') && s.includes('window.__stationEnterRun = run;'), i + ': attach-once and the Enter hand-off');
+    await scenario(browser, base, { file: 'weld-1.html', device: 'weld-1', relay: 'weld-scan-1', timeline: true, id: n => '35223000' + String(n).padStart(2, '0') });
+    await scenario(browser, base, { file: 'assembly-1.html', device: 'assembly-1', relay: 'assembly-scan-1', timeline: true, id: n => '38223000' + String(n).padStart(2, '0') });
+    await scenario(browser, base, { file: 'shipping-1.html', device: 'shipping-1', relay: 'shipping-scan-1', timeline: true, id: n => '39223000' + String(n).padStart(2, '0') });
+    await scenario(browser, base, { file: 'design-message.html', device: 'design-message', relay: 'design-scan-11', timeline: false, id: n => '40223000' + String(n).padStart(2, '0') });
+    // the other copies are the same pages apart from their names: the same wiring, each on its own relay document and device
+    await check('the other copies carry the same queue wiring, each on its own relay and device', async () => {
+      const copies = [['assembly-2', 'assembly-scan-2'], ['assembly-3', 'assembly-scan-3'], ['assembly-4', 'assembly-scan-4'],
+        ['shipping-2', 'shipping-scan-2'], ['shipping-3', 'shipping-scan-3'], ['design-message-1', 'design-scan-111'],
+        ['weld-1', 'weld-scan-1'], ['assembly-1', 'assembly-scan-1'], ['shipping-1', 'shipping-scan-1'], ['design-message', 'design-scan-11']];
+      for (const [dev, relay] of copies) {
+        const s = fs.readFileSync(path.join(root, dev + '.html'), 'utf8');
+        assert.equal((s.match(/<script src="station-scan-queue\.js\?v=20261003-sq1"><\/script>/g) || []).length, 1, dev + ': script tag');
+        assert.ok(s.includes(`device: "${dev}",\n          signedIn:`), dev + ': queue device');
+        assert.equal((s.match(new RegExp(`\\.doc\\("${relay}"\\)`, 'g')) || []).length, 2, dev + ': relay doc (listen + clear)');
+        assert.equal((s.match(/\.doc\("(?:weld|assembly|shipping|design)-scan-\d+"\)/g) || []).length, 2, dev + ': no other relay');
+        assert.ok(s.includes('startScannedOrderListener();\n        /* the phone-scan relay') || s.includes('        startScannedOrderListener();\n'), dev + ': attached at load');
+        assert.ok(s.includes('if (scanRelayOn)') && s.includes('window.__stationEnterRun = run;') && !s.includes('startScannedOrderListener called but user not logged in'), dev + ': attach-once and the Enter hand-off');
       }
     });
   } finally { await browser.close(); server.close(); }

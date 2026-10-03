@@ -973,6 +973,8 @@
        stay on screen. -->
   <script src="station-session.js?v=20261002-ea1"></script>
   <script src="station-activity.js?v=20261002-ea1"></script>
+  <!-- Phone scans that arrive while nobody is signed in wait here and load, in order, right after the next sign-in (station-scan-queue.js). -->
+  <script src="station-scan-queue.js?v=20261003-sq1"></script>
   <script>
     try {
       StationSession.init({
@@ -1621,6 +1623,7 @@ function metalToBadge(label){
 
     window.isEmployeeLoggedIn = false; // We'll use this to guard the real-time listener
         let lastScanProcessed = null;      // 🔑 remember most-recent scanned order
+        let scanRelayOn = false, scanQueue = null;   // the relay listener is attached once per page load; its scans wait in scanQueue
 
     /********************************************************
      * Base URL & Global Variables
@@ -2601,6 +2604,8 @@ function metalToBadge(label){
         else if (!oauthFlag) {
           userLoginModal.open();
         }
+        /* the phone-scan relay listens from page load, signed in or not (attached once): a scan that arrives before a sign-in waits for it */
+        startScannedOrderListener();
 
       // "Log In" button for employees
       var employeeLoginBtn = document.getElementById("employeeLoginBtn");
@@ -2826,7 +2831,12 @@ function metalToBadge(label){
 
       var etsyOrderInput = document.getElementById("etsyOrderNumber");
 
-      etsyOrderInput.addEventListener("keydown", async function (e) {
+      etsyOrderInput.addEventListener("keydown", function (e) {
+        const run = onOrderEnter.call(this, e);
+        if (e.key === "Enter") window.__stationEnterRun = run;     // the phone-scan queue waits for this load before it starts the next scan
+        return run;
+      });
+      async function onOrderEnter(e) {
         if (e.key !== "Enter") return;
         resetAllOrderUI(); // ← full cold boot at the start
 
@@ -2926,7 +2936,7 @@ function metalToBadge(label){
         } catch (e2) {
           console.error(e2);
         }
-      });
+      }
 
       document.getElementById("trackingLinkBtn").addEventListener("click", function(){
         if(!window.currentTracking){
@@ -3740,68 +3750,42 @@ function metalToBadge(label){
 
     /* ---------------------------------------------------------
      *  Firestore listener for employee-scanned order numbers
+     *
+     *  Attached ONCE per page load, whether anybody is signed in or not: a re-login never starts a second listener (it only
+     *  runs what is waiting). A phone scan that arrives while nobody is signed in (after midnight, after Sign Out, at the PIN
+     *  box) is NOT dropped: it waits in StationScanQueue (also kept in sessionStorage; one small note says how many) and loads,
+     *  in the order it arrived, right after the next sign-in, under the person who signed in. Every scan, signed in or not,
+     *  goes through that queue, one order at a time, and lastScanProcessed still ignores a repeat of the newest one.
      * --------------------------------------------------------*/
     function startScannedOrderListener(){
-      if (!window.isEmployeeLoggedIn){
-        console.warn("startScannedOrderListener called but user not logged in!");
-        return;
+      if (!scanQueue && window.StationScanQueue){
+        scanQueue = StationScanQueue.create({
+          device: "shipping-3",
+          signedIn: () => window.isEmployeeLoggedIn === true,
+          run: processScannedOrder,
+          /* the red CANCELLED alert is up: the waiting scans load once Understood is clicked */
+          hold: fn => !!(window.StationTimeline && StationTimeline.afterAlert && StationTimeline.afterAlert(fn))
+        });
       }
+      if (scanRelayOn){ if (scanQueue) scanQueue.drain(); return; }   // already listening: a re-login only runs the waiting scans
+      scanRelayOn = true;
 
       let firstSnap = true;                       // 🔑 skip the initial payload
       db.collection("Brites_Orders")
         .doc("shipping-scan-3")
-        .onSnapshot(async function relay(docSnap) {
-          if (!window.isEmployeeLoggedIn) return;
-
+        .onSnapshot(function relay(docSnap) {
           /* ignore Firestore’s first delivery; wait for *changes* */
           if (firstSnap){ firstSnap = false; return; }
-
-          /* the red CANCELLED alert is up: the phone's scan waits (its number never reaches the fields behind the alert,
-             nor takes the focus from it) and loads once Understood is clicked */
-          if (window.StationTimeline && StationTimeline.afterAlert && StationTimeline.afterAlert(() => relay(docSnap))) return;
 
           if (docSnap.exists){
             const data = docSnap.data();
             if (data && data["Order Number"]){
               const orderNumber   = data["Order Number"];
+              if (!scanQueue && !window.isEmployeeLoggedIn) return;   // (queue script missing: as before, nobody signed in = nothing to do)
               if (orderNumber === lastScanProcessed) return;   // duplicate → ignore
               lastScanProcessed = orderNumber;                 // remember newest hit
-              /* ────────────────────────────────────────────────────────────────
-                 Mirror the Paste-button preflight so CC id refreshes on scan
-                 ───────────────────────────────────────────────────────────── */
-              window.ccPostBuyFrozen = false;
-              window.ccMuteIdInput   = false;
-              const idEl = document.getElementById("ccShipmentId");
-              if (idEl) { idEl.value = ""; idEl.dataset.setAt = String(Date.now()); }
-              window.ccShipmentId = "";
-              try { await fetchBatches(); } catch (e) {}
-
-              // fresh order → wipe any prior recipient values
-              try { resetRecipientFields(); } catch(_) {}
-
-              /* Cancel any in-flight ccShipmentId search and pending slow-pass */
-              window.ccManualIdUpdateDone    = false;
-              window.ccManualIdUpdateInFlight= false;
-              window.ccManualIdUpdatePromise = null;
-
-              /* Fresh slate for new scanned order */
-              try { resetRecipientFields(); } catch(_) {}
-              const etsyOrderInput = document.getElementById("etsyOrderNumber");
-              etsyOrderInput.value = orderNumber;
-
-              /* Kick a CC refresh shortly after (independent of auto-Enter) */
-              setTimeout(() => window.refreshFromOrderIfChitChats?.(), 500);
-
-              /* Focus, then simulate Enter to run the full load */
-              etsyOrderInput.focus();
-              setTimeout(() => {
-                const ev = new KeyboardEvent("keydown", { key:"Enter", bubbles:true });
-                ev.stHow = "scan"; // order timeline: came from the phone scanner
-                etsyOrderInput.dispatchEvent(ev);
-              }, 100);
-
-              /* one-shot: wipe the field so it can’t be reused (kept) */
-              // (leave your existing wipe code below intact)
+              if (scanQueue) scanQueue.offer(orderNumber);     // kept: loads now when signed in, else right after the next sign-in
+              else processScannedOrder(orderNumber);
 
               /* one-shot: wipe the field so it can’t be reused */
               db.collection("Brites_Orders")
@@ -3811,6 +3795,47 @@ function metalToBadge(label){
             }
           }
         });
+    }
+
+    /* Loads ONE phone-scanned order exactly as a typed one (the fields as the Paste button leaves them, then Enter). It resolves
+       when the page's own Enter handler has finished with the order, so the queue starts the next waiting scan only then and two
+       scans never overwrite each other's order field. */
+    async function processScannedOrder(orderNumber){
+      /* ────────────────────────────────────────────────────────────────
+         Mirror the Paste-button preflight so CC id refreshes on scan
+         ───────────────────────────────────────────────────────────── */
+      window.ccPostBuyFrozen = false;
+      window.ccMuteIdInput   = false;
+      const idEl = document.getElementById("ccShipmentId");
+      if (idEl) { idEl.value = ""; idEl.dataset.setAt = String(Date.now()); }
+      window.ccShipmentId = "";
+      try { await fetchBatches(); } catch (e) {}
+
+      // fresh order → wipe any prior recipient values
+      try { resetRecipientFields(); } catch(_) {}
+
+      /* Cancel any in-flight ccShipmentId search and pending slow-pass */
+      window.ccManualIdUpdateDone    = false;
+      window.ccManualIdUpdateInFlight= false;
+      window.ccManualIdUpdatePromise = null;
+
+      /* Fresh slate for new scanned order */
+      try { resetRecipientFields(); } catch(_) {}
+      const etsyOrderInput = document.getElementById("etsyOrderNumber");
+      etsyOrderInput.value = orderNumber;
+
+      /* Kick a CC refresh shortly after (independent of auto-Enter) */
+      setTimeout(() => window.refreshFromOrderIfChitChats?.(), 500);
+
+      /* Focus, then simulate Enter to run the full load */
+      etsyOrderInput.focus();
+      return new Promise(resolve => setTimeout(() => {
+        const ev = new KeyboardEvent("keydown", { key:"Enter", bubbles:true });
+        ev.stHow = "scan"; // order timeline: came from the phone scanner
+        window.__stationEnterRun = null;
+        etsyOrderInput.dispatchEvent(ev);
+        Promise.resolve(window.__stationEnterRun).then(resolve, resolve);   // set by the Enter handler of the order field
+      }, 100));
     }
     });   // ← closes DOMContentLoaded handler
 
