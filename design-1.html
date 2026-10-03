@@ -7976,6 +7976,9 @@ const Bridge = (() => {
       if (!SANDBOX) throw new Error("the station is not in the sandbox");
       completedOrders.clear(); try { localStorage.removeItem(LS.ledger); } catch (_) {}
       allOpenReceipts = []; S.lastSweepAt = 0;   // the next read sweeps the emulator again
+      // what this station did in the sandbox and had not sent yet (its activity queue, in memory and in this origin's storage) goes
+      // with the records: sent after the reset, it landed in the cleaned sandbox again, with its rollup (Paul, 3 Oct: "it still didn't purge")
+      try { if (window.StationActivity && StationActivity.discard) StationActivity.discard(true); } catch (_) {}
       // and the rest of what the sandbox kept in this browser (its keys all carry the ":sandbox" suffix): the memory of
       // the sorter's commits, the order-detail copy and the listing photos, so a replayed order is read afresh
       [LSK.commits, CACHE_KEY, __imagesKey, LSK.selected, LS.selection, "designStation.chatDrafts.v1" + NS].forEach(k => { try { localStorage.removeItem(k); } catch (_) {} });
@@ -8366,7 +8369,7 @@ window.DesignStation = {
 </script>
 <!-- Sign-in time per person and computer, and the midnight sign-out (New York time) -->
 <script src="station-session.js?v=20261002-ea1"></script>
-<script src="station-activity.js?v=20261002-ea1"></script>
+<script src="station-activity.js?v=20261003-reset-clean"></script>
 <script>
 (function () {
   const framed = (() => { try { return window.self !== window.top; } catch (_) { return true; } })();

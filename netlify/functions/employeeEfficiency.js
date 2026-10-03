@@ -118,6 +118,7 @@ const caches = new WeakMap();
 function cacheOf(handle) { let c = caches.get(handle); if (!c) { c = { memo: new Map(), recent: new Map(), fails: new Map() }; caches.set(handle, c); } return c; }
 /** A shared, time-limited read. A failed read is forgotten at once. */
 function cached(ctx, key, ttl, fn) {
+  ttl = Math.min(ttl, ctx.life);
   const memo = ctx.cache.memo, hit = memo.get(key);
   if (hit && ctx.now - hit.at < Math.min(ttl, hit.ttl)) return hit.p;   // (an entry read while its day was live stays short-lived after midnight)
   const entry = { at: ctx.now, ttl, p: null };
@@ -139,7 +140,11 @@ const safe = (p, label) => p.then(value => ({ ok: true, value }), e => ({ ok: fa
 /* ── the reads ── */
 function ctxOf(body, handle) {
   const now = Date.now(), sandbox = body.sandbox === true || body.sandbox === 1 || body.sandbox === "1";
-  return { db: handle || db, admin, prefix: sandbox ? "Sandbox_" : "", now, today: nyDay(now), cache: cacheOf(handle || db) };
+  // The sandbox is a small rehearsal that Reset empties, and a warm instance outlives the reset: what it kept (a past day's rollups
+  // and sign-ins for 10 minutes, the seals of today for 2, the first day of activity for an hour, the newest events for good) showed
+  // the records of before in the console after the reset (Paul, 3 Oct: "it still didn't purge the system fully"). So the sandbox's
+  // reads are kept 5 s at most and its newest events are read afresh each time; production's keep their long lives.
+  return { db: handle || db, admin, prefix: sandbox ? "Sandbox_" : "", life: sandbox ? TTL_LIVE : Infinity, now, today: nyDay(now), cache: cacheOf(handle || db) };
 }
 const col = (ctx, name) => ctx.db.collection(ctx.prefix + name);
 
@@ -158,7 +163,7 @@ async function readRollups(ctx, from, to) {
       return { by, capped: snap.docs.length > LIM.rollups };
     });
     for (const d of stale) {
-      const entry = { at: ctx.now, ttl: d === ctx.today ? TTL_LIVE : TTL_PAST, p: fetchP.then(r => ({ docs: r.by.get(d) || [], capped: r.capped })) };
+      const entry = { at: ctx.now, ttl: Math.min(d === ctx.today ? TTL_LIVE : TTL_PAST, ctx.life), p: fetchP.then(r => ({ docs: r.by.get(d) || [], capped: r.capped })) };
       ctx.cache.memo.set(`roll|${ctx.prefix}|${d}`, entry);
       entry.p.catch(() => { if (ctx.cache.memo.get(`roll|${ctx.prefix}|${d}`) === entry) ctx.cache.memo.delete(`roll|${ctx.prefix}|${d}`); });
       entries.set(d, entry.p);
@@ -228,7 +233,7 @@ function readRecent(ctx) {
     try {
       const TS = ctx.admin.firestore.Timestamp, c = col(ctx, COL.activity);
       let snap = null;
-      if (R.loaded && TS && typeof TS.fromMillis === "function") {
+      if (R.loaded && !ctx.prefix && TS && typeof TS.fromMillis === "function") {   // (the sandbox is not topped up: events a reset deleted would stay in the list)
         snap = await c.where("ts", ">=", TS.fromMillis(Math.max(0, R.newest - 5000))).orderBy("ts", "asc").limit(LIM.window).get();
         if (snap.docs.length >= LIM.window) snap = null;                     // a gap too big to top up: load the newest again
       }

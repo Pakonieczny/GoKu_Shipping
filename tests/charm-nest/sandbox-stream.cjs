@@ -231,6 +231,12 @@ const REAL_ETSY = /^(listOpenOrders|etsyOrderProxy|etsyImages|refreshEtsyToken)$
   assert(midCheck, 'the reset was pressed while an arrivals check was out');
   assert(!stream() && !st.list('Sandbox_Charm_Nest_Arrivals').length && !st.list('Sandbox_Charm_Nest_Runs').length, 'reset removed the stream with the sandbox records');
   await reloaded; await booted();
+  // the cleaned sandbox waits, empty, until it is started (the replay used to begin by itself the moment the page reloaded, and
+  // looked like a reset that had purged nothing): no stream, no check, no order, until Start is pressed on the Orders tab
+  await page.waitForTimeout(4000);
+  assert(await page.evaluate(() => Sandbox.held() && !Sandbox.stream() && !SimClock.on() && !B.orders.rows.length), 'after the reset the sandbox waits for Start');
+  assert(!stream() && !st.list('Sandbox_Charm_Nest_Arrivals').length, 'and no stream and no arrival came by itself');
+  await page.evaluate(() => CN.setMode('orders')); await page.click('[data-sb-start]');
   let replay = [];
   for (const t = Date.now(); Date.now() - t < 60000;) { replay = await rows(); const have = new Set(replay.map(r => r.rid)), s = stream(); if (s && s.tick >= 1 && first.every(id => have.has(id))) break; await page.waitForTimeout(400); }
   const s2 = stream(), replayIds = streamedIds(s2), replayLedger = st.list('Sandbox_Charm_Nest_Arrivals').map(d => d._id);

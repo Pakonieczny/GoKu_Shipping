@@ -1481,7 +1481,13 @@ const Orders = window.Orders = (() => {
     let list=host.querySelector('#ordItems');if(!list){host.innerHTML='<div id="ordItems"></div>';list=host.firstElementChild;}list.className=cards?'ordCards':'ordList';
     // an empty pile says so in the list itself, so the last row out is still seen going (and the words come in softly)
     const wanted=[],mounts=[],pairs=[],rebuilt=[];let shown=[];
-    if (!rowsOf().length) wanted.push(blank("none", '<span>Nothing pulled yet — press <b>Pull orders</b> above.</span>'));   // one line: .libEmpty stacks its children
+    if (!rowsOf().length && window.Sandbox?.held?.()) {
+      // a cleaned sandbox waits for Start: the calm line and the one button that begins the replay (turning Auto on or Pull orders do too)
+      const n = blank("held", '<span class="sbWait"></span><button class="btn gold sm" type="button" data-sb-start>Start</button>', n => { const go = n.querySelector("[data-sb-start]"); go.onclick = () => { go.disabled = true; Sandbox.start().catch(err => { toast(err.message, "bad", 7000); go.disabled = false; }); }; });
+      const sb = n.querySelector(".sbWait"), t = Sandbox.heldText(); if (sb.textContent !== t) sb.textContent = t;
+      wanted.push(n);
+    }
+    else if (!rowsOf().length) wanted.push(blank("none", '<span>Nothing pulled yet — press <b>Pull orders</b> above.</span>'));   // one line: .libEmpty stacks its children
     else if (!rows.length && OV.pile === "hold" && !OV.q && !OV.metal && !OV.form && !OV.eng) wanted.push(blank("hold", 'No order is on hold. An order taken off a sheet, or held from Review, waits here until someone puts it back.'));
     else if (!rows.length) wanted.push(blank("filters", 'Nothing matches these filters.<br><button class="btn ghost sm" id="ordClear" style="margin-top:10px">Show everything</button>', n => { n.querySelector("#ordClear").onclick = () => { OV.pile = null; OV.metal = null; OV.form = null; OV.eng = null; OV.q = ""; CNListActivity.set("orders",{range:"all"}); const box = document.getElementById("ordQ"); if (box) box.value = ""; render(); }; }));
     else {
@@ -9051,6 +9057,48 @@ const Review = window.Review = (() => {
 const Sandbox = window.Sandbox = (() => {
   const on = () => WORKSPACE_SANDBOX;
   let status = null,refreshTask=null;
+  /* The build this file is (keep it the same as the ?v= of its script tag in charm-nest-1.html, which a test checks). A
+     page kept open across a deploy, or a page file kept by a cache, runs an older build than the one on the server:
+     Settings shows both (Paul, 3 Oct: "it still didn't purge the system fully" — which build was he running?). */
+  const BUILD = "20261003-reset-quiet";
+  const pageBuild = () => { try { const s = Array.from(document.scripts || []).find(x => /charm-nest-bridge\.js/.test(x.src || "")); return s ? new URL(s.src, location.href).searchParams.get("v") || "" : ""; } catch (_) { return ""; } };
+  /* ── the sandbox that was cleaned waits (Paul, 3 Oct: "it still didn't purge the system fully"). After the reload a
+     reset ends with, the stream used to start again at step 0, and in Auto the run began, within seconds: the emulated
+     Etsy replayed the 17 Sep orders with their real numbers, arrivals, pool rows, sheets and a set came back, and the
+     sandbox looked as if nothing had been cleaned. Now a clean sandbox is quiet and empty until it is started: no stream,
+     no check of the orders, no Auto run and no pull until Start is pressed (or Auto turned on, or Pull orders pressed,
+     or the sandbox switched on with "Rehearse a run"). The flag lives in this browser; a reload keeps it. Everything
+     that follows a start is exactly what it was. ── */
+  const HOLD = "cn.sandboxHold", LAST = "cn.sandboxLastReset";
+  const held = () => { try { return on() && localStorage.getItem(HOLD) != null; } catch (_) { return false; } };
+  const lsJSON = k => { try { return JSON.parse(localStorage.getItem(k) || "null"); } catch (_) { return null; } };
+  function hold() { try { localStorage.setItem(HOLD, JSON.stringify({ at: Date.now() })); } catch (_) {} try { render(); if (window.Orders && Orders.render) Orders.render(); } catch (_) {} }
+  /** What the calm line says (also the Orders tab's empty state while the sandbox waits). */
+  function heldText() {
+    const at = status && status.snapshot && status.snapshot.at, day = at ? new Date(at).toLocaleDateString("en-GB", { day: "numeric", month: "short" }) : "";
+    const auto = S.settings.runMode === "auto";
+    return `Sandbox is empty. Press Start${auto ? "" : " (or turn Auto on)"} to replay the ${day ? day + " " : ""}orders.${auto ? " Auto is on, so the run then starts by itself." : ""}`;
+  }
+  /** Start was pressed, Auto turned on, or orders were pulled: from here the sandbox plays as it always did. */
+  function release() {
+    if (!held()) return false;
+    try { localStorage.removeItem(HOLD); } catch (_) {}
+    agent({ bridge: true }, "DS", "Sandbox started: the replay begins");
+    try { if (window.Arrivals && Arrivals.start) Arrivals.start(); } catch (_) {}   // the checks begin now: the first at once in Auto, else after one step's wait, as on a fresh load
+    try { render(); if (window.Orders && Orders.render) Orders.render(); } catch (_) {}
+    return true;
+  }
+  /** The Start button: the stream begins (at step 0, with the seed in Settings) or, with the whole snapshot at once, the
+      orders are pulled; Auto then starts its run as it does on a fresh load. */
+  async function start() {
+    if (!held()) return false;
+    release();
+    const auto = S.settings.runMode === "auto";
+    if (streaming()) { await ready(true); toast(`Sandbox started — new orders arrive a few at a time, ${speed()}x faster than real time`, "ok", 6000); }
+    else { try { setMode("orders"); } catch (_) {} if (!auto) await Orders.pull(null); }
+    if (auto) setTimeout(() => { if (!(B.openRuns && B.openRuns.length) && !Recall.on() && !B.run) RunCtl.setMode("auto"); }, 1500);
+    return true;
+  }
   /* ── the order stream: rather than the whole snapshot at once, the emulated Etsy lists 2 to 5 of the snapshot's own
      orders per simulated ten minutes, oldest first, under their real Etsy numbers (etsySandbox builds them;
      charmNestLibrary sandboxStream keeps the seed and the clock). Each arrivals check moves the clock one step; SimClock
@@ -9065,12 +9113,14 @@ const Sandbox = window.Sandbox = (() => {
   /** The stream exists before the station's first sweep in the sandbox, or the emulator would list the whole snapshot.
       `strict` (a sweep about to go ahead): a stream that cannot start is an error, not a warning. */
   function ready(strict) {
-    if (!streaming()) return Promise.resolve(null);
+    if (strict && held()) release();   // a pull or a run asked for orders: that is Start
+    if (!streaming() || held()) return Promise.resolve(null);   // (the rest wait for Start: a paused sandbox starts no stream by itself)
     const task = stream ? Promise.resolve(stream) : (readyTask ||= streamApi("ensure").then(r => adopt(r.stream)).finally(() => { readyTask = null; }));
     return task.then(s => { if (!s) throw new Error("it is off"); return s; }).catch(e => { if (strict) throw new Error(`The sandbox order stream could not start: ${e.message}`); agent({ bridge: true }, "warn", `Sandbox order stream: ${e.message}`); return null; });
   }
   /** One simulated step: the next ten minutes of orders become listable. The arrivals check calls it before it sweeps. */
   async function advance() {
+    if (held()) throw new Error("the sandbox is paused: press Start");
     const s = await ready(true), r = await streamApi("tick", { expect: s.simNow });
     if (!r.stream) { adopt(null); throw new Error("The sandbox order stream was reset: the next check starts it again"); }
     return adopt(r.stream);
@@ -9079,13 +9129,14 @@ const Sandbox = window.Sandbox = (() => {
   function restream() {
     if (!on()) return;
     stream = null;
+    if (held()) { SimClock.set(null); render(); return; }   // saving Settings is not Start: a paused sandbox stays paused
     if (streaming()) { ready(); return; }
     SimClock.set(null); render(); streamApi("off").catch(e => toast(`Sandbox order stream: ${e.message}`, "bad", 6000));
   }
   const simText = t => new Date(t).toLocaleString("en-US", { weekday: "short", hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
   /** What the pill and the arrivals counter say: the mode, and while the stream plays its speed and simulated time. */
-  function label() { return !on() ? "" : streaming() && SimClock.on() ? `Sandbox ${speed()}x · sim ${simText(SimClock.now())}${done() ? " · all orders in" : ""}` : "Sandbox"; }
-  function streamText() { return stream && streaming() ? `Order stream: seed ${stream.seed} · step ${stream.tick} · ${stream.total ? `${stream.brought || 0} of ${stream.total}` : stream.brought || 0} orders in · simulated ${new Date(SimClock.now()).toLocaleString()} · ${speed()}x` : on() && !streaming() ? "Orders: the whole snapshot at once" : ""; }
+  function label() { return !on() ? "" : held() ? "Sandbox · paused" : streaming() && SimClock.on() ? `Sandbox ${speed()}x · sim ${simText(SimClock.now())}${done() ? " · all orders in" : ""}` : "Sandbox"; }
+  function streamText() { return held() ? "Order stream: paused until Start" : stream && streaming() ? `Order stream: seed ${stream.seed} · step ${stream.tick} · ${stream.total ? `${stream.brought || 0} of ${stream.total}` : stream.brought || 0} orders in · simulated ${new Date(SimClock.now()).toLocaleString()} · ${speed()}x` : on() && !streaming() ? "Orders: the whole snapshot at once" : ""; }
   async function refresh() {
     if (!S.cloud.ok) return null;if(refreshTask)return refreshTask;
     refreshTask=(async()=>{try {status=await api("charmNestLibrary",{op:"sandboxStatus"});}catch(e){status={error:e.message};}render();return status;})();
@@ -9123,6 +9174,7 @@ const Sandbox = window.Sandbox = (() => {
       await snapshot();
     }
     S.settings.sandbox = "on"; saveSettings();
+    try { localStorage.removeItem(HOLD); } catch (_) {}   // "Rehearse a run" is a start: a sandbox that was waiting plays
     try { sessionStorage.setItem("cn.sandboxAutoPull", "1"); } catch (_) {}
     toast(S.settings.sandboxStream === "on" ? "Sandbox ON — reloading; the orders then arrive a few at a time" : "Sandbox ON — reloading, then pulling the orders from the copy", "ok", 4000);
     setTimeout(() => location.reload(), 700);
@@ -9131,8 +9183,14 @@ const Sandbox = window.Sandbox = (() => {
       With the stream the orders come by themselves, one simulated ten minutes per check. */
   function afterReload() {
     // what the clean-up before this reload did, said on the clean page (a toast under the Settings dialog was not seen)
-    try { const n = JSON.parse(sessionStorage.getItem("cn.sandboxResetNote") || "null"); sessionStorage.removeItem("cn.sandboxResetNote"); if (n && n.text) setTimeout(() => toast(n.text, n.bad ? "bad" : "ok", 8000), 600); } catch (_) {}
+    let said = false;
+    try { const n = JSON.parse(sessionStorage.getItem("cn.sandboxResetNote") || "null"); sessionStorage.removeItem("cn.sandboxResetNote"); if (n && n.text) { said = true; setTimeout(() => toast(n.text, n.bad ? "bad" : "ok", 8000), 600); } } catch (_) {}
     let want = false; try { want = sessionStorage.getItem("cn.sandboxAutoPull") === "1"; sessionStorage.removeItem("cn.sandboxAutoPull"); } catch (_) {}
+    // a sandbox that was cleaned waits for Start: no stream, no pull, no Auto run (the Orders tab says so, with its Start)
+    if (held()) {
+      if (on()) { refresh().catch(() => {}); if (said) setTimeout(() => { try { setMode("orders"); } catch (_) {} }, 900); }   // (the page that follows a reset opens on Orders, where Start is)
+      return;
+    }
     if (streaming()) ready(); else if (on()) streamApi("off").catch(() => {});   // this sorter asks for the whole snapshot: a stream left playing would hide it
     if (!want || !on()) return;
     setTimeout(async () => {
@@ -9230,9 +9288,21 @@ const Sandbox = window.Sandbox = (() => {
     try { if (window.StationActivity && StationActivity.discard) StationActivity.discard(true); } catch (_) {}
     clearMemory();
   }
-  /** The browser's side of a Purge made from a production page: the sandbox's records went in the cloud too. */
-  async function forgetStores() { return wipeBrowser(false); }
   const nf = n => Number(n || 0).toLocaleString("en-US");
+  /** What the last clean-up did, kept in this browser (it survives the reload; it is not a record of the sandbox) for the
+      calm lines in Settings: when, what went from the cloud, from this browser, and what was left. */
+  function noteReset(info) {
+    try { localStorage.setItem(LAST, JSON.stringify(Object.assign({ at: Date.now() }, info))); } catch (_) {}
+    if (!info.ok) { try { paintInfo().catch(() => {}); } catch (_) {} }   // (a clean-up that stopped says so in the open Settings dialog too)
+  }
+  /** The browser's side of a Purge made from a production page: the sandbox's records went in the cloud too (the server's
+      purge counted them: info). The sandbox then waits for Start, as after a Reset. */
+  async function forgetStores(info) {
+    const gone = await wipeBrowser(false);
+    hold();
+    noteReset({ ok: true, verb: "purge", records: info && info.records != null ? info.records : null, files: info && info.files != null ? info.files : null, left: 0, browser: gone });
+    return gone;
+  }
   /** The whole clean-up, once a person has agreed: the cloud's sandbox records (until the server says none is left and a
       count agrees), then this browser's copy of them, then a reload that restores nothing. ui: { button, note } — the button
       shows a spinner and what it is doing, the note is the calm line under it. Never says done while any record remains. */
@@ -9241,8 +9311,8 @@ const Sandbox = window.Sandbox = (() => {
     const line = (text, bad) => { if (note) { note.textContent = text; note.style.color = bad ? "var(--clay)" : ""; } };
     const spin = text => { if (btn) { btn.disabled = true; btn.setAttribute("aria-busy", "true"); const sp = document.createElement("span"); sp.className = "spin"; sp.setAttribute("aria-hidden", "true"); btn.replaceChildren(sp, document.createTextNode(text)); } line(text); };
     const rest = () => { if (btn) { btn.disabled = false; btn.removeAttribute("aria-busy"); btn.replaceChildren(...was); } };
-    const stop = text => { line(text, true); toast(text, "bad", 12000); return { ok: false, text }; };
-    const replay = streaming();
+    const tally = { records: 0, files: 0 }, verb = how.verb === "Purging" ? "purge" : "reset";
+    const stop = text => { line(text, true); toast(text, "bad", 12000); noteReset({ ok: false, verb, text, records: tally.records, files: tally.files }); return { ok: false, text }; };
     spin(`${how.verb || "Resetting"} the sandbox…`);
     // no arrivals check may sweep while the records go: with the stream deleted the emulator lists the whole snapshot
     await Arrivals.pause(); let reloading = false;
@@ -9259,7 +9329,7 @@ const Sandbox = window.Sandbox = (() => {
         for (let i = 0; i < 400; i++) {
           try { r = await api("charmNestLibrary", { op: "sandboxReset" }, { wipe: true, label: "Resetting the sandbox" }); errors = 0; }
           catch (e) { if (!e.transient || ++errors > 3) throw e; await new Promise(res => setTimeout(res, 1500 * errors)); continue; }
-          records += r.deleted || 0; files += r.files || 0; if (r.filesError) filesError = r.filesError;
+          records += r.deleted || 0; files += r.files || 0; if (r.filesError) filesError = r.filesError; tally.records = records; tally.files = files;
           idle = r.deleted || r.files ? 0 : idle + 1;
           if (!r.more || idle >= 6) break;   // (six calls in a row that removed nothing: the cloud is not getting anywhere)
           line(`${how.verb || "Resetting"} the sandbox… ${nf(records)} record(s) and ${nf(files)} file(s) removed so far`);
@@ -9272,15 +9342,18 @@ const Sandbox = window.Sandbox = (() => {
       try { const st = await api("charmNestLibrary", { op: "sandboxStatus" }, { quiet: true }); left = Object.entries(st.records || {}).filter(([, n]) => n > 0); } catch (_) { left = null; }
       if (left && left.length) return stop(`The sandbox was not fully reset: ${nf(left.reduce((a, [, n]) => a + n, 0))} record(s) are still in the cloud (${left.map(([k, n]) => `${k.replace(/^Charm_(Nest_)?/, "")} ${n}`).join(", ")}); ${nf(records)} were removed. Press again to finish.`);
       spin("Clearing this browser's copy…");
+      // the sandbox now waits, empty, until Start (the reload that follows starts no stream, no Auto run and no pull)
+      hold();
       // the cloud is clean: every other tab of this browser learns it now (Session.listen) and stands down before it can send
       // or save anything it still holds
       try { if (window.Session && Session.bumpEpoch) Session.bumpEpoch("sandbox"); } catch (_) {}
       const stationOk = await forgetCompletions();
-      await wipeBrowser(true);
+      const gone = await wipeBrowser(true);
       const bad = !!filesError || stationOk === false;
-      const text = `${how.prefix || ""}Sandbox cleaned — ${nf(records)} record(s) and ${nf(files)} file(s) removed${left === null ? "; what is left could not be checked" : "; nothing is left"}${filesError ? ` · files not deleted: ${filesError}` : ""}${stationOk === false ? " · the Design Station kept its own list of finished orders (open the Station tab and press again)" : ""}`;
+      noteReset({ ok: true, verb, records, files, filesError, left: left === null ? null : 0, station: stationOk, browser: gone });
+      const text = `${how.prefix || ""}Sandbox cleaned — ${nf(records)} record(s) and ${nf(files)} file(s) removed${left === null ? "; what is left could not be checked" : "; nothing is left"}${filesError ? ` · files not deleted: ${filesError}` : ""}${stationOk === false ? " · the Design Station kept its own list of finished orders (open the Station tab and press again)" : ""}. The sandbox now waits, empty, until you press Start.`;
       // said on the clean page after the reload too (a toast under this dialog is not seen)
-      try { sessionStorage.setItem("cn.sandboxResetNote", JSON.stringify({ text, bad })); if (!replay) sessionStorage.setItem("cn.sandboxAutoPull", "1"); } catch (_) {}
+      try { sessionStorage.setItem("cn.sandboxResetNote", JSON.stringify({ text, bad })); sessionStorage.removeItem("cn.sandboxAutoPull"); } catch (_) {}
       line(`${text} · reloading`, bad); toast(text, bad ? "bad" : "ok", 7000);
       if (btn) { const sp = document.createElement("span"); sp.className = "spin"; sp.setAttribute("aria-hidden", "true"); btn.replaceChildren(sp, document.createTextNode("Reloading…")); }
       reloading = true; setTimeout(() => location.reload(), 1500);
@@ -9291,7 +9364,7 @@ const Sandbox = window.Sandbox = (() => {
   }
   /** Settings → Reset the sandbox: one question, then the clean-up. Answers null when it was not agreed to. */
   async function reset(ui = {}) {
-    if (!confirm(`Delete every sandbox record (sandbox pools, sets, runs, sheets, custom orders, locks, ledger, archive) and the sandbox's files, and everything this browser kept of them (its saved workspace, queued messages, drafts)? The snapshot stays, and so do the engraving readings Claude was paid for. Production data is untouched. The order stream starts over, and the sorter reloads.`)) return null;
+    if (!confirm(`Delete every sandbox record (sandbox pools, sets, runs, sheets, custom orders, locks, ledger, archive) and the sandbox's files, and everything this browser kept of them (its saved workspace, queued messages, drafts)? The snapshot stays, and so do the engraving readings Claude was paid for. Production data is untouched. The sorter reloads, and the sandbox then waits, empty, until you press Start (or turn Auto on).`)) return null;
     return wipe(ui, { verb: "Resetting" });
   }
   /* No strip of its own any more: the SANDBOX pill in the top bar says the mode, the station's own banner says it again,
@@ -9304,10 +9377,45 @@ const Sandbox = window.Sandbox = (() => {
     // the last tab at 1280 px) and still read "Sandbox · Fri 07:30", and so is the clock, left out beside the run's pill;
     // the text is the label's all the same (one inline span holds it all: the pill is a flex box, which would trim the
     // spaces around each piece)
-    const pill = document.getElementById("sandboxPill"); if (pill) { pill.classList.toggle("hidden", !on()); if (on()) { const text = label(), m = /^Sandbox (\S+) · sim (.+?)( · all orders in)?$/.exec(text); if (pill.dataset.label !== text) { pill.dataset.label = text; pill.innerHTML = m ? `<span>Sandbox<span class="sbSpeed"> ${esc(m[1])}</span><span class="sbTime"> · <span class="sbSim">sim </span>${esc(m[2])}</span>${m[3] ? esc(m[3]) : ""}</span>` : esc(text); } pill.title = streamText() ? `Sandbox: emulated Etsy; all records and files use sandbox copies. ${streamText()}` : "Sandbox: emulated Etsy; all records and files use sandbox copies"; } }
+    const pill = document.getElementById("sandboxPill"); if (pill) { pill.classList.toggle("hidden", !on()); if (on()) { const text = label(), m = /^Sandbox (\S+) · sim (.+?)( · all orders in)?$/.exec(text); if (pill.dataset.label !== text) { pill.dataset.label = text; pill.innerHTML = m ? `<span>Sandbox<span class="sbSpeed"> ${esc(m[1])}</span><span class="sbTime"> · <span class="sbSim">sim </span>${esc(m[2])}</span>${m[3] ? esc(m[3]) : ""}</span>` : esc(text); } pill.title = held() ? `Sandbox is paused and empty. ${heldText()}` : streamText() ? `Sandbox: emulated Etsy; all records and files use sandbox copies. ${streamText()}` : "Sandbox: emulated Etsy; all records and files use sandbox copies"; } }
     document.documentElement.classList.toggle("sandbox", on());
+    // the Orders tab's empty state names the snapshot's day once the status is read
+    try { if (held() && document.querySelector) { const n = document.querySelector('[data-mkey="ordEmpty:held"] .sbWait'); if (n && n.textContent !== heldText()) n.textContent = heldText(); } } catch (_) {}
   }
-  return { on, refresh, snapshot, enable, afterReload, reset, wipe, forgetStores, standDown, mountPanel, render, status: () => status, streaming, done, speed, ready, advance, restream, label, streamText, seed: () => stream && stream.seed, stream: () => stream };
+  /* ── Settings: the page build, what the last reset did, what the sandbox holds now (calm lines inside the dialog; no
+     pop-up). Paul, 3 Oct: "it still didn't purge the system fully": which build was he running, what had the reset done,
+     and what was in the sandbox again a moment later? ── */
+  const FRIENDLY = { Charm_Pool: "pool rows", Charm_Pool_Back: "back records", Charm_Nest_Sheets: "sheets", Charm_Nest_Sets: "sets", Charm_Nest_Runs: "runs", Charm_Nest_Run_Lines: "run line archives", Charm_Nest_Run_Live: "live run parts", Charm_Nest_Counters: "set counters", Charm_Nest_Release: "release records",
+    Charm_Nest_Arrivals: "arrivals", Charm_Nest_Rose_Stock: "Rose Gold stock records", Charm_Nest_Cancelled: "cancelled orders", Charm_Nest_Cancelled_History: "cancel history records", Design_Bridge: "bridge logs", Charm_Custom_Orders: "custom orders", Charm_Custom_Sheet: "custom sheets" };
+  const when = t => new Date(t).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
+  function lastText() {
+    const l = lsJSON(LAST); if (!l || !l.at) return "No reset or purge has been made from this browser yet.";
+    const what = l.verb === "purge" ? "purge" : "reset";
+    if (!l.ok) return `Last ${what} ${when(l.at)} — not finished: ${l.text || "it stopped part way"}`;
+    const rec = l.records == null ? "the cloud's sandbox records" : `${nf(l.records)} cloud record(s)`, fil = l.files == null ? "" : ` and ${nf(l.files)} file(s)`;
+    const b = l.browser ? `this browser's saved copy cleared (${nf(l.browser.workspace)} saved workspace part(s), ${nf(l.browser.keys)} stored key(s))` : "this browser's saved copy cleared";
+    return `Last ${what} ${when(l.at)} — ${rec}${fil} removed · ${b} · ${l.left === 0 ? "nothing left in the cloud" : "what was left could not be checked"}${l.filesError ? ` · files not deleted: ${l.filesError}` : ""}${l.station === false ? " · the Design Station kept its own list of finished orders" : ""}`;
+  }
+  function nowText() {
+    if (!status) return "";
+    if (status.error) return `In the sandbox now: could not be read (${status.error})`;
+    const parts = Object.entries(status.records || {}).filter(([, n]) => n > 0).map(([k, n]) => `${nf(n)} ${FRIENDLY[k] || k.replace(/^(Charm_)?(Nest_)?/, "").replace(/_/g, " ").toLowerCase()}`);
+    return parts.length ? `In the sandbox now: ${parts.join(", ")}.` : "In the sandbox now: nothing.";
+  }
+  const latestBuild = async () => { try { const r = await fetch("charm-nest-1.html?_=" + Date.now(), { cache: "no-store" }), m = /charm-nest-bridge\.js\?v=([\w.-]+)/.exec(await r.text()); return m ? m[1] : ""; } catch (_) { return ""; } };
+  async function paintInfo(host) {
+    host = host || document.getElementById("stBuildNote"); if (!host) return;
+    const line = id => { let n = host.querySelector(`[data-i="${id}"]`); if (!n) { n = document.createElement("div"); n.dataset.i = id; host.appendChild(n); } return n; };
+    const set = (n, text, bad) => { n.textContent = text; n.style.color = bad ? "var(--clay)" : ""; };
+    const b = line("build"), l = line("last"), n = line("now"), p = pageBuild(), stale = !!p && p !== BUILD;
+    set(b, stale ? `Page build ${p}, but this script is build ${BUILD}: the page file is out of date — reload with Ctrl+Shift+R` : `Page build ${BUILD}`, stale);
+    set(l, lastText(), (lsJSON(LAST) || {}).ok === false); set(n, nowText());
+    refresh().then(() => set(n, nowText())).catch(() => {});
+    const latest = await latestBuild();
+    if (latest && latest !== BUILD) set(b, `Page build ${BUILD} — a newer build (${latest}) is live: reload this page with Ctrl+Shift+R to run it`, true);
+    else if (latest && !stale) set(b, `Page build ${BUILD} (the latest on the server)`);
+  }
+  return { on, refresh, snapshot, enable, afterReload, reset, wipe, forgetStores, standDown, mountPanel, render, status: () => status, streaming, done, speed, ready, advance, restream, label, streamText, held, start, heldText, paintInfo, build: () => BUILD, pageBuild, lastText, seed: () => stream && stream.seed, stream: () => stream };
 })();
 
 
@@ -12733,7 +12841,7 @@ const Arrivals = window.Arrivals = (() => {
     finally { r.arrivalBusy = false; RunCtl.poke(); Session.schedule(); window.CN?.flushManualIntake?.(); }
   }
   async function check() {
-    if (busy || paused || S.settings.pollOrders === "off") return;
+    if (busy || paused || S.settings.pollOrders === "off" || window.Sandbox?.held?.()) return;   // (a cleaned sandbox waits for Start)
     busy = true; paint(); const began = Date.now(), gen = epoch;
     try {
       await DesignLink.ensure();
@@ -12773,7 +12881,7 @@ const Arrivals = window.Arrivals = (() => {
       // just woken (the machine slept: this tick came over a minute late), the network is given 10 s before the check
       const t = Date.now(); if (lastTick && t - lastTick > 60000 && state.nextCheck < t + 10000) state.nextCheck = t + 10000; lastTick = t;
       paint();
-      if (busy || paused || S.settings.pollOrders === "off") return;
+      if (busy || paused || S.settings.pollOrders === "off" || window.Sandbox?.held?.()) return;   // (a cleaned sandbox waits for Start: no check, no step, no run)
       /* A gap fill ends once every order of the stream is in (CN.settleTopups), asked at every tick with no check out. It
          was asked only between checks, and at 1000x there is no between: the next check is due 600 ms after the last one
          began and a check (the stream's step, the station's sweep) takes longer, so each tick started the next check at
@@ -13261,7 +13369,8 @@ async function bootBridge() {
     DesignLink.flushLog();
   });
   // the Design Station frame mounts on first visit to its tab; Auto mode mounts it now
-  if (!recovered && !recoveryFailed && S.settings.runMode === "auto") { setTimeout(() => { if (!B.openRuns?.length && !Recall.on() && !B.run) RunCtl.setMode("auto"); }, 1500); }
+  // (not in a sandbox that was cleaned: it waits for Start, which starts Auto's run as it does here)
+  if (!recovered && !recoveryFailed && S.settings.runMode === "auto" && !Sandbox.held()) { setTimeout(() => { if (!B.openRuns?.length && !Recall.on() && !B.run) RunCtl.setMode("auto"); }, 1500); }
   document.addEventListener("keydown", e => { if (e.altKey && e.key === "r") { e.preventDefault(); setMode("review"); } });
   agent({ bridge: true }, "DS", `Bridge ready · station ${DesignLink.origin()} · ${S.settings.runMode} mode`);
 }

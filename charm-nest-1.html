@@ -2785,6 +2785,7 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
       <div class="field"><label for="stSbStream">Sandbox orders · speed · seed</label><div class="fieldRow3"><select id="stSbStream"><option value="on">A few at a time, as Etsy brings them</option><option value="off">The whole snapshot at once</option></select><input id="stSbSpeed" type="number" min="1" max="1000" step="1" title="how many times faster than real time the sandbox day plays"><input id="stSbSeed" type="number" min="0" step="1" placeholder="new each reset" title="the same seed replays the same orders after a sandbox reset"></div><div class="help">A few at a time: every simulated 10 minutes 2 to 5 of the snapshot's orders arrive, oldest first, under their real Etsy order numbers and the simulated time. Each order comes once; when all have come, no more arrive until a new snapshot is taken. In Auto the next check starts as soon as the sorter has placed the last orders, so no time is spent waiting between them; in Manual one comes every simulated 10 minutes at this speed (12 s at 50x). Dates and due days follow the simulated clock; nesting keeps its real time. Enter a seed (the status shows the current one) to replay the same arrivals after a reset.</div></div>
       <div class="field"><label>Sandbox records</label><button class="btn ghost sm" id="stSandboxReset" type="button" title="empty the sandbox's own pool, sets, runs and sheets — the real records are never touched">Reset the sandbox…</button><div class="help" id="stSandboxResetNote" role="status" aria-live="polite"></div></div>
       <div class="field"><label>Run history</label><button class="btn ghost sm" id="stPurge" type="button" title="delete every run, sheet, set, pool row, back record and set counter — production and sandbox — and start with a clean sheet; the master files, the SKU index, the mappings and the sandbox snapshot stay">Purge all run history…</button><div class="help">Asks for the passcode. A run that is still open is named and has to be given up first, or the purge can be forced. In the sandbox it also clears the sandbox's custom-order records and this browser's saved sandbox workspace.</div><div class="help" id="stPurgeNote" role="status" aria-live="polite"></div></div>
+      <div class="field" style="grid-column:1 / -1"><label>Build · last reset</label><div class="help" id="stBuildNote" role="status" aria-live="polite"></div><div class="help">Reset and Purge leave the sandbox empty and waiting: it plays again when you press Start on the Orders tab (or turn Auto on).</div></div>
       <div class="field"><label>Etsy calls per hour (cap)</label><input id="stEtsyCap" type="number" min="50" max="5000" step="50"><div class="help">Every Etsy call the sorter causes at the station is metered. A run stops before a pull or re-validation that would pass this cap. A pull costs one list page per 100 open orders plus one detail read per order Etsy changed; a re-validation costs one list sweep (reused when under 90 s old).</div></div>
     </div>
     <div class="section">Master files and engraving</div>
@@ -6356,6 +6357,8 @@ function openSettings() {
   for (const m of METALS) { $(`#st${cap(m.key)}W`).value = +(s.stock[m.key][0] * 25.4).toFixed(1); $(`#st${cap(m.key)}H`).value = +(s.stock[m.key][1] * 25.4).toFixed(1); }   // shown in mm, stored in inches
   $("#stClearance").value = +(s.clearancePt * MM_PER_PT).toFixed(2); $("#stInset").value = +(s.insetPt * MM_PER_PT).toFixed(2);   // shown in mm, stored in pt
   $("#stAngle").value = s.angleStep; $("#stBudget").value = s.budgetS; $("#stParallel").value = s.parallel || 0; $("#stSeed").value = s.seed; $("#stFreshSeed").checked = s.freshSeed !== false; $("#stServerAbove").value = s.serverAbove;
+  // the page build, what the last reset did and what the sandbox holds now
+  try { if (window.Sandbox && Sandbox.paintInfo) Sandbox.paintInfo(); } catch (_) {}
   // Sandbox.reset asks once and says what it removed, or why it removed nothing
   { const rb = $("#stSandboxReset"); if (rb && !rb.dataset.wired) { rb.dataset.wired = "1"; rb.onclick = () => { if (!window.Sandbox || !Sandbox.on()) { toast("The sandbox is off", "bad"); return; } Sandbox.reset({ button: rb, note: $("#stSandboxResetNote") }).catch(e => toast("The sandbox was not reset: " + e.message, "bad", 8000)); }; } }
   { const pb = $("#stPurge"); if (pb && !pb.dataset.wired) { pb.dataset.wired = "1"; pb.onclick = async () => {
@@ -6381,7 +6384,7 @@ function openSettings() {
         toast(`Purged ${n} record(s) — reloading with a clean sheet`, "ok", 4000);
         if (window.RunCtl && RunCtl.clearRunState) RunCtl.clearRunState(null, { drop: "released" });
         // the purge took the sandbox's records in the cloud too: this browser's copy of them goes (the production side's stays)
-        try { if (window.Sandbox && Sandbox.forgetStores) await Sandbox.forgetStores(); } catch (_) {}
+        try { if (window.Sandbox && Sandbox.forgetStores) await Sandbox.forgetStores({ records: r.docs && r.docs.Sandbox_all, files: r.sandbox && r.sandbox.files }); } catch (_) {}
         reloading = true; setTimeout(() => location.reload(), 1200);
       } catch (e) { const t = e.status === 403 ? "Wrong passcode — nothing was purged" : "Purge failed: " + e.message; say(t, true); toast(t, "bad", 7000); }
       finally { if (!reloading) rest(); }
@@ -6570,7 +6573,7 @@ boot();
      Design Station's sign-in), the same name every seal it stamps carries. -->
 <script src="station-session.js?v=20261002-ea1"></script>
 <script src="station-activity.js?v=20261003-reset-clean"></script>
-<script src="charm-nest-bridge.js?v=20261003-reset-clean"></script>
+<script src="charm-nest-bridge.js?v=20261003-reset-quiet"></script>
 <script>
 try {
   const nameNow = () => { try { const n = String((window.CNEmployee && CNEmployee.name()) || "").trim(); return /^\d+$/.test(n) ? "" : n; } catch (_) { return ""; } };
