@@ -5486,6 +5486,7 @@ const LaserReview = window.LaserReview = (()=>{
       const title=card.querySelector('[data-set-title]');if(title)title.textContent=O.setLabel(card._laserSet.seq)+(card._laserSet.day?' · '+card._laserSet.day:'');
       card.querySelectorAll('[data-sheet-status]').forEach(n=>{const s=records.get(n.dataset.sheetStatus);if(s){const html=R.counter(sheet(s),'Sheet',s);if(n.innerHTML!==html)n.innerHTML=html;}});
       const body=card.closest('#libBody');if(body && card.parentElement!==body.querySelector(`[data-laser-area="${report.ready?'ready':'pending'}"] .laserAreaItems`))place(card,report.ready,body);
+      syncApprove(card,report,sheets);   // the manual "Approve for laser cutting" button (below)
     });
     for(const list of document.querySelectorAll('#libBody .laserAreaItems')){
       const value=card=>({...card._laserSet,sheets:(card._laserSheets || []).map(id=>records.get(id)).filter(Boolean)});
@@ -5496,9 +5497,157 @@ const LaserReview = window.LaserReview = (()=>{
     if(needsSeals && !polling && !sealPoll && S.cloud.ok)sealPoll=setTimeout(()=>{sealPoll=0;poll(true);},Math.max(0,5100-(Date.now()-lastPoll)));
     document.querySelectorAll('[data-laser-area]').forEach(area=>{const hasItems=!!area.querySelector('.laserAreaItems')?.children.length;area.hidden=area.dataset.laserArea!=='ready' && !hasItems;const empty=area.querySelector('.laserEmpty');if(empty)empty.hidden=hasItems;});
   }
+  /* ── Approve for laser cutting (Paul, 3 Oct: "There is also no way for the user to manually approve a given sheet or set of
+     sheets.") Every sheet and set card under In progress carries one button. A press asks LibraryFlow (charm-nest-flow.js)
+     to run every safe automatic step for the person signed in and to list what is still missing; LibraryApprovalUI
+     (charm-nest-library-approval-ui.js) shows that on the card, a plain list does when it is not loaded. A card only a
+     person's decision can move on (back engravings not approved) keeps the button, disabled, with the plain reason beside
+     it. Nothing here approves, stamps or writes: LibraryFlow does, and records the person's seal. No LibraryFlow on the
+     page, no button. The card then moves to Laser cutting by the same refresh and read every other change goes through. */
+  let pollAgain=0;
+  const approving=new Set(),boxKey=(kind,id)=>kind+':'+id,plural=(n,w)=>`${n} ${w}${n===1?'':'s'}`;
+  const flowReady=()=>typeof window.LibraryFlow?.approve==='function';
+  const laying=p=>!!(p.dirty || p.saving || ['nesting','finishing','queued','error'].includes(p.status));
+  // null: nothing to offer (ready, cut or gone) · {why:''}: a press can do it · {why:'plain words'}: a person's own step comes first
+  function approveCase(kind,recs,st){
+    recs=recs.filter(Boolean);if(!recs.length)return null;
+    if(kind==='set'?(st.laserDoneAt || group(st,recs).ready):(recs[0].archived || projected(recs[0]).laserDoneAt || sheet(recs[0]).ready))return null;
+    const todo=recs.map(projected).filter(p=>!p.archived && !R.laserSheet(p).ready).map(p=>({p,r:R.laserSheet(p)}));
+    if(!todo.length)return {why:''};
+    const waiting=todo.reduce((n,x)=>n+(x.r.included?x.r.waiting:0),0);
+    if(waiting)return {why:`Waiting on ${plural(waiting,'back engraving')}`};
+    const busy=todo.filter(x=>laying(x.p)).length;
+    if(busy)return {why:kind==='set'?`${plural(busy,'sheet')} still being laid out`:'Still being laid out'};
+    const out=todo.filter(x=>!x.r.included);
+    if(out.length)return {why:kind==='set'?`${plural(out.length,'sheet')} not included in the set yet`:out[0].p.draft?'Still a draft':'Not included in a set yet'};
+    return {why:''};
+  }
+  function makeApproveBox(host,kind,id,before){
+    const box=document.createElement('div');box.className='approveBox';box.dataset.approveFor=boxKey(kind,id);box.dataset.nodrag='';box._kind=kind;box._id=id;
+    box.innerHTML='<div class="approveRow"><button type="button" class="btn sage sm approveBtn" data-approve-btn></button><span class="approveWhy" data-approve-why></span></div><div class="approvePlan" data-approve-plan role="status" aria-live="polite" hidden></div>';
+    box.onclick=e=>{
+      const t=e.target.closest && e.target.closest('button');if(!t || !box.contains(t))return;
+      e.stopPropagation();   // (a press here is not a press on the sheet card under it)
+      if(t.matches('[data-approve-btn]'))pressApprove(box);
+      else if(t.matches('[data-approve-reason]'))openWhy(box);
+      else if(t.matches('[data-approve-yes]'))confirmPlan(box,[t.dataset.approveYes]);
+      else if(t.matches('[data-approve-no]'))cancelPlan(box);
+      else if(t.matches('[data-approve-hide]'))hidePlan(box);
+    };
+    host.insertBefore(box,before && before.parentNode===host?before:null);
+    return box;
+  }
+  function paintApprove(box,c){
+    const key=box.dataset.approveFor,busy=approving.has(key),open=typeof window.LaserReview?.openChecklist==='function';
+    const mode=!c?'done':busy?'busy':c.why?'blocked':'ready',sig=[mode,c?.why || '',open?1:0,box._name || ''].join('|');
+    box._case=c;
+    if(box.dataset.sig===sig)return;
+    box.dataset.sig=sig;box.dataset.mode=mode;
+    const btn=box.querySelector('[data-approve-btn]'),why=box.querySelector('[data-approve-why]');
+    btn.disabled=mode!=='ready';btn.setAttribute('aria-busy',busy?'true':'false');
+    btn.setAttribute('aria-label','Approve for laser cutting'+(box._name?': '+box._name:''));
+    btn.innerHTML=busy?'<i class="spin" aria-hidden="true"></i>Approving…':'Approve for laser cutting';
+    why.innerHTML=mode!=='blocked'?'':open?`<button type="button" class="approveReason" data-approve-reason>${esc(c.why)}</button>`:`<span class="approveReason">${esc(c.why)}</span>`;
+  }
+  function syncBox(host,kind,id,c,before,name){
+    const key=boxKey(kind,id);let box=[...host.children].find(x=>x.dataset?.approveFor===key);
+    if(!c){
+      if(!box)return;
+      if(approving.has(key) || (box.dataset.keep && Date.now()<box._until))paintApprove(box,null);else box.remove();
+      return;
+    }
+    if(!box)box=makeApproveBox(host,kind,id,before);
+    box._name=name || '';paintApprove(box,c);
+    if(box.dataset.keep && Date.now()>box._until)hidePlan(box);
+  }
+  function syncApprove(card,report,sheets){
+    const kind=card.dataset.laserCard,on=flowReady() && !!card.closest('[data-laser-area="pending"]'),st=card._laserSet,items=[];
+    if(kind==='set'){
+      items.push([card,'set',st?.setId,on && st?.setId && !st.standalone && !st.working?approveCase('set',sheets,st):null,card.querySelector(':scope > .sheetsRow'),st?.seq?O.setLabel(st.seq):'']);
+      for(const art of card.querySelectorAll('.sheetsRow > .librarySheet')){const id=art.querySelector(':scope > .libCard')?.dataset.id,rec=records.get(id);if(rec)items.push([art,'sheet',id,on?approveCase('sheet',[rec]):null,null,rec.folder || rec.fileBase || '']);}
+    }else if(kind==='sheet'){
+      const id=card._laserSheets?.[0],rec=records.get(id);if(rec)items.push([card,'sheet',id,on?approveCase('sheet',[rec]):null,null,rec.folder || rec.fileBase || '']);
+    }
+    for(const [host,k,id,c,before,name] of items)if(id)syncBox(host,k,id,c,before,name);
+  }
+  function planHtml(plan,error,canCommit){
+    const say=x=>`<b>${esc(x.label || x.key || '')}</b>${x.detail?` <span>${esc(x.detail)}</span>`:''}`;
+    const items=n=>(n.items || []).length?`<ul>${n.items.map(i=>`<li>${esc(i.label || i.id)}${i.why?` <span>${esc(i.why)}</span>`:''}</li>`).join('')}</ul>`:'';
+    let h='';
+    if(error)h=`<p class="apHead bad">Could not approve for laser cutting</p><p class="apNote">${esc(error)}</p>`;
+    else{
+      const auto=plan.auto || plan.applied || [],needs=plan.needs || [],ask=plan.confirm || [];
+      if(auto.length)h+=`<p class="apHead">Approved automatically</p><ul class="apOk">${auto.map(x=>`<li>${say(x)}</li>`).join('')}</ul>`;
+      if(needs.length)h+=`<p class="apHead bad">Not ready for laser cutting yet</p><ul class="apNeeds">${needs.map(x=>`<li>${say(x)}${items(x)}</li>`).join('')}</ul>`;
+      if(ask.length)h+=`<p class="apHead warn">Needs your yes</p><ul class="apAsk">${ask.map(x=>`<li>${say(x)}${canCommit?` <span class="apBtns"><button type="button" class="btn sm" data-approve-yes="${esc(x.key)}">Yes</button><button type="button" class="btn ghost sm" data-approve-no>Not now</button></span>`:''}</li>`).join('')}</ul>`;
+      for(const n of plan.notes || [])h+=`<p class="apNote">${esc(n)}</p>`;
+      if(!h)h=plan.ok===false?'<p class="apHead bad">Nothing more could be approved yet</p>':'<p class="apHead">Approved for laser cutting</p>';
+      else if(!needs.length && !ask.length && plan.ok!==false)h='<p class="apHead">Approved for laser cutting</p>'+h;
+    }
+    return h+'<button type="button" class="apClose" data-approve-hide>Hide</button>';
+  }
+  // LibraryApprovalUI draws the plan on the card; without it (or if it fails) the same lines are drawn here as plain text
+  function showPlan(box,plan,error){
+    const ui=window.LibraryApprovalUI,card=box.parentElement,host=box.querySelector('[data-approve-plan]');
+    box._plan=error?null:plan;box._ui=false;
+    if(!error && typeof ui?.show==='function'){
+      try{host.hidden=true;host.innerHTML='';ui.show(card,plan,{title:'Approve for laser cutting',onConfirm:keys=>confirmPlan(box,keys),onCancel:()=>cancelPlan(box)});box._ui=true;return;}
+      catch(e){console.warn('Approval view',e);}
+    }
+    host.innerHTML=planHtml(plan || {},error,typeof window.LibraryFlow?.commit==='function');host.hidden=false;
+    box.dataset.keep='1';box._until=Date.now()+(!error && plan?.ok?20000:90000);
+    setTimeout(changed,box._until-Date.now()+300);
+  }
+  function hidePlan(box){
+    const host=box.querySelector('[data-approve-plan]');
+    if(box._ui){try{window.LibraryApprovalUI?.hide?.(box.parentElement);}catch(e){}box._ui=false;}
+    host.hidden=true;host.innerHTML='';delete box.dataset.keep;
+    if(box.dataset.mode==='done')changed();
+  }
+  function cancelPlan(box){box._plan=null;hidePlan(box);}
+  function openWhy(box){
+    const card=box.parentElement,info={kind:box._kind,id:box._id};
+    try{window.LaserReview?.openChecklist?.(card,info);}catch(e){console.warn('Checklist',e);}
+    try{card.dispatchEvent(new window.CustomEvent('library-checklist-open',{bubbles:true,detail:{...info,card}}));}catch(e){}
+  }
+  // what happens on the card after a press: the card is drawn again from the cloud at once (it moves to Laser cutting when
+  // the plan went through), and once more a moment later in case a write was still landing
+  function afterApprove(box,ok){
+    changed();poll(true,true);
+    if(ok)setTimeout(()=>{if(box.isConnected && box.closest('[data-laser-area="pending"]'))poll(true,true);},2200);
+  }
+  async function pressApprove(box){
+    const key=box.dataset.approveFor,flow=window.LibraryFlow;
+    if(approving.has(key) || box._case?.why || typeof flow?.approve!=='function')return;   // (a second press while one runs does nothing)
+    approving.add(key);hidePlan(box);paintApprove(box,box._case);
+    let plan=null,error='';
+    try{plan=await flow.approve({kind:box._kind,id:box._id,by:window.CNEmployee?.name?.() || undefined});plan=plan?.plan || plan;if(!plan)error='No answer came back';}
+    catch(e){error=e?.message || String(e);}
+    finally{approving.delete(key);}
+    paintApprove(box,box._case);
+    showPlan(box,plan,error);
+    afterApprove(box,!error && plan?.ok!==false && !(plan?.needs || []).length && !(plan?.confirm || []).length);
+  }
+  async function confirmPlan(box,keys){
+    const key=box.dataset.approveFor,flow=window.LibraryFlow,plan=box._plan;
+    if(approving.has(key) || typeof flow?.commit!=='function' || !plan)return;
+    approving.add(key);paintApprove(box,box._case);
+    let res=null,error='';
+    try{res=await flow.commit(plan,{confirmed:[].concat(keys || []),by:window.CNEmployee?.name?.() || undefined});if(res && res.ok===false && !error)error=res.error || 'Could not finish';}
+    catch(e){error=e?.message || String(e);}
+    finally{approving.delete(key);}
+    paintApprove(box,box._case);
+    const ui=window.LibraryApprovalUI;
+    if(box._ui && typeof ui?.update==='function'){try{ui.update(box.parentElement,error?{ok:false,error}:res);}catch(e){console.warn('Approval view',e);}}
+    else{box._ui=false;showPlan(box,error?null:{ok:true,auto:(res?.applied || []).map(a=>({label:a.label || a.key})),needs:[],confirm:[]},error);}
+    afterApprove(box,!error);
+  }
   function changed(){if(!frame)frame=requestAnimationFrame(refresh);}
-  async function poll(force=false){
-    if(polling || S.mode!=='library' || document.hidden || !S.cloud.ok || (Date.now()-lastPoll<(force?5000:60000)))return;
+  // `now`: asked for by a press that has just changed cloud state (Approve for laser cutting): it skips the five-second
+  // wait, and when a read is already in flight it asks again right after that one, so the card never shows old state.
+  async function poll(force=false,now=false){
+    if(polling){if(now && !pollAgain)pollAgain=setTimeout(()=>{pollAgain=0;poll(true,true);},700);return;}
+    if(S.mode!=='library' || document.hidden || !S.cloud.ok || (!now && Date.now()-lastPoll<(force?5000:60000)))return;
     const cards=[...document.querySelectorAll('[data-laser-card]')].filter(x=>{const r=x.getBoundingClientRect();return r.width>0&&r.height>0&&r.bottom>0&&r.top<innerHeight;});
     const ids=[...new Set(cards.flatMap(x=>(x._laserSheets || []).concat([...x.querySelectorAll('[data-laser-sheet]')].map(n=>n.dataset.laserSheet))))];if(!ids.length)return;
     polling=true;lastPoll=Date.now();

@@ -2317,6 +2317,32 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
 .setUndoChip .spin{width:10px;height:10px;flex:0 0 10px;border:2px solid var(--line);border-top-color:var(--ink70);border-radius:50%;animation:spin .7s linear infinite}
 .setUndoChip.ok{color:#3c5a39;background:var(--sageSoft);border-color:#cddcc9}
 @media (prefers-reduced-motion:reduce){.setUndoChip,.ldSign{animation:none}}
+/* Approve for laser cutting (charm-nest-bridge.js, LaserReview): one button on every sheet and set card still in progress; disabled, with its plain reason beside it, while a person's own step comes first */
+.approveBox{display:grid;gap:6px;min-width:0}
+.approveRow{display:flex;align-items:center;gap:6px 10px;flex-wrap:wrap;min-width:0}
+.approveBtn{flex:0 0 auto}
+.approveBtn:disabled{background:var(--paper2);border-color:var(--line);color:var(--ink45);opacity:1}
+.approveBtn .spin{vertical-align:-2px}
+.approveWhy{min-width:0;font:600 11.5px/1.35 var(--sans);color:#7a5a1d}
+button.approveReason{border:0;background:none;padding:0;font:inherit;color:inherit;text-align:left;cursor:pointer;text-decoration:underline;text-decoration-style:dotted;text-underline-offset:3px}
+button.approveReason:hover{color:var(--ink)}
+.approveBox[data-mode=done] .approveRow{display:none}
+.approvePlan{position:relative;border:1px solid var(--line);border-radius:9px;background:var(--card2);padding:8px 28px 8px 11px;font:12px/1.45 var(--sans);color:var(--ink70);animation:ldFade .25s ease}
+.approvePlan[hidden]{display:none}
+.approvePlan p{margin:0}
+.approvePlan .apHead{font-weight:700;color:#3c5a39;margin-top:2px}
+.approvePlan .apHead.bad{color:#8a3a26}.approvePlan .apHead.warn{color:#7a5a1d}
+.approvePlan ul{list-style:none;margin:2px 0 4px;padding:0;display:grid;gap:2px}
+.approvePlan li{padding-left:15px;position:relative}
+.approvePlan li::before{content:"";position:absolute;left:3px;top:.55em;width:6px;height:6px;border-radius:50%;background:var(--sage)}
+.approvePlan .apNeeds>li::before{background:var(--clay)}.approvePlan .apAsk>li::before{background:var(--gold)}
+.approvePlan li li::before{width:4px;height:4px;background:var(--ink25)}
+.approvePlan li b{color:var(--ink);font-weight:650}
+.approvePlan .apBtns{display:inline-flex;gap:6px;margin-left:6px;vertical-align:middle}
+.approvePlan .apNote{color:var(--ink45)}
+.approvePlan .apClose{position:absolute;top:6px;right:8px;border:0;background:none;padding:0;font:600 11px var(--sans);color:var(--ink45);cursor:pointer}
+.approvePlan .apClose:hover{color:var(--ink)}
+@media (prefers-reduced-motion:reduce){.approvePlan{animation:none}}
 /* the sheet cards: the same sheet with less around it */
 .sheets{gap:10px}
 .shHead{padding-top:6px;padding-bottom:3px}
