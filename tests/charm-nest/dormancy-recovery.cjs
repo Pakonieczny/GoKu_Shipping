@@ -127,7 +127,10 @@ window.__emit = (type, p) => { if (master) master.postMessage(Object.assign({ so
 </script>`;
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.otf': 'font/otf', '.ttf': 'font/ttf', '.png': 'image/png' };
 const listen = handler => new Promise(ok => { const s = http.createServer(handler).listen(0, '127.0.0.1', () => ok(s)); });
-const SHEETS = n => Array.from({ length: n }, (_, i) => ({ id: 's' + i, sheetId: 's' + i, metal: 'gold', metalLabel: 'GF 14/20', day: '2026-09-23', placedCount: 10, charmCount: 10, density: .7, folder: `GF_Sep.23.26_Set-${1 + (i >> 2)}_Sheet-${1 + (i & 3)}`, fileBase: `GF_Sep.23.26_Set-${1 + (i >> 2)}_Sheet-${1 + (i & 3)}`, updatedAt: Date.now() - i, poolIds: [], page: 1 + (i & 3) }));
+// (a saved sheet always has its picture. One without is restored one by one: a getSheet call and a redraw of the top progress bar each, and 300 of
+//  them kept the page busy for a minute, longer than the one-minute freshness window that check 9 reads. A 1 x 1 picture keeps the fixture realistic.)
+const PREVIEW = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+const SHEETS = n => Array.from({ length: n }, (_, i) => ({ id: 's' + i, sheetId: 's' + i, metal: 'gold', metalLabel: 'GF 14/20', day: '2026-09-23', placedCount: 10, charmCount: 10, density: .7, folder: `GF_Sep.23.26_Set-${1 + (i >> 2)}_Sheet-${1 + (i & 3)}`, fileBase: `GF_Sep.23.26_Set-${1 + (i >> 2)}_Sheet-${1 + (i & 3)}`, updatedAt: Date.now() - i, poolIds: [], page: 1 + (i & 3), preview: PREVIEW }));
 function reply(fn, b, sheets) {
   if (fn === 'authGate') return { locked: false };
   if (fn !== 'charmNestLibrary') return null;
