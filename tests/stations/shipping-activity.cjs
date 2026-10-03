@@ -7,6 +7,7 @@
 //   • a second Buy & Print is a "reprint" print, a second Complete is a note (nothing counted twice)
 //   • failures: an order Etsy cannot find, and an Etsy post that fails, are errors with a category only (never the raw message)
 //   • a cancelled order: the scan is a reject, a refused "do it anyway" a note; no label, no complete
+//   • the order chat: a message sent is a note, one that fails an error; a picture dropped in is a note, one that fails an error
 //   • signed out again: nothing more is recorded; no request anywhere carries the PIN
 //   node tests/stations/shipping-activity.cjs [playwright-core dir]
 const path = require('path'), assert = require('assert'), fs = require('fs'), http = require('http');
@@ -89,6 +90,7 @@ async function run(browser, origin, n, mode) {
           if (body && body.pinLogin !== undefined) { requests.pop(); doorBodies.push(text); return route.fulfill(json(200, body.pinLogin === PIN ? { ok: true, name: WHO } : { ok: false, error: 'not on the list' })); }
           if (req.method() === 'GET' && /employee/i.test(url.searchParams.get('orderId') || '')) { mapGets++; return route.fulfill(json(401, { success: false })); }   // the roster is never asked for
           if (body && Array.isArray(body.activity)) { activity.push(...body.activity); return route.fulfill(json(200, { success: true, written: body.activity.length, duplicate: 0, refused: 0, scrubbed: 0 })); }
+          if (body && body.newMessage && state.msgFail) return route.fulfill(json(500, { success: false, error: 'down' }));
           if (body && (body.session || body.timeline || body.newMessage)) return route.fulfill(json(200, { success: true }));
           return route.fulfill(json(404, { error: 'Order not found' }));
         }
@@ -175,6 +177,16 @@ async function run(browser, origin, n, mode) {
     await clickComplete();
     state.etsyPost = 200;
     await clickComplete();
+    // 5b · the order chat: a message sent, one that fails; a picture dropped in, one that fails (never the words or the picture)
+    const say = async text => { await page.fill('#britesMsgInput', text); await page.evaluate(() => document.getElementById('goScreenTwoBtn').click()); await settle(400); };
+    const drop = async ok => { await page.evaluate(async ok => {
+      window.uploadViaResumable = async () => { if (!ok) throw new Error('storage down'); return 'http://127.0.0.1/x.png'; };
+      const dt = new DataTransfer(); dt.items.add(new File(['x'], 'a.png', { type: 'image/png' }));
+      document.getElementById('customerMessageHistory').dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true, cancelable: true }));
+    }, ok); await settle(400); };
+    await say('secret words about the chain');
+    state.msgFail = true; await say('words that fail'); state.msgFail = false;
+    await drop(true); await drop(false);
   } else {
     // cancelled order: typed scan → alert (reject); Complete and Buy & Print refused ("do it anyway" declined)
     await typeOrder('2222222222');
@@ -211,8 +223,13 @@ async function run(browser, origin, n, mode) {
       'scan:9999999999:0:0', 'error:9999999999:0:0',   // Etsy could not find it
       'scan:1111111111:3:0',
       'error:1111111111:0:0',  // the Etsy post failed
-      'complete:1111111111:3:1'
+      'complete:1111111111:3:1',
+      'note:1111111111:0:0',   // a chat message sent
+      'error:1111111111:0:0',  // a chat message that failed
+      'note:1111111111:0:0',   // a picture sent
+      'error:1111111111:0:0'   // a picture that failed
     ], 'one event per real moment, with the order and its pieces');
+    assert.deepStrictEqual(activity.slice(-4).map(e => e.detail), ['message to the order chat sent', 'Order chat message: failed', 'image sent to the order chat', 'Order chat image: failed'], 'fixed words only: never the message or the picture');
     const by = a => activity.filter(e => e.action === a);
     assert.strictEqual(by('scan')[0].detail, 'typed');
     assert.strictEqual(by('scan')[1].detail, 'phone scan');

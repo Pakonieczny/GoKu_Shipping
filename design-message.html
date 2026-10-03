@@ -2571,6 +2571,7 @@ function metalToBadge(label){
             const txs = orderData && Array.isArray(orderData.transactions) ? orderData.transactions : [];
             StationActivity.log("scan", { orderId: orderNumber, parts: txs.reduce((n, t) => n + (Number(t && t.quantity) || 1), 0),
               detail: e.stationHow === "scan" ? "phone scan" : e.stationHow === "paste" ? "pasted" : "typed" });
+            if (!orderData || orderData.error) StationActivity.log("error", { orderId: orderNumber, detail: "order lookup failed" });   // Etsy has no answer: the scan stands, the failure is shown too
           }
         } catch (_) {}
         await loadShipToAddress(orderNumber);
@@ -2765,8 +2766,10 @@ function metalToBadge(label){
                   senderRole: "staff",
                   timestamp : firebase.firestore.FieldValue.serverTimestamp()
                 });
+              try { window.StationActivity && StationActivity.log("note", { orderId: orderId.replace(/\D/g, ""), detail: "order chat image sent" }); } catch (_) {}   // efficiency log: one note per picture, never the picture
             } catch(err) {
               console.error("upload error:", err);
+              try { window.StationActivity && StationActivity.log("error", { orderId: orderId.replace(/\D/g, ""), detail: "order chat image failed" }); } catch (_) {}
               M.toast({ html: "Upload failed: " + err.message });
             }
           }
