@@ -123,6 +123,7 @@ const assets = [
   "charm-nest-library.js",
   "charm-nest-flow.js",
   "charm-nest-library-approval-ui.js",
+  "charm-nest-library-fx.js",
   "charm-nest-text.js",
   "vendor/fonts/emoji-sequences.json",
   "vendor/fonts/NotoEmoji-OFL.txt",
