@@ -122,6 +122,8 @@ The robot uses matte ceramic, a dark satin visor, restrained lighting and bloom,
 
 The wider interface centers the robot and one voice action. Live captions, typing and history are optional; checked product options stay in a separate tray. Connecting can be cancelled, End/Hide close local media immediately, and interrupted or timed-out catalogue checks cannot overwrite newer selections. Switching to typing ends voice. No microphone or provider call starts on a fresh visit or merely opening the guide.
 
-All **1,184** growth checks pass across **63** files, with complete TAP evidence. Native provider, physical microphone and visual acceptance are recorded separately in the private checkpoint so fixture tests cannot stand in for live proof.
+All **1,192** growth checks pass across **63** files, with complete TAP evidence. Native provider, physical microphone and visual acceptance are recorded separately in the private checkpoint so fixture tests cannot stand in for live proof.
 
 The one-shot WebRTC exchange waits for ICE gathering to complete before sending the refreshed local SDP, with a ten-second limit and cancellation cleanup. It never changes browser networking or graphics settings.
+
+Known microphone permission, unavailable-device, busy-device and media-connection failures show fixed friendly guidance. Unknown provider or account text is withheld; failure cleanup preserves the keyboard path.

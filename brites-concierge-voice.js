@@ -3,6 +3,32 @@
   // microphone, calls a model or invokes browser speech synthesis/recognition.
   function rms(samples){let sum=0;for(let i=0;i<samples.length;i++)sum+=samples[i]*samples[i];return samples.length?Math.min(1,Math.sqrt(sum/samples.length)*4):0;}
   function validateToolArguments(value){if(!value||typeof value!=='object'||Array.isArray(value)||Object.keys(value).some(k=>k!=='message')||typeof value.message!=='string'||!value.message.trim()||value.message.length>2000||/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/.test(value.message))return null;return {message:value.message.trim()};}
+  const MESSAGES=Object.freeze({
+    unavailable:'OpenAI voice could not connect. You can still type.',
+    micDenied:'Microphone permission was not granted. Allow microphone access in your browser, or type here.',
+    micMissing:'No microphone was found. Connect or enable a microphone, or type here.',
+    micBusy:'Your microphone is busy or unavailable. Close other apps using it, or type here.',
+    micUnknown:'Your microphone could not be opened. You can still type.',
+    micTimeout:'Microphone permission timed out. Allow microphone access, then select Talk to me again.',
+    media:'OpenAI voice could not establish a media connection in this browser. You can retry or type here.',
+    network:'OpenAI voice could not finish network setup in this browser. You can retry or type here.',
+    playback:'Your browser paused OpenAI audio. End voice and start again to allow playback.',
+    unsupported:'This browser cannot start OpenAI voice. Try a browser with microphone access, or type here.',
+    audioSetup:'Voice audio initialization timed out.',
+    allocation:'This preview’s voice allocation is paused. You can still type.',
+    disabled:'OpenAI voice is not enabled in this preview. You can still type.',
+    signIn:'Sign in to the isolated preview before testing live voice.',
+    expired:'Select Talk to me again to start a fresh voice session.',
+    rate:'Please wait before starting another voice session.'
+  });
+  function microphoneError(error){
+    const name=error?.name;
+    if(['NotAllowedError','PermissionDeniedError','SecurityError'].includes(name))return Error(MESSAGES.micDenied);
+    if(['NotFoundError','DevicesNotFoundError'].includes(name))return Error(MESSAGES.micMissing);
+    if(['NotReadableError','TrackStartError'].includes(name))return Error(MESSAGES.micBusy);
+    return Error(error?.message===MESSAGES.micTimeout?MESSAGES.micTimeout:MESSAGES.micUnknown);
+  }
+  function safeErrorMessage(error){return Object.values(MESSAGES).includes(error?.message)?error.message:MESSAGES.unavailable;}
   function create(options={}){
     const rt=options.runtime||globalThis,doc=rt.document,nav=rt.navigator,endpoint=options.endpoint||'/api/concierge-voice';
     const ownOrigin=rt.location?.origin||'https://preview.invalid';
@@ -25,14 +51,14 @@
       let ready;const completed=new Promise(resolve=>{ready=resolve;});
       const onState=()=>{if(connection.iceGatheringState==='complete')ready();};
       connection.addEventListener('icegatheringstatechange',onState);
-      try{onState();await bounded(completed,10000,'OpenAI voice network setup timed out while gathering connection candidates.');}
+      try{onState();await bounded(completed,10000,MESSAGES.network);}
       finally{connection.removeEventListener('icegatheringstatechange',onState);}
     }
     async function request(body,{signal,keepalive=false}={}){
       const headers={...(typeof options.headers==='function'?options.headers():options.headers||{}),'Content-Type':'application/json'};
       const response=await rt.fetch(endpoint,{method:'POST',headers,credentials:'same-origin',body:JSON.stringify(body),signal,keepalive});let data;
       try{data=await response.json();}catch{throw Error('OpenAI voice returned an invalid connection answer.');}
-      if(!response.ok||data.enabled===false){const error=Error(data.message||data.error||'OpenAI voice is unavailable. You can still type.');error.code=data.code||'';throw error;}return data;
+      if(!response.ok||data.enabled===false){const known={VOICE_ALLOCATION_UNAVAILABLE:MESSAGES.allocation,VOICE_DISABLED:MESSAGES.disabled,PREVIEW_SIGN_IN_REQUIRED:MESSAGES.signIn,VOICE_SESSION_EXPIRED:MESSAGES.expired};const error=Error(known[data.code]||(response.status===429?MESSAGES.rate:MESSAGES.unavailable));error.code=data.code||'';throw error;}return data;
     }
     function cleanup(){
       for(const controller of toolControllers)controller.abort();toolControllers.clear();
@@ -104,21 +130,21 @@
       if(disposed)throw Error('Voice adapter is closed.');if(state!=='idle')return false;
       const current=++epoch;++turnVersion;setState('connecting');abort=new rt.AbortController();
       try{
-        if(!rt.RTCPeerConnection||!nav?.mediaDevices?.getUserMedia)throw Error('This browser cannot start OpenAI voice. Try a browser with microphone access, or type here.');
+        if(!rt.RTCPeerConnection||!nav?.mediaDevices?.getUserMedia)throw Error(MESSAGES.unsupported);
         // Check explicit sandbox allocation/provider configuration before
         // requesting access to the shopper's microphone.
         const capabilities=await bounded(request({action:'capabilities'},{signal:abort.signal}),12000,'OpenAI voice availability check timed out.');
         if(current!==epoch)throw Error('Voice start cancelled.');
-        const gum=nav.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true},video:false});
+        let gum;try{gum=nav.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true},video:false});}catch(error){throw microphoneError(error);}
         gum.then(stream=>{if(current!==epoch||disposed)stream.getTracks().forEach(track=>track.stop());},()=>{});
-        mic=await bounded(gum,20000,'Microphone permission timed out.');if(current!==epoch)throw Error('Voice start cancelled.');
+        try{mic=await bounded(gum,20000,MESSAGES.micTimeout);}catch(error){throw microphoneError(error);}if(current!==epoch)throw Error('Voice start cancelled.');
         pc=new rt.RTCPeerConnection();audio=doc.createElement('audio');audio.autoplay=true;audio.setAttribute('aria-hidden','true');audio.hidden=true;doc.body?.appendChild(audio);
-        const AudioContext=rt.AudioContext||rt.webkitAudioContext;if(AudioContext){ctx=new AudioContext();await bounded(ctx.resume(),5000,'Voice audio initialization timed out.');inputMeter=meter(mic,'input');sample();}
-        pc.ontrack=event=>{if(current!==epoch)return;const stream=event.streams?.[0]||(rt.MediaStream?new rt.MediaStream([event.track]):null);if(!stream)return;audio.srcObject=stream;outputMeter=meter(stream,'output');audio.play().catch(()=>notify('onError','Your browser paused OpenAI audio. End voice and start again to allow playback.'));};
+        const AudioContext=rt.AudioContext||rt.webkitAudioContext;if(AudioContext){ctx=new AudioContext();await bounded(ctx.resume(),5000,MESSAGES.audioSetup);inputMeter=meter(mic,'input');sample();}
+        pc.ontrack=event=>{if(current!==epoch)return;const stream=event.streams?.[0]||(rt.MediaStream?new rt.MediaStream([event.track]):null);if(!stream)return;audio.srcObject=stream;outputMeter=meter(stream,'output');audio.play().catch(()=>notify('onError',MESSAGES.playback));};
         mic.getAudioTracks().forEach(track=>pc.addTrack(track,mic));
         dc=pc.createDataChannel('oai-events');dc.onmessage=event=>receive(event.data,current);dc.onerror=()=>{notify('onError','OpenAI voice disconnected. You can still type.');void stop('connection');};
-        pc.onconnectionstatechange=()=>{if(['failed','closed'].includes(pc?.connectionState)&&state!=='closing')void stop('connection');};
-        const ready=new Promise((resolve,reject)=>{dc.onopen=resolve;dc.onclose=()=>{if(state==='connecting')reject(Error('OpenAI voice connection closed.'));else if(state!=='closing'&&state!=='idle')void stop('connection');};});ready.catch(()=>{});
+        pc.onconnectionstatechange=()=>{if(['failed','closed'].includes(pc?.connectionState)&&state!=='closing'){notify('onError',MESSAGES.media);void stop('connection');}};
+        const ready=new Promise((resolve,reject)=>{dc.onopen=resolve;dc.onclose=()=>{if(state==='connecting')reject(Error(MESSAGES.media));else if(state!=='closing'&&state!=='idle'){notify('onError',MESSAGES.media);void stop('connection');}};});ready.catch(()=>{});
         const offer=await bounded(pc.createOffer(),5000,'Voice negotiation timed out.');await bounded(pc.setLocalDescription(offer),5000,'Voice negotiation timed out.');
         await gatherIce(pc,current);if(current!==epoch)throw Error('Voice start cancelled.');
         const opening=request({action:'start',sdp:pc.localDescription?.sdp||offer.sdp,...(capabilities.demoToken?{demoToken:capabilities.demoToken}:{})},{signal:abort.signal});
@@ -127,13 +153,13 @@
         if(current!==epoch)throw Error('Voice start cancelled.');
         if(typeof answer.sdp!=='string'||!/^v=0\r?\n/.test(answer.sdp)||typeof answer.stopToken!=='string')throw Error('OpenAI voice answer could not be verified.');
         stopCredential=answer.stopToken;
-        await bounded(pc.setRemoteDescription({type:'answer',sdp:answer.sdp}),5000,'Voice negotiation timed out.');await bounded(ready,10000,'OpenAI voice media did not connect.');
+        await bounded(pc.setRemoteDescription({type:'answer',sdp:answer.sdp}),5000,'Voice negotiation timed out.');await bounded(ready,10000,MESSAGES.media);
         if(current!==epoch)throw Error('Voice start cancelled.');
         const duration=Math.min(120000,Math.max(1000,Number(answer.maxDurationMs)||120000),Number.isFinite(answer.expiresAt)?Math.max(0,answer.expiresAt-Date.now()):120000);
         deadline=timeout(duration,()=>void stop('limit'));setState('listening');
         if(options.greeting!==false){responsePending=true;send({type:'response.create',response:{instructions:'Greet the shopper warmly in one short sentence, then ask whether this is a piece for them or a gift. Do not name products or promise any shop facts yet. Speak as the Brites AI concierge, with a relaxed natural voice.',tool_choice:'none',max_output_tokens:90}});settleState();}
         return true;
-      }catch(error){if(current===epoch){notify('onError',error?.message||'OpenAI voice could not connect. You can still type.');await stop('failed');}return false;}
+      }catch(error){if(current===epoch){notify('onError',safeErrorMessage(error));await stop('failed');}return false;}
     }
     function stop(reason='user'){
       if(closing)return closing;if(state==='idle'){cleanup();return Promise.resolve();}

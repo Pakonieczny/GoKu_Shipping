@@ -91,3 +91,22 @@ for(const phase of ['active','connecting'])test('Type instead ends '+phase+' voi
 test('typed submission defensively ends a subsequently restarted voice session',async t=>{
   const h=fixture(t);h.open();h.button('Type instead').click();await h.activate();assert.equal(h.button('End voice').getAttribute('aria-pressed'),'true');const stops=h.calls.stop,input=h.root.querySelector('input');input.value='A bunny necklace';h.root.querySelector('form').dispatchEvent(new h.w.Event('submit',{bubbles:true,cancelable:true}));await settle();assert.ok(h.calls.stop>stops);assert.equal(h.button('Talk to me').getAttribute('aria-pressed'),'false');assert.equal(h.root.querySelector('.composer').hidden,false);assert.equal(input.disabled,false);assert.equal(h.root.querySelectorAll('.card').length,1);
 });
+
+
+const safeLocalVoiceReasons=[
+  'Microphone permission was not granted. Allow microphone access in your browser, or type here.',
+  'No microphone was found. Connect or enable a microphone, or type here.',
+  'Your microphone is busy or unavailable. Close other apps using it, or type here.',
+  'Your microphone could not be opened. You can still type.',
+  'Microphone permission timed out. Allow microphone access, then select Talk to me again.',
+  'OpenAI voice could not establish a media connection in this browser. You can retry or type here.',
+  'OpenAI voice could not finish network setup in this browser. You can retry or type here.',
+  'Your browser paused OpenAI audio. End voice and start again to allow playback.'
+];
+test('allowlisted local microphone, network and playback failures remain visible after safe voice cleanup',async t=>{
+  const h=fixture(t);h.open();for(const reason of safeLocalVoiceReasons){await h.activate();const before=h.calls.stop;h.config.onError(reason);assert.ok(h.calls.stop>before);assert.equal(h.root.querySelector('.status').textContent,reason);assert.equal(h.root.querySelector('.caption-text').textContent,reason);assert.equal(h.button('Talk to me').getAttribute('aria-pressed'),'false');assert.equal(h.root.querySelector('input').disabled,false);assert.ok(!h.saved().history.some(m=>m.content===reason));}
+  h.button('Type instead').click();assert.equal(h.root.querySelector('.composer').hidden,false);assert.equal(h.root.activeElement,h.root.querySelector('input'));
+});
+test('unknown or suffixed provider/account errors cannot be reflected into shopper captions or history',async t=>{
+  const h=fixture(t);h.open();for(const reason of ['Provider rejected account private-account-id with credential private-test-key',safeLocalVoiceReasons[5]+' Account private-account-id',new Error('private-test-key'),{message:safeLocalVoiceReasons[0],account:'private-account-id'},undefined]){await h.activate();h.config.onError(reason);assert.equal(h.root.querySelector('.status').textContent,'Voice is unavailable right now. Try again or choose Type instead.');assert.equal(h.root.querySelector('.caption-text').textContent,'Voice is unavailable right now. Try again or choose Type instead.');assert.doesNotMatch(h.root.textContent,/private-account-id|private-test-key/);assert.doesNotMatch(JSON.stringify(h.saved()),/private-account-id|private-test-key/);assert.equal(h.button('Talk to me').getAttribute('aria-pressed'),'false');}
+});

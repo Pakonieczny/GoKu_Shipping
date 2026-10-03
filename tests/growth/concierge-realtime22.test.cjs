@@ -82,7 +82,7 @@ test('native interruption clears buffered voice and never starts a stale catalog
 
 test('native deadline, provider failure, hidden page and media refusal close resources without synthetic voice',async()=>{
   const f=nativeFixture({greeting:false});await f.voice.start();f.advance(120000);await flush();assert.equal(f.voice.state,'idle');assert.ok(f.counts().stopped>0);assert.equal(f.peer().closed,true);assert.equal(f.requests.at(-1).action,'stop');await f.voice.dispose();
-  const denied=nativeFixture();denied.runtime.navigator.mediaDevices.getUserMedia=async()=>{throw Error('Microphone denied.');};assert.equal(await denied.voice.start(),false);assert.equal(denied.requests.some(x=>x.action==='start'),false);assert.equal(denied.voice.state,'idle');assert.match(denied.errors[0],/Microphone denied/);await denied.voice.dispose();
+  const denied=nativeFixture();denied.runtime.navigator.mediaDevices.getUserMedia=async()=>{throw Error('Microphone denied.');};assert.equal(await denied.voice.start(),false);assert.equal(denied.requests.some(x=>x.action==='start'),false);assert.equal(denied.voice.state,'idle');assert.equal(denied.errors[0],'Your microphone could not be opened. You can still type.');await denied.voice.dispose();
   const hidden=nativeFixture({greeting:false});await hidden.voice.start();hidden.runtime.document.hidden=true;hidden.listeners.get('visibilitychange')();await flush();assert.equal(hidden.voice.state,'idle');assert.ok(hidden.counts().stopped>0);await hidden.voice.dispose();
 });
 
@@ -121,5 +121,32 @@ test('canceling while ICE gathers removes listeners, closes microphone and never
 });
 
 test('ICE gathering timeout cleans all local resources and reports a bounded network setup error',async()=>{
-  const f=nativeFixture({greeting:false,iceGathering:'gathering'}),starting=f.voice.start();await flush();f.advance(10000);assert.equal(await starting,false);assert.equal(f.voice.state,'idle');assert.equal(f.peer().listeners.size,0);assert.equal(f.peer().closed,true);assert.ok(f.counts().stopped>0);assert.equal(f.requests.some(value=>value.action==='start'),false);assert.match(f.errors[0],/gathering connection candidates/);await f.voice.dispose();assert.equal(f.timers.size,0);
+  const f=nativeFixture({greeting:false,iceGathering:'gathering'}),starting=f.voice.start();await flush();f.advance(10000);assert.equal(await starting,false);assert.equal(f.voice.state,'idle');assert.equal(f.peer().listeners.size,0);assert.equal(f.peer().closed,true);assert.ok(f.counts().stopped>0);assert.equal(f.requests.some(value=>value.action==='start'),false);assert.equal(f.errors[0],'OpenAI voice could not finish network setup in this browser. You can retry or type here.');await f.voice.dispose();assert.equal(f.timers.size,0);
+});
+
+
+test('known microphone browser failures show only fixed safe guidance and never start a paid session',async()=>{
+  for(const [name,expected]of [
+    ['NotAllowedError','Microphone permission was not granted. Allow microphone access in your browser, or type here.'],
+    ['NotFoundError','No microphone was found. Connect or enable a microphone, or type here.'],
+    ['NotReadableError','Your microphone is busy or unavailable. Close other apps using it, or type here.']
+  ]){
+    const f=nativeFixture();f.runtime.navigator.mediaDevices.getUserMedia=async()=>{throw Object.assign(Error('private device serial and account detail'),{name});};assert.equal(await f.voice.start(),false);assert.equal(f.voice.state,'idle');assert.equal(f.requests.some(value=>value.action==='start'),false);assert.equal(f.errors[0],expected);assert.doesNotMatch(JSON.stringify(f.errors),/private device|account detail/);assert.equal(f.audioNodes.length,0);await f.voice.dispose();assert.equal(f.timers.size,0);
+  }
+});
+
+test('unknown microphone exceptions and provider response text cannot disclose private details',async()=>{
+  const mic=nativeFixture();mic.runtime.navigator.mediaDevices.getUserMedia=()=>{throw Error('secret device and account detail');};assert.equal(await mic.voice.start(),false);assert.equal(mic.errors[0],'Your microphone could not be opened. You can still type.');await mic.voice.dispose();
+  const provider=nativeFixture();provider.runtime.fetch=async()=>Response.json({enabled:false,code:'unrecognized_private_code',message:'secret account billing details'},{status:403});assert.equal(await provider.voice.start(),false);assert.equal(provider.errors[0],'OpenAI voice could not connect. You can still type.');assert.equal(provider.counts().microphones,0);assert.doesNotMatch(JSON.stringify([...mic.errors,...provider.errors]),/secret|account|billing/);await provider.voice.dispose();
+});
+
+test('a media connection timeout uses fixed guidance and cleans remote media before signed hangup',async()=>{
+  const f=nativeFixture({greeting:false});let awaitingMedia;
+  const OriginalPeer=f.runtime.RTCPeerConnection;
+  f.runtime.RTCPeerConnection=class extends OriginalPeer{setRemoteDescription(answer){this.remoteDescription=answer;awaitingMedia=true;return Promise.resolve();}};
+  const starting=f.voice.start();await flush();assert.equal(awaitingMedia,true);f.advance(10000);assert.equal(await starting,false);assert.equal(f.errors[0],'OpenAI voice could not establish a media connection in this browser. You can retry or type here.');assert.equal(f.voice.state,'idle');assert.ok(f.counts().stopped>0);assert.equal(f.peer().closed,true);assert.equal(f.audioNodes[0].paused,true);assert.equal(f.requests.at(-1).action,'stop');await f.voice.dispose();assert.equal(f.timers.size,0);
+});
+
+test('peer failure reports fixed connection guidance before ending rather than only an idle state',async()=>{
+  const f=nativeFixture({greeting:false});await f.voice.start();f.peer().connectionState='failed';f.peer().onconnectionstatechange();assert.equal(f.errors.at(-1),'OpenAI voice could not establish a media connection in this browser. You can retry or type here.');assert.equal(f.peer().closed,true);await flush();assert.equal(f.voice.state,'idle');await f.voice.dispose();
 });
