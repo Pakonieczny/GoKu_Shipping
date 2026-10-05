@@ -11093,6 +11093,8 @@ const OrderWin = window.OrderWin = (() => {
   function tlOpts(rid, extra) {
     return Object.assign({ orderId: rid, highlight: W.hl || null, live: true, feed: W.feed && W.feed.orderId === rid ? heldFeed(W.feed) : null, pieces: W.pieces, piece: W.piece,
       // (a sheet link of the Timeline opens that sheet only while the piece it is about is on it: else it says so, and stays)
+      // (and a link greyed beforehand when it is not that piece's sheet; with several pieces in front, the strip names the one on it)
+      sheetLink: (sheetId, poolId) => tryDo(() => sheetLinkSay(sheetId, poolId)),
       onSheet: (sheetId, poolId) => {
         const no = sheetLinkBlock(sheetId, poolId);
         if (no) { sheetSay(W.dlg.querySelector(`.tlOpenSheet[data-sheet="${CSS.escape(String(sheetId || ""))}"]`) || W.dlg, no); return; }
@@ -11477,7 +11479,14 @@ const OrderWin = window.OrderWin = (() => {
     try { if (whyNote && whyNote.close) whyNote.close(); } catch (_) {}
     whyNote = null;
     const n = window.Motion && Motion.note && anchor ? tryDo(() => Motion.note(anchor, { text, ms: 4800 })) : null;
-    if (n) { n._say = text; n._el = anchor; n._at = Date.now(); W.dlg.appendChild(n); whyNote = n; } else toast(text, "", 4000);
+    if (n) {
+      n._say = text; n._el = anchor; n._at = Date.now(); W.dlg.appendChild(n); whyNote = n;
+      // (a control at the foot of the window: the note stands above it, never cut off by the edge)
+      tryDo(() => {
+        const a = anchor.getBoundingClientRect(), h = n.offsetHeight;
+        if (a.bottom + 10 + h > innerHeight - 8 && a.top - 10 - h > 8) { n.style.top = (a.top - 10 - h) + "px"; const ar = n.querySelector(".mNoteArrow"); if (ar) ar.hidden = true; }
+      });
+    } else toast(text, "", 4000);
   }
   /** The order's pool records, read as it opens and again with the window's 20 s read (the same read-only poolList the Sheet view
    *  makes), so that a piece is said to be on no sheet only once they have been read. OrderPieces, when the page has it, is that read. */
@@ -11503,6 +11512,15 @@ const OrderWin = window.OrderWin = (() => {
     const sc = sheetScope(r), owner = poolId ? sc.all.find(p => String(poolId).startsWith(p.key + "_")) || null : sc.sel;
     if (owner && !holds(owner, { id: sheetId || null })) return `${owner.name} is no longer on that sheet`;
     return null;
+  }
+  /** What the Timeline's sheet link says before it is pressed: { off } when the piece it is about is not on that sheet, { piece } when
+   *  several pieces are in front and only some of them sit on it (so "on GF Sheet 1" is never read as the whole order's). */
+  function sheetLinkSay(sheetId, poolId) {
+    const r = rowOf(W.key); if (!r || r.loading || W.cancelled) return null;
+    const off = sheetLinkBlock(sheetId, poolId); if (off) return { off };
+    const sc = sheetScope(r); if (!sc.multi || sc.sel) return null;
+    const on = sc.all.filter(p => p.nested && holds(p, { id: sheetId || null }));
+    return on.length && on.length < sc.all.length ? { piece: on.map(p => p.name).join(" and ") } : null;
   }
   Object.assign(SCOPE, {
     fit(list) {

@@ -39,6 +39,17 @@ async function main() {
   poolRow(T3, 'ta', 'HEART_A', 'gold', GF1, 1, 'GF'); poolRow(T3, 'tc', 'STAR_C', 'silver', SS1, 1, 'SS');
   poolRow(OT, 'ta', 'OTHER_GF', 'gold', GF1, 1, 'GF');
   poolRow(OUT, 'ta', 'MOON_O', 'silver', SS1, 1, 'SS'); poolRow(OUT, 'tb', 'RING_O', 'silver', null, 0, 'SS');   // (outside the pull)
+  // Emily Chambers' timeline: arrived, the CUTE piece placed on GF Sheet 1 (an older step: it has since left that sheet), HEALTH1 placed on it
+  const evAt = Date.now(); let evN = 0;
+  const ev = (type, ago, extra) => srv.st.put('Order_Timeline', `${I5.rid}~${type}~e${++evN}`, Object.assign({ orderId: I5.rid, type, at: evAt - ago * 60000, by: 'Test Operator', source: 'sorter', station: '', text: '', data: {} }, extra || {}));
+  ev('arrived', 4000, { source: 'etsy', by: 'Etsy' });
+  ev('placed', 3000, { sheet: 'GF Sheet 1', sheetId: GF1, lineKey: `${I5.rid}_${I5.ta}`, data: { poolId: pid(I5, 'ta') } });
+  ev('placed', 2000, { sheet: 'GF Sheet 1', sheetId: GF1, lineKey: `${I5.rid}_${I5.tb}`, data: { poolId: pid(I5, 'tb') } });
+  // the 3-piece order's timeline: arrived, HEART_A placed on GF Sheet 1, STAR_C placed on SS Sheet 1; the piece with no SKU has no step of its own
+  const ev3 = (type, ago, extra) => srv.st.put('Order_Timeline', `${T3.rid}~${type}~e${++evN}`, Object.assign({ orderId: T3.rid, type, at: evAt - ago * 60000, by: 'Test Operator', source: 'sorter', station: '', text: '', data: {} }, extra || {}));
+  ev3('arrived', 4000, { source: 'etsy', by: 'Etsy' });
+  ev3('placed', 3000, { sheet: 'GF Sheet 1', sheetId: GF1, lineKey: `${T3.rid}_${T3.ta}`, data: { poolId: pid(T3, 'ta') } });
+  ev3('placed', 2000, { sheet: 'SS Sheet 1', sheetId: SS1, lineKey: `${T3.rid}_${T3.tc}`, data: { poolId: pid(T3, 'tc') } });
   const browser = await chromium.launch({ executablePath: process.env.CHROMIUM || '/opt/pw-browsers/chromium-1194/chrome-linux/chrome', args: ['--no-sandbox'] });
   try {
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
@@ -62,7 +73,7 @@ async function main() {
       [order(OT.rid, 'Olive Other', [line(OT.ta, 'OTHER_GF', 'gold', '14k Gold Filled')]), [pid(OT, 'ta')]]] });
     const keyOf = (o, t) => `${o.rid}_${o[t]}`, hasOP = await page.evaluate(() => !!window.OrderPieces);
     // (open, with the order's records read: no piece is still 'loading', and the card has been drawn for them)
-    const settle = () => page.waitForFunction(() => { if (!OrderWin.isOpen()) return false; const sc = OrderWin._scope(); return sc && sc.all.every(p => !p.loading) && document.querySelectorAll('#owNowCard .owShChip').length >= sc.all.length; }, null, { timeout: 8000 });
+    const settle = () => page.waitForFunction(() => { if (!OrderWin.isOpen()) return false; const sc = OrderWin._scope(); return sc && sc.all.every(p => !p.loading) && document.querySelectorAll('#owNowCard .owShChip').length >= sc.all.length && sc.all.every(p => { const b = document.querySelector(`#owPieceSw [data-piece="${p.key}"]`); return !b || b.classList.contains('noSheet') === !p.nested; }); }, null, { timeout: 8000 });
     const closeWin = async () => { await page.evaluate(() => OrderWin.isOpen() && OrderWin.close()); await page.waitForFunction(() => !document.getElementById('orderWin').open, null, { timeout: 4000 }); };
     // what the window shows about its Sheet controls right now
     const ui = () => page.evaluate(() => {
@@ -206,6 +217,60 @@ async function main() {
     const cold = outKeys.find(x => !x[1]); assert(cold && /^it is waiting to be placed$/.test(cold[2]), JSON.stringify(outKeys));
     await pick(cold[0]);
     u = await ui(); assert(u.btn.off && u.tab.off && /^This piece is not on a sheet yet: it is waiting to be placed$/.test(u.btn.why), JSON.stringify([u.btn, u.tab]));
+    await closeWin();
+
+    // ── 6 · the Timeline's sheet links answer for one piece too ──
+    // (the step's own "Open sheet", the strip's under the rail; the Timeline of the CUTE piece lists its steps alone)
+    await page.evaluate(k => OrderWin.open(k), keyOf(I5, 'ta')); await settle();
+    await page.click('.owTabsV [data-ow-view="timeline"]');
+    const steps = () => page.evaluate(() => [...document.querySelectorAll('#owTimeline .tlSt[data-key]')].map(x => x.dataset.key));
+    const detail = () => page.evaluate(() => { const b = document.querySelector('#owTimeline .tlDetail .tlOpenSheet'); return b ? { off: b.getAttribute('aria-disabled') === 'true', why: b.dataset.why || '', pool: b.dataset.pool } : null; });
+    const strip = () => page.evaluate(() => { const s = document.querySelector('#owTimeline .tlNowS'), b = s && s.querySelector('.tlOpenSheet'); return s ? { text: s.textContent.replace(/\s+/g, ' ').trim(), btn: b ? { off: b.getAttribute('aria-disabled') === 'true', why: b.dataset.why || '' } : null } : null; });
+    const open = key => page.evaluate(k => { document.querySelector(`#owTimeline .tlSt[data-key="${k}"]`).click(); }, key);
+    const waitDetail = () => page.waitForFunction(() => document.querySelector('#owTimeline .tlDetail .tlOpenSheet'), null, { timeout: 8000 });
+    await page.waitForFunction(() => document.querySelectorAll('#owTimeline .tlSt[data-key]').length >= 2, null, { timeout: 15000 });
+    // all pieces: HEALTH1's own "placed" step opens its sheet; the CUTE piece's older one, naming a sheet it has left, is greyed and inert
+    const all = await steps(); assert.deepEqual(all, ['arrived~e1', 'placed~e2', 'placed~e3'], JSON.stringify(all));
+    await open('placed~e3'); await waitDetail(); let d = await detail(); assert(d && !d.off, 'HEALTH1\'s step opens its sheet: ' + JSON.stringify(d));
+    await open('placed~e2'); await page.waitForFunction(() => document.querySelector('#owTimeline .tlDetail .tlOpenSheet[aria-disabled="true"]'), null, { timeout: 8000 });
+    d = await detail(); assert(d.off && /^CUTE TRICERATOPS W\/ HEARTS is no longer on that sheet$/.test(d.why), JSON.stringify(d));
+    await clearNotes(); await page.click('#owTimeline .tlDetail .tlOpenSheet', { force: true }); await oneNote(); u = await ui();
+    assert.equal(u.view, 'timeline', 'the greyed link went nowhere'); assert.match(u.note[0], /no longer on that sheet/);
+    // (the control is at the foot of the window: its note stands above it, whole on screen)
+    const nr = await page.evaluate(() => { const r = document.querySelector('.mNote').getBoundingClientRect(); return { top: r.top, bottom: r.bottom, h: innerHeight }; }); assert(nr.top >= 0 && nr.bottom <= nr.h, 'the note is whole on screen: ' + JSON.stringify(nr));
+    await shot('6-timeline-cute-step-link-greyed');
+    // the strip (all pieces): the sheet is named for the piece that sits on it, not read as the whole order's
+    const st = await strip(); assert(st && /HEALTH1 on GF Sheet 1/.test(st.text) && st.btn && !st.btn.off, JSON.stringify(st));
+    // CUTE picked: its own steps alone, none of HEALTH1's; the same grey; HEALTH1's step is not there to open
+    await pick(keyOf(I5, 'ta'));
+    await page.waitForFunction(() => document.querySelectorAll('#owTimeline .tlSt[data-key]').length === 2, null, { timeout: 8000 });
+    assert.deepEqual(await steps(), ['arrived~e1', 'placed~e2']);
+    await open('placed~e2'); await page.waitForFunction(() => document.querySelector('#owTimeline .tlDetail .tlOpenSheet[aria-disabled="true"]'), null, { timeout: 8000 });
+    d = await detail(); assert(d.off && /no longer on that sheet/.test(d.why), JSON.stringify(d));
+    const st2 = await strip(); assert(!st2 || !st2.btn || st2.btn.off, 'the strip of the CUTE piece does not open HEALTH1\'s sheet: ' + JSON.stringify(st2));
+    // HEALTH1 picked: its own sheet, open, and it opens
+    await pick(keyOf(I5, 'tb'));
+    await page.waitForFunction(() => { const k = [...document.querySelectorAll('#owTimeline .tlSt[data-key]')].map(x => x.dataset.key); return k.includes('placed~e3') && !k.includes('placed~e2'); }, null, { timeout: 8000 });
+    await open('placed~e3'); await waitDetail(); d = await detail(); assert(d && !d.off, JSON.stringify(d));
+    await page.click('#owTimeline .tlDetail .tlOpenSheet'); await drawn(GF1); assert.equal((await ui()).view, 'sheet');
+    await closeWin();
+
+    // ── 7 · the header's rail of the 3-piece order, from each piece's side: "Nested" is marked for the pieces on a sheet only ──
+    await page.evaluate(k => OrderWin.open(k), keyOf(T3, 'tb')); await settle();
+    const rail = () => page.evaluate(() => [...document.querySelectorAll('#owRail .tlStop')].map(x => [x.dataset.stage || x.getAttribute('data-tl-step') || '', x.className.replace(/\btlStop\b/, '').trim(), x.innerText.replace(/\s+/g, ' ').trim()]));
+    // (a step's class: d done, c the one being worked towards, f still to come)
+    const stepOf = async k => (await rail()).find(x => x[0] === k)[1];
+    await page.waitForFunction(() => document.querySelector('#owRail .tlStop[data-stage="arrived"].d'), null, { timeout: 15000 });
+    // all pieces: the order is where its slowest piece is, so "Nested" is not done while one piece has not been placed
+    assert.equal(await stepOf('sheet'), 'c', 'all pieces: Nested is not done for the order');
+    // the piece with no SKU: its own steps, and none of the other pieces' sheets
+    await pick(keyOf(T3, 'tb')); await page.waitForFunction(() => { const x = document.querySelector('#owRail .tlStop[data-stage="sheet"]'); return x && x.classList.contains('c'); }, null, { timeout: 8000 });
+    assert.equal(await stepOf('sheet'), 'c', 'the piece with no SKU: Nested is not marked, with no sheet of another piece behind it');
+    assert.doesNotMatch((await rail()).find(x => x[0] === 'sheet')[2], /OCT 2026/, 'no sheet step of another piece');
+    // the pieces on a sheet: Nested is done, with their own step
+    await pick(keyOf(T3, 'ta')); await page.waitForFunction(() => { const x = document.querySelector('#owRail .tlStop[data-stage="sheet"]'); return x && x.classList.contains('d'); }, null, { timeout: 8000 });
+    assert.equal(await stepOf('laser'), 'c');
+    await pick(keyOf(T3, 'tc')); await page.waitForFunction(() => { const x = document.querySelector('#owRail .tlStop[data-stage="sheet"]'); return x && x.classList.contains('d'); }, null, { timeout: 8000 });
     await closeWin();
     assert.deepEqual(errors, [], 'no page errors');
     console.log('  ✓ piece-scoped Sheet affordances: greyed and inert for a piece on no sheet (button, chip, tab, panel), reason on press and focus, empty state not another piece\'s sheet, counts of real sheets, scope follows a piece chosen in the panel, same from the Orders list and an order outside the pull');
