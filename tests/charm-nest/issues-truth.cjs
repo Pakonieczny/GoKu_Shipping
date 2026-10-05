@@ -65,10 +65,12 @@ assert.equal(R.sheet(fixed).ready,true);assert.equal(R.laserSheet(fixed).ready,t
   // the same through the whole-order map the page hands every sheet unread (bridge validateRelease, the order window): the sheet reads its own side, set included
   const raw=clone(gf);raw.orderReadiness=reps0;assert.equal(R.sheet(raw).stages.orders,true);assert.equal(R.orderBlockers(raw).length,0);
   let e=R.explain(gr,{rows:rs});assert.equal(step(e,'orders').state,'done');assert.equal(step(e,'orders').items.length,0);assert.doesNotMatch(strings(e.steps).join(' | '),/Waits on|wait for other pieces/);
-  // the set's wait is said once, quietly, from the Approve buttons' own truth: GF Sheet 1 is waiting for SS Sheet 1's engraving; SS Sheet 1 does not wait for itself
+  // the set's wait is said ONCE, by the Approve buttons' own truth (setGate: SS Sheet 1's engraving holds the set), and in no sheet's list (round 8: "only related items to that particular sheet"):
+  // GF Sheet 1's list holds nothing, not an order, not a wait for SS Sheet 1, not a quiet entry of any kind
   const li=R.issues(gf,{rows:rs,allSheets:all,set,sheets:all});
-  assert.deepEqual(li.map(i=>[i.step,i.key,i.quiet===true,i.label,i.stepKey,i.stepLabel,i.open.id,i.counter]),[['laser','waitsOnSheet',true,'SS Sheet 1','engraving','Engraving','ss1',{done:0,of:2}]],'one quiet row, no order issue');
-  assert.match(li[0].why,/back engravings 0 of 2/);assert.equal(li[0].text,'SS Sheet 1 · '+li[0].why);
+  assert.deepEqual(li,[],'GF Sheet 1 is fine: its list is empty, the set\'s wait is not an entry of it');
+  const gate=R.setGate(set,all);assert.equal(gate.ready,false);assert.deepEqual(gate.blockers.map(b=>[b.sheetId,b.step,b.counter]),[['ss1','engraving',{done:0,of:2}]],'the gate (the Approve button) says what holds the set');
+  assert.match(gate.reason,/^SS Sheet 1 · back engravings 0 of 2$/,'and its reason line names the sheet once, in the words under the grey button');
   assert.deepEqual(R.issues(ssB,{rows:rs,allSheets:all,set,sheets:all}).filter(i=>i.step==='laser'),[],'a sheet never waits on itself');
   assert.deepEqual(R.issues(ssB,{rows:rs,allSheets:all,set,sheets:all}).map(i=>[i.step,i.key]),[['engraving','approvalsNeeded']],'SS Sheet 1: its own engraving, and nothing else');
   // SS Sheet 1 approves its engravings: the wait is gone
@@ -218,8 +220,8 @@ assert.equal(R.sheet(fixed).ready,true);assert.equal(R.laserSheet(fixed).ready,t
   // a ready sheet held by a mate (its mate has its own engraving to finish)
   const ready=sheet('a','gold',['50_a_1']),mate=sheet('b','silver',['51_a_1'],{approved:false,index:1});
   const li=R.issues(ready,{rows:[row('50','a'),row('51','a')],allSheets:[ready,mate],set,sheets:[ready,mate]});
-  assert.deepEqual(li.map(x=>[x.step,x.key,x.label,x.open.id]),[['laser','waitsOnSheet','SS Sheet 1','b']]);
-  assert.equal(li[0].quiet,true,'the set\'s wait is quiet: not an issue');assert.equal(li[0].stepLabel,'Engraving');assert.match(li[0].why,/back engravings 0 of 1/);
+  assert.deepEqual(li,[],'a ready sheet whose mate is not ready lists nothing: the set\'s wait is said under the Approve button, not in its list');
+  assert.match(R.setGate(set,[ready,mate]).reason,/^SS Sheet 1 · back engravings 0 of 1$/);
   assert.deepEqual(R.issues(ready,{rows:[row('50','a')],allSheets:[ready],set:{...set,sheetIds:['a']},sheets:[ready]}).length,0);
   assert.deepEqual(R.issues(ready,{rows:[row('50','a')],allSheets:[ready],set,sheets:[ready]}).map(x=>[x.key,x.open.id]),[['missingSheet','b']],'a sheet of its set that cannot be found holds it');
   assert.deepEqual(R.issues(ready,{rows:[row('50','a')],allSheets:[ready],setMissing:true}).map(x=>x.key),['setMissing']);
@@ -307,7 +309,7 @@ assert.equal(R.sheet(fixed).ready,true);assert.equal(R.laserSheet(fixed).ready,t
     assert.deepEqual(p.map(x=>[x.index,x.key,x.sheetId]),[[1,'60_a_1','s60x'],[2,'60_a_2',null],[3,'60_a_3','s60x']],'numbered by copy number, whatever order the record lists them in');
   }
   const mate=sheet('b-sheet','silver',['51_a_1'],{approved:false});
-  assert.deepEqual(R.issues(a,{rows:[row('50','a'),row('51','a')],allSheets:[a,mate],set,sheets:[a,mate]}).map(i=>[i.key,i.label,i.quiet]),[['waitsOnSheet','SS Sheet 1',true]]);
+  assert.deepEqual(R.issues(a,{rows:[row('50','a'),row('51','a')],allSheets:[a,mate],set,sheets:[a,mate]}),[],'a mate that is not ready is no entry of this sheet\'s list');
 }
 
 // 12c. Randomised: the scenario is made from ground truth (where each piece really is, what is wrong with its line), the rows and sheets are derived from it
