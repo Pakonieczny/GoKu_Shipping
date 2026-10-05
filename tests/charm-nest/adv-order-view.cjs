@@ -110,10 +110,10 @@ async function main() {
     await page.keyboard.press('Escape'); await closed();
 
     // 4 · a cancelled order whose line is still in the pull as gone (the Cancelled tab opens it by number): the view
-    //     offers no Skip switch, and the switch never turns the line back into a pulled one
+    //     has no Skip switch at all (it is gone from every order window), and the line stays gone
     await page.evaluate(rid => { OrderWin.openOrder(rid, {}); }, G.rid);
     await page.waitForFunction(rid => document.getElementById('owLoading').hidden && document.getElementById('owTitle').textContent === 'Order ' + rid && !/Reading the order/.test(document.getElementById('owNotes').textContent), G.rid, { timeout: 15000 });
-    s = await page.evaluate(key => { const skip = !document.getElementById('owSkipBox').hidden; document.getElementById('owSkip').click(); document.getElementById('owSkip').click(); return { skip, sub: document.getElementById('owSub').textContent, said: document.getElementById('owNotes').textContent, state: Orders.rows().find(r => r.key === key).state }; }, `${G.rid}_${G.tid}`);
+    s = await page.evaluate(key => { const skip = !!document.getElementById('owSkip') || !!document.getElementById('owSkipBox'); return { skip, sub: document.getElementById('owSub').textContent, said: document.getElementById('owNotes').textContent, state: Orders.rows().find(r => r.key === key).state }; }, `${G.rid}_${G.tid}`);
     check(/Gone Buyer/.test(s.sub) && !/never pulled/.test(s.said), `gone line: the pull's line is shown, not "never pulled" (${JSON.stringify(s)})`);
     check(!s.skip && s.state === 'gone', `gone line: no Skip switch, and it stays gone (${JSON.stringify(s)})`);
     await page.keyboard.press('Escape'); await closed();
@@ -131,29 +131,19 @@ async function main() {
       await closed();
     } else check(false, 'after Next: Next was not offered');
 
-    // 6 · a staff note typed while the order is still looked up: kept (focus gone or not), put after the record's own
-    //     note and saved once the order is known
-    notes.record[C.rid] = 'Gift box, please';
+    // 6 · the Order notes box is gone (Paul, 5 Oct 2026): while the order is still looked up and once it is read there is
+    //     no box to type in, nothing is saved to the order's record, and the old note stays in the record untouched
+    notes.record[C.rid] = 'Gift box, please'; notes.saved.length = 0;
     net.hold = 1500;
     await page.evaluate(rid => { OrderWin.openOrder(rid, {}); }, C.rid);
     await page.waitForFunction(() => !document.getElementById('owLoading').hidden);
-    await page.click('#owNote'); await page.keyboard.type('Fragile - wrap twice');
-    await page.click('#owSub');   // (the box loses the focus while the order is still read)
+    check(!(await page.$('#owNote')), 'no notes box while the order is looked up');
     await page.waitForFunction(() => document.getElementById('owLoading').hidden && /Janet Steptoe/.test(document.getElementById('owSub').textContent), null, { timeout: 15000 });
-    await page.waitForFunction(rid => document.getElementById('owNote').value.includes('Gift box'), C.rid, { timeout: 5000 }).catch(() => {});
     await page.waitForTimeout(1200);
-    s = await page.evaluate(() => document.getElementById('owNote').value);
-    // (the record's note shows as soon as it is read, so what is typed lands after it: both are there, and saved)
-    check(s.includes('Gift box, please') && s.includes('Fragile - wrap twice') && notes.saved.some(([rid, t]) => rid === C.rid && t === s), `early note: kept after the record's note and saved (${JSON.stringify(s)} · ${JSON.stringify(notes.saved)})`);
+    check(!(await page.$('#owNote')) && !(await page.evaluate(() => /Order notes|next person who opens/i.test(document.getElementById('orderWin').textContent))), 'no notes box once the order is read');
     await page.keyboard.press('Escape'); await closed();
-    // …and one typed and left by closing the view before the order is known is saved too
-    notes.saved.length = 0; notes.record[C.rid] = '';
-    await page.evaluate(rid => { OrderWin.openOrder(rid, {}); }, C.rid);
-    await page.waitForFunction(() => !document.getElementById('owLoading').hidden);
-    await page.click('#owNote'); await page.keyboard.type('Rush');
-    await page.keyboard.press('Escape'); await closed();
-    await page.waitForTimeout(1500);
-    check(notes.saved.some(([rid, t]) => rid === C.rid && t === 'Rush'), `early note, view closed: saved (${JSON.stringify(notes.saved)})`);
+    await page.waitForTimeout(800);
+    check(notes.saved.length === 0 && notes.record[C.rid] === 'Gift box, please', `the order window saves no note and leaves the record's note as it was (${JSON.stringify(notes.saved)})`);
     net.hold = 0;
 
     // 7 · Ctrl+K while the view shrinks closed opens no search over it

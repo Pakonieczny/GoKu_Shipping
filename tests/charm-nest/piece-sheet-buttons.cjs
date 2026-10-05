@@ -72,21 +72,21 @@ async function main() {
       [order(OT.rid, 'Olive Other', [line(OT.ta, 'OTHER_GF', 'gold', '14k Gold Filled')]), [pid(OT, 'ta')]]] });
     const keyOf = (o, t) => `${o.rid}_${o[t]}`, hasOP = await page.evaluate(() => !!window.OrderPieces);
     // (open, with the order's records read: no piece is still 'loading', and the card has been drawn for them)
-    const settle = () => page.waitForFunction(() => { if (!OrderWin.isOpen()) return false; const sc = OrderWin._scope(); return sc && sc.all.every(p => !p.loading) && document.querySelectorAll('#owNowCard .owShChip').length >= sc.all.length && sc.all.every(p => { const b = document.querySelector(`#owPieceSw [data-piece="${p.key}"]`); return !b || b.classList.contains('noSheet') === !p.nested; }); }, null, { timeout: 8000 });
+    const settle = () => page.waitForFunction(() => { if (!OrderWin.isOpen()) return false; const sc = OrderWin._scope(); return sc && sc.all.every(p => !p.loading) && document.querySelectorAll('#owNowCard .owShChip').length >= sc.all.length; }, null, { timeout: 8000 });
     const closeWin = async () => { await page.evaluate(() => OrderWin.isOpen() && OrderWin.close()); await page.waitForFunction(() => !document.getElementById('orderWin').open, null, { timeout: 4000 }); };
     // what the window shows about its Sheet controls right now
     const ui = () => page.evaluate(() => {
       const q = s => document.querySelector(s), t = q('.owTabsV [data-ow-view="sheet"]'), btn = q('#owNowCard [data-go="sheet"]');
       const chip = c => ({ text: c.querySelector('b').textContent.trim(), sub: c.querySelector('b').nextElementSibling.textContent.trim(), off: c.getAttribute('aria-disabled') === 'true', why: c.dataset.why || '' });
       return { view: OrderWin.view(), piece: OrderWin._scope() && OrderWin._scope().piece,
-        pills: [...document.querySelectorAll('#owPieceSw [data-piece]')].map(b => ({ k: b.dataset.piece, on: b.classList.contains('on'), noSheet: b.classList.contains('noSheet'), t: b.textContent.trim().slice(0, 30) })),
+        pills: [...document.querySelectorAll('#owPcSum .owPcRow[data-piece]')].map(b => ({ k: b.dataset.piece, on: b.classList.contains('sel'), t: b.querySelector('.owPcName').textContent.trim().slice(0, 30) })),
         tab: { off: t.getAttribute('aria-disabled') === 'true', cls: t.classList.contains('off'), why: t.dataset.why || '', count: document.getElementById('owShCount').textContent, sel: t.getAttribute('aria-selected') },
         btn: btn && { off: btn.getAttribute('aria-disabled') === 'true', why: btn.dataset.why || '', tabbable: btn.tabIndex >= 0 },
         chips: [...document.querySelectorAll('#owNowCard .owShChip')].map(chip),
         note: [...document.querySelectorAll('.mNote .mNoteT')].map(n => n.textContent) };
     });
-    const pick = key => page.evaluate(k => { document.querySelector(`#owPieceSw [data-piece="${k}"]`).click(); }, key);
-    const pickAll = () => page.evaluate(() => { document.querySelector('#owPieceSw [data-piece=""]').click(); });
+    const pick = key => page.evaluate(k => { OrderWin.selectPiece(k); }, key);   // (the Its pieces list's own switch: the rows are on the Overview only)
+    const pickAll = () => page.evaluate(() => { OrderWin.selectPiece(null); });
     const sheetPanel = () => page.evaluate(() => ({ tabs: [...document.querySelectorAll('#owSheetPanel .owShTabs button')].map(b => b.textContent.trim()), on: document.querySelector('#owSheetPanel .owShTabs button.on')?.textContent.trim() || null,
       sheet: OrderWin._sheet() && OrderWin._sheet().sheet.id, none: document.querySelector('#owPlateWrap .owPlateNone[data-none]')?.innerText.replace(/\s+/g, ' ').trim() || null, count: document.getElementById('owShCount').textContent,
       pieces: [...document.querySelectorAll('#owSheetPanel .owPieces li')].map(li => li.innerText.replace(/\s+/g, ' ').trim()), canvasHidden: document.getElementById('owSheetCv').style.visibility === 'hidden' }));
@@ -102,8 +102,7 @@ async function main() {
     await settle();
     let u = await ui();
     assert.equal(u.view, 'info'); assert.equal(u.piece, null, 'all pieces');
-    assert.deepEqual(u.pills.map(p => p.t.split(' ')[0]), ['All', 'CUTE', 'HEALTH1'], JSON.stringify(u.pills));
-    assert(u.pills.find(p => /^CUTE/.test(p.t)).noSheet &&!u.pills.find(p => /^HEALTH1/.test(p.t)).noSheet, 'the piece on no sheet says so on its tab: ' + JSON.stringify(u.pills));
+    assert.deepEqual(u.pills.map(p => p.t.split(' ')[0]), ['CUTE', 'HEALTH1'], JSON.stringify(u.pills)); assert(u.pills.every(p => !p.on), 'all pieces: no row marked');
     // the Sheet button answers for the piece on show (CUTE): greyed, inert, its reason in plain words
     assert(u.btn.off && /^Not on a sheet yet: its SKU is not in any master file$/.test(u.btn.why), 'Sheet button greyed with its reason: ' + JSON.stringify(u.btn));
     assert(u.tab.off && u.tab.cls && u.tab.count === '', 'the Sheet tab is greyed too and counts nothing: ' + JSON.stringify(u.tab));
@@ -179,10 +178,10 @@ async function main() {
     u = await ui();   // all pieces, opened on A (on GF Sheet 1)
     assert(!u.btn.off && !u.tab.off && u.tab.count === '2 sheets', 'all pieces: two real sheets: ' + JSON.stringify([u.btn, u.tab]));
     assert.deepEqual(u.chips.map(c => [c.text, c.sub, c.off]), [['GF Sheet 1', 'HEART A', false], ['Not on a sheet yet', 'Charm earrings', true], ['SS Sheet 1', 'STAR C', false]], JSON.stringify(u.chips));
-    // three pieces: the strip gives way (and scrolls) before the live line beside it is cut or touches it
+    // three pieces: the chip row that sat beside the live line is gone; nothing in the tab row is cut
     await page.waitForTimeout(1300);   // (the window has settled: its live line and the Skip label at their full width)
-    const room = await page.evaluate(() => { const sw = document.getElementById('owPieceSw').getBoundingClientRect(), t = document.querySelector('.owTabsV .owTools'); return { gap: t.getBoundingClientRect().left + parseFloat(getComputedStyle(t).paddingLeft) - sw.right, cut: [...t.querySelectorAll('*')].filter(x => x.scrollWidth > x.clientWidth + 1 && getComputedStyle(x).overflowX !== 'visible').map(x => x.textContent.trim().slice(0, 30)) }; });
-    assert(room.gap >= 10 && room.cut.length === 0, 'the piece strip leaves room for the live line: ' + JSON.stringify(room));
+    const room = await page.evaluate(() => { const t = document.querySelector('.owTabsV .owTools'); return { chipRow: !!document.getElementById('owPieceSw'), cut: [...t.querySelectorAll('*')].filter(x => x.scrollWidth > x.clientWidth + 1 && getComputedStyle(x).overflowX !== 'visible').map(x => x.textContent.trim().slice(0, 30)) }; });
+    assert(!room.chipRow && room.cut.length === 0, 'no chip row, and the live line is not cut: ' + JSON.stringify(room));
     await shot('5-three-pieces-all');
     await pick(kA); u = await ui(); assert.equal(u.tab.count, '1 sheet'); assert.deepEqual(u.chips.map(c => c.text), ['GF Sheet 1']);
     await page.click('.owTabsV [data-ow-view="sheet"]'); await drawn(GF1); sp = await sheetPanel(); assert.deepEqual(sp.tabs, ['GF Sheet 1'], 'A: only its own sheet'); assert.equal(await page.evaluate(() => document.querySelector('#owSheetPanel .owCharm b').textContent), 'HEART_A');
@@ -213,7 +212,7 @@ async function main() {
 
     // ── 5 · an order outside the pull (a search), one piece on a sheet and one pooled and not placed yet ──
     await page.evaluate(rid => OrderWin.openOrder(rid, { highlight: true }), OUT.rid);
-    await page.waitForFunction(() => OrderWin.isOpen() && document.getElementById('owLoading').hidden && document.querySelectorAll('#owPieceSw [data-piece]').length === 3, null, { timeout: 20000 });
+    await page.waitForFunction(() => OrderWin.isOpen() && document.getElementById('owLoading').hidden && document.querySelectorAll('#owPcSum .owPcRow[data-piece]').length === 3, null, { timeout: 20000 });
     u = await ui();
     assert.equal(u.chips.filter(c => !c.off).map(c => c.text).join(), 'SS Sheet 1'); assert.equal(u.chips.filter(c => c.off).length, 1, 'the pooled piece has its muted chip: ' + JSON.stringify(u.chips));
     const outKeys = await page.evaluate(() => OrderWin._scope().all.map(p => [p.key, p.nested, p.why]));
@@ -237,41 +236,39 @@ async function main() {
     assert.deepEqual(u.chips.map(c => [c.text, c.off]), [['Not on a sheet yet', true], ['GF Sheet 1', false]]);
     await closeWin(); await page.evaluate(() => document.getElementById('psbDoor').remove());
 
-    // ── 6 · the Timeline's sheet links answer for one piece too ──
-    // (the step's own "Open sheet", the strip's under the rail; the Timeline of the CUTE piece lists its steps alone)
+    // ── 6 · the Timeline lists one piece's steps alone, and opens no sheet at all ──
+    // (the pane under the chart, whose "Open sheet" answered for one piece, went on 5 Oct 2026, so a step on the Timeline never leads to a
+    //  sheet any more; the Sheet tab and the chips on the Overview are the doors, and sections 1-5 hold them. What stays here is that the
+    //  steps are the picked piece's own, that none of them is a way to another piece's sheet, and that pressing one does nothing.)
     const stalePlaced = ev('placed', 3000, { sheet: 'GF Sheet 1', sheetId: GF1, lineKey: `${I5.rid}_${I5.ta}`, data: { poolId: pid(I5, 'ta') } });   // (a step of the CUTE piece, older, on a sheet it has since left)
     await page.evaluate(k => OrderWin.open(k), keyOf(I5, 'ta')); await settle();
     await page.click('.owTabsV [data-ow-view="timeline"]');
     const steps = () => page.evaluate(() => [...document.querySelectorAll('#owTimeline .tlSt[data-key]')].map(x => x.dataset.key));
-    const detail = () => page.evaluate(() => { const b = document.querySelector('#owTimeline .tlDetail .tlOpenSheet'); return b ? { off: b.getAttribute('aria-disabled') === 'true', why: b.dataset.why || '', pool: b.dataset.pool } : null; });
-    const strip = () => page.evaluate(() => { const s = document.querySelector('#owTimeline .tlNowS'), b = s && s.querySelector('.tlOpenSheet'); return s ? { text: s.textContent.replace(/\s+/g, ' ').trim(), btn: b ? { off: b.getAttribute('aria-disabled') === 'true', why: b.dataset.why || '' } : null } : null; });
+    const links = () => page.evaluate(() => [...document.querySelectorAll('#owTimeline .tlOpenSheet')].filter(b => b.getClientRects().length && getComputedStyle(b).visibility !== 'hidden').length);
     const open = key => page.evaluate(k => { document.querySelector(`#owTimeline .tlSt[data-key="${k}"]`).click(); }, key);
-    const waitDetail = () => page.waitForFunction(() => document.querySelector('#owTimeline .tlDetail .tlOpenSheet'), null, { timeout: 8000 });
+    // a press on a step does nothing but grow its seal: no sheet opens, no note says anything, the view stays
+    const quiet = async (key, what) => {
+      await clearNotes(); await open(key); await page.waitForTimeout(400); const q = await ui();
+      assert.equal(q.view, 'timeline', what + ': the view stays on the Timeline'); assert.equal(q.note.length, 0, what + ': no note: ' + JSON.stringify(q.note));
+      assert.equal(await page.evaluate(() => document.querySelectorAll('#owTimeline .tlDetail, #owTimeline .tlBig').length), 0, what + ': no detail drawn');
+      assert.equal(await links(), 0, what + ': no sheet link on the Timeline');
+      await page.mouse.move(5, 5); await page.waitForTimeout(250);
+    };
     await page.waitForFunction(() => document.querySelectorAll('#owTimeline .tlSt[data-key]').length >= 2, null, { timeout: 15000 });
-    // all pieces: HEALTH1's own "placed" step opens its sheet; the CUTE piece's older one, naming a sheet it has left, is greyed and inert
+    // all pieces: HEALTH1's own "placed" step and the CUTE piece's older one, naming a sheet it has left
     const all = await steps(); assert.deepEqual(all, ['arrived~e1', `placed~${healthPlaced}`, `placed~${stalePlaced}`].sort((x, y) => all.indexOf(x) - all.indexOf(y)), JSON.stringify(all)); assert(all.includes(`placed~${healthPlaced}`) && all.includes(`placed~${stalePlaced}`) && all.length === 3);
-    await open(`placed~${healthPlaced}`); await waitDetail(); let d = await detail(); assert(d && !d.off, 'HEALTH1\'s step opens its sheet: ' + JSON.stringify(d));
-    await open(`placed~${stalePlaced}`); await page.waitForFunction(() => document.querySelector('#owTimeline .tlDetail .tlOpenSheet[aria-disabled="true"]'), null, { timeout: 8000 });
-    d = await detail(); assert(d.off && /^CUTE TRICERATOPS W\/ HEARTS is no longer on that sheet$/.test(d.why), JSON.stringify(d));
-    await clearNotes(); await page.click('#owTimeline .tlDetail .tlOpenSheet', { force: true }); await oneNote(); u = await ui();
-    assert.equal(u.view, 'timeline', 'the greyed link went nowhere'); assert.match(u.note[0], /no longer on that sheet/);
-    // (the control is at the foot of the window: its note stands above it, whole on screen)
-    const nr = await page.evaluate(() => { const r = document.querySelector('.mNote').getBoundingClientRect(); return { top: r.top, bottom: r.bottom, h: innerHeight }; }); assert(nr.top >= 0 && nr.bottom <= nr.h, 'the note is whole on screen: ' + JSON.stringify(nr));
-    await shot('6-timeline-cute-step-link-greyed');
-    // the strip (all pieces): the sheet is named for the piece that sits on it, not read as the whole order's
-    const st = await strip(); assert(st && /HEALTH1 on GF Sheet 1/.test(st.text) && st.btn && !st.btn.off, JSON.stringify(st));
-    // CUTE picked: its own steps alone, none of HEALTH1's; the same grey; HEALTH1's step is not there to open
+    await quiet(`placed~${healthPlaced}`, "HEALTH1's step"); await quiet(`placed~${stalePlaced}`, "the CUTE piece's older step");
+    await shot('6-timeline-cute-step-no-link');
+    // CUTE picked: its own steps alone, none of HEALTH1's
     await pick(keyOf(I5, 'ta'));
     await page.waitForFunction(() => document.querySelectorAll('#owTimeline .tlSt[data-key]').length === 2, null, { timeout: 8000 });
     assert.deepEqual(await steps(), ['arrived~e1', `placed~${stalePlaced}`]);
-    await open(`placed~${stalePlaced}`); await page.waitForFunction(() => document.querySelector('#owTimeline .tlDetail .tlOpenSheet[aria-disabled="true"]'), null, { timeout: 8000 });
-    d = await detail(); assert(d.off && /no longer on that sheet/.test(d.why), JSON.stringify(d));
-    const st2 = await strip(); assert(!st2 || !st2.btn || st2.btn.off, 'the strip of the CUTE piece does not open HEALTH1\'s sheet: ' + JSON.stringify(st2));
-    // HEALTH1 picked: its own sheet, open, and it opens
+    await quiet(`placed~${stalePlaced}`, 'CUTE picked');
+    // HEALTH1 picked: its own steps; its sheet is reached from the Sheet tab, as in section 3
     await pick(keyOf(I5, 'tb'));
     await page.waitForFunction(({ h, st }) => { const k = [...document.querySelectorAll('#owTimeline .tlSt[data-key]')].map(x => x.dataset.key); return k.includes('placed~' + h) && !k.includes('placed~' + st); }, { h: healthPlaced, st: stalePlaced }, { timeout: 8000 });
-    await open(`placed~${healthPlaced}`); await waitDetail(); d = await detail(); assert(d && !d.off, JSON.stringify(d));
-    await page.click('#owTimeline .tlDetail .tlOpenSheet'); await drawn(GF1); assert.equal((await ui()).view, 'sheet');
+    await quiet(`placed~${healthPlaced}`, 'HEALTH1 picked');
+    await page.click('.owTabsV [data-ow-view="sheet"]'); await drawn(GF1); assert.equal((await ui()).view, 'sheet', "HEALTH1's sheet opens from the Sheet tab");
     await closeWin();
 
     // ── 7 · the header's rail of the 3-piece order, from each piece's side: "Nested" is marked for the pieces on a sheet only ──

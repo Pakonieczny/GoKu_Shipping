@@ -356,29 +356,26 @@ async function browserChecks() {
     assert.equal(srv.st.doc('Charm_Custom_Orders', '4176576272_41765762721'), undefined, 'a label that did not print completes nothing'); assert.equal(await page.evaluate(() => document.querySelectorAll('#rvList .reviewListRow[data-rid="4176576272"] .sealRow .seal.seal-print').length), 1, 'its seal stays on the button');
     await page.evaluate(() => { window.__failPrint = false; });
 
-    // the order window: everything about the order, its conversations and its notes
+    // the order window: everything about the order and its conversations (no Order notes box any more)
     await page.click('#rvList .reviewListRow[data-rid="4176576272"] .engravingIdentity');
     await page.waitForFunction(() => OrderWin.isOpen());
     await page.waitForFunction(() => !document.getElementById('owPcSum').hidden, null, { timeout: 10000 });   // (its piece's row, with its buttons)
     const win = await page.evaluate(() => ({ title: document.getElementById('owTitle').textContent, custom: document.getElementById('owPcSum').hidden ? null : document.getElementById('owPcSum').textContent, bar: !!document.getElementById('owCustom'),
       meta: [...document.querySelectorAll('#owMeta .m')].map(m => m.querySelector('i').textContent + ': ' + m.querySelector('span').textContent), fix: !!document.querySelector('#owFix .rvItem[data-kind=customOrder]'),
-      note: document.querySelector('label[for=owNote]').textContent, tabs: [...document.querySelectorAll('#orderWin [data-ow-tab]')].map(b => [...b.children].map(c => c.textContent.trim()).filter(Boolean).join(' ')), dialogs: document.querySelectorAll('dialog[open]').length }));
+      note: !!document.getElementById('owNote') || !!document.querySelector('label[for=owNote]'), tabs: [...document.querySelectorAll('#orderWin [data-ow-tab]')].map(b => [...b.children].map(c => c.textContent.trim()).filter(Boolean).join(' ')), dialogs: document.querySelectorAll('dialog[open]').length }));
     assert.match(win.title, /4176576272/); assert.equal(win.bar, false, 'no tan Custom Orders bar in the window (5 Oct, round 8)'); assert.match(win.custom || '', /Rework/, 'its piece\'s row says what kind of order it is'); assert.match(win.custom, /Retry print/, "the print that did not open keeps its seal and offers Retry print (28 Sep), on its piece's row");
     for (const want of ['Order: 4176576272', 'Buyer: Buyer 6272', 'Price: 144', 'Custom order: Rework · SKU RE_5460', 'Title: MODIFICATION REWORK FREE SHIPPING']) assert(win.meta.includes(want), want + ' in ' + JSON.stringify(win.meta));
     assert(win.meta.some(m => /^Purchased: Sep 27, 2026/.test(m)), 'when it was bought: ' + JSON.stringify(win.meta));
-    assert.equal(win.fix, false, 'no decision box in the window (29 Sep 01:01)'); assert.match(win.note, /^Order notes/); assert.deepEqual(win.tabs, ['Team internal', 'Customer on Etsy'], 'the team\'s thread and the customer\'s, side by side');
+    assert.equal(win.fix, false, 'no decision box in the window (29 Sep 01:01)'); assert.equal(win.note, false, 'no Order notes box in the window (5 Oct 2026)'); assert.deepEqual(win.tabs, ['Team internal', 'Customer on Etsy'], 'the team\'s thread and the customer\'s, side by side');
     assert.equal(win.dialogs, 1, 'one window, never one on top of another');
-    // a note left for the next person is saved to the order
-    await page.fill('#owNote', 'Customer wants the old chain back — call before shipping');
-    await page.waitForFunction(() => document.getElementById('owNote').classList.contains('has'));
-    await page.waitForTimeout(1200);
-    assert.equal((srv.st.doc('Brites_Orders', '4176576272') || {})['Staff Note'], 'Customer wants the old chain back — call before shipping', 'saved to the order');
     if (shots) await page.screenshot({ path: path.join(shots, 'custom-orders-window.png') });
     await page.click('#owClose');
-    // another station writes a note; the next person to open the order sees it
+    // another station's note stays in the order's record and is not shown in the window: no box, no text
     srv.st.put('Brites_Orders', '4175423829', { 'Staff Note': 'Engrave on the back only (Ann, station 2)' });
     await page.evaluate(() => OrderWin.open('4175423829_41754238291'));
-    await page.waitForFunction(() => document.getElementById('owNote').value === 'Engrave on the back only (Ann, station 2)', null, { timeout: 10000 });
+    await page.waitForFunction(() => OrderWin.isOpen() && !document.getElementById('owPcSum').hidden, null, { timeout: 10000 });
+    await page.waitForTimeout(700);
+    assert.equal(await page.evaluate(() => !document.getElementById('owNote') && !/Engrave on the back only/.test(document.getElementById('orderWin').textContent)), true, 'a note written at another station is not shown');
     await page.click('#owClose');
 
     // Complete Order: completed at once with no label printed, "Completed by" under Completed, and reopened again
@@ -491,7 +488,7 @@ async function browserChecks() {
     await page.click('#owClose'); await page.waitForFunction(() => !OrderWin.isOpen());
     assert.equal(await page.evaluate(k => [...document.querySelectorAll('#rvList .reviewListRow')].some(n => n.dataset.mkey === k), optKey), true, 'it stays in Review');
     assert.deepEqual(errors, [], 'no page errors');
-    console.log('  ✓ Review → Custom Orders, QR label, Completed, Reopen, the order window and its notes (Chromium)');
+    console.log('  ✓ Review → Custom Orders, QR label, Completed, Reopen, the order window (no notes box) (Chromium)');
   } finally { await browser.close(); srv.close(); }
 }
 
@@ -499,5 +496,5 @@ async function browserChecks() {
   await library();
   await designFixtures();
   await browserChecks();
-  console.log('Custom Orders OK: five examples classified, chain only never pooled, one card per line, sorting-station QR label → Completed → print again / reopen, order window and notes');
+  console.log('Custom Orders OK: five examples classified, chain only never pooled, one card per line, sorting-station QR label → Completed → print again / reopen, order window without the notes box');
 })().catch(e => { console.error(e); process.exit(1); });

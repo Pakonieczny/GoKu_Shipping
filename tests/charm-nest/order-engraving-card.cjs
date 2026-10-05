@@ -84,12 +84,12 @@ const WORDS = { [key(R1, 2)]: 'I\ndissent', [key(R1, 3)]: 'KMB //\nSMH', [key(R2
       const r = h.getBoundingClientRect(), sku = document.getElementById('owSku').getBoundingClientRect(), vec = document.getElementById('owVector').getBoundingClientRect(), ph = document.getElementById('owPhoto').getBoundingClientRect();
       return { hidden: h.hidden, state: e && e.dataset.state, title: q('.top b')?.textContent, chip: q('.top span')?.textContent, words: q('.words')?.textContent, label: q('.fLabel')?.textContent, approve: !!q('[data-e=approve]'), disabled: q('.egApproveButton')?.disabled,
         approveText: q('.egApproveButton')?.textContent, open: q('[data-e=engrave]')?.textContent.trim(), preview: !!q('.pv canvas, .pv img'), seals, wait: q('.owEngWait')?.textContent, box: { top: Math.round(r.top), left: Math.round(r.left), w: Math.round(r.width), h: Math.round(r.height) },
-        under: r.top >= sku.bottom - 1 && r.top >= vec.bottom - 1 && r.top >= ph.bottom - 1 && Math.abs(r.left - ph.left) < 2, red: !!document.querySelector('#owFix .owFix') };
+        under: r.top >= sku.bottom - 1 && r.top >= vec.bottom - 1 && r.top >= ph.bottom - 1 && Math.abs(r.left - ph.left) < 2, settledText: /still to be settled/i.test(document.getElementById('orderWin').textContent) };
     });
     const open = async (k, extra) => { await page.evaluate(k => OrderWin.open(k), k); await page.waitForFunction(k => OrderWin.isOpen() && OrderWin.key() === k && !document.querySelector('#orderWin').getAnimations({ subtree: true }).some(a => a.playState === 'running' && a.effect && a.effect.getTiming().iterations !== Infinity), k, { timeout: 15000 }); };
     const settled = () => page.waitForFunction(() => !document.getElementById('orderWin').getAnimations({ subtree: true }).some(a => a.playState === 'running' && a.effect && a.effect.getTiming().iterations !== Infinity), null, { timeout: 15000 });
-    const pick = async n => { await page.click(`#owPieceSw button:nth-of-type(${n})`); };
-    const k = { c: key(R1, 1), g: key(R1, 2), r: key(R1, 3) };
+    const pick = async n => { await page.evaluate(i => OrderWin.selectPiece(i === 1 ? null : [window.__k.c, window.__k.g, window.__k.r][i - 2]), n); };   // (1: all pieces, then each piece: the Its pieces list's own switch)
+    const k = { c: key(R1, 1), g: key(R1, 2), r: key(R1, 3) }; await page.evaluate(k => { window.__k = k; }, k);
 
     // 1 · the Overview of the RG middle (piece 3 of 3): the card sits under the pictures and the SKU, and is image 3
     await open(k.r);
@@ -99,7 +99,7 @@ const WORDS = { [key(R1, 2)]: 'I\ndissent', [key(R1, 3)]: 'KMB //\nSMH', [key(R2
     check(!c.hidden && c.state === 'approve' && c.label === 'Back engraving' && c.title === 'Check the back, then approve' && c.chip === 'To approve', 'the Overview shows the piece\'s back engraving card: ' + JSON.stringify([c.state, c.title, c.chip]));
     check(c.words === 'KMB //\nSMH' && c.preview && c.approve && c.approveText === 'Approved' && c.open === 'Adjust in Engrave →', 'its words, the placement picture, the Approved button and the shortcut: ' + JSON.stringify([c.words, c.preview, c.approveText, c.open]));
     check(c.under, 'it sits directly under the Etsy listing, the vector design and the SKU line, in the same column: ' + JSON.stringify(c.box));
-    check(c.red, 'the red "still to be settled" box is still there while the engraving is unsettled');
+    check(!c.settledText, 'the words "still to be settled" appear nowhere in the order window while the engraving is not settled (the red box is gone)');
     if (shots) { await page.screenshot({ path: path.join(shots, 'overview-approve.png') }); await page.locator('#owEng').screenshot({ path: path.join(shots, 'card-approve.png') }); }
 
     // 2 · the pieces: each has its own back and approval; switching swaps the card, nothing of the other piece shows
@@ -137,7 +137,7 @@ const WORDS = { [key(R1, 2)]: 'I\ndissent', [key(R1, 3)]: 'KMB //\nSMH', [key(R2
     c = await card(); const who = nameless ? 'Zed Tester' : 'Test Operator';
     check((await calls()).approve.length === 1 && (await calls()).approve[0] === `${k.r}|${who}|true`, 'Engrave.approve was called once, for this piece\'s job, with the name and the button on screen: ' + JSON.stringify((await calls()).approve));
     check(c.state === 'approved' && c.disabled === true && !c.approve && c.seals.length === 1 && c.seals[0] === `BACK ENGRAVING|${who}`, 'the card is approved, the button settled and the BACK ENGRAVING seal on it, once: ' + JSON.stringify([c.state, c.seals]));
-    check(!c.red, 'the red "still to be settled" box is gone once it is settled');
+    check(!c.settledText, 'and still nowhere once it is settled');
     const after = await calls(); check(after.poke >= 1 && after.nudge >= 1, `the run and the order's timeline feed were told (RunCtl.poke ${after.poke}, OrderWin.nudge ${after.nudge})`);
     if (shots) { await page.screenshot({ path: path.join(shots, 'overview-approved.png') }); await page.locator('#owEng').screenshot({ path: path.join(shots, 'card-approved-by-me.png') }); }
     // permanent, never duplicated: away and back, and the window closed and opened again
@@ -194,13 +194,12 @@ const WORDS = { [key(R1, 2)]: 'I\ndissent', [key(R1, 3)]: 'KMB //\nSMH', [key(R2
 
     // 6 · live: an approval made in the Engraving tab / Sheet tab / sheet window (Engrave's own job), and one another computer made
     await open(key(R2, 1)); await page.waitForFunction(() => document.querySelector('#owEng .swEng[data-state=approve] [data-e=approve]'), null, { timeout: 10000 });
-    c = await card(); check(c.state === 'approve' && c.words === 'Aster' && c.red, 'order 2, piece 1: to approve');
+    c = await card(); check(c.state === 'approve' && c.words === 'Aster' && !c.settledText, 'order 2, piece 1: to approve, with no "still to be settled" text');
     const t0 = Date.now();
     await page.evaluate(k => { const j = Engrave.items().get(k), at = Date.now(); CNEngravingSeals.add(j, 'engraveApproved', 'Sam Tester', at); Object.assign(j, { state: 'approved', approvedBy: 'Sam Tester', approvedAt: at }); Object.assign(j.row.engrave, { state: 'approved', approved: true, approvedBy: 'Sam Tester', approvedAt: at }); }, key(R2, 1));
     await page.waitForFunction(() => document.querySelector('#owEng .swEng[data-state=approved]'), null, { timeout: 5000 });
     const took = Date.now() - t0; c = await card();
     check(took <= 3000 && !c.approve && c.disabled === true && c.seals.length === 1 && c.seals[0] === 'BACK ENGRAVING|Sam Tester', `approved in the Engraving tab or the sheet window: the card follows within ${took} ms, with the seal`);
-    await page.waitForFunction(() => !document.querySelector('#owFix .owFix'), null, { timeout: 4000 }).then(() => check(true, 'and the red box goes with it'), () => check(false, 'the red box did not go'));
     // another computer: only the timeline knows (its feed is read by the open window already)
     await pick(3); await page.waitForFunction(k => OrderWin.key() === k && document.querySelector('#owEng .swEng[data-state=approve]'), key(R2, 2), { timeout: 8000 });
     const t1 = Date.now();

@@ -39,7 +39,7 @@ function designPage(file, { name, sandbox = false, timeline = true, printOk = tr
     FN: '/fn', NS: sandbox ? ':sandbox' : '', SANDBOX: sandbox, METAL_BY_KEY: { '14k': { label: '14K Gold' }, ss: { label: 'Silver' } },
     $: () => btn, $$: () => [], cssEsc: x => x, toast: (m, k) => calls.push(['toast', m, k || '']), closeDlg() {}, randomString: () => 'nonce',
     resolvePrintPage: async () => (file === 'design.html' ? 'design-print.html' : 'design-print-1.html'),
-    setItemEssential: (k, v) => store.set(k, v), Activity: { show() {}, hide() {} },
+    setItemEssential: (k, v) => store.set(k, v), Activity: { show() {}, hide() {} }, DsLive: { sync() {} },   // (the live stations board: its own tests are station-live-pages.cjs)
     runPrintFrame: async () => (printOk ? { ok: true, labels: 2 } : { ok: false, error: 'The print page did not respond in time' }),
     removePreviewBoxesForOrder() {}, orderCache: {}, selectedOrders: new Set(), completedOrders: new Set(), allOpenReceipts: [], currentReceipts: [],
     persistCompleted: async ids => calls.push(['completed', [...ids]]), RT: { clientId: 't' }, rtSelected: new Set(),

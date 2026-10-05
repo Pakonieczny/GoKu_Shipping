@@ -1,9 +1,8 @@
 // Adversarial (28 Sep, wave 2): what the old order window did must still work in the full-screen view without losing
-// anyone's work. The staff note is the order's, not the line's: typed on one line of an order and carried to its next
-// line by Next, it is what that line shows (it showed the old note, and the next edit there put the old words back); a
-// note typed while an order outside the pull is still being read is kept and saved, and the Customer tab points at the
+// anyone's work. The Order notes box is gone from the window (Paul, 5 Oct 2026): Next and Previous walk an order's lines
+// and the other orders with no box on any of them, and nothing writes a staff note; the Customer tab points at the
 // order on screen from the first frame (it kept the order shown before, so a message typed meanwhile went to that
-// buyer); Previous and Next stay once the line leaves the list it was opened from (a skip undone in On hold).
+// buyer); Previous and Next stay once the line leaves the list it was opened from (a hold released in On hold).
 // Headless Chromium against the fake site (bridge-server.cjs); every request that is not to the loopback is aborted and
 // the inbox link (etsyMailOrderLink) is answered here: no message leaves the test.
 //   node tests/charm-nest/adv-orderwin.cjs   (PW_DIR=<playwright node_modules>, CHROMIUM=<chrome>)
@@ -56,63 +55,46 @@ async function main() {
       Orders.interpretAll(); CN.setMode('orders'); Orders.render();
     }, [order(A, 'Hannah Whitford', 'Old note'), order(B2, 'Ava Patel')]);
     const a1 = `${A.rid}_${A.tids[0]}`, a2 = `${A.rid}_${A.tids[1]}`, b1 = `${B2.rid}_${B2.tids[0]}`;
-    const noteIs = v => page.waitForFunction(v => document.getElementById('owNote').value === v, v, { timeout: 5000 }).then(() => true, () => false);
+    // the Order notes box is gone from the order window (Paul, 5 Oct 2026): it is never there, and the window never writes a staff note
     const serverNote = rid => (srv.st.doc('Brites_Orders', rid) || {})['Staff Note'];
+    const noBox = async why => assert.equal(await page.$('#owNote'), null, 'no notes box: ' + why);
+    const noteWrites = []; page.on('request', rq => { if (rq.method() === 'POST' && /firebaseOrders/.test(rq.url()) && /staffNote/.test(rq.postData() || '')) noteWrites.push(rq.postData()); });
     const until = async (f, ms = 6000) => { for (const t0 = Date.now(); !f(); ) { if (Date.now() - t0 > ms) return false; await new Promise(r => setTimeout(r, 100)); } return true; };
 
-    // 1 · a note typed on the first line of an order, Next to its second line: the same order, the same note
-    await page.evaluate(k => OrderWin.open(k), a1);
-    await page.waitForFunction(() => OrderWin.isOpen() && document.getElementById('owNote').value === 'Old note');
-    const seq = await page.evaluate(() => Orders.visibleRows().map(r => r.key));
-    assert.deepEqual(seq, [b1, a1, a2], 'the other order, then the two lines of this one side by side: ' + seq.join(','));
-    // (the save is slow: the order's record still says the old note when the next line reads it)
-    let saved = null; const slow = new Promise(r => { saved = r; });
-    await page.route(/\/\.netlify\/functions\/firebaseOrders/, async r => { if (r.request().method() === 'POST' && /staffNote/.test(r.request().postData() || '')) await slow; return r.continue(); });
-    await page.fill('#owNote', 'Call the buyer about the chain');
-    await page.click('#owNext');
-    await page.waitForFunction(k => OrderWin.key() === k, a2);
-    await page.waitForTimeout(600);   // (its note read from the record meanwhile)
-    assert(await noteIs('Call the buyer about the chain'), 'the next line of the same order shows the note just typed, not the old one: ' + await page.inputValue('#owNote'));
-    saved();   // (the route lets everything through from here)
-    assert(await until(() => serverNote(A.rid) === 'Call the buyer about the chain'), 'saved to the order');
-    // back to its first line, on to another order and back: still the note typed
-    await page.click('#owPrev');
-    await page.waitForFunction(k => OrderWin.key() === k, a1);
-    assert(await noteIs('Call the buyer about the chain'), 'and on its first line');
-    await page.click('#owPrev');
-    await page.waitForFunction(k => OrderWin.key() === k, b1);
-    assert(await noteIs(''), 'another order: its own (empty) note');
-    await page.click('#owNext');
-    await page.waitForFunction(k => OrderWin.key() === k, a1);
-    assert(await noteIs('Call the buyer about the chain'), 'back on the order: the note typed');
-    // typed, then a view switched and back, then Esc: kept and saved
-    await page.fill('#owNote', 'Call the buyer about the chain · gift wrap');
-    await page.click('.owTabsV [data-ow-view="timeline"]');
-    await page.click('.owTabsV [data-ow-view="info"]');
-    assert(await noteIs('Call the buyer about the chain · gift wrap'), 'a view switched and back keeps the note');
-    await page.focus('#owNote'); await page.keyboard.type(' · rush');
-    await page.keyboard.press('Escape');
-    await page.waitForFunction(() => !document.getElementById('orderWin').open, null, { timeout: 3000 });
-    assert(await until(() => serverNote(A.rid) === 'Call the buyer about the chain · gift wrap · rush'), 'Esc while typing saves the note: ' + serverNote(A.rid));
-    await page.evaluate(k => OrderWin.open(k), a2);
-    assert(await noteIs('Call the buyer about the chain · gift wrap · rush'), 'opened again on its other line: the note as saved');
-    await page.click('#owClose');
-    await page.waitForFunction(() => !document.getElementById('orderWin').open, null, { timeout: 3000 });
-    // the record read as the order opens answers late, after a note typed meanwhile was saved: the note typed stays
-    let late = null; const answer = new Promise(r => { late = r; });
-    await page.route(/\/\.netlify\/functions\/firebaseOrders\?orderId=/, async r => { const res = await r.fetch(); await answer; return r.fulfill({ response: res }); });
+    // 1 · Next and Previous walk the lines of an order and the other orders; no notes box shows on any of them
     await page.evaluate(k => OrderWin.open(k), a1);
     await page.waitForFunction(() => OrderWin.isOpen());
-    await page.fill('#owNote', 'Newest words');
-    await page.click('#owSub');
-    assert(await until(() => serverNote(A.rid) === 'Newest words'), 'saved');
-    late(); await page.waitForTimeout(500);
-    assert(await noteIs('Newest words'), 'an older answer of the record does not put the old note back: ' + await page.inputValue('#owNote'));
+    await noBox('first line of the order');
+    const seq = await page.evaluate(() => Orders.visibleRows().map(r => r.key));
+    assert.deepEqual(seq, [b1, a1, a2], 'the other order, then the two lines of this one side by side: ' + seq.join(','));
+    await page.click('#owNext');
+    await page.waitForFunction(k => OrderWin.key() === k, a2);
+    await page.waitForTimeout(600);
+    await noBox('second line of the same order');
+    await page.click('#owPrev');
+    await page.waitForFunction(k => OrderWin.key() === k, a1);
+    await page.click('#owPrev');
+    await page.waitForFunction(k => OrderWin.key() === k, b1);
+    await noBox('another order');
+    await page.click('#owNext');
+    await page.waitForFunction(k => OrderWin.key() === k, a1);
+    // a view switched and back, then Esc: still no box, nothing written
+    await page.click('.owTabsV [data-ow-view="timeline"]');
+    await page.click('.owTabsV [data-ow-view="info"]');
+    await noBox('a view switched and back');
+    await page.keyboard.press('Escape');
+    await page.waitForFunction(() => !document.getElementById('orderWin').open, null, { timeout: 3000 });
+    await page.evaluate(k => OrderWin.open(k), a2);
+    await page.waitForFunction(() => OrderWin.isOpen());
+    await noBox('opened again on its other line');
     await page.click('#owClose');
     await page.waitForFunction(() => !document.getElementById('orderWin').open, null, { timeout: 3000 });
+    await page.waitForTimeout(900);
+    assert.equal(noteWrites.length, 0, 'opening, walking and closing orders writes no staff note: ' + noteWrites.join(' | '));
+    assert.equal(serverNote(A.rid), 'Old note', 'the order\'s record keeps its note, untouched');
 
     // 2 · an order outside the pull, read slowly from the records: the Customer tab points at it from the first frame,
-    //     and a note typed meanwhile is kept and saved (to that order)
+    //     and the message written there goes to that order's buyer
     let hold = null; const gate = new Promise(r => { hold = r; });
     await page.route(/\/\.netlify\/functions\/charmNestLibrary/, async r => { let b = {}; try { b = JSON.parse(r.request().postData() || '{}'); } catch (_) {} if (b.op === 'poolList' && String(b.orderId) === C.rid) await gate; return r.continue(); });
     await page.evaluate(rid => { OrderWin.openOrder(rid, {}); }, C.rid);
@@ -125,33 +107,24 @@ async function main() {
     assert(await until(() => mail.some(m => m.op === 'ask')), 'the message went to the inbox link (answered here)');
     const asked = mail.filter(m => m.op === 'ask').map(m => String(m.receiptId));
     assert.deepEqual(asked, [C.rid], 'a message written while it loads goes to this order\'s buyer: ' + asked.join(','));
-    const ro = await page.evaluate(() => document.getElementById('owNote').readOnly);
-    if (!ro) {
-      await page.fill('#owNote', 'Typed while it loads');
-      await page.click('#owSub');   // (the note left before the order is read)
-    }
     hold();
     await page.waitForFunction(() => document.getElementById('owLoading').hidden && /Janet Steptoe/.test(document.getElementById('owSub').textContent), null, { timeout: 15000 });
-    if (!ro) {
-      // (the note box stays open while the order is read: what was typed is kept and the order's own note put before it)
-      assert(await noteIs('C note from the shop\nTyped while it loads'), 'the note typed while the order was read is still there, after its own note: ' + await page.inputValue('#owNote'));
-      assert(await until(() => serverNote(C.rid) === 'C note from the shop\nTyped while it loads'), 'and saved to that order: ' + serverNote(C.rid));
-    } else {
-      assert(await noteIs('C note from the shop'), 'the order\'s own note once it is read: ' + await page.inputValue('#owNote'));
-      assert.equal(await page.evaluate(() => document.getElementById('owNote').readOnly), false, 'the note opens for typing once the order is read');
-    }
+    await noBox('an order read from the records');
+    assert.equal(noteWrites.length, 0, 'nothing written to the order\'s notes while it was read: ' + noteWrites.join(' | '));
     await page.click('#owClose');
     await page.waitForFunction(() => !document.getElementById('orderWin').open, null, { timeout: 3000 });
 
-    // 3 · On hold: a skipped line opened there, its skip undone, leaves that list; Previous and Next stay
+    // 3 · On hold: a line skipped before (the order window has no Skip switch any more: the stored skip stays as it was) opened there,
+    //     then released from On hold (Release hold: Review.repool), leaves that list; Previous and Next stay
     await page.evaluate(k => { const r = B.orders.byKey.get(k); r.state = 'skipped'; r.hold = r.reason = 'piece skipped by Test Operator'; }, b1);
     await page.evaluate(k => { const r = B.orders.byKey.get(k); r.state = 'skipped'; r.hold = r.reason = 'piece skipped by Test Operator'; }, a1);
     await page.evaluate(() => { Orders.view().pile = 'hold'; Orders.render(); });
     assert.deepEqual((await page.evaluate(() => Orders.visibleRows().map(r => r.key))).sort(), [a1, b1].sort(), 'On hold lists the two skipped lines');
     const first = await page.evaluate(() => Orders.visibleRows()[0].key);
     await page.evaluate(k => OrderWin.open(k), first);
-    await page.waitForFunction(k => OrderWin.key() === k && !document.getElementById('owSkipBox').hidden, first);
-    await page.click('#owSkip');
+    await page.waitForFunction(k => OrderWin.key() === k, first);
+    assert(await page.evaluate(k => !document.getElementById('owSkip') && B.orders.byKey.get(k).state === 'skipped', first), 'the window offers no Skip switch, and opening it leaves the stored skip alone');
+    await page.evaluate(k => Review.repool(B.orders.byKey.get(k)), first);
     await page.waitForFunction(k => B.orders.byKey.get(k).state !== 'skipped', first);
     const nav = await page.evaluate(() => ({ next: !document.getElementById('owNext').hidden, dis: document.getElementById('owNext').disabled, list: Orders.visibleRows().map(r => r.key) }));
     assert(nav.next && !nav.dis, 'Next stays once the line has left the On hold list: ' + JSON.stringify(nav));
@@ -162,7 +135,7 @@ async function main() {
 
     assert.deepEqual(errors, [], 'no page errors');
     assert(!mail.some(m => m.op === 'ask' && String(m.receiptId) !== C.rid), 'nothing went to another order');
-    console.log('  ✓ the note follows the order across its lines, a view switch and Esc; the Customer tab and the note while an order is read; Next after leaving On hold');
+    console.log('  ✓ no notes box across the order\'s lines, a view switch and Esc, and nothing written; the Customer tab while an order is read; Next after leaving On hold');
   } finally { await browser.close(); srv.close(); }
 }
 main().then(() => console.log('adv-orderwin OK')).catch(e => { console.error(e); process.exit(1); });

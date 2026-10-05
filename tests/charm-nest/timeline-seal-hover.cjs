@@ -48,19 +48,11 @@ async function exercise(seal,shown,label,signer=null,grows=true){
  point('pointerover',rail.parentElement.querySelector('span'));await advance(2000);assert(!shown(),'a rail label cannot activate its seal');
  point('pointerover',seals[0]);await advance(DELAY);assert(grown());point('pointerout',seals[0],seals[1]);point('pointerover',seals[1],seals[0]);await advance(DELAY-100);assert(!shown(),'adjacent timeline seals earn a new delay');await advance(100);assert(grown());point('pointerout',seals[1],outside);await advance(0);
  focusTab(seals[0]);assert(grown(),'chronology keyboard focus zooms at once');point('pointermove',outside);await advance(0);assert(!shown(),'focus cannot hold a mouse zoom open');
- const detail=box.querySelector('.tlBig');assert(detail);await exercise(detail,shown,'selected detail seal','Paul Konieczny');
- for(const [i,seal]of [...box.querySelectorAll('.tlArw .sv')].entries())await exercise(seal,shown,'around-this-step seal '+i,'Paul Konieczny');
- const aroundLabel=box.querySelector('.tlArw b');point('pointerover',aroundLabel);await advance(2000);assert(!shown(),'around-step labels do not activate seals');
- assert(timeline.focus({stage:'arrived'}));await advance(0);
- const pathSeals=[...box.querySelectorAll('.tlPath2 .sv')];assert(pathSeals.length>3,'pinned step exposes its real path seal group');
- for(const [i,seal]of pathSeals.entries())await exercise(seal,shown,'pinned-path seal '+i);
- await exercise(box.querySelector('.tlBig'),shown,'pinned detail seal','Paul Konieczny');
- point('click',box.querySelector('.tlChip'));await advance(0);const legends=[...box.querySelectorAll('.tlLegend .sv')];assert.equal(legends.length,8,'legend consolidates the event actions into the eight selected families');
- assert.equal(new Set(legends.map(s=>s.querySelector('svg').dataset.sealFamily)).size,8,'each selected family has a distinct legend example');
- for(const [i,seal]of legends.entries())await exercise(seal,shown,'legend seal '+i);
- focusTab(legends[0]);assert(grown(),'legend keyboard focus is accessible');legends[0].dispatchEvent(new w.KeyboardEvent('keydown',{key:'Escape',bubbles:true}));await advance(0);assert(!shown(),'Escape puts a legend seal back');
- // Redrawing the complete legend while its seal is hovered clears the old preview without reacquiring its replacement.
- point('pointerover',legends[0]);await advance(DELAY);assert(grown());point('click',box.querySelector('.tlChip'));await advance(0);assert(!shown(),'detail redraw dismisses a vanished legend seal');
+ // The lower detail pane of the Timeline tab (its big seal, "Around this step" seals, the pinned path, the Stamps legend) went on 5 Oct 2026:
+ // nothing of it is drawn, and focus() rings a seal on the chart (there is no pane to pin a step in).
+ const paneSel='.tlBig,.tlArw,.tlPath2,.tlLegend,.tlChip,.tlDetail';assert(!box.querySelector(paneSel),'the chart carries no detail pane, legend or chip');
+ assert(timeline.focus({stage:'arrived'}));await advance(0);assert(!box.querySelector(paneSel),'a focus draws no pane');assert.equal(box.querySelectorAll('.tlSt.sel').length,1,'it rings one seal on the chart');
+ assert(!shown(),'and grows nothing');
  // At a viewport edge or in a short view, the seal still grows where it stands, nudged just enough to stay wholly in the view.
  const edgeSeal=box.querySelector('.tlSt[data-key]');
  for(const [x,y,height]of [[8,20,768],[900,20,768],[410,150,300],[8,150,300],[900,150,300]]){
@@ -84,5 +76,5 @@ async function exercise(seal,shown,label,signer=null,grows=true){
  cancelTimeline=T.mount(d.querySelector('#cancelled'),{orderId:'555',live:false});await advance(0);const cancelBox=d.querySelector('#cancelled .tlUI'),overlay=cancelBox.querySelector('.tlCxStamp');assert(overlay,'a cancelled order has its historical cancellation overlay');
  const cxShown=()=>!!cancelBox.querySelector('[data-seal-zoom]')||cancelBox.querySelector('.tlExp').classList.contains('on');await exercise(overlay,cxShown,'cancelled rail overlay','Seth Signed');
  point('pointerover',seals[0]);await advance(DELAY-100);timeline.destroy();timeline=null;await advance(2000);assert(!d.querySelector('#timeline .tlUI'),'destroy cancels every pending zoom');
- console.log('PASS: '+seals.length+' chronology variants in 8 families, rail, detail, around/path, '+legends.length+' legend faces, current/cancelled overview, cancellation overlay and legacy mini; the seal itself grows in place (no loupe or copy), edges keep it in view, saved signer in assistive text, 500 ms rest, strict departure/dismissal, redraw safety and keyboard/navigation access');
+ console.log('PASS: '+seals.length+' chronology variants in 8 families, rail, no detail pane or legend, current/cancelled overview, cancellation overlay and legacy mini; the seal itself grows in place (no loupe or copy), edges keep it in view, saved signer in assistive text, 500 ms rest, strict departure/dismissal, redraw safety and keyboard/navigation access');
 }finally{timeline?.destroy();cancelTimeline?.destroy();w.close();}})().catch(e=>{console.error(e);process.exitCode=1;});

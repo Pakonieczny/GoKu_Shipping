@@ -54,7 +54,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     let d = document.getElementById('esHost'); if (!d) { d = document.createElement('div'); d.className = 'lib'; d.id = 'esHost'; document.getElementById('stage').appendChild(d); }
     if (window.__b) { window.__b.unmount(); window.__b = null; }
     d.classList.remove('hidden'); d.textContent = '';
-    const E = EfficiencyStations; E.options.pollMs = o.pollMs || 600000; E.options.zoomDelay = 120; E.options.doneMs = 700; E.options.flyMs = 700;
+    const E = EfficiencyStations; E.options.pollMs = o.pollMs || 600000; E.options.zoomDelay = 250; E.options.doneMs = 700; E.options.flyMs = 700;
     window.__mode = 'real'; window.__opened = []; window.openOrderFrom = (btn, rid) => { window.__opened.push([rid, !!btn.closest('dialog')]); return true; };
     window.__b = E.mount(d, { own: true, mode: () => window.__mode });
     return true;
@@ -67,6 +67,8 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   const rectOf = async (page, sel) => page.$eval(sel, e => { const r = e.getBoundingClientRect(); return { left: r.left, top: r.top, right: r.right, bottom: r.bottom, width: r.width, height: r.height }; });
   const calls = () => fx.state.calls.length;
   const forced = new Set();
+  // a resting pointer grows a picture after a short wait and an animation: wait for it to land (a loaded machine is slower than the clock)
+  const grown = async (pg, sel) => { await pg.waitForFunction(() => !!EfficiencyStations.zoomed(), null, { timeout: 6000 }); let last = -1; for (let i = 0; i < 30; i++) { const w = (await rectOf(pg, sel)).width; if (w === last) return; last = w; await sleep(130); } };
   try {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     await wire(ctx);
@@ -88,7 +90,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
       assert.deepEqual(r.states, ['working', 'offline', 'offline'], 'a state is worked out when the server sent none or nonsense');
       assert.deepEqual(r.cur, [['3521000777', '3521000777', '3521000777', 2, 'Ana M.'], ['12', '12', 'T12', 0, 'Late']], 'the QR text is the order number unless the answer says otherwise; an order with no id is dropped');
       assert.deepEqual(r.people, [['Ana M.', null, null, null], ['Bo', 7, 3, 90000], ['Late', null, null, null]], 'people from the list and from the cards; sign-in time joined by name');
-      assert.deepEqual(r.counts, { parts: 4, orders: null }, 'a count the answer lacks stays unknown (no zero invented)'); assert.deepEqual(r.spark, [1, 2, 3]); assert.equal(r.sparkOnePoint, null, 'one point is not a line');
+      assert.deepEqual(r.counts, { parts: 4, orders: null, scans: null }, 'a count the answer lacks stays unknown (no zero invented)'); assert.deepEqual(r.spark, [1, 2, 3]); assert.equal(r.sparkOnePoint, null, 'one point is not a line');
       assert.deepEqual(r.fmt, ['01:35', '1 h 2 m', '00:00', '00:00', '59:59', '4 m 12 s', '59 s', '1 h', '1 h 12 m', 'PK', 'I', 'SR']); assert.deepEqual(r.empty, []);
       console.log('  ✓ view model: missing fields are empty not invented, states worked out, QR text, timer and duration words');
     }
@@ -172,7 +174,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     const r0 = await rectOf(page, sel);
     await page.hover(sel); await sleep(40);
     assert.equal(await page.evaluate(() => !!EfficiencyStations.zoomed()), false, 'a pointer passing over does not zoom at once (a resting pointer does)');
-    await sleep(520);
+    await grown(page, sel);
     const r1 = await rectOf(page, sel);
     assert(r1.width > r0.width * 1.9 && r1.width < 260, `the picture grows where it stands: ${r0.width} -> ${r1.width}`);
     assert(Math.abs((r1.left + r1.right) / 2 - (r0.left + r0.right) / 2) < 40, 'about its own place, not full screen');
@@ -185,15 +187,15 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     assert(Math.abs(r2.width - r0.width) < 1, `and put back: ${r2.width}`); assert.equal(await page.evaluate(() => EfficiencyStations.zoomed()), null);
     // the QR grows the same way
     const qsel = `${card('3521000101')} .esQr`, q0 = await rectOf(page, qsel);
-    await page.hover(qsel); await sleep(700);
+    await page.hover(qsel); await grown(page, qsel);
     const q1 = await rectOf(page, qsel); assert(q1.width > q0.width * 2 && q1.width < 260, `the QR grows: ${q0.width} -> ${q1.width}`);
     await page.keyboard.press('Escape'); await sleep(450); assert(Math.abs((await rectOf(page, qsel)).width - q0.width) < 1, 'Esc puts it back');
     // a piece picture, and a picture at the very top of the scrolling stage is nudged into view
     const psel = `${card('3521000303')} .esPcTh >> nth=0`, p0 = await rectOf(page, psel);
-    await page.hover(psel); await sleep(700); const p1 = await rectOf(page, psel); assert(p1.width > p0.width * 2.4, `a piece picture grows too: ${p0.width} -> ${p1.width}`);
+    await page.hover(psel); await grown(page, psel); const p1 = await rectOf(page, psel); assert(p1.width > p0.width * 2.4, `a piece picture grows too: ${p0.width} -> ${p1.width}`);
     await page.mouse.move(5, 5); await sleep(400);
     await page.evaluate(() => { const s = document.getElementById('stage'), c = document.querySelector('#esHost .esCard[data-rid="3521000101"]'); s.scrollTop += c.getBoundingClientRect().top - s.getBoundingClientRect().top - 2; });
-    await page.hover(sel); await sleep(700);
+    await page.hover(sel); await grown(page, sel);
     const stage2 = await rectOf(page, '#stage'), r3 = await rectOf(page, sel);
     assert(r3.top >= stage2.top - 1 && r3.width > r0.width * 1.9, `nudged down inside the scrolling stage: top ${r3.top} vs ${stage2.top}`);
     await page.mouse.move(5, 5); await sleep(400); await page.evaluate(() => { document.getElementById('stage').scrollTop = 0; });
@@ -226,6 +228,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     /* ── 6 · live: arrivals, departures, the truth ── */
     await page.evaluate(() => { EfficiencyStations.options.pollMs = 600000; });
     await page.evaluate(() => document.querySelector('#esHost .esSt[data-key=sorting]').scrollIntoView({ block: 'center' }));
+    await page.evaluate(() => __b.refresh());   // (a board that has not heard from the service for 20 s settles quietly; this one is up to date)
     fx.start('sorting', { rid: '3521000505', person: 'Dana S.', customer: 'Zed Fixture', pieces: [{ id: '3521000505_1', label: 'Piece 1', thumbUrl: F.pic(51, 'vector') }, { id: '3521000505_2', label: 'Piece 2', thumbUrl: F.pic(52, 'vector') }] });
     await page.evaluate(() => { window.__b.refresh(); window.__ghost = 0; const L = document.getElementById('motionLayer'); const t = setInterval(() => { if (document.querySelector('#motionLayer .mGhost')) window.__ghost++; }, 30); setTimeout(() => clearInterval(t), 1500); });
     await page.waitForSelector(card('3521000505'), { state: 'attached' });
@@ -262,7 +265,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     await sleep(500);
     // honest empty states
     fx.clear(); await page.evaluate(() => __b.refresh()); await page.waitForFunction(() => !document.querySelector('#esHost .esCard'), null, { timeout: 5000 });
-    assert.equal(await txt(`${V} .esNone`), 'No station is processing an order right now'); assert.equal(await page.isVisible(`${V} .esNone`), true);
+    assert.equal(await txt(`${V} .esNone`), 'No one is working on an order right now'); assert.equal(await page.isVisible(`${V} .esNone`), true);
     assert.equal(await page.$$eval(`${V} .esSt`, r => r.length), 7, 'the stations stay listed, each saying so quietly');
     assert.equal(await txt(`${V} .esSum`), '0 of 7 stations working · 6 people on');
     console.log('  ✓ live: a new order flies in, a finished one says "Done in …" and lifts away, people leave, Live / Reconnecting tell the truth, honest empty state');
@@ -287,8 +290,8 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     fx = F.make();
     for (const w of [1440, 900, 390]) {
       await page.setViewportSize({ width: w, height: 900 }); await mount(page); await page.waitForSelector(`${V} .esSt`, { timeout: 8000 }).catch(async e => { console.log('DEBUG', w, await page.evaluate(() => [document.getElementById('esHost').className, document.getElementById('esHost').innerText.slice(0, 200), document.visibilityState, EfficiencyStations.feed.calls, EfficiencyStations.feed.busy, EfficiencyStations.feed.fails])); throw e; }); await sleep(500);
-      const m = await page.evaluate(() => { const s = document.getElementById('stage'), h = document.getElementById('esHost'); return [document.documentElement.scrollWidth - innerWidth, s.scrollWidth - s.clientWidth, h.scrollWidth - h.clientWidth, [...document.querySelectorAll('#esHost *')].filter(e => { const r = e.getBoundingClientRect(); return r.width && r.right > h.getBoundingClientRect().right + 1; }).length]; });
-      assert.deepEqual(m, [0, 0, 0, 0], `${w} px: nothing sticks out sideways ${m}`);
+      const m = await page.evaluate(() => { const s = document.getElementById('stage'), h = document.getElementById('esHost'), out = [...document.querySelectorAll('#esHost *')].filter(e => { const r = e.getBoundingClientRect(); return r.width && r.right > h.getBoundingClientRect().right + 1; }); return [document.documentElement.scrollWidth - innerWidth, s.scrollWidth - s.clientWidth, h.scrollWidth - h.clientWidth, out.length, out.slice(0, 4).map(e => e.className + '@' + Math.round(e.getBoundingClientRect().right) + '>' + Math.round(h.getBoundingClientRect().right))]; });
+      assert.deepEqual(m.slice(0, 4), [0, 0, 0, 0], `${w} px: nothing sticks out sideways ${JSON.stringify(m)}`);
     }
     console.log('  ✓ 1440, 900 and 390 px: no sideways scroll');
     assert.deepEqual(P.errs, [], 'no page errors, no console errors: ' + P.errs.join(' | '));
@@ -308,7 +311,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     assert.equal(await rp.evaluate(() => window.__g), 0, 'reduced motion: nothing flies');
     assert.equal(await rp.evaluate(() => document.getAnimations().filter(a => a.effect && a.effect.target && a.effect.target.closest && a.effect.target.closest('#esHost')).length), 0, 'reduced motion: not one animation on the board');
     const rs = `${card('3521000606')} .esTh`, w0 = (await rectOf(rp, rs)).width;
-    await rp.hover(rs); await sleep(600); assert.equal(Math.round((await rectOf(rp, rs)).width), Math.round(w0), 'reduced motion: a picture does not grow (the ring is the sign)');
+    await rp.hover(rs); await rp.waitForFunction(() => !!EfficiencyStations.zoomed(), null, { timeout: 6000 }); await sleep(400); assert.equal(Math.round((await rectOf(rp, rs)).width), Math.round(w0), 'reduced motion: a picture does not grow (the ring is the sign)');
     assert.equal(await rp.evaluate(() => !!EfficiencyStations.zoomed()), true);
     fx.finish('sorting', 'Dana S.'); await rp.evaluate(() => __b.refresh()); await rp.waitForSelector(`${card('3521000606')}.done`); await rp.waitForFunction(sel => !document.querySelector(sel), card('3521000606'), { timeout: 3000 });
     assert.deepEqual(R.errs, [], 'no errors under reduced motion: ' + R.errs.join(' | '));
@@ -331,5 +334,71 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     assert.deepEqual(Tt.errs, [], 'no errors on touch: ' + Tt.errs.join(' | '));
     await tctx.close();
     console.log('  ✓ reduced motion: nothing flies, nothing animates, no growing; touch: tap grows, second tap opens; no console errors');
+
+    /* ── 9 · the real live layer's shape: pages, a laser sheet, piece counts, two kinds of picture, the day's numbers on a person's card ── */
+    fx = F.make(); fx.setHook(F.e2);
+    const c9 = await browser.newContext({ viewport: { width: 1440, height: 900 } }); await wire(c9);
+    const N9 = await load(c9); const p9 = N9.page; cur = p9;
+    await p9.evaluate(k => sessionStorage.setItem('cn.eff.key', k), F.KEY);
+    await mount(p9); await p9.waitForSelector(`${V} .esSt`); await sleep(500);
+    const flat = async sel => (await p9.$eval(sel, e => e.innerText)).replace(/\s+/g, ' ').trim();
+    assert.deepEqual(await p9.$$eval(`${V} .esSt`, rs => rs.map(r => r.dataset.key)), ['shipping', 'assembly', 'welding', 'sorting', 'design', 'laser', 'sorter', 'inbox'], 'the laser station is a row like the others');
+    // a laser sheet: its title, no QR, "since started", nothing to open
+    const shc = `${V} .esSt[data-key=laser] .esCard`;
+    const sc = await p9.$eval(shc, c => ({ kind: c.dataset.kind, oid: c.querySelector('.esOid').textContent, dis: c.querySelector('.esOid').disabled, qrRects: c.querySelector('.esQr').getClientRects().length, tl: c.querySelector('.esTl').textContent, t: c.querySelector('.esT').textContent, ph: !!c.querySelector('.esTh [data-ph]'), who: c.querySelector('.esWho').innerText.replace(/\s+/g, ' '), cols: getComputedStyle(c).gridTemplateColumns.split(' ').length }));
+    assert.deepEqual([sc.kind, sc.oid, sc.dis, sc.qrRects, sc.tl, sc.ph, sc.cols], ['sheet', 'GF Sheet 2 · Set 4', true, 0, 'since started', true, 2], 'a laser sheet: its title, no QR column, "since started", a calm placeholder');
+    assert(/^02:\d\d$/.test(sc.t) && /Paul K\./.test(sc.who) && /Laser 1/.test(sc.who), 'timer from its start; the person and the page of the station: ' + sc.t + ' / ' + sc.who);
+    await p9.click(`${shc} .esT`); await p9.mouse.move(5, 5); await sleep(150);
+    assert.deepEqual(await p9.evaluate(() => window.__opened), [], 'a laser sheet is not an order: a press opens nothing');
+    // the page of the station names itself when it has its own name
+    assert.deepEqual(await p9.$$eval(`${V} .esSt[data-key=assembly] .esCard`, cs => cs.map(c => [c.dataset.rid, c.querySelector('.esSn').hidden ? '' : c.querySelector('.esSn').textContent])), [['3521000202', 'Assembly 2'], ['3521000203', 'Assembly 3']], 'two people at one station: which page each is on');
+    assert.equal(await p9.$eval(`${card('3521000303')} .esSn`, e => e.hidden), true, 'a page named like its station adds nothing');
+    // pictures: the first address that loads; the next kind when it does not
+    await p9.waitForFunction(() => ['3521000202', '3521000203'].every(r => { const b = document.querySelector(`#esHost .esCard[data-rid="${r}"] .esTh`); return b && b.dataset.state === 'ready'; }));
+    const i202 = await p9.$eval(`${card('3521000202')} .esTh img`, i => decodeURIComponent(i.src)), i203 = await p9.$eval(`${card('3521000203')} .esTh img`, i => [decodeURIComponent(i.src), i.className]);
+    assert(/38% 82%/.test(i202), 'the order picture address was broken: the listing photo is shown instead'); assert(/38% 97%/.test(i203[0]) && /contain/.test(i203[1]), 'no picture address but a vector design: shown whole');
+    // 5 pieces, 3 pictured: the rest counted
+    assert.equal(await p9.$eval(`${card('3521000303')} .esPcL`, e => e.textContent), '5 pieces'); assert.equal(await p9.$$eval(`${card('3521000303')} .esPcTh`, b => b.length), 3);
+    assert.equal(await txt(`${card('3521000303')} .esMore`), '+2'); assert.equal(await p9.$eval(`${card('3521000303')} .esMore`, e => e.title), '2 more pieces are not shown');
+    await p9.waitForFunction(() => document.querySelector('#esHost .esCard[data-rid="3521000303"] .esPcTh').dataset.state === 'ready'); assert.equal(await p9.$eval(`${card('3521000303')} .esPcTh >> nth=0`, b => b.querySelector('img').className.includes('contain')), true, 'a piece with only a vector design shows it');
+    // the station's card: scans and the pages
+    await p9.evaluate(() => { document.getElementById('stage').scrollTop = 0; }); await sleep(150);   // (a scroll puts a hover card away, as it should)
+    await p9.hover(`${V} .esSt[data-key=assembly] .esStId`); await p9.waitForSelector('.esTip[data-on]');
+    let tip9 = await p9.$eval('.esTip', e => e.innerText.replace(/\s+/g, ' '));
+    assert(/Scans today 77/i.test(tip9) && /Assembly 1 Offline/i.test(tip9) && /Assembly 2 Anna M\. · Working/i.test(tip9) && /2 of 4 in use/i.test(tip9), 'station card with its pages: ' + tip9);
+    await p9.mouse.move(5, 5); await sleep(150);
+    // what a person did today: asked only when the pointer rests, kept a minute, labelled while it comes, each number with the service's own definition
+    const pc = () => fx.state.people.length;
+    await p9.evaluate(() => { EfficiencyStations.options.tipDwell = 900; });   // (a long rest, so a loaded machine cannot make the checks below race the wait)
+    await p9.hover(`${V} .esPer[data-name="Anna M."]`); await sleep(120); await p9.mouse.move(5, 5); await sleep(450);
+    assert.equal(pc(), 0, 'a pointer passing over a person asks for nothing');
+    await p9.hover(`${V} .esPer[data-name="Ivy R."]`); await sleep(100);
+    const wt = await p9.$eval('.esTip', e => e.innerText.replace(/\s+/g, ' '));
+    assert(/Reading today's numbers…/.test(wt) && pc() === 0, 'while it waits for the pointer to rest: a labelled line, still no request: ' + pc() + ' / ' + wt);
+    await p9.waitForFunction(() => /Pieces 33/i.test(document.querySelector('.esTip').innerText.replace(/\s+/g, ' ')), null, { timeout: 4000 });
+    tip9 = await p9.$eval('.esTip', e => e.innerText.replace(/\s+/g, ' '));
+    assert(/Signed in since/i.test(tip9) && /Orders 9/i.test(tip9) && /Median per order 5 m 12 s/i.test(tip9) && /Active time 3 h 30 m/i.test(tip9) && /Pieces per active hour 9\.4 an hour/i.test(tip9), 'the day\'s numbers: ' + tip9);
+    assert(!/Idle time/i.test(tip9) && !/Reading today/.test(tip9), 'a number the service does not know is left out, the wait line is gone');
+    assert(/The middle time from first scan to done/.test(tip9) && /estimated: phone scans count for the desktop/.test(tip9), 'the service\'s own definition, with its "estimated" and why');
+    assert.deepEqual(fx.state.people[0], { name: 'Ivy R.', range: 'day', compare: false, sandbox: false }, 'op person: one day, no comparison');
+    assert.equal(fx.state.calls.filter(c => c.op === 'person').every(c => c.key === F.KEY), true);
+    await p9.mouse.move(5, 5); await sleep(150); await p9.hover(`${V} .esPer[data-name="Ivy R."]`); await sleep(500);
+    assert.equal(pc(), 1, 'asked again within a minute: kept, not read again'); assert(/Pieces 33/i.test(await p9.$eval('.esTip', e => e.innerText.replace(/\s+/g, ' '))), 'and shown at once');
+    await p9.evaluate(() => { window.__mode = 'sandbox'; }); await p9.mouse.move(5, 5); await sleep(150); await p9.hover(`${V} .esPer[data-name="Ivy R."]`);
+    await p9.waitForFunction(() => /Pieces 7\b/i.test(document.querySelector('.esTip').innerText.replace(/\s+/g, ' ')), null, { timeout: 4000 });
+    assert.equal(fx.state.people[1].sandbox, true, 'the Sandbox view asks the Sandbox store, and its numbers are kept apart');
+    await p9.evaluate(() => { window.__mode = 'real'; });
+    // a failed read says so quietly; nobody found says that
+    fx.state.personFail = 1; await p9.mouse.move(5, 5); await sleep(150); await p9.hover(`${V} .esPer[data-name="Michael V."]`);
+    await p9.waitForFunction(() => /could not be read just now/.test(document.querySelector('.esTip').innerText), null, { timeout: 4000 });
+    tip9 = await p9.$eval('.esTip', e => e.innerText.replace(/\s+/g, ' ')); assert(/Signed in since/i.test(tip9) && /Parts today 41/i.test(tip9) && !/Active time/i.test(tip9), 'what the live answer knows stays; nothing is invented: ' + tip9);
+    fx.start('inbox', { rid: '3521000700', person: 'Nobody', thumbUrl: '' }); await p9.evaluate(() => __b.refresh()); await p9.waitForSelector(`${V} .esPer[data-name="Nobody"]`);
+    await p9.mouse.move(5, 5); await p9.evaluate(() => document.querySelector('#esHost .esPer[data-name="Nobody"]').scrollIntoView({ block: 'center' })); await sleep(300); await p9.hover(`${V} .esPer[data-name="Nobody"]`);
+    await p9.waitForFunction(() => /Nothing is logged for this person today yet/.test(document.querySelector('.esTip').innerText), null, { timeout: 4000 });
+    await p9.mouse.move(5, 5);
+    assert(seen.urls.every(u => !u.includes(F.KEY)), 'the passcode is in no address'); assert.equal(seen.aborted, 0);
+    assert.deepEqual(N9.errs, [], 'no errors: ' + N9.errs.join(' | ')); assert(N9.logs.every(l => !/Stations board/.test(l)), 'no warnings from the board');
+    await c9.close();
+    console.log('  ✓ the live layer\'s shape: a laser sheet, device labels, piece counts, two kinds of picture, the station\'s pages; the day\'s numbers on a person\'s card (lazy, kept a minute, labelled, with definitions)');
   } finally { await browser.close(); srv.close(); }
 })().catch(e => { console.error(e); process.exit(1); });

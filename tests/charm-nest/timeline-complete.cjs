@@ -150,7 +150,7 @@ const opsOf = evs => evs.filter(opOf).map(e => [opOf(e), e.by, (e.data && e.data
     const read = () => page.evaluate(() => {
       const txt = s => { const x = document.querySelector(s); return x ? x.textContent.replace(/\s+/g, ' ').trim() : ''; };
       return { pill: txt('#owNow'), stops: [...document.querySelectorAll('#owRail .tlStop')].map(b => [b.dataset.stage, b.className.replace(/^tlStop\s*/, ''), b.getAttribute('aria-label') || '']),
-        nowLine: txt('#owTimeline .tlNowLine span'), ghosts: document.querySelectorAll('#owTimeline .tlSt.ghost').length, next: txt('#owTimeline .tlStepReq'),
+        nowLine: txt('#owTimeline .tlNowLine span'), ghosts: document.querySelectorAll('#owTimeline .tlSt.ghost').length, next: (txt('#owTimeline').match(/next for this order|all that .{1,40} needs/i) || [''])[0],
         k: txt('#owNowCard .k'), t: txt('#owNowCard .t'), card: txt('#owNowCard'), seals: [...document.querySelectorAll('#owTimeline .tlSt[data-key]')].map(b => b.dataset.key.split('~')[0]).filter(t => t === 'sealCompleted' || t === 'reopened') };
     });
     const WHEN = '[A-Z]{3} \\d{1,2}:\\d\\d [AP]M';
@@ -165,7 +165,7 @@ const opsOf = evs => evs.filter(opOf).map(e => [opOf(e), e.by, (e.data && e.data
       // (3) the Overview's Now card: completed, by whom and when; no decision asked
       assert.equal(s.k, 'Order completed', why + ': the Now card'); assert.match(s.t, /^Completed by Test Operator · \w{3},? \d{1,2}:\d\d/, why + ': ' + s.t);
       assert(!/decision|unknown sku/i.test(s.card), why + ': no decision on the Now card: ' + s.card);
-      // (4) no "next" list under the timeline
+      // (4) no "next" list under the timeline (there is no pane under it at all since 5 Oct 2026)
       assert.equal(s.next, '', why + ': no "Next for this order"');
     };
     let s = await read();
