@@ -5,7 +5,7 @@
  *    const tl = OrderTimelineUI.mount(el, { orderId, highlight, live: true, compact: false, onSheet(sheetId, poolId),
  *                                           onOpen(event), onEvents(events), onNow({ text, where, step, next, … }),
  *                                           stages: OrderTimelineUI.stagesFor(lines) | () => its steps })
- *    tl.refresh() → Promise   tl.focus(eventId | event) → true when shown   tl.destroy()
+ *    tl.refresh() → Promise   tl.focus(eventId | event | { stage }) → true when its seal is ringed on the chart   tl.destroy()
  *    onEvents/onNow tell the host what is drawn after every change; onOpen is compact's "open this on the Timeline".
  *    stagesFor(line | lines) → a piece's own steps (Welded only for a stud earring, Engraved only with a back engraving);
  *    isStud(line) → whether it is a stud; engraveOf(line) → true/false, null when not known yet.
@@ -15,12 +15,12 @@
  *                          rail (Order in → Nested → [Engraved] → Laser cut → Sorted → [Welded] → Assembled → Shipped;
  *                          Welded only when a piece is a stud earring, Engraved only when one has a back engraving): passed steps stamped, the next one pulsing, the ones to come
  *                          faint outlines; a cancelled order gets a red CANCELLED stamp across the rail
- *    filters               All · Milestones · Stations · Sheets · Holds & cancels · Messages, with counts, and Stamps
- *                          (the legend); non-matches dim, nothing moves
  *    lanes                 one lane per place, one column per day (idle days collapse), one stamp per event, a gold
  *                          path from event to event, the NOW line and the milestones to come as dashed stamps
- *    detail                the chosen event inline, never a pop-up: its seal, who, where, when, the sheet (Open sheet),
- *                          before → after, the reason, its data, Earlier/Later (← →) and the steps around it
+ *  Nothing is drawn under the chart (Paul, 5 Oct 2026: "remove this entire UI and functionality from the Timeline tab": the detail pane,
+ *  its Next for this order / All that … needs / Around this step, and the selection and the keys that served them are gone): a stamp
+ *  is never "selected" and a click on one opens nothing. tl.focus(…), opts.highlight and a click on a rail step only put a thin ring in
+ *  the accent round that stamp on the chart (and bring it into view).
  *  A stamp rested on, reached with Tab or tapped grows where it stands (Seal.zoom in charm-nest-motion.js: one adaptive zoom for every
  *  seal, small ones more, never a second copy), with the step's explainer card under it.
  *  compact: true draws the rail alone, sized to its host (the order view's header); a rail stamp asks the host to open
@@ -34,7 +34,7 @@
   "use strict";
   if (root.OrderTimelineUI) return;
   const doc = root.document;
-  const E = "cubic-bezier(.2,.8,.2,1)", SLIDE = "cubic-bezier(.3,.1,.2,1)", SPRING = "cubic-bezier(.3,1.7,.5,1)";
+  const E = "cubic-bezier(.2,.8,.2,1)", SLIDE = "cubic-bezier(.3,.1,.2,1)";
   const POLL = 20000;
   // the order view that is open (Paul, 3 Oct 04:03: "within two or three seconds maximum to reflect whatever the user is
   // doing"): its feed reads every POLL_OPEN while the tab is visible, and again at once and POLL_AGAIN after a change made
@@ -60,9 +60,8 @@
   const SEAL_SIZE = 84;
   /* ── the Timeline page's own seal sizes (Paul, 3 Oct 2026, on an order's Timeline: "All of these seals are too big ... they can be
      much smaller, and then they don't have to zoom in so large"): about 40% under the shared 84 px, on this page only (every other
-     page keeps the shared size). The chart's stamps and ghosts, the header rail's steps, the detail's big seal (--tl-big) and the
-     "Around this step" and step lists (--tl-around) each keep one size of their own, and the lanes, columns and rows are cut to
-     fit them. A seal still shows everything it showed; the zoom (Seal.zoom) is what reads it. ── */
+     page keeps the shared size). The chart's stamps and ghosts and the header rail's steps each keep one size of their own, and the
+     lanes, columns and rows are cut to fit them. A seal still shows everything it showed; the zoom (Seal.zoom) is what reads it. ── */
   const TL_CHART_SEAL = 26, TL_RAIL_SEAL = 20;
   const zoomApi = () => (root.Seal && root.Seal.zoom) || null;
   const zoomOn = (el, kb) => { const z = zoomApi(); return !!(z && el && z.show(el, { keyboard: !!kb, managed: true })); };
@@ -130,7 +129,7 @@
     const key = ev => { if (ev.key === "Escape" && (wanted || shown)) { ev.preventDefault(); ev.stopPropagation(); cancel(true); } };
     const check = () => {
       const cur = wanted || shown; if (!cur) return;
-      // (a click the page answers by drawing its seals again, as selecting a stamp does, puts the zoom back: the seal now under the pointer grows in its place)
+      // (a click the page answers by drawing its seals again puts the zoom back: the seal now under the pointer grows in its place)
       const redrawn = shown === cur && Date.now() - clickAt < 1200 && (!cur.isConnected || !lit(cur));
       if (cur.isConnected && !redrawn) return;
       const idOf = b => { const n = b.closest("[data-key], [data-stage]"); return n ? (n.dataset.key || "") + "|" + (n.dataset.stage || "") : ""; };
@@ -317,8 +316,6 @@
     return stampSvg(plain, true, opts);
   }
   const printTitle = e => `QR label printed · Print Nº ${e.print.n} · ${e.print.where}`;
-  /** The print seal in the Stamps legend. */
-  const printLegend = t => { const e = { key: "legend-print", type: "sealPrinted", at: t, by: "", lane: "office", data: null, print: { n: 1, where: PRINT_WHERE.charm } }; return `<figure><span class="sv" tabindex="0" ${sealAttrs(e)} style="transform:rotate(${rotOf(e)}deg)">${stampSvg(e, true, { tex: false })}</span><figcaption>QR label printed<small>every print</small></figcaption></figure>`; };
   /** What is holding this order up, in plain words: a hold nobody released, or a question nobody answered. */
   function blockerOf(events) {
     let hold = null; const need = new Map(), byHand = new Map();
@@ -716,50 +713,6 @@
   const byAt = (a, b) => a.at - b.at || (a.type === "arrived" ? -1 : b.type === "arrived" ? 1 : 0) || recAt(a) - recAt(b) || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0);
   const reasonOf = e => { const d = e.data || {}; return str(d.reason || d.why || d.removedReason || d.cancelReason || "", 400); };
   const poolOf = e => { const d = e.data || {}; return String(d.poolId || (Array.isArray(d.poolIds) && d.poolIds[0]) || (e.lineKey ? `${e.lineKey}_${d.copy || 1}` : "")); };
-  const humanKey = k => String(k).replace(/([a-z0-9])([A-Z])/g, "$1 $2").replace(/[_-]+/g, " ").toLowerCase().replace(/^./, c => c.toUpperCase());
-  function fmt(v) {
-    if (v == null || v === "") return "—";
-    if (Array.isArray(v)) return v.map(fmt).join(", ").slice(0, 160);
-    if (typeof v === "object") {
-      if (v.wIn != null && v.hIn != null) return `${v.wIn} × ${v.hIn} in`;
-      if (v.w != null && v.h != null) return `${v.w} × ${v.h}`;
-      if (v.label || v.name) return String(v.label || v.name);
-      try { return JSON.stringify(v).slice(0, 160); } catch (_) { return "…"; }
-    }
-    if (typeof v === "number" && v > 1e12 && v < 4e12) return longWhen(v);
-    if (typeof v === "boolean") return v ? "yes" : "no";
-    return String(v).slice(0, 200);
-  }
-  /** before → after pairs in an event's data (a move's sheets, a size change, an engraving's words …). */
-  function pairsOf(d) {
-    const out = [], used = new Set();
-    if (!d) return { out, used };
-    const add = (what, a, b) => { if (!used.has(a) && !used.has(b) && (d[a] != null || d[b] != null)) { out.push({ what, a: d[a], b: d[b] }); used.add(a); used.add(b); } };
-    for (const [a, b] of [["from", "to"], ["before", "after"], ["old", "new"], ["was", "now"], ["prev", "next"]]) if (a in d || b in d) add("", a, b);
-    for (const k of Object.keys(d)) {
-      let m = /^(from|old|prev|before)([A-Z]\w*)$/.exec(k);
-      if (m) { const p = { from: "to", old: "new", prev: "next", before: "after" }[m[1]] + m[2]; if (p in d) add(humanKey(m[2]), k, p); continue; }
-      m = /^(\w+?)(From|Before|Old)$/.exec(k);
-      if (m) { const p = m[1] + { From: "To", Before: "After", Old: "New" }[m[2]]; if (p in d) add(humanKey(m[1]), k, p); }
-    }
-    return { out, used };
-  }
-  const REASON_KEYS = new Set(["reason", "why", "removedReason", "cancelReason", "ring", "foot"]);
-  function factsOf(e, used) {
-    const f = [];
-    if (e.sheetId || e.sheet) f.push(["Sheet", e.sheet || e.sheetId]);
-    if (e.sheetId && e.sheet && e.sheet !== e.sheetId) f.push(["Sheet id", e.sheetId]);
-    if (e.setId) f.push(["Set", e.setId]);
-    if (e.lineKey) f.push(["Piece", e.lineKey]); else if (e.transactionId) f.push(["Transaction", e.transactionId]);
-    if (e.device) f.push(["Device", e.device]);
-    if (e.source) f.push(["Recorded by", e.source === "etsy" ? "Etsy check" : e.source === "station" ? "Station" : e.source === "system" ? "Automatic" : humanKey(e.source)]);
-    if (e.pending) f.push(["Status", "Saving — on its way"]);
-    if (e.derived) f.push(["From", "The order's older records (before the timeline)"]);
-    const d = e.data || {};
-    let n = 0;
-    for (const [k, v] of Object.entries(d)) { if (used.has(k) || REASON_KEYS.has(k) || v == null || v === "" || ++n > 14) continue; f.push([humanKey(k), fmt(v)]); }
-    return f;
-  }
   const titleOf = (e, max) => {
     if (e.print) return printTitle(e);
     if (e.type === "scan") return seenAt(e);
@@ -1018,20 +971,19 @@
   const STATE_WORD = { done: "Done", now: "Next", later: "To come", stopped: "Stopped here", gone: "Won't happen", none: "Not needed", skipped: "Skipped" };
   const CHECK = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>`;
   const cap1 = t => { t = String(t || ""); return t.charAt(0).toUpperCase() + t.slice(1); };
-  /** A step's lines: what is done with a check, what is missing with an open circle (full: every one, and the quiet facts). */
-  function reqLines(q, full) {
+  /** A step's lines: what is done with a check, what is missing with an open circle (the last two done, the first four missing). */
+  function reqLines(q) {
     // (the step's own lines, then its labels: a label line never pushes out who did the step)
     const mine = q.done.filter(d => !d.label), labels = q.done.filter(d => d.label);
-    const done = mine.slice(full ? -6 : -2).concat(labels.slice(-2)).map(d => `<li class="rq ok"><i>${CHECK}</i><span>${esc(d.t)}<small>${esc(d.sub)}</small></span></li>`);
-    const need = (full ? q.need : q.need.slice(0, 4)).map(n => `<li class="rq ${n.kind}"><i aria-hidden="true"></i><span>${REQ_WORD[n.kind] ? `<em>${esc(REQ_WORD[n.kind])}</em>` : ""}${esc(cap1(n.t))}</span></li>`);
-    const more = !full && q.need.length > 4 ? `<li class="rq more"><span>${q.need.length - 4} more · click to see them</span></li>` : "";
+    const done = mine.slice(-2).concat(labels.slice(-2)).map(d => `<li class="rq ok"><i>${CHECK}</i><span>${esc(d.t)}<small>${esc(d.sub)}</small></span></li>`);
+    const need = q.need.slice(0, 4).map(n => `<li class="rq ${n.kind}"><i aria-hidden="true"></i><span>${REQ_WORD[n.kind] ? `<em>${esc(REQ_WORD[n.kind])}</em>` : ""}${esc(cap1(n.t))}</span></li>`);
+    const more = q.need.length > 4 ? `<li class="rq more"><span>${q.need.length - 4} more</span></li>` : "";
     if (q.state === "none") return `<ul class="tlReq"><li class="rq ok"><i>${CHECK}</i><span>${esc(q.facts[0] || "Not needed")}</span></li></ul>`;
-    const facts = full && q.facts.length ? `<div class="tlReqF"><span class="tlLbl">Also recorded</span>${q.facts.map(f => `<span>${esc(f)}</span>`).join("")}</div>` : "";
-    return `<ul class="tlReq">${done.join("")}${need.join("")}${more}</ul>${facts}`;
+    return `<ul class="tlReq">${done.join("")}${need.join("")}${more}</ul>`;
   }
-  /** The small card under a hovered step. */
-  const reqCard = q => `<div class="xh"><b>${esc(q.label)}</b><span class="xs ${q.state}${partDone(q) ? " now" : ""}">${esc(partDone(q) ? "Part done" : STATE_WORD[q.state] || "")}</span></div>${reqLines(q, false)}` +
-    `<div class="xf">${q.n ? `Step ${q.n} of ${q.of}` : "Not a step of this order"}${q.state === "done" ? " · click to open it" : " · click to pin"}</div>`;
+  /** The small card under a hovered step; open: what a click on it does ("click to open it on the Timeline" on the header rail), none when it does nothing. */
+  const reqCard = (q, open) => `<div class="xh"><b>${esc(q.label)}</b><span class="xs ${q.state}${partDone(q) ? " now" : ""}">${esc(partDone(q) ? "Part done" : STATE_WORD[q.state] || "")}</span></div>${reqLines(q)}` +
+    `<div class="xf">${q.n ? `Step ${q.n} of ${q.of}` : "Not a step of this order"}${open ? " · " + esc(open) : ""}</div>`;
   /** Shows the card (a fixed layer) under dot, never over it: below when there is room, else beside it (and beside seal,
    *  the zoomed seal's rect in the view, when one is open). → the animation. */
   function placeExp(card, html, dot, whole, seal) {
@@ -1111,7 +1063,7 @@
 
   /* ════ the component's look (once per page) ════ */
   const CSS = `
-.tlUI{position:relative;min-width:0;min-height:0;display:flex;flex-direction:column;color:var(--ink,#1c1a17);font:13px/1.45 var(--sans,system-ui,sans-serif);--tlE:cubic-bezier(.2,.8,.2,1);--tlSpring:cubic-bezier(.3,1.7,.5,1);--tlSlate:#2f5563;--tl-big:54px;--tl-around:46px}
+.tlUI{position:relative;min-width:0;min-height:0;display:flex;flex-direction:column;color:var(--ink,#1c1a17);font:13px/1.45 var(--sans,system-ui,sans-serif);--tlE:cubic-bezier(.2,.8,.2,1);--tlSpring:cubic-bezier(.3,1.7,.5,1);--tlSlate:#2f5563}
 .tlUI *{box-sizing:border-box}
 .tlUI button{font:inherit;color:inherit;cursor:pointer}
 .tlUI [hidden]{display:none!important}
@@ -1119,9 +1071,6 @@
 .tlBar.inTools *{box-sizing:border-box}
 .tlBar.inTools button{font:inherit;cursor:pointer}
 .tlBar.inTools [hidden]{display:none!important}
-.tlBar.inTools .tlChips{flex-wrap:nowrap;min-width:0;overflow-x:auto;scrollbar-width:none}
-.tlBar.inTools .tlChip{flex:none}
-.tlBar button.tlChip{font-size:11px}
 @media (max-width:1599px){.tlBar.inTools .tlSum:not(:has(.err)){display:none}}
 .tlUI .tlLbl{display:block;font:700 9.5px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--ink45)}
 .tlTop{display:flex;align-items:center;gap:14px 26px;padding:10px 18px 9px;border-bottom:1px solid var(--line2);flex-wrap:wrap;flex:none}
@@ -1157,13 +1106,6 @@
 .tlCxStamp{position:absolute;left:50%;top:50%;width:var(--seal-fit,var(--seal-size,84px));height:var(--seal-fit,var(--seal-size,84px));cursor:pointer;z-index:3;transform:translate(-50%,-50%) rotate(-6deg)}
 .tlCxStamp svg{display:block;width:100%;height:100%;mix-blend-mode:multiply;opacity:.93}
 .tlBar{display:flex;align-items:center;gap:6px;padding:7px 18px;border-bottom:1px solid var(--line);flex-wrap:wrap;min-height:40px;flex:none}
-.tlChips{display:flex;flex-wrap:wrap;gap:6px}
-.tlChip{border:1px solid var(--line);border-radius:999px;padding:3px 10px;background:var(--card);font-size:11px;color:var(--ink70);display:inline-flex;align-items:center;gap:6px;transition:transform .12s}
-.tlChip:hover{border-color:var(--ink25)}
-.tlChip:active{transform:scale(.96)}
-.tlChip b{font:600 9.5px var(--mono);color:var(--ink45)}
-.tlChip.on{background:var(--velvet);border-color:var(--velvet);color:#fff}.tlChip.on b{color:var(--rTxt3,#ada393)}
-.tlChip.zero:not(.on){opacity:.55}
 .tlBarR{margin-left:auto;display:flex;align-items:center;gap:10px;font:10.5px var(--mono);color:var(--ink45);min-width:0}
 .tlBarR .err{color:#8a3a26;display:inline-flex;gap:6px;align-items:center}
 .tlLive{display:inline-flex;align-items:center;gap:6px;font:700 9.5px var(--mono);letter-spacing:.1em;color:#3c5a39;background:var(--sageSoft);border-radius:999px;padding:3px 9px}
@@ -1172,7 +1114,7 @@
 .tlBusy{display:inline-flex;align-items:center;gap:6px}
 .tlSpin{display:inline-block;width:11px;height:11px;flex:none;border:2px solid rgba(0,0,0,.12);border-top-color:var(--gold);border-radius:50%;animation:tlSpin .7s linear infinite}
 @keyframes tlSpin{to{transform:rotate(360deg)}}
-.tlGrid{display:grid;grid-template-columns:140px minmax(0,1fr);border-bottom:1px solid var(--line);position:relative;flex:none}
+.tlGrid{display:grid;grid-template-columns:140px minmax(0,1fr);position:relative;flex:none}
 .tlLanes{border-right:1px solid var(--line);background:var(--card);padding-top:40px;padding-bottom:26px}
 .tlLane{position:relative;height:var(--tl-lane-height,42px);display:flex;flex-direction:column;justify-content:center;padding:0 14px;border-bottom:1px solid var(--line2);min-width:0}
 .tlLane::before{content:"";position:absolute;inset:0;background:linear-gradient(90deg,rgba(202,168,97,.16),transparent);opacity:0;transition:opacity .24s}
@@ -1201,6 +1143,7 @@
 .tlSt.pend svg{opacity:.65}
 .tlSt.pending svg,.tlStop .tlSeal.pending svg{visibility:hidden}
 .tlSt.ghost{opacity:.42;cursor:default}
+.tlSt.ghost.sel{opacity:.85}
 .tlSt.ghost svg{mix-blend-mode:normal}
 .tlInkRing{position:absolute;border-radius:50%;border:2px solid;pointer-events:none;z-index:1;opacity:0}
 .tlNowLine{position:absolute;top:34px;bottom:4px;width:0;border-left:1.5px solid var(--gold);z-index:1}
@@ -1212,48 +1155,13 @@
 .tlAfterCx{position:absolute;top:34px;bottom:0;right:0;background:repeating-linear-gradient(135deg,transparent 0 7px,rgba(176,86,63,.09) 7px 8px)}
 .tlMsg{position:absolute;left:158px;top:50%;transform:translateY(-50%);display:flex;align-items:center;gap:9px;font-size:12.5px;color:var(--ink70);background:var(--card);border:1px solid var(--line);border-radius:10px;padding:9px 13px;box-shadow:var(--sh);z-index:4;max-width:calc(100% - 176px)}
 .tlMsg.err{color:#8a3a26;background:var(--claySoft);border-color:#e7b9aa}
-.tlDetail{position:relative;flex:1 1 auto;min-height:0;overflow:auto;padding:22px 28px 26px}
-.tlDetIn{display:grid;grid-template-columns:var(--tl-big) minmax(0,1fr) 290px;gap:20px;align-content:start}
-.tlBig{display:block;width:var(--tl-big);height:var(--tl-big);transform:rotate(var(--rot,0deg))}
-.tlBig svg{width:100%;height:100%;display:block;overflow:visible}
-.tlDetail h3{font:500 24px/1.2 var(--serif);margin:6px 0 4px}
-.tlWhen{font:11.5px var(--mono);color:var(--ink45)}
-.tlBadgeRow{margin-top:12px;display:flex;flex-wrap:wrap;gap:6px}
-.tlDetail p{margin:14px 0 0;color:var(--ink70);max-width:62ch}
-.tlWhy{margin:14px 0 0;border-left:3px solid var(--clay);background:var(--claySoft);padding:8px 12px;border-radius:0 10px 10px 0;font-size:12.5px;color:#5c2a1c;max-width:62ch}
-.tlWhy b{display:block;font:700 9.5px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:#8a3a26;margin-bottom:2px}
-.tlBA{display:flex;align-items:stretch;gap:8px;margin-top:14px;max-width:760px}
-.tlBA .m{flex:1}
-.tlBA .arr{align-self:center;color:var(--ink45);font:15px var(--mono)}
-.tlMeta{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:9px;max-width:760px;margin-top:14px}
-.tlUI .m{border:1px solid var(--line);border-radius:10px;padding:7px 10px;background:var(--card);min-width:0}
-.tlUI .m.after{border-color:var(--goldLine);background:var(--goldSoft)}
-.tlUI .m i{display:block;font:9.5px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--ink45);font-style:normal;margin-bottom:2px}
-.tlUI .m span{font:12.5px var(--mono);overflow-wrap:anywhere}
-.tlActs{display:flex;flex-wrap:wrap;gap:8px;margin-top:16px}
 .tlBadge{display:inline-flex;align-items:center;gap:7px;border:1px solid var(--line);border-radius:999px;padding:3px 10px 3px 4px;background:var(--card);font:12px var(--sans);color:var(--ink);white-space:nowrap}
 .tlBadge i{width:20px;height:20px;border-radius:50%;display:grid;place-items:center;background:var(--slateSoft);color:var(--tlSlate);flex:none}
 .tlBadge i svg{width:11px;height:11px}
 .tlBadge em{font:700 9.5px var(--mono);letter-spacing:.1em;color:var(--tlSlate);font-style:normal;text-transform:uppercase}
 .tlBadge.sm{font-size:11px;padding:1px 8px 1px 2px;gap:5px}.tlBadge.sm i{width:17px;height:17px}.tlBadge.sm em{font-size:8.5px}
-.tlAround{border-left:1px solid var(--line);padding-left:24px;display:grid;gap:4px;align-content:start}
-.tlAround .tlLbl{margin-bottom:6px}
-.tlArw{position:relative;display:grid;grid-template-columns:var(--tl-around) minmax(0,1fr);gap:10px;align-items:center;border:0;background:transparent;text-align:left;padding:6px 8px;border-radius:10px;transition:transform .18s var(--tlE)}
-.tlArw::before{content:"";position:absolute;inset:0;border-radius:inherit;background:var(--card2);opacity:0;transition:opacity .18s}
-.tlArw:hover::before{opacity:1}.tlArw:hover{transform:translateX(2px)}
-.tlArw.cur::before{opacity:1;background:var(--goldSoft)}
-.tlArw .sv{position:relative;display:block;width:var(--tl-around);height:var(--tl-around)}
-.tlArw .sv svg{width:100%;height:100%;display:block}
-.tlArw div{position:relative;min-width:0}
-.tlArw b{display:block;font:600 12px var(--sans);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.tlArw span{font:10.5px var(--mono);color:var(--ink45)}
-.tlEmpty{color:var(--ink45);font-size:12.5px}
-.tlLegend{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,calc(var(--tl-big) + 26px)),1fr));gap:14px 8px}
-.tlLegend figure{margin:0;display:grid;justify-items:center;gap:6px;text-align:center}
-.tlLegend .sv{display:block;width:var(--tl-big);height:var(--tl-big)}.tlLegend .sv svg{width:100%;height:100%;display:block}
-.tlLegend figcaption{font:600 10.5px var(--sans);color:var(--ink70)}
-.tlLegend figcaption small{display:block;font:9px var(--mono);color:var(--ink45);letter-spacing:.06em;text-transform:uppercase;font-weight:400}
-.tlUI.compact .tlBar,.tlUI.compact .tlGrid,.tlUI.compact .tlDetail,.tlUI.compact .tlNow{display:none}
+.tlGrid>.tlEmpty{position:absolute;left:158px;right:18px;top:50%;transform:translateY(-50%);margin:0;color:var(--ink45);font-size:12.5px;pointer-events:none}
+.tlUI.compact .tlBar,.tlUI.compact .tlGrid,.tlUI.compact .tlNow{display:none}
 .tlUI.compact{height:100%;justify-content:center}
 .tlUI.compact .tlTop{border-bottom:0;padding:0;flex:1 1 auto;align-items:center;flex-wrap:nowrap}
 .tlUI.compact .tlRail{flex:1 1 auto;max-width:none;margin:0}
@@ -1265,7 +1173,6 @@
 .tlUI.compact .tlStop>span{font-size:7.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .tlUI.compact .tlCxStamp{width:var(--seal-fit,var(--seal-size,84px));height:var(--seal-fit,var(--seal-size,84px))}
 .tlUI.compact .tlMsg{left:50%;top:50%;transform:translate(-50%,-50%);max-width:100%;padding:3px 10px;font-size:11px;gap:6px;box-shadow:none;white-space:nowrap}
-@media (max-width:1100px){.tlDetIn{grid-template-columns:var(--tl-big) minmax(0,1fr)}.tlAround{grid-column:1/-1;border-left:0;padding-left:0;border-top:1px solid var(--line);padding-top:14px}}
 @media (max-width:900px){.tlRail{flex-basis:100%}.tlStops{grid-template-columns:repeat(6,minmax(0,1fr));row-gap:10px}.tlTrack,.tlFill{display:none}}
 .tlNowSeal{position:relative;width:var(--seal-fit,var(--seal-size,84px));height:var(--seal-fit,var(--seal-size,84px));flex:none;transform:rotate(var(--rot,0deg))}
 .tlNowSeal svg,.tlMini svg{display:block;width:100%;height:100%;overflow:visible}
@@ -1286,12 +1193,12 @@
 .tlExp{position:fixed;z-index:2147483001;left:0;top:0;width:272px;pointer-events:none;background:var(--card,#fffefb);color:var(--ink,#1c1a17);border:1px solid var(--line,#e7e1d6);border-radius:12px;padding:11px 14px 9px;box-shadow:0 1px 0 rgba(255,255,255,.6) inset,0 14px 34px rgba(30,26,20,.16),0 2px 6px rgba(30,26,20,.06);font:12px/1.4 var(--sans,system-ui,sans-serif);opacity:0;display:none}
 .tlExp::before{content:"";position:absolute;left:var(--ax,50%);top:-6px;width:10px;height:10px;margin-left:-5px;background:inherit;border-left:1px solid var(--line,#e7e1d6);border-top:1px solid var(--line,#e7e1d6);transform:rotate(45deg)}
 .tlExp.up::before{top:auto;bottom:-6px;transform:rotate(225deg)}
-.tlExp .xh,.tlPinH{display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin-bottom:7px}
+.tlExp .xh{display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin-bottom:7px}
 .tlExp .xh b{font:500 15px/1.2 var(--serif,Georgia,serif);color:var(--ink)}
-.tlExp .xs,.tlPinH .xs{flex:none;font:700 8.5px var(--mono,monospace);letter-spacing:.1em;text-transform:uppercase;color:var(--ink45);border-radius:999px;padding:2px 7px;background:var(--card2,#f6f2ea)}
-.tlExp .xs.done,.tlPinH .xs.done{color:#3c5a39;background:var(--sageSoft,#e8efe3)}
-.tlExp .xs.now,.tlPinH .xs.now{color:#7a5a1d;background:var(--goldSoft,#f6eedc)}
-.tlExp .xs.stopped,.tlExp .xs.gone,.tlPinH .xs.stopped,.tlPinH .xs.gone{color:#8a3a26;background:var(--claySoft,#f4e3dc)}
+.tlExp .xs{flex:none;font:700 8.5px var(--mono,monospace);letter-spacing:.1em;text-transform:uppercase;color:var(--ink45);border-radius:999px;padding:2px 7px;background:var(--card2,#f6f2ea)}
+.tlExp .xs.done{color:#3c5a39;background:var(--sageSoft,#e8efe3)}
+.tlExp .xs.now{color:#7a5a1d;background:var(--goldSoft,#f6eedc)}
+.tlExp .xs.stopped,.tlExp .xs.gone{color:#8a3a26;background:var(--claySoft,#f4e3dc)}
 .tlExp .xf{margin-top:8px;padding-top:6px;border-top:1px solid var(--line2,#efe9df);font:9.5px var(--mono,monospace);letter-spacing:.04em;color:var(--ink45)}
 .tlReq{list-style:none;margin:0;padding:0;display:grid;gap:6px}
 .tlReq .rq{display:grid;grid-template-columns:16px minmax(0,1fr);gap:8px;align-items:start;color:var(--ink70)}
@@ -1305,26 +1212,12 @@
 .tlReq .rq em{font:700 8.5px var(--mono,monospace);letter-spacing:.09em;text-transform:uppercase;font-style:normal;color:var(--ink45);margin-right:6px}
 .tlReq .rq.person em{color:#7a5a1d}.tlReq .rq.stop em{color:#8a3a26}
 .tlReq .rq.more{grid-template-columns:1fr;padding-left:24px;font:10px var(--mono,monospace);color:var(--ink45)}
-.tlReqF{display:flex;flex-wrap:wrap;gap:4px 12px;margin-top:12px;font:10.5px var(--mono,monospace);color:var(--ink45)}
-.tlReqF .tlLbl{flex-basis:100%;margin-bottom:1px}
-.tlStepReq{margin-top:16px;max-width:620px;border-top:1px solid var(--line2);padding-top:12px}
-.tlStepReq .tlPinH b{font:500 15px var(--serif)}
-.tlPin .tlReq{max-width:620px;margin-top:14px;gap:9px}.tlPin .tlReq .rq{font-size:13px}
-.tlPath2{display:grid;gap:2px}
-.tlPath2 button{display:grid;grid-template-columns:var(--tl-around) minmax(0,1fr) auto;gap:10px;align-items:center;border:0;background:transparent;text-align:left;padding:5px 8px;border-radius:9px;transition:background .18s,transform .18s var(--tlE)}
-.tlPath2 button:hover{background:var(--card2)}.tlPath2 button.cur{background:var(--goldSoft)}
-.tlPath2 .sv{display:block;width:var(--tl-around);height:var(--tl-around)}.tlPath2 .sv svg{width:100%;height:100%;display:block}
-.tlPath2 b{font:600 12px var(--sans)}.tlPath2 span{font:9.5px var(--mono);color:var(--ink45);letter-spacing:.04em;text-transform:uppercase}
-.tlPath2 button.later .sv,.tlPath2 button.gone .sv{opacity:.45}
 .tlSt.ghost[data-stage]{cursor:pointer}
 .tlExp.side::before{display:none}
-.tlStop.pinned .tlSeal::before{content:"";position:absolute;inset:-5px;border-radius:50%;border:1.5px solid var(--gold);box-shadow:0 0 0 4px rgba(202,168,97,.18);animation:tlSelIn .32s var(--tlSpring) both}
-.tlStop.pinned>span{color:#7a5a1d}
 /* a grown seal's own ring or glow stays a thin ring round it (Paul, 3 Oct: the ring that came with the zoom was bigger than the seal's own
    growing): Seal.zoom puts the grown seal's scale in --zk, so these are drawn at 1 / --zk of their size and come out the same thin ring once grown */
 .tlSt.sel[data-seal-zoom]::before{inset:calc(-3px / var(--zk, 1));border-width:calc(1.5px / var(--zk, 1));box-shadow:0 0 0 calc(2px / var(--zk, 1)) rgba(202,168,97,.18)}
 .tlSt.hl[data-seal-zoom]::after{inset:calc(-4px / var(--zk, 1))}
-.tlStop.pinned .tlSeal[data-seal-zoom]::before{inset:calc(-3px / var(--zk, 1));border-width:calc(1.5px / var(--zk, 1));box-shadow:0 0 0 calc(2px / var(--zk, 1)) rgba(202,168,97,.18)}
 .tlStop.c .tlSeal[data-seal-zoom]::after{inset:calc(-3px / var(--zk, 1));border-width:calc(1.5px / var(--zk, 1));animation:none;opacity:.9}
 @media (prefers-reduced-motion:reduce){.tlUI *,.tlUI *::before,.tlUI *::after,.tlMini>span{animation-duration:.001s!important;animation-iteration-count:1!important;transition-duration:.001s!important}.tlUI .tlSpin{animation:tlSpin 1.4s linear infinite!important}}
 `;
@@ -1484,7 +1377,7 @@
     const withDone = keepDone;
     const railNow = evs => { let r = null; try { r = typeof opts.stages === "function" ? opts.stages() : opts.stages; } catch (err) { warn("stages", err); } return withDone(r, evs); };
     // events/byKey: what is drawn (one piece's, or all); every/allKeys: all the order's (opts.pieces, opts.piece: agent F)
-    const S = { events: [], shown: [], shownKeys: new Set(), byKey: new Map(), every: [], allKeys: new Map(), pieces: Array.isArray(opts.pieces) ? opts.pieces : [], piece: opts.piece || null, cancelled: null, where: null, D: null, sel: null, legend: false, hl: new Set(), sig: "",
+    const S = { events: [], shown: [], shownKeys: new Set(), byKey: new Map(), every: [], allKeys: new Map(), pieces: Array.isArray(opts.pieces) ? opts.pieces : [], piece: opts.piece || null, cancelled: null, where: null, D: null, mark: null, markStage: null, hl: new Set(), sig: "",
       stamping: null, deferredPaint: null, loaded: false, loading: null, error: "", dead: false, lastLoad: 0, seq: 0, nowX: 0, pendingFocus: null, hlDone: false };
     // where the piece IS now (opts.placement(key|null) -> the page's PiecePlacement; null asks for the order's: one piece's, or the roll-up of all); see derive
     const plaOf = k => { try { return typeof opts.placement === "function" ? opts.placement(k == null ? null : k) || null : null; } catch (err) { warn("placement", err); return null; } };
@@ -1498,11 +1391,11 @@
     box.setAttribute("data-order", orderId);
     box.innerHTML = `<div class="tlTop"><div class="tlNow"><span class="tlLbl">Now</span><div class="tlNowT">Finding where this order is…</div><div class="tlNowS"></div></div>` +
       `<div class="tlRail" role="group" aria-label="Main steps"><span class="tlTrack"></span><span class="tlFill"></span><div class="tlStops"></div></div></div>` +
-      `<div class="tlBar"><div class="tlChips" role="toolbar" aria-label="Show"></div><div class="tlBarR"><span class="tlBusy" hidden><i class="tlSpin"></i><span>Checking for new steps</span></span><span class="tlLive" hidden><i></i>LIVE</span><span class="tlSum"></span></div></div>` +
+      `<div class="tlBar"><div class="tlBarR"><span class="tlBusy" hidden><i class="tlSpin"></i><span>Checking for new steps</span></span><span class="tlLive" hidden><i></i>LIVE</span><span class="tlSum"></span></div></div>` +
       `<div class="tlGrid"><div class="tlLanes"></div><div class="tlScroll"><div class="tlCanvas"></div></div><div class="tlMsg" hidden></div></div>` +
-      `<div class="tlDetail" aria-live="polite"></div><div class="tlExp" role="tooltip"></div>`;
+      `<div class="tlExp" role="tooltip"></div>`;
     el.appendChild(box);
-    // opts.toolbar: the host's own bar (the order view's tab row, spec §1) takes the filters, so the lanes keep the height
+    // opts.toolbar: the host's own bar (the order view's tab row, spec §1) takes the live badge and the summary, so the lanes keep the height
     const tb = !compact && opts.toolbar && typeof opts.toolbar.appendChild === "function" ? opts.toolbar : null, bar = box.querySelector(".tlBar");
     if (tb) { bar.classList.add("inTools"); tb.appendChild(bar); }
     const $ = s => box.querySelector(s) || (tb ? bar.querySelector(s) : null), $$ = s => [...box.querySelectorAll(s)];
@@ -1510,9 +1403,8 @@
     const scroller = $(".tlScroll"), exp = $(".tlExp");
     let fitObserver = null;
     let unsub = null, unfeed = null, pollT = 0, busyT = 0, zoomFor = null;
-    // what the lanes' names and the detail show now: a redraw that would write the same leaves them (and their layout) alone
-    let lanesHtml = "", detHtml = "";
-    const detUid = "tlDet" + (++UID);
+    // what the lanes' names show now: a redraw that would write the same leaves them (and their layout) alone
+    let lanesHtml = "";
     const pub = e => pubOf(e, orderId);
 
     /* ── loading ── */
@@ -1595,15 +1487,16 @@
     function afterFirst() {
       if (S.pendingFocus != null) { const id = S.pendingFocus; S.pendingFocus = null; if (focus(id)) return; }
       if (S.hlDone) return; S.hlDone = true;
-      const h = opts.highlight == null ? "" : String(opts.highlight).trim();
+      // (a search opens an order with highlight: true, "light its number": no event is asked for, so no seal is ringed)
+      const h = typeof opts.highlight === "string" || typeof opts.highlight === "number" ? String(opts.highlight).trim() : "";
       if (!h || digits(h) === orderId) return;
       const k = findKey(h);
-      if (k) { select(k, 0, { scroll: true }); return; }
+      if (k) { mark(k, { scroll: true }); return; }
       const q = h.toLowerCase(), hits = S.events.filter(e => hay(e).includes(q));
       if (!hits.length) return;
       S.hl = new Set(hits.map(e => e.key));
       for (const b of $$(".tlSt[data-key]")) b.classList.toggle("hl", S.hl.has(b.dataset.key));
-      select(hits[hits.length - 1].key, 0, { scroll: true });
+      mark(hits[hits.length - 1].key, { scroll: true });
     }
 
     /* ── painting ── */
@@ -1629,22 +1522,15 @@
       const paint = Object.assign({}, o, { pressKeys });
       paintNow(D, paint); const railPresses = paintRail(D, paint);
       tell();
-      if (!compact) { paintChips(); paintCanvas(D, paint); paintSum(); }
+      if (!compact) { paintCanvas(D, paint); paintSum(); paintEmpty(); }
       const fresh = (o.fresh || []).filter(k => S.shownKeys.has(k));
       const presses = compact ? railPresses : pressKeys.filter(k => S.shownKeys.has(k)).map(k => $(".tlCanvas").querySelector(`.tlSt[data-key="${cssEsc(k)}"]`)).filter(Boolean);
+      // a new stamp past the right edge comes into view once its press is done, when the reader was looking at the end of the chart
+      // (the stamp before it was in view); nothing is selected or opened
       const follow = () => {
-        if (S.dead || compact || S.legend) return;
-        if (S.pin && renderPin(true)) return;
-        if (fresh.length) {
-          // Follow the next event only after the complete press sequence has finished.
-          const newest = fresh.map(k => S.byKey.get(k)).filter(Boolean).sort(byAt).pop(), prevLast = S.shown.filter(e => !fresh.includes(e.key)).pop();
-          if (!newest) return;
-          if (!S.sel || (prevLast && S.sel === prevLast.key)) select(newest.key, 1, { scroll: true, quiet: false });
-          else if (S.shownKeys.has(S.sel)) renderDetail(S.sel, 0, true);
-          else select(newest.key, 1, { scroll: true });
-        } else if (S.sel && S.shownKeys.has(S.sel)) renderDetail(S.sel, 0, true);
-        else if (S.shown.length) select(S.shown[S.shown.length - 1].key, 0, { scroll: o.first, quiet: true });
-        else $(".tlDetail").innerHTML = detHtml = `<p class="tlEmpty">${esc(S.events.length ? "No milestone yet. The first seal lands here the moment this order reaches one." : "Nothing is recorded for this order yet. Each step shows here the moment it happens.")}</p>`;
+        if (S.dead || compact || !fresh.length) return;
+        const newest = fresh.map(k => S.byKey.get(k)).filter(Boolean).sort(byAt).pop(), prev = S.shown.filter(e => !fresh.includes(e.key)).pop();
+        if (newest && prev && prev.x != null && prev.x >= scroller.scrollLeft && prev.x <= scroller.scrollLeft + scroller.clientWidth) scrollToEv(newest);
       };
       if (presses.length && root.Seal && typeof root.Seal.press === "function") {
         for (const target of presses) target.classList.add("pending");
@@ -1658,6 +1544,14 @@
           if (deferred) repaint(deferred);
         });
       } else follow();
+    }
+    /** An order with no seal yet says so over the chart, in one quiet line (its lanes and the dashed steps stay). */
+    function paintEmpty() {
+      const g = $(".tlGrid"), had = g && g.querySelector(":scope > .tlEmpty"); if (!g) return;
+      if (S.shown.length) { if (had) had.remove(); return; }
+      const t = S.events.length ? "No milestone yet. The first seal lands here the moment this order reaches one." : "Nothing is recorded for this order yet. Each step shows here the moment it happens.";
+      if (had) { if (had.textContent !== t) had.textContent = t; return; }
+      const p = doc.createElement("p"); p.className = "tlEmpty"; p.textContent = t; g.appendChild(p);
     }
     /** One piece: its own events and steps. All pieces of an order of several: the order is where its slowest piece is,
      *  on the steps any of its pieces takes, each counted. One piece only: as it always was. */
@@ -1681,7 +1575,7 @@
       return railed(D, sum.rail.map(r => r.s), sum);
     }
     /** The host's piece switcher: pieces (as opts.pieces; omitted keeps them) and the piece shown (null: all of them).
-     *  The rail, the lanes and the detail cross over to it, from the side it lies on (dir). */
+     *  The rail and the lanes cross over to it, from the side it lies on (dir). */
     function setPieces(list, key, dir) {
       if (S.dead) return;
       const ps = Array.isArray(list) ? list : S.pieces;
@@ -1690,11 +1584,11 @@
       const moved = key !== S.piece, changed = pieceSig(ps) !== S.psig;
       if (!moved && !changed) return;
       S.pieces = ps; S.piece = key; narrow();
-      if (S.sel && !S.byKey.has(S.sel)) S.sel = null;
+      if (moved || (S.mark && !S.byKey.has(S.mark))) { S.mark = null; S.markStage = null; }   // (the ring was round another piece's stamp)
       if (!S.loaded) return;
       hideZoom(true);
       repaint({ first: moved });
-      if (moved) for (const x of [$(".tlRail"), compact ? null : $(".tlGrid"), compact ? null : $(".tlDetail")]) if (x) anim(x, [{ opacity: 0, transform: `translateX(${(dir || 0) * 14}px)` }, { opacity: 1, transform: "none" }], 340, { easing: E });
+      if (moved) for (const x of [$(".tlRail"), compact ? null : $(".tlGrid")]) if (x) anim(x, [{ opacity: 0, transform: `translateX(${(dir || 0) * 14}px)` }, { opacity: 1, transform: "none" }], 340, { easing: E });
     }
     /** The server's `where`; while this page has steps the server has not answered for yet (live, or still in the
      *  outbox) it is worked out here from every step, never behind the server's own. */
@@ -1740,9 +1634,9 @@
       const W = D.W, e = D.last; if (!e) { put(""); return; }
       const st = W.station || e.station || "", at = +W.at || e.at;
       const who = { station: st, by: W.by || whoOf(e), lane: STATION_LANE[st] || e.lane, source: e.source };
-      const next = D.cur >= 0 && !D.hold ? STAGES[D.cur].l : "", pool = W.sheetId ? S.events.filter(x => x.sheetId === W.sheetId).map(poolOf).filter(Boolean).pop() || "" : "";
+      const pool = W.sheetId ? S.events.filter(x => x.sheetId === W.sheetId).map(poolOf).filter(Boolean).pop() || "" : "";
       const hl = W.sheetId ? linkSay(W.sheetId, pool) : null;
-      put(`${badge(who, true)}<span>${esc(shortWhen(at))} · ${esc(ago(at))}</span>${next ? `<span>next: ${esc(next)}</span>` : ""}` +
+      put(`${badge(who, true)}<span>${esc(shortWhen(at))} · ${esc(ago(at))}</span>` +
         (W.sheetId ? `<span>${hl && hl.piece ? esc(hl.piece) + " " : ""}on ${esc(W.sheet || W.sheetId)}</span>${opts.onSheet ? openBtn("tlLink tlOpenSheet", W.sheetId, pool, hl) : ""}` : ""));
     }
     function paintRail(D, o) {
@@ -1805,11 +1699,6 @@
       }
       return presses;
     }
-    /** One quiet chip: the legend of the seals. (The filters are gone — only milestones are drawn.) */
-    function paintChips() {
-      const html = `<button type="button" class="tlChip${S.legend ? " on" : ""}" data-legend aria-pressed="${S.legend}">Stamps</button>`;
-      const c = $(".tlChips"); if (c.innerHTML !== html) c.innerHTML = html;
-    }
     function paintSum() {
       const r = $(".tlSum"), lv = $(".tlLive"); if (!r) return;
       if (lv) lv.hidden = !live || !S.loaded;
@@ -1831,7 +1720,7 @@
     }
     function paintLanes() {
       const who = {}; for (const e of S.events) (who[e.lane] = who[e.lane] || new Set()).add(whoOf(e));
-      const selLane = S.sel && S.byKey.get(S.sel) ? S.byKey.get(S.sel).lane : "";
+      const selLane = S.mark && S.byKey.get(S.mark) ? S.byKey.get(S.mark).lane : S.markStage ? (STAGES.find(x => x.k === S.markStage) || {}).lane || "" : "";   // (the lane of the ringed stamp is lit)
       const html = LANES.map(L => { const w = !who[L.k] || !who[L.k].size ? "—" : L.k === "office" ? "Operator" : [...who[L.k]].join(", "); /* (the Office lane names no one: Paul, 29 Sep, "it just should say Operator") */ return `<div class="tlLane${L.st ? " stn" : ""}${selLane === L.k ? " on" : ""}" data-lane="${L.k}"><b>${iconSvg(L.ic)}${esc(L.l)}</b><span title="${esc(w)}">${esc(w)}</span></div>`; }).join("");
       if (html !== lanesHtml) { lanesHtml = html; $(".tlLanes").innerHTML = html; }
     }
@@ -1863,9 +1752,9 @@
       const back = dayCols + lines +
         `<svg class="tlPath" width="${W}" height="${H}" aria-hidden="true">${evs.length > 1 ? `<path d="${pathD(evs)}" fill="none" stroke="var(--gold)" stroke-width="1.6" stroke-opacity=".55" stroke-linecap="round"/>` : ""}${future ? `<path d="${future}" fill="none" stroke="var(--ink25)" stroke-width="1.4" stroke-dasharray="3 5"/>` : ""}</svg>` +
         (D.cancelled ? `<div class="tlAfterCx" style="left:${cxX}px"></div><div class="tlNowLine cx" style="left:${cxX}px"><span>CANCELLED · ${esc(shortWhen(D.cancelled.at))}</span></div>` : `<div class="tlNowLine" style="left:${nowX}px"><span>${esc(nowLbl)}</span></div>`);
-      const clsOf = e => `tlSt${S.sel === e.key ? " sel" : ""}${e.pending ? " pend" : ""}${S.hl.has(e.key) ? " hl" : ""}`;
+      const clsOf = e => `tlSt${S.mark === e.key ? " sel" : ""}${e.pending ? " pend" : ""}${S.hl.has(e.key) ? " hl" : ""}`;
       const posOf = e => `left:${e.x}px;top:${e.y}px;--s:var(--seal-fit,var(--seal-size,84px));--rot:${rotOf(e)}deg`, sayOf = e => `${labelOf(e.type)} · ${titleOf(e)} · ${longWhen(e.at)} · ${whoOf(e)}${placeOf(e) ? " · " + placeOf(e) : ""}`;
-      const ghostHtml = ghosts.map(g => `<span class="tlSt ghost" data-stage="${esc(g.s.k)}" style="left:${g.x}px;top:${g.y}px;--s:var(--seal-fit,var(--seal-size,84px));--rot:0deg" aria-label="${esc("To come: " + g.s.l)}">${stampSvg(g, false, { ghost: 1 })}</span>`).join("");
+      const ghostHtml = ghosts.map(g => `<span class="tlSt ghost${S.markStage === g.s.k ? " sel" : ""}" data-stage="${esc(g.s.k)}" style="left:${g.x}px;top:${g.y}px;--s:var(--seal-fit,var(--seal-size,84px));--rot:0deg" aria-label="${esc("To come: " + g.s.l)}">${stampSvg(g, false, { ghost: 1 })}</span>`).join("");
       // the stamps already drawn are kept (a live step parses one stamp, not every one: a redraw of 100 stays in a frame);
       // the days, lines, path, NOW line and ghosts are drawn again
       const kept = new Map();
@@ -1913,88 +1802,36 @@
       for (const s of S.shown) { if (s.at <= e.at) at = s.key; else if (!at) { at = s.key; break; } }
       return at;
     }
-    function toggleLegend() {
-      S.legend = !S.legend; paintChips();
-      if (!S.legend) { renderDetail(S.sel || (S.shown[S.shown.length - 1] || {}).key, 0); return; }
-      // The legend explains eight visual families; its captions keep every truthful action that uses that family.
-      const t = Date.now(), types = Object.keys(KIND).filter(k => sealed({ type: k })).concat("sealPrinted");
-      const families = [
-        { k: "received", type: "arrived", name: "Received" }, { k: "prepared", type: "placed", name: "Prepared" },
-        { k: "engraving", type: "engraveApproved", name: "Back Engraving" }, { k: "laser", type: "laserDone", name: "Laser Cutting" },
-        { k: "finishing", type: "assembled", name: "Finishing" }, { k: "fulfilment", type: "shipped", name: "Fulfilment" },
-        { k: "exceptions", type: "held", name: "Exceptions" }, { k: "cancelled", type: "cancelled", name: "Cancelled Orders" }
-      ];
-      const det = $(".tlDetail");
-      det.innerHTML = `<div class="tlLegend" aria-label="Eight seal families">${families.map(f => {
-        const e = { key: "legend-" + f.k, type: f.type, at: t, by: "", source: "system", derived: true, lane: kindOf(f.type).lane, data: null };
-        const actions = [...new Set(types.filter(type => faceModel({ type, at: 0 }).family === f.k).map(type => FACE_ACTION[type] || labelOf(type)))];
-        if (f.k === "engraving") actions.push("CUT PLAIN");
-        return `<figure data-seal-family="${f.k}"><span class="sv" tabindex="0" aria-label="${esc(f.name + " family example seal")}" ${sealAttrs(e)}>${stampSvg(e, true, { tex: false })}</span><figcaption>${esc(f.name)}<small>${esc(actions.join(" · "))}</small></figcaption></figure>`;
-      }).join("")}</div>`;
-      anim(det.firstChild, [{ opacity: 0, transform: "translateY(6px)" }, { opacity: 1, transform: "none" }], 280);
-    }
-    /** Chooses one event: its stamp gets the gold ring, its lane lights, its detail opens below. */
-    function select(key, dir, o) {
+    /** Rings one seal of the chart (a thin ring in the accent, its lane lit) and, with o.scroll, brings it into view. Nothing opens: the
+     *  chart has no detail pane, and a click on a seal only grows it where it stands (Seal.zoom).
+     *  what: an event key or id (the seal that stands for it is ringed), or { stage } for a step of the rail (the seal of that step when it is
+     *  done, else its dashed stamp). The ring stays until the next one. → true when a seal was ringed. */
+    function mark(what, o) {
       o = o || {};
-      key = sealKey(key);
-      if (!key) return false;
-      S.sel = key; if (S.legend) { S.legend = false; paintChips(); }
-      if (S.pin) { S.pin = null; for (const b of $$(".tlStop.pinned")) b.classList.remove("pinned"); }
+      let key = "", stage = "";
+      if (what && typeof what === "object" && what.stage) {
+        const i = STAGES.findIndex(s => s.k === what.stage); if (i < 0) return false;
+        const first = S.D && S.D.stages[i] && S.D.stages[i].first;
+        if (first) key = sealKey(first.key); else stage = STAGES[i].k;
+      } else key = sealKey(what);
+      let ghost = null;
+      if (stage) { ghost = $$(".tlSt.ghost[data-stage]").find(b => b.dataset.stage === stage) || null; if (!ghost) return false; }
+      else if (!key) return false;
+      S.mark = key || null; S.markStage = stage || null;
       for (const b of $$(".tlSt[data-key]")) b.classList.toggle("sel", b.dataset.key === key);
-      const e = S.byKey.get(key);
-      for (const l of $$(".tlLane")) l.classList.toggle("on", l.dataset.lane === e.lane);
-      renderDetail(key, dir, !!o.quiet);
-      if (o.scroll) scrollToEv(e);
+      for (const b of $$(".tlSt.ghost[data-stage]")) b.classList.toggle("sel", b.dataset.stage === stage);
+      const e = key ? S.byKey.get(key) : null, lane = e ? e.lane : (STAGES.find(s => s.k === stage) || {}).lane;
+      for (const l of $$(".tlLane")) l.classList.toggle("on", l.dataset.lane === lane);
+      if (o.scroll) scrollToEv(e || { x: parseFloat(ghost.style.left) });
       return true;
     }
     function scrollToEv(e) {
-      if (!e || !scroller.clientWidth || e.x == null) return;
+      if (!e || !scroller.clientWidth || !(e.x >= 0)) return;
       const sl = scroller.scrollLeft, cw = scroller.clientWidth;
       if (e.x < sl + 40 || e.x > sl + cw - 150) {
         const left = Math.max(0, e.x - cw * .6);
         try { scroller.scrollTo({ left, behavior: reduced() ? "auto" : "smooth" }); } catch (_) { scroller.scrollLeft = left; }
       }
-    }
-    function renderDetail(key, dir, quiet) {
-      const det = $(".tlDetail"), evs = S.shown, i = evs.findIndex(x => x.key === key);
-      if (i < 0) return;
-      const e = evs[i], D = S.D || derive(S.events, S.cancelled);
-      const ae = doc.activeElement, focused = ae && ae !== det && det.contains(ae) ? (ae.dataset && ae.dataset.step) || (ae.classList.contains("tlArw") ? "arw" : "*") : null;
-      const around = evs.slice(Math.max(0, i - 2), i + 3);
-      const { out: ba, used } = pairsOf(e.data);
-      const facts = factsOf(e, used);
-      let why = reasonOf(e);
-      if (!why && CANCEL_TYPES.has(e.type) && D.cancelled) why = D.cancelled.why;
-      const desc = e.text && e.text.length > 90 ? e.text : "";
-      const whyLbl = CANCEL_TYPES.has(e.type) ? "Why it was cancelled" : e.type === "removed" ? "Why it was taken off" : e.type === "held" ? "Why it was held" : "Reason";
-      const html = `<div class="tlDetIn">` +
-        `<span class="tlBig" tabindex="0" aria-label="${esc(labelOf(e.type) + " · " + longWhen(e.at) + " · " + whoOf(e))}" data-key="${esc(e.key)}" style="--rot:${rotOf(e)}deg">${stampSvg(e, true, { uid: detUid })}</span>` +
-        `<div class="tlDetMain"><span class="tlLbl">${esc(labelOf(e.type))} · milestone ${i + 1} of ${evs.length}${e.pending ? " · saving…" : ""}</span>` +
-        `<h3>${esc(titleOf(e))}</h3><div class="tlWhen">${esc(longWhen(e.at))} · ${esc(ago(e.at))}</div>` +
-        `<div class="tlBadgeRow">${badge(e)}</div>` +
-        (desc ? `<p>${esc(desc)}</p>` : "") +
-        (why ? `<div class="tlWhy"><b>${esc(whyLbl)}</b>${esc(why)}</div>` : "") +
-        ba.map(p => `<div class="tlBA"><div class="m"><i>${esc(p.what ? p.what + " · before" : "Before")}</i><span>${esc(fmt(p.a))}</span></div><span class="arr" aria-hidden="true">→</span><div class="m after"><i>${esc(p.what ? p.what + " · after" : "After")}</i><span>${esc(fmt(p.b))}</span></div></div>`).join("") +
-        (facts.length ? `<div class="tlMeta">${facts.map(([k, v]) => `<div class="m"><i>${esc(k)}</i><span>${esc(v)}</span></div>`).join("")}</div>` : "") +
-        nextHtml(D) +
-        `<div class="tlActs"><button type="button" class="btn ghost sm" data-step="-1"${i ? "" : " disabled"}>‹ Earlier</button><button type="button" class="btn ghost sm" data-step="1"${i < evs.length - 1 ? "" : " disabled"}>Later ›</button>` +
-        (e.sheetId && opts.onSheet ? openBtn("btn sm tlOpenSheet", e.sheetId, poolOf(e), linkSay(e.sheetId, poolOf(e))) : "") + `</div></div>` +
-        `<div class="tlAround"><span class="tlLbl">Around this step</span>${around.map(a => `<button type="button" class="tlArw${a.key === e.key ? " cur" : ""}" data-key="${esc(a.key)}"><span class="sv" data-key="${esc(a.key)}" style="transform:rotate(${rotOf(a)}deg)">${stampSvg(a, true, { tex: false })}</span><div><b>${esc(titleOf(a, 60))}</b><span>${esc(shortWhen(a.at))} · ${esc(whoOf(a))}</span></div></button>`).join("")}</div></div>`;
-      if (quiet && html === detHtml && det.firstChild && det.firstChild.classList.contains("tlDetIn")) return;
-      det.innerHTML = detHtml = html;
-      if (focused && !det.contains(doc.activeElement)) { const b = (focused === "arw" && det.querySelector(".tlArw.cur")) || det.querySelector(`[data-step="${focused}"]:not(:disabled)`) || det.querySelector("[data-step]:not(:disabled)"); if (b) b.focus({ preventScroll: true }); }
-      if (quiet) return;
-      const inn = det.firstChild;
-      anim(inn, [{ opacity: 0, transform: `translateX(${(dir || 0) * 14}px)${dir ? "" : " translateY(6px)"}` }, { opacity: 1, transform: "none" }], 280);
-      const big = inn.querySelector(".tlBig"), r = rotOf(e);
-      anim(big, [{ transform: `scale(1.35) rotate(${r - 6}deg)`, opacity: 0 }, { opacity: 1, offset: .55 }, { transform: `scale(1) rotate(${r}deg)`, opacity: 1 }], 500, { easing: SPRING });
-    }
-    function stepBy(d) {
-      const i = S.shown.findIndex(e => e.key === S.sel), j = clamp((i < 0 ? S.shown.length - 1 : i) + d, 0, S.shown.length - 1);
-      if (!S.shown[j] || S.shown[j].key === S.sel) return;
-      const onStamp = doc.activeElement && doc.activeElement.matches && doc.activeElement.matches(".tlSt[data-key]") && box.contains(doc.activeElement);
-      select(S.shown[j].key, d, { scroll: true });
-      if (onStamp) { const b = box.querySelector(`.tlSt[data-key="${cssEsc(S.shown[j].key)}"]`); if (b) b.focus({ preventScroll: true }); }
     }
     function findKey(id) {
       if (id == null) return null;
@@ -2026,7 +1863,7 @@
 
     /* ── the step explainer (Paul, 28 Sep, point 5): hovering a step (a rail's stop, a lane stamp, a dashed stamp to come)
        shows a small card BELOW its dot, what is done and what is still missing (the zoomed seal sits above: the dot stays
-       seen); a click on a step not done yet pins the fuller version in the detail below, never a pop-up on a pop-up.
+       seen); a click on a lane stamp only grows it where it stands, a click on a header rail's step opens the Timeline on it.
        Escape or a click elsewhere lets it go. opts.context() is what the host knows of the order (requirementsOf). ── */
     let expFor = null, expA = null;
     const ctxOf = () => { try { return (typeof opts.context === "function" ? opts.context() : opts.context) || null; } catch (err) { warn("context", err); return null; } };
@@ -2048,7 +1885,7 @@
       expFor = b;
       // the seal has grown where it stands: the card goes under what it has grown to (and, in a short view, beside it), never over it
       const sealEl = liftOf(b), zr = zoomRect(sealEl), whole = zr ? withZoom(b, sealEl) : b;
-      expA = placeExp(exp, hand ? head : head + reqCard(q), b.classList.contains("tlStop") ? b.querySelector(".tlSeal") || b : b, whole, zr && { left: zr.left, right: zr.right });
+      expA = placeExp(exp, hand ? head : head + reqCard(q, compact ? "click to open it on the Timeline" : ""), b.classList.contains("tlStop") ? b.querySelector(".tlSeal") || b : b, whole, zr && { left: zr.left, right: zr.right });
       exp.classList.add("on");
     }
     function hideExp(now) {
@@ -2057,80 +1894,29 @@
       if (now) { if (expA) { try { expA.cancel(); } catch (_) {} } expA = null; exp.style.display = "none"; exp.innerHTML = ""; return; }
       expA = fadeExp(exp, expA);
     }
-    function nextHtml(D) {
-      if (!D || D.cancelled || D.cur < 0) return "";
-      const q = reqOf(D.cur); if (!q || !q.need.length) return "";
-      return `<div class="tlStepReq"><div class="tlPinH" style="justify-content:flex-start"><span class="tlLbl">Next for this order</span><span class="xs now">${esc(q.label)}</span></div>${reqLines(q, false)}<button type="button" class="tlLink" data-pin="${esc(q.k)}" style="margin-top:9px">All that ${esc(q.label)} needs</button></div>`;
-    }
-    const sealSelector = ".tlStop .tlSeal:not(.pending), .tlSt[data-key]:not(.pending), .tlSt.ghost[data-stage], .tlBig, .tlArw .sv, .tlPath2 .sv, .tlLegend .sv, .tlCxStamp";
+    const sealSelector = ".tlStop .tlSeal:not(.pending), .tlSt[data-key]:not(.pending), .tlSt.ghost[data-stage], .tlCxStamp";
     const sealHover = restOnSeal(box, node => node.closest?.(sealSelector), (seal, kb, click) => {
       const b = seal.closest(".tlStop") || seal;
       showZoom(b, kb);
-      if (!click && b.matches(".tlSt, .tlStop")) showExp(b);   // (a click does its own thing below: it selects, pins or opens the step)
+      if (!click && b.matches(".tlSt, .tlStop")) showExp(b);   // (a click only grows the seal; on the header rail it also opens the step on the Timeline)
     }, now => { hideZoom(now); hideExp(now); });
     function focusedSeal(ev) {
-      const b = ev.target.closest?.(".tlStop, .tlSt[data-key], .tlBig, .tlArw, .tlPath2 button, .tlLegend .sv, .tlCxStamp");
-      return b && b.matches(":focus-visible") ? b.matches(".tlArw, .tlPath2 button") ? b.querySelector(".sv") : liftOf(b) : null;
+      const b = ev.target.closest?.(".tlStop, .tlSt[data-key], .tlCxStamp");
+      return b && b.matches(":focus-visible") ? liftOf(b) : null;
     }
     function expFocus(ev) { const b = focusedSeal(ev); if (b && !b.classList.contains("pending")) sealHover.open(b, true); }
-    function expBlur(ev) { const b = ev.target.closest?.(".tlStop, .tlSt[data-key], .tlBig, .tlArw, .tlPath2 button, .tlLegend .sv, .tlCxStamp"); if (b && (b.matches(".tlArw, .tlPath2 button") ? b.querySelector(".sv") : liftOf(b)) === sealHover.current) sealHover.cancel(); }
-    /** Pins a step's fuller explainer in the detail below; → true when shown. */
-    function pin(i) {
-      const s = STAGES[i]; if (!s || compact || !S.loaded) return false;
-      const was = S.pin; S.pin = s.k; hideExp(true);
-      renderPin(was === s.k);
-      for (const b of $$(".tlStop")) b.classList.toggle("pinned", b.dataset.stage === s.k);
-      return true;
-    }
-    function unpin() {
-      if (!S.pin) return;
-      S.pin = null; for (const b of $$(".tlStop.pinned")) b.classList.remove("pinned");
-      const k = S.sel && S.shownKeys.has(S.sel) ? S.sel : (S.shown[S.shown.length - 1] || {}).key;
-      if (k) renderDetail(k, 0); else $(".tlDetail").innerHTML = detHtml = "";
-    }
-    function renderPin(quiet) {
-      const i = STAGES.findIndex(s => s.k === S.pin), q = i >= 0 ? reqOf(i) : null, det = $(".tlDetail");
-      if (!q) { S.pin = null; return false; }
-      const D = S.D, ev = q.state === "done" ? D.stages[i].first : null, s = STAGES[i];
-      const seal = ev ? stampSvg(ev, true, { uid: detUid }) : stampSvg({ key: "pin-" + s.k, type: s.kind, at: 0 }, false, { ghost: 1 });
-      const sheet = (ev && ev.sheetId && ev) || S.events.filter(e => e.sheetId).pop();
-      const path = (D.rail || STAGES.map((x, j) => ({ s: x, i: j }))).map(({ s: x, i: j }) => { const r = reqOf(j), f = D.stages[j].first; return `<button type="button" class="${r.state}${j === i ? " cur" : ""}" data-pin="${x.k}"><span class="sv" data-stage="${esc(x.k)}"${f && r.state === "done" ? ` data-key="${esc(f.key)}"` : ""}>${f && r.state === "done" ? stampSvg(f, true, { tex: false }) : stampSvg({ key: "p-" + x.k, type: x.kind, at: 0 }, false, { ghost: 1 })}</span><b>${esc(x.l)}</b><span>${esc(r.state === "done" && f ? shortWhen(f.at) : STATE_WORD[r.state] || "")}</span></button>`; }).join("");
-      const html = `<div class="tlDetIn tlPin"><span class="tlBig" tabindex="0" aria-label="${esc(s.l + " · " + (ev ? longWhen(ev.at) + " · " + whoOf(ev) : STATE_WORD[q.state] || q.state))}" data-stage="${esc(s.k)}"${ev ? ` data-key="${esc(ev.key)}"` : ""} style="--rot:${ev ? rotOf(ev) : 0}deg">${seal}</span>` +
-        `<div class="tlDetMain"><div class="tlPinH" style="justify-content:flex-start"><span class="tlLbl">${q.n ? `Step ${q.n} of ${q.of}` : "Not a step of this order"}</span><span class="xs ${q.state}${partDone(q) ? " now" : ""}">${esc(partDone(q) ? "Part done" : STATE_WORD[q.state] || "")}</span></div>` +
-        `<h3>${esc(s.l)}</h3><div class="tlWhen">${q.state === "done" || q.state === "skipped" ? "What was done" : q.need.some(n => n.kind === "person") ? "Waiting on a person" : "What is still missing"}</div>` +
-        reqLines(q, true) +
-        `<div class="tlActs">${ev ? `<button type="button" class="btn ghost sm" data-open-ev="${esc(ev.key)}">Show the step</button>` : ""}${sheet && opts.onSheet ? openBtn("btn ghost sm tlOpenSheet", sheet.sheetId, poolOf(sheet), linkSay(sheet.sheetId, poolOf(sheet))) : ""}<button type="button" class="btn ghost sm" data-unpin>Close</button></div></div>` +
-        `<div class="tlAround"><span class="tlLbl">The path</span><div class="tlPath2">${path}</div></div></div>`;
-      if (quiet && html === detHtml) return true;
-      det.innerHTML = detHtml = html;
-      if (!quiet) anim(det.firstChild, [{ opacity: 0, transform: "translateY(6px)" }, { opacity: 1, transform: "none" }], 280);
-      return true;
-    }
-    /** A click anywhere but the pinned step, its detail and the rails lets the pin go. */
-    function onDocDown(ev) {
-      if (!S.pin) return;
-      const t = ev.target;
-      if (t && t.closest && (t.closest(".tlDetail") || t.closest(".tlStop") || t.closest(".tlSt"))) return;
-      unpin();
-    }
-    function onDocKey(ev) { if (ev.key === "Escape" && S.pin) { unpin(); } }
+    function expBlur(ev) { const b = ev.target.closest?.(".tlStop, .tlSt[data-key], .tlCxStamp"); if (b && liftOf(b) === sealHover.current) sealHover.cancel(); }
 
-    /* ── clicks and keys ── */
+    /* ── clicks ── */
     function onClick(ev) {
       const t = ev.target; if (!t || !t.closest) return;
-      const pk = t.closest("[data-pin]"); if (pk) { pin(STAGES.findIndex(s => s.k === pk.dataset.pin)); return; }
-      if (t.closest("[data-unpin]")) { unpin(); return; }
-      const oe = t.closest("[data-open-ev]"); if (oe) { S.pin = null; for (const b of $$(".tlStop.pinned")) b.classList.remove("pinned"); select(oe.dataset.openEv, 0, { scroll: true }); return; }
-      const gh = t.closest(".tlSt.ghost[data-stage]"); if (gh) { pin(STAGES.findIndex(s => s.k === gh.dataset.stage)); return; }
-      const chip = t.closest(".tlChip"); if (chip) { toggleLegend(); return; }
       const os = t.closest(".tlOpenSheet"); if (os && os.getAttribute("aria-disabled") === "true") { ev.preventDefault(); return; }
       if (os) { ev.preventDefault(); hideZoom(true); try { if (typeof opts.onSheet === "function") opts.onSheet(os.dataset.sheet, os.dataset.pool || null); } catch (e) { try { console.warn("[OrderTimelineUI] onSheet:", e); } catch (_) {} } return; }
-      const st = t.closest(".tlSt[data-key], .tlArw[data-key]");
-      if (st) { const k = st.dataset.key, a = S.shown.findIndex(e => e.key === S.sel), b = S.shown.findIndex(e => e.key === k); select(k, a < 0 || a === b ? 0 : b > a ? 1 : -1, { scroll: st.classList.contains("tlArw") }); return; }
-      const step = t.closest("[data-step]"); if (step) { stepBy(+step.dataset.step || 0); return; }
       const stop = t.closest(".tlStop"); if (stop) { stageClick(stop, ev); return; }
       if (t.closest(".tlRetry")) { load(true); return; }
     }
+    /** A step of the rail: compact hands it to the host (which opens its Timeline on it); on the chart's own rail it rings that step's seal
+     *  (or, for a step not reached, its dashed stamp). */
     function stageClick(stop, click) {
       const e = evOfEl(stop);
       const i = STAGES.findIndex(s => s.k === stop.dataset.stage), last = S.D && i >= 0 && (!S.D.fenced || stepDone(S.D, i)) && S.D.stages[i].last;
@@ -2138,20 +1924,13 @@
       if (!target || !target.key || !S.byKey.has(target.key)) {
         if (i >= 0 && S.loaded) {
           if (compact) { if (click) click.preventDefault(); handOver({ stage: STAGES[i].k }); return; }
-          if (pin(i)) return;
+          if (mark({ stage: STAGES[i].k }, { scroll: true })) return;
         }
         anim(stop.querySelector(".tlSeal"), [{ transform: "translateX(0)" }, { transform: "translateX(-3px)" }, { transform: "translateX(3px)" }, { transform: "translateX(0)" }], 300);
         return;
       }
       if (compact) { if (click) click.preventDefault(); handOver(target); return; }
-      const a = S.shown.findIndex(x => x.key === S.sel), b = S.shown.findIndex(x => x.key === sealKey(target.key));
-      select(target.key, a < 0 || a === b ? 0 : b > a ? 1 : -1, { scroll: true });
-    }
-    function onKey(ev) {
-      if (ev.key !== "ArrowLeft" && ev.key !== "ArrowRight") return;
-      const t = ev.target; if (!t || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName) || t.isContentEditable) return;
-      if (!t.closest || !t.closest(".tlGrid, .tlDetail")) return;
-      ev.preventDefault(); stepBy(ev.key === "ArrowLeft" ? -1 : 1);
+      mark(target.key, { scroll: true });
     }
 
     /* ── live ── */
@@ -2199,17 +1978,14 @@
         const i = STAGES.findIndex(s => s.k === ev.stage); if (i < 0) return false;
         if (compact) { handOver({ stage: ev.stage }); return true; }
         if (!S.loaded) { S.pendingFocus = ev; return false; }
-        return pin(i);
+        return mark({ stage: ev.stage }, { scroll: true });
       }
       const id = ev && typeof ev === "object" ? (ev.key && S.byKey.has(ev.key) ? ev.key : ev.id || ev.eventId || ev.key) : ev;
       if (!S.loaded) { S.pendingFocus = id; return false; }
       const k = findKey(id); if (!k) return false;
       const e = S.byKey.get(k);
       if (compact) { handOver(e); return true; }
-      if (!select(k, 0, { scroll: true })) return false;
-      const b = box.querySelector(`.tlSt[data-key="${cssEsc(sealKey(k))}"]`);
-      if (b) { try { b.scrollIntoView({ block: "nearest", inline: "nearest", behavior: reduced() ? "auto" : "smooth" }); } catch (_) {} }
-      return true;
+      return mark(k, { scroll: true });
     }
     function destroy() {
       if (fitObserver) fitObserver.disconnect();
@@ -2223,9 +1999,8 @@
       unsub = unfeed = null;
       doc.removeEventListener("visibilitychange", onVis);
       sealHover.destroy();
-      box.removeEventListener("click", onClick); box.removeEventListener("keydown", onKey);
+      box.removeEventListener("click", onClick);
       box.removeEventListener("focusin", expFocus); box.removeEventListener("focusout", expBlur);
-      doc.removeEventListener("pointerdown", onDocDown, true); doc.removeEventListener("keydown", onDocKey);
       scroller.removeEventListener("scroll", onScroll);
       try { for (const a of box.getAnimations({ subtree: true })) a.cancel(); } catch (_) {}
       if (tb) { bar.removeEventListener("click", onClick); bar.remove(); }
@@ -2241,9 +2016,8 @@
     }
     root.addEventListener("resize", fitAll);
     if (typeof root.ResizeObserver === "function") { fitObserver = new root.ResizeObserver(fitAll); fitObserver.observe(el); }
-    box.addEventListener("click", onClick); box.addEventListener("keydown", onKey);
+    box.addEventListener("click", onClick);
     box.addEventListener("focusin", expFocus); box.addEventListener("focusout", expBlur);
-    if (!compact) { doc.addEventListener("pointerdown", onDocDown, true); doc.addEventListener("keydown", onDocKey); }
     if (tb) bar.addEventListener("click", onClick);
     scroller.addEventListener("scroll", onScroll, { passive: true });
     paintRail(railed(derive([], null), pieceNow() ? withDone(stagesFor(pieceNow().line), []) : railNow([])), { first: true });
