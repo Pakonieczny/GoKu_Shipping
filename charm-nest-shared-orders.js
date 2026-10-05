@@ -211,17 +211,39 @@
     }
     return items;
   }
+  /** The sheets OrderPieces knows the moving sheets' orders sit on that this page does not list (a saved sheet of another run, one
+   *  the Library has not drawn): added as sheets with just those pieces, so the page never answers "nothing" for want of a row. */
+  function withKnown(list, moving) {
+    const OP = root.OrderPieces; if (!OP || typeof OP.of !== 'function') return list;
+    const by = new Map(list.map(s => [s.id, s])), orders = new Set();
+    for (const id of moving) { const s = by.get(id); if (s) for (const p of s.pieces) orders.add(p.orderId); }
+    const extra = new Map();
+    for (const oid of orders) {
+      const ps = safe(() => OP.of(oid), null); if (!Array.isArray(ps)) continue;
+      for (const p of ps) {
+        if (!p || !p.sheetId || by.has(p.sheetId)) continue;
+        let s = extra.get(p.sheetId); if (!s) extra.set(p.sheetId, s = { id: p.sheetId, label: p.sheetLabel || p.sheetId, metal: p.metal || '', setId: p.setId || null, runId: null, fixed: '', pieces: [], cutAll: true });
+        if (!s.pieces.some(x => x.key === p.key)) s.pieces.push({ key: String(p.key), orderId: oid });
+        if (p.state !== 'cut') s.cutAll = false;
+      }
+    }
+    if (!extra.size) return list;
+    for (const s of extra.values()) { s.fixed = fixedWhy(s.cutAll ? { laserDoneAt: 1 } : {}, s.setId ? setDoc(s.setId, null) : null); delete s.cutAll; }
+    return list.concat([...extra.values()]);
+  }
   /** between(idOrSetId, targetSetIdOrNull, {kind?, together?}) from what the page holds. Sync, pure, no network. */
   function pageBetween(id, targetSetId, opts = {}) {
-    const list = pageSheets(), id0 = String(id || ''), kind = opts.kind || kindOf(list, id0);
+    let list = pageSheets(); const id0 = String(id || ''), kind = opts.kind || kindOf(list, id0);
     if (!kind) return [];
     let moving = kind === 'set' ? list.filter(s => s.setId === id0).map(s => s.id) : [id0];
+    list = withKnown(list, moving);
     if (opts.together) moving = [...new Set(moving.flatMap(x => groupOf(list, x).ids))];
     const dest = targetSetId ? String(targetSetId) : kind === 'set' ? id0 : null;
     return enrich(between(list, moving, dest === 'new' ? 'new' : dest));
   }
   function pageGroupOf(sheetId) {
-    const list = pageSheets(), g = groupOf(list, String(sheetId)), by = new Map(list.map(s => [s.id, s]));
+    let list = pageSheets(); list = withKnown(list, [String(sheetId)]);
+    const g = groupOf(list, String(sheetId)), by = new Map(list.map(s => [s.id, s]));
     return { ids: g.ids, labels: g.ids.map(i => (by.get(i) || {}).label || i), members: g.ids.map(i => ({ id: i, label: (by.get(i) || {}).label || i, setId: (by.get(i) || {}).setId || null })), orders: g.orders, sets: [...new Set(g.ids.map(i => (by.get(i) || {}).setId).filter(Boolean))] };
   }
   function pageComposition() { return composition(pageSheets()); }

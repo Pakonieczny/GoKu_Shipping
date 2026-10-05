@@ -2721,22 +2721,32 @@ const Gate = window.Gate = (() => {
     const name = p => `${labelOf(p.metal)} Sheet ${p.page}`;
     const buyer = id => { const r = Orders.rows().find(r => String(r.order?.receiptId) === id); return r?.order?.buyer?.name || ""; };
     const others = split.map(x => x.sheet), orders = [...new Set(split.flatMap(x => x.orders))], one = orders.length === 1;
-    const line = x => `<li><b>${esc(name(x.sheet))}</b><span>${x.orders.slice(0, 4).map(id => `Order ${esc(id)}${buyer(id) ? ` · ${esc(buyer(id))}` : ""}`).join("<br>")}${x.orders.length > 4 ? `<br>and ${x.orders.length - 4} more` : ""}</span></li>`;
+    const line = x => `<li><b>${esc(name(x.sheet))}</b><span>${!x.orders.length ? "shares an order with another of these sheets" : x.orders.slice(0, 4).map(id => `Order ${esc(id)}${buyer(id) ? ` · ${esc(buyer(id))}` : ""}`).join("<br>")}${x.orders.length > 4 ? `<br>and ${x.orders.length - 4} more` : ""}</span></li>`;
     return new Promise(resolve => {
       const d = document.createElement("dialog"); d.className = "splitDlg"; d.setAttribute("aria-labelledby", "splitT"); d.setAttribute("aria-describedby", "splitP");
       d.innerHTML = `<div class="dlg"><div class="dlgHead"><h3 id="splitT">${one ? "An order is" : orders.length + " orders are"} on two sheets</h3></div>
-        <div class="dlgBody"><p id="splitP">${esc(name(sh))} shares ${one ? "an order" : orders.length + " orders"} with ${others.length > 1 ? "sheets that are" : "a sheet that is"} ${included ? "not in the current set" : "staying in the current set"}. ${included ? "Included" : "Taken out"} on its own, ${one ? "the order is" : "these orders are"} cut in two parts, at different times.</p><ul class="splitList">${split.map(line).join("")}</ul></div>
-        <div class="dlgFoot"><div class="left"><button type="button" class="btn ghost sm" data-k="cancel">Cancel</button></div><button type="button" class="btn ghost sm" data-k="one">Only ${esc(name(sh))}</button><button type="button" class="btn sage sm" data-k="all">${included ? "Include" : "Take out"} ${others.length > 1 ? "all " + (others.length + 1) + " sheets" : "both sheets"}</button></div></div>`;
+        <div class="dlgBody"><p id="splitP">${esc(name(sh))} shares ${one ? "an order" : orders.length + " orders"} with ${others.length > 1 ? "sheets that are" : "a sheet that is"} ${included ? "not in the current set" : "staying in the current set"}. Sheets that share an order are always in the same set, so they are ${included ? "included" : "taken out"} together.</p><ul class="splitList">${split.map(line).join("")}</ul></div>
+        <div class="dlgFoot"><div class="left"><button type="button" class="btn ghost sm" data-k="cancel">Cancel</button></div><button type="button" class="btn sage sm" data-k="all">${included ? "Include" : "Take out"} ${others.length > 1 ? "all " + (others.length + 1) + " sheets" : "both sheets"}</button></div></div>`;
       document.body.appendChild(d);
       const done = v => { if (d.open) d.close(); d.remove(); resolve(v); };
       d.querySelector("[data-k=all]").onclick = () => done([sh, ...others]);
-      d.querySelector("[data-k=one]").onclick = () => done([sh]);
       d.querySelector("[data-k=cancel]").onclick = () => done(null);
       d.addEventListener("cancel", e => { e.preventDefault(); done(null); });
       d.showModal(); d.querySelector("[data-k=all]").focus();
     });
   }
+  /* The cardinal rule of a Set of Sheets (Paul, 5 Oct; charm-nest-shared-orders.js): every sheet that shares a multi-piece order with
+     another is in the SAME set. policy() is the sheet's own release rule (basePolicy) with the rule's two marks on top: cardinalApply
+     (below) reads the live pages at every assembly and marks which sheets the rule pulls in with a partner (cardinalPull) and which
+     wait for a partner that cannot join yet (cardinalHold). The marks are derived, never saved: recomputed from the pages each time,
+     so an order taken off, a piece nested somewhere else or a sheet finishing moves the sets at once. */
   function policy(sh, seq, choices = selected()) {
+    const r = basePolicy(sh, seq, choices);
+    if (sh.cardinalHold && r.include) return Object.assign({}, r, { include: false, reason: sh.cardinalHold });
+    if (sh.cardinalPull && !r.include) return Object.assign({}, r, { include: true, reason: sh.cardinalPull });
+    return r;
+  }
+  function basePolicy(sh, seq, choices = selected()) {
     return O_.sheetRelease({ material: sh.metal, verified: !!sh.verification?.ok, placed: sh.placements.length,
       stopped: sh.endedBy === "stopped", dirty: sh.dirty || ["nesting", "finishing", "queued"].includes(sh.status), full: !!sh.releaseFull, topup: sh.topup && !sh.topup.closedAt ? { tried: (sh.topup.tried || []).length, of: TOPUP.orders } : false }, { seq, selected: solid(sh.metal) ? Object.assign({}, choices, { [sh.metal]: picked(sh, choices) }) : choices });
   }
@@ -2764,6 +2774,84 @@ const Gate = window.Gate = (() => {
   const holding = p => !!p.keepRelease && Date.now() - (+p.keepRelease.at || 0) < 600000;
   /** A released sheet that pieces are taken off keeps its set and gets its label made again (see holding). */
   const keep = p => { if ((p.releaseFull || (p.setId && !p.draft)) && !p.roseCutAt && !p.laserDoneAt && !p.recalled) p.keepRelease = { full: !!p.releaseFull, at: Date.now() }; };
+  const SOrd = () => (window.SharedOrders && window.SharedOrders.fromPage && window.SharedOrders.core) ? window.SharedOrders : null;
+  const sheetNameOf = p => `${labelOf(p.metal)} Sheet ${p.page}`;
+  const ordersWords = os => os.length === 1 ? `order ${os[0]}` : `orders ${os.slice(0, 3).join(", ")}${os.length > 3 ? " and more" : ""}`;
+  /** The run's pages as the rule reads them: { sheets: [core sheets], page: id -> page, id: page -> id }. */
+  function cardinalView(run) {
+    const SO = SOrd(); if (!SO || !run) return null;
+    const sheets = [], page = new Map(), idOf = new Map();
+    for (const p of allSheets().filter(p => p.runId === run.runId)) { const n = SO.fromPage(p); if (n) { sheets.push(n); page.set(n.id, p); idOf.set(p, n.id); } }
+    return { SO, sheets, page, idOf, norm: new Map(sheets.map(n => [n.id, n])) };
+  }
+  /** Why a sheet cannot join a set now, in plain words ("" when it can). `ready` = the run's sheets with saved files. */
+  function cannotJoin(p, ready) {
+    if (p.metal === "rose") return "a Rose Gold sheet joins a set only by its own Cut Sheet press";
+    if (p.endedBy === "stopped") return "its nesting was stopped";
+    if (p.dirty || ["nesting", "finishing", "queued"].includes(p.status) || (p.persisted && !p.persistedDone)) return "it is still being nested or saved";
+    if (!(p.placements || []).length) return "nothing is placed on it";
+    if (!p.verification?.ok) return "its layout has not been verified yet";
+    if (!ready.has(p)) return "its sheet files are not saved yet";
+    return "";
+  }
+  /** Marks the run's pages (p.cardinalPull / p.cardinalHold / p.cardinalNote) from the live pages: assembleNow and validateRelease. */
+  function cardinalApply(run, pages, set, choices = selected()) {
+    for (const p of allSheets().filter(p => p.runId === run.runId)) { delete p.cardinalPull; delete p.cardinalHold; delete p.cardinalNote; }
+    const V = cardinalView(run); if (!V) return [];
+    const ready = new Set(pages), seq = set ? set.seq : 2, wants = p => basePolicy(p, seq, choices).include, inSetNow = p => !!set && p.setId === set.setId && !p.draft;
+    const out = [];
+    for (const g of V.SO.core.groups(V.sheets)) {
+      const members = g.ids.map(id => V.page.get(id)).filter(Boolean), orders = g.orders, fixed = g.ids.filter(id => V.norm.get(id).fixed);
+      if (fixed.length) {
+        // a sheet of the group is cut, or in a set already sent to the station: the others can never be in its set. Nothing is held back
+        // for it (the work goes on); each sheet that is not fixed says so, with the exact reason.
+        const why = fixed.map(f => `${V.norm.get(f).label}: ${V.norm.get(f).fixed}`).join("; ");
+        for (const p of members) if (!fixed.includes(V.idOf.get(p))) p.cardinalNote = `${ordersWords(orders)} also on ${why}, so ${members.length > 2 ? "they cannot" : "it cannot"} be in the same set`;
+        out.push({ ids: g.ids, orders, state: "fixed", why });
+        continue;
+      }
+      const wanting = members.filter(wants); if (!wanting.length) continue;
+      const need = members.filter(p => !wants(p)), stuck = need.map(p => ({ p, w: cannotJoin(p, ready) })).filter(x => x.w);
+      const together = o => `Shares ${ordersWords(orders)} with ${members.filter(m => m !== o).map(sheetNameOf).join(", ")}`;
+      if (!stuck.length) { for (const p of need) p.cardinalPull = together(p); out.push({ ids: g.ids, orders, state: "together", why: "" }); continue; }
+      const waits = stuck.map(x => `${sheetNameOf(x.p)} (${x.w})`).join("; ");
+      if (wanting.some(inSetNow)) {
+        // the set is started: the sheets that can come do, the rest are told about
+        for (const p of need) if (!stuck.some(x => x.p === p)) p.cardinalPull = together(p);
+        for (const p of members) p.cardinalNote = `${ordersWords(orders)} also on ${stuck.map(x => sheetNameOf(x.p)).join(", ")}, which cannot join the set yet: ${stuck.map(x => x.w).join("; ")}`;
+        out.push({ ids: g.ids, orders, state: "partial", why: waits });
+        continue;
+      }
+      // nothing of it is in the set yet: nobody starts a split; the sheets that want in wait for the others
+      for (const p of wanting) p.cardinalHold = `Waits for ${waits}: sheets that share ${ordersWords(orders)} go into the set together`;
+      out.push({ ids: g.ids, orders, state: "waiting", why: waits });
+    }
+    return out;
+  }
+  /** What the rule says of one sheet changing set on its own (a tick of Include): { list: the solid sheets that change with it,
+   *  blocked: the plain reason it cannot ("" when it can), orders }. */
+  function cardinalFor(sh, included) {
+    const run = B.run, V = run && sh.runId === run.runId ? cardinalView(run) : null, me = V && V.idOf.get(sh);
+    if (!V || !me) return { list: [sh], blocked: "", orders: [] };
+    const g = V.SO.core.groupOf(V.sheets, me); if (g.ids.length < 2) return { list: [sh], blocked: "", orders: [] };
+    const members = g.ids.map(id => V.page.get(id)).filter(Boolean), set = Sets.ofRun(run.runId).find(s => s.group === "dispatch" && !s.committedAt), seq = set ? set.seq : 2;
+    const list = members.filter(p => solid(p.metal) && membershipEditable(p) && (p === sh || picked(p) !== !!included)), reasons = [];
+    const shares = p => g.orders.filter(o => V.norm.get(V.idOf.get(p)).pieces.some(x => x.orderId === o));   // (the orders this sheet carries of the group's)
+    for (const p of members) {
+      if (list.includes(p)) continue;
+      const n = V.norm.get(V.idOf.get(p)), on = `${ordersWords(shares(p))} also on ${sheetNameOf(p)}`;
+      if (n && n.fixed) reasons.push(`${on}, which cannot change set: ${n.fixed}`);
+      else if (included && p.metal === "rose" && !basePolicy(p, seq).include) reasons.push(`${on}, and a Rose Gold sheet joins a set only by its own Cut Sheet press`);
+      else if (!included && basePolicy(p, seq).include) reasons.push(`${on}, which is in the set on its own (${basePolicy(p, seq).reason.toLowerCase()})`);
+    }
+    return { list: list.length ? list : [sh], orders: g.orders, blocked: reasons.length ? `${reasons.join("; ").replace(/^o/, "O")}. Sheets that share a multi-piece order stay in the same set: take the order off one of the sheets.` : "" };
+  }
+  /** The multi-piece orders of a set's sheets that also have pieces on a sheet of its run outside it that could still join it. */
+  function cardinalSplit(set) {
+    const V = B.run && B.run.runId === set.runId ? cardinalView(B.run) : null; if (!V) return [];
+    const ids = V.sheets.filter(n => n.setId === set.setId).map(n => n.id);
+    return V.SO.core.between(V.sheets, ids, set.setId).filter(it => it.thereIds.some(i => !V.norm.get(i).fixed));
+  }
   let assemblyQueue = Promise.resolve();
   function assemble(run, context) {
     const ops = window.CharmNestOperations;
@@ -2778,11 +2866,13 @@ const Gate = window.Gate = (() => {
     const committedSheets = new Set(Sets.ofRun(run.runId).filter(s => s.committedAt).flatMap(s => s.sheetIds));
     const pages = allSheets().filter(p => p.runId === run.runId && p.outputs && p.persistedDone && !committedSheets.has(p.sheetId));
     let set = Sets.ofRun(run.runId).find(s => s.group === "dispatch" && !s.committedAt);
+    cardinalApply(run, pages, set, choices);   // (sheets that share a multi-piece order come in together, or wait together)
     const regular = pages.filter(p => p.metal !== "rose" && release(p, 2).include);
     const roses = pages.filter(p => p.metal === "rose" && release(p, 2).include);
     if (!set && (regular.length || roses.length)) set = await Sets.ensure(run.runId, "dispatch", { roseOnly: !regular.length && choices.rose !== true });
     if (!set) { run.heldSheets = pages.length; return; }
     if (set.committedAt) return;
+    cardinalApply(run, pages, set, choices);   // (again with the set's own number: Rose Gold's even-numbered rule reads it)
     // (a sheet being rewritten by hand in the sheet window keeps its place and gets its new label once it is written)
     for (const sh of allSheets().filter(p => p.runId === run.runId && p.setId === set.setId && !holding(p) && !release(p, set.seq).include)) {
       const previous = {draft:sh.draft,setId:sh.setId,seq:sh.seq,sheetIndex:sh.sheetIndex,label:sh.label};
@@ -2818,7 +2908,7 @@ const Gate = window.Gate = (() => {
       // Membership changes reuse verified artwork and approved backs. Only the
       // manifest metadata and QR need saving; never re-render/re-upload the AI.
       try {
-        await api("charmNestLibrary", {op:"putSheet", sheet:{id:sh.sheetId,draft:false,setId:set.setId,setSeq:set.seq,sheetIndex:sh.sheetIndex,fileBase:sh.fileBase,folder:sh.fileBase,solidIncluded:solid(sh.metal) ? picked(sh, choices) : null}});
+        await api("charmNestLibrary", {op:"putSheet", sheet:{id:sh.sheetId,draft:false,setId:set.setId,setSeq:set.seq,sheetIndex:sh.sheetIndex,fileBase:sh.fileBase,folder:sh.fileBase,solidIncluded:solid(sh.metal) ? (picked(sh, choices) ? true : sh.cardinalPull ? null : false) : null}});   // (a solid sheet the cardinal rule pulled in is in without its own tick: null, so it never reloads as ticked)
         await Sets.onSheetSaved(sh, sh.charms, undefined, {setOverride:set});
         if (Engrave.saveSheetBacks) await Engrave.saveSheetBacks(sh);
         sh.problem = null;
@@ -2850,7 +2940,7 @@ const Gate = window.Gate = (() => {
     const set = Sets.ofRun(run.runId).find(s=>s.group==='dispatch');
     return rows.map(row=>{
       if(row.runId!==run.runId || !solid(row.metal)) return row;
-      const live=allSheets().find(p=>p.sheetId===row.id), included=live ? picked(live) : !!selected()[row.metal] && row.solidIncluded!==false;
+      const live=allSheets().find(p=>p.sheetId===row.id), included=live ? picked(live) || !!live.cardinalPull : !!selected()[row.metal] && row.solidIncluded!==false;
       return {...row,solidIncluded:included,...(!included ? {draft:true,setId:null,setSeq:null,sheetIndex:null,label:null} : set && live && policy(live,set.seq).include ? {draft:false,setId:set.setId,setSeq:set.seq,sheetIndex:live.sheetIndex || row.sheetIndex} : {})};
     });
   }
@@ -2948,13 +3038,21 @@ const Gate = window.Gate = (() => {
     const include=node.querySelector('[data-solid="include"]');include.checked=!!included;include.disabled=!membershipEditable(sh)||!!sh.roseCutAt;
     // a locked checkbox says why, as the size control below it does
     const runNow=B.run,locked=!include.disabled?'':sh.roseCutAt?'Cut · it stays in its set':sh.recalled?'A saved sheet · its set is fixed':runNow&&['complete','abandoned'].includes(runNow.status)?'The run is finished':committing(runNow)?'The set is being committed':'This sheet is in a committed set · it stays there';
-    node.querySelector('[data-solid="status"]').textContent=R.membershipError?'Selection not saved':R.membershipPending?'Saving selection…':locked;
+    node.querySelector('[data-solid="status"]').textContent=R.membershipError?'Selection not saved':R.membershipPending?'Saving selection…':locked||sh.cardinalHold||sh.cardinalPull||sh.cardinalNote||'';
     if(sh.el)sh.el.querySelector(".shHead").title=policy(sh,seq).reason;   // the same hover answer the Gold and Silver cards give
     const retry=node.querySelector('[data-solid="retry"]');retry.hidden=!R.membershipError;
     retry.onclick=()=>changeMembership(m,m==='rose'?!!selected()[m]:picked(sh),sh).catch(()=>{});
     include.onchange=async e=>{
       if(!membershipEditable(sh))return renderRelease(sh,node);
-      const want=e.target.checked,split=solid(m)?splitWith(sh,want):[];let list=[sh];
+      const want=e.target.checked,rule=solid(m)?cardinalFor(sh,want):{list:[sh],blocked:''};let list=[sh];
+      // the cardinal rule: sheets that share a multi-piece order change set together; one that cannot follow stops the change, and says why
+      if(rule.blocked){
+        const details=node.querySelector('.sheetOptions');if(details){details.open=false;(R.optionsOpen ||= {})[m]=false;}
+        renderRelease(sh,node);
+        if(window.SharedOrdersModal&&SharedOrdersModal.open)try{SharedOrdersModal.open({sheetId:sh.sheetId,targetSetId:null,reason:rule.blocked});return;}catch(_){/* the toast says it */}
+        return toast(rule.blocked,'bad',12000);
+      }
+      const split=rule.list.length>1?rule.list.filter(p=>p!==sh).map(p=>({sheet:p,orders:[...ordersOn(p)].filter(id=>ordersOn(sh).has(id))})):[];
       if(split.length){
         const details=node.querySelector('.sheetOptions');if(details){details.open=false;(R.optionsOpen ||= {})[m]=false;}
         list=await askSplit(sh,want,split);
@@ -3721,7 +3819,8 @@ const Gate = window.Gate = (() => {
     el2.className = cls; el2.classList.remove("hidden"); el2.innerHTML = html;
     const b = el2.querySelector("[data-gate]"); if (b) b.onclick = () => { b.disabled = true; (b.dataset.gate === "release" ? release(m) : cutAnyway(m)).catch(e => toast(e.message, "bad", 6000)); };
   }
-  return { solidSelected:(m, sh) => sh && solid(m) ? picked(sh) : anyPicked(m), splitWith, changeMembership, flush, projectLibraryRecords, refreshMembership, load, plan, afterPool, release, cutAnyway, renderCard, footprint, modern, policy, assemble, holding, keep, upgrade, selected, nestable, renderRelease, mergePlan, mergeSheets, mergeStage, mergeFx: () => ({ live: FX.size }), state: () => R };
+  return { solidSelected:(m, sh) => sh && solid(m) ? picked(sh) || !!sh.cardinalPull : anyPicked(m),   // (a solid sheet the cardinal rule pulled in is in the set)
+     splitWith, cardinalFor, cardinalApply, cardinalSplit, changeMembership, flush, projectLibraryRecords, refreshMembership, load, plan, afterPool, release, cutAnyway, renderCard, footprint, modern, policy, assemble, holding, keep, upgrade, selected, nestable, renderRelease, mergePlan, mergeSheets, mergeStage, mergeFx: () => ({ live: FX.size }), state: () => R };
 })();
 
 /* ═══ 21 · Engrave — the words, the checked flip, the fit, the review, the back files ═══ */
@@ -6122,6 +6221,12 @@ const Sets = window.Sets = (() => {
     const pendingRelease = message => Object.assign(new Error(message), {releasePending:true});
     const sheets = sheetsOf(set);
     if (sheets.some(sh => sh.runHold)) throw pendingRelease("A sheet in this set still needs attention");
+    // the cardinal rule: every sheet that shares a multi-piece order with a sheet of this set is in it
+    const split = Gate.cardinalSplit ? Gate.cardinalSplit(set) : [];
+    if (split.length) {
+      const there = [...new Set(split.flatMap(i => i.there))], os = split.map(i => i.orderId);
+      throw pendingRelease(`${os.length === 1 ? "Order " + os[0] + " is" : "Orders " + os.slice(0, 3).join(", ") + (os.length > 3 ? " and more are" : " are")} also on ${there.join(", ")}, which ${there.length === 1 ? "is" : "are"} not in this set: sheets that share a multi-piece order go into the same set`);
+    }
     const sheetPools=new Set(sheets.flatMap(sh=>sh.charms.filter(c=>sh.placements.some(p=>p.id===c.id)).map(c=>c.poolId)));
     // A cancelled order is dropped from the set, not waited for: a piece of it that could not come off its sheet is cut with it and set aside
     if(Orders.rows().some(row=>row.state !== "gone" && (row.changePending || row.hold) && row.poolIds.some(id=>sheetPools.has(id))))throw pendingRelease("An order on this sheet changed or needs review");
@@ -13447,7 +13552,7 @@ const LiveNest = window.LiveNest = (() => {
     return plan;
   }
   // the page's own marks first; the sets of its run are looked at only when none says so
-  const closed = p => !!p.roseCutAt || !!p.recalled || !!p.releaseFull || !!window.Gate?.holding?.(p) || !!p.laserDoneAt || (!(p.metal==='rose'&&(p.rosePlan||p.roseProtected)) && (!!p.runHold || !!p.intakeFinalized)) ||
+  const closed = p => !!p.roseCutAt || !!p.recalled || !!p.releaseFull || !!p.cardinalPull || !!window.Gate?.holding?.(p) || !!p.laserDoneAt || (!(p.metal==='rose'&&(p.rosePlan||p.roseProtected)) && (!!p.runHold || !!p.intakeFinalized)) ||
     Sets.ofRun(p.runId).some(set=>set.committedAt && set.sheetIds.includes(p.sheetId));
   /* Gold and Silver arrivals go to the run's earliest open sheet first (the pool puts them on the same one). An order
      that misses its gaps moves on to the next sheet, and the earlier sheet stays first in line: once a newer page existed
