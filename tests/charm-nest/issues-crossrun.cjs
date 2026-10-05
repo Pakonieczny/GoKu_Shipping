@@ -16,6 +16,8 @@
  *   parts (Charm_Nest_Run_Lines) carry their own orders / keys / json. The fake store counts the documents it reads in st.reads (reset per call).
  * Never touches a live service. */
 'use strict';
+// the server keeps which runs hold an order for a minute; every shop here re-seeds the same order numbers into other runs, so none is kept
+process.env.CHARM_NEST_HOLDERS_MS = '0';
 const O = require('./issues-oracle.cjs');
 const S = require('./issues-shop.cjs');
 const { start } = require('./bridge-server.cjs');

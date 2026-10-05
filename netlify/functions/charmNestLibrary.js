@@ -201,10 +201,37 @@ async function readinessRecords(records,{revs=null}={}) {
   await productionReadiness(records,{revs});
   return records.map(s=>({...s,laser:Readiness.laserSheet(s)}));
 }
+/* An order's pieces are not always all in the run of the sheet that carries one of them: a later pull can take a line the
+   first run did not, and a piece pooled in an older run is placed by a newer one. The run record lists its orders, and an
+   archive part lists its own, so the runs that hold an order are found by asking those lists (array-contains-any, 15
+   orders to a query because each is asked in its two spellings, text and number; only the lists come back). Every order
+   asked about is answered, the runs of the orders it was asked of last (a minute) kept in this instance, because the
+   Library reads the same sheets every few seconds and a run starts holding an order rarely. A reader that needs the
+   answer exact (a transaction, which writes a seal on it) never uses what was kept. */
+const HOLDERS_MAX = 5000, holders = new Map(), holdersMs = () => (process.env.CHARM_NEST_HOLDERS_MS === undefined ? 60000 : Math.max(0, +process.env.CHARM_NEST_HOLDERS_MS || 0));   // (a test sets it to 0)
+async function runsOfOrders(get, orders, fresh) {
+  const out = new Map(), now = Date.now(), ttl = holdersMs(), ask = [];
+  for (const o of orders) {
+    const kept = fresh ? null : holders.get(PREFIX + o);
+    if (kept && now - kept.at < ttl) out.set(o, new Set(kept.runs)); else { out.set(o, new Set()); ask.push(o); }
+  }
+  const forms = v => [String(v)].concat(Number.isSafeInteger(+v) ? [+v] : []);
+  for (let i = 0; i < ask.length; i += 15) {
+    const batch = ask.slice(i, i + 15), values = batch.flatMap(forms), asked = new Set(batch);
+    const [a, b] = await Promise.all([get(col(RUNS).where("orders", "array-contains-any", values).select("orders")), get(col(RUN_LINES).where("orders", "array-contains-any", values).select("runId", "orders"))]);
+    for (const [docs, runOf] of [[a.docs, d => d.id], [b.docs, d => d.data().runId]]) for (const d of docs) {
+      const id = runOf(d);
+      if (isId(id)) for (const o of new Set((d.data().orders || []).map(String))) if (asked.has(o)) out.get(o).add(id);
+    }
+    if (!fresh && ttl) for (const o of batch) holders.set(PREFIX + o, { at: now, runs: [...out.get(o)] });
+  }
+  if (holders.size > HOLDERS_MAX) { for (const [k, v] of holders) if (now - v.at >= ttl) holders.delete(k); if (holders.size > HOLDERS_MAX) holders.clear(); }
+  return out;
+}
 // Verify whole orders from their current saved lines, including archived lines and copies on another sheet.
 // The caller's transaction reads the live run and every dependent sheet before it writes a seal or completion.
 async function productionReadiness(records,{tx=null,revs=null}={}) {
-  const get=ref=>tx?tx.get(ref):ref.get(),runs=new Map(),lines=new Map(),wanted=new Set(records.flatMap(Readiness.orderIds));
+  const get=ref=>tx?tx.get(ref):ref.get(),runs=new Map(),lines=new Map(),wanted=new Set(records.flatMap(Readiness.orderIds)),unverified=new Set();
   for(const id of [...new Set(records.map(s=>s.runId).filter(isId))]){
     const snap=await get(col(RUNS).doc(id)),run=snap.exists?await withLiveLines(id,snap.data()):null;
     if(revs)revs['r:'+id]=revOf(snap);
@@ -212,6 +239,27 @@ async function productionReadiness(records,{tx=null,revs=null}={}) {
     const archived=run?.lineArchive?await archivedLines(id,{orders:wanted}):{lines:{}};
     for(const [key,l] of Object.entries({...archived.lines,...run?.lines}))if(wanted.has(String(l.orderId || key.split('_')[0])))lines.set(key,{...l,key,orderId:String(l.orderId || key.split('_')[0])});
   }
+  // The rest of an order can be in another run. Only a sheet that is still to be cut asks (a sheet cut once before is ready whatever its orders say), and only
+  // the lines no run read already holds are added: the sheet's own run keeps its word for a line both hold. When the runs of the asked orders cannot be read,
+  // those orders stay unverified rather than reading as whole.
+  const seen=new Map([...runs.keys()].map(id=>[id,new Set(wanted)])),looked=new Set();
+  const crossRuns=async asking=>{
+    asking=asking.filter(o=>!looked.has(o));for(const o of asking)looked.add(o);
+    if(!asking.length)return;
+    const found=await runsOfOrders(get,asking,!!tx),extra=new Map();
+    for(const [order,ids] of found)for(const id of ids){if(!extra.has(id))extra.set(id,new Set());extra.get(id).add(order);}
+    for(const [id,asked] of extra){
+      const had=seen.get(id) || new Set(),orders=new Set([...asked].filter(o=>!had.has(o)));
+      if(!orders.size)continue;
+      let run=runs.get(id);
+      if(!run){const snap=await get(col(RUNS).doc(id));run=snap.exists?await withLiveLines(id,snap.data()):null;if(revs)revs['r:'+id]=revOf(snap);runs.set(id,run || {});}
+      const archived=run?.lineArchive?await archivedLines(id,{orders}):{lines:{}};
+      for(const [key,l] of Object.entries({...archived.lines,...run?.lines})){const order=String(l.orderId || key.split('_')[0]);if(orders.has(order) && !lines.has(key))lines.set(key,{...l,key,orderId:order});}
+      seen.set(id,new Set([...had,...orders]));
+    }
+  };
+  const asking=[...new Set(records.filter(s=>!Readiness.completedBefore(s)).flatMap(Readiness.orderIds))];
+  try{await crossRuns(asking);}catch(e){console.warn('[charmNestLibrary] the runs of these orders could not be read:',e && e.message);for(const o of asking)unverified.add(o);}
   const evidence=new Map(records.map(s=>[s.id || s.sheetId,s]));
   // an order whose pieces are not all on these sheets: the sheets that hold the rest are read too. A line that lost its pool ids is read by the ids the pool gives
   // its copies ("<line key>_<n>"); a committed line without pieces is a no-design candidate (below), not a lost piece
@@ -229,7 +277,11 @@ async function productionReadiness(records,{tx=null,revs=null}={}) {
     const run=runs.get(id),orders=new Set(dependencies.filter(s=>s.runId===id).flatMap(Readiness.orderIds));
     const archived=run?.lineArchive?await archivedLines(id,{orders}):{lines:{}};
     for(const [key,l] of Object.entries({...archived.lines,...run?.lines}))if(orders.has(String(l.orderId || key.split('_')[0])))lines.set(key,{...l,key,orderId:String(l.orderId || key.split('_')[0])});
+    seen.set(id,new Set([...(seen.get(id) || []),...orders]));
   }
+  // a sheet that carries one of these orders can carry pieces of other orders whose lines are in another run: its engraving evidence is read there too, or its plain
+  // pieces would read as undecided and the sheet as not ready (a failed read leaves them undecided, which holds the order back)
+  try{await crossRuns([...new Set(dependencies.filter(s=>!Readiness.completedBefore(s)).flatMap(Readiness.orderIds))]);}catch(e){console.warn('[charmNestLibrary] the runs of the other sheets\' orders could not be read:',e && e.message);}
   // No-design exemptions are explicit in new records; an older committed chain may only name its approved SKU.
   const candidates=[...lines.values()].filter(l=>!l.poolIds?.length && !l.noDesign && ['committed','written','labelled'].includes(l.state));
   if(candidates.length){
@@ -251,7 +303,7 @@ async function productionReadiness(records,{tx=null,revs=null}={}) {
   for(const s of evidence.values())s.engraving=Object.fromEntries(Readiness.idsOf(s).map(id=>[id,decisions[id] || {needed:true,state:'unknown',approved:false}]));
   const orders=Readiness.orderReports([...lines.values()],[...evidence.values()]);
   // each sheet's own reading of its orders: an order waits only for its OTHER pieces (Readiness.forSheet), never for a piece on this very sheet
-  for(const s of records)s.orderReadiness=Object.fromEntries(Readiness.orderIds(s).map(id=>[id,Readiness.forSheet(orders[id],s.id || s.sheetId) || {ready:false,why:'Order readiness has not been verified'}]));
+  for(const s of records)s.orderReadiness=Object.fromEntries(Readiness.orderIds(s).map(id=>[id,(!unverified.has(id) && Readiness.forSheet(orders[id],s.id || s.sheetId)) || {ready:false,why:'Order readiness has not been verified'}]));
   return records;
 }
 
