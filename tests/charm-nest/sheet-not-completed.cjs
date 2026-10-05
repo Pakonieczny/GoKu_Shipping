@@ -111,7 +111,7 @@ const OLD = [
     assert.deepEqual((await bar()).segs, ['open', 'done'], 'still two segments');
     assert.deepEqual(await page.evaluate(() => Review.settled().map(d => d.orders[0])), ['4179100003', '4179100004'], 'nothing was written for the send, nothing kept was deleted');
     assert(await page.evaluate(() => CustomSheet.sentOf(B.orders.byKey.get('4179100001_41791000011'))), 'the send itself stands');
-    const btn = rid => page.evaluate(sel => [...document.querySelector(sel).querySelectorAll('.rowActions button')].map(b => b.textContent.trim()), card(rid));
+    const btn = rid => page.evaluate(sel => [...document.querySelector(sel).querySelectorAll('.rowActions button')].map(b => b.textContent.trim()).filter(t => t !== 'Hold'), card(rid));
     assert.deepEqual(await btn(HAND), ['Print QR label', 'Reopen'], 'the hand-completed order keeps its seal and buttons');
     assert.deepEqual((await btn(SENT)).filter(t => /sheet|History/i.test(t)), ['Open sheet', 'History'], 'the sent order keeps its sheet and history links');
     assert.equal(await page.evaluate(sel => document.querySelectorAll(sel + ' .seal-sheet').length, card(SENT)), 1, 'and its Sent to Sheet seal');

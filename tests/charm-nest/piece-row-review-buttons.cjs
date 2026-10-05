@@ -103,7 +103,7 @@ async function main() {
     // each row of "Its pieces", as drawn
     const rows = () => page.evaluate(() => [...document.querySelectorAll('#owPcSum .owPcRow')].map(r => {
       const a = r.querySelector('.pcAct'), st = r.querySelector('.st');
-      return { key: r.dataset.piece || (r.querySelector('[data-pc-act]') || { dataset: {} }).dataset.pcAct, solo: r.classList.contains('solo'), label: (r.closest('#owPcSum').querySelector('.fLabel') || {}).textContent, tag: r.tagName, act: r.classList.contains('hasAct'), btns: a ? [...a.querySelectorAll('button')].map(b => b.textContent.trim()) : [], seals: a ? a.querySelectorAll('.seal').length : 0, more: a && a.querySelector('[data-cu-more]') ? a.querySelector('[data-cu-more]').textContent.trim() : '',
+      return { key: r.dataset.piece || (r.querySelector('[data-pc-act]') || { dataset: {} }).dataset.pcAct, solo: r.classList.contains('solo'), label: (r.closest('#owPcSum').querySelector('.fLabel') || {}).textContent, tag: r.tagName, act: r.classList.contains('hasAct'), btns: a ? [...a.querySelectorAll('button')].map(b => b.textContent.trim()).filter(t => t !== 'Hold') : [], seals: a ? a.querySelectorAll('.seal').length : 0, more: a && a.querySelector('[data-cu-more]') ? a.querySelector('[data-cu-more]').textContent.trim() : '',
         st: st && !st.classList.contains('owPcSr') ? st.textContent.trim() : null, hidden: st && st.classList.contains('owPcSr') ? st.textContent.trim() : null, html: a ? a.innerHTML : '', stat: a ? (a.querySelector('.cuStat,.cuUndo,.cuWho') || { className: '' }).className : '' };
     }));
     const idle = () => page.evaluate(() => Seal.whenIdle());

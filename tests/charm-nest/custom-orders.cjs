@@ -197,7 +197,7 @@ async function browserChecks() {
     const state = await page.evaluate(() => ({ chain: B.orders.byKey.get('4176744752_41767447521').state, pool: B.orders.byKey.get('4176744752_41767447521').poolIds.length, decisions: Review.count() }));
     assert.equal(state.chain, 'noDesign', 'chain only never goes into the pool'); assert.equal(state.pool, 0);
     await page.click('#reviewView .egTab[data-k="customOrder"]');
-    const rows = () => page.evaluate(() => [...document.querySelectorAll('#rvList .reviewListRow')].map(n => ({ rid: n.dataset.rid, cls: n.className, label: n.querySelector('.engravingIdentity .purchaseLabel')?.textContent, why: n.querySelector('.reviewReason')?.textContent, buttons: [...n.querySelectorAll('.rowActions button')].map(b => b.textContent.trim()) })));
+    const rows = () => page.evaluate(() => [...document.querySelectorAll('#rvList .reviewListRow')].map(n => ({ rid: n.dataset.rid, cls: n.className, label: n.querySelector('.engravingIdentity .purchaseLabel')?.textContent, why: n.querySelector('.reviewReason')?.textContent, buttons: [...n.querySelectorAll('.rowActions button')].map(b => b.textContent.trim()).filter(t => t !== 'Hold') })));
     let list = await rows();
     assert.equal(list.length, 5, 'each custom line once: ' + JSON.stringify(list));
     for (const o of EXAMPLES) { const r = list.find(x => x.rid === o.receiptId); assert(r, o.receiptId + ' listed'); assert.equal(r.label, WANT[o.lines[0].sku], 'its category shows'); }
