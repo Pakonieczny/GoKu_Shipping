@@ -342,7 +342,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms)), nap = ms => sleep(Math.
       const rid = R(0), key = KEY(rid);
       await A.seg('open'); await B.seg('open');
       assert((await A.cards()).includes(rid) && (await B.cards()).includes(rid), 'the card is under Open on both');
-      await Promise.all([A.page.click(`#rvList .reviewListRow[data-rid="${rid}"] [data-cu-complete]`), B.page.click(`#rvList .reviewListRow[data-rid="${rid}"] [data-cu-complete]`)]);
+      await Promise.all([A, B].map(c => c.page.evaluate(sel => document.querySelector(sel).click(), `#rvList .reviewListRow[data-rid="${rid}"] [data-cu-complete]`)));   // (both at the same instant: a click, not a pointer that waits for the page to be still)
       await dueIn(A, { f: k => B.maps.customDone[k], a: key }, 'A done'); await dueIn(B, { f: k => B.maps.customDone[k], a: key }, 'B done');
       await nap(4500); await A.calm(); await B.calm();
       const rec = srv.st.doc(CUSTOM, key), stamps = rec.stamps.map(s => s.at).sort((a, b) => a - b);
@@ -422,7 +422,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms)), nap = ms => sleep(Math.
       }
       // A presses Reopen against B writing complete at the same moment: both settle on what the cloud says
       await A.seg('done'); await sleep(300);
-      await Promise.all([A.page.click(`#rvList .reviewListRow[data-rid="${rid}"] [data-cu-reopen]`), cloud('customPut', Object.assign(target(rid), { by: 'Maria B', how: 'button' }))]);
+      await Promise.all([A.page.evaluate(sel => document.querySelector(sel).click(), `#rvList .reviewListRow[data-rid="${rid}"] [data-cu-reopen]`), cloud('customPut', Object.assign(target(rid), { by: 'Maria B', how: 'button' }))]);
       await nap(5200); await A.calm(); await B.calm();
       const final = srv.st.doc(CUSTOM, key).state, want = final === 'completed' ? [1, 0] : [0, 1];
       for (const c of [A, B]) {
@@ -456,19 +456,21 @@ const sleep = ms => new Promise(r => setTimeout(r, ms)), nap = ms => sleep(Math.
       const D = await client('Eve D');
       await D.load(many);
       await D.page.waitForFunction(() => document.querySelectorAll('#rvList .reviewListRow').length > 0);
-      const draw = await D.page.evaluate(() => { Review.render({ still: true }); const t = performance.now(); Review.render({ still: true }); return performance.now() - t; });
+      const draw = await D.page.evaluate(() => { Review.view().limit = 300; Review.render({ still: true }); const t = performance.now(); Review.render({ still: true }); return performance.now() - t; });
       await D.page.evaluate(() => {
-        window.__ms = 0; window.__net = 0;
-        for (const [o, k] of [[Orders, 'takeCustom'], [CustomPrint, 'settle']]) { const f = o[k]; o[k] = function (...a) { const t = performance.now(); try { return f.apply(this, a); } finally { window.__ms += performance.now() - t; } }; }
+        window.__ms = 0; window.__net = 0; window.__settles = 0;
+        for (const [o, k] of [[Orders, 'takeCustom'], [CustomPrint, 'settle']]) { const f = o[k]; o[k] = function (...a) { if (k === 'settle') window.__settles++; const t = performance.now(); try { return f.apply(this, a); } finally { window.__ms += performance.now() - t; } }; }
         const f = window.api; window.api = async function (fn, body) { const t = performance.now(); try { return await f.apply(this, arguments); } finally { if (body && body.since != null) window.__net += performance.now() - t; } };
       });
-      // an idle read: its own work in the page (the read's wait for the cloud taken off) and what it draws
+      // an idle read: its own work in the page (the read's wait for the cloud taken off), and whether it set anything going
+      // (the join of the records, the settle that redraws: neither is called when nothing changed; the page's own thumbnails and
+      // timers draw into the list meanwhile, which is why the list is not watched here: the 9-card list above is)
       const idle = await D.page.evaluate(async () => {
         const sleep = ms => new Promise(r => setTimeout(r, ms));
         while (ReviewLive.state().busy) await sleep(20);
-        let n = 0; const o = new MutationObserver(m => { n += m.length; }); o.observe(document.getElementById('rvList'), { childList: true, subtree: true, attributes: true, characterData: true });
-        window.__net = 0; const a = performance.now(); await ReviewLive.poll({}); const wall = performance.now() - a, js = wall - window.__net;
-        await sleep(300); o.disconnect(); return { wall, js, n };
+        window.__net = 0; window.__settles = 0; window.__ms = 0; const applied0 = ReviewLive.state().applied, a = performance.now();
+        await ReviewLive.poll({}); const wall = performance.now() - a, js = wall - window.__net;
+        return { wall, js, settles: window.__settles, applied: ReviewLive.state().applied - applied0 };
       });
       const rid = String(4170000000 + 150), key = rid + '_' + rid + '1';
       await cloud('customPut', { key, receiptId: rid, transactionId: rid + '1', sku: 'RE_7050', title: 'MODIFICATION REWORK FREE SHIPPING', category: 'Custom order', kind: 'rework', by: 'Maria B', how: 'button' });
@@ -477,8 +479,8 @@ const sleep = ms => new Promise(r => setTimeout(r, ms)), nap = ms => sleep(Math.
       const apply = await D.page.evaluate(() => window.__ms);
       assert(await D.has(key), 'the change among 300 was applied');
       const cards = await D.page.evaluate(() => document.querySelectorAll('#rvList .reviewListRow').length);
-      log(`300 cards: a full draw of ${cards} cards ${draw.toFixed(0)} ms; an idle read's own work ${idle.js.toFixed(0)} ms (${idle.wall.toFixed(0)} ms with its wait for the cloud), ${idle.n} changes drawn; a change brought in and everything that follows it ${apply.toFixed(0)} ms (machine under load: compare, do not read as absolute)`);
-      assert.equal(idle.n, 0, 'an idle read draws nothing among 300 cards');
+      log(`300 cards: a full draw of ${cards} cards ${draw.toFixed(0)} ms; an idle read's own work ${idle.js.toFixed(0)} ms (${idle.wall.toFixed(0)} ms with its wait for the cloud), ${idle.settles} redraws set going; a change brought in and everything that follows it ${apply.toFixed(0)} ms (machine under load: compare, do not read as absolute)`);
+      assert.equal(idle.settles + idle.applied, 0, 'an idle read changes and redraws nothing among 300 cards: ' + JSON.stringify(idle));
       assert(idle.js < Math.max(150, draw), 'an idle read costs less than one draw of the list: ' + idle.js + ' vs ' + draw);
       assert(apply < 4 * draw + 1000, 'a change among 300 cards costs about a draw or two: ' + apply + ' vs ' + draw);
       await D.close();
