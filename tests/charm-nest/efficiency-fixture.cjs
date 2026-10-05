@@ -126,19 +126,19 @@ function make(opts = {}) {
   }
   /** op live: who is signed in right now and the order each station has now. */
   function liveAnswer(sb) {
-    const t = now(), d = today(), thumb = (c, l) => svg(c, l);
+    const t = now(), T = base, d = today(), thumb = (c, l) => svg(c, l);
     if (sb) return { ok: true, at: t, mode: 'sandbox', stations: [
-      { key: 'sorter', label: 'Sorter', state: 'working', people: ['Paul'], current: [{ person: 'Paul', rid: '3521009001', orderNumber: '3521009001', customer: 'Sandbox Buyer', scannedAt: t - 95000, thumbUrl: thumb('#d9cfb8', 'S'), qr: { text: '3521009001' }, pieces: [{ id: 's1', label: 'Piece 1', thumbUrl: thumb('#c8bb9c', '1') }] }], lastEventAt: t - 95000, counts: { partsToday: 29, ordersToday: 25 } }],
-      signedIn: [{ name: 'Paul', stationKey: 'sorter', since: nyAt(d, 0, 40), lastSeenAt: t - 40000 }] };
-    const cur = (person, rid, ago, n, c) => ({ person, rid, orderNumber: rid, customer: 'Buyer ' + rid.slice(-3), scannedAt: t - ago, thumbUrl: thumb(c, 'O'), qr: { text: rid }, pieces: Array.from({ length: n }, (_, i) => ({ id: rid + '-' + i, label: 'Piece ' + (i + 1), thumbUrl: thumb(c, String(i + 1)) })) });
+      { key: 'sorter', label: 'Sorter', state: 'working', people: ['Paul'], current: [{ person: 'Paul', rid: '3521009001', orderNumber: '3521009001', customer: 'Sandbox Buyer', scannedAt: T - 95000, thumbUrl: thumb('#d9cfb8', 'S'), qr: { text: '3521009001' }, pieces: [{ id: 's1', label: 'Piece 1', thumbUrl: thumb('#c8bb9c', '1') }] }], lastEventAt: T - 95000, counts: { partsToday: 29, ordersToday: 25 } }],
+      signedIn: [{ name: 'Paul', stationKey: 'sorter', since: nyAt(d, 0, 40), lastSeenAt: T - 40000 }] };
+    const cur = (person, rid, ago, n, c) => ({ person, rid, orderNumber: rid, customer: 'Buyer ' + rid.slice(-3), scannedAt: T - ago, thumbUrl: thumb(c, 'O'), qr: { text: rid }, pieces: Array.from({ length: n }, (_, i) => ({ id: rid + '-' + i, label: 'Piece ' + (i + 1), thumbUrl: thumb(c, String(i + 1)) })) });
     const bump = st.bumps * 3;
     return { ok: true, at: t, mode: 'real', stations: [
-      { key: 'welding', label: 'Welding', state: 'working', people: ['Giovanna'], current: [cur('Giovanna', '3521000101', 252000, 3, '#d8c7a0')], lastEventAt: t - 30000 - st.bumps, counts: { partsToday: 189 + bump, ordersToday: 24 } },
-      { key: 'assembly', label: 'Assembly', state: 'working', people: ['Anna'], current: [cur('Anna', '3521000138', 61000, 2, '#cdd6c0')], lastEventAt: t - 50000, counts: { partsToday: 147, ordersToday: 29 } },
-      { key: 'shipping', label: 'Shipping', state: 'working', people: ['Michael'], current: [cur('Michael', '3521000175', 13000, 1, '#d6c3bd')], lastEventAt: t - 20000, counts: { partsToday: 111, ordersToday: 33 } },
-      { key: 'sorting', label: 'Sorting', state: 'idle', people: [], current: [], lastEventAt: t - 5400000, counts: { partsToday: 36, ordersToday: 18 } },
-      { key: 'design', label: 'Design', state: 'offline', people: [], current: [], lastEventAt: t - 5 * 3600000, counts: { partsToday: 42, ordersToday: 12 } }],
-      signedIn: [{ name: 'Giovanna', stationKey: 'welding', since: nyAt(d, 7, 52), lastSeenAt: t - 20000 }, { name: 'Anna', stationKey: 'assembly', since: nyAt(d, 8, 3), lastSeenAt: t - 90000 }, { name: 'Michael', stationKey: 'shipping', since: nyAt(d, 13, 10), lastSeenAt: t - 4000 }] };
+      { key: 'welding', label: 'Welding', state: 'working', people: ['Giovanna'], current: [cur('Giovanna', '3521000101', 252000, 3, '#d8c7a0')], lastEventAt: T - 30000 + st.bumps * 1000, counts: { partsToday: 189 + bump, ordersToday: 24 } },
+      { key: 'assembly', label: 'Assembly', state: 'working', people: ['Anna'], current: [cur('Anna', '3521000138', 61000, 2, '#cdd6c0')], lastEventAt: T - 50000, counts: { partsToday: 147, ordersToday: 29 } },
+      { key: 'shipping', label: 'Shipping', state: 'working', people: ['Michael'], current: [cur('Michael', '3521000175', 13000, 1, '#d6c3bd')], lastEventAt: T - 20000, counts: { partsToday: 111, ordersToday: 33 } },
+      { key: 'sorting', label: 'Sorting', state: 'idle', people: [], current: [], lastEventAt: T - 5400000, counts: { partsToday: 36, ordersToday: 18 } },
+      { key: 'design', label: 'Design', state: 'offline', people: [], current: [], lastEventAt: T - 5 * 3600000, counts: { partsToday: 42, ordersToday: 12 } }],
+      signedIn: [{ name: 'Giovanna', stationKey: 'welding', since: nyAt(d, 7, 52), lastSeenAt: T - 20000 }, { name: 'Anna', stationKey: 'assembly', since: nyAt(d, 8, 3), lastSeenAt: T - 90000 }, { name: 'Michael', stationKey: 'shipping', since: nyAt(d, 13, 10), lastSeenAt: T - 4000 }] };
   }
   /** What the harness answers to a POST body (the passcode is the only gate). */
   function answer(body, headers = {}) {
