@@ -73,6 +73,7 @@ const until = async (fn, ms = 20000, what = '') => { const t0 = Date.now(); for 
 async function backend(opts) {
   const srv = await start({ receipts: [] }), st = srv.st;
   const writes = [], reads = [];
+  { const push = st.calls.push.bind(st.calls); st.calls.push = c => { c.at = Date.now(); return push(c); }; }   // (when each call came)
   const set = st.docs.set.bind(st.docs), del = st.docs.delete.bind(st.docs), get = st.docs.get.bind(st.docs);
   st.docs.set = (k, v) => { writes.push(k); return set(k, v); };
   st.docs.delete = k => { writes.push('-' + k); return del(k); };
@@ -129,6 +130,7 @@ async function openPage(browser, srv, o = {}) {
       stubNest.__stub = true; window.startNest = stubNest; clearInterval(iv);
     }, 0);
   }, { sandbox: !!o.sandbox, stub: o.stub !== false, name: o.name });
+  if (o.init) await ctx.addInitScript(o.init);   // (after the settings above: it may add to them)
   const page = await ctx.newPage(), errors = [];
   page.on('pageerror', e => errors.push('page: ' + e.message));
   if (process.env.DEBUGCON) page.on('console', m => console.log('         [page ' + m.type() + ']', m.text().slice(0, 300)));
@@ -956,7 +958,268 @@ async function uiSegment(browser) {
     check(!A.errors.length && !B.errors.length, 'ui · no page errors ' + A.errors.concat(B.errors).join(' | '));
   } finally { await A.ctx.close(); await B.ctx.close(); srv.close(); }
 }
-async function realSegment() {}
+/* ══ real: the real nest. Custom designs (a DXF each) sent to Gold Filled and nested by the real solver on one sheet; Hold and Release hold
+      are the real engine over it. The machine may be busy with other work: every wait is long, none is a pause for show. ══ */
+const DG = (...kv) => { let t = ''; for (let i = 0; i < kv.length; i += 2) t += `${kv[i]}\n${kv[i + 1]}\n`; return t; };
+const DXF = w => DG(0, 'SECTION', 2, 'HEADER', 9, '$INSUNITS', 70, 4, 0, 'ENDSEC', 0, 'SECTION', 2, 'ENTITIES',
+  0, 'LWPOLYLINE', 8, 'CUT', 90, 4, 70, 1, 10, 0, 20, 0, 10, w, 20, 0, 42, 0.4, 10, w, 20, 20, 10, 0, 20, 20,
+  0, 'CIRCLE', 8, 'CUT', 10, w / 2, 20, 16, 40, 1.2, 0, 'ENDSEC', 0, 'EOF');
+const R_DAY = 86400, R_SHIP = Math.floor(Date.UTC(2026, 9, 2, 17) / 1000);
+const rOrder = (rid, daysAgo) => ({ receiptId: rid, orderNumber: rid, createTs: R_SHIP - daysAgo * R_DAY, updateTs: R_SHIP - daysAgo * R_DAY + 60, shipBy: R_SHIP, buyer: { name: 'Buyer ' + rid.slice(-4) }, buyerMessage: '', isGift: false, giftMessage: '', staffNote: '', messages: [],
+  lines: [{ transactionId: rid + '1', listingId: '18000' + rid.slice(-5), sku: 'CUSTOM-N-001-' + rid.slice(-6), title: 'Custom Name Necklace, Personalized Charm Necklace', quantity: 1, expectedShipDate: R_SHIP, variations: [{ name: 'Metal', value: 'Gold Filled' }], metalKey: 'gold', metalLabel: 'GF 14/20', personalization: [], buyerMessage: '' }] });
+/* what the nest's workers are asked (the jobs, in the order asked), a switch that leaves every search unanswered, a switch that makes
+   the sheet's nest fail at once, and one that keeps the page's own 5 s look for an unfinished release from starting by itself */
+const realInit = () => {
+  const post = Worker.prototype.postMessage;
+  Worker.prototype.postMessage = function (m, ...rest) {
+    try { if (m && m.type === 'solve' && m.job) { (window.__jobs = window.__jobs || []).push({ jobId: m.jobId, at: Date.now(), orders: m.job.pieces.map(p => String(p.order || p.id)) }); if (localStorage.getItem('__hang') === '1') return; } } catch (_) {}
+    return post.call(this, m, ...rest);
+  };
+  const si = window.setInterval;
+  window.setInterval = function (f, ms, ...a) { try { if (ms === 5000 && localStorage.getItem('__noScan') === '1' && /resumeReleases/.test(String(f))) return 0; } catch (_) {} return si.call(this, f, ms, ...a); };
+  try { const s = JSON.parse(localStorage.getItem('cn.settings') || '{}'); s.dsOrigin = 'http://127.0.0.1:9'; localStorage.setItem('cn.settings', JSON.stringify(s)); } catch (_) {}
+};
+async function realSegment(browser) {
+  const srv = await backend(), st = srv.st;
+  const S1 = '4180000001', H = '4180000002', H2 = '4180000003', I = ['4180000011', '4180000012', '4180000013'];
+  const poolOf = rid => `${rid}_${rid}1_1`, LONG = 600000;
+  const { ctx, page, errors } = await openPage(browser, srv, { origin: srv.sorterOrigin, stub: false, init: realInit });
+  const ready = async () => {
+    await page.waitForFunction(() => window.CN && window.Orders && window.Review && window.CustomSheet && window.Gate && window.Session && window.SheetWin && window.OrderHold && OrderHold.release && window.HoldUI && CN.S.cloud.ok === true, null, { timeout: 120000 });
+    await page.evaluate(() => { if (!window.startNest.__wrapped) { const real = window.startNest; const w = function (sh) { if (localStorage.getItem('__failNest') === '1') { sh.problem = 'test: the nest could not start'; sh.status = 'ready'; return; } return real.apply(this, arguments); }; w.__wrapped = true; window.startNest = w; } });
+  };
+  await ready();
+  const info = n => page.evaluate(n => {
+    const pages = CN.S.sheets.gold.pages, sh = n == null ? pages.at(-1) : pages[n - 1]; if (!sh) return null; const byId = new Map(sh.charms.map(c => [c.id, c]));
+    return { sheetId: sh.sheetId, status: sh.status, dirty: !!sh.dirty, saved: !!sh.persistedDone, charms: sh.charms.map(c => c.poolId), placed: sh.placements.map(p => (byId.get(p.id) || {}).poolId),
+      at: Object.fromEntries(sh.placements.map(p => [(byId.get(p.id) || {}).poolId, [p.cxPt, p.cyPt, p.angle]])), feedWait: (sh.feedWait || []).map(id => (byId.get(id) || {}).poolId), problem: sh.problem || null, pages: pages.length };
+  }, n);
+  // (what the sheet is doing, for a wait that ends badly)
+  const dump = () => page.evaluate(() => { const sh = CN.S.sheets.gold.pages[0], o = {}; for (const [k, v] of Object.entries(sh)) if (v == null || ['string', 'number', 'boolean'].includes(typeof v)) o[k] = typeof v === 'string' ? v.slice(0, 80) : v; o.feedWait = (sh.feedWait || []).length; o.charms = sh.charms.length; o.placements = sh.placements.length; o.run = window.B && B.run ? { mode: B.run.mode, status: B.run.status, step: B.run.step } : null; try { o.heldForResume = !!CN.heldForResume(sh); } catch (_) {} return o; });
+  const rest = (n, ms = 300000) => until(async () => { const z = await info(n); return z && z.saved && !z.dirty && !['nesting', 'finishing', 'queued'].includes(z.status) && !z.feedWait.length && z; }, ms, 'the sheet at rest').catch(async e => { console.log('         the sheet when the wait ended:', JSON.stringify(await dump().catch(() => null))); throw e; });
+  const rowOf = rid => page.evaluate(rid => { const r = Orders.rows().find(x => String(x.order.receiptId) === rid); return r ? { state: r.state, hold: r.hold || null, frontAt: r.frontAt || 0, releasing: r.releasing || null, pieces: (r.poolIds || []).length } : null; }, rid);
+  const timeline = (rid, type) => st.list(TL).filter(e => e._id.startsWith(rid + '~') && (!type || e.type === type));
+  const same2 = (a, b) => !!a && !!b && a.join() === b.join();
+  const SIDS = [S1, H, H2];
+
+  /* what is where: each of the order's pieces is on exactly one sheet (waiting or placed) or on hold, never both, never neither */
+  async function realAudit(what, o = {}) {
+    await settled(srv, 1500, 30000);
+    const sheets = await R.onSheets(page), flat = Object.values(sheets).flat(), bad = [];
+    check(new Set(flat).size === flat.length, `${what}: no piece is on two sheets of the page`);
+    for (const rid of SIDS) {
+      const id = poolOf(rid), where = Object.entries(sheets).filter(([, l]) => l.includes(id)).map(([k]) => k), p = pool(srv, id, false), heldNow = p.state === 'abandoned', wantHeld = (o.held || []).includes(rid);
+      if (wantHeld ? !(where.length === 0 && heldNow) : !(where.length === 1 && !heldNow)) bad.push(`${rid}: sheets ${JSON.stringify(where)}, record ${JSON.stringify([p.state, p.sheetId, p.heldBy])}`);
+    }
+    check(!bad.length, `${what}: ${SIDS.length} orders, each on one sheet or on hold, as expected (held: ${(o.held || []).join(',') || 'none'})${bad.length ? ' · ' + bad.join(' | ') : ''}`);
+    const seen = new Map(), twice = [], heldOn = [];
+    for (const d of st.list(SHEETS)) for (const id of d.poolIds || []) { if (seen.has(id) && seen.get(id) !== d._id) twice.push(id); seen.set(id, d._id); if (pool(srv, id, false).state === 'abandoned') heldOn.push(id); }
+    check(!twice.length && !heldOn.length, `${what}: no saved sheet names a piece twice or still lists a piece on hold${twice.length || heldOn.length ? ' · ' + JSON.stringify({ twice, heldOn }) : ''}`);
+  }
+
+  async function send(rid, name, w) {
+    await page.evaluate(() => CN.setMode('review'));
+    await page.click('#reviewView .egTab[data-k="customOrder"]');
+    const card = `#rvList .reviewListRow[data-rid="${rid}"]`;
+    await page.waitForSelector(card);
+    await page.evaluate(({ sel, text, name }) => { const dt = new DataTransfer(); dt.items.add(new File([text], name)); const n = document.querySelector(sel); for (const t of ['dragenter', 'dragover', 'drop']) n.dispatchEvent(new DragEvent(t, { bubbles: true, cancelable: true, dataTransfer: dt, clientX: 700, clientY: 400 })); }, { sel: card, text: DXF(w), name });
+    await page.waitForFunction(() => document.querySelectorAll('#cuDlg[open] .cuFile .cuThumb img').length === 1, null, { timeout: 120000 });
+    await page.click('#cuDlg .cuFile .cuM[data-m="gold"]');
+    await page.click('#cuDlg [data-send]');
+    await page.waitForFunction(() => !document.querySelector('#cuDlg').open && !document.querySelector('#tourLayer > *'), null, { timeout: 120000 });
+    await page.waitForFunction(() => { const sh = CN.S.sheets.gold.pages.at(-1); return sh.charms.length && !['nesting', 'finishing', 'queued'].includes(sh.status); }, null, { timeout: LONG });
+    await page.evaluate(() => { const sh = CN.S.sheets.gold.pages.at(-1); if (sh.status !== 'complete' || sh.dirty) CN.startNest(sh); });
+    await page.waitForFunction(() => { const sh = CN.S.sheets.gold.pages.at(-1); return sh.status === 'complete' && sh.persistedDone && sh.verification?.ok && !sh.dirty; }, null, { timeout: LONG });
+    await page.evaluate(() => CN.setMode('nest'));
+    await page.waitForTimeout(800);
+  }
+  // the orders coming in from Etsy: pieces waiting on the sheet for their turn (copies of a piece the real nest made), each OLDER than H
+  const incoming = rids => page.evaluate(({ rids, SHIP, DAY }) => {
+    const sh = CN.S.sheets.gold.pages.at(-1), base = sh.charms.find(c => c.bits);
+    rids.forEach((rid, i) => {
+      const poolId = `${rid}_${rid}1_1`, c = Object.assign({}, base, { id: `inc-${rid}`, poolId, order: rid, name: `${rid} · INCOMING`, orderDate: SHIP - 4 * DAY + i * 3600, pinned: null, excluded: false, orderInfo: Object.assign({}, base.orderInfo, { receiptId: rid, transactionId: rid + '1' }), lineKey: `${rid}:${rid}1` });
+      delete c.frontAt; sh.charms.push(c); B.pool.rows.set(poolId, { poolId, orderId: rid, sheetId: sh.sheetId, state: 'ready', material: 'gold' });
+    });
+    sh.intakeAppend = sh.placements.length > 0; sh.appendOnly = sh.intakeAppend; sh.dirty = true; sh.status = 'ready'; CN.renderCard(sh);
+  }, { rids, SHIP: R_SHIP, DAY: R_DAY });
+  const holdRun = (rid, name, note) => page.evaluate(({ rid, name, note }) => { window.__hsteps = []; window.__hres = undefined; OrderHold.run(rid, { name, note, onStep: s => window.__hsteps.push(s.type) }).then(r => { window.__hres = { ok: r.ok, held: r.held, error: r.error || null }; }); return true; }, { rid, name, note });
+  const holdEnd = (ms = LONG) => until(() => page.evaluate(() => window.__hres), ms, 'the hold ends');
+  const relRun = (rid, name) => page.evaluate(({ rid, name }) => { window.__rsteps = []; window.__rres = undefined; window.__rp0 = OrderHold.release(rid, { name, onStep: s => window.__rsteps.push(s.type) }); window.__rp = window.__rp0.then(r => { window.__rres = { ok: r.ok, released: r.released, placed: r.placed, error: r.error || null, stage: r.stage || null, pending: !!r.pending }; return r; }); return true; }, { rid, name });
+  const relEnd = (ms = LONG) => until(() => page.evaluate(() => window.__rres), ms, 'the release ends');
+
+  console.log('  building the sheet (the real nest: slow when the machine is busy)');
+  const orders = [rOrder(S1, 6), rOrder(H, 1), rOrder(H2, 2)];
+  await page.evaluate(async orders => {
+    await Orders.loadMaps(true);
+    for (const order of orders) for (const line of order.lines) { const key = CharmNestOrders.lineKey(order, line); const row = { key, order, line, arrivedAt: Date.now(), spec: null, problems: [], state: 'pulled', reason: null, claimedBy: null, poolIds: [], engrave: null, material: null }; B.orders.rows.push(row); B.orders.byKey.set(key, row); }
+    Orders.interpretAll(); Review.syncOrderItems(); CN.setMode('review'); Review.render();
+    const day = new Date().toISOString().slice(0, 10); B.run = { runId: `run-${day}-adv`, day, setId: null, releasePolicy: 2, solidIncluded: {}, step: 'nest', status: 'running', mode: 'manual', startedAt: Date.now(), updatedAt: Date.now(), lines: {}, sheets: {}, holds: {}, errors: [], resumable: true, stoppedBy: null, fix: null, orders: [] };
+  }, orders);
+  await send(S1, 's.dxf', 18); await send(H, 'h.dxf', 22); await send(H2, 'h2.dxf', 20);
+  let s = await info(); const sheetId = s.sheetId;
+  check(SIDS.every(r => s.placed.includes(poolOf(r))) && s.saved, `0 · the real nest placed the three orders on one saved sheet (${JSON.stringify(s.placed)})`);
+  const at0 = s.at;
+  await realAudit('0 start');
+  const m0 = srv.mark(), tl0 = tlSnapshot(srv, false);
+  await page.evaluate(() => { localStorage.setItem('__noScan', '1'); });   // (from the first reload on, only a person's press or this test's own call looks for an unfinished release)
+
+  /* ── 1 · a reload in the middle of a hold ── the real nest has been asked to rewrite the sheet and never answers; the page goes away */
+  try {
+    await page.evaluate(() => { localStorage.setItem('__hang', '1'); window.__jobs = []; });
+    await holdRun(H, 'Paula', 'cut short');
+    const t1 = Date.now(); let liftedAt = 0;
+    const z1 = await until(() => page.evaluate(() => ({ steps: window.__hsteps.slice(), jobs: window.__jobs.length, res: window.__hres || null })).then(z => { if (z.steps.includes('lift') && !liftedAt) liftedAt = Date.now(); return z.res || (z.steps.includes('lift') && (z.jobs > 0 || Date.now() - liftedAt > 20000)) ? z : null; }), LONG, 'the hold reaches the nest');
+    console.log(`         the hold stood at: ${z1.steps.join(' ')} · searches asked ${z1.jobs} · ended ${JSON.stringify(z1.res)}`);
+    check(!z1.res, `1 · the hold is cut in the middle (steps: ${z1.steps.join(' ')})`);
+    try { await page.evaluate(() => Session.flushNow()); } catch (_) {}
+    const pre = { journal: await R.journal(page), pool: pool(srv, poolOf(H), false), sheetPieces: sheetDoc(srv, sheetId, false).poolIds };
+    console.log('         before the reload: journal', JSON.stringify((pre.journal || {})[H] && { who: pre.journal[H].who, lifted: pre.journal[H].lifted, done: pre.journal[H].done, step: pre.journal[H].step && pre.journal[H].step.type }), '· piece record', pre.pool.state, '· saved sheet lists the piece:', (pre.sheetPieces || []).includes(poolOf(H)));
+    await page.evaluate(() => { localStorage.removeItem('__hang'); });
+    await page.reload({ waitUntil: 'load' }); await ready();
+    await page.waitForFunction(() => Orders.rows().length >= 3 && window.B && B.run, null, { timeout: 120000 });
+    await page.waitForTimeout(3000);
+    const post = await page.evaluate(H => ({ journal: (JSON.parse(localStorage.getItem('cn.orderhold.run') || '{}'))[H] || null, status: OrderHold.status(H), pending: OrderHold.pending().map(p => p.rid), shown: HoldUI.shown(H) }), H);
+    const sA = await info(), rA = await rowOf(H), plan = await page.evaluate(H => OrderHold.plan(H).then(p => ({ canHold: p.canHold, why: p.blockedWhy || p.why || null })), H);
+    console.log('         after the reload: sheet', JSON.stringify({ charms: sA.charms.length, placed: sA.placed.length, dirty: sA.dirty, saved: sA.saved, status: sA.status, problem: sA.problem }), '· row', JSON.stringify(rA), '· status', JSON.stringify({ r: post.status.resumable, n: post.status.name }), '· button shown', post.shown, '· plan', JSON.stringify(plan));
+    check(post.journal && post.journal.who === 'Paula' && post.status.resumable === true && post.status.name === 'Paula' && post.pending.includes(H), `1 · the reloaded page still knows the hold was cut short, and by whom (${JSON.stringify({ who: post.journal && post.journal.who, status: post.status.resumable, pending: post.pending })})`);
+    // the person is not stuck: the order already reads "On hold" (no Hold button), so the page itself must finish what the journal says is half done
+    const tAuto = Date.now();
+    let sB = null;
+    try { sB = await until(async () => { const j = await R.journal(page), z = await info(); return !j[H] && z && z.saved && !z.dirty && !['nesting', 'finishing', 'queued'].includes(z.status) && z; }, 240000, 'the page finishes the hold by itself'); } catch (_) { sB = null; }
+    check(!!sB, `1 · the page finishes the cut hold by itself (no button to press: shown ${post.shown}, plan ${JSON.stringify(plan)}) after ${Math.round((Date.now() - tAuto) / 1000)} s`);
+    if (!sB) { await holdRun(H, '', ''); const r1 = await holdEnd(); console.log('         (pressed by hand instead)', JSON.stringify(r1)); sB = await rest(); }
+    check(!sB.charms.includes(poolOf(H)) && sB.placed.length === 2 && same2(sB.at[poolOf(S1)], at0[poolOf(S1)]) && same2(sB.at[poolOf(H2)], at0[poolOf(H2)]), `1 · the order is off the sheet once, the other two did not move (${JSON.stringify({ charms: sB.charms, a: sB.at[poolOf(S1)], b: at0[poolOf(S1)] })})`);
+    const j2 = await R.journal(page), rB = await rowOf(H);
+    check(!j2[H] && rB.state === 'held' && /by Paula/.test(rB.hold || ''), `1 · the journal is gone and the order says who held it: ${rB.hold}`);
+    const held = timeline(H, 'held');
+    check(held.length >= 1 && held.every(e => /Paula/.test(e.by || e.text || '')), `1 · the timeline has the hold under the name that was saved, once per step (${JSON.stringify(held.map(e => [e._id.slice(-14), e.by, e.text]))})`);
+    await realAudit('1 after the cut hold', { held: [H] });
+  } catch (e) { fails.push('real 1: ' + e.message); console.log('  FAIL real 1 · ' + (e.stack || e.message)); }
+
+  /* ── 2 · a release that fails to place at once, again and again: three more tries and then it waits, nothing lost ── */
+  let frontAt = 0;
+  try {
+    // (three orders come in from Etsy meanwhile, each older than H: they wait on the sheet, and nothing places them yet)
+    await incoming(I);
+    await page.evaluate(() => { localStorage.setItem('__failNest', '1'); window.__relCalls = []; if (!OrderHold.release.__counted) { const o = OrderHold.release; const w = function (rid, opts) { window.__relCalls.push(String(rid) + '|' + (/resumeReleases/.test(new Error().stack || '') ? 'resume' : 'press')); return o.apply(this, arguments); }; w.__counted = true; OrderHold.release = w; } });
+    console.log('         the page\'s own look for an unfinished release is switched off:', await page.evaluate(() => /__noScan/.test(String(window.setInterval))));
+    await relRun(H, 'Paul');
+    const r2 = await relEnd();
+    const row2 = await rowOf(H);
+    check(r2.ok === false && r2.released === true && r2.stage === 'place' && r2.pending === true, `2 · a release whose nest cannot start says so plainly and keeps the order at the front (${JSON.stringify(r2)})`);
+    check(row2.state === 'pooled' && !row2.hold && row2.frontAt > 0 && !!row2.releasing, `2 · the hold is lifted, the place at the front and the marker are kept (${JSON.stringify(row2)})`);
+    frontAt = row2.frontAt;
+    await realAudit('2 first try', {});
+    const tries = [];
+    for (let i = 0; i < 5; i++) {
+      await page.evaluate(() => { if (window.__skew == null) { window.__skew = 0; const dn = Date.now.bind(Date); Date.now = () => dn() + window.__skew; } window.__skew += 40000; });
+      tries.push(await page.evaluate(() => OrderHold.resumeReleases().then(a => a.map(x => [x.ok, x.stage || null]))));
+    }
+    const callList = await page.evaluate(() => window.__relCalls.slice()), calls = callList.length;
+    console.log('         tries:', JSON.stringify(tries), '· release calls in all', calls, JSON.stringify(callList));
+    // (the page's own look every 5 s may have been one of the three; what counts is that the person's press is followed by three looks and no more)
+    check(callList.filter(c => /press/.test(c)).length === 1 && callList.filter(c => /resume/.test(c)).length === 3 && tries.every(t => t.every(x => x[0] === false)) && tries[3].length === 0 && tries[4].length === 0, `2 · after the person's press the page looks again three times and then leaves it (${JSON.stringify(tries)}; ${JSON.stringify(callList)})`);
+    const row2b = await rowOf(H), s2 = await info();
+    check(row2b.frontAt === frontAt && s2.charms.filter(id => id === poolOf(H)).length === 1 && !s2.placed.includes(poolOf(H)) && !timeline(H, 'released').length, `2 · after the failures the order is still at the front, once on the sheet and waiting, and the timeline does not claim a release (${JSON.stringify([row2b.frontAt === frontAt, s2.charms.filter(id => id === poolOf(H)).length, timeline(H, 'released').length])})`);
+    await realAudit('2 after the tries', {});
+  } catch (e) { fails.push('real 2: ' + e.message); console.log('  FAIL real 2 · ' + (e.stack || e.message)); }
+
+  /* ── 3 · the place at the front survives a reload: three Etsy orders, all older than H, wait on the same sheet; H is placed first ── */
+  try {
+    await page.evaluate(() => { localStorage.removeItem('__failNest'); });
+    await page.evaluate(() => Session.flushNow().catch(() => {}));
+    await page.reload({ waitUntil: 'load' }); await ready();
+    await page.waitForFunction(() => Orders.rows().length >= 3 && window.B && B.run, null, { timeout: 120000 });
+    await page.waitForTimeout(2000);
+    const row3 = await rowOf(H);
+    check(row3.frontAt === frontAt && !!row3.releasing && row3.state === 'pooled', `3 · the page after a reload still has the order at the front, its release unfinished (${JSON.stringify(row3)})`);
+    const sI = await info();
+    check(I.every(r => sI.charms.includes(poolOf(r))), `3 · the three Etsy orders are still waiting on the sheet after the reload (${sI.charms.length} pieces)`);
+    await page.evaluate(() => { window.__jobs = []; });
+    // (the page's own look picks it up within 5 s; this call is only to be sure it has begun. A machine this busy can take longer than one try's six minutes: the page tries up to three times)
+    await page.evaluate(() => { window.__resumed = []; OrderHold.resumeReleases().then(a => window.__resumed.push(...a.map(x => ({ ok: x.ok, placed: x.placed, error: x.error || null })))).catch(() => {}); });
+    const fin3 = await until(async () => { const r = await rowOf(H), z = await info(); return r && !r.releasing && z && z.placed.includes(poolOf(H)) && z; }, 1500000, 'the release finishes after the reload').catch(() => null);
+    console.log('         resumed:', JSON.stringify(await page.evaluate(() => window.__resumed)));
+    check(!!fin3, `3 · the next load finishes the release by itself (${JSON.stringify(await page.evaluate(() => window.__resumed))})`);
+    const jobs = await page.evaluate(() => window.__jobs);
+    console.log('         first search asked:', JSON.stringify(jobs[0] && jobs[0].orders));
+    check(jobs.length >= 1 && jobs[0].orders.includes(H) && !jobs[0].orders.includes(I[2]), `3 · the first search took H ahead of the third Etsy order, which is older (${JSON.stringify(jobs[0] && jobs[0].orders)})`);
+    // (the three Etsy orders after it may still wait their turn: a run in manual mode starts no search of its own; what is checked is that H is placed, once, and none of them is lost or ahead)
+    await rest().catch(() => null);
+    const s3 = await info();
+    check(SIDS.filter(r => r !== H2).every(r => s3.placed.includes(poolOf(r))) && s3.charms.filter(id => id === poolOf(H)).length === 1 && I.every(r => s3.charms.includes(poolOf(r))), `3 · H is placed once, S1 did not go, the three Etsy orders are all still on the sheet (${JSON.stringify({ placed: s3.placed.length, charms: s3.charms.length, feedWait: s3.feedWait.length, status: s3.status })})`);
+    const placedAt = id => s3.placed.indexOf(id);
+    check(placedAt(poolOf(H)) >= 0 && (placedAt(poolOf(I[2])) < 0 || placedAt(poolOf(H)) < placedAt(poolOf(I[2]))), `3 · H sits ahead of the third Etsy order (${JSON.stringify([placedAt(poolOf(H)), placedAt(poolOf(I[2]))])})`);
+    const row3b = await rowOf(H), pr = pool(srv, poolOf(H), false);
+    console.log('         after placement: row frontAt', row3b.frontAt, 'releasing', JSON.stringify(row3b.releasing), '· piece record frontAt', pr.frontAt);
+    check(row3b.frontAt === frontAt && !row3b.releasing && row3b.state !== 'held', `3 · placed: the marker is gone, the place in the queue is kept and harmless (${JSON.stringify(row3b)})`);
+    const ev3 = await until(() => timeline(H, 'released').length && timeline(H, 'released'), 60000, 'the released event');
+    await page.waitForTimeout(2500);
+    check(timeline(H, 'released').length === 1 && timeline(H, 'released')[0]._id.includes(String(frontAt)), `3 · the timeline has one permanent step for the release, named by the first press (${JSON.stringify(timeline(H, 'released').map(e => e._id))})`);
+    const rk = await page.evaluate(({ ms }) => { const R = CharmNestOrders.rankDate; return { front: R({ frontAt: ms }), dated: R({ orderDate: 1.7e9 }), undated: R({ orderDate: 0 }), none: R({}) }; }, { ms: Date.now() });
+    check(rk.front < rk.dated, `3 · by rank a released piece is ahead of every dated order (${JSON.stringify(rk)})`);
+    // (an order with NO date at all ranks 0, ahead of a released order: Etsy always gives a date, so this is noted, not failed)
+    console.log('         rank of an undated piece:', rk.undated, 'against a released one:', rk.front);
+    await realAudit('3 after the release', { held: [H2].filter(() => false) });
+    // incoming orders stand outside the three orders audited: they are on the sheet too
+    const pl = await info();
+    check(pl.charms.length === 6 && [S1, H, H2, ...I].every(r => pl.charms.includes(poolOf(r))), `3 · six orders on the sheet, none lost (${pl.charms.length} pieces, ${pl.placed.length} placed)`);
+  } catch (e) { fails.push('real 3: ' + e.message); console.log('  FAIL real 3 · ' + (e.stack || e.message)); }
+
+  /* ── 4 · Hold again, Release again, and everything pressed while a Release runs ── */
+  try {
+    // (the run is stopped, so the sheet, with an Etsy order still waiting on it, reads "Waits for Resume": a hold on it must not sit out three minutes and then call it busy)
+    const sheetNow = await dump();
+    const t4 = Date.now();
+    await holdRun(H, 'Paula', 'again'); const rh = await holdEnd();
+    check(sheetNow.stage === 'Waits for Resume' && sheetNow.run && sheetNow.run.status === 'stopped', `4 · the sheet waits for the stopped run to resume (${sheetNow.status}: ${sheetNow.stage}; run ${sheetNow.run && sheetNow.run.status})`);
+    check(rh.ok && rh.held && Date.now() - t4 < 150000, `4 · the order is held a second time without waiting for the stopped run (${JSON.stringify(rh)} in ${Math.round((Date.now() - t4) / 1000)} s)`);
+    await settled(srv, 2000, 60000);
+    const rowH = await rowOf(H);
+    console.log('         held again: frontAt kept =', rowH.frontAt === frontAt, '(row.frontAt', rowH.frontAt, ')');
+    const placedBefore = await info();
+    await page.evaluate(() => { window.__jobs = []; });
+    const m4 = srv.mark();
+    await relRun(H, 'Paul');
+    await until(() => page.evaluate(() => window.__rsteps.includes('target')), LONG, 'the release reaches its target');
+    // everything a second person could press while the first release runs
+    const racers = await page.evaluate(async ({ H, H2 }) => {
+      const again = OrderHold.release(H, { name: 'Pat' });                                  // Release twice
+      const holdSame = await OrderHold.run(H, { name: 'Pat' });                              // Hold the order that is being released
+      const holdOther = await OrderHold.run(H2, { name: 'Pat', note: 'during' });             // Hold another order on the same sheet
+      const sameResult = again === window.__rp0;
+      return { sameResult, holdSame: { ok: holdSame.ok, error: holdSame.error || null }, holdOther: { ok: holdOther.ok, held: holdOther.held, error: holdOther.error || null } };
+    }, { H, H2 });
+    console.log('         pressed during the release:', JSON.stringify(racers));
+    check(racers.sameResult === true, `4 · a second Release of the same order is the first one (one release, not two)`);
+    check(racers.holdSame.ok === false && /being released/.test(racers.holdSame.error || ''), `4 · Hold of the order being released is refused plainly (${JSON.stringify(racers.holdSame)})`);
+    check(racers.holdOther.ok === false ? /One change at a time|still running|being/i.test(racers.holdOther.error || '') : racers.holdOther.held === true, `4 · Hold of another order during the release is refused plainly or goes through whole (${JSON.stringify(racers.holdOther)})`);
+    const r4 = await relEnd();
+    check(r4.ok === true && r4.placed === true, `4 · the release finishes (${JSON.stringify(r4)})`);
+    await settled(srv, 2000, 60000);
+    const calls4 = srv.st.calls.slice(m4.calls);
+    const heldOther = racers.holdOther.ok === true;
+    await realAudit('4 after the race', { held: heldOther ? [H2] : [] });
+    const rel4 = timeline(H, 'released');
+    check(rel4.length === 2 && new Set(rel4.map(e => e._id)).size === 2, `4 · two permanent release steps in all, one for each release (${JSON.stringify(rel4.map(e => e._id))})`);
+    const rowH4 = await rowOf(H);
+    check(rowH4.frontAt > frontAt && !rowH4.releasing, `4 · the second release put the order at a later place in the queue than the first (${rowH4.frontAt} > ${frontAt})`);
+    console.log('         the other order after the race:', JSON.stringify(await rowOf(H2)), '· jobs:', JSON.stringify(await page.evaluate(() => window.__jobs.map(j => j.orders))));
+  } catch (e) { fails.push('real 4: ' + e.message); console.log('  FAIL real 4 · ' + (e.stack || e.message)); }
+
+  /* ── 5 · the timeline only grew; no Etsy call, no paid call after the sheet was built ── */
+  await settled(srv, 2500, 60000);
+  check(tlOnlyGrew(tl0, tlSnapshot(srv, false)), `5 · every timeline event that was there is still there, as it was (the timeline only grows)`);
+  const inRun = srv.st.calls.slice(m0.calls), paidOps = inRun.filter(c => PAID_FN.has(c.name) || (c.name === 'charmNestLibrary' && PAID_OP.test(c.op || '')));
+  check(!inRun.some(c => ETSY_FN.has(c.name)), `5 · no Etsy call from the Hold, the Release or the reloads (${[...new Set(inRun.map(c => c.name))].join(', ')})`);
+  // (the page's own Custom Orders reader asks for a reading of every unread custom line, and again every 10 minutes while nothing answers; the fake has no model key, so it asks all the time.
+  //  That is the reader's, not the hold's or the release's: only a call of ANOTHER kind (grouping, layout, name, place, packing, label, engraving) would be theirs)
+  const modes = paidOps.map(c => (c.body && c.body.mode) || c.name);
+  console.log('         paid calls asked after the sheet was built:', JSON.stringify(modes), '· model calls the fake saw:', srv.paid - m0.paid);
+  check(modes.every(m => m === 'customRead'), `5 · the only paid calls are the Custom Orders reader's own, none from the Hold or the Release (${JSON.stringify(modes)})`);
+  check(!errors.length, 'real · no page errors ' + errors.join(' | '));
+  await ctx.close(); srv.close();
+}
 /*SEGMENTS*/
 
 const SEGMENTS = { seeded: seededSegment, stale: staleSegment, safety: safetySegment, sandbox: sandboxSegment, ui: uiSegment, real: realSegment };
