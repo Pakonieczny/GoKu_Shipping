@@ -536,9 +536,9 @@ async function buildOverview(ctx, day, days, withTrend) {
   // sources, notes
   const notes = [];
   const rollupsDown = info.errors.some(e => String(e).startsWith("rollups:"));
-  if (!src.events && rollupsDown) notes.push("The activity numbers could not be read just now: parts, scans and orders show 0 where they are unknown; sign-in times are real.");
+  if (!src.events && rollupsDown) notes.push("The activity numbers could not be read just now: pieces, scans and orders show 0 where they are unknown; sign-in times are real.");
   else if (!src.events) notes.push("Activity events have not been recorded for these days yet: showing sign-in time and order seals only.");
-  if (src.seals) notes.push("Days before activity events began come from order seals: orders, scans and label prints by person and station, with no part counts.");
+  if (src.seals) notes.push("Days before activity events began come from order seals: orders, scans and label prints by person and station, with no piece counts.");
   if (asm.info.sealsLeftOut > 0) notes.push(`Seal history is read for the newest ${LIM.sealDays} days only; ${asm.info.sealsLeftOut} older day${asm.info.sealsLeftOut === 1 ? "" : "s"} show sign-in time only.`);
   if (info.capped.length) notes.push("Some lists were cut at their size limit: " + [...new Set(info.capped)].join(", ") + ".");
   if (info.errors.length) notes.push("Some data could not be read just now; the screen shows what was.");
@@ -583,7 +583,7 @@ async function opPerson(ctx, body) {
   const S = summarize(pds), src = { events: pds.some(p => p.src === "events"), seals: pds.some(p => p.src === "seals"), sessions: pds.some(p => p.spans.length > 0) };
   const notes = [];
   if (!src.events) notes.push("No activity events for this person in these days: sign-in time and order seals only.");
-  if (src.seals) notes.push("Days before activity events began come from order seals: orders, scans and label prints, with no part counts.");
+  if (src.seals) notes.push("Days before activity events began come from order seals: orders, scans and label prints, with no piece counts.");
   if (info.capped.length) notes.push("Some lists were cut at their size limit: " + [...new Set(info.capped)].join(", ") + ".");
   const partial = info.errors.length > 0 || info.capped.length > 0;
   const out = { ok: true, now: ctx.now, name: P ? displayName(P) : niceName(name), from, to, days: rows, totals: S.totals, sources: src, notes };
@@ -630,7 +630,7 @@ async function opOrders(ctx, body) {
   evOut.sort((a, b) => a.at - b.at);
   const evCut = evOut.length > LIM.orderEventsOut ? evOut.slice(-LIM.orderEventsOut) : evOut;
   if (evOut.length > evCut.length) notes.push(`Showing the newest ${LIM.orderEventsOut} events of ${evOut.length}.`);
-  if (seals.length) notes.push("Steps marked seals come from the order's timeline seals (before activity events), with no part counts or work time.");
+  if (seals.length) notes.push("Steps marked seals come from the order's timeline seals (before activity events), with no piece counts or work time.");
   if (errors.length) notes.push("Some of this order's records could not be read just now.");
   const firstAt = out.length ? Math.min(...out.map(s => s.firstAt)) : 0, lastAt = out.length ? Math.max(...out.map(s => s.lastAt)) : 0;
   const res = { ok: true, now: ctx.now, orderId, steps: out, events: evCut,

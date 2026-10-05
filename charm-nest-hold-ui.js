@@ -54,8 +54,14 @@
   // ── what the page knows of an order: its pieces, whether it is held or cancelled ─────────────────────────────────────
   const rowsOf = rid => tryDo(() => (root.Orders && typeof root.Orders.rows === 'function' ? root.Orders.rows() : [])
     .filter(r => r && r.order && String(r.order.receiptId) === String(rid) && r.state !== 'gone'), []);
-  /** Every piece of the order is on hold (the line's own `hold`, which is what Orders > On hold lists). */
-  const isHeld = rid => { const rows = rowsOf(rid); return rows.length > 0 && rows.every(r => !!r.hold); };
+  /** Every piece of the order is on hold: this page's own lines say so (their `hold`, which is what Orders > On hold lists), or the cloud's answer does (PiecePlacement: a Hold pressed on
+   *  another computer took the pieces off their sheets, and this page's lines never heard: the Hold button was still offered on an order already on hold). */
+  const isHeld = rid => {
+    const rows = rowsOf(rid); if (!rows.length) return false;
+    if (rows.every(r => tryDo(() => (root.Orders && typeof root.Orders.heldNow === 'function' ? root.Orders.heldNow(r) : !!r.hold), !!r.hold))) return true;
+    const p = tryDo(() => (root.PiecePlacement && typeof root.PiecePlacement.of === 'function' ? root.PiecePlacement.of(rid) : null), null), c = p && p.counts;
+    return !!(c && c.hold > 0 && c.hold === c.pieces - c.hand - c.cancelled);
+  };
   const isCancelled = rid => tryDo(() => !!(root.Cancelled && typeof root.Cancelled.has === 'function' && root.Cancelled.has(rid)), false);
   const isRunning = rid => tryDo(() => { const H = engine(), s = H && typeof H.status === 'function' ? H.status(rid) : null, r = H && typeof H.releaseStatus === 'function' ? H.releaseStatus(rid) : null; return !!((s && s.running === true) || (r && r.running === true)); }, false);
   /** Whether the order shows a Hold button: the engine is here, the order is in the pull, and it is not held, cancelled or being held. */
@@ -453,6 +459,14 @@
       rest(); flows.delete(rid);
     }
   }
+
+  // The Hold button follows where the cloud says the order is (OrderPieces: a Hold or a Release made on another computer reaches this page as a read): a button that no longer
+  // applies goes, and the cards (Review) are drawn again so that one that now applies is offered. A hold made here is its own flow's business (busy orders keep their button).
+  (function follow() {
+    const OP = root.OrderPieces; if (!OP || typeof OP.subscribe !== 'function') return;
+    let t = 0;
+    OP.subscribe(() => { clearTimeout(t); t = setTimeout(() => { tryDo(() => sync()); tryDo(() => root.Review && typeof root.Review.render === 'function' && root.Review.render()); }, 60); });
+  })();
 
   root.HoldUI = {
     button, slot, fill, confirm, hold, release, describe,

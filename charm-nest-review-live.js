@@ -10,8 +10,8 @@
 
      · every EVERY (2 s) one small read, charmNestLibrary customGet { since }: the records written after the last answer's
        server time less a margin (one query on updatedAtMs; nothing written; { records: {}, at } and no document read when
-       nothing changed, Firestore bills one read for an empty query). Not read while the tab is hidden or another tab is on screen (1 800 calls an hour while it is watched,
-       none otherwise); a failed read backs off (x2 up to 30 s) and says nothing; no Etsy call, ever;
+       nothing changed, Firestore bills one read for an empty query). Not read while the tab is hidden or the Nest or Engraving tab is on screen (the Review, Orders and Library tabs follow it; 1 800 calls an hour while it is watched,
+       none otherwise; watched: the Review, Orders and Library tabs); a failed read backs off (x2 up to 30 s) and says nothing; no Etsy call, ever;
      · a write made on this page (api: customPut / customReopen) reads at once and again 1.5 s later; the order window's
        timeline feed, when it brings a custom seal or reopen this page has not seen, asks for one read (nudge, not a poller);
      · a tab shown after another is brought up to date by one read (at least 5 s after the last), so the Orders tab, the
@@ -33,8 +33,14 @@
   const modeOf = () => { try { return S.mode; } catch (_) { return ""; } };
   const cloudOk = () => { try { return !!(S.cloud && S.cloud.ok); } catch (_) { return false; } };
   const onReview = () => modeOf() === "review" && !doc.hidden;
-  const live = () => !st.dead && onReview() && cloudOk();
-  const TABS = new Set(["orders", "nest", "library"]);
+  // The Orders list, the Library (its Order check, its "what is left" lists) and the search draw "done by hand / open" from the same custom records the Review tab does: a completion
+  // or a reopen made on another computer reaches them within seconds, not at the next Etsy check (Paul, 5 Oct: no mismatch between the views). Only Review shows the stamp and the flight.
+  const FOLLOW = new Set(["review", "orders", "library"]);
+  // (the search box and the order window open over any tab and say "completed by hand" too: while one is open the records are followed whatever the tab behind it)
+  const overlay = () => { try { return !!((root.OrderSearch && root.OrderSearch.isOpen && root.OrderSearch.isOpen()) || (root.OrderWin && root.OrderWin.isOpen && root.OrderWin.isOpen())); } catch (_) { return false; } };
+  const watching = () => (FOLLOW.has(modeOf()) || overlay()) && !doc.hidden;
+  const live = () => !st.dead && watching() && cloudOk();
+  const TABS = new Set(["nest", "engrave"]);
 
   /** Where the page's records stand: the server's clock at the whole list's read (Orders.loadMaps), taken once. */
   function seed() {
@@ -161,18 +167,18 @@
   function nudge(o) {
     if (st.dead || !cloudOk()) return;
     const hint = !!(o && o.hint);
-    if (!hint && !onReview()) return;   // (a press from another tab: that tab is brought up to date when it is shown)
+    if (!hint && !watching()) return;   // (a press from a tab that does not draw them: that tab is brought up to date when it is shown)
     if (hint) st.hint = true;
     if (st.busy) st.again = true; else arm(Math.max(0, st.start + GAP - Date.now()));
     clearTimeout(st.second);
-    st.second = setTimeout(() => { st.second = 0; if (!st.dead && cloudOk() && (hint || onReview())) { if (hint) st.hint = true; if (st.busy) st.again = true; else arm(0); } }, SECOND);
+    st.second = setTimeout(() => { st.second = 0; if (!st.dead && cloudOk() && (hint || watching())) { if (hint) st.hint = true; if (st.busy) st.again = true; else arm(0); } }, SECOND);
   }
   /** A tab was shown (Views.onShow). */
   function shown(mode) {
     clearTimeout(st.timer); st.timer = 0; clearTimeout(st.second); st.second = 0;
     if (st.dead || !cloudOk()) return;
     st.quietNext = true;   // (what changed while another tab was on screen is not replayed)
-    if (mode === "review") { if (doc.hidden) return; if (st.busy) st.again = true; else arm(0); return; }
+    if (FOLLOW.has(mode)) { if (doc.hidden) return; if (st.busy) st.again = true; else arm(0); return; }
     if (TABS.has(mode) && !doc.hidden && Date.now() - Math.max(st.lastAny, st.end) > OTHER_TAB) { st.lastAny = Date.now(); if (st.busy) st.again = true; else poll({ quiet: true }).catch(() => {}); }
   }
   doc.addEventListener("visibilitychange", () => {
@@ -183,5 +189,7 @@
   const back = () => { st.fails = 0; st.quietNext = true; if (live() && !st.busy) arm(500); };
   root.addEventListener("online", back); root.addEventListener("cn-cloud-back", back);
 
-  root.ReviewLive = { nudge, shown, poll, state: () => ({ polls: st.polls, applied: st.applied, loud: st.loud, fails: st.fails, cursor: st.cursor, lastOk: st.lastOk, busy: st.busy, armed: !!st.timer, dead: st.dead, error: st.error, every: EVERY }) };
+  /** Start the loop when a surface that needs it has come on screen since it last stopped (the search box or the order window opened over a tab that does not follow); the placement feed asks every few seconds. */
+  const ensure = () => { if (!st.dead && !st.timer && !st.busy && live()) schedule(); };
+  root.ReviewLive = { nudge, shown, poll, ensure, state: () => ({ polls: st.polls, applied: st.applied, loud: st.loud, fails: st.fails, cursor: st.cursor, lastOk: st.lastOk, busy: st.busy, armed: !!st.timer, dead: st.dead, error: st.error, every: EVERY }) };
 })(typeof window !== "undefined" ? window : globalThis);

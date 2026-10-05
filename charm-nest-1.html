@@ -2996,8 +2996,8 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-export.js"></script>
 <script src="charm-nest-text.js"></script>
 <script src="charm-nest-orders.js?v=20261005-pieces-hand1-rel1"></script>
-<script src="charm-nest-order-pieces.js?v=20261005-op2-hand1"></script>
-<script src="charm-nest-piece-placement.js?v=20261005-pp1"></script>
+<script src="charm-nest-order-pieces.js?v=20261005-op2-hand1-pf2"></script>
+<script src="charm-nest-piece-placement.js?v=20261005-pp1-pf2"></script>
 <script src="charm-nest-order-engraving.js?v=20261005-oe2-zp1-nofix1-en2"></script>
 <script src="charm-nest-shared-orders.js?v=20261005-cardinal3"></script>
 <script src="charm-nest-background.js?v=20260930-stamp-barrier"></script>
@@ -3202,6 +3202,7 @@ function cloudWords(text, status) {
 window.CNWipe = window.CNWipe || { active: false };
 const READ_OP = /^(get|list|ping|lookup|history|check)|(Get|List|Check|Status|Preview|Read|Url|Info)$/;
 const TL_WRITE = /^(pool|back|laser|rose|custom|arrival|cancel|set|putSheet|deleteSheet|restoreSheet|sandboxCancel)/;   // (the writes an order's timeline shows)
+const PLACEMENT_WRITE = /^(pool|putSheet|deleteSheet|restoreSheet|archiveEmptySheet|set|run|custom|cancel|laserDone|sandboxCancel|flowApply)/;   // (the writes that can move a piece: on a sheet, off it, held, cancelled, done by hand)
 // the writes that change where a sheet or a set stands in the Library, or what it still waits for (its backs, label, set, green
 // line, cut mark, hold and seals, and the orders' own answers): the Library's cards read the cloud again at once after any of them
 const LIBRARY_WRITE = /^(poolPut|poolUpdate|backPut|backInvalidate|setAllocate|setUpdate|runPut|runArchive|laserDone|putSheet|deleteSheet|restoreSheet|archiveEmptySheet|roseRecordCut|roseTakeOff|roseClaim|roseRelease|flowApply|customDecide|customPut|customReopen|customDelete|customSheetPut|cancelPut|cancelRestore|noDesignPut|noDesignDelete)$/;
@@ -3237,6 +3238,9 @@ async function api(fn, body, opts = {}) {
     // ... and the Review tab's changes feed reads now and 1.5 s later after a completion, a print or a reopen written from here
     // (Paul, 5 Oct: whatever is done from any view is the same everywhere within seconds, another computer's too)
     if (fn === "charmNestLibrary" && /^custom(Put|Reopen|Delete)$/.test(String((body && body.op) || ""))) { try { window.ReviewLive?.nudge?.(); } catch (_) {} }
+    // ... and where each piece is (on a sheet, which one, on hold, cancelled, done by hand) is read again, for the orders on screen, now and 1.5 s later
+    // after any write that can move it, so the lists, the cards, the search and the windows say what the cloud says (PlacementFeed)
+    if (fn === "charmNestLibrary" && PLACEMENT_WRITE.test(String((body && body.op) || "")) && !READ_OP.test(String((body && body.op) || ""))) { try { window.PlacementFeed?.nudge?.(); } catch (_) {} }
     return data;
   } catch (e) {
     if (e && e.name === "TimeoutError") throw Object.assign(new Error(`${fn}: no answer in ${Math.round(ms / 1000)} s — timed out`), { transient: true });
@@ -6777,9 +6781,9 @@ boot();
      Design Station's sign-in), the same name every seal it stamps carries. -->
 <script src="station-session.js?v=20261005-et2"></script>
 <script src="station-activity.js?v=20261005-et2"></script>
-<script src="charm-nest-bridge.js?v=20261005-lis2-cardinal4-zoom-psb1-egl1-osc1-r3f-setgate1-hand1-sameset1-rl1-nowait1-opt1-rt1-pcr1-one1-st1-five1-pd1-zp1-rel2-cx1-hold2-sl2-sealsh1-sealpc2-live1-pst1-nofix1-pcsel1-pst2-sk1-nonote1-pdot3-pr1-lvx1-rvx1-pl1-en2"></script>
-<script src="charm-nest-review-live.js?v=20261005-rl1"></script>
-<script src="charm-nest-hold-ui.js?v=20261005-hold3"></script>
+<script src="charm-nest-bridge.js?v=20261005-lis2-cardinal4-zoom-psb1-egl1-osc1-r3f-setgate1-hand1-sameset1-rl1-nowait1-opt1-rt1-pcr1-one1-st1-five1-pd1-zp1-rel2-cx1-hold2-sl2-sealsh1-sealpc2-live1-pst1-nofix1-pcsel1-pst2-sk1-nonote1-pdot3-pr1-lvx1-rvx1-pl1-en2-pf5"></script>
+<script src="charm-nest-review-live.js?v=20261005-rl1-pf1-pf2"></script>
+<script src="charm-nest-hold-ui.js?v=20261005-hold3-pf1"></script>
 <script>
 try {
   const nameNow = () => { try { const n = String((window.CNEmployee && CNEmployee.name()) || "").trim(); return /^\d+$/.test(n) ? "" : n; } catch (_) { return ""; } };
@@ -6807,13 +6811,13 @@ try {
       set(v) { d.set.call(window.B, v); try { const n = String(d.get.call(window.B) || "").trim(); if (n && !/^\d+$/.test(n)) StationSession.signedIn({ name: n, id: null }); } catch (_) {} } });
 } catch (_) {}
 </script>
-<script src="charm-nest-sheetwin.js?v=20261005-pieces-cardinal2-osc1-shm1-osc2-zp1-rel1-oh1-sl2-sealsh1-live1-hk2-en2"></script>
+<script src="charm-nest-sheetwin.js?v=20261005-pieces-cardinal2-osc1-shm1-osc2-zp1-rel1-oh1-sl2-sealsh1-live1-hk3-en2-pf6"></script>
 <!-- Hold the whole order: the engine over the sheet window's own Take off and Fill the freed room (OrderHold.plan, run, status) -->
-<script src="charm-nest-order-hold.js?v=20261005-oh4"></script>
+<script src="charm-nest-order-hold.js?v=20261005-oh5-pf2"></script>
 <!-- the one way into the engraving of one order's piece (the order window, the Sheet tab and the Sheet window call it; each keeps its own way without it) -->
 <script src="charm-nest-engrave-link.js?v=20261005-el2"></script>
 <script src="charm-nest-tour.js?v=20260929-m11"></script>
-<script src="charm-nest-order-release.js?v=20261005-rel4"></script>
+<script src="charm-nest-order-release.js?v=20261005-rel5-pf1"></script>
 <!-- the cinematic Hold and Release: the order seen moving sheet to sheet (OrderHoldFx.playHold, playRelease, returnToOnHold), driven by the engine's own steps -->
 <script src="charm-nest-hold-fx.js?v=20261005-hfx3"></script>
 <script src="charm-nest-mail.js?v=20261005-pv-seal-zp1"></script>
@@ -6830,15 +6834,17 @@ try {
 <script src="charm-nest-library-issues.js?v=20261005-lis6-nowait1-noset1-one1-five1-pd1"></script>
 <script src="charm-nest-rail-tip.js?v=20261005-rt2-pdot1"></script>
 <script src="charm-nest-piece-seals.js?v=20261005-pg1"></script>
-<script src="charm-nest-cancel-ui.js?v=20261005-cx1"></script>
+<script src="charm-nest-cancel-ui.js?v=20261005-cx1-pf2"></script>
 <script src="charm-nest-shared-orders-modal.js?v=20261005-so5"></script>
-<script src="charm-nest-search.js?v=20260929-m5-osc1-sealsh1"></script>
+<!-- the cadence of where-is-each-piece: every surface that says "on a sheet / not on a sheet / on hold" follows the cloud within seconds (PlacementFeed) -->
+<script src="charm-nest-placement-feed.js?v=20261005-pf4"></script>
+<script src="charm-nest-search.js?v=20260929-m5-osc1-sealsh1-pf3"></script>
 <script src="charm-nest-signins.js?v=20260929-m5"></script>
 <script src="charm-nest-efficiency-charts.js?v=20261005-efc3"></script>
-<script src="charm-nest-efficiency-stations.js?v=20261005-es3"></script>
-<script src="charm-nest-efficiency.js?v=20261005-ef8-es3"></script>
+<script src="charm-nest-efficiency-stations.js?v=20261005-es4"></script>
+<script src="charm-nest-efficiency.js?v=20261005-ef10-eq1"></script>
 <script src="charm-nest-efficiency-orders.js?v=20261005-eo3"></script>
-<script src="charm-nest-efficiency-person.js?v=20261005-ep5"></script>
+<script src="charm-nest-efficiency-person.js?v=20261005-ep6"></script>
 <!-- ══ one order line: what it is, what the customer said, what the shop said, and how to settle it ══ -->
 <dialog id="orderWin" class="owin owFull" aria-labelledby="owTitle" data-no-grow>
   <div class="owBox">

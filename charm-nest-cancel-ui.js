@@ -257,7 +257,7 @@
     const B = root.B, rid = snap.rid; let n = 0;
     for (const r of snap.rows) {
       if (B.orders.byKey.has(r.key)) continue;
-      if (!(r.poolIds || []).length && r.state !== "gone") { r.state = "held"; if (!r.hold) { r.hold = r.reason = `Taken off its sheet by ${snap.who}: cancelled, then put back on hold`; } r.heldAt = r.heldAt || Date.now(); }
+      if (!(r.poolIds || []).length && r.state !== "gone") { r.state = "held"; if (!r.hold) { r.hold = r.reason = `Taken off its sheet by ${snap.who}: cancelled, then put back on hold`; r.holdSeen = false; } r.heldAt = r.heldAt || Date.now(); }
       B.orders.rows.push(r); B.orders.byKey.set(r.key, r); n++;
     }
     for (const [id, p] of snap.pool) if (!B.pool.rows.has(id)) B.pool.rows.set(id, p);

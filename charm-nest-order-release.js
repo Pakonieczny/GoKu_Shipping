@@ -190,7 +190,8 @@
       const pending = [...loc.values()].filter(x => !x.placed);
       if (!pending.length && !lost.length) return [...by.keys()];
       for (const sh of new Set(pending.map(x => x.sh))) {
-        if (sh.problem) throw new Error(`${label(sh)}: ${sh.problem}`);
+        // (a problem from a nest before this release is old news: the search is started first, and clears it; only the one it reports counts)
+        if (sh.problem && (starts.get(sh) || 0) > 0) throw new Error(`${label(sh)}: ${sh.problem}`);
         if (busy(sh) || sh.runHold) continue;
         const n = starts.get(sh) || 0;
         if (n < 6) { starts.set(sh, n + 1); startNow(sh); }
@@ -240,6 +241,21 @@
   }
 
   /* ── the release ── */
+  /** A hold is a mark in the cloud (the pool rows a take-off left: abandoned, held, on no sheet) and every page reads it as "on hold" until the pieces are made up again (poolPut stamps repooledAt).
+   *  With a run open that follows at once; with none (or a piece the run could not make up) it would be hours, and every other computer, the Library and the stations' timeline would say "held" for
+   *  an order this page has just released. The release says so itself: the order's still-held pool rows get the same repooledAt stamp, written over the rows only (nothing is made up here, no sheet is
+   *  touched). Never throws: the later poolPut stamps them anyway. */
+  async function liftInCloud(rid) {
+    try {
+      const OP = G.OrderPieces, CN = G.CN; if (!OP || !OP.of || !OP.load || !CN || !CN.api) return;
+      await OP.load([rid], { force: true });
+      const ids = [...new Set(OP.of(rid).filter(p => p && p.hold && p.poolId).map(p => String(p.poolId)))];
+      if (!ids.length) return;
+      await CN.api('charmNestLibrary', { op: 'poolUpdate', poolIds: ids, patch: { repooledAt: Date.now() } }, { quiet: true, timeoutMs: 15000 });
+      await OP.load([rid], { force: true });   // (this page's own view of the order is the cloud's again before the release is over: nothing re-reads the old marks into the rows)
+      if (G.PlacementFeed && G.PlacementFeed.nudge) G.PlacementFeed.nudge();
+    } catch (e) { try { console.warn('[OrderHold.release] the hold marks in the cloud were not cleared', e && e.message || e); } catch (_) { /* none */ } }
+  }
   async function doRelease(rid, opts) {
     const steps = [], emit = s => { s.at = Date.now(); steps.push(s); LAST.set(rid, { step: s }); try { if (opts.onStep) opts.onStep(s); } catch (e) { try { console.warn('[OrderHold.release] onStep', e); } catch (_) { /* none */ } } return s; };
     const out = (ok, extra) => Object.assign({ ok, released: false, rid, placed: false, sheets: [], steps }, extra);
@@ -289,7 +305,8 @@
     refresh();
     const after = rowsOfOrder(rid), still = after.filter(r => r.hold);
     if (still.length) { for (const r of after) delete r.releasing; await persist(); return fail(str(still[0].hold), 'hold'); }
-    const stuck = after.filter(r => (r.problems || []).length);
+    await liftInCloud(rid);   // (the hold is lifted on this page: the cloud's take-off marks say so too, whether or not a run is open to make the pieces up again)
+    const stuck =after.filter(r => (r.problems || []).length);
     if (stuck.length) { for (const r of after) delete r.releasing; await persist(); return fail(`Order ${rid} is released and at the front of the queue, but it needs a look in Review: ${str(stuck[0].reason || (stuck[0].problems[0] && stuck[0].problems[0].reason) || 'a piece has no design yet')}`, 'review', { released: true }); }
     const ids = [...new Set(after.filter(r => r.releasing).flatMap(r => r.poolIds || []))], fresh = ids.filter(id => !stay.has(id));
     const done = ['pooled', 'written', 'labelled', 'committed'];

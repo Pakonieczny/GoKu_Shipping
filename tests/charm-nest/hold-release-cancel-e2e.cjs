@@ -193,6 +193,18 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   const rowsOf = rid => page.evaluate(rid => Orders.rows().filter(r => String(r.order.receiptId) === rid).map(r => ({ key: r.key, state: r.state, hold: r.hold || null, pieces: r.poolIds.length, frontAt: r.frontAt || 0, releasing: !!r.releasing })), rid);
   const mutatingCalls = () => st.calls.filter(c => c.name === 'charmNestLibrary' && /^(poolPut|poolUpdate|putSheet|setUpdate|cancelPut|cancelRestore|customPut|customReopen|runPut|timelineAdd)$/.test(String(c.op)));
   const mutating = () => mutatingCalls().length;
+  // (the page's own first read of the orders, 'interpreted', is recorded in slices and goes out on the timeline outbox's clock, again after a backoff when a send failed on a
+  //  busy machine: it is not what a press did. Every count of writes starts once the outbox is empty and no write has come for 1.5 s, so a press is only blamed for what it wrote itself)
+  const outboxQuiet = async () => {
+    let was = -1, since = Date.now();
+    for (let i = 0; i < 300; i++) {
+      const left = await page.evaluate(() => { if (!window.OrderTimeline) return 0; try { OrderTimeline.flush && OrderTimeline.flush(); } catch (_) {} return OrderTimeline.pending ? OrderTimeline.pending() : 0; });
+      const n = mutating();
+      if (left !== 0 || n !== was) { was = n; since = Date.now(); } else if (Date.now() - since >= 1500) return;
+      await sleep(200);
+    }
+    throw new Error('the timeline outbox never went quiet before the press');
+  };
   const idsOf = (rid, ...txs) => txs.flatMap(tx => { const o = SPEC.orders[rid], ln = o.lines.find(l => l[0] === tx); return Array.from({ length: ln[1] }, (_, i) => pid(rid, tx, i + 1)); });
   const sorted = a => a.slice().sort();
   const allIds = () => SPEC.sheets.flatMap(sh => sh.items.map(([rid, tx, copy]) => pid(rid, tx, copy)));
@@ -284,7 +296,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     for (const r of rowsUi) { assert.equal(r.hold.length, 1, 'one Hold on each piece row: ' + JSON.stringify(r)); assert(r.hold[0].text === 'Hold' && r.hold[0].shown && r.hold[0].bg === 'rgb(162, 89, 28)' && r.hold[0].color === 'rgb(255, 255, 255)', 'the orange Hold: ' + JSON.stringify(r.hold[0])); }
     pass('the order window shows the orange Hold on each piece row of ' + H1);
     await shot('a1-orderwin-hold-button');
-    const w0 = mutating();
+    await outboxQuiet(); const w0 = mutating();
     // the press on the SECOND row's button (the silver piece): the whole order is held whichever piece's button was pressed
     await page.click(`#owPcSum [data-piece="${keyOfLine(H1, 2)}"] [data-hold-btn]`);
     await page.waitForFunction(() => document.querySelector('dialog.holdDlg[open]'), null, { timeout: 20000 });
@@ -398,6 +410,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   /** Presses the Hold at `btnSel`, reads the popup, presses Continue (the name is saved), follows the film to the end, waits until the person is home. */
   async function holdFrom(rid, btnSel, tag, o = {}) {
     await page.waitForFunction(s => { const b = document.querySelector(s); return b && !b.disabled && b.textContent.trim() === 'Hold'; }, btnSel, { timeout: 20000 });
+    await outboxQuiet();
     const before = await onSheets(), w0 = mutating();
     await page.evaluate(() => OrderHoldFx.clearEvents());
     await page.click(btnSel);
@@ -575,6 +588,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     await page.evaluate(s => document.querySelector(s).scrollIntoView({ block: 'center' }), rel);
     await shot('d1-on-hold-card-release-button', 500);
     await page.evaluate(() => { OrderHoldFx.clearEvents(); window.__relTxt = []; new MutationObserver(() => { for (const b of document.querySelectorAll('#ordItems .relHold')) window.__relTxt.push(b.textContent.trim()); }).observe(document.getElementById('ordItems'), { subtree: true, childList: true, characterData: true, attributes: true }); });
+    await outboxQuiet();
     const tPress = await page.evaluate(() => Date.now()), w0 = mutating();
     await sampler();
     await page.click(rel);

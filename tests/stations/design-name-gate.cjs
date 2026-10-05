@@ -126,7 +126,7 @@ const NORMAL = [
 
 async function designPage(browser, file, device) {
   const { ctx, page, errors } = await open(browser, file);
-  await until(() => page.evaluate(() => typeof proceedToPrint === 'function' && typeof DsName === 'object' && window.StationSession && StationSession.page() && window.StationActivity), file + ' loaded');
+  await until(() => page.evaluate(() => typeof proceedToPrint === 'function' && typeof DsName === 'object' && window.StationSession && StationSession.page() && window.StationActivity && document.querySelector('#settingsBody') && document.querySelector('#settingsBody').children.length > 0), file + ' loaded');   // (boot() has run wireUI and buildSettingsUI: its handlers are on the buttons, the settings are loaded)
   await page.evaluate(() => {   // what the page loads from Etsy and the shared locks is not under test
     window.buildNewOrderList = async () => {}; window.ensureSelectedPreviews = async () => {}; window.ensureTilesFor = async () => {};
     window.rtQueueLock = () => {}; window.openListingModal = async () => {};
@@ -169,6 +169,8 @@ async function designPage(browser, file, device) {
   await page.evaluate(([a, b]) => {
     orderCache[a] = [{ quantity: 2 }, { quantity: 1 }]; orderCache[b] = [{ quantity: 1 }];
     pendingLists = { gold: [a, b] }; pendingJobs = buildPrintJobs(pendingLists);
+    try { SETTINGS.labelsFromSorter = false; } catch (_) {}                   // (boot() loads the settings again once the passcode gate has answered: on a slow start that replaced the object set above)
+    document.getElementById('qrPreviewPrintBtn').classList.remove('hidden'); // design-1: the print route, whose button the preview would hide
     document.getElementById('qrPreviewPrintBtn').disabled = false;           // as the preview does once it has labels
     openDlg(document.getElementById('qrPreviewModal'));
   }, [A, B]);

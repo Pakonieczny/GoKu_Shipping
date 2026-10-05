@@ -84,7 +84,8 @@ async function main() {
     const l1 = load();
     const end = await page.evaluate(() => {
       const fix = document.getElementById('owFix');
-      const moving = [...fix.parentNode.children].filter(n => getComputedStyle(n).transform !== 'none').map(n => n.id || n.className);
+      // (a finished fill-forwards entrance, the pieces list's owUp, reads as the identity matrix: nothing moved)
+      const moving = [...fix.parentNode.children].filter(n => { const t = getComputedStyle(n).transform; return t !== 'none' && !/^matrix\(1, 0, 0, 1, 0, 0\)$/.test(t); }).map(n => n.id || n.className);
       return { fix: fix.innerHTML, moving, ghosts: document.querySelectorAll('#orderWin .motionLayer .mGhost').length };
     });
 

@@ -1105,6 +1105,8 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       if (tok !== W.token) return;
       unstill(); W.listKey = null; if (opts.glow) W.landing = W.landing.filter(l => !l.spots.some(s => s.c && opts.glow.includes(s.c.poolId)));
       veil(null); E.orders.innerHTML = `<li class="swNone"><b>This sheet could not open.</b><br>${esc(e.message)}<br><br><button class="btn ghost sm" data-r2="retry">Try again</button></li>`;
+      // (a sheet deleted on another computer while this window showed it: the header's counts, the strip and the state say it is gone too, not the numbers it had; the window follows on, so a sheet put back is drawn again)
+      if (/no longer in the Library/i.test(String(e && e.message))) tryDo(() => { E.strip.innerHTML = ""; E.foot.innerHTML = ""; E.seg.innerHTML = ""; E.state.className = "swState"; const st = E.state.querySelector("span"); if (st) st.textContent = "Deleted"; });
       E.orders.querySelector("[data-r2=retry]").onclick = () => open(id, opts);
       ready();
     }
@@ -1316,9 +1318,14 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   function piecesOf(rec) {
     const saved = new Map((rec.charms || []).map(c => [c.id, c]));
     const pieces = [];
+    // The record's own list of pool ids says which pieces are on it (the cloud's rule): a placement whose charm names a piece that list no longer holds was taken off (a Hold or a cancel
+    // made on another computer, written to the list at once; the page that made it rewrites the drawing a moment later): it is not drawn, listed or counted. A record with no list
+    // (an old one) and a list that is empty with nothing taken off say nothing, and every placement stands.
+    const listed = Array.isArray(rec.poolIds) && (rec.poolIds.length || rec.dirty === true) ? new Set(rec.poolIds.map(String)) : null;
     for (const p of rec.placements || []) {
       const c = saved.get(p.id) || {};
       const name = c.name || p.name || "", poolId = c.poolId || null;
+      if (listed && poolId && !listed.has(String(poolId))) continue;
       const rid = String(c.order || "").split("/")[0] || (poolId ? poolId.split("_")[0] : "");
       const m = / · (\d+)\/(\d+)$/.exec(name), copy = poolId ? +poolId.split("_").pop() || 1 : m ? +m[1] : 1;
       pieces.push({ id: p.id, p: { cxPt: +p.cxPt, cyPt: +p.cyPt, angle: +p.angle || 0, scale: +p.scale || 1, wPt: +p.wPt || 10, hPt: +p.hPt || 10 },
@@ -2393,6 +2400,10 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
      stay as saved (RoseStock.takeOff, on the server). */
   const BUSY = ["nesting", "finishing", "queued"];
   const busy = sh => BUSY.includes(sh.status) || !!sh._operationStarting || !!(sh.persisted && !sh.persistedDone && !sh.problem);
+  // A sheet "queued" only because the run is stopped (stage "Waits for Resume") is doing nothing: a change here need not wait for it
+  // (it used to wait three minutes and then say the sheet was busy). The change's own rewrite starts it by hand, as a person's press.
+  const waitsForResume = sh => sh.status === "queued" && !sh._operationStarting && !(sh.persisted && !sh.persistedDone && !sh.problem) && !!(window.CN && typeof CN.heldForResume === "function" && CN.heldForResume(sh));
+  const sheetWorking = sh => busy(sh) && !waitsForResume(sh);
   const sentToStation = sh => window.Sets && Sets.ofRun(sh.runId).some(set => set.committedAt && (set.sheetIds || []).includes(sh.sheetId));
   function sheetWord(id, name, sh) {
     const chip = W.setSheets.find(z => z.id === id);
@@ -2529,11 +2540,11 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   }
   // a sheet in the middle of a search or a save finishes that first (three minutes at most)
   async function waitIdle(pages, st, paint) {
-    if (!pages.some(busy)) return;
+    if (!pages.some(sheetWorking)) return;
     st.state = "now"; paint();
     const until = Date.now() + 180000;
-    while (pages.some(busy) && Date.now() < until) { const b = pages.find(busy); st.detail = `${sheetWord(b.sheetId, b.fileBase, b)}: ${b.stage || b.status}`; paint(); await pause(400); }
-    if (pages.some(busy)) throw new Error("a sheet is still busy after three minutes; try again once it has saved");
+    while (pages.some(sheetWorking) && Date.now() < until) { const b = pages.find(sheetWorking); st.detail = `${sheetWord(b.sheetId, b.fileBase, b)}: ${b.stage || b.status}`; paint(); await pause(400); }
+    if (pages.some(sheetWorking)) throw new Error("a sheet is still busy after three minutes; try again once it has saved");
     st.state = "ok"; st.detail = "";
   }
   // one sheet written again as it now stands: the pieces already on it stay put, and it is verified and saved
@@ -2541,7 +2552,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     st.state = "now"; paint();
     if (!allSheets().includes(sh) || !sh.placements.length && !activeCharms(sh).length) { st.state = "ok"; st.detail = "nothing left to write"; return true; }
     // the run may already have started it on its own (the sheet was left to be written): that search is this one
-    const job0 = sh.jobId, running = busy(sh), prob0 = sh.problem || null, t0 = Date.now();
+    const job0 = sh.jobId, running = sheetWorking(sh), prob0 = sh.problem || null, t0 = Date.now();
     if (!running) { sh._byHand = true; startNest(sh); }
     const until = t0 + 240000;
     while (Date.now() < until) {
@@ -2688,7 +2699,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
         r.poolIds = (r.poolIds || []).filter(id => !ids.has(id));
         const j = Engrave.items().get(r.key);
         if (j) { j.copies = (j.copies || []).filter(id => !ids.has(id)); if (!j.copies.length) { Engrave.items().delete(r.key); Review.remove("eng:" + r.key); } }
-        if (!r.poolIds.length && r.state !== "gone") { r.state = "held"; r.hold = r.reason = text; r.heldAt = Date.now(); CNListActivity.touch(r,r.heldAt); }
+        if (!r.poolIds.length && r.state !== "gone") { r.state = "held"; r.hold = r.reason = text; r.heldAt = Date.now(); r.holdSeen = false; CNListActivity.touch(r,r.heldAt); }
       }
       if (cue && !cancel && rowsOfOrder(rid).some(r => r.hold)) cue.done();   // (its note: it is on hold now)
       // (a hold is recorded as held, below, and only so: removedBy/At on the piece records would have the server stamp a
@@ -3221,7 +3232,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
         const mine = sh.charms.filter(c => ids.has(c.poolId)); if (!mine.length) continue;
         for (const c of mine) onPage.add(c.poolId);
         const w = leftWhy(sh, ids);
-        if (w && w.wait || !w && busy(sh)) wait.push(sh); else if (w) { stay(whereOf(sh), mine.length, w); for (const c of mine) leftIds.add(c.poolId); } else off.push(sh);
+        if (w && w.wait || !w && sheetWorking(sh)) wait.push(sh); else if (w) { stay(whereOf(sh), mine.length, w); for (const c of mine) leftIds.add(c.poolId); } else off.push(sh);
       }
       for (const id of ids) {
         if (onPage.has(id)) continue;
@@ -4149,6 +4160,48 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     if (changed) { renderStrip(); if (W.view === "sheet") renderSheetPane(); else if (W.sel) renderEng(W.sel, true); paintFx(); }
   }, 1500);
 
+  /* ── the window follows the cloud (Paul, 5 Oct: "make sure that everywhere the same information is available and that there's no mismatch in orders being on sheets, not
+     being on sheets"). The sheet this window shows was read once, when it opened, and said so until it was closed: an order taken off it (a Hold, a Take off on another
+     computer), put on it, or the sheet itself deleted or cut elsewhere stayed on the plate. Every 2 s (and at once when a placement read moved a piece of its orders) while it is open and the tab is visible, ONE small read of this sheet
+     and its set (laserStatus, a pure read, never a seal; the cloud answers { unchanged } from the documents' update times alone when nothing is newer) is compared with
+     what the window shows: the pieces it lists, its orders, its set, its cut mark. A difference reads the sheet again in place (open with keepWork), never while a person is
+     placing by hand, adding, filling, taking off or while anything is flying. The orders it shows are also in PlacementFeed's watch, so the cancelled marks and the
+     other sheets of each piece follow too. ── */
+  const FOLLOW = { id: null, revs: null, busy: false, fails: 0, at: 0 };
+  const memberSig = r => !r ? "gone" : JSON.stringify([(r.poolIds || []).map(String).sort(), (r.orders || []).map(String).sort(), r.setId || "", +r.laserDoneAt || 0, r.archived ? 1 : 0]);
+  const followBusy = () => !!(W.hand || W.add || W.fill || W.flow || W.flying || W.leaving || W.folding || W.away || W.coming || (W.going && W.going.size) || (W.landing && W.landing.length));
+  async function follow() {
+    if (!W.dlg || !W.dlg.open || !W.rec || !W.id || document.hidden || FOLLOW.busy || followBusy()) return;
+    if (FOLLOW.id !== W.id) { FOLLOW.id = W.id; FOLLOW.revs = null; FOLLOW.fails = 0; }
+    if (FOLLOW.fails && Date.now() - FOLLOW.at < 3000 * 2 ** Math.min(FOLLOW.fails, 4)) return;
+    const id = W.id, tok = W.token, setId = W.rec.setId || "", ask = { op: "laserStatus", sheetIds: [id], setIds: setId ? [setId] : [], recordSeals: false, wantRevs: true };
+    if (FOLLOW.revs) ask.ifRevs = FOLLOW.revs;
+    FOLLOW.busy = true; FOLLOW.at = Date.now();
+    try {
+      const r = await api("charmNestLibrary", ask, { quiet: true, timeoutMs: 12000 });
+      if (!r || r.error) throw new Error((r && r.error) || "no answer");
+      FOLLOW.fails = 0;
+      if (r.unchanged || id !== W.id || tok !== W.token || !W.dlg.open || followBusy()) return;
+      FOLLOW.revs = r.revs || null;
+      const live = (r.sheets || []).find(s => s.id === id) || null;
+      if (memberSig(live) === memberSig(W.rec) || (!live && W.rec.archived)) return;   // (an archived sheet the window shows as archived is what the cloud says too)
+      const sig = memberSig(live);   // (an answer that still differs after the window was read for it is not read again for 30 s: no loop on a record the two reads spell differently, or a sheet that cannot be opened.
+      //  "The window was read for it" = the record on screen is the very one read for this answer: a window opened afresh since, or the sheet put back to a state it had before, is a change)
+      if (FOLLOW.did && FOLLOW.did.id === id && FOLLOW.did.sig === sig && FOLLOW.did.rec === W.rec && Date.now() - FOLLOW.did.at < 30000) return;
+      if (window.LaserReview) tryDo(() => LaserReview.patch ? LaserReview.patch(live, id) : live && LaserReview.record(live));   // (the Library's card, its list row and the shared-orders window take it in too)
+      await open(id, { keepWork: true, keepSet: false });   // (read again in place: the plate stays until the saved sheet is drawn over it)
+      if (id === W.id && tok === W.token) FOLLOW.did = { id, sig, rec: W.rec, at: Date.now() };
+    } catch (e) { FOLLOW.fails++; }
+    finally { FOLLOW.busy = false; }
+  }
+  setInterval(follow, 2000);
+  // a read that moved a piece of one of the orders this window shows (the placement feed's, or any other) asks for the sheet's own read at once, not at the next beat
+  const followHook = () => { try { const OP = window.OrderPieces; if (!OP || !OP.subscribe || followHook.on) return; followHook.on = true; OP.subscribe(() => { if (W.dlg && W.dlg.open) { clearTimeout(followHook.t); followHook.t = setTimeout(follow, 80); } }); } catch (_) {} };
+  setInterval(followHook, 2000);
+  // what the window shows is on the placement feed's screen (the cancelled marks, the pieces' other sheets)
+  const feedWatch = () => { try { if (window.PlacementFeed && !feedWatch.on) { feedWatch.on = true; PlacementFeed.watch("sheetwin", () => (W.dlg && W.dlg.open ? [...W.orders.keys()].filter(k => /^\d+$/.test(k)) : [])); } } catch (_) {} };
+  setInterval(feedWatch, 2000);
+
   function veil(text) { const E = W.el; if (!text) { E.veil.hidden = true; return; } E.veilText.textContent = text; E.veil.hidden = false; }
 
   /* ── one order on its sheet, for the order view (OrderWin; Paul, 28 Sep: "the order window and the sheet view become
@@ -4172,7 +4225,20 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     entry.p = p; orderRecs.set(id, entry); if (orderRecs.size > 12) orderRecs.delete(orderRecs.keys().next().value);
     return p;
   }
-  const recOfPage = pg => ({ id: pg.sheetId || null, metal: pg.metal, sheetIndex: pg.sheetIndex || pg.page || 1, placements: pg.placements || [],
+  /** The order window's Sheet tab keeps a sheet's record for a minute (recFor): read it again now, and say whether the pieces or orders it lists, its set or its cut mark are not what the kept
+      copy said (a Hold, a take-off, a piece put on it, a sheet deleted: on any computer). A sheet no longer there is a change. */
+  async function refreshRecord(id) {
+    const kept = orderRecs.get(id), was = kept && kept.rec;
+    orderRecs.delete(id);
+    let rec = null; try { rec = await recFor(id); } catch (_) { rec = null; }
+    return !rec ? !!was : !was || memberSig(rec) !== memberSig(was);
+  }
+  /** The pieces of one order the kept record of a sheet lists (what the order window's plate drew), as one string; null when no record is kept for it yet. */
+  function heldOf(id, rid) {
+    const hit = orderRecs.get(id), rec = hit && hit.rec; if (!rec) return null;
+    return piecesOf(rec).filter(x => x.rid === String(rid)).map(x => x.poolId || x.id).sort().join(",");
+  }
+  const recOfPage = pg => ({ id: pg.sheetId || null, metal: pg.metal, sheetIndex: pg.sheetIndex || pg.page || 1, placements: pg.placements || [], poolIds: (pg.charms || []).map(c => c.poolId).filter(Boolean), dirty: false,
     charms: (pg.charms || []).map(c => ({ id: c.id, name: c.name || "", poolId: c.poolId || null, order: c.order != null ? String(c.order) : "", sku: (c.orderInfo && c.orderInfo.sku) || "" })) });
   function attachGeom(x, g, rec) {
     if (g.pool) { const c = Pool.cloneCharm(g.base, x.id); Object.assign(c, { name: x.name, order: x.rid || c.order, poolId: x.poolId, metal: rec.metal }); x.c = c; return; }
@@ -4714,7 +4780,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       freed: sheetId => (FREED.get(sheetId) || []).length,
     };
   })();
-  window.SheetWin = { remakeLabel, joinSet, joinInfo, takeOffOrder, holdKit, open: (id, opts) => { if (W.away) comeBack(W.away, { ms: 0 }); return open(id, opts); }, close, isOpen: () => !!(W.dlg && W.dlg.open), current: () => W.id, drawOrder, cardBack, armBack, _W: W };
+  window.SheetWin = { remakeLabel, joinSet, joinInfo, takeOffOrder, holdKit, refreshRecord, heldOf, open: (id, opts) => { if (W.away) comeBack(W.away, { ms: 0 }); return open(id, opts); }, close, isOpen: () => !!(W.dlg && W.dlg.open), current: () => W.id, drawOrder, cardBack, armBack, _W: W };
 })();
 
 /* Charm Nest · the Library turned over (Paul, 28 Sep 21:22: "add the back engraving view … to all places where a sheet is

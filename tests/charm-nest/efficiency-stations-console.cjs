@@ -23,7 +23,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     await ctx.route(() => true, async route => {
       const u = new URL(route.request().url());
       if (u.hostname !== '127.0.0.1' && u.hostname !== 'localhost') { seen.aborted++; return route.abort(); }
-      if (u.pathname.endsWith('/employeeEfficiency')) { let b = {}; try { b = JSON.parse(route.request().postData() || '{}'); } catch (_) {} const r = fx.answer(b, route.request().headers()); return route.fulfill({ status: r.status, contentType: 'application/json', headers: { 'Access-Control-Allow-Origin': '*' }, body: JSON.stringify(r.json) }); }
+      if (u.pathname.endsWith('/employeeEfficiency')) { let b = {}; try { b = JSON.parse(route.request().postData() || '{}'); } catch (_) {} const r = fx.answer(b, route.request().headers()); if (fx.delay) await sleep(fx.delay); try { return await route.fulfill({ status: r.status, contentType: 'application/json', headers: { 'Access-Control-Allow-Origin': '*' }, body: JSON.stringify(r.json) }); } catch (_) { return; } }
       return route.continue();
     });
     await ctx.addInitScript(() => { try { localStorage.setItem('cn.employee', 'Tester'); } catch (_) {} window.confirm = () => true; window.alert = () => {}; window.prompt = () => null; });
@@ -90,6 +90,18 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     await page.click(`${V} .efView button[data-view="real"]`);
     await page.waitForFunction(() => document.querySelectorAll('#efficiencyView .esSt').length === 5, null, { timeout: 10000 });
     console.log('  ✓ Real | Sandbox: the board is rebuilt from the other store and back');
+
+    /* first load straight onto Stations while the answer is slow: ONE small labelled spinner (the board's), not one in the console's header and two more in the board */
+    { const p2 = await ctx.newPage(); p2.on('pageerror', e => errs.push(e.message));
+      await p2.addInitScript(k => { try { sessionStorage.setItem('cn.eff.key', k); } catch (_) {} }, F.KEY);
+      fx.delay = 2500; await p2.goto(`${srv.sorterOrigin}/charm-nest-1.html#efficiency/stations`);
+      await p2.waitForFunction(() => window.Efficiency && window.EfficiencyStations && window.CN && window.OrderWin && document.readyState === 'complete', null, { timeout: 60000 });
+      await p2.evaluate(() => { Efficiency.open(); }); await p2.waitForSelector(`${V} .es .esWait`, { state: 'visible', timeout: 8000 });
+      const spin = () => p2.evaluate(() => [...document.querySelectorAll('#efficiencyView .spin, #efficiencyView .esSpin')].filter(e => { for (let n = e; n && n !== document.body; n = n.parentElement) { const cs = getComputedStyle(n); if (cs.display === 'none' || cs.visibility === 'hidden' || n.hidden) return false; } const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0; }).map(e => e.parentElement.textContent.trim().slice(0, 30)));
+      const wait = await spin(); assert(wait.length === 1 && /^Reading the stations/.test(wait[0]), 'one labelled spinner while the stations load: ' + JSON.stringify(wait));
+      fx.delay = 0; await p2.waitForSelector(`${V} .es .esSt`, { timeout: 15000 });
+      assert.deepEqual(await spin(), [], 'and none once they are there'); await p2.close(); }
+    console.log('  ✓ first load of Stations: one labelled spinner');
 
     /* leaving the tab takes the board away */
     await page.click(`${V} .efTabBtn[data-tab="overview"]`); await sleep(400);

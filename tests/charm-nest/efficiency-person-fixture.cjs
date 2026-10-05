@@ -103,7 +103,7 @@ function make(opts = {}) {
       mm('partsPerSignedHour', 'Pieces per signed-in hour', 'pieces/hour', 'up', 'Pieces divided by signed-in hours.', s => div(s.parts, s.signedMs == null ? null : s.signedMs / HR)),
       mm('bestDay', 'Best day', 'pieces', 'up', 'The day with the most parts.', s => (s.best ? s.best.parts : null), { day: S.best ? S.best.day : undefined }),
       mm('peakHour', 'Busiest hour', 'clock', null, 'The hour with the most parts.', s => (s.peak == null ? null : s.peak * 60)),
-      mm('secPerOrderMean', 'Average per order', 'seconds', 'down', 'Active seconds divided by orders.', s => div(s.activeMs == null ? null : s.activeMs / 1000, s.orders)),
+      mm('secPerOrderMean', 'Working seconds per order', 'seconds', 'down', 'Active seconds divided by orders.', s => div(s.activeMs == null ? null : s.activeMs / 1000, s.orders)),
       mm('secPerScanMean', 'Average per scan', 'seconds', 'down', 'Active seconds divided by scans.', s => div(s.activeMs == null ? null : s.activeMs / 1000, s.scans)),
       mm('secPerOrderMedian', 'Median per order', 'seconds', 'down', 'The middle time for one order.', s => median(s.spo), { estimated: true, why: 'Worked out from each day\'s active time and orders.', n: S.spo.length }),
       mm('secPerOrderP90', 'Slowest 10%', 'seconds', 'down', 'Nine in ten orders were faster than this.', s => p90(s.spo)),
