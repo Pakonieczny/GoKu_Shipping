@@ -1394,6 +1394,28 @@ const DsActivity = (() => {
   return { pieces, printed, completed, undone, heldBack, chat, failed, opened };
 })();
 
+/* ── the order in hand right now (station-live-order.js: the Employee efficiency console's live stations board). The orders
+   selected here are what this person is working on: one selected order is that order, several are "N orders selected" with
+   all their pieces. Printing the labels completes them and clearing the selection drops them: nothing in hand (idle). Read
+   from orderCache (no request); the scan time is when the first one was picked. Best effort: never throws, never waits,
+   never changes what the page does. ── */
+const DsLive = (() => {
+  const live = (fn, a, b, c) => { try { const L = window.StationLiveOrder; return !!(L && typeof L[fn] === "function" && L[fn](a, b, c)); } catch (_) { return false; } };
+  let timer = 0;
+  function run() {
+    try {
+      const ids = [...selectedOrders].map(String);
+      if (!ids.length) { live("end"); return; }
+      const have = ids.filter(id => Array.isArray(orderCache[id]) && orderCache[id].length);
+      if (!have.length) return;                                    // still loading: it is told again when it has loaded
+      live("batch", have, have.flatMap(id => orderCache[id]), { sync: true, keepTime: true, key: "selection", title: have.length + " orders selected" });
+    } catch (_) {}
+  }
+  /** the selection changed (a pick, an unpick, a clear, labels printed, an undo): tell the board once things settle */
+  function sync() { try { clearTimeout(timer); timer = setTimeout(run, 300); } catch (_) {} }
+  return { sync };
+})();
+
 /* ── the name at this station. There is no PIN here: the person is whoever set a name (the order chat's "Set your name"
    control, or the small field below when Generate QR or Print labels needs one and none is set). One person, one name: a
    typed name is tidied before it is stored or sent (spaces collapsed, capitals made consistent, a lone initial gets its
@@ -3725,6 +3747,7 @@ async function selectRow(row, { silent = false } = {}) {
     if (!silent) console.warn("load failed for", rid, e);
   }
   refreshChrome();
+  DsLive.sync();   // the live board: this order is in hand
 }
 
 function deselectRow(row) {
@@ -3737,6 +3760,7 @@ function deselectRow(row) {
   persistSelection();
   applyMetalFilter();
   refreshChrome();
+  DsLive.sync();   // the live board
 }
 
 function wireQueueInteractions() {
@@ -3822,6 +3846,7 @@ function clearSelection() {
   updateCounters();
   applyMetalFilter();
   refreshChrome();
+  DsLive.sync();   // the live board: nothing in hand
   toast(`Cleared ${ids.length} order${ids.length !== 1 ? "s" : ""}`);
 }
 
@@ -4719,6 +4744,7 @@ async function proceedToPrint() {
   updateCounters();
   applyMetalFilter();
   refreshChrome();
+  DsLive.sync();   // the live board: the completed orders are no longer in hand
   const labelEntries = Object.values(lists).flat().length;
   toast(`${printedIDs.length} order${printedIDs.length !== 1 ? "s" : ""} completed`
         + (labelEntries !== printedIDs.length ? ` · ${labelEntries} label entries` : ""), "ok");
@@ -4770,6 +4796,7 @@ async function handleUndoComplete(opts) {
     lastClearedReceipts = [];
     refreshChrome();
     if (!(opts && opts.remote)) DsActivity.undone(ids);   // the efficiency log: what this person's completions credited is reversed
+    if (!(opts && opts.remote)) DsLive.sync();             // the live board: the restored orders are in hand again
     toast("Orders restored", "ok");
   } finally { Activity.hide(); }
 }
@@ -7002,7 +7029,9 @@ window.DesignStation = {
 </script>
 <!-- Sign-in time per person and computer, and the midnight sign-out (New York time) -->
 <script src="station-session.js?v=20261002-ea1"></script>
-<script src="station-activity.js?v=20261002-ea1"></script>
+<script src="station-activity.js?v=20261005-live1"></script>
+<!-- The order in hand right now (the selected orders = working, labels printed or selection cleared = idle), for the console's live stations board (station-live-order.js). Optional: without it nothing changes. -->
+<script src="station-live-order.js?v=20261005-lo1"></script>
 <script>
 (function () {
   const framed = (() => { try { return window.self !== window.top; } catch (_) { return true; } })();

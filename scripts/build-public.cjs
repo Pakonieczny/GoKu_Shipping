@@ -108,6 +108,7 @@ const assets = [
   "station-scan-queue.js",
   "station-mail-signals.js",
   "station-seals.js",
+  "station-live-order.js",
   "charm-nest-vector.js",
   "vendor/clipper-6.4.2.js",
   "vendor/clipper-6.4.2-LICENSE.txt",

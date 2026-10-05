@@ -129,6 +129,17 @@ const REC = { key: KC, state: 'open', how: 'button', completedAt: T0 + 50 * H, c
     check(keep && keep.state === 'done' && keep.seals === 1 && keep.ghosts === 0, 'a real seal beats a ghost: Sorted has its seal, so "not done" still shows the real seal and no ghost');
     const reopened = await page.evaluate(() => { const evs = __fx.EVENTS.concat([{ id: 'ro', orderId: '1', type: 'note', at: Date.now() - 36e5, by: 'Paul', lineKey: __fx.PIECES[2].key, data: { reopened: 'reopen' } }]); const e = PieceSeals.render('complete', __ctx(2, { events: evs }), { done: false }); return !!e && e.querySelectorAll('.seal').length === 1; });
     check(reopened, '…and a Reopen in the timeline after the press: the seal is still there (the timeline alone is enough)');
+    // ═══ 4b · what the order window holds: OrderTimelineUI.summary's own item works as the ctx, and its D is left as it was ═══
+    const viaSummary = await page.evaluate(() => {
+      const sum = OrderTimelineUI.summary(__fx.EVENTS, __fx.PIECES, null), rows = [], keys = ['arrived', 'sheet', 'engraved', 'laser', 'sorted', 'welded', 'assembled', 'shipped'];
+      for (let i = 0; i < 3; i++) for (const k of keys) {
+        const x = sum.each[i], a = PieceSeals.render(k, Object.assign({}, x, { pieces: __fx.PIECES }), {}), b = PieceSeals.render(k, __ctx(i), {});
+        rows.push([i, k, a ? a.dataset.pgState : null, b ? b.dataset.pgState : null]);
+      }
+      return { rows, railKept: sum.each.every(x => x.D.rail.every(r => typeof r.k === 'string')) };
+    });
+    check(viaSummary.rows.every(r => r[2] === r[3]) && viaSummary.railKept, 'summary().each[i] works as the ctx and gives the same as the plain ctx for every step of every piece; its D is not changed');
+    check(viaSummary.rows.filter(r => r[0] === 0 && ['arrived', 'sheet', 'laser', 'sorted'].includes(r[1])).every(r => r[2] === 'done') && viaSummary.rows.find(r => r[0] === 1 && r[1] === 'laser')[2] === 'missing', "…piece A's first four steps are done (real seals), piece B's Laser cut is missing (a ghost)");
     // ═══ 5 · the card data ═══
     const inf = await page.evaluate(() => ({ b: PieceSeals.info('laser', __ctx(1)), a: PieceSeals.info('laser', __ctx(0)), none: PieceSeals.info('scan', __ctx(0)) }));
     check(inf.b && inf.b.state !== 'done' && inf.b.ghost === true && inf.b.seals.length === 0 && inf.b.need.length > 0, 'info(): the missing step says what is missing and that a ghost goes with it');
