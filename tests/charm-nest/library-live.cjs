@@ -228,11 +228,11 @@ async function page() {
   await advance(3500); assert.equal(area(cards.A), 'pending');
   let bangs = 0; document.addEventListener('click', e => { if (e.target.closest && e.target.closest('[data-issues-open]')) bangs++; });
   assert.equal(L.openChecklist(cards.A, { kind: 'sheet', id: 'shA' }), true, "the sheet's '!' is pressed (the issues panel opens from it)"); assert.equal(bangs, 1, 'once');
-  const boxBefore = cards.A.querySelector('.flowBox'), textBefore = boxBefore.querySelector('.flowStep.current').title, glidesBefore = glides.length;
+  const boxBefore = cards.A.querySelector('.flowBox'), textBefore = boxBefore.querySelector('.flowStep.current .flowDot').getAttribute('aria-label'), glidesBefore = glides.length;
   const bar = document.createElement('div'); bar.dataset.libraryApproval = ''; bar.textContent = 'Moving'; cards.A.appendChild(bar);
   put(sheet('shA', { updatedAt: 41, poolIds: ['shA1', 'shA2', 'shA3'], placedCount: 3, engraving: { shA1: { needed: false, state: 'none', approved: true }, shA2: { needed: true, state: 'words', approved: false }, shA3: { needed: true, state: 'words', approved: false } } }));
   await advance(3500);
-  assert.notEqual(boxBefore.querySelector('.flowStep.current').title, textBefore, 'the rail says what is left now'); assert(boxBefore.isConnected && cards.A.querySelector('.flowBox') === boxBefore, 'in the same box');
+  assert.notEqual(boxBefore.querySelector('.flowStep.current .flowDot').getAttribute('aria-label'), textBefore, 'the rail says what is left now'); assert(boxBefore.isConnected && cards.A.querySelector('.flowBox') === boxBefore, 'in the same box');
   assert.equal(boxBefore.querySelectorAll('[data-issues-open]').length, 1, "and still carries its '!'"); assert(bar.isConnected && bar.parentElement === cards.A, 'the Moving bar is still on its card');
   assert.equal(glides.length, glidesBefore, 'a card that did not change place does not glide');
   bar.remove();
