@@ -183,6 +183,7 @@
     "_charmNestSolver.js",
     "_charmNestRoseStock.js",
     "_orderTimeline.js",
+    "_employeeAttendance.js",
     "_employeeProfile.js",
     "_stationActivity.js",
     "_stationLive.js",
