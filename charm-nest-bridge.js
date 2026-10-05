@@ -5774,15 +5774,15 @@ i.flowDot::before{content:"";position:absolute;inset:-7px}
   // an order's listing photo (the cache the Orders tab uses; a cached lookup, never a new Etsy call): url, or null
   const photoOf=lid=>{lid=String(lid || '');if(!lid)return Promise.resolve(null);const u=ListMedia.peek(lid);return u?Promise.resolve(u):ListMedia.listing(lid).then(x=>x || null,()=>null);};
   /* The '!' (the issues panel, charm-nest-library-issues.js, opens from it): a real button in the rail of a sheet that is not
-     ready, on every blocked step, on the step the sheet is at when a person can act on it (Engraving, Back files, QR label,
-     Order check), and on Laser cutting when the sheet itself is done but something REAL is wrong with its set (a sheet of it
+     ready, on every blocked step, on the step the sheet is at when a person can act on it (Engraving, which includes saving the
+     back files, and Order check, which includes the QR label), and on Laser cutting when the sheet itself is done but something REAL is wrong with its set (a sheet of it
      cannot be found, the set is not loaded). A ready or cut sheet, and a step that is only running (Nesting), show none.
      A set advances as ONE (round 7), and its wait is the SET's, not this sheet's (round 8, Paul: "only related items to that particular sheet"):
      a sheet that is done and only waits for a mate sheet of its own set shows no '!' and no mark of any kind on Laser cutting, and its list
      names no other sheet. The wait is said once, under the grey Approve button (its reason line, whose shortcut opens the '!' of the sheet that
      holds the set). The attributes are the hook: [data-issues-open] with the sheet (data-issues-id / data-sheet-id) and the step
      (data-issues-step / data-step). */
-  const BANG={engraving:1,backFiles:1,qr:1,orders:1};
+  const BANG={engraving:1,orders:1};   // (the rail has five steps since round 13: Back files is part of Engraving, the QR label part of Order check)
   // w: what the laser step of this sheet has to say, {real} (laserTroubleOf), or null when it has nothing to say / was not read
   const bangOn=(e,s,w)=>!e.ready && !e.done && (s.state==='blocked' || (!!s.current && (!!BANG[s.key] || (s.key==='laser' && (!w || w.real>0)))));
   /* The laser step of a sheet that is done but whose set is not ready, read from CharmNestReadiness.issues (the one truth the panel

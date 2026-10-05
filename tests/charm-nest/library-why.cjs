@@ -56,8 +56,8 @@ function sheet(id,{n=28,metal='gold',setId='set1',index=1,base=1000}={}){
     noSetLevel(blocked);
     assert.equal(flows(blocked).length,1,'a set of one sheet has exactly one rail: its sheet\'s, not a set\'s on top');
     const box=flows(blocked)[0];assert.equal(box.dataset.flowFor,'sheet:gf1');assert.equal(box.dataset.state,'blocked');
-    assert.deepEqual(stepsOf(box),[['Nesting','done',false],['Engraving','done',false],['Back files','done',false],['QR label','done',false],['Order check','blocked',true],['Laser cutting','waiting',false],['Completed','waiting',false]]);
-    assert.equal(box.querySelectorAll('.flowStep.done .flowDot svg').length,4,'done steps carry a check');
+    assert.deepEqual(stepsOf(box),[['Nesting','done',false],['Engraving','done',false],['Order check','blocked',true],['Laser cutting','waiting',false],['Completed','waiting',false]]);
+    assert.equal(box.querySelectorAll('.flowStep.done .flowDot svg').length,2,'done steps carry a check');
     assert.match(box.querySelector('.flowStep.blocked .flowDot').textContent,/!/,'the blocked step is marked');
     // the '!' is a real button with the stable hook the issues panel attaches to
     assert.equal(bangs(box).length,1,"one '!' on the sheet that is not ready");
@@ -67,7 +67,7 @@ function sheet(id,{n=28,metal='gold',setId='set1',index=1,base=1000}={}){
     assert.equal(bang.getAttribute('aria-haspopup'),'dialog');assert.equal(bang.getAttribute('aria-expanded'),'false');assert.match(bang.getAttribute('aria-label'),/^Order check\. Blocked\. /);assert.match(bang.getAttribute('aria-description'),/holds this sheet back/);
     assert.equal(bang.classList.contains('flowDot'),true,'it keeps the dot\'s look');
     assert.equal(box.querySelectorAll('.flowLine, .flowList, [data-flow-toggle]').length,0,'no red line and no checklist toggle under the rail');
-    assert.match(box.querySelector('.flowNow').textContent,/Order check · step 5 of 7/);
+    assert.match(box.querySelector('.flowNow').textContent,/Order check · step 3 of 5/);
     // where it sits: in the sheet's own article, outside the clickable preview card, under the QR label, above its one Approve button
     const art=box.parentElement;assert(art.classList.contains('librarySheet'),'the rail sits in its sheet\'s article');
     assert(!blocked.querySelector('.libCard').contains(box),'not inside the sheet card (its click opens the sheet)');
@@ -97,8 +97,8 @@ function sheet(id,{n=28,metal='gold',setId='set1',index=1,base=1000}={}){
     L.record({...gf,orderReadiness:Object.fromEntries(R.orderIds(gf).map(o=>[o,{ready:true}])),updatedAt:2});L.changed();await tick();
     assert.equal(again.closest('[data-laser-area]').dataset.laserArea,'ready');
     const ready=flows(again)[0];assert.equal(ready.dataset.state,'ready');assert.equal(bangs(ready).length,0,"no '!' once ready");
-    assert.deepEqual(stepsOf(ready).map(x=>x[1]),['done','done','done','done','done','waiting','waiting']);assert(ready.querySelector('.flowStep.current.ready span').textContent==='Laser cutting','Laser cutting is the highlighted step');
-    assert.equal(ready.querySelectorAll('.flowDot').length,7);assert(![...ready.querySelectorAll('button')].length,'a ready sheet\'s rail has no buttons');
+    assert.deepEqual(stepsOf(ready).map(x=>x[1]),['done','done','done','waiting','waiting']);assert(ready.querySelector('.flowStep.current.ready span').textContent==='Laser cutting','Laser cutting is the highlighted step');
+    assert.equal(ready.querySelectorAll('.flowDot').length,5,'five circles: Nesting, Engraving, Order check, Laser cutting, Completed');assert(![...ready.querySelectorAll('button')].length,'a ready sheet\'s rail has no buttons');
     // an engraving reopened on the page: back to In progress, within a frame; the '!' moves to the Engraving step
     jobs.set('j',{copies:['2000_x_1'],state:'words'});L.changed();await tick();
     assert.equal(again.closest('[data-laser-area]').dataset.laserArea,'pending');

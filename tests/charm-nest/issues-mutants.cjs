@@ -98,7 +98,7 @@ const MUTANTS = {
 function caught(name, mut, shops) {
   for (let i = 0; i < shops; i++) {
     const shop = S.materialize(S.makeSpec(500000 + i)), archived = shop.sheets.filter(s => s.archived);
-    const impl = { ...NEW, issues: (sheet, ctx) => NEW.issues(sheet, ctx).filter(i => !(i.step === 'orders' && i.key !== 'unverified')).concat(refIssues(sheet, { ...ctx, archivedToo: archived, shop }, mut)) };
+    const impl = { ...NEW, issues: (sheet, ctx) => NEW.issues(sheet, ctx).filter(i => !(i.step === 'orders' && i.key !== 'unverified' && i.orderId)).concat(refIssues(sheet, { ...ctx, archivedToo: archived, shop }, mut)) };
     const d = P.disagreementsWith(impl, shop, ['rows', 'records']);
     if (d.length) return { shop: i, type: d[0].type };
   }

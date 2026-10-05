@@ -247,7 +247,7 @@ function ownTruth(s, linesByKey) {
   if (!p.qr) out.push('qrMissing');
   return out;
 }
-const OWN_STEP = { held: 'nesting', notInSet: 'nesting', roseLine: 'nesting', layout: 'nesting', approvalsNeeded: 'engraving', backFilesMissing: 'backFiles', qrMissing: 'qr' };
+const OWN_STEP = { held: 'nesting', notInSet: 'nesting', roseLine: 'nesting', layout: 'nesting', approvalsNeeded: 'engraving', backFilesMissing: 'engraving', qrMissing: 'orders' };   // (round 13: the saved back files are part of Engraving, the QR label part of Order check)
 
 /** Is this sheet one that keeps its SET from being approved (R7-1's gate, restated from Paul's rule)? 'engraving' | 'nesting' | null. */
 function hardBlock(s, t) {

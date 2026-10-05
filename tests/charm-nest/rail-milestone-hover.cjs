@@ -93,17 +93,17 @@ const shot = async (page, name, sel, w) => {
       const tag = `${width}px`, { page, context, errors, ss, rows } = await setup(browser, { width, height: width === 390 ? 844 : 900 });
       await page.evaluate(() => { window.__rail = document.querySelector('.flowBox[data-flow-for="sheet:gf1"]'); });
 
-      // ── 1. what is drawn: seven circles per rail, each a zoom dot with its label, none with a listener of its own, no native title on the step
+      // ── 1. what is drawn: five circles per rail (round 13: no Back files, no QR label circle), each a zoom dot with its label, none with a listener of its own, no native title on the step
       { const info = await page.evaluate(() => [...document.querySelectorAll('.flowBox')].map(b => ({ f: b.dataset.flowFor, dots: [...b.querySelectorAll('.flowDot')].map(d => ({ tag: d.tagName, zoom: d.hasAttribute('data-zoom-dot'), role: d.getAttribute('role'), tab: d.getAttribute('tabindex'), label: d.getAttribute('aria-label'), tip: (d.getAttribute('data-tip') || '').split('\n'), step: d.dataset.step })), titles: b.querySelectorAll('li[title], .flowDot[title]').length })));
         assert.equal(info.length, 3, `${tag}: three sheets, three rails`);
-        for (const b of info) { assert.equal(b.dots.length, 7, `${tag}: seven circles in ${b.f}`); assert.equal(b.titles, 0, `${tag}: no native tooltip on the steps (the card says it)`);
-          assert.deepEqual(b.dots.map(d => d.step), ['nesting', 'engraving', 'backFiles', 'qr', 'orders', 'laser', 'completed']);
+        for (const b of info) { assert.equal(b.dots.length, 5, `${tag}: five circles in ${b.f}`); assert.equal(b.titles, 0, `${tag}: no native tooltip on the steps (the card says it)`);
+          assert.deepEqual(b.dots.map(d => d.step), ['nesting', 'engraving', 'orders', 'laser', 'completed']);
           for (const d of b.dots) { assert(d.zoom && d.label, `${tag}: ${b.f} ${d.step} is a labelled zoom dot`); assert.equal(d.tip.length, 4); assert.equal(d.label, `${d.tip[0]}. ${d.tip[1]}. ${d.tip[2]}${d.tip[3] ? ` ${d.tip[3]}.` : ''}`, `${tag}: the label is the card's words`);
             assert(['Done', 'Blocked', 'Waiting', 'In progress', 'Not started'].includes(d.tip[1]), `${tag}: a plain state word (${d.tip[1]})`);
             if (d.tag === 'I') { assert.equal(d.role, 'img'); assert(d.tab === '0' || d.tab === '-1'); } else assert.equal(d.tag, 'BUTTON'); }
           assert(b.dots.filter(d => d.tag === 'I' && d.tab === '0').length <= 1, `${tag}: one Tab stop among the plain circles of a rail`); }
         const gf = info.find(b => b.f === 'sheet:gf1').dots.map(d => d.tip[1]);
-        assert.deepEqual(gf, ['Done', 'Done', 'Done', 'Done', 'Blocked', 'Not started', 'Not started'], `${tag}: GF Sheet 1 reads like the screenshot (four done, the red '!' on Order check, two not started)`);
+        assert.deepEqual(gf, ['Done', 'Done', 'Blocked', 'Not started', 'Not started'], `${tag}: GF Sheet 1 reads like the screenshot (two done, the red '!' on Order check, two not started)`);
         const adds = await page.evaluate(() => window.__adds.filter(a => a[2]).length); assert.equal(adds, 0, `${tag}: no listener on anything inside a rail`); }
 
       // ── 2. a resting pointer on a done circle: nothing at first, then a slight growth and the card; nothing moves; leaving puts both back
@@ -132,9 +132,9 @@ const shot = async (page, name, sel, w) => {
         assert.equal(await page.evaluate(() => !!document.querySelector('.lisPanel')), true, `${tag}: the click opens the Order check panel`); assert.equal(await page.evaluate(() => document.querySelector('.lisHead b')?.textContent), 'Order check');
         m = await read(page, sel); assert(m.k < 1.05 && !m.shown, `${tag}: the pressed '!' is not left grown`);
         // while the panel is open no card comes over another circle (no pop-up on a pop-up)
-        await hover(page, circle('gf1', 'qr'), 800); m = await read(page, circle('gf1', 'qr')); assert.equal(m.shown, false, `${tag}: no card while the panel is open`);
+        await hover(page, circle('gf1', 'engraving'), 800); m = await read(page, circle('gf1', 'engraving')); assert.equal(m.shown, false, `${tag}: no card while the panel is open`);
         await page.keyboard.press('Escape'); await sleep(450); assert.equal(await page.evaluate(() => !!document.querySelector('.lisPanel')), false, `${tag}: Esc closes the panel`); await page.evaluate(() => document.activeElement && document.activeElement.blur());   // (Esc gave the '!' the keyboard back: its ring would show in the screenshots below)
-        await away(page, 300); await hover(page, circle('gf1', 'qr'), 700); m = await read(page, circle('gf1', 'qr')); assert.equal(m.shown, true, `${tag}: the card is back once the panel is closed`); await away(page); }
+        await away(page, 300); await hover(page, circle('gf1', 'engraving'), 700); m = await read(page, circle('gf1', 'engraving')); assert.equal(m.shown, true, `${tag}: the card is back once the panel is closed`); await away(page); }
 
       // ── 4. a not-started circle: its words; the grey circle grows too
       { const sel = circle('gf1', 'laser'), ex = await explainStep(page, 'gf1', 'laser'); await hover(page, sel, 700); const m = await read(page, sel);
@@ -167,7 +167,7 @@ const shot = async (page, name, sel, w) => {
 
       // ── 8. the card flips below at the top edge, whatever the width
       { await page.evaluate(() => { if (!document.getElementById('railPad')) document.getElementById('libBody').insertAdjacentHTML('beforeend', '<div id="railPad" style="height:1600px"></div>'); const b = document.querySelector('.flowBox[data-flow-for="sheet:gf1"]'); b.scrollIntoView({ block: 'start' }); }); await sleep(300);
-        const sel = circle('gf1', 'qr'); await hover(page, sel, 700, true); const m = await read(page, sel);
+        const sel = circle('gf1', 'engraving'); await hover(page, sel, 700, true); const m = await read(page, sel);
         assert.equal(m.shown, true); assert(m.circle.t < 120, `${tag}: the circle is near the top (${m.circle.t})`); assert.equal(m.tip.below, true, `${tag}: no room above, so the card is below`); assert(m.tip.t >= m.circle.b, `${tag}: under the circle (${m.tip.t} vs ${m.circle.b})`);
         assert(m.tip.t >= m.bar + 3, `${tag}: never under the top bar`); assert(m.tip.b <= m.vh - 7.5 && m.tip.l >= 7.5 && m.tip.r <= m.vw - 7.5, `${tag}: inside the screen`);
         await shot(page, `flipped-below-${width}`, sel, width === 390 ? 380 : 420); await away(page); }
@@ -188,19 +188,19 @@ const shot = async (page, name, sel, w) => {
         assert.notEqual(m.tip.line, lineBefore, `${tag}: the card follows the new words (${lineBefore} -> ${m.tip.line})`); assert.match(m.tip.line, /\(1 of 6 approved\)/); assert(m.k >= 1.25 && m.shown, `${tag}: zoom and card stay`);
         const g = await page.evaluate(() => { cancelAnimationFrame(window.__raf); return window.__gaps; }); assert(g.length > 20); assert(g.every(x => x[0] >= 1.24 && x[1] === 1 && x[2] === 1), `${tag}: not one frame without the zoom or the card during the redraw (${JSON.stringify(g.filter(x => !(x[0] >= 1.24 && x[1] === 1)).slice(0, 4))})`);
         await away(page);
-        // a circle replaced by one of another kind (the plain QR circle becomes a '!' button): the card and the zoom come back to the new one with no pointer move
-        const q = circle('gf1', 'qr'); await page.evaluate(q => document.querySelector(q).scrollIntoView({ block: 'center' }), q); await sleep(300); await hover(page, q, 750); m = await read(page, q); assert.equal(m.shown, true);
+        // a circle replaced by one of another kind (the plain Engraving circle becomes a '!' button when a saved back file goes missing): the card and the zoom come back to the new one with no pointer move
+        const q = circle('gf1', 'engraving'); await page.evaluate(q => document.querySelector(q).scrollIntoView({ block: 'center' }), q); await sleep(300); await hover(page, q, 750); m = await read(page, q); assert.equal(m.shown, true);
         assert.equal(await page.evaluate(q => document.querySelector(q).tagName, q), 'I');
-        await page.evaluate(() => { const gf = window.__sheets.find(x => x.id === 'gf1'); gf.label = { files: [{ ...gf.label.files[0], payload: '' }] }; window.LaserReview.record({ ...gf, updatedAt: gf.updatedAt + 1 }); window.LaserReview.changed(); });
-        await sleep(1300); assert.equal(await page.evaluate(q => document.querySelector(q).tagName, q), 'BUTTON', `${tag}: the QR circle became a '!' button`);
-        m = await read(page, q); assert(m.k >= 1.25 && m.shown, `${tag}: zoom and card are on the new circle without moving the pointer (${m.k}, ${m.shown})`); assert.equal(m.tip.state, 'Blocked'); await away(page); }
+        await page.evaluate(() => { const gf = window.__sheets.find(x => x.id === 'gf1'); gf.backPool = gf.backPool.slice(1); window.LaserReview.record({ ...gf, updatedAt: gf.updatedAt + 1 }); window.LaserReview.changed(); });
+        await sleep(1300); assert.equal(await page.evaluate(q => document.querySelector(q).tagName, q), 'BUTTON', `${tag}: the Engraving circle became a '!' button`);
+        m = await read(page, q); assert(m.k >= 1.25 && m.shown, `${tag}: zoom and card are on the new circle without moving the pointer (${m.k}, ${m.shown})`); assert.equal(m.tip.state, 'In progress'); assert.equal(m.tip.line, 'Saving back files: 5 of 6.', `${tag}: the plain line`); await away(page); }
 
       // ── 11. 20 redraws: no listener, no timer is left behind
       { await page.evaluate(() => { window.__marks = { adds: window.__adds.length, ints: window.__ints.size }; });
         for (let i = 0; i < 20; i++) { await page.evaluate(i => { const ss = window.__sheets.find(x => x.id === 'ss1'); ss.placedCount = 6 + (i % 2); window.LaserReview.record({ ...ss, updatedAt: ss.updatedAt + 1 + i, placedCount: 6 + (i % 2) }); window.LaserReview.changed(); }, i); await sleep(90); }
         const after = await page.evaluate(() => ({ adds: window.__adds.length - window.__marks.adds, inRail: window.__adds.filter(a => a[2]).length, ints: window.__ints.size - window.__marks.ints, dots: document.querySelectorAll('.flowDot[data-zoom-dot]').length, boxes: document.querySelectorAll('.flowBox').length }));
         assert.equal(after.inRail, 0, `${tag}: still no listener inside a rail`); assert(after.adds <= 3, `${tag}: no listener growth over 20 redraws (+${after.adds} on the whole page, none from the rail)`); assert.equal(after.ints, 0, `${tag}: no timer left running while idle`);
-        assert.equal(after.dots, 21); assert.equal(after.boxes, 3); }
+        assert.equal(after.dots, 15); assert.equal(after.boxes, 3); }
 
       assert.deepEqual(errors, [], `${tag}: no page errors`); await context.close();
     }

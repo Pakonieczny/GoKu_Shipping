@@ -176,7 +176,7 @@ const shot = async (page, name, m) => { if (!SHOTS) return; fs.mkdirSync(SHOTS, 
       await page.keyboard.press('Escape'); await page.waitForTimeout(300);
       // the sheet that holds the set is fixed: nothing changes on GF Sheet 1's rail, its line goes with the grey
       await page.evaluate(() => { const ss = window.__sheets.find(x => x.id === 'ss1'); window.__rows = window.__rows.map(r => ({ ...r, engrave: { needed: true, state: 'approved', approved: true } })); window.LaserReview.record(ss); window.LaserReview.changed(); }); await page.waitForTimeout(700);
-      assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll('[data-issues-open]')].map(b => b.dataset.issuesId + ':' + b.dataset.issuesStep)), ['ss1:backFiles'], "the engravings are approved: GF Sheet 1 still carries nothing (SS Sheet 1 has its own back files left, a real '!' on its own rail)");
+      assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll('[data-issues-open]')].map(b => b.dataset.issuesId + ':' + b.dataset.issuesStep)), ['ss1:engraving'], "the engravings are approved: GF Sheet 1 still carries nothing (SS Sheet 1 has its own back files left to save: Engraving in progress, a real '!' on its own rail)");
       assert.deepEqual(errors, []); await context.close(); }
 
     // 9. round 8, Paul's image 2: GF Sheet 1's Order check with four real order issues (three unknown SKUs; Leslie Suhr's order has a piece on RG Sheet 1, a sheet in no set, so it is

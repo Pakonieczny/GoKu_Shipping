@@ -17,9 +17,9 @@ const S = 'Charm_Nest_Sheets', SET = 'Charm_Nest_Sets', RUN = 'Charm_Nest_Runs',
   const mk = (id, extra = {}, order) => {
     order = order || String(3800000000 + ++n);
     const pool = order + '_1_1';
-    lines[order + '_1'] = { orderId: order, state: 'written', quantity: 1, poolIds: [pool], ...(extra.needsBack ? { engrave: { needed: true, state: 'review', approved: false } } : { engraveCandidate: false }) };
-    const { needsBack, noLabel, ...rest } = extra;
-    st.put(S, id, { id, runId: 'run-x', metal: 'gold', day, status: 'complete', placedCount: 1, charmCount: 1, density: .7, stock: { wIn: 6, hIn: 4.5 }, poolIds: [pool], orders: [order], verification: { ok: true },
+    lines[order + '_1'] = { orderId: order, state: 'written', quantity: 1, poolIds: [pool], ...(extra.needsBack ? { engrave: { needed: true, state: 'review', approved: false } } : extra.unsavedBack ? { engrave: { needed: true, state: 'written', approved: true } } : { engraveCandidate: false }) };
+    const { needsBack, unsavedBack, noLabel, ...rest } = extra;
+    st.put(S, id, { id, runId: 'run-x', metal: 'gold', day, status: 'complete', placedCount: 1, charmCount: 1, density: .7, stock: { wIn: 6, hIn: 4.5 }, poolIds: [pool], orders: [order], verification: { ok: true }, ...(unsavedBack ? { backPool: [{ poolId: pool, sheetId: id, approvedAt: now, approvedBy: 'Paul' }] } : {}),
       outputs: { ai: { path: id + '.ai', url: srv.sorterOrigin + '/' + id + '.ai' }, preview: { path: id + '.png', url: image } },
       ...(noLabel ? {} : { label: { files: [{ path: id + '-qr.png', url: image, payload: order, orders: [order] }], orders: [order] } }), sheetIndex: 1, updatedAt: ts, createdAt: ts, ...rest });
     return order;
@@ -28,7 +28,7 @@ const S = 'Charm_Nest_Sheets', SET = 'Charm_Nest_Sets', RUN = 'Charm_Nest_Runs',
 
   // ── fixtures ──
   mkSet('set-1', ['mem-1', 'mem-2']); mkSet('set-2', ['cmt-1'], { status: 'complete', committedAt: now - 1000 }); mkSet('set-3', ['opn-1'], { status: 'open', runId: 'run-live' });
-  mk('solo', {}); mk('noqr', { noLabel: true }); mk('noback', { needsBack: true }); mk('draft', { draft: true });
+  mk('solo', {}); mk('noqr', { noLabel: true }); mk('noback', { needsBack: true }); mk('nosave', { unsavedBack: true }); mk('draft', { draft: true });
   mk('mem-1', { setId: 'set-1', setSeq: 1, sheetIndex: 1 }); mk('mem-2', { setId: 'set-1', setSeq: 1, sheetIndex: 2, verification: { ok: false } });
   mk('cmt-1', { setId: 'set-2', setSeq: 2 });
   mk('rose', { metal: 'rose', roseStockId: 'stock-1', noLabel: false });
@@ -109,6 +109,13 @@ const S = 'Charm_Nest_Sheets', SET = 'Charm_Nest_Sets', RUN = 'Charm_Nest_Runs',
     const before = JSON.stringify(st.doc(S, 'noback'));
     r = await LF.commit(p, { by: 'Paul' }); assert.equal(r.ok, false); assert(/engraving/i.test(r.error)); assert.equal(JSON.stringify(st.doc(S, 'noback')), before, 'a blocked commit changes nothing');
     let a = await LF.approve({ kind: 'sheet', id: 'noback', by: 'Paul' }); assert.equal(a.ok, false); assert(a.needs.some(x => x.key === 'engraving')); assert.equal(a.approved, false);
+    // round 13 (the rail has five steps): approved backs whose files are not saved yet still block exactly as before, now worded under Engraving: "Saving back files: 0 of 1"
+    p = await LF.plan({ kind: 'sheet', id: 'nosave', to: { area: 'laser' } });
+    assert.equal(p.ok, false, JSON.stringify(p)); const sav = p.needs.find(x => x.key === 'engravingFiles'); assert(sav, JSON.stringify(p.needs)); assert.equal(sav.label, 'Saving back files: 0 of 1');
+    assert(!p.needs.some(x => x.key === 'backFiles' || x.key === 'engraving'), 'one gap, under Engraving'); assert(/few seconds/.test(sav.detail)); assert(sav.items.length, 'it says which back');
+    assert(!p.auto.some(x => /backFiles/.test(x.key)), 'no "Back files saved" check line any more');
+    const before2 = JSON.stringify(st.doc(S, 'nosave')); r = await LF.commit(p, { by: 'Paul' }); assert.equal(r.ok, false); assert.equal(JSON.stringify(st.doc(S, 'nosave')), before2, 'a blocked commit changes nothing');
+    a = await LF.approve({ kind: 'sheet', id: 'nosave', by: 'Paul' }); assert.equal(a.ok, false); assert(a.needs.some(x => x.key === 'engravingFiles')); assert.equal(a.approved, false);
     // approve does the safe steps and is safe to call twice
     st.put(S, 'noqr', { label: null, laserDoneAt: undefined }); st.doc(S, 'noqr').label = undefined; st.put(S, 'noqr', { processSeals: [] });
     labels.length = 0; a = await LF.approve({ kind: 'sheet', id: 'noqr', by: 'Paul' });
@@ -168,7 +175,7 @@ const S = 'Charm_Nest_Sheets', SET = 'Charm_Nest_Sets', RUN = 'Charm_Nest_Runs',
     LF.configure({ rose: () => null });
     // a Rose Gold sheet gets its QR label with Cut Sheet: a move does not make it, and says where it is made
     mk('rose-nl', { metal: 'rose', roseStockId: 'stock-1', noLabel: true }); labels.length = 0;
-    p = await LF.plan({ kind: 'sheet', id: 'rose-nl', to: { area: 'laser' } }); assert(p.needs.some(x => x.key === 'qr' && /Cut Sheet/.test(x.detail)), JSON.stringify(p.needs)); assert(!labels.length);
+    p = await LF.plan({ kind: 'sheet', id: 'rose-nl', to: { area: 'laser' } }); assert(p.needs.some(x => x.key === 'qrLabel' && x.label === 'QR label not made yet' && /Cut Sheet/.test(x.detail)), JSON.stringify(p.needs)); assert(!labels.length);
 
     // ── E. a failed write changes nothing ──
     mk('boom', {}); let q = await LF.plan({ kind: 'sheet', id: 'boom', to: { area: 'progress' } }); assert(q.ok);

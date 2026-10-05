@@ -68,8 +68,12 @@ const eq = (a, b, m) => assert.deepEqual(JSON.parse(JSON.stringify(a === undefin
     // an order split between two sets is a real issue, worded as the split
     m = LI.model({ ...feed, issues: F.issues('gf1', 2, { keys: ['split', 'otherSheetNotReady'] }) }, { step: 'orders' });
     eq(m.orders.map(o => o.reason.chip), ['Split from SS Sheet 1', 'Waits on SS Sheet 1'], 'a split from another set is not worded as a wait');
-    m = LI.model(feed, { step: 'qr' });
+    m = LI.model(feed, { step: 'nesting' });
     assert.equal(m.title, 'Engraving', 'a step with nothing falls back to what the sheet is held by, never an empty panel');
+    // round 13: the rail has five steps. A feed or a link made with the seven-step rail may still say 'qr' or 'backFiles': they read as the step that took them over
+    m = LI.model(feed, { step: 'qr' }); assert.equal(m.title, 'Order check', 'the QR label step is Order check now'); m = LI.model(feed, { step: 'backFiles' }); assert.equal(m.title, 'Engraving', 'the Back files step is Engraving now');
+    m = LI.model({ ...feed, issues: [{ step: 'qr', key: 'qrMissing', label: 'QR label not made yet', open: { type: 'sheet', id: 'gf1' } }] }, { step: 'qr' }); assert.equal(m.title, 'Order check'); eq([m.own.step, m.own.label, m.own.go], ['orders', 'QR label not made yet', 'sheet'], 'an old entry reads as a row of Order check');
+    m = LI.model({ ...feed, issues: [{ step: 'backFiles', key: 'backFilesMissing', label: 'Back files missing', open: { type: 'sheet', id: 'gf1' } }] }, { step: 'backFiles' }); assert.equal(m.title, 'Engraving'); eq([m.own.step, m.own.label, m.own.go], ['engraving', 'Saving back files', 'sheet'], 'and the saving row says it plainly, opening the sheet, never the engraving approvals');
     m = LI.model({ ...feed, issues: [] }, { step: 'orders' }); assert(!m.own && !m.count, 'no issues, nothing to show');
     // an engraving issue that names an order is not a row (Paul: no back engraving status in this list)
     m = LI.model({ ...feed, issues: [{ step: 'engraving', key: 'x', orderId: '7', customer: 'X', open: { type: 'order', id: '7' } }, ...F.issues('gf1', 1, { keys: ['noDesign'] })] }, { step: 'orders' });
@@ -174,7 +178,14 @@ const eq = (a, b, m) => assert.deepEqual(JSON.parse(JSON.stringify(a === undefin
   assert.doesNotMatch(texts(p), /\d/, 'no counts, no numbers'); calls.length = 0;
   p.querySelector('.lisOwn').click(); await tick(200); eq(calls[0], ['mode', 'engrave'], 'the link opens the Engraving tab'); assert.equal(panel(), null);
   // the QR label step: one small chip, no list
-  w.__feed.gf1 = F.issues('gf1', 3, { own: 'qr' }); bang('qr').click(); await tick(); p = panel(); assert.equal(p.querySelectorAll('.lisRow').length, 0); assert.match(p.querySelector('.lisOwn').textContent, /QR label missing/); w.eval('LibraryIssues.close()'); await tick(200);
+  // (round 13: it is a row of Order check, "QR label not made yet", opening the sheet where Make QR label is)
+  w.__feed.gf1 = F.issues('gf1', 0, { own: 'qr' }); bang('orders').click(); await tick(); p = panel(); assert.equal(p.querySelectorAll('.lisRow').length, 0); assert.match(p.querySelector('.lisOwn').textContent, /QR label not made yet/); assert.equal(p.querySelector('.lisOwn').dataset.issueStep, 'orders'); assert.doesNotMatch(texts(p), /Back files/);
+  calls.length = 0; p.querySelector('.lisOwn').click(); await tick(200); eq(calls[0], ['sheet', 'gf1'], 'its one shortcut opens the sheet, where Make QR label is'); await tick(200);
+  // the approved backs are still being saved: a row of Engraving, "Saving back files", the same shortcut (no engraving approvals to open)
+  w.__feed.gf1 = F.issues('gf1', 0, { own: 'saving' }); bang('engraving').click(); await tick(); p = panel(); assert.match(p.querySelector('.lisOwn').textContent, /Saving back files/); assert.equal(p.querySelector('.lisOwn').dataset.issueStep, 'engraving'); assert.doesNotMatch(texts(p), /Open engraving approvals|QR label/);
+  calls.length = 0; p.querySelector('.lisOwn').click(); await tick(200); eq(calls[0], ['sheet', 'gf1']); await tick(200);
+  // the label missing AND three orders waiting for other pieces: both under Order check, the plain label row first, then the orders
+  w.__feed.gf1 = F.issues('gf1', 3, { own: 'qr' }); bang('orders').click(); await tick(); p = panel(); assert.match(p.querySelector('.lisOwn').textContent, /QR label not made yet/); assert.equal(rowsOf(p).length, 3); assert.equal(p.querySelector('.lisOwn').compareDocumentPosition(p.querySelector('.lisRow')) & 4, 4, 'the label row comes before the orders'); w.eval('LibraryIssues.close()'); await tick(200);
   // Laser cutting (round 8): the set's wait is not in this list. A stale entry for it alone gives no panel (there is nothing of this sheet to say) and no row, however it is pressed
   w.__feed.gf1 = F.issues('gf1', 0, { mates: [{ id: 'ss1', label: 'SS Sheet 1' }] }); bang('laser').click(); await tick(); assert.equal(panel(), null, 'a sheet with nothing of its own to list opens no panel for the set\'s wait');
   // the same stale entry on top of a panel with real issues: not listed, not counted, no 'Waiting' header, no word of the other sheet

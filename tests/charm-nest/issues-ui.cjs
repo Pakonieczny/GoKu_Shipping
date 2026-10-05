@@ -63,7 +63,8 @@ function boot() {
 
 const COV = { ordersBehindEarlierStep: 0, unfolded: 0, matePanels: 0, matesListed: 0, matesExpected: 0, sheets: 0, held: 0, bangs: 0, panels: 0, orderPanels: 0, rowsListed: 0, rowsExpected: 0, ownPanels: 0, notes: 0, groups: 0, setHeld: 0, waitOnly: 0, approveLines: 0 };
 const SHOW = s => JSON.stringify(s).slice(0, 220);
-const BAD_WORDS = [/\bNesting\b/, /\bBack files\b/, /\bQR label\b/, /Layout verified/, /\b\d+ of \d+\b/, /\blines?\b/i, /back engraving/i, /\bEngraving\b/];
+// (round 13: the QR label is part of Order check, said by its one plain row "QR label not made yet": checked apart below, so it is no bad word here)
+const BAD_WORDS = [/\bNesting\b/, /\bBack files\b/, /Layout verified/, /\b\d+ of \d+\b/, /\blines?\b/i, /back engraving/i, /\bEngraving\b/];
 
 /** What the oracle says about one sheet, in the terms the screen uses. A set mate that is not ready to be approved is the SET's wait (waits), never an issue of this sheet and
  *  (round 8) no part of its list or rail at all: `any` (a real '!') is only the sheet's own trouble and its orders; `waitOnly` is a sheet that is done and has only the set's wait. */
@@ -138,6 +139,11 @@ async function checkShop(shop, tag) {
     // ("Waits on RG Sheet 1, in no set" is the round-8 wording for a real piece on a not-ready sheet that is in NO set: a real wait, said as that; only the plain "Waits on" for the same set is the old one)
     if (/\bWaits on\b/.test(panel.textContent.replace(/Waits on [A-Z0-9]{2,3} Sheet \d+, in no set/g, ''))) out.push({ type: 'panelWaitsOn', sheet: sid, detail: 'the old words "Waits on" for a sheet of the same set' });
     if (step === 'orders') {
+      // round 13: the one own row Order check carries is the sheet's QR label, in its plain words; the words appear nowhere else (the rail has five steps). A '!' on Order check that has
+      // nothing of its own to list (the QR label made, or an earlier step still behind: a hard label gap marks Order check too) falls back to the sheet's current blocker, as every panel does
+      if (own.length && own[0] !== 'qrMissing' && !(wt.own.includes(own[0]) && !wt.orders.length)) out.push({ type: 'panelOrdersOwn', sheet: sid, detail: `an own row under Order check that is neither the QR label nor the sheet's current blocker: ${own.join(',')}` });
+      if (own.includes('qrMissing') !== /QR label not made yet/.test(text)) out.push({ type: 'panelQrWords', sheet: sid, detail: `own rows ${own.join(',')}; text "${text.slice(0, 120)}"` });
+      if (!own.includes('qrMissing') && /QR labels?/.test(text)) out.push({ type: 'panelQrWords', sheet: sid, detail: `QR words with no QR row: "${text.slice(0, 120)}"` });
       COV.orderPanels++; COV.rowsListed += listed.length; COV.rowsExpected += wt.orders.length; COV.notes += note.length;
       if (folded.length) {
         COV.groups++;
@@ -170,15 +176,13 @@ async function checkShop(shop, tag) {
       COV.matePanels++; COV.matesListed += mates.length;
       if (mates.length) out.push({ type: 'panelMates', sheet: sid, detail: `lists real set trouble ${JSON.stringify(mates)}; the oracle sees none` });
       if (rows.length) out.push({ type: 'panelLaserOrderRows', sheet: sid, detail: `${rows.length} order rows under Laser cutting` });
-    } else if (step === 'backFiles' || step === 'qr') {
-      COV.ownPanels++;
-      const key = { backFiles: 'backFilesMissing', qr: 'qrMissing' }[step];
-      if (!own.includes(key) && !rows.length) out.push({ type: 'panelOwnStep', sheet: sid, detail: `'!' on ${step}: the panel lists ${JSON.stringify(own)}` });
-      if (own.length && !wt.own.includes(key)) out.push({ type: 'panelFalseOwn', sheet: sid, detail: `${step} panel says ${own.join(',')}; the oracle's own trouble: ${wt.own.join(',')}` });
     } else if (step === 'engraving') {
       COV.ownPanels++;
       if (/\b\d+\b/.test(text.replace(/Sheet \d+|SS|GF|RG/g, ''))) out.push({ type: 'panelEngravingCount', sheet: sid, detail: text.slice(0, 160) });
-      if (!/Open engraving approvals/.test(text)) out.push({ type: 'panelEngravingLink', sheet: sid, detail: text.slice(0, 160) });
+      // round 13: Engraving carries two plain rows: the link to the approvals while a back waits for one, and "Saving back files" (no link to approvals) once they are all approved
+      if (own[0] === 'backFilesMissing') { if (!/Saving back files/.test(text) || /Open engraving approvals/.test(text)) out.push({ type: 'panelSavingWords', sheet: sid, detail: text.slice(0, 160) }); }
+      else if (!/Open engraving approvals/.test(text)) out.push({ type: 'panelEngravingLink', sheet: sid, detail: text.slice(0, 160) });
+      if (own.length && !wt.own.includes(own[0])) out.push({ type: 'panelFalseOwn', sheet: sid, detail: `engraving panel says ${own.join(',')}; the oracle's own trouble: ${wt.own.join(',')}` });
       if (rows.length) out.push({ type: 'panelEngravingRows', sheet: sid, detail: `${rows.length} order rows under the Engraving step` });
     }
     if (own.length && !wt.own.length) out.push({ type: 'panelFalseOwn', sheet: sid, detail: `${own.join(',')}; the oracle's own trouble: none` });

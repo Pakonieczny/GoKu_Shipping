@@ -22,7 +22,9 @@ const KEYS = ['pooled', 'otherSheetNotReady', 'noSku', 'pooled', 'otherSheetNotR
    `trouble` the real set trouble (a sheet of the set that cannot be found), and a key 'split' an order split between two sets (key otherSheetNotReady, split:true). */
 function issues(sheetId, n, { keys, own = null, mates = [], trouble = [], names = NAMES, start = 4170250000, lid = 'L' } = {}) {
   const out = [];
-  if (own) out.push({ step: own, key: { engraving: 'approvalsNeeded', backFiles: 'backFilesMissing', qr: 'qrMissing', nesting: 'layout' }[own], label: { engraving: 'Approvals needed', backFiles: 'Back files missing', qr: 'QR label missing', nesting: 'Layout not ready' }[own], open: { type: 'sheet', id: sheetId } });
+  // own: 'engraving' (approvals), 'saving' (the approved backs' files are still being saved: Engraving), 'qr' (the QR label: Order check), 'nesting' (the rail has five steps since round 13)
+  const OWNS = { engraving: ['engraving', 'approvalsNeeded', 'Approvals needed'], saving: ['engraving', 'backFilesMissing', 'Saving back files'], qr: ['orders', 'qrMissing', 'QR label not made yet'], nesting: ['nesting', 'layout', 'Layout not ready'] };
+  if (own) out.push({ step: OWNS[own][0], key: OWNS[own][1], label: OWNS[own][2], open: { type: 'sheet', id: sheetId } });
   for (let i = 0; i < n; i++) {
     const pick = (keys || KEYS)[i % (keys || KEYS).length], split = pick === 'split', key = split ? 'otherSheetNotReady' : pick, id = String(start + i * 137), sheetLabel = key === 'otherSheetNotReady' ? 'SS Sheet 1' : null;
     out.push({ step: 'orders', key, orderId: id, orderLabel: 'Order ' + id, customer: names[i % names.length], listingId: lid + (i % 12), thumb: null, pieceCount: 2, ...(split ? { split: true, sets: ['Set 1', 'Set 2'] } : {}), pieces: [{ index: 2, key: id + '_b', label: 'Charm', sheetLabel, why: key, ...(split ? { split: true, setLabel: 'Set 2' } : {}) }], open: { type: 'order', id } });
