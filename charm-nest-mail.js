@@ -1204,7 +1204,7 @@
     const at = lineIds.findIndex(r => r.key === row.key);
     const ctx = {
       receiptId: rid, scope: "order", lineId: row.line && row.line.transactionId != null ? String(row.line.transactionId) : null,
-      lineLabel: (row.spec && row.spec.designSku || row.line.sku || "") + (lineIds.length > 1 ? ` · line ${at + 1} of ${lineIds.length}` : ""),
+      lineLabel: (row.spec && row.spec.designSku || row.line.sku || "") + (lineIds.length > 1 ? ` · piece ${at + 1} of ${lineIds.length}` : ""),
       buyerName: row.order.buyerName || row.order.name || ""
     };
     OW.rowKey = row.key;
@@ -1373,7 +1373,7 @@
     queueOut({
       receiptId: L.rid, text, clientId: uidOf(), sandbox: SANDBOX, scope: "engraving", lineId: lineIdOf(row),
       engagementId: s && s.status === "open" ? s.id : null,
-      lineLabel: (row.spec && row.spec.designSku || row.line.sku || "") + (sibs.length > 1 ? ` · line ${at + 1} of ${sibs.length}` : ""),
+      lineLabel: (row.spec && row.spec.designSku || row.line.sku || "") + (sibs.length > 1 ? ` · piece ${at + 1} of ${sibs.length}` : ""),
       orderNumber: L.rid, buyerName: row.order.buyerName || row.order.name || ""
     });
     L.el.input.value = ""; L.grow(); setDraft(lineDraftKey(L), "");
@@ -1405,7 +1405,7 @@
     const sibs = ((window.Orders && Orders.rows && Orders.rows()) || []).filter(r => String(r.order.receiptId) === rid);
     const at = sibs.findIndex(r => r.key === row.key);
     const ctx = { receiptId: rid, scope: "engraving", lineId: lid, buyerName: row.order.buyerName || row.order.name || "",
-      lineLabel: (row.spec && row.spec.designSku || row.line.sku || "") + (sibs.length > 1 ? ` · line ${at + 1} of ${sibs.length}` : "") };
+      lineLabel: (row.spec && row.spec.designSku || row.line.sku || "") + (sibs.length > 1 ? ` · piece ${at + 1} of ${sibs.length}` : "") };
     const ck = rid + "|" + (lid || "");
     // the card is drawn again often: the question is read again only when it is another line, or two minutes on
     if (ck !== C.ck || Date.now() - C.shownAt > 2 * 60000) { C.ck = ck; C.shownAt = Date.now(); show(C.P, ctx); }

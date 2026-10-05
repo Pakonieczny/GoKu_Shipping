@@ -78,8 +78,10 @@
    *   · held (a person's hold or an Etsy change waiting for review), or
    *   · on a different sheet that is not ready ('otherSheetNotReady': that sheet's own physical readiness, never its order check, so
    *     two sheets can never wait on each other).
-   * Pieces on X itself never block through the order check (X's own readiness shows through its own steps), single-piece orders can
-   * never be an issue (nothing else could hold them), and cancelled ('gone') and no-design pieces never block. */
+   * Pieces on X itself never block through the order check (X's own readiness shows through its own steps), single-piece orders are
+   * never an issue for what other pieces do (they have none), and cancelled ('gone') and no-design pieces never block. One exception,
+   * because it is a person's or Etsy's explicit stop and not an inference about where pieces are: a HELD piece (a person's hold, or an
+   * Etsy change waiting for review) holds the sheet wherever it sits, even a one-piece order on this very sheet (as before). */
   const KEYS=['pooled','noSku','unmatched','noDesign','held','otherSheetNotReady'];   // which kind names an order that has several
   const PROBLEM_WORDS={unmatchedSku:'SKU not in a master',needsMaterial:'needs material',needsMapping:'needs an option mapped',missingSize:'no design for that size',blockedSku:'SKU is blocked',oversize:'does not fit the plate'};
   const PROBLEM_KEY={needsMaterial:'unmatched',needsMapping:'unmatched',blockedSku:'noDesign',missingSize:'noDesign',oversize:'noDesign'};
@@ -96,8 +98,10 @@
   }
   // a line's own problem as a kind: no SKU at all, a SKU no master has, or no design for it
   function problemOf(l){
-    const p=Array.isArray(l.problems)?l.problems[0]:null,kind=p && typeof p==='object'?p.kind:p;
-    if(!kind)return null;
+    const p=Array.isArray(l.problems)?l.problems[0]:null;
+    let kind=p && typeof p==='object'?p.kind:p;
+    // an older record may carry only the state the page gave the line
+    if(!kind){if(l.state==='unmatched')kind='unmatchedSku';else if(l.state==='oversize')kind='oversize';else if(l.state==='held')return {key:'held',why:String(l.reason || 'Held for review')};else return null;}
     let key=PROBLEM_KEY[kind] || 'unmatched';
     if(kind==='unmatchedSku'){
       const sku=String(l.spec?.designSku ?? l.sku ?? l.line?.sku ?? (p && p.sku) ?? '').trim();
@@ -158,7 +162,8 @@
   function forSheet(r,sid){
     if(!r || r.ready===true || !Array.isArray(r.blocks) || !sid)return r;
     if(Array.isArray(r.onSheets) && !r.onSheets.includes(sid))return {ready:true};
-    const mine=r.blocks.filter(b=>b.sheetId!==sid && !(b.sheetIds && b.sheetIds.includes(sid)));
+    // (a held piece stops the sheet wherever it sits: a person's hold or an Etsy change waiting for review is no inference about where pieces are)
+    const mine=r.blocks.filter(b=>b.key==='held' || (b.sheetId!==sid && !(b.sheetIds && b.sheetIds.includes(sid))));
     if(!mine.length)return {ready:true};
     if(mine.length===r.blocks.length)return r;
     return {ready:false,...head(mine),blocks:mine,onSheets:r.onSheets,pieceCount:r.pieceCount,customer:r.customer,listingId:r.listingId};
@@ -298,7 +303,7 @@
     detail.qr=ok.qr?`QR label made for ${count(orders.length,'order')}.`:!files.length?'No QR label has been made for this sheet yet.':uncovered.length?`The QR label leaves out ${count(uncovered.length,'order')}.`:'The QR label file is incomplete.';
     short.qr=!files.length?'the QR label has not been made':uncovered.length?`the QR label must also cover ${count(uncovered.length,'order')}`:'the QR label is incomplete';
     // Order check: built on issues(): only an order with another piece holding it back is listed (a piece on this sheet, or an order of one piece, never is)
-    const ids=orderIds(s),checked=!!s.orderReadiness,blockers=checked?sheetIssues(s,{},['orders']):[];
+    const ids=orderIds(s),checked=!!s.orderReadiness,blockers=checked?sheetIssues(s,{perOrder:true},['orders']):[];
     if(!checked && ids.length)own('orders','Its orders have not been checked yet: they are checked when the Library refreshes');
     else{
       const seen=new Set();
@@ -333,7 +338,7 @@
     }
     if(bs.length===1){
       const b=bs[0];
-      return b.key==='pooled'?'Its other piece is not on a sheet yet':b.key==='noSku'?'Its other piece has no SKU':b.key==='held'?`Its other piece is held: ${b.why}`:b.key==='otherSheetNotReady'?`Its other piece is on ${b.sheetLabel || 'another sheet'}, and ${MISSING[b.stage] || 'it is not ready'}`:`Its other piece: ${b.why}`;
+      return b.key==='pooled'?'Its other piece is not on a sheet yet':b.key==='noSku'?'Its other piece has no SKU':b.key==='held'?`A piece of this order is held: ${b.why}`:b.key==='otherSheetNotReady'?`Its other piece is on ${b.sheetLabel || 'another sheet'}, and ${MISSING[b.stage] || 'it is not ready'}`:`Its other piece: ${b.why}`;
     }
     const phrase=b=>PIECE_PHRASE[b.key] || (b.key==='otherSheetNotReady'?`on ${b.sheetLabel || 'another sheet'}`:b.why);
     return `${bs.length} of its other pieces wait: ${[...new Set(bs.map(phrase))].join(', ')}`;
@@ -367,7 +372,15 @@
     if(ctx.rows && ctx.allSheets){const reps=orderReports(ctx.rows,ctx.allSheets);rec={...s,orderReadiness:Object.fromEntries(orderIds(s).map(id=>[id,forSheet(reps[id],sid) || {ready:false,why:'Order readiness has not been verified'}]))};}
     const own=ownIssue(rec);
     if(own && want(own.step))out.push(own);
-    if(want('orders') && !completedBefore(rec) && rec.orderReadiness)for(const b of orderBlockers(rec))out.push({...orderIssue(b.id,b,ctx),sheetId:sid,sheetLabel:label});
+    if(want('orders') && !completedBefore(rec) && rec.orderReadiness){
+      const unread=[];
+      for(const b of orderBlockers(rec)){
+        // an order nothing was read for is one entry for the sheet ("not checked yet"), not one for each of its orders
+        if(!Array.isArray(b.blocks) && !ctx.perOrder){unread.push(b.id);continue;}
+        out.push({...orderIssue(b.id,b,ctx),sheetId:sid,sheetLabel:label});
+      }
+      if(unread.length)out.push({step:'orders',key:'unverified',label:'Orders not checked yet',orderIds:unread,sheetId:sid,sheetLabel:label,open:{type:'sheet',id:sid}});
+    }
     // a sheet that is ready itself is cut with its set: the set's other sheets that are not ready hold it
     if(want('laser') && !(+s.laserDoneAt>0) && s.setId && !s.draft && s.solidIncluded!==false && sheet(rec).included && (completedBefore(rec) || sheet(rec).ready)){
       if(ctx.set){

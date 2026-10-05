@@ -33,7 +33,7 @@ const server = http.createServer((req, res) => {
           lines: { a: {}, b: {} }, sheets: { a: {} }, holds: {}, errors: [], committed: [], resumable: true };
         Dock.layout(); RunCtl.renderBanner();
         CNProgress.start('Talking to the cloud');
-        const t = CNProgress.start('Preparing 8 order line(s)', { total: 8 }); t.set(3, 8, 'READER_97110');
+        const t = CNProgress.start('Preparing 8 pieces', { total: 8 }); t.set(3, 8, 'READER_97110');
         Arrivals.state().error = 'orders.snapshot: the Design Station did not answer in time'; Arrivals.paint();
         await new Promise(r => setTimeout(r, 300));
         // the sandbox pill as Sandbox.render draws it while orders stream in (set once the page's own start has drawn it),
@@ -85,7 +85,7 @@ const server = http.createServer((req, res) => {
       assert(got.bar.b < 140, `and the top bar is at the top (${at})`);
       assert.strictEqual(got.chipText, 'Order check failed', `a failed order check says so (${at})`);
       assert(/did not answer in time/.test(got.chipTitle) && /Orders received · 24h/.test(got.chipTitle), `and its tooltip says why and what was received (${at}): ${got.chipTitle}`);
-      assert(/Talking to the cloud|Preparing 8 order line/.test(got.title) && /\d+s/.test(got.title), `the line's tooltip has the task and its time (${at}): ${got.title}`);
+      assert(/Talking to the cloud|Preparing 8 pieces/.test(got.title) && /\d+s/.test(got.title), `the line's tooltip has the task and its time (${at}): ${got.title}`);
       assert.strictEqual(got.chipAfter, false, `the chip goes when the checks work again (${at})`);
       // the run's pill: in the top bar, beside the line, over nothing, with its words where there is room
       const p = got.pill;

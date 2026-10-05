@@ -267,7 +267,7 @@ function sameOperatorStep(a, b) {
 CUSTOM_FIELDS.push("history");
 /** A custom line's reopens and undos, as its record's history keeps them, each a point of its own. */
 function customReopensOf(id, c) {
-  const key = s(c.key || c._id, 80), tid = s(c.transactionId, 30) || key.split("_").pop(), what = s(c.sku || c.title || "custom line", 80);
+  const key = s(c.key || c._id, 80), tid = s(c.transactionId, 30) || key.split("_").pop(), what = s(c.sku || c.title || "custom piece", 80);
   return (Array.isArray(c.history) ? c.history : []).slice(-24).filter(h => h && msOf(h.at) > 1e12).map(h => {
     const how = h.how === "undo" ? "undo" : "reopen", by = s(h.by, 80);
     return { orderId: id, type: "note", at: msOf(h.at), id: `d-reopen-${key}-${msOf(h.at)}`, series: `reopen-${key}`, lineKey: key, transactionId: tid, by, source: "sorter", station: "sorter",
@@ -421,7 +421,7 @@ async function deriveEvents(db, id, opts) {
 
   // custom orders: each seal (a printed QR label or a Complete Order press), and the completion
   for (const c of customs) {
-    const key = s(c.key || c._id, 80), tid = s(c.transactionId, 30) || key.split("_").pop(), what = c.sku || c.title || "custom line";
+    const key = s(c.key || c._id, 80), tid = s(c.transactionId, 30) || key.split("_").pop(), what = c.sku || c.title || "custom piece";
     const stamps = Array.isArray(c.stamps) && c.stamps.length ? c.stamps : [c.printedAt && { how: "print", at: c.printedAt, by: c.printedBy }, n(c.prints) > 1 && c.lastPrintedAt && { how: "print", at: c.lastPrintedAt, by: c.lastPrintedBy }].filter(Boolean);
     stamps.slice(-24).forEach(st => ev(st.how === "button" ? "sealCompleted" : "sealPrinted", msOf(st.at), { id: `d-seal-${key}-${msOf(st.at)}`, series: `seal-${key}`, lineKey: key, transactionId: tid, by: s(st.by, 80), source: "sorter", station: "sorter", text: st.how === "button" ? `Custom order completed: ${s(what, 80)}` : `Custom QR label printed: ${s(what, 80)}`, data: { how: st.how === "button" ? "button" : "print" } }));
     if (msOf(c.completedAt)) ev("sealCompleted", msOf(c.completedAt), { id: `d-seal-done-${key}`, lineKey: key, transactionId: tid, by: s(c.completedBy, 80), source: "sorter", station: "sorter", text: `Custom order completed: ${s(what, 80)}`, data: { how: c.how === "button" ? "button" : "print" } });

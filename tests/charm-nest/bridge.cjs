@@ -1041,7 +1041,7 @@ const receipts = [
   // a bar that says what the app is doing never stands over the way out, and the way out always works (§5)
   {
     const clear = await page.evaluate(() => {
-      const t = CNProgress.start('Preparing 411 order line(s)', { total: 411 }); t.set(229, 411, 'BLUE_94532');
+      const t = CNProgress.start('Preparing 411 pieces', { total: 411 }); t.set(229, 411, 'BLUE_94532');
       const row = document.querySelector('.cnp .cnpRow').getBoundingClientRect();
       const hits = ['#modeSeg', '#runBanner', '#topBar', '.topBar'].map(sel => { const el = document.querySelector(sel); if (!el) return null; const r = el.getBoundingClientRect(); if (!r.width) return null; return { sel, over: r.left < row.right && r.right > row.left && r.top < row.bottom && r.bottom > row.top }; }).filter(Boolean);
       const mm = document.getElementById('moreMenu'); if (mm) mm.open = true;                 // the three behind More are reached through it
