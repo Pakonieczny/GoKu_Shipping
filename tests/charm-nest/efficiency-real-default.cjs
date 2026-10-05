@@ -103,7 +103,9 @@ seed();
     const page = await ctx.newPage(), errs = track(page);
     await page.goto(`${srv.sorterOrigin}/charm-nest-1.html`);
     await page.waitForFunction(() => window.Efficiency && window.CN && document.readyState === 'complete', null, { timeout: 60000 });
-    await page.evaluate(() => { Object.assign(Efficiency.options, { pollMs: 500, liveMs: 300, growMs: 0, nudgeMs: 400, tabMs: 0 }); });
+    // the shell is tested on its own: the stations board and the employee page (other pieces, with their own tests) are taken away, so the
+    // simple order card, the waiting spinner and the mount rules are what is seen here
+    await page.evaluate(() => { for (const k of ['EfficiencyStations', 'EfficiencyEmployee']) { try { delete window[k]; } catch (_) {} if (window[k]) window[k] = undefined; } Object.assign(Efficiency.options, { pollMs: 500, liveMs: 300, growMs: 0, nudgeMs: 400, tabMs: 0 }); });
     if (vp && vp.width < 700) await page.click('#btnRail');
     await openConsole(page);
     await page.fill(`${V} .efKey input`, F.KEY); await page.press(`${V} .efKey input`, 'Enter');
