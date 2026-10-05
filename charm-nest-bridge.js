@@ -11080,56 +11080,6 @@ const OrderWin = window.OrderWin = (() => {
     // the Skip switch is the cutting flow's: a line of the pull
     byId("owSkipBox").hidden = !inPull(r.key) || r.state === "gone";
   }
-  /* ── the decision box opens and folds (Paul, 28 Sep: "not exactly visible", "jerky") on transform, opacity and
-     clip-path only: its room is taken or given back at once, what is around it glides from where it was drawn, and the
-     box is revealed down from its top edge, or a still copy of it folds up to that edge as it fades. Its height used to
-     be animated frame by frame (the whole view laid out again on every frame), and it popped in at once. On the line
-     already shown only: a step to another line slides the whole view in instead. ── */
-  const FOLD = { ms: 620, ease: "cubic-bezier(.3,.1,.2,1)" };
-  /** Where things are drawn before the box changes (null: no fold now). */
-  function foldFrom(fix, key) {
-    const same = fix._for === key; fix._for = key;
-    if (!same || still() || flying() || !window.Motion || !W.dlg || !W.dlg.open || !fix.getClientRects().length) return null;
-    const box = fix.querySelector(":scope > .owFix"), sc = fix.closest(".owMain");
-    const near = [...fix.parentNode.children, sc && sc.querySelector(".owPics")].filter(n => n && n !== fix && n.getClientRects().length);
-    return { fix, sc, card: !!fix.querySelector(".owFix > .owFixCard"), rect: box ? box.getBoundingClientRect() : null, near: near.map(n => [n, n.getBoundingClientRect()]), g: null };
-  }
-  /** The box changed: it opens or folds, and what is around it glides into its place. */
-  function foldTo(f) {
-    if (!f) return;
-    const { fix } = f, box = fix.querySelector(":scope > .owFix"), card = !!fix.querySelector(".owFix > .owFixCard");
-    const opens = card && !f.card, folds = f.card && !card;
-    if (!opens && !folds) { if (f.g) f.g.remove(); return; }
-    // (a fold still running is taken up from where it is drawn now: its rects were read with it)
-    for (const a of (fix._fold || []).splice(0)) { try { a.cancel(); } catch (_) {} }
-    if (fix._ghost) { fix._ghost.remove(); fix._ghost = null; }
-    const A = fix._fold = [], run = (n, frames, o) => { const a = n.animate(frames, Object.assign({ duration: FOLD.ms, easing: FOLD.ease, fill: "backwards" }, o)); A.push(a); return a; };
-    let shift = 0;
-    for (const [n, b] of f.near) {
-      if (!n.isConnected || !n.getClientRects().length) continue;
-      const r = n.getBoundingClientRect(), dx = b.left - r.left, dy = b.top - r.top;
-      if (!shift && fix.compareDocumentPosition(n) & Node.DOCUMENT_POSITION_FOLLOWING) shift = dy;
-      if (Math.abs(dx) < 1 && Math.abs(dy) < 1) continue;
-      run(n, [{ transform: `translate(${dx}px,${dy}px)` }, { transform: "none" }]);
-    }
-    const radius = n => { const s = getComputedStyle(n).borderTopLeftRadius; return s && s !== "0px" ? " round " + s : ""; };
-    if (opens && box) {
-      const h = box.getBoundingClientRect().height, rd = radius(box);
-      run(box, [{ clipPath: `inset(0px 0px ${h}px 0px${rd})`, opacity: 0 }, { opacity: 1, offset: .45 }, { clipPath: `inset(0px 0px 0px 0px${rd})`, opacity: 1 }]);
-    }
-    if (folds) {
-      if (box) run(box, [{ opacity: 0 }, { opacity: 1 }]);   // (the engraving's line, when it takes the room)
-      const g = f.g; if (!g) return;
-      fix._ghost = g;
-      // the copy's bottom edge rises with what is under it; kept within the scrolled view it stands in
-      const R = f.rect, h = R.height, v = f.sc ? f.sc.getBoundingClientRect() : null, rd = radius(box || g.firstElementChild || g);
-      const top = v ? Math.max(0, Math.min(h, v.top - R.top)) : 0, bot = v ? Math.max(0, Math.min(h - top, R.bottom - v.bottom)) : 0;
-      const rise = Math.min(h - top, Math.max(bot, shift > 1 ? Math.min(h, shift) : h));
-      const a = g.animate([{ clipPath: `inset(${top}px 0px ${bot}px 0px${rd})`, opacity: 1 }, { clipPath: `inset(${top}px 0px ${rise}px 0px${rd})`, opacity: 0 }], { duration: FOLD.ms, easing: FOLD.ease, fill: "forwards" });
-      const gone = () => { g.remove(); if (fix._ghost === g) fix._ghost = null; };
-      a.finished.then(gone, gone); setTimeout(gone, FOLD.ms + 400);   // (a hidden tab draws no frames)
-    }
-  }
   /** The back engraving of the piece shown, under its pictures: the one card the Sheet tab draws (OrderEngraving, charm-nest-order-engraving.js),
    *  here for the line the Overview holds. Each piece of an order has its own back, its own job and its own approval, so the card is
    *  the one of the line shown and swaps with the piece (nothing of the piece before stays). It follows Engrave's jobs and the order's
@@ -11141,7 +11091,7 @@ const OrderWin = window.OrderWin = (() => {
       events: () => (W.evFor === rid ? W.events : null),
       // (the back's own words from the Sheet tab, for an order read from the records that Engrave holds no job for)
       sheetEng: () => { const x = SV.info && (SV.info.mine || []).find(m => m.poolId && (r.poolIds || []).includes(m.poolId)); return (x && x.eng) || null; },
-      // (an approval made elsewhere, or here: what hangs on it is drawn again: the red box, the Engraving cell, the Sheet tab)
+      // (an approval made elsewhere, or here: what hangs on it is drawn again: the Engraving cell, the Sheet tab)
       changed: () => { if (!W.dlg || !W.dlg.open || W.closing) return; if (SV.info && W.view === "sheet") tryDo(() => paintPanel(SV.info)); hold("paint", () => { if (W.dlg.open && !W.closing) paint(); }); } };
     if (W.engCard && W.engCard.el === host) W.engCard.update(ctx); else W.engCard = OE.mount(host, ctx);
   }
@@ -11209,28 +11159,11 @@ const OrderWin = window.OrderWin = (() => {
     // no decision box: a line's question (a custom order's, an option to map, an unknown SKU) is asked nowhere, in this
     // window or in Review (Paul, 28 Sep 16:45: "remove this from the UI ... move up everything that is below to fill up
     // the empty space"; 29 Sep 01:01: "Remove this from the UI and the review tab, from all pop-up modals"): its Review
-    // card's buttons deal with it, and what was under the box stands where it stood
-    // (a line whose engraving is still to be settled says so, with the way to the Engraving tab: no question is asked)
-    const fix = byId("owFix"), fold = foldFrom(fix, r.key);
-    fix.innerHTML = "";
-    // (not beside a card that says approved: an approval another computer made reaches the card from the order's timeline before it reaches this page's records)
-    const cardSaysApproved = !!(W.engCard && W.engCard.kind && tryDo(() => W.engCard.kind()) === "approved");
-    if (inPull(r.key) && r.engrave && r.engrave.needed && !r.engrave.approved && !cardSaysApproved) {
-      const box = el("div", "owFix", '<div class="t">Its engraving is still to be settled</div>');
-      const b = el("button", "btn ghost sm", "Open it in Engraving");
-      // (the engraving of THIS order's piece, its details open, the order's number in the search: EngraveLink, Paul 5 Oct
-      // "it only open the Engraving tab list with no specific order selected"; without it, the tab as it always was)
-      const plain = () => { W.dlg.close(); setMode("engrave"); Engrave.render(); };
-      b.onclick = () => {
-        if (!window.EngraveLink || typeof EngraveLink.open !== "function") return plain();
-        if (b.disabled) return;
-        b.disabled = true; b.innerHTML = '<span class="spin"></span>Opening Engraving…';
-        EngraveLink.open({ rid, key: r.key, poolId: (r.poolIds || [])[0] }).catch(plain).finally(() => { b.disabled = false; b.textContent = "Open it in Engraving"; });
-      };
-      box.appendChild(b); fix.appendChild(box);
-    }
+    // card's buttons deal with it, and what was under the box stands where it stood. Nor is there a red "its engraving is
+    // still to be settled" box (Paul, 5 Oct 17:47: "Remove the center of the screen message and red pill UI ... entirely
+    // from this UI and all detailed order modals"): the Back engraving card under the pictures says what the engraving waits
+    // for and has its own way into Engraving. (#owFix stays in the page, empty: nothing draws in it.)
     paintSend(r);
-    foldTo(fold);
     const sw = byId("owSkip"); sw.setAttribute("aria-checked", r.state === "skipped" ? "true" : "false");
     paintNow(r);
     paintWho();
