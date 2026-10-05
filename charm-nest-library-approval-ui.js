@@ -108,6 +108,14 @@
 .lapNeedList{list-style:none;margin:7px 0 0;padding:0;display:grid;gap:9px}
 .lapNeed .lapNeedT b{font-weight:650}
 .lapNeed .lapNeedT span{color:#8a3a26}
+.lapWhyBtn{border:0;background:none;padding:0 2px;margin-left:4px;font:650 11.5px/1.3 var(--sans,system-ui,sans-serif);color:var(--ink70,#5b554c);text-decoration:underline dotted;text-underline-offset:2px;cursor:pointer;border-radius:4px}
+.lapWhyBtn:hover{color:var(--ink,#1c1a17)}
+.lapWhyBtn:focus-visible{outline:2px solid var(--gold2,#caa861);outline-offset:1px}
+.lapWhySlot{display:grid;grid-template-rows:0fr;transition:grid-template-rows .24s cubic-bezier(.2,.8,.2,1)}
+.lapWhySlot.open{grid-template-rows:1fr}
+.lapWhyIn{display:block;min-height:0;overflow:hidden;visibility:hidden;transition:visibility 0s .24s}
+.lapWhySlot.open>.lapWhyIn{visibility:visible;transition-delay:0s}
+.lapWhy{display:block;padding-top:3px;font-size:11.5px;line-height:1.45}
 .lapItems{display:flex;flex-wrap:wrap;gap:5px;margin-top:5px}
 .lapItem{display:inline-flex;align-items:center;gap:5px;min-height:24px;box-sizing:border-box;max-width:100%;padding:3px 10px;border:1px solid rgba(176,86,63,.42);border-radius:999px;background:var(--card,#fffefb);color:#8a3a26;font:600 11.5px/1.3 var(--sans,system-ui,sans-serif);text-align:left;cursor:pointer;transition:background-color .15s ease,transform .08s ease}
 button.lapItem:hover{background:#fff4ee}
@@ -140,7 +148,7 @@ span.lapItem{cursor:default;border-style:dashed}
 @keyframes lapDraw{to{stroke-dashoffset:0}}
 @media(max-width:560px){.lapBar{padding:9px 10px 10px 13px}.lapBtn{min-height:34px}.lapItem{min-height:32px}.lapLine.stamp{grid-template-columns:40px minmax(0,1fr)}.lapLine.stamp .lapMark{width:38px;height:38px}}
 @media(pointer:coarse){.lapBtn{min-height:34px}.lapItem{min-height:32px}}
-@media(prefers-reduced-motion:reduce){.lapBar.enter,.lapLine.enter,.lapNeeds.enter,.lapConfirm.enter,.lapSummary.enter,.lapNotes.enter{animation:none}.lapLine.in .lapRing,.lapLine.in .lapTick{animation:none;stroke-dasharray:none;stroke-dashoffset:0}.lapSpin{animation-duration:1.6s}.lapBar,.lapRing,.lapTick,.lapLbl,.lapSeal .lapInk{transition:none}}
+@media(prefers-reduced-motion:reduce){.lapWhySlot,.lapWhyIn{transition:none}.lapBar.enter,.lapLine.enter,.lapNeeds.enter,.lapConfirm.enter,.lapSummary.enter,.lapNotes.enter{animation:none}.lapLine.in .lapRing,.lapLine.in .lapTick{animation:none;stroke-dasharray:none;stroke-dashoffset:0}.lapSpin{animation-duration:1.6s}.lapBar,.lapRing,.lapTick,.lapLbl,.lapSeal .lapInk{transition:none}}
 `;
   function css() {
     if (doc.getElementById('lapCss')) return;
@@ -163,7 +171,7 @@ span.lapItem{cursor:default;border-style:dashed}
   function needsText(plan, opts) {
     if (opts.needsText) return String(opts.needsText);
     const to = plan && plan.to || {}, what = kindOf(plan, opts);
-    const act = to.area === 'laser' || (!to.area && !to.setId) ? 'move to Laser cutting' : to.setId ? `join ${to.label || to.name || 'that set'}` : `move to ${areaOf(to) || 'its new place'}`;
+    const act = to.area === 'laser' || (!to.area && !to.setId) ? 'move to Laser cutting' : to.setId ? `join ${String(to.label || to.name || 'that set').split(/\s+[\u00b7\u2022|]\s+/)[0]}` : `move to ${areaOf(to) || 'its new place'}`;
     return `This ${what} cannot ${act} until:`;
   }
   const movedText = plan => { const to = plan && plan.to; if (!to) return 'Done'; if (to.setId) return `Moved into ${destOf(plan)}`; const a = areaOf(to); return a ? `Moved to ${a}` : 'Moved'; };
@@ -304,16 +312,37 @@ span.lapItem{cursor:default;border-style:dashed}
   }
 
   /* the missing things, in red */
+  /** The window that says which multi-piece orders keep a sheet in its set (charm-nest-shared-orders-modal.js), when the page has it. */
+  const sharedWindow = () => !!(window.SharedOrdersModal && typeof window.SharedOrdersModal.open === 'function');
+  function openShared(bar, need, from) {
+    try {
+      const f = bar.opts && bar.opts.onShared;
+      if (typeof f === 'function') return f(need, from);
+      const p = bar.plan || {};
+      return window.SharedOrdersModal.open({ kind: kindOf(p, bar.opts || {}) === 'set' ? 'set' : 'sheet', id: p.id || (p.item && p.item.id) || '', orders: need && Array.isArray(need.items) ? need.items : undefined, targetLabel: destOf(p), targetSetId: p.to && p.to.setId || null, from });
+    } catch (e) { warn('shared orders', e); }
+    return null;
+  }
+  /** A need's explanation: short ones sit beside the label, a long one is behind a quiet "Why". */
+  let whyN = 0;
+  const whyOf = n => {
+    const d = String(n && n.detail || '').trim(); if (!d) return '';
+    if (d.length <= 70) return ` <span>${esc(d)}</span>`;
+    const id = 'lapWhy' + (++whyN);
+    return ` <button type="button" class="lapWhyBtn" data-why aria-expanded="false" aria-controls="${id}">Why</button><span class="lapWhySlot"><span class="lapWhyIn"><span class="lapWhy" id="${id}">${esc(d)}</span></span></span>`;
+  };
   function renderNeeds(bar, plan, needs) {
     const box = q(bar, '.lapNeeds'); box.hidden = false; if (!reduced()) box.classList.add('enter');
     const list = needs.map((n, ni) => {
+      // orders that tie the sheet to others are not a list of red chips: one button opens the window that shows them, with pictures
+      if (n.key === 'sharedOrders' && sharedWindow()) return `<li class="lapNeed" data-need="sharedOrders"><div class="lapNeedT"><b>${esc(n.label || n.key || '')}</b>${whyOf(n)}</div><div class="lapItems"><button type="button" class="lapBtn" data-shared>See which orders</button></div></li>`;
       const items = arr(n.items).map(it => { const t = targetOf(it); const idx = bar.items.push({ it, t }) - 1; return { it, t, idx }; });
       const chip = x => {
         const label = x.it.label || (x.t && x.t.how === 'order' ? `Order ${x.t.id}` : x.t && x.t.how === 'sheet' ? 'Sheet' : x.it.id || ''), why = x.it.why ? `<span class="why">${esc(x.it.why)}</span>` : '';
         return x.t ? `<button type="button" class="lapItem" data-item="${x.idx}"><span>${esc(label)}</span>${why}<span class="go" aria-hidden="true">↗</span></button>` : `<span class="lapItem"><span>${esc(label)}</span>${why}</span>`;
       };
       const shown = items.slice(0, SHOW_ITEMS), more = items.slice(SHOW_ITEMS);
-      return `<li class="lapNeed" data-need="${esc(n.key || ni)}"><div class="lapNeedT"><b>${esc(n.label || n.key || '')}</b>${n.detail ? ` <span>${esc(n.detail)}</span>` : ''}</div>${items.length ? `<div class="lapItems">${shown.map(chip).join('')}${more.length ? `<span class="lapMoreWrap" hidden>${more.map(chip).join('')}</span><button type="button" class="lapItem lapMore" data-more>Show ${more.length} more</button>` : ''}</div>` : ''}</li>`;
+      return `<li class="lapNeed" data-need="${esc(n.key || ni)}"><div class="lapNeedT"><b>${esc(n.label || n.key || '')}</b>${whyOf(n)}</div>${items.length ? `<div class="lapItems">${shown.map(chip).join('')}${more.length ? `<span class="lapMoreWrap" hidden>${more.map(chip).join('')}</span><button type="button" class="lapItem lapMore" data-more>Show ${more.length} more</button>` : ''}</div>` : ''}</li>`;
     }).join('');
     box.innerHTML = `<div class="lapNeedsHead">${ALERT}<span>${esc(needsText(plan, bar.opts))}</span></div><ul class="lapNeedList">${list}</ul>`;
   }
@@ -377,6 +406,8 @@ span.lapItem{cursor:default;border-style:dashed}
   function onClick(bar, e) {
     const b = e.target.closest && e.target.closest('button'); if (!b || !bar.el.contains(b)) return;
     if (b.dataset.act) { e.preventDefault(); return void closeIt(bar); }
+    if (b.hasAttribute('data-why')) { e.preventDefault(); const w = b.nextElementSibling, open = b.getAttribute('aria-expanded') !== 'true'; b.setAttribute('aria-expanded', String(open)); if (w) w.classList.toggle('open', open); return; }
+    if (b.hasAttribute('data-shared')) { e.preventDefault(); const n = arr(bar.plan && bar.plan.needs).find(x => x && x.key === 'sharedOrders'); openShared(bar, n, b); return; }
     if (b.hasAttribute('data-more')) { const w = b.parentNode.querySelector('.lapMoreWrap'); if (w) { w.hidden = false; w.style.display = 'contents'; } b.remove(); const nx = w && w.querySelector('button.lapItem'); if (nx) { try { nx.focus({ preventScroll: true }); } catch (_) {} } return; }
     if (b.dataset.item != null) {
       const x = bar.items[+b.dataset.item]; if (!x || !x.t) return;

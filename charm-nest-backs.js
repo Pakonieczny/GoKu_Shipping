@@ -171,7 +171,7 @@
       const rows = new Map();
       document.querySelectorAll('.sheets .sheetCard').forEach(card => {
         const shelf = card.querySelector('[data-r="backs"]>.sheetBacks');
-        if (!shelf) return;
+        if (!shelf || shelf.parentElement.getAttribute('data-eng') === 'closed') return;   // (a collapsed shelf takes no part in its row: EngravingToggle)
         const key = card.offsetTop;
         if (!rows.has(key)) rows.set(key, []);
         rows.get(key).push(shelf);
