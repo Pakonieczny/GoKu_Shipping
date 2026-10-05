@@ -668,7 +668,7 @@ dialog.phv.layer.phvIn{background:transparent}
 .owTabsV>[role=tab][aria-selected=true]{color:var(--ink)}
 .owTabsV>[role=tab]:focus-visible{outline:2px solid var(--slate);outline-offset:-5px;border-radius:8px}
 .owInk{position:absolute;bottom:-1px;left:0;width:100px;height:2px;border-radius:2px;background:var(--velvet);transform:scaleX(0);transform-origin:0 0;transition:transform .34s cubic-bezier(.2,.8,.2,1)}
-.owTools{margin-left:auto;display:flex;align-items:center;gap:6px;min-width:0}
+.owTools{margin-left:auto;padding-left:12px;display:flex;align-items:center;gap:6px;min-width:0;flex:0 .01 auto}
 .owGrp{display:none;align-items:center;gap:10px;min-width:0}
 .owGrp.on{display:flex;animation:owUp .26s cubic-bezier(.2,.8,.2,1) both}
 .owLive{font:700 9.5px var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--ink45);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -680,7 +680,7 @@ dialog.phv.layer.phvIn{background:transparent}
 .owSeg button.on{background:var(--card);color:var(--ink);box-shadow:0 1px 2px rgba(30,26,20,.12)}
 @keyframes owUp{from{opacity:0;transform:translateY(6px)}}
 /* an order of several pieces: one calm switch in the tab row (Overview, Timeline), its thumb gliding to the piece shown */
-.owPieceSw{position:relative;align-self:center;display:inline-flex;align-items:center;gap:2px;margin-left:14px;padding:2px;border:1px solid var(--line);border-radius:999px;background:var(--card2);min-width:0;flex:0 1 auto;overflow-x:auto;scrollbar-width:none;animation:owUp .26s cubic-bezier(.2,.8,.2,1) both}
+.owPieceSw{position:relative;align-self:center;display:inline-flex;align-items:center;gap:2px;margin-left:14px;padding:2px;border:1px solid var(--line);border-radius:999px;background:var(--card2);min-width:120px;flex:0 100 auto;overflow-x:auto;scrollbar-width:none;animation:owUp .26s cubic-bezier(.2,.8,.2,1) both}   /* (three pieces and more: the strip gives way and scrolls before the live line is cut) */
 .owPieceSw::-webkit-scrollbar{display:none}
 .owPieceSw[hidden]{display:none}
 .owPieceSw button{position:relative;z-index:1;flex:none;display:inline-flex;align-items:center;gap:6px;max-width:230px;border:0;background:transparent;border-radius:999px;padding:3px 11px;font:11.5px var(--sans);color:var(--ink45);cursor:pointer;white-space:nowrap;transition:color .2s}
@@ -746,6 +746,22 @@ dialog.phv.layer.phvIn{background:transparent}
 .owShChip i{width:9px;height:9px;border-radius:50%;background:var(--c,var(--ink25));flex:none}
 .owShChip b{display:block;font:600 11px var(--mono)}
 .owShChip span{color:var(--ink45);font-size:10.5px}
+/* the Sheet controls of a piece on no sheet (Paul, 5 Oct, point 5): greyed and inert, no hover lift; one plain reason on a press */
+.owShChip.off{background:transparent;border-style:dashed;color:var(--ink45);cursor:default}
+.owShChip.off:hover{transform:none;border-color:var(--line);box-shadow:none}
+.owShChip.off i{background:transparent;box-shadow:inset 0 0 0 1.5px var(--ink25)}
+.owShChip.off b{color:var(--ink45);font-weight:500}
+.owShChip:focus-visible{outline:2px solid var(--slate);outline-offset:2px}
+.owShMore{font:10.5px var(--sans);color:var(--ink45);padding-left:4px}
+.owNowCard .btn.off,.owNowCard .btn.off:hover{opacity:.45;cursor:default;background:transparent}
+.owTabsV>[role=tab].off,.owTabsV>[role=tab].off:hover{color:var(--ink25);cursor:default}
+.owTabsV>[role=tab].off b{font-weight:500}
+.owPieceSw button.noSheet .dot{opacity:.4}
+.owPlateNone .owNoneIcon{width:54px;height:54px;color:var(--ink25);margin-bottom:2px}
+.owPlateNone .owNoneWhy{max-width:300px;line-height:1.5}
+.owPlateNone .owNonePc{display:inline-flex;align-items:center;gap:7px;border:1px solid var(--line);border-radius:999px;padding:3px 12px 3px 9px;background:var(--card);font:11.5px var(--sans);color:var(--ink70);margin-top:2px}
+.owPlateNone .owNonePc i{width:8px;height:8px;border-radius:50%;background:var(--c,var(--ink25));flex:none}
+.owPlateNone .btn{margin-top:6px}
 /* the sheet: the plate, its foot, and the panel */
 .owPlateArea{background:var(--paper);display:flex;flex-direction:column;min-width:0;min-height:0}
 .owPlateWrap{flex:1 1 auto;min-height:0;position:relative;display:grid;place-items:center;padding:18px 22px 6px;perspective:1600px}
@@ -1035,6 +1051,7 @@ dialog.phv.layer.phvIn{background:transparent}
 /* a conversation whose order is no longer in the pull opens in a window of its own */
 dialog.cmDlg{width:min(660px,96vw);height:min(86vh,820px)}
 dialog.cmDlg .owBox{height:100%}
+dialog.cmDlg .owHead [data-open-order]{display:inline-flex;align-items:center;gap:5px}dialog.cmDlg .owHead [data-open-order][hidden]{display:none}dialog.cmDlg .owHead [data-open-order] svg{width:12px;height:12px}
 .cmSolo{flex:1 1 auto;min-height:0;display:flex;flex-direction:column}
 
 /* ── orders: one card per line, or the same line as a row ── */
@@ -2885,7 +2902,7 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-pdf.js?v=20260924-followup"></script>
 <script src="charm-nest-dxf.js?v=20260927-custom"></script>
 <script src="charm-nest-motion.js?v=20261003-zg-seal-small"></script>
-<script src="charm-nest-timeline-ui.js?v=20261005-pieces"></script>
+<script src="charm-nest-timeline-ui.js?v=20261005-pieces-psb1"></script>
 <script src="charm-nest-geom.js?v=20260921-material"></script>
 <script src="charm-nest-engrave-fit.js"></script>
 <script src="charm-nest-assets.js"></script>
@@ -6625,7 +6642,7 @@ boot();
      Design Station's sign-in), the same name every seal it stamps carries. -->
 <script src="station-session.js?v=20261002-ea1"></script>
 <script src="station-activity.js?v=20261003-reset-clean"></script>
-<script src="charm-nest-bridge.js?v=20261005-lis2-cardinal3-zoom"></script>
+<script src="charm-nest-bridge.js?v=20261005-lis2-cardinal3-zoom-psb1"></script>
 <script>
 try {
   const nameNow = () => { try { const n = String((window.CNEmployee && CNEmployee.name()) || "").trim(); return /^\d+$/.test(n) ? "" : n; } catch (_) { return ""; } };
