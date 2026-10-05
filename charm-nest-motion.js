@@ -1372,4 +1372,46 @@
 
   root.Motion = { sealZoomScale: Seal.zoomScale, T, ghost, fly, flyIn, grow, shut, fade, arrive, pulse, note, expect, expectIn, pending, carry, carrying: isCarried, reconcile, reduced, wait, layer, dialogOpen, dialogClose, from, popIn, turner, landIn };
   root.Seal = Seal;
+
+  /* ── the small form of a completed piece's seals, for a one-line row (Paul, 5 Oct 2026: "The 'Complete' orders/pieces are missing their
+     associated stamp/seal. Please review all modals and fix."): a row of the sheet window's list of the order's pieces, the order window's
+     Sheet tab, a search result. ONE small seal, the press that completed it, and "+N" for the others it holds, as the order window's
+     one-line bar draws them, from the very same Seal component: Seal.row's mini row (22 px), so it zooms in place (Seal.zoom) and is
+     never a caption or a tooltip. Read only: the seals come from Seal.ofPiece (the record's stamps, what an older record kept, the
+     completion it names, the permanent timeline's events for that line); nothing recorded, "" (no seal is ever invented). ── */
+  (() => {
+    if (!doc.getElementById("sealCompactCss")) {
+      const st = doc.createElement("style"); st.id = "sealCompactCss";
+      st.textContent = ".sealCompact{display:inline-flex;align-items:center;gap:3px;flex:0 0 auto;min-width:0;vertical-align:middle}.sealCompact .sealRow.mini{margin:-5px 0;gap:0}.sealPlus{font:700 10.5px var(--sans,system-ui,sans-serif);color:var(--ink45,#938c80);white-space:nowrap}";
+      (doc.head || doc.documentElement).appendChild(st);
+    }
+    const handKind = s => s.how === "button" || s.how === "print";
+    // (the server's short form of a completion, handDone { at, by, how }, read as the record's own completedAt / completedBy)
+    const asRecord = r => r && typeof r === "object" && !(+r.completedAt > 0) && +r.at > 0 ? Object.assign({}, r, { completedAt: +r.at, completedBy: r.completedBy || r.by || "" }) : r;
+    /** compactRow(lead, more, size) → one seal (a stamp: { how, at, by, n, id }) and "+more" beside it. "" without a lead. */
+    Seal.compactRow = function (lead, more, size) {
+      if (!lead) return "";
+      size = Math.max(16, +size || 22); more = Math.max(0, Math.round(+more) || 0);
+      const n = lead.how === "print" ? lead.n || 0 : 0;
+      return `<span class="sealCompact" data-seal-compact style="--seal-fit:${size}px">${Seal.row({ stamps: [lead], prints: n }, { size })}` +
+        (more ? `<span class="sealPlus" role="img" aria-label="${more} more seal${more > 1 ? "s" : ""}">+${more}</span>` : "") + `</span>`;
+    };
+    /** compact(pieces, { size, events, lineKey }) → the HTML of one seal and "+N" for the piece or pieces. pieces: one custom record (with
+     *  o.lineKey), or a list of { rec, lineKey, events } (an order's pieces: the seal is that of the latest completion among them, the
+     *  "+N" counts every other seal they hold). A record that is open (reopened) still counts its seals: they are never taken away. */
+    Seal.compact = function (pieces, o) {
+      o = o || {};
+      const items = (Array.isArray(pieces) ? pieces : [{ rec: pieces, lineKey: o.lineKey, events: o.events }]).filter(Boolean);
+      let lead = null, total = 0;
+      for (const it of items) {
+        const rec = asRecord(it.rec) || null, q = { events: it.events || o.events, lineKey: it.lineKey || (rec && rec.key) || "" };
+        const all = Seal.ofPiece(rec, q).filter(handKind); total += all.length;
+        const done = rec ? Seal.completionOf(rec, q) : null;
+        // (nothing names the completion: the latest press of the kind that completes, a Complete Order press before a label)
+        const pick = done || all.filter(s => s.how === "button").pop() || all.slice(-1)[0] || null;
+        if (pick && (!lead || +pick.at >= +lead.at)) lead = pick;
+      }
+      return lead ? Seal.compactRow(lead, Math.max(0, total - 1), o.size) : "";
+    };
+  })();
 })(typeof window !== "undefined" ? window : globalThis);

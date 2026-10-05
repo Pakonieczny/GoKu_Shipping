@@ -375,7 +375,7 @@ async function rest() {
   // sizes: one overview reads a handful of queries, not collections
   const sz = dataset(); await call(sz, {});
   const by = {}; for (const r of sz.reads) { by[r.name] = by[r.name] || { q: 0, docs: 0 }; by[r.name].q++; by[r.name].docs += r.n || 0; }
-  assert.strictEqual(sz.reads.filter(r => r.name === 'Efficiency_Daily' && r.filters.length === 2).length, 1, 'one rollup query for the whole window'); assert.strictEqual(by.Efficiency_Daily.q, 2, '(and one for the day the events began)'); assert.strictEqual(by.Station_Sessions.q, 2, 'one sessions query (milliseconds + Firestore times)');
+  assert.strictEqual(sz.reads.filter(r => r.name === 'Efficiency_Daily' && r.filters.length === 2).length, 1, 'one rollup query for the whole window'); assert.strictEqual(by.Efficiency_Daily.q, 2, '(and one for the day the events began)'); assert.strictEqual(by.Station_Sessions.q, 4, 'a cold overview with the trend reads the sessions in two parts (the final older part, kept 10 minutes; the last two days, kept 5 s), each in both time forms (milliseconds + Firestore times): the same documents as before, and a poll then reads only the recent part');
   assert.strictEqual(by.Station_Activity.q, 1); assert(by.Order_Timeline.q <= 10, 'seals only for the days before the events began, and today for Ann (at most 10 days)');
   const steady = dataset(); steady.put('Efficiency_Daily', '2026-09-01__Tess Welder', roll('2026-09-01', 'Tess Welder', { welding: stat({ parts: 1 }) }, {}, {}, 1, 2)); await call(steady, {});
   assert.strictEqual(steady.readsOf('Order_Timeline').length, 1, 'once the events have run for weeks: seals only for the day with a person who has no rollup (today, Ann)');

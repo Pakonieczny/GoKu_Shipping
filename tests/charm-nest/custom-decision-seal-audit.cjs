@@ -65,7 +65,7 @@ function auditReview() {
     el: (tag, className) => { const node = d.createElement(tag); node.className = className; return node; },
     settledRow: () => { throw new Error('a sent decision must never use a Completed row'); }, acted: {} });
   w.eval(fs.readFileSync(path.join(root, 'charm-nest-activity.js'), 'utf8'));
-  w.eval(lineOf('  const customKey = row =>') + '\n' + lineOf('  const mkeyOf = it =>') + '\n' +
+  w.eval(lineOf('  const customKey = row =>') + '\n' + lineOf('  const mkeyOf = it =>') + '\n' + lineOf('  const holdStamp = row =>') + '\n' + lineOf('  const holdSlotFor=(row,it,busy)=>') + '\n' +
     between(bridge, '  function stampOf(it)', '  /* ── Custom Orders that ask nothing') +
     between(bridge, '  const infoItems = new Map();', '  /** The decision card inside another view') +
     between(bridge, '  function reviewRow(it)', '  /** A decision answered, under Completed') +
