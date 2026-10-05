@@ -986,7 +986,7 @@
        the session carries the name only. At midnight (New York) the PIN box comes back; the order, the fields and the chat
        stay on screen. -->
   <script src="station-session.js?v=20261002-ea1"></script>
-  <script src="station-activity.js?v=20261002-ea1"></script>
+  <script src="station-activity.js?v=20261005-e2live"></script>
   <!-- Phone scans that arrive while nobody is signed in wait here and load, in order, right after the next sign-in (station-scan-queue.js). -->
   <script src="station-scan-queue.js?v=20261003-sq1"></script>
   <script>
@@ -1137,20 +1137,46 @@
       return { lines: lines.length, studs: studs.length, parts: studs.reduce((n, t) => n + (Math.floor(Number(t && t.quantity)) || 1), 0) };
     }
     const weldId = v => String(v == null ? "" : v).replace(/\D/g, "").slice(0, 30);
+    /* The live stations board (StationActivity.working / idle; plans/employee-hr/api.md): the scan shows this order as the
+       welder's current order AT ONCE, with one piece per stud line (every line when none is a stud), and it stays 3 minutes (the
+       scan is the weld here, so there is no later "done" to wait for). A cancelled order, one Etsy does not know and one with no
+       studs leave the board again. Best effort: it never throws, waits or touches the network here (the page keeps working
+       exactly as before when the live layer is missing or down); nothing shows with nobody signed in (working() says no). */
+    const weldLiveHold = 3 * 60e3;
+    let weldLiveScan = { id: "", at: 0 };
+    function weldLive(id, orderData, note) {
+      try {
+        const S = window.StationActivity;
+        if (!id || !S || typeof S.working !== "function") return;
+        const now = Date.now();
+        if (weldLiveScan.id !== id || now - weldLiveScan.at > weldLiveHold) weldLiveScan = { id, at: now };   // (the outcome tells the same scan again: one scan time)
+        const lines = Array.isArray(orderData && orderData.transactions) ? orderData.transactions : [];
+        const studs = lines.filter(weldIsStud), use = (studs.length ? studs : lines).slice(0, 24);
+        const pieces = use.map((t, i) => {
+          const q = Math.floor(Number(t && t.quantity)) || 1, title = String((t && t.title) || "").replace(/\s+/g, " ").trim().slice(0, 50) || "Piece " + (i + 1);
+          let sku = ""; try { sku = String((t && t.sku) || (typeof extractSkuFromEtsy === "function" ? extractSkuFromEtsy(t) : "") || ""); } catch (_) {}
+          return { id: id + "_" + (weldId(t && t.transaction_id) || i + 1), label: (q > 1 ? q + " x " : "") + title, sku, listingId: t && t.listing_id };
+        });
+        S.working({ rid: id, orderNumber: id, customer: String((orderData && orderData.name) || ""), pieces, pieceCount: use.length, note: note || "", holdMs: weldLiveHold, scannedAt: weldLiveScan.at });
+      } catch (_) {}
+    }
+    function weldLiveEnd(id) { try { if (window.StationActivity && StationActivity.idle) StationActivity.idle(id); } catch (_) {} }
     function weldActivityScan(orderNumber, orderData, how) {
       try {
         const id = weldId(orderNumber), p = weldPieces(orderData);
         if (!id) return weldAct("error", { detail: "typed text is not an order number" });   // no digits: nothing to weld, and the timeline has no order to seal
         weldAct("scan", { orderId: id, parts: p.parts, detail: (how === "scan" ? "phone scan" : String(how || "typed")) + (weldCounted.has(id) ? " · again" : "") });
+        weldLive(id, orderData, "");
       } catch (_) {}
     }
     function weldActivityOutcome(orderNumber, orderData, res) {
       try {
         const id = weldId(orderNumber), look = weldLookup(orderData), p = weldPieces(orderData);
         if (!id) return;                                // (reported once, at the scan)
-        if (res && res.cancelled) return weldAct("reject", { orderId: id, detail: "cancelled order" });
+        if (res && res.cancelled) { weldLiveEnd(id); return weldAct("reject", { orderId: id, detail: "cancelled order" }); }
         const why = weldRefusal(orderData);               // the same test the seal uses: no seal, one `reject`
-        if (why) return weldAct("reject", { orderId: id, detail: why });
+        if (why) { weldLiveEnd(id); return weldAct("reject", { orderId: id, detail: why }); }
+        weldLive(id, orderData, "Welded");
         if (look === "failed") weldAct("error", { orderId: id, detail: "Etsy order lookup failed" + (orderData && orderData.error ? ": " + String(orderData.error).slice(0, 60) : "") });
         if (weldCounted.has(id)) return;                // the same order scanned again: already counted
         weldCounted.set(id, Date.now());
