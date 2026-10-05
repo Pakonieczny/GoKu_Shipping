@@ -479,7 +479,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms)), nap = ms => sleep(Math.
       const apply = await D.page.evaluate(() => window.__ms);
       assert(await D.has(key), 'the change among 300 was applied');
       const cards = await D.page.evaluate(() => document.querySelectorAll('#rvList .reviewListRow').length);
-      log(`300 cards: a full draw of ${cards} cards ${draw.toFixed(0)} ms; an idle read's own work ${idle.js.toFixed(0)} ms (${idle.wall.toFixed(0)} ms with its wait for the cloud), ${idle.settles} redraws set going; a change brought in and everything that follows it ${apply.toFixed(0)} ms (machine under load: compare, do not read as absolute)`);
+      log(`300 cards: a full draw of ${cards} cards ${draw.toFixed(0)} ms; an idle read's own work ${idle.js.toFixed(0)} ms (its wait for the cloud ${idle.wall.toFixed(0)} ms: the test server queues it behind the page's own requests for 300 orders), ${idle.settles} redraws set going; a change brought in and everything that follows it ${apply.toFixed(0)} ms (machine under load: compare, do not read as absolute)`);
       assert.equal(idle.settles + idle.applied, 0, 'an idle read changes and redraws nothing among 300 cards: ' + JSON.stringify(idle));
       assert(idle.js < Math.max(150, draw), 'an idle read costs less than one draw of the list: ' + idle.js + ' vs ' + draw);
       assert(apply < 4 * draw + 1000, 'a change among 300 cards costs about a draw or two: ' + apply + ' vs ' + draw);
