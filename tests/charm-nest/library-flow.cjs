@@ -122,7 +122,7 @@ const S = 'Charm_Nest_Sheets', SET = 'Charm_Nest_Sets', RUN = 'Charm_Nest_Runs',
     p = await LF.plan({ kind: 'set', id: 'set-1', to: { area: 'laser' } });
     assert.equal(p.from.area, 'progress'); assert.equal(p.ok, false); assert(p.needs.some(x => x.key === 'nesting'), JSON.stringify(p.needs));
     p = await LF.plan({ kind: 'sheet', id: 'mem-1', to: { area: 'laser' } }); assert.equal(p.ok, false);
-    const mem = p.needs.find(x => x.key === 'members'); assert(mem && /Set 1/.test(mem.detail) && mem.items.some(i => /Sheet 2/.test(i.label)), JSON.stringify(p.needs));
+    const mem = p.needs.find(x => x.key === 'nesting'); assert(mem && /Sheet 2/.test(mem.detail) && /Sheet 2/.test(mem.label + mem.detail), JSON.stringify(p.needs)); assert(p.notes.some(x => /approved with Set 1/.test(x)), 'a sheet of a set is approved with its set: ' + p.notes);
     r = await LF.commit(p, { by: 'Paul' }); assert.equal(r.ok, false);
     st.put(S, 'mem-2', { verification: { ok: true } });
     assert.equal(await area('set', 'set-1'), 'laser'); p = await LF.plan({ kind: 'set', id: 'set-1', to: { area: 'laser' } }); assert.equal(p.noop, true);

@@ -2,9 +2,11 @@
  * (48 orders, "Waiting on 18 back engravings"); five multi-piece orders are spread over the two sheets (one piece of each on
  * each sheet), and the run still says state 'pooled' for the pieces that are already on SS Sheet 1.
  *
- * What a person sees as true: GF Sheet 1 has every back saved and its QR label, so its only real "order check" trouble is the
- * five orders whose other piece sits on SS Sheet 1, which is not ready (18 engravings still to approve). SS Sheet 1 has
- * nothing wrong with its orders (GF Sheet 1 is ready): its own 18 engravings are shown by its own step, never as orders. */
+ * What a person sees as true (round 7, Paul: "it's on both sheets and both sheets are in the same set"): NEITHER sheet has an order
+ * issue. The five orders whose other piece sits on SS Sheet 1 are fine: a set advances as ONE, and SS Sheet 1 not being ready (18
+ * engravings still to approve) is the SET's wait, said once where the Approve buttons are (R7-1's setGate), never an issue of those
+ * orders. (Before round 7 they were listed as "Waits on SS Sheet 1" on GF Sheet 1's "!" panel.) SS Sheet 1's own 18 engravings are
+ * shown by its own step, never as orders. */
 'use strict';
 const { materialize } = require('./issues-shop.cjs');
 

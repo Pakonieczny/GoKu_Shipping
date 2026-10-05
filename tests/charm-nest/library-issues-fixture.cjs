@@ -16,15 +16,18 @@ function sheet(id, { n = 28, metal = 'gold', setId = 'set1', index = 1, base = 1
 
 const NAMES = ['Nathaly Soto', 'Emily Chambers', 'Leslie Suhr', 'Jechelle Aragones', 'Yera Espinosa Madariaga', 'Stephanie Cooper', 'Calvin Ly', 'Heike Wagener', 'Nicole Offermann', 'Sunny Makowiak', 'Sarah Löhe', 'Chanel Sargeant', 'Tim Wright', 'Gregory Horvitz', 'Shari L. Morrison', 'Kathleen Henry', 'Susan Pforr', 'Nikki Boyles', 'Nicole', 'Maximiliana Alexandria von Habsburg-Lothringen-Esterházy'];
 const KEYS = ['pooled', 'otherSheetNotReady', 'noSku', 'pooled', 'otherSheetNotReady', 'noSku', 'unmatched', 'noDesign', 'held'];
-/* the issues of a sheet, in the exact shape of CharmNestReadiness.issues: `n` orders (cycling the reasons unless `keys` says), and optionally the sheet's own blocker */
-function issues(sheetId, n, { keys, own = null, mates = [], names = NAMES, start = 4170250000, lid = 'L' } = {}) {
+/* the issues of a sheet, in the exact shape of CharmNestReadiness.issues: `n` orders (cycling the reasons unless `keys` says), and optionally the sheet's own blocker.
+   Round 7: `mates` are the SET's wait (a mate sheet of the same set that is not ready: quiet, never an issue, said once: "Waiting for SS Sheet 1 · Engraving"),
+   `trouble` the real set trouble (a sheet of the set that cannot be found), and a key 'split' an order split between two sets (key otherSheetNotReady, split:true). */
+function issues(sheetId, n, { keys, own = null, mates = [], trouble = [], names = NAMES, start = 4170250000, lid = 'L' } = {}) {
   const out = [];
   if (own) out.push({ step: own, key: { engraving: 'approvalsNeeded', backFiles: 'backFilesMissing', qr: 'qrMissing', nesting: 'layout' }[own], label: { engraving: 'Approvals needed', backFiles: 'Back files missing', qr: 'QR label missing', nesting: 'Layout not ready' }[own], open: { type: 'sheet', id: sheetId } });
   for (let i = 0; i < n; i++) {
-    const key = (keys || KEYS)[i % (keys || KEYS).length], id = String(start + i * 137), sheetLabel = key === 'otherSheetNotReady' ? 'SS Sheet 1' : null;
-    out.push({ step: 'orders', key, orderId: id, orderLabel: 'Order ' + id, customer: names[i % names.length], listingId: lid + (i % 12), thumb: null, pieceCount: 2, pieces: [{ index: 2, key: id + '_b', label: 'Charm', sheetLabel, why: key }], open: { type: 'order', id } });
+    const pick = (keys || KEYS)[i % (keys || KEYS).length], split = pick === 'split', key = split ? 'otherSheetNotReady' : pick, id = String(start + i * 137), sheetLabel = key === 'otherSheetNotReady' ? 'SS Sheet 1' : null;
+    out.push({ step: 'orders', key, orderId: id, orderLabel: 'Order ' + id, customer: names[i % names.length], listingId: lid + (i % 12), thumb: null, pieceCount: 2, ...(split ? { split: true, sets: ['Set 1', 'Set 2'] } : {}), pieces: [{ index: 2, key: id + '_b', label: 'Charm', sheetLabel, why: key, ...(split ? { split: true, setLabel: 'Set 2' } : {}) }], open: { type: 'order', id } });
   }
-  for (const m of mates) out.push({ step: 'laser', key: 'waitsOnSheet', label: m.label, open: { type: 'sheet', id: m.id } });
+  for (const m of mates) out.push({ step: 'laser', key: 'waitsOnSheet', quiet: true, label: m.label, stepKey: 'engraving', stepLabel: m.stepLabel || 'Engraving', why: m.why || 'back engravings 7 of 25', counter: m.counter === undefined ? { done: 7, of: 25 } : m.counter, text: `${m.label} · back engravings 7 of 25`, sheetId: sheetId, sheetLabel: 'GF Sheet 1', open: { type: 'sheet', id: m.id } });
+  for (const m of trouble) out.push({ step: 'laser', key: 'missingSheet', label: 'Sheet missing', sheetId, open: { type: 'sheet', id: m.id } });
   return out;
 }
 
