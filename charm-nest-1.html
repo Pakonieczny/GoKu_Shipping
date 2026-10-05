@@ -2955,7 +2955,7 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-readiness.js?v=20261005-issues-truth4-setgate1-hand1-sameset1-nowait1-noset1-st1-five1"></script>
 <script src="charm-nest-export.js"></script>
 <script src="charm-nest-text.js"></script>
-<script src="charm-nest-orders.js?v=20261005-pieces-hand1"></script>
+<script src="charm-nest-orders.js?v=20261005-pieces-hand1-rel1"></script>
 <script src="charm-nest-order-pieces.js?v=20261005-op2-hand1"></script>
 <script src="charm-nest-order-engraving.js?v=20261005-oe2-zp1"></script>
 <script src="charm-nest-shared-orders.js?v=20261005-cardinal3"></script>
@@ -3892,10 +3892,10 @@ function keepOrdersWhole(sh, byId) {
   const orderOf = id => { const c = byId.get(id); return c ? (c.order || c.id) : id; };
   const bad = new Set(sh.rejects.map(orderOf));
   // a topping-up sheet takes any later order that fits its gaps, so a younger one is not lifted for an older miss
-  const dated = !(sh.topup && !sh.topup.closedAt) && [...byId.values()].some(c => c.orderDate > 0);
-  const cutoff = dated && sh.rejects.length ? Math.min(...sh.rejects.map(id => byId.get(id)?.orderDate || 0)) : Infinity;
+  const dated = !(sh.topup && !sh.topup.closedAt) && [...byId.values()].some(c => orderRank(c) > 0);
+  const cutoff = dated && sh.rejects.length ? Math.min(...sh.rejects.map(id => orderRank(byId.get(id)))) : Infinity;
   const locked=new Set([...(sh.roseProtected?.placements||[]),...(sh.appendOnly?sh.nestInitial||[]:[])].map(p=>p.id));
-  const lifted = sh.placements.filter(p => !locked.has(p.id)&&(bad.has(orderOf(p.id)) || (dated && (byId.get(p.id)?.orderDate || 0) > cutoff)));
+  const lifted = sh.placements.filter(p => !locked.has(p.id)&&(bad.has(orderOf(p.id)) || (dated && orderRank(byId.get(p.id)) > cutoff)));
   if (!lifted.length) return;
   sh.placements = sh.placements.filter(p => !lifted.includes(p));
   sh.rejects.push(...lifted.map(p => p.id));
@@ -4191,7 +4191,7 @@ function buildJob(sh) {
     block: careful && sh.metal === "rose",
     initialLayout: sh.nestInitial || null, maxFill: +S.settings.maxFill || 0.80, nearFullContact: sh.metal !== "rose",
     // filling its gaps, a sheet takes any later order that fits, not only the oldest
-    pieces: items.map(c => ({ id: c.id, w: c.w, h: c.h, scale: c.scale, bits: c.bits, areaPt2: c.areaPt2, order: c.order || c.id, orderDate: sh.topup && !sh.topup.closedAt && sh.appendOnly ? 0 : c.orderDate || 0, pinned: c.pinned ? { cxPt: c.pinned.cxPt, cyPt: c.pinned.cyPt, angle: c.pinned.angle } : null }))
+    pieces: items.map(c => ({ id: c.id, w: c.w, h: c.h, scale: c.scale, bits: c.bits, areaPt2: c.areaPt2, order: c.order || c.id, orderDate: sh.topup && !sh.topup.closedAt && sh.appendOnly ? 0 : orderRank(c), pinned: c.pinned ? { cxPt: c.pinned.cxPt, cyPt: c.pinned.cyPt, angle: c.pinned.angle } : null }))
   };
 }
 function packingKey(sh, items) {
@@ -4318,12 +4318,15 @@ function startNestReady(sh, context) {
    update's new orders are, gap fill included. Gold, Silver and the solid golds of a run; Rose Gold keeps its own flow. */
 const FEED_ORDERS = 3;
 const orderKey = c => String(c.order || c.id);
+/* The date the nest's oldest-first rule reads for a piece: its order's date, and for a piece of an order released from hold
+   (frontAt) a time ahead of every real order date, so it is placed first, in the order the holds were released (Paul, 5 Oct). */
+const orderRank = c => CharmNestOrders.rankDate(c);
 /** The charms this search places, and those it leaves waiting for their turn (sh.feedWait). */
 function feedTurn(sh, items) {
   sh.feedWait = null;
   if (!carefulNest(sh) || sh.metal === "rose" || !sh.runId || (S.settings.engine || "solver") === "ai") return items;
   const placed = new Set(sh.placements.map(p => p.id));
-  const fresh = items.filter(c => !placed.has(c.id)).sort((a, b) => (+a.orderDate || 0) - (+b.orderDate || 0) || orderKey(a).localeCompare(orderKey(b)));
+  const fresh = items.filter(c => !placed.has(c.id)).sort((a, b) => orderRank(a) - orderRank(b) || orderKey(a).localeCompare(orderKey(b)));
   // a sheet filling its gaps: the orders it still owes a try try it together, in one search (topupRoom)
   const turn = new Set([...new Set(fresh.map(orderKey))].slice(0, sh.topup && !sh.topup.closedAt ? Math.max(1, topupRoom(sh, false)) : FEED_ORDERS)), wait = fresh.filter(c => !turn.has(orderKey(c)));
   if (!wait.length) return items;
@@ -4348,7 +4351,7 @@ function feedOn(sh) {
   // a sheet filling its gaps keeps only the orders it still owes a try, oldest first; the rest of the batch goes on to the
   // next sheet now, which starts on them at once (topupRoom)
   if (sh.topup && !sh.topup.closedAt && sh.placements.length && sh.endedBy !== "stopped") {
-    const keep = new Set([...new Set(left.slice().sort((a, b) => (+a.orderDate || 0) - (+b.orderDate || 0) || orderKey(a).localeCompare(orderKey(b))).map(orderKey))].slice(0, Math.max(0, topupRoom(sh, false))));
+    const keep = new Set([...new Set(left.slice().sort((a, b) => orderRank(a) - orderRank(b) || orderKey(a).localeCompare(orderKey(b))).map(orderKey))].slice(0, Math.max(0, topupRoom(sh, false))));
     const pass = left.filter(c => !keep.has(orderKey(c)));
     if (pass.length) { sh.rejects = pass.map(c => c.id); overflowToNextSheet(sh, false); }
     if (pass.length === left.length) return true;
@@ -6732,7 +6735,7 @@ boot();
      Design Station's sign-in), the same name every seal it stamps carries. -->
 <script src="station-session.js?v=20261002-ea1"></script>
 <script src="station-activity.js?v=20261003-reset-clean"></script>
-<script src="charm-nest-bridge.js?v=20261005-lis2-cardinal4-zoom-psb1-egl1-osc1-r3f-setgate1-hand1-sameset1-rl1-nowait1-opt1-rt1-pcr1-one1-st1-five1-pd1-zp1-cx1"></script>
+<script src="charm-nest-bridge.js?v=20261005-lis2-cardinal4-zoom-psb1-egl1-osc1-r3f-setgate1-hand1-sameset1-rl1-nowait1-opt1-rt1-pcr1-one1-st1-five1-pd1-zp1-rel1-cx1"></script>
 <script src="charm-nest-review-live.js?v=20261005-rl1"></script>
 <script>
 try {
@@ -6761,10 +6764,13 @@ try {
       set(v) { d.set.call(window.B, v); try { const n = String(d.get.call(window.B) || "").trim(); if (n && !/^\d+$/.test(n)) StationSession.signedIn({ name: n, id: null }); } catch (_) {} } });
 } catch (_) {}
 </script>
-<script src="charm-nest-sheetwin.js?v=20261005-pieces-cardinal2-osc1-shm1-osc2-zp1"></script>
+<script src="charm-nest-sheetwin.js?v=20261005-pieces-cardinal2-osc1-shm1-osc2-zp1-rel1-oh1"></script>
+<!-- Hold the whole order: the engine over the sheet window's own Take off and Fill the freed room (OrderHold.plan, run, status) -->
+<script src="charm-nest-order-hold.js?v=20261005-oh1"></script>
 <!-- the one way into the engraving of one order's piece (the order window, the Sheet tab and the Sheet window call it; each keeps its own way without it) -->
 <script src="charm-nest-engrave-link.js?v=20261005-el2"></script>
 <script src="charm-nest-tour.js?v=20260929-m11"></script>
+<script src="charm-nest-order-release.js?v=20261005-rel1"></script>
 <script src="charm-nest-mail.js?v=20261005-pv-seal-zp1"></script>
 <script src="charm-nest-rose-ui.js?v=20261005-rg3-opt1"></script>
 <script src="charm-nest-flow-rose.js?v=20261003-rg2"></script>
