@@ -381,15 +381,24 @@ button.flowDot[data-issues-open][aria-expanded="true"]{box-shadow:0 0 0 4px rgba
     const vw = root.innerWidth || 1200, vh = root.innerHeight || 800, bar = doc.querySelector('.topbar');
     const lo = Math.max(8, (bar ? bar.getBoundingClientRect().bottom : 0) + 8), hi = vh - 8, gap = 11;
     let w = Math.min(336, vw - 16); if (card && card.width >= 280 && card.width < w) w = Math.round(card.width);
-    // (the sheet's Approve button sits right under its rail: opening below, the panel starts above the button and covers it whole, never leaving a strip of it showing along the panel's edge)
-    const apEl = cardEl && cardEl.querySelector('.approveBox'), apr = apEl ? apEl.getBoundingClientRect() : null, under = !!(apr && apr.height && apr.top >= whole.bottom - 2);
+    // (the Approve button sits right under the rail: opening below, the panel starts above the button and covers it whole, never leaving a strip of it showing along the panel's edge.
+    //  A sheet that is part of a set has none of its own: the set's one button is the card's last row, its button and its line, and the same holds wherever the panel reaches it)
+    const dot = ar.left + ar.width / 2, inCard = card && card.width >= w ? [card.left, card.right - w] : [8, vw - w - 8], x = clamp(clamp(dot - 26, inCard[0], inCard[1]), 8, vw - w - 8);
+    const own = cardEl && cardEl.querySelector('.approveBox'), setEl = !own && cardEl && cardEl.closest && cardEl.closest('.setCard'), setBox = setEl && setEl.querySelector(':scope > .approveBox');
+    let apr = own ? own.getBoundingClientRect() : null;
+    if (!apr && setBox) {
+      const rs = [setBox.querySelector('[data-approve-btn]'), setBox.querySelector('[data-approve-why]')].filter(e => e && e.getClientRects().length).map(e => e.getBoundingClientRect());
+      if (rs.length) apr = { left: Math.min(...rs.map(r => r.left)), right: Math.max(...rs.map(r => r.right)), top: Math.min(...rs.map(r => r.top)), bottom: Math.max(...rs.map(r => r.bottom)), height: 1 };
+    }
+    const sideways = !!(apr && apr.left < x + w && apr.right > x), under = !!(sideways && apr.height && apr.top >= whole.bottom - 2 && (own || apr.top - whole.bottom <= 20));
     const gapDown = under ? Math.max(5, Math.min(gap, apr.top - 4 - whole.bottom)) : gap, topDown = whole.bottom + gapDown;
     p.style.width = w + 'px'; p.style.maxHeight = 'none'; p.style.minHeight = '';
     const h0 = p.offsetHeight, below = hi - topDown, above = whole.top - gap - lo, down = h0 <= below || below >= above;
     const room = Math.max(140, down ? below : above);
-    p.style.maxHeight = room + 'px'; p.style.minHeight = down && under ? Math.min(room, Math.max(0, Math.ceil(apr.bottom + 4 - topDown))) + 'px' : '';
-    const dot = ar.left + ar.width / 2, inCard = card && card.width >= w ? [card.left, card.right - w] : [8, vw - w - 8];
-    const h = Math.min(Math.max(h0, parseFloat(p.style.minHeight) || 0), room), x = clamp(clamp(dot - 26, inCard[0], inCard[1]), 8, vw - w - 8), y = down ? topDown : whole.top - gap - h, ax = clamp(dot - x, 20, w - 20);
+    // (a button further down that the panel only reaches into is covered whole too)
+    const reach = !!(down && sideways && !under && apr.top > topDown && topDown + h0 > apr.top - 2 && topDown + h0 < apr.bottom + 4);
+    p.style.maxHeight = room + 'px'; p.style.minHeight = down && (under || reach) ? Math.min(room, Math.max(0, Math.ceil(apr.bottom + 4 - topDown))) + 'px' : '';
+    const h = Math.min(Math.max(h0, parseFloat(p.style.minHeight) || 0), room), y = down ? topDown : whole.top - gap - h, ax = clamp(dot - x, 20, w - 20);
     p.style.left = Math.round(x) + 'px'; p.style.top = Math.round(Math.max(lo, y)) + 'px';
     p.style.setProperty('--ax', ax + 'px'); p.style.setProperty('--ox', ax + 'px'); p.style.setProperty('--oy', (down ? -6 : h + 6) + 'px');
     p.classList.toggle('up', !down);

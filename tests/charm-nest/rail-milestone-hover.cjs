@@ -141,10 +141,11 @@ const shot = async (page, name, sel, w) => {
         assert(m.k >= 1.25 && m.k <= 1.35); assert.equal(m.tip.state, 'Not started'); assert.equal(m.tip.line, ex.detail); assert.equal(m.tip.by, '', 'no who and when for a step nobody did');
         await shot(page, `not-started-circle-${width}`, sel, width === 390 ? 380 : 420); await away(page); }
 
-      // ── 5. a done step the laser finished says who and when, from the sheet's own record
+      // ── 5. a done step the laser finished says when (and who), from the sheet's own record, in the shop's time like the seals (14:05 UTC is 10:05 AM at the shop);
+      //       a done step the record holds no time for says so plainly (step-times.cjs holds every step to its own record)
       { const sel = circle('gf2', 'laser'); await hover(page, sel, 700); const m = await read(page, sel);
-        assert.equal(m.tip.state, 'Done'); assert.match(m.tip.by, /^Paul · Oct 3, \d{1,2}:\d{2}\s?(AM|PM)$/, `${tag}: who and when (${m.tip.by})`);
-        await hover(page, circle('gf2', 'nesting'), 700); const n = await read(page, circle('gf2', 'nesting')); assert.equal(n.tip.by, '', 'no who and when for a step the record does not hold one for'); await away(page); }
+        assert.equal(m.tip.state, 'Done'); assert.match(m.tip.by, /^Oct 3, 10:05\s?AM · by Paul$/, `${tag}: when and who (${m.tip.by})`);
+        await hover(page, circle('gf2', 'nesting'), 700); const n = await read(page, circle('gf2', 'nesting')); assert.equal(n.tip.by, 'Time not recorded', 'a done step with nothing on record never gets a made-up time'); await away(page); }
 
       // ── 6. the gold '!' (the sheet's own step in progress): its count, the zoom of a button
       { const sel = circle('ss1', 'engraving'), ex = await explainStep(page, 'ss1', 'engraving'); assert.equal(ex.state, 'waiting'); await hover(page, sel, 700); const m = await read(page, sel);

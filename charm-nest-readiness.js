@@ -222,6 +222,89 @@
     }
     return stamps;
   }
+  /* ── Step times (Paul, 5 Oct 2026 13:16 UTC: "Please add the date and time each step was completed on.") ──────────────────────────
+   * The small card over a circle of the Library's step rail (charm-nest-rail-tip.js) says when a DONE step was completed. One reading,
+   * the page's and the server's, in this file:
+   *   stepFacts(s)      which of the three recorded steps the sheet has passed NOW (the rail's own tests)
+   *   stepsRecord(s)    what the server's pass (recordProcessReadiness, the one that already writes the process seals) appends to the sheet
+   *   stepStamps(s)     the recorded completions, oldest first (they are NOT seals: they are never drawn, only read by the card)
+   *   stepTimes(s)      for every circle of the rail: when it was completed, who did it when a person did, and the first time too
+   * What "completed" means, step by step (the exact event, and where its time comes from):
+   *   Nesting       the sheet's FINAL layout is verified, its cutting files are saved and it has left Draft for its set (stages.layout and
+   *                 stages.front, in a set). Recorded when the pass first sees it; its time is the sheet record's own last update at that moment
+   *                 (never later than the pass), because the save that completed it is the write that last touched the record. No person: the
+   *                 nester is automatic. A sheet from before this recording has no time (the page's records carry no single time for it).
+   *   Engraving     the LAST back engraving of the sheet is approved (stages.approval: every piece decided). Its time is that approval's own time
+   *                 (the back's approvedAt, "the approval, not the save") and its person the sorter's typed name on it (approvedBy). A sheet from
+   *                 before the recording is read the same way from its backs when every one carries its approval time. A sheet that needs no back
+   *                 engraving has nothing to time, so its card shows no time line. Saving the approved backs as files follows the approval and is
+   *                 not what is timed.
+   *   Order check   this gate (no other piece of an order holds the sheet) cleared: the pass's first sight of it, no person. A sheet from before
+   *                 the recording has the moment nothing held it (its latest laserReady seal): by then the gate was clear.
+   *   Laser cutting the cut: the sheet marked cut on the laser (op_laserDone: laserDoneAt, laserDoneBy; the latest laserDone seal when the
+   *   Completed     record lost the field). Marking a sheet cut is what completes it, one press, so these two circles truly show the same moment.
+   * A step that goes back to not-done (a new order lands, an engraving is reopened) and completes again appends a NEW stamp: every stamp is
+   * kept, the card shows the most recent, the first stays in the record (stepTimes().first). Nothing here ever removes or rewrites a stamp. */
+  const STEP_LOG=['nesting','engraving','orders'],MAX_STEP_STAMPS=300;
+  const STEPS_FROM=Date.UTC(2026,9,5,14,30);       // a sheet created from here on is watched from its start; an older one is only watched from the pass that first sees it (no time is made up for what it did before)
+  const REAL_FROM=Date.UTC(2020,0,1);             // a time before this is no time (an unset field, a placeholder)
+  const msOf=v=>v && typeof v.toMillis==='function'?v.toMillis():+v || 0;
+  const person=by=>{by=String(by || '').trim();return /^(system|operator|not recorded)$/i.test(by)?'':by;};
+  function stepFacts(s={}){
+    const r=sheet(s),joined=!s.archived && !s.draft && s.solidIncluded!==false;
+    return {nesting:joined && !!r.stages.layout && !!r.stages.front,engraving:!!r.stages.approval,orders:!!r.stages.orders};
+  }
+  // the last back engraving's own approval: {at,by}, {plain:true} when the sheet needs no back engraving, null when it is not through or the backs do not carry their times
+  function engravedLast(s){
+    const r=sheet(s);
+    if(!(r.total>0 && r.waiting===0))return null;
+    if(r.required===0)return {plain:true};
+    let at=0,by='';
+    for(const c of copies(s)){
+      if(c.plain)continue;
+      const b=c.back;if(!(b && msOf(b.approvedAt)>=REAL_FROM && b.approvedBy))return null;
+      if(msOf(b.approvedAt)>=at){at=msOf(b.approvedAt);by=person(b.approvedBy);}
+    }
+    return at>0?{at,by}:null;
+  }
+  function stepStamps(s={}){
+    return (Array.isArray(s.stepStamps)?s.stepStamps:[]).filter(x=>x && STEP_LOG.includes(x.step) && msOf(x.at)>=REAL_FROM).map(x=>({id:x.id?String(x.id):'',step:x.step,at:msOf(x.at),by:person(x.by)})).sort((a,b)=>a.at-b.at);
+  }
+  function stepEvent(k,s,now,n){
+    let at=now,by='';
+    if(k==='nesting'){const u=msOf(s.updatedAt);if(u>=REAL_FROM && u<=now)at=u;}
+    else if(k==='engraving'){const e=engravedLast(s);if(e && e.plain)return null;if(e && e.at<=now){at=e.at;by=e.by;}}
+    return {id:`${k}-${at}-${n}`,step:k,at,by};
+  }
+  /** stepsRecord(s, now): what the pass writes for a sheet's steps → null (nothing to write) or {state, stamps, added, flipped, baseline}:
+   *  state = which steps are done now (stepState), stamps = the sheet's whole stepStamps (the old ones kept as they are, the new ones after them),
+   *  added = the new stamps, flipped = a step changed since the last pass (the page asks for a pass soon), baseline = the first sight of an older sheet
+   *  (its steps are taken as they stand; no stamp, so no time is made up for what it did before). A sheet already cut has nothing more to record. */
+  function stepsRecord(s={},now=Date.now()){
+    if(msOf(s.laserDoneAt)>0)return null;
+    const facts=stepFacts(s),had=!!s.stepState && typeof s.stepState==='object',log=Array.isArray(s.stepStamps)?s.stepStamps:[],fresh=!had && msOf(s.createdAt)>=STEPS_FROM;
+    const state={},added=[];let flipped=false;
+    for(const k of STEP_LOG){
+      const is=!!facts[k],was=had?!!s.stepState[k]:fresh?false:is;
+      state[k]=is;
+      if(had && was!==is)flipped=true;
+      if(is && !was && log.length+added.length<MAX_STEP_STAMPS){const e=stepEvent(k,s,now,log.length+added.length);if(e)added.push(e);}
+    }
+    if(had && !added.length && !flipped)return null;
+    return {state,stamps:log.concat(added),added,flipped,baseline:!had};
+  }
+  /** stepTimes(s): for each circle key → {at, by, first, recorded} (when it was completed, the person when one did it, the first completion; recorded:false
+   *  = read from the sheet's older records), {plain:true} (nothing to time: no back engraving needed), or null (done, but nothing on record says when). */
+  function stepTimes(s={}){
+    const log=stepStamps(s),pick=k=>{const xs=log.filter(x=>x.step===k),l=xs[xs.length-1];return l?{at:l.at,by:l.by,first:xs[0].at,recorded:true}:null;};
+    const out={nesting:pick('nesting'),engraving:pick('engraving'),orders:pick('orders')};
+    if(!out.engraving){const e=engravedLast(s);if(e)out.engraving=e.plain?{plain:true}:{at:e.at,by:e.by,first:e.at,recorded:false};}
+    const stamps=processStamps(s),ready=stamps.filter(x=>x.how==='laserReady' && msOf(x.at)>=REAL_FROM).pop();
+    if(!out.orders && ready)out.orders={at:msOf(ready.at),by:'',first:msOf(stamps.find(x=>x.how==='laserReady' && msOf(x.at)>=REAL_FROM).at),recorded:false};
+    const cuts=stamps.filter(x=>x.how==='laserDone' && msOf(x.at)>=REAL_FROM),cut=cuts[cuts.length-1],at=msOf(s.laserDoneAt)>=REAL_FROM?msOf(s.laserDoneAt):cut?msOf(cut.at):0;
+    out.laser=out.completed=at>0?{at,by:person(s.laserDoneBy || cut?.by),first:cuts.length?msOf(cuts[0].at):at,recorded:true}:null;
+    return out;
+  }
   // Readiness is expressed by the section and saved-back counter, never a preview stamp.
   // Recorded process seals have their own historical row; rendering them here would duplicate them.
   function seal(r,scope='Sheet',source){return '';}
@@ -588,5 +671,5 @@
     }
     return e;
   }
-  return {idsOf,orderIds,decisions,held,isHand,handOf,sheet,set,completedBefore,laserSheet,laserGroup,setGate,approveBlock,setOf,orderReports,forSheet,pieces,issues,copyIds,orderBlockers,filed,processStamps,seal,counter,explain,lookup:names,STEPS:STEPS.map(([key,label])=>({key,label})),stepKey,sheetLabel};
+  return {idsOf,orderIds,decisions,held,isHand,handOf,sheet,set,completedBefore,laserSheet,laserGroup,setGate,approveBlock,setOf,orderReports,forSheet,pieces,issues,copyIds,orderBlockers,filed,processStamps,STEP_LOG,STEPS_FROM,stepFacts,stepStamps,stepsRecord,stepTimes,seal,counter,explain,lookup:names,STEPS:STEPS.map(([key,label])=>({key,label})),stepKey,sheetLabel};
 });

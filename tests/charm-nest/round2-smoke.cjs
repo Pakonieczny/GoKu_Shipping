@@ -10,7 +10,7 @@
    Hard checks (any failure is a regression): no console errors, page errors or unhandled promise rejections; no doubled DOM ids (beyond
    the baseline's); no flight copies, docks or hidden originals left behind; no live read with recordSeals:true; no write call while the
    views are only looked at; every sheet card on the page exactly once, before and after a drag; Library open time within +20% of the
-   baseline's. "ACCEPT" checks are Round 2's own truths (the right sheet for each piece, no set-level approve, ...): they are expected to be
+   baseline's. "ACCEPT" checks are Round 2's own truths (the right sheet for each piece, one Approve button per set and no set-level progress bar, ...): they are expected to be
    red on the old main and to turn green as the workers land; they are reported, and never counted as a regression.
      node tests/charm-nest/round2-smoke.cjs [--out=file.json] [--baseline=file.json] [--timing-only] [--runs=7] [--shots=dir] [--skip-many]
    (PW_DIR=<playwright node_modules>, CHROMIUM=<chrome>; exit code 1 when a hard check fails.) */
@@ -253,12 +253,13 @@ async function smallWorld(browser, shot) {
     // 2 · the set card of the two-sheet set
     const setInfo = await page.evaluate(() => {
       const c = document.querySelector('#libBody .setCard:has(.libCard[data-id="gfA1"])'); if (!c) return null;
-      return { sheets: [...c.querySelectorAll('.libCard[data-id]')].map(x => x.dataset.id), approveButtons: c.querySelectorAll('[data-approve-btn]').length, setLevelApprove: c.querySelectorAll(':scope > [data-approve-for], :scope > .approveBox, :scope > .sh .approveBox').length,
+      return { sheets: [...c.querySelectorAll('.libCard[data-id]')].map(x => x.dataset.id), approveButtons: c.querySelectorAll('[data-approve-btn]').length, setLevelApprove: c.querySelectorAll(':scope > .approveBox').length, sheetApprove: c.querySelectorAll('.librarySheet .approveBox, :scope > .sh .approveBox').length, approveLast: !!(c.lastElementChild && c.lastElementChild.matches('.approveBox')),
         rails: c.querySelectorAll('.flowBox').length, setLevelRail: c.querySelectorAll(':scope > .flowBox, :scope > .sh .flowBox, :scope > .sh ~ .flowBox').length, text: c.innerText.replace(/\s+/g, ' ').slice(0, 400) };
     });
     hard('the 2-sheet set is on the page with both sheets', !!setInfo && setInfo.sheets.includes('gfA1') && setInfo.sheets.includes('ssA1'), JSON.stringify(setInfo && setInfo.sheets));
     info('set card text', setInfo && setInfo.text);
-    accept('7/3 · a multi-sheet set has no set-level Approve button and no set-level rail (each sheet has its own)', !!setInfo && setInfo.setLevelApprove === 0 && setInfo.setLevelRail === 0, JSON.stringify({ approveButtons: setInfo && setInfo.approveButtons, setLevelApprove: setInfo && setInfo.setLevelApprove, rails: setInfo && setInfo.rails, setLevelRail: setInfo && setInfo.setLevelRail }));
+    // round 12 (Paul, 5 Oct 13:01): "only one 'approved for laser cutting' button per Set of Sheets": ONE button at the bottom of the card, none on a sheet; round 2 point 7 stands: no set-level progress bar, each sheet keeps its own small rail
+    accept('7/3 · a multi-sheet set has ONE Approve button (last in its card, none on a sheet) and no set-level rail (each sheet has its own small rail)', !!setInfo && setInfo.setLevelApprove === 1 && setInfo.sheetApprove === 0 && setInfo.approveButtons === 1 && setInfo.approveLast && setInfo.setLevelRail === 0 && setInfo.rails === setInfo.sheets.length, JSON.stringify({ approveButtons: setInfo && setInfo.approveButtons, setLevelApprove: setInfo && setInfo.setLevelApprove, sheetApprove: setInfo && setInfo.sheetApprove, approveLast: setInfo && setInfo.approveLast, rails: setInfo && setInfo.rails, setLevelRail: setInfo && setInfo.setLevelRail }));
     accept('2 · the word "lines" is not shown for an order\'s pieces in the Library', !(setInfo && /\bother lines?\b|\blines? (is|are) still\b/i.test(setInfo.text)), setInfo && (/\b(other )?lines?\b/i.exec(setInfo.text) || [''])[0]);
 
     // 3 · an order window on each piece (Sheet tab): the piece's own sheet, never the other piece's

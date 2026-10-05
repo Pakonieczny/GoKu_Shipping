@@ -5723,9 +5723,10 @@ i.flowDot::before{content:"";position:absolute;inset:-7px}
   }
   /* What a card shows (Paul, 5 Oct: "I don't need 2 green approve this sheet button ... I also don't want this large progress bar.
      I want the little ones ... directly underneath each sheet", and "Remove this UI completely from a multi sheets set ... Each
-     sheet has its own progress timeline"): a set card carries no rail, no line and no Approve button of its own. Only a sheet does,
-     one small rail directly under that sheet (and, under the rail, its one Approve button): in a set of one sheet, in a set of
-     several, in a loose group (14K / 10K solids, sheets held for a later set) and on a sheet card of its own alike. */
+     sheet has its own progress timeline"): a set card carries no rail and no line of its own. Only a sheet does, one small rail
+     directly under that sheet: in a set of one sheet, in a set of several, in a loose group (14K / 10K solids, sheets held for a
+     later set) and on a sheet card of its own alike. Approve for laser cutting (round 12): one button for a set, at the bottom of its
+     card; a sheet that is part of no set has its own under its rail (see Approve below). */
   function flowSlots(card){
     const kind=card.dataset.laserCard,out=[],articles=kind==='sheet'?[card]:[...card.querySelectorAll('.librarySheet')];
     for(const a of articles){
@@ -5813,23 +5814,53 @@ i.flowDot::before{content:"";position:absolute;inset:-7px}
   }
   /* The milestone circles (Paul, 5 Oct: "a slight expanding zoom for each of the timeline milestones similar to the Seals and a small extra info
      popup over each milestone when hovering"). Each circle is a zoom dot of the shared seal engine (charm-nest-motion.js, data-zoom-dot) and carries
-     what the small card over it says (data-tip: the step's name, its state in plain words, the one line explain() gives for it, and who and when
-     for a step the laser finished: only what the sheet's record already holds), as its own label too. The card is drawn by charm-nest-rail-tip.js.
+     what the small card over it says (data-tip: the step's name, its state in plain words, the one line explain() gives for it, and when a done step
+     was completed and by whom when a person did it, tipWhen below: only what the sheet's record already holds), as its own label too. The card is drawn by charm-nest-rail-tip.js.
      A redraw patches the rail where it stands (railPaint), so the circle a pointer or the keyboard is on is the same element after it and
      its zoom and card go on; no circle has a listener of its own. */
   const TIP_WAITS={orders:1,laser:1};
   const tipState=s=>s.state==='done'?'Done':s.state==='blocked'?'Blocked':!s.current?(s.key==='laser' || s.key==='completed'?'Not started':'Waiting'):TIP_WAITS[s.key]?'Waiting':'In progress';
-  function tipBy(s,id){
-    if(s.state!=='done' || (s.key!=='laser' && s.key!=='completed'))return '';
-    const rec=records.get(id),stamp=rec && (R.processStamps?.(rec) || []).filter(x=>x.how==='laserDone' && +x.at>0).pop(),at=+(rec?.laserDoneAt || stamp?.at || 0),by=String(rec?.laserDoneBy || stamp?.by || '').trim();
-    if(!(at>0))return by;
-    let when='';try{when=new Date(at).toLocaleString(undefined,{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'});}catch(_){}
-    return [by,when].filter(Boolean).join(' · ');
+  /* When a DONE step was completed (Paul, 5 Oct, 13:16 UTC: "Please add the date and time each step was completed on."): what CharmNestReadiness.stepTimes
+     says of the sheet's own record, the same words on the page and on the server. "Oct 3, 2:05 PM · by Paul" (the year only when it is not this year, in the
+     shop's own time as the seals' captions are, a person only when one is recorded); a done step the record has no time for says so quietly and plainly
+     ("Time not recorded") and never a guess; a step that needs no time (no back engraving was needed) and a step with no timed event of its own say nothing.
+     Nothing is read or asked for here: the record carries it. A record is worked out once (it is a new object whenever it changes). */
+  const timed=new WeakMap();
+  function timesOf(rec){
+    if(!rec || typeof rec!=='object' || typeof R.stepTimes!=='function')return null;
+    const key=[rec.laserDoneAt,rec.stepStamps,rec.processSeals,rec.backPool || rec.backs,rec.engraving],hit=timed.get(rec);
+    if(hit && hit.key.every((x,i)=>x===key[i]))return hit.times;
+    let times=null;try{times=R.stepTimes(rec);}catch(err){console.warn('Library step times',err);}
+    timed.set(rec,{key,times});return times;
+  }
+  function stepWhen(at){
+    try{
+      const d=new Date(at),zone='America/Toronto',year=x=>new Intl.DateTimeFormat('en-US',{timeZone:zone,year:'numeric'}).format(x);
+      return d.toLocaleString('en-US',{timeZone:zone,month:'short',day:'numeric',...(year(d)===year(new Date())?{}:{year:'numeric'}),hour:'numeric',minute:'2-digit'}).replace(/\u202f/g,' ');
+    }catch(_){return '';}
+  }
+  function tipWhen(s,id){
+    if(s.state!=='done')return '';
+    const t=timesOf(records.get(id))?.[s.key];
+    if(t===undefined || (t && t.plain))return '';
+    const when=t && t.at>0?stepWhen(t.at):'';
+    return when?[when,t.by?`by ${t.by}`:''].filter(Boolean).join(' · '):'Time not recorded';
+  }
+  /* A step of a sheet that changed since the server last noted the steps (its stepState): the Library's pass is asked for soon (as it is for a sheet
+     that became ready), once for each change, and the pass records when the step was completed (CharmNestReadiness.stepsRecord, written in the same
+     pass as the process seals). What the minute's check finds is recorded then. The live read never records: it carries recordSeals:false. */
+  const stepAsked=new Map();
+  function stepBehind(s,sig){
+    if(!s || s.laserDoneAt || typeof R.stepsRecord!=='function')return false;
+    let r=null;try{r=R.stepsRecord(s,Date.now());}catch(err){return false;}
+    if(!r || !(r.added.length || r.flipped))return false;
+    const now=JSON.stringify(r.state);
+    return sig?now:stepAsked.get(s.id || s.sheetId)!==now;
   }
   function railStamp(ol,e,id){
     [...ol.children].forEach((li,i)=>{
       const s=e.steps[i],dot=li.querySelector('.flowDot');if(!s || !dot)return;
-      const by=tipBy(s,id),state=tipState(s);
+      const by=tipWhen(s,id),state=tipState(s);
       dot.setAttribute('data-zoom-dot','');dot.setAttribute('data-step',s.key);
       dot.setAttribute('data-tip',[s.label,state,s.detail,by].join('\n'));
       dot.setAttribute('aria-label',`${s.label}. ${state}. ${s.detail}${by?` ${by}.`:''}`);
@@ -5866,7 +5897,7 @@ i.flowDot::before{content:"";position:absolute;inset:-7px}
   }
   function flowDraw(box,e,id,w){
     const pending=!e.ready && !e.done,checking=pending && (!!sealPoll || checkingNow || live.checking);
-    const sig=JSON.stringify([e.ready,e.done,e.step,e.steps.map(s=>[s.state,s.detail,s.current?1:0]),checking,box.dataset.issuesOpen || '',w?w.real:0,e.done?[records.get(id)?.laserDoneAt || 0,records.get(id)?.laserDoneBy || '']:0]);
+    const sig=JSON.stringify([e.ready,e.done,e.step,e.steps.map(s=>[s.state,s.detail,s.current?1:0]),checking,box.dataset.issuesOpen || '',w?w.real:0,e.steps.map(x=>x.state==='done'?tipWhen(x,id):''),e.done?[records.get(id)?.laserDoneAt || 0,records.get(id)?.laserDoneBy || '']:0]);
     if(box._sig===sig)return;
     box._sig=sig;
     const state=e.done?'done':e.ready?'ready':e.steps.some(s=>s.current && s.state==='blocked')?'blocked':'waiting',at=e.steps.findIndex(s=>s.current),now=e.steps[at];
@@ -5902,11 +5933,12 @@ i.flowDot::before{content:"";position:absolute;inset:-7px}
     batch(paint);
   }
   function paint(){
-    let needsSeals=false,names=null,before=null,home=null;const lookup=()=>names || (names=R.lookup({rows:Orders.rows()})),moved=[];
+    let needsSeals=false,names=null,before=null,home=null;const lookup=()=>names || (names=R.lookup({rows:Orders.rows()})),moved=[],stepWant=[];
     document.querySelectorAll('[data-laser-card]').forEach(card=>{
       if(!card._laserSheets)return;   // (a copy of a card flying to a tab, charm-nest-motion.js, is not a card: it holds none of its records)
       const sheets=(card._laserSheets || []).map(id=>records.get(id)).filter(Boolean),report=card._laserSet?group(card._laserSet,sheets):{...sheet(sheets[0] || {}),ready:canCut(sheets[0] || {})};
       if(sheets.some(s=>!s.laserDoneAt && sheet(s).ready!==!!s.processReady))needsSeals=true;
+      for(const s of sheets)if(stepBehind(s)){needsSeals=true;stepWant.push(s);}   // (a step changed since the server last noted the steps: the pass records when it was completed)
       if(card._laserSet?.setId && !card._laserSet.standalone && !card._laserSet.working && !card._laserSet.laserDoneAt && report.ready!==!!card._laserSet.processReady)needsSeals=true;
       flowDecorate(card,lookup);
       const seal=card.querySelector('[data-laser-seal]');if(seal){const html=R.seal(report,card._laserSet?'Set':'Sheet',card._laserSet || sheets[0]);if(seal.innerHTML!==html)seal.innerHTML=html;}
@@ -5915,7 +5947,7 @@ i.flowDot::before{content:"";position:absolute;inset:-7px}
       // a card whose readiness changed moves between In progress and Laser cutting: where it stood is measured first, so it glides
       // there (the Library's own glide, charm-nest-library.js) instead of jumping; while a flight is drawing (LibraryFx) that is its to show
       const body=card.closest('#libBody');if(body && card.parentElement!==body.querySelector(`[data-laser-area="${report.ready?'ready':'pending'}"] .laserAreaItems`)){if(!before && !body.querySelector('[data-fx-hide]')){home=body;before=window.LibraryDone?.snapshot?.(body) || null;}place(card,report.ready,body);moved.push([card,report.ready]);}
-      syncApprove(card);   // the manual "Approve for laser cutting" button of each sheet (below)
+      syncApprove(card);   // the manual "Approve for laser cutting" button: one for a set, one for each sheet that is part of no set (below)
     });
     for(const list of document.querySelectorAll('#libBody .laserAreaItems')){
       const value=card=>({...card._laserSet,sheets:(card._laserSheets || []).map(id=>records.get(id)).filter(Boolean)});
@@ -5923,7 +5955,7 @@ i.flowDot::before{content:"";position:absolute;inset:-7px}
       ordered.forEach((card,i)=>{if(list.children[i]!==card)list.insertBefore(card,list.children[i] || null);});
     }
     if(window.LibraryDone)LibraryDone.refreshCards(document.getElementById('libBody'));
-    if(needsSeals && !polling && !sealPoll && S.cloud.ok)sealPoll=setTimeout(()=>{sealPoll=0;poll(true);},Math.max(0,5100-(Date.now()-lastPoll)));
+    if(needsSeals && !polling && !sealPoll && S.cloud.ok){for(const s of stepWant)stepAsked.set(s.id || s.sheetId,stepBehind(s,true));sealPoll=setTimeout(()=>{sealPoll=0;poll(true);},Math.max(0,5100-(Date.now()-lastPoll)));}
     document.querySelectorAll('[data-laser-area]').forEach(area=>{const hasItems=!!area.querySelector('.laserAreaItems')?.children.length;area.hidden=area.dataset.laserArea!=='ready' && !hasItems;const empty=area.querySelector('.laserEmpty');if(empty)empty.hidden=hasItems;});
     if(moved.length)landed(home,before,moved);
     try{window.LibraryIssues?.refresh?.();}catch(e){console.warn('Library issues',e);}   // (an open '!' panel follows what this pass drew)
@@ -5938,16 +5970,22 @@ i.flowDot::before{content:"";position:absolute;inset:-7px}
     }catch(e){console.warn('Library glide',e);}
   }
   /* ── Approve for laser cutting (Paul, 3 Oct: "There is also no way for the user to manually approve a given sheet or set of
-     sheets."; 5 Oct: "I don't need 2 green approve this sheet button. Please remove the top one.") Every sheet under In
-     progress carries one button, directly under that sheet's rail; a set card carries none of its own. A press asks LibraryFlow (charm-nest-flow.js)
-     to run every safe automatic step for the person signed in and to list what is still missing; LibraryApprovalUI
-     (charm-nest-library-approval-ui.js) shows that on the card, a plain list does when it is not loaded. A card only a
-     person's decision can move on (back engravings not approved) keeps the button, disabled, with the plain reason beside
-     it. Nothing here approves, stamps or writes: LibraryFlow does, and records the person's seal. No LibraryFlow on the
-     page, no button. The card then moves to Laser cutting by the same refresh and read every other change goes through. */
+     sheets."; 5 Oct: "I don't need 2 green approve this sheet button. Please remove the top one."; 5 Oct 13:01, round 12: "There should only be
+     one 'approved for laser cutting' button per Set of Sheets. Only individual sheets that are not already part of a set are allowed to have
+     their own 'approved for laser cutting' button.") A SET carries ONE button, at the bottom of its card under its sheet columns, left aligned:
+     a set of one sheet, of two, of three alike. A sheet that is part of a set carries none (its small rail, its line and its '!' stay). Only a
+     sheet that is not part of a set (a sheet card, a sheet of the 14K / 10K group, a sheet held for a later set) keeps its own button, directly
+     under its small rail. A press asks LibraryFlow (charm-nest-flow.js) to run every safe automatic step for the person signed in and to list
+     what is still missing; LibraryApprovalUI (charm-nest-library-approval-ui.js) shows that on the card, a plain list does when it is not
+     loaded. A card only a person's decision can move on (back engravings not approved) keeps the button, disabled, with the plain reason
+     beside it. Nothing here approves, stamps or writes: LibraryFlow does, and records the person's seal. No LibraryFlow on the page, no
+     button. The card then moves to Laser cutting by the same refresh and read every other change goes through. */
   const approving=new Set(),boxKey=(kind,id)=>kind+':'+id,plural=(n,w)=>`${n} ${w}${n===1?'':'s'}`;
   const flowReady=()=>typeof window.LibraryFlow?.approve==='function';
   const laying=p=>!!(p.dirty || p.saving || ['nesting','finishing','queued','error'].includes(p.status));
+  // a sheet is part of a set when it has one and is joined to it (the Library's own test: charm-nest-orders.js libraryGroup, canCut above)
+  const inSetNow=s=>!!(s && s.setId && !s.draft && s.solidIncluded!==false);
+  const realSet=st=>!!(st && st.setId && !st.standalone && !st.working);
   // null: nothing to offer (ready, cut or gone) · {why:''}: a press can do it · {why:'plain words'}: a person's own step comes first (quiet: the
   // rail already says it, so no line is drawn for it). A lone sheet's own test: CharmNestReadiness.approveBlock, the one the set's gate is made of.
   function approveCase(recs){
@@ -5960,25 +5998,24 @@ i.flowDot::before{content:"";position:absolute;inset:-7px}
     return {why:b.why.replace(/^./,c=>c.toUpperCase())};
   }
   /* A set advances as ONE (Paul, 5 Oct, round 7: "you cannot have a green approved button on a single sheet that is part of a set where the
-     other sheets are not ready yet"). A set of several sheets has ONE gate (CharmNestReadiness.setGate): every sheet of it ready to be
-     approved, or none is. Its answer is drawn on every sheet that is not completed, in the same pass: green on all of them, or grey on all
-     of them with the plain line naming the first sheet that is not ready and what it lacks (never quiet, never red). A loose group, a set of
-     one sheet and a sheet card are their own sheet's test (approveCase), as before. */
-  function gateOf(card){
-    const st=card._laserSet;
-    if(card.dataset.laserCard!=='set' || !st?.setId || st.standalone || st.working)return null;
-    const ids=[...new Set((st.sheetIds?.length?st.sheetIds:card._laserSheets) || [])];
-    if(ids.length<2)return null;
-    return R.setGate(st,(card._laserSheets || []).map(id=>records.get(id)).filter(Boolean).map(projected));
+     other sheets are not ready yet"), so its button is ONE too (round 12). A set of several sheets has ONE gate (CharmNestReadiness.setGate):
+     every sheet of it ready to be approved, or none is. The one button is green when it is, or grey with the plain line naming the first sheet
+     that is not ready and what it lacks (never quiet, never red), whose '!' the line opens. A set of one sheet is its own sheet's test
+     (approveCase), as it always was, said at set level. */
+  function setCase(card){
+    const st=card._laserSet,ids=[...new Set((st.sheetIds?.length?st.sheetIds:card._laserSheets) || [])];
+    const recs=(card._laserSheets || []).map(id=>records.get(id)).filter(Boolean);
+    if(ids.length>=2){
+      const gate=R.setGate(st,recs.map(projected));
+      return gate.ready?{why:'',set:true}:{why:gate.reason,set:true,blocker:gate.blockers[0]?.sheetId || ''};
+    }
+    const rec=recs.find(r=>r.id===ids[0]) || recs[0],c=rec?approveCase([rec]):null;
+    return c?{...c,blocker:rec.id}:null;
   }
-  // what each sheet of a set card offers, from the set's one gate
-  function gateCases(card,gate){
-    const out=new Map(),first=gate.blockers[0];
-    for(const r of gate.sheets)if(!r.missing && r.state!=='past')out.set(r.sheetId,gate.ready?{why:'',set:true}:{why:gate.reason,set:true,blocker:first?.sheetId || ''});
-    return out;
-  }
+  const setTitle=st=>O.setLabel(st.seq)+(st.day?' · '+st.day:'');
   function makeApproveBox(host,kind,id){
     const box=document.createElement('div');box.className='approveBox';box.dataset.approveFor=boxKey(kind,id);box.dataset.nodrag='';box._kind=kind;box._id=id;
+    if(kind==='set')box.dataset.level='set';
     box.innerHTML='<div class="approveRow"><button type="button" class="btn sage sm approveBtn" data-approve-btn></button><span class="approveWhy" data-approve-why></span></div><div class="approvePlan" data-approve-plan role="status" aria-live="polite" hidden></div>';
     box.onclick=e=>{
       const t=e.target.closest && e.target.closest('button');if(!t || !box.contains(t))return;
@@ -5989,16 +6026,16 @@ i.flowDot::before{content:"";position:absolute;inset:-7px}
       else if(t.matches('[data-approve-no]'))cancelPlan(box);
       else if(t.matches('[data-approve-hide]'))hidePlan(box);
     };
-    host.appendChild(box);   // (last in its sheet's article: under the sheet, its QR label and its rail)
+    host.appendChild(box);   // (last in its host: a set's button under all of its sheets; a sheet's under its QR label and its rail)
     return box;
   }
-  // one press approves a whole set of several sheets (its boxes share one key: one action at a time, every box busy together)
-  const approvalKey=box=>box._setId?'set:'+box._setId:box.dataset.approveFor;
-  const hostOf=box=>box._setId?(box.closest('.setCard') || box.parentElement):box.parentElement;
+  // one action at a time for what a box approves (a set, or a sheet that is part of no set)
+  const approvalKey=box=>box.dataset.approveFor;
+  const hostOf=box=>box._kind==='set'?(box.closest('.setCard') || box.parentElement):box.parentElement;
   function paintApprove(box,c){
     // (the reason is a link when there is something to open: the '!' on the rail of the sheet it is about, which opens the issues panel)
     const key=approvalKey(box),busy=approving.has(key),about=c?.blocker || box._id,card=hostOf(box);
-    const open=typeof window.LaserReview?.openChecklist==='function' && !!(c?.set?card.querySelector(`.flowBox[data-flow-for="sheet:${about}"] [data-issues-open]`):box.parentElement?.querySelector('.flowBox [data-issues-open]'));
+    const open=typeof window.LaserReview?.openChecklist==='function' && !!(box._kind==='set'?card.querySelector(`.flowBox[data-flow-for="sheet:${about}"] [data-issues-open]`):box.parentElement?.querySelector('.flowBox [data-issues-open]'));
     const mode=!c?'done':busy?'busy':c.why?'blocked':'ready',sig=[mode,c?.why || '',c?.quiet?1:0,open?1:0,about,box._name || ''].join('|');
     box._case=c;
     if(box.dataset.sig===sig)return;
@@ -6012,32 +6049,31 @@ i.flowDot::before{content:"";position:absolute;inset:-7px}
     why.id=reasonId;
     why.innerHTML=mode!=='blocked' || c.quiet?'':open?`<button type="button" class="approveReason" data-approve-reason>${esc(c.why)}</button>`:`<span class="approveReason">${esc(c.why)}</span>`;
   }
-  // every box of the set the box belongs to, at once (a press on one sheet is the whole set's one action: all of them show it together)
-  function paintAll(box){
-    if(!box._setId){paintApprove(box,box._case);return;}
-    for(const b of hostOf(box).querySelectorAll('.approveBox'))if(b._setId===box._setId)paintApprove(b,b._case);
-  }
-  function syncBox(host,kind,id,c,name,setId){
+  function syncBox(host,kind,id,c,name){
     const key=boxKey(kind,id);let box=[...host.children].find(x=>x.dataset?.approveFor===key);
     if(!c){
       if(!box)return;
-      box._setId=setId || '';
       if(approving.has(approvalKey(box)) || (box.dataset.keep && Date.now()<box._until))paintApprove(box,null);else box.remove();
       return;
     }
     if(!box)box=makeApproveBox(host,kind,id);
-    box._name=name || '';box._setId=setId || '';paintApprove(box,c);
+    box._name=name || '';paintApprove(box,c);
     if(box.dataset.keep && Date.now()>box._until)hidePlan(box);
   }
-  // one button per sheet, in that sheet's own article (a set of one sheet and a set of several alike); none for the set. In a set of several
-  // they are one decision (gateOf), made once for the card and drawn on all of its sheets in this pass.
+  // a set card: ONE button for the whole set, last in its card, under the sheet columns; no button in any sheet that is part of it. A sheet that
+  // is part of no set (a sheet card, the 14K / 10K and held groups) keeps its own, in its own article. Each pass reads each sheet's record again,
+  // so a sheet that joins a set loses its button and one that leaves gets it back as soon as the cloud says so (before its card is drawn again).
   function syncApprove(card){
-    const kind=card.dataset.laserCard,on=flowReady() && !!card.closest('[data-laser-area="pending"]'),items=[];
-    const gate=on && kind==='set'?gateOf(card):null,cases=gate?gateCases(card,gate):null,setId=gate?card._laserSet.setId:'';
-    const add=(host,rec)=>{if(rec)items.push([host,rec.id,on?(cases?cases.get(rec.id) || null:approveCase([rec])):null,rec.folder || rec.fileBase || '',setId]);};
+    const kind=card.dataset.laserCard,on=flowReady() && !!card.closest('[data-laser-area="pending"]'),items=[],st=card._laserSet,real=kind==='set' && realSet(st);
+    // (on a set's card a sheet is part of the set unless its record says it left: a draft, or left out by its own Include switch; anywhere else its record's set says it)
+    const part=p=>real?!(p.draft || p.solidIncluded===false):inSetNow(p);
+    const add=(host,rec)=>{if(rec)items.push([host,rec.id,on && !part(projected(rec))?approveCase([rec]):null,rec.folder || rec.fileBase || '']);};
     if(kind==='set')for(const art of card.querySelectorAll('.sheetsRow > .librarySheet'))add(art,records.get(art.querySelector(':scope > .libCard')?.dataset.id));
     else if(kind==='sheet')add(card,records.get(card._laserSheets?.[0]));
-    for(const [host,id,c,name,sid] of items)syncBox(host,'sheet',id,c,name,sid);
+    for(const [host,id,c,name] of items)syncBox(host,'sheet',id,c,name);
+    if(kind!=='set')return;
+    if(real)syncBox(card,'set',st.setId,on?setCase(card):null,setTitle(st));
+    else for(const old of [...card.children])if(old.classList?.contains('approveBox') && old.dataset.level==='set')old.remove();
   }
   function planHtml(plan,error,canCommit){
     const say=x=>`<b>${esc(x.label || x.key || '')}</b>${x.detail?` <span>${esc(x.detail)}</span>`:''}`;
@@ -6060,7 +6096,7 @@ i.flowDot::before{content:"";position:absolute;inset:-7px}
     const ui=window.LibraryApprovalUI,card=hostOf(box),host=box.querySelector('[data-approve-plan]');
     box._plan=error?null:plan;box._ui=false;
     if(!error && typeof ui?.show==='function'){
-      try{host.hidden=true;host.innerHTML='';ui.show(card,plan,{title:'Approve for laser cutting',onConfirm:keys=>confirmPlan(box,keys),onCancel:()=>cancelPlan(box)});box._ui=true;return;}
+      try{host.hidden=true;host.innerHTML='';ui.show(card,plan,{title:'Approve for laser cutting',...(box._kind==='set'?{where:'end'}:{}),onConfirm:keys=>confirmPlan(box,keys),onCancel:()=>cancelPlan(box)});box._ui=true;return;}   // (a set's Moving bar opens under its one button, at the card's end)
       catch(e){console.warn('Approval view',e);}
     }
     host.innerHTML=planHtml(plan || {},error,typeof window.LibraryFlow?.commit==='function');host.hidden=false;
@@ -6075,7 +6111,7 @@ i.flowDot::before{content:"";position:absolute;inset:-7px}
   }
   function cancelPlan(box){box._plan=null;hidePlan(box);}
   function openWhy(box){
-    const host=box.parentElement,card=host.closest('[data-laser-card]') || host,info={kind:box._kind,id:box._case?.blocker || box._id};let handled=false;   // (the reason of a set names a sheet: its '!' opens)
+    const host=box.parentElement,card=host.closest('[data-laser-card]') || host,info={kind:'sheet',id:box._case?.blocker || box._id};let handled=false;   // (the reason of a set names a sheet: that sheet's '!' opens)
     try{handled=!!window.LaserReview?.openChecklist?.(card,info);}catch(e){console.warn('Checklist',e);}
     try{host.dispatchEvent(new window.CustomEvent('library-checklist-open',{bubbles:true,detail:{...info,card,handled}}));}catch(e){}   // (handled: this card has already opened its '!')
   }
@@ -6088,25 +6124,25 @@ i.flowDot::before{content:"";position:absolute;inset:-7px}
   async function pressApprove(box){
     const key=approvalKey(box),flow=window.LibraryFlow;
     if(approving.has(key) || box._case?.why || typeof flow?.approve!=='function')return;   // (a second press while one runs does nothing; a grey one presses nothing)
-    approving.add(key);hidePlan(box);paintAll(box);
+    approving.add(key);hidePlan(box);paintApprove(box,box._case);
     let plan=null,error='';
-    // a sheet of a set of several: the SET is approved, as one action (one plan, one Moving bar), every sheet with its own records and seals
-    try{plan=await flow.approve({kind:box._setId?'set':box._kind,id:box._setId || box._id,by:window.CNEmployee?.name?.() || undefined});plan=plan?.plan || plan;if(!plan)error='No answer came back';}
+    // a set: the whole SET is approved, as one action (one plan, one Moving bar), every sheet with its own records and seals
+    try{plan=await flow.approve({kind:box._kind,id:box._id,by:window.CNEmployee?.name?.() || undefined});plan=plan?.plan || plan;if(!plan)error='No answer came back';}
     catch(e){error=e?.message || String(e);}
     finally{approving.delete(key);}
-    paintAll(box);
+    paintApprove(box,box._case);
     showPlan(box,plan,error);
     afterApprove(box,!error && plan?.ok!==false && !(plan?.needs || []).length && !(plan?.confirm || []).length);
   }
   async function confirmPlan(box,keys){
     const key=approvalKey(box),flow=window.LibraryFlow,plan=box._plan;
     if(approving.has(key) || typeof flow?.commit!=='function' || !plan)return;
-    approving.add(key);paintAll(box);
+    approving.add(key);paintApprove(box,box._case);
     let res=null,error='';
     try{res=await flow.commit(plan,{confirmed:[].concat(keys || []),by:window.CNEmployee?.name?.() || undefined});if(res && res.ok===false && !error)error=res.error || 'Could not finish';}
     catch(e){error=e?.message || String(e);}
     finally{approving.delete(key);}
-    paintAll(box);
+    paintApprove(box,box._case);
     const ui=window.LibraryApprovalUI;
     if(box._ui && typeof ui?.update==='function'){try{ui.update(hostOf(box),error?{ok:false,error}:res);}catch(e){console.warn('Approval view',e);}}
     else{box._ui=false;showPlan(box,error?null:{ok:true,auto:(res?.applied || []).map(a=>({label:a.label || a.key})),needs:[],confirm:[]},error);}
