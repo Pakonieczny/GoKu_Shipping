@@ -11425,6 +11425,73 @@ const OrderWin = window.OrderWin = (() => {
     const sum = tryDo(() => UI.summary(W.events, ps, W.cancelled)), x = sum && sum.each.find(y => y.D.step === sum.step);
     return x ? x.events : null;
   }
+  /* ── the dots of a piece's row (Paul, 5 Oct 2026, point 5: "Enable each of these solid and hollow green dots into a active hover state like the other
+     milestone timeline dots ... a 350 ms delay"). Each dot is one step of the piece (UI.stagesFor): solid when the piece has reached it, hollow when not (the
+     rule the dots always had, read only here). A dot is a circle of the rail's own card (charm-nest-rail-tip.js, the Seal.zoom engine of charm-nest-motion.js):
+     it rests 350 ms under the pointer, or opens at once for a click, a tap, Enter or Space, and Tab opens it. What the card says is asked of pieceDotInfo
+     below when it opens (RailTip.pieceDot): the step, Done or Not yet, when and who for a done step, what it waits on for the rest, and the step's seal
+     (window.PieceSeals.render, drawn by whoever owns the seals: nothing until it is there). No read, no network call: the order's timeline as this window holds it. ── */
+  const PDOT_ZOOM = "1.7", PDOT_REST = 350;
+  const pdotOn = (x, s) => { const i = window.OrderTimelineUI.STAGES.indexOf(s); return x.D.step >= i || !!(x.D.stages[i] || {}).first; };
+  /** The state of a step of a piece, in the words of the card and the dot's label: Done, Not yet, Skipped (the piece was completed by hand), Won't happen (cancelled). */
+  const pdotState = (x, s) => pdotOn(x, s) ? { done: true, word: "Done" } : x.D.cancelled ? { done: false, word: "Won't happen" } : x.D.hand ? { done: false, word: "Skipped" } : { done: false, word: "Not yet" };
+  /** One piece's row of dots (x: a piece of UI.summary's each; rid: the order). One Tab stop for the row, on the step the piece is working towards. */
+  function pieceDotsHtml(x, rid) {
+    const at = x.steps.findIndex(s => !pdotOn(x, s)), tab = at < 0 ? x.steps.length - 1 : at, grp = `${rid}|${x.p.key}`;
+    const dots = x.steps.map((s, i) => `<i class="${pdotOn(x, s) ? "on" : ""}" data-pdot="${s.k}" data-pdot-rid="${esc(rid)}" data-pdot-piece="${esc(x.p.key)}" data-zoom-dot="${PDOT_ZOOM}" data-zoom-delay="${PDOT_REST}" data-zoom-group="${esc(grp)}" role="img" tabindex="${i === tab ? 0 : -1}" title="" aria-label="${esc(`${s.l}, ${pdotState(x, s).word.toLowerCase()}`)}"></i>`).join("");
+    return `<span class="steps" role="group" data-pdot-group title="" aria-label="${esc(`${x.p.name} · progress`)}">${dots}</span>`;
+  }
+  // when a step was done, as the Library's cards say it: "Oct 3 · 4:12 PM" in the shop's own time (the year only when it is not this year)
+  const pdotZone = "America/Toronto", pdotFmt = o => { try { return new Intl.DateTimeFormat("en-US", Object.assign({ timeZone: pdotZone }, o)); } catch (_) { return null; } };
+  function pdotWhen(at) {
+    const d = new Date(+at), day = pdotFmt({ month: "short", day: "numeric" }), time = pdotFmt({ hour: "numeric", minute: "2-digit" }), yr = pdotFmt({ year: "numeric" });
+    if (!(+at > 0) || !day || !time || !yr) return "";
+    return [day.format(d) + (yr.format(d) !== yr.format(new Date()) ? ", " + yr.format(d) : ""), time.format(d).replace(/\u202f/g, " ")].join(" · ");
+  }
+  /** The card's context for one piece (tlContext's lines and sheets, that piece's alone), kept for a moment: a pointer moving along a row asks it once. */
+  function pdotContext(rid, key) {
+    const m = W.pdCtx; if (m && m.rid === rid && m.key === key && Date.now() - m.at < 2000) return m.v;
+    const v = tryDo(() => tlContext(rid, key)) || null; W.pdCtx = { rid, key, at: Date.now(), v }; return v;
+  }
+  /** What the card over a dot says: { name, state, line, by, seal } for RailTip.pieceDot, or null when the piece is not drawn any more. */
+  function pieceDotInfo(d) {
+    const UI = window.OrderTimelineUI, rid = d.getAttribute("data-pdot-rid") || "", key = d.getAttribute("data-pdot-piece") || "", sk = d.getAttribute("data-pdot") || "";
+    const sum = W.pcSum, x = UI && sum && sum.rid === rid ? sum.each.find(e => e.p.key === key) : null, s = x && x.steps.find(t => t.k === sk);
+    if (!x || !s) return null;
+    const i = UI.STAGES.indexOf(s), st = pdotState(x, s), ev = (x.D.stages[i] || {}).first || null;
+    let line = "", by = "";
+    if (st.done) {
+      if (ev) {
+        const who = tryDo(() => UI.personOf(ev)) || (ev.source === "etsy" ? "Etsy" : ev.source === "station" ? "Station" : "Automatic"), where = tryDo(() => UI.placeOf(ev)) || "";
+        by = [pdotWhen(ev.at), who + (where ? " at " + where : "")].filter(Boolean).join(" · ");
+        if (ev.sheet && (s.k === "sheet" || s.k === "laser")) line = `On ${ev.sheet}`;
+      } else by = "Time not recorded";   // (a step passed with no event of its own: never a made-up time)
+    } else if (st.word === "Skipped") {
+      line = "Not needed: completed by hand";
+      const h = x.D.hand; by = h ? [pdotWhen(h.at), tryDo(() => UI.personOf(h)) || ""].filter(Boolean).join(" · ") : "";
+    } else if (st.word === "Won't happen") line = "Cancelled: this step will not happen";
+    else {
+      const now = x.steps.find(t => !pdotOn(x, t));
+      if (now && now !== s) line = `After ${now.l}`;   // (a step further on waits for the one before it: that is the one with something to do)
+      else {
+        const q = tryDo(() => UI.requirementsOf(i, { events: x.events, cancelled: W.cancelled, stages: x.steps, context: pdotContext(rid, key) }));
+        const need = (q && q.need) || [], pick = ["person", "wait", "next", "after"].map(k => need.find(n => n.kind === k)).find(Boolean) || need[0];
+        if (pick) { const t = String(pick.t).replace(/\s+/g, " ").trim(); line = t.charAt(0).toUpperCase() + t.slice(1); if (line.length > 150) line = line.slice(0, 147).trimEnd() + "…"; }
+      }
+    }
+    // the seal slot: window.PieceSeals.render(stepKey, pieceCtx, { done }) -> HTML or a node (the real seal of a done step, the unfinished one of a step still to do), or nothing
+    const ps = window.PieceSeals;
+    const seal = ps && typeof ps.render === "function" ? tryDo(() => ps.render(s.k, { rid, key, piece: x.p, step: s.k, stage: x.D.stages[i] || null, event: ev, at: ev ? +ev.at : 0, events: x.events, D: x.D, done: st.done }, { done: st.done })) : null;
+    return { name: s.l, state: st.word, line, by, seal: seal || null };
+  }
+  { const RT = window.RailTip = window.RailTip || {}; RT.pieceDot = pieceDotInfo; }   // (charm-nest-rail-tip.js draws the card: it asks this when a dot's card opens)
+  /** A redraw of the rows keeps the keyboard where it was: the dot that has it, found again by its order, piece and step. */
+  const pdotHeld = box => { const a = document.activeElement; return a && a.matches && a.matches("[data-pdot]") && box.contains(a) ? ["data-pdot", "data-pdot-rid", "data-pdot-piece"].map(n => [n, a.getAttribute(n)]) : null; };
+  function pdotBack(box, held) {
+    if (!held) return;
+    const sel = "[data-pdot]" + held.map(([n, v]) => `[${n}="${String(v).replace(/["\\]/g, "")}"]`).join("") ; const n = box.querySelector(sel);
+    if (n && document.activeElement !== n) n.focus({ preventScroll: true });
+  }
   /** The pieces on rows under "Where it is now": where each is, what comes next and its steps as dots. An order of several with no
    *  piece picked has every piece on a row (the slowest, where the order is, in gold; a row opens that piece). A piece that is in the
    *  Review tab has that card's own buttons and seals on its row, at the right end of the name's line in place of its words (Paul, 5 Oct,
@@ -11435,11 +11502,12 @@ const OrderWin = window.OrderWin = (() => {
    *  a row of its own for it. */
   function paintPieceSum() {
     const box = byId("owPcSum"); if (!box) return;
-    const UI = window.OrderTimelineUI, ps = W.pieces || [], all = !W.piece && ps.length > 1, r0 = rowOf(W.key);
+    const UI = window.OrderTimelineUI, ps = W.pieces || [], all = !W.piece && ps.length > 1, r0 = rowOf(W.key), rid = r0 ? String(r0.order.receiptId) : "";
     let list = ps;
     if (!all) { const key = W.piece || W.key, p = ps.find(x => x.key === key) || (r0 && !r0.loading && r0.key === key ? tryDo(() => piecesOf([r0])[0]) : null); list = p ? [p] : []; }
     // (an order of several waits for its timeline; one piece's row is drawn at once, its buttons never wait for it)
     const sum = list.length && UI && UI.summary && (!all || W.events) ? tryDo(() => UI.summary(W.events || [], list, W.cancelled)) : null;
+    W.pcSum = sum ? Object.assign({ rid }, sum) : null;   // (what the dots' cards read, pieceDotInfo)
     const ctls = sum ? new Map(sum.each.map(x => [x.p.key, tryDo(() => pieceCtl(x.p.key))])) : null;
     // (the Hold of a piece that has no buttons of its own: a place for it, empty when the order cannot be held, or HoldUI is not there)
     const holds = sum ? new Map(sum.each.map(x => [x.p.key, ctls.get(x.p.key) ? "" : holdSlotOfKey(x.p.key)])) : null;
@@ -11449,7 +11517,7 @@ const OrderWin = window.OrderWin = (() => {
       const nx = x.steps.find(s => at(s) > x.D.step), slow = all && x.D.step === sum.step;
       const dot = `<i class="dot" style="--c:${esc(colorOf(x.p.metal))}"></i>`, nm = `<b>${esc(x.p.name)}</b> · ${esc(pieceMeta(x.p))}`;
       const st = `<span class="st">${esc(x.D.hand ? "Completed by hand" : (x.D.W && x.D.W.label) || "Waiting")}${nx && !x.D.cancelled && !x.D.hand ? " · next: " + esc(nx.l) : ""}</span>`;
-      const steps = `<span class="steps" aria-hidden="true">${x.steps.map(s => `<i class="${x.D.step >= at(s) || (x.D.stages[at(s)] || {}).first ? "on" : ""}"></i>`).join("")}</span>`;
+      const steps = pieceDotsHtml(x, rid);   // (the dots: a card for each, see pieceDotsHtml)
       // a piece that is in the Review tab has that card's own buttons (and seals) here, in place of its words: a press is a press
       // there; a piece in no card keeps its words
       const ctl = ctls.get(x.p.key);
@@ -11474,7 +11542,8 @@ const OrderWin = window.OrderWin = (() => {
     if (box._h === html) return;
     // (a name being typed in a row's question is carried over a redraw, the field and where its cursor was)
     const typed = [...box.querySelectorAll("[data-cu-name]")].map(i => ({ key: i.closest("[data-pc-act]")?.dataset.pcAct, v: i.value, on: document.activeElement === i, a: i.selectionStart, b: i.selectionEnd })).filter(t => t.key);
-    box._h = html; box.innerHTML = html;
+    const held = pdotHeld(box);
+    box._h = html; box.innerHTML = html; pdotBack(box, held);
     box.querySelectorAll("[data-pc-act]").forEach(h => wirePcAct(h, typed));
     if (window.HoldUI) tryDo(() => HoldUI.fill(box));   // (the Hold of the rows that have no card's buttons)
   }
@@ -11657,11 +11726,12 @@ const OrderWin = window.OrderWin = (() => {
   /* What this page already knows of the order, for the timeline's step explainer (OrderTimelineUI.requirementsOf):
      each line's state, hold, wait and engraving, and the readiness of the sheets its pieces sit on
      (CharmNestReadiness, as validateRelease reads it). Nothing is fetched. */
-  function tlContext(rid) {
+  function tlContext(rid, pieceKey) {
     const r = rowOf(W.key); if (!r || String(r.order.receiptId) !== String(rid)) return null;
     const R = window.CharmNestReadiness, all = tryDo(() => linesOf(r)) || [r], pages = new Set();
     // one piece shown (the piece switcher): its own line only
-    const rows = W.piece && all.some(x => x.key === W.piece) ? all.filter(x => x.key === W.piece) : all;
+    // (pieceKey: one piece's row asks for its own piece, whichever is shown)
+    const only = pieceKey || W.piece, rows = only && all.some(x => x.key === only) ? all.filter(x => x.key === only) : all;
     const lines = rows.map(x => {
       const sp = x.spec || {}, ids = x.poolIds || [];
       let onSheet = ids.length > 0;
