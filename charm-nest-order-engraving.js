@@ -15,8 +15,8 @@
  *       events  the order's timeline events (an array, or a function giving them): an approval another computer makes shows
  *               here from them, within the timeline feed's own 2.5 s read; nothing is read for it
  *       changed called when something other than this card's own press changed the engraving (a person's approval elsewhere),
- *               and after this card's own approval: the host repaints what depends on it (the red "still to be settled" box, the
- *               Engraving cell, the Sheet tab)
+ *               and after this card's own approval: the host repaints what depends on it (the Engraving cell, the
+ *               Sheet tab)
  *       sheetEng a function giving the Sheet tab's own reading of this piece (used only when Engrave holds no job for it)
  *     update(ctx)   told again (the order window paints often): the card is drawn again only when what it shows changed; a
  *                   different order, line or piece swaps the card at once (nothing of the piece before stays on screen)
@@ -234,8 +234,6 @@
         if (ident(ctx) !== was) { reset(); refresh(true, true); } else refresh(false);
       },
       refresh(force) { refresh(force); },
-      /** What the card says about the piece now ("approve", "approved", "words", …; "" before it has looked): the host's red box follows it. */
-      kind: () => (last && last.eng && last.eng.kind) || '',
       destroy() {
         if (gone) return; gone = true; live.delete(handle); disarm();
         if (ro) { tryDo(() => ro.disconnect()); ro = null; }

@@ -511,7 +511,10 @@
   <script src="station-session.js?v=20261002-ea1"></script>
   <!-- What each person did here (scans, stickers printed, orders sorted, rejects) for the Employee efficiency console: the
        person, station and device are the StationSession's. Without the file nothing changes. -->
-  <script src="station-activity.js?v=20261002-ea1"></script>
+  <script src="station-activity.js?v=20261005-live1"></script>
+  <!-- The batch in hand right now (scanned = working, every sticker printed = idle), for the console's live stations board
+       (station-live-order.js). Optional: without it nothing changes. -->
+  <script src="station-live-order.js?v=20261005-lo1"></script>
   <script>
     try {
       StationSession.init({
@@ -1538,6 +1541,21 @@ window.SortTL = (function () {
   }
   let scanned = null;                  // the batch just entered (its orders and how), until it has loaded
 
+  /* ---- the batch in hand right now (the console's live stations board; station-live-order.js) ----
+     Scanned and loaded = "working" with every piece of its orders; each printed sticker (or a cancelled order) is one order
+     done, and the last one makes it "idle". Best effort: never throws, never waits, no extra call. */
+  const live = (fn, a, b, c) => { try { const L = window.StationLiveOrder; return !!(L && typeof L[fn] === "function" && L[fn](a, b, c)); } catch (_) { return false; } };
+  let liveBatch = null;                // { ids, done:Set } the orders of the batch in hand
+  function liveStep(id) {
+    try {
+      id = String(id || "");
+      if (!liveBatch || !liveBatch.ids.includes(id)) return;
+      liveBatch.done.add(id);
+      const n = liveBatch.done.size, all = liveBatch.ids.length;
+      if (n >= all) { liveBatch = null; live("end"); } else live("note", n + " of " + all + " orders done");
+    } catch (_) {}
+  }
+
   /* ---- the small spinner under the chip: says what it waits for ---- */
   function busy(k, text) { waiting.set(k, text); paintWait(); }
   function idle(k) { waiting.delete(k); paintWait(); }
@@ -1729,6 +1747,15 @@ window.SortTL = (function () {
         if (parts) act("scan", { orderId: id, parts, detail: sc.how });
         else act("error", { orderId: id, detail: "order not found or not loaded (" + sc.how + ")" });
       }
+      try {   // the batch is now in hand: every order that loaded, with all its pieces (the cancelled ones already alerted count as done)
+        const okIds = sc.ids.filter(id => piecesOf(id) > 0);
+        if (okIds.length) {
+          const items = (window.cachedOrderItems || []).filter(it => idsOfItem(it).some(x => okIds.includes(x)));
+          liveBatch = { ids: okIds, done: new Set() };
+          live("batch", okIds, items, { note: sc.how === "typed" ? "" : sc.how });
+          if (cur) for (const id of [...cur.alerted]) liveStep(id);
+        } else { liveBatch = null; live("end"); }
+      } catch (_) {}
     }
     const me = cur;
     if (!me) return;
@@ -1740,7 +1767,7 @@ window.SortTL = (function () {
   function raise(me) {
     const fresh = [...me.cancelled.keys()].filter(id => !me.alerted.has(id));
     if (!fresh.length) return;
-    fresh.forEach(id => { me.alerted.add(id); act("reject", { orderId: id, detail: "cancelled order: do not sort" }); });
+    fresh.forEach(id => { me.alerted.add(id); act("reject", { orderId: id, detail: "cancelled order: do not sort" }); liveStep(id); });
     showAlert(fresh.map(id => ({ id, rec: me.cancelled.get(id) })), me.batch);
   }
 
@@ -1849,6 +1876,7 @@ window.SortTL = (function () {
       act("print", { orderId: id, parts, detail: "order QR sticker" + (how === "row" ? " (Print Row)" : "") + (again ? ", again" : "") });
       if (!again && act("complete", { orderId: id, parts, orders: 1, detail: "sorted" })) markSorted(id);
     } catch (_) {}
+    liveStep(orderId);   // one more order of the batch in hand is done (the last one makes it idle)
     if (!tl()) return;
     const by = getEmployee(), tail = by ? " by " + by : " (not signed in)";
     const base = { batch: (cur && cur.batch) || "", how };

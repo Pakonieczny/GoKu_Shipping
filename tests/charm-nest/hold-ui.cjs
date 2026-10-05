@@ -250,8 +250,8 @@ async function main() {
     await page.waitForFunction(() => !document.querySelector('dialog.holdDlg') && OrderWin.isOpen(), null, { timeout: 15000 });
     await page.waitForFunction(() => document.querySelectorAll('#owPcSum .owPcRow [data-hold-btn]').length === 3 && ![...document.querySelectorAll('#owPcSum [data-hold-btn]')].some(b => b.disabled), null, { timeout: 8000 });
     t = await T(); assert.equal(t.runs.length, 0, 'Not now: no run'); assert.equal(writes() - w1, 0, 'nothing written');
-    // a press on the row itself (its words, not the Hold) still opens that piece, and its own row alone has the Hold too
-    await page.click(`#owPcSum [data-piece="${gf}"] .st`);
+    // a press on the row itself (its name, not the Hold or the sheet chip) still opens that piece, and its own row alone has the Hold too
+    await page.click(`#owPcSum [data-piece="${gf}"] .owPcName`);
     await page.waitForFunction(k => { const on = document.querySelector('#owPieceSw button.on'); return on && on.dataset.piece === k && document.querySelectorAll('#owPcSum .owPcRow').length === 1; }, gf, { timeout: 15000 });
     await page.waitForFunction(() => document.querySelector('#owPcSum .owPcRow.solo [data-hold-btn]'), null, { timeout: 8000 });
     pr = await plainRows();
