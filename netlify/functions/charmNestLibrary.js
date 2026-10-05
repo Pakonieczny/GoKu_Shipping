@@ -264,8 +264,9 @@ async function productionReadiness(records,{tx=null,revs=null}={}) {
   try{await crossRuns(asking);}catch(e){console.warn('[charmNestLibrary] the runs of these orders could not be read:',e && e.message);for(const o of asking)unverified.add(o);}
   const evidence=new Map(records.map(s=>[s.id || s.sheetId,s]));
   // an order whose pieces are not all on these sheets: the sheets that hold the rest are read too. A line that lost its pool ids is read by the ids the pool gives
-  // its copies ("<line key>_<n>"), a committed or written one too: it may be a no-design candidate (below), but until that is known its copies may be on a sheet that is not asked
-  const present=new Set(records.flatMap(Readiness.idsOf)),lostIds=l=>!(l.poolIds || []).length && l.state!=='gone' && !l.noDesign && !l.problems?.length,
+  // its copies ("<line key>_<n>"), a committed or written one too: it may be a no-design candidate (below), but until that is known its copies may be on a sheet that is not asked.
+  // (a line the run saved as completed by hand, handDone, was never pooled and is not looked for on another sheet: its own custom order record decides, below)
+  const present=new Set(records.flatMap(Readiness.idsOf)),lostIds=l=>!(l.poolIds || []).length && l.state!=='gone' && !l.noDesign && !l.problems?.length && !l.handDone,
     missingOrders=[...new Set([...lines.values()].filter(l=>(l.poolIds || []).some(id=>!present.has(id)) || (lostIds(l) && Readiness.copyIds(l,l.key).some(id=>!present.has(id)))).map(l=>l.orderId))];
   for(let i=0;i<missingOrders.length;i+=30){
     const snap=await get(col(SHEETS).where('orders','array-contains-any',missingOrders.slice(i,i+30)).select(...SLIM_SHEET));
@@ -292,7 +293,7 @@ async function productionReadiness(records,{tx=null,revs=null}={}) {
      only the record decides). A line completed by hand is read as such (handDone) by Readiness.orderReports; a reopened one blocks again. The documents read
      are watched by the cheap "unchanged?" read (revs 'c:'), so a completion or a reopen is seen at once. A read that fails leaves those orders unverified. */
   const placed=new Set([...evidence.values()].flatMap(Readiness.idsOf)),hands=new Map(),seenCustom=new Map(),
-    unplaced=[...lines.values()].filter(l=>lineKeyOk(l.key) && l.state!=='gone' && !(l.poolIds || []).length && !Readiness.copyIds(l,l.key).some(id=>placed.has(id)) && (l.handDone || !(l.noDesign || l.state==='noDesign'))).slice(0,HAND_MAX);
+    unplaced=[...lines.values()].filter(l=>l.state!=='gone' && !(l.poolIds || []).length && !Readiness.copyIds(l,l.key).some(id=>placed.has(id)) && (l.handDone || !(l.noDesign || l.state==='noDesign')) && lineKeyOk(l.key)).slice(0,HAND_MAX);
   const handRead=new Set(unplaced.map(l=>l.key));
   if(unplaced.length){
     try{
@@ -451,8 +452,9 @@ async function decisionsOfRun(runId, run, poolIds = null) {
    when none is newer the answer is just { unchanged: true } and nothing is read or worked out again. A document's update
    time changes with every write to it, whoever made it, so this cannot miss a change in a document it watches. It watches
    the sheets and sets asked for, a set's other sheets, the runs of those sheets and the other sheets that carry their
-   orders; the learned no-design rules and a hand-completed special item are not watched (the Library's slow check
-   reads them). ── */
+   orders, and the custom order record of each line of those orders that is on no sheet (a Complete Order or a Reopen of a
+   piece done by hand is seen at once: 'c:' keys, one small document each, at most HAND_MAX); the learned no-design rules and a
+   hand-completed special item of a line that has a sheet are not watched (the Library's slow check reads them). ── */
 const revOf = snap => (snap && snap.exists && snap.updateTime ? `${snap.updateTime.seconds}.${snap.updateTime.nanoseconds}` : "0");
 const REV_KEY = /^[strc]:[\w\-]{4,80}$/, MAX_REVS = 900;   // (c: a custom order completed by hand that the answer was made from: HAND_MAX at most)
 /** The number of documents read when nothing a laserStatus answer was made from (revs) is newer, 0 when something is. */

@@ -10,9 +10,11 @@
    * it needs no sheet, waits for nothing and holds no other piece back. Both sides read the same truth, the custom order's own record
    * ({state:'completed', how:'button'|'print', completedAt, completedBy}): the page as a row's spec.customDone, the server as the line's handDone
    * (charmNestLibrary productionReadiness reads its own Charm_Custom_Orders record, never the page's). Reopen (state 'open') takes it back and the
-   * piece blocks again; a custom order sent to the sheets with its own designs (how 'sheet') is cut, not completed by hand. */
+   * piece blocks again; a custom order sent to the sheets with its own designs (how 'sheet') is cut, not completed by hand.
+   * Only a line with no pool ids is read this way (the card a person completes by hand was never pooled; the server looks up exactly those lines, one
+   * small read each): a pooled line is waiting for the nester and stays a piece, and a copy that sits on a saved sheet is cut there (see readOrders). */
   const isHand=c=>!!c && typeof c==='object' && c.state!=='open' && c.how!=='sheet';
-  const handOf=l=>{const c=l && (l.handDone || l.spec?.customDone);return isHand(c)?c:null;};
+  const handOf=l=>{const c=l && !(Array.isArray(l.poolIds) && l.poolIds.length) && (l.handDone || l.spec?.customDone);return isHand(c)?c:null;};
   function decisions(rows){
     const out={};
     // (a line whose record lost its pool ids is read by the ids the pool gives its copies, "<line key>_<n>", as orderReports reads them)
@@ -137,15 +139,16 @@
         customer=customer || l.order?.buyer?.name || l.snap?.buyer || '';
         listingId=listingId || String(l.line?.listingId || l.snap?.listingId || '');
         if(l.state==='gone')continue;                                                     // cancelled: cut and set aside, never waited for
-        const hold=l.hold || l.changePending?String(l.hold || 'Order changes need review'):'',hand=handOf(l);
+        const hold=l.hold || l.changePending?String(l.hold || 'Order changes need review'):'',key=lineKeyOf(l,id) || id,ids=copyIds(l,key);
+        // completed by hand: a line on no saved sheet (a copy that sits on one is cut there and is no hand piece: the server never looks such a line up either)
+        const hand=ids.some(x=>(copies.get(x) || []).length)?null:handOf(l);
         if(!hand && (l.spec?.noDesign || l.noDesign || l.state==='noDesign'))continue;    // nothing to cut
-        const key=lineKeyOf(l,id) || id,problem=problemOf(l);
-        for(const pid of copyIds(l,key)){
+        const problem=problemOf(l);
+        for(const pid of ids){
           const on=copies.get(pid) || [];
-          // completed by hand: a copy on no sheet is resolved (it needs none, waits for nothing and holds nothing: the piece is not one of the order's pieces),
-          // unless the line is held as well (a person's or Etsy's explicit stop holds wherever the piece is). A copy that sits on a saved sheet is cut there,
-          // and stays a piece of that sheet's order.
-          if(hand && !hold && !on.length)continue;
+          // completed by hand: the piece is resolved (it needs no sheet, waits for nothing and holds nothing: it is not one of the order's pieces),
+          // unless the line is held as well (a person's or Etsy's explicit stop holds wherever the piece is)
+          if(hand && !hold)continue;
           let block=null;
           if(hold)block={key:'held',why:hold};
           else if(!on.length)block=problem?{key:problem.key,why:problem.why}:{key:'pooled',why:'A piece is not on a saved sheet yet'};

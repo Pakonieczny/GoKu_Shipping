@@ -1132,7 +1132,8 @@ const Orders = window.Orders = (() => {
     // A line a person completed by hand (Review → Complete Order, or its QR label printed: CharmNestReadiness.isHand) needs no sheet. The run record only HINTS
     // that (handDone): the server reads the custom order's own record (a run saves its lines when it pools, not when a card is completed, and a Reopen since
     // would leave this copy stale) and trusts nothing here. Such a line is not noDesign for that reason, so a stale record can never keep a reopened piece resolved.
-    const cd = row.spec && row.spec.customDone, hand = !!cd && cd.state !== "open" && cd.how !== "sheet";
+    // (only a line with no pool ids: the card a person completes was never pooled, and the server looks up exactly those lines)
+    const cd = row.spec && row.spec.customDone, hand = !!cd && cd.state !== "open" && cd.how !== "sheet" && !(row.poolIds || []).length;
     return [row.key, { state: row.state, poolIds: row.poolIds, reason: row.reason, hold: row.hold || null, wait: row.wait || null, sku: row.spec && row.spec.designSku, material: row.material || (row.spec && row.spec.material) || null, quantity: row.spec ? row.spec.quantity : 1,
       engrave: row.engrave ? { needed: !!row.engrave.needed, state: row.engrave.state, approved: !!row.engrave.approved, approvedAt:row.engrave.approvedAt || 0, approvedBy:row.engrave.approvedBy || "", decidedAt:row.engrave.decidedAt || 0, seals:row.engrave.seals || [], text: row.engrave.text || null } : null,
       // The server reads this record, not the row, before it records a set as complete: a line with nothing to engrave
@@ -11252,8 +11253,8 @@ const OrderWin = window.OrderWin = (() => {
       // records are not read yet nothing is said about it: a step is never held back by a piece nobody has looked for)
       const op = window.OrderPieces && tryDo(() => OrderPieces.ofRow(x));
       if (op && op.length && !op.some(p => p.unsure)) onSheet = op.every(p => p.nested || p.loading);
-      const pb = (x.problems || [])[0];
-      return { sku: sp.designSku || (x.line && x.line.sku) || "", form: sp.form || "", title: (x.line && x.line.title) || "", state: x.state, reason: x.reason || "", wait: x.wait || null, hold: !!x.hold,
+      const pb = (x.problems || [])[0], hand = !x.hold && !!handOfRow(x);   // (completed by hand: it needs no sheet, so no step waits on it and none asks for a design)
+      return { sku: sp.designSku || (x.line && x.line.sku) || "", form: sp.form || "", title: (x.line && x.line.title) || "", state: x.state, reason: x.reason || "", wait: x.wait || null, hold: !!x.hold, hand,
         problem: pb ? String(x.reason || pb.reason || pb.kind || "") : "", engrave: x.engrave || null, engraveCandidate: sp.engraveCandidate, special: sp.special ? sp.special.label || "" : "", onSheet };
     });
     const dec = pages.size && R && R.decisions ? tryDo(() => R.decisions(Orders.rows())) : null;
@@ -11824,7 +11825,7 @@ const OrderWin = window.OrderWin = (() => {
     const mineBy = new Map(mine.map(x => [x.poolId || x.id, x]));
     for (const p of OP && OP.of ? OP.of(rid) : []) if (!p.gone) {
       const x = mineBy.get(p.poolId) || null;
-      add(p.poolId, { poolId: p.poolId, sku: (x && x.sku) || p.sku, copy: p.copy, qty: p.qty, here: !!x || !!(cur && cur.id && p.sheetId === cur.id), piece: x, nested: p.nested, loading: p.loading, sheetId: p.sheetId, metal: p.metal, n: p.sheetNo, label: p.sheetLabel, reason: p.reason });
+      add(p.poolId, { poolId: p.poolId, sku: (x && x.sku) || p.sku, copy: p.copy, qty: p.qty, here: !!x || !!(cur && cur.id && p.sheetId === cur.id), piece: x, nested: p.nested, loading: p.loading, hand: !!p.hand, sheetId: p.sheetId, metal: p.metal, n: p.sheetNo, label: p.sheetLabel, reason: p.reason });
     }
     for (const x of mine) if (!items.has(x.poolId || x.id)) add(x.poolId || x.id, { poolId: x.poolId, sku: x.sku, copy: x.copy, qty: x.qty, here: true, nested: true, piece: x });
     if (!OP) for (const x of linesOf(r)) for (const pid of x.poolIds || []) if (!items.has(pid)) add(pid, { poolId: pid, sku: (x.spec && x.spec.designSku) || x.line.sku, copy: +pid.split("_").pop() || 1, qty: (x.spec && x.spec.quantity) || x.line.quantity });
@@ -11840,7 +11841,7 @@ const OrderWin = window.OrderWin = (() => {
     const vis = list.map((s, i) => i).filter(i => SCOPE.ok(i));   // (the sheets of the piece shown, or of all of them: never another piece's)
     // (a sheet's own tab names it, so a piece and its tab always say the same; nothing is said while its sheets are still being found)
     const tabOf = it => it.sheetId ? list.find(s => s.id === it.sheetId) : null;
-    const where = it => it.here ? `<em style="--c:var(--gold2)">this sheet</em>` : it.nested ? `<em style="--c:${esc(colorOf((tabOf(it) || it).metal))}">${esc(tabOf(it) ? sheetName(tabOf(it)) : it.label || "on a sheet")}</em>` : it.loading || !SV.list ? `<em></em>` : `<em>not on a sheet yet</em>`;
+    const where = it => it.here ? `<em style="--c:var(--gold2)">this sheet</em>` : it.nested ? `<em style="--c:${esc(colorOf((tabOf(it) || it).metal))}">${esc(tabOf(it) ? sheetName(tabOf(it)) : it.label || "on a sheet")}</em>` : it.hand ? `<em title="a person completed it by hand: it needs no sheet">completed by hand</em>` : it.loading || !SV.list ? `<em></em>` : `<em>not on a sheet yet</em>`;
     panel.innerHTML =
       (vis.length ? `<section><div class="owSheetFindRow"><span class="fLabel">Sheet</span><label class="cnOrderFind"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="m10.5 10.5 3 3"/></svg><input id="owSheetOrderFind" type="search" inputmode="numeric" placeholder="Order # on sheet" aria-label="Search order numbers on this sheet" aria-controls="owSheetMatches" autocomplete="off" spellcheck="false"></label></div><div class="owShTabs">${vis.map(i => `<button type="button" data-at="${i}" class="${i === SV.at ? "on" : ""}" style="--c:${esc(colorOf(list[i].metal))}"><i></i>${esc(sheetName(list[i]))}</button>`).join("")}</div>${facts ? `<div class="sub" style="margin-top:8px">${esc(facts)}</div>` : ""}</section>` : "") +
       `<div class="owSheetMatches" id="owSheetMatches" role="list" aria-live="polite" hidden></div>` +

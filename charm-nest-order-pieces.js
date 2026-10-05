@@ -48,8 +48,9 @@
 
   /** A piece a person completed by hand (Review → Complete Order, or its QR label printed from Custom Orders): the custom order's own record, as the line
    *  carries it (spec.customDone) or the server read it (handDone). The same rule as CharmNestReadiness.isHand: resolved, it needs no sheet; Reopen
-   *  (state 'open') takes it back; a custom order sent to the sheets with its own designs (how 'sheet') is cut. */
-  const handOf = l => { const c = l && (l.handDone || (l.spec && l.spec.customDone)); return c && typeof c === 'object' && c.state !== 'open' && c.how !== 'sheet' ? c : null; };
+   *  (state 'open') takes it back; a custom order sent to the sheets with its own designs (how 'sheet') is cut. Only a line with no pool ids: a pooled one
+   *  is waiting for the nester (and the card a person completes was never pooled). */
+  const handOf = l => { const c = l && !(Array.isArray(l.poolIds) && l.poolIds.length) && (l.handDone || (l.spec && l.spec.customDone)); return c && typeof c === 'object' && c.state !== 'open' && c.how !== 'sheet' ? c : null; };
   function problemOf(l, sku) {
     if (!l) return sku ? null : 'noSku';
     const sp = l.spec || {}, kinds = (l.problems || []).map(p => String((p && p.kind) || p || ''));
@@ -121,13 +122,14 @@
       const l = o.line, sp = (l && l.spec) || {}, sku = (l && (l.sku || sp.designSku)) || (p && p.sku) || '', metal = (l && (l.material || sp.material)) || (p && p.material) || (holder && holder.metal) || null;
       const problem = problemOf(l, sku);
       const nested = !!holder, state = !holder ? 'unnested' : via === 'page' && !holder.id ? 'nested' : cut(holder) ? 'cut' : 'sheeted';
-      // (completed by hand: a piece that needs no sheet is not waiting for the sheets to be read, and never "not on a sheet yet")
-      const hand = !nested ? handOf(l) : null;
+      // (completed by hand: a piece that needs no sheet is not waiting for the sheets to be read, and never "not on a sheet yet";
+      //  a HELD piece is still a held piece: a person's stop holds wherever it sits, as CharmNestReadiness reads it)
+      const hand = !nested && !(l && (l.hold || l.changePending)) ? handOf(l) : null;
       const loading = !nested && !known && !unsure && !hand, unsureHere = !nested && unsure && !hand;
       let reason = '';
       if (!nested) reason = hand ? HAND_REASON : loading ? '' : unsureHere ? 'its sheets could not be read just now' : problem ? REASON[problem] : l && l.state === 'pooled' ? 'it is waiting to be placed on a sheet' : 'it is not on a sheet yet';
       const thumb = (page && input.thumbOf && input.thumbOf(id)) || (l && l.thumb) || null;
-      return { key: id, lineKey: o.lineKey, index: 0, hand, noDesign: !!(hand || l && (l.state === 'noDesign' || l.noDesign || sp.noDesign)), label: cleanSku(sku || (l && l.title)) || 'Piece', sku, metal, qty: o.qty, copy: o.copy, poolId: id, transactionId: o.tx, state, nested,
+      return { key: id, lineKey: o.lineKey, index: 0, hand, noDesign: !!(hand || l && !handOf(l) && (l.state === 'noDesign' || l.noDesign || sp.noDesign)), label: cleanSku(sku || (l && l.title)) || 'Piece', sku, metal, qty: o.qty, copy: o.copy, poolId: id, transactionId: o.tx, state, nested,
         sheetId: holder ? holder.id || null : null, sheetLabel: holder ? labelOf(Object.assign({}, holder, { metal: holder.metal || metal })) : null, sheetNo: holder ? sheetNo(holder) : null, setId: holder ? holder.setId || (p && p.setId) || null : null,
         problem, reason, why: (l && l.reason) || '', thumb, listingId: (l && l.listingId) || '', loading, unsure: unsureHere, via, gone: !l && goneKeys.has(o.lineKey) };
     });
@@ -180,7 +182,7 @@
     function lineOfRow(r) {
       const sp = r.spec || {}, ln = r.line || {};
       return { key: r.key, transactionId: ln.transactionId, sku: sp.designSku || ln.sku || '', title: ln.title || '', material: r.material || sp.material || r.metal || null,
-        quantity: sp.quantity || ln.quantity || 1, state: r.state, poolIds: r.poolIds || [], hold: r.hold || null, problems: r.problems || [], spec: { noDesign: sp.noDesign, customDone: sp.customDone || null }, reason: r.reason || '', listingId: ln.listingId || '' };
+        quantity: sp.quantity || ln.quantity || 1, state: r.state, poolIds: r.poolIds || [], hold: r.hold || null, changePending: !!r.changePending, problems: r.problems || [], spec: { noDesign: sp.noDesign, customDone: sp.customDone || null }, reason: r.reason || '', listingId: ln.listingId || '' };
     }
     function linesOf(rid) {
       const pulled = root.Orders && root.Orders.rows ? (root.Orders.rows() || []).filter(r => String(r.order && r.order.receiptId) === rid && r.state !== 'gone') : [];
