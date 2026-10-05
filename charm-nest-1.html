@@ -178,6 +178,9 @@ select.topSel{border:1px solid var(--line);background:var(--card);border-radius:
 .shHead{display:flex;align-items:center;gap:7px;padding:9px 14px 5px;min-width:0;flex-wrap:nowrap}
 .shControls{display:flex;align-items:center;gap:6px;padding:0 14px 7px;min-width:0;min-height:33px}   /* one height with or without Options or Cut Sheet, so the sheets of a row line up */
 .shControls .shTabs{flex:1;order:0;flex-wrap:nowrap;overflow-x:auto}
+/* the sheets as ONE pill (SheetMenu: the back-engraving control's own look): the host takes the room the other controls leave, and
+   the pill inside shrinks its NAME with an ellipsis before its mark or chevron would be cut (a row of tabs ran out of room and clipped "Sheet 2") */
+.shControls .shTabs.shMenuHost{flex:1 1 0;min-width:var(--shm-min,80px);overflow:visible;display:flex;align-items:center}   /* (--shm-min: SheetMenu's own count of the least room that keeps the mark and chevron whole) */
 .shControls .shGate{margin:0;padding:0;border:0;background:none;flex:0 0 auto}
 /* a Nest card's Front | Back · engraving: the order view's own switch (.owSeg), in the controls row, adding no height */
 .shControls .shFace{flex:0 0 auto;order:5;align-items:center;white-space:nowrap}.shControls .shFace[hidden]{display:none}
@@ -2918,9 +2921,10 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-assets.js"></script>
 <script src="charm-nest-backs.js?v=20261005-engtog1"></script>
 <script src="charm-nest-engraving-toggle.js?v=20261005-engtog1"></script>
+<script src="charm-nest-sheet-menu.js?v=20261005-shm1"></script>
 <script src="charm-nest-activity.js?v=20261001-compact-controls"></script>
 <script src="charm-nest-engraving-seals.js?v=20261003-seal-small"></script>
-<script src="charm-nest-readiness.js?v=20261005-issues-truth4"></script>
+<script src="charm-nest-readiness.js?v=20261005-issues-truth4-setgate1"></script>
 <script src="charm-nest-export.js"></script>
 <script src="charm-nest-text.js"></script>
 <script src="charm-nest-orders.js?v=20261005-pieces"></script>
@@ -5389,7 +5393,7 @@ function moveOn(sh) {
   const M = window.Motion, el = sh.el, ids = new Set(sh.rejects), gs = el ? queueGhosts(el, id => ids.has(id), 8) : [];
   const next = overflowToNextSheet(sh);
   if (!M || !next || !el) { gs.forEach(g => g.remove()); return next; }
-  const tab = () => { const pages = pagesOf(sh.metal); return $$('[data-r="tabs"] button[data-i]', el).find(b => pages[+b.dataset.i] === next) || null; };
+  const tab = () => sheetTabEl(el, next);
   if (!gs.length) M.pulse(tab); else gs.forEach((g, i) => setTimeout(() => M.fly(g, tab, { plus: i ? false : "+" + ids.size }), i * 110));
   return next;
 }
@@ -5578,10 +5582,38 @@ function clearMetal(metal) {
    older); the earlier ones are a pick away, in the same pill as the tabs. The row is written only when it reads
    differently, and the one-second tick writes only the marks that changed (tabMarks). */
 const TABS_SHOWN = 10;
-const tabStatus = pg => pg.status === "nesting" || pg.status === "finishing" ? `<span class="spin"></span>` : pg.recalled && !pg.charms.length ? `<i>✓ ${pg.recalled.placedCount}</i>` : pg.status === "complete" ? `<i>✓ ${pg.placements.length}</i>` : pg.status === "partial" ? `<i>⚠ ${pg.placements.length}/${activeCharms(pg).length}</i>` : `<i>${activeCharms(pg).length}</i>`;
+/** What a sheet's tab says of it, as plain facts: the mark (a spinner while it nests, "✓ 77" when done, "⚠ 12/14" when partial, else
+    the charms waiting), a word for its state, and how that reads aloud. The tabs and the sheet menu both draw from this one place. */
+const tabFacts = pg => pg.status === "nesting" || pg.status === "finishing" ? { spin: true, mark: "", state: pg.status, aria: pg.status === "nesting" ? "nesting" : "finishing" }
+  : pg.recalled && !pg.charms.length ? { spin: false, mark: `✓ ${pg.recalled.placedCount}`, state: "recalled", aria: `recalled, ${pg.recalled.placedCount} placed` }
+  : pg.status === "complete" ? { spin: false, mark: `✓ ${pg.placements.length}`, state: "complete", aria: `complete, ${pg.placements.length} placed` }
+  : pg.status === "partial" ? { spin: false, mark: `⚠ ${pg.placements.length}/${activeCharms(pg).length}`, state: "partial", aria: `partial, ${pg.placements.length} of ${activeCharms(pg).length} placed` }
+  : (n => ({ spin: false, mark: String(n), state: "waiting", aria: `${n} ${n === 1 ? "piece" : "pieces"} waiting` }))(activeCharms(pg).length);
+const tabStatus = pg => { const f = tabFacts(pg); return f.spin ? `<span class="spin"></span>` : `<i>${f.mark}</i>`; };
+/* A card's sheets are ONE pill (SheetMenu, charm-nest-sheet-menu.js: the back-engraving control's look) that names the sheet on the card
+   and opens a menu of them all; a pick is showPage, the very call a tab made. Without SheetMenu (it failed to load) or with ?sheettabs=old
+   in the address, the card keeps the row of tabs below. */
+const useSheetMenu = () => !!window.SheetMenu && !/[?&]sheettabs=old\b/.test(location.search);
+function sheetTabKey(pg) { let k = sheetTabKeys.get(pg); if (!k) sheetTabKeys.set(pg, k = "sheetTab:" + ++sheetTabSeq); return k; }
+/** The control standing for a card's sheet tab (a fly or a pulse aims at it): the old tab of that page, else the pill. */
+function sheetTabEl(el, pg) {
+  const pages = pagesOf(el.dataset.m), old = $$('[data-r="tabs"] button[data-i]', el).find(b => pages[+b.dataset.i] === pg);
+  return old || (el._sheetMenu && el._sheetMenu.button) || null;
+}
+const sheetsLabel = metal => `Sheets of ${(METALS.find(x => x.key === metal) || {}).long || metal}`;
+function renderSheetMenu(sh, el, tabs, pages) {
+  if (!el._sheetMenu) {
+    tabs.replaceChildren(); tabs._html = null; tabs.classList.add("shMenuHost");
+    el._sheetMenu = SheetMenu.mount(tabs, { key: "nest:" + sh.metal, label: sheetsLabel(sh.metal), onPick: id => { const i = pagesOf(sh.metal).findIndex(pg => sheetTabKey(pg) === id); if (i >= 0) showPage(sh.metal, i); } });
+  }
+  tabs._of = pages; tabs._n = pages.length; tabs.dataset.sheets = String(pages.length);
+  el._sheetMenu.update(pages.map(pg => { const f = tabFacts(pg); return { id: sheetTabKey(pg), label: `Sheet ${pg.page}`, mark: f.mark, spin: f.spin, state: f.state, aria: f.aria, active: pg === sh, title: sheetName(pg), spinLabel: f.aria === "finishing" ? "Finishing" : "Nesting" }; }),
+    { label: sheetsLabel(sh.metal) });
+}
 function renderTabs(sh) {
   const el = sh.el; if (!el) return; const tabs = $(`[data-r="tabs"]`, el); const pages = pagesOf(sh.metal);
   tabs.classList.remove("hidden");
+  if (useSheetMenu() || el._sheetMenu) return renderSheetMenu(sh, el, tabs, pages);
   const from = Math.max(0, pages.length - TABS_SHOWN), older = pages.slice(0, from);
   const html = (older.length ? `<select data-older title="the earlier sheets of this metal"><option value="">Earlier · ${older.length}</option>${older.map((pg, i) => `<option value="${i}"${pg === sh ? " selected" : ""}>${esc(sheetName(pg))}</option>`).join("")}</select>` : "")
     + pages.map((pg, i) => i < from && pg !== sh ? "" : `<button type="button" class="${pg === sh ? "on" : ""}" data-i="${i}" title="${esc(sheetName(pg))}">Sheet ${pg.page}<span data-st>${tabStatus(pg)}</span></button>`).join("");
@@ -5594,6 +5626,7 @@ function renderTabs(sh) {
 /** The tabs' marks (a spinner while a sheet nests, its count after), written where they changed; a new or removed page redraws the row. */
 function tabMarks(sh) {
   const el = sh.el; if (!el) return; const tabs = $(`[data-r="tabs"]`, el), pages = pagesOf(sh.metal);
+  if (el._sheetMenu) return renderTabs(sh);   // (the pill and an open menu write only what changed)
   if (tabs._of !== pages || tabs._n !== pages.length) return renderTabs(sh);
   for (const b of $$("button[data-i]", tabs)) {
     const pg = pages[+b.dataset.i], mark = b.querySelector("[data-st]"); if (!pg || !mark) return renderTabs(sh);
