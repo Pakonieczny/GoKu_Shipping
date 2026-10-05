@@ -41,6 +41,8 @@ const ListZoom = (() => {
   function observe(box){if(resize&&!observed.has(box)){observed.add(box);resize.observe(box);}}
   function detach(box){bound.get(box)?.dispose();bound.delete(box);resize?.unobserve(box);observed.delete(box);box.classList.remove('zoomReady');box.removeAttribute('title');const reset=box.closest('figure')?.querySelector('.thumbReset');if(reset){reset.hidden=true;reset.onclick=null;}}
   function bind(box,key){
+    // (a picture that opens the viewer, the order window's, never zooms in place: PhotoView does the zooming and panning)
+    if(box.hasAttribute('data-viewer')){if(bound.has(box))detach(box);return;}
     const im=box.querySelector('img,canvas');if(!im)return;
     if(bound.get(box)?.im===im){observe(box);return;}
     detach(box);const abort=new AbortController(),on=(name,fn,opts={})=>box.addEventListener(name,fn,{...opts,signal:abort.signal});
@@ -242,15 +244,22 @@ const ListMedia = (() => {
     let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b;});pending.set(id,{promise,resolve,reject});wanted.add(id);flushPhotos();return promise;
   }
   const catalog=new Map();
-  async function vector(row) {
+  // (`px`, from the picture viewer, draws the same design large from the same source: never the thumbnail enlarged)
+  async function vector(row,px) {
     if(!row || row.spec?.noDesign)return null;
     const charm=(row.poolIds || []).map(id=>Pool.charmOf(id)).find(c=>c?.outline && c.members?.length);
-    if(charm)return P.frontPreview ? P.frontPreview(charm,220) : Engrave.renderFront(charm,220);
+    if(charm)return P.frontPreview ? P.frontPreview(charm,px || 220) : Engrave.renderFront(charm,px || 220);
     const sku=row.spec?.designSku || row.line?.sku;if(!sku)return null;
     let entry=Master.entryFor(sku);
     if(!entry){if(!catalog.has(sku))catalog.set(sku,Master.fetchEntry(sku).finally(()=>catalog.delete(sku)));entry=await catalog.get(sku);}
     if(!entry)return null;
-    return Pool.masterPreview(entry,row.spec?.size,true);
+    return px ? Pool.masterFront(entry,row.spec?.size,px) : Pool.masterPreview(entry,row.spec?.size,true);
+  }
+  /** A line's vector design drawn large on white (about 1600 px) for the picture viewer, as an address the viewer's picture
+   *  can show; null when the line has no design. */
+  async function vectorBig(row,px=1600) {
+    const out=await vector(row,px);
+    return typeof out==='string'?out:(out&&out.toDataURL?out.toDataURL('image/png'):null);
   }
   /** A line's vector design into one box: a list row's, or the order window's beside its listing photo. */
   function vectorInto(host,row) {
@@ -274,7 +283,7 @@ const ListMedia = (() => {
     const io=window.IntersectionObserver ? new IntersectionObserver(es=>{if(es.some(e=>e.isIntersecting))go();},{rootMargin:'160px'}) : null;
     button.onclick=go;host.appendChild(button);if(io){pages.set(host,io);io.observe(button);}
   }
-  return {pair,mount,vectorInto,watch,more,listing,prepare,start,peek:id=>photos.get(String(id || '')) || null};
+  return {pair,mount,vectorInto,vectorBig,watch,more,listing,prepare,start,peek:id=>photos.get(String(id || '')) || null};
 })();
 const clockFormat = new Intl.DateTimeFormat([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });   // made once: a formatter costs far more to make than to use
 const fmtT = t => clockFormat.format(new Date(t));
@@ -2236,6 +2245,14 @@ const Pool = window.Pool = (() => {
     while(masterPreviewCache.size>80)masterPreviewCache.delete(masterPreviewCache.keys().next().value);
     try{return await task;}catch(e){masterPreviewCache.delete(key);throw e;}
   }
+  /** The same picture as masterPreview(…, true) drawn at `px` for the picture viewer. Looking registers nothing (no pool
+   *  source, no cache of a large picture): the master is read, drawn and let go, or its pooled copy is drawn. */
+  async function masterFront(entry,size,px) {
+    const path=sizeEntry(entry,size)?.aiPath;
+    if(!path)throw new Error("No design file");
+    const cached=B.pool.sources.get(path),charm=cached?cached.charms[0]:(await readMasterCharm(entry,size)).charm;
+    return P.frontPreview ? P.frontPreview(charm,px) : Engrave.renderFront(charm,px);
+  }
   /** Upgrade cached geometry before a recovered sheet can be used again. */
   async function repairRecoveredGeometry(d) {
     const sources=(d.sources || []).concat(Object.values(d.poolSources || {}));
@@ -2516,7 +2533,7 @@ const Pool = window.Pool = (() => {
     row.state = recs.length && recs.every(p => p.state === "committed") ? "committed" : recs.length && recs.every(p => p.sheetId) ? "written" : "pooled";
     row.reason = null; return true;
   }
-  return { poolAdd, addAll, masterCharm, masterPreview, cloneCharm, update, charmOf, sheetOf, holding, sizeEntry, repairRecoveredGeometry, onSheets, settle, tryLater, recover };
+  return { poolAdd, addAll, masterCharm, masterPreview, masterFront, cloneCharm, update, charmOf, sheetOf, holding, sizeEntry, repairRecoveredGeometry, onSheets, settle, tryLater, recover };
 })();
 
 /* Carry-forward is keyed by immutable order-line identity. A changed Etsy line is always re-interpreted. */
@@ -10383,6 +10400,61 @@ const OrderWin = window.OrderWin = (() => {
   // the lines of the order on screen: the pull's, or those read from the records
   const linesOf = r => { const rid = String(r.order.receiptId); const pulled = (Orders.rows() || []).filter(x => String(x.order.receiptId) === rid && x.state !== "gone"); return pulled.length ? pulled : (W.rows && W.rows.some(x => x === r) ? W.rows : [r]); };
 
+  /* The two pictures at the left of the Overview (the Etsy listing photo and the vector design) open the one viewer the
+     inbox photos use (PhotoView, charm-nest-mail.js: wheel, pinch, double-click and double-tap, + − 0, drag, ← →, Esc) as a
+     layer of this window, so the window under it stays as it was and Esc closes the viewer only. Both pictures of the piece
+     on show are its list: ← → step between them, and the caption says which one it is. The thumbnails themselves never
+     zoom. The photo opens at the largest size Etsy keeps, the vector is drawn again large (never the small thumbnail
+     enlarged). */
+  const PIC_SIZES = ["fullxfull", "1588xN"];   // (largest first: a size that cannot be had falls back to the next, and last to the thumbnail's own)
+  /** The addresses of an Etsy photo in its larger sizes: [largest, …, the one given]. Photos come through the image proxy
+   *  (…/imageProxy?url=<Etsy address>); an address that is not Etsy's usual shape has no larger size to look for. */
+  function bigPhoto(url) {
+    const own = cors(url), at = String(url);
+    let raw = at, wrap = null;
+    try { const u = new URL(at, location.href); if (u.searchParams.get("url")) { raw = u.searchParams.get("url"); wrap = u.pathname + "?url="; } } catch (_) {}
+    const m = /\/il_(\d+x(?:\d+|N)|fullxfull)\./.exec(raw);
+    if (!m || !/^https:\/\/[^/]*etsystatic\.com\//.test(raw)) return [own];
+    // (only sizes above the one given: a photo already at the largest or the next size is not swapped for a smaller one)
+    const has = PIC_SIZES.indexOf(m[1]), above = has < 0 ? PIC_SIZES : PIC_SIZES.slice(0, has);   // (-1: a size of its own, 570xN and the like: both are larger)
+    const sized = size => { const a = raw.replace(/\/il_(?:\d+x(?:\d+|N)|fullxfull)\./, `/il_${size}.`); return wrap ? wrap + encodeURIComponent(a) : a; };
+    return [...above.map(sized), own];
+  }
+  const bigVectors = new Map();   // the drawings made for the viewer, newest last (a few: they are large)
+  function bigVector(r) {
+    const key = JSON.stringify([r.key, r.spec && r.spec.designSku, r.spec && r.spec.size, r.poolIds]);
+    if (!bigVectors.has(key)) {
+      const task = Promise.resolve().then(() => ListMedia.vectorBig(r, 1600)).catch(e => { bigVectors.delete(key); throw e; });
+      bigVectors.set(key, task); while (bigVectors.size > 4) bigVectors.delete(bigVectors.keys().next().value);
+    }
+    return bigVectors.get(key);
+  }
+  /** The pictures of the piece on show, as the viewer's list: the Etsy photo (when there is one) and the vector design. */
+  function picItems(r) {
+    const sku = (r.spec && r.spec.designSku) || r.line.sku || "", pcs = W.pieces || [], n = pcs.length, ix = pcs.findIndex(p => p.key === r.key);
+    const tail = (n > 1 && ix >= 0 ? ` · Piece ${ix + 1} of ${n}` : "") + (sku ? ` · ${sku}` : "");
+    const items = [], url = tryDo(() => Orders.imageFor(r)) || (r.loading ? r.peek : null);
+    if (url) { const v = bigPhoto(url); items.push({ which: "photo", src: v[0], fall: v.slice(1, -1), back: v.length > 1 ? v[v.length - 1] : null, cors: true, cap: "Etsy listing" + tail, wait: "Loading the photo…" }); }
+    if (!(r.spec && r.spec.noDesign) && sku) items.push({ which: "vector", load: () => bigVector(r), orig: false, cap: "Vector design" + tail, wait: "Drawing the vector design…", none: "This piece has no vector design.", fail: "The vector design could not be drawn." });
+    return items;
+  }
+  /** Open the viewer on the picture clicked (`which`: "photo" or "vector"), or do nothing when that one has no picture. */
+  function openPic(which, opener) {
+    const r = rowOf(W.key); if (!r) return;
+    const items = tryDo(() => picItems(r)) || [], at = items.findIndex(x => x.which === which);
+    if (at < 0) return;
+    const PV = window.PhotoView;
+    if (PV && PV.openItems) tryDo(() => PV.openItems(items, at, opener, { noun: "picture" }));
+    else if (items[at].src) window.open(items[at].src, "_blank", "noopener");   // (the viewer's file did not load: the photo, at least, in a tab of its own)
+  }
+  function wirePics() {
+    for (const [id, which] of [["owPhotoBox", "photo"], ["owVectorBox", "vector"]]) {
+      const b = byId(id); if (!b) continue;
+      b.addEventListener("click", e => { e.preventDefault(); openPic(which, b); });
+      b.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); e.stopPropagation(); openPic(which, b); } });
+    }
+  }
+
   function wire() {
     if (W.wired) return; W.wired = true;
     W.dlg = byId("orderWin"); if (!W.dlg) return;
@@ -10406,7 +10478,7 @@ const OrderWin = window.OrderWin = (() => {
     });
     // back from a Send to Sheet flight that took the view out of the way (SendTour): drawn as it is now, still unseen
     W.dlg.addEventListener("tour:back", () => { if (W.dlg.open && !W.closing) tryDo(paint); });
-    byId("owPhoto").onclick = e => e.currentTarget.classList.toggle("zoom");
+    wirePics();
     byId("owCopy").onclick = async () => { const r = rowOf(W.key); const sku = r && ((r.spec && r.spec.designSku) || r.line.sku); if (!sku) return; try { await navigator.clipboard.writeText(sku); toast("SKU copied", "ok", 1800); } catch (_) {} };
     byId("owWhoBtn").onclick = () => { NameBar.open({ onSet: paintWho }); };
     const note = byId("owNote");
@@ -10743,7 +10815,6 @@ const OrderWin = window.OrderWin = (() => {
     const mp = byId("owMetal"); mp.textContent = r.material ? labelOf(r.material) : (sp.materialLabel || (r.loading ? "…" : "no material"));
     mp.className = "pill " + (r.material || r.loading ? "neutral" : "bad");
     const ph = byId("owPhoto"); const url = tryDo(() => Orders.imageFor(r)) || (r.loading ? r.peek : null);
-    ph.classList.remove("zoom");
     ph.innerHTML = url ? '<img crossorigin="anonymous" alt="" src="' + esc(cors(url)) + '">' : r.loading ? '<span class="owSk owSkPic" aria-hidden="true"></span>' : '<span class="ph">no image</span>';
     ph.dataset.lid = String(r.line.listingId || ""); if (url) ph.dataset.painted = "1"; else { delete ph.dataset.painted; if (r.line.listingId) tryDo(() => Orders.wantImage(r.line.listingId)); }
     // the charm's vector design under the listing photo, as the lists show the two side by side (the window showed the

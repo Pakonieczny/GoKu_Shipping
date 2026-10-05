@@ -1479,7 +1479,7 @@
      of that conversation with ← → and the side buttons, and closes with Esc, the × or a click beside the photo. */
   const PhotoView = (() => {
     const SVG = d => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${d}</svg>`;
-    let dlg = null, stage = null, img = null, note = null, list = [], at = 0, opener = null, host = null;
+    let dlg = null, stage = null, img = null, note = null, list = [], at = 0, opener = null, host = null, noun = "photo";
     let W = 0, H = 0, s = 1, tx = 0, ty = 0, fit = 1, ready = false;
     const pts = new Map(); let pinch = null, down = null, moved = false, tap = null, tapped = 0;
     const maxS = () => Math.max(fit * 6, 4);
@@ -1598,29 +1598,55 @@
       if (s > fit * 1.05) toFit(true); else zoomAt(Math.max(fit * 2.5, 1), x - r.left, y - r.top, true);
     }
     function say(t) { note.hidden = !t; note.innerHTML = t; }
+    /** What the note says while a picture is on its way: a caller's own words (p.wait) come with the small spinner the page
+     *  uses for every wait; the photos of a conversation keep their plain "Loading the photo…". */
+    const waiting = p => p.wait ? `<span class="cmSpin" aria-hidden="true"></span>${E(p.wait)}` : "Loading the photo…";
     function show(i) {
       at = (i + list.length) % list.length;
       const p = list[at];
-      ready = false; img.style.visibility = "hidden"; say("Loading the photo…");
+      ready = false; img.style.visibility = "hidden"; img.onload = img.onerror = null;
+      dlg.querySelector(".phvCap").textContent = p.cap || "";
+      dlg.querySelector(".phvN").textContent = list.length > 1 ? `${at + 1} of ${list.length}` : "";
+      const orig = dlg.querySelector(".phvOrig"); orig.hidden = p.orig === false;
+      if (p.src) orig.href = p.src; else orig.removeAttribute("href");
+      dlg.querySelectorAll(".phvNav").forEach(b => b.hidden = list.length < 2);
+      if (p.src) fetchImg(p); else make(p);
+      // the neighbours load while this one is looked at
+      for (const d of [1, -1]) { const q = list[(at + d + list.length) % list.length]; if (q && q !== p && q.src && !q.warm) { q.warm = new Image(); if (q.cors) q.warm.crossOrigin = "anonymous"; q.warm.src = q.src; } }
+    }
+    function fetchImg(p) {
+      say(waiting(p));
       if (p.cors) img.crossOrigin = "anonymous"; else img.removeAttribute("crossorigin");
       img.onload = () => {
         if (list[at] !== p) return;
         W = img.naturalWidth || 1; H = img.naturalHeight || 1; ready = true; say("");
         img.style.width = W + "px"; img.style.height = H + "px"; img.style.visibility = "";
         measure(); toFit(); if (flight) flyIn();
+        // a neighbour that is made on request (a drawing) is begun now that this one is up
+        for (const q of list) if (q !== p && q.load && !q.src && !q.task && !q.failed) task(q);
       };
       img.onerror = () => {
         if (list[at] !== p) return;
-        if (p.back && !p.triedBack) { p.triedBack = true; p.src = p.back; img.src = p.back; dlg.querySelector(".phvOrig").href = p.back; return; }
-        say(`This photo could not be loaded. <a href="${E(p.src)}" target="_blank" rel="noopener">Try the original ${ICON.out}</a>`);
+        // a caller's smaller sizes first (p.fall), then the one known to load (p.back)
+        const next = p.fall && p.fall.length ? p.fall.shift() : (p.back && !p.triedBack ? (p.triedBack = true, p.back) : "");
+        if (next) { p.src = next; img.src = next; dlg.querySelector(".phvOrig").href = next; return; }
+        say(`This ${noun} could not be loaded. <a href="${E(p.src)}" target="_blank" rel="noopener">Try the original ${ICON.out}</a>`);
       };
       img.src = p.src;
-      dlg.querySelector(".phvCap").textContent = p.cap || "";
-      dlg.querySelector(".phvN").textContent = list.length > 1 ? `${at + 1} of ${list.length}` : "";
-      dlg.querySelector(".phvOrig").href = p.src;
-      dlg.querySelectorAll(".phvNav").forEach(b => b.hidden = list.length < 2);
-      // the neighbours load while this one is looked at
-      for (const d of [1, -1]) { const q = list[(at + d + list.length) % list.length]; if (q && q !== p && !q.warm) { q.warm = new Image(); if (q.cors) q.warm.crossOrigin = "anonymous"; q.warm.src = q.src; } }
+    }
+    /** A picture made on request (p.load gives its address, or nothing when there is none): made once, and again only
+     *  after it failed. */
+    function task(q) {
+      if (!q.task) q.task = Promise.resolve().then(() => q.load()).then(r => { q.src = (r && (r.src || r)) || ""; q.failed = false; }, () => { q.task = null; q.src = ""; q.failed = true; });
+      return q.task;
+    }
+    function make(p) {
+      say(waiting(p)); p.failed = false;
+      task(p).then(() => {
+        if (list[at] !== p) return;
+        if (p.src) { dlg.querySelector(".phvOrig").href = p.src; fetchImg(p); }
+        else say(E(p.failed ? (p.fail || `This ${noun} could not be made.`) : (p.none || `There is no ${noun} to show.`)));
+      });
     }
     function step(d) { if (list.length > 1) show(at + d); }
     // photos in a conversation, and the sheets' QR labels (img[data-big]: their picture is whatever the page loaded)
@@ -1637,14 +1663,29 @@
     function hostCancel(e) { if (!host || !dlg.open || !dlg.isConnected) return; e.preventDefault(); e.stopImmediatePropagation(); close(); }
     function hostClosed() { close(); }
     function open(el) {
-      const into = dialogOf(el);
-      if (dlg && dlg.open && (into !== host || !dlg.isConnected)) close();
       const scope = el.closest(".cmThread,.owThread,.sheetQR,[data-photo-scope]") || el.parentElement || document.body;
       const all = [...scope.querySelectorAll(ANY)].filter(b => itemOf(b).src);
-      list = all.map(itemOf);
+      begin(el, all.map(itemOf), Math.max(0, all.indexOf(el)));
+    }
+    /** The viewer on a list the caller made (the order window's Etsy photo and vector design): items are
+     *  { src, cap, cors, back, fall, wait, orig } for a picture with an address, or { load, cap, wait, none, fail, orig }
+     *  for one made on request (load gives its address). `el` is what was clicked: the viewer grows out of it and gives
+     *  the focus back to it. opts.noun names the pictures in the buttons and messages ("photo" when left out). */
+    function openItems(items, index, el, opts) {
+      begin(el, (items || []).filter(Boolean).map(x => Object.assign({}, x)), index || 0, opts);
+    }
+    function begin(el, items, index, opts) {
+      const into = dialogOf(el);
+      if (dlg && dlg.open && (into !== host || !dlg.isConnected)) close();
+      list = items;
       if (!list.length) return;
-      opener = el;
+      opener = el; noun = (opts && opts.noun) || "photo";
       if (!dlg) build();
+      for (const b of dlg.querySelectorAll(".phvNav")) {
+        const w = b.classList.contains("prev") ? "Previous" : "Next", k = b.classList.contains("prev") ? "←" : "→";
+        b.title = `${w} ${noun} (${k})`; b.setAttribute("aria-label", `${w} ${noun}`);
+      }
+      dlg.setAttribute("aria-label", noun.charAt(0).toUpperCase() + noun.slice(1));
       const fresh = !dlg.open;
       if (fresh) {
         host = into;
@@ -1656,7 +1697,7 @@
         else { try { dlg.showModal(); } catch (_) { dlg.show(); } }
         flight = { el, at: Date.now() };
       }
-      show(Math.max(0, all.indexOf(el)));
+      show(Math.max(0, Math.min(+index || 0, list.length - 1)));
       if (fresh) enter();
       dlg.querySelector(".phvX").focus({ preventScroll: true });
     }
@@ -1726,7 +1767,7 @@
       const b = e.target.closest && e.target.closest(ANY); if (!b || !itemOf(b).src) return;
       e.preventDefault(); e.stopPropagation(); open(b);
     }, true);
-    return { open, close, isOpen: () => !!(dlg && dlg.open) };
+    return { open, openItems, close, isOpen: () => !!(dlg && dlg.open) };
   })();
   window.PhotoView = PhotoView;
 
