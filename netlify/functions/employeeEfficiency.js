@@ -175,7 +175,7 @@ async function readRollups(ctx, from, to) {
 }
 
 /** Sessions that started in [fromMs, toMs): the server's times are ms or Firestore times, and a range matches only one kind, so both are read. */
-function readSessions(ctx, fromMs, toMs) {
+function readSessionsRange(ctx, fromMs, toMs) {
   return cached(ctx, `sess|${ctx.prefix}|${fromMs}|${toMs}`, toMs > nyMidnight(ctx.today) ? TTL_LIVE : TTL_PAST, async () => {
     const TS = ctx.admin.firestore.Timestamp, ranges = [[fromMs, toMs]];
     if (TS && typeof TS.fromMillis === "function") ranges.push([TS.fromMillis(fromMs), TS.fromMillis(toMs)]);
@@ -184,6 +184,15 @@ function readSessions(ctx, fromMs, toMs) {
     for (const s of snaps) { if (s.docs.length > LIM.sessions) truncated = true; for (const d of s.docs.slice(0, LIM.sessions)) if (!seen.has(d.id)) { seen.add(d.id); rows.push(Object.assign({ id: d.id }, d.data() || {})); } }
     return { rows, truncated };
   });
+}
+/** The window's sessions in two parts: what started before yesterday's midnight is final (a session never outlives its New York midnight)
+    and is kept 10 minutes; what started yesterday or today can still change and is read afresh every 5 s. A poll used to re-read the
+    whole fortnight (hundreds of documents) every 5 s per open console; now it reads the last day and a bit. */
+function readSessions(ctx, fromMs, toMs) {
+  const split = nyMidnight(addDays(ctx.today, -1));
+  if (fromMs >= split || toMs <= split) return readSessionsRange(ctx, fromMs, toMs);
+  return Promise.all([readSessionsRange(ctx, fromMs, split), readSessionsRange(ctx, split, toMs)])
+    .then(([a, b]) => ({ rows: a.rows.concat(b.rows), truncated: a.truncated || b.truncated }));
 }
 
 /** The first day any rollup exists (when the activity events began); kept an hour. "" when there are none. */
@@ -220,7 +229,8 @@ function eventRow(id, d, ctx) {
   // the feed's order and cursor follow the COMMIT time (ts): serverAt is read before the write, and a transaction that waits
   // for a retry commits later, so a poll could pass an event whose serverAt is older than its cursor and never show it
   return { id: String(d.id || id).slice(0, 100), at, k: tsMs || serverAt, tsMs: tsMs || serverAt, person, station: String(d.station || ""), device: String(d.device || "").slice(0, 40), action,
-    orderId: digits(d.orderId), parts: Math.max(0, Math.floor(num(d.parts))), detail: scrub(d.detail), sincePrevMs: Math.max(0, num(d.sincePrevMs)), day: typeof d.day === "string" ? d.day : "" };
+    orderId: digits(d.orderId), parts: Math.max(0, Math.floor(num(d.parts))), detail: scrub(d.detail), sincePrevMs: Math.max(0, num(d.sincePrevMs)), day: typeof d.day === "string" ? d.day : "",
+    orders: num(d.orders) >= 1 ? 1 : 0, seq: Math.max(0, num(d.seq)) };   // (orders: the action finished an order; seq: the device's counter: the issue counts replay the writer's order with them)
 }
 const byNewest = (a, b) => b.k - a.k || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0);
 /** The newest events of everybody, kept in the instance: loaded once (newest 500), then only topped up. */
@@ -452,8 +462,10 @@ function parseCursor(v) {
 const cursorOf = events => events.length ? `${events[0].k}~${events[0].id}` : "0~";
 const newer = (e, c) => e.k > c.k || (e.k === c.k && e.id > c.id);
 
-async function buildOverview(ctx, day, days) {
-  const from = addDays(day, -(days - 1)), winDays = Math.max(14, days), winFrom = addDays(day, -(winDays - 1));
+async function buildOverview(ctx, day, days, withTrend) {
+  // the daily trend needs a fortnight; a single-day screen (trend:false) reads only its own day, so it does not pull the fortnight's
+  // rollups, sign-ins and (for the days before the events began) up to ten days of seals on every poll
+  const from = addDays(day, -(days - 1)), winDays = withTrend ? Math.max(14, days) : days, winFrom = addDays(day, -(winDays - 1));
   const evP = day === ctx.today ? safe(readRecent(ctx), "events") : safe(readDayEvents(ctx, day).then(r => ({ rows: r.rows, capped: r.capped })), "events");
   const asm = await assemble(ctx, winFrom, day);
   const evR = await evP, info = asm.info;
@@ -524,7 +536,8 @@ async function opOverview(ctx, body) {
   if (!validDay(day)) return json(400, { ok: false, error: "day must be YYYY-MM-DD" });
   if (day > ctx.today) day = ctx.today;
   const n = Math.floor(num(body.days)), days = n <= 1 ? 1 : n <= 7 ? 7 : 30;
-  const base = await cached(ctx, `ov|${ctx.prefix}|${day}|${days}`, TTL_LIVE, () => buildOverview(ctx, day, days));
+  const withTrend = !(body.trend === false || body.trend === 0 || body.trend === "0");
+  const base = await cached(ctx, `ov|${ctx.prefix}|${day}|${days}|${withTrend ? "t" : "n"}`, TTL_LIVE, () => buildOverview(ctx, day, days, withTrend));
   const after = parseCursor(body.after);
   const feed = (after ? base.feedAll.filter(e => newer(e, after)) : base.feedAll.slice(0, LIM.feed)).slice(0, after ? LIM.feedDelta : LIM.feed)
     .map(e => ({ id: e.id, at: e.at, person: e.person, station: e.station, action: e.action, orderId: e.orderId, parts: e.parts }));
@@ -609,7 +622,10 @@ async function opOrders(ctx, body) {
 }
 
 /* ── the door ── */
-const OPS = { overview: opOverview, person: opPerson, orders: opOrders };
+const PROFILE = require("./_employeeProfile")({ COL, LIM, ms, num, r1, zeros, digits, cleanName, okName, niceName, bestForm, nameKeyOf, canonOf, scrub, validDay, addDays, nyDay, nyMidnight, clip, covered, spanOf, cached, readRollups, readEventsStart, eventRow, col, json, safe, tmpl, KEYS });   // the employee page: ops person (with range) and personOrders
+const OPS = { overview: opOverview, person: (ctx, body) => (body.range != null || body.from || body.to ? PROFILE.opProfile(ctx, body) : opPerson(ctx, body)), orders: opOrders, personOrders: PROFILE.opOrders };
+/* op "live": the stations board (what each station is working on right now), kept in _stationLive.js */
+OPS.live = (ctx, body) => require("./_stationLive").op(ctx, body, { json, nyMidnight, cached, display: raw => canonOf(ctx, nameKeyOf(ctx, raw)) || niceName(raw) });
 function senderOf(event) {
   const h = (event && event.headers) || {};
   const get = k => { for (const x in h) if (x.toLowerCase() === k) return h[x]; return ""; };

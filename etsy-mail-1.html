@@ -6764,7 +6764,11 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
 
   <!-- Sign-in time per person and computer, and the midnight sign-out (New York time) -->
   <script src="station-session.js?v=20261002-ea1"></script>
-  <script src="station-activity.js?v=20261002-ea1"></script>
+  <script src="station-activity.js?v=20261005-live1"></script>
+  <!-- The conversation in hand right now (opened = working, reply sent or Done = idle), for the console's live stations board (station-live-order.js). Optional: without it nothing changes. -->
+  <script src="station-live-order.js?v=20261005-lo1"></script>
+  <!-- Contact signals per operator: replies drafted, sent, delivered, failed, edited before sending, time to first reply (station-mail-signals.js). Optional: without it nothing changes. -->
+  <script src="station-mail-signals.js?v=20261005-ms1"></script>
   <script>
   (function(){
     "use strict";
@@ -9521,6 +9525,7 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
     /** Keep what the draft slot says about a thread's latest send. */
     function noteDraftStatus(threadId, d) {
       if (!threadId) return;
+      try { window.MailSignals && MailSignals.seen(threadId, d); } catch (_) {}   // efficiency log: a reply's outcome (delivered / failed), once
       const prev = state.sendDelivery.get(threadId);
       const next = d ? {
         status  : String(d.status || ""),
@@ -14287,6 +14292,7 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
             else if (prev && prev.status === "archived") StationActivity.log("undo", { orderId: String((x && x.etsyOrderId) || "").replace(/\D/g, ""), detail: "conversation reopened" });
           }
         } catch (_) {}
+        try { if (status === "archived") window.InboxLive && InboxLive.end(threadId); } catch (_) {}   // the live board: Done, nothing in hand
         toast(smartStatusToast(status, prev && prev.status, t));
         smartDelta();
       } catch (e) {
@@ -15713,6 +15719,33 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
       });
     }
 
+    /* The conversation in hand right now (station-live-order.js: the Employee efficiency console's live stations board). An
+       operator opening a conversation has it in hand (its Etsy order when it names one: the server finds the pictures from
+       what the app already stores; otherwise a titled "Customer conversation"); sending the reply, marking it Done, going
+       back or deleting it puts nothing in hand. Read from the thread the page already holds: no Etsy call, nothing written
+       but the live board's own small record. Best effort: never throws, never waits, never changes what the page does. */
+    window.InboxLive = (function () {
+      let cur = "";
+      const digits = v => String(v == null ? "" : v).replace(/\D/g, "");
+      function open(t) {
+        try {
+          const L = window.StationLiveOrder; if (!L || !t || !t.id) return false;
+          cur = String(t.id);
+          const oid = digits(t.etsyOrderId), waiting = typeof isAwaiting === "function" && isAwaiting(t);
+          const o = { note: waiting ? "customer waiting" : "", customer: t.customerName ? String(t.customerName).slice(0, 60) : undefined, sync: true };
+          return oid.length >= 9 ? L.start(oid, null, o) : L.sheet(cur, "Customer conversation", o);
+        } catch (_) { return false; }
+      }
+      function end(threadId) {
+        try {
+          if (threadId && cur && String(threadId) !== cur) return false;
+          cur = "";
+          const L = window.StationLiveOrder; return !!(L && L.end());
+        } catch (_) { return false; }
+      }
+      return { open, end };
+    })();
+
     async function openThread(threadId) {
       keepTypedText();   // the reply typed so far stays with its conversation
       aiTextDismissFresh();
@@ -15802,6 +15835,7 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
 
       renderDetail(thread);
       startMessagesPolling(threadId);
+      try { window.InboxLive && InboxLive.open(thread); } catch (_) {}   // the live board: this conversation is in hand
 
       // v3.7 — Auto-detect the customer's language if we don't have one
       // on file yet. Fire and forget; the language picker is rendered
@@ -17810,6 +17844,10 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
     }
     function aiRunFinish(threadId, run, data, mode) {
       if (aiRunMap().get(threadId) !== run) return;
+      try {   // efficiency log: this operator asked for a draft and it came back (counts only; never the words)
+        const x = (state.threads || []).find(y => y && y.id === threadId);
+        window.MailSignals && MailSignals.drafted(threadId, mode || run.mode, String((x && x.etsyOrderId) || ""));
+      } catch (_) {}
       run.status = "done";
       run.recovering = false;
       run.doneAt = Date.now();
@@ -17881,6 +17919,7 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
     }
     function aiTextMarkFresh(threadId, text) {
       if (!text || !String(text).trim()) return;
+      try { window.MailSignals && MailSignals.baseline(threadId, text); } catch (_) {}   // efficiency log: the AI's words, to tell an edited reply from an unchanged one
       const key = aiTextKey(threadId, text);
       let seen = {};
       try { seen = JSON.parse(localStorage.getItem("etsymail_ai_seen_text_v1") || "{}") || {}; } catch (_) {}
@@ -20788,6 +20827,15 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
       setTimeout(tick, 5000);
     }
 
+    // Efficiency log (station-mail-signals.js): a reply still on its way after a reload, or one nobody is watching any more,
+    // is looked at slowly (one read of its draft slot per 30 s while any is pending; no Etsy call, nothing written).
+    try {
+      window.MailSignals && MailSignals.resume(async (threadId, draftId) => {
+        try { const r = await api("etsyMailDraftSend", { query: { op: "status", draftId } }); return (r && r.draft) || null; }
+        catch (e) { if (e && e.status === 404) return null; throw e; }
+      });
+    } catch (_) {}
+
     /** Put a failed send's text (and attachments / translation) back. */
     function restoreFailedSend(threadId, snap) {
       const deskTa = $("emDraftText");
@@ -21285,10 +21333,30 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
 
       // Efficiency log (station-activity.js): this operator's reply is in Etsy's queue. Counts and ids only: never the
       // words, the customer or the address.
+      // (station-mail-signals.js adds how it started (AI draft, edited or not), how long the customer waited, and keeps the
+      // reply on a short list until the Etsy helper says delivered or failed.)
       try {
         const x = (state.threads || []).find(y => y && y.id === threadId);
-        window.StationActivity && StationActivity.log("note", { orderId: String((x && x.etsyOrderId) || "").replace(/\D/g, ""), detail: designNote ? "reply sent · design note" : "reply sent" });
+        const oid = String((x && x.etsyOrderId) || "").replace(/\D/g, "");
+        const sentWords = (resp && typeof resp.text === "string" && resp.text) ? resp.text : text;
+        if (window.MailSignals) {
+          let first = null;
+          try {   // the customer's first message vs. ours: only when this conversation is the one on screen
+            if (state.selectedId === threadId && Array.isArray(state.messages) && state.messages.length) {
+              const ms = state.messages.filter(Boolean);
+              first = ms.some(m => m.direction === "inbound") && !ms.some(m => m.direction === "outbound");
+            }
+          } catch (_) {}
+          // (a customer waiting for this reply: when their latest message began to wait; a follow-up nobody asked for has no wait)
+          const waiting = x && (typeof isAwaiting === "function" ? isAwaiting(x) : true);
+          const since = waiting ? (tsToMs(x.awaitingReplySince) || tsToMs(x.lastInboundAt)) : 0;
+          MailSignals.sent({ threadId, orderId: oid, text: sentWords, englishText, designNote: !!designNote, sinceMs: since, firstReply: first,
+            draftId: resp && resp.draftId });
+        } else {
+          window.StationActivity && StationActivity.log("note", { orderId: oid, detail: designNote ? "reply sent · design note" : "reply sent" });
+        }
       } catch (_) {}
+      try { window.InboxLive && InboxLive.end(threadId); } catch (_) {}   // the live board: the reply is on its way, nothing in hand
       // Queued. The bubble reads "sending…" until the extension reports it
       // delivered (noteDraftStatus), then like any message until Etsy's copy
       // replaces it.
@@ -22712,6 +22780,7 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
             else if (previousStatus === "archived") StationActivity.log("undo", { orderId: String((x && x.etsyOrderId) || "").replace(/\D/g, ""), detail: "conversation reopened" });
           }
         } catch (_) {}
+        try { if (status === "archived") window.InboxLive && InboxLive.end(threadId); } catch (_) {}   // the live board: Done, nothing in hand
         toast(`Status → ${status}`);
         // Reconcile: refresh both the list and the counts from server
         // truth. Optimistic update was for instant feedback; server is
@@ -22875,6 +22944,7 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
         // shows the placeholder when no thread is selected).
         try {
           state.selectedId = null;
+          try { window.InboxLive && InboxLive.end(); } catch (_) {}   // the live board: nothing in hand
           $("emDetail").innerHTML = `<div class="em-detail-empty">Thread deleted. Pick another from the list.</div>`;
         } catch {}
         if (isSmartLayout()) smartForget(threadId);
@@ -25338,6 +25408,7 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
       try {
         api("etsyMailThreads", { method: "POST", body: { action: "markRead", threadId } }).catch(() => {});
       } catch (e) { /* swallow — mark-read is best-effort */ }
+      try { if (t && window.InboxLive) InboxLive.open(t); } catch (_) {}   // the live board: this conversation is in hand
 
       mState.currentScreen = "conv";
       mState.dirtyConv = true;
@@ -26566,6 +26637,7 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
         if (mState.currentScreen === "list") mOpenDrawer();
         else if (mState.currentScreen === "conv") {
           state.selectedId = null;
+          try { window.InboxLive && InboxLive.end(); } catch (_) {}   // the live board: back to the list, nothing in hand
           // v5.1 — Stop the 4s message poller. We started it on thread
           // open; if we don't stop it here, every back-and-forth from
           // a thread leaves a stale poller in flight chewing requests.
@@ -27098,6 +27170,7 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
             }
             // Pop back to the list so the unread-state change is visible.
             state.selectedId = null;
+            try { window.InboxLive && InboxLive.end(); } catch (_) {}   // the live board: nothing in hand
             if (typeof stopMessagesPolling === "function") stopMessagesPolling();
             mShowScreen("list");
             mState.dirtyList = true;
@@ -27148,6 +27221,7 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
                 toast(`Thread permanently deleted (${summary}).`);
               }
               state.selectedId = null;
+              try { window.InboxLive && InboxLive.end(); } catch (_) {}   // the live board: nothing in hand
               try {
                 state.threads = (state.threads || []).filter(t => t && t.id !== tid);
               } catch {}
@@ -27298,6 +27372,7 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
           const screen = mState && mState.currentScreen;
           if (screen === "conv") {
             state.selectedId = null;
+            try { window.InboxLive && InboxLive.end(); } catch (_) {}   // the live board: back to the list, nothing in hand
             if (typeof stopMessagesPolling === "function") stopMessagesPolling();
             mShowScreen("list");
             repush();

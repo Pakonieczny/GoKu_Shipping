@@ -1154,7 +1154,10 @@ dialog.bcLb img{max-width:92vw;max-height:84vh;border-radius:11px;display:block;
     <div class="dlgHead">
       <div style="min-width:0">
         <h3 id="amTitle">Order</h3>
-        <div class="sub" id="amSub" style="font-size:11.5px;color:var(--ink45);margin-top:2px"></div>
+        <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:2px">
+          <div class="sub" id="amSub" style="font-size:11.5px;color:var(--ink45)"></div>
+          <span id="amSeal" style="display:none"></span>
+        </div>
       </div>
       <div class="right">
         <button class="btn ghost sm" id="amShipBtn" title="The only Etsy call in History: live shipping and delivery status">Check shipping</button>
@@ -1198,6 +1201,7 @@ dialog.bcLb img{max-width:92vw;max-height:84vh;border-radius:11px;display:block;
 <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
 <script src="charm-nest-progress.js"></script>
 <script src="order-timeline.js?v=20260929-cx-a"></script>
+<script src="station-seals.js?v=20261005-s4a"></script>
 <script>
 /* ═══════════════════════════════════════════════════════════════════════════
    BRITES DESIGN STATION
@@ -1393,6 +1397,29 @@ const DsActivity = (() => {
     } catch (_) { return false; }
   }
   return { pieces, printed, completed, undone, heldBack, chat, failed, opened };
+})();
+
+/* ── the order in hand right now (station-live-order.js: the Employee efficiency console's live stations board). The orders
+   selected here are what this person is working on: one selected order is that order, several are "N orders selected" with
+   all their pieces. Printing the labels completes them and clearing the selection drops them: nothing in hand (idle). Read
+   from orderCache (no request); the scan time is when the first one was picked. Told only when the PERSON picks, clears or
+   prints (the Charm Sorter's remote selections and commits are the sorter's own work and are not told here). Best effort:
+   never throws, never waits, never changes what the page does. ── */
+const DsLive = (() => {
+  const live = (fn, a, b, c) => { try { const L = window.StationLiveOrder; return !!(L && typeof L[fn] === "function" && L[fn](a, b, c)); } catch (_) { return false; } };
+  let timer = 0;
+  function run() {
+    try {
+      const ids = [...selectedOrders].map(String);
+      if (!ids.length) { live("end"); return; }
+      const have = ids.filter(id => Array.isArray(orderCache[id]) && orderCache[id].length);
+      if (!have.length) return;                                    // still loading: it is told again when it has loaded
+      live("batch", have, have.flatMap(id => orderCache[id]), { sync: true, keepTime: true, key: "selection", title: have.length + " orders selected" });
+    } catch (_) {}
+  }
+  /** the selection changed by the person (a pick, an unpick, a clear, labels printed, an undo): tell the board once things settle */
+  function sync() { try { clearTimeout(timer); timer = setTimeout(run, 300); } catch (_) {} }
+  return { sync };
 })();
 
 /* ── the name at this station. There is no PIN here: the person is whoever set a name (the order chat's "Set your name"
@@ -4286,6 +4313,7 @@ function wireQueueInteractions() {
       else { try { DsActivity.opened("selected order"); } catch (_) {} await selectRow(row); }
     }
     lastRowIdx = idx;
+    DsLive.sync();   // the live board: what this person has picked is in hand
   });
 
   host.addEventListener("keydown", ev => {
@@ -4336,6 +4364,7 @@ function clearSelection() {
   updateCounters();
   applyMetalFilter();
   refreshChrome();
+  DsLive.sync();   // the live board: nothing in hand
   toast(`Cleared ${ids.length} order${ids.length !== 1 ? "s" : ""}`);
 }
 
@@ -5224,6 +5253,7 @@ async function proceedToPrint() {
   const designedPieces = DsActivity.pieces(printedIDs);   // before the orders leave orderCache
   await commitCompletion(printedIDs, { labels: null, completedBy: null });
   DsActivity.completed(printedIDs, designedPieces);       // the efficiency log: one complete per order (the sorter's commits are its own)
+  DsLive.sync();                                          // the live board: the completed orders are no longer in hand
   const labelEntries = Object.values(lists).flat().length;
   toast(`${printedIDs.length} order${printedIDs.length !== 1 ? "s" : ""} completed`
         + (labelEntries !== printedIDs.length ? ` · ${labelEntries} label entries` : ""), "ok");
@@ -5319,6 +5349,7 @@ async function handleUndoComplete(opts) {
     lastClearedReceipts = [];
     refreshChrome();
     if (!(opts && opts.remote)) DsActivity.undone(ids);   // the efficiency log: what this person's completions credited is reversed
+    if (!(opts && opts.remote)) DsLive.sync();             // the live board: the restored orders are in hand again
     toast("Orders restored", "ok");
   } finally { Activity.hide(); __undoInFlight = Math.max(0, __undoInFlight - 1); }
 }
@@ -6906,6 +6937,7 @@ async function openArchiveOrder(rid) {
   $("#amTitle").textContent = "Order " + rid;
   $("#amBody").innerHTML = `<div class="amLoading"><span class="spin"></span> Reading the archive…</div>`;
   $("#amShipBtn").disabled = true;
+  try { window.StationSeals && StationSeals.clear($("#amSeal")); } catch (_) {}   // (the last order's seal never sits under this one's number)
   openDlg(dlg);
 
   let rec = archiveDetail.get(rid) || await idbGet("detail", rid).then(r => r?.rec).catch(() => null);
@@ -6932,6 +6964,8 @@ function paintArchiveDetail(rec) {
   $("#amTitle").textContent = `Order ${rec.orderNumber || rec.receiptId}`;
   const sub = $("#amSub");
   if (sub) sub.textContent = `Completed ${fmtDay(rec.completedDay)}${rec.completedBy ? ` by ${rec.completedBy}` : ""}`;
+  // the order's own seal(s), the Charm Sorter's Seal (station-seals.js): one read of its timeline, nothing when none is recorded
+  try { if (window.StationSeals) StationSeals.show($("#amSeal"), rec.receiptId); } catch (_) {}
 
   const addr = rec.ship || {};
   const addrLines = [addr.name, addr.first_line, addr.second_line,
@@ -8369,7 +8403,9 @@ window.DesignStation = {
 </script>
 <!-- Sign-in time per person and computer, and the midnight sign-out (New York time) -->
 <script src="station-session.js?v=20261002-ea1"></script>
-<script src="station-activity.js?v=20261003-reset-clean"></script>
+<script src="station-activity.js?v=20261005-live1"></script>
+<!-- The order in hand right now (the orders the person picked = working, labels printed or selection cleared = idle), for the console's live stations board (station-live-order.js). Optional: without it nothing changes. -->
+<script src="station-live-order.js?v=20261005-lo1"></script>
 <script>
 (function () {
   const framed = (() => { try { return window.self !== window.top; } catch (_) { return true; } })();
@@ -8390,7 +8426,9 @@ window.DesignStation = {
     }
     try { if (reason === "midnight") toast("Signed out at midnight. Sign back in and set your name in the chat.", "", 8000); } catch (_) {}
   }
-  try { if (window.StationSession) StationSession.init({ station: "design", device: "design-1", person, signOut }); } catch (_) {}
+  // the sandbox flag is the page's own (the address says ?sandbox=1 or 0, and a tab keeps it): the sign-in and every event follow it,
+  // so a sandbox tab opened again without the address never writes into the real station numbers
+  try { if (window.StationSession) StationSession.init({ station: "design", device: "design-1", person, signOut, sandbox: (typeof SANDBOX !== "undefined") ? !!SANDBOX : undefined }); } catch (_) {}
 })();
 </script>
 </body>

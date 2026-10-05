@@ -21,7 +21,7 @@ const { chromium } = require(path.join(pwDir, 'playwright-core'));
 const PIN = '424242';
 const CUSTOMER = ['Jane Doe', '12 Main St', 'Test Buyer', 'engrave her initials'];
 let mapGets = 0, failStatus = false;
-const acts = [], sent = [];                        // every activity event the door got; every request (url + body) the pages made
+const acts = [], sent = [], lives = [];            // every activity event the door got; every request (url + body) the pages made; every live write ({ live }: the order in hand)
 const ts = ms => ({ _ts: true, ms });
 const T0 = Date.now();
 const IDS = { A: 'etsy_conv_1001', B: 'etsy_conv_1002' };
@@ -62,6 +62,7 @@ function fake(method, url, body) {
     if (b.pinLogin !== undefined) return { ok: b.pinLogin === PIN, ...(b.pinLogin === PIN ? { name: 'Rosa Designer' } : { error: 'not on the list' }) };   // the server's login door
     if (method === 'GET' && /employee/i.test(q.orderId || '')) { mapGets++; return { __status: 401, success: false }; }   // the roster is never asked for
     if (method === 'GET') return { __status: 404, error: 'not found' };
+    if (b.live) { lives.push(b.live); return { success: true, written: 1 }; }
     if (Array.isArray(b.activity)) { acts.push(...b.activity); return { success: true, written: b.activity.length, duplicate: 0, refused: 0, scrubbed: 0 }; }
     if (b.newMessage) return { success: true, messageId: b.designSetId ? 'designed-set-' + encodeURIComponent(b.designSetId) : 'm1' };
     return { success: true };
@@ -127,6 +128,9 @@ async function open(browser, file, seed, query = '') {
 const flush = async page => { await page.evaluate(() => window.StationActivity && StationActivity.flush()); await wait(250); };
 const mine = device => acts.filter(e => e.device === device);
 const brief = list => list.map(e => `${e.action}|${e.orderId}|${e.parts}|${e.orders}`);
+// the live board: what a page said is in hand right now, one word per write (beats are keep-alives)
+const liveOf = device => lives.filter(l => l.event !== 'beat' && l.device === device);
+const liveBrief = device => liveOf(device).map(l => l.event + '|' + (l.order ? l.order.kind + ':' + (l.order.rid || l.order.title) + ':' + l.order.pieces.length : (l.ended.rid || l.ended.title)));
 const look = (list, who) => list.forEach(e => {
   assert.strictEqual(e.person, who.person, 'person'); assert.strictEqual(e.station, who.station, 'station'); assert.strictEqual(e.device, who.device, 'device');
   assert(/^pc-/.test(e.computer) && e.session && e.sincePrevMs >= 0 && e.at > 0, 'computer, session and time are stamped: ' + JSON.stringify(e));
@@ -145,11 +149,23 @@ async function designPage(browser, file, device) {
     await proceedToPrint();
   }, ids);
 
+  // the queue's rows the person picks (a click on a row, as in the page): the order's lines are what the page already holds
+  const rowSel = rid => `#newOrderContainer .orderRow[data-receipt="${rid}"]`;
+  const addRows = () => page.evaluate(() => {
+    for (const [rid, q] of [['3521000011', 2], ['3521000012', 1]]) {
+      orderCache[rid] = [{ quantity: q, sku: 'A1', title: 'Charm', receipt_id: rid, listing_id: 111222333 }];
+      if (!document.querySelector('#newOrderContainer .orderRow[data-receipt="' + rid + '"]')) { const r = document.createElement('div'); r.className = 'orderRow'; r.dataset.receipt = rid; document.getElementById('newOrderContainer').appendChild(r); }
+    }
+  });
+  const tap = rid => page.evaluate(sel => document.querySelector(sel).click(), rowSel(rid));
+
   // nobody signed in: nothing is recorded
   const before = acts.length;
   await printRun(['3521000001', '3521000002']); await flush(page);
   assert.strictEqual(mine(device).length, 0, device + ': nothing recorded while nobody is signed in');
   assert.strictEqual(await page.evaluate(() => StationActivity.who()), null);
+  await addRows(); await tap('3521000011'); await wait(700); await tap('3521000011'); await wait(400);
+  assert.strictEqual(liveOf(device).length, 0, device + ': nobody signed in: nothing is in hand');
 
   // the name set in the order chat is the sign-in
   await page.evaluate(() => BritesChat.open('3521000777'));
@@ -208,6 +224,28 @@ async function designPage(browser, file, device) {
     await flush(page);
     assert.deepStrictEqual(mine(device).slice(n1).map(e => e.action + '|' + e.orderId), [], 'the sorter commands a completion, an undo and a preview: none is this page\'s person');
   }
+  // the live board: the orders picked here are in hand (one order = that order, several = "N orders selected", the scan time is the
+  // first pick); putting one back, printing the labels or clearing the selection drops it; the Charm Sorter's own selection is not told
+  await addRows();
+  await page.evaluate(() => clearSelection()); await wait(700);
+  const l0 = liveOf(device).length;
+  await tap('3521000011'); await wait(700);
+  await tap('3521000012'); await wait(700);
+  await tap('3521000012'); await wait(700);
+  await page.evaluate(() => clearSelection()); await wait(700);
+  assert.deepStrictEqual(liveBrief(device).slice(l0), ['work|order:3521000011:2', 'work|sheet:2 orders selected:3', 'work|order:3521000011:2', 'idle|3521000011'],
+    device + ': a pick puts the order in hand with its pieces, a second makes it a batch, putting one back returns to the order, clearing drops it: ' + liveBrief(device).join(' , '));
+  const mineLive = liveOf(device).slice(l0);
+  assert.strictEqual(mineLive[0].order.scannedAt, mineLive[1].order.scannedAt, device + ': the scan time is the first pick');
+  assert.strictEqual(mineLive[1].order.scannedAt, mineLive[2].order.scannedAt);
+  assert.deepStrictEqual(mineLive[0].order.pieces.map(p => [p.sku, p.listingId]), [['A1', '111222333'], ['A1', '111222333']], device + ': one piece per unit');
+  for (const l of lives.filter(x => x.device === device)) { assert.strictEqual(l.person, 'Nora Night'); assert.strictEqual(l.station, 'design'); assert(!('sandbox' in l)); }
+  if (device === 'design-1') {
+    const l1 = liveOf(device).length;
+    await page.evaluate(async () => { await selectRow(document.querySelector('#newOrderContainer .orderRow[data-receipt="3521000011"]'), { silent: true }); });
+    await wait(900);
+    assert.strictEqual(liveOf(device).length, l1, "design-1: the Charm Sorter's own selection is not told as this person's order in hand");
+  }
   assert.strictEqual(errors.filter(e => !/Failed to fetch|Load failed|gstatic|does not provide an export/.test(e)).length, 0, device + ' page errors: ' + errors.join(' | '));
   await ctx.close();
   console.log(device + ': print, complete, undo, chat note, reject, error once each; nothing signed out; sorter commands not recorded');
@@ -251,9 +289,16 @@ async function messagePage(browser, file, device) {
   assert.deepStrictEqual(brief(mine(device).slice(3)), ['scan|3521009995|0|0', 'error|3521009995|0|0', 'note|3521009995|0|0', 'error|3521009995|0|0'], device + ': a failed lookup is a scan and an error; a picture a note, a failed one an error');
   assert.deepStrictEqual(mine(device).slice(3).map(e => e.detail), ['typed', 'order lookup failed', 'order chat image sent', 'order chat image failed']);
 
+  // the live board: an order opened here is in hand until the next scan; an order Etsy has no answer for is not
+  await wait(700);
+  assert.deepStrictEqual(liveBrief(device), ['work|order:3521009999:3', 'work|order:3521009997:3', 'idle|3521009997'], device + ': ' + liveBrief(device).join(' , '));
+  assert.strictEqual(liveOf(device)[1].order.note, 'phone scan', device + ': the phone scan says so');
+  for (const l of lives.filter(x => x.device === device)) { assert.strictEqual(l.person, 'Rosa Designer'); assert.strictEqual(l.station, 'design'); }
+
   await page.evaluate(() => document.getElementById('signOutBtn').click());
   await enter('3521009996'); await wait(600); await flush(page);
   assert.strictEqual(mine(device).length, 7, device + ': nothing after Sign Out');
+  assert.strictEqual(liveOf(device).length, 3, device + ': nothing in hand after Sign Out');
   await ctx.close();
   console.log(device + ': PIN sign-in, two scans with pieces, a message note; nothing signed out');
 }
@@ -280,8 +325,16 @@ async function inbox(browser) {
   await until(async () => { await flush(page); return mine(device).some(e => e.action === 'complete'); }, 'the conversation done');
   const got = mine(device);
   assert.deepStrictEqual(brief(got), ['note|3521000444|0|0', 'error||0|0', 'error||0|0', 'complete||0|0'], 'inbox: a reply, a failed reply, a refused Done, a conversation done, once each');
-  assert.deepStrictEqual(got.map(e => e.detail), ['reply sent', 'reply not sent', 'status change not saved', 'conversation done']);
+  // (the reply's note also says how long the customer waited: the fake thread's first message is an hour old)
+  assert(/^reply sent · first reply (59|60|61)m$/.test(got[0].detail), 'the reply note: ' + got[0].detail);
+  assert.deepStrictEqual(got.slice(1).map(e => e.detail), ['reply not sent', 'status change not saved', 'conversation done']);
   look(got, { person: 'Paul Inbox', station: 'inbox', device });
+  // the live board: an opened conversation is in hand (its order when it names one, else "Customer conversation"); the reply sent
+  // or the conversation done drops it; a refused reply or a refused Done does not
+  await wait(900);
+  assert.deepStrictEqual(liveBrief(device), ['work|order:3521000444:0', 'idle|3521000444', 'work|sheet:Customer conversation:0', 'idle|Customer conversation'], 'inbox live: ' + liveBrief(device).join(' , '));
+  assert.strictEqual(liveOf(device)[0].order.customer, 'Cust A');
+  for (const l of lives.filter(x => x.device === device)) { assert.strictEqual(l.person, 'Paul Inbox'); assert.strictEqual(l.station, 'inbox'); }
   await ctx.close();
   console.log('inbox: reply note, failed-reply error, conversation-done complete, once each');
 }

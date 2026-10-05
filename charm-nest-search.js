@@ -201,14 +201,14 @@
     const all = allSteps(), stepName = (all[Math.min(reached, all.length - 1)] || {}).l || "";
     const review = e.review || rows.some(r => (r.problems || []).length);
     const eng = e.engrave.find(j => ["words", "review", "fitting", "ready", "classify"].includes(j.state));
-    let tone = "warn", pill = "In progress", now = "";
+    let tone = "warn", pill = "In progress", now = "", completed = false;
     // the pill names the step the rail has reached, as the order view does; before Nested it says where the order is
     if (cancel) { tone = "bad"; pill = "Cancelled"; now = `Cancelled${cancel.by ? " by " + cancel.by : ""}${cancel.at ? " · " + whenTxt(cancel.at) : ""}`; }
     else if (hold) { tone = "bad"; pill = "On hold"; now = `On hold · ${String(hold.hold)}`; }
     else if (review) { tone = "warn"; pill = "Decision"; now = "Needs a decision in Review"; }
     else if (reached >= 7) { tone = "ok"; pill = stepName; now = last && stepAt(last) === 7 ?`${TYPE_LABEL(last.type)}${last.by ? " · " + last.by : ""} · ${whenTxt(last.at)}` : stepName; }
     else if (last && stepAt(last) >= 4) { tone = "ok"; pill = stepName; now = `${TYPE_LABEL(last.type)}${last.station ? " at " + last.station[0].toUpperCase() + last.station.slice(1) : ""}${last.by ? " · " + last.by : ""}`; }
-    else if (e.custom.length && !rows.some(r => r.state === "pulled")) { tone = "ok"; pill = stepName; const k = e.custom[0]; now = `Completed by hand${k.completedBy || k.printedBy ? " · " + (k.completedBy || k.printedBy) : ""}`; }
+    else if (e.custom.length && !rows.some(r => r.state === "pulled")) { tone = "ok"; pill = stepName; const k = e.custom[0]; now = `Completed by hand${k.completedBy || k.printedBy ? " · " + (k.completedBy || k.printedBy) : ""}`; completed = true; }
     else if (reached >= 1) {
       tone = reached >= 3 ? "ok" : "info"; pill = stepName;
       now = eng && reached < 2 ? `Back engraving · ${eng.state === "words" ? "words to read" : eng.state}` : sheets.length ? (sheets.some(s => s.cut) ? "Laser cut" : "On sheet") : last ? `${TYPE_LABEL(last.type)} · ${whenTxt(last.at)}` : stepName;
@@ -217,7 +217,9 @@
     else if (rows.length) { const st = rows[0].state; tone = "info"; pill = "In the pull"; now = st === "pooled" ? "Ready to nest" : st === "noDesign" ? "Nothing to cut" : st === "waiting" ? "Waiting" : "In this pull"; }
     else if (c) { tone = "info"; pill = "In the cloud"; now = last ? `${TYPE_LABEL(last.type)} · ${whenTxt(last.at)}` : c.archived ? "Design completed" : "Found in the cloud"; }
     else { tone = "neutral"; pill = "Seen"; now = ""; }
-    return { tone, pill, now, sheets, reached, steps: stepsOf(e), stepName, cancelled: !!cancel, hold: !!hold };
+    // (a line that speaks of a completion the order's timeline recorded, a Complete Order press or a QR label printed: it has its seal too)
+    if (!completed && last && /^seal(Completed|Printed)$/.test(last.type) && now.includes(TYPE_LABEL(last.type))) completed = true;
+    return { tone, pill, now, sheets, reached, steps: stepsOf(e), stepName, cancelled: !!cancel, hold: !!hold, completed };
   }
   /** The card's dots: the order's own steps, done up to the step reached (a step the order skips, Welded for a piece that
       is not a stud earring, is not drawn; one it has a record of anyway is kept, as the order view keeps it). */
@@ -234,6 +236,18 @@
     const label = st.cancelled ? "Cancelled" : (own[Math.max(0, at)] || {}).l || st.stepName;
     return `<span class="cnsRail" aria-label="${esc(label)}">${h}</span>`;
   }
+  /** The small seal of the completion a card's line speaks of (Paul, 5 Oct 2026: "The 'Complete' orders/pieces are missing their associated stamp/seal"): one seal,
+   *  the latest press that completed a piece of the order, and "+N" for the others (Seal.compact, the order window's own one-line form), from the custom orders
+   *  the page holds and the order's timeline when it was read from the cloud. Nothing recorded: no seal. */
+  function sealOf(e, st) {
+    if (!st.completed || !(W.Seal && W.Seal.compact)) return "";
+    try {
+      const ev = (e.cloud && e.cloud.events) || [], items = [], seen = new Set();
+      for (const c of e.custom) { const k = String((c && c.key) || ""); seen.add(k); items.push({ rec: c, lineKey: k, events: ev }); }
+      for (const x of ev) if (x && (x.type === "sealCompleted" || x.type === "sealPrinted") && x.lineKey && !seen.has(String(x.lineKey))) { seen.add(String(x.lineKey)); items.push({ rec: null, lineKey: String(x.lineKey), events: ev }); }
+      return W.Seal.compact(items, { size: 22 });
+    } catch (err) { console.warn("order search: seal", err); return ""; }
+  }
   const mark = (text, q) => { const s = String(text || ""), i = q ? s.toLowerCase().indexOf(q) : -1; return i < 0 ? esc(s) : esc(s.slice(0, i)) + `<mark>${esc(s.slice(i, i + q.length))}</mark>` + esc(s.slice(i + q.length)); };
   function cardHtml(h, R, one) {
     const e = h.e, st = stateOf(e), q = R.num || (R.q.split(" ")[0] || ""), n = e.num || e.rid;
@@ -244,7 +258,7 @@
     const what = sku ? mark(sku, q) : esc(e.skus.slice(0, 2).join(" · ") + (e.skus.length > 2 ? ` +${e.skus.length - 2}` : ""));
     return `<div class="cnsTop"><span class="cnsNum mono">${numHtml}</span><span class="cnsWho">${R.num ? esc(e.buyer) : mark(e.buyer, q)}</span>${also}${e.cloud ? `<span class="cnsTag cloud" title="Not in memory here: read from the cloud">from the cloud</span>` : ""}` +
       `<span class="cnsPill ${st.tone}"><span class="d"></span>${esc(st.pill)}</span></div>` +
-      `<div class="cnsMeta">${rail(st)}<span class="cnsNow${st.cancelled ? " bad" : ""}" title="Where it is now">${esc(st.now)}</span>` +
+      `<div class="cnsMeta">${rail(st)}<span class="cnsNow${st.cancelled ? " bad" : ""}" title="Where it is now">${esc(st.now)}</span>${sealOf(e, st)}` +
       `${st.sheets.length ? `<span class="cnsSheet">${esc(st.sheets.slice(0, 2).map(s => s.label).join(" · "))}${st.sheets.length > 2 ? ` +${st.sheets.length - 2}` : ""}</span>` : ""}<span class="cnsWhat">${what}</span></div>` +
       (one ? `<span class="cnsEnter">↵ open</span>` : "");
   }
@@ -352,6 +366,7 @@
 .cnsMeta{display:flex;align-items:center;gap:14px;font:11.5px var(--sans);color:var(--ink45);min-width:0}
 .cnsNow{color:var(--ink70);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
 .cnsNow.bad{color:var(--clay);font-weight:650}
+.cnsMeta .sealCompact{margin-left:-6px}
 .cnsSheet{font:10px var(--mono);letter-spacing:.06em;border:1px solid var(--line);border-radius:6px;padding:1px 6px;color:var(--ink70);white-space:nowrap;flex:none}
 .cnsWhat{margin-left:auto;font:10.5px var(--mono);color:var(--ink45);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;max-width:34%}
 .cnsTag{font:10px var(--mono);color:var(--ink45);border-radius:6px;padding:1px 6px;background:var(--paper2);white-space:nowrap;flex:none}

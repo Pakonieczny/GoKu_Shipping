@@ -135,6 +135,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
 .swState i{width:7px;height:7px;border-radius:50%;background:currentColor}
 .swState.ready{background:var(--sageSoft);color:#3f5b3c}
 .swState.done{background:var(--velvet);color:#f3ead7}
+.swStateSeal{display:inline-flex;align-items:center;flex:0 0 auto;min-width:0}.swStateSeal:empty{display:none}
 .swIcon{display:inline-grid;place-items:center;width:32px;height:32px;border-radius:9px;border:1px solid transparent;background:transparent;color:var(--ink70);cursor:pointer}
 .swIcon svg{width:16px;height:16px}
 .swIcon:hover{background:var(--paper2);color:var(--ink)}
@@ -382,17 +383,18 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
 @keyframes swSpin{to{transform:rotate(360deg)}}
 @media (max-width:980px){.swBody{grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(300px,1fr) auto}.swSide{border-left:0;border-top:1px solid var(--line);min-height:46vh}.swBox{overflow:auto}.swSheets:not(.swPill){display:none}.swSheets.swPill{margin-left:0;padding-left:0;border-left:0}}
 /* (a phone-width window with the sheets pill: the title and the pill cannot share a line with the status, the file menu and Close
-   without one hiding the other, so the bar takes two lines: the title with its menu and Close, then the pill with the status) */
+   without one hiding the other, so the bar takes two lines: the title with its menu and Close, then the pill with the status; a sheet that was cut has its seal beside
+   the status, which takes the same two lines, so the seal never pushes Close off the window) */
 @media (max-width:600px){
-.swHead:has(>.swSheets.swPill:not([hidden])){flex-wrap:wrap;row-gap:6px;column-gap:8px}
-.swHead:has(>.swSheets.swPill:not([hidden]))::after{content:"";order:3;flex:0 0 100%;height:0}
-.swHead:has(>.swSheets.swPill:not([hidden]))>.swId{order:0;flex:1 1 0}
-.swHead:has(>.swSheets.swPill:not([hidden]))>.swHeadR{display:contents}
-.swHead:has(>.swSheets.swPill:not([hidden])) .swMenuWrap{order:1}
-.swHead:has(>.swSheets.swPill:not([hidden])) [data-r=close]{order:2}
-.swHead:has(>.swSheets.swPill:not([hidden]))>.swSheets{order:4}
-.swHead:has(>.swSheets.swPill:not([hidden])) .swState{order:5}
-.swHead:has(>.swSheets.swPill:not([hidden])) [data-r=done]{order:6}
+.swHead:is(:has(>.swSheets.swPill:not([hidden])),:has(.swStateSeal:not(:empty))){flex-wrap:wrap;row-gap:6px;column-gap:8px}
+.swHead:is(:has(>.swSheets.swPill:not([hidden])),:has(.swStateSeal:not(:empty)))::after{content:"";order:3;flex:0 0 100%;height:0}
+.swHead:is(:has(>.swSheets.swPill:not([hidden])),:has(.swStateSeal:not(:empty)))>.swId{order:0;flex:1 1 0}
+.swHead:is(:has(>.swSheets.swPill:not([hidden])),:has(.swStateSeal:not(:empty)))>.swHeadR{display:contents}
+.swHead:is(:has(>.swSheets.swPill:not([hidden])),:has(.swStateSeal:not(:empty))) .swMenuWrap{order:1}
+.swHead:is(:has(>.swSheets.swPill:not([hidden])),:has(.swStateSeal:not(:empty))) [data-r=close]{order:2}
+.swHead:is(:has(>.swSheets.swPill:not([hidden])),:has(.swStateSeal:not(:empty)))>.swSheets{order:4}
+.swHead:is(:has(>.swSheets.swPill:not([hidden])),:has(.swStateSeal:not(:empty))) .swState,.swHead:is(:has(>.swSheets.swPill:not([hidden])),:has(.swStateSeal:not(:empty))) .swStateSeal{order:5}
+.swHead:is(:has(>.swSheets.swPill:not([hidden])),:has(.swStateSeal:not(:empty))) [data-r=done]{order:6}
 }
 @media (prefers-reduced-motion:reduce){dialog.sheetWin[open],dialog.sheetWin::backdrop{animation:swFade .16s ease backwards}dialog.sheetWin.closing,dialog.sheetWin.closing::backdrop{animation:swFadeOut .12s ease both}.swReturn,.swSkel i{animation:none}}
 `;
@@ -417,7 +419,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
         <div class="swId"><span class="swMetal" data-r="metal"></span><div class="swTitle"><h3 data-r="title">Sheet</h3><span data-r="sub"></span></div></div>
         <nav class="swSheets" data-r="sheets" aria-label="Sheets in this set"></nav>
         <div class="swHeadR">
-          <span class="swState" data-r="state"><i></i><span></span></span>
+          <span class="swState" data-r="state"><i></i><span></span></span><span class="swStateSeal" data-r="stateSeal"></span>
           <button class="btn ghost sm" data-r="done" hidden>Mark completed</button>
           <div class="swMenuWrap"><button class="swIcon" data-r="moreBtn" aria-haspopup="menu" aria-expanded="false" title="Files and more">${ICON.more}</button><div class="swMenu" data-r="menu" role="menu" hidden></div></div>
           <button class="swIcon" data-r="close" title="Close (Esc)" aria-label="Close">${ICON.close}</button>
@@ -454,7 +456,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     // (Esc while the sheet is still flying in closes it: the view it was opening on has not been seen yet)
     d.addEventListener("cancel", e => { e.preventDefault(); if (closeSheetMenu()) return; if (!E.name.hidden) return hideName(); if (!E.menu.hidden) return menu(false); if (W.hand) return stopHand(); if (W.add) return closeAdd(); if (window.CNZoomPan && tryDo(() => CNZoomPan.resetWithin(d))) return; if (W.view === "piece" && !(W.flip && !W.flip.landed)) return showSheetPane(); close(); });
     // (what was changed in here is read again by the order view: its copies of the saved sheets are dropped)
-    d.addEventListener("close", () => { orderRecs.clear(); cleanup(); });
+    d.addEventListener("close", () => { orderRecs.clear(); cleanup(); tryDo(() => window.CNLive && CNLive.close("laser")); });
     d.addEventListener("click", e => { if (e.target === d) close(); if (!E.menu.hidden && !e.target.closest(".swMenuWrap")) menu(false); });
     E.moreBtn.onclick = () => menu(E.menu.hidden);
     const search = input => {
@@ -1167,6 +1169,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     E.sub.title = r.folder || r.id || "";
     W.dlg.setAttribute("aria-label", r.folder || `Sheet ${sheetNoOf(r)}`);
     const st = E.state.querySelector("span");
+    if (E.stateSeal) { const h = prelim ? null : sheetSeal(r); if (E.stateSeal._h !== h) { E.stateSeal._h = h; if (h !== null) E.stateSeal.innerHTML = h; } }
     if (prelim) { E.state.className = "swState"; st.textContent = "…"; }
     else {
       const done = !!(r.laserDoneAt || (window.LibraryDone && LibraryDone.isDone && LibraryDone.isDone(r)));
@@ -1177,15 +1180,29 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       E.done.hidden = !window.LibraryDone || !window.LibraryDone.mark || (!done && !LibraryDone.canComplete('sheet',r.id || r.sheetId));
       E.done.textContent = done ? "Move back to current" : "Mark completed";
       E.done.onclick = () => markDone(!done);
+      // the live stations board (employee console): a sheet that is ready for the laser, open here, is what the Laser station is on now
+      tryDo(() => { if (window.CNLive) { if (ready) CNLive.sheet(`${CODE[m] || labelOf(m)} Sheet ${sheetNoOf(r)}${sn ? ` · Set ${sn}` : ""}`); else CNLive.close("laser"); } });
     }
     if (!prelim || !W.setSheets.length) renderSheetChips();
+  }
+  /** The sheet's own completion seal in the header, beside "Completed" (the Library's card draws the same one, LASER CUT): the latest, small, and "+N" for
+   *  the others it holds. A seal is permanent, so it stays when the sheet is taken back to Current. A sheet nobody cut has none, and none is made up. */
+  function sheetSeal(r) {
+    try {
+      if (!window.Seal || !Seal.compactRow || !window.CharmNestReadiness || !r) return "";
+      const cuts = CharmNestReadiness.processStamps(r).filter(s => s.how === "laserDone" && +s.at > 0).sort((a, b) => a.at - b.at), lead = cuts[cuts.length - 1];
+      return lead ? Seal.compactRow(Object.assign({ scope: "sheet", owner: "sheet:" + (r.id || r.sheetId || "") }, lead), cuts.length - 1, 22) : "";
+    } catch (e) { console.warn("sheet window: completed seal", e); return ""; }
   }
   async function markDone(done) {
     const b = W.el.done, id = W.id; b.disabled = true; const was = b.textContent; b.innerHTML = `<span class="spin"></span>${done ? "Completing…" : "Moving back…"}`;
     try {
       const result = await LibraryDone.mark("sheet", id, done, { via: "Sheet window" });
       if (W.id !== id) return;
-      W.rec.laserDoneAt = done ? Date.now() : null; head(W.rec, false);
+      W.rec.laserDoneAt = done ? result?.at || Date.now() : null;
+      // (the sheet's record as the server wrote it: who marked it and its seal, so the header draws that seal and not a guess)
+      for (const p of result?.process || []) if (p && p.kind === "sheet" && p.id === id && p.patch) Object.assign(W.rec, p.patch);
+      head(W.rec, false);
       // where the sheet went, said slowly where the eye already is (Paul, 27 Sep): the state pops, and a note under it
       // names the Library tab that holds the sheet now, with Undo
       animate(W.el.state, [{ transform: "scale(.8)", opacity: .4 }, { transform: "scale(1.1)", opacity: 1, offset: .45 }, { transform: "none", opacity: 1 }], 700, { fill: "none" });
@@ -2133,7 +2150,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
         if (y) used.add(y);
         list.push({ poolId: p.poolId, piece: onHere ? y : null, sku: p.sku, label: p.label === "Piece" ? "" : p.label, copy: p.copy, qty: p.qty, here: onHere, sheetId: p.nested ? p.sheetId : null,
           metal: onHere ? W.rec.metal : METAL_OF_CODE[(/^(\S+)\s/.exec(p.sheetLabel || "") || [])[1]] || p.metal, n: onHere ? sheetNoOf(W.rec) : p.sheetNo,
-          state: p.nested ? "" : p.hand ? "hand" : p.loading ? "loading" : p.unsure ? "unsure" : "none", reason: p.reason || "" });
+          state: p.nested ? "" : p.hand ? "hand" : p.loading ? "loading" : p.unsure ? "unsure" : "none", reason: p.reason || "", hand: p.nested ? null : p.hand || null, lineKey: p.lineKey || "" });
       }
       for (const y of mine) if (!used.has(y)) list.push({ poolId: y.poolId, piece: y, sku: y.sku, copy: y.copy, qty: y.qty, here: true, sheetId: W.id, metal: W.rec.metal, n: sheetNoOf(W.rec), state: "" });
       return sortOf(list);
@@ -2152,6 +2169,9 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     for (const it of items.values()) if (!it.sheetId && it.poolId && window.Pool) { const sh = Pool.sheetOf(it.poolId); if (sh && sh.sheetId) Object.assign(it, { sheetId: sh.sheetId, metal: sh.metal, n: sh.sheetIndex || sh.page || 1 }); }
     return sortOf([...items.values()].map(it => Object.assign(it, { here: it.sheetId === W.id, state: it.sheetId ? "" : "none" })));
   }
+  /** A piece completed by hand, in its row: the one small seal of the press that completed it, and "+N" for the others it holds (Seal.compact: the
+   *  very component of the order window's one-line bar). Nothing recorded of it: no seal. */
+  const handSeal = it => { try { return window.Seal && Seal.compact ? Seal.compact(it.hand, { lineKey: it.lineKey }) : ""; } catch (e) { console.warn("sheet window: seal", e); return ""; } };
   function renderTrail(x) {
     const host = W.el.detail.querySelector("[data-r2=trail]"), headN = W.el.detail.querySelector("[data-r2=trailHead]"); if (!host) return;
     const rid = x.rid; if (!rid) { host.innerHTML = `<li class="off"><span class="n"></span><span class="sku">Not part of an order</span></li>`; return; }
@@ -2161,7 +2181,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       const here = it.here, cur = it.piece === x;
       const where = here ? `<span class="where" style="--c:${colorOf(W.rec.metal)}"><i></i>${cur ? "this charm" : "on this sheet"}</span>`
         : it.sheetId ? `<span class="where" style="--c:${colorOf(it.metal)}"><i></i>${esc(CODE[it.metal] || "")} Sheet ${esc(it.n || "?")}${ICON.go}</span>`
-        : it.state === "hand" ? `<span class="where" title="${esc((it.reason || "It was completed by hand and needs no sheet").charAt(0).toUpperCase() + (it.reason || "It was completed by hand and needs no sheet").slice(1))}"><i style="background:var(--ink25)"></i>completed by hand</span>`
+        : it.state === "hand" ? `<span class="where"><i style="background:var(--ink25)"></i><span title="${esc((it.reason || "It was completed by hand and needs no sheet").charAt(0).toUpperCase() + (it.reason || "It was completed by hand and needs no sheet").slice(1))}">completed by hand</span>${handSeal(it)}</span>`
         : it.state === "loading" ? `<span class="where"><i style="background:var(--ink25)"></i>reading its sheet…</span>`
         : it.state === "unsure" ? `<span class="where" title="${esc(it.reason || "")}"><i style="background:var(--ink25)"></i>sheet not read just now</span>`
         : `<span class="where"${it.reason ? ` title="${esc(it.reason.charAt(0).toUpperCase() + it.reason.slice(1))}"` : ""}><i style="background:var(--ink25)"></i>not on a sheet yet</span>`;
@@ -2891,8 +2911,11 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       if (String(c.buyer || "").toLowerCase().includes(q)) return true;
       return (c.lines || []).some(l => String(l.sku || "").toLowerCase().includes(q) || String(l.title || "").toLowerCase().includes(q));
     };
+    /** The seals the order's pieces earned before it was cancelled (completed by hand, printed): kept for good, so they stay on
+     *  its card (Paul, 29 Sep and 5 Oct: a cancel never takes a seal away). The same small seals as the Orders list. */
+    const sealsOf = rid => { try { return window.CustomPrint && window.Seal && CustomPrint.sealsOfOrder ? CustomPrint.sealsOfOrder(rid) : null; } catch (_) { return null; } };
     function rowHtml(c, openable) {
-      const etsy = isEtsy(c), rid = String(c.orderId), fates = fatesOf(c), lines = c.lines || [];
+      const etsy = isEtsy(c), rid = String(c.orderId), fates = fatesOf(c), lines = c.lines || [], seals = sealsOf(rid);
       const why = String(c.why || "").trim();
       // Etsy says the order is cancelled: its own record, or one noted on a person's cancel. Never restored here (the
       // stations read this record; "Fully Refunded" is not a cancel on its own, so that one can be restored)
@@ -2901,7 +2924,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
         <div class="cxWhat">${lines.map(l => `<span class="mono" title="${esc(l.title || "")}">${esc(l.sku || "no SKU")}${l.quantity > 1 ? ` ×${l.quantity}` : ""}</span>`).join("") || `<i>no pieces kept</i>`}</div>
         <div class="cxWhy"><div class="cxWho"><span class="cxBadge ${etsy ? "etsy" : "person"}">${etsy ? "Cancelled on Etsy" : `Cancelled by ${esc(c.by || "someone")}`}</span>${!etsy && etsyX ? `<span class="cxBadge etsy">Cancelled on Etsy too</span>` : ""}<time datetime="${c.at ? new Date(+c.at).toISOString() : ""}">${esc(when(+c.at))}</time></div>
           <div class="cxReason${why ? "" : " none"}">${why ? esc(why) : etsy ? "Etsy gave no reason" : "No reason given"}</div>
-          ${fates.length ? `<div class="cxFates">${fates.map(f => `<span class="${f.cut ? "cut" : "off"}">${esc(f.text)}</span>`).join("")}</div>` : ""}</div>
+          ${fates.length ? `<div class="cxFates">${fates.map(f => `<span class="${f.cut ? "cut" : "off"}">${esc(f.text)}</span>`).join("")}</div>` : ""}${seals ? `<div class="cxSeals">${Seal.row(seals, { size: 28 })}</div>` : ""}</div>
         <div class="cxAct">${etsyX ? "" : `<button class="btn ghost sm" type="button" data-cx="restore" title="Bring the order back: it returns with the next orders check if it is still open on Etsy">Restore</button>`}${openable ? `<span class="cxGo" aria-hidden="true">›</span>` : ""}</div>`;
     }
     const nodes = new Map();                                        // orderId → { stamp, node }: rows kept, like the Orders list's
@@ -2944,7 +2967,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       // the rows: kept by order, rebuilt only when what they show changed
       const out = [];
       for (const c of shown) {
-        const rid = String(c.orderId), openable = view || pulled.has(rid), stamp = JSON.stringify([c, openable]); let e = nodes.get(rid);
+        const rid = String(c.orderId), openable = view || pulled.has(rid), sl = sealsOf(rid), stamp = JSON.stringify([c, openable, sl && CustomPrint.sealSig(sl)]); let e = nodes.get(rid);
         if (!e || e.stamp !== stamp) {
           const node = h("div", "cxRow" + (openable ? " open" : "") + (isEtsy(c) ? " etsy" : ""), rowHtml(c, openable));
           node.dataset.rid = rid; node.dataset.mkey = "cx:" + rid;
