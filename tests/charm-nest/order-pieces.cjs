@@ -154,14 +154,14 @@ function partA() {
   ok('A9 readiness: the stale "pooled" Silver line no longer holds the order back (Issues-truth\'s rule; it did on clean main before d529858f)');
 
   // 10 · the two agree on WHICH piece is "piece 2": CharmNestReadiness.pieces (the Library's issues panel) and OrderPieces number the same pieces the same way
-  const X = { rid: '4177100007', a: '41771000073', b: '41771000071', c: '41771000072', d: '41771000074' };
-  const xRows = [[X.a, 'gold', 1, []], [X.b, 'silver', 2, [`${X.rid}_${X.b}_2`, `${X.rid}_${X.b}_1`]], [X.c, 'gold', 1, []], [X.d, 'gold', 1, []]].map(([tx, metal, qty, poolIds]) => ({ order: { receiptId: X.rid }, line: { transactionId: tx }, key: `${X.rid}_${tx}`, transactionId: tx, quantity: qty, material: metal, sku: 'FEMALE_SYMBOL', state: tx === X.c ? 'noDesign' : 'pooled', poolIds, spec: { quantity: qty } }));
+  const X = { rid: '4177100007', a: '41771000073', b: '41771000071', c: '41771000072', d: '41771000074', e: '41771000075' };
+  const xRows = [[X.a, 'gold', 1, []], [X.b, 'silver', 2, [`${X.rid}_${X.b}_2`, `${X.rid}_${X.b}_1`]], [X.c, 'gold', 1, []], [X.d, 'gold', 1, []], [X.e, 'gold', 3, [`${X.rid}_${X.e}_1`, `${X.rid}_${X.e}_3`]]].map(([tx, metal, qty, poolIds]) => ({ order: { receiptId: X.rid }, line: { transactionId: tx }, key: `${X.rid}_${tx}`, transactionId: tx, quantity: qty, material: metal, sku: 'FEMALE_SYMBOL', state: tx === X.c ? 'noDesign' : 'pooled', poolIds, spec: { quantity: qty } }));
   xRows.push({ order: { receiptId: X.rid }, line: { transactionId: '41771000079' }, key: `${X.rid}_41771000079`, transactionId: '41771000079', quantity: 1, state: 'gone', poolIds: [`${X.rid}_41771000079_1`], spec: { quantity: 1 } });
   const xSheets = [{ id: 'sheet-oa-x1', metal: 'gold', sheetIndex: 1, setId: SET, status: 'written', folder: '2026-10-02_GF_Set-1_Sheet-1', orders: [X.rid], poolIds: [`${X.rid}_${X.a}_1`, `${X.rid}_${X.d}_1`] }, { id: 'sheet-oa-x2', metal: 'silver', sheetIndex: 2, setId: SET, status: 'written', folder: '2026-10-02_SS_Set-1_Sheet-2', orders: [X.rid], poolIds: [`${X.rid}_${X.b}_2`] }];
   const theirs = R.pieces(xRows, xSheets)[X.rid], mine = Core.resolve({ orderId: X.rid, lines: xRows, pools: [], sheets: xSheets, sheetsKnown: true }).filter(p => !p.gone && !p.noDesign);
   const shape = ps => ps.map(p => [p.index, p.key, p.sheetId || null]);
   assert.deepEqual(shape(mine), shape(theirs), 'the same numbering and the same sheet');
-  assert.deepEqual(theirs.map(p => p.key), [`${X.rid}_${X.b}_2`, `${X.rid}_${X.b}_1`, `${X.rid}_${X.a}_1`, `${X.rid}_${X.d}_1`], 'lines by the number at the end of their key, copies in their poolIds order; no-design and cancelled lines are no pieces');
+  assert.deepEqual(theirs.map(p => p.key), [`${X.rid}_${X.b}_1`, `${X.rid}_${X.b}_2`, `${X.rid}_${X.a}_1`, `${X.rid}_${X.d}_1`, `${X.rid}_${X.e}_1`, `${X.rid}_${X.e}_2`, `${X.rid}_${X.e}_3`], 'lines by the number at the end of their key, copies by copy number whatever order the record lists them in; no-design and cancelled lines are no pieces');
   ok('A10 "piece 2" is the same piece in the issues panel (CharmNestReadiness.pieces) and in OrderPieces: line order, poolIds order, and the same sheet');
 }
 

@@ -2032,7 +2032,7 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
 .backSavedCount {font:11px var(--sans);font-variant-numeric:tabular-nums;line-height:1.4;white-space:nowrap}
 .backSavedCount>b {font-size:inherit;font-weight:650}
 [data-laser-seal]:empty {display:none}
-@media(max-width:380px){.librarySheet {flex-basis:100%}.productionRow {gap:10px}}
+@media(max-width:420px){.librarySheet {flex-basis:100%}.productionRow {gap:10px}}
 
 /* Shared work-list rows: engraving proportions, two explicit image sources. */
 .srOnly{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
@@ -2328,6 +2328,7 @@ button.approveReason{border:0;background:none;padding:0;font:inherit;color:inher
 button.approveReason:hover,button.approveReason:focus-visible{color:var(--ink70);text-decoration:underline;text-decoration-thickness:1px;text-underline-offset:3px}
 button.approveReason:focus-visible{outline:2px solid var(--gold);outline-offset:2px;border-radius:4px}
 .flowBox+.approveBox{margin-top:-4px}
+@media (pointer:coarse){.approveBtn{min-height:34px}}
 .approveBox[data-mode=done] .approveRow{display:none}
 .approvePlan{position:relative;border:1px solid var(--line);border-radius:9px;background:var(--card2);padding:8px 28px 8px 11px;font:12px/1.45 var(--sans);color:var(--ink70);animation:ldFade .25s ease}
 .approvePlan[hidden]{display:none}
@@ -2887,12 +2888,12 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-backs.js?v=20260928-backface"></script>
 <script src="charm-nest-activity.js?v=20261001-compact-controls"></script>
 <script src="charm-nest-engraving-seals.js?v=20261003-seal-small"></script>
-<script src="charm-nest-readiness.js?v=20261005-issues-truth3"></script>
+<script src="charm-nest-readiness.js?v=20261005-issues-truth4"></script>
 <script src="charm-nest-export.js"></script>
 <script src="charm-nest-text.js"></script>
 <script src="charm-nest-orders.js?v=20261005-pieces"></script>
-<script src="charm-nest-order-pieces.js?v=20261005-op1"></script>
-<script src="charm-nest-shared-orders.js?v=20261005-cardinal2"></script>
+<script src="charm-nest-order-pieces.js?v=20261005-op2"></script>
+<script src="charm-nest-shared-orders.js?v=20261005-cardinal3"></script>
 <script src="charm-nest-background.js?v=20260930-stamp-barrier"></script>
 <script>
 /* ═════════════════════════════════════════════════════════════════════════
@@ -6619,7 +6620,7 @@ boot();
      Design Station's sign-in), the same name every seal it stamps carries. -->
 <script src="station-session.js?v=20261002-ea1"></script>
 <script src="station-activity.js?v=20261003-reset-clean"></script>
-<script src="charm-nest-bridge.js?v=20261005-oa2-cardinal1"></script>
+<script src="charm-nest-bridge.js?v=20261005-setcard2-cardinal2"></script>
 <script>
 try {
   const nameNow = () => { try { const n = String((window.CNEmployee && CNEmployee.name()) || "").trim(); return /^\d+$/.test(n) ? "" : n; } catch (_) { return ""; } };
@@ -6647,14 +6648,14 @@ try {
       set(v) { d.set.call(window.B, v); try { const n = String(d.get.call(window.B) || "").trim(); if (n && !/^\d+$/.test(n)) StationSession.signedIn({ name: n, id: null }); } catch (_) {} } });
 } catch (_) {}
 </script>
-<script src="charm-nest-sheetwin.js?v=20261005-pieces-cardinal1"></script>
+<script src="charm-nest-sheetwin.js?v=20261005-pieces-cardinal2"></script>
 <script src="charm-nest-tour.js?v=20260929-m11"></script>
 <script src="charm-nest-mail.js?v=20261005-pieces"></script>
 <script src="charm-nest-rose-ui.js?v=20261003-rg2"></script>
 <script src="charm-nest-flow-rose.js?v=20261003-rg2"></script>
 <script src="charm-nest-export-ui.js?v=20260925-done"></script>
 <script src="charm-nest-library.js?v=20261003-many1"></script>
-<script src="charm-nest-flow.js?v=20261005-cardinal1"></script>
+<script src="charm-nest-flow.js?v=20261005-cardinal2"></script>
 <script src="charm-nest-library-approval-ui.js?v=20261003-fb1"></script>
 <script src="charm-nest-library-fx.js?v=20261003-fx2"></script>
 <script src="charm-nest-library-dnd.js?v=20261003-dnd1"></script>
