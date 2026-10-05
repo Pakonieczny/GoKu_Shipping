@@ -10798,7 +10798,15 @@ const OrderWin = window.OrderWin = (() => {
     if (inPull(r.key) && r.engrave && r.engrave.needed && !r.engrave.approved) {
       const box = el("div", "owFix", '<div class="t">Its engraving is still to be settled</div>');
       const b = el("button", "btn ghost sm", "Open it in Engraving");
-      b.onclick = () => { W.dlg.close(); setMode("engrave"); Engrave.render(); };
+      // (the engraving of THIS order's piece, its details open, the order's number in the search: EngraveLink, Paul 5 Oct
+      // "it only open the Engraving tab list with no specific order selected"; without it, the tab as it always was)
+      const plain = () => { W.dlg.close(); setMode("engrave"); Engrave.render(); };
+      b.onclick = () => {
+        if (!window.EngraveLink || typeof EngraveLink.open !== "function") return plain();
+        if (b.disabled) return;
+        b.disabled = true; b.innerHTML = '<span class="spin"></span>Opening Engraving…';
+        EngraveLink.open({ rid, key: r.key, poolId: (r.poolIds || [])[0] }).catch(plain).finally(() => { b.disabled = false; b.textContent = "Open it in Engraving"; });
+      };
       box.appendChild(b); fix.appendChild(box);
     }
     if (inPull(r.key) || r._customSentDecision || tryDo(() => CustomSheet.decisionOf?.(r))) paintCustom(r); else { const bar = byId("owCustom"); if (bar) { bar.hidden = true; bar.innerHTML = ""; bar._stamp = ""; } }
@@ -11491,6 +11499,10 @@ const OrderWin = window.OrderWin = (() => {
         finally{ap.removeAttribute("aria-busy");ap.textContent="Approved";}
       },
       open:async()=>{
+        // (this piece's own engraving, details open, the order's number in the search: EngraveLink, which also closes this window)
+        if(window.EngraveLink && typeof EngraveLink.open==="function"){
+          try{await EngraveLink.open({rid,key:eng.job?.key || lr.key,poolId:x0?.poolId || SV.focus || undefined});return;}catch(e){console.warn("engrave link:",e);}
+        }
         await shut();
         const v=Engrave.view(),done=["approved","written","skipped"].includes(eng.job?.state) || eng.kind==="approved";
         Engrave.restoreView({...v,tab:done?"done":"place",focus:done?null:eng.job?.key || lr.key,list:false,chosen:true,q:done?rid:""});

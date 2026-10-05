@@ -57,7 +57,7 @@ function boot() {
   return { w, d, calls, net, L: w.LaserReview, LI: w.LibraryIssues, body: d.getElementById('libBody') };
 }
 
-const COV = { unfolded: 0, matePanels: 0, matesListed: 0, matesExpected: 0, sheets: 0, held: 0, bangs: 0, panels: 0, orderPanels: 0, rowsListed: 0, rowsExpected: 0, ownPanels: 0, notes: 0, groups: 0 };
+const COV = { ordersBehindEarlierStep: 0, unfolded: 0, matePanels: 0, matesListed: 0, matesExpected: 0, sheets: 0, held: 0, bangs: 0, panels: 0, orderPanels: 0, rowsListed: 0, rowsExpected: 0, ownPanels: 0, notes: 0, groups: 0 };
 const SHOW = s => JSON.stringify(s).slice(0, 220);
 const BAD_WORDS = [/\bNesting\b/, /\bBack files\b/, /\bQR label\b/, /Layout verified/, /\b\d+ of \d+\b/, /\blines?\b/i, /back engraving/i, /\bEngraving\b/];
 
@@ -95,6 +95,7 @@ async function checkShop(shop, tag) {
   for (const r of recs) {
     const sid = r.id, wt = want(t, shop, sid), mine = bangs.get(sid) || [], steps = mine.map(b => b.getAttribute('data-issues-step'));
     COV.sheets++; if (wt.any) COV.held++; COV.bangs += mine.length;
+    if (wt.orders.length && mine.length && !steps.includes('orders')) COV.ordersBehindEarlierStep++;   // (informational: real order issues the '!' shows once the earlier step is done: the rail is in order)
     if (!wt.any && mine.length) out.push({ type: 'bangWithoutIssue', sheet: sid, detail: `'!' on ${steps.join(',')}; the oracle sees nothing holding the sheet` });
     if (wt.any && !wt.nesting && !mine.length && w.document.querySelector(`[data-laser-card] [data-flow-for="sheet:${sid}"]`)) out.push({ type: 'noBang', sheet: sid, detail: `held by ${JSON.stringify({ own: wt.own, orders: wt.orders.length, ghosts: wt.ghosts.length })}` });
     if (!mine.length) continue;
