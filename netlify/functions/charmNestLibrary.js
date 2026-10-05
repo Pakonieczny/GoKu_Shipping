@@ -213,7 +213,10 @@ async function productionReadiness(records,{tx=null,revs=null}={}) {
     for(const [key,l] of Object.entries({...archived.lines,...run?.lines}))if(wanted.has(String(l.orderId || key.split('_')[0])))lines.set(key,{...l,key,orderId:String(l.orderId || key.split('_')[0])});
   }
   const evidence=new Map(records.map(s=>[s.id || s.sheetId,s]));
-  const present=new Set(records.flatMap(Readiness.idsOf)),missingOrders=[...new Set([...lines.values()].filter(l=>(l.poolIds || []).some(id=>!present.has(id))).map(l=>l.orderId))];
+  // an order whose pieces are not all on these sheets: the sheets that hold the rest are read too. A line that lost its pool ids is read by the ids the pool gives
+  // its copies ("<line key>_<n>"); a committed line without pieces is a no-design candidate (below), not a lost piece
+  const present=new Set(records.flatMap(Readiness.idsOf)),lostIds=l=>!(l.poolIds || []).length && l.state!=='gone' && !l.noDesign && !l.problems?.length && !['committed','written','labelled'].includes(l.state),
+    missingOrders=[...new Set([...lines.values()].filter(l=>(l.poolIds || []).some(id=>!present.has(id)) || (lostIds(l) && Readiness.copyIds(l,l.key).some(id=>!present.has(id)))).map(l=>l.orderId))];
   for(let i=0;i<missingOrders.length;i+=30){
     const snap=await get(col(SHEETS).where('orders','array-contains-any',missingOrders.slice(i,i+30)).select(...SLIM_SHEET));
     for(const d of snap.docs){if(revs)revs['s:'+d.id]=revOf(d);if(!d.data().archived && !evidence.has(d.id))evidence.set(d.id,{...d.data(),id:d.id});}
@@ -247,7 +250,8 @@ async function productionReadiness(records,{tx=null,revs=null}={}) {
   const decisions=Readiness.decisions([...lines.values()]);
   for(const s of evidence.values())s.engraving=Object.fromEntries(Readiness.idsOf(s).map(id=>[id,decisions[id] || {needed:true,state:'unknown',approved:false}]));
   const orders=Readiness.orderReports([...lines.values()],[...evidence.values()]);
-  for(const s of records)s.orderReadiness=Object.fromEntries(Readiness.orderIds(s).map(id=>[id,orders[id] || {ready:false,why:'Order readiness has not been verified'}]));
+  // each sheet's own reading of its orders: an order waits only for its OTHER pieces (Readiness.forSheet), never for a piece on this very sheet
+  for(const s of records)s.orderReadiness=Object.fromEntries(Readiness.orderIds(s).map(id=>[id,Readiness.forSheet(orders[id],s.id || s.sheetId) || {ready:false,why:'Order readiness has not been verified'}]));
   return records;
 }
 
