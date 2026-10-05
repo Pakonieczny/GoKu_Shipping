@@ -1571,7 +1571,9 @@ const Orders = window.Orders = (() => {
       const why = attn ? (r.problems.map(x => Review.problemText(x)).join(" · ") || r.reason || "") : r.state === "waiting" ? (r.reason || "") : "";
       const gateBtn = r.state === "waiting" && r.wait ? `<button class="relHold" type="button" data-gate="${r.wait.kind === "slow" ? "release" : "cut"}" data-gm="${esc(r.wait.material)}" title="${r.wait.kind === "slow" ? "send " + esc(labelOf(r.wait.material)) + " to the laser with this set instead of waiting" : "cut the partial " + esc(labelOf(r.wait.material)) + " sheet now"}">${r.wait.kind === "slow" ? "Send now" : "Cut it anyway"}</button>` : "";
       const mail = window.CustomerMail ? CustomerMail.badgeStamp(r.order.receiptId) : "", team = window.TeamMail ? TeamMail.stamp(r) : "";
-      const stamp=JSON.stringify([cards,r.order,r.line,r.spec,r.state,st,r.hold,r.wait,why,where,due,date,mail,team,!!r.hold && OV.pile === "hold" && !!window.CancelUI]);
+      // the seals this piece's record keeps (Complete Order, each print; a reopened piece's too: they are for good), drawn small beside its state
+      const seals=window.CustomPrint&&window.Seal?CustomPrint.sealsOfRow(r):null;
+      const stamp=JSON.stringify([cards,r.order,r.line,r.spec,r.state,st,r.hold,r.wait,why,where,due,date,mail,team,!!r.hold && OV.pile === "hold" && !!window.CancelUI,seals&&CustomPrint.sealSig(seals)]);
       const cached=orderNodes.get(r.key);
       if(cached?.stamp===stamp){orderNodes.delete(r.key);orderNodes.set(r.key,cached);wanted.push(cached.node);mounts.push([cached.node,r]);continue;}
       const node = el("div", (cards ? "ocard" : "doneRow workRow orderListRow") + " hoverItem" + (attn ? " attn" : ""));
@@ -1579,7 +1581,7 @@ const Orders = window.Orders = (() => {
       node.title = r.order.receiptId + " · " + (sp.designSku || r.line.sku || "no SKU") + " — " + r.line.title;
       const qty = sp.quantity || r.line.quantity || 1;
       const identity=`<div class="engravingIdentity"><span class="queueLabel">Order</span><div class="engravingOrder"><b class="mono onum">${esc(r.order.receiptId)}</b><span class="sku mono">${esc(sp.designSku || r.line.sku || 'No SKU')}</span></div><span class="purchaseLabel">${wordsOf(sp) ? 'Personalisation' : 'Item'}</span><span class="rowExcerpt" title="${esc(wordsOf(sp) || r.line.title || '')}">${esc(wordsOf(sp) || r.line.title || 'No title')}</span>${where ? `<span class="rowExcerpt dim">${esc(where.set)} · ${esc(where.sheet)}</span>` : ''}</div>`;
-      node.innerHTML=ListMedia.pair(r)+identity+`<div class="purchaseSummary">${purchaseMarkup(r)}</div><div class="rowActions">${team ? TeamMail.mark(r) : ""}${mail && mail !== "null" ? CustomerMail.badge(r.order.receiptId) : ""}<span class="ost ${st[0]}">${esc(st[1])}</span><span class="rowFacts">Qty ${qty} · <span class="due ${due.cls}">Ship by ${esc(due.txt)}</span></span>${why ? `<span class="rowExcerpt reviewReason" title="${esc(why)}">${esc(why)}</span>` : ''}${r.hold ? '<button class="btn ghost sm relHold" type="button" title="back in line: the run places it on the next sheet that fits">Release hold</button>' : ''}${gateBtn}</div>`;
+      node.innerHTML=ListMedia.pair(r)+identity+`<div class="purchaseSummary">${purchaseMarkup(r)}</div><div class="rowActions">${team ? TeamMail.mark(r) : ""}${mail && mail !== "null" ? CustomerMail.badge(r.order.receiptId) : ""}<span class="ost ${st[0]}">${esc(st[1])}</span>${seals?Seal.row(seals,{size:28}):''}<span class="rowFacts">Qty ${qty} · <span class="due ${due.cls}">Ship by ${esc(due.txt)}</span></span>${why ? `<span class="rowExcerpt reviewReason" title="${esc(why)}">${esc(why)}</span>` : ''}${r.hold ? '<button class="btn ghost sm relHold" type="button" title="back in line: the run places it on the next sheet that fits">Release hold</button>' : ''}${gateBtn}</div>`;
       const number=node.querySelector('.onum');if(number){const time=el('span','orderTime');time.textContent=date.time;time.title=date.label;number.appendChild(time);}
       // (the order view grows out of the row that was clicked)
       node.onclick = e => { if (e.target.closest("button,[role=button]") !== node && e.target.closest("button,[role=button]")) return; OrderWin.open(r.key, { from: node }); };
@@ -7616,9 +7618,42 @@ const CustomPrint = window.CustomPrint = (() => {
   function keptOf(it) {
     if (!it || it.done) return null;
     if (it.record && it.record.state === "open") return it.record;
-    const m = B.maps.customKept || {}; for (const r of linesOf(it)) if (m[r.key]) return m[r.key];
-    return null;
+    // (every line of the card keeps a record of its own: the seals of all of them, once each)
+    const m = B.maps.customKept || {}, recs = []; for (const r of linesOf(it)) if (m[r.key]) recs.push(m[r.key]);
+    return cardRecord(recs);
   }
+  /** The record a card draws its seals from, for the lines it holds (a card is one order's lines of one SKU, and each line
+   *  keeps a record of its own): their seals, each once, oldest first. One press of a card stamps its lines' records a moment
+   *  apart (a loop of customPut), and that is one seal: a press of the same kind by the same person within 10 s of one already
+   *  listed is not drawn twice; every print and every completion of one record is a seal of its own. One record: as it is. */
+  function cardRecord(recs) {
+    recs = (recs || []).filter(r => r && typeof r === "object");
+    if (recs.length < 2 || !window.Seal) return recs[0] || null;
+    const out = [], owner = new Map();
+    for (const rec of recs) for (const s of Seal.list(rec)) {
+      const k = s.how === "button" ? "button" : s.how;
+      if (out.some(o => owner.get(o) !== rec && (o.how === "button" ? "button" : o.how) === k && String(o.by || "") === String(s.by || "") && Math.abs((+o.at || 0) - (+s.at || 0)) < 10000)) continue;
+      const c = Object.assign({}, s); delete c.n; out.push(c); owner.set(c, rec);
+    }
+    out.sort((a, b) => (+a.at || 0) - (+b.at || 0));
+    return Object.assign({}, recs[0], { stamps: out, prints: Math.max(...recs.map(r => +r.prints || 0)) });
+  }
+  /** Every seal the records of one order's pieces keep (completed, printed, reopened: all of them, for good), as a record
+   *  Seal.row draws: for lists that show a piece or an order (the Orders tab's rows, the Cancelled list). null when there are none. */
+  function sealsOfRecords(recs) {
+    const rec = cardRecord(recs);
+    return rec && window.Seal && Seal.list(rec).length ? rec : null;
+  }
+  const recordOfRow = r => r && ((r.spec && r.spec.customDone) || (B.maps.customDone || {})[r.key] || (B.maps.customKept || {})[r.key]) || null;
+  const sealsOfRow = r => sealsOfRecords([recordOfRow(r)]);
+  function sealsOfOrder(rid) {
+    rid = String(rid || ""); if (!rid) return null;
+    const recs = [];
+    for (const m of [B.maps.customDone || {}, B.maps.customKept || {}]) for (const rec of Object.values(m)) if (rec && String(rec.receiptId || "") === rid) recs.push(rec);
+    return sealsOfRecords(recs);
+  }
+  /** What a list that draws these records' seals redraws on: the seals, as their times. */
+  const sealSig = rec => rec && window.Seal ? Seal.list(rec).map(s => s.how[0] + s.at).join() : "";
   /** The kept seals of one kind ("print" | "button") of an open card, as they were, on the button that made them: the
    *  same seals (their look and turn come from who and when), never pressed again on a redraw. "" when there are none. */
   function keptSeals(it, how, only) {
@@ -7986,7 +8021,7 @@ const CustomPrint = window.CustomPrint = (() => {
   }
   const keptSig = it => { const k = keptOf(it); return k ? (Array.isArray(k.stamps) ? k.stamps.map(x => x.how[0] + x.at).join() : "l") + ":" + (+k.prints || 0) : ""; };
   const stamp = it => { const f = fails.get(it.key); return [busy.get(it.key) || "", acting.get(it.key) || "", asking.has(it.key), !!undoOf(it), f ? (f.st ? "held:" + f.st.at : "") + (f.retrying ? ":r" : "") || "fail" : "", armed.has(it.key + "|print"), armed.has(it.key + "|complete"), keptSig(it)].join("|"); };
-  return { print, complete, reopen, undo, statusHtml, buttonHtml, working, freshOf, failNote, wire, stamp, keptOf, keptSeals, keptButtonHtml, busy: key => busy.get(key) || "", printing: key => printing.has(key), undoing: rows => rows.some(r => undos.has(r.key)), touching: key => touching.has(key), remote, settle };
+  return { print, complete, reopen, undo, statusHtml, buttonHtml, working, freshOf, failNote, wire, stamp, keptOf, keptSeals, keptButtonHtml, cardRecord, sealsOfRow, sealsOfOrder, sealSig, busy: key => busy.get(key) || "", printing: key => printing.has(key), undoing: rows => rows.some(r => undos.has(r.key)), touching: key => touching.has(key), remote, settle };
 })();
 
 /* ═══ 23a · Custom Orders — the order's own designs, dropped on its card and sent to the sheets ═══════════════════
@@ -9524,7 +9559,7 @@ const Review = window.Review = (() => {
   /** What a decision card is drawn from: while it reads the same, the card (and whatever is typed in it) is kept. */
   function stampOf(it) {
     const row=it.row || rowsOf(it)[0],group=rowsOf(it);
-    return JSON.stringify([it.kind,it.why,it.problem,it.problems,row?.spec,row?.line,row?.poolIds,row?.state,group.map(r=>[r.key,r.order.receiptId]),!!it.info,!!it.done,!!it.decided,it.record&&[it.record.lastPrintedAt,it.record.prints,it.record.stamps,it.record.completedAt,it.record.decidedAt,it.record.by],it.alsoSent&&[it.alsoSent.at,it.alsoSent.by,it.alsoSent.stamps],it.kind==="customOrder"?CustomPrint.stamp(it)+"|"+CustomSheet.stamp(it):actStamp(actOf(it)),CustomRead.stamp(row),holdStamp(row)]);
+    return JSON.stringify([it.kind,it.why,it.problem,it.problems,row?.spec,row?.line,row?.poolIds,row?.state,group.map(r=>[r.key,r.order.receiptId]),!!it.info,!!it.done,!!it.decided,it.record&&[it.record.lastPrintedAt,it.record.prints,it.record.stamps,it.record.completedAt,it.record.decidedAt,it.record.by],it.done&&group.length>1&&group.map(r=>{const d=r.spec?.customDone;return d&&[d.stamps,d.completedAt,d.lastPrintedAt,d.prints];}),it.alsoSent&&[it.alsoSent.at,it.alsoSent.by,it.alsoSent.stamps],it.kind==="customOrder"?CustomPrint.stamp(it)+"|"+CustomSheet.stamp(it):actStamp(actOf(it)),CustomRead.stamp(row),holdStamp(row)]);
   }
   /* ── Custom Orders that ask nothing, and those completed ── */
   const infoItems = new Map();
@@ -9534,7 +9569,8 @@ const Review = window.Review = (() => {
     const kept = B.maps.customDone?.[row.key] || B.maps.customKept?.[row.key] || {};
     const at = +decision.at || +decision.decidedAt || +decision.completedAt || 0, by = decision.by || decision.decidedBy || decision.completedBy || "";
     const stamps = [], seen = new Set();
-    for (const s of [...(kept.stamps || []), ...(decision.stamps || []), { how: "sheet", id: decision.id || `${row.key}.sheet.${at}`, at, by }]) {
+    // (the kept record's seals: its stamps, or for a record from before them what it kept: Seal.list)
+    for (const s of [...(window.Seal ? Seal.list(kept) : kept.stamps || []), ...(decision.stamps || []), { how: "sheet", id: decision.id || `${row.key}.sheet.${at}`, at, by }]) {
       const key = [s.how, +s.at || 0, s.by || ""].join("|"); if (seen.has(key)) continue; seen.add(key); stamps.push({ ...s });
     }
     return { ...kept, ...decision, state: "decided", how: "sheet", at, decidedAt: at, by, stamps,
@@ -9582,7 +9618,8 @@ const Review = window.Review = (() => {
     // dated by this and not by the moment this page first drew it (which put every one of them first after a reload)
     const doneTime = rec => (rec && Math.max(+rec.lastPrintedAt || 0, +rec.completedAt || 0, +rec.printedAt || 0)) || 0;
     for (const g of groups.values()) {
-      const first = g.rows[0], record = g.done ? first.spec.customDone : g.decided ? sentRecord(first, CustomSheet.decisionOf(first)) : null;
+      // (a card of several lines of one SKU is worded and dated by the line completed last: its seals are all its lines', reviewRow)
+      const first = g.rows[0], record = g.done ? g.rows.map(r => r.spec.customDone).reduce((a, b) => doneTime(b) > doneTime(a) ? b : a) : g.decided ? sentRecord(first, CustomSheet.decisionOf(first)) : null;
       // a line completed by hand that was also sent to the sheets: the send is part of the same card
       const own = g.done ? g.rows.map(r => ({ r, d: CustomSheet.decisionOf(r) })).find(x => x.d) : null;
       const it = itemFor(g.key, { rows: g.rows, row: first, done: g.done, decided: g.decided, record, alsoSent: own ? sentRecord(own.r, own.d) : null, foldedInto: null,
@@ -9660,9 +9697,11 @@ const Review = window.Review = (() => {
     const cs=cu&&!it.done&&row?CustomSheet.cardOf(it):ax?CustomSheet.cardOf(ax):null,sendFirst=!!(cs&&!cs.sent&&!cs.why&&!cs.busy);
     // completed: every seal of the order (each print, and Complete Order when it was used) beside its print button, which
     // takes the print seal's colour once a label was printed (Paul, 27 Sep 20:09-20:18)
-    const mk=mkeyOf(it),printed=cu&&it.done&&rec&&window.Seal&&Seal.hasPrint(rec);
+    // (a card of several lines of one SKU draws every line's seals, each once: cardRecord)
+    const sealRec=cu&&it.done&&rec&&group.length>1?CustomPrint.cardRecord(group.map(r=>r.spec?.customDone).filter(Boolean)) || rec:rec;
+    const mk=mkeyOf(it),printed=cu&&it.done&&sealRec&&window.Seal&&Seal.hasPrint(sealRec);
     // (a completed card of an order that was also sent to a sheet carries that send's seal too: withSheetSeals)
-    const seals=cu&&(it.done||it.decided)&&rec&&window.Seal?Seal.row(it.done?withSheetSeals(rec,it.alsoSent):rec,it.decided?{}:{pending:CustomPrint.freshOf(mk)}):'';
+    const seals=cu&&(it.done||it.decided)&&sealRec&&window.Seal?Seal.row(it.done?withSheetSeals(sealRec,it.alsoSent):sealRec,it.decided?{}:{pending:CustomPrint.freshOf(mk)}):'';
     // an open card of any tab (Paul, 29 Sep 00:38: "make all the buttons look the same as in the other tabs"): the custom
     // card's column, one code path for every tab, for what the card acts on (cx: the custom order, or the order another
     // tab's card shows): Print QR label, the primary until its designs are ready to send; Complete Order; Send to Sheet,
