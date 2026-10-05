@@ -150,8 +150,11 @@ assert.equal(R.sheet(fixed).ready,true);assert.equal(R.laserSheet(fixed).ready,t
   const far=sheet('ss1','silver',['25_b_1']);const near=sheet('gf1','gold',['25_a_1']);
   const hs=[row('25','a'),row('25','b',{hold:'Check customer changes'})];
   assert.deepEqual(orderIssues(near,hs,[near,far]).map(x=>[x.key,x.pieces[0].sheetLabel]),[['held','SS Sheet 1']]);
-  assert.equal(orderIssues(far,hs,[near,far]).length,0,'the sheet that holds the held piece does not wait for it (its other piece is on a ready sheet)');
-  assert.equal(orderIssues(sheet('ss1','silver',['25_b_1']),[row('25','b',{hold:'Check customer changes'})]).length,0,'a one-piece order is never an issue');
+  assert.deepEqual(orderIssues(far,hs,[near,far]).map(x=>[x.key,x.pieces[0].sheetLabel]),[['held','SS Sheet 1']],'a held piece holds the sheet it sits on too: a person\'s hold or an Etsy change is not an inference');
+  const solo=orderIssues(sheet('ss1','silver',['25_b_1']),[row('25','b',{hold:'Check customer changes'})]);
+  assert.deepEqual(solo.map(x=>[x.key,x.pieceCount]),[['held',1]],'even a one-piece order, because it is held');
+  assert.equal(orderIssues(sheet('ss1','silver',['25_b_1']),[row('25','b',{changePending:true})]).length,1);
+  assert.equal(orderIssues(sheet('ss1','silver',['25_b_1']),[row('25','b')]).length,0,'a one-piece order that is not held is never an issue');
 }
 
 // 7. A piece's stored state is not where it sits: the order of 4170252963 (Nathaly Soto), one piece on each of two sheets, the SS line still 'pooled'
@@ -234,6 +237,16 @@ assert.equal(R.sheet(fixed).ready,true);assert.equal(R.laserSheet(fixed).ready,t
   assert.deepEqual(R.forSheet({ready:false,why:'x'},'gf1'),{ready:false,why:'x'});assert.equal(R.forSheet(undefined,'gf1'),undefined);assert.deepEqual(R.forSheet({ready:true},'gf1'),{ready:true});
   assert.equal(R.sheet({...gf,orderReadiness:undefined}).stages.orders,false,'orders not read at all: not ready, as before');
   assert.equal(R.sheet({...gf,orderReadiness:{80:{ready:false,why:'Order readiness has not been verified'}}}).stages.orders,false);
+}
+
+// 12b. Orders nothing was read for (no run lines): one entry for the sheet, not one for each of its orders; an older record that carries only the line's state
+{
+  const none=sheet('nn-1','gold',['90_a_1','91_a_1']);
+  const u=R.issues(none,{rows:[],allSheets:[none]}).filter(i=>i.step==='orders');
+  assert.deepEqual(u.map(i=>[i.key,i.orderId||null,i.orderIds,i.open.type]),[['unverified',null,['90','91'],'sheet']]);assert.equal(R.sheet({...none,orderReadiness:{90:{ready:false,why:'x'},91:{ready:true}}}).stages.orders,false);
+  const gf=sheet('gf-1','gold',['95_a_1','96_a_1','97_a_1']);
+  const rs=[row('95','a'),{...row('95','b',{poolIds:[]}),state:'unmatched',problems:[]},row('96','a'),{...row('96','b',{poolIds:[]}),state:'held',reason:'poolAdd failed',problems:[]},row('97','a'),{...row('97','b',{poolIds:[]}),state:'oversize',problems:[]}];
+  assert.deepEqual(orderIssues(gf,rs).map(i=>[i.orderId,i.key]),[['95','unmatched'],['96','held'],['97','noDesign']]);
 }
 
 // 13. The real handlers: laserStatus answers each sheet with its own reading of its orders
