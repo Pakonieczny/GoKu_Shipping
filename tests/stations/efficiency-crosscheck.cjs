@@ -165,7 +165,7 @@ function signIn(t, key, person, sid) {
   at(t, async () => {
     const p = PAGES[key];
     const r = await post({ session: { id: sid, event: 'start', person, station: p.station, device: p.device, computerId: p.computer, computerLabel: p.device, at: NOW } });
-    assert.strictEqual(r.status, 200, 'sign-in ' + sid); sessionOf[sid] = { key, person };
+    assert.strictEqual(r.status, /\p{L}/u.test(person) ? 200 : 400, 'sign-in ' + sid + (/\p{L}/u.test(person) ? '' : ': a digits-only name is a PIN: the door refuses it, nothing is stored')); sessionOf[sid] = { key, person };
     p.who = { person, station: p.station, device: p.device, computer: p.computer, session: sid, startAt: r.body.startAt, sandbox: false };
   });
 }
@@ -319,7 +319,7 @@ let MAIN;
   const rr = PAGES.R.calls; assert(rr.some(c => c.ids.length === 4 && c.ids.slice(0, 2).every(i => rr[0].ids.includes(i))), 'the retry after the lost answer carried the same ids');
   assert.strictEqual(rr.filter(c => c.ids.length === 2 && c.ids[0] === rr[rr.length - 1].ids[0]).length >= 1, true, 'the outage batch was tried again');
   eq(rr.map(c => c.ids.length), [2, 4, 2, 2], 'Ray: lost answer (2), retry with two more (4), 503 (2), and one try after the back-off (2): the second tick inside the back-off made no request');
-  assert(!JSON.stringify([...colls]).includes('424242'), 'the digits-only session name is stored in sessions only (a station never makes an event for it) and never in an event');
+  assert(!JSON.stringify([...colls]).includes('424242'), 'the digits-only session name is refused at the door: stored nowhere, in no session and in no event');
   assert.strictEqual(docsOf('Efficiency_Daily').filter(d => d.person === '424242').length, 0, 'no rollup under a PIN');
 
   /* the live overview at 15:30 */

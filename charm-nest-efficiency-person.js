@@ -557,7 +557,7 @@
     const EA = () => (root.Efficiency && root.Efficiency.api) || null;
     const now = () => (typeof o.now === "function" ? o.now() : EA() && typeof EA().now === "function" ? EA().now() : Date.now() + S.off), today = () => nyDay(now());
     const S = { name: String(o.name || ""), range: "week", anchor: null, custom: null, following: true, metric: "parts", M: null, cache: new Map(), gen: 0, busy: false, err: "", errShort: "", fails: 0, at: 0, off: 0, ctl: null, locked: false, dead: false,
-      live: null, liveAt: 0, liveFails: 0, liveBusy: false, calx: null, calBusy: false, now: new Map(), openKinds: new Set(), kinds: false, moreOpen: new Set(), calW: 0,
+      live: null, liveAt: 0, liveFails: 0, liveBusy: false, calx: null, calBusy: false, ordersAll: false, ordersSig: "", now: new Map(), openKinds: new Set(), kinds: false, moreOpen: new Set(), calW: 0,
       orders: { q: "", list: [], seen: new Set(), next: "", busy: false, gen: 0, err: "", total: null, done: false, loaded: false, typing: false, reset: false, at: 0 } };
     const want = o.range || store.get(RANGE_STORE) || "week"; S.range = RANGES.some(r => r[0] === want && r[0] !== "custom") || want === "custom" && o.custom ? want : "week";
     S.anchor = isDay(o.day) ? o.day : today(); S.custom = o.custom || null; S.following = S.anchor >= today();
@@ -634,7 +634,7 @@
     <section aria-label="Issues"><div class="efpLabel">Issues <b class="efpIN"></b></div><div class="efpCard efpIs"></div></section>
     <section aria-label="Success and contact rates"><div class="efpLabel">Success and contact</div><div class="efpCard efpRates"></div></section>
   </div>
-  <section aria-label="Orders"><div class="efpLabel">Orders <b class="efpON"></b><span class="efpLr">Everything this person handled</span></div>
+  <section aria-label="Orders"><div class="efpLabel">Orders <b class="efpON"></b><span class="efpLr"></span><button type="button" class="efpLink" data-orders-all>Show all time</button></div>
     <div class="efpCard efpOrdersHost"><div class="efpOrdersOwn"><div class="efpFind"><label class="efpSearch">${SEARCH}<input type="text" name="q" inputmode="search" autocomplete="off" spellcheck="false" placeholder="Search orders: number, customer or station" aria-label="Search this person's orders"><button type="button" class="efpIcon hidden" data-clear aria-label="Clear the search">✕</button></label><span class="efpSt" role="status"></span></div>
       <div class="efpOl"></div><div class="efpMore"></div></div></div></section>
   <div class="efpCannot hidden"></div>
@@ -645,7 +645,7 @@
       Object.assign(E, { back: q(".efpBack"), av: q(".efpAv"), name: q(".efpName"), where: q(".efpWhere"), chips: q(".efpChips"), live: q(".efpLive"), liveT: q(".efpLiveT"), bar: q(".efpBar"), day: q(".efpDay"), prev: q('[data-nav="-1"]'), next: q('[data-nav="1"]'), today: q(".efpToday"),
         custom: q(".efpCustom"), busy: q(".efpBusy"), busyT: q(".efpBusyT"), msg: q(".efpMsg"), wait: q(".efpWait"), waitT: q(".efpWaitT"), nowS: q(".efpNowS"), now: q(".efpNow"), body: q(".efpBody"), note: q(".efpNote"), kg: q(".efpKGroups"),
         hc: q(".efpHC"), tpP: q('[data-c="tp"] .efpCP'), calP: q('[data-c="cal"] .efpCP'), mixP: q('[data-c="mix"] .efpCP'), heatP: q('[data-c="heat"] .efpCP'), shiftP: q('[data-c="shift"] .efpCP'), calH: q(".efpCalH"), calNote: q(".efpCalNote"), mixH: q(".efpMixH"), heatH: q(".efpHeatH"), shiftH: q(".efpShiftH"), iN: q(".efpIN"), is: q(".efpIs"), rates: q(".efpRates"),
-        oN: q(".efpON"), find: q(".efpSearch input"), clear: q("[data-clear]"), st: q(".efpFind .efpSt"), ol: q(".efpOl"), more: q(".efpMore"), heat: q('[data-c="heat"]'), cSp: q('[data-c="sp"]'), cTm: q('[data-c="tm"]'), cShift: q('[data-c="shift"]'), ordersHost: q(".efpOrdersHost"), ordersOwn: q(".efpOrdersOwn"), cannot: q(".efpCannot") });
+        oN: q(".efpON"), find: q(".efpSearch input"), clear: q("[data-clear]"), st: q(".efpFind .efpSt"), ol: q(".efpOl"), more: q(".efpMore"), heat: q('[data-c="heat"]'), cSp: q('[data-c="sp"]'), cTm: q('[data-c="tm"]'), cShift: q('[data-c="shift"]'), ordersHost: q(".efpOrdersHost"), ordersOwn: q(".efpOrdersOwn"), cannot: q(".efpCannot"), lr: q(".efpLr"), oAll: q("[data-orders-all]") });
       E.k = {};
       for (const [gname, prim, more] of GROUPS) {
         const g = el("div", "efpGroup"), grid = el("div", "efpKpis"), lab = g.appendChild(el("div", "efpLabel")); lab.appendChild(el("span")).textContent = gname;
@@ -981,7 +981,7 @@
       Object.assign(S, ch);
       if (S.range === "custom" && !S.custom) { const p = period(); S.custom = { from: p.from, to: p.to }; }
       S.following = period().to >= today() && S.anchor >= today(); store.set(RANGE_STORE, S.range === "custom" ? "" : S.range);
-      S.gen++; if (S.ctl) { try { S.ctl.abort(); } catch (_) {} } S.busy = false; S.fails = 0; S.err = ""; paintBar(); hideHC(); S.calx = S.calx && S.M && S.calx.to === period().to ? S.calx : null;
+      S.gen++; if (S.ctl) { try { S.ctl.abort(); } catch (_) {} } S.busy = false; S.fails = 0; S.err = ""; paintBar(); syncOrders(); hideHC(); S.calx = S.calx && S.M && S.calx.to === period().to ? S.calx : null;
       try { o.onState && o.onState({ range: S.range, day: S.anchor, from: period().from, to: period().to }); } catch (_) {}
       const key = reqKey(), hit = S.cache.get(key);
       if (hit) accept(hit.r, true, hit.at); else E.body.classList.add("dim");
@@ -1047,10 +1047,21 @@
       O.typing = true; E.st.innerHTML = `<span class="spin" aria-hidden="true"></span>Searching orders…`; E.st._h = E.st.innerHTML;
       T.deb = setTimeout(() => { O.q = v; loadOrders(true); }, options.debounceMs);
     }
+    /** E8's list follows the date chips (its own From / To fields are off); "Show all time" lifts the range for a search over everything. */
+    const ordersRange = () => { if (S.ordersAll) return null; const p = period(); return { from: p.from, to: p.to }; };
+    function paintOrdersLabel() {
+      if (!ordersH) { setText(E.lr, "Everything this person handled"); E.oAll.classList.add("hidden"); return; }
+      setText(E.lr, S.ordersAll ? "All time" : periodLabel(S.range, period(), today())); E.oAll.classList.remove("hidden"); setText(E.oAll, S.ordersAll ? "Only this period" : "Show all time");
+    }
+    function syncOrders() {
+      if (!ordersH) return; paintOrdersLabel();
+      const r = ordersRange(), sig = JSON.stringify(r); if (sig === S.ordersSig) return; S.ordersSig = sig;
+      if (typeof ordersH.setRange === "function") { try { ordersH.setRange(r); } catch (e) { console.warn("[efficiency person] order list range:", e && e.message); } }
+    }
     function mountOrders() {
       const EO = root.EfficiencyOrders;
       if (EO && typeof EO.mount === "function") {
-        try { const host1 = el("div", "efpOrdersMod"); E.ordersHost.appendChild(host1); const h = EO.mount(host1, { name: S.name, onOpen: (rid, btn) => openOrder(btn || host1, rid) }); if (h) { ordersH = h; E.ordersOwn.classList.add("hidden"); if (io) io.disconnect(); return; } host1.remove(); } catch (e) { console.warn("[efficiency person] order list module:", e && e.message); }
+        try { const host1 = el("div", "efpOrdersMod"); E.ordersHost.appendChild(host1); const r0 = ordersRange(), h = EO.mount(host1, { name: S.name, range: r0, dateFields: false, onOpen: (rid, btn) => openOrder(btn || host1, rid) }); if (h) { ordersH = h; S.ordersSig = JSON.stringify(r0); E.ordersOwn.classList.add("hidden"); if (io) io.disconnect(); paintOrdersLabel(); return; } host1.remove(); } catch (e) { console.warn("[efficiency person] order list module:", e && e.message); }
       }
       if (root.IntersectionObserver) { io = new IntersectionObserver(es => { if (es.some(x => x.isIntersecting)) loadOrders(false); }, { rootMargin: "400px 0px" }); io.observe(E.more); }
       loadOrders(true); schedule("orders", options.ordersMs);
@@ -1072,6 +1083,7 @@
       if (b && b.dataset.moreGroup) { const g = b.dataset.moreGroup, on = !S.moreOpen.has(g); if (on) S.moreOpen.add(g); else S.moreOpen.delete(g); b.setAttribute("aria-expanded", on); b.textContent = on ? "Fewer figures" : "More figures"; for (const full of Object.keys(E.k)) { const k = E.k[full]; if (k.group === g && k.card.classList.contains("extra")) { k.card.classList.toggle("hidden", !on); if (on && !still()) { k.card.classList.remove("more"); void k.card.offsetWidth; k.card.classList.add("more"); } } } if (S.M) renderKpis(S.M, buckets(S.M, today(), now()), true); return; }
       if (b && b.dataset.kindbtn) { const k = b.dataset.kindbtn, g = b.closest(".efpIg"); if (!S.kinds) { S.kinds = true; const f = S.M && S.M.issues && S.M.issues.byKind[0]; if (f && f.kind !== k) S.openKinds.add(f.kind); } const open = !g.classList.contains("open"); if (open) S.openKinds.add(k); else S.openKinds.delete(k); g.classList.toggle("open", open); b.setAttribute("aria-expanded", open); E.is._sig = JSON.stringify([S.M && S.M.issues, [...S.openKinds], S.kinds, S.M && S.M.eventWindow]); return; }
       if (b && b.hasAttribute("data-clear")) { E.find.value = ""; onSearchInput(); E.find.focus(); return; }
+      if (b && b.hasAttribute("data-orders-all")) { S.ordersAll = !S.ordersAll; syncOrders(); return; }
       if (b && b.hasAttribute("data-more")) { loadOrders(false); return; }
       const ob = t.closest("[data-order]"); if (ob && ob.dataset.order) { e.stopPropagation(); return openOrder(ob, ob.dataset.order); }
       if (row && row.dataset.rid) return openOrder(row, row.dataset.rid);

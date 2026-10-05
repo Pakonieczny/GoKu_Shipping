@@ -58,7 +58,7 @@ function fixture() {
   w.Seal.add = () => { throw Error('historical rendering must never add a seal'); };
   w.Seal.press = () => { throw Error('historical rendering must never replay a stamp'); };
   w.Motion.note = (b, opts) => { calls.notices.push(opts); return d.createElement('span'); };
-  w.eval(section('  function paintSend(', '  /** The order\'s notes as they stand now:'));
+  w.eval(section('  function paintSend(', '  /* ── an order of several pieces'));   // (up to where the pieces list begins: the notes box that used to end this stretch is gone, 5 Oct)
   // (a piece's row: the timeline's summary and the piece list are answered here; the controls and their wiring are the production code)
   w.OrderTimelineUI = {STAGES:['arrived'], summary:(events, pieces) => ({each:pieces.map(p => ({p, D:{step:0, stages:[{}], hand:false, cancelled:false, W:null}, steps:[]})), rail:[], step:0})};
   w.piecesOf = rows => rows.map(x => ({key:x.key, name:'Piece', metal:null, form:'', qty:1, line:{}}));

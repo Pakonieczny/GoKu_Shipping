@@ -48,7 +48,9 @@ const ms = v => v == null ? 0 : typeof v.toMillis === "function" ? v.toMillis() 
 const r1 = x => Math.round(x * 10) / 10;
 const pct = (n, d) => d > 0 ? r1(n / d * 100) : null;
 const digits = (v, n = 30) => String(v == null ? "" : v).replace(/\D/g, "").slice(0, n);
-const cleanName = v => String(v == null ? "" : v).replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim().slice(0, 80);
+/* A name never carries a PIN: four or more digits in a name are a login number that slipped in, so the digits are dropped ("Paul 482915" is "Paul"); the same rule as the console's. */
+const noPin = s => (s.match(/\p{Nd}/gu) || []).length >= 4 ? s.replace(/\p{Nd}+/gu, " ").replace(/\s+/g, " ").trim() : s;
+const cleanName = v => noPin(String(v == null ? "" : v).replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim().slice(0, 200)).slice(0, 80);
 const okName = n => !!n && /\p{L}/u.test(n);                       // a name with no letter is a PIN, never a person
 /* the console's name folding (employeeEfficiency.js `fold`): one person however the login spelled the name. Used only when the
    caller gives no ctx.nameKey / ctx.prof.key. Keep identical to it. */
@@ -327,7 +329,7 @@ function aggregate(A, docs, key, from, to) {
     a.spell.add(String(d.person)); a.events += num(d.events);
     if (d.ixv !== 1) a.ixv = false;                                  // one spelling without the marker makes the whole day "not counted"
     for (const [s, v] of Object.entries(d.stations && typeof d.stations === "object" ? d.stations : {})) {
-      if (!/^[a-z][\w-]{0,19}$/.test(s) || !v || typeof v !== "object") continue;
+      if (!/^[a-z][\w-]{0,19}$/.test(s) || s in Object.prototype || !v || typeof v !== "object") continue;
       const t = a.st[s] || (a.st[s] = zero());
       for (const k of BASE) t[k] += Math.max(0, num(v[k]));
       for (const k of K.X_KEYS) t[k] += Math.max(0, num(v[k]));

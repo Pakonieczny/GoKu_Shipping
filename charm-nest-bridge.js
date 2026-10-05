@@ -11489,7 +11489,8 @@ const OrderWin = window.OrderWin = (() => {
         const pl = x._pl, w = pl.wasOn || null;
         line = "Not on a sheet now";
         if (w && w.label) by = `Was on ${w.label} ${w.how === "gone" ? "until it stopped holding it" : `until ${w.by || "it was"} ${w.by ? "took it off" : "taken off"}`}${w.until > 0 ? ", " + pdotWhen(w.until) : ""}`;
-        const hold = pl.state === "hold" ? "On hold" + (/:\s*\S/.test(pl.why || "") ? ": " + pl.why.replace(/^[^:]*:\s*/, "") : "") : "";
+        const hr = /:\s*\S/.test(pl.why || "") ? pl.why.replace(/^[^:]*:\s*/, "").trim() : "";   // (the Hold press's own marker, "held by Paul", only says what "On hold" says)
+        const hold = pl.state === "hold" ? "On hold" + (hr && !/^held by\b/i.test(hr) ? ": " + hr : "") : "";
         by = [by, hold].filter(Boolean).join(" · ") || ask();
       } else line = ask();
     }
@@ -11685,7 +11686,7 @@ const OrderWin = window.OrderWin = (() => {
   // Review feed reads the records at once (ReviewLive.nudge: one read, not a poller), so the window's pieces follow
   const customSig = list => Array.isArray(list) ? list.filter(e => e.type === "sealCompleted" || e.type === "sealPrinted" || (e.type === "note" && e.data && e.data.reopened)).map(e => e.type + ":" + (e.id || e.at)).join() : null;
   function loadEvents(rid) {
-    W.events = null; W.evFor = rid; W.cancelled = null; W.nowSeal = null;
+    W.events = null; W.evFor = rid; W.cancelled = null; W.nowSeal = null; W.placementRev = null;
     if (W.feed) tryDo(() => W.feed.destroy()); W.feed = null;
     const T = window.OrderTimeline, UI = window.OrderTimelineUI; if (!T || !T.get) return;
     const f = UI && UI.feed ? tryDo(() => UI.feed(rid)) : null;
@@ -11693,8 +11694,11 @@ const OrderWin = window.OrderWin = (() => {
       if (W.evFor !== rid || W.feed !== f) return;
       const before = sheetSig(W.events), beforeC = customSig(W.events); W.events = (j && j.events) || []; W.cancelled = j && j.cancelled ? (j.cancelled[rid] || (j.cancelled.orderId ? j.cancelled : null)) : null;
       if (beforeC !== null && beforeC !== customSig(W.events)) tryDo(() => window.ReviewLive && ReviewLive.nudge({ hint: true }));
-      // a piece placed, moved or taken off since the sheet records were read: they are read again (no poller of its own: this feed is the clock)
-      if (before !== null && before !== sheetSig(W.events)) tryDo(() => window.OrderPieces && OrderPieces.load(rid, { force: true }));
+      // a piece placed, moved or taken off since the sheet records were read: they are read again (no poller of its own: this feed is the clock).
+      // The server's placementRev (a digest of the update times of the pool rows and sheet records the answer was made from) says so too when
+      // a write left no event (a sheet rewritten, a piece taken off by a stale second tab, a sheet deleted): it moved, so the pieces are read again
+      const revWas = W.placementRev; W.placementRev = (j && j.placementRev) || revWas;
+      if ((before !== null && before !== sheetSig(W.events)) || (revWas && W.placementRev !== revWas)) tryDo(() => window.OrderPieces && OrderPieces.load(rid, { force: true }));
       hold("now", () => { const r = rowOf(W.key); if (r && String(r.order.receiptId) === rid) paintNow(r); }, [byId("owNowCard"), byId("owNow")]);
     };
     if (f) { W.feed = f; f.subscribe(k => { if (k === "data") take(f.answer); else if (k === "error" && W.feed === f) console.warn("order view: timeline", f.error); }); f.refresh(); return; }

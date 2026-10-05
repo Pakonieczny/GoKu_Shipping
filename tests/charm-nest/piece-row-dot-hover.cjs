@@ -39,7 +39,7 @@ const ORDERS = [[order(P.rid, 'Leslie Suhr', [line(P.cable, 'CABLE CHAIN ONLY', 
 // gone, the line carries the hold marker); and PAST, two held pieces, one the history shows laser cut and sorted (a piece cannot un-cut: its dots are not clamped)
 const HELD = { rid: '4170999001', a: '41709990011', b: '41709990012' }, PAST = { rid: '4170999002', a: '41709990021', b: '41709990022' };
 ORDERS.push([order(HELD.rid, 'Hadley Holden', [line(HELD.a, 'MIDDLE_9935', 'gold', '14k Gold Filled'), line(HELD.b, 'MIDDLE_9935', 'rose', 'Rose Gold Filled')]), [null, null], 'held by Test Operator']);
-ORDERS.push([order(PAST.rid, 'Percy Past', [line(PAST.a, 'MIDDLE_9935', 'gold', '14k Gold Filled'), line(PAST.b, 'MIDDLE_9935', 'rose', 'Rose Gold Filled')]), [null, null], 'held by Test Operator']);
+ORDERS.push([order(PAST.rid, 'Percy Past', [line(PAST.a, 'MIDDLE_9935', 'gold', '14k Gold Filled'), line(PAST.b, 'MIDDLE_9935', 'rose', 'Rose Gold Filled')]), [null, null], 'Add to next sheet']);
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 // the shop's time, as the card says it: "Oct 3 · 4:12 PM"
 const when = at => { const d = new Date(at), f = o => new Intl.DateTimeFormat('en-US', Object.assign({ timeZone: 'America/Toronto' }, o)).format(d); return `${f({ month: 'short', day: 'numeric' })} · ${f({ hour: 'numeric', minute: '2-digit' }).replace(/ /g, ' ')}`; };
@@ -353,10 +353,13 @@ async function main() {
       // the Nested card of the first piece: where it is now, where it was, the hold, and the history's real seal (a seal is permanent)
       let sel = dot(ha, 'sheet'); await rest(hp, sel); let m = await read(hp, sel);
       assert.equal(m.shown, true); assert.equal(m.tip.name, 'Nested'); assert.equal(m.tip.state, 'Not yet'); assert.equal(m.tip.line, 'Not on a sheet now', 'the Nested card says where the piece is now: ' + m.tip.text);
-      assert.equal(m.tip.by, `Was on GF Sheet 2 until Paul took it off, ${when(HOLD_AT.a)} · On hold: held by Test Operator`, 'and where it was, who took it off and when, and that it is on hold: ' + m.tip.by);
+      assert.equal(m.tip.by, `Was on GF Sheet 2 until Paul took it off, ${when(HOLD_AT.a)} · On hold`, 'and where it was, who took it off and when, and that it is on hold: ' + m.tip.by);
       assert(!/\blines?\b/i.test(m.tip.text), 'pieces, never lines');
       const sealOf = () => hp.evaluate(() => { const q = document.querySelector('.railTip[data-on] .rtSeal'); return q ? { real: !!q.querySelector('.seal'), ghost: !!q.querySelector('.pgGhost') } : null; });
-      assert.deepEqual(await sealOf(), { real: true, ghost: false }, 'the ON SHEET seal is history and stays: the real one, never a ghost, in the hollow Nested dot\'s card'); await away(hp);
+      assert.deepEqual(await sealOf(), { real: true, ghost: false }, 'the ON SHEET seal is history and stays: the real one, never a ghost, in the hollow Nested dot\'s card');
+      if (shots) { const cx = (m.dot.l + m.dot.r) / 2, x = Math.max(0, Math.min(m.vw - 560, cx - 280)), top = Math.max(0, Math.min(m.tip.t, m.dot.t) - 90), bot = Math.min(m.vh, Math.max(m.tip.b, m.dot.b) + 130);
+        await hp.screenshot({ path: path.join(shots, 'held-nested-dot-card-1440.png'), clip: { x, y: top, width: Math.min(m.vw, 560), height: bot - top } }); }
+      await away(hp);
       // the second piece, off its own sheet (RG Sheet 2), says the same of its own sheet
       sel = dot(hb, 'sheet'); await rest(hp, sel); m = await read(hp, sel); assert.equal(m.tip.line, 'Not on a sheet now'); assert.match(m.tip.by, /^Was on RG Sheet 2 until Paul took it off, /); await away(hp);
       // every later step waits for Nested
@@ -368,7 +371,7 @@ async function main() {
       { const rows = await dotsOf();
         assert.deepEqual(rows[pa].dots.filter(d => d.on).map(d => d.step), ['arrived', 'sheet', 'laser', 'sorted'], 'a held piece the history shows sorted keeps its dots: ' + JSON.stringify(rows[pa].dots.map(d => d.on)));
         assert.deepEqual(rows[pb].dots.filter(d => d.on).map(d => d.step), ['arrived'], 'its sibling, nested only and held, has one'); }
-      sel = dot(pb, 'sheet'); await rest(hp, sel); m = await read(hp, sel); assert.equal(m.tip.line, 'Not on a sheet now'); assert.equal(m.tip.by, 'On hold: held by Test Operator', 'no history of a sheet taken off: only the hold: ' + m.tip.by); await away(hp);
+      sel = dot(pb, 'sheet'); await rest(hp, sel); m = await read(hp, sel); assert.equal(m.tip.line, 'Not on a sheet now'); assert.equal(m.tip.by, 'On hold: Add to next sheet', 'no history of a sheet taken off: only the hold: ' + m.tip.by); await away(hp);
       sel = dot(pa, 'sheet'); await rest(hp, sel); m = await read(hp, sel); assert.equal(m.tip.state, 'Done', 'the sorted piece\'s Nested is Done (history)'); await away(hp);
       // a mutant that ignores the placement (the dots read the history alone) is caught by the held-order check
       await openOrder(HELD, 12, 6); await heldIsFenced();   // (the real page passes)

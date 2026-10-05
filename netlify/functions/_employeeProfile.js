@@ -70,7 +70,7 @@ const CATALOG = {
 };
 
 function make(K) {
-  const { COL, LIM, ms, num, r1, zeros, digits, cleanName, okName, niceName, bestForm, nameKeyOf, canonOf, scrub, validDay, addDays,
+  const { COL, LIM, ms, num, r1, zeros, digits, cleanName, okName, okStation, niceName, bestForm, nameKeyOf, canonOf, scrub, validDay, addDays,
     nyDay, nyMidnight, clip, covered, spanOf, cached, readRollups, readEventsStart, eventRow, col, json, safe, tmpl, KEYS } = K;
   const DAY = 86400000;
 
@@ -97,7 +97,7 @@ function make(K) {
       if (spanLen(f, end) > MAX_DAYS) return { error: `a custom range is at most ${MAX_DAYS} days` };
       return { range: "custom", from: f, to: end, days: spanLen(f, end) };
     }
-    const n = RANGE_DAYS[r];
+    const n = typeof r === "string" && Object.prototype.hasOwnProperty.call(RANGE_DAYS, r) ? RANGE_DAYS[r] : 0;      // (an own entry only: "constructor" is not a range)
     if (!n) return { error: "range must be day, week, month, quarter, year or {from,to}" };
     return { range: r, from: addDays(to, -(n - 1)), to, days: n };
   }
@@ -164,7 +164,7 @@ function make(K) {
       const pd = pdOf(P, x.day); pd.hasEvents = true; pd.events += Math.max(0, num(x.events));
       const form = String(x.person); pd.forms.add(form); P.forms.add(form);              // (the exact stored name: what a Station_Activity query must match)
       for (const [st, v] of Object.entries(x.stations && typeof x.stations === "object" ? x.stations : {})) {
-        if (!/^[a-z][\w-]{0,19}$/.test(st) || !v || typeof v !== "object") continue;
+        if (!okStation(st) || !v || typeof v !== "object") continue;
         const a = pd.st[st] || (pd.st[st] = tmpl()); for (const k of KEYS) a[k] += Math.max(0, num(v[k]));
         const fa = ms(v.firstAt), la = ms(v.lastAt); if (fa > 0 && (!pd.inFirst || fa < pd.inFirst)) pd.inFirst = fa; if (la > pd.inLast) pd.inLast = la;
       }
@@ -175,7 +175,7 @@ function make(K) {
       for (const [id, m] of Object.entries(x.touched && typeof x.touched === "object" ? x.touched : {})) {
         const oid = digits(id); if (!oid) continue;
         let set = pd.orders.get(oid); if (!set) pd.orders.set(oid, set = new Set());
-        for (const k of m && typeof m === "object" ? Object.keys(m).filter(z => m[z]) : []) set.add(k);
+        for (const k of m && typeof m === "object" ? Object.keys(m).filter(z => m[z] && okStation(z)) : []) set.add(k);
       }
       const fa = ms(x.firstAt), la = ms(x.lastAt); if (fa > 0 && (!pd.inFirst || fa < pd.inFirst)) pd.inFirst = fa; if (la > pd.inLast) pd.inLast = la;
     }
@@ -389,6 +389,7 @@ function make(K) {
     const opt = { limit: Math.max(1, Math.min(200, Math.floor(num(body.issuesLimit)) || 50)), cursor: typeof body.issuesCursor === "string" ? body.issuesCursor.slice(0, 200) : "", crossCheck: body.crossCheck !== false && body.crossCheck !== 0 && body.crossCheck !== "0" };
     const ckey = `prof|${ctx.prefix}|${nameKeyOf(ctx, name)}|${rg.from}|${rg.to}|${compare ? 1 : 0}|${opt.limit}|${opt.cursor}|${opt.crossCheck ? 1 : 0}`;
     const out = await cached(ctx, ckey, rg.to === ctx.today ? TTL.respLive : TTL.resp, () => buildProfile(ctx, name, rg, prev, opt));
+    if (out && Array.isArray(out.errors) && out.errors.length) ctx.cache.memo.delete(ckey);      // (an answer with a failed read in it is not kept: once the source is back the next call is whole)
     return json(200, out);
   }
 
@@ -507,6 +508,7 @@ function make(K) {
       return "";
     });
   }
+  const plain = v => String(v == null ? "" : v).replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim();      // (a SKU or a title keeps its digits: only a NAME has them dropped)
   const NO_INFO = { info: false, customer: "", thumbUrl: "", pieces: [], piecesCount: 0, text: "" };
   /** What the stored receipt says about an order: customer, pieces (one per piece) with their pictures. Production only (the mirror is not in the sandbox). */
   function orderInfo(ctx, rid) {
@@ -517,15 +519,17 @@ function make(K) {
       const d = snap.data() || {}, raw = d.raw && typeof d.raw === "object" ? d.raw : {};
       let customer = cleanName(d.buyer_name || raw.name || ""); if (!okName(customer)) customer = "";
       const txs = (Array.isArray(raw.transactions) ? raw.transactions : []).filter(t => t && typeof t === "object").slice(0, 20);
-      const thumbs = new Map();
-      await Promise.all([...new Set(txs.map(t => digits(t.listing_id, 20)).filter(Boolean))].map(async id => { try { thumbs.set(id, await listingThumb(ctx, id)); } catch (_) { thumbs.set(id, ""); } }));
+      const thumbs = new Map(); let thumbFailed = false;
+      await Promise.all([...new Set(txs.map(t => digits(t.listing_id, 20)).filter(Boolean))].map(async id => { try { thumbs.set(id, await listingThumb(ctx, id)); } catch (_) { thumbs.set(id, ""); thumbFailed = true; } }));
+      if (thumbFailed) ctx.cache.memo.delete(`oinfo|${rid}`);      // (an answer without its pictures is not kept: the next look reads them again, and this one says partial)
       const pieces = []; let count = 0; const text = [customer];
       for (const t of txs) {
-        const q = Math.max(1, Math.min(50, Math.floor(num(t.quantity)) || 1)), sku = cleanName(t.sku || "").slice(0, 60), title = cleanName(t.title || "").slice(0, 120), thumb = thumbs.get(digits(t.listing_id, 20)) || "";
+        const q = Math.max(1, Math.min(5000, Math.floor(num(t.quantity)) || 1)), sku = plain(t.sku).slice(0, 60), title = plain(t.title).slice(0, 120), thumb = thumbs.get(digits(t.listing_id, 20)) || "";
         text.push(sku, title);
-        for (let i = 1; i <= q; i++) { count++; if (pieces.length < 12) pieces.push({ id: `${digits(t.transaction_id, 20) || pieces.length + 1}_${i}`, label: sku || title, sku, thumbUrl: thumb }); }
+        count += q;                                       // (the true number of pieces, a 300-piece line included; only the first 12 are listed)
+        for (let i = 1; i <= q && pieces.length < 12; i++) pieces.push({ id: `${digits(t.transaction_id, 20) || pieces.length + 1}_${i}`, label: sku || title, sku, thumbUrl: thumb });
       }
-      return { info: true, customer, thumbUrl: (pieces.find(p => p.thumbUrl) || {}).thumbUrl || "", pieces, piecesCount: count, text: text.join(" ").toLowerCase() };
+      return { info: true, thumbFailed, customer, thumbUrl: (pieces.find(p => p.thumbUrl) || {}).thumbUrl || "", pieces, piecesCount: count, text: text.join(" ").toLowerCase() };
     });
   }
   /** Runs fn over the items, `n` at a time. */
@@ -538,7 +542,7 @@ function make(K) {
     const q = String(body.q == null ? "" : body.q).replace(/[\u0000-\u001f]/g, " ").slice(0, 120).trim();
     const tokens = searchTokens(q);
     const cm = /^o(\d{1,6})$/.exec(String(body.cursor || "")), offset = cm ? +cm[1] : 0;
-    const stationF = typeof body.station === "string" && STATION_LABEL[body.station] ? body.station : "";
+    const stationF = typeof body.station === "string" && Object.prototype.hasOwnProperty.call(STATION_LABEL, body.station) ? body.station : "";
     let to = body.to && validDay(String(body.to)) ? String(body.to) : ctx.today; if (to > ctx.today) to = ctx.today;
     const floor = addDays(to, -(MAX_DAYS - 1));
     let from = body.from && validDay(String(body.from)) ? String(body.from) : "";
@@ -569,13 +573,13 @@ function make(K) {
     let withDetails = 0, infos = new Map();
     if (needInfo && !ctx.prefix) {
       const want = list.slice(0, CAP.infoSearch);
-      await pool(want, 12, async e => { try { infos.set(e.rid, await orderInfo(ctx, e.rid)); } catch (err) { sink.errors.push("receipts: " + String((err && err.message) || err).slice(0, 80)); } });
+      await pool(want, 12, async e => { try { const i = await orderInfo(ctx, e.rid); infos.set(e.rid, i); if (i.thumbFailed) sink.errors.push("pictures: unreadable"); } catch (err) { sink.errors.push("receipts: " + String((err && err.message) || err).slice(0, 80)); } });
       withDetails = [...infos.values()].filter(i => i.info).length;
     }
     let matches = list;
     if (tokens.length) {
       matches = list.filter(e => {
-        const info = infos.get(e.rid), dates = ` ${[...e.days].map(dateWords).join(" ")} `, hay = `${e.rid} ${[...e.stations].map(s => s + " " + STATION_LABEL[s].toLowerCase()).join(" ")} ${dates} ${info ? info.text : ""}`.toLowerCase();
+        const info = infos.get(e.rid), dates = ` ${[...e.days].map(dateWords).join(" ")} `, hay = `${e.rid} ${[...e.stations].map(s => s + " " + (STATION_LABEL[s] || s).toLowerCase()).join(" ")} ${dates} ${info ? info.text : ""}`.toLowerCase();
         return tokens.every(x => (x.date ? dates.includes(" " + x.t + " ") : hay.includes(x.t)));
       });
     }
@@ -606,7 +610,7 @@ function make(K) {
       evs.sort((a, b) => a.at - b.at || a.k - b.k || (a.id < b.id ? -1 : 1));
       const { steps } = stepsOf(evs), list2 = [...steps.values()].sort((a, b) => a.firstAt - b.firstAt);
       const onLatest = list2.filter(s => s.day === e.latest), lastStep = list2.slice().sort((a, b) => b.lastAt - a.lastAt)[0];
-      let info = NO_INFO; try { info = await orderInfo(ctx, e.rid); } catch (_) { sink.errors.push("receipts: unreadable"); }
+      let info = NO_INFO; try { info = await orderInfo(ctx, e.rid); if (info.thumbFailed) sink.errors.push("pictures: unreadable"); } catch (_) { sink.errors.push("receipts: unreadable"); }
       const sum = k => list2.reduce((n, s) => n + s[k], 0), firstAt = onLatest.length ? Math.min(...onLatest.map(s => s.firstAt)) : null, lastAt = onLatest.length ? Math.max(...onLatest.map(s => s.lastAt)) : null;
       rows.push({ rid: e.rid, number: e.rid, at: firstAt, day: e.latest, station: lastStep ? lastStep.station : [...e.stations][0] || "", stations: [...e.stations], durationMs: list2.length ? sum("workMs") : null, spanMs: firstAt != null ? lastAt - firstAt : null,
         scans: sum("scans"), completes: sum("completes"), prints: sum("prints"), parts: sum("parts"), undone: sum("undos"), rejected: sum("rejects"), errors: sum("errors"),

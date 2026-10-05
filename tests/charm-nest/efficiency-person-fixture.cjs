@@ -237,7 +237,7 @@ function make(opts = {}) {
     if (st.fail > 0) { st.fail--; return { status: 503, json: { ok: false, error: 'both reads failed' } }; }
     if (body.op === 'person') return { status: 200, json: person(body) };
     if (body.op === 'live') return { status: 200, json: live() };
-    if (body.op === 'personOrders') return orders.answer(body);
+    if (body.op === 'personOrders') { if (PEOPLE[String(body.name || '').toLowerCase()]) orders.state.person = PEOPLE[String(body.name).toLowerCase()].name; return orders.answer(body); }   // (E8's fixture knows one person: every invented person here shares its list)
     return { status: 400, json: { ok: false, error: 'bad op' } };
   }
   return { answer, state: st, orders, person, live, today, firstDay, setLive(m, who) { st.live = m; st.who = who || ''; }, setDelay(f) { st.delay = f; }, delayFor(body) { return st.delay ? +st.delay(body) || 0 : 0; }, ymd, addDays };

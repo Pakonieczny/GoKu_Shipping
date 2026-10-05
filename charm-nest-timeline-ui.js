@@ -29,7 +29,9 @@
  *  Live: OrderTimeline.onRecord for this order, plus a refresh while the tab is visible: every 2.5 s for the order view that
  *  is open (its shared feed, below; a change made on this page is read again at once and 1.5 s later), every 20 s for a
  *  mount of its own; a new stamp comes down on its lane, the NOW line glides and the rail moves on. Motion is transform and opacity only; none under
- *  prefers-reduced-motion. destroy() clears every timer and listener it set. */
+ *  prefers-reduced-motion. destroy() clears every timer and listener it set.
+ *  The chart fills its room (5 Oct, "the chart fits its room" below): its grid takes all the space its host gives it, and every part (lanes,
+ *  seals up to the 84 px cap, text, strokes, day heads, the NOW pill) is sized from that room again whenever it changes (a ResizeObserver). */
 (function (root) {
   "use strict";
   if (root.OrderTimelineUI) return;
@@ -60,9 +62,12 @@
   const SEAL_SIZE = 84;
   /* ── the Timeline page's own seal sizes (Paul, 3 Oct 2026, on an order's Timeline: "All of these seals are too big ... they can be
      much smaller, and then they don't have to zoom in so large"): about 40% under the shared 84 px, on this page only (every other
-     page keeps the shared size). The chart's stamps and ghosts and the header rail's steps each keep one size of their own, and the
-     lanes, columns and rows are cut to fit them. A seal still shows everything it showed; the zoom (Seal.zoom) is what reads it. ── */
-  const TL_CHART_SEAL = 26, TL_RAIL_SEAL = 20;
+     page keeps the shared size). The header rail's steps keep one size of their own, and the rail's rows are cut to fit them. A seal still shows
+     everything it showed; the zoom (Seal.zoom) is what reads it.
+     (Paul, 5 Oct 2026, with the detail pane gone: "expand the chart and enlarge the seals and all other components of the chart to fit the empty
+     space below": the chart's own seals are no longer one fixed 26 px but the size its room allows, up to FIT_CAP, the shared 84 px: see "the
+     chart fits its room" below.) ── */
+  const TL_RAIL_SEAL = 20;
   const zoomApi = () => (root.Seal && root.Seal.zoom) || null;
   const zoomOn = (el, kb) => { const z = zoomApi(); return !!(z && el && z.show(el, { keyboard: !!kb, managed: true })); };
   const zoomOff = (el, now) => { const z = zoomApi(); if (z && el) z.hide(!!now, el); };
@@ -1018,7 +1023,7 @@
 
   /* ════ the component's look (once per page) ════ */
   const CSS = `
-.tlUI{position:relative;min-width:0;min-height:0;display:flex;flex-direction:column;color:var(--ink,#1c1a17);font:13px/1.45 var(--sans,system-ui,sans-serif);--tlE:cubic-bezier(.2,.8,.2,1);--tlSpring:cubic-bezier(.3,1.7,.5,1);--tlSlate:#2f5563}
+.tlUI{position:relative;min-width:0;min-height:0;display:flex;flex-direction:column;color:var(--ink,#1c1a17);font:13px/1.45 var(--sans,system-ui,sans-serif);--tlE:cubic-bezier(.2,.8,.2,1);--tlSpring:cubic-bezier(.3,1.7,.5,1);--tlSlate:#2f5563;--tl-t:1}
 .tlUI *{box-sizing:border-box}
 .tlUI button{font:inherit;color:inherit;cursor:pointer}
 .tlUI [hidden]{display:none!important}
@@ -1069,31 +1074,34 @@
 .tlBusy{display:inline-flex;align-items:center;gap:6px}
 .tlSpin{display:inline-block;width:11px;height:11px;flex:none;border:2px solid rgba(0,0,0,.12);border-top-color:var(--gold);border-radius:50%;animation:tlSpin .7s linear infinite}
 @keyframes tlSpin{to{transform:rotate(360deg)}}
-.tlGrid{display:grid;grid-template-columns:140px minmax(0,1fr);position:relative;flex:none}
-.tlLanes{border-right:1px solid var(--line);background:var(--card);padding-top:40px;padding-bottom:26px}
-.tlLane{position:relative;height:var(--tl-lane-height,42px);display:flex;flex-direction:column;justify-content:center;padding:0 14px;border-bottom:1px solid var(--line2);min-width:0}
+/* the chart fills the room its host gives it (fit(), below): the grid is one row as tall as that room, whatever it holds, so its size never depends on what is drawn in it */
+.tlGrid{display:grid;grid-template-columns:var(--tl-label-w,140px) minmax(0,1fr);grid-template-rows:minmax(0,1fr);position:relative;flex:1 1 360px;min-height:0;overflow:hidden}
+.tlLanes{border-right:1px solid var(--line);background:var(--card);padding-top:var(--tl-top,40px);padding-bottom:var(--tl-axis,26px);overflow:hidden;min-width:0}
+.tlLane{position:relative;height:var(--tl-lane-height,42px);display:flex;flex-direction:column;justify-content:center;padding:0 var(--tl-padx,14px);border-bottom:1px solid var(--line2);min-width:0}
 .tlLane::before{content:"";position:absolute;inset:0;background:linear-gradient(90deg,rgba(202,168,97,.16),transparent);opacity:0;transition:opacity .24s}
 .tlLane.on::before{opacity:1}
-.tlLane b{position:relative;font:700 9.5px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--ink70);display:flex;align-items:center;gap:6px}
-.tlLane b svg{width:12px;height:12px;color:var(--ink45);flex:none}
-.tlLane span{position:relative;font-size:11px;color:var(--ink45);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tlLane b{position:relative;font:700 var(--tl-fs-lane,9.5px) var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--ink70);display:flex;align-items:center;gap:calc(6px * var(--tl-t,1))}
+.tlLane b svg{width:var(--tl-ic,12px);height:var(--tl-ic,12px);color:var(--ink45);flex:none}
+.tlLane span{position:relative;font-size:var(--tl-fs-sub,11px);color:var(--ink45);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tlUI.tlNoSub .tlLane span{display:none}
 .tlLane.stn b{color:var(--tlSlate)}
-.tlScroll{overflow-x:auto;overflow-y:hidden;position:relative;min-width:0}
-.tlCanvas{position:relative;height:360px;min-width:100%}
+.tlScroll{overflow:hidden;position:relative;min-width:0;min-height:0}
+.tlCanvas{position:relative;height:100%;min-width:100%}
 .tlPath{position:absolute;left:0;top:0;overflow:visible;pointer-events:none}
 .tlDay{position:absolute;top:0;bottom:0;border-right:1px dashed var(--line)}
 .tlDay.alt{background:rgba(250,247,241,.7)}
-.tlDay .dh{position:absolute;left:14px;top:10px;font:700 10px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--ink70);white-space:nowrap}
-.tlDay .dh small{display:block;font:400 9.5px var(--mono);letter-spacing:.02em;color:var(--ink45);text-transform:none;margin-top:1px;overflow:hidden;text-overflow:ellipsis}
-.tlDay:not(.idle) .dh{right:8px;overflow:hidden;text-overflow:ellipsis}
+.tlDay .dh{position:absolute;left:var(--tl-dhx,14px);top:var(--tl-dhy,10px);font:700 var(--tl-fs-day,10px) var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--ink70);white-space:nowrap}
+.tlDay .dh small{display:block;font:400 var(--tl-fs-small,9.5px) var(--mono);letter-spacing:.02em;color:var(--ink45);text-transform:none;margin-top:1px;overflow:hidden;text-overflow:ellipsis}
+.tlUI.tlNoSmall .tlDay .dh small{display:none}
+.tlDay:not(.idle) .dh{right:calc(var(--tl-dhx,14px) * .57);overflow:hidden;text-overflow:ellipsis}
 .tlDay.idle{background:repeating-linear-gradient(135deg,transparent 0 6px,rgba(196,189,176,.22) 6px 7px)}
 .tlDay.idle .dh{left:50%;transform:translateX(-50%);text-align:center}
 .tlLaneLine{position:absolute;left:0;right:0;height:1px;background:var(--line2)}
 .tlSt{position:absolute;width:var(--s);height:var(--s);margin:calc(var(--s) / -2) 0 0 calc(var(--s) / -2);border:0;padding:0;background:transparent;border-radius:50%;transform:rotate(var(--rot));transition:opacity .24s,transform .22s var(--tlE);z-index:2}
 .tlSt svg{width:100%;height:100%;display:block;overflow:visible;mix-blend-mode:multiply}
-.tlSt.sel::before{content:"";position:absolute;inset:-6px;border-radius:50%;border:1.5px solid var(--gold);box-shadow:0 0 0 4px rgba(202,168,97,.18);animation:tlSelIn .32s var(--tlSpring) both}
+.tlSt.sel::before{content:"";position:absolute;inset:calc(-6px * var(--tl-t,1));border-radius:50%;border:calc(1.5px * var(--tl-t,1)) solid var(--gold);box-shadow:0 0 0 calc(4px * var(--tl-t,1)) rgba(202,168,97,.18);animation:tlSelIn .32s var(--tlSpring) both}
 @keyframes tlSelIn{from{transform:scale(.6);opacity:0}}
-.tlSt.hl::after{content:"";position:absolute;inset:-10px;border-radius:50%;background:radial-gradient(rgba(202,168,97,.38),transparent 70%);z-index:-1}
+.tlSt.hl::after{content:"";position:absolute;inset:calc(-10px * var(--tl-t,1));border-radius:50%;background:radial-gradient(rgba(202,168,97,.38),transparent 70%);z-index:-1}
 .tlSt.dim{opacity:.13}.tlSt.dim svg{filter:grayscale(1)}
 .tlSt.pend svg{opacity:.65}
 .tlSt.pending svg,.tlStop .tlSeal.pending svg{visibility:hidden}
@@ -1101,14 +1109,14 @@
 .tlSt.ghost.sel{opacity:.85}
 .tlSt.ghost svg{mix-blend-mode:normal}
 .tlInkRing{position:absolute;border-radius:50%;border:2px solid;pointer-events:none;z-index:1;opacity:0}
-.tlNowLine{position:absolute;top:34px;bottom:4px;width:0;border-left:1.5px solid var(--gold);z-index:1}
-.tlNowLine::before,.tlNowLine::after{content:"";position:absolute;left:-5px;bottom:-5px;width:9px;height:9px;border-radius:50%;background:var(--gold)}
-.tlNowLine::after{background:none;border:2px solid var(--gold2);left:-7px;bottom:-7px;width:13px;height:13px;animation:tlRing 2s ease-out infinite}
-.tlNowLine span{position:absolute;right:8px;bottom:-3px;font:700 9.5px var(--mono);letter-spacing:.1em;color:#7a5a1d;white-space:nowrap;background:var(--goldSoft);padding:2px 6px;border-radius:5px}
+.tlNowLine{position:absolute;top:calc(var(--tl-top,40px) - 6px * var(--tl-t,1));bottom:calc(11px * var(--tl-t,1));width:0;border-left:calc(1.5px * var(--tl-t,1)) solid var(--gold);z-index:1}
+.tlNowLine::before,.tlNowLine::after{content:"";position:absolute;left:calc(-5px * var(--tl-t,1));bottom:calc(-5px * var(--tl-t,1));width:calc(9px * var(--tl-t,1));height:calc(9px * var(--tl-t,1));border-radius:50%;background:var(--gold)}
+.tlNowLine::after{background:none;border:calc(2px * var(--tl-t,1)) solid var(--gold2);left:calc(-7px * var(--tl-t,1));bottom:calc(-7px * var(--tl-t,1));width:calc(13px * var(--tl-t,1));height:calc(13px * var(--tl-t,1));animation:tlRing 2s ease-out infinite}
+.tlNowLine span{position:absolute;right:calc(8px * var(--tl-t,1));bottom:calc(-3px * var(--tl-t,1));font:700 var(--tl-fs-pill,9.5px) var(--mono);letter-spacing:.1em;color:#7a5a1d;white-space:nowrap;background:var(--goldSoft);padding:calc(2px * var(--tl-t,1)) calc(6px * var(--tl-t,1));border-radius:calc(5px * var(--tl-t,1))}
 .tlNowLine.cx{border-color:var(--clay)}.tlNowLine.cx::before{background:var(--clay)}.tlNowLine.cx::after{display:none}
 .tlNowLine.cx span{background:var(--claySoft);color:#8a3a26}
-.tlAfterCx{position:absolute;top:34px;bottom:0;right:0;background:repeating-linear-gradient(135deg,transparent 0 7px,rgba(176,86,63,.09) 7px 8px)}
-.tlMsg{position:absolute;left:158px;top:50%;transform:translateY(-50%);display:flex;align-items:center;gap:9px;font-size:12.5px;color:var(--ink70);background:var(--card);border:1px solid var(--line);border-radius:10px;padding:9px 13px;box-shadow:var(--sh);z-index:4;max-width:calc(100% - 176px)}
+.tlAfterCx{position:absolute;top:calc(var(--tl-top,40px) - 6px * var(--tl-t,1));bottom:0;right:0;background:repeating-linear-gradient(135deg,transparent 0 7px,rgba(176,86,63,.09) 7px 8px)}
+.tlMsg{position:absolute;left:calc(var(--tl-label-w,140px) + 18px);top:50%;transform:translateY(-50%);display:flex;align-items:center;gap:9px;font-size:12.5px;color:var(--ink70);background:var(--card);border:1px solid var(--line);border-radius:10px;padding:9px 13px;box-shadow:var(--sh);z-index:4;max-width:calc(100% - var(--tl-label-w,140px) - 36px)}
 .tlMsg.err{color:#8a3a26;background:var(--claySoft);border-color:#e7b9aa}
 .tlBadge{display:inline-flex;align-items:center;gap:7px;border:1px solid var(--line);border-radius:999px;padding:3px 10px 3px 4px;background:var(--card);font:12px var(--sans);color:var(--ink);white-space:nowrap}
 .tlBadge i{width:20px;height:20px;border-radius:50%;display:grid;place-items:center;background:var(--slateSoft);color:var(--tlSlate);flex:none}
@@ -1181,33 +1189,127 @@
     const s = doc.createElement("style"); s.id = "tlUiCss"; s.textContent = CSS; (doc.head || doc.documentElement).appendChild(s);
   }
   const badge = (e, sm) => `<span class="tlBadge${sm ? " sm" : ""}"><i>${iconSvg((LANE[e.lane] || LANE.office).ic)}</i><em>${esc(e.print ? e.print.where : stationName(e))}</em>${esc(whoOf(e))}</span>`;
-  // roomier than it was (Paul, 28 Sep: "this entire section is way too crowded"): the seals sit further apart on a
-  //  taller lane, and a day is wider, so nothing crowds even when a day holds three or four of them
-  const CELL_COL = TL_CHART_SEAL + 8, CELL_LANE = TL_CHART_SEAL + 16, TOP = 40, PAD = 18, IDLE = 34, DAYMIN = 150, AXIS = 26;
-  const laneY = (k, laneH) => TOP + (LANE[k] || LANE.office).i * laneH + laneH / 2;
+  /* ════ the chart fits its room (Paul, 5 Oct 2026, on the Timeline tab: "expand the chart and enlarge the seals and all other components of
+     the chart to fit the empty space below ... the full chart should always be visible on one screen without scrolling, this needs to be
+     dynamic in nature") ════
+     The grid takes all the room its host gives it, and one measure of that room (its height and width, read before anything is written)
+     sets every part of the chart together:
+       fitVertical  the height → one scale for the text and the strokes, the lane height, the band for the day heads and the one for the
+                    NOW pill, and the seal size: the lane height less a little air, never more than FIT_CAP. A taller screen spreads
+                    the lanes instead of growing the seals; a shorter one first takes the air out, then the day heads' second line
+                    and the lanes' who-lines go (fewer labels, never clipped ones), and the seals only go below FIT_MIN last.
+       fitChart     the width → how far apart the seals sit, how wide the days are. The seals are laid out one after the other in time,
+                    each as near its neighbour as a seal that must not touch it can be (placeRun: the seal's own circle against every
+                    seal it could touch, so two seals on different lanes may stand one above the other, and two on one lane never
+                    meet). Too wide a chart first closes the spacing up, then the seals themselves get smaller (down to FIT_FLOOR);
+                    a roomy one opens the spacing out (up to FIT_STRETCH times), so the route spans the screen.
+     There is no sideways scroll unless even the smallest seals of a very long history cannot fit. */
+  const FIT_CAP = 84;        // the widest a seal rests on the chart: the app's one shared seal size (SEAL_SIZE); what a taller screen has over goes to the lanes
+  const FIT_MIN = 20;        // under this the labels give way first
+  const FIT_FLOOR = 8;       // only a long history on a narrow screen goes under FIT_MIN
+  const FIT_STRETCH = 2.6;   // the most a roomy chart opens its spacing out
+  const FIT_CLOSE = .2;      // the nearest two seals on different lanes stand, as a part of a seal and its air, when the chart is at its tightest
   const dayKey = t => { const d = new Date(t); return d.getFullYear() * 10000 + (d.getMonth() + 1) * 100 + d.getDate(); };
   const midnight = t => { const d = new Date(t); d.setHours(0, 0, 0, 0); return +d; };
-  /** Day columns and each event's place (x in its day, y on its lane). */
-  function layout(evs, fit) {
-    const COL = Math.max(CELL_COL, fit + 8), LANE_H = Math.max(CELL_LANE, fit + 12);
+  const r2 = n => Math.round(n * 100) / 100;
+  /** What the height and the width of the room decide: the scale, the sizes of the text, the bands and the lanes, and the seal size. */
+  function fitVertical(h, w, cap, minTier) {
+    h = Math.max(120, +h || 360); w = Math.max(200, +w || 800);
+    // one scale for the text and the strokes: it grows with the room (the slower of its height and its width, so a phone keeps phone-sized words), within a floor and a ceiling
+    const t = clamp(Math.min(Math.pow(h / 360, .62), w / 700), .82, 1.7);
+    const fs = { lane: clamp(9.5 * t, 8.5, 16), sub: clamp(11 * t, 9, 14.5), day: clamp(10 * t, 9, 17), small: clamp(9.5 * t, 8.5, 15), pill: clamp(9.5 * t, 8.5, 15) };
+    const L = LANES.length;
+    let top = 0, axis = 0, laneH = 0, s = 0, tier = minTier || 0;
+    for (; tier < 3; tier++) {
+      // tier 0: the day heads of two lines; tier 1: one line; tier 2: one line, closer, and the pill's band as thin as it can be
+      top = Math.round(tier === 0 ? 14 * t + fs.day * 1.25 + fs.small * 1.25 + 2 : tier === 1 ? 14 * t + fs.day * 1.25 : 5 + fs.day * 1.2 + 4);
+      axis = Math.round(tier < 2 ? fs.pill * 1.2 + 18 * t : fs.pill * 1.2 + 12);
+      laneH = Math.max(12, Math.floor((h - top - axis) / L));
+      s = Math.min(cap, laneH - clamp(laneH * .18, 4, 22));
+      if (s >= FIT_MIN) break;
+    }
+    if (tier === 3) tier = 2;
+    if (s < FIT_MIN) s = Math.max(FIT_FLOOR, Math.min(cap, laneH - 3));   // (spacing first, then the seal)
+    axis += Math.max(0, h - top - axis - laneH * L);   // (the pixels that do not divide into lanes go to the foot, so the lanes end exactly where the room does)
+    const padx = Math.round(clamp(14 * Math.pow(t, .8), 7, 22) * (w < 520 ? .65 : 1)), ic = clamp(12 * t, 10, 19);
+    // the label column: a lane's name on one line, but never wider than a quarter of the room; narrower than that the name wraps at its spaces, and the column is never
+    // narrower than the longest word (ASSEMBLY, SHIPPING) with its icon
+    const word = 8 * .7 * fs.lane + ic + 5 * t + 2 * padx + 4;
+    const labelW = Math.round(clamp(fs.lane * 10.6 + 2 * padx + 6, word, Math.max(word, w * .26)));
+    return { h, w, t, fs, top, axis, laneH, s: Math.floor(s * 2) / 2, cap, labelW, padx, ic, dhx: padx, dhy: Math.round(tier === 2 ? 4 : 9 * t),
+      showSmall: tier === 0, showSub: laneH >= fs.lane * 1.3 + fs.sub * 1.3 + 8, tier, route: r2(clamp(1.6 * t, 1.3, 3.6)), future: r2(clamp(1.4 * t, 1.2, 3.2)) };
+  }
+  /** The days of the drawn seals, oldest first: each with its seals' lanes, the words of its head and the idle days before it. */
+  function dayModel(evs) {
     const days = []; let cur = null;
-    for (const e of evs) { const k = dayKey(e.at); if (!cur || cur.k !== k) { cur = { k, at: e.at, evs: [] }; days.push(cur); } cur.evs.push(e); }
-    let x = 0, alt = 0; const cols = [];
+    for (const e of evs) { const k = dayKey(e.at); if (!cur || cur.k !== k) { cur = { k, at: e.at, evs: [], lanes: [], gap: 0, prev: 0 }; days.push(cur); } cur.evs.push(e); cur.lanes.push((LANE[e.lane] || LANE.office).i); }
     days.forEach((d, i) => {
-      if (i) {
-        const gap = Math.round((midnight(d.at) - midnight(days[i - 1].at)) / 864e5) - 1;
-        if (gap > 2) { cols.push({ idle: 1, x, w: IDLE + 22, label: gap + " days" }); x += IDLE + 22; }
-        else for (let g = 1; g <= gap; g++) { const dd = new Date(midnight(days[i - 1].at) + g * 864e5 + 36e5 * 12); cols.push({ idle: 1, x, w: IDLE, label: DAYN[dd.getDay()] }); x += IDLE; }
-      }
       // its head's second line ("8:52 AM – 3:44 PM · 9", one time when there is one) never runs into the next day
-      const t0 = timeOf(d.evs[0].at), t1 = timeOf(d.evs[d.evs.length - 1].at), span = (t0 === t1 ? t0 : t0 + " – " + t1) + " · " + d.evs.length;
-      const w = Math.max(DAYMIN, PAD * 2 + d.evs.length * COL, Math.ceil(26 + span.length * 6.1));
-      cols.push({ x, w, at: d.at, evs: d.evs, alt: alt++ % 2, span });
-      d.evs.forEach((e, j) => { e.x = x + PAD + j * COL + COL / 2; e.y = laneY(e.lane, LANE_H); });
+      const t0 = timeOf(d.evs[0].at), t1 = timeOf(d.evs[d.evs.length - 1].at), dt = new Date(d.at);
+      d.span = (t0 === t1 ? t0 : t0 + " – " + t1) + " · " + d.evs.length;
+      d.chars = (DAYN[dt.getDay()] + " · " + MON[dt.getMonth()] + " " + dt.getDate()).length + (dt.getFullYear() !== new Date().getFullYear() ? 5 : 0);
+      d.short = (DAYN[dt.getDay()] + " " + dt.getDate()).length;   // (a very tight chart names a day "THU 1")
+      if (i) { d.prev = days[i - 1].at; d.gap = Math.round((midnight(d.at) - midnight(d.prev)) / 864e5) - 1; }
+    });
+    return days;
+  }
+  /** x of each seal of a run (their centres, from the run's start): each as near the one before as it may stand (`c` of a seal and its
+   *  air), and clear of every seal its own circle could touch, which lies on a lane near enough. */
+  function placeRun(lanes, s, g, c, first, laneH) {
+    const pitch = s + g, xs = [];
+    for (let j = 0; j < lanes.length; j++) {
+      let x = j ? xs[j - 1] + c * pitch : first;
+      for (let i = j - 1; i >= 0 && xs[i] + pitch > x; i--) {
+        const dy = Math.abs(lanes[j] - lanes[i]) * laneH;
+        if (dy < pitch) x = Math.max(x, xs[i] + Math.sqrt(pitch * pitch - dy * dy));
+      }
+      xs.push(x);
+    }
+    return xs;
+  }
+  /** The spacing for a chart `lam` wide: 0 the tightest, 1 as the chart was drawn, up to FIT_STRETCH roomier. */
+  function fitKnobs(lam, s, V) {
+    const lo = Math.min(lam, 1), up = Math.max(lam, 1), mix = (a, b) => a + (b - a) * lo;
+    const pad1 = Math.max(14, s * .55), day1 = 150 * V.t, idle1 = Math.max(26, 34 * V.t);
+    return { s, lo, up, g: mix(2, clamp(s * .14, 5, 12)), c: mix(FIT_CLOSE, 1) * up, pad: mix(Math.max(3, pad1 * .25), pad1) * up, dayMin: mix(day1 * .3, day1) * up, idle: mix(idle1 * .6, idle1) * Math.sqrt(up) };
+  }
+  /** The day columns and every seal's x, for one spacing: cols (the days, the idle ones between), xs (the seals), nowX, gx (the steps to come), width. */
+  function buildChart(days, ghostLanes, V, k) {
+    const { s, g, c, pad } = k, step = c * (s + g), cols = [], xs = [];
+    let x = 0, alt = 0;
+    days.forEach(d => {
+      // (an idle day's name always fits its own column: it is centred in it, and never runs over the day beside it)
+      const idle = (label, w0) => { const w = Math.ceil(Math.max(w0, label.length * .74 * V.fs.day + 10)); cols.push({ idle: 1, x, w, label }); x += w; };
+      const tight = k.lo < .45;   // (a chart closed up this far names its days and its idle stretches short: THU 1, 3d)
+      if (d.gap > 2) idle(tight ? d.gap + "d" : d.gap + " days", k.idle + 22 * k.lo);
+      else for (let q = 1; q <= d.gap; q++) idle(DAYN[new Date(midnight(d.prev) + q * 864e5 + 36e5 * 12).getDay()], k.idle);
+      const rel = placeRun(d.lanes, s, g, c, pad + s / 2, V.laneH);
+      const named = (tight ? d.short : d.chars) * .74 * V.fs.day, said = d.span.length * .62 * V.fs.small, head = V.dhx * 1.57 + (V.showSmall ? Math.max(named, said) : named);
+      const w = Math.ceil(Math.max(k.dayMin, head, (rel.length ? rel[rel.length - 1] + s / 2 : 0) + pad * .8));
+      cols.push({ x, w, at: d.at, evs: d.evs, alt: alt++ % 2, span: d.span, short: tight });
+      for (const r of rel) xs.push(Math.round(x + r));
       x += w;
     });
-    return { cols, w: x };
+    const nowX = Math.round(xs.length ? xs[xs.length - 1] + Math.max(s / 2 + 5, .75 * step) : pad + s / 2);
+    const gr = placeRun(ghostLanes, s, g, c, s / 2 + 8, V.laneH), gx = gr.map(v => Math.round(nowX + v));
+    const end = (gx.length ? gx[gx.length - 1] + s / 2 : nowX) + Math.max(10, pad * .6);
+    return { cols, xs, nowX, gx, step, half: Math.max(s / 2 + 3, step / 2), width: Math.ceil(Math.max(x, end)) };
   }
+  /** The widest spacing, then the largest seals, that fit `availW`: → buildChart's answer with the seal size (s), how open the spacing is (lam) and `over` when even the smallest seals do not fit. */
+  function fitChart(days, ghostLanes, V, availW) {
+    const need = (lam, s) => buildChart(days, ghostLanes, V, fitKnobs(lam, s, V)).width;
+    let s = V.s, lam = 0;
+    if (need(0, s) > availW) {   // closed up as far as it goes and still too wide: smaller seals
+      let lo = FIT_FLOOR, hi = s;
+      if (need(0, lo) <= availW) for (let i = 0; i < 12; i++) { const mid = (lo + hi) / 2; if (need(0, mid) <= availW) lo = mid; else hi = mid; }
+      s = lo;
+    } else if (need(FIT_STRETCH, s) <= availW) lam = FIT_STRETCH;
+    else { let lo = 0, hi = FIT_STRETCH; for (let i = 0; i < 16; i++) { const mid = (lo + hi) / 2; if (need(mid, s) <= availW) lo = mid; else hi = mid; } lam = lo; }
+    s = Math.floor(s * 2) / 2;
+    const B = buildChart(days, ghostLanes, V, fitKnobs(lam, s, V));
+    return Object.assign(B, { s, lam, over: B.width > availW + 1 });
+  }
+  const laneY = (k, V) => V.top + (LANE[k] || LANE.office).i * V.laneH + V.laneH / 2;
   const pathD = pts => { let d = ""; pts.forEach((e, i) => { if (!i) { d = `M${e.x} ${e.y}`; return; } const p = pts[i - 1], mx = (p.x + e.x) / 2; d += ` C${mx} ${p.y} ${mx} ${e.y} ${e.x} ${e.y}`; }); return d; };
 
   /* ════ one order's timeline, read once and shared (adversarial wave 2) ════
@@ -1351,7 +1453,7 @@
     if (tb) { bar.classList.add("inTools"); tb.appendChild(bar); }
     const $ = s => box.querySelector(s) || (tb ? bar.querySelector(s) : null), $$ = s => [...box.querySelectorAll(s)];
     if (compact) $(".tlRail").appendChild($(".tlMsg"));   // the rail alone: its wait and error lines sit on it
-    const scroller = $(".tlScroll"), exp = $(".tlExp");
+    const scroller = $(".tlScroll"), exp = $(".tlExp"), gridEl = $(".tlGrid");
     let fitObserver = null;
     let unsub = null, unfeed = null, pollT = 0, busyT = 0, zoomFor = null;
     // what the lanes' names show now: a redraw that would write the same leaves them (and their layout) alone
@@ -1455,7 +1557,20 @@
      *  work out every style those writes have changed, again for each read, and a live step then no longer fits a frame. */
     function measure() {
       const rail = $(".tlRail"), wrap = rail && rail.querySelector(".tlStops"), host = rail && rail.closest(".tlUI.compact");
-      S.M = { stops: wrap ? wrap.clientWidth || rail.clientWidth : 0, host: host ? host.clientHeight : 0, scroll: scroller.clientWidth };
+      S.M = { stops: wrap ? wrap.clientWidth || rail.clientWidth : 0, host: host ? host.clientHeight : 0, scroll: scroller.clientWidth, grid: compact ? { w: 0, h: 0 } : gridSize() };
+    }
+    /** The room the chart has: its grid's inner size, which its host decides (never what is drawn in it). */
+    const gridSize = () => ({ w: gridEl.clientWidth, h: gridEl.clientHeight });
+    /** Writes what one measure of the room decided (fitVertical) as the sizes the chart's styles read: the scale, the bands, the lanes, the text. */
+    let fitSig = "";
+    function applyFit(V) {
+      const sig = [V.h, V.w, V.t, V.labelW, V.top, V.axis, V.laneH, V.showSub, V.showSmall].join("|");
+      if (sig === fitSig) return; fitSig = sig;
+      const st = box.style, set = (k, v) => st.setProperty(k, v), px = n => r2(n) + "px";
+      set("--tl-t", String(r2(V.t))); set("--tl-label-w", px(V.labelW)); set("--tl-top", px(V.top)); set("--tl-axis", px(V.axis)); set("--tl-lane-height", px(V.laneH));
+      set("--tl-fs-lane", px(V.fs.lane)); set("--tl-fs-sub", px(V.fs.sub)); set("--tl-fs-day", px(V.fs.day)); set("--tl-fs-small", px(V.fs.small)); set("--tl-fs-pill", px(V.fs.pill));
+      set("--tl-ic", px(V.ic)); set("--tl-padx", px(V.padx)); set("--tl-dhx", px(V.dhx)); set("--tl-dhy", px(V.dhy));
+      box.classList.toggle("tlNoSub", !V.showSub); box.classList.toggle("tlNoSmall", !V.showSmall);
     }
     function repaint(o) {
       o = o || {};
@@ -1679,28 +1794,39 @@
       const cv = $(".tlCanvas"), evs = S.shown, oldNow = S.nowX;
       paintLanes();
       const pending = D.cancelled || D.hand ? [] : (D.rail || STAGES.map((s, i) => ({ s, i }))).filter(g => g.i > D.step);
-      const base = baseSealSize(cv), count = Math.min(12, Math.max(1, evs.length + pending.length)), available = S.M ? S.M.scroll : scroller.clientWidth;
-      // Every member of a dense timeline shrinks by the same ratio; a sparse timeline uses the shared base size.
-      // The timeline cells provide 34px by 42px (the chart seal's 26px and its room). Fit the whole group inside them rather than making taller lists.
-      const fit = Math.min(base, CELL_COL - 8, CELL_LANE - 12, available > 0 ? Math.max(24, (available - PAD * 2) / count - 8) : base);
-      const COL = Math.max(CELL_COL, fit + 8), LANE_H = Math.max(CELL_LANE, fit + 12), H = TOP + LANES.length * LANE_H + AXIS;
-      box.style.setProperty("--tl-lane-height", LANE_H + "px"); cv.style.setProperty("--seal-fit", fit + "px");
-      const { cols, w } = layout(evs, fit), last = evs[evs.length - 1];
-      const nowX = last ? last.x + COL * .75 : PAD + COL / 2;
-      const ghosts = pending.map((g, j) => ({ key: "ghost-" + g.s.k, type: g.s.kind, s: g.s, x: nowX + COL * (j + .9), y: laneY(g.s.lane, LANE_H) }));
-      const W = Math.ceil(Math.max(w, nowX + COL * (ghosts.length + .6) + 16));
+      // the room, read once before anything is written (measure): every part of the chart is sized to it together
+      // (measure() has read it already, before this redraw wrote anything: never read again here, a layout read in the middle of the writes
+      //  makes the page work out every style they changed. A chart in a hidden tab is drawn for the last room it had; the observer redraws it when it is shown)
+      const seen = S.M && S.M.grid ? S.M.grid : gridSize();
+      if (seen.h) S.room = seen;
+      const grid = seen.h ? seen : S.room || { w: 800, h: 360 }, resized = !S.fit || S.fit.w !== seen.w || S.fit.h !== seen.h;
+      const cap = Math.min(FIT_CAP, baseSealSize(cv));
+      let V = fitVertical(grid.h, grid.w, cap);
+      const availW = Math.max(60, grid.w - V.labelW), days = dayModel(evs), ghostLanes = pending.map(g => (LANE[g.s.lane] || LANE.office).i);
+      let P = fitChart(days, ghostLanes, V, availW);
+      if (V.showSmall && P.s < V.s - .5) {   // (the day heads' second line costs the seals some size: the heads keep one line, and the room that gives back goes to the lanes, when that is the better chart)
+        const V1 = fitVertical(grid.h, grid.w, cap, 1), P1 = fitChart(days, ghostLanes, V1, availW);
+        if (P1.s > P.s + .5) { V = V1; P = P1; }
+      }
+      applyFit(V);
+      const fit = P.s, last = evs[evs.length - 1], H = V.h, nowX = P.nowX;
+      cv.style.setProperty("--seal-fit", fit + "px");
+      evs.forEach((e, i) => { e.x = P.xs[i]; e.y = laneY(e.lane, V); });
+      const ghosts = pending.map((g, j) => ({ key: "ghost-" + g.s.k, type: g.s.kind, s: g.s, x: P.gx[j], y: laneY(g.s.lane, V) }));
+      const W = Math.max(availW, P.width), cols = P.cols;
+      scroller.style.overflowX = P.over ? "auto" : "";   // (hidden, unless even the smallest seals of a very long history cannot fit)
       const thisYear = new Date().getFullYear();
-      const dayCols = cols.map(c => { const d = c.idle ? null : new Date(c.at); return `<div class="tlDay${c.alt ? " alt" : ""}${c.idle ? " idle" : ""}" style="left:${c.x}px;width:${c.w}px"><div class="dh">${c.idle ? esc(c.label) : `${DAYN[d.getDay()]} · ${MON[d.getMonth()]} ${d.getDate()}${d.getFullYear() !== thisYear ? " " + d.getFullYear() : ""}<small>${esc(c.span)}</small>`}</div></div>`; }).join("");
-      const lines = LANES.map((L, i) => `<div class="tlLaneLine" style="top:${TOP + (i + 1) * LANE_H}px"></div>`).join("");
+      const dayCols = cols.map(c => { const d = c.idle ? null : new Date(c.at); return `<div class="tlDay${c.alt ? " alt" : ""}${c.idle ? " idle" : ""}" style="left:${c.x}px;width:${c.w}px"><div class="dh">${c.idle ? esc(c.label) : `${c.short ? `${DAYN[d.getDay()]} ${d.getDate()}` : `${DAYN[d.getDay()]} · ${MON[d.getMonth()]} ${d.getDate()}${d.getFullYear() !== thisYear ? " " + d.getFullYear() : ""}`}<small>${esc(c.span)}</small>`}</div></div>`; }).join("");
+      const lines = LANES.map((L, i) => `<div class="tlLaneLine" style="top:${V.top + (i + 1) * V.laneH}px"></div>`).join("");
       const future = ghosts.length && last ? pathD([last].concat(ghosts)) : "";
       // the cancel line: at the cancel stamp (or, with only the record, where its time falls)
       let cxX = 0;
-      if (D.cancelled) { const ce = evs.filter(e => CANCEL_TYPES.has(e.type)).pop(); cxX = ce ? ce.x + COL / 2 : ((evs.filter(e => e.at <= D.cancelled.at).pop() || { x: nowX - COL * .75 }).x + COL / 2); }
+      if (D.cancelled) { const ce = evs.filter(e => CANCEL_TYPES.has(e.type)).pop(); cxX = ce ? ce.x + P.half : ((evs.filter(e => e.at <= D.cancelled.at).pop() || { x: nowX - P.step * .75 }).x + P.half); }
       const Wh = D.W, stn = Wh.station && !["sheet", "waiting", "review", "held"].includes(Wh.stage) ? STATION_NAME[Wh.station] || Wh.station : "";
       const nowLbl = D.hand ? ["COMPLETED", shortWhen(D.hand.at)].concat(personOf(D.hand) ? [personOf(D.hand).toUpperCase()] : []).join(" · ") : D.hold ? "NOW · ON HOLD" : Wh.stage === "completed" || (D.cur < 0 && last) ? "COMPLETED" : stn ? "NOW · AT " + stn.toUpperCase() : last ? "NOW · " + String(Wh.label || "").toUpperCase() : "NOW";
       cv.style.width = W + "px"; cv.style.height = H + "px";
       const back = dayCols + lines +
-        `<svg class="tlPath" width="${W}" height="${H}" aria-hidden="true">${evs.length > 1 ? `<path d="${pathD(evs)}" fill="none" stroke="var(--gold)" stroke-width="1.6" stroke-opacity=".55" stroke-linecap="round"/>` : ""}${future ? `<path d="${future}" fill="none" stroke="var(--ink25)" stroke-width="1.4" stroke-dasharray="3 5"/>` : ""}</svg>` +
+        `<svg class="tlPath" width="${W}" height="${H}" aria-hidden="true">${evs.length > 1 ? `<path d="${pathD(evs)}" fill="none" stroke="var(--gold)" stroke-width="${V.route}" stroke-opacity=".55" stroke-linecap="round"/>` : ""}${future ? `<path d="${future}" fill="none" stroke="var(--ink25)" stroke-width="${V.future}" stroke-dasharray="${r2(3 * V.t)} ${r2(5 * V.t)}"/>` : ""}</svg>` +
         (D.cancelled ? `<div class="tlAfterCx" style="left:${cxX}px"></div><div class="tlNowLine cx" style="left:${cxX}px"><span>CANCELLED · ${esc(shortWhen(D.cancelled.at))}</span></div>` : `<div class="tlNowLine" style="left:${nowX}px"><span>${esc(nowLbl)}</span></div>`);
       const clsOf = e => `tlSt${S.mark === e.key ? " sel" : ""}${e.pending ? " pend" : ""}${S.hl.has(e.key) ? " hl" : ""}`;
       const posOf = e => `left:${e.x}px;top:${e.y}px;--s:var(--seal-fit,var(--seal-size,84px));--rot:${rotOf(e)}deg`, sayOf = e => `${labelOf(e.type)} · ${titleOf(e)} · ${longWhen(e.at)} · ${whoOf(e)}${placeOf(e) ? " · " + placeOf(e) : ""}`;
@@ -1729,7 +1855,30 @@
       }
       S.nowX = nowX;
       // (a NOW label longer than the room before its line, "COMPLETED · TUE 3:08 AM · PAUL" early on, reads after it)
-      const nl0 = cv.querySelector(".tlNowLine:not(.cx) span"); if (nl0 && (nl0.offsetWidth || nowLbl.length * 6.7 + 12) + 8 > nowX) { nl0.style.right = "auto"; nl0.style.left = "8px"; }
+      const nl0 = cv.querySelector(".tlNowLine:not(.cx) span"); if (nl0 && (nl0.offsetWidth || nowLbl.length * V.fs.pill * .72 + 12) + 8 > nowX) { nl0.style.right = "auto"; nl0.style.left = "calc(8px * var(--tl-t, 1))"; }
+      // a re-fit (the room changed, or a seal arrived and the chart took it in) glides: each seal from where it stood to where it stands, by transform alone,
+      // the rest of the chart fading in. Never on the first drawing (the window opening has its own motion), never while it is being dragged to a size
+      // (a re-fit a moment after the last), never under reduced motion (anim answers none)
+      const pos = new Map();
+      for (const e of evs) pos.set("k:" + e.key, { x: e.x, y: e.y, s: fit });
+      for (const g of ghosts) pos.set("g:" + g.s.k, { x: g.x, y: g.y, s: fit });
+      const before = S.pos, was = S.fit, calm = Date.now() - (S.fitAt || 0) > 140;
+      S.pos = pos; S.fit = { w: seen.w, h: seen.h }; S.fitAt = Date.now();
+      if (!o.first && before && was && was.w > 0 && was.h > 0 && seen.w > 0 && calm && !reduced() && typeof cv.animate === "function") {
+        // (only the seals that move, and not more than a few dozen: a very long history just takes its new places, a frame is worth more than the glide)
+        const moving = [];
+        for (const b of cv.querySelectorAll(".tlSt")) {
+          if (b._tlGlide) { try { b._tlGlide.cancel(); } catch (_) {} b._tlGlide = null; }
+          const id = b.dataset.key ? "k:" + b.dataset.key : b.dataset.stage ? "g:" + b.dataset.stage : "", from = before.get(id), to = pos.get(id);
+          if (!from || !to || b.classList.contains("pending")) continue;
+          const dx = from.x - to.x, dy = from.y - to.y, k = from.s / to.s;
+          if (Math.abs(dx) >= .5 || Math.abs(dy) >= .5 || Math.abs(k - 1) >= .01) moving.push([b, dx, dy, k]);
+        }
+        if (moving.length <= 40) for (const [b, dx, dy, k] of moving) {
+          try { b._tlGlide = b.animate([{ transform: `translate(${dx}px, ${dy}px) scale(${k}) rotate(var(--rot))` }, { transform: "rotate(var(--rot))" }], { duration: 260, easing: E }); } catch (_) { /* no glide */ }
+        }
+        if (resized) for (const n of cv.children) if (n.tagName !== "BUTTON" && !n.classList.contains("tlSt")) { try { n.animate([{ opacity: .3 }, { opacity: 1 }], { duration: 220, easing: E }); } catch (_) { /* no fade */ } }
+      }
       if (o.first) {
         const p = cv.querySelector(".tlPath"); anim(p, [{ opacity: 0 }, { opacity: 1 }], 900, { easing: SLIDE });
         // opens at "now"
@@ -1737,7 +1886,7 @@
       } else {
         // (the canvas keeps its width while it is redrawn, so the scroll stays where the reader left it)
         const nl = cv.querySelector(".tlNowLine:not(.cx)");
-        if (nl && oldNow && Math.abs(oldNow - nowX) > 1) anim(nl, [{ transform: `translateX(${oldNow - nowX}px)` }, { transform: "none" }], 760, { easing: SLIDE });
+        if (nl && oldNow && !resized && Math.abs(oldNow - nowX) > 1) anim(nl, [{ transform: `translateX(${oldNow - nowX}px)` }, { transform: "none" }], 760, { easing: SLIDE });
       }
     }
     const cssEsc = s => (root.CSS && root.CSS.escape ? root.CSS.escape(s) : String(s).replace(/["\\]/g, "\\$&"));
@@ -1956,15 +2105,22 @@
       box.remove();
     }
 
+    /** The room changed (the window, the order window, the browser's zoom, a taller header ...): the chart is fitted to it again, in the frame the
+     *  change was seen in. The room is read from its host (el) and from the grid itself, so nothing the chart writes can change what it observes. */
     function fitAll() {
       if (S.dead) return;
       if (S.stamping) { S.deferredPaint = S.deferredPaint || {}; return; }
       measure();
       fitRail($(".tlRail"), S.M);
-      if (!compact && S.loaded && S.D) paintCanvas(S.D, {});
+      if (compact) return;
+      const g = S.M.grid;
+      if (!g.w || !g.h) return;   // (hidden: the observer says when it is shown)
+      if (S.fit && S.fit.w === g.w && S.fit.h === g.h) return;   // (the same room: it fits it already)
+      if (S.loaded && S.D) paintCanvas(S.D, {});
+      else { applyFit(fitVertical(g.h, g.w, Math.min(FIT_CAP, baseSealSize($(".tlCanvas"))))); S.fit = { w: g.w, h: g.h }; }   // (nothing to draw yet: the lanes' names and bands already stand at their size)
     }
     root.addEventListener("resize", fitAll);
-    if (typeof root.ResizeObserver === "function") { fitObserver = new root.ResizeObserver(fitAll); fitObserver.observe(el); }
+    if (typeof root.ResizeObserver === "function") { fitObserver = new root.ResizeObserver(fitAll); fitObserver.observe(el); if (!compact) fitObserver.observe(gridEl); }
     box.addEventListener("click", onClick);
     box.addEventListener("focusin", expFocus); box.addEventListener("focusout", expBlur);
     if (tb) bar.addEventListener("click", onClick);

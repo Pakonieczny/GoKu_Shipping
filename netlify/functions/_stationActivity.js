@@ -33,6 +33,8 @@ const rollupId = (day, person) => `${day}__${String(person || "").replace(/\//g,
 const str = (v, n) => String(v == null ? "" : v).replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim().slice(0, n);
 const int = (v, lo, hi) => { const x = Math.round(Number(v)); return Number.isFinite(x) ? Math.max(lo, Math.min(hi, x)) : lo; };
 const pinLike = s => /^\d{4,8}$/.test(s);                       // a PIN is digits only: never kept as an id
+/** A name never carries a PIN: four or more digits in a name (after it, glued to it, spaced "12 34 56") are a login number that slipped in; they are dropped ("Paul 482915" is "Paul"). */
+const noPin = s => (s.match(/\p{Nd}/gu) || []).length >= 4 ? s.replace(/\p{Nd}+/gu, " ").replace(/\s+/g, " ").trim() : s;
 
 /** One event as it is stored, or { refused: true }. `scrubbed` says a PIN-looking value was blanked. */
 function clean(e, now, prefix) {
@@ -44,7 +46,7 @@ function clean(e, now, prefix) {
   const id = typeof e.id === "string" && /^[\w.:-]{8,100}$/.test(e.id) && !/^__.*__$/.test(e.id) && !/^\.+$/.test(e.id) ? e.id : "";
   const station = typeof e.station === "string" && STATIONS.has(e.station) ? e.station : "";
   const action = typeof e.action === "string" && ACTIONS.has(e.action) ? e.action : "";
-  const person = str(e.person, 80);
+  const person = noPin(str(e.person, 200)).slice(0, 80);
   if (!id || !station || !action || !person || !/\p{L}/u.test(person)) return { refused: true };   // no letter (digits, "123 456", "12-34-56") = a PIN, never a name
   const at0 = Number(e.at);
   let at = Number.isFinite(at0) && at0 > 1e12 ? Math.round(at0) : now;
