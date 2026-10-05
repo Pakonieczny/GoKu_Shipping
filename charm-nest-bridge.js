@@ -3069,7 +3069,8 @@ const Gate = window.Gate = (() => {
         if(window.SharedOrdersModal&&SharedOrdersModal.open)try{SharedOrdersModal.open({sheetId:sh.sheetId,targetSetId:null,reason:rule.blocked});return;}catch(_){/* the toast says it */}
         return toast(rule.blocked,'bad',12000);
       }
-      const split=rule.list.length>1?rule.list.filter(p=>p!==sh).map(p=>({sheet:p,orders:[...ordersOn(p)].filter(id=>ordersOn(sh).has(id))})):[];
+      let split=rule.list.length>1?rule.list.filter(p=>p!==sh).map(p=>({sheet:p,orders:[...ordersOn(p)].filter(id=>ordersOn(sh).has(id))})):[];
+      if(!split.length&&solid(m))split=splitWith(sh,want);   // (a page whose charms carry no pool ids, so the rule cannot see its orders: the order test of the page still asks, as it always did)
       if(split.length){
         const details=node.querySelector('.sheetOptions');if(details){details.open=false;(R.optionsOpen ||= {})[m]=false;}
         list=await askSplit(sh,want,split);

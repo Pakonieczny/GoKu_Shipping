@@ -181,6 +181,8 @@ select.topSel{border:1px solid var(--line);background:var(--card);border-radius:
 .shControls .shGate{margin:0;padding:0;border:0;background:none;flex:0 0 auto}
 /* a Nest card's Front | Back · engraving: the order view's own switch (.owSeg), in the controls row, adding no height */
 .shControls .shFace{flex:0 0 auto;order:5;align-items:center;white-space:nowrap}.shControls .shFace[hidden]{display:none}
+/* the back-engraving shelf's show/hide control (EngravingToggle): one quiet segment beside Front | Back, never a second row */
+.shControls .engTogHost{flex:0 0 auto;order:4;display:inline-flex;align-items:center}.shControls .engTogHost[hidden]{display:none}
 .shFace .spin{width:9px;height:9px;border:2px solid rgba(0,0,0,.15);border-top-color:var(--ink45);border-radius:50%;animation:spin .7s linear infinite;margin:0 5px 0 4px;flex:0 0 auto}.shFace .spin[hidden]{display:none}
 .sheetOptions{position:relative;font-size:11px}
 .sheetOptions>summary{cursor:pointer;list-style:none;border:1px solid var(--line);border-radius:999px;padding:4px 9px;color:var(--ink70)}
@@ -2906,7 +2908,8 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-geom.js?v=20260921-material"></script>
 <script src="charm-nest-engrave-fit.js"></script>
 <script src="charm-nest-assets.js"></script>
-<script src="charm-nest-backs.js?v=20260928-backface"></script>
+<script src="charm-nest-backs.js?v=20261005-engtog1"></script>
+<script src="charm-nest-engraving-toggle.js?v=20261005-engtog1"></script>
 <script src="charm-nest-activity.js?v=20261001-compact-controls"></script>
 <script src="charm-nest-engraving-seals.js?v=20261003-seal-small"></script>
 <script src="charm-nest-readiness.js?v=20261005-issues-truth4"></script>
@@ -5483,7 +5486,7 @@ function buildCards() {
     const el = document.createElement("section"); el.className = "sheetCard"; el.dataset.m = m.key; el.style.setProperty("--ar", `${st.wPt}/${st.hPt}`);
     el.innerHTML = `
       <div class="shHead"><span class="sw"></span><span class="name">${m.label}</span><span class="stock" data-r="stock"></span><span class="prov" data-r="prov"></span><span class="pill neutral" data-r="pill">Idle</span></div>
-      <div class="shControls"><div class="shTabs" data-r="tabs"></div><div class="shGate hidden" data-r="gate"></div><div class="owSeg shFace" data-r="face" role="group" aria-label="Side of the sheet" hidden><span class="spin" hidden></span><button type="button" data-face="front" class="on" aria-pressed="true" title="The sheet from the front">Front</button><button type="button" data-face="back" aria-pressed="false" title="Turn the sheet over: every charm&#39;s back engraving, mirrored as the laser sees it">Back · engraving</button></div></div>
+      <div class="shControls"><div class="shTabs" data-r="tabs"></div><div class="shGate hidden" data-r="gate"></div><span class="engTogHost" data-r="eng" hidden></span><div class="owSeg shFace" data-r="face" role="group" aria-label="Side of the sheet" hidden><span class="spin" hidden></span><button type="button" data-face="front" class="on" aria-pressed="true" title="The sheet from the front">Front</button><button type="button" data-face="back" aria-pressed="false" title="Turn the sheet over: every charm&#39;s back engraving, mirrored as the laser sees it">Back · engraving</button></div></div>
       <div data-r="backs"></div>
       <div class="shPreviewWrap"><canvas data-r="canvas"></canvas>
         <div class="dropHint" data-r="hint"><b>Drop ${m.label} artwork here</b><span>.ai · .pdf · .zip — anything dropped on this card belongs to ${m.long.toLowerCase()}</span><span class="k">or drop on the queue to route by file name</span></div>
@@ -5606,13 +5609,28 @@ function holdCards(ms, fn) {
     if (held.size) setTimeout(() => { const next = () => { const sh = held.values().next().value; if (!sh) return; held.delete(sh); renderCard(sh); if (held.size) requestAnimationFrame(next); }; next(); }, ms);
   }
 }
+/** A sheet's back-engraving shelf (the thumbnails above its picture) and the small control that shows or hides it, kept per sheet
+    (EngravingToggle: collapsed on every load, never stored). The shelf's host outlives its redraws, so a repaint keeps the choice;
+    a page not saved yet is known by a key of its own that carries over to its sheet id once it has one. */
+function engKey(sh) {
+  const id = sh.sheetId || (sh.recalled && sh.recalled.id) || "";
+  if (id) { if (sh._engKey && sh._engKey !== id && window.EngravingToggle) EngravingToggle.rekey(sh._engKey, id); sh._engKey = id; return id; }
+  return sh._engKey || (sh._engKey = `page:${sh.metal}:${Math.random().toString(36).slice(2, 10)}`);
+}
+function engraveShelf(sh, el) {
+  const ET = window.EngravingToggle; if (!ET) return;   // (without it the shelf simply stays shown, as before)
+  const shelf = $(`[data-r="backs"]`, el), host = $(`[data-r="eng"]`, el); if (!shelf || !host) return;
+  const key = engKey(sh), n = ET.countIn(shelf);
+  if (!el._engTog) el._engTog = ET.mount(host, { sheetKey: key, count: n });
+  el._engTog.update(n, key); ET.follow(shelf, key);
+}
 function renderCard(sh) {
   if (window.NestHold && NestHold.without(sh, () => renderCard(sh))) return;   // (drawn without the pieces still flying: NestHold)
   if (sh.charms.length && !sh.cardStartedAt) sh.cardStartedAt = sh.recalled?.cardStartedAt || sh.recalled?.createdAt || (sh.setDay ? new Date(sh.setDay + "T12:00:00").getTime() : Date.now());
   if (window.Session) Session.schedule();
   if (cardHold && sh.el) { cardHold.add(sh); return; }
   const el = sh.el; if (!el) return; const q = r => $(`[data-r="${r}"]`, el); const st = stockFor(sh.metal, sh);
-  if (q("backs")) q("backs").innerHTML = window.Engrave ? Engrave.backsMarkup(sh) : "";
+  if (q("backs")) { q("backs").innerHTML = window.Engrave ? Engrave.backsMarkup(sh) : ""; engraveShelf(sh, el); }
   const rc = sh.recalled && !sh.charms.length ? sh.recalled : null;        // a saved sheet shown from its record
   el.style.setProperty("--ar", `${st.wPt}/${st.hPt}`);
   q("stock").textContent = ""; { const nm = $(".name", el); if (nm) nm.title = `${fmt.mm(st.wPt).replace(/\.0 mm$/, "")} × ${fmt.mm(st.hPt).replace(/\.0 mm$/, " mm")} plate`; }
@@ -6642,7 +6660,7 @@ boot();
      Design Station's sign-in), the same name every seal it stamps carries. -->
 <script src="station-session.js?v=20261002-ea1"></script>
 <script src="station-activity.js?v=20261003-reset-clean"></script>
-<script src="charm-nest-bridge.js?v=20261005-lis2-cardinal3-zoom-psb1-egl1"></script>
+<script src="charm-nest-bridge.js?v=20261005-lis2-cardinal4-zoom-psb1-egl1"></script>
 <script>
 try {
   const nameNow = () => { try { const n = String((window.CNEmployee && CNEmployee.name()) || "").trim(); return /^\d+$/.test(n) ? "" : n; } catch (_) { return ""; } };
@@ -6680,11 +6698,12 @@ try {
 <script src="charm-nest-export-ui.js?v=20260925-done"></script>
 <script src="charm-nest-library.js?v=20261005-egl1"></script>
 <script src="charm-nest-flow.js?v=20261005-cardinal3"></script>
-<script src="charm-nest-library-approval-ui.js?v=20261003-fb1"></script>
+<script src="charm-nest-library-approval-ui.js?v=20261005-so2"></script>
 <script src="charm-nest-library-fx.js?v=20261003-fx2"></script>
-<script src="charm-nest-library-dnd.js?v=20261003-dnd1"></script>
+<script src="charm-nest-library-dnd.js?v=20261005-so2"></script>
 <script src="charm-nest-library-engraving.js?v=20261005-egl1"></script>
 <script src="charm-nest-library-issues.js?v=20261005-lis4"></script>
+<script src="charm-nest-shared-orders-modal.js?v=20261005-so5"></script>
 <script src="charm-nest-search.js?v=20260929-m5"></script>
 <script src="charm-nest-signins.js?v=20260929-m5"></script>
 <script src="charm-nest-efficiency.js?v=20261003-ef5"></script>
