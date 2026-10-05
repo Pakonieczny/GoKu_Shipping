@@ -246,7 +246,7 @@
    * A step that goes back to not-done (a new order lands, an engraving is reopened) and completes again appends a NEW stamp: every stamp is
    * kept, the card shows the most recent, the first stays in the record (stepTimes().first). Nothing here ever removes or rewrites a stamp. */
   const STEP_LOG=['nesting','engraving','orders'],MAX_STEP_STAMPS=300;
-  const STEPS_FROM=Date.UTC(2026,9,5,15,0);       // a sheet created from here on is watched from its start; an older one is only watched from the pass that first sees it (no time is made up for what it did before)
+  const STEPS_FROM=Date.UTC(2026,9,5,14,30);       // a sheet created from here on is watched from its start; an older one is only watched from the pass that first sees it (no time is made up for what it did before)
   const REAL_FROM=Date.UTC(2020,0,1);             // a time before this is no time (an unset field, a placeholder)
   const msOf=v=>v && typeof v.toMillis==='function'?v.toMillis():+v || 0;
   const person=by=>{by=String(by || '').trim();return /^(system|operator|not recorded)$/i.test(by)?'':by;};

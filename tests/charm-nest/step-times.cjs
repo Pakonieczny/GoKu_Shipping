@@ -263,6 +263,7 @@ const EXPECT = {   // the card's time line of each step of each sheet, in the sh
   not: { nesting: 'Oct 3, 9:12 AM', engraving: '', orders: 'Oct 3, 9:30 AM', laser: '', completed: '' },
   year: { nesting: 'Time not recorded', engraving: 'Oct 3, 11:40 AM · by Ana', orders: 'Time not recorded', laser: `Oct 3, ${CUR - 1}, 2:05 PM · by Paul`, completed: `Oct 3, ${CUR - 1}, 2:05 PM · by Paul` }
 };
+const CASE = { full: 'cut-sheet', old: 'older-sheet', again: 'ready-sheet', plain: 'no-engraving-sheet', not: 'engraving-not-done', year: 'cut-last-year' };   // (names of the screenshots)
 async function setup(browser, width) {
   const errors = [], { page, context } = await F.openPage(browser, { width, height: width === 390 ? 844 : 900, fake: false, errors });
   if (width < 600) await page.evaluate(() => document.getElementById('app').classList.add('railOff'));
@@ -313,7 +314,7 @@ async function partC(mutantName) {
         }
       }
       // the five steps shown on the cut sheet (and every sheet's done steps), by hovering, in the real card, with the label saying the same words
-      for (const [id, k] of [['full', 'nesting'], ['full', 'engraving'], ['full', 'orders'], ['full', 'laser'], ['full', 'completed'], ['old', 'nesting'], ['old', 'engraving'], ['old', 'orders'], ['again', 'engraving'], ['year', 'laser'], ['plain', 'engraving'], ['not', 'engraving']]) {
+      for (const [id, k] of [['full', 'nesting'], ['full', 'engraving'], ['full', 'orders'], ['full', 'laser'], ['full', 'completed'], ['old', 'nesting'], ['old', 'engraving'], ['old', 'orders'], ['again', 'nesting'], ['again', 'engraving'], ['again', 'orders'], ['year', 'laser'], ['plain', 'engraving'], ['not', 'engraving']]) {
         const sel = circle(id, k); if (!(await page.$(sel))) continue;
         await hover(page, sel); const m = await read(page, sel);
         assert.equal(m.shown, true, `${tag}: ${id} ${k}: the card shows`); assert.equal(m.by, EXPECT[id][k] === '' ? '' : m.state === 'Done' ? EXPECT[id][k] : '', `${tag}: ${id} ${k} says ${EXPECT[id][k] || 'no time'} (${m.by})`);
@@ -321,10 +322,7 @@ async function partC(mutantName) {
         assert(m.w <= 236.5, `${tag}: the card keeps its calm width (${m.w})`); assert(m.l >= 7.5 && m.r <= m.vw - 7.5, `${tag}: inside the screen`); assert(m.scrollW <= m.vw, `${tag}: no sideways scroll`);
         if (m.by) assert(m.label.endsWith(' ' + m.by + '.'), `${tag}: the label carries the same words (${m.label})`);
         assert.doesNotMatch(m.tip, /\blines?\b/i, 'pieces, never lines');
-        if (id === 'full') await shot(page, `${k}-done-${width}`, sel, width === 390 ? 380 : 420);
-        if (id === 'old' && (k === 'nesting' || k === 'orders')) await shot(page, `${id}-${k}-${width}`, sel, width === 390 ? 380 : 420);
-        if (id === 'again' && k === 'engraving') await shot(page, `done-again-${k}-${width}`, sel, width === 390 ? 380 : 420);
-        if (id === 'not') await shot(page, `not-done-${k}-${width}`, sel, width === 390 ? 380 : 420);
+        await shot(page, `${CASE[id]}-${k}-${width}`, sel, width === 390 ? 380 : 420);
         await away(page);
       }
       // page and server read the same stamps: the page's reading of each record is the node reading of the same record
