@@ -11450,7 +11450,7 @@ const OrderWin = window.OrderWin = (() => {
     if (!r || r.loading || r.state === "gone" || W.cancelled || (tryDo(() => nowOf(r)) || {}).cancelled) return null;
     if (window.CustomSheet && tryDo(() => CustomSheet.decisionOf && CustomSheet.decisionOf(r))) return null;   // (a custom order sent to its sheet is on it)
     const sc = sheetScope(r), p = sc.focus; if (!p || p.loading || p.nested) return null;
-    return `${sc.multi && !sc.sel ? p.name + " is" : "This piece is"} not on a sheet yet: ${p.why}`;
+    return `${sc.multi && !sc.sel ? "Not on a sheet yet" : "This piece is not on a sheet yet"}: ${p.why}`;   // (all pieces in front: the chip beside it names the piece)
   }
   /** The Overview card's own Sheet affordances: its Sheet button and one chip for each sheet of the scope's pieces (all pieces:
    *  each piece's own, named; a piece on none: a muted chip, inert). */
@@ -11462,7 +11462,7 @@ const OrderWin = window.OrderWin = (() => {
         const e = list && list.find(s => h.id && s.id ? h.id === s.id : h.page && s.page === h.page), state = (e && e.state) || "";
         chips.push(`<button type="button" class="owShChip" data-pc="${esc(p.key)}" data-sheet="${esc(h.id || "")}" data-pool="${esc(h.pools[0] || "")}" style="--c:${esc(colorOf(h.metal || p.metal))}"><i></i><span><b>${esc(e ? sheetName(e) : h.label)}</b><span>${esc(named ? p.name + (state ? " · " + state : "") : state || "open it")}</span></span></button>`);
       } else {
-        const why = `${named ? p.name + " is" : "This piece is"} not on a sheet yet: ${p.why}`;
+        const why = `${named ? "Not on a sheet yet" : "This piece is not on a sheet yet"}: ${p.why}`;   // (named: the chip says whose it is)
         chips.push(`<button type="button" class="owShChip off" data-pc="${esc(p.key)}" aria-disabled="true" data-why="${esc(why)}" title="${esc(why)}"><i></i><span><b>Not on a sheet yet</b><span>${esc(named ? p.name : upperFirst(p.why))}</span></span></button>`);
       }
     }

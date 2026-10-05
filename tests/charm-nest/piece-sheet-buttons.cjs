@@ -91,7 +91,7 @@ async function main() {
       sheet: OrderWin._sheet() && OrderWin._sheet().sheet.id, none: document.querySelector('#owPlateWrap .owPlateNone[data-none]')?.innerText.replace(/\s+/g, ' ').trim() || null, count: document.getElementById('owShCount').textContent,
       pieces: [...document.querySelectorAll('#owSheetPanel .owPieces li')].map(li => li.innerText.replace(/\s+/g, ' ').trim()), canvasHidden: document.getElementById('owSheetCv').style.visibility === 'hidden' }));
     const drawn = sheet => page.waitForFunction(s => { const i = OrderWin._sheet(); return i && i.sheet.id === s && document.getElementById('owPlateWait').hidden; }, sheet, { timeout: 20000 });
-    const shot = async name => { if (shots) await page.screenshot({ path: path.join(shots, name + '.png') }); };
+    const shot = async name => { if (shots) { await page.waitForTimeout(1200); await page.screenshot({ path: path.join(shots, name + '.png') }); } };   // (taken once the window has settled)
     const noteNow = () => page.evaluate(() => [...document.querySelectorAll('.mNote .mNoteT')].map(n => n.textContent));
     const clearNotes = () => page.evaluate(() => document.querySelectorAll('.mNote').forEach(n => n.remove()));
     // (the note before leaves with a 0.3 s fade as the next one arrives: one note at rest)
@@ -105,15 +105,15 @@ async function main() {
     assert.deepEqual(u.pills.map(p => p.t.split(' ')[0]), ['All', 'CUTE', 'HEALTH1'], JSON.stringify(u.pills));
     assert(u.pills.find(p => /^CUTE/.test(p.t)).noSheet &&!u.pills.find(p => /^HEALTH1/.test(p.t)).noSheet, 'the piece on no sheet says so on its tab: ' + JSON.stringify(u.pills));
     // the Sheet button answers for the piece on show (CUTE): greyed, inert, its reason in plain words
-    assert(u.btn.off && /^CUTE TRICERATOPS W\/ HEARTS is not on a sheet yet: its SKU is not in any master file$/.test(u.btn.why), 'Sheet button greyed with its reason: ' + JSON.stringify(u.btn));
+    assert(u.btn.off && /^Not on a sheet yet: its SKU is not in any master file$/.test(u.btn.why), 'Sheet button greyed with its reason: ' + JSON.stringify(u.btn));
     assert(u.tab.off && u.tab.cls && u.tab.count === '', 'the Sheet tab is greyed too and counts nothing: ' + JSON.stringify(u.tab));
     // each piece's own sheet, separately: HEALTH1's chip is open, CUTE's is muted and inert
     assert.deepEqual(u.chips.map(c => [c.text, c.sub, c.off]), [['Not on a sheet yet', 'CUTE TRICERATOPS W/ HEARTS', true], ['GF Sheet 1', 'HEALTH1', false]], JSON.stringify(u.chips));
-    assert(/not on a sheet yet: its SKU is not in any master file/.test(u.chips[0].why));
+    assert(/^Not on a sheet yet: its SKU is not in any master file$/.test(u.chips[0].why), u.chips[0].why);
     await shot('1-overview-all-opened-on-cute');
     // pressing the greyed Sheet button, its chip and the Sheet tab: nothing opens; the reason is said, once
     await page.click('#owNowCard [data-go="sheet"]', { force: true });
-    u = await ui(); assert.equal(u.view, 'info', 'the Sheet button went nowhere'); assert.equal(u.note.length, 1); assert.match(u.note[0], /not on a sheet yet: its SKU is not in any master file/);
+    u = await ui(); assert.equal(u.view, 'info', 'the Sheet button went nowhere'); assert.equal(u.note.length, 1); assert.match(u.note[0], /^Not on a sheet yet: its SKU is not in any master file$/);
     await shot('2-reason-on-press');
     await page.click('#owNowCard .owShChip.off', { force: true });
     await oneNote(); u = await ui(); assert.equal(u.view, 'info'); assert.equal(u.note.length, 1, 'one note at a time: ' + JSON.stringify(u.note));
@@ -122,7 +122,7 @@ async function main() {
     await clearNotes();
     // the keyboard reaches the greyed tab (arrow keys), says why on focus, and does not open it
     await page.focus('.owTabsV [data-ow-view="info"]'); await page.keyboard.press('ArrowRight'); await page.keyboard.press('ArrowRight');
-    u = await ui(); assert.equal(u.view, 'timeline', 'only the Timeline opened'); assert.equal(await page.evaluate(() => document.activeElement.dataset.owView), 'sheet', 'focus is on the greyed tab'); assert.match(u.note.join('|'), /not on a sheet yet/);
+    u = await ui(); assert.equal(u.view, 'timeline', 'only the Timeline opened'); assert.equal(await page.evaluate(() => document.activeElement.dataset.owView), 'sheet', 'focus is on the greyed tab'); assert.match(u.note.join('|'), /not on a sheet yet/i);
     await page.keyboard.press('Enter'); u = await ui(); assert.equal(u.view, 'timeline', 'Enter on the greyed tab opens nothing');
     await page.evaluate(() => OrderWin.setView('info')); await clearNotes();
     // HEALTH1's chip is open: it takes to GF Sheet 1 with HEALTH1's charm chosen
@@ -179,6 +179,10 @@ async function main() {
     u = await ui();   // all pieces, opened on A (on GF Sheet 1)
     assert(!u.btn.off && !u.tab.off && u.tab.count === '2 sheets', 'all pieces: two real sheets: ' + JSON.stringify([u.btn, u.tab]));
     assert.deepEqual(u.chips.map(c => [c.text, c.sub, c.off]), [['GF Sheet 1', 'HEART A', false], ['Not on a sheet yet', 'Charm earrings', true], ['SS Sheet 1', 'STAR C', false]], JSON.stringify(u.chips));
+    // three pieces: the strip gives way (and scrolls) before the live line beside it is cut or touches it
+    await page.waitForTimeout(1300);   // (the window has settled: its live line and the Skip label at their full width)
+    const room = await page.evaluate(() => { const sw = document.getElementById('owPieceSw').getBoundingClientRect(), t = document.querySelector('.owTabsV .owTools'); return { gap: t.getBoundingClientRect().left + parseFloat(getComputedStyle(t).paddingLeft) - sw.right, cut: [...t.querySelectorAll('*')].filter(x => x.scrollWidth > x.clientWidth + 1 && getComputedStyle(x).overflowX !== 'visible').map(x => x.textContent.trim().slice(0, 30)) }; });
+    assert(room.gap >= 10 && room.cut.length === 0, 'the piece strip leaves room for the live line: ' + JSON.stringify(room));
     await shot('5-three-pieces-all');
     await pick(kA); u = await ui(); assert.equal(u.tab.count, '1 sheet'); assert.deepEqual(u.chips.map(c => c.text), ['GF Sheet 1']);
     await page.click('.owTabsV [data-ow-view="sheet"]'); await drawn(GF1); sp = await sheetPanel(); assert.deepEqual(sp.tabs, ['GF Sheet 1'], 'A: only its own sheet'); assert.equal(await page.evaluate(() => document.querySelector('#owSheetPanel .owCharm b').textContent), 'HEART_A');
@@ -223,7 +227,7 @@ async function main() {
       await page.evaluate(({ rid, key, pool }) => { const b = document.createElement('button'); b.id = 'psbDoor'; document.body.appendChild(b); openOrderFrom(b, rid, { row: { key }, poolId: pool }); }, { rid: I5.rid, key: keyOf(I5, k), pool: pid(I5, k) });
       await settle(); u = await ui();
       assert.equal(u.view, 'info'); assert.equal(u.piece, null, 'all pieces in front, the piece of the card shown');
-      if (k === 'ta') { assert(u.btn.off && /^CUTE TRICERATOPS W\/ HEARTS is not on a sheet yet: /.test(u.btn.why), what + ': ' + JSON.stringify(u.btn)); assert(u.tab.off, what); }
+      if (k === 'ta') { assert(u.btn.off && /^Not on a sheet yet: /.test(u.btn.why), what + ': ' + JSON.stringify(u.btn)); assert(u.tab.off, what); }
       else { assert(!u.btn.off && !u.tab.off && u.tab.count === '1 sheet', what + ': ' + JSON.stringify([u.btn, u.tab])); }
       assert.deepEqual(u.chips.map(c => [c.text, c.off]), [['Not on a sheet yet', true], ['GF Sheet 1', false]], what + ': ' + JSON.stringify(u.chips));
       await closeWin(); await page.evaluate(() => document.getElementById('psbDoor').remove());
