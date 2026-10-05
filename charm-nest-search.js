@@ -160,7 +160,11 @@
   function sheetsOf(e) {
     const out = new Map(), add = (k, label, cut) => { if (label && !out.has(k)) out.set(k, { label, cut: !!cut }); };
     const Pool = W.Pool;
-    for (const r of e.rows) for (const id of r.poolIds || []) { const pg = Pool && Pool.sheetOf ? Pool.sheetOf(id) : null; if (pg) add("n:" + (pg.sheetId || nestLabel(pg)), nestLabel(pg)); }
+    // (one truth first: the sheets' own records, then the pages this sorter holds, the pool row's sheetId only as a hint: OrderPieces. The page's pool rows
+    //  and Library rows below stay for what it does not know, a sheet id keyed the same way so a sheet is never named twice)
+    const OP = W.OrderPieces;
+    if (OP && OP.of) { try { for (const p of OP.of(e.rid)) if (!p.gone && p.nested && p.sheetLabel) add("s:" + (p.sheetId || p.sheetLabel), p.sheetLabel, p.state === "cut"); } catch (_) {} }
+    for (const r of e.rows) for (const id of r.poolIds || []) { const pg = Pool && Pool.sheetOf ? Pool.sheetOf(id) : null; if (pg) add(pg.sheetId ? "s:" + pg.sheetId : "n:" + nestLabel(pg), nestLabel(pg)); }
     for (const p of e.pools) if (p.sheetId || p.sheetName) add("s:" + (p.sheetId || p.sheetName), sheetWords(p.sheetName) || null);
     for (const r of e.sheets) add("s:" + (r.id || r.sheetId), `${CODE[r.metal] || ""} Sheet ${r.sheetIndex || r.page || 1}`.trim(), +r.laserDoneAt > 0);
     const c = e.cloud; if (c) for (const x of c.sheets) add("s:" + x.id, x.label, x.cut);
@@ -555,6 +559,18 @@
     }
     select(Math.min(UI.sel, Math.max(0, shown.length - 1)), true);
     message(R);
+    wantPieces(shown.map(h => h.e.rid));
+  }
+  /** The sheet records of the orders whose cards are on screen, read once each (OrderPieces.load: one read of the sheets that name them);
+   *  the cards are drawn again when they land. Never a poll: the page's own change of OrderPieces says it. */
+  const askedPieces = new Map();
+  function wantPieces(rids) {
+    const OP = W.OrderPieces; if (!OP || !OP.load) return;
+    if (!UI.opSub && OP.subscribe) UI.opSub = OP.subscribe(() => { if (!isOpen()) return; clearTimeout(UI.opT); UI.opT = setTimeout(() => { if (isOpen()) refresh(false); }, 80); });
+    const now = Date.now(), fresh = rids.filter(r => /^\d+$/.test(r) && !(now - (askedPieces.get(r) || 0) < 60000));
+    if (!fresh.length) return;
+    for (const r of fresh) askedPieces.set(r, now);
+    try { Promise.resolve(OP.load(fresh)).catch(() => {}); } catch (_) {}
   }
   function select(i, quiet) {
     UI.sel = i;

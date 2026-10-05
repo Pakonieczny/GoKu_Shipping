@@ -10255,7 +10255,7 @@ const OrderWin = window.OrderWin = (() => {
     if (W.wired) return; W.wired = true;
     W.dlg = byId("orderWin"); if (!W.dlg) return;
     // the sheet records of the order read (OrderPieces): the Sheet tab's tabs and piece list, and the Overview, follow them
-    tryDo(() => window.OrderPieces && OrderPieces.subscribe(() => hold("pieces", () => { const rid = W.rid; if (!rid || !W.dlg.open || W.closing) return; pieceTabs(rid); if (W.view === "sheet" && SV.list) paintPanel(SV.info); const r = rowOf(W.key); if (r) paintNow(r); })));
+    tryDo(() => window.OrderPieces && OrderPieces.subscribe(() => hold("pieces", () => { const rid = W.rid; if (!rid || !W.dlg.open || W.closing) return; pieceTabs(rid); if (W.view === "sheet" && SV.list) paintPanel(SV.info); const r = rowOf(W.key); if (r) { paintSheetCell(r); paintNow(r); } })));
     byId("owClose").onclick = () => shut();
     // Esc goes back into what was clicked, as the close button does
     W.dlg.addEventListener("cancel", e => { e.preventDefault(); if (finding()) endFind(true); else shut(); });
@@ -10633,7 +10633,7 @@ const OrderWin = window.OrderWin = (() => {
     if (r.loading) notes.setAttribute("aria-label", "Reading the order…"); else notes.removeAttribute("aria-label");
     const again = notes.querySelector("[data-ow-retry]"); if (again) again.onclick = () => openOrder(String(r.order.receiptId), { view: W.view, keepFrom: true, highlight: W.hl || undefined });
     paintNote(r);
-    const st = tryDo(() => Orders.statePill(r)) || ["neutral", r.state || "—"], where = tryDo(() => Orders.placeOf(r));
+    const st = tryDo(() => Orders.statePill(r)) || ["neutral", r.state || "—"], sheetCell = sheetCellOf(r);
     const mcell = (lbl, val) => '<div class="m"><i>' + esc(lbl) + '</i><span>' + esc(val) + '</span></div>';
     // the order itself (its number, when it was bought and by whom) and everything that was picked at the purchase, not
     // only the options the sorter could map: a custom order is read from exactly these
@@ -10649,7 +10649,7 @@ const OrderWin = window.OrderWin = (() => {
       mcell("Quantity", String(sp.quantity || r.line.quantity || 1)) +
       mcell("Metal", r.material ? labelOf(r.material) : (sp.materialLabel || "none")) +
       mcell("State", st[1]) +
-      (where ? mcell("Sheet", (where.set ? where.set + " · " : "") + (where.sheet || "")) : "") +
+      (sheetCell ? mcell("Sheet", sheetCell) : "") +
       mcell("Ship by", tryDo(() => Orders.shipTxt(r)) || "—") +
       (sp.form ? mcell("Form", sp.form) : "") + (sp.size ? mcell("Size", sp.size) : "") + (sp.chain ? mcell("Chain", sp.chain) : "") +
       (r.engrave && (r.engrave.needed || CNEngravingSeals.list(r.engrave).length) ? `<div class="m"><i>Engraving</i><span>${esc((r.engrave.approved ? "approved" : r.engrave.state || "waiting") + (r.engrave.text ? " · " + r.engrave.text : ""))}</span>${CNEngravingSeals.html(Engrave.jobOf(r) || r.engrave)}</div>` : "") +
@@ -10923,6 +10923,23 @@ const OrderWin = window.OrderWin = (() => {
     }
     const st = tryDo(() => Orders.statePill(r)) || ["neutral", r.state || ""], where = tryDo(() => Orders.placeOf(r));
     return { tone: st[0] === "bad" ? "bad" : st[0] === "ok" ? "done" : "", pill: String(st[1] || "").replace(/^\d\/\d\s+/, ""), k: "Where it is now", t: r.loading ? "Reading the order's records…" : (st[1] ? st[1].replace(/^\d\/\d\s+/, "") : "") + (where ? " · " + (where.sheet || "") : ""), ev: null };
+  }
+  /** The Overview grid's Sheet cell: every sheet this line's pieces are on (OrderPieces: the sheets' own records), the one sheet the
+   *  pool row names while those are not read. A piece on two sheets says both; nothing is said for a piece on none. */
+  function sheetCellOf(r) {
+    const ps = window.OrderPieces ? tryDo(() => OrderPieces.ofRow(r)) : null;
+    const labels = ps ? [...new Map(ps.filter(p => p.nested && p.sheetLabel).map(p => [p.sheetId || p.sheetLabel, p.sheetLabel])).values()] : [];
+    if (labels.length) return labels.join(" + ");
+    const where = tryDo(() => Orders.placeOf(r)); return where ? (where.set ? where.set + " · " : "") + (where.sheet || "") : "";
+  }
+  /** The grid's Sheet cell redrawn alone when the sheets' records land (the grid is drawn once, as the order opens). */
+  function paintSheetCell(r) {
+    const meta = byId("owMeta"); if (!meta || !r || r.loading) return;
+    const cells = [...meta.querySelectorAll(".m")], mine = cells.find(m => m.querySelector("i") && m.querySelector("i").textContent === "Sheet"), text = sheetCellOf(r);
+    if (!text) { if (mine) mine.remove(); return; }
+    if (mine) { const sp = mine.querySelector("span"); if (sp && sp.textContent !== text) sp.textContent = text; return; }
+    const at = cells.find(m => m.querySelector("i") && m.querySelector("i").textContent === "State"), cell = el("div", "m"); cell.innerHTML = "<i>Sheet</i><span>" + esc(text) + "</span>";
+    if (at) at.after(cell); else meta.appendChild(cell);
   }
   function paintNow(r) {
     if(window.Seal?.defer('order-now',()=>paintNow(rowOf(W.key))))return;
