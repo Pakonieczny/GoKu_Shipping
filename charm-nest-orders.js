@@ -442,6 +442,16 @@
    */
   // Shop-local receipt dates, never the time a historical order was imported.
   function orderPlacedAt(row) { return (+row.order?.createTs || 0) * 1000 || +row.arrivedAt || 0; }
+  /* The queue's one order (Paul, 5 Oct 2026: "When an order gets released from hold it must go back in queue and be placed on
+     the next available placement ... ahead of the incoming orders from Etsy"). An order released from hold carries `frontAt`
+     (the release time in ms) on its lines, pieces and pool rows. Every placement path puts what carries it first, the order
+     released first first, and the rest as before: oldest order first. frontOf reads a line, a piece or a queue entry;
+     byQueue(dateOf) is the comparator for lines (dateOf: their order date); rankDate(piece) is the date the nest's FIFO reads
+     for a piece: a front piece ranks by its release time over a billion, which is a few minutes past 1970 in the solver's
+     seconds, so it stays ahead of every real order date and in release order among its own kind. */
+  const frontOf = x => { const v = +(x && (x.frontAt ?? (x.row && x.row.frontAt))); return v > 0 ? v : 0; };
+  const byQueue = dateOf => (a, b) => { const fa = frontOf(a), fb = frontOf(b); if (fa || fb) { if (!fa) return 1; if (!fb) return -1; if (fa !== fb) return fa - fb; } return (dateOf(a) || 0) - (dateOf(b) || 0); };
+  const rankDate = c => { const f = frontOf(c); return f ? f / 1e9 : +(c && c.orderDate) || 0; };
   // one set of formatters per time zone: making one costs far more than using it, and each Orders list drew three per line
   const dayFormats = new Map();
   function dayFormat(timeZone) {
@@ -541,7 +551,8 @@
     for (const l of gated) if (SLOW_MATERIALS.has(l.material)) { take.add(l.key); materials[l.material].taken++; }
     // 4 · fast materials: full sheets go; the remainder waits unless something on it has to travel
     for (const m of FAST_MATERIALS) {
-      const cand = gated.filter(l => l.material === m).sort((a, b) => ((a.createTs || 0) - (b.createTs || 0)) || (b.multi - a.multi) || (b.urgent - a.urgent) || ((a.shipBy || 1e12) - (b.shipBy || 1e12)));
+      // (a line released from hold is never made to wait for a full sheet: it goes now, ahead of the others)
+      const cand = gated.filter(l => l.material === m).sort((a, b) => byQueue(x => x.createTs || 0)(a, b) || (b.multi - a.multi) || (b.urgent - a.urgent) || ((a.shipBy || 1e12) - (b.shipBy || 1e12)));
       const usable = +cap[m] || 0, sum = materials[m];
       if (!cand.length) continue;
       if (!(usable > 0)) { cand.forEach(l => take.add(l.key)); sum.taken = cand.length; continue; }   // no plate known: never hold on a guess
@@ -559,6 +570,7 @@
         let acc2 = 0; for (const l of rest) { if (acc2 + (+l.areaPt2 || 0) <= usable + 1e-6) { acc2 += +l.areaPt2 || 0; take.add(l.key); } else wait.set(l.key, { kind: "fill", material: m, pct: sum.pct, why: `waits for a full ${m} sheet` }); }
         sum.partial = true; sum.forcedBy = forceFill[m] ? ["operator"] : [...new Set(forced.map(l => l.multi ? `order ${l.orderId} travels with another material` : `order ${l.orderId} is due`))];
       } else for (const l of rest) wait.set(l.key, { kind: "fill", material: m, pct: sum.pct, why: `waits for a full ${m} sheet · ${sum.pct}% so far` });
+      for (const l of cand) if (frontOf(l)) { take.add(l.key); wait.delete(l.key); }
       sum.taken = cand.filter(l => take.has(l.key)).length;
     }
     return { take, wait, materials };
@@ -730,6 +742,6 @@
     return [...groups].sort(([a],[b])=>a.localeCompare(b));
   }
   return { orderQuery, orderMatches, orderGroups, SPECIAL, specialOf, engravingNote, sortingLabel, sortingMetal, visible, purchaseDetails, purchaseOptions, libraryGroup, METAL_TO_CARD, CARD_TO_METAL, CARD_TAG, CARD_LABEL, DEFAULT_OPTION_MAP, FORM_VALUES, SIZE_VALUES, norm, optionLookup, isNoDesign, resolveSku, variationBase, optionDesign, huggieSku, interpretLine, lineKey, poolId,
-    orderPlacedAt, orderDay, intakePlan, completionDay, completionTime, compareCompleted, completedTitle, localDay, dateTag, dateTagOfDay, setId, setLabel, setFolder, sheetName, sheetFolder, toB36, encodeOrderList, safeChunks, evaluateOrder, planRelease, sheetRelease, kinGroups, FAST_MATERIALS, SLOW_MATERIALS, RUN_STEPS, HALF, nextStep, stepIndex, DONE_STATES,
+    orderPlacedAt, frontOf, byQueue, rankDate, orderDay, intakePlan, completionDay, completionTime, compareCompleted, completedTitle, localDay, dateTag, dateTagOfDay, setId, setLabel, setFolder, sheetName, sheetFolder, toB36, encodeOrderList, safeChunks, evaluateOrder, planRelease, sheetRelease, kinGroups, FAST_MATERIALS, SLOW_MATERIALS, RUN_STEPS, HALF, nextStep, stepIndex, DONE_STATES,
     RUN_RECORD, FINISHED_LINE, closedOrders, utf8Bytes, textHash, indexEntries, archiveParts };
 });
