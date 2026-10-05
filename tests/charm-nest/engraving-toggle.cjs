@@ -172,25 +172,31 @@ async function page() {
     const face = await pg.evaluate(() => { const cv = document.querySelector('.sheetCard[data-m="gold14k"] [data-r="canvas"]'); return { face: cv._face || 'front', w: cv.width }; });
     assert.equal(face.face, 'front');
     console.log(`  ✓ page: a press opens that sheet's shelf only, again hides it; kept across a redraw and the tabs; Enter/Space work; ${pressHits} picture requests while toggling`);
-    // 7 · the controls row: as tall with the control as without it, at 320, 480 and 900 px
+    // 7 · the controls row: as tall with the control as without it, at 320, 480 and 900 px, whenever every control fits one row; a row too
+    //     narrow for all of them (their own widths added up) goes on to a second row, left aligned, and never clips (5 Oct: Options moved to the title line)
     for (const width of [320, 480, 900]) {
       await pg.setViewportSize({ width, height: 900 }); await tick(250);
       const r = await pg.evaluate(() => {
         const out = {};
         for (const m of ['gold14k', 'silver']) {
           const card = document.querySelector(`.sheetCard[data-m="${m}"]`), row = card.querySelector('.shControls'), host = card.querySelector('[data-r="eng"]'), face = card.querySelector('.shFace'), btn = host.querySelector('button');
-          const withIt = row.getBoundingClientRect().height; host.hidden = true; const without = row.getBoundingClientRect().height; host.hidden = false;
+          // (the room every control would take side by side, each at its own width, against the room the row has)
+          const natural = () => { const kids = [...row.children].filter(x => !x.hidden && x.getClientRects().length && !x.classList.contains('hidden')), saved = kids.map(k => k.style.cssText), cs = getComputedStyle(row);
+            row.style.flexWrap = 'nowrap'; kids.forEach(k => { k.style.flex = '0 0 auto'; }); const need = kids.reduce((n, k) => n + k.getBoundingClientRect().width, 0) + 6 * Math.max(0, kids.length - 1), inner = row.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+            row.style.flexWrap = ''; kids.forEach((k, i) => { k.style.cssText = saved[i]; }); return need > inner + 0.5; };
+          const withIt = row.getBoundingClientRect().height, wraps = natural(); host.hidden = true; const without = row.getBoundingClientRect().height; host.hidden = false;
           const hr = btn.getBoundingClientRect(), fr = face.hidden ? null : face.getBoundingClientRect(), rr = row.getBoundingClientRect();
-          out[m] = { withIt, without, btnH: hr.height, btnW: Math.round(hr.width), inside: hr.left >= rr.left - 1 && hr.right <= rr.right + 1, noOverlap: !fr || hr.right <= fr.left + 1 || hr.left >= fr.right - 1, faceFits: !!fr && fr.left >= rr.left - 1 && fr.right <= rr.right + 1, shown: !host.hidden, at: `btn ${Math.round(hr.left)}-${Math.round(hr.right)} row ${Math.round(rr.left)}-${Math.round(rr.right)} face ${fr ? Math.round(fr.left) + '-' + Math.round(fr.right) : 'hidden'}` };
+          out[m] = { withIt, without, wraps, btnH: hr.height, btnW: Math.round(hr.width), inside: hr.left >= rr.left - 1 && hr.right <= rr.right + 1, noOverlap: !fr || hr.right <= fr.left + 1 || hr.left >= fr.right - 1 || hr.bottom <= fr.top + 1 || hr.top >= fr.bottom - 1, faceFits: !!fr && fr.left >= rr.left - 1 && fr.right <= rr.right + 1, shown: !host.hidden, at: `btn ${Math.round(hr.left)}-${Math.round(hr.right)} row ${Math.round(rr.left)}-${Math.round(rr.right)} face ${fr ? Math.round(fr.left) + '-' + Math.round(fr.right) : 'hidden'}` };
         }
         out.docOverflow = document.documentElement.scrollWidth - document.documentElement.clientWidth;
         return out;
       });
       for (const m of ['gold14k', 'silver']) {
-        assert.equal(r[m].withIt, r[m].without, `${m} @${width}px: the controls row is ${r[m].withIt}px with the control and ${r[m].without}px without`);
+        if (!r[m].wraps) assert.equal(r[m].withIt, r[m].without, `${m} @${width}px: the controls row is ${r[m].withIt}px with the control and ${r[m].without}px without`);
+        else assert(r[m].withIt >= r[m].without, `${m} @${width}px: a row too narrow for every control wraps (${r[m].withIt}px with the control, ${r[m].without}px without)`);
         assert(r[m].btnH <= r[m].withIt, `${m} @${width}px: the control fits the row (${r[m].btnH} in ${r[m].withIt})`); assert(!r[m].faceFits || (r[m].inside && r[m].noOverlap), `${m} @${width}px: inside the row and clear of Front | Back wherever Front | Back itself fits (${r[m].at})`);
       }
-      console.log(`  ✓ page @${width}px: controls row ${r.gold14k.withIt}px with and without; the control is ${r.gold14k.btnW}×${Math.round(r.gold14k.btnH)}px (${r.gold14k.at}; Front | Back ${r.gold14k.faceFits ? 'fits' : 'is already wider than the row at this width'})`);
+      console.log(`  ✓ page @${width}px: controls row ${r.gold14k.withIt}px with and ${r.gold14k.without}px without${r.gold14k.wraps ? ' (wrapped to a second row: not all of it fits one row)' : ''}; the control is ${r.gold14k.btnW}×${Math.round(r.gold14k.btnH)}px (${r.gold14k.at}; Front | Back ${r.gold14k.faceFits ? 'fits' : 'is already wider than the row at this width'})`);
     }
     await pg.setViewportSize({ width: 1440, height: 900 }); await tick(250);
     // pictures: collapsed (as every load starts), then opened

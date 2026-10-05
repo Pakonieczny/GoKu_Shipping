@@ -3046,8 +3046,16 @@ const Gate = window.Gate = (() => {
     }
     refreshAllCards();
   }
+  /** Where a card's gate node stands. Its Options button stands on the title line, at the far right end after the date (Paul, 5 Oct),
+   *  the same node and the same panel as ever; the old waiting line of a run of the earlier release rule is wider than a title line
+   *  has room for, so it keeps its place in the controls row. A node already there is not touched (an open panel, a focused field). */
+  function seat(sh, node, where) {
+    const to = sh.el && sh.el.querySelector(where === "row" ? ".shControls" : ".shHead"); if (!to || node.parentNode === to) return;
+    if (where === "row") to.insertBefore(node, to.querySelector(".engTogHost")); else to.appendChild(node);
+  }
   function renderRelease(sh, node) {
     const m = sh.metal, st = stockFor(m,sh), seq = Sets.ofRun(B.run?.runId).find(s => s.group === "dispatch" && !s.committedAt)?.seq;
+    seat(sh, node, "head");
     node.className = "shGate";
     if (!solid(m) && m !== "rose") {
       node.textContent = sh.setId && !sh.draft ? `In Set ${sh.seq} · ${policy(sh, sh.seq).reason}` : policy(sh, seq).reason;
@@ -3864,7 +3872,7 @@ const Gate = window.Gate = (() => {
       const pct = (waiting[0].wait && waiting[0].wait.pct) || 0;
       html = `<span class="t"><b>${pct}% of a sheet</b> waiting for more</span><span class="n">${pieces} piece${pieces === 1 ? "" : "s"}</span><button class="btn ghost xs" data-gate="cut" title="cut the partial sheet now instead of waiting for it to fill">Cut it anyway</button>`;
     }
-    el2.className = cls; el2.classList.remove("hidden"); el2.innerHTML = html;
+    seat(sh, el2, "row"); el2._sheetOptionsOwner = null; el2.className = cls; el2.classList.remove("hidden"); el2.innerHTML = html;   // (the line takes the node's place: Options is drawn again when the current rule is back)
     const b = el2.querySelector("[data-gate]"); if (b) b.onclick = () => { b.disabled = true; (b.dataset.gate === "release" ? release(m) : cutAnyway(m)).catch(e => toast(e.message, "bad", 6000)); };
   }
   return { solidSelected:(m, sh) => sh && solid(m) ? picked(sh) || !!sh.cardinalPull : anyPicked(m),   // (a solid sheet the cardinal rule pulled in is in the set)
