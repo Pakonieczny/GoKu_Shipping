@@ -711,13 +711,30 @@ dialog.phv.layer.phvIn{background:transparent}
 /* all pieces: each one on a row under "where it is now"; the slowest, where the order is, in gold */
 .owPcSum{display:grid;gap:2px;margin:-6px 0 20px;animation:owUp .3s cubic-bezier(.2,.8,.2,1) both}
 .owPcSum[hidden]{display:none}
-.owPcRow{display:grid;grid-template-columns:8px minmax(0,1.2fr) minmax(0,1fr) auto;align-items:center;gap:12px;border:0;background:transparent;text-align:left;padding:7px 10px;border-radius:10px;font:12.5px var(--sans);color:var(--ink70);cursor:pointer;transition:background .2s,transform .18s cubic-bezier(.2,.8,.2,1)}
+.owPcRow{display:grid;grid-template-columns:8px minmax(0,1fr) auto auto;align-items:center;gap:12px;border:0;background:transparent;text-align:left;padding:7px 10px;border-radius:10px;font:12.5px var(--sans);color:var(--ink70);cursor:pointer;transition:background .2s,transform .18s cubic-bezier(.2,.8,.2,1)}
 .owPcRow:hover{background:var(--card2);transform:translateX(2px)}
 .owPcRow:focus-visible{outline:2px solid var(--slate);outline-offset:-2px}
 .owPcRow .dot{width:8px;height:8px;border-radius:50%;background:var(--c)}
 .owPcRow .nm{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.owPcRow .nm b{font-weight:600;color:var(--ink)}
-.owPcRow .st{font:11px var(--mono);color:var(--ink45);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.owPcRow.slow .st{color:#7a5a1d}
+/* a piece's status on its row (Paul, 5 Oct, point 4; pieceStatusHtml): ONE quiet chip, the Sheet card's own chip (.owShChip: its metal dot, its hairline)
+   shrunk to a line. The sheet's name in the app's own type (never mono, never cut short), a dot in the sheet's metal, a small check once the sheet is cut or
+   sent; waiting and cancelled are its dashed, hollow form, on hold takes the Hold button's orange and completed the Completed button's green. The chip of a
+   sheet opens it (a button); the others only say where the piece is. The hover is a tint fading in and a 1px lift: opacity and transform only. */
+.owPcRow .st{display:flex;align-items:center;justify-content:flex-end;min-width:0;font:inherit;color:inherit}
+.owPcRow .pcSt{position:relative;isolation:isolate;display:inline-flex;align-items:center;gap:7px;max-width:100%;border-radius:999px;padding:3px 10px 3px 8px;background:var(--card2);box-shadow:none;white-space:nowrap;transition:transform .18s cubic-bezier(.2,.8,.2,1)}
+.owPcRow .pcSt i{width:8px;height:8px}
+.owPcRow .pcSt span{font:600 11.5px/1.35 var(--sans);color:var(--ink70)}
+.owPcRow .pcSt::before{content:"";position:absolute;inset:-1px;z-index:-1;border-radius:inherit;background:var(--goldSoft);opacity:0;transition:opacity .18s;pointer-events:none}
+.owPcRow button.pcSt:hover,.owPcRow button.pcSt:focus-visible{transform:translateY(-1px);border-color:var(--line);box-shadow:none}
+.owPcRow button.pcSt:hover::before,.owPcRow button.pcSt:focus-visible::before{opacity:1}
+.owPcRow span.pcSt{cursor:inherit}.owPcRow span.pcSt:hover{transform:none;border-color:var(--line);box-shadow:none}
+.owPcRow .pcSt.off{background:transparent}
+.owPcRow .pcCk{width:10px;height:10px;flex:none;color:var(--sage)}
+.owPcRow .pcMore{font:600 10.5px var(--sans);font-style:normal;color:var(--ink45)}
+.owPcRow .pcSt[data-k=hold]{background:#f8eee3;border-color:#e6cdb2}.owPcRow .pcSt[data-k=hold] span{color:var(--warn,#a2591c)}.owPcRow .pcSt[data-k=hold]::before{background:#f1dcc3}
+.owPcRow .pcSt[data-k=done]{background:#e8f1ea;border-color:#b6d2bf}.owPcRow .pcSt[data-k=done] span{color:#19663f}.owPcRow .pcSt[data-k=done]::before{background:#d9eadf}
+.owPcRow.slow .pcSt{border-color:var(--goldLine)}   /* (the slowest piece, where the order is: a gold hairline, no longer brown words) */
+@media(prefers-reduced-motion:reduce){.owPcRow .pcSt,.owPcRow .pcSt::before{transition:none}}
 .owPcRow .steps{display:inline-flex;gap:4px}
 .owPcRow .steps i{width:6px;height:6px;border-radius:50%;box-shadow:inset 0 0 0 1px var(--ink25);transition:background .3s}
 .owPcRow .steps i.on{background:var(--sage);box-shadow:none}
@@ -743,10 +760,12 @@ dialog.phv.layer.phvIn{background:transparent}
 .owPcRow .owPcSr{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0 0 0 0);border:0;white-space:nowrap}
 /* a piece in no card (an ordinary piece on a sheet): its words stay, and its orange Hold sits at the right end of the row where they are, before the
    dots. Where the room is short (a phone, or the window beside its chat) the words go on a second line under the name, never a sideways scroll. */
-.owPcSum .owPcRow.hasWords{grid-template-columns:8px minmax(8em,1.2fr) minmax(0,1fr) auto auto}
+.owPcSum .owPcRow.hasWords{grid-template-columns:8px minmax(8em,1fr) auto auto auto}   /* (the status chip takes its own width, the name gives way first) */
 @container (max-width:470px){
   .owPcSum .owPcRow.hasWords{grid-template-columns:8px minmax(8em,1fr) auto auto;row-gap:1px}
-  .owPcRow.hasWords .st{grid-column:2 / -1;grid-row:2;white-space:normal;overflow:visible;text-overflow:clip}
+  .owPcRow.hasWords .st{grid-column:2 / -1;grid-row:2;justify-content:flex-start;margin-top:3px}
+  .owPcSum .owPcRow:not(.hasAct){grid-template-columns:8px minmax(0,1fr) auto;row-gap:1px}   /* (a row with no Hold: the same, its dots stay at the right end) */
+  .owPcRow:not(.hasAct) .st{grid-column:2 / -1;grid-row:2;justify-content:flex-start;margin-top:3px}
 }
 /* what is being waited for, said on one line */
 .owLoading{display:flex;align-items:center;gap:9px;padding:8px 18px;font:12px var(--sans);color:var(--ink70);border-bottom:1px solid var(--line2);background:var(--card2)}
@@ -6745,7 +6764,7 @@ boot();
      Design Station's sign-in), the same name every seal it stamps carries. -->
 <script src="station-session.js?v=20261002-ea1"></script>
 <script src="station-activity.js?v=20261005-e2live"></script>
-<script src="charm-nest-bridge.js?v=20261005-lis2-cardinal4-zoom-psb1-egl1-osc1-r3f-setgate1-hand1-sameset1-rl1-nowait1-opt1-rt1-pcr1-one1-st1-five1-pd1-zp1-rel2-cx1-hold2-sl2-sealsh1-sealpc2-live1-nofix1"></script>
+<script src="charm-nest-bridge.js?v=20261005-lis2-cardinal4-zoom-psb1-egl1-osc1-r3f-setgate1-hand1-sameset1-rl1-nowait1-opt1-rt1-pcr1-one1-st1-five1-pd1-zp1-rel2-cx1-hold2-sl2-sealsh1-sealpc2-live1-pst1-nofix1"></script>
 <script src="charm-nest-review-live.js?v=20261005-rl1"></script>
 <script src="charm-nest-hold-ui.js?v=20261005-hold2"></script>
 <script>

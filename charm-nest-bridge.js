@@ -11460,10 +11460,10 @@ const OrderWin = window.OrderWin = (() => {
     const holds = sum ? new Map(sum.each.map(x => [x.p.key, ctls.get(x.p.key) ? "" : holdSlotOfKey(x.p.key)])) : null;
     if (!sum || (!all && !ctls.get(list[0].key) && !holds.get(list[0].key))) { box.hidden = true; box._h = ""; box.innerHTML = ""; return; }
     const at = s => UI.STAGES.indexOf(s);
+    const scope = r0 && !r0.loading ? tryDo(() => scopePieces(r0)) : null;   // (the sheets each piece's copies are on: its status names one)
     const html = `<span class="fLabel">${all ? "Its pieces · the order is where the slowest one is" : ps.length > 1 ? "This piece" : "Its piece"}</span>` + sum.each.map(x => {
-      const nx = x.steps.find(s => at(s) > x.D.step), slow = all && x.D.step === sum.step;
+      const slow = all && x.D.step === sum.step;
       const dot = `<i class="dot" style="--c:${esc(colorOf(x.p.metal))}"></i>`, nm = `<b>${esc(x.p.name)}</b> · ${esc(pieceMeta(x.p))}`;
-      const st = `<span class="st">${esc(x.D.hand ? "Completed by hand" : (x.D.W && x.D.W.label) || "Waiting")}${nx && !x.D.cancelled && !x.D.hand ? " · next: " + esc(nx.l) : ""}</span>`;
       const steps = `<span class="steps" aria-hidden="true">${x.steps.map(s => `<i class="${x.D.step >= at(s) || (x.D.stages[at(s)] || {}).first ? "on" : ""}"></i>`).join("")}</span>`;
       // a piece that is in the Review tab has that card's own buttons (and seals) here, in place of its words: a press is a press
       // there; a piece in no card keeps its words
@@ -11471,11 +11471,14 @@ const OrderWin = window.OrderWin = (() => {
       // (a piece in no card keeps its words, and its Hold at the right end of the row; nothing nests in a button, so with a Hold the row is a
       // group like the card rows are, its name the button that opens the piece, and a press anywhere else on it still does the same)
       const hold = holds.get(x.p.key);
+      // (its status, said once: a chip, a button that opens its sheet where the row is a group, plain where the row is itself a button; or only
+      // for a screen reader where the row says it another way: the Review card's buttons, or the one piece the window shows)
+      const sp = scope && scope.find(q => q.key === x.p.key) || null, st = pieceStatusHtml(x, sp, { inButton: !ctl && !hold }), stSr = pieceStatusHtml(x, sp, { sr: true });
       if (!ctl && hold) {
         const aria = x.p.name + (pieceMeta(x.p) ? " · " + pieceMeta(x.p) : "");
         return `<div class="owPcRow hasAct hasHold${all ? " hasWords" : " solo"}${slow ? " slow" : ""}"${all ? ` data-piece="${esc(x.p.key)}"` : ""} role="group" aria-label="${esc(aria)}">${dot}` +
           (all ? `<button type="button" class="nm owPcName" title="Show only this piece">${nm}</button>` : `<span class="nm owPcName">${nm}</span>`) +
-          (all ? st : st.replace('class="st"', 'class="st owPcSr"')) + `<span class="pcAct" data-pc-hold>${hold}</span>${steps}</div>`;
+          (all ? st : stSr) + `<span class="pcAct" data-pc-hold>${hold}</span>${steps}</div>`;
       }
       if (!ctl) return `<button type="button" class="owPcRow${slow ? " slow" : ""}" data-piece="${esc(x.p.key)}" title="Show only this piece">${dot}<span class="nm">${nm}</span>${st}${steps}</button>`;
       // (what the card is, said beside the name: the kind of custom order it is, which the bar used to say)
@@ -11483,15 +11486,64 @@ const OrderWin = window.OrderWin = (() => {
       const name = `<b>${esc(x.p.name)}</b>${meta ? " · " + meta : ""}`, aria = x.p.name + (pieceMeta(x.p) ? " · " + pieceMeta(x.p) : "") + (ctl.label ? " · " + ctl.label : "");
       return `<div class="owPcRow hasAct${slow ? " slow" : ""}${all ? "" : " solo"}"${all ? ` data-piece="${esc(x.p.key)}"` : ""} role="group" aria-label="${esc(aria)}">${dot}` +
         (all ? `<button type="button" class="nm owPcName" title="Show only this piece">${name}</button>` : `<span class="nm owPcName">${name}</span>`) +
-        `<span class="pcAct" data-pc-act="${esc(x.p.key)}">${ctl.html}</span>${st.replace('class="st"', 'class="st owPcSr"')}${steps}</div>`;
+        `<span class="pcAct" data-pc-act="${esc(x.p.key)}">${ctl.html}</span>${stSr}${steps}</div>`;
     }).join("");
     box.hidden = false;
     if (box._h === html) return;
     // (a name being typed in a row's question is carried over a redraw, the field and where its cursor was)
     const typed = [...box.querySelectorAll("[data-cu-name]")].map(i => ({ key: i.closest("[data-pc-act]")?.dataset.pcAct, v: i.value, on: document.activeElement === i, a: i.selectionStart, b: i.selectionEnd })).filter(t => t.key);
     box._h = html; box.innerHTML = html;
+    wirePcSheet(box);
     box.querySelectorAll("[data-pc-act]").forEach(h => wirePcAct(h, typed));
     if (window.HoldUI) tryDo(() => HoldUI.fill(box));   // (the Hold of the rows that have no card's buttons)
+  }
+  /** What a piece's row says of where the piece is NOW, in plain short words (Paul, 5 Oct, point 4: no "next: ..." any more, the steps ahead are the
+   *  dots' to show; and one calm status in place of "On RG Sheet 1 · next: Laser cut"). x: the timeline's summary of the piece ({ p, D, events }), sp: its
+   *  place in the Sheet scope (scopePieces: the sheets its copies are on), null while that is not read.
+   *  → { k: sheet | wait | hold | cancel | done | review | stage, text, say (for a screen reader), name (the sheet's), check (the sheet is cut or sent),
+   *  more (other sheets it is on), sheet ({ id, pool } of the sheet to open, else null), metal }. */
+  const PC_WORD = { review: "In review", sorted: "Sorted", welded: "Welded", assembled: "Assembled", packed: "Packed", shipped: "Shipped" };
+  function pieceStatusOf(x, sp) {
+    const D = x.D || {}, W = D.W || {}, stage = W.stage || "", row = sp && sp.row || null;
+    if (D.cancelled || stage === "cancelled" || (row && row.state === "gone")) return { k: "cancel", text: "Cancelled" };
+    if (D.hold || stage === "held" || (row && row.hold)) return { k: "hold", text: "On hold" };
+    if (D.hand || (sp && sp.hand) || stage === "completed") return { k: "done", text: "Completed" };
+    const on = sp && sp.nested ? sp.sheets || [] : [], first = on[0] || null;
+    // (on a sheet: the timeline says so, or the sheets' own records do, which may be a moment ahead of it)
+    if (stage === "sheet" || stage === "cut" || (on.length && (!stage || stage === "waiting" || stage === "designed"))) {
+      const nice = l => (l && !/\?/.test(l) ? l : ""), name = nice(first && first.label) || String(W.sheet || "").trim() || (first && first.label) || "";
+      const cut = stage === "cut" || (x.events || []).some(e => e && e.type === "setCommitted");   // (cut, or its set sent to the laser)
+      return { k: "sheet", text: name || (stage === "cut" ? "Cut on the laser" : "On a sheet"), say: name ? "On " + name : "", name, check: cut, more: Math.max(0, on.length - 1),
+        sheet: first ? { id: first.id || "", pool: (first.pools || [])[0] || "" } : null, metal: (first && first.metal) || x.p.metal };
+    }
+    if (PC_WORD[stage]) return { k: stage === "review" ? "review" : "stage", text: PC_WORD[stage], metal: x.p.metal };
+    return { k: "wait", text: "Waiting for a sheet" };
+  }
+  /** The status of a piece as its row draws it (the `.st` cell): one chip, the Sheet card's own (owShChip: its metal dot, its hairline), the sheet's name
+   *  in the app's type, a small check once the sheet is cut or sent; a button that opens that sheet (aria-label "Open RG Sheet 1") unless it sits inside
+   *  the row's own button (o.inButton), where it only says it. o.sr: the words alone, for a screen reader (the card's buttons, or the one piece shown, say
+   *  the rest). */
+  const PC_CK = '<svg class="pcCk" viewBox="0 0 12 12" aria-hidden="true"><path d="m2.6 6.5 2.3 2.3 4.6-5.1" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  function pieceStatusHtml(x, sp, o) {
+    const s = pieceStatusOf(x, sp); o = o || {};
+    if (o.sr) return `<span class="st owPcSr">${esc(s.say || s.text)}</span>`;
+    const hollow = s.k === "wait" || s.k === "cancel", c = s.k === "hold" ? "var(--warn,#a2591c)" : s.k === "done" ? "var(--sage)" : colorOf(s.metal || x.p.metal);
+    const at = `class="owShChip pcSt${hollow ? " off" : ""}" data-k="${s.k}" style="--c:${esc(c)}"`, inner = `<i></i><span>${esc(s.text)}</span>${s.check ? PC_CK : ""}${s.more ? `<em class="pcMore">+${s.more}</em>` : ""}`;
+    const chip = s.sheet && !o.inButton
+      ? `<button type="button" ${at} data-pc-sheet="${esc(x.p.key)}" data-sheet="${esc(s.sheet.id)}" data-pool="${esc(s.sheet.pool)}" aria-label="${esc(s.name ? "Open " + s.name : "Open its sheet")}">${inner}</button>`
+      : `<span ${at}>${inner}</span>`;
+    return `<span class="st">${chip}</span>`;
+  }
+  /** A press on a piece's sheet chip opens that sheet in the Sheet view, as the Sheet card's chips do (openSheetOf: no pop-up over the pop-up), and is
+   *  the chip's alone: the row it sits on is not pressed with it. A piece other than the one picked is picked first. */
+  function wirePcSheet(box) {
+    box.querySelectorAll("button[data-pc-sheet]").forEach(b => b.addEventListener("click", e => {
+      e.stopPropagation();
+      const key = b.dataset.pcSheet, sid = b.dataset.sheet, pool = b.dataset.pool;
+      if (!W.dlg || !W.dlg.open || !rowOf(W.key)) return;
+      if (W.piece && W.piece !== key) pickPiece(key);
+      openSheetOf(key, sid, pool);
+    }));
   }
   /** What a press on a piece's controls does (h: the span holding them, data-pc-act its piece's key): the card as it is when pressed, not
    *  as it was drawn, of an order that is still the one the window shows. typed: the names being typed in the rows drawn before. */
