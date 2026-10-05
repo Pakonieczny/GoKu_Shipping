@@ -184,7 +184,7 @@
 .efpOid:hover{background:var(--goldSoft);text-decoration:underline;text-decoration-color:var(--gold2);text-underline-offset:3px}
 .efpKGroups{display:grid;gap:22px}.efpGroup{display:grid;gap:0}.efpBody>section,.efpBody>.efpGrid.g57{margin-top:10px}
 .efpKpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
-.efpK{position:relative;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 16px 10px;display:grid;gap:2px;min-width:0;outline:none;transition:transform .2s ease,box-shadow .2s ease,border-color .2s ease;cursor:default;overflow:hidden}
+.efpK{position:relative;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 16px 10px;display:grid;grid-template-rows:auto auto auto 1fr;align-content:start;gap:2px;min-width:0;outline:none;transition:transform .2s ease,box-shadow .2s ease,border-color .2s ease;cursor:default;overflow:hidden}
 .efpK:hover,.efpK:focus-visible,.efpK.hov{transform:translateY(-1px);box-shadow:var(--sh);border-color:var(--ink25)}
 .efpK:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
 .efpKL{font-size:10.5px;letter-spacing:.07em;text-transform:uppercase;color:var(--ink45);font-weight:700;display:flex;gap:6px;align-items:flex-start;line-height:1.3}
@@ -195,7 +195,7 @@
 .efpKD{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--ink45);min-height:15px;flex-wrap:wrap;gap:1px 6px}.efpKD span{white-space:nowrap}
 .efpKD b{display:inline-flex;align-items:center;gap:2px;font-weight:700;font-variant-numeric:tabular-nums;padding:0 5px;border-radius:5px;background:var(--paper2);color:var(--ink70)}
 .efpKD b.up{background:var(--sageSoft);color:#46623f}.efpKD b.down{background:var(--claySoft);color:#8a3f2b}
-.efpKF{display:flex;align-items:flex-end;gap:8px;min-height:14px;min-width:0}.efpKS{flex:1 1 auto;min-width:0;font-size:11px;line-height:1.35;color:var(--ink45);min-height:14px}
+.efpKF{display:flex;align-items:flex-end;align-self:end;gap:8px;min-height:14px;min-width:0}.efpKS{flex:1 1 auto;min-width:0;font-size:11px;line-height:1.35;color:var(--ink45);min-height:14px}
 .efpKsp{flex:0 1 76px;min-width:24px;height:26px;pointer-events:none;opacity:.95}
 .efpHC{position:absolute;z-index:12;pointer-events:none;width:max-content;max-width:min(272px,calc(100% - 16px));background:var(--card);color:var(--ink70);border:1px solid var(--line);border-radius:11px;padding:9px 12px 10px;font-size:11.5px;line-height:1.45;box-shadow:0 10px 26px rgba(30,26,20,.13);opacity:0;visibility:hidden;transform:translateY(4px);transition:opacity .14s ease,transform .14s ease,visibility 0s .14s}
 .efpHC.on{opacity:1;visibility:visible;transform:none;transition:opacity .14s ease,transform .14s ease}
@@ -252,7 +252,7 @@
 .efpSum{display:flex;flex-wrap:wrap;gap:6px;padding:10px 18px 4px}.efpSum span{display:inline-flex;gap:5px;align-items:baseline;border:1px solid var(--line);border-radius:999px;padding:2px 10px;font-size:11px;color:var(--ink70);background:var(--card2)}.efpSum b{color:var(--ink);font-weight:700;font-variant-numeric:tabular-nums}
 .efpAt{display:inline-block;font:700 9px var(--sans);letter-spacing:.06em;text-transform:uppercase;padding:1px 6px;border-radius:4px;margin-left:8px;vertical-align:1px;background:var(--paper2);color:var(--ink70)}.efpAt.own{background:var(--goldSoft);color:#7a5a1d}.efpAt.system{background:var(--paper2);color:var(--ink45)}.efpNone{padding:8px 18px 4px;border-top:1px solid var(--line2)}.efpNone b{color:var(--ink70);font-weight:650}
 .efpHow{padding:2px 0 6px;color:var(--ink45);font-size:11.5px;line-height:1.5}
-.efpIs>.efpHow{padding:9px 18px 12px;border-top:1px solid var(--line2)}.efpIs>.efpHow+.efpHow{border-top:0;padding-top:0;margin-top:-6px}
+.efpPad{padding:0 18px}.efpIs>.efpHow{padding:9px 18px 12px;border-top:1px solid var(--line2)}.efpIs>.efpHow+.efpHow{border-top:0;padding-top:0;margin-top:-6px}
 .efpSub{font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink45);font-weight:750;margin:6px 0 -4px}
 .efpStat{display:flex;flex-wrap:wrap;gap:4px 18px;font-size:12px;color:var(--ink70)}.efpStat b{color:var(--ink);font-weight:650;font-variant-numeric:tabular-nums;margin-left:4px}
 .efpCannot{display:grid;gap:3px;margin:2px 2px 0;color:var(--ink45);font-size:11.5px;line-height:1.5}.efpCannot b{color:var(--ink70);font-weight:650}
@@ -262,7 +262,7 @@
 @container efp (max-width:640px){.efpAv{width:42px;height:42px;flex-basis:42px;font-size:14px}.efpName{font-size:18px;white-space:normal;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;line-clamp:2;overflow-wrap:anywhere}.efpChips{flex:1 1 100%}.efpBar{gap:6px 8px;padding:6px 8px}.efpSeg{order:1;max-width:100%;overflow-x:auto;scrollbar-width:none}.efpSeg button{padding:4px 9px;flex:0 0 auto}.efpNav{order:2;flex:1 1 100%}.efpDay{flex:1;min-width:0}.efpBusy{order:3}
 .efpRtH b{flex:1 1 100%;order:-2}.efpRtH span{order:-1;margin-left:0;color:var(--ink);font-weight:700}
 .efpKpis{gap:8px}.efpKL{font-size:9.5px;letter-spacing:.04em;min-height:2.6em;align-items:flex-end}.efpK{padding:11px 12px 9px}.efpKV{font-size:25px}.efpKsp{flex-basis:48px}.efpChart{padding:11px 12px 12px}.efpNowCard{grid-template-columns:auto minmax(0,1fr);padding:11px 12px}.efpNowCard>.efpQr{display:none}
-.efpO{grid-template-columns:70px minmax(0,1fr) 44px;grid-template-areas:"t n q" "s s s" "p p p"}.efpO>.efpOs{grid-area:s;display:flex;gap:10px;align-items:baseline}.efpIr{grid-template-columns:100px minmax(0,1fr);grid-template-areas:"t n" "r r"}.efpIr>time{grid-area:t}.efpIr>.efpOid{grid-area:n}.efpIr>span{grid-area:r}.efpIgh,.efpIgl,.efpRates{padding-left:12px;padding-right:12px}.efpFind{padding:10px 12px 6px}.efpOl{padding:0 2px 4px}
+.efpO{grid-template-columns:70px minmax(0,1fr) 44px;grid-template-areas:"t n q" "s s s" "p p p"}.efpO>.efpOs{grid-area:s;display:flex;gap:10px;align-items:baseline}.efpIr{grid-template-columns:100px minmax(0,1fr);grid-template-areas:"t n" "r r"}.efpIr>time{grid-area:t}.efpIr>.efpOid{grid-area:n}.efpIr>span{grid-area:r}.efpIgh,.efpIgl,.efpRates{padding-left:12px;padding-right:12px}.efpPad,.efpIs>.efpHow,.efpNone,.efpSum{padding-left:12px;padding-right:12px}.efpFind{padding:10px 12px 6px}.efpOl{padding:0 2px 4px}
 }
 @media (prefers-reduced-motion:reduce){.efp *,.efp *:before,.efp *:after{transition:none!important;animation:none!important}}`;
     doc.head.appendChild(s);
@@ -565,6 +565,7 @@
       default: return nf;
     }
   }
+  const nameOf = (m, d) => String((m && m.label) || d.label || "").replace(/\bseconds\b/i, "time");
   const metricAt = (M, full) => { for (const name of ALIAS[full] || [full]) { const [ns, k] = name.split("."); const m = M.src[ns] && M.src[ns][k]; if (m) return m; } return null; };
   const shortKey = full => full.split(".")[1];
 
@@ -695,7 +696,7 @@
       const rd = M ? diffDays(M.from, M.to) + 1 : 0, part = m && m.daysCounted != null && m.daysCounted < rd, tag = m && m.est ? `<span class="tag">Estimated</span>` : part ? `<span class="tag">Counted on ${esc(nf(m.daysCounted))} of ${esc(nf(rd))} days</span>` : m && m.window && M.eventWindow ? `<span class="tag">From the newest ${nf(M.eventWindow.days)} days</span>` : m && m.derived ? `<span class="tag">Worked out from the days shown</span>` : `<span class="tag ok">Counted from logged activity</span>`;
       const why = m && m.est && m.why ? `<p>${esc(m.why)}</p>` : "" + (full === "att.daysOff" && M && M.attNote ? `<p>${esc(M.attNote)}</p>` : "") + (m && m.rule && !m.est ? `<p>${esc(m.rule)}</p>` : ""), n = m && m.n != null ? `<span class="prev">Based on ${esc(nf(m.n))}</span>` : "";
       const pv = M && M.prev ? `<span class="prev">${esc(PREV_WORD[S.range] ? PREV_WORD[S.range].replace(/^./, c => c.toUpperCase()) : "Before")}: ${m && m.prev != null ? esc(fmt(m.prev)) : "no data"}</span>` : "";
-      E.hc.innerHTML = `<b>${esc((m && m.label) || d.label)}</b><p>${esc(def)}</p>${why}${tag}${pv}${n}`;
+      E.hc.innerHTML = `<b>${esc(nameOf(m, d))}</b><p>${esc(def)}</p>${why}${tag}${pv}${n}`;
       const rr = root0.getBoundingClientRect(), cr = k.card.getBoundingClientRect(); E.hc.classList.add("on");
       const w = E.hc.offsetWidth, h = E.hc.offsetHeight; let x = cr.left - rr.left + cr.width / 2 - w / 2, y = cr.top - rr.top - h - 8; if (cr.top - h - 8 < 56) y = cr.bottom - rr.top + 8;
       E.hc.style.left = Math.max(8, Math.min(rr.width - w - 8, x)) + "px"; E.hc.style.top = y + "px"; k.card.classList.add("hov");
@@ -785,16 +786,16 @@
       for (const full of Object.keys(E.k)) {
         const k = E.k[full], key = shortKey(full), d = cardOf(full), m = metricAt(M, full), unit = (m && m.unit) || d.unit, fmt = fmtFor(key, unit);
         const contactOff = full.startsWith("contact.") && M.contact && M.contact.available === false;
-        setNum(k.val, m ? m.v : null, fmt, first); setText(k.t, (m && m.label) || d.label);
+        setNum(k.val, m ? m.v : null, fmt, first); setText(k.t, nameOf(m, d));
         const dl = M.prev && m ? deltaOf(m, key, unit) : { txt: "", cls: "" }, sig = dl.txt + "|" + dl.cls + "|" + dl.none + "|" + S.range + "|" + (m ? m.v : "x");
         if (k.d._sig !== sig) { k.d._sig = sig; const pw = PREV_WORD[S.range] || "before"; k.d.innerHTML = !m || m.v == null ? "" : dl.txt ? `<b class="${dl.cls}">${esc(dl.txt)}</b><span>vs ${esc(pw)}</span>` : dl.none ? `<span>vs ${esc(pw)}: no data</span>` : ""; }
         setText(k.s, contactOff ? "Not recorded in this range" : m && m.v != null ? subFor(full, m, M) : "");
         const rd = diffDays(M.from, M.to) + 1, tag = m && m.est ? "est." : m && m.daysCounted != null && m.daysCounted < rd && m.v != null ? `${nf(m.daysCounted)} of ${nf(rd)} days` : m && m.window && evs ? "recent" : m && m.derived ? "sum" : ""; setText(k.tag, tag);
         // a small trend line joins the days that have a figure (a day off or a future day would cut it into stubs); the charts below keep every gap
         const sp = m ? sparkFor(full, B, M).filter(x => x != null) : [], known = sp.length, on = known >= 3 && !k.card.classList.contains("hidden") && root.EfficiencyCharts;
-        if (on) { if (!k.sp) k.sp = chart("sparkline", k.spH, { height: 26, hover: false, fill: false, name: `${(m && m.label) || d.label} across the range` }); if (k.sp) k.sp.update({ values: sp }); k.spH.style.visibility = ""; }
+        if (on) { if (!k.sp) k.sp = chart("sparkline", k.spH, { height: 26, hover: false, fill: false, name: `${nameOf(m, d)} across the range` }); if (k.sp) k.sp.update({ values: sp }); k.spH.style.visibility = ""; }
         else { if (k.sp) { k.sp.destroy(); k.sp = null; } k.spH.style.visibility = "hidden"; }
-        k.card.setAttribute("aria-label", `${(m && m.label) || d.label}: ${m && m.v != null ? fmt(m.v) : "no data"}. ${(m && m.def) || d.def}`);
+        k.card.setAttribute("aria-label", `${nameOf(m, d)}: ${m && m.v != null ? fmt(m.v) : "no data"}. ${(m && m.def) || d.def}`);
       }
       E.kg.querySelectorAll(".efpKpis").forEach(g => roveFix(g, ".efpK"));
     }
@@ -889,7 +890,7 @@
       if (!I.byKind.length) { E.is.innerHTML = `<div class="efpEmptyBox">${I.total === 0 ? "No issues logged in this range" : "No issue data in this range"}</div>`; return; }
       const td = today(), rd = diffDays(M.from, M.to) + 1, ew = M.eventWindow ? M.eventWindow.days : null, d = v => (v == null ? "—" : nf1(v));
       const sum = [["Total", I.total], ["Their action", I.own], ["About the order", I.order], ["System failure", I.system], ["Per 100 orders", I.per100]].filter(x => x[1] != null || x[0] === "Total");
-      const partial = I.daysCounted != null && I.daysCounted < rd ? `<div class="efpHow" style="padding:0 18px">Counted on ${nf(I.daysCounted)} of ${nf(rd)} days: the other days were logged before these counters existed, so they are not guessed.</div>` : "";
+      const partial = I.daysCounted != null && I.daysCounted < rd ? `<div class="efpHow efpPad">Counted on ${nf(I.daysCounted)} of ${nf(rd)} days: the other days were logged before these counters existed, so they are not guessed.</div>` : "";
       const some = I.byKind.filter(k => k.count > 0), none = I.byKind.filter(k => k.count === 0), unk = I.byKind.filter(k => k.count == null);
       const group = (k, gi) => {
         const items = I.items.filter(x => x.kind === k.kind), open = S.openKinds.has(k.kind) || (!S.kinds && gi === 0), shown = items.slice(0, 8);
