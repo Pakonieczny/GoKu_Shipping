@@ -240,7 +240,8 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
 .swOrderHead .who{font:12px var(--sans);color:var(--ink45)}
 .swSaid{margin-top:6px;font:13px/1.45 var(--serif);color:var(--ink70);border-left:2px solid var(--goldLine);padding:1px 0 1px 9px;white-space:pre-wrap;overflow-wrap:anywhere}
 .swPiece{display:grid;grid-template-columns:92px minmax(0,1fr);gap:12px;align-items:center}
-.swThumb{width:92px;height:92px;border:1px solid var(--line);border-radius:11px;background:#fff;display:block}
+.swThumbBox{position:relative;display:block;width:92px;height:92px;box-sizing:border-box;border:1px solid var(--line);border-radius:11px;background:#fff;overflow:hidden}
+.swThumb{width:100%;height:100%;display:block;object-fit:contain}
 .swPiece .facts{display:grid;gap:3px;min-width:0}
 .swPiece .facts b{font:600 13px var(--mono);overflow-wrap:anywhere}
 .swPiece .facts span{font:12px var(--sans);color:var(--ink70)}
@@ -451,7 +452,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     const E = W.el;
     E.close.onclick = () => close();
     // (Esc while the sheet is still flying in closes it: the view it was opening on has not been seen yet)
-    d.addEventListener("cancel", e => { e.preventDefault(); if (closeSheetMenu()) return; if (!E.name.hidden) return hideName(); if (!E.menu.hidden) return menu(false); if (W.hand) return stopHand(); if (W.add) return closeAdd(); if (W.view === "piece" && !(W.flip && !W.flip.landed)) return showSheetPane(); close(); });
+    d.addEventListener("cancel", e => { e.preventDefault(); if (closeSheetMenu()) return; if (!E.name.hidden) return hideName(); if (!E.menu.hidden) return menu(false); if (W.hand) return stopHand(); if (W.add) return closeAdd(); if (window.CNZoomPan && tryDo(() => CNZoomPan.resetWithin(d))) return; if (W.view === "piece" && !(W.flip && !W.flip.landed)) return showSheetPane(); close(); });
     // (what was changed in here is read again by the order view: its copies of the saved sheets are dropped)
     d.addEventListener("close", () => { orderRecs.clear(); cleanup(); });
     d.addEventListener("click", e => { if (e.target === d) close(); if (!E.menu.hidden && !e.target.closest(".swMenuWrap")) menu(false); });
@@ -1132,6 +1133,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       }
     } finally { W.leaving = false; }
     try { d.close(); } catch (_) { d.removeAttribute("open"); }
+    tryDo(() => window.CNZoomPan && CNZoomPan.forget("sw:"));
   }
   function cleanup() {
     stopFlip(); dropSnap(false); W.flying = false; W.fitLater = false; W.origin = null; W.pre = null; closeSheetMenu();
@@ -2064,13 +2066,17 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     const mm = mmOf(x);
     E.detail.innerHTML = `
       <header class="swOrderHead"><span class="fLabel">Order</span><div class="swOrdTop"><span class="rid">${esc(x.rid || "No order")}</span>${x.rid && canView() ? `<button type="button" class="btn ghost xs swOpenOrd" data-r2="openOrd" title="Open order ${esc(x.rid)} in the order view">Open order${ICON.expand}</button>` : ""}</div><span class="who">${esc([buyer, placed ? "ordered " + placed : "", ship].filter(Boolean).join(" · ")) || "&nbsp;"}</span>${said ? `<div class="swSaid" title="From the buyer">${esc(said)}</div>` : ""}</header>
-      <div class="swPiece"><canvas class="swThumb" width="184" height="184"></canvas><div class="facts"><b>${esc(x.sku || x.name)}</b><span data-r2="mm">${x.qty > 1 ? `Copy ${x.copy} of ${x.qty} · ` : ""}${mm}</span><span>${esc(labelOf(W.rec.metal))}${sp.size ? " · size " + esc(sp.size) : ""}</span>${words ? `<em title="${esc(words)}">${esc(words)}</em>` : ""}</div></div>
+      <div class="swPiece"><span class="swThumbBox" data-zp aria-label="Charm drawing"><canvas class="swThumb" width="184" height="184"></canvas></span><div class="facts"><b>${esc(x.sku || x.name)}</b><span data-r2="mm">${x.qty > 1 ? `Copy ${x.copy} of ${x.qty} · ` : ""}${mm}</span><span>${esc(labelOf(W.rec.metal))}${sp.size ? " · size " + esc(sp.size) : ""}</span>${words ? `<em title="${esc(words)}">${esc(words)}</em>` : ""}</div></div>
       <section class="swSection" data-r2="eng"></section>
       <section class="swSection"><span class="fLabel" data-r2="trailHead">This order</span><ul class="swTrail" data-r2="trail"></ul></section>
       <section class="swSection" data-r2="off"></section>
       <section class="swSection" data-r2="msgs"><span class="fLabel">Messages</span></section>`;
     const ob = E.detail.querySelector("[data-r2=openOrd]"); if (ob) ob.onclick = () => toOrder(x, ob);
     drawThumb(E.detail.querySelector(".swThumb"), x);
+    // (the charm's drawing zooms and pans where it lies, as the order window's pictures do: charm-nest-zoompan.js; drawn again larger when the zoom settles)
+    const Z = window.CNZoomPan, tb = E.detail.querySelector(".swThumbBox");
+    if (Z && tb) tryDo(() => Z.attach(tb, { id: "sw:thumb", key: (x.rid || "") + "|" + (x.poolId || x.id || x.key || x.name || ""), label: "Charm drawing", maxPx: 1472,
+      hires: x.c ? ({ px }) => { const size = Math.min(1472, Math.max(368, Math.ceil(px / 184) * 184)), c3 = document.createElement("canvas"); c3.width = c3.height = size; drawThumb(c3, x); return { el: c3, px: size }; } : undefined }));
     renderEng(x);
     renderTrail(x);
     renderOffBtn(x);
@@ -2092,7 +2098,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     const host = W.el.detail.querySelector("[data-r2=eng]"); if (!host) return;
     x.eng = engOf(x); const e = x.eng;
     host.innerHTML = CNEngravingSeals.panel(e);
-    CNEngravingSeals.wirePanel(host,e,{approve:b=>approveHere(x,b),open:b=>goEngrave(x,b),imageUrl:url=>/^https?:/.test(url)?cors(url):url});
+    CNEngravingSeals.wirePanel(host,e,{approve:b=>approveHere(x,b),open:b=>goEngrave(x,b),imageUrl:url=>/^https?:/.test(url)?cors(url):url,zoom:{id:'sw:eng',key:(x.rid||'')+'|'+(x.poolId||x.id||x.key||'')}});
     if (flash) host.querySelector('.swEng')?.classList.add('flash');
   }
 

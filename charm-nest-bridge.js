@@ -41,8 +41,8 @@ const ListZoom = (() => {
   function observe(box){if(resize&&!observed.has(box)){observed.add(box);resize.observe(box);}}
   function detach(box){bound.get(box)?.dispose();bound.delete(box);resize?.unobserve(box);observed.delete(box);box.classList.remove('zoomReady');box.removeAttribute('title');const reset=box.closest('figure')?.querySelector('.thumbReset');if(reset){reset.hidden=true;reset.onclick=null;}}
   function bind(box,key){
-    // (a picture that opens the viewer, the order window's, never zooms in place: PhotoView does the zooming and panning)
-    if(box.hasAttribute('data-viewer')){if(bound.has(box))detach(box);return;}
+    // (a picture the order window zooms in place with the one module for its pictures, charm-nest-zoompan.js, is not the lists': it is not bound here)
+    if(box.hasAttribute('data-zp')){if(bound.has(box))detach(box);return;}
     const im=box.querySelector('img,canvas');if(!im)return;
     if(bound.get(box)?.im===im){observe(box);return;}
     detach(box);const abort=new AbortController(),on=(name,fn,opts={})=>box.addEventListener(name,fn,{...opts,signal:abort.signal});
@@ -10597,12 +10597,13 @@ const OrderWin = window.OrderWin = (() => {
   // the lines of the order on screen: the pull's, or those read from the records
   const linesOf = r => { const rid = String(r.order.receiptId); const pulled = (Orders.rows() || []).filter(x => String(x.order.receiptId) === rid && x.state !== "gone"); return pulled.length ? pulled : (W.rows && W.rows.some(x => x === r) ? W.rows : [r]); };
 
-  /* The two pictures at the left of the Overview (the Etsy listing photo and the vector design) open the one viewer the
-     inbox photos use (PhotoView, charm-nest-mail.js: wheel, pinch, double-click and double-tap, + − 0, drag, ← →, Esc) as a
-     layer of this window, so the window under it stays as it was and Esc closes the viewer only. Both pictures of the piece
-     on show are its list: ← → step between them, and the caption says which one it is. The thumbnails themselves never
-     zoom. The photo opens at the largest size Etsy keeps, the vector is drawn again large (never the small thumbnail
-     enlarged). */
+  /* The two pictures at the left of the Overview (the Etsy listing photo and the vector design) zoom and pan where they lie, in
+     their own frames (charm-nest-zoompan.js: the click-to-zoom of the lists and Review): a click zooms in centred on the point
+     clicked, a drag pans, a click at the limit (or the little round button, 0, Esc) puts the picture back whole. The frame never
+     changes size and nothing opens over the window. The photo is swapped for the largest size Etsy's image server keeps when the
+     zoom settles (an image address, not an Etsy lookup: nothing is asked of Etsy's API), the vector is drawn again larger from
+     its own design (never the small thumbnail enlarged), and the small ones are back when the picture is whole again. The state
+     is kept per piece and picture: the window drawn again keeps it, another piece starts whole. */
   const PIC_SIZES = ["fullxfull", "1588xN"];   // (largest first: a size that cannot be had falls back to the next, and last to the thumbnail's own)
   /** The addresses of an Etsy photo in its larger sizes: [largest, …, the one given]. Photos come through the image proxy
    *  (…/imageProxy?url=<Etsy address>); an address that is not Etsy's usual shape has no larger size to look for. */
@@ -10617,39 +10618,30 @@ const OrderWin = window.OrderWin = (() => {
     const sized = size => { const a = raw.replace(/\/il_(?:\d+x(?:\d+|N)|fullxfull)\./, `/il_${size}.`); return wrap ? wrap + encodeURIComponent(a) : a; };
     return [...above.map(sized), own];
   }
-  const bigVectors = new Map();   // the drawings made for the viewer, newest last (a few: they are large)
-  function bigVector(r) {
-    const key = JSON.stringify([r.key, r.spec && r.spec.designSku, r.spec && r.spec.size, r.poolIds]);
-    if (!bigVectors.has(key)) {
-      const task = Promise.resolve().then(() => ListMedia.vectorBig(r, 1600)).catch(e => { bigVectors.delete(key); throw e; });
-      bigVectors.set(key, task); while (bigVectors.size > 4) bigVectors.delete(bigVectors.keys().next().value);
+  const photoKey = (r, url) => JSON.stringify([r.key, url ? String(url) : ""]);
+  const vectorKey = r => JSON.stringify([r.key, r.spec && r.spec.designSku, r.spec && r.spec.size, r.poolIds]);
+  /** A sharper Etsy photo for the zoom now: the larger sizes, the largest first (the loader takes the first that comes). */
+  function sharpPhoto() {
+    const ph = byId("owPhoto"), im = ph && ph.querySelector("img"), url = ph && (ph.dataset.srcUrl || (im && im.getAttribute("src"))); if (!url) return null;   // (a photo the lists' loader put there has no srcUrl: its own address)
+    const v = bigPhoto(url); return v.length > 1 ? { srcs: v.slice(0, -1) } : null;
+  }
+  const bigVectors = new Map();   // the drawings made for a zoom, newest last (a few: they are large)
+  /** The vector drawn again from its design for the zoom now, in steps of 256 px up to 2048 (never the thumbnail enlarged). */
+  function sharpVector(info) {
+    const r = rowOf(W.key); if (!r || vectorKey(r) !== info.key) return null;
+    const px = Math.max(512, Math.min(2048, Math.ceil(info.px / 256) * 256)), k = info.key + "|" + px;
+    if (!bigVectors.has(k)) {
+      const task = Promise.resolve().then(() => ListMedia.vectorBig(r, px)).catch(e => { bigVectors.delete(k); throw e; });
+      bigVectors.set(k, task); while (bigVectors.size > 3) bigVectors.delete(bigVectors.keys().next().value);
     }
-    return bigVectors.get(key);
+    return bigVectors.get(k).then(src => src ? { src, px } : null);
   }
-  /** The pictures of the piece on show, as the viewer's list: the Etsy photo (when there is one) and the vector design. */
-  function picItems(r) {
-    const sku = (r.spec && r.spec.designSku) || r.line.sku || "", pcs = W.pieces || [], n = pcs.length, ix = pcs.findIndex(p => p.key === r.key);
-    const tail = (n > 1 && ix >= 0 ? ` · Piece ${ix + 1} of ${n}` : "") + (sku ? ` · ${sku}` : "");
-    const items = [], url = tryDo(() => Orders.imageFor(r)) || (r.loading ? r.peek : null);
-    if (url) { const v = bigPhoto(url); items.push({ which: "photo", src: v[0], fall: v.slice(1, -1), back: v.length > 1 ? v[v.length - 1] : null, cors: true, cap: "Etsy listing" + tail, wait: "Loading the photo…" }); }
-    if (!(r.spec && r.spec.noDesign) && sku) items.push({ which: "vector", load: () => bigVector(r), orig: false, cap: "Vector design" + tail, wait: "Drawing the vector design…", none: "This piece has no vector design.", fail: "The vector design could not be drawn." });
-    return items;
-  }
-  /** Open the viewer on the picture clicked (`which`: "photo" or "vector"), or do nothing when that one has no picture. */
-  function openPic(which, opener) {
-    const r = rowOf(W.key); if (!r) return;
-    const items = tryDo(() => picItems(r)) || [], at = items.findIndex(x => x.which === which);
-    if (at < 0) return;
-    const PV = window.PhotoView;
-    if (PV && PV.openItems) tryDo(() => PV.openItems(items, at, opener, { noun: "picture" }));
-    else if (items[at].src) window.open(items[at].src, "_blank", "noopener");   // (the viewer's file did not load: the photo, at least, in a tab of its own)
-  }
-  function wirePics() {
-    for (const [id, which] of [["owPhotoBox", "photo"], ["owVectorBox", "vector"]]) {
-      const b = byId(id); if (!b) continue;
-      b.addEventListener("click", e => { e.preventDefault(); openPic(which, b); });
-      b.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); e.stopPropagation(); openPic(which, b); } });
-    }
+  function wireZoom() {
+    const Z = window.CNZoomPan, pb = byId("owPhoto"), vb = byId("owVector"); if (!Z || !pb || !vb) return;   // (the module did not load: the pictures are plain and the window works)
+    W.zoom = {
+      photo: Z.attach(pb, { id: "ow:photo", persistent: true, label: "Etsy listing photo", hires: sharpPhoto }),
+      vector: Z.attach(vb, { id: "ow:vector", persistent: true, label: "Charm vector design", hires: sharpVector, maxPx: 2048 })
+    };
   }
 
   function wire() {
@@ -10659,7 +10651,8 @@ const OrderWin = window.OrderWin = (() => {
     tryDo(() => window.OrderPieces && OrderPieces.subscribe(() => hold("pieces", () => { const rid = W.rid; if (!rid || !W.dlg.open || W.closing) return; pieceTabs(rid); if (W.view === "sheet" && SV.list) paintPanel(SV.info); const r = rowOf(W.key); if (r) { tryDo(() => paintPieces(r, linesOf(r))); paintSheetCell(r); paintNow(r); } })));
     byId("owClose").onclick = () => shut();
     // Esc goes back into what was clicked, as the close button does
-    W.dlg.addEventListener("cancel", e => { e.preventDefault(); if (finding()) endFind(true); else shut(); });
+    // (a picture zoomed in place goes back whole first: that press does not close the window)
+    W.dlg.addEventListener("cancel", e => { e.preventDefault(); if (finding()) endFind(true); else if (!(window.CNZoomPan && tryDo(() => CNZoomPan.resetWithin(W.dlg)))) shut(); });
     // the number is the view's search too (design spec 7)
     byId("owTitle").addEventListener("click", e => { if (e.target.closest(".num")) focusSearch(); });
     // a note typed just before the window closed (Escape, ×) is saved too: its timer and its blur both found no order
@@ -10668,14 +10661,14 @@ const OrderWin = window.OrderWin = (() => {
     // state — the late event used to clear its line, so the next repaint closed it, and could save the note box's old
     // text onto the new order; open() saves the note of the order it leaves)
     W.dlg.addEventListener("close", () => {
-      if (W.dlg.open) return; giveBack(0); clearTimeout(W.noteTimer); saveNote(); if (W.early) refreshNote({ order: { receiptId: W.early.rid } }); clearInterval(W.poll); W.poll = 0; W.key = null; stashTray();
+      if (W.dlg.open) return; tryDo(() => window.CNZoomPan && CNZoomPan.forget("ow:")); giveBack(0); clearTimeout(W.noteTimer); saveNote(); if (W.early) refreshNote({ order: { receiptId: W.early.rid } }); clearInterval(W.poll); W.poll = 0; W.key = null; stashTray();
       W.closing = false; stopMotion(); flightGone(); W.dlg.classList.remove("owGrow", "owBack"); endFind();
       unmountTimeline(); tryDo(() => { if (W.engCard) W.engCard.destroy(); W.engCard = null; }); W.row = null; W.rows = null; W.listed = null; W.look++; sheetReset(); SV.shown = null; W.dlg.classList.remove("owCancelled"); lookDone();
       try { window.CustomerMail?.orderClosed(); } catch (_) {}
     });
     // back from a Send to Sheet flight that took the view out of the way (SendTour): drawn as it is now, still unseen
     W.dlg.addEventListener("tour:back", () => { if (W.dlg.open && !W.closing) tryDo(paint); });
-    wirePics();
+    wireZoom();
     byId("owCopy").onclick = async () => { const r = rowOf(W.key); const sku = r && ((r.spec && r.spec.designSku) || r.line.sku); if (!sku) return; try { await navigator.clipboard.writeText(sku); toast("SKU copied", "ok", 1800); } catch (_) {} };
     byId("owWhoBtn").onclick = () => { NameBar.open({ onSet: paintWho }); };
     const note = byId("owNote");
@@ -11045,11 +11038,16 @@ const OrderWin = window.OrderWin = (() => {
     const mp = byId("owMetal"); mp.textContent = r.material ? labelOf(r.material) : (sp.materialLabel || (r.loading ? "…" : "no material"));
     mp.className = "pill " + (r.material || r.loading ? "neutral" : "bad");
     const ph = byId("owPhoto"); const url = tryDo(() => Orders.imageFor(r)) || (r.loading ? r.peek : null);
-    ph.innerHTML = url ? '<img crossorigin="anonymous" alt="" src="' + esc(cors(url)) + '">' : r.loading ? '<span class="owSk owSkPic" aria-hidden="true"></span>' : '<span class="ph">no image</span>';
+    // (the same photo is not drawn again on a repaint: a zoom in progress, and the sharper picture it swapped in, stay as they are)
+    if (!(url && ph.dataset.srcUrl === String(url) && ph.querySelector("img")))
+      ph.innerHTML = url ? '<img crossorigin="anonymous" alt="" src="' + esc(cors(url)) + '">' : r.loading ? '<span class="owSk owSkPic" aria-hidden="true"></span>' : '<span class="ph">no image</span>';
+    ph.dataset.srcUrl = url ? String(url) : "";
     ph.dataset.lid = String(r.line.listingId || ""); if (url) ph.dataset.painted = "1"; else { delete ph.dataset.painted; if (r.line.listingId) tryDo(() => Orders.wantImage(r.line.listingId)); }
+    // (the zoom is kept for this piece and this picture; another piece, or another photo, starts whole)
+    if (W.zoom) tryDo(() => W.zoom.photo.key(photoKey(r, url)));
     // the charm's vector design under the listing photo, as the lists show the two side by side (the window showed the
     // photo alone, or "no image" while the photo was not ready)
-    const vh = byId("owVector"); if (vh) tryDo(() => ListMedia.vectorInto(vh, r));
+    const vh = byId("owVector"); if (vh) { if (W.zoom) tryDo(() => W.zoom.vector.key(vectorKey(r))); tryDo(() => ListMedia.vectorInto(vh, r)); }
     byId("owSku").textContent = "SKU: " + (sp.designSku || r.line.sku || "—");
     paintEng(r);
     // the one field that must be read exactly: labelled, whole, and never boxed into a scroller under the staff note
@@ -12131,12 +12129,17 @@ const OrderWin = window.OrderWin = (() => {
       (vis.length ? `<section><div class="owSheetFindRow"><span class="fLabel">Sheet</span><label class="cnOrderFind"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="m10.5 10.5 3 3"/></svg><input id="owSheetOrderFind" type="search" inputmode="numeric" placeholder="Order # on sheet" aria-label="Search order numbers on this sheet" aria-controls="owSheetMatches" autocomplete="off" spellcheck="false"></label></div><div class="owShTabs">${vis.map(i => `<button type="button" data-at="${i}" class="${i === SV.at ? "on" : ""}" style="--c:${esc(colorOf(list[i].metal))}"><i></i>${esc(sheetName(list[i]))}</button>`).join("")}</div>${facts ? `<div class="sub" style="margin-top:8px">${esc(facts)}</div>` : ""}</section>` : "") +
       `<div class="owSheetMatches" id="owSheetMatches" role="list" aria-live="polite" hidden></div>` +
       `<section><div class="owOrdHd"><span class="fLabel">Order</span>${bk ? `<button type="button" class="btn ghost xs" data-ow-back title="Back to order ${esc(bk.rid)}, as it was"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg>Back to order ${esc(bk.rid)}</button>` : ""}</div><div class="big">${esc(rid)}</div><div class="sub">${esc([o.buyer && o.buyer.name, placed ? "ordered " + placed : "", ship].filter(Boolean).join(" · "))}</div></section>` +
-      `<section class="owCharm"><div class="pic" data-pic></div><div><b>${esc(sku || "—")}</b>${x0 && x0.c ? `<span>${esc((x0.c.widthPt * 25.4 / 72).toFixed(1))} × ${esc((x0.c.heightPt * 25.4 / 72).toFixed(1))} mm</span>` : ""}<span>${esc(lr.material ? labelOf(lr.material) : rec ? labelOf(rec.metal) : "")}${sp.size ? " · size " + esc(sp.size) : ""}</span></div></section>` +
+      `<section class="owCharm"><div class="pic" data-pic data-zp></div><div><b>${esc(sku || "—")}</b>${x0 && x0.c ? `<span>${esc((x0.c.widthPt * 25.4 / 72).toFixed(1))} × ${esc((x0.c.heightPt * 25.4 / 72).toFixed(1))} mm</span>` : ""}<span>${esc(lr.material ? labelOf(lr.material) : rec ? labelOf(rec.metal) : "")}${sp.size ? " · size " + esc(sp.size) : ""}</span></div></section>` +
       `<section class="swSection" data-engraving-panel>${engHtml}</section>` +
       `<section><span class="fLabel">This order · ${pieces.length} piece${pieces.length === 1 ? "" : "s"}</span><ul class="owPieces">${pieces.map((it, i) => `<li data-i="${i}" class="${it.here && (!SV.focus || it.poolId === SV.focus || !x0 || x0 === it.piece) && it.piece === x0 ? "on" : !it.here && !it.nested && !it.loading ? "off" : ""}"><span class="n">${i + 1}</span><span class="sku">${esc(it.sku || "")}${it.qty > 1 ? ` <small>copy ${it.copy} of ${it.qty}</small>` : ""}</span>${where(it)}</li>`).join("")}</ul></section>` +
       (rec ? `<div class="acts"><button type="button" class="btn ghost sm" data-full${cut ? "" : ""}>Open full sheet ›</button><button type="button" class="btn ghost sm" data-off${cut || lined ? " disabled" : ""}${lined ? ` title="Inside the saved Rose Gold green line: its pieces stay on the sheet until it is cut, then are set aside"` : ""}>Take off the sheet…</button>${cut ? `<span class="why">Cut — it can no longer be taken off</span>` : lined ? `<span class="why">Inside the saved green line</span>` : ""}</div>` : "");
     // the charm's own picture: its drawing on this sheet, else the order's vector
-    const pic = panel.querySelector("[data-pic]"); if (pic) { if (x0 && x0.c) { const c2 = document.createElement("canvas"); c2.width = c2.height = 184; drawCharmInto(c2, x0.c); pic.appendChild(c2); } else tryDo(() => ListMedia.vectorInto(pic, lr)); }
+    const pic = panel.querySelector("[data-pic]"); if (pic) { if (x0 && x0.c) { const c2 = document.createElement("canvas"); c2.width = c2.height = 184; drawCharmInto(c2, x0.c); pic.appendChild(c2); } else tryDo(() => ListMedia.vectorInto(pic, lr));
+      // (zooms and pans where it lies, as the Overview's pictures do; the drawing is made again larger when the zoom settles, and the panel drawn again keeps it)
+      const Z = window.CNZoomPan, picKey = rid + "|" + ((x0 && (x0.poolId || x0.id)) || "") + "|" + sku;
+      if (Z) tryDo(() => Z.attach(pic, { id: "ow:sheetPic", key: picKey, label: "Charm drawing", maxPx: 1472,
+        hires: x0 && x0.c ? ({ px }) => { const size = Math.min(1472, Math.max(368, Math.ceil(px / 184) * 184)), c3 = document.createElement("canvas"); c3.width = c3.height = size; drawCharmInto(c3, x0.c); return { el: c3, px: size }; }
+          : ({ px }) => { const size = Math.min(1472, Math.max(512, Math.ceil(px / 184) * 184)); return Promise.resolve(ListMedia.vectorBig(lr, size)).then(src => src ? { src, px: size } : null); } })); }
     panel.querySelectorAll("[data-at]").forEach(b => b.onclick = () => { if (+b.dataset.at === SV.at) return; SV.at = +b.dataset.at; SV.focus = null; paintPanel(null); sheetDraw(); });
     panel.querySelectorAll(".owPieces li[data-i]").forEach(li => {
       const it = pieces[+li.dataset.i];
@@ -12149,6 +12152,7 @@ const OrderWin = window.OrderWin = (() => {
     });
     CNEngravingSeals.wirePanel(panel.querySelector('[data-engraving-panel]'),eng,{
       imageUrl:url=>/^https?:/.test(url)?cors(url):url,
+      zoom:{id:'ow:sheetEng',key:rid+'|'+(x0&&(x0.poolId||x0.id)||'')},
       approve:async ap=>{
         const who=me() || askEmployee();if(!who)return;
         ap.disabled=true;ap.textContent="Approved";ap.setAttribute("aria-busy","true");

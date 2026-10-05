@@ -163,7 +163,8 @@
       const card = doc().createElement('div'); card.className = 'owEngCard'; card.dataset.orderEngraving = eng.kind; card.setAttribute('role', 'group'); card.setAttribute('aria-label', 'Back engraving of this piece');
       card.innerHTML = S.panel(eng);
       host.replaceChildren(card);
-      S.wirePanel(card, eng, { imageUrl: u => (/^https?:/.test(u) ? cors(u) : u), approve: b => approve(b), open: b => openEngrave(b) });
+      // (the preview zooms and pans where it lies, as the order's two pictures do: charm-nest-zoompan.js; kept for this piece when the card is drawn again)
+      S.wirePanel(card, eng, { imageUrl: u => (/^https?:/.test(u) ? cors(u) : u), approve: b => approve(b), open: b => openEngrave(b), zoom: { id: 'ow:eng', key: ident(ctx) } });
       // every wait is said: the picture still coming, the words still being read
       const pv = card.querySelector('.pv'), im = pv && pv.querySelector('img');
       if (im && !im.complete) {

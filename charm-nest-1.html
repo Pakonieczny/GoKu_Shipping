@@ -470,11 +470,14 @@ dialog.owin{width:min(1320px,97vw);max-height:min(94vh,1040px)}
    the bottom and was clipped; wide ones never showed it). */
 .owPhoto,.owVector{--owAir:6px;position:relative}
 .owPhoto img,.owVector img,.owVector canvas{position:absolute;left:var(--owAir);top:var(--owAir);width:calc(100% - 2 * var(--owAir));height:calc(100% - 2 * var(--owAir));max-width:none;max-height:none;object-fit:contain;object-position:center;display:block}
-.owPhoto{width:100%;aspect-ratio:1;background:var(--paper2);border:1px solid var(--line);border-radius:11px;display:grid;place-items:center;overflow:hidden;cursor:zoom-in}
-/* the two pictures open the viewer (PhotoView); they never zoom where they lie. The box around each is the button. */
-.owZoom{display:block;border-radius:11px}.owVector{cursor:zoom-in}
-.owZoom:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
-.owPhoto:not(:has(img)),.owVector:not(:has(img,canvas,.thumbLoading)){cursor:default}
+.owPhoto{width:100%;aspect-ratio:1;background:var(--paper2);border:1px solid var(--line);border-radius:11px;display:grid;place-items:center;overflow:hidden}
+/* the two pictures zoom and pan where they lie (charm-nest-zoompan.js, the click-to-zoom of the lists and Review): the frame keeps its
+   size and clips, the picture moves by transform only; the frame is the button (its cursor and touch rules are the module's) */
+[data-zp]{-webkit-tap-highlight-color:transparent}.owPhoto img,.owVector img,.owVector canvas,.swEng .pv img,.swEng .pv canvas,.owCharm .pic img,.owCharm .pic canvas{-webkit-user-drag:none;user-select:none;transform-origin:center center}
+[data-zp]:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
+.zpReset{position:absolute;top:6px;right:6px;z-index:3;width:24px;height:24px;padding:0;border-radius:50%;border:1px solid var(--line);background:var(--card);color:var(--ink70);font:14px/1 var(--sans);display:grid;place-items:center;cursor:pointer;opacity:.92}
+.zpReset:hover{color:var(--ink);background:var(--paper2);opacity:1}.zpReset[hidden]{display:none}.zpReset:focus-visible{outline:2px solid var(--gold);outline-offset:1px}
+.owCharm .pic .zpReset,.swThumbBox .zpReset{top:3px;right:3px;width:20px;height:20px;font-size:12px}
 .owPhoto .ph{font:10.5px var(--mono);color:var(--ink25);letter-spacing:.08em;text-transform:uppercase;text-align:center;padding:0 14px}
 .owSku{display:flex;align-items:center;gap:8px;margin-top:10px;min-width:0}
 .owPics{display:grid;gap:10px;align-content:start;min-width:0}
@@ -2947,13 +2950,14 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-engraving-toggle.js?v=20261005-engtog1"></script>
 <script src="charm-nest-sheet-menu.js?v=20261005-shm1"></script>
 <script src="charm-nest-activity.js?v=20261001-compact-controls"></script>
-<script src="charm-nest-engraving-seals.js?v=20261003-seal-small"></script>
+<script src="charm-nest-zoompan.js?v=20261005-zp1"></script>
+<script src="charm-nest-engraving-seals.js?v=20261003-seal-small-zp1"></script>
 <script src="charm-nest-readiness.js?v=20261005-issues-truth4-setgate1-hand1-sameset1-nowait1-noset1"></script>
 <script src="charm-nest-export.js"></script>
 <script src="charm-nest-text.js"></script>
 <script src="charm-nest-orders.js?v=20261005-pieces-hand1"></script>
 <script src="charm-nest-order-pieces.js?v=20261005-op2-hand1"></script>
-<script src="charm-nest-order-engraving.js?v=20261005-oe2"></script>
+<script src="charm-nest-order-engraving.js?v=20261005-oe2-zp1"></script>
 <script src="charm-nest-shared-orders.js?v=20261005-cardinal3"></script>
 <script src="charm-nest-background.js?v=20260930-stamp-barrier"></script>
 <script>
@@ -6728,7 +6732,7 @@ boot();
      Design Station's sign-in), the same name every seal it stamps carries. -->
 <script src="station-session.js?v=20261002-ea1"></script>
 <script src="station-activity.js?v=20261003-reset-clean"></script>
-<script src="charm-nest-bridge.js?v=20261005-lis2-cardinal4-zoom-psb1-egl1-osc1-r3f-setgate1-hand1-sameset1-rl1-nowait1-opt1-rt1-pcr1"></script>
+<script src="charm-nest-bridge.js?v=20261005-lis2-cardinal4-zoom-psb1-egl1-osc1-r3f-setgate1-hand1-sameset1-rl1-nowait1-opt1-rt1-pcr1-zp1"></script>
 <script src="charm-nest-review-live.js?v=20261005-rl1"></script>
 <script>
 try {
@@ -6757,11 +6761,11 @@ try {
       set(v) { d.set.call(window.B, v); try { const n = String(d.get.call(window.B) || "").trim(); if (n && !/^\d+$/.test(n)) StationSession.signedIn({ name: n, id: null }); } catch (_) {} } });
 } catch (_) {}
 </script>
-<script src="charm-nest-sheetwin.js?v=20261005-pieces-cardinal2-osc1-shm1-osc2"></script>
+<script src="charm-nest-sheetwin.js?v=20261005-pieces-cardinal2-osc1-shm1-osc2-zp1"></script>
 <!-- the one way into the engraving of one order's piece (the order window, the Sheet tab and the Sheet window call it; each keeps its own way without it) -->
 <script src="charm-nest-engrave-link.js?v=20261005-el2"></script>
 <script src="charm-nest-tour.js?v=20260929-m11"></script>
-<script src="charm-nest-mail.js?v=20261005-pv-seal"></script>
+<script src="charm-nest-mail.js?v=20261005-pv-seal-zp1"></script>
 <script src="charm-nest-rose-ui.js?v=20261005-rg3-opt1"></script>
 <script src="charm-nest-flow-rose.js?v=20261003-rg2"></script>
 <script src="charm-nest-export-ui.js?v=20260925-done"></script>
@@ -6809,8 +6813,8 @@ try {
       <section class="owView owVInfo" data-view="info" role="tabpanel" aria-label="Overview">
       <div class="owMain">
         <div class="owPics">
-          <figure><div class="owZoom" id="owPhotoBox" role="button" tabindex="0" aria-label="Etsy listing photo: open it large to zoom and pan"><div class="owPhoto" id="owPhoto" data-viewer><span class="ph">no image</span></div></div><figcaption>Etsy listing</figcaption></figure>
-          <figure><div class="owZoom" id="owVectorBox" role="button" tabindex="0" aria-label="Vector design: open it large to zoom and pan"><div class="owVector" id="owVector" aria-label="Charm vector design" data-viewer></div></div><figcaption>Vector design</figcaption></figure>
+          <figure><div class="owPhoto" id="owPhoto" data-zp aria-label="Etsy listing photo"><span class="ph">no image</span></div><figcaption>Etsy listing</figcaption></figure>
+          <figure><div class="owVector" id="owVector" data-zp aria-label="Charm vector design"></div><figcaption>Vector design</figcaption></figure>
           <div class="owSku"><b id="owSku">SKU: —</b><button class="btn ghost xs" id="owCopy">Copy</button></div>
           <div class="owEng" id="owEng" hidden></div>
         </div>

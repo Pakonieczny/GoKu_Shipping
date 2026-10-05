@@ -1676,13 +1676,6 @@
       const all = [...scope.querySelectorAll(ANY)].filter(b => itemOf(b).src);
       begin(el, all.map(itemOf), Math.max(0, all.indexOf(el)));
     }
-    /** The viewer on a list the caller made (the order window's Etsy photo and vector design): items are
-     *  { src, cap, cors, back, fall, wait, orig } for a picture with an address, or { load, cap, wait, none, fail, orig }
-     *  for one made on request (load gives its address). `el` is what was clicked: the viewer grows out of it and gives
-     *  the focus back to it. opts.noun names the pictures in the buttons and messages ("photo" when left out). */
-    function openItems(items, index, el, opts) {
-      begin(el, (items || []).filter(Boolean).map(x => Object.assign({}, x)), index || 0, opts);
-    }
     function begin(el, items, index, opts) {
       const into = dialogOf(el);
       if (dlg && dlg.open && (into !== host || !dlg.isConnected)) close();
@@ -1780,7 +1773,7 @@
       const b = e.target.closest && e.target.closest(ANY); if (!b || !itemOf(b).src) return;
       e.preventDefault(); e.stopPropagation(); open(b);
     }, true);
-    return { open, openItems, close, isOpen: () => !!(dlg && dlg.open) };
+    return { open, close, isOpen: () => !!(dlg && dlg.open) };
   })();
   window.PhotoView = PhotoView;
 
