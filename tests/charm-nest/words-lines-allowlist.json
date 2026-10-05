@@ -2,7 +2,7 @@
   "about": "Where the word 'line' / 'lines' is right in text a person reads (tests/charm-nest/words-lines.cjs). An item of an order is a PIECE: never add 'line' for it. Every entry has its reason.",
   "scope": [
     [".", "^(charm-nest-.*\\.(js|html)|order-timeline\\.js|station-.*\\.js|index\\.html|main\\.js|scanner\\.html|sort-scan\\.html|sorting(-2)?\\.html|weld(-scan)?-1\\.html|assembly(-scan)?-[0-9]\\.html|shipping(-scan)?-[0-9]\\.html|design(-message|-print)?(-1)?\\.html|etsy-mail-1\\.html|screenTwo\\.html|SKU_List_V1\\.html)$"],
-    ["netlify/functions", "^(_?charmNest.*|_orderTimeline|_stationActivity|employeeEfficiency|listOpenOrders|skuChecked)\\.js$"]
+    ["netlify/functions", "^(_?charm[A-Z].*|syncCharmSets|_beadyCharmCap.*|_order[A-Z].*|_station[A-Z].*|employeeEfficiency|listOpenOrders|skuChecked|getShipments|firebaseOrders|ssGet.*|trackOrder.*|etsyOrderProxy|shopifyOrderWebhook)\\.js$"]
   ],
   "outOfScope": {
     "files": [],
@@ -21,6 +21,7 @@
     { "pattern": "\\bline art\\b", "why": "black-and-white line art of a design" },
     { "pattern": "\\bSKU lines?\\b", "why": "a SKU label line written under a charm in a master file (indexing), not an order piece" },
     { "pattern": "\\blines?(?:\\(s\\))?\\u0001? with no charm above", "why": "SKU label lines in a master file that have no charm above them" },
+    { "pattern": "\\bpointer line\\b", "why": "a drawn pointer line in the beady cap artwork geometry (an error about the drawing)" },
     { "pattern": "\\bdates the line\\b", "why": "Rose Gold: Cut Sheet dates the green dash line it draws" },
     { "pattern": "\\bor change that line\\b", "why": "Etsy mail: a line of the reply being written, whose attachment is missing" },
     { "pattern": "further lines stack under it", "why": "the SKU label lines under a charm in a master file (Settings help)" },
