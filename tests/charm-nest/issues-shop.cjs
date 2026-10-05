@@ -13,6 +13,10 @@
  *   - a line with fewer pool ids than its quantity (copies not pooled), quantity > 1 spread over sheets
  *   - a piece with a leftover problems[] while it is already on a sheet
  *   - a held / change-pending line, nested or not
+ *   - a piece COMPLETED BY HAND (Review "Complete Order", or its QR label printed from Custom Orders; Paul, 5 Oct round 6): the custom order's own
+ *     record (Charm_Custom_Orders, shop.customs[lineKey]) says so, while the run's copy of the line may still say 'unmatched' / 'waiting' (stale),
+ *     'noDesign' with a hint the page wrote (handDone), or 'noDesign' flagged (an older save); a reopened one (state 'open'), one sent to the sheets
+ *     with its own designs (how 'sheet'), a held one, one that sits on a sheet and a cancelled one are the other shapes
  */
 'use strict';
 
@@ -30,7 +34,9 @@ function rng(seed) {
 const METALS = ['gold', 'silver', 'rose', 'gold14k'];
 const OWN = [['ok', 46], ['unverified', 6], ['noQr', 5], ['qrPartial', 4], ['held', 5], ['draft', 6], ['solidExcluded', 3], ['dirty', 3], ['saving', 2],
   ['done', 6], ['reopened', 4], ['backUnsaved', 6], ['noFront', 3], ['roseNoPlan', 2], ['error', 2], ['unidentified', 3]];
-const KINDS = [['nested', 52], ['unnestedPooled', 9], ['unnestedPulled', 5], ['problem', 10], ['noDesign', 4], ['gone', 3], ['held', 4], ['partial', 6], ['staleProblemNested', 2], ['goneNoPiece', 1], ['lostPoolIds', 4], ['archivedOnly', 3]];
+const KINDS = [['nested', 52], ['unnestedPooled', 9], ['unnestedPulled', 5], ['problem', 10], ['noDesign', 4], ['gone', 3], ['held', 4], ['partial', 6], ['staleProblemNested', 2], ['goneNoPiece', 1], ['lostPoolIds', 4], ['archivedOnly', 3],
+  ['handDone', 6], ['handReopened', 2], ['handSheet', 2], ['handHeld', 2], ['handGone', 1]];
+const HANDS = new Set(['handDone', 'handReopened', 'handSheet', 'handHeld', 'handGone']);
 const PROBLEMS = [['unmatchedSku', 'sku'], ['unmatchedSku', ''], ['missingSize', 'sku'], ['blockedSku', 'sku'], ['needsMaterial', ''], ['needsMapping', 'sku']];
 
 /** A random shop spec. o: { maxOrders, maxSheets, dual (a piece on two live sheets), sandbox } */
@@ -55,7 +61,7 @@ function makeSpec(seed, o = {}) {
     const pieces = r.weighted([[1, 40], [2, 33], [3, 17], [4, 10]]), nLines = Math.min(pieces, r.weighted([[1, 45], [2, 40], [3, 15]]));
     const qs = Array(nLines).fill(1); for (let k = nLines; k < pieces; k++) qs[r.int(0, nLines - 1)]++;
     for (const q of qs) {
-      const metal = r.pick(metals), kind = r.weighted(o.noLost ? KINDS.filter(k => k[0] !== 'lostPoolIds') : KINDS), line = { tx: ++tx, metal, q, kind, copies: [], state: 'pulled', problems: [], sku: 'SKU-' + tx, hold: null, change: false, engrave: r.weighted([['plain', 55], ['approved', 33], ['unapproved', 12]]), noDesign: false, stale: false };
+      const metal = r.pick(metals), kind = r.weighted(KINDS.filter(k => !(o.noLost && k[0] === 'lostPoolIds') && !(o.noHand && HANDS.has(k[0])))), line = { tx: ++tx, metal, q, kind, copies: [], state: 'pulled', problems: [], sku: 'SKU-' + tx, hold: null, change: false, engrave: r.weighted([['plain', 55], ['approved', 33], ['unapproved', 12]]), noDesign: false, stale: false };
       const sheetsOf = byMetal(metal), pickSheet = () => (sheetsOf.length ? r.pick(sheetsOf).id : null);
       const nested = () => Array.from({ length: q }, () => ({ sheet: pickSheet(), pooled: true }));
       const state = () => r.weighted([['pooled', 40], ['written', 38], ['labelled', 12], ['committed', 10]]);
@@ -74,6 +80,36 @@ function makeSpec(seed, o = {}) {
         case 'noDesign': line.noDesign = true; line.state = 'noDesign'; line.engrave = 'plain'; line.copies = Array.from({ length: q }, () => ({ sheet: null, pooled: false })); break;
         case 'gone': line.state = 'gone'; line.engrave = 'plain'; line.copies = nested().map(c => (r.chance(0.6) ? c : { sheet: null, pooled: false })); break;
         case 'goneNoPiece': line.state = 'gone'; line.engrave = 'plain'; line.copies = Array.from({ length: q }, () => ({ sheet: null, pooled: false })); line.problems = r.chance(0.5) ? ['unmatchedSku'] : []; break;
+        case 'handDone': {
+          // Paul's order: the chain-only piece, completed by hand, on no sheet. rec = how the run's copy of the line still reads
+          const how = r.pick(['button', 'print']), rec = r.weighted([['stale', 50], ['hinted', 25], ['legacy', 25]]);
+          line.hand = { how, state: 'completed', rec }; line.engrave = 'plain'; line.copies = Array.from({ length: q }, () => ({ sheet: null, pooled: false }));
+          if (rec === 'stale') { line.state = r.pick(['unmatched', 'unmatched', 'waiting', 'held']); line.problems = ['unmatchedSku']; if (r.chance(0.7)) line.sku = ''; }
+          else if (rec === 'hinted') line.state = 'noDesign';
+          else { line.state = 'noDesign'; line.noDesign = true; }
+          break;
+        }
+        case 'handReopened': {
+          // completed, then reopened: a piece again (its record may still carry the hint the page wrote while it was completed)
+          const rec = r.pick(['hinted', 'stale']);
+          line.hand = { how: r.pick(['button', 'print']), state: 'open', rec }; line.engrave = 'plain'; line.copies = Array.from({ length: q }, () => ({ sheet: null, pooled: false }));
+          if (rec === 'stale') { line.state = r.pick(['unmatched', 'waiting']); line.problems = ['unmatchedSku']; if (r.chance(0.6)) line.sku = ''; } else line.state = 'noDesign';
+          break;
+        }
+        case 'handSheet': {
+          // sent to the sheets with its own designs (how 'sheet'): cut, not completed by hand; it still waits for its place
+          line.hand = { how: 'sheet', state: 'completed', rec: 'stale' }; line.engrave = 'plain'; line.state = r.pick(['pooled', 'waiting']);
+          line.copies = Array.from({ length: q }, () => ({ sheet: null, pooled: r.chance(0.5) })); break;
+        }
+        case 'handHeld': {
+          // completed by hand, but a person (or Etsy) also holds it: the stop still holds the sheets of its order
+          line.hand = { how: r.pick(['button', 'print']), state: 'completed', rec: 'stale' }; line.engrave = 'plain'; line.hold = 'Customer changed the order'; line.change = r.chance(0.5);
+          line.copies = Array.from({ length: q }, () => ({ sheet: null, pooled: false })); line.state = 'held'; line.problems = ['unmatchedSku']; line.sku = ''; break;
+        }
+        case 'handGone': {
+          line.hand = { how: r.pick(['button', 'print']), state: 'completed', rec: 'stale' }; line.state = 'gone'; line.engrave = 'plain'; line.problems = ['unmatchedSku'];
+          line.copies = Array.from({ length: q }, () => ({ sheet: null, pooled: false })); break;
+        }
         case 'held':
           line.hold = 'Customer changed the order'; line.change = r.chance(0.5);
           line.copies = r.chance(0.5) ? nested() : Array.from({ length: q }, () => ({ sheet: null, pooled: false })); line.state = line.copies[0].sheet ? 'written' : 'held'; break;
@@ -100,10 +136,12 @@ const pidOf = (o, l, i) => `${keyOf(o, l)}_${i + 1}`;
 
 /** Raw records (the shop) from a spec. */
 function materialize(spec) {
-  const lines = {}, placed = new Map(spec.sheets.map(s => [s.id, []])), pool = [];
+  const lines = {}, placed = new Map(spec.sheets.map(s => [s.id, []])), pool = [], customs = {};
   const archivedSheets = [], archivedOnly = [];
   for (const o of spec.orders) for (const l of o.lines) {
     const key = keyOf(o, l), poolIds = [];
+    // the custom order's own record, as Charm_Custom_Orders keeps it (state 'completed' | 'open', how 'button' | 'print' | 'sheet')
+    if (l.hand) customs[key] = { state: l.hand.state, how: l.hand.how, completedAt: 1700000000000 + l.tx, completedBy: 'Seth' };
     l.copies.forEach((c, i) => {
       const pid = pidOf(o, l, i);
       if ((c.sheet || c.pooled) && !l.lost) poolIds.push(pid);
@@ -119,6 +157,8 @@ function materialize(spec) {
       engrave: plain ? null : l.engrave === 'approved' ? { needed: true, state: 'approved', approved: true, approvedAt: 10, approvedBy: 'Paul' } : { needed: true, state: 'review', approved: false },
       snap: { title: `Charm ${l.tx}`, buyer: o.buyer, metalKey: l.metal }
     };
+    // the hint the page wrote into the run's copy while the piece was completed by hand (the server only uses it to know which line to look up)
+    if (l.hand && l.hand.rec === 'hinted') lines[key].handDone = { at: customs[key].completedAt, by: 'Seth', how: l.hand.how === 'button' ? 'button' : 'print' };
   }
   const sheets = [];
   const oidOfPid = pid => String(pid).split('_')[0];
@@ -166,25 +206,43 @@ function materialize(spec) {
   // part of the lines sit in the run's line archive (the server reads them from there)
   const archivedLines = {}, live = {};
   Object.keys(lines).sort().forEach((k, i) => { ((spec.seed + i) % 5 === 0 ? archivedLines : live)[k] = lines[k]; });
-  return { sandbox: spec.sandbox, lines: live, archivedLines, sheets, sets, pool };
+  return { sandbox: spec.sandbox, lines: live, archivedLines, sheets, sets, pool, customs };
 }
 
-/** The page's rows (Orders.rows() after interpretAll) from the line records: rowFromRecord's shape plus the spec. */
+/** The oracle's and the harness's one reading of a custom order's record: completed by hand = state not 'open' and not sent to the sheets. */
+const isHandDoc = c => !!c && typeof c === 'object' && c.state !== 'open' && c.how !== 'sheet';
+
+/** The page's rows (Orders.rows() after interpretAll) from the line records: rowFromRecord's shape plus the spec.
+ *  A custom order the page read as completed (B.maps.customDone: state not 'open') is spec.customDone and, as interpretLine reads it, a line with
+ *  nothing to cut (spec.noDesign, state 'noDesign' unless a person holds it); a reopened one (customKept) is read afresh as a piece again. */
 function uiRowsFresh(shop) {
-  const all = { ...shop.archivedLines, ...shop.lines };
+  const all = { ...shop.archivedLines, ...shop.lines }, customs = shop.customs || {};
   return Object.keys(all).sort().map(key => {
-    const l = all[key], s2 = l.snap || {};
+    const l = all[key], s2 = l.snap || {}, doc = customs[key] && customs[key].state !== 'open' ? { ...customs[key] } : null, done = !!doc && doc.how !== 'sheet';
     const order = { receiptId: String(l.orderId), orderNumber: String(l.orderId), buyer: { name: s2.buyer || '' }, lines: [] };
     const line = { transactionId: String(l.transactionId), listingId: '', sku: l.sku || '', title: s2.title || '', quantity: +l.quantity || 1, metalKey: s2.metalKey || '' };
     order.lines = [line];
-    return { key, order, line, spec: { designSku: l.sku || null, quantity: +l.quantity || 1, noDesign: !!l.noDesign, engraveCandidate: !!l.engraveCandidate, problems: (l.problems || []).map(k => ({ kind: k })), material: l.material },
-      problems: (l.problems || []).map(k => ({ kind: k })), state: l.state, reason: l.reason, hold: l.hold || null, changePending: !!l.changePending, poolIds: (l.poolIds || []).slice(), engrave: l.engrave ? { ...l.engrave } : null, metal: l.material };
+    // (a leftover 'noDesign' that only a completion explained is read afresh once the completion is gone)
+    let state = l.state === 'noDesign' && !l.noDesign && !done ? 'pulled' : l.state;
+    if (done && state !== 'gone' && !l.hold && !(l.poolIds || []).length) state = 'noDesign';
+    const noDesign = done ? true : !!l.noDesign;
+    return { key, order, line, spec: { designSku: l.sku || null, quantity: +l.quantity || 1, noDesign, engraveCandidate: !!l.engraveCandidate, problems: (l.problems || []).map(k => ({ kind: k })), material: l.material, ...(doc ? { customDone: doc } : {}) },
+      problems: (l.problems || []).map(k => ({ kind: k })), state, reason: l.reason, hold: l.hold || null, changePending: !!l.changePending, poolIds: (l.poolIds || []).slice(), engrave: l.engrave ? { ...l.engrave } : null, metal: l.material };
   });
 }
-/** The server's rows: the run's line records with their key (op_laserStatus passes these to orderReports). */
+/** The server's rows: the run's line records with their key (op_laserStatus passes these to orderReports), as productionReadiness leaves them after it
+ *  looked each unplaced line's own custom order up: a line the server's record says was completed by hand carries handDone; a hint the page wrote that the
+ *  record no longer backs (reopened since) is dropped, and the leftover 'noDesign' state it explained is a piece again. issues-server.cjs runs the real
+ *  handler over the same records; this is the shape its answer is read from. */
 function recordRowsFresh(shop) {
-  const all = { ...shop.archivedLines, ...shop.lines };
-  return Object.keys(all).sort().map(key => ({ ...JSON.parse(JSON.stringify(all[key])), key, orderId: String(all[key].orderId) }));
+  const all = { ...shop.archivedLines, ...shop.lines }, customs = shop.customs || {};
+  return Object.keys(all).sort().map(key => {
+    const rec = { ...JSON.parse(JSON.stringify(all[key])), key, orderId: String(all[key].orderId) }, c = customs[key];
+    const read = rec.state !== 'gone' && !(rec.poolIds || []).length && (rec.handDone || !(rec.noDesign || rec.state === 'noDesign'));
+    if (read && isHandDoc(c)) rec.handDone = { at: +c.completedAt || 0, by: c.completedBy || '', how: c.how === 'button' ? 'button' : 'print' };
+    else if (rec.handDone) { delete rec.handDone; if (read && rec.state === 'noDesign') rec.state = 'pulled'; }
+    return rec;
+  });
 }
 
 /** Memoised per shop: the harness asks for the same rows many times. The value is shared, so every read is also snapshotted (JSON) and
@@ -209,6 +267,7 @@ function shrinks(spec) {
   spec.sheets.forEach((s, i) => { const c = cloneSpec(spec); const id = s.id; c.sheets.splice(i, 1); c.orders.forEach(o => o.lines.forEach(l => l.copies.forEach(cp => { if (cp.sheet === id) cp.sheet = null; if (cp.dual === id) delete cp.dual; }))); out.push(c); });
   spec.orders.forEach((o, i) => o.lines.forEach((l, j) => { if (l.staleArchive) { const c = cloneSpec(spec); delete c.orders[i].lines[j].staleArchive; out.push(c); } l.copies.forEach((cp, k) => { if (cp.dual) { const c = cloneSpec(spec); delete c.orders[i].lines[j].copies[k].dual; out.push(c); } }); }));
   spec.sheets.forEach((s, i) => { for (const k of ['staleOrder', 'orphan', 'dupPool', 'ghostOrder']) if (s[k]) { const c = cloneSpec(spec); delete c.sheets[i][k]; out.push(c); } });
+  spec.orders.forEach((o, i) => o.lines.forEach((l, j) => { if (l.hand) { const c = cloneSpec(spec); delete c.orders[i].lines[j].hand; out.push(c); } }));
   spec.sheets.forEach((s, i) => { if (s.own !== 'ok') { const c = cloneSpec(spec); c.sheets[i].own = 'ok'; out.push(c); } });
   spec.orders.forEach((o, i) => o.lines.forEach((l, j) => { if (l.engrave !== 'plain') { const c = cloneSpec(spec); c.orders[i].lines[j].engrave = 'plain'; out.push(c); } if (l.stale) { const c = cloneSpec(spec); c.orders[i].lines[j].stale = false; out.push(c); } }));
   return out;
@@ -224,9 +283,9 @@ function describe(spec) {
   for (const s of spec.sheets) L.push(`sheet ${s.id}${s.setId ? ' in ' + s.setId : ' (no set)'}${s.own !== 'ok' ? ' own=' + s.own : ''}${s.staleOrder ? ' lists order ' + s.staleOrder + ' it does not hold' : ''}${s.orphan ? ' +manual charm' : ''}${s.dupPool ? ' +pool id twice' : ''}${s.ghostOrder ? ' lists order ' + s.ghostOrder + ' that has no lines at all' : ''}`);
   for (const o of spec.orders) for (const l of o.lines) {
     const cp = l.copies.map(c => (c.sheet ? c.sheet + (c.dual ? '+' + c.dual : '') : c.archivedOn ? 'archivedSheet' : c.pooled ? 'pooled' : '-')).join(',');
-    L.push(`order ${o.id} line ${l.tx} [${l.kind}] state=${l.state} q=${l.q} copies=[${cp}]${l.problems.length ? ' problems=' + l.problems.join('/') : ''}${l.sku ? '' : ' (no sku)'}${l.hold ? ' HOLD' : ''}${l.change ? ' changePending' : ''}${l.noDesign ? ' noDesign' : ''} engrave=${l.engrave}${l.staleArchive ? ' +archived copy' : ''}${l.lost ? ' (record lost its pool ids)' : ''}${l.copies.some(c => c.archivedOn) ? ' (some copies only on an archived sheet)' : ''}`);
+    L.push(`order ${o.id} line ${l.tx} [${l.kind}] state=${l.state} q=${l.q} copies=[${cp}]${l.problems.length ? ' problems=' + l.problems.join('/') : ''}${l.sku ? '' : ' (no sku)'}${l.hold ? ' HOLD' : ''}${l.change ? ' changePending' : ''}${l.noDesign ? ' noDesign' : ''}${l.hand ? ` HAND(${l.hand.how}, custom record ${l.hand.state}, run copy ${l.hand.rec})` : ''} engrave=${l.engrave}${l.staleArchive ? ' +archived copy' : ''}${l.lost ? ' (record lost its pool ids)' : ''}${l.copies.some(c => c.archivedOn) ? ' (some copies only on an archived sheet)' : ''}`);
   }
   return L.join('\n');
 }
 
-module.exports = { rng, makeSpec, materialize, uiRows, recordRows, memo, untouched, shrink, shrinkCandidates: shrinks, describe, cloneSpec, keyOf, pidOf, METALS };
+module.exports = { rng, makeSpec, materialize, isHandDoc, uiRows, recordRows, memo, untouched, shrink, shrinkCandidates: shrinks, describe, cloneSpec, keyOf, pidOf, METALS };

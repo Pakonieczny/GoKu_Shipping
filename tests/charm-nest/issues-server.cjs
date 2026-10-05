@@ -25,6 +25,8 @@ function seed(st, shop, sandbox) {
   }
   for (const s of shop.sheets) st.put(P + 'Charm_Nest_Sheets', s.id, { ...JSON.parse(JSON.stringify(s)), day: '2026-10-05', stock: { wIn: 6, hIn: 4.5 }, updatedAt: ts, createdAt: ts });
   for (const x of shop.sets) st.put(P + 'Charm_Nest_Sets', x.setId, { ...x, day: '2026-10-05', runId: 'run-1', updatedAt: ts, createdAt: ts });
+  // the custom orders' own records (Review → Complete Order, QR label printed, Reopen): the server reads these itself, never the page's word
+  for (const [key, c] of Object.entries(shop.customs || {})) st.put(P + 'Charm_Custom_Orders', key, { key, ...c, updatedAtMs: now });
 }
 async function ask(srv, shop, ids, sandbox) {
   const r = await fetch(srv.sorterOrigin + '/.netlify/functions/charmNestLibrary', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ op: 'laserStatus', sheetIds: ids, ...(sandbox ? { sandbox: true } : {}) }) });

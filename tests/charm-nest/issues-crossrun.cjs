@@ -62,6 +62,8 @@ function seedTwoRuns(st, shop, { runOf, sheetRun }) {
   }
   for (const s of shop.sheets) st.put('Charm_Nest_Sheets', s.id, { ...JSON.parse(JSON.stringify(s)), runId: sheetRun[s.id] || 'run-1', day: '2026-10-05', stock: { wIn: 6, hIn: 4.5 }, updatedAt: ts, createdAt: ts });
   for (const x of shop.sets) st.put('Charm_Nest_Sets', x.setId, { ...x, day: '2026-10-05', runId: 'run-1', updatedAt: ts, createdAt: ts });
+  // the custom orders' own records (a piece completed by hand, reopened, sent to the sheets): the server reads these itself, whichever run holds the line
+  for (const [key, c] of Object.entries(shop.customs || {})) st.put('Charm_Custom_Orders', key, { key, ...c, updatedAtMs: now });
 }
 const ask = async (srv, ids) => { srv.st.reads = 0; const r = await (await fetch(srv.sorterOrigin + '/.netlify/functions/charmNestLibrary', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ op: 'laserStatus', sheetIds: ids }) })).json(); r.reads = srv.st.reads; return r; };
 
