@@ -11,6 +11,9 @@
 //    over the pop-up), and does not press the row; the others only say where the piece is
 //  - hover and focus: a tint fading in (opacity) and a 1px lift (transform), nothing else animates
 //  - no "next: ..." anywhere in the order window but the header rail's own Now strip (another element, which this change leaves alone)
+//  - Paul's contradiction (5 Oct, plans/consistency): an order on hold whose pieces were taken off their sheets says "Not on a sheet yet" on its card, so
+//    its rows say On hold (never "Waiting" or a step after the sheet), whether the hold is the lines' marker or only in the timeline; a piece the
+//    timeline says was placed but the sheets' records have on none reads Waiting for a sheet; a row names a sheet only for a piece the Sheet tab has on one
 //  - the source has no next-step code any more, and a mutant that brings "next: ..." back is caught
 //  - 1440, 900 and 390 px: the chip fits inside its row beside the name and the Hold button (or under the name where the room is short), never
 //    clipped, no sideways scroll of the list
@@ -22,6 +25,9 @@ const { start } = require('./bridge-server.cjs');
 const DAY = 86400, SHIP = Math.floor(Date.UTC(2026, 9, 10, 17) / 1000);
 const A = { rid: '4180000001', a1: '41800000011', a2: '41800000012', a3: '41800000013' };                       // on GF Sheet 1, on RG Sheet 1 and its set sent, waiting
 const B = { rid: '4180000002', b1: '41800000021', b2: '41800000022' };                                           // an order on hold (no Hold button: plain rows)
+const F = { rid: '4180000006', f1: '41800000061', f2: '41800000062' };                                           // Paul's 5 Oct picture: an order on hold, taken off its sheets (the lines carry the hold marker)
+const F2 = { rid: '4180000007', h1: '41800000071', h2: '41800000072' };                                          // the same, with the hold only in the timeline (no marker on the lines)
+const G = { rid: '4180000008', g1: '41800000081', g2: '41800000082' };                                           // g1: the timeline says placed, the sheets' records say on no sheet
 const E = { rid: '4180000005', e1: '41800000051', e2: '41800000052' };                                           // one piece cancelled, the other on GF Sheet 1
 const C = { rid: '4180000003', c1: '41800000031', c2: '41800000032', c3: '41800000033', c4: '41800000034' };    // cut, sorted, shipped, completed by hand
 const D = { rid: '4180000004', d1: '41800000041' };                                                            // a single piece
@@ -32,9 +38,12 @@ const order = (rid, buyer, lines) => ({ receiptId: rid, orderNumber: rid, create
 const GOLD = ['gold', '14k Gold Filled'], ROSE = ['rose', 'Rose Gold Filled'], SILVER = ['silver', 'Sterling Silver'];
 const ORDERS = [
   [order(A.rid, 'Ada Alpha', [line(A.a1, 'MIDDLE_9935', ...GOLD), line(A.a2, 'MIDDLE_9935', ...ROSE), line(A.a3, 'STAR_C', ...GOLD)]), [pidOf(A, 'a1'), pidOf(A, 'a2'), null]],
-  [order(B.rid, 'Bea Beta', [line(B.b1, 'MIDDLE_9935', ...GOLD), line(B.b2, 'MIDDLE_9935', ...ROSE)]), [pidOf(B, 'b1'), pidOf(B, 'b2')]],
+  [order(B.rid, 'Bea Beta', [line(B.b1, 'MIDDLE_9935', ...GOLD), line(B.b2, 'MIDDLE_9935', ...ROSE)]), [null, null]],
   [order(E.rid, 'Eve Epsilon', [line(E.e1, 'MIDDLE_9935', ...SILVER), line(E.e2, 'MIDDLE_9935', ...GOLD)]), [pidOf(E, 'e1'), pidOf(E, 'e2')]],
   [order(C.rid, 'Cy Gamma', [line(C.c1, 'MIDDLE_9935', ...GOLD), line(C.c2, 'MIDDLE_9935', ...ROSE), line(C.c3, 'STAR_C', ...GOLD), line(C.c4, 'STAR_C', ...GOLD)]), [pidOf(C, 'c1'), pidOf(C, 'c2'), pidOf(C, 'c3'), pidOf(C, 'c4')]],
+  [order(F.rid, 'Fay Foxtrot', [line(F.f1, 'MIDDLE_9935', ...GOLD), line(F.f2, 'MIDDLE_9935', ...SILVER)]), [null, null]],
+  [order(F2.rid, 'Gil Golf', [line(F2.h1, 'MIDDLE_9935', ...GOLD), line(F2.h2, 'MIDDLE_9935', ...SILVER)]), [null, null]],
+  [order(G.rid, 'Hal Hotel', [line(G.g1, 'MIDDLE_9935', ...GOLD), line(G.g2, 'MIDDLE_9935', ...GOLD)]), [null, pidOf(G, 'g2')]],
   [order(D.rid, 'Dee Delta', [line(D.d1, 'MIDDLE_9935', ...GOLD)]), [pidOf(D, 'd1')]]];
 // "next: ..." as it was: the checker every state goes through, in the page
 const NO_NEXT = () => {
@@ -59,21 +68,20 @@ async function main() {
   const srv = await start({ receipts: [] });
   const box = (id, cx, cy) => ({ id, cxPt: cx, cyPt: cy, angle: 0, wPt: 34, hPt: 34 });
   const ch = (id, o, t, sku) => ({ id, name: `${o.rid} · ${sku}`, poolId: pidOf(o, t), order: o.rid, sku });
-  srv.st.put('Charm_Nest_Sheets', GF1, { id: GF1, metal: 'gold', sheetIndex: 1, day: '2026-10-04', status: 'written', stock: { wPt: 300, hPt: 140 }, orders: [A.rid, B.rid, C.rid, D.rid, E.rid],
-    placements: [box('g1', 40, 40), box('g2', 90, 40), box('g3', 140, 40), box('g4', 190, 40), box('g5', 40, 90), box('g6', 90, 90), box('g7', 140, 90)],
-    charms: [ch('g1', A, 'a1', 'MIDDLE_9935'), ch('g2', B, 'b1', 'MIDDLE_9935'), ch('g3', C, 'c1', 'MIDDLE_9935'), ch('g4', C, 'c3', 'STAR_C'), ch('g5', C, 'c4', 'STAR_C'), ch('g6', D, 'd1', 'MIDDLE_9935'), ch('g7', E, 'e2', 'MIDDLE_9935')] });
+  srv.st.put('Charm_Nest_Sheets', GF1, { id: GF1, metal: 'gold', sheetIndex: 1, day: '2026-10-04', status: 'written', stock: { wPt: 300, hPt: 140 }, orders: [A.rid, B.rid, C.rid, D.rid, E.rid, G.rid],
+    placements: [box('g1', 40, 40), box('g2', 90, 40), box('g3', 140, 40), box('g4', 190, 40), box('g5', 40, 90), box('g6', 90, 90), box('g7', 140, 90), box('g8', 190, 90)],
+    charms: [ch('g1', A, 'a1', 'MIDDLE_9935'), ch('g2', B, 'b1', 'MIDDLE_9935'), ch('g3', C, 'c1', 'MIDDLE_9935'), ch('g4', C, 'c3', 'STAR_C'), ch('g5', C, 'c4', 'STAR_C'), ch('g6', D, 'd1', 'MIDDLE_9935'), ch('g7', E, 'e2', 'MIDDLE_9935'), ch('g8', G, 'g2', 'MIDDLE_9935')] });
   srv.st.put('Charm_Nest_Sheets', RG1, { id: RG1, metal: 'rose', sheetIndex: 1, day: '2026-10-04', status: 'written', stock: { wPt: 200, hPt: 140 }, orders: [A.rid, B.rid, C.rid],
     placements: [box('r1', 40, 40), box('r2', 90, 40), box('r3', 140, 40)], charms: [ch('r1', A, 'a2', 'MIDDLE_9935'), ch('r2', B, 'b2', 'MIDDLE_9935'), ch('r3', C, 'c2', 'MIDDLE_9935')] });
   const poolRow = (o, t, sku, material, sheetId, metal) => srv.st.put('Charm_Pool', pidOf(o, t), { poolId: pidOf(o, t), orderId: o.rid, transactionId: o[t], lineKey: kOf(o, t), sku, material, copy: 1, quantity: 1, state: 'written', sheetId, sheetName: `2026-10-04_${metal}_Set-1_Sheet-1`, updatedAt: Date.now() });
   poolRow(A, 'a1', 'MIDDLE_9935', 'gold', GF1, 'GF'); poolRow(A, 'a2', 'MIDDLE_9935', 'rose', RG1, 'RG');
-  poolRow(B, 'b1', 'MIDDLE_9935', 'gold', GF1, 'GF'); poolRow(B, 'b2', 'MIDDLE_9935', 'rose', RG1, 'RG');
   poolRow(C, 'c1', 'MIDDLE_9935', 'gold', GF1, 'GF'); poolRow(C, 'c2', 'MIDDLE_9935', 'rose', RG1, 'RG'); poolRow(C, 'c3', 'STAR_C', 'gold', GF1, 'GF'); poolRow(C, 'c4', 'STAR_C', 'gold', GF1, 'GF');
-  poolRow(D, 'd1', 'MIDDLE_9935', 'gold', GF1, 'GF'); poolRow(E, 'e1', 'MIDDLE_9935', 'silver', GF1, 'SS'); poolRow(E, 'e2', 'MIDDLE_9935', 'gold', GF1, 'GF');
+  poolRow(D, 'd1', 'MIDDLE_9935', 'gold', GF1, 'GF'); poolRow(E, 'e1', 'MIDDLE_9935', 'silver', GF1, 'SS'); poolRow(E, 'e2', 'MIDDLE_9935', 'gold', GF1, 'GF'); poolRow(G, 'g2', 'MIDDLE_9935', 'gold', GF1, 'GF');
   // the orders' timelines
   const evAt = Date.now(); let evN = 0;
   const ev = (o, type, ago, extra) => srv.st.put('Order_Timeline', `${o.rid}~${type}~e${++evN}`, Object.assign({ orderId: o.rid, type, at: evAt - ago * 60000, by: 'Test Operator', source: 'sorter', station: '', text: '', data: {} }, extra || {}));
   const placed = (o, t, sheet, sheetId, ago) => ev(o, 'placed', ago, { sheet, sheetId, lineKey: kOf(o, t), data: { poolId: pidOf(o, t) } });
-  for (const o of [A, B, C, D, E]) ev(o, 'arrived', 4000, { source: 'etsy', by: 'Etsy' });
+  for (const o of [A, B, C, D, E, F, F2, G]) ev(o, 'arrived', 4000, { source: 'etsy', by: 'Etsy' });
   placed(A, 'a1', 'GF Sheet 1', GF1, 3000); placed(A, 'a2', 'RG Sheet 1', RG1, 2900);
   ev(A, 'setCommitted', 2000, { sheetId: RG1, sheet: 'RG Sheet 1', setId: 'set-psc-1' });                   // (the set of RG Sheet 1 is sent to the laser: its chip has the check)
   placed(B, 'b1', 'GF Sheet 1', GF1, 3000); placed(B, 'b2', 'RG Sheet 1', RG1, 2900);
@@ -85,6 +93,14 @@ async function main() {
   ev(C, 'sealCompleted', 300, { lineKey: kOf(C, 'c4'), data: { how: 'button', pressedIn: 'Order window' } });                                                       // c4: completed by hand
   placed(D, 'd1', 'GF Sheet 1', GF1, 3000);
   placed(E, 'e1', 'SS Sheet 1', GF1, 3000); placed(E, 'e2', 'GF Sheet 1', GF1, 2900);
+  // the held order of Paul's picture: nested, then held and taken off its sheets ("Taken off SS Sheet 1, GF Sheet 2 by Paul: Add to next sheet, on hold"); the
+  // timeline alone says Waiting with Nested done, which used to read "Waiting · next: Engraved" under a card that said Not on a sheet yet
+  for (const [o, t, sheet, sid] of [[F, 'f1', 'GF Sheet 1', GF1], [F, 'f2', 'SS Sheet 1', GF1], [F2, 'h1', 'GF Sheet 1', GF1], [F2, 'h2', 'SS Sheet 1', GF1]]) {
+    placed(o, t, sheet, sid, 3000);
+    ev(o, 'held', 2000, { by: 'Paul', text: 'On hold: Add to next sheet', data: { reason: 'Add to next sheet' } });
+    ev(o, 'removed', 1990, { by: 'Paul', lineKey: kOf(o, t), sheet, sheetId: sid, text: `Taken off ${sheet} by Paul: Add to next sheet, on hold`, data: { reason: 'Add to next sheet', poolId: pidOf(o, t) } });
+  }
+  placed(G, 'g1', 'GF Sheet 1', GF1, 3000); placed(G, 'g2', 'GF Sheet 1', GF1, 2900);                          // (g1 has no pool piece: the sheets' records have it on none)
   ev(E, 'cancelled', 1000, { lineKey: kOf(E, 'e1'), text: 'Cancelled by the buyer', data: { reason: 'buyer asked' } });                                    // e1: cancelled
   const browser = await chromium.launch({ executablePath: process.env.CHROMIUM || '/opt/pw-browsers/chromium-1194/chrome-linux/chrome', args: ['--no-sandbox'] });
   try {
@@ -112,7 +128,7 @@ async function main() {
         for (const [order, pools] of orders) order.lines.forEach((line, i) => { const key = CharmNestOrders.lineKey(order, line); if (B.orders.byKey.has(key)) return; const row = { key, order, line, arrivedAt: Date.now(), spec: null, problems: [], state: pools[i] ? 'pooled' : 'pulled', reason: null, claimedBy: null, poolIds: pools[i] ? [pools[i]] : [], engrave: null, material: null }; B.orders.rows.push(row); B.orders.byKey.set(key, row); });
         Orders.interpretAll();
         // the order on hold: every piece held but the cancelled one (so the order shows no Hold button of its own, and its rows are plain)
-        for (const r of B.orders.rows) if (String(r.order.receiptId) === '4180000002') { r.hold = { by: 'Test Operator', at: Date.now() }; r.reason = 'on hold'; }
+        for (const r of B.orders.rows) if (['4180000002', '4180000006'].includes(String(r.order.receiptId))) { r.hold = { by: 'Test Operator', at: Date.now() }; r.reason = 'on hold'; }
         CN.setMode('orders'); Orders.render();
       }, { orders: ORDERS });
     };
@@ -240,6 +256,38 @@ async function main() {
     await page.setViewportSize({ width: 1440, height: 900 }); await page.waitForTimeout(300);
     await closeWin();
 
+    // ── 3c · Paul's contradiction (5 Oct): an order on hold, both pieces taken off their sheets. The card says Not on a sheet yet; the rows never say a step after the sheet ──
+    const scopeOf = () => page.evaluate(() => { const sc = OrderWin._scope(); return sc && sc.all.map(p => ({ key: p.key, nested: p.nested, loading: p.loading })); });
+    const waitScope = () => page.waitForFunction(() => { const sc = OrderWin._scope(); return sc && sc.all.every(p => !p.loading); });
+    for (const [what, o, keys, plainRows] of [['hold marker on the lines', F, ['f1', 'f2'], true], ['hold only in the timeline', F2, ['h1', 'h2'], false]]) {
+      await openWin(o, 2); await waitScope();
+      R = await rows(); const held = keys.map(t => byKey(R, o, t));
+      assert.deepEqual(held.map(r => r.chip && r.chip.text), ['On hold', 'On hold'], what + ': both pieces say On hold: ' + JSON.stringify(R.map(r => r.chip)));
+      assert(held.every(r => r.chip.cls === 'hold' && r.chip.tag === 'SPAN' && r.chip.aria === null), what + ': said, not pressed (there is no sheet to open): ' + JSON.stringify(held.map(r => r.chip)));
+      assert.equal(R.every(r => r.tag === 'BUTTON'), plainRows, what + ': ' + (plainRows ? 'no Hold button of its own (the order is held): plain rows' : 'the Hold button is still there: group rows'));
+      assert((await scopeOf()).every(p => !p.nested), what + ': the Sheet tab agrees: on no sheet ' + JSON.stringify(await scopeOf()));
+      assert.equal(await page.evaluate(() => document.querySelectorAll('#owNowCard .owShChip.off').length), 2, what + ': the card above says Not on a sheet yet, twice');
+      const said = await page.evaluate(() => document.getElementById('owPcSum').textContent);
+      assert(!/next\s*:|Waiting|Engraved|Laser|Nested|Sorted/i.test(said.replace(/ITS PIECES.*?SLOWEST ONE IS/i, '')), what + ': no step after the sheet, no "Waiting", no "next: ...": ' + said);
+      await nothing(what);
+      if (plainRows) { await fit('held', [[1440, 900], [390, 844]], 'p3-6-held-off-sheets'); await page.setViewportSize({ width: 1440, height: 900 }); await page.waitForTimeout(300); }
+      await closeWin();
+    }
+    // the timeline said placed, the sheets' records have the piece on none: the row follows the records (the Sheet tab's truth), never the old event
+    await openWin(G, 2); await waitScope();
+    R = await rows(); const g1 = byKey(R, G, 'g1'), g2 = byKey(R, G, 'g2'), gs = await scopeOf();
+    assert.deepEqual(gs.map(p => p.nested), [false, true], 'the Sheet tab: g1 on no sheet, g2 on one: ' + JSON.stringify(gs));
+    assert.deepEqual([g1, g2].map(r => r.chip.text), ['Waiting for a sheet', 'GF Sheet 1'], 'the rows agree with the Sheet tab, not with the older placed event: ' + JSON.stringify(R.map(r => r.chip)));
+    assert(g1.chip.tag === 'SPAN' && g2.chip.tag === 'BUTTON');
+    await closeWin();
+    // (every order above: a chip names a sheet only for a piece the Sheet tab has on one)
+    for (const [o, n] of [[A, 3], [C, 4], [E, 2]]) {
+      await openWin(o, n); await waitScope();
+      const [sc, rr] = [await scopeOf(), await rows()];
+      for (const p of sc) { const c = rr.find(r => r.key === p.key).chip; assert(p.nested || !(c.cls === 'sheet' || /Sheet \d/.test(c.text)), `${o.rid}: ${p.key} is on no sheet but its row says "${c.text}"`); }
+      await closeWin();
+    }
+
     // ── 4 · Cy Gamma's order: cut (with its check), sorted, shipped, completed by hand ──
     await openWin(C, 4);
     R = await rows();
@@ -273,9 +321,20 @@ async function main() {
     const caught = await page2.evaluate(NO_NEXT);
     assert(caught.length >= 3 && caught.every(t => /next\s*:\s*Laser cut/.test(t)), 'the mutant that brings "next: ..." back is caught: ' + JSON.stringify(caught));
     await page2.close();
+    // and a mutant that forgets the hold (Paul's contradiction comes back: a held order's rows say something else) is caught by the held case
+    const forgot = src.replace('if (held) return { k: "hold", text: "On hold" };', 'if (false) return { k: "hold", text: "On hold" };');
+    assert.notEqual(forgot, src, 'the second mutant changed the builder');
+    const page3 = await context.newPage(), errors3 = [];
+    await page3.route(u => /\/charm-nest-bridge\.js(\?|$)/.test(u.pathname + u.search), r => r.fulfill(js(forgot)));
+    await seedPage(page3, errors3);
+    await page3.evaluate(k => OrderWin.open(k), kOf(F2, 'h1'));
+    await page3.waitForFunction(() => document.querySelectorAll('#owPcSum .pcSt').length === 2 && [...document.querySelectorAll('#owNowCard .owShChip')].length === 2, null, { timeout: 20000 });
+    const mutantChips = await page3.evaluate(() => [...document.querySelectorAll('#owPcSum .pcSt')].map(c => c.textContent.trim()));
+    assert.notDeepEqual(mutantChips, ['On hold', 'On hold'], 'the mutant that forgets the hold is caught by the held case: ' + JSON.stringify(mutantChips));
+    await page3.close();
 
     assert.deepEqual(outside, [], 'no Etsy call');
-    assert.deepEqual(errors2, [], 'no page errors, mutant page');
+    assert.deepEqual(errors2.concat(errors3), [], 'no page errors, mutant pages');
     console.log('  ✓ a piece\'s row says where it is in one calm chip: GF Sheet 1 (a button that opens that sheet, with a check once cut or sent), Waiting for a sheet, On hold, Cancelled, Sorted, Shipped, Completed; no "next: ..." anywhere; fits 1440, 900 and 390; a mutant is caught');
   } finally { await browser.close(); srv.close(); }
 }

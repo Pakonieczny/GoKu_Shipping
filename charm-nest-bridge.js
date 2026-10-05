@@ -11567,23 +11567,34 @@ const OrderWin = window.OrderWin = (() => {
   /** What a piece's row says of where the piece is NOW, in plain short words (Paul, 5 Oct, point 4: no "next: ..." any more, the steps ahead are the
    *  dots' to show; and one calm status in place of "On RG Sheet 1 · next: Laser cut"). x: the timeline's summary of the piece ({ p, D, events }), sp: its
    *  place in the Sheet scope (scopePieces: the sheets its copies are on), null while that is not read.
+   *  It reads the SAME inputs the Sheet tab and the Now card read, in this order, so the row can never contradict them (Paul, 5 Oct: a held order said
+   *  "Not on a sheet yet" on its card and "Waiting · next: Engraved" on its rows): cancelled; the steps after the laser (their events happened); completed
+   *  by hand; the Sheet tab's own membership (scopePieces: which sheets the piece is on NOW, from the sheets' records, not from what the timeline once
+   *  said); a hold nobody released (the line's own marker, or the timeline's unreleased hold, the one the Now card says); else waiting for a sheet.
+   *  A piece on no sheet NEVER reads as being on a step after the sheet: held, it says On hold, else Waiting for a sheet.
    *  → { k: sheet | wait | hold | cancel | done | review | stage, text, say (for a screen reader), name (the sheet's), check (the sheet is cut or sent),
    *  more (other sheets it is on), sheet ({ id, pool } of the sheet to open, else null), metal }. */
-  const PC_WORD = { review: "In review", sorted: "Sorted", welded: "Welded", assembled: "Assembled", packed: "Packed", shipped: "Shipped" };
+  const PC_WORD = { sorted: "Sorted", welded: "Welded", assembled: "Assembled", packed: "Packed", shipped: "Shipped" };
   function pieceStatusOf(x, sp) {
-    const D = x.D || {}, W = D.W || {}, stage = W.stage || "", row = sp && sp.row || null;
+    const D = x.D || {}, W = D.W || {}, stage = W.stage || "", row = sp && sp.row || null, UI = window.OrderTimelineUI;
     if (D.cancelled || stage === "cancelled" || (row && row.state === "gone")) return { k: "cancel", text: "Cancelled" };
-    if (D.hold || stage === "held" || (row && row.hold)) return { k: "hold", text: "On hold" };
-    if (D.hand || (sp && sp.hand) || stage === "completed") return { k: "done", text: "Completed" };
-    const on = sp && sp.nested ? sp.sheets || [] : [], first = on[0] || null;
-    // (on a sheet: the timeline says so, or the sheets' own records do, which may be a moment ahead of it)
-    if (stage === "sheet" || stage === "cut" || (on.length && (!stage || stage === "waiting" || stage === "designed"))) {
-      const nice = l => (l && !/\?/.test(l) ? l : ""), name = nice(first && first.label) || String(W.sheet || "").trim() || (first && first.label) || "";
-      const cut = stage === "cut" || (x.events || []).some(e => e && e.type === "setCommitted");   // (cut, or its set sent to the laser)
-      return { k: "sheet", text: name || (stage === "cut" ? "Cut on the laser" : "On a sheet"), say: name ? "On " + name : "", name, check: cut, more: Math.max(0, on.length - 1),
-        sheet: first ? { id: first.id || "", pool: (first.pools || [])[0] || "" } : null, metal: (first && first.metal) || x.p.metal };
+    const known = !!sp && !sp.loading, on = sp && sp.nested ? sp.sheets || [] : [], first = on[0] || null;
+    // (the steps after the laser: sorting, welding, assembly, shipping happened, a sheet's records or not)
+    if (PC_WORD[stage] && !(row && row.hold)) return { k: "stage", text: PC_WORD[stage], metal: x.p.metal };
+    // (completed by hand, a Complete Order press no Reopen came after: finished, whichever sheet it was on; a hold on the line says it is not)
+    if ((D.hand || (sp && sp.hand) || stage === "completed") && !(row && row.hold)) return { k: "done", text: "Completed" };
+    // (on a sheet now: the sheets' own records say so; cut, or its set sent to the laser, adds the check)
+    if (on.length) {
+      const nice = l => (l && !/\?/.test(l) ? l : ""), name = nice(first.label) || String(W.sheet || "").trim() || first.label || "";
+      const cut = stage === "cut" || (x.events || []).some(e => e && e.type === "setCommitted");
+      return { k: "sheet", text: name || "On a sheet", say: name ? "On " + name : "", name, check: cut, more: on.length - 1, sheet: { id: first.id || "", pool: (first.pools || [])[0] || "" }, metal: first.metal || x.p.metal };
     }
-    if (PC_WORD[stage]) return { k: stage === "review" ? "review" : "stage", text: PC_WORD[stage], metal: x.p.metal };
+    // (on no sheet: held, or waiting. A hold taken off the sheets: the line's marker, or the timeline's hold nobody released)
+    const held = !!(row && row.hold) || !!D.hold || stage === "held" || ((tryDo(() => UI && UI.blockerOf && UI.blockerOf(x.events || [])) || {}).label === "On hold");
+    if (held) return { k: "hold", text: "On hold" };
+    // (the records have not answered yet: the timeline's word, said without a sheet to open)
+    if (!known && (stage === "sheet" || stage === "cut") && W.sheet) return { k: "sheet", text: W.sheet, say: "On " + W.sheet, name: W.sheet, check: stage === "cut", more: 0, sheet: null, metal: x.p.metal };
+    if (stage === "review") return { k: "review", text: "In review", metal: x.p.metal };
     return { k: "wait", text: "Waiting for a sheet" };
   }
   /** The status of a piece as its row draws it (the `.st` cell): one chip, the Sheet card's own (owShChip: its metal dot, its hairline), the sheet's name
