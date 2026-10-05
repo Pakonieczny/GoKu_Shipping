@@ -1181,6 +1181,7 @@ const Orders = window.Orders = (() => {
       engraveCandidate: row.spec ? !!row.spec.engraveCandidate : null, noDesign: hand ? !!(row.spec.special && row.spec.special.notCut) : !!row.spec?.noDesign,
       ...(hand ? { handDone: { at: +cd.completedAt || 0, by: cap(cd.completedBy, 80), how: cd.how === "button" ? "button" : "print" } } : {}),
       activityAt:row.activityAt || 0, changePending:!!row.changePending,repoolChanged:!!row.repoolChanged,arrivedAt: row.arrivedAt || 0, createTs: o.createTs || 0, materialOverride: row.materialOverride || null, sizeOverride: row.sizeOverride || null, problems: (row.problems || []).map(p => p.kind), updateTs: o.updateTs, orderId: o.receiptId, transactionId: l.transactionId,
+      ...(+row.frontAt > 0 ? { frontAt: +row.frontAt } : {}), ...(row.releasing ? { releasing: { at: +row.releasing.at || 0, by: cap(row.releasing.by, 80), stage: String(row.releasing.stage || "").slice(0, 20) } } : {}),   // (released from hold: ahead of the orders coming in; a release not finished yet, taken up again by the next page, OrderHold)
       snap: { title: cap(l.title, 160), listingId: cap(l.listingId, 24), metalKey: cap(l.metalKey, 24), metalLabel: cap(l.metalLabel, 40),
         orderNumber: cap(o.orderNumber, 24), buyer: cap(o.buyer && o.buyer.name, 60), shipBy: +o.shipBy || 0, isGift: !!o.isGift,
         vars: (l.variations || []).map(v => String(v.name ?? v.formatted_name ?? "") + "\u241f" + String(v.value ?? v.formatted_value ?? "")),
@@ -1200,7 +1201,7 @@ const Orders = window.Orders = (() => {
       variations: (s2.vars || []).map(v => { const i = String(v).indexOf("\u241f"); return { name: String(v).slice(0, i < 0 ? 0 : i), value: i < 0 ? String(v) : String(v).slice(i + 1) }; }) };
     order.lines = [line];
     return { key, order, line, activityAt:+l.activityAt || 0, changePending:!!l.changePending,repoolChanged:!!l.repoolChanged, arrivedAt: +l.arrivedAt || 0, sizeOverride: l.sizeOverride || null, spec: null, problems: [], state: l.state || "pulled", reason: l.reason || null, hold: l.hold || null, wait: l.wait || null, claimedBy: null,
-      poolIds: l.poolIds || [], engrave: l.engrave || null, metal: l.material || null, materialOverride: l.materialOverride || l.material || null, fromRecord: true };
+      poolIds: l.poolIds || [], engrave: l.engrave || null, metal: l.material || null, materialOverride: l.materialOverride || l.material || null, fromRecord: true, ...(+l.frontAt > 0 ? { frontAt: +l.frontAt } : {}), ...(l.releasing && +l.releasing.at > 0 ? { releasing: l.releasing } : {}) };
   }
   /* The claim is a courtesy — a gold dot on the station's rows saying the sorter has these — never a lock. So it goes
      in batches of a hundred, each with its own time, and a batch the station does not answer is retried once and then
@@ -1570,7 +1571,7 @@ const Orders = window.Orders = (() => {
       const why = attn ? (r.problems.map(x => Review.problemText(x)).join(" · ") || r.reason || "") : r.state === "waiting" ? (r.reason || "") : "";
       const gateBtn = r.state === "waiting" && r.wait ? `<button class="relHold" type="button" data-gate="${r.wait.kind === "slow" ? "release" : "cut"}" data-gm="${esc(r.wait.material)}" title="${r.wait.kind === "slow" ? "send " + esc(labelOf(r.wait.material)) + " to the laser with this set instead of waiting" : "cut the partial " + esc(labelOf(r.wait.material)) + " sheet now"}">${r.wait.kind === "slow" ? "Send now" : "Cut it anyway"}</button>` : "";
       const mail = window.CustomerMail ? CustomerMail.badgeStamp(r.order.receiptId) : "", team = window.TeamMail ? TeamMail.stamp(r) : "";
-      const stamp=JSON.stringify([cards,r.order,r.line,r.spec,r.state,st,r.hold,r.wait,why,where,due,date,mail,team]);
+      const stamp=JSON.stringify([cards,r.order,r.line,r.spec,r.state,st,r.hold,r.wait,why,where,due,date,mail,team,!!r.hold && OV.pile === "hold" && !!window.CancelUI]);
       const cached=orderNodes.get(r.key);
       if(cached?.stamp===stamp){orderNodes.delete(r.key);orderNodes.set(r.key,cached);wanted.push(cached.node);mounts.push([cached.node,r]);continue;}
       const node = el("div", (cards ? "ocard" : "doneRow workRow orderListRow") + " hoverItem" + (attn ? " attn" : ""));
@@ -1586,6 +1587,8 @@ const Orders = window.Orders = (() => {
       // Release hold: the line goes back in line; drawn at once, so it is seen leaving On hold for Open Orders
       { const rh = node.querySelector(".relHold:not([data-gate])"); if (rh) rh.onclick = e => { e.stopPropagation(); if (window.HoldUI && HoldUI.canRelease()) { HoldUI.release(String(r.order.receiptId), { button: rh }).then(x => { if (x && x.used === false) { Review.repool(r); render(); } }); return; } Review.repool(r); render(); }; }
       { const gb = node.querySelector("[data-gate]"); if (gb) gb.onclick = e => { e.stopPropagation(); gb.disabled = true; (gb.dataset.gate === "release" ? Gate.release(gb.dataset.gm) : Gate.cutAnyway(gb.dataset.gm)).catch(err => toast(err.message, "bad", 6000)); }; }
+      // Cancel Order beside Release hold, on the On hold pile only (charm-nest-cancel-ui.js; the stamp above carries the pile)
+      if (r.hold && OV.pile === "hold" && window.CancelUI) { try { CancelUI.mount(node, r); } catch (err) { console.warn("Cancel Order button", err); } }
       // an order can be several lines on several cards: hovering one lifts all of them, the way the station does
       node.dataset.rid = String(r.order.receiptId);
       // (the old node's decoded pictures move over once the update has measured where the old node stood)
@@ -2362,7 +2365,7 @@ const Pool = window.Pool = (() => {
     }
     return repaired.size;
   }
-  function cloneCharm(c, id) { const k = Object.assign({}, c, { id, pinned: null }); return k; }
+  function cloneCharm(c, id) { const k = Object.assign({}, c, { id, pinned: null }); delete k.frontAt; return k; }   // (a copy never carries another order's place in the queue)
   /** §6.4 · one pooled charm per copy of the line, on the material card the ORDER says. */
   /** A line's copies, made from its traced design, ready to record; null when the line is held, has no design or does
       not fit (row.state says which). A copy a cleanup took off its sheet on purpose (Cleanups.removed: the sheet's record
@@ -2399,8 +2402,8 @@ const Pool = window.Pool = (() => {
       const charm = copy === 1 && !base.poolId ? base : cloneCharm(base, `${src.id}:${poolId}`);
       charm.name = `${row.order.receiptId} · ${sp.designSku}${sp.quantity > 1 ? ` · ${copy}/${sp.quantity}` : ""}`;
       charm.order = row.order.receiptId; charm.orderDate = +row.order.createTs || 0; charm.arrivedAt = row.arrivedAt || 0; charm.orderInfo = { receiptId: row.order.receiptId, transactionId: row.line.transactionId, sku: sp.designSku, copy, quantity: sp.quantity, form: sp.form, size: sp.size };
-      charm.poolId = poolId; charm.metal = sp.material; charm.lineKey = row.key; charm.pinned = null; charm.excluded = false;
-      pools.push({ poolId, runId: run ? run.runId : null, setId: run ? run.setId || null : null, sheetId: null, orderId: row.order.receiptId, orderDate: +row.order.createTs || 0, arrivedAt: row.arrivedAt || 0, transactionId: row.line.transactionId, sku: sp.designSku, material: sp.material, size: sp.size || null, form: sp.form || null, chain: sp.chain || null, copy, quantity: sp.quantity, charmHash: charm.hash, masterHash: entry.masterHash || null, aiPath: sizeEntry(entry, sp.size).aiPath, engrave: !!(row.engrave && row.engrave.needed), state: "ready", lineKey: row.key, updateTs: row.order.updateTs });
+      charm.poolId = poolId; charm.metal = sp.material; charm.lineKey = row.key; charm.pinned = null; charm.excluded = false; if (+row.frontAt > 0) charm.frontAt = +row.frontAt; else delete charm.frontAt;
+      pools.push({ poolId, runId: run ? run.runId : null, setId: run ? run.setId || null : null, sheetId: null, orderId: row.order.receiptId, orderDate: +row.order.createTs || 0, arrivedAt: row.arrivedAt || 0, ...(+row.frontAt > 0 ? { frontAt: +row.frontAt } : {}), transactionId: row.line.transactionId, sku: sp.designSku, material: sp.material, size: sp.size || null, form: sp.form || null, chain: sp.chain || null, copy, quantity: sp.quantity, charmHash: charm.hash, masterHash: entry.masterHash || null, aiPath: sizeEntry(entry, sp.size).aiPath, engrave: !!(row.engrave && row.engrave.needed), state: "ready", lineKey: row.key, updateTs: row.order.updateTs });
       charms.push(charm);
     }
     return { sp, pools, charms };
@@ -2502,7 +2505,7 @@ const Pool = window.Pool = (() => {
     // a pooled order put a second copy of each of its pieces on a sheet (same pool id, cut twice).
     // (and a custom line whose QR label is being printed waits for the print: CustomPrint.printing; a line being placed
     // now, by Send to Sheet or an answer, is that placement's: placing)
-    const rows = Orders.rows().filter(r => ["pulled", "held", "unmatched", "oversize", "waiting"].includes(r.state) && !(r.state === "held" && r.hold) && !window.Cancelled?.has?.(r.order.receiptId) && !(window.CustomPrint && CustomPrint.printing(r.key)) && !placing.has(r.key) && !(onSheets(r) && settle(r)) && due(r)).sort((a, b) => (+a.order.createTs || 0) - (+b.order.createTs || 0));
+    const rows = Orders.rows().filter(r => ["pulled", "held", "unmatched", "oversize", "waiting"].includes(r.state) && !(r.state === "held" && r.hold) && !window.Cancelled?.has?.(r.order.receiptId) && !(window.CustomPrint && CustomPrint.printing(r.key)) && !placing.has(r.key) && !(onSheets(r) && settle(r)) && due(r)).sort(O.byQueue(r => +r.order.createTs || 0));   // (an order released from hold first, then oldest first: frontAt)
     const free = lock(rows);
     try { return await addRows(run, rows); } finally { free(); }
   }
@@ -3203,7 +3206,7 @@ const Gate = window.Gate = (() => {
   const mergeable = p => solid(p.metal) && p.charms.length > 0 && modern(p.runId) && membershipEditable(p) && !p.roseCutAt && !p.laserDoneAt && !holding(p);
   const charmsWord = n => `${n} charm${n === 1 ? "" : "s"}`;
   const sheetsWord = list => list.length === 1 ? `Sheet ${list[0].page}` : `Sheets ${list.slice(0, -1).map(p => p.page).join(", ")} and ${list.at(-1).page}`;
-  const byDate = (a, b) => (+a.orderDate || 0) - (+b.orderDate || 0);
+  const byDate = (a, b) => O.rankDate(a) - O.rankDate(b);   // (a piece of an order released from hold stays ahead: frontAt)
   /** The metal's sheets a merge takes: the first that can still change, and the later ones of its run. null: nothing to merge. */
   function mergePlan(m) {
     if (!solid(m)) return null;
@@ -3826,7 +3829,7 @@ const Gate = window.Gate = (() => {
     }
     const ready = rows.filter(r => r.spec && !r.spec.noDesign && !r.problems.length && r.spec.material);
     for (const r of ready) if (r.spec.designSku && !Master.entryFor(r.spec.designSku)) await Master.fetchEntry(r.spec.designSku).catch(() => {});
-    const lines = ready.map(r => ({ key: r.key, orderId: String(r.order.receiptId), material: r.spec.material, areaPt2: footprint(r), createTs: +r.order.createTs || 0, shipBy: +r.order.shipBy || 0 }));
+    const lines = ready.map(r => ({ key: r.key, orderId: String(r.order.receiptId), material: r.spec.material, areaPt2: footprint(r), createTs: +r.order.createTs || 0, frontAt: +r.frontAt || 0, shipBy: +r.order.shipBy || 0 }));
     R.plan = O_.planRelease(lines, { today: today(), capacity: capacity(), lastReleased: R.lastReleased, released: R.released, forceFill: R.forceFill, cadenceDays: +S.settings.cadenceDays || 2, lateDays: S.settings.lateDays == null ? 2 : +S.settings.lateDays });
     for (const r of ready) {
       const w = R.plan.wait.get(r.key);
@@ -8367,10 +8370,10 @@ const CustomSheet = window.CustomSheet = (() => {
       const src = await sourceOf(e, F); if(all()!==owner || owner[e.ck]!==e || B.orders.byKey.get(row.key)!==row || row.state==="gone")return null; const base = src.charms[pc.i]; if (!base) throw new Error(`${F.name} has no piece ${pc.i + 1}`);
       const copy = n + 1, poolId = O.poolId(row.order, row.line, copy);
       const c = Object.assign({}, base, { id: `${src.id}:${poolId}`, pinned: null });
-      Object.assign(c, { name: `${rid} · Custom · ${F.name.replace(ACCEPT, "")}${mine.length > 1 ? ` · ${copy}/${mine.length}` : ""}`, custom: true, customCk: e.ck, order: rid, orderDate: +row.order.createTs || 0, arrivedAt: row.arrivedAt || 0,
+      Object.assign(c, { name: `${rid} · Custom · ${F.name.replace(ACCEPT, "")}${mine.length > 1 ? ` · ${copy}/${mine.length}` : ""}`, custom: true, customCk: e.ck, order: rid, orderDate: +row.order.createTs || 0, arrivedAt: row.arrivedAt || 0, ...(+row.frontAt > 0 ? { frontAt: +row.frontAt } : {}),
         orderInfo: { receiptId: rid, transactionId: row.line.transactionId, sku: sp.designSku || row.line.sku || "CUSTOM", copy, quantity: mine.length, form: sp.form, size: sp.size, custom: true, file: F.name },
         poolId, metal: F.metal, lineKey: row.key, excluded: false, engravable: false, backKeepOut: null });
-      pools.push({ poolId, runId: run ? run.runId : null, setId: run ? run.setId || null : null, sheetId: null, orderId: rid, orderDate: +row.order.createTs || 0, arrivedAt: row.arrivedAt || 0, transactionId: row.line.transactionId, sku: sp.designSku || row.line.sku || "CUSTOM", material: F.metal, size: null, form: sp.form || null, chain: sp.chain || null, copy, quantity: mine.length, charmHash: c.hash, masterHash: null, aiPath: (F.cloud && F.cloud.path) || null, engrave: false, state: "ready", lineKey: row.key, updateTs: row.order.updateTs, custom: true, customFile: F.name });
+      pools.push({ poolId, runId: run ? run.runId : null, setId: run ? run.setId || null : null, sheetId: null, orderId: rid, orderDate: +row.order.createTs || 0, arrivedAt: row.arrivedAt || 0, ...(+row.frontAt > 0 ? { frontAt: +row.frontAt } : {}), transactionId: row.line.transactionId, sku: sp.designSku || row.line.sku || "CUSTOM", material: F.metal, size: null, form: sp.form || null, chain: sp.chain || null, copy, quantity: mine.length, charmHash: c.hash, masterHash: null, aiPath: (F.cloud && F.cloud.path) || null, engrave: false, state: "ready", lineKey: row.key, updateTs: row.order.updateTs, custom: true, customFile: F.name });
       charms.push(c);
     }
     if(!charms.length){row.state="noDesign";row.reason="its sent designs were removed from the sheets";return null;}
@@ -9204,6 +9207,8 @@ const Review = window.Review = (() => {
   // the order timeline: a line whose hold is lifted here (Release hold, the sheet window, an answer) is restored
   async function repool(row) {
     const was = row && row.hold;
+    // a hold lifted puts the order ahead of the orders coming in from Etsy, wherever it is lifted (OrderHold.release does it first, with its time)
+    if (was && row && !row.releasing) row.frontAt = Date.now();
     try { return await repoolLine(row); }
     finally { if (was && row && !row.hold && row.state !== "gone") TL.line(row, "restored", { id: `${row.key}.${Date.now()}`, text: `Back in line · was ${String(was).replace(/^(?:line|piece) /, "")}`.slice(0, 200), data: { was: String(was).slice(0, 300) } }); }
   }

@@ -2407,15 +2407,16 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       const sh = holder.get(id), pr = poolRowOf(id, rid), mine = W.byPool.get(id);
       const sku = mine?.sku || pr?.sku || "";
       if (!sh) {
-        if (pr && pr.sheetId && !["abandoned", "superseded"].includes(pr.state)) stay.push({ id, sku, where: sheetWord(pr.sheetId, pr.sheetName), why: pr.state === "committed" ? "its set was already sent to the station" : "its sheet is not open in this sorter" });
-        else if (mine) stay.push({ id, sku, where: sheetWord(W.id, W.rec?.fileBase), why: "this sheet is not open in this sorter" });
+        if (pr && pr.sheetId && !["abandoned", "superseded"].includes(pr.state)) stay.push({ id, sku, where: sheetWord(pr.sheetId, pr.sheetName), kind: pr.state === "committed" ? "sent" : "unloaded", why: pr.state === "committed" ? "its set was already sent to the station" : "its sheet is not open in this sorter" });
+        else if (mine) stay.push({ id, sku, where: sheetWord(W.id, W.rec?.fileBase), kind: "unloaded", why: "this sheet is not open in this sorter" });
         else ok.push({ id, sku, sh: null, where: "not on a sheet yet" });
         continue;
       }
       const where = sheetWord(sh.sheetId, sh.fileBase, sh);
-      if (sh.roseCutAt) stay.push({ id, sku, where, why: "that sheet was already cut" });
-      else if (sh.laserDoneAt) stay.push({ id, sku, where, why: "that sheet was marked completed" });
-      else if (sentToStation(sh)) stay.push({ id, sku, where, why: "its set was already sent to the station" });
+      if (sh.roseCutAt) stay.push({ id, sku, where, kind: "cut", why: "that sheet was already cut" });
+      else if (sh.laserDoneAt) stay.push({ id, sku, where, kind: "cut", why: "that sheet was marked completed" });
+      else if (sh.recalled) stay.push({ id, sku, where, kind: "cut", why: "that sheet was recalled" });
+      else if (sentToStation(sh)) stay.push({ id, sku, where, kind: "sent", why: "its set was already sent to the station" });
       // (a Rose Gold sheet not cut yet gives its pieces up too, inside a green line or outside every line: the lines with
       //  nothing left inside them go with the pieces, the ones that keep a piece stay as saved. Paul, 29 Sep: a cancelled
       //  order's lions stayed on the sheet for good, "inside the saved Rose Gold cut line")
@@ -2427,12 +2428,12 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       const left = sh.placements.filter(p => { const c = sh.charms.find(c => c.id === p.id); return c && !going.has(c.poolId); }).length;
       if (!left && sh.placements.length) for (const o of ok.filter(o => o.sh === sh)) o.last = true;
     }
-    let okF = ok.filter(o => !o.last), stayF = stay.concat(ok.filter(o => o.last).map(o => Object.assign(o, { why: "it is the last charm on that sheet: delete the sheet from its menu instead" })));
+    let okF = ok.filter(o => !o.last), stayF = stay.concat(ok.filter(o => o.last).map(o => Object.assign(o, { kind: "last", why: "it is the last charm on that sheet: delete the sheet from its menu instead" })));
     // a line with a copy that must stay keeps all its copies: half a line on hold could never be put back whole
     for (const r of window.Orders ? Orders.rows() : []) {
       const line = new Set(r.poolIds || []); if (line.size < 2) continue;
       const held = stayF.find(o => line.has(o.id)); if (!held || !okF.some(o => line.has(o.id))) continue;
-      for (const o of okF.filter(o => line.has(o.id))) stayF.push(Object.assign(o, { why: `its piece stays together (a copy is on ${held.where}: ${held.why})` }));
+      for (const o of okF.filter(o => line.has(o.id))) stayF.push(Object.assign(o, { kind: "together", why: `its piece stays together (a copy is on ${held.where}: ${held.why})` }));
       okF = okF.filter(o => !line.has(o.id));
     }
     return { rid, whole, ids, ok: okF, stay: stayF };
@@ -3558,9 +3559,11 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       k.at = at.length ? Math.min(...at) : 0;
       k.row = rs[0] || null; k.area = k.pieces.reduce((n, z) => n + (+z.c.areaPt2 || 0), 0);
       k.waiting = k.pieces.every(z => !z.placed);
+      // a waiting order released from hold (frontAt) comes ahead of the other waiting orders, the one released first first (Paul, 5 Oct)
+      k.front = k.waiting ? Math.min(...rs.map(r => +r.frontAt || 0).concat(k.pieces.map(z => +z.c.frontAt || 0)).filter(v => v > 0), Infinity) : 0; if (!isFinite(k.front)) k.front = 0;
       out.push(k);
     }
-    return out.sort((a, b) => (a.at || 9e15) - (b.at || 9e15) || a.rid.localeCompare(b.rid));
+    return out.sort((a, b) => (a.front && b.front ? a.front - b.front : b.front ? 1 : a.front ? -1 : 0) || (a.at || 9e15) - (b.at || 9e15) || a.rid.localeCompare(b.rid));
   }
   function plateGrid(target) {
     const job = buildJob(target), byId = new Map(target.charms.map(c => [c.id, c]));
@@ -3927,8 +3930,9 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     try { const j = JSON.parse(localStorage.getItem(JOURNAL()) || "{}"); if (entry) j[rid] = entry; else delete j[rid]; localStorage.setItem(JOURNAL(), JSON.stringify(j)); } catch (_) {}
   }
   // o.free: the nest itself picks the spots (spots are only proof that there is room); otherwise each piece is pinned
+  // o.headless: the Hold engine's fill (charm-nest-order-hold.js): the same move, nothing drawn, for the sheet it is given
   async function moveIn(k, spots, target, who, o = {}) {
-    const rid = k.rid, ids = new Set(spots.map(s => s.c.poolId)), sheetId = W.id;
+    const rid = k.rid, ids = new Set(spots.map(s => s.c.poolId)), ui = !o.headless, sheetId = ui ? W.id : target.sheetId;
     const srcs = [...new Set(spots.map(s => s.src))], tName = sheetWord(target.sheetId, target.fileBase, target);
     const sName = sh => sheetWord(sh.sheetId, sh.fileBase, sh);
     const wait = stepOf("Waiting for the sheets to finish their current step");
@@ -3939,8 +3943,8 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     if (!work) return false;
     const all = [target, ...srcs];
     if (!all.some(busy)) work.steps.shift();
-    W.fill = null; renderFill(); renderWork();
-    const paint = () => { if (W.dlg.open && W.work === work) renderWork(); };
+    if (ui) { W.fill = null; renderFill(); renderWork(); }
+    const paint = () => { if (W.dlg && W.dlg.open && W.work === work) renderWork(); };
     const moved = [];
     let stage = "start";
     journal(rid, { rid, ids: [...ids], from: srcs.map(s => s.sheetId || null), to: target.sheetId, by: who, at: Date.now(), stage });
@@ -4007,7 +4011,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       work.note = (ok ? "Verified: the saved sheets and piece records match. " : "") + `${srcs.map(s => esc(sName(s))).join(", ")} keep${srcs.length === 1 ? "s" : ""} filling with the next orders.`;
       paint(); endFlow(work);
       if (window.RunCtl) RunCtl.poke();
-      if (W.id === sheetId && W.dlg.open) open(sheetId, { keepWork: true, keepSet: false, glow: [...ids] }); else unland(rid);
+      if (W.dlg && W.dlg.open && W.id === sheetId) open(sheetId, { keepWork: true, keepSet: false, glow: [...ids] }); else unland(rid);
       return true;
     } catch (e) {
       unland(rid);
@@ -4019,7 +4023,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       journal(rid, null);
       work.state = "failed"; work.title = `Order ${rid} not moved`; work.note = esc(e.message) + "." + esc(back);
       paint(); endFlow(work);
-      if (W.id === sheetId && W.dlg.open) open2(sheetId);
+      if (W.dlg && W.dlg.open && W.id === sheetId) open2(sheetId);
       throw e;
     }
   }
@@ -4528,6 +4532,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
        joinSet(id, o)       the sheet of the open run joins its set with its QR label (Release as it stands, or Include for 10K / 14K);
                             o.split "all": the sheets it shares an order with join with it (the sheets of one order are always one set)
        takeOffOrder(o)      an order's pieces off its sheets with no window drawn (SharedOrders.removeFromSheet)
+       holdKit              the Hold engine's hands (OrderHold, charm-nest-order-hold.js): offPlan, takeOff, room, fill, busy, word
        remakeLabel(id)      the QR label of a sheet in its set (or of its own) made again */
   const savedSheet = async id => { const r = await api("charmNestLibrary", { op: "getSheet", id }, { quiet: true, timeoutMs: 12000 }); if (!r.sheet) throw new Error("This sheet is no longer in the Library."); return r.sheet; };
   function joinInfo(id) {
@@ -4594,7 +4599,94 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     if (!plan || (plan.kind !== "relabel" && plan.kind !== "own")) throw new Error("The QR label cannot be made from here: open the sheet and press Make QR label");
     await doLabel(plan, rec, sh, [sh], run);
   }
-  window.SheetWin = { remakeLabel, joinSet, joinInfo, takeOffOrder, open: (id, opts) => { if (W.away) comeBack(W.away, { ms: 0 }); return open(id, opts); }, close, isOpen: () => !!(W.dlg && W.dlg.open), current: () => W.id, drawOrder, cardBack, armBack, _W: W };
+  /* ── Hold, the whole order (charm-nest-order-hold.js; Paul, 5 Oct): this window's own Take off and Fill the freed room, with no
+     window drawn. Nothing here is new machinery: takeOff (headless, as takeOffOrder uses it) takes the pieces off, the freed
+     room is found with the same collision grid as the window's suggestions (suggest), and each order moves in with the same
+     verified, restart-safe moveIn. The engine drives them one change at a time and tells what it sees. ── */
+  const holdKit = (() => {
+    const word = sh => sheetWord(sh.sheetId, sh.fileBase, sh);
+    // a sheet the freed room can go to (the window's fillTarget, for any sheet): it still holds a piece, it is not Rose Gold (its
+    // green line decides), not cut, recalled or sent
+    const fillable = sh => !!sh && allSheets().includes(sh) && !!sh.sheetId && sh.placements.length > 0 && sh.metal !== "rose" && !sh.roseCutAt && !sh.recalled && !sh.laserDoneAt && !sentToStation(sh) && !!SV() && !!SV().makeSheetGrid;
+    // "a newer sheet": a later page of the same metal (its orders are the later ones, and it is the one still filling)
+    const newer = (src, target) => src.metal === target.metal && (+src.page || 0) > (+target.page || 0);
+    // the orders that can fill a spot, in line: the ones waiting (nothing of them placed) first, oldest first, then an order from a
+    // newer sheet still filling (movableFrom keeps cut, recalled, sent, released and held-in-a-set sheets out), oldest first
+    function candidates(target, skip, avoid) {
+      // (avoid: sheets the Hold still has to take pieces off: nothing is taken from them, so they never end up holding one order)
+      const all = candidatesFor(target).filter(k => !skip.has(k.rid) && ![...k.srcs].some(src => avoid.has(src.sheetId)));
+      return all.filter(k => k.waiting).map(k => Object.assign(k, { source: "waiting" }))
+        .concat(all.filter(k => !k.waiting && [...k.srcs].every(src => newer(src, target))).map(k => Object.assign(k, { source: "newerSheet" })));
+    }
+    // the spots pieces leave, as the window keeps them for a sheet (FREED); `without` draws them from the pieces still on it
+    function ghostsOf(target, without) {
+      const out = [];
+      for (const c of target.charms) {
+        if (!without.has(c.poolId)) continue;
+        const p = target.placements.find(q => q.id === c.id); if (!p) continue;
+        out.push({ x: { id: c.id, c, gone: true, p: { cxPt: p.cxPt, cyPt: p.cyPt, angle: p.angle || 0, scale: p.scale || 1, wPt: p.wPt || c.widthPt || 20, hPt: p.hPt || c.heightPt || 20 } }, rid: ridOf(c), sku: c.sku || c.name, at: Date.now(), t0: 0 });
+      }
+      return out;
+    }
+    /** The orders that fill the freed room of one sheet, planned like the window's suggestions (suggest), headless.
+     *  o.without: poolIds not off the sheet yet (planned as if they were); o.skip: orders never taken in; o.budgetMs; o.stop() */
+    async function room(target, o = {}) {
+      const empty = { list: [], spots: 0, filled: 0 };
+      if (!SV() || !SV().makeSheetGrid) return empty;
+      const without = o.without && o.without.size ? o.without : null, skip = new Set((o.skip || []).map(String));
+      const virt = !without ? target : Object.assign({}, target, { charms: target.charms.filter(c => !without.has(c.poolId)), placements: target.placements.filter(p => { const c = target.charms.find(z => z.id === p.id); return c && !without.has(c.poolId); }) });
+      const all = o.ghosts || (without ? ghostsOf(target, without) : (FREED.get(target.sheetId) || []));
+      if (!all.length) return empty;
+      const G = plateGrid(virt), ghosts = all.filter(g => { const f = takenOf(g, G, virt); return f == null || f < TAKEN; }), boxes = roomBoxes(ghosts);
+      if (!ghosts.length) return empty;
+      const cands = candidates(target, skip, new Set(o.avoid || []));
+      if (!cands.length) return { list: [], spots: ghosts.length, filled: 0 };
+      let last = performance.now();
+      const breathe = async () => { if (performance.now() - last > 12) { await pause(0); last = performance.now(); } if (o.stop && o.stop()) throw new Error("stale"); };
+      const area = b => (b.x1 - b.x0) * (b.y1 - b.y0), t0 = performance.now(), budget = o.budgetMs || 12000;
+      const open = new Set(boxes.map(b => b.i)), planned = new Set(), list = [];
+      let grid = G.grid;
+      for (const k of cands) {
+        if (!open.size || list.length >= 40 || performance.now() - t0 > budget) break;
+        const rest = boxes.filter(b => open.has(b.i));
+        if (k.area > rest.reduce((n, b) => n + area(b), 0) * 1.6) continue;
+        // a saved sheet is never emptied by a move, counting the orders planned before this one
+        if ([...k.srcs].some(src => src.sheetId && src.placements.length && src.placements.every(p => planned.has(p.id) || k.pieces.some(z => z.src === src && z.c.id === p.id)))) continue;
+        const got = await fitOrder(k, Object.assign({}, G, { grid }), rest, breathe);
+        if (!got) continue;
+        grid = got.grid; for (const s of got.spots) planned.add(s.c.id);
+        const Gn = Object.assign({}, G, { grid });
+        for (const b of rest) { const f = takenOf(ghosts[b.i], Gn, null); if (f == null ? got.spots.some(s => s.bi === b.i) : f >= TAKEN) open.delete(b.i); }
+        list.push({ k, spots: got.spots, source: k.source });
+      }
+      return { list, spots: ghosts.length, filled: ghosts.length - open.size };
+    }
+    /** The planned orders go in one after another into the freed room of a sheet, each its own verified move (moveIn). A move
+     *  that does not go through stops the rest (they stay where they are). hooks: from(item), placed(item), skipped(item, error). */
+    async function fill(target, who, hooks = {}) {
+      const p = await room(target, { skip: hooks.skip, avoid: hooks.avoid, stop: hooks.stop, budgetMs: hooks.budgetMs });
+      const placed = [];
+      for (const item of p.list) {
+        if (!fillable(target)) break;
+        if (hooks.from) hooks.from(item);
+        let ok = false, err = null;
+        try { ok = await moveIn(item.k, item.spots, target, who, { headless: true }); } catch (e) { err = e; }
+        if (!ok) { if (hooks.skipped) hooks.skipped(item, err || new Error("another change is running")); break; }
+        placed.push(item); if (hooks.placed) hooks.placed(item);
+      }
+      return { planned: p.list.length, placed: placed.length, spots: p.spots, filled: p.filled };
+    }
+    return {
+      busy: () => !!W.flow, word, fillable, room, fill, ghostsOf, newer, flow: () => (W.flow ? W.flow.title : ""),
+      // what becomes of the whole order: the pieces that come off (ok, each with its sheet) and those that stay (stay, with a kind:
+      // cut · sent · unloaded · last · together). The window's pool cache for the order is dropped first: it is only a cache.
+      offPlan: rid => { W.pools.delete(String(rid)); return offPlan({ rid: String(rid) }, true); },
+      // the pieces off, headless, one change at a time (as the shared-orders window's Take off does)
+      takeOff: (plan, who, note) => takeOff(plan, { then: "hold", note: note || "", headless: true }, who),
+      freed: sheetId => (FREED.get(sheetId) || []).length,
+    };
+  })();
+  window.SheetWin = { remakeLabel, joinSet, joinInfo, takeOffOrder, holdKit, open: (id, opts) => { if (W.away) comeBack(W.away, { ms: 0 }); return open(id, opts); }, close, isOpen: () => !!(W.dlg && W.dlg.open), current: () => W.id, drawOrder, cardBack, armBack, _W: W };
 })();
 
 /* Charm Nest · the Library turned over (Paul, 28 Sep 21:22: "add the back engraving view … to all places where a sheet is
