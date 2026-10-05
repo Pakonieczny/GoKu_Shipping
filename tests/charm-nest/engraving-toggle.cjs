@@ -117,6 +117,13 @@ async function page() {
       return { attr: shelf.getAttribute('data-eng'), h: Math.round(r.height), vis: getComputedStyle(shelf).visibility, thumbs: shelf.querySelectorAll('.backPieces figure').length, thumbH: tr ? Math.round(tr.height) : 0,
         control: !host.hidden && !!btn && host.getBoundingClientRect().width > 0, expanded: btn && btn.getAttribute('aria-expanded'), pressed: btn && btn.getAttribute('aria-pressed'), count: btn && btn.textContent.trim(), controlsH: card.querySelector('.shControls').getBoundingClientRect().height };
     }, metal);
+    // choose a sheet of a card as a person does: its tab, or (the sheets are one pill now) the pill and then the sheet in its menu
+    const pickSheet = async (pg, metal, i) => {
+      const tab = `.sheetCard[data-m="${metal}"] .shTabs button[data-i="${i}"]`;
+      if (await pg.$(tab)) return pg.click(tab);
+      await pg.click(`.sheetCard[data-m="${metal}"] .shTabs button.shmBtn`); await pg.click(`.shmPanel .shmRow >> nth=${i}`);
+      await pg.waitForFunction(() => !document.querySelector('.shmPanel'));
+    };
     let pressHits = 0;   // picture requests made while a press (or a key) was being handled and its shelf eased: there must be none
     const counted = async fn => { const b = backHits; await fn(); await tick(120); pressHits += backHits - b; };
     const press = (pg, metal) => counted(() => pg.click(`.sheetCard[data-m="${metal}"] [data-r="eng"] button`));
@@ -150,10 +157,10 @@ async function page() {
     a = await look(pg, 'gold14k'); assert.equal(a.attr, 'open'); assert(a.h > 20); assert.equal(a.expanded, 'true'); assert.equal(a.count, '3');
     s = await look(pg, 'silver'); assert.equal(s.attr, 'closed');
     // 4 · the tabs: sheet 2 of the same card is its own sheet (collapsed), and sheet 1 is still open when it comes back
-    await pg.click('.sheetCard[data-m="gold14k"] .shTabs button[data-i="1"]'); await tick(150);
+    await pickSheet(pg, 'gold14k', 1); await tick(150);
     a = await look(pg, 'gold14k'); assert.equal(a.count, '2'); assert.equal(a.attr, 'closed', 'sheet 2 has its own state: collapsed'); assert.equal(a.h, 0); assert.equal(a.expanded, 'false');
     await press(pg, 'gold14k'); await settle(pg); a = await look(pg, 'gold14k'); assert.equal(a.attr, 'open'); assert(a.h > 20);
-    await pg.click('.sheetCard[data-m="gold14k"] .shTabs button[data-i="0"]'); await tick(150);
+    await pickSheet(pg, 'gold14k', 0); await tick(150);
     a = await look(pg, 'gold14k'); assert.equal(a.count, '3'); assert.equal(a.attr, 'open', 'sheet 1 kept its choice across the tab round trip');
     // 5 · press again: hidden; the keyboard does the same
     await press(pg, 'gold14k'); await settle(pg); a = await look(pg, 'gold14k'); assert.equal(a.attr, 'closed'); assert.equal(a.h, 0); assert.equal(a.expanded, 'false');

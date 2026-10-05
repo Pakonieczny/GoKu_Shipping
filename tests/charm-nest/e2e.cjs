@@ -115,7 +115,7 @@ const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/jav
     console.log('partial allowed:', result.status, result.rejects, 'rejects');
     // overflow: what did not fit moved to sheet 2 of the same metal, which nests on its own and shows in a tab
     await page.waitForFunction(() => CN.S.sheets.gold.pages.length >= 2 && ['complete', 'partial'].includes(CN.S.sheets.gold.pages[1].status), null, { timeout: 600000 });
-    const ov = await page.evaluate(() => { const p = CN.S.sheets.gold; const p2 = p.pages[1]; return { pages: p.pages.length, moved: p.movedOn && p.movedOn.n, rejects1: p.rejects.length, status1: p.status, charms2: p2.charms.length, placed2: p2.placements.length, status2: p2.status, tabs: document.querySelectorAll('.sheetCard[data-m=gold] .shTabs button').length, total: p.pages.reduce((n, x) => n + x.charms.length, 0) }; });
+    const ov = await page.evaluate(() => { const p = CN.S.sheets.gold; const p2 = p.pages[1]; return { pages: p.pages.length, moved: p.movedOn && p.movedOn.n, rejects1: p.rejects.length, status1: p.status, charms2: p2.charms.length, placed2: p2.placements.length, status2: p2.status, tabs: (t => +t.dataset.sheets || t.querySelectorAll('button').length)(document.querySelector('.sheetCard[data-m=gold] .shTabs')), total: p.pages.reduce((n, x) => n + x.charms.length, 0) }; });
     console.log('overflow', JSON.stringify(ov));
     // overflow may chain (sheet 2 can overflow into sheet 3): what left sheet 1 equals what the later sheets hold
     const later = await page.evaluate(() => CN.S.sheets.gold.pages.slice(1).reduce((n, x) => n + x.charms.length, 0));
