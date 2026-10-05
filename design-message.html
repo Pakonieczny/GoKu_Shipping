@@ -2580,6 +2580,12 @@ function metalToBadge(label){
             StationActivity.log("scan", { orderId: orderNumber, parts: txs.reduce((n, t) => n + (Number(t && t.quantity) || 1), 0),
               detail: e.stationHow === "scan" ? "phone scan" : e.stationHow === "paste" ? "pasted" : "typed" });
             if (!orderData || orderData.error) StationActivity.log("error", { orderId: orderNumber, detail: "order lookup failed" });   // Etsy has no answer: the scan stands, the failure is shown too
+            /* the live stations board: this order is in hand from the scan until the next scan, a sign-out or ten quiet minutes
+               (nothing here completes an order). Best effort through station-live-order.js; never throws or waits. */
+            try {
+              const L = window.StationLiveOrder;
+              if (L) { if (orderData && !orderData.error) L.start(orderNumber, txs, { note: e.stationHow === "scan" ? "phone scan" : "", holdMs: 600000 }); else L.end(); }
+            } catch (_) {}
           }
         } catch (_) {}
         await loadShipToAddress(orderNumber);
@@ -7158,7 +7164,9 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
 
 <!-- Sign-in time per person and computer, and the midnight sign-out (New York time) -->
 <script src="station-session.js?v=20261002-ea1"></script>
-<script src="station-activity.js?v=20261002-ea1"></script>
+<script src="station-activity.js?v=20261005-live1"></script>
+<!-- The order in hand right now (opened here = working), for the console's live stations board (station-live-order.js). Optional: without it nothing changes. -->
+<script src="station-live-order.js?v=20261005-lo1"></script>
 <!-- Phone scans that arrive while nobody is signed in wait here and load, in order, right after the next sign-in (station-scan-queue.js). -->
 <script src="station-scan-queue.js?v=20261003-sq1"></script>
 <script>
