@@ -105,7 +105,7 @@ const K = [key(R3, 1), key(R3, 2), key(R3, 3)], KS = key(R1, 1);
 
     // ═══ 1 · the order of three pieces, all shown ═══
     await openWin(K[0]); await waitRows(3);
-    await page.waitForFunction(() => document.querySelector('#owRail [data-stage="laser"] .tlCnt:not([hidden])'), null, { timeout: 15000 });
+    await page.waitForFunction(() => document.querySelectorAll('#owRail [data-stage]').length >= 6 && document.querySelector('#owRail [data-stage="sheet"] .tlCnt:not([hidden])'), null, { timeout: 15000 });
     await settled();
     check((await chipRow()).length === 0, 'no chip row: no #owPieceSw, no "All 6 pieces" button, no .owPieceSw / .owPcThumb CSS anywhere: ' + JSON.stringify(await chipRow()));
     let R = await rowsOf();

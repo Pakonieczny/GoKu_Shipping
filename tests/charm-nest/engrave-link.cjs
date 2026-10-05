@@ -109,14 +109,14 @@ async function main() {
     await reset();
     await redBox(B, 0); await lands(B, 0, 'place', 'red box, piece 1 of 3');
     await reset();
-    // the same order, the piece chosen in the window's own switcher (the Overview follows it), then the box
+    // the same order, the piece chosen on the window's Its pieces list (the Overview follows it), then the box
     await page.evaluate(k => OrderWin.open(k), keyOf(B, 0));
-    await page.waitForSelector('#owPieceSw [data-piece]', { timeout: 15000 });
-    await page.click(`#owPieceSw [data-piece="${keyOf(B, 1)}"]`);
+    await page.waitForSelector('#owPcSum .owPcRow[data-piece]', { timeout: 15000 });
+    await page.click(`#owPcSum .owPcRow[data-piece="${keyOf(B, 1)}"] .dot`);
     await page.waitForFunction(k => OrderWin.key() === k, keyOf(B, 1));
     await page.waitForSelector('#owFix .owFix button');
     await page.click('#owFix .owFix button');
-    await lands(B, 1, 'place', 'red box after choosing piece 2 in the switcher');
+    await lands(B, 1, 'place', 'red box after choosing piece 2 on the pieces list');
     await reset();
 
     // ── 2 · the Sheet tab's shortcut ──

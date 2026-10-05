@@ -88,8 +88,8 @@ const WORDS = { [key(R1, 2)]: 'I\ndissent', [key(R1, 3)]: 'KMB //\nSMH', [key(R2
     });
     const open = async (k, extra) => { await page.evaluate(k => OrderWin.open(k), k); await page.waitForFunction(k => OrderWin.isOpen() && OrderWin.key() === k && !document.querySelector('#orderWin').getAnimations({ subtree: true }).some(a => a.playState === 'running' && a.effect && a.effect.getTiming().iterations !== Infinity), k, { timeout: 15000 }); };
     const settled = () => page.waitForFunction(() => !document.getElementById('orderWin').getAnimations({ subtree: true }).some(a => a.playState === 'running' && a.effect && a.effect.getTiming().iterations !== Infinity), null, { timeout: 15000 });
-    const pick = async n => { await page.click(`#owPieceSw button:nth-of-type(${n})`); };
-    const k = { c: key(R1, 1), g: key(R1, 2), r: key(R1, 3) };
+    const pick = async n => { await page.evaluate(i => OrderWin.selectPiece(i === 1 ? null : [window.__k.c, window.__k.g, window.__k.r][i - 2]), n); };   // (1: all pieces, then each piece: the Its pieces list's own switch)
+    const k = { c: key(R1, 1), g: key(R1, 2), r: key(R1, 3) }; await page.evaluate(k => { window.__k = k; }, k);
 
     // 1 · the Overview of the RG middle (piece 3 of 3): the card sits under the pictures and the SKU, and is image 3
     await open(k.r);
