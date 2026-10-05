@@ -64,6 +64,24 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     await page.waitForFunction(() => document.querySelector("#efficiencyView .es .esCard[data-rid=\"3521000900\"]") === null, null, { timeout: 12000 });
     console.log('  ✓ Stations tab: every station, one card per person, one picture per piece; one shared live read; follows the answer');
 
+    /* the live layer's own shape (E2): a laser sheet with a title and no QR, the name of the page, a piece count above the pieces listed; a click on the person goes to their page */
+    fx.setLiveHook((j) => {
+      const w = j.stations.find(s => s.key === 'welding'); w.current[0].deviceLabel = 'Welding 2'; w.current[0].id = 'welding__weld-2__Giovanna'; w.current[0].pieceCount = 5;
+      j.stations.push({ key: 'laser', label: 'Laser', state: 'working', people: ['Zoe'], devices: [{ device: 'laser-1', label: 'Laser 1', state: 'working', person: 'Zoe', since: Date.now() - 3600000 }], lastEventAt: Date.now() - 9000, counts: { partsToday: 3, ordersToday: 1, scansToday: 4 },
+        current: [{ id: 'laser__laser-1__Zoe', person: 'Zoe', device: 'laser-1', deviceLabel: 'Laser 1', kind: 'sheet', rid: '', orderNumber: '', customer: '', title: 'GF Sheet 9', scannedAt: Date.now() - 65000, beatAt: Date.now() - 4000, qr: null, pieces: [], pieceCount: 0, thumbUrl: '' }] });
+      j.signedIn.push({ name: 'Zoe', stationKey: 'laser', since: Date.now() - 3600000, lastSeenAt: Date.now() - 4000 }); return j;
+    });
+    await page.waitForSelector(`${V} .es .esSt[data-key=laser] .esCard[data-kind=sheet]`, { timeout: 8000 });
+    const sh = await page.$eval(`${V} .es .esSt[data-key=laser] .esCard`, c => ({ oid: c.querySelector('.esOid').textContent, qr: c.querySelector('.esQr').getClientRects().length, tl: c.querySelector('.esTl').textContent, who: c.querySelector('.esWho').innerText.replace(/\s+/g, ' ') }));
+    assert.deepEqual([sh.oid, sh.qr, sh.tl], ['GF Sheet 9', 0, 'since started'], 'a laser sheet on the board: its title, no QR'); assert(/Zoe/.test(sh.who) && /Laser 1/.test(sh.who), sh.who);
+    await page.waitForFunction(() => { const r = document.querySelector('#efficiencyView .es .esSt[data-key=welding]'); return r && r.querySelectorAll('.esCard').length === 1; }, null, { timeout: 8000 });   // (the card got its server id: the first one is told it is done and goes)
+    assert.equal(await page.$eval(`${V} .es .esSt[data-key=welding] .esCard .esSn`, e => e.textContent), 'Welding 2', 'the page of the station, when it has its own name');
+    assert.equal(await page.$eval(`${V} .es .esSt[data-key=welding] .esPieces .esMore`, e => e.textContent), '+2', '5 pieces, 3 pictured: the rest counted');
+    await page.click(`${V} .es .esSt[data-key=laser] .esWho`);   // (the person's name opens the person's page, as in the rest of the console)
+    await page.waitForFunction(() => /^#efficiency\/person\/Zoe/.test(location.hash), null, { timeout: 4000 });
+    fx.setLiveHook(null); await page.evaluate(() => Efficiency.go('stations')); await page.waitForSelector(`${V} .es .esSt`, { timeout: 8000 });
+    console.log('  ✓ the live layer\'s shape: a laser sheet card, the page name, the piece count; a person opens their page');
+
     /* the Real | Sandbox switch: the board is rebuilt from the other store */
     await page.click(`${V} .efView button[data-view="sandbox"]`);
     await page.waitForFunction(() => { const r = document.querySelectorAll('#efficiencyView .esSt'); return r.length === 1 && r[0].dataset.key === 'sorter'; }, null, { timeout: 10000 });

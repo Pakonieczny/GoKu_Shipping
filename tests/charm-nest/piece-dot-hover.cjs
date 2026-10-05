@@ -573,28 +573,28 @@ async function fullApp(browser, mutant = null) {   // (mutant: { from, to }: the
     assert.deepEqual(seenCalls.slice(hoverPhase).filter(u => /etsy/i.test(u)), [], 'opening the list and hovering every dot made no Etsy call');
     assert.deepEqual(seenCalls.slice(hoverPhase).filter(u => !/^\/\.netlify\/functions\//.test(u)), [], 'nor any call that left this machine');
     // ── the press on each dot, by mouse, keyboard and touch: the REAL order window opens with exactly that piece selected ──
-    const ui = () => page.evaluate(() => { const sc = OrderWin._scope(), on = document.querySelector('#owPieceSw button.on'); return { open: OrderWin.isOpen(), rid: OrderWin.rid(), key: OrderWin.key(), piece: sc && sc.piece, chip: on ? on.dataset.piece : null, chipText: on ? on.textContent.trim().slice(0, 40) : '', chips: [...document.querySelectorAll('#owPieceSw button')].map(b => b.dataset.piece), handed: !!document.querySelector('.lisPanel.handed') }; });
+    const ui = () => page.evaluate(() => { const sc = OrderWin._scope(), on = document.querySelector('#owPcSum .owPcRow.sel'); return { open: OrderWin.isOpen(), rid: OrderWin.rid(), key: OrderWin.key(), piece: sc && sc.piece, chip: on ? on.dataset.piece : '', chipText: on ? on.querySelector('.owPcName').textContent.trim().slice(0, 40) : '', chips: ['', ...[...document.querySelectorAll('#owPcSum .owPcRow[data-piece]')].map(b => b.dataset.piece)], chipRow: !!document.getElementById('owPieceSw'), handed: !!document.querySelector('.lisPanel.handed') }; });
     let n = 0;
     for (const mode of ['mouse', 'enter', 'touch']) for (const rid of [O3.rid, Q2.rid]) for (const [i, [pool, line]] of want[rid].entries()) {
       await page.$eval(dotSel(rid, i + 1), e => e.scrollIntoView({ block: 'nearest' })); const c = await centreOf(page, dotSel(rid, i + 1));
       if (mode === 'mouse') { await page.mouse.move(c.x, c.y); await page.mouse.down(); await page.mouse.up(); } else if (mode === 'touch') await page.touchscreen.tap(c.x, c.y); else { await page.evaluate(s => document.querySelector(s).focus(), dotSel(rid, i + 1)); await page.keyboard.press('Enter'); }
-      await page.waitForFunction(r => OrderWin.isOpen() && OrderWin.rid() === r && OrderWin._scope() && document.querySelector('#owPieceSw button.on'), rid, { timeout: 15000 });
+      await page.waitForFunction(r => OrderWin.isOpen() && OrderWin.rid() === r && OrderWin._scope() && document.querySelector('#owPcSum .owPcRow.sel'), rid, { timeout: 15000 });
       const u = await ui(); n++;
       assert.equal(u.rid, rid, `${mode}: the order window shows order ${rid}`); assert.equal(u.key, line, `${mode} ${rid}#${i + 1}: the window is on that piece's line`);
-      assert.equal(u.piece, line, `${mode} ${rid}#${i + 1}: the piece switcher's scope is exactly that piece (${pool})`); assert.equal(u.chip, line, `${mode} ${rid}#${i + 1}: the selected chip is that piece's (${u.chipText})`);
+      assert.equal(u.piece, line, `${mode} ${rid}#${i + 1}: the pieces list's scope is exactly that piece (${pool})`); assert.equal(u.chip, line, `${mode} ${rid}#${i + 1}: the selected row is that piece's (${u.chipText})`); assert.equal(u.chipRow, false, 'no chip row');
       assert(u.handed, `${mode}: the issues panel stepped aside`);
-      if (rid === O3.rid) assert.deepEqual(u.chips, ['', ...[0, 1, 2, 3, 4].map(k => lkey(O3, k))], 'all five pieces are in the switcher, and "All pieces"');
+      if (rid === O3.rid) assert.deepEqual(u.chips, ['', ...[0, 1, 2, 3, 4].map(k => lkey(O3, k))], 'all five pieces are rows of the pieces list');
       if (n === 2 || (mode === 'mouse' && rid === Q2.rid && i === 2)) await shot2(page, `full-app-order-${mode}-${rid}-${i + 1}`);
       await closeOrder();
     }
     // a press on the row outside the dots: the order opens as before, on "All pieces"
     { const sel = `.lisRow[data-issue-order="${O3.rid}"] .lisWho b`, c = await centreOf(page, sel); await page.mouse.click(c.x, c.y);
-      await page.waitForFunction(r => OrderWin.isOpen() && OrderWin.rid() === r, O3.rid, { timeout: 15000 }); const u = await ui(); assert.equal(u.piece, null, 'a press on the row opens "All pieces"'); assert.equal(u.chip, '', 'the "All pieces" chip is selected'); await closeOrder(); }
+      await page.waitForFunction(r => OrderWin.isOpen() && OrderWin.rid() === r, O3.rid, { timeout: 15000 }); const u = await ui(); assert.equal(u.piece, null, 'a press on the row opens "All pieces"'); assert.equal(u.chip, '', 'no piece row is selected: all pieces'); await closeOrder(); }
     // from a dialog (the shared-orders modal's kind): the real hand-off: the dialog gives way, the order opens on that piece, and the dialog is back when the order closes
     await page.keyboard.press('Escape'); await sleep(450);
     await page.evaluate(({ O3 }) => { const d = document.createElement('dialog'); d.id = 'srcDlg'; d.style.cssText = 'padding:26px;border:1px solid #d8d0c0;border-radius:14px;width:300px;height:160px'; d.innerHTML = '<div data-pd-scope>' + PieceDots.html([{ ring: false, metal: 'rose', pool: O3.p0, line: O3.l0, n: 1 }, { ring: true, metal: 'rose', pool: O3.p1, line: O3.l1, n: 2 }], { order: O3.rid, sheetMetal: 'rose' }) + '</div>'; document.body.appendChild(d); d.showModal(); }, { O3: { rid: O3.rid, p0: pid(O3, 0), l0: lkey(O3, 0), p1: pid(O3, 1), l1: lkey(O3, 1) } });
     { const c = await centreOf(page, '#srcDlg .pdot:nth-child(2)'); await page.mouse.click(c.x, c.y);
-      await page.waitForFunction(r => OrderWin.isOpen() && OrderWin.rid() === r && OrderWin._scope() && document.querySelector('#owPieceSw button.on'), O3.rid, { timeout: 15000 }); const u = await ui(); assert.equal(u.chip, lkey(O3, 1), 'a dot in a dialog opens the order on that piece too');
+      await page.waitForFunction(r => OrderWin.isOpen() && OrderWin.rid() === r && OrderWin._scope() && document.querySelector('#owPcSum .owPcRow.sel'), O3.rid, { timeout: 15000 }); const u = await ui(); assert.equal(u.chip, lkey(O3, 1), 'a dot in a dialog opens the order on that piece too');
       await page.keyboard.press('Escape'); await page.waitForFunction(() => !OrderWin.isOpen(), null, { timeout: 8000 }); await sleep(900);
       assert.equal(await page.evaluate(() => { const d = document.getElementById('srcDlg'); return !!d && d.open && d.style.opacity !== '0'; }), true, 'closing the order window returns to the dialog it came from'); await page.evaluate(() => { const d = document.getElementById('srcDlg'); d.close(); d.remove(); }); }
     console.log(`    full app: ${n} presses (mouse, keyboard, touch) opened the real order window on exactly their own piece`);
