@@ -11936,7 +11936,7 @@ const OrderWin = window.OrderWin = (() => {
     const fix = p ? reviewItemOf(p.key) : null;
     const icon = `<svg class="owNoneIcon" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="6" y="9" width="36" height="30" rx="5" stroke-dasharray="3.2 4.2"/><path d="M17 27c0-4 3-7 7-7s7 3 7 7-3 6-7 6-7-2-7-6z" opacity=".5"/></svg>`;
     // a piece completed by hand needs no sheet: it is resolved, not waiting for one
-    if (p && p.hand) return icon + `<b>Completed by hand</b><span class="owNoneWhy">${esc("It needs no sheet.")}</span>` + (p && sc.multi ? `<span class="owNonePc"><i style="--c:${esc(colorOf(p.metal))}"></i>${esc(p.name)}</span>` : "") +
+    if (p && p.hand) return icon + `<b>Completed by hand</b>${handSealOf(handOfRow(p.row), p.key)}<span class="owNoneWhy">${esc("It needs no sheet.")}</span>` + (p && sc.multi ? `<span class="owNonePc"><i style="--c:${esc(colorOf(p.metal))}"></i>${esc(p.name)}</span>` : "") +
       (fix ? `<button type="button" class="btn ghost sm" data-none-fix="${esc(p.key)}">Open in Review <span aria-hidden="true">›</span></button>` : "");
     return icon + `<b>Not on a sheet yet</b><span class="owNoneWhy">${esc(why || (String(st[1] || "").replace(/^\d\/\d\s+/, "") || "It waits for its turn") + " — its pieces are drawn here once they are placed on a sheet.")}</span>` +
       (p && sc.multi ? `<span class="owNonePc"><i style="--c:${esc(colorOf(p.metal))}"></i>${esc(p.name)}</span>` : "") +
@@ -11958,6 +11958,9 @@ const OrderWin = window.OrderWin = (() => {
    *  rule every screen and the server read). It needs no sheet: never "not on a sheet yet". Reopen takes it back. */
   const handOfRow = x => { try { return window.CharmNestReadiness && window.CharmNestReadiness.handOf ? window.CharmNestReadiness.handOf(x) : null; } catch (_) { return null; } };
   const HAND_WHY = "it was completed by hand and needs no sheet";
+  /** The small seal of a piece completed by hand (its record, the piece's line key): the press that completed it and "+N" for the rest, Seal.compact, the very
+   *  component of the one-line bar; the order's timeline fills in a completion the record does not carry. "" when nothing was recorded (no seal is made up). */
+  const handSealOf = (rec, lineKey) => { try { return window.Seal && Seal.compact ? Seal.compact(rec || null, { lineKey, events: W.events || null }) : ""; } catch (_) { return ""; } };
   /** Why a line is on no sheet, in a few plain words. */
   function pieceWhy(x) {
     const sp = x.spec || {}, pb = (x.problems || [])[0] || null, kind = pb && pb.kind, st = x.state, sku = String(sp.designSku || (x.line && x.line.sku) || "").trim();
@@ -12200,7 +12203,7 @@ const OrderWin = window.OrderWin = (() => {
     const mineBy = new Map(mine.map(x => [x.poolId || x.id, x]));
     for (const p of OP && OP.of ? OP.of(rid) : []) if (!p.gone) {
       const x = mineBy.get(p.poolId) || null;
-      add(p.poolId, { poolId: p.poolId, sku: (x && x.sku) || p.sku, copy: p.copy, qty: p.qty, here: !!x || !!(cur && cur.id && p.sheetId === cur.id), piece: x, nested: p.nested, loading: p.loading, hand: !!p.hand, sheetId: p.sheetId, metal: p.metal, n: p.sheetNo, label: p.sheetLabel, reason: p.reason });
+      add(p.poolId, { poolId: p.poolId, sku: (x && x.sku) || p.sku, copy: p.copy, qty: p.qty, here: !!x || !!(cur && cur.id && p.sheetId === cur.id), piece: x, nested: p.nested, loading: p.loading, hand: p.hand || null, lineKey: p.lineKey || "", sheetId: p.sheetId, metal: p.metal, n: p.sheetNo, label: p.sheetLabel, reason: p.reason });
     }
     for (const x of mine) if (!items.has(x.poolId || x.id)) add(x.poolId || x.id, { poolId: x.poolId, sku: x.sku, copy: x.copy, qty: x.qty, here: true, nested: true, piece: x });
     if (!OP) for (const x of linesOf(r)) for (const pid of x.poolIds || []) if (!items.has(pid)) add(pid, { poolId: pid, sku: (x.spec && x.spec.designSku) || x.line.sku, copy: +pid.split("_").pop() || 1, qty: (x.spec && x.spec.quantity) || x.line.quantity });
@@ -12216,7 +12219,7 @@ const OrderWin = window.OrderWin = (() => {
     const vis = list.map((s, i) => i).filter(i => SCOPE.ok(i));   // (the sheets of the piece shown, or of all of them: never another piece's)
     // (a sheet's own tab names it, so a piece and its tab always say the same; nothing is said while its sheets are still being found)
     const tabOf = it => it.sheetId ? list.find(s => s.id === it.sheetId) : null;
-    const where = it => it.here ? `<em style="--c:var(--gold2)">this sheet</em>` : it.nested ? `<em style="--c:${esc(colorOf((tabOf(it) || it).metal))}">${esc(tabOf(it) ? sheetName(tabOf(it)) : it.label || "on a sheet")}</em>` : it.hand ? `<em title="a person completed it by hand: it needs no sheet">completed by hand</em>` : it.loading || !SV.list ? `<em></em>` : `<em>not on a sheet yet</em>`;
+    const where = it => it.here ? `<em style="--c:var(--gold2)">this sheet</em>` : it.nested ? `<em style="--c:${esc(colorOf((tabOf(it) || it).metal))}">${esc(tabOf(it) ? sheetName(tabOf(it)) : it.label || "on a sheet")}</em>` : it.hand ? `<em><span title="a person completed it by hand: it needs no sheet">completed by hand</span>${handSealOf(it.hand, it.lineKey)}</em>` : it.loading || !SV.list ? `<em></em>` : `<em>not on a sheet yet</em>`;
     panel.innerHTML =
       (vis.length ? `<section><div class="owSheetFindRow"><span class="fLabel">Sheet</span><label class="cnOrderFind"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="m10.5 10.5 3 3"/></svg><input id="owSheetOrderFind" type="search" inputmode="numeric" placeholder="Order # on sheet" aria-label="Search order numbers on this sheet" aria-controls="owSheetMatches" autocomplete="off" spellcheck="false"></label></div><div class="owShTabs">${vis.map(i => `<button type="button" data-at="${i}" class="${i === SV.at ? "on" : ""}" style="--c:${esc(colorOf(list[i].metal))}"><i></i>${esc(sheetName(list[i]))}</button>`).join("")}</div>${facts ? `<div class="sub" style="margin-top:8px">${esc(facts)}</div>` : ""}</section>` : "") +
       `<div class="owSheetMatches" id="owSheetMatches" role="list" aria-live="polite" hidden></div>` +
