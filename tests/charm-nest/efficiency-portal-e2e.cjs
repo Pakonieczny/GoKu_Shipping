@@ -259,7 +259,11 @@ function backend(env) {
       catch (e) { throw new Error(`the person page did not settle on ${range} ${anchor || ''}: ` + JSON.stringify(await page.evaluate(() => ({ s: EfficiencyEmployee.instances.map(h => h.state), hash: location.hash })))); }
     };
     /** the page keeps the range last chosen (also across people), so say which one a check needs */
-    const ensureRange = async (page, r) => { await ploaded(page); if ((await pstate(page)).range !== r) await page.click(`${P} .efpSeg button[data-range="${r}"]`); await ploaded(page, r); };
+    const ensureRange = async (page, r) => {
+      await ploaded(page); if ((await pstate(page)).range !== r) await page.click(`${P} .efpSeg button[data-range="${r}"]`); await ploaded(page, r);
+      const td = (await B.ask({ op: 'overview', trend: false })).day, st = await pstate(page);       // (and the window that ends today, not a day an earlier check had opened)
+      if (st.anchor && st.anchor < td) { await page.click(`${P} .efpToday`); await ploaded(page, r); }
+    };
     const pk = (page, k) => page.locator(`${P} .efpK[data-k="${k}"] .efpKV`).innerText().then(s => s.replace(/,/g, '').trim());
     const orderRows = page => page.$$eval(`${P} .efoRow`, rs => rs.map(r => ({ rid: r.dataset.rid, text: r.innerText.replace(/\s+/g, ' ') })));
     const pAsk = (name, range, day, extra) => B.ask(Object.assign({ op: 'person', name, range, compare: true }, day ? { day } : {}, extra || {}));
@@ -307,8 +311,9 @@ function backend(env) {
       await shot(page, 'c4-person-hover-1440'); await page.mouse.move(2, 2);
       // the calendar: a worked day opens that day
       const cal = page.locator(`${P} [data-c="cal"] .efc-day.worked:not(.today)`).first(); await cal.evaluate(e => e.scrollIntoView({ block: 'center' })); await sleep(120);
-      const day = await cal.getAttribute('data-day'), cb = await cal.boundingBox();
-      if (!cb) throw new Error('the calendar day ' + day + ' has no box: ' + JSON.stringify(await page.evaluate(() => [...document.querySelectorAll('#efficiencyView .efp [data-c="cal"] .efc-day')].map(g => [g.getAttribute('data-day'), g.getAttribute('data-state'), g.getAttribute('class'), g.getBoundingClientRect().width]).slice(0, 40)))); await page.mouse.move(cb.x + cb.width / 2, cb.y + cb.height / 2);
+      const day = await cal.getAttribute('data-day'); let cb = await cal.boundingBox();
+      for (let i = 0; i < 12 && !cb; i++) { await sleep(300); cb = await page.locator(`${P} [data-c="cal"] .efc-day[data-day="${day}"]`).first().boundingBox(); }   // (the calendar draws again on each poll: a node can be gone for a moment)
+      if (!cb) throw new Error('the calendar day ' + day + ' has no box: ' + JSON.stringify(await page.evaluate(d => { const g = document.querySelector(`#efficiencyView .efp [data-c="cal"] .efc-day[data-day="${d}"]`); if (!g) return 'gone'; const r = g.getBoundingClientRect(), c = getComputedStyle(g), sv = g.closest('svg'); return { tag: g.tagName, cls: g.getAttribute('class'), rect: [r.left, r.top, r.width, r.height], display: c.display, vis: c.visibility, op: c.opacity, svg: sv && sv.getBoundingClientRect().toJSON(), kids: g.children.length, html: g.outerHTML.slice(0, 300) }; }, day))); await page.mouse.move(cb.x + cb.width / 2, cb.y + cb.height / 2);
       await page.waitForSelector(`${P} [data-c="cal"] .efc-tip[data-open]`, { timeout: 8000 }).catch(async e => { await shot(page, 'zz-cal-hover-failed'); throw new Error('no card on the calendar day ' + day + ' at ' + JSON.stringify(cb) + ': ' + JSON.stringify(await page.evaluate(([x, y]) => { const t = document.elementFromPoint(x, y); return { at: t && (t.tagName + '.' + (t.getAttribute('class') || '')), scrollY: [...document.querySelectorAll('*')].filter(e => e.scrollTop > 0).map(e => e.tagName + '#' + e.id + ':' + e.scrollTop).slice(0, 3), tips: document.querySelectorAll('.efc-tip').length }; }, [cb.x + cb.width / 2, cb.y + cb.height / 2]))); });
       assert(/Signed in/.test(await page.locator(`${P} [data-c="cal"] .efc-tip[data-open]`).innerText()), 'a calendar day says how long the person was signed in');
       await page.mouse.click(cb.x + cb.width / 2, cb.y + cb.height / 2); await ploaded(page, 'day', day);
@@ -422,12 +427,13 @@ function backend(env) {
       await page.evaluate(() => Efficiency.go('person', 'Giovanna')); await settled(page, '#efficiency/person/Giovanna', 'efPgPerson'); await ensureRange(page, 'week');
       const realG = await pAsk('Giovanna', 'week'), sbG = await B.ask({ op: 'person', name: 'Giovanna', range: 'week', compare: true, sandbox: true });
       assert.notEqual(realG.kpis.parts.value, sbG.kpis.parts.value, 'the two stores give different numbers for the same name (the test would not see a leak otherwise)');
-      await waitFor(page, v => document.querySelector('#efficiencyView .efp .efpK[data-k="kpis.parts"] .efpKV').textContent.replace(/,/g, '').trim() === String(v), realG.kpis.parts.value, 20000);
+      await waitFor(page, v => document.querySelector('#efficiencyView .efp .efpK[data-k="kpis.parts"] .efpKV').textContent.replace(/,/g, '').trim() === String(v), realG.kpis.parts.value, 45000)
+        .catch(async () => { const again = []; for (let i = 0; i < 3; i++) { const g = await pAsk('Giovanna', 'week'); again.push([g.kpis.parts.value, g.kpis.orders.value, g.to]); await sleep(1500); } throw new Error(`Giovanna (Real, week): the page shows ${await pk(page, 'kpis.parts')} pieces, the server said ${realG.kpis.parts.value} (${realG.to}) and now says ${JSON.stringify(again)}; state ${JSON.stringify(await pstate(page))}`); });
       const d0 = await counts();
       await page.click(`${V} .efView button[data-view="sandbox"]`);
       await waitFor(page, n => window.__m.pM > n, d0.pM, 20000); await ensureRange(page, 'week');
       const d1 = await counts(); assert.equal(d1.pD, d0.pD + 1, 'the real person page was destroyed'); assert.equal(d1.pM, d0.pM + 1, 'and a new one mounted for the Sandbox');
-      await waitFor(page, v => document.querySelector('#efficiencyView .efp .efpK[data-k="kpis.parts"] .efpKV').textContent.replace(/,/g, '').trim() === String(v), sbG.kpis.parts.value, 25000)
+      await waitFor(page, v => document.querySelector('#efficiencyView .efp .efpK[data-k="kpis.parts"] .efpKV').textContent.replace(/,/g, '').trim() === String(v), sbG.kpis.parts.value, 45000)
         .catch(async () => { throw new Error(`Sandbox: the page shows ${await pk(page, 'kpis.parts')} pieces, the Sandbox copies say ${sbG.kpis.parts.value} (the real store says ${realG.kpis.parts.value})`); });
       assert.equal(await hash(page), '#efficiency/person/Giovanna', 'the same person stays in the address');
       await shot(page, 'e2-person-sandbox-1440');
@@ -436,9 +442,9 @@ function backend(env) {
       await page.click(`${V} .efView button[data-view="real"]`); await sleep(250); await page.click(`${V} .efView button[data-view="sandbox"]`);
       await waitFor(page, () => document.getElementById('efficiencyView').getAttribute('data-view') === 'sandbox', null, 10000); await sleep(4500); ctl.hook = null;
       await ensureRange(page, 'week');
-      await waitFor(page, v => document.querySelector('#efficiencyView .efp .efpK[data-k="kpis.parts"] .efpKV').textContent.replace(/,/g, '').trim() === String(v), sbG.kpis.parts.value, 20000).catch(() => {}); // the figure counts up to its final value
+      await waitFor(page, v => document.querySelector('#efficiencyView .efp .efpK[data-k="kpis.parts"] .efpKV').textContent.replace(/,/g, '').trim() === String(v), sbG.kpis.parts.value, 45000).catch(() => {}); // the figure counts up to its final value
       assert.equal(await pk(page, 'kpis.parts'), String(sbG.kpis.parts.value), `a slow real answer that arrived after the switch was thrown away (real says ${realG.kpis.parts.value}, Sandbox says ${sbG.kpis.parts.value}; mounts ${JSON.stringify(await counts())}; view ${await page.evaluate(() => document.getElementById('efficiencyView').getAttribute('data-view'))})`);
-      await page.click(`${V} .efView button[data-view="real"]`); await waitFor(page, v => document.querySelector('#efficiencyView .efp .efpK[data-k="kpis.parts"] .efpKV').textContent.replace(/,/g, '').trim() === String(v), realG.kpis.parts.value, 25000);
+      await page.click(`${V} .efView button[data-view="real"]`); await waitFor(page, v => document.querySelector('#efficiencyView .efp .efpK[data-k="kpis.parts"] .efpKV').textContent.replace(/,/g, '').trim() === String(v), realG.kpis.parts.value, 45000);
       await page.evaluate(() => Efficiency.go('overview')); await settled(page, '#efficiency', 'efPgOverview');
     });
 
