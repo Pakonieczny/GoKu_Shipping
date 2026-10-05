@@ -481,6 +481,7 @@ async function libraryProbes(page, mode, R, variant) {
   }
   await sharedProbes(page, mode, R);
   await issuesProbes(page, mode, R, variant);
+  await librarySearchProbes(page, mode, R);
   await page.evaluate(() => CN.setMode('orders'));
 }
 
@@ -517,6 +518,28 @@ async function sharedProbes(page, mode, R) {
     const items = await ask('between', [set.id, null]), w = splitTruth(SHEETS.filter(x => x.set === set.id).map(x => x.id), set.id);
     R.eq('K1', `Set ${set.seq} kept as it is, the orders already split across sets`, Array.isArray(items) ? items.map(i => ({ rid: i.orderId, there: (i.there || []).slice().sort() })).sort((a, b) => a.rid < b.rid ? -1 : 1) : items, w, 'the orders split across sets');
   }
+}
+
+/* C3: the Library's own search for an order number: "N sheets hold order X · in M sets" (findSheets, the saved sheet records), and the set cards it keeps. */
+async function librarySearchProbes(page, mode, R) {
+  const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
+  for (const o of FIX) {
+    const sheets = [...new Set(truth.pieces(o.rid).filter(p => p.sheetId).map(p => p.sheetId))], sets = [...new Set(sheets.map(id => SHEET[id].set))];
+    await page.fill('#libSearch', o.rid); await page.press('#libSearch', 'Enter');
+    const line = await page.waitForFunction(() => { const t = (document.querySelector('.ldFound') || {}).innerText || ''; return /hold|holds|No current sheet|Could not/.test(t) && !/Looking through/.test(t) ? t.replace(/\s+/g, ' ').trim() : null; }, null, { timeout: 15000 }).then(h => h.jsonValue()).catch(() => null);
+    await sleep(500);
+    const cards = await page.evaluate(() => [...document.querySelectorAll('#libBody .setCard')].map(c => (c.querySelector('[data-set-title]')?.textContent || '').trim()));
+    if (!sheets.length) R.check('C3', `order ${o.rid} (on no sheet)`, !!line && /^No current sheet/.test(line), `the Library search says "${line}", no sheet holds the order`);
+    else {
+      const want = `${plural(sheets.length, 'sheet')} ${sheets.length === 1 ? 'holds' : 'hold'} order ${o.rid}`;
+      R.check('C3', `order ${o.rid}, the sheets it is found on`, !!line && line.startsWith(want), `the Library search says "${line}", the order is on ${plural(sheets.length, 'sheet')}`);
+      const inSets = !!line && (/ in (\d+) sets?/.exec(line) || [])[1];
+      R.check('C3', `order ${o.rid}, the sets it is found in`, +inSets === sets.length, `the Library search says it is in ${inSets || 'no'} set(s), the sheets are in ${plural(sets.length, 'set')}`);
+      for (const set of SETS.filter(x => sets.includes(x.id))) R.check('C3', `order ${o.rid}, the card of Set-${set.seq}`, cards.some(t => new RegExp(`Set-${set.seq}\\b`).test(t)), `the Library keeps no card for Set-${set.seq}, which holds a piece of the order`);
+    }
+  }
+  await page.click('.ldClear').catch(() => {});
+  await page.fill('#libSearch', ''); await page.press('#libSearch', 'Enter').catch(() => {});
 }
 
 /* C5: what the Library says holds a sheet back about its ORDERS (the '!' panel reads this: LaserReview.issuesOf), against the pieces the fixture says are on no sheet.
@@ -626,6 +649,7 @@ const SURFACES = {
   H1: 'OrderPieces · window.OrderPieces itself says what the fixture says about each piece',
   G1: 'Server · the readiness each sheet reports for its orders (laserStatus, read only)',
   C1: 'Library · the order count on each sheet of a set card (and its QR label)',
+  C3: 'Library · the Library\'s own order-number search: how many sheets and sets hold the order, and the set cards it keeps',
   C5: 'Library · the orders a sheet is held back by (a piece on no sheet, no SKU): what the "!" panel reads',
   K1: 'SharedOrders · the sheets that must stay together and the orders a move would split (the cardinal rule)',
   D1: 'Orders list · the state word of a line (nested only when every piece is on a sheet)',
