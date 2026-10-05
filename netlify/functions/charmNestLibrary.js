@@ -659,6 +659,8 @@ async function withFullBacks(d) {
 }
 // Firestore refuses a document over 1 MiB; a sheet record is refused here first, in words, before it gets there.
 const SHEET_DOC_BYTES = 900000;
+/** Documents read inside a transaction, with only the fields asked for (tx.getAll); one tx.get each where a transaction has no getAll (a test's stand-in). */
+const txGetAll = (tx, refs, fieldMask) => (typeof tx.getAll === "function" ? tx.getAll(...refs, ...(fieldMask ? [{ fieldMask }] : [])) : Promise.all(refs.map(r => tx.get(r))));
 async function op_putSheet(b) {
   const s = b.sheet || {}; if (!isId(s.id)) return { error: "bad sheet id" };
   const doc = Object.assign({}, s, { id: s.id, archived: false, updatedAt: FV.serverTimestamp() });
@@ -694,7 +696,7 @@ async function op_putSheet(b) {
     // record already lists is never in question, so a save of a sheet as it stands is never refused by this.
     if (Array.isArray(s.poolIds)) {
       const had = new Set((old.poolIds || []).map(String)), added = [...new Set(s.poolIds.map(String))].filter(id => !had.has(id) && isPoolId(id)), off = [];
-      for (let i = 0; i < added.length && i < 400; i += 100) for (const r of await tx.getAll(...added.slice(i, Math.min(added.length, i + 100)).map(id => col(POOL).doc(id)), { fieldMask: ["state", "sheetId", "heldAt", "removedAt", "heldBy", "removedBy", Placement.REPOOLED] })) if (r.exists && Placement.takenOff(r.data())) off.push(r.id);
+      for (let i = 0; i < added.length && i < 400; i += 100) for (const r of await txGetAll(tx, added.slice(i, Math.min(added.length, i + 100)).map(id => col(POOL).doc(id)), ["state", "sheetId", "heldAt", "removedAt", "heldBy", "removedBy", Placement.REPOOLED])) if (r.exists && Placement.takenOff(r.data())) off.push(r.id);
       if (off.length) return { error: `Sheet ${s.id} was not saved: it would put back ${off.length === 1 ? "piece " + off[0] : `${off.length} pieces (${off.slice(0, 3).join(", ")})`}, which ${off.length === 1 ? "was" : "were"} taken off on purpose (on hold or cancelled). Reload the page to see the sheet as it is now`, status: 409, taken: off.slice(0, 20) };
     }
     if(old.roseCutAt && (s.placements || s.stock || s.sources))throw new Error('This layout was already cut. Start a new sheet to use its remnant');
@@ -1231,7 +1233,7 @@ async function poolTakeOff(ids, patch, told) {
     const part = ids.slice(i, i + 200), want = new Set(part);
     const made = await db.runTransaction(async tx => {
       // (every read first: a transaction writes after it has read)
-      const rows = told ? await tx.getAll(...part.map(id => col(POOL).doc(id))) : [], sheets = new Map();
+      const rows = told ? await txGetAll(tx, part.map(id => col(POOL).doc(id))) : [], sheets = new Map();
       for (let j = 0; j < part.length; j += 30) for (const d of (await tx.get(col(SHEETS).where("poolIds", "array-contains-any", part.slice(j, j + 30)).select(...TAKE_OFF_SHEET_FIELDS))).docs) sheets.set(d.id, Object.assign(d.data(), { id: d.id }));
       const at = FV.serverTimestamp(), where = new Map(), seen = new Map(), touched = [];
       for (const s of sheets.values()) for (const id of s.poolIds || []) if (want.has(String(id)) && !where.has(String(id))) where.set(String(id), s);
@@ -1284,11 +1286,20 @@ async function op_poolList(b) {
   let q = col(POOL);
   if (b.runId) q = q.where("runId", "==", str(b.runId, 80)); else if (b.setId) q = q.where("setId", "==", str(b.setId, 80)); else if (b.sheetId) q = q.where("sheetId", "==", str(b.sheetId, 80)); else if (b.orderId) q = q.where("orderId", "==", str(b.orderId, 40)); else return { error: "runId, setId, sheetId or orderId required" };
   const snap = await q.limit(Math.min(2000, num(b.limit) || 1000)).get();
-  return { pools: snap.docs.map(d => { const r = d.data(); r.updatedAt = ms(r.updatedAt); r.createdAt = ms(r.createdAt); return r; }) };
+  const rows = snap.docs.map(d => msRow(d.data()));
+  // an order's rows that name a sheet that is deleted or archived say they are on none (the reader's repair; nothing is written)
+  return { pools: b.orderId ? await withoutGoneSheets(rows) : rows };
+}
+async function withoutGoneSheets(rows) {
+  const ids = [...new Set(rows.filter(r => r.sheetId && !Placement.TAKE_OFF_STATES.has(r.state)).map(r => String(r.sheetId)).filter(isId))].slice(0, 40), gone = new Set();
+  if (!ids.length) return rows;
+  try { for (let i = 0; i < ids.length; i += 30) for (const d of await db.getAll(...ids.slice(i, i + 30).map(id => col(SHEETS).doc(id)), { fieldMask: ["archived"] })) if (!d.exists || d.data().archived) gone.add(d.id); }
+  catch (e) { console.warn("[charmNestLibrary] poolList: sheets not checked:", (e && e.message) || e); return rows; }
+  return gone.size ? Placement.repairPoolRows(rows, gone) : rows;
 }
 async function op_poolGet(b) {
   const ids = (b.poolIds || []).filter(isPoolId).slice(0, 300); const out = {};
-  for (let i = 0; i < ids.length; i += 30) { const snaps = await db.getAll(...ids.slice(i, i + 30).map(id => col(POOL).doc(id))); for (const s of snaps) if (s.exists) { const r = s.data(); r.updatedAt = ms(r.updatedAt); out[s.id] = r; } }
+  for (let i = 0; i < ids.length; i += 30) { const snaps = await db.getAll(...ids.slice(i, i + 30).map(id => col(POOL).doc(id))); for (const s of snaps) if (s.exists) { const r = s.data(); r.updatedAt = ms(r.updatedAt); if (r[Placement.REPOOLED]) r[Placement.REPOOLED] = ms(r[Placement.REPOOLED]) || 1; out[s.id] = r; } }
   return { pools: out };
 }
 /* Where each piece of an order is, from the records that can say so (Paul, 5 Oct: a Silver piece on SS Sheet 1 read "not on a
@@ -1298,47 +1309,71 @@ async function op_poolGet(b) {
    saved sheets that name the order or any of its pool ids, each with only the fields placing a piece needs and only the poolIds
    of this order. The page (charm-nest-order-pieces.js, OrderPieces) decides from these. Read only. */
 const PIECE_SHEET_FIELDS = ["id", "sheetId", "metal", "metalLabel", "fileBase", "folder", "sheetIndex", "page", "setId", "setSeq", "poolIds", "orders", "archived", "laserDoneAt", "roseCutAt", "draft", "solidIncluded", "status", "runId", "updatedAt", "createdAt", "laserHold"];
+/* The answer is made from ONE snapshot (a read-only transaction: every document as it was at one moment), so that a take-off, a
+   delete or a move, each of which is now one commit, is seen whole or not at all: a reader that read the pool rows before
+   such a commit and the sheets after it used to be handed a piece on a sheet that no longer listed it. Then the documents are
+   reconciled by _charmNestPlacement.reconcile (the sheet record's listing is the truth; a take-off wins over a stale listing; a
+   pool row naming a sheet that is gone or does not list it is out of date), and the answer says where each piece is
+   (`placement`), what was out of date (`repaired`, never written back: a reader never rewrites a record), and `rev`, a
+   digest of the update times of the documents it was made from, per order and for the whole answer. `ifRev` (a rev the page
+   holds) answers `unchanged` without the payload when nothing moved. */
 async function op_getOrderPieces(b) {
-  // sheetIds: the same fields of those sheets with ALL their poolIds (who shares a sheet with whom), read by id
   const sheetIds = (Array.isArray(b.sheetIds) ? b.sheetIds : []).filter(isId).slice(0, 40);
   const ids = [...new Set((Array.isArray(b.orderIds) ? b.orderIds : [b.orderId]).map(x => String(x == null ? "" : x).replace(/\D/g, "")).filter(x => /^\d{4,20}$/.test(x)))].slice(0, 40);
   if (!ids.length && !sheetIds.length) return { error: "orderId required" };
+  const ifRev = /^[0-9a-f]{12}$/.test(String(b.ifRev || "")) ? String(b.ifRev) : "";
+  let answer;
+  try { answer = await db.runTransaction(tx => readOrderPieces({ get: q => tx.get(q), getAll: (...a) => (typeof a[a.length - 1].get === "function" ? txGetAll(tx, a) : txGetAll(tx, a.slice(0, -1), a[a.length - 1].fieldMask)) }, ids, sheetIds), { readOnly: true }); }
+  catch (e) { console.warn("[charmNestLibrary] getOrderPieces: snapshot read failed, reading without one:", (e && e.message) || e); answer = await readOrderPieces({ get: q => q.get(), getAll: (...a) => db.getAll(...a) }, ids, sheetIds); }
+  return ifRev && answer.rev === ifRev ? { ok: true, unchanged: true, rev: answer.rev } : answer;
+}
+const msRow = r => { r.updatedAt = ms(r.updatedAt); r.createdAt = ms(r.createdAt); if (r[Placement.REPOOLED]) r[Placement.REPOOLED] = ms(r[Placement.REPOOLED]) || 1; return r; };
+async function readOrderPieces(rd, ids, sheetIds) {
+  const parts = [], revs = new Map(ids.map(id => [id, []]));
+  // sheetIds: the same fields of those sheets with ALL their poolIds (who shares a sheet with whom), read by id
   const bySheet = {};
-  for (let i = 0; i < sheetIds.length; i += 30) for (const d of await db.getAll(...sheetIds.slice(i, i + 30).map(id => col(SHEETS).doc(id)), { fieldMask: PIECE_SHEET_FIELDS })) {
+  for (let i = 0; i < sheetIds.length; i += 30) for (const d of await rd.getAll(...sheetIds.slice(i, i + 30).map(id => col(SHEETS).doc(id)), { fieldMask: PIECE_SHEET_FIELDS })) {
+    parts.push(`s:${d.id}:${Placement.revOf(d)}`);
     if (!d.exists) continue; const s = d.data(); if (s.archived) continue;
     bySheet[d.id] = { id: d.id, metal: s.metal || null, fileBase: s.fileBase || s.folder || null, folder: s.folder || null, sheetIndex: num(s.sheetIndex) || null, page: num(s.page) || null, setId: s.setId || null, setSeq: num(s.setSeq) || null, poolIds: (s.poolIds || []).map(String), orders: (s.orders || []).map(String).slice(0, 500),
       laserDoneAt: num(s.laserDoneAt) || null, roseCutAt: num(s.roseCutAt) || null, draft: !!s.draft, solidIncluded: s.solidIncluded == null ? null : !!s.solidIncluded, status: s.status || null, runId: s.runId || null, updatedAt: ms(s.updatedAt), createdAt: ms(s.createdAt) };
   }
-  if (!ids.length) return { ok: true, orders: {}, sheets: bySheet };
+  if (!ids.length) return { ok: true, orders: {}, sheets: bySheet, rev: Placement.digest(parts) };
   const both = id => [id].concat(Number.isSafeInteger(+id) ? [+id] : []);
-  const pools = new Map(ids.map(id => [id, []])), sheets = new Map(), sheetsOf = new Map(ids.map(id => [id, new Map()]));
+  const pools = new Map(ids.map(id => [id, []])), sheets = new Map(), sheetRev = new Map();
   for (let i = 0; i < ids.length; i += 10) {
     const part = ids.slice(i, i + 10), values = part.flatMap(both);
     const [ps, xs] = await Promise.all([
-      col(POOL).where("orderId", "in", values).limit(2000).get(),
-      col(SHEETS).where("orders", "array-contains-any", values).limit(HISTORY_CAP.sheets).select(...PIECE_SHEET_FIELDS).get()
+      rd.get(col(POOL).where("orderId", "in", values).limit(2000)),
+      rd.get(col(SHEETS).where("orders", "array-contains-any", values).limit(HISTORY_CAP.sheets).select(...PIECE_SHEET_FIELDS))
     ]);
-    for (const d of ps.docs) { const r = d.data(), rid = String(r.orderId == null ? String(d.id).split("_")[0] : r.orderId); if (pools.has(rid)) { r.updatedAt = ms(r.updatedAt); r.createdAt = ms(r.createdAt); pools.get(rid).push(r); } }
-    for (const d of xs.docs) sheets.set(d.id, { ...d.data(), id: d.id });
+    for (const d of ps.docs) { const r = d.data(), rid = String(r.orderId == null ? String(d.id).split("_")[0] : r.orderId); if (pools.has(rid)) { pools.get(rid).push(msRow(r)); revs.get(rid).push(`p:${d.id}:${Placement.revOf(d)}`); } }
+    for (const d of xs.docs) { sheets.set(d.id, { ...d.data(), id: d.id }); sheetRev.set(d.id, Placement.revOf(d)); }
   }
   // sheets that list one of the order's pieces although their `orders` list does not name the order (an older or cut-down record)
   const listed = new Set([...sheets.values()].flatMap(s => s.poolIds || []).map(String));
   const missing = [...pools.values()].flat().map(p => String(p.poolId)).filter(id => !listed.has(id));
-  for (let i = 0; i < missing.length; i += 30) for (const d of (await col(SHEETS).where("poolIds", "array-contains-any", missing.slice(i, i + 30)).select(...PIECE_SHEET_FIELDS).get()).docs) if (!sheets.has(d.id)) sheets.set(d.id, { ...d.data(), id: d.id });
+  for (let i = 0; i < missing.length; i += 30) for (const d of (await rd.get(col(SHEETS).where("poolIds", "array-contains-any", missing.slice(i, i + 30)).select(...PIECE_SHEET_FIELDS))).docs) if (!sheets.has(d.id)) { sheets.set(d.id, { ...d.data(), id: d.id }); sheetRev.set(d.id, Placement.revOf(d)); }
+  // the sheets the pool rows name that none of the reads above found: gone (deleted), archived, or not listing the piece
+  const named = new Set([...pools.values()].flat().filter(p => p.sheetId && !Placement.TAKE_OFF_STATES.has(p.state)).map(p => String(p.sheetId)).filter(x => isId(x) && !sheets.has(x))), hinted = new Map();
+  const asked = [...named].slice(0, 120);
+  for (let i = 0; i < asked.length; i += 30) for (const d of await rd.getAll(...asked.slice(i, i + 30).map(id => col(SHEETS).doc(id)), { fieldMask: ["archived", "poolIds"] })) {
+    const s = d.exists ? d.data() : null; hinted.set(d.id, { exists: !!s, archived: !!(s && s.archived), listed: s ? (s.poolIds || []).length : null }); parts.push(`h:${d.id}:${Placement.revOf(d)}`);
+  }
   const orders = {};
   for (const rid of ids) {
-    const mine = [];
-    for (const s of sheets.values()) {
-      if (s.archived) continue;
-      const has = (s.orders || []).map(String).includes(rid) || (s.poolIds || []).some(p => String(p).startsWith(rid + "_"));
-      if (!has) continue;
-      mine.push({ id: s.id, metal: s.metal || null, metalLabel: s.metalLabel || null, fileBase: s.fileBase || s.folder || null, folder: s.folder || null, sheetIndex: num(s.sheetIndex) || null, page: num(s.page) || null, setId: s.setId || null, setSeq: num(s.setSeq) || null,
-        poolIds: (s.poolIds || []).map(String).filter(p => p.startsWith(rid + "_")), poolCount: (s.poolIds || []).length, laserDoneAt: num(s.laserDoneAt) || null, roseCutAt: num(s.roseCutAt) || null, draft: !!s.draft, solidIncluded: s.solidIncluded == null ? null : !!s.solidIncluded,
-        status: s.status || null, runId: s.runId || null, updatedAt: ms(s.updatedAt), createdAt: ms(s.createdAt) });
-    }
-    orders[rid] = { pools: pools.get(rid), sheets: mine };
+    const mineSheets = [...sheets.values()].filter(s => !s.archived && ((s.orders || []).map(String).includes(rid) || (s.poolIds || []).some(p => String(p).startsWith(rid + "_"))));
+    const rec = Placement.reconcile({ orderId: rid, pools: pools.get(rid), sheets: mineSheets, hinted });
+    const mine = rec.sheets.map(s => ({ id: s.id, metal: s.metal || null, metalLabel: s.metalLabel || null, fileBase: s.fileBase || s.folder || null, folder: s.folder || null, sheetIndex: num(s.sheetIndex) || null, page: num(s.page) || null, setId: s.setId || null, setSeq: num(s.setSeq) || null,
+      poolIds: (s.poolIds || []).map(String).filter(p => p.startsWith(rid + "_")), poolCount: (s.poolIds || []).length, laserDoneAt: num(s.laserDoneAt) || null, roseCutAt: num(s.roseCutAt) || null, draft: !!s.draft, solidIncluded: s.solidIncluded == null ? null : !!s.solidIncluded,
+      status: s.status || null, runId: s.runId || null, updatedAt: ms(s.updatedAt), createdAt: ms(s.createdAt) }));
+    const mineRev = revs.get(rid).concat(mineSheets.map(s => `s:${s.id}:${sheetRev.get(s.id)}`), [...hinted].filter(([id]) => pools.get(rid).some(p => String(p.sheetId) === id)).map(([id, h]) => `h:${id}:${h.exists ? 1 : 0}`));
+    parts.push(...mineRev);
+    // pools: the rows as the answer shows them (a row naming a sheet that is gone or does not list it says it is on none)
+    // (an order the records know nothing of is answered as it always was: no pieces, no sheets)
+    orders[rid] = rec.pools.length || mine.length ? { pools: rec.pools, sheets: mine, placement: rec.placement, repaired: rec.repaired.slice(0, 40), summary: rec.summary, rev: Placement.digest(mineRev) } : { pools: rec.pools, sheets: mine };
   }
-  return { ok: true, orders, sheets: bySheet };
+  return { ok: true, orders, sheets: bySheet, rev: Placement.digest(parts) };
 }
 // ── backs ──
 /* ── the sandbox snapshot: what the emulated Etsy serves (etsySandbox.js). The sorter uploads the JSON through

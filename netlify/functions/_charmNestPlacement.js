@@ -140,8 +140,10 @@ function reconcile(input) {
       if (named) bad = (named.poolIds || []).length > 0 && !(named.poolIds || []).map(String).includes(id) ? "hintStale" : null;
       else if (h) bad = !h.exists || h.archived ? "sheetGone" : h.listed > 0 ? "hintStale" : null;
       if (bad) {
-        row = Object.assign({}, p, { sheetId: null, sheetName: null, setId: null, sheetIdWas: p.sheetId, repaired: [bad] });
-        repaired.push({ poolId: id, kind: bad, sheetId: p.sheetId, why: bad === "sheetGone" ? "its sheet was deleted or repacked" : "its sheet's record does not list it" });
+        // (a record that lists the piece says where it is now: a move whose row did not catch up; none: it is on no sheet)
+        const to = holder ? { sheetId: holder.id || holder.sheetId || null, sheetName: holder.fileBase || holder.folder || null, setId: holder.draft ? null : holder.setId || null } : { sheetId: null, sheetName: null, setId: null };
+        row = Object.assign({}, p, to, { sheetIdWas: p.sheetId, repaired: [bad] });
+        repaired.push({ poolId: id, kind: bad, sheetId: p.sheetId, now: to.sheetId, why: bad === "sheetGone" ? "its sheet was deleted or repacked" : "its sheet's record does not list it" });
       } else if (!holder && (named || h)) {
         holder = named || { id: p.sheetId, metal: p.material || null, fileBase: p.sheetName || null, setId: p.setId || null, poolIds: [] }; via = "hint";
       }
@@ -150,7 +152,7 @@ function reconcile(input) {
     const set = holder ? holder.setId || (row && row.setId) || null : null;
     if (holder) {
       placement[id] = { state: "sheet", sheetId: holder.id || holder.sheetId || null, sheetLabel: labelOf(holder) || (row && row.sheetName) || null, setId: set && !holder.draft ? set : null, metal: holder.metal || (row && row.material) || null,
-        draft: !!holder.draft, cut: num(holder.laserDoneAt) > 0 || num(holder.roseCutAt) > 0, via, since: ms(holder.updatedAt) || null, why: "its sheet's record lists it" };
+        draft: !!holder.draft, cut: num(holder.laserDoneAt) > 0 || num(holder.roseCutAt) > 0, via, sheetAt: ms(holder.updatedAt) || null, why: "its sheet's record lists it" };
     } else if (takenOff(p)) {
       const removed = num(p.removedAt) > 0 || p.removedBy, cancel = /^cancel/i.test(String(p.removedReason || ""));
       placement[id] = p.state === "superseded" ? { state: "superseded", sheetId: null, setId: null, since: ms(p.updatedAt) || null, why: "its line was made up again" }
