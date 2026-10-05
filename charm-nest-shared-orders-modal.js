@@ -274,7 +274,7 @@ dialog.soDlg:focus,dialog.soDlg:focus-visible{outline:none}
       if (!orderId) continue;
       // (the engine says `here` as "GF Sheet 1 + GF Sheet 2" when a set with several sheets moves, and hereIds with the sheets' ids)
       const hereL = new Set([...here, ...[].concat(o.here || []).flatMap(h => String(h).split(' + ').map(x => x.trim()))].filter(Boolean)), hereIds = new Set(arr(o.hereIds).map(String));
-      let pieces = arr(o.pieces).filter(p => p && typeof p === 'object').map((p, i) => ({ index: p.index != null ? +p.index : i + 1, label: p.label || '', sheetId: p.sheetId || '', sheetLabel: String(p.sheetLabel || ''), setId: p.setId || '', thumb: p.thumb || null }));
+      let pieces = arr(o.pieces).filter(p => p && typeof p === 'object').map((p, i) => ({ key: String(p.key || p.poolId || ''), index: p.index != null ? +p.index : i + 1, label: p.label || '', sheetId: p.sheetId || '', sheetLabel: String(p.sheetLabel || ''), setId: p.setId || '', thumb: p.thumb || null }));
       pieces.forEach(p => { p.here = !!((ctx.kind !== 'set' && p.sheetId && String(p.sheetId) === String(ctx.id)) || (p.sheetId && hereIds.has(String(p.sheetId))) || (p.sheetLabel && hereL.has(p.sheetLabel))); });
       // no pieces told: the sheets are (here, there)
       if (!pieces.length) {
@@ -291,7 +291,7 @@ dialog.soDlg:focus,dialog.soDlg:focus-visible{outline:none}
   }
   const signature = list => list.map(o => o.sig).join('|');
   const orderNo = o => digits(o.orderId) || o.label || o.orderId;
-  const rawOf = o => ({ orderId: o.orderId, label: o.label, customer: o.customer, thumb: o.thumb, locked: o.locked.map(l => Object.assign({}, l)), pieces: o.pieces.map(p => ({ index: p.index, label: p.label, sheetId: p.sheetId, sheetLabel: p.sheetLabel, setId: p.setId, thumb: p.thumb })), here: (o.pieces.find(p => p.here) || {}).sheetLabel || '', there: o.pieces.filter(p => !p.here).map(p => p.sheetLabel) });
+  const rawOf = o => ({ orderId: o.orderId, label: o.label, customer: o.customer, thumb: o.thumb, locked: o.locked.map(l => Object.assign({}, l)), pieces: o.pieces.map(p => ({ key: p.key, index: p.index, label: p.label, sheetId: p.sheetId, sheetLabel: p.sheetLabel, setId: p.setId, thumb: p.thumb })), here: (o.pieces.find(p => p.here) || {}).sheetLabel || '', there: o.pieces.filter(p => !p.here).map(p => p.sheetLabel) });
 
   /* ── words ── */
   function words(M, n) {
@@ -566,8 +566,9 @@ dialog.soDlg:focus,dialog.soDlg:focus-visible{outline:none}
     rid = digits(rid); if (!rid) return false;
     const ow = doc.getElementById('orderWin');
     let ok = false;
-    try { if (typeof W.openOrderFrom === 'function') ok = W.openOrderFrom(btn, rid, {}) !== false; } catch (e) { warn('open order', e); }
-    if (!ok) { try { if (W.OrderWin && typeof OrderWin.openOrder === 'function') { OrderWin.openOrder(rid, { from: btn }); ok = true; } } catch (e) { warn('open order', e); } }
+    const card = M.orders.find(x => x.orderId === rid), piece = card && (card.pieces.find(p => p.here && p.key) || card.pieces.find(p => p.key)), opts = piece ? { poolId: piece.key } : {};   // (the piece that sits on this sheet)
+    try { if (typeof W.openOrderFrom === 'function') ok = W.openOrderFrom(btn, rid, opts) !== false; } catch (e) { warn('open order', e); }
+    if (!ok) { try { if (W.OrderWin && typeof OrderWin.openOrder === 'function') { OrderWin.openOrder(rid, Object.assign({ from: btn }, opts)); ok = true; } } catch (e) { warn('open order', e); } }
     if (!ok) return false;
     M.away = true;
     const pill = backPill(M);
@@ -829,7 +830,7 @@ dialog.soDlg:focus,dialog.soDlg:focus-visible{outline:none}
     close: () => { if (CUR) closeIt(CUR, 'close'); },
     isOpen: () => !!(CUR && live(CUR) && CUR.dlg.open),
     current: () => (CUR && live(CUR) ? handleOf(CUR) : null),
-    version: '20261005-2',
+    version: '20261005-3',
     _normalize: normalize
   };
 })();

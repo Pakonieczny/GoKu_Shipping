@@ -47,7 +47,7 @@ function fakeShared(cfg) {
   const sleep = ms => new Promise(r => setTimeout(r, ms)), subs = new Set();
   const store = window.__so = { orders: cfg.orders, held: {}, calls: [], reads: 0, delay: cfg.delay == null ? 450 : cfg.delay, fail: null, stay: null, subs };
   const item = (o, id) => ({ orderId: o.id, label: '#' + o.id, customer: o.who, thumb: o.thumb, here: (o.pieces.find(p => p.sheetId === id) || {}).sheetLabel, there: o.pieces.filter(p => p.sheetId !== id).map(p => p.sheetLabel),
-    locked: o.locked || [], pieces: o.pieces.map((p, i) => ({ index: i + 1, label: p.label, sheetId: p.sheetId, sheetLabel: p.sheetLabel, setId: 'set-1', thumb: p.thumb })) });
+    locked: o.locked || [], pieces: o.pieces.map((p, i) => ({ key: o.id + '_' + (i + 1) + '_1', index: i + 1, label: p.label, sheetId: p.sheetId, sheetLabel: p.sheetLabel, setId: 'set-1', thumb: p.thumb })) });
   window.SharedOrders = {
     between(id, target) {
       store.reads++;
@@ -179,9 +179,11 @@ const until = async (fn, ms = 8000, what = '') => { ms *= SLOW; const t0 = Date.
     assert.equal((await cards(page)).length, 12, 'twelve orders listed');
     await page.$eval('.soBody', b => { b.scrollTop = 220; });
     const pick = orders[5].id;
+    await page.evaluate(() => { window.__owOpens = []; const f = OrderWin.openOrder; OrderWin.openOrder = function (rid, opts) { window.__owOpens.push([String(rid), opts && opts.poolId]); return f.apply(this, arguments); }; });
     await page.focus(`.soCard[data-order="${pick}"] [data-open]`);
     await page.click(`.soCard[data-order="${pick}"] [data-open]`);
     await until(() => owOpen(page), 6000, 'the order opens');
+    assert.deepEqual(await page.evaluate(() => window.__owOpens), [[pick, pick + '_1_1']], 'the order view lands on the piece that sits on this sheet (poolId): ' + JSON.stringify(await page.evaluate(() => window.__owOpens)));
     const scrolled = await page.$eval('.soBody', b => b.scrollTop);   // (where the list was left: the card pressed may have been brought into view)
     assert(scrolled > 100, 'the list scrolls (it holds twelve): ' + scrolled);
     await until(() => vis(page, '#orderWin #soBack'), 3000, 'the Back button shows in the order view');

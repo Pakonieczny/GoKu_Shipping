@@ -293,6 +293,9 @@ const until = async (fn, ms = 20000, what = '') => { ms *= SLOW; const t0 = Date
     const r = await page.evaluate(() => ({ cards: [...document.querySelectorAll('.soDlg .soCard')].map(c => c.dataset.order), tiles: document.querySelectorAll('.soDlg .soCard .soTile').length, no: (document.querySelector('.soDlg .soOrderNo') || {}).textContent, title: document.querySelector('.soTitle').textContent, sub: document.querySelector('.soSub').textContent, off: !!document.querySelector('.soDlg [data-off]') }));
     assert.deepEqual(r.cards, ['3700000010'], 'the order the engine names: ' + JSON.stringify(r)); assert.equal(r.tiles, 2, 'a picture tile per piece'); assert.equal(r.no, '#3700000010');
     assert(/^This order keeps .+ in Set 1$/.test(r.title), 'title: ' + r.title); assert(r.off, 'and a way to take it off');
+    // (the engine names each piece by its pool id: the order view lands on the piece that sits on the sheet, by openOrderFrom(btn, rid, { poolId }))
+    const keys = await page.evaluate(() => { const h = SharedOrdersModal.current(); return h ? h.orders()[0].pieces.map(p => p.key) : null; });
+    assert(keys && keys.length === 2 && keys.every(k => /^3700000010_/.test(k)), 'each piece carries its pool id: ' + JSON.stringify(keys));
     await shot(page, 'D5-real-engine-window');
     await page.keyboard.press('Escape');
     await until(async () => !(await modalOpen(page)), 3000, 'closed');
