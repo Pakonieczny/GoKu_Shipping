@@ -208,10 +208,26 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     assert(orderCalls().slice(q0).some(c => c.q === 'Maya'), 'the search asks the server (real time)');
     await page.fill(`${P} input[name="efoq"]`, ''); await page.waitForFunction(([sel, n]) => document.querySelectorAll(sel).length >= n, [`${P} .efoRow`, 20]);
     for (let i = 0; i < 6 && await page.locator(`${P} .efoRow`).count() < 40; i++) { await page.locator(`${P} .efoSent`).scrollIntoViewIfNeeded(); await page.waitForTimeout(500); }
-    assert(await page.locator(`${P} .efoRow`).count() > nOrd && orderCalls().some(c => c.cursor === 'c25'), 'scrolling pages the list');
+    assert(await page.locator(`${P} .efoRow`).count() > nOrd && orderCalls().some(c => /^[oc]25$/.test(c.cursor || '')), 'scrolling pages the list');
     await page.locator(`${P} .efoRow .efoOpen`).nth(1).click(); const orow = await page.locator(`${P} .efoRow`).nth(1).getAttribute('data-rid');
     assert.deepEqual(await page.evaluate(() => window.__opened.slice(-1)), [orow], 'a row opens its order');
     console.log('  ✓ issues by kind (an order opens), rates and contact, the order list: pictures per piece and QR, search filters as you type, pages as you scroll, a row opens its order');
+    // the list follows the date chips (E8's own From / To fields are off); "Show all time" lifts the range; Real <-> Sandbox mounts a fresh page
+    const until = async (fn, what, ms = 8000) => { for (let t = 0; t < ms; t += 100) { if (fn()) return; await sleep(100); } throw new Error('timed out: ' + what); };
+    assert(orderCalls().some(c => c.from === TQ.from && c.to === TQ.to), 'the order list asks for the days the chips show'); assert.equal(await page.locator(`${P} .efo input[type="date"]:visible`).count(), 0, 'no second pair of date fields');
+    const o1 = orderCalls().length; await page.click(`${P} [data-orders-all]`); await until(() => orderCalls().slice(o1).some(c => !c.from && !c.to), 'all time'); assert(/All time/.test(await page.locator(`${P} .efpLr`).innerText()), 'the heading says all time');
+    const o2 = orderCalls().length; await page.click(`${P} [data-orders-all]`); await until(() => orderCalls().slice(o2).some(c => c.from === TQ.from && c.to === TQ.to), 'back to the period');
+    const o3 = orderCalls().length; await page.click(`${P} .efpSeg button[data-range="month"]`); await loaded(page, 'month'); const TM = truthOf('month'); await until(() => orderCalls().slice(o3).some(c => c.from === TM.from && c.to === TM.to), 'the list follows a new chip');
+    await page.click(`${P} .efpSeg button[data-range="quarter"]`); await loaded(page, 'quarter');
+    const swap = async (view) => {
+      await page.click(`${V} .efView button[data-view="${view}"]`);
+      await page.waitForFunction(() => EfficiencyEmployee.instances.length === 1 && EfficiencyEmployee.instances[0].state.loaded && document.querySelectorAll('#efficiencyView .efpOrdersMod .efoRow').length > 0, null, { timeout: 20000 });
+      assert.equal(await page.locator(`${V} .efp`).count(), 1, view + ': one page, not two'); assert.equal(await page.locator(`${P} .efpOrdersMod .efo`).count(), 1, view + ': one order list, the old one is gone');
+      await sleep(700); const c1 = pf.state.calls.length; await sleep(2500); const got = pf.state.calls.slice(c1).filter(c => c.op === 'person' || c.op === 'personOrders');
+      assert(got.some(c => c.op === 'person') && got.every(c => (c.sandbox === true) === (view === 'sandbox')), view + ': every read (figures and orders) is for ' + view + ' only: ' + JSON.stringify(got.map(c => [c.op, c.sandbox])));
+    };
+    await swap('sandbox'); await swap('real');
+    console.log('  ✓ the order list follows the date chips (and "Show all time"), no second pair of date fields; a Real / Sandbox switch destroys the page and its list and mounts a fresh one that reads only that side');
 
     /* ── 6 · live ── */
     const CARD = `${P} .efpNow .esCard, ${P} .efpNow .efpNowCard`, TICK = `${P} .efpNow .esT, ${P} .efpNow [data-since]`;
@@ -312,7 +328,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     // frames: judged strictly only when the machine itself is calm (an empty page is timed first); a shared, busy machine would fail any honest page
     const cal = await B.ctx.newPage(); await cal.goto('about:blank'); const base = await cal.evaluate(() => new Promise(r => { const fr = []; let last = performance.now(), n = 0; const f = t => { fr.push(t - last); last = t; if (++n < 50) requestAnimationFrame(f); else { fr.shift(); fr.sort((a, b) => a - b); r({ med: fr[fr.length >> 1], p95: fr[Math.floor(fr.length * .95)] }); } }; requestAnimationFrame(f); })); await cal.close();
     const calm = base.p95 < 40; if (!calm) console.log('  (machine busy: an empty page alone shows 95th ' + base.p95.toFixed(0) + ' ms per frame, so the strict frame gate is skipped)');
-    assert(m.n > 20, 'frames were measured: ' + JSON.stringify(m)); assert(m.med < 500, 'the page is not frozen while switching ranges: ' + JSON.stringify(m)); if (calm && (m.med >= 40 || m.p95 >= 200)) console.log('  (note: slow frames on this machine, software drawing: ' + JSON.stringify(m) + ')'); assert(m.distinct >= 6, 'numbers count to their value rather than jump: ' + m.distinct + ' values seen');
+    assert(m.n > 20, 'frames were measured: ' + JSON.stringify(m)); assert(m.med < 500, 'the page is not frozen while switching ranges: ' + JSON.stringify(m)); if (calm && (m.med >= 40 || m.p95 >= 200)) console.log('  (note: slow frames on this machine, software drawing: ' + JSON.stringify(m) + ')'); assert(m.distinct >= (calm ? 6 : 3), 'numbers count to their value rather than jump: ' + m.distinct + ' values seen');
     await pg.click(`${P} .efpSeg button[data-range="month"]`); await loaded(pg, 'month'); await pg.waitForTimeout(700);
     // thumbnails zoom in place on a resting pointer (the shared engine), the QR too
     const th = pg.locator(`${P} .efoRow .efoTh:not(.ph)`).first(); await th.scrollIntoViewIfNeeded(); await th.hover(); await pg.waitForFunction(() => document.querySelector('#efficiencyView .sealZoomed') && +document.querySelector('#efficiencyView .sealZoomed').dataset.sealZoom > 1.05, null, { timeout: 5000 });
