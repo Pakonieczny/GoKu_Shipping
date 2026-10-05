@@ -57,7 +57,7 @@
   /** Every piece of the order is on hold (the line's own `hold`, which is what Orders > On hold lists). */
   const isHeld = rid => { const rows = rowsOf(rid); return rows.length > 0 && rows.every(r => !!r.hold); };
   const isCancelled = rid => tryDo(() => !!(root.Cancelled && typeof root.Cancelled.has === 'function' && root.Cancelled.has(rid)), false);
-  const isRunning = rid => tryDo(() => { const H = engine(), s = H && typeof H.status === 'function' ? H.status(rid) : null; return !!(s && s.running === true); }, false);
+  const isRunning = rid => tryDo(() => { const H = engine(), s = H && typeof H.status === 'function' ? H.status(rid) : null, r = H && typeof H.releaseStatus === 'function' ? H.releaseStatus(rid) : null; return !!((s && s.running === true) || (r && r.running === true)); }, false);
   /** Whether the order shows a Hold button: the engine is here, the order is in the pull, and it is not held, cancelled or being held. */
   function shown(rid) {
     rid = str(rid);

@@ -43,6 +43,8 @@ const flood = {
 
 /* the same open-door guard for station-activity.js, with its own counter (a busy hour of scans must not starve the timeline) */
 const activityFlood = { seen: new Map(), PER_MIN: 1500, allow: flood.allow };
+/* and for the live layer's keep-alives (station-activity.js working/idle): a station sends about two a minute */
+const liveFlood = { seen: new Map(), PER_MIN: 600, allow: flood.allow };
 
 /* The stations' sign-in sessions (station-session.js): one document per session in Station_Sessions, from sign-in to
    sign-out, for one person on one computer at one station or page:
@@ -172,6 +174,15 @@ exports.handler = async (event) => {
         if (!activityFlood.allow(event, body.activity.length)) return { statusCode: 429, headers: CORS, body: JSON.stringify({ error: "too many activity events, try again in a minute" }) };
         const out = await A.add(db, admin.firestore.FieldValue, body.activity, { prefix: PREFIX });
         return { statusCode: 200, headers: CORS, body: JSON.stringify(Object.assign({ success: true }, out)) };
+      }
+      /* what a station is working on right now (station-activity.js working / idle): one small document per station, page and
+         person, overwritten, shown to the console while its keep-alive lasts (_stationLive.js). Write-only: the console reads it through its own gate. */
+      if (body.live && typeof body.live === "object" && !Array.isArray(body.live)) {
+        const L = require("./_stationLive");
+        if (String(event.body || "").length > L.MAX_BODY_CHARS) return { statusCode: 413, headers: CORS, body: JSON.stringify({ error: "live event too large" }) };
+        if (!liveFlood.allow(event, 1)) return { statusCode: 429, headers: CORS, body: JSON.stringify({ error: "too many live events, try again in a minute" }) };
+        const [statusCode, out] = await L.write(db, admin.firestore.FieldValue, body.live, { prefix: PREFIX });
+        return { statusCode, headers: CORS, body: JSON.stringify(out) };
       }
       const {
         orderNumber,

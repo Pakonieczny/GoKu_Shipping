@@ -6765,6 +6765,8 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
   <!-- Sign-in time per person and computer, and the midnight sign-out (New York time) -->
   <script src="station-session.js?v=20261002-ea1"></script>
   <script src="station-activity.js?v=20261002-ea1"></script>
+  <!-- Contact signals per operator: replies drafted, sent, delivered, failed, edited before sending, time to first reply (station-mail-signals.js). Optional: without it nothing changes. -->
+  <script src="station-mail-signals.js?v=20261005-ms1"></script>
   <script>
   (function(){
     "use strict";
@@ -9521,6 +9523,7 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
     /** Keep what the draft slot says about a thread's latest send. */
     function noteDraftStatus(threadId, d) {
       if (!threadId) return;
+      try { window.MailSignals && MailSignals.seen(threadId, d); } catch (_) {}   // efficiency log: a reply's outcome (delivered / failed), once
       const prev = state.sendDelivery.get(threadId);
       const next = d ? {
         status  : String(d.status || ""),
@@ -17810,6 +17813,10 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
     }
     function aiRunFinish(threadId, run, data, mode) {
       if (aiRunMap().get(threadId) !== run) return;
+      try {   // efficiency log: this operator asked for a draft and it came back (counts only; never the words)
+        const x = (state.threads || []).find(y => y && y.id === threadId);
+        window.MailSignals && MailSignals.drafted(threadId, mode || run.mode, String((x && x.etsyOrderId) || ""));
+      } catch (_) {}
       run.status = "done";
       run.recovering = false;
       run.doneAt = Date.now();
@@ -17881,6 +17888,7 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
     }
     function aiTextMarkFresh(threadId, text) {
       if (!text || !String(text).trim()) return;
+      try { window.MailSignals && MailSignals.baseline(threadId, text); } catch (_) {}   // efficiency log: the AI's words, to tell an edited reply from an unchanged one
       const key = aiTextKey(threadId, text);
       let seen = {};
       try { seen = JSON.parse(localStorage.getItem("etsymail_ai_seen_text_v1") || "{}") || {}; } catch (_) {}
@@ -20788,6 +20796,15 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
       setTimeout(tick, 5000);
     }
 
+    // Efficiency log (station-mail-signals.js): a reply still on its way after a reload, or one nobody is watching any more,
+    // is looked at slowly (one read of its draft slot per 30 s while any is pending; no Etsy call, nothing written).
+    try {
+      window.MailSignals && MailSignals.resume(async (threadId, draftId) => {
+        try { const r = await api("etsyMailDraftSend", { query: { op: "status", draftId } }); return (r && r.draft) || null; }
+        catch (e) { if (e && e.status === 404) return null; throw e; }
+      });
+    } catch (_) {}
+
     /** Put a failed send's text (and attachments / translation) back. */
     function restoreFailedSend(threadId, snap) {
       const deskTa = $("emDraftText");
@@ -21285,9 +21302,28 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
 
       // Efficiency log (station-activity.js): this operator's reply is in Etsy's queue. Counts and ids only: never the
       // words, the customer or the address.
+      // (station-mail-signals.js adds how it started (AI draft, edited or not), how long the customer waited, and keeps the
+      // reply on a short list until the Etsy helper says delivered or failed.)
       try {
         const x = (state.threads || []).find(y => y && y.id === threadId);
-        window.StationActivity && StationActivity.log("note", { orderId: String((x && x.etsyOrderId) || "").replace(/\D/g, ""), detail: designNote ? "reply sent · design note" : "reply sent" });
+        const oid = String((x && x.etsyOrderId) || "").replace(/\D/g, "");
+        const sentWords = (resp && typeof resp.text === "string" && resp.text) ? resp.text : text;
+        if (window.MailSignals) {
+          let first = null;
+          try {   // the customer's first message vs. ours: only when this conversation is the one on screen
+            if (state.selectedId === threadId && Array.isArray(state.messages) && state.messages.length) {
+              const ms = state.messages.filter(Boolean);
+              first = ms.some(m => m.direction === "inbound") && !ms.some(m => m.direction === "outbound");
+            }
+          } catch (_) {}
+          // (a customer waiting for this reply: when their latest message began to wait; a follow-up nobody asked for has no wait)
+          const waiting = x && (typeof isAwaiting === "function" ? isAwaiting(x) : true);
+          const since = waiting ? (tsToMs(x.awaitingReplySince) || tsToMs(x.lastInboundAt)) : 0;
+          MailSignals.sent({ threadId, orderId: oid, text: sentWords, englishText, designNote: !!designNote, sinceMs: since, firstReply: first,
+            draftId: resp && resp.draftId });
+        } else {
+          window.StationActivity && StationActivity.log("note", { orderId: oid, detail: designNote ? "reply sent · design note" : "reply sent" });
+        }
       } catch (_) {}
       // Queued. The bubble reads "sending…" until the extension reports it
       // delivered (noteDraftStatus), then like any message until Etsy's copy

@@ -235,6 +235,8 @@
     if (!K || !W.Orders || !W.Pool || !W.B) return fail("The sorter is not ready yet; try again in a moment.");
     if (active.size) return fail(`One change at a time: the hold of order ${[...active.keys()][0]} is still running.`);
     if (K.busy()) return fail(`One change at a time: ${K.flow().charAt(0).toLowerCase() + K.flow().slice(1)} is still running.`);
+    // a Release of this order still putting it back on a sheet is let finish first
+    if (W.OrderHold && typeof W.OrderHold.releaseStatus === "function" && (W.OrderHold.releaseStatus(rid) || {}).running) return fail(`Order ${rid} is being released right now. Try again when that has finished.`);
     const before = journal.all()[rid];
     const who = String(opts.name || (before && before.who) || whoNow()).trim(), note = String(opts.note || (before && before.note) || "").trim().slice(0, 200);
     if (!who) return fail("A name is needed for the record.");
@@ -244,6 +246,9 @@
       // a run a reload cut short: the sheets it had lifted pieces from still wait for their fill and label
       const lifted = (before && before.lifted || []).filter(id => !(before.done || []).includes(id));
       if (!P.canHold && !(resumed && P.blockedWhy === "This order is already on hold." && lifted.length)) return fail(P.blockedWhy || "This order cannot be put on hold.");
+      // (a release a reload cut short, its lines still carrying `releasing`, is given up now: the person's hold is the newer decision,
+      //  and the page's own check for unfinished releases must not lift it again)
+      for (const r of W.Orders.rows()) if (String(r.order.receiptId) === rid && r.releasing) delete r.releasing;
       journal.set(rid, { rid, who, note, at: t0, lifted: (before && before.lifted) || [], done: (before && before.done) || [], names: (before && before.names) || [] });
       A.begun = true;
       // lines already on hold keep their own reason; but lines this same hold took off before a reload are part of this hold, and get its one reason

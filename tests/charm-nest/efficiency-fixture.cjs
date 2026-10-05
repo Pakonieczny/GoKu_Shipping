@@ -1,6 +1,10 @@
 // A fake `employeeEfficiency` (contract.md, "Console API") for the Employee efficiency console's tests and screenshots.
 // FAKE DATA ONLY: four invented people, invented order numbers, a fake passcode. No network, no Firestore.
 //   const F = require('./efficiency-fixture.cjs'); const fx = F.make(); fx.answer(body) → { status, json }   fx.bump() adds work.
+// TWO STORES, like the real function: a request with `sandbox:true` reads the sorter's Sandbox copies (one person, Paul, at the
+// Sorter: 29 parts, 25 orders, as on Paul's screenshot of 5 Oct); every other request reads the real stations (the crew below).
+// op `live` (plans/employee-hr/api.md): who is signed in and the order each station has now; fx.setLiveMode('old') answers it
+// "unknown op" like a server that does not have it yet.
 const KEY = 'fixture-pass-123';
 const NY_HOUR = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hourCycle: 'h23', hour: 'numeric' });
 const NY_DAY = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' });
@@ -14,6 +18,7 @@ const nyAt = (day, h, m) => { // a New York clock time of that day, in ms (EDT/E
 const arr = map => { const a = new Array(24).fill(0); for (const k of Object.keys(map)) a[+k] = map[k]; return a; };
 const sum = (...as) => { const o = new Array(24).fill(0); for (const a of as) a.forEach((v, i) => { o[i] += v; }); return o; };
 const total = a => a.reduce((n, v) => n + v, 0);
+const svg = (fill, label) => 'data:image/svg+xml;base64,' + Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64"><rect width="64" height="64" fill="${fill}"/><circle cx="32" cy="32" r="14" fill="#fffefb" opacity=".8"/><text x="32" y="37" font-size="13" text-anchor="middle" fill="#5b554c" font-family="sans-serif">${label || ''}</text></svg>`).toString('base64');
 
 /** The people of the shop day: station hours (parts per New York hour), and what each did. */
 function crew() {
@@ -106,17 +111,52 @@ function make(opts = {}) {
     const notes = st.orderMode === 'seals' ? ["Steps marked seals come from the order's timeline seals (before activity events), with no part counts or work time."] : [];
     return { status: 200, json: { ok: true, now: now(), orderId: id, steps, events: steps.map(x => ({ at: x.firstAt, person: x.person, station: x.station, device: x.station + '-1', action: 'complete', parts: x.parts, detail: '', source: x.source })), totals: { firstAt: steps[0].firstAt, lastAt: steps[3].lastAt, spanMs: steps[3].lastAt - steps[0].firstAt, workMs: steps.reduce((n, x) => n + x.workMs, 0), people: 3, stations: 4 }, sources: { events: true, seals: st.orderMode === 'seals' }, notes } };
   }
+  /** The sorter's Sandbox store, as on Paul's screenshot: Paul alone, at the Sorter, 29 parts and 25 orders. Nothing at the real stations. */
+  function sandboxOverview(b) {
+    const days = [1, 7, 30].includes(+b.days) ? +b.days : 1, end = b.day && b.day <= today() ? b.day : today();
+    const hours = arr({ 0: 1, 8: 19, 9: 3, 10: 2, 11: 2, 12: 2 }), trend = [];
+    for (let i = 13; i >= 0; i--) trend.push({ day: addDays(end, -i), parts: i === 0 ? 29 : 0, orders: i === 0 ? 25 : 0, people: i === 0 ? 1 : 0, source: i === 0 ? 'events' : 'none' });
+    const paul = { name: 'Paul', status: end === today() ? 'on' : 'out', firstIn: nyAt(end, 0, 40), lastOut: null, onSince: end === today() ? nyAt(end, 0, 40) : null, inDay: end, nowAt: end === today() ? ['sorter'] : [], source: 'events',
+      stations: [{ station: 'sorter', minutes: 726, parts: 29, scanParts: 0, scans: 0, completes: 25, prints: 0, orders: 25 }],
+      totals: { parts: 29, scanParts: 0, scans: 0, orders: 25, rejects: 0, errors: 0, activeMin: 5, idleMin: 700, signedInMin: 726, rate: 328, secPerScan: 0 }, perHour: hours, orders: [] };
+    const zero = n => ({ station: n, parts: 0, scans: 0, orders: 0, peopleNow: [] });
+    return { ok: true, now: now(), day: end, days, cursor: 'c0', delta: false, people: [paul],
+      business: { totals: { parts: 29, scans: 0, orders: 25, people: 1 }, perHour: { sorter: hours }, stations: ['sorting', 'welding', 'assembly', 'shipping'].map(zero).concat([{ station: 'sorter', parts: 29, scans: 0, orders: 25, peopleNow: end === today() ? ['Paul'] : [] }]), trend: b.trend === false ? trend.slice(-1) : trend },
+      feed: [{ id: 'sb1', at: now() - 60000, person: 'Paul', station: 'sorter', action: 'complete', orderId: '3521009001', parts: 1 }], sources: { events: true, seals: false, sessions: true }, notes: [] };
+  }
+  /** op live: who is signed in right now and the order each station has now. */
+  function liveAnswer(sb) {
+    const t = now(), d = today(), thumb = (c, l) => svg(c, l);
+    if (sb) return { ok: true, at: t, mode: 'sandbox', stations: [
+      { key: 'sorter', label: 'Sorter', state: 'working', people: ['Paul'], current: [{ person: 'Paul', rid: '3521009001', orderNumber: '3521009001', customer: 'Sandbox Buyer', scannedAt: t - 95000, thumbUrl: thumb('#d9cfb8', 'S'), qr: { text: '3521009001' }, pieces: [{ id: 's1', label: 'Piece 1', thumbUrl: thumb('#c8bb9c', '1') }] }], lastEventAt: t - 95000, counts: { partsToday: 29, ordersToday: 25 } }],
+      signedIn: [{ name: 'Paul', stationKey: 'sorter', since: nyAt(d, 0, 40), lastSeenAt: t - 40000 }] };
+    const cur = (person, rid, ago, n, c) => ({ person, rid, orderNumber: rid, customer: 'Buyer ' + rid.slice(-3), scannedAt: t - ago, thumbUrl: thumb(c, 'O'), qr: { text: rid }, pieces: Array.from({ length: n }, (_, i) => ({ id: rid + '-' + i, label: 'Piece ' + (i + 1), thumbUrl: thumb(c, String(i + 1)) })) });
+    const bump = st.bumps * 3;
+    return { ok: true, at: t, mode: 'real', stations: [
+      { key: 'welding', label: 'Welding', state: 'working', people: ['Giovanna'], current: [cur('Giovanna', '3521000101', 252000, 3, '#d8c7a0')], lastEventAt: t - 30000 - st.bumps, counts: { partsToday: 189 + bump, ordersToday: 24 } },
+      { key: 'assembly', label: 'Assembly', state: 'working', people: ['Anna'], current: [cur('Anna', '3521000138', 61000, 2, '#cdd6c0')], lastEventAt: t - 50000, counts: { partsToday: 147, ordersToday: 29 } },
+      { key: 'shipping', label: 'Shipping', state: 'working', people: ['Michael'], current: [cur('Michael', '3521000175', 13000, 1, '#d6c3bd')], lastEventAt: t - 20000, counts: { partsToday: 111, ordersToday: 33 } },
+      { key: 'sorting', label: 'Sorting', state: 'idle', people: [], current: [], lastEventAt: t - 5400000, counts: { partsToday: 36, ordersToday: 18 } },
+      { key: 'design', label: 'Design', state: 'offline', people: [], current: [], lastEventAt: t - 5 * 3600000, counts: { partsToday: 42, ordersToday: 12 } }],
+      signedIn: [{ name: 'Giovanna', stationKey: 'welding', since: nyAt(d, 7, 52), lastSeenAt: t - 20000 }, { name: 'Anna', stationKey: 'assembly', since: nyAt(d, 8, 3), lastSeenAt: t - 90000 }, { name: 'Michael', stationKey: 'shipping', since: nyAt(d, 13, 10), lastSeenAt: t - 4000 }] };
+  }
   /** What the harness answers to a POST body (the passcode is the only gate). */
   function answer(body, headers = {}) {
-    st.calls.push({ op: body.op, key: body.key, days: body.days, day: body.day, after: body.after, name: body.name, orderId: body.orderId });
-    if (st.http) { const h = st.http; return { status: h.status, json: h.json }; }
+    st.calls.push({ op: body.op, key: body.key, days: body.days, day: body.day, after: body.after, name: body.name, orderId: body.orderId, sandbox: body.sandbox === true, trend: body.trend });
+    if (st.http && (!st.httpOps || st.httpOps.includes(body.op))) { const h = st.http; return { status: h.status, json: h.json }; }
     if (body.key !== st.key) { st.wrong++; return { status: 401, json: { ok: false, error: 'unauthorized' } }; }
-    if (st.fail > 0) { st.fail--; return { status: 503, json: { ok: false, error: 'both reads failed' } }; }
+    if (st.fail > 0 && (!st.failOps || st.failOps.includes(body.op))) { st.fail--; return { status: 503, json: { ok: false, error: 'both reads failed' } }; }
+    if (body.op === 'live') { if (st.liveMode === 'old') return { status: 400, json: { ok: false, error: 'unknown op' } }; const j = liveAnswer(body.sandbox === true); return { status: 200, json: st.liveHook ? st.liveHook(j, body) : j }; }
+    if (body.sandbox === true) {
+      if (body.op === 'overview') return { status: 200, json: sandboxOverview(body) };
+      if (body.op === 'person') return { status: 200, json: { ok: true, now: now(), name: body.name, from: addDays(today(), -6), to: today(), days: [], totals: { parts: 0, orders: 0, signedInMin: 0 }, sources: { events: false }, notes: [] } };
+      if (body.op === 'orders') return { status: 200, json: { ok: true, now: now(), orderId: String(body.orderId || ''), steps: [], events: [], totals: { firstAt: null, lastAt: null, spanMs: 0, workMs: 0, people: 0, stations: 0 }, sources: { events: false, seals: false }, notes: [] } };
+    }
     if (body.op === 'orders') return order(body);
     if (body.op === 'overview') { const j = st.mode === 'seals' ? sealed(body) : st.mode ? early(body) : overview(body); return { status: 200, json: st.hook ? st.hook(j, body) : j }; }
     if (body.op === 'person') return { status: 200, json: person(body) };
     return { status: 400, json: { ok: false, error: 'bad op' } };
   }
-  return { answer, state: st, setKey(k) { st.key = k; }, setMode(m) { st.mode = m || ''; }, setHook(f) { st.hook = f || null; }, setHttp(status, json) { st.http = status ? { status, json: json || { ok: false, error: 'x' } } : null; }, setOrderMode(m) { st.orderMode = m || ''; }, now, today, bump() { st.bumps++; }, KEY };
+  return { answer, state: st, setKey(k) { st.key = k; }, setMode(m) { st.mode = m || ''; }, setHook(f) { st.hook = f || null; }, setHttp(status, json, ops) { st.http = status ? { status, json: json || { ok: false, error: 'x' } } : null; st.httpOps = status && ops ? ops : null; }, setLiveMode(m) { st.liveMode = m || ''; }, setLiveHook(f) { st.liveHook = f || null; }, failOnly(ops) { st.failOps = ops || null; }, setOrderMode(m) { st.orderMode = m || ''; }, now, today, bump() { st.bumps++; }, KEY };
 }
 module.exports = { make, KEY, ymd, addDays, nyAt };
