@@ -7,7 +7,8 @@
    remaining mixed orders. A user should be able to remove the offending orders, and have that updated in real time
    everywhere, so that when the user comes back only the remaining offending orders are visible."
 
-     SharedOrdersModal.open({ kind, id, orders, targetLabel, targetSetId, sheetLabel, setLabel, from, onChange, onClose, onRetry })
+     SharedOrdersModal.open({ kind, id, orders, targetLabel, targetSetId, sheetLabel, setLabel, reason, from, onChange, onClose, onRetry })
+        (also {sheetId} or {setId} in place of {kind, id}; `reason` is one sentence that replaces the usual one)
         -> { el, close(), update(orders), refresh(), isOpen(), orders() }   (null when there is nothing to show it with)
      SharedOrdersModal.close()   SharedOrdersModal.isOpen()   SharedOrdersModal.current()
 
@@ -18,7 +19,7 @@
    from the page's own state (no network: the Library live read and the order window's 2.5 s feed keep that state fresh, so a
    change made on another computer drops its card within about three seconds). onChange(remaining, why) after each change,
    onClose({ cleared, retried, why }) when it is closed, onRetry() when the person presses "Move it now" on the empty state
-   (the caller's own move is tried again).
+   (the caller's own move is tried again: called once the window is gone, just before onClose).
 
    What it shows (minimal words, maximum pictures): a calm title ("These orders keep GF Sheet 1 in Set 2"), one short sentence,
    and one card per shared order: its pieces as small pictures, each with a chip of the sheet it sits on and "here" or "there",
@@ -65,9 +66,6 @@ dialog.soDlg[open]{display:block}
 .soTitles.swap .soTitle,.soTitles.swap .soSub,.soTitles.swap .soSheets{opacity:0;transform:translateY(3px)}
 .soSheets{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:10px}
 .soSheets:empty{display:none}
-.soPair{display:inline-flex;align-items:center;gap:6px;white-space:nowrap}
-.soLinkIc{display:grid;place-items:center;color:var(--gold,#a9823f);flex:0 0 auto}
-.soLinkIc svg{width:12px;height:12px;display:block}
 .soSheets .soChip.here{background:var(--goldSoft,#f0e6cd);color:#5c4210}
 .soHeadRight{display:flex;align-items:center;gap:6px;flex:0 0 auto}
 .soCount{display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 10px;border-radius:999px;background:var(--paper2,#ebe5d9);color:var(--ink70,#5b554c);font:700 11px/1 var(--sans,system-ui,sans-serif);white-space:nowrap;font-variant-numeric:tabular-nums;transition:background-color .4s ease,color .4s ease,transform .3s cubic-bezier(.3,1.7,.5,1)}
@@ -90,7 +88,7 @@ dialog.soDlg:focus,dialog.soDlg:focus-visible{outline:none}
 .soAskSlot{grid-template-rows:0fr;opacity:0;visibility:hidden;transition:grid-template-rows .26s ${EASE},opacity .2s ease,visibility 0s .26s}
 .soAskSlot.open{grid-template-rows:1fr;opacity:1;visibility:visible;transition:grid-template-rows .26s ${EASE},opacity .2s ease .06s,visibility 0s}
 .soCard:has(>.soAskSlot.open)>.soFootSlot{grid-template-rows:0fr;opacity:0;visibility:hidden;transition:grid-template-rows .26s ${EASE},opacity .15s ease,visibility 0s .26s}
-.soOpen{display:flex;flex-direction:column;gap:10px;width:100%;margin:0;padding:12px 12px 4px;border:0;background:transparent;color:inherit;text-align:left;cursor:pointer;font:inherit;border-radius:12px 12px 0 0;position:relative;min-width:0}
+.soOpen{display:flex;flex:0 0 auto;flex-direction:column;gap:10px;width:100%;margin:0;padding:12px 12px 4px;border:0;background:transparent;color:inherit;text-align:left;cursor:pointer;font:inherit;border-radius:12px 12px 0 0;position:relative;min-width:0}
 .soOpen:focus-visible{outline:2px solid var(--gold2,#caa861);outline-offset:-2px}
 @supports selector(:has(*)){
   .soOpen:focus-visible{outline:none}
@@ -116,13 +114,16 @@ dialog.soDlg:focus,dialog.soDlg:focus-visible{outline:none}
 .soChip i{width:7px;height:7px;border-radius:50%;background:var(--dot,var(--ink25,#c4bdb0));flex:0 0 auto;box-shadow:0 0 0 1px rgba(30,26,20,.12)}
 .soChip span{overflow:hidden;text-overflow:ellipsis}
 .soPiece.here .soChip{background:var(--goldSoft,#f0e6cd);color:#5c4210}
-.soWhere{font:650 9.5px/1 var(--sans,system-ui,sans-serif);letter-spacing:.1em;text-transform:uppercase;color:var(--ink45,#938c80);margin-top:-2px}
-.soPiece.here .soWhere{color:var(--gold,#a9823f)}
+.soWhere{font:650 10px/1 var(--sans,system-ui,sans-serif);letter-spacing:.1em;text-transform:uppercase;color:var(--ink70,#5b554c);margin-top:-2px}
+.soPiece.here .soWhere{color:#7a5a1d}
 .soJoin{position:absolute;left:calc(-13px - var(--pg,12px)/2);top:50%;margin-top:-12px;width:26px;height:24px;display:grid;place-items:center;z-index:1;color:var(--gold,#a9823f)}
 .soJoin svg{width:13px;height:13px;display:block;padding:4px;box-sizing:content-box;border-radius:50%;background:var(--card,#fffefb);border:1px solid var(--goldLine,#e3d3a6);box-shadow:0 1px 3px rgba(30,26,20,.08)}
 .soMeta{display:flex;align-items:center;gap:8px;min-width:0;padding:0 2px}
 .soOrderNo{font:650 12.5px var(--mono,ui-monospace,Menlo,Consolas,monospace);letter-spacing:-.01em;color:var(--ink,#1c1a17);flex:0 0 auto;font-variant-numeric:tabular-nums}
 .soWho{min-width:0;color:var(--ink70,#5b554c);font-size:11.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.soLocked{display:flex;align-items:flex-start;gap:6px;margin:0;padding:0 14px 4px;color:var(--ink70,#5b554c);font-size:11.5px;line-height:1.4;text-wrap:pretty}
+.soLocked svg{width:12px;height:12px;flex:0 0 auto;margin-top:2px;color:var(--ink45,#938c80)}
+.soLocked b{font-weight:650;color:var(--ink,#1c1a17)}
 .soFoot{display:flex;align-items:center;justify-content:flex-end;padding:4px 10px 10px;min-height:34px}
 .soOff{display:inline-flex;align-items:center;gap:6px;min-height:28px;padding:4px 9px;border:1px solid var(--line,#e4ddd0);border-radius:9px;background:transparent;color:var(--ink70,#5b554c);font:650 11px/1.2 var(--sans,system-ui,sans-serif);cursor:pointer;transition:background-color .15s ease,color .15s ease,border-color .15s ease}
 .soOff svg{width:13px;height:13px;display:block;flex:0 0 auto}
@@ -137,13 +138,14 @@ dialog.soDlg:focus,dialog.soDlg:focus-visible{outline:none}
 .soOpt input{position:absolute;inset:0;opacity:0;margin:0;cursor:pointer}
 .soOpt span{display:inline-flex;align-items:center;gap:6px;min-height:30px;padding:4px 12px;border:1px solid var(--line,#e4ddd0);border-radius:999px;background:var(--card,#fffefb);font:650 12px/1.2 var(--sans,system-ui,sans-serif);color:var(--ink,#1c1a17);transition:background-color .15s ease,border-color .15s ease,color .15s ease}
 .soOpt:hover span{border-color:var(--ink25,#c4bdb0)}
-.soOpt input:checked+span{background:var(--ink,#1c1a17);border-color:var(--ink,#1c1a17);color:#fff}
-.soOpt input[value=cancel]:checked+span{background:var(--clay,#b0563f);border-color:var(--clay,#b0563f)}
+.soOpt input:checked+span{background:var(--goldSoft,#f0e6cd);border-color:var(--ink,#1c1a17);color:var(--ink,#1c1a17)}
+.soOpt input[value=cancel]:checked+span{background:var(--claySoft,#f4e3dc);border-color:var(--clay,#b0563f);color:#8a3a26}
 .soOpt input:focus-visible+span{outline:2px solid var(--gold2,#caa861);outline-offset:2px}
 .soAskText{margin:0;color:var(--ink70,#5b554c);font-size:12px;line-height:1.4;min-height:17px;text-wrap:pretty}
 .soName{border:1px solid var(--line,#e4ddd0);border-radius:9px;padding:7px 10px;background:var(--card,#fffefb);font:13px var(--sans,system-ui,sans-serif);min-width:0;width:100%;box-sizing:border-box}
 .soName:focus-visible{outline:2px solid var(--gold2,#caa861);outline-offset:1px}
 .soBtns{display:flex;flex-wrap:wrap;gap:7px;align-items:center}
+.soAsk .soBtns{justify-content:flex-end}
 .soBtn{display:inline-flex;align-items:center;justify-content:center;gap:7px;min-height:32px;padding:5px 13px;border:1px solid var(--line,#e4ddd0);border-radius:9px;background:var(--card,#fffefb);color:var(--ink,#1c1a17);font:650 12.5px/1.2 var(--sans,system-ui,sans-serif);cursor:pointer;white-space:nowrap;transition:background-color .15s ease,opacity .15s ease,transform .08s ease,border-color .15s ease}
 .soBtn:hover{background:var(--card2,#faf7f1);border-color:var(--ink25,#c4bdb0)}
 .soBtn:active{transform:translateY(1px)}
@@ -197,7 +199,7 @@ dialog.soDlg:focus,dialog.soDlg:focus-visible{outline:none}
   .soBody{padding:12px 12px 16px}
   .soGrid{grid-template-columns:minmax(0,1fr);gap:10px}
   /* a compact row, not a tall card: small pictures with their chips on the left, the order and customer beside them */
-  .soOpen{flex-direction:row;align-items:center;gap:12px;padding:10px 10px 0 12px}
+  .soOpen{flex-direction:row;align-items:center;gap:12px;padding:10px 10px 8px 12px}
   .soPieces{--pg:10px;flex:0 0 auto;justify-content:flex-start;padding-top:0}
   .soPiece{flex:0 0 56px;width:56px;max-width:56px}
   .soMeta{flex:1 1 auto;display:grid;grid-template-columns:minmax(0,1fr) auto;grid-template-areas:"no go" "who go";align-content:center;align-items:center;column-gap:8px;row-gap:3px;padding:0}
@@ -241,6 +243,7 @@ dialog.soDlg:focus,dialog.soDlg:focus-visible{outline:none}
     go: '<svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M4 2.5L7.5 6 4 9.5"/></svg>',
     off: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="8" cy="8" r="6.2"/><path d="M5.2 8h5.6"/></svg>',
     back: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M15 6l-6 6 6 6"/></svg>',
+    lock: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="3.4" y="7.2" width="9.2" height="6.4" rx="1.6"/><path d="M5.4 7.2V5.4a2.6 2.6 0 0 1 5.2 0v1.8"/></svg>',
     charm: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="12" cy="6.2" r="2.2"/><path d="M12 8.4v2.1"/><path d="M12 10.5c3.6 0 6 2.4 6 5.2 0 2.7-2.4 4.5-6 4.5s-6-1.8-6-4.5c0-2.8 2.4-5.2 6-5.2z"/></svg>',
     ring: '<svg class="soRing" viewBox="0 0 84 84" aria-hidden="true" focusable="false"><circle cx="42" cy="42" r="38"/><path d="M27 43.5l10.5 10.5L58 31"/></svg>'
   };
@@ -263,9 +266,10 @@ dialog.soDlg:focus,dialog.soDlg:focus-visible{outline:none}
       if (!o || typeof o !== 'object') continue;
       const orderId = String(o.orderId != null ? o.orderId : o.receiptId != null ? o.receiptId : o.id != null ? o.id : '');
       if (!orderId) continue;
-      const hereL = new Set([...here, ...[].concat(o.here || [])].filter(Boolean));
+      // (the engine says `here` as "GF Sheet 1 + GF Sheet 2" when a set with several sheets moves, and hereIds with the sheets' ids)
+      const hereL = new Set([...here, ...[].concat(o.here || []).flatMap(h => String(h).split(' + ').map(x => x.trim()))].filter(Boolean)), hereIds = new Set(arr(o.hereIds).map(String));
       let pieces = arr(o.pieces).filter(p => p && typeof p === 'object').map((p, i) => ({ index: p.index != null ? +p.index : i + 1, label: p.label || '', sheetId: p.sheetId || '', sheetLabel: String(p.sheetLabel || ''), setId: p.setId || '', thumb: p.thumb || null }));
-      pieces.forEach(p => { p.here = !!((ctx.kind !== 'set' && p.sheetId && String(p.sheetId) === String(ctx.id)) || (p.sheetLabel && hereL.has(p.sheetLabel))); });
+      pieces.forEach(p => { p.here = !!((ctx.kind !== 'set' && p.sheetId && String(p.sheetId) === String(ctx.id)) || (p.sheetId && hereIds.has(String(p.sheetId))) || (p.sheetLabel && hereL.has(p.sheetLabel))); });
       // no pieces told: the sheets are (here, there)
       if (!pieces.length) {
         const labels = [...hereL].map(l => ({ l, h: true })).concat(arr(o.there).map(l => ({ l, h: false })));
@@ -273,35 +277,36 @@ dialog.soDlg:focus,dialog.soDlg:focus-visible{outline:none}
       }
       pieces.sort((a, b) => (b.here - a.here) || (a.index - b.index));
       const customer = String(o.customer || o.buyer || o.name || '').trim(), thumb = typeof o.thumb === 'string' ? o.thumb : null;
-      out.push({ orderId, label: String(o.label || ''), customer, thumb, pieces, sig: JSON.stringify([orderId, customer, thumb ? 1 : 0, pieces.map(p => [p.index, p.sheetId, p.sheetLabel, p.here ? 1 : 0, p.thumb ? 1 : 0])]) });
+      // a sheet that cannot give its piece up (already cut, completed, its set committed): said on the card before anything is pressed
+      const locked = arr(o.locked).filter(l => l && typeof l === 'object' && (l.sheetLabel || l.why)).map(l => ({ sheetId: String(l.sheetId || ''), sheetLabel: String(l.sheetLabel || ''), why: String(l.why || '').trim().replace(/[.\s]+$/, '') }));
+      out.push({ orderId, label: String(o.label || ''), customer, thumb, pieces, locked, sig: JSON.stringify([orderId, customer, thumb ? 1 : 0, pieces.map(p => [p.index, p.sheetId, p.sheetLabel, p.here ? 1 : 0, p.thumb ? 1 : 0]), locked.map(l => [l.sheetId, l.why])]) });
     }
     return out;
   }
   const signature = list => list.map(o => o.sig).join('|');
   const orderNo = o => digits(o.orderId) || o.label || o.orderId;
-  const rawOf = o => ({ orderId: o.orderId, label: o.label, customer: o.customer, thumb: o.thumb, pieces: o.pieces.map(p => ({ index: p.index, label: p.label, sheetId: p.sheetId, sheetLabel: p.sheetLabel, setId: p.setId, thumb: p.thumb })), here: (o.pieces.find(p => p.here) || {}).sheetLabel || '', there: o.pieces.filter(p => !p.here).map(p => p.sheetLabel) });
+  const rawOf = o => ({ orderId: o.orderId, label: o.label, customer: o.customer, thumb: o.thumb, locked: o.locked.map(l => Object.assign({}, l)), pieces: o.pieces.map(p => ({ index: p.index, label: p.label, sheetId: p.sheetId, sheetLabel: p.sheetLabel, setId: p.setId, thumb: p.thumb })), here: (o.pieces.find(p => p.here) || {}).sheetLabel || '', there: o.pieces.filter(p => !p.here).map(p => p.sheetLabel) });
 
   /* ── words ── */
   function words(M, n) {
-    const o = M.opts, sheet = M.sheetLabel, set = M.setLabel, tgt = o.targetLabel ? String(o.targetLabel) : '';
+    const o = M.opts, sheet = M.sheetLabel, set = M.setLabel, tgt = o.targetLabel ? String(o.targetLabel) : '', why = typeof o.reason === 'string' ? o.reason.trim() : '';   // (a caller's own one sentence replaces the usual one)
     if (M.loading) return { title: `Looking for the orders that keep <b>${esc(M.subject)}</b> here`, plain: `Looking for the orders that keep ${M.subject} here`, sub: 'This takes a moment.' };
     if (n === 0) return { title: `Nothing holds <b>${esc(M.subject)}</b> any more`, plain: `Nothing holds ${M.subject} any more`, sub: tgt ? `It can move to ${tgt} now.` : 'It is free to move now.' };
     if (M.kind === 'set') {
       const t = `${n === 1 ? 'This order keeps' : 'These orders keep'} <b>${esc(set || 'this set')}</b> together`;
-      return { title: t, plain: t.replace(/<[^>]+>/g, ''), sub: `${n === 1 ? 'Its' : 'Their'} pieces sit in other sets, so it can't move${tgt ? ' to ' + tgt : ''} yet.` };
+      return { title: t, plain: t.replace(/<[^>]+>/g, ''), sub: why || `${n === 1 ? 'Its' : 'Their'} pieces sit in other sets, so it can't move${tgt ? ' to ' + tgt : ''} yet.` };
     }
     const t = `${n === 1 ? 'This order keeps' : 'These orders keep'} <b>${esc(sheet || 'this sheet')}</b> in <b>${esc(set || 'its set')}</b>`;
-    return { title: t, plain: t.replace(/<[^>]+>/g, ''), sub: `${n === 1 ? 'Its' : 'Their'} pieces sit on other sheets, so it can't ${tgt ? 'move to ' + tgt : 'leave ' + (set || 'its set')} yet.` };
+    return { title: t, plain: t.replace(/<[^>]+>/g, ''), sub: why || `${n === 1 ? 'Its' : 'Their'} pieces sit on other sheets, so it can't ${tgt ? 'move to ' + tgt : 'leave ' + (set || 'its set')} yet.` };
   }
-  /** The sheets these orders tie together (the sheet being moved first), as chips: GF Sheet 1 ⛓ SS Sheet 1. */
+  /** The sheets these orders tie together (the sheet being moved first, in gold), as chips. */
   function sheetsHtml(M) {
     const seen = new Map();
     for (const o of M.orders) for (const p of o.pieces) if (p.sheetLabel && (!seen.has(p.sheetLabel) || p.here)) seen.set(p.sheetLabel, !!p.here || seen.get(p.sheetLabel));
     const list = [...seen].sort((a, b) => (b[1] - a[1])).slice(0, 5), more = seen.size - list.length;
     if (list.length < 2) return '';
     const chip = ([l, h]) => `<span class="soChip${h ? ' here' : ''}" style="--dot:${dotOf(l)}"><i></i><span>${esc(l)}</span></span>`;
-    // (each link icon travels with the chip after it, so a wrapped row never starts with a lone icon)
-    return list.map((x, i) => i ? `<span class="soPair"><span class="soLinkIc" aria-hidden="true">${ICON.link}</span>${chip(x)}</span>` : chip(x)).join('') + (more > 0 ? `<span class="soPair"><span class="soLinkIc" aria-hidden="true">${ICON.link}</span><span class="soChip"><span>+${more}</span></span></span>` : '');
+    return list.map(chip).join('') + (more > 0 ? `<span class="soChip"><span>+${more}</span></span>` : '');
   }
   function derive(M) {
     const o = M.opts;
@@ -339,8 +344,17 @@ dialog.soDlg:focus,dialog.soDlg:focus-visible{outline:none}
     const ps = o.pieces.map(p => `${p.sheetLabel || 'no sheet yet'}${p.here ? ' (this sheet)' : ''}`);
     return `Open order ${orderNo(o)}${o.customer ? ', ' + o.customer : ''}. ${plural(o.pieces.length, 'piece')}: ${ps.join(', ')}.`;
   }
+  /** "Stays on RG Sheet 1: its Rose Gold cut is recorded." (the plain reason the engine gives, after the sheet's name) */
+  function lockedHtml(o) {
+    if (!o.locked.length) return '';
+    const seen = new Set(), parts = [];
+    for (const l of o.locked) { const k = l.sheetLabel + '|' + l.why; if (seen.has(k)) continue; seen.add(k); parts.push(`${l.sheetLabel ? `<b>${esc(l.sheetLabel)}</b>` : 'A sheet'}${l.why ? ': ' + esc(l.why) : ''}`); }
+    const shown = parts.slice(0, 2), more = parts.length - shown.length;
+    return `<p class="soLocked">${ICON.lock}<span>Stays on ${shown.join('; ')}${more > 0 ? ` and ${more} more` : ''}.</span></p>`;
+  }
   function cardHtml(o) {
     return `<button type="button" class="soOpen" data-open aria-label="${esc(aria(o))}"><span class="soPieces">${piecesHtml(o)}</span><span class="soMeta"><span class="soOrderNo">#${esc(orderNo(o))}</span>${o.customer ? `<span class="soWho">${esc(o.customer)}</span>` : ''}<span class="soGo" aria-hidden="true">${ICON.go}</span></span></button>`
+      + lockedHtml(o)
       + `<div class="soSlot soFootSlot"><div class="soClip"><div class="soFoot"><button type="button" class="soOff" data-off>${ICON.off}<span>Take off the sheet…</span></button></div></div></div>`;
   }
   function wireImages(root) {
@@ -569,7 +583,7 @@ dialog.soDlg:focus,dialog.soDlg:focus-visible{outline:none}
     const name = `soWhat${++uid}`;
     box.innerHTML = `<p class="soAskQ">Take #${esc(orderNo(o))} off its sheets?</p>`
       + `<div class="soOpts" role="radiogroup" aria-label="What happens to the order"><label class="soOpt"><input type="radio" name="${name}" value="hold"><span>Put on hold</span></label><label class="soOpt"><input type="radio" name="${name}" value="cancel"><span>Cancel the order</span></label></div>`
-      + `<p class="soAskText" aria-live="polite">Choose what happens to it.</p>`
+      + `<p class="soAskText" aria-live="polite"></p>`
       + (need ? '<input class="soName" type="text" maxlength="40" autocomplete="name" spellcheck="false" placeholder="Your name, for the record" aria-label="Your name, kept with this change">' : '')
       + '<div class="soBtns"><button type="button" class="soBtn go" data-yes disabled>Take off</button><button type="button" class="soBtn" data-keep>Keep it</button></div>';
     // the choice grows in where the quiet button was (the footer folds away as it opens: the grid does not jump)
@@ -578,7 +592,7 @@ dialog.soDlg:focus,dialog.soDlg:focus-visible{outline:none}
     const TEXT = { hold: 'It waits under On hold until someone puts it back.', cancel: 'It leaves every list. Its record stays under Orders › Cancelled.' };
     const sync = () => {
       const v = (box.querySelector('input:checked') || {}).value || '';
-      text.textContent = TEXT[v] || 'Choose what happens to it.';
+      text.textContent = TEXT[v] || '';
       yes.textContent = v === 'cancel' ? 'Take off and cancel' : v === 'hold' ? 'Take off and hold' : 'Take off';
       yes.classList.toggle('danger', v === 'cancel');
       yes.disabled = !v || (need && !(nameIn.value || '').trim());
@@ -738,10 +752,8 @@ dialog.soDlg:focus,dialog.soDlg:focus-visible{outline:none}
     dlg.addEventListener('close', () => finish(M));
   }
   function retry(M) {
-    const f = M.opts.onRetry; M.retried = true;
-    closeIt(M, 'retry');
-    // (once the window has begun to go: the move draws its own flight and bar on the page)
-    setTimeout(() => { try { if (typeof f === 'function') f(); } catch (e) { warn('onRetry', e); } }, 0);
+    M.retried = true;
+    closeIt(M, 'retry');   // (onRetry is called by finish(): once the window has gone, just before onClose)
   }
   function closeIt(M, why) {
     if (!M || M.closed || M.closing) return;
@@ -753,6 +765,8 @@ dialog.soDlg:focus,dialog.soDlg:focus-visible{outline:none}
     clearTimeout(M.timer); for (const off of M.offs.splice(0)) { try { off(); } catch (_) {} }
     const ow = doc.getElementById('orderWin'); if (ow) for (const b of ow.querySelectorAll('.soBack')) b.remove();
     if (CUR === M) CUR = null;
+    // (the window has gone: the caller is told the person wants the move again first, then that it is closed, so that what closing sets going already knows)
+    if (M.retried && typeof M.opts.onRetry === 'function') { try { M.opts.onRetry(); } catch (e) { warn('onRetry', e); } }
     try { if (M.opts.onClose) M.opts.onClose({ cleared: !M.orders.length, retried: !!M.retried, why: M.why || 'close' }); } catch (e) { warn('onClose', e); }
     setTimeout(() => { try { M.dlg.remove(); } catch (_) {} }, 700);
   }
@@ -762,7 +776,8 @@ dialog.soDlg:focus,dialog.soDlg:focus-visible{outline:none}
     try {
       opts = opts && typeof opts === 'object' ? opts : {};
       css();
-      const kind = String(opts.kind || '').toLowerCase() === 'set' ? 'set' : 'sheet', id = String(opts.id || '');
+      // (the callers say it as {kind, id} or as {sheetId} / {setId}, with a targetSetId, an own `reason` and the orders if they hold them)
+      const kind = (String(opts.kind || '').toLowerCase() === 'set' || (!opts.kind && opts.setId && !opts.sheetId && !opts.id)) ? 'set' : 'sheet', id = String(opts.id || opts.sheetId || opts.setId || '');
       if (CUR && live(CUR)) { const c = CUR; Object.assign(c.opts, opts); c.kind = kind; if (id) c.id = id; if (Array.isArray(opts.orders)) update(c, opts.orders); else reread(c, 'live'); return handleOf(c); }
       const S = W.SharedOrders, canRead = !!(S && typeof S.between === 'function') || typeof opts.read === 'function';
       if (!Array.isArray(opts.orders) && !canRead) return null;

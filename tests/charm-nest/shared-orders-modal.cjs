@@ -13,6 +13,7 @@ const pwDir = process.argv[2] || process.env.PW_DIR || path.join(root, 'node_mod
 let chromium; try { ({ chromium } = require(path.join(pwDir, 'playwright-core'))); } catch (_) { console.log('  – no playwright-core: the browser checks were not run'); process.exit(0); }
 const { start } = require('./bridge-server.cjs');
 const SHOTS = process.env.SHOTS || '';
+const SLOW = Math.max(1, +process.env.SO_SLOW || 1);   // (SO_SLOW=4 on a busy machine: every wait below is that many times longer)
 const DAY = 86400, SHIP = Math.floor(Date.UTC(2026, 9, 10, 17) / 1000);
 
 /* ── the fixture: orders with pieces on GF Sheet 1 (the sheet in question) and on other sheets of its set ── */
@@ -46,7 +47,7 @@ function fakeShared(cfg) {
   const sleep = ms => new Promise(r => setTimeout(r, ms)), subs = new Set();
   const store = window.__so = { orders: cfg.orders, held: {}, calls: [], reads: 0, delay: cfg.delay == null ? 450 : cfg.delay, fail: null, stay: null, subs };
   const item = (o, id) => ({ orderId: o.id, label: '#' + o.id, customer: o.who, thumb: o.thumb, here: (o.pieces.find(p => p.sheetId === id) || {}).sheetLabel, there: o.pieces.filter(p => p.sheetId !== id).map(p => p.sheetLabel),
-    pieces: o.pieces.map((p, i) => ({ index: i + 1, label: p.label, sheetId: p.sheetId, sheetLabel: p.sheetLabel, setId: 'set-1', thumb: p.thumb })) });
+    locked: o.locked || [], pieces: o.pieces.map((p, i) => ({ index: i + 1, label: p.label, sheetId: p.sheetId, sheetLabel: p.sheetLabel, setId: 'set-1', thumb: p.thumb })) });
   window.SharedOrders = {
     between(id, target) {
       store.reads++;
@@ -66,7 +67,7 @@ function fakeShared(cfg) {
   };
 }
 
-const until = async (fn, ms = 8000, what = '') => { const t0 = Date.now(); for (;;) { let v; try { v = await fn(); } catch (_) { v = false; } if (v) return v; if (Date.now() - t0 > ms) throw new Error('timed out: ' + what); await new Promise(r => setTimeout(r, 40)); } };
+const until = async (fn, ms = 8000, what = '') => { ms *= SLOW; const t0 = Date.now(); for (;;) { let v; try { v = await fn(); } catch (_) { v = false; } if (v) return v; if (Date.now() - t0 > ms) throw new Error('timed out: ' + what); await new Promise(r => setTimeout(r, 40)); } };
 
 (async () => {
   const srv = await start({ receipts: [] });
@@ -84,11 +85,11 @@ const until = async (fn, ms = 8000, what = '') => { const t0 = Date.now(); for (
     await ctx.addInitScript(() => { try { if (!sessionStorage.getItem('__seeded')) { localStorage.setItem('cn.settings', JSON.stringify({ v: 26, dsOrigin: 'http://127.0.0.1:9', runMode: 'manual', sound: 'off', notify: 'off', review: 'on' })); if (!window.__noName) localStorage.setItem('cn.employee', 'Test Operator'); sessionStorage.setItem('__seeded', '1'); } } catch (_) {} window.confirm = () => true; window.alert = () => {}; });
     if (!process.env.SO_REAL) await ctx.addInitScript(`(${fakeShared.toString()})(${JSON.stringify({ orders, delay: o.delay })})`);
     const page = await ctx.newPage(), errors = [];
-    page.setDefaultTimeout(20000);
+    page.setDefaultTimeout(20000 * SLOW);
     page.on('pageerror', e => { errors.push('page: ' + e.message); console.error('page error:', String(e.stack || e.message).split('\n').slice(0, 4).join(' | ')); });
     page.on('console', m => { if (m.type() === 'error' && !/firebase stub|Failed to load resource/.test(m.text())) errors.push('console: ' + m.text().slice(0, 300)); });
     await page.goto(`${srv.sorterOrigin}/charm-nest-1.html`, { waitUntil: 'load' });
-    await page.waitForFunction(() => window.CN && window.Orders && window.OrderWin && window.SharedOrdersModal && window.OrderTimeline && CN.S.cloud.ok === true, null, { timeout: 60000 });
+    await page.waitForFunction(() => window.CN && window.Orders && window.OrderWin && window.SharedOrdersModal && window.OrderTimeline && CN.S.cloud.ok === true, null, { timeout: 60000 * SLOW });
     await page.evaluate(async ({ recs }) => {
       await Orders.loadMaps(true);
       for (const order of recs) order.lines.forEach(line => { const key = CharmNestOrders.lineKey(order, line); const row = { key, order, line, arrivedAt: Date.now(), spec: null, problems: [], state: 'pooled', reason: null, claimedBy: null, poolIds: [], engrave: null, material: null }; B.orders.rows.push(row); B.orders.byKey.set(key, row); });
@@ -380,9 +381,9 @@ const until = async (fn, ms = 8000, what = '') => { const t0 = Date.now(); for (
     await page.keyboard.press('Tab'); assert(await page.evaluate(() => document.activeElement.matches('[data-off]')), 'Tab reaches "Take off the sheet…"');
     await page.keyboard.press('Enter');
     await until(() => page.$(`.soCard[data-order="${orders[0].id}"][data-state=ask]`), 2000, 'Enter opens the choice');
-    assert(await page.evaluate(() => document.activeElement.matches('.soAsk input')), 'the focus moves into the choice');
-    await page.keyboard.press('Escape'); await page.waitForTimeout(200);
-    assert(await page.evaluate(() => document.activeElement.matches('[data-off]')), 'putting the choice away returns to its button');
+    await until(() => page.evaluate(() => document.activeElement.matches('.soAsk input')), 2000, 'the focus moves into the choice');
+    await page.keyboard.press('Escape');
+    await until(() => page.evaluate(() => document.activeElement.matches('[data-off]')), 2000, 'putting the choice away returns to its button');
     // Enter on the card opens the order; Esc returns
     await page.focus(`.soCard[data-order="${orders[1].id}"] [data-open]`);
     await page.keyboard.press('Enter');
@@ -451,7 +452,7 @@ const until = async (fn, ms = 8000, what = '') => { const t0 = Date.now(); for (
     assert.equal(await page.$$eval('.soWait', a => a.length), 0, 'the wait is gone');
     ok.push('9 · before the first answer: skeleton cards and a small labelled spinner, then the orders');
     await page.evaluate(() => { SharedOrdersModal.close(); });
-    await page.waitForTimeout(900);
+    await until(async () => (await page.evaluate(() => !SharedOrdersModal.current())), 6000, 'the first window is gone before the next opens');
     // a failed first read: one short line and a way to try again
     await page.evaluate(() => { __so.readDelay = 0; __so.readFail = true; });
     assert(await openModal(page, { noOrders: true }));
@@ -480,6 +481,21 @@ const until = async (fn, ms = 8000, what = '') => { const t0 = Date.now(); for (
       await ctx.close();
     }
     ok.push('9 · one order (singular words), twelve orders, long names and missing pictures all lay out without cutting anything off');
+  }
+
+  /* ═════ 10 · a sheet that cannot give its piece up is said on the card before anything is pressed ═════ */
+  {
+    const orders = mkOrders(3);
+    orders[1].locked = [{ sheetId: 'ss-s1', sheetLabel: 'SS Sheet 1', why: 'its Rose Gold cut is recorded.' }];
+    const { ctx, page, errors } = await boot(orders);
+    assert(await openModal(page)); await settled(page);
+    assert.equal(await page.$$eval('.soCard .soLocked', a => a.length), 1, 'only the order with a locked sheet says so');
+    assert.equal(await text(page, `.soCard[data-order="${orders[1].id}"] .soLocked`), 'Stays on SS Sheet 1: its Rose Gold cut is recorded.');
+    assert.equal(await page.$$eval(`.soCard[data-order="${orders[0].id}"] .soLocked`, a => a.length), 0);
+    await shot(page, 'S16-locked');
+    assert.deepEqual(errors, [], 'no page errors: ' + errors.join(' | '));
+    ok.push('10 · a sheet that cannot let go (cut, completed, set committed) is said on its card: "Stays on SS Sheet 1: its Rose Gold cut is recorded."');
+    await ctx.close();
   }
 
   await browser.close(); srv.close();

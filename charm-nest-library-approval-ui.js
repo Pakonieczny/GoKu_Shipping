@@ -304,9 +304,22 @@ span.lapItem{cursor:default;border-style:dashed}
   }
 
   /* the missing things, in red */
+  /** The window that says which multi-piece orders keep a sheet in its set (charm-nest-shared-orders-modal.js), when the page has it. */
+  const sharedWindow = () => !!(window.SharedOrdersModal && typeof window.SharedOrdersModal.open === 'function');
+  function openShared(bar, need, from) {
+    try {
+      const f = bar.opts && bar.opts.onShared;
+      if (typeof f === 'function') return f(need, from);
+      const p = bar.plan || {};
+      return window.SharedOrdersModal.open({ kind: kindOf(p, bar.opts || {}) === 'set' ? 'set' : 'sheet', id: p.id || (p.item && p.item.id) || '', orders: need && Array.isArray(need.items) ? need.items : undefined, targetLabel: destOf(p), targetSetId: p.to && p.to.setId || null, from });
+    } catch (e) { warn('shared orders', e); }
+    return null;
+  }
   function renderNeeds(bar, plan, needs) {
     const box = q(bar, '.lapNeeds'); box.hidden = false; if (!reduced()) box.classList.add('enter');
     const list = needs.map((n, ni) => {
+      // orders that tie the sheet to others are not a list of red chips: one button opens the window that shows them, with pictures
+      if (n.key === 'sharedOrders' && sharedWindow()) return `<li class="lapNeed" data-need="sharedOrders"><div class="lapNeedT"><b>${esc(n.label || n.key || '')}</b>${n.detail ? ` <span>${esc(n.detail)}</span>` : ''}</div><div class="lapItems"><button type="button" class="lapBtn" data-shared>See which orders</button></div></li>`;
       const items = arr(n.items).map(it => { const t = targetOf(it); const idx = bar.items.push({ it, t }) - 1; return { it, t, idx }; });
       const chip = x => {
         const label = x.it.label || (x.t && x.t.how === 'order' ? `Order ${x.t.id}` : x.t && x.t.how === 'sheet' ? 'Sheet' : x.it.id || ''), why = x.it.why ? `<span class="why">${esc(x.it.why)}</span>` : '';
@@ -377,6 +390,7 @@ span.lapItem{cursor:default;border-style:dashed}
   function onClick(bar, e) {
     const b = e.target.closest && e.target.closest('button'); if (!b || !bar.el.contains(b)) return;
     if (b.dataset.act) { e.preventDefault(); return void closeIt(bar); }
+    if (b.hasAttribute('data-shared')) { e.preventDefault(); const n = arr(bar.plan && bar.plan.needs).find(x => x && x.key === 'sharedOrders'); openShared(bar, n, b); return; }
     if (b.hasAttribute('data-more')) { const w = b.parentNode.querySelector('.lapMoreWrap'); if (w) { w.hidden = false; w.style.display = 'contents'; } b.remove(); const nx = w && w.querySelector('button.lapItem'); if (nx) { try { nx.focus({ preventScroll: true }); } catch (_) {} } return; }
     if (b.dataset.item != null) {
       const x = bar.items[+b.dataset.item]; if (!x || !x.t) return;
