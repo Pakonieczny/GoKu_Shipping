@@ -126,7 +126,7 @@ const NORMAL = [
 
 async function designPage(browser, file, device) {
   const { ctx, page, errors } = await open(browser, file);
-  await until(() => page.evaluate(() => typeof proceedToPrint === 'function' && typeof DsName === 'object' && window.StationSession && StationSession.page() && window.StationActivity), file + ' loaded');
+  await until(() => page.evaluate(() => typeof proceedToPrint === 'function' && typeof DsName === 'object' && window.StationSession && StationSession.page() && window.StationActivity && document.querySelector('#settingsBody') && document.querySelector('#settingsBody').children.length > 0), file + ' loaded');   // (boot() has run wireUI and buildSettingsUI: its handlers are on the buttons, the settings are loaded)
   await page.evaluate(() => {   // what the page loads from Etsy and the shared locks is not under test
     window.buildNewOrderList = async () => {}; window.ensureSelectedPreviews = async () => {}; window.ensureTilesFor = async () => {};
     window.rtQueueLock = () => {}; window.openListingModal = async () => {};
