@@ -31,7 +31,7 @@ const F = require('./efficiency-orders-fixture.cjs');
   assert.equal(M.orders.length, 2, 'rows without an id are dropped'); assert.equal(M.orders[0].rid, '77'); assert.equal(M.orders[0].qr, '77', 'no qr: the receipt id, which is what the sticker carries');
   assert.equal(M.orders[0].piecesCount, 0); assert.equal(M.orders[0].durationMs, null); assert.deepEqual(M.orders[0].pieces, []); assert.equal(M.orders[0].next, undefined);
   const x = M.orders[1]; assert.equal(x.number, '55', 'the # is not doubled'); assert.equal(x.piecesCount, 4); assert.equal(x.pieces[0].thumbUrl, '', 'a javascript: address is not a picture'); assert.equal(x.pieces[1].thumbUrl, 'https://i.example/x.jpg'); assert.equal(x.durationMs, null); assert.equal(x.qr, 'QR55');
-  assert.equal(M.next, ''); assert.equal(M.total, 3); assert.equal(j(E.norm(null)).orders.length, 0); assert.equal(j(E.norm({ next: 'c25', orders: [] })).next, 'c25');
+  assert.equal(M.next, ''); assert.equal(M.total, 3); assert.equal(j(E.norm(null)).orders.length, 0); assert.equal(j(E.norm({ next: 'o25', orders: [] })).next, 'o25');
   assert.equal(E.hl('Maya <b>Lindgren', ['maya', 'b']), '<mark class="efoMk">Maya</mark> &lt;b&gt;Lindgren', 'a word is marked, text is escaped, one letter is not marked');
   assert.equal(E.hl('Heart charm', ['ar', 'cha']), 'He<mark class="efoMk">ar</mark>t <mark class="efoMk">cha</mark>rm'); assert.equal(E.hl('abc', []), 'abc'); assert.deepEqual(j(E.words('  Oct  5 ')), ['oct', '5']);
   // the date text with what was typed marked: a weekday, a month, a day beside a month, a whole date, a whole month (the forms E4 reads)
@@ -202,10 +202,13 @@ const F = require('./efficiency-orders-fixture.cjs');
     const n0 = calls().length, input = page.locator('.efoSearch input');
     assert.equal(await page.locator('.efoNote:visible').count(), 0, 'no note when the server has none');
     fx.state.notes = ['Customer names, SKUs and piece titles were searched in the newest 250 orders with a stored receipt.'];
-    await input.click(); await page.keyboard.type('maya', { delay: 35 });
-    await page.waitForFunction(() => document.querySelectorAll('.efoRow .efoMk').length > 0, null, { timeout: 4000 });
+    await input.click();
+    // four keystrokes in one task (a fast typist): the debounce must turn them into one request, for the last text
+    await page.evaluate(() => { const i = document.querySelector('.efoSearch input'); for (const v of ['m', 'ma', 'may', 'maya']) { i.value = v; i.dispatchEvent(new Event('input', { bubbles: true })); } });
+    for (let i = 0; i < 400 && !calls().slice(n0).some(c => c.q === 'maya'); i++) await wait(25);
+    await page.waitForFunction(() => !window.__h.state().loading && document.querySelectorAll('.efoRow .efoMk').length > 0, null, { timeout: 8000 });
     await wait(300);
-    const typed = calls().slice(n0); assert(typed.length < 4, 'not one request per key (debounced): ' + JSON.stringify(typed.map(c => c.q))); assert.equal(typed.at(-1).q, 'maya'); assert.equal(typed.at(-1).cursor, '');
+    const typed = calls().slice(n0); assert.equal(typed.length, 1, 'not one request per key (debounced): ' + JSON.stringify(typed.map(c => c.q))); assert.equal(typed[0].q, 'maya'); assert.equal(typed[0].cursor, '');
     const want = fx.orders.filter(o => fx.hit(o, 'maya')); assert(want.length > 0);
     assert.deepEqual(await rids(page), want.slice(0, 25).map(o => o.rid), 'only the orders that match');
     assert.equal(await page.locator('.efoRow .efoCust').evaluateAll(l => l.every(e => /maya/i.test(e.textContent))), true);
@@ -234,10 +237,12 @@ const F = require('./efficiency-orders-fixture.cjs');
     await page.waitForFunction(() => window.__h.state().query === '' && !window.__h.state().loading); assert.equal(await input.inputValue(), '');
     // a stale request is cancelled: the answer to the first word comes late and must never be drawn
     const a0 = await page.evaluate(() => window.__aborts);
-    fx.setDelay(b => (b.q === 'a' ? 900 : 60));
-    await input.click(); await page.keyboard.type('a'); await wait(320);      // 'a' is asked (debounced) and still waiting
-    await page.keyboard.type('b'); await page.waitForFunction(() => window.__h.state().query === 'ab' && !window.__h.state().loading, null, { timeout: 4000 });
-    await wait(1100);
+    fx.setDelay(b => (b.q === 'a' ? 2000 : 60));
+    const s0 = calls().length; await input.click(); await page.keyboard.type('a');
+    for (let i = 0; i < 200 && !calls().slice(s0).some(c => c.q === 'a'); i++) await wait(25);      // 'a' is asked (debounced) and still waiting
+    assert(calls().slice(s0).some(c => c.q === 'a'), "'a' was asked");
+    await page.keyboard.type('b'); await page.waitForFunction(() => window.__h.state().query === 'ab' && !window.__h.state().loading, null, { timeout: 6000 });
+    await wait(2100);
     assert.equal(await page.evaluate(() => window.__h.state().query), 'ab'); assert.deepEqual(await rids(page), fx.orders.filter(o => fx.hit(o, 'ab')).slice(0, 25).map(o => o.rid), 'the late answer to "a" was not drawn');
     assert((await page.evaluate(() => window.__aborts)) > a0, 'the stale request was aborted, not only ignored'); fx.setDelay(null);
     // station chips, dates and sort: what E5's page drives through the same calls
@@ -265,14 +270,15 @@ const F = require('./efficiency-orders-fixture.cjs');
     assert.deepEqual(await rids(page), fx.orders.slice(0, 25).map(o => o.rid), 'newest is the server order again');
     await snap(page, '8-filters', { x: 0, y: 0, width: 1440, height: 200 });
     // paging on scroll: the next page by cursor, a labelled spinner, then every order and an end line
-    await mount(page, { pollMs: 0 }); await page.waitForSelector('.efoRow'); fx.setDelay(b => (b.cursor ? 600 : 0));
+    await mount(page, { pollMs: 0 }); await page.waitForSelector('.efoRow'); fx.setDelay(b => (b.cursor ? 1500 : 0));
     const p0 = calls().length;
     await page.evaluate(() => { const d = document.getElementById('efoTest'); d.scrollTop = d.scrollHeight; });
-    await page.waitForSelector('.efoFoot .spin', { timeout: 4000 }); assert.match(await page.locator('.efoFoot').innerText(), /Loading more orders/);
-    await page.waitForFunction(() => document.querySelectorAll('.efoRow').length === 50, null, { timeout: 5000 });
-    assert.equal(calls()[p0].cursor, 'c25', 'the cursor the server gave is sent back'); assert.equal(calls()[p0].limit, 25);
+    const ft = await (await page.waitForFunction(() => { const f = document.querySelector('.efoFoot'); return f && f.querySelector('.spin') ? f.innerText : false; }, null, { timeout: 6000 })).jsonValue();
+    assert.match(ft, /Loading more orders/, 'a labelled spinner while the next page is read');
+    await page.waitForFunction(() => document.querySelectorAll('.efoRow').length === 50, null, { timeout: 8000 });
+    assert.equal(calls()[p0].cursor, 'o25', 'the cursor the server gave is sent back'); assert.equal(calls()[p0].limit, 25);
     await page.evaluate(() => { const d = document.getElementById('efoTest'); d.scrollTop = d.scrollHeight; });
-    await page.waitForFunction(() => document.querySelectorAll('.efoRow').length === 60, null, { timeout: 5000 }); fx.setDelay(null);
+    await page.waitForFunction(() => document.querySelectorAll('.efoRow').length === 60, null, { timeout: 8000 }); fx.setDelay(null);
     await page.evaluate(() => { const d = document.getElementById('efoTest'); d.scrollTop = d.scrollHeight; }); await wait(500);
     assert.deepEqual(await rids(page), fx.orders.map(o => o.rid), 'every order once, in order'); assert.equal(calls().length, p0 + 2, 'no request after the end');
     assert.match(await page.locator('.efoFoot').innerText(), /All 60 orders shown/);

@@ -46,11 +46,11 @@ function make(opts = {}) {
   }
   function personOrders(b) {
     if (b.name && String(b.name).toLowerCase() !== st.person.toLowerCase()) return { ok: true, now: now(), mode: st.mode, name: b.name, found: false, q: b.q || '', total: 0, scanned: 0, searched: { orders: 0, withDetails: 0 }, orders: [], next: null, notes: [] };
-    const limit = Math.max(1, Math.min(100, +b.limit || 25)), off = /^c(\d+)$/.test(b.cursor || '') ? +b.cursor.slice(1) : 0;
+    const limit = Math.max(1, Math.min(100, +b.limit || 25)), off = /^o(\d+)$/.test(b.cursor || '') ? +b.cursor.slice(1) : 0;
     let list = orders.filter(o => (!b.from || o.day >= b.from) && (!b.to || o.day <= b.to) && (!b.station || o.stations.includes(b.station)));
     const scanned = list.length; list = list.filter(o => hit(o, b.q));
     // (E4 lists newest first by the last action and ignores `sort` today: so does this)
-    const page = list.slice(off, off + limit), next = off + limit < list.length ? 'c' + (off + limit) : null;
+    const page = list.slice(off, off + limit), next = off + limit < list.length ? 'o' + (off + limit) : null;
     return { ok: true, now: now(), mode: st.mode, name: b.name, found: true, total: list.length, scanned, searched: { orders: scanned, withDetails: Math.min(scanned, st.withDetails == null ? scanned : st.withDetails) },
       orders: page, next, notes: st.notes || [] };
   }
