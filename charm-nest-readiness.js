@@ -5,7 +5,8 @@
   const idsOf=s=>[...new Set((s.poolIds || []).filter(Boolean))];
   const held=s=>!!(s && s.laserHold && +s.laserHold.at>0);
   const url=x=>typeof x==='string'?x:x?.url;
-  /* A piece a person completed by hand (Review → Complete Order, or the QR label printed from Custom Orders; Paul, 5 Oct: "this chain only piece
+  /* A piece a person completed by hand (Review → Complete Order, or the QR label printed from Custom Orders: EITHER button, or both, in any order and
+   * any number of reprints, releases the piece: both write state 'completed' on the record; Paul, 5 Oct: "this chain only piece
    * obviously does not go on any sheet so I approve that by pressing the complete button ... but it's still blocking this sheet") is RESOLVED:
    * it needs no sheet, waits for nothing and holds no other piece back. Both sides read the same truth, the custom order's own record
    * ({state:'completed', how:'button'|'print', completedAt, completedBy}): the page as a row's spec.customDone, the server as the line's handDone
@@ -97,7 +98,8 @@
    * Pieces on X itself never block through the order check (X's own readiness shows through its own steps), single-piece orders are
    * never an issue for what other pieces do (they have none), and cancelled ('gone'), no-design and completed-by-hand pieces (handOf: Review's
    * Complete Order, or the QR label printed from Custom Orders: a resolved piece needs no sheet) are not pieces at all and never block; Reopen
-   * makes the piece one again. One exception,
+   * makes the piece one again. When the order still waits ONLY for its other, real piece on a sheet that is not ready, that stays the one honest issue and
+   * names that piece and that sheet (round 8: a sheet in no set says so, another set is a split); the piece completed by hand is never the one blamed. One exception,
    * because it is a person's or Etsy's explicit stop and not an inference about where pieces are: a HELD piece (a person's hold, or an
    * Etsy change waiting for review) holds the sheet wherever it sits, even a one-piece order on this very sheet (as before). */
   const KEYS=['pooled','noSku','unmatched','noDesign','held','otherSheetNotReady'];   // which kind names an order that has several
@@ -340,7 +342,7 @@
       for(const b of blockers)for(const p of b.pieces)if(p.kind==='otherSheetNotReady' && p.sheetId && p.sheetId!==id && !seen.has(p.sheetId)){
         seen.add(p.sheetId);
         const n=blockers.filter(x=>x.pieces.some(y=>y.sheetId===p.sheetId && y.kind==='otherSheetNotReady')).length;
-        items.orders.push({kind:'sheet',id:p.sheetId,label:p.sheetLabel,why:`Holds ${count(n,'order')} of this sheet back: ${MISSING[p.stage] || 'it is not ready'}`});
+        items.orders.push({kind:'sheet',id:p.sheetId,label:p.sheetLabel,why:`Holds ${count(n,'order')} of this sheet back: ${p.noSet && p.stage!=='included'?'it is in no set, and ':''}${MISSING[p.stage] || 'it is not ready'}`});
       }
       if(blockers.length>LISTED)items.orders.push({kind:'sheet',id,label,why:`${count(blockers.length-LISTED,'more order')} also wait for other pieces`});
       if(blockers.length)hard.orders=true;
@@ -361,7 +363,10 @@
   // (sheets that share a multi-piece order belong to one set) says it should not be; it stays a real issue, worded as the split it is.
   const splitFrom=(b,me)=>!!(me && me.setId && b && b.key==='otherSheetNotReady' && (Array.isArray(b.setIds)?b.setIds:[b.setId]).some(x=>x && x!==me.setId));
   const splitWords=(b,me)=>me.setLabel && b.setLabel && me.setLabel!==b.setLabel?`Split between ${me.setLabel} and ${b.setLabel}`:'Split across sets';
-  const pieceLine=(b,me)=>b.key==='pooled'?'Not on a sheet yet':b.key==='noSku'?'No SKU':b.key==='otherSheetNotReady'?(splitFrom(b,me)?`On ${b.sheetLabel || 'another sheet'}, in another set`:`On ${b.sheetLabel || 'another sheet'}, not ready yet`):sentence(b.why);
+  // round 8: its other piece is on a not-ready sheet that is in NO set, while the asking sheet is in one. It is still the one honest wait (a real piece on a real
+  // sheet), told as what it is: that sheet has no set (the cardinal rule says sheets sharing a multi-piece order belong to one set). Never a piece completed by hand: those are no pieces.
+  const noSetFrom=(b,me)=>!!(me && me.setId && b && b.key==='otherSheetNotReady' && Object.prototype.hasOwnProperty.call(b,'setId') && (Array.isArray(b.setIds)?b.setIds:[b.setId]).every(x=>!x));
+  const pieceLine=(b,me)=>b.key==='pooled'?'Not on a sheet yet':b.key==='noSku'?'No SKU':b.key==='otherSheetNotReady'?(splitFrom(b,me)?`On ${b.sheetLabel || 'another sheet'}, in another set`:noSetFrom(b,me)?`On ${b.sheetLabel || 'another sheet'}, in no set and not ready yet`:`On ${b.sheetLabel || 'another sheet'}, not ready yet`):sentence(b.why);
   // the words of what holds an order back, from its blocks (older reports without blocks: their own words, as they were mapped before)
   function orderWhy(r,me){
     const bs=Array.isArray(r.blocks)?r.blocks:[];
@@ -371,17 +376,17 @@
     }
     if(bs.length===1){
       const b=bs[0];
-      return b.key==='pooled'?'Its other piece is not on a sheet yet':b.key==='noSku'?'Its other piece has no SKU':b.key==='held'?`A piece of this order is held: ${b.why}`:b.key==='otherSheetNotReady'?`${splitFrom(b,me)?`${splitWords(b,me)}: its`:'Its'} other piece is on ${b.sheetLabel || 'another sheet'}, and ${MISSING[b.stage] || 'it is not ready'}`:`Its other piece: ${b.why}`;
+      return b.key==='pooled'?'Its other piece is not on a sheet yet':b.key==='noSku'?'Its other piece has no SKU':b.key==='held'?`A piece of this order is held: ${b.why}`:b.key==='otherSheetNotReady'?(noSetFrom(b,me)?`Its other piece is on ${b.sheetLabel || 'another sheet'}, which is in no set${b.stage==='included'?'':`, and ${MISSING[b.stage] || 'it is not ready'}`}`:`${splitFrom(b,me)?`${splitWords(b,me)}: its`:'Its'} other piece is on ${b.sheetLabel || 'another sheet'}, and ${MISSING[b.stage] || 'it is not ready'}`):`Its other piece: ${b.why}`;
     }
-    const phrase=b=>PIECE_PHRASE[b.key] || (b.key==='otherSheetNotReady'?`on ${b.sheetLabel || 'another sheet'}${splitFrom(b,me)?' (another set)':''}`:b.why);
+    const phrase=b=>PIECE_PHRASE[b.key] || (b.key==='otherSheetNotReady'?`on ${b.sheetLabel || 'another sheet'}${splitFrom(b,me)?' (another set)':noSetFrom(b,me)?' (in no set)':''}`:b.why);
     return `${bs.length} of its other pieces wait: ${[...new Set(bs.map(phrase))].join(', ')}`;
   }
   // me: the asking sheet's own set ({setId,setLabel}), to tell an order split across sets from a wait inside the sheet's own set
   function orderIssue(id,r,ctx,me){
-    const bs=Array.isArray(r.blocks)?r.blocks:[],h=bs.length?head(bs):null,first=h && bs.find(b=>b.key===h.key),sp=bs.find(b=>splitFrom(b,me));
+    const bs=Array.isArray(r.blocks)?r.blocks:[],h=bs.length?head(bs):null,first=h && bs.find(b=>b.key===h.key),sp=bs.find(b=>splitFrom(b,me)),ns=!sp && bs.find(b=>noSetFrom(b,me));
     return {step:'orders',key:h?h.key:'unverified',orderId:id,orderLabel:`Order ${id}`,customer:r.customer || '',listingId:r.listingId || '',thumb:typeof ctx.thumb==='function'?ctx.thumb(id) || null:null,
-      pieceCount:r.pieceCount || 0,pieces:bs.map(b=>({index:b.index,key:b.poolId,poolId:b.poolId,label:b.label,kind:b.key,sheetId:b.sheetId || null,sheetLabel:b.sheetLabel || null,stage:b.stage || '',why:pieceLine(b,me),...(splitFrom(b,me)?{split:true,setLabel:b.setLabel || ''}:{})})),
-      why:orderWhy(r,me),open:{type:'order',id,...(first?{poolId:first.poolId}:{})},...(h && h.sheetId?{otherSheetId:h.sheetId}:{}),...(sp?{split:true,...(me.setLabel && sp.setLabel && me.setLabel!==sp.setLabel?{sets:[me.setLabel,sp.setLabel]}:{})}:{})};
+      pieceCount:r.pieceCount || 0,pieces:bs.map(b=>({index:b.index,key:b.poolId,poolId:b.poolId,label:b.label,kind:b.key,sheetId:b.sheetId || null,sheetLabel:b.sheetLabel || null,stage:b.stage || '',why:pieceLine(b,me),...(splitFrom(b,me)?{split:true,setLabel:b.setLabel || ''}:noSetFrom(b,me)?{noSet:true}:{})})),
+      why:orderWhy(r,me),open:{type:'order',id,...(first?{poolId:first.poolId}:{})},...(h && h.sheetId?{otherSheetId:h.sheetId}:{}),...(sp?{split:true,...(me.setLabel && sp.setLabel && me.setLabel!==sp.setLabel?{sets:[me.setLabel,sp.setLabel]}:{})}:ns?{noSet:true}:{})};
   }
   // the sheet's own current blocker: the first of its own steps still behind, as a short label (no counts, no engraving rows)
   function ownIssue(s){

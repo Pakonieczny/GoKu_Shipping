@@ -56,6 +56,8 @@
     otherSheetNotReady: { tone: 'slate', group: s => `Waits on ${s}`, chip: (n, s) => `Waits on ${s}` },
     // an order split between two sets (the other piece is on a not-ready sheet of ANOTHER set): a real issue, said as the split it is
     split: { tone: 'slate', group: s => `Split from ${s}`, chip: (n, s) => `Split from ${s}` },
+    // the other piece is on a not-ready sheet that is in no set (round 8): the wait stays, said with its real sheet and that it has no set
+    noSet: { tone: 'slate', group: s => `Waits on ${s}, in no set`, chip: (n, s) => `Waits on ${s}, in no set` },
     unverified: { tone: 'gold', group: () => 'Not checked yet', chip: () => 'Not checked yet' }
   };
   const MATE = { waitsOnSheet: 'Not ready yet', missingSheet: 'Not found', setMissing: 'Set not loaded' };
@@ -107,7 +109,8 @@
   function reasonOf(it) {
     const pieces = Array.isArray(it.pieces) ? it.pieces : [], n = Math.max(1, pieces.length || +it.pieceCount || 1);
     const labels = [...new Set(pieces.map(p => p && p.sheetLabel).filter(Boolean))];
-    const split = it.key === 'otherSheetNotReady' && (it.split === true || pieces.some(p => p && p.split === true)), r = REASON[split ? 'split' : it.key];
+    const split = it.key === 'otherSheetNotReady' && (it.split === true || pieces.some(p => p && p.split === true));
+    const noSet = it.key === 'otherSheetNotReady' && !split && (it.noSet === true || pieces.some(p => p && p.noSet === true)), r = REASON[split ? 'split' : noSet ? 'noSet' : it.key];
     if (!r) { const text = tidy((pieces[0] && pieces[0].why) || it.why || it.label || 'Not ready') || 'Not ready'; return { id: 'x:' + text, tone: 'gold', chip: text, group: text }; }
     const s = it.key === 'otherSheetNotReady' ? sheetsWord(labels) : '';
     let chip = r.chip(n, s);
@@ -118,7 +121,7 @@
       const tail = tidy(useful(own) ? own : whole && useful(whole[1]) ? whole[1] : '').replace(/…$/, '');
       if (tail) { const w = tail.split(' ').slice(0, 4).join(' '); chip = 'On hold: ' + (/^[A-Z][a-z]/.test(w) ? w[0].toLowerCase() + w.slice(1) : w); }
     }
-    return { id: (split ? 'split' : it.key) + (s ? ':' + s : ''), tone: r.tone, chip, group: r.group(s) };
+    return { id: (split ? 'split' : noSet ? 'noSet' : it.key) + (s ? ':' + s : ''), tone: r.tone, chip, group: r.group(s) };
   }
   function model(feed, opts) {
     opts = opts || {};
