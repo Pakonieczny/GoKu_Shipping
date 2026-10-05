@@ -250,15 +250,14 @@ async function main() {
     await page.waitForFunction(() => !document.querySelector('dialog.holdDlg') && OrderWin.isOpen(), null, { timeout: 15000 });
     await page.waitForFunction(() => document.querySelectorAll('#owPcSum .owPcRow [data-hold-btn]').length === 3 && ![...document.querySelectorAll('#owPcSum [data-hold-btn]')].some(b => b.disabled), null, { timeout: 8000 });
     t = await T(); assert.equal(t.runs.length, 0, 'Not now: no run'); assert.equal(writes() - w1, 0, 'nothing written');
-    // a press on the row itself (its name, not the Hold or the sheet chip) still opens that piece, and its own row alone has the Hold too
+    // a press on the row itself (its name, not the Hold or the sheet chip) still picks that piece: every row stays, the piece's is marked and keeps its Hold
     await page.click(`#owPcSum [data-piece="${gf}"] .owPcName`);
-    await page.waitForFunction(k => { const on = document.querySelector('#owPieceSw button.on'); return on && on.dataset.piece === k && document.querySelectorAll('#owPcSum .owPcRow').length === 1; }, gf, { timeout: 15000 });
-    await page.waitForFunction(() => document.querySelector('#owPcSum .owPcRow.solo [data-hold-btn]'), null, { timeout: 8000 });
+    await page.waitForFunction(k => OrderWin.selectedPiece() === k && document.querySelectorAll('#owPcSum .owPcRow').length === 3 && document.querySelector(`#owPcSum .owPcRow.sel[data-piece="${k}"] [data-hold-btn]`), gf, { timeout: 15000 });
     pr = await plainRows();
-    assert(pr.length === 1 && pr[0].solo && pr[0].plain && pr[0].holds === 1 && pr[0].inAct && pr[0].words === null && pr[0].rightOfName && pr[0].beforeDots && pr[0].inside && !pr[0].clip, 'one piece picked, in no card: its own row with the Hold: ' + JSON.stringify(pr));
+    assert(pr.length === 3 && pr.every(r => r.holds === 1 && r.inAct && r.rightOfName && r.beforeDots && r.inside && !r.clip) && pr.slice(1).every(r => r.plain), 'one piece picked, in no card: every row stays with its Hold: ' + JSON.stringify(pr));
     await shot('plain-row-picked-1440');
-    await page.click('#owPieceSw [data-piece=""]');
-    await page.waitForFunction(() => document.querySelectorAll('#owPcSum .owPcRow').length === 3 && !document.querySelector('#owPcSum .owPcRow.solo'), null, { timeout: 15000 });
+    await page.click('#owPcSum [data-pc-all]');
+    await page.waitForFunction(() => OrderWin.selectedPiece() === null && document.querySelectorAll('#owPcSum .owPcRow').length === 3 && !document.querySelector('#owPcSum .owPcRow.solo'), null, { timeout: 15000 });
     await closeWin();
 
     // ── 4 · the plan's own sentences (effects) are shown as given ──

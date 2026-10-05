@@ -184,7 +184,7 @@ async function main() {
     await shot('a-timeline');
     await view('info');
     const sheetSeals = async key => {
-      await page.click(`#owPieceSw [data-piece="${key}"]`); await page.waitForTimeout(500); await view('sheet');
+      await page.evaluate(k => OrderWin.selectPiece(k), key); await page.waitForTimeout(500); await view('sheet');
       const r = await page.evaluate(() => { const n = document.querySelector('#owPlateWrap .owPlateNone[data-none]'); return n ? { text: n.textContent.replace(/\s+/g, ' ').trim(), seals: [...n.querySelectorAll('svg[data-seal-model]')].map(x => { const j = JSON.parse(x.getAttribute('data-seal-model')); return `${j.action} ${j.date} ${j.time}`; }), titled: n.querySelectorAll('[title]').length } : null; });
       await view('info'); return r;
     };
@@ -192,7 +192,7 @@ async function main() {
     await shot('a-sheet-football');
     sh = await sheetSeals(kOf(A, 'fig')); assert(sh && /Completed by hand/.test(sh.text)); assert.deepEqual(sh.seals, [QR('12:41 PM')], 'FIGURE SKATE\'s Sheet tab: the QR label that completed it');
     sh = await sheetSeals(kOf(A, 'snake')); assert(!sh, 'SNAKE 5 is on a sheet: no "none" box and no seal on its Sheet tab');
-    await page.click('#owPieceSw [data-piece=""]'); await page.waitForTimeout(800); await idle();
+    await page.evaluate(() => OrderWin.selectPiece(null)); await page.waitForTimeout(800); await idle();
     p = await aProblems(); assert.deepEqual(p, [], 'all pieces again: ' + p.join(' | '));
 
     // ── 3 · reopen keeps every seal; Complete Order again adds one and takes none away ──

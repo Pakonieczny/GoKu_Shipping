@@ -2,6 +2,8 @@
 // FAKE DATA ONLY: invented people, invented order numbers and customers, pictures drawn here as small SVG data addresses. No network, no Firestore.
 //   const F = require('./efficiency-stations-fixture.cjs'); const fx = F.make(); fx.answer(body) → { status, json }
 //   fx.start(station, order) · fx.finish(station, person) · fx.signOut(name) · fx.clear() · fx.state.fail = n (the next n answers fail)
+//   F.e2(answer) → the same answer in the shape the real live layer sends (devices, device labels, a laser sheet, piece counts, two kinds of picture)
+//   op person (what one person did today, E4's shape: kpis with label, unit, value, def): fx.state.personFail = n (the next n of them fail), the name "Nobody" is not found
 const KEY = 'fixture-pass-123';
 
 const hue = n => (n * 47) % 360;
@@ -16,7 +18,7 @@ const pic = (n, kind) => {
 const BROKEN = '/__fixture/missing-picture.jpg';
 
 function make(opts = {}) {
-  const st = { calls: [], bad: 0, fail: 0, key: opts.key || KEY, http: null };
+  const st = { calls: [], people: [], bad: 0, fail: 0, personFail: 0, key: opts.key || KEY, http: null };
   const t0 = Date.now();
   const at = () => Date.now();
   const mk = (rid, o) => Object.assign({ rid, orderNumber: rid, customer: 'Fixture Customer', thumbUrl: pic(+rid.slice(-3), 'photo'), qr: { text: rid }, pieces: [], scannedAt: at() - 95000 }, o);
@@ -44,6 +46,16 @@ function make(opts = {}) {
     if (st.http) return { status: st.http.status, json: st.http.json };
     if (body.key !== st.key) { st.bad++; return { status: 401, json: { ok: false, error: 'unauthorized' } }; }
     if (st.fail > 0) { st.fail--; return { status: 503, json: { ok: false, error: 'both reads failed' } }; }
+    if (body.op === 'person') {
+      st.people.push({ name: body.name, range: body.range, compare: body.compare, sandbox: body.sandbox === true });
+      if (st.personFail > 0) { st.personFail--; return { status: 503, json: { ok: false, error: 'busy' } }; }
+      if (body.name === 'Nobody') return { status: 200, json: { ok: true, found: false, name: body.name, mode: body.sandbox ? 'sandbox' : 'real' } };
+      const m = (label, unit, value, def, more) => Object.assign({ label, unit, value, prev: null, delta: null, def, estimated: false }, more);
+      return { status: 200, json: { ok: true, now: at(), mode: body.sandbox ? 'sandbox' : 'real', name: body.name, found: true, range: body.range, kpis: {
+        parts: m('Pieces', 'pieces', body.sandbox ? 7 : 33, 'Pieces scanned or completed today, net of undo.'), orders: m('Orders', 'orders', 9, 'Different orders worked on today.'),
+        secPerOrderMedian: m('Median per order', 'seconds', 312, 'The middle time from first scan to done.', { estimated: true, why: 'phone scans count for the desktop' }),
+        activeHours: m('Active time', 'hours', 3.5, 'Time with an action at least every 5 minutes.'), idleHours: m('Idle time', 'hours', null, 'Signed in but nothing logged.'), partsPerActiveHour: m('Pieces per active hour', 'pieces/hour', 9.43, 'Pieces divided by active time.') } } };
+    }
     if (body.op === 'live') return { status: 200, json: st.hook ? st.hook(live(body.sandbox === true), body) : live(body.sandbox === true) };
     return { status: 400, json: { ok: false, error: 'bad op' } };
   }
@@ -59,4 +71,21 @@ function make(opts = {}) {
     setHook(f) { st.hook = f || null; }, find, pic, BROKEN
   };
 }
-module.exports = { make, KEY, pic, BROKEN };
+/** The live answer as the real live layer sends it (plans/employee-hr/api.md, E2 section 4): ids, pages, device labels, laser sheets, piece counts, both kinds of picture. */
+function e2(j) {
+  const now = j.at, st = k => j.stations.find(s => s.key === k);
+  const a = st('assembly'), w = st('welding');
+  Object.assign(a.current[0], { id: 'assembly__assembly-2__Anna M.', device: 'assembly-2', deviceLabel: 'Assembly 2', kind: 'order', title: '', thumbUrl: BROKEN, photoUrl: pic(202, 'photo'), vectorUrl: pic(202, 'vector'), beatAt: now - 4000, pieceCount: 2 });
+  Object.assign(a.current[1], { id: 'assembly__assembly-3__Ivy R.', device: 'assembly-3', deviceLabel: 'Assembly 3', kind: 'order', title: '', thumbUrl: '', photoUrl: '', vectorUrl: pic(203, 'vector'), beatAt: now - 9000, pieceCount: 0 });
+  a.devices = [{ device: 'assembly-1', label: 'Assembly 1', state: 'offline', person: '', since: null }, { device: 'assembly-2', label: 'Assembly 2', state: 'working', person: 'Anna M.', since: now - 4 * 3600000 }, { device: 'assembly-3', label: 'Assembly 3', state: 'working', person: 'Ivy R.', since: now - 3 * 3600000 }, { device: 'assembly-4', label: 'Assembly 4', state: 'offline', person: '', since: null }];
+  a.counts.scansToday = 77;
+  w.current[0].pieces = w.current[0].pieces.map(p => Object.assign({}, p));
+  w.current[0].pieces[0] = { id: '3521000303_1', label: 'Piece 1', sku: 'ARC-1', thumbUrl: '', vectorUrl: pic(301, 'vector'), photoUrl: '' };
+  Object.assign(w.current[0], { id: 'welding__weld-1__Giovanna C.', device: 'weld-1', deviceLabel: 'Welding', kind: 'order', pieceCount: 5 });
+  const laser = { key: 'laser', label: 'Laser', state: 'working', people: ['Paul K.'], lastEventAt: now - 20000, counts: { partsToday: 12, ordersToday: 4, scansToday: 19 },
+    devices: [{ device: 'laser-1', label: 'Laser 1', state: 'working', person: 'Paul K.', since: now - 2 * 3600000 }],
+    current: [{ id: 'laser__laser-1__Paul K.', person: 'Paul K.', device: 'laser-1', deviceLabel: 'Laser 1', kind: 'sheet', rid: '', orderNumber: '', customer: '', title: 'GF Sheet 2 · Set 4', scannedAt: now - 130000, beatAt: now - 5000, note: '', thumbUrl: '', vectorUrl: '', photoUrl: '', qr: null, pieces: [], pieceCount: 0 }] };
+  j.stations.splice(j.stations.findIndex(s => s.key === 'sorter'), 0, laser);
+  return j;
+}
+module.exports = { make, KEY, pic, BROKEN, e2 };

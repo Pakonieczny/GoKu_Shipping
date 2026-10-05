@@ -139,12 +139,12 @@ async function main() {
     c = await card(OV);
     check((await page.evaluate(() => __approves.length)) === 1 && c.seals === 1, 'pressing it again approves nothing and adds no seal (approvals ' + (await page.evaluate(() => __approves.length)) + ', seals ' + c.seals + ')');
     // the other pieces of the order have their own card
-    await page.click(`#owPieceSw [data-piece="${keyOf(B, 1)}"]`);
+    await page.click(`#owPcSum .owPcRow[data-piece="${keyOf(B, 1)}"] .dot`);
     await page.waitForFunction(k => OrderWin.key() === k, keyOf(B, 1));
-    check(await waitCard(OV, 'approve'), 'piece 2 in the switcher: its own card, still to approve (not piece 1\'s approved one)');
+    check(await waitCard(OV, 'approve'), 'piece 2 on the pieces list: its own card, still to approve (not piece 1\'s approved one)');
     c = await card(OV);
     check(/LOVE/.test(c.words) && !/KMB/.test(c.words) && c.seals === 0, 'piece 2 shows its own words and no seal: ' + JSON.stringify(c));
-    await page.click(`#owPieceSw [data-piece="${keyOf(B, 2)}"]`);
+    await page.click(`#owPcSum .owPcRow[data-piece="${keyOf(B, 2)}"] .dot`);
     await page.waitForFunction(k => OrderWin.key() === k, keyOf(B, 2));
     check(await waitCard(OV, 'approved'), 'piece 3: its approved card');
     c = await card(OV);
