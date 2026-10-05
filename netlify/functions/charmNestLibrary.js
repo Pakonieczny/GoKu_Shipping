@@ -262,8 +262,8 @@ async function productionReadiness(records,{tx=null,revs=null}={}) {
   try{await crossRuns(asking);}catch(e){console.warn('[charmNestLibrary] the runs of these orders could not be read:',e && e.message);for(const o of asking)unverified.add(o);}
   const evidence=new Map(records.map(s=>[s.id || s.sheetId,s]));
   // an order whose pieces are not all on these sheets: the sheets that hold the rest are read too. A line that lost its pool ids is read by the ids the pool gives
-  // its copies ("<line key>_<n>"); a committed line without pieces is a no-design candidate (below), not a lost piece
-  const present=new Set(records.flatMap(Readiness.idsOf)),lostIds=l=>!(l.poolIds || []).length && l.state!=='gone' && !l.noDesign && !l.problems?.length && !['committed','written','labelled'].includes(l.state),
+  // its copies ("<line key>_<n>"), a committed or written one too: it may be a no-design candidate (below), but until that is known its copies may be on a sheet that is not asked
+  const present=new Set(records.flatMap(Readiness.idsOf)),lostIds=l=>!(l.poolIds || []).length && l.state!=='gone' && !l.noDesign && !l.problems?.length,
     missingOrders=[...new Set([...lines.values()].filter(l=>(l.poolIds || []).some(id=>!present.has(id)) || (lostIds(l) && Readiness.copyIds(l,l.key).some(id=>!present.has(id)))).map(l=>l.orderId))];
   for(let i=0;i<missingOrders.length;i+=30){
     const snap=await get(col(SHEETS).where('orders','array-contains-any',missingOrders.slice(i,i+30)).select(...SLIM_SHEET));
