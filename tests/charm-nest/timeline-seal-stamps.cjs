@@ -1,4 +1,5 @@
-// The real timeline uses the shared faces, then awaits complete physical presses before repainting or following a new step.
+// The real timeline uses the shared faces, then awaits complete physical presses before repainting. (Until 5 Oct 2026 it also moved a detail pane
+// to the new step once it was pressed; the pane is gone, so a new seal is just pressed onto the chart.)
 const assert = require('node:assert/strict'), fs = require('node:fs'), { JSDOM } = require('jsdom');
 const dom = new JSDOM('<main id="timeline"></main><section id="compact"></section>', { url: 'http://127.0.0.1', runScripts: 'outside-only', pretendToBeVisual: true });
 const w = dom.window, d = w.document;
@@ -28,25 +29,25 @@ const record = event => { for (const fn of listeners) fn(event); };
     timeline = T.mount(d.querySelector('#timeline'), { orderId, live: true }); await flush();
     assert.equal(presses.length, 0, 'opening saved history does not play a new physical press');
     assert.equal(d.querySelector('.tlSt').querySelector('svg').dataset.sealFamily, 'received');
-    const original = d.querySelector('#timeline .tlBig').dataset.key;
+    assert(!d.querySelector('#timeline .tlBig, #timeline .tlDetail'), 'the chart has no detail pane for a new step to move');
     record(laser); await flush();
     assert.equal(presses.length, 1, 'a new recorded action starts one physical press');
     const first = presses[0], face = first.firstChild;
     assert(first.classList.contains('pending'), 'fresh ink waits for contact in the shared press');
     assert.equal(face.dataset.sealFamily, 'laser');
-    assert.equal(d.querySelector('#timeline .tlBig').dataset.key, original, 'next detail waits for the full press');
+    assert.equal(first.dataset.key, 'laserDone~laser', 'the press is on the new seal of the chart itself'); assert(!d.querySelector('#timeline .tlBig, #timeline .tlDetail, #timeline .tlSt.sel'), 'no pane draws and nothing is selected or followed while it is pressed');
     record(welded); await flush();
     assert.equal(presses.length, 1, 'a second live record cannot interrupt the first press');
     assert.equal(first.firstChild, face, 'a queued redraw cannot replace the actual face being stamped');
     assert(!d.querySelector('.tlSt[data-key="welded~weld"]'), 'a later record waits for the first animation');
     pending.shift()(); await flush();
     assert.equal(presses.length, 2, 'the second physical press starts after the first is complete');
-    assert.equal(d.querySelector('#timeline .tlBig').dataset.key, 'laserDone~laser', 'only the completed first press may advance the detail');
+    assert.equal(presses[1].dataset.key, 'welded~weld', 'the second press is on the welded seal, and starts only after the first is complete');
     assert(first.isConnected, 'the first historical seal remains');
     assert.equal(first.firstChild, face, 'the completed face remains unchanged when the queue redraws');
     assert(!first.classList.contains('pending'), 'completed ink remains visible');
     pending.shift()(); await flush();
-    assert.equal(d.querySelector('#timeline .tlBig').dataset.key, 'welded~weld', 'the second detail waits until its own press is complete');
+    assert(!d.querySelector('#timeline .tlSt[data-key="welded~weld"]').classList.contains('pending'), 'the second seal is on the chart, complete, once its own press is'); assert(!d.querySelector('#timeline .tlBig, #timeline .tlDetail, #timeline .tlSt.sel'), 'and still no pane and no selection');
     assert.equal(d.querySelectorAll('#timeline .tlSt[data-key]').length, 3, 'all historical seals remain');
     const m = JSON.parse(first.querySelector('svg').dataset.sealModel);
     assert.equal(m.by, 'Seth Signed', 'the event retains its actual recorded signer');
@@ -80,6 +81,6 @@ const record = event => { for (const fn of listeners) fn(event); };
     const unknownDate = T.faceModel({ ...plain, data: { how: 'skipped', decidedAt: 0 } });
     assert.equal(unknownDate.at, 0); assert.equal(unknownDate.date, ''); assert.equal(unknownDate.time, '');
     assert.equal(unknownDate.by, 'Historic Signer', 'an unknown date cannot erase a recorded signer');
-    console.log('PASS: real shared faces; silent saved/backfilled history; serial live and compact/cancelled presses; concurrent redraw preserves ink; each detail awaits full completion; immutable identity/time and truthful cut-plain history.');
+    console.log('PASS: real shared faces; silent saved/backfilled history; serial live and compact/cancelled presses; concurrent redraw preserves ink; each seal waits for its own full press, with no pane to follow it; immutable identity/time and truthful cut-plain history.');
   } finally { timeline?.destroy(); compact?.destroy(); w.close(); }
 })().catch(err => { console.error(err); process.exitCode = 1; });
