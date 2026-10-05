@@ -4670,9 +4670,8 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       const placed = [];
       for (const item of p.list) {
         if (!fillable(target)) break;
-        if (hooks.from) hooks.from(item);
         let ok = false, err = null;
-        try { ok = await moveIn(item.k, item.spots, target, who, { headless: true }); } catch (e) { err = e; }
+        try { if (hooks.from) await hooks.from(item); ok = await moveIn(item.k, item.spots, target, who, { headless: true }); } catch (e) { err = e; }   // (from may refuse the move: it throws)
         if (!ok) { if (hooks.skipped) hooks.skipped(item, err || new Error("another change is running")); break; }
         placed.push(item); if (hooks.placed) hooks.placed(item);
       }
@@ -4680,6 +4679,8 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     }
     return {
       busy: () => !!W.flow, word, fillable, room, fill, ghostsOf, newer, flow: () => (W.flow ? W.flow.title : ""),
+      // one sheet written again as it now stands, verified and saved (what a save that failed, or a reload, left unwritten); nothing drawn. false: still saving
+      rewrite: sh => rewritePage(sh, stepOf(`Rewriting ${word(sh)}`), () => {}),
       // what becomes of the whole order: the pieces that come off (ok, each with its sheet) and those that stay (stay, with a kind:
       // cut · sent · unloaded · last · together). The window's pool cache for the order is dropped first: it is only a cache.
       offPlan: rid => { W.pools.delete(String(rid)); return offPlan({ rid: String(rid) }, true); },
