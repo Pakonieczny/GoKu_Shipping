@@ -77,12 +77,13 @@
       out.push(Object.assign({ id, line, pool: p, copy: m ? +m[3] : 1, tx: m ? m[2] : '', lineKey: line && line.key || (m ? `${m[1]}_${m[2]}` : id.replace(/_\d+$/, '')) }, extra || {}));
     };
     // (the order Issues-truth's CharmNestReadiness.pieces counts in, so that "piece 2" is the same piece in the Library's issues panel and here:
-    //  lines by the number at the end of their key, a line's copies in its poolIds order, then the ones its quantity still lacks, "<line key>_<n>")
+    //  lines by the number at the end of their key, a line's copies by their copy number (the number at the end of the pool id; the quantity's missing ones are "<line key>_<n>"))
     for (const l of lines.slice().sort((a, b) => tailNo(a.key) - tailNo(b.key))) {
       const key = String(l.key || `${rid}_${l.transactionId || ''}`), qty = Math.max(1, Math.floor(+((l.spec && l.spec.quantity) || l.quantity) || 1));
       const ids = [...new Set((Array.isArray(l.poolIds) ? l.poolIds : []).filter(Boolean).map(String))];
       for (let n = 1; ids.length < qty; n++) if (!ids.includes(`${key}_${n}`)) ids.push(`${key}_${n}`);
       for (const [id, p] of pools) if (p.lineKey === key && !ids.includes(id) && !GONE.has(p.state)) ids.push(id);
+      ids.sort((a, b) => tailNo(a) - tailNo(b));   // (stable: by copy number, so a record that lists _3 before _1 does not change which piece is piece 2)
       for (const id of ids) add(id, l, { qty: Math.max(qty, ids.length) });
     }
     for (const [id, p] of pools) if (!seen.has(id) && !GONE.has(p.state)) add(id, null, { qty: +p.quantity || 1 });
