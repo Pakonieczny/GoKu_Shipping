@@ -106,6 +106,10 @@ const fileBase = s => `${CODE[s.metal]}_${DAYSTR}_Set-${SETS.find(x => x.id === 
 const VARIANTS = ['ok', 'pool', 'sheet', 'set', 'state'];
 const lineState = (variant, l) => variant === 'state' && l.state === 'written' ? 'pooled' : l.state;
 const lagged = (variant, sheetId) => (variant === 'pool' || variant === 'sheet') && sheetId === 'sh-ss1';
+/** What the Order check (the server's readiness, the Library's '!' panel) can know: it reads the SAVED sheet records, and a record is the file that gets cut,
+ *  so a piece its sheet's record does not list is "not on a saved sheet yet" for it, whatever the pool row or the set say. With every record complete this is
+ *  truth.unnested; in variant 'sheet' the SS sheet's record lists nothing, and that is by design (see the report: the readiness is deliberately strict). */
+const recordUnnested = (variant, rid) => truth.pieces(rid).filter(p => p.state !== 'gone' && (!p.sheetId || (variant === 'sheet' && lagged(variant, p.sheetId))));
 function seedServer(srv, variant = 'ok') {
   const { st } = srv, ts = { toMillis: () => NOW };
   const box = (id, i, w = 30) => ({ id, cxPt: 24 + (i % 8) * 34, cyPt: 24 + Math.floor(i / 8) * 34, angle: 0, wPt: w, hPt: w });
@@ -407,7 +411,9 @@ async function sheetWinProbes(page, mode, R, sheets) {
     await settle(page, SW, null, { max: 3000, quiet: 300 });
     // B1 / B2 / B6: every order of the sheet, selected
     for (const rid of rids) {
-      const pieces = truth.pieces(rid).filter(p => p.state !== 'gone'), side = `${at}, order ${rid}`, here = pieces.filter(p => p.sheetId === S.id);
+      // (an order outside the pull, read from records alone: a piece with no SKU has no pool record, nothing the app can read names it. That one piece
+      //  is not asked of the sheet window there; the order window opened from it reads the order itself and is asked everything)
+      const pieces = truth.pieces(rid).filter(p => p.state !== 'gone' && (mode !== 'out' || p.poolId)), side = `${at}, order ${rid}`, here = pieces.filter(p => p.sheetId === S.id);
       await pressUntil(page, rid => document.querySelector(`.swOrd[data-rid="${rid}"]`)?.click(), selectedOrder, rid);
       let v = await settle(page, SW, null, { max: 7000, quiet: 550, ready: swSelReady });
       const check = (v, how) => {
@@ -455,7 +461,7 @@ async function sheetWinProbes(page, mode, R, sheets) {
 
 /* ═══════════════════════════ C · Library cards ═══════════════════════════ */
 /** The Library's Sets view: each set card lists its sheets, each with the number of orders on it. */
-async function libraryProbes(page, mode, R) {
+async function libraryProbes(page, mode, R, variant) {
   await closeAll(page);
   await page.evaluate(() => CN.setMode('library'));
   await page.waitForSelector('#libBody .setCard', { timeout: 30000 }).catch(() => {});
@@ -473,7 +479,60 @@ async function libraryProbes(page, mode, R) {
       if (!Number.isNaN(qr)) R.check('C1', `${sheetLabel(s)} QR label on the Set-${set.seq} card`, qr === want, `the QR label says ${qr} order(s), ${want} order(s) have a piece on it`);
     }
   }
+  await sharedProbes(page, mode, R);
+  await issuesProbes(page, mode, R, variant);
   await page.evaluate(() => CN.setMode('orders'));
+}
+
+/* K1: the cardinal rule. "Every sheet that shares a multi-piece order stays in the same Set": which sheets must stay together, and which orders a move would split.
+   The oracle below is worked out from the fixture alone (an order is shared when more than one of its pieces sits on sheets and those are two or more). */
+const sharedTruth = () => FIX.map(o => { const ps = truth.pieces(o.rid).filter(p => p.sheetId); return { rid: o.rid, sheets: [...new Set(ps.map(p => p.sheetId))].sort(), n: new Set(ps.map(p => p.poolId || p.key + p.copy)).size }; }).filter(x => x.sheets.length >= 2 && x.n > 1);
+function groupTruth(id) {
+  const shared = sharedTruth(), seen = new Set([id]); let grew = true;
+  while (grew) { grew = false; for (const o of shared) if (o.sheets.some(x => seen.has(x))) for (const x of o.sheets) if (!seen.has(x)) { seen.add(x); grew = true; } }
+  return { ids: [...seen].sort(), orders: shared.filter(o => o.sheets.some(x => seen.has(x))).map(o => o.rid).sort() };
+}
+function splitTruth(moving, dest) {
+  const out = [];
+  for (const o of sharedTruth()) {
+    const here = o.sheets.filter(x => moving.includes(x)), there = o.sheets.filter(x => !moving.includes(x) && (SHEET[x].set || null) !== dest);
+    if (here.length && there.length) out.push({ rid: o.rid, there: there.map(x => sheetLabel(SHEET[x])).sort() });
+  }
+  return out;
+}
+async function sharedProbes(page, mode, R) {
+  const ask = (fn, arg) => page.evaluate(({ fn, arg }) => { try { const v = window.SharedOrders[fn](...arg); return JSON.parse(JSON.stringify(v)); } catch (e) { return { error: e.message }; } }, { fn, arg });
+  if (!(await page.evaluate(() => !!(window.SharedOrders && SharedOrders.between)))) { R.check('K1', 'SharedOrders', false, 'window.SharedOrders is not on the page'); return; }
+  await sleep(1200);
+  for (const S of SHEETS) {
+    const at = sheetLabel(S), g = await ask('groupOf', [S.id]), want = groupTruth(S.id);
+    R.eq('K1', `${at}, the sheets that must stay together`, (g.ids || []).slice().sort(), want.ids, 'the sheets it must stay with');
+    R.eq('K1', `${at}, the shared orders of that group`, (g.orders || []).slice().sort(), want.orders, 'the orders that tie them');
+    for (const dest of [null, ...SETS.map(x => x.id)]) {
+      const items = await ask('between', [S.id, dest]), w = splitTruth([S.id], dest);
+      R.eq('K1', `${at} moved to ${dest || 'no set'}, the orders it would split`, Array.isArray(items) ? items.map(i => ({ rid: i.orderId, there: (i.there || []).slice().sort() })).sort((a, b) => a.rid < b.rid ? -1 : 1) : items, w, 'the orders that would be split');
+    }
+  }
+  for (const set of SETS) {
+    const items = await ask('between', [set.id, null]), w = splitTruth(SHEETS.filter(x => x.set === set.id).map(x => x.id), set.id);
+    R.eq('K1', `Set ${set.seq} kept as it is, the orders already split across sets`, Array.isArray(items) ? items.map(i => ({ rid: i.orderId, there: (i.there || []).slice().sort() })).sort((a, b) => a.rid < b.rid ? -1 : 1) : items, w, 'the orders split across sets');
+  }
+}
+
+/* C5: what the Library says holds a sheet back about its ORDERS (the '!' panel reads this: LaserReview.issuesOf), against the pieces the fixture says are on no sheet.
+   Only the piece reasons are asked here (not on a sheet yet, no SKU); another sheet's physical stage is the readiness engine's own and has its own tests. */
+async function issuesProbes(page, mode, R, variant) {
+  for (const S of SHEETS) {
+    if (variant === 'sheet' && lagged(variant, S.id)) continue;   // (see recordUnnested)
+    const at = sheetLabel(S);
+    await page.waitForFunction(id => window.LaserReview && LaserReview.issuesOf && LaserReview.issuesOf(id), S.id, { timeout: 20000 }).catch(() => {});
+    await sleep(900);
+    const got = await page.evaluate(id => { const r = LaserReview.issuesOf(id); return r ? { issues: (r.issues || []).filter(i => i.step === 'orders').map(i => ({ rid: String(i.orderId), key: i.key })) } : null; }, S.id);
+    if (!got) { R.check('C5', at, false, 'the Library has no readiness for the sheet'); continue; }
+    const want = truth.ordersOn(S.id).filter(rid => recordUnnested(variant, rid).length).map(rid => ({ rid, key: recordUnnested(variant, rid).some(p => !p.sku) ? 'noSku' : 'pooled' })).sort((a, b) => a.rid < b.rid ? -1 : 1);
+    const pieceKeys = new Set(['pooled', 'noSku', 'unmatched', 'noDesign']);
+    R.eq('C5', `${at}, the orders held back by a piece on no sheet`, got.issues.filter(i => pieceKeys.has(i.key)).sort((a, b) => a.rid < b.rid ? -1 : 1), want, 'the orders the sheet says wait on a piece');
+  }
 }
 
 /* ═══════════════════════════ D · Orders list rows, global search ═══════════════════════════ */
@@ -514,14 +573,15 @@ async function serverProbes(srv, variant, R) {
   const call = async body => JSON.parse((await srv.st.handlers.charmNestLibrary.handler({ httpMethod: 'POST', headers: {}, body: JSON.stringify(body), queryStringParameters: {} })).body || '{}');
   const r = await call({ op: 'laserStatus', sheetIds: SHEETS.map(s => s.id), setIds: SETS.map(s => s.id), recordSeals: false });
   for (const S of SHEETS) {
+    if (variant === 'sheet' && lagged(variant, S.id)) continue;   // (a record that lists no piece has nothing to say about its own orders; the other sheets are asked about it)
     const rec = (r.sheets || []).find(x => x.id === S.id), at = sheetLabel(S);
     if (!rec) { R.check('G1', at, false, 'laserStatus does not answer for the sheet'); continue; }
     const got = rec.orderReadiness || {};
     for (const rid of truth.ordersOn(S.id)) {
-      const e = got[rid], blocked = truth.unnested(rid).length > 0;
+      const e = got[rid], blocked = recordUnnested(variant, rid).length > 0;
       if (!e) { R.check('G1', `${at}, order ${rid}`, false, 'the sheet\'s readiness does not mention the order'); continue; }
-      R.check('G1', `${at}, order ${rid}`, !!e.ready === !blocked, `${blocked ? 'a piece of the order is on no sheet, and' : 'every piece of the order is on a sheet, and'} the sheet says the order is ${e.ready ? 'ready' : 'not ready'}${e.why ? ` (${e.why})` : ''}`);
-      if (blocked && e.ready === false && Array.isArray(e.onSheets)) R.eq('G1', `${at}, order ${rid}, the sheets it names`, e.onSheets.slice().sort(), [...new Set(truth.pieces(rid).filter(p => p.sheetId).map(p => p.sheetId))].sort(), 'the sheets the order is on');
+      R.check('G1', `${at}, order ${rid}`, !!e.ready === !blocked, `${blocked ? 'a piece of the order is on no saved sheet, and' : 'every piece of the order is on a saved sheet, and'} the sheet says the order is ${e.ready ? 'ready' : 'not ready'}${e.why ? ` (${e.why})` : ''}`);
+      if (blocked && e.ready === false && Array.isArray(e.onSheets)) R.eq('G1', `${at}, order ${rid}, the sheets it names`, e.onSheets.slice().sort(), [...new Set(truth.pieces(rid).filter(p => p.sheetId && !(variant === 'sheet' && lagged(variant, p.sheetId))).map(p => p.sheetId))].sort(), 'the sheets the order is on');
     }
     for (const rid of Object.keys(got)) if (!truth.ordersOn(S.id).includes(rid)) R.check('G1', `${at}, order ${rid}`, false, 'the sheet waits on an order that has no piece on it');
   }
@@ -566,6 +626,8 @@ const SURFACES = {
   H1: 'OrderPieces · window.OrderPieces itself says what the fixture says about each piece',
   G1: 'Server · the readiness each sheet reports for its orders (laserStatus, read only)',
   C1: 'Library · the order count on each sheet of a set card (and its QR label)',
+  C5: 'Library · the orders a sheet is held back by (a piece on no sheet, no SKU): what the "!" panel reads',
+  K1: 'SharedOrders · the sheets that must stay together and the orders a move would split (the cardinal rule)',
   D1: 'Orders list · the state word of a line (nested only when every piece is on a sheet)',
   D3: 'Header search · the sheets named on an order\'s card',
   E2: 'Timeline · the rail reaches Nested for a piece on a sheet, and only then',
@@ -589,11 +651,11 @@ async function runOne(chromium, variant, mode, R, args, SHARDS) {
     const jobs = [];
     if (wants(['A', 'E'])) { const shards = Array.from({ length: Math.min(SHARDS, orders.length) }, () => []); orders.forEach((o, i) => shards[i % shards.length].push(o)); for (const list of shards) jobs.push({ what: 'order window', run: (page, rep) => orderWindowProbes(page, mode, rep, list) }); }
     if (wants(['B'])) jobs.push({ what: 'sheet window', run: (page, rep) => sheetWinProbes(page, mode, rep, SHEETS) });
-    if (wants(['C', 'D', 'H'])) jobs.push({ what: 'library, orders list and search', run: async (page, rep) => {
+    if (wants(['C', 'D', 'H', 'K'])) jobs.push({ what: 'library, orders list and search', run: async (page, rep) => {
       if (wants(['H'])) await piecesProbes(page, mode, rep);
       if (wants(['D1'])) await ordersListProbes(page, mode, rep, variant);
       if (wants(['D3'])) await searchProbes(page, mode, rep);
-      if (wants(['C'])) await libraryProbes(page, mode, rep);
+      if (wants(['C', 'K'])) await libraryProbes(page, mode, rep, variant);
     } });
     await Promise.all(jobs.map(async (job, i) => {
       const rep = new Report().at(ctx); let session;

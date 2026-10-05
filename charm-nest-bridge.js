@@ -11275,6 +11275,8 @@ const OrderWin = window.OrderWin = (() => {
      same sheet, with the same charm chosen and on the same side. BK: the orders gone through, newest last. */
   const BK = [];
   let keepFor = null, slideP = null;
+  /** The sheet the person came from (the sheet window's Open order): the Sheet tab, opened later from Overview, starts on it, once. */
+  let sheetWant = null;
   const slid = () => slideP || Promise.resolve();
   const nOf = name => +((/_Sheet-(\d+)/.exec(name || "") || [])[1]) || null;
   /** Every sheet the order has pieces on: the pages this sorter holds, the pool's records, and else the Library's search. */
@@ -11374,6 +11376,8 @@ const OrderWin = window.OrderWin = (() => {
     } else if (SV.finding) await SV.finding;
     await landed(); await slid();
     if (epoch !== SV.epoch || SV.rid !== rid || !SV.list || !W.dlg?.open || W.closing || W.view !== "sheet" || String(rowOf(W.key)?.order.receiptId || "") !== rid) return;
+    if (!sheetId && !poolId && sheetWant && sheetWant.rid === rid) { sheetId = sheetWant.sheetId; poolId = sheetWant.poolId; }
+    if (sheetWant && sheetWant.rid === rid) sheetWant = null;
     if (sheetId) { const i = SV.list.findIndex(s => s.id === sheetId); if (i >= 0) SV.at = i; }
     if (poolId) SV.focus = poolId;
     if (sheetId || !SV.info || SV.info.sheetAt !== SV.at) sheetDraw(); else if (poolId) SV.info.focus(poolId); else SV.info.redraw();
@@ -11866,6 +11870,8 @@ const OrderWin = window.OrderWin = (() => {
     showOrder(rid, r);
     W.key = key;
     if (other) W.piece = null; else if (W.piece && W.piece !== key) W.piece = key;
+    if (other) sheetWant = null;
+    if (opts.sheetId || opts.poolId) sheetWant = { rid, sheetId: opts.sheetId || "", poolId: opts.poolId || "" };
     if (other) { sheetReset(); unmountTimeline(); loadEvents(rid); const n = byId("owNowCard"); if (n) n._html = ""; const c = byId("owShCount"); if (c) c.textContent = ""; }
     // which sheet holds which piece of the order: read from the sheets' own records, once per opening (and again when its timeline says a piece moved)
     if (other) tryDo(() => window.OrderPieces && OrderPieces.load(rid));
