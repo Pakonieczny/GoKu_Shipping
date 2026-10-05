@@ -1,22 +1,25 @@
-// Click to zoom and pan on the order window's two pictures (Paul, 5 Oct 2026, round 3: "add a full-fledged click to zoom
-// and pan functionality for both the charm listing image and the vector thumbnail"). Paul's rule is that it looks exactly
-// the same, so the one viewer the inbox photos use (PhotoView, charm-nest-mail.js) is what opens:
-//   · a click, Enter or Space on the Etsy listing photo or on the Vector design opens it, as a layer of the order window;
-//   · the Etsy photo opens at the largest size Etsy keeps (and falls back to the next size, then to the thumbnail's own,
-//     when a size cannot be had); the vector is drawn again large (never the 220 px thumbnail enlarged), for a pooled
-//     charm and for a master's drawing alike;
-//   · the wheel and a pinch zoom (with limits), a drag pans (never past the picture's edges), a double-click or 0 resets;
-//   · ← → and the side buttons step Etsy listing ↔ Vector design of the same piece, and the caption says which;
-//   · Esc closes the viewer only: the window under it, its tab and its piece are as they were, and the focus is back on
-//     the thumbnail that was used;
-//   · the thumbnails themselves never zoom (no in-place zoom, no tooltip, no reset button), and each is a focusable button;
+// Click to zoom and pan on the order window's two pictures, in place (Paul, 5 Oct 2026, 13:25 UTC: "You implemented the zoom
+// features here as a fullscreen Zoom view. This is not what I wanted. You need to implement the same type of sophisticated
+// zoom and pan as we already have in other parts of this app. When clicking to zoom it should zoom in within its own space and
+// should be draggable to pan the photo and when clicking to zoom it should centre the area of the image that was clicked").
+// The same click-to-zoom as the lists' and Review's thumbnails, one module (charm-nest-zoompan.js); the full gesture and
+// geometry checks are in inplace-zoom-pan.cjs. What this test keeps of round 3 is the order window's side of it:
+//   · the Etsy listing photo and the Vector design are each a focusable frame that zooms where it lies: a click, Enter or Space
+//     zooms it, and NOTHING opens (no viewer, no layer, no second dialog); the frame keeps its size;
+//   · the Etsy photo is swapped for the largest size Etsy keeps when the zoom settles (and falls back to the next size, then
+//     to the thumbnail's own, when a size cannot be had), and the small one is back when the picture is whole again;
+//   · the vector is drawn again larger (never the small thumbnail enlarged), for a pooled charm and for a master's drawing alike,
+//     and a drawing that cannot be made larger leaves the zoomed thumbnail as it is;
+//   · Esc puts a zoomed picture back whole first, with the window, its tab and its piece as they were and the focus on the
+//     frame; the next Esc closes the window;
+//   · a piece with no photo or no design has nothing to zoom, and nothing opens;
 //   · the inbox's photo viewer (data-photo in a conversation) still behaves exactly as before, on the page and in a layer.
 //   node tests/charm-nest/order-photo-zoom.cjs   (PW_DIR=<playwright node_modules>, CHROMIUM=<chrome>, CN_SHOTS=dir keeps screenshots)
 const path = require('path'), zlib = require('zlib'), assert = require('assert/strict');
 const root = path.join(__dirname, '../..');
 const { start } = require('./bridge-server.cjs');
 
-// ── pictures for the fake image proxy: real PNGs of known sizes, so which size the viewer loaded can be read ──
+// ── pictures for the fake image proxy: real PNGs of known sizes, so which size the frame loaded can be read ──
 const crcT = (() => { const t = new Int32Array(256); for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; t[n] = c; } return t; })();
 const crc = b => { let c = -1; for (const x of b) c = crcT[(c ^ x) & 255] ^ (c >>> 8); return (c ^ -1) >>> 0; };
 const chunk = (type, data) => { const len = Buffer.alloc(4); len.writeUInt32BE(data.length); const td = Buffer.concat([Buffer.from(type), data]), c = Buffer.alloc(4); c.writeUInt32BE(crc(td)); return Buffer.concat([len, td, c]); };
@@ -45,8 +48,8 @@ async function main() {
   try {
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, hasTouch: true });
     await context.route(u => !/^http:\/\/(127\.0\.0\.1|localhost)[:/]/.test(u.href), r => /fonts\.googleapis|fonts\.gstatic/.test(r.request().url()) ? r.fulfill({ status: 200, contentType: 'text/css', body: '' }) : r.abort());
-    // the image proxy: a photo's size is in its Etsy address (il_<size>.), the second piece's two largest sizes cannot be had,
-    // and so the third piece's; the inbox's own test photos (…url=a, b) are small
+    // the image proxy: a photo's size is in its Etsy address (il_<size>.), the second piece's largest size cannot be had,
+    // nor can the third piece's two larger ones; the inbox's own test photos (…url=a, b) are small
     const asked = [];
     await context.route(/\/\.netlify\/functions\/imageProxy/, r => {
       const u = new URL(r.request().url()).searchParams.get('url') || '', m = /\/il_([^.]+)\./.exec(u); asked.push(u);
@@ -66,7 +69,7 @@ async function main() {
     page.setDefaultTimeout(30000);
     page.on('pageerror', e => { errors.push(e.message); console.error('page error:', String(e.stack || e.message).split('\n').slice(0, 4).join(' | ')); });
     await page.goto(`${srv.sorterOrigin}/charm-nest-1.html`, { waitUntil: 'load' });
-    await page.waitForFunction(() => window.CN && window.Orders && window.OrderWin && window.PhotoView && CN.S.cloud.ok === true, null, { timeout: 60000 });
+    await page.waitForFunction(() => window.CN && window.Orders && window.OrderWin && window.PhotoView && window.CNZoomPan && CN.S.cloud.ok === true, null, { timeout: 60000 });
 
     // the order: three pieces, each with its listing photo; the first two have a pooled charm (a 34 × 34 square), the third has
     // none and is drawn from its master's design (its copy in the pool's sources, so nothing is fetched)
@@ -84,6 +87,7 @@ async function main() {
     const keys = SKUS.map((_, i) => `${RID}_${TID(i + 1)}`);
     await page.waitForSelector(`#ordItems [data-key="${keys[0]}"]`);
     const settled = () => page.waitForFunction(() => { const d = document.getElementById('orderWin'); return d.open && !d.getAnimations({ subtree: true }).some(a => a.playState === 'running' && a.effect && a.effect.getTiming().iterations !== Infinity); }, null, { timeout: 8000 });
+    // the inbox viewer (section 8)
     const viewer = () => page.evaluate(() => {
       const d = document.querySelector('dialog.phv'); if (!d || !d.open) return null;
       const i = d.querySelector('.phvImg'), st = d.querySelector('.phvStage'), m = /translate\(([-\d.e]+)px,\s*([-\d.e]+)px\) scale\(([-\d.e]+)\)/.exec(i.style.transform || ''), n = d.querySelector('.phvNote');
@@ -98,168 +102,124 @@ async function main() {
       scroll: document.querySelector('.owVInfo .owMain').scrollTop, dialogs: [...document.querySelectorAll('dialog[open]')].filter(d => !d.classList.contains('phv')).length, active: document.activeElement && document.activeElement.id }));
     const centre = { x: 720, y: 450 };
 
-    // 1 · open the order (piece 1): both thumbnails drawn, each a focusable button, neither zooms where it lies
+    // a frame as the eye reads it, and what could have opened over the window
+    const frame = sel => page.evaluate(sel => {
+      const box = document.querySelector(sel), m = box.querySelector('img, canvas'), r = box.getBoundingClientRect();
+      return { zp: box.dataset.zp, role: box.getAttribute('role'), tab: box.tabIndex, label: box.getAttribute('aria-label'), title: box.title, cursor: box.style.cursor, size: [r.width, r.height].map(Math.round).join('x'),
+        tag: m && m.tagName, s: m ? +(m.dataset.scale || 1) : 1, nat: m ? [m.naturalWidth || m.width, m.naturalHeight || m.height] : [0, 0], src: m ? decodeURIComponent((m.currentSrc || m.src || '').slice(0, 400)) : '', transform: m ? m.style.transform : '' };
+    }, sel);
+    const over = () => page.evaluate(() => ({ dialogs: document.querySelectorAll('dialog[open]').length, viewer: !!document.querySelector('dialog.phv[open]'), photoView: window.PhotoView ? PhotoView.isOpen() : false }));
+    const natOf = (sel, w) => page.waitForFunction(({ sel, w }) => { const m = document.querySelector(sel + ' img, ' + sel + ' canvas'); return m && (m.naturalWidth || m.width) === w && (m.complete !== false); }, { sel, w }, { timeout: 20000 });
+    const bigOf = (sel, w) => page.waitForFunction(({ sel, w }) => { const m = document.querySelector(sel + ' img, ' + sel + ' canvas'); return m && Math.max(m.naturalWidth || m.width, m.naturalHeight || m.height) >= w; }, { sel, w }, { timeout: 20000 });
+    const tap = async (sel, fx = .5, fy = .5) => { const b = await page.locator(sel).boundingBox(); await page.mouse.click(b.x + b.width * fx, b.y + b.height * fy); };
+    const piece = async i => { await page.click(`#owPieceSw [data-piece="${keys[i]}"]`); await page.waitForFunction(k => OrderWin.key() === k && document.querySelector('#owPhoto img')?.complete, keys[i], { timeout: 10000 }); await settled(); };
+
+    // 1 · open the order (piece 1): both pictures drawn, each a focusable frame that zooms where it lies, no tooltip, no reset button
     await page.click(`#ordItems [data-key="${keys[0]}"]`);
     await settled();
     await page.waitForFunction(() => document.querySelector('#owPhoto img')?.complete && document.querySelector('#owVector img, #owVector canvas'), null, { timeout: 20000 });
-    const t1 = await page.evaluate(() => {
-      const b = id => document.getElementById(id), ph = b('owPhoto'), vh = b('owVector');
-      return { photoBtn: [b('owPhotoBox').getAttribute('role'), b('owPhotoBox').tabIndex, b('owPhotoBox').getAttribute('aria-label')], vecBtn: [b('owVectorBox').getAttribute('role'), b('owVectorBox').tabIndex, b('owVectorBox').getAttribute('aria-label')],
-        titles: [ph.title, vh.title, ph.closest('figure').querySelector('[title]')?.title || '', vh.closest('figure').querySelector('.thumbReset') ? 'reset' : ''], bound: [ph.classList.contains('zoomReady'), vh.classList.contains('zoomReady')],
-        cursor: [getComputedStyle(ph).cursor, getComputedStyle(vh).cursor], vecNat: (vh.querySelector('img') || vh.querySelector('canvas')).tagName, vecSize: (() => { const e = vh.querySelector('img') || vh.querySelector('canvas'); return [e.naturalWidth || e.width, e.naturalHeight || e.height]; })() };
-    });
-    assert.deepEqual(t1.photoBtn.slice(0, 2), ['button', 0]); assert.deepEqual(t1.vecBtn.slice(0, 2), ['button', 0]);
-    assert.match(t1.photoBtn[2], /Etsy listing photo/); assert.match(t1.vecBtn[2], /Vector design/);
-    assert.deepEqual(t1.titles, ['', '', '', ''], 'no tooltip on either picture, no reset button: ' + JSON.stringify(t1.titles));
-    assert.deepEqual(t1.bound, [false, false], 'neither thumbnail is bound to the in-place zoom of the lists');
-    assert.deepEqual(t1.cursor, ['zoom-in', 'zoom-in']);
-    assert(t1.vecSize[0] <= 260, 'the vector thumbnail is the small one: ' + t1.vecSize);
-    // the wheel over a thumbnail scrolls the page as it did: it does not zoom it
-    await page.hover('#owPhoto'); await page.mouse.wheel(0, -300);
-    await page.waitForTimeout(150);
-    assert.equal(await page.evaluate(() => ['owPhoto', 'owVector'].map(id => { const e = document.querySelector('#' + id + ' img, #' + id + ' canvas'); return e.style.transform || 'none'; }).join()), 'none,none', 'a wheel does not zoom a thumbnail in place');
-    if (shots) await page.screenshot({ path: path.join(shots, 'order-photo-zoom-thumbs.png') });
+    const f0 = await frame('#owPhoto'), v0 = await frame('#owVector');
+    for (const [g, name, label] of [[f0, 'photo', /Etsy listing photo/], [v0, 'vector', /vector design/i]]) {
+      assert.deepEqual([g.role, g.tab, g.zp, g.cursor, g.s], ['button', 0, 'rest', 'zoom-in', 1], `the ${name} is a focusable frame that zooms where it lies: ` + JSON.stringify(g));
+      assert.match(g.label, label); assert.equal(g.title, '', `no tooltip on the ${name}`);
+    }
+    assert.equal(await page.evaluate(() => [document.getElementById('owPhoto').classList.contains('zoomReady'), document.getElementById('owVector').classList.contains('zoomReady'), !!document.querySelector('.owPics .thumbReset')].join()), 'false,false,false', 'neither is bound to the lists\' own zoom, and no list-style reset button');
+    assert(v0.nat[0] <= 260 && v0.nat[1] <= 260, 'the vector thumbnail is the small one: ' + v0.nat);
+    assert.equal(f0.nat[0], 570, 'the photo at rest is the small one: ' + f0.src);
+    assert.equal(await page.evaluate(() => !!document.getElementById('owPhotoBox') || !!document.getElementById('owVectorBox')), false, 'the round-3 wrappers of the fullscreen route are gone');
+    // the wheel over a picture scrolls the page as it did: it does not zoom it
+    await page.hover('#owPhoto'); await page.mouse.wheel(0, -300); await page.waitForTimeout(150);
+    assert.equal((await frame('#owPhoto')).s, 1, 'a wheel does not zoom a picture');
+    if (shots) await page.screenshot({ path: path.join(shots, 'order-photo-zoom-rest.png') });
 
-    // 2 · a click on the Etsy photo opens the viewer on it, as a layer of the window, at the largest size
-    const before = await winState();
-    await page.click('#owPhoto');
-    await loaded(2000);
-    let v = await viewer();
-    assert(v.layer && v.inWin, 'the viewer is a layer of the order window');
-    assert.match(v.cap, /^Etsy listing · Piece 1 of 3 · CARDINAL_A$/); assert.equal(v.n, '1 of 2'); assert(!v.navHidden, 'side buttons');
-    assert.deepEqual(v.nat, [2000, 1500], 'the largest size was loaded: ' + v.src); assert(v.orig, 'the original is one click away');
-    assert.equal(v.nextTitle, 'Next picture (→)'); assert.equal(v.label, 'Picture');
-    assert(asked.some(u => /il_fullxfull\./.test(u)), 'the largest size was asked for'); assert.equal(await page.evaluate(() => document.querySelectorAll('dialog[open]').length), 2, 'the window and its viewer, nothing else');
-    const fit = v.s; assert(fit > 0 && fit < 1 && v.pct === Math.round(fit * 100) + '%', 'fitted to the screen: ' + v.pct);
+    // 2 · a click on the Etsy photo zooms it in its own frame: nothing opens, the frame keeps its size, the largest size comes
+    const before = await winState(), sizeBefore = f0.size, askedBefore = asked.length;
+    await tap('#owPhoto', .3, .3);
+    await natOf('#owPhoto', 2000);
+    let z = await frame('#owPhoto');
+    assert(z.s > 1.2 && z.zp === 'zoomed', 'the click zoomed it in place: ' + z.s); assert.equal(z.size, sizeBefore, 'the frame keeps its size');
+    assert.deepEqual(await over(), { dialogs: 1, viewer: false, photoView: false }, 'nothing opened over the window: no viewer, no layer, no second dialog');
+    assert(/il_fullxfull\./.test(z.src), 'the largest size is the one shown: ' + z.src); assert(asked.slice(askedBefore).some(u => /il_fullxfull\./.test(u)), 'the largest size was asked for');
+    assert.equal(asked.slice(askedBefore).filter(u => /il_fullxfull\./.test(u)).length, 1, 'once');
+    assert.equal(await page.evaluate(() => document.querySelector('#owPhoto img').crossOrigin), 'anonymous', 'the swapped picture is loaded as the thumbnail was');
     if (shots) await page.screenshot({ path: path.join(shots, 'order-photo-zoom-photo.png') });
+    // a drag pans it, and the click that ends the drag is not a click
+    const pb = await page.locator('#owPhoto').boundingBox();
+    await page.mouse.move(pb.x + pb.width / 2, pb.y + pb.height / 2); await page.mouse.down(); await page.mouse.move(pb.x + pb.width / 2 - 40, pb.y + pb.height / 2 - 24, { steps: 6 }); await page.mouse.up(); await page.waitForTimeout(100);
+    const zp = await page.evaluate(() => { const m = document.querySelector('#owPhoto img'); return { s: +m.dataset.scale, x: +m.dataset.offsetX, y: +m.dataset.offsetY }; });
+    assert(Math.abs(zp.s - z.s) < 1e-9 && (zp.x !== 0 || zp.y !== 0), 'a drag pans it and does not change the zoom: ' + JSON.stringify(zp));
+    assert.deepEqual(await over(), { dialogs: 1, viewer: false, photoView: false });
 
-    // 3 · wheel zoom with limits, drag pan limited to the picture's edges, double-click resets
-    await page.mouse.move(centre.x, centre.y);
-    await page.mouse.wheel(0, -400); await page.waitForTimeout(80);
-    let v2 = await viewer(); assert(v2.s > fit * 1.5, `the wheel zooms in: ${fit} → ${v2.s}`);
-    for (let i = 0; i < 12; i++) { await page.mouse.wheel(0, -600); }
-    await page.waitForTimeout(80);
-    v2 = await viewer(); const max = Math.max(fit * 6, 4); assert(Math.abs(v2.s - max) < 1e-6, `zoom stops at its limit (${v2.s} vs ${max})`);
-    await page.mouse.wheel(0, 100000); await page.waitForTimeout(80);
-    v2 = await viewer(); assert(v2.s < max && v2.s >= fit - 1e-9, 'zooming out steps down, never below the fit');
-    for (let i = 0; i < 6; i++) await page.mouse.wheel(0, 600);
-    await page.waitForTimeout(80);
-    v2 = await viewer(); assert(Math.abs(v2.s - fit) < 1e-6, 'zoomed all the way out it is the fit again: ' + v2.s);
-    for (let i = 0; i < 3; i++) await page.mouse.wheel(0, -500);
-    await page.waitForTimeout(80);
-    const z0 = await viewer(); assert(z0.s > fit * 2, 'zoomed in again to pan');
-    const drag = async (dx, dy) => { await page.mouse.move(centre.x, centre.y); await page.mouse.down(); const N = 8; for (let i = 1; i <= N; i++) await page.mouse.move(centre.x + dx * i / N, centre.y + dy * i / N); await page.mouse.up(); await page.waitForTimeout(60); };
-    await drag(-150, -90);
-    const p1 = await viewer(); assert(Math.abs((p1.tx - z0.tx) - (-150)) < 2 && Math.abs((p1.ty - z0.ty) - (-90)) < 2, `a drag pans the picture with the pointer: dx ${p1.tx - z0.tx}, dy ${p1.ty - z0.ty}`);
-    for (let i = 0; i < 25; i++) await drag(400, 400);   // as far as it goes towards the top left of the picture: its edge stops at the screen's
-    const pe = await viewer(); assert.equal(pe.tx, 0, 'the left edge stops at the screen: ' + pe.tx); assert.equal(pe.ty, 0, 'the top edge stops at the screen: ' + pe.ty);
-    for (let i = 0; i < 25; i++) await drag(-400, -400);
-    const pf = await viewer(); const W = 2000 * pf.s, H = 1500 * pf.s;
-    assert(Math.abs(pf.tx - (pf.sw - W)) < 1e-6, `the right edge stops at the screen: ${pf.tx} vs ${pf.sw - W}`); assert(Math.abs(pf.ty - (pf.sh - H)) < 1e-6, 'the bottom edge stops at the screen');
-    assert(await page.evaluate(() => !!document.querySelector('dialog.phv .phvStage.zoomed')), 'a zoomed picture shows the grab cursor');
-    await page.mouse.dblclick(centre.x, centre.y);
-    await page.waitForTimeout(60);
-    const reset = await viewer(); assert(Math.abs(reset.s - fit) < 1e-6, 'a double-click resets to the fit: ' + reset.s);
-    await page.mouse.dblclick(centre.x, centre.y); await page.waitForTimeout(60);
-    const dz = await viewer(); assert(dz.s > fit * 2, 'and zooms in on the spot when it is fitted: ' + dz.s);
-    await page.keyboard.press('0'); await page.waitForTimeout(60);
-    assert(Math.abs((await viewer()).s - fit) < 1e-6, '0 resets');
-    await page.keyboard.press('+'); await page.waitForTimeout(60); const kz = await viewer(); assert(kz.s > fit * 1.5, '+ zooms');
-    await page.keyboard.press('-'); await page.waitForTimeout(60); assert(Math.abs((await viewer()).s - fit) < 1e-6, '− zooms back out');
-    await page.click('dialog.phv [data-phv=in]'); await page.waitForTimeout(60); assert((await viewer()).s > fit * 1.5, 'the + button zooms'); await page.click('dialog.phv .phvPct'); await page.waitForTimeout(60);
-    assert(Math.abs((await viewer()).s - fit) < 1e-6, 'the percentage button fits it');
-
-    // 3b · a pinch (two touches spread apart) zooms about the fingers' midpoint
-    await page.evaluate(({ x, y }) => {
-      const st = document.querySelector('dialog.phv .phvStage'), ev = (type, id, dx) => st.dispatchEvent(new PointerEvent(type, { bubbles: true, pointerId: id, pointerType: 'touch', isPrimary: id === 21, clientX: x + dx, clientY: y, button: 0, buttons: 1 }));
-      ev('pointerdown', 21, -40); ev('pointerdown', 22, 40); for (let i = 1; i <= 8; i++) { ev('pointermove', 21, -40 - i * 25); ev('pointermove', 22, 40 + i * 25); }
-      ev('pointerup', 21, -240); ev('pointerup', 22, 240);
-    }, centre);
-    await page.waitForTimeout(80);
-    const pz = await viewer(); assert(pz.s > fit * 2.5, `a pinch zooms in: ${fit} → ${pz.s}`);
-    await page.keyboard.press('0');
-
-    // 4 · ← → and the side buttons step Etsy listing ↔ Vector design; the vector is drawn large
-    await page.keyboard.press('ArrowRight');
-    await loaded(1600);
-    v = await viewer();
-    assert.match(v.cap, /^Vector design · Piece 1 of 3 · CARDINAL_A$/); assert.equal(v.n, '2 of 2'); assert(v.src.startsWith('data:image/png'), 'the vector is a picture drawn for the viewer: ' + v.src);
-    assert.deepEqual(v.nat, [1600, 1600], 'drawn at 1600 px, not the thumbnail enlarged'); assert.equal(v.orig, false, 'no "Original" link for a drawing');
-    assert(v.s < 1 && v.s > 0, 'fitted'); assert.equal(v.note, '');
-    if (shots) await page.screenshot({ path: path.join(shots, 'order-photo-zoom-vector.png') });
-    await page.mouse.move(centre.x, centre.y); await page.mouse.wheel(0, -500); await page.waitForTimeout(60);
-    assert((await viewer()).s > v.s * 1.5, 'the vector zooms too');
-    await page.keyboard.press('ArrowLeft'); await loaded(2000);
-    assert.match((await viewer()).cap, /^Etsy listing/);
-    await page.click('dialog.phv [data-phv=next]'); await loaded(1600);
-    assert.match((await viewer()).cap, /^Vector design/);
-    await page.click('dialog.phv [data-phv=prev]'); await loaded(2000);
-    assert.equal((await viewer()).n, '1 of 2');
-
-    // 5 · Esc closes the viewer only: the same window, the same piece, the focus back on the thumbnail used
-    await page.keyboard.press('Escape'); await closed();
+    // 3 · Esc puts it back whole (the window, its tab and its piece as they were, the focus on the frame); the small photo is back
+    await page.keyboard.press('Escape'); await natOf('#owPhoto', 570);
+    z = await frame('#owPhoto'); assert(z.s === 1 && z.zp === 'rest' && z.transform === '', 'Esc put the photo back whole: ' + JSON.stringify([z.s, z.zp]));
     const after = await winState();
-    assert.deepEqual(after, Object.assign({}, before, { active: 'owPhotoBox' }), 'the window is as it was, the focus on the Etsy photo');
-    assert.equal(after.dialogs, 1, 'one window'); assert.equal(await page.evaluate(() => OrderWin.isOpen()), true);
+    assert.deepEqual(after, Object.assign({}, before, { active: 'owPhoto' }), 'the window is as it was, the focus on the Etsy photo');
+    assert.equal(await page.evaluate(() => OrderWin.isOpen()), true, 'the first Esc did not close the window');
 
-    // 6 · from the keyboard: Enter, then Space, on the vector
-    await page.focus('#owVectorBox'); await page.keyboard.press('Enter');
-    await loaded(1600);
-    v = await viewer(); assert.match(v.cap, /^Vector design/); assert.equal(v.n, '2 of 2', 'it opens on the one that was used');
-    await page.keyboard.press('Escape'); await closed();
-    assert.equal((await winState()).active, 'owVectorBox', 'Esc gives the focus back to the vector');
-    assert.deepEqual(await page.evaluate(() => { const b = document.getElementById('owVectorBox'), c = getComputedStyle(b); return [b.matches(':focus-visible'), c.outlineStyle, c.outlineWidth]; }), [true, 'solid', '2px'], 'a keyboard user sees where the focus is');
-    await page.keyboard.press('Space'); await loaded(1600);
-    assert.match((await viewer()).cap, /^Vector design/, 'Space opens it too');
-    await page.keyboard.press('Escape'); await closed();
-    await page.focus('#owPhotoBox'); await page.keyboard.press('Enter'); await loaded(2000);
-    assert.match((await viewer()).cap, /^Etsy listing/, 'Enter on the photo'); await page.keyboard.press('Escape'); await closed();
-    // a click on the vector box (the pointer, not the keys)
-    await page.click('#owVector'); await loaded(1600); assert.match((await viewer()).cap, /^Vector design/); await page.keyboard.press('Escape'); await closed();
-    assert.equal((await winState()).active, 'owVectorBox');
+    // 4 · from the keyboard: Enter, then Space, on the vector; the vector is drawn again larger, then the small one is back
+    await page.focus('#owVector'); await page.keyboard.press('Enter');
+    await bigOf('#owVector', 500);
+    let v = await frame('#owVector');
+    assert(v.s >= 1.9 && v.zp === 'zoomed' && Math.max(...v.nat) >= 500 && Math.max(...v.nat) <= 2048, `Enter zooms the vector in place and it is drawn again larger, not the thumbnail enlarged (${v.nat}, x${v.s})`);
+    assert.equal(v.size, v0.size, 'the vector frame keeps its size'); assert.deepEqual(await over(), { dialogs: 1, viewer: false, photoView: false });
+    if (shots) await page.screenshot({ path: path.join(shots, 'order-photo-zoom-vector.png') });
+    await page.keyboard.press('Space'); await page.waitForFunction(() => { const m = document.querySelector('#owVector img, #owVector canvas'); return m && Math.max(m.naturalWidth || m.width, m.naturalHeight || m.height) <= 260; }, null, { timeout: 8000 });
+    v = await frame('#owVector'); assert(v.s === 1 && v.transform === '', 'Space put it back whole, and the small drawing with it: ' + JSON.stringify([v.s, v.nat]));
+    assert.deepEqual(await page.evaluate(() => { const b = document.getElementById('owVector'), c = getComputedStyle(b); return [b.matches(':focus-visible'), c.outlineStyle, c.outlineWidth]; }), [true, 'solid', '2px'], 'a keyboard user sees where the focus is');
+    assert.equal((await winState()).active, 'owVector');
+    // and a click on the vector (the pointer, not the keys)
+    await tap('#owVector', .5, .4); await page.waitForTimeout(450); assert((await frame('#owVector')).s > 1.2, 'a click zooms the vector'); await page.keyboard.press('Escape'); await page.waitForTimeout(400);
+    assert.equal((await frame('#owVector')).s, 1);
 
-    // 7 · another piece: its own pictures and its place in the caption; a size that cannot be had falls back to the next
-    await page.click(`#owPieceSw [data-piece="${keys[1]}"]`);
-    await page.waitForFunction(k => OrderWin.key() === k && document.querySelector('#owPhoto img')?.getAttribute('src')?.includes('1800200'), keys[1], { timeout: 10000 });
-    await settled();
-    await page.click('#owPhoto'); await loaded(1000);
-    v = await viewer(); assert.match(v.cap, /^Etsy listing · Piece 2 of 3 · CARDINAL_B$/); assert.deepEqual(v.nat, [1000, 750], 'the largest size failed, the next one loaded');
-    await page.keyboard.press('Escape'); await closed();
-    await page.click(`#owPieceSw [data-piece="${keys[2]}"]`);
-    await page.waitForFunction(k => OrderWin.key() === k && document.querySelector('#owPhoto img')?.getAttribute('src')?.includes('1800300'), keys[2], { timeout: 10000 });
-    await settled();
-    await page.click('#owPhoto'); await loaded(570);
-    v = await viewer(); assert.match(v.cap, /^Etsy listing · Piece 3 of 3 · CARDINAL_C$/); assert.deepEqual(v.nat, [570, 428], 'no larger size could be had: the thumbnail\'s own is shown');
-    assert(asked.filter(u => /1800300/.test(u) && /il_fullxfull\./.test(u)).length >= 1 && asked.some(u => /1800300/.test(u) && /il_1588xN\./.test(u)), 'both larger sizes were tried first');
-    // piece 3 has no pooled charm: its vector is drawn from its master's design (Pool.masterFront), large
-    await page.keyboard.press('ArrowRight'); await loaded(1600);
-    v = await viewer(); assert.match(v.cap, /^Vector design · Piece 3 of 3 · CARDINAL_C$/); assert.deepEqual(v.nat, [1600, 1600], 'a master\'s drawing is drawn large too');
-    await page.keyboard.press('Escape'); await closed();
-    await page.click(`#owPieceSw [data-piece="${keys[0]}"]`);
-    await page.waitForFunction(k => OrderWin.key() === k, keys[0]);
+    // 5 · another piece starts whole, with its own pictures; a size that cannot be had falls back to the next
+    await tap('#owPhoto'); await natOf('#owPhoto', 2000);
+    await piece(1);
+    z = await frame('#owPhoto'); assert(z.s === 1 && z.nat[0] === 570 && /1800200/.test(z.src), 'the next piece starts whole, with its own photo: ' + JSON.stringify([z.s, z.nat]));
+    await tap('#owPhoto'); await natOf('#owPhoto', 1000);
+    z = await frame('#owPhoto'); assert(z.s > 1.2 && z.nat[0] === 1000, 'the largest size failed, the next one loaded: ' + z.nat); assert(asked.some(u => /1800200/.test(u) && /il_fullxfull\./.test(u)), 'the largest was tried first');
+    await page.keyboard.press('Escape'); await natOf('#owPhoto', 570);
+    await piece(2);
+    const askedThird = asked.length;
+    await tap('#owPhoto'); await page.waitForTimeout(1200);
+    z = await frame('#owPhoto'); assert(z.s > 1.2 && z.nat[0] === 570, 'no larger size could be had: the thumbnail\'s own stays, zoomed: ' + JSON.stringify([z.s, z.nat]));
+    assert(asked.slice(askedThird).some(u => /1800300/.test(u) && /il_fullxfull\./.test(u)) && asked.slice(askedThird).some(u => /1800300/.test(u) && /il_1588xN\./.test(u)), 'both larger sizes were tried first');
+    await page.keyboard.press('Escape'); await page.waitForTimeout(300);
+    // piece 3 has no pooled charm: its vector is drawn from its master's design, larger too
+    await tap('#owVector'); await bigOf('#owVector', 500);
+    v = await frame('#owVector'); assert(v.s > 1.2 && Math.max(...v.nat) >= 500, 'a master\'s drawing is drawn larger too: ' + v.nat);
+    await page.keyboard.press('Escape'); await page.waitForTimeout(400);
 
-    // 8 · a piece with no photo and no design opens nothing; one with a design but no photo opens the vector alone
-    const nothing = await page.evaluate(() => { const r = Orders.rows().find(x => x.key === OrderWin.key()); const imageFor = Orders.imageFor; Orders.imageFor = () => null; const was = r.spec.noDesign; r.spec.noDesign = true;
-      document.getElementById('owPhotoBox').click(); document.getElementById('owVectorBox').click(); const open = PhotoView.isOpen(); r.spec.noDesign = was; Orders.imageFor = imageFor; return { open }; });
-    assert.equal(nothing.open, false, 'with nothing to show, nothing opens');
-    await page.evaluate(() => { const imageFor = Orders.imageFor; Orders.imageFor = () => null; window.__imageFor = imageFor; document.getElementById('owVectorBox').click(); });
-    await loaded(1600);
-    v = await viewer(); assert.equal(v.n, '', 'one picture: no count'); assert.equal(v.navHidden, true, 'and no side buttons');
-    await page.keyboard.press('Escape'); await closed();
-    await page.evaluate(() => { Orders.imageFor = window.__imageFor; OrderWin.paint(); });
+    // 6 · a drawing that cannot be made larger leaves the zoomed thumbnail as it is, and nothing breaks
+    await piece(1);   // (a piece whose larger drawing has not been made yet: the ones made are kept)
+    await page.evaluate(() => { window.__fp = CharmNestPDF.frontPreview; CharmNestPDF.frontPreview = async () => { throw new Error('boom'); }; });
+    await tap('#owVector'); await page.waitForTimeout(900);
+    v = await frame('#owVector'); assert(v.s > 1.2 && Math.max(...v.nat) <= 260 && v.zp === 'zoomed', 'the vector zooms on its thumbnail when the larger drawing fails: ' + JSON.stringify([v.s, v.nat]));
+    assert.deepEqual(await over(), { dialogs: 1, viewer: false, photoView: false });
+    await page.keyboard.press('Escape'); await page.waitForTimeout(400);
+    await page.evaluate(() => { CharmNestPDF.frontPreview = window.__fp; });
 
-    // 9 · the vector of a design that cannot be drawn says so, with the Etsy photo one arrow away
-    await page.evaluate(() => { const r = Orders.rows().find(x => x.key === OrderWin.key()); window.__size = r.spec.size; r.spec.size = 'zzz'; window.__fp = CharmNestPDF.frontPreview; CharmNestPDF.frontPreview = async () => { throw new Error('boom'); }; document.getElementById('owVectorBox').click(); });
-    await page.waitForFunction(() => /could not be drawn/.test(document.querySelector('dialog.phv[open] .phvNote')?.textContent || ''), null, { timeout: 5000 });
-    await page.keyboard.press('ArrowLeft'); await loaded(2000);
-    await page.keyboard.press('Escape'); await closed();
-    await page.evaluate(() => { CharmNestPDF.frontPreview = window.__fp; Orders.rows().find(x => x.key === OrderWin.key()).spec.size = window.__size; });
+    // 7 · a piece with no photo has nothing to zoom there: nothing opens, nothing breaks; the photo coming back zooms again
+    const none = await page.evaluate(async () => {
+      const r = Orders.rows().find(x => x.key === OrderWin.key()); window.__imageFor = Orders.imageFor; window.__wantImage = Orders.wantImage; Orders.imageFor = () => null; Orders.wantImage = () => Promise.resolve();   // (a listing whose photo is not known, and is not found)
+      OrderWin.paint(); await new Promise(res => setTimeout(res, 300));
+      const ph = document.getElementById('owPhoto'); ph.click(); ph.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: 30, clientY: 30, detail: 1 }));
+      return { zp: ph.dataset.zp, media: !!ph.querySelector('img, canvas'), role: ph.getAttribute('role'), open: PhotoView.isOpen(), dialogs: document.querySelectorAll('dialog[open]').length };
+    });
+    assert.deepEqual(none, { zp: 'none', media: false, role: null, open: false, dialogs: 1 }, 'with no photo there is nothing to zoom and nothing opens: ' + JSON.stringify(none));
+    await page.evaluate(() => { Orders.imageFor = window.__imageFor; Orders.wantImage = window.__wantImage; OrderWin.paint(); });
+    await natOf('#owPhoto', 570);
+    await tap('#owPhoto'); await page.waitForTimeout(450); assert((await frame('#owPhoto')).s > 1.2, 'and when the photo is back it zooms again');
+    await page.keyboard.press('Escape'); await page.waitForTimeout(400);
 
-    // 10 · the order window shuts with Esc once the viewer is closed (the viewer never swallowed the window's own Esc)
+    // 8 · the next Esc closes the window as it always did (Esc never closes it while a picture is zoomed)
+    await tap('#owPhoto'); await page.waitForTimeout(450);
+    await page.keyboard.press('Escape'); await page.waitForTimeout(450);
+    assert.equal(await page.evaluate(() => document.getElementById('orderWin').open), true, 'Esc on a zoomed picture leaves the window open');
     await page.keyboard.press('Escape');
     await page.waitForFunction(() => !document.getElementById('orderWin').open, null, { timeout: 3000 });
 
-    // 11 · the inbox's photo viewer, as it was: on the page (not in a dialog) and in a layer of the order window
+    // 9 · the inbox's photo viewer, as it was: on the page (not in a dialog) and in a layer of the order window
     await page.evaluate(() => {
       const fx = document.createElement('div'); fx.id = 'fxPage'; fx.className = 'cmThread'; Object.assign(fx.style, { position: 'fixed', left: '10px', top: '10px', zIndex: 5, background: '#fff' });
       fx.innerHTML = ['a', 'b'].map((c, i) => `<button type="button" id="fx${c}" data-photo="/.netlify/functions/imageProxy?url=${c}" data-photo-cors="1" data-photo-cap="Customer photo ${i + 1}"><img alt="" src="/.netlify/functions/imageProxy?url=${c}" width="40" height="30"></button>`).join('');
@@ -289,7 +249,7 @@ async function main() {
     await page.waitForFunction(() => !document.getElementById('orderWin').open, null, { timeout: 3000 });
 
     assert.deepEqual(errors, [], 'no page errors');
-    console.log('  ✓ click, Enter and Space open the viewer on either picture (largest Etsy size with fallbacks, the vector drawn at 1600 px from a pooled charm and from a master); wheel and pinch zoom with limits, drag pan to the edges, double-click and 0 reset; ← → step between the two; Esc returns to the same window and the same thumbnail; thumbnails never zoom in place; the inbox viewer is unchanged');
+    console.log('  ✓ a click, Enter and Space zoom the listing photo and the vector in their own frames (nothing opens, the frame keeps its size, a drag pans); the photo is swapped for the largest Etsy size that can be had and the vector is drawn again larger, from a pooled charm and from a master; Esc puts it back whole with the window as it was; a piece with no photo has nothing to zoom; the inbox viewer is unchanged');
   } finally { await browser.close(); srv.close(); }
 }
 main().then(() => console.log('Order photo zoom OK')).catch(e => { console.error(e); process.exit(1); });

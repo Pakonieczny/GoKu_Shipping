@@ -5,15 +5,18 @@
 // aspect-ratio, so a TALL picture took its natural height at the box's width, ran past the bottom of the box and was
 // clipped (every portrait Etsy photo and every upright charm; wide ones never showed it). Second cause: the box was
 // handed the list rows' saved click-zoom for the same SKU (ListZoom, one key for every view; a click near a thumbnail's
-// edge zooms it ×5), so one click in a list left the order window zoomed in and cut off for good (R3-E's data-viewer on the
-// two boxes keeps ListZoom off them; this test keeps it that way). Third: in the one-column layout (≤ 900 px) the Overview's
+// edge zooms it ×5), so one click in a list left the order window zoomed in and cut off for good (the two boxes carry data-zp,
+// the order window's own in-place zoom, which keeps ListZoom off them; this test keeps it that way). Third: in the one-column layout (≤ 900 px) the Overview's
 // two grid rows shared the view's height, so on a phone the pictures lay across the conversation, or under it.
 // Real artwork (the repo's middle-finger charm), upright, wide, tiny, huge and off-centre drawings, portrait, landscape,
 // square, tiny and huge photos, and SVGs with no viewBox / no size are put in the order window at 320, 480, 900 and 1440 px
 // wide, after a click-zoom has been saved for each in its list row, and the picture's pixels (a screenshot of the box)
 // are measured: every corner marker of a photo and the whole drawing of a vector lies inside the box with air all round,
 // centred, in its own proportions, with no zoom transform. The list rows' thumbnails and the sheet window's charm picture,
-// which reuse the same loader, must not be cut either, and the lists' own click-zoom must still work.
+// which reuse the same loader, must not be cut either, and the lists' own click-zoom must still work. The order window's
+// pictures zoom where they lie (charm-nest-zoompan.js; the gestures are in inplace-zoom-pan.cjs): here a click zooms each
+// one inside its frame, the frame neither moves nor changes size, and once put back whole (Esc) the picture is measured
+// again, whole, centred and with air all round, exactly as at rest: the zoom leaves no trace on the rest state.
 //   node tests/charm-nest/order-thumbs-whole.cjs   (PW_DIR=<playwright node_modules>, CHROMIUM=<chrome>,
 //        CN_SHOTS=dir keeps screenshots, THUMBS_PREFIX=thumbs-before|thumbs-after names them)
 const path = require('path'), fs = require('fs'), zlib = require('zlib'), assert = require('assert/strict');
@@ -226,6 +229,25 @@ async function main() {
         const spill = await page.evaluate(() => { const p = document.querySelector('.owPics'); return p.scrollWidth - p.clientWidth; });
         check(spill <= 1, `${tag}: the pictures column spills sideways by ${spill} px`);
         if (shots && c.id === 'hand') { fs.mkdirSync(shots, { recursive: true }); await page.locator('.owPics').screenshot({ path: path.join(shots, `${prefix}-${w}.png`) }); }
+        // a click zooms each picture in its own frame; Esc puts it back whole, and it is the rest state again (measured as above)
+        if (c.id === 'hand' && (w === 1440 || w === 480)) {
+          const scaleOf = sel => page.evaluate(s => +(document.querySelector(s + ' img, ' + s + ' canvas').dataset.scale || 1), sel);
+          // (the transform is read once its ease has ended: a transition on a large picture can wait for the compositor)
+          const eased = () => page.evaluate(() => document.getAnimations().forEach(a => { try { a.finish(); } catch (_) {} }));
+          for (const [sel, kind, name] of [['#owVector', 'vector', 'Vector design'], ['#owPhoto', 'photo', 'Etsy listing photo ' + c.photo]]) {
+            await page.evaluate(s => document.querySelector(s).scrollIntoView({ block: 'center', inline: 'nearest' }), sel);
+            const g00 = await page.evaluate(`(${probe})(${JSON.stringify(sel)})`);
+            await page.mouse.click(g00.inner.x + g00.inner.w * .35, g00.inner.y + g00.inner.h * .3); await page.waitForTimeout(500);
+            const s1 = await scaleOf(sel), g1 = await page.evaluate(`(${probe})(${JSON.stringify(sel)})`), open = await page.evaluate(() => ({ n: document.querySelectorAll('dialog[open]').length, viewer: !!document.querySelector('dialog.phv[open]') }));
+            check(s1 > 1.2, `${tag} · ${name}: a click zooms it where it lies (scale ${s1})`);
+            check(g1.inner.w === g00.inner.w && g1.inner.h === g00.inner.h && Math.abs(g1.inner.x - g00.inner.x) < .5 && Math.abs(g1.inner.y - g00.inner.y) < .5, `${tag} · ${name}: the frame moved or changed size while zoomed`);
+            check(open.n === 1 && !open.viewer, `${tag} · ${name}: something opened over the window (${JSON.stringify(open)})`);
+            await page.keyboard.press('Escape'); await page.waitForTimeout(600); await eased();
+            check(await page.evaluate(() => document.getElementById('orderWin').open), `${tag} · ${name}: Esc closed the window instead of putting the picture back whole`);
+            check(await scaleOf(sel) === 1, `${tag} · ${name}: Esc did not put it back whole`);
+            await measure(tag + ' · ' + name + ' · whole again after a zoom', sel, kind);
+          }
+        }
       }
       await page.setViewportSize({ width: 1440, height: 900 }); await page.evaluate(() => OrderWin.close()); await page.waitForFunction(() => !document.getElementById('orderWin').open, null, { timeout: 8000 });
     }
@@ -256,6 +278,6 @@ async function main() {
     assert.deepEqual(errors, [], 'no page errors: ' + errors.join(' | '));
   } finally { await browser.close(); srv.close && srv.close(); }
   if (problems.length) { console.error(problems.map(p => '  ✗ ' + p).join('\n')); console.error(`\n  ${problems.length} problems in ${seen.length} measured pictures`); process.exitCode = 1; return; }
-  console.log(`Order thumbnails OK: ${seen.length} pictures measured whole, centred, with air, unzoomed — real hand charm, upright / wide / tiny / huge / off-centre drawings, portrait / landscape / square / tiny / huge photos, SVGs without viewBox or size; order window at 320, 480, 900 and 1440 px, list rows and the sheet window charm picture too`);
+  console.log(`Order thumbnails OK: ${seen.length} pictures measured whole, centred, with air, unzoomed — real hand charm, upright / wide / tiny / huge / off-centre drawings, portrait / landscape / square / tiny / huge photos, SVGs without viewBox or size; order window at 320, 480, 900 and 1440 px, list rows and the sheet window charm picture too; and whole again, exactly as at rest, after a click zoomed each order window picture in its frame`);
 }
 main().catch(e => { console.error(e); process.exit(1); });

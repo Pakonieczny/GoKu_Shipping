@@ -1,11 +1,12 @@
 // Round 3 of the order window, all five changes at once (Paul, 5 Oct 2026): the back engraving card under the thumbnails (R3-B), the
 // "Open it in Engraving" / "View in Engrave" deep link (R3-A), the window opened on the piece that was asked for (R3-C), the
-// thumbnails shown whole (R3-D) and the click-to-zoom viewer on the Etsy listing and the Vector design (R3-E). Each has its own
+// thumbnails shown whole (R3-D) and the click-to-zoom on the Etsy listing and the Vector design (R3-E; since 5 Oct 13:25 UTC it
+// zooms and pans where the picture lies, in its own frame, and opens no viewer: charm-nest-zoompan.js). Each has its own
 // test; this one is the order of an afternoon at the bench, with an order shaped like 4170837249 (3 pieces: CABLE CHAIN ONLY RG,
 // MIDDLE 9935 GF, MIDDLE 9935 RG), the RG middle selected and its back in review ("KMB // SMH"), the GF middle approved ("I dissent"),
 // the chain with no back engraving, and what only shows when they act together:
-//   1 Overview: thumbnails whole, the card under them              6 the viewer (click, step, wheel, drag, Esc) and the card; the
-//   2 the piece switcher swaps card, pictures and viewer's caption     viewer opened while an approval's seal is being pressed
+//   1 Overview: thumbnails whole, the card under them              6 the pictures zoom in place (click, wheel, drag, Esc) and the
+//   2 the piece switcher swaps card, pictures and each piece's zoom     card; a zoom while an approval's seal is being pressed
 //   3 the red box and the card's "View in Engrave" land alike      7 other doors: openOrderFrom / Issues rows / Sheet window / search
 //   4 Approve on the card: name, one seal, permanent, red box,     8 390 and 900 px wide: no overlap, no sideways scroll
 //     timeline, Sheet tab, the Engraving tab's Decided             9 twenty piece switches while a seal is pressing
@@ -13,7 +14,7 @@
 //     follows within about 2 s
 // Headless Chromium on the fake site (bridge-server.cjs), offline. The approval itself (fit, back file, cloud) is a stand-in with the
 // same order of steps as Engrave.approve (preparing, intent, seal added, pressed on the very button, settled, timeline told); the card,
-// the link, the viewer, the Sheet tab and the window are the page's own. Assertions are counts and strings, never element handles.
+// the link, the zoom, the Sheet tab and the window are the page's own. Assertions are counts and strings, never element handles.
 //   node tests/charm-nest/order-window-round3-e2e.cjs   (PW_DIR=<playwright node_modules>, CHROMIUM=<chrome>, SHOTS=<dir> keeps screenshots)
 const fs = require('fs'), path = require('path'), zlib = require('zlib');
 const root = path.join(__dirname, '../..');
@@ -158,15 +159,12 @@ async function main() {
         open: ((q('[data-e=engrave]') || {}).textContent || '').trim(), preview: !!q('.pv canvas, .pv img'), seals, wait: (q('.owEngWait') || {}).textContent || '', red: document.querySelectorAll('#owFix .owFix').length,
         under: r.height > 0 && r.top >= Math.max(sku.bottom, vec.bottom, ph.bottom) - 1 && Math.abs(r.left - ph.left) < 2, w: Math.round(r.width), h: Math.round(r.height), lid: document.getElementById('owPhoto').dataset.lid || '', key: OrderWin.key() };
     });
-    const viewer = () => page.evaluate(() => {
-      const d = document.querySelector('dialog.phv'); if (!d || !d.open) return null;
-      const i = d.querySelector('.phvImg'), st = d.querySelector('.phvStage'), m = /translate\(([-\d.e]+)px,\s*([-\d.e]+)px\) scale\(([-\d.e]+)\)/.exec(i.style.transform || '');
-      return { cap: d.querySelector('.phvCap').textContent, n: d.querySelector('.phvN').textContent, src: (i.currentSrc || i.src || '').slice(0, 200), nat: [i.naturalWidth, i.naturalHeight], tx: m && +m[1], ty: m && +m[2], s: m && +m[3], sw: st.clientWidth, sh: st.clientHeight, layer: d.classList.contains('layer'), inWin: !!d.closest('#orderWin') };
-    });
-    const loaded = () => page.waitForFunction(() => { const i = document.querySelector('dialog.phv[open] .phvImg'); return i && i.complete && i.naturalWidth > 0 && i.style.visibility !== 'hidden'; }, null, { timeout: 20000 }).catch(async e => {
-      const d = await page.evaluate(() => { const d = document.querySelector('dialog.phv'); if (!d) return 'no viewer'; const i = d.querySelector('.phvImg'), n = d.querySelector('.phvNote'); return JSON.stringify({ open: d.open, layer: d.classList.contains('layer'), parent: d.parentElement && (d.parentElement.id || d.parentElement.tagName), vis: i.style.visibility, complete: i.complete, nat: i.naturalWidth, src: (i.src || '').slice(-60), note: n.hidden ? '' : n.textContent, cap: d.querySelector('.phvCap').textContent, seal: Seal.busy() }); });
-      console.error('    viewer did not load: ' + d); throw e; });
-    const closedViewer = (ms = 4000) => page.waitForFunction(() => !document.querySelector('dialog.phv[open]'), null, { timeout: ms }).then(() => true, () => false);
+    // the zoom of a picture, read from the picture itself (data-scale: the state; the transition on its way is not waited for), and what could have opened
+    const zoomOf = sel => page.evaluate(sel => { const m = document.querySelector(sel + ' img, ' + sel + ' canvas'); return m ? { s: +(m.dataset.scale || 1), src: decodeURIComponent(m.currentSrc || m.src || '').slice(0, 300), nat: [m.naturalWidth || m.width, m.naturalHeight || m.height], ox: +(m.dataset.offsetX || 0), oy: +(m.dataset.offsetY || 0) } : null; }, sel);
+    const anyViewer = () => page.evaluate(() => !!document.querySelector('dialog.phv[open]') || (window.PhotoView ? PhotoView.isOpen() : false));
+    const zoomIn = async (sel, fx = .5, fy = .5) => { await page.locator(sel).scrollIntoViewIfNeeded(); const bx = await page.locator(sel).boundingBox(); await page.mouse.click(bx.x + bx.width * fx, bx.y + bx.height * fy); await page.waitForTimeout(450); };
+    const unzoom = async () => { await page.keyboard.press('Escape'); await page.waitForTimeout(400); };
+    const bigNat = (sel, w) => page.waitForFunction(({ sel, w }) => { const m = document.querySelector(sel + ' img, ' + sel + ' canvas'); return m && Math.max(m.naturalWidth || m.width, m.naturalHeight || m.height) >= w && m.complete !== false; }, { sel, w }, { timeout: 20000 }).then(() => true, () => false);
     const winState = () => page.evaluate(() => ({ open: document.getElementById('orderWin').open, key: OrderWin.key(), view: document.querySelector('.owTabsV [aria-selected=true]').dataset.owView, title: document.getElementById('owTitle').textContent, active: document.activeElement && document.activeElement.id || '' }));
     const open = async k => { await page.evaluate(k => OrderWin.open(k), k); await page.waitForFunction(k => OrderWin.isOpen() && OrderWin.key() === k, k, { timeout: 15000 }); await settled(); };
     const closeWin = async () => { await page.evaluate(() => { const o = document.getElementById('orderWin'); if (o && o.open) document.getElementById('owClose').click(); }); await page.waitForFunction(() => !document.getElementById('orderWin').open && !OrderWin.isOpen(), null, { timeout: 8000 }).catch(() => {}); await page.waitForTimeout(250); };
@@ -200,26 +198,28 @@ async function main() {
     check(th.every(t => !t.none && t.inside && t.still && t.square && !t.listZoom) && th[0].fit === 'contain', 'the Etsy photo (a tall one) and the Vector design lie whole inside their boxes, unzoomed: ' + JSON.stringify(th));
     if (shots) await page.screenshot({ path: path.join(shots, '1-overview-1440.png') });
 
-    // ══ 2 · the piece switcher: card, pictures and viewer's caption follow the piece ══
+    // ══ 2 · the piece switcher: card, pictures and each piece's zoom follow the piece ══
     step = '2'; say(step);
     await page.evaluate(({ WORDS, LID_KEY, chain }) => {
       const h = document.getElementById('owEng'); window.__log = [];
       new MutationObserver(() => { const lid = document.getElementById('owPhoto').dataset.lid || '', want = LID_KEY[lid] || '', w = (h.querySelector('.words') || {}).textContent || '', st = (h.querySelector('.swEng') || {}).dataset?.state || '';
         __log.push({ lid, want, w, st, hidden: h.hidden, wrong: !!w && w !== (WORDS[want] || '#') || (!!st && want === chain) }); }).observe(h, { childList: true, subtree: true, attributes: true, attributeFilter: ['hidden'] });
     }, { WORDS, LID_KEY, chain: k.c });
-    const viewOf = async (lid, cap) => {
-      await page.click('#owPhoto'); await loaded(); const v = await viewer();
-      check(v && v.layer && v.inWin && v.src.includes(lid) && cap.test(v.cap) && v.n === '1 of 2', `the viewer on piece ${cap.source.match(/Piece (\d)/)[1]}: its own listing photo (${lid}), the caption "${v && v.cap}"`);
-      await page.keyboard.press('ArrowRight'); await loaded(); const w = await viewer();
-      check(w && Math.max(...w.nat) === 1600 && /^Vector design · Piece \d of 3/.test(w.cap) && w.cap.replace(/^Vector design/, 'Etsy listing') === v.cap, `its Vector design follows with the same piece in the caption: "${w && w.cap}"`);
-      await page.keyboard.press('Escape'); await closedViewer();
+    const viewOf = async (lid, n) => {
+      await zoomIn('#owPhoto', .35, .35); const z = await zoomOf('#owPhoto');
+      check(z && z.s > 1.2 && z.src.includes(lid) && !(await anyViewer()), `piece ${n}: a click zooms its own listing photo (${lid}) where it lies, x${z && z.s.toFixed(2)}, nothing opens`);
+      await unzoom(); await zoomIn('#owVector', .5, .4); const w = await zoomOf('#owVector');
+      check(w && w.s > 1.2 && !(await anyViewer()), `piece ${n}: its Vector design zooms in place too (x${w && w.s.toFixed(2)})`);
+      await unzoom();
+      const both = [await zoomOf('#owPhoto'), await zoomOf('#owVector')];
+      check(both.every(g => g && g.s === 1) && (await winState()).open, `piece ${n}: Esc put both back whole and the window stayed open`);
     };
     await pick(k.c); await waitNoCard();
     c = await card(); check(c.hidden && !c.state && c.lid === B.lids[0], 'the chain (piece 1) has no back engraving: no card, its own listing photo');
-    await picsReady(); await viewOf(B.lids[0], /^Etsy listing · Piece 1 of 3 · CABLE_CHAIN_ONLY$/);
+    await picsReady(); await viewOf(B.lids[0], 1);
     await pick(k.g); await waitCard('approved'); await picsReady();
     c = await card(); check(c.state === 'approved' && c.words === 'I\ndissent' && c.disabled && !c.approve && c.open === 'View in Engrave →' && c.seals.length === 1 && c.seals[0] === 'BACK ENGRAVING|Giovanna' && c.lid === B.lids[1], 'the GF middle (piece 2): its own approved card, Giovanna\'s one BACK ENGRAVING seal on the button: ' + JSON.stringify([c.state, c.words, c.seals]));
-    await viewOf(B.lids[1], /^Etsy listing · Piece 2 of 3 · MIDDLE_9935$/);
+    await viewOf(B.lids[1], 2);
     await page.click('.owTabsV [data-ow-view="sheet"]');
     await page.waitForFunction(() => document.querySelector('#owSheetPanel [data-engraving-panel] .swEng'), null, { timeout: 20000 }).catch(() => {});
     const sg = await page.evaluate(() => ({ state: (document.querySelector('#owSheetPanel [data-engraving-panel] .swEng') || {}).dataset?.state || '', words: (document.querySelector('#owSheetPanel [data-engraving-panel] .words') || {}).textContent || '', seals: document.querySelectorAll('#owSheetPanel [data-engraving-panel] .egButtonSeal .seal').length }));
@@ -323,68 +323,72 @@ async function main() {
     check(f2 && took2 <= 2500 && c.seals.length === 1 && c.words === 'Leaf' && !c.approve && (await approvals()).filter(a => a.startsWith(key(R2, 1))).length === 1, `approved in the Sheet tab: the Overview's card reads approved ${took2} ms after the tab is back, one seal, one approval`);
     await closeWin();
 
-    // ══ 6 · the viewer and the card ══
+    // ══ 6 · the pictures zoom in place, and the card ══
     step = '6'; say(step);
     await open(k.r); await picsReady();
     const before = await card(), win0 = await winState();
-    await page.click('#owPhoto'); await loaded();
-    let v = await viewer();
-    check(v && /^Etsy listing · Piece 3 of 3/.test(v.cap) && v.nat[0] === 2000, 'click on the listing: the viewer opens on piece 3\'s listing photo at the largest size');
-    const fit0 = v.s; await page.mouse.move(720, 450); for (let i = 0; i < 3; i++) await page.mouse.wheel(0, -500); await page.waitForTimeout(100);
-    const zoomed = await viewer(); check(zoomed.s > fit0 * 2, 'the wheel zooms the listing photo');
-    await page.mouse.move(720, 450); await page.mouse.down(); for (let i = 1; i <= 8; i++) await page.mouse.move(720 - 15 * i, 450 - 9 * i); await page.mouse.up(); await page.waitForTimeout(80);
-    const panned = await viewer(); check(Math.abs((panned.tx - zoomed.tx) + 120) < 3 && Math.abs((panned.ty - zoomed.ty) + 72) < 3, 'a drag pans the picture with the pointer: ' + [panned.tx - zoomed.tx, panned.ty - zoomed.ty]);
-    await page.keyboard.press('0'); await page.keyboard.press('ArrowRight'); await loaded(); v = await viewer();
-    check(/^Vector design/.test(v.cap) && Math.max(...v.nat) === 1600, 'arrow: its Vector design, drawn large');
-    await page.mouse.move(720, 450); await page.mouse.wheel(0, -500); await page.waitForTimeout(100);
-    check((await viewer()).s > v.s * 1.5, 'the wheel zooms the vector too');
-    c = await card(); check(c.state === before.state && c.words === before.words && c.seals.length === before.seals.length, 'the card under the viewer is untouched while it is open');
-    await page.keyboard.press('Escape'); check(await closedViewer(), 'Esc closes the viewer only');
-    let after = await winState(); check(after.open && after.key === k.r && after.view === 'info' && after.active === 'owPhotoBox', 'the window is as it was and the focus is back on the thumbnail that opened it: ' + JSON.stringify(after));
-    c = await card(); check(c.state === before.state && c.words === before.words && c.seals.length === before.seals.length && c.under && !c.wait, 'the card is intact after the viewer closed');
-    await page.click('#owVector'); await loaded(); v = await viewer(); check(/^Vector design/.test(v.cap), 'a click on the Vector design opens it');
-    await page.keyboard.press('Escape'); await closedViewer(); check((await winState()).active === 'owVectorBox', 'Esc gives the focus back to the Vector design');
+    const frame0 = await page.evaluate(() => ['owPhoto', 'owVector'].map(id => { const r = document.getElementById(id).getBoundingClientRect(); return [r.x, r.y, r.width, r.height].map(Math.round).join(); }).join('|'));
+    await zoomIn('#owPhoto', .3, .3);
+    let v = await zoomOf('#owPhoto');
+    check(v && v.s > 1.2 && v.src.includes(B.lids[2]) && !(await anyViewer()), 'click on the listing: it zooms where it lies, piece 3\'s own photo, and nothing opens over the window');
+    check(await bigNat('#owPhoto', 2000), 'when the zoom settles the photo is the largest size');
+    const z0 = await zoomOf('#owPhoto');
+    const pb0 = await page.locator('#owPhoto').boundingBox(); await page.mouse.move(pb0.x + pb0.width / 2, pb0.y + pb0.height / 2); await page.keyboard.down('Control'); for (let i = 0; i < 3; i++) await page.mouse.wheel(0, -500); await page.keyboard.up('Control'); await page.waitForTimeout(100);
+    const zoomed = await zoomOf('#owPhoto'); check(zoomed.s > z0.s * 1.2, 'ctrl + wheel zooms the listing photo further (a plain wheel scrolls the window)');
+    const pb = await page.locator('#owPhoto').boundingBox();
+    await page.mouse.move(pb.x + pb.width / 2, pb.y + pb.height / 2); await page.mouse.down(); for (let i = 1; i <= 8; i++) await page.mouse.move(pb.x + pb.width / 2 - 15 * i, pb.y + pb.height / 2 - 9 * i); await page.mouse.up(); await page.waitForTimeout(80);
+    const panned = await zoomOf('#owPhoto'); check(Math.abs((panned.ox - zoomed.ox) + 60) < 3 && Math.abs((panned.oy - zoomed.oy) + 36) < 3 && panned.s === zoomed.s, 'a drag pans the picture, damped by half, without changing the zoom: ' + [panned.ox - zoomed.ox, panned.oy - zoomed.oy]);
+    await unzoom(); check((await zoomOf('#owPhoto')).s === 1, 'Esc puts it back whole');
+    await zoomIn('#owVector', .5, .4); await bigNat('#owVector', 500); v = await zoomOf('#owVector');
+    check(v.s > 1.2 && Math.max(...v.nat) >= 500 && Math.max(...v.nat) <= 2048, 'a click on the Vector design zooms it in place, drawn again larger (' + v.nat + ')');
+    const vb0 = await page.locator('#owVector').boundingBox(); await page.mouse.move(vb0.x + vb0.width / 2, vb0.y + vb0.height / 2); await page.keyboard.down('Control'); await page.mouse.wheel(0, -500); await page.keyboard.up('Control'); await page.waitForTimeout(100);
+    check((await zoomOf('#owVector')).s > v.s * 1.05, 'ctrl + wheel zooms the vector too');
+    c = await card(); check(c.state === before.state && c.words === before.words && c.seals.length === before.seals.length, 'the card under the zoomed picture is untouched');
+    check(await page.evaluate(f => ['owPhoto', 'owVector'].map(id => { const r = document.getElementById(id).getBoundingClientRect(); return [r.x, r.y, r.width, r.height].map(Math.round).join(); }).join('|') === f, frame0), 'both frames kept their place and size while zoomed');
+    await unzoom();
+    let after = await winState(); check(after.open && after.key === k.r && after.view === 'info' && after.active === 'owVector', 'the window is as it was and the focus is on the picture that was used: ' + JSON.stringify(after));
+    c = await card(); check(c.state === before.state && c.words === before.words && c.seals.length === before.seals.length && c.under && !c.wait, 'the card is intact after the pictures were put back whole');
     await closeWin();
-    // the viewer opened while an approval is being prepared (R4 piece 1; the approval is made slower so the two meet), the seal then pressed under it
+    // a zoom while an approval is being prepared (R4 piece 1; the approval is made slower so the two meet), the seal then pressed
     await open(key(R4, 0)); await waitCard('approve'); await picsReady();
     await page.evaluate(() => { window.__hold(); window.__n6 = __approve.length; });
     await page.click('#owEng [data-e=approve]');
     await page.waitForFunction(() => __approve.length > __n6, null, { timeout: 8000 });
-    await page.click('#owPhoto'); await loaded();
-    v = await viewer(); check(v && /^Etsy listing · Piece 1 of 3 · ALPHA_TAG$/.test(v.cap), 'the viewer opens while the approval runs, on its own piece');
+    await zoomIn('#owPhoto', .3, .3);
+    const lid4 = (await card()).lid; v = await zoomOf('#owPhoto'); check(v && v.s > 1.2 && lid4 && v.src.includes(lid4) && !(await anyViewer()), 'the picture zooms while the approval runs, on its own piece (' + lid4 + ')');
     await page.evaluate(() => __release());
     await page.waitForFunction(() => Seal.busy(), null, { timeout: 8000 });
-    // Esc while the seal is being pressed under it: the viewer goes at once, as it is asked to (the press under it goes on)
-    await page.keyboard.press('Escape');
-    const gone = await closedViewer(700);
-    check(gone, 'Esc while the seal is being pressed closes the viewer at once (it stayed over the window, blank, until the seal had landed)');
+    // Esc while the seal is being pressed: the page is still (the press under it is not disturbed); the zoom stays until the seal has landed
+    await page.keyboard.press('Escape'); await page.waitForTimeout(150);
+    check((await zoomOf('#owPhoto')).s > 1.2 && (await winState()).open, 'Esc while the seal is being pressed changes nothing: the page is still, the window stays');
     await page.waitForFunction(() => !Seal.busy() && !!document.querySelector('#owEng .swEng[data-state=approved]'), null, { timeout: 25000 });
-    c = await card(); check(c.state === 'approved' && c.seals.length === 1 && c.words === 'Alpha', 'the approval landed under it once: approved, one seal, its words');
-    check(await closedViewer(3000) && (await winState()).open && (await winState()).active === 'owPhotoBox', 'the viewer is closed, the window open, the focus on the thumbnail');
-    // a click made while the seal is pressed is not taken by anything (the page waits for the wooden press): it opens nothing, and the next one does
+    c = await card(); check(c.state === 'approved' && c.seals.length === 1 && c.words === 'Alpha', 'the approval landed under the zoom once: approved, one seal, its words');
+    check((await zoomOf('#owPhoto')).s > 1.2, 'and the zoom, kept for this piece, is still there after the card was drawn again');
+    await unzoom(); check((await zoomOf('#owPhoto')).s === 1 && (await winState()).open, 'afterwards Esc puts it back whole and the window stays');
+    // a click made while the seal is pressed is not taken by anything (the page waits for the wooden press): it zooms nothing, and the next one does
     await pick(key(R4, 1)); await waitCard('approve'); await picsReady();
     await page.click('#owEng [data-e=approve]');
     await page.waitForFunction(() => Seal.busy(), null, { timeout: 8000 });
     await page.click('#owPhoto', { noWaitAfter: true }); await page.waitForTimeout(200);
-    check(!(await page.evaluate(() => PhotoView.isOpen())), 'a click on the picture during the press opens nothing (the page is still while the seal is pressed)');
+    check((await zoomOf('#owPhoto')).s === 1 && !(await anyViewer()), 'a click on the picture during the press zooms nothing (the page is still while the seal is pressed)');
     await page.waitForFunction(() => !Seal.busy() && !!document.querySelector('#owEng .swEng[data-state=approved]'), null, { timeout: 25000 });
     c = await card(); check(c.state === 'approved' && c.seals.length === 1 && c.words === 'Bravo', 'the approval landed once: ' + JSON.stringify([c.state, c.seals.length, c.words]));
-    await page.click('#owPhoto'); await loaded(); v = await viewer(); check(v && /Piece 2 of 3 · BRAVO_TAG/.test(v.cap), 'afterwards the same click opens the viewer');
-    await page.keyboard.press('Escape'); await closedViewer();
+    await zoomIn('#owPhoto'); v = await zoomOf('#owPhoto'); check(v.s > 1.2 && !(await anyViewer()), 'afterwards the same click zooms the picture');
+    await unzoom();
     await page.evaluate(() => { window.__delay = 250; });
     await closeWin();
 
-    // the window closed from under an open viewer (EngraveLink, the Sheet window and a hand-over all close it by code): the viewer goes with it, and the next opening is clean
+    // the window closed by code from under a zoomed picture (EngraveLink, the Sheet window and a hand-over all close it): nothing is left over, and the next opening is whole
     await open(key(R5, 0)); await picsReady();
-    await page.click('#owPhoto'); await loaded();
+    await zoomIn('#owPhoto', .3, .3); await zoomIn('#owVector', .3, .3);
+    check((await zoomOf('#owPhoto')).s > 1.2 && (await zoomOf('#owVector')).s > 1.2, 'both pictures zoomed before the window is closed by code');
     await page.evaluate(() => OrderWin.close());
     await page.waitForFunction(() => !OrderWin.isOpen() && !document.getElementById('orderWin').open, null, { timeout: 8000 }).catch(() => {});
-    const orphanGone = await closedViewer(3000);   // (the window's close event, which the viewer waits for, comes a moment after the window is closed)
-    const orphan = await page.evaluate(() => ({ viewers: document.querySelectorAll('dialog.phv[open]').length, win: document.getElementById('orderWin').open, over: PhotoView.isOpen() }));
-    check(orphanGone && orphan.viewers === 0 && !orphan.win && !orphan.over, 'the order window closed by code while the viewer was open: the viewer is closed with it: ' + JSON.stringify(orphan));
-    await open(key(R5, 0)); await picsReady(); await page.click('#owVector'); await loaded(); v = await viewer();
-    check(v && v.layer && v.inWin && /Vector design/.test(v.cap), 'the next opening of the window and of the viewer is clean (a layer of the window again)');
-    await page.keyboard.press('Escape'); await closedViewer(); await closeWin();
+    const orphan = await page.evaluate(() => ({ win: document.getElementById('orderWin').open, kept: CNZoomPan.stats().ids.filter(i => i.startsWith('ow:')), over: PhotoView.isOpen() }));
+    check(!orphan.win && !orphan.over && orphan.kept.length === 0, 'the order window closed by code while zoomed: nothing is kept of the zoom, nothing is open: ' + JSON.stringify(orphan));
+    await open(key(R5, 0)); await picsReady();
+    check((await zoomOf('#owPhoto')).s === 1 && (await zoomOf('#owVector')).s === 1, 'the next opening of the same piece is whole');
+    await closeWin();
 
     // ══ 7 · the other doors ══
     step = '7'; say(step);
@@ -395,9 +399,9 @@ async function main() {
       const cc = await card(); const idx = ALL.flatMap(o => o.skus.map((_, i) => key(o, i))).indexOf(want);
       check(cc.key === want, `${label}: the window is on the piece named`);
       check(exp ? cc.words === exp && cc.state !== '' : cc.hidden, `${label}: its card is that piece's own (${exp ? JSON.stringify(cc.words) : 'no card'})`);
-      await page.click('#owPhoto'); await loaded(); const vv = await viewer(); const piece = (want.endsWith(tid(B, 0)) ? 1 : want.endsWith(tid(B, 1)) ? 2 : want.endsWith(tid(B, 2)) ? 3 : 0);
-      check(vv && (!piece || new RegExp('Piece ' + piece + ' of 3').test(vv.cap)), `${label}: the viewer's caption names the same piece: "${vv && vv.cap}"`);
-      await page.keyboard.press('Escape'); await closedViewer();
+      await zoomIn('#owPhoto'); const vv = await zoomOf('#owPhoto');
+      check(vv && vv.s > 1.2 && (!cc.lid || vv.src.includes(cc.lid)) && !(await anyViewer()), `${label}: the picture zooms where it lies, and it is the same piece's own photo (${cc.lid || 'no listing'})`);
+      await unzoom();
     };
     // openOrderFrom from a pop-up with only a pool id (the charm inspector, the Moving bar, the Library Issues rows)
     await page.evaluate(() => { const d = document.createElement('dialog'); d.id = '__src'; d.innerHTML = '<div style="padding:30px"><button id="__go" type="button">Open order</button></div>'; document.body.appendChild(d); d.showModal(); });
@@ -435,11 +439,10 @@ async function main() {
     await page.evaluate(() => { OrderWin.openOrder('4179990001', { q: '4179990001', row: null }); });
     await page.waitForFunction(() => OrderWin.isOpen() && OrderWin.rid() === '4179990001', null, { timeout: 10000 });
     const early = await page.evaluate(() => { const h = document.getElementById('owEng'); return { hidden: h.hidden, wait: (h.querySelector('.owEngWait') || {}).textContent || '', open: !!document.querySelector('dialog.phv[open]') }; });
-    await page.evaluate(() => { document.getElementById('owPhotoBox').click(); document.getElementById('owVectorBox').click(); });
+    await page.evaluate(() => { document.getElementById('owPhoto').click(); document.getElementById('owVector').click(); });
     await page.waitForTimeout(300);
     check(/Reading the back engraving/.test(early.wait) || early.hidden, 'an order not read yet: the card says what it waits for (or is not there), not another order\'s card: ' + JSON.stringify(early));
-    check(!(await page.evaluate(() => PhotoView.isOpen())) || (await closedViewer(1)) === false, 'its pictures open nothing while there is nothing to show');
-    await page.evaluate(() => PhotoView.close());
+    check(!(await anyViewer()), 'its pictures open nothing while there is nothing to show');
     await page.waitForFunction(() => /no piece in the sorter's records|could not be read/.test(document.getElementById('owNotes').textContent) && document.getElementById('owLoading').hidden, null, { timeout: 25000 }).catch(() => {});
     const lost = await page.evaluate(() => { const h = document.getElementById('owEng'); return { hidden: h.hidden, wait: (h.querySelector('.owEngWait') || {}).textContent || '', card: !!h.querySelector('.swEng') }; });
     check(lost.hidden && !lost.wait && !lost.card, 'an order the records do not have: once that is known the card\'s wait is gone and no card is shown: ' + JSON.stringify(lost));
@@ -605,10 +608,14 @@ async function main() {
     check(JSON.parse(noLink).tab === 'done', 'EngraveLink missing: the card\'s shortcut still takes the person to the Engraving tab (the approved piece\'s Decided tab): ' + noLink);
     await resetEngrave(); await page.evaluate(() => { window.EngraveLink = window.__EL; });
     await open(k.r); await waitCard('approved'); await picsReady();
-    await page.evaluate(() => { window.__opened = []; window.__PV = window.PhotoView; delete window.PhotoView; window.__wo = window.open; window.open = u => { __opened.push(String(u)); return null; }; });
-    await page.click('#owPhoto'); await page.waitForTimeout(300);
-    check((await page.evaluate(() => __opened.length)) === 1 && (await winState()).open && (await card()).state === 'approved', 'PhotoView missing: the listing photo opens in a tab of its own, the window and its card are untouched');
-    await page.evaluate(() => { window.open = window.__wo; window.PhotoView = window.__PV; });
+    // the zoom module missing: the window works (Esc closes it: there is nothing to put back whole; every call of the module is guarded)
+    await page.evaluate(() => { window.__ZP = window.CNZoomPan; delete window.CNZoomPan; });
+    await page.keyboard.press('Escape');
+    const noZoomClosed = await page.waitForFunction(() => !OrderWin.isOpen() && !document.getElementById('orderWin').open, null, { timeout: 5000 }).then(() => true, () => false);
+    check(noZoomClosed, 'CNZoomPan missing: Esc closes the window as it always did, nothing throws');
+    await page.evaluate(() => { window.CNZoomPan = window.__ZP; });
+    await open(k.r); await waitCard('approved'); await picsReady();
+    check((await card()).state === 'approved' && (await zoomOf('#owPhoto')).s === 1, 'and the window opens again with its card and a whole picture');
     await closeWin();
     check(errors.length === 0, 'no page errors or console errors in the whole run: ' + errors.join(' | '));
   } finally { clearTimeout(guard); await browser.close(); srv.close(); }
