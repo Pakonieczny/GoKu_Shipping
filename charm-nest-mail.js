@@ -1223,12 +1223,21 @@
   function standalone(s, extra = {}) {
     if (!SA) {
       const d = h("dialog", "owin cmDlg"); d.setAttribute("aria-label", "Customer conversation");
-      d.innerHTML = `<div class="owBox"><div class="owHead"><h3>Customer</h3><span class="spacer"></span><button type="button" class="btn ghost sm" data-x>✕ Close</button></div><div class="cmSolo"></div></div>`;
+      d.innerHTML = `<div class="owBox"><div class="owHead"><h3>Customer</h3><span class="spacer"></span><button type="button" class="btn ghost sm" data-open-order hidden title="Open this order: everything about it, its back engraving and its notes">Open order ${ICON.out}</button><button type="button" class="btn ghost sm" data-x>✕ Close</button></div><div class="cmSolo"></div></div>`;
       document.body.appendChild(d);
       d.querySelector("[data-x]").onclick = () => d.close();
+      // (Paul, 5 Oct, round 3: the order's one detailed window, the same from every pop-up that names an order; this window hands over to it
+      // as the charm inspector does, and comes back when it closes)
+      const go = d.querySelector("[data-open-order]");
+      go.onclick = () => {
+        const rid = String(go.dataset.rid || "").replace(/\D/g, ""); if (!rid) return;
+        try { if (typeof window.openOrderFrom === "function" && window.openOrderFrom(go, rid) !== false) return; } catch (e) { console.warn("customer window: open order", e); }
+        try { if (window.OrderWin && OrderWin.openOrder) OrderWin.openOrder(rid, { from: go }); } catch (e) { console.warn("customer window: open order", e); }
+      };
       SA = { d, P: Pane(d.querySelector(".cmSolo"), { visible: () => d.open }) };
     }
     SA.d.querySelector("h3").textContent = String(s.receiptId) === TEST ? "Email link test" : "Order " + s.receiptId;
+    { const go = SA.d.querySelector("[data-open-order]"), rid = String(s.receiptId) === TEST ? "" : String(s.receiptId || "").replace(/\D/g, ""); go.dataset.rid = rid; go.hidden = !(rid.length >= 5 && window.OrderWin && typeof OrderWin.openOrder === "function"); }
     if (!SA.d.open) { try { SA.d.showModal(); } catch (_) { SA.d.setAttribute("open", ""); } }
     show(SA.P, { receiptId: s.receiptId, scope: s.scope, lineId: s.lineId, lineLabel: s.lineLabel || "" }, { engagementId: s.id || null });
     if (extra.pull) pullWhenReady(SA.P);
