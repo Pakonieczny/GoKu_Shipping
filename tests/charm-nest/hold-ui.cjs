@@ -147,8 +147,10 @@ async function main() {
     const installFake = install;
     const T = () => page.evaluate(() => JSON.parse(JSON.stringify(Object.assign({}, window.__t, { planFor: undefined, gate: undefined }))));
 
-    // ── 1 · no engine, no button ──
-    assert.equal(await page.evaluate(() => !window.OrderHold), true, 'the engine is not on this page yet (these are its fakes)');
+    // ── 1 · no engine, no button (the page's own engine, when its module is in, is taken away for this check) ──
+    if (await page.evaluate(() => !!(window.OrderHold && OrderHold.plan && OrderHold.run))) assert.equal(await page.evaluate(() => HoldUI.available()), true, 'the real engine is on the page: the button is offered');
+    await page.evaluate(() => { window.__real = { hold: window.OrderHold || null, fx: window.OrderHoldFx || null }; delete window.OrderHold; delete window.OrderHoldFx; Review.syncOrderItems(); Review.render(); });
+    await page.waitForFunction(() => !document.querySelector('#rvList [data-hold-btn]'), null, { timeout: 10000 });
     assert.deepEqual(await holdBtns(P.rid), [], 'without the engine there is no Hold button in Review');
     assert.equal(await page.evaluate(() => HoldUI.available()), false);
 
@@ -238,6 +240,18 @@ async function main() {
     await page.click('dialog.holdDlg [data-k=no]'); await page.waitForFunction(() => !document.querySelector('dialog.holdDlg'));
     t = await T(); assert.equal(t.runs.length, 0);
     await page.evaluate(() => { window.__t.override = null; });
+
+    // ── 5b · a window that cannot step aside (the sheet window under an order window, say): the popup is drawn on its surface, never over it ──
+    await page.evaluate(() => { document.getElementById('dlgSettings').showModal(); });
+    await page.evaluate(plan => { window.__asked = HoldUI.confirm(plan).then(v => { window.__answer = v; return v; }); }, PLAN(P.rid));
+    await page.waitForFunction(() => document.querySelector('#dlgSettings .holdInline'), null, { timeout: 8000 });
+    assert.equal(await page.evaluate(() => document.querySelectorAll('dialog.holdDlg').length), 0, 'no second dialog');
+    assert.equal(await page.evaluate(() => document.querySelectorAll('dialog[open]').length), 1, 'one dialog open');
+    assert(/Continue/.test(await dlgText()) && /Not now/.test(await dlgText()), 'the same words, inside it');
+    await page.keyboard.press('Escape');
+    await page.waitForFunction(() => window.__answer === false && !document.querySelector('.holdInline'), null, { timeout: 8000 });
+    assert.equal(await page.evaluate(() => document.getElementById('dlgSettings').open), true, 'Esc put the question away, not the window under it');
+    await page.evaluate(() => document.getElementById('dlgSettings').close());
 
     // ── 6 · layout: the card, the row and the popup at 900 and 390 (the dark rail folds below 900 px, as the page's own toggle does) ──
     const fold = w => page.evaluate(w => { const off = document.getElementById('app').classList.contains('railOff'); if ((w < 900) !== off) document.getElementById('btnRail').click(); }, w);
@@ -347,7 +361,7 @@ async function main() {
     await seg('open');
 
     // ── 10 · a failed run says so plainly, keeps what was done and never leaves the person in the Nest tab ──
-    await page.evaluate(() => { for (const r of Orders.rows()) if (String(r.order.receiptId) === '4170837249') { r.hold = null; r.state = 'pulled'; } window.__t.runs.length = 0; window.__t.returns.length = 0; window.__t.fx.length = 0; window.__t.runResult = { ok: false, error: 'the sheet could not be saved' }; window.OrderHoldFx.returnToOnHold = () => {}; B.employee = 'Test Operator'; CN.setMode('review'); Review.syncOrderItems(); Review.render(); });
+    await page.evaluate(() => { for (const r of Orders.rows()) if (String(r.order.receiptId) === '4170837249') { r.hold = null; r.state = r.poolIds.length ? 'pooled' : 'pulled'; } window.__t.runs.length = 0; window.__t.returns.length = 0; window.__t.fx.length = 0; window.__t.runResult = { ok: false, error: 'the sheet could not be saved' }; window.OrderHoldFx.returnToOnHold = () => {}; B.employee = 'Test Operator'; CN.setMode('review'); Review.syncOrderItems(); Review.render(); });
     await page.waitForFunction(k => document.querySelector(`#rvList .reviewListRow[data-row="${k}"] [data-hold-btn]`), cable, { timeout: 15000 });
     await page.click(`${card(cable)} [data-hold-btn]`);
     await page.waitForFunction(() => document.querySelector('dialog.holdDlg[open]'), null, { timeout: 15000 });
@@ -358,7 +372,7 @@ async function main() {
     await page.waitForFunction(() => CN.S.mode === 'review' && !HoldUI.busy('4170837249'), null, { timeout: 15000 });
     t = await T(); assert.equal(t.runs.length, 1); assert(t.fx[0].finished && t.fx[0].pushed.includes('error'), 'the film was told how it ended: ' + JSON.stringify(t.fx[0].pushed));
     await page.waitForFunction(k => document.querySelector(`#rvList .reviewListRow[data-row="${k}"] [data-hold-btn]`), cable, { timeout: 15000 });
-    await page.waitForFunction(r => document.querySelectorAll(`[data-hold-btn][data-rid="${r}"]`).length === 1, P.rid, { timeout: 10000 }).catch(async () => { throw new Error('the button is back, once: ' + JSON.stringify(await holdBtns(P.rid))); });   // (a card that flew away leaves its copy for a moment)
+    await page.waitForFunction(r => document.querySelectorAll(`[data-hold-btn][data-rid="${r}"]`).length === 1, P.rid, { timeout: 10000 }).catch(async () => { throw new Error('the button is back, once: ' + JSON.stringify(await page.evaluate(r => [...document.querySelectorAll(`[data-hold-btn][data-rid="${r}"]`)].map(b => { const chain = []; for (let n = b; n && n !== document.body; n = n.parentElement) chain.push(n.tagName.toLowerCase() + (n.id ? '#' + n.id : '') + (n.className && typeof n.className === 'string' ? '.' + n.className.split(' ').join('.') : '')); return chain.slice(0, 7).join(' < ') + ' | ' + (b.closest('.reviewListRow') ? b.closest('.reviewListRow').dataset.row : ''); }), P.rid))); });   // (a card that flew away leaves its copy for a moment)
     assert.equal(await page.evaluate(() => document.querySelector('#rvList [data-hold-btn]').disabled), false);
     await page.evaluate(() => { document.getElementById('toasts').innerHTML = ''; });
 
@@ -405,6 +419,20 @@ async function main() {
     t = await T(); assert.equal(t.rels.length, 0); assert.equal(t.fx.length, 0, 'no film for the old press');
     await page.waitForFunction(h => Orders.rows().filter(r => String(r.order.receiptId) === h).every(r => !r.hold), H.rid, { timeout: 15000 });
 
+    // ── 13 · the page's own engine (when its module is in): its plan is read only, and its sentences are shown as they come ──
+    if (await page.evaluate(() => !!(window.__real.hold && window.__real.hold.plan))) {
+      await page.evaluate(() => { window.OrderHold = window.__real.hold; window.OrderHoldFx = window.__real.fx || undefined; if (!window.__real.fx) delete window.OrderHoldFx; for (const r of Orders.rows()) if (String(r.order.receiptId) === '4170837249') { r.hold = null; r.state = r.poolIds.length ? 'pooled' : 'pulled'; } CN.setMode('review'); Review.syncOrderItems(); Review.render(); });
+      await page.waitForFunction(k => document.querySelector(`#rvList .reviewListRow[data-row="${k}"] [data-hold-btn]`), cable, { timeout: 15000 });
+      const w1 = writes();
+      await page.click(`${card(cable)} [data-hold-btn]`);
+      await page.waitForFunction(() => document.querySelector('dialog.holdDlg[open]'), null, { timeout: 30000 });
+      text = await dlgText();
+      assert(!/\blines?\b/i.test(text), 'pieces, never lines: ' + text);
+      assert(/Continue/.test(text) ? /Not now/.test(text) && /Nothing is deleted/.test(text) : /Close/.test(text) && /can't be put on hold yet/.test(text), 'the real plan is shown: ' + text);
+      await shot('popup-real-plan-1440');
+      await page.keyboard.press('Escape'); await page.waitForFunction(() => !document.querySelector('dialog.holdDlg'));
+      assert.equal(writes() - w1, 0, 'reading the real plan writes nothing');
+    }
     assert.deepEqual(outside, [], 'no Etsy call');
     assert.deepEqual(errors, [], 'no page errors');
     console.log('  ✓ Hold button (Review open and completed, order window piece row), consent popup, name bar, run with film, errors, Release hold wiring, 900 and 390 px');

@@ -187,8 +187,8 @@ async function main() {
         assert.equal(await reopenInWin(), 0, `${tag} ${w}: no Reopen button in the order window`);
         assert(await noBar(), `${tag} ${w}: no tan Custom Orders bar`);
         const dd = await dupes(); assert(Object.values(dd).every(n => n === 1) && !Object.keys(dd).some(k => /OUTSIDE/.test(k)), `${tag} ${w}: every button once, none outside a row: ${JSON.stringify(dd)}`);
-        // (a row showing what is happening, the Undo offered for a few seconds or the name asked is taller at 390: it wraps among itself)
-        assert(Math.max(...f.rows.map(r => r.h)) <= (f.rows.some(r => r.tall) ? 150 : w > 700 ? 46 : 110), `${tag} ${w}: the rows do not grow ugly (${f.rows.map(r => r.h)}px)`);
+        // (a row showing what is happening, the Undo offered for a few seconds or the name asked is taller at 390: it wraps among itself; the orange Hold button, 5 Oct, is one more button in that wrap: 175)
+        assert(Math.max(...f.rows.map(r => r.h)) <= (f.rows.some(r => r.tall) ? 175 : w > 700 ? 46 : 110), `${tag} ${w}: the rows do not grow ugly (${f.rows.map(r => r.h)}px)`);
         const calm = acted.filter(r => !r.tall); if (w > 700 && calm.length) assert(Math.max(...calm.map(r => r.h)) <= 46 && !calm.some(r => r.at.nLines > 1), `${tag} ${w}: wide, the buttons are one line on the name's line`);
       }
       await page.setViewportSize({ width: 1440, height: 900 }); await page.waitForTimeout(400);

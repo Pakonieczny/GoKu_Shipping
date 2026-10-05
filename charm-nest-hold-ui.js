@@ -159,7 +159,7 @@
     if (v == null || v === '') return '';
     if (typeof v === 'string' && !/^\d+(\.\d+)?$/.test(v.trim())) return v.trim();
     const n = +v, d = new Date(n < 1e12 ? n * 1000 : n);
-    if (isNaN(d.getTime())) return '';
+    if (!(n > 0) || isNaN(d.getTime())) return '';
     const text = tryDo(() => d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'America/Toronto' }), '') || tryDo(() => d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }), '');
     return text ? 'ship by ' + text : '';
   };
@@ -174,7 +174,9 @@
     const pieces = arr(plan.pieces), sheets = arr(plan.sheets), fills = arr(plan.fills), stays = arr(plan.stays);
     const given = arr(plan.effects).map(str).filter(Boolean);
     const out = { what: [], moves: [], after: [] };
-    if (given.length) out.what = given.slice();
+    // (a sentence about QR labels, sheets already cut, the wait in On hold or "nothing is deleted" is a quiet one: it is what stays true, not the change)
+    const quiet = t => /\bQR\b|release hold|nothing is deleted|already cut/i.test(t);
+    if (given.length) { out.what = given.filter(t => !quiet(t)); out.after = given.filter(quiet); }
     else {
       // what happens to this order
       const off = sheets.filter(s => num(s.removes) > 0);
@@ -202,8 +204,8 @@
     if (stays.length && !/already cut|keep(s)? (their|its) pieces/i.test(said)) {
       out.after.push(`Sheets already cut keep their pieces${cut.length ? ': ' + andList(cut) : ''}.`);
     }
-    out.after.push('The order waits in On hold until someone presses Release hold.');
-    out.after.push('Nothing is deleted.');
+    if (!/release hold/i.test(said)) out.after.push('The order waits in On hold until someone presses Release hold.');
+    if (!/nothing is deleted/i.test(said)) out.after.push('Nothing is deleted.');
     return out;
   }
 
@@ -220,7 +222,7 @@
     return new Promise(resolve => {
       const rid = str(plan.rid), blocked = plan.canHold === false, id = 'holdT' + (++seq);
       const m = describe(plan);
-      const who = [str(plan.label), str(plan.customer), shipText(plan.shipBy)].filter(Boolean).join(' · ');
+      const who = [str(plan.label) !== rid ? str(plan.label) : '', str(plan.customer), shipText(plan.shipBy)].filter(Boolean).join(' · ');
       const title = blocked ? "This order can't be put on hold yet" : (rid ? `Put order ${esc(rid)} on hold?` : 'Put this order on hold?');
       const item = (t, quiet) => `<li${quiet ? ' class="quiet"' : ''}>${esc(t)}</li>`;
       const body = blocked
@@ -300,6 +302,7 @@
   const savedName = () => tryDo(() => str(root.CNEmployee && typeof root.CNEmployee.name === 'function' ? root.CNEmployee.name() : ''), '');
   const modeNow = () => tryDo(() => (root.CN && root.CN.S && root.CN.S.mode) || '', '');
 
+  const atOnHold = () => modeNow() === 'orders' && tryDo(() => root.Orders.view().pile === 'hold', false);
   /** Orders > On hold, as plainly as the page can show it (the way home when there is no film, or the film could not take the person there). */
   function showOnHold(rid) {
     tryDo(() => { if (root.CN && typeof root.CN.setMode === 'function') root.CN.setMode('orders'); });
@@ -312,7 +315,7 @@
     if (F && typeof F.returnToOnHold === 'function') {
       try { const p = F.returnToOnHold(rid); if (p && typeof p.then === 'function') await p; }
       catch (e) { warn('return to On hold', e); }
-    } else showOnHold(rid);
+    } else if (!atOnHold()) showOnHold(rid);   // (a Release hold pressed in Orders > On hold stays where it is)
     // (the film could not bring them back: the plain way does; one who started elsewhere and is still in the Nest tab goes back there)
     if (modeNow() === 'nest') { if (from && from !== 'nest' && !isHeld(rid)) tryDo(() => root.CN.setMode(from)); else showOnHold(rid); }
   }
