@@ -27,10 +27,10 @@ const boxes=root=>[...root.querySelectorAll('.approveBox')];
 const boxOf=(root,key)=>root.querySelector(`.approveBox[data-approve-for="${key}"]`);
 
 // the records: F1 lacks only its QR label (an automatic step), R is ready, A is like F1, B waits on two back engravings, D is cut
-const recs={F1:sheet('F1'),F2:sheet('F2'),F3:sheet('F3'),F4:sheet('F4'),R:labelled(sheet('R')),A:sheet('A'),B:waiting('B'),D:labelled(sheet('D',{laserDoneAt:5}))};
+const recs={F1:sheet('F1'),F2:sheet('F2'),F3:sheet('F3'),F4:sheet('F4'),X:sheet('X',{solidIncluded:false}),R:labelled(sheet('R')),A:sheet('A'),B:waiting('B'),D:labelled(sheet('D',{laserDoneAt:5}))};
 Object.values(recs).forEach(L.record);world={...recs};L.sections(body);
-const cards={F1:flat('F1'),F2:flat('F2'),F3:flat('F3'),R:flat('R'),set:setCard('set1',['A','B','D']),one:setCard('set2',['F4'])};
-for(const k of ['F1','F2','F3','R'])L.place(cards[k],L.canCut(recs[k]),body);
+const cards={F1:flat('F1'),F2:flat('F2'),F3:flat('F3'),X:flat('X'),R:flat('R'),set:setCard('set1',['A','B','D']),one:setCard('set2',['F4'])};
+for(const k of ['F1','F2','F3','X','R'])L.place(cards[k],L.canCut(recs[k]),body);
 L.place(cards.set,L.group(cards.set._laserSet,['A','B','D'].map(id=>recs[id])).ready,body);
 L.place(cards.one,L.group(cards.one._laserSet,[recs.F4]).ready,body);
 
@@ -60,17 +60,24 @@ L.place(cards.one,L.group(cards.one._laserSet,[recs.F4]).ready,body);
   assert.deepEqual(boxes(cards.one).map(b=>b.dataset.approveFor),['sheet:F4'],'a set of one sheet carries exactly one button, under its sheet (Paul had two, one above and one under)');
   assert.equal(boxes(document).filter(b=>!b.closest('#libBody')).length,0);
 
-  // 3. hard-blocked: visible, disabled, with the plain reason
+  // 3. hard-blocked: visible and disabled. Back engravings are the rail's to say (its current step is Engraving, its '!' opens the
+  //    panel): no line and no count on the card, the button keeps the reason for a screen reader. A reason the rail cannot say
+  //    (a sheet not included in its set) is one plain line, a link to the '!' only while the rail has one.
   const bBox=boxOf(cards.set,'sheet:B');
-  assert.equal(bBox.querySelector('[data-approve-btn]').disabled,true);assert.equal(bBox.querySelector('[data-approve-why]').textContent,'Waiting on 2 back engravings');
+  assert.equal(bBox.querySelector('[data-approve-btn]').disabled,true);assert.equal(bBox.querySelector('[data-approve-why]').textContent,'','no line and no count for back engravings');
+  assert.match(bBox.querySelector('[data-approve-btn]').getAttribute('aria-label'),/Waiting on 2 back engravings/,'the reason stays in the button\'s name');
   assert.equal(boxOf(cards.set,'sheet:A').querySelector('[data-approve-btn]').disabled,false,'a sheet that only waits on automatic steps can be pressed');
+  const xBox=boxOf(cards.X,'sheet:X');
+  assert.equal(xBox.querySelector('[data-approve-btn]').disabled,true);assert.equal(xBox.querySelector('[data-approve-why]').textContent,'Not included in a set yet');
+  assert(xBox.parentElement.querySelector('.flowBox [data-issues-open]'),'its rail carries a \'!\'');
   delete win.LaserReview.openChecklist;L.changed();flush();   // (the real one now ships in LaserReview: take it away to see the reason without it)
-  assert.equal(bBox.querySelector('[data-approve-reason]'),null,'the reason is plain text until the checklist exists');
-  bBox.querySelector('[data-approve-btn]').click();assert.equal(calls.length,0,'a disabled button presses nothing');
+  assert.equal(xBox.querySelector('[data-approve-reason]'),null,'the reason is plain text until the checklist exists');
+  xBox.querySelector('[data-approve-btn]').click();assert.equal(calls.length,0,'a disabled button presses nothing');
   win.LaserReview.openChecklist=(card,info)=>opened.push({card,...info});
   L.changed();flush();
-  const why=bBox.querySelector('[data-approve-reason]');assert(why,'with the checklist shipped the reason opens it');
-  why.click();assert.deepEqual(opened.map(o=>[o.kind,o.id]),[['sheet','B']]);assert.equal(opened[0].card,cards.set,'the checklist is asked of the card that owns the sheet');assert.equal(calls.length,0);
+  const why=xBox.querySelector('[data-approve-reason]');assert(why,'with the checklist shipped and a \'!\' on the rail the reason opens it');
+  why.click();assert.deepEqual(opened.map(o=>[o.kind,o.id]),[['sheet','X']]);assert.equal(opened[0].card,cards.X);assert.equal(calls.length,0);
+  assert.equal(bBox.querySelector('[data-approve-reason]'),null,'and a reason the rail already says is no link');
 
   // 4. a press calls approve once, a second press while it runs is ignored, a labelled spinner shows
   btn.click();btn.click();f1.querySelector('[data-approve-btn]').click();
