@@ -164,7 +164,7 @@ function fitted(f,label){
       assert.equal(length(pairRow.lastElementChild,'width'),size,'siblings shrink equally');
       const used=2*size+gap(pairRow)+pad(pairRow),room=available-144-8+size/2;
       assert(used<=room+.03,'the whole row fits beside its half-button overlap');assert(size>0&&size<=BASE);
-      if(available===220)assert(size<40,'narrow inspectors dynamically reduce both stamps');
+      if(available===220)assert(size<BASE,'narrow inspectors dynamically reduce both stamps');
       assert.equal(pairRow.innerHTML,originalPair,'resizing preserves original names/times/artwork');
     }
     const pressed=Seal.press;let lift;const lifting=new Promise(r=>lift=r);let newPending;

@@ -426,6 +426,7 @@ async function main() {
       const top1 = await page.evaluate(() => document.querySelector('.owVInfo .owMain').scrollTop), z2 = await look(page, PH);
       check(top1 > top0 && z2.s === zz.s, 'a plain wheel over a zoomed picture still scrolls the window and leaves the zoom alone');
       await page.setViewportSize({ width: 1440, height: 900 }); await page.waitForTimeout(250);
+      await page.evaluate(() => { document.querySelector('.owVInfo .owMain').scrollTop = 0; });   // (an order of several pieces lists a card for each under the pictures: the column is taller than the window, so it is put back to the top, as the window itself would not)
       const g3 = await look(page, PH); await page.mouse.move(g3.mid.x, g3.mid.y);
       await page.keyboard.down('Control'); for (let i = 0; i < 6; i++) await page.mouse.wheel(0, 100); await page.keyboard.up('Control'); await page.waitForTimeout(150);
       const back = await look(page, PH); check(back.s === 1 && back.transform === '', 'ctrl + wheel out snaps back to whole');
@@ -508,7 +509,7 @@ async function main() {
       await page.click('#owEng [data-e=approve]');
       await page.waitForFunction(() => document.querySelector('#owEng .swEng[data-state=approved]'), null, { timeout: 12000 });
       await page.waitForTimeout(500);
-      const ap = await page.evaluate(() => ({ approves: window.__approve.length, seals: document.querySelectorAll('#owEng .egButtonSeal .seal').length, chip: document.querySelector('#owEng .top span')?.textContent }));
+      const ap = await page.evaluate(() => ({ approves: window.__approve.length, seals: document.querySelectorAll('#owEng .egButtonSeal .seal').length, chip: document.querySelector('#owEng .egPill')?.textContent }));
       check(ap.approves === 1 && ap.seals === 1 && ap.chip === 'Approved', 'Approved works with the preview zoomed: ' + JSON.stringify(ap));
       const p3 = await look(page, '#owEng .pv'); check(p3.s > 2.5, 'and the preview is still zoomed in the card that was drawn again for the approval (kept for this piece)');
       await unzoom(page);
