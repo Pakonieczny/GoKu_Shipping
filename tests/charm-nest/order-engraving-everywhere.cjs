@@ -12,7 +12,8 @@
 //     rows and the Moving bar all go through openOrderFrom / OrderWin.openOrder with {poolId}): the piece asked for, not the first;
 //   · the Sheet tab and the Sheet window's piece view keep their card (Approved once, one seal, View in Engrave asks for the piece);
 //     approved in one place it reads approved in the others;
-//   · the customer conversation window for an order outside the pull has an Open order button that hands over to the order window.
+//   · the customer conversation window for an order outside the pull has an Open order button that hands over to the order window;
+//   · the global search ("/", an order number, Enter) opens the same window on the same card.
 // Headless Chromium; every request that is not to the loopback is aborted.
 //   node tests/charm-nest/order-engraving-everywhere.cjs   (PW_DIR=<playwright node_modules>, CHROMIUM=<chrome>)
 const path = require('path'), assert = require('assert/strict');
@@ -229,6 +230,18 @@ async function main() {
     await page.waitForSelector('dialog.cmDlg[open]');
     check(await page.evaluate(() => { const b = document.querySelector('dialog.cmDlg [data-open-order]'); return !b || b.hidden || !b.offsetParent; }), 'the email link test conversation has no Open order button (it is not an order)');
     await page.click('dialog.cmDlg [data-x]');
+
+    // ── 6 · the global search (/): a result opens the same window, on the same card ──────────────────────────────────────
+    await page.keyboard.press('/');
+    await page.waitForFunction(() => OrderSearch.isOpen() && document.activeElement && document.activeElement.id === 'cnsQ', null, { timeout: 8000 });
+    await page.keyboard.type(B.rid);
+    await page.waitForSelector(`#cnsList .cnsCard[data-rid="${B.rid}"]`, { timeout: 10000 });
+    await page.keyboard.press('Enter');
+    await page.waitForFunction(rid => OrderWin.isOpen() && OrderWin.rid() === rid, B.rid, { timeout: 15000 });
+    check(await waitCard(OV), 'search result → order window → the card of the piece it shows');
+    c = await card(OV);
+    check(c.card && c.state === 'approved' && c.seals === 1 && /KMB/.test(c.words), 'it is piece 1\'s approved card, with its one seal: ' + JSON.stringify(c));
+    await closeWin();
 
     check(errors.length === 0, 'no page errors: ' + errors.join(' | '));
   } finally { await browser.close(); srv.close(); }
