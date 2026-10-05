@@ -163,7 +163,7 @@
     const moduleUrl = new URL(options.sceneModuleUrl || 'assets/brites-concierge-avatar-scene.mjs', base).href;
     const cssUrl = new URL(options.cssUrl || 'brites-concierge-avatar.css', base).href;
     const frame = doc.createElement('div'); frame.className = 'brites-avatar'; frame.dataset.state = validState(options.initialState); frame.setAttribute('role', 'img'); frame.setAttribute('aria-label', 'Brites jewellery gift guide');
-    const surface = doc.createElement('div'); surface.className = 'brites-avatar__surface';
+    const surface = doc.createElement('div'); surface.className = 'brites-avatar__surface'; surface.style.visibility = 'hidden';
     const fallback = doc.createElement('div'); fallback.className = 'brites-avatar__fallback';
     const id = 'britesRobot' + (++instanceCount);
     fallback.innerHTML = `<svg viewBox="0 0 320 280" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
@@ -197,6 +197,7 @@
     const productLabel = doc.createElement('figcaption'); productLabel.textContent = 'Product photo'; productCard.append(productLabel);
     frame.append(style, surface, fallback, caption, productCard); container.appendChild(frame);
     let state = validState(options.initialState), visible = options.visible === true, intersecting = true, destroyed = false, loading = false, engine = null, declarations = null, failed = false, paused = options.paused === true, emotion = options.emotion === 'appreciated' ? null : validEmotion(options.emotion), failureReason = null, level = 0, gaze = {x: 0, y: 0}, headGaze = {x: 0, y: 0}, gazeTarget = {x: 0, y: 0}, gazeAt = 0, pointerFrame = null, stateAt = 0, mannerism = null, mannerismAt = 0, mannerismId = 0, mannerismTimer = null, greetedThisOpening = false, productFocus = null, speechBeatAt = null, speechRested = true, appreciationAt = 0, appreciationTimer = null, appreciationEpoch = 0, previousEmotion = null, shownProduct = null, productEpoch = 0, floating = false, performance = null, performanceTimer = null, performanceEpoch = 0, performancePreviousEmotion = null, mannerismDurationMs = null;
+    let frameReady = false, pendingReadyType = null;
     const media = win.matchMedia ? win.matchMedia('(prefers-reduced-motion: reduce)') : null;
     let reducedMotion = !!media?.matches, readyResolve;
     const ready = new Promise(resolve => {readyResolve = resolve;});
@@ -229,17 +230,28 @@
     function emit(type, detail) {frame.dispatchEvent(new win.CustomEvent('brites-avatar:' + type, {detail, bubbles: true, composed: true})); try {options.onStatus?.(type, detail);} catch {}}
     function canDisplay() {return visible && intersecting && !doc.hidden && !destroyed;}
     function active() {return canDisplay() && !paused && !failed;}
-    function fallbackMoving() {return canDisplay() && !paused && !reducedMotion && (!engine || failed);}
+    function hasWebglFrame() {return !!engine && !failed && frameReady;}
+    function fallbackMoving() {return canDisplay() && !paused && !reducedMotion && !hasWebglFrame();}
     function snapshot() {
       const scene = engine?.snapshot?.() || {};
-      return {...scene, state, emotion, performance: performance ? {...performance} : null, gaze: {target: {...gazeTarget}, eye: {...gaze}, head: {...headGaze}, scope: 'visible-page-pointer'}, floating, shownProduct: shownProduct ? {id: shownProduct.id, handle: shownProduct.handle, title: shownProduct.title, format: 'verified-product-photo'} : null, productFocus: productFocus ? {...productFocus} : null, visible, intersecting, paused, reducedMotion, mode: engine && !failed ? 'webgl' : failed ? 'fallback' : 'pending', loading, destroyed,
+      return {...scene, state, emotion, performance: performance ? {...performance} : null, gaze: {target: {...gazeTarget}, eye: {...gaze}, head: {...headGaze}, scope: 'visible-page-pointer'}, floating, shownProduct: shownProduct ? {id: shownProduct.id, handle: shownProduct.handle, title: shownProduct.title, format: 'verified-product-photo'} : null, productFocus: productFocus ? {...productFocus} : null, visible, intersecting, paused, reducedMotion, mode: hasWebglFrame() ? 'webgl' : failed ? 'fallback' : 'pending', loading, destroyed,
         mannerism: {name: mannerism, cue: BEHAVIOR_CUES[mannerism] || null, id: mannerismId, duration: mannerismDurationMs ? mannerismDurationMs / 1000 : MANNERISMS[mannerism] || 0, active: !!mannerism && canDisplay() && !paused && !reducedMotion, elapsed: mannerism ? Math.max(0, now() - mannerismAt) : 0},
-        animated: engine && !failed ? active() && !reducedMotion && scene.animated === true : fallbackMoving(),
-        fallback: {format: 'animated_svg_2d', active: canDisplay() && (!engine || failed), animated: fallbackMoving(), reason: failureReason},
+        animated: hasWebglFrame() ? active() && !reducedMotion && scene.animated === true : fallbackMoving(),
+        fallback: {format: 'animated_svg_2d', active: canDisplay() && !hasWebglFrame(), animated: fallbackMoving(), reason: failureReason},
         quality: {...quality}, declarations: declarations ? {schema: declarations.schema, source: declarations.source, textures: declarations.textures.map(value => ({...value}))} : null};
     }
+    function syncLayers() {
+      // Keep the renderer measurable, but show exactly one representation even
+      // when the optional stylesheet is delayed, stale or unavailable.
+      const webgl = hasWebglFrame();
+      frame.dataset.rendering = webgl ? 'webgl' : failed ? 'fallback' : loading || engine ? 'loading' : 'pending';
+      surface.style.visibility = webgl ? 'visible' : 'hidden';
+      fallback.hidden = webgl;
+      fallback.style.display = webgl ? 'none' : '';
+    }
     function syncFallback() {
-      const pose = poseAt(now(), !engine || failed);
+      syncLayers();
+      const pose = poseAt(now(), !hasWebglFrame());
       frame.style.setProperty('--brites-eye-color', emotion === 'appreciated' ? '#ed93aa' : pose.eyeColor);
       frame.style.setProperty('--brites-eye-x', String(pose.eyeScaleX));
       frame.style.setProperty('--brites-eye-y', String(pose.eyeScaleY));
@@ -280,18 +292,35 @@
       caption.textContent = statusLabel + (failed ? ' · 2-D companion' : '');
       frame.setAttribute('aria-label', 'Brites jewellery gift guide. ' + statusLabel + (failed ? '. Animated 2-D companion; 3-D unavailable.' : '') + (paused ? '. Animation paused.' : ''));
     }
-    function renderingFailure(reason = 'WebGL rendering is unavailable') {reason = typeof reason === 'string' ? reason : 'WebGL rendering is unavailable'; const old = engine; engine = null; failed = true; failureReason = reason; loading = false; frame.dataset.rendering = 'fallback'; try {old?.destroy();} catch {} syncFallback(); emit('fallback', {reason: failureReason, ...snapshot()}); readyResolve(snapshot());}
-    function sync() {if (!canDisplay() || paused) {stopPointerFrame(); gaze = {x: 0, y: 0}; headGaze = {...gaze}; gazeTarget = {...gaze}; gazeAt = now(); cancelPerformance(); clearProduct(); cancelAppreciation(); cancelMannerism(); productFocus = null; level = 0; speechBeatAt = null; speechRested = true;} else if (reducedMotion) {stopPointerFrame(); cancelMannerism();} frame.hidden = !visible; syncFallback(); if (engine) {try {engine.setMotion({active: active(), reducedMotion}); if (active()) engine.render(poseAt(now()), true);} catch {renderingFailure();}} if (active() && !engine && !loading) load();}
+    function renderingFailure(reason = 'WebGL rendering is unavailable') {reason = typeof reason === 'string' ? reason : 'WebGL rendering is unavailable'; const old = engine; engine = null; frameReady = false; pendingReadyType = null; failed = true; failureReason = reason; loading = false; frame.dataset.rendering = 'fallback'; try {old?.destroy();} catch {} finally {surface.replaceChildren();} syncFallback(); emit('fallback', {reason: failureReason, ...snapshot()}); readyResolve(snapshot());}
+    function sync() {
+      if (!canDisplay() || paused) {stopPointerFrame(); gaze = {x: 0, y: 0}; headGaze = {...gaze}; gazeTarget = {...gaze}; gazeAt = now(); cancelPerformance(); clearProduct(); cancelAppreciation(); cancelMannerism(); productFocus = null; level = 0; speechBeatAt = null; speechRested = true;}
+      else if (reducedMotion) {stopPointerFrame(); cancelMannerism();}
+      frame.hidden = !visible; syncFallback();
+      if (engine) {
+        try {
+          engine.setMotion({active: active(), reducedMotion});
+          if (active()) {
+            const drawing = engine; drawing.render(poseAt(now()), true);
+            if (engine === drawing && !failed && !destroyed) {
+              frameReady = true; syncLayers();
+              if (pendingReadyType) {const type = pendingReadyType; pendingReadyType = null; syncFallback(); emit(type, snapshot()); readyResolve(snapshot());}
+            }
+          }
+        } catch {renderingFailure();}
+      }
+      if (active() && !engine && !loading) load();
+    }
     async function load() {
-      loading = true; frame.dataset.rendering = 'loading';
+      loading = true; frameReady = false; pendingReadyType = 'ready'; frame.dataset.rendering = 'loading'; surface.replaceChildren();
       try {
         const sceneModule = options.loadScene ? await options.loadScene(moduleUrl) : await import(moduleUrl);
         if (destroyed) return;
         declarations = declaredScene(sceneModule.AVATAR_SCENE_DECLARATIONS, quality.textureSize);
-        engine = sceneModule.createAvatarScene({container: surface, quality, onFrame: t => poseAt(t), onError: renderingFailure, onContext: lost => {failed = lost; failureReason = lost ? 'WebGL context was lost' : null; frame.dataset.rendering = lost ? 'fallback' : 'webgl'; syncFallback(); emit(lost ? 'fallback' : 'restored', snapshot()); sync();}});
+        engine = sceneModule.createAvatarScene({container: surface, quality, onFrame: t => poseAt(t), onError: renderingFailure, onContext: lost => {failed = lost; frameReady = false; pendingReadyType = lost ? null : 'restored'; failureReason = lost ? 'WebGL context was lost' : null; syncFallback(); if (lost) emit('fallback', snapshot()); sync();}});
         if (destroyed) {engine.destroy(); return;}
-        failed = false; failureReason = null; loading = false; frame.dataset.rendering = 'webgl'; engine.setFloating?.(floating); if (shownProduct) engine.showProduct?.(shownProduct); fallback.setAttribute('aria-hidden', 'true');
-        emit('ready', snapshot()); readyResolve(snapshot()); sync();
+        failed = false; failureReason = null; loading = false; engine.setFloating?.(floating); if (shownProduct) engine.showProduct?.(shownProduct); fallback.setAttribute('aria-hidden', 'true');
+        sync();
       } catch (error) {
         if (destroyed) return;
         renderingFailure();

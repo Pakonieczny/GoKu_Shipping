@@ -194,6 +194,115 @@ test('an explicit retry failure remains static until a later explicit request', 
   h.api.destroy(); assert.equal(h.api.retry(), false); assert.equal(h.calls.loads.length, 2);
 });
 
+test('avatar layers stay exclusive while styles are missing and across context recovery', async t => {
+  const loading = deferred(); let module;
+  const h = makeAvatar(t, {visible: true, loader: value => {module = value; return loading.promise;}});
+  const surface = h.api.element.querySelector('.brites-avatar__surface');
+  const fallback = h.api.element.querySelector('.brites-avatar__fallback');
+  const staleStyle = h.document.createElement('style');
+  staleStyle.textContent = '.brites-avatar__fallback{display:grid}'; h.document.head.appendChild(staleStyle);
+  assert.equal(surface.style.visibility, 'hidden');
+  assert.equal(fallback.hidden, false);
+  assert.notEqual(h.window.getComputedStyle(fallback).display, 'none');
+  loading.resolve(module); await h.api.ready;
+  assert.equal(surface.style.visibility, 'visible');
+  assert.equal(fallback.hidden, true);
+  assert.equal(h.window.getComputedStyle(fallback).display, 'none');
+  h.sceneOptions.onContext(true);
+  assert.equal(surface.style.visibility, 'hidden');
+  assert.equal(fallback.hidden, false);
+  assert.notEqual(h.window.getComputedStyle(fallback).display, 'none');
+  h.sceneOptions.onContext(false);
+  assert.equal(surface.style.visibility, 'visible');
+  assert.equal(fallback.hidden, true);
+  assert.equal(h.window.getComputedStyle(fallback).display, 'none');
+  assert.equal(fallback.querySelector('svg').getAttribute('aria-hidden'), 'true');
+  assert.match(h.api.element.getAttribute('aria-label'), /Brites jewellery gift guide/);
+});
+
+test('a partially constructed scene cannot leave a second canvas on explicit retry', async t => {
+  let attempts = 0;
+  const h = makeAvatar(t, {visible: true, loader: module => ({...module, createAvatarScene(config) {
+    config.container.appendChild(config.container.ownerDocument.createElement('canvas'));
+    if (++attempts === 1) throw Error('Synthetic constructor failure after canvas attachment');
+    return module.createAvatarScene(config);
+  }})});
+  assert.equal((await h.api.ready).mode, 'fallback');
+  const surface = h.api.element.querySelector('.brites-avatar__surface');
+  assert.equal(surface.querySelectorAll('canvas').length, 0);
+  assert.equal(h.api.retry(), true); await settle();
+  assert.equal(h.api.snapshot().mode, 'webgl');
+  assert.equal(surface.querySelectorAll('canvas').length, 1);
+});
+
+test('failed engine cleanup cannot leave a stale canvas beneath a replacement scene', async t => {
+  const h = makeAvatar(t, {visible: true, loader: module => ({...module, createAvatarScene(config) {
+    config.container.appendChild(config.container.ownerDocument.createElement('canvas'));
+    const engine = module.createAvatarScene(config);
+    return {...engine, destroy() {engine.destroy(); throw Error('Synthetic disposal failure');}};
+  }})});
+  await h.api.ready;
+  const surface = h.api.element.querySelector('.brites-avatar__surface');
+  assert.equal(surface.querySelectorAll('canvas').length, 1);
+  h.calls.fail = 'render'; h.api.setState('thinking');
+  assert.equal(h.api.snapshot().mode, 'fallback');
+  assert.equal(surface.querySelectorAll('canvas').length, 0);
+  assert.equal(surface.style.visibility, 'hidden');
+  delete h.calls.fail; assert.equal(h.api.retry(), true); await settle();
+  assert.equal(h.api.snapshot().mode, 'webgl');
+  assert.equal(surface.querySelectorAll('canvas').length, 1);
+  assert.equal(h.api.element.querySelector('.brites-avatar__fallback').hidden, true);
+});
+
+test('a failed first draw resolves fallback without announcing 3-D readiness', async t => {
+  const h = makeAvatar(t, {visible: true}); const events = [];
+  h.api.element.addEventListener('brites-avatar:ready', () => events.push('ready'));
+  h.calls.fail = 'render';
+  assert.equal((await h.api.ready).mode, 'fallback');
+  assert.deepEqual(events, []);
+  assert.equal(h.api.element.querySelector('.brites-avatar__fallback').hidden, false);
+});
+
+test('pausing during import keeps the fallback until a successful first draw on resume', async t => {
+  const loading = deferred(); let module, readyResolved = false;
+  const h = makeAvatar(t, {visible: true, loader: value => {module = value; return loading.promise;}});
+  const events = []; h.api.element.addEventListener('brites-avatar:ready', () => events.push('ready'));
+  h.api.ready.then(() => {readyResolved = true;});
+  h.api.setPaused(true); loading.resolve(module); await settle();
+  const surface = h.api.element.querySelector('.brites-avatar__surface');
+  const fallback = h.api.element.querySelector('.brites-avatar__fallback');
+  assert.equal(h.calls.render.length, 0);
+  assert.equal(h.api.snapshot().mode, 'pending');
+  assert.equal(h.api.snapshot().fallback.active, true);
+  assert.equal(surface.style.visibility, 'hidden');
+  assert.equal(fallback.hidden, false);
+  assert.equal(readyResolved, false); assert.deepEqual(events, []);
+  h.api.setPaused(false);
+  assert.equal((await h.api.ready).mode, 'webgl');
+  assert.equal(surface.style.visibility, 'visible');
+  assert.equal(fallback.hidden, true); assert.deepEqual(events, ['ready']);
+});
+
+test('restoration while paused keeps fallback visible until a successful recovery draw', async t => {
+  const h = makeAvatar(t, {visible: true}); await h.api.ready;
+  const events = []; h.api.element.addEventListener('brites-avatar:restored', () => events.push('restored'));
+  const surface = h.api.element.querySelector('.brites-avatar__surface');
+  const fallback = h.api.element.querySelector('.brites-avatar__fallback');
+  h.sceneOptions.onContext(true); h.api.setPaused(true);
+  const draws = h.calls.render.length;
+  h.sceneOptions.onContext(false);
+  assert.equal(h.calls.render.length, draws);
+  assert.equal(h.api.snapshot().mode, 'pending');
+  assert.equal(h.api.snapshot().fallback.active, true);
+  assert.equal(surface.style.visibility, 'hidden');
+  assert.equal(fallback.hidden, false); assert.deepEqual(events, []);
+  h.api.setPaused(false);
+  assert.ok(h.calls.render.length > draws);
+  assert.equal(h.api.snapshot().mode, 'webgl');
+  assert.equal(surface.style.visibility, 'visible');
+  assert.equal(fallback.hidden, true); assert.deepEqual(events, ['restored']);
+});
+
 test('retry preserves browser context restoration and recovers a discarded failed engine', async t => {
   const h = makeAvatar(t, {visible: true}); await h.api.ready;
   h.sceneOptions.onContext(true); assert.equal(h.api.retry(), false); assert.equal(h.calls.loads.length, 1);
@@ -215,8 +324,8 @@ test('context loss pauses rendering and restoration respects current visibility'
   const h = makeAvatar(t, {visible: true}); await h.api.ready;
   h.sceneOptions.onContext(true); assert.equal(h.api.snapshot().mode, 'fallback'); assert.equal(h.calls.motion.at(-1).active, false);
   h.api.setVisible(false); h.sceneOptions.onContext(false);
-  assert.equal(h.api.snapshot().mode, 'webgl'); assert.equal(h.calls.motion.at(-1).active, false);
-  h.api.setVisible(true); assert.equal(h.calls.motion.at(-1).active, true);
+  assert.equal(h.api.snapshot().mode, 'pending'); assert.equal(h.calls.motion.at(-1).active, false);
+  h.api.setVisible(true); assert.equal(h.calls.motion.at(-1).active, true); assert.equal(h.api.snapshot().mode, 'webgl');
 });
 
 test('destroy during asynchronous import prevents scene creation', async t => {
