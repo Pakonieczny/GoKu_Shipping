@@ -153,10 +153,10 @@ function fixture({ MAIN, CX, D }) {
       assert.equal(await page.evaluate(() => document.querySelectorAll('#owTlTools .tlBar').length), 0, 'closing takes the bar out of the tab row');
 
       // 3 · a 2-line order: no "line 1 of 2" in the header any more (Paul, 28 Sep: multi-piece orders were confusing);
-      //     the piece switch says "All 2 pieces" instead
+      //     the Its pieces list says "Showing all 2 pieces" instead (the chip row is gone, Paul 5 Oct round 16)
       await openKey(D, D.tid); await snap('twosheets-overview');
       assert.equal(await page.evaluate(() => !!document.querySelector('#owTitle .owPc')), false, 'no "line 1 of 2" after the number');
-      await page.waitForFunction(() => { const sw = document.getElementById('owPieceSw'); return sw && !sw.hidden && /^All 2 pieces/.test(sw.textContent.trim()); }, null, { timeout: 10000 });
+      await page.waitForFunction(() => { const st = document.querySelector('#owPcSum .owPcState'); return st && /^Showing all 2 pieces/.test(st.textContent.trim()) && !document.getElementById('owPieceSw'); }, null, { timeout: 10000 });
       await view('timeline'); await view('info');
       assert.equal(await page.evaluate(() => document.querySelectorAll('#owTlTools .tlBar').length), 1, 'one bar, however often the tab is shown');
       await close();
