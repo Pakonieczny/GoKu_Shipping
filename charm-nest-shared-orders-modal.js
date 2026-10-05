@@ -7,7 +7,7 @@
    remaining mixed orders. A user should be able to remove the offending orders, and have that updated in real time
    everywhere, so that when the user comes back only the remaining offending orders are visible."
 
-     SharedOrdersModal.open({ kind, id, orders, targetLabel, targetSetId, sheetLabel, setLabel, reason, from, onChange, onClose, onRetry })
+     SharedOrdersModal.open({ kind, id, orders, targetLabel, targetSetId, sheetLabel, setLabel, reason, others, from, onChange, onClose, onRetry })
         (also {sheetId} or {setId} in place of {kind, id}; `reason` is one sentence that replaces the usual one)
         -> { el, close(), update(orders), refresh(), isOpen(), orders() }   (null when there is nothing to show it with)
      SharedOrdersModal.close()   SharedOrdersModal.isOpen()   SharedOrdersModal.current()
@@ -56,6 +56,11 @@
 dialog.soDlg{width:min(640px,94vw);max-height:min(88vh,860px);border:0;padding:0;border-radius:15px;background:var(--card,#fffefb);color:var(--ink,#1c1a17);box-shadow:0 24px 80px rgba(0,0,0,.32);overflow:hidden;font:14px/1.45 var(--sans,-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,system-ui,sans-serif);-webkit-font-smoothing:antialiased}
 dialog.soDlg::backdrop{background:rgba(20,18,15,.52)}
 dialog.soDlg[open]{display:block}
+@media (min-width:621px){
+  dialog.soDlg{transition:width .26s cubic-bezier(.2,.8,.2,1)}
+  dialog.soDlg[data-n="0"],dialog.soDlg[data-n="1"]{width:min(400px,calc(100vw - 32px))}
+  dialog.soDlg[data-n="1"] .soGrid{grid-template-columns:minmax(0,300px);justify-content:center}
+}
 .soBox{display:flex;flex-direction:column;max-height:min(88vh,860px);min-height:0}
 .soHead{position:relative;display:grid;grid-template-columns:minmax(0,1fr) auto;column-gap:12px;align-items:start;padding:15px 14px 13px 18px;border-bottom:1px solid var(--line,#e4ddd0);flex:0 0 auto;background:var(--card,#fffefb)}
 .soTitles{min-width:0}
@@ -226,6 +231,7 @@ dialog.soDlg:focus,dialog.soDlg:focus-visible{outline:none}
 }
 @media (pointer:coarse){.soOff,.soBtn,.soOpt span{min-height:36px}.soX{width:36px;height:36px}#orderWin .soBack{height:36px}}
 @media (prefers-reduced-motion:reduce){
+  dialog.soDlg{transition:none!important}
   .soCard,.soCard.arriving,.soSlot,.soAskSlot,.soAskSlot.open,.soCard:has(>.soAskSlot.open)>.soFootSlot,.soNote.enter,.soClear,.soBusy,.soErr,.soSkel i,#orderWin .soBack{animation:none!important;transition:none!important}
   .soRing circle,.soRing path{animation:none!important;stroke-dashoffset:0}
   .soTitle,.soSub,.soCount{transition:none!important}
@@ -289,9 +295,10 @@ dialog.soDlg:focus,dialog.soDlg:focus-visible{outline:none}
 
   /* ── words ── */
   function words(M, n) {
-    const o = M.opts, sheet = M.sheetLabel, set = M.setLabel, tgt = o.targetLabel ? String(o.targetLabel) : '', why = typeof o.reason === 'string' ? o.reason.trim() : '';   // (a caller's own one sentence replaces the usual one)
+    const o = M.opts, sheet = M.sheetLabel, set = M.setLabel, tgt = setShort(o.targetLabel), why = typeof o.reason === 'string' ? o.reason.trim() : '';   // (a caller's own one sentence replaces the usual one)
     if (M.loading) return { title: `Looking for the orders that keep <b>${esc(M.subject)}</b> here`, plain: `Looking for the orders that keep ${M.subject} here`, sub: 'This takes a moment.' };
-    if (n === 0) return { title: `Nothing holds <b>${esc(M.subject)}</b> any more`, plain: `Nothing holds ${M.subject} any more`, sub: tgt ? `It can move to ${tgt} now.` : 'It is free to move now.' };
+    const more = arr(o.others).length > 0;   // (the caller has other reasons the move is refused: an empty list is not a promise that it can go)
+    if (n === 0) return { title: `Nothing holds <b>${esc(M.subject)}</b> any more`, plain: `Nothing holds ${M.subject} any more`, sub: more ? 'No order holds it here. Try the move again.' : tgt ? `It can move to ${tgt} now.` : 'It is free to move now.' };
     if (M.kind === 'set') {
       const t = `${n === 1 ? 'This order keeps' : 'These orders keep'} <b>${esc(set || 'this set')}</b> together`;
       return { title: t, plain: t.replace(/<[^>]+>/g, ''), sub: why || `${n === 1 ? 'Its' : 'Their'} pieces sit in other sets, so it can't move${tgt ? ' to ' + tgt : ''} yet.` };
@@ -319,7 +326,7 @@ dialog.soDlg:focus,dialog.soDlg:focus-visible{outline:none}
       if (!set && row && row.setSeq) set = `Set ${row.setSeq}`;
       if (!set && M.kind === 'set') { const m = /-(\d+)$/.exec(String(M.id)); if (m) set = `Set ${+m[1]}`; }
     } catch (_) { /* labels stay as given */ }
-    M.sheetLabel = sheet; M.setLabel = set;
+    M.sheetLabel = sheet; M.setLabel = setShort(set);
     M.subject = M.kind === 'set' ? (set || 'This set') : (sheet || 'This sheet');
   }
 
@@ -331,6 +338,8 @@ dialog.soDlg:focus,dialog.soDlg:focus-visible{outline:none}
   }
   /** "GF Sheet 1" as "GF 1" on a small chip (the full name is in the head and in the card's spoken name). */
   const shortOf = l => l ? String(l).replace(/\s*sheet\s*/i, ' ').trim() : 'No sheet';
+  /** A set is named by its short name here ("Set 2"), never by its long label ("Set 2 · Oct 3"), which reads like a typo in a sentence. */
+  const setShort = l => String(l || '').split(/\s+[\u00b7\u2022|]\s+/)[0].trim();
   function pieceHtml(o, p, i) {
     return `<span class="soPiece ${p.here ? 'here' : 'there'}"><span class="soTileWrap">${i ? `<span class="soJoin" aria-hidden="true">${ICON.link}</span>` : ''}${tileHtml(o, p)}</span><span class="soChip" style="--dot:${dotOf(p.sheetLabel)}"><i></i><span>${esc(shortOf(p.sheetLabel))}</span></span><span class="soWhere">${p.here ? 'here' : 'there'}</span></span>`;
   }
@@ -406,6 +415,7 @@ dialog.soDlg:focus,dialog.soDlg:focus-visible{outline:none}
   function paintHead(M, n, animate) {
     const w = words(M, n), t = q(M, '.soTitle'), s = q(M, '.soSub'), c = q(M, '.soCount'), box = q(M, '.soTitles');
     M.dlg.dataset.state = M.loading ? 'loading' : n === 0 ? 'clear' : 'list';
+    if (M.loading) delete M.dlg.dataset.n; else M.dlg.dataset.n = String(Math.min(n, 2));   // (0 or 1 order: a small window; 2 or more: the wide one)
     M.dlg.setAttribute('aria-label', w.plain);
     const ct = countText(n, M.loading);
     if (c.textContent !== ct) { c.textContent = ct; if (animate && !reduced()) { c.classList.add('tick'); setTimeout(() => c.classList.remove('tick'), 320); } }
@@ -444,7 +454,7 @@ dialog.soDlg:focus,dialog.soDlg:focus-visible{outline:none}
     const body = q(M, '.soBody'), w = words(M, 0);
     if (body.querySelector('.soClear')) return;
     const retry = typeof M.opts.onRetry === 'function';
-    body.innerHTML = `<div class="soClear" role="group" aria-label="${esc(w.plain)}">${ICON.ring}<p class="soClearT">${esc(w.sub)}</p><div class="soBtns">${retry ? '<button type="button" class="soBtn gold" data-retry>Move it now</button>' : ''}<button type="button" class="soBtn" data-close>${retry ? 'Close' : 'Done'}</button></div></div>`;
+    body.innerHTML = `<div class="soClear" role="group" aria-label="${esc(w.plain)}">${ICON.ring}<p class="soClearT">${esc(w.sub)}</p><div class="soBtns">${retry ? `<button type="button" class="soBtn gold" data-retry>${arr(M.opts.others).length ? 'Try the move again' : 'Move it now'}</button>` : ''}<button type="button" class="soBtn" data-close>${retry ? 'Close' : 'Done'}</button></div></div>`;
     const first = body.querySelector('[data-retry]') || body.querySelector('[data-close]'), a = doc.activeElement;
     // the focus follows the news (a person who was on a card that went is not left on nothing)
     if (!a || a === doc.body || a === M.dlg || !a.isConnected || !M.dlg.contains(a)) { try { first.focus({ preventScroll: true }); } catch (_) {} }
@@ -819,7 +829,7 @@ dialog.soDlg:focus,dialog.soDlg:focus-visible{outline:none}
     close: () => { if (CUR) closeIt(CUR, 'close'); },
     isOpen: () => !!(CUR && live(CUR) && CUR.dlg.open),
     current: () => (CUR && live(CUR) ? handleOf(CUR) : null),
-    version: '20261005-1',
+    version: '20261005-2',
     _normalize: normalize
   };
 })();

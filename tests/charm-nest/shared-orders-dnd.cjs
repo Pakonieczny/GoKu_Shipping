@@ -95,7 +95,7 @@ function fakeFlow(cfg) {
       const items = q.kind === 'sheet' && q.to.set ? window.SharedOrders.between(q.id, q.to.set) : [];
       if (items.length) {
         const needs = [{ key: 'sharedOrders', label: items.length + ' orders keep this sheet in its set', detail: 'Their pieces are on other sheets.', items }];
-        if (cfg.extraNeed) needs.push({ key: 'backs', label: '2 back engravings not approved', detail: 'Approve them in the Engrave tab', items: [] });
+        if (cfg.extraNeed) needs.push({ key: 'backs', label: '2 back engravings not approved', detail: 'The back engravings of this set must be approved in the Engrave tab before any of its sheets can be moved or cut.', items: [] });
         return Object.assign(base, { ok: false, needs, shared: items, group: ['SS Sheet 1'] });
       }
       return Object.assign(base, { ok: true, auto: [{ key: 'membership', label: 'Set membership changed' }] });
@@ -123,12 +123,14 @@ const until = async (fn, ms = 20000, what = '') => { ms *= SLOW; const t0 = Date
   /** The Library page with the fake LibraryFlow and SharedOrders. o.realUi keeps the real LibraryApprovalUI; o.noModal leaves the shared-orders window out. */
   async function open(o = {}) {
     st.docs.clear(); seed(st, srv.blobUrl, false);
+    // (o.real: order 3700000010 has a second piece on dA02, so the real engine finds dA01 and dA02 sharing a multi-piece order)
+    if (o.real) { const r = st.doc(SHEETS, 'dA02'); st.put(SHEETS, 'dA02', { poolIds: [...r.poolIds, '3700000010_2_1'], orders: [...r.orders, '3700000010'] }); }
     const ctx = await browser.newContext({ viewport: { width: 1400, height: 1500 } });
     await ctx.route(u => !/^http:\/\/(127\.0\.0\.1|localhost)[:/]/.test(u.href), r => r.abort());   // (registered first: every later, more specific route wins over it)
     await ctx.route(/gstatic\.com\/firebasejs/, r => r.fulfill({ status: 200, contentType: 'text/javascript', headers: { 'Cross-Origin-Resource-Policy': 'cross-origin' }, body: /-compat\.js/.test(r.request().url()) ? '' : fbStub }));
     await ctx.route(/qrcodejs/, r => r.fulfill({ status: 200, contentType: 'text/javascript', headers: { 'Cross-Origin-Resource-Policy': 'cross-origin' }, body: fs.readFileSync(path.join(root, 'lib/qrcode.min.js')) }));
     await ctx.route(/charmNestLibrary/, r => { let b = null; try { b = r.request().postDataJSON(); } catch (_) { /* a get */ } return b && b.op === 'runList' ? r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ runs: [] }) }) : r.continue(); });
-    const out = [/charm-nest-flow\.js/, /charm-nest-library-fx\.js/, /charm-nest-flow-rose\.js/].concat(o.realUi ? [] : [/charm-nest-library-approval-ui\.js/], o.noModal ? [/charm-nest-shared-orders-modal\.js/] : []);
+    const out = o.real ? [] : [/charm-nest-flow\.js/, /charm-nest-library-fx\.js/, /charm-nest-flow-rose\.js/, /charm-nest-shared-orders\.js/].concat(o.realUi ? [] : [/charm-nest-library-approval-ui\.js/], o.noModal ? [/charm-nest-shared-orders-modal\.js/] : []);
     for (const re of out) await ctx.route(re, r => r.fulfill({ status: 200, contentType: 'text/javascript', body: '/* left out by the test */' }));
     await ctx.addInitScript(() => { try { if (!localStorage.getItem('cn.employee')) localStorage.setItem('cn.employee', 'Tester'); } catch (_) { /* about:blank */ } window.confirm = () => true; window.prompt = () => 'Tester'; window.alert = () => {}; });
     const page = await ctx.newPage(), errors = [], writes = [];
@@ -137,8 +139,10 @@ const until = async (fn, ms = 20000, what = '') => { ms *= SLOW; const t0 = Date
     page.on('console', m => { if (m.type() === 'error' && !/firebase stub|Failed to load resource/.test(m.text())) errors.push('console: ' + m.text().slice(0, 300)); });
     page.on('request', r => { if (r.method() === 'POST' && /charmNest|\.netlify\/functions/.test(r.url())) { try { const b = r.postDataJSON() || {}; if (b.op !== 'laserStatus' && (/apply|commit|hold|cancel(?!List)|rose|move|save|write|delete|purge|reset|remove|put|steps/i.test(b.op || '') || b.steps)) writes.push(b.op || 'post'); } catch (_) { /* not json */ } } });   // (the Library's own once-a-minute laserStatus check at opening is the page's, not the window's)
     await page.exposeFunction('__fixtureMove', (id, to) => moveSheet(st, id, to));
-    await page.addInitScript(`(${fakeShared.toString()})(${JSON.stringify({ orders: ORDERS })})`);
-    await page.addInitScript(`(${fakeFlow.toString()})(${JSON.stringify({ planMs: 250, commitMs: 250, extraNeed: !!o.extraNeed })})`);
+    if (!o.real) {
+      await page.addInitScript(`(${fakeShared.toString()})(${JSON.stringify({ orders: ORDERS })})`);
+      await page.addInitScript(`(${fakeFlow.toString()})(${JSON.stringify({ planMs: 250, commitMs: 250, extraNeed: !!o.extraNeed })})`);
+    }
     await page.goto(`${sorterOrigin}/charm-nest-1.html#library`);
     await page.waitForFunction(() => window.CN && CN.S.cloud.ok === true && window.LibraryDone && window.LibraryDnd, null, { timeout: 60000 * SLOW });
     await page.waitForFunction(() => document.querySelectorAll('#libBody .setCard').length >= 4 && CN.S.library.rows.length >= 6 && document.querySelectorAll('#libBody .dndGrip').length > 0, null, { timeout: 30000 * SLOW });
@@ -208,44 +212,94 @@ const until = async (fn, ms = 20000, what = '') => { ms *= SLOW; const t0 = Date
     await ctx.close();
   }
 
-  /* ═════ 3 · other needs too: the bar keeps them and has one "See which orders" button (the window is the person's choice) ═════ */
+  /* ═════ 3 · other reasons too: the window still opens; the bar keeps only the other reasons, waits while it is open and goes by itself after ═════ */
   {
     const { ctx, page, errors } = await open({ extraNeed: true });
     await dropOn(page, sheetSel('dA01'), chipSel(3));
-    await until(() => page.$('.dndBtn[data-shared]'), 15000, 'the plain bar has the button');
-    assert.equal((await page.$eval('.dndBtn[data-shared]', b => b.textContent)), 'See which orders');
-    assert.equal(await modalOpen(page), false, 'the window is not forced on the person');
-    assert(await page.evaluate(() => document.querySelectorAll('.dndLine.bad').length) >= 2, 'both reasons are said in the bar');
-    await page.click('.dndBtn[data-shared]');
-    await until(() => modalOpen(page), 5000, 'the button opens the window');
+    await until(() => modalOpen(page), 15000, 'the window opens although there is another reason too');
     assert.deepEqual(await cardsIn(page), ORDERS.map(o => o.id));
+    await page.waitForTimeout(700);
+    const bar = await page.evaluate(() => ({ lines: [...document.querySelectorAll('.dndMovingWrap .dndLine.bad')].map(e => e.textContent), btn: document.querySelectorAll('.dndMovingWrap [data-shared]').length }));
+    assert.equal(bar.lines.length, 1, 'the bar keeps only the other reason: ' + JSON.stringify(bar.lines));
+    assert(/back engravings/.test(bar.lines[0]) && !/orders keep this sheet/.test(bar.lines[0]), 'and it is that one: ' + bar.lines[0]); assert.equal(bar.btn, 0, 'no second way in to the window');
     await page.waitForTimeout(4600);   // (longer than the bar would otherwise stay)
     assert.equal(await page.evaluate(() => document.querySelectorAll('.dndMovingWrap').length), 1, 'the bar waits while the window is open');
     await page.keyboard.press('Escape');
     await until(async () => !(await modalOpen(page)), 3000, 'closed');
     await until(async () => JSON.stringify(await idle(page)) === JSON.stringify(quiet), 20000, 'then the bar goes by itself and nothing is left: ' + JSON.stringify(await idle(page)));
     assert.deepEqual(errors, [], 'no page errors: ' + errors.join(' | '));
-    ok.push('3 · with other reasons too: the bar keeps them with one "See which orders" button, the bar waits while the window is open and goes by itself after');
+    ok.push('3 · with another reason too: the window opens, the bar keeps only the other reason (no second way in), waits while the window is open and goes by itself after');
     await ctx.close();
   }
 
-  /* ═════ 4 · the same with the real LibraryApprovalUI ═════ */
+  /* ═════ 4 · the real LibraryApprovalUI: a long explanation is behind "Why"; a sharedOrders need is one "See which orders" button ═════ */
   {
     const { ctx, page, errors } = await open({ extraNeed: true, realUi: true });
     assert.equal(await page.evaluate(() => typeof LibraryApprovalUI.show), 'function');
+    // (a) the drop itself: the window opens, and the approval card behind it says only the other reason, its long text behind "Why"
     await dropOn(page, sheetSel('dA01'), chipSel(3));
-    await until(() => page.$('.lapNeed[data-need="sharedOrders"] [data-shared]'), 15000, 'the approval card has one button for the orders');
-    assert.equal(await page.$$eval('.lapNeed[data-need="sharedOrders"] .lapItem', a => a.length), 0, 'no row of red chips for them');
-    assert.equal(await page.$eval('.lapNeed[data-need="sharedOrders"] [data-shared]', b => b.textContent.trim()), 'See which orders');
-    await shot(page, 'D3-approval-card-button');
-    await page.click('.lapNeed[data-need="sharedOrders"] [data-shared]');
+    await until(() => modalOpen(page), 15000, 'the window opens');
+    await until(() => page.$('.lapNeed[data-need="backs"]'), 8000, 'the approval card says the other reason');
+    assert.equal(await page.$$eval('.lapNeed[data-need="sharedOrders"]', a => a.length), 0, 'and not the orders again');
+    const why = await page.evaluate(() => { const n = document.querySelector('.lapNeed[data-need="backs"]'); const b = n.querySelector('.lapWhyBtn'), w = n.querySelector('.lapWhy'); const slot = n.querySelector('.lapWhySlot'); return { btn: !!b, closed: !!slot && slot.getBoundingClientRect().height === 0 && getComputedStyle(w).visibility === 'hidden', label: n.querySelector('.lapNeedT b').textContent, head: document.querySelector('.lapNeedsHead span').textContent }; });
+    assert(why.btn && why.closed, 'its long explanation is really closed (no height, not visible) behind "Why": ' + JSON.stringify(why));
+    assert.equal(why.head, 'Not yet:', 'the red box behind the window says only "Not yet:": ' + why.head);
+    await page.keyboard.press('Escape');
+    await until(async () => !(await modalOpen(page)), 3000, 'closed');
+    await page.click('.lapNeed[data-need="backs"] .lapWhyBtn');
+    await until(() => page.$eval('.lapNeed[data-need="backs"] .lapWhySlot', s => s.getBoundingClientRect().height > 8), 4000, 'Why opens it (the slot grows)');
+    assert.equal(await page.$eval('.lapNeed[data-need="backs"] .lapWhy', w => getComputedStyle(w).visibility), 'visible', 'and its words show');
+    assert.equal(await page.$eval('.lapNeed[data-need="backs"] .lapWhyBtn', b => b.getAttribute('aria-expanded')), 'true');
+    await shot(page, 'D3-approval-card-why');
+    await page.mouse.move(4, 4);   // (the bar waits while it is pointed at; it goes by itself once the pointer is away)
+    await page.evaluate(() => LibraryDnd.cancel());
+    await until(async () => JSON.stringify(await idle(page)) === JSON.stringify(quiet), 20000, 'quiet again: ' + JSON.stringify(await idle(page)));
+    // (b) a plan shown with the card alone (no drop): the shared-orders need is one button, no row of red chips, and it opens the window with those orders
+    await page.evaluate(() => {
+      const host = document.createElement('div'); host.id = 'tmpHost'; host.style.cssText = 'position:fixed;left:40px;top:40px;width:560px;z-index:5'; document.body.appendChild(host);
+      const items = SharedOrders.between('dA01', 'set-t-3');
+      window.__uiShared = [];
+      LibraryApprovalUI.show(host, { ok: false, kind: 'sheet', id: 'dA01', move: {}, from: {}, to: { area: null, setId: 'set-t-3', label: 'Set 3' }, auto: [], confirm: [], notes: [],
+        needs: [{ key: 'sharedOrders', label: items.length + ' orders keep this sheet in its set', detail: 'Their pieces are on other sheets, which stay in Set 1 and so the sheet cannot leave it.', items }] },
+      { title: 'Moving GF Sheet 1 to Set 3', kind: 'sheet', onConfirm() {}, onCancel() {}, onShared: (n, b) => { window.__uiShared.push(n.key); return SharedOrdersModal.open({ kind: 'sheet', id: 'dA01', orders: n.items, targetLabel: 'Set 3', from: b }); } });
+    });
+    await until(() => page.$('#tmpHost .lapNeed[data-need="sharedOrders"] [data-shared]'), 8000, 'the approval card has one button for the orders');
+    assert.equal(await page.$$eval('#tmpHost .lapNeed[data-need="sharedOrders"] .lapItem', a => a.length), 0, 'no row of red chips for them');
+    assert.equal(await page.$eval('#tmpHost .lapNeed[data-need="sharedOrders"] [data-shared]', b => b.textContent.trim()), 'See which orders');
+    assert.equal(await page.$$eval('#tmpHost .lapNeed[data-need="sharedOrders"] .lapWhyBtn', a => a.length), 1, 'its long explanation is behind "Why" too');
+    await shot(page, 'D4-approval-card-button');
+    await page.click('#tmpHost .lapNeed[data-need="sharedOrders"] [data-shared]');
     await until(() => modalOpen(page), 5000, 'the button opens the window');
     assert.deepEqual(await cardsIn(page), ORDERS.map(o => o.id), 'the same orders');
+    assert.deepEqual(await page.evaluate(() => window.__uiShared), ['sharedOrders']);
+    await page.keyboard.press('Escape');
+    await until(async () => !(await modalOpen(page)), 3000, 'closed');
+    assert.deepEqual(errors, [], 'no page errors: ' + errors.join(' | '));
+    ok.push('4 · LibraryApprovalUI: a long explanation is behind "Why"; a sharedOrders need is one "See which orders" button (no chips) that opens the window with those orders');
+    await ctx.close();
+  }
+
+  /* ═════ 6 · the REAL engine (SharedOrders, LibraryFlow, the real approval card): a drop that would split an order opens the window with it ═════ */
+  {
+    const { ctx, page, errors, writes } = await open({ real: true });
+    const mods = await page.evaluate(() => ({ flow: !!(window.LibraryFlow && LibraryFlow.plan), shared: !!(window.SharedOrders && SharedOrders.between && SharedOrders.core), ui: !!(window.LibraryApprovalUI && LibraryApprovalUI.show), modal: !!(window.SharedOrdersModal && SharedOrdersModal.open), fake: !!window.__so }));
+    assert.deepEqual(mods, { flow: true, shared: true, ui: true, modal: true, fake: false }, 'the real modules are on the page: ' + JSON.stringify(mods));
+    const items = await page.evaluate(() => SharedOrders.between('dA01', 'set-t-3'));
+    assert.deepEqual(items.map(i => i.orderId), ['3700000010'], 'the engine finds the one order that ties dA01 to dA02: ' + JSON.stringify(items.map(i => i.orderId)));
+    writes.length = 0;
+    await dropOn(page, sheetSel('dA01'), chipSel(3));
+    await until(() => modalOpen(page), 20000, 'the window opens on the real engine\'s block');
+    await page.waitForTimeout(1000);
+    const r = await page.evaluate(() => ({ cards: [...document.querySelectorAll('.soDlg .soCard')].map(c => c.dataset.order), tiles: document.querySelectorAll('.soDlg .soCard .soTile').length, no: (document.querySelector('.soDlg .soOrderNo') || {}).textContent, title: document.querySelector('.soTitle').textContent, sub: document.querySelector('.soSub').textContent, off: !!document.querySelector('.soDlg [data-off]') }));
+    assert.deepEqual(r.cards, ['3700000010'], 'the order the engine names: ' + JSON.stringify(r)); assert.equal(r.tiles, 2, 'a picture tile per piece'); assert.equal(r.no, '#3700000010');
+    assert(/^This order keeps .+ in Set 1$/.test(r.title), 'title: ' + r.title); assert(r.off, 'and a way to take it off');
+    await shot(page, 'D5-real-engine-window');
     await page.keyboard.press('Escape');
     await until(async () => !(await modalOpen(page)), 3000, 'closed');
     await until(async () => JSON.stringify(await idle(page)) === JSON.stringify(quiet), 20000, 'quiet again: ' + JSON.stringify(await idle(page)));
+    assert.equal(setOf('dA01'), 'set-t-1', 'the sheet was not moved'); assert.deepEqual(writes, [], 'nothing was written: ' + writes);
     assert.deepEqual(errors, [], 'no page errors: ' + errors.join(' | '));
-    ok.push('4 · LibraryApprovalUI: a sharedOrders need is one "See which orders" button (no chips) that opens the window with those orders');
+    ok.push('6 · the real engine: a drop that would split order 3700000010 opens the window with exactly that order (two piece tiles), the sheet stays, nothing is written');
     await ctx.close();
   }
 

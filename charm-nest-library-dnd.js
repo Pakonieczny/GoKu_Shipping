@@ -490,7 +490,7 @@ html.dndOn,html.dndOn *{cursor:grabbing!important;-webkit-user-select:none!impor
       attach(); ap.replaceChildren(); let i = 0;
       const line = (cls, icon, main, sub, extra) => { const d = doc.createElement('div'); d.className = 'dndLine ' + cls; d.style.setProperty('--i', i++); d.innerHTML = `${icon}<span class="dndTxt"><b></b>${sub ? '<small></small>' : ''}</span>`; d.querySelector('b').textContent = main; if (sub) d.querySelector('small').textContent = sub; if (extra) extra(d); ap.appendChild(d); return d; };
       const name = o.target || 'there';
-      if (plan.needs.length) { const h = doc.createElement('div'); h.className = 'dndHead bad'; h.innerHTML = `Cannot move to <b></b> yet:`; h.querySelector('b').textContent = name; ap.appendChild(h); }
+      if (plan.needs.length) { const h = doc.createElement('div'); h.className = 'dndHead bad'; h.innerHTML = `Cannot move to <b></b> yet:`; h.querySelector('b').textContent = String(name).split(/\s+[\u00b7\u2022|]\s+/)[0]; ap.appendChild(h); }
       for (const a of plan.auto) line('ok', SVG.ok, a.label || a.key, a.detail);
       for (const n of plan.needs) line('bad', SVG.bad, n.label || n.key, [n.detail, (n.items || []).map(it => it.label || it.id).filter(Boolean).join(' · ')].filter(Boolean).join(' · '), n.key === 'sharedOrders' && o.onShared ? row => {
         const b = doc.createElement('button'); b.type = 'button'; b.className = 'dndBtn gold'; b.dataset.shared = ''; b.textContent = 'See which orders'; b.onclick = () => o.onShared(n, b); row.appendChild(b);
@@ -622,25 +622,25 @@ html.dndOn,html.dndOn *{cursor:grabbing!important;-webkit-user-select:none!impor
     const SOM = W.SharedOrdersModal;
     const sharedOk = !!(SOM && typeof SOM.open === 'function' && typeof doc.createElement('dialog').showModal === 'function');
     let again = false;
-    const openShared = (need, from) => {
+    const openShared = (need, from, others) => {
       if (!sharedOk) return null;
       m.hold = true;
       return new Promise(res => {
         let h = null;
         try {
           h = SOM.open({ kind, id: item.id, orders: need && Array.isArray(need.items) ? need.items : undefined, sheetLabel: kind === 'sheet' ? label : '', setLabel: kind === 'set' ? label : '',
-            targetLabel: name, targetSetId: m.to.set || (m.to.newSet ? 'new' : null), from: from || elOf(item) || undefined,
+            targetLabel: name, targetSetId: m.to.set || (m.to.newSet ? 'new' : null), from: from || elOf(item) || undefined, others: (others || []).map(n => n && (n.label || n.key)).filter(Boolean),
             onRetry: () => { again = true; }, onClose: () => { m.hold = false; if (again && m.skip) m.skip(); res(true); } });
         } catch (e) { console.warn('SharedOrdersModal', e); }
         if (!h) { m.hold = false; res(false); }
       });
     };
     // the plan is shown: by LibraryApprovalUI (its own card stands in the room of this one), else by the plain bar below
-    const present = (r = raw, p = plan) => {
+    const present = (r = raw, p = plan, needsText) => {
       bar.clear(); bar.wait(null);
       if (ui) {
         bar.ui(true); if (dk && !place) dk.el.classList.add('ui');
-        try { ui.show(bar.ap, viewOf(r), { title, kind, onConfirm: cb.onConfirm, onCancel: cb.onCancel, onShared: openShared, onClose() { m.skip && m.skip(); } }); shown = true; return; }
+        try { ui.show(bar.ap, viewOf(r), Object.assign({ title, kind, onConfirm: cb.onConfirm, onCancel: cb.onCancel, onShared: openShared, onClose() { m.skip && m.skip(); } }, needsText ? { needsText } : null)); shown = true; return; }
         catch (e) { console.warn('LibraryApprovalUI.show', e); bar.ui(false); if (dk) dk.el.classList.remove('ui'); bar.clear(); shown = false; }
       }
       // (the plain bar: green, red, amber; Rose Gold's last check is LibraryFlowRose's own bar)
@@ -651,19 +651,23 @@ html.dndOn,html.dndOn *{cursor:grabbing!important;-webkit-user-select:none!impor
         if (row && acts) { try { const hostEl = doc.createElement('div'); row.replaceWith(hostEl); acts.remove(); R.confirmBar(hostEl, { sheetLabel: label, item: { kind, id: item.id }, onConfirm: () => cb.onConfirm(['roseLine']), onCancel: cb.onCancel }); } catch (e) { console.warn('LibraryFlowRose.confirmBar', e); } }
       }
     };
-    // 1a. only shared orders hold it: no red list. The copy flies home, and the window grows out of the card at home (its list, its quick links to each order,
-    //     the choice to take an order off; "Move it now" there tries this move again). Nothing was changed.
-    if (sharedOk && plan.needs.length === 1 && plan.needs[0].key === 'sharedOrders') {
+    // 1a. shared orders hold it: no red list for them. The copy flies home, and the window grows out of the card at home (its list, its quick links to each
+    //     order, the choice to take an order off; "Move it now" there tries this move again). Nothing was changed. Any other reason stays in the bar, which
+    //     waits while the window is open and goes by itself after.
+    const sharedNeed = sharedOk ? plan.needs.find(n => n && n.key === 'sharedOrders') : null;
+    if (sharedNeed) {
+      const others = plan.needs.filter(n => n !== sharedNeed);
       m.state = 'review';
       bar.wait('Finding the orders…');
       await flight; m.state = 'back';
+      if (others.length) { const r2 = Object.assign({}, raw, { needs: others }); present(r2, normPlan(r2), 'Not yet:'); }
       const h = flyHome(item, homeEl(), kind);
       await Promise.race([h, wait(m.fast ? 0 : 450)]);   // (the window opens while the card is still on its way: it grows out of the card's home)
-      bar.wait(null);
-      const gone = end(0);
-      const seen = openShared(plan.needs[0], elOf(item));
+      let gone = null;
+      if (!others.length) { bar.wait(null); gone = end(0); }
+      const seen = openShared(sharedNeed, elOf(item), others);
       await h; await seen; refocus(item, o);
-      await gone;
+      if (gone) await gone; else await end(2600);
       if (again) setTimeout(() => { move(item, m.to, { via: 'retry' }).catch(() => {}); }, 0);
       return { ok: false, plan: raw, shared: true };
     }

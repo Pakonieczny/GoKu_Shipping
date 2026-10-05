@@ -83,7 +83,10 @@ const until = async (fn, ms = 8000, what = '') => { ms *= SLOW; const t0 = Date.
     await ctx.route(/charmNestLibrary/, r => { let b = null; try { b = r.request().postDataJSON(); } catch (_) {} return b && b.op === 'runList' ? r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ runs: [] }) }) : r.fallback(); });
     if (o.noName) await ctx.addInitScript(() => { window.__noName = true; });
     await ctx.addInitScript(() => { try { if (!sessionStorage.getItem('__seeded')) { localStorage.setItem('cn.settings', JSON.stringify({ v: 26, dsOrigin: 'http://127.0.0.1:9', runMode: 'manual', sound: 'off', notify: 'off', review: 'on' })); if (!window.__noName) localStorage.setItem('cn.employee', 'Test Operator'); sessionStorage.setItem('__seeded', '1'); } } catch (_) {} window.confirm = () => true; window.alert = () => {}; });
-    if (!process.env.SO_REAL) await ctx.addInitScript(`(${fakeShared.toString()})(${JSON.stringify({ orders, delay: o.delay })})`);
+    if (!process.env.SO_REAL) {
+      await ctx.route(/charm-nest-shared-orders\.js/, r => r.fulfill({ status: 200, contentType: 'text/javascript', body: '/* the real engine is left out: this test has its own */' }));
+      await ctx.addInitScript(`(${fakeShared.toString()})(${JSON.stringify({ orders, delay: o.delay })})`);
+    }
     const page = await ctx.newPage(), errors = [];
     page.setDefaultTimeout(20000 * SLOW);
     page.on('pageerror', e => { errors.push('page: ' + e.message); console.error('page error:', String(e.stack || e.message).split('\n').slice(0, 4).join(' | ')); });
@@ -459,8 +462,8 @@ const until = async (fn, ms = 8000, what = '') => { ms *= SLOW; const t0 = Date.
     await until(() => vis(page, '.soErr'), 5000, 'the error line shows');
     assert.equal((await text(page, '.soErr span')), 'The orders could not be read.'); assert.equal(await text(page, '.soErr [data-reload]'), 'Try again');
     await shot(page, 'S14-read-failed');
-    await page.evaluate(() => { __so.readFail = false; });
-    await page.click('.soErr [data-reload]');
+    // (the window also reads again by itself about once a second, so on a busy machine it may have recovered before the press: the press and the fix are one step, and either way the orders must come)
+    await page.evaluate(() => { __so.readFail = false; const b = document.querySelector('.soErr [data-reload]'); if (b) b.click(); });
     await until(async () => (await cards(page)).length === 3, 5000, 'Try again reads the orders');
     assert.deepEqual(errors, [], 'no page errors: ' + errors.join(' | '));
     ok.push('9 · a failed read: one short line and Try again, then it works');
@@ -474,13 +477,29 @@ const until = async (fn, ms = 8000, what = '') => { ms *= SLOW; const t0 = Date.
       assert.equal((await cards(page)).length, n);
       const bad = await page.evaluate(() => [...document.querySelectorAll('.soCard')].filter(c => c.scrollWidth > c.clientWidth + 1).length);
       assert.equal(bad, 0, name + ': no card is cut off');
-      if (n === 1) { assert.equal(await text(page, '.soCount'), '1 order'); assert((await text(page, '.soSub')).startsWith('Its pieces')); }
+      if (n === 1) {
+        assert.equal(await text(page, '.soCount'), '1 order'); assert((await text(page, '.soSub')).startsWith('Its pieces'));
+        // one order is a small window with its card in the middle, not one card in half an empty wide one
+        const g = await page.evaluate(() => { const d = document.querySelector('.soDlg').getBoundingClientRect(), b = document.querySelector('.soBody').getBoundingClientRect(), c = document.querySelector('.soCard').getBoundingClientRect(); return { w: Math.round(d.width), left: Math.round(c.left - b.left), right: Math.round(b.right - c.right) }; });
+        assert(g.w <= 420, 'a small window for one order: ' + JSON.stringify(g)); assert(Math.abs(g.left - g.right) <= 6, 'its card is in the middle: ' + JSON.stringify(g));
+      }
+      if (n >= 3) assert((await page.evaluate(() => document.querySelector('.soDlg').getBoundingClientRect().width)) > 560, name + ': the wide window for several orders');
       if (o.noThumbs) assert((await page.$$('.soTile .soPh')).length >= 3 && (await page.$$('.soTile img')).length === 0, 'a calm placeholder where a picture is missing');
       await shot(page, name);
       assert.deepEqual(errors, [], name + ' no page errors: ' + errors.join(' | '));
       await ctx.close();
     }
-    ok.push('9 · one order (singular words), twelve orders, long names and missing pictures all lay out without cutting anything off');
+    ok.push('9 · one order (a small window, the card in the middle), twelve orders (the wide one), long names and missing pictures all lay out without cutting anything off');
+    {
+      const { ctx, page, errors } = await boot(mkOrders(2));
+      assert(await openModal(page, { target: 'Set 3 · Oct 3' })); await settled(page);
+      const s = await text(page, '.soSub');
+      assert(/move to Set 3 yet\.$/.test(s) && !/Oct/.test(s), 'a set is named by its short name in the sentence: ' + s);
+      assert(!/Oct/.test(await text(page, '.soTitle')) && !/Oct/.test(await text(page, '.soSheets')), 'and in the title and the chips');
+      assert.deepEqual(errors, [], 'no page errors: ' + errors.join(' | '));
+      ok.push('9 · a set is named by its short name ("Set 3"), never "Set 3 · Oct 3", in the sentence');
+      await ctx.close();
+    }
   }
 
   /* ═════ 10 · a sheet that cannot give its piece up is said on the card before anything is pressed ═════ */
