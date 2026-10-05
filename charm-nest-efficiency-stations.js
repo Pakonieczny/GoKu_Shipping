@@ -846,7 +846,12 @@
     (doc.head || doc.documentElement).appendChild(s);
   }
 
-  root.EfficiencyStations = { mount, orderCard, norm, options, qr: qrUrl, fmt: { since, words, ago, initials }, openOrder,
+  /** The board's light hover card on ANY element (the Overview's numbers, the people list): spec() is asked each time the card opens or refreshes and
+   *  returns { title, sub, avatar | state, rows:[{ k, v, d }], note, foot } (or null for no card). The element gets the platform's pointer, focus and touch
+   *  behaviour of the board's own cards; one card is shared by all of them. */
+  function hoverCard(node, spec) { if (!node || typeof spec !== "function") return node; css(); wire(); node.dataset.esTip = ""; node._esTip = spec; return node; }
+
+  root.EfficiencyStations = { mount, orderCard, norm, options, qr: qrUrl, fmt: { since, words, ago, initials }, openOrder, hoverCard,
     /* for the checks */
     feed: { get calls() { return Feed.calls; }, get busy() { return Feed.busy; }, get fails() { return Feed.fails; }, wake: () => Feed.wake(), now: () => Feed.now() }, zoomed: () => Z.node, tip: () => Tp.el };
 })(typeof self !== "undefined" ? self : this);
