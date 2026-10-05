@@ -70,7 +70,7 @@ Object.assign(window, {
   LibraryFlow: { approve: async () => { window.__calls.push(['approve']); return { ok: true, auto: [], needs: [], confirm: [], notes: [] }; } },   /* (so the sheets carry their Approve button; a press is only recorded) */
   ListMedia: { peek: id => window.__photos.get(id) || null, listing: id => new Promise(r => setTimeout(() => r(window.__photoOf ? window.__photoOf(id) : null), 120 + (parseInt(String(id).replace(/\\D/g, ''), 10) || 0) * 25)) }
 });`;
-async function openPage(browser, { width = 1440, height = 900, fake = true, errors = [], touch = false } = {}) {
+async function openPage(browser, { width = 1440, height = 900, fake = true, errors = [], touch = false, bridge: bridgeSrc = '' } = {}) {
   const context = await browser.newContext({ viewport: { width, height }, deviceScaleFactor: 2, ...(touch ? { hasTouch: true } : {}) });
   const page = await context.newPage();
   page.on('pageerror', e => { errors.push(e.message); console.error('page error:', String(e.stack || e.message).split('\n').slice(0, 3).join(' | ')); });
@@ -80,7 +80,7 @@ async function openPage(browser, { width = 1440, height = 900, fake = true, erro
   for (const f of ['charm-nest-orders.js']) await page.addScriptTag({ content: read(f) });
   await page.evaluate(() => { window.O = window.CharmNestOrders; });
   for (const f of ['charm-nest-readiness.js', 'charm-nest-activity.js', 'charm-nest-motion.js']) await page.addScriptTag({ content: read(f) });
-  const bridge = read('charm-nest-bridge.js');
+  const bridge = bridgeSrc || read('charm-nest-bridge.js');   // (a test may hand it a changed copy: the mutants)
   await page.addScriptTag({ content: bridge.slice(bridge.indexOf('const LaserReview ='), bridge.indexOf('/* ═══ 22 · Sets — one run')) });
   const a = bridge.indexOf('  function libraryGroups('), b = bridge.indexOf('  /** A set card whose completion', a), c = bridge.indexOf('  async function renderLibrary(body, opts)', b), e = bridge.indexOf('  return { releaseIssue', c);
   await page.addScriptTag({ content: 'window.Sets=(()=>{' + bridge.slice(a, b) + bridge.slice(c, e) + ';return {libraryCard};})();' });
