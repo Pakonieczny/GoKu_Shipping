@@ -10,7 +10,7 @@
 //    and below the top bar, and unclipped; leaving puts every style back (transform, filter, overflow, z-index);
 //  · a pointer sweeping across a seal for 300 ms zooms nothing, one resting 560 ms does (the delay is 500 ms); Tab zooms at once; Esc returns it;
 //  · the real surfaces: the Review card's seals, the order window's header strip (24 px, in a 44 px box that clips), its
-//    piece row (once 1 px wide), the timeline's lane stamps and detail seal: each grows, in view, unclipped;
+//    piece row (once 1 px wide), the timeline's lane stamps (its detail seal went on 5 Oct 2026): each grows, in view, unclipped;
 //  · only transform, filter and opacity move; a finger's tap zooms and a second tap returns it; reduced motion is short.
 //   SHOTS=<dir> node tests/charm-nest/seal-zoom.cjs [playwright-core dir]
 const fs = require('fs'), path = require('path'), assert = require('assert/strict');
@@ -215,30 +215,33 @@ const ORDERS = [{ receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * DAY, up
       if (shots) await page.screenshot({ path: path.join(shots, '3-completed-card-seal.png'), clip: { x: 0, y: 40, width: 1440, height: 440 } });
       await page.mouse.move(5, 880); await X.gone();
     }
-    // 6c · the Timeline tab: lane stamps, the detail seal, the one at the left edge
+    // 6c · the Timeline tab: lane stamps, the one at the left edge (the detail seal under the chart went on 5 Oct 2026)
     await page.click('#orderWin [data-ow-view="timeline"]'); await page.waitForSelector('#orderWin .tlSt[data-key]', { timeout: 8000 }); await page.waitForTimeout(900);
     const lanes = await page.evaluate(() => document.querySelectorAll('#orderWin .tlSt[data-key]').length);
-    for (const [sel, i0] of [['#orderWin .tlSt[data-key]:not(.pending)', 0], ['#orderWin .tlSt[data-key]:not(.pending)', 1], ['#orderWin .tlBig', 0]]) {
+    for (const [sel, i0] of [['#orderWin .tlSt[data-key]:not(.pending)', 0], ['#orderWin .tlSt[data-key]:not(.pending)', 1]]) {
       const n = (await page.evaluate(s => document.querySelectorAll(s).length, sel)); if (!n) { check(false, 'there are ' + sel); continue; }
       const i = Math.min(i0, n - 1), p = await X.point(sel, i); if (!p) { check(false, 'a point on ' + sel); continue; }
       await page.mouse.move(5, 880); await page.mouse.move(p.x, p.y, { steps: 4 });
       await page.waitForFunction(([s, i]) => document.querySelectorAll(s)[i].dataset.sealZoom, [sel, i], { timeout: 4000 }); await X.settle();
       const z = await X.probe(sel, i);
-      check(near(z.k, await scaleOf(z.size, 72)) && fits(z, 72) && z.inView && !z.clipped.length, `Timeline ${sel.includes('tlSt') ? 'lane stamp ' + i + (i === 0 ? ' (at the left edge, the first)' : '') : 'detail seal'} (${z.size}px): grown ×${z.k}, in view, not clipped ${JSON.stringify(z.clipped)}`);
-      if (shots && sel.includes('tlSt') && i === 1) await page.screenshot({ path: path.join(shots, '4-timeline-page-seal.png') });
+      check(near(z.k, await scaleOf(z.size, 72)) && fits(z, 72) && z.inView && !z.clipped.length, `Timeline lane stamp ${i}${i === 0 ? ' (at the left edge, the first)' : ''} (${z.size}px): grown ×${z.k}, in view, not clipped ${JSON.stringify(z.clipped)}`);
+      if (shots && i === 1) await page.screenshot({ path: path.join(shots, '4-timeline-page-seal.png') });
       await page.mouse.move(5, 880, { steps: 3 }); await X.gone();
     }
-    // 6c' · the selected stamp's own gold ring and glow come out a thin ring round the grown stamp (they used to grow with it: 6 + 4 px at ×3)
+    // 6c' · the ringed stamp's own gold ring and glow come out a thin ring round the grown stamp (they used to grow with it: 6 + 4 px at ×3).
+    //       Nothing on the chart rings a stamp by a click now; a step of the header strip opens its step on the Timeline and rings that stamp
     {
       const sel = '#orderWin .tlSt.sel';
+      await page.evaluate(() => document.querySelector('#owRail .tlStop.d').click());
+      await page.mouse.move(5, 880, { steps: 3 }); await X.gone(); await page.waitForTimeout(500);
       if (await page.evaluate(s => !!document.querySelector(s), sel)) {
         const p = await X.point(sel, 0); await page.mouse.move(5, 880); await page.mouse.move(p.x, p.y, { steps: 4 });
         await page.waitForFunction(s => document.querySelector(s).dataset.sealZoom, sel, { timeout: 4000 }); await X.settle();
         const r = await page.evaluate(s => { const e = document.querySelector(s), k = +e.dataset.sealZoom, b = getComputedStyle(e, '::before'), sh = /([\d.]+)px\s*$/.exec(b.boxShadow); return { k, out: (-parseFloat(b.top) + parseFloat(b.borderTopWidth) + (sh ? +sh[1] : 0)) * k, size: Math.min(e.offsetWidth, e.offsetHeight), w: e.getBoundingClientRect().width }; }, sel);
-        check(r.out > 0 && r.out <= 7.5 && r.w + 2 * r.out <= 72 + 15, `the selected stamp's ring and glow, grown ×${r.k}: ${r.out.toFixed(1)}px beyond the seal (a thin ring), the whole ${(r.w + 2 * r.out).toFixed(0)}px across`);
+        check(r.out > 0 && r.out <= 7.5 && r.w + 2 * r.out <= 72 + 15, `the ringed stamp's ring and glow, grown ×${r.k}: ${r.out.toFixed(1)}px beyond the seal (a thin ring), the whole ${(r.w + 2 * r.out).toFixed(0)}px across`);
         if (shots) await page.screenshot({ path: path.join(shots, '4b-timeline-selected-ring.png'), clip: { x: 0, y: 90, width: 760, height: 480 } });
         await page.mouse.move(5, 880, { steps: 3 }); await X.gone();
-      } else check(false, 'a selected stamp on the timeline');
+      } else check(false, 'a ringed stamp on the timeline after a header-strip step opened it');
     }
     // 6d · the Overview's Now card seal, and the engraving approval seals in a window that clips (the sheet window's engraving inspector)
     await page.click('#orderWin [data-ow-view="info"]'); await page.waitForSelector('#orderWin .tlNowSeal', { timeout: 8000 }); await page.waitForTimeout(700);
