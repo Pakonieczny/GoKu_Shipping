@@ -29,7 +29,9 @@
  *  Live: OrderTimeline.onRecord for this order, plus a refresh while the tab is visible: every 2.5 s for the order view that
  *  is open (its shared feed, below; a change made on this page is read again at once and 1.5 s later), every 20 s for a
  *  mount of its own; a new stamp comes down on its lane, the NOW line glides and the rail moves on. Motion is transform and opacity only; none under
- *  prefers-reduced-motion. destroy() clears every timer and listener it set. */
+ *  prefers-reduced-motion. destroy() clears every timer and listener it set.
+ *  The chart fills its room (5 Oct, "the chart fits its room" below): its grid takes all the space its host gives it, and every part (lanes,
+ *  seals up to the 84 px cap, text, strokes, day heads, the NOW pill) is sized from that room again whenever it changes (a ResizeObserver). */
 (function (root) {
   "use strict";
   if (root.OrderTimelineUI) return;
@@ -60,9 +62,12 @@
   const SEAL_SIZE = 84;
   /* ── the Timeline page's own seal sizes (Paul, 3 Oct 2026, on an order's Timeline: "All of these seals are too big ... they can be
      much smaller, and then they don't have to zoom in so large"): about 40% under the shared 84 px, on this page only (every other
-     page keeps the shared size). The chart's stamps and ghosts and the header rail's steps each keep one size of their own, and the
-     lanes, columns and rows are cut to fit them. A seal still shows everything it showed; the zoom (Seal.zoom) is what reads it. ── */
-  const TL_CHART_SEAL = 26, TL_RAIL_SEAL = 20;
+     page keeps the shared size). The header rail's steps keep one size of their own, and the rail's rows are cut to fit them. A seal still shows
+     everything it showed; the zoom (Seal.zoom) is what reads it.
+     (Paul, 5 Oct 2026, with the detail pane gone: "expand the chart and enlarge the seals and all other components of the chart to fit the empty
+     space below": the chart's own seals are no longer one fixed 26 px but the size its room allows, up to FIT_CAP, the shared 84 px: see "the
+     chart fits its room" below.) ── */
+  const TL_RAIL_SEAL = 20;
   const zoomApi = () => (root.Seal && root.Seal.zoom) || null;
   const zoomOn = (el, kb) => { const z = zoomApi(); return !!(z && el && z.show(el, { keyboard: !!kb, managed: true })); };
   const zoomOff = (el, now) => { const z = zoomApi(); if (z && el) z.hide(!!now, el); };
@@ -728,10 +733,11 @@
    *  the furthest step reached (W.step counts the full rail: a step this order does not take is passed over), cur: the
    *  step being worked towards (-1 when all are done, or it was completed by hand), stop: where a cancelled order
    *  stopped, hand: the Complete Order press that completed it by hand (handOf; the steps after `step` are skipped). */
-  function derive(events, cancelRec, where, rail) {
+  const PLACE_STATES = new Set(["sheet", "waiting", "hold", "hand", "cancelled", "loading"]);
+  function derive(events, cancelRec, where, rail, place) {
     events = events || [];
     rail = Array.isArray(rail) && rail.length ? rail : STAGES;
-    const W = where && typeof where === "object" ? where : Object.assign(whereOf(events, cancelRec), typeof where === "string" && where ? { label: where, text: where } : {});
+    let W = where && typeof where === "object" ? where : Object.assign(whereOf(events, cancelRec), typeof where === "string" && where ? { label: where, text: where } : {});
     const stages = rail.map(() => ({ first: null, last: null }));
     let lastHold = null, lastCancel = null;
     for (const e of events) {
@@ -740,17 +746,45 @@
       if (e.type === "held" || e.type === "released" || e.type === "restored") lastHold = e;
       if (CANCEL_TYPES.has(e.type) || e.type === "cancelRestored") lastCancel = e;
     }
-    const full = clamp(Number.isFinite(+W.step) ? Math.round(+W.step) : -1, -1, STAGES.length - 1);
-    const step = full < 0 ? -1 : rail.filter(s => STAGES.indexOf(s) <= full).length - 1;
-    const cur = step + 1 < rail.length ? step + 1 : -1;
+    let full = clamp(Number.isFinite(+W.step) ? Math.round(+W.step) : -1, -1, STAGES.length - 1);
     let cancelled = null;
     if (cancelRec && typeof cancelRec === "object") cancelled = { at: +cancelRec.at || (lastCancel && lastCancel.at) || 0, by: str(cancelRec.by, 80), why: str(cancelRec.why, 400), source: cancelRec.source || (cancelRec.by === "Etsy" ? "etsy" : "sorter") };
     else if (lastCancel && lastCancel.type !== "cancelRestored" && W.cancelled !== false) cancelled = { at: lastCancel.at, by: whoOf(lastCancel), why: reasonOf(lastCancel) || lastCancel.text, source: lastCancel.type === "etsyCancelled" ? "etsy" : lastCancel.source };
     else if (W.cancelled) cancelled = { at: +W.since || +W.at || 0, by: str(W.by, 80), why: "", source: "" };
-    const hold = !cancelled && W.stage === "held" ? (lastHold && lastHold.type === "held" ? lastHold : { type: "held", at: +W.since || 0, text: "", data: null }) : null;
+    let hold = !cancelled && W.stage === "held" ? (lastHold && lastHold.type === "held" ? lastHold : { type: "held", at: +W.since || 0, text: "", data: null }) : null;
     const hand = cancelled ? null : handOf(events);
-    return { W, rail, stages, step, cur: hand ? -1 : cur, stop: cancelled ? Math.min(step + 1, rail.length - 1) : -1, cancelled, hold, hand, last: events[events.length - 1] || null };
+    /* Where the piece IS now (the page's PiecePlacement, opts.placement): history is what happened, and `step` is its high-water mark: no event lowers it, so
+       a piece placed once and taken off since (a hold, a remove, its sheet deleted, its set undone) kept Nested and a step after it: "On hold" under dots that
+       said "Nested, next: Laser cut" (Paul, 5 Oct 2026, image 3). With a placement the steps follow the CURRENT state: a piece on no sheet (place.fence) has
+       Nested and every later step hollow, unless the history already shows it cut (a piece cannot un-cut: `beyond`); a piece on a sheet has Nested done at least
+       (`raised`: the sheet's record may be a moment ahead of the timeline). W (the words "On a sheet" / "Waiting") and the hold follow it too. The events, and
+       every seal on the Timeline, are untouched: this only decides what is DONE, never what happened. */
+    const pl = place && typeof place === "object" && PLACE_STATES.has(place.state) ? place : null;
+    let fenced = false, raised = false, beyond = false;
+    if (pl && !cancelled && !hand && pl.state !== "cancelled" && pl.state !== "hand" && pl.state !== "loading") {
+      if (pl.fence && full >= 1) { if (full < 3) { full = 0; fenced = true; } else beyond = true; }
+      else if (pl.floor >= 1 && full < 1) { full = 1; raised = true; }
+      const st = W.stage, said = (stage, label) => ({ stage, label, text: label });
+      if (pl.state === "hold") {
+        hold = (lastHold && lastHold.type === "held" ? lastHold : null) || { type: "held", at: +pl.since || +W.since || 0, text: pl.reason || "", data: null };
+        if (!beyond && st !== "held") W = Object.assign({}, W, said("held", "On hold"), pl.onSheet ? {} : { sheet: "", sheetId: "" });
+      } else if (pl.state === "waiting" || pl.state === "sheet") {
+        hold = null;
+        if (pl.fence && !beyond && (st === "sheet" || st === "held")) W = Object.assign({}, W, said("waiting", pl.text || "Waiting for a sheet"), { sheet: "", sheetId: "" });
+        else if (pl.state === "sheet" && pl.sheets && pl.sheets.length) {
+          const a = pl.sheets[0], names = pl.sheets.map(x => x.label).filter(Boolean).join(" + ") || "a sheet", mine = W.sheetId && pl.sheets.some(x => x.id === W.sheetId);
+          if (st === "waiting" || st === "review" || st === "designed" || st === "held") W = Object.assign({}, W, said("sheet", "On " + names), { sheet: a.label || "", sheetId: a.id || "" });
+          else if (st === "sheet" && !mine && a.id) W = Object.assign({}, W, { sheet: a.label || W.sheet, sheetId: a.id });
+        }
+      }
+    }
+    const step = full < 0 ? -1 : rail.filter(s => STAGES.indexOf(s) <= full).length - 1;
+    const cur = step + 1 < rail.length ? step + 1 : -1;
+    return { W, rail, stages, step, cur: hand ? -1 : cur, stop: cancelled ? Math.min(step + 1, rail.length - 1) : -1, cancelled, hold, hand, last: events[events.length - 1] || null, place: pl, fenced, raised, beyond };
   }
+  /** Whether step i (an index into STAGES) counts as done for a derived piece or order: reached, or stamped, and (placement) not a step after Nested that a
+   *  piece taken off its sheet no longer stands on. ONE rule for the row's dots, the rail's counts and the Timeline (never `D.step` or `first` alone). */
+  const stepDone = (D, i) => !!D && (D.step >= i || (!D.fenced && !!(D.stages && D.stages[i] && D.stages[i].first)));
 
   /* ════ orders of several pieces (Paul, 28 Sep: "very convoluted and confusing especially on multipiece orders") ════
      A piece is one line of the order: { key (its lineKey), tid, qty, line, pools [poolIds], sheets [sheetIds] }. An event
@@ -768,14 +802,16 @@
   /** The order across its pieces: each piece where it stands (derive over its own events, its own steps), each rail step
    *  with how many pieces reached it (a line of 2 counts 2) out of those that take it, and the step of the slowest piece,
    *  which is where the order is. → { each: [{ p, D, steps, events }], rail: [{ s, i, n, of }], step } */
-  function summary(events, pieces, cancelRec) {
+  function summary(events, pieces, cancelRec, placeOf) {
     const evs = (events || []).map(x => (x && x.lane ? x : norm(x))).filter(Boolean).sort(byAt), ps = pieces || [];
-    const each = ps.map(p => { const list = evs.filter(e => ofPiece(e, p, ps)); return { p, D: derive(list, cancelRec), steps: keepDone(stagesFor(p.line), list), events: list }; });
+    // (placeOf(key), or a piece's own .place: where the piece IS now, the PiecePlacement; see derive)
+    const placed = p => { try { return typeof placeOf === "function" ? placeOf(p.key) || null : p.place || null; } catch (_) { return null; } };
+    const each = ps.map(p => { const list = evs.filter(e => ofPiece(e, p, ps)); return { p, D: derive(list, cancelRec, null, null, placed(p)), steps: keepDone(stagesFor(p.line), list), events: list }; });
     const rail = STAGES.map((s, i) => ({ s, i, n: 0, of: 0 }));
     for (const x of each) for (const s of x.steps) {
       const i = STAGES.indexOf(s); if (i < 0) continue;
       const q = Math.max(1, Math.round(+x.p.qty || 1)); rail[i].of += q;
-      if (x.D.step >= i || x.D.stages[i].first || x.D.hand) rail[i].n += q;
+      if (stepDone(x.D, i) || x.D.hand) rail[i].n += q;
     }
     // (a piece completed by hand waits on no step: the order is where its slowest other piece is)
     return { each, rail: rail.filter(r => r.of), step: each.length ? Math.min(...each.map(x => (x.D.hand ? STAGES.length - 1 : x.D.step))) : -1 };
@@ -832,7 +868,7 @@
     const i = typeof step === "number" ? step : STAGES.findIndex(s => s.k === (step && typeof step === "object" ? step.k : step));
     const s = STAGES[i]; if (!s) return null;
     const evs = (data.events || []).map(e => e && e.lane && e.key ? e : norm(e)).filter(Boolean).sort(byAt);
-    let D = data.D || derive(evs, data.cancelled || null, data.where || null);
+    let D = data.D || derive(evs, data.cancelled || null, data.where || null, null, data.place || null);
     // (derive's own rail is the steps themselves; the rail a view draws is railed's { s, i })
     if (!Array.isArray(D.rail) || !D.rail.length || !D.rail[0].s) D = railed(D, keepDone(data.stages, evs));
     const R = D.rail, pos = R.findIndex(r => r.i === i);
@@ -848,6 +884,18 @@
     };
     for (const e of evs) if (STOP_OF[e.type] === i) done.push(doneOf(e));
     if (state === "done" && !done.length) done.push({ t: s.l, sub: "done before the timeline was kept" });
+    /* A piece that is on no sheet NOW (the placement: D.fenced) has Nested and the steps after it still to do, whatever happened before. What happened stays
+       on the Timeline, every seal of it; here it is only said in the past tense ("Was on SS Sheet 1 until Paul took it off, 5 Oct 12:44 AM"), never as a
+       step done (Paul, 5 Oct 2026, image 3). */
+    const fenced = !!(D.fenced && state !== "done" && state !== "none");
+    let wasNote = "";
+    if (fenced) {
+      const pl = data.place || D.place || null, earlier = done.splice(0);
+      if (s.k === "sheet") {
+        const was = (pl && pl.wasOn) || (root.PiecePlacement && root.PiecePlacement.history ? root.PiecePlacement.history(evs).wasOn : null);
+        wasNote = was && was.until ? `Was on ${was.label || "a sheet"} until ${was.by ? was.by + " took it off" : "it was taken off"}, ${shortWhen(was.until)}` : was && was.label ? `Was on ${was.label} earlier` : earlier.length ? "Was on a sheet earlier" : "";
+      } else for (const d of earlier) facts.push(`Earlier: ${d.t} · ${d.sub}`);
+    }
     /* the order's labels (Paul, 28 Sep 23:51): its QR label printed at the Sorting station or the Design Station is said
        under Sorted, "Label printed at the Sorting station by Ana P." (the latest print per place), or "Label not printed
        yet"; a shipping label under Shipped */
@@ -863,7 +911,7 @@
       if (e.type === "scan" ? SCAN_STEP[e.station] === s.k : quiet.includes(e.type) && STOP_OF[e.type] == null)
         facts.push(`${titleOf(e, 70)}${e.type === "scan" ? " · " + whoOf(e) : ""} · ${shortWhen(e.at)}`);
     }
-    const out = () => ({ k: s.k, label: s.l, i, n: pos + 1, of: R.length, state, done, need, facts: facts.slice(-6) });
+    const out = () => ({ k: s.k, label: s.l, i, n: pos + 1, of: R.length, state, done, need, facts: facts.slice(-6), fenced, was: wasNote });
     const add = (kind, t) => { if (t && !need.some(n => n.t === t)) need.push({ kind, t: String(t).slice(0, 220) }); };
     if (state === "none") { facts.push(`${s.none || "Not a step"} for ${lines.length === 1 ? "this piece" : "this order"}`); return out(); }
     if (state === "gone" || state === "stopped") { add("stop", D.cancelled && D.cancelled.source === "etsy" ? "Cancelled on Etsy: this step will not happen" : "Cancelled: this step will not happen"); return out(); }
@@ -888,6 +936,7 @@
     };
     if (state === "done") { if (s.k === "sheet") loose(); noLabel(); return out(); }
     if (state === "later") { const cp = R.findIndex(r => r.i === D.cur); add("after", `${STAGES[Math.max(0, D.cur)].l}${cp >= 0 && cp < pos - 1 ? " and the steps between" : ""}`); }
+    if (fenced && s.k === "sheet") { add(D.hold ? "person" : "wait", "Not on a sheet now"); if (wasNote) add("was", wasNote); }
     if (D.hold) { const r = reasonOf(D.hold) || D.hold.text || ""; add("person", `On hold${r ? ": " + r.slice(0, 120) : ""}. Release it in Review`); }
     if (state === "now" && s.k !== "sheet") loose();
     if (s.k === "arrived") add("wait", HOW.arrived);
@@ -921,7 +970,7 @@
     noLabel();
     return out();
   }
-  const REQ_WORD = { wait: "Waiting", person: "Needs a person", next: "Next", after: "After", stop: "Stopped", label: "" };
+  const REQ_WORD = { wait: "Waiting", person: "Needs a person", next: "Next", after: "After", stop: "Stopped", label: "", was: "" };   // (was: what the history says, in the past tense: never a step to do)
   // (a label not printed yet is said, but a step that is done stays done: only a real need makes it "Part done")
   const partDone = q => q.state === "done" && q.need.some(n => n.kind !== "label");
   const STATE_WORD = { done: "Done", now: "Next", later: "To come", stopped: "Stopped here", gone: "Won't happen", none: "Not needed", skipped: "Skipped" };
@@ -982,11 +1031,12 @@
     const SEL = ".tlNowSeal, .tlMini, [data-tl-step]";
     const stepOf = b => {
       const g = (typeof host._tlExpGet === "function" && host._tlExpGet()) || {};
-      const evs = (g.events || []).map(norm).filter(Boolean).sort(byAt), D = railed(derive(evs, g.cancelled || null, g.where || null), keepDone(g.stages, evs));
+      // (g.D: the rail's own derived state, mount().state(), so the card and the rail can never disagree; g.place: where the piece IS now, see derive)
+      const evs = (g.events || []).map(norm).filter(Boolean).sort(byAt), D = g.D && Array.isArray(g.D.rail) && g.D.rail[0] && g.D.rail[0].s ? g.D : railed(derive(evs, g.cancelled || null, g.where || null, null, g.place || null), keepDone(g.stages, evs));
       let i = b.dataset.tlStep ? STAGES.findIndex(s => s.k === b.dataset.tlStep) : -1;
       if (i < 0 && b.dataset.tlEv) { const e = evs.find(x => x.id === b.dataset.tlEv); if (e && own(STOP_OF, e.type)) i = STOP_OF[e.type]; }
       if (i < 0) i = D.cancelled ? D.stop : D.cur >= 0 ? D.cur : D.step;
-      return i >= 0 ? requirementsOf(i, { events: evs, D, context: g.context }) : null;
+      return i >= 0 ? requirementsOf(i, { events: evs, D, context: g.context, place: g.place || null }) : null;
     };
     const foot = () => { const f = card.querySelector(".xf"); if (f && cur) f.textContent = `${cur.n ? `Step ${cur.n} of ${cur.of}` : "Not a step of this order"}${typeof host._tlExpPin === "function" ? " · click seal to open on the Timeline" : ""}`; };
     const show = (b, kb) => {
@@ -1018,7 +1068,7 @@
 
   /* ════ the component's look (once per page) ════ */
   const CSS = `
-.tlUI{position:relative;min-width:0;min-height:0;display:flex;flex-direction:column;color:var(--ink,#1c1a17);font:13px/1.45 var(--sans,system-ui,sans-serif);--tlE:cubic-bezier(.2,.8,.2,1);--tlSpring:cubic-bezier(.3,1.7,.5,1);--tlSlate:#2f5563}
+.tlUI{position:relative;min-width:0;min-height:0;display:flex;flex-direction:column;color:var(--ink,#1c1a17);font:13px/1.45 var(--sans,system-ui,sans-serif);--tlE:cubic-bezier(.2,.8,.2,1);--tlSpring:cubic-bezier(.3,1.7,.5,1);--tlSlate:#2f5563;--tl-t:1}
 .tlUI *{box-sizing:border-box}
 .tlUI button{font:inherit;color:inherit;cursor:pointer}
 .tlUI [hidden]{display:none!important}
@@ -1069,31 +1119,34 @@
 .tlBusy{display:inline-flex;align-items:center;gap:6px}
 .tlSpin{display:inline-block;width:11px;height:11px;flex:none;border:2px solid rgba(0,0,0,.12);border-top-color:var(--gold);border-radius:50%;animation:tlSpin .7s linear infinite}
 @keyframes tlSpin{to{transform:rotate(360deg)}}
-.tlGrid{display:grid;grid-template-columns:140px minmax(0,1fr);position:relative;flex:none}
-.tlLanes{border-right:1px solid var(--line);background:var(--card);padding-top:40px;padding-bottom:26px}
-.tlLane{position:relative;height:var(--tl-lane-height,42px);display:flex;flex-direction:column;justify-content:center;padding:0 14px;border-bottom:1px solid var(--line2);min-width:0}
+/* the chart fills the room its host gives it (fit(), below): the grid is one row as tall as that room, whatever it holds, so its size never depends on what is drawn in it */
+.tlGrid{display:grid;grid-template-columns:var(--tl-label-w,140px) minmax(0,1fr);grid-template-rows:minmax(0,1fr);position:relative;flex:1 1 360px;min-height:0;overflow:hidden}
+.tlLanes{border-right:1px solid var(--line);background:var(--card);padding-top:var(--tl-top,40px);padding-bottom:var(--tl-axis,26px);overflow:hidden;min-width:0}
+.tlLane{position:relative;height:var(--tl-lane-height,42px);display:flex;flex-direction:column;justify-content:center;padding:0 var(--tl-padx,14px);border-bottom:1px solid var(--line2);min-width:0}
 .tlLane::before{content:"";position:absolute;inset:0;background:linear-gradient(90deg,rgba(202,168,97,.16),transparent);opacity:0;transition:opacity .24s}
 .tlLane.on::before{opacity:1}
-.tlLane b{position:relative;font:700 9.5px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--ink70);display:flex;align-items:center;gap:6px}
-.tlLane b svg{width:12px;height:12px;color:var(--ink45);flex:none}
-.tlLane span{position:relative;font-size:11px;color:var(--ink45);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tlLane b{position:relative;font:700 var(--tl-fs-lane,9.5px) var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--ink70);display:flex;align-items:center;gap:calc(6px * var(--tl-t,1))}
+.tlLane b svg{width:var(--tl-ic,12px);height:var(--tl-ic,12px);color:var(--ink45);flex:none}
+.tlLane span{position:relative;font-size:var(--tl-fs-sub,11px);color:var(--ink45);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tlUI.tlNoSub .tlLane span{display:none}
 .tlLane.stn b{color:var(--tlSlate)}
-.tlScroll{overflow-x:auto;overflow-y:hidden;position:relative;min-width:0}
-.tlCanvas{position:relative;height:360px;min-width:100%}
+.tlScroll{overflow:hidden;position:relative;min-width:0;min-height:0}
+.tlCanvas{position:relative;height:100%;min-width:100%}
 .tlPath{position:absolute;left:0;top:0;overflow:visible;pointer-events:none}
 .tlDay{position:absolute;top:0;bottom:0;border-right:1px dashed var(--line)}
 .tlDay.alt{background:rgba(250,247,241,.7)}
-.tlDay .dh{position:absolute;left:14px;top:10px;font:700 10px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--ink70);white-space:nowrap}
-.tlDay .dh small{display:block;font:400 9.5px var(--mono);letter-spacing:.02em;color:var(--ink45);text-transform:none;margin-top:1px;overflow:hidden;text-overflow:ellipsis}
-.tlDay:not(.idle) .dh{right:8px;overflow:hidden;text-overflow:ellipsis}
+.tlDay .dh{position:absolute;left:var(--tl-dhx,14px);top:var(--tl-dhy,10px);font:700 var(--tl-fs-day,10px) var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--ink70);white-space:nowrap}
+.tlDay .dh small{display:block;font:400 var(--tl-fs-small,9.5px) var(--mono);letter-spacing:.02em;color:var(--ink45);text-transform:none;margin-top:1px;overflow:hidden;text-overflow:ellipsis}
+.tlUI.tlNoSmall .tlDay .dh small{display:none}
+.tlDay:not(.idle) .dh{right:calc(var(--tl-dhx,14px) * .57);overflow:hidden;text-overflow:ellipsis}
 .tlDay.idle{background:repeating-linear-gradient(135deg,transparent 0 6px,rgba(196,189,176,.22) 6px 7px)}
 .tlDay.idle .dh{left:50%;transform:translateX(-50%);text-align:center}
 .tlLaneLine{position:absolute;left:0;right:0;height:1px;background:var(--line2)}
 .tlSt{position:absolute;width:var(--s);height:var(--s);margin:calc(var(--s) / -2) 0 0 calc(var(--s) / -2);border:0;padding:0;background:transparent;border-radius:50%;transform:rotate(var(--rot));transition:opacity .24s,transform .22s var(--tlE);z-index:2}
 .tlSt svg{width:100%;height:100%;display:block;overflow:visible;mix-blend-mode:multiply}
-.tlSt.sel::before{content:"";position:absolute;inset:-6px;border-radius:50%;border:1.5px solid var(--gold);box-shadow:0 0 0 4px rgba(202,168,97,.18);animation:tlSelIn .32s var(--tlSpring) both}
+.tlSt.sel::before{content:"";position:absolute;inset:calc(-6px * var(--tl-t,1));border-radius:50%;border:calc(1.5px * var(--tl-t,1)) solid var(--gold);box-shadow:0 0 0 calc(4px * var(--tl-t,1)) rgba(202,168,97,.18);animation:tlSelIn .32s var(--tlSpring) both}
 @keyframes tlSelIn{from{transform:scale(.6);opacity:0}}
-.tlSt.hl::after{content:"";position:absolute;inset:-10px;border-radius:50%;background:radial-gradient(rgba(202,168,97,.38),transparent 70%);z-index:-1}
+.tlSt.hl::after{content:"";position:absolute;inset:calc(-10px * var(--tl-t,1));border-radius:50%;background:radial-gradient(rgba(202,168,97,.38),transparent 70%);z-index:-1}
 .tlSt.dim{opacity:.13}.tlSt.dim svg{filter:grayscale(1)}
 .tlSt.pend svg{opacity:.65}
 .tlSt.pending svg,.tlStop .tlSeal.pending svg{visibility:hidden}
@@ -1101,14 +1154,14 @@
 .tlSt.ghost.sel{opacity:.85}
 .tlSt.ghost svg{mix-blend-mode:normal}
 .tlInkRing{position:absolute;border-radius:50%;border:2px solid;pointer-events:none;z-index:1;opacity:0}
-.tlNowLine{position:absolute;top:34px;bottom:4px;width:0;border-left:1.5px solid var(--gold);z-index:1}
-.tlNowLine::before,.tlNowLine::after{content:"";position:absolute;left:-5px;bottom:-5px;width:9px;height:9px;border-radius:50%;background:var(--gold)}
-.tlNowLine::after{background:none;border:2px solid var(--gold2);left:-7px;bottom:-7px;width:13px;height:13px;animation:tlRing 2s ease-out infinite}
-.tlNowLine span{position:absolute;right:8px;bottom:-3px;font:700 9.5px var(--mono);letter-spacing:.1em;color:#7a5a1d;white-space:nowrap;background:var(--goldSoft);padding:2px 6px;border-radius:5px}
+.tlNowLine{position:absolute;top:calc(var(--tl-top,40px) - 6px * var(--tl-t,1));bottom:calc(11px * var(--tl-t,1));width:0;border-left:calc(1.5px * var(--tl-t,1)) solid var(--gold);z-index:1}
+.tlNowLine::before,.tlNowLine::after{content:"";position:absolute;left:calc(-5px * var(--tl-t,1));bottom:calc(-5px * var(--tl-t,1));width:calc(9px * var(--tl-t,1));height:calc(9px * var(--tl-t,1));border-radius:50%;background:var(--gold)}
+.tlNowLine::after{background:none;border:calc(2px * var(--tl-t,1)) solid var(--gold2);left:calc(-7px * var(--tl-t,1));bottom:calc(-7px * var(--tl-t,1));width:calc(13px * var(--tl-t,1));height:calc(13px * var(--tl-t,1));animation:tlRing 2s ease-out infinite}
+.tlNowLine span{position:absolute;right:calc(8px * var(--tl-t,1));bottom:calc(-3px * var(--tl-t,1));font:700 var(--tl-fs-pill,9.5px) var(--mono);letter-spacing:.1em;color:#7a5a1d;white-space:nowrap;background:var(--goldSoft);padding:calc(2px * var(--tl-t,1)) calc(6px * var(--tl-t,1));border-radius:calc(5px * var(--tl-t,1))}
 .tlNowLine.cx{border-color:var(--clay)}.tlNowLine.cx::before{background:var(--clay)}.tlNowLine.cx::after{display:none}
 .tlNowLine.cx span{background:var(--claySoft);color:#8a3a26}
-.tlAfterCx{position:absolute;top:34px;bottom:0;right:0;background:repeating-linear-gradient(135deg,transparent 0 7px,rgba(176,86,63,.09) 7px 8px)}
-.tlMsg{position:absolute;left:158px;top:50%;transform:translateY(-50%);display:flex;align-items:center;gap:9px;font-size:12.5px;color:var(--ink70);background:var(--card);border:1px solid var(--line);border-radius:10px;padding:9px 13px;box-shadow:var(--sh);z-index:4;max-width:calc(100% - 176px)}
+.tlAfterCx{position:absolute;top:calc(var(--tl-top,40px) - 6px * var(--tl-t,1));bottom:0;right:0;background:repeating-linear-gradient(135deg,transparent 0 7px,rgba(176,86,63,.09) 7px 8px)}
+.tlMsg{position:absolute;left:calc(var(--tl-label-w,140px) + 18px);top:50%;transform:translateY(-50%);display:flex;align-items:center;gap:9px;font-size:12.5px;color:var(--ink70);background:var(--card);border:1px solid var(--line);border-radius:10px;padding:9px 13px;box-shadow:var(--sh);z-index:4;max-width:calc(100% - var(--tl-label-w,140px) - 36px)}
 .tlMsg.err{color:#8a3a26;background:var(--claySoft);border-color:#e7b9aa}
 .tlBadge{display:inline-flex;align-items:center;gap:7px;border:1px solid var(--line);border-radius:999px;padding:3px 10px 3px 4px;background:var(--card);font:12px var(--sans);color:var(--ink);white-space:nowrap}
 .tlBadge i{width:20px;height:20px;border-radius:50%;display:grid;place-items:center;background:var(--slateSoft);color:var(--tlSlate);flex:none}
@@ -1160,7 +1213,7 @@
 .tlReq .rq>i{width:14px;height:14px;margin-top:1px;border-radius:50%;border:1.5px solid var(--ink25,#c4bdb0);display:grid;place-items:center}
 .tlReq .rq.ok>i{border:0;background:var(--sage,#6f8d6a);color:#fff}.tlReq .rq.ok>i svg{width:9px;height:9px}
 .tlReq .rq.person>i{border-color:#c79a3a}.tlReq .rq.stop>i{border-color:var(--clay,#b0563f)}
-.tlReq .rq.after>i,.tlReq .rq.next>i{border-style:dashed}
+.tlReq .rq.after>i,.tlReq .rq.next>i{border-style:dashed}.tlReq .rq.was>i{border-style:dotted}.tlReq .rq.was span{color:var(--ink45)}
 .tlReq .rq span{min-width:0;overflow-wrap:anywhere}
 .tlReq .rq.ok span{color:var(--ink)}
 .tlReq .rq small{display:block;font:10px var(--mono,monospace);color:var(--ink45);margin-top:1px}
@@ -1181,33 +1234,127 @@
     const s = doc.createElement("style"); s.id = "tlUiCss"; s.textContent = CSS; (doc.head || doc.documentElement).appendChild(s);
   }
   const badge = (e, sm) => `<span class="tlBadge${sm ? " sm" : ""}"><i>${iconSvg((LANE[e.lane] || LANE.office).ic)}</i><em>${esc(e.print ? e.print.where : stationName(e))}</em>${esc(whoOf(e))}</span>`;
-  // roomier than it was (Paul, 28 Sep: "this entire section is way too crowded"): the seals sit further apart on a
-  //  taller lane, and a day is wider, so nothing crowds even when a day holds three or four of them
-  const CELL_COL = TL_CHART_SEAL + 8, CELL_LANE = TL_CHART_SEAL + 16, TOP = 40, PAD = 18, IDLE = 34, DAYMIN = 150, AXIS = 26;
-  const laneY = (k, laneH) => TOP + (LANE[k] || LANE.office).i * laneH + laneH / 2;
+  /* ════ the chart fits its room (Paul, 5 Oct 2026, on the Timeline tab: "expand the chart and enlarge the seals and all other components of
+     the chart to fit the empty space below ... the full chart should always be visible on one screen without scrolling, this needs to be
+     dynamic in nature") ════
+     The grid takes all the room its host gives it, and one measure of that room (its height and width, read before anything is written)
+     sets every part of the chart together:
+       fitVertical  the height → one scale for the text and the strokes, the lane height, the band for the day heads and the one for the
+                    NOW pill, and the seal size: the lane height less a little air, never more than FIT_CAP. A taller screen spreads
+                    the lanes instead of growing the seals; a shorter one first takes the air out, then the day heads' second line
+                    and the lanes' who-lines go (fewer labels, never clipped ones), and the seals only go below FIT_MIN last.
+       fitChart     the width → how far apart the seals sit, how wide the days are. The seals are laid out one after the other in time,
+                    each as near its neighbour as a seal that must not touch it can be (placeRun: the seal's own circle against every
+                    seal it could touch, so two seals on different lanes may stand one above the other, and two on one lane never
+                    meet). Too wide a chart first closes the spacing up, then the seals themselves get smaller (down to FIT_FLOOR);
+                    a roomy one opens the spacing out (up to FIT_STRETCH times), so the route spans the screen.
+     There is no sideways scroll unless even the smallest seals of a very long history cannot fit. */
+  const FIT_CAP = 84;        // the widest a seal rests on the chart: the app's one shared seal size (SEAL_SIZE); what a taller screen has over goes to the lanes
+  const FIT_MIN = 20;        // under this the labels give way first
+  const FIT_FLOOR = 8;       // only a long history on a narrow screen goes under FIT_MIN
+  const FIT_STRETCH = 2.6;   // the most a roomy chart opens its spacing out
+  const FIT_CLOSE = .2;      // the nearest two seals on different lanes stand, as a part of a seal and its air, when the chart is at its tightest
   const dayKey = t => { const d = new Date(t); return d.getFullYear() * 10000 + (d.getMonth() + 1) * 100 + d.getDate(); };
   const midnight = t => { const d = new Date(t); d.setHours(0, 0, 0, 0); return +d; };
-  /** Day columns and each event's place (x in its day, y on its lane). */
-  function layout(evs, fit) {
-    const COL = Math.max(CELL_COL, fit + 8), LANE_H = Math.max(CELL_LANE, fit + 12);
+  const r2 = n => Math.round(n * 100) / 100;
+  /** What the height and the width of the room decide: the scale, the sizes of the text, the bands and the lanes, and the seal size. */
+  function fitVertical(h, w, cap, minTier) {
+    h = Math.max(120, +h || 360); w = Math.max(200, +w || 800);
+    // one scale for the text and the strokes: it grows with the room (the slower of its height and its width, so a phone keeps phone-sized words), within a floor and a ceiling
+    const t = clamp(Math.min(Math.pow(h / 360, .62), w / 700), .82, 1.7);
+    const fs = { lane: clamp(9.5 * t, 8.5, 16), sub: clamp(11 * t, 9, 14.5), day: clamp(10 * t, 9, 17), small: clamp(9.5 * t, 8.5, 15), pill: clamp(9.5 * t, 8.5, 15) };
+    const L = LANES.length;
+    let top = 0, axis = 0, laneH = 0, s = 0, tier = minTier || 0;
+    for (; tier < 3; tier++) {
+      // tier 0: the day heads of two lines; tier 1: one line; tier 2: one line, closer, and the pill's band as thin as it can be
+      top = Math.round(tier === 0 ? 14 * t + fs.day * 1.25 + fs.small * 1.25 + 2 : tier === 1 ? 14 * t + fs.day * 1.25 : 5 + fs.day * 1.2 + 4);
+      axis = Math.round(tier < 2 ? fs.pill * 1.2 + 18 * t : fs.pill * 1.2 + 12);
+      laneH = Math.max(12, Math.floor((h - top - axis) / L));
+      s = Math.min(cap, laneH - clamp(laneH * .18, 4, 22));
+      if (s >= FIT_MIN) break;
+    }
+    if (tier === 3) tier = 2;
+    if (s < FIT_MIN) s = Math.max(FIT_FLOOR, Math.min(cap, laneH - 3));   // (spacing first, then the seal)
+    axis += Math.max(0, h - top - axis - laneH * L);   // (the pixels that do not divide into lanes go to the foot, so the lanes end exactly where the room does)
+    const padx = Math.round(clamp(14 * Math.pow(t, .8), 7, 22) * (w < 520 ? .65 : 1)), ic = clamp(12 * t, 10, 19);
+    // the label column: a lane's name on one line, but never wider than a quarter of the room; narrower than that the name wraps at its spaces, and the column is never
+    // narrower than the longest word (ASSEMBLY, SHIPPING) with its icon
+    const word = 8 * .7 * fs.lane + ic + 5 * t + 2 * padx + 4;
+    const labelW = Math.round(clamp(fs.lane * 10.6 + 2 * padx + 6, word, Math.max(word, w * .26)));
+    return { h, w, t, fs, top, axis, laneH, s: Math.floor(s * 2) / 2, cap, labelW, padx, ic, dhx: padx, dhy: Math.round(tier === 2 ? 4 : 9 * t),
+      showSmall: tier === 0, showSub: laneH >= fs.lane * 1.3 + fs.sub * 1.3 + 8, tier, route: r2(clamp(1.6 * t, 1.3, 3.6)), future: r2(clamp(1.4 * t, 1.2, 3.2)) };
+  }
+  /** The days of the drawn seals, oldest first: each with its seals' lanes, the words of its head and the idle days before it. */
+  function dayModel(evs) {
     const days = []; let cur = null;
-    for (const e of evs) { const k = dayKey(e.at); if (!cur || cur.k !== k) { cur = { k, at: e.at, evs: [] }; days.push(cur); } cur.evs.push(e); }
-    let x = 0, alt = 0; const cols = [];
+    for (const e of evs) { const k = dayKey(e.at); if (!cur || cur.k !== k) { cur = { k, at: e.at, evs: [], lanes: [], gap: 0, prev: 0 }; days.push(cur); } cur.evs.push(e); cur.lanes.push((LANE[e.lane] || LANE.office).i); }
     days.forEach((d, i) => {
-      if (i) {
-        const gap = Math.round((midnight(d.at) - midnight(days[i - 1].at)) / 864e5) - 1;
-        if (gap > 2) { cols.push({ idle: 1, x, w: IDLE + 22, label: gap + " days" }); x += IDLE + 22; }
-        else for (let g = 1; g <= gap; g++) { const dd = new Date(midnight(days[i - 1].at) + g * 864e5 + 36e5 * 12); cols.push({ idle: 1, x, w: IDLE, label: DAYN[dd.getDay()] }); x += IDLE; }
-      }
       // its head's second line ("8:52 AM – 3:44 PM · 9", one time when there is one) never runs into the next day
-      const t0 = timeOf(d.evs[0].at), t1 = timeOf(d.evs[d.evs.length - 1].at), span = (t0 === t1 ? t0 : t0 + " – " + t1) + " · " + d.evs.length;
-      const w = Math.max(DAYMIN, PAD * 2 + d.evs.length * COL, Math.ceil(26 + span.length * 6.1));
-      cols.push({ x, w, at: d.at, evs: d.evs, alt: alt++ % 2, span });
-      d.evs.forEach((e, j) => { e.x = x + PAD + j * COL + COL / 2; e.y = laneY(e.lane, LANE_H); });
+      const t0 = timeOf(d.evs[0].at), t1 = timeOf(d.evs[d.evs.length - 1].at), dt = new Date(d.at);
+      d.span = (t0 === t1 ? t0 : t0 + " – " + t1) + " · " + d.evs.length;
+      d.chars = (DAYN[dt.getDay()] + " · " + MON[dt.getMonth()] + " " + dt.getDate()).length + (dt.getFullYear() !== new Date().getFullYear() ? 5 : 0);
+      d.short = (DAYN[dt.getDay()] + " " + dt.getDate()).length;   // (a very tight chart names a day "THU 1")
+      if (i) { d.prev = days[i - 1].at; d.gap = Math.round((midnight(d.at) - midnight(d.prev)) / 864e5) - 1; }
+    });
+    return days;
+  }
+  /** x of each seal of a run (their centres, from the run's start): each as near the one before as it may stand (`c` of a seal and its
+   *  air), and clear of every seal its own circle could touch, which lies on a lane near enough. */
+  function placeRun(lanes, s, g, c, first, laneH) {
+    const pitch = s + g, xs = [];
+    for (let j = 0; j < lanes.length; j++) {
+      let x = j ? xs[j - 1] + c * pitch : first;
+      for (let i = j - 1; i >= 0 && xs[i] + pitch > x; i--) {
+        const dy = Math.abs(lanes[j] - lanes[i]) * laneH;
+        if (dy < pitch) x = Math.max(x, xs[i] + Math.sqrt(pitch * pitch - dy * dy));
+      }
+      xs.push(x);
+    }
+    return xs;
+  }
+  /** The spacing for a chart `lam` wide: 0 the tightest, 1 as the chart was drawn, up to FIT_STRETCH roomier. */
+  function fitKnobs(lam, s, V) {
+    const lo = Math.min(lam, 1), up = Math.max(lam, 1), mix = (a, b) => a + (b - a) * lo;
+    const pad1 = Math.max(14, s * .55), day1 = 150 * V.t, idle1 = Math.max(26, 34 * V.t);
+    return { s, lo, up, g: mix(2, clamp(s * .14, 5, 12)), c: mix(FIT_CLOSE, 1) * up, pad: mix(Math.max(3, pad1 * .25), pad1) * up, dayMin: mix(day1 * .3, day1) * up, idle: mix(idle1 * .6, idle1) * Math.sqrt(up) };
+  }
+  /** The day columns and every seal's x, for one spacing: cols (the days, the idle ones between), xs (the seals), nowX, gx (the steps to come), width. */
+  function buildChart(days, ghostLanes, V, k) {
+    const { s, g, c, pad } = k, step = c * (s + g), cols = [], xs = [];
+    let x = 0, alt = 0;
+    days.forEach(d => {
+      // (an idle day's name always fits its own column: it is centred in it, and never runs over the day beside it)
+      const idle = (label, w0) => { const w = Math.ceil(Math.max(w0, label.length * .74 * V.fs.day + 10)); cols.push({ idle: 1, x, w, label }); x += w; };
+      const tight = k.lo < .45;   // (a chart closed up this far names its days and its idle stretches short: THU 1, 3d)
+      if (d.gap > 2) idle(tight ? d.gap + "d" : d.gap + " days", k.idle + 22 * k.lo);
+      else for (let q = 1; q <= d.gap; q++) idle(DAYN[new Date(midnight(d.prev) + q * 864e5 + 36e5 * 12).getDay()], k.idle);
+      const rel = placeRun(d.lanes, s, g, c, pad + s / 2, V.laneH);
+      const named = (tight ? d.short : d.chars) * .74 * V.fs.day, said = d.span.length * .62 * V.fs.small, head = V.dhx * 1.57 + (V.showSmall ? Math.max(named, said) : named);
+      const w = Math.ceil(Math.max(k.dayMin, head, (rel.length ? rel[rel.length - 1] + s / 2 : 0) + pad * .8));
+      cols.push({ x, w, at: d.at, evs: d.evs, alt: alt++ % 2, span: d.span, short: tight });
+      for (const r of rel) xs.push(Math.round(x + r));
       x += w;
     });
-    return { cols, w: x };
+    const nowX = Math.round(xs.length ? xs[xs.length - 1] + Math.max(s / 2 + 5, .75 * step) : pad + s / 2);
+    const gr = placeRun(ghostLanes, s, g, c, s / 2 + 8, V.laneH), gx = gr.map(v => Math.round(nowX + v));
+    const end = (gx.length ? gx[gx.length - 1] + s / 2 : nowX) + Math.max(10, pad * .6);
+    return { cols, xs, nowX, gx, step, half: Math.max(s / 2 + 3, step / 2), width: Math.ceil(Math.max(x, end)) };
   }
+  /** The widest spacing, then the largest seals, that fit `availW`: → buildChart's answer with the seal size (s), how open the spacing is (lam) and `over` when even the smallest seals do not fit. */
+  function fitChart(days, ghostLanes, V, availW) {
+    const need = (lam, s) => buildChart(days, ghostLanes, V, fitKnobs(lam, s, V)).width;
+    let s = V.s, lam = 0;
+    if (need(0, s) > availW) {   // closed up as far as it goes and still too wide: smaller seals
+      let lo = FIT_FLOOR, hi = s;
+      if (need(0, lo) <= availW) for (let i = 0; i < 12; i++) { const mid = (lo + hi) / 2; if (need(0, mid) <= availW) lo = mid; else hi = mid; }
+      s = lo;
+    } else if (need(FIT_STRETCH, s) <= availW) lam = FIT_STRETCH;
+    else { let lo = 0, hi = FIT_STRETCH; for (let i = 0; i < 16; i++) { const mid = (lo + hi) / 2; if (need(mid, s) <= availW) lo = mid; else hi = mid; } lam = lo; }
+    s = Math.floor(s * 2) / 2;
+    const B = buildChart(days, ghostLanes, V, fitKnobs(lam, s, V));
+    return Object.assign(B, { s, lam, over: B.width > availW + 1 });
+  }
+  const laneY = (k, V) => V.top + (LANE[k] || LANE.office).i * V.laneH + V.laneH / 2;
   const pathD = pts => { let d = ""; pts.forEach((e, i) => { if (!i) { d = `M${e.x} ${e.y}`; return; } const p = pts[i - 1], mx = (p.x + e.x) / 2; d += ` C${mx} ${p.y} ${mx} ${e.y} ${e.x} ${e.y}`; }); return d; };
 
   /* ════ one order's timeline, read once and shared (adversarial wave 2) ════
@@ -1334,6 +1481,10 @@
     // events/byKey: what is drawn (one piece's, or all); every/allKeys: all the order's (opts.pieces, opts.piece: agent F)
     const S = { events: [], shown: [], shownKeys: new Set(), byKey: new Map(), every: [], allKeys: new Map(), pieces: Array.isArray(opts.pieces) ? opts.pieces : [], piece: opts.piece || null, cancelled: null, where: null, D: null, mark: null, markStage: null, hl: new Set(), sig: "",
       stamping: null, deferredPaint: null, loaded: false, loading: null, error: "", dead: false, lastLoad: 0, seq: 0, nowX: 0, pendingFocus: null, hlDone: false };
+    // where the piece IS now (opts.placement(key|null) -> the page's PiecePlacement; null asks for the order's: one piece's, or the roll-up of all); see derive
+    const plaOf = k => { try { return typeof opts.placement === "function" ? opts.placement(k == null ? null : k) || null : null; } catch (err) { warn("placement", err); return null; } };
+    const pieceSig = x => JSON.stringify(x.map(p => [p.key, p.qty, p.pools, p.sheets])) + "#" + plaSig(x);
+    const plaSig = ps => [plaOf(null)].concat((ps || []).map(p => plaOf(p.key))).map(q => (q && q.sig) || "").join("|");
     const timers = new Set();
     const later = (fn, ms) => { const t = setTimeout(() => { timers.delete(t); if (!S.dead) fn(); }, ms); timers.add(t); return t; };
     const cancelT = t => { if (t) { clearTimeout(t); timers.delete(t); } return 0; };
@@ -1351,7 +1502,7 @@
     if (tb) { bar.classList.add("inTools"); tb.appendChild(bar); }
     const $ = s => box.querySelector(s) || (tb ? bar.querySelector(s) : null), $$ = s => [...box.querySelectorAll(s)];
     if (compact) $(".tlRail").appendChild($(".tlMsg"));   // the rail alone: its wait and error lines sit on it
-    const scroller = $(".tlScroll"), exp = $(".tlExp");
+    const scroller = $(".tlScroll"), exp = $(".tlExp"), gridEl = $(".tlGrid");
     let fitObserver = null;
     let unsub = null, unfeed = null, pollT = 0, busyT = 0, zoomFor = null;
     // what the lanes' names show now: a redraw that would write the same leaves them (and their layout) alone
@@ -1433,7 +1584,7 @@
     }
     /** What is drawn, in one string: an answer that says the same repaints nothing (a stamp still dropping keeps going). */
     function sigOf() {
-      return S.every.map(e => e.key + (e.pending ? "*" : "")).join("|") + "#" + (S.cancelled ? S.cancelled.at || 1 : 0) + "#" + JSON.stringify(S.where || "");
+      return S.every.map(e => e.key + (e.pending ? "*" : "")).join("|") + "#" + (S.cancelled ? S.cancelled.at || 1 : 0) + "#" + JSON.stringify(S.where || "") + "#" + plaSig(S.pieces);
     }
     function afterFirst() {
       if (S.pendingFocus != null) { const id = S.pendingFocus; S.pendingFocus = null; if (focus(id)) return; }
@@ -1455,7 +1606,20 @@
      *  work out every style those writes have changed, again for each read, and a live step then no longer fits a frame. */
     function measure() {
       const rail = $(".tlRail"), wrap = rail && rail.querySelector(".tlStops"), host = rail && rail.closest(".tlUI.compact");
-      S.M = { stops: wrap ? wrap.clientWidth || rail.clientWidth : 0, host: host ? host.clientHeight : 0, scroll: scroller.clientWidth };
+      S.M = { stops: wrap ? wrap.clientWidth || rail.clientWidth : 0, host: host ? host.clientHeight : 0, scroll: scroller.clientWidth, grid: compact ? { w: 0, h: 0 } : gridSize() };
+    }
+    /** The room the chart has: its grid's inner size, which its host decides (never what is drawn in it). */
+    const gridSize = () => ({ w: gridEl.clientWidth, h: gridEl.clientHeight });
+    /** Writes what one measure of the room decided (fitVertical) as the sizes the chart's styles read: the scale, the bands, the lanes, the text. */
+    let fitSig = "";
+    function applyFit(V) {
+      const sig = [V.h, V.w, V.t, V.labelW, V.top, V.axis, V.laneH, V.showSub, V.showSmall].join("|");
+      if (sig === fitSig) return; fitSig = sig;
+      const st = box.style, set = (k, v) => st.setProperty(k, v), px = n => r2(n) + "px";
+      set("--tl-t", String(r2(V.t))); set("--tl-label-w", px(V.labelW)); set("--tl-top", px(V.top)); set("--tl-axis", px(V.axis)); set("--tl-lane-height", px(V.laneH));
+      set("--tl-fs-lane", px(V.fs.lane)); set("--tl-fs-sub", px(V.fs.sub)); set("--tl-fs-day", px(V.fs.day)); set("--tl-fs-small", px(V.fs.small)); set("--tl-fs-pill", px(V.fs.pill));
+      set("--tl-ic", px(V.ic)); set("--tl-padx", px(V.padx)); set("--tl-dhx", px(V.dhx)); set("--tl-dhy", px(V.dhy));
+      box.classList.toggle("tlNoSub", !V.showSub); box.classList.toggle("tlNoSmall", !V.showSmall);
     }
     function repaint(o) {
       o = o || {};
@@ -1465,7 +1629,7 @@
       }
       measure();
       sealHover.cancel(true); // a redraw cannot preserve hover just because a larger parent still matches :hover
-      const D = S.D = deriveNow();
+      const D = S.D = deriveNow(); S.psig = pieceSig(S.pieces);
       // every event stays in S.events (the host, and the step explainer, read them all); only the seals are drawn
       S.shown = withPrints(S.events); S.shownKeys = new Set(S.shown.map(e => e.key));
       const now = Date.now(), pressKeys = (o.fresh || []).filter(k => { const e = S.byKey.get(k); return e && (e.live || e.pending || (!e.derived && +e.at >= now - 300000 && +e.at <= now + 60000)); });
@@ -1514,10 +1678,10 @@
     }
     function deriveNow() {
       const p = pieceNow();
-      if (p) return railed(derive(S.events, S.cancelled), withDone(stagesFor(p.line), S.events));
-      const D = derive(S.events, S.cancelled, whereNow());
+      if (p) return railed(derive(S.events, S.cancelled, null, null, plaOf(p.key)), withDone(stagesFor(p.line), S.events));
+      const D = derive(S.events, S.cancelled, whereNow(), null, plaOf(null));
       if (S.pieces.length < 2) return railed(D, railNow(S.events));
-      const sum = summary(S.every, S.pieces, S.cancelled), far = D.step;
+      const sum = summary(S.every, S.pieces, S.cancelled, plaOf), far = D.step;
       if (D.hand && !sum.each.every(x => x.D.hand)) D.hand = null;   // (completed by hand: every piece of it)
       D.step = Math.min(D.step, sum.step);
       // a step that every piece taking it has passed is not what the order waits on (a stud's Welded, done, while the
@@ -1529,9 +1693,10 @@
      *  The rail and the lanes cross over to it, from the side it lies on (dir). */
     function setPieces(list, key, dir) {
       if (S.dead) return;
-      const ps = Array.isArray(list) ? list : S.pieces, sigP = x => JSON.stringify(x.map(p => [p.key, p.qty, p.pools, p.sheets]));
+      const ps = Array.isArray(list) ? list : S.pieces;
       key = key || null;
-      const moved = key !== S.piece, changed = sigP(ps) !== sigP(S.pieces);
+      // (the pieces AND where each is now: a piece taken off its sheet changes the rail with no change of pieces; S.psig is what was drawn last)
+      const moved = key !== S.piece, changed = pieceSig(ps) !== S.psig;
       if (!moved && !changed) return;
       S.pieces = ps; S.piece = key; narrow();
       if (moved || (S.mark && !S.byKey.has(S.mark))) { S.mark = null; S.markStage = null; }   // (the ring was round another piece's stamp)
@@ -1679,28 +1844,39 @@
       const cv = $(".tlCanvas"), evs = S.shown, oldNow = S.nowX;
       paintLanes();
       const pending = D.cancelled || D.hand ? [] : (D.rail || STAGES.map((s, i) => ({ s, i }))).filter(g => g.i > D.step);
-      const base = baseSealSize(cv), count = Math.min(12, Math.max(1, evs.length + pending.length)), available = S.M ? S.M.scroll : scroller.clientWidth;
-      // Every member of a dense timeline shrinks by the same ratio; a sparse timeline uses the shared base size.
-      // The timeline cells provide 34px by 42px (the chart seal's 26px and its room). Fit the whole group inside them rather than making taller lists.
-      const fit = Math.min(base, CELL_COL - 8, CELL_LANE - 12, available > 0 ? Math.max(24, (available - PAD * 2) / count - 8) : base);
-      const COL = Math.max(CELL_COL, fit + 8), LANE_H = Math.max(CELL_LANE, fit + 12), H = TOP + LANES.length * LANE_H + AXIS;
-      box.style.setProperty("--tl-lane-height", LANE_H + "px"); cv.style.setProperty("--seal-fit", fit + "px");
-      const { cols, w } = layout(evs, fit), last = evs[evs.length - 1];
-      const nowX = last ? last.x + COL * .75 : PAD + COL / 2;
-      const ghosts = pending.map((g, j) => ({ key: "ghost-" + g.s.k, type: g.s.kind, s: g.s, x: nowX + COL * (j + .9), y: laneY(g.s.lane, LANE_H) }));
-      const W = Math.ceil(Math.max(w, nowX + COL * (ghosts.length + .6) + 16));
+      // the room, read once before anything is written (measure): every part of the chart is sized to it together
+      // (measure() has read it already, before this redraw wrote anything: never read again here, a layout read in the middle of the writes
+      //  makes the page work out every style they changed. A chart in a hidden tab is drawn for the last room it had; the observer redraws it when it is shown)
+      const seen = S.M && S.M.grid ? S.M.grid : gridSize();
+      if (seen.h) S.room = seen;
+      const grid = seen.h ? seen : S.room || { w: 800, h: 360 }, resized = !S.fit || S.fit.w !== seen.w || S.fit.h !== seen.h;
+      const cap = Math.min(FIT_CAP, baseSealSize(cv));
+      let V = fitVertical(grid.h, grid.w, cap);
+      const availW = Math.max(60, grid.w - V.labelW), days = dayModel(evs), ghostLanes = pending.map(g => (LANE[g.s.lane] || LANE.office).i);
+      let P = fitChart(days, ghostLanes, V, availW);
+      if (V.showSmall && P.s < V.s - .5) {   // (the day heads' second line costs the seals some size: the heads keep one line, and the room that gives back goes to the lanes, when that is the better chart)
+        const V1 = fitVertical(grid.h, grid.w, cap, 1), P1 = fitChart(days, ghostLanes, V1, availW);
+        if (P1.s > P.s + .5) { V = V1; P = P1; }
+      }
+      applyFit(V);
+      const fit = P.s, last = evs[evs.length - 1], H = V.h, nowX = P.nowX;
+      cv.style.setProperty("--seal-fit", fit + "px");
+      evs.forEach((e, i) => { e.x = P.xs[i]; e.y = laneY(e.lane, V); });
+      const ghosts = pending.map((g, j) => ({ key: "ghost-" + g.s.k, type: g.s.kind, s: g.s, x: P.gx[j], y: laneY(g.s.lane, V) }));
+      const W = Math.max(availW, P.width), cols = P.cols;
+      scroller.style.overflowX = P.over ? "auto" : "";   // (hidden, unless even the smallest seals of a very long history cannot fit)
       const thisYear = new Date().getFullYear();
-      const dayCols = cols.map(c => { const d = c.idle ? null : new Date(c.at); return `<div class="tlDay${c.alt ? " alt" : ""}${c.idle ? " idle" : ""}" style="left:${c.x}px;width:${c.w}px"><div class="dh">${c.idle ? esc(c.label) : `${DAYN[d.getDay()]} · ${MON[d.getMonth()]} ${d.getDate()}${d.getFullYear() !== thisYear ? " " + d.getFullYear() : ""}<small>${esc(c.span)}</small>`}</div></div>`; }).join("");
-      const lines = LANES.map((L, i) => `<div class="tlLaneLine" style="top:${TOP + (i + 1) * LANE_H}px"></div>`).join("");
+      const dayCols = cols.map(c => { const d = c.idle ? null : new Date(c.at); return `<div class="tlDay${c.alt ? " alt" : ""}${c.idle ? " idle" : ""}" style="left:${c.x}px;width:${c.w}px"><div class="dh">${c.idle ? esc(c.label) : `${c.short ? `${DAYN[d.getDay()]} ${d.getDate()}` : `${DAYN[d.getDay()]} · ${MON[d.getMonth()]} ${d.getDate()}${d.getFullYear() !== thisYear ? " " + d.getFullYear() : ""}`}<small>${esc(c.span)}</small>`}</div></div>`; }).join("");
+      const lines = LANES.map((L, i) => `<div class="tlLaneLine" style="top:${V.top + (i + 1) * V.laneH}px"></div>`).join("");
       const future = ghosts.length && last ? pathD([last].concat(ghosts)) : "";
       // the cancel line: at the cancel stamp (or, with only the record, where its time falls)
       let cxX = 0;
-      if (D.cancelled) { const ce = evs.filter(e => CANCEL_TYPES.has(e.type)).pop(); cxX = ce ? ce.x + COL / 2 : ((evs.filter(e => e.at <= D.cancelled.at).pop() || { x: nowX - COL * .75 }).x + COL / 2); }
+      if (D.cancelled) { const ce = evs.filter(e => CANCEL_TYPES.has(e.type)).pop(); cxX = ce ? ce.x + P.half : ((evs.filter(e => e.at <= D.cancelled.at).pop() || { x: nowX - P.step * .75 }).x + P.half); }
       const Wh = D.W, stn = Wh.station && !["sheet", "waiting", "review", "held"].includes(Wh.stage) ? STATION_NAME[Wh.station] || Wh.station : "";
       const nowLbl = D.hand ? ["COMPLETED", shortWhen(D.hand.at)].concat(personOf(D.hand) ? [personOf(D.hand).toUpperCase()] : []).join(" · ") : D.hold ? "NOW · ON HOLD" : Wh.stage === "completed" || (D.cur < 0 && last) ? "COMPLETED" : stn ? "NOW · AT " + stn.toUpperCase() : last ? "NOW · " + String(Wh.label || "").toUpperCase() : "NOW";
       cv.style.width = W + "px"; cv.style.height = H + "px";
       const back = dayCols + lines +
-        `<svg class="tlPath" width="${W}" height="${H}" aria-hidden="true">${evs.length > 1 ? `<path d="${pathD(evs)}" fill="none" stroke="var(--gold)" stroke-width="1.6" stroke-opacity=".55" stroke-linecap="round"/>` : ""}${future ? `<path d="${future}" fill="none" stroke="var(--ink25)" stroke-width="1.4" stroke-dasharray="3 5"/>` : ""}</svg>` +
+        `<svg class="tlPath" width="${W}" height="${H}" aria-hidden="true">${evs.length > 1 ? `<path d="${pathD(evs)}" fill="none" stroke="var(--gold)" stroke-width="${V.route}" stroke-opacity=".55" stroke-linecap="round"/>` : ""}${future ? `<path d="${future}" fill="none" stroke="var(--ink25)" stroke-width="${V.future}" stroke-dasharray="${r2(3 * V.t)} ${r2(5 * V.t)}"/>` : ""}</svg>` +
         (D.cancelled ? `<div class="tlAfterCx" style="left:${cxX}px"></div><div class="tlNowLine cx" style="left:${cxX}px"><span>CANCELLED · ${esc(shortWhen(D.cancelled.at))}</span></div>` : `<div class="tlNowLine" style="left:${nowX}px"><span>${esc(nowLbl)}</span></div>`);
       const clsOf = e => `tlSt${S.mark === e.key ? " sel" : ""}${e.pending ? " pend" : ""}${S.hl.has(e.key) ? " hl" : ""}`;
       const posOf = e => `left:${e.x}px;top:${e.y}px;--s:var(--seal-fit,var(--seal-size,84px));--rot:${rotOf(e)}deg`, sayOf = e => `${labelOf(e.type)} · ${titleOf(e)} · ${longWhen(e.at)} · ${whoOf(e)}${placeOf(e) ? " · " + placeOf(e) : ""}`;
@@ -1729,7 +1905,30 @@
       }
       S.nowX = nowX;
       // (a NOW label longer than the room before its line, "COMPLETED · TUE 3:08 AM · PAUL" early on, reads after it)
-      const nl0 = cv.querySelector(".tlNowLine:not(.cx) span"); if (nl0 && (nl0.offsetWidth || nowLbl.length * 6.7 + 12) + 8 > nowX) { nl0.style.right = "auto"; nl0.style.left = "8px"; }
+      const nl0 = cv.querySelector(".tlNowLine:not(.cx) span"); if (nl0 && (nl0.offsetWidth || nowLbl.length * V.fs.pill * .72 + 12) + 8 > nowX) { nl0.style.right = "auto"; nl0.style.left = "calc(8px * var(--tl-t, 1))"; }
+      // a re-fit (the room changed, or a seal arrived and the chart took it in) glides: each seal from where it stood to where it stands, by transform alone,
+      // the rest of the chart fading in. Never on the first drawing (the window opening has its own motion), never while it is being dragged to a size
+      // (a re-fit a moment after the last), never under reduced motion (anim answers none)
+      const pos = new Map();
+      for (const e of evs) pos.set("k:" + e.key, { x: e.x, y: e.y, s: fit });
+      for (const g of ghosts) pos.set("g:" + g.s.k, { x: g.x, y: g.y, s: fit });
+      const before = S.pos, was = S.fit, calm = Date.now() - (S.fitAt || 0) > 140;
+      S.pos = pos; S.fit = { w: seen.w, h: seen.h }; S.fitAt = Date.now();
+      if (!o.first && before && was && was.w > 0 && was.h > 0 && seen.w > 0 && calm && !reduced() && typeof cv.animate === "function") {
+        // (only the seals that move, and not more than a few dozen: a very long history just takes its new places, a frame is worth more than the glide)
+        const moving = [];
+        for (const b of cv.querySelectorAll(".tlSt")) {
+          if (b._tlGlide) { try { b._tlGlide.cancel(); } catch (_) {} b._tlGlide = null; }
+          const id = b.dataset.key ? "k:" + b.dataset.key : b.dataset.stage ? "g:" + b.dataset.stage : "", from = before.get(id), to = pos.get(id);
+          if (!from || !to || b.classList.contains("pending")) continue;
+          const dx = from.x - to.x, dy = from.y - to.y, k = from.s / to.s;
+          if (Math.abs(dx) >= .5 || Math.abs(dy) >= .5 || Math.abs(k - 1) >= .01) moving.push([b, dx, dy, k]);
+        }
+        if (moving.length <= 40) for (const [b, dx, dy, k] of moving) {
+          try { b._tlGlide = b.animate([{ transform: `translate(${dx}px, ${dy}px) scale(${k}) rotate(var(--rot))` }, { transform: "rotate(var(--rot))" }], { duration: 260, easing: E }); } catch (_) { /* no glide */ }
+        }
+        if (resized) for (const n of cv.children) if (n.tagName !== "BUTTON" && !n.classList.contains("tlSt")) { try { n.animate([{ opacity: .3 }, { opacity: 1 }], { duration: 220, easing: E }); } catch (_) { /* no fade */ } }
+      }
       if (o.first) {
         const p = cv.querySelector(".tlPath"); anim(p, [{ opacity: 0 }, { opacity: 1 }], 900, { easing: SLIDE });
         // opens at "now"
@@ -1737,7 +1936,7 @@
       } else {
         // (the canvas keeps its width while it is redrawn, so the scroll stays where the reader left it)
         const nl = cv.querySelector(".tlNowLine:not(.cx)");
-        if (nl && oldNow && Math.abs(oldNow - nowX) > 1) anim(nl, [{ transform: `translateX(${oldNow - nowX}px)` }, { transform: "none" }], 760, { easing: SLIDE });
+        if (nl && oldNow && !resized && Math.abs(oldNow - nowX) > 1) anim(nl, [{ transform: `translateX(${oldNow - nowX}px)` }, { transform: "none" }], 760, { easing: SLIDE });
       }
     }
     const cssEsc = s => (root.CSS && root.CSS.escape ? root.CSS.escape(s) : String(s).replace(/["\\]/g, "\\$&"));
@@ -1798,7 +1997,8 @@
       if (b.dataset.key) return S.byKey.get(b.dataset.key) || null;
       const i = STAGES.findIndex(s => s.k === b.dataset.stage); if (i < 0 || !S.D) return null;
       if ((b.classList.contains("x") || b.classList.contains("tlCxStamp")) && S.D.cancelled) return S.events.filter(e => CANCEL_TYPES.has(e.type)).pop() || { key: "x", type: "cancelled", at: S.D.cancelled.at, by: S.D.cancelled.by, lane: "office", data: null };
-      return S.D.stages[i].first || { key: "future-" + STAGES[i].k, type: STAGES[i].kind, at: 0, ghost: true, by: "" };
+      // (a step the piece no longer stands on, taken off its sheet, is drawn as a ghost: its zoom is the ghost too, the real seal stays on the Timeline)
+      return (stepDone(S.D, i) && S.D.stages[i].first) || { key: "future-" + STAGES[i].k, type: STAGES[i].kind, at: 0, ghost: true, by: "" };
     }
     const liftOf = b => b.classList.contains("tlStop") ? b.querySelector(".tlSeal") : b;
     function showZoom(b, kb) {
@@ -1868,7 +2068,7 @@
      *  (or, for a step not reached, its dashed stamp). */
     function stageClick(stop, click) {
       const e = evOfEl(stop);
-      const i = STAGES.findIndex(s => s.k === stop.dataset.stage), last = S.D && i >= 0 && S.D.stages[i].last;
+      const i = STAGES.findIndex(s => s.k === stop.dataset.stage), last = S.D && i >= 0 && (!S.D.fenced || stepDone(S.D, i)) && S.D.stages[i].last;
       const target = stop.classList.contains("x") ? e : last || e;
       if (!target || !target.key || !S.byKey.has(target.key)) {
         if (i >= 0 && S.loaded) {
@@ -1956,15 +2156,22 @@
       box.remove();
     }
 
+    /** The room changed (the window, the order window, the browser's zoom, a taller header ...): the chart is fitted to it again, in the frame the
+     *  change was seen in. The room is read from its host (el) and from the grid itself, so nothing the chart writes can change what it observes. */
     function fitAll() {
       if (S.dead) return;
       if (S.stamping) { S.deferredPaint = S.deferredPaint || {}; return; }
       measure();
       fitRail($(".tlRail"), S.M);
-      if (!compact && S.loaded && S.D) paintCanvas(S.D, {});
+      if (compact) return;
+      const g = S.M.grid;
+      if (!g.w || !g.h) return;   // (hidden: the observer says when it is shown)
+      if (S.fit && S.fit.w === g.w && S.fit.h === g.h) return;   // (the same room: it fits it already)
+      if (S.loaded && S.D) paintCanvas(S.D, {});
+      else { applyFit(fitVertical(g.h, g.w, Math.min(FIT_CAP, baseSealSize($(".tlCanvas"))))); S.fit = { w: g.w, h: g.h }; }   // (nothing to draw yet: the lanes' names and bands already stand at their size)
     }
     root.addEventListener("resize", fitAll);
-    if (typeof root.ResizeObserver === "function") { fitObserver = new root.ResizeObserver(fitAll); fitObserver.observe(el); }
+    if (typeof root.ResizeObserver === "function") { fitObserver = new root.ResizeObserver(fitAll); fitObserver.observe(el); if (!compact) fitObserver.observe(gridEl); }
     box.addEventListener("click", onClick);
     box.addEventListener("focusin", expFocus); box.addEventListener("focusout", expBlur);
     if (tb) bar.addEventListener("click", onClick);
@@ -1983,7 +2190,8 @@
       try { if (root.OrderTimeline && typeof root.OrderTimeline.onRecord === "function") unsub = root.OrderTimeline.onRecord(onRecord); } catch (_) {}
       if (!src) { doc.addEventListener("visibilitychange", onVis); arm(); }   // (a feed polls for every mount)
     }
-    return { refresh, destroy, focus, setPieces };
+    // state(): the derived state last drawn (D: steps, hold, placement), for a host's step card to read the very same answer as the rail
+    return { refresh, destroy, focus, setPieces, state: () => S.D };
   }
 
   /* ════ the order view's "Where it is now" card (spec §3, §8) ════
@@ -2071,7 +2279,7 @@
   /** The icon of the lane an event belongs to (the station badge's disc), as SVG markup; "" for no event. */
   function iconOf(x) { const e = x && norm(x); return e ? iconSvg((LANE[e.lane] || LANE.office).ic) : ""; }
 
-  root.OrderTimelineUI = { mount, feed, stampSvg, derive, STAGES, stagesFor, ofPiece, summary, isStud, engraveOf, KIND, labelOf, nowStamps, wireNow, iconOf, sealed, sealsOf, blockerOf, requirementsOf, explainOn,
+  root.OrderTimelineUI = { mount, feed, stampSvg, derive, stepDone, STAGES, stagesFor, ofPiece, summary, isStud, engraveOf, KIND, labelOf, nowStamps, wireNow, iconOf, sealed, sealsOf, blockerOf, requirementsOf, explainOn,
     stepOf, labelStepOf, personOf, placeOf, opStepOf, whenOf, timeOf, handStepOf, handOf, handDoneOf, handLive, handSealOf, faceModel };
   root.OrderTimelineUI.pollOpenMs = POLL_OPEN;   // how often the open order view's feed reads (tests may set another before it opens)
 })(typeof window !== "undefined" ? window : globalThis);

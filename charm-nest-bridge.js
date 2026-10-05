@@ -1554,6 +1554,8 @@ const Orders = window.Orders = (() => {
   function leaveFor(noted) {
     return (mk, node) => {
       const rid = node.dataset.rid, key = node.dataset.key; if (!key || !mine(rid)) return null;
+      // (Release hold lifts the hold while its film plays in the Nest tab: the film has its own flight and its own note at the end, so the line folds away here; this list's flight and note were drawn at the top left corner, over the tabs, and said "1 still on hold" while the whole order was being released)
+      if (window.HoldUI && HoldUI.busy && HoldUI.busy(rid)) return null;
       const r = rowsOf().find(x => x.key === key), first = !noted.has(rid); noted.add(rid);
       // a newer move of the same order says what is true now: the note its last move left goes
       const note = (text, fn, title) => { if (!first) return null; for (const n of document.querySelectorAll(".mNote")) if (n._anchor && n._anchor.ordRid === rid && n.close) n.close(); return { text, actions: [{ label: "Show", title, fn }] }; };
@@ -9946,6 +9948,8 @@ const Review = window.Review = (() => {
     const leave = (mk, node) => {
       const w = where.get(mk), rid = node && node.dataset.rid, mine = acted.mk === mk && Date.now() - acted.t < 10000;
       const who = rid ? "Order " + rid : "The decision";
+      // (Hold's film plays in the Nest tab and walks the person to On hold itself: this list's flight and its "is on hold under Orders" note were drawn at the top left, over the film)
+      if (rid && window.HoldUI && HoldUI.busy && HoldUI.busy(rid)) return null;
       if (w && w.seg !== RV.cseg) return { to: w.seg === "done" ? DONE_SW : OPEN_SW, note: mine ? { text: `${who} moved to ${w.seg === "done" ? "Completed" : "Open"}`, actions: [{ label: "Show", fn: () => showCard(w.it.settled ? "settled:" + w.it.settled.key + ":" + w.it.settled.t : mk, w.seg) }] } : null };
       if (w && f && w.kind !== f) return { to: chipSel(w.kind), note: mine ? { text: `${who} is now under ${KIND_WORDS[w.kind] || w.kind}`, actions: [{ label: "Show", fn: () => showCard(mk, w.seg, w.kind) }] } : null };
       // its line sent to the sheets with the order's own designs (Send to Sheet on any card): it goes to the sheets, whose
@@ -11303,6 +11307,7 @@ const OrderWin = window.OrderWin = (() => {
     W.pieces = ps;
     if (W.piece && !ps.some(p => p.key === W.piece)) W.piece = null;
     const dir = W.pieceDir; W.pieceDir = 0;
+    refreshPlacement(r); W.placeDrawn = W.placeSig;   // (where each piece IS now, before the mounts draw: they ask for it, opts.placement)
     for (const m of [W.rail, W.tl]) if (m && m.setPieces) tryDo(() => m.setPieces(ps, W.piece, dir));
   }
   /** A piece chosen (null: all of them): the Overview shows that piece's line, and every view crosses over to it. */
@@ -11404,7 +11409,7 @@ const OrderWin = window.OrderWin = (() => {
     // (a piece completed by hand is never the slowest: its steps are skipped, but a custom piece completed by its QR label reads one step in, as the
     //  record's own completion event says, and could be taken for the piece the order waits on while another piece, on a sheet, is still to be cut: Paul's
     //  order 4171711853 read "Order completed" with SNAKE 5 on RG Sheet 1)
-    const sum = tryDo(() => UI.summary(W.events, ps, W.cancelled)), x = sum && sum.each.find(y => !y.D.hand && y.D.step === sum.step);
+    const sum = tryDo(() => UI.summary(W.events, ps, W.cancelled, placeOfKey)), x = sum && sum.each.find(y => !y.D.hand && y.D.step === sum.step);
     return x ? x.events : null;
   }
   /* ── the dots of a piece's row (Paul, 5 Oct 2026, point 5: "Enable each of these solid and hollow green dots into a active hover state like the other
@@ -11422,6 +11427,10 @@ const OrderWin = window.OrderWin = (() => {
      read (place.state "loading") nothing is said and the dots read as the history says. x._pl is the Placement, set once per paint (pdotPlace). */
   function pdotPlace(x, rid) {
     if (x._pl !== undefined) return x._pl;
+    // (the open order's own placement, worked out once per paint by refreshPlacement from the same sheets, hold and history the chips, rail and Sheet tab use, history already
+    //  in it: the dots can never be asked a different question from theirs. Any other order: PiecePlacement.of, then the history)
+    const own = W.placeRid === rid ? placeOfKey(x.p.key) : null;
+    if (own) return (x._pl = own);
     const PP = window.PiecePlacement; let pl = (x.p && x.p.place) || (PP && PP.of ? tryDo(() => PP.of(rid, x.p.key)) : null) || null;
     if (pl && PP && PP.withHistory) pl = tryDo(() => PP.withHistory(pl, x.events || [])) || pl;
     return (x._pl = pl);
@@ -11523,7 +11532,7 @@ const OrderWin = window.OrderWin = (() => {
     let list = ps;
     if (!all) { const key = W.piece || W.key, p = ps.find(x => x.key === key) || (r0 && !r0.loading && r0.key === key ? tryDo(() => piecesOf([r0])[0]) : null); list = p ? [p] : []; }
     // (an order of several waits for its timeline; one piece's row is drawn at once, its buttons never wait for it)
-    const sum = list.length && UI && UI.summary && (!all || W.events) ? tryDo(() => UI.summary(W.events || [], list, W.cancelled)) : null;
+    const sum = list.length && UI && UI.summary && (!all || W.events) ? tryDo(() => UI.summary(W.events || [], list, W.cancelled, placeOfKey)) : null;
     W.pcSum = sum ? Object.assign({ rid }, sum) : null;   // (what the dots' cards read, pieceDotInfo)
     const ctls = sum ? new Map(sum.each.map(x => [x.p.key, tryDo(() => pieceCtl(x.p.key))])) : null;
     // (the Hold of a piece that has no buttons of its own: a place for it, empty when the order cannot be held, or HoldUI is not there)
@@ -11582,12 +11591,14 @@ const OrderWin = window.OrderWin = (() => {
   const PC_WORD = { sorted: "Sorted", welded: "Welded", assembled: "Assembled", packed: "Packed", shipped: "Shipped" };
   function pieceStatusOf(x, sp) {
     const D = x.D || {}, W = D.W || {}, stage = W.stage || "", row = sp && sp.row || null, UI = window.OrderTimelineUI;
-    if (D.cancelled || stage === "cancelled" || (row && row.state === "gone")) return { k: "cancel", text: "Cancelled" };
+    // (the PLACEMENT, charm-nest-piece-placement.js: the one answer to where the piece is now, which the chips, the dots, the rail and the pill read as well)
+    const pl = placeOfKey(x.p.key), heldNow = pl ? pl.state === "hold" : !!(row && row.hold);
+    if (D.cancelled || stage === "cancelled" || (row && row.state === "gone") || (pl && pl.state === "cancelled")) return { k: "cancel", text: "Cancelled" };
     const known = !!sp && !sp.loading, on = sp && sp.nested ? sp.sheets || [] : [], first = on[0] || null;
     // (the steps after the laser: sorting, welding, assembly, shipping happened, a sheet's records or not)
-    if (PC_WORD[stage] && !(row && row.hold)) return { k: "stage", text: PC_WORD[stage], metal: x.p.metal };
+    if (PC_WORD[stage] && !heldNow) return { k: "stage", text: PC_WORD[stage], metal: x.p.metal };
     // (completed by hand, a Complete Order press no Reopen came after: finished, whichever sheet it was on; a hold on the line says it is not)
-    if ((D.hand || (sp && sp.hand) || stage === "completed") && !(row && row.hold)) return { k: "done", text: "Completed" };
+    if ((D.hand || (sp && sp.hand) || stage === "completed" || (pl && pl.state === "hand")) && !heldNow) return { k: "done", text: "Completed" };
     // (on a sheet now: the sheets' own records say so; cut, or its set sent to the laser, adds the check)
     if (on.length) {
       const nice = l => (l && !/\?/.test(l) ? l : ""), name = nice(first.label) || String(W.sheet || "").trim() || first.label || "";
@@ -11595,7 +11606,7 @@ const OrderWin = window.OrderWin = (() => {
       return { k: "sheet", text: name || "On a sheet", say: name ? "On " + name : "", name, check: cut, more: on.length - 1, sheet: { id: first.id || "", pool: (first.pools || [])[0] || "" }, metal: first.metal || x.p.metal };
     }
     // (on no sheet: held, or waiting. A hold taken off the sheets: the line's marker, or the timeline's hold nobody released)
-    const held = !!(row && row.hold) || !!D.hold || stage === "held" || ((tryDo(() => UI && UI.blockerOf && UI.blockerOf(x.events || [])) || {}).label === "On hold");
+    const held = pl && pl.state !== "loading" ? heldNow : !!(row && row.hold) || !!D.hold || stage === "held" || ((tryDo(() => UI && UI.blockerOf && UI.blockerOf(x.events || [])) || {}).label === "On hold");
     if (held) return { k: "hold", text: "On hold" };
     // (the records have not answered yet: the timeline's word, said without a sheet to open)
     if (!known && (stage === "sheet" || stage === "cut") && W.sheet) return { k: "sheet", text: W.sheet, say: "On " + W.sheet, name: W.sheet, check: stage === "cut", more: 0, sheet: null, metal: x.p.metal };
@@ -11734,6 +11745,22 @@ const OrderWin = window.OrderWin = (() => {
     // (all pieces of an order of several: its step is its slowest piece's, as the rail says)
     const ms = evs && lastOf(slowestEvents() || evs, e => ((T[e.type] && T[e.type].milestone) || e.milestone) && !back(e) && !mine(e));
     const last = evs && lastOf(evs, e => e.type !== "note" && e.type !== "teamMessage" && e.type !== "customerMessage" && !back(e) && !mine(e));
+    // (the pill and the card's head say where the order IS now: a piece placed once and taken off since, held or released and not placed again, is on no sheet,
+    //  whatever the last milestone of the history says: the PLACEMENT, the same answer as the rows, the chips and the rail; history past the laser stands)
+    const pl = placeInScope();
+    if (pl && pl.fence && (pl.state === "hold" || pl.state === "waiting") && (ms || last)) {
+      const scoped = slowestEvents() || evs, st1 = e => (UI && UI.stepOf && e ? UI.stepOf(e) : null);
+      const past = (scoped || []).some(e => { const n = st1(e); return n != null && n >= 3; }), shows = e => { const n = st1(e); return n != null && n >= 1; };
+      if (!past && (pl.state === "hold" || shows(ms) || shows(last))) {
+        const e = last || ms, w = pl.wasOn, was = w && w.label ? ` Was on ${w.label}${w.until ? ` until ${w.by ? w.by + " took it off" : "it was taken off"}, ${shopWhen(w.until)}` : " earlier"}.` : "";
+        return { tone: "", pill: pl.state === "hold" ? "On hold" : pl.text || "Waiting for a sheet", k: pl.state === "hold" ? "On hold" : "Waiting for a sheet", t: pl.state === "hold" ? e.text || upperFirst(pl.why) : upperFirst(pl.why) + "." + was, ev: e, place: pl };
+      }
+    }
+    // (and the other way round: every piece is on a sheet, which the sheets' records say, and the timeline has not recorded it yet)
+    if (pl && pl.state === "sheet" && pl.onSheet && !pl.partial && !pl.fence && (ms || last)) {
+      const st2 = e => (UI && UI.stepOf && e ? UI.stepOf(e) : null), shows2 = e => { const n = st2(e); return n != null && n >= 1; };
+      if (!shows2(ms) && !shows2(last)) return { tone: "", pill: "On sheet", k: GROUP_NOW.sheet, t: pl.say, ev: last || ms, place: pl };
+    }
     if (ms || last) {
       const e = last || ms, ty = T[e.type] || {}, mt = ms ? (T[ms.type] || {}) : ty;
       const g = GROUP_NOW[mt.group] || mt.label || "In progress";
@@ -11762,6 +11789,8 @@ const OrderWin = window.OrderWin = (() => {
   function paintNow(r) {
     if(window.Seal?.defer('order-now',()=>paintNow(rowOf(W.key))))return;
     if (!r) return;
+    // (where each piece IS now, again: the timeline brought a step, a sheet's record landed, a hold was pressed or let go; the rail and the Timeline redraw on it)
+    if (refreshPlacement(r) !== W.placeDrawn) { W.placeDrawn = W.placeSig; for (const m of [W.rail, W.tl]) if (m && m.setPieces) tryDo(() => m.setPieces(W.pieces || [], W.piece, 0)); }
     paintEng(r);
     // Older compact order rows omitted approval metadata. Their permanent timeline keeps the exact signature.
     const events=W.evFor===String(r.order.receiptId)?W.events:[],historical=CNEngravingSeals.fromEvents(events,r);
@@ -11808,7 +11837,8 @@ const OrderWin = window.OrderWin = (() => {
     if (st) tryDo(() => UI.wireNow(card, ev => { setView("timeline"); tryDo(() => W.tl && W.tl.focus(ev)); }));
     // hovering the seal or a stamp says what the step needs (timeline-ui's step explainer); a click pins it on the Timeline
     const rid = String(r.order.receiptId);
-    if (UI && UI.explainOn) tryDo(() => UI.explainOn(card, () => ({ events: W.evFor === rid ? shownEvents() || [] : [], cancelled: W.cancelled, context: tlContext(rid), stages: tlStages(rid, true) }), stp => { setView("timeline"); tryDo(() => W.tl && W.tl.focus(stp)); }));
+    // (the card reads the rail's own derived state and the placement: the same answer as the dots, the rail and the rows)
+    if (UI && UI.explainOn) tryDo(() => UI.explainOn(card, () => ({ events: W.evFor === rid ? shownEvents() || [] : [], cancelled: W.cancelled, context: tlContext(rid), stages: tlStages(rid, true), D: W.rail && W.rail.state ? W.rail.state() : null, place: placeInScope() }), stp => { setView("timeline"); tryDo(() => W.tl && W.tl.focus(stp)); }));
   }
   /** The order's own steps (stagesFor its lines: Welded only when a piece is a stud earring); the piece shown's own when
    *  one is picked (piece). null while the order's row is not read. */
@@ -11833,6 +11863,7 @@ const OrderWin = window.OrderWin = (() => {
       // records are not read yet nothing is said about it: a step is never held back by a piece nobody has looked for)
       const op = window.OrderPieces && tryDo(() => OrderPieces.ofRow(x));
       if (op && op.length && !op.some(p => p.unsure)) onSheet = op.every(p => p.nested || p.loading);
+      const pl = placeOfKey(x.key); if (pl && pl.state !== "loading") onSheet = pl.onSheet && !pl.partial;   // (the PLACEMENT: the one answer the rows, chips and rail read)
       const pb = (x.problems || [])[0], hand = !x.hold && !!handOfRow(x);   // (completed by hand: it needs no sheet, so no step waits on it and none asks for a design)
       return { sku: sp.designSku || (x.line && x.line.sku) || "", form: sp.form || "", title: (x.line && x.line.title) || "", state: x.state, reason: x.reason || "", wait: x.wait || null, hold: !!x.hold, hand,
         problem: pb ? String(x.reason || pb.reason || pb.kind || "") : "", engrave: x.engrave || null, engraveCandidate: sp.engraveCandidate, special: sp.special ? sp.special.label || "" : "", onSheet };
@@ -11918,6 +11949,8 @@ const OrderWin = window.OrderWin = (() => {
       // the order's own steps, header rail and Timeline alike: Welded only when one of its pieces is a stud earring,
       // Engraved only when one carries a back engraving (or is not read yet)
       stages: () => tlStages(rid),
+      // (where each piece IS now, the PiecePlacement: the rail's and the Timeline's steps follow it, never the history's high-water mark alone; key null: the order's)
+      placement: key => placeOfKey(key || null),
       context: () => tlContext(rid), onNow: () => {}, onEvents: list => { if (Array.isArray(list) && W.evFor === rid) { W.events = list.slice(); paintNow(rowOf(W.key)); } } }, extra || {});
   }
   /** The shared timeline feed as the mounts see it: the same reads, its answers handed on once the view has landed. */
@@ -12204,7 +12237,7 @@ const OrderWin = window.OrderWin = (() => {
       const sp = x.spec || {}, key = x.key, pools = (x.poolIds || []).map(String), sheets = new Map(), on = new Set(), qty = Math.max(1, Math.round(+(sp.quantity || (x.line && x.line.quantity)) || 1));
       const put = (pid, id, page, o) => {
         on.add(pid); const k = id || page || "?", cur = sheets.get(k) || { id: id || null, page: id ? null : page || null, pools: [] };
-        for (const a of ["metal", "n", "label"]) if (o[a] != null && o[a] !== "" && cur[a] == null) cur[a] = o[a];
+        for (const a of ["metal", "n", "label", "setId", "cut"]) if (o[a] != null && o[a] !== "" && cur[a] == null) cur[a] = o[a];
         if (!cur.pools.includes(pid)) cur.pools.push(pid); sheets.set(k, cur);
       };
       const mine = Array.isArray(op) ? op.filter(c => c && c.lineKey === key) : [];
@@ -12214,7 +12247,7 @@ const OrderWin = window.OrderWin = (() => {
         for (const c of mine) {
           if (c.loading || c.unsure) loading = true;
           const pid = String(c.poolId || c.key);
-          if (c.nested) { const pg = !c.sheetId && window.Pool && Pool.sheetOf ? tryDo(() => Pool.sheetOf(pid)) : null; put(pid, c.sheetId || null, pg, { metal: c.metal, n: c.sheetNo, label: c.sheetLabel }); }
+          if (c.nested) { const pg = !c.sheetId && window.Pool && Pool.sheetOf ? tryDo(() => Pool.sheetOf(pid)) : null; put(pid, c.sheetId || null, pg, { metal: c.metal, n: c.sheetNo, label: c.sheetLabel, setId: c.setId, cut: c.state === "cut" }); }
           else if (!why && c.reason) why = lowerFirst(c.reason);
         }
         // (a held piece whose SKU is not in any master file says that, its root cause, rather than that it is on hold)
@@ -12246,6 +12279,49 @@ const OrderWin = window.OrderWin = (() => {
     const all = scopePieces(r), shown = all.find(p => p.key === r.key) || all[0] || null, sel = W.piece ? all.find(p => p.key === W.piece) || null : null;
     return { all, shown, sel, focus: sel || shown, mine: sel ? [sel] : all, multi: all.length > 1 };
   }
+  /* ── where each piece IS now: ONE answer for every surface of this window (PiecePlacement, charm-nest-piece-placement.js) ──
+     Paul, 5 Oct 2026, image 3: the hold card's chips said "Not on a sheet yet" (read from the sheets' own records) while the rows under it said "Waiting ·
+     next: Laser cut" with Nested done (read from the timeline's high-water step): two sources for one fact. Now the chips and Sheet tab (scopePieces, built
+     from OrderPieces), the rows' words and dots, the header rail, the pill, the hold card and the Timeline's NOW all read the Placement this builds from that
+     one scope (and the permanent history for "since / by / was on"): W.place (Map line key -> Placement), W.placeAll (the order's roll-up). Computed by
+     paintPieces and paintNow; read, cheaply, by the timeline mounts (opts.placement) and the rows. Absent PiecePlacement: the old behaviour. */
+  /** A cancel that stands in these events (a piece's own, or the whole order's: an event with a lineKey is that piece's alone) or in the order's cancel record; null when none, or a restore came after. */
+  function cancelIn(evs) {
+    const cx = (evs && lastOf(evs, e => e.type === "cancelled" || e.type === "etsyCancelled")) || (W.cancelled ? { type: "cancelled", at: W.cancelled.at, by: W.cancelled.by, text: W.cancelled.reason || "" } : null);
+    if (!cx || (evs && lastOf(evs, e => e.type === "cancelRestored" && e.at > cx.at))) return null;
+    return { at: +cx.at || 0, by: cx.by || "", reason: cx.text || "" };
+  }
+  /** The facts of one scope piece (scopePieces) for PiecePlacement.resolve: the sheets it is on, a hold on its line, a hand completion, a cancel, whether the records are read. */
+  function placeFacts(p, cx) {
+    const row = p.row || {}, held = !!(row.hold || row.state === "held"), pools = new Set();
+    for (const h of p.sheets) for (const id of h.pools || []) pools.add(id);
+    return { key: p.key, name: p.name, metal: p.metal, qty: p.qty, cancelled: cx || (row.state === "gone" ? true : false),
+      hold: held ? { reason: String(row.reason || (typeof row.hold === "string" ? row.hold : "") || ""), at: +row.heldAt || 0, by: "" } : null,
+      hand: p.hand ? handOfRow(row) || { state: "completed", how: "print" } : null,
+      sheets: p.nested ? p.sheets.map(h => ({ id: h.id || null, label: h.label, metal: h.metal || p.metal, setId: h.setId || null, cut: !!h.cut, pools: h.pools })) : [],
+      copies: p.qty, copiesOn: p.nested ? Math.min(p.qty, Math.max(1, pools.size)) : 0, loading: !!p.loading, why: p.why };
+  }
+  /** Works out every piece's Placement (and the order's roll-up) from the sheets' records and this window's timeline; returns the signature the mounts redraw on. */
+  function refreshPlacement(r) {
+    const PP = window.PiecePlacement;
+    if (!PP || !r || r.loading) { W.place = null; W.placeAll = null; W.placeRid = ""; W.placeSig = ""; return ""; }
+    const UI = window.OrderTimelineUI, rid = String(r.order.receiptId), evs = W.evFor === rid && Array.isArray(W.events) ? W.events : null;
+    let sc = null; try { sc = scopePieces(r); } catch (e) { console.warn("order view: placement", e); }
+    if (!sc || !sc.length) { W.place = null; W.placeAll = null; W.placeRid = ""; W.placeSig = ""; return ""; }
+    const minis = sc.map(p => ({ key: p.key, tid: String((p.row && p.row.line && p.row.line.transactionId) || ""), pools: ((p.row && p.row.poolIds) || []).map(String), sheets: p.sheets.map(h => h.id).filter(Boolean) })), m = new Map();
+    for (const p of sc) {
+      const mine = minis.find(q => q.key === p.key), own = evs && UI && UI.ofPiece ? evs.filter(e => UI.ofPiece(e, mine, minis)) : evs;
+      let pl = PP.resolve(placeFacts(p, cancelIn(own)));
+      if (own && evs && UI && UI.ofPiece) pl = PP.withHistory(pl, own);
+      m.set(p.key, pl);
+    }
+    W.place = m; W.placeAll = PP.roll([...m.values()]); W.placeRid = rid; W.placeSig = W.placeAll.sig;
+    return W.placeSig;
+  }
+  /** The Placement of one piece (its line key), or the order's roll-up (no key); null while it is not worked out (or PiecePlacement is not loaded). */
+  const placeOfKey = key => !W.place ? null : key ? W.place.get(key) || null : W.placeAll || null;
+  /** The placement the window's scope answers for: the piece picked, else all of them. */
+  const placeInScope = () => placeOfKey(W.piece || null);
   const holds = (p, s) => !!(p && s) && p.sheets.some(h => h.id && s.id ? h.id === s.id : !!(h.page && s.page && h.page === s.page));
   const sheetKeyOf = h => h.id || h.page;
   /** The Sheet view's own sheets: those of the piece picked (a piece on none: none), else all of the order's. When no piece

@@ -192,9 +192,11 @@ const ORDERS = [{ receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * DAY, up
       const rung = () => page.evaluate(() => [...document.querySelectorAll('#orderWin .tlSt.sel')].map(b => b.dataset.key || b.dataset.stage).join() + '|' + [...document.querySelectorAll('#orderWin .tlLane.on')].map(l => l.dataset.lane).join());
       const ring0 = await rung();
       const nothing = async () => await page.evaluate(() => !document.querySelector('#orderWin .tlDetail, #orderWin .tlBig, #orderWin .tlArw, #orderWin .tlPin, .tlExp.on')) && await rung() === ring0;
+      const rest = await page.evaluate(sel => document.querySelectorAll(sel)[1].offsetWidth, sel);
       const r = await click(sel, 1);
-      // (nothing is laid out again by the click, so the stamp grows in a frame or two like any other seal)
-      check(r.t105 != null && r.t105 <= 120 && r.tTarget != null && r.tTarget <= 400, `timeline lane stamp: a click grew it (×1.05 in ${r.t105 == null ? '–' : r.t105.toFixed(0)} ms, target ×${r.k} in ${r.tTarget == null ? '–' : r.tTarget.toFixed(0)} ms)`);
+      // (nothing is laid out again by the click, so the stamp grows in a frame or two like any other seal; the chart's stamps rest at the size their room allows, up to the shared
+      //  84 px, and one at or over the order window's 72px cap is lifted and straightened, not grown any more: it has no ×1.05 to reach)
+      check((r.k === 1 ? rest >= 72 : r.t105 != null && r.t105 <= 120) && r.tTarget != null && r.tTarget <= 400, `timeline lane stamp (${rest}px at rest): a click ${r.k === 1 ? 'lifted' : 'grew'} it (×1.05 in ${r.t105 == null ? '–' : r.t105.toFixed(0)} ms, target ×${r.k} in ${r.tTarget == null ? '–' : r.tTarget.toFixed(0)} ms)`);
       check(await zoomed() === 1 && await page.evaluate(k => (document.querySelector('[data-seal-zoom]').closest('[data-key]') || {}).dataset.key === k, key), '…it is that one stamp that is grown');
       check(await nothing(), '…and nothing else opened: no detail pane, no other step selected or lane lit, no explainer card');
       check(await page.evaluate(() => document.querySelectorAll('#orderWin .tlUI > *:not([hidden])').length) >= 1 && await page.evaluate(() => [...document.querySelectorAll('#orderWin .tlUI > *')].filter(n => getComputedStyle(n).display !== 'none' && !n.matches('.tlGrid, .tlBar, .tlNow, .tlTop, .tlMsg, .tlExp, .tlZoom')).length === 0), '…and the chart is all there is under the tab row (no empty box or divider left where the pane was)');

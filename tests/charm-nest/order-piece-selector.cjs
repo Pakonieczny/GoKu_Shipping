@@ -272,6 +272,8 @@ const K = [key(R3, 1), key(R3, 2), key(R3, 3)], KS = key(R1, 1);
 
     // ═══ 10 · fits 1440, 900 and 390 ═══
     const fit = async label => {
+      // (the pointer rests where the last press was; a row under it slides 2px on hover by design (.owPcRow:hover), which is not a row that does not fit: park it clear of the list first)
+      await page.mouse.move(2, 2); await page.waitForTimeout(260);
       const m = await page.evaluate(() => {
         const box = document.getElementById('owPcSum'), br = box.getBoundingClientRect(), win = document.getElementById('orderWin').getBoundingClientRect(), st = box.querySelector('.owPcState'), sr = st && st.getBoundingClientRect(), hd = box.querySelector('.owPcHd').getBoundingClientRect();
         const rows = [...box.querySelectorAll('.owPcRow')].map(r => ({ clip: r.scrollWidth > r.clientWidth + 1, right: Math.round(r.getBoundingClientRect().right), h: Math.round(r.getBoundingClientRect().height) }));

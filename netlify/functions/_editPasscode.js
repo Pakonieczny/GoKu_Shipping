@@ -46,7 +46,8 @@ function envPasscode(env) { return clean((env || process.env).EDIT_PASSCODE); }
 
 // Constant-time comparison of what a caller offered (trimmed) with the passcode.
 function sameSecret(a, b) {
-  a = String(a == null ? "" : a).trim(); b = String(b == null ? "" : b);
+  try { a = String(a == null ? "" : a).trim(); b = String(b == null ? "" : b); }
+  catch (_) { return false; }                          // (a JSON object with its own toString, {"toString":1}, cannot be turned into text: that is a wrong key, not a crash)
   if (!a || !b) return false;
   const h = x => crypto.createHash("sha256").update(x).digest();
   return crypto.timingSafeEqual(h(a), h(b));

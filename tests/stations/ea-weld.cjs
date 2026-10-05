@@ -91,7 +91,7 @@ const seals = (order, type = 'welded') => st.events.filter(e => e.orderId === or
       if (fn === 'etsyOrderProxy') {
         const id = u.searchParams.get('orderId');
         if (id === UNKNOWN) return json(r, { error: 'Resource not found.' }, 404);
-        if (id === DOWN) return json(r, { error: 'upstream timeout' }, 502);
+        if (id === DOWN) return json(r, { error: 'upstream timeout for Jane Doe at 12 Main St' }, 502);   // (Etsy's own words may carry anything: only a category is ever sent)
         return json(r, { receipt_id: Number(id), status: id === CANC ? 'Canceled' : 'Paid', transactions: TX[id] || [] });
       }
       return json(r, {});
@@ -192,6 +192,8 @@ const seals = (order, type = 'welded') => st.events.filter(e => e.orderId === or
   // 6 · Etsy down: the scan, an error, and the order still counted (the weld is sealed as before)
   await enter(DOWN); await outcome(DOWN, 'complete');
   assert.deepStrictEqual(acts(DOWN).map(e => e.action), ['scan', 'error', 'complete'], 'Etsy down: scan, error, complete: ' + JSON.stringify(acts(DOWN)));
+  assert.strictEqual(acts(DOWN, 'error')[0].detail, 'Etsy order lookup failed', 'the error is a category only: Etsy\'s own words are never sent');
+  assert(!JSON.stringify(st.acts).includes('Main St') && !JSON.stringify(st.acts).includes('Jane Doe'), 'nothing Etsy said reached the activity door');
   assert.strictEqual(acts(DOWN, 'complete')[0].parts, 0, 'pieces unknown'); assert(/not checked/.test(acts(DOWN, 'complete')[0].detail));
   await tl();                                                        // the page cannot tell, so seal and activity both stand (as before)
   assert.strictEqual(seals(DOWN).length, 1, 'Etsy down: the order is still sealed welded, as the activity counts it: ' + JSON.stringify(seals(DOWN)));
