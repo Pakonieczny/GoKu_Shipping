@@ -724,7 +724,7 @@
     if (e.sheetId || e.sheet) f.push(["Sheet", e.sheet || e.sheetId]);
     if (e.sheetId && e.sheet && e.sheet !== e.sheetId) f.push(["Sheet id", e.sheetId]);
     if (e.setId) f.push(["Set", e.setId]);
-    if (e.lineKey) f.push(["Line", e.lineKey]); else if (e.transactionId) f.push(["Transaction", e.transactionId]);
+    if (e.lineKey) f.push(["Piece", e.lineKey]); else if (e.transactionId) f.push(["Transaction", e.transactionId]);
     if (e.device) f.push(["Device", e.device]);
     if (e.source) f.push(["Recorded by", e.source === "etsy" ? "Etsy check" : e.source === "station" ? "Station" : e.source === "system" ? "Automatic" : humanKey(e.source)]);
     if (e.pending) f.push(["Status", "Saving — on its way"]);

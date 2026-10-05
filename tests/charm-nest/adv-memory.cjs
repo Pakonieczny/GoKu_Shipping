@@ -57,7 +57,7 @@ async function main() {
     await check('whether a line was skipped is kept for the lines on the list only', async () => assert.ok(s.skip <= s.lines, `${s.skip} kept for ${s.lines} lines on the list`));
 
     await check('a line on the list skipped now is recorded once', async () => {
-      const key = await page.evaluate(() => { const r = Orders.rows()[3]; r.state = 'skipped'; r.reason = 'line skipped by Test Operator'; Review.syncOrderItems(); Review.syncOrderItems(); return r.key; });
+      const key = await page.evaluate(() => { const r = Orders.rows()[3]; r.state = 'skipped'; r.reason = 'piece skipped by Test Operator'; Review.syncOrderItems(); Review.syncOrderItems(); return r.key; });
       await drained();
       const n = await page.evaluate(k => window.__ev.filter(e => e.type === 'skipped' && e.key === k).length, key);
       assert.equal(n, 1);

@@ -213,7 +213,10 @@ async function productionReadiness(records,{tx=null,revs=null}={}) {
     for(const [key,l] of Object.entries({...archived.lines,...run?.lines}))if(wanted.has(String(l.orderId || key.split('_')[0])))lines.set(key,{...l,key,orderId:String(l.orderId || key.split('_')[0])});
   }
   const evidence=new Map(records.map(s=>[s.id || s.sheetId,s]));
-  const present=new Set(records.flatMap(Readiness.idsOf)),missingOrders=[...new Set([...lines.values()].filter(l=>(l.poolIds || []).some(id=>!present.has(id))).map(l=>l.orderId))];
+  // an order whose pieces are not all on these sheets: the sheets that hold the rest are read too. A line that lost its pool ids is read by the ids the pool gives
+  // its copies ("<line key>_<n>"); a committed line without pieces is a no-design candidate (below), not a lost piece
+  const present=new Set(records.flatMap(Readiness.idsOf)),lostIds=l=>!(l.poolIds || []).length && l.state!=='gone' && !l.noDesign && !l.problems?.length && !['committed','written','labelled'].includes(l.state),
+    missingOrders=[...new Set([...lines.values()].filter(l=>(l.poolIds || []).some(id=>!present.has(id)) || (lostIds(l) && Readiness.copyIds(l,l.key).some(id=>!present.has(id)))).map(l=>l.orderId))];
   for(let i=0;i<missingOrders.length;i+=30){
     const snap=await get(col(SHEETS).where('orders','array-contains-any',missingOrders.slice(i,i+30)).select(...SLIM_SHEET));
     for(const d of snap.docs){if(revs)revs['s:'+d.id]=revOf(d);if(!d.data().archived && !evidence.has(d.id))evidence.set(d.id,{...d.data(),id:d.id});}
@@ -247,7 +250,8 @@ async function productionReadiness(records,{tx=null,revs=null}={}) {
   const decisions=Readiness.decisions([...lines.values()]);
   for(const s of evidence.values())s.engraving=Object.fromEntries(Readiness.idsOf(s).map(id=>[id,decisions[id] || {needed:true,state:'unknown',approved:false}]));
   const orders=Readiness.orderReports([...lines.values()],[...evidence.values()]);
-  for(const s of records)s.orderReadiness=Object.fromEntries(Readiness.orderIds(s).map(id=>[id,orders[id] || {ready:false,why:'Order readiness has not been verified'}]));
+  // each sheet's own reading of its orders: an order waits only for its OTHER pieces (Readiness.forSheet), never for a piece on this very sheet
+  for(const s of records)s.orderReadiness=Object.fromEntries(Readiness.orderIds(s).map(id=>[id,Readiness.forSheet(orders[id],s.id || s.sheetId) || {ready:false,why:'Order readiness has not been verified'}]));
   return records;
 }
 
@@ -579,7 +583,7 @@ async function op_putSheet(b) {
     // an order line goes on a sheet once (Paul, 29 Sep: a design went on its sheet twice): a record that would place one
     // piece twice is refused, in words; one saved so before this check saves as it was, to be put right by hand
     const twice = ids => { const seen = new Set(), dup = new Set(); for (const id of Array.isArray(ids) ? ids : []) if (id) { if (seen.has(id)) dup.add(id); seen.add(id); } return dup; };
-    if (Array.isArray(s.poolIds)) { const was = twice(old.poolIds), extra = [...twice(s.poolIds)].filter(id => !was.has(id)); if (extra.length) return { error: `Sheet ${s.id} was not saved: it would put ${extra.length === 1 ? "piece " + extra[0] : `${extra.length} pieces (${extra.slice(0, 3).join(", ")})`} on it twice — an order line goes on a sheet once`, status: 409 }; }
+    if (Array.isArray(s.poolIds)) { const was = twice(old.poolIds), extra = [...twice(s.poolIds)].filter(id => !was.has(id)); if (extra.length) return { error: `Sheet ${s.id} was not saved: it would put ${extra.length === 1 ? "piece " + extra[0] : `${extra.length} pieces (${extra.slice(0, 3).join(", ")})`} on it twice — a piece goes on a sheet once`, status: 409 }; }
     // a piece a cleanup took off this sheet on purpose (its record's `cleanup`, rg-cleanup-2026-09-29) is not put back by
     // a page that still shows the sheet as it was before: that page reloads first
     const cleared = new Set(old.cleanup ? [].concat(old.cleanup.removedPoolIds || [], old.cleanup.removedCharmIds || []) : []);
@@ -1128,6 +1132,55 @@ async function op_poolGet(b) {
   for (let i = 0; i < ids.length; i += 30) { const snaps = await db.getAll(...ids.slice(i, i + 30).map(id => col(POOL).doc(id))); for (const s of snaps) if (s.exists) { const r = s.data(); r.updatedAt = ms(r.updatedAt); out[s.id] = r; } }
   return { pools: out };
 }
+/* Where each piece of an order is, from the records that can say so (Paul, 5 Oct: a Silver piece on SS Sheet 1 read "not on a
+   sheet yet" from its order's Gold Filled sheet). The pool row's sheetId is only a hint (a re-nest, a restart or an older run
+   clears it while the sheet still holds the piece); the SAVED SHEETS that list the piece in poolIds are the truth. One light
+   read per order (no readiness work): the order's pool rows (every state, the page decides what an abandoned one means) and the
+   saved sheets that name the order or any of its pool ids, each with only the fields placing a piece needs and only the poolIds
+   of this order. The page (charm-nest-order-pieces.js, OrderPieces) decides from these. Read only. */
+const PIECE_SHEET_FIELDS = ["id", "sheetId", "metal", "metalLabel", "fileBase", "folder", "sheetIndex", "page", "setId", "setSeq", "poolIds", "orders", "archived", "laserDoneAt", "roseCutAt", "draft", "solidIncluded", "status", "runId", "updatedAt", "createdAt", "laserHold"];
+async function op_getOrderPieces(b) {
+  // sheetIds: the same fields of those sheets with ALL their poolIds (who shares a sheet with whom), read by id
+  const sheetIds = (Array.isArray(b.sheetIds) ? b.sheetIds : []).filter(isId).slice(0, 40);
+  const ids = [...new Set((Array.isArray(b.orderIds) ? b.orderIds : [b.orderId]).map(x => String(x == null ? "" : x).replace(/\D/g, "")).filter(x => /^\d{4,20}$/.test(x)))].slice(0, 40);
+  if (!ids.length && !sheetIds.length) return { error: "orderId required" };
+  const bySheet = {};
+  for (let i = 0; i < sheetIds.length; i += 30) for (const d of await db.getAll(...sheetIds.slice(i, i + 30).map(id => col(SHEETS).doc(id)), { fieldMask: PIECE_SHEET_FIELDS })) {
+    if (!d.exists) continue; const s = d.data(); if (s.archived) continue;
+    bySheet[d.id] = { id: d.id, metal: s.metal || null, fileBase: s.fileBase || s.folder || null, folder: s.folder || null, sheetIndex: num(s.sheetIndex) || null, page: num(s.page) || null, setId: s.setId || null, setSeq: num(s.setSeq) || null, poolIds: (s.poolIds || []).map(String), orders: (s.orders || []).map(String).slice(0, 500),
+      laserDoneAt: num(s.laserDoneAt) || null, roseCutAt: num(s.roseCutAt) || null, draft: !!s.draft, solidIncluded: s.solidIncluded == null ? null : !!s.solidIncluded, status: s.status || null, runId: s.runId || null, updatedAt: ms(s.updatedAt), createdAt: ms(s.createdAt) };
+  }
+  if (!ids.length) return { ok: true, orders: {}, sheets: bySheet };
+  const both = id => [id].concat(Number.isSafeInteger(+id) ? [+id] : []);
+  const pools = new Map(ids.map(id => [id, []])), sheets = new Map(), sheetsOf = new Map(ids.map(id => [id, new Map()]));
+  for (let i = 0; i < ids.length; i += 10) {
+    const part = ids.slice(i, i + 10), values = part.flatMap(both);
+    const [ps, xs] = await Promise.all([
+      col(POOL).where("orderId", "in", values).limit(2000).get(),
+      col(SHEETS).where("orders", "array-contains-any", values).limit(HISTORY_CAP.sheets).select(...PIECE_SHEET_FIELDS).get()
+    ]);
+    for (const d of ps.docs) { const r = d.data(), rid = String(r.orderId == null ? String(d.id).split("_")[0] : r.orderId); if (pools.has(rid)) { r.updatedAt = ms(r.updatedAt); r.createdAt = ms(r.createdAt); pools.get(rid).push(r); } }
+    for (const d of xs.docs) sheets.set(d.id, { ...d.data(), id: d.id });
+  }
+  // sheets that list one of the order's pieces although their `orders` list does not name the order (an older or cut-down record)
+  const listed = new Set([...sheets.values()].flatMap(s => s.poolIds || []).map(String));
+  const missing = [...pools.values()].flat().map(p => String(p.poolId)).filter(id => !listed.has(id));
+  for (let i = 0; i < missing.length; i += 30) for (const d of (await col(SHEETS).where("poolIds", "array-contains-any", missing.slice(i, i + 30)).select(...PIECE_SHEET_FIELDS).get()).docs) if (!sheets.has(d.id)) sheets.set(d.id, { ...d.data(), id: d.id });
+  const orders = {};
+  for (const rid of ids) {
+    const mine = [];
+    for (const s of sheets.values()) {
+      if (s.archived) continue;
+      const has = (s.orders || []).map(String).includes(rid) || (s.poolIds || []).some(p => String(p).startsWith(rid + "_"));
+      if (!has) continue;
+      mine.push({ id: s.id, metal: s.metal || null, metalLabel: s.metalLabel || null, fileBase: s.fileBase || s.folder || null, folder: s.folder || null, sheetIndex: num(s.sheetIndex) || null, page: num(s.page) || null, setId: s.setId || null, setSeq: num(s.setSeq) || null,
+        poolIds: (s.poolIds || []).map(String).filter(p => p.startsWith(rid + "_")), poolCount: (s.poolIds || []).length, laserDoneAt: num(s.laserDoneAt) || null, roseCutAt: num(s.roseCutAt) || null, draft: !!s.draft, solidIncluded: s.solidIncluded == null ? null : !!s.solidIncluded,
+        status: s.status || null, runId: s.runId || null, updatedAt: ms(s.updatedAt), createdAt: ms(s.createdAt) });
+    }
+    orders[rid] = { pools: pools.get(rid), sheets: mine };
+  }
+  return { ok: true, orders, sheets: bySheet };
+}
 // ── backs ──
 /* ── the sandbox snapshot: what the emulated Etsy serves (etsySandbox.js). The sorter uploads the JSON through
    charmNestOutput and records it here; reset clears the sandbox's own records so a run can start clean. ── */
@@ -1649,7 +1702,7 @@ async function op_runPut(b) {
   const r = b.run || {}; const id = str(r.runId, 80); if (!isId(id)) return { error: "bad run id" };
   const doc = Object.assign({}, r, { runId: id, updatedAt: FV.serverTimestamp() }); delete doc.liveLines;
   const parts = r.lines && typeof r.lines === "object" && !Array.isArray(r.lines) ? liveParts(id, r.lines) : null;
-  if (parts && parts.some(p => p.bytes > 1000000)) return { error: "an order line of this run is too large to save" };
+  if (parts && parts.some(p => p.bytes > 1000000)) return { error: "a piece of this run is too large to save" };
   if (parts) { delete doc.lines; doc.liveLines = { ids: parts.map(p => p.id), lines: parts.reduce((n, p) => n + p.lines, 0), bytes: parts.reduce((n, p) => n + p.bytes, 0) }; }
   const plain = Object.assign({}, doc, { updatedAt: 0 }), bytes = Buffer.byteLength(JSON.stringify(plain)), entries = OrderRules.indexEntries(plain);   // measured without the server's time mark
   if (Math.max(bytes / RUN_DOC_BYTES, entries / RUN_DOC_ENTRIES) > 0.7 && !runSizeWarned.has(PREFIX + id)) { runSizeWarned.add(PREFIX + id); console.warn(`[charmNestLibrary] run ${id}${PREFIX ? " (sandbox)" : ""}: its record is ${Math.round(bytes / 1024)} KB of the 1,024 KB and ${entries} of the 40,000 index entries one Firestore document can hold. A full record cannot be saved, and the run stops.`); }
@@ -1685,10 +1738,10 @@ async function op_runArchive(b) {
     const json = p && typeof p.json === "string" ? p.json : "", bytes = Buffer.byteLength(json);
     if (!bytes || bytes > LINE_PART_BYTES) return { error: "an archive part is JSON text of at most 900 KB" };
     let lines = null; try { lines = JSON.parse(json); } catch (_) { return { error: "an archive part is not JSON" }; }
-    if (!lines || typeof lines !== "object" || Array.isArray(lines) || !Object.keys(lines).length) return { error: "an archive part holds no lines" };
+    if (!lines || typeof lines !== "object" || Array.isArray(lines) || !Object.keys(lines).length) return { error: "an archive part holds no pieces" };
     const keys = Object.keys(lines), orders = [...new Set(Object.values(lines).map(l => String((l && l.orderId) ?? "")).filter(Boolean))];
     const decisions = JSON.stringify(decisionsByLine(lines));
-    if (bytes + Buffer.byteLength(decisions) + Buffer.byteLength(JSON.stringify(keys.concat(orders))) > 1000000) return { error: "an archive part is too large to keep with its lists; send fewer lines in it" };
+    if (bytes + Buffer.byteLength(decisions) + Buffer.byteLength(JSON.stringify(keys.concat(orders))) > 1000000) return { error: "an archive part is too large to keep with its lists; send fewer pieces in it" };
     const digest = require("crypto").createHash("sha256").update(json).digest("hex").slice(0, 40);
     docs.push([col(RUN_LINES).doc(`${id}~${digest}`), { runId: id, lines: keys.length, bytes, json, keys, orders, decisions, decisionsVersion: DECISIONS_VERSION, at, seq: i, createdAt: FV.serverTimestamp() }]);
   }
@@ -2403,7 +2456,7 @@ function customSheetEvents(r) {
   }, { source: "sorter" })).filter(Boolean);
 }
 async function op_customSheetPut(b) {
-  const doc = cleanCustomSheet(b); if (!doc) return { error: "valid custom sheet files, signed decision and line copy mapping required" };
+  const doc = cleanCustomSheet(b); if (!doc) return { error: "valid custom sheet files, signed decision and piece copy mapping required" };
   // Cleanup markers describe what happened to a copy later; its original assignment and signed decision stay fixed.
   const decision = r => ({ ck: r.ck, rid: r.rid, files: r.files, sent: { id: r.sent.id, at: r.sent.at, by: r.sent.by,
     lines: Object.fromEntries(Object.entries(r.sent.lines).map(([key, pcs]) => [key, pcs.map(pc => ({ f: pc.f, i: pc.i }))])) } });
@@ -2413,7 +2466,7 @@ async function op_customSheetPut(b) {
     const snap = await tx.get(ref), old = snap.exists ? snap.data() : null;
     if (old && customSheetCanonical(decision(old)) !== fingerprint) return { error: "These custom designs were already sent with a different decision; reload the original send before retrying", status: 409 };
     const claimed = lineRefs.length ? await tx.getAll(...lineRefs) : [];
-    if (claimed.some(s => s.exists && (s.data().ck !== doc.ck || s.data().sendId !== doc.sent.id))) return { error: "A line of this order already belongs to another custom sheet decision", status: 409 };
+    if (claimed.some(s => s.exists && (s.data().ck !== doc.ck || s.data().sendId !== doc.sent.id))) return { error: "A piece of this order already belongs to another custom sheet decision", status: 409 };
     const phase = old?.phase === "sent" ? "sent" : doc.phase, next = Object.assign({}, old || doc, { phase });
     let removalChanged = false;
     if (old) next.sent = Object.assign({}, old.sent, { lines: Object.fromEntries(Object.entries(old.sent.lines).map(([key, pcs]) => [key, pcs.map((pc, i) => {
@@ -2505,7 +2558,7 @@ async function legacyCustomSheets(lineKeys, known) {
   return { records, truncated: timedOut || next < candidates.length || lines.length > 40 };
 }
 async function op_customSheetGet(b) {
-  if (!Array.isArray(b.keys) && !Array.isArray(b.lineKeys) && !Array.isArray(b.legacyLineKeys)) return { error: "known custom card keys or line keys required" };
+  if (!Array.isArray(b.keys) && !Array.isArray(b.lineKeys) && !Array.isArray(b.legacyLineKeys)) return { error: "known custom card keys or piece keys required" };
   const asked = [...new Set((Array.isArray(b.keys) ? b.keys : []).filter(customSheetKeyOk))], lines = [...new Set((Array.isArray(b.lineKeys) ? b.lineKeys : []).map(String).filter(lineKeyOk))];
   const keys = new Set(asked.slice(0, 1000));
   for (let i = 0; i < Math.min(lines.length, 1000); i += 100) {
@@ -2542,7 +2595,7 @@ const legacyStamps = c => {
   return out.sort((a, b) => a.at - b.at);
 };
 async function op_customPut(b) {
-  const key = String(b.key || ""); if (!lineKeyOk(key)) return { error: "key (the line's receipt_transaction) required" };
+  const key = String(b.key || ""); if (!lineKeyOk(key)) return { error: "key (the piece's receipt_transaction) required" };
   const label = b.label && typeof b.label === "object" ? b.label : null, labelJson = label ? JSON.stringify(label) : "";
   const now = Date.now(), ref = col(CUSTOM).doc(key), snap = await ref.get(), cur = snap.exists ? snap.data() : null;
   const button = b.how === "button", who = str(b.by || "operator", 80);
@@ -2581,7 +2634,7 @@ async function op_customReopen(b) {
     history: (Array.isArray(cur.history) ? cur.history : []).concat(Object.assign({ how, at: now, by: who }, b.from ? { from: str(b.from, 40) } : {})).slice(-STAMPS_MAX) };
   if (!Array.isArray(cur.stamps)) doc.stamps = legacyStamps(cur);
   await ref.set(doc, { merge: true });
-  const seals = (doc.stamps || cur.stamps || []).length, what = cur.sku || cur.title || "custom line";
+  const seals = (doc.stamps || cur.stamps || []).length, what = cur.sku || cur.title || "custom piece";
   await stamp(() => ({ orderId: cur.receiptId || orderOfKey(key), type: "note", at: now, by: who, station: "sorter", lineKey: key, transactionId: cur.transactionId || key.split("_")[1] || "",
     text: `Custom order ${how === "undo" ? "completion undone" : "reopened"} by ${who}: ${str(what, 80)} · back to Open (its ${seals === 1 ? "seal stays" : seals + " seals stay"})`,
     data: { reopened: how, seals, sku: cur.sku || "", ...pressedIn(b) }, id: `customReopen-${key}-${now}` }), "custom reopen");
@@ -2871,6 +2924,7 @@ async function op_flowApply(b) {
 }
 OPS.flowState = op_flowState;
 OPS.flowApply = op_flowApply;
+OPS.getOrderPieces = op_getOrderPieces;   // where each piece of an order is (OrderPieces); read only
 
 exports.ops = OPS;   // the connections check runs the same queries the app runs
 exports.handler = async (event) => {

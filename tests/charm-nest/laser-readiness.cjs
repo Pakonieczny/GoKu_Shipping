@@ -28,6 +28,7 @@ vm.runInContext(source.slice(source.indexOf('async function filingRecords'),sour
  data.get('sheets/sheet1').backPool=[];
  await assert.rejects(context.op_setUpdate({setId:'set1',patch:{status:'complete'}}),/cannot be completed/);assert.equal(writes,1,'failed gate never writes completion');
  const records=await context.readinessRecords([data.get('sheets/sheet1')]);assert.equal(records[0].laser.waiting,2);
+ assert.equal(records[0].laser.stages.orders,true,'its own unapproved engravings are its own steps, never its order check');assert.equal(records[0].orderReadiness.order1.ready,true,'both pieces of order1 are on this sheet: nothing else holds it');
  data.set('runs/run1',{lines:{a:{orderId:'order1',state:'written',poolIds:['copy1'],engrave:{needed:false,state:'none',approved:true}}}});
  const hydrated=await context.readinessRecords([data.get('sheets/sheet1')]);assert.equal(hydrated[0].laser.plain,1);assert.equal(hydrated[0].laser.waiting,1);
  // A line with nothing to engrave reads as plain on the server too, before its engraving check has run. The page let a

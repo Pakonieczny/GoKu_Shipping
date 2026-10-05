@@ -1,7 +1,8 @@
 /* The manual "Approve for laser cutting" button on the Library's In progress cards (charm-nest-bridge.js, LaserReview).
-   Fakes of LibraryFlow and LibraryApprovalUI: the button shows on a card that is not ready (sheet card, set card, a sheet
-   inside a set) and never on a ready or completed one, is disabled with its plain reason while engravings are missing,
-   a press calls approve once, a second press while it runs is ignored, the card list then updates by itself. */
+   Fakes of LibraryFlow and LibraryApprovalUI: the button shows under a sheet that is not ready (a sheet card, a sheet inside a
+   set of one or of several) and never on a ready or completed one, and a set card carries none of its own (Paul, 5 Oct: "I
+   don't need 2 green approve this sheet button. Please remove the top one."); it is disabled with its plain reason while
+   engravings are missing, a press calls approve once, a second press while it runs is ignored, the card list then updates by itself. */
 const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm'),{JSDOM}=require('jsdom');
 const src=fs.readFileSync('charm-nest-bridge.js','utf8');
 const dom=new JSDOM('<body><main id="libBody"></main></body>',{runScripts:'outside-only',pretendToBeVisual:true}),win=dom.window,document=win.document,frames=[],requests=[],calls=[],shows=[],opened=[];
@@ -26,11 +27,12 @@ const boxes=root=>[...root.querySelectorAll('.approveBox')];
 const boxOf=(root,key)=>root.querySelector(`.approveBox[data-approve-for="${key}"]`);
 
 // the records: F1 lacks only its QR label (an automatic step), R is ready, A is like F1, B waits on two back engravings, D is cut
-const recs={F1:sheet('F1'),F2:sheet('F2'),F3:sheet('F3'),R:labelled(sheet('R')),A:sheet('A'),B:waiting('B'),D:labelled(sheet('D',{laserDoneAt:5}))};
+const recs={F1:sheet('F1'),F2:sheet('F2'),F3:sheet('F3'),F4:sheet('F4'),X:sheet('X',{solidIncluded:false}),R:labelled(sheet('R')),A:sheet('A'),B:waiting('B'),D:labelled(sheet('D',{laserDoneAt:5}))};
 Object.values(recs).forEach(L.record);world={...recs};L.sections(body);
-const cards={F1:flat('F1'),F2:flat('F2'),F3:flat('F3'),R:flat('R'),set:setCard('set1',['A','B','D'])};
-for(const k of ['F1','F2','F3','R'])L.place(cards[k],L.canCut(recs[k]),body);
+const cards={F1:flat('F1'),F2:flat('F2'),F3:flat('F3'),X:flat('X'),R:flat('R'),set:setCard('set1',['A','B','D']),one:setCard('set2',['F4'])};
+for(const k of ['F1','F2','F3','X','R'])L.place(cards[k],L.canCut(recs[k]),body);
 L.place(cards.set,L.group(cards.set._laserSet,['A','B','D'].map(id=>recs[id])).ready,body);
+L.place(cards.one,L.group(cards.one._laserSet,[recs.F4]).ready,body);
 
 (async()=>{try{
   // 1. no LibraryFlow on the page: no button at all, never a dead one
@@ -49,24 +51,33 @@ L.place(cards.set,L.group(cards.set._laserSet,['A','B','D'].map(id=>recs[id])).r
   const btn=f1.querySelector('[data-approve-btn]');
   assert.equal(btn.textContent,'Approve for laser cutting');assert.equal(btn.disabled,false);assert.equal(f1.querySelector('[data-approve-why]').textContent,'');
   assert.equal(f1.parentElement,cards.F1,'the button lives on its card, not at the bottom of the page');
-  assert(boxOf(cards.set,'set:set1'),'a set card that is not ready has one');
-  assert.equal(boxOf(cards.set,'set:set1').nextElementSibling,cards.set.querySelector('.sheetsRow'),'the set button sits above its sheets');
+  assert.equal(boxOf(cards.set,'set:set1'),null,'a set card has no Approve button of its own');
+  assert.equal(cards.set.querySelectorAll(':scope > .approveBox').length,0,'nothing above or beside the sheets of a set');
   const inSet=cards.set.querySelectorAll('.sheetsRow .approveBox');
   assert.deepEqual([...inSet].map(b=>b.dataset.approveFor),['sheet:A','sheet:B'],'a sheet inside a set gets its own button; the cut sheet D gets none');
+  assert([...inSet].every(b=>b.parentElement.classList.contains('librarySheet') && b===b.parentElement.lastElementChild),'each one is the last thing in its own sheet, under its rail');
+  assert.equal(boxOf(cards.one,'set:set2'),null,'a set of one sheet has no button of its own either');
+  assert.deepEqual(boxes(cards.one).map(b=>b.dataset.approveFor),['sheet:F4'],'a set of one sheet carries exactly one button, under its sheet (Paul had two, one above and one under)');
   assert.equal(boxes(document).filter(b=>!b.closest('#libBody')).length,0);
 
-  // 3. hard-blocked: visible, disabled, with the plain reason
-  const setBox=boxOf(cards.set,'set:set1'),bBox=boxOf(cards.set,'sheet:B');
-  assert.equal(bBox.querySelector('[data-approve-btn]').disabled,true);assert.equal(bBox.querySelector('[data-approve-why]').textContent,'Waiting on 2 back engravings');
-  assert.equal(setBox.querySelector('[data-approve-btn]').disabled,true);assert.equal(setBox.querySelector('[data-approve-why]').textContent,'Waiting on 2 back engravings');
+  // 3. hard-blocked: visible and disabled. Back engravings are the rail's to say (its current step is Engraving, its '!' opens the
+  //    panel): no line and no count on the card, the button keeps the reason for a screen reader. A reason the rail cannot say
+  //    (a sheet not included in its set) is one plain line, a link to the '!' only while the rail has one.
+  const bBox=boxOf(cards.set,'sheet:B');
+  assert.equal(bBox.querySelector('[data-approve-btn]').disabled,true);assert.equal(bBox.querySelector('[data-approve-why]').textContent,'','no line and no count for back engravings');
+  assert.match(bBox.querySelector('[data-approve-btn]').getAttribute('aria-label'),/Waiting on 2 back engravings/,'the reason stays in the button\'s name');
   assert.equal(boxOf(cards.set,'sheet:A').querySelector('[data-approve-btn]').disabled,false,'a sheet that only waits on automatic steps can be pressed');
+  const xBox=boxOf(cards.X,'sheet:X');
+  assert.equal(xBox.querySelector('[data-approve-btn]').disabled,true);assert.equal(xBox.querySelector('[data-approve-why]').textContent,'Not included in a set yet');
+  assert(xBox.parentElement.querySelector('.flowBox [data-issues-open]'),'its rail carries a \'!\'');
   delete win.LaserReview.openChecklist;L.changed();flush();   // (the real one now ships in LaserReview: take it away to see the reason without it)
-  assert.equal(bBox.querySelector('[data-approve-reason]'),null,'the reason is plain text until the checklist exists');
-  bBox.querySelector('[data-approve-btn]').click();assert.equal(calls.length,0,'a disabled button presses nothing');
+  assert.equal(xBox.querySelector('[data-approve-reason]'),null,'the reason is plain text until the checklist exists');
+  xBox.querySelector('[data-approve-btn]').click();assert.equal(calls.length,0,'a disabled button presses nothing');
   win.LaserReview.openChecklist=(card,info)=>opened.push({card,...info});
   L.changed();flush();
-  const why=bBox.querySelector('[data-approve-reason]');assert(why,'with the checklist shipped the reason opens it');
-  why.click();assert.deepEqual(opened.map(o=>[o.kind,o.id]),[['sheet','B']]);assert.equal(opened[0].card,bBox.parentElement);assert.equal(calls.length,0);
+  const why=xBox.querySelector('[data-approve-reason]');assert(why,'with the checklist shipped and a \'!\' on the rail the reason opens it');
+  why.click();assert.deepEqual(opened.map(o=>[o.kind,o.id]),[['sheet','X']]);assert.equal(opened[0].card,cards.X);assert.equal(calls.length,0);
+  assert.equal(bBox.querySelector('[data-approve-reason]'),null,'and a reason the rail already says is no link');
 
   // 4. a press calls approve once, a second press while it runs is ignored, a labelled spinner shows
   btn.click();btn.click();f1.querySelector('[data-approve-btn]').click();
@@ -107,5 +118,5 @@ L.place(cards.set,L.group(cards.set._laserSet,['A','B','D'].map(id=>recs[id])).r
   b3.click();await tick();
   assert.equal(calls.length,n+1);assert.match(f3.querySelector('[data-approve-plan]').textContent,/Netlify said no/);assert.equal(b3.disabled,false);
 
-  console.log('Library approve button OK: shown on sheet, set and in-set sheet cards that are not ready, absent when ready or cut or without LibraryFlow, disabled with its reason when blocked, one call per press, plan on the card, card moves by itself');
+  console.log('Library approve button OK: one under each sheet that is not ready (sheet card, set of one, set of several), none on a set card, absent when ready or cut or without LibraryFlow, disabled with its reason when blocked, one call per press, plan on the card, card moves by itself');
 }finally{win.close();}})().catch(e=>{console.error(e);process.exitCode=1;});
