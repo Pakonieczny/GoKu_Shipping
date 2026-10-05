@@ -120,6 +120,8 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
 .swSheets{display:flex;align-items:center;gap:4px;min-width:0;overflow-x:auto;scrollbar-width:none;padding:2px 2px 2px 10px;margin-left:4px;border-left:1px solid var(--line)}
 .swSheets::-webkit-scrollbar{display:none}
 .swSheets[hidden]{display:none}
+/* (the sheets as SheetMenu's pill: it keeps its own size, shows at every width, and the title beside it gives way first) */
+.swSheets.swPill{flex:0 0 auto;overflow:visible;padding:0 0 0 10px}
 .swChip{position:relative;display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);background:var(--card);border-radius:999px;padding:3px 10px 3px 6px;font:600 11.5px var(--sans);color:var(--ink70);cursor:pointer;white-space:nowrap;transition:background .15s,border-color .15s,color .15s,box-shadow .2s}
 .swChip i{width:9px;height:9px;border-radius:50%;background:var(--c)}
 .swChip:hover{background:var(--paper2)}
@@ -377,7 +379,20 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
 .swSpot{position:absolute;pointer-events:none;border-radius:50%;opacity:.6}
 .mGhost.swFly{display:block;padding:0;border:0;border-radius:0;background:none;animation:none}.mGhost.swFly>li{background:var(--card);box-shadow:0 8px 22px rgba(40,30,20,.14);animation:none}
 @keyframes swSpin{to{transform:rotate(360deg)}}
-@media (max-width:980px){.swBody{grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(300px,1fr) auto}.swSide{border-left:0;border-top:1px solid var(--line);min-height:46vh}.swBox{overflow:auto}.swSheets{display:none}}
+@media (max-width:980px){.swBody{grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(300px,1fr) auto}.swSide{border-left:0;border-top:1px solid var(--line);min-height:46vh}.swBox{overflow:auto}.swSheets:not(.swPill){display:none}.swSheets.swPill{margin-left:0;padding-left:0;border-left:0}}
+/* (a phone-width window with the sheets pill: the title and the pill cannot share a line with the status, the file menu and Close
+   without one hiding the other, so the bar takes two lines: the title with its menu and Close, then the pill with the status) */
+@media (max-width:600px){
+.swHead:has(>.swSheets.swPill:not([hidden])){flex-wrap:wrap;row-gap:6px;column-gap:8px}
+.swHead:has(>.swSheets.swPill:not([hidden]))::after{content:"";order:3;flex:0 0 100%;height:0}
+.swHead:has(>.swSheets.swPill:not([hidden]))>.swId{order:0;flex:1 1 0}
+.swHead:has(>.swSheets.swPill:not([hidden]))>.swHeadR{display:contents}
+.swHead:has(>.swSheets.swPill:not([hidden])) .swMenuWrap{order:1}
+.swHead:has(>.swSheets.swPill:not([hidden])) [data-r=close]{order:2}
+.swHead:has(>.swSheets.swPill:not([hidden]))>.swSheets{order:4}
+.swHead:has(>.swSheets.swPill:not([hidden])) .swState{order:5}
+.swHead:has(>.swSheets.swPill:not([hidden])) [data-r=done]{order:6}
+}
 @media (prefers-reduced-motion:reduce){dialog.sheetWin[open],dialog.sheetWin::backdrop{animation:swFade .16s ease backwards}dialog.sheetWin.closing,dialog.sheetWin.closing::backdrop{animation:swFadeOut .12s ease both}.swReturn,.swSkel i{animation:none}}
 `;
 
@@ -436,7 +451,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     const E = W.el;
     E.close.onclick = () => close();
     // (Esc while the sheet is still flying in closes it: the view it was opening on has not been seen yet)
-    d.addEventListener("cancel", e => { e.preventDefault(); if (!E.name.hidden) return hideName(); if (!E.menu.hidden) return menu(false); if (W.hand) return stopHand(); if (W.add) return closeAdd(); if (W.view === "piece" && !(W.flip && !W.flip.landed)) return showSheetPane(); close(); });
+    d.addEventListener("cancel", e => { e.preventDefault(); if (closeSheetMenu()) return; if (!E.name.hidden) return hideName(); if (!E.menu.hidden) return menu(false); if (W.hand) return stopHand(); if (W.add) return closeAdd(); if (W.view === "piece" && !(W.flip && !W.flip.landed)) return showSheetPane(); close(); });
     // (what was changed in here is read again by the order view: its copies of the saved sheets are dropped)
     d.addEventListener("close", () => { orderRecs.clear(); cleanup(); });
     d.addEventListener("click", e => { if (e.target === d) close(); if (!E.menu.hidden && !e.target.closest(".swMenuWrap")) menu(false); });
@@ -453,7 +468,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     E.prev.onclick = () => step(-1);
     E.next.onclick = () => step(1);
     d.addEventListener("keydown", e => {
-      if (e.target.closest("input,textarea,[contenteditable]")) return;
+      if (e.target.closest("input,textarea,[contenteditable],.shmPanel")) return;
       if (W.hand) {
         const turn = { "[": -10, "]": 10, "{": -2, "}": 2, r: 10, R: -10 }[e.key];
         if (turn) { e.preventDefault(); return handTurn(turn); }
@@ -1009,7 +1024,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     // into is this sheet's card where one is on screen)
     else { dropSnap(false); W.pre = null; if (W.origin && W.origin.id !== id) { const c = [...document.querySelectorAll(`.libCard[data-id="${CSS.escape(id)}"]`)].find(shown); W.origin = c ? cardOrigin(id, c, null) : null; } }
     W.id = id; W.rec = null; W.live = null; W.geom = false; W.pieces = []; W.byId = new Map(); W.byPool = new Map(); W.orders = new Map();
-    W.sel = null; W.hover = null; W.fx = []; W.set = W.set && opts.keepSet ? W.set : null;
+    W.sel = null; W.hover = null; W.fx = []; W.lit = null; W.litRid = ""; W.set = W.set && opts.keepSet ? W.set : null;
     // the side it opens on (Paul, 28 Sep): a sheet looked at from its Back (a turned Nest or Library card, Sets window
     // tile or Sets menu preview, the order view's Sheet tab) opens on its Back, its engraving asked for at once
     if (fresh && (opts.face || (origin && origin.face)) === "back") { W.face = W.shown = "back"; sheetBacksReady(); }
@@ -1119,7 +1134,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     try { d.close(); } catch (_) { d.removeAttribute("open"); }
   }
   function cleanup() {
-    stopFlip(); dropSnap(false); W.flying = false; W.fitLater = false; W.origin = null; W.pre = null;
+    stopFlip(); dropSnap(false); W.flying = false; W.fitLater = false; W.origin = null; W.pre = null; closeSheetMenu();
     W.dlg.classList.remove("closing", "swGrow", "swFlying", "swBack", "swAway", "swReturn", "swHidden"); W.token++; stopHand(true); W.add = null;
     W.away = null; W.coming = null; W.refit = false;
     for (const n of [W.el.stage, W.el.headBar]) { n.style.willChange = ""; n.style.transformOrigin = ""; }
@@ -1217,9 +1232,36 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     // (nothing names it: not a gold sheet 1 by default; readUnknown reads its record)
     return { id: sid, metal, n: no || 1, name: name || sid, guess: !(metal && no) };
   }
+  /* The set's sheets as one pill and a menu (Paul, 5 Oct 2026, 04:33 UTC: "Add drop down menu for the Sheets just like the new back
+     engraving menu."): the row of chips ran out of room (it scrolled with its bar hidden, and below 980 px it was not there at
+     all, so a set's other sheets could not be reached). The pill is SheetMenu's own (charm-nest-sheet-menu.js, the very component
+     the Nest tab's cards use): the sheet in the window, with the order in hand's pieces on it, and a chevron; its menu lists every
+     sheet of the set with what the chips said (metal, number, the pieces of the order in hand, freed room) and a pick is
+     switchSheet, the chips' own path. Without the component the chips are drawn exactly as before. The menu is built when it is
+     opened, never per sheet while closed; the pill is updated, not redrawn, when the window repaints or the order in hand changes. */
+  const sheetMenuLib = () => { const M = window.SheetMenu; return M && typeof M.mount === "function" ? M : null; };
+  const chipList = () => W.setSheets.length ? W.setSheets : (W.rec ? [{ id: W.rec.id, metal: W.rec.metal, n: sheetNoOf(W.rec) }] : []);
+  const chipItem = s => {
+    const freed = (FREED.get(s.id) || []).length, n = (W.lit && W.lit.get(s.id)) || 0, order = W.litRid;
+    return { id: s.id, label: s.guess ? "Sheet" : `${CODE[s.metal] || ""} ${s.n}`.trim(), color: colorOf(s.metal), sub: s.name || "", badge: n || "", note: freed ? "freed room" : "", current: s.id === W.id,
+      title: `${s.name || ""}${n ? ` · ${n} piece${n === 1 ? "" : "s"} of ${order ? "order " + order : "this order"} here` : ""}${freed ? " · has freed room" : ""}`.replace(/^ · /, "") };
+  };
+  function paintSheetMenu(list, M) {
+    const items = list.map(chipItem), sig = JSON.stringify(items);
+    if (!W.menu) {
+      W.el.sheets.textContent = "";
+      W.menu = M.mount(W.el.sheets, { items, key: "sheetwin", label: "Sheets in this set", onPick: id => { if (id && id !== W.id) switchSheet(id); } });
+      W.menuSig = sig; return;
+    }
+    if (W.menuSig !== sig) { W.menuSig = sig; W.menu.update(items); }
+  }
+  /** Shut the sheets menu where it is open (the window closes, or Esc is pressed in it). */
+  function closeSheetMenu() { const m = W.menu; if (!m) return false; const was = typeof m.isOpen === "function" && m.isOpen(); if (was && typeof m.close === "function") m.close(); return was; }
   function renderSheetChips() {
-    const E = W.el, list = W.setSheets.length ? W.setSheets : (W.rec ? [{ id: W.rec.id, metal: W.rec.metal, n: sheetNoOf(W.rec) }] : []);
+    const E = W.el, list = chipList(), M = sheetMenuLib();
     E.sheets.hidden = list.length < 2;
+    if (M) { E.sheets.classList.add("swPill"); if (list.length > 1 || W.menu) paintSheetMenu(list, M); return; }
+    E.sheets.classList.remove("swPill");
     E.sheets.innerHTML = list.map(s => `<button type="button" class="swChip" data-sheet="${esc(s.id)}" style="--c:${colorOf(s.metal)}"${s.id === W.id ? ' aria-current="true"' : ""} title="${esc(s.name || "")}${FREED.get(s.id)?.length ? " · has freed room" : ""}"${FREED.get(s.id)?.length ? " data-freed" : ""}><i></i>${s.guess ? "Sheet" : `${esc(CODE[s.metal] || "")} ${s.n}`}<b></b></button>`).join("");
     E.sheets.querySelectorAll("[data-sheet]").forEach(b => b.onclick = () => { if (b.dataset.sheet !== W.id) switchSheet(b.dataset.sheet); });
   }
@@ -1230,6 +1272,8 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       if (rid && W.set?.orders?.[rid]) for (const l of linesOf(W.set.orders[rid])) for (const c of l.copies || []) counts.set(c.sheetId, (counts.get(c.sheetId) || 0) + 1);
       if (rid) for (const p of W.pools.get(rid) || []) if (p.sheetId && !counts.has(p.sheetId) && !["abandoned", "superseded"].includes(p.state)) counts.set(p.sheetId, 1);
     }
+    W.lit = counts; W.litRid = rid || "";
+    if (W.menu) { const M = sheetMenuLib(); if (M) paintSheetMenu(chipList(), M); return; }
     W.el.sheets.querySelectorAll("[data-sheet]").forEach(b => { const n = counts.get(b.dataset.sheet) || 0; b.classList.toggle("lit", n > 0); b.querySelector("b").textContent = n || ""; });
   }
   const linesOf = o => Array.isArray(o?.lines) ? o.lines : Object.values(o?.lines || {});
