@@ -192,8 +192,10 @@ const liveBrief = (rec, device) => rec.lives.filter(l => l.event !== 'beat' && l
     assert.deepStrictEqual(rec.ev('error').map(e => [e.orderId, e.person]), [[D, 'Maya Sorter']], 'an order that did not load is one error');
     assert(!rec.ev('scan').some(e => e.orderId === D), 'and not a scan');
     await wait(800);
-    assert.deepStrictEqual(liveBrief(rec, 'sorting-1').slice(3), ['work:sheet:Batch of 2 orders:4:sheet QR', 'work:sheet:Batch of 2 orders:4:1 of 2 orders done', 'work:order:' + A + ':3:'],
-      'live: a sheet-QR batch says so, a cancelled order counts as done, and the order that did not load is not in hand (the one that did is)');
+    /* (the "sheet QR" write and the "1 of 2 orders done" one follow each other at once: the pump may send the first or
+       replace it with the second before it goes out; either is right, what matters is the last word on the batch and the order) */
+    assert.deepStrictEqual(liveBrief(rec, 'sorting-1').slice(3).filter(x => x !== 'work:sheet:Batch of 2 orders:4:sheet QR'), ['work:sheet:Batch of 2 orders:4:1 of 2 orders done', 'work:order:' + A + ':3:'],
+      'live: a sheet-QR batch counts a cancelled order as done, and the order that did not load is not in hand (the one that did is)');
     assert(rec.lives.every(l => l.person === 'Maya Sorter' && l.station === 'sorting' && l.device === 'sorting-1' && !('sandbox' in l)), 'live: every write is this person, station and page');
     console.log('sorting.html: sheet-QR scans, one reject for the cancelled order, one error for the order that did not load');
 

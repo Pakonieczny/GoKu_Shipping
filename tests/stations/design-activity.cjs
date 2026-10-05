@@ -339,11 +339,58 @@ async function inbox(browser) {
   console.log('inbox: reply note, failed-reply error, conversation-done complete, once each');
 }
 
+/* ── design-1.html opened as a sandbox (?sandbox=1): its session, live and activity requests all go to the Sandbox_ store ──
+   (the leak this guards: StationSession.init was given no sandbox flag, so a sandbox page signed a real person in on the real board) */
+async function designSandbox(browser) {
+  const from = sent.length;
+  const station = () => sent.slice(from).filter(s => /"(?:session|live|activity)":/.test(s));
+  let { ctx, page } = await open(browser, 'design-1.html', null, '?sandbox=1');
+  await until(() => page.evaluate(() => window.StationSession && StationSession.page() && window.StationActivity && typeof selectRow === 'function'), 'design-1 sandbox loaded');
+  assert.strictEqual(await page.evaluate(() => StationSession.page().sandbox), true, 'design-1?sandbox=1: the page knows it is a sandbox before anyone signs in');
+  const signIn = async () => {
+    await page.evaluate(() => BritesChat.open('3521000777'));
+    await until(() => page.$('#bcWho'), 'the chat');
+    await page.evaluate(() => { document.getElementById('bcWho').click(); const i = document.querySelector('#bcWho input'); i.value = 'Sandy Box'; i.dispatchEvent(new Event('blur')); });
+    await until(() => page.evaluate(() => { const w = StationActivity.who(); return w && w.person === 'Sandy Box'; }), 'the sandbox sign-in');
+  };
+  const pick = async () => {
+    await page.evaluate(() => {
+      const rid = '3521000011'; orderCache[rid] = [{ quantity: 2, sku: 'A1', title: 'Charm', receipt_id: rid, listing_id: 111222333 }];
+      if (!document.querySelector('#newOrderContainer .orderRow[data-receipt="' + rid + '"]')) { const r = document.createElement('div'); r.className = 'orderRow'; r.dataset.receipt = rid; document.getElementById('newOrderContainer').appendChild(r); }
+      document.querySelector('#newOrderContainer .orderRow[data-receipt="' + rid + '"]').click();
+    });
+    await wait(900); await flush(page);
+  };
+  await signIn(); await pick();
+  assert.strictEqual(await page.evaluate(() => StationSession.who().sandbox), true, 'design-1?sandbox=1: the person is signed in on the sandbox board');
+  let reqs = station();
+  assert(reqs.some(s => /"session":/.test(s)) && reqs.some(s => /"live":/.test(s)), 'the sign-in and the pick were told: ' + reqs.length + ' requests');
+  assert(reqs.every(s => /^\S*[?&]sandbox=1 /.test(s)), 'design-1?sandbox=1: every session, live and activity request goes to the sandbox door: ' + reqs.filter(s => !/^\S*[?&]sandbox=1 /.test(s)).map(s => s.slice(0, 90)).join(' | '));
+  // the same tab, reloaded without the query: the page remembers it is a sandbox (sessionStorage), so the board stays the sandbox's
+  const n1 = sent.length;
+  await page.goto(origin() + '/design-1.html');
+  await until(() => page.evaluate(() => window.StationSession && StationSession.page() && window.StationActivity), 'design-1 reloaded');
+  assert.strictEqual(await page.evaluate(() => StationSession.page().sandbox), true, 'design-1 reloaded in the same tab: still the sandbox');
+  assert(sent.slice(n1).filter(s => /"(?:session|live|activity)":/.test(s)).every(s => /^\S*[?&]sandbox=1 /.test(s)), 'after the reload nothing real is written');
+  await ctx.close();
+  // a fresh window (a new tab keeps no sandbox flag) is the real page: nothing it says carries the sandbox flag
+  const n2 = sent.length;
+  ({ ctx, page } = await open(browser, 'design-1.html'));
+  await until(() => page.evaluate(() => window.StationSession && StationSession.page() && window.StationActivity && typeof selectRow === 'function'), 'design-1 real loaded');
+  assert.strictEqual(await page.evaluate(() => StationSession.page().sandbox), false, 'design-1: a page opened without ?sandbox=1 is real');
+  await signIn(); await pick();
+  const real = sent.slice(n2).filter(s => /"(?:session|live|activity)":/.test(s));
+  assert(real.length >= 2 && real.every(s => !/sandbox/.test(s)), 'a real design-1 never writes the sandbox: ' + real.filter(s => /sandbox/.test(s)).map(s => s.slice(0, 90)).join(' | '));
+  await ctx.close();
+  console.log('design-1 sandbox: session, live and activity go to the sandbox door (also after a reload); a fresh real page never does');
+}
+
 (async () => {
   const browser = await chromium.launch({ executablePath: process.env.CHROMIUM || '/opt/pw-browsers/chromium-1194/chrome-linux/chrome', args: ['--no-sandbox'] });
   try {
     await designPage(browser, 'design.html', 'design');
     await designPage(browser, 'design-1.html', 'design-1');
+    await designSandbox(browser);
     await messagePage(browser, 'design-message.html', 'design-message');
     await messagePage(browser, 'design-message-1.html', 'design-message-1');
     await inbox(browser);
@@ -356,6 +403,10 @@ async function inbox(browser) {
     assert(!all.includes(PIN), 'the PIN reached a request');
     const recorded = sent.filter(s => /"activity"|"session"/.test(s)).join('\n') + '\n' + JSON.stringify(acts);
     for (const bad of CUSTOMER) assert(!recorded.includes(bad), 'customer text in an activity or session request: ' + bad);
+    const liveText = JSON.stringify(lives);       // (the buyer's first name may be on the live board; their address, words and the message text never)
+    for (const bad of CUSTOMER.filter(x => x !== 'Test Buyer')) assert(!liveText.includes(bad), 'customer text in a live write: ' + bad);
+    assert(!/(?<!\d)\d{6}(?!\d)/.test(liveText.replace(/"(?:id|session|computer)":"[^"]*"/g, '')), 'a 6-digit number in a live write');
+    assert(lives.length >= 10, 'live writes were captured: ' + lives.length);
     assert(/"activity"/.test(recorded), 'the activity requests were captured');
     assert(acts.length >= 20, 'events arrived at the door: ' + acts.length);
     console.log('design-activity: all passed (' + acts.length + ' events, no PIN or customer text in ' + sent.length + ' requests)');
