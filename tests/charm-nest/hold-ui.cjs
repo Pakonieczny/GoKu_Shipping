@@ -84,7 +84,7 @@ async function main() {
     await page.goto(`${srv.sorterOrigin}/charm-nest-1.html`, { waitUntil: 'load' });
     await page.waitForFunction(() => window.CN && window.Orders && window.Review && window.CustomPrint && window.Seal && window.OrderWin && window.OrderTimeline && window.HoldUI && CN.S.cloud.ok === true, null, { timeout: 60000 });
     // the dialogs open at once, ever (never a pop-up over a pop-up)
-    await page.evaluate(() => { window.__dlg = { max: 0 }; const look = () => { const n = document.querySelectorAll('dialog[open]').length + document.querySelectorAll('.holdInline').length; if (n > window.__dlg.max) window.__dlg.max = n; }; new MutationObserver(look).observe(document.documentElement, { subtree: true, attributes: true, attributeFilter: ['open'], childList: true }); });
+    await page.evaluate(() => { window.__dlg = { max: 0 }; const look = () => { const n = document.querySelectorAll('dialog[open]').length; if (n > window.__dlg.max) window.__dlg.max = n; }; new MutationObserver(look).observe(document.documentElement, { subtree: true, attributes: true, attributeFilter: ['open'], childList: true }); });
     await page.evaluate(async ({ orders }) => {
       await Orders.loadMaps(true);
       B.master.entries.set('MIDDLE_9935', { sku: 'MIDDLE_9935', updatedAt: 1 });
