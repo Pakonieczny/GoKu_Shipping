@@ -255,7 +255,7 @@ const OV = () => ({
   metaSheet: (() => { const m = [...document.querySelectorAll('#owMeta .m')].find(x => (x.querySelector('i')?.textContent || '').trim().toLowerCase() === 'sheet'); return m ? (m.querySelector('span')?.textContent || '').trim() : null; })(),
 });
 const SHEETTAB = () => ({
-  chips: [...document.querySelectorAll('#owSheetPanel .owShTabs button')].map(b => ({ label: b.textContent.trim(), on: b.classList.contains('on') })),
+  chips: [...document.querySelectorAll('#owSheetPanel .owShTabs button')].map(b => ({ label: b.textContent.trim(), on: b.classList.contains('on'), at: b.dataset.at })),
   rows: [...document.querySelectorAll('#owSheetPanel .owPieces li')].map(li => ({ sku: (li.querySelector('.sku')?.textContent || '').replace(/copy \d+ of \d+/, '').trim(), where: (li.querySelector('em')?.textContent || '').trim() })),
   head: [...document.querySelectorAll('#owSheetPanel .fLabel')].map(x => x.textContent.trim()).find(t => /This order/.test(t)) || '',
   full: (b => b ? { disabled: !!b.disabled } : null)(document.querySelector('#owSheetPanel [data-full]')),
@@ -317,12 +317,15 @@ async function orderWindowProbes(page, mode, R, orders) {
         await page.evaluate(() => OrderWin.setView('sheet')); tab = await readSheetTab(page);
       }
       // ── Sheet tab: every chip in turn, every piece on its row ──
-      if (!all.length) {
-        if (here) R.check('A13', side, /not on a sheet yet/i.test(tab.none) && !tab.chips.length, `no piece of this order is on a sheet and the Sheet tab says ${JSON.stringify(tab.none || tab.chips.map(c => c.label))}`);
+      // (the Sheet tab answers for the piece picked in the switcher: that piece's own sheets, none for a piece on no sheet; with one piece in the order, for the order)
+      const scoped = multi ? mine : all;
+      if (!scoped.length) {
+        if (here) R.check('A13', side, /not on a sheet yet/i.test(tab.none) && !tab.chips.length, `${multi && all.length ? 'this piece is' : 'no piece of this order is'} on no sheet and the Sheet tab says ${JSON.stringify(tab.none || tab.chips.map(c => c.label))}`);
       } else {
-        R.eq('A10', side, tab.chips.map(c => c.label).sort(), all, 'the sheet chips');
+        R.eq('A10', side, tab.chips.map(c => c.label).sort(), scoped, 'the sheet chips');
         for (let i = 0; i < tab.chips.length; i++) {
-          if (!tab.chips[i].on) { await page.evaluate(i => document.querySelector(`#owSheetPanel .owShTabs button[data-at="${i}"]`)?.click(), i); tab = await settle(page, SHEETTAB, null, { max: 9000, quiet: 280, ready: v => sheetTabReady(v) && v.chips[i] && v.chips[i].on }); }
+          // (a tab's data-at is its place among ALL the order's sheets; the tabs shown are those of the piece)
+          if (!tab.chips[i].on) { await page.evaluate(at => document.querySelector(`#owSheetPanel .owShTabs button[data-at="${at}"]`)?.click(), tab.chips[i].at); tab = await settle(page, SHEETTAB, null, { max: 9000, quiet: 280, ready: v => sheetTabReady(v) && v.chips[i] && v.chips[i].on && v.rows.some(r => /this sheet/i.test(r.where)) }); }
           const cur = tab.chips[i].label, curId = chipId(cur);
           const pieces = truth.pieces(o.rid).filter(p => p.state !== 'gone'), miss = matchRows(tab.rows.map(r => ({ sku: r.sku, kind: whereKind(r.where) })), pieces, curId);
           R.check('A11', `${side}, ${cur} selected`, !miss.length && new RegExp(`This order . ${pieces.length} piece`).test(tab.head), `the piece list (${tab.head}) says ${JSON.stringify(tab.rows.map(r => `${r.sku} ${r.where}`))}: ${miss.join('; ') || 'the count in its header is not ' + pieces.length}`);
