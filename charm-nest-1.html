@@ -489,8 +489,6 @@ dialog.owin{width:min(1320px,97vw);max-height:min(94vh,1040px)}
 .fLabel{display:block;font:10px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--ink45);font-weight:700;margin:0 0 5px}
 .fLabel .soft{text-transform:none;letter-spacing:0;font-weight:400;color:var(--ink45);font-family:var(--sans)}
 .owField{margin-bottom:12px}
-.owIn{width:100%;border:1px solid var(--line);border-radius:10px;padding:9px 11px;font:13px var(--sans);background:var(--card);resize:vertical;color:var(--ink)}
-.owIn[readonly]{background:var(--paper2);color:var(--ink70)}
 /* the one field that must be read exactly: it grows to its content and is never boxed into a scroller */
 .owSaid{font:14px/1.5 var(--serif);background:var(--paper2);border:1px solid var(--line);border-radius:10px;padding:9px 11px;overflow-wrap:anywhere;white-space:pre-wrap;min-height:44px}
 .owSaid .lbl{display:block;font:9.5px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--ink45);font-weight:700;margin:6px 0 2px}
@@ -506,10 +504,6 @@ dialog.owin{width:min(1320px,97vw);max-height:min(94vh,1040px)}
 .owMeta .m .owSk{height:10px;width:64%;margin:5px 0 3px}
 .owPhoto .owSkPic{width:100%;height:100%;margin:0;border-radius:0;background:var(--line2)}
 #orderWin.owFull .owSub .owSk{display:inline-block;vertical-align:middle;width:150px;height:8px;margin:0}
-.owFix{border:1px solid var(--clay);background:var(--claySoft);border-radius:11px;padding:10px 12px;margin-bottom:12px}
-.owFix .t{font:700 11px var(--mono);letter-spacing:.09em;text-transform:uppercase;color:#8a3a26;margin-bottom:5px}
-.owFix .rvItem{border:0;box-shadow:none;background:transparent;padding:0;border-left:0}
-.owFix .rvItem .rh .ttl,.owFix .rvItem .rh .sub{display:none}
 /* the team's conversation is laid out as the customer's is (head, thread, box, one status pill), in the warm colours */
 .owChatHead{display:flex;align-items:center;gap:9px;padding:9px 12px;border-bottom:1px solid var(--line);flex:0 0 auto}
 .owMark{width:28px;height:28px;border-radius:50%;display:grid;place-items:center;background:var(--paper2);color:var(--ink70);flex:0 0 auto}
@@ -608,11 +602,6 @@ dialog.phv.layer.phvIn{background:transparent}
 .owHint kbd{font:10px var(--mono);border:1px solid var(--line);border-radius:4px;padding:0 4px;background:var(--paper2)}
 .owFoot{display:flex;align-items:center;gap:10px;padding:10px 16px;border-top:1px solid var(--line);flex:0 0 auto;background:var(--card)}
 .owFoot .spacer{flex:1 1 auto}
-.owSkip{display:inline-flex;align-items:center;gap:8px;font-size:12.5px;cursor:pointer}
-.owSw{width:40px;height:22px;border-radius:999px;border:1px solid var(--line);background:var(--paper2);position:relative;cursor:pointer;flex:0 0 auto;padding:0}
-.owSw i{position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:var(--ink45);transition:left .15s,background .15s}
-.owSw[aria-checked=true]{background:var(--sageSoft,var(--paper2));border-color:var(--sage,var(--line))}
-.owSw[aria-checked=true] i{left:20px;background:var(--sage,var(--ink))}
 
 /* ── the order view (Paul, 28 Sep, E1-F3; plans/design/order-view-spec.md): the whole screen, one thin header with the
    order's progress rail, one tab row that is also the toolbar, and Overview · Timeline · Sheet, each the full height.
@@ -691,40 +680,72 @@ dialog.phv.layer.phvIn{background:transparent}
 .owTools{margin-left:auto;padding-left:12px;display:flex;align-items:center;gap:6px;min-width:0;flex:0 .01 auto}
 .owGrp{display:none;align-items:center;gap:10px;min-width:0}
 .owGrp.on{display:flex;animation:owUp .26s cubic-bezier(.2,.8,.2,1) both}
-.owLive{font:700 9.5px var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--ink45);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.owSkip{display:inline-flex;align-items:center;gap:8px;font-size:12px;cursor:pointer;white-space:nowrap}
-.owSkip .soft{color:var(--ink45)}
-.owSkip[hidden]{display:none}
+.owTools:has(>.owGrp.on[data-for=info]){flex-shrink:1}   /* (the live line takes the room the tabs leave, at the right end of the row, and breaks inside it) */
+/* the live line, at the right end of the tab row where the Skip switch used to stand: right-aligned, one line when there is room,
+   else broken between its parts (each part is whole: owLive in the bridge), at most three lines so the row never grows */
+.owLive{font:700 9.5px/1.15 var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--ink45);text-align:right;min-width:0;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;overflow:hidden}
+.owLive>span{white-space:nowrap}
 .owSeg{display:inline-flex;border:1px solid var(--line);border-radius:8px;padding:2px;background:var(--card2)}
 .owSeg button{border:0;background:transparent;border-radius:6px;padding:2px 10px;font:11px var(--sans);color:var(--ink45);cursor:pointer;transition:background .2s,color .2s}
 .owSeg button.on{background:var(--card);color:var(--ink);box-shadow:0 1px 2px rgba(30,26,20,.12)}
 @keyframes owUp{from{opacity:0;transform:translateY(6px)}}
-/* an order of several pieces: one calm switch in the tab row (Overview, Timeline), its thumb gliding to the piece shown */
-.owPieceSw{position:relative;align-self:center;display:inline-flex;align-items:center;gap:2px;margin:0 14px;padding:2px;border:1px solid var(--line);border-radius:999px;background:var(--card2);min-width:120px;flex:0 100 auto;overflow-x:auto;scrollbar-width:none;animation:owUp .26s cubic-bezier(.2,.8,.2,1) both}   /* (three pieces and more: the strip gives way and scrolls before the live line is cut) */
-.owPieceSw::-webkit-scrollbar{display:none}
-.owPieceSw[hidden]{display:none}
-.owPieceSw button{position:relative;z-index:1;flex:none;display:inline-flex;align-items:center;gap:6px;max-width:230px;border:0;background:transparent;border-radius:999px;padding:3px 11px;font:11.5px var(--sans);color:var(--ink45);cursor:pointer;white-space:nowrap;transition:color .2s}
-.owPieceSw button>span{min-width:0;overflow:hidden;text-overflow:ellipsis}
-.owPieceSw button small{font:10px var(--mono);letter-spacing:.02em;color:var(--ink45)}
-.owPieceSw button:hover{color:var(--ink70)}
-.owPieceSw button.on{color:var(--ink)}
-.owPieceSw button:focus-visible{outline:2px solid var(--slate);outline-offset:-2px}
-.owPieceSw .dot{width:7px;height:7px;border-radius:50%;background:var(--c);flex:none;box-shadow:0 0 0 1px rgba(30,26,20,.1)}
-.owPieceSw button.shown::after{content:"";position:absolute;left:50%;bottom:0;width:3px;height:3px;margin-left:-1.5px;border-radius:50%;background:var(--gold)}
-.owPcThumb{position:absolute;z-index:0;top:2px;bottom:2px;left:0;width:0;border-radius:999px;background:var(--card);box-shadow:0 1px 2px rgba(30,26,20,.12),0 0 0 1px var(--line2);transition:left .34s cubic-bezier(.2,.8,.2,1),width .34s cubic-bezier(.2,.8,.2,1)}
+/* the "Its pieces" list is the piece selector (Paul, 5 Oct 2026, round 16; the chip row in the tab row is gone): the row of the piece shown is tinted,
+   barred in its metal's colour and has the bolder name; one quiet line at the head says what is shown, with the way back to all pieces. The tint
+   and the bar are layers that only fade and scale, so nothing else moves when a row is picked. */
+.owPcHd{display:flex;align-items:baseline;justify-content:space-between;flex-wrap:wrap;gap:0 14px;margin:0 0 5px}
+.owPcHd .fLabel{margin:0}
+.owPcState{font:11.5px var(--sans);color:var(--ink45)}
+.owPcState b{font-weight:600;color:var(--ink70)}
+.owPcState i{font-style:normal;color:var(--ink25)}
+.owPcAll{border:0;background:transparent;padding:0 2px;margin:0;font:inherit;color:var(--slate);cursor:pointer;border-radius:4px;text-decoration:underline;text-decoration-color:transparent;text-underline-offset:2px;transition:text-decoration-color .2s}
+.owPcAll:hover{text-decoration-color:currentColor}
+.owPcAll:focus-visible{outline:2px solid var(--slate);outline-offset:2px}
+.owPcSum .owPcRow[data-piece]{position:relative;isolation:isolate}
+.owPcSum .owPcRow[data-piece]::before{content:"";position:absolute;inset:0;z-index:-1;border-radius:10px;background:var(--goldSoft);opacity:0;transition:opacity .18s ease;pointer-events:none}
+.owPcSum .owPcRow[data-piece]::after{content:"";position:absolute;left:0;top:8px;bottom:8px;width:3px;border-radius:2px;background:var(--pc,var(--gold));opacity:0;transform:scaleY(.4);transition:opacity .18s ease,transform .18s cubic-bezier(.2,.8,.2,1);pointer-events:none}
+.owPcSum .owPcRow.sel::before{opacity:.55}
+.owPcSum .owPcRow.sel::after{opacity:1;transform:none}
+.owPcSum .owPcRow.sel{transform:none}
+.owPcSum .owPcRow.sel .nm b{font-weight:700}
+.owPcSum .owPcRow.pics .dot{box-shadow:0 0 0 2px var(--card),0 0 0 3px var(--gold2)}   /* (all pieces shown: the piece whose photo and details the Overview holds) */
+@media (prefers-reduced-motion:reduce){.owPcSum .owPcRow[data-piece]::before,.owPcSum .owPcRow[data-piece]::after{transition:none}}
 /* all pieces: each one on a row under "where it is now"; the slowest, where the order is, in gold */
 .owPcSum{display:grid;gap:2px;margin:-6px 0 20px;animation:owUp .3s cubic-bezier(.2,.8,.2,1) both}
 .owPcSum[hidden]{display:none}
-.owPcRow{display:grid;grid-template-columns:8px minmax(0,1.2fr) minmax(0,1fr) auto;align-items:center;gap:12px;border:0;background:transparent;text-align:left;padding:7px 10px;border-radius:10px;font:12.5px var(--sans);color:var(--ink70);cursor:pointer;transition:background .2s,transform .18s cubic-bezier(.2,.8,.2,1)}
+.owPcRow{display:grid;grid-template-columns:8px minmax(0,1fr) auto auto;align-items:center;gap:12px;border:0;background:transparent;text-align:left;padding:7px 10px;border-radius:10px;font:12.5px var(--sans);color:var(--ink70);cursor:pointer;transition:background .2s,transform .18s cubic-bezier(.2,.8,.2,1)}
 .owPcRow:hover{background:var(--card2);transform:translateX(2px)}
 .owPcRow:focus-visible{outline:2px solid var(--slate);outline-offset:-2px}
 .owPcRow .dot{width:8px;height:8px;border-radius:50%;background:var(--c)}
 .owPcRow .nm{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.owPcRow .nm b{font-weight:600;color:var(--ink)}
-.owPcRow .st{font:11px var(--mono);color:var(--ink45);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.owPcRow.slow .st{color:#7a5a1d}
+/* a piece's status on its row (Paul, 5 Oct, point 4; pieceStatusHtml): ONE quiet chip, the Sheet card's own chip (.owShChip: its metal dot, its hairline)
+   shrunk to a line. The sheet's name in the app's own type (never mono, never cut short), a dot in the sheet's metal, a small check once the sheet is cut or
+   sent; waiting and cancelled are its dashed, hollow form, on hold takes the Hold button's orange and completed the Completed button's green. The chip of a
+   sheet opens it (a button); the others only say where the piece is. The hover is a tint fading in and a 1px lift: opacity and transform only. */
+.owPcRow .st{display:flex;align-items:center;justify-content:flex-end;min-width:0;font:inherit;color:inherit}
+.owPcRow .pcSt{position:relative;isolation:isolate;display:inline-flex;align-items:center;gap:7px;max-width:100%;border-radius:999px;padding:3px 10px 3px 8px;background:var(--card2);box-shadow:none;white-space:nowrap;transition:transform .18s cubic-bezier(.2,.8,.2,1)}
+.owPcRow .pcSt i{width:8px;height:8px}
+.owPcRow .pcSt span{font:600 11.5px/1.35 var(--sans);color:var(--ink70)}
+.owPcRow .pcSt::before{content:"";position:absolute;inset:-1px;z-index:-1;border-radius:inherit;background:var(--goldSoft);opacity:0;transition:opacity .18s;pointer-events:none}
+.owPcRow button.pcSt:hover,.owPcRow button.pcSt:focus-visible{transform:translateY(-1px);border-color:var(--line);box-shadow:none}
+.owPcRow button.pcSt:hover::before,.owPcRow button.pcSt:focus-visible::before{opacity:1}
+.owPcRow span.pcSt{cursor:inherit}.owPcRow span.pcSt:hover{transform:none;border-color:var(--line);box-shadow:none}
+.owPcRow .pcSt.off{background:transparent}
+.owPcRow .pcCk{width:10px;height:10px;flex:none;color:var(--sage)}
+.owPcRow .pcMore{font:600 10.5px var(--sans);font-style:normal;color:var(--ink45)}
+.owPcRow .pcSt[data-k=hold]{background:#f8eee3;border-color:#e6cdb2}.owPcRow .pcSt[data-k=hold] span{color:var(--warn,#a2591c)}.owPcRow .pcSt[data-k=hold]::before{background:#f1dcc3}
+.owPcRow .pcSt[data-k=done]{background:#e8f1ea;border-color:#b6d2bf}.owPcRow .pcSt[data-k=done] span{color:#19663f}.owPcRow .pcSt[data-k=done]::before{background:#d9eadf}
+.owPcRow.slow .pcSt{border-color:var(--goldLine)}   /* (the slowest piece, where the order is: a gold hairline, no longer brown words) */
+@media(prefers-reduced-motion:reduce){.owPcRow .pcSt,.owPcRow .pcSt::before{transition:none}}
 .owPcRow .steps{display:inline-flex;gap:4px}
 .owPcRow .steps i{width:6px;height:6px;border-radius:50%;box-shadow:inset 0 0 0 1px var(--ink25);transition:background .3s}
 .owPcRow .steps i.on{background:var(--sage);box-shadow:none}
+/* the dots are circles with a card (charm-nest-rail-tip.js, Seal.zoom): a hit area a little wider than the dot so no gap between two is dead (the dots never
+   take the row's press), the grown dot keeps its look and takes a thin soft ring (transform and opacity only move, the ring is drawn once) */
+.owPcRow .steps i[data-pdot]{position:relative;cursor:default}
+.owPcRow .steps i[data-pdot]::before{content:"";position:absolute;inset:-8px -2px}
+.owPcRow .steps i[data-pdot]:focus-visible{outline:2px solid var(--slate);outline-offset:2px}
+.owPcRow .steps i.sealZoomed{box-shadow:inset 0 0 0 1px var(--ink45)}
+.owPcRow .steps i.on.sealZoomed{box-shadow:0 0 0 calc(1.5px / var(--zk,1)) rgba(95,122,91,.38)}
 /* a piece that is in the Review tab has its card's own buttons and seals here, at the right end of its row, where the words of the other
    pieces sit (Paul, 5 Oct, round 8: "to the right side of the chain only listing and NOT below it"): the name, then the buttons, right
    aligned and wrapping among themselves when the room is short, then the dots. Never under the name, at any width. */
@@ -747,10 +768,12 @@ dialog.phv.layer.phvIn{background:transparent}
 .owPcRow .owPcSr{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0 0 0 0);border:0;white-space:nowrap}
 /* a piece in no card (an ordinary piece on a sheet): its words stay, and its orange Hold sits at the right end of the row where they are, before the
    dots. Where the room is short (a phone, or the window beside its chat) the words go on a second line under the name, never a sideways scroll. */
-.owPcSum .owPcRow.hasWords{grid-template-columns:8px minmax(8em,1.2fr) minmax(0,1fr) auto auto}
+.owPcSum .owPcRow.hasWords{grid-template-columns:8px minmax(8em,1fr) auto auto auto}   /* (the status chip takes its own width, the name gives way first) */
 @container (max-width:470px){
   .owPcSum .owPcRow.hasWords{grid-template-columns:8px minmax(8em,1fr) auto auto;row-gap:1px}
-  .owPcRow.hasWords .st{grid-column:2 / -1;grid-row:2;white-space:normal;overflow:visible;text-overflow:clip}
+  .owPcRow.hasWords .st{grid-column:2 / -1;grid-row:2;justify-content:flex-start;margin-top:3px}
+  .owPcSum .owPcRow:not(.hasAct){grid-template-columns:8px minmax(0,1fr) auto;row-gap:1px}   /* (a row with no Hold: the same, its dots stay at the right end) */
+  .owPcRow:not(.hasAct) .st{grid-column:2 / -1;grid-row:2;justify-content:flex-start;margin-top:3px}
 }
 /* what is being waited for, said on one line */
 .owLoading{display:flex;align-items:center;gap:9px;padding:8px 18px;font:12px var(--sans);color:var(--ink70);border-bottom:1px solid var(--line2);background:var(--card2)}
@@ -805,7 +828,6 @@ dialog.phv.layer.phvIn{background:transparent}
 .owNowCard .btn.off,.owNowCard .btn.off:hover{opacity:.45;cursor:default;background:transparent}
 .owTabsV>[role=tab].off,.owTabsV>[role=tab].off:hover{color:var(--ink25);cursor:default;transition:none}   /* (greyed the moment the order's records land, which can be while the window opens: only transform, opacity and clip-path move then) */
 .owTabsV>[role=tab].off b{font-weight:500}
-.owPieceSw button.noSheet .dot{opacity:.4}
 .owPlateNone .owNoneIcon{width:54px;height:54px;color:var(--ink25);margin-bottom:2px}
 .owPlateNone .owNoneWhy{max-width:300px;line-height:1.5}
 .owPlateNone .owNonePc{display:inline-flex;align-items:center;gap:7px;border:1px solid var(--line);border-radius:999px;padding:3px 12px 3px 9px;background:var(--card);font:11.5px var(--sans);color:var(--ink70);margin-top:2px}
@@ -880,7 +902,15 @@ dialog.phv.layer.phvIn{background:transparent}
   #orderWin.owFull .owSide>.owPanel{border-top:0}
   #orderWin.owFull .owSide>.owChat{flex:none;min-height:420px}
   .owNowCard,.owNowCard.sealed,.owNowCard.sealed.bad{grid-template-columns:minmax(0,1fr)}
-  .owSkip .soft{display:none}
+}
+/* a phone: the tab row is 38 px high and its three tabs took 317 px of a 390 px screen, which left the live line 47 px. The tabs close up
+   (their counts are on the views themselves) so the line has its room, and its lead word steps aside: "Live · last change Mon 12:44 PM · Paul"
+   in three short lines at most, in the same row, at its right end */
+@media (max-width:600px){
+  .owTabsV>[role=tab]{padding:0 6px;gap:5px}
+  .owTabsV>[role=tab] .c{display:none}
+  .owTools{padding-left:6px}
+  .owLive .lead{display:none}
 }
 /* ── the order window's two conversations: the team's (warm, internal) and the customer's (slate, on Etsy) ── */
 .owTabs{display:flex;gap:2px;padding:6px 10px 0;border-bottom:1px solid var(--line);flex:0 0 auto}
@@ -2731,16 +2761,13 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 .rvItem .cuStep>.rvItem{border:0;box-shadow:none;background:transparent;padding:0;border-left:0}
 .rvItem .cuStep>.rvItem>.rh .ttl,.rvItem .cuStep>.rvItem>.rh .sub,.rvItem .cuStep>.rvItem>.ev,.rvItem .cuStep>.rvItem>.why{display:none}
 .rvItem .cuStep>.rvItem>.rh{padding-bottom:0;border-bottom:0}
-/* the order window: a custom order's one line, and notes left for the next person */
+/* the order window: a custom order's one line */
 .owPcRow .pcAct .sealRow{margin:calc(var(--seal-fit,var(--seal-base)) * -.28) 0;max-width:50%;flex:0 0 auto}
 /* the small seals a piece keeps in the Orders list (completed by hand, printed) and an order's on its Cancelled card: their records keep them for good */
 .orderListRow .rowActions .sealRow,.ocard .rowActions .sealRow,.cxSeals .sealRow{margin:3px 0 3px 3px;max-width:100%}
 .cxSeals{margin-top:3px}
 .owPcRow .pcAct .owCuMore{flex:0 0 auto;border:0;background:transparent;color:var(--ink45);font:700 10.5px var(--sans);padding:3px 5px;margin-left:-4px;border-radius:6px;cursor:pointer;white-space:nowrap}
 .owPcRow .pcAct .owCuMore:hover,.owPcRow .pcAct .owCuMore:focus-visible{color:var(--ink);background:var(--card2)}
-.owNoteField .fLabel{color:var(--ink)}
-.owNoteField .owIn{border-color:var(--goldLine)}
-.owNoteField .owIn.has{background:#fdf7e6;border-color:var(--gold2);font-size:13.5px}
 </style>
 <link rel="preload" href="charm-nest-stamp-walnut.png" as="image">
 <link rel="stylesheet" href="charm-nest-activity.css?v=20261003-seal-small">
@@ -2953,7 +2980,7 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-vector.js"></script>
 <script src="charm-nest-pdf.js?v=20260924-followup"></script>
 <script src="charm-nest-dxf.js?v=20260927-custom"></script>
-<script src="charm-nest-motion.js?v=20261005-zg-seal-small-rt1-sealpc1-sealcmp1"></script>
+<script src="charm-nest-motion.js?v=20261005-zg-seal-small-rt1-sealpc1-sealcmp1-pdot1"></script>
 <script src="charm-nest-timeline-ui.js?v=20261005-pieces-psb1-hand2-print1-sealpc2-q1next1-tl1"></script>
 <script src="charm-nest-geom.js?v=20260921-material"></script>
 <script src="charm-nest-engrave-fit.js"></script>
@@ -2969,7 +2996,8 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-text.js"></script>
 <script src="charm-nest-orders.js?v=20261005-pieces-hand1-rel1"></script>
 <script src="charm-nest-order-pieces.js?v=20261005-op2-hand1"></script>
-<script src="charm-nest-order-engraving.js?v=20261005-oe2-zp1"></script>
+<script src="charm-nest-piece-placement.js?v=20261005-pp1"></script>
+<script src="charm-nest-order-engraving.js?v=20261005-oe2-zp1-nofix1"></script>
 <script src="charm-nest-shared-orders.js?v=20261005-cardinal3"></script>
 <script src="charm-nest-background.js?v=20260930-stamp-barrier"></script>
 <script>
@@ -6747,8 +6775,8 @@ boot();
      personal login: the person is the name it keeps (cn.employee: typed at the first approval, label or decision, or the
      Design Station's sign-in), the same name every seal it stamps carries. -->
 <script src="station-session.js?v=20261002-ea1"></script>
-<script src="station-activity.js?v=20261003-reset-clean"></script>
-<script src="charm-nest-bridge.js?v=20261005-lis2-cardinal4-zoom-psb1-egl1-osc1-r3f-setgate1-hand1-sameset1-rl1-nowait1-opt1-rt1-pcr1-one1-st1-five1-pd1-zp1-rel2-cx1-hold2-sl2-sealsh1-sealpc2"></script>
+<script src="station-activity.js?v=20261005-e2live"></script>
+<script src="charm-nest-bridge.js?v=20261005-lis2-cardinal4-zoom-psb1-egl1-osc1-r3f-setgate1-hand1-sameset1-rl1-nowait1-opt1-rt1-pcr1-one1-st1-five1-pd1-zp1-rel2-cx1-hold2-sl2-sealsh1-sealpc2-live1-pst1-nofix1-pcsel1-pst2-sk1-nonote1-pdot1"></script>
 <script src="charm-nest-review-live.js?v=20261005-rl1"></script>
 <script src="charm-nest-hold-ui.js?v=20261005-hold2"></script>
 <script>
@@ -6778,15 +6806,15 @@ try {
       set(v) { d.set.call(window.B, v); try { const n = String(d.get.call(window.B) || "").trim(); if (n && !/^\d+$/.test(n)) StationSession.signedIn({ name: n, id: null }); } catch (_) {} } });
 } catch (_) {}
 </script>
-<script src="charm-nest-sheetwin.js?v=20261005-pieces-cardinal2-osc1-shm1-osc2-zp1-rel1-oh1-sl2-sealsh1"></script>
+<script src="charm-nest-sheetwin.js?v=20261005-pieces-cardinal2-osc1-shm1-osc2-zp1-rel1-oh1-sl2-sealsh1-live1-hk2"></script>
 <!-- Hold the whole order: the engine over the sheet window's own Take off and Fill the freed room (OrderHold.plan, run, status) -->
-<script src="charm-nest-order-hold.js?v=20261005-oh2"></script>
+<script src="charm-nest-order-hold.js?v=20261005-oh3"></script>
 <!-- the one way into the engraving of one order's piece (the order window, the Sheet tab and the Sheet window call it; each keeps its own way without it) -->
 <script src="charm-nest-engrave-link.js?v=20261005-el2"></script>
 <script src="charm-nest-tour.js?v=20260929-m11"></script>
-<script src="charm-nest-order-release.js?v=20261005-rel3"></script>
+<script src="charm-nest-order-release.js?v=20261005-rel4"></script>
 <!-- the cinematic Hold and Release: the order seen moving sheet to sheet (OrderHoldFx.playHold, playRelease, returnToOnHold), driven by the engine's own steps -->
-<script src="charm-nest-hold-fx.js?v=20261005-hfx1"></script>
+<script src="charm-nest-hold-fx.js?v=20261005-hfx2"></script>
 <script src="charm-nest-mail.js?v=20261005-pv-seal-zp1"></script>
 <script src="charm-nest-rose-ui.js?v=20261005-rg3-opt1"></script>
 <script src="charm-nest-flow-rose.js?v=20261003-rg2"></script>
@@ -6799,16 +6827,16 @@ try {
 <script src="charm-nest-library-engraving.js?v=20261005-egl1"></script>
 <script src="charm-nest-piece-dots.js?v=20261005-pd1"></script>
 <script src="charm-nest-library-issues.js?v=20261005-lis6-nowait1-noset1-one1-five1-pd1"></script>
-<script src="charm-nest-rail-tip.js?v=20261005-rt2"></script>
+<script src="charm-nest-rail-tip.js?v=20261005-rt2-pdot1"></script>
 <script src="charm-nest-piece-seals.js?v=20261005-pg1"></script>
 <script src="charm-nest-cancel-ui.js?v=20261005-cx1"></script>
 <script src="charm-nest-shared-orders-modal.js?v=20261005-so5"></script>
 <script src="charm-nest-search.js?v=20260929-m5-osc1-sealsh1"></script>
 <script src="charm-nest-signins.js?v=20260929-m5"></script>
-<script src="charm-nest-efficiency-charts.js?v=20261005-efc1"></script>
-<script src="charm-nest-efficiency-stations.js?v=20261005-es1"></script>
-<script src="charm-nest-efficiency.js?v=20261005-ef7-es1"></script>
-<script src="charm-nest-efficiency-orders.js?v=20261005-eo1"></script>
+<script src="charm-nest-efficiency-charts.js?v=20261005-efc2"></script>
+<script src="charm-nest-efficiency-stations.js?v=20261005-es2"></script>
+<script src="charm-nest-efficiency.js?v=20261005-ef7-es2"></script>
+<script src="charm-nest-efficiency-orders.js?v=20261005-eo2"></script>
 <!-- ══ one order line: what it is, what the customer said, what the shop said, and how to settle it ══ -->
 <dialog id="orderWin" class="owin owFull" aria-labelledby="owTitle" data-no-grow>
   <div class="owBox">
@@ -6829,9 +6857,8 @@ try {
       <button type="button" role="tab" data-ow-view="timeline" aria-selected="false" tabindex="-1"><b>Timeline</b><span class="c" id="owTlCount"></span></button>
       <button type="button" role="tab" data-ow-view="sheet" aria-selected="false" tabindex="-1"><b>Sheet</b><span class="c" id="owShCount"></span></button>
       <span class="owInk" aria-hidden="true"></span>
-      <div class="owPieceSw" id="owPieceSw" role="group" aria-label="Which piece of the order" hidden></div>
       <div class="owTools">
-        <div class="owGrp" data-for="info"><span class="owLive" id="owLive"></span><label class="owSkip" id="owSkipBox"><button type="button" class="owSw" id="owSkip" role="switch" aria-checked="false" aria-label="Skip this Order"><i></i></button><span>Skip this Order <span class="soft">— cut nothing for it</span></span></label></div>
+        <div class="owGrp" data-for="info"><span class="owLive" id="owLive"></span></div>
         <div class="owGrp" data-for="timeline" id="owTlTools"></div>
         <div class="owGrp" data-for="sheet"><div class="owSeg" id="owFace" role="group" aria-label="Side of the sheet"><button type="button" data-face="front" class="on" aria-pressed="true">Front</button><button type="button" data-face="back" aria-pressed="false">Back · engraving</button></div></div>
       </div>
@@ -6851,7 +6878,6 @@ try {
           <div class="owPcSum" id="owPcSum" hidden></div>
           <div id="owFix"></div>
           <div class="owField"><label class="fLabel">What the customer wrote</label><div class="owSaid" id="owNotes">— No notes —</div></div>
-          <div class="owField owNoteField"><label class="fLabel" for="owNote">Order notes <span class="soft">— for whoever opens this order next · saved to the order by itself, every station and sorter sees them</span></label><textarea class="owIn" id="owNote" rows="3" placeholder="Leave a note on this order for the next person who opens it…"></textarea></div>
           <div class="owMeta" id="owMeta"></div>
         </div>
       </div>
@@ -6870,7 +6896,7 @@ try {
             <textarea id="owInput" rows="1" placeholder="Message every station on this order…"></textarea>
             <button type="button" class="owIco send" id="owSend" title="Send (Enter)" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2L11 13"/><path d="M22 2l-7 20-4-9-9-4 20-7z"/></svg></button>
           </div>
-          <div class="owHint"><span class="owLink ok" id="owLink" title="Messages and the staff note save straight to the order's record"><i></i>Live</span><span class="owHintT"><kbd>Enter</kbd> send · <kbd>Shift</kbd>+<kbd>Enter</kbd> new line · paste or drop images</span></div>
+          <div class="owHint"><span class="owLink ok" id="owLink" title="Messages save straight to the order's record"><i></i>Live</span><span class="owHintT"><kbd>Enter</kbd> send · <kbd>Shift</kbd>+<kbd>Enter</kbd> new line · paste or drop images</span></div>
         </div>
         <input type="file" id="owFile" accept="image/*" multiple hidden>
         </div>

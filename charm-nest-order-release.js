@@ -293,7 +293,8 @@
     if (stuck.length) { for (const r of after) delete r.releasing; await persist(); return fail(`Order ${rid} is released and at the front of the queue, but it needs a look in Review: ${str(stuck[0].reason || (stuck[0].problems[0] && stuck[0].problems[0].reason) || 'a piece has no design yet')}`, 'review', { released: true }); }
     const ids = [...new Set(after.filter(r => r.releasing).flatMap(r => r.poolIds || []))], fresh = ids.filter(id => !stay.has(id));
     const done = ['pooled', 'written', 'labelled', 'committed'];
-    const unplaced = after.filter(r => !done.includes(r.state));
+    // (a line that is never cut, a chain only line or one completed by hand, has nothing to put on a sheet: it is "noDesign" with no pieces, and no reason to stop the release)
+    const unplaced = after.filter(r => !done.includes(r.state) && !(r.state === 'noDesign' && !(r.poolIds || []).length));
     if (unplaced.length && open) { const r = unplaced[0]; for (const x of after) delete x.releasing; await persist(); return fail(`Order ${rid} is released and at the front of the queue, but ${str(r.reason || r.state)}`, 'place', { released: true }); }
 
     const finish = async (pages, placed, why) => {

@@ -456,7 +456,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     // (Esc while the sheet is still flying in closes it: the view it was opening on has not been seen yet)
     d.addEventListener("cancel", e => { e.preventDefault(); if (closeSheetMenu()) return; if (!E.name.hidden) return hideName(); if (!E.menu.hidden) return menu(false); if (W.hand) return stopHand(); if (W.add) return closeAdd(); if (window.CNZoomPan && tryDo(() => CNZoomPan.resetWithin(d))) return; if (W.view === "piece" && !(W.flip && !W.flip.landed)) return showSheetPane(); close(); });
     // (what was changed in here is read again by the order view: its copies of the saved sheets are dropped)
-    d.addEventListener("close", () => { orderRecs.clear(); cleanup(); });
+    d.addEventListener("close", () => { orderRecs.clear(); cleanup(); tryDo(() => window.CNLive && CNLive.close("laser")); });
     d.addEventListener("click", e => { if (e.target === d) close(); if (!E.menu.hidden && !e.target.closest(".swMenuWrap")) menu(false); });
     E.moreBtn.onclick = () => menu(E.menu.hidden);
     const search = input => {
@@ -1180,6 +1180,8 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       E.done.hidden = !window.LibraryDone || !window.LibraryDone.mark || (!done && !LibraryDone.canComplete('sheet',r.id || r.sheetId));
       E.done.textContent = done ? "Move back to current" : "Mark completed";
       E.done.onclick = () => markDone(!done);
+      // the live stations board (employee console): a sheet that is ready for the laser, open here, is what the Laser station is on now
+      tryDo(() => { if (window.CNLive) { if (ready) CNLive.sheet(`${CODE[m] || labelOf(m)} Sheet ${sheetNoOf(r)}${sn ? ` · Set ${sn}` : ""}`); else CNLive.close("laser"); } });
     }
     if (!prelim || !W.setSheets.length) renderSheetChips();
   }
@@ -4691,9 +4693,8 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       const placed = [];
       for (const item of p.list) {
         if (!fillable(target)) break;
-        if (hooks.from) hooks.from(item);
         let ok = false, err = null;
-        try { ok = await moveIn(item.k, item.spots, target, who, { headless: true }); } catch (e) { err = e; }
+        try { if (hooks.from) await hooks.from(item); ok = await moveIn(item.k, item.spots, target, who, { headless: true }); } catch (e) { err = e; }   // (from may refuse the move: it throws)
         if (!ok) { if (hooks.skipped) hooks.skipped(item, err || new Error("another change is running")); break; }
         placed.push(item); if (hooks.placed) hooks.placed(item);
       }
@@ -4701,6 +4702,8 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     }
     return {
       busy: () => !!W.flow, word, fillable, room, fill, ghostsOf, newer, flow: () => (W.flow ? W.flow.title : ""),
+      // one sheet written again as it now stands, verified and saved (what a save that failed, or a reload, left unwritten); nothing drawn. false: still saving
+      rewrite: sh => rewritePage(sh, stepOf(`Rewriting ${word(sh)}`), () => {}),
       // what becomes of the whole order: the pieces that come off (ok, each with its sheet) and those that stay (stay, with a kind:
       // cut · sent · unloaded · last · together). The window's pool cache for the order is dropped first: it is only a cache.
       offPlan: rid => { W.pools.delete(String(rid)); return offPlan({ rid: String(rid) }, true); },

@@ -111,15 +111,6 @@
 /* remove old left-margin so notes align with input */
 .modal-notes-col #modalListingNotes{ margin:0; }
 
-/* staff-note field */
-#modalStaffNote{
-  width:300px;
-  height:35px;
-  margin-top:40px;
-  padding:4px;
-  border:1px solid #999;
-}
-
     /* fixed thumbnail size, border stays */
     #modalListingImg{
       width:200px;
@@ -3852,41 +3843,7 @@ function reflowGrid(){
       mkInput("SKU"  , item.sku        || "N/A");
       mkInput("Other", item.otherLabel || "N/A");   // NEW line
 
-      /* ▼▼  STAFF NOTE sync  (deduped) ▼▼ */
-      const staffInp = document.getElementById("modalStaffNote");
       const orderId  = String(item.receipt_id || item.orderNumber);
-
-      staffInp.value = "";   // reset before fetch
-
-      fetch(`${functionsBaseUrl}/firebaseOrders?orderId=${encodeURIComponent(orderId)}`)
-        .then(r => r.json())
-        .then(res => {
-          if (res.success && res.data && res.data["Staff Note"]) {
-            staffInp.value = res.data["Staff Note"];
-          }
-        })
-        .catch(console.error);
-
-      /* overwrite any previous handlers */
-        staffInp.onchange = staffInp.onblur = async () => {
-        const note = staffInp.value.trim();
-
-        /* write to Firestore */
-        fetch(`${functionsBaseUrl}/firebaseOrders`,{
-          method : "POST",
-          headers: { "Content-Type":"application/json" },
-          body   : JSON.stringify({ orderNumber: orderId, staffNote: note })
-        }).catch(console.error);
-
-        /* instant UI feedback */
-        if(note){
-          staffNoteIDs.add(orderId);
-        }else{
-          staffNoteIDs.delete(orderId);
-        }
-        markStaffNoteOrders();
-      };
-      /* ▲▲  end STAFF NOTE sync ▲▲ */
 
       /* sync checkbox with this order */
       modalCompleteChk.checked   = completedOrders.has(orderId);
@@ -3927,10 +3884,6 @@ function reflowGrid(){
       <!-- notes + staff input stacked -->
       <div class="modal-notes-col">
         <pre id="modalListingNotes"></pre>
-
-        <input id="modalStaffNote"
-               type="text"
-               placeholder="Staff Note">
       </div>
     </div>
 

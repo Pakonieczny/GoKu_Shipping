@@ -429,7 +429,9 @@ const humanAct = window.CNAct = (action, o) => {
       return false;
     }
     if (WORKSPACE_SANDBOX && !w.sandbox) return false;
-    return logAs(action, opts, station);
+    const logged = logAs(action, opts, station);
+    try { if (window.CNLive) CNLive.pressed(action, opts, station); } catch (_) {}      // (the live board: a press keeps the open order alive, a completion ends it)
+    return logged;
   } catch (_) { return false; }
 };
 /** A name is set: what was pressed before it, in the last 20 minutes, is recorded under it. */
@@ -442,6 +444,61 @@ humanAct.release = () => {
 };
 humanAct.drop = () => { held.length = 0; };       // (the midnight sign-out: yesterday's presses are never put under tomorrow's name)
 humanAct.held = () => held.length;
+/* The live stations board (station-activity.js working() / idle(); plans/employee-hr/api.md): what this page has open RIGHT NOW.
+   Sorter: the order whose window is open, with a piece for each of its lines. Laser: the sheet window while its sheet says "Ready
+   for laser". It shows at once, ends when the window closes (or the order or the sheet is completed), a press keeps it alive and
+   20 quiet minutes end it. The same rules as CNAct: nothing without a signed-in name (it never asks for one) and nothing from a
+   sandbox page that is not signed in as the sandbox. It never throws, waits or touches the network here, so the sorter works
+   exactly as before when the live layer is missing or down. */
+const CNLive = window.CNLive = (() => {
+  const HOLD = 20 * 60e3, seen = { sorter: "", laser: "" }, since = { sorter: null };
+  const A = () => { const a = window.StationActivity; return a && typeof a.working === "function" ? a : null; };
+  const who = () => { try { if (!A() || !sessionUp()) return null; const w = sessionWho(); return w && !(WORKSPACE_SANDBOX && !w.sandbox) ? w : null; } catch (_) { return null; } };
+  /** the order of the open window: rows are its lines (the pull's, or those read from the records) */
+  function order(rid, rows) {
+    try {
+      rid = String(rid || "").replace(/\D/g, ""); const w = who();
+      if (!rid || !w) return false;
+      const all = (rows || []).filter(r => r && r.order && r.line && !r.loading), here = all.filter(r => r.state !== "gone"), use = (here.length ? here : all).slice(0, 24);
+      const pieces = use.map((r, i) => {
+        const l = r.line, sp = r.spec || {}, q = Math.floor(+l.quantity) || 1, sku = String(sp.designSku || l.sku || "");
+        const title = String(l.title || (r.snap && r.snap.title) || "").replace(/\s+/g, " ").trim().slice(0, 50);
+        return { id: rid + "_" + (String(l.transactionId || "").replace(/\D/g, "").slice(0, 20) || i + 1), label: (q > 1 ? q + " x " : "") + (title || sku || "Piece " + (i + 1)), sku, listingId: l.listingId, size: sp.size };
+      });
+      const customer = String((use[0] && use[0].order.buyer && use[0].order.buyer.name) || "");
+      const fp = JSON.stringify([w.person, w.device, rid, customer, pieces]);
+      if (seen.sorter === fp) return true;
+      seen.sorter = fp;
+      if (!since.sorter || since.sorter.rid !== rid) since.sorter = { rid, at: Date.now() };       // (one scan time for the whole opening, however often the lines are read again)
+      return A().working({ station: "sorter", rid, orderNumber: rid, customer, pieces, pieceCount: use.length, holdMs: HOLD, scannedAt: since.sorter.at });
+    } catch (_) { return false; }
+  }
+  /** the laser sheet of the open sheet window (title: "GF Sheet 2 · Set 4") */
+  function sheet(title) {
+    try {
+      title = String(title || "").trim(); const w = who();
+      if (!title || !w) return false;
+      const fp = JSON.stringify([w.person, w.device, title]);
+      if (seen.laser === fp) return true;
+      seen.laser = fp;
+      return A().working({ kind: "sheet", station: "laser", title, holdMs: HOLD });
+    } catch (_) { return false; }
+  }
+  /** the window of that station closed (or its sheet is not for the laser): the slot is empty, and the next opening shows again */
+  function close(station) {
+    try { seen[station] = ""; if (station === "sorter") since.sorter = null; const a = window.StationActivity; return !!(a && typeof a.idle === "function" && a.idle({ station })); } catch (_) { return false; }
+  }
+  /** a press here: it keeps what is open alive; completing the open order (or a sheet at the laser) ends it, the window staying as it is */
+  function pressed(action, opts, station) {
+    try {
+      const a = window.StationActivity; if (!a) return;
+      if (action === "complete" && station === "laser") a.idle({ station: "laser" });
+      else if (action === "complete" && opts && opts.orders === 1 && opts.orderId) a.idle({ station: "sorter", rid: String(opts.orderId) });
+      else if (typeof a.touch === "function") a.touch();
+    } catch (_) {}
+  }
+  return { order, sheet, close, pressed };
+})();
 const piecesOfRows = rows => { try { return (rows || []).reduce((n, r) => n + Math.max(1, Math.floor(+(r && r.line && r.line.quantity) || 1)), 0); } catch (_) { return 0; } };
 /* Who the server's Nested stamps name (placed, setCommitted: poolUpdate), Paul, 28 Sep (station tracking E). The sorter
    has no person login of its own (its passcode is shared): the person on duty is the name its sign-in keeps (cn.employee,
@@ -9123,7 +9180,7 @@ const Review = window.Review = (() => {
         }
         if (done !== false || now - a.at > 600000) answers.delete(k);
       }
-      // a line skipped from its order window (no card) is recorded when the sync first sees it skipped
+      // a line skipped without a card is recorded when the sync first sees it skipped (the order window no longer has a Skip switch: a line skipped there before keeps its stored state)
       if (full) {
         const live = new Set();
         for (const r of Orders.rows()) {
@@ -10688,13 +10745,12 @@ const TeamCard = window.TeamCard = (() => {
 })();
 
 /* ═══ 24b · OrderWin — one line, everything about it, and the way to settle it ═══
-   The Design Station's own order window, here: the picture, the SKU, what the customer typed, the staff note that saves
-   itself, the internal thread every station shares, and — the reason it is worth having here — the review decision the
+   The Design Station's own order window, here: the picture, the SKU, what the customer typed, the internal thread every station shares, and — the reason it is worth having here — the review decision the
    line is waiting on, answered without leaving the order. Messages go over the bridge, so the station keeps the one Etsy
    session and the one Firestore listener and this page never grows a second of either. */
 const OrderWin = window.OrderWin = (() => {
   // the Team thread itself lives in TeamMail (thread, load, html), shared with the engraving cards
-  const W = { key: null, rid: null, at: 0, dlg: null, tray: [], poll: 0, noteTimer: 0, wired: false,
+  const W = { key: null, rid: null, at: 0, dlg: null, tray: [], poll: 0, wired: false,
     trays: new Map(), sending: new Map(), painted: "",
     // the order view (Paul, 28 Sep): a line from the records when the order is not in the pull (row, rows), whether
     // Previous and Next walk the Orders list, the view in front, what it grew out of, its motion, the timeline mounted
@@ -10773,13 +10829,11 @@ const OrderWin = window.OrderWin = (() => {
     W.dlg.addEventListener("cancel", e => { e.preventDefault(); if (finding()) endFind(true); else if (!(window.CNZoomPan && tryDo(() => CNZoomPan.resetWithin(W.dlg)))) shut(); });
     // the number is the view's search too (design spec 7)
     byId("owTitle").addEventListener("click", e => { if (e.target.closest(".num")) focusSearch(); });
-    // a note typed just before the window closed (Escape, ×) is saved too: its timer and its blur both found no order
     // images waiting beside the message box stay with their order for when it is opened again
     // (the close event comes a moment after the window closes: one opened again at once, on another order, keeps its own
-    // state — the late event used to clear its line, so the next repaint closed it, and could save the note box's old
-    // text onto the new order; open() saves the note of the order it leaves)
+    // state — the late event used to clear its line, so the next repaint closed it)
     W.dlg.addEventListener("close", () => {
-      if (W.dlg.open) return; tryDo(() => window.CNZoomPan && CNZoomPan.forget("ow:")); giveBack(0); clearTimeout(W.noteTimer); saveNote(); if (W.early) refreshNote({ order: { receiptId: W.early.rid } }); clearInterval(W.poll); W.poll = 0; W.key = null; stashTray();
+      if (W.dlg.open) return; tryDo(() => window.CNLive && CNLive.close("sorter")); tryDo(() => window.CNZoomPan && CNZoomPan.forget("ow:")); giveBack(0); clearInterval(W.poll); W.poll = 0; W.key = null; stashTray();
       W.closing = false; stopMotion(); flightGone(); W.dlg.classList.remove("owGrow", "owBack"); endFind();
       unmountTimeline(); tryDo(() => { if (W.engCard) W.engCard.destroy(); W.engCard = null; }); W.row = null; W.rows = null; W.listed = null; W.look++; sheetReset(); SV.shown = null; W.dlg.classList.remove("owCancelled"); lookDone();
       try { window.CustomerMail?.orderClosed(); } catch (_) {}
@@ -10789,14 +10843,6 @@ const OrderWin = window.OrderWin = (() => {
     wireZoom();
     byId("owCopy").onclick = async () => { const r = rowOf(W.key); const sku = r && ((r.spec && r.spec.designSku) || r.line.sku); if (!sku) return; try { await navigator.clipboard.writeText(sku); toast("SKU copied", "ok", 1800); } catch (_) {} };
     byId("owWhoBtn").onclick = () => { NameBar.open({ onSet: paintWho }); };
-    const note = byId("owNote");
-    note.oninput = () => {
-      note.classList.toggle("has", !!note.value.trim());
-      // (typed while the order is still being looked up: kept for it, and saved once it is known, earlyNote)
-      const r0 = rowOf(W.key); if (W.early && W.early.rid === W.rid) W.early.text = note.value; else if (r0 && r0.loading) W.early = { rid: W.rid, text: note.value };
-      clearTimeout(W.noteTimer); W.noteTimer = setTimeout(saveNote, 700);
-    };
-    note.onblur = () => { clearTimeout(W.noteTimer); saveNote(); };
     const input = byId("owInput");
     input.oninput = () => { grow(); TeamMail.setDraft(W.rid, input.value); };
     input.onkeydown = e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } };
@@ -10807,7 +10853,6 @@ const OrderWin = window.OrderWin = (() => {
     const pane = W.dlg.querySelector("#owPaneTeam") || W.dlg.querySelector(".owChat");
     pane.addEventListener("dragover", e => { e.preventDefault(); });
     pane.addEventListener("drop", e => { e.preventDefault(); addFiles([...(e.dataTransfer.files || [])].filter(f => f.type.startsWith("image/"))); });
-    byId("owSkip").onclick = e => { e.preventDefault(); toggleSkip(); };
     byId("owPrev").onclick = () => step(-1);
     byId("owNext").onclick = () => step(1);
     // the views: a tab, the arrow keys on the tab row, the header's rail (its steps are on the Timeline)
@@ -10836,9 +10881,7 @@ const OrderWin = window.OrderWin = (() => {
       await shut(); Review.showCard(String(it.key), "open");
     });
     byId("owRail").addEventListener("click", e => { if (!e.defaultPrevented && W.view !== "timeline") setView("timeline"); });
-    byId("owPieceSw")?.addEventListener("click", e => { const b = e.target.closest("[data-piece]"); if (b) pickPiece(b.dataset.piece || null); });
-    // (a press on a piece's Review buttons, its seals or the question they ask is that card's own: it does not pick the piece)
-    byId("owPcSum")?.addEventListener("click", e => { if (e.target.closest(".pcAct")) return; const b = e.target.closest("[data-piece]"); if (b) pickPiece(b.dataset.piece || null); });
+    wirePcSum(byId("owPcSum"));   // (the "Its pieces" list is the piece selector: Paul, 5 Oct, round 16; the chip row that did this is gone)
     byId("owFace").addEventListener("click", e => { const b = e.target.closest("[data-face]"); if (b) turnPlate(b.dataset.face); });
     // the turn never waits on a download: the engraving font in idle time, the sheet's backs as the switch is neared
     if (window.SheetWin && SheetWin.armBack) SheetWin.armBack(byId("owFace"), () => { const s = SV.list && SV.list[SV.at]; return s && s.id; });
@@ -10908,7 +10951,7 @@ const OrderWin = window.OrderWin = (() => {
   function paintWho() {
     const w = byId("owWho"); if (w) w.textContent = me() || "Set your name";
     const wb = byId("owWhoBtn"); if (wb) wb.title = me() ? "The name your messages and your work carry · press to change it" : "No name set yet · press to add yours, so your work is counted";
-    // messages and the staff note go to the order's record itself: this says whether it can be reached right now, and a
+    // messages go to the order's record itself: this says whether it can be reached right now, and a
     // message typed meanwhile waits here and goes by itself
     const st = byId("owLink"); if (!st) return;
     const th = W.rid ? TeamMail.thread(W.rid) : { list: [], err: null };
@@ -10916,70 +10959,9 @@ const OrderWin = window.OrderWin = (() => {
     st.innerHTML = bad ? "<i></i>Offline" : "<i></i>Live";
     st.className = "owLink " + (bad ? "bad" : "ok");
     st.title = bad ? `The order's record cannot be reached (${TeamMail.error() || th.err || "no connection"}).${waiting ? ` ${waiting} message(s) wait here and go by themselves when it is back.` : " Anything you send waits here and goes by itself when it is back."}`
-      : "Messages and the staff note save straight to the order's record, where every station reads them";
+      : "Messages save straight to the order's record, where every station reads them";
   }
 
-  /** Every line on hand of one order (the pull's, those read from the records): the staff note is the order's. */
-  const linesOfOrder = rid => [...new Set(Orders.rows().concat(W.rows || [], W.row ? [W.row] : []))].filter(x => String(x.order.receiptId) === rid);
-  async function saveNote() {
-    const r = rowOf(W.key); if (!r || r.loading || (W.early && W.early.rid === String(r.order.receiptId))) return;
-    r.spec = r.spec || {};
-    const text = byId("owNote").value;
-    // a note whose last save failed is sent again, although the box already shows it
-    if (text === (r.spec.staffNote || "") && r.noteUnsaved == null) return;
-    // every line of the order shows it at once (Next to the order's next line showed the old note until the record
-    // answered, and a note typed there put the old words back)
-    const rid = String(r.order.receiptId), all = linesOfOrder(rid); if (!all.includes(r)) all.push(r);
-    const at = Date.now();
-    for (const x of all) { x.spec = x.spec || {}; x.spec.staffNote = text; x.noteUnsaved = text; x.noteAt = at; }
-    try {
-      await saveNoteAt(rid, text);
-      // the order carries it too: each arrival re-reads the lines from their orders, which put the old note back
-      // (and newer than any read of the record asked while it was on its way: that read may predate it, refreshNote)
-      let told = false; const done = Date.now();
-      for (const x of all) { if (x.noteAt === at) x.noteAt = done; x.order.staffNote = text; if (x.line.staffNote) x.line.staffNote = text; if (x.noteUnsaved === text) delete x.noteUnsaved; if (x.noteFailed) { delete x.noteFailed; told = true; } }
-      // the label promises "saved automatically": a save speaks up only to end an earlier failure (it used to toast at
-      // every pause in the typing)
-      if (told) toast("Staff note saved", "ok", 1800);
-    } catch (e) { for (const x of all) x.noteFailed = true; toast(`Staff note not saved: ${String(e.message).replace(/^staff note not saved:\s*/i, "")} — it is sent again when you leave the note or close this window`, "bad", 6000); }
-    const cur = rowOf(W.key); if (cur && all.includes(cur)) paintNote(cur);
-  }
-  /** A note typed while its order was still being looked up (W.early) is never painted over. Once the order is known and
-   *  its record's note read (refreshNote), it is kept after that note and saved: in the box when the order is on screen,
-   *  else straight to the record (the view closed or moved on meanwhile). Paul: typed work is never lost. */
-  async function earlyNote(rid, known) {
-    const e = W.early; if (!e || e.rid !== rid) return;
-    const box = byId("owNote"), here = !!(W.dlg && W.dlg.open && W.rid === rid), r = here ? rowOf(W.key) : null;
-    if (here && (!r || r.loading)) return;   // (looked up again: it waits for that)
-    W.early = null;
-    const typed = here ? box.value : e.text, had = String(known || "").replace(/\s+$/, "");
-    if (!typed.trim()) { if (r) paintNote(r); return; }
-    const text = had.trim() && !typed.includes(had.trim()) ? had + "\n" + typed : typed;
-    if (r) { if (box.value !== text) box.value = text; r.noteUnsaved = text; clearTimeout(W.noteTimer); return saveNote(); }
-    try { await saveNoteAt(rid, text); }
-    catch (err) { if (!W.early) W.early = { rid, text }; toast(`Staff note for order ${rid} not saved: ${err.message} — it is kept here and saved when the order is opened again`, "bad", 8000); }
-  }
-  /** Through the station while it is linked (it keeps its own copy of the note), else straight to the order's record. */
-  async function saveNoteAt(rid, text) {
-    // the same note written twice is the same note: a station that fails for any reason leaves it to the direct route
-    if (DesignLink.inControl() && DesignLink.up()) { try { await DesignLink.call("notes.set", { receiptId: rid, text }, { quiet: true }); return; } catch (_) {} }
-    const res = await fetch(`${FN}/firebaseOrders${WORKSPACE_SANDBOX ? "?sandbox=1" : ""}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ orderNumber: String(rid), staffNote: text }), signal: window.AbortSignal && AbortSignal.timeout ? AbortSignal.timeout(20000) : undefined });
-    if (!res.ok) throw new Error(`the order's record answered ${res.status}`);
-  }
-  /** The note box shows what was typed; one that has not reached the station yet says so on the box itself. */
-  function paintNote(r) {
-    const note = byId("owNote"); if (!note) return;
-    const early = W.early && W.early.rid === String(r.order.receiptId) ? W.early : null;
-    if (document.activeElement !== note) note.value = early ? early.text : r.noteUnsaved != null ? r.noteUnsaved : ((r.spec && r.spec.staffNote) || "");
-    // an order still being read from the records has no line to keep a note on yet: what is typed meanwhile is kept
-    // (W.early) and saved once the order is known
-    note.placeholder = r.loading ? "Type a note: it is kept and saved once the order is read…" : "Leave a note on this order for the next person who opens it…";
-    const unsaved = r.noteUnsaved != null;
-    // a note someone left stands out, so the next person to open the order reads it first
-    note.classList.toggle("has", !!note.value.trim());
-    note.style.boxShadow = unsaved ? "inset 0 0 0 1px #8a3a26" : "";
-    note.title = unsaved ? "not saved to the Design Station yet — it is sent again when you leave the note or close this window" : "";
-  }
   function addFiles(files) {
     for (const f of files.slice(0, 6)) W.tray.push({ file: f, url: URL.createObjectURL(f) });
     paintTray(); byId("owSend").disabled = !byId("owInput").value.trim() && !W.tray.length;
@@ -11037,23 +11019,37 @@ const OrderWin = window.OrderWin = (() => {
     t.scrollTop = stick ? t.scrollHeight : at;
     if (stick) t.querySelectorAll("img").forEach(img => { if (!img.complete) img.addEventListener("load", () => { t.scrollTop = t.scrollHeight; }, { once: true }); });
   }
+  /** The live line at the right end of the tab row ("Updated live · last change Mon 12:44 PM · Paul"), where the Skip switch
+   *  used to stand: right-aligned, and when the row is short it breaks only between its parts (each part is kept whole),
+   *  never in the middle of a time or a name. Its text reads as ever; it is redrawn only when it reads differently. */
+  function paintLive(live, e) {
+    const when = e ? shopWhen(e.at) : "", by = e && e.by ? String(e.by) : "", key = e ? when + "␟" + by : "";
+    if (live._key === key) return;
+    live._key = key; live.textContent = "";
+    if (!e) return;
+    const parts = ["Updated live ·", "last change", when + (by ? " ·" : "")]; if (by) parts.push(by);
+    parts.forEach((t, i) => {
+      if (i) live.appendChild(document.createTextNode(" "));
+      const s = document.createElement("span");
+      // ("Updated" steps aside on a phone, where the row has little room: "Live · last change …"; the text itself is unchanged)
+      if (i === 0) { const lead = document.createElement("span"); lead.className = "lead"; lead.textContent = "Updated "; s.appendChild(lead); s.appendChild(document.createTextNode("live ·")); }
+      else s.textContent = t;
+      live.appendChild(s);
+    });
+  }
   /** The Team tab's dot: something new from another station while the Customer tab is in front. */
   function paintTeamDot() {
     const dot = byId("owTabTeam")?.querySelector(".owDot"); if (!dot) return;
     dot.hidden = !(W.rid && byId("owPaneTeam")?.hidden && TeamMail.isNew(W.rid, TeamMail.thread(W.rid).list));
   }
-  function toggleSkip() {
-    const r = inPull(W.key); if (!r || r.state === "gone") return;
-    const who = me() || askEmployee(); if (!who) return;
-    const on = r.state !== "skipped";
-    if (on) { r.state = "skipped"; r.reason = "piece skipped by " + who; r.problems = []; r.hold = r.reason; }
-    else { r.state = "pulled"; r.reason = null; r.hold = null; Orders.interpretAll(); }
-    Review.syncOrderItems(); Orders.render(); RunCtl.poke(); paint();
-  }
+  /* (There is no "Skip this Order" switch in this window any more, Paul 5 Oct: nothing here sets a line's skip. A line that
+     was skipped before keeps its stored state ("skipped", with its hold); the placement code reads it in Pool.addAll, which
+     only places lines that are pulled, held without a hold, unmatched, oversize or waiting, so it stays off every sheet
+     until someone releases it from On hold.) */
   const when = t => new Date(t).toLocaleString(undefined, { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" });
   /** The header: the order's number (lit when it was searched for), who bought it, how many pieces and when it ships.
    *  (It said "Order 1 of 3", then "line 1 of 3": the first of the order's 3 lines was on screen, never 1 of 3 orders.
-   *  Paul found it confusing: the line under it says "3 pieces", and the piece switcher names the piece shown.) */
+   *  Paul found it confusing: the line under it says "3 pieces", and the Its pieces list marks the piece shown.) */
   function paintHead(r, sibs, li) {
     const rid = String(r.order.receiptId), t = byId("owTitle");
     const lit = W.hl ? " found" : "", cur = t.dataset.rid === rid && t.dataset.lit === lit && t.dataset.n === sibs.length + ":" + li;
@@ -11069,7 +11065,7 @@ const OrderWin = window.OrderWin = (() => {
     else sub.textContent = [buyer, qty ? qty + (qty === 1 ? " piece" : " pieces") : "", ship].filter(Boolean).join(" · ");
     // Previous and Next walk the Orders list the person is looking at, and only then
     const list = W.walk ? siblings() : [];
-    // a line that has just left the list it was walked in (its skip undone under On hold, a fix that filtered it out)
+    // a line that has just left the list it was walked in (its hold released under On hold, a fix that filtered it out)
     // keeps Previous and Next, from where it was (they used to vanish, and the walk ended there)
     const i = list.findIndex(x => x.key === r.key);
     if (i >= 0) { W.at = i; W.listed = r.key; }
@@ -11077,58 +11073,6 @@ const OrderWin = window.OrderWin = (() => {
     const pos = byId("owPos"); if (pos) pos.textContent = on && i >= 0 ? (i + 1) + " of " + list.length : "";
     const pv = byId("owPrev"), nx = byId("owNext");
     pv.hidden = nx.hidden = !on; pv.disabled = i >= 0 ? i <= 0 : W.at <= 0; nx.disabled = i >= 0 ? i >= list.length - 1 : W.at >= list.length;
-    // the Skip switch is the cutting flow's: a line of the pull
-    byId("owSkipBox").hidden = !inPull(r.key) || r.state === "gone";
-  }
-  /* ── the decision box opens and folds (Paul, 28 Sep: "not exactly visible", "jerky") on transform, opacity and
-     clip-path only: its room is taken or given back at once, what is around it glides from where it was drawn, and the
-     box is revealed down from its top edge, or a still copy of it folds up to that edge as it fades. Its height used to
-     be animated frame by frame (the whole view laid out again on every frame), and it popped in at once. On the line
-     already shown only: a step to another line slides the whole view in instead. ── */
-  const FOLD = { ms: 620, ease: "cubic-bezier(.3,.1,.2,1)" };
-  /** Where things are drawn before the box changes (null: no fold now). */
-  function foldFrom(fix, key) {
-    const same = fix._for === key; fix._for = key;
-    if (!same || still() || flying() || !window.Motion || !W.dlg || !W.dlg.open || !fix.getClientRects().length) return null;
-    const box = fix.querySelector(":scope > .owFix"), sc = fix.closest(".owMain");
-    const near = [...fix.parentNode.children, sc && sc.querySelector(".owPics")].filter(n => n && n !== fix && n.getClientRects().length);
-    return { fix, sc, card: !!fix.querySelector(".owFix > .owFixCard"), rect: box ? box.getBoundingClientRect() : null, near: near.map(n => [n, n.getBoundingClientRect()]), g: null };
-  }
-  /** The box changed: it opens or folds, and what is around it glides into its place. */
-  function foldTo(f) {
-    if (!f) return;
-    const { fix } = f, box = fix.querySelector(":scope > .owFix"), card = !!fix.querySelector(".owFix > .owFixCard");
-    const opens = card && !f.card, folds = f.card && !card;
-    if (!opens && !folds) { if (f.g) f.g.remove(); return; }
-    // (a fold still running is taken up from where it is drawn now: its rects were read with it)
-    for (const a of (fix._fold || []).splice(0)) { try { a.cancel(); } catch (_) {} }
-    if (fix._ghost) { fix._ghost.remove(); fix._ghost = null; }
-    const A = fix._fold = [], run = (n, frames, o) => { const a = n.animate(frames, Object.assign({ duration: FOLD.ms, easing: FOLD.ease, fill: "backwards" }, o)); A.push(a); return a; };
-    let shift = 0;
-    for (const [n, b] of f.near) {
-      if (!n.isConnected || !n.getClientRects().length) continue;
-      const r = n.getBoundingClientRect(), dx = b.left - r.left, dy = b.top - r.top;
-      if (!shift && fix.compareDocumentPosition(n) & Node.DOCUMENT_POSITION_FOLLOWING) shift = dy;
-      if (Math.abs(dx) < 1 && Math.abs(dy) < 1) continue;
-      run(n, [{ transform: `translate(${dx}px,${dy}px)` }, { transform: "none" }]);
-    }
-    const radius = n => { const s = getComputedStyle(n).borderTopLeftRadius; return s && s !== "0px" ? " round " + s : ""; };
-    if (opens && box) {
-      const h = box.getBoundingClientRect().height, rd = radius(box);
-      run(box, [{ clipPath: `inset(0px 0px ${h}px 0px${rd})`, opacity: 0 }, { opacity: 1, offset: .45 }, { clipPath: `inset(0px 0px 0px 0px${rd})`, opacity: 1 }]);
-    }
-    if (folds) {
-      if (box) run(box, [{ opacity: 0 }, { opacity: 1 }]);   // (the engraving's line, when it takes the room)
-      const g = f.g; if (!g) return;
-      fix._ghost = g;
-      // the copy's bottom edge rises with what is under it; kept within the scrolled view it stands in
-      const R = f.rect, h = R.height, v = f.sc ? f.sc.getBoundingClientRect() : null, rd = radius(box || g.firstElementChild || g);
-      const top = v ? Math.max(0, Math.min(h, v.top - R.top)) : 0, bot = v ? Math.max(0, Math.min(h - top, R.bottom - v.bottom)) : 0;
-      const rise = Math.min(h - top, Math.max(bot, shift > 1 ? Math.min(h, shift) : h));
-      const a = g.animate([{ clipPath: `inset(${top}px 0px ${bot}px 0px${rd})`, opacity: 1 }, { clipPath: `inset(${top}px 0px ${rise}px 0px${rd})`, opacity: 0 }], { duration: FOLD.ms, easing: FOLD.ease, fill: "forwards" });
-      const gone = () => { g.remove(); if (fix._ghost === g) fix._ghost = null; };
-      a.finished.then(gone, gone); setTimeout(gone, FOLD.ms + 400);   // (a hidden tab draws no frames)
-    }
   }
   /** The back engraving of the piece shown, under its pictures: the one card the Sheet tab draws (OrderEngraving, charm-nest-order-engraving.js),
    *  here for the line the Overview holds. Each piece of an order has its own back, its own job and its own approval, so the card is
@@ -11141,7 +11085,7 @@ const OrderWin = window.OrderWin = (() => {
       events: () => (W.evFor === rid ? W.events : null),
       // (the back's own words from the Sheet tab, for an order read from the records that Engrave holds no job for)
       sheetEng: () => { const x = SV.info && (SV.info.mine || []).find(m => m.poolId && (r.poolIds || []).includes(m.poolId)); return (x && x.eng) || null; },
-      // (an approval made elsewhere, or here: what hangs on it is drawn again: the red box, the Engraving cell, the Sheet tab)
+      // (an approval made elsewhere, or here: what hangs on it is drawn again: the Engraving cell, the Sheet tab)
       changed: () => { if (!W.dlg || !W.dlg.open || W.closing) return; if (SV.info && W.view === "sheet") tryDo(() => paintPanel(SV.info)); hold("paint", () => { if (W.dlg.open && !W.closing) paint(); }); } };
     if (W.engCard && W.engCard.el === host) W.engCard.update(ctx); else W.engCard = OE.mount(host, ctx);
   }
@@ -11151,6 +11095,7 @@ const OrderWin = window.OrderWin = (() => {
     const r = rowOf(W.key); if (!r) { if (W.dlg && W.dlg.open && !W.closing) W.dlg.close(); return; }
     const sp = r.spec || {};
     const sibs = linesOf(r), li = Math.max(0, sibs.findIndex(x => x.key === r.key));
+    tryDo(() => window.CNLive && CNLive.order(r.order.receiptId, sibs));      // the live stations board: this is the order in hand (nothing when it was only cleared)
     paintHead(r, sibs, li);
     paintPieces(r, sibs);
     const mp = byId("owMetal"); mp.textContent = r.material ? labelOf(r.material) : (sp.materialLabel || (r.loading ? "…" : "no material"));
@@ -11168,7 +11113,7 @@ const OrderWin = window.OrderWin = (() => {
     const vh = byId("owVector"); if (vh) { if (W.zoom) tryDo(() => W.zoom.vector.key(vectorKey(r))); tryDo(() => ListMedia.vectorInto(vh, r)); }
     byId("owSku").textContent = "SKU: " + (sp.designSku || r.line.sku || "—");
     paintEng(r);
-    // the one field that must be read exactly: labelled, whole, and never boxed into a scroller under the staff note
+    // the one field that must be read exactly: labelled, whole, and never boxed into a scroller
     const said = [];
     // a line read before the placeholder cleanup (CharmNestOrders.visible) shows clean too
     const pers = (sp.personalization || r.line.personalization || []).map(x => O.visible(x).trim()).filter(Boolean), bm = O.visible(sp.buyerMessage).trim();
@@ -11182,7 +11127,6 @@ const OrderWin = window.OrderWin = (() => {
     notes.innerHTML = said.length ? said.map(([k, v2]) => `<span class="lbl">${esc(k)}</span>${esc(v2)}`).join("") : r.loading ? '<span class="owSk" aria-hidden="true"></span><span class="owSk short" aria-hidden="true"></span>' : r.said || "— the customer wrote nothing —";
     if (r.loading) notes.setAttribute("aria-label", "Reading the order…"); else notes.removeAttribute("aria-label");
     const again = notes.querySelector("[data-ow-retry]"); if (again) again.onclick = () => openOrder(String(r.order.receiptId), { view: W.view, keepFrom: true, highlight: W.hl || undefined });
-    paintNote(r);
     const st = tryDo(() => Orders.statePill(r)) || ["neutral", r.state || "—"], sheetCell = sheetCellOf(r);
     const mcell = (lbl, val) => '<div class="m"><i>' + esc(lbl) + '</i><span>' + esc(val) + '</span></div>';
     // the order itself (its number, when it was bought and by whom) and everything that was picked at the purchase, not
@@ -11209,29 +11153,11 @@ const OrderWin = window.OrderWin = (() => {
     // no decision box: a line's question (a custom order's, an option to map, an unknown SKU) is asked nowhere, in this
     // window or in Review (Paul, 28 Sep 16:45: "remove this from the UI ... move up everything that is below to fill up
     // the empty space"; 29 Sep 01:01: "Remove this from the UI and the review tab, from all pop-up modals"): its Review
-    // card's buttons deal with it, and what was under the box stands where it stood
-    // (a line whose engraving is still to be settled says so, with the way to the Engraving tab: no question is asked)
-    const fix = byId("owFix"), fold = foldFrom(fix, r.key);
-    fix.innerHTML = "";
-    // (not beside a card that says approved: an approval another computer made reaches the card from the order's timeline before it reaches this page's records)
-    const cardSaysApproved = !!(W.engCard && W.engCard.kind && tryDo(() => W.engCard.kind()) === "approved");
-    if (inPull(r.key) && r.engrave && r.engrave.needed && !r.engrave.approved && !cardSaysApproved) {
-      const box = el("div", "owFix", '<div class="t">Its engraving is still to be settled</div>');
-      const b = el("button", "btn ghost sm", "Open it in Engraving");
-      // (the engraving of THIS order's piece, its details open, the order's number in the search: EngraveLink, Paul 5 Oct
-      // "it only open the Engraving tab list with no specific order selected"; without it, the tab as it always was)
-      const plain = () => { W.dlg.close(); setMode("engrave"); Engrave.render(); };
-      b.onclick = () => {
-        if (!window.EngraveLink || typeof EngraveLink.open !== "function") return plain();
-        if (b.disabled) return;
-        b.disabled = true; b.innerHTML = '<span class="spin"></span>Opening Engraving…';
-        EngraveLink.open({ rid, key: r.key, poolId: (r.poolIds || [])[0] }).catch(plain).finally(() => { b.disabled = false; b.textContent = "Open it in Engraving"; });
-      };
-      box.appendChild(b); fix.appendChild(box);
-    }
+    // card's buttons deal with it, and what was under the box stands where it stood. Nor is there a red "its engraving is
+    // still to be settled" box (Paul, 5 Oct 17:47: "Remove the center of the screen message and red pill UI ... entirely
+    // from this UI and all detailed order modals"): the Back engraving card under the pictures says what the engraving waits
+    // for and has its own way into Engraving. (#owFix stays in the page, empty: nothing draws in it.)
     paintSend(r);
-    foldTo(fold);
-    const sw = byId("owSkip"); sw.setAttribute("aria-checked", r.state === "skipped" ? "true" : "false");
     paintNow(r);
     paintWho();
     if (W.view === "sheet" && SV.rid && SV.rid !== rid) sheetShow();
@@ -11343,29 +11269,13 @@ const OrderWin = window.OrderWin = (() => {
     const mb = host.querySelector("[data-cu-more]"); if (mb) mb.onclick = () => { if (now()) { if (ex && ex.more) ex.more(); else setView("timeline"); } };
     return CustomPrint.wire(host, it);
   }
-  /** The order's notes as they stand now: another station, or another sorter, may have written since this pull. Read
-   *  only; a note being typed, or one waiting to be saved, is never replaced by what the record said a moment ago. */
-  async function refreshNote(r) {
-    const rid = String(r.order.receiptId), t0 = Date.now(); let known;
-    try {
-      const res = await fetch(`${FN}/firebaseOrders?orderId=${encodeURIComponent(rid)}${WORKSPACE_SANDBOX ? "&sandbox=1" : ""}`, { signal: window.AbortSignal && AbortSignal.timeout ? AbortSignal.timeout(15000) : undefined });
-      if (!res.ok) return;
-      const j = await res.json().catch(() => null);
-      const note = j && j.success && j.data ? j.data["Staff Note"] : undefined;
-      if (typeof note !== "string") return;
-      known = note;
-      const cur = rowOf(W.key), typing = cur && String(cur.order.receiptId) === rid && document.activeElement === byId("owNote");
-      if (typing) return;
-      // (a note typed here since the record was asked is newer than what it answered, even once it is saved)
-      for (const x of linesOfOrder(rid)) if (x.noteUnsaved == null && !(x.noteAt >= t0) && ((x.spec && x.spec.staffNote) || "") !== note) { x.spec = x.spec || {}; x.spec.staffNote = note; x.order.staffNote = note; if (x.line.staffNote) x.line.staffNote = note; }
-      if (cur && String(cur.order.receiptId) === rid && W.dlg && W.dlg.open) hold("note", () => { const c = rowOf(W.key); if (c && String(c.order.receiptId) === rid && W.dlg.open && document.activeElement !== byId("owNote")) paintNote(c); });
-    } catch (_) {} finally { if (W.early && W.early.rid === rid) earlyNote(rid, known != null ? known : (r.spec && r.spec.staffNote) || ""); }
-  }
-
   /* ── an order of several pieces (Paul, 28 Sep: "very convoluted and confusing especially on multipiece orders") ──
-     One switch in the tab row, for the Overview and the Timeline: "All 3 pieces", then each piece by its charm, metal
-     and type. A piece shows only its own steps and stamps (and its photo and details on the Overview); all of them show
-     the order where its slowest piece is, each step saying how many pieces reached it. One piece: no switch at all. */
+     Paul, 5 Oct 2026, round 16: the "Its pieces" list under "Where it is now" is the one way to pick a piece (the chip row in the
+     tab row, "All 6 pieces | SPORTS 10 | SNAKE 5", is gone). Every row of it is a button for its piece: the row shown is marked, a
+     press on it again shows all pieces, and a press on a row's own buttons (Hold, Print QR label, the dots, the seals) is theirs.
+     A piece shows only its own steps and stamps (and its photo and details on the Overview); all of them show the order where its
+     slowest piece is, each step saying how many pieces reached it. One piece: one row, nothing to pick. OrderWin.selectPiece(key|null)
+     and OrderWin.selectedPiece() are the same thing for other code. */
   const pieceName = x => String((x.spec && x.spec.designSku) || x.line.sku || x.line.title || "Piece").replace(/_+/g, " ").replace(/\s+/g, " ").trim().slice(0, 32);
   const pieceMeta = p => [CODE[p.metal] || (p.metal ? labelOf(p.metal) : ""), p.form].filter(Boolean).join(" · ") + (p.qty > 1 ? ` · ×${p.qty}` : "");
   /** Each line of the order as a piece: its key, transaction, count, pool pieces and the sheets they are on. */
@@ -11385,55 +11295,103 @@ const OrderWin = window.OrderWin = (() => {
         name: pieceName(x), metal: m, form: sp.form || "" };
     });
   }
-  /** The switch, its thumb on the piece shown, and the timeline's two mounts (the header's rail, the Timeline) told. */
+  /** The pieces of an order of several, told to the timeline's two mounts (the header's rail, the Timeline). Which one is shown is picked on
+   *  the "Its pieces" list under "Where it is now" (paintPieceSum, selectPiece); the chip row that did it in the tab row is gone. */
   function paintPieces(r, sibs) {
-    const sw = byId("owPieceSw"), multi = sibs.length > 1 && !r.loading;
+    const multi = sibs.length > 1 && !r.loading;
     const ps = multi ? piecesOf(sibs) : [];
     W.pieces = ps;
     if (W.piece && !ps.some(p => p.key === W.piece)) W.piece = null;
-    if (sw) {
-      sw.hidden = !multi || W.view === "sheet";
-      if (!multi) { sw.innerHTML = ""; sw._k = ""; }
-      else {
-        const k = JSON.stringify(ps.map(p => [p.key, p.name, p.metal, p.form, p.qty]));
-        if (sw._k !== k) {
-          sw._k = k;
-          const total = ps.reduce((n, p) => n + p.qty, 0);
-          sw.innerHTML = `<i class="owPcThumb" aria-hidden="true"></i><button type="button" data-piece="">All ${total} pieces</button>` +
-            ps.map(p => `<button type="button" data-piece="${esc(p.key)}" title="${esc(`${p.name} · ${pieceMeta(p)}: only this piece's steps`)}"><i class="dot" style="--c:${esc(colorOf(p.metal))}"></i><span>${esc(p.name)}<small> · ${esc(pieceMeta(p))}</small></span></button>`).join("");
-        }
-        const sc = sheetScope(r);
-        sw.querySelectorAll("[data-piece]").forEach(b => {
-          const key = b.dataset.piece || null, on = key === W.piece, pc = key && sc.all.find(x => x.key === key), off = !!(pc && !pc.nested && !pc.loading);
-          // (a piece on no sheet says so on its tab, as it does on its Sheet button)
-          if (pc) b.title = `${pc.name} · ${pieceMeta(ps.find(p => p.key === key) || pc)}: only this piece's steps${off ? " · not on a sheet yet" : ""}`;
-          b.classList.toggle("noSheet", off);
-          b.classList.toggle("on", on); b.setAttribute("aria-pressed", on ? "true" : "false");
-          // (all pieces shown: the one whose photo and details the Overview holds has a small gold dot)
-          b.classList.toggle("shown", !W.piece && key === r.key);
-        });
-        thumbTo();
-      }
-    }
     const dir = W.pieceDir; W.pieceDir = 0;
     for (const m of [W.rail, W.tl]) if (m && m.setPieces) tryDo(() => m.setPieces(ps, W.piece, dir));
-  }
-  function thumbTo() {
-    const sw = byId("owPieceSw"), t = sw && sw.querySelector(".owPcThumb"), b = sw && sw.querySelector("button.on"); if (!t || !b || !sw.offsetParent) return;
-    t.style.left = b.offsetLeft + "px"; t.style.width = b.offsetWidth + "px";
-    if (b.offsetLeft < sw.scrollLeft || b.offsetLeft + b.offsetWidth > sw.scrollLeft + sw.clientWidth) sw.scrollTo({ left: Math.max(0, b.offsetLeft - 24), behavior: still() ? "auto" : "smooth" });
   }
   /** A piece chosen (null: all of them): the Overview shows that piece's line, and every view crosses over to it. */
   function pickPiece(key) {
     key = key || null; if (key === W.piece) return;
     const order = [null].concat(W.pieces.map(p => p.key)); W.pieceDir = order.indexOf(key) > order.indexOf(W.piece) ? 1 : -1;
     const dir = W.pieceDir; W.piece = key;
+    markPieces();   // (the row is marked at once, whatever the repaint waits for)
     const r = rowOf(W.key); if (!r) return;
     const to = key && key !== r.key ? linesOf(r).find(x => x.key === key) : null;
     if (to) show(to, {}); else paint();
-    const main = W.view === "info" && W.dlg.querySelector(".owVInfo .owMain");
-    if (main && !still()) { main.getAnimations().forEach(a => a.cancel()); main.animate([{ opacity: .25, transform: `translateX(${dir * 14}px)` }, { opacity: 1, transform: "none" }], { duration: 300, easing: EASE }); }
+    // (what changed crosses over, 180 ms, opacity and transform only: never the list that was pressed, which stays where it is)
+    if (W.view === "info" && !still()) for (const n of W.dlg.querySelectorAll(".owVInfo .owPics, .owVInfo #owNowCard, .owVInfo #owFix, .owVInfo #owMeta")) {
+      if (n.hidden || !n.offsetParent) continue;
+      n.getAnimations().forEach(a => a.cancel()); n.animate([{ opacity: .3, transform: `translateY(${dir * 6}px)` }, { opacity: 1, transform: "none" }], { duration: 180, easing: EASE });
+    }
   }
+  /** The piece shown, for the list's presses and other code: a piece of the order (its key), or null for all of them. A piece that is not one
+   *  of this order's is refused (false). The list stays exactly where it is on the screen while what is above it changes (no scroll jump),
+   *  and a row that had the focus keeps it. */
+  function selectPiece(key) {
+    key = key || null;
+    if (!W.dlg || !W.dlg.open || W.closing) return false;
+    if (key && !(W.pieces || []).some(p => p.key === key)) return false;
+    if (key === W.piece) return true;
+    const box = byId("owPcSum"), at = key || W.piece, rowFor = k => box && k ? box.querySelector(`.owPcRow[data-piece="${CSS.escape(k)}"]`) : null;
+    const was = box && box.contains(document.activeElement) && document.activeElement.closest(".owPcRow") ? document.activeElement.closest(".owPcRow").dataset.piece : null;
+    const sc = scrollerOf(box), top = k => { const e = rowFor(k); return e && !box.hidden ? e.getBoundingClientRect().top : null; };
+    const t0 = top(at);
+    pickPiece(key);
+    // (the rows above this one may now be taller or shorter: the scroller is moved by what the pressed row moved; where it cannot be, the list
+    // glides from where it was to where it is now, transform only, instead of jumping from under the pointer)
+    const gliding = () => box.getAnimations().some(a => a.id === "owPcFlip");
+    const keep = () => { if (gliding()) return; const t1 = top(at); if (sc && t0 != null && t1 != null && Math.abs(t1 - t0) > .5) sc.scrollTop += t1 - t0; };
+    keep();
+    const t1 = top(at);
+    if (t0 != null && t1 != null && Math.abs(t1 - t0) > 1 && !still()) { const a = box.animate([{ transform: `translateY(${t0 - t1}px)` }, { transform: "none" }], { duration: 180, easing: EASE }); a.id = "owPcFlip"; }
+    requestAnimationFrame(keep);
+    if (was != null) { const nm = rowFor(was) && rowFor(was).querySelector(".owPcName"); if (nm && document.activeElement !== nm) nm.focus({ preventScroll: true }); }
+    return W.piece === key;
+  }
+  /** The nearest ancestor of `n` that scrolls (the Overview's own column; the whole view where the window is narrow). */
+  function scrollerOf(n) {
+    for (let e = n && n.parentElement; e && e !== document.body; e = e.parentElement) { const o = getComputedStyle(e).overflowY; if ((o === "auto" || o === "scroll") && e.scrollHeight > e.clientHeight + 1) return e; if (e === W.dlg) break; }
+    return null;
+  }
+  /** What the "Its pieces" list says of the piece shown, drawn in place (the rows are not drawn again, so a Hold, a question being typed or
+   *  a focus in one stays as it is): the row of the piece shown has aria-current and its name pressed (calm tint, a thin bar in its metal's
+   *  colour, a bolder name: the CSS .owPcRow.sel); with all pieces shown the row whose photo and details the Overview holds has a small ring
+   *  on its dot (.pics); the header says what is shown, and "Show all" is the way back. */
+  function markPieces() {
+    const box = byId("owPcSum"); if (!box || box.hidden) return;
+    const ps = W.pieces || [], multi = ps.length > 1, sel = multi ? W.piece : null, r0 = rowOf(W.key), shown = multi && r0 ? r0.key : null;
+    box.querySelectorAll(".owPcRow[data-piece]").forEach(row => {
+      const key = row.dataset.piece, on = key === sel, nm = row.querySelector(".owPcName"), dot = row.querySelector(".dot");
+      row.classList.toggle("sel", on); row.classList.toggle("pics", !sel && key === shown);
+      if (on) row.setAttribute("aria-current", "true"); else row.removeAttribute("aria-current");
+      if (nm) { nm.setAttribute("aria-pressed", on ? "true" : "false"); nm.title = on ? "Showing only this piece · press to show all pieces" : "Show only this piece"; }
+      if (dot && !row.style.getPropertyValue("--pc")) row.style.setProperty("--pc", dot.style.getPropertyValue("--c") || "var(--gold)");
+    });
+    const st = box.querySelector(".owPcState"); if (!st) return;
+    const p = sel && ps.find(x => x.key === sel), total = ps.reduce((n, x) => n + x.qty, 0);
+    const html = p ? `Showing <b>${esc(p.name)}</b><i aria-hidden="true"> · </i><button type="button" class="owPcAll" data-pc-all>Show all</button>` : `Showing all ${total} pieces`;
+    if (st._h !== html) { st._h = html; st.innerHTML = html; }
+  }
+  /** The presses on the "Its pieces" list: a press on a row's own body (its name, its words, the empty room) picks the piece, or all pieces
+   *  when it is the one shown; a press on anything that does something of its own (a button, a link, a field, the controls and seals at the
+   *  right end, the dots; data-no-select marks any other) is that thing's and picks nothing. Up and Down on a row's name move the pick
+   *  to the row above or below (Home and End: the first and the last). */
+  function wirePcSum(box) {
+    if (!box || box._wired) return; box._wired = true;
+    const own = (t, row) => { const x = t.closest && t.closest("button, a, input, textarea, select, label, [role=button], [data-no-select], .pcAct, .steps, .seal, .sealRow, [data-seal-model]"); return x && x !== row && !x.classList.contains("owPcName") && row.contains(x); };
+    box.addEventListener("click", e => {
+      const all = e.target.closest && e.target.closest("[data-pc-all]"); if (all) { selectPiece(null); return; }
+      const row = e.target.closest && e.target.closest(".owPcRow[data-piece]"); if (!row || !box.contains(row) || own(e.target, row)) return;
+      const key = row.dataset.piece; selectPiece(key === W.piece ? null : key);
+    });
+    box.addEventListener("keydown", e => {
+      const nm = e.target.closest && e.target.closest(".owPcName"); if (!nm || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+      const rows = [...box.querySelectorAll(".owPcRow[data-piece]")], i = rows.indexOf(nm.closest(".owPcRow"));
+      const j = i < 0 ? -1 : e.key === "ArrowDown" ? i + 1 : e.key === "ArrowUp" ? i - 1 : e.key === "Home" ? 0 : e.key === "End" ? rows.length - 1 : -1;
+      if (j < 0) return;
+      e.preventDefault();
+      const to = rows[Math.min(rows.length - 1, j)]; if (!to) return;
+      selectPiece(to.dataset.piece);
+      const n2 = box.querySelector(`.owPcRow[data-piece="${CSS.escape(to.dataset.piece)}"] .owPcName`); if (n2 && document.activeElement !== n2) n2.focus({ preventScroll: true });
+    });
+  }
+
   /** The order's events as the Overview shows them: the piece chosen's alone, or all of them. */
   function shownEvents() {
     const UI = window.OrderTimelineUI, p = W.piece && W.pieces.find(x => x.key === W.piece);
@@ -11449,6 +11407,74 @@ const OrderWin = window.OrderWin = (() => {
     const sum = tryDo(() => UI.summary(W.events, ps, W.cancelled)), x = sum && sum.each.find(y => !y.D.hand && y.D.step === sum.step);
     return x ? x.events : null;
   }
+  /* ── the dots of a piece's row (Paul, 5 Oct 2026, point 5: "Enable each of these solid and hollow green dots into a active hover state like the other
+     milestone timeline dots ... a 350 ms delay"). Each dot is one step of the piece (UI.stagesFor): solid when the piece has reached it, hollow when not (the
+     rule the dots always had, read only here). A dot is a circle of the rail's own card (charm-nest-rail-tip.js, the Seal.zoom engine of charm-nest-motion.js):
+     it rests 350 ms under the pointer, or opens at once for a click, a tap, Enter or Space, and Tab opens it. What the card says is asked of pieceDotInfo
+     below when it opens (RailTip.pieceDot): the step, Done or Not yet, when and who for a done step, what it waits on for the rest, and the step's seal
+     (window.PieceSeals.render, drawn by whoever owns the seals: nothing until it is there). No read, no network call: the order's timeline as this window holds it. ── */
+  const PDOT_ZOOM = "1.7", PDOT_REST = 350;
+  const pdotOn = (x, s) => { const i = window.OrderTimelineUI.STAGES.indexOf(s); return x.D.step >= i || !!(x.D.stages[i] || {}).first; };
+  /** The state of a step of a piece, in the words of the card and the dot's label: Done, Not yet, Skipped (the piece was completed by hand), Won't happen (cancelled). */
+  const pdotState = (x, s) => pdotOn(x, s) ? { done: true, word: "Done" } : x.D.cancelled ? { done: false, word: "Won't happen" } : x.D.hand ? { done: false, word: "Skipped" } : { done: false, word: "Not yet" };
+  /** One piece's row of dots (x: a piece of UI.summary's each; rid: the order). One Tab stop for the row, on the step the piece is working towards. */
+  function pieceDotsHtml(x, rid) {
+    const at = x.steps.findIndex(s => !pdotOn(x, s)), tab = at < 0 ? x.steps.length - 1 : at, grp = `${rid}|${x.p.key}`;
+    const dots = x.steps.map((s, i) => `<i class="${pdotOn(x, s) ? "on" : ""}" data-pdot="${s.k}" data-pdot-rid="${esc(rid)}" data-pdot-piece="${esc(x.p.key)}" data-zoom-dot="${PDOT_ZOOM}" data-zoom-delay="${PDOT_REST}" data-zoom-group="${esc(grp)}" role="img" tabindex="${i === tab ? 0 : -1}" title="" aria-label="${esc(`${s.l}, ${pdotState(x, s).word.toLowerCase()}`)}"></i>`).join("");
+    return `<span class="steps" role="group" data-pdot-group title="" aria-label="${esc(`${x.p.name} · progress`)}">${dots}</span>`;
+  }
+  // when a step was done, as the Library's cards say it: "Oct 3 · 4:12 PM" in the shop's own time (the year only when it is not this year)
+  const pdotZone = "America/Toronto", pdotFmt = o => { try { return new Intl.DateTimeFormat("en-US", Object.assign({ timeZone: pdotZone }, o)); } catch (_) { return null; } };
+  function pdotWhen(at) {
+    const d = new Date(+at), day = pdotFmt({ month: "short", day: "numeric" }), time = pdotFmt({ hour: "numeric", minute: "2-digit" }), yr = pdotFmt({ year: "numeric" });
+    if (!(+at > 0) || !day || !time || !yr) return "";
+    return [day.format(d) + (yr.format(d) !== yr.format(new Date()) ? ", " + yr.format(d) : ""), time.format(d).replace(/\u202f/g, " ")].join(" · ");
+  }
+  /** The card's context for one piece (tlContext's lines and sheets, that piece's alone), kept for a moment: a pointer moving along a row asks it once. */
+  function pdotContext(rid, key) {
+    const m = W.pdCtx; if (m && m.rid === rid && m.key === key && Date.now() - m.at < 2000) return m.v;
+    const v = tryDo(() => tlContext(rid, key)) || null; W.pdCtx = { rid, key, at: Date.now(), v }; return v;
+  }
+  /** What the card over a dot says: { name, state, line, by, seal } for RailTip.pieceDot, or null when the piece is not drawn any more. */
+  function pieceDotInfo(d) {
+    const UI = window.OrderTimelineUI, rid = d.getAttribute("data-pdot-rid") || "", key = d.getAttribute("data-pdot-piece") || "", sk = d.getAttribute("data-pdot") || "";
+    const sum = W.pcSum, x = UI && sum && sum.rid === rid ? sum.each.find(e => e.p.key === key) : null, s = x && x.steps.find(t => t.k === sk);
+    if (!x || !s) return null;
+    const i = UI.STAGES.indexOf(s), st = pdotState(x, s), ev = (x.D.stages[i] || {}).first || null;
+    let line = "", by = "";
+    if (st.done) {
+      if (ev) {
+        const who = tryDo(() => UI.personOf(ev)) || (ev.source === "etsy" ? "Etsy" : ev.source === "station" ? "Station" : "Automatic"), where = tryDo(() => UI.placeOf(ev)) || "";
+        by = [pdotWhen(ev.at), who + (where ? " at " + where : "")].filter(Boolean).join(" · ");
+        if (ev.sheet && (s.k === "sheet" || s.k === "laser")) line = `On ${ev.sheet}`;
+      } else by = "Time not recorded";   // (a step passed with no event of its own: never a made-up time)
+    } else if (st.word === "Skipped") {
+      line = "Not needed: completed by hand";
+      const h = x.D.hand; by = h ? [pdotWhen(h.at), tryDo(() => UI.personOf(h)) || ""].filter(Boolean).join(" · ") : "";
+    } else if (st.word === "Won't happen") line = "Cancelled: this step will not happen";
+    else {
+      const now = x.steps.find(t => !pdotOn(x, t));
+      if (now && now !== s) line = `After ${now.l}`;   // (a step further on waits for the one before it: that is the one with something to do)
+      else {
+        const q = tryDo(() => UI.requirementsOf(i, { events: x.events, cancelled: W.cancelled, stages: x.steps, context: pdotContext(rid, key) }));
+        const need = (q && q.need) || [], pick = ["person", "wait", "next", "after"].map(k => need.find(n => n.kind === k)).find(Boolean) || need[0];
+        if (pick) { const t = String(pick.t).replace(/\s+/g, " ").trim(); line = t.charAt(0).toUpperCase() + t.slice(1); if (line.length > 150) line = line.slice(0, 147).trimEnd() + "…"; }
+      }
+    }
+    // the seal slot (PieceSeals, charm-nest-piece-seals.js: which step has a seal is its to say): the real seal of a done step, the unfinished one of a step still to
+    // come, nothing for a step that has none. The words beside it are this card's own (who, where, when), so the seal's caption is off.
+    const ps = window.PieceSeals;
+    const seal = ps && typeof ps.render === "function" ? tryDo(() => ps.render(s.k, Object.assign({}, x, { pieces: (W.pieces && W.pieces.length) ? W.pieces : [x.p] }), { done: st.done, caption: false, size: 40 })) : null;
+    return { name: s.l, state: st.word, line, by, seal: seal || null };
+  }
+  { const RT = window.RailTip = window.RailTip || {}; RT.pieceDot = pieceDotInfo; }   // (charm-nest-rail-tip.js draws the card: it asks this when a dot's card opens)
+  /** A redraw of the rows keeps the keyboard where it was: the dot that has it, found again by its order, piece and step. */
+  const pdotHeld = box => { const a = document.activeElement; return a && a.matches && a.matches("[data-pdot]") && box.contains(a) ? ["data-pdot", "data-pdot-rid", "data-pdot-piece"].map(n => [n, a.getAttribute(n)]) : null; };
+  function pdotBack(box, held) {
+    if (!held) return;
+    const sel = "[data-pdot]" + held.map(([n, v]) => `[${n}="${String(v).replace(/["\\]/g, "")}"]`).join("") ; const n = box.querySelector(sel);
+    if (n && document.activeElement !== n) n.focus({ preventScroll: true });
+  }
   /** The pieces on rows under "Where it is now": where each is, what comes next and its steps as dots. An order of several with no
    *  piece picked has every piece on a row (the slowest, where the order is, in gold; a row opens that piece). A piece that is in the
    *  Review tab has that card's own buttons and seals on its row, at the right end of the name's line in place of its words (Paul, 5 Oct,
@@ -11459,48 +11485,115 @@ const OrderWin = window.OrderWin = (() => {
    *  a row of its own for it. */
   function paintPieceSum() {
     const box = byId("owPcSum"); if (!box) return;
-    const UI = window.OrderTimelineUI, ps = W.pieces || [], all = !W.piece && ps.length > 1, r0 = rowOf(W.key);
+    // (an order of several keeps EVERY piece on a row, whichever is shown: the one picked is marked in place by markPieces, never drawn alone)
+    const UI = window.OrderTimelineUI, ps = W.pieces || [], all = ps.length > 1, r0 = rowOf(W.key), rid = r0 ? String(r0.order.receiptId) : "";
     let list = ps;
     if (!all) { const key = W.piece || W.key, p = ps.find(x => x.key === key) || (r0 && !r0.loading && r0.key === key ? tryDo(() => piecesOf([r0])[0]) : null); list = p ? [p] : []; }
     // (an order of several waits for its timeline; one piece's row is drawn at once, its buttons never wait for it)
     const sum = list.length && UI && UI.summary && (!all || W.events) ? tryDo(() => UI.summary(W.events || [], list, W.cancelled)) : null;
+    W.pcSum = sum ? Object.assign({ rid }, sum) : null;   // (what the dots' cards read, pieceDotInfo)
     const ctls = sum ? new Map(sum.each.map(x => [x.p.key, tryDo(() => pieceCtl(x.p.key))])) : null;
     // (the Hold of a piece that has no buttons of its own: a place for it, empty when the order cannot be held, or HoldUI is not there)
     const holds = sum ? new Map(sum.each.map(x => [x.p.key, ctls.get(x.p.key) ? "" : holdSlotOfKey(x.p.key)])) : null;
     if (!sum || (!all && !ctls.get(list[0].key) && !holds.get(list[0].key))) { box.hidden = true; box._h = ""; box.innerHTML = ""; return; }
     const at = s => UI.STAGES.indexOf(s);
-    const html = `<span class="fLabel">${all ? "Its pieces · the order is where the slowest one is" : ps.length > 1 ? "This piece" : "Its piece"}</span>` + sum.each.map(x => {
-      const nx = x.steps.find(s => at(s) > x.D.step), slow = all && x.D.step === sum.step;
+    const scope = r0 && !r0.loading ? tryDo(() => scopePieces(r0)) : null;   // (the sheets each piece's copies are on: its status names one)
+    const html = `<div class="owPcHd"><span class="fLabel">${all ? "Its pieces · the order is where the slowest one is" : "Its piece"}</span>${all ? '<span class="owPcState" aria-live="polite"></span>' : ""}</div>` + sum.each.map(x => {
+      const slow = all && x.D.step === sum.step;
       const dot = `<i class="dot" style="--c:${esc(colorOf(x.p.metal))}"></i>`, nm = `<b>${esc(x.p.name)}</b> · ${esc(pieceMeta(x.p))}`;
-      const st = `<span class="st">${esc(x.D.hand ? "Completed by hand" : (x.D.W && x.D.W.label) || "Waiting")}${nx && !x.D.cancelled && !x.D.hand ? " · next: " + esc(nx.l) : ""}</span>`;
-      const steps = `<span class="steps" aria-hidden="true">${x.steps.map(s => `<i class="${x.D.step >= at(s) || (x.D.stages[at(s)] || {}).first ? "on" : ""}"></i>`).join("")}</span>`;
+      const steps = pieceDotsHtml(x, rid);   // (the dots: a card for each, see pieceDotsHtml)
       // a piece that is in the Review tab has that card's own buttons (and seals) here, in place of its words: a press is a press
       // there; a piece in no card keeps its words
       const ctl = ctls.get(x.p.key);
       // (a piece in no card keeps its words, and its Hold at the right end of the row; nothing nests in a button, so with a Hold the row is a
       // group like the card rows are, its name the button that opens the piece, and a press anywhere else on it still does the same)
       const hold = holds.get(x.p.key);
+      // (its status, said once: a chip, a button that opens its sheet (every row is a group now, its name the button that picks the piece); or only
+      // for a screen reader where the row says it another way: the Review card's buttons, or the one piece the window shows)
+      const sp = scope && scope.find(q => q.key === x.p.key) || null, st = pieceStatusHtml(x, sp, { inButton: false }), stSr = pieceStatusHtml(x, sp, { sr: true });
       if (!ctl && hold) {
         const aria = x.p.name + (pieceMeta(x.p) ? " · " + pieceMeta(x.p) : "");
         return `<div class="owPcRow hasAct hasHold${all ? " hasWords" : " solo"}${slow ? " slow" : ""}"${all ? ` data-piece="${esc(x.p.key)}"` : ""} role="group" aria-label="${esc(aria)}">${dot}` +
           (all ? `<button type="button" class="nm owPcName" title="Show only this piece">${nm}</button>` : `<span class="nm owPcName">${nm}</span>`) +
-          (all ? st : st.replace('class="st"', 'class="st owPcSr"')) + `<span class="pcAct" data-pc-hold>${hold}</span>${steps}</div>`;
+          (all ? st : stSr) + `<span class="pcAct" data-pc-hold>${hold}</span>${steps}</div>`;
       }
-      if (!ctl) return `<button type="button" class="owPcRow${slow ? " slow" : ""}" data-piece="${esc(x.p.key)}" title="Show only this piece">${dot}<span class="nm">${nm}</span>${st}${steps}</button>`;
+      if (!ctl) return `<div class="owPcRow${slow ? " slow" : ""}" data-piece="${esc(x.p.key)}" role="group" aria-label="${esc(x.p.name + (pieceMeta(x.p) ? " · " + pieceMeta(x.p) : ""))}">${dot}<button type="button" class="nm owPcName" title="Show only this piece">${nm}</button>${st}${steps}</div>`;
       // (what the card is, said beside the name: the kind of custom order it is, which the bar used to say)
       const meta = [pieceMeta(x.p) ? esc(pieceMeta(x.p)) : "", ctl.label ? `<span class="kind" title="${esc(ctl.why)}">${esc(ctl.label)}</span>` : ""].filter(Boolean).join(" · ");
       const name = `<b>${esc(x.p.name)}</b>${meta ? " · " + meta : ""}`, aria = x.p.name + (pieceMeta(x.p) ? " · " + pieceMeta(x.p) : "") + (ctl.label ? " · " + ctl.label : "");
       return `<div class="owPcRow hasAct${slow ? " slow" : ""}${all ? "" : " solo"}"${all ? ` data-piece="${esc(x.p.key)}"` : ""} role="group" aria-label="${esc(aria)}">${dot}` +
         (all ? `<button type="button" class="nm owPcName" title="Show only this piece">${name}</button>` : `<span class="nm owPcName">${name}</span>`) +
-        `<span class="pcAct" data-pc-act="${esc(x.p.key)}">${ctl.html}</span>${st.replace('class="st"', 'class="st owPcSr"')}${steps}</div>`;
+        `<span class="pcAct" data-pc-act="${esc(x.p.key)}">${ctl.html}</span>${stSr}${steps}</div>`;
     }).join("");
     box.hidden = false;
-    if (box._h === html) return;
+    if (box._h === html) { markPieces(); return; }
     // (a name being typed in a row's question is carried over a redraw, the field and where its cursor was)
     const typed = [...box.querySelectorAll("[data-cu-name]")].map(i => ({ key: i.closest("[data-pc-act]")?.dataset.pcAct, v: i.value, on: document.activeElement === i, a: i.selectionStart, b: i.selectionEnd })).filter(t => t.key);
-    box._h = html; box.innerHTML = html;
+    const held = pdotHeld(box);
+    box._h = html; box.innerHTML = html; pdotBack(box, held);
+    wirePcSheet(box);
     box.querySelectorAll("[data-pc-act]").forEach(h => wirePcAct(h, typed));
     if (window.HoldUI) tryDo(() => HoldUI.fill(box));   // (the Hold of the rows that have no card's buttons)
+    markPieces();
+  }
+  /** What a piece's row says of where the piece is NOW, in plain short words (Paul, 5 Oct, point 4: no "next: ..." any more, the steps ahead are the
+   *  dots' to show; and one calm status in place of "On RG Sheet 1 · next: Laser cut"). x: the timeline's summary of the piece ({ p, D, events }), sp: its
+   *  place in the Sheet scope (scopePieces: the sheets its copies are on), null while that is not read.
+   *  It reads the SAME inputs the Sheet tab and the Now card read, in this order, so the row can never contradict them (Paul, 5 Oct: a held order said
+   *  "Not on a sheet yet" on its card and "Waiting · next: Engraved" on its rows): cancelled; the steps after the laser (their events happened); completed
+   *  by hand; the Sheet tab's own membership (scopePieces: which sheets the piece is on NOW, from the sheets' records, not from what the timeline once
+   *  said); a hold nobody released (the line's own marker, or the timeline's unreleased hold, the one the Now card says); else waiting for a sheet.
+   *  A piece on no sheet NEVER reads as being on a step after the sheet: held, it says On hold, else Waiting for a sheet.
+   *  → { k: sheet | wait | hold | cancel | done | review | stage, text, say (for a screen reader), name (the sheet's), check (the sheet is cut or sent),
+   *  more (other sheets it is on), sheet ({ id, pool } of the sheet to open, else null), metal }. */
+  const PC_WORD = { sorted: "Sorted", welded: "Welded", assembled: "Assembled", packed: "Packed", shipped: "Shipped" };
+  function pieceStatusOf(x, sp) {
+    const D = x.D || {}, W = D.W || {}, stage = W.stage || "", row = sp && sp.row || null, UI = window.OrderTimelineUI;
+    if (D.cancelled || stage === "cancelled" || (row && row.state === "gone")) return { k: "cancel", text: "Cancelled" };
+    const known = !!sp && !sp.loading, on = sp && sp.nested ? sp.sheets || [] : [], first = on[0] || null;
+    // (the steps after the laser: sorting, welding, assembly, shipping happened, a sheet's records or not)
+    if (PC_WORD[stage] && !(row && row.hold)) return { k: "stage", text: PC_WORD[stage], metal: x.p.metal };
+    // (completed by hand, a Complete Order press no Reopen came after: finished, whichever sheet it was on; a hold on the line says it is not)
+    if ((D.hand || (sp && sp.hand) || stage === "completed") && !(row && row.hold)) return { k: "done", text: "Completed" };
+    // (on a sheet now: the sheets' own records say so; cut, or its set sent to the laser, adds the check)
+    if (on.length) {
+      const nice = l => (l && !/\?/.test(l) ? l : ""), name = nice(first.label) || String(W.sheet || "").trim() || first.label || "";
+      const cut = stage === "cut" || (x.events || []).some(e => e && e.type === "setCommitted");
+      return { k: "sheet", text: name || "On a sheet", say: name ? "On " + name : "", name, check: cut, more: on.length - 1, sheet: { id: first.id || "", pool: (first.pools || [])[0] || "" }, metal: first.metal || x.p.metal };
+    }
+    // (on no sheet: held, or waiting. A hold taken off the sheets: the line's marker, or the timeline's hold nobody released)
+    const held = !!(row && row.hold) || !!D.hold || stage === "held" || ((tryDo(() => UI && UI.blockerOf && UI.blockerOf(x.events || [])) || {}).label === "On hold");
+    if (held) return { k: "hold", text: "On hold" };
+    // (the records have not answered yet: the timeline's word, said without a sheet to open)
+    if (!known && (stage === "sheet" || stage === "cut") && W.sheet) return { k: "sheet", text: W.sheet, say: "On " + W.sheet, name: W.sheet, check: stage === "cut", more: 0, sheet: null, metal: x.p.metal };
+    if (stage === "review") return { k: "review", text: "In review", metal: x.p.metal };
+    return { k: "wait", text: "Waiting for a sheet" };
+  }
+  /** The status of a piece as its row draws it (the `.st` cell): one chip, the Sheet card's own (owShChip: its metal dot, its hairline), the sheet's name
+   *  in the app's type, a small check once the sheet is cut or sent; a button that opens that sheet (aria-label "Open RG Sheet 1") unless it sits inside
+   *  the row's own button (o.inButton), where it only says it. o.sr: the words alone, for a screen reader (the card's buttons, or the one piece shown, say
+   *  the rest). */
+  const PC_CK = '<svg class="pcCk" viewBox="0 0 12 12" aria-hidden="true"><path d="m2.6 6.5 2.3 2.3 4.6-5.1" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  function pieceStatusHtml(x, sp, o) {
+    const s = pieceStatusOf(x, sp); o = o || {};
+    if (o.sr) return `<span class="st owPcSr">${esc(s.say || s.text)}</span>`;
+    const hollow = s.k === "wait" || s.k === "cancel", c = s.k === "hold" ? "var(--warn,#a2591c)" : s.k === "done" ? "var(--sage)" : colorOf(s.metal || x.p.metal);
+    const at = `class="owShChip pcSt${hollow ? " off" : ""}" data-k="${s.k}" style="--c:${esc(c)}"`, inner = `<i></i><span>${esc(s.text)}</span>${s.check ? PC_CK : ""}${s.more ? `<em class="pcMore">+${s.more}</em>` : ""}`;
+    const chip = s.sheet && !o.inButton
+      ? `<button type="button" ${at} data-pc-sheet="${esc(x.p.key)}" data-sheet="${esc(s.sheet.id)}" data-pool="${esc(s.sheet.pool)}" aria-label="${esc(s.name ? "Open " + s.name : "Open its sheet")}">${inner}</button>`
+      : `<span ${at}>${inner}</span>`;
+    return `<span class="st">${chip}</span>`;
+  }
+  /** A press on a piece's sheet chip opens that sheet in the Sheet view, as the Sheet card's chips do (openSheetOf: no pop-up over the pop-up), and is
+   *  the chip's alone: the row it sits on is not pressed with it. A piece other than the one picked is picked first. */
+  function wirePcSheet(box) {
+    box.querySelectorAll("button[data-pc-sheet]").forEach(b => b.addEventListener("click", e => {
+      e.stopPropagation();
+      const key = b.dataset.pcSheet, sid = b.dataset.sheet, pool = b.dataset.pool;
+      if (!W.dlg || !W.dlg.open || !rowOf(W.key)) return;
+      if (W.piece && W.piece !== key) (typeof selectPiece === "function" ? selectPiece : pickPiece)(key);
+      openSheetOf(key, sid, pool);
+    }));
   }
   /** What a press on a piece's controls does (h: the span holding them, data-pc-act its piece's key): the card as it is when pressed, not
    *  as it was drawn, of an order that is still the one the window shows. typed: the names being typed in the rows drawn before. */
@@ -11650,7 +11743,7 @@ const OrderWin = window.OrderWin = (() => {
     const noSh = byId("owPlateWrap") && byId("owPlateWrap").querySelector(".owPlateNone[data-none]"); if (noSh) { const h = noSheetHtml(r); if (noSh._h !== h) { noSh._h = h; noSh.innerHTML = h; } }
     pill.hidden = !n.pill; pill.textContent = n.pill || ""; pill.className = "owNow" + (n.tone ? " " + n.tone : "");
     const count = byId("owTlCount"); if (count) count.textContent = W.events && W.evFor === String(r.order.receiptId) && W.events.length ? String(W.events.length) : "";
-    const live = byId("owLive"); if (live) { const e = W.events && W.events.length ? W.events[W.events.length - 1] : null; live.textContent = e ? "Updated live · last change " + shopWhen(e.at) + (e.by ? " · " + e.by : "") : ""; }
+    const live = byId("owLive"); if (live) paintLive(live, W.events && W.events.length ? W.events[W.events.length - 1] : null);
     paintPieceSum();
     paintSheetTab(r); sheetSettle(r);
     const card = byId("owNowCard"); if (!card) return;
@@ -11691,11 +11784,11 @@ const OrderWin = window.OrderWin = (() => {
   /* What this page already knows of the order, for the timeline's step explainer (OrderTimelineUI.requirementsOf):
      each line's state, hold, wait and engraving, and the readiness of the sheets its pieces sit on
      (CharmNestReadiness, as validateRelease reads it). Nothing is fetched. */
-  function tlContext(rid) {
+  function tlContext(rid, pieceKey) {
     const r = rowOf(W.key); if (!r || String(r.order.receiptId) !== String(rid)) return null;
     const R = window.CharmNestReadiness, all = tryDo(() => linesOf(r)) || [r], pages = new Set();
-    // one piece shown (the piece switcher): its own line only
-    const rows = W.piece && all.some(x => x.key === W.piece) ? all.filter(x => x.key === W.piece) : all;
+    // one piece shown (picked on the Its pieces list): its own line only; (pieceKey: one piece's row asks for its own piece, whichever is shown)
+    const only = pieceKey || W.piece, rows = only && all.some(x => x.key === only) ? all.filter(x => x.key === only) : all;
     const lines = rows.map(x => {
       const sp = x.spec || {}, ids = x.poolIds || [];
       let onSheet = ids.length > 0;
@@ -11730,7 +11823,6 @@ const OrderWin = window.OrderWin = (() => {
     if (now) ink.style.transition = "none";
     ink.style.transform = `translateX(${b.offsetLeft + 6}px) scaleX(${Math.max(0, b.offsetWidth - 12) / 100})`;
     if (now) { getComputedStyle(ink).transform; ink.style.transition = ""; }
-    const sw = byId("owPieceSw"); if (sw) { sw.hidden = W.pieces.length < 2 || W.view === "sheet"; thumbTo(); }
   }
   /* the order's two conversations (Paul, 29 Sep 01:04: "I don't see the message history for the emails or their
      internal messages"): the one Team / Customer column — its threads, composers, drafts, images waiting and live reads
@@ -12688,8 +12780,6 @@ const OrderWin = window.OrderWin = (() => {
     const key = r.key, rid = String(r.order.receiptId);
     const fresh = !W.dlg.open || W.closing;
     if (W.closing) { W.closing = false; stopMotion(); W.dlg.classList.remove("owBack"); }
-    if (W.key && W.key !== key) { clearTimeout(W.noteTimer); saveNote(); }
-    if (W.early && W.early.rid !== rid) refreshNote({ order: { receiptId: W.early.rid } });   // (typed during a look-up the view left)
     if (!W.dlg.open) W.key = null;
     // (a look-up still running for the order this view showed before never draws its spinner line over this one)
     if (!r.loading) lookDone();
@@ -12702,7 +12792,7 @@ const OrderWin = window.OrderWin = (() => {
     showOrder(rid, r);
     W.key = key;
     if (other) W.piece = null; else if (W.piece && W.piece !== key) W.piece = key;
-    // (a piece dot's press, Paul 5 Oct round 15: the switch opens ON that piece, so the Overview, the Sheet tab, the back engraving and the pictures are its own at once; an order of one line has no switch)
+    // (a piece dot's press, Paul 5 Oct round 15: the window opens with that piece SELECTED (its row on the Its pieces list marked, W.piece), so the Overview, the Sheet tab, the back engraving and the pictures are its own at once; an order of one line has nothing to select)
     if (opts.pick && r.key === key && !r.loading && linesOf(r).length > 1) W.piece = key;
     if (other) sheetWant = null;
     if (opts.sheetId || opts.poolId) sheetWant = { rid, sheetId: opts.sheetId || "", poolId: opts.poolId || "" };
@@ -12728,7 +12818,6 @@ const OrderWin = window.OrderWin = (() => {
     // the Customer tab follows the order on screen from the first frame, and so does its note: while an order outside the
     // pull is read, the tab kept the order shown before, and a message written there went to that buyer
     try { window.CustomerMail?.orderShown(r, opts || {}); } catch (e) { console.warn("customer mail:", e); }
-    refreshNote(r);
     // (the Team tab too: while an order outside the pull is read it showed the thread of the order shown before; the
     // thread is the order's, read by its number, so it is read at once)
     grow(); paintThread();
@@ -12835,7 +12924,7 @@ const OrderWin = window.OrderWin = (() => {
   function lookDone() { W.look++; const l = byId("owLoading"); if (l) l.hidden = true; }
   /** Opens an order by its number, wherever it is: the pull's line when it has one, else built from the records.
    *  opts: { highlight, from, view, poolId, row, pick } (a search passes highlight: the number is lit as the view opens; a piece dot passes poolId, row: { key } and pick: the window opens
-   *  on that piece, the piece switcher selected on it, as an order of more than one line shows it). */
+   *  on that piece, its row on the Its pieces list selected, as an order of more than one line shows it). */
   async function openOrder(rid, opts = {}) {
     // (waits only while a stamp is being made: otherwise the view moves in this very turn, so its slide is already on
     // the page when the caller looks for it, and the plate is not drawn again until that slide has landed)
@@ -12880,17 +12969,17 @@ const OrderWin = window.OrderWin = (() => {
       stub.said = failed ? `The order's records could not be read just now (${esc(String(failed.message || failed).slice(0, 160))}). Its timeline and messages are still here. <button type="button" class="btn ghost xs" data-ow-retry>Try again</button>`
         : "This order has no piece in the sorter's records: it was never pulled, or its run is gone. Its timeline and messages are still here.";
       paint(); shown();
-      TeamMail.load(rid, true); refreshNote(stub); try { window.CustomerMail?.orderShown(stub, {}); } catch (_) {}
+      TeamMail.load(rid, true); try { window.CustomerMail?.orderShown(stub, {}); } catch (_) {}
       return;
     }
     W.rows = rows;
     tryDo(() => window.OrderPieces && OrderPieces.learn(rid, { rows }));   // (the order's lines as the records give them: its pieces are told from them too)
-    // the note already read while the order was looked up shows at once on its lines
-    if (stub.spec && stub.spec.staffNote) for (const row of rows) if (row.spec && !row.spec.staffNote) { row.spec.staffNote = stub.spec.staffNote; row.order.staffNote = stub.spec.staffNote; }
     show((opts.row && opts.row.key && rows.find(r => r.key === opts.row.key)) || ofPool(rows, opts.poolId) || rows[0], { walk: false, view: W.view, sheetId: o.sheetId, poolId: o.poolId, pick: o.pick }); shown();
   }
   // (a repaint asked from outside, an image or a record arriving, waits for the view to land)
-  return { open, openOrder, focusSearch, paint: () => hold("paint", () => { if (W.dlg && W.dlg.open && !W.closing) paint(); }), close: () => shut(), isOpen: () => !!(W.dlg && W.dlg.open && !W.closing), key: () => W.key, view: () => W.view, setView: v => setView(v), repaintThread: () => paintThread(true), _sheet: () => SV.info, _feed: () => W.feed,
+  return { open, openOrder, focusSearch, paint: () => hold("paint", () => { if (W.dlg && W.dlg.open && !W.closing) paint(); }), close: () => shut(), isOpen: () => !!(W.dlg && W.dlg.open && !W.closing), key: () => W.key, view: () => W.view, setView: v => setView(v),
+    // the piece shown in the order window (Paul, 5 Oct, round 16: the "Its pieces" rows are the selector): selectPiece(key | null for all pieces) -> whether it is shown now
+    selectPiece: k => selectPiece(k), selectedPiece: () => (W.pieces || []).length > 1 ? W.piece || null : null, repaintThread: () => paintThread(true), _sheet: () => SV.info, _feed: () => W.feed,
     // (read-only, for the checks: the pieces of the order on screen, each with the sheets it is on, and the one in focus)
     _scope: () => { const r = rowOf(W.key); if (!r) return null; const sc = sheetScope(r), cut = p => p && { key: p.key, name: p.name, nested: p.nested, loading: p.loading, why: p.why, sheets: p.sheets.map(h => ({ id: h.id, label: h.label })) }; return { all: sc.all.map(cut), focus: sc.focus && sc.focus.key, sel: sc.sel && sc.sel.key, piece: W.piece, block: sheetBlock(r) }; },
     // the order number of the open view, and "something was just done here": its timeline reads now and again 1.5 s later

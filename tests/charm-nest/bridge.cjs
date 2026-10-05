@@ -722,6 +722,7 @@ const receipts = [
       assert(asList.sideScroll <= 2, 'and does not run off the side: ' + asList.sideScroll);
       assert.deepStrictEqual(asList.hdr, ['Order', 'SKU', 'Item', 'Qty', 'Metal', 'Ship by', 'State'], 'the columns say what they are: ' + asList.hdr.join(','));
       // the order window: everything about one line, and the way to settle it
+      const notesBefore = await frame.evaluate(() => DesignStation.bridge.cursor.log.filter(l => /Staff note on/.test(l.caption)).length);
       const win = await page.evaluate(async () => {
         document.querySelector('[data-view=cards]').click();
         const held = [...document.querySelectorAll('.ocard')].find(c2 => c2.classList.contains('attn')) || document.querySelector('.ocard');
@@ -733,7 +734,7 @@ const receipts = [
           metal: document.getElementById('owMetal').textContent, meta, fix: !!d.querySelector('#owFix .rvItem'),
           note: !!document.getElementById('owNote'), thread: !!document.getElementById('owThread'),
           composer: !!document.getElementById('owInput'), attach: !!document.getElementById('owAttach'),
-          skip: document.getElementById('owSkip').getAttribute('aria-checked'), photo: !!d.querySelector('#owPhoto'),
+          skip: !!document.getElementById('owSkip') || !!document.getElementById('owSkipBox'), photo: !!d.querySelector('#owPhoto'),
           box: (() => { const r2 = d.getBoundingClientRect(); return { w: Math.round(r2.width), h: Math.round(r2.height), inW: window.innerWidth, inH: window.innerHeight }; })() };
       });
       console.log('order window', JSON.stringify(win));
@@ -741,19 +742,14 @@ const receipts = [
       assert(/^Order \d{6,}$/.test(win.title.trim()), 'headed by the order: ' + win.title);
       assert(/^SKU: /.test(win.sku) && win.metal, 'with the SKU and the metal');
       assert(['Quantity', 'Metal', 'State', 'Ship by', 'Listing', 'Title'].every(k => win.meta.includes(k)), 'and the details: ' + win.meta.join(','));
-      assert(win.note && win.thread && win.composer && win.attach && win.photo, 'the staff note, the thread, the composer and the picture are all there');
+      assert(!win.note && win.thread && win.composer && win.attach && win.photo, 'no Order notes box (Paul, 5 Oct 2026), but the thread, the composer and the picture are all there');
+      assert(!win.skip, 'and no Skip this Order switch (removed from the order window, Paul 5 Oct)');
       assert(!win.fix, 'and no decision box in the window (Paul, 28 Sep 16:45 and 29 Sep 01:01): its Review card\'s buttons deal with it');
       assert(win.box.w <= win.box.inW && win.box.h <= win.box.inH, `the window fits the screen: ${win.box.w}x${win.box.h} in ${win.box.inW}x${win.box.inH}`);
-      // a staff note typed here reaches the station
-      const noted = await page.evaluate(async () => {
-        const n = document.getElementById('owNote'); n.value = 'checked by the sorter'; n.dispatchEvent(new Event('input'));
-        n.dispatchEvent(new Event('blur'));
-        await new Promise(r => setTimeout(r, 700));
-        return true;
-      });
-      void noted;
+      // the Order notes box is gone: nothing the window does writes a staff note through the station
+      await new Promise(r => setTimeout(r, 900));
       const noteSeen = await frame.evaluate(() => DesignStation.bridge.cursor.log.filter(l => /Staff note on/.test(l.caption)).length);
-      assert(noteSeen >= 1, 'the staff note was written through the station');
+      assert.equal(noteSeen, notesBefore, 'opening the order window writes no staff note through the station');
       // a message typed here reaches the shared thread
       await page.evaluate(async () => {
         const i = document.getElementById('owInput'); i.value = 'sorter says hello'; i.dispatchEvent(new Event('input'));

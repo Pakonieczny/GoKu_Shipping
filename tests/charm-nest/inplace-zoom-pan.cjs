@@ -139,7 +139,7 @@ async function openPiece(page, i, extra) {
   await page.waitForFunction(k => OrderWin.isOpen() && OrderWin.key() === k && document.querySelector('#owPhoto img')?.complete && document.querySelector('#owPhoto img').naturalWidth > 0 && document.querySelector('#owVector img, #owVector canvas'), key(i), { timeout: 40000 });
   await settled(page);
 }
-const pickPiece = async (page, i) => { await page.click(`#owPieceSw [data-piece="${key(i)}"]`); await page.waitForFunction(k => OrderWin.key() === k && document.querySelector('#owPhoto img')?.complete, key(i), { timeout: 20000 }); await settled(page); };
+const pickPiece = async (page, i) => { await page.click(`#owPcSum .owPcRow[data-piece="${key(i)}"] .dot`); await page.waitForFunction(k => OrderWin.key() === k && document.querySelector('#owPhoto img')?.complete, key(i), { timeout: 20000 }); await settled(page); };
 /** Put whatever is zoomed in the order window back whole (Esc) - and only then, so a second Esc never closes the window. */
 const unzoom = async page => { if (await page.evaluate(() => CNZoomPan.zoomedWithin(document.getElementById('orderWin')))) { await page.keyboard.press('Escape'); await page.waitForTimeout(320); } };
 const closeWin = async page => { await page.evaluate(() => { const o = document.getElementById('orderWin'); if (o && o.open) document.getElementById('owClose').click(); }); await page.waitForFunction(() => !document.getElementById('orderWin').open, null, { timeout: 8000 }).catch(() => {}); await page.waitForTimeout(150); };

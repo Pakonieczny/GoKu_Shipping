@@ -72,21 +72,21 @@ async function main() {
       [order(OT.rid, 'Olive Other', [line(OT.ta, 'OTHER_GF', 'gold', '14k Gold Filled')]), [pid(OT, 'ta')]]] });
     const keyOf = (o, t) => `${o.rid}_${o[t]}`, hasOP = await page.evaluate(() => !!window.OrderPieces);
     // (open, with the order's records read: no piece is still 'loading', and the card has been drawn for them)
-    const settle = () => page.waitForFunction(() => { if (!OrderWin.isOpen()) return false; const sc = OrderWin._scope(); return sc && sc.all.every(p => !p.loading) && document.querySelectorAll('#owNowCard .owShChip').length >= sc.all.length && sc.all.every(p => { const b = document.querySelector(`#owPieceSw [data-piece="${p.key}"]`); return !b || b.classList.contains('noSheet') === !p.nested; }); }, null, { timeout: 8000 });
+    const settle = () => page.waitForFunction(() => { if (!OrderWin.isOpen()) return false; const sc = OrderWin._scope(); return sc && sc.all.every(p => !p.loading) && document.querySelectorAll('#owNowCard .owShChip').length >= sc.all.length; }, null, { timeout: 8000 });
     const closeWin = async () => { await page.evaluate(() => OrderWin.isOpen() && OrderWin.close()); await page.waitForFunction(() => !document.getElementById('orderWin').open, null, { timeout: 4000 }); };
     // what the window shows about its Sheet controls right now
     const ui = () => page.evaluate(() => {
       const q = s => document.querySelector(s), t = q('.owTabsV [data-ow-view="sheet"]'), btn = q('#owNowCard [data-go="sheet"]');
       const chip = c => ({ text: c.querySelector('b').textContent.trim(), sub: c.querySelector('b').nextElementSibling.textContent.trim(), off: c.getAttribute('aria-disabled') === 'true', why: c.dataset.why || '' });
       return { view: OrderWin.view(), piece: OrderWin._scope() && OrderWin._scope().piece,
-        pills: [...document.querySelectorAll('#owPieceSw [data-piece]')].map(b => ({ k: b.dataset.piece, on: b.classList.contains('on'), noSheet: b.classList.contains('noSheet'), t: b.textContent.trim().slice(0, 30) })),
+        pills: [...document.querySelectorAll('#owPcSum .owPcRow[data-piece]')].map(b => ({ k: b.dataset.piece, on: b.classList.contains('sel'), t: b.querySelector('.owPcName').textContent.trim().slice(0, 30) })),
         tab: { off: t.getAttribute('aria-disabled') === 'true', cls: t.classList.contains('off'), why: t.dataset.why || '', count: document.getElementById('owShCount').textContent, sel: t.getAttribute('aria-selected') },
         btn: btn && { off: btn.getAttribute('aria-disabled') === 'true', why: btn.dataset.why || '', tabbable: btn.tabIndex >= 0 },
         chips: [...document.querySelectorAll('#owNowCard .owShChip')].map(chip),
         note: [...document.querySelectorAll('.mNote .mNoteT')].map(n => n.textContent) };
     });
-    const pick = key => page.evaluate(k => { document.querySelector(`#owPieceSw [data-piece="${k}"]`).click(); }, key);
-    const pickAll = () => page.evaluate(() => { document.querySelector('#owPieceSw [data-piece=""]').click(); });
+    const pick = key => page.evaluate(k => { OrderWin.selectPiece(k); }, key);   // (the Its pieces list's own switch: the rows are on the Overview only)
+    const pickAll = () => page.evaluate(() => { OrderWin.selectPiece(null); });
     const sheetPanel = () => page.evaluate(() => ({ tabs: [...document.querySelectorAll('#owSheetPanel .owShTabs button')].map(b => b.textContent.trim()), on: document.querySelector('#owSheetPanel .owShTabs button.on')?.textContent.trim() || null,
       sheet: OrderWin._sheet() && OrderWin._sheet().sheet.id, none: document.querySelector('#owPlateWrap .owPlateNone[data-none]')?.innerText.replace(/\s+/g, ' ').trim() || null, count: document.getElementById('owShCount').textContent,
       pieces: [...document.querySelectorAll('#owSheetPanel .owPieces li')].map(li => li.innerText.replace(/\s+/g, ' ').trim()), canvasHidden: document.getElementById('owSheetCv').style.visibility === 'hidden' }));
@@ -102,8 +102,7 @@ async function main() {
     await settle();
     let u = await ui();
     assert.equal(u.view, 'info'); assert.equal(u.piece, null, 'all pieces');
-    assert.deepEqual(u.pills.map(p => p.t.split(' ')[0]), ['All', 'CUTE', 'HEALTH1'], JSON.stringify(u.pills));
-    assert(u.pills.find(p => /^CUTE/.test(p.t)).noSheet &&!u.pills.find(p => /^HEALTH1/.test(p.t)).noSheet, 'the piece on no sheet says so on its tab: ' + JSON.stringify(u.pills));
+    assert.deepEqual(u.pills.map(p => p.t.split(' ')[0]), ['CUTE', 'HEALTH1'], JSON.stringify(u.pills)); assert(u.pills.every(p => !p.on), 'all pieces: no row marked');
     // the Sheet button answers for the piece on show (CUTE): greyed, inert, its reason in plain words
     assert(u.btn.off && /^Not on a sheet yet: its SKU is not in any master file$/.test(u.btn.why), 'Sheet button greyed with its reason: ' + JSON.stringify(u.btn));
     assert(u.tab.off && u.tab.cls && u.tab.count === '', 'the Sheet tab is greyed too and counts nothing: ' + JSON.stringify(u.tab));
@@ -179,10 +178,10 @@ async function main() {
     u = await ui();   // all pieces, opened on A (on GF Sheet 1)
     assert(!u.btn.off && !u.tab.off && u.tab.count === '2 sheets', 'all pieces: two real sheets: ' + JSON.stringify([u.btn, u.tab]));
     assert.deepEqual(u.chips.map(c => [c.text, c.sub, c.off]), [['GF Sheet 1', 'HEART A', false], ['Not on a sheet yet', 'Charm earrings', true], ['SS Sheet 1', 'STAR C', false]], JSON.stringify(u.chips));
-    // three pieces: the strip gives way (and scrolls) before the live line beside it is cut or touches it
+    // three pieces: the chip row that sat beside the live line is gone; nothing in the tab row is cut
     await page.waitForTimeout(1300);   // (the window has settled: its live line and the Skip label at their full width)
-    const room = await page.evaluate(() => { const sw = document.getElementById('owPieceSw').getBoundingClientRect(), t = document.querySelector('.owTabsV .owTools'); return { gap: t.getBoundingClientRect().left + parseFloat(getComputedStyle(t).paddingLeft) - sw.right, cut: [...t.querySelectorAll('*')].filter(x => x.scrollWidth > x.clientWidth + 1 && getComputedStyle(x).overflowX !== 'visible').map(x => x.textContent.trim().slice(0, 30)) }; });
-    assert(room.gap >= 10 && room.cut.length === 0, 'the piece strip leaves room for the live line: ' + JSON.stringify(room));
+    const room = await page.evaluate(() => { const t = document.querySelector('.owTabsV .owTools'); return { chipRow: !!document.getElementById('owPieceSw'), cut: [...t.querySelectorAll('*')].filter(x => x.scrollWidth > x.clientWidth + 1 && getComputedStyle(x).overflowX !== 'visible').map(x => x.textContent.trim().slice(0, 30)) }; });
+    assert(!room.chipRow && room.cut.length === 0, 'no chip row, and the live line is not cut: ' + JSON.stringify(room));
     await shot('5-three-pieces-all');
     await pick(kA); u = await ui(); assert.equal(u.tab.count, '1 sheet'); assert.deepEqual(u.chips.map(c => c.text), ['GF Sheet 1']);
     await page.click('.owTabsV [data-ow-view="sheet"]'); await drawn(GF1); sp = await sheetPanel(); assert.deepEqual(sp.tabs, ['GF Sheet 1'], 'A: only its own sheet'); assert.equal(await page.evaluate(() => document.querySelector('#owSheetPanel .owCharm b').textContent), 'HEART_A');
@@ -213,7 +212,7 @@ async function main() {
 
     // ── 5 · an order outside the pull (a search), one piece on a sheet and one pooled and not placed yet ──
     await page.evaluate(rid => OrderWin.openOrder(rid, { highlight: true }), OUT.rid);
-    await page.waitForFunction(() => OrderWin.isOpen() && document.getElementById('owLoading').hidden && document.querySelectorAll('#owPieceSw [data-piece]').length === 3, null, { timeout: 20000 });
+    await page.waitForFunction(() => OrderWin.isOpen() && document.getElementById('owLoading').hidden && document.querySelectorAll('#owPcSum .owPcRow[data-piece]').length === 3, null, { timeout: 20000 });
     u = await ui();
     assert.equal(u.chips.filter(c => !c.off).map(c => c.text).join(), 'SS Sheet 1'); assert.equal(u.chips.filter(c => c.off).length, 1, 'the pooled piece has its muted chip: ' + JSON.stringify(u.chips));
     const outKeys = await page.evaluate(() => OrderWin._scope().all.map(p => [p.key, p.nested, p.why]));

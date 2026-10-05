@@ -61,7 +61,7 @@ function watcher() {
 const STATE = () => {
   const d = document.getElementById('orderWin'), cs = getComputedStyle(d), scroll = {};
   for (const n of d.querySelectorAll('*')) if (n.scrollTop) { let k = String(n.id || n.className || n.tagName), i = 1; while (scroll[k + (i > 1 ? '#' + i : '')] != null) i++; scroll[k + (i > 1 ? '#' + i : '')] = n.scrollTop; }
-  return { open: d.open, modal: d.matches(':modal'), key: OrderWin.key(), view: OrderWin.view(), scroll, note: document.getElementById('owNote').value, input: document.getElementById('owInput').value,
+  return { open: d.open, modal: d.matches(':modal'), key: OrderWin.key(), view: OrderWin.view(), scroll, input: document.getElementById('owInput').value,
     drawn: { vis: cs.visibility, op: cs.opacity, tf: cs.transform, anims: d.getAnimations().filter(a => a.playState === 'running').length }, layer: (document.getElementById('tourLayer') || { parentNode: { id: 'none' } }).parentNode.id || 'body', top: !!document.querySelector('#tourTop[open]'), mode: CN.S.mode };
 };
 
@@ -127,12 +127,13 @@ const STATE = () => {
       await page.waitForFunction(() => OrderWin.isOpen());
       await page.waitForTimeout(900);
       if (view !== 'info') { await page.click(`#orderWin [data-ow-view="${view}"]`); await page.waitForTimeout(900); }
-      // text typed where it can be (the Team message box, and the order's note on the Overview); a scroll in the view
+      // text typed where it can be (the Team message box); a scroll in the view
       const typed = `kept for ${rid}`;
       if (await page.isVisible('#owInput')) { await page.click('#owInput'); await page.keyboard.type(typed); } else await page.evaluate(v => { document.getElementById('owInput').value = v; }, typed);
-      if (view === 'info') { await page.click('#owNote'); await page.keyboard.type('note ' + rid); }
+      // (the Overview fits the window once it has no notes box: it is given room to scroll, so that its scroll is still kept and checked)
+      if (view === 'info') await page.evaluate(() => { if (!document.getElementById('cnTestRoom')) { const st = document.createElement('style'); st.id = 'cnTestRoom'; st.textContent = '#orderWin .owMain{padding-bottom:520px!important}'; document.head.appendChild(st); } });
       const scrolled = await page.evaluate(() => { const v = document.querySelector('#orderWin .owView:not([hidden])'), out = []; for (const n of [v, ...v.querySelectorAll('*')]) { const cs = getComputedStyle(n); if (/(auto|scroll)/.test(cs.overflowY) && n.scrollHeight > n.clientHeight + 30 && n.getClientRects().length) { n.scrollTop = Math.round((n.scrollHeight - n.clientHeight) / 2); out.push((n.id || n.className) + ':' + n.scrollTop); } } return out; });
-      await page.waitForTimeout(900);   // (the note saves itself)
+      await page.waitForTimeout(900);
       const s0 = await page.evaluate(STATE), b = await page.evaluate(() => { const x = document.getElementById('owSendSheet'); return x && !x.hidden ? x.textContent : null; });
       check(b === 'Send to Sheet' && s0.open && s0.modal && s0.view === view && (scrolled.length > 0 || view === 'timeline'), `${view}: the order window is open on ${view}, scrolled (${scrolled.join(' ')}), with Send to Sheet in its header (${b})`);
       if (!b) { await page.click('#owClose'); continue; }
@@ -165,7 +166,7 @@ const STATE = () => {
       check(sent.sent && sent.state === 'pooled', `${view}: sent and placed first (${JSON.stringify(sent)})`);
       check(s1.open && s1.modal && s1.key === s0.key && s1.view === s0.view, `${view}: the same window is back, on the same order and tab (${s1.key}, ${s1.view})`);
       check(JSON.stringify(s1.scroll) === JSON.stringify(s0.scroll), `${view}: every scroll in it where it was (${JSON.stringify(s1.scroll)})`);
-      check(s1.input === typed && s1.note === s0.note, `${view}: the text typed is kept ("${s1.input}", note "${s1.note}")`);
+      check(s1.input === typed, `${view}: the text typed is kept ("${s1.input}")`);
       check(s1.drawn.vis === 'visible' && s1.drawn.op === '1' && s1.drawn.tf === 'none' && !s1.drawn.anims, `${view}: drawn whole again, nothing left on it (${JSON.stringify(s1.drawn)})`);
       check(s1.layer === 'body' && !s1.top && s1.mode === 'review' && rvSame, `${view}: the tour's layer back on the page, the Review tab under it as it was (${s1.layer}, ${s1.mode}, scroll ${rvScroll[0]} → ${rv1[0]}${rv1[0] !== rvScroll[0] ? `, the list ${shrink} px shorter without its Send to Sheet` : ''})`);
       check(await page.evaluate(() => { const x = document.getElementById('owSendSheet'); return !x || x.hidden; }), `${view}: its Send to Sheet is gone (the designs are on the sheets)`);
