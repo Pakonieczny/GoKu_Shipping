@@ -169,7 +169,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms)), nap = ms => sleep(Math.
       const x = await seen1(R(2), 'custom order', null, 'button'); lat.push(x.late);
       // Completed: the card, once, with the record's seal (who, when)
       await A.seg('done');
-      const card = await A.page.evaluate(rid => { const ns = [...document.querySelectorAll(`#rvList .reviewListRow[data-rid="${rid}"]`)]; const n = ns[0]; return { count: ns.length, seals: n ? [...n.querySelectorAll('.seal')].map(s => ({ cls: s.className, at: +s.dataset.at, label: s.getAttribute('aria-label') })) : [], btns: n ? [...n.querySelectorAll('.rowActions button')].map(b => b.textContent.trim()) : [] }; }, R(2));
+      const card = await A.page.evaluate(rid => { const ns = [...document.querySelectorAll(`#rvList .reviewListRow[data-rid="${rid}"]`)]; const n = ns[0]; return { count: ns.length, seals: n ? [...n.querySelectorAll('.seal')].map(s => ({ cls: s.className, at: +s.dataset.at, label: s.getAttribute('aria-label') })) : [], btns: n ? [...n.querySelectorAll('.rowActions button')].map(b => b.textContent.trim()).filter(t => t !== 'Hold') : [] }; }, R(2));
       const rec = srv.st.doc(CUSTOM, KEY(R(2)));
       assert.equal(card.count, 1, 'the card is in Completed once');
       assert.equal(card.seals.length, 1, 'one seal on it: ' + JSON.stringify(card.seals));

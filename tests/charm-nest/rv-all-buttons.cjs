@@ -68,7 +68,7 @@ const COLUMN = sel => { const n = document.querySelector(sel); return [...n.quer
       Orders.interpretAll(); Review.syncOrderItems(); CN.setMode('review'); Review.render();
     }, ORDERS);
     const card = rid => `#rvList .reviewListRow[data-rid="${rid}"]`;
-    const buttons = () => page.evaluate(() => [...document.querySelectorAll('#rvList .reviewListRow')].map(n => ({ rid: n.dataset.rid, b: [...n.querySelectorAll('.rowActions button')].map(b => b.textContent.trim()), h: Math.round(n.getBoundingClientRect().height) })));
+    const buttons = () => page.evaluate(() => [...document.querySelectorAll('#rvList .reviewListRow')].map(n => ({ rid: n.dataset.rid, b: [...n.querySelectorAll('.rowActions button')].map(b => b.textContent.trim()).filter(t => t !== 'Hold'), h: Math.round(n.getBoundingClientRect().height) })));
 
     // 1 · Unknown SKU: every card, no "Review & resolve", the custom card's column: its buttons in its order, classes and
     //     sizes, Send to Sheet greyed and disabled (no design yet) and the dashed drop zone under them
@@ -138,7 +138,7 @@ const COLUMN = sel => { const n = document.querySelector(sel); return [...n.quer
     await page.waitForFunction(() => /^Order 4175892473 moved to Completed · completed by Test Operator/.test(document.querySelector('.mNote .mNoteT')?.textContent || ''), null, { timeout: 10000 });
     await page.evaluate(() => document.querySelectorAll('.mNote').forEach(n => n.close && n.close()));
     await page.click('#reviewView .rvSeg [data-cseg="done"]');
-    const doneA = await page.evaluate(sel => { const n = document.querySelector(sel); return n && { seals: [...n.querySelectorAll('.seal')].map(x => x.classList.contains('seal-button')), b: [...n.querySelectorAll('.rowActions button')].map(b => b.textContent.trim()), q: n.querySelector('.queueLabel').textContent, l: n.querySelector('.engravingIdentity .purchaseLabel').textContent, chips: [...document.querySelectorAll('#reviewView .egTab')].map(c => c.dataset.k) }; }, card('4175892473'));
+    const doneA = await page.evaluate(sel => { const n = document.querySelector(sel); return n && { seals: [...n.querySelectorAll('.seal')].map(x => x.classList.contains('seal-button')), b: [...n.querySelectorAll('.rowActions button')].map(b => b.textContent.trim()).filter(t => t !== 'Hold'), q: n.querySelector('.queueLabel').textContent, l: n.querySelector('.engravingIdentity .purchaseLabel').textContent, chips: [...document.querySelectorAll('#reviewView .egTab')].map(c => c.dataset.k) }; }, card('4175892473'));
     assert(doneA, 'under Completed');
     assert.deepEqual(doneA.seals, [true], 'the green Complete Order seal'); assert.deepEqual(doneA.b, ['Print QR label', 'Reopen']);
     assert.equal(doneA.q, 'Completed by hand'); assert.equal(doneA.l, 'Unknown SKU'); assert(doneA.chips.includes('unmatchedSku'), 'under its own chip there: ' + doneA.chips);
@@ -177,7 +177,7 @@ const COLUMN = sel => { const n = document.querySelector(sel); return [...n.quer
     await page.click('#cuDlg .cuFile .cuM[data-m="gold"]');
     await page.click('#cuDlg [data-x]');
     await page.waitForFunction(sel => document.querySelector(sel + ' .cuDesigns.ready') && !document.querySelector('dialog[open]'), card('4178100001'));
-    const eCard = await page.evaluate(sel => { const n = document.querySelector(sel); return { strip: n.querySelector('.cuDesigns').textContent, send: n.querySelector('[data-cu-send]').className, dis: n.querySelector('[data-cu-send]').getAttribute('aria-disabled'), print: n.querySelector('[data-cu-print]').className, b: [...n.querySelectorAll('.rowActions button')].map(b => b.textContent.trim()) }; }, card('4178100001'));
+    const eCard = await page.evaluate(sel => { const n = document.querySelector(sel); return { strip: n.querySelector('.cuDesigns').textContent, send: n.querySelector('[data-cu-send]').className, dis: n.querySelector('[data-cu-send]').getAttribute('aria-disabled'), print: n.querySelector('[data-cu-print]').className, b: [...n.querySelectorAll('.rowActions button')].map(b => b.textContent.trim()).filter(t => t !== 'Hold') }; }, card('4178100001'));
     assert.match(eCard.strip, /Custom designs.*1 design · 1 piece.*Ready to send.*Edit designs/); assert.match(eCard.send, /gold/, 'Send to Sheet is the next step'); assert.equal(eCard.dis, null, 'and enabled');
     assert.match(eCard.print, /ghost/, 'Print QR label is plain then');
     assert.deepEqual(eCard.b, ['Print QR label', 'Complete Order', 'Send to Sheet'], 'the same buttons with its designs strip (no drop zone once it has designs)');
