@@ -130,6 +130,7 @@ const assets = [
   "vendor/fonts/NotoEmoji-OFL.txt",
   "vendor/fonts/Unicode-LICENSE.txt",
   "charm-nest-orders.js",
+  "charm-nest-shared-orders.js",
   "charm-nest-bridge.js",
   "charm-nest-progress.js",
   "charm-nest-sheetwin.js",
