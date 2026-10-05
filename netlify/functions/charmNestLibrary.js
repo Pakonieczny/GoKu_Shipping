@@ -150,7 +150,7 @@ function slim(d) {
     names: str(d.names, 2000), sources: (d.sources || []).map(s => ({ name: s.name, hash: s.hash || null })), runId: d.runId || null, page: num(d.page) || 1,
     setId: d.setId || null, setSeq: num(d.setSeq) || null, sheetIndex: num(d.sheetIndex) || null, orders: (d.orders || []).slice(0, 500), backCount: (d.backPool || []).length, label: d.label ? { files: (d.label.files || []).map(f => ({ path: f.path, url: f.url, payload:f.payload || null, orders:f.orders || [], part:f.part || 1 })) } : null,
     // cut on the laser and marked so (op_laserDone), and the listings its pieces were bought from (the Library's search)
-    laserDoneAt: num(d.laserDoneAt) || null, laserDoneBy: d.laserDoneBy || null, processSeals: Readiness.processStamps(d), processReady: !!d.processReady, laserSetPending: !!d.laserSetPending, laserHold: d.laserHold && num(d.laserHold.at) > 0 ? { at: num(d.laserHold.at), by: str(d.laserHold.by, 80), note: str(d.laserHold.note, 200) } : null, listings: (d.listings || []).slice(0, 500),
+    laserDoneAt: num(d.laserDoneAt) || null, laserDoneBy: d.laserDoneBy || null, processSeals: Readiness.processStamps(d), processReady: !!d.processReady, stepStamps: Readiness.stepStamps(d), stepState: d.stepState && typeof d.stepState === "object" ? d.stepState : null, laserSetPending: !!d.laserSetPending, laserHold: d.laserHold && num(d.laserHold.at) > 0 ? { at: num(d.laserHold.at), by: str(d.laserHold.by, 80), note: str(d.laserHold.note, 200) } : null, listings: (d.listings || []).slice(0, 500),
     cardStartedAt: ms(d.cardStartedAt) || ms(d.createdAt), updatedAt: ms(d.updatedAt), createdAt: ms(d.createdAt),
     // a cleanup made on the record (the pieces it took off, the green line it removed): a page whose own copy of the sheet
     // is older puts the same change on it (Cleanups, charm-nest-bridge.js). Only on a record that has one
@@ -160,7 +160,7 @@ function slim(d) {
 /* The fields of a sheet record that its list entry (slim) and its laser readiness (Readiness.sheet) read, and the lists
    filter on. A list reads only these: the rest of a record (its charms with their outlines, its placements) is most of
    its up to 900 KB, and a list of 500 sheets used to read all of it to send none of it. */
-const SLIM_SHEET = ["id", "sheetId", "roseStockId", "roseCutAt", "rosePlanHash", "solidIncluded", "draft", "releaseFull", "folder", "fileBase", "saving", "dirty", "metal", "metalLabel", "day", "status", "endedBy", "charmCount", "placedCount", "rejectCount", "density", "freePt2", "verification", "preview", "outputs", "stock", "poolIds", "backPool", "backs", "names", "sources", "runId", "page", "setId", "setSeq", "sheetIndex", "orders", "label", "archived", "laserDoneAt", "laserDoneBy", "listings", "cardStartedAt", "cleanup", "createdAt", "updatedAt", "processSeals", "processReady", "archivedLaserDoneAt", "archivedLaserDoneBy", "activityAt", "laserHold"];
+const SLIM_SHEET = ["id", "sheetId", "roseStockId", "roseCutAt", "rosePlanHash", "solidIncluded", "draft", "releaseFull", "folder", "fileBase", "saving", "dirty", "metal", "metalLabel", "day", "status", "endedBy", "charmCount", "placedCount", "rejectCount", "density", "freePt2", "verification", "preview", "outputs", "stock", "poolIds", "backPool", "backs", "names", "sources", "runId", "page", "setId", "setSeq", "sheetIndex", "orders", "label", "archived", "laserDoneAt", "laserDoneBy", "listings", "cardStartedAt", "cleanup", "createdAt", "updatedAt", "processSeals", "processReady", "stepStamps", "stepState", "archivedLaserDoneAt", "archivedLaserDoneBy", "activityAt", "laserHold"];
 /** Readiness counts a record's placements where it has no placedCount (Readiness.sheet): read for those alone. */
 async function withPlacements(rows) {
   const want = rows.filter(([, d]) => !(+d.placedCount)), byId = new Map(want);
@@ -496,7 +496,7 @@ async function op_laserStatus(b) {
 
 // All process seals are append-only. No trimming, replacement on re-completion, or client-written history.
 function processEvent(how,at,by,n){return {id:how+'-'+at+'-'+n,how,at,by};}
-function processRecord(kind,id,d){return {kind,id,patch:{processSeals:Readiness.processStamps(d),processReady:!!d.processReady,laserDoneAt:num(d.laserDoneAt) || null,laserDoneBy:d.laserDoneBy || null}};}
+function processRecord(kind,id,d){return {kind,id,patch:{processSeals:Readiness.processStamps(d),processReady:!!d.processReady,laserDoneAt:num(d.laserDoneAt) || null,laserDoneBy:d.laserDoneBy || null,...(kind==='sheet' && d.stepState && typeof d.stepState==='object'?{stepStamps:Readiness.stepStamps(d),stepState:d.stepState}:{})}};}
 async function processHistory(kind,id,d){
   if(Array.isArray(d.processSeals))return d.processSeals;
   // Recover earlier completions even when the old Undo removed laserDoneAt. Each order on a sheet
@@ -537,7 +537,14 @@ async function recordProcessReadiness(kind,id,by){
       const oldBadge=!Array.isArray(old.processSeals) && processSeals.some(s=>s.id==='legacy-ready') && !processSeals.some(s=>s.how==='laserDone');
       if(ready && !old.processReady && !oldBadge){const event=processEvent('laserReady',at,by,processSeals.length);processSeals.push(event);added.push({kind:k,id:key,eventId:event.id});}
       const patch={processSeals,processReady:ready};
-      if(!Array.isArray(old.processSeals) || !!old.processReady!==ready || JSON.stringify(old.processSeals)!==JSON.stringify(processSeals))tx.set(col(k==='set'?SETS:SHEETS).doc(key),{...patch,updatedAt:FV.serverTimestamp()},{merge:true});
+      /* When each step was completed (Readiness.stepsRecord: nesting, engraving, order check), in this same pass and the same write: no new read, no new
+         call. Append-only like the seals: a stamp already on the sheet is never removed or rewritten, a step that goes back and completes again adds
+         a new one. A sheet is only written when a step changed (or an older sheet is seen for the first time, to take its steps as they stand). */
+      const steps=k==='sheet'?Readiness.stepsRecord(approved.find(x=>x.id===key) || old,at):null;
+      if(steps){patch.stepStamps=steps.stamps;patch.stepState=steps.state;}
+      const sealed=!Array.isArray(old.processSeals) || !!old.processReady!==ready || JSON.stringify(old.processSeals)!==JSON.stringify(processSeals);
+      // (a write that only notes the steps leaves updatedAt alone: the Library orders its lists by it, and seeing a sheet again is no activity of the sheet's)
+      if(sealed || steps)tx.set(col(k==='set'?SETS:SHEETS).doc(key),sealed?{...patch,updatedAt:FV.serverTimestamp()}:patch,{merge:true});
       records.push(processRecord(k,key,{...old,...patch}));
     };
     const approved=sheets.map(s=>({...s,processSeals:recovered.get('sheet:'+s.id)}));
@@ -656,6 +663,8 @@ async function op_putSheet(b) {
   delete doc.log;
   // a sheet is marked cut only by op_laserDone: a save of the open run's copy of it keeps the mark it has
   delete doc.laserDoneAt; delete doc.laserDoneBy; delete doc.processSeals; delete doc.processReady;
+  // the step completions (stepStamps, stepState) are the server's record of when each step was done: a page can neither write nor clear them
+  delete doc.stepStamps; delete doc.stepState;
   // a hold back from Laser cutting and the Library's move history are server-owned too (op_flowApply): a stale page cannot clear them
   delete doc.laserHold; delete doc.flowHistory;
   // the listings its pieces were bought from, as the Library's listing search reads them (array-contains)
