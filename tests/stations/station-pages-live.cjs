@@ -15,7 +15,7 @@ const { chromium } = require(path.join(pwDir, 'playwright-core'));
 
 const ts = ms => ({ _ts: true, ms });
 const T0 = Date.now();
-const acts = [], sent = [];                       // every activity event the door got; every request (url + body) the pages made
+const acts = [], sent = [], lives = [];           // every activity event the door got; every request (url + body) the pages made; every live write (the order in hand)
 let netDown = false;                              // the fake network: every call fails while true
 const CUSTOMER = ['Jane Doe', '12 Main St', 'Test Buyer'];
 
@@ -40,6 +40,7 @@ function fake(method, url, body) {
   let b = {}; try { b = body ? JSON.parse(body) : {}; } catch (_) {}
   if (name === 'firebaseOrders') {
     if (method === 'GET') return { __status: 404, error: 'not found' };
+    if (b.live) { lives.push(b.live); return { success: true, written: 1 }; }
     if (Array.isArray(b.activity)) { acts.push(...b.activity); return { success: true, written: b.activity.length, duplicate: 0, refused: 0, scrubbed: 0 }; }
     return { success: true };
   }
@@ -143,6 +144,17 @@ async function inbox(browser) {
   for (const e of got) { assert.strictEqual(e.person, 'Paul Inbox'); assert.strictEqual(e.station, 'inbox'); assert.strictEqual(e.device, device); }
   console.log('inbox: drafted x2, sent x5 (ai draft / edited / first reply / waited / plain), refused x1');
 
+  // the live board: opening a conversation puts its order in hand; a reply sent puts it down; a refused reply does not
+  await wait(900);
+  const lv = () => lives.filter(l => l.event !== 'beat');
+  for (const k of ['A', 'B', 'C', 'D', 'F']) assert(lv().some(l => l.event === 'work' && l.order.rid === oidOf(k)), 'live: opening ' + k + ' puts its order in hand: ' + lv().map(l => l.event + ':' + (l.order || l.ended).rid).join(' '));
+  for (const k of ['A', 'B', 'C', 'D']) assert(lv().some(l => l.event === 'idle' && l.ended.rid === oidOf(k)), 'live: the reply sent on ' + k + ' puts it down');
+  assert(!lv().some(l => l.event === 'idle' && l.ended.rid === oidOf('F')), 'live: the refused reply on F does not put it down');
+  const workA = lv().find(l => l.event === 'work' && l.order.rid === oidOf('A'));
+  assert.deepStrictEqual([workA.person, workA.station, workA.device, workA.order.kind, workA.order.customer, workA.order.pieces.length], ['Paul Inbox', 'inbox', device, 'order', 'Cust A', 0], 'live: this operator, the inbox, the conversation as an order');
+  assert(lv().every(l => l.person === 'Paul Inbox' && l.station === 'inbox' && l.device === device && !('sandbox' in l)), 'live: every write is this operator at the inbox');
+  console.log('inbox live: an opened conversation is in hand, a reply sent puts it down, a refused one does not');
+
   // the Etsy helper's word: A delivered, B delivered with images missing, C unconfirmed, D failed with its code, E (nobody reads it) later
   const set = (k, status, extra) => { world[IDS[k]].draft = Object.assign({}, world[IDS[k]].draft, { status }, extra || {}); };
   set('A', 'sent'); set('B', 'sent_text_only'); set('C', 'sent_unverified'); set('D', 'failed', { sendErrorCode: 'NO_ETSY_TAB', sendError: 'Open the Etsy tab for Jane Doe at 12 Main St' });
@@ -169,12 +181,15 @@ async function inbox(browser) {
 
   // privacy: fixed words and numbers only; never a customer name, address, message text or a PIN
   const blob = JSON.stringify(acts) + sent.filter(s => /"activity"|"session"/.test(s)).join('\n');
-  for (const w of [...CUSTOMER, 'ships tomorrow', 'Thank you for your patience', 'Sorry for the wait']) assert(!blob.includes(w), 'no customer text in what is recorded about the people: ' + w);
+  for (const w of [...CUSTOMER, 'ships tomorrow', 'Thank you for your patience', 'Sorry for the wait']) assert(!blob.includes(w) && !JSON.stringify(lives).includes(w), 'no customer text in what is recorded about the people: ' + w);
+  assert(!/\b\d{6}\b/.test(JSON.stringify(lives.map(l => l.order || l.ended))), 'live: no 6-digit number (a PIN could look like one) in any order in hand');
   assert(!/\b\d{6}\b/.test(JSON.stringify(acts.map(e => e.detail))), 'no 6-digit number in any detail');
 
   // a dead network: nothing throws, nothing blocks, and the reply box still works
   netDown = true;
   await open(IDS.F); await page.fill('#emDraftText', 'sent while the network is down'); await page.click('#emSendEtsyBtn'); await wait(1200);
+  const held = await page.evaluate(() => StationActivity.current());
+  assert(held.length === 1 && held[0].rid === oidOf('F') && held[0].sent === false, 'live: with the network down the conversation is still in hand here, and not yet told: ' + JSON.stringify(held));
   const stillTyping = await page.evaluate(() => !!document.getElementById('emDraftText'));
   netDown = false;
   assert(stillTyping, 'the page still works');
