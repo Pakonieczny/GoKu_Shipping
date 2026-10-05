@@ -1702,17 +1702,21 @@
       if (wrap.dataset.keys !== keys) { wrap.dataset.keys = keys; rail.style.setProperty("--n", R.length); wrap.innerHTML = R.map(r => `<button type="button" class="tlStop f" data-stage="${r.s.k}"><i class="tlSeal"></i><span>${esc(r.s.l)}</span><em class="tlCnt" hidden></em></button>`).join(""); }
       fitRail(rail, S.M);
       const nodes = [...wrap.children], presses = [];
+      // all pieces (Paul, 5 Oct: "only show it above the next unfinished milestone"): the count of a step some pieces reached and others
+      // not yet ("2 of 6") is drawn on the next unfinished step alone, the first one, in rail order, that not every piece has reached;
+      // a later step, a done step and a cancelled order show none (the step explainer and the aria-label still say how many are there)
+      const sumOf = i => D.sum && D.sum.rail.find(r => r.i === i);
+      const next = !S.loaded || D.cancelled || D.hand ? -1 : R.findIndex(r => { const q = sumOf(r.i); return r.i > D.step && !(q && q.of > 0 && q.n >= q.of); });
       R.forEach(({ s, i }, j) => {
         const n = nodes[j], st = D.stages[i];
-        // all pieces: a step some pieces reached and others not yet says how many ("2 of 3")
-        const sr = D.sum && D.sum.rail.find(r => r.i === i), part = sr && sr.n > 0 && sr.n < sr.of ? `${sr.n} of ${sr.of}` : "";
+        const sr = sumOf(i), part = j === next && sr && sr.n > 0 && sr.n < sr.of ? `${sr.n} of ${sr.of}` : "";
         let c;
         if (!S.loaded) c = "f";
         else if (D.cancelled) c = i < D.stop ? "d" : i === D.stop ? "x" : "f gone";
         else c = i <= D.step ? "d" : i === D.cur ? "c" : D.hand ? "f gone" : "f";   // (completed by hand: the rest skipped)
         // a step passed with no event of its own (an older order, or one done off the record) still shows as done
         const ev = c === "d" ? st.first : null;
-        const sig = c + "|" + (ev ? ev.key : "") + (c === "c" && D.hold ? "|h" : "") + (c === "x" ? "|" + D.cancelled.at : "") + "|" + part;
+        const sig = c + "|" + (ev ? ev.key : "") + (c === "c" && D.hold ? "|h" : "") + (c === "x" ? "|" + D.cancelled.at : "") + "|" + part + "|" + (sr ? sr.n + "/" + sr.of : "");
         if (n.dataset.sig === sig) return;
         n.dataset.sig = sig;
         n.className = "tlStop " + c + (c === "c" && D.hold ? " paused" : "");

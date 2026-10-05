@@ -353,7 +353,10 @@
        (station-activity.js), as on sorting.html: the "Sorting as" name or 6-digit employee number (checked by the
        server against "Employee Numbers"; the number is never kept or logged). Each piece is optional: the page works without it. -->
   <script src="station-session.js?v=20261002-ea1"></script>
-  <script src="station-activity.js?v=20261002-ea1"></script>
+  <script src="station-activity.js?v=20261005-live1"></script>
+  <!-- The batch in hand right now (scanned = working, every sticker printed = idle), for the console's live stations board
+       (station-live-order.js). Optional: without it nothing changes. -->
+  <script src="station-live-order.js?v=20261005-lo1"></script>
   <script>
   window.SortAct = (function () {
     const EMP_KEY = "sorting.employee", VIA_KEY = "sorting.employeeVia", DONE_KEY = "sorting.sortedToday";
@@ -461,15 +464,35 @@
         lsSet(DONE_KEY, JSON.stringify(o));
       } catch (_) {}
     }
+    /* ---- the batch in hand right now (the console's live stations board; station-live-order.js) ----
+       Scanned and loaded = "working" with every piece of its orders; each printed sticker is one order done, the last one makes
+       it "idle". Best effort: never throws, never waits, no extra call. */
+    const live = (fn, a, b, c) => { try { const L = window.StationLiveOrder; return !!(L && typeof L[fn] === "function" && L[fn](a, b, c)); } catch (_) { return false; } };
+    let liveBatch = null;                  // { ids, done:Set } the orders of the batch in hand
+    function liveStep(id) {
+      try {
+        id = String(id || "");
+        if (!liveBatch || !liveBatch.ids.includes(id)) return;
+        liveBatch.done.add(id);
+        const n = liveBatch.done.size, all = liveBatch.ids.length;
+        if (n >= all) { liveBatch = null; live("end"); } else live("note", n + " of " + all + " orders done");
+      } catch (_) {}
+    }
     return {
       getEmployee,
       scanned(orderIds, how) {
         try {
+          const okIds = [];
           for (const id of [...new Set((orderIds || []).map(x => String(x).trim()).filter(Boolean))]) {
             const parts = piecesOf(id);
-            if (parts) act("scan", { orderId: id, parts, detail: how || "typed" });
+            if (parts) { act("scan", { orderId: id, parts, detail: how || "typed" }); okIds.push(id); }
             else act("error", { orderId: id, detail: "order not found or not loaded (" + (how || "typed") + ")" });
           }
+          if (okIds.length) {
+            const items = (window.cachedOrderItems || []).filter(it => idsOfItem(it).some(x => okIds.includes(x)));
+            liveBatch = { ids: okIds, done: new Set() };
+            live("batch", okIds, items, { note: (how || "typed") === "typed" ? "" : String(how).slice(0, 40) });
+          } else { liveBatch = null; live("end"); }
         } catch (_) {}
       },
       sorted(orderId) {
@@ -479,6 +502,7 @@
           act("print", { orderId: id, parts, detail: "order QR sticker" + (again ? ", again" : "") });
           if (!again && act("complete", { orderId: id, parts, orders: 1, detail: "sorted" })) markSorted(id);
         } catch (_) {}
+        liveStep(orderId);
       }
     };
   })();
