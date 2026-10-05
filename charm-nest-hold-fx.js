@@ -528,8 +528,12 @@
     /** keep: the sheet is only left for a moment, what is still to be done to it is kept. */
     clearSheet(sheetId, keep) {
       const id = String(sheetId);
-      for (const s of this.spots.get(id) || []) { this.fadeOut(s.el, 420); s.el = null; } for (const c of this.chips.get(id) || []) this.fadeOut(c, 420);
-      if (!keep) this.spots.delete(id); this.chips.delete(id);
+      for (const s of this.spots.get(id) || []) { this.fadeOut(s.el, 420); s.el = null; }
+      // (a sheet only left for a moment keeps the pieces still on their way to it: Release hold tells the film where every sheet's pieces go before the first sheet is placed)
+      const wait = keep ? (this.chips.get(id) || []).filter(c => c._await && !c._done) : [];
+      for (const c of this.chips.get(id) || []) if (!wait.includes(c)) this.fadeOut(c, 420);
+      if (!keep) this.spots.delete(id);
+      if (wait.length) this.chips.set(id, wait); else this.chips.delete(id);
       const st = this.stats.get(id); if (st) { this.stats.delete(id); this.fadeOut(st.box, 700); }
     }
     /** Pieces coming in: a chip at each spot, a copy flying to it from `from`, one after another. */
@@ -539,7 +543,7 @@
       for (let j = 0; j < ids.length; j++) {
         if (this.ff || !card) break;
         const at = spotAt(j); if (!at || !at.r) continue;
-        const k = this.chip(at.r, faceFor(ids[j], url), `${key}:${sheetId}:${ids[j]}`); k.c.dataset.pool = String(ids[j]); k.c._spot = at.sp || null; chips.push(k.c);
+        const k = this.chip(at.r, faceFor(ids[j], url), `${key}:${sheetId}:${ids[j]}`); k.c.dataset.pool = String(ids[j]); k.c._spot = at.sp || null; if (key === "place") k.c._await = true; chips.push(k.c);
         flights.push(this.flyInto(from, k.c, k.inner, this.ms(T.fly)));
         await this.sleep(this.ms(T.gap));
       }
@@ -777,14 +781,21 @@
       await this.hold(this.ms(400));
     },
     async placed(s) {
-      const ids = (s.poolIds || []).map(String), n = await this.settle(s.sheetId, ids);
+      const ids = (s.poolIds || []).map(String); await this.on(s.sheetId, s); const n = await this.settle(s.sheetId, ids);   // (the light is back on the sheet that is named: another sheet's flight came after this one's)
       this.say(`Placed on ${this.labelOf(s.sheetId) || this.relLabel || "the sheet"}`, pl(ids.length || n, "piece"));
       this.row(s.sheetId, `<b>${pl(ids.length || n, "piece")}</b> placed`, "placed");
       await this.hold();
     },
-    async qr(s) { return HOLD.qr.call(this, s); },
+    async qr(s) {
+      if (s.made !== false) return HOLD.qr.call(this, s);
+      // (the engine did not make the label: a sheet still filling gets it when it joins its set; the film says so and ticks nothing)
+      await this.on(s.sheetId, s); this.say("QR label comes later", this.labelOf(s.sheetId));
+      this.row(s.sheetId, `${QR}QR label comes later`, "qr");
+      await this.hold(this.ms(T.tick));
+    },
     async released(s) {
-      this.terminal = true; const label = this.relLabel || this.labelOf(this.tgt && this.tgt.sheetId);
+      this.terminal = true; const names = s.placed === false ? [] : [...new Set((s.sheets || []).map(x => x && (x.label || this.labelOf(x.sheetId))).filter(Boolean))];   // (an order on two sheets says both, like the timeline step does)
+      const label = names.length ? names.join(", ") : this.relLabel || this.labelOf(this.tgt && this.tgt.sheetId);
       this.doneText = `Order ${s.rid || this.rid} is back in line${label ? " \u00b7 placed on " + label : ""}`;
       if (this.mark) this.mark.done();
       this.say(`Order ${s.rid || this.rid} is released`, label || "");
