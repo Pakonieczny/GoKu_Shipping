@@ -41,6 +41,8 @@ const ListZoom = (() => {
   function observe(box){if(resize&&!observed.has(box)){observed.add(box);resize.observe(box);}}
   function detach(box){bound.get(box)?.dispose();bound.delete(box);resize?.unobserve(box);observed.delete(box);box.classList.remove('zoomReady');box.removeAttribute('title');const reset=box.closest('figure')?.querySelector('.thumbReset');if(reset){reset.hidden=true;reset.onclick=null;}}
   function bind(box,key){
+    // (a picture that opens the viewer, the order window's, never zooms in place: PhotoView does the zooming and panning)
+    if(box.hasAttribute('data-viewer')){if(bound.has(box))detach(box);return;}
     const im=box.querySelector('img,canvas');if(!im)return;
     if(bound.get(box)?.im===im){observe(box);return;}
     detach(box);const abort=new AbortController(),on=(name,fn,opts={})=>box.addEventListener(name,fn,{...opts,signal:abort.signal});
@@ -242,15 +244,22 @@ const ListMedia = (() => {
     let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b;});pending.set(id,{promise,resolve,reject});wanted.add(id);flushPhotos();return promise;
   }
   const catalog=new Map();
-  async function vector(row) {
+  // (`px`, from the picture viewer, draws the same design large from the same source: never the thumbnail enlarged)
+  async function vector(row,px) {
     if(!row || row.spec?.noDesign)return null;
     const charm=(row.poolIds || []).map(id=>Pool.charmOf(id)).find(c=>c?.outline && c.members?.length);
-    if(charm)return P.frontPreview ? P.frontPreview(charm,220) : Engrave.renderFront(charm,220);
+    if(charm)return P.frontPreview ? P.frontPreview(charm,px || 220) : Engrave.renderFront(charm,px || 220);
     const sku=row.spec?.designSku || row.line?.sku;if(!sku)return null;
     let entry=Master.entryFor(sku);
     if(!entry){if(!catalog.has(sku))catalog.set(sku,Master.fetchEntry(sku).finally(()=>catalog.delete(sku)));entry=await catalog.get(sku);}
     if(!entry)return null;
-    return Pool.masterPreview(entry,row.spec?.size,true);
+    return px ? Pool.masterFront(entry,row.spec?.size,px) : Pool.masterPreview(entry,row.spec?.size,true);
+  }
+  /** A line's vector design drawn large on white (about 1600 px) for the picture viewer, as an address the viewer's picture
+   *  can show; null when the line has no design. */
+  async function vectorBig(row,px=1600) {
+    const out=await vector(row,px);
+    return typeof out==='string'?out:(out&&out.toDataURL?out.toDataURL('image/png'):null);
   }
   /** A line's vector design into one box: a list row's, or the order window's beside its listing photo. */
   function vectorInto(host,row) {
@@ -274,7 +283,7 @@ const ListMedia = (() => {
     const io=window.IntersectionObserver ? new IntersectionObserver(es=>{if(es.some(e=>e.isIntersecting))go();},{rootMargin:'160px'}) : null;
     button.onclick=go;host.appendChild(button);if(io){pages.set(host,io);io.observe(button);}
   }
-  return {pair,mount,vectorInto,watch,more,listing,prepare,start,peek:id=>photos.get(String(id || '')) || null};
+  return {pair,mount,vectorInto,vectorBig,watch,more,listing,prepare,start,peek:id=>photos.get(String(id || '')) || null};
 })();
 const clockFormat = new Intl.DateTimeFormat([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });   // made once: a formatter costs far more to make than to use
 const fmtT = t => clockFormat.format(new Date(t));
@@ -2236,6 +2245,14 @@ const Pool = window.Pool = (() => {
     while(masterPreviewCache.size>80)masterPreviewCache.delete(masterPreviewCache.keys().next().value);
     try{return await task;}catch(e){masterPreviewCache.delete(key);throw e;}
   }
+  /** The same picture as masterPreview(…, true) drawn at `px` for the picture viewer. Looking registers nothing (no pool
+   *  source, no cache of a large picture): the master is read, drawn and let go, or its pooled copy is drawn. */
+  async function masterFront(entry,size,px) {
+    const path=sizeEntry(entry,size)?.aiPath;
+    if(!path)throw new Error("No design file");
+    const cached=B.pool.sources.get(path),charm=cached?cached.charms[0]:(await readMasterCharm(entry,size)).charm;
+    return P.frontPreview ? P.frontPreview(charm,px) : Engrave.renderFront(charm,px);
+  }
   /** Upgrade cached geometry before a recovered sheet can be used again. */
   async function repairRecoveredGeometry(d) {
     const sources=(d.sources || []).concat(Object.values(d.poolSources || {}));
@@ -2516,7 +2533,7 @@ const Pool = window.Pool = (() => {
     row.state = recs.length && recs.every(p => p.state === "committed") ? "committed" : recs.length && recs.every(p => p.sheetId) ? "written" : "pooled";
     row.reason = null; return true;
   }
-  return { poolAdd, addAll, masterCharm, masterPreview, cloneCharm, update, charmOf, sheetOf, holding, sizeEntry, repairRecoveredGeometry, onSheets, settle, tryLater, recover };
+  return { poolAdd, addAll, masterCharm, masterPreview, masterFront, cloneCharm, update, charmOf, sheetOf, holding, sizeEntry, repairRecoveredGeometry, onSheets, settle, tryLater, recover };
 })();
 
 /* Carry-forward is keyed by immutable order-line identity. A changed Etsy line is always re-interpreted. */
@@ -10383,6 +10400,61 @@ const OrderWin = window.OrderWin = (() => {
   // the lines of the order on screen: the pull's, or those read from the records
   const linesOf = r => { const rid = String(r.order.receiptId); const pulled = (Orders.rows() || []).filter(x => String(x.order.receiptId) === rid && x.state !== "gone"); return pulled.length ? pulled : (W.rows && W.rows.some(x => x === r) ? W.rows : [r]); };
 
+  /* The two pictures at the left of the Overview (the Etsy listing photo and the vector design) open the one viewer the
+     inbox photos use (PhotoView, charm-nest-mail.js: wheel, pinch, double-click and double-tap, + − 0, drag, ← →, Esc) as a
+     layer of this window, so the window under it stays as it was and Esc closes the viewer only. Both pictures of the piece
+     on show are its list: ← → step between them, and the caption says which one it is. The thumbnails themselves never
+     zoom. The photo opens at the largest size Etsy keeps, the vector is drawn again large (never the small thumbnail
+     enlarged). */
+  const PIC_SIZES = ["fullxfull", "1588xN"];   // (largest first: a size that cannot be had falls back to the next, and last to the thumbnail's own)
+  /** The addresses of an Etsy photo in its larger sizes: [largest, …, the one given]. Photos come through the image proxy
+   *  (…/imageProxy?url=<Etsy address>); an address that is not Etsy's usual shape has no larger size to look for. */
+  function bigPhoto(url) {
+    const own = cors(url), at = String(url);
+    let raw = at, wrap = null;
+    try { const u = new URL(at, location.href); if (u.searchParams.get("url")) { raw = u.searchParams.get("url"); wrap = u.pathname + "?url="; } } catch (_) {}
+    const m = /\/il_(\d+x(?:\d+|N)|fullxfull)\./.exec(raw);
+    if (!m || !/^https:\/\/[^/]*etsystatic\.com\//.test(raw)) return [own];
+    // (only sizes above the one given: a photo already at the largest or the next size is not swapped for a smaller one)
+    const has = PIC_SIZES.indexOf(m[1]), above = has < 0 ? PIC_SIZES : PIC_SIZES.slice(0, has);   // (-1: a size of its own, 570xN and the like: both are larger)
+    const sized = size => { const a = raw.replace(/\/il_(?:\d+x(?:\d+|N)|fullxfull)\./, `/il_${size}.`); return wrap ? wrap + encodeURIComponent(a) : a; };
+    return [...above.map(sized), own];
+  }
+  const bigVectors = new Map();   // the drawings made for the viewer, newest last (a few: they are large)
+  function bigVector(r) {
+    const key = JSON.stringify([r.key, r.spec && r.spec.designSku, r.spec && r.spec.size, r.poolIds]);
+    if (!bigVectors.has(key)) {
+      const task = Promise.resolve().then(() => ListMedia.vectorBig(r, 1600)).catch(e => { bigVectors.delete(key); throw e; });
+      bigVectors.set(key, task); while (bigVectors.size > 4) bigVectors.delete(bigVectors.keys().next().value);
+    }
+    return bigVectors.get(key);
+  }
+  /** The pictures of the piece on show, as the viewer's list: the Etsy photo (when there is one) and the vector design. */
+  function picItems(r) {
+    const sku = (r.spec && r.spec.designSku) || r.line.sku || "", pcs = W.pieces || [], n = pcs.length, ix = pcs.findIndex(p => p.key === r.key);
+    const tail = (n > 1 && ix >= 0 ? ` · Piece ${ix + 1} of ${n}` : "") + (sku ? ` · ${sku}` : "");
+    const items = [], url = tryDo(() => Orders.imageFor(r)) || (r.loading ? r.peek : null);
+    if (url) { const v = bigPhoto(url); items.push({ which: "photo", src: v[0], fall: v.slice(1, -1), back: v.length > 1 ? v[v.length - 1] : null, cors: true, cap: "Etsy listing" + tail, wait: "Loading the photo…" }); }
+    if (!(r.spec && r.spec.noDesign) && sku) items.push({ which: "vector", load: () => bigVector(r), orig: false, cap: "Vector design" + tail, wait: "Drawing the vector design…", none: "This piece has no vector design.", fail: "The vector design could not be drawn." });
+    return items;
+  }
+  /** Open the viewer on the picture clicked (`which`: "photo" or "vector"), or do nothing when that one has no picture. */
+  function openPic(which, opener) {
+    const r = rowOf(W.key); if (!r) return;
+    const items = tryDo(() => picItems(r)) || [], at = items.findIndex(x => x.which === which);
+    if (at < 0) return;
+    const PV = window.PhotoView;
+    if (PV && PV.openItems) tryDo(() => PV.openItems(items, at, opener, { noun: "picture" }));
+    else if (items[at].src) window.open(items[at].src, "_blank", "noopener");   // (the viewer's file did not load: the photo, at least, in a tab of its own)
+  }
+  function wirePics() {
+    for (const [id, which] of [["owPhotoBox", "photo"], ["owVectorBox", "vector"]]) {
+      const b = byId(id); if (!b) continue;
+      b.addEventListener("click", e => { e.preventDefault(); openPic(which, b); });
+      b.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); e.stopPropagation(); openPic(which, b); } });
+    }
+  }
+
   function wire() {
     if (W.wired) return; W.wired = true;
     W.dlg = byId("orderWin"); if (!W.dlg) return;
@@ -10401,12 +10473,12 @@ const OrderWin = window.OrderWin = (() => {
     W.dlg.addEventListener("close", () => {
       if (W.dlg.open) return; giveBack(0); clearTimeout(W.noteTimer); saveNote(); if (W.early) refreshNote({ order: { receiptId: W.early.rid } }); clearInterval(W.poll); W.poll = 0; W.key = null; stashTray();
       W.closing = false; stopMotion(); flightGone(); W.dlg.classList.remove("owGrow", "owBack"); endFind();
-      unmountTimeline(); W.row = null; W.rows = null; W.listed = null; W.look++; sheetReset(); SV.shown = null; W.dlg.classList.remove("owCancelled"); lookDone();
+      unmountTimeline(); tryDo(() => { if (W.engCard) W.engCard.destroy(); W.engCard = null; }); W.row = null; W.rows = null; W.listed = null; W.look++; sheetReset(); SV.shown = null; W.dlg.classList.remove("owCancelled"); lookDone();
       try { window.CustomerMail?.orderClosed(); } catch (_) {}
     });
     // back from a Send to Sheet flight that took the view out of the way (SendTour): drawn as it is now, still unseen
     W.dlg.addEventListener("tour:back", () => { if (W.dlg.open && !W.closing) tryDo(paint); });
-    byId("owPhoto").onclick = e => e.currentTarget.classList.toggle("zoom");
+    wirePics();
     byId("owCopy").onclick = async () => { const r = rowOf(W.key); const sku = r && ((r.spec && r.spec.designSku) || r.line.sku); if (!sku) return; try { await navigator.clipboard.writeText(sku); toast("SKU copied", "ok", 1800); } catch (_) {} };
     byId("owWhoBtn").onclick = () => { NameBar.open({ onSet: paintWho }); };
     const note = byId("owNote");
@@ -10732,6 +10804,21 @@ const OrderWin = window.OrderWin = (() => {
       a.finished.then(gone, gone); setTimeout(gone, FOLD.ms + 400);   // (a hidden tab draws no frames)
     }
   }
+  /** The back engraving of the piece shown, under its pictures: the one card the Sheet tab draws (OrderEngraving, charm-nest-order-engraving.js),
+   *  here for the line the Overview holds. Each piece of an order has its own back, its own job and its own approval, so the card is
+   *  the one of the line shown and swaps with the piece (nothing of the piece before stays). It follows Engrave's jobs and the order's
+   *  timeline feed (an approval made anywhere shows within a second or two) and asks for no read of its own. */
+  function paintEng(r) {
+    const host = byId("owEng"), OE = window.OrderEngraving; if (!host || !OE || !r) return;
+    const rid = String(r.order.receiptId);
+    const ctx = { rid, key: r.key, poolId: (r.poolIds || [])[0] || "", piece: W.piece || r.key, row: r,
+      events: () => (W.evFor === rid ? W.events : null),
+      // (the back's own words from the Sheet tab, for an order read from the records that Engrave holds no job for)
+      sheetEng: () => { const x = SV.info && (SV.info.mine || []).find(m => m.poolId && (r.poolIds || []).includes(m.poolId)); return (x && x.eng) || null; },
+      // (an approval made elsewhere, or here: what hangs on it is drawn again: the red box, the Engraving cell, the Sheet tab)
+      changed: () => { if (!W.dlg || !W.dlg.open || W.closing) return; if (SV.info && W.view === "sheet") tryDo(() => paintPanel(SV.info)); hold("paint", () => { if (W.dlg.open && !W.closing) paint(); }); } };
+    if (W.engCard && W.engCard.el === host) W.engCard.update(ctx); else W.engCard = OE.mount(host, ctx);
+  }
   /** Paint the window from the row it is showing. */
   function paint() {
     if(window.Seal?.defer('order-view-paint',paint))return;
@@ -10743,13 +10830,13 @@ const OrderWin = window.OrderWin = (() => {
     const mp = byId("owMetal"); mp.textContent = r.material ? labelOf(r.material) : (sp.materialLabel || (r.loading ? "…" : "no material"));
     mp.className = "pill " + (r.material || r.loading ? "neutral" : "bad");
     const ph = byId("owPhoto"); const url = tryDo(() => Orders.imageFor(r)) || (r.loading ? r.peek : null);
-    ph.classList.remove("zoom");
     ph.innerHTML = url ? '<img crossorigin="anonymous" alt="" src="' + esc(cors(url)) + '">' : r.loading ? '<span class="owSk owSkPic" aria-hidden="true"></span>' : '<span class="ph">no image</span>';
     ph.dataset.lid = String(r.line.listingId || ""); if (url) ph.dataset.painted = "1"; else { delete ph.dataset.painted; if (r.line.listingId) tryDo(() => Orders.wantImage(r.line.listingId)); }
     // the charm's vector design under the listing photo, as the lists show the two side by side (the window showed the
     // photo alone, or "no image" while the photo was not ready)
     const vh = byId("owVector"); if (vh) tryDo(() => ListMedia.vectorInto(vh, r));
     byId("owSku").textContent = "SKU: " + (sp.designSku || r.line.sku || "—");
+    paintEng(r);
     // the one field that must be read exactly: labelled, whole, and never boxed into a scroller under the staff note
     const said = [];
     // a line read before the placeholder cleanup (CharmNestOrders.visible) shows clean too
@@ -10798,7 +10885,15 @@ const OrderWin = window.OrderWin = (() => {
     if (inPull(r.key) && r.engrave && r.engrave.needed && !r.engrave.approved) {
       const box = el("div", "owFix", '<div class="t">Its engraving is still to be settled</div>');
       const b = el("button", "btn ghost sm", "Open it in Engraving");
-      b.onclick = () => { W.dlg.close(); setMode("engrave"); Engrave.render(); };
+      // (the engraving of THIS order's piece, its details open, the order's number in the search: EngraveLink, Paul 5 Oct
+      // "it only open the Engraving tab list with no specific order selected"; without it, the tab as it always was)
+      const plain = () => { W.dlg.close(); setMode("engrave"); Engrave.render(); };
+      b.onclick = () => {
+        if (!window.EngraveLink || typeof EngraveLink.open !== "function") return plain();
+        if (b.disabled) return;
+        b.disabled = true; b.innerHTML = '<span class="spin"></span>Opening Engraving…';
+        EngraveLink.open({ rid, key: r.key, poolId: (r.poolIds || [])[0] }).catch(plain).finally(() => { b.disabled = false; b.textContent = "Open it in Engraving"; });
+      };
       box.appendChild(b); fix.appendChild(box);
     }
     if (inPull(r.key) || r._customSentDecision || tryDo(() => CustomSheet.decisionOf?.(r))) paintCustom(r); else { const bar = byId("owCustom"); if (bar) { bar.hidden = true; bar.innerHTML = ""; bar._stamp = ""; } }
@@ -11059,6 +11154,7 @@ const OrderWin = window.OrderWin = (() => {
   function paintNow(r) {
     if(window.Seal?.defer('order-now',()=>paintNow(rowOf(W.key))))return;
     if (!r) return;
+    paintEng(r);
     // Older compact order rows omitted approval metadata. Their permanent timeline keeps the exact signature.
     const events=W.evFor===String(r.order.receiptId)?W.events:[],historical=CNEngravingSeals.fromEvents(events,r);
     if(historical.length){
@@ -11428,7 +11524,9 @@ const OrderWin = window.OrderWin = (() => {
     // (a Rose Gold sheet behind its saved green line keeps its pieces until it is cut: nothing comes off it)
     const lined = rec && !cut && rec.metal === "rose" && !!(rec.roseLine || rec.rosePlan || rec.roseProtected || rec.rosePlanHash || rec.rosePlanJson || rec.roseProtectedJson);
     const facts = rec ? [sheetName(list[SV.at] || { metal: rec.metal, n: inf.sheet.n }), inf.stock ? `${Math.round(inf.stock.wPt * 25.4 / 72)} × ${Math.round(inf.stock.hPt * 25.4 / 72)} mm` : "", rec.setSeq ? "Set-" + rec.setSeq : "", cut ? "cut " + new Date(+cut).toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" }) : rec.status || ""].filter(Boolean).join(" · ") : "";
-    const mine = inf ? inf.mine : [], x0 = mine.find(x => x.poolId === SV.focus) || mine[0] || null;
+    // (the charm shown when none was picked on the sheet: the piece this window is on (the Overview's switcher), so the Overview's back
+    // engraving card and this tab's are always about the same piece; only then the first charm of the order on the sheet)
+    const mine = inf ? inf.mine : [], x0 = mine.find(x => x.poolId === SV.focus) || mine.find(x => x.poolId && (r.poolIds || []).includes(x.poolId)) || mine[0] || null;
     // (the line of the charm shown: an order split over sheets and metals speaks of that charm, not of the line opened)
     const lr = (x0 && x0.poolId && linesOf(r).find(l => (l.poolIds || []).includes(x0.poolId))) || r;
     const sp = lr.spec || {}, sku = (x0 && x0.sku) || sp.designSku || lr.line.sku || "";
@@ -11491,6 +11589,10 @@ const OrderWin = window.OrderWin = (() => {
         finally{ap.removeAttribute("aria-busy");ap.textContent="Approved";}
       },
       open:async()=>{
+        // (this piece's own engraving, details open, the order's number in the search: EngraveLink, which also closes this window)
+        if(window.EngraveLink && typeof EngraveLink.open==="function"){
+          try{await EngraveLink.open({rid,key:eng.job?.key || lr.key,poolId:x0?.poolId || SV.focus || undefined});return;}catch(e){console.warn("engrave link:",e);}
+        }
         await shut();
         const v=Engrave.view(),done=["approved","written","skipped"].includes(eng.job?.state) || eng.kind==="approved";
         Engrave.restoreView({...v,tab:done?"done":"place",focus:done?null:eng.job?.key || lr.key,list:false,chosen:true,q:done?rid:""});
@@ -11979,8 +12081,11 @@ const OrderWin = window.OrderWin = (() => {
     // gone from the pull, cancelled or no longer open, shows those lines as they are)
     const ofRid = (Orders.rows() || []).filter(r => String(r.order.receiptId) === rid), live = ofRid.filter(r => r.state !== "gone");
     const pulled = live.length ? live : ofRid;
+    // (the piece asked for: the line named, else the line that holds the pool id named (a copy's id starts with its line's key), else the order's first;
+    // Paul, 5 Oct, round 3: every place that opens the order shows the piece it was pressed for, with that piece's own back engraving)
+    const ofPool = (list, pid) => { pid = String(pid || ""); return pid ? list.find(r => (r.poolIds || []).includes(pid)) || list.find(r => pid.startsWith(r.key + "_")) || null : null; };
     const mine = opts.row && opts.row.key ? pulled.find(r => r.key === opts.row.key) : null;
-    if (pulled.length) return show(mine || pulled[0], o);
+    if (pulled.length) return show(mine || ofPool(pulled, opts.poolId) || pulled[0], o);
     const tok = ++W.look, stub = stubRow(rid);
     // what the page already knows of the order (the search index as it stands, the picture already fetched) is drawn
     // at once, so the view flies with it; nothing is read or built for it here
@@ -12014,7 +12119,7 @@ const OrderWin = window.OrderWin = (() => {
     tryDo(() => window.OrderPieces && OrderPieces.learn(rid, { rows }));   // (the order's lines as the records give them: its pieces are told from them too)
     // the note already read while the order was looked up shows at once on its lines
     if (stub.spec && stub.spec.staffNote) for (const row of rows) if (row.spec && !row.spec.staffNote) { row.spec.staffNote = stub.spec.staffNote; row.order.staffNote = stub.spec.staffNote; }
-    show(rows[0], { walk: false, view: W.view, sheetId: o.sheetId, poolId: o.poolId }); shown();
+    show((opts.row && opts.row.key && rows.find(r => r.key === opts.row.key)) || ofPool(rows, opts.poolId) || rows[0], { walk: false, view: W.view, sheetId: o.sheetId, poolId: o.poolId }); shown();
   }
   // (a repaint asked from outside, an image or a record arriving, waits for the view to land)
   return { open, openOrder, focusSearch, paint: () => hold("paint", () => { if (W.dlg && W.dlg.open && !W.closing) paint(); }), close: () => shut(), isOpen: () => !!(W.dlg && W.dlg.open && !W.closing), key: () => W.key, view: () => W.view, setView: v => setView(v), repaintThread: () => paintThread(true), _sheet: () => SV.info, _feed: () => W.feed,
