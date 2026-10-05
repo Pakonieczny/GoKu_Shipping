@@ -2674,7 +2674,9 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       await Pool.update([...ids], Object.assign({ state: "abandoned", sheetId: null, setId: null }, cancel ? { removedBy: who, removedReason: "cancelled" + (note ? ": " + note : ""), removedAt: Date.now() } : { heldBy: who, heldReason: note || "on hold", heldAt: Date.now() }));
       for (const id of ids) B.pool.rows.delete(id);
       // on hold (a cancel is stamped by the server as the order is cancelled): on the order's timeline, with who
-      if (!cancel && rid) window.SheetEvents?.order({ type: "held", orderId: rid, id: `sw-${sheetId}-${Date.now()}`, by: who, sheetId, sheet: names || "", text: `${text}, on hold`.slice(0, 200), data: { pieces: list.length, note: note || undefined } });
+      // (no window drawn: the sheet it came off is named when it was one sheet, as the Hold of a whole order takes one sheet at a time)
+      const evSheet = sheetId || (pages.length === 1 && pages[0].sheetId) || null;
+      if (!cancel && rid) window.SheetEvents?.order({ type: "held", orderId: rid, id: `sw-${evSheet}-${Date.now()}`, by: who, sheetId: evSheet, sheet: names || "", text: `${text}, on hold`.slice(0, 200), data: { pieces: list.length, note: note || undefined } });
       // 3 · the set: the order leaves the sheets it was on (labels are remade when each sheet is saved again)
       await dropFromSets(ids);
       if (B.run) { B.run.lines = Object.fromEntries(Orders.rows().map(Orders.lineRecord)); await RunCtl.save(B.run).catch(e => console.warn("sheet window: run lines", e)); }
