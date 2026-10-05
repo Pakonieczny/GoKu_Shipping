@@ -341,7 +341,12 @@ async function smallWorld(browser, shot) {
       await page.waitForTimeout(2200);
       return { note, chipState, chipWhy };
     }
-    const closeOverlays = async () => { await page.keyboard.press('Escape').catch(() => {}); await page.evaluate(() => { document.querySelectorAll('dialog[open]').forEach(d => { try { d.close(); } catch (_) { /* gone */ } }); }); await page.waitForTimeout(500); };
+    const closeOverlays = async () => {
+      await page.evaluate(() => { try { if (window.SharedOrdersModal && SharedOrdersModal.isOpen && SharedOrdersModal.isOpen()) SharedOrdersModal.close(); } catch (_) { /* closed */ } });
+      await page.waitForTimeout(900);                                         // (its way out is animated)
+      await page.keyboard.press('Escape').catch(() => {}); await page.waitForTimeout(500);
+      await page.evaluate(() => { document.querySelectorAll('dialog[open]').forEach(d => { try { d.close(); } catch (_) { /* gone */ } }); }); await page.waitForTimeout(500);
+    };
     const modalUp = () => page.evaluate(() => !!(document.querySelector('[data-shared-orders-modal], .sharedOrdersModal, #sharedOrdersModal, dialog.sharedOrders[open], .soModal, [data-so-modal]')) || !!(window.SharedOrdersModal && SharedOrdersModal.isOpen && SharedOrdersModal.isOpen()));
     const hasModule = () => page.evaluate(() => !!window.SharedOrdersModal);
 
@@ -376,6 +381,29 @@ async function smallWorld(browser, shot) {
       const writes2 = h.since('drag2').filter(isWrite).filter(c => !sealCheck(c));
       info('writes after the drag to Set 2', writes2.map(c => c.fn + ':' + c.op + (c.steps ? '[' + c.steps + ']' : '')));
       if (where2.gfA1 === where2.ssA1) hard('a refused drag onto another set writes nothing', writes2.length === 0, writes2.map(c => c.fn + ':' + c.op).join(','));
+      if (m2) {
+        const listed = () => page.evaluate(() => ({ cards: document.querySelectorAll('.soCard').length, tiles: document.querySelectorAll('.soCard .soTile').length, opens: document.querySelectorAll('.soCard [data-open]').length, text: (document.querySelector('.soHead, .soTitle, dialog.soDlg h2, [data-so-title]') || {}).textContent || '' }));
+        await until(async () => (await listed()).cards > 0, 8000, 'the modal lists its orders').catch(() => {});
+        const L1 = await listed();
+        info('shared-orders modal', L1);
+        accept('6 · the modal lists exactly the 4 orders the two sheets share, each with thumbnails and a link to the order', L1.cards === 4 && L1.tiles >= 8 && L1.opens === 4, JSON.stringify(L1));
+        await shot(page, 'A06-shared-orders-modal');
+        const n0 = L1.cards;
+        // an order is opened from it, and the way back brings the modal up again with the same orders
+        await page.evaluate(() => document.querySelector('.soCard [data-open]').click());
+        const opened = await until(() => page.evaluate(() => !!(window.OrderWin && OrderWin.isOpen())), 8000, 'the order opens from the modal').then(() => true, () => false);
+        await page.waitForTimeout(1200);
+        const back = await page.evaluate(() => !!document.getElementById('soBack'));
+        await shot(page, 'A07-order-opened-from-modal');
+        accept('6 · an order opened from the modal shows the order view with a way back to the modal', opened && back, JSON.stringify({ opened, back }));
+        if (back) {
+          await page.evaluate(() => document.getElementById('soBack').click());
+          const again = await until(() => page.evaluate(() => !!(window.SharedOrdersModal && SharedOrdersModal.isOpen && SharedOrdersModal.isOpen())), 8000, 'back to the modal').then(() => true, () => false);
+          await page.waitForTimeout(1000);
+          const L2 = await listed();
+          accept('6 · going back from the order returns to the modal with the remaining shared orders', again && L2.cards === n0, JSON.stringify({ again, before: n0, after: L2.cards }));
+        } else await page.evaluate(() => { try { OrderWin.close(); } catch (_) { /* closed */ } });
+      }
       await closeOverlays();
       await sweep(h, 'A5b drag onto another set');
     }
