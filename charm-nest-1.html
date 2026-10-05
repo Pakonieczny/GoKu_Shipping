@@ -714,6 +714,25 @@ dialog.phv.layer.phvIn{background:transparent}
 .owPcRow .steps{display:inline-flex;gap:4px}
 .owPcRow .steps i{width:6px;height:6px;border-radius:50%;box-shadow:inset 0 0 0 1px var(--ink25);transition:background .3s}
 .owPcRow .steps i.on{background:var(--sage);box-shadow:none}
+/* a piece that is in the Review tab has its card's own buttons and seals here, in place of its words (Paul, 5 Oct): compact (xs, as
+   the Custom Orders bar draws them), beside the name while the row is wide and under it, dots column unmoved, when it is not */
+.owPcSum{container-type:inline-size}
+.owPcRow.hasAct{position:relative;cursor:pointer}
+.owPcSum .owPcRow.hasAct{grid-template-columns:8px minmax(0,1.2fr) minmax(max-content,1fr) auto}   /* (the words' own columns, but never narrower than the buttons: the name gives way first) */
+.owPcRow.hasAct:hover{transform:none}
+.owPcRow .owPcName{border:0;background:transparent;padding:0;margin:0;font:inherit;color:inherit;text-align:left;cursor:pointer;border-radius:4px;min-width:0}
+.owPcRow .owPcName:focus-visible{outline:2px solid var(--slate);outline-offset:2px}
+.owPcRow .pcAct{display:flex;align-items:center;flex-wrap:wrap;gap:4px 8px;min-width:0;cursor:default}
+.owPcRow .pcAct .btn{flex:0 0 auto}
+.owPcRow .pcAct .cuWho{flex-wrap:wrap}.owPcRow .pcAct .cuWho input{width:9em}
+.owPcRow .owPcSr{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0 0 0 0);border:0;white-space:nowrap}
+@container (max-width:760px){
+  .owPcSum .owPcRow.hasAct{grid-template-columns:8px minmax(0,1fr) auto;row-gap:4px}
+  .owPcRow.hasAct .dot{grid-row:1;grid-column:1}
+  .owPcRow.hasAct .owPcName{grid-row:1;grid-column:2}
+  .owPcRow.hasAct .steps{grid-row:1;grid-column:3}
+  .owPcRow.hasAct .pcAct{grid-row:2;grid-column:2 / -1}
+}
 /* what is being waited for, said on one line */
 .owLoading{display:flex;align-items:center;gap:9px;padding:8px 18px;font:12px var(--sans);color:var(--ink70);border-bottom:1px solid var(--line2);background:var(--card2)}
 .owLoading[hidden]{display:none}
@@ -2351,11 +2370,14 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
 .setUndoChip .spin{width:10px;height:10px;flex:0 0 10px;border:2px solid var(--line);border-top-color:var(--ink70);border-radius:50%;animation:spin .7s linear infinite}
 .setUndoChip.ok{color:#3c5a39;background:var(--sageSoft);border-color:#cddcc9}
 @media (prefers-reduced-motion:reduce){.setUndoChip,.ldSign{animation:none}}
-/* Approve for laser cutting (charm-nest-bridge.js, LaserReview): one button under every sheet still in progress (never one on a set card), directly under that sheet's small rail; disabled, with its plain reason beside it, while a person's own step comes first */
+/* Approve for laser cutting (charm-nest-bridge.js, LaserReview): one button under every sheet still in progress (never one on a set card), directly under that sheet's small rail; grey (aria-disabled, so it keeps the keyboard), with its plain reason beside it, while a person's own step comes first. A set of several sheets is approved as ONE: all of its buttons are green together or grey together */
 .approveBox{display:grid;gap:6px;min-width:0}
 .approveRow{display:flex;align-items:center;gap:6px 10px;flex-wrap:wrap;min-width:0}
 .approveBtn{flex:0 0 auto}
 .approveBtn:disabled{background:var(--paper2);border-color:var(--line);color:var(--ink45);opacity:1}
+.approveBtn[aria-disabled=true]{background:var(--paper2);border-color:var(--line);color:var(--ink45);opacity:1;cursor:default}
+.approveBtn[aria-disabled=true]:hover{opacity:1}
+.approveBtn[aria-disabled=true]:active{transform:none}
 .approveBtn .spin{vertical-align:-2px}
 .approveWhy{min-width:0;font:500 11.5px/1.35 var(--sans);color:var(--ink45)}
 button.approveReason{border:0;background:none;padding:0;font:inherit;color:inherit;text-align:left;cursor:pointer}
@@ -2696,9 +2718,9 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 .owCustom.done .tag{color:#3f5b3a}
 .owCustom .w{flex:1 1 auto;min-width:0;font-size:12px;color:var(--ink70);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .owCustom .btn{flex:0 0 auto}
-.owCustom .sealRow{margin:calc(var(--seal-fit,var(--seal-base)) * -.28) 0;max-width:50%;flex:0 0 auto}
-.owCustom .owCuMore{flex:0 0 auto;border:0;background:transparent;color:var(--ink45);font:700 10.5px var(--sans);padding:3px 5px;margin-left:-4px;border-radius:6px;cursor:pointer;white-space:nowrap}
-.owCustom .owCuMore:hover,.owCustom .owCuMore:focus-visible{color:var(--ink);background:var(--card2)}
+.owCustom .sealRow,.owPcRow .pcAct .sealRow{margin:calc(var(--seal-fit,var(--seal-base)) * -.28) 0;max-width:50%;flex:0 0 auto}
+.owCustom .owCuMore,.owPcRow .pcAct .owCuMore{flex:0 0 auto;border:0;background:transparent;color:var(--ink45);font:700 10.5px var(--sans);padding:3px 5px;margin-left:-4px;border-radius:6px;cursor:pointer;white-space:nowrap}
+.owCustom .owCuMore:hover,.owCustom .owCuMore:focus-visible,.owPcRow .pcAct .owCuMore:hover,.owPcRow .pcAct .owCuMore:focus-visible{color:var(--ink);background:var(--card2)}
 .owNoteField .fLabel{color:var(--ink)}
 .owNoteField .owIn{border-color:var(--goldLine)}
 .owNoteField .owIn.has{background:#fdf7e6;border-color:var(--gold2);font-size:13.5px}
@@ -2929,7 +2951,7 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-text.js"></script>
 <script src="charm-nest-orders.js?v=20261005-pieces"></script>
 <script src="charm-nest-order-pieces.js?v=20261005-op2"></script>
-<script src="charm-nest-order-engraving.js?v=20261005-oe1"></script>
+<script src="charm-nest-order-engraving.js?v=20261005-oe2"></script>
 <script src="charm-nest-shared-orders.js?v=20261005-cardinal3"></script>
 <script src="charm-nest-background.js?v=20260930-stamp-barrier"></script>
 <script>
@@ -6701,7 +6723,7 @@ boot();
      Design Station's sign-in), the same name every seal it stamps carries. -->
 <script src="station-session.js?v=20261002-ea1"></script>
 <script src="station-activity.js?v=20261003-reset-clean"></script>
-<script src="charm-nest-bridge.js?v=20261005-lis2-cardinal4-zoom-psb1-egl1-osc1"></script>
+<script src="charm-nest-bridge.js?v=20261005-lis2-cardinal4-zoom-psb1-egl1-osc1-r3f-setgate1"></script>
 <script>
 try {
   const nameNow = () => { try { const n = String((window.CNEmployee && CNEmployee.name()) || "").trim(); return /^\d+$/.test(n) ? "" : n; } catch (_) { return ""; } };
@@ -6729,16 +6751,16 @@ try {
       set(v) { d.set.call(window.B, v); try { const n = String(d.get.call(window.B) || "").trim(); if (n && !/^\d+$/.test(n)) StationSession.signedIn({ name: n, id: null }); } catch (_) {} } });
 } catch (_) {}
 </script>
-<script src="charm-nest-sheetwin.js?v=20261005-pieces-cardinal2-osc1"></script>
+<script src="charm-nest-sheetwin.js?v=20261005-pieces-cardinal2-osc1-shm1"></script>
 <!-- the one way into the engraving of one order's piece (the order window, the Sheet tab and the Sheet window call it; each keeps its own way without it) -->
 <script src="charm-nest-engrave-link.js?v=20261005-el2"></script>
 <script src="charm-nest-tour.js?v=20260929-m11"></script>
-<script src="charm-nest-mail.js?v=20261005-pieces-zoom"></script>
+<script src="charm-nest-mail.js?v=20261005-pv-seal"></script>
 <script src="charm-nest-rose-ui.js?v=20261003-rg2"></script>
 <script src="charm-nest-flow-rose.js?v=20261003-rg2"></script>
 <script src="charm-nest-export-ui.js?v=20260925-done"></script>
 <script src="charm-nest-library.js?v=20261005-egl1"></script>
-<script src="charm-nest-flow.js?v=20261005-cardinal3"></script>
+<script src="charm-nest-flow.js?v=20261005-cardinal3-setgate1"></script>
 <script src="charm-nest-library-approval-ui.js?v=20261005-so2"></script>
 <script src="charm-nest-library-fx.js?v=20261003-fx2"></script>
 <script src="charm-nest-library-dnd.js?v=20261005-so2"></script>

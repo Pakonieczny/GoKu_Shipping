@@ -132,8 +132,11 @@ function sheet(id,{n=28,metal='gold',setId='set1',index=1,base=1000}={}){
     assert(bs[0].querySelector('[data-issues-open][data-issues-quiet]') && !bs[0].querySelector('.flowBang') && !/!/.test(bs[0].querySelector('[data-issues-open]').textContent),"a clock, not a '!': nothing is wrong with this sheet");
     assert(bs[1].querySelector('.flowBang[data-issues-open]') && !bs[1].querySelector('[data-issues-quiet]'),"the sheet that holds the set keeps its real '!'");
     assert.match(bs[0].querySelector('.flowStep.current').title,/Set 3 is cut together/);
-    assert.deepEqual([...two.querySelectorAll('.approveBox')].map(b=>b.dataset.approveFor),['sheet:m2'],'one Approve button, under the sheet that is not ready; none for the set, none for the finished sheet');
-    assert.equal(two.querySelector('.approveBox').previousElementSibling,bs[1],'directly under that sheet\'s rail');
+    // (round 7: a set advances as ONE: the finished sheet carries the same grey button as the sheet that is not ready, naming it)
+    assert.deepEqual([...two.querySelectorAll('.approveBox')].map(b=>b.dataset.approveFor),['sheet:m1','sheet:m2'],'one Approve button under each sheet of the set, none for the set; both grey while a sheet is not ready');
+    assert.deepEqual([...two.querySelectorAll('.approveBox [data-approve-btn]')].map(b=>b.getAttribute('aria-disabled')),['true','true']);
+    assert.deepEqual([...two.querySelectorAll('.approveBox [data-approve-why]')].map(b=>b.textContent),['SS Sheet 2 · back engravings 1 of 3','SS Sheet 2 · back engravings 1 of 3'],'both name the sheet that is not ready');
+    assert.equal(two.querySelector('.approveBox[data-approve-for="sheet:m2"]').previousElementSibling,bs[1],'directly under that sheet\'s rail');
     // the hooks the Approve button uses
     pressed.length=0;two.dispatchEvent(new w.CustomEvent('library-checklist-open',{bubbles:true,detail:{kind:'set',id:'set3'}}));
     assert.equal(pressed.length,1,"library-checklist-open presses one '!' of the card");

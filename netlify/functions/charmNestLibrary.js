@@ -2919,7 +2919,11 @@ OPS.sessionsList = op_sessionsList;
      whole call and nothing is written. A repeat finds the sheets as asked and writes nothing (idempotent). Each change adds an
      entry to the sheet's flowHistory (append only, newest 100) and a note on each of its orders' timelines.
    · flowApply  {steps:[{type:"seal", kind:"sheet"|"set", id}], by}   records the readiness seal by the person, exactly as laserStatus
-     does for the active view (recordProcessReadiness: only when the group is ready and has none yet; history is never replaced). ── */
+     does for the active view (recordProcessReadiness: only when the group is ready and has none yet; history is never replaced).
+   · A set advances as ONE (round 7): flowState also answers `gates` ({setId: {ready, reason, blockers, toApprove}}, Readiness.setGate over
+     each set of several sheets), and flowApply REFUSES (409, nothing written, `blockers` and `setId` in the answer) a release or a seal
+     for a sheet of such a set while any sheet of it is not ready to be approved; a hold, a step that only restores what a failed move
+     changed (`restore: true`) and a sheet in no set or in a set of one are as before. ── */
 async function op_flowState(b) {
   const sheetIds = [...new Set((b.sheetIds || []).filter(isId))].slice(0, 300), askedSets = [...new Set((b.setIds || []).filter(isId))].slice(0, 100);
   const status = await op_laserStatus({ sheetIds, setIds: askedSets, recordSeals: false });
@@ -2934,7 +2938,10 @@ async function op_flowState(b) {
   // the cardinal rule of a Set of Sheets (below): for a move into a set, the orders it would split, read from the records
   const mv = b.move && typeof b.move === "object" ? b.move : null;
   const shared = mv && mv.to && (mv.to.set || mv.to.newSet) ? await sharedAnswer(mv) : null;
-  return { sheets: status.sheets || [], sets: status.sets || [], setDocs: docs, runs, checkedAt: Date.now(), ...(shared ? { shared: shared.shared, group: shared.group } : {}) };
+  // a set of several sheets advances as one: its gate (Readiness.setGate) from these same records, so the page can say why none of it is approved
+  const gates = {};
+  for (const x of docs) if ((x.sheetIds || []).length > 1) { const g = Readiness.setGate({ ...x, name: x.name || (x.seq ? "Set " + x.seq : "") }, (status.sheets || []).filter(r => r.setId === x.setId)); gates[x.setId] = { ready: g.ready, reason: g.reason, blockers: g.blockers, toApprove: g.toApprove }; }
+  return { sheets: status.sheets || [], sets: status.sets || [], setDocs: docs, runs, gates, checkedAt: Date.now(), ...(shared ? { shared: shared.shared, group: shared.group } : {}) };
 }
 /* ── The cardinal rule of a Set of Sheets (Paul, 5 Oct 2026; charm-nest-shared-orders.js, window.SharedOrders, which this
    file shares): every sheet that shares a multi-piece order with another is in the SAME set. Read only here: the sheets that
@@ -2990,6 +2997,43 @@ async function op_sharedOrders(b) {
   const to = b.to && typeof b.to === "object" ? b.to : {};
   return { ok: true, ...(await sharedAnswer({ kind: b.kind, id: b.id, to, together: !!b.together })) };
 }
+/* ── A set advances as ONE (Paul, 5 Oct 2026, round 7: "you cannot have a green approved button on a single sheet that is part of a set
+   where the other sheets are not ready yet"). Readiness.setGate (charm-nest-readiness.js) is the one truth the page's buttons read:
+   every sheet of a set of several ready to be approved (the lone button's hard test), or none is. This is its server twin: an
+   approving step (a hold lifted, a ready seal) for a sheet of such a set is REFUSED, and nothing is written, while any sheet of
+   the set is not, so a stale page cannot approve half a set. A set of one sheet and a sheet in no set are as before; so are the
+   steps that go the other way (a hold) and a step that restores what a failed move had changed (`restore: true`). ── */
+async function setGatesFor(setIds, known) {
+  const ids = [...new Set((setIds || []).filter(isId))].slice(0, 50), out = new Map();
+  for (let i = 0; i < ids.length; i += 100) for (const d of await db.getAll(...ids.slice(i, i + 100).map(id => col(SETS).doc(id)))) {
+    if (!d.exists) continue;
+    const doc = { setId: d.id, ...d.data() }, members = [...new Set((doc.sheetIds || []).filter(isId))];
+    if (members.length < 2) continue;                                   // one sheet: its own gate, as before
+    const sheets = new Map((known || []).filter(x => x.setId === d.id).map(x => [x.id, x])), missing = members.filter(m => !sheets.has(m));
+    for (let j = 0; j < missing.length; j += 100) for (const r of await db.getAll(...missing.slice(j, j + 100).map(m => col(SHEETS).doc(m)), { fieldMask: SLIM_SHEET.concat(["placements"]) })) if (r.exists && !r.data().archived) sheets.set(r.id, { ...r.data(), id: r.id });
+    const records = await readinessRecords([...sheets.values()]);
+    out.set(d.id, { set: doc, gate: Readiness.setGate({ ...doc, name: doc.name || (doc.seq ? "Set " + doc.seq : "") }, records) });
+  }
+  return out;
+}
+/** null when every approving step in `steps` may go ahead, else the refusal ({error, status:409, blockers, set}). */
+async function approveGate(steps) {
+  const sheetIds = new Set(), setIds = new Set();
+  for (const x of steps) {
+    if (!x || x.restore === true) continue;
+    if (x.type === "release") for (const i of (x.sheetIds || [])) sheetIds.add(str(i, 80));
+    else if (x.type === "seal") (x.kind === "set" ? setIds : sheetIds).add(str(x.id, 80));
+  }
+  const ask = [...sheetIds].filter(isId);
+  for (let i = 0; i < ask.length; i += 100) for (const d of await db.getAll(...ask.slice(i, i + 100).map(id => col(SHEETS).doc(id)), { fieldMask: ["setId", "draft", "solidIncluded", "archived"] })) {
+    const x = d.exists ? d.data() : null;
+    if (x && !x.archived && x.setId && !x.draft && x.solidIncluded !== false) setIds.add(String(x.setId));
+  }
+  for (const [id, { set, gate }] of await setGatesFor([...setIds], null)) if (!gate.ready) {
+    return { error: `${gate.setLabel === "This set" ? "This set" : gate.setLabel} is approved together, so every sheet of it must be ready first: ${gate.reason}`, status: 409, blockers: gate.blockers, setId: id };
+  }
+  return null;
+}
 async function op_flowApply(b) {
   const by = str(b.by, 80).trim();
   if (!by) return { error: "Say who made this change", status: 400 };
@@ -2999,6 +3043,7 @@ async function op_flowApply(b) {
   const holds = steps.filter(x => x && (x.type === "hold" || x.type === "release")), seals = steps.filter(x => x && x.type === "seal");
   if (holds.length + seals.length !== steps.length) return { error: "unknown step", status: 400 };
   const device = str(b.device, 40).replace(/[^\w.-]/g, ""), via = str(b.via, 24).replace(/[^\w .-]/g, "").trim();
+  const refused = await approveGate(steps); if (refused) return refused;     // (a set advances as one: nothing is written for half of it)
   let events = [];
   if (holds.length) {
     const at = Date.now(), want = new Map(holds.map(x => [x.type + ":" + str(x.note, 200), [...new Set((x.sheetIds || []).filter(isId))].slice(0, 300)]));

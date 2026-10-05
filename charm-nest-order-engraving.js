@@ -202,6 +202,8 @@
         await root.Engrave.approve(job, who, btn);
         ok = DONE.includes(job.state);
         if (!ok && btn.isConnected) btn.disabled = false;
+        // (Engrave.approve says nothing for a line that has left the pull, a cancelled order's: a press that did nothing says why)
+        if (!ok && job.row && job.row.state === 'gone') say('This order has left the pull (cancelled or shipped), so its back engraving is not approved here.', '', 6000);
       } catch (e) { say('Not approved: ' + (e && e.message || e), 'bad', 6000); if (btn.isConnected) btn.disabled = false; }
       finally { if (btn.isConnected) { btn.removeAttribute('aria-busy'); btn.textContent = 'Approved'; } if (busy === token) busy = 0; }
       if (!ok || gone) return;
@@ -231,6 +233,8 @@
         if (ident(ctx) !== was) { reset(); refresh(true, true); } else refresh(false);
       },
       refresh(force) { refresh(force); },
+      /** What the card says about the piece now ("approve", "approved", "words", …; "" before it has looked): the host's red box follows it. */
+      kind: () => (last && last.eng && last.eng.kind) || '',
       destroy() {
         if (gone) return; gone = true; live.delete(handle); disarm();
         if (ro) { tryDo(() => ro.disconnect()); ro = null; }
