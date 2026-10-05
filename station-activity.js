@@ -7,6 +7,9 @@
  *    StationActivity.flush()    → Promise (sends what is queued now)
  *    StationActivity.pending()  → how many events are not acknowledged yet
  *    StationActivity.who()      → the identity the next event would carry, or null
+ *    StationActivity.working({ rid, orderNumber, customer, pieces:[{ id, label, sku, listingId, size }], note, station, holdMs })
+ *                               → the order this person has in hand RIGHT NOW (the console's live stations board); idle() ends it
+ *    StationActivity.idle(rid?) / touch() / current()      (the live layer, below; plans/employee-hr/api.md)
  *
  *  The person, station, device, computer, session, time and the gap since the person's previous action are added here.
  *  Nothing happens (and nothing throws) when nobody is signed in or there is no session. Events wait in memory and in
@@ -194,8 +197,160 @@
     } catch (e) { warn("discard:", e); }
     return n;
   }
+  /* ═══ the live layer: what this page is working on RIGHT NOW (the console's stations board; plans/employee-hr/api.md) ═══
+     working({ rid, orderNumber, customer, pieces:[{ id, label, sku, listingId, size }], pieceCount, note, station, holdMs, ... })
+        an order was scanned or started: it is this person's current order at this station until idle() or holdMs of quiet.
+     idle(arg?)   it was completed or closed: no argument = everything this page holds; a rid (string or number) = that order only;
+                  { station, rid } = that station's slot. touch() = something is still going on (restarts the quiet time).
+     A separate, tiny channel: a `work` write when the order starts or changes, a `beat` every 30 s while it stays open (the server
+     shows an order only while a beat is under 3 minutes old, so a closed tab never leaves a ghost), an `idle` write at the end and on
+     pagehide. One request at a time, in order; a failed one is retried with backoff; nothing here throws, waits, or touches the
+     network inside the call. The person is the sign-in's NAME (never a PIN); nobody signed in = nothing. Thumbnails and the QR
+     are resolved by the server from data the app already stores (never Etsy): the page only says which order and which pieces. */
+  const LIVE_STATIONS = new Set(["sorting", "welding", "assembly", "shipping", "design", "laser", "sorter", "qr", "inbox"]);
+  const LIVE = { keepAlive: 30000, tick: 5000, refresh: 120000, coalesce: 15000, hold: 600000, holdMax: 1800000, pieces: 24, backoff: 60000, bytes: 7000 };
+  const slots = new Map(), owed = [];            // station → what is current · idles the server still has to hear
+  let liveTimer = 0, liveBusy = false, liveHooked = false;
+  const scrub = (v, n) => { const s = clean(v, n); return /^\d+$/.test(s) ? "" : s.replace(/(?<!\d)\d{6}(?!\d)/g, "[#]"); };
+  const livePieces = list => (Array.isArray(list) ? list : []).slice(0, LIVE.pieces).map(p => {
+    if (!p || typeof p !== "object") return null;
+    const out = { id: clean(p.id, 40).replace(/[^\w.:-]/g, "_"), label: scrub(p.label, 60) };
+    if (pinLike(out.id)) out.id = "";
+    const sku = clean(p.sku, 60), lid = String(p.listingId == null ? "" : p.listingId).replace(/\D/g, "").slice(0, 20), size = clean(p.size, 6);
+    if (sku && !pinLike(sku)) out.sku = sku;
+    if (lid.length >= 3 && !pinLike(lid)) out.listingId = lid;
+    if (/^[A-Za-z0-9]{1,6}$/.test(size)) out.size = size;
+    return out.id || out.label || out.sku || out.listingId ? out : null;
+  }).filter(Boolean);
+  const liveFp = s => JSON.stringify([s.person, s.device, s.station, s.order]);
+  const liveUrl = sb => "/.netlify/functions/firebaseOrders" + (sb ? "?sandbox=1" : "");
+  function liveBody(s, event) {
+    const b = { v: 1, event, station: s.station, device: s.device, person: s.person };
+    if (s.sandbox) b.sandbox = true;
+    if (event === "beat") return { live: b };
+    b.computer = s.computer; b.session = s.session; b.startAt = s.startAt;
+    if (event === "work") {
+      b.order = Object.assign({}, s.order);
+      while (JSON.stringify({ live: b }).length > LIVE.bytes && b.order.pieces.length) b.order.pieces = b.order.pieces.slice(0, Math.max(0, b.order.pieces.length - 4));
+    } else b.ended = { kind: s.order.kind, rid: s.order.rid, orderNumber: s.order.orderNumber, title: s.order.title, scannedAt: s.order.scannedAt };
+    return { live: b };
+  }
+  function livePost(sb, body, keepalive) {
+    if (typeof fetch !== "function") return Promise.resolve(null);
+    let ctl = null, timer = 0;
+    try { if (!keepalive && typeof AbortController === "function") { ctl = new AbortController(); timer = setTimeout(() => { try { ctl.abort(); } catch (_) {} }, 15000); } } catch (_) {}
+    return fetch(liveUrl(sb), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), keepalive: !!keepalive, signal: ctl ? ctl.signal : undefined })
+      .then(r => { clearTimeout(timer); return Promise.resolve(r && typeof r.json === "function" ? r.json().catch(() => null) : null).then(j => ({ status: r.status, json: j })); }, () => { clearTimeout(timer); return null; });
+  }
+  const liveFail = s => { s.failures = Math.min((s.failures || 0) + 1, 6); s.nextTry = Date.now() + Math.min(LIVE.backoff, 5000 * Math.pow(2, s.failures - 1)); };
+  /** sends the one next thing that is owed (an idle, a changed order, a refresh, a beat); one request at a time, in order */
+  function livePump() {
+    if (liveBusy) return;
+    try {
+      const now = Date.now();
+      let s = owed.find(x => now >= (x.nextTry || 0)), event = "idle";
+      if (!s) {
+        event = "";
+        for (const x of slots.values()) {
+          if (now < (x.nextTry || 0)) continue;
+          if (x.sentFp !== liveFp(x) || now - (x.workAt || 0) >= LIVE.refresh) event = "work"; else if (now - x.sentAt >= LIVE.keepAlive) event = "beat";
+          if (event) { s = x; break; }
+        }
+      }
+      if (!s || !event) return;
+      const fp = liveFp(s);
+      liveBusy = true; s.attempted = true;
+      livePost(s.sandbox, liveBody(s, event), false).then(r => {
+        liveBusy = false;
+        const st = r ? r.status : 0;
+        if (st >= 200 && st < 300) {
+          s.failures = 0; s.nextTry = 0;
+          if (event === "idle") { const i = owed.indexOf(s); if (i >= 0) owed.splice(i, 1); }
+          else { s.sentAt = Date.now(); if (event === "work") { s.sentFp = fp; s.workAt = s.sentAt; } else if (r.json && r.json.resend) s.sentFp = ""; }
+        } else if (st === 400 || st === 413 || st === 422) {          // refused for good: not sent again
+          warn("a live write was refused:", st);
+          if (event === "idle") { const i = owed.indexOf(s); if (i >= 0) owed.splice(i, 1); } else { s.sentFp = fp; s.sentAt = s.workAt = Date.now(); }
+        } else liveFail(s);
+        livePump();
+      }).catch(() => { liveBusy = false; liveFail(s); });
+    } catch (e) { liveBusy = false; warn("live:", e); }
+  }
+  /** a slot ends: its idle is owed to the server when it ever spoke to it */
+  function liveRetire(s) {
+    if (slots.get(s.station) === s) slots.delete(s.station);
+    if (s.attempted) owed.push({ station: s.station, person: s.person, device: s.device, computer: s.computer, session: s.session, startAt: s.startAt, sandbox: s.sandbox, order: s.order, attempted: true, failures: 0, nextTry: 0 });
+  }
+  function liveTick() {
+    try {
+      const now = Date.now(), w = whoNow();
+      for (const s of [...slots.values()]) {
+        if (!w || w.person !== s.person || w.device !== s.device || !!w.sandbox !== s.sandbox || now - s.touchedAt >= s.hold) liveRetire(s);   // signed out, someone else, or quiet for too long
+      }
+      livePump();
+      if (!slots.size && !owed.length) { clearInterval(liveTimer); liveTimer = 0; }
+    } catch (e) { warn("liveTick:", e); }
+  }
+  /** the page is going away: every idle is sent now without waiting (a lost beacon is no worry: the beat stops and the order expires) */
+  function liveLeave() {
+    try {
+      for (const s of [...slots.values()]) liveRetire(s);
+      for (const o of owed.splice(0)) {
+        const text = JSON.stringify(liveBody(o, "idle")); let ok = false;
+        try { if (navigator.sendBeacon) ok = navigator.sendBeacon(liveUrl(o.sandbox), new Blob([text], { type: "application/json" })); } catch (_) {}
+        if (!ok) { try { if (typeof fetch === "function") fetch(liveUrl(o.sandbox), { method: "POST", headers: { "Content-Type": "application/json" }, body: text, keepalive: true }).catch(() => {}); } catch (_) {} }
+      }
+    } catch (_) {}
+  }
+  function working(o) {
+    try {
+      o = o && typeof o === "object" ? o : {};
+      const w = whoNow(); if (!w) return false;
+      const kind = o.kind === "sheet" ? "sheet" : "order";
+      let rid = String(o.rid == null ? (o.orderId == null ? "" : o.orderId) : o.rid).replace(/\D/g, "").slice(0, 30);
+      if (pinLike(rid)) rid = "";
+      const title = scrub(o.title, 80), station = typeof o.station === "string" && LIVE_STATIONS.has(o.station) ? o.station : w.station;
+      if (!LIVE_STATIONS.has(station) || (kind === "order" ? !rid : !(title || clean(o.orderNumber, 40)))) return false;
+      const now = Date.now(), prev = slots.get(station);
+      const sameWho = !!prev && prev.person === w.person && prev.device === w.device && !!prev.sandbox === !!w.sandbox;
+      if (prev && !sameWho) liveRetire(prev);                                 // someone else at this page: the first person's order ends (an idle is owed)
+      const same = sameWho && prev.order.kind === kind && prev.order.rid === rid && prev.order.title === title;   // (another order of the same person just replaces it: one write)
+      const keepOld = same && now - prev.order.scannedAt < LIVE.coalesce;     // the same scan told again (more detail): one scan, not two
+      const at = Number(o.scannedAt), p = keepOld ? prev.order : null;
+      const order = { kind, rid, title, orderNumber: scrub(o.orderNumber, 40) || rid,
+        customer: o.customer !== undefined ? scrub(o.customer, 60) : (p ? p.customer : ""),
+        scannedAt: keepOld ? prev.order.scannedAt : (at > 1e12 && at <= now ? Math.round(at) : now),
+        pieces: o.pieces !== undefined ? livePieces(o.pieces) : (p ? p.pieces : []),
+        pieceCount: o.pieceCount !== undefined ? int(o.pieceCount, 0, 500) : (p ? p.pieceCount : 0),
+        note: o.note !== undefined ? scrub(o.note, 80) : (p ? p.note : "") };
+      order.pieceCount = Math.max(order.pieceCount, order.pieces.length);
+      const slot = sameWho ? prev : { station, attempted: false, sentFp: "", sentAt: 0, workAt: 0, failures: 0, nextTry: 0 };
+      Object.assign(slot, { person: w.person, device: w.device, computer: String(w.computer || ""), session: String(w.session || ""), startAt: Number(w.startAt) || 0, sandbox: !!w.sandbox, order,
+        hold: int(o.holdMs == null ? LIVE.hold : o.holdMs, 5000, LIVE.holdMax), touchedAt: now });
+      slots.set(station, slot);
+      if (!liveTimer) { liveTimer = setInterval(liveTick, LIVE.tick); }
+      if (!liveHooked) { liveHooked = true; try { window.addEventListener("pagehide", liveLeave); } catch (_) {} }
+      setTimeout(livePump, 0);
+      return true;
+    } catch (e) { warn("working:", e); return false; }
+  }
+  function idle(arg) {
+    try {
+      const a = arg && typeof arg === "object" ? arg : { rid: arg };
+      const rid = a.rid == null || a.rid === "" ? "" : String(a.rid).replace(/\D/g, "");
+      let n = 0;
+      for (const s of [...slots.values()]) {
+        if (a.station && s.station !== a.station) continue;
+        if (rid && s.order.rid !== rid) continue;
+        liveRetire(s); n++;
+      }
+      if (n) setTimeout(livePump, 0);
+      return n > 0;
+    } catch (e) { warn("idle:", e); return false; }
+  }
+  const touch = () => { try { const now = Date.now(); for (const s of slots.values()) s.touchedAt = now; return slots.size > 0; } catch (_) { return false; } };
   window.StationActivity = {
-    log, flush: () => flush(true), pending: () => queue.length, discard,
+    log, flush: () => flush(true), pending: () => queue.length, discard, working, idle, touch,
+    current: () => [...slots.values()].map(s => ({ station: s.station, device: s.device, rid: s.order.rid, orderNumber: s.order.orderNumber, kind: s.order.kind, scannedAt: s.order.scannedAt, pieces: s.order.pieces.length, sent: s.sentFp === liveFp(s) })),
     who: () => { const w = whoNow(); return w ? { person: w.person, station: w.station, device: w.device, computer: w.computer, session: w.session } : null; }
   };
   // events left from an earlier page load (offline, closed too fast) go out soon after the station has set itself up

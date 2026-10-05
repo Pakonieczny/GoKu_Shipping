@@ -185,6 +185,7 @@
     "_orderTimeline.js",
     "_employeeProfile.js",
     "_stationActivity.js",
+    "_stationLive.js",
     "_stationPinLogin.js",
     "_orderCancel.js",
     "_etsyApiMeter.js",
