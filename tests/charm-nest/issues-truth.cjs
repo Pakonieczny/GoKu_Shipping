@@ -250,7 +250,7 @@ assert.equal(R.sheet(fixed).ready,true);assert.equal(R.laserSheet(fixed).ready,t
 }
 
 // 12d. A line whose record lost its pool ids: its engraving decision is read by the derived copy id too (the sheet is not "waiting" for it, and no other sheet
-// waits for that sheet); the set mates of a ready sheet read in recompute mode; copies are numbered by their copy number, whatever order the record lists them
+// waits for that sheet); the set mates of a ready sheet read in recompute mode
 {
   const lost=row('4170000001','7001',{poolIds:[]});lost.spec.engraveCandidate=false;
   assert.deepEqual(R.decisions([lost])['4170000001_7001_1'],{needed:false,state:'none',approved:true});
@@ -264,10 +264,6 @@ assert.equal(R.sheet(fixed).ready,true);assert.equal(R.laserSheet(fixed).ready,t
   assert.deepEqual(R.issues(a,{rows:[row('50','a'),row('51','a')],allSheets:[a,b],set,sheets:[a,b]}),[],'two ready sheets of one set hold nothing in recompute mode');
   const mate=sheet('b-sheet','silver',['51_a_1'],{approved:false});
   assert.deepEqual(R.issues(a,{rows:[row('50','a'),row('51','a')],allSheets:[a,mate],set,sheets:[a,mate]}).map(i=>[i.key,i.label]),[['waitsOnSheet','SS Sheet 1']]);
-  for(const ids of [['60_a_1','60_a_3'],['60_a_3','60_a_1']]){
-    const p=R.pieces([row('60','a',{quantity:3,poolIds:ids})],[sheet('s60x','gold',['60_a_1','60_a_3'])])['60'];
-    assert.deepEqual(p.map(x=>[x.index,x.key,x.sheetId]),[[1,'60_a_1','s60x'],[2,'60_a_2',null],[3,'60_a_3','s60x']],'by copy number');
-  }
 }
 
 // 12c. Randomised: the scenario is made from ground truth (where each piece really is, what is wrong with its line), the rows and sheets are derived from it

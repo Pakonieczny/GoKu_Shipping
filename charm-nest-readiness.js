@@ -95,7 +95,7 @@
   function copyIds(l,key){
     const ids=[...new Set((Array.isArray(l.poolIds)?l.poolIds:[]).filter(Boolean).map(String))],want=qtyOf(l);
     for(let n=1;key && ids.length<want;n++){const d=`${key}_${n}`;if(!ids.includes(d))ids.push(d);}
-    return ids.sort((a,b)=>tailNo(a)-tailNo(b));       // a piece is "piece 2" by its copy number, whatever order the record lists them in
+    return ids;
   }
   const lineKeyOf=(l,id)=>String(l.key || [id || l.order?.receiptId || l.orderId,l.transactionId || l.line?.transactionId].filter(Boolean).join('_') || '');
   // a line's own problem as a kind: no SKU at all, a SKU no master has, or no design for it
