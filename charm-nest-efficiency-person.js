@@ -6,9 +6,10 @@
  *  change against the period before, sparklines and a hover card that says how each number is worked out (and whether it is estimated), charts
  *  with crosshair read-outs (throughput, speed, active vs signed in, busiest hours, station mix), a days-worked calendar (a click on a day opens
  *  that Day), issues grouped by kind, success and contact rates, and a real-time order search over everything this person handled.
- *  PARTS: this file is the shell (header, chips, KPIs, layout, the live card). The order list is EfficiencyOrders.mount (E8,
- *  charm-nest-efficiency-orders.js) when that file is loaded, else a small list of its own here. The charts are drawn here for now; they are the
- *  part E7's EfficiencyCharts (charm-nest-efficiency-charts.js) is to take over (see plans/employee-hr/api.md, section E5).
+ *  PARTS: this file is the shell (header, chips, KPIs, layout, the live card, issues, rates). The charts are E7's EfficiencyCharts
+ *  (charm-nest-efficiency-charts.js: bars, line, calendarHeat, donut, hourHeatmap, sparkline), which this file only hands the data to; the live
+ *  card is E6's EfficiencyStations.orderCard when that file is loaded, else a small card of its own; the order list is EfficiencyOrders.mount
+ *  (E8, charm-nest-efficiency-orders.js) when loaded, else a small list of its own here (see plans/employee-hr/api.md, section E5).
  *  Reads (op names of plans/employee-hr/api.md; the console's api adds the manager passcode and Real | Sandbox; never stored here):
  *    person        { name, range, day, compare:true }   a window of 1 / 7 / 30 / 90 / 365 days ending on day (or { from, to }): kpis, series,
  *                  hours, stations, calendar, attendance, issues, rates, contact, cannotTell, notes. Each figure carries prev and delta.
@@ -27,7 +28,6 @@
   const KEY_STORE = "cn.eff.key", RANGE_STORE = "cn.eff.p.range";
   const NAMES = { shipping: "Shipping", assembly: "Assembly", welding: "Welding", sorting: "Sorting", design: "Design", laser: "Laser", sorter: "Sorter", qr: "QR printer", inbox: "Inbox" };
   const RANGES = [["day", "Day"], ["week", "Week"], ["month", "Month"], ["quarter", "3 months"], ["year", "Year"], ["custom", "Custom"]];
-  const PALETTE = ["#a9823f", "#5f7a5b", "#4a6b78", "#b0563f", "#8d95a0", "#c08578", "#7d6a9a", "#3f8a86"];
   const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const el = (tag, cls, html) => { const e = doc.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; };
   const setText = (e, s) => { if (e && e.textContent !== s) e.textContent = s; };
@@ -73,7 +73,6 @@
   const initials = name => { const w = String(name || "?").replace(/[^\p{L}\p{N} ._-]/gu, "").split(/[ ._-]+/).filter(Boolean); return ((w[0] || "?").charAt(0) + (w.length > 1 ? w[w.length - 1].charAt(0) : "")).toUpperCase(); };
   const tint = name => { let h = 0; for (const c of String(name)) h = (h * 31 + c.charCodeAt(0)) >>> 0; return h % 4; };
   const stamp = (t, today) => (nyDay(t) === today ? clock(t) : `${mdLbl(nyDay(t))}, ${clock(t)}`);
-  const niceMax = v => { const NICE = [1, 2, 4, 5, 8, 10]; if (!(v > 0)) return 4; let p = 1; while (p * 10 < v) p *= 10; for (const f of NICE) if (f * p >= v) return f * p; return 10 * p; };
   const safeUrl = u => { u = String(u || ""); return /^(https?:\/\/|data:image\/|blob:|\/(?!\/))/i.test(u) ? u : ""; };
 
   /* ── motion: one tween for numbers and chart geometry (instant under reduced motion) ── */
@@ -195,7 +194,6 @@
 .efpKD b.up{background:var(--sageSoft);color:#46623f}.efpKD b.down{background:var(--claySoft);color:#8a3f2b}
 .efpKS{font-size:11px;color:var(--ink45);min-height:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .efpKsp{position:absolute;right:12px;top:14px;width:76px;height:26px;pointer-events:none;opacity:.95}
-.efpSpark{display:block;overflow:visible}.efpSL{fill:none;stroke:#6f6a62;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}.efpSA{fill:rgba(93,90,82,.08);stroke:none}.efpSD{fill:var(--gold);stroke:var(--card);stroke-width:1.5}
 .efpHC{position:absolute;z-index:12;pointer-events:none;width:max-content;max-width:min(272px,calc(100% - 16px));background:var(--velvet);color:#f6f1e6;border-radius:10px;padding:9px 12px 10px;font-size:11.5px;line-height:1.45;box-shadow:0 10px 28px rgba(20,16,10,.28);opacity:0;visibility:hidden;transform:translateY(4px);transition:opacity .14s ease,transform .14s ease,visibility 0s .14s}
 .efpHC.on{opacity:1;visibility:visible;transform:none;transition:opacity .14s ease,transform .14s ease}
 .efpHC b{display:block;font:650 12.5px var(--sans);color:#fff;margin-bottom:2px}.efpHC p{margin:0;color:#e3dccd}.efpHC .tag{display:inline-block;margin-top:6px;font:700 9px var(--sans);letter-spacing:.07em;text-transform:uppercase;padding:2px 6px;border-radius:4px;background:rgba(202,168,97,.2);color:#ecd596}.efpHC .tag.ok{background:rgba(95,122,91,.3);color:#cfe3c8}.efpHC .prev{display:block;margin-top:5px;color:#b9b09f;font-size:11px}
@@ -203,52 +201,10 @@
 .efpChart{padding:12px 18px 14px;display:grid;gap:6px;min-width:0;align-content:start}
 .efpCH{display:flex;align-items:center;gap:6px 12px;flex-wrap:wrap;min-height:26px}
 .efpCT{font-weight:700;letter-spacing:.07em;text-transform:uppercase;font-size:10.5px;color:var(--ink45)}.efpCP{margin-left:auto;font-size:11.5px;color:var(--ink45);display:inline-flex;gap:10px;align-items:center;flex-wrap:wrap}
-.efpLeg{display:inline-flex;align-items:center;gap:5px}.efpLeg i{width:9px;height:9px;border-radius:3px;display:inline-block}
 .efpTog{display:inline-flex}.efpTog button{padding:2px 9px;font-size:10.5px}
-.efpXY{position:relative;min-width:0}.efpSvg{display:block;overflow:visible;max-width:100%;outline:none;touch-action:pan-y}.efpSvg:focus-visible{outline:2px solid var(--gold);outline-offset:3px;border-radius:4px}
-.efpGridL{stroke:var(--line2);stroke-width:1}.efpBase{stroke:var(--line);stroke-width:1}
-.efpTick,.efpXl{font:10px var(--sans);fill:var(--ink45)}.efpXl.on{fill:var(--gold);font-weight:700}
-.efpBar0{fill:#85807a;transition:fill .15s}.efpBar0.under{fill:var(--line)}.efpBar0.hi{fill:var(--gold)}.efpBar0.under.hi{fill:var(--goldLine)}.efpBar0.hov{fill:var(--ink)}.efpBar0.hi.hov{fill:var(--gold2)}.efpBar0.under.hov{fill:var(--ink25)}.efpBar0.pickable{cursor:pointer}
-.efpLn{fill:none;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}.efpLn.a{stroke:var(--ink70)}.efpLn.b{stroke:var(--gold2)}
-.efpBand{fill:rgba(169,130,63,.1);stroke:none}
-.efpRef{stroke:var(--gold2);stroke-width:1;stroke-dasharray:3 4;opacity:.9}.efpRefT{font:600 10px var(--sans);fill:var(--gold)}
-.efpCross{stroke:var(--ink45);stroke-width:1;stroke-dasharray:2 3;opacity:0;transition:opacity .12s}.efpCross.on{opacity:.8}
-.efpPt{stroke:var(--card);stroke-width:2;opacity:0;transition:opacity .12s}.efpPt.on{opacity:1}.efpPt.a{fill:var(--ink)}.efpPt.b{fill:var(--gold)}
-.efpEmpty{font:500 12px var(--sans);fill:var(--ink45)}
+.efpXY{position:relative;min-width:0}
 .efpTip{position:absolute;top:2px;z-index:4;pointer-events:none;background:var(--velvet);color:#f6f1e6;border-radius:9px;padding:7px 10px;font-size:11px;box-shadow:0 8px 24px rgba(20,16,10,.22);white-space:nowrap;display:grid;gap:1px;opacity:0;visibility:hidden;transition:opacity .1s}
 .efpTip.on{opacity:1;visibility:visible}.efpTipT{color:#cdc4b2;font-size:10.5px}.efpTipV{font:650 14px var(--sans)}.efpTipR{display:flex;justify-content:space-between;gap:16px;color:#cdc4b2}.efpTipR b{color:#fff;font-weight:650}.efpTipH{margin-top:3px;color:#ecd596;font-size:10.5px}
-.efpHeat{display:grid;gap:3px;min-width:0}
-.efpHeatRow{display:grid;grid-template-columns:34px repeat(24,minmax(0,1fr));gap:3px;align-items:center}.efpHeatRow.one{grid-template-columns:repeat(24,minmax(0,1fr))}
-.efpHeatRow>span{font-size:10px;color:var(--ink45);white-space:nowrap}
-.efpHc{position:relative;height:26px;border-radius:5px;background:var(--paper2);overflow:hidden;cursor:default;outline:none}
-.efpHc:before{content:"";position:absolute;inset:0;background:var(--gold);opacity:var(--a,0);transition:opacity .45s ease}.efpHc.x{background:repeating-linear-gradient(45deg,var(--line2) 0 3px,transparent 3px 6px)}
-.efpHc:hover,.efpHc:focus-visible{box-shadow:0 0 0 2px var(--ink)}
-.efpHeatAx{display:grid;grid-template-columns:34px repeat(24,minmax(0,1fr));gap:3px;font-size:10px;color:var(--ink45)}.efpHeatAx.one{grid-template-columns:repeat(24,minmax(0,1fr))}.efpHeatAx span{text-align:center;white-space:nowrap;overflow:visible}
-.efpMix{display:grid;grid-template-columns:150px minmax(0,1fr);gap:8px 20px;align-items:center}
-.efpDonut{position:relative;width:150px;height:150px}.efpDonut svg{display:block;width:150px;height:150px;overflow:visible}
-.efpArc{fill:none;stroke-width:17;transition:transform .2s ease,opacity .2s ease;transform-origin:75px 75px;cursor:default}.efpDonut.has .efpArc{opacity:.45}.efpDonut.has .efpArc.on{opacity:1;transform:scale(1.045)}
-.efpDc{position:absolute;inset:0;display:grid;place-content:center;text-align:center;pointer-events:none;gap:1px}.efpDc b{font:600 22px/1 var(--sans);letter-spacing:-.02em;font-variant-numeric:tabular-nums}.efpDc span{font-size:10.5px;color:var(--ink45);max-width:84px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.efpMixL{display:grid;gap:2px;min-width:0}
-.efpMr{display:grid;grid-template-columns:10px minmax(0,1fr) auto auto;gap:4px 9px;align-items:center;padding:5px 7px;margin:0 -7px;border-radius:7px;font-size:12px;cursor:default;transition:background .15s}.efpMr:hover,.efpMr.on{background:var(--paper2)}
-.efpMr i{width:9px;height:9px;border-radius:3px}.efpMr b{font-variant-numeric:tabular-nums;font-weight:650}.efpMr em{font-style:normal;color:var(--ink45);font-size:11px;min-width:34px;text-align:right;font-variant-numeric:tabular-nums}.efpMr span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.efpMr u{grid-column:2/-1;height:3px;border-radius:2px;background:var(--line2);text-decoration:none;display:block;overflow:hidden;margin-top:-1px}.efpMr u s{display:block;height:100%;border-radius:2px;transition:width .5s ease}
-.efpCal{display:grid;gap:4px;min-width:0}
-.efpCalHd,.efpCalRow{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:4px}.efpCalHd span{font-size:10px;color:var(--ink45);text-align:center;letter-spacing:.05em}
-.efpDy{position:relative;height:34px;border:1px solid transparent;border-radius:8px;background:var(--card2);color:var(--ink70);font:600 11px var(--sans);display:grid;place-items:center;padding:0;cursor:pointer;transition:transform .15s ease,box-shadow .15s ease,border-color .15s ease;font-variant-numeric:tabular-nums}
-.efpDy:hover,.efpDy:focus-visible{transform:scale(1.07);z-index:2;box-shadow:0 4px 14px rgba(30,26,20,.16);outline:none;border-color:var(--ink)}
-.efpDy.worked{background:#dfe8d6;border-color:#c5d5b9;color:#2f4a2b}.efpDy.partial{background:var(--goldSoft);border-color:var(--goldLine);color:#6a4d17}
-.efpDy.off{background:var(--card2);border-color:var(--line);color:var(--ink45);background-image:repeating-linear-gradient(135deg,transparent 0 5px,rgba(176,86,63,.1) 5px 6px)}
-.efpDy.future{background:transparent;border:1px dashed var(--line);color:var(--ink25);cursor:default}.efpDy.future:hover{transform:none;box-shadow:none;border-color:var(--line)}
-.efpDy.unknown,.efpDy.before{background:transparent;border:1px dotted var(--line);color:var(--ink25)}
-.efpDy.closed{background:var(--paper2);border-color:var(--line);color:var(--ink45);background-image:repeating-linear-gradient(45deg,transparent 0 4px,rgba(30,26,20,.08) 4px 5px)}
-.efpDy.pending{background:transparent;border:1px solid var(--goldLine);color:var(--ink45)}
-.efpDy.pad{visibility:hidden;pointer-events:none}.efpDy.sel{box-shadow:0 0 0 2px var(--gold)}.efpDy.today{border-color:var(--gold)}
-.efpCal.long .efpDy{height:auto;aspect-ratio:1;min-height:11px;border-radius:3px;font-size:0}
-.efpCal.long{grid-template-columns:auto minmax(0,1fr);gap:3px 6px}.efpCalW{display:grid;gap:3px;grid-auto-flow:column;grid-auto-columns:minmax(0,1fr);min-width:0}.efpCalW>div{display:grid;gap:3px;grid-template-rows:repeat(7,auto)}
-.efpCalD{display:grid;gap:3px;grid-template-rows:repeat(7,auto);font-size:9.5px;color:var(--ink45);margin-top:14px}.efpCalD span{aspect-ratio:auto;display:flex;align-items:center;line-height:1}
-.efpCalM{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(0,1fr);gap:3px;height:12px;font-size:9.5px;color:var(--ink45);grid-column:2}.efpCalM span{white-space:nowrap;overflow:visible}
-.efpKey{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:11px;color:var(--ink45);margin-top:2px}.efpKey span{display:inline-flex;align-items:center;gap:5px}.efpKey i{width:11px;height:11px;border-radius:3px;border:1px solid var(--line);display:inline-block}
-.efpKey .w{background:#dfe8d6;border-color:#c5d5b9}.efpKey .p{background:var(--goldSoft);border-color:var(--goldLine)}.efpKey .o{background:repeating-linear-gradient(135deg,transparent 0 3px,rgba(176,86,63,.25) 3px 4px)}.efpKey .f{border-style:dashed;background:transparent}.efpKey .b{border-style:dotted;background:transparent}.efpKey .c{background:var(--paper2) repeating-linear-gradient(45deg,transparent 0 3px,rgba(30,26,20,.14) 3px 4px)}
 .efpIs{display:grid}.efpIg+.efpIg{border-top:1px solid var(--line2)}
 .efpIgh{display:grid;grid-template-columns:minmax(0,1fr) auto 18px;gap:10px;align-items:center;width:100%;border:0;background:transparent;padding:9px 18px;text-align:left;cursor:pointer;border-radius:0;color:var(--ink)}
 .efpIgh:hover{background:var(--card2)}.efpIgh b{font-weight:700;font-size:12.5px}.efpIgh small{display:block;font-weight:400;color:var(--ink45);font-size:11px;margin-top:1px;white-space:normal}
@@ -300,9 +256,9 @@
 @container efp (max-width:1180px){.efpKpis{grid-template-columns:repeat(4,minmax(0,1fr))}.efpO{grid-template-columns:88px minmax(130px,1fr) 104px minmax(0,1.6fr) 48px}.efpDay{min-width:132px}}
 @container efp (max-width:900px){.efpGrid.g2,.efpGrid.g75,.efpGrid.g57{grid-template-columns:minmax(0,1fr)}.efpKpis{grid-template-columns:repeat(2,minmax(0,1fr))}.efpO{grid-template-columns:78px minmax(0,1fr) 92px 44px;grid-template-areas:"t n s q" "p p p p";gap:6px 10px}.efpO>.efpOt{grid-area:t}.efpO>.efpOn{grid-area:n}.efpO>.efpOs{grid-area:s}.efpO>.efpOp{grid-area:p}.efpO>.efpQr{grid-area:q;width:44px;height:44px}}
 @container efp (max-width:640px){.efpAv{width:42px;height:42px;flex-basis:42px;font-size:14px}.efpName{font-size:18px}.efpChips{flex:1 1 100%}.efpBar{gap:6px 8px;padding:6px 8px}.efpSeg{order:1;max-width:100%;overflow-x:auto;scrollbar-width:none}.efpSeg button{padding:4px 9px;flex:0 0 auto}.efpNav{order:2;flex:1 1 100%}.efpDay{flex:1;min-width:0}.efpBusy{order:3}
-.efpKpis{gap:8px}.efpK{padding:11px 12px 9px}.efpKV{font-size:25px}.efpKsp{width:56px;right:8px;top:12px}.efpChart{padding:11px 12px 12px}.efpMix{grid-template-columns:minmax(0,1fr);justify-items:center}.efpMixL{width:100%}.efpNowCard{grid-template-columns:auto minmax(0,1fr);padding:11px 12px}.efpNowCard>.efpQr{display:none}
+.efpKpis{gap:8px}.efpK{padding:11px 12px 9px}.efpKV{font-size:25px}.efpKsp{width:56px;right:8px;top:12px}.efpChart{padding:11px 12px 12px}.efpNowCard{grid-template-columns:auto minmax(0,1fr);padding:11px 12px}.efpNowCard>.efpQr{display:none}
 .efpO{grid-template-columns:70px minmax(0,1fr) 44px;grid-template-areas:"t n q" "s s s" "p p p"}.efpO>.efpOs{grid-area:s;display:flex;gap:10px;align-items:baseline}.efpIr{grid-template-columns:78px minmax(0,1fr);grid-template-areas:"t n" "r r"}.efpIr>time{grid-area:t}.efpIr>.efpOid{grid-area:n}.efpIr>span{grid-area:r}.efpIgh,.efpIgl,.efpRates{padding-left:12px;padding-right:12px}.efpFind{padding:10px 12px 6px}.efpOl{padding:0 2px 4px}
-.efpHeatRow{grid-template-columns:28px repeat(24,minmax(0,1fr));gap:2px}.efpHeatRow.one{grid-template-columns:repeat(24,minmax(0,1fr))}.efpHeatAx{grid-template-columns:28px repeat(24,minmax(0,1fr));gap:2px}.efpHeatAx.one{grid-template-columns:repeat(24,minmax(0,1fr))}.efpHc{height:22px;border-radius:3px}.efpDy{height:30px}}
+}
 @media (prefers-reduced-motion:reduce){.efp *,.efp *:before,.efp *:after{transition:none!important;animation:none!important}}`;
     doc.head.appendChild(s);
   }
@@ -488,125 +444,6 @@
     return { kind: "day", noun: "day", items, hi: today >= from && today <= to ? items.findIndex(d => d.day === today) : -1 };
   }
 
-  /* ── charts: inline SVG, thin marks, one baseline, the current period in gold ── */
-  const SVG = "http://www.w3.org/2000/svg";
-  const mk = (parent, name, attrs) => { const e = doc.createElementNS(SVG, name); for (const k in attrs) e.setAttribute(k, attrs[k]); parent.appendChild(e); return e; };
-  function resample(vals, n) {
-    const m = vals.length; if (m === n) return vals.slice(); if (!m) return new Array(n).fill(null);
-    const out = []; for (let j = 0; j < n; j++) { const p = n === 1 ? 0 : (j / (n - 1)) * (m - 1), a = Math.floor(p), b = Math.min(m - 1, a + 1), t = p - a, va = vals[a], vb = vals[b]; out.push(va == null || vb == null ? (t < .5 ? va : vb) : va + (vb - va) * t); }
-    return out;
-  }
-  const lerpArr = (a, b, k) => b.map((v, i) => (v == null || a[i] == null ? v : a[i] + (v - a[i]) * k));
-  /** Columns, lines and a band over one shared x axis. .set({ labels, layers:[{ type:'bars'|'line'|'band', cls, a, b, w }], ref, refLabel, hi, tips, yFmt, pick, empty, name }) */
-  function xy(host, o) {
-    const H = o.height || 150, L = o.left || 40, R = 6, T0 = 12, B = 22;
-    const S = { W: 0, n: 0, svg: null, d: null, cur: null, stop: null, idx: -1, geo: null, lsig: "" };
-    host.classList.add("efpXY");
-    const tip = el("div", "efpTip"); host.appendChild(tip);
-    function build(W, n, layers) {
-      if (S.svg) S.svg.remove();
-      const svg = S.svg = doc.createElementNS(SVG, "svg"); for (const [k, v] of Object.entries({ viewBox: `0 0 ${W} ${H}`, width: W, height: H, class: "efpSvg", tabindex: "0", role: "img" })) svg.setAttribute(k, v);
-      host.insertBefore(svg, tip);
-      const pw = W - L - R, ph = H - T0 - B, slot = pw / n; S.W = W; S.n = n;
-      S.geo = { pw, ph, slot, cw: Math.max(2, Math.min(o.maxW || 26, slot - (o.gap == null ? 4 : o.gap))), base: T0 + ph };
-      S.grid = [0, .5, 1].map(f => { const y = T0 + ph * (1 - f); return { ln: mk(svg, "line", { x1: L, x2: W - R, y1: y, y2: y, class: f ? "efpGridL" : "efpBase" }), tx: f ? mk(svg, "text", { x: L - 6, y: y + 3.5, class: "efpTick", "text-anchor": "end" }) : null }; });
-      S.xl = []; for (let i = 0; i < n; i++) S.xl[i] = mk(svg, "text", { x: L + slot * (i + .5), y: H - 6, class: "efpXl", "text-anchor": "middle" });
-      S.els = layers.map(l => l.type === "bars" ? { bars: Array.from({ length: n }, () => mk(svg, "path", { class: "efpBar0 " + (l.cls || "") })) } : l.type === "band" ? { band: mk(svg, "path", { class: "efpBand" }) } : { line: mk(svg, "path", { class: "efpLn " + (l.cls || "a") }) });
-      S.ref = mk(svg, "line", { class: "efpRef", display: "none" }); S.refT = mk(svg, "text", { class: "efpRefT", "text-anchor": "end", display: "none" });
-      S.emp = mk(svg, "text", { class: "efpEmpty", "text-anchor": "middle", x: L + pw / 2, y: T0 + ph / 2 + 4, display: "none" });
-      S.cross = mk(svg, "line", { class: "efpCross", y1: T0, y2: T0 + ph });
-      S.pts = layers.map(l => (l.type === "line" ? mk(svg, "circle", { r: 4, class: "efpPt " + (l.cls || "a") }) : null));
-      S.hit = mk(svg, "rect", { x: L, y: 0, width: pw, height: H, fill: "transparent" });
-      const at = e => { const r = svg.getBoundingClientRect(), x = (e.clientX - r.left) * (W / (r.width || W)); return Math.max(0, Math.min(n - 1, Math.floor((x - L) / slot))); };
-      S.hit.addEventListener("pointermove", e => show(at(e))); S.hit.addEventListener("pointerdown", e => show(at(e)));
-      S.hit.addEventListener("click", e => { const i = at(e), t = S.d && S.d.tips && S.d.tips[i]; if (S.d && S.d.pick && t && t.pick) S.d.pick(i); });
-      svg.addEventListener("pointerleave", hide); svg.addEventListener("blur", hide);
-      svg.addEventListener("keydown", e => {
-        const k = e.key; if (!["ArrowLeft", "ArrowRight", "Home", "End", "Escape", "Enter"].includes(k)) return;
-        e.preventDefault(); if (k === "Escape") return hide();
-        if (k === "Enter") { const t = S.d && S.d.tips && S.d.tips[S.idx]; if (S.d && S.d.pick && t && t.pick) S.d.pick(S.idx); return; }
-        show(k === "Home" ? 0 : k === "End" ? n - 1 : Math.max(0, Math.min(n - 1, (S.idx < 0 ? (S.d && S.d.hi >= 0 ? S.d.hi : 0) : S.idx) + (k === "ArrowRight" ? 1 : -1))));
-      });
-    }
-    const yOf = (v, max) => S.geo.base - (Math.max(0, v) / max) * S.geo.ph;
-    function paint(cur, d) {
-      const { ph, slot, cw, base } = S.geo, max = cur.max;
-      cur.layers.forEach((cl, li) => {
-        const ld = d.layers[li], e = S.els[li];
-        if (ld.type === "bars") {
-          const w = cw * (ld.w || 1);
-          for (let i = 0; i < S.n; i++) {
-            const v = cl.a[i], h = v != null && v > 0 ? Math.max(1.5, v / max * ph) : 0, x = L + slot * i + (slot - w) / 2, y = base - h, r = Math.min(3, h, w / 2);
-            e.bars[i].setAttribute("d", h ? `M${x.toFixed(1)},${base}V${(y + r).toFixed(1)}Q${x.toFixed(1)},${y.toFixed(1)} ${(x + r).toFixed(1)},${y.toFixed(1)}H${(x + w - r).toFixed(1)}Q${(x + w).toFixed(1)},${y.toFixed(1)} ${(x + w).toFixed(1)},${(y + r).toFixed(1)}V${base}Z` : "");
-          }
-        } else if (ld.type === "line") {
-          let p = "", pen = false; for (let i = 0; i < S.n; i++) { const v = cl.a[i]; if (v == null) { pen = false; continue; } p += `${pen ? "L" : "M"}${(L + slot * (i + .5)).toFixed(1)},${yOf(v, max).toFixed(1)}`; pen = true; }
-          e.line.setAttribute("d", p);
-        } else {
-          let p = "", run = []; const flush = () => { if (run.length > 1) { p += "M" + run.map(i => `${(L + slot * (i + .5)).toFixed(1)},${yOf(cl.b[i], max).toFixed(1)}`).join("L") + "L" + run.slice().reverse().map(i => `${(L + slot * (i + .5)).toFixed(1)},${yOf(cl.a[i], max).toFixed(1)}`).join("L") + "Z"; } run = []; };
-          for (let i = 0; i < S.n; i++) { if (cl.a[i] == null || cl.b[i] == null) flush(); else run.push(i); } flush(); e.band.setAttribute("d", p);
-        }
-      });
-      const fy = d.yFmt || nf; setText(S.grid[1].tx, fy(max / 2)); setText(S.grid[2].tx, fy(max));
-      if (d.ref != null && d.ref > 0 && d.ref <= max) { const y = yOf(d.ref, max); for (const [k, v] of Object.entries({ x1: L, x2: S.W - R, y1: y, y2: y })) S.ref.setAttribute(k, v); S.ref.removeAttribute("display"); S.refT.setAttribute("x", S.W - R - 2); S.refT.setAttribute("y", Math.max(9, y - 4)); setText(S.refT, d.refLabel || ""); S.refT.removeAttribute("display"); } else { S.ref.setAttribute("display", "none"); S.refT.setAttribute("display", "none"); }
-      if (S.idx >= 0) marks(S.idx);
-    }
-    function marks(i) {
-      const cx = L + S.geo.slot * (i + .5); S.cross.setAttribute("x1", cx); S.cross.setAttribute("x2", cx); S.cross.classList.add("on");
-      S.d.layers.forEach((l, li) => { if (l.type === "bars") S.els[li].bars.forEach((b, bi) => b.classList.toggle("hov", bi === i)); else if (l.type === "line" && S.pts[li]) { const v = S.cur.layers[li].a[i], p = S.pts[li]; if (v == null) p.classList.remove("on"); else { p.setAttribute("cx", cx); p.setAttribute("cy", yOf(v, S.cur.max)); p.classList.add("on"); } } });
-    }
-    function show(i) {
-      const d = S.d; if (!d || i < 0 || i >= S.n) return hide();
-      S.idx = i; marks(i);
-      const t = (d.tips && d.tips[i]) || { t: d.labels[i], v: "" };
-      tip.textContent = ""; tip.appendChild(el("div", "efpTipT")).textContent = t.t; if (t.v) tip.appendChild(el("div", "efpTipV")).textContent = t.v;
-      for (const [k, v] of t.rows || []) { const r = tip.appendChild(el("div", "efpTipR")); r.appendChild(el("span")).textContent = k; r.appendChild(el("b")).textContent = v; }
-      if (t.hint) tip.appendChild(el("div", "efpTipH")).textContent = t.hint;
-      tip.classList.add("on");
-      const w = tip.offsetWidth || 130, cx = L + S.geo.slot * (i + .5);
-      tip.style.left = Math.max(2, Math.min(S.W - w - 2, cx > S.W * .55 ? cx - w - 14 : cx + 14)) + "px";
-      S.hit.style.cursor = d.pick && t.pick ? "pointer" : "default";
-    }
-    function hide() { S.idx = -1; tip.classList.remove("on"); if (S.cross) S.cross.classList.remove("on"); if (S.pts) S.pts.forEach(p => p && p.classList.remove("on")); if (S.els && S.d) S.d.layers.forEach((l, li) => { if (l.type === "bars") S.els[li].bars.forEach(b => b.classList.remove("hov")); }); }
-    function set(d) {
-      const n = d.labels.length || 1, W = Math.max(200, Math.floor(host.clientWidth || 0)), lsig = d.layers.map(l => l.type + (l.cls || "")).join();
-      const prev = S.cur && S.lsig === lsig ? S.cur : null; S.d = d;
-      const to = { lsig, max: d.max || niceMax(Math.max(0, ...d.layers.flatMap(l => (l.type === "band" ? l.b : l.a).filter(v => v != null)), d.ref || 0)), layers: d.layers.map(l => ({ a: l.a.slice(), b: l.b ? l.b.slice() : null })) };
-      to.max = Math.max(to.max, 1e-9);
-      const rebuilt = !S.svg || S.W !== W || S.n !== n || S.lsig !== lsig;
-      if (rebuilt) { build(W, n, d.layers); S.lsig = lsig; }
-      const step = d.step || Math.max(1, Math.ceil((o.labelW || 40) / S.geo.slot));
-      S.xl.forEach((t, i) => { const lab = i % step === 0 || i === d.hi ? d.labels[i] || "" : ""; setText(t, lab); t.classList.toggle("on", i === d.hi); });
-      S.svg.setAttribute("aria-label", `${d.name || o.name}: ` + d.labels.map((t, i) => (d.tips && d.tips[i] ? `${d.tips[i].t} ${d.tips[i].v || ""}` : t)).filter(Boolean).slice(0, 60).join(", "));
-      if (d.empty) { setText(S.emp, d.empty); S.emp.removeAttribute("display"); } else S.emp.setAttribute("display", "none");
-      const sig = JSON.stringify([to.layers, to.max, d.ref, d.hi, W]);
-      if (!rebuilt && S.sig === sig) { if (S.idx >= 0) show(Math.min(S.idx, S.n - 1)); return; }
-      S.sig = sig; if (S.stop) S.stop();
-      S.layersD = d.layers; S.els.forEach((e, li) => { if (e.bars) e.bars.forEach((b, i) => { b.classList.toggle("hi", i === d.hi); b.classList.toggle("pickable", !!(d.pick && d.tips && d.tips[i] && d.tips[i].pick)); }); });
-      const from = prev ? { max: prev.max, layers: prev.layers.map((pl, li) => ({ a: resample(pl.a, n), b: pl.b ? resample(pl.b, n) : null })) } : { max: to.max, layers: to.layers.map((l, li) => ({ a: l.a.map(v => (d.layers[li].type === "line" ? 0 : 0)), b: l.b ? l.b.map(() => 0) : null })) };
-      S.stop = tween(options.growMs, k => { S.cur = { lsig, max: from.max + (to.max - from.max) * k, layers: to.layers.map((l, li) => ({ a: lerpArr(from.layers[li].a, l.a, k).map((v, i) => (l.a[i] == null ? null : v)), b: l.b ? lerpArr(from.layers[li].b, l.b, k).map((v, i) => (l.b[i] == null ? null : v)) : null })) }; paint(S.cur, d); }, () => { S.cur = to; paint(to, d); });
-      if (S.idx >= 0) show(Math.min(S.idx, S.n - 1));
-    }
-    if (root.ResizeObserver) { const ro = new ResizeObserver(() => { if (S.d && host.clientWidth && Math.floor(host.clientWidth) !== S.W) set(S.d); }); ro.observe(host); S.ro = ro; }
-    return { set, hide, show, destroy() { if (S.stop) S.stop(); if (S.ro) S.ro.disconnect(); }, get svg() { return S.svg; } };
-  }
-  /** A small line (its own scale, a dot on the last known point); a gap in the data is a gap in the line. */
-  function spark(host, o) {
-    const w = o.w || 76, h = o.h || 26, S = { cur: null, stop: null, svg: mk(host, "svg", { viewBox: `0 0 ${w} ${h}`, width: w, height: h, class: "efpSpark", "aria-hidden": "true" }) };
-    const area = mk(S.svg, "path", { class: "efpSA" }), line = mk(S.svg, "path", { class: "efpSL" }), dot = mk(S.svg, "circle", { r: 2.6, class: "efpSD" });
-    function paint(v) {
-      const n = v.length, known = v.filter(x => x != null), max = Math.max(1e-9, ...known), min = Math.min(0, ...known), x = i => 2 + (n < 2 ? (w - 4) / 2 : i * (w - 4) / (n - 1)), y = a => h - 2.5 - ((a - min) / (max - min)) * (h - 6);
-      let d = "", pen = false, last = -1; for (let i = 0; i < n; i++) { if (v[i] == null) { pen = false; continue; } d += (pen ? "L" : "M") + x(i).toFixed(1) + "," + y(v[i]).toFixed(1); pen = true; last = i; }
-      line.setAttribute("d", d); area.setAttribute("d", d && last > 0 && v.every(a => a != null) ? `${d}L${x(last).toFixed(1)},${h - 2}L${x(0).toFixed(1)},${h - 2}Z` : "");
-      if (last >= 0) { dot.setAttribute("cx", x(last).toFixed(1)); dot.setAttribute("cy", y(v[last]).toFixed(1)); dot.removeAttribute("display"); } else dot.setAttribute("display", "none");
-    }
-    return { set(vals) {
-      const sig = vals.join(); if (S.sig === sig) return; S.sig = sig;
-      if (S.stop) S.stop(); const from = S.cur && S.cur.length === vals.length ? S.cur : vals.map(v => (v == null ? null : 0));
-      S.stop = tween(options.growMs, k => { S.cur = vals.map((v, i) => (v == null ? null : (from[i] == null ? v : from[i] + (v - from[i]) * k))); paint(S.cur); }, () => { S.cur = vals.slice(); paint(vals); });
-    }, destroy() { if (S.stop) S.stop(); } };
-  }
-
   /* ── pictures: a thumbnail per piece, a small QR (the app's own generator, lib/qrcode.min.js), both zoom in place ── */
   const ZOOM = { th: "1.9", big: "1.55", qr: "2" };
   const QRC = new Map();
@@ -727,7 +564,13 @@
     const T = { range: 0, live: 0, cal: 0, orders: 0, tick: 0, deb: 0 };
     const root0 = el("div", "efp in"); root0.setAttribute("aria-label", `${S.name}, employee page`);
     host.textContent = ""; host.appendChild(root0);
-    const E = {}; let charts = {}, mini = {}, io = null, ro = null, unsubLive = null, ordersH = null;
+    const E = {}; let charts = {}, mini = {}, io = null, unsubLive = null, ordersH = null;
+    /** One chart of E7's EfficiencyCharts in `host` (null, with a quiet line, when the library is not in the page). */
+    function chart(kind, host, opts) {
+      const lib = root.EfficiencyCharts; host.textContent = "";
+      if (lib && typeof lib[kind] === "function") { try { return lib[kind](host, opts || {}); } catch (e) { console.warn("[efficiency person] chart " + kind + ":", e && e.message); } }
+      host.appendChild(el("div", "efpEmptyBox")).textContent = "Charts are not available on this page."; return null;
+    }
 
     /* ── the wire: the console's api (passcode and Real | Sandbox added by the shell), or this tab's own passcode ── */
     async function call(body, signal) {
@@ -778,12 +621,12 @@
   <section aria-label="Over time"><div class="efpLabel">Over time</div>
     <div class="efpCard efpChart" data-c="tp"><div class="efpCH"><span class="efpCT">Throughput</span><span class="seg efpTog" role="group" aria-label="Measure"><button type="button" data-metric="parts">Parts</button><button type="button" data-metric="scans">Scans</button><button type="button" data-metric="orders">Orders</button><button type="button" data-metric="perActiveHour">Per hour</button></span><span class="efpCP"></span></div><div class="efpCh"></div></div></section>
   <div class="efpGrid g2">
-    <div class="efpCard efpChart" data-c="sp"><div class="efpCH"><span class="efpCT">Speed per order</span><span class="efpCP"><span class="efpLeg" data-lg="med"><i style="background:var(--ink70)"></i>Median</span><span class="efpLeg"><i style="background:var(--gold2)"></i>Average</span></span></div><div class="efpCh"></div></div>
-    <div class="efpCard efpChart" data-c="tm"><div class="efpCH"><span class="efpCT">Active vs signed in</span><span class="efpCP"><span class="efpLeg"><i style="background:var(--line)"></i>Signed in</span><span class="efpLeg"><i style="background:#85807a"></i>Active</span></span></div><div class="efpCh"></div></div>
+    <div class="efpCard efpChart" data-c="sp"><div class="efpCH"><span class="efpCT">Speed per order</span><span class="efpCP"></span></div><div class="efpCh"></div></div>
+    <div class="efpCard efpChart" data-c="tm"><div class="efpCH"><span class="efpCT">Active vs signed in</span><span class="efpCP"></span></div><div class="efpCh"></div></div>
     <div class="efpCard efpChart wide hidden" data-c="shift"><div class="efpCH"><span class="efpCT">The shift</span><span class="efpCP"></span></div><div class="efpShiftH efpXY"></div></div>
   </div>
   <div class="efpGrid g75">
-    <div class="efpCard efpChart" data-c="cal"><div class="efpCH"><span class="efpCT">Days worked</span><span class="efpCP"></span></div><div class="efpCalH"></div><div class="efpKey"><span><i class="w"></i>Worked</span><span><i class="p"></i>Part day</span><span><i class="o"></i>Day off</span><span><i class="c"></i>Team closed</span><span><i class="b"></i>No record</span><span><i class="f"></i>Not yet</span></div><div class="efpHow efpCalNote hidden"></div></div>
+    <div class="efpCard efpChart" data-c="cal"><div class="efpCH"><span class="efpCT">Days worked</span><span class="efpCP"></span></div><div class="efpCalH"></div><div class="efpHow efpCalNote hidden"></div></div>
     <div class="efpCard efpChart" data-c="mix"><div class="efpCH"><span class="efpCT">Station mix</span><span class="efpCP"></span></div><div class="efpMixH"></div></div>
   </div>
   <div class="efpCard efpChart" data-c="heat"><div class="efpCH"><span class="efpCT">Busiest hours</span><span class="efpCP"></span></div><div class="efpHeatH"></div></div>
@@ -802,7 +645,7 @@
       Object.assign(E, { back: q(".efpBack"), av: q(".efpAv"), name: q(".efpName"), where: q(".efpWhere"), chips: q(".efpChips"), live: q(".efpLive"), liveT: q(".efpLiveT"), bar: q(".efpBar"), day: q(".efpDay"), prev: q('[data-nav="-1"]'), next: q('[data-nav="1"]'), today: q(".efpToday"),
         custom: q(".efpCustom"), busy: q(".efpBusy"), busyT: q(".efpBusyT"), msg: q(".efpMsg"), wait: q(".efpWait"), waitT: q(".efpWaitT"), nowS: q(".efpNowS"), now: q(".efpNow"), body: q(".efpBody"), note: q(".efpNote"), kg: q(".efpKGroups"),
         hc: q(".efpHC"), tpP: q('[data-c="tp"] .efpCP'), calP: q('[data-c="cal"] .efpCP'), mixP: q('[data-c="mix"] .efpCP'), heatP: q('[data-c="heat"] .efpCP'), shiftP: q('[data-c="shift"] .efpCP'), calH: q(".efpCalH"), calNote: q(".efpCalNote"), mixH: q(".efpMixH"), heatH: q(".efpHeatH"), shiftH: q(".efpShiftH"), iN: q(".efpIN"), is: q(".efpIs"), rates: q(".efpRates"),
-        oN: q(".efpON"), find: q(".efpSearch input"), clear: q("[data-clear]"), st: q(".efpFind .efpSt"), ol: q(".efpOl"), more: q(".efpMore"), heat: q('[data-c="heat"]'), cSp: q('[data-c="sp"]'), cTm: q('[data-c="tm"]'), cShift: q('[data-c="shift"]'), ordersHost: q(".efpOrdersHost"), ordersOwn: q(".efpOrdersOwn"), cannot: q(".efpCannot"), lg: q('[data-lg="med"]') });
+        oN: q(".efpON"), find: q(".efpSearch input"), clear: q("[data-clear]"), st: q(".efpFind .efpSt"), ol: q(".efpOl"), more: q(".efpMore"), heat: q('[data-c="heat"]'), cSp: q('[data-c="sp"]'), cTm: q('[data-c="tm"]'), cShift: q('[data-c="shift"]'), ordersHost: q(".efpOrdersHost"), ordersOwn: q(".efpOrdersOwn"), cannot: q(".efpCannot") });
       E.k = {};
       for (const [gname, prim, more] of GROUPS) {
         const g = el("div", "efpGroup"), grid = el("div", "efpKpis"), lab = g.appendChild(el("div", "efpLabel")); lab.appendChild(el("span")).textContent = gname;
@@ -811,19 +654,19 @@
         for (const full of prim.concat(more)) {
           const key = shortKey(full), d = cardOf(full), c = el("div", "efpK", `<span class="efpKL"><span class="t"></span></span><b class="efpKV">—</b><span class="efpKD"></span><span class="efpKS"></span><span class="efpKsp"></span><span class="efpKT"></span>`);
           c.tabIndex = 0; c.dataset.k = full; c.setAttribute("role", "group"); setText(c.querySelector(".t"), d.label); if (more.includes(full)) c.classList.add("hidden", "extra");
-          E.k[full] = { card: c, val: c.querySelector(".efpKV"), d: c.querySelector(".efpKD"), s: c.querySelector(".efpKS"), tag: c.querySelector(".efpKT"), sp: spark(c.querySelector(".efpKsp"), { w: 76, h: 26 }), t: c.querySelector(".t"), group: gname };
+          E.k[full] = { card: c, val: c.querySelector(".efpKV"), d: c.querySelector(".efpKD"), s: c.querySelector(".efpKS"), tag: c.querySelector(".efpKT"), sp: null, spH: c.querySelector(".efpKsp"), t: c.querySelector(".t"), group: gname };
           grid.appendChild(c);
         }
         E.kg.appendChild(g);
       }
-      charts = { tp: xy(q('[data-c="tp"] .efpCh'), { height: 168, maxW: 30, name: "Throughput", left: 42 }), sp: xy(q('[data-c="sp"] .efpCh'), { height: 150, maxW: 24, name: "Speed per order", left: 46 }), tm: xy(q('[data-c="tm"] .efpCh'), { height: 150, maxW: 30, name: "Active vs signed in", left: 42 }) };
-      mini = { cal: miniTip(E.calH), mix: miniTip(E.mixH), heat: miniTip(E.heatH), rate: miniTip(E.rates), shift: miniTip(E.shiftH) };
+      charts = { tp: chart("bars", q('[data-c="tp"] .efpCh'), { height: 188, name: "Throughput", emptyText: "No activity in this range" }), sp: chart("line", q('[data-c="sp"] .efpCh'), { height: 170, name: "Speed per order" }), tm: chart("bars", q('[data-c="tm"] .efpCh'), { height: 170, name: "Active vs signed in" }),
+        cal: chart("calendarHeat", E.calH, { name: "Days worked" }), mix: chart("donut", E.mixH, { name: "Station mix" }), heat: chart("hourHeatmap", E.heatH, { name: "Busiest hours of the day" }) };
+      mini = { rate: miniTip(E.rates), shift: miniTip(E.shiftH) };
       setText(E.name, S.name); setText(E.av, initials(S.name)); E.av.dataset.t = String(tint(S.name));
       root0.addEventListener("click", onClick); root0.addEventListener("submit", onSubmit);
       E.find.addEventListener("input", onSearchInput); E.find.addEventListener("keydown", e => { if (e.key === "Escape" && E.find.value) { e.preventDefault(); E.find.value = ""; onSearchInput(); } });
       E.ol.addEventListener("keydown", e => { if ((e.key === "Enter" || e.key === " ") && e.target.classList && e.target.classList.contains("efpO")) { e.preventDefault(); openOrder(e.target, e.target.dataset.rid); } });
       for (const k of Object.keys(E.k)) { const c = E.k[k].card; c.addEventListener("pointerenter", () => showHC(k)); c.addEventListener("pointerleave", hideHC); c.addEventListener("focus", () => showHC(k)); c.addEventListener("blur", hideHC); }
-      if (root.ResizeObserver) { ro = new ResizeObserver(() => { if (S.M && E.calH.clientWidth && Math.abs(E.calH.clientWidth - S.calW) > 24) renderCal(); }); ro.observe(E.calH); }
       setTimeout(() => root0.classList.remove("in"), 900);
     }
 
@@ -929,40 +772,36 @@
         if (k.d._sig !== sig) { k.d._sig = sig; const pw = PREV_WORD[S.range] || "before"; k.d.innerHTML = !m || m.v == null ? "" : dl.txt ? `<b class="${dl.cls}">${esc(dl.txt)}</b><span>vs ${esc(pw)}</span>` : dl.none ? `<span>vs ${esc(pw)}: no data</span>` : ""; }
         setText(k.s, contactOff ? "Not recorded in this range" : m && m.v != null ? subFor(full, m, M) : "");
         const rd = diffDays(M.from, M.to) + 1, tag = m && m.est ? "est." : m && m.daysCounted != null && m.daysCounted < rd && m.v != null ? `${nf(m.daysCounted)} of ${nf(rd)} days` : m && m.window && evs ? "recent" : m && m.derived ? "sum" : ""; setText(k.tag, tag);
-        const sp = m ? sparkFor(full, B, M) : [], known = sp.filter(x => x != null).length; k.sp.set(known >= 3 ? sp : []); k.card.querySelector(".efpKsp").style.visibility = known >= 3 ? "" : "hidden";
+        const sp = m ? sparkFor(full, B, M) : [], known = sp.filter(x => x != null).length, on = known >= 3 && !k.card.classList.contains("hidden") && root.EfficiencyCharts;
+        if (on) { if (!k.sp) k.sp = chart("sparkline", k.spH, { height: 26, hover: false, fill: false, name: `${(m && m.label) || d.label} across the range` }); if (k.sp) k.sp.update({ values: sp }); k.spH.style.visibility = ""; }
+        else { if (k.sp) { k.sp.destroy(); k.sp = null; } k.spH.style.visibility = "hidden"; }
         k.card.setAttribute("aria-label", `${(m && m.label) || d.label}: ${m && m.v != null ? fmt(m.v) : "no data"}. ${(m && m.def) || d.def}`);
       }
     }
-    const tickFmt = v => (Math.abs(v - Math.round(v)) > 0.01 ? nf1(v) : nf(v));
+    const TP = { parts: ["pieces", "pieces", "kpis.parts"], scans: ["scans", "scans", "kpis.scans"], orders: ["orders", "orders", "kpis.orders"], perActiveHour: ["pieces/hour", "pieces per active hour", "kpis.partsPerActiveHour"] };
     function renderCharts(M, B) {
-      const it = B.items, kind = B.kind, pick = i => { const x = it[i]; if (!x || !x.pickable) return; if (kind === "day") go({ range: "day", anchor: x.key }); else if (kind === "week") go({ range: "week", anchor: x.span[1] > today() ? today() : x.span[1] }); };
-      const hint = x => (x.pickable ? (kind === "day" ? "Click to open this day" : "Click to open this week") : "");
-      const stepF = kind === "day" && it.length > 7 ? { step: 1 } : {}, labels = it.map(x => x.label);
+      const kind = B.kind, rows = B.items.filter(x => !x.future), hiItem = B.items[B.hi], hiX = kind === "hour" ? rows.indexOf(hiItem) : hiItem ? hiItem.key : null;
+      const xs = rows.map(x => (kind === "hour" ? +x.key : x.key)), xKind = kind === "hour" ? "hour" : kind === "week" ? "week" : "day";
+      const onPoint = p => { const m = p.meta; if (!m || !m.pickable) return; if (kind === "day") go({ range: "day", anchor: m.key }); else if (kind === "week") go({ range: "week", anchor: m.span[1] > today() ? today() : m.span[1] }); };
+      const click = x => (x && x.pickable ? [{ k: kind === "day" ? "Click to open this day" : "Click to open this week", v: "", muted: true }] : []);
       const avail = kind === "hour" ? ["parts", "scans"] : ["parts", "orders", "perActiveHour"]; if (!avail.includes(S.metric)) S.metric = "parts";
       root0.querySelectorAll("[data-metric]").forEach(b => { const ok = avail.includes(b.dataset.metric), on = b.dataset.metric === S.metric; b.classList.toggle("hidden", !ok); b.classList.toggle("on", on); b.setAttribute("aria-pressed", on); });
-      // throughput
-      const mt = S.metric, MET = { parts: ["parts", nf], scans: ["scans", nf], orders: ["orders", nf], perActiveHour: ["per active hour", rateTxt] }, [noun, fmt] = MET[mt];
-      const vals = it.map(x => (x.future ? null : x[mt])), known = vals.filter(v => v != null), all0 = known.length && known.every(v => !v);
-      const worked = it.filter(x => !x.future && x[mt] != null && (x[mt] > 0 || nz(x.signedMs) > 0)), avg = kind !== "hour" && worked.length > 1 ? worked.reduce((n, x) => n + x[mt], 0) / worked.length : null;
-      const row = (k, v) => [k, v == null ? "—" : nf(v)];
-      charts.tp.set(Object.assign({ name: `Throughput, ${noun} per ${B.noun}`, labels, hi: B.hi, layers: [{ type: "bars", cls: "", a: vals }], ref: avg, refLabel: avg != null ? `avg ${fmt(avg)}` : "", yFmt: tickFmt, pick,
-        empty: !known.length ? "Not logged for this range" : all0 ? "No activity in this range" : "",
-        tips: it.map(x => ({ t: x.title, v: x.future ? "Not yet" : x[mt] == null ? "Not logged" : `${fmt(x[mt])} ${noun}`, pick: !!x.pickable, hint: hint(x),
-          rows: x.future || x[mt] == null ? [] : kind === "hour" ? [row(mt === "parts" ? "Scans" : "Parts", mt === "parts" ? x.scans : x.parts)] : [mt !== "orders" ? row("Orders", x.orders) : row("Parts", x.parts), mt !== "perActiveHour" ? ["Per active hour", rateTxt(x.perActiveHour)] : row("Parts", x.parts), ["Signed in", durMs(x.signedMs)], ["Active", durMs(x.activeMs)]] })) }, stepF));
-      setText(E.tpP, avg != null ? `average ${fmt(avg)} per ${B.noun} worked` : kind === "hour" && known.length ? (() => { let pk = -1; vals.forEach((v, i) => { if (v > 0 && (pk < 0 || v > vals[pk])) pk = i; }); return pk >= 0 ? `busiest hour ${hourLabel(+it[pk].key)}` : ""; })() : "");
       const day = kind === "hour"; E.cSp.classList.toggle("hidden", day); E.cTm.classList.toggle("hidden", day); E.cShift.classList.toggle("hidden", !day);
+      // throughput
+      const mt = S.metric, [unit, noun, defKey] = TP[mt], dm = metricAt(M, defKey), vals = rows.map(x => x[mt]), known = vals.filter(v => v != null), fmt = mt === "perActiveHour" ? rateTxt : nf;
+      const worked = rows.filter(x => x[mt] != null && (x[mt] > 0 || nz(x.signedMs) > 0)), avg = kind !== "hour" && worked.length > 1 ? worked.reduce((n, x) => n + x[mt], 0) / worked.length : null;
+      const row = (k, v) => [k, v == null ? "—" : nf(v)];
+      if (charts.tp) charts.tp.update({ x: xs, series: [{ key: "v", label: noun, values: vals }], highlight: hiX, meta: rows }, { unit, xKind, def: dm && dm.def || "", emptyText: known.length ? "No activity in this range" : "Not logged for this range", onPoint, name: `Throughput, ${noun} per ${B.noun}`,
+        tipRows: p => { const x = p.meta; if (!x || p.values.v == null) return []; return (kind === "hour" ? [row(mt === "parts" ? "Scans" : "Pieces", mt === "parts" ? x.scans : x.parts)] : [mt !== "orders" ? row("Orders", x.orders) : row("Pieces", x.parts), mt !== "perActiveHour" ? ["Per active hour", rateTxt(x.perActiveHour)] : row("Pieces", x.parts), ["Signed in", durMs(x.signedMs)], ["Active", durMs(x.activeMs)]]).concat(click(x)); } });
+      setText(E.tpP, avg != null ? `average ${fmt(avg)} per ${B.noun} worked` : kind === "hour" && known.length ? (() => { let pk = -1; vals.forEach((v, i) => { if (v > 0 && (pk < 0 || v > vals[pk])) pk = i; }); return pk >= 0 ? `busiest hour ${hourLabel(+rows[pk].key)}` : ""; })() : "");
       if (day) { renderShift(M); return; }
       // speed: the median (days with single events) and the average
-      const med = it.map(x => (x.future ? null : x.medianSecPerOrder)), avgS = it.map(x => (x.future ? null : x.secPerOrder)), sp = med.some(v => v != null) || avgS.some(v => v != null), hasMed = med.some(v => v != null);
-      E.lg.classList.toggle("hidden", !hasMed);
-      charts.sp.set(Object.assign({ name: "Speed per order", labels, hi: B.hi, yFmt: v => secTxt(v).replace(" min", "m"), pick, empty: sp ? "" : "No speed data in this range",
-        layers: hasMed ? [{ type: "line", cls: "b", a: avgS }, { type: "line", cls: "a", a: med }] : [{ type: "line", cls: "b", a: avgS }],
-        tips: it.map(x => ({ t: x.title, v: x.future ? "Not yet" : x.secPerOrder == null && x.medianSecPerOrder == null ? "No orders timed" : `${secTxt(x.secPerOrder)} average`, pick: !!x.pickable, hint: hint(x), rows: x.future || x.secPerOrder == null && x.medianSecPerOrder == null ? [] : [].concat(x.medianSecPerOrder != null ? [["Median", secTxt(x.medianSecPerOrder)]] : [], [["Orders", x.orders == null ? "—" : nf(x.orders)]]) })) }, stepF));
+      const med = rows.map(x => x.medianSecPerOrder), avgS = rows.map(x => x.secPerOrder), hasMed = med.some(v => v != null), hasAvg = avgS.some(v => v != null), sdef = metricAt(M, hasMed ? "kpis.secPerOrderMedian" : "kpis.secPerOrderMean");
+      if (charts.sp) charts.sp.update({ x: xs, series: [hasMed ? { key: "median", label: "Median", values: med, color: "ink70" } : null, hasAvg ? { key: "avg", label: "Average", values: avgS, color: "gold2" } : null].filter(Boolean), meta: rows }, { unit: "seconds", better: "down", xKind, def: sdef && sdef.def || "", emptyText: "No speed data in this range", onPoint, tipRows: p => (p.meta && (p.values.median != null || p.values.avg != null) ? [row("Orders", p.meta.orders)].concat(click(p.meta)) : []) });
       // active vs signed in, in hours
-      const sg = it.map(x => (x.future || x.signedMs == null ? null : x.signedMs / HOUR_MS)), ac = it.map(x => (x.future || x.activeMs == null ? null : x.activeMs / HOUR_MS)), tm = sg.some(v => v != null) || ac.some(v => v != null);
-      charts.tm.set(Object.assign({ name: "Active vs signed in", labels, hi: B.hi, yFmt: v => `${tickFmt(v)} h`, pick, empty: tm ? "" : "No sign-in time in this range",
-        layers: [{ type: "bars", cls: "under", a: sg, w: 1 }, { type: "bars", cls: "", a: ac, w: .56 }],
-        tips: it.map(x => ({ t: x.title, v: x.future ? "Not yet" : x.signedMs == null && x.activeMs == null ? "Not logged" : `${durMs(x.signedMs)} signed in`, pick: !!x.pickable, hint: hint(x), rows: x.future || x.signedMs == null && x.activeMs == null ? [] : [["Active", durMs(x.activeMs)], ["Active share", x.signedMs > 0 && x.activeMs != null ? pctTxt(Math.min(1, x.activeMs / x.signedMs)) : "—"], ["Parts", x.parts == null ? "—" : nf(x.parts)]] })) }, stepF));
+      const sg = rows.map(x => (x.signedMs == null ? null : x.signedMs / HOUR_MS)), ac = rows.map(x => (x.activeMs == null ? null : x.activeMs / HOUR_MS)), adef = metricAt(M, "kpis.activeShare");
+      if (charts.tm) charts.tm.update({ x: xs, series: [{ key: "signed", label: "Signed in", values: sg, color: "ink25" }, { key: "active", label: "Active", values: ac, color: "ink70" }], meta: rows }, { unit: "hours", better: null, xKind, fmt: v => durMs(v * HOUR_MS), def: adef && adef.def || "", emptyText: "No sign-in time in this range", onPoint,
+        tipRows: p => { const x = p.meta; if (!x || x.signedMs == null && x.activeMs == null) return []; return [["Active share", x.signedMs > 0 && x.activeMs != null ? pctTxt(Math.min(1, x.activeMs / x.signedMs)) : "—"], row("Pieces", x.parts)].concat(click(x)); } });
     }
     /* the Day view: one shift, in, out, and what the signed-in time was made of */
     function renderShift(M) {
@@ -989,81 +828,36 @@
       const cx = S.calx && S.calx.to === M.to ? S.calx : null;
       return { cal: cx ? cx.cal : M.cal, from: cx ? cx.from : M.from, to: cx ? cx.to : M.to, sel: [M.from, M.to], wait: !cx };
     }
-    const DAY_WORDS = { off: "off", worked: "worked", partial: "part day", closed: "team closed", before: "no record", unknown: "before sign-in logging began", future: "not yet", pending: "not signed in yet" };
     function renderCal() {
-      const M = S.M; if (!M) return; const src = calSource(M), td = today(), by = new Map(src.cal.map(c => [c.day, c])), n = diffDays(src.from, src.to) + 1, long = n > 42;
-      S.calW = E.calH.clientWidth;
+      const M = S.M; if (!M) return; const src = calSource(M), td = today(), n = diffDays(src.from, src.to) + 1;
       const worked = src.cal.filter(c => c.state === "worked" || c.state === "partial").length, off = src.cal.filter(c => c.state === "off").length;
       setText(E.calP, src.wait && n < 28 ? "" : worked || off ? `${nf(worked)} worked · ${nf(off)} off` : ""); setText(E.calNote, M.attNote && off ? M.attNote : ""); E.calNote.classList.toggle("hidden", !(M.attNote && off));
-      const sig = JSON.stringify([src.from, src.to, src.sel, long, [...by.values()].map(c => c.day + c.state + c.signedMs + c.parts), td, !!src.wait]);
-      if (E.calH._sig === sig) return; E.calH._sig = sig;
-      const host0 = E.calH, tipEl = host0.querySelector(".efpTip"); host0.querySelectorAll(":scope>:not(.efpTip)").forEach(x => x.remove());
-      const cell = day => {
-        const c = by.get(day), state = day > td ? "future" : c ? c.state : "before";
-        const b = el("button", `efpDy ${state}${day === td ? " today" : ""}${day >= src.sel[0] && day <= src.sel[1] ? " sel" : ""}`); b.type = "button"; b.dataset.day = day; b.textContent = long ? "" : String(+day.slice(8));
-        b.setAttribute("aria-label", `${dayLbl(day)}: ${DAY_WORDS[state]}`); if (state === "future") b.tabIndex = -1;
-        const rows = []; if (c && (state === "worked" || state === "partial")) { if (c.activeMs != null) rows.push(["Active", durMs(c.activeMs)]); if (c.firstIn) rows.push(["In · out", `${clock(c.firstIn)}${c.lastOut ? " · " + clock(c.lastOut) : ""}`]); rows.push(["Parts", c.parts == null ? "—" : nf(c.parts)], ["Orders", c.orders == null ? "—" : nf(c.orders)]); if (c.late) rows.push(["", "Late start"]); if (c.short || state === "partial") rows.push(["", "Short day"]); if (c.extra) rows.push(["", "Extra day (not a working day)"]); if (c.lengthKnown === false) rows.push(["", "Length of the day not known"]); if (c.est) rows.push(["", "Estimated"]); }
-        if (c && c.others != null && state !== "future" && state !== "closed" && state !== "before" && state !== "unknown") rows.push(["Team", `${nf(c.others)} others in`]);
-        const t = { t: wdLong.format(dayDate(day)) + ", " + mdLbl(day), v: state === "off" ? "Day off" : state === "future" ? "Not yet" : state === "closed" ? "The team did not work" : state === "before" ? "No record" : state === "unknown" ? "Not logged yet" : state === "pending" ? "Not signed in yet" : c && c.signedMs != null ? `${durMs(c.signedMs)} signed in` : "Signed in, length not known", rows, hint: state === "before" ? "Before records began" : state === "unknown" ? (c && c.note) || "Sign-in logging had not begun" : state === "future" ? "" : "Click to open this day" };
-        b.addEventListener("pointerenter", () => mini.cal.show(b, t)); b.addEventListener("focus", () => mini.cal.show(b, t)); b.addEventListener("pointerleave", () => mini.cal.hide()); b.addEventListener("blur", () => mini.cal.hide());
-        return b;
-      };
-      if (src.wait && n < 28) { const w = el("div"); w.innerHTML = `<span class="spin" aria-hidden="true"></span> Reading the month…`; w.style.cssText = "display:flex;gap:8px;align-items:center;color:var(--ink45);padding:18px 0"; host0.insertBefore(w, tipEl); return; }
-      const cal = el("div", "efpCal" + (long ? " long" : ""));
-      if (!long) {
-        const hd = el("div", "efpCalHd"); "MTWTFSS".split("").forEach(c => hd.appendChild(el("span")).textContent = c); cal.appendChild(hd);
-        let d = addDays(src.from, -dowMon(src.from)), row = null; const stop = addDays(src.to, 6 - dowMon(src.to));
-        for (let i = 0; d <= stop && i < 60; d = addDays(d, 1), i++) { if (i % 7 === 0) { row = el("div", "efpCalRow"); cal.appendChild(row); } row.appendChild(d < src.from || d > src.to ? el("span", "efpDy pad") : cell(d)); }
-      } else {
-        const start = mondayOf(src.from), weeks = Math.floor(diffDays(start, src.to) / 7) + 1; cal.style.gridTemplateColumns = `auto repeat(${weeks}, minmax(0,1fr))`;
-        ["M", "", "W", "", "F", "", "S"].forEach((t, r) => { const s = el("span", "efpCalD"); s.textContent = t; s.style.cssText = `grid-column:1;grid-row:${r + 2};margin:0`; cal.appendChild(s); });
-        let lastM = "";
-        for (let w = 0; w < weeks; w++) { const mon = addDays(start, w * 7), mlab = mon.slice(0, 7); if ((mlab !== lastM && +mon.slice(8) <= 14) || w === 0) { const m = el("span", "efpCalM"); m.textContent = monShort.format(dayDate(mon)); m.style.cssText = `grid-column:${w + 2}/span 4;grid-row:1;display:block;height:auto`; cal.appendChild(m); lastM = mlab; }
-          for (let r = 0; r < 7; r++) { const day = addDays(mon, r); if (day < src.from || day > src.to) continue; const c = cell(day); c.style.gridColumn = String(w + 2); c.style.gridRow = String(r + 2); cal.appendChild(c); } }
-      }
-      host0.insertBefore(cal, tipEl);
+      if (!charts.cal) return;
+      if (src.wait && n < 28) { charts.cal.setLoading(true, "Reading the month"); return; }
+      const days = src.cal.filter(c => c.day >= src.from && c.day <= src.to).map(c => (c.state === "unknown" ? Object.assign({}, c, { state: "before", stateLabel: "Before sign-in logging began" }) : c.day > td ? Object.assign({}, c, { state: "future" }) : c));
+      charts.cal.update({ days, today: td }, { selected: S.range === "day" ? M.from : "", emptyText: "No days to show for this range", onDay: day => go({ range: "day", anchor: day }),
+        tipRows: it => { const r = []; if (it.extra) r.push({ k: "Extra day (not a working day)", v: "", muted: true }); if (it.lengthKnown === false) r.push({ k: "Length of the day not known", v: "", muted: true }); if (it.est) r.push({ k: "Estimated", v: "", muted: true }); if (it.others != null && !["future", "closed", "before", "unknown"].includes(it.state)) r.push({ k: "Team", v: `${nf(it.others)} others in`, muted: true }); if (it.state !== "future" && it.state !== "before") r.push({ k: "Click to open this day", v: "", muted: true }); return r; } });
     }
 
-    /* station mix: a donut that answers the pointer, and the list beside it */
+    /* station mix */
     function renderMix(M) {
-      const st = M.stations.filter(s => nz(s.parts) > 0 || nz(s.minutes) > 0), byParts = st.some(s => nz(s.parts) > 0), val = s => (byParts ? nz(s.parts) : nz(s.minutes)), tot = st.reduce((n, s) => n + val(s), 0), txt = v => (byParts ? nf(v) : durMs(v * 60000));
-      const sig = JSON.stringify([st, byParts]); setText(E.mixP, tot ? (byParts ? `${nf(tot)} parts` : durMs(tot * 60000)) : "");
-      if (E.mixH._sig === sig) return; E.mixH._sig = sig; const tipEl = E.mixH.querySelector(".efpTip"); E.mixH.querySelectorAll(":scope>:not(.efpTip)").forEach(x => x.remove());
-      if (!tot) { const e = el("div", "efpEmptyBox"); e.textContent = M.stations.length ? "No station activity in this range" : "No station data in this range"; E.mixH.insertBefore(e, tipEl); return; }
-      const wrap = el("div", "efpMix"), don = el("div", "efpDonut"), svg = doc.createElementNS(SVG, "svg"); svg.setAttribute("viewBox", "0 0 150 150"); svg.setAttribute("role", "img"); svg.setAttribute("aria-label", `Station mix: ` + st.map(s => `${s.label} ${Math.round(val(s) / tot * 100)}%`).join(", "));
-      const g = mk(svg, "g", { transform: "rotate(-90 75 75)" }), center = el("div", "efpDc"), list = el("div", "efpMixL");
-      center.innerHTML = `<b>${esc(txt(tot))}</b><span>${byParts ? "parts" : "time"}</span>`;
-      let cum = 0; const arcs = [], rows = [];
-      st.forEach((s, i) => {
-        const share = val(s) / tot * 100, col = PALETTE[i % PALETTE.length], gap = st.length > 1 ? Math.min(.9, share / 3) : 0;
-        const arc = mk(g, "circle", { cx: 75, cy: 75, r: 57, pathLength: 100, class: "efpArc", stroke: col, "stroke-dasharray": `0 100`, "stroke-dashoffset": -cum }); arcs.push([arc, Math.max(0, share - gap)]); cum += share;
-        const row = el("div", "efpMr", `<i style="background:${col}"></i><span>${esc(s.label)}</span><b>${esc(txt(val(s)))}</b><em>${Math.round(share)}%</em><u><s style="width:0;background:${col}"></s></u>`); rows.push(row); list.appendChild(row);
-        const t = { t: s.label, v: byParts ? `${nf(s.parts)} parts` : durMs(s.minutes * 60000), rows: [["Share", `${Math.round(share)}%`], ["Orders", s.orders == null ? "—" : nf(s.orders)], ["Time", s.minutes == null ? "—" : durMs(s.minutes * 60000)], ["Per active hour", rateTxt(s.perActiveHour)]] };
-        const on = () => { don.classList.add("has"); arc.classList.add("on"); row.classList.add("on"); center.innerHTML = `<b>${esc(txt(val(s)))}</b><span>${esc(s.label)}</span>`; mini.mix.show(row, t); };
-        const off = () => { don.classList.remove("has"); arc.classList.remove("on"); row.classList.remove("on"); center.innerHTML = `<b>${esc(txt(tot))}</b><span>${byParts ? "parts" : "time"}</span>`; mini.mix.hide(); };
-        for (const e of [arc, row]) { e.addEventListener("pointerenter", on); e.addEventListener("pointerleave", off); }
-      });
-      don.append(svg, center); wrap.append(don, list); E.mixH.insertBefore(wrap, tipEl);
-      tween(options.growMs * 1.4, k => { arcs.forEach(([a, len]) => a.setAttribute("stroke-dasharray", `${(len * k).toFixed(2)} ${(100 - len * k).toFixed(2)}`)); rows.forEach((r, i) => { r.querySelector("s").style.width = `${Math.round(val(st[i]) / val(st[0]) * 100 * k)}%`; }); });
+      const st = M.stations.filter(s => nz(s.parts) > 0 || nz(s.minutes) > 0), byParts = st.some(s => nz(s.parts) > 0), val = s => (byParts ? nz(s.parts) : nz(s.minutes)), tot = st.reduce((n, s) => n + val(s), 0);
+      setText(E.mixP, tot ? (byParts ? `${nf(tot)} pieces` : durMs(tot * 60000)) : "");
+      if (!charts.mix) return;
+      charts.mix.update({ slices: st.map(s => ({ key: s.station, label: s.label, value: val(s), meta: s })), center: tot ? { value: tot, label: byParts ? "pieces" : "time" } : null },
+        { unit: byParts ? "pieces" : "min", centerLabel: byParts ? "pieces" : "time", emptyText: M.stations.length ? "No station activity in this range" : "No station data in this range", def: byParts ? "Pieces finished at each station in this range." : "Time signed in at each station in this range.",
+          tipRows: x => { const s = x.meta; return s && !Array.isArray(s) ? [["Orders", s.orders == null ? "—" : nf(s.orders)], ["Time", s.minutes == null ? "—" : durMs(s.minutes * 60000)], ["Per active hour", rateTxt(s.perActiveHour)]] : []; } });
     }
 
     /* busiest hours: the hours of the day over the range */
     function renderHeat(M, B) {
       const dayRange = B.kind === "hour", has = M.hours.length && M.hours.some(h => h.parts != null);
       E.heat.classList.toggle("hidden", dayRange || !has); if (dayRange || !has) return;
-      const vals = M.hours.map(h => h.parts), max = Math.max(1, ...vals.map(nz)); let peak = -1; vals.forEach((v, h) => { if (v > 0 && (peak < 0 || v > vals[peak])) peak = h; });
+      const vals = M.hours.map(h => h.parts); let peak = -1, lo = 7, hi = 18; vals.forEach((v, h) => { if (v > 0) { if (peak < 0 || v > vals[peak]) peak = h; lo = Math.min(lo, h); hi = Math.max(hi, h); } });
       setText(E.heatP, peak >= 0 ? `busiest around ${hourLabel(peak)}` : "");
-      const sig = JSON.stringify(M.hours); if (E.heatH._sig === sig) return; E.heatH._sig = sig; const tipEl = E.heatH.querySelector(".efpTip"); E.heatH.querySelectorAll(":scope>:not(.efpTip)").forEach(x => x.remove());
-      const wrap = el("div", "efpHeat"); wrap.setAttribute("role", "img"); wrap.setAttribute("aria-label", "Busiest hours of the day");
-      const row = el("div", "efpHeatRow one");
-      for (let h = 0; h < 24; h++) {
-        const v = vals[h], x = M.hours[h], c = el("div", "efpHc" + (v == null ? " x" : "")); c.tabIndex = v == null ? -1 : 0; c.style.setProperty("--a", v ? String(Math.max(.1, v / max)) : "0");
-        const t = { t: hourLabel(h), v: v == null ? "No data" : `${nf(v)} parts`, rows: [["Scans", x.scans == null ? "—" : nf(x.scans)], ["Per day worked", x.perDay == null ? "—" : nf1(x.perDay)]] };
-        c.setAttribute("aria-label", `${t.t}: ${t.v}`); c.addEventListener("pointerenter", () => mini.heat.show(c, t)); c.addEventListener("pointerleave", () => mini.heat.hide()); c.addEventListener("focus", () => mini.heat.show(c, t)); c.addEventListener("blur", () => mini.heat.hide());
-        row.appendChild(c);
-      }
-      wrap.appendChild(row); const ax = el("div", "efpHeatAx one"); for (let h = 0; h < 24; h++) ax.appendChild(el("span")).textContent = h % 6 === 0 ? hourShort(h) : ""; wrap.appendChild(ax);
-      E.heatH.insertBefore(wrap, tipEl);
+      if (!charts.heat) return;
+      charts.heat.update({ values: vals }, { unit: "pieces", hourFrom: lo, hourTo: hi, emptyText: "No activity in this range", def: "Pieces finished in each hour of the day, over the whole range (New York time).",
+        tipRows: c => { const x = M.hours[c.hour] || {}; return [["Scans", x.scans == null ? "—" : nf(x.scans)], ["Per day worked", x.perDay == null ? "—" : nf1(x.perDay)]]; } });
     }
 
     /* issues, by kind, each with its order and the plain reason */
@@ -1280,7 +1074,6 @@
       if (b && b.hasAttribute("data-clear")) { E.find.value = ""; onSearchInput(); E.find.focus(); return; }
       if (b && b.hasAttribute("data-more")) { loadOrders(false); return; }
       const ob = t.closest("[data-order]"); if (ob && ob.dataset.order) { e.stopPropagation(); return openOrder(ob, ob.dataset.order); }
-      const dy = t.closest(".efpDy[data-day]"); if (dy && !dy.classList.contains("future") && !dy.classList.contains("pad")) { mini.cal.hide(); return go({ range: "day", anchor: dy.dataset.day }); }
       if (row && row.dataset.rid) return openOrder(row, row.dataset.rid);
     }
     function onSubmit(e) {
@@ -1305,7 +1098,7 @@
     function onVisible() { if (S.dead) return; if (doc.visibilityState === "hidden") { for (const k of ["range", "live", "cal", "orders"]) { clearTimeout(T[k]); T[k] = 0; } hideHC(); return; } if (!visible()) return; if (S.M && Date.now() - S.at > 2000 && !S.busy) fetchRange(S.gen, true); pollLive(); if (S.orders.loaded) schedule("orders", 400); schedule("cal", 600); const a = EA(); if (unsubLive && a && typeof a.live === "function") { const s = a.live(); if (s) applyLive(s); } }
     function unmount() {
       if (S.dead) return; S.dead = true; for (const k of Object.keys(T)) { clearTimeout(T[k]); clearInterval(T[k]); T[k] = 0; }
-      if (S.ctl) { try { S.ctl.abort(); } catch (_) {} } if (io) io.disconnect(); if (ro) ro.disconnect(); Object.values(charts).forEach(c => c && c.destroy && c.destroy()); for (const k of Object.keys(E.k || {})) E.k[k].sp.destroy();
+      if (S.ctl) { try { S.ctl.abort(); } catch (_) {} } if (io) io.disconnect(); Object.values(charts).forEach(c => c && c.destroy && c.destroy()); for (const k of Object.keys(E.k || {})) if (E.k[k].sp) E.k[k].sp.destroy();
       if (typeof unsubLive === "function") { try { unsubLive(); } catch (_) {} } if (ordersH) { try { (ordersH.unmount || ordersH.destroy || ordersH).call(ordersH); } catch (_) {} }
       doc.removeEventListener("visibilitychange", onVisible); try { if (root.Seal && root.Seal.zoom && root.Seal.zoom.away) root.Seal.zoom.away(); } catch (_) {}
       if (root0.parentNode) root0.remove(); instances.delete(api);
@@ -1324,5 +1117,5 @@
     return api;
   }
   const instances = new Set();
-  root.EfficiencyEmployee = { mount, options, norm, normOrders, pickLive, buckets, periodOf, shiftAnchor, periodLabel, niceMax, CARD, GROUPS, get instances() { return [...instances]; } };
+  root.EfficiencyEmployee = { mount, options, norm, normOrders, pickLive, buckets, periodOf, shiftAnchor, periodLabel, CARD, GROUPS, get instances() { return [...instances]; } };
 })(window);
