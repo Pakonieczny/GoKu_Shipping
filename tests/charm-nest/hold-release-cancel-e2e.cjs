@@ -231,12 +231,13 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
         const open = document.querySelectorAll('dialog[open]').length; if (open) S.dlg = Math.max(S.dlg, open);
         const tb = document.querySelector('.topbar'); if (tb) { const r = tb.getBoundingClientRect(); for (const n of document.querySelectorAll('#hfxLayer .hfxCap, #hfxLayer .hfxMark, #hfxLayer .hfxSkip')) { const q = n.getBoundingClientRect(); if (q.height && q.top < r.bottom - 1 && r.bottom > 0) { S.topBarCovered++; break; } } }
         if (document.querySelector('.cnNameBar')) S.nameBar++;
+        for (const n of document.querySelectorAll('.mNote')) { S.notes = (S.notes || 0) + 1; (S.noteText = S.noteText || []).includes(n.textContent) || S.noteText.push(n.textContent.slice(0, 90)); }   // (a note drawn while the film plays would sit at the top left, over the tabs)
       }
       if (S.run) requestAnimationFrame(tick);
     };
     requestAnimationFrame(tick);
   });
-  const sampled = () => page.evaluate(() => { const S = window.__film; S.run = false; const g = S.gaps.slice(2).sort((a, b) => a - b); return { long: S.long.filter(x => x.d >= 100).sort((a, b) => b.d - a.d).slice(0, 6), caps: S.caps, n: g.length, p50: g[Math.floor(g.length * .5)] || 0, p95: g[Math.floor(g.length * .95)] || 0, max: g[g.length - 1] || 0, over100: g.filter(x => x > 100).length, dlg: S.dlg, nameBar: S.nameBar, topBarCovered: S.topBarCovered }; });
+  const sampled = () => page.evaluate(() => { const S = window.__film; S.run = false; const g = S.gaps.slice(2).sort((a, b) => a - b); return { long: S.long.filter(x => x.d >= 100).sort((a, b) => b.d - a.d).slice(0, 6), caps: S.caps, n: g.length, p50: g[Math.floor(g.length * .5)] || 0, p95: g[Math.floor(g.length * .95)] || 0, max: g[g.length - 1] || 0, over100: g.filter(x => x > 100).length, dlg: S.dlg, nameBar: S.nameBar, topBarCovered: S.topBarCovered, notes: S.notes || 0, noteText: S.noteText || [] }; });
   const frames = [];   // every film's frame stats, for the end
   /** the way home is walked once: its start is the one "home" event that says instant or not (an instant walk adds a second one when the card is found) */
   const walks = log => log.filter(e => e.ev === 'home' && 'instant' in e);
@@ -433,6 +434,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     const end = log.find(e => e.ev === 'end'); assert(end && end.ok && !end.skipped && !end.timedOut && !end.stalled, `${tag}: the film ended on its own: ` + JSON.stringify(end));
     assert.equal(walks(log).length, 1, `${tag}: the way home was walked once: ` + JSON.stringify(log.filter(e => e.ev === 'home')));
     assert(seen.fr.caps.filter(c => /^(Taking the pieces off|Filling the empty|Placed on|Remaking QR)/.test(c.text)).every(c => c.mode === 'nest'), `${tag}: the film played in the Nest tab: ` + JSON.stringify(seen.fr.caps.map(c => [c.mode, c.text.slice(0, 30)])));
+    assert.equal(seen.fr.notes, 0, `${tag}: no note over the film: ` + JSON.stringify(seen.fr.noteText));
     assert.equal(seen.fr.dlg, 0, `${tag}: no dialog open while the film played (it would hide it)`); assert.equal(seen.fr.nameBar, 0, `${tag}: no name bar over the film`); assert.equal(seen.fr.topBarCovered, 0, `${tag}: the film stays under the top bar`);
     // the popup kept its promise
     const P = promised(seen.text), D = delivered(steps); oneOrderTwoSheets(steps, tag);
@@ -621,6 +623,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     const end = log.find(e => e.ev === 'end'); assert(end && end.ok && !end.skipped && !end.timedOut && !end.stalled, 'the film ended on its own: ' + JSON.stringify(end));
     assert.equal(walks(log).length, 1, 'the way home was walked once: ' + JSON.stringify(log.filter(e => e.ev === 'home')));
     assert(fr.caps.filter(c => /^(Finding a spot|Placing the pieces|Placed on|Remaking QR|QR label)/.test(c.text)).every(c => c.mode === 'nest'), 'the film played in the Nest tab: ' + JSON.stringify(fr.caps.map(c => [c.mode, c.text.slice(0, 30)])));
+    assert.equal(fr.notes, 0, 'no note over the film (the list the hold leaves is not on screen): ' + JSON.stringify(fr.noteText));
     assert.equal(fr.dlg, 0, 'no dialog open while the film played'); assert.equal(fr.nameBar, 0, 'no name bar over the film'); assert.equal(fr.topBarCovered, 0, 'the film stays under the top bar');
     const spin = await page.evaluate(() => window.__relTxt.some(t => /Checking sheets/.test(t)));
     assert(spin, 'the button showed a small labelled "Checking sheets…" while the plan was read');
