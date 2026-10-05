@@ -112,6 +112,8 @@ function listChecks(R, shop, mode, got) {
         out.push(...pieceChecks(e, r, t, mode, sid, id));
       }
       for (const id of Object.keys(real)) if (!ids.includes(id)) out.push({ type: 'falseNegative', mode, sheet: sid, order: id, detail: JSON.stringify(real[id].offenders.map(o => [o.lineKey, o.copy, [...o.reasons], o.sheets.map(s => s.label)])) });
+      // round 8: the set's wait is no entry of any sheet's list (it is said under the Approve button, by the gate)
+      for (const i of got[sid] || []) if (i && (i.quiet === true || i.key === 'waitsOnSheet')) out.push({ type: 'setWaitListed', mode, sheet: sid, detail: JSON.stringify(i).slice(0, 140) });
       out.push(...ownChecks(got[sid], raw.get(sid), t, mode, sid));
       out.push(...ghostChecks(got[sid], t.sheets[sid], raw.get(sid), mode, sid));
     }
@@ -227,10 +229,10 @@ function setChecks(R, shop) {
   }
   return out;
 }
-/** A sheet in a set, asked for with its set: the set's wait is ONE quiet 'waitsOnSheet' entry per OTHER sheet of the set that keeps the set from
- *  being approved (the oracle's hardBlock), whether or not the sheet itself is ready, and never an order issue (round 7: a set advances as one).
- *  A cut sheet, a draft and a sheet left out of its set have none. A sheet of the set that cannot be found is a real 'missingSheet' only for a sheet that is
- *  itself ready, as before. */
+/** A sheet in a set, asked for with its set (round 8, Paul: "Remove any references to the other sheet from this list ... only related items to that particular sheet"): the set's
+ *  wait is NOT an entry of the sheet's list. A mate sheet that merely is not ready appears nowhere in it (no 'waitsOnSheet', nothing quiet, no step-'laser' entry that names a mate),
+ *  whether or not the sheet itself is ready. It is said once, by the gate (the Approve buttons' own truth): setGate's blockers are exactly the oracle's hard-blocking sheets
+ *  (O.setWaits). A sheet of the set that cannot be found is a real 'missingSheet' only for a sheet that is itself ready, as before. */
 function mateChecks(R, shop) {
   const t = O.truth(shop), out = [], rows = S.recordRows(shop), all = pageSheets(shop, R), pre = serverLike(shop, R), live = new Map(shop.sheets.filter(s => !s.archived).map(s => [s.id, s]));
   for (const set of shop.sets) {
@@ -238,16 +240,19 @@ function mateChecks(R, shop) {
     for (const mode of ['rows', 'pre']) for (const id of ids) {
       const members = mode === 'rows' ? all.filter(s => ids.includes(s.id)) : pre.filter(s => ids.includes(s.id));
       const subject = mode === 'rows' ? all.find(s => s.id === id) : pre.find(s => s.id === id);
-      let got;
-      try { got = R.issues(subject, mode === 'rows' ? { rows, allSheets: all, set, sheets: members } : { set, sheets: members }).filter(i => i.step === 'laser' && i.key === 'waitsOnSheet'); } catch (e) { out.push({ type: 'throws', mode: 'mates-' + mode, detail: e.message }); continue; }
-      const want = O.setWaits(shop, t, id), have = got.map(i => i.open && i.open.id).sort();
-      if (JSON.stringify(have) !== JSON.stringify(want)) out.push({ type: 'setMates', mode: 'mates-' + mode, sheet: id, detail: `got ${JSON.stringify(have)} want ${JSON.stringify(want)}` });
-      for (const i of got) {
-        if (i.quiet !== true) out.push({ type: 'setWaitLoud', mode: 'mates-' + mode, sheet: id, detail: JSON.stringify(i).slice(0, 140) });
-        if (i.sheetId !== id) out.push({ type: 'setWaitWrongSheet', mode: 'mates-' + mode, sheet: id, detail: `entry says ${i.sheetId}` });
-        const y = live.get(i.open && i.open.id), why = y && O.hardBlock(y, t);
-        if (why && i.stepKey !== why) out.push({ type: 'setWaitStep', mode: 'mates-' + mode, sheet: id, detail: `${i.open.id}: shows ${i.stepKey}, oracle ${why}` });
-        if (y && i.label !== O.labelOf(y)) out.push({ type: 'setWaitLabel', mode: 'mates-' + mode, sheet: id, detail: `${i.label} vs ${O.labelOf(y)}` });
+      let list;
+      try { list = R.issues(subject, mode === 'rows' ? { rows, allSheets: all, set, sheets: members } : { set, sheets: members }); } catch (e) { out.push({ type: 'throws', mode: 'mates-' + mode, detail: e.message }); continue; }
+      // the list holds no wait for a mate: nothing quiet, no 'waitsOnSheet', and the only step-'laser' entries are real set trouble
+      for (const i of list) {
+        if (i.quiet === true || i.key === 'waitsOnSheet') out.push({ type: 'setWaitListed', mode: 'mates-' + mode, sheet: id, detail: JSON.stringify(i).slice(0, 140) });
+        else if (i.step === 'laser' && i.key !== 'missingSheet' && i.key !== 'setMissing') out.push({ type: 'setWaitListed', mode: 'mates-' + mode, sheet: id, detail: `a laser-step entry that is not set trouble: ${JSON.stringify(i).slice(0, 120)}` });
+      }
+      // the wait is said once, by the gate: its blockers (but the sheet itself) are what the oracle says holds the set
+      const x = live.get(id);
+      if (!(+x.laserDoneAt > 0) && O.effSet(x)) {
+        const gate = R.setGate(set, members), want = O.setWaits(shop, t, id), have = gate.blockers.filter(b => live.has(b.sheetId) && b.sheetId !== id).map(b => b.sheetId).sort();
+        if (JSON.stringify(have) !== JSON.stringify(want)) out.push({ type: 'setGate', mode: 'mates-' + mode, sheet: id, detail: `the gate says ${JSON.stringify(have)}, the oracle ${JSON.stringify(want)}` });
+        if (want.length && gate.ready) out.push({ type: 'setGate', mode: 'mates-' + mode, sheet: id, detail: 'the oracle says a mate holds the set, the gate says it is ready' });
       }
       // a wait is never an order: no order issue of this sheet names a mate of its own set as the sheet that holds it
       const me = O.effSet(live.get(id));
@@ -269,7 +274,7 @@ const allChecks = shop => {
 function runProperty() {
   const shops = argv('shops', 2500), seed0 = argv('seed', 1), budget = argv('budget-ms', 25000), dual = !!argv('dual', false), noLost = !!argv('no-lost', false), ghost = !!argv('ghost', false), t0 = Date.now(), counts = {};
   let ran = 0, bad = 0, sheets = 0, issuesSeen = 0, expected = 0;
-  const cov = { sameSetDropped: 0, splitIssues: 0, setWaits: 0, shopsWithDrop: 0 };   // what the shops exercised: orders the OLD rule listed for a same-set wait, splits kept, set waits said
+  const cov = { sameSetDropped: 0, splitIssues: 0, setWaits: 0, shopsWithDrop: 0 };   // what the shops exercised: orders the OLD rule listed for a same-set wait, splits kept, set waits the gate says (and no list shows)
   for (let i = 0; i < shops && Date.now() - t0 < budget; i++, ran++) {
     const spec = S.makeSpec(seed0 * 100003 + i, { dual, noLost, ghost }), shop = S.materialize(spec), d = allChecks(shop);
     const tr = O.truth(shop);
@@ -290,7 +295,7 @@ function runProperty() {
     }
   }
   console.log(`${bad ? 'FAIL' : 'PASS'}: ${ran} shops, ${sheets} sheets, ${expected} real order issues expected, ${bad} shops disagree ${JSON.stringify(counts)} in ${Date.now() - t0} ms`);
-  console.log(`  covered: ${JSON.stringify(cov)}  (same-set waits the old rule listed and the new one does not; orders split between two sets, still listed; quiet set waits expected)`);
+  console.log(`  covered: ${JSON.stringify(cov)}  (same-set waits the old rule listed and the new one does not; orders split between two sets, still listed; set waits the gate says and no list shows)`);
   if (!argv('no-coverage', false) && ran >= 300 && (cov.sameSetDropped < 5 || cov.splitIssues < 5 || cov.setWaits < 5)) { console.log('FAIL: the random shops did not exercise the same-set rule, the split-between-sets rule and the set wait'); return false; }
   return bad === 0;
 }

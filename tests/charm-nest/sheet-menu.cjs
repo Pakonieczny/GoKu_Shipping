@@ -118,9 +118,12 @@ async function page() {
       const c = document.querySelector(`.sheetCard[data-m="${m}"]`), host = c.querySelector('[data-r="tabs"]'), row = c.querySelector('.shControls'), r = host.getBoundingClientRect();
       const wrap = host.querySelector('.shMenu'), btn = host.querySelector('button.shmBtn'), name = host.querySelector('.shmName'), mark = host.querySelector('.shmMark, .shmSpin'), chev = host.querySelector('.shmChev');
       const cr = c.getBoundingClientRect(), rr = row.getBoundingClientRect(), wr = wrap && wrap.getBoundingClientRect(), nr = name && name.getBoundingClientRect(), chr = chev && chev.getBoundingClientRect();
-      const sibs = [...row.children].filter(x => x !== host && !x.hidden && x.getClientRects().length && !x.classList.contains('hidden')).map(x => x.getBoundingClientRect());
+      // (a row too narrow for all its controls goes on to a second line, left aligned: only a control on the pill's own line can be run under)
+      const vis = [...row.children].filter(x => !x.hidden && x.getClientRects().length && !x.classList.contains('hidden')), mid = e => { const b = e.getBoundingClientRect(); return b.top + b.height / 2; };
+      const sibs = vis.filter(x => x !== host && Math.abs(mid(x) - mid(host)) < 10).map(x => x.getBoundingClientRect());
+      const nRows = vis.map(mid).sort((a, b) => a - b).reduce((n, v, i, a) => n + (i && v - a[i - 1] > 10 ? 1 : 0), vis.length ? 1 : 0);
       const oldTabs = [...host.querySelectorAll('button[data-i]')];
-      return { rowH: rr.height, hostW: Math.round(r.width), pill: !!wrap, chip: !!host.querySelector('.shmChip'), btn: !!btn, text: wrap ? wrap.innerText.trim().replace(/\s+/g, ' ') : oldTabs.map(b => `${b.firstChild.textContent} ${b.querySelector('[data-st]').textContent}`.trim()).join(' | '),
+      return { rowH: rr.height, nRows, hostW: Math.round(r.width), pill: !!wrap, chip: !!host.querySelector('.shmChip'), btn: !!btn, text: wrap ? wrap.innerText.trim().replace(/\s+/g, ' ') : oldTabs.map(b => `${b.firstChild.textContent} ${b.querySelector('[data-st]').textContent}`.trim()).join(' | '),
         name: name && name.textContent, mark: mark && (mark.classList.contains('shmSpin') ? 'spin:' + mark.getAttribute('aria-label') : mark.textContent), sheets: host.dataset.sheets || String(oldTabs.length),
         wrapL: wr && Math.round(wr.left), wrapR: wr && Math.round(wr.right), wrapW: wr && Math.round(wr.width), wrapH: wr && wr.height, cardL: Math.round(cr.left), cardR: Math.round(cr.right), rowL: Math.round(rr.left), rowR: Math.round(rr.right),
         nameW: nr && Math.round(nr.width), nameFull: name ? name.scrollWidth <= name.clientWidth + 1 : null, nameEll: name ? getComputedStyle(name).textOverflow === 'ellipsis' : null,
@@ -195,7 +198,9 @@ async function page() {
       widths[w] = {};
       for (const m of M) {
         const x = widths[w][m] = await look(pg, m), o = oldWide[w][m];
-        assert.equal(x.rowH, o.rowH, `${m} @${w}px: the controls row is ${x.rowH}px, and was ${o.rowH}px with tabs`);
+        // one row: as tall as with tabs; a row too narrow for every control wraps to two rows, never clips (Options is on the title line now)
+        if (x.nRows === 1) assert.equal(x.rowH, o.rowH, `${m} @${w}px: the controls row is ${x.rowH}px, and was ${o.rowH}px with tabs`);
+        else assert(x.nRows === 2 && x.rowH > o.rowH && x.rowH <= 2 * o.rowH + 2 && w <= 480, `${m} @${w}px: a row that wraps is two rows high (${x.rowH}px, ${x.nRows} rows)`);
         assert(x.wrapL >= x.cardL && x.wrapR <= x.cardR + 1, `${m} @${w}px: the pill is inside its card (${x.wrapL}-${x.wrapR} in ${x.cardL}-${x.cardR})`);
         assert(x.wrapR <= x.rowR + 1 || x.sibN > 0, `${m} @${w}px: the pill is inside the row`);
         if (x.btn) assert.equal(x.chevIn, true, `${m} @${w}px: the chevron is whole, inside the pill (${x.chevR})`);
@@ -206,7 +211,7 @@ async function page() {
         if (w >= 900) assert.equal(x.nameFull, true, `${m} @${w}px: the whole name "${x.name}" is shown`);
       }
       const clippedBefore = M.filter(m => oldWide[w][m].oldClipped).length;
-      console.log(`  ✓ page @${w}px: ${M.map(m => `${m} ${widths[w][m].wrapW}px${widths[w][m].nameFull ? '' : ' (name shortened)'}`).join(', ')}; the old tab row was cut off on ${clippedBefore} of ${M.length} cards; rows ${widths[w].silver.rowH}px as before`);
+      console.log(`  ✓ page @${w}px: ${M.map(m => `${m} ${widths[w][m].wrapW}px${widths[w][m].nameFull ? '' : ' (name shortened)'}`).join(', ')}; the old tab row was cut off on ${clippedBefore} of ${M.length} cards; rows ${widths[w].silver.rowH}px as before${M.some(m => widths[w][m].nRows > 1) ? ' (wrapped to a second row on ' + M.filter(m => widths[w][m].nRows > 1).join(', ') + ')' : ''}`);
     }
     await fit(pg, 1440, 900);
     // the pill is the engraving control's pill: the same height, border, radius and chevron

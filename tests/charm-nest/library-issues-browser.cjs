@@ -6,8 +6,10 @@
 // under the top bar, never past the bottom, never a horizontal page scroll; it covers its own Approve button whole (no strip of it along
 // the edge) and leaves the neighbouring sheet's rail and Approve button alone; one short chip per row, never clipped mid-letter; a row opens
 // its order with the page's own hand-off; Esc closes and the '!' gets the keyboard back; a live change keeps it open and updates its rows.
-// Round 7 (Paul: "both sheets are in the same set"): a sheet that is done and only waits for a mate sheet of its own set has NO '!' but one quiet clock
-// on Laser cutting; its panel says "Waiting for SS Sheet 1 · Engraving" once, uncounted, with a shortcut to that sheet, and fits like every other panel.
+// Round 8 (Paul: "Remove any references to the other sheet from this list ... only related items to that particular sheet"): a sheet that is done and only
+// waits for a mate sheet of its own set has NO mark on its rail (no '!', no clock); the set's wait is said once, under its grey Approve button, whose line
+// opens the '!' panel of the sheet that holds the set. Paul's image 2 (GF Sheet 1 with four real order issues next to a not-ready SS Sheet 1): its Order check
+// says "4 issues", lists those four and nothing of SS Sheet 1, and fits like every other panel.
 //   node tests/charm-nest/library-issues-browser.cjs [playwright-core dir]     (PW_DIR=…, CHROMIUM=…; SHOTS=<dir> saves screenshots)
 const fs = require('fs'), path = require('path'), assert = require('assert/strict');
 const F = require('./library-issues-fixture.cjs');
@@ -17,16 +19,16 @@ let chromium;
 try { ({ chromium } = require(path.join(pwDir, 'playwright-core'))); } catch (_) { console.log('  – no playwright-core: the browser check was not run'); process.exit(0); }
 const SHOTS = process.env.SHOTS || '';
 const KEYS = ['pooled', 'otherSheetNotReady', 'noSku', 'pooled', 'otherSheetNotReady', 'unmatched', 'held', 'noSku'];
-const WHY = { pooled: 'A piece is not on a saved sheet yet', noSku: 'No SKU', unmatched: 'SKU not in a master', held: 'Check customer changes', otherSheetNotReady: 'SS Sheet 1: engraving needs approval' };
+const WHY = { pooled: 'A piece is not on a saved sheet yet', noSku: 'No SKU', unmatched: 'SKU not in a master', held: 'Check customer changes', otherSheetNotReady: 'RG Sheet 1: not ready yet' };
 
 // a gold sheet with `k` orders another piece holds back, and a silver sheet beside it (engraving not approved when `engraving`)
-function records(k, { names = F.NAMES, engraving = true, mateReady = false } = {}) {
+function records(k, { names = F.NAMES, engraving = true, mateReady = false, keys = KEYS } = {}) {
   const gf = F.sheet('gf1', { n: Math.max(k, 6), metal: 'gold', base: 4170250000, seq: 1, index: 1 });
   const ss = F.sheet('ss1', { n: 6, metal: 'silver', base: 4180250000, seq: 1, index: 1 });
   gf.orders.forEach((o, i) => {
     if (i >= k) return;
-    const key = KEYS[i % KEYS.length], other = key === 'otherSheetNotReady';
-    gf.orderReadiness[o] = { ready: false, key, why: WHY[key], blocks: [{ key, index: 2, label: 'Charm', poolId: o + '_x_2', lineKey: o + '_x', sheetId: other ? 'ss1' : null, sheetLabel: other ? 'SS Sheet 1' : null, ...(other ? { stage: 'approval' } : {}), why: WHY[key] }], onSheets: ['gf1'], pieceCount: 2, customer: names[i % names.length], listingId: 'L' + (i % 12) };
+    const key = keys[i % keys.length], other = key === 'otherSheetNotReady';
+    gf.orderReadiness[o] = { ready: false, key, why: WHY[key], blocks: [{ key, index: 2, label: 'Charm', poolId: o + '_x_2', lineKey: o + '_x', sheetId: other ? 'rg1' : null, sheetLabel: other ? 'RG Sheet 1' : null, ...(other ? { stage: 'approval' } : {}), why: WHY[key] }], onSheets: ['gf1'], pieceCount: 2, customer: names[i % names.length], listingId: 'L' + (i % 12) };
   });
   if (engraving) ss.backPool = [];
   const rows = [...gf.poolIds, ...ss.poolIds].map((p, i) => ({ key: p.replace(/_1$/, ''), order: { receiptId: p.split('_')[0], buyer: { name: F.NAMES[i % F.NAMES.length] } }, line: { title: 'Charm', listingId: 'L' + (i % 12) }, state: 'written', poolIds: [p], engrave: engraving && p.startsWith('41802') ? { needed: true, state: 'words', approved: false } : { needed: true, state: 'approved', approved: true } }));
@@ -63,7 +65,7 @@ const measure = page => page.evaluate(() => {
   return { panel: r(p), bar: bar ? r(bar) : null, vw, vh, scrollW: document.documentElement.scrollWidth, bodyScrollW: document.body.scrollWidth, panelScrollW: p.scrollWidth, panelClientW: p.clientWidth,
     gfCard: gfCard ? r(gfCard) : null, ssCard: ssCard ? r(ssCard) : null, up: p.classList.contains('up'),
     gfApprove: covered(gfCard && gfCard.querySelector('.approveBox')), gfFlow: gfCard && gfCard.querySelector('.flowBox') ? r(gfCard.querySelector('.flowBox')) : null, ssApproveHit: hit(ssCard && ssCard.querySelector('.approveBox [data-approve-btn]')), ssBangHit: hit(ssCard && ssCard.querySelector('[data-issues-open]')), gfBangHit: hit(gfCard && gfCard.querySelector('[data-issues-open]')),
-    waits: p.querySelectorAll('.lisWait').length, count: p.querySelector('.lisCount')?.textContent || '', countQuiet: !!p.querySelector('.lisCount.quiet'), waitCut: [...p.querySelectorAll('.lisWaitTx')].some(x => getComputedStyle(x).textOverflow === 'ellipsis' || x.scrollWidth > x.clientWidth + 1), quietRing: (() => { const b = document.querySelector('[data-issues-quiet][aria-expanded="true"]'); return b ? getComputedStyle(b).boxShadow : null; })(), waitText: [...p.querySelectorAll('.lisWait')].map(x => x.textContent.replace(/\s+/g, ' ').trim()),
+    waits: p.querySelectorAll('.lisWait,[data-quiet],[data-issue-key="waitsOnSheet"]').length, count: p.querySelector('.lisCount')?.textContent || '', countQuiet: !!p.querySelector('.lisCount.quiet'), mentionsMate: /Waiting|SS Sheet|GF Sheet/.test(p.textContent),
     rows: rows.length, groups: p.querySelectorAll('.lisGroup').length, own: p.querySelectorAll('.lisOwn').length, head: p.querySelector('.lisHead b')?.textContent || '', text: p.textContent.replace(/\s+/g, ' '),
     chips: rows.map(x => { const c = x.querySelector('.lisChip'); return c ? { text: c.textContent, clipped: c.scrollWidth > c.clientWidth + 1, ellipsis: getComputedStyle(c).textOverflow === 'ellipsis' } : null; }),
     rowOverflow: rows.some(x => x.scrollWidth > x.clientWidth + 1), whoOverflow: [...p.querySelectorAll('.lisWho')].some(x => x.scrollWidth > x.clientWidth + 1), tileText: [...p.querySelectorAll('.lisTh:not(.lisTile)')].map(x => x.textContent.trim()).filter(Boolean) };
@@ -154,32 +156,50 @@ const shot = async (page, name, m) => { if (!SHOTS) return; fs.mkdirSync(SHOTS, 
       await page.evaluate(() => { window.__calls.length = 0; }); await page.click('.lisOwn'); await page.waitForTimeout(400);
       assert.deepEqual(await page.evaluate(() => window.__calls[0]), ['mode', 'engrave']); assert.deepEqual(errors, []); await context.close(); }
 
-    // 8. round 7: the set's wait. GF Sheet 1 is done, SS Sheet 1 (same set) still has back engravings to approve: GF has a quiet clock, never a '!'
+    // 8. round 8: the set's wait is not in the sheet's list or on its rail. GF Sheet 1 is done, SS Sheet 1 (same set) still has back engravings to approve:
+    //    GF has NO mark at all (no '!', no clock); its grey Approve line says what holds the set, once, and opens SS Sheet 1's own '!' panel
     for (const width of [1440, 390]) { const { page, context, errors } = await setup(browser, 0, { width, height: width === 390 ? 844 : 900 });
       const seen = await page.evaluate(() => [...document.querySelectorAll('[data-issues-open]')].map(b => b.dataset.issuesId + ':' + b.dataset.issuesStep + (b.hasAttribute('data-issues-quiet') ? ':quiet' : '') + (b.classList.contains('flowBang') ? ':bang' : '')).sort());
-      assert.deepEqual(seen, ['gf1:laser:quiet', 'ss1:engraving:bang'], `${width}px: the done sheet shows a quiet clock, only the sheet with real work left shows a '!' (${seen})`);
-      const qb = await page.evaluate(() => { const b = document.querySelector('[data-issues-id="gf1"][data-issues-quiet]'), cs = getComputedStyle(b), r = b.getBoundingClientRect(); return { text: b.textContent.trim(), svg: !!b.querySelector('svg path'), label: b.getAttribute('aria-label'), desc: b.getAttribute('aria-description'), w: r.width, h: r.height, bg: cs.backgroundColor, border: cs.borderTopColor, step: b.closest('.flowStep').className }; });
-      assert.equal(qb.text, '', 'a clock, not an exclamation mark'); assert(qb.svg, 'the clock is drawn'); assert.match(qb.label, /^Laser cutting\. Waiting\. .*cut together/i, 'its label is the rail card\'s words'); assert.match(qb.desc, /waits for/i); assert(qb.w >= 15 && qb.w <= 17 && qb.h >= 15 && qb.h <= 17, 'the size of the rail\'s other dots');
-      assert.doesNotMatch(qb.border, /176, 86, 63/, 'not the clay of a problem'); assert.match(qb.step, /\bcurrent\b/);
-      await (await bang(page, 'gf1', 'laser')).click(); await page.waitForTimeout(500);
-      const m = await measure(page); assert(m, 'the quiet clock opens the panel'); within(m, `set wait ${width}px`); if (width > 600) approveRule(m, `set wait ${width}px`);   // (on a narrow screen the panel is its own 336 px, a little narrower than the card: the rule is the wide layout's)
-      assert.equal(m.rows, 0, 'no issue row'); assert.equal(m.waits, 1, 'the wait is said once'); assert.equal(m.waitText.length, 1); assert.match(m.waitText[0], /^Waiting for SS Sheet 1 · Engraving ?(\d+ \/ \d+)?$/); assert.equal(m.head, 'Laser cutting');
-      assert.equal(m.count, 'Waiting', 'a quiet header, not an issue count'); assert.equal(m.countQuiet, true); assert.doesNotMatch(m.text, /\bissues?\b|\bWaits on\b|\blines?\b/i); if (width > 600) assert.equal(m.ssBangHit, true, 'the next sheet\'s \'!\' is not covered');   // (on a narrow screen the sheets stack: the panel lies over the one below, as it does for every panel)
-      assert.equal(m.panel.h < 150, true, `a quiet panel is small (${m.panel.h})`);
-      assert.equal(m.waitCut, false, 'the step\'s name is never cut off (the row wraps instead)'); assert(m.quietRing && !/176, 86, 63/.test(m.quietRing), `the open clock has no clay ring (${m.quietRing})`);
-      await shot(page, `issues-set-wait-${width}`, m);
-      await page.evaluate(() => { window.__calls.length = 0; }); await page.click('.lisWait'); await page.waitForTimeout(300);
-      assert.deepEqual((await page.evaluate(() => window.__calls[0])).slice(0, 2), ['sheet', 'ss1'], 'the wait row opens the sheet that holds the set');
-      await page.evaluate(() => { const lp = document.querySelector('.lisPanel'); if (lp) lp.classList.remove('handed'); window.LibraryIssues.close(); }); await page.waitForTimeout(300);
-      // the sheet that holds the set is fixed: the clock and its wait are gone
+      assert.deepEqual(seen, ['ss1:engraving:bang'], `${width}px: the done sheet carries nothing on its rail; only the sheet with real work left shows a '!' (${seen})`);
+      const gfRail = await page.evaluate(() => { const f = document.querySelector('.flowBox[data-flow-for="sheet:gf1"]'), cur = f.querySelector('.flowStep.current'); return { step: cur.querySelector('span').textContent, button: !!cur.querySelector('button'), dot: !!cur.querySelector('i.flowDot'), any: f.querySelectorAll('button,.flowWait,[data-issues-quiet]').length, clock: document.querySelectorAll('.flowWait,[data-issues-quiet],.lisWait').length }; });
+      assert.deepEqual(gfRail, { step: 'Laser cutting', button: false, dot: true, any: 0, clock: 0 }, `${width}px: Laser cutting is a plain current dot on the done sheet`);
+      // the set's wait, said once: the grey Approve line under GF Sheet 1 (and under SS Sheet 1: both are grey together)
+      const line = await page.evaluate(() => [...document.querySelectorAll('.approveBox')].map(b => ({ id: b.dataset.approveFor, grey: b.querySelector('[data-approve-btn]').getAttribute('aria-disabled'), link: !!b.querySelector('button[data-approve-reason]'), text: b.querySelector('[data-approve-why]').textContent.trim() })));
+      assert.deepEqual(line.map(x => [x.id, x.grey, x.link]), [['sheet:gf1', 'true', true], ['sheet:ss1', 'true', true]], `${width}px: both buttons are grey together, each with a reason that opens a '!'`);
+      for (const x of line) assert.match(x.text, /^SS Sheet 1 · back engravings \d+ of \d+$/, `${width}px: the line names the sheet that holds the set and what it lacks`);
+      await shot(page, `issues-approve-line-${width}`);
+      await page.click('.approveBox[data-approve-for="sheet:gf1"] button[data-approve-reason]'); await page.waitForTimeout(500);
+      const m = await measure(page); assert(m, `${width}px: the line under GF Sheet 1's button opens a panel`); within(m, `approve line ${width}px`);
+      assert.equal(await page.evaluate(() => document.querySelector('.lisPanel').getAttribute('data-issues-for')), 'sheet:ss1', 'it is SS Sheet 1\'s panel: the sheet that holds the set');
+      assert.equal(m.head, 'Engraving'); assert.equal(m.rows, 0); assert.equal(m.own, 1); assert.equal(m.waits, 0, 'no wait row'); assert.equal(m.mentionsMate, false, 'the panel names no other sheet');
+      await shot(page, `issues-approve-line-opens-${width}`, m);
+      await page.keyboard.press('Escape'); await page.waitForTimeout(300);
+      // the sheet that holds the set is fixed: nothing changes on GF Sheet 1's rail, its line goes with the grey
       await page.evaluate(() => { const ss = window.__sheets.find(x => x.id === 'ss1'); window.__rows = window.__rows.map(r => ({ ...r, engrave: { needed: true, state: 'approved', approved: true } })); window.LaserReview.record(ss); window.LaserReview.changed(); }); await page.waitForTimeout(700);
-      assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll('[data-issues-open]')].map(b => b.dataset.issuesId + ':' + b.dataset.issuesStep)), ['ss1:backFiles'], "the engravings are approved: GF Sheet 1's clock is gone (SS Sheet 1 has its own back files left, a real '!' on its own rail)");
+      assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll('[data-issues-open]')].map(b => b.dataset.issuesId + ':' + b.dataset.issuesStep)), ['ss1:backFiles'], "the engravings are approved: GF Sheet 1 still carries nothing (SS Sheet 1 has its own back files left, a real '!' on its own rail)");
       assert.deepEqual(errors, []); await context.close(); }
+
+    // 9. round 8, Paul's image 2: GF Sheet 1's Order check with four real order issues (three unknown SKUs; Leslie Suhr's order has a piece on RG Sheet 1, a sheet in no set, so it is
+    //    related to this sheet and stays) next to a SS Sheet 1 that is not ready, in the same set: "4 issues", those four, and not a word of SS Sheet 1 or of waiting
+    for (const width of [1440, 390]) { const { page, context, errors } = await setup(browser, 4, { width, height: width === 390 ? 844 : 900, keys: ['unmatched', 'otherSheetNotReady', 'unmatched', 'unmatched'], names: ['Unknown Buyer', 'Leslie Suhr', 'Unknown Buyer Two', 'Unknown Buyer Three'] });
+      await (await bang(page, 'gf1', 'orders')).click(); await page.waitForTimeout(600);
+      const m = await measure(page); assert(m, `${width}px: the Order check opens`); within(m, `image 2, ${width}px`); if (width > 600) approveRule(m, `image 2, ${width}px`);
+      assert.equal(m.head, 'Order check'); assert.equal(m.count, '4 issues', 'the header counts this sheet\'s own four issues'); assert.equal(m.countQuiet, false); assert.equal(m.rows, 4);
+      assert.deepEqual(m.chips.map(c => c.text).sort(), ['Unknown SKU', 'Unknown SKU', 'Unknown SKU', 'Waits on RG Sheet 1'], 'three unknown SKUs and the order with a piece elsewhere');
+      assert.equal(m.waits, 0, 'no wait row of any kind'); assert.equal(m.mentionsMate, false, 'not a word of SS Sheet 1, of GF Sheet 1 or of waiting'); assert(!/\blines?\b/i.test(m.text), 'pieces, never lines');
+      assert(m.chips.every(c => c && !c.clipped), 'chips are whole');
+      const first = await page.evaluate(() => document.querySelector('.lisBody').firstElementChild.querySelector('.lisRow') !== null); assert.equal(first, true, 'the first thing in the list is an order of this sheet');
+      if (width > 600) { assert.equal(m.ssBangHit, true); assert.equal(m.ssApproveHit, true); }
+      await shot(page, `image2-order-check-${width}`, m);
+      // the one place that says SS Sheet 1 holds the set stays under the button: GF Sheet 1's own article names it once
+      const named = await page.evaluate(() => { const a = document.querySelector('.librarySheet:has([data-flow-for="sheet:gf1"])'); return (a.textContent.match(/SS Sheet 1/g) || []).length; });
+      assert.equal(named, 1, 'GF Sheet 1\'s own article names SS Sheet 1 once: its Approve line');
+      await page.keyboard.press('Escape'); await page.waitForTimeout(300); assert.deepEqual(errors, []); await context.close(); }
 
     // 7. near the bottom of the screen the panel opens upward; near the top bar it stays below it
     for (const height of [640, 560]) { const { page, context, errors } = await setup(browser, 5, { height });
       await (await bang(page, 'gf1', 'orders')).click(); await page.waitForTimeout(500);
       const m = await measure(page); within(m, `short screen ${height}`); assert.deepEqual(errors, []); await context.close(); }
   } finally { await browser.close(); }
-  console.log('Library issues browser OK: no \'!\' when nothing is wrong; 1, 5 and 40 issues, long names, 390 px, Engraving link; inside the screen, under no bar, never past the bottom, no sideways scroll; as wide as its card at most, over its own Approve button whole, the next sheet untouched; short whole chips; hand-off, Esc, live update');
+  console.log('Library issues browser OK: no \'!\' when nothing is wrong; 1, 5 and 40 issues, long names, 390 px, Engraving link; no clock, no wait row, the Approve line names the set\'s wait once and opens the holding sheet\'s \'!\'; Paul\'s image 2 (4 issues, nothing of SS Sheet 1); inside the screen, under no bar, never past the bottom, no sideways scroll; as wide as its card at most, over its own Approve button whole, the next sheet untouched; short whole chips; hand-off, Esc, live update');
 })().catch(e => { console.error(e); process.exitCode = 1; });
