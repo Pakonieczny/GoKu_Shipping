@@ -972,7 +972,9 @@
        the session carries the name only. At midnight (New York) the PIN box comes back; the order, the fields and the chat
        stay on screen. -->
   <script src="station-session.js?v=20261002-ea1"></script>
-  <script src="station-activity.js?v=20261002-ea1"></script>
+  <script src="station-activity.js?v=20261005-live1"></script>
+  <!-- The order in hand right now (scan = working, Complete / cancelled = idle), for the console's live stations board (station-live-order.js). Optional: without it nothing changes. -->
+  <script src="station-live-order.js?v=20261005-lo1"></script>
   <!-- Phone scans that arrive while nobody is signed in wait here and load, in order, right after the next sign-in (station-scan-queue.js). -->
   <script src="station-scan-queue.js?v=20261003-sq1"></script>
   <script>
@@ -1088,6 +1090,9 @@
         } catch (_) {}
       };
       const orderInfo = id => { try { return orderMem.get(id) || null; } catch (_) { return null; } };
+      /* The order in hand right now (the console's live stations board): a scan is "working" with every piece, Complete or a
+         cancelled order is "idle". Best effort through station-live-order.js; never throws, never waits. */
+      const live = (fn, a, b, c) => { try { const L = window.StationLiveOrder; return !!(L && typeof L[fn] === "function" && L[fn](a, b, c)); } catch (_) { return false; } };
       /* a scan, once per Enter: the Etsy order the page just pulled gives the pieces; a lookup that failed is an error too */
       const scanActivity = (orderId, how, d) => {
         const id = digitsOf(orderId);
@@ -1098,6 +1103,7 @@
         if (id) { orderMem.set(id, info); if (orderMem.size > 200) orderMem.delete(orderMem.keys().next().value); }
         act("scan", { orderId: id, parts: info.parts, sku: info.sku, detail: how === "scan" ? "phone scan" : String(how || "scan").slice(0, 40) });
         if (!ok) act("error", { orderId: id, detail: "order lookup failed (not found, or Etsy did not answer)" });
+        if (ok && id) live("start", id, tx, { note: how === "scan" ? "phone scan" : "" }); else live("end");   // not found: nothing in hand
       };
       const api = window.shipTimeline = {
         /* scan, typing or paste: record it; the module checks for a cancel and shows its own full-screen alert */
@@ -1140,6 +1146,7 @@
           try {
             const id = digitsOf(orderId), seen = !!id && rejMem.has(id);
             if (id) rejMem.add(id);
+            if (!afterAlert) live("end", id);   // the cancel alert at the scan: this order is not being worked on
             return act(afterAlert && seen ? "note" : "reject", { orderId: id, detail: String(detail || "refused").slice(0, 120) });
           } catch (_) { return false; }
         },
@@ -1149,6 +1156,7 @@
             const id = digitsOf(orderId);
             const again = !!id && (prnMem.has(id) || !!prnRead()[id]);
             if (id) { prnMem.add(id); prnSave(id); }
+            live("note", "Label printed");   // still in hand: it is packed and completed next
             return act("print", { orderId: id, detail: again ? "reprint" : "Chit Chats label" });
           } catch (_) { return false; }
         },
@@ -1159,6 +1167,7 @@
             const id = digitsOf(orderId), info = orderInfo(id), c = String(carrierName || "").slice(0, 40);
             let parts = info ? info.parts : 0;
             if (!info && id && id === digitsOf(document.getElementById("etsyOrderNumber")?.value)) parts = piecesOf(window.cachedOrderItems);
+            live("end", id);   // completed: nothing in hand
             return first
               ? act("complete", { orderId: id, parts, orders: 1, sku: info ? info.sku : "", detail: "Etsy order completed" + (c ? " · " + c : "") })
               : act("note", { orderId: id, detail: "Complete pressed on an order already completed" });
