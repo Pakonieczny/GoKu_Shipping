@@ -38,6 +38,7 @@ const eq = (a, b, m) => assert.deepEqual(JSON.parse(JSON.stringify(a === undefin
   // the exact shape of CharmNestReadiness.issues; the test sets window.__feed[sheetId]
   const realIssues = R.issues;
   let readCount = 0; w.__feed = {}; R.issues = s => { readCount++; return w.__feed[s.id || s.sheetId] || []; };
+  w.eval(fs.readFileSync(path.join(root, 'charm-nest-piece-dots.js'), 'utf8'));   // (the one dot component the order rows draw their piece dots with)
   w.eval(fs.readFileSync(path.join(root, 'charm-nest-library-issues.js'), 'utf8'));
   const LI = w.LibraryIssues;
   assert(LI && typeof LI.open === 'function', 'the module is on the page');
@@ -109,7 +110,7 @@ const eq = (a, b, m) => assert.deepEqual(JSON.parse(JSON.stringify(a === undefin
   for (const bad of [/\bNesting\b/, /\bBack files\b/, /\bQR label\b/, /\bEngraving\b/, /Layout verified/, /\b\d+ of \d+\b/, /\blines?\b/i, /back engraving/i]) assert(!bad.test(texts(p)), `nothing about completed steps or engraving: ${bad}`);
   assert.equal(p.querySelectorAll('svg path[d*="M2.6 6.3"]').length, 0, 'no completed ticks');
   const first = rowsOf(p)[0]; assert.equal(first.querySelector('b').textContent, w.__feed.gf1[0].orderId); assert.equal(first.querySelector('i').textContent, 'Nathaly Soto');
-  assert.equal(first.querySelectorAll('.lisDot').length, 2, 'two pieces: one dot each'); assert.equal(first.querySelectorAll('.lisDot.ring').length, 1, 'a ring for the problem piece');
+  assert.equal(first.querySelectorAll('.pdot').length, 2, 'two pieces: one dot each'); assert.equal(first.querySelectorAll('.pdot.ring').length, 1, 'a ring for the problem piece');
   assert(d.activeElement && p.contains(d.activeElement), 'focus moves into the panel');
   // pictures: the listing photo from the page's own cache, the quiet piece icon until it is there
   assert.equal(first.querySelectorAll('.lisTh svg').length, 1, 'a quiet piece icon where there is no picture yet');
