@@ -321,7 +321,7 @@ const B = (o = {}) => Object.assign({ v: 1, event: 'beat', station: 'welding', d
     s.reset();
     await ask(); const first = s.reads.slice();
     assert.strictEqual(s.readsOf('Station_Live').length, 1, 'one small query for the live documents'); assert.deepStrictEqual(s.readsOf('Station_Live')[0].filters, ['beatAt>='], 'a single range: no index to create');
-    assert.strictEqual(s.readsOf('Station_Sessions').length, 1); assert.strictEqual(s.readsOf('Efficiency_Daily').length, 1); assert.deepStrictEqual(s.readsOf('Efficiency_Daily')[0].select, ['day', 'person', 'stations'], 'only the fields the board shows');
+    assert.strictEqual(s.readsOf('Station_Sessions').length, 1); assert.strictEqual(s.readsOf('Efficiency_Daily').length, 1); assert.deepStrictEqual(s.readsOf('Efficiency_Daily')[0].select, ['day', 'person', 'stations', 'sandbox'], 'only the fields the board shows (and the store flag, so a document of the other store never counts)');
     s.reset(); tick(1000); await ask(); assert.strictEqual(s.reads.length, 0, 'a second poll inside 2 s reads nothing');
     tick(1500); s.reset(); await ask();
     assert.strictEqual(s.readsOf('Station_Live').length, 1, 'after 2 s the live documents are read again'); assert.strictEqual(s.readsOf('Station_Sessions').length, 0, 'sessions are kept 15 s'); assert.strictEqual(s.readsOf('Efficiency_Daily').length, 0, 'today\'s numbers are kept 20 s');
@@ -329,7 +329,7 @@ const B = (o = {}) => Object.assign({ v: 1, event: 'beat', station: 'welding', d
     // a failing piece does not blank the board
     s.db.collection = (orig => name => name === 'Efficiency_Daily' ? { where: () => ({ limit: () => ({ select: () => ({ get: async () => { throw new Error('14 UNAVAILABLE: synthetic'); } }), get: async () => { throw new Error('14 UNAVAILABLE: synthetic'); } }) }) } : orig(name))(s.db.collection);
     tick(30000); const part = await ask(); assert.strictEqual(part.status, 200); assert.strictEqual(part.body.partial, true); assert(part.body.errors.some(e => /^today:/.test(e)));
-    assert.strictEqual(station(part, 'welding').current.length, 1, 'the order is still shown'); assert.strictEqual(station(part, 'welding').counts.partsToday, 0, 'only today\'s numbers are missing');
+    assert.strictEqual(station(part, 'welding').current.length, 1, 'the order is still shown'); assert.deepStrictEqual(station(part, 'welding').counts, { partsToday: null, ordersToday: null, scansToday: null }, 'today\'s numbers are unknown: null (a dash on the board), never a 0');
     say('9 gate (401 without the key), one query a poll, ~2 s / 15 s / 20 s caches, a failed read leaves the rest');
   }
 
