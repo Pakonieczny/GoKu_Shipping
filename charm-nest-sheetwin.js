@@ -38,12 +38,11 @@
     const nm = p => `${p.metal === "gold10k" ? "10K" : "14K"} Sheet ${p.page}`;
     const orders = [...new Set(split.flatMap(x => x.orders))], others = split.map(x => x.sheet);
     return new Promise(resolve => {
-      bar.innerHTML = `<span class="swAsk">${orders.length === 1 ? `Order ${esc(orders[0])} is` : `${orders.length} orders are`} also on ${esc(others.map(nm).join(", "))}, which ${others.length > 1 ? "are" : "is"} not in the set.</span><button type="button" class="btn sage xs" data-sp="all">Include ${others.length > 1 ? "all" : "both"}</button><button type="button" class="btn ghost xs" data-sp="one">Only this sheet</button><button type="button" class="swIcon" data-sp="x" title="Cancel" aria-label="Cancel">${ICON.close}</button>`;
+      bar.innerHTML = `<span class="swAsk">${orders.length === 1 ? `Order ${esc(orders[0])} is` : `${orders.length} orders are`} also on ${esc(others.map(nm).join(", "))}, which ${others.length > 1 ? "are" : "is"} not in the set; sheets that share an order go into the same set.</span><button type="button" class="btn sage xs" data-sp="all">Include ${others.length > 1 ? "all" : "both"}</button><button type="button" class="swIcon" data-sp="x" title="Cancel" aria-label="Cancel">${ICON.close}</button>`;
       bar.setAttribute("aria-label", "An order on two sheets"); bar.hidden = false;
       const done = v => { if (W.asked !== done) return; W.asked = null; bar.onkeydown = null; hideName(); bar.setAttribute("aria-label", "Your name"); resolve(v); };
       W.asked = done;   // Esc, or the window closing, is a Cancel
       bar.querySelector("[data-sp=all]").onclick = () => done([sh, ...others]);
-      bar.querySelector("[data-sp=one]").onclick = () => done([sh]);
       bar.querySelector("[data-sp=x]").onclick = () => done(null);
       bar.onkeydown = e => { if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); done(null); } };
       requestAnimationFrame(() => bar.querySelector("[data-sp=all]").focus());
@@ -2179,7 +2178,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     const job = x.eng && x.eng.job, rec = W.rec;
     RET.ctx = { sheetId: rec.id, poolId: x.poolId || x.id, rid: x.rid, key: job ? job.key : null, label: `${CODE[rec.metal] || ""} Sheet ${sheetNoOf(rec)}`, was: job ? job.state : null };
     if (b) b.innerHTML = `<span class="spin"></span>Opening Engrave…`;
-    close().then(() => {
+    const plain = () => close().then(() => {
       const v = Engrave.view();
       if (job && ["approved", "written", "skipped"].includes(job.state)) Engrave.restoreView(Object.assign({}, v, { tab: "done", focus: null, list: false, chosen: true, q: x.rid || "" }));
       else if (job) Engrave.restoreView(Object.assign({}, v, { tab: "place", focus: job.key, list: false, chosen: true, q: "" }));
@@ -2187,6 +2186,14 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       setMode("engrave"); Engrave.render();
       returnPill();
     });
+    // (this charm's own order and piece, its details open, the order's number in the search: EngraveLink, which this window
+    // closes for; the way back stays as it was. Without it, the tab as it always was)
+    if (window.EngraveLink && typeof EngraveLink.open === "function") {
+      let p; try { p = EngraveLink.open({ rid: x.rid, key: job ? job.key : undefined, poolId: x.poolId || x.id, closeFirst: () => close() }); } catch (_) { p = Promise.reject(); }
+      p.then(() => returnPill(), () => plain());
+      return;
+    }
+    plain();
   }
   function returnPill() {
     if (!RET.el) {
@@ -2248,9 +2255,16 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     return m ? `${m[1]} Sheet ${m[2]}` : (name || "a sheet");
   }
   const poolRowOf = (id, rid) => (window.B && B.pool && B.pool.rows.get(id)) || (W.pools.get(rid) || []).find(p => p.poolId === id) || null;
-  function offPlan(x, whole) {
+  function offPlan(x, whole, only) {
     const rid = x.rid, ids = new Set();
-    if (whole && rid) {
+    if (only) {
+      // (SheetWin.takeOffOrder, for one sheet: these pieces, and the rest of each of their lines: a line comes off whole)
+      for (const id of only) {
+        ids.add(id);
+        const row = (window.Orders ? Orders.rows() : []).find(r => (r.poolIds || []).includes(id));
+        if (row) for (const y of row.poolIds) ids.add(y);
+      }
+    } else if (whole && rid) {
       for (const y of W.orders.get(rid) || []) if (y.poolId && !y.gone) ids.add(y.poolId);
       for (const r of window.Orders ? Orders.rows() : []) if (String(r.order.receiptId) === rid) for (const id of r.poolIds || []) ids.add(id);
       for (const p of W.pools.get(rid) || []) if (!["abandoned", "superseded"].includes(p.state)) ids.add(p.poolId);
@@ -2268,7 +2282,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       const sku = mine?.sku || pr?.sku || "";
       if (!sh) {
         if (pr && pr.sheetId && !["abandoned", "superseded"].includes(pr.state)) stay.push({ id, sku, where: sheetWord(pr.sheetId, pr.sheetName), why: pr.state === "committed" ? "its set was already sent to the station" : "its sheet is not open in this sorter" });
-        else if (mine) stay.push({ id, sku, where: sheetWord(W.id, W.rec.fileBase), why: "this sheet is not open in this sorter" });
+        else if (mine) stay.push({ id, sku, where: sheetWord(W.id, W.rec?.fileBase), why: "this sheet is not open in this sorter" });
         else ok.push({ id, sku, sh: null, where: "not on a sheet yet" });
         continue;
       }
@@ -2455,7 +2469,9 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     const cancel = opt.then === "cancel" && !!plan.rid, note = opt.note || "";
     const ids = new Set(list.map(o => o.id)), rid = plan.rid;
     const pages = [...new Set(list.map(o => o.sh).filter(Boolean))];
-    const sheetId = W.id, names = listWhere(list.filter(o => o.sh));
+    // (headless: asked for by the shared-orders window, with no sheet window drawn: the same changes, nothing drawn)
+    const ui = !opt.headless && !!(W.dlg && W.dlg.open && W.el.plate);
+    const sheetId = ui ? W.id : null, names = listWhere(list.filter(o => o.sh));
     const rewrite = pages.map(sh => ({ sh, name: sheetWord(sh.sheetId, sh.fileBase, sh), st: stepOf(`Rewriting ${sheetWord(sh.sheetId, sh.fileBase, sh)}`) }));
     const labels = stepOf(`Remaking the QR label${pages.length === 1 ? "" : "s"}`), check = stepOf("Checking the saved sheets");
     const wait = stepOf("Waiting for the sheets to finish their current step");
@@ -2465,26 +2481,30 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     if (!pages.some(busy)) work.steps.shift();
     // the pieces leave the plates at once, in clay, and leave the outline of the room they freed (kept per sheet)
     const t0 = performance.now();
-    for (const o of list) { const y = W.byPool.get(o.id); if (y && !y.gone) { y.gone = true; W.freed.push({ x: y, t0, rid: y.rid, sku: y.sku, at: Date.now() }); } }
-    setFreed(sheetId, W.freed);
+    if (ui) {
+      for (const o of list) { const y = W.byPool.get(o.id); if (y && !y.gone) { y.gone = true; W.freed.push({ x: y, t0, rid: y.rid, sku: y.sku, at: Date.now() }); } }
+      setFreed(sheetId, W.freed);
+    }
     for (const sh of pages) if (sh.sheetId && sh.sheetId !== sheetId) {
       const g = (FREED.get(sh.sheetId) || []).slice();
       for (const c of sh.charms) if (ids.has(c.poolId)) { const p = sh.placements.find(q => q.id === c.id); if (p) g.push({ x: { id: c.id, c, gone: true, p: { cxPt: p.cxPt, cyPt: p.cyPt, angle: p.angle || 0, scale: p.scale || 1, wPt: p.wPt || c.widthPt || 20, hPt: p.hPt || c.heightPt || 20 } }, t0: 0, rid: ridOf(c), sku: c.sku || c.name, at: Date.now() }); }
       setFreed(sh.sheetId, g);
     }
-    W.hover = null; tip(null); W.el.plate.classList.remove("onCharm"); W.ghost = null;
+    if (ui) { W.hover = null; tip(null); W.el.plate.classList.remove("onCharm"); W.ghost = null; }
     // the order's row goes with it: to On hold, or folded away when the order is cancelled (copied before the list
     // is drawn again; from the charm's pane, once the list has slid back)
     const skus = [...new Set(list.map(o => o.sku).filter(Boolean))];
-    const cue = offCue(rid, cancel ? "cancel" : "hold", plan.whole || !skus.length ? `Order ${rid} is on hold` : `Order ${rid} · ${skus.join(", ")} is on hold`);
+    const cue = !ui ? null : offCue(rid, cancel ? "cancel" : "hold", plan.whole || !skus.length ? `Order ${rid} is on hold` : `Order ${rid} · ${skus.join(", ")} is on hold`);
     // (the steps panel first: from the charm's pane it is there already when the list slides back, instead of pushing
     // the list down under the eye)
-    renderWork(); renderFill();
-    if (W.view === "piece") showSheetPane(); else { renderStrip(); renderSheetPane(); }
-    // (after the pane is back: going back to the list used to stop the clay fade on its first frame)
-    W.fx.push({ kind: "freed", t0, ms: 1020 }); fxLoop(); paintBase();
+    if (ui) {
+      renderWork(); renderFill();
+      if (W.view === "piece") showSheetPane(); else { renderStrip(); renderSheetPane(); }
+      // (after the pane is back: going back to the list used to stop the clay fade on its first frame)
+      W.fx.push({ kind: "freed", t0, ms: 1020 }); fxLoop(); paintBase();
+    }
     if (cue) cue.go();
-    const paint = () => { if (W.dlg.open && W.work === work) renderWork(); };
+    const paint = () => { if (W.dlg && W.dlg.open && W.work === work) renderWork(); };
     let changed = false;
     try {
       await waitIdle(pages, wait, paint);
@@ -2560,21 +2580,21 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
         (plan.stay.length ? ` ${plan.stay.length === 1 ? "1 piece" : plan.stay.length + " pieces"} stayed (${esc(plan.stay.map(o => o.where + ": " + o.why).join("; "))})${cancel ? ": set them aside once cut" : ""}.` : "");
       if (cue) cue.end();
       paint(); endFlow(work);
-      if (W.id === sheetId && W.dlg.open) open2(sheetId);
+      if (sheetId && W.id === sheetId && W.dlg.open) open2(sheetId);
     } catch (e) {
       for (const st of work.steps) doneStep(st);
       letGo(pages);
       if (!changed) {   // nothing came off: the room it would have freed is not free
         for (const o of list) { const y = W.byPool.get(o.id); if (y) y.gone = false; }
         const mine = g => ids.has(g.x.poolId || (g.x.c && g.x.c.poolId));
-        for (const id of new Set([sheetId, ...pages.map(sh => sh.sheetId).filter(Boolean)])) setFreed(id, (FREED.get(id) || []).filter(g => !mine(g)));
+        for (const id of new Set([sheetId, ...pages.map(sh => sh.sheetId)].filter(Boolean))) setFreed(id, (FREED.get(id) || []).filter(g => !mine(g)));
         W.freed = W.freed.filter(g => !mine(g));
       }
       if (cue) cue.fail();   // (a row that did not go comes back into its list)
       work.state = "failed"; work.title = cancel ? "Not cancelled" : "Not everything came off";
       work.note = esc(e.message) + (!changed ? "." : cancel ? ". The order is under On hold; cancel it from there." : ". Pieces already taken off stay off; the sheet window shows the sheet as saved now.");
       paint(); endFlow(work);
-      if (W.id === sheetId && W.dlg.open) open2(sheetId);
+      if (sheetId && W.id === sheetId && W.dlg.open) open2(sheetId);
       throw e;
     }
   }
@@ -2939,18 +2959,19 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     const pressedAt = Date.now();
     const keep = stepOf("Keeping its record under Cancelled orders"), gone = stepOf("Taking it off every list");
     const work = beginFlow({ state: "working", title: `Cancelling order ${rid}`, steps: [keep, gone], note: "" }); if (!work) return;
-    const cue = offCue(rid, "cancel");   // (its row on hold folds away; one whose pieces stay on this sheet stays)
-    renderWork();
-    if (W.view === "piece") showSheetPane(); else renderSheetPane();
+    const ui = !opt.headless && !!(W.dlg && W.dlg.open && W.el.plate);   // (headless: nothing drawn; see takeOff)
+    const cue = ui ? offCue(rid, "cancel") : null;   // (its row on hold folds away; one whose pieces stay on this sheet stays)
+    if (ui) { renderWork(); if (W.view === "piece") showSheetPane(); else renderSheetPane(); }
     if (cue) cue.go();
-    const paint = () => { if (W.dlg.open && W.work === work) renderWork(); };
+    const paint = () => { if (W.dlg && W.dlg.open && W.work === work) renderWork(); };
     // a held order remembers the sheets it was taken off (its hold says so): the record keeps them
     const was = [...new Set(rowsOfOrder(rid).map(r => (/^Taken off (.+?) by /.exec(r.hold || "") || [])[1]).filter(n => n && n !== "its sheet"))].join(", ");
     try { await cancelRecord(rid, { note: opt.note, who, sheets: was, at: pressedAt }, keep, gone, paint); }
     catch (e) { for (const st of work.steps) doneStep(st); work.state = "failed"; work.title = "Not cancelled"; work.note = esc(e.message) + ". Nothing changed; try again."; if (cue) cue.fail(); paint(); endFlow(work); throw e; }
     work.state = "done"; work.title = `Order ${rid} cancelled`; work.note = `The record is under Orders › Cancelled, where it can be restored.`;
     if (cue) { cue.done(); cue.end(); }
-    paint(); endFlow(work); if (W.dlg.open && W.rec) renderSheetPane();
+    paint(); endFlow(work); if (ui && W.dlg.open && W.rec) renderSheetPane();
+    return true;
   }
 
   /* ── cancelled elsewhere (Paul, 28 Sep, A2-A3): an order cancelled on Etsy (the receipts mirror writes its record) or at
@@ -4379,7 +4400,8 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
      Include paths above without opening this window. Each throws, having put back what it changed, when it did not do it.
        joinInfo(id)         what the open run can do for the sheet now: { runHere, draft, dispatchSetId, can: { ok, byHand, reason }, split: [{ label, orders }] }
        joinSet(id, o)       the sheet of the open run joins its set with its QR label (Release as it stands, or Include for 10K / 14K);
-                            o.split "this": only this sheet when an order of it is also on a sheet that stays out
+                            o.split "all": the sheets it shares an order with join with it (the sheets of one order are always one set)
+       takeOffOrder(o)      an order's pieces off its sheets with no window drawn (SharedOrders.removeFromSheet)
        remakeLabel(id)      the QR label of a sheet in its set (or of its own) made again */
   const savedSheet = async id => { const r = await api("charmNestLibrary", { op: "getSheet", id }, { quiet: true, timeoutMs: 12000 }); if (!r.sheet) throw new Error("This sheet is no longer in the Library."); return r.sheet; };
   function joinInfo(id) {
@@ -4398,15 +4420,55 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   async function joinSet(id, o = {}) {
     const sh = allSheets().find(p => p.sheetId === id), run = window.B && B.run, plan = labelPlanOf({}, id);
     if (!sh || !run || !plan || (plan.kind !== "release" && plan.kind !== "include")) throw new Error("This sheet cannot join a set from here: open it and press Make QR label");
-    if (plan.kind === "include" && Gate.splitWith && Gate.splitWith(sh, true).length && o.split !== "this") throw new Error("An order on this sheet is also on a sheet that is not in the set: it needs your choice first");
-    await doLabel(plan, null, sh, [sh], run);
+    // sheets that share an order go into the same set (Paul, 5 Oct): the sheets it shares one with come in with it, or none does
+    const partners = plan.kind === "include" && Gate.splitWith ? Gate.splitWith(sh, true) : [];
+    if (partners.length && o.split !== "all") throw new Error("An order on this sheet is also on a sheet that is not in the set: the sheets of one order go into the set together, so it needs all of them");
+    await doLabel(plan, null, sh, [sh, ...partners.map(x => x.sheet)], run);
+  }
+  /** Take an order's pieces off its sheets with no window drawn (the shared-orders window calls this through
+   *  SharedOrders.removeFromSheet; Paul, 5 Oct: an order that ties two sheets together can be put on hold or cancelled from
+   *  there). The same steps as the sheet window's Take off, one change at a time:
+   *    { orderId, sheetId, mode: "hold" | "cancel", by, note, scope: "order" | "sheet" }
+   *  scope "order" (default): the whole order comes off every sheet not cut yet; scope "sheet": only its pieces on that
+   *  sheet (a line comes off whole), on hold; an order is cancelled whole, never in part. A piece on a cut sheet, a set
+   *  sent to the station, or a sheet this sorter does not hold stays, and is named with the reason.
+   *  Resolves { ok, error?, mode, scope, removed: [{ id, sku, where }], stayed: [{ id, sku, where, why }] }. */
+  async function takeOffOrder(o) {
+    o = o || {};
+    const rid = String(o.orderId || ""), sheetId = String(o.sheetId || ""), mode = o.mode === "cancel" ? "cancel" : "hold", scope = o.scope === "sheet" ? "sheet" : "order";
+    const who = String(o.by || whoAmI() || "").trim(), note = String(o.note || "").trim();
+    const no = error => ({ ok: false, error, mode, scope, removed: [], stayed: [] });
+    if (!rid) return no("No order was given.");
+    if (!window.B || !window.Orders || !window.Pool) return no("The sorter is not ready yet; try again in a moment.");
+    if (!who) return no("A name is needed for the record.");
+    if (scope === "sheet" && mode === "cancel") return no("An order is cancelled whole; take its pieces off this sheet to put them on hold.");
+    if (scope === "sheet" && !sheetId) return no("No sheet was given.");
+    if (W.flow) return no(`One change at a time: ${W.flow.title.charAt(0).toLowerCase() + W.flow.title.slice(1)} is still running.`);
+    let only = null;
+    if (scope === "sheet") {
+      only = new Set();
+      const page = allSheets().find(p => p.sheetId === sheetId);
+      if (page) for (const c of page.charms) if (c.poolId && ridOf(c) === rid) only.add(c.poolId);
+      for (const [id, pr] of B.pool.rows) if (pr.sheetId === sheetId && String(pr.orderId) === rid && !["abandoned", "superseded"].includes(pr.state)) only.add(id);
+      if (!only.size) return no(`Order ${rid} has no pieces on that sheet.`);
+    }
+    const plan = offPlan({ rid }, scope === "order", only), opt = { then: mode, note, headless: true };
+    const stayed = plan.stay.map(x => ({ id: x.id, sku: x.sku, where: x.where, why: x.why }));
+    const removed = plan.ok.map(x => ({ id: x.id, sku: x.sku, where: x.where }));
+    try {
+      if (plan.ok.length) await takeOff(plan, opt, who);
+      else if (mode === "cancel") { if (!(await cancelOnly(rid, opt, who))) return no("The order could not be cancelled."); }
+      else return Object.assign(no(plan.stay.length ? `Nothing of order ${rid} can come off: ${plan.stay.map(x => `${x.sku || "a piece"} on ${x.where} (${x.why})`).join("; ")}.` : `Order ${rid} has nothing to take off.`), { stayed });
+    } catch (e) { return Object.assign(no(String(e && e.message || e)), { stayed }); }
+    if (W.dlg && W.dlg.open && W.rec) { try { open2(W.id); } catch (_) {} }   // (a sheet window left open shows the sheet as it is saved now)
+    return { ok: true, mode, scope, removed: plan.ok.length ? removed : [], stayed };
   }
   async function remakeLabel(id) {
     const sh = allSheets().find(p => p.sheetId === id), run = window.B && B.run, rec = await savedSheet(id), plan = labelPlanOf(rec, id);
     if (!plan || (plan.kind !== "relabel" && plan.kind !== "own")) throw new Error("The QR label cannot be made from here: open the sheet and press Make QR label");
     await doLabel(plan, rec, sh, [sh], run);
   }
-  window.SheetWin = { remakeLabel, joinSet, joinInfo, open: (id, opts) => { if (W.away) comeBack(W.away, { ms: 0 }); return open(id, opts); }, close, isOpen: () => !!(W.dlg && W.dlg.open), current: () => W.id, drawOrder, cardBack, armBack, _W: W };
+  window.SheetWin = { remakeLabel, joinSet, joinInfo, takeOffOrder, open: (id, opts) => { if (W.away) comeBack(W.away, { ms: 0 }); return open(id, opts); }, close, isOpen: () => !!(W.dlg && W.dlg.open), current: () => W.id, drawOrder, cardBack, armBack, _W: W };
 })();
 
 /* Charm Nest · the Library turned over (Paul, 28 Sep 21:22: "add the back engraving view … to all places where a sheet is

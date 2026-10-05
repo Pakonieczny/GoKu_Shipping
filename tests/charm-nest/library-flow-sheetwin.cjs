@@ -81,8 +81,10 @@ const plain = x => JSON.parse(JSON.stringify(x));   // (objects made inside the 
   // ── a 10K/14K sheet: Include, and an order on two sheets needs the person's choice ──
   reset([sheet({ sheetId: 'k10-1', metal: 'gold10k', split: true }), sheet({ sheetId: 'k10-2', metal: 'gold10k', page: 2, split: true })]);
   i = joinInfo('k10-1'); assert.equal(i.can.ok, true); assert.equal(i.can.byHand, false); assert.deepEqual(plain(i.split.map(x => x.label + ':' + x.orders)), ['10K Sheet 2:5001']);
-  await assert.rejects(joinSet('k10-1'), /needs your choice/); assert.equal(c.getChanged(), null);
-  await joinSet('k10-1', { split: 'this' }); assert.deepEqual(plain(c.getChanged()), { m: 'gold10k', inc: true, ids: ['k10-1'] }); assert.equal(c.getSheets()[1].draft, true, 'the other sheet stays out');
+  // (the cardinal rule of a Set of Sheets, 5 Oct: the sheets of one order go in together; "only this sheet" is gone)
+  await assert.rejects(joinSet('k10-1'), /go into the set together/); assert.equal(c.getChanged(), null);
+  await assert.rejects(joinSet('k10-1', { split: 'this' }), /go into the set together/); assert.equal(c.getChanged(), null, 'the old "only this sheet" choice is gone');
+  await joinSet('k10-1', { split: 'all' }); assert.deepEqual(plain(c.getChanged()), { m: 'gold10k', inc: true, ids: ['k10-1', 'k10-2'] });
 
   // ── the label of a sheet in its set, or of its own, made again ──
   reset([sheet({ sheetId: 'in-set', draft: false, setId: 'set-9', label: null })]); records['in-set'] = { id: 'in-set' }; assembleMode = 'label';
@@ -96,5 +98,5 @@ const plain = x => JSON.parse(JSON.stringify(x));   // (objects made inside the 
   reset([sheet({ sheetId: 'gold-1' })]); records['gold-1'] = { id: 'gold-1' };
   await assert.rejects(remakeLabel('gold-1'), /cannot be made from here/, 'a sheet that has not joined a set is joined, not relabelled');
   assert(!toasts.length, 'no pop-up for a move');
-  console.log('PASS: sheet window paths for the Library moves: join info, join a set with its label, Include with its split choice, label made again, failures put back what they changed');
+  console.log('PASS: sheet window paths for the Library moves: join info, join a set with its label, Include with the sheets of its order, label made again, failures put back what they changed');
 })().catch(e => { console.error(e); process.exitCode = 1; });
