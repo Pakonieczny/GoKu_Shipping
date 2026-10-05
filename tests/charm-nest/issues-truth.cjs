@@ -378,6 +378,17 @@ assert.equal(R.sheet(fixed).ready,true);assert.equal(R.laserSheet(fixed).ready,t
     lines[solo+'_2'].engraveCandidate=true;   // the same piece with something to engrave and no decision: SS Sheet 1 now waits for it, and GF Sheet 1 names that sheet
     const r5=await call({op:'laserStatus',sheetIds:['gf-1']});
     assert.deepEqual(Object.entries(r5.sheets[0].orderReadiness).filter(([,v])=>v.ready!==true).map(([o,v])=>[o,v.key,v.sheetLabel]),[[two,'otherSheetNotReady','SS Sheet 1'],[solo,'otherSheetNotReady','SS Sheet 1']]);
+    // a WRITTEN line that lost its pool ids is as lost as a pooled one (it could also be a SKU with no design, which is only known later): when this sheet is asked
+    // alone, the sheet that lists the line's copy is read too, so the piece is on a sheet and the order is no issue (a sheet that lists ONLY this order)
+    const lone='4170777001',loneLines={};
+    loneLines[lone+'_7001']={orderId:lone,state:'written',quantity:1,poolIds:[],sku:'SKU-7001',engraveCandidate:false,snap:{buyer:'Someone'}};
+    loneLines[lone+'_7002']={orderId:lone,state:'written',quantity:1,poolIds:[lone+'_7002_1'],sku:'SKU-7002',engraveCandidate:false,snap:{buyer:'Someone'}};
+    st.put(RUN,'run9',{runId:'run9',lines:loneLines});
+    mk('x9-sheet','gold',[lone+'_7001_1'],{setId:'set9a',runId:'run9'});mk('y9-sheet','silver',[lone+'_7002_1'],{setId:'set9b',runId:'run9'});
+    st.put(SET,'set9a',{setId:'set9a',seq:3,day:'2026-10-05',runId:'run9',sheetIds:['x9-sheet'],orders:{},status:'labelled',updatedAt:ts,createdAt:ts});
+    st.put(SET,'set9b',{setId:'set9b',seq:4,day:'2026-10-05',runId:'run9',sheetIds:['y9-sheet'],orders:{},status:'labelled',updatedAt:ts,createdAt:ts});
+    const r6=await call({op:'laserStatus',sheetIds:['y9-sheet']});
+    assert.deepEqual(r6.sheets.map(s=>[s.id,s.orderReadiness[lone],s.laser.ready]),[['y9-sheet',{ready:true},true]],'a written line without pool ids, its copy on a sheet that was not asked, is no issue');
     console.log('issues-truth OK');
   }finally{server.close();}
 })().catch(e=>{console.error(e);process.exitCode=1;});
