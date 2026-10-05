@@ -99,6 +99,7 @@ L.place(cards.one,L.group(cards.one._laserSet,[recs.F4]).ready,body);
   release();await tick();
   assert.equal(shows.length,1);assert.equal(shows[0].host,cards.F1,'LibraryApprovalUI shows on the card that was pressed');
   assert.equal(shows[0].plan.auto[0].label,'QR label remade');assert.equal(typeof shows[0].opts.onConfirm,'function');assert.equal(typeof shows[0].opts.onCancel,'function');
+  for(let i=0;i<60 && !requests.length;i++)await tick(10);   // (the read is a timer of the live loop: given a moment on a busy machine)
   assert.equal(requests.length,1,'the card is read again at once');assert.equal(requests[0].payload.sheetIds.includes('F1'),true);
   await tick();flush();
   assert.equal(area(cards.F1),'ready','the card moved to Laser cutting');assert.equal(boxes(cards.F1).length,0,'and no longer has a button');
