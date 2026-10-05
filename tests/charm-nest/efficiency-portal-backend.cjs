@@ -104,7 +104,7 @@ if (!EMPTY) {
 
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.svg': 'image/svg+xml', '.json': 'application/json' };
 const PAGES = {   // the fake station pages: the real libraries, a sign-in done by the test, nothing else
-  '/weld-1.html': { station: 'welding', device: 'weld-1' }, '/assembly-2.html': { station: 'assembly', device: 'assembly-2' }, '/shipping-1.html': { station: 'shipping', device: 'shipping-1' },
+  '/weld-1.html': { station: 'welding', device: 'weld-1' }, '/assembly-2.html': { station: 'assembly', device: 'assembly-2' }, '/assembly-3.html': { station: 'assembly', device: 'assembly-3' }, '/shipping-1.html': { station: 'shipping', device: 'shipping-1' },
   '/sorting.html': { station: 'sorting', device: 'sorting-1' }, '/design-message.html': { station: 'design', device: 'design-message' }, '/etsy-mail-1.html': { station: 'inbox', device: 'etsy-mail-1' }
 };
 const pageHtml = (p, sandbox) => `<!doctype html><html><head><meta charset="utf-8"><title>${p.device}</title></head><body><h1>${p.device}</h1>

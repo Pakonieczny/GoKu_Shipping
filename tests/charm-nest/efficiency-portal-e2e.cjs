@@ -180,12 +180,14 @@ function backend(env) {
       return page;
     };
     const TX = (rid, lines) => lines.map((l, i) => ({ transaction_id: Number(rid) * 10 + i, listing_id: l.listing, sku: l.sku, title: l.title, quantity: l.q, variations: l.size ? [{ formatted_name: 'Size', formatted_value: l.size }] : [] }));
-    const R = { weld: '3529000101', asm: '3529000202', ship: '3529000303', design: '3529000404' }, R_L = '3529000505';
+    const R = { weld: '3529000101', asm: '3529000202', ship: '3529000303', design: '3529000404' }, R_L = '3529000505', R_G = '3529000606', R_I = '3529000707';
     const LINES = {
       [R.weld]: [{ listing: 1912340001, sku: 'CH-MOON-GF', title: 'Moon charm, gold', q: 2, size: 'M' }, { listing: 1912340002, sku: 'ST-PEARL-GF', title: 'Pearl stud', q: 1 }],
       [R.asm]: [{ listing: 1912340003, sku: 'CH-HEART-RG', title: 'Heart charm, rose', q: 1 }],
       [R.ship]: [{ listing: 1912340004, sku: 'ST-BEE-SS', title: 'Bee stud', q: 2 }, { listing: 1912340005, sku: 'CH-LEAF-GF', title: 'Leaf charm', q: 2 }],
       [R.design]: [{ listing: 1912340006, sku: 'CH-STAR-SS', title: 'Star charm', q: 1 }],
+      [R_I]: [{ listing: 1912340005, sku: 'CH-LEAF-GF', title: 'Leaf charm', q: 1 }],
+      [R_G]: [{ listing: 1912340003, sku: 'CH-HEART-RG', title: 'Heart charm, rose', q: 1 }],
       [R_L]: [{ listing: 1912340001, sku: 'CH-MOON-GF', title: 'Moon charm, gold', q: 2, size: 'M' }, { listing: 1912340004, sku: 'ST-BEE-SS', title: 'Bee stud', q: 1 }]
     };
     const stationPage = async (ctx, name, who, sandbox) => {
@@ -546,7 +548,7 @@ function backend(env) {
       assert.equal(await page.locator(`${P} .efpK[data-k="kpis.parts"] .efpKV`).innerText().then(s => s.trim()), '—', 'a figure nobody logged is a dash, not a 0');
       await shot(page, 'g4-person-no-data-1440');
       const LONG = 'Bartholomew-Maximilian Featherstonehaugh-Cholmondeley-Wolfeschlegelstein';
-      const lp = await stationPage(shared.ctx, 'sorting', LONG); await scan(lp, R.asm, 'typed'); await page.bringToFront();   // (a tab behind another one draws no frames: its page-in slide and the rail's fold would stand still)
+      const lp = await stationPage(shared.ctx, 'sorting', LONG); await scan(lp, R_G, 'typed'); await page.bringToFront();   // (a tab behind another one draws no frames: its page-in slide and the rail's fold would stand still)
       await page.evaluate(() => Efficiency.go('overview')); await settled(page, '#efficiency', 'efPgOverview');
       await waitFor(page, n => document.getElementById('efficiencyView').innerText.includes(n.slice(0, 20)), LONG, 30000);
       const longBad = [];
@@ -572,12 +574,22 @@ function backend(env) {
       const page = await fresh();
       const fig = (page, sel) => page.locator(sel).innerText().then(s => s.replace(/,/g, '').trim());
       const same = async (sel, want, what) => waitFor(page, ([sel, want]) => { const e = document.querySelector(sel); return !!e && e.textContent.replace(/,/g, '').trim() === String(want); }, [sel, want], 25000)
-        .catch(async () => { throw new Error(`${what}: the screen says "${await page.locator(sel).first().innerText().catch(() => '(missing)')}", the server says ${want}`); });
-      const ov = await B.ask({ op: 'overview', trend: false }), lv = await B.ask({ op: 'live' });
+        .catch(async () => { const o2 = await B.ask({ op: 'overview', trend: false }), l2 = await B.ask({ op: 'live' }); throw new Error(`${what}: the screen says "${await page.locator(sel).first().innerText().catch(() => '(missing)')}", the server says ${want} (now: overview stations ${JSON.stringify(o2.business.stations.map(x => [x.station, x.parts, x.orders]))}; live counts ${JSON.stringify(l2.stations.map(x => [x.key, x.counts.partsToday, x.counts.ordersToday]))})`); });
+      // an order IN HAND (scanned, not finished) at Sorting: the day's order counts must already include it everywhere (they did not on the board: it counted only finished orders)
+      const base = (await B.ask({ op: 'overview', trend: false })).business.stations.find(x => x.station === 'sorting').orders;
+      const ip = await stationPage(shared.ctx, 'sorting', 'Empress D.'); await scan(ip, R_I, 'in hand'); await page.bringToFront();
+      let ov, lv; const t0 = Date.now();
+      for (;;) {   // (both answers keep today's numbers for a few seconds, the live one for up to 20 s: wait until the Overview has the scan, then until the live answer agrees)
+        ov = await B.ask({ op: 'overview', trend: false }); lv = await B.ask({ op: 'live' });
+        if (ov.business.stations.find(x => x.station === 'sorting').orders < base + 1 && Date.now() - t0 < 40000) { await sleep(1500); continue; }
+        const diff = ov.business.stations.filter(x => (lv.stations.find(l => l.key === x.station) || { counts: {} }).counts.ordersToday !== x.orders).map(x => `${x.station}: overview ${x.orders}, live ${(lv.stations.find(l => l.key === x.station) || { counts: {} }).counts.ordersToday}`);
+        if (!diff.length) break; if (Date.now() - t0 > 40000) assert.fail('the live board and the Overview count a different number of orders per station while an order is in hand: ' + diff.join('; ')); await sleep(2000);
+      }
       const T = ov.business.totals, names = ov.people.map(p => p.name), onNames = ov.people.filter(p => p.status === 'on').map(p => p.name).sort();
       // 1 · the Overview: the day's totals and who is in
       await page.evaluate(() => Efficiency.go('overview')); await settled(page, '#efficiency', 'efPgOverview');
       await same(`${V} .efKpi[data-k="parts"] .efKV`, T.parts, 'Overview parts today'); await same(`${V} .efKpi[data-k="orders"] .efKV`, T.orders, 'Overview orders today'); await same(`${V} .efKpi[data-k="on"] .efKV`, onNames.length, 'Overview people on now');
+      await waitFor(page, n => JSON.stringify([...document.querySelectorAll('#efficiencyView .efSiGrid .efSiNm')].map(e => e.textContent.trim()).sort()) === JSON.stringify(n), onNames, 25000).catch(() => {});
       assert.deepEqual(await siNames(page), onNames, 'Signed in now = the people the sign-ins say');
       // 2 · the Stations board: each station's day counts are the server's, and they add up to the Overview's totals
       await page.click(`${V} .efTabBtn[data-tab="stations"]`); await settled(page, '#efficiency/stations', 'efPgStations'); await page.waitForSelector(`${V} .es .esSt`, { timeout: 20000 });
@@ -618,6 +630,7 @@ function backend(env) {
         }
         await page.click(`${P} .efpBack`); await settled(page, '#efficiency/people', 'efPgPeople'); await page.waitForSelector(`${V} .efRoster .efRc`, { timeout: 20000 });
       }
+      await ip.evaluate(() => window.__signOut()); await page.bringToFront();
       if (rowsInfo.length) console.log('    note (nobody logged anything today):', rowsInfo.join(' | '));
       await page.evaluate(() => Efficiency.go('overview')); await settled(page, '#efficiency', 'efPgOverview');
     });
