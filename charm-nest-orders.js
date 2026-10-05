@@ -467,6 +467,10 @@
   function evaluateOrder(rows) {
     const lines = rows.map(r => {
       if (r.changePending || r.hold) return {key:r.key,ok:false,why:r.reason || r.hold || "Etsy changes need review"};
+      // completed by hand (Review → Complete Order, or its QR label printed: the custom order's own record, as CharmNestReadiness.isHand reads it) is resolved:
+      // it needs no sheet and does not hold its order's set (a held one, above, still does)
+      const cd = r.spec && r.spec.customDone;
+      if (cd && cd.state !== "open" && cd.how !== "sheet") return { key: r.key, ok: true, why: "completed by hand (Custom Orders)" };
       if (r.spec && r.spec.noDesign) return { key: r.key, ok: true, why: "no design (chain/packaging)" };
       if (r.state === "gone") return { key: r.key, ok: false, why: "order gone from Etsy" };
       if (r.problems && r.problems.length) return { key: r.key, ok: false, why: r.problems[0].kind === "needsMaterial" ? "needs material" : r.problems[0].kind === "needsMapping" ? "needs an option mapped" : r.problems[0].kind === "unmatchedSku" ? "SKU not in a master" : r.problems[0].kind === "missingSize" ? "no design for that size" : r.problems[0].kind };

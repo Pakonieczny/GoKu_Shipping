@@ -896,7 +896,7 @@
     // under Nested even once another piece of the order is nested
     const loose = () => {
       for (const l of lines) {
-        if (l.onSheet || l.state === "gone") continue;
+        if (l.onSheet || l.hand || l.state === "gone") continue;   // (hand: completed by hand, a piece that needs no sheet)
         if (l.hold) add("person", `${name(l)} is held${l.reason ? ": " + l.reason : ""}. Release it in Review`);
         else if (l.state === "unmatched") add("person", `${name(l)} has no charm${l.reason ? " (" + l.reason + ")" : ""}; pick it in Review`);
         else if (l.problem) add("person", `${name(l)}: ${l.problem}; decide it in Review`);

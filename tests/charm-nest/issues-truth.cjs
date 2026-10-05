@@ -9,7 +9,7 @@ const CODE={gold:'GF',silver:'SS',rose:'RG'};
 // a saved sheet holding these pool ids; approved:false = its engravings still wait for approval (the sheet's own trouble, never an order's)
 function sheet(id,metal,pool,{approved=true,index=1,setId='set1',extra={}}={}){
   const orders=[...new Set(pool.map(p=>p.split('_')[0]))];
-  return {id,metal,setId,runId:'run1',sheetIndex:index,status:'complete',poolIds:pool,placedCount:pool.length,verification:{ok:true},preview:'https://example.com/p.png',outputs:{ai:'https://example.com/f.ai'},
+  return {id,metal,setId,setSeq:+(String(setId).match(/\d+$/)||[1])[0],runId:'run1',sheetIndex:index,status:'complete',poolIds:pool,placedCount:pool.length,verification:{ok:true},preview:'https://example.com/p.png',outputs:{ai:'https://example.com/f.ai'},
     orders,label:{files:[{path:'qr.png',url:'https://example.com/qr.png',payload:'x',orders}]},backPool:approved?pool.map(p=>back(p,id)):[],
     engraving:Object.fromEntries(pool.map(p=>[p,approved?{needed:true,state:'written',approved:true}:{needed:true,state:'review',approved:false}])),...extra};
 }
@@ -36,7 +36,7 @@ assert.deepEqual(own.map(i=>[i.step,i.key,i.label]),[['engraving','approvalsNeed
 assert.equal(own[0].orderId,undefined);assert.deepEqual(own[0].open,{type:'sheet',id:'ss1'});
 const reps48=R.orderReports(rows48,[ss]);
 assert.equal(Object.values(reps48).filter(r=>!r.ready).length,48,'the whole-order reading still knows each piece sits on a sheet that is not ready');
-const seen=clone(ss);seen.orderReadiness=Object.fromEntries(R.orderIds(ss).map(o=>[o,R.forSheet(reps48[o],'ss1')]));
+const seen=clone(ss);seen.orderReadiness=Object.fromEntries(R.orderIds(ss).map(o=>[o,R.forSheet(reps48[o],'ss1',R.setOf(ss))]));
 assert(Object.values(seen.orderReadiness).every(r=>r.ready===true),'but read from the sheet that holds them, every one is ready');
 assert.equal(R.sheet(seen).stages.orders,true);assert.equal(R.orderBlockers(seen).length,0);assert.equal(R.sheet(seen).ready,false,'the sheet itself is still not ready: its own engraving');
 let e=R.explain(seen,{rows:rows48});
@@ -48,31 +48,59 @@ const raw=clone(ss);raw.orderReadiness=reps48;assert.equal(R.sheet(raw).stages.o
 const fixed=sheet('ss1','silver',pool48);fixed.orderReadiness=reps48;
 assert.equal(R.sheet(fixed).ready,true);assert.equal(R.laserSheet(fixed).ready,true);
 
-// 2. Two pieces, the other on a second sheet that is not ready: exactly one issue, naming that sheet; the not-ready sheet itself never blames itself
+// 2. Paul's order 4170252963 (round 7): two pieces, the other on a second sheet that is not ready, BOTH SHEETS IN THE SAME SET: "It looks perfectly fine to me and
+//    it's on both sheets and both sheets are in the same set". A set advances as one: the wait is the SET's, said once, and the order is no issue for either sheet.
 {
   const gf=sheet('gf1','gold',['4170252963_a_1','5000_x_1'],{index:1}),ssB=sheet('ss1','silver',['4170252963_b_1','5001_y_1'],{approved:false,index:1});
+  const rs=[row('4170252963','a',{buyer:'Nathaly Soto',title:'Female symbol',listing:'7777'}),row('4170252963','b',{state:'pooled',title:'Female symbol'}),row('5000','x'),row('5001','y')];
+  const all=[gf,ssB],set={setId:'set1',seq:1,name:'Set 1',sheetIds:['gf1','ss1']};
+  assert.deepEqual(orderIssues(gf,rs,all),[],'same set: Nathaly Soto\'s order is not an issue of GF Sheet 1');
+  assert.deepEqual(orderIssues(ssB,rs,all),[]);
+  // the whole-order reading still knows where each piece sits and that SS Sheet 1 is not ready; the sheet reads its own side of it
+  const reps0=R.orderReports(rs,all);assert.equal(reps0['4170252963'].ready,false);assert.equal(reps0['4170252963'].blocks[0].sheetLabel,'SS Sheet 1');assert.equal(reps0['4170252963'].blocks[0].setId,'set1');
+  assert.equal(R.forSheet(reps0['4170252963'],'gf1',R.setOf(gf)).ready,true,'forSheet drops a wait for a not-ready sheet of the sheet\'s own set');
+  assert.equal(R.forSheet(reps0['4170252963'],'gf1','set2').ready,false,'it is a wait for a sheet of another set');
+  const gr=clone(gf);gr.orderReadiness=Object.fromEntries(R.orderIds(gf).map(o=>[o,R.forSheet(reps0[o],'gf1',R.setOf(gf))]));
+  assert(Object.values(gr.orderReadiness).every(r=>r.ready===true));assert.equal(R.sheet(gr).stages.orders,true);assert.equal(R.orderBlockers(gr).length,0);assert.equal(R.sheet(gr).ready,true,'GF Sheet 1 has nothing of its own or of any order holding it');
+  // the same through the whole-order map the page hands every sheet unread (bridge validateRelease, the order window): the sheet reads its own side, set included
+  const raw=clone(gf);raw.orderReadiness=reps0;assert.equal(R.sheet(raw).stages.orders,true);assert.equal(R.orderBlockers(raw).length,0);
+  let e=R.explain(gr,{rows:rs});assert.equal(step(e,'orders').state,'done');assert.equal(step(e,'orders').items.length,0);assert.doesNotMatch(strings(e.steps).join(' | '),/Waits on|wait for other pieces/);
+  // the set's wait is said once, quietly, from the Approve buttons' own truth: GF Sheet 1 is waiting for SS Sheet 1's engraving; SS Sheet 1 does not wait for itself
+  const li=R.issues(gf,{rows:rs,allSheets:all,set,sheets:all});
+  assert.deepEqual(li.map(i=>[i.step,i.key,i.quiet===true,i.label,i.stepKey,i.stepLabel,i.open.id,i.counter]),[['laser','waitsOnSheet',true,'SS Sheet 1','engraving','Engraving','ss1',{done:0,of:2}]],'one quiet row, no order issue');
+  assert.match(li[0].why,/back engravings 0 of 2/);assert.equal(li[0].text,'SS Sheet 1 · '+li[0].why);
+  assert.deepEqual(R.issues(ssB,{rows:rs,allSheets:all,set,sheets:all}).filter(i=>i.step==='laser'),[],'a sheet never waits on itself');
+  assert.deepEqual(R.issues(ssB,{rows:rs,allSheets:all,set,sheets:all}).map(i=>[i.step,i.key]),[['engraving','approvalsNeeded']],'SS Sheet 1: its own engraving, and nothing else');
+  // SS Sheet 1 approves its engravings: the wait is gone
+  assert.deepEqual(R.issues(gf,{rows:rs,allSheets:[gf,sheet('ss1','silver',['4170252963_b_1','5001_y_1'],{index:1})],set,sheets:[gf,sheet('ss1','silver',['4170252963_b_1','5001_y_1'],{index:1})]}),[]);
+}
+// 2b. The very same order with the second sheet in ANOTHER set is split between two sets: still a real issue of the sheet that waits, worded as the split it is.
+{
+  const gf=sheet('gf1','gold',['4170252963_a_1','5000_x_1'],{index:1}),ssB=sheet('ss1','silver',['4170252963_b_1','5001_y_1'],{approved:false,index:1,setId:'set2'});
   const rs=[row('4170252963','a',{buyer:'Nathaly Soto',title:'Female symbol',listing:'7777'}),row('4170252963','b',{state:'pooled',title:'Female symbol'}),row('5000','x'),row('5001','y')];
   const all=[gf,ssB];
   const a=orderIssues(gf,rs,all);
   assert.equal(a.length,1);assert.equal(a[0].orderId,'4170252963');assert.equal(a[0].key,'otherSheetNotReady');assert.equal(a[0].customer,'Nathaly Soto');assert.equal(a[0].orderLabel,'Order 4170252963');assert.equal(a[0].listingId,'7777');
   assert.equal(a[0].pieceCount,2);assert.deepEqual(a[0].pieces.map(p=>[p.index,p.sheetLabel]),[[2,'SS Sheet 1']],'the other piece, and the sheet it is on');
+  assert.equal(a[0].split,true);assert.deepEqual(a[0].sets,['Set 1','Set 2']);assert.equal(a[0].pieces[0].split,true);
+  assert.match(a[0].why,/^Split between Set 1 and Set 2: its other piece is on SS Sheet 1, and its engraving needs approval/);assert.match(a[0].pieces[0].why,/On SS Sheet 1, in another set/);
   assert.deepEqual(a[0].open,{type:'order',id:'4170252963',poolId:'4170252963_b_1'});assert.equal(a[0].sheetId,'gf1');
   assert(a[0].pieces.every(p=>!/\d+ (back )?engravings?/i.test(p.why)),'that sheet\'s own engraving counts are not repeated');
   assert.doesNotMatch(strings(a[0]).join(' | '),/\bpooled\b/,'its stored state "pooled" is not a reason: the piece is on SS Sheet 1');
   assert.equal(orderIssues(ssB,rs,all).length,0,'SS Sheet 1 does not wait for its own piece, nor for GF Sheet 1 which is ready');
   // the other sheet becomes ready: the order is no issue at all
-  const ssOk=sheet('ss1','silver',['4170252963_b_1','5001_y_1'],{index:1});
+  const ssOk=sheet('ss1','silver',['4170252963_b_1','5001_y_1'],{index:1,setId:'set2'});
   assert.equal(orderIssues(gf,rs,[gf,ssOk]).length,0);
   // read from the server's side: the per-sheet map says the same
-  const reps=R.orderReports(rs,all),g2=clone(gf);g2.orderReadiness=Object.fromEntries(R.orderIds(gf).map(o=>[o,R.forSheet(reps[o],'gf1')]));
+  const reps=R.orderReports(rs,all),g2=clone(gf);g2.orderReadiness=Object.fromEntries(R.orderIds(gf).map(o=>[o,R.forSheet(reps[o],'gf1',R.setOf(gf))]));
   assert.equal(g2.orderReadiness['4170252963'].ready,false);assert.equal(g2.orderReadiness['5000'].ready,true);assert.equal(R.sheet(g2).stages.orders,false);
-  assert.deepEqual(R.issues(g2,{}).filter(i=>i.step==='orders').map(i=>[i.orderId,i.key,i.pieces[0].sheetLabel]),[['4170252963','otherSheetNotReady','SS Sheet 1']],'issues() reads the record\'s own answer when no rows are given');
-  const s2=clone(ssB);s2.orderReadiness=Object.fromEntries(R.orderIds(ssB).map(o=>[o,R.forSheet(reps[o],'ss1')]));
+  assert.deepEqual(R.issues(g2,{}).filter(i=>i.step==='orders').map(i=>[i.orderId,i.key,i.pieces[0].sheetLabel,i.split]),[['4170252963','otherSheetNotReady','SS Sheet 1',true]],'issues() reads the record\'s own answer when no rows are given');
+  const s2=clone(ssB);s2.orderReadiness=Object.fromEntries(R.orderIds(ssB).map(o=>[o,R.forSheet(reps[o],'ss1',R.setOf(ssB))]));
   assert(Object.values(s2.orderReadiness).every(r=>r.ready),'SS Sheet 1\'s own map has no waiting order');
   // explain: the Order check step is built on the same issue, in the same words as before
   e=R.explain(g2,{rows:rs});
   assert.equal(step(e,'orders').state,'blocked');assert.deepEqual(step(e,'orders').items.map(i=>[i.kind,i.id]),[['order','4170252963'],['sheet','ss1']]);
-  assert.match(step(e,'orders').items[0].why,/Its other piece is on SS Sheet 1, and its engraving needs approval/);assert.match(step(e,'orders').detail,/1 of 2 orders wait/);
+  assert.match(step(e,'orders').items[0].why,/its other piece is on SS Sheet 1, and its engraving needs approval/);assert.match(step(e,'orders').detail,/1 of 2 orders wait/);
 }
 
 // 3. An unnested piece: the other piece is not on any sheet yet. A single order of one piece never appears.
@@ -124,7 +152,7 @@ assert.equal(R.sheet(fixed).ready,true);assert.equal(R.laserSheet(fixed).ready,t
   const half=sheet('gf1','gold',['11_a_1']);
   const q=orderIssues(half,[row('11','a',{quantity:2,poolIds:['11_a_1']})]);assert.deepEqual(q.map(x=>[x.key,x.pieceCount,x.pieces.map(p=>p.index)]),[['pooled',2,[2]]]);
   // quantity 2: one copy here, one on another sheet that is not ready
-  const far=sheet('ss1','silver',['11_a_2'],{approved:false});
+  const far=sheet('ss1','silver',['11_a_2'],{approved:false,setId:'set2'});
   const q2=orderIssues(half,[row('11','a',{quantity:2})],[half,far]);assert.deepEqual(q2.map(x=>[x.key,x.pieces.map(p=>[p.index,p.sheetLabel])]),[['otherSheetNotReady',[[2,'SS Sheet 1']]]]);
   // quantity 2 with the record's pool ids lost entirely, both on this sheet: no issue
   assert.equal(orderIssues(sheet('gf1','gold',['11_a_1','11_a_2']),[row('11','a',{quantity:2,poolIds:[]})]).length,0);
@@ -168,10 +196,12 @@ assert.equal(R.sheet(fixed).ready,true);assert.equal(R.laserSheet(fixed).ready,t
 
 // 8. Which kind names an order that has several different pieces holding it back, and every piece is listed
 {
-  const gf=sheet('gf1','gold',['30_a_1']),far=sheet('ss1','silver',['30_b_1'],{approved:false});
+  const gf=sheet('gf1','gold',['30_a_1']),far=sheet('ss1','silver',['30_b_1'],{approved:false,setId:'set2'});
   const rs=[row('30','a'),row('30','b'),row('30','c',{state:'pooled',poolIds:[]}),row('30','d',{state:'unmatched',poolIds:[],problems:['unmatchedSku'],sku:''})];
   const i=orderIssues(gf,rs,[gf,far]);assert.equal(i.length,1);assert.equal(i[0].key,'pooled');assert.deepEqual(i[0].pieces.map(p=>[p.index,p.kind]),[[2,'otherSheetNotReady'],[3,'pooled'],[4,'noSku']]);assert.equal(i[0].pieceCount,4);
-  assert.match(i[0].why,/3 of its other pieces wait: on SS Sheet 1, not on a sheet yet, no SKU/);
+  assert.match(i[0].why,/3 of its other pieces wait: on SS Sheet 1 \(another set\), not on a sheet yet, no SKU/);
+  // (the same order with SS Sheet 1 in the SAME set: its piece is the set's wait, so the two pieces that are really missing are what holds the order)
+  const same=orderIssues(gf,rs,[gf,sheet('ss1','silver',['30_b_1'],{approved:false})]);assert.equal(same.length,1);assert.deepEqual(same[0].pieces.map(p=>[p.index,p.kind]),[[3,'pooled'],[4,'noSku']]);assert.match(same[0].why,/2 of its other pieces wait: not on a sheet yet, no SKU/);
 }
 
 // 9. A set: one entry per (sheet, order), the mates that hold a ready sheet, a missing sheet
@@ -179,13 +209,17 @@ assert.equal(R.sheet(fixed).ready,true);assert.equal(R.laserSheet(fixed).ready,t
   const a=sheet('a','gold',['40_a_1','41_a_1'],{index:1}),b=sheet('b','silver',['40_b_1','41_b_1'],{approved:false,index:1});
   const set={setId:'set1',seq:1,name:'Set 1',sheetIds:['a','b']},rs=[row('40','a'),row('40','b'),row('41','a'),row('41','b')];
   const i=R.issues(set,{rows:rs,allSheets:[a,b]});
-  assert.deepEqual(i.map(x=>[x.sheetId,x.step,x.key,x.orderId||null]),[['a','orders','otherSheetNotReady','40'],['a','orders','otherSheetNotReady','41'],['b','engraving','approvalsNeeded',null]]);
+  assert.deepEqual(i.map(x=>[x.sheetId,x.step,x.key,x.orderId||null]),[['b','engraving','approvalsNeeded',null]],'one set: the two orders spread over both sheets are fine, only b\'s own engraving is left');
+  // the same two sheets in two different sets: the orders are split between them, a real issue of the sheet that waits
+  const bOther={...b,setId:'set2',setSeq:2},split=R.issues(set,{rows:rs,allSheets:[a,bOther]});
+  assert.deepEqual(split.map(x=>[x.sheetId,x.step,x.key,x.orderId||null,x.split||false]),[['a','orders','otherSheetNotReady','40',true],['a','orders','otherSheetNotReady','41',true],['b','engraving','approvalsNeeded',null,false]]);
   assert.equal(new Set(i.map(x=>`${x.sheetId}|${x.step}|${x.key}|${x.orderId}`)).size,i.length,'no duplicates');
   assert(i.every(x=>x.sheetLabel));
   // a ready sheet held by a mate (its mate has its own engraving to finish)
   const ready=sheet('a','gold',['50_a_1']),mate=sheet('b','silver',['51_a_1'],{approved:false,index:1});
   const li=R.issues(ready,{rows:[row('50','a'),row('51','a')],allSheets:[ready,mate],set,sheets:[ready,mate]});
   assert.deepEqual(li.map(x=>[x.step,x.key,x.label,x.open.id]),[['laser','waitsOnSheet','SS Sheet 1','b']]);
+  assert.equal(li[0].quiet,true,'the set\'s wait is quiet: not an issue');assert.equal(li[0].stepLabel,'Engraving');assert.match(li[0].why,/back engravings 0 of 1/);
   assert.deepEqual(R.issues(ready,{rows:[row('50','a')],allSheets:[ready],set:{...set,sheetIds:['a']},sheets:[ready]}).length,0);
   assert.deepEqual(R.issues(ready,{rows:[row('50','a')],allSheets:[ready],set,sheets:[ready]}).map(x=>[x.key,x.open.id]),[['missingSheet','b']],'a sheet of its set that cannot be found holds it');
   assert.deepEqual(R.issues(ready,{rows:[row('50','a')],allSheets:[ready],setMissing:true}).map(x=>x.key),['setMissing']);
@@ -217,9 +251,9 @@ assert.equal(R.sheet(fixed).ready,true);assert.equal(R.laserSheet(fixed).ready,t
 
 // 11. Words: pieces, never lines, in anything a person reads
 {
-  const gf=sheet('gf1','gold',['70_a_1','71_a_1','72_a_1','73_a_1']),far=sheet('ss1','silver',['70_b_1'],{approved:false});
+  const gf=sheet('gf1','gold',['70_a_1','71_a_1','72_a_1','73_a_1']),far=sheet('ss1','silver',['70_b_1'],{approved:false,setId:'set2'});
   const rs=[row('70','a'),row('70','b'),row('71','a'),row('71','b',{state:'pooled',poolIds:[]}),row('72','a'),row('72','b',{state:'unmatched',poolIds:[],problems:['unmatchedSku'],sku:'Z'}),row('73','a'),row('73','b',{hold:'Check customer changes',poolIds:[]})];
-  const all=[gf,far],reps=R.orderReports(rs,all),g=clone(gf);g.orderReadiness=Object.fromEntries(R.orderIds(gf).map(o=>[o,R.forSheet(reps[o],'gf1')]));
+  const all=[gf,far],reps=R.orderReports(rs,all),g=clone(gf);g.orderReadiness=Object.fromEntries(R.orderIds(gf).map(o=>[o,R.forSheet(reps[o],'gf1',R.setOf(gf))]));
   const text=[...strings(R.issues(g,{}).map(i=>({label:i.label,why:i.why,pieces:i.pieces&&i.pieces.map(p=>p.why)}))),...strings(R.explain(g,{rows:rs}).steps.map(s=>({d:s.detail,i:s.items}))),R.explain(g,{rows:rs}).nextText];
   assert(text.length>8);
   for(const t of text)assert.doesNotMatch(t,/\blines?\b/i,t);
@@ -231,10 +265,16 @@ assert.equal(R.sheet(fixed).ready,true);assert.equal(R.laserSheet(fixed).ready,t
 
 // 12. forSheet is idempotent and leaves older shapes alone
 {
-  const gf=sheet('gf1','gold',['80_a_1']),far=sheet('ss1','silver',['80_b_1'],{approved:false});
-  const r=R.orderReports([row('80','a'),row('80','b')],[gf,far])['80'],one=R.forSheet(r,'gf1');
-  assert.deepEqual(R.forSheet(one,'gf1'),one);assert.equal(R.forSheet(r,'ss1').ready,true);assert.equal(R.forSheet(r,'elsewhere').ready,true,'a sheet that holds none of its pieces');
+  const gf=sheet('gf1','gold',['80_a_1']),far=sheet('ss1','silver',['80_b_1'],{approved:false,setId:'set2'});
+  const r=R.orderReports([row('80','a'),row('80','b')],[gf,far])['80'],one=R.forSheet(r,'gf1',R.setOf(gf));
+  assert.deepEqual(R.forSheet(one,'gf1',R.setOf(gf)),one);assert.equal(R.forSheet(r,'ss1',R.setOf(far)).ready,true);assert.equal(R.forSheet(r,'elsewhere').ready,true,'a sheet that holds none of its pieces');
   assert.deepEqual(R.forSheet({ready:false,why:'x'},'gf1'),{ready:false,why:'x'});assert.equal(R.forSheet(undefined,'gf1'),undefined);assert.deepEqual(R.forSheet({ready:true},'gf1'),{ready:true});
+  // round 7: the wait for a not-ready sheet of the sheet's OWN set is dropped by forSheet(report, sheetId, setId); older reports (no set recorded in their blocks) and reads with no set stay as they were
+  const sameFar=sheet('ss1','silver',['80_b_1'],{approved:false}),rs0=R.orderReports([row('80','a'),row('80','b')],[gf,sameFar])['80'];
+  assert.equal(rs0.ready,false);assert.equal(R.forSheet(rs0,'gf1',R.setOf(gf)).ready,true,'the same set: the set\'s wait');assert.equal(R.forSheet(rs0,'gf1').ready,false,'no set given: read as before');assert.equal(R.forSheet(rs0,'gf1','set7').ready,false);
+  const noSet=clone(rs0);noSet.blocks.forEach(b=>{delete b.setId;delete b.setIds;delete b.setLabel;});assert.equal(R.forSheet(noSet,'gf1','set1').ready,false,'a report that does not record the sets is read as it always was');
+  const dual=clone(rs0);dual.blocks[0].sheetIds=['ss1','zz'];dual.blocks[0].setIds=['set1','set2'];assert.equal(R.forSheet(dual,'gf1','set1').ready,false,'a piece also listed on a not-ready sheet of another set still waits');
+  assert.equal(R.setOf({setId:'s',draft:true}),null);assert.equal(R.setOf({setId:'s',solidIncluded:false}),null);assert.equal(R.setOf({setId:'s'}),'s');assert.equal(R.setOf({}),null);
   assert.equal(R.sheet({...gf,orderReadiness:undefined}).stages.orders,false,'orders not read at all: not ready, as before');
   assert.equal(R.sheet({...gf,orderReadiness:{80:{ready:false,why:'Order readiness has not been verified'}}}).stages.orders,false);
 }
@@ -267,7 +307,7 @@ assert.equal(R.sheet(fixed).ready,true);assert.equal(R.laserSheet(fixed).ready,t
     assert.deepEqual(p.map(x=>[x.index,x.key,x.sheetId]),[[1,'60_a_1','s60x'],[2,'60_a_2',null],[3,'60_a_3','s60x']],'numbered by copy number, whatever order the record lists them in');
   }
   const mate=sheet('b-sheet','silver',['51_a_1'],{approved:false});
-  assert.deepEqual(R.issues(a,{rows:[row('50','a'),row('51','a')],allSheets:[a,mate],set,sheets:[a,mate]}).map(i=>[i.key,i.label]),[['waitsOnSheet','SS Sheet 1']]);
+  assert.deepEqual(R.issues(a,{rows:[row('50','a'),row('51','a')],allSheets:[a,mate],set,sheets:[a,mate]}).map(i=>[i.key,i.label,i.quiet]),[['waitsOnSheet','SS Sheet 1',true]]);
 }
 
 // 12c. Randomised: the scenario is made from ground truth (where each piece really is, what is wrong with its line), the rows and sheets are derived from it
@@ -277,7 +317,7 @@ assert.equal(R.sheet(fixed).ready,true);assert.equal(R.laserSheet(fixed).ready,t
   const PREC=['pooled','noSku','unmatched','noDesign','held','otherSheetNotReady'];
   let cases=0,withIssue=0;
   for(let n=0;n<1500;n++){
-    const where=['X','Y','Z'],ready={X:rnd()<.5,Y:rnd()<.6,Z:rnd()<.6},orders=[];
+    const where=['X','Y','Z'],ready={X:rnd()<.5,Y:rnd()<.6,Z:rnd()<.6},orders=[],inSet={X:'set1',Y:rnd()<.5?'set1':'set2',Z:rnd()<.5?'set1':'set3'};   // (X's set mates wait as the SET, not as the order)
     for(let o=0;o<1+Math.floor(rnd()*4);o++){
       const lines=[];
       for(let l=0;l<1+Math.floor(rnd()*3);l++){
@@ -296,7 +336,7 @@ assert.equal(R.sheet(fixed).ready,true);assert.equal(R.laserSheet(fixed).ready,t
       if(l.kind==='noDesign')r.spec.noDesign=true;
       rows.push(r);
     }
-    const all=Object.keys(sheetPools).filter(k=>sheetPools[k].length).map(k=>sheet(k+'x-1',{X:'gold',Y:'silver',Z:'rose'}[k],sheetPools[k],{approved:ready[k],index:1}));
+    const all=Object.keys(sheetPools).filter(k=>sheetPools[k].length).map(k=>sheet(k+'x-1',{X:'gold',Y:'silver',Z:'rose'}[k],sheetPools[k],{approved:ready[k],index:1,setId:inSet[k]}));
     const X=all.find(x=>x.id==='Xx-1');if(!X)continue;
     // ground truth for sheet X
     const expected={};
@@ -310,14 +350,14 @@ assert.equal(R.sheet(fixed).ready,true);assert.equal(R.laserSheet(fixed).ready,t
         if(heldNow){keys.add('held');continue;}
         if(c.place==='X')continue;
         if(c.place===null){keys.add(({noSku:'noSku',unmatched:'unmatched',noDesign2:'noDesign'})[l.kind] || 'pooled');continue;}
-        if(!ready[c.place])keys.add('otherSheetNotReady');
+        if(!ready[c.place] && inSet[c.place]!==inSet.X)keys.add('otherSheetNotReady');   // (a not-ready sheet of X's own set is the set's wait)
       }
       if(keys.size)expected[o.id]=PREC.find(k=>keys.has(k));
     }
     // a piece with a defect that is nested elsewhere is nested: the generator only gives a defect kind to unnested copies of that line when they have no place; the nested copies of such a line are stale
     const got=Object.fromEntries(orderIssues(X,rows,all).map(i=>[i.orderId,i.key]));
     assert.deepEqual(got,expected,'case '+n+' '+JSON.stringify({ready,orders}));
-    const reps=R.orderReports(rows,all),rec=clone(X);rec.orderReadiness=Object.fromEntries(R.orderIds(X).map(o=>[o,R.forSheet(reps[o],X.id)]));
+    const reps=R.orderReports(rows,all),rec=clone(X);rec.orderReadiness=Object.fromEntries(R.orderIds(X).map(o=>[o,R.forSheet(reps[o],X.id,X.setId)]));
     assert.deepEqual(Object.fromEntries(R.issues(rec,{}).filter(i=>i.step==='orders').map(i=>[i.orderId,i.key])),expected,'precomputed map, case '+n);
     assert.equal(R.sheet(rec).stages.orders,Object.keys(expected).length===0,'stage, case '+n);
     cases++;if(Object.keys(expected).length)withIssue++;
@@ -356,11 +396,20 @@ assert.equal(R.sheet(fixed).ready,true);assert.equal(R.laserSheet(fixed).ready,t
     const waiting=s=>Object.entries(s.orderReadiness).filter(([,v])=>v.ready!==true);
     assert.deepEqual(waiting(sS),[],'SS Sheet 1: not one of its 49 orders waits (its own engravings are its own steps)');
     assert.equal(R.sheet(sS).stages.orders,true);assert.equal(sS.laser.stages.orders,true);
-    assert.deepEqual(waiting(sG).map(([o,v])=>[o,v.key]),[[two,'otherSheetNotReady'],[solo,'unmatched']],'GF Sheet 1: the two real multi-piece orders');
+    // round 7 (Paul): Nathaly Soto's order is on GF Sheet 1 and on SS Sheet 1, BOTH IN SET 1, and SS Sheet 1 is not ready: the order is fine. Only the order with a real problem (an unknown SKU) waits.
+    assert.deepEqual(waiting(sG).map(([o,v])=>[o,v.key]),[[solo,'unmatched']],'GF Sheet 1: the order spread over two sheets of its own set is fine; the unknown SKU is the one real order issue');
     const gi=R.issues(sG,{}).filter(i=>i.step==='orders');
-    assert.deepEqual(gi.map(i=>[i.orderId,i.key,i.customer,i.pieces.map(p=>p.sheetLabel)]),[[two,'otherSheetNotReady','Nathaly Soto',['SS Sheet 1']],[solo,'unmatched','Emily Chambers',[null]]]);
-    assert.equal(gi[1].pieces[0].label,'CUTE TRICERATOPS W/ HEARTS');
-    // SS Sheet 1 approves its engravings: the order of Nathaly Soto is no issue any more; the unmatched SKU stays one
+    assert.deepEqual(gi.map(i=>[i.orderId,i.key,i.customer,i.pieces.map(p=>p.sheetLabel)]),[[solo,'unmatched','Emily Chambers',[null]]]);
+    assert.equal(gi[0].pieces[0].label,'CUTE TRICERATOPS W/ HEARTS');
+    assert.equal(R.sheet(sG).stages.orders,false,'(the unknown SKU still holds GF Sheet 1\'s order check)');
+    // the same shop with SS Sheet 1 in ANOTHER set: Nathaly Soto's order is split between two sets, a real issue of GF Sheet 1 again (then put back)
+    st.put(S,'ss-1',{setId:'setx',setSeq:2});st.put(SET,'setx',{setId:'setx',seq:2,day:'2026-10-05',runId:'run1',sheetIds:['ss-1'],orders:{},status:'labelled',updatedAt:ts,createdAt:ts});st.put(SET,'set1',{sheetIds:['gf-1']});
+    const rx=await call({op:'laserStatus',sheetIds:['gf-1']}),gx=rx.sheets.find(s=>s.id==='gf-1');
+    assert.deepEqual(waiting(gx).map(([o,v])=>[o,v.key,v.sheetLabel]),[[two,'otherSheetNotReady','SS Sheet 1'],[solo,'unmatched',undefined]],'split between two sets: still a real issue');
+    assert.equal(waiting(gx)[0][1].blocks[0].setId,'setx');
+    const gxi=R.issues(gx,{}).filter(i=>i.step==='orders');assert.deepEqual(gxi.map(i=>[i.orderId,i.key,!!i.split]),[[two,'otherSheetNotReady',true],[solo,'unmatched',false]]);
+    st.put(S,'ss-1',{setId:'set1',setSeq:1});st.put(SET,'set1',{sheetIds:['ss-1','gf-1']});
+    // SS Sheet 1 approves its engravings: nothing about Nathaly Soto's order changes (it was never an issue); the unmatched SKU stays one
     for(const p of [...pools,two+'_2_1']){const o=p.split('_')[0];Object.assign(lines[o+'_'+p.split('_')[1]],{engrave:{needed:true,state:'written',approved:true}});}
     st.put(S,'ss-1',{backPool:[...pools,two+'_2_1'].map(p=>back(p,'ss-1'))});
     const r2=await call({op:'laserStatus',sheetIds:['ss-1','gf-1']}),g2=r2.sheets.find(s=>s.id==='gf-1');

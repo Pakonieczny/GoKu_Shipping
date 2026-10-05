@@ -84,7 +84,9 @@ const issuesOf = ans => { const out = {}; for (const s of ans.sheets || []) for 
     console.log(`30-sheet Library, ${W} orders: without the lookup ${warm.reads} documents read and ${warm.queries} queries; with it ${cold.reads} and ${cold.queries} (${addedReads} documents and ${cold.queries - warm.queries} queries added, once a minute at most)`);
 
     // 3. the "unchanged?" read never asks, and a change in the other run is still seen (that run is watched as well)
-    assert.ok(cold.revs && !Object.keys(cold.revs).some(k => !/^[str]:/.test(k)));
+    // (s: sheets, t: sets, r: runs, c: the custom orders of the lines on no sheet, looked up for a piece completed by hand: the 5 unplaced second pieces here)
+    assert.ok(cold.revs && !Object.keys(cold.revs).some(k => !/^[strc]:/.test(k)));
+    assert.equal(Object.keys(cold.revs).filter(k => k[0] === 'c').length, CROSS / 2, 'one watched custom-order document per line that is on no sheet (and nothing for the 235 that are)');
     const some = all.slice(0, CROSS), first = await ask(srv, some, { wantRevs: true });
     assert.ok(first.revs['r:lib-run-2'] && first.revs['r:lib-run-3'], 'the runs the other pieces are in are watched: ' + Object.keys(first.revs).filter(k => k[0] === 'r'));
     const same = await ask(srv, some, { ifRevs: first.revs });

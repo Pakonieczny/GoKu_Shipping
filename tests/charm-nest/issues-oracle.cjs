@@ -21,6 +21,15 @@
  * RULES (Paul, point 9; agreed with Issues-truth)
  *  piece   one copy of a line (line.quantity copies; copy ids <lineKey>_<n>). A cancelled/gone line and a noDesign line
  *          (nothing to cut) are NOT pieces: they never block and do not count.
+ *  by hand a piece a person COMPLETED BY HAND (Review "Complete Order", or its QR label printed from Custom Orders; Paul, 5 Oct round 6: "this chain
+ *          only piece obviously does not go on any sheet ... it's still blocking this sheet") is RESOLVED: it needs no sheet, so a copy of it that is on
+ *          no sheet is not a piece (it blocks nothing, waits for nothing, is nobody's mate), whatever the run's copy of the line still says (it can read
+ *          'unmatched', 'waiting', 'held' or an unknown SKU long after). The truth is the custom order's own record (shop.customs[lineKey], what
+ *          Charm_Custom_Orders keeps): state 'completed' with how 'button' | 'print'. A reopened one (state 'open') is a piece again, and so is one
+ *          sent to the sheets with its own designs (how 'sheet': it is cut, not completed by hand). Two limits: a HELD piece (hold / changePending)
+ *          still holds the sheets of its order wherever it is, and a copy that already sits on a live sheet stays that sheet's piece (it is cut there).
+ *          A cancelled order is unchanged. (A record whose state is 'noDesign' only because of a hand completion carries the hint handDone: that
+ *          state alone, once the completion is gone, is not a "nothing to cut".)
  *  nested  a piece is on a sheet iff its pool id is in poolIds of a LIVE (non-archived) sheet record. line.state stays
  *          'pooled' until the set is written, so it says nothing about where a piece is. A line with fewer pool ids than
  *          quantity has unnested copies. A nested piece is never "unmatched": nested wins over line.problems.
@@ -29,7 +38,11 @@
  *            pooled               not on any sheet yet
  *            noSku / unmatched / noDesign   (and the other problem kinds) not on any sheet and the line has a problem
  *            held                 the line is held / has a change to review (hold, changePending)
- *            otherSheetNotReady   it sits only on sheets that are not ready
+ *            otherSheetNotReady   it sits only on sheets that are not ready AND not every one of those sheets is in X's OWN set
+ *                                 (round 7, Paul: "it's on both sheets and both sheets are in the same set": a set advances as ONE, a mate
+ *                                 sheet of the same set that is not ready is the SET's wait, never an issue of the order. An order whose
+ *                                 other piece sits on a not-ready sheet of ANOTHER set is split between two sets (the cardinal rule): it
+ *                                 stays a real issue, flagged `split`.)
  *          Single-piece orders and orders whose live pieces are all on X are NEVER an order issue for X through where pieces are,
  *          and X's own readiness (unapproved engraving, no QR label, unverified layout...) never makes an order an issue for X.
  *          ONE exception, agreed with Issues-truth (3ff5b790): a HELD piece (hold text, changePending) is a person's / Etsy's explicit stop
@@ -40,7 +53,12 @@
  *  ready   (another sheet Y is "ready") laserDoneAt>0, or Y is included (not draft, not archived, not held back by a
  *          person, solidIncluded!==false) AND (it was completed before, or all its PHYSICAL stages pass: layout, front
  *          (cutting file + picture), approval (every back decided), backs (every approved back saved), qr).
+ *  inSet   a sheet is in a set iff it has a setId and is neither a draft nor left out of it (solidIncluded === false): effSet(sheet).
  *  set     issues of a set = the issues of its member sheets (one entry per sheet and order).
+ *  setWait (round 7, R7-1's gate) the SET's wait, said once and never an order issue: for a sheet X in a set (not cut), every OTHER live sheet Y
+ *          the set lists that is not ready to be approved: hardBlock(Y) = not cut, not laser-ready, and (it is joined and still has a back
+ *          engraving undecided, or it is being laid out, or it is a draft / left out of its set). Soft gaps (QR label, a hold, orders waiting for
+ *          other pieces, a layout check to come) never make a mate block: pressing Approve does or lists them.
  *
  * Exports: truth(shop) -> { sheets:{[sheetId]:{label, orders:{[orderId]:{orderId, livePieces, pieces:[...], offenders:[...] , kinds:Set}}}}, ... }
  *          physical(sheet, linesByKey) / ready(sheet, linesByKey), labelOf(sheet), lineOf(poolId) */
@@ -52,6 +70,8 @@ const num = v => (+v > 0 ? +v : 0);
 const lineOf = pid => { const s = String(pid), i = s.lastIndexOf('_'); return i > 0 ? s.slice(0, i) : s; };
 const orderOfLine = (key, l) => String((l && l.orderId) || String(key).split('_')[0]);
 const sheetId = s => s.id || s.sheetId;
+/** completed by hand, from the custom order's own record */
+const handDoc = (shop, key) => { const c = shop.customs && shop.customs[key]; return !!c && c.state !== 'open' && c.how !== 'sheet'; };
 
 function labelOf(s) {
   const n = +s.sheetIndex || +((/_Sheet-(\d+)/.exec(s.folder || s.fileBase || '') || [])[1]) || +s.page || 1;
@@ -95,6 +115,10 @@ function physical(s, linesByKey) {
   };
 }
 const included = s => !s.draft && s.solidIncluded !== false && !s.archived && !(s.laserHold && num(s.laserHold.at));
+/** The set a sheet is really in (a draft, or a sheet left out of it, is in none). */
+const effSet = s => (s && s.setId && !s.draft && s.solidIncluded !== false ? String(s.setId) : null);
+const laying = s => !!(s.dirty || s.saving || ['nesting', 'finishing', 'queued', 'error'].includes(s.status));
+const joined = s => !s.draft && s.solidIncluded !== false;
 const completedBefore = s => num(s.laserDoneAt) > 0 || (s.processSeals || []).some(x => x.how === 'laserDone' && num(x.at));
 /** Is this sheet ready, as ANOTHER sheet's order sees it (physical readiness: two sheets never wait on each other's order check). */
 function ready(s, linesByKey) {
@@ -151,9 +175,17 @@ function truthOf(shop, policy = {}) {
   const tail = k => { const m = /_(\d+)$/.exec(String(k)); return m ? +m[1] : 0; };
   for (const key of Object.keys(lines).sort((a, b) => tail(a) - tail(b) || (a < b ? -1 : a > b ? 1 : 0))) {
     const l = lines[key];
-    if (!l || l.state === 'gone' || l.noDesign || l.state === 'noDesign' || (l.spec && l.spec.noDesign)) continue;
+    if (!l || l.state === 'gone') continue;
+    const copies = copiesOf(key, l, policy.indexOrder);
+    // completed by hand: the custom order's record says so, the line was never pooled and none of its copies sits on a live sheet
+    const hand = handDoc(shop, key) && !(l.poolIds || []).length && !copies.some(c => (where.get(c.poolId) || []).length);
+    const nothingToCut = l.noDesign || (l.state === 'noDesign' && !l.handDone) || (l.spec && l.spec.noDesign);
+    if (nothingToCut && !hand) continue;
     const oid = orderOfLine(key, l), xs = orders.get(oid) || [];
-    for (const c of copiesOf(key, l, policy.indexOrder)) xs.push({ ...c, line: l, sheets: where.get(c.poolId) || [], orderId: oid });
+    for (const c of copies) {
+      if (hand && !(l.hold || l.changePending)) continue;   // completed by hand: resolved, not a piece (a held one is still a held piece)
+      xs.push({ ...c, line: l, sheets: where.get(c.poolId) || [], orderId: oid, hand });
+    }
     orders.set(oid, xs);
   }
   for (const pieces of orders.values()) pieces.forEach((p, i) => { p.index = i + 1; });
@@ -171,16 +203,21 @@ function truthOf(shop, policy = {}) {
       if (!pieces.some(p => p.sheets.includes(sid))) continue;              // X holds none of it
       const offenders = [];
       for (const p of pieces) {
-        const reasons = new Set(), l = p.line, here = p.sheets.includes(sid);
+        const reasons = new Set(), l = p.line, here = p.sheets.includes(sid); let split = false;
         if (l.hold || l.changePending) reasons.add('held');                // a person's stop holds the sheet it sits on too
         if (here) { if (!reasons.size) continue; }                          // on this sheet: that sheet's own readiness shows the rest
         else if (!p.sheets.length) {
           reasons.add('pooled');
           for (const pr of l.problems || []) for (const k of PROBLEM_KEYS(l, kindOf(pr))) reasons.add(k);
           if (!(l.problems || []).length && STATE_KEYS[l.state]) for (const k of STATE_KEYS[l.state](l)) reasons.add(k);
-        } else if (p.sheets.every(id => !readyOf.get(id))) reasons.add('otherSheetNotReady');
+        } else if (p.sheets.every(id => !readyOf.get(id))) {
+          // a not-ready sheet of X's OWN set is the set's wait, not the order's; one in another set (or in no set) is a real split / wait
+          const mine = effSet(s), same = !policy.sameSetIsIssue && !!mine && p.sheets.every(id => effSet(byId.get(id)) === mine);   // (policy.sameSetIsIssue: the OLD rule, for the coverage count and the mutant)
+          // (`split`: an order split between two sets. A held piece is listed as held, whatever sheet it sits on, so it is not listed as a split)
+          if (!same) { reasons.add('otherSheetNotReady'); split = !!mine && !(l.hold || l.changePending) && p.sheets.some(id => effSet(byId.get(id)) && effSet(byId.get(id)) !== mine); }
+        }
         if (!reasons.size) continue;
-        offenders.push({ index: p.index, lineKey: p.lineKey, copy: p.copy, poolId: p.poolId, reasons, sheets: p.sheets.map(id => ({ id, label: labelOf(byId.get(id)) })) });
+        offenders.push({ index: p.index, lineKey: p.lineKey, copy: p.copy, poolId: p.poolId, reasons, ...(split ? { split: true } : {}), sheets: p.sheets.map(id => ({ id, label: labelOf(byId.get(id)) })) });
       }
       if (offenders.length) rec.orders[oid] = { orderId: oid, livePieces: pieces.length, offenders, pieces: pieces.map(p => ({ index: p.index, lineKey: p.lineKey, copy: p.copy, poolId: p.poolId, sheets: p.sheets })) };
     }
@@ -205,7 +242,25 @@ function ownTruth(s, linesByKey) {
 }
 const OWN_STEP = { held: 'nesting', notInSet: 'nesting', roseLine: 'nesting', layout: 'nesting', approvalsNeeded: 'engraving', backFilesMissing: 'backFiles', qrMissing: 'qr' };
 
+/** Is this sheet one that keeps its SET from being approved (R7-1's gate, restated from Paul's rule)? 'engraving' | 'nesting' | null. */
+function hardBlock(s, t) {
+  const r = t.sheets[sheetId(s)];
+  if (s.archived || num(s.laserDoneAt) || !r || r.laserReady) return null;
+  if (joined(s) && r.physical.counts.waiting > 0) return 'engraving';
+  if (laying(s)) return 'nesting';
+  if (!joined(s)) return 'nesting';
+  return null;
+}
+/** The set wait of sheet X: the other live sheets of its set that keep the set from being approved ([] for a cut sheet or a sheet in no set). */
+function setWaits(shop, t, sid) {
+  const x = (shop.sheets || []).find(s => sheetId(s) === sid && !s.archived);
+  if (!x || num(x.laserDoneAt) || !effSet(x)) return [];
+  const set = (shop.sets || []).find(z => z.setId === x.setId); if (!set) return [];
+  const live = new Map((shop.sheets || []).filter(s => !s.archived).map(s => [sheetId(s), s]));
+  return set.sheetIds.filter(id => id !== sid && live.has(id) && hardBlock(live.get(id), t)).sort();
+}
+
 /** The issue order ids of a sheet, sorted: what the comparison needs most. */
 const issueOrders = (t, sid) => Object.keys((t.sheets[sid] || { orders: {} }).orders).sort();
 
-module.exports = { truth, issueOrders, ownTruth, OWN_STEP, physical, ready, included, completedBefore, decisionOf, labelOf, lineOf, copiesOf, CODE };
+module.exports = { truth, issueOrders, ownTruth, effSet, hardBlock, setWaits, OWN_STEP, physical, ready, included, completedBefore, decisionOf, labelOf, lineOf, copiesOf, CODE };

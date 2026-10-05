@@ -1766,7 +1766,11 @@
     function close() {
       if (!dlg || !dlg.open) return;
       flight = null; flyOut();
+      const layer = !!host;
       dlg.close();
+      // (while a seal is being pressed every window's closing waits for it, Motion's close; the viewer is a layer over the window, not a window
+      // of its own: a layer asked to close goes now, blank, instead of lingering over the order until the seal has landed)
+      if (layer && dlg.open) dlg.removeAttribute("open");
       if (host) { host.removeEventListener("cancel", hostCancel, true); host.removeEventListener("close", hostClosed); host = null; }
       img.onload = img.onerror = null; img.removeAttribute("src"); list = []; pts.clear(); pinch = null; ready = false;
       const o = opener; opener = null;

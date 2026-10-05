@@ -431,7 +431,7 @@ async function smallWorld(browser, shot) {
     }
 
     // 6 · the Approve button on a sheet that is not ready
-    const approve = await page.evaluate(() => [...document.querySelectorAll('#libBody [data-approve-btn]')].map(b => ({ id: (b.closest('[data-approve-for]') || {}).dataset && b.closest('[data-approve-for]').dataset.approveFor, disabled: b.disabled, text: b.textContent.trim() })));
+    const approve = await page.evaluate(() => [...document.querySelectorAll('#libBody [data-approve-btn]')].map(b => ({ id: (b.closest('[data-approve-for]') || {}).dataset && b.closest('[data-approve-for]').dataset.approveFor, disabled: b.disabled || b.getAttribute('aria-disabled') === 'true', text: b.textContent.trim() })));   // (a grey button is aria-disabled now: it keeps the keyboard)
     info('approve buttons', approve);
     h.mark('approve');
     const target2 = approve.find(a => /sheet:gfB1/.test(a.id || '') && !a.disabled) || approve.find(a => !a.disabled);
