@@ -4649,7 +4649,7 @@ const Engrave = window.Engrave = (() => {
     refreshAllCards();
     for (const el of document.querySelectorAll("[data-back-sheet]")) {
       const id = el.dataset.backSheet, sh = allSheets().find(p=>p.sheetId === id) || S.library.rows.find(p=>p.id === id);
-      if (sh) el.innerHTML = backsMarkup(sh);
+      if (sh) { el.innerHTML = backsMarkup(sh); window.LibraryEngraving?.sync?.(el); }   // (a Library card's small show/hide follows the shelf's pieces)
     }
     Session.schedule();
   }
