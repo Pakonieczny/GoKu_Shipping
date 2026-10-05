@@ -124,6 +124,8 @@
     goMode("engrave"); E.render();
     const end = Date.now() + LAND_MS; let s = shown(job, done);
     while (s === null && Date.now() < end) { await sleep(60); s = shown(job, done); }
+    // (a decided piece's row is brought into view when the list is longer than the screen)
+    if (s === true && done) { try { const row = document.querySelector("#engraveView .doneRow.open"); if (row) row.scrollIntoView({ block: "nearest" }); } catch (_) {} }
     const w = E.view();
     return s === true || (s === null && w.tab === (done ? "done" : "place") && (done || w.focus === job.key));
   }
