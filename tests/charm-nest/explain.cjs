@@ -81,6 +81,20 @@ const unread=clone(a);delete unread.orderReadiness;e=R.explain(unread);assert.eq
 const draft=clone(b);draft.draft=true;const rep2=R.orderReports(lines,[a,{...draft,backPool:[back('2000_y_1','rg1')],engraving:{'2000_y_1':{needed:true,state:'approved',approved:true},'3000_z_1':{needed:false,state:'none',approved:true}}}]);
 assert.match(rep2['2000'].why,/not in a set yet/);
 
+// 5b. (Paul, 5 Oct: "48 of 48 orders are awaiting on something, which is impossible") the Order check lists only an order that has ANOTHER piece holding it
+// back. A sheet whose own engravings are unapproved does not wait for itself, and an order of one piece is never listed.
+{
+  const own=sheet('s9',{n:3,index:9});own.backPool=[];own.engraving=Object.fromEntries(own.poolIds.map(p=>[p,{needed:true,state:'review',approved:false}]));
+  const ls=own.poolIds.map(p=>({key:p.replace(/_1$/,''),orderId:p.split('_')[0],state:'written',poolIds:[p]})),reps=R.orderReports(ls,[own]);
+  assert(Object.values(reps).every(r=>!r.ready),'every piece sits on a sheet that is not ready');
+  own.orderReadiness=Object.fromEntries(R.orderIds(own).map(o=>[o,R.forSheet(reps[o],'s9')]));
+  const ex=R.explain(own);
+  assert.equal(states(ex).orders,'done');assert.equal(step(ex,'orders').items.length,0);assert.match(step(ex,'orders').detail,/All 3 orders/);assert.equal(ex.step,'engraving');assert.match(ex.nextText,/3 back engravings still need approval/);
+  assert.deepEqual(R.issues(own,{}).map(i=>[i.step,i.key]),[['engraving','approvalsNeeded']],'issues(): the sheet\'s own blocker, no order');
+  // the same map handed over unread (the page's whole-order answer) reads the same from this sheet
+  const raw=clone(own);raw.orderReadiness=reps;assert.equal(R.sheet(raw).stages.orders,true);assert.equal(states(R.explain(raw)).orders,'done');
+}
+
 // 6. a set with one blocked member (and its pieces named)
 const m1=sheet('m1',{n:2,index:1}),m2=sheet('m2',{n:2,index:2,metal:'silver'});m2.backPool=[m2.backPool[0]];m2.engraving={[m2.poolIds[1]]:{needed:true,state:'review',approved:false}};
 const set={setId:'set1',seq:1,name:'Set 1',sheetIds:['m1','m2']};
@@ -119,4 +133,4 @@ const held=sheet('h1');held.laserHold={at:5,by:'Paul'};e=R.explain(held);assert.
 
 // every item carries a label and a reason; no ids without a label
 for(const x of [eng,bf,qr2,a,m1]){const r=R.explain(x,{rows:names});for(const s of r.steps)for(const i of s.items){assert(['order','charm','sheet'].includes(i.kind));assert(i.id && i.label && i.why,JSON.stringify(i));}}
-console.log('explain OK: all ready, engraving waiting, back files unsaved, QR missing, order held by another sheet, set with a blocked member, missing/archived/excluded members, sheet held by its set');
+console.log('explain OK: all ready, order check lists only other pieces, engraving waiting, back files unsaved, QR missing, order held by another sheet, set with a blocked member, missing/archived/excluded members, sheet held by its set');
