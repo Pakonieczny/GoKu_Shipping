@@ -1554,6 +1554,8 @@ const Orders = window.Orders = (() => {
   function leaveFor(noted) {
     return (mk, node) => {
       const rid = node.dataset.rid, key = node.dataset.key; if (!key || !mine(rid)) return null;
+      // (Release hold lifts the hold while its film plays in the Nest tab: the film has its own flight and its own note at the end, so the line folds away here; this list's flight and note were drawn at the top left corner, over the tabs, and said "1 still on hold" while the whole order was being released)
+      if (window.HoldUI && HoldUI.busy && HoldUI.busy(rid)) return null;
       const r = rowsOf().find(x => x.key === key), first = !noted.has(rid); noted.add(rid);
       // a newer move of the same order says what is true now: the note its last move left goes
       const note = (text, fn, title) => { if (!first) return null; for (const n of document.querySelectorAll(".mNote")) if (n._anchor && n._anchor.ordRid === rid && n.close) n.close(); return { text, actions: [{ label: "Show", title, fn }] }; };
