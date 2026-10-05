@@ -304,8 +304,8 @@ function readSessions(ctx, H) {
 function readToday(ctx, H) {
   return H.cached(ctx, `ltoday|${ctx.prefix}`, TTL.today, async () => {
     let q = col(ctx, "Efficiency_Daily").where("day", "==", ctx.today).limit(LIM.rollups + 1);
-    if (typeof q.select === "function") q = q.select("day", "person", "stations", "sandbox");
-    const snap = await q.get(), by = {};
+    if (typeof q.select === "function") q = q.select("day", "person", "stations", "sandbox", "touched");
+    const snap = await q.get(), by = {}, touched = {};
     for (const d of snap.docs.slice(0, LIM.rollups)) {
       const v = d.data() || {};
       if (!!v.sandbox !== !!ctx.prefix) continue;                       // (a document of the other store never counts, as in every other reader)
@@ -317,7 +317,12 @@ function readToday(ctx, H) {
         t.scans += Math.max(0, Number(x.scans) || 0);
         t.lastAt = Math.max(t.lastAt, ms(x.lastAt));
       }
+      // the orders the person touched today and where (a scan counts the moment it happens; "orders" above counts only the finished ones)
+      if (v.touched && typeof v.touched === "object") for (const [oid, sts] of Object.entries(v.touched)) if (sts && typeof sts === "object") for (const st of Object.keys(sts)) (touched[st] || (touched[st] = new Set())).add(oid);
     }
+    // A station's orders today = the orders worked there, as the Overview counts them (an order in hand is one the moment it is scanned), never fewer than the finished ones.
+    // Counting only the finished ones made the Stations board say 9 where the Overview, the People cards and the person page said 10 while one order was in hand.
+    for (const [st, set] of Object.entries(touched)) { const t = by[st] || (by[st] = { parts: 0, orders: 0, scans: 0, lastAt: 0 }); t.orders = Math.max(t.orders, set.size); }
     return { by, capped: snap.docs.length > LIM.rollups };
   });
 }
