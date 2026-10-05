@@ -7,7 +7,8 @@
   const url=x=>typeof x==='string'?x:x?.url;
   function decisions(rows){
     const out={};
-    for(const row of rows || [])for(const id of row.poolIds || []) {
+    // (a line whose record lost its pool ids is read by the ids the pool gives its copies, "<line key>_<n>", as orderReports reads them)
+    for(const row of rows || [])for(const id of copyIds(row,lineKeyOf(row))) {
       const e=row.engrave;
       // a cancelled order's piece left on a released sheet is cut and set aside, so it waits on no engraving decision
       // A line with no personalization, message or note has nothing to engrave, before its engraving check has run too.
@@ -93,9 +94,10 @@
   // the copies of a line: its pool ids, and (when the record lost some) the "<line key>_<n>" ids the pool gives them
   function copyIds(l,key){
     const ids=[...new Set((Array.isArray(l.poolIds)?l.poolIds:[]).filter(Boolean).map(String))],want=qtyOf(l);
-    for(let n=1;ids.length<want;n++){const d=`${key}_${n}`;if(!ids.includes(d))ids.push(d);}
-    return ids;
+    for(let n=1;key && ids.length<want;n++){const d=`${key}_${n}`;if(!ids.includes(d))ids.push(d);}
+    return ids.sort((a,b)=>tailNo(a)-tailNo(b));       // a piece is "piece 2" by its copy number, whatever order the record lists them in
   }
+  const lineKeyOf=(l,id)=>String(l.key || [id || l.order?.receiptId || l.orderId,l.transactionId || l.line?.transactionId].filter(Boolean).join('_') || '');
   // a line's own problem as a kind: no SKU at all, a SKU no master has, or no design for it
   function problemOf(l){
     const p=Array.isArray(l.problems)?l.problems[0]:null;
@@ -126,7 +128,7 @@
         listingId=listingId || String(l.line?.listingId || l.snap?.listingId || '');
         if(l.state==='gone')continue;                                                     // cancelled: cut and set aside, never waited for
         if(l.spec?.noDesign || l.noDesign || l.state==='noDesign')continue;               // nothing to cut
-        const key=String(l.key || [id,l.transactionId].filter(Boolean).join('_') || id),hold=l.hold || l.changePending?String(l.hold || 'Order changes need review'):'',problem=problemOf(l);
+        const key=lineKeyOf(l,id) || id,hold=l.hold || l.changePending?String(l.hold || 'Order changes need review'):'',problem=problemOf(l);
         for(const pid of copyIds(l,key)){
           const on=copies.get(pid) || [];
           let block=null;
@@ -365,11 +367,15 @@
     return null;
   }
   const ALL_STEPS=['nesting','engraving','backFiles','qr','orders','laser'];
+  // the reports of one reading of the rows and every sheet, made once for however many sheets of a set ask (the same rows and sheets give the same answer)
+  const readings=new WeakMap();
+  const reportsOf=ctx=>{let r=readings.get(ctx.allSheets);if(!r || r.rows!==ctx.rows){r={rows:ctx.rows,reps:orderReports(ctx.rows,ctx.allSheets)};readings.set(ctx.allSheets,r);}return r.reps;};
+  // a sheet as it reads its own orders from those reports
+  const readFrom=(s,reps)=>{const sid=s.id || s.sheetId;return {...s,orderReadiness:Object.fromEntries(orderIds(s).map(id=>[id,forSheet(reps[id],sid) || {ready:false,why:'Order readiness has not been verified'}]))};};
   function sheetIssues(s,ctx,steps){
-    const sid=s.id || s.sheetId,want=k=>steps.includes(k),out=[],label=sheetLabel(s);
-    let rec=s;
+    const sid=s.id || s.sheetId,want=k=>steps.includes(k),out=[],label=sheetLabel(s),reps=ctx.rows && ctx.allSheets?reportsOf(ctx):null;
     // pieces read from the page's rows and every live sheet, instead of the record's own answer
-    if(ctx.rows && ctx.allSheets){const reps=orderReports(ctx.rows,ctx.allSheets);rec={...s,orderReadiness:Object.fromEntries(orderIds(s).map(id=>[id,forSheet(reps[id],sid) || {ready:false,why:'Order readiness has not been verified'}]))};}
+    const rec=reps?readFrom(s,reps):s;
     const own=ownIssue(rec);
     if(own && want(own.step))out.push(own);
     if(want('orders') && !completedBefore(rec) && rec.orderReadiness){
@@ -384,7 +390,7 @@
     // a sheet that is ready itself is cut with its set: the set's other sheets that are not ready hold it
     if(want('laser') && !(+s.laserDoneAt>0) && s.setId && !s.draft && s.solidIncluded!==false && sheet(rec).included && (completedBefore(rec) || sheet(rec).ready)){
       if(ctx.set){
-        const mates=[...new Map((ctx.sheets || []).filter(m=>!m.archived).map(m=>[m.id || m.sheetId,m])).values()].filter(m=>(m.id || m.sheetId)!==sid);
+        const mates=[...new Map((ctx.sheets || []).filter(m=>!m.archived).map(m=>[m.id || m.sheetId,m])).values()].filter(m=>(m.id || m.sheetId)!==sid).map(m=>reps?readFrom(m,reps):m);
         for(const m of mates)if(!laserSheet(m).ready)out.push({step:'laser',key:'waitsOnSheet',label:sheetLabel(m),sheetId:sid,sheetLabel:label,open:{type:'sheet',id:m.id || m.sheetId}});
         for(const i of ctx.set.sheetIds || [])if(i!==sid && !mates.some(m=>(m.id || m.sheetId)===i))out.push({step:'laser',key:'missingSheet',label:'Sheet missing',sheetId:sid,sheetLabel:label,open:{type:'sheet',id:i}});
       }else if(ctx.setMissing)out.push({step:'laser',key:'setMissing',label:'Set not loaded',sheetId:sid,sheetLabel:label,open:{type:'sheet',id:sid}});
