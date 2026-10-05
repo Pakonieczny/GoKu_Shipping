@@ -988,7 +988,7 @@
   <script src="station-session.js?v=20261002-ea1"></script>
   <!-- Employee efficiency: each real action here (an order opened, the Team's done stamp, a flag, a failure) is one event with
        the person signed in, this station and the time (station-activity.js). Never a PIN. -->
-  <script src="station-activity.js?v=20261002-ea1"></script>
+  <script src="station-activity.js?v=20261005-e2live"></script>
   <!-- Phone scans that arrive while nobody is signed in wait here and load, in order, right after the next sign-in (station-scan-queue.js). -->
   <script src="station-scan-queue.js?v=20261003-sq1"></script>
   <script>
@@ -2355,6 +2355,27 @@ function metalToBadge(label){
         const actDone = (() => { try { const m = JSON.parse(localStorage.getItem("assembly_activity_done") || "{}"); return m && typeof m === "object" ? m : {}; } catch (_) { return {}; } })();
         const ACT_FLAG = /\b(rework|re-?do|re-?make|reject(?:ed)?|defect(?:ive)?|broken|damaged|wrong|flag(?:ged)?|hold)\b/i;
         const actWho = () => { try { return String(localStorage.getItem("employee_name") || "").trim(); } catch (_) { return ""; } };
+        /* The live stations board (StationActivity.working / idle; plans/employee-hr/api.md): the scan shows this order, one piece
+           per line of the receipt, as this person's current order AT ONCE; the Team's first stamp (QA1, QA 2, Done, Assembled), a
+           cancelled order or a new scan ends it, and a message or picture to the Team keeps it alive. After 12 quiet minutes the
+           station shows idle again. Best effort: nothing here throws, waits or touches the network, and the page works exactly as
+           before when the live layer is missing or down (nothing shows with nobody signed in). */
+        const ACT_LIVE_HOLD = 12 * 60e3;
+        function actLive(orderId, data) {
+          try {
+            const S = window.StationActivity;
+            if (!S || typeof S.working !== "function") return;
+            const list = data && Array.isArray(data.transactions) ? data.transactions.slice(0, 24) : [];
+            const pieces = list.map((it, i) => {
+              const q = Math.floor(Number(it && (it.quantity ?? it.qty))) || 1, title = String((it && it.title) || "").replace(/\s+/g, " ").trim().slice(0, 50) || "Piece " + (i + 1);
+              let sku = ""; try { sku = String((it && it.sku) || (typeof extractSkuFromEtsy === "function" ? extractSkuFromEtsy(it) : "") || ""); } catch (_) {}
+              return { id: orderId + "_" + (String((it && it.transaction_id) || "").replace(/\D/g, "").slice(0, 20) || i + 1), label: (q > 1 ? q + " x " : "") + title, sku, listingId: it && it.listing_id };
+            });
+            S.working({ rid: orderId, orderNumber: orderId, customer: String((data && data.name) || ""), pieces, pieceCount: list.length, holdMs: ACT_LIVE_HOLD });
+          } catch (_) {}
+        }
+        function actLiveEnd(orderId) { try { if (window.StationActivity && StationActivity.idle) StationActivity.idle(orderId); } catch (_) {} }
+        function actLiveTouch() { try { if (window.StationActivity && StationActivity.touch) StationActivity.touch(); } catch (_) {} }
         function actScan(orderId, data, how) {
           try {
             const now = Date.now();
@@ -2366,6 +2387,7 @@ function metalToBadge(label){
             Object.assign(actLoaded, { id: data && !data.error ? orderId : "", parts, sku });   // not loaded when the lookup failed: its pieces stay unknown
             actLog("scan", { orderId, sku, parts, detail: how === "scan" ? "phone scan" : how === "paste" ? "pasted" : "typed" });
             if (!data || data.error) actLog("error", { orderId, detail: "order lookup failed" });
+            actLive(orderId, data);                 // the live board: this is now the person's current order
           } catch (_) {}
         }
         /* the QA number a stamp names: "QA1" is 1, "QA 2" is 2, "qa2 ok" is 2; 0 when it names none ("Done", "Assembled") */
@@ -2377,6 +2399,7 @@ function metalToBadge(label){
         function actStamp(orderId, text) {          // the Team's done stamp: the first assembled stamp per person and order is the completion
           try {
             orderId = /^\d{6,}$/.test(orderId) ? orderId : "";
+            actLiveEnd(orderId);                    // the live board: the Team's stamp (any QA number) finishes this person's order
             const who = actWho(), key = orderId + "|" + who, now = Date.now(), known = actLoaded.id === orderId;
             if (!who) return;
             /* A QA 2 (or later) stamp is a second person's check of work that QA1, Done or Assembled already finished: it is
@@ -2394,9 +2417,11 @@ function metalToBadge(label){
           } catch (_) {}
         }
         function actImage(orderId, ok) {            // a photo dropped into the order chat: counted (or its failure), never the picture
+          actLiveTouch();
           try { actLog(ok ? "note" : "error", { orderId: /^\d{6,}$/.test(orderId) ? orderId : "", detail: ok ? "image to Team" : "Team image not sent" }); } catch (_) {}
         }
         function actMessage(orderId, text) {        // any other message to the Team: a flag when it says rework or a problem
+          actLiveTouch();
           try {
             orderId = /^\d{6,}$/.test(orderId) ? orderId : "";
             const m = ACT_FLAG.exec(text);
@@ -2689,7 +2714,7 @@ function metalToBadge(label){
           if (window.StationTimeline && /^\d{6,}$/.test(orderNumber)) {
             const etsyStatus = (orderData && typeof orderData.status === "string") ? orderData.status : "";   // already read: no extra Etsy call
             Promise.resolve(window.StationTimeline.scanned(orderNumber, { how: e.stationHow || "typed", ...(etsyStatus ? { extra: { etsyStatus } } : {}) }))
-              .then(r => { if (r && r.cancelled) actLog("reject", { orderId: orderNumber, detail: "cancelled order alert" }); })
+              .then(r => { if (r && r.cancelled) { actLiveEnd(orderNumber); actLog("reject", { orderId: orderNumber, detail: "cancelled order alert" }); } })
               .catch(err => console.warn("Station timeline scan failed:", err));
           }
         } catch (err) { console.warn("Station timeline scan failed:", err); }
