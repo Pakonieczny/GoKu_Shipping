@@ -131,6 +131,7 @@ const assets = [
   "charm-nest-library-dnd.js",
   "charm-nest-library-engraving.js",
   "charm-nest-library-issues.js",
+  "charm-nest-rail-tip.js",
   "charm-nest-shared-orders-modal.js",
   "charm-nest-text.js",
   "vendor/fonts/emoji-sequences.json",

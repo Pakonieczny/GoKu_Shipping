@@ -147,7 +147,7 @@
     // Rose Gold sheet a row below the sheets beside it (audit, 25 Sep). This panel keeps the step under way, a failure
     // and the dated green lines, and takes no room when it has none of them.
     let slot=sh.el.querySelector('.roseCut');
-    if(!slot){slot=document.createElement('div');slot.className='roseCut';const row=sh.el.querySelector('.shControls');if(row)row.insertBefore(slot,row.querySelector('.shGate'));else host.before(slot);}
+    if(!slot){slot=document.createElement('div');slot.className='roseCut';const row=sh.el.querySelector('.shControls');if(row)row.insertBefore(slot,row.querySelector('.shGate')||row.querySelector('.engTogHost'));else host.before(slot);}
     slot.hidden=!cuttable;
     slot.innerHTML=cuttable?`<button class="btn ghost xs" data-rose="cut" ${busy?'disabled':''}>Cut Sheet</button>`:'';
     host.innerHTML=`${busy?`<div class="help" role="status"><i class="spin"></i> ${busyWord}</div>`:''}${sh._roseError?`<p class="roseError" role="alert">${esc(sh._roseError)}</p>`:''}${marks}`;

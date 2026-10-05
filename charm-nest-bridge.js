@@ -3046,8 +3046,16 @@ const Gate = window.Gate = (() => {
     }
     refreshAllCards();
   }
+  /** Where a card's gate node stands. Its Options button stands on the title line, at the far right end after the date (Paul, 5 Oct),
+   *  the same node and the same panel as ever; the old waiting line of a run of the earlier release rule is wider than a title line
+   *  has room for, so it keeps its place in the controls row. A node already there is not touched (an open panel, a focused field). */
+  function seat(sh, node, where) {
+    const to = sh.el && sh.el.querySelector(where === "row" ? ".shControls" : ".shHead"); if (!to || node.parentNode === to) return;
+    if (where === "row") to.insertBefore(node, to.querySelector(".engTogHost")); else to.appendChild(node);
+  }
   function renderRelease(sh, node) {
     const m = sh.metal, st = stockFor(m,sh), seq = Sets.ofRun(B.run?.runId).find(s => s.group === "dispatch" && !s.committedAt)?.seq;
+    seat(sh, node, "head");
     node.className = "shGate";
     if (!solid(m) && m !== "rose") {
       node.textContent = sh.setId && !sh.draft ? `In Set ${sh.seq} · ${policy(sh, sh.seq).reason}` : policy(sh, seq).reason;
@@ -3864,7 +3872,7 @@ const Gate = window.Gate = (() => {
       const pct = (waiting[0].wait && waiting[0].wait.pct) || 0;
       html = `<span class="t"><b>${pct}% of a sheet</b> waiting for more</span><span class="n">${pieces} piece${pieces === 1 ? "" : "s"}</span><button class="btn ghost xs" data-gate="cut" title="cut the partial sheet now instead of waiting for it to fill">Cut it anyway</button>`;
     }
-    el2.className = cls; el2.classList.remove("hidden"); el2.innerHTML = html;
+    seat(sh, el2, "row"); el2._sheetOptionsOwner = null; el2.className = cls; el2.classList.remove("hidden"); el2.innerHTML = html;   // (the line takes the node's place: Options is drawn again when the current rule is back)
     const b = el2.querySelector("[data-gate]"); if (b) b.onclick = () => { b.disabled = true; (b.dataset.gate === "release" ? release(m) : cutAnyway(m)).catch(e => toast(e.message, "bad", 6000)); };
   }
   return { solidSelected:(m, sh) => sh && solid(m) ? picked(sh) || !!sh.cardinalPull : anyPicked(m),   // (a solid sheet the cardinal rule pulled in is in the set)
@@ -5702,17 +5710,15 @@ const LaserReview = window.LaserReview = (()=>{
 @container (min-width:430px){.flowStep span{display:block}.flowNow{display:none}.flowFoot:not(:has(.flowBusy)){display:none}}
 .flowBusy{flex:none;display:inline-flex;align-items:center;gap:5px;font-size:11px;color:var(--ink45)}
 .flowBusy .spin{width:10px;height:10px;border:2px solid rgba(0,0,0,.15);border-top-color:var(--ink45);border-radius:50%;animation:spin .7s linear infinite}
-button.flowDot{appearance:none;-webkit-appearance:none;margin:0;padding:0;cursor:pointer;-webkit-tap-highlight-color:transparent;transition:transform .15s ease,box-shadow .15s ease}
+button.flowDot{appearance:none;-webkit-appearance:none;margin:0;padding:0;cursor:pointer;-webkit-tap-highlight-color:transparent;transition:box-shadow .15s ease}
 button.flowDot::before{content:"";position:absolute;inset:-11px}
-button.flowDot:hover{transform:scale(1.14)}
-button.flowDot:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
+i.flowDot::before{content:"";position:absolute;inset:-7px}
+.flowDot:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
+.flowDot.sealZoomed{box-shadow:0 0 0 calc(1.5px / var(--zk,1)) var(--ring,var(--line))!important}
+.flowStep.done{--ring:var(--sage)}.flowStep.blocked{--ring:var(--clay)}.flowStep.waiting.current{--ring:var(--gold2)}.flowStep.ready{--ring:var(--sage)}
 .flowStep.waiting .flowBang{background:var(--card);border-color:var(--gold2);color:#8a6a1f}
 .flowStep.waiting .flowBang::after{display:none}
-.flowStep.waiting .flowWait{background:var(--card);border-color:var(--ink25);color:var(--ink45)}
-.flowStep.waiting.current .flowWait{border-color:var(--ink25);box-shadow:0 0 0 3px var(--line)}
-.flowStep.waiting.current .flowWait::after{display:none}
-.flowWait svg{width:10px;height:10px;stroke:var(--ink45);stroke-width:1.5}
-@media (prefers-reduced-motion:reduce){button.flowDot{transition:none}button.flowDot:hover{transform:none}}`;
+@media (prefers-reduced-motion:reduce){button.flowDot{transition:none}}`;
     document.head.appendChild(s);
   }
   /* What a card shows (Paul, 5 Oct: "I don't need 2 green approve this sheet button ... I also don't want this large progress bar.
@@ -5771,35 +5777,31 @@ button.flowDot:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
      ready, on every blocked step, on the step the sheet is at when a person can act on it (Engraving, Back files, QR label,
      Order check), and on Laser cutting when the sheet itself is done but something REAL is wrong with its set (a sheet of it
      cannot be found, the set is not loaded). A ready or cut sheet, and a step that is only running (Nesting), show none.
-     Round 7 (Paul: "you cannot have a green approved button on a single sheet that is part of a set where the other sheets are not
-     ready yet"): a set advances as ONE, so a sheet that is done and only waits for a mate sheet of its own set is not in trouble.
-     It shows no '!' but a quiet clock on Laser cutting (a grey ring, no colour of its own, [data-issues-quiet]); a press opens the
-     same panel, which says the wait once ("Waiting for SS Sheet 1 · Engraving") with a shortcut to that sheet. The attributes are the
-     hook: [data-issues-open] with the sheet (data-issues-id / data-sheet-id) and the step (data-issues-step / data-step). */
+     A set advances as ONE (round 7), and its wait is the SET's, not this sheet's (round 8, Paul: "only related items to that particular sheet"):
+     a sheet that is done and only waits for a mate sheet of its own set shows no '!' and no mark of any kind on Laser cutting, and its list
+     names no other sheet. The wait is said once, under the grey Approve button (its reason line, whose shortcut opens the '!' of the sheet that
+     holds the set). The attributes are the hook: [data-issues-open] with the sheet (data-issues-id / data-sheet-id) and the step
+     (data-issues-step / data-step). */
   const BANG={engraving:1,backFiles:1,qr:1,orders:1};
-  const CLOCK='<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M6 2.9V6l2.1 1.3"/></svg>';
-  // w: what the laser step of this sheet has to say, {real, waits} (laserWaitOf), or null when it has nothing to say / was not read
+  // w: what the laser step of this sheet has to say, {real} (laserTroubleOf), or null when it has nothing to say / was not read
   const bangOn=(e,s,w)=>!e.ready && !e.done && (s.state==='blocked' || (!!s.current && (!!BANG[s.key] || (s.key==='laser' && (!w || w.real>0)))));
-  const waitOn=(e,s,w)=>!e.ready && !e.done && s.key==='laser' && !!s.current && !!w && w.real===0 && w.waits>0;
   /* The laser step of a sheet that is done but whose set is not ready, read from CharmNestReadiness.issues (the one truth the panel
-     lists too): {real, waits} = the real set trouble and the quiet waits for a mate sheet. Nothing is read for any other state. */
-  function laserWaitOf(id,e,card,lookup){
+     lists too): {real} = the real set trouble (a sheet of the set that cannot be found, the set not loaded); a mate sheet that merely is not
+     ready is no trouble of this sheet (it is the set's wait, said under the Approve button). Nothing is read for any other state. */
+  function laserTroubleOf(id,e,card,lookup){
     if(e.ready || e.done || e.step!=='laser' || typeof R.issues!=='function')return null;
     const rec=records.get(id);if(!rec)return null;
     try{
-      const p=projected(rec),list=R.issues(p,sheetCtx(p,card,{lookup,steps:['laser']})) || [];
-      const wait=i=>i.quiet===true || i.key==='waitsOnSheet';
-      return {real:list.filter(i=>!wait(i)).length,waits:list.filter(wait).length};
-    }catch(err){console.warn('Library set wait',err);return null;}
+      const p=projected(rec);
+      return {real:(R.issues(p,sheetCtx(p,card,{lookup,steps:['laser']})) || []).length};
+    }catch(err){console.warn('Library set trouble',err);return null;}
   }
   function railHtml(e,id,open,w){
-    const hook=(s,cls,quiet)=>`<button type="button" class="flowDot ${cls}" data-issues-open${quiet?' data-issues-quiet="1"':''} data-issues-kind="sheet" data-issues-id="${esc(id)}" data-issues-step="${s.key}" data-sheet-id="${esc(id)}" data-step="${s.key}" aria-haspopup="dialog" aria-expanded="${open && (open===s.key || open==='true')?'true':'false'}"`;
+    const hook=(s,cls)=>`<button type="button" class="flowDot ${cls}" data-issues-open data-issues-kind="sheet" data-issues-id="${esc(id)}" data-issues-step="${s.key}" data-sheet-id="${esc(id)}" data-step="${s.key}" aria-haspopup="dialog" aria-expanded="${open && (open===s.key || open==='true')?'true':'false'}"`;
     const dot=s=>bangOn(e,s,w)
       ?`${hook(s,'flowBang')} aria-label="What holds this sheet back">!</button>`
-      :waitOn(e,s,w)
-      ?`${hook(s,'flowWait',true)} aria-label="This sheet is done. Its set waits for another sheet">${CLOCK}</button>`
       :`<i class="flowDot">${s.state==='done'?CHECK:s.state==='blocked'?'!':''}</i>`;
-    return `<ol class="flowRail" aria-label="Process steps">${e.steps.map(s=>`<li class="flowStep ${s.state}${s.current?' current':''}${s.current && e.ready && s.key==='laser'?' ready':''}"${s.current?' aria-current="step"':''} title="${esc(`${s.label}: ${s.detail}`)}">${dot(s)}<span>${esc(s.label)}</span></li>`).join('')}</ol>`;
+    return `<ol class="flowRail" aria-label="Process steps">${e.steps.map(s=>`<li class="flowStep ${s.state}${s.current?' current':''}${s.current && e.ready && s.key==='laser'?' ready':''}"${s.current?' aria-current="step"':''}>${dot(s)}<span>${esc(s.label)}</span></li>`).join('')}</ol>`;
   }
   function flowBox(slot){
     const key=`${slot.kind}:${slot.id}`;let box=[...slot.host.children].find(x=>x.classList?.contains('flowBox') && x.dataset.flowFor===key);
@@ -5809,23 +5811,76 @@ button.flowDot:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
     slot.host.insertBefore(box,slot.host.querySelector(':scope > .approveBox') || null);   // (under the sheet, and under its QR label; its Approve button follows)
     return box;
   }
+  /* The milestone circles (Paul, 5 Oct: "a slight expanding zoom for each of the timeline milestones similar to the Seals and a small extra info
+     popup over each milestone when hovering"). Each circle is a zoom dot of the shared seal engine (charm-nest-motion.js, data-zoom-dot) and carries
+     what the small card over it says (data-tip: the step's name, its state in plain words, the one line explain() gives for it, and who and when
+     for a step the laser finished: only what the sheet's record already holds), as its own label too. The card is drawn by charm-nest-rail-tip.js.
+     A redraw patches the rail where it stands (railPaint), so the circle a pointer or the keyboard is on is the same element after it and
+     its zoom and card go on; no circle has a listener of its own. */
+  const TIP_WAITS={orders:1,laser:1};
+  const tipState=s=>s.state==='done'?'Done':s.state==='blocked'?'Blocked':!s.current?(s.key==='laser' || s.key==='completed'?'Not started':'Waiting'):TIP_WAITS[s.key]?'Waiting':'In progress';
+  function tipBy(s,id){
+    if(s.state!=='done' || (s.key!=='laser' && s.key!=='completed'))return '';
+    const rec=records.get(id),stamp=rec && (R.processStamps?.(rec) || []).filter(x=>x.how==='laserDone' && +x.at>0).pop(),at=+(rec?.laserDoneAt || stamp?.at || 0),by=String(rec?.laserDoneBy || stamp?.by || '').trim();
+    if(!(at>0))return by;
+    let when='';try{when=new Date(at).toLocaleString(undefined,{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'});}catch(_){}
+    return [by,when].filter(Boolean).join(' · ');
+  }
+  function railStamp(ol,e,id){
+    [...ol.children].forEach((li,i)=>{
+      const s=e.steps[i],dot=li.querySelector('.flowDot');if(!s || !dot)return;
+      const by=tipBy(s,id),state=tipState(s);
+      dot.setAttribute('data-zoom-dot','');dot.setAttribute('data-step',s.key);
+      dot.setAttribute('data-tip',[s.label,state,s.detail,by].join('\n'));
+      dot.setAttribute('aria-label',`${s.label}. ${state}. ${s.detail}${by?` ${by}.`:''}`);
+      if(dot.tagName==='I'){dot.setAttribute('role','img');dot.setAttribute('tabindex',s.current?'0':'-1');}
+      else if(dot.hasAttribute('data-issues-open'))dot.setAttribute('aria-description','Press to see what holds this sheet back');   // (the label is the card's words; what a press does is said apart)   // (one stop in the rail for the keyboard: the circle it is at; the arrow keys move along it, charm-nest-rail-tip.js)
+    });
+  }
+  // one rail patched into another: the elements stay, so does whatever the page has put on them (the zoom's class and style, the focus, the '!' panel's marks)
+  const KEEP_ATTR={class:1,'aria-expanded':1,'aria-controls':1,style:1};
+  function attrsInto(a,b,skip){
+    for(const n of [...a.getAttributeNames()])if(!b.hasAttribute(n) && !(skip && skip[n]))a.removeAttribute(n);
+    for(const n of b.getAttributeNames())if(!(skip && skip[n]) && a.getAttribute(n)!==b.getAttribute(n))a.setAttribute(n,b.getAttribute(n));
+  }
+  function classInto(a,b){
+    const want=new Set(b.classList);if(a.classList.contains('sealZoomed'))want.add('sealZoomed');
+    for(const c of [...a.classList])if(!want.has(c))a.classList.remove(c);
+    for(const c of want)if(!a.classList.contains(c))a.classList.add(c);
+  }
+  function railPaint(box,html,e,id){
+    const tpl=document.createElement('template');tpl.innerHTML=html;
+    const nu=tpl.content,newOl=nu.querySelector('.flowRail'),ol=box.querySelector(':scope > .flowRail');
+    if(newOl)railStamp(newOl,e,id);
+    if(!ol || !newOl || ol.children.length!==newOl.children.length){box.replaceChildren(...nu.childNodes);return;}
+    const foot=box.querySelector(':scope > .flowFoot'),newFoot=nu.querySelector('.flowFoot');
+    attrsInto(ol,newOl);
+    [...ol.children].forEach((li,i)=>{
+      const nl=newOl.children[i];attrsInto(li,nl,KEEP_ATTR);classInto(li,nl);
+      const a=li.querySelector('.flowDot'),b=nl.querySelector('.flowDot');
+      if(a && b && a.tagName===b.tagName){attrsInto(a,b,KEEP_ATTR);classInto(a,b);if(a.innerHTML!==b.innerHTML)a.innerHTML=b.innerHTML;}
+      else if(a && b)a.replaceWith(b);
+      const x=li.querySelector(':scope > span'),y=nl.querySelector(':scope > span');if(x && y && x.textContent!==y.textContent)x.textContent=y.textContent;
+    });
+    if(foot && newFoot)foot.replaceWith(newFoot);else if(newFoot)box.appendChild(newFoot);else foot?.remove();
+  }
   function flowDraw(box,e,id,w){
     const pending=!e.ready && !e.done,checking=pending && (!!sealPoll || checkingNow || live.checking);
-    const sig=JSON.stringify([e.ready,e.done,e.step,e.steps.map(s=>[s.state,s.detail,s.current?1:0]),checking,box.dataset.issuesOpen || '',w?[w.real,w.waits]:0]);
+    const sig=JSON.stringify([e.ready,e.done,e.step,e.steps.map(s=>[s.state,s.detail,s.current?1:0]),checking,box.dataset.issuesOpen || '',w?w.real:0,e.done?[records.get(id)?.laserDoneAt || 0,records.get(id)?.laserDoneBy || '']:0]);
     if(box._sig===sig)return;
     box._sig=sig;
     const state=e.done?'done':e.ready?'ready':e.steps.some(s=>s.current && s.state==='blocked')?'blocked':'waiting',at=e.steps.findIndex(s=>s.current),now=e.steps[at];
     const kept=box.contains(document.activeElement)?document.activeElement.dataset?.step || '':'';
     box.dataset.state=state;
-    box.innerHTML=railHtml(e,id,box.dataset.issuesOpen,w)+`<div class="flowFoot">${now?`<div class="flowNow"><b>${esc(now.label)}</b> · step ${at+1} of ${e.steps.length}</div>`:''}${checking?'<span class="flowBusy" role="status"><i class="spin"></i>Checking…</span>':''}</div>`;
-    if(kept)box.querySelector(`[data-issues-open][data-step="${kept}"]`)?.focus({preventScroll:true});   // (a redraw keeps the keyboard where it was)
+    railPaint(box,railHtml(e,id,box.dataset.issuesOpen,w)+`<div class="flowFoot">${now?`<div class="flowNow"><b>${esc(now.label)}</b> · step ${at+1} of ${e.steps.length}</div>`:''}${checking?'<span class="flowBusy" role="status"><i class="spin"></i>Checking…</span>':''}</div>`,e,id);
+    if(kept){const f=box.querySelector(`.flowDot[data-step="${kept}"]`);if(f && document.activeElement!==f)f.focus({preventScroll:true});}   // (a redraw keeps the keyboard where it was)
   }
   function flowDecorate(card,lookup){
     try{
       flowCss();
       const slots=flowSlots(card);
       for(const old of card.querySelectorAll('.flowBox'))if(!slots.some(s=>old.dataset.flowFor===`${s.kind}:${s.id}` && old.parentElement===s.host))old.remove();   // (a set's own box of an older drawing, a sheet that left)
-      for(const slot of slots){const e=explainOf(slot,card,lookup);if(e)flowDraw(flowBox(slot),e,slot.id,laserWaitOf(slot.id,e,card,lookup));}
+      for(const slot of slots){const e=explainOf(slot,card,lookup);if(e)flowDraw(flowBox(slot),e,slot.id,laserTroubleOf(slot.id,e,card,lookup));}
     }catch(err){console.warn('Library step rail',err);}
   }
   /** The '!' of a sheet card, or of the first sheet of a set card that has one (the plain reason on a disabled Approve button
@@ -5836,6 +5891,7 @@ button.flowDot:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
     const host=which?.kind==='sheet'?[...card.querySelectorAll('.flowBox')].find(b=>b.dataset.flowFor===`sheet:${which.id}`):card;
     const bang=host && (host.querySelector('.flowStep.current [data-issues-open]') || host.querySelector('[data-issues-open]'));
     if(!bang)return false;
+    try{bang.scrollIntoView?.({block:'nearest'});}catch(e){}   // (the panel stays only while its '!' is on screen: on a phone the sheet that holds the set can be below the fold)
     bang.click();return true;
   }
   document.addEventListener('library-checklist-open',ev=>{if(ev.detail?.handled)return;const card=ev.target?.closest?.('[data-laser-card]');if(card)openChecklist(card,ev.detail);});

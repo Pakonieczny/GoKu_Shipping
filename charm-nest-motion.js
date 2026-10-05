@@ -768,6 +768,19 @@
       const own = el && el.closest ? el.closest("[data-seal-cap]") : null, n = own ? +own.getAttribute("data-seal-cap") : 0;
       return n > 0 ? n : el && el.closest && el.closest(ZOOM_TIGHT) ? ZOOM_CAP_TIGHT : ZOOM_CAP;
     }
+    /* Small round markers that are not seals (the Library's step rail circles, Paul 5 Oct: "a slight expanding zoom for each of the timeline
+       milestones similar to the Seals") ride the same engine: an element with data-zoom-dot waits ZOOM_DELAY under a resting pointer, grows at
+       once for a click, a tap or Tab, stays inside the screen, and goes back on leaving, Esc, a scroll or a press elsewhere, exactly as a seal does.
+       They differ in three small ways: the scale is one gentle number (DOT_SCALE, or the attribute's own value) instead of the size curve, it grows
+       with no shadow (the page draws a thin ring on .sealZoomed), and a reduced-motion setting leaves them at their size (the ring and the page's
+       own fade are the sign). A dot that is a button keeps its press: a click on it never zooms, and a press puts a zoom back at once. The engine
+       tells the page when one starts and ends (a "dotzoom" event on the document: detail { el, on }) so a caption can follow it. No seal is touched. */
+    const DOT = "[data-zoom-dot]", DOT_SCALE = 1.3, SEALS = ".seal, .laserSeal";
+    const isDot = el => !!(el && el.hasAttribute && el.hasAttribute("data-zoom-dot"));
+    const dotScale = el => { const n = parseFloat(el.getAttribute("data-zoom-dot")); return reduced() ? 1 : n > 1 && n <= 2 ? n : DOT_SCALE; };
+    const dotEvent = (el, on) => { try { doc.dispatchEvent(new CustomEvent("dotzoom", { detail: { el, on } })); } catch (_) {} };
+    // (the page may say no, for as long as something else holds the screen: a "dotzoom" with detail.ask that it cancels)
+    const dotAllowed = el => { try { return doc.dispatchEvent(new CustomEvent("dotzoom", { cancelable: true, detail: { el, ask: true } })); } catch (_) { return true; } };
     const ZOOM_GROW = 300, ZOOM_BACK = 230, ZOOM_EASE = "cubic-bezier(.2,.9,.25,1.14)", ZOOM_BACK_EASE = "cubic-bezier(.3,0,.2,1)", ZOOM_Z = 900, ZOOM_M = 6;
     /** The lift's soft shadow, drawn in the seal's own pixels (the grow scales it): about 8% down and 13% blurred of the grown seal, so a small seal gets a small one. */
     const zoomShadow = size => `drop-shadow(0 ${Math.max(1.5, size * .08).toFixed(1)}px ${Math.max(2.5, size * .13).toFixed(1)}px rgba(30,26,20,.26))`;
@@ -835,16 +848,17 @@
       if (st) { st.anim && st.anim.cancel(); st.paper && st.paper.cancel(); if (st.undo) { st.undo(); st.undo = null; } } else st = { undo: null };
       // the place it rests in, measured with no zoom on it and nothing opened
       const bs = getComputedStyle(el), base = parseM(bs.transform), r = el.getBoundingClientRect();
-      const W = el.offsetWidth || r.width, H = el.offsetHeight || r.height, size = Math.min(W, H) || Math.min(r.width, r.height), k = zoomScale(size, zoomCap(el));
+      const W = el.offsetWidth || r.width, H = el.offsetHeight || r.height, size = Math.min(W, H) || Math.min(r.width, r.height), dot = isDot(el), k = dot ? dotScale(el) : zoomScale(size, zoomCap(el));
       const p = zoomPlan(el, k, r, W, H);
       st.undo = zoomLift(el, p.open, k);
-      const to = { transform: `matrix(${k},0,0,${k},${base[4] + p.dx},${base[5] + p.dy})`, filter: zoomShadow(size), opacity: "1" };
+      const to = { transform: `matrix(${k},0,0,${k},${base[4] + p.dx},${base[5] + p.dy})`, filter: dot ? "none" : zoomShadow(size), opacity: "1" };
       const quick = reduced(), ms = quick ? 120 : ZOOM_GROW, ease = quick ? "ease-out" : ZOOM_EASE;
       st.anim = el.animate ? el.animate([from, to], { duration: ms, easing: ease, fill: "forwards" }) : null;
       const pp = paperOf(el); st.paper = pp && pp.animate ? pp.animate([{ opacity: pfrom }, { opacity: 1 }], { duration: quick ? 100 : 220, delay: quick ? 0 : 30, easing: "ease-out", fill: "forwards" }) : null;
       Object.assign(st, { el, on: true, k, rect: p.rect, home: { l: r.left, t: r.top, r: r.right, b: r.bottom }, keyboard: !!o.keyboard, touch: !!o.touch, managed: !!o.managed });
       ZS.set(el, st); ACT.add(st); Zm.cur = st; el.dataset.sealZoom = k.toFixed(2);
       if (!Zm.watch) Zm.watch = setInterval(zoomWatch, 250);
+      if (dot) dotEvent(el, true);
       return true;
     }
     /** Puts the seal back (now: at once; else the way it came, from where it is). */
@@ -854,6 +868,7 @@
       if (!st.on) { if (now) done(); return; }
       st.on = false; if (Zm.cur === st) Zm.cur = null;
       if (!Zm.cur && Zm.watch) { clearInterval(Zm.watch); Zm.watch = 0; }
+      if (isDot(e)) dotEvent(e, false);
       if (now || !e.isConnected || !e.animate) { done(); return; }
       const cs = getComputedStyle(e), from = { transform: cs.transform, filter: cs.filter, opacity: cs.opacity }, pp = paperOf(e), pfrom = pp ? getComputedStyle(pp).opacity : "0";
       st.anim && st.anim.cancel(); st.paper && st.paper.cancel();
@@ -869,10 +884,10 @@
       if (!st.keyboard && !st.touch && !st.managed && !pointed(s) && !atHome(st, Zm.point)) zoomHide(false);
     }
     function cancelWant() { clearTimeout(Zm.t); Zm.t = 0; Zm.want = null; }
-    const sealAt = t => t && t.closest ? t.closest(".seal, .laserSeal") : null;
+    const sealAt = t => t && t.closest ? t.closest(SEALS + ", " + DOT) : null;
     /** Any seal on the page that is drawn and ready (a pending one, still waiting for its stamp, is not). */
     const canZoom = s => !!(s && s.isConnected && !s.classList.contains("pending") && !s.closest(".mGhost,[inert]") && s.getClientRects().length);
-    const zoomable = s => canZoom(s) && s.matches(".seal, .laserSeal");
+    const zoomable = s => canZoom(s) && s.matches(SEALS + ", " + DOT) && (!isDot(s) || dotAllowed(s));
     /** The pointer is still where the seal stood (a seal nudged well away from a screen edge may no longer cover that spot: the pointer
      *  there is still resting on it, and taking the zoom back would only bring it round again). */
     const atHome = (st, p) => !!(st && st.home && p && p.x >= st.home.l && p.x <= st.home.r && p.y >= st.home.t && p.y <= st.home.b);
@@ -916,6 +931,7 @@
     // is not "second"). A press that comes from the keyboard (detail 0) never toggles.
     doc.addEventListener("click", e => {
       const s = sealAt(e.target); if (!s) return;
+      if (isDot(s) && s.matches("button, a")) return;   // (a circle that is a button: the button answers, nothing zooms)
       const row = s.closest && s.closest(".sealRow .seal") === s;
       if (row) {
         const b = btnOf(s);
@@ -927,6 +943,8 @@
       if ((touch || e.detail) && was && Zm.cur && Zm.cur.el === s) { zoomHide(false); if (!touch) Zm.off = s; return; }
       if (zoomable(s)) zoomShow(s, { touch: !!touch });
     }, true);
+    // a press on a circle that is a button puts its zoom back at once, and the pointer resting on it does not bring it round again
+    doc.addEventListener("pointerdown", e => { const s = sealAt(e.target); if (!isDot(s) || !s.matches("button, a")) return; cancelWant(); zoomHide(false); Zm.off = s; }, true);
     doc.addEventListener("pointerdown", e => { Zm.lastTouch = e.pointerType === "touch"; const s = sealAt(e.target); Zm.pre = s && Zm.cur && Zm.cur.on && Zm.cur.el === s ? s : null; }, true);
     // Enter or Space on a seal that has the focus grows it, or puts it back
     doc.addEventListener("keydown", e => {
@@ -945,7 +963,7 @@
     doc.addEventListener("visibilitychange", () => { if (doc.visibilityState === "hidden") zoomAway(); });
     doc.addEventListener("close", e => { if (e.target && e.target.contains && (e.target.contains(Zm.cur && Zm.cur.el) || e.target.contains(Zm.want))) zoomAway(); }, true);
     const zoom = {
-      DELAY: ZOOM_DELAY, scale: zoomScale, cap: zoomCap, show: zoomShow, hide: zoomHide, away: zoomAway,
+      DELAY: ZOOM_DELAY, DOT: DOT_SCALE, scale: zoomScale, cap: zoomCap, show: zoomShow, hide: zoomHide, away: zoomAway,
       get current() { return Zm.cur ? Zm.cur.el : null; },
       /** Where the seal is, or will be once zoomed (the page rectangle that tooltips and cards stay clear of). */
       rectOf(el) { const st = ZS.get(el); return st && st.on ? Object.assign({}, st.rect) : null; },
