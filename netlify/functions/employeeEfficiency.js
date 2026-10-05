@@ -610,6 +610,8 @@ async function opOrders(ctx, body) {
 
 /* ── the door ── */
 const OPS = { overview: opOverview, person: opPerson, orders: opOrders };
+/* op "live": the stations board (what each station is working on right now), kept in _stationLive.js */
+OPS.live = (ctx, body) => require("./_stationLive").op(ctx, body, { json, nyMidnight, cached, display: raw => canonOf(ctx, nameKeyOf(ctx, raw)) || niceName(raw) });
 function senderOf(event) {
   const h = (event && event.headers) || {};
   const get = k => { for (const x in h) if (x.toLowerCase() === k) return h[x]; return ""; };
