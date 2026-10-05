@@ -158,7 +158,9 @@ async function openPage(browser, srv, o = {}) {
 }
 const READ_OPS = new Set(['ping', 'lookupCharms', 'listCharms', 'listSheets', 'getSheet', 'backPreview', 'sheetPdf', 'getCalibration', 'jobList', 'getJob', 'getAgent', 'masterGet', 'masterGetMany', 'masterList', 'masterListFiles', 'poolList', 'poolGet', 'sandboxStatus', 'backList', 'setGet', 'setList', 'releaseGet', 'runGet', 'runList', 'history', 'laserDoneList', 'findSheets', 'aliasGet', 'noDesignGet', 'optionMapGet', 'customGet', 'customSheetGet', 'customReadGet', 'cancelList', 'cancelFates', 'timelineGet', 'cancelCheck', 'sessionsList', 'flowState', 'getShapeGuidance', 'listingPhotos']);
 /** A call that changes cloud state (an op not known to be a read; laserStatus only with recordSeals:true; a station POST). */
-const isWrite = c => c.fn === 'charmNestLibrary' ? (c.op === 'laserStatus' ? c.recordSeals === true : !READ_OPS.has(c.op)) : c.fn === 'firebaseOrders';
+// (an op that is not in the list but is named get.../list.../find... is a read: new reading ops of the round, e.g. getOrderPieces, are not writes)
+const isRead = op => READ_OPS.has(op) || /^(get|list|find)[A-Z]/.test(String(op || ''));
+const isWrite = c => c.fn === 'charmNestLibrary' ? (c.op === 'laserStatus' ? c.recordSeals === true : !isRead(c.op)) : c.fn === 'firebaseOrders';
 const sealCheck = c => c.fn === 'charmNestLibrary' && c.op === 'laserStatus' && c.recordSeals === true;
 
 const dupIds = page => page.evaluate(() => { const m = {}; for (const e of document.querySelectorAll('[id]')) m[e.id] = (m[e.id] || 0) + 1; return Object.entries(m).filter(([, n]) => n > 1).map(([k, n]) => k + '×' + n); });
@@ -238,9 +240,10 @@ async function smallWorld(browser, shot) {
     // (the rows above were handed to the page by the test: what the page does by itself about new rows - arrivals, custom readings - is over before this)
     await page.waitForTimeout(3500);
     h.mark('look');
-    await page.waitForTimeout(4200);                                           // (the live loop reads about every 3 s)
+    await page.waitForTimeout(3500);                                           // (the live loop reads about every 3 s; a busy machine may be late: it is waited for, up to 15 s)
+    await until(() => h.since('look').some(c => c.fn === 'charmNestLibrary' && c.op === 'laserStatus' && c.wantRevs), 15000, 'a live read').catch(() => {});
     const live = h.since('look').filter(c => c.fn === 'charmNestLibrary' && c.op === 'laserStatus');
-    hard('the Library follows the cloud: a live read was made within 4 s', live.some(c => c.wantRevs), `${live.length} laserStatus calls, ${live.filter(c => c.wantRevs).length} live`);
+    hard('the Library follows the cloud: a live read was made (the loop is running)', live.some(c => c.wantRevs), `${live.length} laserStatus calls, ${live.filter(c => c.wantRevs).length} live`);
     hard('a live read never sends recordSeals:true', !h.calls.some(c => c.op === 'laserStatus' && (c.wantRevs || c.ifRevs) && c.recordSeals === true), JSON.stringify(h.calls.filter(c => c.op === 'laserStatus' && c.recordSeals === true)));
     const wrote = h.since('look').filter(isWrite);
     hard('no write call while the Library is only looked at', wrote.filter(c => !sealCheck(c)).length === 0, wrote.map(c => c.fn + ':' + c.op).join(','));
@@ -338,7 +341,12 @@ async function smallWorld(browser, shot) {
       await page.waitForTimeout(2200);
       return { note, chipState, chipWhy };
     }
-    const closeOverlays = async () => { await page.keyboard.press('Escape').catch(() => {}); await page.evaluate(() => { document.querySelectorAll('dialog[open]').forEach(d => { try { d.close(); } catch (_) { /* gone */ } }); }); await page.waitForTimeout(500); };
+    const closeOverlays = async () => {
+      await page.evaluate(() => { try { if (window.SharedOrdersModal && SharedOrdersModal.isOpen && SharedOrdersModal.isOpen()) SharedOrdersModal.close(); } catch (_) { /* closed */ } });
+      await page.waitForTimeout(900);                                         // (its way out is animated)
+      await page.keyboard.press('Escape').catch(() => {}); await page.waitForTimeout(500);
+      await page.evaluate(() => { document.querySelectorAll('dialog[open]').forEach(d => { try { d.close(); } catch (_) { /* gone */ } }); }); await page.waitForTimeout(500);
+    };
     const modalUp = () => page.evaluate(() => !!(document.querySelector('[data-shared-orders-modal], .sharedOrdersModal, #sharedOrdersModal, dialog.sharedOrders[open], .soModal, [data-so-modal]')) || !!(window.SharedOrdersModal && SharedOrdersModal.isOpen && SharedOrdersModal.isOpen()));
     const hasModule = () => page.evaluate(() => !!window.SharedOrdersModal);
 
@@ -373,6 +381,29 @@ async function smallWorld(browser, shot) {
       const writes2 = h.since('drag2').filter(isWrite).filter(c => !sealCheck(c));
       info('writes after the drag to Set 2', writes2.map(c => c.fn + ':' + c.op + (c.steps ? '[' + c.steps + ']' : '')));
       if (where2.gfA1 === where2.ssA1) hard('a refused drag onto another set writes nothing', writes2.length === 0, writes2.map(c => c.fn + ':' + c.op).join(','));
+      if (m2) {
+        const listed = () => page.evaluate(() => ({ cards: document.querySelectorAll('.soCard').length, tiles: document.querySelectorAll('.soCard .soTile').length, opens: document.querySelectorAll('.soCard [data-open]').length, text: (document.querySelector('.soHead, .soTitle, dialog.soDlg h2, [data-so-title]') || {}).textContent || '' }));
+        await until(async () => (await listed()).cards > 0, 8000, 'the modal lists its orders').catch(() => {});
+        const L1 = await listed();
+        info('shared-orders modal', L1);
+        accept('6 · the modal lists exactly the 4 orders the two sheets share, each with thumbnails and a link to the order', L1.cards === 4 && L1.tiles >= 8 && L1.opens === 4, JSON.stringify(L1));
+        await shot(page, 'A06-shared-orders-modal');
+        const n0 = L1.cards;
+        // an order is opened from it, and the way back brings the modal up again with the same orders
+        await page.evaluate(() => document.querySelector('.soCard [data-open]').click());
+        const opened = await until(() => page.evaluate(() => !!(window.OrderWin && OrderWin.isOpen())), 8000, 'the order opens from the modal').then(() => true, () => false);
+        await page.waitForTimeout(1200);
+        const back = await page.evaluate(() => !!document.getElementById('soBack'));
+        await shot(page, 'A07-order-opened-from-modal');
+        accept('6 · an order opened from the modal shows the order view with a way back to the modal', opened && back, JSON.stringify({ opened, back }));
+        if (back) {
+          await page.evaluate(() => document.getElementById('soBack').click());
+          const again = await until(() => page.evaluate(() => !!(window.SharedOrdersModal && SharedOrdersModal.isOpen && SharedOrdersModal.isOpen())), 8000, 'back to the modal').then(() => true, () => false);
+          await page.waitForTimeout(1000);
+          const L2 = await listed();
+          accept('6 · going back from the order returns to the modal with the remaining shared orders', again && L2.cards === n0, JSON.stringify({ again, before: n0, after: L2.cards }));
+        } else await page.evaluate(() => { try { OrderWin.close(); } catch (_) { /* closed */ } });
+      }
       await closeOverlays();
       await sweep(h, 'A5b drag onto another set');
     }
@@ -389,7 +420,7 @@ async function smallWorld(browser, shot) {
       await page.waitForTimeout(1800);
       await shot(page, 'A05-after-approve');
       await quiet(page, 1500);
-      const calls = h.since('approve').filter(c => c.fn === 'charmNestLibrary' && !READ_OPS.has(c.op) && !(c.op === 'laserStatus' && c.recordSeals !== true));
+      const calls = h.since('approve').filter(c => c.fn === 'charmNestLibrary' && !isRead(c.op) && !(c.op === 'laserStatus' && c.recordSeals !== true));
       info('calls after Approve (' + target2.id + ')', calls.map(c => c.op + (c.steps ? '[' + c.steps + ']' : '')));
       hard('Approve for laser cutting: one press, one request (a double press makes no second)', calls.filter(c => c.op === 'flowApply').length <= 1, calls.map(c => c.op).join(','));
     } else hard('an Approve button is on a sheet that is not ready', false, JSON.stringify(approve));

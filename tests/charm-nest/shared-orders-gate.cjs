@@ -68,7 +68,7 @@ const gold = (n, keys, extra) => sheet('gold', n, keys, extra), silver = (n, key
   rule = Gate.cardinalFor(c, false); assert.deepEqual(rule.list.map(p => p.page).sort(), [1, 2, 3], 'taking one out takes the chain out'); await Gate.changeMembership('gold14k', false, rule.list); assert.deepEqual(inSet(), []);
   // a full gold sheet that shares an order is in the set on its own: the 14K sheet cannot be taken out from under it
   const gf = gold(1, ['7001_2_1'], { releaseFull: true }); pages.push(gf); await Gate.changeMembership('gold14k', true, [a, b, c]); assert.deepEqual(inSet(), ['14K1', '14K2', '14K3', 'GF1']);
-  rule = Gate.cardinalFor(a, false); assert(/^Order 7001 also on GF Sheet 1, which is in the set on its own \(full sheet\)\./.test(rule.blocked), rule.blocked); assert(/take the order off one of the sheets/.test(rule.blocked));
+  rule = Gate.cardinalFor(a, false); assert.equal(rule.blocked, '14K Sheet 1 stays with GF Sheet 1: they share an order.', rule.blocked); assert(!/reason|stay in the same set|take the order off/.test(rule.blocked), 'names only: no reasons, no instruction');
   // a pulled solid sheet is in the set without its own tick: the record says null (never "ticked"), the library row says it is in
   reset([gold(1, ['8001_1_1'], { releaseFull: true }), sheet('gold14k', 1, ['8001_1_2'])]);
   await Gate.assemble(run); assert.deepEqual(inSet(), ['14K1', 'GF1']); assert.strictEqual(saved.get('gold14k-1').solidIncluded, null, 'in by the rule, not by its own tick');
