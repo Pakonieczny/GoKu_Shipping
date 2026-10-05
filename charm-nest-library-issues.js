@@ -31,6 +31,11 @@
    only what belongs to this sheet, and the set's wait is said once, under the grey Approve button (its reason line and the shortcut that
    opens the sheet that holds the set). A feed entry {step:'laser', key:'waitsOnSheet'} is dropped here whatever sent it.
 
+   Round 15 (Paul: "the colours of the hollow circles ... should be showing the same colour as the sheet they belong to" · hover each dot for the vector design
+   of that piece, instantly · "clicking on any of the dots ... will automatically open the detailed order view with that particular piece pre-selected"): the dots
+   under each order are the shared PieceDots component (charm-nest-piece-dots.js). A ring is the colour of the sheet its piece belongs to, never the issue red; every
+   dot has its hover card and opens its own piece through the same hand-off as the row (the panel steps aside and is back when the order window closes).
+
    Closes on Esc (focus goes back to the '!'), a press outside, the '!' pressed again, the sheet leaving the screen, or
    when nothing is left to show. Keyboard: Tab / Shift+Tab stay inside, Up/Down/Home/End move between rows, Enter opens.
    Reduced motion: a short fade only. Touch: rows are 52 px tall, the panel is at most the screen width less 16 px.
@@ -75,6 +80,10 @@
     nesting: { label: 'Layout not ready', icon: 'grid' }
   };
   const METAL_OF = { GF: 'gold', SS: 'silver', RG: 'rose', '10K': 'gold10k', '14K': 'gold14k' };
+  const METAL_KEYS = new Set(Object.values(METAL_OF));
+  const codeOf = label => (/^([A-Z0-9]{2,3}) Sheet/.exec(label || '') || [])[1] || '';   // "RG Sheet 1" -> "RG"
+  const lineOfPool = pool => String(pool || '').replace(/_\d+$/, '');                     // a copy's pool id starts with its line's key
+  const NO_DESIGN = new Set(['noSku', 'unmatched', 'noDesign']);                           // a piece with one of these has no vector design to show
   const STEP = { nesting: 'Nesting', engraving: 'Engraving', backFiles: 'Back files', qr: 'QR label', orders: 'Order check', laser: 'Laser cutting' };   // the rail's own words
   const HARD = new Set(['noSku', 'unmatched', 'noDesign', 'held']);   // a person has to fix these (the count chip turns clay); the others only wait
   const SIX = 6, SHOWN = 3;   // more than SIX issues fold into groups; a group shows SHOWN rows before "Show N more"
@@ -149,11 +158,16 @@
         seen.add('o:' + id);
         const r = reasonOf(it), pool = it.open && it.open.poolId, type = (it.open && it.open.type) || 'order', pieces = Array.isArray(it.pieces) ? it.pieces : [];
         const bad = Math.max(1, pieces.length), total = clamp(Math.max(+it.pieceCount || 0, bad + 1), 2, 6);
+        // one dot per piece (the PieceDots component draws them): a ring for each piece that holds the order back, in the colour of the sheet it sits on (its
+        // metal's colour once known, else this sheet's: PieceDots), a filled dot for the rest; each says which piece it is, so a press opens that piece
         const dots = [];
-        for (let i = 0; i < Math.min(bad, total - 1); i++) { const p = pieces[i] || {}, lc = (/^([A-Z0-9]{2,3}) Sheet/.exec(p.sheetLabel || '') || [])[1] || ''; dots.push({ ring: true, metal: METAL_OF[lc] || '', tone: r.tone }); }
-        while (dots.length < total) dots.unshift({ ring: false, metal: (feed && feed.metal) || '', tone: '' });
+        for (let i = 0; i < Math.min(bad, total - 1); i++) {
+          const p = pieces[i] || {}, kind = p.kind || it.key || '', pool = String(p.poolId || p.key || '');
+          dots.push({ ring: true, metal: METAL_OF[codeOf(p.sheetLabel)] || '', kind, n: +p.index || 0, pool, line: lineOfPool(pool), state: p.why || '', none: NO_DESIGN.has(kind) });
+        }
+        while (dots.length < total) dots.unshift({ ring: false, metal: '', kind: '', n: 0, pool: '', line: '', state: '', none: false });
         const cust = String(it.customer || '').trim();
-        m.orders.push({ k: 'o:' + id, orderId: id, key: it.key || '', customer: cust, listingId: it.listingId ? String(it.listingId) : '', thumb: typeof it.thumb === 'string' ? it.thumb : (it.thumb && it.thumb.url) || '', reason: r, dots, go: type === 'piece' ? 'piece' : type === 'sheet' ? 'sheet' : 'order', target: String((it.open && it.open.id) || id), pool: pool ? String(pool) : '' });
+        m.orders.push({ k: 'o:' + id, orderId: id, key: it.key || '', customer: cust, listingId: it.listingId ? String(it.listingId) : '', thumb: typeof it.thumb === 'string' ? it.thumb : (it.thumb && it.thumb.url) || '', reason: r, dots, pieceTotal: Math.max(+it.pieceCount || 0, dots.length), sheetMetal: m.metal, go: type === 'piece' ? 'piece' : type === 'sheet' ? 'sheet' : 'order', target: String((it.open && it.open.id) || id), pool: pool ? String(pool) : '' });
         if (HARD.has(it.key)) m.hard = true;
       } else if (it.key === 'unverified' && !it.orderId) {   // the sheet's orders could not be read yet: ONE quiet chip for the whole sheet, worded from the readiness' own label
         if (seen.has('n:unverified')) continue;
@@ -188,7 +202,27 @@
   const photos = new Map();   // listing id -> { url | null, busy, at }
   // (our own attribute names: the page's photo loader fills every [data-lid] / [data-listing] it finds with its status words)
   const thumbHtml = o => `<span class="lisTh" data-lis-lid="${esc(o.listingId)}" data-lis-url="${esc(o.thumb)}">${ICON.piece}</span>`;
-  const dotsHtml = o => `<span class="lisDots" role="img" aria-label="${esc(`${plural(o.dots.length, 'piece', 'pieces')}, ${o.dots.filter(d => d.ring).length} waiting`)}">${o.dots.map(d => `<i class="lisDot${d.ring ? ' ring' : ''}"${d.metal ? ` data-m="${esc(d.metal)}"` : ''}${d.tone ? ` data-t="${d.tone}"` : ''}></i>`).join('')}</span>`;
+  /* the piece dots (charm-nest-piece-dots.js, the one component): the order's own pieces when the page knows them (OrderPieces: which piece each dot is, its
+     metal, the sheet it sits on), else what the issue says. Made once per drawn row and kept for that reading: only the rows on screen ask. */
+  function refine(o) {
+    if (o._dots) return o._dots;
+    let all = []; try { const OP = root.OrderPieces; all = OP && typeof OP.of === 'function' ? OP.of(o.orderId) || [] : []; } catch (e) { warn('pieces', e); }
+    const live = all.filter(p => p && !p.gone && !p.hand && !p.noDesign), byPool = new Map(live.map(p => [p.key, p]));
+    const used = new Set(o.dots.filter(d => d.pool).map(d => d.pool)), rest = live.filter(p => !used.has(p.key)).sort((a, b) => a.index - b.index);
+    let k = 0;
+    return o._dots = o.dots.map(d => {
+      const x = Object.assign({}, d);
+      if (d.ring) {
+        const p = d.pool && byPool.get(d.pool);
+        if (p) { if (!x.metal) x.metal = METAL_OF[codeOf(p.sheetLabel)] || (METAL_KEYS.has(p.metal) ? p.metal : ''); x.line = p.lineKey || x.line; x.n = x.n || p.index; if (NO_DESIGN.has(p.problem)) x.none = true; }
+      } else {
+        const p = rest[k++];
+        if (p) { x.pool = p.key; x.line = p.lineKey; x.n = p.index; x.metal = METAL_OF[codeOf(p.sheetLabel)] || ''; x.state = p.sheetLabel ? 'on ' + p.sheetLabel : 'on a sheet'; if (NO_DESIGN.has(p.problem)) x.none = true; }
+      }
+      return x;
+    });
+  }
+  const dotsHtml = o => root.PieceDots ? root.PieceDots.html(refine(o), { order: o.orderId, sheetMetal: o.sheetMetal, total: o.pieceTotal }) : '';
   const rowHtml = (o, chip) => `<button type="button" class="lisRow lisGo" data-go="${o.go}" data-id="${esc(o.target)}" data-pool="${esc(o.pool)}" data-issue-step="orders" data-issue-key="${esc(o.key)}" data-issue-order="${esc(o.orderId)}" aria-label="${esc(`Open order ${o.orderId}${o.customer ? ', ' + o.customer : ''}${chip ? ', ' + o.reason.chip : ''}`)}">${thumbHtml(o)}<span class="lisTx"><span class="lisWho"><b>${esc(o.orderId)}</b>${o.customer ? `<i>${esc(o.customer)}</i>` : ''}</span><span class="lisSub">${dotsHtml(o)}${chip ? `<span class="lisChip ${o.reason.tone}">${esc(o.reason.chip)}</span>` : ''}</span></span>${ICON.chev}</button>`;
   const sheetRowHtml = s => { const inner = `<span class="lisTh lisTile" ${s.metal ? `data-m="${esc(s.metal)}"` : ''}>${esc(s.code || '')}</span><span class="lisTx"><span class="lisWho"><b class="sans">${esc(s.label)}</b></span><span class="lisSub"><span class="lisChip slate">${esc(s.chip)}</span></span></span>`, hook = ` data-issue-step="laser" data-issue-key="${esc(s.key)}" data-issue-sheet="${esc(s.id)}"`;
     return s.id ? `<button type="button" class="lisRow lisGo" data-go="sheet" data-id="${esc(s.id)}"${hook} aria-label="${esc('Open ' + s.label)}">${inner}${ICON.chev}</button>` : `<div class="lisRow lisStatic"${hook}>${inner}<span></span></div>`; };
@@ -262,11 +296,6 @@
 .lisWho b.sans{font:600 13px/1.25 var(--sans,system-ui,sans-serif)}
 .lisWho i{min-width:0;font:11px/1.2 var(--sans,system-ui,sans-serif);font-style:normal;color:var(--ink45,#938c80);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .lisSub{display:flex;align-items:center;gap:6px;min-width:0}
-.lisDots{display:inline-flex;gap:3px;flex:none}
-.lisDot{width:10px;height:10px;border-radius:50%;background:var(--ink25,#c4bdb0)}
-.lisDot[data-m]{background:var(--mc)}
-.lisDot.ring{background:transparent;border:2px solid var(--clay,#b0563f)}
-.lisDot.ring[data-t=gold]{border-color:var(--gold2,#caa861)}.lisDot.ring[data-t=slate]{border-color:var(--slate,#4a6b78)}.lisDot.ring[data-m]{border-color:var(--mc)}
 .lisChip{display:inline-block;flex:0 1 auto;min-width:0;max-width:100%;font:650 10.5px/1.1 var(--sans,system-ui,sans-serif);padding:4px 8px 4px 7px;border-radius:999px;background:var(--goldSoft,#f0e6cd);color:#7a5a1d;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .lisChip::before{content:"";display:inline-block;width:5px;height:5px;margin:0 5px 1px 0;vertical-align:middle;border-radius:50%;background:currentColor;opacity:.7}
 .lisChip.clay{background:var(--claySoft,#f4e3dc);color:#8a3a26}
@@ -402,7 +431,7 @@ button.flowDot[data-issues-open][aria-expanded="true"]{box-shadow:0 0 0 4px rgba
         if (!reduced() && !first) anim(n, [{ opacity: 0, transform: 'translateY(5px)' }, { opacity: 1, transform: 'none' }], { duration: 220, easing: EASE });
         else if (first && !reduced() && i < 8) anim(n, [{ opacity: 0, transform: 'translateY(5px)' }, { opacity: 1, transform: 'none' }], { duration: 260, delay: 70 + i * 32, easing: EASE, fill: 'backwards' });
       } else if (n._sig !== b.sig) {
-        const keep = n.contains(doc.activeElement), had = n.firstElementChild, tmp = doc.createElement('div');
+        const keep = n.contains(doc.activeElement), dk = keep && doc.activeElement.classList && doc.activeElement.classList.contains('pdot') ? doc.activeElement.getAttribute('data-pk') : '', had = n.firstElementChild, tmp = doc.createElement('div');
         tmp.innerHTML = b.html; n._sig = b.sig;
         const now = tmp.firstElementChild;
         if (had && now && had.classList.contains('lisGroup') && now.classList.contains('lisGroup')) {   // (a group header changes in place: its chevron turns, it does not blink)
@@ -410,7 +439,7 @@ button.flowDot[data-issues-open][aria-expanded="true"]{box-shadow:0 0 0 4px rgba
           const ch = had.querySelector('.lisCh');   // (the chevron stays: it turns; everything else is made again)
           for (const c of [...had.children]) if (c !== ch) c.remove();
           for (const c of [...now.children]) if (!c.classList.contains('lisCh')) had.insertBefore(c, ch);
-        } else { n.replaceChildren(...tmp.childNodes); if (keep) n.querySelector('.lisGo,.lisMore')?.focus({ preventScroll: true }); }
+        } else { n.replaceChildren(...tmp.childNodes); if (keep) ((dk && n.querySelector(`.pdot[data-pk="${dk.replace(/["\\]/g, '')}"]`)) || n.querySelector('.lisGo,.lisMore'))?.focus({ preventScroll: true }); }   // (a focused piece dot keeps the keyboard: its successor takes it)
       }
       if (prev ? prev.nextSibling !== n : body.firstChild !== n) body.insertBefore(n, prev ? prev.nextSibling : body.firstChild);
       prev = n; i++;
@@ -423,6 +452,8 @@ button.flowDot[data-issues-open][aria-expanded="true"]{box-shadow:0 0 0 4px rgba
     }
     if (focus && !body.contains(doc.activeElement)) (body.querySelector(`.lisBlk[data-k="${focus.replace(/"/g, '')}"] .lisGo`) || body.querySelector('.lisGo'))?.focus({ preventScroll: true });
     pictures(st.panel);
+    // the vector designs of the pieces drawn here are made ahead, in idle slices, the rows on screen first: a hover shows its card at once
+    if (root.PieceDots && typeof root.PieceDots.warm === 'function') { try { root.PieceDots.warm(body, { clip: body }); } catch (e) { warn('warm', e); } }
   }
 
   /* ═══ open, refresh, close ═══ */
@@ -437,7 +468,7 @@ button.flowDot[data-issues-open][aria-expanded="true"]{box-shadow:0 0 0 4px rgba
     const p = st.panel = doc.createElement('div');
     p.className = 'lisPanel'; p.id = 'libIssuesPanel'; p.setAttribute('data-issues-for', 'sheet:' + id); p.setAttribute('role', 'dialog'); p.setAttribute('aria-modal', 'false'); p.setAttribute('aria-label', `What holds ${m.label || 'this sheet'} back`); p.tabIndex = -1;
     st.head = doc.createElement('div'); st.head.className = 'lisHead';
-    st.body = doc.createElement('div'); st.body.className = 'lisBody';
+    st.body = doc.createElement('div'); st.body.className = 'lisBody'; st.body.setAttribute('data-pd-scope', '');   // (the piece dots' card follows a redraw of what is inside this)
     p.append(st.head, st.body);
     (btn.closest('dialog[open]') || doc.body).appendChild(p);
     btn.setAttribute('aria-controls', p.id);
@@ -574,6 +605,7 @@ button.flowDot[data-issues-open][aria-expanded="true"]{box-shadow:0 0 0 4px rgba
     const b = t.closest('[data-issues-open]');
     if (b) { ev.preventDefault(); ev.stopPropagation(); toggle(b); return; }
     if (!st.open || !st.panel || !st.panel.contains(t)) return;
+    if (t.closest('.pdot')) return;   // (a piece dot is PieceDots' own press: it opens that piece, and says so through "piecedot:open" below)
     const fold = t.closest('[data-fold]');
     if (fold) { ev.preventDefault(); st.fold.set(fold.dataset.fold, fold.getAttribute('aria-expanded') !== 'true'); st.sig = ''; refresh(); return; }
     const more = t.closest('[data-more]');
@@ -581,19 +613,34 @@ button.flowDot[data-issues-open][aria-expanded="true"]{box-shadow:0 0 0 4px rgba
     const g = t.closest('.lisGo');
     if (g) { ev.preventDefault(); go(g); }
   }, true);
+  /* a press on a piece dot (Paul, round 15: "clicking on any of the dots both solid and hollow will automatically open the detailed order view with that particular piece
+     pre-selected"): the order opens with that piece selected, handed over exactly as a row's press is (the panel steps aside, no pop-up on a pop-up, and it is back
+     when the order window closes). A press outside this panel is not ours. */
+  doc.addEventListener('piecedot:open', ev => {
+    const x = ev.detail, d = x && x.dot;
+    if (!st.open || !st.panel || !d || !st.panel.contains(d)) return;
+    const row = d.closest('.lisRow'); if (!row) return;
+    ev.preventDefault();
+    if (st.handed) return;
+    const o = root.PieceDots && typeof root.PieceDots.openOpts === 'function' ? root.PieceDots.openOpts(x) : {};
+    handOver(row, () => openOrder(row, x.order, o));
+  });
   doc.addEventListener('pointerdown', ev => {
     const t = ev.target && ev.target.closest ? ev.target : null; if (!t) return;
     if (t.closest('[data-issues-open]')) { ev.stopPropagation(); return; }   // (the '!' never starts a drag of its card)
     if (st.open && st.panel && !st.handed && !st.panel.contains(t)) close();
   }, true);
   doc.addEventListener('keydown', ev => {
-    if (!st.open || !st.panel || st.handed) return;
+    if (ev.defaultPrevented || !st.open || !st.panel || st.handed) return;   // (a key the dots took, an arrow between two of them, is not read again here)
     if (doc.querySelector('dialog[open]')) return;
     if (ev.key === 'Escape') { ev.preventDefault(); ev.stopPropagation(); close({ focus: true }); return; }
     const inside = st.panel.contains(doc.activeElement);
     const items = [...st.panel.querySelectorAll('.lisGo,.lisMore,.lisGroup')];
     if (!items.length) return;
-    const i = items.indexOf(doc.activeElement);
+    const at = doc.activeElement, dot = at && at.classList && at.classList.contains('pdot') ? at : null;
+    const i = items.indexOf(dot ? dot.closest('.lisGo') : at);   // (a focused piece dot stands for its row)
+    if (dot && ev.key === 'ArrowLeft' && dot.parentNode.firstElementChild === dot) { const row = dot.closest('.lisGo'); if (row) { ev.preventDefault(); row.focus({ preventScroll: true }); } return; }
+    if (inside && ev.key === 'ArrowRight' && at && at.classList.contains('lisGo')) { const first = at.querySelector('.pdot'); if (first) { ev.preventDefault(); first.focus({ preventScroll: true }); } return; }
     if (ev.key === 'Tab' && inside) {
       ev.preventDefault(); items[(i + (ev.shiftKey ? items.length - 1 : 1)) % items.length].focus();
     } else if (inside && (ev.key === 'ArrowDown' || ev.key === 'ArrowUp' || ev.key === 'Home' || ev.key === 'End')) {
