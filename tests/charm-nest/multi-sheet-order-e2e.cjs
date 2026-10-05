@@ -409,6 +409,21 @@ const SW = () => ({
   head: (document.querySelector('[data-r2=trailHead]')?.textContent || '').trim(),
   trail: [...document.querySelectorAll('[data-r2=trail] li[data-i]')].map(li => ({ sku: (li.querySelector('.sku')?.childNodes[0]?.textContent || '').trim(), where: (li.querySelector('.where')?.textContent || '').trim(), cur: li.classList.contains('cur') })),
 });
+/** The set's sheets as the window shows them for the order selected: with SheetMenu on the page they are one pill and a menu (the menu is opened as a person
+ *  opens it, read, and shut again), without it the old row of chips. Each: id, name as drawn, the one the window is on, lit (the order has a piece there) and its count. */
+async function readSheetChips(page) {
+  const row = () => [...document.querySelectorAll('.swSheets .swChip')].map(b => ({ id: b.dataset.sheet, label: [...b.childNodes].filter(n => n.nodeType === 3).map(n => n.textContent).join('').trim(), cur: b.hasAttribute('aria-current'), lit: b.classList.contains('lit'), n: +(b.querySelector('b')?.textContent || 0) }));
+  const chips = await page.evaluate(row);
+  if (chips.length) return { chips, pill: null };
+  const pill = await page.evaluate(() => { const b = document.querySelector('.swSheets .shmBtn'); return b && b.tagName === 'BUTTON' ? { cur: b.dataset.sheet || '', n: +(b.querySelector('.shmBadge')?.textContent || 0), name: (b.querySelector('.shmName')?.textContent || '').trim() } : null; });
+  if (!pill) return { chips: [], pill: null };
+  await page.evaluate(() => document.querySelector('.swSheets .shmBtn').click());
+  await page.waitForFunction(() => document.querySelectorAll('.shmPanel .shmRow:not(.gone)').length > 0, null, { timeout: 5000 }).catch(() => {});
+  const rows = await page.evaluate(() => [...document.querySelectorAll('.shmPanel .shmRow:not(.gone)')].map(r => ({ id: r.dataset.id, label: (r.querySelector('.shmName')?.textContent || '').trim(), cur: r.getAttribute('aria-checked') === 'true', lit: !!r.querySelector('.shmBadge'), n: +(r.querySelector('.shmBadge')?.textContent || 0) })));
+  await page.evaluate(() => { try { window.SheetMenu && SheetMenu.closeAll(); } catch (_) {} });
+  await page.waitForFunction(() => !document.querySelector('.shmPanel'), null, { timeout: 4000 }).catch(() => {});
+  return { chips: rows, pill };
+}
 /** Presses until `ready` holds (a press the window ignores while it is still settling is pressed again, as a person would), at most `max` ms. */
 async function pressUntil(page, click, ready, arg, { max = 9000, every = 900 } = {}) {
   const t0 = Date.now();
@@ -450,22 +465,29 @@ async function sheetWinProbes(page, mode, R, sheets) {
       const pieces = truth.pieces(rid).filter(p => p.state !== 'gone' && (mode !== 'out' || p.poolId)), side = `${at}, order ${rid}`, here = pieces.filter(p => p.sheetId === S.id);
       await pressUntil(page, rid => document.querySelector(`.swOrd[data-rid="${rid}"]`)?.click(), selectedOrder, rid);
       let v = await settle(page, SW, null, { max: 7000, quiet: 550, ready: swSelReady });
-      const check = (v, how) => {
+      const check = async (v, how) => {
         const rows = v.trail.map(r => ({ sku: r.sku, kind: whereKind(r.where) })), miss = matchRows(rows, pieces, S.id);
         R.check('B1', `${side}${how}`, !miss.length && v.trail.filter(r => r.cur).length === 1, `the trail (${v.head}) reads ${JSON.stringify(v.trail.map(r => `${r.sku} ${r.where}`))}: ${miss.join('; ') || 'not exactly one "this charm"'}`);
         R.eq('B1', `${side}${how}, header`, +((/(\d+) piece/.exec(v.head) || [])[1]), pieces.length, 'the header\'s piece count');
-        if (v.chipsShown || v.chips.length > 1) for (const c of v.chips) {
-          const n = pieces.filter(p => p.sheetId === c.id).length;
-          const want = SHEET[c.id] ? short(sheetLabel(SHEET[c.id])) : null;
-          if (want) R.check('B2', `${side}${how}, the name of chip ${c.id}`, norm2(c.label) === want, `the chip of ${c.id} is named "${c.label}", the sheet is ${want}`);
-          R.check('B2', `${side}${how}, chip ${c.label}`, c.lit === (n > 0) && c.n === n, `the chip ${c.label} is ${c.lit ? 'lit' : 'dark'} with ${c.n}, the order has ${n} piece(s) there`);
+        // B2: the set's sheets (one pill and its menu, or the row of chips): every sheet of the set, each named for what it is, lit with this order's count
+        const setIds = S.set ? SHEETS.filter(x => x.set === S.set).map(x => x.id).sort() : [];
+        if (setIds.length > 1) {
+          const { chips, pill } = await readSheetChips(page);
+          R.eq('B2', `${side}${how}, the sheets of the set`, chips.map(c => c.id).sort(), setIds, 'the sheets the window offers for its set');
+          for (const c of chips) {
+            const n = pieces.filter(p => p.sheetId === c.id).length;
+            const want = SHEET[c.id] ? short(sheetLabel(SHEET[c.id])) : null;
+            if (want) R.check('B2', `${side}${how}, the name of chip ${c.id}`, norm2(c.label) === want, `the chip of ${c.id} is named "${c.label}", the sheet is ${want}`);
+            R.check('B2', `${side}${how}, chip ${c.label}`, c.lit === (n > 0) && c.n === n, `the chip ${c.label} is ${c.lit ? 'lit' : 'dark'} with ${c.n}, the order has ${n} piece(s) there`);
+          }
+          if (pill) R.check('B2', `${side}${how}, the pill`, pill.cur === S.id && pill.n === here.length, `the pill is on ${pill.cur} with ${pill.n}, the window is on ${S.id} and the order has ${here.length} piece(s) here`);
         }
       };
-      check(v, '');
+      await check(v, '');
       // a second piece on this same sheet: select it from the trail, the whole list must stay true
       if (here.length > 1) {
         await page.evaluate(() => [...document.querySelectorAll('[data-r2=trail] li[data-i]')].find(li => !li.classList.contains('cur') && /on this sheet/i.test(li.querySelector('.where')?.textContent || ''))?.click());
-        const v2 = await settle(page, SW, null, { max: 5000, quiet: 550, ready: swSelReady }); check(v2, ' (the second piece on the sheet selected)');
+        const v2 = await settle(page, SW, null, { max: 5000, quiet: 550, ready: swSelReady }); await check(v2, ' (the second piece on the sheet selected)');
       }
       // a piece on another sheet: its row opens THAT sheet
       const other = pieces.find(p => p.sheetId && p.sheetId !== S.id);
@@ -507,9 +529,11 @@ async function libraryProbes(page, mode, R, variant) {
     if (!card) { R.check('C1', `Set-${set.seq}`, false, 'the Library has no card for the set'); continue; }
     const at = [], re = /(GF|SS|RG|10K|14K) Sheet \d+/g; let m; while ((m = re.exec(card.text))) at.push({ label: m[0], i: m.index });
     for (const s of SHEETS.filter(x => x.set === set.id)) {
-      const k = at.findIndex(x => x.label === sheetLabel(s));
+      // (the card names a sheet more than once now: the set's wait row says "SS Sheet 1 · back engravings 0 of 5": the sheet's own block is the one that counts its orders)
+      const segOf = j => card.text.slice(at[j].i, j + 1 < at.length ? at[j + 1].i : undefined);
+      const same = at.map((x, j) => j).filter(j => at[j].label === sheetLabel(s)), k = same.find(j => /(\d+) orders?/.test(segOf(j))) ?? (same.length ? same[0] : -1);
       if (k < 0) { R.check('C1', `${sheetLabel(s)} on the Set-${set.seq} card`, false, `the card of Set-${set.seq} does not list ${sheetLabel(s)}`); continue; }
-      const seg = card.text.slice(at[k].i, k + 1 < at.length ? at[k + 1].i : undefined), want = truth.ordersOn(s.id).length, got = +((/(\d+) orders?/.exec(seg) || [])[1]);
+      const seg = segOf(k), want = truth.ordersOn(s.id).length, got = +((/(\d+) orders?/.exec(seg) || [])[1]);
       R.check('C1', `${sheetLabel(s)} on the Set-${set.seq} card`, got === want, `the card says ${got} order(s), ${want} order(s) have a piece on it`);
       const qr = +((/QR label (\d+) orders?/.exec(seg) || [])[1]);
       if (!Number.isNaN(qr)) R.check('C1', `${sheetLabel(s)} QR label on the Set-${set.seq} card`, qr === want, `the QR label says ${qr} order(s), ${want} order(s) have a piece on it`);

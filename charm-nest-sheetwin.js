@@ -2127,7 +2127,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
         if (y) used.add(y);
         list.push({ poolId: p.poolId, piece: onHere ? y : null, sku: p.sku, label: p.label === "Piece" ? "" : p.label, copy: p.copy, qty: p.qty, here: onHere, sheetId: p.nested ? p.sheetId : null,
           metal: onHere ? W.rec.metal : METAL_OF_CODE[(/^(\S+)\s/.exec(p.sheetLabel || "") || [])[1]] || p.metal, n: onHere ? sheetNoOf(W.rec) : p.sheetNo,
-          state: p.nested ? "" : p.loading ? "loading" : p.unsure ? "unsure" : "none", reason: p.reason || "" });
+          state: p.nested ? "" : p.hand ? "hand" : p.loading ? "loading" : p.unsure ? "unsure" : "none", reason: p.reason || "" });
       }
       for (const y of mine) if (!used.has(y)) list.push({ poolId: y.poolId, piece: y, sku: y.sku, copy: y.copy, qty: y.qty, here: true, sheetId: W.id, metal: W.rec.metal, n: sheetNoOf(W.rec), state: "" });
       return sortOf(list);
@@ -2155,6 +2155,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       const here = it.here, cur = it.piece === x;
       const where = here ? `<span class="where" style="--c:${colorOf(W.rec.metal)}"><i></i>${cur ? "this charm" : "on this sheet"}</span>`
         : it.sheetId ? `<span class="where" style="--c:${colorOf(it.metal)}"><i></i>${esc(CODE[it.metal] || "")} Sheet ${esc(it.n || "?")}${ICON.go}</span>`
+        : it.state === "hand" ? `<span class="where" title="${esc((it.reason || "It was completed by hand and needs no sheet").charAt(0).toUpperCase() + (it.reason || "It was completed by hand and needs no sheet").slice(1))}"><i style="background:var(--ink25)"></i>completed by hand</span>`
         : it.state === "loading" ? `<span class="where"><i style="background:var(--ink25)"></i>reading its sheet…</span>`
         : it.state === "unsure" ? `<span class="where" title="${esc(it.reason || "")}"><i style="background:var(--ink25)"></i>sheet not read just now</span>`
         : `<span class="where"${it.reason ? ` title="${esc(it.reason.charAt(0).toUpperCase() + it.reason.slice(1))}"` : ""}><i style="background:var(--ink25)"></i>not on a sheet yet</span>`;
