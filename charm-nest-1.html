@@ -742,6 +742,22 @@ dialog.phv.layer.phvIn{background:transparent}
 .owShChip i{width:9px;height:9px;border-radius:50%;background:var(--c,var(--ink25));flex:none}
 .owShChip b{display:block;font:600 11px var(--mono)}
 .owShChip span{color:var(--ink45);font-size:10.5px}
+/* the Sheet controls of a piece on no sheet (Paul, 5 Oct, point 5): greyed and inert, no hover lift; one plain reason on a press */
+.owShChip.off{background:transparent;border-style:dashed;color:var(--ink45);cursor:default}
+.owShChip.off:hover{transform:none;border-color:var(--line);box-shadow:none}
+.owShChip.off i{background:transparent;box-shadow:inset 0 0 0 1.5px var(--ink25)}
+.owShChip.off b{color:var(--ink45);font-weight:500}
+.owShChip:focus-visible{outline:2px solid var(--slate);outline-offset:2px}
+.owShMore{font:10.5px var(--sans);color:var(--ink45);padding-left:4px}
+.owNowCard .btn.off,.owNowCard .btn.off:hover{opacity:.45;cursor:default;background:transparent}
+.owTabsV>[role=tab].off,.owTabsV>[role=tab].off:hover{color:var(--ink25);cursor:default}
+.owTabsV>[role=tab].off b{font-weight:500}
+.owPieceSw button.noSheet .dot{opacity:.4}
+.owPlateNone .owNoneIcon{width:54px;height:54px;color:var(--ink25);margin-bottom:2px}
+.owPlateNone .owNoneWhy{max-width:300px;line-height:1.5}
+.owPlateNone .owNonePc{display:inline-flex;align-items:center;gap:7px;border:1px solid var(--line);border-radius:999px;padding:3px 12px 3px 9px;background:var(--card);font:11.5px var(--sans);color:var(--ink70);margin-top:2px}
+.owPlateNone .owNonePc i{width:8px;height:8px;border-radius:50%;background:var(--c,var(--ink25));flex:none}
+.owPlateNone .btn{margin-top:6px}
 /* the sheet: the plate, its foot, and the panel */
 .owPlateArea{background:var(--paper);display:flex;flex-direction:column;min-width:0;min-height:0}
 .owPlateWrap{flex:1 1 auto;min-height:0;position:relative;display:grid;place-items:center;padding:18px 22px 6px;perspective:1600px}
