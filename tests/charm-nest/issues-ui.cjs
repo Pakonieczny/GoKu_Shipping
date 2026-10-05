@@ -238,6 +238,35 @@ async function roundEight() {
   return { out, seen };
 }
 
+/** Round 8 (Paul's newest screenshot: RG Sheet 1, GF Sheet 1 and SS Sheet 1 in ONE card): a Rose Gold sheet is in a set when its own record says so (setId, not a draft), which the card and the
+ *  order check both read. GF Sheet 1's '!' on Order check names RG Sheet 1 "in no set" while RG Sheet 1 is a draft or not in the set; the Library's next answer (RG Sheet 1 joined the set by the Cut
+ *  Sheet press, ready or not) takes the '!' away at once, with the card read from the same record. Replays the answers the live read hands the page (LaserReview.record + changed). */
+async function joinOnScreen() {
+  const out = [], seen = { before: 0, after: 0, together: 0 }, bangsOf = (body, sid) => [...body.querySelectorAll('button[data-issues-open]')].filter(b => b.getAttribute('data-issues-id') === sid && !b.hasAttribute('data-issues-quiet')).map(b => b.getAttribute('data-issues-step'));
+  const cards = shop => shop.sets.map(x => ({ ...x, status: 'saved', name: 'Set ' + x.seq, day: '2026-10-05', seq: x.seq }));
+  for (const [name, a, b] of [['a draft that joins ready', { own: 'draft', setId: null }, { own: 'ok', setId: 'set-1' }], ['a sheet with no QR labels that joins', { own: 'noQr', setId: null }, { own: 'noQr', setId: 'set-1' }], ['an unverified sheet that joins', { own: 'unverified', setId: null }, { own: 'unverified', setId: 'set-1' }]]) {
+    const pg = boot(), { w, d, L, LI, body } = pg, shopA = paulRound8Shop({ ...a, presses: ['button'] }), shopB = paulRound8Shop({ ...b, presses: ['button'] });
+    const recsA = JSON.parse(JSON.stringify(P.serverLike(shopA))), recsB = JSON.parse(JSON.stringify(P.serverLike(shopB)));
+    w.__rows = JSON.parse(JSON.stringify(S.uiRows(shopA)));
+    L.sections(body); for (const r of recsA) L.record(r);
+    for (const g of w.Sets.libraryGroups(cards(shopA), recsA)) L.place(w.Sets.libraryCard(g, g.sheets, g.sheets), L.group(g, g.sheets).ready, body);
+    L.changed(); await sleep(40);
+    const say = (type, detail) => out.push({ type, sheet: 'gf-sheet-1', detail: `${name}: ${detail}` });
+    if (!bangsOf(body, 'gf-sheet-1').includes('orders')) say('joinBeforeNoBang', `no '!' on Order check before the join (${bangsOf(body, 'gf-sheet-1').join(',')})`); else seen.before++;
+    const open = [...body.querySelectorAll('button[data-issues-open]')].find(x => x.getAttribute('data-issues-id') === 'gf-sheet-1' && x.getAttribute('data-issues-step') === 'orders');
+    if (open) { open.click(); const panel = await until(() => d.getElementById('libIssuesPanel')); const text = panel ? panel.textContent.replace(/\s+/g, ' ') : ''; if (!/Waits on RG Sheet 1, in no set/.test(text)) say('joinBeforeWords', SHOW(text)); LI.close(); await sleep(5); }
+    // the answer after the Cut Sheet press: RG Sheet 1's own record now carries the set, and GF Sheet 1's answer no longer waits for it
+    for (const r of recsB) L.record(r);
+    L.changed(); await sleep(60);
+    const after = bangsOf(body, 'gf-sheet-1');
+    if (after.includes('orders')) say('joinAfterBang', `'!' still on Order check after RG Sheet 1 joined the set (${after.join(',')})`); else seen.after++;
+    const rg = recsB.find(r => r.id === 'rg-sheet-1'), gf = recsB.find(r => r.id === 'gf-sheet-1');
+    if (w.CharmNestOrders.libraryGroup(rg).key !== w.CharmNestOrders.libraryGroup(gf).key || w.CharmNestReadiness.setOf(rg) !== w.CharmNestReadiness.setOf(gf)) say('joinCardApart', 'the card or the order check puts RG Sheet 1 and GF Sheet 1 in different sets'); else seen.together++;
+    w.close();
+  }
+  return { out, seen };
+}
+
 /** One gold sheet with 18 two-piece orders whose other piece is pooled, has no SKU, is held, or sits on a silver sheet that is not ready. */
 function bigShop() {
   const sheets = [{ id: 'big-sheet-1', metal: 'gold', index: 1, own: 'ok', setId: 'set-big' }, { id: 'big-sheet-2', metal: 'silver', index: 1, own: 'noQr', setId: 'set-big' }];
@@ -268,6 +297,7 @@ async function main() {
   await run(bigShop(), 'a long list (18 orders on one sheet)');
   let r8 = null;
   { r8 = await roundEight(); ran++; if (r8.out.length) { bad++; for (const x of r8.out) counts[x.type] = (counts[x.type] || 0) + 1; console.log(`\nUI DISAGREEMENT (Paul's order 4170837249, round 8):\n  ${r8.out.slice(0, 5).map(x => `${x.type} ${x.detail}`).join('\n  ')}`); } }
+  { const j = await joinOnScreen(); ran++; r8.seen.join = j.seen; if (j.out.length) { bad++; for (const x of j.out) counts[x.type] = (counts[x.type] || 0) + 1; console.log(`\nUI DISAGREEMENT (RG Sheet 1 joining the set):\n  ${j.out.slice(0, 5).map(x => `${x.type} ${x.detail}`).join('\n  ')}`); } }
   for (let i = 0; i < shops && Date.now() - t0 < argv('budget-ms', 60000); i++) { const spec = S.makeSpec(seed0 * 9973 + i, { noLost: false, ghost: true }); pairs += spec.sheets.length; await run(S.materialize(spec), 'seed ' + spec.seed); }
   // the set's wait must have been met (a harness that never meets a sheet whose set waits for a mate proves nothing): sheets that only wait carry no mark, and their Approve line says what holds the set
   if (!COV.setHeld || !COV.waitOnly || !COV.approveLines) { bad++; counts.coverage = 1; console.log(`\nCOVERAGE: the set's wait was never met ${JSON.stringify({ setHeld: COV.setHeld, waitOnly: COV.waitOnly, approveLines: COV.approveLines })}`); }

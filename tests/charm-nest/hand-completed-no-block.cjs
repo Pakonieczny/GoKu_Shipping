@@ -260,11 +260,14 @@ async function costChecks(srv) {
  * contributes nothing anywhere; what still waits is the MIDDLE RG piece alone, on RG Sheet 1, and that is said with its real piece, its real sheet and, when the sheet
  * has no set, that it has none (another set: the split). The same shape is read through the page (issues, explain, laserSheet) and the server's answered records. */
 const MID_RG = `${ORDER}_1003`, MID_GF = `${ORDER}_1002`;
-const RG_OWN = { noQr: /its QR labels are missing$/, held: /it is held back from Laser cutting$/, roseNoPlan: /its layout needs verification$/ };
+// what RG Sheet 1 itself still lacks (the words that name it); null = it was RECORDED in a set but never joined it (a draft sheet, or a rose sheet left out of the set before Cut Sheet):
+// the Library card does not show it in that set (O.libraryGroup) and readiness does not either (setOf), so it is in no set at all, whatever its record says
+const RG_OWN = { noQr: /its QR labels are missing$/, held: /it is held back from Laser cutting$/, roseNoPlan: /its layout needs verification$/, draft: null, solidExcluded: null };
 const RG_SETS = [['in no set', null], ['in the same set', SET], ['in another set', 'set-2']];
 const RG_CHAIN = [['unpressed', null], ['print only', hand('print', 'completed', 'stale', ['print'])], ['Complete Order only', hand('button', 'completed', 'stale', ['button'])], ['both buttons', hand('print', 'completed', 'stale', ['print', 'button'])], ['reopened', hand('button', 'open', 'stale', ['button'])]];
 const rgSpec = (h, own, setId) => paul(h, {}, { sheets: [{ id: GF, metal: 'gold', index: 1, own: 'ok', setId: SET }, { id: RG, metal: 'rose', index: 1, own, setId }] });
-const rgCombos = function* () { for (const own of Object.keys(RG_OWN)) for (const [setName, setId] of RG_SETS) for (const [pressName, h] of RG_CHAIN) yield { own, setName, setId, pressName, h, tag: `RG Sheet 1 ${own}, ${setName}, chain ${pressName}`, released: !!h && h.state !== 'open', same: setId === SET }; };
+// `recorded` is the set id the sheet's record carries; `setId` the set it is really in (none, for a draft or an excluded sheet)
+const rgCombos = function* () { for (const own of Object.keys(RG_OWN)) for (const [setName, recorded] of RG_SETS) { const setId = RG_OWN[own] === null ? null : recorded; for (const [pressName, h] of RG_CHAIN) yield { own, setName, recorded, setId, pressName, h, tag: `RG Sheet 1 ${own}, ${RG_OWN[own] === null ? `recorded ${setName}, joined none` : setName}, chain ${pressName}`, released: !!h && h.state !== 'open', same: setId === SET }; } };
 /** What GF Sheet 1 must be held back by, in piece ids: the chain only while it is not released, the MIDDLE RG piece unless RG Sheet 1 is in GF's own set (the set's wait). */
 const rgWant = c => (c.released ? [] : [`${CHAIN}_1`]).concat(c.same ? [] : [`${MID_RG}_1`]);
 /** The words and flags of the one honest wait (a released chain, RG Sheet 1 not in GF's set): said of the real piece and the real sheet, never of the chain. */
@@ -273,7 +276,7 @@ function rgWords(c, i, tag) {
   eq(i.pieces.map(p => [p.poolId, p.sheetLabel, p.kind]), [[`${MID_RG}_1`, 'RG Sheet 1', 'otherSheetNotReady']], `${tag}: it names the MIDDLE RG piece on RG Sheet 1`);
   if (c.setId === null) {
     ok(i.noSet === true && !i.split && i.pieces[0].noSet === true && !i.pieces[0].split, `${tag}: it says the sheet has no set (flags)`);
-    ok(new RegExp('^Its other piece is on RG Sheet 1, which is in no set, and ' + RG_OWN[c.own].source).test(i.why), `${tag}: it says so in words: ${i.why}`);
+    ok(new RegExp('^Its other piece is on RG Sheet 1, which is in no set' + (RG_OWN[c.own] ? ', and ' + RG_OWN[c.own].source : '$')).test(i.why), `${tag}: it says so in words: ${i.why}`);
     ok(/in no set/.test(i.pieces[0].why), `${tag}: and in the piece's own line: ${i.pieces[0].why}`);
   } else {
     ok(i.split === true && !i.noSet && i.pieces[0].split === true && !i.pieces[0].noSet, `${tag}: another set is a split (flags)`);
@@ -284,7 +287,7 @@ function rgWords(c, i, tag) {
 function rgPageChecks() {
   let n = 0;
   for (const c of rgCombos()) {
-    const { tag } = c, shop = S.materialize(rgSpec(c.h, c.own, c.setId)), rows = S.uiRows(shop), sheets = P.pageSheets(shop), pre = P.serverLike(shop);
+    const { tag } = c, shop = S.materialize(rgSpec(c.h, c.own, c.recorded)), rows = S.uiRows(shop), sheets = P.pageSheets(shop), pre = P.serverLike(shop);
     const gf = sheets.find(s => s.id === GF), rg = sheets.find(s => s.id === RG), want = rgWant(c);
     // whichever sheet asks: the order waits for the MIDDLE RG piece (RG Sheet 1 is not ready) and for the chain only until it is released; it never counts a released chain as a piece
     const rep = R.orderReports(rows, sheets)[ORDER];
@@ -308,7 +311,7 @@ function rgPageChecks() {
     eq(step.state === 'done', !want.length, `${tag}: GF's Order check step ${want.length ? 'is not' : 'is'} done (${step.state}: ${step.detail})`);
     eq(R.laserSheet(pre.find(s => s.id === GF)).ready, !want.length, `${tag}: GF's laserSheet`);
     if (want.length) { eq(step.state, 'blocked', `${tag}: the step is blocked by a real wait`); eq(step.items.filter(i => i.kind === 'order').map(i => i.id), [ORDER], `${tag}: it lists the order`); eq(step.items.find(i => i.kind === 'order').why, list[0].why, `${tag}: with the issue's own words`); }
-    if (want.length === 1 && !c.same && c.setId === null) ok(step.items.some(i => i.kind === 'sheet' && i.id === RG && /^Holds 1 order of this sheet back: it is in no set, and /.test(i.why)), `${tag}: the checklist says the sheet has no set: ${JSON.stringify(step.items)}`);
+    if (want.length === 1 && !c.same && c.setId === null) ok(step.items.some(i => i.kind === 'sheet' && i.id === RG && (RG_OWN[c.own] ? /^Holds 1 order of this sheet back: it is in no set, and / : /^Holds 1 order of this sheet back: it is not in a set yet$/).test(i.why)), `${tag}: the checklist says the sheet has no set: ${JSON.stringify(step.items)}`);
     // RG Sheet 1's own panel: the chain (unreleased) holds it; GF Sheet 1 is ready, so nothing else does
     eq(R.issues(rg, { rows, allSheets: sheets }).filter(i => i.step === 'orders').map(i => i.pieces.map(p => p.poolId)), c.released ? [] : [[`${CHAIN}_1`]], `${tag}: RG Sheet 1's own panel`);
     n++;
@@ -320,7 +323,7 @@ async function rgServerChecks(srv) {
   let n = 0;
   for (const c of rgCombos()) {
     const { tag } = c, want = rgWant(c);
-    seed(srv.st, S.materialize(rgSpec(c.h, c.own, c.setId)), false);
+    seed(srv.st, S.materialize(rgSpec(c.h, c.own, c.recorded)), false);
     const a = await post({ op: 'laserStatus', sheetIds: [GF, RG] }), gf = a.sheets.find(s => s.id === GF), rd = gf.orderReadiness[ORDER];
     eq(a.status, 200, `${tag}: laserStatus answers`);
     if (!want.length) eq(rd, { ready: true }, `${tag}: the server says GF Sheet 1's order is whole`);
@@ -434,21 +437,109 @@ async function fiveServerChecks(srv) {
   return pages;
 }
 
+/* ── Paul's newest screenshot (12:4x): RG Sheet 1, GF Sheet 1 and SS Sheet 1 sit in ONE card, Set 1, with Leslie's order (chain completed by hand, MIDDLE on GF, MIDDLE on RG). How a Rose Gold
+ * sheet is in a set: its OWN record says so (setId, with draft false and solidIncluded not false: the Cut Sheet press, or dragging it into a set, writes exactly that), and nothing else does.
+ * The Library card (CharmNestOrders.libraryGroup), the order check (setOf, forSheet, ownSetWait) and the server read those same fields, so they cannot disagree about which set a sheet
+ * is in. Until the press the sheet is a draft in no set; a set record that lists it (sheetIds) does not put it there. A wait for it is dropped only once it has joined. */
+const imgSpec = (h, rgOwn = 'ok', rgSet = SET) => {
+  const s = paul(h, {}, { sheets: [{ id: GF, metal: 'gold', index: 1, own: 'ok', setId: SET }, { id: SS, metal: 'silver', index: 1, own: 'ok', setId: SET }, { id: RG, metal: 'rose', index: 1, own: rgOwn, setId: rgSet }] });
+  s.orders.push({ id: '4170888001', buyer: 'Other', lines: [{ tx: 3000, metal: 'silver', q: 1, kind: 'p', copies: [{ sheet: SS, pooled: true }], state: 'written', problems: [], sku: 'AQUATIC-11', hold: null, change: false, engrave: 'plain', noDesign: false, stale: false }] });
+  return s;
+};
+async function rgMembershipChecks(srv) {
+  const post = body => fetch(srv.sorterOrigin + '/.netlify/functions/charmNestLibrary', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }).then(async r => ({ status: r.status, ...(await r.json()) }));
+  const card = s => CO.libraryGroup(s, { combineSolids: true }).setId || null;
+  let n = 0;
+  // 1. the screenshot's shape: three sheets in one card, the chain pressed (either button, or both): nothing is anyone's wait, on any sheet
+  for (const [pressName, h] of RG_CHAIN.slice(1, 4)) {
+    const shop = S.materialize(imgSpec(h)), rows = S.uiRows(shop), sheets = P.pageSheets(shop), pre = P.serverLike(shop);
+    for (const s of sheets) { eq(card(s), SET, `${pressName}: the card puts ${s.id} in Set 1`); eq(R.setOf(s), SET, `${pressName}: and the order check reads ${s.id} in Set 1`); }
+    for (const id of [GF, SS, RG]) {
+      eq(R.issues(sheets.find(x => x.id === id), { rows, allSheets: sheets }).filter(i => i.step === 'orders'), [], `${pressName}: ${id}: no order is listed`);
+      eq(R.explain(pre.find(x => x.id === id), { rows }).steps.find(x => x.key === 'orders').state, 'done', `${pressName}: ${id}: Order check is done`);
+      eq(R.laserSheet(pre.find(x => x.id === id)).ready, true, `${pressName}: ${id}: laser-ready`);
+    }
+    n++;
+  }
+  // 2. the card and the order check read a Rose Gold sheet's set alike, whatever its own state and whichever set its record carries (draft, left out, held, not ready)
+  for (const own of Object.keys(RG_OWN)) for (const [setName, recorded] of RG_SETS) {
+    const shop = S.materialize(imgSpec(hand('button'), own, recorded));
+    for (const s of P.pageSheets(shop)) eq(card(s), R.setOf(s), `RG Sheet 1 ${own}, recorded ${setName}: ${s.id}: the card's set and the order check's set are the same`);
+    n++;
+  }
+  // 3. through the server: not joined yet (a draft in no set): the wait is listed, and said as a sheet in no set; the Cut Sheet press writes the membership on the sheet and the wait is gone at
+  //    the next read, which the cheap "unchanged?" read sees at once. Not ready but joined: the wait is the set's, not the order's.
+  const words = a => { const gf = a.sheets.find(s => s.id === GF), rd = gf.orderReadiness[ORDER], l = rd.ready === true ? [] : R.issues(gf, {}).filter(i => i.step === 'orders'); return { rd, l, gf }; };
+  const join = (set, seq) => srv.st.put('Charm_Nest_Sheets', RG, { draft: false, setId: set, setSeq: seq, sheetIndex: 1, solidIncluded: null });   // (the fields the Cut Sheet press and a drag into a set save)
+  for (const [name, own, ready] of [['a draft that is complete in every other way', 'draft', true], ['a sheet whose QR labels are missing', 'noQr', false]]) {
+    const h = hand('button', 'completed', 'stale', ['button']);
+    seed(srv.st, S.materialize(imgSpec(h, own, null)), false);
+    let a = await post({ op: 'laserStatus', sheetIds: [GF, SS], wantRevs: true }), w = words(a);
+    eq([w.rd.ready, w.rd.blocks.map(b => [b.lineKey, b.key, b.sheetLabel, b.setId])], [false, [[MID_RG, 'otherSheetNotReady', 'RG Sheet 1', null]]], `${name}, not in a set: GF Sheet 1 waits for the MIDDLE RG piece on RG Sheet 1, which has no set`);
+    ok(w.l.length === 1 && w.l[0].noSet === true && /^Its other piece is on RG Sheet 1, which is in no set/.test(w.l[0].why) && w.l[0].pieces.length === 1, `${name}: it is told as a sheet in no set, with its one real piece: ${w.l[0] && w.l[0].why}`);
+    eq(w.gf.laser.ready, false, `${name}: GF Sheet 1 is not laser-ready while that is so`);
+    // the sheet's own set record lists it, its own record does not: still no set (the card shows it in none)
+    srv.st.put('Charm_Nest_Sets', SET, { sheetIds: [GF, SS, RG] });
+    a = await post({ op: 'laserStatus', sheetIds: [GF, SS] }); w = words(a);
+    ok(w.rd.ready === false && w.rd.blocks[0].setId === null, `${name}: a set record that lists the sheet does not put it in the set: ${JSON.stringify(w.rd).slice(0, 140)}`);
+    srv.st.put('Charm_Nest_Sets', SET, { sheetIds: [GF, SS] });
+    // the press
+    a = await post({ op: 'laserStatus', sheetIds: [GF, SS], wantRevs: true });
+    join(SET, 1);
+    const probe = await post({ op: 'laserStatus', sheetIds: [GF, SS], ifRevs: a.revs, wantRevs: true });
+    ok(!probe.unchanged && probe.sheets, `${name}: the Cut Sheet press is a change the cheap read sees`);
+    w = words(probe);
+    eq(w.rd, { ready: true }, `${name}: joined the set (${ready ? 'ready' : 'not ready'}): GF Sheet 1 no longer waits for it: it is the set's wait at most, never the order's`);
+    eq([w.l.length, w.gf.laser.ready], [0, true], `${name}: no '!' entry, GF Sheet 1 laser-ready`);
+    // the sheet's answered record reads in Set 1 the way the card does
+    const rgRec = (await post({ op: 'laserStatus', sheetIds: [GF, SS, RG] })).sheets.find(s => s.id === RG);
+    eq([card(rgRec), R.setOf(rgRec)], [SET, SET], `${name}: RG Sheet 1's answered record is in Set 1 for the card and for readiness`);
+    eq(R.laserSheet(rgRec).ready, ready, `${name}: and is ${ready ? '' : 'not '}laser-ready itself`);
+    n++;
+  }
+  // 4. another set (the real split) still waits, and says so
+  seed(srv.st, S.materialize(imgSpec(hand('button', 'completed', 'stale', ['button']), 'noQr', 'set-2')), false);
+  const split = words(await post({ op: 'laserStatus', sheetIds: [GF, SS] }));
+  ok(split.l.length === 1 && split.l[0].split === true && !split.l[0].noSet, `an order split between Set 1 and Set 2 stays an issue, told as the split: ${split.l[0] && split.l[0].why}`);
+  return n + 1;
+}
+
+/* ── a chain line that has a pool id, or a copy on RG Sheet 1, and was completed by hand all the same. A completed custom order reads as "nothing to cut" (interpretLine: noDesign, as
+ * interpretChecks shows), and the run's record carries that (bridge lineRecord: noDesign comes from the row's spec), so such a line is NOT one of the order's pieces, on the page
+ * and on the server alike: it blocks nothing and is never named, whichever button was pressed. Checked against the oracle in every reading, and through the server. */
+async function boundaryChecks(srv) {
+  const { check } = require('./issues-server.cjs');
+  let n = 0;
+  for (const [name, copies] of [['a chain line with a pool id', [{ sheet: null, pooled: true }]], ['a chain copy that sits on RG Sheet 1', [{ sheet: RG, pooled: true }]]]) for (const presses of [['print'], ['button'], ['print', 'button']]) {
+    const spec = paul(hand(presses[0], 'completed', 'stale', presses), { copies, state: 'pooled', problems: [], noDesign: true }, { sheets: [{ id: GF, metal: 'gold', index: 1, own: 'ok', setId: SET }, { id: RG, metal: 'rose', index: 1, own: 'noQr', setId: null }] });
+    const shop = S.materialize(spec), tag = `${name}, ${presses.join('+')}`;
+    eq(P.disagreementsWith(R, shop, ['rows', 'records', 'pre']), [], `${tag}: the page agrees with the oracle`);
+    eq(await check(srv, shop, [GF, RG], false), [], `${tag}: the server agrees with the oracle`);
+    const rows = S.uiRows(shop), sheets = P.pageSheets(shop), list = R.issues(sheets.find(s => s.id === GF), { rows, allSheets: sheets }).filter(i => i.step === 'orders');
+    eq(list.length, 1, `${tag}: GF Sheet 1 lists the order once (RG Sheet 1 is not ready and in no set)`);
+    eq(list[0].pieces.map(p => [p.poolId, p.noSet === true]), [[`${MID_RG}_1`, true]], `${tag}: only the MIDDLE RG piece, told as on a sheet in no set; the chain is not named`);
+    n++;
+  }
+  return n;
+}
+
 (async () => {
   process.env.CHARM_NEST_HOLDERS_MS = '0';
   for (const v of VARIANTS) pageChecks(v);
   interpretChecks();
   const rgPages = rgPageChecks();
   const srv = await start({ receipts: [] });
-  let cost, rgServers, presses, fives;
+  let cost, rgServers, presses, fives, members;
   try {
     for (const v of VARIANTS) await serverChecks(srv, v);
     rgServers = await rgServerChecks(srv);
+    members = await rgMembershipChecks(srv);
     presses = await pressChecks(srv);
     fives = await fiveServerChecks(srv);
+    await boundaryChecks(srv);
     await probeChecks(srv);
     await trustChecks(srv);
     cost = await costChecks(srv);
   } finally { srv.close(); }
-  console.log(`hand-completed-no-block OK: ${checks} checks (${rgPages} RG Sheet 1 cases on the page, ${rgServers} through the server, ${presses} press sequences through the real ops, ${fives} five-piece shapes). Either button, or both, releases a piece; a piece completed by hand (Review Complete Order, or its QR label printed) is resolved on the page and on the server alike: it needs no sheet, blocks no sheet's Order check, '!' panel, Approve, set completion or seal, is nobody's set mate and is never pooled; Reopen blocks again, a hold still holds, how 'sheet' is cut, a cancelled order is unchanged; the server reads its own record (never the page's hint), and the "unchanged?" read sees a completion and a reopen. Added reads: ${cost.paul} document for Paul's order, at most ${cost.big} for ${230} such pieces.`);
+  console.log(`hand-completed-no-block OK: ${checks} checks (${rgPages} RG Sheet 1 cases on the page, ${rgServers} through the server, ${presses} press sequences through the real ops, ${fives} five-piece shapes, ${members} Rose Gold set-membership cases). Either button, or both, releases a piece; a piece completed by hand (Review Complete Order, or its QR label printed) is resolved on the page and on the server alike: it needs no sheet, blocks no sheet's Order check, '!' panel, Approve, set completion or seal, is nobody's set mate and is never pooled; Reopen blocks again, a hold still holds, how 'sheet' is cut, a cancelled order is unchanged; the server reads its own record (never the page's hint), and the "unchanged?" read sees a completion and a reopen. Added reads: ${cost.paul} document for Paul's order, at most ${cost.big} for ${230} such pieces.`);
 })().catch(e => { console.error(e); process.exitCode = 1; });
