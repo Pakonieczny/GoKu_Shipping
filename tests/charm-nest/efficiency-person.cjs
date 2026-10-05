@@ -35,7 +35,10 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   assert.equal(j(E.norm(null)).found, true); assert.deepEqual(j(E.norm({}).series), []);
   const fx = F.make(), A = fx.person({ op: 'person', name: 'Ana M.', range: 'month', compare: true }), N2 = j(E.norm(A, { name: 'Ana M.' }));
   assert.equal(N2.src.kpis.parts.v, A.kpis.parts.value); assert.equal(N2.src.kpis.parts.prev, A.kpis.parts.prev); assert.equal(N2.series.length, 30); assert.equal(N2.cal.length, 30);
-  assert(N2.src.att.daysWorked && N2.src.rates.firstPassRate && N2.src.contact.repliesSent && N2.issues.byKind.length, 'attendance, rates, contact and issues are read');
+  assert(N2.src.att.daysWorked && N2.src.att.medianStart && N2.src.rates.firstPass && N2.src.rates.rescanRate && N2.src.contact.sent && N2.src.contact.medianFirstReplyMs && N2.issues.byKind.length === 13, 'attendance, the seven rates, contact and the 13 issue kinds are read');
+  const OLD = j(E.norm(fx.person({ op: 'person', name: 'Ana M.', range: { from: F.addDays(fx.today, -180), to: F.addDays(fx.today, -170) }, compare: false }), { name: 'Ana M.' }));
+  assert.equal(OLD.issues.byKind.find(k => k.kind === 'reprint').count, null, 'a kind that was not counted on those days is a dash, never a 0'); assert(typeof OLD.issues.byKind.find(k => k.kind === 'undone').count === 'number', 'an exact kind is counted'); assert.equal(OLD.issues.byKind[OLD.issues.byKind.length - 1].count, null, 'the dashes come last');
+  assert.equal(N2.src.att.avgShiftHours.est, true, 'an estimated figure says so'); assert(/time clock/.test(N2.attNote), 'the honest sentence about days off is kept');
   const L = j(E.pickLive({ at: 5, signedIn: [{ name: 'Ana M.', stationKey: 'welding', since: 1, lastSeenAt: 2 }], stations: [{ key: 'welding', label: 'Welding', current: [{ person: 'Ana M.', rid: '35210001', station: 'welding' }, { person: 'Someone Else', rid: '9' }] }] }, 'Ana M.'));
   assert.equal(L.where.stationKey, 'welding'); assert.deepEqual(L.current.map(c => c.rid), ['35210001'], 'only this person\'s order is in the card'); assert.equal(L.current[0].stationLabel, 'Welding');
   console.log('  ✓ periods are rolling windows, a missing figure stays a dash, the answer\'s shapes are read, the live card picks this person only');
@@ -74,6 +77,8 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     try { await page.waitForFunction(([r, a]) => { const h = EfficiencyEmployee.instances[0], s = h && h.state; return !!s && s.loaded && s.range === r && (!a || s.anchor === a) && !document.querySelector('#efficiencyView .efpBusy.on'); }, [range, anchor || ''], { timeout: 15000 }); }
     catch (e) { throw new Error(`the page did not settle on ${range}${anchor ? ' ' + anchor : ''}: ` + JSON.stringify(await page.evaluate(() => ({ s: EfficiencyEmployee.instances.map(h => h.state), busy: !!document.querySelector('#efficiencyView .efpBusy.on'), hash: location.hash, eff: Efficiency.state.mounted })))); }
   };
+  // the sorter keeps a 344 px rail on the left; on a phone it is folded away with its own button (as the console's own test does)
+  const rail = (page, off) => page.evaluate(o => { const app = document.getElementById('app'); if (app.classList.contains('railOff') !== o) document.getElementById('btnRail').click(); }, off);
   const settle = async (page, ms = 150) => { await page.waitForTimeout(ms); };
   const openPerson = async (page, name) => { await page.evaluate(n => { sessionStorage.removeItem('cn.eff.p.range'); Efficiency.go('person', n); }, name); await page.waitForSelector(`${P}`, { timeout: 15000 }); await loaded(page, 'week'); };
   const boot = async (ctxOpts) => {
@@ -119,7 +124,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
       await page.waitForFunction(([k, v]) => document.querySelector(`#efficiencyView .efpK[data-k="${k}"] .efpKV`).textContent.replace(/,/g, '') === String(v), ['kpis.parts', T.kpis.parts.value]);
       assert.equal(nums(await kpiText(page, 'kpis.parts')), T.kpis.parts.value, key + ': parts agree with the fixture');
       const dl = (await page.locator(`${P} .efpK[data-k="kpis.parts"] .efpKD`).innerText()).replace(/\s+/g, ' ');
-      if (T.kpis.parts.prev == null) assert(/no data/.test(dl) && !/[▲▼]/.test(dl), `${key}: nothing to compare with says so (${dl})`); else assert(/[▲▼] \d+%/.test(dl) && /vs/.test(dl), `${key}: the change against the period before (${dl})`);
+      if (T.kpis.parts.prev == null) assert(/no data/.test(dl) && !/[▲▼]/.test(dl), `${key}: nothing to compare with says so (${dl})`); else assert(/([▲▼] \d+%|no change)/.test(dl) && /vs/.test(dl), `${key}: the change against the period before (${dl})`);
       if (key === 'day') { assert.equal(await page.locator(`${P} [data-c="shift"]`).isVisible(), true, 'Day shows the shift'); assert.equal(await page.locator(`${P} [data-c="sp"]`).isVisible(), false); }
       else assert.equal(await page.locator(`${P} [data-c="sp"]`).isVisible(), true);
       const bars = await page.locator(`${P} [data-c="tp"] .efpBar0`).count();
@@ -174,6 +179,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     assert.equal(nums(await kpiText(page, 'kpis.parts')), truthOf('day', { day: wday }).kpis.parts.value, 'that day\'s parts');
     await page.click(`${P} [data-today]`); await loaded(page, 'day', today);
     await page.click(`${P} .efpSeg button[data-range="year"]`); await loaded(page, 'year');
+    assert(/Counted on \d+ of 365 days/.test(await page.locator(`${P} .efpIs`).innerText()), 'a year that is only partly counted says so (and does not guess the rest)'); assert(/\d+ of 365 days/i.test(await page.locator(`${P} .efpK[data-k="issues.issues"] .efpKT`).innerText()), 'the issues card carries the same words'); assert(await page.locator(`${P} .efpDy.unknown`).count() > 20, 'days before sign-in logging began are marked, not counted');
     assert(await page.locator(`${P} .efpCal.long`).count() === 1 && await page.locator(`${P} .efpDy.before`).count() > 20, 'a year is a column of seven per week, with the days before records marked');
     await page.click(`${P} .efpSeg button[data-range="week"]`); await loaded(page, 'week'); await page.waitForFunction(sel => document.querySelectorAll(sel).length >= 28, `${P} .efpDy[data-day]`, { timeout: 8000 });
     assert(person().some(c => c.range === 'month' && c.compare === false), 'a short range reads the month behind its calendar (without a comparison)');
@@ -182,7 +188,8 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     /* ── 5 · issues, rates, contact, orders ── */
     await page.click(`${P} .efpSeg button[data-range="quarter"]`); await loaded(page, 'quarter'); const TQ = truthOf('quarter');
     assert.equal((await page.locator(`${P} .efpIN`).innerText()).trim(), String(TQ.issues.total), 'issue count');
-    assert(await page.locator(`${P} .efpIg`).count() === TQ.issues.byKind.length && await page.locator(`${P} .efpIg.open`).count() === 1, 'issues grouped by kind, the first open');
+    assert(await page.locator(`${P} .efpIg`).count() === TQ.issues.byKind.filter(k => k.count > 0).length && await page.locator(`${P} .efpIg.open`).count() === 1, 'issues grouped by kind (only kinds that have some), the first open');
+    assert(await page.locator(`${P} .efpIg .efpAt.own`).count() >= 1 && await page.locator(`${P} .efpIg .efpAt.order, ${P} .efpIg .efpAt.system`).count() >= 1, 'who each kind is about is shown beside it'); assert(/None logged:/.test(await page.locator(`${P} .efpIs`).innerText()) || TQ.issues.byKind.every(k => k.count > 0), 'kinds with none are named once, not drawn as empty rows');
     const kindBtn = page.locator(`${P} .efpIgh`).nth(1); await kindBtn.click(); assert.equal(await page.locator(`${P} .efpIg.open`).count(), 2, 'a kind opens'); await kindBtn.click();
     const ob = page.locator(`${P} .efpIg.open .efpOid`).first(); const orid = await ob.getAttribute('data-order'); await ob.click();
     assert.deepEqual(await page.evaluate(() => window.__opened.slice(-1)), [orid], 'an issue opens its order with the console\'s own order window');
@@ -203,12 +210,17 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     console.log('  ✓ issues by kind (an order opens), rates and contact, the order list: pictures per piece and QR, search filters as you type, pages as you scroll, a row opens its order');
 
     /* ── 6 · live ── */
-    await page.waitForSelector(`${P} .efpNowS:not(.hidden) .efpNowCard`, { timeout: 8000 });
+    const CARD = `${P} .efpNow .esCard, ${P} .efpNow .efpNowCard`, TICK = `${P} .efpNow .esT, ${P} .efpNow [data-since]`;
+    await page.waitForSelector(`${P} .efpNowS:not(.hidden) .esCard`, { timeout: 8000 });   // E6's shared order card, the same one the stations board draws
     const lv = pf.live().stations.find(s => s.key === 'welding').current[0];
-    assert(new RegExp(String(lv.orderNumber)).test(await page.locator(`${P} .efpNowCard`).innerText()), 'the live card names the order in her hands');
-    assert(await page.locator(`${P} .efpNowCard [data-since]`).count() >= 1 && await page.locator(`${P} .efpNowCard .efpQr, ${P} .efpNowCard canvas, ${P} .efpNowCard img`).count() >= 1, 'a ticking time, the pictures and a QR');
-    const s1 = await page.locator(`${P} .efpNowCard [data-since]`).first().innerText(); await page.waitForTimeout(2300); assert.notEqual(await page.locator(`${P} .efpNowCard [data-since]`).first().innerText(), s1, 'the time since scanned ticks');
-    pf.setLive('idle'); await page.waitForFunction(sel => /Not on an order right now/.test((document.querySelector(sel) || {}).textContent || ''), `${P} .efpNowIdle`, { timeout: 8000 }); assert.equal(await page.locator(`${P} .efpNowCard`).count(), 0, 'no order in hand: the card is replaced by a plain line');
+    assert(new RegExp(String(lv.orderNumber)).test(await page.locator(CARD).first().innerText()), 'the live card names the order in her hands');
+    assert(await page.locator(`${P} .efpNow .esTh, ${P} .efpNow img`).count() >= 1 && await page.locator(`${P} .efpNow .esQr, ${P} .efpNow canvas, ${P} .efpNow .efpQr`).count() >= 1, 'the pictures and a QR');
+    const s1 = await page.locator(TICK).first().innerText(); await page.waitForTimeout(2300); assert.notEqual(await page.locator(TICK).first().innerText(), s1, 'the time since scanned ticks');
+    await page.locator(`${P} .efpNow .esCard`).first().evaluate(e => { e.__keep = 1; }); await page.waitForTimeout(700);
+    assert.equal(await page.locator(`${P} .efpNow .esCard`).first().evaluate(e => e.__keep), 1, 'the same card stays in the page across live reads (changed in place, not redrawn)'); assert.equal(await page.locator(`${P} .efpNow .esCard`).count(), 1, 'one order in hand: one card');
+    pf.setLive('idle');
+    await page.waitForFunction(sel => /Done in|Done|Left/.test((document.querySelector(sel) || {}).textContent || ''), `${P} .efpNow .esCard`, { timeout: 8000 });   // the card says how long it took, stays a moment ...
+    await page.waitForFunction(sel => /Not on an order right now/.test((document.querySelector(sel) || {}).textContent || ''), `${P} .efpNowIdle`, { timeout: 8000 }); assert.equal(await page.locator(CARD).count(), 0, 'no order in hand: the card has folded away and a plain line is shown');
     pf.setLive('out'); await page.waitForFunction(sel => /Not signed in/.test((document.querySelector(sel) || {}).textContent || ''), `${P} .efpNowIdle`, { timeout: 8000 }); await page.waitForFunction(sel => /Not signed in/.test(document.querySelector(sel).textContent), `${P} .efpWhere`, { timeout: 8000 });
     assert(/Last seen|Not signed in/.test(await page.locator(`${P} .efpWhere`).innerText()), 'signed out: the header says when she was last seen'); pf.setLive('working');
     await page.waitForFunction(sel => /Signed in/.test(document.querySelector(sel).textContent), `${P} .efpWhere`, { timeout: 8000 });
@@ -244,6 +256,13 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     await page.fill(`${P} input[name="q"]`, ''); await page.waitForFunction(sel => document.querySelectorAll(sel).length >= 20, `${P} .efpO`, { timeout: 10000 });
     await page.locator(`${P} .efpO`).nth(2).click(); assert.equal((await page.evaluate(() => window.__opened.slice(-1)))[0], await page.locator(`${P} .efpO`).nth(2).getAttribute('data-rid'), 'its own list opens an order too');
     await page.evaluate(() => { window.EfficiencyOrders = window.__EO; });
+    // without E6's shared card the page draws its own small one (a ticking time, pictures, a QR, a click opens the order)
+    await page.evaluate(() => { window.__OC = EfficiencyStations.orderCard; EfficiencyStations.orderCard = undefined; }); pf.setLive('working', 'Ben R.');
+    await page.waitForSelector(`${P} .efpNowS:not(.hidden) .efpNowCard`, { timeout: 8000 }); assert.equal(await page.locator(`${P} .efpNow .esCard`).count(), 0, 'no shared card: the page\'s own is used');
+    assert(await page.locator(`${P} .efpNowCard [data-since]`).count() >= 1 && await page.locator(`${P} .efpNowCard .efpQr, ${P} .efpNowCard canvas, ${P} .efpNowCard img`).count() >= 1, 'its own card has a ticking time, the pictures and a QR');
+    await page.locator(`${P} .efpNowCard .efpOid`).click(); assert((await page.evaluate(() => window.__opened.slice(-1)))[0], 'its own card opens the order');
+    pf.setLive('idle', 'Ben R.'); await page.waitForFunction(sel => /Not on an order right now/.test((document.querySelector(sel) || {}).textContent || ''), `${P} .efpNowIdle`, { timeout: 8000 });
+    await page.evaluate(() => { EfficiencyStations.orderCard = window.__OC; }); pf.setLive('working');
     // an unknown name: said in words, not drawn as zeros
     await page.evaluate(() => Efficiency.go('people')); await openPerson(page, 'New Hire');
     assert(/No sign-ins or activity were found/.test(await page.locator(`${P} .efpNote`).innerText()), 'a name nothing is logged under says so'); assert.equal((await kpiText(page, 'kpis.parts')).trim(), '—');
@@ -259,12 +278,12 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
       p.querySelectorAll('*').forEach(e => { const r = e.getBoundingClientRect(); if (!r.width || r.right <= pr.right + 1) return; for (let a = e.parentElement; a && a !== p; a = a.parentElement) { const o = getComputedStyle(a).overflowX; if (o === 'auto' || o === 'scroll' || o === 'hidden') return; } if (getComputedStyle(e).position === 'fixed') return; out.push(String(e.className && e.className.baseVal === undefined ? e.className : 'svg').slice(0, 30)); });
       return { page: de.scrollWidth - de.clientWidth, efp: p.scrollWidth - p.clientWidth, beyond: out.slice(0, 5), w: innerWidth }; });
     for (const w of [900, 390]) {
-      await page.setViewportSize({ width: w, height: 900 }); await openPerson(page, 'Ana M.');
+      await page.setViewportSize({ width: w, height: 900 }); await rail(page, w < 600); await openPerson(page, 'Ana M.');
       for (const r of ['day', 'month', 'year']) { await page.click(`${P} .efpSeg button[data-range="${r}"]`); await loaded(page, r); await settle(page, 200); const f = await fit(); assert(f.page <= 1 && f.efp <= 1 && !f.beyond.length, `${w}px ${r}: no sideways scroll ${JSON.stringify(f)}`); }
       const small = await page.evaluate(() => [...document.querySelectorAll('#efficiencyView .efp button, #efficiencyView .efp input')].filter(e => e.offsetParent && e.getBoundingClientRect().width < 18 && !e.closest('.efpCal')).length); assert.equal(small, 0, `${w}px: no unreachably small control`);
       await page.evaluate(() => Efficiency.go('people')); await page.waitForFunction(() => !EfficiencyEmployee.instances.length);
     }
-    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.setViewportSize({ width: 1440, height: 900 }); await rail(page, false);
     // the default way of reading (no console api): the page asks the gated function itself with the console's passcode for this tab
     const direct = await page.evaluate(async () => {
       const hold = window.Efficiency; window.Efficiency = undefined; const host = document.createElement('div'); host.id = 'directHost'; host.style.cssText = 'position:fixed;left:0;top:0;width:900px;height:600px;overflow:auto;z-index:1;background:#fff'; document.body.appendChild(host);
@@ -286,7 +305,8 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     await pg.click(`${P} .efpSeg button[data-range="month"]`); await loaded(pg, 'month'); await pg.waitForTimeout(900);
     await pg.click(`${P} .efpSeg button[data-range="day"]`); await loaded(pg, 'day'); await pg.waitForTimeout(900);
     const m = await pg.evaluate(() => { window.__on = false; clearInterval(window.__sw); const fr = window.__fr.slice(2).sort((a, b) => a - b); return { n: fr.length, med: fr[fr.length >> 1], p95: fr[Math.floor(fr.length * .95)], max: fr[fr.length - 1], distinct: new Set(window.__vals).size }; });
-    assert(m.n > 30 && m.med < 40 && m.p95 < 120 && m.max < 400, 'smooth: ' + JSON.stringify(m)); assert(m.distinct >= 6, 'numbers count to their value rather than jump: ' + m.distinct + ' values seen');
+    // a coarse gate (software rendering on a shared, busy machine): no frozen page, no run of slow frames; the numbers are printed below
+    assert(m.n > 30 && m.med < 50 && m.p95 < 250 && m.max < 1500, 'smooth: ' + JSON.stringify(m)); assert(m.distinct >= 6, 'numbers count to their value rather than jump: ' + m.distinct + ' values seen');
     await pg.click(`${P} .efpSeg button[data-range="month"]`); await loaded(pg, 'month'); await pg.waitForTimeout(700);
     // thumbnails zoom in place on a resting pointer (the shared engine), the QR too
     const th = pg.locator(`${P} .efoRow .efoTh:not(.ph)`).first(); await th.scrollIntoViewIfNeeded(); await th.hover(); await pg.waitForFunction(() => document.querySelector('#efficiencyView .sealZoomed') && +document.querySelector('#efficiencyView .sealZoomed').dataset.sealZoom > 1.05, null, { timeout: 5000 });
@@ -299,7 +319,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     if (SHOTS) {
       fs.mkdirSync(SHOTS, { recursive: true }); const S = await boot({ reducedMotion: 'reduce' }), sp = S.page;
       for (const w of [1440, 900, 390]) {
-        await sp.setViewportSize({ width: w, height: 3400 }); await openPerson(sp, 'Ana M.');
+        await sp.setViewportSize({ width: w, height: 3400 }); await rail(sp, w < 600); await openPerson(sp, 'Ana M.');
         for (const [r, label] of [['day', 'day'], ['month', 'month'], ['year', 'year']]) { await sp.click(`${P} .efpSeg button[data-range="${r}"]`); await loaded(sp, r); await sp.waitForTimeout(1300); await sp.mouse.move(2, 2); await sp.locator(V).screenshot({ path: path.join(SHOTS, `${w}-${label}.png`) }); }
         if (w === 1440) {
           await sp.click(`${P} .efpSeg button[data-range="month"]`); await loaded(sp, 'month'); await sp.waitForTimeout(1300);

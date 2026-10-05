@@ -32,7 +32,7 @@ function make(opts = {}) {
   const t0 = Date.now(), base = opts.now || Date.now();
   const now = () => base + (Date.now() - t0);
   const st = { calls: [], fail: 0, key: opts.key || KEY, delay: null, live: 'working', mode: 'real' };
-  const today = ymd(base), firstDay = addDays(today, -300), nowH = () => +NYH.format(new Date(now()));
+  const today = ymd(base), firstDay = addDays(today, -200), trackingStart = addDays(today, -250), nowH = () => +NYH.format(new Date(now()));
   const orders = OF.make({ now: base, key: st.key, count: opts.orders == null ? 60 : opts.orders });
   const PEOPLE = {
     'ana m.': { name: 'Ana M.', key: 'ana m', salt: 0, signedInToday: true },
@@ -57,6 +57,7 @@ function make(opts = {}) {
   }
   function dayRec(P, day) {
     if (day > today) return null;
+    if (day < trackingStart) return { state: 'unknown', note: 'Sign-in logging had not begun on this day.' };
     const k = diff(firstDay, day); if (k < 0) return { state: 'before' };
     const w = dow(day);
     if (day === today) return P.signedInToday ? worked(P, day, true, false) : { state: 'pending' };
@@ -129,58 +130,92 @@ function make(opts = {}) {
     return { granularity: 'week', series: out };
   }
   function calendarOf(P, S) {
-    return S.days.filter(x => x.rec).map(x => { const c = x.rec, o = { day: x.day, state: c.state }; if (c.state === 'worked' || c.state === 'partial') Object.assign(o, { signedMs: c.signedMs, activeMs: c.activeMs, firstIn: c.firstIn, lastOut: c.lastOut || null, parts: c.parts, orders: c.orders, late: c.late, short: c.short, others: 4 }); return o; });
+    return S.days.filter(x => x.rec).map(x => { const c = x.rec, o = { day: x.day, state: c.state }; if (c.note) o.note = c.note; if (c.state === 'worked' || c.state === 'partial') Object.assign(o, { signedMs: c.signedMs, activeMs: c.activeMs, firstIn: c.firstIn, lastOut: c.lastOut || null, parts: c.parts, orders: c.orders, late: c.late, short: c.short, others: 4 }); return o; });
   }
+  /** E9's block: metrics (METRICs), streaks, the average shift, the honest sentence. (The calendar is its own top-level field.) */
   function attendanceOf(P, S, Q) {
-    const count = (s, st) => (s ? s.days.filter(x => x.rec && x.rec.state === st).length : 0), wd = s => s.days.filter(x => x.rec && x.rec.state === 'off' && dow(x.day) > 0 && dow(x.day) < 7).length;
-    const worked = s => s.worked, rate = s => { const t = s.worked + s.off; return t ? r1(s.worked / t * 100) : null; };
-    let cur = 0; for (let d = today; d >= firstDay; d = addDays(d, -1)) { const c = dayRec(P, d); if (!c || c.state === 'closed') continue; if (c.state === 'worked' || c.state === 'partial') cur++; else if (c.state !== 'pending') break; }
-    let best = 0, run = 0; for (const x of S.days) { const c = x.rec; if (!c || c.state === 'closed') continue; if (c.state === 'worked' || c.state === 'partial') { run++; best = Math.max(best, run); } else if (c.state !== 'pending') run = 0; }
-    const m = (label, unit, v, pv, better, def) => M(label, unit, v, pv, better, def);
-    const lateN = s => s.wk.filter(x => x.rec.late).length, shortN = s => s.wk.filter(x => x.rec.short).length;
-    return { metrics: {
-      daysWorked: m('Days worked', 'days', worked(S), Q ? worked(Q) : null, 'up', 'Days signed in at a station.'),
-      daysOff: m('Days off', 'days', S.off, Q ? Q.off : null, 'down', 'Team working days with no sign-in.'),
-      weekdayDaysOff: m('Weekday days off', 'days', wd(S), Q ? wd(Q) : null, 'down', 'Days off that fell Monday to Friday.'),
-      lateDays: m('Late starts', 'days', lateN(S), Q ? lateN(Q) : null, 'down', 'First sign-in more than 30 minutes after the team\'s usual start.'),
-      shortDays: m('Short days', 'days', shortN(S), Q ? shortN(Q) : null, 'down', 'Signed in for under half of what the team did.'),
-      attendanceRate: m('Attendance', 'percent', rate(S), Q ? rate(Q) : null, 'up', 'Days worked as a share of the team\'s working days.'),
-      currentStreak: m('Current streak', 'days', cur, null, 'up', 'Working days in a row, up to today.'),
-      longestStreak: m('Longest streak', 'days', best, null, null, 'The most working days in a row in this period.')
-    }, avgShiftMs: S.worked ? Math.round(S.signedMs / S.worked) : null };
+    const rate = s => { const t = s.worked + s.off; return t ? r1(s.worked / t * 100) : null; };
+    let cur = 0; for (let d = today; d >= trackingStart; d = addDays(d, -1)) { const c = dayRec(P, d); if (!c || c.state === 'closed' || c.state === 'before' || c.state === 'unknown') continue; if (c.state === 'worked' || c.state === 'partial') cur++; else if (c.state !== 'pending') break; }
+    let best = 0, run = 0; for (const x of S.days) { const c = x.rec; if (!c || c.state === 'closed' || c.state === 'before' || c.state === 'unknown') continue; if (c.state === 'worked' || c.state === 'partial') { run++; best = Math.max(best, run); } else if (c.state !== 'pending') run = 0; }
+    const lateN = s => s.wk.filter(x => x.rec.late).length, shortN = s => s.wk.filter(x => x.rec.short).length, shiftH = s => (s.worked ? s.signedMs / s.worked / HR : null);
+    const mid = s => (s.start == null ? null : Math.round(s.start)), end = s => (s.end == null ? null : Math.round(s.end));
+    const m = (label, unit, v, pv, better, def, extra) => M(label, unit, v == null ? null : r1(v), pv == null ? null : r1(pv), better, def, extra);
+    return { ok: true, found: S.worked > 0, from: S.days[0].day, to: S.days[S.days.length - 1].day, trackingStart, firstDay,
+      metrics: {
+        workingDays: m('Working days', 'days', S.worked + S.off, Q ? Q.worked + Q.off : null, null, 'Days the team worked and this person could have worked.', { estimated: false }),
+        daysWorked: m('Days worked', 'days', S.worked, Q ? Q.worked : null, 'up', 'Working days with any sign-in or recorded work.'),
+        daysOff: m('Days off', 'days', S.off, Q ? Q.off : null, 'down', 'Working days on which the person never signed in and recorded nothing.'),
+        extraDays: m('Extra days', 'days', 0, Q ? 0 : null, null, 'Days present that are not working days.'),
+        shortDays: m('Short days', 'days', shortN(S), Q ? shortN(Q) : null, 'down', 'Signed in for less than half of the person\'s own median shift.', { estimated: true, why: 'A day that ended at the midnight sign-out used the last recorded action.' }),
+        lateDays: m('Late starts', 'days', lateN(S), Q ? lateN(Q) : null, 'down', 'First sign-in more than 30 minutes after the person\'s own usual start.'),
+        attendanceRate: m('Attendance', 'percent', rate(S), Q ? rate(Q) : null, 'up', 'Days worked as a share of working days.'),
+        avgShiftHours: m('Average shift', 'hours', shiftH(S), Q ? shiftH(Q) : null, null, 'Time signed in per finished day worked.', { estimated: true, why: 'Days that ended at the midnight sign-out are cut back to the last action.' }),
+        medianStart: m('Usual start', 'clock', mid(S), Q ? mid(Q) : null, null, 'Middle time of the first sign-in.'),
+        medianEnd: m('Usual finish', 'clock', end(S), Q ? end(Q) : null, null, 'Middle time of the last sign-out.', { estimated: true, why: 'Some finishes are the last recorded action.' }),
+        currentStreak: m('Current streak', 'days', cur, null, 'up', 'Days worked in a row up to the end of the period.'),
+        longestStreak: m('Longest streak', 'days', best, null, null, 'The most days worked in a row.')
+      },
+      avgShiftMs: S.worked ? Math.round(S.signedMs / S.worked) : null, streaks: { current: cur, best },
+      definitions: { notAttendance: 'These numbers come from logged sign-ins and logged work, not from a time clock: a day off here means not logged in, not proof of absence.' },
+      estimated: { any: true, days: [], fields: { avgShiftMs: { estimated: true, why: 'Days that ended at the midnight sign-out are cut back.' }, shortDays: { estimated: true, why: 'Same.' }, workingDays: { estimated: false, rule: 'Decided by the team-size rule, not measured.' }, daysOff: { estimated: false, rule: 'Decided by the team-size rule, not measured.' } } }, notes: [] };
   }
-  const KINDS = [['rejected', 'Piece rejected', 'order', 'rejects', 'A piece was rejected at a station.'], ['error', 'Error shown', 'system', 'errors', 'The station showed an error while this person worked.'], ['undone', 'Completion undone', 'own', 'undos', 'A completion was undone.']];
+  /** E10's 13 kinds. Counted from the rollup counters on the days from `countersFrom` on only (a dash before), the two cross-checked kinds from the newest orders only. */
+  const K13 = [['undone', 'Completion undone', 'own', 'undos'], ['reprint', 'Label reprinted', 'own', .2], ['rescan', 'Scanned again', 'own', .15], ['heldOrSkipped', 'Held or skipped', 'own', .1], ['reopenedLater', 'Reopened later by someone else', 'order', 'win'], ['cameBack', 'Order came back', 'order', 'win'],
+    ['unknownSku', 'Piece not in the files', 'order', .05], ['qaFlag', 'Flagged for the team', 'order', .05], ['cancelAlert', 'Cancelled order met', 'order', .04], ['refused', 'Refused', 'order', 'rejects'], ['lookupFailed', 'Lookup failed', 'system', .06], ['failed', 'Error shown', 'system', 'errors'], ['replyFailed', 'Reply failed', 'system', .03]];
+  const NOTES = { undone: 'A completion was undone.', reprint: 'The label was printed again.', rescan: 'Scanned again.', heldOrSkipped: 'The order was held or skipped.', reopenedLater: 'Reopened later by another person.', cameBack: 'The order came back to an earlier station.', unknownSku: 'No picture files for this piece.', qaFlag: 'Flagged for the team.', cancelAlert: 'The customer cancelled.', refused: 'Scratched on the back', lookupFailed: 'The Etsy lookup failed.', failed: 'Scan did not match the order', replyFailed: 'The reply was not sent.' };
+  const countersFrom = addDays(today, -120);
   function issuesOf(P, S, Q, w) {
-    const items = [], by = KINDS.map(([kind, label, attribution, key, def]) => ({ kind, label, attribution, key, def, count: S.wk.length ? sum(S.wk, x => x.rec[key]) : 0, prevCount: Q && Q.wk.length ? sum(Q.wk, x => x.rec[key]) : null }));
-    for (const x of S.wk) for (const k of by) if (x.rec[k.key]) { const o = orders.orders[Math.floor(rnd(P.key + x.day + k.kind) * orders.orders.length)]; items.push({ at: x.rec.firstIn + 2 * HR + by.indexOf(k) * 600000, day: x.day, rid: o.rid, number: o.number, kind: k.kind, label: k.label, station: STATIONS[Math.floor(rnd(x.day + k.kind) * 3)][0], note: k.kind === 'rejected' ? 'Scratched on the back' : k.kind === 'error' ? 'Scan did not match the order' : '' }); }
-    items.sort((a, b) => b.at - a.at); const total = sum(by, k => k.count), ord = S.orders;
-    const byKind = by.filter(k => k.count).map(k => ({ kind: k.kind, label: k.label, count: k.count, per100Orders: ord ? r1(k.count / ord * 100) : null, coverage: w.days > 31 ? 'window' : 'range', attribution: k.attribution, def: k.def, how: 'Counted from the logged ' + k.label.toLowerCase() + ' actions.', estimated: false }));
-    const pt = Q && Q.wk.length ? sum(by, k => k.prevCount || 0) : null;
-    return { total: S.wk.length ? total : null, own: S.wk.length ? by.filter(k => k.attribution === 'own').reduce((n, k) => n + k.count, 0) : null, system: S.wk.length ? by.filter(k => k.attribution === 'system').reduce((n, k) => n + k.count, 0) : null, per100Orders: ord ? r1(total / ord * 100) : null, prevTotal: pt,
-      byKind, items: items.slice(0, 40), itemsCapped: items.length > 40 };
+    const per = (day, kind, spec) => { const c = dayRec(P, day); if (!c || !(c.state === 'worked' || c.state === 'partial')) return 0; if (typeof spec === 'string') return spec === 'win' ? 0 : c[spec]; return rnd(P.key + day + kind) < spec ? 1 : 0; };
+    const countOver = (days, kind, spec) => days.reduce((n, x) => n + per(x.day, kind, spec), 0);
+    const range = S.days, nd = range.length;
+    const evFrom = addDays(w.to, -30), evDays = range.filter(x => x.day >= evFrom);
+    const rows = K13.map(([kind, label, attribution, spec]) => {
+      const win = spec === 'win', exact = spec === 'undos', counted = exact || win ? range : range.filter(x => x.day >= countersFrom), dc = counted.filter(x => x.rec).length;
+      let count = null;
+      if (win) { const fin = evDays.filter(x => x.rec && x.rec.completes).slice(-30); count = fin.length ? fin.filter(x => rnd(P.key + x.day + kind) < .2).length : null; }
+      else if (counted.length) count = countOver(counted, kind, spec);
+      const covered = win ? 'window' : exact ? 'range' : counted.length < nd ? 'range-partial' : 'range';
+      const prevCount = Q && !win && (exact || Q.days.every(x => x.day >= countersFrom)) ? countOver(Q.days, kind, spec) : null;
+      return { kind, label, count, definition: NOTES[kind], def: NOTES[kind], how: 'Counted from the logged ' + label.toLowerCase() + ' actions.', attribution, coverage: covered, estimated: win, why: win ? ['Only the person\'s newest finished orders were looked at.'] : [], daysCounted: counted.length, daysActive: dc, complete: counted.length === nd,
+        per100Orders: count != null && S.orders ? r1(count / S.orders * 100) : null, prev: prevCount, delta: count != null && prevCount != null ? count - prevCount : null, deltaPct: null, better: attribution === 'own' ? 'down' : null, checked: win ? { orders: Math.min(30, evDays.filter(x => x.rec && x.rec.completes).length), of: 30 } : undefined };
+    });
+    const items = [];
+    for (const x of evDays) for (const k of rows) if (k.count != null && k.coverage !== 'window') { const spec = K13.find(q => q[0] === k.kind)[3]; if (per(x.day, k.kind, spec) && x.day >= (spec === 'undos' ? evFrom : countersFrom)) { const o = orders.orders[Math.floor(rnd(P.key + x.day + k.kind + 'o') * orders.orders.length)]; items.push({ id: x.day + k.kind, at: x.rec.firstIn + 2 * HR + rows.indexOf(k) * 90000, day: x.day, rid: o.rid, number: o.number, station: STATIONS[Math.floor(rnd(x.day + k.kind) * 3)][0], kind: k.kind, label: k.label, attribution: k.attribution, note: NOTES[k.kind], source: 'events' }); } }
+    items.sort((a, b) => b.at - a.at);
+    const nzr = rows.filter(k => k.count != null), total = S.wk.length && nzr.length ? sum(nzr, k => k.count) : null, by = a => (nzr.length ? sum(nzr.filter(k => k.attribution === a), k => k.count) : null);
+    const counters = range.filter(x => x.day >= countersFrom && x.rec).length;
+    return { total, own: by('own'), system: by('system'), order: by('order'), per100Orders: total != null && S.orders ? r1(total / S.orders * 100) : null, daysCounted: S.wk.length ? counters || null : null, daysActive: S.wk.length, countersFrom, complete: counters === range.filter(x => x.rec).length,
+      prevTotal: Q && Q.wk.length && Q.days.every(x => x.day >= countersFrom) ? sum(K13.filter(k => k[3] !== 'win'), k => countOver(Q.days, k[0], k[3])) : null,
+      byKind: rows, byDay: S.wk.map(x => ({ day: x.day, total: sum(K13.filter(k => k[3] !== 'win'), k => per(x.day, k[0], k[3])), source: 'counters' })), items: items.slice(0, 40), itemsTotal: items.length, itemsCapped: items.length > 40, next: null };
   }
   function ratesOf(S, Q) {
-    const R = (label, better, def, fn) => { const v = fn(S), pv = Q ? fn(Q) : null; return M(label, 'percent', v == null ? null : r1(v), pv == null ? null : r1(pv), better, def); };
-    const fp = s => (s.orders ? (s.orders - Math.min(s.orders, s.rejects + s.errors + s.undos)) / s.orders * 100 : null);
-    const rev = s => (s.completes ? s.undos / s.completes * 100 : null), rej = s => (s.orders ? s.rejects / s.orders * 100 : null);
-    const out = { firstPassRate: R('First-pass success', 'up', 'Orders with no reject, error or undo, as a share of orders.', fp), reversalRate: R('Reversed work', 'down', 'Completions that were undone, as a share of completions.', rev), rejectRate: R('Rejected', 'down', 'Rejects as a share of orders.', rej) };
-    if (S.orders) { out.firstPassRate.num = S.orders - Math.min(S.orders, S.rejects + S.errors + S.undos); out.firstPassRate.den = S.orders; out.reversalRate.num = S.undos; out.reversalRate.den = S.completes; out.rejectRate.num = S.rejects; out.rejectRate.den = S.orders; }
-    return out;
+    const pc = (n, d) => (d ? { p: n / d * 100, n, d } : null);
+    const R = (key, label, better, def, fn, cov) => { const v = fn(S), pv = Q ? fn(Q) : null, o = M(label, 'percent', v == null ? null : r1(v.p), pv == null ? null : r1(pv.p), better, def, { coverage: cov || 'range', key }); if (v) { o.numerator = o.num = v.n; o.denominator = o.den = v.d; } o.definition = def; o.why = cov === 'window' ? ['Only the person\'s own presses are seen.'] : []; o.estimated = cov === 'window'; o.daysCounted = S.wk.length; o.daysActive = S.wk.length; return o; };
+    return {
+      firstPass: R('firstPass', 'First-pass rate', 'up', 'Of the orders finished at a station, the share with no undo, reopen or reprint by the person afterwards.', s => (s.orders ? pc(s.orders - Math.min(s.orders, s.undos + s.rejects), s.orders) : null), 'window'),
+      reworkRate: R('reworkRate', 'Rework rate', 'down', 'Undo presses divided by complete presses.', s => (s.completes ? pc(s.undos, s.completes) : null)),
+      successRate: R('successRate', 'Error-free actions', 'up', 'The share of logged actions that did not end in an error on screen.', s => (s.scans ? pc(s.scans - s.errors, s.scans) : null)),
+      failureRate: R('failureRate', 'Error rate', 'down', 'The share of logged actions that ended in an error on screen.', s => (s.scans ? pc(s.errors, s.scans) : null)),
+      holdRate: R('holdRate', 'Hold and cancel rate', null, 'Refusals, holds and flags per 100 orders handled.', s => (s.orders ? pc(s.rejects, s.orders) : null)),
+      reprintRate: R('reprintRate', 'Reprint rate', 'down', 'Labels printed again divided by all label prints.', s => (s.prints ? pc(Math.round(s.prints * .04), s.prints) : null)),
+      rescanRate: R('rescanRate', 'Repeat scan rate', 'down', 'Scans marked again divided by all scans.', s => (s.scans ? pc(Math.round(s.scans * .02), s.scans) : null))
+    };
   }
   function contactOf(P, S, Q) {
-    const c = s => { if (!s || !s.wk.length) return null; const sent = sum(s.wk, x => 3 + Math.floor(rnd(P.key + x.day + 'm') * 7)), failed = sum(s.wk, x => (rnd(P.key + x.day + 'x') < .05 ? 1 : 0)); return { sent, failed, delivered: sent - failed, drafted: sent + 2, edited: Math.round(sent * .4), first: 22 + (s.wk.length % 9) }; };
-    const a = c(S), b = c(Q); const m = (label, unit, k, better, def) => M(label, unit, a ? a[k] : null, b ? b[k] : null, better, def);
-    return { available: true, source: 'Inbox activity', metrics: {
-      repliesSent: m('Replies sent', 'count', 'sent', 'up', 'Replies sent to customers from the Inbox.'), repliesDelivered: m('Replies delivered', 'count', 'delivered', 'up', 'Replies Etsy confirmed.'), repliesFailed: m('Replies failed', 'count', 'failed', 'down', 'Replies that did not go through.'),
-      repliesDrafted: m('Drafts made', 'count', 'drafted', null, 'AI drafts asked for.'), repliesEdited: m('AI drafts edited', 'count', 'edited', null, 'Drafts changed before sending.'), timeToFirstReplyMin: m('First reply', 'minutes', 'first', 'down', 'The middle time to a first reply.')
-    } };
+    const c = s => { if (!s || !s.wk.length) return null; const sent = sum(s.wk, x => 3 + Math.floor(rnd(P.key + x.day + 'm') * 7)), failed = sum(s.wk, x => (rnd(P.key + x.day + 'x') < .05 ? 1 : 0)), delivered = sent - failed; return { drafted: sent + 2, sent, delivered, unconfirmed: 0, failed, refused: 0, edited: Math.round(sent * .4), aiSentUnchanged: Math.round(sent * .5), deliveryRate: r1(delivered / (delivered + failed) * 100), failureRate: r1(failed / (delivered + failed) * 100), editedShare: 44.4, medianFirstReplyMs: (22 + (s.wk.length % 9)) * 60000, meanFirstReplyMs: (30 + (s.wk.length % 7)) * 60000, conversationsDone: Math.round(sent * .8), reopened: 1, reopenRate: 1.2 }; };
+    const a = c(S), b = c(Q);
+    const LAB = { drafted: 'Replies drafted', sent: 'Replies sent', delivered: 'Replies delivered', unconfirmed: 'Replies unconfirmed', failed: 'Replies failed', refused: 'Replies refused', edited: 'AI drafts edited', aiSentUnchanged: 'AI drafts sent unchanged', deliveryRate: 'Delivery rate', failureRate: 'Failure rate', editedShare: 'Drafts edited', medianFirstReplyMs: 'Time to first reply (middle)', meanFirstReplyMs: 'Time to first reply (average)', conversationsDone: 'Conversations done', reopened: 'Conversations reopened', reopenRate: 'Reopen rate' };
+    const UNIT = { deliveryRate: 'percent', failureRate: 'percent', editedShare: 'percent', reopenRate: 'percent', medianFirstReplyMs: 'ms', meanFirstReplyMs: 'ms' }, BETTER = { deliveryRate: 'up', failureRate: 'down', failed: 'down', refused: 'down', reopenRate: 'down', reopened: 'down' };
+    const metrics = {};
+    for (const k of Object.keys(LAB)) { const def = LAB[k] + ' (a plain sentence).', o = M(LAB[k], UNIT[k] || 'count', a ? a[k] : null, b && k !== 'medianFirstReplyMs' ? b[k] : null, BETTER[k] || null, def, { key: k, definition: def, coverage: 'counted', daysCounted: S.wk.length, daysActive: S.wk.length }); metrics[k] = o; }
+    return Object.assign({ available: !!a, source: 'counters', daysCounted: S.wk.length, daysActive: S.wk.length, firstReplyCount: S.wk.length, metrics }, a || {});
   }
   const CANNOT = [{ topic: 'Phone scans', text: 'A phone scan is credited to the desktop signed in at that station, so it counts for that desktop\'s person.' }, { topic: 'Breaks', text: 'A break and waiting for work look the same in the log: neither has an action.' }];
 
   /* ── the answers ── */
   function person(b) {
     const P = PEOPLE[String(b.name || '').toLowerCase()], w = windowOf(b), compare = b.compare !== false, pw = compare ? { from: addDays(w.from, -w.days), to: addDays(w.from, -1), days: w.days } : null;
-    const head = { ok: true, now: now(), mode: st.mode, name: P ? P.name : String(b.name || ''), range: b.range, from: w.from, to: w.to, days: w.days, today, live: w.to === today, prev: pw, trackingStart: addDays(today, -250), rules: { teamMinPeople: 2, minSignedMin: 15, shortFraction: 0.5, lateAfterMin: 30, activeGapMin: 5 } };
+    const head = { ok: true, now: now(), mode: st.mode, name: P ? P.name : String(b.name || ''), range: b.range, from: w.from, to: w.to, days: w.days, today, live: w.to === today, prev: pw, trackingStart, rules: { teamMinPeople: 2, minSignedMin: 15, shortFraction: 0.5, lateAfterMin: 30, activeGapMin: 5 } };
     if (!P) return Object.assign(head, { found: false, spellings: [], granularity: 'day', firstDay: null, eventWindow: null, kpis: {}, series: [], hours: [], stations: [], calendar: [], cannotTell: CANNOT, notes: ['Nothing has been logged under this name yet.'] });
     const S = stats(P, w), Q = pw ? stats(P, pw) : null, se = seriesOf(S, w), tot = S.parts, sig = S.signedMs;
     const stationRows = STATIONS.map(([k, label]) => { const parts = S.wk.length ? Math.round(sum(S.wk, x => x.rec.parts * (x.rec.split[k] || 0))) : null; return { station: k, label, parts, orders: parts == null ? null : Math.round(parts / 2.3), scans: parts == null ? null : Math.round(parts * 2.1), completes: parts == null ? null : Math.round(parts / 2.5), prints: parts == null ? null : Math.round(parts / 4), minutes: S.wk.length ? Math.round(sum(S.wk, x => x.rec.signedMs / 60000 * (x.rec.split[k] || 0))) : null, shareParts: tot ? r1(parts / tot * 100) : null, shareMinutes: sig ? r1(S.wk.length ? sum(S.wk, x => x.rec.signedMs / 60000 * (x.rec.split[k] || 0)) / (sig / 60000) * 100 : 0) : null, perActiveHour: S.activeMs && parts != null ? r1(parts / (S.activeMs / HR * (S.wk.length ? sum(S.wk, x => (x.rec.split[k] || 0)) / S.wk.length : 0))) : null }; }).filter(x => x.parts).sort((a, b) => b.parts - a.parts);
@@ -190,11 +225,11 @@ function make(opts = {}) {
   }
   /** The console's `live` read (api.md, E2 section 4), for whoever is signed in: Ana M. at Welding, with the first of the orders in hand. */
   function live() {
-    const o = orders.orders[0], mode = st.live, at = now();
-    const cur = mode === 'working' ? [{ id: 'welding__welding-1__Ana M.', person: 'Ana M.', device: 'welding-1', deviceLabel: 'Welding 1', kind: 'order', rid: o.rid, orderNumber: o.number, customer: o.customer, title: 'Order ' + o.number, scannedAt: base - 95000, beatAt: at - 2000, note: '', thumbUrl: o.thumbUrl, vectorUrl: '', photoUrl: '', qr: { text: o.rid }, pieces: o.pieces.slice(0, 24), pieceCount: o.pieces.length }] : [];
+    const o = orders.orders[0], mode = st.live, at = now(), who = st.who || 'Ana M.';
+    const cur = mode === 'working' ? [{ id: 'welding__welding-1__' + who, person: who, device: 'welding-1', deviceLabel: 'Welding 1', kind: 'order', rid: o.rid, orderNumber: o.number, customer: o.customer, title: 'Order ' + o.number, scannedAt: base - 95000, beatAt: at - 2000, note: '', thumbUrl: o.thumbUrl, vectorUrl: '', photoUrl: '', qr: { text: o.rid }, pieces: o.pieces.slice(0, 24), pieceCount: o.pieces.length }] : [];
     return { ok: true, at, mode: st.mode, day: today, keepAliveMs: 30000, staleMs: 180000,
-      stations: ALL9.map(([key, label]) => ({ key, label, state: key === 'welding' && mode !== 'out' ? (mode === 'working' ? 'working' : 'idle') : 'offline', people: key === 'welding' && mode !== 'out' ? ['Ana M.'] : [], current: key === 'welding' ? cur : [], devices: [], lastEventAt: at - 5000, counts: { partsToday: 12, ordersToday: 5, scansToday: 30 } })),
-      signedIn: mode === 'out' ? [] : [{ name: 'Ana M.', stationKey: 'welding', device: 'welding-1', since: at - 3 * HR, lastSeenAt: at - 2000 }] };
+      stations: ALL9.map(([key, label]) => ({ key, label, state: key === 'welding' && mode !== 'out' ? (mode === 'working' ? 'working' : 'idle') : 'offline', people: key === 'welding' && mode !== 'out' ? [who] : [], current: key === 'welding' ? cur : [], devices: [], lastEventAt: at - 5000, counts: { partsToday: 12, ordersToday: 5, scansToday: 30 } })),
+      signedIn: mode === 'out' ? [] : [{ name: who, stationKey: 'welding', device: 'welding-1', since: at - 3 * HR, lastSeenAt: at - 2000 }] };
   }
   function answer(body) {
     st.calls.push({ op: body.op, name: body.name, range: body.range, day: body.day, from: body.from, to: body.to, compare: body.compare, q: body.q, cursor: body.cursor, limit: body.limit, sandbox: body.sandbox });
@@ -205,6 +240,6 @@ function make(opts = {}) {
     if (body.op === 'personOrders') return orders.answer(body);
     return { status: 400, json: { ok: false, error: 'bad op' } };
   }
-  return { answer, state: st, orders, person, live, today, firstDay, setLive(m) { st.live = m; }, setDelay(f) { st.delay = f; }, delayFor(body) { return st.delay ? +st.delay(body) || 0 : 0; }, ymd, addDays };
+  return { answer, state: st, orders, person, live, today, firstDay, setLive(m, who) { st.live = m; st.who = who || ''; }, setDelay(f) { st.delay = f; }, delayFor(body) { return st.delay ? +st.delay(body) || 0 : 0; }, ymd, addDays };
 }
 module.exports = { make, KEY, ymd, addDays };

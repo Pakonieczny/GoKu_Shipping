@@ -137,10 +137,10 @@
 .efpChip{display:inline-flex;gap:5px;align-items:baseline;border:1px solid var(--line);border-radius:999px;padding:2px 9px;font-size:11px;color:var(--ink70);white-space:nowrap;background:var(--card2)}
 .efpChip b{font-weight:700;color:var(--ink)}.efpChip.now{border-color:var(--sage);background:var(--sageSoft)}
 .efpLive{display:inline-flex;align-items:center;gap:7px;font-size:11.5px;color:var(--ink45);white-space:nowrap;min-width:0}
-.efpDot{width:7px;height:7px;border-radius:50%;background:var(--ink25);flex:0 0 7px}
-.efpLive[data-s=live] .efpDot{background:var(--sage);animation:efpPulse 2.4s ease-out infinite}.efpLive[data-s=slow] .efpDot{background:var(--gold2)}.efpLive[data-s=load] .efpDot{display:none}
+.efpDot{position:relative;width:7px;height:7px;border-radius:50%;background:var(--ink25);flex:0 0 7px}.efpDot:after{content:"";position:absolute;inset:0;border-radius:50%;background:inherit;opacity:0;pointer-events:none}
+.efpLive[data-s=live] .efpDot{background:var(--sage)}.efpLive[data-s=live] .efpDot:after{animation:efpPulse 2.4s ease-out infinite}.efpLive[data-s=slow] .efpDot{background:var(--gold2)}.efpLive[data-s=load] .efpDot{display:none}
 .efpLive .spin{display:none}.efpLive[data-s=load] .spin{display:inline-block}
-@keyframes efpPulse{0%{box-shadow:0 0 0 0 rgba(95,122,91,.4)}70%,100%{box-shadow:0 0 0 6px rgba(95,122,91,0)}}
+@keyframes efpPulse{0%{opacity:.4;transform:scale(1)}70%,100%{opacity:0;transform:scale(2.7)}}
 .efpBar{position:sticky;top:var(--efp-top,4px);z-index:6;display:flex;align-items:center;gap:6px 12px;flex-wrap:wrap;min-height:42px;padding:6px 10px 6px 12px;background:rgba(255,254,251,.93);backdrop-filter:blur(10px);border:1px solid var(--line);border-radius:12px;box-shadow:var(--sh)}
 .efpSeg button{padding:4px 11px;font-size:11px;transition:background .2s,color .2s}.efpSeg button:not(.on):hover{background:var(--card2);color:var(--ink)}
 .efpNav{display:inline-flex;align-items:center;gap:2px;min-width:0}
@@ -239,7 +239,7 @@
 .efpDy.worked{background:#dfe8d6;border-color:#c5d5b9;color:#2f4a2b}.efpDy.partial{background:var(--goldSoft);border-color:var(--goldLine);color:#6a4d17}
 .efpDy.off{background:var(--card2);border-color:var(--line);color:var(--ink45);background-image:repeating-linear-gradient(135deg,transparent 0 5px,rgba(176,86,63,.1) 5px 6px)}
 .efpDy.future{background:transparent;border:1px dashed var(--line);color:var(--ink25);cursor:default}.efpDy.future:hover{transform:none;box-shadow:none;border-color:var(--line)}
-.efpDy.unknown,.efpDy.before{background:transparent;border:1px solid var(--line2);color:var(--ink25)}
+.efpDy.unknown,.efpDy.before{background:transparent;border:1px dotted var(--line);color:var(--ink25)}
 .efpDy.closed{background:var(--paper2);border-color:var(--line);color:var(--ink45);background-image:repeating-linear-gradient(45deg,transparent 0 4px,rgba(30,26,20,.08) 4px 5px)}
 .efpDy.pending{background:transparent;border:1px solid var(--goldLine);color:var(--ink45)}
 .efpDy.pad{visibility:hidden;pointer-events:none}.efpDy.sel{box-shadow:0 0 0 2px var(--gold)}.efpDy.today{border-color:var(--gold)}
@@ -248,7 +248,7 @@
 .efpCalD{display:grid;gap:3px;grid-template-rows:repeat(7,auto);font-size:9.5px;color:var(--ink45);margin-top:14px}.efpCalD span{aspect-ratio:auto;display:flex;align-items:center;line-height:1}
 .efpCalM{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(0,1fr);gap:3px;height:12px;font-size:9.5px;color:var(--ink45);grid-column:2}.efpCalM span{white-space:nowrap;overflow:visible}
 .efpKey{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:11px;color:var(--ink45);margin-top:2px}.efpKey span{display:inline-flex;align-items:center;gap:5px}.efpKey i{width:11px;height:11px;border-radius:3px;border:1px solid var(--line);display:inline-block}
-.efpKey .w{background:#dfe8d6;border-color:#c5d5b9}.efpKey .p{background:var(--goldSoft);border-color:var(--goldLine)}.efpKey .o{background:repeating-linear-gradient(135deg,transparent 0 3px,rgba(176,86,63,.25) 3px 4px)}.efpKey .f{border-style:dashed;background:transparent}.efpKey .c{background:var(--paper2) repeating-linear-gradient(45deg,transparent 0 3px,rgba(30,26,20,.14) 3px 4px)}
+.efpKey .w{background:#dfe8d6;border-color:#c5d5b9}.efpKey .p{background:var(--goldSoft);border-color:var(--goldLine)}.efpKey .o{background:repeating-linear-gradient(135deg,transparent 0 3px,rgba(176,86,63,.25) 3px 4px)}.efpKey .f{border-style:dashed;background:transparent}.efpKey .b{border-style:dotted;background:transparent}.efpKey .c{background:var(--paper2) repeating-linear-gradient(45deg,transparent 0 3px,rgba(30,26,20,.14) 3px 4px)}
 .efpIs{display:grid}.efpIg+.efpIg{border-top:1px solid var(--line2)}
 .efpIgh{display:grid;grid-template-columns:minmax(0,1fr) auto 18px;gap:10px;align-items:center;width:100%;border:0;background:transparent;padding:9px 18px;text-align:left;cursor:pointer;border-radius:0;color:var(--ink)}
 .efpIgh:hover{background:var(--card2)}.efpIgh b{font-weight:700;font-size:12.5px}.efpIgh small{display:block;font-weight:400;color:var(--ink45);font-size:11px;margin-top:1px;white-space:normal}
@@ -291,7 +291,7 @@
 .efpSB{display:flex;height:12px;border-radius:6px;overflow:hidden;background:var(--line2);gap:2px;position:relative}.efpSB i{display:block;height:100%;width:0;transition:width .6s cubic-bezier(.2,.8,.2,1);cursor:default}.efpSB .a{background:#6f6a62}.efpSB .i{background:var(--gold2)}.efpSB .u{background:var(--line)}
 .efpSLeg{display:flex;flex-wrap:wrap;gap:4px 16px;font-size:11.5px;color:var(--ink45)}.efpSLeg span{display:inline-flex;gap:6px;align-items:center}.efpSLeg i{width:9px;height:9px;border-radius:3px;display:inline-block}
 .efpSum{display:flex;flex-wrap:wrap;gap:6px;padding:10px 18px 4px}.efpSum span{display:inline-flex;gap:5px;align-items:baseline;border:1px solid var(--line);border-radius:999px;padding:2px 10px;font-size:11px;color:var(--ink70);background:var(--card2)}.efpSum b{color:var(--ink);font-weight:700;font-variant-numeric:tabular-nums}
-.efpAt{display:inline-block;font:700 9px var(--sans);letter-spacing:.06em;text-transform:uppercase;padding:1px 6px;border-radius:4px;margin-left:8px;vertical-align:1px;background:var(--paper2);color:var(--ink70)}.efpAt.own{background:var(--goldSoft);color:#7a5a1d}.efpAt.system{background:var(--slateSoft);color:#35525d}
+.efpAt{display:inline-block;font:700 9px var(--sans);letter-spacing:.06em;text-transform:uppercase;padding:1px 6px;border-radius:4px;margin-left:8px;vertical-align:1px;background:var(--paper2);color:var(--ink70)}.efpAt.own{background:var(--goldSoft);color:#7a5a1d}.efpAt.system{background:var(--paper2);color:var(--ink45)}.efpNone{padding:8px 18px 4px;border-top:1px solid var(--line2)}.efpNone b{color:var(--ink70);font-weight:650}
 .efpHow{padding:2px 0 6px;color:var(--ink45);font-size:11.5px;line-height:1.5}
 .efpSub{font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink45);font-weight:750;margin:6px 0 -4px}
 .efpStat{display:flex;flex-wrap:wrap;gap:4px 18px;font-size:12px;color:var(--ink70)}.efpStat b{color:var(--ink);font-weight:650;font-variant-numeric:tabular-nums;margin-left:4px}
@@ -303,7 +303,7 @@
 .efpKpis{gap:8px}.efpK{padding:11px 12px 9px}.efpKV{font-size:25px}.efpKsp{width:56px;right:8px;top:12px}.efpChart{padding:11px 12px 12px}.efpMix{grid-template-columns:minmax(0,1fr);justify-items:center}.efpMixL{width:100%}.efpNowCard{grid-template-columns:auto minmax(0,1fr);padding:11px 12px}.efpNowCard>.efpQr{display:none}
 .efpO{grid-template-columns:70px minmax(0,1fr) 44px;grid-template-areas:"t n q" "s s s" "p p p"}.efpO>.efpOs{grid-area:s;display:flex;gap:10px;align-items:baseline}.efpIr{grid-template-columns:78px minmax(0,1fr);grid-template-areas:"t n" "r r"}.efpIr>time{grid-area:t}.efpIr>.efpOid{grid-area:n}.efpIr>span{grid-area:r}.efpIgh,.efpIgl,.efpRates{padding-left:12px;padding-right:12px}.efpFind{padding:10px 12px 6px}.efpOl{padding:0 2px 4px}
 .efpHeatRow{grid-template-columns:28px repeat(24,minmax(0,1fr));gap:2px}.efpHeatRow.one{grid-template-columns:repeat(24,minmax(0,1fr))}.efpHeatAx{grid-template-columns:28px repeat(24,minmax(0,1fr));gap:2px}.efpHeatAx.one{grid-template-columns:repeat(24,minmax(0,1fr))}.efpHc{height:22px;border-radius:3px}.efpDy{height:30px}}
-@media (prefers-reduced-motion:reduce){.efp *{transition:none!important;animation:none!important}}`;
+@media (prefers-reduced-motion:reduce){.efp *,.efp *:before,.efp *:after{transition:none!important;animation:none!important}}`;
     doc.head.appendChild(s);
   }
 
@@ -336,47 +336,61 @@
     avgStart: { label: "Usual start", unit: "clock", better: null, def: "The average time of the first sign-in on days worked." },
     avgEnd: { label: "Usual finish", unit: "clock", better: null, def: "The average time of the last sign-out on days worked." },
     avgShiftHours: { label: "Average shift", unit: "hours", better: null, def: "Signed-in time on an average day worked." },
-    daysWorked: { label: "Days worked", unit: "days", better: "up", def: "Days signed in at a station.", sp: "worked" },
-    daysOff: { label: "Days off", unit: "days", better: "down", def: "Team working days on which this person never signed in. Weekends and days nobody worked are not counted.", sp: "off" },
-    weekdayDaysOff: { label: "Weekday days off", unit: "days", better: "down", def: "Days off that fell Monday to Friday." },
-    weekendDaysOff: { label: "Weekend days off", unit: "days", better: null, def: "Days off that fell on a Saturday or Sunday, when the team did work." },
-    lateDays: { label: "Late starts", unit: "days", better: "down", def: "Days this person first signed in more than 30 minutes after the rest of the team's usual start." },
-    shortDays: { label: "Short days", unit: "days", better: "down", def: "Days signed in for less than half of what the rest of the team did." },
-    currentStreak: { label: "Current streak", unit: "days", better: "up", def: "Working days in a row, up to today, signed in." },
-    longestStreak: { label: "Longest streak", unit: "days", better: null, def: "The most working days in a row signed in, in this period." },
+    daysWorked: { label: "Days worked", unit: "days", better: "up", def: "Working days on which this person was signed in or had recorded work.", sp: "worked" },
+    daysOff: { label: "Days off", unit: "days", better: "down", def: "Team working days on which this person never signed in and recorded nothing. Weekends and days nobody worked are not counted.", sp: "off" },
+    workingDays: { label: "Working days", unit: "days", better: null, def: "Days the team worked and this person could have worked." },
+    extraDays: { label: "Extra days", unit: "days", better: null, def: "Days this person came in that were not working days for the team." },
+    lateDays: { label: "Late starts", unit: "days", better: "down", def: "Days this person first signed in more than 30 minutes after their own usual start." },
+    shortDays: { label: "Short days", unit: "days", better: "down", def: "Days signed in for less than half of this person's own usual shift." },
+    currentStreak: { label: "Current streak", unit: "days", better: "up", def: "Days worked in a row, up to the end of the period." },
+    longestStreak: { label: "Longest streak", unit: "days", better: null, def: "The most days worked in a row." },
     attendanceRate: { label: "Attendance", unit: "percent", better: "up", def: "Days worked as a share of the team's working days." },
-    issues: { label: "Issues", unit: "count", better: "down", def: "Rejects, errors and undos logged against this person's work, and reprints and re-scans that name them. Signals to look at, not verdicts." },
+    avgShiftHours: { label: "Average shift", unit: "hours", better: null, def: "Signed-in time on an average finished day worked." },
+    medianStart: { label: "Usual start", unit: "clock", better: null, def: "The middle time of the first sign-in on days worked." },
+    medianEnd: { label: "Usual finish", unit: "clock", better: null, def: "The middle time of the last sign-out on days worked." },
+    issues: { label: "Issues", unit: "count", better: "down", sp: "issuesDay", def: "Signals logged against this person's work: presses of their own, things about the order, and failures the screen showed them. Signals to look at, not verdicts." },
     issuesPer100Orders: { label: "Issues per 100 orders", unit: "count", better: "down", def: "Issues divided by orders, times 100, so busy and quiet periods compare fairly." },
-    firstPassRate: { label: "First-pass success", unit: "percent", better: "up", def: "Orders finished with no reject, error or undo along the way, as a share of orders worked." },
-    reversalRate: { label: "Reversed work", unit: "percent", better: "down", def: "Completions that were undone, as a share of completions." },
-    rejectRate: { label: "Rejected", unit: "percent", better: "down", def: "Rejects as a share of orders worked." },
-    errorRate: { label: "Errors", unit: "percent", better: "down", def: "Errors shown to this person as a share of orders worked." },
-    repliesDrafted: { label: "Drafts made", unit: "count", better: null, def: "Times this person asked the Inbox for an AI draft." },
-    repliesSent: { label: "Replies sent", unit: "count", better: "up", def: "Replies this person sent to customers from the Inbox." },
-    repliesDelivered: { label: "Replies delivered", unit: "count", better: "up", def: "Replies Etsy confirmed were sent." },
-    repliesFailed: { label: "Replies failed", unit: "count", better: "down", def: "Replies that did not go through. Each one is listed with its order." },
-    repliesEdited: { label: "AI drafts edited", unit: "count", better: null, def: "Replies that started as an AI draft and were changed by this person before sending." },
-    deliveredRate: { label: "Delivered", unit: "percent", better: "up", def: "Replies delivered as a share of replies delivered or failed." },
-    failureRate: { label: "Failed", unit: "percent", better: "down", def: "Replies failed as a share of replies delivered or failed." },
-    timeToFirstReplyMin: { label: "First reply", unit: "minutes", better: "down", def: "The middle time from a customer's first message to this person's first reply." },
+    firstPass: { label: "First-pass rate", unit: "percent", better: "up", def: "Of the orders this person finished at a station, the share with no undo, reopen or reprint by them afterwards." },
+    reworkRate: { label: "Rework rate", unit: "percent", better: "down", def: "Undo presses divided by complete presses at the production stations." },
+    successRate: { label: "Error-free actions", unit: "percent", better: "up", def: "The share of logged actions that did not end in an error on screen." },
+    "rates.failureRate": { label: "Error rate", unit: "percent", better: "down", def: "The share of logged actions that ended in an error on screen. Most errors come from the system, not the person." },
+    holdRate: { label: "Hold and cancel rate", unit: "percent", better: null, def: "Refusals, holds, skips, flags and cancelled-order alerts per 100 orders handled." },
+    reprintRate: { label: "Reprint rate", unit: "percent", better: "down", def: "Labels printed again divided by all label prints. A jammed printer raises it." },
+    rescanRate: { label: "Repeat scan rate", unit: "percent", better: "down", def: "Scans marked 'again' divided by all scans." },
+    drafted: { label: "Replies drafted", unit: "count", better: null, def: "Times this person asked the AI to draft or revise a reply." },
+    sent: { label: "Replies sent", unit: "count", better: "up", def: "Replies the send queue accepted from this person." },
+    delivered: { label: "Replies delivered", unit: "count", better: "up", def: "Replies Etsy confirmed as sent." },
+    unconfirmed: { label: "Replies unconfirmed", unit: "count", better: null, def: "Probably sent, but not confirmed. Neither delivered nor failed." },
+    failed: { label: "Replies failed", unit: "count", better: "down", def: "Replies that could not be sent." },
+    refused: { label: "Replies refused", unit: "count", better: "down", def: "Replies the server turned away before they reached Etsy." },
+    edited: { label: "AI drafts edited", unit: "count", better: null, def: "AI drafts this person changed before sending." },
+    deliveryRate: { label: "Delivery rate", unit: "percent", better: "up", def: "Delivered divided by replies with a known result." },
+    "contact.failureRate": { label: "Failure rate", unit: "percent", better: "down", def: "Failed or refused replies divided by replies with a known result." },
+    editedShare: { label: "Drafts edited", unit: "percent", better: null, def: "AI drafts edited divided by all AI drafts sent." },
+    medianFirstReplyMs: { label: "First reply (middle)", unit: "ms", better: "down", def: "The middle time from a customer's first message to this person's first reply." },
+    meanFirstReplyMs: { label: "First reply (average)", unit: "ms", better: "down", def: "The average time from a customer's first message to this person's first reply." },
     conversationsDone: { label: "Conversations done", unit: "count", better: "up", def: "Conversations this person archived as done." },
-    reopened: { label: "Reopened", unit: "count", better: "down", def: "Conversations this person reopened after marking them done." }
+    reopened: { label: "Reopened", unit: "count", better: "down", def: "Conversations this person reopened after marking them done." },
+    reopenRate: { label: "Reopen rate", unit: "percent", better: "down", def: "Conversations reopened divided by conversations done." }
   };
   /** Which cards the page shows: [group, [primary keys], [more keys]], and where each one is looked up (kpis | att | rates | contact | issues). */
   const GROUPS = [
     ["Production", ["kpis.parts", "kpis.orders", "kpis.partsPerActiveHour", "kpis.partsPerDay"], ["kpis.partsPerSignedHour", "kpis.ordersPerDay", "kpis.ordersCompleted", "kpis.scans", "kpis.bestDay", "kpis.peakHour"]],
     ["Speed", ["kpis.secPerOrderMedian", "kpis.secPerOrderP90", "kpis.secPerOrderMean", "kpis.secBetweenScansMedian"], ["kpis.secPerScanMean"]],
-    ["Time", ["kpis.activeShare", "kpis.signedHours", "kpis.activeHours", "kpis.avgShiftHours"], ["kpis.idleHours", "kpis.unloggedHours", "kpis.avgStart", "kpis.avgEnd"]],
-    ["Attendance", ["att.daysWorked", "att.daysOff", "att.lateDays", "att.shortDays"], ["att.weekdayDaysOff", "att.weekendDaysOff", "att.currentStreak", "att.longestStreak", "att.attendanceRate"]],
-    ["Quality", ["issues.issues", "issues.issuesPer100Orders", "rates.firstPassRate", "rates.reversalRate"], ["rates.rejectRate", "rates.errorRate"]],
-    ["Contact", ["contact.repliesSent", "contact.deliveredRate", "contact.repliesFailed", "contact.timeToFirstReplyMin"], ["contact.repliesDrafted", "contact.repliesDelivered", "contact.repliesEdited", "contact.failureRate", "contact.conversationsDone", "contact.reopened"]]
+    ["Time", ["kpis.activeShare", "kpis.signedHours", "kpis.activeHours", "att.avgShiftHours"], ["kpis.idleHours", "kpis.unloggedHours", "att.medianStart", "att.medianEnd"]],
+    ["Attendance", ["att.daysWorked", "att.daysOff", "att.lateDays", "att.shortDays"], ["att.attendanceRate", "att.extraDays", "att.currentStreak", "att.longestStreak"]],
+    ["Quality", ["issues.issues", "issues.issuesPer100Orders", "rates.firstPass", "rates.reworkRate"], ["rates.successRate", "rates.failureRate", "rates.holdRate", "rates.reprintRate", "rates.rescanRate"]],
+    ["Contact", ["contact.sent", "contact.deliveryRate", "contact.failed", "contact.medianFirstReplyMs"], ["contact.drafted", "contact.delivered", "contact.unconfirmed", "contact.refused", "contact.edited", "contact.editedShare", "contact.failureRate", "contact.conversationsDone", "contact.reopened", "contact.reopenRate", "contact.meanFirstReplyMs"]]
   ];
-  const ALIAS = { "rates.firstPassRate": ["rates.firstPassRate", "rates.firstPass", "kpis.firstPassRate"], "rates.reversalRate": ["rates.reversalRate", "rates.reworkRate"], "kpis.activeShare": ["kpis.activeShare", "rates.activeShare"], "att.attendanceRate": ["att.attendanceRate", "rates.attendanceRate"] };
+  const ALIAS = { "att.medianStart": ["att.medianStart", "kpis.avgStart"], "att.medianEnd": ["att.medianEnd", "kpis.avgEnd"], "att.avgShiftHours": ["att.avgShiftHours", "kpis.avgShiftHours"], "kpis.activeShare": ["kpis.activeShare", "rates.activeShare"], "att.attendanceRate": ["att.attendanceRate", "rates.attendanceRate"] };
+  /** The card of a figure: its own entry when two groups share a name (rates.failureRate, contact.failureRate), else the short name's. */
+  const cardOf = full => CARD[full] || CARD[full.split(".")[1]] || { label: kindWords(full.split(".")[1]), unit: "count", better: null, def: "" };
   /** A server METRIC / RATE (or a bare number) as the page reads it. */
-  function metric(key, raw, over) {
-    const d = CARD[key] || {}, o = raw && typeof raw === "object" ? raw : null, v0 = o ? first(o, "value", "v") : raw;
+  function metric(key, raw, over, full) {
+    const d = CARD[full || key] || CARD[key] || {}, o = raw && typeof raw === "object" ? raw : null, v0 = o ? first(o, "value", "v") : raw;
     const m = { key, label: String((o && o.label) || d.label || kindWords(key)), unit: String((o && o.unit) || d.unit || "count"), v: num(v0), prev: o ? num(first(o, "prev", "previous")) : null, delta: o ? num(o.delta) : null, deltaPct: o ? num(o.deltaPct) : null, better: o && "better" in o ? o.better : d.better != null ? d.better : null,
-      def: String((o && first(o, "def", "definition", "text")) || d.def || ""), est: !!(o && first(o, "estimated", "est")), why: String((o && o.why) || ""), n: o ? num(o.n) : null, window: !!(o && o.window), day: o && o.day ? String(o.day) : "", num: o ? num(first(o, "num", "numerator")) : null, den: o ? num(first(o, "den", "denominator")) : null };
+      def: String((o && first(o, "def", "definition", "text")) || d.def || ""), est: !!(o && first(o, "estimated", "est")), why: o && Array.isArray(o.why) ? o.why.filter(Boolean).map(String).join(" ") : String((o && o.why) || ""), n: o ? num(o.n) : null, window: !!(o && o.window), day: o && o.day ? String(o.day) : "", num: o ? num(first(o, "num", "numerator")) : null, den: o ? num(first(o, "den", "denominator")) : null,
+      daysCounted: o ? num(o.daysCounted) : null, daysActive: o ? num(o.daysActive) : null, coverage: o && o.coverage ? String(o.coverage) : "" };
     if (m.delta == null && m.v != null && m.prev != null) m.delta = m.v - m.prev;
     if (m.deltaPct == null && m.v != null && m.prev != null && m.prev !== 0) m.deltaPct = (m.v - m.prev) / Math.abs(m.prev) * 100;
     return Object.assign(m, over || {});
@@ -388,42 +402,41 @@
     return { day: String(p.day || ""), to: isDay(p.to) ? p.to : String(p.day || ""), days: num(p.days) || 1, workedDays: num(p.workedDays), hasData: p.hasData !== false && p.parts !== null, parts: num(p.parts), orders: num(p.orders), scans: num(p.scans), completes: num(p.completes), prints: num(p.prints), rejects: num(p.rejects), errors: num(p.errors), undos: num(p.undos),
       activeMs: num(p.activeMs), idleMs: num(p.idleMs), signedMs: num(p.signedMs), perActiveHour: num(p.perActiveHour), perSignedHour: num(p.perSignedHour), secPerOrder: num(p.secPerOrder), medianSecPerOrder: num(p.medianSecPerOrder), firstIn: num(p.firstIn), lastOut: num(p.lastOut), shiftMs: num(p.shiftMs), state: p.state ? String(p.state) : "" };
   }
-  const CAL = { worked: 1, partial: 1, off: 1, closed: 1, before: 1, future: 1, pending: 1 };
+  const CAL = { worked: 1, partial: 1, off: 1, closed: 1, before: 1, future: 1, pending: 1, unknown: 1 };
   /** The `person` answer, in the shapes of plans/employee-hr/api.md; every field is optional. */
   function norm(r, req) {
     r = r || {}; req = req || {};
     const series = A(r.series).filter(p => p && p.day).map(normPoint), hoursRaw = A(r.hours);
     const hours = hoursRaw.length ? Array.from({ length: 24 }, (_, h) => { const x = hoursRaw.find(e => e && +e.hour === h) || hoursRaw[h] || {}; return { hour: h, parts: num(x.parts), scans: num(x.scans), perDay: num(x.perDay) }; }) : [];
     const stations = A(r.stations).filter(s => s && s.station).map(s => ({ station: String(s.station), label: String(s.label || stName(s.station)), parts: num(s.parts), orders: num(s.orders), scans: num(s.scans), completes: num(s.completes), prints: num(s.prints), minutes: num(s.minutes), shareParts: num(s.shareParts), shareMinutes: num(s.shareMinutes), perActiveHour: num(s.perActiveHour) }));
-    const cal = A(r.calendar).filter(c => c && c.day).map(c => ({ day: String(c.day), state: CAL[c.state] ? String(c.state) : "before", signedMs: num(c.signedMs), activeMs: num(c.activeMs), firstIn: num(c.firstIn), lastOut: num(c.lastOut), parts: num(c.parts), orders: num(c.orders), late: !!c.late, short: !!c.short, weekend: !!c.weekend, others: num(c.others) })).sort((a, b) => (a.day < b.day ? -1 : 1));
+    const cal = A(r.calendar).filter(c => c && c.day).map(c => ({ day: String(c.day), state: CAL[c.state] ? String(c.state) : "before", signedMs: num(c.signedMs), activeMs: num(c.activeMs), firstIn: num(c.firstIn), lastOut: num(c.lastOut), parts: num(c.parts), orders: num(c.orders), late: !!c.late, short: !!c.short, extra: !!c.extra, est: !!c.estimated, lengthKnown: c.lengthKnown !== false, note: c.note ? String(c.note) : "", weekend: !!c.weekend, others: num(c.others) })).sort((a, b) => (a.day < b.day ? -1 : 1));
     const src = { kpis: {}, att: {}, rates: {}, contact: {}, issues: {} };
     for (const k of Object.keys(r.kpis || {})) src.kpis[k] = metric(k, r.kpis[k]);
-    // attendance (E9): metrics as METRIC objects or plain numbers, streaks, the average shift
-    const at = r.attendance && typeof r.attendance === "object" ? r.attendance : {}, am = at.metrics && typeof at.metrics === "object" ? at.metrics : at;
-    for (const k of ["daysWorked", "daysOff", "weekdayDaysOff", "weekendDaysOff", "teamDays", "workingDays", "lateDays", "shortDays", "currentStreak", "longestStreak", "attendanceRate"]) if (am[k] != null) src.att[k] = metric(k, am[k]);
+    // attendance (E9): attendance.metrics = METRICs (workingDays daysWorked daysOff extraDays shortDays lateDays attendanceRate avgShiftHours medianStart medianEnd currentStreak longestStreak)
+    const at = r.attendance && typeof r.attendance === "object" ? r.attendance : {}, am = at.metrics && typeof at.metrics === "object" ? at.metrics : {};
+    for (const k of Object.keys(am)) src.att[k] = metric(k, am[k], null, "att." + k);
     if (at.streaks && typeof at.streaks === "object") { if (src.att.currentStreak == null && at.streaks.current != null) src.att.currentStreak = metric("currentStreak", at.streaks.current); if (src.att.longestStreak == null && at.streaks.best != null) src.att.longestStreak = metric("longestStreak", at.streaks.best); }
-    if (at.avgShiftMs != null && !src.kpis.avgShiftHours) src.kpis.avgShiftHours = metric("avgShiftHours", num(at.avgShiftMs) == null ? null : at.avgShiftMs / HOUR_MS);
-    const defs = at.definitions || at.defs || {}; for (const k of Object.keys(src.att)) if (!src.att[k].def && typeof defs[k] === "string") src.att[k].def = defs[k];
-    // issues (E10)
-    const iraw = r.issues && typeof r.issues === "object" ? r.issues : null, items = A(iraw && iraw.items).filter(i => i && i.kind != null).map(i => ({ at: num(i.at), day: String(i.day || ""), rid: i.rid != null ? String(i.rid) : "", number: i.number != null ? String(i.number) : "", kind: String(i.kind), label: String(i.label || kindWords(i.kind)), station: String(i.station || ""), note: String(i.note || i.reason || "") })).sort((a, b) => nz(b.at) - nz(a.at));
-    const byKind = A(iraw && iraw.byKind).filter(k => k && k.kind != null).map(k => ({ kind: String(k.kind), label: String(k.label || kindWords(k.kind)), count: nz(k.count), per100: num(k.per100Orders), coverage: String(k.coverage || "range"), attribution: String(k.attribution || ""), def: String(k.def || k.definition || ""), how: String(k.how || ""), est: !!k.estimated, prev: num(k.prev), delta: num(k.delta) })).sort((a, b) => b.count - a.count);
-    const issues = iraw ? { total: num(iraw.total), own: num(iraw.own), system: num(iraw.system), per100: num(iraw.per100Orders), byKind, items, capped: !!iraw.itemsCapped } : null;
-    if (iraw) { src.issues.issues = metric("issues", iraw.metric || { value: iraw.total, prev: iraw.prevTotal, delta: iraw.delta, deltaPct: iraw.deltaPct, better: "down", def: iraw.def }); src.issues.issuesPer100Orders = metric("issuesPer100Orders", { value: iraw.per100Orders, prev: iraw.prevPer100Orders, better: "down" }); }
-    // rates (E10 / E4): each a RATE { label, value (percent), num, den, prev, delta, better, def, estimated }
+    if (at.avgShiftMs != null && !src.att.avgShiftHours && !src.kpis.avgShiftHours) src.kpis.avgShiftHours = metric("avgShiftHours", num(at.avgShiftMs) == null ? null : at.avgShiftMs / HOUR_MS);
+    const defs = at.definitions && typeof at.definitions === "object" ? at.definitions : {}, estF = at.estimated && at.estimated.fields && typeof at.estimated.fields === "object" ? at.estimated.fields : {};
+    const FIELD = { avgShiftHours: "avgShiftMs", medianStart: "medianStart", medianEnd: "medianEnd", daysWorked: "daysWorked", daysOff: "daysOff", shortDays: "shortDays", lateDays: "lateDays", workingDays: "workingDays" };
+    for (const k of Object.keys(src.att)) { const m = src.att[k], e = estF[FIELD[k] || k]; if (!m.def && typeof defs[k] === "string") m.def = defs[k]; if (e && e.estimated && !m.est) { m.est = true; if (!m.why) m.why = String(e.why || ""); } if (e && e.rule && !m.why) m.rule = String(e.rule); }
+    const attNote = typeof defs.notAttendance === "string" ? defs.notAttendance : "";
+    // issues (E10): { total, own, system, order, per100Orders, daysCounted, byKind[13], byDay, items[], itemsTotal, next }; a count that is null is a dash (not counted on these days), never 0
+    const iraw = r.issues && typeof r.issues === "object" ? r.issues : null, items = A(iraw && iraw.items).filter(i => i && i.kind != null).map(i => ({ at: num(i.at), day: String(i.day || ""), rid: i.rid != null ? String(i.rid) : "", number: i.number != null ? String(i.number) : "", kind: String(i.kind), label: String(i.label || kindWords(i.kind)), station: String(i.station || ""), attribution: String(i.attribution || ""), note: String(i.note || i.reason || "") })).sort((a, b) => nz(b.at) - nz(a.at));
+    const byKind = A(iraw && iraw.byKind).filter(k => k && k.kind != null).map(k => ({ kind: String(k.kind), label: String(k.label || kindWords(k.kind)), count: num(k.count), per100: num(k.per100Orders), coverage: String(k.coverage || "range"), attribution: String(k.attribution || ""), def: String(k.def || k.definition || ""), how: String(k.how || ""), est: !!k.estimated, why: Array.isArray(k.why) ? k.why.filter(Boolean).map(String).join(" ") : String(k.why || ""), prev: num(k.prev), delta: num(k.delta), deltaPct: num(k.deltaPct), daysCounted: num(k.daysCounted), daysActive: num(k.daysActive), complete: k.complete !== false, checked: k.checked && k.checked.of != null ? { orders: num(k.checked.orders), of: num(k.checked.of) } : null })).sort((a, b) => nz(b.count) - nz(a.count) || (a.count == null) - (b.count == null));
+    const byDay = new Map(A(iraw && iraw.byDay).filter(d => d && d.day).map(d => [String(d.day), { total: num(d.total), own: num(d.own), system: num(d.system), order: num(d.order) }]));
+    const issues = iraw ? { total: num(iraw.total), own: num(iraw.own), system: num(iraw.system), order: num(iraw.order), per100: num(first(iraw, "per100Orders", "per100")), daysCounted: num(iraw.daysCounted), daysActive: num(iraw.daysActive), prevTotal: num(iraw.prevTotal), byKind, byDay, items, itemsTotal: num(iraw.itemsTotal), capped: !!iraw.itemsCapped, next: iraw.next || "" } : null;
+    if (iraw) { src.issues.issues = metric("issues", iraw.metric || { value: iraw.total, prev: iraw.prevTotal, better: "down", daysCounted: iraw.daysCounted, daysActive: iraw.daysActive, coverage: iraw.complete === false ? "range-partial" : "range" }, null, "issues.issues"); src.issues.issuesPer100Orders = metric("issuesPer100Orders", { value: first(iraw, "per100Orders", "per100"), prev: iraw.prevPer100Orders, better: "down", daysCounted: iraw.daysCounted }, null, "issues.issuesPer100Orders"); }
+    // rates (E10): firstPass reworkRate successRate failureRate holdRate reprintRate rescanRate, each a RATE { label, value (percent), numerator, denominator, definition, better, coverage, estimated, why[], daysCounted, prev, delta }
     const rr = r.rates && typeof r.rates === "object" && !Array.isArray(r.rates) ? r.rates : {};
-    for (const k of Object.keys(rr)) src.rates[k] = metric(k, rr[k] && typeof rr[k] === "object" ? Object.assign({ unit: "percent" }, rr[k]) : { value: rr[k], unit: "percent" }, { unit: "percent" });
-    // contact (E10): METRICs under .metrics, or plain fields (sent, delivered, failed, edited, medianFirstReplyMs ...)
+    for (const k of Object.keys(rr)) if (rr[k] != null) src.rates[k] = metric(k, rr[k] && typeof rr[k] === "object" ? Object.assign({ unit: "percent" }, rr[k]) : { value: rr[k], unit: "percent" }, { unit: "percent" }, "rates." + k);
+    // contact (E10): contact.metrics = METRICs (drafted sent delivered unconfirmed failed refused edited aiSentUnchanged deliveryRate failureRate editedShare medianFirstReplyMs meanFirstReplyMs conversationsDone reopened reopenRate)
     const cr = r.contact && typeof r.contact === "object" ? r.contact : null, cm = cr && cr.metrics && typeof cr.metrics === "object" ? cr.metrics : {};
     if (cr) {
-      for (const k of Object.keys(cm)) src.contact[k] = metric(k, cm[k]);
-      const flat = { repliesSent: "sent", repliesDelivered: "delivered", repliesFailed: "failed", repliesEdited: "edited", repliesDrafted: "drafted", conversationsDone: "conversationsDone", reopened: "reopened" };
-      for (const k of Object.keys(flat)) if (!src.contact[k] && cr[flat[k]] != null) src.contact[k] = metric(k, cr[flat[k]]);
-      if (!src.contact.timeToFirstReplyMin && cr.medianFirstReplyMs != null) src.contact.timeToFirstReplyMin = metric("timeToFirstReplyMin", num(cr.medianFirstReplyMs) == null ? null : cr.medianFirstReplyMs / 60000);
-      const s = src.contact.repliesSent && src.contact.repliesSent.v, dl = src.contact.repliesDelivered && src.contact.repliesDelivered.v, fl = src.contact.repliesFailed && src.contact.repliesFailed.v;
-      if (!src.contact.deliveredRate && dl != null && fl != null && dl + fl > 0) src.contact.deliveredRate = metric("deliveredRate", dl / (dl + fl) * 100, { unit: "percent" });
-      if (!src.contact.failureRate && dl != null && fl != null && dl + fl > 0) src.contact.failureRate = metric("failureRate", fl / (dl + fl) * 100, { unit: "percent" });
+      for (const k of Object.keys(cm)) if (cm[k] != null) src.contact[k] = metric(k, cm[k], null, "contact." + k);
+      for (const k of ["drafted", "sent", "delivered", "unconfirmed", "failed", "refused", "edited", "deliveryRate", "failureRate", "editedShare", "medianFirstReplyMs", "conversationsDone", "reopened", "reopenRate"]) if (!src.contact[k] && cr[k] !== undefined) src.contact[k] = metric(k, cr[k], null, "contact." + k);
     }
-    const contact = cr ? { available: cr.available !== false, source: String(cr.source || ""), metrics: src.contact } : null;
+    const contact = cr ? { available: cr.available !== false, source: String(cr.source || ""), daysCounted: num(cr.daysCounted), daysActive: num(cr.daysActive), metrics: src.contact } : null;
     // what the days add up to, where the server sent none
     const fill = (ns, k, v) => { if (!src[ns][k]) src[ns][k] = metric(k, v, { derived: true }); else if (src[ns][k].v == null && v != null) { src[ns][k].v = v; src[ns][k].derived = true; } };
     if (series.length || cal.length) {
@@ -433,7 +446,7 @@
     const last = cal.filter(c => c.signedMs > 0 || c.lastOut || c.firstIn).pop(), lastSeen = last ? (last.lastOut || last.firstIn) : null;
     return { name: String(r.name || req.name || ""), found: r.found !== false, spellings: A(r.spellings).map(String), mode: String(r.mode || ""), range: r.range, from: isDay(r.from) ? r.from : req.from, to: isDay(r.to) ? r.to : req.to, days: num(r.days), today: isDay(r.today) ? r.today : "", live: !!r.live, prev: r.prev && r.prev.from ? { from: String(r.prev.from), to: String(r.prev.to), days: num(r.prev.days) } : null,
       granularity: r.granularity === "week" ? "week" : "day", trackingStart: isDay(r.trackingStart) ? r.trackingStart : "", firstDay: isDay(r.firstDay) ? r.firstDay : "", eventWindow: r.eventWindow && r.eventWindow.from ? r.eventWindow : null, rules: r.rules || {},
-      src, series, hours, stations, cal, att: r.attendance || null, issues, contact, cannotTell: A(r.cannotTell).filter(c => c && c.text).map(c => ({ topic: String(c.topic || ""), text: String(c.text) })), notes: A(r.notes).map(String).filter(Boolean), partial: !!r.partial, errors: A(r.errors).map(String), now: num(r.now), lastSeen, lastStation: "" };
+      src, series, hours, stations, cal, att: r.attendance || null, attNote, issues, contact, cannotTell: A(r.cannotTell).filter(c => c && c.text).map(c => ({ topic: String(c.topic || ""), text: String(c.text) })), notes: A(r.notes).map(String).filter(Boolean), partial: !!r.partial, errors: A(r.errors).map(String), now: num(r.now), lastSeen, lastStation: "" };
   }
   /** `personOrders` (E4's shape; E8's list reads it itself, this is the page's own small list until that module is in the page). */
   function normOrders(r) {
@@ -693,7 +706,7 @@
     if (key === "peakHour") return v => (unit === "clock" ? clockMin(v) : hourLabel(Math.round(v) % 24));
     if (key === "issuesPer100Orders") return nf1;
     switch (unit) {
-      case "hours": return v => hoursTxt(v * HOUR_MS); case "seconds": return secTxt; case "percent": return pctVal; case "clock": return clockMin;
+      case "ms": return v => durMs(v); case "hours": return v => hoursTxt(v * HOUR_MS); case "seconds": return secTxt; case "percent": return pctVal; case "clock": return clockMin;
       case "pieces/hour": case "orders/hour": return rateTxt; case "pieces/day": case "orders/day": return nf1; case "hour": return v => hourLabel(Math.round(v) % 24);
       default: return nf;
     }
@@ -770,7 +783,7 @@
     <div class="efpCard efpChart wide hidden" data-c="shift"><div class="efpCH"><span class="efpCT">The shift</span><span class="efpCP"></span></div><div class="efpShiftH efpXY"></div></div>
   </div>
   <div class="efpGrid g75">
-    <div class="efpCard efpChart" data-c="cal"><div class="efpCH"><span class="efpCT">Days worked</span><span class="efpCP"></span></div><div class="efpCalH"></div><div class="efpKey"><span><i class="w"></i>Worked</span><span><i class="p"></i>Part day</span><span><i class="o"></i>Day off</span><span><i class="c"></i>Team closed</span><span><i class="f"></i>Not yet</span></div></div>
+    <div class="efpCard efpChart" data-c="cal"><div class="efpCH"><span class="efpCT">Days worked</span><span class="efpCP"></span></div><div class="efpCalH"></div><div class="efpKey"><span><i class="w"></i>Worked</span><span><i class="p"></i>Part day</span><span><i class="o"></i>Day off</span><span><i class="c"></i>Team closed</span><span><i class="b"></i>No record</span><span><i class="f"></i>Not yet</span></div><div class="efpHow efpCalNote hidden"></div></div>
     <div class="efpCard efpChart" data-c="mix"><div class="efpCH"><span class="efpCT">Station mix</span><span class="efpCP"></span></div><div class="efpMixH"></div></div>
   </div>
   <div class="efpCard efpChart" data-c="heat"><div class="efpCH"><span class="efpCT">Busiest hours</span><span class="efpCP"></span></div><div class="efpHeatH"></div></div>
@@ -788,7 +801,7 @@
       const q = s => root0.querySelector(s);
       Object.assign(E, { back: q(".efpBack"), av: q(".efpAv"), name: q(".efpName"), where: q(".efpWhere"), chips: q(".efpChips"), live: q(".efpLive"), liveT: q(".efpLiveT"), bar: q(".efpBar"), day: q(".efpDay"), prev: q('[data-nav="-1"]'), next: q('[data-nav="1"]'), today: q(".efpToday"),
         custom: q(".efpCustom"), busy: q(".efpBusy"), busyT: q(".efpBusyT"), msg: q(".efpMsg"), wait: q(".efpWait"), waitT: q(".efpWaitT"), nowS: q(".efpNowS"), now: q(".efpNow"), body: q(".efpBody"), note: q(".efpNote"), kg: q(".efpKGroups"),
-        hc: q(".efpHC"), tpP: q('[data-c="tp"] .efpCP'), calP: q('[data-c="cal"] .efpCP'), mixP: q('[data-c="mix"] .efpCP'), heatP: q('[data-c="heat"] .efpCP'), shiftP: q('[data-c="shift"] .efpCP'), calH: q(".efpCalH"), mixH: q(".efpMixH"), heatH: q(".efpHeatH"), shiftH: q(".efpShiftH"), iN: q(".efpIN"), is: q(".efpIs"), rates: q(".efpRates"),
+        hc: q(".efpHC"), tpP: q('[data-c="tp"] .efpCP'), calP: q('[data-c="cal"] .efpCP'), mixP: q('[data-c="mix"] .efpCP'), heatP: q('[data-c="heat"] .efpCP'), shiftP: q('[data-c="shift"] .efpCP'), calH: q(".efpCalH"), calNote: q(".efpCalNote"), mixH: q(".efpMixH"), heatH: q(".efpHeatH"), shiftH: q(".efpShiftH"), iN: q(".efpIN"), is: q(".efpIs"), rates: q(".efpRates"),
         oN: q(".efpON"), find: q(".efpSearch input"), clear: q("[data-clear]"), st: q(".efpFind .efpSt"), ol: q(".efpOl"), more: q(".efpMore"), heat: q('[data-c="heat"]'), cSp: q('[data-c="sp"]'), cTm: q('[data-c="tm"]'), cShift: q('[data-c="shift"]'), ordersHost: q(".efpOrdersHost"), ordersOwn: q(".efpOrdersOwn"), cannot: q(".efpCannot"), lg: q('[data-lg="med"]') });
       E.k = {};
       for (const [gname, prim, more] of GROUPS) {
@@ -796,7 +809,7 @@
         if (more.length) { const b = el("button", "efpLink"); b.type = "button"; b.dataset.moreGroup = gname; b.setAttribute("aria-expanded", "false"); b.textContent = "More figures"; lab.appendChild(b); }
         g.appendChild(grid);
         for (const full of prim.concat(more)) {
-          const key = shortKey(full), d = CARD[key], c = el("div", "efpK", `<span class="efpKL"><span class="t"></span></span><b class="efpKV">—</b><span class="efpKD"></span><span class="efpKS"></span><span class="efpKsp"></span><span class="efpKT"></span>`);
+          const key = shortKey(full), d = cardOf(full), c = el("div", "efpK", `<span class="efpKL"><span class="t"></span></span><b class="efpKV">—</b><span class="efpKD"></span><span class="efpKS"></span><span class="efpKsp"></span><span class="efpKT"></span>`);
           c.tabIndex = 0; c.dataset.k = full; c.setAttribute("role", "group"); setText(c.querySelector(".t"), d.label); if (more.includes(full)) c.classList.add("hidden", "extra");
           E.k[full] = { card: c, val: c.querySelector(".efpKV"), d: c.querySelector(".efpKD"), s: c.querySelector(".efpKS"), tag: c.querySelector(".efpKT"), sp: spark(c.querySelector(".efpKsp"), { w: 76, h: 26 }), t: c.querySelector(".t"), group: gname };
           grid.appendChild(c);
@@ -816,10 +829,10 @@
 
     /* ── hover card of a figure: its plain definition, and whether it is counted or estimated ── */
     function showHC(full) {
-      const k = E.k[full], M = S.M, m = M && metricAt(M, full), key = shortKey(full), d = CARD[key]; if (!k) return;
+      const k = E.k[full], M = S.M, m = M && metricAt(M, full), key = shortKey(full), d = cardOf(full); if (!k) return;
       const fmt = fmtFor(key, (m && m.unit) || d.unit), def = (m && m.def) || d.def;
-      const tag = m && m.est ? `<span class="tag">Estimated</span>` : m && m.window && M.eventWindow ? `<span class="tag">From the newest ${nf(M.eventWindow.days)} days</span>` : m && m.derived ? `<span class="tag">Worked out from the days shown</span>` : `<span class="tag ok">Counted from logged activity</span>`;
-      const why = m && m.est && m.why ? `<p>${esc(m.why)}</p>` : "", n = m && m.n != null ? `<span class="prev">Based on ${esc(nf(m.n))}</span>` : "";
+      const rd = M ? diffDays(M.from, M.to) + 1 : 0, part = m && m.daysCounted != null && m.daysCounted < rd, tag = m && m.est ? `<span class="tag">Estimated</span>` : part ? `<span class="tag">Counted on ${esc(nf(m.daysCounted))} of ${esc(nf(rd))} days</span>` : m && m.window && M.eventWindow ? `<span class="tag">From the newest ${nf(M.eventWindow.days)} days</span>` : m && m.derived ? `<span class="tag">Worked out from the days shown</span>` : `<span class="tag ok">Counted from logged activity</span>`;
+      const why = m && m.est && m.why ? `<p>${esc(m.why)}</p>` : "" + (full === "att.daysOff" && M && M.attNote ? `<p>${esc(M.attNote)}</p>` : "") + (m && m.rule && !m.est ? `<p>${esc(m.rule)}</p>` : ""), n = m && m.n != null ? `<span class="prev">Based on ${esc(nf(m.n))}</span>` : "";
       const pv = M && M.prev ? `<span class="prev">${esc(PREV_WORD[S.range] ? PREV_WORD[S.range].replace(/^./, c => c.toUpperCase()) : "Before")}: ${m && m.prev != null ? esc(fmt(m.prev)) : "no data"}</span>` : "";
       E.hc.innerHTML = `<b>${esc((m && m.label) || d.label)}</b><p>${esc(def)}</p>${why}${tag}${pv}${n}`;
       const rr = root0.getBoundingClientRect(), cr = k.card.getBoundingClientRect(); E.hc.classList.add("on");
@@ -886,19 +899,20 @@
         case "activeShare": { const a = kv(M, "kpis.activeHours"), s = kv(M, "kpis.signedHours"); return a != null && s != null ? `${hoursTxt(a * HOUR_MS)} of ${hoursTxt(s * HOUR_MS)}` : ""; }
         case "daysWorked": { const wd = kv(M, "att.workingDays") != null ? kv(M, "att.workingDays") : kv(M, "att.teamDays") != null ? kv(M, "att.teamDays") : work != null && kv(M, "att.daysOff") != null ? work + kv(M, "att.daysOff") : null; return wd ? `of ${nf(wd)} working days` : ""; }
         case "daysOff": return off.length ? off.slice(-3).map(c => mdLbl(c.day)).join(", ") + (off.length > 3 ? ` +${off.length - 3}` : "") : m.v === 0 ? "none" : "";
-        case "issues": { const I = M.issues; return I && I.byKind.length ? `most: ${I.byKind[0].label} (${nf(I.byKind[0].count)})` : m.v === 0 ? "none logged" : ""; }
+        case "issues": { const I = M.issues, top = I && I.byKind.find(k => k.count > 0); return top ? `most: ${top.label} (${nf(top.count)})` : m.v === 0 ? "none logged" : ""; }
         case "issuesPer100Orders": return kv(M, "issues.issues") != null && kv(M, "kpis.orders") != null ? `${nf(kv(M, "issues.issues"))} in ${nf(kv(M, "kpis.orders"))} orders` : "";
-        case "firstPassRate": case "deliveredRate": case "failureRate": case "reversalRate": case "rejectRate": case "errorRate": return m.num != null && m.den ? `${nf(m.num)} of ${nf(m.den)}` : "";
+        case "firstPass": case "deliveryRate": case "failureRate": case "reworkRate": case "successRate": case "holdRate": case "reprintRate": case "rescanRate": case "reopenRate": case "editedShare": return m.num != null && m.den ? `${nf(m.num)} of ${nf(m.den)}` : "";
         case "lateDays": case "shortDays": return m.v === 0 ? "none" : "";
         default: return "";
       }
     }
     function sparkFor(full, B, M) {
-      const key = shortKey(full), sp = CARD[key].sp; if (!sp) return [];
+      const key = shortKey(full), sp = cardOf(full).sp; if (!sp) return [];
       const it = B.items;
       if (B.kind === "hour") return sp === "parts" || sp === "scans" ? it.map(x => (x.future ? null : x[sp])) : [];
       const f = g => it.map(x => (x.future ? null : g(x)));
       switch (sp) {
+        case "issuesDay": return B.kind === "day" && M.issues && M.issues.byDay.size ? f(x => { const b = M.issues.byDay.get(x.day); return b && b.total != null ? b.total : null; }) : [];
         case "share": return f(x => (x.activeMs != null && x.signedMs > 0 ? Math.min(100, x.activeMs / x.signedMs * 100) : null));
         case "worked": return B.kind === "day" ? f(x => (x.state === "worked" || x.state === "partial" ? 1 : x.state === "off" ? 0 : null)) : [];
         case "off": return B.kind === "day" ? f(x => (x.state === "off" ? 1 : x.state === "worked" || x.state === "partial" ? 0 : null)) : [];
@@ -908,13 +922,13 @@
     function renderKpis(M, B, first) {
       const evs = M.eventWindow;
       for (const full of Object.keys(E.k)) {
-        const k = E.k[full], key = shortKey(full), d = CARD[key], m = metricAt(M, full), unit = (m && m.unit) || d.unit, fmt = fmtFor(key, unit);
+        const k = E.k[full], key = shortKey(full), d = cardOf(full), m = metricAt(M, full), unit = (m && m.unit) || d.unit, fmt = fmtFor(key, unit);
         const contactOff = full.startsWith("contact.") && M.contact && M.contact.available === false;
         setNum(k.val, m ? m.v : null, fmt, first); setText(k.t, (m && m.label) || d.label);
         const dl = M.prev && m ? deltaOf(m, key, unit) : { txt: "", cls: "" }, sig = dl.txt + "|" + dl.cls + "|" + dl.none + "|" + S.range + "|" + (m ? m.v : "x");
         if (k.d._sig !== sig) { k.d._sig = sig; const pw = PREV_WORD[S.range] || "before"; k.d.innerHTML = !m || m.v == null ? "" : dl.txt ? `<b class="${dl.cls}">${esc(dl.txt)}</b><span>vs ${esc(pw)}</span>` : dl.none ? `<span>vs ${esc(pw)}: no data</span>` : ""; }
         setText(k.s, contactOff ? "Not recorded in this range" : m && m.v != null ? subFor(full, m, M) : "");
-        const tag = m && m.est ? "est." : m && m.window && evs ? "recent" : m && m.derived ? "sum" : ""; setText(k.tag, tag);
+        const rd = diffDays(M.from, M.to) + 1, tag = m && m.est ? "est." : m && m.daysCounted != null && m.daysCounted < rd && m.v != null ? `${nf(m.daysCounted)} of ${nf(rd)} days` : m && m.window && evs ? "recent" : m && m.derived ? "sum" : ""; setText(k.tag, tag);
         const sp = m ? sparkFor(full, B, M) : [], known = sp.filter(x => x != null).length; k.sp.set(known >= 3 ? sp : []); k.card.querySelector(".efpKsp").style.visibility = known >= 3 ? "" : "hidden";
         k.card.setAttribute("aria-label", `${(m && m.label) || d.label}: ${m && m.v != null ? fmt(m.v) : "no data"}. ${(m && m.def) || d.def}`);
       }
@@ -975,12 +989,12 @@
       const cx = S.calx && S.calx.to === M.to ? S.calx : null;
       return { cal: cx ? cx.cal : M.cal, from: cx ? cx.from : M.from, to: cx ? cx.to : M.to, sel: [M.from, M.to], wait: !cx };
     }
-    const DAY_WORDS = { off: "off", worked: "worked", partial: "part day", closed: "team closed", before: "no record", future: "not yet", pending: "not signed in yet" };
+    const DAY_WORDS = { off: "off", worked: "worked", partial: "part day", closed: "team closed", before: "no record", unknown: "before sign-in logging began", future: "not yet", pending: "not signed in yet" };
     function renderCal() {
       const M = S.M; if (!M) return; const src = calSource(M), td = today(), by = new Map(src.cal.map(c => [c.day, c])), n = diffDays(src.from, src.to) + 1, long = n > 42;
       S.calW = E.calH.clientWidth;
       const worked = src.cal.filter(c => c.state === "worked" || c.state === "partial").length, off = src.cal.filter(c => c.state === "off").length;
-      setText(E.calP, src.wait && n < 28 ? "" : worked || off ? `${nf(worked)} worked · ${nf(off)} off` : "");
+      setText(E.calP, src.wait && n < 28 ? "" : worked || off ? `${nf(worked)} worked · ${nf(off)} off` : ""); setText(E.calNote, M.attNote && off ? M.attNote : ""); E.calNote.classList.toggle("hidden", !(M.attNote && off));
       const sig = JSON.stringify([src.from, src.to, src.sel, long, [...by.values()].map(c => c.day + c.state + c.signedMs + c.parts), td, !!src.wait]);
       if (E.calH._sig === sig) return; E.calH._sig = sig;
       const host0 = E.calH, tipEl = host0.querySelector(".efpTip"); host0.querySelectorAll(":scope>:not(.efpTip)").forEach(x => x.remove());
@@ -988,9 +1002,9 @@
         const c = by.get(day), state = day > td ? "future" : c ? c.state : "before";
         const b = el("button", `efpDy ${state}${day === td ? " today" : ""}${day >= src.sel[0] && day <= src.sel[1] ? " sel" : ""}`); b.type = "button"; b.dataset.day = day; b.textContent = long ? "" : String(+day.slice(8));
         b.setAttribute("aria-label", `${dayLbl(day)}: ${DAY_WORDS[state]}`); if (state === "future") b.tabIndex = -1;
-        const rows = []; if (c && (state === "worked" || state === "partial")) { if (c.activeMs != null) rows.push(["Active", durMs(c.activeMs)]); if (c.firstIn) rows.push(["In · out", `${clock(c.firstIn)}${c.lastOut ? " · " + clock(c.lastOut) : ""}`]); rows.push(["Parts", c.parts == null ? "—" : nf(c.parts)], ["Orders", c.orders == null ? "—" : nf(c.orders)]); if (c.late) rows.push(["", "Late start"]); if (c.short || state === "partial") rows.push(["", "Short day"]); }
-        if (c && c.others != null && state !== "future" && state !== "closed" && state !== "before") rows.push(["Team", `${nf(c.others)} others in`]);
-        const t = { t: wdLong.format(dayDate(day)) + ", " + mdLbl(day), v: state === "off" ? "Day off" : state === "future" ? "Not yet" : state === "closed" ? "The team did not work" : state === "before" ? "No record" : state === "pending" ? "Not signed in yet" : `${durMs(c && c.signedMs)} signed in`, rows, hint: state === "before" ? "Before records began" : state === "future" ? "" : "Click to open this day" };
+        const rows = []; if (c && (state === "worked" || state === "partial")) { if (c.activeMs != null) rows.push(["Active", durMs(c.activeMs)]); if (c.firstIn) rows.push(["In · out", `${clock(c.firstIn)}${c.lastOut ? " · " + clock(c.lastOut) : ""}`]); rows.push(["Parts", c.parts == null ? "—" : nf(c.parts)], ["Orders", c.orders == null ? "—" : nf(c.orders)]); if (c.late) rows.push(["", "Late start"]); if (c.short || state === "partial") rows.push(["", "Short day"]); if (c.extra) rows.push(["", "Extra day (not a working day)"]); if (c.lengthKnown === false) rows.push(["", "Length of the day not known"]); if (c.est) rows.push(["", "Estimated"]); }
+        if (c && c.others != null && state !== "future" && state !== "closed" && state !== "before" && state !== "unknown") rows.push(["Team", `${nf(c.others)} others in`]);
+        const t = { t: wdLong.format(dayDate(day)) + ", " + mdLbl(day), v: state === "off" ? "Day off" : state === "future" ? "Not yet" : state === "closed" ? "The team did not work" : state === "before" ? "No record" : state === "unknown" ? "Not logged yet" : state === "pending" ? "Not signed in yet" : c && c.signedMs != null ? `${durMs(c.signedMs)} signed in` : "Signed in, length not known", rows, hint: state === "before" ? "Before records began" : state === "unknown" ? (c && c.note) || "Sign-in logging had not begun" : state === "future" ? "" : "Click to open this day" };
         b.addEventListener("pointerenter", () => mini.cal.show(b, t)); b.addEventListener("focus", () => mini.cal.show(b, t)); b.addEventListener("pointerleave", () => mini.cal.hide()); b.addEventListener("blur", () => mini.cal.hide());
         return b;
       };
@@ -1056,28 +1070,35 @@
     const ATTR = { own: "Their action", system: "System failure", order: "About the order" };
     function renderIssues(M) {
       const I = M.issues; setText(E.iN, I && I.total != null ? nf(I.total) : "");
-      const sig = JSON.stringify([I, [...S.openKinds], S.kinds, M.eventWindow]); if (E.is._sig === sig) return; E.is._sig = sig;
+      const sig = JSON.stringify([I && Object.assign({}, I, { byDay: null }), [...S.openKinds], S.kinds, M.eventWindow, M.from, M.to]); if (E.is._sig === sig) return; E.is._sig = sig;
       if (!I) { E.is.innerHTML = `<div class="efpEmptyBox">No issue data in this range</div>`; return; }
       if (!I.byKind.length) { E.is.innerHTML = `<div class="efpEmptyBox">${I.total === 0 ? "No issues logged in this range" : "No issue data in this range"}</div>`; return; }
-      const td = today(), ew = M.eventWindow ? M.eventWindow.days : null, sum = [["Total", I.total], ["Their action", I.own], ["System failure", I.system], ["Per 100 orders", I.per100]].filter(x => x[1] != null);
-      E.is.innerHTML = `<div class="efpSum">${sum.map(([k, v]) => `<span>${esc(k)} <b>${nf1(v)}</b></span>`).join("")}</div>` + I.byKind.map((k, gi) => {
+      const td = today(), rd = diffDays(M.from, M.to) + 1, ew = M.eventWindow ? M.eventWindow.days : null, d = v => (v == null ? "—" : nf1(v));
+      const sum = [["Total", I.total], ["Their action", I.own], ["About the order", I.order], ["System failure", I.system], ["Per 100 orders", I.per100]].filter(x => x[1] != null || x[0] === "Total");
+      const partial = I.daysCounted != null && I.daysCounted < rd ? `<div class="efpHow" style="padding:0 18px">Counted on ${nf(I.daysCounted)} of ${nf(rd)} days: the other days were logged before these counters existed, so they are not guessed.</div>` : "";
+      const some = I.byKind.filter(k => k.count > 0), none = I.byKind.filter(k => k.count === 0), unk = I.byKind.filter(k => k.count == null);
+      const group = (k, gi) => {
         const items = I.items.filter(x => x.kind === k.kind), open = S.openKinds.has(k.kind) || (!S.kinds && gi === 0), shown = items.slice(0, 8);
-        return `<div class="efpIg${open ? " open" : ""}" data-kind="${esc(k.kind)}"><button type="button" class="efpIgh" aria-expanded="${open}" data-kindbtn="${esc(k.kind)}"><span><b>${esc(k.label)}</b>${k.attribution && ATTR[k.attribution] ? `<span class="efpAt ${esc(k.attribution)}">${esc(ATTR[k.attribution])}</span>` : ""}${k.def ? `<small>${esc(k.def)}</small>` : ""}</span><em>${nf(k.count)}</em><i aria-hidden="true">▼</i></button><div class="efpIgw"><div class="efpIgi"><div class="efpIgl">${k.how ? `<div class="efpHow">${esc(k.how)}${k.est ? " Estimated." : ""}</div>` : ""}${k.coverage === "window" && ew ? `<div class="efpHow">Counted from the newest ${nf(ew)} days of the range only.</div>` : ""}${shown.map(x => `<div class="efpIr"><time>${x.at ? esc(stamp(x.at, td)) : x.day ? esc(mdLbl(x.day)) : "—"}</time>${x.rid ? `<button type="button" class="efpOid" data-order="${esc(x.rid)}" title="Open this order">${esc(x.number || x.rid)}</button>` : "<span>—</span>"}<span>${x.station ? esc(stName(x.station)) + " · " : ""}${esc(x.note || "No reason recorded")}</span></div>`).join("")}${items.length > shown.length ? `<div class="efpHow">+${nf(items.length - shown.length)} more in this range</div>` : ""}${!items.length ? `<div class="efpHow">${nf(k.count)} counted. The single events are not listed for this range.</div>` : ""}</div></div></div></div>`;
-      }).join("");
+        const cov = k.coverage === "window" ? `<div class="efpHow">${k.checked ? `Counted from the newest ${nf(k.checked.of)} finished orders (${nf(k.checked.orders)} found).` : ew ? `Counted from the newest ${nf(ew)} days of the range only.` : "Counted from the newest orders only."}</div>` : k.coverage === "range-partial" && k.daysCounted != null ? `<div class="efpHow">Counted on ${nf(k.daysCounted)} of ${nf(rd)} days.</div>` : "";
+        return `<div class="efpIg${open ? " open" : ""}" data-kind="${esc(k.kind)}"><button type="button" class="efpIgh" aria-expanded="${open}" data-kindbtn="${esc(k.kind)}" title="${esc(k.def)}"><span><b>${esc(k.label)}</b>${k.attribution && ATTR[k.attribution] ? `<span class="efpAt ${esc(k.attribution)}">${esc(ATTR[k.attribution])}</span>` : ""}${k.est ? `<span class="efpAt">Estimated</span>` : ""}${k.def ? `<small>${esc(k.def)}</small>` : ""}</span><em>${nf(k.count)}</em><i aria-hidden="true">▼</i></button><div class="efpIgw"><div class="efpIgi"><div class="efpIgl">${k.how ? `<div class="efpHow">${esc(k.how)}</div>` : ""}${k.est && k.why ? `<div class="efpHow">${esc(k.why)}</div>` : ""}${cov}${shown.map(x => `<div class="efpIr"><time>${x.at ? esc(stamp(x.at, td)) : x.day ? esc(mdLbl(x.day)) : "—"}</time>${x.rid ? `<button type="button" class="efpOid" data-order="${esc(x.rid)}" title="Open this order">${esc(x.number || x.rid)}</button>` : "<span>—</span>"}<span>${x.station ? esc(stName(x.station)) + " · " : ""}${esc(x.note || "No reason recorded")}</span></div>`).join("")}${items.length > shown.length ? `<div class="efpHow">+${nf(items.length - shown.length)} more in this range</div>` : ""}${!items.length ? `<div class="efpHow">${nf(k.count)} counted. The single events are not listed for this range.</div>` : ""}</div></div></div></div>`;
+      };
+      E.is.innerHTML = `<div class="efpSum">${sum.map(([k, v]) => `<span>${esc(k)} <b>${d(v)}</b></span>`).join("")}</div>${partial}` + (some.length ? some.map(group).join("") : `<div class="efpEmptyBox" style="padding:12px 18px">${I.total === 0 ? "No issues logged in this range" : "No issues counted in this range"}</div>`)
+        + (none.length ? `<div class="efpHow efpNone"><b>None logged:</b> ${none.map(k => esc(k.label)).join(", ")}.</div>` : "") + (unk.length ? `<div class="efpHow efpNone"><b>Not counted on these days:</b> ${unk.map(k => esc(k.label)).join(", ")}.</div>` : "");
     }
-    const RATE_ORDER = ["firstPassRate", "firstPass", "successRate", "activeShare", "attendanceRate", "reversalRate", "reworkRate", "rejectRate", "errorRate", "failureRate"];
+    const RATE_ORDER = ["firstPass", "reworkRate", "successRate", "failureRate", "holdRate", "reprintRate", "rescanRate"];
     function renderRates(M) {
       const R = Object.values(M.src.rates).sort((a, b) => { const i = RATE_ORDER.indexOf(a.key), j = RATE_ORDER.indexOf(b.key); return (i < 0 ? 99 : i) - (j < 0 ? 99 : j); }), C = M.contact, cm = C && C.available ? C.metrics : null;
-      const sig = JSON.stringify([R, C]); if (E.rates._sig === sig) return; E.rates._sig = sig;
-      const rateRow = (r, i) => { const known = r.v != null, w = known ? Math.max(0, Math.min(100, r.v)) : 0, cls = r.better === "down" ? "bad" : r.better === "up" ? "ok" : "un", dl = M.prev ? deltaOf(r, "x", "percent") : { txt: "" };
-        return `<div class="efpRt" data-r="${i}" tabindex="0" aria-label="${esc(r.label)}: ${known ? pctVal(r.v) : "no data"}. ${esc(r.def)}"><div class="efpRtH"><b>${esc(r.label)}</b>${r.est ? `<em>est.</em>` : ""}<span>${known ? pctVal(r.v) : "—"}</span>${r.num != null && r.den ? `<em>${nf(r.num)} of ${nf(r.den)}</em>` : ""}${dl.txt ? `<em class="efpD ${dl.cls}">${esc(dl.txt)}</em>` : ""}</div><div class="efpRtB"><i class="${cls}" data-w="${w.toFixed(1)}"></i></div></div>`; };
+      const sig = JSON.stringify([R, C, M.from, M.to]); if (E.rates._sig === sig) return; E.rates._sig = sig;
+      const rd = diffDays(M.from, M.to) + 1;
+      const rateRow = (r, i) => { const known = r.v != null, w = known ? Math.max(0, Math.min(100, r.v)) : 0, cls = r.better === "down" ? "bad" : r.better === "up" ? "ok" : "un", dl = M.prev ? deltaOf(r, "x", "percent") : { txt: "" }, part = r.daysCounted != null && r.daysCounted < rd && r.coverage !== "window";
+        return `<div class="efpRt" data-r="${i}" tabindex="0" aria-label="${esc(r.label)}: ${known ? pctVal(r.v) : "no data"}. ${esc(r.def)}"><div class="efpRtH"><b>${esc(r.label)}</b>${r.est ? `<em>est.</em>` : ""}<span>${known ? pctVal(r.v) : "—"}</span>${r.num != null && r.den ? `<em>${nf(r.num)} of ${nf(r.den)}</em>` : ""}${part ? `<em>${nf(r.daysCounted)} of ${nf(rd)} days</em>` : ""}${dl.txt ? `<em class="efpD ${dl.cls}">${esc(dl.txt)}</em>` : ""}</div><div class="efpRtB"><i class="${cls}" data-w="${w.toFixed(1)}"></i></div></div>`; };
       let html = R.length ? R.map((r, i) => rateRow(r, i)).join("") : `<div class="efpEmptyBox" style="padding:12px 0">No rates in this range yet</div>`;
       html += `<div class="efpSub">Inbox replies</div>`;
       if (!C) html += `<div class="efpHow">Contact figures are not read yet.</div>`;
       else if (!C.available) html += `<div class="efpHow">Inbox replies are not recorded for this person in this range.</div>`;
-      else { const f = (k, l, fmt) => (cm[k] && cm[k].v != null ? `<span>${esc(l)}<b>${esc(fmt(cm[k].v))}</b></span>` : ""); html += `<div class="efpStat">${f("repliesSent", "Sent", nf)}${f("repliesDelivered", "Delivered", nf)}${f("repliesFailed", "Failed", nf)}${f("repliesDrafted", "Drafts", nf)}${f("repliesEdited", "Edited", nf)}${f("timeToFirstReplyMin", "First reply", v => durMs(v * 60000))}</div>`; }
+      else { const f = (k, l, fmt) => (cm[k] ? `<span>${esc(l)}<b>${cm[k].v != null ? esc(fmt(cm[k].v)) : "—"}</b></span>` : ""); html += `<div class="efpStat">${f("sent", "Sent", nf)}${f("delivered", "Delivered", nf)}${f("failed", "Failed", nf)}${f("refused", "Refused", nf)}${f("drafted", "Drafts", nf)}${f("edited", "Edited", nf)}${f("medianFirstReplyMs", "First reply (middle)", durMs)}</div>${C.daysCounted != null && C.daysCounted < rd ? `<div class="efpHow">Counted on ${nf(C.daysCounted)} of ${nf(rd)} days.</div>` : ""}`; }
       E.rates.innerHTML = html;
-      E.rates.querySelectorAll(".efpRt").forEach(n => { const r = R[+n.dataset.r], t = { t: r.label, v: r.v != null ? pctVal(r.v) : "No data", rows: [].concat(r.num != null ? [["Good", nf(r.num)]] : [], r.den != null ? [["Of", nf(r.den)]] : [], r.prev != null ? [[(PREV_WORD[S.range] || "Before").replace(/^./, c => c.toUpperCase()), pctVal(r.prev)]] : []), hint: r.def + (r.est && r.why ? " " + r.why : "") }; n.addEventListener("pointerenter", () => mini.rate.show(n, t)); n.addEventListener("pointerleave", () => mini.rate.hide()); n.addEventListener("focus", () => mini.rate.show(n, t)); n.addEventListener("blur", () => mini.rate.hide()); });
+      E.rates.querySelectorAll(".efpRt").forEach(n => { const r = R[+n.dataset.r], t = { t: r.label, v: r.v != null ? pctVal(r.v) : "No data", rows: [].concat(r.num != null ? [["Good", nf(r.num)]] : [], r.den != null ? [["Of", nf(r.den)]] : [], r.prev != null ? [[(PREV_WORD[S.range] || "Before").replace(/^./, c => c.toUpperCase()), pctVal(r.prev)]] : []), hint: r.def + (r.est && r.why ? " Estimated: " + r.why : r.est ? " Estimated." : "") + (r.coverage === "window" ? " Counted from the newest finished orders only." : "") }; n.addEventListener("pointerenter", () => mini.rate.show(n, t)); n.addEventListener("pointerleave", () => mini.rate.hide()); n.addEventListener("focus", () => mini.rate.show(n, t)); n.addEventListener("blur", () => mini.rate.hide()); });
       requestAnimationFrame(() => E.rates.querySelectorAll(".efpRtB i").forEach(b => { b.style.width = b.dataset.w + "%"; }));
     }
     function renderNote(M) {
@@ -1085,7 +1106,7 @@
       if (!M.found) lines.push("No sign-ins or activity were found for this name.");
       else if (!Object.values(M.src.kpis).some(k => k.v != null) && !lines.length) lines.push("No activity in this range.");
       const sig = lines.join("|"); if (E.note._sig === sig) return; E.note._sig = sig; E.note.textContent = ""; for (const l of lines) E.note.appendChild(el("span")).textContent = l; E.note.classList.toggle("hidden", !lines.length);
-      const ct = M.cannotTell, csig = JSON.stringify(ct); if (E.cannot._sig !== csig) { E.cannot._sig = csig; E.cannot.innerHTML = ct.length ? `<div><b>What this data cannot show</b></div>` + ct.map(c => `<div>${c.topic ? `<b>${esc(c.topic)}.</b> ` : ""}${esc(c.text)}</div>`).join("") : ""; E.cannot.classList.toggle("hidden", !ct.length); }
+      const ct = M.cannotTell, csig = JSON.stringify(ct); if (E.cannot._sig !== csig) { E.cannot._sig = csig; E.cannot.innerHTML = ct.length ? `<div><b>What this cannot tell you</b></div>` + ct.map(c => `<div>${c.topic ? `<b>${esc(c.topic)}.</b> ` : ""}${esc(c.text)}</div>`).join("") : ""; E.cannot.classList.toggle("hidden", !ct.length); }
     }
     function render(M, first) {
       const B = buckets(M, today(), now()); paintBar(); renderHead(); renderNote(M); renderKpis(M, B, first); renderCharts(M, B); renderCal(); renderMix(M); renderHeat(M, B); renderIssues(M); renderRates(M); paintLive();
@@ -1095,9 +1116,10 @@
     function renderLive() {
       const L = S.live; if (!L) return; E.nowS.classList.remove("hidden");
       const cur = L.current, ids = new Set(cur.map(c => String(c.rid || c.orderNumber)));
-      for (const [id, n] of [...S.now]) if (!ids.has(id)) { S.now.delete(id); const e = n.el; if (e.animate && !still()) { const a = e.animate([{ opacity: 1 }, { opacity: 0, transform: "translateY(-4px)" }], { duration: 180, easing: "ease-in" }); a.onfinish = () => e.remove(); } else e.remove(); }
+      for (const [id, n] of [...S.now]) if (!ids.has(id)) leaveLive(id, n, L);
       const idle = E.now.querySelector(".efpNowIdle");
       if (!cur.length) {
+        if (S.leaving) return;                                   // a finished card is still on its way out: the quiet line waits for it
         const w = L.where, td = today(), last = (w && w.lastSeenAt) || S.seenAt || null;
         const html = w ? `<i></i><span><b>Not on an order right now</b>${last ? ` · last activity ${esc(ago((now() - last) / 1000))}` : ""}${w.stationKey ? ` at ${esc(stName(w.stationKey))}` : ""}</span>` : `<i></i><span><b>Not signed in</b>${last ? ` · last seen ${esc(stamp(last, td))}` : ""}</span>`;
         if (!idle) { const e = el("div", "efpCard efpNowIdle", html); e._h = html; E.now.appendChild(e); if (!still() && e.animate) e.animate([{ opacity: 0, transform: "translateY(4px)" }, { opacity: 1, transform: "none" }], { duration: 260, easing: "cubic-bezier(.2,.8,.2,1)" }); } else if (idle._h !== html) { idle._h = html; idle.innerHTML = html; }
@@ -1107,12 +1129,21 @@
       for (const c of cur) {
         const id = String(c.rid || c.orderNumber), sig = JSON.stringify(c); let n = S.now.get(id);
         if (n && n.sig === sig) continue;
+        if (n && typeof n.el.update === "function") { try { n.el.update(c); n.sig = sig; continue; } catch (e) { console.warn("[efficiency person] card update:", e && e.message); } }   // the shared card changes in place: its timer and pictures are kept
         let node = null; const OC = root.EfficiencyStations && root.EfficiencyStations.orderCard;
-        if (typeof OC === "function") { try { const r = OC(c); node = r && r.nodeType === 1 ? r : r && (r.el || r.node) || null; if (!node && typeof r === "string") node = el("div", "", r); } catch (e) { console.warn("[efficiency person] shared order card:", e && e.message); } }
+        if (typeof OC === "function") { try { const r = OC(c, { hideStation: false, onOpen: (cc, card) => { openOrder(card, (cc && (cc.rid || cc.orderNumber)) || id); return true; } }); node = r && r.nodeType === 1 ? r : r && (r.el || r.node) || null; if (!node && typeof r === "string") node = el("div", "", r); } catch (e) { console.warn("[efficiency person] shared order card:", e && e.message); } }
         if (!node) node = nowCard(c, now());
         if (n) n.el.replaceWith(node); else { E.now.appendChild(node); if (!still() && node.animate) node.animate([{ opacity: 0, transform: "translateY(6px)" }, { opacity: 1, transform: "none" }], { duration: 300, easing: "cubic-bezier(.2,.8,.2,1)" }); }
         S.now.set(id, { el: node, sig });
       }
+    }
+    /** An order that left this person's hands: the shared card says how long it took, stays a moment, then folds away. */
+    function leaveLive(id, n, L) {
+      S.now.delete(id); const e = n.el, c = n.sig ? (() => { try { return JSON.parse(n.sig); } catch (_) { return null; } })() : null;
+      const gone = () => { if (e.isConnected) e.remove(); S.leaving = Math.max(0, (S.leaving || 0) - 1); if (!S.dead && S.live) renderLive(); };
+      const out = () => { if (S.dead || still() || !e.animate) return gone(); const a = e.animate([{ opacity: 1, transform: "none" }, { opacity: 0, transform: "translateY(-6px)" }], { duration: 260, easing: "ease-in", fill: "forwards" }); a.onfinish = gone; a.oncancel = gone; };
+      S.leaving = (S.leaving || 0) + 1;
+      if (typeof e.finish === "function" && !S.dead) { const ms = c && num(c.scannedAt) ? now() - c.scannedAt : 0, on = !!(L && L.where), text = ms >= 0 && ms < 864e5 && c && c.scannedAt ? `${on ? "Done in" : "Left after"} ${durMs(ms)}` : on ? "Done" : "Left"; try { e.finish(text); } catch (_) {} setTimeout(out, S.leaveMs == null ? 2400 : S.leaveMs); } else out();
     }
 
     /* ── reading: the period (a stored answer is shown at once, then made fresh), the live card, the month for the calendar ── */
