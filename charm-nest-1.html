@@ -489,8 +489,6 @@ dialog.owin{width:min(1320px,97vw);max-height:min(94vh,1040px)}
 .fLabel{display:block;font:10px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--ink45);font-weight:700;margin:0 0 5px}
 .fLabel .soft{text-transform:none;letter-spacing:0;font-weight:400;color:var(--ink45);font-family:var(--sans)}
 .owField{margin-bottom:12px}
-.owIn{width:100%;border:1px solid var(--line);border-radius:10px;padding:9px 11px;font:13px var(--sans);background:var(--card);resize:vertical;color:var(--ink)}
-.owIn[readonly]{background:var(--paper2);color:var(--ink70)}
 /* the one field that must be read exactly: it grows to its content and is never boxed into a scroller */
 .owSaid{font:14px/1.5 var(--serif);background:var(--paper2);border:1px solid var(--line);border-radius:10px;padding:9px 11px;overflow-wrap:anywhere;white-space:pre-wrap;min-height:44px}
 .owSaid .lbl{display:block;font:9.5px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--ink45);font-weight:700;margin:6px 0 2px}
@@ -604,11 +602,6 @@ dialog.phv.layer.phvIn{background:transparent}
 .owHint kbd{font:10px var(--mono);border:1px solid var(--line);border-radius:4px;padding:0 4px;background:var(--paper2)}
 .owFoot{display:flex;align-items:center;gap:10px;padding:10px 16px;border-top:1px solid var(--line);flex:0 0 auto;background:var(--card)}
 .owFoot .spacer{flex:1 1 auto}
-.owSkip{display:inline-flex;align-items:center;gap:8px;font-size:12.5px;cursor:pointer}
-.owSw{width:40px;height:22px;border-radius:999px;border:1px solid var(--line);background:var(--paper2);position:relative;cursor:pointer;flex:0 0 auto;padding:0}
-.owSw i{position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:var(--ink45);transition:left .15s,background .15s}
-.owSw[aria-checked=true]{background:var(--sageSoft,var(--paper2));border-color:var(--sage,var(--line))}
-.owSw[aria-checked=true] i{left:20px;background:var(--sage,var(--ink))}
 
 /* ── the order view (Paul, 28 Sep, E1-F3; plans/design/order-view-spec.md): the whole screen, one thin header with the
    order's progress rail, one tab row that is also the toolbar, and Overview · Timeline · Sheet, each the full height.
@@ -687,10 +680,11 @@ dialog.phv.layer.phvIn{background:transparent}
 .owTools{margin-left:auto;padding-left:12px;display:flex;align-items:center;gap:6px;min-width:0;flex:0 .01 auto}
 .owGrp{display:none;align-items:center;gap:10px;min-width:0}
 .owGrp.on{display:flex;animation:owUp .26s cubic-bezier(.2,.8,.2,1) both}
-.owLive{font:700 9.5px var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--ink45);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.owSkip{display:inline-flex;align-items:center;gap:8px;font-size:12px;cursor:pointer;white-space:nowrap}
-.owSkip .soft{color:var(--ink45)}
-.owSkip[hidden]{display:none}
+.owTools:has(>.owGrp.on[data-for=info]){flex-shrink:1}   /* (the live line takes the room the tabs leave, at the right end of the row, and breaks inside it) */
+/* the live line, at the right end of the tab row where the Skip switch used to stand: right-aligned, one line when there is room,
+   else broken between its parts (each part is whole: owLive in the bridge), at most three lines so the row never grows */
+.owLive{font:700 9.5px/1.15 var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--ink45);text-align:right;min-width:0;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;overflow:hidden}
+.owLive>span{white-space:nowrap}
 .owSeg{display:inline-flex;border:1px solid var(--line);border-radius:8px;padding:2px;background:var(--card2)}
 .owSeg button{border:0;background:transparent;border-radius:6px;padding:2px 10px;font:11px var(--sans);color:var(--ink45);cursor:pointer;transition:background .2s,color .2s}
 .owSeg button.on{background:var(--card);color:var(--ink);box-shadow:0 1px 2px rgba(30,26,20,.12)}
@@ -902,7 +896,15 @@ dialog.phv.layer.phvIn{background:transparent}
   #orderWin.owFull .owSide>.owPanel{border-top:0}
   #orderWin.owFull .owSide>.owChat{flex:none;min-height:420px}
   .owNowCard,.owNowCard.sealed,.owNowCard.sealed.bad{grid-template-columns:minmax(0,1fr)}
-  .owSkip .soft{display:none}
+}
+/* a phone: the tab row is 38 px high and its three tabs took 317 px of a 390 px screen, which left the live line 47 px. The tabs close up
+   (their counts are on the views themselves) so the line has its room, and its lead word steps aside: "Live · last change Mon 12:44 PM · Paul"
+   in three short lines at most, in the same row, at its right end */
+@media (max-width:600px){
+  .owTabsV>[role=tab]{padding:0 6px;gap:5px}
+  .owTabsV>[role=tab] .c{display:none}
+  .owTools{padding-left:6px}
+  .owLive .lead{display:none}
 }
 /* ── the order window's two conversations: the team's (warm, internal) and the customer's (slate, on Etsy) ── */
 .owTabs{display:flex;gap:2px;padding:6px 10px 0;border-bottom:1px solid var(--line);flex:0 0 auto}
@@ -2753,16 +2755,13 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 .rvItem .cuStep>.rvItem{border:0;box-shadow:none;background:transparent;padding:0;border-left:0}
 .rvItem .cuStep>.rvItem>.rh .ttl,.rvItem .cuStep>.rvItem>.rh .sub,.rvItem .cuStep>.rvItem>.ev,.rvItem .cuStep>.rvItem>.why{display:none}
 .rvItem .cuStep>.rvItem>.rh{padding-bottom:0;border-bottom:0}
-/* the order window: a custom order's one line, and notes left for the next person */
+/* the order window: a custom order's one line */
 .owPcRow .pcAct .sealRow{margin:calc(var(--seal-fit,var(--seal-base)) * -.28) 0;max-width:50%;flex:0 0 auto}
 /* the small seals a piece keeps in the Orders list (completed by hand, printed) and an order's on its Cancelled card: their records keep them for good */
 .orderListRow .rowActions .sealRow,.ocard .rowActions .sealRow,.cxSeals .sealRow{margin:3px 0 3px 3px;max-width:100%}
 .cxSeals{margin-top:3px}
 .owPcRow .pcAct .owCuMore{flex:0 0 auto;border:0;background:transparent;color:var(--ink45);font:700 10.5px var(--sans);padding:3px 5px;margin-left:-4px;border-radius:6px;cursor:pointer;white-space:nowrap}
 .owPcRow .pcAct .owCuMore:hover,.owPcRow .pcAct .owCuMore:focus-visible{color:var(--ink);background:var(--card2)}
-.owNoteField .fLabel{color:var(--ink)}
-.owNoteField .owIn{border-color:var(--goldLine)}
-.owNoteField .owIn.has{background:#fdf7e6;border-color:var(--gold2);font-size:13.5px}
 </style>
 <link rel="preload" href="charm-nest-stamp-walnut.png" as="image">
 <link rel="stylesheet" href="charm-nest-activity.css?v=20261003-seal-small">
@@ -6771,7 +6770,7 @@ boot();
      Design Station's sign-in), the same name every seal it stamps carries. -->
 <script src="station-session.js?v=20261002-ea1"></script>
 <script src="station-activity.js?v=20261005-e2live"></script>
-<script src="charm-nest-bridge.js?v=20261005-lis2-cardinal4-zoom-psb1-egl1-osc1-r3f-setgate1-hand1-sameset1-rl1-nowait1-opt1-rt1-pcr1-one1-st1-five1-pd1-zp1-rel2-cx1-hold2-sl2-sealsh1-sealpc2-live1-pst1-nofix1-pcsel1-pst2"></script>
+<script src="charm-nest-bridge.js?v=20261005-lis2-cardinal4-zoom-psb1-egl1-osc1-r3f-setgate1-hand1-sameset1-rl1-nowait1-opt1-rt1-pcr1-one1-st1-five1-pd1-zp1-rel2-cx1-hold2-sl2-sealsh1-sealpc2-live1-pst1-nofix1-pcsel1-pst2-sk1-nonote1"></script>
 <script src="charm-nest-review-live.js?v=20261005-rl1"></script>
 <script src="charm-nest-hold-ui.js?v=20261005-hold2"></script>
 <script>
@@ -6831,7 +6830,7 @@ try {
 <script src="charm-nest-efficiency-charts.js?v=20261005-efc2"></script>
 <script src="charm-nest-efficiency-stations.js?v=20261005-es2"></script>
 <script src="charm-nest-efficiency.js?v=20261005-ef7-es2"></script>
-<script src="charm-nest-efficiency-orders.js?v=20261005-eo1"></script>
+<script src="charm-nest-efficiency-orders.js?v=20261005-eo2"></script>
 <!-- ══ one order line: what it is, what the customer said, what the shop said, and how to settle it ══ -->
 <dialog id="orderWin" class="owin owFull" aria-labelledby="owTitle" data-no-grow>
   <div class="owBox">
@@ -6853,7 +6852,7 @@ try {
       <button type="button" role="tab" data-ow-view="sheet" aria-selected="false" tabindex="-1"><b>Sheet</b><span class="c" id="owShCount"></span></button>
       <span class="owInk" aria-hidden="true"></span>
       <div class="owTools">
-        <div class="owGrp" data-for="info"><span class="owLive" id="owLive"></span><label class="owSkip" id="owSkipBox"><button type="button" class="owSw" id="owSkip" role="switch" aria-checked="false" aria-label="Skip this Order"><i></i></button><span>Skip this Order <span class="soft">— cut nothing for it</span></span></label></div>
+        <div class="owGrp" data-for="info"><span class="owLive" id="owLive"></span></div>
         <div class="owGrp" data-for="timeline" id="owTlTools"></div>
         <div class="owGrp" data-for="sheet"><div class="owSeg" id="owFace" role="group" aria-label="Side of the sheet"><button type="button" data-face="front" class="on" aria-pressed="true">Front</button><button type="button" data-face="back" aria-pressed="false">Back · engraving</button></div></div>
       </div>
@@ -6873,7 +6872,6 @@ try {
           <div class="owPcSum" id="owPcSum" hidden></div>
           <div id="owFix"></div>
           <div class="owField"><label class="fLabel">What the customer wrote</label><div class="owSaid" id="owNotes">— No notes —</div></div>
-          <div class="owField owNoteField"><label class="fLabel" for="owNote">Order notes <span class="soft">— for whoever opens this order next · saved to the order by itself, every station and sorter sees them</span></label><textarea class="owIn" id="owNote" rows="3" placeholder="Leave a note on this order for the next person who opens it…"></textarea></div>
           <div class="owMeta" id="owMeta"></div>
         </div>
       </div>
@@ -6892,7 +6890,7 @@ try {
             <textarea id="owInput" rows="1" placeholder="Message every station on this order…"></textarea>
             <button type="button" class="owIco send" id="owSend" title="Send (Enter)" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2L11 13"/><path d="M22 2l-7 20-4-9-9-4 20-7z"/></svg></button>
           </div>
-          <div class="owHint"><span class="owLink ok" id="owLink" title="Messages and the staff note save straight to the order's record"><i></i>Live</span><span class="owHintT"><kbd>Enter</kbd> send · <kbd>Shift</kbd>+<kbd>Enter</kbd> new line · paste or drop images</span></div>
+          <div class="owHint"><span class="owLink ok" id="owLink" title="Messages save straight to the order's record"><i></i>Live</span><span class="owHintT"><kbd>Enter</kbd> send · <kbd>Shift</kbd>+<kbd>Enter</kbd> new line · paste or drop images</span></div>
         </div>
         <input type="file" id="owFile" accept="image/*" multiple hidden>
         </div>
