@@ -20,9 +20,13 @@ const source=fs.readFileSync('netlify/functions/charmNestLibrary.js','utf8');
 const data=new Map([['sheets/sheet1',ready],['sets/set1',{setId:'set1',sheetIds:['sheet1'],status:'open'}],['runs/run1',{lines:{a:{orderId:'order1',state:'written',poolIds:['copy1']},b:{orderId:'order1',state:'written',poolIds:['copy2']}}}]]);
 let writes=0;
 const snap=ref=>({id:ref.path.split('/')[1],exists:data.has(ref.path),data:()=>clone(data.get(ref.path))});
-const context=vm.createContext({Readiness:R,str:String,num:Number,isId:()=>true,SETS:'sets',SHEETS:'sheets',RUNS:'runs',col:n=>({doc:id=>({path:n+'/'+id,get:async()=>snap({path:n+'/'+id})})}),FV:{serverTimestamp:()=>100},db:{runTransaction:async fn=>fn({get:async ref=>snap(ref),set:(ref,patch)=>{writes++;data.set(ref.path,{...data.get(ref.path),...patch});},update:(ref,patch)=>{writes++;data.set(ref.path,{...data.get(ref.path),...patch});}}),getAll:async(...refs)=>refs.filter(x=>x.path).map(snap)}});
+const noRuns={isQuery:true,select:()=>noRuns,get:async()=>({docs:[]})};   // (the runs that list an order: none but the sheet's own)
+const context=vm.createContext({splitOfSet:async()=>[],Readiness:R,process,console,str:String,num:Number,isId:()=>true,PREFIX:'',SETS:'sets',SHEETS:'sheets',RUNS:'runs',RUN_LINES:'run_lines',col:n=>({where:()=>noRuns,doc:id=>({path:n+'/'+id,get:async()=>snap({path:n+'/'+id})})}),FV:{serverTimestamp:()=>100},db:{runTransaction:async fn=>fn({get:async ref=>ref.isQuery?ref.get():snap(ref),set:(ref,patch)=>{writes++;data.set(ref.path,{...data.get(ref.path),...patch});},update:(ref,patch)=>{writes++;data.set(ref.path,{...data.get(ref.path),...patch});}}),getAll:async(...refs)=>refs.filter(x=>x.path).map(snap)}});
 vm.runInContext(source.slice(source.indexOf('async function op_setUpdate'),source.indexOf('async function op_setGet')),context);
 vm.runInContext(source.slice(source.indexOf('async function filingRecords'),source.indexOf('async function op_laserStatus')),context);
+const broken=vm.createContext({splitOfSet:async()=>[],Readiness:R,process,console:{warn(){},error(){},log(){}},str:String,num:Number,isId:()=>true,PREFIX:'',SETS:'sets',SHEETS:'sheets',RUNS:'runs',RUN_LINES:'run_lines',col:n=>({where:()=>{throw new Error('the runs cannot be listed');},doc:id=>({path:n+'/'+id,get:async()=>snap({path:n+'/'+id})})}),FV:{serverTimestamp:()=>100},db:{runTransaction:async fn=>fn({get:async ref=>ref.isQuery?ref.get():snap(ref),set:(ref,patch)=>{writes++;data.set(ref.path,{...data.get(ref.path),...patch});},update:(ref,patch)=>{writes++;data.set(ref.path,{...data.get(ref.path),...patch});}}),getAll:async(...refs)=>refs.filter(x=>x.path).map(snap)}});
+vm.runInContext(source.slice(source.indexOf('async function op_setUpdate'),source.indexOf('async function op_setGet')),broken);
+vm.runInContext(source.slice(source.indexOf('async function filingRecords'),source.indexOf('async function op_laserStatus')),broken);
 (async()=>{
  await context.op_setUpdate({setId:'set1',patch:{status:'complete'}});assert.equal(writes,1);
  data.get('sheets/sheet1').backPool=[];
@@ -45,5 +49,12 @@ vm.runInContext(source.slice(source.indexOf('async function filingRecords'),sour
    data.set('runs/run1',{lines:{a:{orderId:'order1',state:'written',poolIds:['copy1'],engrave:{needed:true,state:'written',approved:true}},b}});
    await assert.rejects(context.op_setUpdate({setId:'set1',patch:{status:'complete'}}),/cannot be completed/,'a line to engrave, or one not read yet, still waits');
  }
- console.log('Laser readiness OK: per-copy counts, physical and whole-order gates, exclusions, missing sheets, server completion guard and run hydration, plain lines read alike on the page and the server');
+ // The runs that list an order cannot be asked (an index not ready, a read refused): no order is read as whole, so a sheet is neither shown ready nor completed on it
+ data.set('sheets/sheet1',clone(ready));data.set('sets/set1',{setId:'set1',sheetIds:['sheet1'],status:'open'});
+ data.set('runs/run1',{lines:{a:{orderId:'order1',state:'written',poolIds:['copy1'],engraveCandidate:false},b:{orderId:'order1',state:'written',poolIds:['copy2'],engraveCandidate:false}}});
+ assert.equal((await context.readinessRecords([data.get('sheets/sheet1')]))[0].orderReadiness.order1.ready,true,'with the runs listed, the order is whole');
+ const before=writes,unread=await broken.readinessRecords([data.get('sheets/sheet1')]);
+ assert.deepEqual(clone(unread[0].orderReadiness.order1),{ready:false,why:'Order readiness has not been verified'},'the runs cannot be listed: the order is not verified, never whole');
+ await assert.rejects(broken.op_setUpdate({setId:'set1',patch:{status:'complete'}}),/cannot be completed/,'and a set is not completed on an unverified order');assert.equal(writes,before,'the failed gate writes nothing');
+ console.log('Laser readiness OK: per-copy counts, physical and whole-order gates, exclusions, missing sheets, server completion guard and run hydration, plain lines read alike on the page and the server, an order whose runs cannot be listed stays unverified');
 })().catch(e=>{console.error(e);process.exitCode=1;});

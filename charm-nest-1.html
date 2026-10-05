@@ -2893,6 +2893,7 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-text.js"></script>
 <script src="charm-nest-orders.js?v=20261005-pieces"></script>
 <script src="charm-nest-order-pieces.js?v=20261005-op2"></script>
+<script src="charm-nest-shared-orders.js?v=20261005-cardinal3"></script>
 <script src="charm-nest-background.js?v=20260930-stamp-barrier"></script>
 <script>
 /* ═════════════════════════════════════════════════════════════════════════
@@ -6619,7 +6620,7 @@ boot();
      Design Station's sign-in), the same name every seal it stamps carries. -->
 <script src="station-session.js?v=20261002-ea1"></script>
 <script src="station-activity.js?v=20261003-reset-clean"></script>
-<script src="charm-nest-bridge.js?v=20261005-oa2-setcard2"></script>
+<script src="charm-nest-bridge.js?v=20261005-lis2-cardinal2"></script>
 <script>
 try {
   const nameNow = () => { try { const n = String((window.CNEmployee && CNEmployee.name()) || "").trim(); return /^\d+$/.test(n) ? "" : n; } catch (_) { return ""; } };
@@ -6647,17 +6648,20 @@ try {
       set(v) { d.set.call(window.B, v); try { const n = String(d.get.call(window.B) || "").trim(); if (n && !/^\d+$/.test(n)) StationSession.signedIn({ name: n, id: null }); } catch (_) {} } });
 } catch (_) {}
 </script>
-<script src="charm-nest-sheetwin.js?v=20261005-pieces"></script>
+<script src="charm-nest-sheetwin.js?v=20261005-pieces-cardinal2"></script>
+<!-- the one way into the engraving of one order's piece (the order window, the Sheet tab and the Sheet window call it; each keeps its own way without it) -->
+<script src="charm-nest-engrave-link.js?v=20261005-el1"></script>
 <script src="charm-nest-tour.js?v=20260929-m11"></script>
 <script src="charm-nest-mail.js?v=20261005-pieces"></script>
 <script src="charm-nest-rose-ui.js?v=20261003-rg2"></script>
 <script src="charm-nest-flow-rose.js?v=20261003-rg2"></script>
 <script src="charm-nest-export-ui.js?v=20260925-done"></script>
 <script src="charm-nest-library.js?v=20261003-many1"></script>
-<script src="charm-nest-flow.js?v=20261003-flow3"></script>
+<script src="charm-nest-flow.js?v=20261005-cardinal2"></script>
 <script src="charm-nest-library-approval-ui.js?v=20261003-fb1"></script>
 <script src="charm-nest-library-fx.js?v=20261003-fx2"></script>
 <script src="charm-nest-library-dnd.js?v=20261003-dnd1"></script>
+<script src="charm-nest-library-issues.js?v=20261005-lis4"></script>
 <script src="charm-nest-search.js?v=20260929-m5"></script>
 <script src="charm-nest-signins.js?v=20260929-m5"></script>
 <script src="charm-nest-efficiency.js?v=20261003-ef5"></script>
