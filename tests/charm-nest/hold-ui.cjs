@@ -270,6 +270,25 @@ async function main() {
     await page.click('dialog.holdDlg [data-k=no]'); await page.waitForFunction(() => !document.querySelector('dialog.holdDlg'));
     await page.evaluate(() => { window.__t.effects = null; });
 
+    // ── 4b · the orders that move in are counted ONCE each, by order id: ONE order that fills a spot on each of two sheets reads "1 order", not one for each sheet ──
+    const popupSays = async fills => {
+      await page.evaluate(f => { window.__t.override = { fills: f }; }, fills);
+      await page.click(`${card(cable)} [data-hold-btn]`);
+      await page.waitForFunction(() => document.querySelector('dialog.holdDlg[open]'), null, { timeout: 15000 });
+      const said = await dlgText();
+      await page.click('dialog.holdDlg [data-k=no]'); await page.waitForFunction(() => !document.querySelector('dialog.holdDlg'));
+      await page.evaluate(() => { window.__t.override = null; });
+      return said;
+    };
+    const fill = (sheetId, sheetLabel, from, label, rids, source = 'newerSheet') => ({ sheetId, sheetLabel, spots: 1, source, fromSheetId: from, fromSheetLabel: label, orders: rids.length, rids });
+    text = await popupSays([fill(GF1, 'GF Sheet 1', 'gf3', 'GF Sheet 3', ['4170000777']), fill(RG1, 'RG Sheet 1', 'rg2', 'RG Sheet 2', ['4170000777'])]);
+    assert(text.includes('1 order from GF Sheet 3 and RG Sheet 2 fills the 2 empty spots.'), 'one order on two sheets reads "1 order ... fills": ' + text);
+    assert(!/\b2 orders\b/.test(text), 'and never "2 orders": ' + text);
+    text = await popupSays([fill(GF1, 'GF Sheet 1', 'gf3', 'GF Sheet 3', ['4170000777']), fill(RG1, 'RG Sheet 1', 'rg2', 'RG Sheet 2', ['4170000888'])]);
+    assert(text.includes('2 orders from GF Sheet 3 and RG Sheet 2 fill the 2 empty spots.'), 'two different orders read "2 orders ... fill": ' + text);
+    text = await popupSays([fill(GF1, 'GF Sheet 1', null, null, ['4170000777'], 'waiting'), fill(RG1, 'RG Sheet 1', null, null, ['4170000777'], 'waiting')]);
+    assert(text.includes('1 waiting order fills the 2 empty spots.'), 'one waiting order on two sheets reads "1 waiting order fills": ' + text);
+
     // ── 5 · a plan that cannot be held: its reason, Close only ──
     await page.evaluate(() => { window.__t.override = { canHold: false, blockedWhy: 'Undo the set first: a piece of this order is inside a committed set.' }; });
     await page.click(`${card(cable)} [data-hold-btn]`);

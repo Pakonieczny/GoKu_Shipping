@@ -389,9 +389,10 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   /** the numbers the consent popup promised, read from its words; and what the engine then did */
   const promised = text => { const n = re => { const m = re.exec(text); return m ? +m[1] : null; }; return { off: n(/(\d+) pieces? of this order come off/), spots: n(/fill the (\d+) empty spots?/), waiting: n(/(\d+) waiting orders?/), newer: n(/(\d+) orders? from [A-Z]{2} Sheet \d+/) }; };
   const delivered = steps => ({ off: steps.filter(s => s.type === 'lift').reduce((n, s) => n + s.poolIds.length, 0), spots: steps.filter(s => s.type === 'fillBegin').reduce((n, s) => n + s.spots, 0),
-    // (counted the way the popup counts: an order once for each sheet it fills; when ONE order fills a spot on two sheets the popup says "2 orders", see the note)
-    waiting: new Set(steps.filter(s => s.type === 'fillFrom' && s.source === 'waiting').map(s => s.rid + '|' + s.toSheetId)).size, newer: new Set(steps.filter(s => s.type === 'fillFrom' && s.source === 'newerSheet').map(s => s.rid + '|' + s.toSheetId)).size });
-  const oneOrderTwoSheets = (steps, tag) => { const by = new Map(); for (const s of steps.filter(s => s.type === 'fillFrom')) by.set(s.rid, new Set([...(by.get(s.rid) || []), s.toSheetId])); for (const [rid, sh] of by) if (sh.size > 1) notes.add(`${tag}: one order (${rid}) filled the empty spots on ${sh.size} sheets, and the popup counted it once for each sheet ("2 orders from GF Sheet 3 and SS Sheet 2"): the plan never promises one order to two sheets, the run took it for both (the spots and the pieces are right, only the number of orders in the sentence is high)`); };
+    // (counted the way the popup counts: each order ONCE, by its order id, however many sheets it fills; when one order fills a spot on two sheets the popup says "1 order", see the note)
+    waiting: new Set(steps.filter(s => s.type === 'fillFrom' && s.source === 'waiting').map(s => s.rid)).size,
+    newer: new Set(steps.filter(s => s.type === 'fillFrom' && s.source === 'newerSheet' && !steps.some(w => w.type === 'fillFrom' && w.source === 'waiting' && w.rid === s.rid)).map(s => s.rid)).size });
+  const oneOrderTwoSheets = (steps, tag) => { const by = new Map(); for (const s of steps.filter(s => s.type === 'fillFrom')) by.set(s.rid, new Set([...(by.get(s.rid) || []), s.toSheetId])); for (const [rid, sh] of by) if (sh.size > 1) notes.add(`${tag}: one order (${rid}) filled the empty spots on ${sh.size} sheets (its gold piece on one, its silver piece on the other); the popup counts it once ("1 order from GF Sheet 3 and SS Sheet 2"), the spots and the pieces are as promised`); };
   const sheetStory = lab => [new RegExp('^' + lab), /^Taking the pieces off/, /^Filling the empty spots? ·/, /^Filling the empty spots? from/, /^Placed on/, /^Remaking QR labels/, /is done/];
 
   /** Presses the Hold at `btnSel`, reads the popup, presses Continue (the name is saved), follows the film to the end, waits until the person is home. */
@@ -578,7 +579,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     await sampler();
     await page.click(rel);
     await page.waitForFunction(() => document.getElementById('hfxLayer') && CN.S.mode === 'nest', null, { timeout: 30000 });
-    for (const [re, name] of [['First in line', 'd2-release-film-1-first-in-line'], ['Finding a spot', 'd2-release-film-2-spot'], ['Placing the pieces', 'd2-release-film-3-placing'], ['Placed on', 'd2-release-film-4-placed']]) { try { await page.waitForFunction(re => { const l = document.querySelector('#hfxLayer .hfxLive'); return l && l.textContent.includes(re); }, re, { timeout: 60000 }); await shot(name, 120); } catch (_) { console.log('  (no frame for ' + re + ')'); } }
+    for (const [re, name] of [['First in the queue', 'd2-release-film-1-first-in-line'], ['Finding a spot', 'd2-release-film-2-spot'], ['Placing the pieces', 'd2-release-film-3-placing'], ['Placed on', 'd2-release-film-4-placed']]) { try { await page.waitForFunction(re => { const l = document.querySelector('#hfxLayer .hfxLive'); return l && l.textContent.includes(re); }, re, { timeout: 60000 }); await shot(name, 120); } catch (_) { console.log('  (no frame for ' + re + ')'); } }
     await waitHome(H1, 'D');
     const fr = await sampled(); frames.push(['D', fr]);
     const note = await page.evaluate(() => { const n = document.querySelector('.mNote'); return n ? { text: n.querySelector('.mNoteT').textContent.trim(), btns: [...n.querySelectorAll('.mNoteBtn')].map(b => b.textContent.trim()) } : null; });
@@ -617,7 +618,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     pass('the data: its four pieces stand on ' + gold.label + ' and ' + silver.label + ' (the saved sheets list them), the lines are back in line with their place at the front, one "Released from hold by Paul" step names the sheet and the time, the held steps are still there');
     // ── the film ──
     const log = await fxLog(), caps = captionsOf(log);
-    const order = inOrder(caps, [/^Releasing order 4170000100/, /^First in line, ahead of new orders/, /^Finding a spot on/, /^Placing the pieces on/, /^Placed on/, /^Order 4170000100 is released/]);
+    const order = inOrder(caps, [/^Releasing order 4170000100/, /^First in the queue, ahead of new orders/, /^Finding a spot on/, /^Placing the pieces on/, /^Placed on/, /^Order 4170000100 is released/]);
     assert.equal(order, true, 'the release captions followed the steps in order: ' + order);
     const flights = log.filter(e => e.ev === 'flight').map(e => e.key);
     for (const s of steps.filter(s => s.type === 'flight')) for (const id of s.poolIds) assert(flights.includes(`place:${s.toSheetId}:${id}`), `the film flew ${id} to ${s.toSheetId} (flights: ${flights.join(', ')})`);
