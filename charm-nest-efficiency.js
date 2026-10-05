@@ -3,16 +3,30 @@
  *  throughput by hour, the orders they touched, a business line over the day (or a daily trend over 7 and 30 days).
  *  It is a tab of the sorter (Workspace > Employee efficiency, #efficiencyView), not a pop-up: it stays mounted when another tab
  *  is shown, so its day, its open cards and its scroll are as they were left.
- *  Read-only: the gated function employeeEfficiency (ops overview and person). It asks for the manager passcode once, in the
- *  console itself; the passcode is held in memory and in sessionStorage for the tab only (never in localStorage, a URL or a log).
- *  Polls every 10 s while the tab is shown and the page is in sight, backs off after errors, catches up when shown again.
- *    Efficiency.open()   Efficiency.options = { pollMs, tickMs, maxBackoffMs, holdMs, growMs }   Efficiency.norm(answer) → the view model   */
+ *  Read-only: the gated function employeeEfficiency (ops overview, live, person, personOrders, orders). It asks for the manager
+ *  passcode once, in the console itself; the passcode is held in memory and in sessionStorage for the tab only (never in
+ *  localStorage, a URL or a log).
+ *  WHICH DATA (Paul, 5 Oct 2026: "completely unpopulated"): the console reads the REAL stations by default, whatever mode the
+ *  sorter itself is in. A sorter in Sandbox mode writes its own work to the Sandbox_ copies, so reading "the sorter's mode" showed
+ *  only that rehearsal. Real | Sandbox is an explicit switch in the bar; the two never mix (every answer, cache and row is
+ *  dropped when it is switched, and an answer that names the other store is thrown away).
+ *  Three tabs with hash routes: Overview (#efficiency), Stations (#efficiency/stations, charm-nest-efficiency-stations.js) and
+ *  People (#efficiency/people); one person's full page is #efficiency/person/<name> (charm-nest-efficiency-person.js). Those two
+ *  modules are mounted here when they are loaded (a small labelled spinner and a retry until then); the Overview never waits for them.
+ *  Live: one small `live` read every 3 s (who is signed in, which order each station has now) while the console is in sight and
+ *  its tab is the one shown; the heavier overview about every 10 s, and at once when the live read says work was recorded. Both
+ *  pause when the page is hidden or another Workspace tab is open, and catch up (with a labelled spinner) when shown again.
+ *  The status line tells the truth: "Live · updated 2s ago", and "Reconnecting" when a read failed or is older than it should be.
+ *    Efficiency.open()   Efficiency.go("stations" | "people" | "person", name)   Efficiency.api (for the two modules, see below)
+ *    Efficiency.options = { pollMs, liveMs, tickMs, maxBackoffMs, holdMs, growMs, timeoutMs, staleMs }   Efficiency.norm(answer) → the view model
+ *    Efficiency.api = { call(body) → Promise<json>, view(), onView(fn), live(), onLive(fn), state(), now(), openOrder(btn, rid),
+ *      openPerson(name), openStations(), openOverview(), fmt } (plans/employee-hr/api.md, "E1 shell")                                  */
 (function (root) {
   "use strict";
   if (root.Efficiency) return;
   const doc = root.document, TZ = "America/New_York", DAY_MS = 86400000;
-  const options = { pollMs: 10000, tickMs: 1000, maxBackoffMs: 60000, holdMs: 60000, growMs: 480 };
-  const KEY_STORE = "cn.eff.key", DAYS_STORE = "cn.eff.days";
+  const options = { pollMs: 10000, liveMs: 3000, tickMs: 1000, maxBackoffMs: 60000, holdMs: 60000, growMs: 480, timeoutMs: 9000, staleMs: 13000, nudgeMs: 4000, mountRetryMs: 400, mountGiveUpMs: 20000, tabMs: 260 };
+  const KEY_STORE = "cn.eff.key", DAYS_STORE = "cn.eff.days", VIEW_STORE = "cn.eff.view";
   const NAMES = { shipping: "Shipping", assembly: "Assembly", welding: "Welding", sorting: "Sorting", design: "Design", laser: "Laser", sorter: "Sorter", qr: "QR printer", inbox: "Inbox" };
   const CORE = ["shipping", "assembly", "welding", "sorting", "design"], EXTRA = ["laser", "sorter", "qr", "inbox"];
   const ACTIONS = { scan: "scanned", complete: "completed", print: "printed", reject: "rejected", undo: "undid", error: "error", note: "noted" };
@@ -115,6 +129,35 @@
     return { orderId: String(r.orderId || ""), steps, events: Array.isArray(r.events) ? r.events.length : 0, firstAt: T(t.firstAt), lastAt: T(t.lastAt), spanMs: N(t.spanMs), workMs: N(t.workMs), people: N(t.people), stations: N(t.stations), notes: (Array.isArray(r.notes) ? r.notes : []).map(String).filter(Boolean), partial: !!r.partial };
   }
 
+  /** The live read (op live): who is signed in right now and what order each station has now. A missing field is empty, never a crash. */
+  const arr = a => (Array.isArray(a) ? a : []);
+  function normLive(r) {
+    r = r || {};
+    const stations = arr(r.stations).filter(s => s && s.key).map(s => {
+      const key = String(s.key), label = String(s.label || stName(key));
+      const current = arr(s.current).filter(c => c && (c.person || c.rid || c.orderNumber)).map(c => ({
+        person: String(c.person || ""), rid: String(c.rid || c.orderNumber || ""), orderNumber: String(c.orderNumber || c.rid || ""), customer: String(c.customer || ""),
+        scannedAt: T(c.scannedAt), thumbUrl: String(c.thumbUrl || ""), qr: c.qr && c.qr.text ? { text: String(c.qr.text) } : null, note: c.note ? String(c.note) : "",
+        pieces: arr(c.pieces).filter(p => p && (p.id != null || p.label || p.thumbUrl)).map(p => ({ id: String(p.id == null ? "" : p.id), label: String(p.label || ""), thumbUrl: String(p.thumbUrl || "") })),
+        station: key, stationLabel: label }));
+      return { key, label, state: ["working", "idle", "offline"].includes(s.state) ? s.state : (current.length ? "working" : "idle"), people: arr(s.people).map(String), current,
+        lastEventAt: T(s.lastEventAt), counts: { partsToday: N(s.counts && s.counts.partsToday), ordersToday: N(s.counts && s.counts.ordersToday) } };
+    });
+    const signedIn = arr(r.signedIn).filter(p => p && p.name).map(p => ({ name: String(p.name), stationKey: String(p.stationKey || p.station || ""), since: T(p.since), lastSeenAt: T(p.lastSeenAt) }))
+      .sort((a, b) => (a.since || 0) - (b.since || 0) || a.name.localeCompare(b.name));
+    const current = []; for (const s of stations) for (const c of s.current) current.push(c);
+    current.sort((a, b) => (a.scannedAt || 0) - (b.scannedAt || 0) || a.person.localeCompare(b.person));
+    return { ok: r.ok !== false, at: N(r.at), mode: r.mode === "sandbox" ? "sandbox" : r.mode === "real" ? "real" : "", stations, signedIn, current };
+  }
+  /** When the server has no `live` read yet: the people the overview says are on now, with what it knows (no order, no last-seen). */
+  function liveFromOverview(M) {
+    const signedIn = M.people.filter(p => p.on).map(p => ({ name: p.name, stationKey: p.nowAt[0] || (p.stations[0] && p.stations[0].station) || "", since: p.onSince || p.firstIn, lastSeenAt: null }));
+    return { ok: true, at: M.now, mode: "", stations: [], signedIn, current: [], derived: true };
+  }
+  /** "37 s", "4 m 12 s", "12 m", "1 h 5 m": a time that visibly ticks while it is short. */
+  const since = ms => { ms = Math.max(0, N(ms)); const s = Math.floor(ms / 1000); if (s < 60) return `${s} s`; const m = Math.floor(s / 60); if (m < 10) return `${m} m ${s % 60} s`; if (m < 60) return `${m} m`; return `${Math.floor(m / 60)} h${m % 60 ? ` ${m % 60} m` : ""}`; };
+  const initials = name => { const w = String(name).replace(/[._]/g, " ").trim().split(/\s+/).filter(Boolean); return ((w[0] || "?").charAt(0) + (w.length > 1 ? w[w.length - 1].charAt(0) : "")).toUpperCase(); };
+
   /* ── charts: inline SVG, thin marks, one baseline, the current hour in gold ── */
   const SVG = "http://www.w3.org/2000/svg";
   const mk = (parent, name, attrs) => { const e = doc.createElementNS(SVG, name); for (const k in attrs) e.setAttribute(k, attrs[k]); parent.appendChild(e); return e; };
@@ -209,12 +252,18 @@
 
   /* ── state ── */
   const st = { built: false, shown: false, key: store.get(KEY_STORE), keyErr: "", checking: false, days: +store.get(DAYS_STORE) || 1, day: null, gen: 0, data: null, M: null, off: 0, at: 0, fails: 0, busy: false, err: "", timer: 0, tick: 0, ctl: null,
-    rows: new Map(), stRows: new Map(), open: new Map(), hist: new Map(), ord: new Map(), ordOpen: new Set(), find: "", feed: [], feedOpen: false, feedSig: "", win: { lo: 7, hi: 18, nowH: -1, today: true }, charts: {}, sandbox: false, lastNames: [] };
+    rows: new Map(), stRows: new Map(), open: new Map(), hist: new Map(), ord: new Map(), ordOpen: new Set(), find: "", feed: [], feedOpen: false, feedSig: "", win: { lo: 7, hi: 18, nowH: -1, today: true }, charts: {}, sandbox: false, lastNames: [],
+    // which data (real by default, whatever the sorter's own mode), the tab and route, the live read
+    view: store.get(VIEW_STORE) === "sandbox" ? "sandbox" : "real", tab: "overview", person: "", locked: false,
+    live: null, liveAt: 0, liveErr: "", liveShort: "", liveFails: 0, liveBusy: false, liveGen: 0, liveTimer: 0, liveCtl: null, liveSupported: true, liveRetryAt: 0, liveSig: "", resuming: false, hiddenAt: 0, renderErr: "",
+    wk: new Map(), si: new Map(), roster: new Map(), q: "", sort: "now", mounts: {}, subs: { live: new Set(), view: new Set() } };
   if (![1, 7, 30].includes(st.days)) st.days = 1;
   const now = () => Date.now() + st.off;
   let host = null, E = {};
   const endpoint = () => root.location.origin + "/.netlify/functions/employeeEfficiency";
-  const isSandbox = () => !!(root.CN && root.CN.S && root.CN.S.settings && root.CN.S.settings.sandbox === "on");
+  /** The sorter's OWN mode (Settings): shown as a quiet hint, never used to choose what the console reads. */
+  const sorterSandbox = () => !!(root.CN && root.CN.S && root.CN.S.settings && root.CN.S.settings.sandbox === "on");
+  const isSandbox = () => st.view === "sandbox";
 
   /* ── the skeleton, built once; everything after updates in place ── */
   function style() {
@@ -345,6 +394,68 @@
 .efFl b{color:var(--ink);font-weight:650;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.efFl time{color:var(--ink45);font-variant-numeric:tabular-nums;font-size:11.5px}.efFl em{font-style:normal;color:var(--ink45);margin-left:8px;font-size:11px}
 .efFl.new{animation:efIn .9s ease}@keyframes efIn{from{background:var(--goldSoft);opacity:.2}to{background:transparent;opacity:1}}
 .efPeopleEmpty{padding:26px 18px;text-align:center;color:var(--ink45);font-size:12.5px}
+/* the bar: which data (Real | Sandbox), then the tabs with a sliding ink */
+.efBar{padding-bottom:0}
+.efView button{padding:4px 11px;font-size:11px}.efView button.on[data-view=sandbox]{background:var(--gold);color:#fff}
+.efHint{font-size:11px;color:var(--ink45);white-space:nowrap}
+.efTabsBar{position:relative;display:flex;gap:2px;flex:1 1 100%;margin:0 -6px;overflow-x:auto;scrollbar-width:none}.efTabsBar::-webkit-scrollbar{display:none}
+.efTabBtn{border:0;background:transparent;padding:7px 12px 9px;font:650 12px var(--sans);color:var(--ink45);border-radius:7px 7px 0 0;white-space:nowrap;transition:color .2s,background .2s}
+.efTabBtn:hover{color:var(--ink);background:rgba(0,0,0,.025)}.efTabBtn.on{color:var(--ink)}.efTabBtn:focus-visible{outline:2px solid var(--gold);outline-offset:-2px}
+.efInk{position:absolute;left:0;bottom:0;width:1px;height:2px;background:var(--gold);border-radius:2px;transform-origin:0 0;transition:transform .3s cubic-bezier(.2,.8,.2,1);pointer-events:none}
+.ef[data-lock] :is(.efTabsBar,.efView,.efHint){display:none}
+.ef[data-route=stations] :is(.efNav,.efSeg),.ef[data-route=person] :is(.efNav,.efSeg){display:none}
+.efPage{min-width:0;display:grid;gap:12px;align-content:start}
+.efPage.hidden{display:none}
+.efSoft{font-size:12px;color:var(--ink45);padding:2px 4px}
+.efLoadMod{display:flex;align-items:center;justify-content:center;gap:9px;padding:56px 0;color:var(--ink70);font-size:12.5px}
+.efLoadMod .efKeyErr{color:var(--ink70)}
+.efLoadMod button{border:1px solid var(--line);background:var(--card);border-radius:8px;padding:4px 11px;font:650 11.5px var(--sans);color:var(--ink70)}.efLoadMod button:hover{background:var(--paper2);color:var(--ink)}
+/* right now: who is signed in, and the order each person has in hand */
+.efNowSec{display:grid;gap:12px}
+.efSiGrid{display:flex;flex-wrap:wrap;gap:8px;padding:12px 14px;min-width:0}
+.efSi{display:grid;grid-template-columns:auto minmax(0,1fr);gap:1px 10px;align-items:center;padding:8px 14px 8px 9px;border:1px solid var(--line);border-radius:11px;background:var(--card2);text-align:left;min-width:204px;max-width:100%;transition:transform .22s cubic-bezier(.2,.8,.2,1),border-color .2s,box-shadow .2s,background .2s}
+.efSi:hover{transform:translateY(-1px);border-color:var(--goldLine);background:#fff;box-shadow:0 6px 16px rgba(60,48,30,.08)}
+.efAv{width:30px;height:30px;border-radius:50%;background:var(--paper2);display:grid;place-items:center;font:700 11px var(--sans);color:var(--ink70);grid-row:1/3;transition:box-shadow .3s,background .3s}
+.efSi.fresh .efAv,.efRc.on .efAv{box-shadow:0 0 0 2px var(--card),0 0 0 4px var(--sage);background:var(--sageSoft);color:#3c5a39}
+.efSiN{font-weight:700;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:flex;gap:7px;align-items:baseline}.efSiN em{font-style:normal;font-weight:600;font-size:11px;color:var(--ink70)}
+.efSiW{grid-column:2;font-size:11.5px;color:var(--ink45);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.efWkList{display:grid;min-width:0}
+.efWk{padding:11px 16px;border-top:1px solid var(--line2);min-width:0;transition:background .25s}.efWk:first-child{border-top:0}.efWk:hover{background:var(--card2)}
+.efOc{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:6px 14px;align-items:center;min-width:0}
+.efOcMedia{display:flex;align-items:center;gap:6px;min-width:0}
+.efOcImg{width:54px;height:54px;border-radius:10px;border:1px solid var(--line);background:var(--paper2) center/cover no-repeat;flex:0 0 54px;transition:transform .25s cubic-bezier(.2,.8,.2,1),box-shadow .25s;position:relative}
+.efOcImg:hover{transform:scale(2.1);z-index:8;box-shadow:0 12px 30px rgba(30,24,14,.28);transform-origin:left center}
+.efOcPcs{display:flex;gap:4px;flex-wrap:wrap;max-width:190px}.efOcPc{width:26px;height:26px;border-radius:7px;border:1px solid var(--line);background:var(--paper2) center/cover no-repeat;flex:0 0 26px;transition:transform .2s;position:relative}.efOcPc:hover{transform:scale(2.2);z-index:8;box-shadow:0 8px 20px rgba(30,24,14,.25)}
+.efOcInfo{min-width:0;display:grid;gap:1px}
+.efOcTop{display:flex;align-items:baseline;gap:8px;min-width:0;flex-wrap:wrap}
+.efOcWho{font-weight:700;font-size:13px}.efOcSt{font-size:11.5px;color:var(--ink70)}
+.efOcOrd{border:0;background:transparent;padding:1px 5px;margin:0 -5px;border-radius:6px;font:650 12px var(--mono);color:var(--ink);text-align:left}.efOcOrd:hover{background:var(--goldSoft);text-decoration:underline;text-decoration-color:var(--gold2);text-underline-offset:3px}
+.efOcCust{font-size:11.5px;color:var(--ink45);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.efOcTime{font:650 12px var(--sans);color:var(--ink70);font-variant-numeric:tabular-nums;white-space:nowrap}.efOcTime small{font-weight:500;color:var(--ink45);margin-right:4px;font-size:11px}
+.efOcQr{width:58px;height:58px;padding:3px;border:1px solid var(--line);border-radius:9px;background:#fff;display:grid;place-items:center;overflow:hidden;transition:transform .25s cubic-bezier(.2,.8,.2,1),box-shadow .25s;transform-origin:right center}
+.efOcQr:hover{transform:scale(2.4);z-index:8;box-shadow:0 12px 30px rgba(30,24,14,.28)}.efOcQr img,.efOcQr canvas{width:100%!important;height:100%!important;display:block;image-rendering:pixelated}
+.efNowEmpty{padding:18px 18px;color:var(--ink45);font-size:12.5px;text-align:center}
+.efSiGrid.empty{padding:0}
+/* people: the roster, one card each */
+.efRTools{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0 2px}
+.efRTools input{width:min(240px,100%);border:1px solid var(--line);background:var(--card);border-radius:999px;padding:5px 13px;font:500 12px var(--sans);color:var(--ink);transition:border-color .2s,background .2s}.efRTools input:focus{outline:none;border-color:var(--gold);background:#fff}
+.efRTools .seg button{padding:4px 11px;font-size:11px}.efRTools .efQ{margin-left:auto}
+.efRoster{display:grid;grid-template-columns:repeat(auto-fill,minmax(262px,1fr));gap:10px;min-width:0}
+.efRc{display:grid;gap:10px;padding:14px 16px 12px;text-align:left;background:var(--card);border:1px solid var(--line);border-radius:12px;min-width:0;transition:transform .22s cubic-bezier(.2,.8,.2,1),border-color .2s,box-shadow .22s;cursor:pointer;color:inherit}
+.efRc:hover{transform:translateY(-2px);border-color:var(--goldLine);box-shadow:0 10px 26px rgba(60,48,30,.1)}.efRc:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
+.efRcTop{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:2px 11px;align-items:center}
+.efRcTop .efAv{width:36px;height:36px;font-size:12px;grid-row:1/3}
+.efRcName{font-weight:700;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.efRcWhen{grid-column:2;font-size:11.5px;color:var(--ink45);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.efRcGo{grid-row:1/3;grid-column:3;color:var(--ink25);font-size:18px;transition:transform .2s,color .2s}.efRc:hover .efRcGo{transform:translateX(3px);color:var(--gold)}
+.efRcFig{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px}
+.efRcFig div{display:grid;gap:1px}.efRcFig b{font:650 15px var(--sans);font-variant-numeric:tabular-nums}.efRcFig span{font-size:10px;letter-spacing:.07em;text-transform:uppercase;color:var(--ink45);font-weight:700}
+.efRcSp{display:flex;align-items:center;gap:10px}.efRcSp .efSpark{flex:1;max-width:none;height:22px}
+.efRcChips{display:flex;flex-wrap:wrap;gap:4px 5px}
+.efRcLive{display:inline-flex;align-items:center;gap:6px;font-size:11px;color:#3c5a39;font-weight:650}.efRcLive:before{content:"";width:6px;height:6px;border-radius:50%;background:var(--sage)}
+.efRcOff{font-size:11px;color:var(--ink45);font-weight:600}
+.efPRow{cursor:pointer;transition:background .2s}.efPRow:hover{background:var(--card2)}.efPRow .efN,.efPRow .efOrd{cursor:pointer}
+@keyframes efEnter{from{opacity:0;transform:translateY(7px)}to{opacity:1;transform:none}}
+@keyframes efEnterX{from{opacity:0;transform:translateX(16px)}to{opacity:1;transform:none}}
 /* nothing recorded yet (sign-ins only): no empty columns of dashes, just who is in and where */
 .ef[data-nofig] :is(.efPH,.efN,.efSp,.efAct,.efSV,.efGraph),.ef[data-nofig] .efKpi:not([data-k=on]){display:none}
 .ef[data-noparts] :is(.efKpi[data-k=parts],.efKpi[data-k=rate],.efSV[data-c=parts]){display:none}
@@ -359,6 +470,10 @@
  .efSpark{width:100%;max-width:150px}.efSp{grid-column:1/3}.efAct{grid-column:3/-1}
  .efCols2{grid-template-columns:1fr}
  .efSR{grid-template-columns:90px minmax(0,1fr) 64px 64px 100px;padding:9px 14px}
+}
+@container ef (max-width:760px){
+ .efOc{grid-template-columns:minmax(0,1fr) auto}.efOcMedia{grid-column:1/-1;order:2}.efOcQr{grid-row:1;grid-column:2}.efOcInfo{order:1}.efOcPcs{max-width:none}
+ .efSi{flex:1 1 100%}
 }
 @container ef (max-width:640px){
  .efKpis{grid-template-columns:repeat(2,minmax(0,1fr))}.efKpi{padding:14px 16px 8px}.efKpi:nth-child(3){border-left:0}.efKpi:nth-child(n+3){border-top:1px solid var(--line2)}.efKpi:nth-child(2){border-left:1px solid var(--line2)}
@@ -376,6 +491,10 @@
  .efFl{grid-template-columns:56px minmax(0,1fr) 128px;grid-template-areas:"t p a" "t s o"}.efFl>time{grid-area:t}.efFl>b{grid-area:p}.efFl>span:nth-of-type(1){grid-area:s}.efFl>span:nth-of-type(2){grid-area:a}.efFl>span:nth-of-type(3){grid-area:o}
  .efFeedBtn,.efFeed{padding-left:14px;padding-right:14px}.efKey{margin-top:3vh}
 }
+@container ef (max-width:640px){
+ .efHint{display:none}.efView{order:3}.efRcFig{grid-template-columns:repeat(4,minmax(0,1fr))}.efRoster{grid-template-columns:1fr}.efRTools .efQ{margin-left:0}
+ .efOcImg{width:46px;height:46px;flex-basis:46px}.efWk{padding:10px 14px}.efSiGrid{padding:10px}
+}
 @media (prefers-reduced-motion:reduce){.ef *{transition:none!important;animation:none!important}}`;
     doc.head.appendChild(s);
   }
@@ -386,15 +505,17 @@
 <header class="efBar">
   <div class="efHead"><h2 class="efTitle">Employee efficiency</h2>
   <span class="efLive" data-s="load" role="status"><i class="efDot"></i><span class="spin" aria-hidden="true"></span><span class="efLiveT">Connecting…</span></span>
-  <span class="efFlag hidden" title="Sandbox copies only">Sandbox</span></div>
+  <span class="seg efView" role="group" aria-label="Which data"><button type="button" data-view="real" title="The shop's real stations and employees">Real</button><button type="button" data-view="sandbox" title="The sorter's Sandbox rehearsal copies only">Sandbox</button></span>
+  <span class="efFlag hidden" title="Sandbox copies only: never the real numbers">Sandbox data only</span><span class="efHint hidden" title="This sorter's own mode is Sandbox. This screen still reads the real stations unless you choose Sandbox."></span></div>
   <span class="efGrow"></span>
   <span class="efNav" role="group" aria-label="Day"><button type="button" class="efIcon" data-nav="-1" aria-label="Earlier">‹</button><span class="efDay" aria-live="polite"></span><button type="button" class="efIcon" data-nav="1" aria-label="Later">›</button><button type="button" class="efToday hidden" data-today>Today</button></span>
   <span class="seg efSeg" role="group" aria-label="Range"><button type="button" data-days="1">Day</button><button type="button" data-days="7">7 days</button><button type="button" data-days="30">30 days</button></span>
+  <nav class="efTabsBar" role="tablist" aria-label="Employee efficiency"><button type="button" role="tab" class="efTabBtn" data-tab="overview" aria-controls="efPgOverview">Overview</button><button type="button" role="tab" class="efTabBtn" data-tab="stations" aria-controls="efPgStations">Stations</button><button type="button" role="tab" class="efTabBtn" data-tab="people" aria-controls="efPgPeople">People</button><i class="efInk" aria-hidden="true"></i></nav>
 </header>
 <form class="efKey hidden" autocomplete="off"><h3>Manager passcode</h3><p>This screen shows every person's work. Enter the manager passcode (the same one as the Ads console) to open it.</p>
   <div class="efKeyRow"><input type="password" name="efpass" aria-label="Manager passcode" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Passcode"><button class="btn gold xs" type="submit">Open</button></div><div class="efKeyErr" role="alert"></div></form>
 <div class="efWait"><span class="spin" aria-hidden="true"></span><span class="efWaitT">Reading employee activity…</span></div>
-<div class="efBody hidden">
+<div class="efBody efPage hidden" id="efPgOverview" role="tabpanel" data-v="overview">
   <div class="efNote hidden" role="status"></div>
   <section class="efCard efHero" aria-label="The business at a glance">
     <div class="efKpis">
@@ -406,27 +527,44 @@
     <div class="efGraph" data-g="hours"><div class="efGH"><span class="efGT">Parts per hour</span><span class="efGP"></span></div><div class="efChart"></div></div>
     <div class="efGraph two hidden" data-g="trend"><div data-t="parts"><div class="efGH"><span class="efGT">Parts per day</span></div><div class="efChartA"></div></div><div data-t="orders"><div class="efGH"><span class="efGT">Orders per day</span></div><div class="efChartB"></div></div></div>
   </section>
+  <section class="efNowSec" aria-label="Right now">
+    <div><div class="efLabel">Signed in now <b class="efSiC"></b></div><div class="efCard"><div class="efSiGrid empty"></div></div></div>
+    <div><div class="efLabel">Now working on <b class="efWkC"></b></div><div class="efCard"><div class="efWkList"></div></div></div>
+  </section>
   <section aria-label="Stations"><div class="efLabel">Stations</div><div class="efCard efStations"></div></section>
   <section aria-label="People"><div class="efLabel">People <b class="efPN"></b><form class="efFind" autocomplete="off"><input inputmode="numeric" name="eforder" aria-label="Trace an order: who worked it, where and for how long" placeholder="Trace an order" autocomplete="off" spellcheck="false"><button type="submit" class="efIcon" aria-label="Trace this order">›</button></form></div>
   <div class="efCard efOView hidden" aria-label="Order trace"><div class="efOVH"><b class="efOVT"></b><button type="button" class="efOVopen" data-order="">Open order</button><button type="button" class="efIcon efOVx" data-find-close aria-label="Close the trace">✕</button></div><div class="efOxb"></div></div>
   <div class="efCard"><div class="efPH" aria-hidden="true"><span>Person</span><span>Stations</span><span>Parts</span><span>Scanned</span><span>Orders</span><span>Per hr</span><span>Per scan</span><span class="efPHs">By hour</span><span>Active</span></div><div class="efPeople"></div></div></section>
   <section class="efCard efFeedCard" aria-label="Live activity"><button type="button" class="efFeedBtn" aria-expanded="false"><i aria-hidden="true">▶</i>Live activity <b class="efFC"></b></button><div class="efFeedWrap"><div class="efFeedIn"><div class="efFeed"></div></div></div></section>
-</div>`;
+</div>
+<div class="efPage hidden" id="efPgStations" role="tabpanel" data-v="stations"><div class="efMount"></div></div>
+<div class="efPage hidden" id="efPgPeople" role="tabpanel" data-v="people">
+  <div class="efRTools"><input type="search" name="efq" aria-label="Find a person" placeholder="Find a person" autocomplete="off" spellcheck="false"><span class="seg efSort" role="group" aria-label="Order"><button type="button" data-sort="now">On now</button><button type="button" data-sort="parts">Parts</button><button type="button" data-sort="name">Name</button></span><span class="efQ efRQ"></span></div>
+  <div class="efRoster"></div>
+</div>
+<div class="efPage hidden" id="efPgPerson" role="tabpanel" data-v="person"><div class="efMount"></div></div>`;
     E = { bar: host.querySelector(".efBar"), live: host.querySelector(".efLive"), liveT: host.querySelector(".efLiveT"), flag: host.querySelector(".efFlag"), day: host.querySelector(".efDay"), today: host.querySelector(".efToday"), next: host.querySelector('[data-nav="1"]'), prev: host.querySelector('[data-nav="-1"]'),
       key: host.querySelector(".efKey"), keyIn: host.querySelector(".efKey input"), keyErr: host.querySelector(".efKeyErr"), keyBtn: host.querySelector(".efKey .btn"), wait: host.querySelector(".efWait"), waitT: host.querySelector(".efWaitT"), body: host.querySelector(".efBody"), note: host.querySelector(".efNote"),
       kpi: Object.fromEntries([...host.querySelectorAll(".efKpi")].map(k => [k.dataset.k, k])), gHours: host.querySelector('[data-g="hours"]'), gTrend: host.querySelector('[data-g="trend"]'), gp: host.querySelector(".efGP"),
       find: host.querySelector(".efFind"), findIn: host.querySelector(".efFind input"), ov: host.querySelector(".efOView"), ovT: host.querySelector(".efOVT"), ovOpen: host.querySelector(".efOVopen"), ovBox: host.querySelector(".efOView .efOxb"),
-      stations: host.querySelector(".efStations"), people: host.querySelector(".efPeople"), pn: host.querySelector(".efPN"), feedBtn: host.querySelector(".efFeedBtn"), feedWrap: host.querySelector(".efFeedWrap"), feed: host.querySelector(".efFeed"), fc: host.querySelector(".efFC") };
+      stations: host.querySelector(".efStations"), people: host.querySelector(".efPeople"), pn: host.querySelector(".efPN"), feedBtn: host.querySelector(".efFeedBtn"), feedWrap: host.querySelector(".efFeedWrap"), feed: host.querySelector(".efFeed"), fc: host.querySelector(".efFC"),
+      tabsBar: host.querySelector(".efTabsBar"), ink: host.querySelector(".efInk"), hint: host.querySelector(".efHint"),
+      siGrid: host.querySelector(".efSiGrid"), siC: host.querySelector(".efSiC"), wkList: host.querySelector(".efWkList"), wkC: host.querySelector(".efWkC"),
+      pages: { overview: host.querySelector("#efPgOverview"), stations: host.querySelector("#efPgStations"), people: host.querySelector("#efPgPeople"), person: host.querySelector("#efPgPerson") },
+      roster: host.querySelector(".efRoster"), rq: host.querySelector('.efRTools input[name="efq"]'), rqN: host.querySelector(".efRQ") };
     st.charts.hours = columns(host.querySelector(".efChart"), { height: 124, name: "Parts per hour", maxW: 24, unit: "parts", labelW: 26, thin: true });
     st.charts.tA = columns(host.querySelector(".efChartA"), { height: 118, name: "Parts per day", maxW: 18, unit: "parts", labelW: 40 });
     st.charts.tB = columns(host.querySelector(".efChartB"), { height: 118, name: "Orders per day", maxW: 18, unit: "orders", labelW: 40 });
-    host.addEventListener("click", onClick);
+    host.addEventListener("click", onClick); E.tabsBar.addEventListener("keydown", onKeyTabs);
     E.keyIn.form.addEventListener("submit", onKey); E.find.addEventListener("submit", onFind);
     E.keyIn.addEventListener("input", () => { if (st.keyErr) { st.keyErr = ""; setText(E.keyErr, ""); } });
     st.sandbox = isSandbox(); E.flag.classList.toggle("hidden", !st.sandbox);
-    segs(); paintDay();
+    E.rq.addEventListener("input", () => { st.q = E.rq.value; renderRoster(st.M); });
+    parseHash(); segs(); paintDay(); paintView(); paintTabs();
     if (root.MutationObserver) new MutationObserver(visibility).observe(host, { attributes: true, attributeFilter: ["class"] });
     doc.addEventListener("visibilitychange", visibility);
+    root.addEventListener("popstate", onHash); root.addEventListener("hashchange", onHash);
+    if (root.ResizeObserver) new ResizeObserver(() => placeInk(false)).observe(E.bar);
     return true;
   }
 
@@ -448,33 +586,175 @@
     setText(E.kpi.orders.querySelector(".efKL"), st.days > 1 ? `Orders · ${st.days} days` : (st.day && st.day !== today() ? "Orders" : "Orders today"));
   }
   const live = () => !st.day || st.day >= today();
+  /** Which data this screen reads: the switch, the "Sandbox data only" badge, and a quiet hint when the sorter itself is in Sandbox mode. */
+  function paintView() {
+    if (!E.flag) return;
+    host.querySelectorAll(".efView button").forEach(b => { const on = b.dataset.view === st.view; b.classList.toggle("on", on); b.setAttribute("aria-pressed", on); });
+    host.setAttribute("data-view", st.view); st.sandbox = isSandbox();
+    E.flag.classList.toggle("hidden", !st.sandbox);
+    const hint = !st.sandbox && sorterSandbox(); E.hint.classList.toggle("hidden", !hint); setText(E.hint, hint ? "Sorter is in Sandbox mode" : "");
+  }
+  /** Real or Sandbox, explicitly. Nothing of the other store stays: answers, rows, caches, open traces and the modules are dropped. */
+  function switchView(v) {
+    v = v === "sandbox" ? "sandbox" : "real"; if (v === st.view) return;
+    st.view = v; store.set(VIEW_STORE, v === "sandbox" ? "sandbox" : "");
+    st.gen++; st.liveGen++; for (const c of [st.ctl, st.liveCtl]) if (c) { try { c.abort(); } catch (_) {} }
+    clearTimeout(st.timer); clearTimeout(st.liveTimer); st.timer = st.liveTimer = 0;
+    st.busy = false; st.liveBusy = false; st.ctl = st.liveCtl = null;
+    st.data = null; st.M = null; st.feed = []; st.feedSig = ""; st.off = 0; st.at = 0; st.err = ""; st.errShort = ""; st.fails = 0; st.hold = 0; st.reset = true;
+    st.live = null; st.liveAt = 0; st.liveErr = ""; st.liveShort = ""; st.liveFails = 0; st.liveSig = ""; st.resuming = false; st.renderErr = "";
+    st.hist.clear(); st.ord.clear(); st.ordOpen.clear(); st.find = ""; st.open.clear();
+    if (E.ov) { E.ov.classList.add("hidden"); E.findIn.value = ""; }
+    for (const r of st.rows.values()) r.e.remove(); st.rows.clear(); E.people.textContent = "";
+    for (const r of st.stRows.values()) r.e.remove(); st.stRows.clear();
+    for (const r of st.wk.values()) r.e.remove(); st.wk.clear(); for (const r of st.si.values()) r.e.remove(); st.si.clear();
+    for (const r of st.roster.values()) r.e.remove(); st.roster.clear();
+    for (const k of Object.keys(E.kpi)) dash(E.kpi[k].querySelector(".efKV"));
+    E.feed.textContent = ""; setText(E.fc, ""); E.note.classList.add("hidden"); E.note._sig = "";
+    unmountAll(); paintView(); paintDay(); paintPages(false); paintLive(); renderNow();
+    for (const fn of [...st.subs.view]) { try { fn(v); } catch (e) { console.warn("[efficiency] view listener:", e && e.message); } }
+    if (st.key && st.shown) { ensureMounts(); poll(); pollLive(); }
+  }
+
+  /* ── the tabs and the routes: #efficiency · #efficiency/stations · #efficiency/people · #efficiency/person/<name> ── */
+  const MODS = { stations: { global: "EfficiencyStations", label: "stations board" }, person: { global: "EfficiencyEmployee", label: "employee page" } };
+  const needOverview = () => !st.person && (st.tab === "overview" || st.tab === "people");
+  const hashFor = () => "#efficiency" + (st.person ? "/person/" + encodeURIComponent(st.person) : st.tab === "stations" ? "/stations" : st.tab === "people" ? "/people" : "");
+  /** Reads the address into the tab and person; false when the address is not this screen's. */
+  function parseHash() {
+    const h = String(root.location.hash || "").replace(/^#/, "").split("/");
+    if (h[0] !== "efficiency") return false;
+    let tab = "overview", person = "";
+    if (h[1] === "stations") tab = "stations"; else if (h[1] === "people") tab = "people";
+    else if (h[1] === "person" && h.slice(2).join("/")) { tab = "people"; try { person = decodeURIComponent(h.slice(2).join("/")); } catch (_) { person = h.slice(2).join("/"); } }
+    st.tab = tab; st.person = person.replace(/[\u0000-\u001f\u007f]/g, " ").trim().slice(0, 80); return true;
+  }
+  function writeHash(push) { try { const want = hashFor(); if (root.location.hash !== want) root.history[push ? "pushState" : "replaceState"](null, "", want); } catch (_) {} }
+  /** A person or a tab was chosen: the address follows (a new history entry, so Back returns to where you were). */
+  function route(tab, person, o) {
+    o = o || {}; person = String(person || "").trim();
+    const same = tab === st.tab && person === st.person; if (same) return;
+    st.tab = tab; st.person = person; writeHash(o.push !== false); showRoute(true);
+  }
+  function onHash() {
+    if (!st.built) return;
+    const mine = String(root.location.hash || "").replace(/^#/, "").split("/")[0] === "efficiency"; if (!mine) return;
+    if (parseHash()) showRoute(true);
+  }
+  function paintTabs() {
+    if (!E.tabsBar) return;
+    E.tabsBar.querySelectorAll(".efTabBtn").forEach(b => { const on = b.dataset.tab === st.tab; b.classList.toggle("on", on); b.setAttribute("aria-selected", on); b.tabIndex = on ? 0 : -1; });
+    host.dataset.route = st.person ? "person" : st.tab;
+    placeInk(true);
+  }
+  function placeInk(animate) {
+    const b = E.tabsBar && E.tabsBar.querySelector(".efTabBtn.on"); if (!b || !E.ink) return;
+    if (!b.offsetWidth) return;                                   // (not laid out: the tab is not shown)
+    E.ink.style.transition = animate && E.ink._on && !still() ? "" : "none";
+    E.ink.style.transform = `translateX(${b.offsetLeft}px) scaleX(${b.offsetWidth})`; E.ink._on = true;
+  }
+  /** Which page is on screen: none while the passcode is asked; the Overview and People wait for their first answer. */
+  function paintPages(animate) {
+    const unlocked = !!st.key && !st.locked, want = !unlocked ? "" : st.person ? "person" : st.tab;
+    for (const [k, el] of Object.entries(E.pages)) {
+      const show = k === want && !((k === "overview" || k === "people") && !st.data), was = !el.classList.contains("hidden");
+      el.classList.toggle("hidden", !show);
+      if (show && !was && animate && !still() && el.animate) el.animate([{ opacity: 0, transform: k === "person" ? "translateX(16px)" : "translateY(7px)" }, { opacity: 1, transform: "none" }], { duration: options.tabMs, easing: EASE });
+    }
+    const waiting = unlocked && (want === "overview" || want === "people") && !st.data;
+    E.wait.classList.toggle("hidden", !waiting);
+    if (waiting && !st.err) setText(E.waitT, st.view === "sandbox" ? "Reading the Sandbox copies…" : "Reading employee activity…");
+  }
+  function showRoute(animate) {
+    const key = (st.person ? "p:" + st.person : st.tab);
+    const changed = st.rt !== key; st.rt = key;
+    paintTabs(); paintPages(animate && changed); ensureMounts();
+    if (changed && st.key && st.shown) { if (needOverview()) { if (!st.busy && (!st.at || Date.now() - st.at > 2000)) poll(); else if (!st.timer) schedule(options.pollMs); } renderRoster(st.M); }
+    if (changed && animate) { try { const sc = doc.querySelector(".stage"); if (sc) sc.scrollTop = 0; } catch (_) {} }
+  }
+  /** The two full modules (E5's employee page, E6's stations board) are mounted when shown and destroyed when left, so nothing of theirs runs while another tab is open. */
+  const el0 = (tag, cls) => { const e = doc.createElement(tag); if (cls) e.className = cls; return e; };
+  function mountMod(kind) {
+    const spec = MODS[kind], el = E.pages[kind].querySelector(".efMount"), token = { kind, t0: Date.now(), name: kind === "person" ? st.person : "", timer: 0, h: null };
+    st.mounts[kind] = token;
+    const attempt = () => {
+      if (st.mounts[kind] !== token) return;
+      const mod = root[spec.global];
+      if (mod && typeof mod.mount === "function") {
+        el.textContent = "";
+        try { token.h = kind === "person" ? mod.mount(el, { name: token.name, onBack: backFromPerson }) : mod.mount(el); }
+        catch (e) { console.warn("[efficiency] " + spec.label + " did not start:", e && e.message); failMod(el, spec, token); }
+        return;
+      }
+      if (Date.now() - token.t0 > options.mountGiveUpMs) { failMod(el, spec, token); return; }
+      if (!el.querySelector(".efLoadMod")) { el.textContent = ""; const w = el.appendChild(el0("div", "efLoadMod")); w.setAttribute("role", "status"); w.innerHTML = `<span class="spin" aria-hidden="true"></span><span></span>`; w.lastChild.textContent = `Loading the ${spec.label}…`; }
+      token.timer = setTimeout(attempt, options.mountRetryMs);
+    };
+    attempt();
+  }
+  function failMod(el, spec, token) {
+    el.textContent = ""; const w = el.appendChild(el0("div", "efLoadMod")); w.setAttribute("role", "status");
+    const t = w.appendChild(el0("span", "efKeyErr")); t.textContent = `The ${spec.label} did not load.`;
+    const b = w.appendChild(el0("button")); b.type = "button"; b.textContent = "Try again"; b.onclick = () => { unmountMod(token.kind); mountMod(token.kind); };
+  }
+  function unmountMod(kind) {
+    const token = st.mounts[kind]; if (!token) return; st.mounts[kind] = null; clearTimeout(token.timer);
+    try { const h = token.h; if (h) { if (typeof h.destroy === "function") h.destroy(); else if (typeof h.unmount === "function") h.unmount(); else if (typeof h === "function") h(); } } catch (e) { console.warn("[efficiency] " + MODS[kind].label + " did not stop cleanly:", e && e.message); }
+    const el = E.pages[kind].querySelector(".efMount"); if (el) el.textContent = "";
+  }
+  const unmountAll = () => { for (const k of Object.keys(MODS)) unmountMod(k); };
+  function ensureMounts() {
+    const ok = st.built && st.shown && !!st.key && !st.locked, want = !ok ? "" : st.person ? "person" : st.tab === "stations" ? "stations" : "";
+    for (const k of Object.keys(MODS)) if (k !== want && st.mounts[k]) unmountMod(k);
+    if (want && st.mounts[want] && want === "person" && st.mounts[want].name !== st.person) unmountMod(want);
+    if (want && !st.mounts[want]) mountMod(want);
+  }
+  function openPerson(name) { name = String(name || "").trim(); if (!name) return; st.back = true; route(st.tab === "stations" ? "people" : st.tab, name, { push: true }); }
+  function backFromPerson() {
+    if (!st.person) return;
+    const leave = () => route(st.tab || "people", "", { push: false });
+    if (st.back && root.history.length > 1) { st.back = false; const was = hashFor(); try { root.history.back(); } catch (_) { leave(); return; } setTimeout(() => { if (st.person && hashFor() === was) leave(); }, 300); } else leave();
+  }
+
+  /* ── the status line: it says only what is true ── */
+  const driveAt = () => (st.liveSupported && st.liveAt ? st.liveAt : st.at);
   function paintLive() {
     if (!E.live) return;
-    let s, t;
-    if (!st.key) { s = "off"; t = "Locked"; }
-    else if (st.busy && !st.data) { s = "load"; t = "Reading…"; }
+    let s, t; const age = d => ago((Date.now() - d) / 1000);
+    const have = needOverview() ? !!st.data : !!(st.data || st.live);
+    if (!st.key || st.locked) { s = "off"; t = "Locked"; }
+    else if (!have && (st.busy || st.liveBusy || st.resuming)) { s = "load"; t = "Reading…"; }
+    else if (st.resuming) { s = "load"; t = "Catching up…"; }
     else if (st.busy && st.loadingDay) { s = "load"; t = "Reading…"; }
-    else if (st.err && st.data) { s = "slow"; t = `${esc(st.errShort || "Reconnecting…")} · last update ${ago((Date.now() - st.at) / 1000)}`; }
-    else if (!st.data) { s = "off"; t = st.err ? "Not connected" : "Connecting…"; }
-    else if (!live()) { s = "off"; t = `Updated ${ago((Date.now() - st.at) / 1000)}`; }
-    else { s = "live"; t = `Live · <span class="lg">updated </span>${ago((Date.now() - st.at) / 1000)}`; }
+    else if (st.err && st.data) { s = "slow"; t = `${esc(st.errShort || "Reconnecting…")} · last update ${age(st.at)}`; }
+    else if (st.liveErr && st.live) { s = "slow"; t = `${esc(st.liveShort || "Reconnecting…")} · last update ${age(st.liveAt)}`; }
+    else if (!have) { s = "off"; t = st.err || st.liveErr ? "Not connected" : "Connecting…"; }
+    else if (driveAt() && Date.now() - driveAt() > options.staleMs && live()) { s = "slow"; t = `Reconnecting… · last update ${age(driveAt())}`; }   // a read that never came back is not "Live"
+    else if (!live() && needOverview()) { s = "off"; t = `Updated ${age(st.at)}`; }
+    else { s = "live"; t = `Live · <span class="lg">updated </span>${age(driveAt() || st.at)}`; }
     if (E.live.dataset.s !== s) E.live.dataset.s = s; if (E.liveT.innerHTML !== t) E.liveT.innerHTML = t;
   }
 
   /* ── the key: asked once, inside the console ── */
   function showKey(msg) {
-    st.keyErr = msg || ""; setText(E.keyErr, st.keyErr);
-    E.key.classList.remove("hidden"); E.wait.classList.add("hidden"); E.body.classList.add("hidden"); host.setAttribute("data-lock", "");
+    st.keyErr = msg || ""; setText(E.keyErr, st.keyErr); st.locked = true;
+    E.key.classList.remove("hidden"); host.setAttribute("data-lock", ""); unmountAll(); paintPages(false);
     paintLive(); if (st.shown) setTimeout(() => { try { E.keyIn.focus(); } catch (_) {} }, 30);
   }
-  function unlockBar() { host.removeAttribute("data-lock"); paintDay(); }
+  function unlockBar() { st.locked = false; host.removeAttribute("data-lock"); paintDay(); }
+  /** The passcode was refused or is not set up: forget it everywhere and ask again (the numbers on screen go too). */
+  function authFail(e) {
+    st.key = ""; store.set(KEY_STORE, ""); st.data = null; st.M = null; st.live = null; st.liveAt = 0; st.gen++; st.liveGen++;
+    clearTimeout(st.timer); clearTimeout(st.liveTimer); st.timer = st.liveTimer = 0; st.busy = st.liveBusy = false;
+    showKey(e && e.auth ? "The passcode was not accepted. Enter it again." : (e && e.message) || "The passcode is needed.");
+  }
   async function onKey(e) {
     e.preventDefault(); if (st.checking) return;
     const k = E.keyIn.value.trim(); if (!k) { setText(E.keyErr, "Enter the passcode."); E.keyIn.focus(); return; }
     st.checking = true; E.keyBtn.disabled = true; E.keyBtn.innerHTML = `<span class="spin" aria-hidden="true"></span>Checking…`; setText(E.keyErr, "");
     try {
-      const r = await call({ op: "overview", day: st.day || undefined, days: st.days }, k);
-      st.key = k; store.set(KEY_STORE, k); E.keyIn.value = ""; E.key.classList.add("hidden"); unlockBar(); accept(r, true); schedule(options.pollMs);
+      const r = await call({ op: "overview", day: st.day || undefined, days: st.days, trend: st.days === 1 ? false : undefined }, k);
+      st.key = k; store.set(KEY_STORE, k); E.keyIn.value = ""; E.key.classList.add("hidden"); unlockBar(); st.err = ""; accept(r, true); schedule(options.pollMs); ensureMounts(); pollLive();
     } catch (x) {
       E.keyIn.value = ""; setText(E.keyErr, x.auth ? "That passcode was not accepted. Try again." : x.message); E.keyIn.focus();
     } finally { st.checking = false; E.keyBtn.disabled = false; E.keyBtn.textContent = "Open"; }
@@ -485,7 +765,8 @@
   function failure(status, j, net) {
     const code = j && j.code ? String(j.code) : "", srv = j && j.error ? String(j.error).replace(/\s+/g, " ").slice(0, 100) : "";
     let msg, short = "Reconnecting…";
-    if (net) msg = "The service cannot be reached from here. Check the connection.";
+    if (net === "timeout") msg = "The service did not answer in time.";
+    else if (net) msg = "The service cannot be reached from here. Check the connection.";
     else if (status === 401) msg = "That passcode was not accepted.";
     else if (status === 403) msg = "No manager passcode is set up yet. Add EDIT_PASSCODE in Netlify (or the passcode in Firebase, config/editPasscode), then open this again.";
     else if (status === 429) { msg = "Too many attempts from this address. Wait a minute and try again."; short = "Paused · too many requests"; }
@@ -494,32 +775,39 @@
     else if (status === 400 || status === 413) { msg = `The request was refused${srv ? `: ${srv}` : ""}.`; short = "Request refused"; }
     else if (status >= 500) msg = `The data could not be read just now${srv ? ` (${srv})` : ""}.`;
     else msg = srv ? `${srv}.` : `The service answered ${status || "with an error"}.`;
-    return Object.assign(new Error(msg), { status: status || 0, auth: status === 401, locked: status === 403 || code === "EDIT_PASSCODE_NOT_SET", limited: status === 429, short, code });
+    return Object.assign(new Error(msg), { status: status || 0, auth: status === 401, locked: status === 403 || code === "EDIT_PASSCODE_NOT_SET", limited: status === 429, short, code, serverError: srv });
   }
+  /** One read: the passcode and the chosen data (Real, or Sandbox) are added here and nowhere else. A read that does not answer in `timeoutMs` is dropped. */
   async function call(body, key, signal) {
     const k = key || st.key, payload = Object.assign({}, body, { key: k }); st.sandbox = isSandbox(); if (st.sandbox) payload.sandbox = true;
-    if (payload.day === undefined) delete payload.day;
-    let res; try { res = await fetch(endpoint(), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload), cache: "no-store", signal }); } catch (e) { if (e && e.name === "AbortError") throw e; throw failure(0, null, true); }
-    const txt = await res.text(); let j = null; try { j = JSON.parse(txt); } catch (_) {}
+    for (const f of ["day", "trend", "after"]) if (payload[f] === undefined) delete payload[f];
+    const ctl = root.AbortController ? new AbortController() : null; let timedOut = false, timer = 0, onAbort = null, res, txt;
+    if (ctl) { timer = setTimeout(() => { timedOut = true; try { ctl.abort(); } catch (_) {} }, options.timeoutMs); if (signal) { if (signal.aborted) ctl.abort(); else { onAbort = () => { try { ctl.abort(); } catch (_) {} }; signal.addEventListener("abort", onAbort); } } }
+    try {
+      res = await fetch(endpoint(), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload), cache: "no-store", signal: ctl ? ctl.signal : signal });
+      txt = await res.text();
+    } catch (e) { if (timedOut) throw failure(0, null, "timeout"); if (e && e.name === "AbortError") throw e; throw failure(0, null, true); }
+    finally { clearTimeout(timer); if (signal && onAbort) signal.removeEventListener("abort", onAbort); }
+    let j = null; try { j = JSON.parse(txt); } catch (_) {}
     if (!res.ok || !j || j.ok === false) throw failure(res.status, j);
     return j;
   }
-  const active = () => st.built && st.shown && doc.visibilityState !== "hidden" && !!st.key;
-  function schedule(ms) { clearTimeout(st.timer); st.timer = 0; if (active()) st.timer = setTimeout(poll, ms); }
+  const active = () => st.built && st.shown && doc.visibilityState !== "hidden" && !!st.key && !st.locked;
+  function schedule(ms) { clearTimeout(st.timer); st.timer = 0; if (active() && needOverview()) st.timer = setTimeout(poll, ms); }
   function backoff() { return Math.min(options.maxBackoffMs, options.pollMs * Math.pow(2, st.fails)); }
   async function poll() {
     clearTimeout(st.timer); st.timer = 0;
-    if (!active() || st.busy) return;
+    if (!active() || !needOverview() || st.busy) return;
     const gen = st.gen, delta = st.data && st.data.cursor && !st.reset ? st.data.cursor : "";
     st.busy = true; st.ctl = root.AbortController ? new AbortController() : null; paintLive();
     try {
-      const r = await call({ op: "overview", day: st.day || undefined, days: st.days, after: delta || undefined }, null, st.ctl && st.ctl.signal);
+      const r = await call({ op: "overview", day: st.day || undefined, days: st.days, trend: st.days === 1 ? false : undefined, after: delta || undefined }, null, st.ctl && st.ctl.signal);
       if (gen !== st.gen) return;
       st.fails = 0; st.err = ""; st.errShort = ""; accept(r, false);
     } catch (e) {
       if (gen !== st.gen || (e && e.name === "AbortError")) return;
-      if (e.auth || e.locked) { st.key = ""; store.set(KEY_STORE, ""); st.data = null; showKey(e.auth ? "The passcode was not accepted. Enter it again." : e.message); return; }
-      st.fails++; st.err = String(e.message || e).slice(0, 200); st.errShort = e.short || "Reconnecting…"; st.hold = e.limited ? options.holdMs : 0;
+      if (e.auth || e.locked) { authFail(e); return; }
+      st.fails++; st.err = String(e.message || e).slice(0, 200); st.errShort = e.short || "Reconnecting…"; st.hold = e.limited ? options.holdMs : 0; st.resuming = false;
       if (!st.data) { setText(E.waitT, `${st.err} Trying again.`); E.wait.querySelector(".spin").style.visibility = "hidden"; } paintLive();
     } finally { if (gen === st.gen) { st.busy = false; st.loadingDay = false; st.reset = false; E.body.classList.remove("dim"); paintLive(); schedule(st.err ? Math.max(backoff(), st.hold || 0) : (live() ? options.pollMs : Math.max(options.pollMs * 3, 30000))); } }
   }
@@ -527,9 +815,43 @@
   function accept(r, first) {
     const M = norm(r); first = first || !st.data;
     if (r.delta && st.data && st.feed.length) { const seen = new Set(M.feed.map(f => f.id)); M.feed = M.feed.concat(st.feed.filter(f => !seen.has(f.id))).sort((a, b) => b.at - a.at).slice(0, 40); }
-    st.off = M.now ? M.now - Date.now() : st.off; st.at = Date.now(); st.data = r; st.M = M; st.feed = M.feed;
-    E.flag.classList.toggle("hidden", !st.sandbox); host.removeAttribute("data-lock"); E.wait.classList.add("hidden"); E.key.classList.add("hidden"); E.body.classList.remove("hidden"); E.wait.querySelector(".spin").style.visibility = ""; setText(E.waitT, "Reading employee activity…");
-    render(M, first); refreshOrders();
+    st.off = M.now ? M.now - Date.now() : st.off; st.at = Date.now(); st.data = r; st.M = M; st.feed = M.feed; st.resuming = false; st.locked = false;
+    paintView(); host.removeAttribute("data-lock"); E.key.classList.add("hidden"); E.wait.querySelector(".spin").style.visibility = ""; paintPages(false);
+    // a drawing fault is its own message: it is never reported as a lost connection
+    try { render(M, first); st.renderErr = ""; } catch (e) { st.renderErr = String((e && e.message) || e).slice(0, 120); console.warn("[efficiency] drawing failed:", e); E.note.textContent = ""; E.note.appendChild(el("span")).textContent = "Some figures could not be drawn just now."; E.note.classList.remove("hidden"); E.note._sig = ""; }
+    try { renderNow(); renderRoster(M); refreshOrders(); } catch (e) { console.warn("[efficiency] drawing failed:", e); }
+  }
+
+  /* ── the live read: who is signed in, and the order each station has now (op live), about every 3 s while in sight ── */
+  const backoffLive = () => Math.min(30000, options.liveMs * Math.pow(2, st.liveFails));
+  function scheduleLive(ms) { clearTimeout(st.liveTimer); st.liveTimer = 0; if (active() && st.liveSupported) st.liveTimer = setTimeout(pollLive, ms); }
+  async function pollLive() {
+    clearTimeout(st.liveTimer); st.liveTimer = 0;
+    if (!active() || !st.liveSupported || st.liveBusy) return;
+    const gen = st.liveGen; st.liveBusy = true; st.liveCtl = root.AbortController ? new AbortController() : null;
+    try {
+      const r = await call({ op: "live" }, null, st.liveCtl && st.liveCtl.signal);
+      if (gen !== st.liveGen) return;
+      st.liveFails = 0; st.liveErr = ""; st.liveShort = ""; acceptLive(r);
+    } catch (e) {
+      if (gen !== st.liveGen || (e && e.name === "AbortError")) return;
+      if (e.auth || e.locked) { authFail(e); return; }
+      if (e.status === 400 && /unknown op/i.test(e.serverError || "")) { st.liveSupported = false; st.liveRetryAt = Date.now() + 300000; st.liveErr = ""; st.resuming = false; renderNow(); }   // an older server: the overview alone, and a look again in five minutes
+      else { st.liveFails++; st.liveErr = String(e.message || e).slice(0, 200); st.liveShort = e.short || "Reconnecting…"; st.liveHold = e.limited ? options.holdMs : 0; st.resuming = false; }
+    } finally { if (gen === st.liveGen) { st.liveBusy = false; paintLive(); scheduleLive(st.liveErr ? Math.max(backoffLive(), st.liveHold || 0) : options.liveMs); } }
+  }
+  function acceptLive(r) {
+    const L = normLive(r);
+    if (L.mode && L.mode !== st.view) return;                       // an answer for the other store is never drawn
+    if (L.at) st.off = L.at - Date.now();
+    st.live = L; st.liveAt = Date.now(); st.resuming = false;
+    try { renderNow(); } catch (e) { console.warn("[efficiency] drawing failed:", e); }
+    for (const fn of [...st.subs.live]) { try { fn(L); } catch (e) { console.warn("[efficiency] live listener:", e && e.message); } }
+    // work was recorded since the last read: the heavier overview follows at once (never faster than every few seconds)
+    const sig = L.stations.map(s => `${s.key}:${s.counts.partsToday}:${s.counts.ordersToday}:${s.lastEventAt || 0}`).join("|") + "#" + L.signedIn.length;
+    const moved = st.liveSig && sig !== st.liveSig; st.liveSig = sig;
+    if (moved && needOverview() && live() && !st.busy && Date.now() - st.at > options.nudgeMs) poll();
+    paintLive();
   }
 
   /* ── render: every part updates what is there ── */
@@ -629,7 +951,7 @@
   function personRow(name) {
     const e = el("article", "efP"); e.dataset.name = name;
     e.innerHTML = `<div class="efPRow">
-  <button type="button" class="efWho" aria-expanded="false" title="Open ${esc(name)}'s days"><i class="efSt" aria-hidden="true"></i><span class="efName"></span><span class="efWhen"></span></button>
+  <button type="button" class="efWho" title="Open ${esc(name)}'s page"><i class="efSt" aria-hidden="true"></i><span class="efName"></span><span class="efWhen"></span></button>
   <div class="efChips"></div>
   <div class="efN" data-l="Parts"><b data-r="parts">0</b></div><div class="efN" data-l="Scanned"><b data-r="scans">0</b></div>
   <button type="button" class="efN efOrd" data-l="Orders" aria-expanded="false" title="Open the newest orders"><b><span data-r="orders">0</span><i aria-hidden="true">▼</i></b></button>
@@ -682,7 +1004,7 @@
     let empty = E.people.querySelector(".efPeopleEmpty"); if (empty) empty.remove();
     for (const p of list) {
       let r = st.rows.get(p.name); const fresh = !r;
-      if (!r) { r = personRow(p.name); st.rows.set(p.name, r); r.who.onclick = () => togglePanel(r, "days"); r.ord.onclick = () => togglePanel(r, "orders"); }
+      if (!r) { r = personRow(p.name); st.rows.set(p.name, r); r.ord.onclick = () => togglePanel(r, "orders"); }
       updatePerson(r, p, M, first || fresh); want.push(r);
     }
     for (const [name, r] of st.rows) if (!list.some(p => p.name === name)) { st.rows.delete(name); st.open.delete(name); r.e.remove(); }
@@ -701,7 +1023,7 @@
   function paintPanel(r, p) {
     const tab = st.open.get(r.name), open = !!tab;
     r.e.classList.toggle("open", open); r.e.classList.toggle("o-orders", tab === "orders"); r.e.classList.toggle("o-days", tab === "days");
-    r.who.setAttribute("aria-expanded", tab === "days"); r.ord.setAttribute("aria-expanded", tab === "orders");
+    r.ord.setAttribute("aria-expanded", tab === "orders");
     if (!open || !p) return;
     r.box.querySelectorAll(".efTabs button").forEach(b => { const on = b.dataset.t === tab; b.classList.toggle("on", on); b.setAttribute("aria-selected", on); });
     r.box.querySelectorAll(".efPane").forEach(x => x.classList.toggle("hidden", x.dataset.p !== tab));
@@ -823,14 +1145,160 @@
     E.feed.innerHTML = M.feed.length ? M.feed.map(f => `<div class="efFl${prev.size && !prev.has(f.id) ? " new" : ""}"><time>${esc(clock(f.at))}</time><b>${esc(f.person)}</b><span>${esc(stName(f.station))}</span><span>${esc(ACTIONS[f.action] || f.action)}</span><span>${f.orderId ? `<button type="button" class="efOid" data-order="${esc(f.orderId)}" title="Open this order">${esc(f.orderId)}</button>` : ""}${f.parts ? `<em>${nf(f.parts)} parts</em>` : ""}</span></div>`).join("") : `<div class="efMuted" style="padding:6px 0">Nothing yet. Actions appear here as stations send them.</div>`;
   }
 
+  /* ── right now: who is signed in, and the order each person has in hand ── */
+  const liveModel = () => st.live || (st.M && (!st.liveSupported || st.liveFails >= 2) ? liveFromOverview(st.M) : null);
+  const stationOf = (L, key) => { const s = L && L.stations.find(x => x.key === key); return (s && s.label) || stName(key); };
+  const siText = p => [p.since ? `since ${clock(p.since)}` : "", p.lastSeenAt ? `seen ${ago((now() - p.lastSeenAt) / 1000)}` : ""].filter(Boolean).join(" · ") || "signed in";
+  const urlOk = u => (/^(https?:\/\/|data:image\/|blob:|\/)/i.test(u) ? u.replace(/["'\\\n\r()]/g, "") : "");
+  const bg = (e, u) => { u = urlOk(String(u || "")); if (u) e.style.backgroundImage = `url("${u}")`; };
+  /** Rows that come and go glide: a new one rises in, a gone one fades out (opacity and transform only). */
+  const enter = (e, first) => { if (first || still() || !e.animate) return; e.animate([{ opacity: 0, transform: "translateY(6px)" }, { opacity: 1, transform: "none" }], { duration: 300, easing: EASE }); };
+  const leave = e => { e.dataset.leaving = "1"; if (still() || !e.animate) { e.remove(); return; } const a = e.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 180, easing: "ease-out" }); a.onfinish = a.oncancel = () => e.remove(); };
+  /** One quiet message in a card (a small spinner while a read is out), or none. */
+  function note(host, text, busy) {
+    let m = host._msg;
+    if (!text) { if (m) { m.remove(); host._msg = null; } return; }
+    if (!m) { m = host._msg = el("div", "efNowEmpty"); m.setAttribute("role", "status"); host.appendChild(m); }
+    const sig = (busy ? "1" : "0") + text; if (m._sig === sig) return; m._sig = sig;
+    m.textContent = ""; if (busy) { const sp = m.appendChild(el("span", "spin")); sp.setAttribute("aria-hidden", "true"); sp.style.marginRight = "8px"; } m.appendChild(doc.createTextNode(text));
+  }
+  function siRow(p) {
+    const e = el("button", "efSi"); e.type = "button"; e.dataset.name = p.name;
+    e.innerHTML = `<span class="efAv" aria-hidden="true"></span><span class="efSiN"><span class="efSiNm"></span><em></em></span><span class="efSiW"></span>`;
+    return { e, av: e.querySelector(".efAv"), nm: e.querySelector(".efSiNm"), stn: e.querySelector("em"), w: e.querySelector(".efSiW"), p };
+  }
+  function renderSignedIn(L, first) {
+    const list = L ? L.signedIn : [], seen = new Set();
+    setText(E.siC, list.length ? String(list.length) : "");
+    for (const p of list) {
+      seen.add(p.name); let r = st.si.get(p.name), fresh = !r;
+      if (!r) { r = siRow(p); st.si.set(p.name, r); }
+      r.p = p; setText(r.av, initials(p.name)); setText(r.nm, p.name); setText(r.stn, stationOf(L, p.stationKey)); setText(r.w, siText(p));
+      const seenAgo = p.lastSeenAt ? now() - p.lastSeenAt : 0, ok = !p.lastSeenAt || seenAgo < 6 * 60000;
+      r.e.classList.toggle("fresh", ok);
+      r.e.title = `${p.name} · signed in at ${stationOf(L, p.stationKey)}${p.since ? ` since ${clock(p.since)}` : ""}${p.lastSeenAt ? ` · last seen ${clock(p.lastSeenAt)}` : ""} · open ${p.name}'s page`;
+      r.e.setAttribute("aria-label", `${p.name}, ${stationOf(L, p.stationKey)}, ${siText(p)}. Open their page`);
+      if (fresh) { E.siGrid.appendChild(r.e); enter(r.e, first); }
+    }
+    for (const [name, r] of st.si) if (!seen.has(name)) { st.si.delete(name); leave(r.e); }
+    const want = list.map(p => st.si.get(p.name).e); want.forEach((e, i) => { const cur = [...E.siGrid.children].filter(c => c.classList.contains("efSi") && !c.dataset.leaving)[i]; if (cur !== e) E.siGrid.insertBefore(e, cur || E.siGrid._msg || null); });
+    note(E.siGrid, !L ? "Reading who is signed in…" : list.length ? "" : "No one is signed in right now", !L);
+    E.siGrid.classList.toggle("empty", !list.length);
+  }
+  /** The simple card until the stations board's own card (EfficiencyStations.orderCard) is loaded: order, thumbnails, one tile per piece, the QR. */
+  function fallbackCard(c) {
+    const e = el("div", "efOc"), media = e.appendChild(el("div", "efOcMedia")), main = media.appendChild(el("div", "efOcImg"));
+    bg(main, c.thumbUrl); main.title = c.orderNumber ? `Order ${c.orderNumber}` : "Order";
+    if (c.pieces.length) {
+      const pcs = media.appendChild(el("div", "efOcPcs"));
+      for (const p of c.pieces.slice(0, 10)) { const t = pcs.appendChild(el("span", "efOcPc")); bg(t, p.thumbUrl); t.title = p.label || "Piece"; }
+      if (c.pieces.length > 10) { const m = pcs.appendChild(el("span", "efMuted")); m.textContent = `+${c.pieces.length - 10}`; m.style.alignSelf = "center"; }
+    }
+    const info = e.appendChild(el("div", "efOcInfo")), top = info.appendChild(el("div", "efOcTop"));
+    top.appendChild(el("span", "efOcWho")).textContent = c.person || "—"; top.appendChild(el("span", "efOcSt")).textContent = c.stationLabel || stName(c.station);
+    if (c.orderNumber) { const b = info.appendChild(el("button", "efOcOrd")); b.type = "button"; b.dataset.order = c.rid || c.orderNumber; b.textContent = c.orderNumber; b.title = "Open this order"; }
+    if (c.customer || c.note) info.appendChild(el("span", "efOcCust")).textContent = [c.customer, c.note].filter(Boolean).join(" · ");
+    if (c.scannedAt) { const t = info.appendChild(el("span", "efOcTime")); t.appendChild(el("small")).textContent = "Scanned"; const b = t.appendChild(el("span")); b.dataset.since = String(c.scannedAt); b.textContent = since(now() - c.scannedAt); t.appendChild(el("small")).textContent = " ago"; t.lastChild.style.marginLeft = "4px"; }
+    if (c.qr && c.qr.text) {
+      const q = e.appendChild(el("div", "efOcQr")); q.title = "The order's QR code";
+      try { if (root.QRCode) new root.QRCode(q, { text: c.qr.text, width: 116, height: 116, correctLevel: root.QRCode.CorrectLevel ? root.QRCode.CorrectLevel.M : undefined }); } catch (_) { q.textContent = ""; }
+    }
+    return e;
+  }
+  function wkContent(c) {
+    const S = root.EfficiencyStations;
+    if (S && typeof S.orderCard === "function") {
+      try { const x = S.orderCard(c); if (x) return { node: x, card: true }; } catch (e) { console.warn("[efficiency] order card:", e && e.message); }
+    }
+    return { node: fallbackCard(c), card: false };
+  }
+  function renderWorking(L, first) {
+    const list = L ? L.current : [], seen = new Set();
+    setText(E.wkC, list.length ? String(list.length) : "");
+    for (const c of list) {
+      const key = `${c.station}|${c.person}|${c.rid}`; seen.add(key);
+      let r = st.wk.get(key); const fresh = !r;
+      if (!r) { r = { e: el("div", "efWk"), sig: "", card: false }; r.e.dataset.key = key; st.wk.set(key, r); }
+      const sig = JSON.stringify([c.rid, c.orderNumber, c.customer, c.note, c.thumbUrl, c.qr && c.qr.text, c.person, c.station, c.scannedAt, c.pieces.map(p => [p.id, p.thumbUrl, p.label])]);
+      const haveCard = !!(root.EfficiencyStations && typeof root.EfficiencyStations.orderCard === "function");
+      if (r.sig !== sig || (haveCard && !r.card)) {
+        r.sig = sig; const x = wkContent(c); r.card = x.card; r.e.textContent = "";
+        if (typeof x.node === "string") r.e.innerHTML = x.node; else r.e.appendChild(x.node);
+      }
+      if (fresh) { E.wkList.appendChild(r.e); enter(r.e, first); }
+    }
+    for (const [k, r] of st.wk) if (!seen.has(k)) { st.wk.delete(k); leave(r.e); }
+    const want = list.map(c => st.wk.get(`${c.station}|${c.person}|${c.rid}`).e); want.forEach((e, i) => { const cur = [...E.wkList.children].filter(x => !x.classList.contains("efNowEmpty") && !x.dataset.leaving)[i]; if (cur !== e) E.wkList.insertBefore(e, cur || E.wkList._msg || null); });
+    note(E.wkList, !L ? "Reading what each person is working on…" : list.length ? "" : !st.liveSupported || (L && L.derived) ? "Which order each person has in hand is not available from the service yet." : "No one is working on an order right now", !L);
+  }
+  function renderNow() {
+    if (!E.siGrid) return;
+    const L = liveModel(), first = !st.nowDrawn; st.nowDrawn = true;
+    renderSignedIn(L, first); renderWorking(L, first);
+  }
+  /** The seconds tick in place: "scanned 4 m 12 s ago", "seen 12s ago". */
+  function tickNow() {
+    for (const r of st.wk.values()) r.e.querySelectorAll("[data-since]").forEach(x => { const at = +x.dataset.since; if (at > 0) setText(x, since(now() - at)); });
+    for (const r of st.si.values()) if (r.p) setText(r.w, siText(r.p));
+  }
+
+  /* ── people: one card each, to the person's page ── */
+  function rosterCard(name) {
+    const e = el("button", "efRc"); e.type = "button"; e.dataset.name = name;
+    e.innerHTML = `<div class="efRcTop"><span class="efAv" aria-hidden="true"></span><span class="efRcName"></span><span class="efRcGo" aria-hidden="true">›</span><span class="efRcWhen"></span></div>
+<div class="efRcFig"><div><b data-f="parts">0</b><span>Parts</span></div><div><b data-f="orders">0</b><span>Orders</span></div><div><b data-f="rate">—</b><span>Per hr</span></div><div><b data-f="act">—</b><span>Active</span></div></div>
+<div class="efRcSp"><div class="efRcSpk" style="flex:1;min-width:0"></div><span class="efRcState"></span></div>`;
+    const r = { e, name, av: e.querySelector(".efAv"), nm: e.querySelector(".efRcName"), when: e.querySelector(".efRcWhen"), state: e.querySelector(".efRcState"), f: Object.fromEntries([...e.querySelectorAll("[data-f]")].map(x => [x.dataset.f, x])), spEl: e.querySelector(".efRcSpk") };
+    r.sp = spark(r.spEl, { w: 150, h: 22 }); setText(r.nm, name); setText(r.av, initials(name)); e.setAttribute("aria-label", `Open ${name}'s page`); e.title = `Open ${name}'s page`;
+    return r;
+  }
+  function renderRoster(M) {
+    if (!E.roster || host.dataset.route !== "people") return;
+    if (!M) { return; }
+    const q = st.q.trim().toLowerCase();
+    let list = M.people.filter(p => !q || p.name.toLowerCase().includes(q));
+    const by = { now: (a, b) => (b.on && !M.past) - (a.on && !M.past) || b.t.parts - a.t.parts || a.name.localeCompare(b.name), parts: (a, b) => b.t.parts - a.t.parts || b.t.scans - a.t.scans || a.name.localeCompare(b.name), name: (a, b) => a.name.localeCompare(b.name) };
+    list = list.slice().sort(by[st.sort] || by.now);
+    host.querySelectorAll(".efSort button").forEach(b => { const on = b.dataset.sort === st.sort; b.classList.toggle("on", on); b.setAttribute("aria-pressed", on); });
+    setText(E.rqN, q ? `${list.length} of ${M.people.length}` : M.people.length ? `${M.people.length} ${M.people.length === 1 ? "person" : "people"}` : "");
+    const wasTop = new Map([...E.roster.children].map(c => [c, c.getBoundingClientRect().top])), want = [], ev = M.sources.events !== false;
+    for (const p of list) {
+      let r = st.roster.get(p.name); const fresh = !r; if (!r) { r = rosterCard(p.name); st.roster.set(p.name, r); }
+      const on = p.on && !M.past, t = p.t, src = p.source, kParts = src !== "seals" && src !== "sessions", kOther = src !== "sessions";
+      r.e.classList.toggle("on", on);
+      const when = on ? `On now · ${stName(p.nowAt[0] || (p.stations[0] && p.stations[0].station) || "")}${p.onSince ? ` · since ${clock(p.onSince)}` : ""}` : p.lastOut ? `Out ${clock(p.lastOut)}` : p.inDay && p.inDay !== M.day ? `Last in ${mdFmt.format(dayDate(p.inDay))}` : p.firstIn ? `In ${clock(p.firstIn)}` : "No sign-in recorded";
+      setText(r.when, when); r.when.title = when; setText(r.state, "");
+      fig(r.f.parts, t.parts, ev && kParts, nf, fresh); fig(r.f.orders, t.orders, ev && kOther || !!M.sources.seals, nf, fresh); fig(r.f.rate, t.rate, ev && kParts && t.rate > 0, rateTxt, fresh);
+      const tot = t.activeMin + t.idleMin, pc = tot >= 1 ? Math.round(t.activeMin / tot * 100) : null; setText(r.f.act, pc == null ? "—" : pc + "%");
+      r.f.act.title = pc == null ? "No activity timing yet" : `Active ${dur(t.activeMin)} · idle ${dur(t.idleMin)}`;
+      const w = st.win, vals = []; for (let h = w.lo; h <= w.hi; h++) vals.push(p.perHour[h] || 0);
+      r.spEl.style.visibility = ev && (kParts || src === "seals") && vals.some(v => v > 0) ? "" : "hidden"; r.sp.set(vals, w.today && M.days === 1 ? Math.min(vals.length - 1, w.nowH - w.lo) : vals.length - 1);
+      want.push(r);
+    }
+    for (const [name, r] of st.roster) if (!list.some(p => p.name === name)) r.e.remove();
+    let moved = false; want.forEach((r, i) => { if (E.roster.children[i] !== r.e) { E.roster.insertBefore(r.e, E.roster.children[i] || null); moved = true; } });
+    if (moved) want.forEach(r => { const was = wasTop.get(r.e); if (was == null) enter(r.e, false); else if (!still() && r.e.animate) { const to = r.e.getBoundingClientRect().top; if (Math.abs(was - to) > 1) r.e.animate([{ transform: `translateY(${was - to}px)` }, { transform: "none" }], { duration: 360, easing: EASE }); } });
+    let empty = E.roster.querySelector(".efNowEmpty"); if (empty) empty.remove();
+    if (!list.length) { empty = E.roster.appendChild(el("div", "efNowEmpty")); empty.style.gridColumn = "1/-1"; empty.textContent = q ? "Nobody matches that name." : M.days > 1 ? "Nobody signed in during these days." : "No one has signed in on this day yet."; }
+  }
+
   /* ── clicks ── */
   function openOrder(btn, id) {
     id = String(id || "").replace(/\D/g, ""); if (!id) return;
     try { if (typeof root.openOrderFrom === "function") root.openOrderFrom(btn, id); else if (root.OrderWin && root.OrderWin.openOrder) root.OrderWin.openOrder(id, { from: btn }); } catch (e) { console.warn("[efficiency] order not opened:", e && e.message); }
   }
-  function go(change) { Object.assign(st, change); st.gen++; if (st.ctl) { try { st.ctl.abort(); } catch (_) {} } st.busy = false; st.loadingDay = true; st.reset = true; st.fails = 0; st.err = ""; paintDay(); segs(); E.body.classList.add("dim"); st.hist.forEach(h => { h.data = null; h.sig = ""; h.at = 0; }); poll(); }
+  function go(change) { Object.assign(st, change); st.gen++; if (st.ctl) { try { st.ctl.abort(); } catch (_) {} } st.busy = false; st.loadingDay = true; st.reset = true; st.fails = 0; st.err = ""; st.resuming = false; paintDay(); segs(); E.body.classList.add("dim"); st.hist.forEach(h => { h.data = null; h.sig = ""; h.at = 0; }); poll(); }
   function onClick(e) {
-    const b = e.target.closest && e.target.closest("button"); if (!b || !host.contains(b)) return;
+    const t = e.target, b = t.closest && t.closest("button");
+    // a whole person row is a way to that person's page (the Orders figure and every other button keep their own job)
+    const pr = !b && t.closest && t.closest(".efPRow");
+    if (pr && host.contains(pr)) { const nm = pr.closest(".efP"); if (nm && nm.dataset.name && !(root.getSelection && String(root.getSelection()))) return openPerson(nm.dataset.name); }
+    if (!b || !host.contains(b)) return;
+    if (b.dataset.tab) return route(b.dataset.tab, "");
+    if (b.dataset.view) return switchView(b.dataset.view);
+    if (b.dataset.sort) { st.sort = b.dataset.sort; return renderRoster(st.M); }
+    if (b.classList.contains("efWho")) { const nm = b.closest(".efP"); return nm && openPerson(nm.dataset.name); }
+    if (b.classList.contains("efRc") || b.classList.contains("efSi")) return openPerson(b.dataset.name);
     if (b.dataset.steps) return toggleSteps(b.dataset.steps);
     if (b.hasAttribute("data-find-close")) { traceOrder(""); return; }
     if (b.dataset.order !== undefined) return b.dataset.order ? openOrder(b, b.dataset.order) : undefined;
@@ -842,23 +1310,73 @@
       if (st.feedOpen) { st.feedSig = ""; if (st.M) renderFeed(st.M); }
     }
   }
+  function onKeyTabs(e) {
+    if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(e.key)) return;
+    const tabs = [...E.tabsBar.querySelectorAll(".efTabBtn")], i = tabs.findIndex(b => b.dataset.tab === st.tab); if (i < 0) return;
+    e.preventDefault(); const j = e.key === "Home" ? 0 : e.key === "End" ? tabs.length - 1 : (i + (e.key === "ArrowRight" ? 1 : -1) + tabs.length) % tabs.length;
+    route(tabs[j].dataset.tab, ""); tabs[j].focus();
+  }
 
   /* ── when it is in sight: poll, pause, catch up ── */
+  /** Starts whatever read is due (a read that is still out is left alone). True when one started. */
+  function catchUp() {
+    let did = false;
+    if (needOverview() && !st.busy) { if (!st.at || Date.now() - st.at > 2000) { poll(); did = true; } else if (!st.timer) schedule(options.pollMs); }
+    if (st.liveSupported && !st.liveBusy) { if (!st.liveAt || Date.now() - st.liveAt > 1500) { pollLive(); did = true; } else if (!st.liveTimer) scheduleLive(options.liveMs); }
+    return did;
+  }
+  /** The screen was opened (the Workspace menu, a link, Back): the address and the tab agree, the passcode is asked if needed. */
+  function onShown() {
+    if (!st.key) showKey(st.keyErr);
+    const h = String(root.location.hash || "").replace(/^#/, "").split("/");
+    if (h[0] === "efficiency" && h[1]) parseHash(); else writeHash(false);
+    showRoute(false);
+  }
   function visibility() {
     if (!st.built) return;
     const was = st.shown; st.shown = !host.classList.contains("hidden");
-    if (st.shown && !was) { if (!st.key) showKey(st.keyErr); }
-    if (!(st.shown && doc.visibilityState !== "hidden")) { clearTimeout(st.timer); st.timer = 0; return; }   // out of sight: nothing is read
-    if (st.key && !st.busy) { if (!st.at || Date.now() - st.at > 2000) poll(); else if (!st.timer) schedule(options.pollMs); }   // in sight again: catch up
+    if (st.shown && !was) onShown();
+    if (!st.shown && was) unmountAll();                       // another Workspace tab is open: nothing of ours runs
+    if (!(st.shown && doc.visibilityState !== "hidden")) { clearTimeout(st.timer); clearTimeout(st.liveTimer); st.timer = st.liveTimer = 0; if (!st.out) st.out = Date.now(); paintLive(); return; }   // out of sight: nothing is read
+    const away = st.out ? Date.now() - st.out : 0; st.out = 0;
+    if (st.key && !st.locked) {
+      if (away > 1500 && (st.data || st.live)) st.resuming = true;           // a labelled spinner while it catches up
+      ensureMounts();
+      if (!catchUp()) st.resuming = false;
+    }
     paintLive();
   }
-  function tickLive() { if (st.built && st.shown && doc.visibilityState !== "hidden") { paintLive(); const td = today(); if (st.data && !st.day && st.data.day && st.data.day !== td) { paintDay(); if (!st.busy) poll(); } } }
+  /** Each second: the status line and the ticking times; and a safety net, so a read that should be running always is. */
+  function tickLive() {
+    if (!(st.built && st.shown && doc.visibilityState !== "hidden")) return;
+    paintLive(); tickNow();
+    const td = today(); if (st.data && !st.day && st.data.day && st.data.day !== td) { paintDay(); if (!st.busy) poll(); }
+    if (!active()) return;
+    if (!st.liveSupported && st.liveRetryAt && Date.now() > st.liveRetryAt) { st.liveSupported = true; st.liveRetryAt = 0; pollLive(); }
+    if (st.liveSupported && !st.liveBusy && !st.liveTimer) scheduleLive(options.liveMs);
+    if (needOverview() && !st.busy && !st.timer) schedule(options.pollMs);
+  }
   function open() { try { if (root.CN && typeof root.CN.setMode === "function") root.CN.setMode("efficiency"); } catch (_) {} }
+  /** Opens the screen on a tab (or a person) from anywhere. */
+  function goTo(tab, name) { if (!st.shown) open(); if (tab === "person") openPerson(name); else route(tab === "stations" || tab === "people" ? tab : "overview", ""); }
+  /** What the two modules (and other screens) use. The passcode and the chosen data are added here, never by the caller. */
+  const api = {
+    version: 1,
+    call(body, o) { return call(Object.assign({}, body), null, o && o.signal).catch(e => { if (e && (e.auth || e.locked)) authFail(e); throw e; }); },
+    view: () => st.view,
+    onView(fn) { st.subs.view.add(fn); return () => st.subs.view.delete(fn); },
+    live: () => st.live,
+    onLive(fn) { st.subs.live.add(fn); return () => st.subs.live.delete(fn); },
+    state: () => ({ visible: active(), connected: !st.err && !st.liveErr, view: st.view, liveSupported: st.liveSupported, age: driveAt() ? Date.now() - driveAt() : null }),
+    now, openOrder, openPerson, openStations: () => goTo("stations"), openOverview: () => goTo("overview"), openPeople: () => goTo("people"),
+    fmt: { nf, dur, durMs, ago, clock, since, stName, nyDay, initials }
+  };
   function mount() {
     if (!build()) return;
     visibility();
     setInterval(tickLive, Math.max(250, +options.tickMs || 1000));
   }
   if (doc.getElementById("efficiencyView")) mount(); else doc.addEventListener("DOMContentLoaded", mount, { once: true });
-  root.Efficiency = { open, options, norm, normHist, normOrder, niceMax, get state() { return { key: !!st.key, days: st.days, day: st.day, shown: st.shown, fails: st.fails, busy: st.busy, at: st.at, rows: [...st.rows.keys()] }; } };
+  root.Efficiency = { open, go: goTo, options, norm, normHist, normOrder, normLive, niceMax, api,
+    get state() { return { key: !!st.key, days: st.days, day: st.day, shown: st.shown, fails: st.fails, busy: st.busy, at: st.at, rows: [...st.rows.keys()], view: st.view, tab: st.tab, person: st.person, liveAt: st.liveAt, liveSupported: st.liveSupported, liveFails: st.liveFails, mounted: Object.keys(st.mounts).filter(k => st.mounts[k]) }; } };
 })(window);
