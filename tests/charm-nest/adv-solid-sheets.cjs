@@ -140,7 +140,7 @@ const { start } = require('./bridge-server.cjs');
       console.log(`  ✓ Move all, a slow nest: no count during the scene; "+1" on Sheet 1 and "+1" back to Sheet 2 once it answered (${late.after} ms)`);
     }
 
-    /* ── 2 · the split-order question: include both, only this one, or cancel ── */
+    /* ── 2 · the split-order question: include both, or cancel (the cardinal rule: sheets that share an order are always in one set, so there is no "only this one") ── */
     {
       await page.evaluate(() => {
         const [p1, p2] = CN.pagesOf('gold14k'), c0 = p1.charms[0], c = Object.assign({}, c0, { id: 'cx', poolId: c0.order + '_7799_1', lineKey: c0.order + '_7799' });
@@ -152,21 +152,22 @@ const { start } = require('./bridge-server.cjs');
       await tick();
       const ask = await page.evaluate(() => { const d = document.querySelector('dialog.splitDlg'); return { text: d.textContent, keys: [...d.querySelectorAll('[data-k]')].map(b => b.dataset.k + ':' + b.textContent), panel: !!document.querySelector('.sheetCard[data-m="gold14k"] .sheetOptions[open]') }; });
       assert.match(ask.text, /14K Gold Sheet 2/); assert.match(ask.text, /4170000100/);
-      assert.deepEqual(ask.keys, ['cancel:Cancel', 'one:Only 14K Gold Sheet 1', 'all:Include both sheets']);
+      assert.deepEqual(ask.keys, ['cancel:Cancel', 'all:Include both sheets']);
       assert.equal(ask.panel, false, 'the Options panel closed first (never a pop-up over a pop-up)');
       await page.click('dialog.splitDlg [data-k="cancel"]');
       assert.deepEqual(await picks(), [false, false], 'Cancel: left as it was');
       await opts(); assert.equal(await page.isChecked(`${card} [data-solid="include"]:visible`), false, 'the box is unticked again');
       await page.click(`${card} [data-solid="include"]:visible`); await page.waitForSelector('dialog.splitDlg[open]', { timeout: 3000 });
-      await page.click('dialog.splitDlg [data-k="one"]');
-      assert.deepEqual(await picks(), [true, false], 'Only this one');
-      await opts(); await page.click(`${card} [data-solid="include"]:visible`);   // taken out: Sheet 2 is out already, nothing to ask
-      await page.waitForTimeout(300); assert.equal(await page.locator('dialog.splitDlg').count(), 0, 'no question when nothing splits');
-      assert.deepEqual(await picks(), [false, false]);
-      await tick(); await page.click('dialog.splitDlg [data-k="all"]');
+      assert.equal(await page.locator('dialog.splitDlg [data-k="one"]').count(), 0, 'no "only this sheet": sheets that share an order go in together');
+      await page.click('dialog.splitDlg [data-k="all"]');
       assert.deepEqual(await picks(), [true, true], 'Include both');
+      await opts(); await page.click(`${card} [data-solid="include"]:visible`); await page.waitForSelector('dialog.splitDlg[open]', { timeout: 3000 });   // taken out: Sheet 2 is in too, so it asks, and takes both out
+      await page.click('dialog.splitDlg [data-k="all"]');
+      assert.deepEqual(await picks(), [false, false], 'Take out both');
+      await tick(); await page.click('dialog.splitDlg [data-k="all"]');
+      assert.deepEqual(await picks(), [true, true], 'Include both again');
       await page.waitForTimeout(600); assert.equal(await page.locator('dialog.splitDlg').count(), 0, 'the window is gone');
-      console.log('  ✓ split order: Cancel leaves both out, "Only 14K Gold Sheet 1" takes it alone, "Include both sheets" takes both; the panel closes first');
+      console.log('  ✓ split order: Cancel leaves both out, "Include both sheets" and "Take out both sheets" move the pair (no "only this sheet"); the panel closes first');
     }
 
     /* ── 3 · Apply size keeps a cut sheet at its size ── */
