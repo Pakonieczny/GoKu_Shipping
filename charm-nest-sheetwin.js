@@ -2909,8 +2909,11 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       if (String(c.buyer || "").toLowerCase().includes(q)) return true;
       return (c.lines || []).some(l => String(l.sku || "").toLowerCase().includes(q) || String(l.title || "").toLowerCase().includes(q));
     };
+    /** The seals the order's pieces earned before it was cancelled (completed by hand, printed): kept for good, so they stay on
+     *  its card (Paul, 29 Sep and 5 Oct: a cancel never takes a seal away). The same small seals as the Orders list. */
+    const sealsOf = rid => { try { return window.CustomPrint && window.Seal && CustomPrint.sealsOfOrder ? CustomPrint.sealsOfOrder(rid) : null; } catch (_) { return null; } };
     function rowHtml(c, openable) {
-      const etsy = isEtsy(c), rid = String(c.orderId), fates = fatesOf(c), lines = c.lines || [];
+      const etsy = isEtsy(c), rid = String(c.orderId), fates = fatesOf(c), lines = c.lines || [], seals = sealsOf(rid);
       const why = String(c.why || "").trim();
       // Etsy says the order is cancelled: its own record, or one noted on a person's cancel. Never restored here (the
       // stations read this record; "Fully Refunded" is not a cancel on its own, so that one can be restored)
@@ -2919,7 +2922,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
         <div class="cxWhat">${lines.map(l => `<span class="mono" title="${esc(l.title || "")}">${esc(l.sku || "no SKU")}${l.quantity > 1 ? ` ×${l.quantity}` : ""}</span>`).join("") || `<i>no pieces kept</i>`}</div>
         <div class="cxWhy"><div class="cxWho"><span class="cxBadge ${etsy ? "etsy" : "person"}">${etsy ? "Cancelled on Etsy" : `Cancelled by ${esc(c.by || "someone")}`}</span>${!etsy && etsyX ? `<span class="cxBadge etsy">Cancelled on Etsy too</span>` : ""}<time datetime="${c.at ? new Date(+c.at).toISOString() : ""}">${esc(when(+c.at))}</time></div>
           <div class="cxReason${why ? "" : " none"}">${why ? esc(why) : etsy ? "Etsy gave no reason" : "No reason given"}</div>
-          ${fates.length ? `<div class="cxFates">${fates.map(f => `<span class="${f.cut ? "cut" : "off"}">${esc(f.text)}</span>`).join("")}</div>` : ""}</div>
+          ${fates.length ? `<div class="cxFates">${fates.map(f => `<span class="${f.cut ? "cut" : "off"}">${esc(f.text)}</span>`).join("")}</div>` : ""}${seals ? `<div class="cxSeals">${Seal.row(seals, { size: 28 })}</div>` : ""}</div>
         <div class="cxAct">${etsyX ? "" : `<button class="btn ghost sm" type="button" data-cx="restore" title="Bring the order back: it returns with the next orders check if it is still open on Etsy">Restore</button>`}${openable ? `<span class="cxGo" aria-hidden="true">›</span>` : ""}</div>`;
     }
     const nodes = new Map();                                        // orderId → { stamp, node }: rows kept, like the Orders list's
@@ -2962,7 +2965,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       // the rows: kept by order, rebuilt only when what they show changed
       const out = [];
       for (const c of shown) {
-        const rid = String(c.orderId), openable = view || pulled.has(rid), stamp = JSON.stringify([c, openable]); let e = nodes.get(rid);
+        const rid = String(c.orderId), openable = view || pulled.has(rid), sl = sealsOf(rid), stamp = JSON.stringify([c, openable, sl && CustomPrint.sealSig(sl)]); let e = nodes.get(rid);
         if (!e || e.stamp !== stamp) {
           const node = h("div", "cxRow" + (openable ? " open" : "") + (isEtsy(c) ? " etsy" : ""), rowHtml(c, openable));
           node.dataset.rid = rid; node.dataset.mkey = "cx:" + rid;
