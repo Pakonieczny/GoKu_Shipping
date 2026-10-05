@@ -62,13 +62,13 @@ async function main() {
     const v1 = await page.evaluate(() => { const d = document.getElementById('orderWin'), r = d.getBoundingClientRect();
       return { full: [Math.round(r.width), Math.round(r.height)], cls: d.className, title: document.getElementById('owTitle').textContent, tab: document.querySelector('.owTabsV [aria-selected=true]').dataset.owView,
         info: !document.querySelector('.owVInfo').hidden, prev: !document.getElementById('owPrev').hidden, pos: document.getElementById('owPos').textContent, sub: document.getElementById('owSub').textContent,
-        meta: [...document.querySelectorAll('#owMeta .m i')].map(i => i.textContent), note: document.querySelector('label[for=owNote]').textContent, tabs: [...document.querySelectorAll('#orderWin [data-ow-tab]')].map(b => [...b.children].map(c => c.textContent.trim()).filter(Boolean).join(' ')),
+        meta: [...document.querySelectorAll('#owMeta .m i')].map(i => i.textContent), note: !!document.getElementById('owNote') || !!document.querySelector('label[for=owNote]'), tabs: [...document.querySelectorAll('#orderWin [data-ow-tab]')].map(b => [...b.children].map(c => c.textContent.trim()).filter(Boolean).join(' ')),
         dialogs: document.querySelectorAll('dialog[open]').length }; });
     assert.deepEqual(v1.full, [1440, 900], 'it fills the screen'); assert.match(v1.cls, /owFull/);
     assert.equal(v1.title, `Order ${A.rid}`); assert.equal(v1.tab, 'info'); assert(v1.info, 'Overview in front');
     assert(v1.prev && /^\d+ of \d+$/.test(v1.pos), 'Previous and Next walk the Orders list: ' + v1.pos);
     assert.match(v1.sub, /Hannah Whitford · 1 piece · ship by Oct/);
-    assert(v1.meta.includes('Order') && v1.meta.includes('Buyer')); assert.match(v1.note, /^Order notes/);
+    assert(v1.meta.includes('Order') && v1.meta.includes('Buyer')); assert.equal(v1.note, false, 'no Order notes box in the view (5 Oct 2026)');
     assert.deepEqual(v1.tabs, ['Team internal', 'Customer on Etsy']); assert.equal(v1.dialogs, 1, 'one window');
     if (shots) await page.screenshot({ path: path.join(shots, 'order-view-overview.png') });
 
