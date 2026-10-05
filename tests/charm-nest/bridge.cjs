@@ -733,7 +733,7 @@ const receipts = [
           metal: document.getElementById('owMetal').textContent, meta, fix: !!d.querySelector('#owFix .rvItem'),
           note: !!document.getElementById('owNote'), thread: !!document.getElementById('owThread'),
           composer: !!document.getElementById('owInput'), attach: !!document.getElementById('owAttach'),
-          skip: document.getElementById('owSkip').getAttribute('aria-checked'), photo: !!d.querySelector('#owPhoto'),
+          skip: !!document.getElementById('owSkip') || !!document.getElementById('owSkipBox'), photo: !!d.querySelector('#owPhoto'),
           box: (() => { const r2 = d.getBoundingClientRect(); return { w: Math.round(r2.width), h: Math.round(r2.height), inW: window.innerWidth, inH: window.innerHeight }; })() };
       });
       console.log('order window', JSON.stringify(win));
@@ -742,6 +742,7 @@ const receipts = [
       assert(/^SKU: /.test(win.sku) && win.metal, 'with the SKU and the metal');
       assert(['Quantity', 'Metal', 'State', 'Ship by', 'Listing', 'Title'].every(k => win.meta.includes(k)), 'and the details: ' + win.meta.join(','));
       assert(win.note && win.thread && win.composer && win.attach && win.photo, 'the staff note, the thread, the composer and the picture are all there');
+      assert(!win.skip, 'and no Skip this Order switch (removed from the order window, Paul 5 Oct)');
       assert(!win.fix, 'and no decision box in the window (Paul, 28 Sep 16:45 and 29 Sep 01:01): its Review card\'s buttons deal with it');
       assert(win.box.w <= win.box.inW && win.box.h <= win.box.inH, `the window fits the screen: ${win.box.w}x${win.box.h} in ${win.box.inW}x${win.box.inH}`);
       // a staff note typed here reaches the station
