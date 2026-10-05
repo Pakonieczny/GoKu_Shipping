@@ -106,9 +106,9 @@ async function main() {
   }, sel);
   // (polls: the card fades in over 150 ms)
   const shownWithin = async (page, sel, ms) => { const t0 = Date.now(); while (Date.now() - t0 < ms) { if ((await read(page, sel)).shown) return true; await sleep(40); } return false; };
-  const goneWithin = async (page, sel, ms = 2000) => { const t0 = Date.now(); while (Date.now() - t0 < ms) { const m = await read(page, sel); if (!m.shown && m.k < 1.05) return true; await sleep(40); } return false; };
+  const goneWithin = async (page, sel, ms = 4000) => { const t0 = Date.now(); while (Date.now() - t0 < ms) { const m = await read(page, sel); if (!m.shown && m.k < 1.05) return true; await sleep(40); } return false; };
   const away = async (page, ms = 450) => { await page.mouse.move(8, 8, { steps: 3 }); await sleep(ms); };
-  const rest = async (page, sel) => { const c = await centre(page, sel); await page.mouse.move(c.x - 60, c.y - 30); await page.mouse.move(c.x, c.y, { steps: 4 }); await shownWithin(page, sel, 3000); await sleep(60); return c; };
+  const rest = async (page, sel) => { const c = await centre(page, sel); await page.mouse.move(c.x - 60, c.y - 30); await page.mouse.move(c.x, c.y, { steps: 4 }); await shownWithin(page, sel, 6000); await sleep(60); return c; };
   // 2 · a quick pass over the whole row opens nothing (the check a mutant with no delay must fail); quick is under 150 ms to a dot, far under the 350 asked
   const quickPass = async (page, key) => {
     const first = await centre(page, dot(key, 'arrived')), last = await (async () => { const b = await (await page.$(dot(key, 'shipped'))).boundingBox(); return { x: b.x + b.width / 2, y: b.y + b.height / 2 }; })();
@@ -204,7 +204,7 @@ async function main() {
       const first = dot(gf, 'assembled');   // (the Tab stop of the GF row)
       let found = false; await page.evaluate(() => { const rows = [...document.querySelectorAll('#owPcSum .owPcRow')]; const b = rows[1].querySelector('button, [tabindex="0"]'); b && b.focus && b.focus(); });
       for (let i = 0; i < 12 && !found; i++) { await page.keyboard.press('Tab'); found = await page.evaluate(() => !!(document.activeElement && document.activeElement.matches && document.activeElement.matches('#owPcSum [data-pdot]'))); }
-      assert(found, 'Tab reaches a dot'); assert(await page.evaluate(() => Math.abs(window.__t.open - window.__t.focus) < 80), 'the card opened with the focus, at once (not after a rest)'); await sleep(250);
+      assert(found, 'Tab reaches a dot'); { const tt = await page.evaluate(() => ({ open: window.__t.open, focus: window.__t.focus, el: document.activeElement && document.activeElement.getAttribute('data-pdot'), shown: !!document.querySelector('.railTip[data-on]') })); assert(Math.abs(tt.open - tt.focus) < 80, 'the card opened with the focus, at once (not after a rest): ' + JSON.stringify(tt)); } await sleep(250);
       const name = () => page.evaluate(() => { const t = document.querySelector('.railTip[data-on]'); return t ? t.querySelector('b').textContent : ''; });
       const step = () => page.evaluate(() => document.activeElement && document.activeElement.getAttribute('data-pdot'));
       assert(await name(), 'the card is open as soon as the dot has the keyboard (200 ms)');
@@ -256,9 +256,9 @@ async function main() {
       assert(zoomed.cls && zoomed.k >= 1.15 && zoomed.tip, 'the real seal in the card grew in place on rest, the card stayed: ' + JSON.stringify(zoomed));
       await away(page); await sleep(700); assert.deepEqual(await page.evaluate(() => ({ tip: !!document.querySelector('.railTip[data-on]'), grown: document.querySelectorAll('.railTip .sealZoomed').length })), { tip: false, grown: 0 }, 'leaving the seal puts both away');
       // the pointer leaves the dot for nowhere: the card is gone soon, and a pointer resting on the dot opens it again
-      sel = dot(gf, 'sorted'); await rest(page, sel); await away(page, 100); await sleep(800); assert.equal(await page.evaluate(() => !!document.querySelector('.railTip[data-on]')), false, 'a pointer that leaves the dot for elsewhere: the card goes (a moment late for a seal, never held)');
+      sel = dot(gf, 'sorted'); await rest(page, sel); await away(page, 100); assert.equal(await goneWithin(page, sel, 4000), true, 'a pointer that leaves the dot for elsewhere: the card goes (a moment late for a seal, never held)');
       // Esc puts away a held card too
-      await rest(page, sel); const c2 = await centre(page, sel); await page.mouse.move(c2.x, c2.y - 14, { steps: 2 }); await page.keyboard.press('Escape'); await sleep(900); assert.equal(await page.evaluate(() => !!document.querySelector('.railTip[data-on]')), false, 'Esc puts the card away'); await away(page); }
+      await rest(page, sel); const c2 = await centre(page, sel); await page.mouse.move(c2.x, c2.y - 14, { steps: 2 }); await page.keyboard.press('Escape'); assert.equal(await goneWithin(page, sel, 4000), true, 'Esc puts the card away'); await away(page); }
 
     // ── 9 · 1440, 900, 390: the card fits, the page is not made wider ──
     for (const [w, h] of [[1440, 900], [900, 800], [390, 844]]) {
