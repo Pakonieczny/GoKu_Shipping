@@ -972,6 +972,8 @@ const Views = window.Views = (() => {
     if (mode === "master") Master.render();
     if (mode === "engrave") Engrave.render();
     if (mode === "review") Review.render();
+    // the Review tab follows the cloud while it is on screen (ReviewLive); another tab is brought up to date once as it is shown
+    try { window.ReviewLive?.shown?.(mode); } catch (_) {}
   }
   return { designHost, onShow };
 })();
@@ -989,6 +991,8 @@ const Orders = window.Orders = (() => {
     const ck = customKeys(), began = Date.now(), listDue = began - customListAt > 30 * 60000;
     const [om, al, nd, cl, cd] = await Promise.all([api("charmNestLibrary", { op: "optionMapGet" }), api("charmNestLibrary", { op: "aliasGet" }), api("charmNestLibrary", { op: "noDesignGet" }), listDue ? api("charmNestLibrary", { op: "customGet" }, { quiet: true }).catch(() => null) : null, ck.length ? api("charmNestLibrary", { op: "customGet", keys: ck }, { quiet: true }).catch(() => null) : null]);
     mergeCustom(cl, cd, ck, began);
+    // the server's clock at the whole list's read: the Review tab's changes feed (ReviewLive) asks for what changed after it
+    if (cl && cl.records && typeof cl.at === "number") { customBase = { at: cl.at, seen: Date.now() }; }
     // the maps are replaced only when what was read differs: a new map object is what makes interpretAll read lines again
     const next = [om.maps || {}, al.aliases || {}, nd.list || { patterns: [], skus: [], rows: [] }], sig = JSON.stringify(next);
     if (sig !== mapsSig || !mapsSame()) { mapsSig = sig; [B.maps.optionMaps, B.maps.aliases, B.maps.noDesign] = next; mapsRead = next; }
@@ -1000,7 +1004,7 @@ const Orders = window.Orders = (() => {
     mapsCut = cut;
     if (window.Session?.ready?.()) window.CustomSheet?.load?.().catch(() => {});
   }
-  let mapsSig = "", mapsRead = [], mapsCut = "", customListAt = 0;
+  let mapsSig = "", mapsRead = [], mapsCut = "", customListAt = 0, customBase = null;
   if (!B.maps.customDone) B.maps.customDone = {};
   // the records of lines reopened (state "open"): not completed, but their seals are kept and shown on their buttons for
   // good (Paul, 29 Sep 00:35: "the seal must always remain and follow that order forever")
@@ -1029,6 +1033,26 @@ const Orders = window.Orders = (() => {
     // (a new object only when it reads differently: a new one is what makes interpretAll read every line again)
     if (JSON.stringify(next) !== JSON.stringify(B.maps.customDone)) B.maps.customDone = next;
     if (JSON.stringify(kept) !== JSON.stringify(B.maps.customKept)) B.maps.customKept = kept;
+  }
+  /** The records another computer (or another tab) wrote, read by the Review tab's changes feed: each joins what the page
+   *  holds when it is newer (its update time), as mergeCustom puts a record (a reopened one is kept with its seals, a
+   *  completed one is done), and nothing is ever dropped. `pre(changes)` is told what will change before it does (the
+   *  cards as they stand now); a record this page wrote since the read began stands as it is (its own press holds it).
+   *  Returns [{ key, was, rec }] for what changed. */
+  function takeCustom(records, began, pre) {
+    const ver = r => (r && +r.updatedAtMs) || 0, out = [], held = B.maps.customWrites;
+    for (const [k, v] of Object.entries(records || {})) {
+      if (!v || typeof v !== "object" || (held.get(k) || 0) >= (began || 0)) continue;
+      const was = B.maps.customDone[k] || B.maps.customKept[k] || null;
+      if (was && ver(was) >= ver(v)) continue;
+      out.push({ key: k, was, rec: v });
+    }
+    if (!out.length) return out;
+    if (pre) { try { pre(out); } catch (e) { console.warn("Review feed", e); } }
+    const next = Object.assign({}, B.maps.customDone), kept = Object.assign({}, B.maps.customKept);
+    for (const { key, rec } of out) { if (rec.state === "open") { kept[key] = rec; delete next[key]; } else { next[key] = rec; delete kept[key]; } }
+    B.maps.customDone = next; B.maps.customKept = kept;
+    return out;
   }
   const mapsSame = () => mapsRead[0] === B.maps.optionMaps && mapsRead[1] === B.maps.aliases && mapsRead[2] === B.maps.noDesign;
   const ctx = () => ({ optionMaps: B.maps.optionMaps, aliases: B.maps.aliases, noDesign: B.maps.noDesign, customDone: B.maps.customDone, customRead: B.maps.customRead, customDecided: B.maps.customDecided, masterEntry: sku => Master.entryFor(sku) });
@@ -1698,7 +1722,7 @@ const Orders = window.Orders = (() => {
     const v = document.getElementById("ordersView"), box = v && v.querySelector("#ordQ"); if (box) box.value = OV.q;
     render();
   }
-  return { view: () => OV, showPile, showCancelled, cancelArrived, pull, claim, unclaim, revalidate, render, renderNow, renderBody, markStale, loadMaps, interpretAll, lineRecord, rowFromRecord, rows: rowsOf, visibleRows, placeOf, imageFor, wantImage, shipTxt, statePill: stateWords, applyPullRule, ctx, keepRest, takeOffGone, _kept: () => readSaid.size };
+  return { view: () => OV, showPile, showCancelled, cancelArrived, pull, claim, unclaim, revalidate, render, renderNow, renderBody, markStale, loadMaps, takeCustom, customBase: () => customBase, interpretAll, lineRecord, rowFromRecord, rows: rowsOf, visibleRows, placeOf, imageFor, wantImage, shipTxt, statePill: stateWords, applyPullRule, ctx, keepRest, takeOffGone, _kept: () => readSaid.size };
 })();
 
 /* ═══ 19 · Master — SKU labels under charms, per-SKU designs, the index ══════ */
@@ -7405,6 +7429,11 @@ const CustomPrint = window.CustomPrint = (() => {
   const armed = new Map();      // card key|act → { from, until }: when a cancelled order's second press goes ahead
   const stamping = new Set();   // card keys whose seal is being stamped / whose held print is running: a second press waits
   const UNDO_MS = 12000;
+  // line keys whose record this page is writing now (a completion, a print, a reopen): the Review tab's changes feed (ReviewLive)
+  // leaves them to the press that is writing them, so the person who pressed is never shown their own change as another's
+  const touching = new Map();
+  const grab = keys => { for (const k of keys) touching.set(k, (touching.get(k) || 0) + 1); };
+  const drop = keys => { for (const k of keys) { const n = (touching.get(k) || 0) - 1; if (n > 0) touching.set(k, n); else touching.delete(k); } };
   let queue = Promise.resolve(), lastFrame = null, pressedBtn = null;
   const PRINTER = "QR Printer.html", PRINTER_V = "20260928-pq-seal";
   // the Print QR label button pressed last (a press on a seal over it is passed on to it as a click): its seal lands there
@@ -7596,8 +7625,9 @@ const CustomPrint = window.CustomPrint = (() => {
       // a line the run put on a sheet all the same is cut on the laser: it is not marked completed as well
       const cut = it.done ? new Set() : new Set(rows.filter(r => (r.poolIds || []).length).map(r => r.key));
       say(key, "Marking it completed…");
-      const saved = {}; let putErr = null;
-      for (const t of targets) { if (cut.has(t.key)) continue; try { const r = await api("charmNestLibrary", Object.assign({ op: "customPut", by: who, label }, t), { quiet: true }); if (r && r.record) { saved[t.key] = r.record; wrote([t.key]); } } catch (e) { putErr = e; } }
+      const saved = {}; let putErr = null; const mine = targets.map(t => t.key); grab(mine);
+      try { for (const t of targets) { if (cut.has(t.key)) continue; try { const r = await api("charmNestLibrary", Object.assign({ op: "customPut", by: who, label }, t), { quiet: true }); if (r && r.record) { saved[t.key] = r.record; wrote([t.key]); } } catch (e) { putErr = e; } } }
+      finally { drop(mine); }
       const done = Object.keys(saved);
       keepDone(saved);
       release(); busy.delete(key); acting.delete(key);
@@ -7642,6 +7672,7 @@ const CustomPrint = window.CustomPrint = (() => {
     for (const k of held) printing.add(k);
     const release = () => { for (const k of held) printing.delete(k); };
     fails.delete(key); acting.set(key, "complete"); say(key, "Completing…");
+    const mine = rows.map(r => r.key); grab(mine);
     queue = queue.then(async () => {
       let label = null; try { label = O.sortingLabel(rows[0].order, rows[0].line); } catch (_) { label = null; }
       const saved = {}; let putErr = null, cut = 0;
@@ -7661,7 +7692,7 @@ const CustomPrint = window.CustomPrint = (() => {
       agent({ bridge: true }, putErr ? "warn" : "DS", `${rid}: custom order completed by ${who} (no label printed)${putErr ? ` — not every piece was saved (${putErr.message})` : " · Review → Completed"}`);
       if (putErr) toast(`${rid}: ${done.length ? "not every piece was" : "the order was not"} completed: ${putErr.message} — press Complete Order to try again`, "bad", 9000);
       else if (cut) toast(`${rid}: ${cut} of its pieces went on a sheet meanwhile — cut on the laser, not completed`, "bad", 8000);
-    }).catch(e => { humanAct("error", { orderId: String(rows[0].order.receiptId || ""), detail: "Complete Order failed" }); failed(key, e.message); acting.delete(key); say(key, null); toast("Complete Order: " + e.message, "bad", 7000); }).finally(() => { release(); acting.delete(key); });
+    }).catch(e => { humanAct("error", { orderId: String(rows[0].order.receiptId || ""), detail: "Complete Order failed" }); failed(key, e.message); acting.delete(key); say(key, null); toast("Complete Order: " + e.message, "bad", 7000); }).finally(() => { release(); acting.delete(key); drop(mine); });
   }
   /* ── the seal and the move (Paul, 27 Sep 20:09-20:24): what was pressed is stamped on the button that did it, with
      who and when; from Open the card then flies to Completed, where a note says what arrived and offers Undo ── */
@@ -7689,6 +7720,35 @@ const CustomPrint = window.CustomPrint = (() => {
     const mk = mkeyOf(rows);
     Motion.expect(mk, { to: OPEN_SW, note: note ? { text: note, actions: [{ label: "Show", fn: () => Review.showCard(mk, "open") }] } : null });
     Motion.expectIn(mk, { from: DONE_SW });
+  }
+  /* ── a completion, a print or a reopen made on another computer (or in another tab), seen here (ReviewLive: Paul, 5 Oct,
+     "if there's another user looking at the review tab while this is happening, then there should be a stamp animation shown
+     and the animated order flying to the Completed tab"). The page has read the record already: this is what the person who
+     pressed saw, for the card on screen, by the same Motion paths as their own press, and nothing else (no Undo, which is
+     theirs; no scrolling, which would move a list under a reader). ev: { it, rows, rec, kind: "complete" | "again" | "reopen",
+     seal, who, loud }. loud: the card is on screen and the change is new, so it is seen; otherwise the state only changes. */
+  function remote(ev) {
+    const rows = (ev.rows || []).filter(Boolean); if (!rows.length) return;
+    const mk = mkeyOf(rows), rid = rows[0].order.receiptId, who = ev.who || "someone", it = ev.it || null;
+    if (ev.kind === "reopen") {
+      if (ev.loud && window.Motion) comesBack(rows, `Order ${rid} moved back to Open · reopened by ${who}`);
+      return;
+    }
+    const st = ev.seal || { how: ev.rec && ev.rec.how === "button" ? "button" : "print", at: +(ev.rec && ev.rec.updatedAtMs) || Date.now(), by: who };
+    const how = st.how === "button" ? "button" : "print";
+    // the Completed card's seal (the record's own: who and when) is pressed where it shows, once
+    if (ev.loud) fresh.set(mk, +st.at || Date.now());
+    if (ev.kind !== "complete" || !ev.loud || !window.Motion) { pressSoon(); return; }
+    const what = how === "button" ? `completed by ${who} with no label printed` : `QR label printed by ${who}`;
+    const note = { text: `Order ${rid} moved to Completed · ${what}`, ms: 9000, actions: [{ label: "Show", title: "open Completed at this order", fn: () => Review.showCard(mk, "done") }] };
+    // a card kept open by other orders that ask the same stays where it is while Completed answers
+    if (it && it.stays) { Motion.arrive(DONE_SW, { note }); pressSoon(); return; }
+    // (a person typing keeps every key: the stamp holds the page's presses for a second, so it is not brought down on them)
+    const a = document.activeElement, typing = !!a && (/^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName) || a.isContentEditable);
+    Motion.expect((it && it.flyKey) || mk, { to: DONE_SW, ttl: 15000, stamp: { btn: how === "button" ? "[data-cu-complete]" : "[data-cu-print]", stamp: st, still: typing, label: how === "button" ? "Complete Order" : "Print QR label" }, note });
+    // (Completed is the list on show: the card comes in from the Open switch, its seal pressed on it)
+    Motion.expectIn(mk, { from: OPEN_SW, ttl: 15000 });
+    pressSoon();
   }
   /** "Marked completed · Undo" on the card for UNDO_MS: the lines it completed, by their keys. */
   function offerUndo(keys, rows, who) {
@@ -7722,6 +7782,10 @@ const CustomPrint = window.CustomPrint = (() => {
    *  follows each as it goes (a failure part way leaves it saying what the cloud holds), then the lines are put back for
    *  cutting; a failure of either is said as what it is. */
   async function takeBack(key, rows, who, how, from) {
+    const mine = rows.map(r => r.key); grab(mine);
+    try { await takeBackOf(key, rows, who, how, from); } finally { drop(mine); }
+  }
+  async function takeBackOf(key, rows, who, how, from) {
     const did = how === "undo" ? "undone" : "reopened", rid = rows[0].order.receiptId;
     say(key, how === "undo" ? "Undoing…" : "Reopening…");
     let gone = 0;
@@ -7808,7 +7872,7 @@ const CustomPrint = window.CustomPrint = (() => {
   }
   const keptSig = it => { const k = keptOf(it); return k ? (Array.isArray(k.stamps) ? k.stamps.map(x => x.how[0] + x.at).join() : "l") + ":" + (+k.prints || 0) : ""; };
   const stamp = it => { const f = fails.get(it.key); return [busy.get(it.key) || "", acting.get(it.key) || "", asking.has(it.key), !!undoOf(it), f ? (f.st ? "held:" + f.st.at : "") + (f.retrying ? ":r" : "") || "fail" : "", armed.has(it.key + "|print"), armed.has(it.key + "|complete"), keptSig(it)].join("|"); };
-  return { print, complete, reopen, undo, statusHtml, buttonHtml, working, freshOf, failNote, wire, stamp, keptOf, keptSeals, keptButtonHtml, busy: key => busy.get(key) || "", printing: key => printing.has(key), undoing: rows => rows.some(r => undos.has(r.key)) };
+  return { print, complete, reopen, undo, statusHtml, buttonHtml, working, freshOf, failNote, wire, stamp, keptOf, keptSeals, keptButtonHtml, busy: key => busy.get(key) || "", printing: key => printing.has(key), undoing: rows => rows.some(r => undos.has(r.key)), touching: key => touching.has(key), remote, settle };
 })();
 
 /* ═══ 23a · Custom Orders — the order's own designs, dropped on its card and sent to the sheets ═══════════════════
@@ -9686,7 +9750,10 @@ const Review = window.Review = (() => {
         desired.splice(at, 0, { it: null, node: gap });
       });
     }
-    const sameView = !opts.still && host._mView === view && host.childElementCount > 0; host._mView = view;
+    // (quiet: the list is brought up to what the cloud says with nothing moving, once: a change that arrived while this tab was
+    //  not on screen or caught up after an absence, ReviewLive; it is set before the draw it is for and spent by it)
+    const quiet = !!RV.quiet; RV.quiet = false;
+    const sameView = !opts.still && !quiet && host._mView === view && host.childElementCount > 0; host._mView = view;
     if (window.Motion) Motion.reconcile(host, desired.length ? desired.map(x => x.node) : [empty()], { animate: sameView, leave });
     else { host.replaceChildren(...(desired.length ? desired.map(x => x.node) : [empty()])); }
     for (const {it,node} of desired) { if(!it)continue; const r=it.settled?it.settled.row:it.row; if(r)ListMedia.mount(node,r); }
@@ -11251,6 +11318,9 @@ const OrderWin = window.OrderWin = (() => {
   /** What the timeline says about where pieces went (placed, moved, taken off, cancelled, committed): changes when a piece changes sheet. */
   const SHEET_EV = new Set(["placed", "moved", "removed", "renested", "merged", "included", "excluded", "cancelled", "cancelRestored", "held", "released", "restored", "setCommitted", "laserDone", "roseCut"]);
   const sheetSig = list => Array.isArray(list) ? list.filter(e => SHEET_EV.has(e.type)).length + ":" + (list.filter(e => SHEET_EV.has(e.type)).at(-1) || {}).at : null;
+  // a completion, a print or a reopen of a custom piece (its seal and its note): when the feed brings one this page has not seen, the
+  // Review feed reads the records at once (ReviewLive.nudge: one read, not a poller), so the window's Custom Orders bar and its pieces follow
+  const customSig = list => Array.isArray(list) ? list.filter(e => e.type === "sealCompleted" || e.type === "sealPrinted" || (e.type === "note" && e.data && e.data.reopened)).map(e => e.type + ":" + (e.id || e.at)).join() : null;
   function loadEvents(rid) {
     W.events = null; W.evFor = rid; W.cancelled = null; W.nowSeal = null;
     if (W.feed) tryDo(() => W.feed.destroy()); W.feed = null;
@@ -11258,7 +11328,8 @@ const OrderWin = window.OrderWin = (() => {
     const f = UI && UI.feed ? tryDo(() => UI.feed(rid)) : null;
     const take = j => {
       if (W.evFor !== rid || W.feed !== f) return;
-      const before = sheetSig(W.events); W.events = (j && j.events) || []; W.cancelled = j && j.cancelled ? (j.cancelled[rid] || (j.cancelled.orderId ? j.cancelled : null)) : null;
+      const before = sheetSig(W.events), beforeC = customSig(W.events); W.events = (j && j.events) || []; W.cancelled = j && j.cancelled ? (j.cancelled[rid] || (j.cancelled.orderId ? j.cancelled : null)) : null;
+      if (beforeC !== null && beforeC !== customSig(W.events)) tryDo(() => window.ReviewLive && ReviewLive.nudge({ hint: true }));
       // a piece placed, moved or taken off since the sheet records were read: they are read again (no poller of its own: this feed is the clock)
       if (before !== null && before !== sheetSig(W.events)) tryDo(() => window.OrderPieces && OrderPieces.load(rid, { force: true }));
       hold("now", () => { const r = rowOf(W.key); if (r && String(r.order.receiptId) === rid) paintNow(r); }, [byId("owNowCard"), byId("owNow")]);

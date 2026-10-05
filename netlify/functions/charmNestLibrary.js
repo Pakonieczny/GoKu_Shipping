@@ -2487,11 +2487,24 @@ async function op_customGet(b) {
     for (let i = 0; i < keys.length; i += 100) for (const s of await db.getAll(...keys.slice(i, i + 100).map(k => col(CUSTOM).doc(k)), { fieldMask: CUSTOM_FIELDS })) if (s.exists) records[s.id] = customRow(s.data(), false);
     return { records, keys: keys.length, truncated: new Set(b.keys.map(String)).size > keys.length };
   }
-  const since = Date.now() - Math.max(1, Math.min(CUSTOM_DAYS, b.days == null ? CUSTOM_DAYS : num(b.days))) * 86400000;
+  /* The changes feed (the open Review tab, every 2.5 s: Paul, 5 Oct, "in real time" for a completion made on another
+     computer): the records written at or after `since` (this server's clock, milliseconds; the page sends the `at` of its last
+     answer less a margin, so a write that committed a moment after another with a later time is not missed), oldest first,
+     with no sticker. One query on the one field every write sets (updatedAtMs); nothing is written, and when nothing changed
+     the answer is { records: {}, at } and one document read. `more` says the page of CUSTOM_FEED records was full: ask again
+     from `last`. `at` is read before the query, so what commits during it is in the next answer's margin. */
+  if (b.since != null) {
+    const at = Date.now(), from = Math.max(0, Math.min(at, num(b.since)));
+    const snap = await col(CUSTOM).where("updatedAtMs", ">=", from).orderBy("updatedAtMs", "asc").limit(CUSTOM_FEED + 1).select(...CUSTOM_FIELDS).get();
+    const docs = snap.docs.slice(0, CUSTOM_FEED), records = {}; docs.forEach(d => { records[d.id] = customRow(d.data(), false); });
+    return { records, at, more: snap.size > CUSTOM_FEED, last: docs.length ? num(docs[docs.length - 1].data().updatedAtMs) : 0 };
+  }
+  const at = Date.now(), since = at - Math.max(1, Math.min(CUSTOM_DAYS, b.days == null ? CUSTOM_DAYS : num(b.days))) * 86400000;
   const snap = await col(CUSTOM).where("updatedAtMs", ">=", since).orderBy("updatedAtMs", "desc").limit(1000).select(...CUSTOM_FIELDS).get();
   const records = {}; snap.docs.forEach(d => { records[d.id] = customRow(d.data(), false); });
-  return { records, truncated: snap.size >= 1000 };
+  return { records, truncated: snap.size >= 1000, at };
 }
+const CUSTOM_FEED = 300;
 /* Custom designs accepted by Send to Sheet are a different decision from a Custom Order completed by hand.
    The pending record survives a close before pooling; the sent phase and each line's timeline commit together.
    A retry uses the original files, copy mapping, signer and time. It never writes a completion, QR or engraving seal. */
