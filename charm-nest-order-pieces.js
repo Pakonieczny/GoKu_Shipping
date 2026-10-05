@@ -45,13 +45,19 @@
   const tailNo = k => { const m = /_(\d+)$/.exec(String(k || '')); return m ? +m[1] : 0; };
   const cleanSku = x => String(x || '').replace(/_+/g, ' ').replace(/\s+/g, ' ').trim();
   const cut = s => !!(s && (+s.laserDoneAt > 0 || +s.roseCutAt > 0));
+  const num = v => (Number.isFinite(+v) ? +v : 0);
+  /** A pool row a person's HOLD took off its sheet, as the cloud keeps it (the Hold press writes it in the same commit that edits the sheet records: C3, _charmNestPlacement.takenOff):
+   *  abandoned, on no sheet, with the hold's own mark (heldAt / heldBy) and no cancel mark (removedAt / removedBy), and not made live again since (repooledAt: the Release stamp).
+   *  The marks stay on a row for good as history, so a row released and made up again is told by repooledAt (and by its state: a live row is never 'abandoned'). Returns the hold, or null. */
+  const heldRow = p => (p && p.state === 'abandoned' && !p.sheetId && (num(p.heldAt) > 0 || p.heldBy) && !(num(p.removedAt) > 0 || p.removedBy) && !num(p.repooledAt) ? { at: num(p.heldAt) || num(p.updatedAt) || 0, by: String(p.heldBy || ''), reason: String(p.heldReason || '') } : null);
 
   /** A piece a person completed by hand (Review → Complete Order, or its QR label printed from Custom Orders): the custom order's own record, as the line
    *  carries it (spec.customDone) or the server read it (handDone). The same rule as CharmNestReadiness.isHand: resolved, it needs no sheet; Reopen
    *  (state 'open') takes it back; a custom order sent to the sheets with its own designs (how 'sheet') is cut. Only a line with no pool ids: a pooled one
    *  is waiting for the nester (and the card a person completes was never pooled). */
   const handOf = l => { const c = l && !(Array.isArray(l.poolIds) && l.poolIds.length) && (l.handDone || (l.spec && l.spec.customDone)); return c && typeof c === 'object' && c.state !== 'open' && c.how !== 'sheet' ? c : null; };
-  function problemOf(l, sku) {
+  function problemOf(l, sku, hold) {
+    if (hold) return 'held';   // (the cloud says a person took this piece off its sheet: whatever this page's own line says)
     if (!l) return sku ? null : 'noSku';
     const sp = l.spec || {}, kinds = (l.problems || []).map(p => String((p && p.kind) || p || ''));
     if (l.hold || l.state === 'held' || l.state === 'oversize' || kinds.includes('oversize')) return 'held';
@@ -95,7 +101,8 @@
       ids.sort((a, b) => tailNo(a) - tailNo(b));   // (stable: by copy number, so a record that lists _3 before _1 does not change which piece is piece 2)
       for (const id of ids) add(id, l, { qty: Math.max(qty, ids.length) });
     }
-    for (const [id, p] of pools) if (!seen.has(id) && !GONE.has(p.state)) add(id, null, { qty: +p.quantity || 1 });
+    // (a pool row a Hold took off its sheet is a held piece, still: an order this page holds no lines of, found by number, says it is on hold)
+    for (const [id, p] of pools) if (!seen.has(id) && (!GONE.has(p.state) || (!lines.length && heldRow(p)))) add(id, null, { qty: +p.quantity || 1 });
     for (const id of byPool.keys()) if (!seen.has(id)) add(id, null, { qty: 1 });
 
     // 2 · where each piece is
@@ -119,19 +126,24 @@
           via = 'hint';
         }
       }
+      // a take-off the cloud has recorded (a Hold: the pool row says abandoned + heldAt) wins over a sheet record that still lists the piece (a write that never
+      // reached it) and over the row's old sheetId, as the server's own reading does (C3, reconcile): not on that sheet, on hold. A page this sorter holds live
+      // that still places it is the person's own screen and stands; a sheet already cut keeps the piece (it is held AND physically there).
+      const hold = heldRow(p);
+      if (hold && holder && via !== 'page' && !cut(holder)) { holder = null; via = null; }
       const l = o.line, sp = (l && l.spec) || {}, sku = (l && (l.sku || sp.designSku)) || (p && p.sku) || '', metal = (l && (l.material || sp.material)) || (p && p.material) || (holder && holder.metal) || null;
-      const problem = problemOf(l, sku);
+      const problem = problemOf(l, sku, hold);
       const nested = !!holder, state = !holder ? 'unnested' : via === 'page' && !holder.id ? 'nested' : cut(holder) ? 'cut' : 'sheeted';
       // (completed by hand: a piece that needs no sheet is not waiting for the sheets to be read, and never "not on a sheet yet";
       //  a HELD piece is still a held piece: a person's stop holds wherever it sits, as CharmNestReadiness reads it)
-      const hand = !nested && !(l && (l.hold || l.changePending)) ? handOf(l) : null;
+      const hand = !nested && !hold && !(l && (l.hold || l.changePending)) ? handOf(l) : null;
       const loading = !nested && !known && !unsure && !hand, unsureHere = !nested && unsure && !hand;
       let reason = '';
       if (!nested) reason = hand ? HAND_REASON : loading ? '' : unsureHere ? 'its sheets could not be read just now' : problem ? REASON[problem] : l && l.state === 'pooled' ? 'it is waiting to be placed on a sheet' : 'it is not on a sheet yet';
       const thumb = (page && input.thumbOf && input.thumbOf(id)) || (l && l.thumb) || null;
       return { key: id, lineKey: o.lineKey, index: 0, hand, noDesign: !!(hand || l && !handOf(l) && (l.state === 'noDesign' || l.noDesign || sp.noDesign)), label: cleanSku(sku || (l && l.title)) || 'Piece', sku, metal, qty: o.qty, copy: o.copy, poolId: id, transactionId: o.tx, state, nested,
         sheetId: holder ? holder.id || null : null, sheetLabel: holder ? labelOf(Object.assign({}, holder, { metal: holder.metal || metal })) : null, sheetNo: holder ? sheetNo(holder) : null, setId: holder ? holder.setId || (p && p.setId) || null : null,
-        problem, reason, why: (l && l.reason) || '', thumb, listingId: (l && l.listingId) || '', loading, unsure: unsureHere, via, gone: !l && goneKeys.has(o.lineKey) };
+        problem, reason, why: (l && l.reason) || '', hold, thumb, listingId: (l && l.listingId) || '', loading, unsure: unsureHere, via, gone: !l && goneKeys.has(o.lineKey) };
     });
     // a line cancelled or gone from the order: its pieces that are still on a sheet are reported (gone), those on none are not
     // numbered as CharmNestReadiness.pieces numbers them: the live pieces 1.. in order; a piece with nothing to cut (no design), or cancelled and still on a sheet, after them
@@ -154,17 +166,21 @@
   /** The page's face of the module: reads what the page holds, learns what the order window reads, asks the server once. */
   function makePage(root) {
     const learned = new Map();      // orderId -> { at, pools, sheets, rows, ok, failed, task }
+    const revs = new Map();         // the orders of one read (joined) -> the digest of the answer the cloud made (getOrderPieces `rev`), sent back as ifRev on the next forced read
     const fullSheets = new Map();   // sheetId -> the sheet's record with ALL its poolIds (loadSheet)
     const subs = new Set();
     let version = 0, lib = null;
     const bump = () => { version++; for (const f of [...subs]) { try { f(version); } catch (e) { console.warn('OrderPieces subscriber', e); } } };
     const ridOf = x => String(x == null ? '' : x).replace(/\D/g, '');
     const entry = rid => { let e = learned.get(rid); if (!e) learned.set(rid, e = { at: 0, pools: [], sheets: [], rows: null, ok: false, failed: null, task: null }); return e; };
+    /** What a read of an order says, as one short string: it changes exactly when the answer to "where is each piece" could (the rows' state, sheet and take-off marks, the sheets' piece lists and cut marks). */
+    const readSig = e => JSON.stringify([e.ok ? 1 : 0, e.failed ? 1 : 0, (e.pools || []).map(p => [p.poolId, p.state, p.sheetId || '', num(p.heldAt), num(p.removedAt), num(p.repooledAt), p.heldBy || '', num(p.updatedAt)]).sort(),
+      (e.sheets || []).map(s => [sidOf(s), num(s.updatedAt), (s.poolIds || []).length, num(s.laserDoneAt), num(s.roseCutAt), s.setId || '', s.draft ? 1 : 0, s.archived ? 1 : 0]).sort()]);
 
     // the Library's rows (Current tab, loaded), indexed once per list
     function libIndex() {
       const L = root.CN && root.CN.S && root.CN.S.library, rows = (L && L.rows) || [];
-      if (lib && lib.rows === rows && lib.n === rows.length && lib.at === (L && L.loadedAt)) return lib;
+      if (lib && lib.rows === rows && lib.n === rows.length && lib.at === (L && L.loadedAt) && lib.patched === (L && L.patchedAt)) return lib;
       const byPool = new Map(), byOrder = new Map(), bySheet = new Map(), bySet = new Map();
       for (const r of rows) {
         const id = sidOf(r); if (!id || r.archived) continue;
@@ -173,7 +189,7 @@
         for (const o of r.orders || []) (byOrder.get(String(o)) || byOrder.set(String(o), []).get(String(o))).push(r);
         for (const p of r.poolIds || []) { const k = String(p); (byPool.get(k) || byPool.set(k, []).get(k)).push(r); const o = k.split('_')[0]; const l = byOrder.get(o); if (!l || !l.includes(r)) (l || byOrder.set(o, []).get(o)).push(r); }
       }
-      return lib = { rows, n: rows.length, at: L && L.loadedAt, byPool, byOrder, bySheet, bySet };
+      return lib = { rows, n: rows.length, at: L && L.loadedAt, patched: L && L.patchedAt, byPool, byOrder, bySheet, bySet };
     }
     const pages = () => { try { return typeof allSheets === 'function' ? allSheets() : []; } catch (_) { return []; } };
     const livePlaced = id => { try { return root.Pool && root.Pool.sheetOf ? root.Pool.sheetOf(id) : null; } catch (_) { return null; } };
@@ -195,7 +211,13 @@
       for (const p of (e && e.pools) || []) pools.set(p.poolId, p);
       const mem = root.B && root.B.pool && root.B.pool.rows;
       // (this page's own pool rows, for the pieces its lines name: a hint, merged with what was read, a sheet id kept from either)
-      const merge = (id, p) => { const cur = pools.get(id); pools.set(id, cur ? Object.assign({}, cur, p, { sheetId: p.sheetId || cur.sheetId || null }) : p); };
+      // (the NEWER of the two says what the row is now: a row this page patched is newer than the read made before it; a row another computer wrote since is newer than
+      //  this page's copy. A take-off (abandoned) carries no sheet, whichever copy held one.)
+      const merge = (id, p) => {
+        const cur = pools.get(id); if (!cur) { pools.set(id, p); return; }
+        const mineNewer = stampOf(p) >= stampOf(cur), a = mineNewer ? cur : p, b = mineNewer ? p : cur;
+        pools.set(id, Object.assign({}, a, b, { sheetId: GONE.has(b.state) ? (b.sheetId || null) : (b.sheetId || a.sheetId || null) }));
+      };
       if (mem) for (const l of lines) {
         for (let c = 1; c <= Math.max(1, Math.round(+l.quantity || 1)); c++) { const id = `${l.key}_${c}`, p = mem.get(id); if (p) merge(id, p); }
         for (const id of l.poolIds || []) { const p = mem.get(String(id)); if (p) merge(String(id), p); }
@@ -203,8 +225,13 @@
       // sheets: what the page holds (Library rows) and what was read for the order, newest copy of each
       const L = libIndex(), sheets = new Map();
       const take = s => { const id = sidOf(s); if (!id) return; const c = sheets.get(id); if (!c || stampOf(s) >= stampOf(c)) sheets.set(id, s); };
-      for (const s of L.byOrder.get(rid) || []) take(s);
-      for (const l of lines) for (let c = 1; c <= Math.max(1, Math.round(+l.quantity || 1)); c++) for (const s of L.byPool.get(`${l.key}_${c}`) || []) take(s);
+      // The Library's list is the page's copy of the sheets as they were when it was last read (when the Library was opened, and only changed in place while it is on screen): it
+      // can only say what was, so once the order's OWN read has been made (every sheet that names the order or lists one of its pieces) it adds nothing, and a sheet it still
+      // lists the order on, that the cloud no longer does (a hold, a take-off, a deleted sheet), is not read as a sheet the piece is on.
+      if (!(e && e.ok)) {
+        for (const s of L.byOrder.get(rid) || []) take(s);
+        for (const l of lines) for (let c = 1; c <= Math.max(1, Math.round(+l.quantity || 1)); c++) for (const s of L.byPool.get(`${l.key}_${c}`) || []) take(s);
+      }
       for (const s of (e && e.sheets) || []) take(s);
       return { orderId: rid, lines, pools: [...pools.values()], sheets: [...sheets.values()], sheetsKnown: !!(e && e.ok), failed: !!(e && !e.ok && e.failed), livePlaced, liveSheet,
         thumbOf: id => { try { const c = root.Pool && root.Pool.charmOf ? root.Pool.charmOf(id) : null; return c && c.thumbUrl || null; } catch (_) { return null; } } };
@@ -259,15 +286,21 @@
       const fresh = want.filter(r => !(learned.get(r) && learned.get(r).task));
       if (!fresh.length) return waiting.length ? Promise.all(waiting).then(() => true) : Promise.resolve(true);
       const task = (async () => {
+        let changed = false;
         for (let i = 0; i < fresh.length; i += 30) {
           const part = fresh.slice(i, i + 30);
           try {
-            const res = await api('charmNestLibrary', { op: 'getOrderPieces', orderIds: part }, { quiet: true, timeoutMs: 15000 });
-            for (const r of part) { const x = (res.orders || {})[r] || {}, e = entry(r); e.pools = x.pools || []; e.sheets = x.sheets || []; e.at = Date.now(); e.ok = true; e.failed = null; }
-          } catch (err) { for (const r of part) { const e = entry(r); e.failed = err; e.at = Date.now(); } console.warn('OrderPieces: sheet records not read', err && err.message); }
+            // (a forced re-read of orders already read sends the digest of the last answer: the cloud says `unchanged` without the payload when nothing it was made from moved: C3's ifRev)
+            const key = part.join(','), ask = { op: 'getOrderPieces', orderIds: part }, last = opts.force && part.every(r => learned.get(r) && learned.get(r).ok) ? revs.get(key) : null;
+            if (last) ask.ifRev = last;
+            const res = await api('charmNestLibrary', ask, { quiet: true, timeoutMs: 15000 });
+            if (res && res.unchanged && last) { for (const r of part) { const e = entry(r); e.at = Date.now(); } continue; }
+            if (res && res.rev) { revs.set(key, res.rev); if (revs.size > 40) revs.delete(revs.keys().next().value); } else revs.delete(key);
+            for (const r of part) { const x = (res.orders || {})[r] || {}, e = entry(r), was = readSig(e); e.pools = x.pools || []; e.sheets = x.sheets || []; e.at = Date.now(); e.ok = true; e.failed = null; if (was !== readSig(e)) changed = true; }
+          } catch (err) { for (const r of part) { const e = entry(r), was = readSig(e); e.failed = err; e.at = Date.now(); if (was !== readSig(e)) changed = true; } console.warn('OrderPieces: sheet records not read', err && err.message); }
         }
         for (const r of fresh) { const e = learned.get(r); if (e) e.task = null; }
-        bump();
+        if (changed || !opts.force) bump();   // (a forced re-read of what the page already holds says nothing new: nothing redraws)
         return fresh.every(r => learned.get(r) && learned.get(r).ok);
       })();
       for (const r of fresh) entry(r).task = task;
@@ -275,21 +308,27 @@
     }
     /** Reads a saved sheet whole (every piece on it, so every order on it) and then the sheet records of those orders: when it resolves,
      *  onSheet(sheetId) and the spread of each order on it are complete. For a sheet the Library rows do not hold (a Completed one). */
-    async function loadSheet(sheetId) {
+    async function loadSheet(sheetId, opts = {}) {
       const api = root.CN && root.CN.api; if (!api || !sheetId) return false;
       try {
         const res = await api('charmNestLibrary', { op: 'getOrderPieces', sheetIds: [sheetId] }, { quiet: true, timeoutMs: 15000 });
-        const rec = (res.sheets || {})[sheetId]; if (!rec) return false;
+        const rec = (res.sheets || {})[sheetId];
+        if (!rec) { const had = fullSheets.delete(sheetId); if (had) bump(); return false; }   // (gone from the cloud: this page stops holding it)
+        const was = fullSheets.get(sheetId), moved = !was || num(was.updatedAt) !== num(rec.updatedAt) || (was.poolIds || []).length !== (rec.poolIds || []).length;
         fullSheets.set(sheetId, rec);
         const rids = [...new Set(rec.poolIds.map(id => id.split('_')[0]).filter(x => /^\d+$/.test(x)))];
-        const ok = await load(rids); bump(); return ok;
+        const ok = await load(rids, { force: !!opts.force }); if (moved) bump(); return ok;
       } catch (e) { console.warn('OrderPieces: sheet not read', e && e.message); return false; }
     }
     /** The order lines the order window built from the records (an order outside the pull). */
     function learn(orderId, data) { const rid = ridOf(orderId); if (!rid || !data) return; const e = entry(rid); if (data.rows) e.rows = data.rows; if (data.pools) { e.pools = data.pools; } if (data.sheets) { e.sheets = data.sheets; if (data.sheetsKnown) { e.ok = true; e.at = Date.now(); } } bump(); }
     const forget = orderId => { learned.delete(ridOf(orderId)); bump(); };
 
-    return { of, spread: spreadOf, ofLine, ofRow, nestedOfRow, nestedOf, onSheet, ordersOf, known, load, loadSheet, learn, forget, subscribe: fn => { subs.add(fn); return () => subs.delete(fn); }, version: () => version, _resolve: resolve, _learned: learned };
+    /** Something this module reads from elsewhere changed (a cancel record, a hand completion): everything that reads it draws again. */
+    const notify = () => bump();
+    /** Read again now (forced) the orders given, else every order this page has learned; resolves when they are read. */
+    const refresh = ids => load(ids && ids.length ? ids : [...learned.keys()], { force: true });
+    return { of, spread: spreadOf, ofLine, ofRow, nestedOfRow, nestedOf, onSheet, ordersOf, known, load, loadSheet, learn, forget, notify, refresh, subscribe: fn => { subs.add(fn); return () => subs.delete(fn); }, version: () => version, _resolve: resolve, _learned: learned };
   }
   return { CODE, resolve, spread, makePage, labelOf, sheetNo, problemOf, handOf, REASON };
 });

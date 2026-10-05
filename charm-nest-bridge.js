@@ -1408,7 +1408,7 @@ const Orders = window.Orders = (() => {
     }
     return out;
   }
-  const STATE_PILL = { pulled: ["neutral", "pulled"], waiting: ["info", "waiting"], noDesign: ["info", "no design"], pooled: ["info", "pooled"], nested: ["ok", "nested"], written: ["ok", "written"], labelled: ["ok", "labelled"], committed: ["ok", "complete"], unmatched: ["bad", "unmatched"], held: ["bad", "held"], contended: ["warn", "other run"], skipped: ["warn", "skipped"], gone: ["bad", "gone"], oversize: ["bad", "oversize"] };
+  const STATE_PILL = { pulled: ["neutral", "pulled"], waiting: ["info", "waiting"], noDesign: ["info", "no design"], pooled: ["info", "pooled"], nested: ["ok", "nested"], written: ["ok", "written"], labelled: ["ok", "labelled"], committed: ["ok", "complete"], unmatched: ["bad", "unmatched"], held: ["bad", "held"], contended: ["warn", "other run"], skipped: ["warn", "skipped"], gone: ["bad", "gone"], cancelled: ["bad", "cancelled"], oversize: ["bad", "oversize"] };
   function engravePill(r) { const e = r.engrave; if (!e) return r.spec && r.spec.engraveCandidate ? ["warn", "words?"] : ["neutral", "—"]; if (!e.needed) return ["neutral", e.state === "skipped" ? "skipped" : "no engraving"]; if (e.approved) return ["ok", "approved"]; if (e.state === "words") return ["warn", "words"]; if (e.state === "review") return ["warn", "review"]; if (e.state === "fitted") return ["info", "fitted"]; if (e.state === "blocked") return ["bad", "blocked"]; return ["info", e.state || "engrave"]; }
   const OV = { pile: null, metal: null, form: null, eng: null, q: "", view: null, sort: "activity", desc: false, limit:48 };   // what the tab is showing right now
   const FORM_LABEL = { necklace: "Necklaces", earrings: "Earrings", "earring-single": "Single earrings", huggie: "Huggies", charm: "Charms only", bracelet: "Bracelets", anklet: "Anklets", keychain: "Keychains" };
@@ -1418,7 +1418,7 @@ const Orders = window.Orders = (() => {
     const q = OV.q.trim().toLowerCase();
     return rowsOf().filter(r => {
       if (r.state === "gone") return false;
-      if (OV.pile === "hold" && !r.hold) return false;
+      if (OV.pile === "hold" && !heldNow(r)) return false;
       if (OV.metal && (r.material || "none") !== OV.metal) return false;
       if (OV.form && ((r.spec && r.spec.form) || "none") !== OV.form) return false;
       if (OV.eng) { const needs = !!(r.engrave && r.engrave.needed); if (OV.eng === "yes" ? !needs : needs) return false; }
@@ -1445,11 +1445,26 @@ const Orders = window.Orders = (() => {
      the run, so "3/5 nested" reads as progress; the exceptions stay unnumbered, so a problem reads differently. */
   const PROGRESS = ["pooled", "nested", "written", "labelled", "committed"];
   const nestedRow = r => { try { return !!(window.OrderPieces && OrderPieces.nestedOfRow(r)); } catch (_) { return false; } };
+  /** Where this line's pieces are NOW, from the ONE answer (PiecePlacement: the cloud's sheet records and pool rows, the cancel and hand records, a hold), never from this page's own
+   *  line state alone: that is what the run last did on this computer (a line is "pooled" until its set is written, "held" only where Hold was pressed). null while unread. */
+  const placeNow = r => { try { const p = window.PiecePlacement ? PiecePlacement.ofRow(r) : null; return p && p.state !== "loading" ? p : null; } catch (_) { return null; } };
+  /** Whether this line is on hold: where the cloud has said so (a hold this page has seen confirmed is the cloud's to lift: a Release made elsewhere ends it here too), else this page's own flag
+   *  (a hold pressed here that the cloud has not confirmed yet: its own flow is still writing it). */
+  const heldNow = r => { const pl = placeNow(r); if (pl && r.holdSeen) return pl.state === "hold"; return !!r.hold || (pl || {}).state === "hold"; };
+  const RUN_ON_SHEET = ["nested", "written", "labelled", "committed"];
   function stateWords(r) {
     // a line stays "pooled" in the record until its set is written; once every piece of it sits on a sheet it reads as
     // nested (the list said "1/5 pooled" for a charm already cut into a sheet: audit, 25 Sep)
     // (every piece placed on a sheet: a page of this sorter holds it, or a saved sheet's own record lists it: OrderPieces)
-    const state = r.state === "pooled" && ((window.Pool && (r.poolIds || []).length && r.poolIds.every(id => Pool.sheetOf(id))) || nestedRow(r)) ? "nested" : r.state;
+    // The cloud's answer first (Paul, 5 Oct: one piece said "pooled" in the list and "on GF Sheet 1" in the order window): a piece the cloud holds on a sheet is at least nested; one it
+    // holds on no sheet is not written or labelled whatever this page's line says; one it holds on hold is held. This page's line state only says how far the run took it.
+    const pl = placeNow(r);
+    let state;
+    if (pl && pl.state === "cancelled") state = "cancelled";   // (an order cancelled on another computer: its lines say so here too, whatever this page's run last did with them)
+    else if (pl && pl.state === "hold") state = "held";
+    else if (pl && pl.state === "sheet" && !pl.partial) state = RUN_ON_SHEET.includes(r.state) ? r.state : r.state === "pooled" || r.state === "waiting" ? "nested" : r.state;
+    else if (pl && pl.state === "waiting" && RUN_ON_SHEET.includes(r.state)) state = "pooled";
+    else state = r.state === "pooled" && ((window.Pool && (r.poolIds || []).length && r.poolIds.every(id => Pool.sheetOf(id))) || nestedRow(r)) ? "nested" : r.state;
     // a special line that is not cut says which: finished by hand under Custom Orders, or chain only
     if (state === "noDesign" && r.spec && r.spec.customDone) return ["ok", "custom · done"];
     if (state === "noDesign" && r.spec && r.spec.special && r.spec.special.notCut) return ["info", r.spec.special.label.toLowerCase()];
@@ -1472,9 +1487,16 @@ const Orders = window.Orders = (() => {
   const wordsOf = sp => (sp.personalization || []).join(" / ") || sp.buyerMessage || "";
   /** Where this line physically is: the set and the sheet it was nested on. "What's where", answered on the line itself. */
   function placeOf(r) {
-    for (const id of r.poolIds || []) { const p2 = B.pool.rows.get(id); if (p2 && (p2.sheetName || p2.sheetId)) return { set: p2.setId || "", sheet: p2.sheetName || p2.sheetId, sheetId: p2.sheetId || null }; }
+    // a piece the cloud holds on no sheet has no place, whatever this page's pool rows were last told (a hold, a take-off or a deleted sheet elsewhere)
+    const pl = placeNow(r);
+    if (pl && !pl.onSheet) return null;
+    const seen = pl && pl.sheets.length ? pl.sheets : null;
+    // a piece with copies on two sheets says both (the order window and the Overview's Sheet cell do)
+    if (seen && seen.length > 1 && seen.every(s => s.label)) return { set: "", sheet: seen.map(s => s.label).join(" + "), sheetId: seen[0].id || null };
+    for (const id of r.poolIds || []) { const p2 = B.pool.rows.get(id); if (p2 && (p2.sheetName || p2.sheetId) && (!seen || !p2.sheetId || seen.some(s => s.id === p2.sheetId))) return { set: p2.setId || "", sheet: p2.sheetName || p2.sheetId, sheetId: p2.sheetId || null }; }
     // (the pool rows say nothing, or no longer name the sheet: the saved sheet that lists the piece does)
     try { const at = window.OrderPieces && OrderPieces.ofRow(r).find(p => p.nested && p.sheetLabel); if (at) return { set: at.setId || "", sheet: at.sheetLabel, sheetId: at.sheetId || null }; } catch (_) {}
+    if (seen) return { set: seen[0].setId || "", sheet: seen[0].label, sheetId: seen[0].id || null };
     return null;
   }
   /** Everything a person needs to recognise one line, as a card or as a row: the same fields either way. */
@@ -1562,8 +1584,8 @@ const Orders = window.Orders = (() => {
       if (!r || r.state === "gone")
         return window.Cancelled && Cancelled.has(rid) ? { to: pillOf("cancelled", rid), plus: first ? "+1" : false, note: note(`Order ${rid} is cancelled · kept under Cancelled`, () => showCancelled(rid), "open Cancelled at this order") } : null;
       // off hold: back in line under Open Orders (which counted it already: no "+1")
-      if (OV.pile === "hold" && !r.hold) {
-        const still = rowsOf().filter(x => String(x.order.receiptId) === rid && x.hold && x.state !== "gone").length;
+      if (OV.pile === "hold" && !heldNow(r)) {
+        const still = rowsOf().filter(x => String(x.order.receiptId) === rid && heldNow(x) && x.state !== "gone").length;
         return { to: pillOf("", rid), plus: false, note: note(still ? `A piece of order ${rid} is back in line · ${still} still on hold` : `Order ${rid} is back in line`, () => showLine(key, ""), "open Open Orders at this order") };
       }
       if (visibleRows().some(x => x.key === key)) return null;   // only further down: the sort took it past what is drawn
@@ -1632,7 +1654,8 @@ const Orders = window.Orders = (() => {
       const mail = window.CustomerMail ? CustomerMail.badgeStamp(r.order.receiptId) : "", team = window.TeamMail ? TeamMail.stamp(r) : "";
       // the seals this piece's record keeps (Complete Order, each print; a reopened piece's too: they are for good), drawn small beside its state
       const sealRec=window.CustomPrint&&window.Seal?CustomPrint.recordOfRow(r):null,seals=sealRec?CustomPrint.sealsOfRow(r,28):"";
-      const stamp=JSON.stringify([cards,r.order,r.line,r.spec,r.state,st,r.hold,r.wait,why,where,due,date,mail,team,!!r.hold && OV.pile === "hold" && !!window.CancelUI,seals&&CustomPrint.sealSig(sealRec)]);
+      const held=heldNow(r);
+      const stamp=JSON.stringify([cards,r.order,r.line,r.spec,r.state,st,r.hold,held,r.wait,why,where,due,date,mail,team,held && OV.pile === "hold" && !!window.CancelUI,seals&&CustomPrint.sealSig(sealRec)]);
       const cached=orderNodes.get(r.key);
       if(cached?.stamp===stamp){orderNodes.delete(r.key);orderNodes.set(r.key,cached);wanted.push(cached.node);mounts.push([cached.node,r]);continue;}
       const node = el("div", (cards ? "ocard" : "doneRow workRow orderListRow") + " hoverItem" + (attn ? " attn" : ""));
@@ -1640,7 +1663,7 @@ const Orders = window.Orders = (() => {
       node.title = r.order.receiptId + " · " + (sp.designSku || r.line.sku || "no SKU") + " — " + r.line.title;
       const qty = sp.quantity || r.line.quantity || 1;
       const identity=`<div class="engravingIdentity"><span class="queueLabel">Order</span><div class="engravingOrder"><b class="mono onum">${esc(r.order.receiptId)}</b><span class="sku mono">${esc(sp.designSku || r.line.sku || 'No SKU')}</span></div><span class="purchaseLabel">${wordsOf(sp) ? 'Personalisation' : 'Item'}</span><span class="rowExcerpt" title="${esc(wordsOf(sp) || r.line.title || '')}">${esc(wordsOf(sp) || r.line.title || 'No title')}</span>${where ? `<span class="rowExcerpt dim">${esc(where.set)} · ${esc(where.sheet)}</span>` : ''}</div>`;
-      node.innerHTML=ListMedia.pair(r)+identity+`<div class="purchaseSummary">${purchaseMarkup(r)}</div><div class="rowActions">${team ? TeamMail.mark(r) : ""}${mail && mail !== "null" ? CustomerMail.badge(r.order.receiptId) : ""}<span class="ost ${st[0]}">${esc(st[1])}</span>${seals}<span class="rowFacts">Qty ${qty} · <span class="due ${due.cls}">Ship by ${esc(due.txt)}</span></span>${why ? `<span class="rowExcerpt reviewReason" title="${esc(why)}">${esc(why)}</span>` : ''}${r.hold ? '<button class="btn ghost sm relHold" type="button" title="back in line: the run places it on the next sheet that fits">Release hold</button>' : ''}${gateBtn}</div>`;
+      node.innerHTML=ListMedia.pair(r)+identity+`<div class="purchaseSummary">${purchaseMarkup(r)}</div><div class="rowActions">${team ? TeamMail.mark(r) : ""}${mail && mail !== "null" ? CustomerMail.badge(r.order.receiptId) : ""}<span class="ost ${st[0]}">${esc(st[1])}</span>${seals}<span class="rowFacts">Qty ${qty} · <span class="due ${due.cls}">Ship by ${esc(due.txt)}</span></span>${why ? `<span class="rowExcerpt reviewReason" title="${esc(why)}">${esc(why)}</span>` : ''}${held ? '<button class="btn ghost sm relHold" type="button" title="back in line: the run places it on the next sheet that fits">Release hold</button>' : ''}${gateBtn}</div>`;
       const number=node.querySelector('.onum');if(number){const time=el('span','orderTime');time.textContent=date.time;time.title=date.label;number.appendChild(time);}
       // (the order view grows out of the row that was clicked)
       node.onclick = e => { if (e.target.closest("button,[role=button]") !== node && e.target.closest("button,[role=button]")) return; OrderWin.open(r.key, { from: node }); };
@@ -1649,7 +1672,7 @@ const Orders = window.Orders = (() => {
       { const rh = node.querySelector(".relHold:not([data-gate])"); if (rh) rh.onclick = e => { e.stopPropagation(); if (window.HoldUI && HoldUI.canRelease()) { HoldUI.release(String(r.order.receiptId), { button: rh }).then(x => { if (x && x.used === false) { Review.repool(r); render(); } }); return; } Review.repool(r); render(); }; }
       { const gb = node.querySelector("[data-gate]"); if (gb) gb.onclick = e => { e.stopPropagation(); gb.disabled = true; (gb.dataset.gate === "release" ? Gate.release(gb.dataset.gm) : Gate.cutAnyway(gb.dataset.gm)).catch(err => toast(err.message, "bad", 6000)); }; }
       // Cancel Order beside Release hold, on the On hold pile only (charm-nest-cancel-ui.js; the stamp above carries the pile)
-      if (r.hold && OV.pile === "hold" && window.CancelUI) { try { CancelUI.mount(node, r); } catch (err) { console.warn("Cancel Order button", err); } }
+      if (held && OV.pile === "hold" && window.CancelUI) { try { CancelUI.mount(node, r); } catch (err) { console.warn("Cancel Order button", err); } }
       // an order can be several lines on several cards: hovering one lifts all of them, the way the station does
       node.dataset.rid = String(r.order.receiptId);
       // (the old node's decoded pictures move over once the update has measured where the old node stood)
@@ -1736,7 +1759,7 @@ const Orders = window.Orders = (() => {
     const byForm = {}; for (const r of all) { const f = (r.spec && r.spec.form) || "none"; byForm[f] = (byForm[f] || 0) + 1; }
     const forms = Object.keys(byForm).filter(f => f !== "none" || OV.form === "none").sort((a2, b2) => byForm[b2] - byForm[a2]);
     const engN = all.filter(r => r.engrave && r.engrave.needed).length;
-    const heldN = new Set(all.filter(r => r.hold).map(r => String(r.order.receiptId))).size, cxN = window.Cancelled ? Cancelled.count() : 0;
+    const heldN = new Set(all.filter(r => heldNow(r)).map(r => String(r.order.receiptId))).size, cxN = window.Cancelled ? Cancelled.count() : 0;
     // (Cancelled is always there, Paul 28 Sep A5: every cancelled order, Etsy's and a person's, whatever the pull holds)
     const pills = v.querySelector("#ordChips"), pillsHtml = chip(!OV.pile,"","Open Orders",totals.orders,"","Distinct open order numbers, across all materials")
       + (heldN || OV.pile === "hold" ? chip(OV.pile === "hold","hold","On hold",heldN,"","Orders a person put on hold or took off a sheet; release them from here or from the sheet window") : "")
@@ -1787,6 +1810,9 @@ const Orders = window.Orders = (() => {
     renderBody();
     tabCount();
   }
+  // The list says where each piece is from the ONE answer (placeNow: OrderPieces -> PiecePlacement), so it is drawn again when a read lands that changed it: the list had no
+  // such listener, and said "1/5 pooled" for a piece the cloud had put on a sheet, and nothing for one it had put on hold, until the next Etsy check (Paul, 5 Oct).
+  try { if (window.OrderPieces && OrderPieces.subscribe) OrderPieces.subscribe(() => { if (onScreen()) render(); }); } catch (_) { /* drawn when next shown */ }
   /** The Orders tab's count (open orders). A change while the station is in use (an order in, an order gone) shows as a
    *  soft ring round the number, not a jump: a line put on hold or released stays an open order and leaves it as it is. */
   function tabCount() {
@@ -1802,7 +1828,7 @@ const Orders = window.Orders = (() => {
     const v = document.getElementById("ordersView"), box = v && v.querySelector("#ordQ"); if (box) box.value = OV.q;
     render();
   }
-  return { view: () => OV, showPile, showCancelled, cancelArrived, pull, claim, unclaim, revalidate, render, renderNow, renderBody, markStale, loadMaps, takeCustom, customBase: () => customBase, interpretAll, lineRecord, rowFromRecord, rows: rowsOf, visibleRows, placeOf, imageFor, wantImage, shipTxt, statePill: stateWords, applyPullRule, ctx, keepRest, takeOffGone, _kept: () => readSaid.size };
+  return { view: () => OV, showPile, showCancelled, cancelArrived, pull, claim, unclaim, revalidate, render, renderNow, renderBody, markStale, loadMaps, takeCustom, customBase: () => customBase, interpretAll, lineRecord, rowFromRecord, rows: rowsOf, visibleRows, placeOf, heldNow, imageFor, wantImage, shipTxt, statePill: stateWords, applyPullRule, ctx, keepRest, takeOffGone, _kept: () => readSaid.size };
 })();
 
 /* ═══ 19 · Master — SKU labels under charms, per-SKU designs, the index ══════ */
@@ -2616,7 +2642,8 @@ const Pool = window.Pool = (() => {
     return pooled;
   }
   // (who: { by, signedIn, device } for the order timeline's stamp, stampWho; sent beside the patch, not stored on the rows)
-  async function update(poolIds, patch, who) { for (const id of poolIds) { const p = B.pool.rows.get(id); if (p) Object.assign(p, patch); } if (S.cloud.ok) for (let i = 0; i < poolIds.length; i += 400) await api("charmNestLibrary", Object.assign({}, who, { op: "poolUpdate", poolIds: poolIds.slice(i, i + 400), patch })); }
+  // (the page's row is stamped: a row read from the cloud before this change is older than it, OrderPieces)
+  async function update(poolIds, patch, who) { for (const id of poolIds) { const p = B.pool.rows.get(id); if (p) Object.assign(p, patch, { updatedAt: Date.now() }); } if (S.cloud.ok) for (let i = 0; i < poolIds.length; i += 400) await api("charmNestLibrary", Object.assign({}, who, { op: "poolUpdate", poolIds: poolIds.slice(i, i + 400), patch })); }
   /* charmOf and sheetOf walked every charm of every sheet at each call (sheetOf every placement against every charm), and
      a classify pass or a restore asks once a line, so an update took longer the more sheets the table held. One index
      answers both, first match first as the walks did; it is made again when a page comes or goes or a sheet's charms or
@@ -6009,6 +6036,33 @@ i.flowDot::before{content:"";position:absolute;inset:-7px}
     bang.click();return true;
   }
   document.addEventListener('library-checklist-open',ev=>{if(ev.detail?.handled)return;const card=ev.target?.closest?.('[data-laser-card]');if(card)openChecklist(card,ev.detail);});
+  /* A sheet card's "placed/charms · density · orders" line is the sheet's cloud record as the live read last had it (Paul: an order taken off a sheet, or put on one, on another
+     computer is on this card within seconds, not at the next opening of the Library): the cloud's own numbers, never the list the card was drawn from. */
+  function cardCounts(card){
+    for(const n of card.querySelectorAll('[data-sheet-count]')){
+      const s=records.get(n.dataset.sheetCount);if(!s)continue;
+      const html=`<b>${s.placedCount}</b>/${s.charmCount}`;if(n.innerHTML!==html)n.innerHTML=html;
+    }
+    for(const n of card.querySelectorAll('[data-sheet-density]')){
+      const s=records.get(n.dataset.sheetDensity);if(!s)continue;
+      const html=`<b>${Math.round((s.density || 0) * 100)}%</b>`;if(n.innerHTML!==html)n.innerHTML=html;
+    }
+    for(const n of card.querySelectorAll('[data-sheet-orders]')){
+      const s=records.get(n.dataset.sheetOrders);if(!s)continue;
+      const text=`${(s.orders || []).length} orders`;if(n.textContent!==text)n.textContent=text;
+    }
+  }
+  /* The Library's list rows are the page's copy of the sheets for everything else that reads them (OrderPieces' libIndex, the shared-orders window, the readiness lines): a sheet the
+     live read found different is changed in the row too (the placement fields only), and S.library.patchedAt says so, so no other reader keeps the older copy. */
+  const ROW_FIELDS=['poolIds','orders','charmCount','placedCount','rejectCount','density','freePt2','updatedAt','setId','setSeq','sheetIndex','draft','solidIncluded','laserDoneAt','laserDoneBy','roseCutAt','archived'];
+  function patchRow(rec){
+    const rows=S.library?.rows;if(!rows || !rec)return;
+    const id=rec.id || rec.sheetId,row=rows.find(r=>(r.id || r.sheetId)===id);if(!row)return;
+    if(!rec.archived && (rec.updatedAt || 0)<(row.updatedAt || 0))return;   // (the list is newer than this answer: a read made before the list was)
+    let moved=false;
+    for(const k of ROW_FIELDS){if(!(k in rec))continue;if(JSON.stringify(row[k])!==JSON.stringify(rec[k])){row[k]=rec[k];moved=true;}}
+    if(moved)S.library.patchedAt=Date.now();
+  }
   function refresh(){
     frame=0;
     if(window.Seal?.defer("laser-refresh",refresh))return;
@@ -6027,6 +6081,7 @@ i.flowDot::before{content:"";position:absolute;inset:-7px}
       const seal=card.querySelector('[data-laser-seal]');if(seal){const html=R.seal(report,card._laserSet?'Set':'Sheet',card._laserSet || sheets[0]);if(seal.innerHTML!==html)seal.innerHTML=html;}
       const title=card.querySelector('[data-set-title]');if(title)title.textContent=O.setLabel(card._laserSet.seq)+(card._laserSet.day?' · '+card._laserSet.day:'');
       card.querySelectorAll('[data-sheet-status]').forEach(n=>{const s=records.get(n.dataset.sheetStatus);if(s){const html=R.counter(sheet(s),'Sheet',s);if(n.innerHTML!==html)n.innerHTML=html;}});
+      cardCounts(card);
       // a card whose readiness changed moves between In progress and Laser cutting: where it stood is measured first, so it glides
       // there (the Library's own glide, charm-nest-library.js) instead of jumping; while a flight is drawing (LibraryFx) that is its to show
       const body=card.closest('#libBody');if(body && card.parentElement!==body.querySelector(`[data-laser-area="${report.ready?'ready':'pending'}"] .laserAreaItems`)){if(!before && !body.querySelector('[data-fx-hide]')){home=body;before=window.LibraryDone?.snapshot?.(body) || null;}place(card,report.ready,body);moved.push([card,report.ready]);}
@@ -6247,7 +6302,7 @@ i.flowDot::before{content:"";position:absolute;inset:-7px}
        · an answer that changes a card draws it again (the cards in place; a card that crossed between In progress and Laser
          cutting glides there); a sheet that moved to another set, or was cut or removed on another computer, has the Library's
          list read again (once the person's own work on it, a Moving bar or a drag, is done). */
-  const LIVE={every:3000,gap:600,max:30000,old:20000,second:1500,settle:1000,reloadEvery:10000};
+  const LIVE={every:3000,gap:600,max:30000,old:20000,second:1500,settle:1000,reloadEvery:10000,goneEvery:2500,goneSettle:50};   // (a sheet found GONE from the cloud has the list read again sooner: its card must not stay)
   const liveOn=()=>S.mode==='library' && !document.hidden && !!S.cloud.ok;
   // the sheets and sets of the cards in view
   function shown(){
@@ -6271,11 +6326,11 @@ i.flowDot::before{content:"";position:absolute;inset:-7px}
       found.add(s.id);
       shaped('s:'+s.id,(!s.draft && s.solidIncluded!==false?s.setId || '':'')+'|'+(s.laserDoneAt?'cut':''));
       if(!differs('s:'+s.id,s) && !always)continue;
-      diff=true;records.set(s.id,s);
+      diff=true;records.set(s.id,s);patchRow(s);
     }
     for(const id of ids)if(!found.has(id) && records.has(id)){
-      shaped('s:'+id,'gone');
-      if(always || !records.get(id).archived){diff=true;records.set(id,{...records.get(id),archived:true});}
+      shaped('s:'+id,'gone');if(!records.get(id).archived)live.gone=true;
+      if(always || !records.get(id).archived){diff=true;records.set(id,{...records.get(id),archived:true});patchRow({id,archived:true});}
     }
     if(shape)wantReload();
     return diff;
@@ -6334,16 +6389,16 @@ i.flowDot::before{content:"";position:absolute;inset:-7px}
      them. Its list is read again by the page's own read (loadLibrary), a moment after the change was seen (the person's own
      changes have been drawn by then, and a list read since says it already), never over a Moving bar, a flight or a drag,
      and at most every ten seconds. */
-  function wantReload(){live.reload=true;live.seen=Date.now();if(!live.reloadTimer)live.reloadTimer=setTimeout(tryReload,LIVE.settle);}
+  function wantReload(){live.reload=true;live.seen=Date.now();if(!live.reloadTimer)live.reloadTimer=setTimeout(tryReload,live.gone?LIVE.goneSettle:LIVE.settle);}
   const resumeReload=()=>{if(live.reload && !live.reloadTimer)live.reloadTimer=setTimeout(tryReload,LIVE.settle);};
   function tryReload(){
     live.reloadTimer=0;
     if(!live.reload || !liveOn())return;
     if((S.library?.loadedAt || 0)>live.seen){live.reload=false;return;}
     const holding=approving.size>0 || !!document.querySelector('[data-library-approval],[data-fx-hide],[data-library-drag]') || !!window.LibraryDnd?.busy?.() || !!window.LibraryFx?.active?.();
-    const wait=Math.max(holding?1500:0,live.reloadAt+LIVE.reloadEvery-Date.now());
+    const wait=Math.max(holding?1500:0,live.reloadAt+(live.gone?LIVE.goneEvery:LIVE.reloadEvery)-Date.now());
     if(wait>0){live.reloadTimer=setTimeout(tryReload,wait);return;}
-    live.reload=false;live.reloadAt=Date.now();
+    live.reload=false;live.gone=false;live.reloadAt=Date.now();
     try{Promise.resolve(window.CN?.loadLibrary?.()).catch(()=>{});}catch(e){console.warn('Library read',e);}
   }
   // `now`: asked for by a press that has just changed cloud state (Approve for laser cutting): the live read, at once and again
@@ -6374,7 +6429,11 @@ i.flowDot::before{content:"";position:absolute;inset:-7px}
   window.addEventListener?.('online',()=>{live.fails=0;readSoon(false);resumeReload();});
   /** What the live read is doing (the test reads it): reads in flight, failures in a row, whether the cloud knows ifRevs. */
   const liveState=()=>({busy:live.busy,fails:live.fails,legacy:live.legacy,armed:!!live.timer,revs:live.revs?Object.keys(live.revs).length:0,reload:live.reload});
-  return {record,sheet,group,canCut,labels,sections,place,changed,saved,poll,nudge,liveState,projected,batch,acceptProcess,openChecklist,issuesOf,photo:photoOf,explain:(kind,id,card)=>explainOf({kind,id},card || {_laserSheets:[id]},()=>R.lookup({rows:Orders.rows()}))};
+  /** The orders of the sheet cards on screen (the placement feed reads where their pieces are, so the Library's lists and chips follow a hold or a take-off made elsewhere). */
+  const shownOrders=()=>{try{if(!liveOn())return [];return [...new Set(shown().ids.flatMap(id=>(records.get(id)?.orders || []).map(String)))].filter(x=>/^\d{4,20}$/.test(x)).slice(0,24);}catch(_){return [];}};
+  /** A sheet's cloud record read elsewhere (the sheet window's own follow): taken in as the live read would, the Library's list row too; rec null: the sheet is gone (id given). */
+  const patch=(rec,id)=>{if(rec){record(rec);patchRow(rec);}else if(id){if(records.has(id))records.set(id,{...records.get(id),archived:true});patchRow({id,archived:true});}try{window.SharedOrders?.refreshed?.();}catch(_){}changed();};
+  return {record,sheet,group,canCut,labels,sections,place,changed,saved,poll,nudge,shownOrders,patch,liveState,projected,batch,acceptProcess,openChecklist,issuesOf,photo:photoOf,explain:(kind,id,card)=>explainOf({kind,id},card || {_laserSheets:[id]},()=>R.lookup({rows:Orders.rows()}))};
 })();
 
 /* ═══ 22 · Sets — one run, one date, one folder, one numbering across materials ═══ */
@@ -6664,7 +6723,7 @@ const Sets = window.Sets = (() => {
   function libraryCard(st, all, shown, {onUndo = null} = {}) {
     const card = el("div", "setCard"); card.dataset.laserCard="set";card._laserSet=st;card._laserSheets=all.map(r=>r.id);card._sheets=all;
     card.innerHTML = `${st.standalone || st.working ? `<div class="sh"><span class="nm">${st.standalone ? "14K / 10K Solid Sheets" : "Sheets"}</span></div>` : `<div class="sh"><span class="nm" data-set-title>${esc(O.setLabel(st.seq))}${st.day?" · "+esc(st.day):""}</span>${st.labels?.pdf || st.labels?.manifest || st.labels?.json || /complete/.test(st.status) ? `<details class="setActions"><summary aria-label="Set file menu">⋯</summary><div>${st.labels?.pdf ? `<a href="${st.labels.pdf.url}" target="_blank" rel="noopener">Labels PDF</a>` : ""}${st.labels?.manifest ? `<a href="${st.labels.manifest.url}" target="_blank" rel="noopener">Manifest</a>` : ""}${st.labels?.json ? `<a href="${st.labels.json.url}" target="_blank" rel="noopener">Set data</a>` : ""}${/complete/.test(st.status) ? `<button class="btn ghost xs" data-undo="${esc(st.setId)}">Undo set</button>` : ""}</div></details>` : ""}</div>`}
-          <div class="sheetsRow">${shown.map(r => `<article class="librarySheet"><div class="libCard hoverItem" data-m="${r.metal}" data-id="${r.id}" title="${esc(r.folder || r.id)}">${window.sheetHead ? sheetHead(r, { inFan: true }) : `<div class="h"><span class="nm">${esc(r.folder || r.id)}</span></div>`}<div data-back-sheet="${esc(r.id)}">${Engrave.backsMarkup(r)}</div><img class="pv" data-sheet-preview="${esc(r.id)}"${window.pvRatio ? pvRatio(r) : ""} crossorigin="anonymous"${r.preview ? ` src="${esc(cors(r.preview))}"` : ""} loading="lazy" alt="Sheet preview"><div class="m"><span><b>${r.placedCount}</b>/${r.charmCount}</span><span><b>${Math.round((r.density || 0) * 100)}%</b></span><span>${(r.orders || []).length} orders</span><span class="sheetBackStatus" data-sheet-status="${esc(r.id)}" aria-live="polite">${window.CharmNestReadiness.counter(LaserReview.sheet(r),'Sheet',r)}</span></div></div>${LaserReview.labels(r,(st.labelFiles || []).filter(f=>f.sheetId===r.id))}</article>`).join("") || "<div class='libEmpty'>no sheets recorded</div>"}</div>
+          <div class="sheetsRow">${shown.map(r => `<article class="librarySheet"><div class="libCard hoverItem" data-m="${r.metal}" data-id="${r.id}" title="${esc(r.folder || r.id)}">${window.sheetHead ? sheetHead(r, { inFan: true }) : `<div class="h"><span class="nm">${esc(r.folder || r.id)}</span></div>`}<div data-back-sheet="${esc(r.id)}">${Engrave.backsMarkup(r)}</div><img class="pv" data-sheet-preview="${esc(r.id)}"${window.pvRatio ? pvRatio(r) : ""} crossorigin="anonymous"${r.preview ? ` src="${esc(cors(r.preview))}"` : ""} loading="lazy" alt="Sheet preview"><div class="m"><span data-sheet-count="${esc(r.id)}"><b>${r.placedCount}</b>/${r.charmCount}</span><span data-sheet-density="${esc(r.id)}"><b>${Math.round((r.density || 0) * 100)}%</b></span><span data-sheet-orders="${esc(r.id)}">${(r.orders || []).length} orders</span><span class="sheetBackStatus" data-sheet-status="${esc(r.id)}" aria-live="polite">${window.CharmNestReadiness.counter(LaserReview.sheet(r),'Sheet',r)}</span></div></div>${LaserReview.labels(r,(st.labelFiles || []).filter(f=>f.sheetId===r.id))}</article>`).join("") || "<div class='libEmpty'>no sheets recorded</div>"}</div>
           ${st.refused && st.refused.length ? `<div class="holds"><b>Refused by the station:</b> ${st.refused.map(r => `${esc(r.id)} — ${esc(r.reason)}`).join(" · ")}</div>` : ""}
           `;
     card.querySelectorAll(".libCard").forEach(x => x.onclick = () => openLibrarySheet(x.dataset.id));
@@ -9789,7 +9848,9 @@ const Review = window.Review = (() => {
       +'<button type="button" class="btn ghost sm" data-cu-sheet>Open sheet</button><button type="button" class="btn ghost sm" data-cu-history>History</button>':'';
     // Placement alone is not a recorded send. Keep its existing Open card useful while the original decision is
     // absent: these are read-only links to its actual pool/sheet membership and timeline, with no inferred seal.
-    const placedActs=!it.decided&&row&&group.some(r=>(r.poolIds || []).length)
+    // (placement is the cloud's answer as PiecePlacement resolves it, never this page's own row.poolIds: a piece taken off a sheet, held or cancelled elsewhere has no sheet to open)
+    const onASheet=r=>{try{const p=window.PiecePlacement?.ofRow?.(r);if(p)return p.state==='sheet';}catch(_){}return (r.poolIds || []).length>0;};
+    const placedActs=!it.decided&&row&&group.some(onASheet)
       ?'<button type="button" class="btn ghost sm" data-cu-sheet>Open sheet</button><button type="button" class="btn ghost sm" data-cu-history>History</button>':'';
     const acts=(it.decided?sentActs:busy?busy
       :cx&&!cx.done?column(cx)
@@ -10030,6 +10091,11 @@ const Review = window.Review = (() => {
     return it && !it.decided && !it.foldedInto ? it : null;
   }
   const isDecided = row => !!CustomSheet.decisionOf(typeof row==='string'?B.orders.byKey?.get(row):row);
+  /* A card's "Open sheet" button is there when the cloud says a piece of it is on a sheet (PiecePlacement), not when this page's own row says so: a read that moves a piece on or off a
+     sheet (a Hold, a take-off, an order put on a sheet, a sheet deleted: on any computer) draws the list again, still (nothing is stamped or flown for it). */
+  let lastPlace='';
+  const placeSig=()=>{try{return items().filter(it=>mine(it) && !isNotice(it)).map(it=>rowsOf(it).map(r=>{const p=window.PiecePlacement?.ofRow?.(r);return r.key+':'+(p?p.state:'');}).join(',')).join('|');}catch(_){return '';}};
+  try{window.OrderPieces?.subscribe?.(()=>{if(S.mode!=='review' || document.hidden)return;const sig=placeSig();if(sig===lastPlace)return;lastPlace=sig;render({still:true});});}catch(_){/* drawn when next shown */}
   return { view: () => RV, settled: () => settled, items, count, add, remove, render, card, cardIn, leaveCard, problemText, syncOrderItems, focus, showCard, repool, customItemFor, sentItemFor, isDecided, actFor, pieceItemFor, printable, cardKey: row => customKey(row).slice(4), _kept: () => ({ asked: askedSeen.size, skip: skipSeen.size }) };
 })();
 
@@ -10826,7 +10892,7 @@ const OrderWin = window.OrderWin = (() => {
     if (W.wired) return; W.wired = true;
     W.dlg = byId("orderWin"); if (!W.dlg) return;
     // the sheet records of the order read (OrderPieces): the Sheet tab's tabs and piece list, and the Overview, follow them
-    tryDo(() => window.OrderPieces && OrderPieces.subscribe(() => hold("pieces", () => { const rid = W.rid; if (!rid || !W.dlg.open || W.closing) return; pieceTabs(rid); if (W.view === "sheet" && SV.list) paintPanel(SV.info); const r = rowOf(W.key); if (r) { tryDo(() => paintPieces(r, linesOf(r))); paintSheetCell(r); paintNow(r); } })));
+    tryDo(() => window.OrderPieces && OrderPieces.subscribe(() => hold("pieces", () => { const rid = W.rid; if (!rid || !W.dlg.open || W.closing) return; pieceTabs(rid); sheetFollow(rid); if (W.view === "sheet" && SV.list) paintPanel(SV.info); const r = rowOf(W.key); if (r) { tryDo(() => paintPieces(r, linesOf(r))); paintSheetCell(r); paintNow(r); } })));
     byId("owClose").onclick = () => shut();
     // Esc goes back into what was clicked, as the close button does
     // (a picture zoomed in place goes back whole first: that press does not close the window)
@@ -11768,7 +11834,10 @@ const OrderWin = window.OrderWin = (() => {
     }
     if (ms || last) {
       const e = last || ms, ty = T[e.type] || {}, mt = ms ? (T[ms.type] || {}) : ty;
-      const g = GROUP_NOW[mt.group] || mt.label || "In progress";
+      let g = GROUP_NOW[mt.group] || mt.label || "In progress";
+      // (the Timeline's "sheet" group is the whole prepared step: "Ready to nest" (pooled) is in it, and a piece made up that waits for a sheet is not ON one. Where the pieces are now says which;
+      //  Paul, 5 Oct: one screen said "On a sheet" while the rows said "Waiting for a sheet")
+      if (mt.group === "sheet" && !ms) { const pl = tryDo(() => window.PiecePlacement && PiecePlacement.of(String(r.order.receiptId))); if (pl && !pl.anyOnSheet && (pl.state === "waiting" || pl.state === "hold")) g = pl.state === "hold" ? "On hold" : "Waiting for a sheet"; }
       return { tone: ["done"].includes(mt.group) || ms && ["etsyCompleted", "sealCompleted", "shipped"].includes(ms.type) ? "done" : "", pill: ms ? (T[ms.type] || {}).label || g : g, k: g, t: e.text || ty.label || e.type, ev: e };
     }
     const st = tryDo(() => Orders.statePill(r)) || ["neutral", r.state || ""], where = tryDo(() => Orders.placeOf(r));
@@ -12076,6 +12145,34 @@ const OrderWin = window.OrderWin = (() => {
     for (const s of OP.spread(rid).sheets) if (s.sheetId && !SV.list.some(x => x.id === s.sheetId)) { SV.list.push({ id: s.sheetId, metal: s.metal, n: s.sheetNo || null }); added = true; }
     if (added) { const count = byId("owShCount"); if (count) count.textContent = SV.list.length + (SV.list.length === 1 ? " sheet" : " sheets"); }
     return added;
+  }
+  /* The Sheet tab follows the cloud (Paul, 5 Oct: no mismatch between what the order window and the Library say of where a piece is; C3's note in api.md): a sheet that no longer holds any
+     piece of the order, by the sheets' own records (OrderPieces), loses its tab (a Hold, a cancel, a sheet deleted: on any computer); and the sheet on the plate is read again when what
+     it holds of THIS order changed (the Sheet tab keeps a sheet's record for a minute: the open sheet's own row went on saying "this sheet"). Called whenever OrderPieces read something. */
+  function sheetFollow(rid) {
+    const OP = window.OrderPieces; if (!OP || !OP.of || !OP.known || !SV.list || SV.rid !== rid || !tryDo(() => OP.known(rid))) return;
+    const pcs = tryDo(() => OP.of(rid)) || [], held = new Set(pcs.map(p => p.sheetId).filter(Boolean));
+    const epoch = SV.epoch, sel = SV.list[SV.at];
+    const keep = SV.list.filter(x => !x.id || held.has(x.id));
+    let redraw = false;
+    if (keep.length !== SV.list.length) {
+      SV.list = keep;
+      const gone = !sel || !keep.includes(sel);
+      SV.at = gone ? SCOPE.fit(keep) : keep.indexOf(sel);
+      const count = byId("owShCount"); if (count) count.textContent = SCOPE.count(keep);
+      if (gone) { SV.info = null; redraw = true; }
+    }
+    const cur = SV.list[SV.at];
+    if (cur && cur.id && !redraw) {
+      // what the record kept for the plate lists of this order, against what the pieces' own read says sits on this sheet
+      const id = cur.id, drawn = tryDo(() => SheetWin.heldOf(id, rid)), now = pcs.filter(p => p.sheetId === id).map(p => p.poolId).sort().join(",");
+      const again = SV.memTry && SV.memTry.id === id && SV.memTry.sig === now && Date.now() - SV.memTry.at < 15000;   // (a record that never agrees is not read in a loop)
+      if (drawn !== null && drawn !== now && !again) {
+        SV.memTry = { id, sig: now, at: Date.now() };
+        Promise.resolve(tryDo(() => SheetWin.refreshRecord(id))).then(changed => { if (changed && epoch === SV.epoch && SV.rid === rid && SV.list && SV.list[SV.at] && SV.list[SV.at].id === id) { SV.info = null; if (W.view === "sheet" && W.dlg?.open && !W.closing) sheetDraw(); } }).catch(() => {});
+      }
+    }
+    if (redraw && W.view === "sheet" && W.dlg?.open && !W.closing) sheetDraw();
   }
   function plateWait(text) { const w = byId("owPlateWait"); if (!w) return; w.hidden = !text; if (text) w.lastElementChild.textContent = text; }
   async function sheetShow(sheetId, poolId) {

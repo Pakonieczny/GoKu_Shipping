@@ -157,13 +157,19 @@
   function nestLabel(page) {
     try { const i = pagesOf(page.metal).indexOf(page); return `${CODE[page.metal] || ""} Sheet ${i >= 0 ? i + 1 : page.page || "?"}`.trim(); } catch (_) { return `${CODE[page.metal] || ""} Sheet ${page.page || "?"}`.trim(); }
   }
+  /** Where the order's pieces are NOW, from the one answer (PiecePlacement: the cloud's sheet records and pool rows, a hold, a cancel, a hand completion), rolled up for the order; null while
+   *  the sheet records are unread. The card never says "on a sheet" or "held" from its own reading of the order's history, its rows' stored state or a search read made earlier. */
+  function placementOf(e) { try { const p = W.PiecePlacement ? W.PiecePlacement.of(e.rid) : null; return p && p.state !== "loading" && p.counts && p.counts.pieces ? p : null; } catch (_) { return null; } }
   function sheetsOf(e) {
+    const pl = placementOf(e);
+    if (pl) return pl.sheets.map(s => ({ label: s.label, cut: !!s.cut }));
     const out = new Map(), add = (k, label, cut) => { if (label && !out.has(k)) out.set(k, { label, cut: !!cut }); };
     const Pool = W.Pool;
     // (one truth first: the sheets' own records, then the pages this sorter holds, the pool row's sheetId only as a hint: OrderPieces. The page's pool rows
     //  and Library rows below stay for what it does not know, a sheet id keyed the same way so a sheet is never named twice)
     const OP = W.OrderPieces;
     if (OP && OP.of) { try { for (const p of OP.of(e.rid)) if (!p.gone && p.nested && p.sheetLabel) add("s:" + (p.sheetId || p.sheetLabel), p.sheetLabel, p.state === "cut"); } catch (_) {} }
+    if (cancelOf(e)) return [...out.values()];   // (a cancelled order's pieces were taken off: the hints below, this page's old pool rows and Library rows, would still name the sheets they were on)
     for (const r of e.rows) for (const id of r.poolIds || []) { const pg = Pool && Pool.sheetOf ? Pool.sheetOf(id) : null; if (pg) add(pg.sheetId ? "s:" + pg.sheetId : "n:" + nestLabel(pg), nestLabel(pg)); }
     for (const p of e.pools) if (p.sheetId || p.sheetName) add("s:" + (p.sheetId || p.sheetName), sheetWords(p.sheetName) || null);
     for (const r of e.sheets) add("s:" + (r.id || r.sheetId), `${CODE[r.metal] || ""} Sheet ${r.sheetIndex || r.page || 1}`.trim(), +r.laserDoneAt > 0);
@@ -171,7 +177,7 @@
     return [...out.values()];
   }
   // a pool row's sheet name is its file base (…_GF_Sheet_2 or "GF Sheet 2"): the words a person reads
-  function sheetWords(n) { const m = /(GF|SS|RG|10K|14K)[ _-]*Sheet[ _-]*(\d+)/i.exec(String(n || "")); return m ? `${m[1].toUpperCase()} Sheet ${m[2]}` : n ? String(n).slice(0, 28) : ""; }
+  function sheetWords(n) { const m = /(GF|SS|RG|10K|14K)[ _-]*Sheet[ _-]*(\d+)/i.exec(String(n || "")) || /^(GF|SS|RG|10K|14K)_.*_Sheet-(\d+)/i.exec(String(n || "")); return m ? `${m[1].toUpperCase()} Sheet ${m[2]}` : n ? String(n).slice(0, 28) : ""; }   // (a file base too: GF_2026-10-05_Set-1_Sheet-1)
   /* An order's cancel record while it is still cancelled: one read earlier (the Cancelled list, the cloud) no longer counts
      once the order was restored, here or on another screen (it has left Cancelled's ids, or was restored since). */
   function cancelOf(e) {
@@ -183,12 +189,15 @@
   function stateOf(e) {
     const c = e.cloud, rows = e.rows.filter(r => r.state !== "gone");
     const cancel = cancelOf(e);
-    const hold = rows.find(r => r.hold);
+    const pl = placementOf(e);
+    // on hold: the cloud's answer says so (a Hold pressed on another computer), or this page's own line does while the cloud has not said anything yet (its own press, still being written)
+    const holdRow = rows.find(r => r.hold), seen = holdRow && holdRow.holdSeen;
+    const hold = pl && pl.state === "hold" ? { hold: String(pl.why || "").replace(/^it is on hold:?\s*/i, "") || "on hold" } : holdRow && !(pl && seen) ? holdRow : null;
     const sheets = sheetsOf(e);
     let reached = 0;
     const reach = i => { if (i > reached) reached = i; };
     // (the full rail's numbering, 0-7, as the server's where.step: nested, a set committed or a custom seal done is 1)
-    if (sheets.length || rows.some(r => ["nested", "written", "labelled", "committed"].includes(r.state))) reach(1);
+    if (sheets.length || (!pl && rows.some(r => ["nested", "written", "labelled", "committed"].includes(r.state)))) reach(1);
     if (e.custom.length) reach(1);
     if (e.engrave.some(j => j.approvedAt && ["approved", "written"].includes(j.state))) reach(2);
     if (sheets.some(s => s.cut)) reach(3);
@@ -198,6 +207,9 @@
       for (const ev of c.events) { if (stepAt(ev) != null) reach(stepAt(ev)); if (!last || ev.at >= last.at) last = ev; }
       if (c.shipped) reach(7);
     }
+    // where the pieces ARE decides how far the order has got, not the permanent history (its step is a high-water mark, and an order taken off its sheet kept "Nested" and "On sheet"
+    // on this card): a piece on no sheet holds the order at its arrival, unless the history is past the laser (a cut piece cannot be un-cut). The seals stay on the Timeline.
+    if (pl && pl.fence && reached < 3) reached = 0;
     const all = allSteps(), stepName = (all[Math.min(reached, all.length - 1)] || {}).l || "";
     const review = e.review || rows.some(r => (r.problems || []).length);
     const eng = e.engrave.find(j => ["words", "review", "fitting", "ready", "classify"].includes(j.state));
@@ -208,14 +220,14 @@
     else if (review) { tone = "warn"; pill = "Decision"; now = "Needs a decision in Review"; }
     else if (reached >= 7) { tone = "ok"; pill = stepName; now = last && stepAt(last) === 7 ?`${TYPE_LABEL(last.type)}${last.by ? " · " + last.by : ""} · ${whenTxt(last.at)}` : stepName; }
     else if (last && stepAt(last) >= 4) { tone = "ok"; pill = stepName; now = `${TYPE_LABEL(last.type)}${last.station ? " at " + last.station[0].toUpperCase() + last.station.slice(1) : ""}${last.by ? " · " + last.by : ""}`; }
-    else if (e.custom.length && !rows.some(r => r.state === "pulled")) { tone = "ok"; pill = stepName; const k = e.custom[0]; now = `Completed by hand${k.completedBy || k.printedBy ? " · " + (k.completedBy || k.printedBy) : ""}`; completed = true; }
+    else if (e.custom.length && !rows.some(r => r.state === "pulled")) { tone = "ok"; pill = sheets.length ? stepName : "Done by hand"; /* (the rail counts a hand seal as its first step, "Nested": an order that is on no sheet does not say so) */ const k = e.custom[0]; now = `Completed by hand${k.completedBy || k.printedBy ? " · " + (k.completedBy || k.printedBy) : ""}`; completed = true; }
     else if (reached >= 1) {
       tone = reached >= 3 ? "ok" : "info"; pill = stepName;
       now = eng && reached < 2 ? `Back engraving · ${eng.state === "words" ? "words to read" : eng.state}` : sheets.length ? (sheets.some(s => s.cut) ? "Laser cut" : "On sheet") : last ? `${TYPE_LABEL(last.type)} · ${whenTxt(last.at)}` : stepName;
     }
     else if (eng) { tone = "warn"; pill = "Engraving"; now = `Back engraving · ${eng.state === "words" ? "words to read" : eng.state}`; }
-    else if (rows.length) { const st = rows[0].state; tone = "info"; pill = "In the pull"; now = st === "pooled" ? "Ready to nest" : st === "noDesign" ? "Nothing to cut" : st === "waiting" ? "Waiting" : "In this pull"; }
-    else if (c) { tone = "info"; pill = "In the cloud"; now = last ? `${TYPE_LABEL(last.type)} · ${whenTxt(last.at)}` : c.archived ? "Design completed" : "Found in the cloud"; }
+    else if (rows.length) { const st = rows[0].state; tone = "info"; pill = "In the pull"; now = pl && pl.state === "waiting" ? pl.say : st === "pooled" ? "Ready to nest" : st === "noDesign" ? "Nothing to cut" : st === "waiting" ? "Waiting" : "In this pull"; }
+    else if (c) { tone = "info"; pill = "In the cloud"; now = pl && pl.say ? pl.say : last ? `${TYPE_LABEL(last.type)} · ${whenTxt(last.at)}` : c.archived ? "Design completed" : "Found in the cloud"; }
     else { tone = "neutral"; pill = "Seen"; now = ""; }
     // (a line that speaks of a completion the order's timeline recorded, a Complete Order press or a QR label printed: it has its seal too)
     if (!completed && last && /^seal(Completed|Printed)$/.test(last.type) && now.includes(TYPE_LABEL(last.type))) completed = true;
@@ -282,10 +294,11 @@
   const cloudCache = new Map();                                                   // number → { found, at } for this session
   let cloudCtl = null, cloudTimer = 0;
   function cloudAbort() { clearTimeout(cloudTimer); cloudTimer = 0; if (cloudCtl) { try { cloudCtl.abort(); } catch (_) {} cloudCtl = null; } UI.cloud = null; }
-  async function lookup(q) {
+  async function lookup(q, quiet) {
     const known = cloudCache.get(q);
     if (known && Date.now() - known.at < 120000) return known.found;
-    const ctl = cloudCtl = new AbortController(), sig = signalOf(ctl, 20000);
+    // (a quiet read, the one that follows a change of where an order's pieces are, is not the one a typing pause owns: typing never aborts it)
+    const ctl = new AbortController(), sig = signalOf(ctl, 20000); if (!quiet) cloudCtl = ctl;
     let bad = 0, why = "";
     const soft = p => p.catch(e => { if (ctl.signal.aborted) throw e; bad++; why = why || (e && e.message) || "no answer"; return null; });
     const [tl, pl, fs, ar] = await Promise.all([soft(lib("timelineGet", { orderId: q }, sig)), soft(lib("poolList", { orderId: q }, sig)),
@@ -313,6 +326,21 @@
     }
     cloudCache.set(q, { found: !!found, at: Date.now() });
     return !!found;
+  }
+  /* What a number read from the cloud said is kept for 120 s (typing the same number again does not ask again). It is NOT kept past a change of where that order's pieces are: the
+     placement feed reads the orders on the cards every few seconds (OrderPieces), and when one's roll-up answer moved (on a sheet, taken off, held, cancelled, done by hand, a sheet
+     deleted: on any computer) its entry is dropped and read again at once, quietly, so a card never says what the lookup found minutes ago (C3: the one place a change could show late). */
+  const cloudSigs = new Map(), cloudBusy = new Set();
+  function recheckCloud() {
+    if (!isOpen()) return;
+    for (const h of UI.shown || []) {
+      const e = h.e, rid = e && e.rid; if (!rid || !e.cloud) continue;
+      const p = placementOf(e), sig = p ? (p.sig || p.state + ":" + p.text) : "", was = cloudSigs.get(rid);
+      cloudSigs.set(rid, sig);
+      if (was === undefined || was === "" || was === sig || cloudBusy.has(rid)) continue;   // (nothing known yet is no change: the first answer just lands)
+      cloudCache.delete(rid); cloudBusy.add(rid);
+      lookup(rid, true).then(() => { if (isOpen()) { build(); refresh(false); } }, () => {}).finally(() => cloudBusy.delete(rid));
+    }
   }
   /** The newest cancelled orders, with what was ordered: read once when the search first opens, then every few minutes. */
   function readCancelled() {
@@ -574,6 +602,7 @@
     }
     select(Math.min(UI.sel, Math.max(0, shown.length - 1)), true);
     message(R);
+    for (const h of shown) if (h.e.cloud && !cloudSigs.has(h.e.rid)) { const p = placementOf(h.e); cloudSigs.set(h.e.rid, p ? (p.sig || p.state + ":" + p.text) : ""); }   // (what the card said when drawn: a later change re-reads the number)
     wantPieces(shown.map(h => h.e.rid));
   }
   /** The sheet records of the orders whose cards are on screen, read once each (OrderPieces.load: one read of the sheets that name them);
@@ -581,7 +610,9 @@
   const askedPieces = new Map();
   function wantPieces(rids) {
     const OP = W.OrderPieces; if (!OP || !OP.load) return;
-    if (!UI.opSub && OP.subscribe) UI.opSub = OP.subscribe(() => { if (!isOpen()) return; clearTimeout(UI.opT); UI.opT = setTimeout(() => { if (isOpen()) refresh(false); }, 80); });
+    if (!UI.opSub && OP.subscribe) UI.opSub = OP.subscribe(() => { if (!isOpen()) return; clearTimeout(UI.opT); UI.opT = setTimeout(() => { if (isOpen()) { recheckCloud(); refresh(false); } }, 80); });
+    // (kept up to date while the box is open: the placement feed reads these orders again every few seconds, so a card never says where an order was)
+    if (!UI.feed && W.PlacementFeed) UI.feed = W.PlacementFeed.watch("search", () => (isOpen() ? (UI.shown || []).map(h => h.e.rid) : []));
     const now = Date.now(), fresh = rids.filter(r => /^\d+$/.test(r) && !(now - (askedPieces.get(r) || 0) < 60000));
     if (!fresh.length) return;
     for (const r of fresh) askedPieces.set(r, now);

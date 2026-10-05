@@ -409,7 +409,7 @@
       for (const r of W.Orders.rows()) {
         if (String(r.order.receiptId) !== rid || r.state === "gone") continue;
         if (r.hold) { if (!heldBefore.has(r.key)) r.hold = r.reason = text; marked++; continue; }
-        if (!(r.poolIds || []).length) { r.state = "held"; r.hold = r.reason = text; r.heldAt = Date.now(); if (W.CNListActivity && CNListActivity.touch) CNListActivity.touch(r, r.heldAt); marked++; }
+        if (!(r.poolIds || []).length) { r.state = "held"; r.hold = r.reason = text; r.heldAt = Date.now(); r.holdSeen = false; if (W.CNListActivity && CNListActivity.touch) CNListActivity.touch(r, r.heldAt); marked++; }
       }
       if (!clusters.length && marked && W.SheetEvents && SheetEvents.order) SheetEvents.order({ type: "held", orderId: rid, id: `oh-${Date.now()}`, by: who, text: `${text}, on hold`.slice(0, 200), data: { pieces: 0, note: note || undefined } });
       if (B.run && W.RunCtl && RunCtl.save) { B.run.lines = Object.fromEntries(W.Orders.rows().map(W.Orders.lineRecord)); await RunCtl.save(B.run).catch(e => console.warn("[OrderHold] run lines", e)); }
