@@ -321,7 +321,7 @@ const B = (o = {}) => Object.assign({ v: 1, event: 'beat', station: 'welding', d
     s.reset();
     await ask(); const first = s.reads.slice();
     assert.strictEqual(s.readsOf('Station_Live').length, 1, 'one small query for the live documents'); assert.deepStrictEqual(s.readsOf('Station_Live')[0].filters, ['beatAt>='], 'a single range: no index to create');
-    assert.strictEqual(s.readsOf('Station_Sessions').length, 1); assert.strictEqual(s.readsOf('Efficiency_Daily').length, 1); assert.deepStrictEqual(s.readsOf('Efficiency_Daily')[0].select, ['day', 'person', 'stations', 'sandbox'], 'only the fields the board shows (and the store flag, so a document of the other store never counts)');
+    assert.strictEqual(s.readsOf('Station_Sessions').length, 1); assert.strictEqual(s.readsOf('Efficiency_Daily').length, 1); assert.deepStrictEqual(s.readsOf('Efficiency_Daily')[0].select, ['day', 'person', 'stations', 'sandbox', 'touched'], 'only the fields the board shows (the store flag, and the orders touched, so an order in hand counts; and the store flag, so a document of the other store never counts)');
     s.reset(); tick(1000); await ask(); assert.strictEqual(s.reads.length, 0, 'a second poll inside 2 s reads nothing');
     tick(1500); s.reset(); await ask();
     assert.strictEqual(s.readsOf('Station_Live').length, 1, 'after 2 s the live documents are read again'); assert.strictEqual(s.readsOf('Station_Sessions').length, 0, 'sessions are kept 15 s'); assert.strictEqual(s.readsOf('Efficiency_Daily').length, 0, 'today\'s numbers are kept 20 s');
@@ -331,6 +331,21 @@ const B = (o = {}) => Object.assign({ v: 1, event: 'beat', station: 'welding', d
     tick(30000); const part = await ask(); assert.strictEqual(part.status, 200); assert.strictEqual(part.body.partial, true); assert(part.body.errors.some(e => /^today:/.test(e)));
     assert.strictEqual(station(part, 'welding').current.length, 1, 'the order is still shown'); assert.deepStrictEqual(station(part, 'welding').counts, { partsToday: null, ordersToday: null, scansToday: null }, 'today\'s numbers are unknown: null (a dash on the board), never a 0');
     say('9 gate (401 without the key), one query a poll, ~2 s / 15 s / 20 s caches, a failed read leaves the rest');
+  }
+
+  /* 9b · an order in hand counts the moment it is scanned, as the Overview counts it (the board used to count only the finished ones and said 9 where the Overview said 10) */
+  {
+    const s = fresh(); seed(s);
+    s.put('Efficiency_Daily', '2026-10-05__In Hand A', { day: '2026-10-05', person: 'In Hand A', stations: { sorting: { parts: 0, orders: 0, scans: 2, lastAt: NOW - 1000 }, assembly: { parts: 2, orders: 1, scans: 2, lastAt: NOW - 2000 } },
+      touched: { '3521000901': { sorting: true }, '3521000902': { sorting: true, assembly: true }, '3521000903': { assembly: true } } });
+    s.put('Efficiency_Daily', '2026-10-05__In Hand B', { day: '2026-10-05', person: 'In Hand B', stations: { sorting: { parts: 1, orders: 1, scans: 1, lastAt: NOW - 3000 } }, touched: { '3521000901': { sorting: true }, '3521000904': { sorting: true } } });   // (the same order scanned by two people counts once)
+    s.put('Efficiency_Daily', '2026-10-05__Sandbox only', { day: '2026-10-05', person: 'Sandbox only', sandbox: true, stations: { sorting: { scans: 1 } }, touched: { '3521000999': { sorting: true } } });
+    s.put('Efficiency_Daily', '2026-10-05__Old rollup', { day: '2026-10-05', person: 'Old rollup', stations: { shipping: { parts: 9, orders: 5, scans: 5, lastAt: NOW - 4000 } } });   // (a rollup that kept no touched list: the finished orders stand)
+    const x = await ask(), so = station(x, 'sorting'), as = station(x, 'assembly');
+    assert.strictEqual(station(x, 'shipping').counts.ordersToday, 5, 'a rollup with no touched list keeps its finished count');
+    assert.deepStrictEqual(so.counts, { partsToday: 1, ordersToday: 3, scansToday: 3 }, 'sorting: orders 901, 902, 904 are worked (one finished), the sandbox one never counts: ' + JSON.stringify(so.counts));
+    assert.strictEqual(as.counts.ordersToday, 2, 'assembly: 1 finished, 2 touched (902, 903): the larger: ' + JSON.stringify(as.counts));
+    assert.strictEqual(station(x, 'design').counts.ordersToday, 0, 'a station nobody scanned at has none');
   }
 
   /* 10 · read cost per hour (printed for the report) */
