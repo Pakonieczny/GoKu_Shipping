@@ -11489,7 +11489,8 @@ const OrderWin = window.OrderWin = (() => {
         const pl = x._pl, w = pl.wasOn || null;
         line = "Not on a sheet now";
         if (w && w.label) by = `Was on ${w.label} ${w.how === "gone" ? "until it stopped holding it" : `until ${w.by || "it was"} ${w.by ? "took it off" : "taken off"}`}${w.until > 0 ? ", " + pdotWhen(w.until) : ""}`;
-        const hold = pl.state === "hold" ? "On hold" + (/:\s*\S/.test(pl.why || "") ? ": " + pl.why.replace(/^[^:]*:\s*/, "") : "") : "";
+        const hr = /:\s*\S/.test(pl.why || "") ? pl.why.replace(/^[^:]*:\s*/, "").trim() : "";   // (the Hold press's own marker, "held by Paul", only says what "On hold" says)
+        const hold = pl.state === "hold" ? "On hold" + (hr && !/^held by\b/i.test(hr) ? ": " + hr : "") : "";
         by = [by, hold].filter(Boolean).join(" · ") || ask();
       } else line = ask();
     }
