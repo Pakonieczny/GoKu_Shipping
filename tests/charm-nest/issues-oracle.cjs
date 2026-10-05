@@ -21,7 +21,9 @@
  * RULES (Paul, point 9; agreed with Issues-truth)
  *  piece   one copy of a line (line.quantity copies; copy ids <lineKey>_<n>). A cancelled/gone line and a noDesign line
  *          (nothing to cut) are NOT pieces: they never block and do not count.
- *  by hand a piece a person COMPLETED BY HAND (Review "Complete Order", or its QR label printed from Custom Orders; Paul, 5 Oct round 6: "this chain
+ *  by hand a piece a person COMPLETED BY HAND (Review "Complete Order", or its QR label printed from Custom Orders: EITHER button, or both, in any order and
+ *          with any number of reprints, releases it (round 8, Paul: "If either or both of the buttons Print QR Label, Complete Order are pressed then that piece
+ *          should be considered released"): customPut writes state 'completed' for either press; Paul, 5 Oct round 6: "this chain
  *          only piece obviously does not go on any sheet ... it's still blocking this sheet") is RESOLVED: it needs no sheet, so a copy of it that is on
  *          no sheet is not a piece (it blocks nothing, waits for nothing, is nobody's mate), whatever the run's copy of the line still says (it can read
  *          'unmatched', 'waiting', 'held' or an unknown SKU long after). The truth is the custom order's own record (shop.customs[lineKey], what
@@ -42,7 +44,8 @@
  *                                 (round 7, Paul: "it's on both sheets and both sheets are in the same set": a set advances as ONE, a mate
  *                                 sheet of the same set that is not ready is the SET's wait, never an issue of the order. An order whose
  *                                 other piece sits on a not-ready sheet of ANOTHER set is split between two sets (the cardinal rule): it
- *                                 stays a real issue, flagged `split`.)
+ *                                 stays a real issue, flagged `split`. Round 8: when that sheet is in NO set at all while X is in one, the wait stays the one
+ *                                 honest issue, flagged `noSet`: a real piece on a real sheet that has no set, never the piece completed by hand.)
  *          Single-piece orders and orders whose live pieces are all on X are NEVER an order issue for X through where pieces are,
  *          and X's own readiness (unapproved engraving, no QR label, unverified layout...) never makes an order an issue for X.
  *          ONE exception, agreed with Issues-truth (3ff5b790): a HELD piece (hold text, changePending) is a person's / Etsy's explicit stop
@@ -203,7 +206,7 @@ function truthOf(shop, policy = {}) {
       if (!pieces.some(p => p.sheets.includes(sid))) continue;              // X holds none of it
       const offenders = [];
       for (const p of pieces) {
-        const reasons = new Set(), l = p.line, here = p.sheets.includes(sid); let split = false;
+        const reasons = new Set(), l = p.line, here = p.sheets.includes(sid); let split = false, noSet = false;
         if (l.hold || l.changePending) reasons.add('held');                // a person's stop holds the sheet it sits on too
         if (here) { if (!reasons.size) continue; }                          // on this sheet: that sheet's own readiness shows the rest
         else if (!p.sheets.length) {
@@ -214,10 +217,14 @@ function truthOf(shop, policy = {}) {
           // a not-ready sheet of X's OWN set is the set's wait, not the order's; one in another set (or in no set) is a real split / wait
           const mine = effSet(s), same = !policy.sameSetIsIssue && !!mine && p.sheets.every(id => effSet(byId.get(id)) === mine);   // (policy.sameSetIsIssue: the OLD rule, for the coverage count and the mutant)
           // (`split`: an order split between two sets. A held piece is listed as held, whatever sheet it sits on, so it is not listed as a split)
-          if (!same) { reasons.add('otherSheetNotReady'); split = !!mine && !(l.hold || l.changePending) && p.sheets.some(id => effSet(byId.get(id)) && effSet(byId.get(id)) !== mine); }
+          if (!same) {
+            reasons.add('otherSheetNotReady'); split = !!mine && !(l.hold || l.changePending) && p.sheets.some(id => effSet(byId.get(id)) && effSet(byId.get(id)) !== mine);
+            // (`noSet`, round 8: the piece's not-ready sheet is in NO set at all while X is in one: the one honest wait, said with its real sheet and that it has no set)
+            noSet = !!mine && !split && !(l.hold || l.changePending) && p.sheets.every(id => !effSet(byId.get(id)));
+          }
         }
         if (!reasons.size) continue;
-        offenders.push({ index: p.index, lineKey: p.lineKey, copy: p.copy, poolId: p.poolId, reasons, ...(split ? { split: true } : {}), sheets: p.sheets.map(id => ({ id, label: labelOf(byId.get(id)) })) });
+        offenders.push({ index: p.index, lineKey: p.lineKey, copy: p.copy, poolId: p.poolId, reasons, ...(split ? { split: true } : {}), ...(noSet ? { noSet: true } : {}), sheets: p.sheets.map(id => ({ id, label: labelOf(byId.get(id)) })) });
       }
       if (offenders.length) rec.orders[oid] = { orderId: oid, livePieces: pieces.length, offenders, pieces: pieces.map(p => ({ index: p.index, lineKey: p.lineKey, copy: p.copy, poolId: p.poolId, sheets: p.sheets })) };
     }

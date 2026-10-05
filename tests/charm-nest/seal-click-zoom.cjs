@@ -8,7 +8,7 @@
 //  · Enter and Space on a focused seal grow it and put it back;
 //  · the Review card: a click on the printed-label seal prints nothing; a click on a seal where it lies over its button presses that button
 //    exactly once (the action, not the zoom, wins there);
-//  · the order window: the header strip seal (opens its step on the Timeline AND grows), the custom-order bar's seals, the timeline's lane
+//  · the order window: the header strip seal (opens its step on the Timeline AND grows), the piece row's seals, the timeline's lane
 //    stamp (selects its step AND grows, no explainer card), its detail seal (a click grows it, a second puts it back), and the "Where it is
 //    now" seal (its click opens the step on the Timeline: no zoom, the view is gone).
 //   SHOTS=<dir> node tests/charm-nest/seal-click-zoom.cjs [playwright-core dir]
@@ -163,13 +163,13 @@ const ORDERS = [{ receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * DAY, up
 
     // ═══ 3 · the order window ═══
     await page.evaluate(k => OrderWin.open(k), KEY);
-    await page.waitForFunction(() => document.querySelectorAll('#owRail .tlStop .tlSeal').length > 3 && document.querySelectorAll('#owCustom .sealRow .seal').length >= 1, null, { timeout: 15000 });
+    await page.waitForFunction(() => document.querySelectorAll('#owRail .tlStop .tlSeal').length > 3 && document.querySelectorAll('#owPcSum .sealRow .seal').length >= 1, null, { timeout: 15000 });
     await page.waitForTimeout(1200); await page.mouse.move(700, 600);
     const view = () => page.evaluate(() => (document.querySelector('#orderWin [data-ow-view][aria-selected="true"]') || {}).dataset.owView);
-    // the custom-order bar's seals
+    // the piece row's seals
     {
-      const sel = '#owCustom .sealRow .seal', r = await click(sel, 0, await point(sel, 0, 'clear'));
-      check(r.t105 != null && r.t105 <= 120 && r.tTarget != null && r.tTarget <= 400, `order window custom-order bar seal (its one small seal): a click grew it (×1.05 in ${r.t105 == null ? '–' : r.t105.toFixed(0)} ms, target ×${r.k} in ${r.tTarget == null ? '–' : r.tTarget.toFixed(0)} ms)`);
+      const sel = '#owPcSum .sealRow .seal', r = await click(sel, 0, await point(sel, 0, 'clear'));
+      check(r.t105 != null && r.t105 <= 120 && r.tTarget != null && r.tTarget <= 400, `order window piece row seal (its one small seal): a click grew it (×1.05 in ${r.t105 == null ? '–' : r.t105.toFixed(0)} ms, target ×${r.k} in ${r.tTarget == null ? '–' : r.tTarget.toFixed(0)} ms)`);
       await away();
     }
     // the header strip: the click opens its step on the Timeline, and the seal grows all the same

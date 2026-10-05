@@ -308,19 +308,19 @@ const sleep = ms => new Promise(r => setTimeout(r, ms)), nap = ms => sleep(Math.
       log('another tab on screen: no feed read; Review shown again or another tab shown: one read, nothing moves, state right');
     }
     {
-      // the order window open on the Orders tab: its timeline feed (2.5 s) brings a change in, and the window's Custom Orders bar follows
+      // the order window open on the Orders tab: its timeline feed (2.5 s) brings a change in, and the piece's row in the window follows
       const rid = R(1), key = KEY(rid);
       await A.page.evaluate(k => { CN.setMode('orders'); OrderWin.open(k); }, key);
       await A.page.waitForFunction(k => OrderWin.isOpen() && OrderWin.key() === k && !document.querySelector('#orderWin').classList.contains('owLoading'), key);
-      await A.page.waitForFunction(() => !document.getElementById('owCustom').hidden && document.querySelector('#owCustom [data-cu-complete]'), null, { timeout: 15000 });
+      await A.page.waitForFunction(() => document.querySelector('#owPcSum [data-cu-complete]'), null, { timeout: 15000 });
       const t = Date.now(); await cloud('customPut', Object.assign(target(rid), { by: 'Maria B', how: 'button' }));
-      await dueIn(A, { f: () => document.querySelector('#owCustom [data-cu-reopen]'), a: null }, 'the window\'s bar showing Completed', 6000);
+      await dueIn(A, { f: () => document.querySelector('#owPcSum [data-cu-done]'), a: null }, 'the window\'s piece row showing Completed', 6000);
       const took = Date.now() - t;
       assert(took <= 5000, 'the window followed within seconds: ' + took);
       assert.equal(await A.has(key), true, 'the page holds the record');
       await A.page.evaluate(() => document.getElementById('owClose').click()); await A.page.waitForFunction(() => !OrderWin.isOpen());
       await A.page.evaluate(() => CN.setMode('review')); await A.calm();
-      log(`order window open on the Orders tab: its Custom Orders bar followed B's completion in ${(took / 1000).toFixed(1)} s (the window's timeline feed asks for one read)`);
+      log(`order window open on the Orders tab: its piece row followed B's completion in ${(took / 1000).toFixed(1)} s (the window's timeline feed asks for one read)`);
     }
 
     /* ── 4 · a page load replays nothing ── */

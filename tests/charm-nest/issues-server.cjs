@@ -12,6 +12,7 @@ const O = require('./issues-oracle.cjs');
 const S = require('./issues-shop.cjs');
 const { paulShop } = require('./issues-paul.cjs');
 const { start } = require('./bridge-server.cjs');
+const R = require('../../charm-nest-readiness.js');
 
 const argv = (name, dflt) => { const i = process.argv.indexOf('--' + name); if (i < 0) return dflt; const v = process.argv[i + 1]; return v == null || v.startsWith('--') ? true : isNaN(+v) ? v : +v; };
 
@@ -52,6 +53,16 @@ async function check(srv, shop, subset, sandbox) {
     for (const id of new Set([...(s.orders || []), ...(s.poolIds || []).map(p => String(p).split('_')[0]).filter(x => /^\d+$/.test(x))])) if (!rd[id]) out.push({ type: 'unverifiedOrder', sheet: s.id, order: id, detail: 'no orderReadiness entry' });
     if (s.laser && s.laser.ready !== t.sheets[s.id].laserReady) out.push({ type: 'laserReady', sheet: s.id, detail: `server laser.ready ${s.laser.ready}, oracle ${t.sheets[s.id].laserReady}` });
     for (const id of shown) { const b = rd[id]; if (b && b.blocks && !b.blocks.length) out.push({ type: 'emptyBlocks', sheet: s.id, order: id }); }
+    // round 8: the Library reads the server's answer (R.issues over the answered record, the page has no rows of its own there): an order whose one honest wait is for a piece on a
+    // not-ready sheet in NO set says so, another set is the split, and the pieces are the oracle's, whichever way the page asks
+    if (!silent) for (const i of R.issues(s, {}).filter(x => x.step === 'orders' && x.orderId && x.key !== 'unverified')) {
+      const r = t.sheets[s.id].orders[i.orderId]; if (!r) continue;
+      const wantSplit = r.offenders.some(o => o.split), wantNoSet = !wantSplit && r.offenders.some(o => o.noSet);
+      if (!!i.noSet !== wantNoSet) out.push({ type: 'serverNoSet', sheet: s.id, order: i.orderId, detail: `noSet ${!!i.noSet}, oracle ${wantNoSet}` });
+      if (i.key !== 'held' && !!i.split !== wantSplit) out.push({ type: 'serverSplit', sheet: s.id, order: i.orderId, detail: `split ${!!i.split}, oracle ${wantSplit}` });
+      const have = (i.pieces || []).map(p => p.poolId).sort(), want = r.offenders.map(o => o.poolId).sort();
+      if (JSON.stringify(have) !== JSON.stringify(want)) out.push({ type: 'serverPieces', sheet: s.id, order: i.orderId, detail: `${have} vs oracle ${want}` });
+    }
   }
   // the sheets asked for (and their set mates) come back
   for (const id of subset) if (live.has(id) && !ans.sheets.some(s => s.id === id)) out.push({ type: 'sheetMissingFromAnswer', sheet: id });

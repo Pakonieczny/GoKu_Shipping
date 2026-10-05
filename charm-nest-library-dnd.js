@@ -174,6 +174,7 @@ html.dndOn,html.dndOn *{cursor:grabbing!important;-webkit-user-select:none!impor
 .dndMenuItem[aria-disabled="true"]:hover,.dndMenuItem[aria-disabled="true"]:focus-visible{background:var(--claySoft)}
 .dndMenuItem[aria-disabled="true"]:hover small,.dndMenuItem[aria-disabled="true"]:focus-visible small{color:#8a3a26}
 .dndMenuWait{display:flex;align-items:center;gap:9px;padding:6px 8px;font:12px var(--sans);color:var(--ink70)}
+.dndMenuNone{padding:6px 8px;font:12px var(--sans);color:var(--ink70)}
 @media (prefers-reduced-motion:reduce){.dndGrip,.dndSource,.dndArming,.dndLift::before,.dndDock,.dndRowWrap,.dndChip,.dndMovingWrap,.dndMenuWrap,[data-dnd-state]::after{transition:none!important}
  .dndLine,.dndActs,[data-dnd-state]::after,[data-dnd-state]::before,.dndLanded{animation:none!important;opacity:1!important;transform:none!important}
  .dndLine.ok svg path{animation:none;stroke-dashoffset:0}
@@ -248,6 +249,11 @@ html.dndOn,html.dndOn *{cursor:grabbing!important;-webkit-user-select:none!impor
     try { const t = await Promise.resolve(f.targets(it)); return Array.isArray(t) ? t : t && Array.isArray(t.targets) ? t.targets : []; }
     catch (e) { console.warn('LibraryFlow.targets', e); return []; }
   }
+  // the reasons that say "it is already here" or "it can never go there" (the item's own place, a set inside a set, a set's sheets)
+  const NEVER = /^(already in\b|it is already in\b|a set cannot go inside another set|a set already holds its sheets together)/i;
+  /** The places the Move to… menu lists: every one that can apply, now or once something is done (a place that waits on
+   *  something keeps its reason), and none that is the item's own place or can never apply to this kind of item. */
+  const menuZones = zones => (zones || []).filter(z => z.legal || !z.never);
   function defaultReason(item, spec, reasons) {
     const given = reasons && reasons[specKey(spec)]; if (given) return given;
     if (spec.set && item.kind === 'set') return 'A set cannot go inside another set';
@@ -265,7 +271,9 @@ html.dndOn,html.dndOn *{cursor:grabbing!important;-webkit-user-select:none!impor
       if (spec.area && here.area === spec.area) { ok = false; reason = `Already in ${name}`; }
       if (spec.set && here.setId === spec.set) { ok = false; reason = 'Already in this set'; }
       if (!ok && !reason) reason = defaultReason(item, spec, reasons);
-      zones.push({ key, spec, name: (t && t.label) || name, sub: (t && t.sub) || sub, legal: ok, reason });
+      // (never: a place that is the item's own, or that this kind of item can never go to: the Move to… menu leaves it out)
+      const never = !ok && ((item.kind === 'set' && !!(spec.set || spec.newSet)) || NEVER.test(reason));
+      zones.push({ key, spec, name: (t && t.label) || name, sub: (t && t.sub) || sub, legal: ok, reason, never });
     };
     for (const a of ['progress', 'laser', 'completed']) add({ area: a }, AREA[a].name, AREA[a].sub);
     add({ newSet: true }, 'New set', 'start a new set');
@@ -861,8 +869,9 @@ html.dndOn,html.dndOn *{cursor:grabbing!important;-webkit-user-select:none!impor
     requestAnimationFrame(() => wrap.classList.add('on'));
     const ts = await targetsOf(item);
     if (D.menu !== menu) return;
-    const zones = buildZones(item, ts), inn = wrap.querySelector('.dndMenuIn');
+    const zones = menuZones(buildZones(item, ts)), inn = wrap.querySelector('.dndMenuIn');
     inn.querySelector('.dndMenuWait').remove();
+    if (!zones.length) { inn.insertAdjacentHTML('beforeend', '<div class="dndMenuNone" role="none">Nowhere to move this right now</div>'); return; }
     for (const z of zones) {
       const b = doc.createElement('button'); b.type = 'button'; b.className = 'dndMenuItem'; b.setAttribute('role', 'menuitem'); b.dataset.key = z.key;
       b.innerHTML = '<span></span><small></small>'; b.firstChild.textContent = z.name;

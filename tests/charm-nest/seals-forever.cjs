@@ -97,16 +97,16 @@ const ORDERS = [order(RID, [line(41767447521, 'CHAIN_8941', 'CHAIN REPLACEMENT',
     assert.deepEqual(open.map(s => [s.how, s.btn]), [['print', 'print'], ['button', 'complete']], 'each seal on the button that made it: ' + JSON.stringify(open));
     const kept = open.map(s => [s.how, s.at, s.rot]);
 
-    // 4 · the order window's bar draws at most one small seal (the latest the card above it does not show) and a "+N" that opens
+    // 4 · the order window's piece row draws at most one small seal (the latest the card above it does not show) and a "+N" that opens
     //     the Timeline for the rest (Paul, 2 Oct: each seal once on the overview). Display only: nothing leaves the record or
     //     the Timeline, so both seals are checked there, at a small but legible size (18-50 px), within the 50 px canon
     await page.evaluate(k => OrderWin.open(k), KEY);
-    await page.waitForFunction(() => document.querySelectorAll('#owCustom .sealRow .seal').length === 1 && document.querySelector('#owCustom [data-cu-more]'), null, { timeout: 15000 });
-    const owBar = await page.evaluate(() => ({ seals: [...document.querySelectorAll('#owCustom .sealRow .seal')].map(s => [s.classList.contains('seal-button') ? 'button' : 'print', s.offsetWidth, s.offsetHeight]), more: document.querySelector('#owCustom [data-cu-more]').textContent }));   // (unrotated box: a stamp lies at an angle)
+    await page.waitForFunction(() => document.querySelectorAll('#owPcSum .sealRow .seal').length === 1 && document.querySelector('#owPcSum [data-cu-more]'), null, { timeout: 15000 });
+    const owBar = await page.evaluate(() => ({ seals: [...document.querySelectorAll('#owPcSum .sealRow .seal')].map(s => [s.classList.contains('seal-button') ? 'button' : 'print', s.offsetWidth, s.offsetHeight]), more: document.querySelector('#owPcSum [data-cu-more]').textContent }));   // (unrotated box: a stamp lies at an angle)
     assert.deepEqual([owBar.seals.length, owBar.seals[0][0], owBar.more], [1, 'complete'.replace('complete', 'button'), '+1'], 'one seal, the latest, and "+1" for the other: ' + JSON.stringify(owBar));
     assert.ok(owBar.seals.every(([, w, h]) => w >= 18 && w <= 50 && h >= 18 && h <= 50), 'the order window seal is drawn at a small but legible size, within the 50 px canon: ' + JSON.stringify(owBar));
     r = rec(); assert.equal(r.stamps.map(x => x.how).join(), 'print,button', 'the record still keeps both seals');
-    await page.click('#owCustom [data-cu-more]');
+    await page.click('#owPcSum [data-cu-more]');
     await page.waitForFunction(() => document.querySelector('#owTimeline .tlSt[data-key^="labelPrinted~"]') && document.querySelector('#owTimeline .tlSt[data-key^="sealCompleted~"]'), null, { timeout: 15000 });
     const onTimeline = await page.evaluate(() => [...document.querySelectorAll('#owTimeline .tlSt[data-key^="labelPrinted~"], #owTimeline .tlSt[data-key^="sealCompleted~"]')].map(b => { const m = b.querySelector('svg[data-seal-model]'); try { return JSON.parse(m.getAttribute('data-seal-model')).action; } catch (_) { return ''; } }));
     assert.deepEqual(onTimeline.slice().sort(), ['ORDER COMPLETE', 'QR LABEL PRINTED'], 'the "+1" opens the Timeline, which lists both the print and the Complete seal: ' + JSON.stringify(onTimeline));

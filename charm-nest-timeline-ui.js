@@ -323,8 +323,8 @@
   function blockerOf(events) {
     let hold = null; const need = new Map(), byHand = new Map();
     for (const e of events || []) {
-      // a line completed with Complete Order answers its question (a person finished it by hand); a Reopen asks it again
-      const op = opStepOf(e), l = e.lineKey;
+      // a line completed with Complete Order, or with its QR label printed, answers its question (a person finished it by hand); a Reopen asks it again
+      const op = handStepOf(e), l = e.lineKey;
       if (op && l) { const [a, b] = op === "complete" ? [need, byHand] : [byHand, need]; if (a.has(l)) { b.set(l, a.get(l)); a.delete(l); } continue; }
       if (e.type === "held") hold = e;
       else if (e.type === "released" || e.type === "restored" || e.type === "cancelRestored") hold = null;
@@ -528,12 +528,15 @@
     const text = k === "complete" ? "Completed with Complete Order" : d.reopened === "undo" ? "Completion undone: back to Open" : "Reopened: back to Open";
     return { type: k === "reopen" ? "reopened" : x.type, text: text + (where ? " · " + where : ""), data: Object.assign({}, d, where ? { foot: where } : {}) };
   }
-  /** Completed by hand (Paul, 29 Sep: a Complete Order press reads as completed everywhere): the latest press when every
-   *  line pressed has no Reopen after its last press, else null. The steps it had not reached are skipped, not "next";
-   *  a Reopen puts the order back where it was (its Complete and Reopen seals stay), a later press completes it again. */
+  // A press that completes a piece by hand: a Complete Order press, or the QR label printed from Custom Orders (the server's sealPrinted: customPut writes the
+  // record's state 'completed' for either button, so either one, or both in any order with any number of reprints, releases the piece; Paul, 5 Oct)
+  const handStepOf = x => (x && x.type === "sealPrinted" ? "complete" : opStepOf(x));
+  /** Completed by hand (Paul, 29 Sep: a Complete Order press reads as completed everywhere; 5 Oct: and so does a Print QR label press): the latest press
+   *  when every line pressed has no Reopen after its last press, else null. The steps it had not reached are skipped, not "next";
+   *  a Reopen puts the order back where it was (its seals stay), a later press of either button completes it again. */
   function handOf(events) {
     const last = new Map();
-    for (const e of events || []) { const k = opStepOf(e); if (k) last.set(e.lineKey || "", k === "complete" ? e : null); }
+    for (const e of events || []) { const k = handStepOf(e); if (k) last.set(e.lineKey || "", k === "complete" ? e : null); }
     const v = [...last.values()];
     return v.length && v.every(Boolean) ? v.reduce((a, b) => (+b.at >= +a.at ? b : a)) : null;
   }

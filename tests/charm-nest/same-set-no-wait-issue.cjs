@@ -260,7 +260,7 @@ const must = (list, what) => { if (list.length) { console.error(`FAIL: ${what}\n
               if (panel.querySelector('.lisWait,[data-quiet],[data-issue-key="waitsOnSheet"],[data-issue-sheet]')) bad.push(`${label}: a wait row is in GF Sheet 1's list`);
               if (/Waiting|SS Sheet|\bEngraving ?\d/.test(text)) bad.push(`${label}: the panel mentions the other sheet or a wait: "${text.slice(0, 160)}"`);
               const chips = rows.map(r => r.querySelector('.lisChip').textContent.trim()).sort();
-              if (JSON.stringify(chips) !== JSON.stringify(['Unknown SKU', 'Unknown SKU', 'Unknown SKU', 'Waits on RG Sheet 1'])) bad.push(`${label}: the four orders say ${JSON.stringify(chips)}`);
+              if (JSON.stringify(chips) !== JSON.stringify(['Unknown SKU', 'Unknown SKU', 'Unknown SKU', 'Waits on RG Sheet 1, in no set'])) bad.push(`${label}: the four orders say ${JSON.stringify(chips)}`);   // (round 8: RG Sheet 1 is in no set, so the one real wait says so)
               if (panel.querySelector('.lisBody').firstElementChild && !panel.querySelector('.lisBody').firstElementChild.querySelector('.lisRow')) bad.push(`${label}: the first thing in the list is not an order of this sheet`);
               await closePanel();
             }
