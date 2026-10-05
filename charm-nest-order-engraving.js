@@ -144,7 +144,7 @@
     if (!host) return null;
     if (host._orderEngraving) tryDo(() => host._orderEngraving.destroy());
     const id = 'order-engraving:' + (++nextId);
-    let ctx = Object.assign({}, ctx0), gone = false, sig = null, shown = null, busy = 0, seenAt = Date.now(), last = null, ro = null;
+    let ctx = Object.assign({}, ctx0), gone = false, sig = null, shown = null, busy = 0, seenAt = Date.now(), last = null, ro = null, attached = false;
     host.classList.add('owEng');
     // (the piece picked on the switcher is only told to EngraveLink: the same line on "All pieces" or on its own is the same card)
     const ident = c => [c.rid, c.key, c.poolId || ''].join('|');
@@ -160,7 +160,7 @@
       const eng = r.eng;
       if (!eng || eng.kind === 'none') { host.hidden = true; host.replaceChildren(); return; }
       host.hidden = false;
-      const card = doc().createElement('div'); card.className = 'owEngCard'; card.dataset.orderEngraving = eng.kind;
+      const card = doc().createElement('div'); card.className = 'owEngCard'; card.dataset.orderEngraving = eng.kind; card.setAttribute('role', 'group'); card.setAttribute('aria-label', 'Back engraving of this piece');
       card.innerHTML = S.panel(eng);
       host.replaceChildren(card);
       S.wirePanel(card, eng, { imageUrl: u => (/^https?:/.test(u) ? cors(u) : u), approve: b => approve(b), open: b => openEngrave(b) });
@@ -177,6 +177,7 @@
     /** Look again; draw only when what the card shows has changed (or at once when asked). `quiet`: the host is not told. */
     function refresh(force, quiet) {
       if (gone || !host.isConnected) return;
+      attached = true;
       if (busy) return;   // (this card's own approval is on its way: it draws the end of it)
       const r = engOf(ctx, seenAt), s = sigOf(r), has = !!(r.loading || r.eng && r.eng.kind !== 'none');
       last = r;
@@ -236,7 +237,8 @@
         host.replaceChildren(); host.hidden = true; host.classList.remove('owEng'); if (host._orderEngraving === handle) delete host._orderEngraving;
       },
       _tick() {
-        if (!host.isConnected) return handle.destroy();
+        // (a host taken out of the page takes the card with it; one not put in yet is waited for)
+        if (!host.isConnected) return attached ? handle.destroy() : undefined;
         if (!visible()) return;
         refresh(sig === null);
       }
