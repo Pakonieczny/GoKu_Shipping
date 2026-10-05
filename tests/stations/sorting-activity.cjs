@@ -49,19 +49,23 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
 const iso = ms => new Date(Date.now() - ms).toISOString();
 // the events the door received, flattened, with the raw requests kept for the "no PIN anywhere" check
 function recorder() {
-  const raw = [], events = [], sessions = [];
+  const raw = [], events = [], sessions = [], lives = [];
   return {
-    raw, events, sessions,
+    raw, events, sessions, lives,
     take(url, body) {
       raw.push(url + ' ' + body);
       let j = null; try { j = JSON.parse(body || 'null'); } catch (_) {}
       if (j && Array.isArray(j.activity)) events.push(...j.activity);
       if (j && j.session) sessions.push(j.session);
+      if (j && j.live) lives.push(j.live);
     },
     ev: (action, filter) => events.filter(e => e.action === action && (!filter || filter(e)))
   };
 }
 const brief = e => [e.action, e.orderId, e.parts, e.orders, e.person, e.station, e.device];
+// the live board (station-live-order.js): what the page said is in hand right now, one word per write
+const liveBrief = (rec, device) => rec.lives.filter(l => l.event !== 'beat' && l.device === device)
+  .map(l => l.event + ':' + (l.order ? l.order.kind + ':' + (l.order.rid || l.order.title) + ':' + l.order.pieces.length + ':' + l.order.note : l.ended.rid || l.ended.title));
 
 (async () => {
   const browser = await chromium.launch({ executablePath: CHROME, args: ['--no-sandbox'] });
@@ -80,7 +84,7 @@ const brief = e => [e.action, e.orderId, e.parts, e.orders, e.person, e.station,
       if (u.origin !== ORIGIN) return r.abort();
       const p = decodeURIComponent(u.pathname);
       if (p === '/sorting.html') return r.fulfill({ status: 200, contentType: 'text/html', body: fs.readFileSync(path.join(root, 'sorting.html')) });
-      if (['/order-timeline.js', '/station-session.js', '/station-activity.js'].includes(p)) return r.fulfill(js(fs.readFileSync(path.join(root, p.slice(1)))));
+      if (['/order-timeline.js', '/station-session.js', '/station-activity.js', '/station-live-order.js'].includes(p)) return r.fulfill(js(fs.readFileSync(path.join(root, p.slice(1)))));
       if (p === '/station-timeline.js') return r.fulfill(js(stationStub));
       if (p === '/QR Printer.html') return r.fulfill({ status: 200, contentType: 'text/html', body: '<!doctype html><title>printer stub</title>' });
       if (p === '/.netlify/functions/etsyOrderProxy') {
@@ -123,6 +127,7 @@ const brief = e => [e.action, e.orderId, e.parts, e.orders, e.person, e.station,
     await page.waitForFunction(() => window.__toasts !== undefined);
     await flush();
     assert.deepStrictEqual(rec.events, [], 'nobody signed in: no activity is recorded');
+    assert.deepStrictEqual(rec.lives, [], 'nobody signed in: nothing is in hand');
     assert.strictEqual(await page.evaluate(() => localStorage.getItem('sorting.sortedToday')), null, 'and the printed order is not counted as sorted');
     assert.strictEqual(await page.evaluate(() => StationActivity.who()), null);
     console.log('sorting.html: nobody signed in → no events, the order is not used up');
@@ -143,6 +148,8 @@ const brief = e => [e.action, e.orderId, e.parts, e.orders, e.person, e.station,
     await flush();
     assert.deepStrictEqual(rec.ev('scan').map(brief), [['scan', A, 3, 0, 'Maya Sorter', 'sorting', 'sorting-1'], ['scan', C, 1, 0, 'Maya Sorter', 'sorting', 'sorting-1']], 'a typed batch is one scan per order, with its pieces');
     assert(rec.ev('scan').every(e => e.detail === 'typed'));
+    await wait(700);
+    assert.deepStrictEqual(liveBrief(rec, 'sorting-1'), ['work:sheet:Batch of 2 orders:4:'], 'live: the typed batch is in hand with every piece of its orders');
 
     // a sticker: a print, and the order sorted (complete, once, orders 1, its three pieces)
     await page.evaluate(i => openIframePrinterForListing(i), iA);
@@ -156,12 +163,16 @@ const brief = e => [e.action, e.orderId, e.parts, e.orders, e.person, e.station,
     await flush();
     assert.strictEqual(rec.ev('print').length, 2, 'a second print is recorded'); assert(/again/.test(rec.ev('print')[1].detail));
     assert.strictEqual(rec.ev('complete').length, 1, 'but the order is sorted once');
+    await wait(700);
+    assert.deepStrictEqual(liveBrief(rec, 'sorting-1'), ['work:sheet:Batch of 2 orders:4:', 'work:sheet:Batch of 2 orders:4:1 of 2 orders done'], 'live: one sticker is one order done (the same sticker again is no change)');
     // Print Row: C is new (print + complete), A again (print only)
     await page.evaluate(() => handlePrintRowClick());
     await page.waitForFunction(() => localStorage.getItem('qrPrintBatch'));
     await flush();
     assert.deepStrictEqual(rec.ev('complete').map(e => e.orderId), [A, C], 'Print Row: the new order is sorted, the one already sorted is not counted again');
     assert.deepStrictEqual(rec.ev('print').map(e => e.orderId), [A, A, A, C], 'every sticker of the row is a print');
+    await wait(700);
+    assert.deepStrictEqual(liveBrief(rec, 'sorting-1'), ['work:sheet:Batch of 2 orders:4:', 'work:sheet:Batch of 2 orders:4:1 of 2 orders done', 'idle:Batch of 2 orders'], 'live: the last sticker of the batch puts nothing in hand');
     console.log('sorting.html: scans, prints and the order sorted once, with the person, station, device and pieces');
 
     // a sheet-QR batch with a cancelled order: scans say sheet QR, one reject for the cancelled order
@@ -180,6 +191,10 @@ const brief = e => [e.action, e.orderId, e.parts, e.orders, e.person, e.station,
     await flush();
     assert.deepStrictEqual(rec.ev('error').map(e => [e.orderId, e.person]), [[D, 'Maya Sorter']], 'an order that did not load is one error');
     assert(!rec.ev('scan').some(e => e.orderId === D), 'and not a scan');
+    await wait(800);
+    assert.deepStrictEqual(liveBrief(rec, 'sorting-1').slice(3), ['work:sheet:Batch of 2 orders:4:sheet QR', 'work:sheet:Batch of 2 orders:4:1 of 2 orders done', 'work:order:' + A + ':3:'],
+      'live: a sheet-QR batch says so, a cancelled order counts as done, and the order that did not load is not in hand (the one that did is)');
+    assert(rec.lives.every(l => l.person === 'Maya Sorter' && l.station === 'sorting' && l.device === 'sorting-1' && !('sandbox' in l)), 'live: every write is this person, station and page');
     console.log('sorting.html: sheet-QR scans, one reject for the cancelled order, one error for the order that did not load');
 
     // nothing in any request carries the PIN, and every event is one of the contract's
@@ -206,7 +221,7 @@ const brief = e => [e.action, e.orderId, e.parts, e.orders, e.person, e.station,
       if (u.origin !== ORIGIN) return r.abort();
       const p = decodeURIComponent(u.pathname);
       if (p === '/sorting-2.html') return r.fulfill({ status: 200, contentType: 'text/html', body: fs.readFileSync(path.join(root, 'sorting-2.html')) });
-      if (['/station-session.js', '/station-activity.js'].includes(p)) return r.fulfill(js(fs.readFileSync(path.join(root, p.slice(1)))));
+      if (['/station-session.js', '/station-activity.js', '/station-live-order.js'].includes(p)) return r.fulfill(js(fs.readFileSync(path.join(root, p.slice(1)))));
       if (p === '/QR Printer.html') return r.fulfill({ status: 200, contentType: 'text/html', body: '<!doctype html><title>printer stub</title>' });
       if (p === '/.netlify/functions/etsyOrderProxy') return r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(receipt(u.searchParams.get('orderId'))) });
       if (p === '/.netlify/functions/firebaseOrders') {
@@ -250,6 +265,9 @@ const brief = e => [e.action, e.orderId, e.parts, e.orders, e.person, e.station,
     assert.deepStrictEqual(rec.ev('scan').map(brief), [['scan', A, 3, 0, 'Ivy Two', 'sorting', 'sorting-2'], ['scan', C, 1, 0, 'Ivy Two', 'sorting', 'sorting-2']], 'sorting-2: a typed batch is one scan per order');
     assert.deepStrictEqual(rec.ev('complete').map(brief), [['complete', A, 3, 1, 'Ivy Two', 'sorting', 'sorting-2']], 'sorting-2: the order is sorted once');
     assert.strictEqual(rec.ev('print').length, 2, 'sorting-2: each sticker is a print');
+    await wait(700);
+    assert.deepStrictEqual(liveBrief(rec, 'sorting-2'), ['work:sheet:Batch of 2 orders:4:', 'work:sheet:Batch of 2 orders:4:1 of 2 orders done'], 'sorting-2: the batch is in hand, a sticker is one order done');
+    assert(rec.lives.every(l => l.person === 'Ivy Two' && l.station === 'sorting' && l.device === 'sorting-2'), 'sorting-2: every live write is this person, station and page');
     assert(rec.sessions.some(s => s.station === 'sorting' && s.device === 'sorting-2' && s.person === 'Ivy Two'), 'sorting-2 now has its sign-in session');
     console.log('sorting-2.html: the chip, a StationSession and scans, prints and the order sorted once');
     // the chip takes a 6-digit number too: the server's login door answers with the name, and the roster is never read
