@@ -222,7 +222,7 @@
 .lisPanel.up::before{top:auto;bottom:-6px;transform:rotate(225deg)}
 .lisHead{flex:0 0 auto;display:flex;align-items:center;gap:10px;padding:11px 14px 7px;min-width:0}
 .lisHead b{min-width:0;font:500 15px/1.2 var(--serif,Georgia,serif);color:var(--ink,#1c1a17);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.lisCount{margin-left:auto;flex:none;font:700 8.5px/1 var(--mono,monospace);letter-spacing:.1em;text-transform:uppercase;color:#7a5a1d;background:var(--goldSoft,#f0e6cd);border-radius:999px;padding:3px 7px}
+.lisCount{margin-left:auto;flex:none;font:700 9px/1 var(--mono,monospace);letter-spacing:.1em;text-transform:uppercase;color:#7a5a1d;background:var(--goldSoft,#f0e6cd);border-radius:999px;padding:3px 7px}
 .lisCount.clay{color:#8a3a26;background:var(--claySoft,#f4e3dc)}
 .lisBusy{flex:none;display:inline-flex;align-items:center;gap:5px;font:11px/1 var(--sans,system-ui,sans-serif);color:var(--ink45,#938c80)}
 .lisBusy{margin-left:auto}.lisBusy+.lisCount{margin-left:0}
@@ -285,9 +285,6 @@ button.lisOwn{cursor:pointer}button.lisOwn:hover,button.lisOwn:focus-visible{bor
 .lisMore .lisCh{width:12px;height:12px;opacity:.75;transform:rotate(90deg);transition:transform .22s cubic-bezier(.2,.8,.2,1)}
 .lisMore[aria-expanded=true] .lisCh{transform:rotate(-90deg)}
 .lisStatic{cursor:default}
-button.flowDot[data-issues-open]{position:relative;cursor:pointer}
-button.flowDot[data-issues-open]::before{content:"";position:absolute;inset:-9px;border-radius:50%}
-button.flowDot[data-issues-open]:focus-visible{outline:2px solid var(--gold,#a9823f);outline-offset:2px}
 button.flowDot[data-issues-open][aria-expanded="true"]{box-shadow:0 0 0 4px rgba(176,86,63,.2)!important}
 @media (hover:none){.lisCh{opacity:1}}
 @media (max-width:480px){.lisRow{min-height:56px}}

@@ -54,7 +54,7 @@ const STUBS = `
 window.__calls = []; window.__feed = {}; window.__photos = new Map();
 window.matchMedia = window.matchMedia || (() => ({ matches: false }));
 Object.assign(window, {
-  S: { mode: 'library', library: { rows: [], kind: 'sets', metal: 'all' }, cloud: { ok: true } }, api: async () => ({ sheets: [], sets: [] }), allSheets: () => [],
+  S: { mode: 'library', library: { rows: [], kind: 'sets', metal: 'all' }, cloud: { ok: true } }, api: async () => ({ sheets: window.__sheets || [], sets: window.__sets || [] }), allSheets: () => window.__sheets || [],   /* (the Library's live read answers with these: a read that found nothing would archive every record) */
   Orders: { rows: () => window.__rows || [] }, Engrave: { items: () => new Map(), backsMarkup: () => '' },
   esc: x => String(x ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])),
   el: (tag, cls) => { const e = document.createElement(tag); e.className = cls; return e; }, Gate: { projectLibraryRecords: x => x }, RoseStock: {}, CODE: { gold: 'GF', silver: 'SS', rose: 'RG', gold10k: '10K', gold14k: '14K' },
@@ -63,6 +63,7 @@ Object.assign(window, {
   openLibrarySheet: id => { window.__calls.push(['sheet', id]); return true; },
   openOrderFrom: (btn, rid, o) => { window.__calls.push(['order', rid, (o && o.poolId) || null]); return window.__openWindow ? window.__openWindow() : true; },
   setMode: m => { window.__calls.push(['mode', m]); },
+  LibraryFlow: { approve: async () => { window.__calls.push(['approve']); return { ok: true, auto: [], needs: [], confirm: [], notes: [] }; } },   /* (so the sheets carry their Approve button; a press is only recorded) */
   ListMedia: { peek: id => window.__photos.get(id) || null, listing: id => new Promise(r => setTimeout(() => r(window.__photoOf ? window.__photoOf(id) : null), 120 + (parseInt(String(id).replace(/\\D/g, ''), 10) || 0) * 25)) }
 });`;
 async function openPage(browser, { width = 1440, height = 900, fake = true, errors = [] } = {}) {
