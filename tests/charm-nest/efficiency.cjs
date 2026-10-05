@@ -181,8 +181,8 @@ const F = require('./efficiency-fixture.cjs');
     assert(/whole order number/.test(await txt(`${V} .efOView`)), 'a short number is not looked up');
     await page.click(`${V} .efOVx`); assert.equal(await page.locator(`${V} .efOView`).isVisible(), false, 'the trace closes');
     await page.click(`${V} .efP:nth-child(1) .efOw:nth-child(1) .efOx`); assert.equal(await page.locator(`${V} .efP:nth-child(1) .efOw.open`).count(), 0, 'and an order closes again');
-    // a person's days (op person), inline
-    await page.click(`${V} .efP:nth-child(3) .efWho`);
+    // a person's days (op person), inline: the Orders figure opens the card, its Days tab shows them (the name itself opens the person's own page, tested in efficiency-real-default.cjs)
+    await page.click(`${V} .efP:nth-child(3) .efOrd`); await page.click(`${V} .efP:nth-child(3) .efTabs button[data-t="days"]`);
     await page.waitForFunction(() => /days worked/.test((document.querySelector('#efficiencyView .efP:nth-child(3) .efSum') || {}).textContent || ''), null, { timeout: 8000 });
     assert(/days worked/.test(await page.locator(`${V} .efP:nth-child(3) .efSum`).innerText()), 'a summary of the days');
     assert(fx.state.calls.some(c => c.op === 'person' && c.name === 'Michael' && c.days === 7), 'op person for the seven days');
