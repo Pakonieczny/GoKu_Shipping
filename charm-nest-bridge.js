@@ -10401,7 +10401,7 @@ const OrderWin = window.OrderWin = (() => {
     W.dlg.addEventListener("close", () => {
       if (W.dlg.open) return; giveBack(0); clearTimeout(W.noteTimer); saveNote(); if (W.early) refreshNote({ order: { receiptId: W.early.rid } }); clearInterval(W.poll); W.poll = 0; W.key = null; stashTray();
       W.closing = false; stopMotion(); flightGone(); W.dlg.classList.remove("owGrow", "owBack"); endFind();
-      unmountTimeline(); W.row = null; W.rows = null; W.listed = null; W.look++; sheetReset(); SV.shown = null; W.dlg.classList.remove("owCancelled"); lookDone();
+      unmountTimeline(); tryDo(() => { if (W.engCard) W.engCard.destroy(); W.engCard = null; }); W.row = null; W.rows = null; W.listed = null; W.look++; sheetReset(); SV.shown = null; W.dlg.classList.remove("owCancelled"); lookDone();
       try { window.CustomerMail?.orderClosed(); } catch (_) {}
     });
     // back from a Send to Sheet flight that took the view out of the way (SendTour): drawn as it is now, still unseen
@@ -10732,6 +10732,21 @@ const OrderWin = window.OrderWin = (() => {
       a.finished.then(gone, gone); setTimeout(gone, FOLD.ms + 400);   // (a hidden tab draws no frames)
     }
   }
+  /** The back engraving of the piece shown, under its pictures: the one card the Sheet tab draws (OrderEngraving, charm-nest-order-engraving.js),
+   *  here for the line the Overview holds. Each piece of an order has its own back, its own job and its own approval, so the card is
+   *  the one of the line shown and swaps with the piece (nothing of the piece before stays). It follows Engrave's jobs and the order's
+   *  timeline feed (an approval made anywhere shows within a second or two) and asks for no read of its own. */
+  function paintEng(r) {
+    const host = byId("owEng"), OE = window.OrderEngraving; if (!host || !OE || !r) return;
+    const rid = String(r.order.receiptId);
+    const ctx = { rid, key: r.key, poolId: (r.poolIds || [])[0] || "", piece: W.piece || r.key, row: r,
+      events: () => (W.evFor === rid ? W.events : null),
+      // (the back's own words from the Sheet tab, for an order read from the records that Engrave holds no job for)
+      sheetEng: () => { const x = SV.info && (SV.info.mine || []).find(m => m.poolId && (r.poolIds || []).includes(m.poolId)); return (x && x.eng) || null; },
+      // (an approval made elsewhere, or here: what hangs on it is drawn again: the red box, the Engraving cell, the Sheet tab)
+      changed: () => { if (!W.dlg || !W.dlg.open || W.closing) return; if (SV.info && W.view === "sheet") tryDo(() => paintPanel(SV.info)); hold("paint", () => { if (W.dlg.open && !W.closing) paint(); }); } };
+    if (W.engCard && W.engCard.el === host) W.engCard.update(ctx); else W.engCard = OE.mount(host, ctx);
+  }
   /** Paint the window from the row it is showing. */
   function paint() {
     if(window.Seal?.defer('order-view-paint',paint))return;
@@ -10750,6 +10765,7 @@ const OrderWin = window.OrderWin = (() => {
     // photo alone, or "no image" while the photo was not ready)
     const vh = byId("owVector"); if (vh) tryDo(() => ListMedia.vectorInto(vh, r));
     byId("owSku").textContent = "SKU: " + (sp.designSku || r.line.sku || "—");
+    paintEng(r);
     // the one field that must be read exactly: labelled, whole, and never boxed into a scroller under the staff note
     const said = [];
     // a line read before the placeholder cleanup (CharmNestOrders.visible) shows clean too
@@ -11059,6 +11075,7 @@ const OrderWin = window.OrderWin = (() => {
   function paintNow(r) {
     if(window.Seal?.defer('order-now',()=>paintNow(rowOf(W.key))))return;
     if (!r) return;
+    paintEng(r);
     // Older compact order rows omitted approval metadata. Their permanent timeline keeps the exact signature.
     const events=W.evFor===String(r.order.receiptId)?W.events:[],historical=CNEngravingSeals.fromEvents(events,r);
     if(historical.length){
