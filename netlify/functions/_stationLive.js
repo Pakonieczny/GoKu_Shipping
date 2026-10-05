@@ -70,8 +70,17 @@ function cleanPiece(p) {
   if (/^[A-Za-z0-9]{1,6}$/.test(size)) out.size = size;
   return out.id || out.label || out.sku || out.listingId ? out : null;
 }
-/** The order a station is working on, as stored; { error } when it is not one. */
-function cleanOrder(o, now) {
+/** How far this computer's clock is from the server's: the server's now minus the clock the browser stamped on its request (`sentAt`),
+ *  in whole seconds. Under 10 s (the request's own travel time, or a clock that is nearly right) it counts as none, and so does a
+ *  value that is not a time or is over 36 hours off (a clock that far out is not trusted to be put right by a shift). */
+function skewOf(sentAt, now) {
+  const t = Number(sentAt);
+  if (!Number.isFinite(t) || t < 1e12) return 0;
+  const d = now - t;
+  return Math.abs(d) < 10000 || Math.abs(d) > 36 * 3600e3 ? 0 : Math.round(d / 1000) * 1000;
+}
+/** The order a station is working on, as stored; { error } when it is not one. `skew`: the browser clock's error (skewOf), added to its scan time. */
+function cleanOrder(o, now, skew) {
   if (!o || typeof o !== "object" || Array.isArray(o)) return { error: "no order" };
   const kind = o.kind === "sheet" ? "sheet" : "order";
   let rid = digits(o.rid, 30); if (pinLike(rid)) rid = "";
@@ -82,7 +91,7 @@ function cleanOrder(o, now) {
   if (kind === "sheet" && !title && !orderNumber) return { error: "a sheet needs a title" };
   let customer = text(o.customer, 60); if (!hasLetter(customer)) customer = "";
   const pieces = (Array.isArray(o.pieces) ? o.pieces : []).slice(0, MAX_PIECES).map(cleanPiece).filter(Boolean);
-  const at0 = Number(o.scannedAt);
+  const at0 = Number(o.scannedAt) + (skew || 0);
   let scannedAt = Number.isFinite(at0) && at0 > 1e12 ? Math.round(at0) : now;
   if (scannedAt > now) scannedAt = now;
   if (now - scannedAt > MAX_AGE_MS) scannedAt = now;
@@ -125,12 +134,13 @@ async function write(db, FV, live, opts) {
 
   const computer = typeof live.computer === "string" && /^[\w-]{6,64}$/.test(live.computer) ? live.computer : "";
   const session = typeof live.session === "string" && /^[\w.:-]{8,100}$/.test(live.session) ? live.session : "";
-  const sa = Number(live.startAt), sinceAt = Number.isFinite(sa) && sa > 1e12 && sa <= now ? Math.round(sa) : 0;
+  const skew = skewOf(live.sentAt, now);                    // a computer whose clock is minutes off still shows the true time since the scan
+  const sa = Number(live.startAt) + skew, sinceAt = Number.isFinite(sa) && sa > 1e12 && sa <= now ? Math.round(sa) : 0;
   const base = { id, v: 1, station, device, computer, session, person, sinceAt, beatAt: now, eventAt: now };
   if (prefix) base.sandbox = true;
 
   if (event === "work") {
-    const r = cleanOrder(live.order, now);
+    const r = cleanOrder(live.order, now, skew);
     if (r.error) return [400, { error: r.error }];
     const fp = fpOf(r.order);
     if (last && last.event === "work" && last.fp === fp && now - last.at < COALESCE_MS) return [200, { success: true, coalesced: true }];
@@ -140,7 +150,7 @@ async function write(db, FV, live, opts) {
   }
 
   // idle: the order was completed or closed; what it was is kept as `last` for the card's "last order" line
-  const e = live.ended && typeof live.ended === "object" ? cleanOrder(Object.assign({ kind: live.ended.kind }, live.ended), now) : { error: "none" };
+  const e = live.ended && typeof live.ended === "object" ? cleanOrder(Object.assign({ kind: live.ended.kind }, live.ended), now, skew) : { error: "none" };
   const doc = Object.assign(base, { state: "idle", idleAt: now });
   if (e.order) doc.last = { kind: e.order.kind, rid: e.order.rid, orderNumber: e.order.orderNumber, title: e.order.title, scannedAt: e.order.scannedAt };
   const fp = doc.last ? JSON.stringify(doc.last) : "";
@@ -371,4 +381,4 @@ async function op(ctx, body, H) {
   return H.json(200, out);
 }
 
-module.exports = { LIVE, KEEPALIVE_MS, STALE_MS, COALESCE_MS, MAX_BODY_CHARS, MAX_PIECES, CATALOG, LABELS, cleanOrder, cleanPiece, write, op, _t: { seen } };
+module.exports = { LIVE, KEEPALIVE_MS, STALE_MS, COALESCE_MS, MAX_BODY_CHARS, MAX_PIECES, CATALOG, LABELS, cleanOrder, cleanPiece, skewOf, write, op, _t: { seen } };
