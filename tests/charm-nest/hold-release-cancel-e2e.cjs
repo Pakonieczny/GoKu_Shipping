@@ -191,7 +191,8 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   const tlOf = (rid, type) => st.list(TL).filter(x => x._id.startsWith(rid + '~') && (!type || x.type === type));
   const onSheets = () => page.evaluate(() => Object.fromEntries(Object.keys(CN.S.sheets).flatMap(m => CN.S.sheets[m].pages.filter(p => p.sheetId).map(p => [p.sheetId, { all: p.charms.map(c => c.poolId), placed: p.placements.map(pl => (p.charms.find(c => c.id === pl.id) || {}).poolId) }]))));
   const rowsOf = rid => page.evaluate(rid => Orders.rows().filter(r => String(r.order.receiptId) === rid).map(r => ({ key: r.key, state: r.state, hold: r.hold || null, pieces: r.poolIds.length, frontAt: r.frontAt || 0, releasing: !!r.releasing })), rid);
-  const mutating = () => st.calls.filter(c => c.name === 'charmNestLibrary' && /^(poolPut|poolUpdate|putSheet|setUpdate|cancelPut|cancelRestore|customPut|customReopen|runPut|timelineAdd)$/.test(String(c.op))).length;
+  const mutatingCalls = () => st.calls.filter(c => c.name === 'charmNestLibrary' && /^(poolPut|poolUpdate|putSheet|setUpdate|cancelPut|cancelRestore|customPut|customReopen|runPut|timelineAdd)$/.test(String(c.op)));
+  const mutating = () => mutatingCalls().length;
   const idsOf = (rid, ...txs) => txs.flatMap(tx => { const o = SPEC.orders[rid], ln = o.lines.find(l => l[0] === tx); return Array.from({ length: ln[1] }, (_, i) => pid(rid, tx, i + 1)); });
   const sorted = a => a.slice().sort();
   const allIds = () => SPEC.sheets.flatMap(sh => sh.items.map(([rid, tx, copy]) => pid(rid, tx, copy)));
@@ -219,6 +220,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   const quiet = async what => { const l = await until(async () => { const x = await leftovers(); return x.length ? false : true; }, 15000, `${what}: nothing left on the screen`).then(() => [], async () => leftovers()); assert.deepEqual(l, [], `${what}: leftovers on the screen: ${l.join(' | ')}`); };
 
   /** a film's frame times, the dialogs, the layer's place: sampled in the page while it runs */
+  const clearNotes = () => page.evaluate(() => { for (const n of document.querySelectorAll('.mNote')) n.remove(); });
   const sampler = () => page.evaluate(() => {
     const S = window.__film = { run: true, last: performance.now(), gaps: [], caps: [], dlg: 0, layerOver: true, nameBar: 0, topBarCovered: 0, bottomUnder: 0 };
     let lastCap = ''; S.long = [];
@@ -297,7 +299,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     await shot('a2-consent-popup');
     await page.click('dialog.holdDlg [data-k=no]');
     await page.waitForFunction(() => !document.querySelector('dialog.holdDlg') && OrderWin.isOpen() && OrderWin.key().startsWith('4170000100_'), null, { timeout: 15000 });
-    assert.equal(mutating() - w0, 0, 'Not now wrote nothing');
+    assert.equal(mutating() - w0, 0, 'Not now wrote nothing: ' + JSON.stringify(mutatingCalls().slice(w0).map(c => [c.op, JSON.stringify(c.body || c.payload || c.args || {}).slice(0, 160)])));
     assert.deepEqual(await onSheets(), before, 'Not now changed no sheet');
     assert((await rowsOf(H1)).every(r => !r.hold && r.state === 'pooled'), 'Not now: the order is as it was');
     assert.equal(await page.evaluate(() => document.querySelectorAll('.cnNameBar').length), 0, 'no name asked for a Not now');
@@ -404,6 +406,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     assert.equal(await page.evaluate(() => document.querySelectorAll('dialog[open]').length), 1, `${tag}: one dialog open, never a pop-up over a pop-up`);
     assert.equal(mutating() - w0, 0, `${tag}: nothing is written while the popup is asked`);
     await shot(tag + '1-consent-popup');
+    await clearNotes();   // (a note a step before the Hold left, e.g. "moved to Completed" from pressing Complete Order, is that press's, not the film's)
     await sampler();
     if (o.during) o.during();
     await page.click('dialog.holdDlg [data-k=go]');
@@ -679,7 +682,6 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   });
   const cxStop = () => page.evaluate(() => { const S = window.__cx; S.run = false; const g = S.gaps.slice(2).sort((a, b) => a - b); return { s: S.s, props: [...S.props], anims: S.anims, n: g.length, p50: g[Math.floor(g.length * .5)] || 0, p95: g[Math.floor(g.length * .95)] || 0, max: g[g.length - 1] || 0, over100: g.filter(x => x > 100).length }; });
   const settleCx = () => page.waitForFunction(() => !document.querySelector('.cnBeacon, .cnTick') && !(document.getElementById('motionLayer') || { children: [] }).children.length, null, { timeout: 20000 });
-  const clearNotes = () => page.evaluate(() => { for (const n of document.querySelectorAll('.mNote')) n.remove(); });
 
   /** presses Cancel Order on the order's first card and follows the flight to the note */
   async function cancelFrom(rid, tag, shots) {

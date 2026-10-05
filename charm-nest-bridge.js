@@ -9948,6 +9948,8 @@ const Review = window.Review = (() => {
     const leave = (mk, node) => {
       const w = where.get(mk), rid = node && node.dataset.rid, mine = acted.mk === mk && Date.now() - acted.t < 10000;
       const who = rid ? "Order " + rid : "The decision";
+      // (Hold's film plays in the Nest tab and walks the person to On hold itself: this list's flight and its "is on hold under Orders" note were drawn at the top left, over the film)
+      if (rid && window.HoldUI && HoldUI.busy && HoldUI.busy(rid)) return null;
       if (w && w.seg !== RV.cseg) return { to: w.seg === "done" ? DONE_SW : OPEN_SW, note: mine ? { text: `${who} moved to ${w.seg === "done" ? "Completed" : "Open"}`, actions: [{ label: "Show", fn: () => showCard(w.it.settled ? "settled:" + w.it.settled.key + ":" + w.it.settled.t : mk, w.seg) }] } : null };
       if (w && f && w.kind !== f) return { to: chipSel(w.kind), note: mine ? { text: `${who} is now under ${KIND_WORDS[w.kind] || w.kind}`, actions: [{ label: "Show", fn: () => showCard(mk, w.seg, w.kind) }] } : null };
       // its line sent to the sheets with the order's own designs (Send to Sheet on any card): it goes to the sheets, whose
