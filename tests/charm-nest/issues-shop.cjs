@@ -132,7 +132,7 @@ function materialize(spec) {
     const backs = ids.filter(pid => { const l = lines[pid.slice(0, pid.lastIndexOf('_'))]; return l && l.engrave && l.engrave.approved && l.state !== 'gone'; })
       .map(pid => ({ poolId: pid, sheetId: s.id, approvedAt: 10, approvedBy: 'Paul', verified: { geometry: { ok: true }, file: { ok: true } }, outputs: { ai: { path: pid + '.ai', url: 'https://example.test/' + pid + '.ai' } } }));
     const rec = {
-      id: s.id, metal: s.metal, metalLabel: s.metal, setId: s.setId, setSeq: 1, sheetIndex: s.index, runId: 'run-1', status: 'complete', placedCount: new Set(ids).size,
+      id: s.id, metal: s.metal, metalLabel: s.metal, setId: s.setId, setSeq: 0, sheetIndex: s.index, runId: 'run-1', status: 'complete', placedCount: new Set(ids).size,
       poolIds: ids, orders, verification: { ok: true }, preview: 'https://example.test/' + s.id + '.png', outputs: { ai: { path: s.id + '.ai', url: 'https://example.test/' + s.id + '.ai' }, preview: { path: s.id + '.png', url: 'https://example.test/' + s.id + '.png' } },
       label: { files: [{ path: s.id + '-qr.png', url: 'https://example.test/' + s.id + '-qr.png', payload: 'x', orders }] }, backPool: backs, draft: false
     };
@@ -163,6 +163,8 @@ function materialize(spec) {
   }
   for (const a of archivedOnly) sheets.push({ id: `gone-${a.pid}`, metal: a.l.metal, archived: true, setId: null, runId: 'run-1', sheetIndex: 8, poolIds: [a.pid], orders: [a.o.id], placedCount: 1, status: 'complete', verification: { ok: true }, label: { files: [] } });
   const sets = [...new Set(sheets.filter(s => s.setId && !s.archived).map(s => s.setId))].map((setId, i) => ({ setId, seq: i + 1, sheetIds: sheets.filter(s => s.setId === setId && !s.archived).map(s => s.id) }));
+  // each sheet says which set it is in the way the Library does (the set's number), so an order split between two sets can name both
+  for (const sh of sheets) { const z = sets.find(x => x.setId === sh.setId); if (z) sh.setSeq = z.seq; }
   // part of the lines sit in the run's line archive (the server reads them from there)
   const archivedLines = {}, live = {};
   Object.keys(lines).sort().forEach((k, i) => { ((spec.seed + i) % 5 === 0 ? archivedLines : live)[k] = lines[k]; });

@@ -51,8 +51,18 @@ const eq = (a, b, m) => assert.deepEqual(JSON.parse(JSON.stringify(a === undefin
     eq(m.orders.map(o => o.reason.tone), ['gold', 'clay', 'slate']); assert.equal(m.hard, true, 'a missing SKU needs a person');
     m = LI.model(feed, { step: 'engraving' });
     assert.equal(m.title, 'Engraving'); assert.equal(m.orders.length, 0); assert.equal(m.count, 0); eq([m.own.go, m.own.label], ['engraving', 'Open engraving approvals'], 'for Engraving only the single link');
+    // round 7: a mate sheet of the same set that is not ready is the SET's wait: said once, quietly, and never counted as an issue
     m = LI.model({ ...feed, issues: F.issues('gf1', 0, { mates: [{ id: 'ss1', label: 'SS Sheet 1' }] }) }, { step: 'laser' });
-    assert.equal(m.title, 'Laser cutting'); eq(m.sheets.map(s => [s.id, s.label, s.metal]), [['ss1', 'SS Sheet 1', 'silver']]);
+    assert.equal(m.title, 'Laser cutting'); eq(m.sheets, [], 'the set\'s wait is no issue row'); assert.equal(m.count, 0, 'and it is not counted');
+    eq(m.waits.map(x => [x.id, x.label, x.metal, x.step, x.counter]), [['ss1', 'SS Sheet 1', 'silver', 'Engraving', '7 / 25']], 'one quiet wait: the sheet, its step, its count');
+    m = LI.model({ ...feed, issues: [...F.issues('gf1', 2, { keys: ['noSku'], mates: [{ id: 'ss1', label: 'SS Sheet 1' }, { id: 'ss1', label: 'SS Sheet 1' }] })] }, { step: 'orders' });
+    assert.equal(m.count, 2, 'two real issues, the wait is not the third'); assert.equal(m.waits.length, 1, 'a sheet that holds the set is named once');
+    m = LI.model({ ...feed, issues: [{ step: 'laser', key: 'waitsOnSheet', label: 'SS Sheet 1', open: { type: 'sheet', id: 'ss1' } }] }, { step: 'laser' }); assert.equal(m.count, 0); assert.equal(m.waits.length, 1, 'even an entry without the quiet flag is only ever the set\'s wait');
+    // the real set trouble (a sheet of the set that cannot be found) stays an issue
+    m = LI.model({ ...feed, issues: F.issues('gf1', 0, { trouble: [{ id: 'ss9' }] }) }, { step: 'laser' }); assert.equal(m.count, 1); eq(m.sheets.map(x => [x.id, x.chip]), [['ss9', 'Not found']]);
+    // an order split between two sets is a real issue, worded as the split
+    m = LI.model({ ...feed, issues: F.issues('gf1', 2, { keys: ['split', 'otherSheetNotReady'] }) }, { step: 'orders' });
+    eq(m.orders.map(o => o.reason.chip), ['Split from SS Sheet 1', 'Waits on SS Sheet 1'], 'a split from another set is not worded as a wait');
     m = LI.model(feed, { step: 'qr' });
     assert.equal(m.title, 'Engraving', 'a step with nothing falls back to what the sheet is held by, never an empty panel');
     m = LI.model({ ...feed, issues: [] }, { step: 'orders' }); assert(!m.own && !m.count, 'no issues, nothing to show');
@@ -160,9 +170,23 @@ const eq = (a, b, m) => assert.deepEqual(JSON.parse(JSON.stringify(a === undefin
   p.querySelector('.lisOwn').click(); await tick(200); eq(calls[0], ['mode', 'engrave'], 'the link opens the Engraving tab'); assert.equal(panel(), null);
   // the QR label step: one small chip, no list
   w.__feed.gf1 = F.issues('gf1', 3, { own: 'qr' }); bang('qr').click(); await tick(); p = panel(); assert.equal(p.querySelectorAll('.lisRow').length, 0); assert.match(p.querySelector('.lisOwn').textContent, /QR label missing/); w.eval('LibraryIssues.close()'); await tick(200);
-  // Laser cutting: the sheet that holds the set back
+  // Laser cutting (round 7): the set's wait, said ONCE and quietly: "Waiting for SS Sheet 1 · Engraving 7 / 25", not an issue: no row, no count, a quiet header; a press opens that sheet
   w.__feed.gf1 = F.issues('gf1', 0, { mates: [{ id: 'ss1', label: 'SS Sheet 1' }] }); bang('laser').click(); await tick(); p = panel();
-  assert.equal(rowsOf(p).length, 1); assert.match(texts(p), /SS Sheet 1/); calls.length = 0; rowsOf(p)[0].click(); await tick(); eq(calls.pop(), ['sheet', 'ss1']); p.classList.remove('handed'); w.eval('LibraryIssues.close()'); await tick(200);
+  assert.equal(rowsOf(p).length, 0, 'the set\'s wait is no issue row'); const wr = [...p.querySelectorAll('.lisWait')]; assert.equal(wr.length, 1, 'said once');
+  assert.match(texts(wr[0]), /^Waiting for SS Sheet 1 · Engraving ?7 \/ 25$/); assert.equal(wr[0].querySelectorAll('svg').length, 2, 'a quiet clock and the arrow'); assert.equal(wr[0].tagName, 'BUTTON');
+  assert.match(p.querySelector('.lisCount').textContent, /^Waiting$/); assert(p.querySelector('.lisCount').classList.contains('quiet'), 'a quiet header chip, not an issue count'); assert.doesNotMatch(texts(p), /\bissues?\b|\bWaits on\b|\blines?\b/i);
+  calls.length = 0; wr[0].click(); await tick(); eq(calls.pop(), ['sheet', 'ss1'], 'a press opens the sheet that holds the set'); p.classList.remove('handed'); w.eval('LibraryIssues.close()'); await tick(200);
+  // the same wait on top of a panel with real issues: said once, above them, and not counted
+  w.__feed.gf1 = F.issues('gf1', 3, { keys: ['noSku'], mates: [{ id: 'ss1', label: 'SS Sheet 1' }] }); bang('orders').click(); await tick(); p = panel();
+  assert.equal(rowsOf(p).length, 3); assert.match(p.querySelector('.lisCount').textContent, /^3 issues$/, 'the wait is not the fourth issue'); assert(!p.querySelector('.lisCount').classList.contains('quiet'));
+  assert(p.querySelector('.lisBody').firstElementChild.querySelector('.lisWait'), 'the set\'s wait comes first');
+  assert.equal(p.querySelectorAll('.lisWait').length, 1);
+  // the wait alone keeps its panel open and goes when the set is ready
+  w.__feed.gf1 = F.issues('gf1', 0, { mates: [{ id: 'ss1', label: 'SS Sheet 1', counter: { done: 9, of: 25 } }] }); L.changed(); await tick(300);
+  assert(panel() && panel().querySelectorAll('.lisRow').length === 0 && /Waiting for SS Sheet 1 · Engraving ?9 \/ 25/.test(texts(panel())), 'only the wait is left: its panel follows it, in place');
+  w.__feed.gf1 = []; L.changed(); await tick(300); assert.equal(panel(), null, 'the mate is ready: the wait folds away');
+  // real set trouble is still an issue
+  w.__feed.gf1 = F.issues('gf1', 0, { trouble: [{ id: 'ss9' }] }); bang('laser').click(); await tick(); p = panel(); assert.equal(rowsOf(p).length, 1); assert.match(p.querySelector('.lisCount').textContent, /^1 issue$/); w.eval('LibraryIssues.close()'); await tick(200);
 
   // ── 6. forty issues: groups by reason, each folded with its count and a stack of pictures; "Show N more"
   w.__feed.gf1 = F.issues('gf1', 40); bang().click(); await tick(); p = panel();
@@ -212,6 +236,22 @@ const eq = (a, b, m) => assert.deepEqual(JSON.parse(JSON.stringify(a === undefin
     for (const i of [0, 1, 2, 3]) rec.orderReadiness[ids[i]] = { ready: true };
     L.record(rec); L.changed(); await tick(300); p = panel(); assert(p && rowsOf(p).length === 0 && p.querySelectorAll('.lisNote').length === 1, 'the chip alone stays');
     w.eval('LibraryIssues.close()'); await tick(200);
+    // round 7, the REAL issues over a record as the server answers it: an order whose other piece sits on a not-ready sheet of the SAME set is no issue; in ANOTHER set it is a split;
+    // a report from before sets were recorded keeps its wait. Nothing in the panel says "lines" or lists the same-set wait as an order
+    const rc = F.sheet('gf1', { n: 4 }), rids = rc.orders, setIn = (key, i, extra) => ({ ready: false, key, why: 'SS Sheet 1: back engraving files are not saved', blocks: [{ key, index: 2, label: 'Charm', poolId: rids[i] + '_x_2', lineKey: rids[i] + '_x', sheetId: 'ss1', sheetLabel: 'SS Sheet 1', stage: 'backs', why: 'SS Sheet 1: back engraving files are not saved', ...extra }], onSheets: ['gf1'], pieceCount: 2, customer: F.NAMES[i], listingId: 'L' + (i + 1) });
+    rc.orderReadiness[rids[0]] = setIn('otherSheetNotReady', 0, { setId: 'set1', setLabel: 'Set 1' });
+    rc.orderReadiness[rids[1]] = setIn('otherSheetNotReady', 1, { setId: 'set2', setLabel: 'Set 2' });
+    rc.orderReadiness[rids[2]] = setIn('otherSheetNotReady', 2);
+    rc.orderReadiness[rids[3]] = setIn('otherSheetNotReady', 3, { setId: 'set1', setLabel: 'Set 1' });
+    L.record(rc); L.changed(); await tick();
+    const rb3 = card.querySelector('.flowBox button.flowBang[data-issues-step="orders"]'); assert(rb3, 'a split order is a real issue: the rail keeps its \'!\'');
+    rb3.click(); await tick(); p = panel();
+    eq(rowsOf(p).map(r => r.dataset.issueOrder), [rids[1], rids[2]], 'the same-set orders are not listed; the split one and the older report are');
+    eq(rowsOf(p).map(r => r.querySelector('.lisChip').textContent), ['Split from SS Sheet 1', 'Waits on SS Sheet 1']);
+    assert.match(p.querySelector('.lisCount').textContent, /^2 issues$/);
+    for (const i of [1, 2]) rc.orderReadiness[rids[i]] = { ready: true };
+    L.record(rc); L.changed(); await tick(300);
+    assert.equal(card.querySelector('.flowBox button.flowBang[data-issues-step="orders"]'), null, 'only same-set orders were left: no \'!\' at all, and the panel went'); assert.equal(panel(), null);
     R.issues = (s) => { readCount++; return w.__feed[s.id || s.sheetId] || []; };
   }
 

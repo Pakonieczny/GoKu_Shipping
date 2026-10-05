@@ -9,6 +9,7 @@ const assert = require('node:assert/strict');
 const O = require('./issues-oracle.cjs');
 const S = require('./issues-shop.cjs');
 const OLD = require('./fixtures/charm-nest-readiness.before-round2.js');
+const fs = require('node:fs');
 const NEW = require(require('path').join(__dirname, '../../charm-nest-readiness.js'));
 const P = require('./issues-property.cjs');
 const { paulShop } = require('./issues-paul.cjs');
@@ -51,16 +52,24 @@ function refIssues(sheet, ctx, mut = {}) {
       else if (mut.problemBeatsNested && (p.l.problems || []).length) why = problemKey(p.l);
       else if (mut.lineState && !['written', 'labelled', 'committed'].includes(p.l.state)) why = 'pooled';
       else if (!on.length) why = (p.l.problems || []).length ? problemKey(p.l) : 'pooled';
-      else if (mut.archived ? on.some(s => !ready(s)) : on.every(s => !ready(s))) why = 'otherSheetNotReady';
-      if (why) bad.push({ p, why, on });
+      else if (mut.archived ? on.some(s => !ready(s)) : on.every(s => !ready(s))) {
+        // round 7: a not-ready sheet of the SAME set is the set's wait, not the order's (mutant sameSetWaits: the old rule, which listed it)
+        const me = O.effSet(sheet);
+        if (mut.sameSetWaits || !(me && on.every(s => O.effSet(s) === me))) why = 'otherSheetNotReady';
+      }
+      if (why) bad.push({ p, why, on, split: why === 'otherSheetNotReady' && !!O.effSet(sheet) && !(p.l.hold || p.l.changePending) && on.some(s => O.effSet(s) && O.effSet(s) !== O.effSet(sheet)) });
     }
-    if (bad.length) out.push({ step: 'orders', key: bad[0].why, orderId: oid, sheetId: sheet.id, pieceCount: pieces.length, pieces: bad.map(b => ({ index: pieces.indexOf(b.p) + 1, lineKey: b.p.key, copy: b.p.copy, poolId: b.p.pid, kind: b.why, sheetLabel: b.on[0] ? O.labelOf(b.on[0]) : null, why: 'x' })) });
+    if (bad.length) {
+      const sp = bad.find(b => b.split), here = sheet.setSeq ? `Set ${sheet.setSeq}` : '', there = sp ? (() => { const o = sp.on.find(s => O.effSet(s) && O.effSet(s) !== O.effSet(sheet)); return o && o.setSeq ? `Set ${o.setSeq}` : ''; })() : '';
+      out.push({ step: 'orders', key: bad[0].why, orderId: oid, sheetId: sheet.id, pieceCount: pieces.length, ...(sp ? { split: true, ...(here && there && here !== there ? { sets: [here, there] } : {}) } : {}), why: sp && here && there ? `Split between ${here} and ${there}: its other piece` : 'x',
+        pieces: bad.map(b => ({ index: pieces.indexOf(b.p) + 1, lineKey: b.p.key, copy: b.p.copy, poolId: b.p.pid, kind: b.why, sheetLabel: b.on[0] ? O.labelOf(b.on[0]) : null, why: 'x', ...(b.split ? { split: true } : {}) })) });
+    }
   }
   return out;
 }
 
 const MUTANTS = {
-  clean: {}, ownReady: { ownReady: 1 }, lineState: { lineState: 1 }, ownPieceOnMultiOrder: { ownPiece: 1 }, noDesignBlocks: { noDesign: 1 }, goneBlocks: { gone: 1 }, ignoreHeld: { ignoreHeld: 1 },
+  clean: {}, sameSetWaits: { sameSetWaits: 1 }, ownReady: { ownReady: 1 }, lineState: { lineState: 1 }, ownPieceOnMultiOrder: { ownPiece: 1 }, noDesignBlocks: { noDesign: 1 }, goneBlocks: { gone: 1 }, ignoreHeld: { ignoreHeld: 1 },
   archivedCounts: { archived: 1 }, problemBeatsNested: { problemBeatsNested: 1 }, ordersListed: { ordersListed: 1 }, ignoresQuantity: { noQty: 1 }, noCompletedBefore: { noCompletedBefore: 1 }, loudCompleted: { completedBeforeLoud: 1 }
 };
 
@@ -74,6 +83,15 @@ function caught(name, mut, shops) {
   return null;
 }
 
+/** The REAL module with the round-7 rule taken out again (a not-ready sheet of the asking sheet's own set listed as the order's wait, as before): the harness
+ *  must catch it too, on the code that ships and not only on the reference. Built from the module's own source so it can never drift from it. */
+function realWithOldRule() {
+  const file = require('path').join(__dirname, '../../charm-nest-readiness.js'), src = fs.readFileSync(file, 'utf8');
+  const target = '!ownSetWait(b,mySet)';
+  assert(src.includes(target), 'the same-set rule is where the mutant expects it (charm-nest-readiness.js forSheet)');
+  const m = { exports: {} }; new Function('module', 'exports', 'self', src.replace(target, 'true'))(m, m.exports, undefined);
+  return m.exports;
+}
 function main() {
   const results = {};
   for (const [name, mut] of Object.entries(MUTANTS)) {
@@ -82,10 +100,17 @@ function main() {
     if (name === 'clean') assert.equal(hit, null, `the clean reference implementation must agree with the oracle: ${JSON.stringify(hit)}`);
     else assert(hit, `mutant "${name}" went undetected by the harness`);
   }
+  // the real module with the same-set rule taken out again: caught by the same comparison, and on a shop shaped like Paul's
+  const back = realWithOldRule(); let real = null;
+  for (let i = 0; i < 400 && !real; i++) { const d = P.disagreementsWith(back, S.materialize(S.makeSpec(500000 + i)), ['rows', 'records', 'pre']); if (d.length) real = { shop: i, type: d[0].type }; }
+  assert(real, 'the shipped module with the same-set rule put back went undetected by the harness');
+  const paulOld = P.disagreementsWith(back, paulShop(), ['rows', 'records', 'pre']).filter(d => d.type === 'falsePositive' || d.type === 'sameSetWaitListed');
+  assert(P.mateChecks(back, paulShop()).some(d => d.type === 'sameSetWaitListed') || paulOld.length, 'putting the same-set wait back is caught on a shop shaped like Paul\'s');
   // the old code, a real mutant: caught on Paul's shop
   const paul = P.oldAgainstOracle(paulShop());
-  assert(paul.falseAlarms >= 48 && paul.wrongReason >= 5, 'the old code is caught on a shop shaped like Paul\'s');
-  console.log(`PASS: clean reference agrees with the oracle; ${Object.keys(MUTANTS).length - 1} mutants all caught (${Object.entries(results).filter(([k]) => k !== 'clean').map(([k, v]) => `${k}:${v.type}@${v.shop}`).join(', ')}); old code caught on Paul's shop (${paul.falseAlarms} false alarms)`);
+  // (round 7: both sheets are in ONE set, so even the five shared orders are no issue: the old code's 53 listed orders are all false alarms)
+  assert(paul.falseAlarms >= 53 && paul.real === 0, 'the old code is caught on a shop shaped like Paul\'s');
+  console.log(`PASS: clean reference agrees with the oracle; ${Object.keys(MUTANTS).length - 1} mutants all caught (${Object.entries(results).filter(([k]) => k !== 'clean').map(([k, v]) => `${k}:${v.type}@${v.shop}`).join(', ')}); same-set rule put back in the shipped module caught (${real.type}@${real.shop}); old code caught on Paul's shop (${paul.falseAlarms} false alarms)`);
 }
 if (require.main === module) main();
 module.exports = { refIssues, MUTANTS };

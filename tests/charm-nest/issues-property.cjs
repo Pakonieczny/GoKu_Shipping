@@ -58,7 +58,7 @@ const shopOrders = (shop, sid) => new Set(shop.sheets.find(s => s.id === sid).or
 const serverLike = (shop, R = NEW) => S.memo(shop, 'serverLike:' + (R === NEW ? 'new' : 'x'), () => serverLikeFresh(shop, R));
 function serverLikeFresh(shop, R) {
   const rows = S.recordRows(shop), sheets = pageSheets(shop, R), reps = R.orderReports(rows, sheets);
-  return sheets.map(s => ({ ...s, orderReadiness: Object.fromEntries(R.orderIds(s).map(id => [id, (reps[id] ? R.forSheet(reps[id], s.id) : null) || { ready: false, why: 'Order readiness has not been verified' }])) }));
+  return sheets.map(s => ({ ...s, orderReadiness: Object.fromEntries(R.orderIds(s).map(id => [id, (reps[id] ? R.forSheet(reps[id], s.id, O.effSet(s)) : null) || { ready: false, why: 'Order readiness has not been verified' }])) }));
 }
 /** What the code under test shows for each live sheet, three ways: reading the page's rows (rows / records shape) and
  *  reading the record the server answered (pre). All steps, so the sheet's own blocker is there too. */
@@ -99,6 +99,16 @@ function listChecks(R, shop, mode, got) {
         const kinds = new Set(r.offenders.flatMap(o => [...o.reasons]));
         if (!kinds.has(e.key)) out.push({ type: 'wrongKey', mode, sheet: sid, order: id, detail: `shows ${e.key}; the real reasons are ${[...kinds].join('/')}` });
         if (e.pieceCount != null && e.pieceCount !== r.livePieces) out.push({ type: 'wrongCount', mode, sheet: sid, order: id, detail: `pieceCount ${e.pieceCount}, oracle ${r.livePieces}` });
+        const wantSplit = r.offenders.some(o => o.split);
+        if (!!e.split !== wantSplit && e.key !== 'held') out.push({ type: 'wrongSplitIssue', mode, sheet: sid, order: id, detail: `issue split ${!!e.split}, oracle ${wantSplit}` });
+        // the split is worded with the two sets' numbers ("Split between Set 1 and Set 2"), mine first
+        if (e.split) {
+          const seqOf = x => { const z = (shop.sets || []).find(q => q.setId === (raw.get(x) || {}).setId); return z ? `Set ${z.seq}` : ''; };
+          const here = seqOf(sid), there = [...new Set(r.offenders.filter(o => o.split).flatMap(o => o.sheets.map(z => seqOf(z.id))).filter(l => l && l !== here))];
+          if (here && there.length === 1 && (!e.sets || e.sets[0] !== here || e.sets[1] !== there[0])) out.push({ type: 'splitWords', mode, sheet: sid, order: id, detail: `sets ${JSON.stringify(e.sets)}, oracle ${here} / ${there[0]}` });
+          if (here && there.length === 1 && e.pieces.length === 1 && !new RegExp('^Split between ' + here + ' and ' + there[0] + ': ').test(e.why)) out.push({ type: 'splitWhy', mode, sheet: sid, order: id, detail: e.why });
+          if (/^Waits? on|not ready yet$/i.test(String(e.why))) out.push({ type: 'splitSaysWaits', mode, sheet: sid, order: id, detail: e.why });
+        }
         out.push(...pieceChecks(e, r, t, mode, sid, id));
       }
       for (const id of Object.keys(real)) if (!ids.includes(id)) out.push({ type: 'falseNegative', mode, sheet: sid, order: id, detail: JSON.stringify(real[id].offenders.map(o => [o.lineKey, o.copy, [...o.reasons], o.sheets.map(s => s.label)])) });
@@ -143,6 +153,8 @@ function pieceChecks(e, r, t, mode, sid, id) {
     if (p.index != null && p.index !== o.index) out.push({ type: 'wrongPieceIndex', mode, sheet: sid, order: id, detail: `${p.poolId}: index ${p.index}, oracle ${o.index}` });
     const wantLabels = o.sheets.map(s => s.label);
     if (o.sheets.length ? !wantLabels.includes(p.sheetLabel) : p.sheetLabel != null) out.push({ type: 'wrongSheetName', mode, sheet: sid, order: id, detail: `piece ${p.poolId} on ${JSON.stringify(wantLabels)} but entry says ${p.sheetLabel}` });
+    // an order split between two sets stays a real issue and says so; a wait inside the sheet's own set is never listed (round 7)
+    if (p.kind === 'otherSheetNotReady' && !!p.split !== !!o.split) out.push({ type: 'wrongSplit', mode, sheet: sid, order: id, detail: `piece ${p.poolId}: split ${!!p.split}, oracle ${!!o.split}` });
     if (p.kind && !o.reasons.has(p.kind)) out.push({ type: 'wrongPieceKind', mode, sheet: sid, order: id, detail: `piece ${p.poolId} shown as ${p.kind}; real: ${[...o.reasons].join('/')}` });
   }
   for (const k of off.keys()) if (!seen.has(k)) out.push({ type: 'missingPiece', mode, sheet: sid, order: id, detail: `blocking piece ${k} not listed` });
@@ -214,21 +226,33 @@ function setChecks(R, shop) {
   }
   return out;
 }
-/** A sheet in a set, asked for with its set: a mate that is not laser-ready is a 'waitsOnSheet' entry, once, and only for a sheet that is itself ready. */
+/** A sheet in a set, asked for with its set: the set's wait is ONE quiet 'waitsOnSheet' entry per OTHER sheet of the set that keeps the set from
+ *  being approved (the oracle's hardBlock), whether or not the sheet itself is ready, and never an order issue (round 7: a set advances as one).
+ *  A cut sheet, a draft and a sheet left out of its set have none. A sheet of the set that cannot be found is a real 'missingSheet' only for a sheet that is
+ *  itself ready, as before. */
 function mateChecks(R, shop) {
   const t = O.truth(shop), out = [], rows = S.recordRows(shop), all = pageSheets(shop, R), pre = serverLike(shop, R), live = new Map(shop.sheets.filter(s => !s.archived).map(s => [s.id, s]));
   for (const set of shop.sets) {
     const ids = set.sheetIds.filter(id => live.has(id));
     for (const mode of ['rows', 'pre']) for (const id of ids) {
-      const x = live.get(id); if (num(x.laserDoneAt) || x.draft || x.solidIncluded === false) continue;
       const members = mode === 'rows' ? all.filter(s => ids.includes(s.id)) : pre.filter(s => ids.includes(s.id));
       const subject = mode === 'rows' ? all.find(s => s.id === id) : pre.find(s => s.id === id);
       let got;
       try { got = R.issues(subject, mode === 'rows' ? { rows, allSheets: all, set, sheets: members } : { set, sheets: members }).filter(i => i.step === 'laser' && i.key === 'waitsOnSheet'); } catch (e) { out.push({ type: 'throws', mode: 'mates-' + mode, detail: e.message }); continue; }
-      const ts = t.sheets[id], p = ts.physical, itself = ts.included && (ts.completedBefore || (p.layout && p.front && p.approval && p.backs && p.qr && !Object.keys(ts.orders).length && !ts.ghosts.length));
-      const want = itself ? ids.filter(m => m !== id && !t.sheets[m].laserReady).sort() : [];
-      const have = got.map(i => i.open && i.open.id).sort();
+      const want = O.setWaits(shop, t, id), have = got.map(i => i.open && i.open.id).sort();
       if (JSON.stringify(have) !== JSON.stringify(want)) out.push({ type: 'setMates', mode: 'mates-' + mode, sheet: id, detail: `got ${JSON.stringify(have)} want ${JSON.stringify(want)}` });
+      for (const i of got) {
+        if (i.quiet !== true) out.push({ type: 'setWaitLoud', mode: 'mates-' + mode, sheet: id, detail: JSON.stringify(i).slice(0, 140) });
+        if (i.sheetId !== id) out.push({ type: 'setWaitWrongSheet', mode: 'mates-' + mode, sheet: id, detail: `entry says ${i.sheetId}` });
+        const y = live.get(i.open && i.open.id), why = y && O.hardBlock(y, t);
+        if (why && i.stepKey !== why) out.push({ type: 'setWaitStep', mode: 'mates-' + mode, sheet: id, detail: `${i.open.id}: shows ${i.stepKey}, oracle ${why}` });
+        if (y && i.label !== O.labelOf(y)) out.push({ type: 'setWaitLabel', mode: 'mates-' + mode, sheet: id, detail: `${i.label} vs ${O.labelOf(y)}` });
+      }
+      // a wait is never an order: no order issue of this sheet names a mate of its own set as the sheet that holds it
+      const me = O.effSet(live.get(id));
+      if (me) for (const e of R.issues(subject, mode === 'rows' ? { rows, allSheets: all, set, sheets: members } : { set, sheets: members }).filter(i => i.step === 'orders' && i.orderId)) for (const p of e.pieces || []) {
+        if (p.kind === 'otherSheetNotReady' && p.sheetId && p.sheetId !== id && O.effSet(live.get(p.sheetId)) === me) out.push({ type: 'sameSetWaitListed', mode: 'mates-' + mode, sheet: id, order: e.orderId, detail: `piece ${p.poolId} on ${p.sheetLabel}, a not-ready sheet of the same set` });
+      }
     }
   }
   return out;
@@ -244,10 +268,18 @@ const allChecks = shop => {
 function runProperty() {
   const shops = argv('shops', 2500), seed0 = argv('seed', 1), budget = argv('budget-ms', 25000), dual = !!argv('dual', false), noLost = !!argv('no-lost', false), ghost = !!argv('ghost', false), t0 = Date.now(), counts = {};
   let ran = 0, bad = 0, sheets = 0, issuesSeen = 0, expected = 0;
+  const cov = { sameSetDropped: 0, splitIssues: 0, setWaits: 0, shopsWithDrop: 0 };   // what the shops exercised: orders the OLD rule listed for a same-set wait, splits kept, set waits said
   for (let i = 0; i < shops && Date.now() - t0 < budget; i++, ran++) {
     const spec = S.makeSpec(seed0 * 100003 + i, { dual, noLost, ghost }), shop = S.materialize(spec), d = allChecks(shop);
     const tr = O.truth(shop);
-    for (const sid of Object.keys(tr.sheets)) { sheets++; expected += Object.keys(tr.sheets[sid].orders).length; }
+    const was = O.truth(shop, { sameSetIsIssue: true });
+    for (const sid of Object.keys(tr.sheets)) {
+      sheets++; expected += Object.keys(tr.sheets[sid].orders).length;
+      cov.sameSetDropped += Object.keys(was.sheets[sid].orders).filter(o => !tr.sheets[sid].orders[o]).length;
+      cov.splitIssues += Object.values(tr.sheets[sid].orders).filter(o => o.offenders.some(x => x.split)).length;
+      cov.setWaits += O.setWaits(shop, tr, sid).length;
+    }
+    if (Object.keys(was.sheets).some(sid => Object.keys(was.sheets[sid].orders).some(o => !tr.sheets[sid].orders[o]))) cov.shopsWithDrop++;
     if (!d.length) continue;
     bad++;
     for (const x of d) counts[x.type] = (counts[x.type] || 0) + 1;
@@ -257,6 +289,8 @@ function runProperty() {
     }
   }
   console.log(`${bad ? 'FAIL' : 'PASS'}: ${ran} shops, ${sheets} sheets, ${expected} real order issues expected, ${bad} shops disagree ${JSON.stringify(counts)} in ${Date.now() - t0} ms`);
+  console.log(`  covered: ${JSON.stringify(cov)}  (same-set waits the old rule listed and the new one does not; orders split between two sets, still listed; quiet set waits expected)`);
+  if (!argv('no-coverage', false) && ran >= 300 && (cov.sameSetDropped < 5 || cov.splitIssues < 5 || cov.setWaits < 5)) { console.log('FAIL: the random shops did not exercise the same-set rule, the split-between-sets rule and the set wait'); return false; }
   return bad === 0;
 }
 

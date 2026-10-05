@@ -125,9 +125,12 @@ function sheet(id,{n=28,metal='gold',setId='set1',index=1,base=1000}={}){
     assert.deepEqual(stepsOf(bs[1]).filter(x=>x[2]).map(x=>x[0]),['Engraving'],'the sheet that waits shows its own step');
     assert.match(bs[1].querySelector('.flowStep.current').title,/2 back engravings still need approval/);
     assert.deepEqual(bangs(bs[1]).map(b=>[b.dataset.issuesId,b.dataset.step]),[['m2','engraving']]);
-    // a finished sheet whose set still waits for another sheet says so on its own rail: the '!' sits on Laser cutting
+    // a finished sheet whose set still waits for another sheet says so on its own rail (round 7: a set advances as ONE, so it is the set's wait, not trouble of this sheet):
+    // a quiet clock on Laser cutting, never a '!' (the panel it opens says the wait once)
     assert.deepEqual(stepsOf(bs[0]).filter(x=>x[2]).map(x=>x[0]),['Laser cutting']);
-    assert.deepEqual(bangs(bs[0]).map(b=>[b.dataset.issuesId,b.dataset.step]),[['m1','laser']],"the sheet that is done but waits for its set carries the '!' on Laser cutting");
+    assert.deepEqual(bangs(bs[0]).map(b=>[b.dataset.issuesId,b.dataset.step]),[['m1','laser']],"the sheet that is done but waits for its set carries a quiet clock on Laser cutting");
+    assert(bs[0].querySelector('[data-issues-open][data-issues-quiet]') && !bs[0].querySelector('.flowBang') && !/!/.test(bs[0].querySelector('[data-issues-open]').textContent),"a clock, not a '!': nothing is wrong with this sheet");
+    assert(bs[1].querySelector('.flowBang[data-issues-open]') && !bs[1].querySelector('[data-issues-quiet]'),"the sheet that holds the set keeps its real '!'");
     assert.match(bs[0].querySelector('.flowStep.current').title,/Set 3 is cut together/);
     assert.deepEqual([...two.querySelectorAll('.approveBox')].map(b=>b.dataset.approveFor),['sheet:m2'],'one Approve button, under the sheet that is not ready; none for the set, none for the finished sheet');
     assert.equal(two.querySelector('.approveBox').previousElementSibling,bs[1],'directly under that sheet\'s rail');

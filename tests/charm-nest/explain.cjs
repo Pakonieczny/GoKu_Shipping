@@ -95,6 +95,28 @@ assert.match(rep2['2000'].why,/not in a set yet/);
   const raw=clone(own);raw.orderReadiness=reps;assert.equal(R.sheet(raw).stages.orders,true);assert.equal(states(R.explain(raw)).orders,'done');
 }
 
+// 5c. (Paul, round 7: "it's on both sheets and both sheets are in the same set") the very order of 5, with its two pieces on sheets of the SAME set: the order is fine.
+// A set advances as one, so RG Sheet 1 not being ready is the SET's wait (said once, quietly), never a wait of the order; the same order split between two sets still is one.
+{
+  const same=clone(b);same.setId='set1';
+  const sets1={setId:'set1',seq:1,name:'Set 1',sheetIds:['gf1','rg1']},repsS=R.orderReports(lines,[a,same]);
+  const ga=clone(a);ga.orderReadiness=Object.fromEntries(R.orderIds(ga).map(o=>[o,R.forSheet(repsS[o],'gf1',R.setOf(ga))]));
+  assert.equal(R.sheet(ga).stages.orders,true,'the order spread over two sheets of its own set is no order wait');
+  assert.equal(R.sheet(ga).ready,true,'GF Sheet 1 itself has nothing holding it');
+  e=R.explain(ga,{rows:names,set:sets1,sheets:[ga,same]});
+  assert.equal(states(e).orders,'done');assert.equal(step(e,'orders').items.length,0,'no order is listed as waiting');assert.match(step(e,'orders').detail,/All 4 orders/);
+  assert.equal(e.step,'laser');assert.equal(e.ready,false,'the set is cut together, so the sheet still waits for its mate');assert.equal(step(e,'laser').items[0].id,'rg1');
+  const same1=R.issues(ga,{rows:names,set:sets1,sheets:[ga,same]});
+  assert.deepEqual(same1.map(i=>[i.step,i.key,!!i.quiet,i.label,i.stepLabel,i.open.id]),[['laser','waitsOnSheet',true,'RG Sheet 1','Engraving','rg1']],'the set wait, once, quiet: no order issue');
+  assert(!same1.some(i=>i.orderId),'no order is listed as an issue');
+  // the same shop with RG Sheet 1 in ANOTHER set: the order is split between two sets, a real issue worded as the split it is
+  const apart=clone(b);apart.setId='set2';apart.setSeq=2;const repsX=R.orderReports(lines,[a,apart]);
+  const gx=clone(a);gx.setSeq=1;gx.orderReadiness=Object.fromEntries(R.orderIds(gx).map(o=>[o,R.forSheet(repsX[o],'gf1',R.setOf(gx))]));
+  assert.equal(R.sheet(gx).stages.orders,false);
+  const x=R.issues(gx,{rows:names}).filter(i=>i.step==='orders');
+  assert.deepEqual(x.map(i=>[i.orderId,i.key,i.split===true]),[['2000','otherSheetNotReady',true]]);assert.match(x[0].why,/^Split between Set 1 and Set 2/);assert.doesNotMatch(x[0].why,/\bwaits?\b/i);
+}
+
 // 6. a set with one blocked member (and its pieces named)
 const m1=sheet('m1',{n:2,index:1}),m2=sheet('m2',{n:2,index:2,metal:'silver'});m2.backPool=[m2.backPool[0]];m2.engraving={[m2.poolIds[1]]:{needed:true,state:'review',approved:false}};
 const set={setId:'set1',seq:1,name:'Set 1',sheetIds:['m1','m2']};
