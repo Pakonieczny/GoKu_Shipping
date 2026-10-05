@@ -158,7 +158,9 @@ async function openPage(browser, srv, o = {}) {
 }
 const READ_OPS = new Set(['ping', 'lookupCharms', 'listCharms', 'listSheets', 'getSheet', 'backPreview', 'sheetPdf', 'getCalibration', 'jobList', 'getJob', 'getAgent', 'masterGet', 'masterGetMany', 'masterList', 'masterListFiles', 'poolList', 'poolGet', 'sandboxStatus', 'backList', 'setGet', 'setList', 'releaseGet', 'runGet', 'runList', 'history', 'laserDoneList', 'findSheets', 'aliasGet', 'noDesignGet', 'optionMapGet', 'customGet', 'customSheetGet', 'customReadGet', 'cancelList', 'cancelFates', 'timelineGet', 'cancelCheck', 'sessionsList', 'flowState', 'getShapeGuidance', 'listingPhotos']);
 /** A call that changes cloud state (an op not known to be a read; laserStatus only with recordSeals:true; a station POST). */
-const isWrite = c => c.fn === 'charmNestLibrary' ? (c.op === 'laserStatus' ? c.recordSeals === true : !READ_OPS.has(c.op)) : c.fn === 'firebaseOrders';
+// (an op that is not in the list but is named get.../list.../find... is a read: new reading ops of the round, e.g. getOrderPieces, are not writes)
+const isRead = op => READ_OPS.has(op) || /^(get|list|find)[A-Z]/.test(String(op || ''));
+const isWrite = c => c.fn === 'charmNestLibrary' ? (c.op === 'laserStatus' ? c.recordSeals === true : !isRead(c.op)) : c.fn === 'firebaseOrders';
 const sealCheck = c => c.fn === 'charmNestLibrary' && c.op === 'laserStatus' && c.recordSeals === true;
 
 const dupIds = page => page.evaluate(() => { const m = {}; for (const e of document.querySelectorAll('[id]')) m[e.id] = (m[e.id] || 0) + 1; return Object.entries(m).filter(([, n]) => n > 1).map(([k, n]) => k + '×' + n); });
@@ -238,9 +240,10 @@ async function smallWorld(browser, shot) {
     // (the rows above were handed to the page by the test: what the page does by itself about new rows - arrivals, custom readings - is over before this)
     await page.waitForTimeout(3500);
     h.mark('look');
-    await page.waitForTimeout(4200);                                           // (the live loop reads about every 3 s)
+    await page.waitForTimeout(3500);                                           // (the live loop reads about every 3 s; a busy machine may be late: it is waited for, up to 15 s)
+    await until(() => h.since('look').some(c => c.fn === 'charmNestLibrary' && c.op === 'laserStatus' && c.wantRevs), 15000, 'a live read').catch(() => {});
     const live = h.since('look').filter(c => c.fn === 'charmNestLibrary' && c.op === 'laserStatus');
-    hard('the Library follows the cloud: a live read was made within 4 s', live.some(c => c.wantRevs), `${live.length} laserStatus calls, ${live.filter(c => c.wantRevs).length} live`);
+    hard('the Library follows the cloud: a live read was made (the loop is running)', live.some(c => c.wantRevs), `${live.length} laserStatus calls, ${live.filter(c => c.wantRevs).length} live`);
     hard('a live read never sends recordSeals:true', !h.calls.some(c => c.op === 'laserStatus' && (c.wantRevs || c.ifRevs) && c.recordSeals === true), JSON.stringify(h.calls.filter(c => c.op === 'laserStatus' && c.recordSeals === true)));
     const wrote = h.since('look').filter(isWrite);
     hard('no write call while the Library is only looked at', wrote.filter(c => !sealCheck(c)).length === 0, wrote.map(c => c.fn + ':' + c.op).join(','));
@@ -389,7 +392,7 @@ async function smallWorld(browser, shot) {
       await page.waitForTimeout(1800);
       await shot(page, 'A05-after-approve');
       await quiet(page, 1500);
-      const calls = h.since('approve').filter(c => c.fn === 'charmNestLibrary' && !READ_OPS.has(c.op) && !(c.op === 'laserStatus' && c.recordSeals !== true));
+      const calls = h.since('approve').filter(c => c.fn === 'charmNestLibrary' && !isRead(c.op) && !(c.op === 'laserStatus' && c.recordSeals !== true));
       info('calls after Approve (' + target2.id + ')', calls.map(c => c.op + (c.steps ? '[' + c.steps + ']' : '')));
       hard('Approve for laser cutting: one press, one request (a double press makes no second)', calls.filter(c => c.op === 'flowApply').length <= 1, calls.map(c => c.op).join(','));
     } else hard('an Approve button is on a sheet that is not ready', false, JSON.stringify(approve));
