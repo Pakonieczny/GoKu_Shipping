@@ -24,12 +24,14 @@
   const CARD = '.libCard[data-id]', SHELF = ':scope > [data-back-sheet]';
   const live = new Set();                                  // the cards that carry a control (so a card that has left the page lets go of it)
   const toggle = () => { const t = W.EngravingToggle; return t && typeof t.mount === 'function' && typeof t.follow === 'function' ? t : null; };
-  const pieces = shelf => (shelf ? shelf.querySelectorAll('.backPieces figure').length : 0);
+  const pieces = (shelf, T) => !shelf ? 0 : T && typeof T.countIn === 'function' ? T.countIn(shelf) : shelf.querySelectorAll('.backPieces figure').length;   // (one figure per piece)
 
   const CSS = `
 .libCard>.h>.engLibHost{flex:0 0 auto;display:inline-flex;align-items:center;margin-block:-4px}
 .libCard>.h>.engLibHost[hidden]{display:none}
-.libCard>.h:has(>.engLibHost:not([hidden])){flex-wrap:nowrap}
+.libCard>.h:has(>.engLibHost:not([hidden])){flex-wrap:nowrap;gap:4px}
+.libCard>.h:has(>.set):has(>.engLibHost:not([hidden])) .engChev{display:none}
+.libCard>.h:has(>.engLibHost:not([hidden]))>:is(.nm,.set,.tm){min-width:0;overflow:hidden;text-overflow:ellipsis}
 .libCard>[data-back-sheet]{transition:margin-bottom .2s ease}
 .libCard>[data-back-sheet][data-eng="closed"]{margin-bottom:-6px!important}
 @media (prefers-reduced-motion:reduce){.libCard>[data-back-sheet]{transition:none}}`;
@@ -53,12 +55,12 @@
     const shelf = card.querySelector(SHELF); let r = card._engLib;
     if (r && (r.shelf !== shelf || !r.host.isConnected || r.host.parentElement !== card.querySelector(':scope > .h'))) { release(card); r = null; }
     if (r) {
-      const n = pieces(shelf);
+      const n = pieces(shelf, T);
       if (n !== r.n) { r.n = n; r.handle.update(n); }
       r.follow = T.follow(shelf, r.key) || r.follow;       // (idempotent: the same host, the same sheet, nothing to do)
       return;
     }
-    if (!shelf || !pieces(shelf)) return;                  // no engraving on this sheet: no control, the card is left as it is
+    if (!shelf || !pieces(shelf, T)) return;                  // no engraving on this sheet: no control, the card is left as it is
     const head = card.querySelector(':scope > .h'); if (!head) return;
     style();
     const key = card.dataset.id;
@@ -68,7 +70,7 @@
     // (LibraryDnd) never starts from it either
     host.addEventListener('click', e => e.stopPropagation());
     head.insertBefore(host, head.querySelector(':scope > .tm'));
-    const n = pieces(shelf);
+    const n = pieces(shelf, T);
     card._engLib = { host, handle: T.mount(host, { sheetKey: key, count: n }), follow: T.follow(shelf, key), shelf, n, key };
     live.add(card);
   }
