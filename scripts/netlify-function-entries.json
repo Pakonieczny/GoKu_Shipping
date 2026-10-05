@@ -180,6 +180,7 @@
     "_charmNestCustomRead.js",
     "_charmNestMaster.js",
     "_charmNestPdf.js",
+    "_charmNestPlacement.js",
     "_charmNestSolver.js",
     "_charmNestRoseStock.js",
     "_orderTimeline.js",

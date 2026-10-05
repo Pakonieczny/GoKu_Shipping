@@ -20,6 +20,9 @@
 //  9  a redraw under the pointer (the step is done while the card is open): the card follows to the new dot and says Done
 // 10  1440, 900 and 390: the card fits the screen and the page is not made wider; reduced motion: no growth, the card still shows
 // 11  a mutant with no delay is caught by check 2
+// 12  (C1, PiecePlacement) the dots follow where the pieces are NOW: a held order of two pieces that were nested and then taken off their sheets has one solid dot (Order
+//     in), Nested hollow, its card says "Not on a sheet now", "Was on GF Sheet 2 until Paul took it off, <when>" and "On hold", the real ON SHEET seal stays in it (a seal
+//     is history), every later card says "After Nested"; a held piece the history shows laser cut and sorted is not clamped; a mutant that ignores the placement is caught
 //   node tests/charm-nest/piece-row-dot-hover.cjs   (PW_DIR=<playwright-core's node_modules>, CHROMIUM=<chrome>, SHOTS=<dir> saves screenshots)
 const fs = require('fs'), path = require('path'), assert = require('assert/strict');
 const root = path.join(__dirname, '../..');
@@ -32,6 +35,11 @@ const kOf = (o, t) => `${o.rid}_${o[t]}`, pidOf = (o, t) => `${o.rid}_${o[t]}_1`
 const line = (tid, sku, metalKey, metalLabel) => ({ transactionId: tid, listingId: '19008' + tid.slice(-5), sku, title: sku + ' necklace', quantity: 1, expectedShipDate: SHIP, variations: [{ name: 'Metal', value: metalLabel }], metalKey, metalLabel, personalization: [], buyerMessage: '' });
 const order = (rid, buyer, lines) => ({ receiptId: rid, orderNumber: rid, createTs: SHIP - 7 * DAY, updateTs: SHIP - 7 * DAY + 60, shipBy: SHIP, buyer: { name: buyer }, buyerMessage: '', isGift: false, giftMessage: '', staffNote: '', messages: [], lines });
 const ORDERS = [[order(P.rid, 'Leslie Suhr', [line(P.cable, 'CABLE CHAIN ONLY', 'rose', 'Rose Gold Filled'), line(P.gf, 'MIDDLE_9935', 'gold', '14k Gold Filled'), line(P.rg, 'MIDDLE_9935', 'rose', 'Rose Gold Filled')]), [null, pidOf(P, 'gf'), pidOf(P, 'rg')]]];
+// two more orders for check 14 (C1: the dots follow where the pieces are NOW): HELD, two pieces nested on sheets and then taken off by the Hold (the sheets' records are
+// gone, the line carries the hold marker); and PAST, two held pieces, one the history shows laser cut and sorted (a piece cannot un-cut: its dots are not clamped)
+const HELD = { rid: '4170999001', a: '41709990011', b: '41709990012' }, PAST = { rid: '4170999002', a: '41709990021', b: '41709990022' };
+ORDERS.push([order(HELD.rid, 'Hadley Holden', [line(HELD.a, 'MIDDLE_9935', 'gold', '14k Gold Filled'), line(HELD.b, 'MIDDLE_9935', 'rose', 'Rose Gold Filled')]), [null, null], 'held by Test Operator']);
+ORDERS.push([order(PAST.rid, 'Percy Past', [line(PAST.a, 'MIDDLE_9935', 'gold', '14k Gold Filled'), line(PAST.b, 'MIDDLE_9935', 'rose', 'Rose Gold Filled')]), [null, null], 'Add to next sheet']);
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 // the shop's time, as the card says it: "Oct 3 · 4:12 PM"
 const when = at => { const d = new Date(at), f = o => new Intl.DateTimeFormat('en-US', Object.assign({ timeZone: 'America/Toronto' }, o)).format(d); return `${f({ month: 'short', day: 'numeric' })} · ${f({ hour: 'numeric', minute: '2-digit' }).replace(/ /g, ' ')}`; };
@@ -58,6 +66,20 @@ async function main() {
   ev('placed', 2900, { sheet: 'RG Sheet 1', sheetId: RG1, lineKey: kOf(P, 'rg'), data: { poolId: pidOf(P, 'rg') } });
   ev('laserDone', 2000, { sheet: 'GF Sheet 1', sheetId: GF1, by: 'Paul', source: 'station', station: 'laser' });
   ev('sorted', 1000, { by: 'Ana P.', source: 'station', station: 'sorting', lineKey: kOf(P, 'gf') });
+  // HELD: arrived; each piece on a sheet (GF Sheet 2 / RG Sheet 2, no record of either now); taken off by Paul's Hold, 5 and 4 minutes apart; the order held
+  const evO = (o, type, ago, extra) => { const at = evAt - ago * 60000; srv.st.put('Order_Timeline', `${o.rid}~${type}~e${++evN}`, Object.assign({ orderId: o.rid, type, at, by: 'Test Operator', source: 'sorter', station: '', text: '', data: {} }, extra || {})); return at; };
+  const GH = 'sheet-pd-held-gf', RH = 'sheet-pd-held-rg', HOLD_AT = {};
+  evO(HELD, 'arrived', 4000, { source: 'etsy', by: 'Etsy' });
+  evO(HELD, 'placed', 3000, { sheet: 'GF Sheet 2', sheetId: GH, lineKey: kOf(HELD, 'a'), data: { poolId: pidOf(HELD, 'a') } });
+  evO(HELD, 'placed', 2990, { sheet: 'RG Sheet 2', sheetId: RH, lineKey: kOf(HELD, 'b'), data: { poolId: pidOf(HELD, 'b') } });
+  HOLD_AT.a = evO(HELD, 'removed', 300, { by: 'Paul', sheet: 'GF Sheet 2', sheetId: GH, lineKey: kOf(HELD, 'a'), text: 'Taken off GF Sheet 2: order on hold', data: { reason: 'Order on hold', poolId: pidOf(HELD, 'a') } });
+  HOLD_AT.b = evO(HELD, 'removed', 299, { by: 'Paul', sheet: 'RG Sheet 2', sheetId: RH, lineKey: kOf(HELD, 'b'), text: 'Taken off RG Sheet 2: order on hold', data: { reason: 'Order on hold', poolId: pidOf(HELD, 'b') } });
+  evO(HELD, 'held', 298, { by: 'Paul', text: 'Order on hold', data: { reason: 'Order on hold' } });
+  evO(PAST, 'arrived', 4000, { source: 'etsy', by: 'Etsy' });
+  evO(PAST, 'placed', 3000, { sheet: 'GF Sheet 3', sheetId: 'sheet-pd-past-gf', lineKey: kOf(PAST, 'a'), data: { poolId: pidOf(PAST, 'a') } });
+  evO(PAST, 'laserDone', 2000, { sheet: 'GF Sheet 3', sheetId: 'sheet-pd-past-gf', lineKey: kOf(PAST, 'a'), by: 'Paul', source: 'station', station: 'laser' });
+  evO(PAST, 'sorted', 1000, { by: 'Ana P.', source: 'station', station: 'sorting', lineKey: kOf(PAST, 'a') });
+  evO(PAST, 'placed', 2990, { sheet: 'RG Sheet 3', sheetId: 'sheet-pd-past-rg', lineKey: kOf(PAST, 'b'), data: { poolId: pidOf(PAST, 'b') } });
   const browser = await chromium.launch({ executablePath: process.env.CHROMIUM || '/opt/pw-browsers/chromium-1194/chrome-linux/chrome', args: ['--no-sandbox'] });
   const errors = [];
   const open = async (opts = {}) => {
@@ -78,7 +100,7 @@ async function main() {
     await page.evaluate(async ({ orders }) => {
       await Orders.loadMaps(true);
       B.master.entries.set('MIDDLE_9935', { sku: 'MIDDLE_9935', updatedAt: 1 });
-      for (const [order, pools] of orders) order.lines.forEach((line, i) => { const key = CharmNestOrders.lineKey(order, line); const row = { key, order, line, arrivedAt: Date.now(), spec: null, problems: [], state: pools[i] ? 'pooled' : 'pulled', reason: null, claimedBy: null, poolIds: pools[i] ? [pools[i]] : [], engrave: null, material: null }; B.orders.rows.push(row); B.orders.byKey.set(key, row); });
+      for (const [order, pools, held] of orders) order.lines.forEach((line, i) => { const key = CharmNestOrders.lineKey(order, line); const row = { key, order, line, arrivedAt: Date.now(), spec: null, problems: [], state: held ? 'held' : pools[i] ? 'pooled' : 'pulled', reason: held || null, hold: held || null, claimedBy: null, poolIds: pools[i] ? [pools[i]] : [], engrave: null, material: null }; B.orders.rows.push(row); B.orders.byKey.set(key, row); });
       Orders.interpretAll(); Review.syncOrderItems(); CN.setMode('review'); Review.render();
       window.OrderTimelineUI.pollOpenMs = 700;   // (the open window's feed reads often: the redraw check below does not wait long)
     }, { orders: ORDERS });
@@ -312,8 +334,55 @@ async function main() {
       let caught = false; try { await quickPass(mp, gf); } catch (e) { caught = /opens nothing|quick/.test(String(e.message)); }
       assert(caught, 'a dot with no delay opens its card during a quick pass: the check catches it');
       await mctx.close(); }
+
+    // ── 14 · C1: the dots follow where the pieces are NOW. A held order whose two pieces were nested and then taken off their sheets by the Hold: at most one solid dot (Order
+    //        in), Nested hollow, its card says "Not on a sheet now" and where it was; every later card says it comes after Nested; the history's real ON SHEET seal stays in the
+    //        Nested card. A piece the history shows laser cut and sorted is not clamped. A mutant that ignores the placement (the dots read the history alone) is caught. ──
+    { const { context: hctx, page: hp } = await open();
+      const ha = kOf(HELD, 'a'), hb = kOf(HELD, 'b'), pa = kOf(PAST, 'a'), pb = kOf(PAST, 'b');
+      const openOrder = async (o, dots, events) => { await hp.evaluate(k => OrderWin.open(k), kOf(o, 'a')); await hp.waitForFunction(({ rid, dots, events }) => !!OrderWin.isOpen() && document.querySelectorAll(`#owPcSum .steps i[data-pdot][data-pdot-rid="${rid}"]`).length === dots && +((document.querySelector('#owTlCount') || {}).textContent || 0) >= events, { rid: o.rid, dots, events }, { timeout: 25000 }); await sleep(500); };
+      const dotsOf = async () => Object.fromEntries((await rowsInfo(hp)).map(r => [r.key, r]));
+      const heldIsFenced = async () => {
+        const rows = await dotsOf();
+        for (const k of [ha, hb]) {
+          assert.deepEqual(rows[k].dots.filter(d => d.on).map(d => d.step), ['arrived'], `the held piece ${k}: one solid dot, Order in (Nested was done once, it is on no sheet now)`);
+          assert.deepEqual(rows[k].dots.map(d => d.label), ['Order in, done', 'Nested, not yet', 'Laser cut, not yet', 'Sorted, not yet', 'Assembled, not yet', 'Shipped, not yet'], 'each label says it too');
+        }
+      };
+      await openOrder(HELD, 12, 6); await heldIsFenced();
+      // the Nested card of the first piece: where it is now, where it was, the hold, and the history's real seal (a seal is permanent)
+      let sel = dot(ha, 'sheet'); await rest(hp, sel); let m = await read(hp, sel);
+      assert.equal(m.shown, true); assert.equal(m.tip.name, 'Nested'); assert.equal(m.tip.state, 'Not yet'); assert.equal(m.tip.line, 'Not on a sheet now', 'the Nested card says where the piece is now: ' + m.tip.text);
+      assert.equal(m.tip.by, `Was on GF Sheet 2 until Paul took it off, ${when(HOLD_AT.a)} · On hold`, 'and where it was, who took it off and when, and that it is on hold: ' + m.tip.by);
+      assert(!/\blines?\b/i.test(m.tip.text), 'pieces, never lines');
+      const sealOf = () => hp.evaluate(() => { const q = document.querySelector('.railTip[data-on] .rtSeal'); return q ? { real: !!q.querySelector('.seal'), ghost: !!q.querySelector('.pgGhost') } : null; });
+      assert.deepEqual(await sealOf(), { real: true, ghost: false }, 'the ON SHEET seal is history and stays: the real one, never a ghost, in the hollow Nested dot\'s card');
+      if (shots) { const cx = (m.dot.l + m.dot.r) / 2, x = Math.max(0, Math.min(m.vw - 560, cx - 280)), top = Math.max(0, Math.min(m.tip.t, m.dot.t) - 90), bot = Math.min(m.vh, Math.max(m.tip.b, m.dot.b) + 130);
+        await hp.screenshot({ path: path.join(shots, 'held-nested-dot-card-1440.png'), clip: { x, y: top, width: Math.min(m.vw, 560), height: bot - top } }); }
+      await away(hp);
+      // the second piece, off its own sheet (RG Sheet 2), says the same of its own sheet
+      sel = dot(hb, 'sheet'); await rest(hp, sel); m = await read(hp, sel); assert.equal(m.tip.line, 'Not on a sheet now'); assert.match(m.tip.by, /^Was on RG Sheet 2 until Paul took it off, /); await away(hp);
+      // every later step waits for Nested
+      for (const k of ['laser', 'sorted', 'assembled', 'shipped']) { sel = dot(ha, k); await rest(hp, sel); m = await read(hp, sel); assert.equal(m.tip.state, 'Not yet'); assert.equal(m.tip.line, 'After Nested', `${k}: the step ahead names the one it waits on`); await away(hp); }
+      // Order in stays Done, with its seal
+      sel = dot(ha, 'arrived'); await rest(hp, sel); m = await read(hp, sel); assert.equal(m.tip.state, 'Done'); assert.deepEqual(await sealOf(), { real: true, ghost: false }); await away(hp);
+      // a piece the history shows laser cut and sorted is not clamped (it cannot un-cut); its sibling, nested only, is
+      await openOrder(PAST, 12, 5);
+      { const rows = await dotsOf();
+        assert.deepEqual(rows[pa].dots.filter(d => d.on).map(d => d.step), ['arrived', 'sheet', 'laser', 'sorted'], 'a held piece the history shows sorted keeps its dots: ' + JSON.stringify(rows[pa].dots.map(d => d.on)));
+        assert.deepEqual(rows[pb].dots.filter(d => d.on).map(d => d.step), ['arrived'], 'its sibling, nested only and held, has one'); }
+      sel = dot(pb, 'sheet'); await rest(hp, sel); m = await read(hp, sel); assert.equal(m.tip.line, 'Not on a sheet now'); assert.equal(m.tip.by, 'On hold: Add to next sheet', 'no history of a sheet taken off: only the hold: ' + m.tip.by); await away(hp);
+      sel = dot(pa, 'sheet'); await rest(hp, sel); m = await read(hp, sel); assert.equal(m.tip.state, 'Done', 'the sorted piece\'s Nested is Done (history)'); await away(hp);
+      // a mutant that ignores the placement (the dots read the history alone) is caught by the held-order check
+      await openOrder(HELD, 12, 6); await heldIsFenced();   // (the real page passes)
+      await hp.evaluate(() => { window.__PP = window.PiecePlacement; window.PiecePlacement = Object.assign({}, window.__PP, { of: () => null }); });
+      await openOrder(PAST, 12, 5); await openOrder(HELD, 12, 6);
+      let caught = false; try { await heldIsFenced(); } catch (e) { caught = /one solid dot/.test(String(e.message)); }
+      assert(caught, 'with the placement ignored, the held pieces read Nested solid from the history: the check catches it');
+      await hp.evaluate(() => { window.PiecePlacement = window.__PP; });
+      await hctx.close(); }
     assert.deepEqual(errors, [], 'no page errors, no console errors');
   } finally { await browser.close(); srv.close(); }
-  console.log('Piece row dot hover OK: six labelled zoom dots to a row with one Tab stop and a hit area wider than the dot; 350 ms rest (a 200 ms pass opens nothing, measured 330-520 ms), click, tap, Tab, Enter and Space open it at once, Esc, scroll, a second click and moving away put it back; the card says step, state, when and who and where, or what it waits on, with a seal slot for PieceSeals; never over the row\'s buttons, never clickable; the next dot opens after a short beat once a card was open; a redraw under the pointer keeps the card; 1440/900/390 fit; reduced motion; touch; a no-delay mutant is caught');
+  console.log('Piece row dot hover OK: six labelled zoom dots to a row with one Tab stop and a hit area wider than the dot; 350 ms rest (a 200 ms pass opens nothing, measured 330-520 ms), click, tap, Tab, Enter and Space open it at once, Esc, scroll, a second click and moving away put it back; the card says step, state, when and who and where, or what it waits on, with a seal slot for PieceSeals; never over the row\'s buttons, never clickable; the next dot opens after a short beat once a card was open; a redraw under the pointer keeps the card; 1440/900/390 fit; reduced motion; touch; a no-delay mutant is caught; a held order\'s dots follow where its pieces are now (one solid dot, Nested hollow, "Not on a sheet now", the real seal kept), a piece the history shows sorted is not clamped, a placement-blind mutant is caught');
 }
 main().then(() => process.exit(0), e => { console.error(e); process.exit(1); });

@@ -11414,13 +11414,34 @@ const OrderWin = window.OrderWin = (() => {
      below when it opens (RailTip.pieceDot): the step, Done or Not yet, when and who for a done step, what it waits on for the rest, and the step's seal
      (window.PieceSeals.render, drawn by whoever owns the seals: nothing until it is there). No read, no network call: the order's timeline as this window holds it. ── */
   const PDOT_ZOOM = "1.7", PDOT_REST = 350;
-  const pdotOn = (x, s) => { const i = window.OrderTimelineUI.STAGES.indexOf(s); return x.D.step >= i || !!(x.D.stages[i] || {}).first; };
+  /* WHERE THE PIECE IS NOW decides the dots, not what once happened (Paul, 5 Oct 2026, the held order whose rows said "Waiting · next: Engraved"): the timeline's
+     `step` only ever goes up, so a piece placed on a sheet and later taken off (a Hold, a removal, its sheet deleted) kept Nested solid. The one answer to "is it on a
+     sheet now" is C1's PiecePlacement (charm-nest-piece-placement.js; the piece's own `place` when the window gave it one). A piece on no sheet now (waiting, or on hold
+     and off its sheet: place.fence) has Nested and every later dot hollow, unless its history is past the laser (a piece cannot un-cut). The history itself, every seal
+     in it, is untouched: a hollow Nested dot's card still shows the real ON SHEET seal, and says "Not on a sheet now" and where it was. While the sheet records are not
+     read (place.state "loading") nothing is said and the dots read as the history says. x._pl is the Placement, set once per paint (pdotPlace). */
+  function pdotPlace(x, rid) {
+    if (x._pl !== undefined) return x._pl;
+    const PP = window.PiecePlacement; let pl = (x.p && x.p.place) || (PP && PP.of ? tryDo(() => PP.of(rid, x.p.key)) : null) || null;
+    if (pl && PP && PP.withHistory) pl = tryDo(() => PP.withHistory(pl, x.events || [])) || pl;
+    return (x._pl = pl);
+  }
+  const pdotAt = k => window.OrderTimelineUI.STAGES.findIndex(t => t.k === k);
+  const pdotFenced = x => { const pl = x._pl; return !!(pl && pl.fence && !["loading", "cancelled", "hand"].includes(pl.state) && !x.D.cancelled && !x.D.hand && x.D.step < pdotAt("laser")); };
+  const pdotOn = (x, s) => {
+    const UI = window.OrderTimelineUI, i = UI.STAGES.indexOf(s), nest = pdotAt("sheet"), pl = x._pl;
+    let on = UI.stepDone ? !!UI.stepDone(x.D, i) : (x.D.step >= i || !!(x.D.stages[i] || {}).first);
+    if (on && i >= nest && pdotFenced(x)) on = false;                                                       // (on no sheet now: Nested and everything after is still to do)
+    else if (!on && i <= nest && pl && pl.floor >= 1 && !["loading", "cancelled"].includes(pl.state)) on = true;   // (a sheet's own record holds it: Nested is done at least)
+    return on;
+  };
   /** The state of a step of a piece, in the words of the card and the dot's label: Done, Not yet, Skipped (the piece was completed by hand), Won't happen (cancelled). */
   const pdotState = (x, s) => pdotOn(x, s) ? { done: true, word: "Done" } : x.D.cancelled ? { done: false, word: "Won't happen" } : x.D.hand ? { done: false, word: "Skipped" } : { done: false, word: "Not yet" };
   /** One piece's row of dots (x: a piece of UI.summary's each; rid: the order). One Tab stop for the row, on the step the piece is working towards. */
   function pieceDotsHtml(x, rid) {
+    pdotPlace(x, rid);
     const at = x.steps.findIndex(s => !pdotOn(x, s)), tab = at < 0 ? x.steps.length - 1 : at, grp = `${rid}|${x.p.key}`;
-    const dots = x.steps.map((s, i) => `<i class="${pdotOn(x, s) ? "on" : ""}" data-pdot="${s.k}" data-pdot-rid="${esc(rid)}" data-pdot-piece="${esc(x.p.key)}" data-zoom-dot="${PDOT_ZOOM}" data-zoom-delay="${PDOT_REST}" data-zoom-group="${esc(grp)}" role="img" tabindex="${i === tab ? 0 : -1}" title="" aria-label="${esc(`${s.l}, ${pdotState(x, s).word.toLowerCase()}`)}"></i>`).join("");
+    const dots = x.steps.map((s, i) => `<i class="${pdotOn(x, s) ? "on" : ""}" data-pdot="${s.k}" data-pdot-rid="${esc(rid)}" data-pdot-piece="${esc(x.p.key)}" data-pdot-sig="${esc(x._pl && x._pl.sig || "")}" data-zoom-dot="${PDOT_ZOOM}" data-zoom-delay="${PDOT_REST}" data-zoom-group="${esc(grp)}" role="img" tabindex="${i === tab ? 0 : -1}" title="" aria-label="${esc(`${s.l}, ${pdotState(x, s).word.toLowerCase()}`)}"></i>`).join("");
     return `<span class="steps" role="group" data-pdot-group title="" aria-label="${esc(`${x.p.name} · progress`)}">${dots}</span>`;
   }
   // when a step was done, as the Library's cards say it: "Oct 3 · 4:12 PM" in the shop's own time (the year only when it is not this year)
@@ -11440,6 +11461,7 @@ const OrderWin = window.OrderWin = (() => {
     const UI = window.OrderTimelineUI, rid = d.getAttribute("data-pdot-rid") || "", key = d.getAttribute("data-pdot-piece") || "", sk = d.getAttribute("data-pdot") || "";
     const sum = W.pcSum, x = UI && sum && sum.rid === rid ? sum.each.find(e => e.p.key === key) : null, s = x && x.steps.find(t => t.k === sk);
     if (!x || !s) return null;
+    pdotPlace(x, rid);
     const i = UI.STAGES.indexOf(s), st = pdotState(x, s), ev = (x.D.stages[i] || {}).first || null;
     let line = "", by = "";
     if (st.done) {
@@ -11454,17 +11476,28 @@ const OrderWin = window.OrderWin = (() => {
     } else if (st.word === "Won't happen") line = "Cancelled: this step will not happen";
     else {
       const now = x.steps.find(t => !pdotOn(x, t));
+      const ask = () => {
+        const q = tryDo(() => UI.requirementsOf(i, { events: x.events, cancelled: W.cancelled, stages: x.steps, context: pdotContext(rid, key), place: x._pl || undefined }));
+        const need = (q && q.need) || [], pick = ["person", "wait", "next", "after"].map(k => need.find(n => n.kind === k && !/^Not on a sheet now$/i.test(n.t))).find(Boolean) || need.find(n => !/^Not on a sheet now$/i.test(n.t) && n.kind !== "was");
+        if (!pick) return "";
+        const t = String(pick.t).replace(/\s+/g, " ").trim(), u = t.charAt(0).toUpperCase() + t.slice(1);
+        return u.length > 150 ? u.slice(0, 147).trimEnd() + "…" : u;
+      };
       if (now && now !== s) line = `After ${now.l}`;   // (a step further on waits for the one before it: that is the one with something to do)
-      else {
-        const q = tryDo(() => UI.requirementsOf(i, { events: x.events, cancelled: W.cancelled, stages: x.steps, context: pdotContext(rid, key) }));
-        const need = (q && q.need) || [], pick = ["person", "wait", "next", "after"].map(k => need.find(n => n.kind === k)).find(Boolean) || need[0];
-        if (pick) { const t = String(pick.t).replace(/\s+/g, " ").trim(); line = t.charAt(0).toUpperCase() + t.slice(1); if (line.length > 150) line = line.slice(0, 147).trimEnd() + "…"; }
-      }
+      else if (s.k === "sheet" && pdotFenced(x)) {
+        // (the piece is on no sheet now, whatever its history says: said so, then where it was, or why it is not, or what it waits on. The history's seal stays: see the seal slot)
+        const pl = x._pl, w = pl.wasOn || null;
+        line = "Not on a sheet now";
+        if (w && w.label) by = `Was on ${w.label} ${w.how === "gone" ? "until it stopped holding it" : `until ${w.by || "it was"} ${w.by ? "took it off" : "taken off"}`}${w.until > 0 ? ", " + pdotWhen(w.until) : ""}`;
+        const hr = /:\s*\S/.test(pl.why || "") ? pl.why.replace(/^[^:]*:\s*/, "").trim() : "";   // (the Hold press's own marker, "held by Paul", only says what "On hold" says)
+        const hold = pl.state === "hold" ? "On hold" + (hr && !/^held by\b/i.test(hr) ? ": " + hr : "") : "";
+        by = [by, hold].filter(Boolean).join(" · ") || ask();
+      } else line = ask();
     }
     // the seal slot (PieceSeals, charm-nest-piece-seals.js: which step has a seal is its to say): the real seal of a done step, the unfinished one of a step still to
     // come, nothing for a step that has none. The words beside it are this card's own (who, where, when), so the seal's caption is off.
     const ps = window.PieceSeals;
-    const seal = ps && typeof ps.render === "function" ? tryDo(() => ps.render(s.k, Object.assign({}, x, { pieces: (W.pieces && W.pieces.length) ? W.pieces : [x.p] }), { done: st.done, caption: false, size: 40 })) : null;
+    const seal = ps && typeof ps.render === "function" ? tryDo(() => ps.render(s.k, Object.assign({}, x, { pieces: (W.pieces && W.pieces.length) ? W.pieces : [x.p], place: x._pl || undefined }), { done: st.done, caption: false, size: 40 })) : null;
     return { name: s.l, state: st.word, line, by, seal: seal || null };
   }
   { const RT = window.RailTip = window.RailTip || {}; RT.pieceDot = pieceDotInfo; }   // (charm-nest-rail-tip.js draws the card: it asks this when a dot's card opens)
@@ -11653,7 +11686,7 @@ const OrderWin = window.OrderWin = (() => {
   // Review feed reads the records at once (ReviewLive.nudge: one read, not a poller), so the window's pieces follow
   const customSig = list => Array.isArray(list) ? list.filter(e => e.type === "sealCompleted" || e.type === "sealPrinted" || (e.type === "note" && e.data && e.data.reopened)).map(e => e.type + ":" + (e.id || e.at)).join() : null;
   function loadEvents(rid) {
-    W.events = null; W.evFor = rid; W.cancelled = null; W.nowSeal = null;
+    W.events = null; W.evFor = rid; W.cancelled = null; W.nowSeal = null; W.placementRev = null;
     if (W.feed) tryDo(() => W.feed.destroy()); W.feed = null;
     const T = window.OrderTimeline, UI = window.OrderTimelineUI; if (!T || !T.get) return;
     const f = UI && UI.feed ? tryDo(() => UI.feed(rid)) : null;
@@ -11661,8 +11694,11 @@ const OrderWin = window.OrderWin = (() => {
       if (W.evFor !== rid || W.feed !== f) return;
       const before = sheetSig(W.events), beforeC = customSig(W.events); W.events = (j && j.events) || []; W.cancelled = j && j.cancelled ? (j.cancelled[rid] || (j.cancelled.orderId ? j.cancelled : null)) : null;
       if (beforeC !== null && beforeC !== customSig(W.events)) tryDo(() => window.ReviewLive && ReviewLive.nudge({ hint: true }));
-      // a piece placed, moved or taken off since the sheet records were read: they are read again (no poller of its own: this feed is the clock)
-      if (before !== null && before !== sheetSig(W.events)) tryDo(() => window.OrderPieces && OrderPieces.load(rid, { force: true }));
+      // a piece placed, moved or taken off since the sheet records were read: they are read again (no poller of its own: this feed is the clock).
+      // The server's placementRev (a digest of the update times of the pool rows and sheet records the answer was made from) says so too when
+      // a write left no event (a sheet rewritten, a piece taken off by a stale second tab, a sheet deleted): it moved, so the pieces are read again
+      const revWas = W.placementRev; W.placementRev = (j && j.placementRev) || revWas;
+      if ((before !== null && before !== sheetSig(W.events)) || (revWas && W.placementRev !== revWas)) tryDo(() => window.OrderPieces && OrderPieces.load(rid, { force: true }));
       hold("now", () => { const r = rowOf(W.key); if (r && String(r.order.receiptId) === rid) paintNow(r); }, [byId("owNowCard"), byId("owNow")]);
     };
     if (f) { W.feed = f; f.subscribe(k => { if (k === "data") take(f.answer); else if (k === "error" && W.feed === f) console.warn("order view: timeline", f.error); }); f.refresh(); return; }
