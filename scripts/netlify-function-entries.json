@@ -185,6 +185,8 @@
     "_orderTimeline.js",
     "_employeeAttendance.js",
     "_employeeProfile.js",
+    "_employeeIssues.js",
+    "_activityKinds.js",
     "_stationActivity.js",
     "_stationLive.js",
     "_stationPinLogin.js",
