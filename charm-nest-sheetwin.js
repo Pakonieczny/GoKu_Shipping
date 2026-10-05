@@ -2391,6 +2391,10 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
      stay as saved (RoseStock.takeOff, on the server). */
   const BUSY = ["nesting", "finishing", "queued"];
   const busy = sh => BUSY.includes(sh.status) || !!sh._operationStarting || !!(sh.persisted && !sh.persistedDone && !sh.problem);
+  // A sheet "queued" only because the run is stopped (stage "Waits for Resume") is doing nothing: a change here need not wait for it
+  // (it used to wait three minutes and then say the sheet was busy). The change's own rewrite starts it by hand, as a person's press.
+  const waitsForResume = sh => sh.status === "queued" && !sh._operationStarting && !(sh.persisted && !sh.persistedDone && !sh.problem) && !!(window.CN && typeof CN.heldForResume === "function" && CN.heldForResume(sh));
+  const sheetWorking = sh => busy(sh) && !waitsForResume(sh);
   const sentToStation = sh => window.Sets && Sets.ofRun(sh.runId).some(set => set.committedAt && (set.sheetIds || []).includes(sh.sheetId));
   function sheetWord(id, name, sh) {
     const chip = W.setSheets.find(z => z.id === id);
@@ -2527,11 +2531,11 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   }
   // a sheet in the middle of a search or a save finishes that first (three minutes at most)
   async function waitIdle(pages, st, paint) {
-    if (!pages.some(busy)) return;
+    if (!pages.some(sheetWorking)) return;
     st.state = "now"; paint();
     const until = Date.now() + 180000;
-    while (pages.some(busy) && Date.now() < until) { const b = pages.find(busy); st.detail = `${sheetWord(b.sheetId, b.fileBase, b)}: ${b.stage || b.status}`; paint(); await pause(400); }
-    if (pages.some(busy)) throw new Error("a sheet is still busy after three minutes; try again once it has saved");
+    while (pages.some(sheetWorking) && Date.now() < until) { const b = pages.find(sheetWorking); st.detail = `${sheetWord(b.sheetId, b.fileBase, b)}: ${b.stage || b.status}`; paint(); await pause(400); }
+    if (pages.some(sheetWorking)) throw new Error("a sheet is still busy after three minutes; try again once it has saved");
     st.state = "ok"; st.detail = "";
   }
   // one sheet written again as it now stands: the pieces already on it stay put, and it is verified and saved
@@ -2539,7 +2543,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     st.state = "now"; paint();
     if (!allSheets().includes(sh) || !sh.placements.length && !activeCharms(sh).length) { st.state = "ok"; st.detail = "nothing left to write"; return true; }
     // the run may already have started it on its own (the sheet was left to be written): that search is this one
-    const job0 = sh.jobId, running = busy(sh), prob0 = sh.problem || null, t0 = Date.now();
+    const job0 = sh.jobId, running = sheetWorking(sh), prob0 = sh.problem || null, t0 = Date.now();
     if (!running) { sh._byHand = true; startNest(sh); }
     const until = t0 + 240000;
     while (Date.now() < until) {
@@ -3219,7 +3223,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
         const mine = sh.charms.filter(c => ids.has(c.poolId)); if (!mine.length) continue;
         for (const c of mine) onPage.add(c.poolId);
         const w = leftWhy(sh, ids);
-        if (w && w.wait || !w && busy(sh)) wait.push(sh); else if (w) { stay(whereOf(sh), mine.length, w); for (const c of mine) leftIds.add(c.poolId); } else off.push(sh);
+        if (w && w.wait || !w && sheetWorking(sh)) wait.push(sh); else if (w) { stay(whereOf(sh), mine.length, w); for (const c of mine) leftIds.add(c.poolId); } else off.push(sh);
       }
       for (const id of ids) {
         if (onPage.has(id)) continue;

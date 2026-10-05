@@ -271,7 +271,10 @@
   async function run(rid, opts) {
     rid = String(rid); opts = opts || {};
     const t0 = Date.now(), steps = [], K = kit();
-    let resumed = false;
+    let resumed = false, beatTimer = null;
+    // (while this page works, the journal says so every few seconds: another page of this computer that finds it silent for a while takes the run up)
+    const stopBeat = () => { if (beatTimer) { clearInterval(beatTimer); beatTimer = null; } };
+    const startBeat = () => { if (typeof setInterval !== "function") return; journal.set(rid, { alive: Date.now() }); beatTimer = setInterval(() => journal.set(rid, { alive: Date.now() }), 4000); };
     const A = { who: "", at: t0, step: null, steps, sheetId: null, begun: false, progress: false };
     const emit = s => {
       const now = Date.now(); s.at = now; s.t = now - t0; steps.push(s); A.step = s; if (s.sheetId) A.sheetId = s.sheetId;
@@ -279,7 +282,7 @@
       if (typeof opts.onStep === "function") { try { opts.onStep(s); } catch (e) { console.warn("[OrderHold] onStep", e); } }
       return s;
     };
-    const fail = (message, sheetId) => { emit({ type: "error", message, rid, sheetId: sheetId || null }); if (A.begun && !A.progress && !resumed) journal.drop(rid); return { ok: false, held: false, steps, error: message }; };
+    const fail = (message, sheetId) => { stopBeat(); emit({ type: "error", message, rid, sheetId: sheetId || null }); if (A.begun && !A.progress && !resumed) journal.drop(rid); return { ok: false, held: false, steps, error: message }; };
     if (!rid || rid === "undefined") return fail("No order was given.");
     if (!K || !W.Orders || !W.Pool || !W.B) return fail("The sorter is not ready yet; try again in a moment.");
     if (active.size) return fail(`One change at a time: the hold of order ${[...active.keys()][0]} is still running.`);
@@ -300,7 +303,7 @@
       //  and the page's own check for unfinished releases must not lift it again)
       for (const r of W.Orders.rows()) if (String(r.order.receiptId) === rid && r.releasing) delete r.releasing;
       journal.set(rid, { rid, who, note, at: t0, lifted: (before && before.lifted) || [], done: (before && before.done) || [], names: (before && before.names) || [] });
-      A.begun = true;
+      A.begun = true; startBeat();
       // lines already on hold keep their own reason; but lines this same hold took off before a reload are part of this hold, and get its one reason
       const earlier = h => resumed && ((before && before.lifted) || []).length > 0 && /^Taken off /.test(h) && h.endsWith(` by ${who}${note ? ": " + note : ""}`);
       const heldBefore = new Set(W.Orders.rows().filter(r => String(r.order.receiptId) === rid && r.hold && !earlier(String(r.hold))).map(r => r.key));
@@ -415,12 +418,38 @@
       if (W.RunCtl && RunCtl.poke) RunCtl.poke();
       emit({ type: "held", rid });
       emit({ type: "done" });
-      journal.drop(rid);
+      stopBeat(); journal.drop(rid);
       return { ok: true, held: true, steps };
     } catch (e) {
       return fail(String((e && e.message) || e));
-    } finally { active.delete(rid); }
+    } finally { stopBeat(); active.delete(rid); }
   }
 
-  W.OrderHold = Object.assign(W.OrderHold || {}, { plan, run, status, pending, planFrom, effectsOf, _liveSnapshot: liveSnapshot });
+  /* ── a hold a reload cut short is finished by the page itself (as an unfinished release is) ──
+     The journal says whose hold it was and which sheets it had lifted pieces from; those sheets still wait for their save, fill and
+     label, and the order already reads "On hold", so there is no Hold button to press again. Only a hold from before this page was
+     loaded is taken up, only once its sheets are back, only when no other page of this computer is still at it (its journal is silent),
+     and each order at most 3 times, 30 s apart. */
+  const LOADED = Date.now(), TRIED = new Map();
+  async function resumeHolds() {
+    const out = [];
+    if (!W.Orders || typeof W.Orders.rows !== "function") return out;
+    for (const [rid, j] of Object.entries(journal.all())) {
+      if (!j || active.has(rid) || !((j.at || 0) < LOADED) || !(j.lifted || []).length) continue;
+      if (Date.now() - (j.alive || (j.step && j.step.at) || j.at || 0) < 20000) continue;
+      if (!W.Orders.rows().some(r => r && r.order && String(r.order.receiptId) === rid)) continue;
+      const have = sheetsAll(); if (!j.lifted.every(id => have.some(z => z.sheetId === id))) continue;
+      const t = TRIED.get(rid) || { n: 0, at: 0 };
+      if (t.n >= 3 || Date.now() - t.at < 30000) continue;
+      TRIED.set(rid, { n: t.n + 1, at: Date.now() });
+      out.push(await run(rid, { name: j.who }));
+    }
+    return out;
+  }
+  if (typeof setInterval === "function" && W.document) {
+    const scan = () => { try { if (W.Session && W.Session.ready && !W.Session.ready()) return; resumeHolds().catch(() => {}); } catch (_) { /* tried again */ } };
+    setInterval(scan, 5000);
+  }
+
+  W.OrderHold = Object.assign(W.OrderHold || {}, { plan, run, status, pending, planFrom, effectsOf, resumeHolds, _liveSnapshot: liveSnapshot });
 })();

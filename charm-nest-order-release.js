@@ -190,7 +190,8 @@
       const pending = [...loc.values()].filter(x => !x.placed);
       if (!pending.length && !lost.length) return [...by.keys()];
       for (const sh of new Set(pending.map(x => x.sh))) {
-        if (sh.problem) throw new Error(`${label(sh)}: ${sh.problem}`);
+        // (a problem from a nest before this release is old news: the search is started first, and clears it; only the one it reports counts)
+        if (sh.problem && (starts.get(sh) || 0) > 0) throw new Error(`${label(sh)}: ${sh.problem}`);
         if (busy(sh) || sh.runHold) continue;
         const n = starts.get(sh) || 0;
         if (n < 6) { starts.set(sh, n + 1); startNow(sh); }
