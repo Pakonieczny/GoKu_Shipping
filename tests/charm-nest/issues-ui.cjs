@@ -106,8 +106,10 @@ async function checkShop(shop, tag) {
     if (quietBtns.length) out.push({ type: 'quietMarkDrawn', sheet: sid, detail: `${quietBtns.length} quiet mark(s): ${SHOW(quietBtns[0].outerHTML)}` });
     if (wt.waitOnly && drawn) { COV.waitOnly++; if (all.length) out.push({ type: 'markOnWaitOnlySheet', sheet: sid, detail: `done, only the set waits for ${wt.waits.join(',')}: ${all.length} mark(s) on its rail` }); }
     if (w.document.querySelector(`[data-flow-for="sheet:${sid}"] .flowWait`)) out.push({ type: 'clockDrawn', sheet: sid, detail: 'a clock on the rail' });
-    // the set's wait is said once, under the grey Approve button (when the page draws one for this sheet): it names a sheet that holds the set
-    const ab = w.document.querySelector(`.approveBox[data-approve-for="sheet:${sid}"]`);
+    // the set's wait is said once, under the set's ONE grey Approve button (round 12: a sheet that is part of a set has none of its own): it names a sheet that holds the set
+    const sc = w.document.querySelector(`.setCard:has([data-flow-for="sheet:${sid}"])`), inRealSet = !!(sc && sc._laserSet && sc._laserSet.setId && !sc._laserSet.working && !sc._laserSet.standalone);
+    if (inRealSet && sc.querySelector(`.librarySheet:has([data-flow-for="sheet:${sid}"]) .approveBox`)) out.push({ type: 'sheetOwnApprove', sheet: sid, detail: 'a sheet that is part of a set has its own Approve button' });
+    const ab = inRealSet ? sc.querySelector(':scope > .approveBox') : null;
     if (ab && wt.waits.length) {
       const say = (ab.querySelector('[data-approve-why]') || {}).textContent || '', names = [sid].concat(wt.waits).map(z => O.labelOf(shop.sheets.find(q => q.id === z))).concat('A sheet of this set');   // (the last: a sheet of the set that cannot be found, named first by the gate)
       if (ab.querySelector('[data-approve-btn]').getAttribute('aria-disabled') !== 'true') out.push({ type: 'approveNotGrey', sheet: sid, detail: `a mate holds the set (${wt.waits.join(',')}) but the button is not grey` });

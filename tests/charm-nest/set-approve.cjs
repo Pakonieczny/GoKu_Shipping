@@ -249,8 +249,9 @@ parts.push(async () => {
   const setCard = (setId, ids, extra = {}) => { const a = document.createElement('div'); a.className = 'setCard'; a.dataset.laserCard = 'set'; a._laserSet = { setId, seq: 1, sheetIds: ids, ...extra }; a._laserSheets = ids;
     a.innerHTML = `<div class="sh"><span class="nm" data-set-title></span></div><div class="sheetsRow">${ids.map(id => `<article class="librarySheet"><div class="libCard" data-id="${id}"><span data-sheet-status="${id}"></span></div></article>`).join('')}</div>`; return rect(a); };
   const area = card => card.closest('[data-laser-area]').dataset.laserArea;
-  const boxOf = (root, id) => root.querySelector(`.approveBox[data-approve-for="sheet:${id}"]`);
-  const btnOf = (root, id) => boxOf(root, id).querySelector('[data-approve-btn]'), whyOf = (root, id) => boxOf(root, id).querySelector('[data-approve-why]');
+  // a set has ONE button (key set:<setId>), at the bottom of its card; a sheet that is part of no set has its own (key sheet:<id>)
+  const boxOf = (root, key) => root.querySelector(`.approveBox[data-approve-for="${key}"]`);
+  const btnOf = (root, key) => boxOf(root, key).querySelector('[data-approve-btn]'), whyOf = (root, key) => boxOf(root, key).querySelector('[data-approve-why]');
   const off = b => b.getAttribute('aria-disabled') === 'true';
   const place = (card, ids) => { L.place(card, L.group(card._laserSet, ids.map(id => world[id])).ready, body); };
   // the records
@@ -268,89 +269,91 @@ parts.push(async () => {
   win.CNEmployee = { name: () => 'Maria' };
   win.LaserReview.openChecklist = (card, info) => opened.push({ card, ...info });
 
-  // ── A. Paul's picture (image 4 and 5): GF Sheet 1 is ready, SS Sheet 1 has 7 of 25 backs approved: BOTH buttons are grey, both say why ──
+  // ── A. Paul's picture (image 4 and 5): GF Sheet 1 is ready, SS Sheet 1 has 7 of 25 backs approved: the set's ONE button is grey and says why ──
   put(labelled2(sheet2('GF')), eng('SS', 25, 7, { metal: 'silver' }));
   const card = setCard('set1', ['GF', 'SS']); place(card, ['GF', 'SS']);
   L.changed(); flush();
   assert.equal(area(card), 'pending');
-  const REASON = 'SS Sheet 1 · back engravings 7 of 25';
-  for (const id of ['GF', 'SS']) {
-    assert(boxOf(card, id), id + ' has its button'); assert.equal(off(btnOf(card, id)), true, id + ' is grey: a single sheet cannot advance without the rest of its set');
-    assert.equal(whyOf(card, id).textContent, REASON, id + ' says which sheet is not ready and what it lacks, in one plain line');
-    assert.match(btnOf(card, id).getAttribute('aria-label'), /not yet: SS Sheet 1 · back engravings 7 of 25/); assert.equal(btnOf(card, id).getAttribute('aria-describedby'), whyOf(card, id).id, 'the reason is read with the button');
-    assert.equal(btnOf(card, id).disabled, false, 'aria-disabled, not disabled: the keyboard stays on it');
-    assert(!/\b(bad|warn|err|red)\b/i.test(whyOf(card, id).innerHTML), 'no red text: the reason is a quiet line'); assert.equal(whyOf(card, id).querySelectorAll('[title]').length, 0, 'no tooltip');
-    assert.equal(boxOf(card, id).dataset.mode, 'blocked');
-  }
-  btnOf(card, 'GF').click(); btnOf(card, 'SS').click(); assert.equal(calls.length, 0, 'a grey button presses nothing, on either sheet');
-  assert.equal(whyOf(card, 'GF').querySelector('[data-approve-reason]').textContent, REASON, 'the line is a link while the blocking sheet has its \'!\'');
-  whyOf(card, 'GF').querySelector('[data-approve-reason]').click(); assert.deepEqual(opened.map(o => [o.kind, o.id]), [['sheet', 'SS']], 'GF\'s reason opens SS Sheet 1\'s panel: the sheet that holds the set back');
+  const REASON = 'SS Sheet 1 · back engravings 7 of 25', K1 = 'set:set1';
+  assert.deepEqual([...card.querySelectorAll('.approveBox')].map(b => b.dataset.approveFor), [K1], 'ONE button for the set, and none on GF Sheet 1 or SS Sheet 1');
+  assert.equal(card.lastElementChild, boxOf(card, K1), 'at the bottom of the set card, under the sheet columns'); assert.equal(card.querySelectorAll('.librarySheet .approveBox').length, 0);
+  assert.equal(off(btnOf(card, K1)), true, 'grey: a single sheet cannot advance without the rest of its set');
+  assert.equal(whyOf(card, K1).textContent, REASON, 'it says which sheet is not ready and what it lacks, in one plain line');
+  assert.match(btnOf(card, K1).getAttribute('aria-label'), /not yet: SS Sheet 1 · back engravings 7 of 25/); assert.equal(btnOf(card, K1).getAttribute('aria-describedby'), whyOf(card, K1).id, 'the reason is read with the button');
+  assert.equal(btnOf(card, K1).disabled, false, 'aria-disabled, not disabled: the keyboard stays on it');
+  assert(!/\b(bad|warn|err|red)\b/i.test(whyOf(card, K1).innerHTML), 'no red text: the reason is a quiet line'); assert.equal(whyOf(card, K1).querySelectorAll('[title]').length, 0, 'no tooltip');
+  assert.equal(boxOf(card, K1).dataset.mode, 'blocked');
+  btnOf(card, K1).click(); assert.equal(calls.length, 0, 'a grey button presses nothing');
+  assert.equal(whyOf(card, K1).querySelector('[data-approve-reason]').textContent, REASON, 'the line is a link while the blocking sheet has its \'!\'');
+  whyOf(card, K1).querySelector('[data-approve-reason]').click(); assert.deepEqual(opened.map(o => [o.kind, o.id]), [['sheet', 'SS']], 'the reason opens SS Sheet 1\'s panel: the sheet that holds the set back');
 
-  // ── B. the live read (about every 3 s) turns them green TOGETHER (one pass, never one sheet green while its mate is grey), and grey together again ──
+  // ── B. the live read (about every 3 s) turns it green and grey in ONE pass, the same button and the same place ──
   const watch = () => { const batches = []; const mo = new win.MutationObserver(l => batches.push([...new Set(l.map(m => m.target.closest('[data-approve-for]').dataset.approveFor))].sort())); mo.observe(card, { attributes: true, attributeFilter: ['aria-disabled'], subtree: true }); return { batches, stop: () => mo.disconnect() }; };
   const cloudSays = async () => { L.nudge(); await tick(650); flush(); await tick(2); };      // (the live read: a person's change asks for a read at once)
-  btnOf(card, 'GF').focus(); assert.equal(document.activeElement, btnOf(card, 'GF'));
-  let w = watch(); const asked = requests.length;
+  btnOf(card, K1).focus(); assert.equal(document.activeElement, btnOf(card, K1));
+  const node = boxOf(card, K1); let w = watch(); const asked = requests.length;
   world.SS = bump(eng('SS', 25, 25, { metal: 'silver' }), { updatedAt: 5 });                    // the cloud now says: every back is approved and saved (its QR label is still the press's own step)
   await cloudSays(); w.stop();
   assert(requests.length > asked, 'the cards were read again');
-  assert.deepEqual(w.batches, [['sheet:GF', 'sheet:SS']], 'both buttons changed in the same pass: ' + JSON.stringify(w.batches));
-  for (const id of ['GF', 'SS']) { assert.equal(off(btnOf(card, id)), false, id + ' is green'); assert.equal(whyOf(card, id).textContent, ''); assert.equal(boxOf(card, id).dataset.mode, 'ready'); }
+  assert.deepEqual(w.batches, [[K1]], 'the one button changed, once: ' + JSON.stringify(w.batches));
+  assert.equal(boxOf(card, K1), node, 'the same button, not drawn again'); assert.equal(off(btnOf(card, K1)), false, 'green'); assert.equal(whyOf(card, K1).textContent, ''); assert.equal(boxOf(card, K1).dataset.mode, 'ready');
   assert.equal(area(card), 'pending', 'the set is still In progress until it is approved');
-  assert.equal(document.activeElement, btnOf(card, 'GF'), 'the keyboard stayed on the button through the change');
+  assert.equal(document.activeElement, btnOf(card, K1), 'the keyboard stayed on the button through the change');
 
-  // grey together again (a back changed on another computer)
+  // grey again (a back changed on another computer)
   w = watch();
   world.SS = bump(eng('SS', 25, 24, { metal: 'silver' }), { updatedAt: 9 }); await cloudSays(); w.stop();
-  assert.deepEqual(w.batches, [['sheet:GF', 'sheet:SS']], 'grey together, in one pass: ' + JSON.stringify(w.batches));
-  for (const id of ['GF', 'SS']) { assert.equal(off(btnOf(card, id)), true); assert.equal(whyOf(card, id).textContent, 'SS Sheet 1 · back engravings 24 of 25'); }
-  assert.equal(document.activeElement, btnOf(card, 'GF'), 'the keyboard stayed on the button that turned grey (aria-disabled, not disabled)');
+  assert.deepEqual(w.batches, [[K1]], 'grey, in one pass: ' + JSON.stringify(w.batches));
+  assert.equal(off(btnOf(card, K1)), true); assert.equal(whyOf(card, K1).textContent, 'SS Sheet 1 · back engravings 24 of 25'); assert.equal(boxOf(card, K1), node);
+  assert.equal(document.activeElement, btnOf(card, K1), 'the keyboard stayed on the button that turned grey (aria-disabled, not disabled)');
   w = watch(); await cloudSays(); w.stop(); assert.deepEqual(w.batches, [], 'a read that says nothing new redraws nothing: no flicker');
 
-  // ── C. green on both: ONE press, on either sheet, approves the whole set once ──
+  // ── C. green: ONE press approves the whole set once ──
   world.SS = bump(eng('SS', 25, 25, { metal: 'silver' }), { updatedAt: 12 }); await cloudSays();
-  for (const id of ['GF', 'SS']) assert.equal(off(btnOf(card, id)), false, id);
-  btnOf(card, 'GF').click(); btnOf(card, 'SS').click(); btnOf(card, 'GF').click();
-  assert.equal(calls.length, 1, 'one action for the set, whichever sheet\'s button was pressed and however many times'); assert.deepEqual(calls[0], { kind: 'set', id: 'set1', by: 'Maria' });
-  for (const id of ['GF', 'SS']) { assert.equal(boxOf(card, id).dataset.mode, 'busy', id + ' shows the one running approval'); assert.match(btnOf(card, id).textContent, /Approving/); assert(btnOf(card, id).querySelector('.spin'), 'a small spinner with its word'); assert.equal(off(btnOf(card, id)), true); }
-  L.changed(); flush(); btnOf(card, 'SS').click(); assert.equal(calls.length, 1, 'still one, even through a redraw and a press on the other sheet');
+  assert.equal(off(btnOf(card, K1)), false);
+  btnOf(card, K1).click(); btnOf(card, K1).click(); btnOf(card, K1).click();
+  assert.equal(calls.length, 1, 'one action for the set, however many times it was pressed'); assert.deepEqual(calls[0], { kind: 'set', id: 'set1', by: 'Maria' });
+  assert.equal(boxOf(card, K1).dataset.mode, 'busy', 'the button shows the one running approval'); assert.match(btnOf(card, K1).textContent, /Approving/); assert(btnOf(card, K1).querySelector('.spin'), 'a small spinner with its word'); assert.equal(off(btnOf(card, K1)), true);
+  L.changed(); flush(); btnOf(card, K1).click(); assert.equal(calls.length, 1, 'still one, even through a redraw');
   world.SS = labelled2(world.SS); win._release(); await tick(); flush();                           // (the press made the QR label and sealed the set: both sheets are ready)
-  assert.equal(shows.length, 1, 'one Moving bar'); assert.equal(shows[0].host, card, 'on the set\'s card, not on one sheet'); assert.equal(shows[0].opts.title, 'Approve for laser cutting');
+  assert.equal(shows.length, 1, 'one Moving bar'); assert.equal(shows[0].host, card, 'on the set\'s card'); assert.equal(shows[0].opts.title, 'Approve for laser cutting'); assert.equal(shows[0].opts.where, 'end', 'under the one button');
   await cloudSays();
   assert.equal(area(card), 'ready', 'the whole set reached Laser cutting together');
-  for (const id of ['GF', 'SS']) assert(!boxOf(card, id) || boxOf(card, id).dataset.mode !== 'ready', 'no sheet is left with a green button');
+  assert.equal(card.querySelectorAll('.approveBox').length === 0 || boxOf(card, K1).dataset.mode !== 'ready', true, 'no green button is left on a set in Laser cutting');
 
-  // ── D. a set with a completed sheet: the sheets still to approve carry the buttons, the cut one none ──
-  const card2 = setCard('set2', ['A', 'B', 'C']);
+  // ── D. a set with a completed sheet: the set's one button, the cut sheet has none ──
+  const card2 = setCard('set2', ['A', 'B', 'C']), K2 = 'set:set2';
   put(labelled2(sheet2('A', { laserDoneAt: 5 })), eng('B', 3, 3, { metal: 'silver' }), eng('C', 4, 1, { metal: 'rose' })); place(card2, ['A', 'B', 'C']); L.changed(); flush();
-  assert.equal(area(card2), 'pending'); assert.equal(boxOf(card2, 'A'), null, 'a completed sheet has no button');
-  for (const id of ['B', 'C']) { assert.equal(off(btnOf(card2, id)), true); assert.equal(whyOf(card2, id).textContent, 'RG Sheet 1 · back engravings 1 of 4'); }
-  // the Rose Gold sheet's own approvals count; once they are in, its green line is its own yes and never greys a button
+  assert.equal(area(card2), 'pending'); assert.deepEqual([...card2.querySelectorAll('.approveBox')].map(b => b.dataset.approveFor), [K2], 'a completed sheet has no button, nor has any other sheet of the set');
+  assert.equal(off(btnOf(card2, K2)), true); assert.equal(whyOf(card2, K2).textContent, 'RG Sheet 1 · back engravings 1 of 4');
+  // the Rose Gold sheet's own approvals count; once they are in, its green line is its own yes and never greys the button
   put(bump(eng('C', 4, 4, { metal: 'rose', roseStockId: 'stock-1' }))); L.changed(); flush();
-  for (const id of ['B', 'C']) assert.equal(off(btnOf(card2, id)), false, id + ' green: a Rose Gold sheet without its line is soft');
-  // "and N more": several sheets that are not ready
-  const card3 = setCard('set3', ['D', 'E', 'F']);
+  assert.equal(off(btnOf(card2, K2)), false, 'green: a Rose Gold sheet without its line is soft');
+  // "and N more": several sheets that are not ready (F is a draft: it is no part of the set, it keeps a button of its own)
+  const card3 = setCard('set3', ['D', 'E', 'F']), K3 = 'set:set3';
   put(eng('D', 4, 1), eng('E', 2, 0, { metal: 'silver' }), sheet2('F', { metal: 'rose', draft: true })); place(card3, ['D', 'E', 'F']); L.changed(); flush();
-  for (const id of ['D', 'E', 'F']) assert.equal(whyOf(card3, id).textContent, 'GF Sheet 1 · back engravings 1 of 4, and 2 more', id);
+  assert.equal(whyOf(card3, K3).textContent, 'GF Sheet 1 · back engravings 1 of 4, and 2 more'); assert.deepEqual([...card3.querySelectorAll('.approveBox')].map(b => b.dataset.approveFor).sort(), ['set:set3', 'sheet:F'], 'only the draft that is no part of the set has its own');
   // a 14K sheet left out of its set by its own Include switch holds the others back
-  const card4 = setCard('set4', ['G', 'H']);
+  const card4 = setCard('set4', ['G', 'H']), K4 = 'set:set4';
   put(sheet2('G'), sheet2('H', { metal: 'gold14k', solidIncluded: false })); place(card4, ['G', 'H']); L.changed(); flush();
-  for (const id of ['G', 'H']) { assert.equal(off(btnOf(card4, id)), true); assert.equal(whyOf(card4, id).textContent, '14K Sheet 1 · not included in a set yet'); }
+  assert.equal(off(btnOf(card4, K4)), true); assert.equal(whyOf(card4, K4).textContent, '14K Sheet 1 · not included in a set yet');
   // a sheet still being laid out, and one a person holds (the press lifts the hold: it is no reason to be grey)
   put(bump(world.H, { solidIncluded: true }), bump(world.G, { status: 'nesting' })); L.changed(); flush();
-  for (const id of ['G', 'H']) assert.equal(whyOf(card4, id).textContent, 'GF Sheet 1 · still being laid out');
+  assert.equal(whyOf(card4, K4).textContent, 'GF Sheet 1 · still being laid out'); assert.deepEqual([...card4.querySelectorAll('.approveBox')].map(b => b.dataset.approveFor), [K4]);
   put(bump(world.G, { status: 'complete', laserHold: { at: 3, by: 'Paul' } })); L.changed(); flush();
-  for (const id of ['G', 'H']) assert.equal(off(btnOf(card4, id)), false, 'a held sheet is pressable: Approve lifts the hold');
+  assert.equal(off(btnOf(card4, K4)), false, 'a held sheet is pressable: Approve lifts the hold');
 
-  // ── E. a set of one sheet, a loose group and a sheet card are exactly as before: their own sheet's test, a quiet reason for back engravings ──
-  const one = setCard('set5', ['I']); put(eng('I', 3, 0)); place(one, ['I']); L.changed(); flush();
-  assert.equal(off(btnOf(one, 'I')), true); assert.equal(whyOf(one, 'I').textContent, '', 'a lone sheet\'s engravings are the rail\'s to say'); assert.match(btnOf(one, 'I').getAttribute('aria-label'), /Waiting on 3 back engravings/);
+  // ── E. a set of one sheet is one button at set level, its sheet's own test, a quiet reason for back engravings; a loose group is its sheets' own ──
+  const one = setCard('set5', ['I']), K5 = 'set:set5'; put(eng('I', 3, 0)); place(one, ['I']); L.changed(); flush();
+  assert.deepEqual([...one.querySelectorAll('.approveBox')].map(b => b.dataset.approveFor), [K5], 'one button for the set of one sheet, none on the sheet');
+  assert.equal(off(btnOf(one, K5)), true); assert.equal(whyOf(one, K5).textContent, '', 'a lone sheet\'s engravings are the rail\'s to say'); assert.match(btnOf(one, K5).getAttribute('aria-label'), /Waiting on 3 back engravings/);
   const loose = setCard(undefined, ['J', 'K'], { setId: undefined, working: true, sheetIds: undefined }); put(sheet2('J'), eng('K', 2, 0, { metal: 'silver' })); place(loose, ['J', 'K']); L.changed(); flush();
-  assert.equal(off(btnOf(loose, 'J')), false, 'sheets of a loose group are not a set: J is green whatever K lacks'); assert.equal(off(btnOf(loose, 'K')), true);
-  calls.length = 0; btnOf(loose, 'J').click(); assert.deepEqual(calls[0], { kind: 'sheet', id: 'J', by: 'Maria' }, 'its press approves that sheet, as before'); win._release();
+  assert.deepEqual([...loose.querySelectorAll('.approveBox')].map(b => b.dataset.approveFor), ['sheet:J', 'sheet:K'], 'sheets of a loose group are no set: each keeps its own');
+  assert.equal(off(btnOf(loose, 'sheet:J')), false, 'J is green whatever K lacks'); assert.equal(off(btnOf(loose, 'sheet:K')), true);
+  calls.length = 0; btnOf(loose, 'sheet:J').click(); assert.deepEqual(calls[0], { kind: 'sheet', id: 'J', by: 'Maria' }, 'its press approves that sheet, as before'); win._release();
   await tick();
 
-  console.log('Set approve OK (part 3): GF ready + SS blocked: both grey with one plain reason; both ready: both green together, one press approves the set once; green and grey flip together without a flicker and keep the keyboard; completed, held, 14K, Rose Gold, one-sheet and loose cases');
+  console.log('Set approve OK (part 3): GF ready + SS blocked: the set\'s one button is grey with one plain reason; both ready: it is green, one press approves the set once; green and grey flip in one pass without a flicker and keep the keyboard; completed, held, 14K, Rose Gold, one-sheet and loose cases');
   win.close();
 });
 
