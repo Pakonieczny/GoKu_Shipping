@@ -133,7 +133,7 @@ const shot = async (page, name, sel, w) => {
         m = await read(page, sel); assert(m.k < 1.05 && !m.shown, `${tag}: the pressed '!' is not left grown`);
         // while the panel is open no card comes over another circle (no pop-up on a pop-up)
         await hover(page, circle('gf1', 'qr'), 800); m = await read(page, circle('gf1', 'qr')); assert.equal(m.shown, false, `${tag}: no card while the panel is open`);
-        await page.keyboard.press('Escape'); await sleep(450); assert.equal(await page.evaluate(() => !!document.querySelector('.lisPanel')), false, `${tag}: Esc closes the panel`);
+        await page.keyboard.press('Escape'); await sleep(450); assert.equal(await page.evaluate(() => !!document.querySelector('.lisPanel')), false, `${tag}: Esc closes the panel`); await page.evaluate(() => document.activeElement && document.activeElement.blur());   // (Esc gave the '!' the keyboard back: its ring would show in the screenshots below)
         await away(page, 300); await hover(page, circle('gf1', 'qr'), 700); m = await read(page, circle('gf1', 'qr')); assert.equal(m.shown, true, `${tag}: the card is back once the panel is closed`); await away(page); }
 
       // ── 4. a not-started circle: its words; the grey circle grows too
