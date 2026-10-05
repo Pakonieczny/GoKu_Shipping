@@ -234,7 +234,7 @@ async function main() {
     R = await rows();
     const b1 = byKey(R, B, 'b1'), b2 = byKey(R, B, 'b2');
     assert.deepEqual([b1, b2].map(r => r.chip && r.chip.text), ['On hold', 'On hold'], JSON.stringify(R.map(r => r.chip)));
-    assert([b1, b2].every(r => r.tag === 'BUTTON' && r.hold === 0 && r.chip.tag === 'SPAN'), 'plain rows: the row is the button, its chip only says: ' + JSON.stringify(R.map(r => [r.tag, r.chip.tag])));
+    assert([b1, b2].every(r => r.hold === 0 && r.chip.tag === 'SPAN'), 'rows with no Hold button (the order is held): the chip only says: ' + JSON.stringify(R.map(r => [r.tag, r.hold, r.chip.tag])));
     assert(b1.chip.cls.includes('hold') && /^rgb\(162, 89, 28\)$/.test(b1.chip.color), 'On hold takes the Hold button\'s orange: ' + b1.chip.color + ' ' + b1.chip.cls);
     assert(b1.chip.dot === 'rgb(162, 89, 28)', 'and its dot: ' + b1.chip.dot);
     for (const r of [b1, b2]) plain(r.chip, r.chip.text);
@@ -264,7 +264,7 @@ async function main() {
       R = await rows(); const held = keys.map(t => byKey(R, o, t));
       assert.deepEqual(held.map(r => r.chip && r.chip.text), ['On hold', 'On hold'], what + ': both pieces say On hold: ' + JSON.stringify(R.map(r => r.chip)));
       assert(held.every(r => r.chip.cls === 'hold' && r.chip.tag === 'SPAN' && r.chip.aria === null), what + ': said, not pressed (there is no sheet to open): ' + JSON.stringify(held.map(r => r.chip)));
-      assert.equal(R.every(r => r.tag === 'BUTTON'), plainRows, what + ': ' + (plainRows ? 'no Hold button of its own (the order is held): plain rows' : 'the Hold button is still there: group rows'));
+      assert.equal(R.every(r => r.hold === 0), plainRows, what + ': ' + (plainRows ? 'no Hold button of its own (the order is held)' : 'the Hold button is still there'));
       assert((await scopeOf()).every(p => !p.nested), what + ': the Sheet tab agrees: on no sheet ' + JSON.stringify(await scopeOf()));
       assert.equal(await page.evaluate(() => document.querySelectorAll('#owNowCard .owShChip.off').length), 2, what + ': the card above says Not on a sheet yet, twice');
       const said = await page.evaluate(() => document.getElementById('owPcSum').textContent);

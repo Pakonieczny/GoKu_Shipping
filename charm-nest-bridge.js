@@ -11603,7 +11603,7 @@ const OrderWin = window.OrderWin = (() => {
       e.stopPropagation();
       const key = b.dataset.pcSheet, sid = b.dataset.sheet, pool = b.dataset.pool;
       if (!W.dlg || !W.dlg.open || !rowOf(W.key)) return;
-      if (W.piece && W.piece !== key) pickPiece(key);
+      if (W.piece && W.piece !== key) (typeof selectPiece === "function" ? selectPiece : pickPiece)(key);
       openSheetOf(key, sid, pool);
     }));
   }
