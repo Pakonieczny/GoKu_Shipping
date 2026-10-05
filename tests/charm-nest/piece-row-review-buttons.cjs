@@ -103,7 +103,7 @@ async function main() {
     // each row of "Its pieces", as drawn
     const rows = () => page.evaluate(() => [...document.querySelectorAll('#owPcSum .owPcRow')].map(r => {
       const a = r.querySelector('.pcAct'), st = r.querySelector('.st');
-      return { key: r.dataset.piece || (r.querySelector('[data-pc-act]') || { dataset: {} }).dataset.pcAct, solo: r.classList.contains('solo'), label: (r.closest('#owPcSum').querySelector('.fLabel') || {}).textContent, tag: r.tagName, act: r.classList.contains('hasAct'), btns: a ? [...a.querySelectorAll('button')].map(b => b.textContent.trim()).filter(t => t !== 'Hold') : [], seals: a ? a.querySelectorAll('.seal').length : 0, more: a && a.querySelector('[data-cu-more]') ? a.querySelector('[data-cu-more]').textContent.trim() : '',
+      return { key: r.dataset.piece || (r.querySelector('[data-pc-act]') || { dataset: {} }).dataset.pcAct, solo: r.classList.contains('solo'), label: (r.closest('#owPcSum').querySelector('.fLabel') || {}).textContent, tag: r.tagName, act: r.classList.contains('hasAct') && !r.classList.contains('hasHold'), plain: r.classList.contains('hasHold'), hold: r.querySelectorAll('.holdBtn').length, btns: a ? [...a.querySelectorAll('button')].map(b => b.textContent.trim()).filter(t => t !== 'Hold') : [], seals: a ? a.querySelectorAll('.seal').length : 0, more: a && a.querySelector('[data-cu-more]') ? a.querySelector('[data-cu-more]').textContent.trim() : '',
         st: st && !st.classList.contains('owPcSr') ? st.textContent.trim() : null, hidden: st && st.classList.contains('owPcSr') ? st.textContent.trim() : null, html: a ? a.innerHTML : '', stat: a ? (a.querySelector('.cuStat,.cuUndo,.cuWho') || { className: '' }).className : '' };
     }));
     const idle = () => page.evaluate(() => Seal.whenIdle());
@@ -136,7 +136,7 @@ async function main() {
     assert(R[0].act && R[0].tag === 'DIV', 'the piece in Review has a row with its card\'s buttons');
     assert.deepEqual(R[0].btns, ['Print QR label', 'Complete Order'], 'Print QR label and Complete Order, as its Review card has them: ' + JSON.stringify(R[0]));
     assert.equal(R[0].st, null, 'its words are not shown beside them (they are in place of the words)');
-    for (const r of [R[1], R[2]]) { assert(!r.act && r.tag === 'BUTTON' && r.btns.length === 0, 'a piece on a sheet keeps its row: ' + JSON.stringify(r)); assert.match(r.st, /^On (GF|RG) Sheet 1 · next: Laser cut$/, 'and its words: ' + r.st); }
+    for (const r of [R[1], R[2]]) { assert(!r.act && r.plain && r.tag === 'DIV' && r.hold === 1 && r.btns.length === 0, 'a piece on a sheet keeps its row, its words and, at the right end, one orange Hold: ' + JSON.stringify(r)); assert.match(r.st, /^On (GF|RG) Sheet 1 · next: Laser cut$/, 'and its words: ' + r.st); }
     // (no tan Custom Orders bar at the foot: its buttons were a second copy of these)
     assert(await noBar(), 'no Custom Orders bar, open'); const d1 = await dupes(); assert.deepEqual(d1, { [`${cable} | Print QR label`]: 1, [`${cable} | Complete Order`]: 1 }, 'each button exactly once, on its own row: ' + JSON.stringify(d1));
     // and the Review tab's card for the same piece has those buttons
@@ -155,9 +155,9 @@ async function main() {
         // (it wraps among itself when the room is short) flush to its right end
         let at = null;
         if (a) {
-          const nm = r.querySelector('.nm').getBoundingClientRect(), ar = a.getBoundingClientRect(), kids = [...a.children].map(k => k.getBoundingClientRect()).filter(k => k.width > 0);
+          const nm = r.querySelector('.nm').getBoundingClientRect(), wd = r.querySelector('.st:not(.owPcSr)'), under = !!wd && wd.getBoundingClientRect().top >= nm.bottom - 1, ar = a.getBoundingClientRect(), kids = [...a.children].map(k => k.getBoundingClientRect()).filter(k => k.width > 0);
           const far = Math.max(...kids.map(k => k.right)), lines = {}; let ln = null; for (const k of [...kids].sort((a, b) => (a.top + a.bottom) - (b.top + b.bottom))) { const c = (k.top + k.bottom) / 2; if (ln === null || c - ln > 12) ln = c; (lines[Math.round(ln)] = lines[Math.round(ln)] || []).push(k.right); }   // (lines of the group, by the middle of each part)
-          at = { rightOfName: kids.every(k => k.left >= nm.right - 1), sameRow: ar.top < nm.bottom - 1 && nm.top < ar.bottom - 1, middle: Math.abs((ar.top + ar.bottom) / 2 - (rr.top + rr.bottom) / 2) <= 4, centre: Math.round(Math.abs((ar.top + ar.bottom) / 2 - (nm.top + nm.bottom) / 2)), beforeDots: st.left >= far - 1,
+          at = { rightOfName: kids.every(k => k.left >= nm.right - 1), sameRow: ar.top < nm.bottom - 1 && nm.top < ar.bottom - 1, under, middle: under || Math.abs((ar.top + ar.bottom) / 2 - (rr.top + rr.bottom) / 2) <= 4, centre: Math.round(Math.abs((ar.top + ar.bottom) / 2 - (nm.top + nm.bottom) / 2)), beforeDots: st.left >= far - 1,
             flush: Object.values(lines).every(rs => Math.abs(Math.max(...rs) - far) <= 3), nLines: Object.keys(lines).length, nameW: Math.round(nm.width), groupW: Math.round(ar.width), kids: kids.length };
         }
         out.rows.push({ tall: !!r.querySelector('.cuUndo, .cuStat, .cuWho'), h: Math.round(rr.height), w: Math.round(rr.width), clip: r.scrollWidth > r.clientWidth + 1, inside, at, stepsRight: Math.round(st.right), stepsLeft: Math.round(st.left), within: st.right <= rr.right + 1 && rr.right <= sr.right + 1, name: Math.round(r.querySelector('.nm').getBoundingClientRect().left) });
@@ -188,8 +188,8 @@ async function main() {
         assert(await noBar(), `${tag} ${w}: no tan Custom Orders bar`);
         const dd = await dupes(); assert(Object.values(dd).every(n => n === 1) && !Object.keys(dd).some(k => /OUTSIDE/.test(k)), `${tag} ${w}: every button once, none outside a row: ${JSON.stringify(dd)}`);
         // (a row showing what is happening, the Undo offered for a few seconds or the name asked is taller at 390: it wraps among itself; the orange Hold button, 5 Oct, is one more button in that wrap: 175)
-        assert(Math.max(...f.rows.map(r => r.h)) <= (f.rows.some(r => r.tall) ? 175 : w > 700 ? 46 : 110), `${tag} ${w}: the rows do not grow ugly (${f.rows.map(r => r.h)}px)`);
-        const calm = acted.filter(r => !r.tall); if (w > 700 && calm.length) assert(Math.max(...calm.map(r => r.h)) <= 46 && !calm.some(r => r.at.nLines > 1), `${tag} ${w}: wide, the buttons are one line on the name's line`);
+        assert(Math.max(...f.rows.map(r => r.h)) <= (f.rows.some(r => r.tall) ? 175 : w > 700 && !f.rows.some(r => r.at && r.at.under) ? 46 : 110), `${tag} ${w}: the rows do not grow ugly (${f.rows.map(r => r.h)}px)`);
+        const calm = acted.filter(r => !r.tall && !r.at.under); if (w > 700 && calm.length) assert(Math.max(...calm.map(r => r.h)) <= 46 && !calm.some(r => r.at.nLines > 1), `${tag} ${w}: wide, the buttons are one line on the name's line`);
       }
       await page.setViewportSize({ width: 1440, height: 900 }); await page.waitForTimeout(400);
     };
@@ -295,7 +295,7 @@ async function main() {
     const alpha = kOf(Q, 'alpha'), beta = kOf(Q, 'beta'), charm = kOf(Q, 'charm');
     await page.evaluate(() => { B.employee = ''; });
     await openWin(charm);                                      // opened on the piece on the sheet: its row has words, the others buttons
-    await page.waitForFunction(() => document.querySelectorAll('#owPcSum .owPcRow.hasAct').length === 2, null, { timeout: 15000 });
+    await page.waitForFunction(() => document.querySelectorAll('#owPcSum .owPcRow.hasAct:not(.hasHold)').length === 2, null, { timeout: 15000 });
     R = await rows();
     assert.deepEqual(R.map(r => [r.key, r.act]), [[alpha, true], [beta, true], [charm, false]]);
     for (const r of R.slice(0, 2)) assert.deepEqual(r.btns, ['Print QR label', 'Complete Order'], r.key);

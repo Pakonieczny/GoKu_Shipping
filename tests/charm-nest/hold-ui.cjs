@@ -96,7 +96,7 @@ async function main() {
     const shot = async name => { if (shots) { await page.waitForTimeout(700); await page.screenshot({ path: path.join(shots, name + '.png') }); } };
     const idle = () => page.evaluate(() => Seal.whenIdle());
     const seg = async which => { await idle(); await page.evaluate(w => { document.querySelector(`#reviewView .rvSeg [data-cseg="${w}"]`).click(); }, which); };
-    const holdBtns = rid => page.evaluate(r => [...document.querySelectorAll(`[data-hold-btn][data-rid="${r}"]`)].map(b => ({ text: b.textContent.trim(), cls: b.className, src: b.dataset.src, hidden: b.hidden || b.offsetParent === null, where: b.closest('[data-pc-act]') ? 'row' : b.closest('.rowActions') ? 'card' : 'other' })), rid);
+    const holdBtns = rid => page.evaluate(r => [...document.querySelectorAll(`[data-hold-btn][data-rid="${r}"]`)].map(b => ({ text: b.textContent.trim(), cls: b.className, src: b.dataset.src, hidden: b.hidden || b.offsetParent === null, where: b.closest('[data-pc-act], [data-pc-hold]') ? 'row' : b.closest('.rowActions') ? 'card' : 'other' })), rid);
     const cardHold = key => page.evaluate(k => { const n = document.querySelector(`#rvList .reviewListRow[data-row="${k}"]`); return n ? n.querySelectorAll('[data-hold-btn]').length : -1; }, key);
     const dlgText = () => page.evaluate(() => { const d = document.querySelector('dialog.holdDlg[open], .holdInline'); return d ? d.innerText : null; });
     const writes = () => srv.st.calls.filter(c => c.name === 'charmNestLibrary' && /^(poolPut|poolUpdate|putSheet|setUpdate|cancelPut|customPut|customReopen|runPut)$/.test(String(c.op))).length;
@@ -170,11 +170,12 @@ async function main() {
     await openWin(cable);
     await page.waitForFunction(() => document.querySelector('#owPcSum [data-hold-btn]'), null, { timeout: 15000 });
     b = (await holdBtns(P.rid)).filter(x => x.where === 'row');
-    assert.equal(b.length, 1, 'one Hold button on the order window\'s piece rows: ' + JSON.stringify(b));
-    assert(b[0].text === 'Hold' && b[0].src === 'orderWindow' && /\bholdBtn\b/.test(b[0].cls), JSON.stringify(b[0]));
+    assert.equal(b.length, 3, 'one Hold button on each of the order window\'s three piece rows: ' + JSON.stringify(b));
+    assert(b.every(x => x.text === 'Hold' && x.src === 'orderWindow' && /\bholdBtn\b/.test(x.cls)) && b[0].text === 'Hold' && b[0].src === 'orderWindow' && /\bholdBtn\b/.test(b[0].cls), JSON.stringify(b[0]));
     const rw = await look('#owPcSum [data-hold-btn]'); assert.equal(rw.bg, rv.bg, 'the same orange in both places'); assert.equal(rw.color, rv.color);
     const onRow = await page.evaluate(() => [...document.querySelectorAll('#owPcSum .owPcRow')].map(r => ({ key: r.dataset.piece, hold: r.querySelectorAll('[data-hold-btn]').length, btns: [...r.querySelectorAll('.pcAct button')].map(x => x.textContent.trim()) })));
-    assert.deepEqual(onRow.map(r => r.hold), [1, 0, 0], 'on the piece that has buttons, not on the pieces on sheets: ' + JSON.stringify(onRow));
+    assert.deepEqual(onRow.map(r => r.hold), [1, 1, 1], 'on every piece row, the pieces on sheets (no Review card) too: ' + JSON.stringify(onRow));
+    assert.deepEqual(onRow.slice(1).map(r => r.btns), [['Hold'], ['Hold']], 'a piece on a sheet has the Hold alone at the right end of its row: ' + JSON.stringify(onRow));
     assert.deepEqual(onRow[0].btns, ['Print QR label', 'Complete Order', 'Hold'], JSON.stringify(onRow[0]));
     const same = await page.evaluate(() => { const a = document.querySelector('#owPcSum [data-hold-btn]'), c = document.querySelector('#rvList [data-hold-btn]'); const strip = n => n.className.replace(/\b(xs|sm)\b/g, '').replace(/\s+/g, ' ').trim(); return { a: strip(a), c: strip(c), same: a.title === c.title }; });
     assert.equal(same.a, same.c, 'one component, two places: ' + JSON.stringify(same));
@@ -217,6 +218,48 @@ async function main() {
     await page.waitForFunction(() => !document.querySelector('dialog.holdDlg'), null, { timeout: 8000 });
     t = await T(); assert.equal(t.runs.length, 0, 'Esc and outside: no run'); assert.equal(t.fx.length, 0); assert.equal(writes() - w0, 0);
     assert.equal(t.plans.length, 3, 'the plan was read once per press');
+
+    // ── 3c · EVERY piece row has the Hold, the plain rows too (pieces on sheets, in no Review card): the same button, one press, one consent ──
+    await openWin(cable);
+    await page.waitForFunction(() => document.querySelectorAll('#owPcSum .owPcRow [data-hold-btn]').length === 3, null, { timeout: 15000 });
+    const plainRows = () => page.evaluate(() => [...document.querySelectorAll('#owPcSum .owPcRow')].map(r => {
+      const h = r.querySelector('[data-hold-btn]'), st = r.querySelector('.st'), rr = r.getBoundingClientRect(), nm = r.querySelector('.nm').getBoundingClientRect(), dots = r.querySelector('.steps').getBoundingClientRect(), hr = h ? h.getBoundingClientRect() : null;
+      const wr = st && !st.classList.contains('owPcSr') ? st.getBoundingClientRect() : null;
+      return { key: r.dataset.piece, tag: r.tagName, plain: r.classList.contains('hasHold'), solo: r.classList.contains('solo'), holds: r.querySelectorAll('[data-hold-btn]').length, text: h && h.textContent.trim(), src: h && h.dataset.src, inAct: !!(h && h.closest('.pcAct')),
+        nested: !!(h && h.closest('button:not([data-hold-btn])')), words: wr ? st.textContent.trim() : null, under: !!wr && wr.top >= nm.bottom - 1, wordsBeforeHold: !!wr && !!hr && wr.right <= hr.left + 1,
+        rightOfName: !!hr && hr.left >= nm.right - 1, beforeDots: !!hr && hr.right <= dots.left + 1, inside: !!hr && hr.left >= rr.left - 1 && hr.right <= rr.right + 1 && hr.width > 20, clip: r.scrollWidth > r.clientWidth + 1,
+        over: document.documentElement.scrollWidth > innerWidth + 1, h: Math.round(rr.height), sameLine: !!hr && Math.abs((hr.top + hr.bottom) / 2 - (nm.top + nm.bottom) / 2) <= 6 };
+    }));
+    let pr = await plainRows();
+    assert.deepEqual(pr.map(r => r.key), [cable, gf, kOf(P, 'rg')], 'the three pieces');
+    assert.deepEqual(pr.map(r => r.holds), [1, 1, 1], 'one Hold on every piece row: ' + JSON.stringify(pr));
+    for (const r of pr.slice(1)) assert(r.tag === 'DIV' && r.plain && r.text === 'Hold' && r.src === 'orderWindow' && r.inAct && !r.nested && r.words && r.rightOfName && r.beforeDots && r.inside && !r.clip && !r.over, 'a plain row: its words, its Hold at the right end, no button inside a button: ' + JSON.stringify(r));
+    assert(pr.slice(1).every(r => r.under || r.wordsBeforeHold), 'the Hold sits right of the words: ' + JSON.stringify(pr));
+    assert.equal(await page.evaluate(() => document.querySelectorAll('#owPcSum button button').length), 0, 'no button inside a button');
+    // the press on a plain row's Hold: the plan read ONCE, ONE popup, the order window stepped aside, nothing runs
+    const w1 = writes(), p0 = (await T()).plans.length;
+    await page.click(`#owPcSum [data-piece="${gf}"] [data-hold-btn]`);
+    await page.waitForFunction(() => document.querySelector('dialog.holdDlg[open]'), null, { timeout: 15000 }); await page.waitForTimeout(400);
+    assert.equal(await page.evaluate(() => document.querySelectorAll('dialog.holdDlg[open]').length), 1, 'ONE consent popup from the plain row');
+    assert.equal(await page.evaluate(() => document.querySelectorAll('dialog[open]').length), 1, 'one dialog open: never a pop-up over a pop-up');
+    assert.equal(await page.evaluate(() => document.getElementById('orderWin').open), false, 'the order window stepped aside first');
+    t = await T(); assert.equal(t.plans.length - p0, 1, 'the plan was read once'); assert.equal(t.plans[t.plans.length - 1].rid, P.rid, 'for the whole order'); assert.equal(t.runs.length, 0, 'nothing runs before Continue');
+    assert((await dlgText()).includes(`Put order ${P.rid} on hold?`), 'it asks about the order');
+    await shot('plain-row-popup-1440');
+    await page.click('dialog.holdDlg [data-k=no]');
+    await page.waitForFunction(() => !document.querySelector('dialog.holdDlg') && OrderWin.isOpen(), null, { timeout: 15000 });
+    await page.waitForFunction(() => document.querySelectorAll('#owPcSum .owPcRow [data-hold-btn]').length === 3 && ![...document.querySelectorAll('#owPcSum [data-hold-btn]')].some(b => b.disabled), null, { timeout: 8000 });
+    t = await T(); assert.equal(t.runs.length, 0, 'Not now: no run'); assert.equal(writes() - w1, 0, 'nothing written');
+    // a press on the row itself (its words, not the Hold) still opens that piece, and its own row alone has the Hold too
+    await page.click(`#owPcSum [data-piece="${gf}"] .st`);
+    await page.waitForFunction(k => { const on = document.querySelector('#owPieceSw button.on'); return on && on.dataset.piece === k && document.querySelectorAll('#owPcSum .owPcRow').length === 1; }, gf, { timeout: 15000 });
+    await page.waitForFunction(() => document.querySelector('#owPcSum .owPcRow.solo [data-hold-btn]'), null, { timeout: 8000 });
+    pr = await plainRows();
+    assert(pr.length === 1 && pr[0].solo && pr[0].plain && pr[0].holds === 1 && pr[0].inAct && pr[0].words === null && pr[0].rightOfName && pr[0].beforeDots && pr[0].inside && !pr[0].clip, 'one piece picked, in no card: its own row with the Hold: ' + JSON.stringify(pr));
+    await shot('plain-row-picked-1440');
+    await page.click('#owPieceSw [data-piece=""]');
+    await page.waitForFunction(() => document.querySelectorAll('#owPcSum .owPcRow').length === 3 && !document.querySelector('#owPcSum .owPcRow.solo'), null, { timeout: 15000 });
+    await closeWin();
 
     // ── 4 · the plan's own sentences (effects) are shown as given ──
     await page.evaluate(() => { window.__t.effects = ['4 pieces come off GF Sheet 2 and SS Sheet 1.', '3 waiting orders and 1 order from GF Sheet 3 fill the 4 empty spots.']; });
@@ -275,6 +318,17 @@ async function main() {
       assert(!g.over && g.inside && !g.clip && g.nameW >= 60, `${w}: the piece row holds the button (${JSON.stringify(g)})`);
       if (w > 700) assert(g.sameLine && g.rowH <= 46, `${w}: on the name's line (${JSON.stringify(g)})`);
       await shot(`orderwin-row-${w}`);
+      // 6b · the plain rows (pieces on sheets): their words, their Hold at the right end, wrapping neatly, no sideways scroll
+      const pf = await plainRows();
+      assert.deepEqual(pf.map(r => r.holds), [1, 1, 1], `${w}: a Hold on every row: ` + JSON.stringify(pf));
+      for (const r of pf) assert(r.inside && !r.clip && !r.over && r.rightOfName && r.beforeDots && (r.sameLine || !r.plain), `${w}: the row holds its Hold at the right end of the name's line: ` + JSON.stringify(r));
+      for (const r of pf.slice(1)) assert(r.words && r.plain, `${w}: a plain row keeps its words: ` + JSON.stringify(r));
+      assert(Math.max(...pf.map(r => r.h)) <= (w > 700 ? 80 : 110), `${w}: the rows do not grow ugly (${pf.map(r => r.h)}px)`);
+      const sw = await page.evaluate(() => { const d = document.getElementById('orderWin'), s = document.getElementById('owPcSum'), dr = d.getBoundingClientRect(), sr = s.getBoundingClientRect();
+        const out = [...s.querySelectorAll('*')].filter(n => n.offsetParent !== null && n.getBoundingClientRect().width > 0 && (n.getBoundingClientRect().right > sr.right + 1 || n.getBoundingClientRect().left < sr.left - 1)).slice(0, 5).map(n => n.tagName + '.' + n.className + ' ' + Math.round(n.getBoundingClientRect().left) + '-' + Math.round(n.getBoundingClientRect().right));
+        return { sum: [s.scrollWidth, s.clientWidth], out, sr: [Math.round(sr.left), Math.round(sr.right)], dr: [Math.round(dr.left), Math.round(dr.right)], page: document.documentElement.scrollWidth > innerWidth + 1 }; });
+      assert(sw.sum[0] <= sw.sum[1] + 1 && sw.out.length === 0 && !sw.page && sw.sr[1] <= sw.dr[1] + 1, `${w}: nothing of the piece rows sticks out sideways: ` + JSON.stringify(sw));
+      await shot(`orderwin-plain-rows-${w}`);
       await closeWin();
       await page.click(`${card(cable)} [data-hold-btn]`);
       await page.waitForFunction(() => document.querySelector('dialog.holdDlg[open]'), null, { timeout: 15000 }); await page.waitForTimeout(700);
