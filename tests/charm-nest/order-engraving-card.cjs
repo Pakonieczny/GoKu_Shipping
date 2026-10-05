@@ -163,6 +163,15 @@ const WORDS = { [key(R1, 2)]: 'I\ndissent', [key(R1, 3)]: 'KMB //\nSMH', [key(R2
     check(told, 'the order\'s timeline was told (an engraveApproved step went to the record)');
 
     // 5 · the shortcut: EngraveLink when it is there, with the order, line, pool id and piece; else the Sheet tab's own way
+    // (the real EngraveLink, when this page has it: the order window closes and the Engraving tab is set to this order's approved piece)
+    if (await page.evaluate(() => !!(window.EngraveLink && EngraveLink.open))) {
+      await page.click('#owEng [data-e=engrave]');
+      await page.waitForFunction(() => !OrderWin.isOpen() && CN.S.mode === 'engrave', null, { timeout: 15000 });
+      const rv = await page.evaluate(() => Engrave.view());
+      check(rv.tab === 'done' && rv.chosen === true && rv.list === false, 'with the real EngraveLink: the window closed and the Engraving tab is on the approved piece: ' + JSON.stringify({ tab: rv.tab, q: rv.q, chosen: rv.chosen, list: rv.list }));
+      await page.waitForTimeout(600); await page.evaluate(() => CN.setMode('orders')); await open(k.r);
+      await page.waitForFunction(() => document.querySelector('#owEng .swEng[data-state=approved] .egButtonSeal .seal'), null, { timeout: 10000 });
+    }
     await page.evaluate(() => { window.EngraveLink = { open: async t => { __links.push(t); await new Promise(r => setTimeout(r, 1500)); } }; });
     await page.click('#owEng [data-e=engrave]');
     const mid = await page.evaluate(() => { const b = document.querySelector('#owEng [data-e=engrave]'); return { disabled: b.disabled, text: b.textContent.trim() }; });
