@@ -17,7 +17,8 @@ function sheet(id, { n = 28, metal = 'gold', setId = 'set1', index = 1, base = 1
 const NAMES = ['Nathaly Soto', 'Emily Chambers', 'Leslie Suhr', 'Jechelle Aragones', 'Yera Espinosa Madariaga', 'Stephanie Cooper', 'Calvin Ly', 'Heike Wagener', 'Nicole Offermann', 'Sunny Makowiak', 'Sarah Löhe', 'Chanel Sargeant', 'Tim Wright', 'Gregory Horvitz', 'Shari L. Morrison', 'Kathleen Henry', 'Susan Pforr', 'Nikki Boyles', 'Nicole', 'Maximiliana Alexandria von Habsburg-Lothringen-Esterházy'];
 const KEYS = ['pooled', 'otherSheetNotReady', 'noSku', 'pooled', 'otherSheetNotReady', 'noSku', 'unmatched', 'noDesign', 'held'];
 /* the issues of a sheet, in the exact shape of CharmNestReadiness.issues: `n` orders (cycling the reasons unless `keys` says), and optionally the sheet's own blocker.
-   Round 7: `mates` are the SET's wait (a mate sheet of the same set that is not ready: quiet, never an issue, said once: "Waiting for SS Sheet 1 · Engraving"),
+   Round 7 made `mates` the SET's wait (a mate sheet of the same set that is not ready: quiet, never an issue); round 8 (Paul: "only related items to that particular sheet") took it out of every
+   list: nothing sends such an entry any more, a test passes `mates` only to prove the panel drops it. The set's wait is said under the Approve button (setGate's reason).
    `trouble` the real set trouble (a sheet of the set that cannot be found), and a key 'split' an order split between two sets (key otherSheetNotReady, split:true). */
 function issues(sheetId, n, { keys, own = null, mates = [], trouble = [], names = NAMES, start = 4170250000, lid = 'L' } = {}) {
   const out = [];

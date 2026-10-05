@@ -176,13 +176,16 @@ select.topSel{border:1px solid var(--line);background:var(--card);border-radius:
 @media (prefers-reduced-motion:reduce){.sheets.nfOn>.sheetCard,.sheetCard>.nfGlow,.sheetCard>.nfCap{transition:none}.sheets.nfDim>.sheetCard:not(.nfFocus){transform:none}}
 @keyframes pulse{0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--accent) 55%,transparent)}100%{box-shadow:0 0 0 22px transparent}}
 .shHead{display:flex;align-items:center;gap:7px;padding:9px 14px 5px;min-width:0;flex-wrap:nowrap}
-.shControls{display:flex;align-items:center;gap:6px;padding:0 14px 7px;min-width:0;min-height:33px}   /* one height with or without Options or Cut Sheet, so the sheets of a row line up */
+/* the controls row: one line at its one height, with or without Cut Sheet, so the sheets of a row line up; only when its controls truly
+   cannot all stand in one line (a narrow card) the rest goes to a second line, left aligned, rather than being clipped at the card's edge
+   (Options is not in this row: it stands at the right end of the title line) */
+.shControls{display:flex;flex-wrap:wrap;align-items:center;gap:5px 6px;padding:0 14px 7px;min-width:0;min-height:33px}
 .shControls .shTabs{flex:1;order:0;flex-wrap:nowrap;overflow-x:auto}
 /* the sheets as ONE pill (SheetMenu: the back-engraving control's own look): the host takes the room the other controls leave, and
    the pill inside shrinks its NAME with an ellipsis before its mark or chevron would be cut (a row of tabs ran out of room and clipped "Sheet 2") */
-.shControls .shTabs.shMenuHost{flex:1 1 0;min-width:var(--shm-min,80px);overflow:visible;display:flex;align-items:center}   /* (--shm-min: SheetMenu's own count of the least room that keeps the mark and chevron whole) */
+.shControls .shTabs.shMenuHost{flex:1 1 auto;min-width:var(--shm-min,80px);max-width:100%;overflow:visible;display:flex;align-items:center}   /* (its basis is the pill's own width, so the row wraps before the name is cut: "Sheet 1" whole; --shm-min: SheetMenu's own count of the least room that keeps the mark and chevron whole, which a line of its own can still be squeezed to) */
 .shControls .shGate{margin:0;padding:0;border:0;background:none;flex:0 0 auto}
-/* a Nest card's Front | Back · engraving: the order view's own switch (.owSeg), in the controls row, adding no height */
+/* a Nest card's Front | Back · engraving: the order view's own switch (.owSeg), in the controls row, adding no height (a second line only when the row is too narrow) */
 .shControls .shFace{flex:0 0 auto;order:5;align-items:center;white-space:nowrap}.shControls .shFace[hidden]{display:none}
 /* the back-engraving shelf's show/hide control (EngravingToggle): one quiet segment beside Front | Back, never a second row */
 .shControls .engTogHost{flex:0 0 auto;order:4;display:inline-flex;align-items:center}.shControls .engTogHost[hidden]{display:none}
@@ -190,9 +193,14 @@ select.topSel{border:1px solid var(--line);background:var(--card);border-radius:
 .sheetOptions{position:relative;font-size:11px}
 .sheetOptions>summary{cursor:pointer;list-style:none;border:1px solid var(--line);border-radius:999px;padding:4px 9px;color:var(--ink70)}
 .sheetOptions[open] .solidOptions{position:absolute;right:0;top:calc(100% + 7px);z-index:30;width:min(390px,calc(100vw - 40px));padding:0;max-height:min(650px,75vh);overflow:auto;overscroll-behavior:contain;border:1px solid var(--line);border-radius:13px;background:var(--card);box-shadow:0 12px 32px #0002}
-/* on a card the panel hangs from the card's right edge, not from the Options button: with the Front | Back switch beside it,
-   the button sits further left and a panel under it ran off the card, under the left rail */
-.shControls{position:relative}.shControls .sheetOptions{position:static}.shControls .sheetOptions[open] .solidOptions{right:14px;top:calc(100% + 2px)}
+/* Options stands on the title line, at its far right end, after the date (Paul, 5 Oct); the title text gives way (an ellipsis) before it does.
+   The panel opens just under the title line and hangs from the card's right edge, never wider than the card, so it covers neither the
+   title nor the card's edge. The button keeps the title line's own height (so a card with Options and one without line up) */
+.shHead{position:relative}
+.shHead .shGate{margin:0;padding:0;border:0;background:none;flex:0 0 auto;min-width:0}
+.shHead .sheetOptions{position:static;white-space:nowrap}
+.shHead .sheetOptions>summary{line-height:16px;padding:1px 9px}
+.shHead .sheetOptions[open] .solidOptions{right:14px;top:calc(100% + 2px);width:min(390px,calc(100% - 28px))}
 .shHead .prov{flex:1}
 .shHead .pill{font-size:10px;flex:0 0 auto;padding:2px 6px}
 .shHead .prov{font-size:11px;color:var(--ink45);font-family:var(--mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
@@ -2461,7 +2469,7 @@ button.approveReason:focus-visible{outline:2px solid var(--gold);outline-offset:
 .roseTimeline li{position:relative;flex-basis:0;min-width:130px;padding:8px 10px 3px 0}.roseTimeline time{font-size:10px;white-space:nowrap}.roseTimeline small{display:block;font-size:9px;color:var(--ink45);max-width:190px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .roseCutNumber{display:inline-grid;place-items:center;border:1px solid #bad3cb;border-radius:50%;width:16px;height:16px;margin-right:5px;color:#326e60;background:#f3f8f5;font-size:9px}
 .roseTimeline li.roseLineEntry{flex:0 0 auto}.roseLineNumber{display:inline-grid;place-items:center;border-radius:50%;width:16px;height:16px;margin-right:5px;color:#fff;background:#008974;font-size:9px}.roseUndated{font-size:10px;font-style:italic;color:var(--ink45)}
-.roseCut{flex:0 0 auto;display:flex}.roseCut[hidden]{display:none}.roseHistory.roseEmpty{margin:0}.roseRecorded{color:#326e60}.roseError{color:#a34838}
+.roseCut{flex:0 0 auto;display:flex}.roseCut[hidden]{display:none}.shControls .roseCut{margin-block:-2px;order:1}   /* (the button is taller than the pills beside it: centred in a line as high as theirs, Cut Sheet adds no height to the row) */.roseHistory.roseEmpty{margin:0}.roseRecorded{color:#326e60}.roseError{color:#a34838}
 /* Green line timeline: sits on the sheet's top ruler, each mark over its line. */
 .roseHistory.roseHasTimeline{margin-bottom:0}
 .roseLineTimeline{position:relative;margin:8px 1px 0}
@@ -2937,7 +2945,7 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-pdf.js?v=20260924-followup"></script>
 <script src="charm-nest-dxf.js?v=20260927-custom"></script>
 <script src="charm-nest-motion.js?v=20261003-zg-seal-small"></script>
-<script src="charm-nest-timeline-ui.js?v=20261005-pieces-psb1-hand1"></script>
+<script src="charm-nest-timeline-ui.js?v=20261005-pieces-psb1-hand2-print1"></script>
 <script src="charm-nest-geom.js?v=20260921-material"></script>
 <script src="charm-nest-engrave-fit.js"></script>
 <script src="charm-nest-assets.js"></script>
@@ -2946,7 +2954,7 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-sheet-menu.js?v=20261005-shm1"></script>
 <script src="charm-nest-activity.js?v=20261001-compact-controls"></script>
 <script src="charm-nest-engraving-seals.js?v=20261003-seal-small"></script>
-<script src="charm-nest-readiness.js?v=20261005-issues-truth4-setgate1-hand1-sameset1"></script>
+<script src="charm-nest-readiness.js?v=20261005-issues-truth4-setgate1-hand1-sameset1-nowait1-noset1"></script>
 <script src="charm-nest-export.js"></script>
 <script src="charm-nest-text.js"></script>
 <script src="charm-nest-orders.js?v=20261005-pieces-hand1"></script>
@@ -5522,8 +5530,8 @@ function buildCards() {
     const sh = S.sheets[m.key]; const st = stockFor(m.key);
     const el = document.createElement("section"); el.className = "sheetCard"; el.dataset.m = m.key; el.style.setProperty("--ar", `${st.wPt}/${st.hPt}`);
     el.innerHTML = `
-      <div class="shHead"><span class="sw"></span><span class="name">${m.label}</span><span class="stock" data-r="stock"></span><span class="prov" data-r="prov"></span><span class="pill neutral" data-r="pill">Idle</span></div>
-      <div class="shControls"><div class="shTabs" data-r="tabs"></div><div class="shGate hidden" data-r="gate"></div><span class="engTogHost" data-r="eng" hidden></span><div class="owSeg shFace" data-r="face" role="group" aria-label="Side of the sheet" hidden><span class="spin" hidden></span><button type="button" data-face="front" class="on" aria-pressed="true" title="The sheet from the front">Front</button><button type="button" data-face="back" aria-pressed="false" title="Turn the sheet over: every charm&#39;s back engraving, mirrored as the laser sees it">Back · engraving</button></div></div>
+      <div class="shHead"><span class="sw"></span><span class="name">${m.label}</span><span class="stock" data-r="stock"></span><span class="prov" data-r="prov"></span><span class="pill neutral" data-r="pill">Idle</span><div class="shGate hidden" data-r="gate"></div></div>
+      <div class="shControls"><div class="shTabs" data-r="tabs"></div><span class="engTogHost" data-r="eng" hidden></span><div class="owSeg shFace" data-r="face" role="group" aria-label="Side of the sheet" hidden><span class="spin" hidden></span><button type="button" data-face="front" class="on" aria-pressed="true" title="The sheet from the front">Front</button><button type="button" data-face="back" aria-pressed="false" title="Turn the sheet over: every charm&#39;s back engraving, mirrored as the laser sees it">Back · engraving</button></div></div>
       <div data-r="backs"></div>
       <div class="shPreviewWrap"><canvas data-r="canvas"></canvas>
         <div class="dropHint" data-r="hint"><b>Drop ${m.label} artwork here</b><span>.ai · .pdf · .zip — anything dropped on this card belongs to ${m.long.toLowerCase()}</span><span class="k">or drop on the queue to route by file name</span></div>
@@ -6726,7 +6734,7 @@ boot();
      Design Station's sign-in), the same name every seal it stamps carries. -->
 <script src="station-session.js?v=20261002-ea1"></script>
 <script src="station-activity.js?v=20261003-reset-clean"></script>
-<script src="charm-nest-bridge.js?v=20261005-lis2-cardinal4-zoom-psb1-egl1-osc1-r3f-setgate1-hand1-sameset1-rl1"></script>
+<script src="charm-nest-bridge.js?v=20261005-lis2-cardinal4-zoom-psb1-egl1-osc1-r3f-setgate1-hand1-sameset1-rl1-nowait1-opt1"></script>
 <script src="charm-nest-review-live.js?v=20261005-rl1"></script>
 <script>
 try {
@@ -6760,7 +6768,7 @@ try {
 <script src="charm-nest-engrave-link.js?v=20261005-el2"></script>
 <script src="charm-nest-tour.js?v=20260929-m11"></script>
 <script src="charm-nest-mail.js?v=20261005-pv-seal"></script>
-<script src="charm-nest-rose-ui.js?v=20261003-rg2"></script>
+<script src="charm-nest-rose-ui.js?v=20261005-rg3-opt1"></script>
 <script src="charm-nest-flow-rose.js?v=20261003-rg2"></script>
 <script src="charm-nest-export-ui.js?v=20260925-done"></script>
 <script src="charm-nest-library.js?v=20261005-egl1"></script>
@@ -6769,7 +6777,7 @@ try {
 <script src="charm-nest-library-fx.js?v=20261003-fx2"></script>
 <script src="charm-nest-library-dnd.js?v=20261005-so2"></script>
 <script src="charm-nest-library-engraving.js?v=20261005-egl1"></script>
-<script src="charm-nest-library-issues.js?v=20261005-lis5-sameset1"></script>
+<script src="charm-nest-library-issues.js?v=20261005-lis6-nowait1-noset1"></script>
 <script src="charm-nest-shared-orders-modal.js?v=20261005-so5"></script>
 <script src="charm-nest-search.js?v=20260929-m5-osc1"></script>
 <script src="charm-nest-signins.js?v=20260929-m5"></script>

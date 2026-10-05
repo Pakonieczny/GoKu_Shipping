@@ -51,13 +51,18 @@ const eq = (a, b, m) => assert.deepEqual(JSON.parse(JSON.stringify(a === undefin
     eq(m.orders.map(o => o.reason.tone), ['gold', 'clay', 'slate']); assert.equal(m.hard, true, 'a missing SKU needs a person');
     m = LI.model(feed, { step: 'engraving' });
     assert.equal(m.title, 'Engraving'); assert.equal(m.orders.length, 0); assert.equal(m.count, 0); eq([m.own.go, m.own.label], ['engraving', 'Open engraving approvals'], 'for Engraving only the single link');
-    // round 7: a mate sheet of the same set that is not ready is the SET's wait: said once, quietly, and never counted as an issue
+    // round 8 (Paul: "Remove any references to the other sheet from this list ... only related items to that particular sheet"): a mate sheet of the same set that is
+    // not ready is the SET's wait, said under the Approve button and nowhere in this list. Nothing sends such an entry any more; if one ever arrives it is dropped:
+    // no row, no count, no 'waits' of any kind, whatever its flags say
     m = LI.model({ ...feed, issues: F.issues('gf1', 0, { mates: [{ id: 'ss1', label: 'SS Sheet 1' }] }) }, { step: 'laser' });
-    assert.equal(m.title, 'Laser cutting'); eq(m.sheets, [], 'the set\'s wait is no issue row'); assert.equal(m.count, 0, 'and it is not counted');
-    eq(m.waits.map(x => [x.id, x.label, x.metal, x.step, x.counter]), [['ss1', 'SS Sheet 1', 'silver', 'Engraving', '7 / 25']], 'one quiet wait: the sheet, its step, its count');
-    m = LI.model({ ...feed, issues: [...F.issues('gf1', 2, { keys: ['noSku'], mates: [{ id: 'ss1', label: 'SS Sheet 1' }, { id: 'ss1', label: 'SS Sheet 1' }] })] }, { step: 'orders' });
-    assert.equal(m.count, 2, 'two real issues, the wait is not the third'); assert.equal(m.waits.length, 1, 'a sheet that holds the set is named once');
-    m = LI.model({ ...feed, issues: [{ step: 'laser', key: 'waitsOnSheet', label: 'SS Sheet 1', open: { type: 'sheet', id: 'ss1' } }] }, { step: 'laser' }); assert.equal(m.count, 0); assert.equal(m.waits.length, 1, 'even an entry without the quiet flag is only ever the set\'s wait');
+    assert.equal(m.title, 'Laser cutting'); eq(m.sheets, [], 'the set\'s wait is no row'); assert.equal(m.count, 0, 'and it is not counted'); assert.equal(m.own, null); assert(!('waits' in m), 'the model has no waits list at all');
+    m = LI.model({ ...feed, issues: [...F.issues('gf1', 2, { keys: ['noSku'], mates: [{ id: 'ss1', label: 'SS Sheet 1' }, { id: 'ss2', label: 'SS Sheet 2' }] })] }, { step: 'orders' });
+    assert.equal(m.count, 2, 'two real issues: the set\'s wait is not a third'); assert.doesNotMatch(JSON.stringify(m), /SS Sheet|ss1|ss2|Waiting/, 'nothing in the model names a mate sheet');
+    m = LI.model({ ...feed, issues: [{ step: 'laser', key: 'waitsOnSheet', label: 'SS Sheet 1', open: { type: 'sheet', id: 'ss1' } }] }, { step: 'laser' }); assert.equal(m.count, 0); eq(m.sheets, [], 'an entry without the quiet flag is dropped as well');
+    m = LI.model({ ...feed, issues: [{ step: 'laser', key: 'waitsOnSheet', quiet: true, label: 'SS Sheet 1', open: { type: 'sheet', id: 'ss1' } }, ...F.issues('gf1', 1, { keys: ['noSku'] })] }, { step: 'laser' });
+    assert.equal(m.count, 1, 'a panel that falls back to the sheet\'s real issues lists those only'); assert.equal(m.orders.length, 1);
+    // the adapter (explain()'s items, used only while CharmNestReadiness.issues is missing) says no wait either: the laser step's sheets are the set's wait
+    eq(LI.adapt({ ready: false, done: false, steps: [{ key: 'laser', state: 'waiting', items: [{ kind: 'sheet', id: 'ss1', label: 'SS Sheet 1', why: 'back engravings 7 of 25' }] }] }, { id: 'gf1' }), [], 'explain\'s laser items are no entry of this list');
     // the real set trouble (a sheet of the set that cannot be found) stays an issue
     m = LI.model({ ...feed, issues: F.issues('gf1', 0, { trouble: [{ id: 'ss9' }] }) }, { step: 'laser' }); assert.equal(m.count, 1); eq(m.sheets.map(x => [x.id, x.chip]), [['ss9', 'Not found']]);
     // an order split between two sets is a real issue, worded as the split
@@ -170,21 +175,14 @@ const eq = (a, b, m) => assert.deepEqual(JSON.parse(JSON.stringify(a === undefin
   p.querySelector('.lisOwn').click(); await tick(200); eq(calls[0], ['mode', 'engrave'], 'the link opens the Engraving tab'); assert.equal(panel(), null);
   // the QR label step: one small chip, no list
   w.__feed.gf1 = F.issues('gf1', 3, { own: 'qr' }); bang('qr').click(); await tick(); p = panel(); assert.equal(p.querySelectorAll('.lisRow').length, 0); assert.match(p.querySelector('.lisOwn').textContent, /QR label missing/); w.eval('LibraryIssues.close()'); await tick(200);
-  // Laser cutting (round 7): the set's wait, said ONCE and quietly: "Waiting for SS Sheet 1 · Engraving 7 / 25", not an issue: no row, no count, a quiet header; a press opens that sheet
-  w.__feed.gf1 = F.issues('gf1', 0, { mates: [{ id: 'ss1', label: 'SS Sheet 1' }] }); bang('laser').click(); await tick(); p = panel();
-  assert.equal(rowsOf(p).length, 0, 'the set\'s wait is no issue row'); const wr = [...p.querySelectorAll('.lisWait')]; assert.equal(wr.length, 1, 'said once');
-  assert.match(texts(wr[0]), /^Waiting for SS Sheet 1 · Engraving ?7 \/ 25$/); assert.equal(wr[0].querySelectorAll('svg').length, 2, 'a quiet clock and the arrow'); assert.equal(wr[0].tagName, 'BUTTON');
-  assert.match(p.querySelector('.lisCount').textContent, /^Waiting$/); assert(p.querySelector('.lisCount').classList.contains('quiet'), 'a quiet header chip, not an issue count'); assert.doesNotMatch(texts(p), /\bissues?\b|\bWaits on\b|\blines?\b/i);
-  calls.length = 0; wr[0].click(); await tick(); eq(calls.pop(), ['sheet', 'ss1'], 'a press opens the sheet that holds the set'); p.classList.remove('handed'); w.eval('LibraryIssues.close()'); await tick(200);
-  // the same wait on top of a panel with real issues: said once, above them, and not counted
+  // Laser cutting (round 8): the set's wait is not in this list. A stale entry for it alone gives no panel (there is nothing of this sheet to say) and no row, however it is pressed
+  w.__feed.gf1 = F.issues('gf1', 0, { mates: [{ id: 'ss1', label: 'SS Sheet 1' }] }); bang('laser').click(); await tick(); assert.equal(panel(), null, 'a sheet with nothing of its own to list opens no panel for the set\'s wait');
+  // the same stale entry on top of a panel with real issues: not listed, not counted, no 'Waiting' header, no word of the other sheet
   w.__feed.gf1 = F.issues('gf1', 3, { keys: ['noSku'], mates: [{ id: 'ss1', label: 'SS Sheet 1' }] }); bang('orders').click(); await tick(); p = panel();
-  assert.equal(rowsOf(p).length, 3); assert.match(p.querySelector('.lisCount').textContent, /^3 issues$/, 'the wait is not the fourth issue'); assert(!p.querySelector('.lisCount').classList.contains('quiet'));
-  assert(p.querySelector('.lisBody').firstElementChild.querySelector('.lisWait'), 'the set\'s wait comes first');
-  assert.equal(p.querySelectorAll('.lisWait').length, 1);
-  // the wait alone keeps its panel open and goes when the set is ready
-  w.__feed.gf1 = F.issues('gf1', 0, { mates: [{ id: 'ss1', label: 'SS Sheet 1', counter: { done: 9, of: 25 } }] }); L.changed(); await tick(300);
-  assert(panel() && panel().querySelectorAll('.lisRow').length === 0 && /Waiting for SS Sheet 1 · Engraving ?9 \/ 25/.test(texts(panel())), 'only the wait is left: its panel follows it, in place');
-  w.__feed.gf1 = []; L.changed(); await tick(300); assert.equal(panel(), null, 'the mate is ready: the wait folds away');
+  assert.equal(rowsOf(p).length, 3); assert.match(p.querySelector('.lisCount').textContent, /^3 issues$/, 'the header counts this sheet\'s own issues only'); assert(!p.querySelector('.lisCount.quiet'));
+  assert.equal(p.querySelectorAll('.lisWait,[data-quiet],[data-issue-key="waitsOnSheet"],[data-issue-sheet]').length, 0, 'no wait row of any kind'); assert.doesNotMatch(texts(p), /Waiting|SS Sheet|Engraving ?\d/, 'no word of the other sheet');
+  assert(p.querySelector('.lisBody').firstElementChild.matches('.lisBlk') && p.querySelector('.lisBody').firstElementChild.querySelector('.lisRow'), 'the first thing in the list is an order of this sheet');
+  w.eval('LibraryIssues.close()'); await tick(200);
   // real set trouble is still an issue
   w.__feed.gf1 = F.issues('gf1', 0, { trouble: [{ id: 'ss9' }] }); bang('laser').click(); await tick(); p = panel(); assert.equal(rowsOf(p).length, 1); assert.match(p.querySelector('.lisCount').textContent, /^1 issue$/); w.eval('LibraryIssues.close()'); await tick(200);
 

@@ -96,7 +96,7 @@ assert.match(rep2['2000'].why,/not in a set yet/);
 }
 
 // 5c. (Paul, round 7: "it's on both sheets and both sheets are in the same set") the very order of 5, with its two pieces on sheets of the SAME set: the order is fine.
-// A set advances as one, so RG Sheet 1 not being ready is the SET's wait (said once, quietly), never a wait of the order; the same order split between two sets still is one.
+// A set advances as one, so RG Sheet 1 not being ready is the SET's wait (said once, under the Approve button, in no sheet's list), never a wait of the order; the same order split between two sets still is one.
 {
   const same=clone(b);same.setId='set1';
   const sets1={setId:'set1',seq:1,name:'Set 1',sheetIds:['gf1','rg1']},repsS=R.orderReports(lines,[a,same]);
@@ -107,8 +107,8 @@ assert.match(rep2['2000'].why,/not in a set yet/);
   assert.equal(states(e).orders,'done');assert.equal(step(e,'orders').items.length,0,'no order is listed as waiting');assert.match(step(e,'orders').detail,/All 4 orders/);
   assert.equal(e.step,'laser');assert.equal(e.ready,false,'the set is cut together, so the sheet still waits for its mate');assert.equal(step(e,'laser').items[0].id,'rg1');
   const same1=R.issues(ga,{rows:names,set:sets1,sheets:[ga,same]});
-  assert.deepEqual(same1.map(i=>[i.step,i.key,!!i.quiet,i.label,i.stepLabel,i.open.id]),[['laser','waitsOnSheet',true,'RG Sheet 1','Engraving','rg1']],'the set wait, once, quiet: no order issue');
-  assert(!same1.some(i=>i.orderId),'no order is listed as an issue');
+  assert.deepEqual(same1,[],'GF Sheet 1\'s list is empty (round 8: "only related items to that particular sheet"): no order issue, and the set\'s wait for RG Sheet 1 is not an entry of it');
+  assert.match(R.setGate(sets1,[ga,same]).reason,/^RG Sheet 1 · back engravings \d+ of \d+$/,'the set\'s wait is said once, by the gate (the reason under the grey Approve button)');
   // the same shop with RG Sheet 1 in ANOTHER set: the order is split between two sets, a real issue worded as the split it is
   const apart=clone(b);apart.setId='set2';apart.setSeq=2;const repsX=R.orderReports(lines,[a,apart]);
   const gx=clone(a);gx.setSeq=1;gx.orderReadiness=Object.fromEntries(R.orderIds(gx).map(o=>[o,R.forSheet(repsX[o],'gf1',R.setOf(gx))]));

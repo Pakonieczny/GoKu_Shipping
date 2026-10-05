@@ -121,6 +121,17 @@ function realMutant(target, replacement) {
   const m = { exports: {} }; new Function('module', 'exports', 'self', src.replace(target, replacement))(m, m.exports, undefined);
   return m.exports;
 }
+/** The shipped module with round 7's quiet set-wait entries put back in a sheet's list (round 8, Paul: "only related items to that particular sheet", took them out): one
+ *  {step:'laser', key:'waitsOnSheet', quiet:true} entry per mate sheet that keeps the set from being approved, read from setGate as before. Built from the module's own source.
+ *  → { R, src }: the patched module and its source (a page can run it). */
+function withWaitsBack(src) {
+  const anchor = 'const itself=sheet(rec).included && (completedBefore(rec) || sheet(rec).ready);';
+  assert(src.includes(anchor), 'the place where round 8 took the set\'s wait out of a sheet\'s list is where the mutant expects it (charm-nest-readiness.js sheetIssues)');
+  const put = anchor + "if(ctx.set){const g0=setGate(ctx.set,[rec,...(ctx.sheets || []).filter(m=>!m.archived && (m.id || m.sheetId)!==sid)]);for(const w of g0.blockers)if(w.sheetId!==sid && !g0.sheets.some(x=>x.missing && x.sheetId===w.sheetId))out.push({step:'laser',key:'waitsOnSheet',quiet:true,label:w.sheetLabel,stepKey:w.step,stepLabel:w.stepLabel,why:w.why,counter:w.counter || null,text:w.text,sheetId:sid,sheetLabel:label,open:{type:'sheet',id:w.sheetId}});}";
+  const patched = src.replace(anchor, put), m = { exports: {} };
+  new Function('module', 'exports', 'self', patched)(m, m.exports, undefined);
+  return { R: m.exports, src: patched };
+}
 function main() {
   const results = {};
   for (const [name, mut] of Object.entries(MUTANTS)) {
@@ -143,11 +154,17 @@ function main() {
     let hit = null; for (let i = 0; i < 400 && !hit; i++) { const d = P.disagreementsWith(impl, S.materialize(S.makeSpec(500000 + i)), ['rows', 'records', 'pre']); if (d.length) hit = { shop: i, type: d[0].type }; }
     assert(hit, `the shipped module with "${name}" went undetected by the harness`); realHits[name] = hit;
   }
+  // round 8: the set's wait put back in a sheet's list is caught by the same harness: on a shop shaped like Paul's and on random shops
+  const waits = withWaitsBack(fs.readFileSync(require('path').join(__dirname, '../../charm-nest-readiness.js'), 'utf8'));
+  assert(P.mateChecks(waits.R, paulShop()).some(d => d.type === 'setWaitListed'), 'putting the set\'s wait back in the list is caught on a shop shaped like Paul\'s');
+  let waitHit = null;
+  for (let i = 0; i < 300 && !waitHit; i++) { const d = P.mateChecks(waits.R, S.materialize(S.makeSpec(700000 + i))).filter(x => x.type === 'setWaitListed'); if (d.length) waitHit = { shop: i, type: d[0].type }; }
+  assert(waitHit, 'the set\'s wait put back in the list went undetected on random shops');
   // the old code, a real mutant: caught on Paul's shop
   const paul = P.oldAgainstOracle(paulShop());
   // (round 7: both sheets are in ONE set, so even the five shared orders are no issue: the old code's 53 listed orders are all false alarms)
   assert(paul.falseAlarms >= 53 && paul.real === 0, 'the old code is caught on a shop shaped like Paul\'s');
-  console.log(`PASS: clean reference agrees with the oracle; ${Object.keys(MUTANTS).length - 1} mutants all caught (${Object.entries(results).filter(([k]) => k !== 'clean').map(([k, v]) => `${k}:${v.type}@${v.shop}`).join(', ')}); same-set rule put back in the shipped module caught (${real.type}@${real.shop}); round-8 rules taken out of the shipped module caught (${Object.entries(realHits).map(([k, v]) => `${k}: ${v.type}@${v.shop}`).join(', ')}); old code caught on Paul's shop (${paul.falseAlarms} false alarms)`);
+  console.log(`PASS: clean reference agrees with the oracle; ${Object.keys(MUTANTS).length - 1} mutants all caught (${Object.entries(results).filter(([k]) => k !== 'clean').map(([k, v]) => `${k}:${v.type}@${v.shop}`).join(', ')}); same-set rule put back in the shipped module caught (${real.type}@${real.shop}); round-8 rules taken out of the shipped module caught (${Object.entries(realHits).map(([k, v]) => `${k}: ${v.type}@${v.shop}`).join(', ')}); the set's wait put back in a sheet's list caught (${waitHit.type}@${waitHit.shop}); old code caught on Paul's shop (${paul.falseAlarms} false alarms)`);
 }
 if (require.main === module) main();
-module.exports = { refIssues, MUTANTS };
+module.exports = { refIssues, MUTANTS, withWaitsBack };
