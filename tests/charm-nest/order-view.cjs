@@ -63,14 +63,31 @@ async function main() {
       return { full: [Math.round(r.width), Math.round(r.height)], cls: d.className, title: document.getElementById('owTitle').textContent, tab: document.querySelector('.owTabsV [aria-selected=true]').dataset.owView,
         info: !document.querySelector('.owVInfo').hidden, prev: !document.getElementById('owPrev').hidden, pos: document.getElementById('owPos').textContent, sub: document.getElementById('owSub').textContent,
         meta: [...document.querySelectorAll('#owMeta .m i')].map(i => i.textContent), note: document.querySelector('label[for=owNote]').textContent, tabs: [...document.querySelectorAll('#orderWin [data-ow-tab]')].map(b => [...b.children].map(c => c.textContent.trim()).filter(Boolean).join(' ')),
-        skip: !document.getElementById('owSkipBox').hidden, dialogs: document.querySelectorAll('dialog[open]').length }; });
+        dialogs: document.querySelectorAll('dialog[open]').length }; });
     assert.deepEqual(v1.full, [1440, 900], 'it fills the screen'); assert.match(v1.cls, /owFull/);
     assert.equal(v1.title, `Order ${A.rid}`); assert.equal(v1.tab, 'info'); assert(v1.info, 'Overview in front');
-    assert(v1.prev && /^\d+ of \d+$/.test(v1.pos), 'Previous and Next walk the Orders list: ' + v1.pos); assert(v1.skip, 'Skip this Order, in the tab row');
+    assert(v1.prev && /^\d+ of \d+$/.test(v1.pos), 'Previous and Next walk the Orders list: ' + v1.pos);
     assert.match(v1.sub, /Hannah Whitford · 1 piece · ship by Oct/);
     assert(v1.meta.includes('Order') && v1.meta.includes('Buyer')); assert.match(v1.note, /^Order notes/);
     assert.deepEqual(v1.tabs, ['Team internal', 'Customer on Etsy']); assert.equal(v1.dialogs, 1, 'one window');
     if (shots) await page.screenshot({ path: path.join(shots, 'order-view-overview.png') });
+
+    // 1b · no "Skip this Order" switch in the window (Paul, 5 Oct: removed from every order window), and the live line ("Updated live ·
+    //      last change …") stands where it was, at the right end of the tab row: right-aligned at 1440 and at 390 px, whole (not clipped),
+    //      on the row's own middle line, the row 38 px high either way
+    await page.waitForFunction(() => document.getElementById('owLive').textContent.length > 5, null, { timeout: 15000 });
+    const liveAt = () => page.evaluate(() => { const nav = document.querySelector('.owTabsV'), l = document.getElementById('owLive'), n = nav.getBoundingClientRect(), rg = document.createRange(); rg.selectNodeContents(l); const t = rg.getBoundingClientRect();
+      return { skipText: /skip this order|cut nothing for it/i.test(document.getElementById('orderWin').textContent), skipEl: !!document.querySelector('#owSkip, #owSkipBox, .owSkip, .owSw'), text: l.textContent,
+        right: Math.round(n.right - 12 - t.right), mid: Math.round(Math.abs((t.top + t.bottom) / 2 - (n.top + n.bottom - 1) / 2) * 10) / 10, whole: l.scrollWidth <= l.clientWidth + 1 && l.scrollHeight <= l.clientHeight + 1, inside: t.left >= 0 && t.right <= innerWidth, navH: Math.round(n.height) }; });
+    for (const w of [1440, 390]) {
+      if (w !== 1440) { await page.setViewportSize({ width: w, height: 844 }); await new Promise(r => setTimeout(r, 400)); }
+      const lv = await liveAt();
+      assert(!lv.skipText && !lv.skipEl, `no Skip this Order text or #owSkip in the order window at ${w}: ${JSON.stringify(lv)}`);
+      assert.match(lv.text, /^Updated live · last change .+/); assert.equal(lv.right, 0, `#owLive is right-aligned at ${w}: ${JSON.stringify(lv)}`);
+      assert(lv.whole && lv.inside && lv.mid <= 1 && lv.navH === 38, `#owLive is whole, inside the screen and on the row's middle at ${w}: ${JSON.stringify(lv)}`);
+      if (shots) await page.screenshot({ path: path.join(shots, `order-view-live-line-${w}.png`), clip: { x: 0, y: 0, width: w, height: 130 } });
+    }
+    await page.setViewportSize({ width: 1440, height: 900 }); await new Promise(r => setTimeout(r, 400));
 
     // 2 · the views: Timeline (the mount point, or its quiet placeholder), then Sheet
     await page.click('.owTabsV [data-ow-view="timeline"]');
@@ -110,9 +127,9 @@ async function main() {
     await page.evaluate(() => document.getElementById('liftedCard').remove());
     assert(early.open, 'it opens at once'); assert.match(early.loading || '', /Looking up order 4175000123/); assert.equal(early.title, `Order ${C.rid}`);
     await page.waitForFunction(() => document.getElementById('owLoading').hidden && /Janet Steptoe/.test(document.getElementById('owSub').textContent), null, { timeout: 15000 });
-    const v5 = await page.evaluate(() => ({ title: document.getElementById('owTitle').textContent, lit: !!document.querySelector('#owTitle .num.found'), prev: document.getElementById('owPrev').hidden, skip: document.getElementById('owSkipBox').hidden,
+    const v5 = await page.evaluate(() => ({ title: document.getElementById('owTitle').textContent, lit: !!document.querySelector('#owTitle .num.found'), prev: document.getElementById('owPrev').hidden,
       meta: [...document.querySelectorAll('#owMeta .m')].map(m => m.querySelector('i').textContent + ': ' + m.querySelector('span').textContent), said: document.getElementById('owNotes').textContent }));
-    assert.equal(v5.title, `Order ${C.rid}`); assert(v5.lit, 'the searched number is highlighted'); assert(v5.prev, 'no Previous/Next: not walking the Orders list'); assert(v5.skip, 'no Skip: not a line of the pull');
+    assert.equal(v5.title, `Order ${C.rid}`); assert(v5.lit, 'the searched number is highlighted'); assert(v5.prev, 'no Previous/Next: not walking the Orders list');
     assert(v5.meta.includes('Buyer: Janet Steptoe') && v5.meta.includes('Title: Aster birth flower necklace'), JSON.stringify(v5.meta)); assert.match(v5.said, /September/);
     // a repaint of the lists never closes a view of an order the pull does not hold
     await page.evaluate(() => { Orders.render(); OrderWin.paint(); });
