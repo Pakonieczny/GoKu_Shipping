@@ -17,7 +17,8 @@
             pieces: [{ poolId, lineKey, label, metal, state: onSheet | onCutSheet | inCommittedSet | notOnSheet | completed,
                        sheetId, sheetLabel, setId, setLabel }],
             sheets: [{ sheetId, label, setLabel, metal, removes, qrRemade }],
-            fills:  [{ sheetId, sheetLabel, spots, source: waiting | newerSheet | none, fromSheetId, fromSheetLabel, orders, why? }],
+            fills:  [{ sheetId, sheetLabel, spots, source: waiting | newerSheet | none, fromSheetId, fromSheetLabel, orders, rids, why? }],
+                    (rids: the ids of the orders that fill; the sentences count each order once, whatever number of sheets it fills)
             stays:  [{ poolId, label, sheetLabel, why }],
             effects: [plain sentences, ready to show] }
 
@@ -48,6 +49,23 @@
   const msOf = t => { t = +t || 0; return t > 0 && t < 1e11 ? t * 1000 : t; };
 
   /* ── what a person sees: one plain sentence per consequence ── */
+  // The orders that fill the freed spots, each counted ONCE by its order id: one order that fills a spot on two sheets (its gold piece
+  // moves into one sheet, its silver piece into another) is "1 order", not one for each sheet. A fill that carries no ids counts what it says.
+  function moversOf(into) {
+    const seen = new Set();
+    const count = list => {
+      let n = 0;
+      for (const f of list) {
+        const ids = (Array.isArray(f.rids) ? f.rids : []).map(String).filter(Boolean);
+        if (!ids.length) { n += +f.orders || 0; continue; }
+        for (const id of ids) if (!seen.has(id)) { seen.add(id); n++; }
+      }
+      return n;
+    };
+    const waiting = into.filter(f => f.source === "waiting"), newer = into.filter(f => f.source === "newerSheet");
+    const wait = count(waiting), from = count(newer);
+    return { wait, from, labels: uniq(newer.map(f => f.fromSheetLabel)) };
+  }
   function effectsOf(P) {
     const out = [], on = P.pieces.filter(p => p.state === "onSheet"), loose = P.pieces.filter(p => p.state === "notOnSheet");
     const where = P.sheets.map(s => s.label + (s.setLabel ? ` (${s.setLabel})` : ""));
@@ -55,12 +73,11 @@
     if (loose.length) out.push(`${plural(loose.length, "piece")} ${loose.length === 1 ? "is" : "are"} not on a sheet yet and simply ${loose.length === 1 ? "waits" : "wait"} under On hold.`);
     const into = P.fills.filter(f => f.source !== "none"), free = P.fills.filter(f => f.source === "none");
     if (into.length) {
-      const wait = into.filter(f => f.source === "waiting").reduce((n, f) => n + f.orders, 0), from = into.filter(f => f.source === "newerSheet");
-      const parts = [];
-      if (wait) parts.push(plural(wait, "waiting order"));
-      if (from.length) parts.push(`${plural(from.reduce((n, f) => n + f.orders, 0), "order")} from ${joinAnd(uniq(from.map(f => f.fromSheetLabel)))}`);
-      const spots = into.reduce((n, f) => n + f.spots, 0), orders = wait + from.reduce((n, f) => n + f.orders, 0);
-      out.push(`${P.estimate ? "Up to " : ""}${joinAnd(parts)} ${orders === 1 ? "fills" : "fill"} the ${plural(spots, "empty spot")}.`);
+      const m = moversOf(into), parts = [];
+      if (m.wait) parts.push(plural(m.wait, "waiting order"));
+      if (m.from) parts.push(`${plural(m.from, "order")} from ${joinAnd(m.labels)}`);
+      const spots = into.reduce((n, f) => n + f.spots, 0), orders = m.wait + m.from;
+      if (parts.length) out.push(`${P.estimate ? "Up to " : ""}${joinAnd(parts)} ${orders === 1 ? "fills" : "fill"} the ${plural(spots, "empty spot")}.`);
     }
     const left = free.reduce((n, f) => n + f.spots, 0);
     if (left && on.length) {
@@ -103,18 +120,19 @@
     else if (by("last").length) block(`This order is the only one on ${labels(by("last"))}, and a sheet is never left empty. Let another order fill that sheet first, or delete the sheet from its menu.`);
     else if (!off.length && !none.length && stays.length) block("Every piece of this order is already cut, so there is nothing to take off.");
     // what fills the spots (an estimate here; the room search of the live page replaces it, see plan())
-    const used = new Set(), cands = (snap.candidates || []).slice();
+    // (an order is taken once for a sheet of a metal: its gold piece for a gold sheet and its silver piece for a silver sheet are two moves of ONE order, as the run does them)
+    const used = new Set(), usedKey = (c, metal) => c.rid + "|" + (c.metal ? metal : ""), cands = (snap.candidates || []).slice();
     for (const s of P.sheets) {
       const info = (snap.sheets || {})[s.sheetId] || {}, spots = info.spots != null ? info.spots : s.removes;
-      if (!info.fillable) { P.fills.push({ sheetId: s.sheetId, sheetLabel: s.label, spots, source: "none", fromSheetId: null, fromSheetLabel: "", orders: 0, why: info.why || (info.rose ? "Rose Gold sheets are never re-arranged" : "this sheet cannot be filled") }); continue; }
+      if (!info.fillable) { P.fills.push({ sheetId: s.sheetId, sheetLabel: s.label, spots, source: "none", fromSheetId: null, fromSheetLabel: "", orders: 0, rids: [], why: info.why || (info.rose ? "Rose Gold sheets are never re-arranged" : "this sheet cannot be filled") }); continue; }
       let left = spots;
-      for (const c of cands.filter(c => !used.has(c.rid) && (!c.metal || c.metal === s.metal)).sort((a, b) => (a.source === "waiting" ? 0 : 1) - (b.source === "waiting" ? 0 : 1))) {
+      for (const c of cands.filter(c => !used.has(usedKey(c, s.metal)) && (!c.metal || c.metal === s.metal)).sort((a, b) => (a.source === "waiting" ? 0 : 1) - (b.source === "waiting" ? 0 : 1))) {
         if (left <= 0) break;
-        const n = Math.min(left, c.spots || 1); used.add(c.rid); left -= n;
+        const n = Math.min(left, c.spots || 1); used.add(usedKey(c, s.metal)); left -= n;
         const prev = P.fills.find(f => f.sheetId === s.sheetId && f.source === c.source && (f.fromSheetId || null) === (c.fromSheetId || null));
-        if (prev) { prev.spots += n; prev.orders++; } else P.fills.push({ sheetId: s.sheetId, sheetLabel: s.label, spots: n, source: c.source, fromSheetId: c.source === "newerSheet" ? c.fromSheetId || null : null, fromSheetLabel: c.source === "newerSheet" ? c.fromSheetLabel || "" : "", orders: 1 });
+        if (prev) { prev.spots += n; prev.orders++; prev.rids.push(String(c.rid)); } else P.fills.push({ sheetId: s.sheetId, sheetLabel: s.label, spots: n, source: c.source, fromSheetId: c.source === "newerSheet" ? c.fromSheetId || null : null, fromSheetLabel: c.source === "newerSheet" ? c.fromSheetLabel || "" : "", orders: 1, rids: [String(c.rid)] });
       }
-      if (left > 0) P.fills.push({ sheetId: s.sheetId, sheetLabel: s.label, spots: left, source: "none", fromSheetId: null, fromSheetLabel: "", orders: 0, why: "no waiting order fits" });
+      if (left > 0) P.fills.push({ sheetId: s.sheetId, sheetLabel: s.label, spots: left, source: "none", fromSheetId: null, fromSheetLabel: "", orders: 0, rids: [], why: "no waiting order fits" });
     }
     P.effects = P.canHold ? effectsOf(P) : [];
     return P;
@@ -171,9 +189,11 @@
     if (!P.label) P.label = rid;
     if (opts.snapshot || opts.exact === false || !P.canHold || !P.sheets.length) return P;
     // the real room: the nest's own collision grid on each sheet as it will stand once the order is off (read only), in
-    // the order the run takes them, an order never promised to two sheets, within a few seconds (the rest stays an estimate)
+    // the order the run takes them, within a few seconds (the rest stays an estimate). An order is not promised twice to sheets of one
+    // metal (it has moved by then); the run only skips the held order itself, so an order with a gold piece on a newer gold sheet and a
+    // silver piece on a newer silver sheet fills a spot on each: the plan says the same, and counts that order once (see moversOf)
     const K = kit(); if (!K || !K.room) return P;
-    const t0 = Date.now(), budget = +opts.budgetMs || 4000, fills = [], taken = [rid], sheets = P.sheets.map(s => s.sheetId);
+    const t0 = Date.now(), budget = +opts.budgetMs || 4000, fills = [], taken = [], sheets = P.sheets.map(s => s.sheetId);
     let exact = true;
     try {
       for (const s of P.sheets) {
@@ -182,18 +202,18 @@
         const without = new Set(snap.pieces.filter(p => p.status === "off" && p.sheetId === s.sheetId).map(p => p.poolId));
         const left = budget - (Date.now() - t0);
         if (left < 400) { exact = false; fills.push(...P.fills.filter(f => f.sheetId === s.sheetId)); continue; }
-        const r = await K.room(sh, { without, skip: taken, avoid: sheets.filter(id => id !== s.sheetId), budgetMs: left });
+        const r = await K.room(sh, { without, skip: [rid, ...taken.filter(t => t.metal === s.metal).map(t => t.rid)], avoid: sheets.filter(id => id !== s.sheetId), budgetMs: left });
         const spots = info.spots != null ? info.spots : s.removes;
         const bySource = new Map();
         for (const it of r.list) {
-          taken.push(it.k.rid);
+          taken.push({ rid: it.k.rid, metal: s.metal });
           const from = it.source === "newerSheet" ? [...it.k.srcs][0] : null, key = it.source + "|" + (from ? from.sheetId : ""), n = new Set(it.spots.map(x => x.bi)).size || it.spots.length;
-          const f = bySource.get(key) || { sheetId: s.sheetId, sheetLabel: s.label, spots: 0, source: it.source, fromSheetId: from ? from.sheetId || null : null, fromSheetLabel: from ? K.word(from) : "", orders: 0 };
-          f.spots += n; f.orders++; bySource.set(key, f);
+          const f = bySource.get(key) || { sheetId: s.sheetId, sheetLabel: s.label, spots: 0, source: it.source, fromSheetId: from ? from.sheetId || null : null, fromSheetLabel: from ? K.word(from) : "", orders: 0, rids: [] };
+          f.spots += n; f.orders++; f.rids.push(String(it.k.rid)); bySource.set(key, f);
         }
         const filled = [...bySource.values()]; fills.push(...filled);
         const rest = Math.max(0, spots - filled.reduce((n, f) => n + f.spots, 0));
-        if (rest) fills.push({ sheetId: s.sheetId, sheetLabel: s.label, spots: rest, source: "none", fromSheetId: null, fromSheetLabel: "", orders: 0, why: "no waiting order fits" });
+        if (rest) fills.push({ sheetId: s.sheetId, sheetLabel: s.label, spots: rest, source: "none", fromSheetId: null, fromSheetLabel: "", orders: 0, rids: [], why: "no waiting order fits" });
       }
       P.fills = fills; P.estimate = !exact; P.effects = effectsOf(P);
     } catch (e) { console.warn("[OrderHold] room search", e); }

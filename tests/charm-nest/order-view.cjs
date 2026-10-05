@@ -62,15 +62,32 @@ async function main() {
     const v1 = await page.evaluate(() => { const d = document.getElementById('orderWin'), r = d.getBoundingClientRect();
       return { full: [Math.round(r.width), Math.round(r.height)], cls: d.className, title: document.getElementById('owTitle').textContent, tab: document.querySelector('.owTabsV [aria-selected=true]').dataset.owView,
         info: !document.querySelector('.owVInfo').hidden, prev: !document.getElementById('owPrev').hidden, pos: document.getElementById('owPos').textContent, sub: document.getElementById('owSub').textContent,
-        meta: [...document.querySelectorAll('#owMeta .m i')].map(i => i.textContent), note: document.querySelector('label[for=owNote]').textContent, tabs: [...document.querySelectorAll('#orderWin [data-ow-tab]')].map(b => [...b.children].map(c => c.textContent.trim()).filter(Boolean).join(' ')),
-        skip: !document.getElementById('owSkipBox').hidden, dialogs: document.querySelectorAll('dialog[open]').length }; });
+        meta: [...document.querySelectorAll('#owMeta .m i')].map(i => i.textContent), note: !!document.getElementById('owNote') || !!document.querySelector('label[for=owNote]'), tabs: [...document.querySelectorAll('#orderWin [data-ow-tab]')].map(b => [...b.children].map(c => c.textContent.trim()).filter(Boolean).join(' ')),
+        dialogs: document.querySelectorAll('dialog[open]').length }; });
     assert.deepEqual(v1.full, [1440, 900], 'it fills the screen'); assert.match(v1.cls, /owFull/);
     assert.equal(v1.title, `Order ${A.rid}`); assert.equal(v1.tab, 'info'); assert(v1.info, 'Overview in front');
-    assert(v1.prev && /^\d+ of \d+$/.test(v1.pos), 'Previous and Next walk the Orders list: ' + v1.pos); assert(v1.skip, 'Skip this Order, in the tab row');
+    assert(v1.prev && /^\d+ of \d+$/.test(v1.pos), 'Previous and Next walk the Orders list: ' + v1.pos);
     assert.match(v1.sub, /Hannah Whitford · 1 piece · ship by Oct/);
-    assert(v1.meta.includes('Order') && v1.meta.includes('Buyer')); assert.match(v1.note, /^Order notes/);
+    assert(v1.meta.includes('Order') && v1.meta.includes('Buyer')); assert.equal(v1.note, false, 'no Order notes box in the view (5 Oct 2026)');
     assert.deepEqual(v1.tabs, ['Team internal', 'Customer on Etsy']); assert.equal(v1.dialogs, 1, 'one window');
     if (shots) await page.screenshot({ path: path.join(shots, 'order-view-overview.png') });
+
+    // 1b · no "Skip this Order" switch in the window (Paul, 5 Oct: removed from every order window), and the live line ("Updated live ·
+    //      last change …") stands where it was, at the right end of the tab row: right-aligned at 1440 and at 390 px, whole (not clipped),
+    //      on the row's own middle line, the row 38 px high either way
+    await page.waitForFunction(() => document.getElementById('owLive').textContent.length > 5, null, { timeout: 15000 });
+    const liveAt = () => page.evaluate(() => { const nav = document.querySelector('.owTabsV'), l = document.getElementById('owLive'), n = nav.getBoundingClientRect(), rg = document.createRange(); rg.selectNodeContents(l); const t = rg.getBoundingClientRect();
+      return { skipText: /skip this order|cut nothing for it/i.test(document.getElementById('orderWin').textContent), skipEl: !!document.querySelector('#owSkip, #owSkipBox, .owSkip, .owSw'), text: l.textContent,
+        right: Math.round(n.right - 12 - t.right), mid: Math.round(Math.abs((t.top + t.bottom) / 2 - (n.top + n.bottom - 1) / 2) * 10) / 10, whole: l.scrollWidth <= l.clientWidth + 1 && l.scrollHeight <= l.clientHeight + 1, inside: t.left >= 0 && t.right <= innerWidth, navH: Math.round(n.height) }; });
+    for (const w of [1440, 390]) {
+      if (w !== 1440) { await page.setViewportSize({ width: w, height: 844 }); await new Promise(r => setTimeout(r, 400)); }
+      const lv = await liveAt();
+      assert(!lv.skipText && !lv.skipEl, `no Skip this Order text or #owSkip in the order window at ${w}: ${JSON.stringify(lv)}`);
+      assert.match(lv.text, /^Updated live · last change .+/); assert.equal(lv.right, 0, `#owLive is right-aligned at ${w}: ${JSON.stringify(lv)}`);
+      assert(lv.whole && lv.inside && lv.mid <= 1 && lv.navH === 38, `#owLive is whole, inside the screen and on the row's middle at ${w}: ${JSON.stringify(lv)}`);
+      if (shots) await page.screenshot({ path: path.join(shots, `order-view-live-line-${w}.png`), clip: { x: 0, y: 0, width: w, height: 130 } });
+    }
+    await page.setViewportSize({ width: 1440, height: 900 }); await new Promise(r => setTimeout(r, 400));
 
     // 2 · the views: Timeline (the mount point, or its quiet placeholder), then Sheet
     await page.click('.owTabsV [data-ow-view="timeline"]');
@@ -110,16 +127,16 @@ async function main() {
     await page.evaluate(() => document.getElementById('liftedCard').remove());
     assert(early.open, 'it opens at once'); assert.match(early.loading || '', /Looking up order 4175000123/); assert.equal(early.title, `Order ${C.rid}`);
     await page.waitForFunction(() => document.getElementById('owLoading').hidden && /Janet Steptoe/.test(document.getElementById('owSub').textContent), null, { timeout: 15000 });
-    const v5 = await page.evaluate(() => ({ title: document.getElementById('owTitle').textContent, lit: !!document.querySelector('#owTitle .num.found'), prev: document.getElementById('owPrev').hidden, skip: document.getElementById('owSkipBox').hidden,
+    const v5 = await page.evaluate(() => ({ title: document.getElementById('owTitle').textContent, lit: !!document.querySelector('#owTitle .num.found'), prev: document.getElementById('owPrev').hidden,
       meta: [...document.querySelectorAll('#owMeta .m')].map(m => m.querySelector('i').textContent + ': ' + m.querySelector('span').textContent), said: document.getElementById('owNotes').textContent }));
-    assert.equal(v5.title, `Order ${C.rid}`); assert(v5.lit, 'the searched number is highlighted'); assert(v5.prev, 'no Previous/Next: not walking the Orders list'); assert(v5.skip, 'no Skip: not a line of the pull');
+    assert.equal(v5.title, `Order ${C.rid}`); assert(v5.lit, 'the searched number is highlighted'); assert(v5.prev, 'no Previous/Next: not walking the Orders list');
     assert(v5.meta.includes('Buyer: Janet Steptoe') && v5.meta.includes('Title: Aster birth flower necklace'), JSON.stringify(v5.meta)); assert.match(v5.said, /September/);
     // a repaint of the lists never closes a view of an order the pull does not hold
     await page.evaluate(() => { Orders.render(); OrderWin.paint(); });
     assert(await page.evaluate(() => OrderWin.isOpen()), 'still open after a repaint');
     await page.click('.owTabsV [data-ow-view="sheet"]');
     await page.waitForFunction(rid => { const i = OrderWin._sheet(); return i && i.mine.length === 1 && i.mine[0].rid === rid && document.getElementById('owPlateWait').hidden; }, C.rid, { timeout: 15000 });
-    assert.match(await page.textContent('#owSheetPanel .owBackEng'), /Love, Mom/, 'its back engraving');
+    assert.match(await page.textContent('#owSheetPanel [data-engraving-panel]'), /Love, Mom/, 'its back engraving');   // (the one back engraving card, rebuilt 5 Oct: it holds the words as the sheet record keeps them)
     // a click on another order's charm opens that order here, on the same sheet
     const pa = await page.evaluate(k => OrderWin._sheet().pointOf(k), poolOf(A));
     await page.mouse.click(pa.x, pa.y);
@@ -151,6 +168,12 @@ async function main() {
     //     the Its pieces list ("Showing all 2 pieces", each piece a row to pick); all pieces put the order where its slowest piece is, a step some pieces reached
     //     says how many; one piece shows only its own steps. The header no longer says "line 1 of 2".
     const D2 = { rid: '4174322410', t1: '41743224101', t2: '41743224102' }, k1 = `${D2.rid}_${D2.t1}`, k2 = `${D2.rid}_${D2.t2}`;
+    // (where each piece is NOW is the sheets' own records, not the timeline's old `placed` events (placement truth, 5 Oct): the two pieces are on their sheets there too)
+    for (const [t, sid, nm, n, sku] of [[D2.t1, 'sh-a', 'GF_Sheet-1', 1, 'SHEEP_3'], [D2.t2, 'sh-b', 'GF_Sheet-2', 2, 'COW_1']]) {
+      const pool = `${D2.rid}_${t}_1`;
+      srv.st.put('Charm_Nest_Sheets', sid, { id: sid, metal: 'gold', sheetIndex: n, day: '2026-10-05', status: 'written', density: 0.42, stock: { wPt: 283.46, hPt: 141.73 }, orders: [D2.rid], placements: [box('pd' + n, 80, 60)], charms: [{ id: 'pd' + n, name: `${D2.rid} · ${sku}`, poolId: pool, order: D2.rid, sku }] });
+      srv.st.put('Charm_Pool', pool, { poolId: pool, orderId: D2.rid, transactionId: t, lineKey: `${D2.rid}_${t}`, sku, material: 'gold', copy: 1, quantity: 1, state: 'placed', sheetId: sid, sheetName: nm, runId: null, updatedAt: Date.now() });
+    }
     await page.evaluate(({ D2, k1, k2, SHIP }) => {
       const T0 = Date.now() - 3 * 3600e3, ln = (tid, sku) => ({ transactionId: tid, listingId: '18000' + tid.slice(-4), sku, title: sku.replace(/_/g, ' ') + ' necklace', quantity: 1, expectedShipDate: SHIP, variations: [{ name: 'Metal', value: '14k Gold Filled' }], metalKey: 'gold', metalLabel: 'GF 14/20', personalization: [], buyerMessage: '' });
       const order = { receiptId: D2.rid, orderNumber: D2.rid, createTs: Math.floor(T0 / 1000) - 60, updateTs: Math.floor(T0 / 1000), shipBy: SHIP, buyer: { name: 'Stephanie Lopez' }, buyerMessage: '', isGift: false, giftMessage: '', staffNote: '', messages: [], lines: [ln(D2.t1, 'SHEEP_3'), ln(D2.t2, 'COW_1')] };

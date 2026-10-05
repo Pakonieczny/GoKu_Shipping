@@ -90,11 +90,13 @@
       const kind = o.kind === "sheet" ? "sheet" : "order", rid = kind === "order" ? digits(o.rid, 30) : "", title = clean(o.title, 80);
       if (kind === "order" ? !rid : !title) return false;
       const key = String(o.key != null ? o.key : kind + "|" + rid + "|" + title);
+      let who = ""; try { const w = typeof a.who === "function" ? a.who() : null; who = w && w.person ? String(w.person) : ""; } catch (_) {}
       const same = !!cur && cur.key === key;
       if (!fresh && !same) return false;                       // a new line only for the order in hand
-      if (fresh && o.sync === true && same) fresh = false;     // told again: a refresh
-      const keep = !!cur && (!fresh || o.keepTime === true);
-      const next = Object.assign({}, same ? cur : {}, o, { kind, rid, title, key });
+      if (!fresh && cur.person !== who) fresh = true;          // the order in hand was somebody else's scan (they signed out): this person's first word about it is a scan of their own
+      if (fresh && o.sync === true && same && cur.person === who) fresh = false;     // told again: a refresh
+      const keep = !!cur && cur.person === who && (!fresh || o.keepTime === true);
+      const next = Object.assign({}, same ? cur : {}, o, { kind, rid, title, key, person: who });
       const ok = !!a.working({ kind, rid, title, orderNumber: kind === "order" ? (clean(o.orderNumber, 40) || rid) : clean(o.orderNumber, 40),
         customer: o.customer != null ? clean(o.customer, 60) : (same ? cur.customer : undefined),
         pieces: next.pieces, pieceCount: next.pieceCount, note: o.note != null ? clean(o.note, 80) : next.note,

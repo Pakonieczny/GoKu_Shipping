@@ -108,7 +108,7 @@ function make(opts = {}) {
       { station: 'assembly', person: 'Anna', a: 130, b: 152, work: 15, scans: 2, completes: 1, prints: 1, parts: 4, source: 'events' },
       { station: 'shipping', person: 'Michael', a: 301, b: 306, work: 4, scans: 2, completes: 1, prints: 2, parts: 4, source: st.orderMode === 'seals' ? 'seals' : 'events' }];
     let far = 0; const steps = S.map((x, i) => { const first = base + mins(x.a), last = base + mins(x.b), wait = i ? Math.max(0, first - far) : 0; far = Math.max(far, last); return { station: x.station, person: x.person, firstAt: first, lastAt: last, workMs: x.source === 'seals' ? 0 : mins(x.work), waitMs: wait, scans: x.scans, completes: x.completes, prints: x.prints, parts: x.source === 'seals' ? 0 : x.parts, source: x.source }; });
-    const notes = st.orderMode === 'seals' ? ["Steps marked seals come from the order's timeline seals (before activity events), with no part counts or work time."] : [];
+    const notes = st.orderMode === 'seals' ? ["Steps marked seals come from the order's timeline seals (before activity events), with no piece counts or work time."] : [];
     return { status: 200, json: { ok: true, now: now(), orderId: id, steps, events: steps.map(x => ({ at: x.firstAt, person: x.person, station: x.station, device: x.station + '-1', action: 'complete', parts: x.parts, detail: '', source: x.source })), totals: { firstAt: steps[0].firstAt, lastAt: steps[3].lastAt, spanMs: steps[3].lastAt - steps[0].firstAt, workMs: steps.reduce((n, x) => n + x.workMs, 0), people: 3, stations: 4 }, sources: { events: true, seals: st.orderMode === 'seals' }, notes } };
   }
   /** The sorter's Sandbox store, as on Paul's screenshot: Paul alone, at the Sorter, 29 parts and 25 orders. Nothing at the real stations. */

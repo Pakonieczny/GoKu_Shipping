@@ -3,9 +3,9 @@
 // specific order selected"). window.EngraveLink.open (charm-nest-engrave-link.js) is the one way in; checked here from
 // the three places that used to open the tab by themselves, on a single-piece order and on an order of 3 pieces
 // (4170837249's shape), with other orders about that would be in front if the piece were not asked for by name:
-//   · the Back engraving card in the order window's Overview (its shortcut into Engrave; the red "Its engraving is still to be
-//     settled" box that was a second door was removed on 5 Oct 2026, and the window never says it again);
-//   · the Sheet tab's shortcut (Confirm the words in Engrave / View in Engrave);
+//   · the Back engraving card in the order window's Overview (its shortcut into Engraving: Fix in Engraving / View in Engraving; the red
+//     "Its engraving is still to be settled" box that was a second door was removed on 5 Oct 2026, and the window never says it again);
+//   · the Sheet tab's shortcut (Fix in Engraving / View in Engraving);
 //   · the Sheet window's own (the window closes, the way back stays);
 //   · a piece whose job is not loaded yet is waited for (small labelled spinner, bounded), a missing job falls back to
 //     the Engraving tab filtered to the order with a toast, a Sandbox order is never opened from the production page.
@@ -129,14 +129,14 @@ async function main() {
       await page.click('#owSheetPanel [data-engraving-panel] [data-e=engrave]');
       return text;
     };
-    check(/Confirm the words in Engrave/.test(await sheetTab(A, 0)), 'Sheet tab, one piece: its shortcut asks to confirm the words');
+    check(/Fix in Engraving/.test(await sheetTab(A, 0)), 'Sheet tab, one piece: its shortcut is Fix in Engraving');
     await lands(A, 0, 'place', 'Sheet tab, one piece');
     await reset();
-    check(/Confirm the words in Engrave/.test(await sheetTab(B, 1)), 'Sheet tab, piece 2 of 3: its shortcut asks to confirm the words');
+    check(/Fix in Engraving/.test(await sheetTab(B, 1)), 'Sheet tab, piece 2 of 3: its shortcut is Fix in Engraving');
     const w2 = await lands(B, 1, 'place', 'Sheet tab, piece 2 of 3');
     check(!w2.cards.includes(keyOf(B, 0)) && !w2.cards.includes(keyOf(C, 0)), 'the first piece and the order in front are not what opened');
     await reset();
-    check(/View in Engrave/.test(await sheetTab(B, 2)), 'Sheet tab, piece 3 of 3 (approved): its shortcut says View in Engrave');
+    check(/View in Engraving/.test(await sheetTab(B, 2)), 'Sheet tab, piece 3 of 3 (approved): its shortcut says View in Engraving');
     await lands(B, 2, 'done', 'Sheet tab, piece 3 of 3 (approved)');
     await reset();
 
@@ -150,7 +150,7 @@ async function main() {
       return text;
     };
     const dismiss = () => page.evaluate(() => { document.querySelector('.swReturn [data-a=x]')?.click(); });
-    check(/Confirm the words in Engrave/.test(await sheetWin(B, 1)), 'Sheet window, piece 2 of 3: its shortcut asks to confirm the words');
+    check(/Fix in Engraving/.test(await sheetWin(B, 1)), 'Sheet window, piece 2 of 3: its shortcut is Fix in Engraving');
     const w3 = await lands(B, 1, 'place', 'Sheet window, piece 2 of 3');
     check(w3.pill, 'the way back to the sheet is still offered (Back to the sheet)');
     await dismiss(); await reset();

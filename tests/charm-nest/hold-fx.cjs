@@ -196,7 +196,7 @@ const releaseSteps = (rid, newSheet) => [
   { type: 'released', rid },
   { type: 'done' }
 ];
-const RELEASE_CAPTIONS = (rid, label) => [`Releasing order ${rid}`, 'First in line, ahead of new orders', `Finding a spot on ${label}`, `Placing the pieces on ${label}`, `Placed on ${label}`, 'Remaking QR labels', `Order ${rid} is released`];
+const RELEASE_CAPTIONS = (rid, label) => [`Releasing order ${rid}`, 'First in the queue, ahead of new orders', `Finding a spot on ${label}`, `Placing the pieces on ${label}`, `Placed on ${label}`, 'Remaking QR labels', `Order ${rid} is released`];
 
 /* ── helpers ── */
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -362,7 +362,7 @@ const ALLOWED = new Set(['transform', 'opacity', 'clipPath', 'offset', 'easing',
       const fl = await flights(), exp = await expected();
       assert.deepEqual(fl.map(f => f.key), ['coin:' + RID, 'place:sh1:r1', 'place:sh1:r2']);
       near(fl[0].from, { x: thumb.x, y: thumb.y - 42 }, 4, 'the design rises from the order\'s own card'); const tray = fl[0].to;
-      assert.ok(tray.x > 1000 && tray.y < 130, 'and flies into the "Next in line" marker: ' + JSON.stringify(tray));
+      assert.ok(tray.x > 1000 && tray.y < 130, 'and flies into the "Up next" marker: ' + JSON.stringify(tray));
       near(fl[1].from, tray, 3, 'the pieces leave that marker'); near(fl[2].from, tray, 3, 'both');
       near(fl[1].to, exp.spot, 5, 'the first piece lands on the target spot the step names'); near(fl[2].to, { x: exp.spot.x + 14, y: exp.spot.y + 10 }, 5, 'the second a little beside it');
       noWarn('release-paced');

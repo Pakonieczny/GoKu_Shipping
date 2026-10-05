@@ -21,6 +21,7 @@
  *                        manager passcode and the Real | Sandbox choice), else a built-in POST to /.netlify/functions/employeeEfficiency with the passcode
  *                        the console holds for this tab (sessionStorage 'cn.eff.key', sent as `key`, never shown, logged or stored by this file). An
  *                        error it throws is shown as its message; one with .auth or .locked stops the live polling.
+ *      opts.onRange      ({from,to} | null) → called when the list's own date fields or its "Clear" change the range (so the host's chips can follow)
  *      opts.limit        orders per page (25)    opts.pollMs   milliseconds between live checks (5000; 0 = no live checks)
  *      opts.prefer       'photo' (default): a piece shows its stored picture, else its vector design; 'vector': the design first
  *      opts.onState      (info) → called when the list changes: { total, scanned, rows, loading, error, query }
@@ -30,16 +31,18 @@
  *                        error, polling, away, buffered, live }
  *    h.unmount()         stops every request, timer and listener and empties el. Mounting again into the same el unmounts the old list first.
  *
- *  What it asks (op personOrders, employeeEfficiency): { op, name, q, cursor, limit, from?, to?, station?, sort?, sandbox? } and reads
+ *  What it asks (op personOrders, employeeEfficiency; E4's, newest first by the time of the last action): { op, name, q, cursor, limit, from?, to?, station?,
+ *  sort?, sandbox? } and reads
  *    answer.{ ok, now, mode, found, total, scanned, searched:{orders,withDetails}, orders, next, notes[], partial, sort? }
  *    order.{ rid, number, at, day, station, stations[], durationMs, spanMs, scans, completes, prints, parts, undone, rejected, errors,
- *            steps[{station,firstAt,lastAt,durationMs,scans,completes,prints,parts}], issues[{kind,label,at,note}], customer, thumbUrl,
+ *            steps[{station,firstAt,lastAt,durationMs,scans,completes,prints,parts}], issues[{kind,label,at,note}], customer, info, thumbUrl,
  *            qr:{text}, pieces[{id,label,sku,thumbUrl}], piecesCount }
  *  Anything missing is left out of the row (never invented): no pieces → one calm picture tile; no thumbUrl → a placeholder; no qr → the receipt id.
  *
  *  What a row shows: order number, customer, the date and time (New York), the station chip, the logged working time ("4 m 12 s"), a status hint
  *    (Completed · Reopened · Issue · Handled), ONE picture tile per piece (at most three, then "+N": hover it for all of them, press it to open
- *    them in place), and a small QR of the order (qr.text). Thumbnails and the QR grow in place on a resting pointer (the platform's own zoom,
+ *    them in place; tiles stop at 24 and the card says "and N more", the server lists at most 12 pieces and gives the true piecesCount), and a
+ *    small QR of the order (qr.text). Thumbnails and the QR grow in place on a resting pointer (the platform's own zoom,
  *    data-zoom-dot of charm-nest-motion.js: never full screen); the rest of the row shows a hover card with the timing facts. Words you type
  *    are marked in the text. A press anywhere on the row opens the order (onOpen); a pop-up is never opened over a pop-up by this file.
  *  Live: while the list is in sight (tab shown, the box laid out and on screen) the first page is read every pollMs. An order that is new
@@ -47,21 +50,25 @@
  *    away from the top, new orders wait behind an "N new" pill instead of moving the list under you. Hidden or out of sight: no requests.
  *  States: loading (labelled spinner), "This person has not handled an order yet", "No orders match", an error with Retry (rows already on
  *    screen are kept when only a live check fails: the Live light says "Reconnecting…"). Stale answers are dropped and their requests aborted.
- *  Sort: the server lists newest first. 'slowest' and 'fastest' reorder the orders loaded so far (more load as you scroll) and the list says so,
- *    unless the answer carries sort:'<the same key>' (the server sorted the whole range).
+ *  Sort: the server lists newest first and ignores `sort` today. The list keeps the server's order for Newest (never re-sorting by the first action;
+ *    each order remembers its place in that order, so going back to Newest restores it);
+ *    'slowest' and 'fastest' reorder the orders loaded so far (more load as you scroll) and the list says so, unless the answer carries
+ *    sort:'<the same key>' (the server sorted the whole range). The server's own `notes` (how far the customer / SKU search reached, no receipt
+ *    stored...) are shown quietly under the filters.
  *  Motion: opacity and transform only; prefers-reduced-motion removes it. Layout: wide (about 980 px and up) one line per order, medium two lines,
  *    narrow (a phone) stacked; never a sideways scroll.
- *    EfficiencyOrders.options = { pollMs, debounceMs, pageSize, capThumbs, hoverMs, zoom }   EfficiencyOrders.norm(answer)   EfficiencyOrders.fmtDur(ms)  */
+ *  A box that was taken out of the page without unmount() is let go after options.orphanMs (20 s) of being detached.
+ *    EfficiencyOrders.options = { pollMs, debounceMs, pageSize, capThumbs, hoverMs, zoom, orphanMs }   EfficiencyOrders.norm(answer)   EfficiencyOrders.fmtDur(ms)  */
 (function (root) {
   "use strict";
   if (root.EfficiencyOrders) return;
   const doc = root.document, TZ = "America/New_York";
-  const options = { pollMs: 5000, debounceMs: 200, pageSize: 25, capThumbs: 3, hoverMs: 260, maxBackoffMs: 60000, freshMs: 2400, zoom: 1.9, vectorConc: 2, vectorCap: 240, qrCap: 600, awayPx: 48 };
+  const options = { pollMs: 5000, debounceMs: 200, pageSize: 25, capThumbs: 3, hoverMs: 260, maxBackoffMs: 60000, freshMs: 2400, orphanMs: 20000, zoom: 1.9, vectorConc: 2, vectorCap: 240, qrCap: 600, awayPx: 48 };
   const KEY_STORE = "cn.eff.key";
   const NAMES = { shipping: "Shipping", assembly: "Assembly", welding: "Welding", sorting: "Sorting", design: "Design", laser: "Laser", sorter: "Sorter", qr: "QR printer", inbox: "Inbox" };
   const CORE = ["sorting", "welding", "assembly", "shipping", "design"];
   const SORTS = [["newest", "Newest"], ["slowest", "Slowest"], ["fastest", "Fastest"]];
-  const ACTIVE_MS = 120000;
+  const ACTIVE_MS = 120000, TILES = 24;   // (the server lists at most 12 pieces of an order and says the true count; tiles are drawn for up to 24)
   const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const S_ = v => (v == null ? "" : String(v));
   const N = v => { v = +v; return Number.isFinite(v) ? v : 0; };
@@ -97,7 +104,7 @@
   }
 
   /* ── the answer, normalised: a missing field is empty, never a crash ── */
-  const ISSUE_KINDS = new Set(["rejected", "cancelAlert", "heldOrSkipped", "failed", "lookupFailed"]);
+  const ISSUE_KINDS = new Set(["refused", "rejected", "cancelAlert", "heldOrSkipped", "failed", "lookupFailed"]);
   /** completed · reopened · issue · handled, with the plain reason. Priority: issue, reopened, completed. A reprint or a rescan is a signal, never a verdict. */
   function statusOf(o) {
     const kinds = new Set(o.issues.map(i => i.kind));
@@ -145,18 +152,21 @@
     while ((m = re.exec(text))) { if (!m[0]) { re.lastIndex++; continue; } out += esc(text.slice(last, m.index)) + `<mark class="efoMk">${esc(m[0])}</mark>`; last = m.index + m[0].length; }
     return out + esc(text.slice(last));
   }
-  /** The date text, with what the typed words say about the date marked: a month, a day after it, 2026-10-03 or 10/3 (the forms the server reads). */
+  const WEEKDAYS = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
+  const mark = (t, on) => (on ? `<mark class="efoMk">${esc(t)}</mark>` : esc(t));
+  /** The date text ("Mon, Oct 5"), with what the typed words say about the date marked: a weekday, a month, a day beside a month,
+   *  a whole date (2026-10-03, 10/3) or a whole month (2026-10): the forms the server reads. */
   function hlDate(o, d, ws) {
     if (!ws.length) return esc(d);
-    const iso = ws.some(w => w === o.day), md = o.day && /^(\d{4})-(\d{2})-(\d{2})$/.test(o.day) ? [+o.day.slice(5, 7), +o.day.slice(8, 10)] : null;
-    const slash = md && ws.some(w => { const m = /^(\d{1,2})\/(\d{1,2})(?:\/\d{2,4})?$/.exec(w); return m && +m[1] === md[0] && +m[2] === md[1]; });
-    if (iso || slash) return `<mark class="efoMk">${esc(d)}</mark>`;
-    const mon = md ? MONTHS[md[0] - 1] : "", wm = ws.find(w => w.length >= 3 && mon.startsWith(w) && /^[a-z]+$/.test(w));
-    if (!wm) return hl(d, ws);
-    let h = hl(d, [wm]);
-    const day = ws.find((w, i) => /^\d{1,2}$/.test(w) && ws[i - 1] === wm && md && +w === md[1]);
-    if (day) h = h.replace(new RegExp("(</mark>\\s)(" + day + ")(?!\\d)"), '$1<mark class="efoMk">$2</mark>');
-    return h;
+    const m = /^(\w{3}), (\w{3}) (\d{1,2})(, \d{4})?$/.exec(d), p = /^(\d{4})-(\d{2})-(\d{2})$/.exec(o.day || "");
+    if (!m || !p) return hl(d, ws);
+    const y = +p[1], mo = +p[2], da = +p[3];
+    const whole = w => { if (w === o.day) return true; if (/^\d{4}-\d{2}$/.test(w)) return o.day.startsWith(w + "-"); const x = /^(\d{1,2})\/(\d{1,2})(?:\/\d{2,4})?$/.exec(w); return !!x && +x[1] === mo && +x[2] === da; };
+    if (ws.some(whole)) return mark(d, true);
+    const wd = WEEKDAYS[new Date(Date.UTC(y, mo - 1, da)).getUTCDay()], mon = MONTHS[mo - 1];
+    const hasWd = ws.some(w => w.length >= 3 && /^[a-z]+$/.test(w) && wd.startsWith(w)), hasMon = ws.some(w => w.length >= 3 && /^[a-z]+$/.test(w) && mon.startsWith(w));
+    const hasDay = hasMon && ws.some(w => /^\d{1,2}$/.test(w) && +w === da);
+    return `${mark(m[1], hasWd)}, ${mark(m[2], hasMon)} ${mark(m[3], hasDay)}${esc(m[4] || "")}`;
   }
 
   /* ── the QR of an order: the app's own generator (lib/qrcode.min.js, as the sheet labels use it), drawn as a sharp vector ── */
@@ -227,7 +237,7 @@
 .efoBar{display:flex;align-items:center;gap:8px 14px;flex-wrap:wrap;min-width:0}
 .efoSearch{position:relative;flex:1 1 300px;min-width:0;max-width:560px;display:flex;align-items:center;margin:0}
 .efoSearch input{width:100%;height:36px;border:1px solid var(--line,#e4ddd0);background:var(--card,#fffefb);border-radius:999px;padding:0 36px;font-size:13px;font-weight:500;letter-spacing:0;transition:border-color .2s,box-shadow .2s,background .2s}
-.efoSearch input::placeholder{color:var(--ink45,#938c80);font-weight:400}
+.efoSearch input{text-overflow:ellipsis}.efoSearch input::placeholder{color:var(--ink45,#938c80);font-weight:400;text-overflow:ellipsis}
 .efoSearch input:focus{outline:none;border-color:var(--gold,#a9823f);background:#fff;box-shadow:0 0 0 3px var(--goldSoft,#f0e6cd)}
 .efoMag{position:absolute;left:13px;color:var(--ink45,#938c80);pointer-events:none}
 .efoClear{position:absolute;right:6px;width:26px;height:26px;border:0;background:transparent;border-radius:50%;color:var(--ink45,#938c80);font-size:17px;line-height:1;padding:0;display:grid;place-items:center}
@@ -267,7 +277,7 @@
 .efoRow:hover,.efoRow:focus-within{border-color:var(--ink25,#c4bdb0);background:#fff;box-shadow:0 1px 2px rgba(30,26,20,.04),0 8px 22px rgba(30,26,20,.07)}
 .efoRow.efoIn{animation:efoIn .34s cubic-bezier(.2,.8,.2,1) both;animation-delay:calc(var(--k,0) * 22ms)}
 @keyframes efoIn{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:none}}
-.efoRow.efoLive:before{content:"";position:absolute;inset:0;border-radius:inherit;background:var(--goldSoft,#f0e6cd);opacity:0;pointer-events:none;animation:efoWash 1.9s ease-out}
+.efoRow.efoFresh:before{content:"";position:absolute;inset:0;border-radius:inherit;background:var(--goldSoft,#f0e6cd);opacity:0;pointer-events:none;animation:efoWash 1.9s ease-out}
 @keyframes efoWash{0%{opacity:.95}100%{opacity:0}}
 .efoThumbsW{grid-area:th;min-width:0}
 .efoThumbs{display:flex;flex-wrap:wrap;align-items:center;gap:6px;min-width:0}
@@ -315,30 +325,33 @@
 .efoBtn:hover{border-color:var(--ink25,#c4bdb0);background:#fff}
 .efoFoot{display:flex;align-items:center;justify-content:center;gap:9px;min-height:30px;padding:8px 0 2px;color:var(--ink45,#938c80);font-size:11.5px}
 .efoSent{height:1px}
-.efoTip{position:fixed;left:0;top:0;z-index:960;pointer-events:none;width:max-content;max-width:min(360px,calc(100vw - 16px));background:var(--velvet,#221f1b);color:#f6f1e6;border-radius:11px;padding:10px 12px;font:11.5px/1.4 var(--sans,system-ui,sans-serif);box-shadow:0 10px 30px rgba(20,16,10,.28);opacity:0;visibility:hidden;transform:translateY(3px);transition:opacity .14s ease,transform .14s ease,visibility 0s .14s;display:grid;gap:7px}
+.efoTip{position:fixed;left:0;top:0;z-index:960;pointer-events:none;width:max-content;max-width:min(360px,calc(100vw - 16px));background:var(--card,#fffefb);color:var(--ink70,#5b554c);border:1px solid var(--line,#e4ddd0);border-radius:12px;padding:11px 13px;font:11.5px/1.4 var(--sans,system-ui,sans-serif);box-shadow:0 10px 26px rgba(30,26,20,.13),0 1px 3px rgba(30,26,20,.07);opacity:0;visibility:hidden;transform:translateY(3px);transition:opacity .14s ease,transform .14s ease,visibility 0s .14s;display:grid;gap:7px}
 .efoTip.on{opacity:1;visibility:visible;transform:none;transition:opacity .14s ease,transform .14s ease}
-.efoTipH{display:flex;align-items:baseline;justify-content:space-between;gap:14px}.efoTipH b{font:650 13px var(--mono,ui-monospace,Menlo,monospace)}.efoTipH span{font-size:10.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:#cdc4b2}
-.efoTipW{color:#cdc4b2}
-.efoTipG{display:grid;grid-template-columns:auto 1fr;gap:2px 16px;color:#cdc4b2}.efoTipG b{color:#fff;font-weight:650;text-align:right;font-variant-numeric:tabular-nums}
-.efoTipS{display:grid;gap:2px;border-top:1px solid rgba(246,241,230,.14);padding-top:6px}
-.efoTipS div{display:grid;grid-template-columns:70px auto 1fr;gap:10px;color:#cdc4b2;font-variant-numeric:tabular-nums}.efoTipS div b{color:#fff;font-weight:650}.efoTipS div span:last-child{text-align:right}
-.efoTipI{color:#f0c9bb}
-.efoTipF{color:#a89f8e;font-size:10.5px;border-top:1px solid rgba(246,241,230,.14);padding-top:6px}
+.efoTipH{display:flex;align-items:baseline;justify-content:space-between;gap:14px}.efoTipH b{font:650 13px var(--mono,ui-monospace,Menlo,monospace);color:var(--ink,#1c1a17)}.efoTipH span{font-size:10.5px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:var(--ink45,#938c80)}
+.efoTipW{color:var(--ink45,#938c80)}
+.efoTipG{display:grid;grid-template-columns:auto 1fr;gap:2px 16px;color:var(--ink45,#938c80)}.efoTipG b{color:var(--ink,#1c1a17);font-weight:650;text-align:right;font-variant-numeric:tabular-nums}
+.efoTipS{display:grid;gap:2px;border-top:1px solid var(--line2,#efe9dd);padding-top:6px}
+.efoTipR{display:grid;grid-template-columns:70px auto 1fr;gap:10px;color:var(--ink45,#938c80);font-variant-numeric:tabular-nums}.efoTipR b{color:var(--ink,#1c1a17);font-weight:650}.efoTipR span:last-child{text-align:right}
+.efoTipI{color:var(--clay,#b0563f)}
+.efoTipF{color:var(--ink45,#938c80);font-size:10.5px;border-top:1px solid var(--line2,#efe9dd);padding-top:6px}
 .efoTipP{display:grid;grid-template-columns:repeat(auto-fill,minmax(64px,1fr));gap:8px;max-width:340px}
 .efoTipP div{display:grid;gap:3px;justify-items:center;text-align:center;min-width:0}
-.efoTipP i{display:grid;place-items:center;width:56px;height:56px;background:#fff;border-radius:9px;overflow:hidden;color:var(--ink25,#c4bdb0)}.efoTipP img{width:100%;height:100%;object-fit:contain;padding:3px}
-.efoTipP span{font-size:10.5px;color:#cdc4b2;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.efoTipP i{display:grid;place-items:center;width:56px;height:56px;background:#fff;border:1px solid var(--line2,#efe9dd);border-radius:9px;overflow:hidden;color:var(--ink25,#c4bdb0)}.efoTipP img{width:100%;height:100%;object-fit:contain;padding:3px}
+.efoTipP span{font-size:10.5px;color:var(--ink45,#938c80);max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 @container efo (max-width:979px){
- .efoRow{grid-template-columns:var(--efoTW) minmax(0,1fr) auto;grid-template-areas:"th main qr" "th meta meta";gap:6px 14px}
+ .efoRow{grid-template-columns:minmax(0,1fr) auto auto;grid-template-areas:"main th qr" "meta meta qr";gap:6px 16px}
  .efoMeta{grid-area:meta;display:flex;flex-wrap:wrap;align-items:center;gap:4px 14px;min-width:0}
  .efoMeta>*{grid-area:auto}
  .efoWhen{display:flex;gap:6px;align-items:center;flex-wrap:nowrap}.efoWhen .t:before{content:"·";margin-right:6px;color:var(--ink25,#c4bdb0)}
  .efoDur{display:flex;align-items:baseline;gap:6px}.efoDur small{order:2;text-transform:none;letter-spacing:0;font-weight:500;font-size:11px}
- .efoThumbsW{align-self:start}.efoQrW{align-self:start}
+ .efoThumbsW{align-self:start;justify-self:end}.efoQrW{align-self:start}.efoThumbs{justify-content:flex-end}
 }
 @container efo (max-width:559px){
- .efo{--efoT:44px;--efoTW:auto}
+ .efo{--efoT:44px}
  .efoRow{grid-template-columns:minmax(0,1fr) auto;grid-template-areas:"main qr" "th th" "meta meta";padding:11px 12px}
+ .efoMeta{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:6px 14px;align-items:center}.efoMeta>*{justify-self:start}
+ .efoThumbsW{justify-self:start}.efoThumbs{justify-content:flex-start}
+ .efoSearch input{font-size:12px;padding:0 32px 0 34px}
  .efoSearch{flex-basis:100%;max-width:none}.efoCount{margin-left:0}.efoSeg{margin-left:0}
  .efoDates input{width:112px}
  .efoCust{white-space:normal}
@@ -355,7 +368,7 @@
     style();
     const M = {
       dead: false, name: S_(opts.name).trim(), q: S_(opts.query).trim(), station: S_(opts.station), from: "", to: "", sort: SORTS.some(s => s[0] === opts.sort) ? opts.sort : "newest",
-      rows: [], byRid: new Map(), els: new Map(), next: "", total: 0, scanned: 0, searched: null, notes: [], partial: false, serverSort: "", found: true,
+      rows: [], lo: 0, hi: 0, byRid: new Map(), els: new Map(), next: "", total: 0, scanned: 0, searched: null, notes: [], partial: false, serverSort: "", found: true,
       busy: false, more: false, err: null, errMore: null, gen: 0, ctl: null, moreCtl: null, pollCtl: null, pollT: 0, fails: 0, slow: false, waiting: false, inView: true, skew: 0,
       buffer: [], expanded: new Set(), seen: new Set(), stations: new Set(CORE), loadedOnce: false, authStop: false, debounce: 0, limit: Math.max(1, Math.min(100, +opts.limit || options.pageSize))
     };
@@ -444,23 +457,27 @@
     function take(a, reset) {
       M.total = a.total; M.scanned = a.scanned; M.searched = a.searched; M.notes = a.notes; M.partial = a.partial; M.serverSort = a.sort; M.sortSupport = M.sortSupport || !!a.sort; M.found = a.found; M.next = a.next;
       if (a.now) M.skew = a.now - Date.now();
-      if (reset) { M.rows = []; M.byRid = new Map(); M.seen = new Set(); }
+      if (reset) { M.rows = []; M.byRid = new Map(); M.seen = new Set(); M.lo = 0; M.hi = 0; }
       merge(a.orders, false);
     }
-    function merge(list, live) {
+    /** New orders join the list: at the end (a page) or at the front (arrivals, newest first). Each order keeps `seq`, its place in the SERVER's order
+     *  (its last action, not its first), so Newest is that order and a sort by working time can always come back to it. */
+    function merge(list, live, front) {
       const fresh = [];
       for (const o of list) {
         const had = M.byRid.get(o.rid);
-        if (had) { M.rows[M.rows.indexOf(had)] = o; M.byRid.set(o.rid, o); } else { M.rows.push(o); M.byRid.set(o.rid, o); fresh.push(o.rid); }
+        if (had) { o.seq = had.seq; M.rows[M.rows.indexOf(had)] = o; } else fresh.push(o);
+        M.byRid.set(o.rid, o);
         for (const s of o.stations) M.stations.add(s);
       }
-      if (live) for (const rid of fresh) M.live.add(rid);
-      order();
+      if (front) { for (let i = fresh.length - 1; i >= 0; i--) fresh[i].seq = --M.lo; M.rows = fresh.concat(M.rows); } else for (const o of fresh) { o.seq = M.hi++; M.rows.push(o); }
+      if (live) for (const o of fresh) M.live.add(o.rid);
+      if (M.sort !== "newest") order();
     }
     M.live = new Set();
-    /** Newest keeps the server's order (a stable sort by time); slowest and fastest compare the working time, unknown times last. */
+    /** Newest is the server's order (by seq, never by the first action's time); slowest and fastest compare the working time, unknown times last. */
     function order() {
-      if (M.sort === "newest") M.rows.sort((a, b) => b.at - a.at);
+      if (M.sort === "newest") M.rows.sort((a, b) => a.seq - b.seq);
       else { const dir = M.sort === "slowest" ? -1 : 1, k = o => (o.durationMs > 0 ? o.durationMs : null); M.rows.sort((a, b) => { const x = k(a), y = k(b); if (x == null && y == null) return b.at - a.at; if (x == null) return 1; if (y == null) return -1; return (x - y) * dir || b.at - a.at; }); }
     }
     async function loadMore() {
@@ -479,6 +496,8 @@
     const pollingOn = () => pollMs > 0 && !M.authStop;
     function schedulePoll() {
       clearTimeout(M.pollT); M.pollT = 0; M.waiting = false;
+      // a box taken out of the page without unmount() is let go after a while: no timer, listener or card is left behind
+      if (!M.dead && !root_.isConnected && !M.orphanT) M.orphanT = setTimeout(() => { M.orphanT = 0; if (!M.dead && !root_.isConnected) unmount(); }, options.orphanMs);
       if (M.dead || !pollingOn()) { paintLive(); return; }
       if (!inSight()) { M.waiting = true; paintLive(); return; }
       const wait = M.fails ? Math.min(options.maxBackoffMs, pollMs * Math.pow(2, M.fails)) : pollMs;
@@ -501,19 +520,26 @@
     /** What a live check found: new orders arrive (at the top, or behind the pill), changed orders are redrawn where they stand. */
     function absorb(a) {
       M.total = a.total; M.scanned = a.scanned; M.notes = a.notes; M.partial = a.partial; M.searched = a.searched; if (a.now) M.skew = a.now - Date.now();
-      const oldest = M.rows.length ? M.rows[M.rows.length - 1].at : 0, changed = [], fresh = [];
-      for (const o of a.orders) {
+      const changed = [], fresh = [], first = a.orders;
+      for (const o of first) {
         const had = M.byRid.get(o.rid);
         if (had) { if (sigOf(had) !== sigOf(o)) changed.push(o); }
-        else if (!M.buffer.some(b => b.rid === o.rid) && (!M.next || o.at >= oldest || M.sort !== "newest")) fresh.push(o);
+        else if (!M.buffer.some(b => b.rid === o.rid)) fresh.push(o);
       }
-      const hold = fresh.length && away(), flip = fresh.length && !hold ? snap() : null;
-      if (changed.length) merge(changed, false);
-      if (fresh.length) { if (hold) M.buffer = M.buffer.concat(fresh); else merge(fresh, true); }
-      paintList(flip); paintBar(); paintNote(); paintPill(); paintState(); paintFoot();
+      const hold = !!fresh.length && away();
+      if (hold) { M.buffer = fresh.concat(M.buffer); if (changed.length) merge(changed, false); paintList(null); }
+      else if (M.sort === "newest" && (fresh.length || changed.length)) {
+        // the first page is the server's newest: it goes to the top in the server's order (an order worked again moves up too)
+        const flip = snap(), top = new Set(first.map(o => o.rid));
+        for (const o of fresh) M.live.add(o.rid);
+        for (const o of first) { M.byRid.set(o.rid, o); for (const s of o.stations) M.stations.add(s); }
+        M.rows = first.concat(M.rows.filter(r => !top.has(r.rid))); M.lo = 0; M.hi = M.rows.length; M.rows.forEach((r, i) => { r.seq = i; });
+        paintList(flip);
+      } else { const flip = fresh.length ? snap() : null; if (changed.length) merge(changed, false); if (fresh.length) merge(fresh, true, true); paintList(flip); }
+      paintBar(); paintNote(); paintPill(); paintState(); paintFoot();
       if (opts.onState) emit();
     }
-    function addLive(list) { const flip = snap(); merge(list, true); paintList(flip); paintBar(); paintState(); paintPill(); if (opts.onState) emit(); }
+    function addLive(list) { const flip = snap(); merge(list, true, true); paintList(flip); paintBar(); paintState(); paintPill(); if (opts.onState) emit(); }
     /** The list's top is above what is on screen (the person scrolled down). */
     function away() {
       const r = E.top.getBoundingClientRect(); if (!r.height && !r.width && !root_.getClientRects().length) return false;
@@ -561,7 +587,6 @@
     function paintNote() {
       const lines = M.notes.slice();
       if (M.partial) lines.push("Some history could not be read just now, so this list may be incomplete.");
-      if (M.q && M.searched && M.searched.orders > 0 && M.searched.withDetails > 0 && M.searched.withDetails < M.searched.orders) lines.push(`Customer names and piece names are searched in the newest ${nf(M.searched.withDetails)} of ${nf(M.searched.orders)} orders; order numbers, stations and dates in all of them.`);
       if (M.sort !== "newest" && M.next && M.serverSort !== M.sort) lines.push("Sorted among the orders loaded so far. Scroll to load more.");
       const html = lines.map(l => `<span>${esc(l)}</span>`).join("");
       E.note.hidden = !lines.length; setHtml(E.note, html);
@@ -596,8 +621,8 @@
       } else if (M.busy && !M.rows.length) {
         h = `<div class="efoWait" role="status"><i class="spin" aria-hidden="true"></i><span>${M.q ? "Searching orders…" : "Loading orders…"}</span></div>`;
       } else if (!M.rows.length && M.loadedOnce) {
-        if (hasFilters() && (M.scanned > 0 || M.total === 0 && M.found)) {
-          h = `${PH}<b>No orders match</b><p>${M.q ? `Nothing matches “${esc(M.q)}”${M.station || M.from || M.to ? " with these filters" : ""}. Try a customer, an order number, a piece, a station or a date.` : "Nothing was handled with these filters."}</p><button type="button" class="efoBtn" data-act="clear">Clear search and filters</button>`;
+        if (hasFilters()) {
+          h = `${PH}<b>No orders match</b><p>${M.q ? `Nothing matches “${esc(M.q)}”${M.station || M.from || M.to ? " with these filters" : ""}. Try a customer, an order number, a piece, a station or a date.` : M.from || M.to ? "No order was handled on these days." : "Nothing was handled at this station."}</p><button type="button" class="efoBtn" data-act="clear">Clear search and filters</button>`;
         } else h = `${PH}<b>This person has not handled an order yet</b><p>Orders appear here as soon as one is scanned at a station.</p>`;
       }
       E.state.hidden = !h; setHtml(E.state, h);
@@ -625,8 +650,8 @@
     function enter(e, o, k) {
       if (still()) return;
       const live = M.live.has(o.rid);
-      e.style.setProperty("--k", String(Math.min(k, 8))); e.classList.add("efoIn"); if (live) e.classList.add("efoLive");
-      const done = () => { e.classList.remove("efoIn", "efoLive"); e.style.removeProperty("--k"); };
+      e.style.setProperty("--k", String(Math.min(k, 8))); e.classList.add("efoIn"); if (live) e.classList.add("efoFresh");
+      const done = () => { e.classList.remove("efoIn", "efoFresh"); e.style.removeProperty("--k"); };
       e.addEventListener("animationend", ev => { if (ev.target === e && ev.animationName === "efoIn") done(); }, { once: true }); setTimeout(done, live ? options.freshMs : 1200);
     }
     function makeRow() {
@@ -643,7 +668,7 @@
     }
     function thumbsHtml(o, open) {
       const n = Math.max(1, o.piecesCount), tiles = [];
-      for (let i = 0; i < n; i++) tiles.push(tileHtml(o, o.pieces[i] || (n === 1 ? { thumbUrl: "", label: "", sku: "" } : null), i, n, i >= cap()));
+      for (let i = 0; i < Math.min(n, TILES); i++) tiles.push(tileHtml(o, o.pieces[i] || (n === 1 ? { thumbUrl: "", label: "", sku: "" } : null), i, n, i >= cap()));
       const more = n - cap();
       const chip = more > 0 ? `<button type="button" class="efoMore" data-act="pieces" aria-expanded="${open}" aria-label="${open ? "Show fewer pieces" : `Show all ${n} pieces`}">${open ? "Less" : "+" + more}</button>` : "";
       return `<div class="efoThumbs${open ? " open" : ""}" role="group" aria-label="${n === 1 ? "Order picture" : n + " pieces"}">${tiles.join("")}${chip}</div>`;
@@ -686,11 +711,12 @@
 
     /* ── hover cards: the timing facts of a row, all the pieces behind "+N". One card for the page, never over a zoom, hidden on any move away. ── */
     let tip = null, tipT = 0;
+    const now_ = () => (root.performance && root.performance.now ? root.performance.now() : Date.now());
     const tipEl = () => { if (!tip) { tip = el("div", "efoTip"); tip.setAttribute("role", "tooltip"); doc.body.appendChild(tip); } return tip; };
     function factsHtml(o) {
       const w = o.at ? when(o.at, nowMs()) : null, last = o.lastAt && o.lastAt !== o.at ? clockFmt.format(new Date(o.lastAt)) : "";
       const g = [["Worked", fmtDur(o.durationMs)], ["Start to finish", fmtDur(o.spanMs)], ["Scans", nf(o.scans)], ["Completed", nf(o.completes)], ["Labels printed", nf(o.prints)], ["Pieces", nf(o.parts || 0)]];
-      const steps = o.steps.map(s => `<div><span>${esc(stName(s.station))}</span><b>${s.firstAt ? esc(clockFmt.format(new Date(s.firstAt))) : "—"}</b><span>${esc(fmtDur(s.durationMs))}${s.parts ? ` · ${nf(s.parts)} piece${s.parts === 1 ? "" : "s"}` : ""}</span></div>`).join("");
+      const steps = o.steps.map(s => `<div class="efoTipR"><span>${esc(stName(s.station))}</span><b>${s.firstAt ? esc(clockFmt.format(new Date(s.firstAt))) : "—"}</b><span>${esc(fmtDur(s.durationMs))}${s.parts ? ` · ${nf(s.parts)} piece${s.parts === 1 ? "" : "s"}` : ""}</span></div>`).join("");
       const iss = o.issues.map(i => `<div class="efoTipI">${esc(i.label || i.kind)}${i.at ? " · " + esc(clockFmt.format(new Date(i.at))) : ""}${i.note ? " · " + esc(i.note) : ""}</div>`).join("");
       return `<div class="efoTipH"><b>#${esc(o.number)}</b><span>${esc(o.status.label)}</span></div>`
         + `<div class="efoTipW">${w ? esc(w.d) + " · " + esc(w.t) + (last ? " to " + esc(last) : "") : ""}${o.customer ? `<br>${esc(o.customer)}` : ""}</div>`
@@ -700,8 +726,8 @@
     }
     function piecesHtml(o) {
       const n = Math.max(1, o.piecesCount);
-      const cells = []; for (let i = 0; i < n; i++) { const p = o.pieces[i], url = thumbOf(o, p); cells.push(`<div><i${p && p.sku ? ` data-sku="${esc(p.sku)}"` : ""}>${url ? `<img src="${esc(url)}" alt="" referrerpolicy="no-referrer">` : PH}</i><span>${esc(p && p.label ? p.label : "Piece " + (i + 1))}</span></div>`); }
-      return `<div class="efoTipH"><b>#${esc(o.number)}</b><span>${n} pieces</span></div><div class="efoTipP">${cells.join("")}</div>`;
+      const cells = []; for (let i = 0; i < Math.min(n, TILES); i++) { const p = o.pieces[i], url = thumbOf(o, p); cells.push(`<div><i${p && p.sku ? ` data-sku="${esc(p.sku)}"` : ""}>${url ? `<img src="${esc(url)}" alt="" referrerpolicy="no-referrer">` : PH}</i><span>${esc(p && p.label ? p.label : "Piece " + (i + 1))}</span></div>`); }
+      return `<div class="efoTipH"><b>#${esc(o.number)}</b><span>${n} pieces</span></div><div class="efoTipP">${cells.join("")}</div>${n > TILES ? `<div class="efoTipW">and ${n - TILES} more</div>` : ""}`;
     }
     function showTip(row, kind) {
       const o = row._o; if (!o || M.dead || M.zooming || doc.visibilityState === "hidden") return;
@@ -720,24 +746,36 @@
       if (!tip) return; tip.classList.remove("on"); if (now) tip.style.visibility = "hidden";
     }
     const zoneOf = t => (t.closest(".efoZ") ? "zoom" : t.closest(".efoMore") ? "pieces" : "facts");
+    function wantTip(row, z) {
+      clearTimeout(tipT);
+      tipT = setTimeout(() => { tipT = 0; if (row.isConnected && M.cand === row && !M.zooming) showTip(row, z); }, options.hoverMs);   // (the pointer's own events, not :hover, which the browser updates late under a moving row)
+    }
     E.list.addEventListener("pointerover", ev => {
       if (ev.pointerType === "touch") return;
       const row = ev.target.closest(".efoRow"); if (!row) return;
-      const z = zoneOf(ev.target); clearTimeout(tipT); tipT = 0;
+      M.cand = row; M.overAt = now_(); const z = zoneOf(ev.target); clearTimeout(tipT); tipT = 0;
       if (z === "zoom") { if (M.hoverRow) hideTip(false); return; }
-      if (M.zooming) return;
-      tipT = setTimeout(() => { tipT = 0; if (row.isConnected && row.matches(":hover")) showTip(row, z); }, options.hoverMs);
+      if (M.zooming || M.quiet === row) return;
+      wantTip(row, z);
+    });
+    // a move inside a row that has no card and none coming (the first over was missed or came before the row settled) asks for one
+    E.list.addEventListener("pointermove", ev => {
+      if (ev.pointerType === "touch" || M.hoverRow || tipT || M.zooming) return;
+      const row = ev.target.closest(".efoRow"); if (!row || M.quiet === row) return;
+      const z = zoneOf(ev.target); if (z === "zoom") return;
+      M.cand = row; wantTip(row, z);
     });
     E.list.addEventListener("pointerout", ev => {
       const row = ev.target.closest(".efoRow"); if (!row || row.contains(ev.relatedTarget)) return;
-      clearTimeout(tipT); tipT = 0; if (M.hoverRow === row) hideTip(false);
+      if (M.cand === row) M.cand = null; if (M.quiet === row) M.quiet = null; clearTimeout(tipT); tipT = 0; if (M.hoverRow === row) hideTip(false);
     });
     E.list.addEventListener("focusin", ev => { const row = ev.target.closest(".efoRow"); if (row && ev.target.matches(".efoOpen:focus-visible")) showTip(row, "facts"); });
     E.list.addEventListener("focusout", ev => { const row = ev.target.closest(".efoRow"); if (row && M.hoverRow === row && !row.contains(ev.relatedTarget)) hideTip(false); });
     const onZoom = ev => { const d = ev.detail || {}; if (d.ask || !d.el || !root_.contains(d.el)) return; M.zooming = d.on ? d.el : null; if (d.on) hideTip(true); };
     doc.addEventListener("dotzoom", onZoom);
-    const onKey = ev => { if (ev.key === "Escape" && M.hoverRow) hideTip(true); };
-    const onAway = () => hideTip(true);
+    const onKey = ev => { if (ev.key === "Escape" && (M.hoverRow || tipT)) { M.quiet = M.cand; hideTip(true); } };   // (Esc puts the card away and it stays away until the pointer leaves the row)
+    // a scroll that arrives just after the pointer came onto a row (a browser reports a scroll one frame late) must not cancel that row's card
+    const onAway = () => { if (!M.hoverRow && tipT && now_() - (M.overAt || 0) < 150) return; hideTip(true); };
     root.addEventListener("keydown", onKey, true); root.addEventListener("scroll", onAway, { passive: true, capture: true }); root.addEventListener("blur", onAway);
 
     /* ── presses ── */
@@ -760,7 +798,7 @@
       const b = ev.target.closest("[data-act]"); if (b) { const a = b.dataset.act; if (a === "retry") load(); else if (a === "more") { M.errMore = null; loadMore(); } else if (a === "clear") clearAll(); return; }
       const fc = ev.target.closest(".efoFc"); if (fc) { setStation(fc.dataset.st); return; }
       const sb = ev.target.closest(".efoSeg button"); if (sb) { setSort(sb.dataset.sort); return; }
-      if (ev.target.closest(".efoDx")) { setRange(null); return; }
+      if (ev.target.closest(".efoDx")) { if (typeof opts.onRange === "function") { try { opts.onRange(null); } catch (_) {} } setRange(null); return; }
       if (ev.target.closest(".efoPill")) { flushBuffer(true); return; }
       if (ev.target.closest(".efoClear")) { E.input.value = ""; setQuery(""); E.input.focus(); }
     });
@@ -771,19 +809,19 @@
     });
     E.form.addEventListener("submit", ev => { ev.preventDefault(); clearTimeout(M.debounce); M.debounce = 0; const q = E.input.value.trim(); M.q = q; load(); });
     E.input.addEventListener("keydown", ev => { if (ev.key === "Escape" && E.input.value) { ev.preventDefault(); ev.stopPropagation(); E.input.value = ""; setQuery(""); } });
-    const dateIn = () => { let f = E.dFrom.value, t = E.dTo.value; if (f && t && f > t) [f, t] = [t, f]; M.from = f; M.to = t; paintChips(); load(); };
+    const dateIn = () => { let f = E.dFrom.value, t = E.dTo.value; if (f && t && f > t) [f, t] = [t, f]; M.from = f; M.to = t; paintChips(); if (typeof opts.onRange === "function") { try { opts.onRange({ from: f, to: t }); } catch (_) {} } load(); };
     E.dFrom.addEventListener("change", dateIn); E.dTo.addEventListener("change", dateIn);
 
     /* ── the handle ── */
-    function clearAll() { M.q = ""; M.station = ""; M.from = ""; M.to = ""; E.input.value = ""; paintChips(); return load(); }
+    function clearAll() { const had = !!(M.from || M.to); M.q = ""; M.station = ""; M.from = ""; M.to = ""; E.input.value = ""; paintChips(); if (had && typeof opts.onRange === "function") { try { opts.onRange(null); } catch (_) {} } return load(); }
     function setQuery(q) { q = S_(q).trim(); E.input.value = q; clearTimeout(M.debounce); M.debounce = 0; if (q === M.q && !M.err && M.loadedOnce) { paintBar(); return Promise.resolve(); } M.q = q; return load(); }
     function setStation(s) { s = S_(s); if (s === M.station) return Promise.resolve(); M.station = s; paintChips(); return load(); }
     function setSort(s) { if (!SORTS.some(x => x[0] === s) || s === M.sort) return Promise.resolve(); M.sort = s; paintChips(); if (M.sortSupport) return load(); order(); paintList(null); paintNote(); return Promise.resolve(); }
     function setRange(r) { const f = r ? S_(r.from) : "", t = r ? S_(r.to) : ""; if (f === M.from && t === M.to) return Promise.resolve(); M.from = f; M.to = t; paintChips(); return load(); }
-    function setName(n) { n = S_(n).trim(); if (n === M.name) return Promise.resolve(); M.name = n; M.rows = []; M.byRid = new Map(); M.loadedOnce = false; return load(); }
+    function setName(n) { n = S_(n).trim(); if (n === M.name) return Promise.resolve(); M.name = n; M.rows = []; M.byRid = new Map(); M.lo = 0; M.hi = 0; M.loadedOnce = false; return load(); }
     function unmount() {
       if (M.dead) return; M.dead = true; M.gen++;
-      clearTimeout(M.debounce); clearTimeout(M.pollT); clearTimeout(tipT); abort(M.ctl); abort(M.moreCtl); abort(M.pollCtl);
+      clearTimeout(M.debounce); clearTimeout(M.pollT); clearTimeout(M.orphanT); clearTimeout(tipT); abort(M.ctl); abort(M.moreCtl); abort(M.pollCtl);
       doc.removeEventListener("visibilitychange", onVis); doc.removeEventListener("dotzoom", onZoom);
       root.removeEventListener("scroll", onScroll, true); root.removeEventListener("scroll", onAway, true); root.removeEventListener("keydown", onKey, true); root.removeEventListener("blur", onAway);
       if (ioView) ioView.disconnect(); if (ioMore) ioMore.disconnect(); if (M.scrollRaf) root.cancelAnimationFrame(M.scrollRaf);
@@ -798,5 +836,5 @@
     return handle;
   }
 
-  root.EfficiencyOrders = { mount, options, norm, normOrder, fmtDur, statusOf, hl, words, qrUrl, vecThumb, when };
+  root.EfficiencyOrders = { mount, options, norm, normOrder, fmtDur, statusOf, hl, hlDate, words, qrUrl, vecThumb, when };
 })(typeof window !== "undefined" ? window : globalThis);

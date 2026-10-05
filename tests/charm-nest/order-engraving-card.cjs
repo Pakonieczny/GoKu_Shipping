@@ -82,13 +82,16 @@ const WORDS = { [key(R1, 2)]: 'I\ndissent', [key(R1, 3)]: 'KMB //\nSMH', [key(R2
       const h = document.getElementById('owEng'), q = s => h.querySelector(s), e = q('.swEng');
       const seals = [...h.querySelectorAll('.egButtonSeal .seal svg[data-seal-model]')].map(s => { try { const m = JSON.parse(s.getAttribute('data-seal-model')); return m.action + '|' + m.by; } catch (_) { return '?'; } });
       const r = h.getBoundingClientRect(), sku = document.getElementById('owSku').getBoundingClientRect(), vec = document.getElementById('owVector').getBoundingClientRect(), ph = document.getElementById('owPhoto').getBoundingClientRect();
-      return { hidden: h.hidden, state: e && e.dataset.state, title: q('.top b')?.textContent, chip: q('.top span')?.textContent, words: q('.words')?.textContent, label: q('.fLabel')?.textContent, approve: !!q('[data-e=approve]'), disabled: q('.egApproveButton')?.disabled,
+      return { hidden: h.hidden, state: e && e.dataset.state, title: q('.egWhy b')?.textContent, chip: q('.egPill')?.textContent, words: q('.words')?.textContent, label: q('.fLabel')?.textContent, approve: !!q('[data-e=approve]'), disabled: q('.egApproveButton')?.disabled,
         approveText: q('.egApproveButton')?.textContent, open: q('[data-e=engrave]')?.textContent.trim(), preview: !!q('.pv canvas, .pv img'), seals, wait: q('.owEngWait')?.textContent, box: { top: Math.round(r.top), left: Math.round(r.left), w: Math.round(r.width), h: Math.round(r.height) },
         under: r.top >= sku.bottom - 1 && r.top >= vec.bottom - 1 && r.top >= ph.bottom - 1 && Math.abs(r.left - ph.left) < 2, settledText: /still to be settled/i.test(document.getElementById('orderWin').textContent) };
     });
-    const open = async (k, extra) => { await page.evaluate(k => OrderWin.open(k), k); await page.waitForFunction(k => OrderWin.isOpen() && OrderWin.key() === k && !document.querySelector('#orderWin').getAnimations({ subtree: true }).some(a => a.playState === 'running' && a.effect && a.effect.getTiming().iterations !== Infinity), k, { timeout: 15000 }); };
+    // (an order of several opens on "All pieces", which draws a compact card for each piece; these checks are about one piece's card, so the piece is picked: "All pieces" has its own check below)
+    const open = async (k, extra) => { await page.evaluate(k => OrderWin.open(k), k); await page.waitForFunction(k => OrderWin.isOpen() && OrderWin.key() === k && !document.querySelector('#orderWin').getAnimations({ subtree: true }).some(a => a.playState === 'running' && a.effect && a.effect.getTiming().iterations !== Infinity), k, { timeout: 15000 });
+      await page.evaluate(k => { if (OrderWin.selectedPiece() !== k) OrderWin.selectPiece(k); }, k);
+      await page.waitForFunction(k => OrderWin.key() === k && !document.querySelector('#owEng .egCompact'), k, { timeout: 8000 }).catch(() => {}); };
     const settled = () => page.waitForFunction(() => !document.getElementById('orderWin').getAnimations({ subtree: true }).some(a => a.playState === 'running' && a.effect && a.effect.getTiming().iterations !== Infinity), null, { timeout: 15000 });
-    const pick = async n => { await page.evaluate(i => OrderWin.selectPiece(i === 1 ? null : [window.__k.c, window.__k.g, window.__k.r][i - 2]), n); };   // (1: all pieces, then each piece: the Its pieces list's own switch)
+    const pick = async n => { await page.evaluate(i => { const rows = [...document.querySelectorAll('#owPcSum .owPcRow[data-piece]')]; OrderWin.selectPiece(i === 1 ? null : rows[i - 2].dataset.piece); }, n); };   // (1: all pieces, then the open order's pieces in the list's order: the Its pieces list's own switch; the order shown, not always the first)
     const k = { c: key(R1, 1), g: key(R1, 2), r: key(R1, 3) }; await page.evaluate(k => { window.__k = k; }, k);
 
     // 1 · the Overview of the RG middle (piece 3 of 3): the card sits under the pictures and the SKU, and is image 3
@@ -96,28 +99,30 @@ const WORDS = { [key(R1, 2)]: 'I\ndissent', [key(R1, 3)]: 'KMB //\nSMH', [key(R2
     await page.waitForFunction(() => document.querySelector('#owEng .swEng[data-state=approve] .pv canvas'), null, { timeout: 10000 });
     await settled(); await page.mouse.move(700, 880);
     let c = await card();
-    check(!c.hidden && c.state === 'approve' && c.label === 'Back engraving' && c.title === 'Check the back, then approve' && c.chip === 'To approve', 'the Overview shows the piece\'s back engraving card: ' + JSON.stringify([c.state, c.title, c.chip]));
-    check(c.words === 'KMB //\nSMH' && c.preview && c.approve && c.approveText === 'Approved' && c.open === 'Adjust in Engrave →', 'its words, the placement picture, the Approved button and the shortcut: ' + JSON.stringify([c.words, c.preview, c.approveText, c.open]));
+    check(!c.hidden && c.state === 'approve' && c.label === 'Back engraving' && c.title === 'Waiting for your approval' && c.chip === 'To approve', 'the Overview shows the piece\'s back engraving card: ' + JSON.stringify([c.state, c.title, c.chip]));
+    check(c.words === 'KMB //\nSMH' && c.preview && c.approve && c.approveText === 'Approve engraving' && c.open === 'Fix in Engraving →', 'its words, the placement picture, the Approved button and the shortcut: ' + JSON.stringify([c.words, c.preview, c.approveText, c.open]));
     check(c.under, 'it sits directly under the Etsy listing, the vector design and the SKU line, in the same column: ' + JSON.stringify(c.box));
     check(!c.settledText, 'the words "still to be settled" appear nowhere in the order window while the engraving is not settled (the red box is gone)');
     if (shots) { await page.screenshot({ path: path.join(shots, 'overview-approve.png') }); await page.locator('#owEng').screenshot({ path: path.join(shots, 'card-approve.png') }); }
 
     // 2 · the pieces: each has its own back and approval; switching swaps the card, nothing of the other piece shows
-    await page.evaluate(() => { const h = document.getElementById('owEng'); window.__log = []; new MutationObserver(() => __log.push({ key: OrderWin.key(), hidden: h.hidden, state: h.querySelector('.swEng')?.dataset.state || '', words: h.querySelector('.words')?.textContent || '', wait: !!h.querySelector('.owEngWait') })).observe(h, { childList: true, subtree: true, attributes: true, attributeFilter: ['hidden'] }); });
+    await page.evaluate(() => { const h = document.getElementById('owEng'); window.__log = []; new MutationObserver(() => __log.push({ key: OrderWin.key(), compact: !!h.querySelector('.egCompact'), hidden: h.hidden, state: h.querySelector('.swEng')?.dataset.state || '', words: h.querySelector('.words')?.textContent || '', wait: !!h.querySelector('.owEngWait') })).observe(h, { childList: true, subtree: true, attributes: true, attributeFilter: ['hidden'] }); });
     await pick(2); await page.waitForFunction(k => OrderWin.key() === k && document.getElementById('owEng').hidden, k.c, { timeout: 8000 });
     c = await card(); check(c.hidden && !c.state, 'the chain (piece 1) has no back engraving: no card, the host is hidden');
     await pick(3); await page.waitForFunction(k => OrderWin.key() === k && document.querySelector('#owEng .swEng[data-state=approved]'), k.g, { timeout: 8000 });
     c = await card();
-    check(c.state === 'approved' && c.words === 'I\ndissent' && c.disabled === true && !c.approve && c.open === 'View in Engrave →' && c.chip === 'Approved' && c.title === 'Engraved on the back', 'the GF middle (piece 2) shows its own approved card: ' + JSON.stringify([c.state, c.words, c.chip, c.open]));
+    check(c.state === 'approved' && c.words === 'I\ndissent' && c.disabled === true && !c.approve && c.open === 'View in Engraving →' && c.chip === 'Approved' && c.title === 'The back is approved', 'the GF middle (piece 2) shows its own approved card: ' + JSON.stringify([c.state, c.words, c.chip, c.open]));
     check(c.seals.length === 1 && c.seals[0] === 'BACK ENGRAVING|Giovanna', 'with Giovanna\'s BACK ENGRAVING seal on the button: ' + JSON.stringify(c.seals));
     if (shots) await page.locator('#owEng').screenshot({ path: path.join(shots, 'card-approved.png') });
     await pick(4); await page.waitForFunction(k => OrderWin.key() === k && document.querySelector('#owEng .swEng[data-state=approve]'), k.r, { timeout: 8000 });
     c = await card(); check(c.state === 'approve' && c.words === 'KMB //\nSMH' && c.seals.length === 0, 'the RG middle (piece 3) is its own: to approve, no seal');
-    await pick(1);   // All 3 pieces: the line the Overview holds stays the one shown
-    await page.waitForTimeout(400);
-    c = await card(); check(c.state === 'approve' && c.words === 'KMB //\nSMH', '"All pieces" keeps the line the Overview holds: same card, not drawn anew');
+    await pick(1);   // All 3 pieces: a compact card for each piece that has a back engraving (the chain has none)
+    await page.waitForFunction(() => document.querySelectorAll('#owEng .swEng.egCompact').length === 2, null, { timeout: 8000 });
+    const all2 = await page.evaluate(() => [...document.querySelectorAll('#owEng .swEng')].map(e => e.dataset.state + ':' + (e.querySelector('.words') || {}).textContent));
+    check(all2.join('|') === 'approve:KMB //\nSMH|approved:I\ndissent', '"All pieces": a compact card for each piece with a back engraving, none for the chain, the piece the window holds first: ' + JSON.stringify(all2));
+    await pick(4); await page.waitForFunction(k => OrderWin.key() === k && document.querySelector('#owEng .swEng[data-state=approve]:not(.egCompact)'), k.r, { timeout: 8000 });
     const log = await page.evaluate(() => __log);
-    const bad = log.filter(l => l.words && l.words !== (WORDS[l.key] || '#none#'));
+    const bad = log.filter(l => !l.compact && l.words && l.words !== (WORDS[l.key] || '#none#'));   // ('All pieces' draws every piece's own card, each with its own words: that is the compact list)
     check(log.length > 0 && bad.length === 0 && !log.some(l => l.key === k.c && (!l.hidden && l.state)), 'at no moment did a piece show another piece\'s words or a card on the chain (' + log.length + ' changes seen)');
 
     // 3 · approve: the name is asked as everywhere (me() || askEmployee()), Engrave.approve gets the very button, the seal lands on it
@@ -175,9 +180,9 @@ const WORDS = { [key(R1, 2)]: 'I\ndissent', [key(R1, 3)]: 'KMB //\nSMH', [key(R2
     await page.evaluate(() => { window.EngraveLink = { open: async t => { __links.push(t); await new Promise(r => setTimeout(r, 1500)); } }; });
     await page.click('#owEng [data-e=engrave]');
     const mid = await page.evaluate(() => { const b = document.querySelector('#owEng [data-e=engrave]'); return { disabled: b.disabled, text: b.textContent.trim() }; });
-    check(mid.disabled && /Opening Engrave/.test(mid.text), 'while it opens the button says so: ' + JSON.stringify(mid));
+    check(mid.disabled && /Opening Engraving/.test(mid.text), 'while it opens the button says so: ' + JSON.stringify(mid));
     await page.waitForFunction(() => __links.length === 1, null, { timeout: 4000 });
-    await page.waitForFunction(() => { const b = document.querySelector('#owEng [data-e=engrave]'); return b && !b.disabled && /View in Engrave/.test(b.textContent); }, null, { timeout: 4000 });
+    await page.waitForFunction(() => { const b = document.querySelector('#owEng [data-e=engrave]'); return b && !b.disabled && /View in Engraving/.test(b.textContent); }, null, { timeout: 4000 });
     const links = (await calls()).links;
     check(links.length === 1 && JSON.stringify(links[0]) === JSON.stringify({ rid: R1, key: k.r, poolId: pool(R1, 3), piece: k.r }), 'it called EngraveLink.open({rid, key, poolId, piece}) for this piece: ' + JSON.stringify(links[0]));
     check(await page.evaluate(() => OrderWin.isOpen()), 'and the window was left to EngraveLink (it closes it first)');
@@ -201,7 +206,7 @@ const WORDS = { [key(R1, 2)]: 'I\ndissent', [key(R1, 3)]: 'KMB //\nSMH', [key(R2
     const took = Date.now() - t0; c = await card();
     check(took <= 3000 && !c.approve && c.disabled === true && c.seals.length === 1 && c.seals[0] === 'BACK ENGRAVING|Sam Tester', `approved in the Engraving tab or the sheet window: the card follows within ${took} ms, with the seal`);
     // another computer: only the timeline knows (its feed is read by the open window already)
-    await pick(3); await page.waitForFunction(k => OrderWin.key() === k && document.querySelector('#owEng .swEng[data-state=approve]'), key(R2, 2), { timeout: 8000 });
+    await page.evaluate(k => OrderWin.selectPiece(k), key(R2, 2)); await page.waitForFunction(k => OrderWin.key() === k && document.querySelector('#owEng .swEng[data-state=approve]'), key(R2, 2), { timeout: 8000 });
     const t1 = Date.now();
     await page.evaluate(({ R2, k }) => { const at = Date.now(); window.__evs[R2] = [{ id: R2 + '~arrived', orderId: R2, type: 'arrived', at: at - 3600e3, by: 'Etsy', source: 'etsy' }, { id: `${k}_1-${at}`, orderId: R2, type: 'engraveApproved', at, by: 'Giovanna', source: 'sorter', station: 'sorter', lineKey: k, transactionId: k.split('_')[1], text: '“Leaf”', data: { text: 'Leaf', poolId: k + '_1', copy: 1 } }]; OrderWin._feed().refresh({ force: true }); }, { R2, k: key(R2, 2) });
     await page.waitForFunction(() => document.querySelector('#owEng .swEng[data-state=approved]'), null, { timeout: 6000 });

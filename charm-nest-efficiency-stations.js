@@ -556,13 +556,13 @@
       else if (!S.data) { s = "load"; t = "Connecting…"; }
       else if (S.busy && age > 8) { s = "load"; t = "Updating…"; }
       else { s = "live"; t = `Live · updated ${ago(age)}`; }
-      if (E.live.dataset.s !== s) E.live.dataset.s = s; setText(E.liveT, t);
+      if (E.live.dataset.s !== s) E.live.dataset.s = s; E.live.classList.toggle("esQ", !S.data); setText(E.liveT, t);   // until the first answer the wait below carries the one spinner
     }
     const stopLive = track(E.live, paintLive);
 
     function stationRow(s) {
       const e = h("section", "esSt"); e.dataset.key = s.key;
-      e.innerHTML = `<div class="esStHead"><span class="esStId" tabindex="0" data-es-tip><i class="esLight"></i><h3 class="esStName"></h3><span class="esStState"></span></span><span class="esPeople"></span><span class="esGrow"></span><span class="esCnt"><span class="esCntL">Today</span><span><b data-n="parts">0</b> parts</span><span><b data-n="orders">0</b> orders</span></span><span class="esSparkW"></span></div><div class="esStBody"></div>`;
+      e.innerHTML = `<div class="esStHead"><span class="esStId" tabindex="0" data-es-tip><i class="esLight"></i><h3 class="esStName"></h3><span class="esStState"></span></span><span class="esPeople"></span><span class="esGrow"></span><span class="esCnt"><span class="esCntL">Today</span><span><b data-n="parts">0</b> pieces</span><span><b data-n="orders">0</b> orders</span></span><span class="esSparkW"></span></div><div class="esStBody"></div>`;
       const X = { key: s.key, el: e, id: e.querySelector(".esStId"), light: e.querySelector(".esLight"), name: e.querySelector(".esStName"), state: e.querySelector(".esStState"), people: e.querySelector(".esPeople"), cnt: e.querySelector(".esCnt"),
         parts: e.querySelector('[data-n="parts"]'), orders: e.querySelector('[data-n="orders"]'), sparkW: e.querySelector(".esSparkW"), body: e.querySelector(".esStBody"), chips: new Map(), cards: new Map(), leaving: 0, idle: null, data: s, sparkSig: "" };
       X.id._esTip = () => stationTip(X);
@@ -570,7 +570,7 @@
     }
     function stationTip(X) {
       const s = X.data, rows = [];
-      if (s.counts.parts != null) rows.push({ k: "Parts today", v: nf(s.counts.parts), d: "Pieces scanned or completed here today" });
+      if (s.counts.parts != null) rows.push({ k: "Pieces today", v: nf(s.counts.parts), d: "Pieces scanned or completed here today" });
       if (s.counts.orders != null) rows.push({ k: "Orders today", v: nf(s.counts.orders), d: "Different orders handled here today" });
       if (s.counts.scans != null) rows.push({ k: "Scans today", v: nf(s.counts.scans), d: "Scans logged at this station today" });
       if (s.lastEventAt) rows.push({ k: "Last event", v: `${clock(s.lastEventAt)} · ${ago((now() - s.lastEventAt) / 1000)}`, d: "The last scan or action logged at this station" });
@@ -580,7 +580,7 @@
         s.devices.slice(0, 6).forEach((d, i) => rows.push({ k: d.label, v: d.state === "offline" ? "Offline" : `${d.person ? d.person + " · " : ""}${stateWord[d.state]}`, d: i === 0 ? `Pages of this station: ${on} of ${s.devices.length} in use` : "" }));
         if (s.devices.length > 6) rows.push({ k: "", v: `+${s.devices.length - 6} more pages` });
       }
-      return { state: s.state, title: s.label, sub: `${stateWord[s.state]}${s.state === "working" && s.current.length ? ` · ${s.current.length} ${s.current.length === 1 ? "order" : "orders"}` : ""}`, rows, spark: s.spark, sparkNote: "Parts, last hour", foot: "Logged activity only: it shows what was scanned, not effort." };
+      return { state: s.state, title: s.label, sub: `${stateWord[s.state]}${s.state === "working" && s.current.length ? ` · ${s.current.length} ${s.current.length === 1 ? "order" : "orders"}` : ""}`, rows, spark: s.spark, sparkNote: "Pieces, last hour", foot: "Logged activity only: it shows what was scanned, not effort." };
     }
     const ask = body => (shared ? shared.call(body) : askOwn(sub, body));
     const modeKey = () => { if (shared) { let v = ""; try { v = shared.view(); } catch (_) {} return String(v || "real"); } return viewParams(opts).sandbox ? "sandbox" : "real"; };
@@ -588,7 +588,7 @@
       const s = X.data, cur = s.current.find(c => low(c.person) === low(p.name)), head = [], live = [];
       if (p.since) head.push({ k: "Signed in since", v: `${clock(p.since)} · ${words(now() - p.since)}`, d: "When this person signed in at a station today" });
       if (p.lastSeenAt) head.push({ k: "Last seen", v: ago((now() - p.lastSeenAt) / 1000), d: "The last sign of life from the station" });
-      if (p.parts != null) live.push({ k: "Parts today", v: nf(p.parts), d: "Pieces scanned or completed today" });
+      if (p.parts != null) live.push({ k: "Pieces today", v: nf(p.parts), d: "Pieces scanned or completed today" });
       if (p.orders != null) live.push({ k: "Orders today", v: nf(p.orders), d: "Different orders handled today" });
       if (p.medianMs != null) live.push({ k: "Median per order", v: words(p.medianMs), d: "The middle time from scan to done" });
       if (p.longestIdleMs != null) live.push({ k: "Longest idle", v: words(p.longestIdleMs), d: "The longest gap with nothing logged today" });
@@ -649,7 +649,7 @@
       X.id.setAttribute("aria-label", `${s.label}, ${stateWord[s.state].toLowerCase()}`);
       X.cnt.hidden = s.counts.parts == null && s.counts.orders == null;
       for (const [k, n] of [["parts", X.parts], ["orders", X.orders]]) { const v = s.counts[k]; n.parentNode.hidden = v == null; if (v != null) setNum(n, v, ctx.quiet); }
-      const sig = s.spark ? s.spark.join() : ""; if (sig !== X.sparkSig) { X.sparkSig = sig; X.sparkW.textContent = ""; if (s.spark) { X.sparkW.appendChild(sparkSvg(s.spark, 84, 22)); X.sparkW.title = "Parts in the last hour"; } }
+      const sig = s.spark ? s.spark.join() : ""; if (sig !== X.sparkSig) { X.sparkSig = sig; X.sparkW.textContent = ""; if (s.spark) { X.sparkW.appendChild(sparkSvg(s.spark, 84, 22)); X.sparkW.title = "Pieces in the last hour"; } }
       // people: arrive and leave softly
       const keep = new Set();
       for (const p of s.people) {
@@ -744,7 +744,7 @@
 .esLive[data-s=live] .esDot{background:var(--sage,#5f7a5b)}
 .esLive[data-s=live] .esDot:after{content:"";position:absolute;inset:0;border-radius:50%;background:var(--sage,#5f7a5b);animation:esPulse 2.4s ease-out infinite}
 .esLive[data-s=slow] .esDot{background:var(--gold2,#caa861)}
-.esLive[data-s=load] .esDot{display:none}.esLive .esSpin{display:none}.esLive[data-s=load] .esSpin{display:inline-block}
+.esLive[data-s=load] .esDot{display:none}.esLive .esSpin{display:none}.esLive[data-s=load] .esSpin{display:inline-block}.esLive.esQ[data-s=load] .esSpin{visibility:hidden}
 .esSpin{width:11px;height:11px;border:2px solid var(--line,#e4ddd0);border-top-color:var(--ink70,#5b554c);border-radius:50%;animation:esSpin .7s linear infinite;flex:0 0 11px;display:inline-block}
 @keyframes esSpin{to{transform:rotate(360deg)}}
 @keyframes esPulse{0%{transform:scale(1);opacity:.45}70%,100%{transform:scale(3.1);opacity:0}}
@@ -846,7 +846,12 @@
     (doc.head || doc.documentElement).appendChild(s);
   }
 
-  root.EfficiencyStations = { mount, orderCard, norm, options, qr: qrUrl, fmt: { since, words, ago, initials }, openOrder,
+  /** The board's light hover card on ANY element (the Overview's numbers, the people list): spec() is asked each time the card opens or refreshes and
+   *  returns { title, sub, avatar | state, rows:[{ k, v, d }], note, foot } (or null for no card). The element gets the platform's pointer, focus and touch
+   *  behaviour of the board's own cards; one card is shared by all of them. */
+  function hoverCard(node, spec) { if (!node || typeof spec !== "function") return node; css(); wire(); node.dataset.esTip = ""; node._esTip = spec; return node; }
+
+  root.EfficiencyStations = { mount, orderCard, norm, options, qr: qrUrl, fmt: { since, words, ago, initials }, openOrder, hoverCard,
     /* for the checks */
     feed: { get calls() { return Feed.calls; }, get busy() { return Feed.busy; }, get fails() { return Feed.fails; }, wake: () => Feed.wake(), now: () => Feed.now() }, zoomed: () => Z.node, tip: () => Tp.el };
 })(typeof self !== "undefined" ? self : this);

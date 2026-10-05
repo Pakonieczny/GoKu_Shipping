@@ -607,13 +607,12 @@ dialog.lmChat .dlg{height:min(90vh,960px);max-height:min(90vh,960px)}
 dialog.lmChat .dlgBody{padding:0;overflow:hidden;min-height:0;flex:1 1 auto}
 .lmSplit{display:grid;grid-template-columns:minmax(0,1fr) minmax(342px,.86fr);height:100%;min-height:0}
 .lmMain{padding:16px 18px;overflow:auto;min-height:0;display:flex}
-/* Fill the taller dialog instead of leaving a well of dead space under the
-   meta boxes: the staff note takes the slack, which is the field an operator
-   is most likely to want room in. */
+/* The personalisation and buyer message box takes the room it can use (a long
+   message is read whole), and the meta boxes follow it directly: no gap
+   where the staff note box used to be. */
 dialog.lmChat .lmMain>.lmGrid{flex:1 1 auto;min-height:0}
 dialog.lmChat .lmGrid>div:last-child{display:flex;flex-direction:column;min-height:0}
-dialog.lmChat #modalListingNotes{min-height:104px;flex:0 0 auto}
-dialog.lmChat #modalStaffNote{flex:1 1 auto;min-height:104px}
+dialog.lmChat #modalListingNotes{min-height:104px;max-height:280px;flex:1 1 auto}
 dialog.lmChat #modalListingDetails{flex:0 0 auto}
 
 .bc{display:flex;flex-direction:column;min-height:0;position:relative;
@@ -1064,9 +1063,6 @@ dialog.bcLb img{max-width:92vw;max-height:84vh;border-radius:11px;display:block;
             <div>
               <label class="fLabel">Personalisation &amp; buyer message</label>
               <textarea class="inp" id="modalListingNotes" readonly></textarea>
-
-              <label class="fLabel">Staff note <span style="text-transform:none;letter-spacing:0;font-weight:400;color:var(--ink45)">— saved automatically, visible to every station</span></label>
-              <textarea class="inp" id="modalStaffNote" placeholder="Add a note for this order…"></textarea>
 
               <div class="metaGrid" id="modalListingDetails"></div>
             </div>
@@ -5444,30 +5440,6 @@ async function openListingModal(txid) {
   mk("SKU",      finalSku);
   mk("Option",   otherLabelFor(tx) || "N/A");
 
-  // Staff note
-  const note = $("#modalStaffNote");
-  note.value = "";
-  note.dataset.rid = rid;
-  fetch(`${FN}/firebaseOrders?orderId=${encodeURIComponent(rid)}`)
-    .then(r => r.json())
-    .then(res => {
-      if (note.dataset.rid !== rid) return;
-      if (res.success && res.data && res.data["Staff Note"]) note.value = res.data["Staff Note"];
-    })
-    .catch(console.error);
-
-  note.onchange = note.onblur = async () => {
-    const text = note.value.trim();
-    try {
-      await fetch(`${FN}/firebaseOrders`, {
-        method:"POST", headers:{ "Content-Type":"application/json" },
-        body:JSON.stringify({ orderNumber: rid, staffNote: text })
-      });
-    } catch (e) { console.error(e); toast("Staff note not saved", "bad"); return; }
-    if (text) staffNoteIDs.add(rid); else staffNoteIDs.delete(rid);
-    markStaffNoteOrders();
-  };
-
   // Skip switch
   const sw = $("#modalCompleteChk");
   const on = completedOrders.has(rid);
@@ -7906,7 +7878,7 @@ const Bridge = (() => {
     const ROLE = {
       row: a => $(`.orderRow[data-receipt='${cssEsc(String(a))}']`), tile: a => $(`.tile[data-tx='${cssEsc(String(a))}']`) || $(`.tile[data-receipt='${cssEsc(String(a))}']`),
       complete: () => $("#completeBtn"), print: () => { const b = $("#qrPreviewPrintBtn"); return b && visible(b) ? b : ($("#qrSorterNote") && visible($("#qrSorterNote")) ? $("#qrSorterNote") : $("#qrSummary")); }, cancel: () => $("#qrCancelBtn"), grid: () => $("#qrPreviewGrid"), undo: () => $("#undoCompleteBtn"),
-      refresh: () => [$("#updateOrderListBtn"), $("#stripRefreshBtn"), $("#emptyLoadBtn")].find(visible) || $("#updateOrderListBtn"), rail: () => $("#railToggle"), connect: () => $("#connectEtsyBtn"), metals: () => $("#metalBar"), note: () => $("#modalStaffNote"), chat: () => $("#chatInput") || $("#modalChatInput"), banner: () => $("#bridgeBanner"), release: () => $("#bridgeRelease")
+      refresh: () => [$("#updateOrderListBtn"), $("#stripRefreshBtn"), $("#emptyLoadBtn")].find(visible) || $("#updateOrderListBtn"), rail: () => $("#railToggle"), connect: () => $("#connectEtsyBtn"), metals: () => $("#metalBar"), chat: () => $("#chatInput") || $("#modalChatInput"), banner: () => $("#bridgeBanner"), release: () => $("#bridgeRelease")
     };
     const visible = el => { if (!el || !el.isConnected) return false; const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
     function find(role, arg) { const f = ROLE[role]; return f ? f(arg) : null; };
@@ -8181,11 +8153,10 @@ const Bridge = (() => {
     async "ui.scrollTo"(a) { const ok = revealOrder(String(a.receiptId)); await Cursor.act("row", String(a.receiptId), `Show ${a.receiptId}`, { click: false }); return { revealed: !!ok }; },
     async "notes.set"(a) {
       const rid = String(a.receiptId || ""); const text = String(a.text || "");
-      await Cursor.act($("#modalStaffNote") && $("#modalStaffNote").dataset.rid === rid ? "note" : "row", rid, `Staff note on ${rid}`);
+      await Cursor.act("row", rid, `Staff note on ${rid}`);
       const r = await fetch(`${FN}/firebaseOrders`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ orderNumber: rid, staffNote: text }) });
       if (!r.ok) throw new Error("staff note not saved: HTTP " + r.status);
       if (text.trim()) staffNoteIDs.add(rid); else staffNoteIDs.delete(rid); notesCache.set(rid, text); markStaffNoteOrders();
-      const note = $("#modalStaffNote"); if (note && note.dataset.rid === rid) note.value = text;
       return { receiptId: rid, hasNote: !!text.trim() };
     },
     async "chat.post"(a) { const rid = String(a.receiptId || ""); await Cursor.act("row", rid, `Post a chat message on ${rid}`); await BritesChat.postAs(rid, String(a.text || ""), a.sender || "Charm Sorter", a.imageUrl || null, a.clientId || null); msgCache.delete(rid); return { receiptId: rid }; },
@@ -8402,10 +8373,10 @@ window.DesignStation = {
   }
 </script>
 <!-- Sign-in time per person and computer, and the midnight sign-out (New York time) -->
-<script src="station-session.js?v=20261002-ea1"></script>
-<script src="station-activity.js?v=20261005-live1"></script>
+<script src="station-session.js?v=20261005-et2"></script>
+<script src="station-activity.js?v=20261005-et2"></script>
 <!-- The order in hand right now (the orders the person picked = working, labels printed or selection cleared = idle), for the console's live stations board (station-live-order.js). Optional: without it nothing changes. -->
-<script src="station-live-order.js?v=20261005-lo1"></script>
+<script src="station-live-order.js?v=20261005-et2"></script>
 <script>
 (function () {
   const framed = (() => { try { return window.self !== window.top; } catch (_) { return true; } })();

@@ -61,7 +61,14 @@ const F = require('./efficiency-fixture.cjs');
   const track = page => { const errs = [], logs = []; page.on('pageerror', e => errs.push(e.message)); page.on('console', m => { logs.push(m.text()); /* the browser's own notice for the 401s, 403s, 405s, 429s and 503s this test forces on purpose is not an error of the page */ if (m.type() === 'error' && !(/status of (401|403|405|429|503)/.test(m.text()) && /employeeEfficiency/.test((m.location() && m.location().url) || ''))) errs.push('console: ' + m.text()); }); return { errs, logs }; };
   const openConsole = async page => { await page.click('#moreMenu > summary'); await page.click('#moreMenu .moreList button[data-mode="efficiency"]'); };
   const V = '#efficiencyView';
-  const calls = () => fx.state.calls.filter(c => c.op === 'overview');
+  /** the text of the hover card a figure opens (the light card of the stations board); the scroll lands first, because a scroll closes a card */
+  const card = async (sel, page) => {
+    const loc = page.locator(sel); await loc.scrollIntoViewIfNeeded();
+    await page.mouse.move(2, 2); await page.evaluate(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))));
+    await loc.hover(); await page.waitForSelector('.esTip[data-on]', { timeout: 5000 });
+    const t = await page.locator('.esTip[data-on]').innerText(); await page.mouse.move(2, 2); return t;
+  };
+  const calls =() => fx.state.calls.filter(c => c.op === 'overview');
   try {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, reducedMotion: 'reduce' });
     await wire(ctx);
@@ -116,7 +123,7 @@ const F = require('./efficiency-fixture.cjs');
     // the keyboard reaches the graph: one tab stop, the arrows walk the readout (hour, parts, and which station made them)
     await page.focus(`${V} .efChart svg.efSvg`); await page.keyboard.press('ArrowLeft');
     const tipTxt = await txt(`${V} .efChart .efTip`);
-    assert(/2 PM/.test(tipTxt) && /parts/.test(tipTxt) && /Welding/.test(tipTxt), 'keyboard readout: ' + tipTxt.replace(/\s+/g, ' '));
+    assert(/2 PM/.test(tipTxt) && /pieces?\b/.test(tipTxt) && !/\bparts?\b/i.test(tipTxt) && /Welding/.test(tipTxt), 'keyboard readout: ' + tipTxt.replace(/\s+/g, ' '));
     await page.keyboard.press('Escape'); assert.equal(await page.locator(`${V} .efChart .efTip`).isVisible(), false);
     // the stations strip
     const stations = await page.$$eval(`${V} .efSR`, rs => rs.map(r => r.innerText.replace(/\s+/g, ' ')));
@@ -134,7 +141,15 @@ const F = require('./efficiency-fixture.cjs');
     assert.equal(await page.locator(`${V} .efP:nth-child(1) .efChip.now`).count(), 1, 'where they are now');
     const fig = await page.$$eval(`${V} .efP:nth-child(1) .efN b`, bs => bs.map(b => b.textContent.replace(/[^\d.a-z ]/gi, '').trim()));
     assert.deepEqual(fig.slice(0, 3), ['223', '195', '37'], 'parts, pieces scanned, orders: ' + fig.join('|'));
-    assert.equal(await page.locator(`${V} .efP:nth-child(1) [data-r="scans"]`).getAttribute('title'), '195 pieces scanned in 186 scans', 'the scan actions are one hover away');
+    // Paul's word is Pieces, never Parts: the KPI, the graph, the stations strip, the people table, the sort buttons and the hover lines
+    assert.equal((await page.locator(`${V} .efKpi[data-k="parts"] .efKL`).textContent()).trim(), 'Pieces today'); assert.equal((await page.locator(`${V} .efKpi[data-k="rate"] .efKL .l`).textContent()).trim(), 'Pieces per active hour');
+    assert.equal((await page.locator(`${V} [data-g="hours"] .efGT`).textContent()).trim(), 'Pieces per hour'); assert.deepEqual(await page.$$eval(`${V} .efPH span`, ns => ns.map(n => n.textContent).slice(0, 5)), ['Person', 'Stations', 'Pieces', 'Scanned', 'Orders']);
+    assert.deepEqual(await page.$$eval(`${V} .efSort button`, ns => ns.map(n => n.textContent)), ['On now', 'Pieces', 'Name'], 'the sort buttons');
+    { const seen = await page.evaluate(() => document.getElementById('efficiencyView').innerText), cardsTxt = (await card(`${V} .efKpi[data-k="parts"]`, page)) + ' ' + (await card(`${V} .efKpi[data-k="rate"]`, page)) + ' ' + (await card(`${V} .efP:nth-child(1) [data-r="parts"]`, page));
+      assert(!/\bparts?\b/i.test(seen), 'no "parts" on the Overview: ' + (seen.match(/.{0,30}\bparts?\b.{0,30}/i) || [''])[0]); assert(!/\bparts?\b/i.test(cardsTxt) && /Pieces finished at a station/.test(cardsTxt), 'nor in the hover cards: ' + cardsTxt.replace(/\s+/g, ' ')); }
+    const scanCard = await card(`${V} .efP:nth-child(1) [data-r="scans"]`, page);
+    assert(/195 pieces scanned in 186 scans/.test(scanCard), 'the scan actions are one hover away (the hover card says them): ' + scanCard);
+    assert(/Pieces scanned\. A scan is not a finished piece\./.test(scanCard), 'and defines the figure in one line');
     assert(await page.locator(`${V} .efP:nth-child(1) .efSpark`).count() === 1 && await page.locator(`${V} .efP:nth-child(1) .efAct i`).count() === 1, 'a sparkline and the active-vs-idle bar');
     // no figure twice in a card (a collapsed card's visible text; the figures are distinct in the fixture)
     for (const i of [1, 2, 3, 4]) {
@@ -245,10 +260,10 @@ const F = require('./efficiency-fixture.cjs');
     assert.equal(await page.locator(`${V} .efNav [data-nav="1"]`).isDisabled(), true, 'nothing after today');
     // the quiet hint, from real hours only: someone is on at a station that logged nothing since the 12 PM hour
     fx.setHook(j => { const a = j.business.perHour.assembly; for (const h of [13, 14, 15]) a[h] = 0; return j; });
-    await page.waitForFunction(() => /No parts since 1 PM/.test(document.querySelector('#efficiencyView .efSR[data-station="assembly"]').innerText), null, { timeout: 8000 });
-    assert(!/No parts since/.test(await txt(`${V} .efSR[data-station="welding"]`)), 'only the quiet station says so');
+    await page.waitForFunction(() => /No pieces since 1 PM/.test(document.querySelector('#efficiencyView .efSR[data-station="assembly"]').innerText), null, { timeout: 8000 });
+    assert(!/No pieces since/.test(await txt(`${V} .efSR[data-station="welding"]`)), 'only the quiet station says so');
     fx.setHook(null);
-    await page.waitForFunction(() => !/No parts since/.test(document.querySelector('#efficiencyView .efStations').innerText), null, { timeout: 8000 });
+    await page.waitForFunction(() => !/No pieces since/.test(document.querySelector('#efficiencyView .efStations').innerText), null, { timeout: 8000 });
     // a day gone by shows who worked it, not who is "on now"
     await page.click(`${V} [data-nav="-1"]`);
     await page.waitForFunction(() => /People that day/.test(document.querySelector('#efficiencyView .efKpi[data-k="on"] .efKL').textContent), null, { timeout: 8000 });
@@ -270,22 +285,22 @@ const F = require('./efficiency-fixture.cjs');
     // history from seals (before activity events): orders and scans, no parts; the hourly line counts order steps and says so
     fx.setMode('seals');
     await page.waitForFunction(() => document.getElementById('efficiencyView').hasAttribute('data-noparts'), null, { timeout: 8000 });
-    assert.equal((await page.locator(`${V} [data-g="hours"] .efGT`).textContent()).trim(), 'Order steps per hour', 'the graph does not call order steps parts');
+    assert.equal((await page.locator(`${V} [data-g="hours"] .efGT`).textContent()).trim(), 'Order steps per hour', 'the graph does not call order steps pieces');
     assert(/steps/.test(await page.locator(`${V} .efChart svg`).getAttribute('aria-label')), 'and neither does its label');
-    assert.equal(await page.locator(`${V} .efKpi[data-k="parts"]`).isVisible(), false, 'no Parts figure that would read as zero'); assert.equal(await page.locator(`${V} .efKpi[data-k="orders"]`).isVisible(), true);
+    assert.equal(await page.locator(`${V} .efKpi[data-k="parts"]`).isVisible(), false, 'no Pieces figure that would read as zero'); assert.equal(await page.locator(`${V} .efKpi[data-k="orders"]`).isVisible(), true);
     assert.equal((await txt(`${V} .efP:nth-child(1) [data-r="parts"]`)).trim(), '—', 'a dash, not a zero'); assert.equal((await txt(`${V} .efP:nth-child(1) [data-r="rate"]`)).trim(), '—');
-    assert.equal(await page.locator(`${V} .efP:nth-child(1) [data-r="scans"]`).getAttribute('title'), '186 scans (pieces were not counted)', 'scans without a piece count say so');
-    assert.equal(await page.locator(`${V} .efP:nth-child(1) .efSp`).getAttribute('title'), 'Order steps by hour');
+    assert(/186 scans \(pieces were not counted\)/.test(await card(`${V} .efP:nth-child(1) [data-r="scans"]`, page)), 'scans without a piece count say so');
+    assert(/Order steps by hour/.test(await card(`${V} .efP:nth-child(1) .efSp`, page)));
     assert.equal((await page.locator(`${V} .efWhen`).allInnerTexts()).some(t => /sealed work/.test(t)), false, 'the note says it once');
     await page.click(`${V} [data-days="7"]`); await page.waitForFunction(() => !document.querySelector('#efficiencyView [data-g="trend"]').classList.contains('hidden'), null, { timeout: 8000 });
-    assert.equal(await page.locator(`${V} [data-g="trend"] [data-t="parts"]`).isVisible(), false, 'no parts per day from history that has none'); assert.equal(await page.locator(`${V} [data-g="trend"] [data-t="orders"]`).isVisible(), true);
+    assert.equal(await page.locator(`${V} [data-g="trend"] [data-t="parts"]`).isVisible(), false, 'no pieces per day from history that has none'); assert.equal(await page.locator(`${V} [data-g="trend"] [data-t="orders"]`).isVisible(), true);
     await page.click(`${V} [data-days="1"]`); fx.setMode('');
     await page.waitForFunction(() => !document.getElementById('efficiencyView').hasAttribute('data-noparts') && document.querySelectorAll('#efficiencyView .efP').length === 4, null, { timeout: 8000 });
     // a week where one day is history from seals: its parts say "not logged", not zero
     fx.setHook(j => { const d = j.business.trend.find(x => x.day === F.addDays(j.day, -6)); if (d) { d.source = 'seals'; d.parts = 0; } return j; });
     await page.click(`${V} [data-days="7"]`); await page.waitForFunction(() => document.querySelectorAll('#efficiencyView [data-g="trend"] .efChartA .efCol').length === 7, null, { timeout: 8000 });
     await page.focus(`${V} [data-g="trend"] .efChartA svg.efSvg`); await page.keyboard.press('Home');
-    assert(/Parts not logged/.test(await txt(`${V} [data-g="trend"] .efChartA .efTip`)), 'a history day is not a zero day: ' + await txt(`${V} [data-g="trend"] .efChartA .efTip`));
+    assert(/Pieces not logged/.test(await txt(`${V} [data-g="trend"] .efChartA .efTip`)), 'a history day is not a zero day: ' + await txt(`${V} [data-g="trend"] .efChartA .efTip`));
     await page.keyboard.press('Escape'); fx.setHook(null); await page.click(`${V} [data-days="1"]`);
     await page.waitForFunction(() => !document.querySelector('#efficiencyView [data-g="hours"]').classList.contains('hidden'), null, { timeout: 8000 });
     // the service says no: each refusal is named, the last numbers stay, and it recovers

@@ -191,7 +191,20 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   const tlOf = (rid, type) => st.list(TL).filter(x => x._id.startsWith(rid + '~') && (!type || x.type === type));
   const onSheets = () => page.evaluate(() => Object.fromEntries(Object.keys(CN.S.sheets).flatMap(m => CN.S.sheets[m].pages.filter(p => p.sheetId).map(p => [p.sheetId, { all: p.charms.map(c => c.poolId), placed: p.placements.map(pl => (p.charms.find(c => c.id === pl.id) || {}).poolId) }]))));
   const rowsOf = rid => page.evaluate(rid => Orders.rows().filter(r => String(r.order.receiptId) === rid).map(r => ({ key: r.key, state: r.state, hold: r.hold || null, pieces: r.poolIds.length, frontAt: r.frontAt || 0, releasing: !!r.releasing })), rid);
-  const mutating = () => st.calls.filter(c => c.name === 'charmNestLibrary' && /^(poolPut|poolUpdate|putSheet|setUpdate|cancelPut|cancelRestore|customPut|customReopen|runPut|timelineAdd)$/.test(String(c.op))).length;
+  const mutatingCalls = () => st.calls.filter(c => c.name === 'charmNestLibrary' && /^(poolPut|poolUpdate|putSheet|setUpdate|cancelPut|cancelRestore|customPut|customReopen|runPut|timelineAdd)$/.test(String(c.op)));
+  const mutating = () => mutatingCalls().length;
+  // (the page's own first read of the orders, 'interpreted', is recorded in slices and goes out on the timeline outbox's clock, again after a backoff when a send failed on a
+  //  busy machine: it is not what a press did. Every count of writes starts once the outbox is empty and no write has come for 1.5 s, so a press is only blamed for what it wrote itself)
+  const outboxQuiet = async () => {
+    let was = -1, since = Date.now();
+    for (let i = 0; i < 300; i++) {
+      const left = await page.evaluate(() => { if (!window.OrderTimeline) return 0; try { OrderTimeline.flush && OrderTimeline.flush(); } catch (_) {} return OrderTimeline.pending ? OrderTimeline.pending() : 0; });
+      const n = mutating();
+      if (left !== 0 || n !== was) { was = n; since = Date.now(); } else if (Date.now() - since >= 1500) return;
+      await sleep(200);
+    }
+    throw new Error('the timeline outbox never went quiet before the press');
+  };
   const idsOf = (rid, ...txs) => txs.flatMap(tx => { const o = SPEC.orders[rid], ln = o.lines.find(l => l[0] === tx); return Array.from({ length: ln[1] }, (_, i) => pid(rid, tx, i + 1)); });
   const sorted = a => a.slice().sort();
   const allIds = () => SPEC.sheets.flatMap(sh => sh.items.map(([rid, tx, copy]) => pid(rid, tx, copy)));
@@ -219,6 +232,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   const quiet = async what => { const l = await until(async () => { const x = await leftovers(); return x.length ? false : true; }, 15000, `${what}: nothing left on the screen`).then(() => [], async () => leftovers()); assert.deepEqual(l, [], `${what}: leftovers on the screen: ${l.join(' | ')}`); };
 
   /** a film's frame times, the dialogs, the layer's place: sampled in the page while it runs */
+  const clearNotes = () => page.evaluate(() => { for (const n of document.querySelectorAll('.mNote')) n.remove(); });
   const sampler = () => page.evaluate(() => {
     const S = window.__film = { run: true, last: performance.now(), gaps: [], caps: [], dlg: 0, layerOver: true, nameBar: 0, topBarCovered: 0, bottomUnder: 0 };
     let lastCap = ''; S.long = [];
@@ -231,12 +245,13 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
         const open = document.querySelectorAll('dialog[open]').length; if (open) S.dlg = Math.max(S.dlg, open);
         const tb = document.querySelector('.topbar'); if (tb) { const r = tb.getBoundingClientRect(); for (const n of document.querySelectorAll('#hfxLayer .hfxCap, #hfxLayer .hfxMark, #hfxLayer .hfxSkip')) { const q = n.getBoundingClientRect(); if (q.height && q.top < r.bottom - 1 && r.bottom > 0) { S.topBarCovered++; break; } } }
         if (document.querySelector('.cnNameBar')) S.nameBar++;
+        for (const n of document.querySelectorAll('.mNote')) { S.notes = (S.notes || 0) + 1; (S.noteText = S.noteText || []).includes(n.textContent) || S.noteText.push(n.textContent.slice(0, 90)); }   // (a note drawn while the film plays would sit at the top left, over the tabs)
       }
       if (S.run) requestAnimationFrame(tick);
     };
     requestAnimationFrame(tick);
   });
-  const sampled = () => page.evaluate(() => { const S = window.__film; S.run = false; const g = S.gaps.slice(2).sort((a, b) => a - b); return { long: S.long.filter(x => x.d >= 100).sort((a, b) => b.d - a.d).slice(0, 6), caps: S.caps, n: g.length, p50: g[Math.floor(g.length * .5)] || 0, p95: g[Math.floor(g.length * .95)] || 0, max: g[g.length - 1] || 0, over100: g.filter(x => x > 100).length, dlg: S.dlg, nameBar: S.nameBar, topBarCovered: S.topBarCovered }; });
+  const sampled = () => page.evaluate(() => { const S = window.__film; S.run = false; const g = S.gaps.slice(2).sort((a, b) => a - b); return { long: S.long.filter(x => x.d >= 100).sort((a, b) => b.d - a.d).slice(0, 6), caps: S.caps, n: g.length, p50: g[Math.floor(g.length * .5)] || 0, p95: g[Math.floor(g.length * .95)] || 0, max: g[g.length - 1] || 0, over100: g.filter(x => x > 100).length, dlg: S.dlg, nameBar: S.nameBar, topBarCovered: S.topBarCovered, notes: S.notes || 0, noteText: S.noteText || [] }; });
   const frames = [];   // every film's frame stats, for the end
   /** the way home is walked once: its start is the one "home" event that says instant or not (an instant walk adds a second one when the card is found) */
   const walks = log => log.filter(e => e.ev === 'home' && 'instant' in e);
@@ -281,7 +296,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     for (const r of rowsUi) { assert.equal(r.hold.length, 1, 'one Hold on each piece row: ' + JSON.stringify(r)); assert(r.hold[0].text === 'Hold' && r.hold[0].shown && r.hold[0].bg === 'rgb(162, 89, 28)' && r.hold[0].color === 'rgb(255, 255, 255)', 'the orange Hold: ' + JSON.stringify(r.hold[0])); }
     pass('the order window shows the orange Hold on each piece row of ' + H1);
     await shot('a1-orderwin-hold-button');
-    const w0 = mutating();
+    await outboxQuiet(); const w0 = mutating();
     // the press on the SECOND row's button (the silver piece): the whole order is held whichever piece's button was pressed
     await page.click(`#owPcSum [data-piece="${keyOfLine(H1, 2)}"] [data-hold-btn]`);
     await page.waitForFunction(() => document.querySelector('dialog.holdDlg[open]'), null, { timeout: 20000 });
@@ -296,7 +311,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     await shot('a2-consent-popup');
     await page.click('dialog.holdDlg [data-k=no]');
     await page.waitForFunction(() => !document.querySelector('dialog.holdDlg') && OrderWin.isOpen() && OrderWin.key().startsWith('4170000100_'), null, { timeout: 15000 });
-    assert.equal(mutating() - w0, 0, 'Not now wrote nothing');
+    assert.equal(mutating() - w0, 0, 'Not now wrote nothing: ' + JSON.stringify(mutatingCalls().slice(w0).map(c => [c.op, JSON.stringify(c.body || c.payload || c.args || {}).slice(0, 160)])));
     assert.deepEqual(await onSheets(), before, 'Not now changed no sheet');
     assert((await rowsOf(H1)).every(r => !r.hold && r.state === 'pooled'), 'Not now: the order is as it was');
     assert.equal(await page.evaluate(() => document.querySelectorAll('.cnNameBar').length), 0, 'no name asked for a Not now');
@@ -386,14 +401,16 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   /** the numbers the consent popup promised, read from its words; and what the engine then did */
   const promised = text => { const n = re => { const m = re.exec(text); return m ? +m[1] : null; }; return { off: n(/(\d+) pieces? of this order come off/), spots: n(/fill the (\d+) empty spots?/), waiting: n(/(\d+) waiting orders?/), newer: n(/(\d+) orders? from [A-Z]{2} Sheet \d+/) }; };
   const delivered = steps => ({ off: steps.filter(s => s.type === 'lift').reduce((n, s) => n + s.poolIds.length, 0), spots: steps.filter(s => s.type === 'fillBegin').reduce((n, s) => n + s.spots, 0),
-    // (counted the way the popup counts: an order once for each sheet it fills; when ONE order fills a spot on two sheets the popup says "2 orders", see the note)
-    waiting: new Set(steps.filter(s => s.type === 'fillFrom' && s.source === 'waiting').map(s => s.rid + '|' + s.toSheetId)).size, newer: new Set(steps.filter(s => s.type === 'fillFrom' && s.source === 'newerSheet').map(s => s.rid + '|' + s.toSheetId)).size });
-  const oneOrderTwoSheets = (steps, tag) => { const by = new Map(); for (const s of steps.filter(s => s.type === 'fillFrom')) by.set(s.rid, new Set([...(by.get(s.rid) || []), s.toSheetId])); for (const [rid, sh] of by) if (sh.size > 1) notes.add(`${tag}: one order (${rid}) filled the empty spots on ${sh.size} sheets, and the popup counted it once for each sheet ("2 orders from GF Sheet 3 and SS Sheet 2"): the plan never promises one order to two sheets, the run took it for both (the spots and the pieces are right, only the number of orders in the sentence is high)`); };
+    // (counted the way the popup counts: each order ONCE, by its order id, however many sheets it fills; when one order fills a spot on two sheets the popup says "1 order", see the note)
+    waiting: new Set(steps.filter(s => s.type === 'fillFrom' && s.source === 'waiting').map(s => s.rid)).size,
+    newer: new Set(steps.filter(s => s.type === 'fillFrom' && s.source === 'newerSheet' && !steps.some(w => w.type === 'fillFrom' && w.source === 'waiting' && w.rid === s.rid)).map(s => s.rid)).size });
+  const oneOrderTwoSheets = (steps, tag) => { const by = new Map(); for (const s of steps.filter(s => s.type === 'fillFrom')) by.set(s.rid, new Set([...(by.get(s.rid) || []), s.toSheetId])); for (const [rid, sh] of by) if (sh.size > 1) notes.add(`${tag}: one order (${rid}) filled the empty spots on ${sh.size} sheets (its gold piece on one, its silver piece on the other); the popup counts it once ("1 order from GF Sheet 3 and SS Sheet 2"), the spots and the pieces are as promised`); };
   const sheetStory = lab => [new RegExp('^' + lab), /^Taking the pieces off/, /^Filling the empty spots? ·/, /^Filling the empty spots? from/, /^Placed on/, /^Remaking QR labels/, /is done/];
 
   /** Presses the Hold at `btnSel`, reads the popup, presses Continue (the name is saved), follows the film to the end, waits until the person is home. */
   async function holdFrom(rid, btnSel, tag, o = {}) {
     await page.waitForFunction(s => { const b = document.querySelector(s); return b && !b.disabled && b.textContent.trim() === 'Hold'; }, btnSel, { timeout: 20000 });
+    await outboxQuiet();
     const before = await onSheets(), w0 = mutating();
     await page.evaluate(() => OrderHoldFx.clearEvents());
     await page.click(btnSel);
@@ -403,6 +420,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     assert.equal(await page.evaluate(() => document.querySelectorAll('dialog[open]').length), 1, `${tag}: one dialog open, never a pop-up over a pop-up`);
     assert.equal(mutating() - w0, 0, `${tag}: nothing is written while the popup is asked`);
     await shot(tag + '1-consent-popup');
+    await clearNotes();   // (a note a step before the Hold left, e.g. "moved to Completed" from pressing Complete Order, is that press's, not the film's)
     await sampler();
     if (o.during) o.during();
     await page.click('dialog.holdDlg [data-k=go]');
@@ -433,6 +451,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     const end = log.find(e => e.ev === 'end'); assert(end && end.ok && !end.skipped && !end.timedOut && !end.stalled, `${tag}: the film ended on its own: ` + JSON.stringify(end));
     assert.equal(walks(log).length, 1, `${tag}: the way home was walked once: ` + JSON.stringify(log.filter(e => e.ev === 'home')));
     assert(seen.fr.caps.filter(c => /^(Taking the pieces off|Filling the empty|Placed on|Remaking QR)/.test(c.text)).every(c => c.mode === 'nest'), `${tag}: the film played in the Nest tab: ` + JSON.stringify(seen.fr.caps.map(c => [c.mode, c.text.slice(0, 30)])));
+    assert.equal(seen.fr.notes, 0, `${tag}: no note over the film: ` + JSON.stringify(seen.fr.noteText));
     assert.equal(seen.fr.dlg, 0, `${tag}: no dialog open while the film played (it would hide it)`); assert.equal(seen.fr.nameBar, 0, `${tag}: no name bar over the film`); assert.equal(seen.fr.topBarCovered, 0, `${tag}: the film stays under the top bar`);
     // the popup kept its promise
     const P = promised(seen.text), D = delivered(steps); oneOrderTwoSheets(steps, tag);
@@ -569,11 +588,12 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     await page.evaluate(s => document.querySelector(s).scrollIntoView({ block: 'center' }), rel);
     await shot('d1-on-hold-card-release-button', 500);
     await page.evaluate(() => { OrderHoldFx.clearEvents(); window.__relTxt = []; new MutationObserver(() => { for (const b of document.querySelectorAll('#ordItems .relHold')) window.__relTxt.push(b.textContent.trim()); }).observe(document.getElementById('ordItems'), { subtree: true, childList: true, characterData: true, attributes: true }); });
+    await outboxQuiet();
     const tPress = await page.evaluate(() => Date.now()), w0 = mutating();
     await sampler();
     await page.click(rel);
     await page.waitForFunction(() => document.getElementById('hfxLayer') && CN.S.mode === 'nest', null, { timeout: 30000 });
-    for (const [re, name] of [['First in line', 'd2-release-film-1-first-in-line'], ['Finding a spot', 'd2-release-film-2-spot'], ['Placing the pieces', 'd2-release-film-3-placing'], ['Placed on', 'd2-release-film-4-placed']]) { try { await page.waitForFunction(re => { const l = document.querySelector('#hfxLayer .hfxLive'); return l && l.textContent.includes(re); }, re, { timeout: 60000 }); await shot(name, 120); } catch (_) { console.log('  (no frame for ' + re + ')'); } }
+    for (const [re, name] of [['First in the queue', 'd2-release-film-1-first-in-line'], ['Finding a spot', 'd2-release-film-2-spot'], ['Placing the pieces', 'd2-release-film-3-placing'], ['Placed on', 'd2-release-film-4-placed']]) { try { await page.waitForFunction(re => { const l = document.querySelector('#hfxLayer .hfxLive'); return l && l.textContent.includes(re); }, re, { timeout: 60000 }); await shot(name, 120); } catch (_) { console.log('  (no frame for ' + re + ')'); } }
     await waitHome(H1, 'D');
     const fr = await sampled(); frames.push(['D', fr]);
     const note = await page.evaluate(() => { const n = document.querySelector('.mNote'); return n ? { text: n.querySelector('.mNoteT').textContent.trim(), btns: [...n.querySelectorAll('.mNoteBtn')].map(b => b.textContent.trim()) } : null; });
@@ -612,7 +632,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     pass('the data: its four pieces stand on ' + gold.label + ' and ' + silver.label + ' (the saved sheets list them), the lines are back in line with their place at the front, one "Released from hold by Paul" step names the sheet and the time, the held steps are still there');
     // ── the film ──
     const log = await fxLog(), caps = captionsOf(log);
-    const order = inOrder(caps, [/^Releasing order 4170000100/, /^First in line, ahead of new orders/, /^Finding a spot on/, /^Placing the pieces on/, /^Placed on/, /^Order 4170000100 is released/]);
+    const order = inOrder(caps, [/^Releasing order 4170000100/, /^First in the queue, ahead of new orders/, /^Finding a spot on/, /^Placing the pieces on/, /^Placed on/, /^Order 4170000100 is released/]);
     assert.equal(order, true, 'the release captions followed the steps in order: ' + order);
     const flights = log.filter(e => e.ev === 'flight').map(e => e.key);
     for (const s of steps.filter(s => s.type === 'flight')) for (const id of s.poolIds) assert(flights.includes(`place:${s.toSheetId}:${id}`), `the film flew ${id} to ${s.toSheetId} (flights: ${flights.join(', ')})`);
@@ -621,6 +641,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     const end = log.find(e => e.ev === 'end'); assert(end && end.ok && !end.skipped && !end.timedOut && !end.stalled, 'the film ended on its own: ' + JSON.stringify(end));
     assert.equal(walks(log).length, 1, 'the way home was walked once: ' + JSON.stringify(log.filter(e => e.ev === 'home')));
     assert(fr.caps.filter(c => /^(Finding a spot|Placing the pieces|Placed on|Remaking QR|QR label)/.test(c.text)).every(c => c.mode === 'nest'), 'the film played in the Nest tab: ' + JSON.stringify(fr.caps.map(c => [c.mode, c.text.slice(0, 30)])));
+    assert.equal(fr.notes, 0, 'no note over the film (the list the hold leaves is not on screen): ' + JSON.stringify(fr.noteText));
     assert.equal(fr.dlg, 0, 'no dialog open while the film played'); assert.equal(fr.nameBar, 0, 'no name bar over the film'); assert.equal(fr.topBarCovered, 0, 'the film stays under the top bar');
     const spin = await page.evaluate(() => window.__relTxt.some(t => /Checking sheets/.test(t)));
     assert(spin, 'the button showed a small labelled "Checking sheets…" while the plan was read');
@@ -676,7 +697,6 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   });
   const cxStop = () => page.evaluate(() => { const S = window.__cx; S.run = false; const g = S.gaps.slice(2).sort((a, b) => a - b); return { s: S.s, props: [...S.props], anims: S.anims, n: g.length, p50: g[Math.floor(g.length * .5)] || 0, p95: g[Math.floor(g.length * .95)] || 0, max: g[g.length - 1] || 0, over100: g.filter(x => x > 100).length }; });
   const settleCx = () => page.waitForFunction(() => !document.querySelector('.cnBeacon, .cnTick') && !(document.getElementById('motionLayer') || { children: [] }).children.length, null, { timeout: 20000 });
-  const clearNotes = () => page.evaluate(() => { for (const n of document.querySelectorAll('.mNote')) n.remove(); });
 
   /** presses Cancel Order on the order's first card and follows the flight to the note */
   async function cancelFrom(rid, tag, shots) {

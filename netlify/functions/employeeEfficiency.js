@@ -45,8 +45,14 @@ const r1 = x => Math.round(x * 10) / 10;
 const shown = x => Math.max(0, r1(x));                              // an hour that nets below zero (an undo in a later hour) is drawn as 0
 const zeros = n => new Array(n).fill(0);
 const digits = (v, n = 30) => String(v == null ? "" : v).replace(/\D/g, "").slice(0, n);
-const cleanName = v => String(v == null ? "" : v).replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim().slice(0, 80);
+/* A name never carries a PIN: four or more digits in a name (typed after it, glued to it, or spaced "12 34 56") are a login number that slipped in, so
+   the digits are dropped ("Paul 482915" is "Paul"): the Employee Number can never be stored, shown or echoed through a name. The station doors do the same on write. */
+const noPin = s => (s.match(/\p{Nd}/gu) || []).length >= 4 ? s.replace(/\p{Nd}+/gu, " ").replace(/\s+/g, " ").trim() : s;
+const cleanName = v => noPin(String(v == null ? "" : v).replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim().slice(0, 200)).slice(0, 80);
 const okName = n => !!n && /\p{L}/u.test(n);                       // a name with no letter ("123456", "123 456") is a PIN, never data
+/* A station key is a short lower-case word. Anything else read from a stored document (a station called "constructor", "Bad Station!", a 5,000-character
+   string) is not a station: it never becomes a key of a per-station map, a label or a filter. */
+const okStation = st => typeof st === "string" && /^[a-z][\w-]{0,19}$/.test(st) && !(st in Object.prototype);
 /* One person, however the logins spelled the name: strip accents, case-fold, drop apostrophes, and treat every other
    punctuation mark (underscore, period, hyphen, comma ...) as a space, so "Michael_V" (the PIN list), "Michael V." (typed at
    the design pages or the sorter), "michael v" and "MICHAEL  V" are ONE person; then the alias map (below). The initial still
@@ -81,7 +87,11 @@ function buildAliases(extra) {
 }
 function nameKeyOf(ctx, name) {
   let k = fold(name); const m = ctx.aliases && ctx.aliases.map;
-  if (m) for (let i = 0; i < 3 && m.has(k) && m.get(k) !== k; i++) k = m.get(k);
+  if (m) {
+    const seen = [];                                                       // follow the aliases to the end; a loop (A is B and B is A) settles on its smallest key, so every spelling of it is ONE person
+    while (m.has(k) && m.get(k) !== k && !seen.includes(k) && seen.length < 8) { seen.push(k); k = m.get(k); }
+    if (seen.includes(k)) k = seen.slice(seen.indexOf(k)).sort()[0];
+  }
   return k;
 }
 /** The name the console shows for a person: the alias map's own spelling, else the most used (mixed case preferred) of the spellings seen. */
@@ -228,7 +238,7 @@ function eventRow(id, d, ctx) {
   const at = ms(d.at), tsMs = ms(d.ts), serverAt = ms(d.serverAt) || tsMs || at;
   // the feed's order and cursor follow the COMMIT time (ts): serverAt is read before the write, and a transaction that waits
   // for a retry commits later, so a poll could pass an event whose serverAt is older than its cursor and never show it
-  return { id: String(d.id || id).slice(0, 100), at, k: tsMs || serverAt, tsMs: tsMs || serverAt, person, station: String(d.station || ""), device: String(d.device || "").slice(0, 40), action,
+  return { id: (scrub(d.id) || String(id)).slice(0, 100), at, k: tsMs || serverAt, tsMs: tsMs || serverAt, person, station: okStation(String(d.station || "")) ? String(d.station) : "", device: scrub(d.device).slice(0, 40), action,
     orderId: digits(d.orderId), parts: Math.max(0, Math.floor(num(d.parts))), detail: scrub(d.detail), sincePrevMs: Math.max(0, num(d.sincePrevMs)), day: typeof d.day === "string" ? d.day : "",
     orders: num(d.orders) >= 1 ? 1 : 0, seq: Math.max(0, num(d.seq)) };   // (orders: the action finished an order; seq: the device's counter: the issue counts replay the writer's order with them)
 }
@@ -275,7 +285,8 @@ function spanOf(s, now) {
   let end = ms(s.endAt), live = false;
   if (!end) { if (now - last >= GONE_MS) end = last; else { end = now; live = true; } }
   end = Math.min(end, now); if (end < start) end = start;
-  return { id: String(s.id || ""), station: String(s.station || ""), start, end, live, last };
+  const station = String(s.station || "");
+  return { id: String(s.id || ""), station: okStation(station) ? station : "", start, end, live, last };       // (a key like "constructor" would break the per-station maps)
 }
 /** [{day, s, e}] pieces of [s, e] inside from..to; a span that ends exactly at midnight puts nothing on the next day. */
 function clip(s, e, from, to) {
@@ -337,7 +348,7 @@ async function assemble(ctx, winFrom, toDay) {
       eventDays.add(x.day);
       const pd = P.pd(person, x.day); pd.src = "events";
       for (const [st, v] of Object.entries(x.stations && typeof x.stations === "object" ? x.stations : {})) {
-        if (!/^[a-z][\w-]{0,19}$/.test(st) || !v || typeof v !== "object") continue;
+        if (!okStation(st) || !v || typeof v !== "object") continue;      // (a station called "constructor" is not a station)
         const a = stAgg(pd, st); for (const k of KEYS) a[k] += Math.max(0, num(v[k]));
         const fa = ms(v.firstAt), la = ms(v.lastAt);
         if (fa > 0 && (!pd.inFirst || fa < pd.inFirst)) pd.inFirst = fa;
@@ -346,11 +357,11 @@ async function assemble(ctx, winFrom, toDay) {
       for (const [hh, h] of Object.entries(x.hours && typeof x.hours === "object" ? x.hours : {})) {
         const hr = parseInt(hh, 10); if (!(hr >= 0 && hr < 24) || !h || typeof h !== "object") continue;
         pd.hours[hr] += Math.max(0, num(h.parts)) - Math.max(0, num(h.undoParts));          // produced minus undone, the same net as the totals
-        for (const [st, b] of Object.entries(h.by && typeof h.by === "object" ? h.by : {})) if (b && typeof b === "object") (pd.hs[st] || (pd.hs[st] = zeros(24)))[hr] += Math.max(0, num(b.parts)) - Math.max(0, num(b.undoParts));
+        for (const [st, b] of Object.entries(h.by && typeof h.by === "object" ? h.by : {})) if (okStation(st) && b && typeof b === "object") (pd.hs[st] || (pd.hs[st] = zeros(24)))[hr] += Math.max(0, num(b.parts)) - Math.max(0, num(b.undoParts));
       }
       for (const [id, m] of Object.entries(x.touched && typeof x.touched === "object" ? x.touched : {})) {
         const oid = digits(id); if (!oid) continue;
-        const stations = m && typeof m === "object" ? Object.keys(m).filter(k => m[k]) : [];
+        const stations = m && typeof m === "object" ? Object.keys(m).filter(k => m[k] && okStation(k)) : [];
         let set = pd.orders.get(oid); if (!set) pd.orders.set(oid, set = new Set()); stations.forEach(s => set.add(s));
       }
       const fa = ms(x.firstAt), la = ms(x.lastAt);
@@ -417,6 +428,8 @@ async function assemble(ctx, winFrom, toDay) {
   return { P, info, eventDays };
 }
 
+/** An order is WORK when some station other than the inbox touched it: a customer conversation in the inbox is not an order worked (the person page and the calendar count the same way). */
+const isWork = set => { for (const x of set) if (x !== "inbox") return true; return false; };
 /** Everything about some person-days at once: stations, totals, per hour, order ids. */
 function summarize(pds) {
   const acc = {}, ids = new Map(), hours = zeros(24), hs = {}, stMs = {}; let signed = 0, evScans = 0, hasE = false, hasS = false, hasAny = false;
@@ -447,7 +460,8 @@ function summarize(pds) {
     active += a; idle += i;
   }
   const parts = sum("parts"), scans = sum("scans");
-  const totals = { parts, scanParts: sum("scanParts"), scans, orders: ids.size || sum("orders"), rejects, errors, activeMin: r1(active / 60000), idleMin: r1(idle / 60000), signedInMin: r1(signed / 60000),
+  const workIds = [...ids.values()].filter(isWork).length, ordersFin = stations.reduce((n, x) => n + (x.station === "inbox" ? 0 : x.orders), 0);
+  const totals = { parts, scanParts: sum("scanParts"), scans, orders: ids.size ? workIds : ordersFin, rejects, errors, activeMin: r1(active / 60000), idleMin: r1(idle / 60000), signedInMin: r1(signed / 60000),
     rate: active >= 60000 ? r1(parts / (active / 3600000)) : 0, secPerScan: evScans > 0 && active > 0 ? r1(active / 1000 / evScans) : 0 };   // (seal scans carry no time: only logged scans divide the active time)
   const source = hasE && hasS ? "mixed" : hasE ? "events" : hasS ? "seals" : hasAny || signed > 0 ? "sessions" : "none";
   return { stations, totals, perHour: hours.map(shown), hs, ids, source, hasAny: hasAny || signed > 0 };
@@ -501,28 +515,30 @@ async function buildOverview(ctx, day, days, withTrend) {
       onSince: live.length ? Math.min(...live.map(s => s.start)) : null, inDay: inPd ? inPd.day : null, nowAt, source: S.source, stations: S.stations, totals: S.totals, perHour: S.perHour, orders });
   }
   people.sort((a, b) => (a.status === "on" ? 0 : 1) - (b.status === "on" ? 0 : 1) || b.totals.parts - a.totals.parts || a.name.localeCompare(b.name));
-  if (people.length > LIM.people) { info.capped.push("people"); people.length = LIM.people; }
-  // the business
-  const totals = { parts: 0, scans: 0, orders: allIds.size, people: people.length };
+  // the business: summed over EVERYBODY, then the list is cut (the totals must not lose the people the list does not show)
+  const totals = { parts: 0, scans: 0, orders: [...allIds.values()].filter(isWork).length, people: people.length };
   const perSt = {};
   for (const p of people) { totals.parts += p.totals.parts; totals.scans += p.totals.scans; for (const s of p.stations) { const t = perSt[s.station] || (perSt[s.station] = { parts: 0, scans: 0 }); t.parts += s.parts; t.scans += s.scans; } }
   const order = st => { const i = STATIONS.indexOf(st); return i < 0 ? 99 : i; };
   const stationList = [...new Set(CORE.concat(Object.keys(perSt), Object.keys(stNow)))].sort((a, b) => order(a) - order(b) || (a < b ? -1 : 1))
     .map(st => ({ station: st, parts: (perSt[st] || {}).parts || 0, scans: (perSt[st] || {}).scans || 0, orders: stIds[st] ? stIds[st].size : 0, peopleNow: (stNow[st] || []).slice().sort() }));
   const perHour = {}; for (const [st, arr] of Object.entries(perStationHours)) if (arr.some(v => v > 0)) perHour[st] = arr.map(shown);
+  if (people.length > LIM.people) { info.capped.push("people"); people.length = LIM.people; }       // (the list only: the totals above counted everybody)
   const trend = dayList(winFrom, day).map(d => {
-    let parts = 0, n = 0, rank = 0; const ids = new Set();
+    let parts = 0, n = 0, rank = 0; const ids = new Map();
     for (const P of asm.P.people.values()) {
       const pd = P.days.get(d); if (!pd || (!pd.src && !pd.spans.length)) continue;
-      n++; const S = summarize([pd]); parts += S.totals.parts; for (const id of S.ids.keys()) ids.add(id);
+      n++; const S = summarize([pd]); parts += S.totals.parts; for (const [id, set] of S.ids) { let x = ids.get(id); if (!x) ids.set(id, x = new Set()); set.forEach(v => x.add(v)); }
       rank = Math.max(rank, pd.src === "events" ? 3 : pd.src === "seals" ? 2 : 1);
     }
-    return { day: d, parts, orders: ids.size, people: n, source: ["none", "sessions", "seals", "events"][rank] };
+    return { day: d, parts, orders: [...ids.values()].filter(isWork).length, people: n, source: ["none", "sessions", "seals", "events"][rank] };
   });
   // sources, notes
   const notes = [];
-  if (!src.events) notes.push("Activity events have not been recorded for these days yet: showing sign-in time and order seals only.");
-  if (src.seals) notes.push("Days before activity events began come from order seals: orders, scans and label prints by person and station, with no part counts.");
+  const rollupsDown = info.errors.some(e => String(e).startsWith("rollups:"));
+  if (!src.events && rollupsDown) notes.push("The activity numbers could not be read just now: pieces, scans and orders show 0 where they are unknown; sign-in times are real.");
+  else if (!src.events) notes.push("Activity events have not been recorded for these days yet: showing sign-in time and order seals only.");
+  if (src.seals) notes.push("Days before activity events began come from order seals: orders, scans and label prints by person and station, with no piece counts.");
   if (asm.info.sealsLeftOut > 0) notes.push(`Seal history is read for the newest ${LIM.sealDays} days only; ${asm.info.sealsLeftOut} older day${asm.info.sealsLeftOut === 1 ? "" : "s"} show sign-in time only.`);
   if (info.capped.length) notes.push("Some lists were cut at their size limit: " + [...new Set(info.capped)].join(", ") + ".");
   if (info.errors.length) notes.push("Some data could not be read just now; the screen shows what was.");
@@ -537,7 +553,9 @@ async function opOverview(ctx, body) {
   if (day > ctx.today) day = ctx.today;
   const n = Math.floor(num(body.days)), days = n <= 1 ? 1 : n <= 7 ? 7 : 30;
   const withTrend = !(body.trend === false || body.trend === 0 || body.trend === "0");
-  const base = await cached(ctx, `ov|${ctx.prefix}|${day}|${days}|${withTrend ? "t" : "n"}`, TTL_LIVE, () => buildOverview(ctx, day, days, withTrend));
+  const ovKey = `ov|${ctx.prefix}|${day}|${days}|${withTrend ? "t" : "n"}`;
+  const base = await cached(ctx, ovKey, TTL_LIVE, () => buildOverview(ctx, day, days, withTrend));
+  if (base.errors.length) ctx.cache.memo.delete(ovKey);                // (an answer with a failed read in it is not kept: the next call tries the source again)
   const after = parseCursor(body.after);
   const feed = (after ? base.feedAll.filter(e => newer(e, after)) : base.feedAll.slice(0, LIM.feed)).slice(0, after ? LIM.feedDelta : LIM.feed)
     .map(e => ({ id: e.id, at: e.at, person: e.person, station: e.station, action: e.action, orderId: e.orderId, parts: e.parts }));
@@ -565,7 +583,7 @@ async function opPerson(ctx, body) {
   const S = summarize(pds), src = { events: pds.some(p => p.src === "events"), seals: pds.some(p => p.src === "seals"), sessions: pds.some(p => p.spans.length > 0) };
   const notes = [];
   if (!src.events) notes.push("No activity events for this person in these days: sign-in time and order seals only.");
-  if (src.seals) notes.push("Days before activity events began come from order seals: orders, scans and label prints, with no part counts.");
+  if (src.seals) notes.push("Days before activity events began come from order seals: orders, scans and label prints, with no piece counts.");
   if (info.capped.length) notes.push("Some lists were cut at their size limit: " + [...new Set(info.capped)].join(", ") + ".");
   const partial = info.errors.length > 0 || info.capped.length > 0;
   const out = { ok: true, now: ctx.now, name: P ? displayName(P) : niceName(name), from, to, days: rows, totals: S.totals, sources: src, notes };
@@ -577,6 +595,7 @@ async function opPerson(ctx, body) {
 async function opOrders(ctx, body) {
   const orderId = digits(body.orderId);
   if (!orderId) return json(400, { ok: false, error: "orderId required" });
+  if (/^\d{4,8}$/.test(orderId)) return json(400, { ok: false, error: "that is not an order number" });         // (4 to 8 digits could be a PIN: the stations never record such an id, and it is not echoed back)
   const [ar, sr] = await Promise.all([
     safe(col(ctx, COL.activity).where("orderId", "==", orderId).limit(LIM.orderEvents).get(), "events"),
     safe(col(ctx, COL.seals).where("orderId", "==", orderId).limit(LIM.orderSeals).get(), "seals")]);
@@ -611,7 +630,7 @@ async function opOrders(ctx, body) {
   evOut.sort((a, b) => a.at - b.at);
   const evCut = evOut.length > LIM.orderEventsOut ? evOut.slice(-LIM.orderEventsOut) : evOut;
   if (evOut.length > evCut.length) notes.push(`Showing the newest ${LIM.orderEventsOut} events of ${evOut.length}.`);
-  if (seals.length) notes.push("Steps marked seals come from the order's timeline seals (before activity events), with no part counts or work time.");
+  if (seals.length) notes.push("Steps marked seals come from the order's timeline seals (before activity events), with no piece counts or work time.");
   if (errors.length) notes.push("Some of this order's records could not be read just now.");
   const firstAt = out.length ? Math.min(...out.map(s => s.firstAt)) : 0, lastAt = out.length ? Math.max(...out.map(s => s.lastAt)) : 0;
   const res = { ok: true, now: ctx.now, orderId, steps: out, events: evCut,
@@ -622,7 +641,7 @@ async function opOrders(ctx, body) {
 }
 
 /* ── the door ── */
-const PROFILE = require("./_employeeProfile")({ COL, LIM, ms, num, r1, zeros, digits, cleanName, okName, niceName, bestForm, nameKeyOf, canonOf, scrub, validDay, addDays, nyDay, nyMidnight, clip, covered, spanOf, cached, readRollups, readEventsStart, eventRow, col, json, safe, tmpl, KEYS });   // the employee page: ops person (with range) and personOrders
+const PROFILE = require("./_employeeProfile")({ COL, LIM, ms, num, r1, zeros, digits, cleanName, okName, okStation, niceName, bestForm, nameKeyOf, canonOf, scrub, validDay, addDays, nyDay, nyMidnight, clip, covered, spanOf, cached, readRollups, readEventsStart, eventRow, col, json, safe, tmpl, KEYS });   // the employee page: ops person (with range) and personOrders
 const OPS = { overview: opOverview, person: (ctx, body) => (body.range != null || body.from || body.to ? PROFILE.opProfile(ctx, body) : opPerson(ctx, body)), orders: opOrders, personOrders: PROFILE.opOrders };
 /* op "live": the stations board (what each station is working on right now), kept in _stationLive.js */
 OPS.live = (ctx, body) => require("./_stationLive").op(ctx, body, { json, nyMidnight, cached, display: raw => canonOf(ctx, nameKeyOf(ctx, raw)) || niceName(raw) });
@@ -647,12 +666,28 @@ async function handle(event, handle_) {
   // the gate, before any data is touched
   const pass = await EP.resolve({ db: ctx.db });
   if (!pass.value) return json(403, { ok: false, error: "locked", code: "EDIT_PASSCODE_NOT_SET" });
-  if (!EP.sameSecret(body.key, pass.value)) { noteFail(ctx.cache, ip, ctx.now); return json(401, { ok: false, error: "unauthorized" }); }
-  const op = OPS[typeof body.op === "string" ? body.op : "overview"];
+  const offered = typeof body.key === "string" || typeof body.key === "number" ? body.key : "";      // (an object or array as the key: refused, never an exception)
+  if (!EP.sameSecret(offered, pass.value)) { noteFail(ctx.cache, ip, ctx.now); return json(401, { ok: false, error: "unauthorized" }); }
+  const opName = typeof body.op === "string" ? body.op : "overview";
+  const op = Object.prototype.hasOwnProperty.call(OPS, opName) ? OPS[opName] : null;       // (an own entry only: "constructor" and "toString" are not ops)
   if (!op) return json(400, { ok: false, error: "unknown op" });
   const al = await safe(loadAliases(ctx), "aliases");
   ctx.aliases = al.ok ? al.value : buildAliases(null); ctx.aliasError = al.ok ? "" : al.error;
-  try { return await op(ctx, body); }
+  try {
+    const res = await op(ctx, body);
+    if (ctx.aliasError && res && res.statusCode === 200) {           // without the alias list two spellings of one person may show as two: every answer says so, once
+      try {
+        const j = JSON.parse(res.body);
+        if (j && typeof j === "object" && !Array.isArray(j)) {
+          const errs = Array.isArray(j.errors) ? j.errors : [];
+          if (!errs.some(x => String(x).startsWith("aliases:"))) errs.push("aliases: " + ctx.aliasError);
+          j.partial = true; j.errors = errs.slice(0, 12);
+          return Object.assign({}, res, { body: JSON.stringify(j) });
+        }
+      } catch (_) { /* not JSON: leave it */ }
+    }
+    return res;
+  }
   catch (e) {
     if (e && e.unavailable) return json(503, { ok: false, error: "the data could not be read just now", errors: e.unavailable });
     console.warn("[employeeEfficiency] " + String((e && e.message) || e).slice(0, 200));

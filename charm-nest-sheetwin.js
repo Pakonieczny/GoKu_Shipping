@@ -1757,8 +1757,8 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
         // a spinner only while Engrave is actually reading or fitting it; otherwise what it waits for
         const working = !!(Engrave.isWorking && Engrave.isWorking(job));
         const note = working ? (s === "classify" ? "Reading the words…" : "Fitting the words on the back…")
-          : s === "classify" ? "Its words are not read yet: confirm them in Engrave"
-          : Engrave.canFit && !Engrave.canFit(job) ? "Waits for its sheet to be written, then it is fitted" : "Waits its turn in Engrave";
+          : s === "classify" ? "Confirm them in Engraving, or wait for them to be read"
+          : Engrave.canFit && !Engrave.canFit(job) ? "Waits for its sheet to be written, then it is fitted" : "Waits its turn in Engraving";
         return { kind: "preparing", label: "being prepared", job, text: job.text, working, note };
       }
       return { kind: "none", label: "none" };
@@ -2323,7 +2323,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   function goEngrave(x, b) {
     const job = x.eng && x.eng.job, rec = W.rec;
     RET.ctx = { sheetId: rec.id, poolId: x.poolId || x.id, rid: x.rid, key: job ? job.key : null, label: `${CODE[rec.metal] || ""} Sheet ${sheetNoOf(rec)}`, was: job ? job.state : null };
-    if (b) b.innerHTML = `<span class="spin"></span>Opening Engrave…`;
+    if (b) b.innerHTML = `<span class="spin"></span>Opening Engraving…`;
     const plain = () => close().then(() => {
       const v = Engrave.view();
       if (job && ["approved", "written", "skipped"].includes(job.state)) Engrave.restoreView(Object.assign({}, v, { tab: "done", focus: null, list: false, chosen: true, q: x.rid || "" }));

@@ -29,30 +29,66 @@
 @media(max-width:1100px){.doneRow.placementRow:has(.engravingSeals){grid-template-columns:184px minmax(160px,1fr) minmax(220px,1.2fr)}.egPlacementSeals{grid-column:2/-1;justify-self:start}}
 @media(max-width:900px){.doneRow.placementRow:has(.engravingSeals){grid-template-columns:76px minmax(0,1fr)}}
 
-/* One engraving inspector, shared by both sheet windows. */
-.swEng{border:1px solid var(--line);border-radius:12px;padding:10px 12px;display:grid;gap:9px;background:var(--card);min-width:0}
-.swEng .top{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
-.swEng .top b{font:600 13px var(--sans)}
-.swEng .top span{margin-left:auto;font:700 9.5px var(--mono);letter-spacing:.08em;text-transform:uppercase;border-radius:999px;padding:2px 8px;background:var(--paper2);color:var(--ink70)}
-.swEng[data-state=approve],.swEng[data-state=words]{border-color:#e7b9aa;background:linear-gradient(0deg,rgba(244,227,220,.35),rgba(244,227,220,.35)),var(--card)}
-.swEng[data-state=approve] .top span,.swEng[data-state=words] .top span{background:var(--claySoft);color:#8a3a26}
-.swEng[data-state=approved] .top span{background:var(--sageSoft);color:#3f5b3c}
+/* The back engraving card, one card for every place an order is shown (the order window's Overview and Sheet tab, the sheet window): charm-nest-engraving-seals.js, CNEngravingSeals.panel.
+   The card is its own size container (container "eng"): everything inside wraps and stacks by the card's own width, 200 to 700 px, never by the window's,
+   so the status, the words and the buttons never run past the card's edge or into the next column (min-width:0 all the way down, overflow-wrap on every line). */
+.swEng{container:eng / inline-size;border:1px solid var(--line);border-radius:12px;padding:12px;display:grid;grid-template-columns:minmax(0,1fr);gap:10px;background:var(--card);min-width:0;max-width:100%;box-sizing:border-box;overflow-wrap:anywhere}
+.swEng .top{display:flex;align-items:center;gap:6px 10px;flex-wrap:wrap;min-width:0}
+.swEng .top b{font:600 13px var(--sans);min-width:0}
+.swEng[data-state=words]{border-color:#e7b9aa;background:linear-gradient(0deg,rgba(244,227,220,.28),rgba(244,227,220,.28)),var(--card)}
 .swEng[data-state=none]{padding:8px 12px}
 .swEng[data-state=none] .top b{font-weight:500;color:var(--ink45)}
-.swEng .pv{display:grid;place-items:center;background:#fff;border:1px solid var(--line2);border-radius:9px;height:180px;min-width:0;overflow:hidden}
-.swEng .pv canvas,.swEng .pv img{width:100%;height:100%;max-width:100%;max-height:180px;object-fit:contain;display:block;border-radius:0}
-.swEng .words{font:14px/1.45 var(--serif);white-space:pre-wrap;overflow-wrap:anywhere;background:var(--paper2);border-radius:8px;padding:6px 9px}
-.swEng .acts{display:flex;gap:8px;flex-wrap:wrap}
-.swEng .acts .btn{display:inline-flex;align-items:center;gap:6px}
+.swEng .by{font:11px var(--sans);color:var(--ink45)}
+.egCard .egTop:empty{display:none}
+.egCard .egFor{flex:1 1 100%;min-width:0;font:12.5px/1.35 var(--sans);color:var(--ink)}
+.egCard .egFor b{font-weight:600}
+.egCard .egFor small{font:400 11px var(--mono);color:var(--ink45)}
+.egCard .egPill{flex:0 1 auto;min-width:0;max-width:100%;display:inline-flex;align-items:center;gap:6px;padding:3px 10px;border-radius:999px;background:var(--paper2);color:var(--ink70);font:700 9.5px/1.3 var(--mono);letter-spacing:.08em;text-transform:uppercase}
+.egCard .egPill i{flex:none;width:6px;height:6px;border-radius:50%;background:currentColor;opacity:.7}
+.egCard .egPill[data-s=approve]{background:var(--goldSoft);color:#7a5a1e}
+.egCard .egPill[data-s=words]{background:var(--claySoft);color:#8a3a26}
+.egCard .egPill[data-s=approved]{background:var(--sageSoft);color:#3f5b3c}
+.egCard .egWhy{display:grid;gap:3px;min-width:0}
+.egCard .egWhy b{font:500 17px/1.25 var(--serif);color:var(--ink)}
+.egCard .egSub{display:flex;align-items:flex-start;gap:7px;font:12px/1.4 var(--sans);color:var(--ink70)}
+.egCard .egSub .owSpin{margin-top:2px;width:11px;height:11px;flex-basis:11px}
+.swEng .pv{display:grid;grid-template:minmax(0,1fr) / minmax(0,1fr);place-items:center;background:#fff;border:1px solid var(--line2);border-radius:9px;height:180px;height:clamp(120px,62cqw,200px);min-width:0;overflow:hidden;position:relative}
+.swEng .pv:empty{display:none}
+.swEng .pv.egPvNone{height:auto;min-height:0;padding:12px 10px;text-align:center;background:var(--paper2);border-style:dashed}
+.swEng .pv canvas,.swEng .pv img{width:100%;height:100%;max-width:100%;max-height:none;object-fit:contain;display:block;border-radius:0}
+.egCard .egWords,.egCard .egUnclear{display:grid;gap:4px;min-width:0}
+.egCard .egLbl{font:700 9px/1.2 var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--ink45)}
+.swEng .words{font:15px/1.45 var(--serif);white-space:pre-wrap;overflow-wrap:anywhere;background:var(--paper2);border-radius:8px;padding:7px 10px;min-width:0}
+.swEng .words.egNone{font:italic 13px/1.4 var(--serif);color:var(--ink45);background:transparent;padding:0}
+.egCard .egMeta{font:11px/1.4 var(--sans);color:var(--ink45)}
+.egCard .egUnclear ul{margin:0;padding:0;list-style:none;display:grid;gap:3px}
+.egCard .egUnclear li{position:relative;padding-left:13px;font:12px/1.4 var(--sans);color:#8a3a26}
+.egCard .egUnclear li::before{content:"";position:absolute;left:2px;top:.55em;width:5px;height:5px;border-radius:50%;background:currentColor;opacity:.6}
+.swEng .acts{display:grid;gap:8px;min-width:0;padding-top:4px}
+.swEng .acts .btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;max-width:100%;white-space:normal;text-align:center;line-height:1.25}
+.swEng .acts .egOpen{min-width:0}
+.swEng .acts .btn.egApproveButton{white-space:nowrap}
+.swEng .acts .btn.egApproveButton.egAsk{font-size:11.5px;padding:6px}
+.swEng .acts .btn.egApproveButton.egOff{background:var(--card2);border-color:var(--line);color:var(--ink45)}
+.egCard .egOpen{justify-self:stretch}
+.egCard .egOffWhy{font:12px/1.4 var(--sans);color:var(--ink70);margin-top:-2px}
 .swEng .acts .btn svg{width:14px;height:14px}
 .swEng .acts .egApproveButton svg{width:22px;height:22px}
 .swEng .egApproveButton:disabled{opacity:1;cursor:default}
-.swEng .egHistory{border-top:1px solid var(--line2);padding-top:3px}
+.swEng .egHistory{border-top:1px solid var(--line2);padding-top:6px}
 .swEng .egHistory .engravingSeals{max-width:100%}
 .swEng .egApproveWrap{width:100%;min-width:0;margin-right:0}
-.swEng .egApproveWrap>.egButtonSeal{left:calc(144px - var(--seal-fit,var(--seal-base,50px)) / 2 + 8px);right:0;top:calc(36px - var(--seal-fit,var(--seal-base,50px)));width:auto;height:var(--seal-fit,var(--seal-base,50px));max-width:none;padding:0 8px;gap:16px}
+.swEng .egApproveWrap>.egButtonSeal{left:calc(144px - var(--seal-fit,var(--seal-base,50px)) / 2 + 8px);right:0;top:calc(36px - var(--seal-fit,var(--seal-base,50px)));width:auto;height:var(--seal-fit,var(--seal-base,50px));max-width:none;padding:0;gap:6px}
 .swEng .acts:empty{display:none}
-.swEng .by{font:11px var(--sans);color:var(--ink45)}
+.swEng.egCompact{padding:10px;gap:8px}
+.egCompact .egWhy b{font-size:15px}
+.egCompact .pv{height:104px;height:clamp(96px,44cqw,132px)}
+.egCompact .words{font-size:14px;padding:6px 9px}
+/* the card's own width, not the window's: wide enough, the status sits at the right of the piece and the open button keeps its own width; narrow, the pieces stack and the
+   Approved button shortens so its seal still rests half over it at full size (the Overview's column is 200 px) */
+@container eng (min-width:320px){.egCard .egFor{flex-basis:7em}.egCard .egFor+.egPill{margin-left:auto}}
+@container eng (min-width:360px){.egCard .egOpen{justify-self:start}}
+@container eng (max-width:236px){.swEng .btn.egApproveButton{min-width:140px}.swEng .egApproveWrap>.egButtonSeal{left:calc(140px - var(--seal-fit,var(--seal-base,50px)) / 2 + 8px)}}
 .swEng.flash{animation:swFlash 1.4s ease}
 @keyframes swFlash{0%{box-shadow:0 0 0 0 rgba(95,122,91,.55)}60%{box-shadow:0 0 0 10px rgba(95,122,91,0)}}
 
