@@ -1154,7 +1154,10 @@ dialog.bcLb img{max-width:92vw;max-height:84vh;border-radius:11px;display:block;
     <div class="dlgHead">
       <div style="min-width:0">
         <h3 id="amTitle">Order</h3>
-        <div class="sub" id="amSub" style="font-size:11.5px;color:var(--ink45);margin-top:2px"></div>
+        <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:2px">
+          <div class="sub" id="amSub" style="font-size:11.5px;color:var(--ink45)"></div>
+          <span id="amSeal" style="display:none"></span>
+        </div>
       </div>
       <div class="right">
         <button class="btn ghost sm" id="amShipBtn" title="The only Etsy call in History: live shipping and delivery status">Check shipping</button>
@@ -1198,6 +1201,7 @@ dialog.bcLb img{max-width:92vw;max-height:84vh;border-radius:11px;display:block;
 <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
 <script src="charm-nest-progress.js"></script>
 <script src="order-timeline.js?v=20260929-cx-a"></script>
+<script src="station-seals.js?v=20261005-s4a"></script>
 <script>
 /* ═══════════════════════════════════════════════════════════════════════════
    BRITES DESIGN STATION
@@ -6906,6 +6910,7 @@ async function openArchiveOrder(rid) {
   $("#amTitle").textContent = "Order " + rid;
   $("#amBody").innerHTML = `<div class="amLoading"><span class="spin"></span> Reading the archive…</div>`;
   $("#amShipBtn").disabled = true;
+  try { window.StationSeals && StationSeals.clear($("#amSeal")); } catch (_) {}   // (the last order's seal never sits under this one's number)
   openDlg(dlg);
 
   let rec = archiveDetail.get(rid) || await idbGet("detail", rid).then(r => r?.rec).catch(() => null);
@@ -6932,6 +6937,8 @@ function paintArchiveDetail(rec) {
   $("#amTitle").textContent = `Order ${rec.orderNumber || rec.receiptId}`;
   const sub = $("#amSub");
   if (sub) sub.textContent = `Completed ${fmtDay(rec.completedDay)}${rec.completedBy ? ` by ${rec.completedBy}` : ""}`;
+  // the order's own seal(s), the Charm Sorter's Seal (station-seals.js): one read of its timeline, nothing when none is recorded
+  try { if (window.StationSeals) StationSeals.show($("#amSeal"), rec.receiptId); } catch (_) {}
 
   const addr = rec.ship || {};
   const addrLines = [addr.name, addr.first_line, addr.second_line,
