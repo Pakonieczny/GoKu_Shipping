@@ -28,6 +28,11 @@ async function main() {
   const srv = await start({ receipts: [] });
   // a cancelled order in the cloud's Cancelled list (the sorter reads it when the search first opens)
   srv.st.put('Charm_Nest_Cancelled', '4173299999', { orderId: '4173299999', by: 'Etsy', why: 'buyer asked', at: Date.now() - 3600e3, buyer: 'Cara Quinn', lines: [{ transactionId: '1', sku: 'LEAF_2', title: 'Leaf Charm', quantity: 1 }], sheets: [] });
+  // Zoe's line sits on a written sheet: the CLOUD holds that (the sheet's record lists her pool id, her pool row names the sheet). The search says where a piece is
+  // from the cloud's one answer (PiecePlacement), so a sheet that only this page's own rows named would be a stale hint, not a fact (consistency: audit.md row 8)
+  const ZOE_POOL = '4176229486_41762294861_1', NOW = Date.now();
+  srv.st.put('Charm_Nest_Sheets', 'sh2', { id: 'sh2', metal: 'gold', sheetIndex: 2, status: 'complete', fileBase: '2026-09-28_GF_Sheet_2', folder: '2026-09-28_GF_Sheet_2', poolIds: [ZOE_POOL], orders: ['4176229486'], charms: [{ id: 'sh2-c0', poolId: ZOE_POOL, order: '4176229486', name: '4176229486 · SEA_TURTLE' }], placements: [{ id: 'sh2-c0', cxPt: 40, cyPt: 40, angle: 0, wPt: 28, hPt: 28 }], placedCount: 1, charmCount: 1, density: .1, stock: { wPt: 300, hPt: 150, wIn: 6, hIn: 4.5 }, verification: { ok: true }, outputs: {}, createdAt: NOW - 3600e3, updatedAt: NOW - 600e3 });
+  srv.st.put('Charm_Pool', ZOE_POOL, { poolId: ZOE_POOL, orderId: '4176229486', sku: 'SEA_TURTLE', state: 'written', sheetId: 'sh2', sheetName: '2026-09-28_GF_Sheet_2', createdAt: NOW - 3600e3, updatedAt: NOW - 600e3 });
   const browser = await chromium.launch({ executablePath: process.env.CHROMIUM || '/opt/pw-browsers/chromium-1194/chrome-linux/chrome', args: ['--no-sandbox'] });
   try {
     const context = await browser.newContext({ viewport: { width: 1440, height: 950 } });

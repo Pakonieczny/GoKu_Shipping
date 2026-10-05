@@ -282,9 +282,10 @@ const sleep = ms => new Promise(r => setTimeout(r, ms)), nap = ms => sleep(Math.
       log('hidden tab: 0 reads in 5.5 s, nothing moved; shown again: caught up in one read, no stamp, no flight, counts right');
     }
     {
-      // another tab (Orders) on screen: no read; the Review tab shown again is caught up, nothing moves
+      // another tab (Engraving: it draws no completions) on screen: no read; the Review tab shown again is caught up, nothing moves.
+      // (The Orders and Library tabs draw "done by hand / open" too, so they follow the feed like Review: block below)
       const rid = R(5), a0 = await A.mark();
-      await A.page.evaluate(() => CN.setMode('orders')); await sleep(900);
+      await A.page.evaluate(() => CN.setMode('engrave')); await sleep(900);
       const r0 = A.reads.length;
       await cloud('customPut', Object.assign(target(rid), { by: 'Maria B', how: 'button' }));
       await sleep(4500);
@@ -296,16 +297,30 @@ const sleep = ms => new Promise(r => setTimeout(r, ms)), nap = ms => sleep(Math.
       // one quiet read as another tab is shown, once the last read is more than 5 s old (the Orders tab, the Library's issues and
       // the rail agree when they are looked at)
       const rid2 = R(6);
-      await A.page.evaluate(() => CN.setMode('orders')); await sleep(5800);
+      await A.page.evaluate(() => CN.setMode('engrave')); await sleep(5800);
       const r1 = A.reads.length;
       await cloud('customPut', Object.assign(target(rid2), { by: 'Maria B', how: 'button' }));
-      await sleep(700); assert.equal(A.reads.length, r1, 'no read while on the Orders tab');
+      await sleep(700); assert.equal(A.reads.length, r1, 'no read while on the Engraving tab');
       await A.page.evaluate(() => CN.setMode('nest'));
       await dueIn(A, { f: k => B.maps.customDone[k], a: KEY(rid2) }, 'one read as another tab is shown', 4000);
       assert.equal(A.reads.length - r1, 1, 'one read, not a poller');
       await A.page.evaluate(() => CN.setMode('review')); await sleep(800); await A.calm();
       assert.deepEqual((await A.since(a0)).filter(e => e.k !== 'note'), [], 'still nothing moved');
       log('another tab on screen: no feed read; Review shown again or another tab shown: one read, nothing moves, state right');
+    }
+    {
+      // the Orders tab follows the same feed (the list's pills say "done by hand" from these records): a completion made elsewhere is held within seconds, nothing stamped or flown
+      const rid = R(7), key = KEY(rid);
+      await cloud('customReopen', { key, by: 'Maria B' });   // (R(7) was completed in 1b: open it again, on the Review tab, before the Orders tab is shown)
+      await dueIn(A, { f: k => !B.maps.customDone[k], a: key }, 'A holding the reopen'); await dueIn(B, { f: k => !B.maps.customDone[k], a: key }, 'B holding the reopen');
+      await A.page.evaluate(() => CN.setMode('orders')); await sleep(900); await A.calm();
+      const a0 = await A.mark(), t = Date.now(); await cloud('customPut', Object.assign(target(rid), { by: 'Maria B', how: 'button' }));
+      await dueIn(A, { f: k => B.maps.customDone[k], a: KEY(rid) }, 'A following on the Orders tab', 6000);
+      assert(Date.now() - t <= 5000, 'the Orders tab held the completion within seconds');
+      await nap(1500);
+      assert.deepEqual((await A.since(a0)).filter(e => e.k !== 'note'), [], 'nothing stamped or flown on the Orders tab');
+      await A.page.evaluate(() => CN.setMode('review')); await sleep(800); await A.calm();
+      log('Orders tab: a completion made elsewhere is held within ' + ((Date.now() - t) / 1000).toFixed(1) + ' s, nothing moves');
     }
     {
       // the order window open on the Orders tab: its timeline feed (2.5 s) brings a change in, and the piece's row in the window follows

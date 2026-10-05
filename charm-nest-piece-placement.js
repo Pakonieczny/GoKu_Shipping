@@ -189,19 +189,22 @@
     const rowsOf = rid => { try { return (root.Orders && root.Orders.rows ? root.Orders.rows() || [] : []).filter(r => r && r.order && ridOf(r.order.receiptId) === rid && r.state !== 'gone'); } catch (_) { return []; } };
     const cancelled = rid => { try { return !!(root.Cancelled && root.Cancelled.has && root.Cancelled.has(rid)); } catch (_) { return false; } };
     const handOfRow = row => { try { return root.CharmNestReadiness && root.CharmNestReadiness.handOf ? root.CharmNestReadiness.handOf(row) : null; } catch (_) { return null; } };
-    const holdOfRow = row => row && (row.hold || row.state === 'held') ? { reason: str(typeof row.hold === 'string' ? row.hold : (row.hold && (row.hold.reason || row.hold.text)) || row.reason || '', 200), at: +(row.hold && row.hold.at) || 0, by: str(row.hold && row.hold.by, 80) } : null;
+    // (a row's own hold counts until the cloud has confirmed it (row.holdSeen, set by PlacementFeed.adoptHolds): from then on the cloud's pool rows are the hold's one record, so a Release made on
+    //  another computer releases it here too. o.cloudOnly asks what the cloud alone says: the feed uses it to tell a hold the cloud confirms from one still being written)
+    const holdOfRow = (row, o) => row && !row.holdSeen && !(o && o.cloudOnly) && (row.hold || row.state === 'held') ? { reason: str(typeof row.hold === 'string' ? row.hold : (row.hold && (row.hold.reason || row.hold.text)) || row.reason || '', 200), at: +(row.hold && row.hold.at) || 0, by: str(row.hold && row.hold.by, 80) } : null;
     /** The facts of one line of an order, from the line's row and its copies (OrderPieces entries: records first, live pages next, the pool row only a hint). */
     function factsOf(row, copies, o) {
       const mine = copies || [], sheets = [], seen = new Set();
       for (const c of mine) if (c && c.nested) { const k = c.sheetId || c.sheetLabel; if (!k || seen.has(k)) continue; seen.add(k); sheets.push({ id: c.sheetId || null, label: c.sheetLabel, metal: c.metal, setId: c.setId, cut: c.state === 'cut', pools: [c.poolId || c.key] }); }
       for (const s of sheets) for (const c of mine) if (c && c.nested && (c.sheetId || c.sheetLabel) === (s.id || s.label) && !s.pools.includes(c.poolId || c.key)) s.pools.push(c.poolId || c.key);
-      const lineHold = holdOfRow(row) || (!row && mine.some(c => c && c.problem === 'held') ? { reason: (mine.find(c => c.problem === 'held') || {}).why || '' } : null);
+      // (a hold the cloud keeps, a pool row taken off for a hold: OrderPieces says so on the piece as `hold`, so a page whose own row never heard of it (another computer pressed Hold) says it too)
+      const cloudHold = mine.find(c => c && c.hold), lineHold = holdOfRow(row, o) || (cloudHold ? { reason: str(cloudHold.hold.reason, 200), at: +cloudHold.hold.at || 0, by: str(cloudHold.hold.by, 80) } : !row && mine.some(c => c && c.problem === 'held') ? { reason: (mine.find(c => c.problem === 'held') || {}).why || '' } : null);
       const sk = mine[0] || {}, hand = !lineHold && row ? handOfRow(row) : (!lineHold && mine.length && mine.every(c => c && c.hand) ? mine[0].hand : null);
       return { key: row ? row.key : sk.lineKey || null, name: sk.label || '', metal: (row && (row.material || (row.spec && row.spec.material))) || sk.metal || null, qty: Math.max(mine.length, 1),
         cancelled: (o && o.cancelled) || (row && row.state === 'gone') || (!row && mine.length > 0 && mine.every(c => c && c.gone)), hold: lineHold, hand,
         sheets, copies: Math.max(mine.length, 1), copiesOn: mine.filter(c => c && c.nested).length, loading: mine.some(c => c && c.loading), unsure: mine.some(c => c && c.unsure), why: (mine.find(c => c && !c.nested && c.reason) || {}).reason || '' };
     }
-    function ofOrder(orderId) {
+    function ofOrder(orderId, opts) {
       hook();
       const rid = ridOf(orderId), out = { orderId: rid, order: null, pieces: [], byKey: new Map() };
       if (!rid) { out.order = roll([]); return out; }
@@ -210,14 +213,14 @@
       for (const c of copies) { const k = c.lineKey; (byLine.get(k) || byLine.set(k, []).get(k)).push(c); }
       const keys = rows.length ? rows.map(r => r.key) : [...byLine.keys()];
       for (const k of keys) {
-        const p = resolve(factsOf(rows.find(r => r.key === k) || null, byLine.get(k) || [], { cancelled: cx }));
+        const p = resolve(factsOf(rows.find(r => r.key === k) || null, byLine.get(k) || [], { cancelled: cx, cloudOnly: !!(opts && opts.cloudOnly) }));
         out.pieces.push(p); out.byKey.set(k, p);
       }
       out.order = roll(out.pieces);
       return out;
     }
-    const of = (orderId, lineKey) => { const o = ofOrder(orderId); return lineKey ? o.byKey.get(lineKey) || null : o.order; };
-    function ofRow(row) { const rid = row && row.order ? ridOf(row.order.receiptId) : ''; return rid && row.key ? of(rid, row.key) : null; }
+    const of = (orderId, lineKey, opts) => { const o = ofOrder(orderId, opts); return lineKey ? o.byKey.get(lineKey) || null : o.order; };
+    function ofRow(row, opts) { const rid = row && row.order ? ridOf(row.order.receiptId) : ''; return rid && row.key ? of(rid, row.key, opts) : null; }
     return { of, ofOrder, ofRow, factsOf, subscribe: fn => { hook(); subs.add(fn); return () => subs.delete(fn); }, resolve, roll, history, withHistory, STATES };
   }
   return { resolve, roll, history, withHistory, makePage, STATES, WAIT_TEXT, NEXT_TEXT };
