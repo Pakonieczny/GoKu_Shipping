@@ -447,8 +447,10 @@ const until = async (fn, ms = 20000, what = '') => { const t0 = Date.now(); for 
     await page.waitForSelector('#libBody .dndMenu .dndMenuItem', { timeout: 4000 });
     const menu = await page.$$eval('#libBody .dndMenu .dndMenuItem', m => m.map(x => [x.firstChild.textContent, x.getAttribute('aria-disabled') === 'true', x.lastChild.textContent]));
     const mnames = menu.map(m => m[0]);
-    for (const n of ['In progress', 'Laser cutting', 'Completed', 'New set', 'Set 1', 'Set 2', 'Set 3', 'Set 4']) assert(mnames.some(x => x.startsWith(n)), 'Move to… lists ' + n + ': ' + mnames);
-    assert(menu.find(m => m[0] === 'In progress')[1] && /Already/.test(menu.find(m => m[0] === 'In progress')[2]), 'a place that is not allowed is listed, dimmed, with the reason: ' + JSON.stringify(menu));
+    // (the sheet's own column and its own set are not listed: nothing in the menu is greyed only because the sheet is already there)
+    for (const n of ['Laser cutting', 'Completed', 'New set', 'Set 1', 'Set 2', 'Set 3']) assert(mnames.some(x => x.startsWith(n)), 'Move to… lists ' + n + ': ' + mnames);
+    for (const n of ['In progress', 'Set 4']) assert(!mnames.some(x => x.startsWith(n)), 'Move to… does not list the sheet\'s own place ' + n + ': ' + mnames);
+    assert(!menu.some(m => /already in/i.test(m[2])), 'no entry says "Already in": ' + JSON.stringify(menu));
     await shot(page, '10-move-to-menu');
     assert.equal(await page.evaluate(() => document.activeElement.className + ' | ' + document.activeElement.firstChild.textContent), 'dndMenuItem | Laser cutting', 'focus moves to the first allowed place');
     await page.keyboard.press('ArrowDown');   // Completed
@@ -464,7 +466,7 @@ const until = async (fn, ms = 20000, what = '') => { const t0 = Date.now(); for 
     await until(() => page.evaluate(() => __calls.some(c => c[0] === 'commit' && c[1] === 'dD01' && c[2] === '{"set":"set-t-1"}')), 5000, 'keyboard commit');
     await until(() => setOfCard(page, 'dD01').then(s => s === 'set-t-1'), 12000, 'dD01 listed under Set 1');
     assert.equal(await page.evaluate(() => document.activeElement.className.includes('dndGrip') && !!document.activeElement.closest('.libCard[data-id="dD01"]')), true, 'focus returns to the card where it now stands');
-    ok.push('B · keyboard: the grip opens "Move to…" with the same places (the not-allowed ones dimmed with the reason), arrows and Escape work, Enter on a set moves the sheet by the same plan and commit, and focus lands on the card in its new set');
+    ok.push('B · keyboard: the grip opens "Move to…" with the places that can apply (never its own column or set), arrows and Escape work, Enter on a set moves the sheet by the same plan and commit, and focus lands on the card in its new set');
     await page.click('#libBody .dndMovingWrap .dndX').catch(() => {}); await until(() => page.evaluate(() => !document.querySelector('.dndMovingWrap')), 6000, 'bar gone');
 
     // 7 · a whole set picked up: it can go to the areas, never into another set
