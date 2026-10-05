@@ -132,7 +132,7 @@
     if (r.loading) return 'loading';
     const e = r.eng, j = r.job, S = root.CNEngravingSeals;
     const seals = j && S ? tryDo(() => S.list(j).map(s => s.id).join(','), '') : e.saved && S ? tryDo(() => S.list({ seals: e.saved.seals || [], approvedAt: e.saved.approvedAt, approvedBy: e.saved.approvedBy, state: e.saved.state }).map(s => s.id).join(','), '') : '';
-    return JSON.stringify([e.kind, e.text, e.note, !!e.working, e.by, +e.at || 0, !!e.foreign, j && j.state, j && +j.approvedAt || 0, seals, j && idOf(j.fit), j && idOf(j.view),
+    return JSON.stringify([e.kind, e.text, e.note, !!e.working, e.by, +e.at || 0, !!e.foreign, j && j.state, j && +j.approvedAt || 0, j && j.backPending || '', seals, j && idOf(j.fit), j && idOf(j.view),
       e.back && (e.back.approvedAt || '') + (e.back.png || (e.back.outputs && e.back.outputs.png && e.back.outputs.png.url) || e.back.preview || '')]);
   }
 
@@ -169,7 +169,7 @@
       card.innerHTML = S.panel(Object.assign({}, eng, { pieceLabel: ctx.label || '', pieceMeta: ctx.meta || '', compact: !!ctx.compact }));
       host.replaceChildren(card);
       // (the preview zooms and pans where it lies, as the order's two pictures do: charm-nest-zoompan.js; kept for this piece when the card is drawn again)
-      S.wirePanel(card, eng, { imageUrl: u => (/^https?:/.test(u) ? cors(u) : u), approve: b => approve(b), open: b => openEngrave(b), zoom: { id: 'ow:eng', key: ident(ctx) } });
+      S.wirePanel(card, eng, { imageUrl: u => (/^https?:/.test(u) ? cors(u) : u), approve: b => approve(b), open: b => openEngrave(b), stale: () => refresh(true, true), zoom: { id: 'ow:eng', key: ident(ctx) } });
       // every wait is said: the picture still coming, the words still being read
       const pv = card.querySelector('.pv'), im = pv && pv.querySelector('img');
       if (im && !im.complete) {
@@ -183,8 +183,10 @@
     function refresh(force, quiet) {
       if (gone || !host.isConnected) return;
       attached = true;
-      if (busy) return;   // (this card's own approval is on its way: it draws the end of it)
       const r = engOf(ctx, seenAt), s = sigOf(r) + '|' + (ctx.label || '') + '|' + (ctx.meta || '') + '|' + (ctx.compact ? 1 : 0), has = !!(r.loading || r.eng && r.eng.kind !== 'none');
+      // (this card's own approval is on its way: the card is left as it is until the approval stands, i.e. the stamp has landed; the saving of the back
+      //  file that follows can take seconds, and the card says Approved, with that saving said under it, as soon as the stamp is down)
+      if (busy && !(r.job && DONE.includes(r.job.state))) return;
       last = r;
       if (!force && s === sig) return;
       // (something is here to show but cannot be drawn yet: the window is not on screen, or a seal is being pressed: it says so)
@@ -196,24 +198,40 @@
       render(r);
       if (!first && !quiet && before !== shown) told(r);
     }
+    let asking = false;
     async function approve(btn) {
-      const r = last || engOf(ctx, seenAt), job = r.job; if (!job || !btn) return;
-      const who = tryDo(() => (root.CNEmployee && (root.CNEmployee.name() || root.CNEmployee.ask())) || '', '');
-      if (!who) return;
+      const r = last || engOf(ctx, seenAt), job = r.job, S = root.CNEngravingSeals; if (!job || !btn || !S) return;
+      // (a card that is out of date approves nothing: only a placement waiting for approval, which is what the button offered, is approved)
+      if (job.state !== 'review') { refresh(false, true); return; }
+      // the name kept on this computer, else the small name bar inside this window (never a browser pop-up on the order window); a press goes on at
+      // once, in the same breath, when the name is known (a second press finds the button already off)
+      let who = S.who();
+      if (typeof who !== 'string') {
+        const fit0 = job.fit, view0 = job.view;
+        if (asking) return; asking = true;
+        try { who = await who; } finally { asking = false; }
+        if (!who || gone) return;
+        if (!btn.isConnected) btn = host.querySelector('[data-e=approve]');   // (the card was drawn again while the name was typed)
+        if (!btn || btn.disabled) return;
+        // (the placement the person looked at is the one approved: if it changed while the name was typed, the card shows the new one first)
+        if (!last || !last.job || last.job !== job || job.state !== 'review' || job.fit !== fit0 || job.view !== view0) { refresh(true, true); return; }
+      }
       const token = busy = ++nextId; const key = ident(ctx);
-      btn.disabled = true; btn.setAttribute('aria-busy', 'true');
+      S.busyLabel(btn);
       let ok = false;
       try {
-        await root.Engrave.approve(job, who, btn);
+        const run = root.Engrave.approve(job, who, btn);   // (it starts at once and puts "Approved" on the button: the wait is said again, with its spinner, until the stamp)
+        S.busyLabel(btn);
+        await run;
         ok = DONE.includes(job.state);
         if (!ok && btn.isConnected) btn.disabled = false;
         // (Engrave.approve says nothing for a line that has left the pull, a cancelled order's: a press that did nothing says why)
         if (!ok && job.row && job.row.state === 'gone') say('This order has left the pull (cancelled or shipped), so its back engraving is not approved here.', '', 6000);
       } catch (e) { say('Not approved: ' + (e && e.message || e), 'bad', 6000); if (btn.isConnected) btn.disabled = false; }
       finally { if (btn.isConnected) btn.removeAttribute('aria-busy'); if (busy === token) busy = 0; }
-      if (!ok || gone) return;
+      if (!ok || gone) { if (!gone && ident(ctx) === key) refresh(false, true); return; }   // (a press that did nothing: the card shows what the piece is now)
       poke();
-      if (ident(ctx) === key) refresh(true, true);
+      if (ident(ctx) === key) refresh(false, true);
       told(last);
     }
     async function openEngrave(btn) {

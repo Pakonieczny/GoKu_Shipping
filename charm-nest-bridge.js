@@ -12549,15 +12549,21 @@ const OrderWin = window.OrderWin = (() => {
     CNEngravingSeals.wirePanel(panel.querySelector('[data-engraving-panel]'),eng,{
       imageUrl:url=>/^https?:/.test(url)?cors(url):url,
       zoom:{id:'ow:sheetEng',key:rid+'|'+(x0&&(x0.poolId||x0.id)||'')},
+      stale:()=>{if(SV.info)paintPanel(SV.info);},
       approve:async ap=>{
-        const who=me() || askEmployee();if(!who)return;
-        ap.disabled=true;ap.textContent="Approved";ap.setAttribute("aria-busy","true");
+        // (the name kept on this computer, else the small name bar in this window: never a browser pop-up on the order window)
+        if(eng.job?.state!=="review"){if(SV.info)paintPanel(SV.info);return;}   // (a card that is out of date approves nothing: only a placement waiting for approval is approved)
+        let who=CNEngravingSeals.who();if(typeof who!=="string"){who=await who;if(!who)return;if(!ap.isConnected)ap=panel.querySelector('[data-e=approve]');if(!ap || ap.disabled || eng.job.state!=="review")return;}
+        CNEngravingSeals.busyLabel(ap);
         try{
-          await Engrave.approve(eng.job,who,ap);
-          if(!["approved","written"].includes(eng.job.state)){ap.disabled=false;return;}
+          const run=Engrave.approve(eng.job,who,ap);CNEngravingSeals.busyLabel(ap);   // (it puts "Approved" on the button as it starts: the wait is said again until the stamp)
+          // (the card turns Approved as soon as the stamp is down, the saving of the back file said under it; not when that saving is over)
+          await CNEngravingSeals.stamped(eng.job,run);
+          if(!["approved","written"].includes(eng.job.state)){await run;ap.disabled=false;return;}
           if(x0)x0.eng={...eng,kind:"approved",by:eng.job.approvedBy,at:eng.job.approvedAt};
           if(SV.info)paintPanel(SV.info);if(window.RunCtl)RunCtl.poke();
-        }catch(e){toast("Not approved: "+e.message,"bad",6000);ap.disabled=false;}
+          await run;
+        }catch(e){if(!["approved","written"].includes(eng.job.state)){toast("Not approved: "+e.message,"bad",6000);ap.disabled=false;}}
         finally{ap.removeAttribute("aria-busy");ap.textContent="Approved";}
       },
       open:async()=>{

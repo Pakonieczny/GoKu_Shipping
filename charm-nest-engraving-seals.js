@@ -34,6 +34,29 @@
   const SOURCE={personalization:'the personalisation box',personalisation:'the personalisation box',buyerMessage:"the buyer's message",staffNote:'the staff note',messages:'the staff messages'};
   const NOT_ENGRAVABLE=/not engravable|cannot (?:be |take )engrav|design.*engrav/i;
   let askN=0;
+  /* What an approval that did not go through said, kept for the card until the next press or until the piece is no longer to approve (a toast sits
+     under a modal order window where nobody sees it; the card says it where the button is). Keyed by the job. */
+  const fails=new Map();
+  const badToasts=()=>new Map([...(root?.document?.querySelectorAll('#toasts .toast.bad') || [])].map(n=>[n,n.dataset.n]));
+  /** Who presses: the name kept on this computer, else the small name bar inside the open window (CNEmployee.edit: never a browser pop-up on
+   *  the order window). A string when the name is known (so a press goes on without a wait), else a promise of the name, '' when it is put away. */
+  function who(why){
+    const E=root?.CNEmployee;let n='';
+    try{n=String((E && E.name && E.name()) || '').trim();}catch(_){}
+    if(n)return n;
+    try{return Promise.resolve(E && E.edit?E.edit({why:why || 'Kept with this approval and its seal.'}):E && E.ask?E.ask():'').then(v=>String(v || '').trim(),()=>'');}catch(_){return Promise.resolve('');}
+  }
+  /** The wait of an approval, said on its button: it cannot be pressed again, and a small spinner says what is being done. */
+  function busyLabel(btn){if(!btn || !btn.isConnected)return;btn.disabled=true;btn.setAttribute('aria-busy','true');btn.innerHTML='<span class="spin"></span>Approving…';}
+  /** Resolves when the approval stands (the stamp is down and the job is approved), or when `run` (the approval itself, which goes on to save the back file) ends. */
+  function stamped(job,run){return new Promise(res=>{let t=0;const done=()=>{clearInterval(t);res();};t=setInterval(()=>{if(['approved','written'].includes(job?.state))done();},80);Promise.resolve(run).then(done,done);});}
+  /** The words of the piece's back file while it is saved or waits for the cloud: the approval stands either way. */
+  function savingNote(job){
+    if(!job)return null;
+    if(job.backPending)return {note:'The back file waits for the cloud: it is saved by itself when it is back',working:false};
+    if(job.state==='approved')return {note:'Saving the back file…',working:true};
+    return null;
+  }
   /** What is unclear about the words, in plain lines: what was read with a question, and what the buyer asked for that the words alone do not carry. */
   function unclear(e){
     const job=e.job || {},out=[],add=t=>{t=String(t ?? '').trim();if(t && !NOT_ENGRAVABLE.test(t) && !out.includes(t))out.push(t);};
@@ -88,10 +111,12 @@
     const words=e.text?`<div class="egWords"><span class="egLbl">${lbl}</span><div class="words">${esc(e.text)}</div>${from?`<span class="egMeta">${esc(from)}</span>`:''}</div>`
       :kind==='words' || kind==='preparing'?`<div class="egWords"><span class="egLbl">${lbl}</span><div class="words egNone">Nothing read yet</div></div>`:'';
     const un=unclear(e),unclearHtml=un.length?`<div class="egUnclear"><span class="egLbl">${kind==='words'?'What is unclear':'Worth a look'}</span><ul>${un.map(t=>`<li>${esc(t)}</li>`).join('')}</ul></div>`:'';
-    const sub=e.note?`<span class="by egSub">${e.working?'<span class="owSpin" aria-hidden="true"></span>':''}<span>${esc(e.note)}</span></span>`:'';
+    const saving=kind==='approved' && !e.note?savingNote(e.job):null,note=e.note || saving?.note || '',working=e.note?e.working:saving?.working;
+    const sub=note?`<span class="by egSub">${working?'<span class="owSpin" aria-hidden="true"></span>':''}<span>${esc(note)}</span></span>`:'';
+    const failKey=e.job?.key,failed=kind==='approve' && failKey?fails.get(failKey):'';if(kind!=='approve' && failKey)fails.delete(failKey);
     const forPiece=e.pieceLabel?`<span class="egFor"><b>${esc(e.pieceLabel)}</b>${e.pieceMeta?` <small>${esc(e.pieceMeta)}</small>`:''}</span>`:'';
     const pill=status?`<span class="egPill" data-s="${esc(kind)}"><i aria-hidden="true"></i>${status}</span>`:'';
-    return `${compact?'':'<span class="fLabel">Back engraving</span>'}<div class="swEng egCard${compact?' egCompact':''}" data-state="${esc(kind)}"><div class="top egTop">${forPiece}${pill}</div><div class="egWhy"><b>${why}</b>${sub}</div>${preview}${words}${unclearHtml}<div class="acts">${acts}</div>${history?`<div class="egHistory">${history}</div>`:''}</div>`;
+    return `${compact?'':'<span class="fLabel">Back engraving</span>'}<div class="swEng egCard${compact?' egCompact':''}" data-state="${esc(kind)}"><div class="top egTop">${forPiece}${pill}</div><div class="egWhy"><b>${why}</b>${sub}</div>${preview}${words}${unclearHtml}<div class="acts">${acts}</div>${failed?`<div class="egFail" role="alert">${esc(failed)}</div>`:''}${history?`<div class="egHistory">${history}</div>`:''}</div>`;
   }
   /** The preview zooms and pans where it lies (charm-nest-zoompan.js, the one module for every order picture): a click zooms in on the
    *  point clicked, a drag pans, the frame keeps its size. `zoom` ({id, key}) names the place and what it shows, so a card drawn again for
@@ -101,17 +126,31 @@
     try{Z.attach(slot,{id:(zoom&&zoom.id)||'eng',key:((zoom&&zoom.key)||job?.key||'')+(fitted?'|fit':'|png'),label:'Back engraving preview',maxPx:1800,
       hires:fitted?async({px})=>{const size=Math.max(900,Math.min(1800,Math.ceil(px/300)*300)),cv=root.Engrave.renderBack(job,size,{hatch:false,grid:false});cv.setAttribute('role','img');cv.setAttribute('aria-label','The full back engraving');return{el:cv,px:size};}:undefined});}catch(_){}
   }
-  function wirePanel(host,e,{approve,open,imageUrl,zoom}={}){
+  function wirePanel(host,e,{approve,open,imageUrl,zoom,stale}={}){
     // Approve engraving: the host's own approval runs (its name bar, Engrave.approve, the BACK ENGRAVING seal pressed on this very button). The wait
     // before the stamp is said on the button, with a small spinner; a refusal gives the button back as it was.
+    // A refusal says why where the button is: the line a toast would have said is shown in the card (a toast sits under a modal order window).
+    const key=e.job?.key || '',fit0=e.job?.fit,view0=e.job?.view;
     host.querySelector('[data-e=approve]')?.addEventListener('click',ev=>{
       const btn=ev.currentTarget;if(btn.disabled || !approve)return;
-      const was=btn.innerHTML;let run;
-      try{run=approve(btn);}catch(err){console.warn('engraving card: approve',err);return;}
+      // a card that is out of date approves nothing: only the placement it shows, still waiting for approval (the host draws the card again, and a new press is the person's)
+      if(e.job && (e.job.state!=='review' || e.job.fit!==fit0 || e.job.view!==view0)){try{stale && stale();}catch(_){}return;}
+      const was=btn.innerHTML,wasToasts=badToasts();let run;
+      if(key)fails.delete(key);host.querySelector('.egFail')?.remove();
+      const tell=err=>{
+        if(!btn.isConnected || btn.closest('[data-state=approved]') || !key || ['approved','written'].includes(e.job.state))return;   // (it went through: nothing to explain)
+        const toasted=[...badToasts()].filter(([n,c])=>wasToasts.get(n)!==c).map(([n])=>n.dataset.msg).filter(Boolean).pop(),msg=toasted || (err && String(err.message || err));
+        if(!msg)return;
+        fails.set(key,msg);
+        const acts=btn.closest('.acts');if(!acts)return;
+        let n=acts.parentElement.querySelector('.egFail');if(!n){n=root.document.createElement('div');n.className='egFail';n.setAttribute('role','alert');acts.after(n);}
+        n.textContent=msg;
+      };
+      try{run=approve(btn);}catch(err){console.warn('engraving card: approve',err);tell(err);return;}
       if(!run || typeof run.then!=='function')return;
       if(btn.disabled && btn.isConnected)btn.innerHTML='<span class="spin"></span>Approving…';
       const back=()=>{if(btn.isConnected && !btn.closest('[data-state=approved]')){btn.innerHTML=was;btn.removeAttribute('aria-busy');}};
-      run.then(back,err=>{console.warn('engraving card: approve',err);back();});
+      run.then(()=>{back();tell();},err=>{console.warn('engraving card: approve',err);back();tell(err);});
     });
     // Fix / View in Engraving: the host opens that exact order and piece (EngraveLink.open); the wait is a small labelled spinner on the button.
     host.querySelector('[data-e=engrave]')?.addEventListener('click',ev=>{
@@ -142,5 +181,5 @@
     row.dataset.sealCount=String(row.querySelectorAll('.seal').length);root.Seal.fit?.(row);button.disabled=true;button.textContent='Approved';button.setAttribute('aria-busy','true');
     try{await root.Seal.press(seal);}finally{button.disabled=wasDisabled;if(wasBusy==null)button.removeAttribute('aria-busy');else button.setAttribute('aria-busy',wasBusy);}
   }
-  return {merge,list,keep,add,html,press,record,panel,wirePanel,fromEvents};
+  return {merge,list,keep,add,html,press,record,panel,wirePanel,fromEvents,who,busyLabel,stamped};
 });

@@ -72,6 +72,7 @@
 .swEng .acts .btn.egApproveButton.egOff{background:var(--card2);border-color:var(--line);color:var(--ink45)}
 .egCard .egOpen{justify-self:stretch}
 .egCard .egOffWhy{font:12px/1.4 var(--sans);color:var(--ink70);margin-top:-2px}
+.egCard .egFail{font:12px/1.4 var(--sans);color:#8a3a26;background:var(--claySoft);border-radius:8px;padding:6px 10px;min-width:0;overflow-wrap:anywhere}
 .swEng .acts .btn svg{width:14px;height:14px}
 .swEng .acts .egApproveButton svg{width:22px;height:22px}
 .swEng .egApproveButton:disabled{opacity:1;cursor:default}

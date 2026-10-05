@@ -2115,16 +2115,18 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     const host = W.el.detail.querySelector("[data-r2=eng]"); if (!host) return;
     x.eng = engOf(x); const e = x.eng;
     host.innerHTML = CNEngravingSeals.panel(e);
-    CNEngravingSeals.wirePanel(host,e,{approve:b=>approveHere(x,b),open:b=>goEngrave(x,b),imageUrl:url=>/^https?:/.test(url)?cors(url):url,zoom:{id:'sw:eng',key:(x.rid||'')+'|'+(x.poolId||x.id||x.key||'')}});
+    CNEngravingSeals.wirePanel(host,e,{approve:b=>approveHere(x,b),open:b=>goEngrave(x,b),stale:()=>renderEng(x),imageUrl:url=>/^https?:/.test(url)?cors(url):url,zoom:{id:'sw:eng',key:(x.rid||'')+'|'+(x.poolId||x.id||x.key||'')}});
     if (flash) host.querySelector('.swEng')?.classList.add('flash');
   }
 
   async function approveHere(x, b) {
     const job = x.eng && x.eng.job; if (!job) return;
+    if (job.state !== 'review') { renderEng(x); return; }   // (a card that is out of date approves nothing: only a placement waiting for approval is approved)
     const who = needName(() => approveHere(x, b)); if (!who) return;
-    b.disabled = true; b.textContent = 'Approved'; b.setAttribute('aria-busy','true');
+    CNEngravingSeals.busyLabel(b);   // (a small spinner and "Approving…" until the stamp: Engrave.approve puts "Approved" on the button as it starts, so the wait is said again after it)
     try {
-      await Engrave.approve(job, who, b);
+      const run = Engrave.approve(job, who, b); CNEngravingSeals.busyLabel(b);
+      await run;
       if (W.sel !== x) return;
       if (!["approved", "written"].includes(job.state)) { b.disabled = false; return; }
       renderEng(x, true); renderStrip(); renderOrders(); paintFx();
