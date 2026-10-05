@@ -21,6 +21,15 @@
  * RULES (Paul, point 9; agreed with Issues-truth)
  *  piece   one copy of a line (line.quantity copies; copy ids <lineKey>_<n>). A cancelled/gone line and a noDesign line
  *          (nothing to cut) are NOT pieces: they never block and do not count.
+ *  by hand a piece a person COMPLETED BY HAND (Review "Complete Order", or its QR label printed from Custom Orders; Paul, 5 Oct round 6: "this chain
+ *          only piece obviously does not go on any sheet ... it's still blocking this sheet") is RESOLVED: it needs no sheet, so a copy of it that is on
+ *          no sheet is not a piece (it blocks nothing, waits for nothing, is nobody's mate), whatever the run's copy of the line still says (it can read
+ *          'unmatched', 'waiting', 'held' or an unknown SKU long after). The truth is the custom order's own record (shop.customs[lineKey], what
+ *          Charm_Custom_Orders keeps): state 'completed' with how 'button' | 'print'. A reopened one (state 'open') is a piece again, and so is one
+ *          sent to the sheets with its own designs (how 'sheet': it is cut, not completed by hand). Two limits: a HELD piece (hold / changePending)
+ *          still holds the sheets of its order wherever it is, and a copy that already sits on a live sheet stays that sheet's piece (it is cut there).
+ *          A cancelled order is unchanged. (A record whose state is 'noDesign' only because of a hand completion carries the hint handDone: that
+ *          state alone, once the completion is gone, is not a "nothing to cut".)
  *  nested  a piece is on a sheet iff its pool id is in poolIds of a LIVE (non-archived) sheet record. line.state stays
  *          'pooled' until the set is written, so it says nothing about where a piece is. A line with fewer pool ids than
  *          quantity has unnested copies. A nested piece is never "unmatched": nested wins over line.problems.
@@ -61,6 +70,8 @@ const num = v => (+v > 0 ? +v : 0);
 const lineOf = pid => { const s = String(pid), i = s.lastIndexOf('_'); return i > 0 ? s.slice(0, i) : s; };
 const orderOfLine = (key, l) => String((l && l.orderId) || String(key).split('_')[0]);
 const sheetId = s => s.id || s.sheetId;
+/** completed by hand, from the custom order's own record */
+const handDoc = (shop, key) => { const c = shop.customs && shop.customs[key]; return !!c && c.state !== 'open' && c.how !== 'sheet'; };
 
 function labelOf(s) {
   const n = +s.sheetIndex || +((/_Sheet-(\d+)/.exec(s.folder || s.fileBase || '') || [])[1]) || +s.page || 1;
@@ -164,9 +175,17 @@ function truthOf(shop, policy = {}) {
   const tail = k => { const m = /_(\d+)$/.exec(String(k)); return m ? +m[1] : 0; };
   for (const key of Object.keys(lines).sort((a, b) => tail(a) - tail(b) || (a < b ? -1 : a > b ? 1 : 0))) {
     const l = lines[key];
-    if (!l || l.state === 'gone' || l.noDesign || l.state === 'noDesign' || (l.spec && l.spec.noDesign)) continue;
+    if (!l || l.state === 'gone') continue;
+    const copies = copiesOf(key, l, policy.indexOrder);
+    // completed by hand: the custom order's record says so, the line was never pooled and none of its copies sits on a live sheet
+    const hand = handDoc(shop, key) && !(l.poolIds || []).length && !copies.some(c => (where.get(c.poolId) || []).length);
+    const nothingToCut = l.noDesign || (l.state === 'noDesign' && !l.handDone) || (l.spec && l.spec.noDesign);
+    if (nothingToCut && !hand) continue;
     const oid = orderOfLine(key, l), xs = orders.get(oid) || [];
-    for (const c of copiesOf(key, l, policy.indexOrder)) xs.push({ ...c, line: l, sheets: where.get(c.poolId) || [], orderId: oid });
+    for (const c of copies) {
+      if (hand && !(l.hold || l.changePending)) continue;   // completed by hand: resolved, not a piece (a held one is still a held piece)
+      xs.push({ ...c, line: l, sheets: where.get(c.poolId) || [], orderId: oid, hand });
+    }
     orders.set(oid, xs);
   }
   for (const pieces of orders.values()) pieces.forEach((p, i) => { p.index = i + 1; });

@@ -230,6 +230,8 @@ async function runsOfOrders(get, orders, fresh) {
 }
 // Verify whole orders from their current saved lines, including archived lines and copies on another sheet.
 // The caller's transaction reads the live run and every dependent sheet before it writes a seal or completion.
+// (the custom orders completed by hand that one reading looks up: at most HAND_MAX lines, one small read each; see below)
+const HAND_MAX = 200, HAND_FIELDS = ["state", "how", "completedAt", "completedBy"];
 async function productionReadiness(records,{tx=null,revs=null}={}) {
   const get=ref=>tx?tx.get(ref):ref.get(),runs=new Map(),lines=new Map(),wanted=new Set(records.flatMap(Readiness.orderIds)),unverified=new Set();
   for(const id of [...new Set(records.map(s=>s.runId).filter(isId))]){
@@ -262,8 +264,9 @@ async function productionReadiness(records,{tx=null,revs=null}={}) {
   try{await crossRuns(asking);}catch(e){console.warn('[charmNestLibrary] the runs of these orders could not be read:',e && e.message);for(const o of asking)unverified.add(o);}
   const evidence=new Map(records.map(s=>[s.id || s.sheetId,s]));
   // an order whose pieces are not all on these sheets: the sheets that hold the rest are read too. A line that lost its pool ids is read by the ids the pool gives
-  // its copies ("<line key>_<n>"), a committed or written one too: it may be a no-design candidate (below), but until that is known its copies may be on a sheet that is not asked
-  const present=new Set(records.flatMap(Readiness.idsOf)),lostIds=l=>!(l.poolIds || []).length && l.state!=='gone' && !l.noDesign && !l.problems?.length,
+  // its copies ("<line key>_<n>"), a committed or written one too: it may be a no-design candidate (below), but until that is known its copies may be on a sheet that is not asked.
+  // (a line the run saved as completed by hand, handDone, was never pooled and is not looked for on another sheet: its own custom order record decides, below)
+  const present=new Set(records.flatMap(Readiness.idsOf)),lostIds=l=>!(l.poolIds || []).length && l.state!=='gone' && !l.noDesign && !l.problems?.length && !l.handDone,
     missingOrders=[...new Set([...lines.values()].filter(l=>(l.poolIds || []).some(id=>!present.has(id)) || (lostIds(l) && Readiness.copyIds(l,l.key).some(id=>!present.has(id)))).map(l=>l.orderId))];
   for(let i=0;i<missingOrders.length;i+=30){
     const snap=await get(col(SHEETS).where('orders','array-contains-any',missingOrders.slice(i,i+30)).select(...SLIM_SHEET));
@@ -282,6 +285,35 @@ async function productionReadiness(records,{tx=null,revs=null}={}) {
   // a sheet that carries one of these orders can carry pieces of other orders whose lines are in another run: its engraving evidence is read there too, or its plain
   // pieces would read as undecided and the sheet as not ready (a failed read leaves them undecided, which holds the order back)
   try{await crossRuns([...new Set(dependencies.filter(s=>!Readiness.completedBefore(s)).flatMap(Readiness.orderIds))]);}catch(e){console.warn('[charmNestLibrary] the runs of the other sheets\' orders could not be read:',e && e.message);}
+  /* A piece a person completed by hand (Review → Complete Order, or its QR label printed from Custom Orders) needs no sheet, whatever the run's copy of its line
+     says. A run saves its lines when it pools and nests, not when a card is completed: its record can still say 'unmatched', 'held' or 'waiting' (a SKU no
+     master has) long after the completion, and used to hold every sheet of the order back for a piece nobody can place (Paul, 5 Oct). The custom order's own
+     record (Charm_Custom_Orders, written by the press itself) is the truth: read here, one document each and in batches, for the lines that are on no sheet
+     and have no other reason to be skipped (a line the run itself saved as completed by hand is read as well: a Reopen since then makes it a piece again, and
+     only the record decides). A line completed by hand is read as such (handDone) by Readiness.orderReports; a reopened one blocks again. The documents read
+     are watched by the cheap "unchanged?" read (revs 'c:'), so a completion or a reopen is seen at once. A read that fails leaves those orders unverified. */
+  const placed=new Set([...evidence.values()].flatMap(Readiness.idsOf)),hands=new Map(),seenCustom=new Map(),
+    unplaced=[...lines.values()].filter(l=>l.state!=='gone' && !(l.poolIds || []).length && !Readiness.copyIds(l,l.key).some(id=>placed.has(id)) && (l.handDone || !(l.noDesign || l.state==='noDesign')) && lineKeyOk(l.key)).slice(0,HAND_MAX);
+  const handRead=new Set(unplaced.map(l=>l.key));
+  if(unplaced.length){
+    try{
+      for(let i=0;i<unplaced.length;i+=100){
+        const refs=unplaced.slice(i,i+100).map(l=>col(CUSTOM).doc(l.key));
+        for(const d of await (tx?tx.getAll(...refs,{fieldMask:HAND_FIELDS}):db.getAll(...refs,{fieldMask:HAND_FIELDS}))){
+          if(revs && d.id.length<=80)revs['c:'+d.id]=revOf(d);
+          const c=d.exists?d.data():null;
+          seenCustom.set(d.id,c?{state:c.state,how:c.how}:null);
+          if(Readiness.isHand(c))hands.set(d.id,{at:num(c.completedAt),by:str(c.completedBy,80),how:c.how==='button'?'button':'print'});
+        }
+      }
+    }catch(e){console.warn('[charmNestLibrary] the custom orders completed by hand could not be read:',e && e.message);for(const l of unplaced)unverified.add(l.orderId);}
+  }
+  // (what the page wrote as handDone is only a hint of which lines to read: the server's own record decides, and a line it did not read has none)
+  for(const l of lines.values()){
+    const h=hands.get(l.key);
+    if(h)l.handDone=h;
+    else if(l.handDone){delete l.handDone;if(handRead.has(l.key) && l.state==='noDesign')l.state='pulled';}   // (reopened since the run saved it: a piece again)
+  }
   // No-design exemptions are explicit in new records; an older committed chain may only name its approved SKU.
   const candidates=[...lines.values()].filter(l=>!l.poolIds?.length && !l.noDesign && ['committed','written','labelled'].includes(l.state));
   if(candidates.length){
@@ -290,9 +322,9 @@ async function productionReadiness(records,{tx=null,revs=null}={}) {
     for(const l of candidates){
       const line={sku:l.sku,title:l.snap?.title || '',variations:(l.snap?.vars || []).map(v=>{const [name,value]=v.split('␟');return {name,value};})};
       if(OrderRules.isNoDesign(l.sku || line.title,rules) || OrderRules.specialOf(line)?.notCut){l.noDesign=true;continue;}
-      // A special item completed by hand has its own permanent seal, and is not a missing charm.
-      const custom=lineKeyOk(l.key)?await get(col(CUSTOM).doc(l.key)):null;
-      if(custom?.exists && custom.data().state!=='open'){l.noDesign=true;continue;}
+      // A special item completed by hand has its own permanent seal, and is not a missing charm (its record was read above with the lines on no sheet: not read twice).
+      const custom=seenCustom.has(l.key)?seenCustom.get(l.key):lineKeyOk(l.key)?await get(col(CUSTOM).doc(l.key)).then(d=>d.exists?d.data():null):null;
+      if(custom && custom.state!=='open'){l.noDesign=true;continue;}
       if(lineKeyOk(l.key)){
         const saved=await get(db.collection(require('./_charmNestCustomRead').COLL).doc(l.key)),x=saved.exists?saved.data():{};
         if(OrderRules.specialOf(line,{read:x.reads?.[x.latest],decided:x[PREFIX?'decidedSandbox':'decided']})?.notCut)l.noDesign=true;
@@ -421,17 +453,18 @@ async function decisionsOfRun(runId, run, poolIds = null) {
    when none is newer the answer is just { unchanged: true } and nothing is read or worked out again. A document's update
    time changes with every write to it, whoever made it, so this cannot miss a change in a document it watches. It watches
    the sheets and sets asked for, a set's other sheets, the runs of those sheets and the other sheets that carry their
-   orders; the learned no-design rules and a hand-completed special item are not watched (the Library's slow check
-   reads them). ── */
+   orders, and the custom order record of each line of those orders that is on no sheet (a Complete Order or a Reopen of a
+   piece done by hand is seen at once: 'c:' keys, one small document each, at most HAND_MAX); the learned no-design rules and a
+   hand-completed special item of a line that has a sheet are not watched (the Library's slow check reads them). ── */
 const revOf = snap => (snap && snap.exists && snap.updateTime ? `${snap.updateTime.seconds}.${snap.updateTime.nanoseconds}` : "0");
-const REV_KEY = /^[str]:[\w\-]{4,80}$/, MAX_REVS = 700;
+const REV_KEY = /^[strc]:[\w\-]{4,80}$/, MAX_REVS = 900;   // (c: a custom order completed by hand that the answer was made from: HAND_MAX at most)
 /** The number of documents read when nothing a laserStatus answer was made from (revs) is newer, 0 when something is. */
 async function laserUnchanged(sheetIds, setIds, revs) {
   const keys = Object.keys(revs || {});
   if (!keys.length || keys.length > MAX_REVS || !keys.every(k => REV_KEY.test(k))) return 0;
   const asked = [...new Set((sheetIds || []).filter(isId))].map(id => "s:" + id).concat([...new Set([].concat(setIds || []).filter(isId))].map(id => "t:" + id));
   if (!asked.length || !asked.every(k => Object.prototype.hasOwnProperty.call(revs, k))) return 0;   // (a card not read before: read in full)
-  const coll = { s: SHEETS, t: SETS, r: RUNS }, parts = [];
+  const coll = { s: SHEETS, t: SETS, r: RUNS, c: CUSTOM }, parts = [];
   for (let i = 0; i < keys.length; i += 100) parts.push(keys.slice(i, i + 100));
   const answers = await Promise.all(parts.map(part => db.getAll(...part.map(k => col(coll[k[0]]).doc(k.slice(2))), { fieldMask: ["updatedAt"] })));
   for (let i = 0; i < parts.length; i++) for (let j = 0; j < parts[i].length; j++) if (revOf(answers[i][j]) !== String(revs[parts[i][j]])) return 0;

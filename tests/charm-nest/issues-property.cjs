@@ -182,10 +182,11 @@ function explainChecks(R, shop) {
 /** OrderPieces (the order window's Sheet tab, the Overview words, the piece sheet buttons) must say the same as the oracle: which sheet
  *  holds each piece, which pieces are on none, and the same "piece N" numbers the issues list uses. */
 const OP = require('../../charm-nest-order-pieces.js');
-const opLine = (key, l) => ({ key, transactionId: l.transactionId, sku: l.sku || '', title: '', material: l.material, quantity: l.quantity, state: l.state, poolIds: (l.poolIds || []).slice(), hold: l.hold || null, problems: (l.problems || []).map(k => ({ kind: k })), noDesign: !!l.noDesign, spec: { noDesign: !!l.noDesign, quantity: l.quantity }, reason: l.reason || '' });
+// (the lines as the page hands them over: its rows, so a piece completed by hand carries the custom order's record as spec.customDone, as OrderPieces' lineOfRow reads it)
+const opLine = r => ({ key: r.key, transactionId: r.line.transactionId, sku: r.line.sku || '', title: '', material: r.metal, quantity: r.spec.quantity, state: r.state, poolIds: (r.poolIds || []).slice(), hold: r.hold || null, changePending: !!r.changePending, problems: (r.problems || []).map(p => ({ kind: p.kind })), noDesign: !!r.spec.noDesign, spec: { noDesign: !!r.spec.noDesign, quantity: r.spec.quantity, customDone: r.spec.customDone || null }, reason: r.reason || '' });
 function orderPiecesChecks(shop) {
-  const t = O.truth(shop), out = [], all = { ...shop.archivedLines, ...shop.lines }, byOrder = new Map(), sheetById = new Map(shop.sheets.filter(s => !s.archived).map(s => [s.id, s]));
-  for (const k of Object.keys(all).sort()) { const oid = String(all[k].orderId); (byOrder.get(oid) || byOrder.set(oid, []).get(oid)).push(opLine(k, all[k])); }
+  const t = O.truth(shop), out = [], byOrder = new Map(), sheetById = new Map(shop.sheets.filter(s => !s.archived).map(s => [s.id, s]));
+  for (const r of S.uiRows(shop)) { const oid = String(r.order.receiptId); (byOrder.get(oid) || byOrder.set(oid, []).get(oid)).push(opLine(r)); }
   for (const [oid, ls] of byOrder) {
     let got;
     try { got = OP.resolve({ orderId: oid, lines: ls, pools: shop.pool, sheets: shop.sheets, sheetsKnown: true }); } catch (ex) { out.push({ type: 'throws', mode: 'orderPieces', sheet: '-', order: oid, detail: ex.message }); continue; }

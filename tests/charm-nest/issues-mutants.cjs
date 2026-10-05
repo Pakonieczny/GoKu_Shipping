@@ -3,7 +3,7 @@
  * (each is a mistake the old code or a quick rewrite could make). Every mutant must be caught by issues-property's comparison.
  *
  *   node tests/charm-nest/issues-mutants.cjs
- * The old code (before round 2) is the thirteenth, real mutant: it must be caught on a shop shaped like Paul's too. */
+ * The old code (before round 2) is a real mutant too: it must be caught on a shop shaped like Paul's too. */
 'use strict';
 const assert = require('node:assert/strict');
 const O = require('./issues-oracle.cjs');
@@ -14,13 +14,21 @@ const NEW = require(require('path').join(__dirname, '../../charm-nest-readiness.
 const P = require('./issues-property.cjs');
 const { paulShop } = require('./issues-paul.cjs');
 
-const record = r => r.orderId ? r : ({ orderId: String(r.order.receiptId), transactionId: r.line.transactionId, state: r.state, quantity: r.spec.quantity, poolIds: r.poolIds, problems: (r.problems || []).map(p => p.kind), sku: r.line.sku, hold: r.hold, changePending: r.changePending, noDesign: r.spec.noDesign, engraveCandidate: r.spec.engraveCandidate, engrave: r.engrave });
+// (hand: the line is completed by hand as this shape says it: the page's row carries the custom order's record as spec.customDone, the server's record as handDone)
+const handOfShape = r => { const c = r.orderId ? r.handDone : r.spec && r.spec.customDone; return !!c && c.state !== 'open' && c.how !== 'sheet'; };
+const record = r => r.orderId ? { ...r, hand: handOfShape(r) } : ({ orderId: String(r.order.receiptId), transactionId: r.line.transactionId, state: r.state, quantity: r.spec.quantity, poolIds: r.poolIds, problems: (r.problems || []).map(p => p.kind), sku: r.line.sku, hold: r.hold, changePending: r.changePending, noDesign: r.spec.noDesign, engraveCandidate: r.spec.engraveCandidate, engrave: r.engrave, hand: handOfShape(r) });
 const problemKey = l => { const k = l.problems[0].kind || l.problems[0]; return k === 'unmatchedSku' ? (l.sku ? 'unmatched' : 'noSku') : k === 'missingSize' || k === 'blockedSku' ? 'noDesign' : 'unmatched'; };
 const lineOf = pid => String(pid).slice(0, String(pid).lastIndexOf('_'));
 
 /** The rules, in the page's terms, with one switch per plausible mistake. */
 function refIssues(sheet, ctx, mut = {}) {
   const lines = Object.fromEntries(ctx.rows.map(r => [r.key, record(r)]));
+  // the two mutants that read the custom order's record wrongly look at it directly (the shop's own Charm_Custom_Orders record of the line)
+  const handNow = (key, l) => {
+    if (mut.forgetsHand) return false;
+    if (mut.reopenIsDone || mut.sheetIsHand) { const c = ctx.shop && ctx.shop.customs && ctx.shop.customs[key]; return !!c && (mut.reopenIsDone || c.state !== 'open') && (mut.sheetIsHand || c.how !== 'sheet'); }
+    return l.hand;
+  };
   const sheets = mut.archived ? ctx.allSheets.concat(ctx.archivedToo || []) : ctx.allSheets;
   const where = new Map();
   for (const s of sheets) for (const pid of OLD.idsOf(s)) { const xs = where.get(pid) || []; xs.push(s); where.set(pid, xs); }
@@ -31,11 +39,14 @@ function refIssues(sheet, ctx, mut = {}) {
   for (const key of Object.keys(lines).sort()) {
     const l = lines[key], oid = String(l.orderId);
     if (!mut.gone && l.state === 'gone') continue;
-    if (!mut.noDesign && (l.noDesign || l.state === 'noDesign')) continue;
+    const hand = handNow(key, l) && !(l.poolIds || []).length;
+    if (!mut.noDesign && (l.noDesign || l.state === 'noDesign') && !hand) continue;
     const q = mut.noQty ? 1 : Math.max(1, +l.quantity || 1), ids = [...new Set(l.poolIds || [])], used = new Set(ids.map(x => +String(x).split('_').pop()));
     const copies = ids.map(pid => ({ pid, copy: +String(pid).split('_').pop() }));
     for (let n = 1, need = q - ids.length; need > 0; n++) if (!used.has(n)) { copies.push({ pid: `${key}_${n}`, copy: n }); used.add(n); need--; }
-    for (const c of copies.sort((a, b) => a.copy - b.copy)) { const xs = byOrder.get(oid) || []; xs.push({ l, pid: c.pid, key, copy: c.copy }); byOrder.set(oid, xs); }
+    // completed by hand and on no sheet: resolved, not a piece (a held one is still a held piece)
+    const onSheet = copies.some(c => sheets.some(s => OLD.idsOf(s).includes(c.pid)));
+    for (const c of copies.sort((a, b) => a.copy - b.copy)) { if (hand && !onSheet && (mut.handBeatsHold || !(l.hold || l.changePending))) continue; const xs = byOrder.get(oid) || []; xs.push({ l, pid: c.pid, key, copy: c.copy }); byOrder.set(oid, xs); }
   }
   const out = [];
   for (const [oid, pieces] of byOrder) {
@@ -70,13 +81,16 @@ function refIssues(sheet, ctx, mut = {}) {
 
 const MUTANTS = {
   clean: {}, sameSetWaits: { sameSetWaits: 1 }, ownReady: { ownReady: 1 }, lineState: { lineState: 1 }, ownPieceOnMultiOrder: { ownPiece: 1 }, noDesignBlocks: { noDesign: 1 }, goneBlocks: { gone: 1 }, ignoreHeld: { ignoreHeld: 1 },
-  archivedCounts: { archived: 1 }, problemBeatsNested: { problemBeatsNested: 1 }, ordersListed: { ordersListed: 1 }, ignoresQuantity: { noQty: 1 }, noCompletedBefore: { noCompletedBefore: 1 }, loudCompleted: { completedBeforeLoud: 1 }
+  archivedCounts: { archived: 1 }, problemBeatsNested: { problemBeatsNested: 1 }, ordersListed: { ordersListed: 1 }, ignoresQuantity: { noQty: 1 }, noCompletedBefore: { noCompletedBefore: 1 }, loudCompleted: { completedBeforeLoud: 1 },
+  // Paul, round 6 point 1: a piece completed by hand is resolved. The mistakes: forgetting it (the stale run record still says 'unmatched'), letting it beat a hold,
+  // reading a reopened custom order, or one sent to the sheets (how 'sheet'), as completed by hand
+  handBlocks: { forgetsHand: 1 }, handBeatsHold: { handBeatsHold: 1 }, reopenedStaysResolved: { reopenIsDone: 1 }, sentToSheetsIsHand: { sheetIsHand: 1 }
 };
 
 function caught(name, mut, shops) {
   for (let i = 0; i < shops; i++) {
     const shop = S.materialize(S.makeSpec(500000 + i)), archived = shop.sheets.filter(s => s.archived);
-    const impl = { ...NEW, issues: (sheet, ctx) => NEW.issues(sheet, ctx).filter(i => !(i.step === 'orders' && i.key !== 'unverified')).concat(refIssues(sheet, { ...ctx, archivedToo: archived }, mut)) };
+    const impl = { ...NEW, issues: (sheet, ctx) => NEW.issues(sheet, ctx).filter(i => !(i.step === 'orders' && i.key !== 'unverified')).concat(refIssues(sheet, { ...ctx, archivedToo: archived, shop }, mut)) };
     const d = P.disagreementsWith(impl, shop, ['rows', 'records']);
     if (d.length) return { shop: i, type: d[0].type };
   }

@@ -125,15 +125,43 @@ t('reopened sheet silent', shop([{ ...A, own: 'reopened' }], [order(1, line(), l
 }
 // 19 the other sheet is ready again once its trouble is fixed (same pieces): the issue disappears
 t('fixed', shop([A, B], [order(1, line(), line({ metal: 'silver', copies: [copy('B')] }))]), { A: [], B: [] });
+// 20 a piece COMPLETED BY HAND (Paul, 5 Oct round 6, order 4170837249: a cable chain only, a custom order completed in Review, plus a middle on each of two
+//    sheets) needs no sheet: it blocks nothing, whatever the run's copy of its line still says. The custom order's own record decides (shop.customs)
+{
+  const GF = sheet('GF', 'gold', 'ok', 'set-1'), RG = sheet('RG', 'rose', 'ok', 'set-2');
+  const chain = (hand, o = {}) => line({ metal: 'rose', copies: [NONE], problems: ['unmatchedSku'], sku: '', state: 'unmatched', hand, ...o });
+  const paul = hand => shop([GF, RG], [order(4170837249, chain(hand), line({ copies: [copy('GF')] }), line({ metal: 'rose', copies: [copy('RG')] }))]);
+  t('Paul: hand piece, the run still says unmatched', paul({ how: 'button', state: 'completed', rec: 'stale' }), { GF: [], RG: [] });
+  t('the same piece, not completed: it blocks both sheets', paul(null), { GF: [4170837249], RG: [4170837249] });
+  t('completed by its printed QR label', paul({ how: 'print', state: 'completed', rec: 'stale' }), { GF: [], RG: [] });
+  t('run copy hinted (handDone, noDesign state)', paul({ how: 'button', state: 'completed', rec: 'hinted' }), { GF: [], RG: [] });
+  t('run copy flagged noDesign (an older save)', paul({ how: 'button', state: 'completed', rec: 'legacy' }), { GF: [], RG: [] });
+  // REOPEN: a piece again, blocking again (also when the record still carries the hint the page wrote while it was completed)
+  t('reopened, run copy stale', paul({ how: 'button', state: 'open', rec: 'stale' }), { GF: [4170837249], RG: [4170837249] });
+  t('reopened, run copy still hinted', shop([GF, RG], [order(4170837249, line({ metal: 'rose', copies: [NONE], state: 'noDesign', hand: { how: 'button', state: 'open', rec: 'hinted' } }), line({ copies: [copy('GF')] }), line({ metal: 'rose', copies: [copy('RG')] }))]), { GF: [4170837249], RG: [4170837249] });
+  // sent to the sheets with its own designs (how 'sheet') is cut, not completed by hand: its place is still awaited
+  t('sent to the sheets is no hand completion', paul({ how: 'sheet', state: 'completed', rec: 'stale' }), { GF: [4170837249], RG: [4170837249] });
+  // HELD: a person's or Etsy's stop still holds the sheets of its order, completed or not
+  t('held and completed by hand: still holds', shop([GF, RG], [order(4170837249, chain({ how: 'button', state: 'completed', rec: 'stale' }, { hold: 'Customer changed the order', state: 'held' }), line({ copies: [copy('GF')] }), line({ metal: 'rose', copies: [copy('RG')] }))]), { GF: [4170837249], RG: [4170837249] });
+  // quantity 2: every copy is resolved; a cancelled order is unchanged (nothing blocks either way)
+  t('two copies completed by hand', shop([GF, RG], [order(4170837249, chain({ how: 'button', state: 'completed', rec: 'stale' }, { copies: [NONE, NONE], q: 2 }), line({ copies: [copy('GF')] }), line({ metal: 'rose', copies: [copy('RG')] }))]), { GF: [], RG: [] });
+  t('cancelled hand piece', shop([GF, RG], [order(4170837249, chain({ how: 'button', state: 'completed', rec: 'stale' }, { state: 'gone' }), line({ copies: [copy('GF')] }), line({ metal: 'rose', copies: [copy('RG')] }))]), { GF: [], RG: [] });
+  // a line that was pooled (it has pool ids) is waiting for the nester: it stays a piece
+  t('pooled line is no hand piece', shop([GF, RG], [order(4170837249, chain({ how: 'button', state: 'completed', rec: 'stale' }, { copies: [POOLED], state: 'pooled' }), line({ copies: [copy('GF')] }), line({ metal: 'rose', copies: [copy('RG')] }))]), { GF: [4170837249], RG: [4170837249] });
+  // the only other piece is hand-completed too / the order is that piece alone: nothing is left to wait for
+  t('only hand pieces besides one sheet piece', shop([GF], [order(4170837249, chain({ how: 'button', state: 'completed', rec: 'stale' }), chain({ how: 'print', state: 'completed', rec: 'stale' }), line({ copies: [copy('GF')] }))]), { GF: [] });
+  // it does not make a one-piece order multi-piece, and a real second piece that is not placed still blocks
+  t('hand piece does not hide a real unplaced piece', shop([GF], [order(1, chain({ how: 'button', state: 'completed', rec: 'stale' }), line({ copies: [copy('GF')] }), line({ copies: [POOLED], state: 'pooled' }))]), { GF: [1] });
+}
 
 // ── round 7: a set advances as ONE ────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 const two = (x, y) => shop([x, y], [order(1, line({ copies: [copy('A')] }), line({ metal: 'silver', copies: [copy('B')] }))]);
 const SA = sheet('A', 'gold', 'ok', 'set-1'), SB = sheet('B', 'silver', 'ok', 'set-1', 1);
-// 20 same set, the mate not ready for any reason that matters: the order is no issue for either sheet
+// 22 same set, the mate not ready for any reason that matters: the order is no issue for either sheet
 for (const own of ['unverified', 'noQr', 'qrPartial', 'held', 'dirty', 'saving', 'noFront', 'error', 'backUnsaved', 'unidentified']) t('same set, mate ' + own, two(SA, { ...SB, own }), { A: [], B: [] });
 t('same set, mate has an unapproved engraving', shop([SA, SB], [order(1, line(), line({ metal: 'silver', copies: [copy('B')], engrave: 'unapproved' }))]), { A: [], B: [] });
 t('same set, both not ready', two({ ...SA, own: 'noQr' }, { ...SB, own: 'unverified' }), { A: [], B: [] });
-// 20b another set is another set: still an issue, flagged split (and only when both sheets are really in a set)
+// 22b another set is another set: still an issue, flagged split (and only when both sheets are really in a set)
 t('another set', two(SA, { ...SB, own: 'unverified', setId: 'set-2' }), { A: [1], B: [] });
 // (each sheet reads the other as not in its set; the one that is not ready is what the other waits on: here the not-ready one is the draft / left-out sheet, or B)
 for (const [why, x, y, want] of [['mate is a draft (in no set)', SA, { ...SB, own: 'draft', setId: null }, { A: [1], B: [] }], ['mate left out of the set', SA, { ...SB, own: 'solidExcluded' }, { A: [1], B: [] }], ['this sheet is a draft', { ...SA, own: 'draft', setId: null }, { ...SB, own: 'unverified' }, { A: [1], B: [1] }], ['this sheet is left out of the set', { ...SA, own: 'solidExcluded' }, { ...SB, own: 'unverified' }, { A: [1], B: [1] }]]) t(why + ': not the same set', two(x, y), want);
@@ -144,7 +172,7 @@ for (const [why, x, y, want] of [['mate is a draft (in no set)', SA, { ...SB, ow
   assert.equal(f(SA, { ...SB, own: 'solidExcluded' }).offenders[0].split, undefined, 'left out of its set: a wait, not a split');
   n++;
 }
-// 20c an order over three sheets: the not-ready mate of the same set is the set's wait, the one in another set is the real issue (only that piece is listed)
+// 22c an order over three sheets: the not-ready mate of the same set is the set's wait, the one in another set is the real issue (only that piece is listed)
 {
   const C2 = sheet('C', 'rose', 'unverified', 'set-2', 1);
   const s = shop([SA, { ...SB, own: 'unverified' }, C2], [order(1, line({ copies: [copy('A')] }), line({ metal: 'silver', copies: [copy('B')] }), line({ metal: 'rose', copies: [copy('C')] }))]);
@@ -154,18 +182,18 @@ for (const [why, x, y, want] of [['mate is a draft (in no set)', SA, { ...SB, ow
   assert.deepEqual(issueOrders(tr, 'C'), ['1'], 'C sees A (ready) and B (not ready, in another set from C): B is the issue'); assert.deepEqual(tr.sheets.C.orders[1].offenders.map(o => o.sheets.map(z => z.id)), [['B']]);
   n++;
 }
-// 20d a real problem on another piece still lists the order (the same-set mate's piece is not what is listed)
+// 22d a real problem on another piece still lists the order (the same-set mate's piece is not what is listed)
 {
   const s = shop([SA, { ...SB, own: 'unverified' }], [order(1, line({ copies: [copy('A')] }), line({ metal: 'silver', copies: [copy('B')] }), line({ copies: [POOLED], state: 'pooled' }))]);
   const tr = truth(s), e = tr.sheets.A.orders[1];
   assert.deepEqual(issueOrders(tr, 'A'), ['1']); assert.deepEqual(e.offenders.map(o => [...o.reasons]), [['pooled']]); n++;
 }
-// 20e a hold still holds, in the same set too (an explicit stop is not an inference about where pieces are)
+// 22e a hold still holds, in the same set too (an explicit stop is not an inference about where pieces are)
 t('same set, held mate piece', shop([SA, SB], [order(1, line(), line({ metal: 'silver', copies: [copy('B')], hold: 'changed', state: 'written' }))]), { A: [1], B: [1] });
 t('same set, mate not ready AND a piece unnested', shop([SA, { ...SB, own: 'unverified' }], [order(1, line(), line({ metal: 'silver', copies: [copy('B')] }), line({ copies: [NONE], problems: ['unmatchedSku'], sku: '', state: 'unmatched' }))]), { A: [1], B: [1] });
-// 20f both sheets laser-ready: nothing at all
+// 22f both sheets laser-ready: nothing at all
 t('same set, both ready', two(SA, SB), { A: [], B: [] });
-// 21 the SET's wait (R7-1's gate, said once and never an order issue): the other sheets of the set that keep it from being approved
+// 23 the SET's wait (R7-1's gate, said once and never an order issue): the other sheets of the set that keep it from being approved
 {
   const w = (own, extra = {}) => { const s = shop([SA, { ...SB, own, ...extra }], [order(1, line({ copies: [copy('A')] }), line({ metal: 'silver', copies: [copy('B')] }))]); return [setWaits(s, truth(s), 'A'), setWaits(s, truth(s), 'B')]; };
   for (const [own, want] of [['ok', []], ['noQr', []], ['qrPartial', []], ['unverified', []], ['held', []], ['noFront', []], ['backUnsaved', []], ['done', []], ['reopened', []], ['dirty', ['B']], ['saving', ['B']], ['error', ['B']], ['solidExcluded', ['B']], ['unidentified', ['B']]]) {
