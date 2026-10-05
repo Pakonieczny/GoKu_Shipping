@@ -129,11 +129,13 @@ const WORDS = { [key(R1, 2)]: 'I\ndissent', [key(R1, 3)]: 'KMB //\nSMH', [key(R2
     await page.evaluate(() => { window.__prompts = 0; window.prompt = () => { __prompts++; return null; }; B.employee = ''; try { localStorage.removeItem('cn.employee'); } catch (_) {} });
     const nameless = await page.evaluate(() => (window.CNEmployee.name() || '') === '');
     if (nameless) {
-      await page.click('#owEng [data-e=approve]'); await page.waitForTimeout(250);
-      check((await calls()).approve.length === 0 && (await page.evaluate(() => __prompts)) === 1 && (await card()).approve, 'with no name, the name is asked for and a refusal approves nothing (the button stays)');
-      await page.evaluate(() => { window.prompt = () => 'Zed Tester'; });
-    } else console.log('  – the name could not be cleared here: the ask-for-a-name path was not run');
-    await page.click('#owEng [data-e=approve]');
+      // (the name is asked in the small name bar inside the order window, never as a browser pop-up over it; "Not now" approves nothing)
+      await page.click('#owEng [data-e=approve]'); await page.waitForSelector('#orderWin .cnNameBar input', { timeout: 4000 });
+      await page.click('#orderWin .cnNameBar .cnNbX'); await page.waitForTimeout(250);
+      check((await calls()).approve.length === 0 && (await page.evaluate(() => __prompts)) === 0 && !(await page.$('.cnNameBar')) && (await card()).approve, 'with no name, the name bar asks for it in the window and "Not now" approves nothing (the button stays)');
+      await page.click('#owEng [data-e=approve]'); await page.waitForSelector('#orderWin .cnNameBar input', { timeout: 4000 });
+      await page.fill('#orderWin .cnNameBar input', 'Zed Tester'); await page.click('#orderWin .cnNameBar button[type=submit]');
+    } else { console.log('  – the name could not be cleared here: the ask-for-a-name path was not run'); await page.click('#owEng [data-e=approve]'); }
     await page.waitForFunction(() => __approve.length === 1, null, { timeout: 8000 });
     const during = await page.evaluate(() => { const b = document.querySelector('#owEng .egApproveButton'); return { disabled: b.disabled, busy: b.getAttribute('aria-busy'), pending: !!document.querySelector('#owEng .seal.pending, #owEng .egButtonSeal .seal') }; });
     check(during.disabled && during.busy === 'true' && during.pending, 'pressed: the button waits (disabled, busy) while the seal is pressed on it: ' + JSON.stringify(during));

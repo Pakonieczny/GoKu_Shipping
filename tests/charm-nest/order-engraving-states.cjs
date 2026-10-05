@@ -135,6 +135,9 @@ const LONG = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789ABCDEFGHIJKLMNOP';
     check(c.out.length === 0, 'with the seal inside the card: ' + JSON.stringify(c.out));
     if (shots) await page.locator('#owEng').screenshot({ path: path.join(shots, 'card-1440-approved.png') });
     // a seal zooms where it stands (a click), with no tooltip and no caption of its own
+    // (the seal lies below the fold of the Overview at 900 px: it is brought into view and left to settle first, because a scroll puts any zoomed seal back by design
+    //  and the scroll event Playwright's own scroll-into-view causes lands a frame after the click - on a slow machine after the zoom, which then reads as no zoom at all)
+    await page.evaluate(() => document.querySelector('#owEng .egButtonSeal .seal').scrollIntoView({ block: 'center' })); await page.waitForTimeout(500);
     await page.click('#owEng .egButtonSeal .seal'); await page.waitForTimeout(800);
     const zoomed = await page.evaluate(() => { const s = document.querySelector('#owEng .egButtonSeal .seal'); return { cur: Seal.zoom.current === s, tip: !!(s.getAttribute('title') || s.querySelector('title')), hasTitle: s.hasAttribute('title') }; });
     check(zoomed.cur && !zoomed.tip && !zoomed.hasTitle, 'a seal on the card zooms in place and carries no tooltip: ' + JSON.stringify(zoomed));

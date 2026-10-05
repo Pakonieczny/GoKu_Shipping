@@ -508,8 +508,11 @@ async function main() {
       // Approved still works while the preview is zoomed: one approval, one seal on the button
       await page.click('#owEng [data-e=approve]');
       await page.waitForFunction(() => document.querySelector('#owEng .swEng[data-state=approved]'), null, { timeout: 12000 });
+      // (the card says Approved the moment the stamp lands; the order's timeline then stamps its own seal for the same approval, and a click is swallowed
+      //  while any stamp is coming down - so the next click waits until none is: Seal.busy())
+      await page.waitForFunction(() => !Seal.busy(), null, { timeout: 12000 });
       await page.waitForTimeout(500);
-      const ap = await page.evaluate(() => ({ approves: window.__approve.length, seals: document.querySelectorAll('#owEng .egButtonSeal .seal').length, chip: document.querySelector('#owEng .egPill')?.textContent }));
+      const ap =await page.evaluate(() => ({ approves: window.__approve.length, seals: document.querySelectorAll('#owEng .egButtonSeal .seal').length, chip: document.querySelector('#owEng .egPill')?.textContent }));
       check(ap.approves === 1 && ap.seals === 1 && ap.chip === 'Approved', 'Approved works with the preview zoomed: ' + JSON.stringify(ap));
       const p3 = await look(page, '#owEng .pv'); check(p3.s > 2.5, 'and the preview is still zoomed in the card that was drawn again for the approval (kept for this piece)');
       await unzoom(page);
