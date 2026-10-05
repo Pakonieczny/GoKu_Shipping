@@ -187,13 +187,24 @@
       // what moves in
       const spots = fills.reduce((a, f) => a + num(f.spots), 0);
       const none = fills.filter(f => f.source === 'none').reduce((a, f) => a + num(f.spots), 0);
-      const waiting = fills.filter(f => f.source === 'waiting').reduce((a, f) => a + num(f.orders), 0);
-      const from = new Map();
-      for (const f of fills) if (f.source === 'newerSheet') { const k = str(f.fromSheetLabel) || 'a newer sheet'; from.set(k, (from.get(k) || 0) + (num(f.orders) || 1)); }
+      // the orders that fill, each counted ONCE by its order id: one order that fills a spot on two sheets is "1 order", not one for each
+      // sheet (a fill that carries no ids counts what it says)
+      const seenIds = new Set();
+      const countOrders = list => {
+        let n = 0;
+        for (const f of list) {
+          const ids = arr(f.rids).map(str).filter(Boolean);
+          if (!ids.length) { n += num(f.orders) || (f.source === 'newerSheet' ? 1 : 0); continue; }
+          for (const id of ids) if (!seenIds.has(id)) { seenIds.add(id); n++; }
+        }
+        return n;
+      };
+      const waiting = countOrders(fills.filter(f => f.source === 'waiting'));
+      const newer = fills.filter(f => f.source === 'newerSheet'), fromN = countOrders(newer);
       const parts = [];
       if (waiting) parts.push(`${waiting} waiting ${plural(waiting, 'order', 'orders')}`);
-      for (const [k, v] of from) parts.push(`${v} ${plural(v, 'order', 'orders')} from ${k}`);
-      const movers = waiting + [...from.values()].reduce((a, v) => a + v, 0), filled = Math.max(0, spots - none);
+      if (fromN) parts.push(`${fromN} ${plural(fromN, 'order', 'orders')} from ${andList(uniq(newer.map(f => str(f.fromSheetLabel) || 'a newer sheet')))}`);
+      const movers = waiting + fromN, filled = Math.max(0, spots - none);
       if (parts.length) out.moves.push(`${andList(parts)} ${plural(movers, 'fills', 'fill')} the ${filled || spots} empty ${plural(filled || spots, 'spot', 'spots')}.`);
       if (none > 0) out.moves.push(`${none} empty ${plural(none, 'spot stays', 'spots stay')} open until an order fits.`);
     }

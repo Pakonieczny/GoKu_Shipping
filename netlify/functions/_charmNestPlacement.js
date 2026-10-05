@@ -155,7 +155,7 @@ function reconcile(input) {
         draft: !!holder.draft, cut: num(holder.laserDoneAt) > 0 || num(holder.roseCutAt) > 0, via, sheetAt: ms(holder.updatedAt) || null, why: "its sheet's record lists it" };
     } else if (takenOff(p)) {
       const removed = num(p.removedAt) > 0 || p.removedBy, cancel = /^cancel/i.test(String(p.removedReason || ""));
-      placement[id] = p.state === "superseded" ? { state: "superseded", sheetId: null, setId: null, since: ms(p.updatedAt) || null, why: "its line was made up again" }
+      placement[id] = p.state === "superseded" ? { state: "superseded", sheetId: null, setId: null, since: ms(p.updatedAt) || null, why: "its piece was made up again" }
         : removed ? { state: "removed", sheetId: null, setId: null, cancel, by: p.removedBy || null, since: num(p.removedAt) || ms(p.updatedAt) || null, why: String(p.removedReason || (cancel ? "cancelled" : "taken off")).slice(0, 200) }
         : { state: "held", sheetId: null, setId: null, by: p.heldBy || null, since: num(p.heldAt) || ms(p.updatedAt) || null, why: String(p.heldReason || "on hold").slice(0, 200) };
     } else if (p && p.state === "abandoned") {

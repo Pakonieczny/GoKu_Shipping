@@ -2771,7 +2771,7 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 .owPcRow .pcAct .owCuMore:hover,.owPcRow .pcAct .owCuMore:focus-visible{color:var(--ink);background:var(--card2)}
 </style>
 <link rel="preload" href="charm-nest-stamp-walnut.png" as="image">
-<link rel="stylesheet" href="charm-nest-activity.css?v=20261003-seal-small">
+<link rel="stylesheet" href="charm-nest-activity.css?v=20261003-seal-small-en2">
 </head>
 <body>
 <div class="app" id="app">
@@ -2982,7 +2982,7 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-pdf.js?v=20260924-followup"></script>
 <script src="charm-nest-dxf.js?v=20260927-custom"></script>
 <script src="charm-nest-motion.js?v=20261005-zg-seal-small-rt1-sealpc1-sealcmp1-pdot1"></script>
-<script src="charm-nest-timeline-ui.js?v=20261005-pieces-psb1-hand2-print1-sealpc2-q1next1-tl1-tl2fit1"></script>
+<script src="charm-nest-timeline-ui.js?v=20261005-pieces-psb1-hand2-print1-sealpc2-q1next1-tl1-tl2fit1-pl1"></script>
 <script src="charm-nest-geom.js?v=20260921-material"></script>
 <script src="charm-nest-engrave-fit.js"></script>
 <script src="charm-nest-assets.js"></script>
@@ -2991,14 +2991,14 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-sheet-menu.js?v=20261005-shm1"></script>
 <script src="charm-nest-activity.js?v=20261001-compact-controls"></script>
 <script src="charm-nest-zoompan.js?v=20261005-zp1"></script>
-<script src="charm-nest-engraving-seals.js?v=20261003-seal-small-zp1"></script>
+<script src="charm-nest-engraving-seals.js?v=20261003-seal-small-zp1-en2"></script>
 <script src="charm-nest-readiness.js?v=20261005-issues-truth4-setgate1-hand1-sameset1-nowait1-noset1-st1-five1"></script>
 <script src="charm-nest-export.js"></script>
 <script src="charm-nest-text.js"></script>
 <script src="charm-nest-orders.js?v=20261005-pieces-hand1-rel1"></script>
 <script src="charm-nest-order-pieces.js?v=20261005-op2-hand1"></script>
 <script src="charm-nest-piece-placement.js?v=20261005-pp1"></script>
-<script src="charm-nest-order-engraving.js?v=20261005-oe2-zp1-nofix1"></script>
+<script src="charm-nest-order-engraving.js?v=20261005-oe2-zp1-nofix1-en2"></script>
 <script src="charm-nest-shared-orders.js?v=20261005-cardinal3"></script>
 <script src="charm-nest-background.js?v=20260930-stamp-barrier"></script>
 <script>
@@ -6775,11 +6775,11 @@ boot();
 <!-- How long each person is signed in here, and what they did (station-session.js, station-activity.js). The sorter has no
      personal login: the person is the name it keeps (cn.employee: typed at the first approval, label or decision, or the
      Design Station's sign-in), the same name every seal it stamps carries. -->
-<script src="station-session.js?v=20261002-ea1"></script>
-<script src="station-activity.js?v=20261005-e2live"></script>
-<script src="charm-nest-bridge.js?v=20261005-lis2-cardinal4-zoom-psb1-egl1-osc1-r3f-setgate1-hand1-sameset1-rl1-nowait1-opt1-rt1-pcr1-one1-st1-five1-pd1-zp1-rel2-cx1-hold2-sl2-sealsh1-sealpc2-live1-pst1-nofix1-pcsel1-pst2-sk1-nonote1-pdot3-pr1"></script>
+<script src="station-session.js?v=20261005-et2"></script>
+<script src="station-activity.js?v=20261005-et2"></script>
+<script src="charm-nest-bridge.js?v=20261005-lis2-cardinal4-zoom-psb1-egl1-osc1-r3f-setgate1-hand1-sameset1-rl1-nowait1-opt1-rt1-pcr1-one1-st1-five1-pd1-zp1-rel2-cx1-hold2-sl2-sealsh1-sealpc2-live1-pst1-nofix1-pcsel1-pst2-sk1-nonote1-pdot3-pr1-lvx1-rvx1-pl1-en2"></script>
 <script src="charm-nest-review-live.js?v=20261005-rl1"></script>
-<script src="charm-nest-hold-ui.js?v=20261005-hold2"></script>
+<script src="charm-nest-hold-ui.js?v=20261005-hold3"></script>
 <script>
 try {
   const nameNow = () => { try { const n = String((window.CNEmployee && CNEmployee.name()) || "").trim(); return /^\d+$/.test(n) ? "" : n; } catch (_) { return ""; } };
@@ -6807,15 +6807,15 @@ try {
       set(v) { d.set.call(window.B, v); try { const n = String(d.get.call(window.B) || "").trim(); if (n && !/^\d+$/.test(n)) StationSession.signedIn({ name: n, id: null }); } catch (_) {} } });
 } catch (_) {}
 </script>
-<script src="charm-nest-sheetwin.js?v=20261005-pieces-cardinal2-osc1-shm1-osc2-zp1-rel1-oh1-sl2-sealsh1-live1-hk2"></script>
+<script src="charm-nest-sheetwin.js?v=20261005-pieces-cardinal2-osc1-shm1-osc2-zp1-rel1-oh1-sl2-sealsh1-live1-hk2-en2"></script>
 <!-- Hold the whole order: the engine over the sheet window's own Take off and Fill the freed room (OrderHold.plan, run, status) -->
-<script src="charm-nest-order-hold.js?v=20261005-oh3"></script>
+<script src="charm-nest-order-hold.js?v=20261005-oh4"></script>
 <!-- the one way into the engraving of one order's piece (the order window, the Sheet tab and the Sheet window call it; each keeps its own way without it) -->
 <script src="charm-nest-engrave-link.js?v=20261005-el2"></script>
 <script src="charm-nest-tour.js?v=20260929-m11"></script>
 <script src="charm-nest-order-release.js?v=20261005-rel4"></script>
 <!-- the cinematic Hold and Release: the order seen moving sheet to sheet (OrderHoldFx.playHold, playRelease, returnToOnHold), driven by the engine's own steps -->
-<script src="charm-nest-hold-fx.js?v=20261005-hfx2"></script>
+<script src="charm-nest-hold-fx.js?v=20261005-hfx3"></script>
 <script src="charm-nest-mail.js?v=20261005-pv-seal-zp1"></script>
 <script src="charm-nest-rose-ui.js?v=20261005-rg3-opt1"></script>
 <script src="charm-nest-flow-rose.js?v=20261003-rg2"></script>
@@ -6838,7 +6838,7 @@ try {
 <script src="charm-nest-efficiency-stations.js?v=20261005-es2"></script>
 <script src="charm-nest-efficiency.js?v=20261005-ef8-eq1"></script>
 <script src="charm-nest-efficiency-orders.js?v=20261005-eo2"></script>
-<script src="charm-nest-efficiency-person.js?v=20261005-ep2"></script>
+<script src="charm-nest-efficiency-person.js?v=20261005-ep5"></script>
 <!-- ══ one order line: what it is, what the customer said, what the shop said, and how to settle it ══ -->
 <dialog id="orderWin" class="owin owFull" aria-labelledby="owTitle" data-no-grow>
   <div class="owBox">

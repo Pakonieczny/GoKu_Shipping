@@ -117,8 +117,8 @@ async function main() {
     await page.waitForFunction(() => OrderWin.isOpen());
     check(await waitCard(OV, 'approve'), 'Orders row → order window → Overview shows the back engraving card of piece 1 (To approve)');
     let c = await card(OV);
-    check(c.card && /KMB/.test(c.words) && c.preview && c.button && c.button.text === 'Approved' && !c.button.disabled && c.seals === 0 && c.engrave, 'the card has the words, the preview, the green Approved button and View in Engrave: ' + JSON.stringify(c));
-    check(/View in Engrave|Adjust in Engrave/.test(c.engraveText), 'the shortcut reads for the state: ' + c.engraveText.trim());
+    check(c.card && /KMB/.test(c.words) && c.preview && c.button && c.button.text === 'Approve engraving' && !c.button.disabled && c.seals === 0 && c.engrave, 'the card has the words, the preview, the Approve engraving button and Fix in Engraving: ' + JSON.stringify(c));
+    check(/View in Engraving|Fix in Engraving/.test(c.engraveText), 'the shortcut reads for the state: ' + c.engraveText.trim());
     // the card sits under the pictures, in the left column
     const place = await page.evaluate(() => { const ph = document.getElementById('owPhoto').getBoundingClientRect(), v = document.getElementById('owVector').getBoundingClientRect(), e = document.querySelector('#orderWin .owVInfo .owEng'); if (!e) return null; const r = e.getBoundingClientRect(); return { below: r.top >= Math.max(ph.bottom, v.bottom) - 1, sameColumn: Math.abs(r.left - ph.left) < 40 }; });
     check(place && place.below && place.sameColumn, 'under the Etsy listing and Vector design thumbnails, in their column: ' + JSON.stringify(place));
@@ -166,9 +166,10 @@ async function main() {
     await page.click('#__go');
     await page.waitForFunction(() => OrderWin.isOpen());
     check(await page.evaluate(k => OrderWin.key() === k, keyOf(B, 1)), 'openOrderFrom with only {poolId}: the order window is on the piece named (piece 2), not the order\'s first');
-    check(await waitCard(OV, 'approve'), 'and its card is there, from the pop-up that handed over');
-    c = await card(OV);
-    check(/LOVE/.test(c.words), 'it is piece 2\'s own: ' + c.words.trim());
+    check(await waitCard(OV), 'and its card is there, from the pop-up that handed over');
+    // ("All pieces" is shown: a compact card for each piece with a back engraving, piece 2\'s among them)
+    const wordsAll = await page.evaluate(() => [...document.querySelectorAll('#orderWin .owVInfo .owEng .words')].map(w => w.textContent.trim()));
+    check(wordsAll.length === 3 && wordsAll.some(w => /LOVE/.test(w)), 'it is piece 2\'s own, with the order\'s other pieces: ' + JSON.stringify(wordsAll));
     await closeWin();
     check(await page.evaluate(() => document.getElementById('__src').open), 'closing the order window comes back to the pop-up it grew from');
     await page.evaluate(() => { document.getElementById('__src').close(); document.getElementById('__src').remove(); });

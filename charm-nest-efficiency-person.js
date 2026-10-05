@@ -63,9 +63,10 @@
   const nz = v => (num(v) == null ? 0 : num(v));
   const nf = n => Math.round(nz(n)).toLocaleString("en-US");
   const nf1 = n => { n = nz(n); return n >= 100 ? nf(n) : (Math.round(n * 10) / 10).toLocaleString("en-US"); };
-  const durMs = ms => { ms = num(ms); if (ms == null) return "—"; ms = Math.max(0, ms); if (ms < 1000) return ms > 0 ? "<1 s" : "0 m"; if (ms < 60000) return `${Math.round(ms / 1000)} s`; const m = Math.round(ms / 60000); if (m < 60) return `${m} m`; const h = Math.floor(m / 60); return `${h} h${m % 60 ? ` ${m % 60} m` : ""}`; };
-  const hoursTxt = ms => { ms = num(ms); if (ms == null) return "—"; const h = ms / HOUR_MS; return h >= 100 ? `${nf(h)} h` : h >= 10 ? `${nf1(h)} h` : h > 0 ? durMs(ms) : "0 m"; };
-  const secTxt = s => { s = num(s); if (s == null || s <= 0) return "—"; return s < 90 ? `${Math.round(s)} s` : s < 5400 ? `${(Math.round(s / 6) / 10).toString()} min` : `${(Math.round(s / 360) / 10).toString()} h`; };
+  const minTxt = mn => `${mn < 9.95 ? Math.round(mn * 10) / 10 : Math.round(mn)} min`;
+  const durMs = ms => { ms = num(ms); if (ms == null) return "—"; ms = Math.max(0, ms); if (ms < 1000) return ms > 0 ? "<1 s" : "0 min"; if (ms < 60000) return `${Math.round(ms / 1000)} s`; if (ms < 3570000) return minTxt(ms / 60000); const m = Math.round(ms / 60000), h = Math.floor(m / 60); return `${h} h${m % 60 ? ` ${m % 60} m` : ""}`; };
+  const hoursTxt = ms => { ms = num(ms); if (ms == null) return "—"; const h = ms / HOUR_MS; return h >= 100 ? `${nf(h)} h` : h >= 10 ? `${nf1(h)} h` : h > 0 ? durMs(ms) : "0 min"; };
+  const secTxt = s => { s = num(s); if (s == null || s <= 0) return "—"; return s < 90 ? `${Math.round(s)} s` : durMs(s * 1000); };
   const rateTxt = v => { v = num(v); return v == null || v <= 0 ? "—" : v >= 10 ? nf(v) : (Math.round(v * 10) / 10).toString(); };
   const pctTxt = f => (num(f) == null ? "—" : `${Math.round(f * 100)}%`);
   const ago = s => (s < 2 ? "just now" : s < 60 ? `${Math.round(s)}s ago` : s < 3600 ? `${Math.floor(s / 60)}m ago` : s < 86400 ? `${Math.floor(s / 3600)}h ago` : `${Math.floor(s / 86400)}d ago`);
@@ -158,7 +159,7 @@
 .efpBody{display:grid;gap:12px;min-width:0;transition:opacity .25s ease;align-content:start}.efpBody.dim{opacity:.5}
 .efpNote{margin:0;display:grid;gap:2px;color:var(--ink70);font-size:12px;padding:0 2px}
 .efpNote span:before{content:"";display:inline-block;width:5px;height:5px;border-radius:50%;background:var(--gold2);margin-right:8px;vertical-align:1px}
-.efpLabel{font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink45);font-weight:750;display:flex;align-items:center;gap:8px;margin:0 2px 7px}
+.efpLabel{font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink45);font-weight:750;display:flex;align-items:center;gap:8px;margin:0 2px 9px}
 .efpLabel:after{content:"";flex:1;height:1px;background:var(--line);order:1}.efpLabel b{color:var(--ink70);letter-spacing:0;font-weight:700}.efpLabel .efpLr{order:2;letter-spacing:0;text-transform:none;font-weight:500;font-size:11.5px}
 .efpCard{background:var(--card);border:1px solid var(--line);border-radius:12px;min-width:0}
 .efpNow{display:grid;gap:10px}
@@ -181,30 +182,32 @@
 .efpQr.sealZoomed{box-shadow:0 0 0 2px var(--gold),0 8px 22px rgba(30,26,20,.28)}
 .efpOid{border:0;background:transparent;padding:2px 6px;margin:0 -6px;border-radius:6px;font:650 12px var(--mono);color:var(--ink);text-align:left;white-space:nowrap;cursor:pointer}
 .efpOid:hover{background:var(--goldSoft);text-decoration:underline;text-decoration-color:var(--gold2);text-underline-offset:3px}
-.efpGroup{display:grid;gap:8px}.efpGroup+.efpGroup{margin-top:4px}
+.efpKGroups{display:grid;gap:22px}.efpGroup{display:grid;gap:0}.efpBody>section,.efpBody>.efpGrid.g57{margin-top:10px}
 .efpKpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
 .efpK{position:relative;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 16px 10px;display:grid;gap:2px;min-width:0;outline:none;transition:transform .2s ease,box-shadow .2s ease,border-color .2s ease;cursor:default;overflow:hidden}
 .efpK:hover,.efpK:focus-visible,.efpK.hov{transform:translateY(-1px);box-shadow:var(--sh);border-color:var(--ink25)}
 .efpK:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
-.efpKL{font-size:10.5px;letter-spacing:.07em;text-transform:uppercase;color:var(--ink45);font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:flex;gap:6px;align-items:center}
+.efpKL{font-size:10.5px;letter-spacing:.07em;text-transform:uppercase;color:var(--ink45);font-weight:700;display:flex;gap:6px;align-items:flex-start;line-height:1.3}
+.efpKL .t{min-width:0;overflow:hidden;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;line-clamp:2}
+.efpKR{display:flex;align-items:center;justify-content:space-between;gap:8px;min-width:0}
 .efpKL i{font-style:normal;font-weight:700;font-size:8.5px;letter-spacing:.04em;padding:1px 4px;border-radius:4px;background:var(--goldSoft);color:#7a5a1d}
 .efpKV{font:600 29px/1.1 var(--sans);letter-spacing:-.022em;font-variant-numeric:tabular-nums;white-space:nowrap}.efpKV small{font-size:13px;font-weight:600;color:var(--ink45);letter-spacing:0;margin-left:3px}
-.efpKD{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--ink45);min-height:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.efpKD{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--ink45);min-height:15px;flex-wrap:wrap;gap:1px 6px}.efpKD span{white-space:nowrap}
 .efpKD b{display:inline-flex;align-items:center;gap:2px;font-weight:700;font-variant-numeric:tabular-nums;padding:0 5px;border-radius:5px;background:var(--paper2);color:var(--ink70)}
 .efpKD b.up{background:var(--sageSoft);color:#46623f}.efpKD b.down{background:var(--claySoft);color:#8a3f2b}
-.efpKS{font-size:11px;color:var(--ink45);min-height:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.efpKsp{position:absolute;right:12px;top:14px;width:76px;height:26px;pointer-events:none;opacity:.95}
-.efpHC{position:absolute;z-index:12;pointer-events:none;width:max-content;max-width:min(272px,calc(100% - 16px));background:var(--velvet);color:#f6f1e6;border-radius:10px;padding:9px 12px 10px;font-size:11.5px;line-height:1.45;box-shadow:0 10px 28px rgba(20,16,10,.28);opacity:0;visibility:hidden;transform:translateY(4px);transition:opacity .14s ease,transform .14s ease,visibility 0s .14s}
+.efpKF{display:flex;align-items:flex-end;gap:8px;min-height:14px;min-width:0}.efpKS{flex:1 1 auto;min-width:0;font-size:11px;line-height:1.35;color:var(--ink45);min-height:14px}
+.efpKsp{flex:0 1 76px;min-width:24px;height:26px;pointer-events:none;opacity:.95}
+.efpHC{position:absolute;z-index:12;pointer-events:none;width:max-content;max-width:min(272px,calc(100% - 16px));background:var(--card);color:var(--ink70);border:1px solid var(--line);border-radius:11px;padding:9px 12px 10px;font-size:11.5px;line-height:1.45;box-shadow:0 10px 26px rgba(30,26,20,.13);opacity:0;visibility:hidden;transform:translateY(4px);transition:opacity .14s ease,transform .14s ease,visibility 0s .14s}
 .efpHC.on{opacity:1;visibility:visible;transform:none;transition:opacity .14s ease,transform .14s ease}
-.efpHC b{display:block;font:650 12.5px var(--sans);color:#fff;margin-bottom:2px}.efpHC p{margin:0;color:#e3dccd}.efpHC .tag{display:inline-block;margin-top:6px;font:700 9px var(--sans);letter-spacing:.07em;text-transform:uppercase;padding:2px 6px;border-radius:4px;background:rgba(202,168,97,.2);color:#ecd596}.efpHC .tag.ok{background:rgba(95,122,91,.3);color:#cfe3c8}.efpHC .prev{display:block;margin-top:5px;color:#b9b09f;font-size:11px}
+.efpHC b{display:block;font:650 12.5px var(--sans);color:var(--ink);margin-bottom:2px}.efpHC p{margin:0;color:var(--ink70)}.efpHC .tag{display:inline-block;margin-top:6px;font:700 9px var(--sans);letter-spacing:.07em;text-transform:uppercase;padding:2px 6px;border-radius:4px;background:var(--goldSoft);color:#7a5a1d}.efpHC .tag.ok{background:var(--sageSoft);color:#46623f}.efpHC .prev{display:block;margin-top:5px;color:var(--ink45);font-size:11px}
 .efpGrid{display:grid;gap:12px;min-width:0}.efpGrid.g2{grid-template-columns:repeat(2,minmax(0,1fr))}.efpGrid.g2>.wide{grid-column:1/-1}.efpGrid.g75{grid-template-columns:minmax(0,7fr) minmax(0,5fr)}.efpGrid.g57{grid-template-columns:minmax(0,5fr) minmax(0,7fr)}
 .efpChart{padding:12px 18px 14px;display:grid;gap:6px;min-width:0;align-content:start}
 .efpCH{display:flex;align-items:center;gap:6px 12px;flex-wrap:wrap;min-height:26px}
 .efpCT{font-weight:700;letter-spacing:.07em;text-transform:uppercase;font-size:10.5px;color:var(--ink45)}.efpCP{margin-left:auto;font-size:11.5px;color:var(--ink45);display:inline-flex;gap:10px;align-items:center;flex-wrap:wrap}
 .efpTog{display:inline-flex}.efpTog button{padding:2px 9px;font-size:10.5px}
 .efpXY{position:relative;min-width:0}
-.efpTip{position:absolute;top:2px;z-index:4;pointer-events:none;background:var(--velvet);color:#f6f1e6;border-radius:9px;padding:7px 10px;font-size:11px;box-shadow:0 8px 24px rgba(20,16,10,.22);white-space:nowrap;display:grid;gap:1px;opacity:0;visibility:hidden;transition:opacity .1s}
-.efpTip.on{opacity:1;visibility:visible}.efpTipT{color:#cdc4b2;font-size:10.5px}.efpTipV{font:650 14px var(--sans)}.efpTipR{display:flex;justify-content:space-between;gap:16px;color:#cdc4b2}.efpTipR b{color:#fff;font-weight:650}.efpTipH{margin-top:3px;color:#ecd596;font-size:10.5px}
+.efpTip{position:absolute;top:2px;z-index:4;pointer-events:none;background:var(--card);color:var(--ink70);border:1px solid var(--line);border-radius:11px;padding:7px 10px;font-size:11px;box-shadow:0 10px 26px rgba(30,26,20,.13);white-space:nowrap;display:grid;gap:1px;opacity:0;visibility:hidden;transition:opacity .1s}
+.efpTip.on{opacity:1;visibility:visible}.efpTipT{color:var(--ink45);font-size:10.5px}.efpTipV{font:650 14px var(--sans);color:var(--ink)}.efpTipR{display:flex;justify-content:space-between;gap:16px;color:var(--ink70)}.efpTipR b{color:var(--ink);font-weight:650}.efpTipH{margin-top:3px;color:#7a5a1d;font-size:10.5px}
 .efpIs{display:grid}.efpIg+.efpIg{border-top:1px solid var(--line2)}
 .efpIgh{display:grid;grid-template-columns:minmax(0,1fr) auto 18px;gap:10px;align-items:center;width:100%;border:0;background:transparent;padding:9px 18px;text-align:left;cursor:pointer;border-radius:0;color:var(--ink)}
 .efpIgh:hover{background:var(--card2)}.efpIgh b{font-weight:700;font-size:12.5px}.efpIgh small{display:block;font-weight:400;color:var(--ink45);font-size:11px;margin-top:1px;white-space:normal}
@@ -215,7 +218,7 @@
 .efpIm{border:0;background:transparent;color:var(--gold);font:700 11px var(--sans);padding:6px 0 2px;cursor:pointer;justify-self:start}.efpIm:hover{text-decoration:underline}
 .efpRates{display:grid;gap:12px;padding:6px 18px 16px}
 .efpRt{display:grid;gap:5px;padding:4px 0;border-radius:8px;cursor:default}
-.efpRtH{display:flex;align-items:baseline;gap:8px;font-size:12px}.efpRtH b{font-weight:700}.efpRtH span{margin-left:auto;color:var(--ink70);font-variant-numeric:tabular-nums}.efpRtH em{font-style:normal;color:var(--ink45);font-size:11px}.efpRtH em.efpD{font-weight:700;font-variant-numeric:tabular-nums;padding:0 5px;border-radius:5px;background:var(--paper2);color:var(--ink70)}.efpRtH em.efpD.up{background:var(--sageSoft);color:#46623f}.efpRtH em.efpD.down{background:var(--claySoft);color:#8a3f2b}
+.efpRtH{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 8px;font-size:12px}.efpRtH b{font-weight:700}.efpRtH span{margin-left:auto;color:var(--ink70);font-variant-numeric:tabular-nums}.efpRtH em{font-style:normal;color:var(--ink45);font-size:11px;white-space:nowrap}.efpRtH em.efpD{font-weight:700;font-variant-numeric:tabular-nums;padding:0 5px;border-radius:5px;background:var(--paper2);color:var(--ink70)}.efpRtH em.efpD.up{background:var(--sageSoft);color:#46623f}.efpRtH em.efpD.down{background:var(--claySoft);color:#8a3f2b}
 .efpOrdersMod{display:block;padding:2px 2px 4px}
 .efpRtB{display:flex;height:7px;border-radius:4px;overflow:hidden;background:var(--line2);gap:2px}.efpRtB i{display:block;height:100%;width:0;transition:width .55s cubic-bezier(.2,.8,.2,1);min-width:0}.efpRtB .ok{background:var(--sage)}.efpRtB .bad{background:var(--clay)}.efpRtB .un{background:var(--ink25)}
 .efpFind{display:flex;align-items:center;gap:8px;padding:12px 16px 8px;flex-wrap:wrap}
@@ -242,22 +245,24 @@
 .efpSkel{border-radius:6px;background:linear-gradient(90deg,var(--line2),var(--paper2),var(--line2));background-size:200% 100%;animation:efpSk 1.4s ease-in-out infinite}@keyframes efpSk{to{background-position:-200% 0}}
 .efpLink{border:0;background:transparent;color:var(--gold);font:700 11px var(--sans);letter-spacing:0;text-transform:none;padding:2px 6px;border-radius:6px;cursor:pointer;order:2}.efpLink:hover{background:var(--goldSoft)}
 .efpK.more{animation:efpIn .32s cubic-bezier(.2,.8,.2,1) both}
-.efpK .efpKT{position:absolute;right:12px;bottom:9px;font:700 8.5px var(--sans);letter-spacing:.05em;text-transform:uppercase;color:var(--ink25)}
+.efpKT{flex:none;margin-left:auto;font:700 8.5px var(--sans);letter-spacing:.05em;text-transform:uppercase;color:var(--ink25);white-space:nowrap;line-height:1.6}
 .efpShift{display:grid;gap:10px;padding:2px 0}.efpShiftT{display:flex;flex-wrap:wrap;gap:4px 18px;font-size:12.5px;color:var(--ink70)}.efpShiftT b{color:var(--ink);font-weight:650;font-variant-numeric:tabular-nums}
 .efpSB{display:flex;height:12px;border-radius:6px;overflow:hidden;background:var(--line2);gap:2px;position:relative}.efpSB i{display:block;height:100%;width:0;transition:width .6s cubic-bezier(.2,.8,.2,1);cursor:default}.efpSB .a{background:#6f6a62}.efpSB .i{background:var(--gold2)}.efpSB .u{background:var(--line)}
 .efpSLeg{display:flex;flex-wrap:wrap;gap:4px 16px;font-size:11.5px;color:var(--ink45)}.efpSLeg span{display:inline-flex;gap:6px;align-items:center}.efpSLeg i{width:9px;height:9px;border-radius:3px;display:inline-block}
 .efpSum{display:flex;flex-wrap:wrap;gap:6px;padding:10px 18px 4px}.efpSum span{display:inline-flex;gap:5px;align-items:baseline;border:1px solid var(--line);border-radius:999px;padding:2px 10px;font-size:11px;color:var(--ink70);background:var(--card2)}.efpSum b{color:var(--ink);font-weight:700;font-variant-numeric:tabular-nums}
 .efpAt{display:inline-block;font:700 9px var(--sans);letter-spacing:.06em;text-transform:uppercase;padding:1px 6px;border-radius:4px;margin-left:8px;vertical-align:1px;background:var(--paper2);color:var(--ink70)}.efpAt.own{background:var(--goldSoft);color:#7a5a1d}.efpAt.system{background:var(--paper2);color:var(--ink45)}.efpNone{padding:8px 18px 4px;border-top:1px solid var(--line2)}.efpNone b{color:var(--ink70);font-weight:650}
 .efpHow{padding:2px 0 6px;color:var(--ink45);font-size:11.5px;line-height:1.5}
+.efpIs>.efpHow{padding:9px 18px 12px;border-top:1px solid var(--line2)}.efpIs>.efpHow+.efpHow{border-top:0;padding-top:0;margin-top:-6px}
 .efpSub{font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink45);font-weight:750;margin:6px 0 -4px}
 .efpStat{display:flex;flex-wrap:wrap;gap:4px 18px;font-size:12px;color:var(--ink70)}.efpStat b{color:var(--ink);font-weight:650;font-variant-numeric:tabular-nums;margin-left:4px}
 .efpCannot{display:grid;gap:3px;margin:2px 2px 0;color:var(--ink45);font-size:11.5px;line-height:1.5}.efpCannot b{color:var(--ink70);font-weight:650}
 .efpFound{display:flex;align-items:center;gap:9px;padding:9px 14px;border:1px solid var(--line);background:var(--card2);border-radius:10px;color:var(--ink70);font-size:12px}
 @container efp (max-width:1180px){.efpKpis{grid-template-columns:repeat(4,minmax(0,1fr))}.efpO{grid-template-columns:88px minmax(130px,1fr) 104px minmax(0,1.6fr) 48px}.efpDay{min-width:132px}}
 @container efp (max-width:900px){.efpGrid.g2,.efpGrid.g75,.efpGrid.g57{grid-template-columns:minmax(0,1fr)}.efpKpis{grid-template-columns:repeat(2,minmax(0,1fr))}.efpO{grid-template-columns:78px minmax(0,1fr) 92px 44px;grid-template-areas:"t n s q" "p p p p";gap:6px 10px}.efpO>.efpOt{grid-area:t}.efpO>.efpOn{grid-area:n}.efpO>.efpOs{grid-area:s}.efpO>.efpOp{grid-area:p}.efpO>.efpQr{grid-area:q;width:44px;height:44px}}
-@container efp (max-width:640px){.efpAv{width:42px;height:42px;flex-basis:42px;font-size:14px}.efpName{font-size:18px}.efpChips{flex:1 1 100%}.efpBar{gap:6px 8px;padding:6px 8px}.efpSeg{order:1;max-width:100%;overflow-x:auto;scrollbar-width:none}.efpSeg button{padding:4px 9px;flex:0 0 auto}.efpNav{order:2;flex:1 1 100%}.efpDay{flex:1;min-width:0}.efpBusy{order:3}
-.efpKpis{gap:8px}.efpK{padding:11px 12px 9px}.efpKV{font-size:25px}.efpKsp{width:56px;right:8px;top:12px}.efpChart{padding:11px 12px 12px}.efpNowCard{grid-template-columns:auto minmax(0,1fr);padding:11px 12px}.efpNowCard>.efpQr{display:none}
-.efpO{grid-template-columns:70px minmax(0,1fr) 44px;grid-template-areas:"t n q" "s s s" "p p p"}.efpO>.efpOs{grid-area:s;display:flex;gap:10px;align-items:baseline}.efpIr{grid-template-columns:78px minmax(0,1fr);grid-template-areas:"t n" "r r"}.efpIr>time{grid-area:t}.efpIr>.efpOid{grid-area:n}.efpIr>span{grid-area:r}.efpIgh,.efpIgl,.efpRates{padding-left:12px;padding-right:12px}.efpFind{padding:10px 12px 6px}.efpOl{padding:0 2px 4px}
+@container efp (max-width:640px){.efpAv{width:42px;height:42px;flex-basis:42px;font-size:14px}.efpName{font-size:18px;white-space:normal;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;line-clamp:2;overflow-wrap:anywhere}.efpChips{flex:1 1 100%}.efpBar{gap:6px 8px;padding:6px 8px}.efpSeg{order:1;max-width:100%;overflow-x:auto;scrollbar-width:none}.efpSeg button{padding:4px 9px;flex:0 0 auto}.efpNav{order:2;flex:1 1 100%}.efpDay{flex:1;min-width:0}.efpBusy{order:3}
+.efpRtH b{flex:1 1 100%;order:-2}.efpRtH span{order:-1;margin-left:0;color:var(--ink);font-weight:700}
+.efpKpis{gap:8px}.efpKL{font-size:9.5px;letter-spacing:.04em;min-height:2.6em;align-items:flex-end}.efpK{padding:11px 12px 9px}.efpKV{font-size:25px}.efpKsp{flex-basis:48px}.efpChart{padding:11px 12px 12px}.efpNowCard{grid-template-columns:auto minmax(0,1fr);padding:11px 12px}.efpNowCard>.efpQr{display:none}
+.efpO{grid-template-columns:70px minmax(0,1fr) 44px;grid-template-areas:"t n q" "s s s" "p p p"}.efpO>.efpOs{grid-area:s;display:flex;gap:10px;align-items:baseline}.efpIr{grid-template-columns:100px minmax(0,1fr);grid-template-areas:"t n" "r r"}.efpIr>time{grid-area:t}.efpIr>.efpOid{grid-area:n}.efpIr>span{grid-area:r}.efpIgh,.efpIgl,.efpRates{padding-left:12px;padding-right:12px}.efpFind{padding:10px 12px 6px}.efpOl{padding:0 2px 4px}
 }
 @media (prefers-reduced-motion:reduce){.efp *,.efp *:before,.efp *:after{transition:none!important;animation:none!important}}`;
     doc.head.appendChild(s);
@@ -269,16 +274,16 @@
   const pct1 = v => { v = num(v); return v == null ? null : Math.round(v * 10) / 10; };
   /** One number worth showing: how to say it (unit), which way is good, its plain definition, whether it is an estimate. (Plain words here are the fallback; the server's own `label` and `def` win.) */
   const CARD = {
-    parts: { label: "Parts", unit: "pieces", better: "up", def: "Pieces this person finished at a station (net of undos) in the period.", sp: "parts" },
+    parts: { label: "Pieces", unit: "pieces", better: "up", def: "Pieces this person finished at a station (net of undos) in the period.", sp: "parts" },
     orders: { label: "Orders", unit: "orders", better: "up", def: "Distinct orders this person worked on in the period.", sp: "orders" },
     ordersCompleted: { label: "Orders completed", unit: "orders", better: "up", def: "Orders this person finished at a station.", sp: "completes" },
     scans: { label: "Scans", unit: "scans", better: "up", def: "Scan actions logged under this person's name.", sp: "scans" },
-    partsPerDay: { label: "Parts per day worked", unit: "pieces/day", better: "up", def: "Parts divided by days worked.", sp: "parts" },
+    partsPerDay: { label: "Pieces per day worked", unit: "pieces/day", better: "up", def: "Pieces divided by days worked.", sp: "parts" },
     ordersPerDay: { label: "Orders per day worked", unit: "orders/day", better: "up", def: "Orders divided by days worked.", sp: "orders" },
-    partsPerActiveHour: { label: "Parts per active hour", unit: "pieces/hour", better: "up", def: "Parts divided by active hours: time between actions that were less than 5 minutes apart.", sp: "perActiveHour" },
-    partsPerSignedHour: { label: "Parts per signed-in hour", unit: "pieces/hour", better: "up", def: "Parts divided by every hour signed in, active or not.", sp: "perSignedHour" },
-    bestDay: { label: "Best day", unit: "pieces", better: "up", def: "The day with the most parts in the period." },
-    peakHour: { label: "Busiest hour", unit: "hour", better: null, def: "The hour of the day with the most parts." },
+    partsPerActiveHour: { label: "Pieces per active hour", unit: "pieces/hour", better: "up", def: "Pieces divided by active hours: time between actions that were less than 5 minutes apart.", sp: "perActiveHour" },
+    partsPerSignedHour: { label: "Pieces per signed-in hour", unit: "pieces/hour", better: "up", def: "Pieces divided by every hour signed in, active or not.", sp: "perSignedHour" },
+    bestDay: { label: "Best day", unit: "pieces", better: "up", def: "The day with the most pieces in the period." },
+    peakHour: { label: "Busiest hour", unit: "hour", better: null, def: "The hour of the day with the most pieces." },
     secPerOrderMedian: { label: "Median per order", unit: "seconds", better: "down", def: "The middle time this person took for one order. Half were faster, half slower.", sp: "medianSecPerOrder" },
     secPerOrderP90: { label: "Slowest 10%", unit: "seconds", better: "down", def: "Nine in ten orders were done faster than this: the slow tail, not thrown by one odd order." },
     secPerOrderMean: { label: "Average per order", unit: "seconds", better: "down", def: "Active seconds divided by orders.", sp: "secPerOrder" },
@@ -414,12 +419,12 @@
     return { orders, next: r.next == null || r.next === "" ? "" : String(r.next), total: num(r.total) };
   }
   /** The console's `live` snapshot, reduced to this person: where they are, since when, and the order or orders in their hands. */
-  function pickLive(r, name) {
-    const me = slug(name), out = { at: num(r && r.at), where: null, current: [], stationKey: "" };
+  function pickLive(r, name, also) {
+    const mine = new Set([slug(name)].concat(A(also).filter(Boolean).map(slug))), isMe = n => mine.has(slug(n)), out = { at: num(r && r.at), where: null, current: [], stationKey: "" };
     if (!r) return out;
-    const sig = A(r.signedIn).find(s => s && slug(s.name) === me);
+    const sig = A(r.signedIn).find(s => s && isMe(s.name));
     if (sig) { out.where = { name: String(sig.name), stationKey: String(sig.stationKey || ""), since: num(sig.since), lastSeenAt: num(sig.lastSeenAt) }; out.stationKey = out.where.stationKey; }
-    const seen = new Set(), add = (c, st) => { if (!c || slug(c.person) !== me) return; const id = String(c.rid || c.orderNumber || ""); if (seen.has(id)) return; seen.add(id); out.current.push(Object.assign({}, c, { stationKey: c.station || (st && st.key) || "", stationLabel: c.stationLabel || (st && st.label) || stName(c.station || (st && st.key)) })); };
+    const seen = new Set(), add = (c, st) => { if (!c || !isMe(c.person)) return; const id = String(c.rid || c.orderNumber || ""); if (seen.has(id)) return; seen.add(id); out.current.push(Object.assign({}, c, { stationKey: c.station || (st && st.key) || "", stationLabel: c.stationLabel || (st && st.label) || stName(c.station || (st && st.key)) })); };
     for (const c of A(r.current)) add(c, null); for (const st of A(r.stations)) for (const c of A(st && st.current)) add(c, st);
     if (!out.stationKey && out.current[0]) out.stationKey = out.current[0].stationKey;
     return out;
@@ -492,7 +497,7 @@
     tickSince(card, now); return card;
   }
   function tickSince(scope, now) {
-    const a = root.Efficiency && root.Efficiency.api, f = a && a.fmt && typeof a.fmt.since === "function" ? a.fmt.since : t => durMs(t).replace("<1 s", "0 s").replace(/^0 m$/, "0 s");
+    const a = root.Efficiency && root.Efficiency.api, f = a && a.fmt && typeof a.fmt.since === "function" ? a.fmt.since : t => durMs(t).replace("<1 s", "0 s").replace(/^0 min$/, "0 s");
     scope.querySelectorAll("[data-since]").forEach(b => { const t = num(b.dataset.since); setText(b, t ? f(Math.max(0, now - t)) : "—"); });
   }
 
@@ -538,6 +543,18 @@
   /* ── how a metric reads ── */
   const clockMin = m => { m = Math.round(num(m) || 0) % 1440; const h = Math.floor(m / 60); return `${h % 12 || 12}:${pad(m % 60)} ${h < 12 ? "AM" : "PM"}`; };
   const pctVal = v => (v >= 10 ? `${Math.round(v)}%` : `${Math.round(v * 10) / 10}%`);
+  /** A group of cards is ONE Tab stop; the arrow keys, Home and End move inside it (a keyboard user does not pass sixteen stops before the first chart). */
+  function roveFix(box, sel) { const all = [].slice.call(box.querySelectorAll(sel)), vis = all.filter(n => !n.classList.contains("hidden")), cur = vis.find(n => n.tabIndex === 0) || vis[0]; all.forEach(n => { n.tabIndex = n === cur ? 0 : -1; }); }
+  function roveInit(box, sel) {
+    roveFix(box, sel);
+    box.addEventListener("focusin", e => { const n = e.target && e.target.closest ? e.target.closest(sel) : null; if (n && box.contains(n)) [].slice.call(box.querySelectorAll(sel)).forEach(x => { x.tabIndex = x === n ? 0 : -1; }); });
+    box.addEventListener("keydown", e => {
+      const n = e.target; if (!n || !n.matches || !n.matches(sel)) return;
+      const l = [].slice.call(box.querySelectorAll(sel)).filter(x => !x.classList.contains("hidden")), i = l.indexOf(n); let j = -1;
+      if (e.key === "ArrowRight" || e.key === "ArrowDown") j = Math.min(l.length - 1, i + 1); else if (e.key === "ArrowLeft" || e.key === "ArrowUp") j = Math.max(0, i - 1); else if (e.key === "Home") j = 0; else if (e.key === "End") j = l.length - 1; else return;
+      e.preventDefault(); if (l[j]) l[j].focus();
+    });
+  }
   function fmtFor(key, unit) {
     if (key === "timeToFirstReplyMin" || unit === "minutes") return v => durMs(v * 60000);
     if (key === "peakHour") return v => (unit === "clock" ? clockMin(v) : hourLabel(Math.round(v) % 24));
@@ -619,7 +636,7 @@
   <div class="efpNote hidden" role="status"></div>
   <div class="efpKGroups"></div>
   <section aria-label="Over time"><div class="efpLabel">Over time</div>
-    <div class="efpCard efpChart" data-c="tp"><div class="efpCH"><span class="efpCT">Throughput</span><span class="seg efpTog" role="group" aria-label="Measure"><button type="button" data-metric="parts">Parts</button><button type="button" data-metric="scans">Scans</button><button type="button" data-metric="orders">Orders</button><button type="button" data-metric="perActiveHour">Per hour</button></span><span class="efpCP"></span></div><div class="efpCh"></div></div></section>
+    <div class="efpCard efpChart" data-c="tp"><div class="efpCH"><span class="efpCT">Throughput</span><span class="seg efpTog" role="group" aria-label="Measure"><button type="button" data-metric="parts">Pieces</button><button type="button" data-metric="scans">Scans</button><button type="button" data-metric="orders">Orders</button><button type="button" data-metric="perActiveHour">Per hour</button></span><span class="efpCP"></span></div><div class="efpCh"></div></div></section>
   <div class="efpGrid g2">
     <div class="efpCard efpChart" data-c="sp"><div class="efpCH"><span class="efpCT">Speed per order</span><span class="efpCP"></span></div><div class="efpCh"></div></div>
     <div class="efpCard efpChart" data-c="tm"><div class="efpCH"><span class="efpCT">Active vs signed in</span><span class="efpCP"></span></div><div class="efpCh"></div></div>
@@ -652,8 +669,8 @@
         if (more.length) { const b = el("button", "efpLink"); b.type = "button"; b.dataset.moreGroup = gname; b.setAttribute("aria-expanded", "false"); b.textContent = "More figures"; lab.appendChild(b); }
         g.appendChild(grid);
         for (const full of prim.concat(more)) {
-          const key = shortKey(full), d = cardOf(full), c = el("div", "efpK", `<span class="efpKL"><span class="t"></span></span><b class="efpKV">—</b><span class="efpKD"></span><span class="efpKS"></span><span class="efpKsp"></span><span class="efpKT"></span>`);
-          c.tabIndex = 0; c.dataset.k = full; c.setAttribute("role", "group"); setText(c.querySelector(".t"), d.label); if (more.includes(full)) c.classList.add("hidden", "extra");
+          const key = shortKey(full), d = cardOf(full), c = el("div", "efpK", `<span class="efpKL"><span class="t"></span></span><span class="efpKR"><b class="efpKV">—</b><span class="efpKsp"></span></span><span class="efpKD"></span><span class="efpKF"><span class="efpKS"></span><span class="efpKT"></span></span>`);
+          c.tabIndex = -1; c.dataset.k = full; c.setAttribute("role", "group"); setText(c.querySelector(".t"), d.label); if (more.includes(full)) c.classList.add("hidden", "extra");
           E.k[full] = { card: c, val: c.querySelector(".efpKV"), d: c.querySelector(".efpKD"), s: c.querySelector(".efpKS"), tag: c.querySelector(".efpKT"), sp: null, spH: c.querySelector(".efpKsp"), t: c.querySelector(".t"), group: gname };
           grid.appendChild(c);
         }
@@ -667,6 +684,7 @@
       E.find.addEventListener("input", onSearchInput); E.find.addEventListener("keydown", e => { if (e.key === "Escape" && E.find.value) { e.preventDefault(); E.find.value = ""; onSearchInput(); } });
       E.ol.addEventListener("keydown", e => { if ((e.key === "Enter" || e.key === " ") && e.target.classList && e.target.classList.contains("efpO")) { e.preventDefault(); openOrder(e.target, e.target.dataset.rid); } });
       for (const k of Object.keys(E.k)) { const c = E.k[k].card; c.addEventListener("pointerenter", () => showHC(k)); c.addEventListener("pointerleave", hideHC); c.addEventListener("focus", () => showHC(k)); c.addEventListener("blur", hideHC); }
+      E.kg.querySelectorAll(".efpKpis").forEach(g => roveInit(g, ".efpK")); roveInit(E.rates, ".efpRt");
       setTimeout(() => root0.classList.remove("in"), 900);
     }
 
@@ -715,8 +733,8 @@
       else txt = L || M ? "Not signed in now" : "";
       if (E.where._h !== txt) { E.where._h = txt; E.where.innerHTML = txt; }
       const here = L ? L.stationKey : "", st = (M && M.stations.length ? M.stations : []).slice(0, 5), sig = st.map(x => x.station + x.minutes + x.parts).join() + "|" + here + !!w;
-      if (E.chips._sig !== sig) { E.chips._sig = sig; E.chips.innerHTML = st.map(x => `<span class="efpChip${w && here && x.station === here ? " now" : ""}" title="${esc(x.parts != null ? nf(x.parts) + " parts" : "")}"><b>${esc(x.label)}</b>${esc(x.minutes != null ? durMs(x.minutes * 60000) : x.parts != null ? nf(x.parts) + " parts" : "")}</span>`).join(""); }
-      if (M && M.spellings.length > 1) E.name.title = `Also seen as: ${M.spellings.filter(x => x !== M.name).join(", ")}`;
+      if (E.chips._sig !== sig) { E.chips._sig = sig; E.chips.innerHTML = st.map(x => `<span class="efpChip${w && here && x.station === here ? " now" : ""}" title="${esc(x.parts != null ? nf(x.parts) + " pieces" : "")}"><b>${esc(x.label)}</b>${esc(x.minutes != null ? durMs(x.minutes * 60000) : x.parts != null ? nf(x.parts) + " pieces" : "")}</span>`).join(""); }
+      E.name.title = S.name + (M && M.spellings.length > 1 ? `. Also seen as: ${M.spellings.filter(x => x !== M.name).join(", ")}` : "");
     }
 
     /* ── the figures ── */
@@ -737,7 +755,7 @@
       const key = shortKey(full), work = kv(M, "att.daysWorked"), off = M.cal.filter(c => c.state === "off");
       switch (key) {
         case "parts": return m.v != null && work > 0 ? `${nf(m.v / work)} per day worked` : "";
-        case "orders": return m.v > 0 && kv(M, "kpis.parts") != null ? `${nf1(kv(M, "kpis.parts") / m.v)} parts per order` : "";
+        case "orders": return m.v > 0 && kv(M, "kpis.parts") != null ? `${nf1(kv(M, "kpis.parts") / m.v)} pieces per order` : "";
         case "bestDay": return m.day ? dayLbl(m.day) : "";
         case "activeShare": { const a = kv(M, "kpis.activeHours"), s = kv(M, "kpis.signedHours"); return a != null && s != null ? `${hoursTxt(a * HOUR_MS)} of ${hoursTxt(s * HOUR_MS)}` : ""; }
         case "daysWorked": { const wd = kv(M, "att.workingDays") != null ? kv(M, "att.workingDays") : kv(M, "att.teamDays") != null ? kv(M, "att.teamDays") : work != null && kv(M, "att.daysOff") != null ? work + kv(M, "att.daysOff") : null; return wd ? `of ${nf(wd)} working days` : ""; }
@@ -772,11 +790,13 @@
         if (k.d._sig !== sig) { k.d._sig = sig; const pw = PREV_WORD[S.range] || "before"; k.d.innerHTML = !m || m.v == null ? "" : dl.txt ? `<b class="${dl.cls}">${esc(dl.txt)}</b><span>vs ${esc(pw)}</span>` : dl.none ? `<span>vs ${esc(pw)}: no data</span>` : ""; }
         setText(k.s, contactOff ? "Not recorded in this range" : m && m.v != null ? subFor(full, m, M) : "");
         const rd = diffDays(M.from, M.to) + 1, tag = m && m.est ? "est." : m && m.daysCounted != null && m.daysCounted < rd && m.v != null ? `${nf(m.daysCounted)} of ${nf(rd)} days` : m && m.window && evs ? "recent" : m && m.derived ? "sum" : ""; setText(k.tag, tag);
-        const sp = m ? sparkFor(full, B, M) : [], known = sp.filter(x => x != null).length, on = known >= 3 && !k.card.classList.contains("hidden") && root.EfficiencyCharts;
+        // a small trend line joins the days that have a figure (a day off or a future day would cut it into stubs); the charts below keep every gap
+        const sp = m ? sparkFor(full, B, M).filter(x => x != null) : [], known = sp.length, on = known >= 3 && !k.card.classList.contains("hidden") && root.EfficiencyCharts;
         if (on) { if (!k.sp) k.sp = chart("sparkline", k.spH, { height: 26, hover: false, fill: false, name: `${(m && m.label) || d.label} across the range` }); if (k.sp) k.sp.update({ values: sp }); k.spH.style.visibility = ""; }
         else { if (k.sp) { k.sp.destroy(); k.sp = null; } k.spH.style.visibility = "hidden"; }
         k.card.setAttribute("aria-label", `${(m && m.label) || d.label}: ${m && m.v != null ? fmt(m.v) : "no data"}. ${(m && m.def) || d.def}`);
       }
+      E.kg.querySelectorAll(".efpKpis").forEach(g => roveFix(g, ".efpK"));
     }
     const TP = { parts: ["pieces", "pieces", "kpis.parts"], scans: ["scans", "scans", "kpis.scans"], orders: ["orders", "orders", "kpis.orders"], perActiveHour: ["pieces/hour", "pieces per active hour", "kpis.partsPerActiveHour"] };
     function renderCharts(M, B) {
@@ -892,6 +912,7 @@
       else if (!C.available) html += `<div class="efpHow">Inbox replies are not recorded for this person in this range.</div>`;
       else { const f = (k, l, fmt) => (cm[k] ? `<span>${esc(l)}<b>${cm[k].v != null ? esc(fmt(cm[k].v)) : "—"}</b></span>` : ""); html += `<div class="efpStat">${f("sent", "Sent", nf)}${f("delivered", "Delivered", nf)}${f("failed", "Failed", nf)}${f("refused", "Refused", nf)}${f("drafted", "Drafts", nf)}${f("edited", "Edited", nf)}${f("medianFirstReplyMs", "First reply (middle)", durMs)}</div>${C.daysCounted != null && C.daysCounted < rd ? `<div class="efpHow">Counted on ${nf(C.daysCounted)} of ${nf(rd)} days.</div>` : ""}`; }
       E.rates.innerHTML = html;
+      roveFix(E.rates, ".efpRt");
       E.rates.querySelectorAll(".efpRt").forEach(n => { const r = R[+n.dataset.r], t = { t: r.label, v: r.v != null ? pctVal(r.v) : "No data", rows: [].concat(r.num != null ? [["Good", nf(r.num)]] : [], r.den != null ? [["Of", nf(r.den)]] : [], r.prev != null ? [[(PREV_WORD[S.range] || "Before").replace(/^./, c => c.toUpperCase()), pctVal(r.prev)]] : []), hint: r.def + (r.est && r.why ? " Estimated: " + r.why : r.est ? " Estimated." : "") + (r.coverage === "window" ? " Counted from the newest finished orders only." : "") }; n.addEventListener("pointerenter", () => mini.rate.show(n, t)); n.addEventListener("pointerleave", () => mini.rate.hide()); n.addEventListener("focus", () => mini.rate.show(n, t)); n.addEventListener("blur", () => mini.rate.hide()); });
       requestAnimationFrame(() => E.rates.querySelectorAll(".efpRtB i").forEach(b => { b.style.width = b.dataset.w + "%"; }));
     }
@@ -963,7 +984,7 @@
         if (!S.M) { setText(E.waitT, `${S.err} Trying again.`); E.wait.querySelector(".spin").style.visibility = "hidden"; } else E.body.classList.remove("dim");
       } finally { if (gen === S.gen) { S.busy = false; paintBusy(""); paintLive(); if (!S.locked) schedule("range", S.fails ? backoff(S.fails) : period().to >= today() ? options.rangeMs : options.rangeMs * 4); } }
     }
-    function applyLive(snap) { S.live = pickLive(snap, S.name); S.liveAt = Date.now(); S.liveFails = 0; renderLive(); renderHead(); paintLive(); }
+    function applyLive(snap) { S.live = pickLive(snap, S.name, S.M && S.M.spellings); S.liveAt = Date.now(); S.liveFails = 0; renderLive(); renderHead(); paintLive(); }
     async function pollLive() {
       clearTimeout(T.live); T.live = 0; if (unsubLive || !visible() || S.liveBusy) return; S.liveBusy = true;
       try { const r = await call({ op: "live" }); if (S.dead) return; applyLive(r); }

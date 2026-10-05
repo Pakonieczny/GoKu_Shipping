@@ -29,13 +29,19 @@
     { "pattern": "[\\w]-lines?\\b", "why": "CSS and ids: cc-line-item, bg-line, sub-line, tl-line" },
     { "pattern": "--lines?\\b", "why": "the CSS variable --line (the hairline colour)" },
     { "pattern": "<\\/?line\\b", "why": "an SVG <line> element" },
-    { "pattern": "\\bline (?:\\d+|\\u0001) is not a group code", "why": "a DXF file's own line number in a parse error" }
+    { "pattern": "\\bline (?:\\d+|\\u0001) is not a group code", "why": "a DXF file's own line number in a parse error" },
+    { "pattern": "\\.efc-guide line\\{", "why": "the efficiency charts' CSS selector for the SVG <line> element of the hover guide (a drawing element, not text)" },
+    { "pattern": "\\.efc-sw\\.line\\{", "why": "the efficiency charts' CSS class of the legend swatch drawn as a line (a chart-key shape, not text)" },
+    { "pattern": "share a line with the status|takes (?:the same )?two lines", "why": "a comment inside the sheet window's CSS: the title bar wraps onto two rows of text (a comment, never shown)" }
   ],
   "literals": [
     { "file": "charm-nest-dxf.js", "exact": "LINE", "why": "the DXF entity name LINE (a file format keyword)" },
     { "file": "charm-nest-efficiency.js", "exact": "line", "why": "the SVG element name passed to the drawing helper" },
     { "file": "charm-nest-flow-rose.js", "exact": "(\u0001 lines)", "why": "how many green dash lines were just saved on the sheet" },
     { "file": "charm-nest-sheetwin.js", "exact": "sheet window: run lines", "why": "a console warning label, not shown on the page" },
+    { "file": "charm-nest-order-hold.js", "exact": "[OrderHold] run lines", "why": "a console warning label (B.run.lines is the run's saved record), not shown on the page" },
+    { "file": "charm-nest-efficiency-charts.js", "exact": "line", "why": "the chart kind / SVG element name / legend key kind of the chart code (a drawing token: a line chart), never shown" },
+    { "file": "charm-nest-efficiency-person.js", "exact": "line", "why": "the chart kind passed to the chart helper (the speed-per-order line chart), never shown" },
     { "file": "station-activity.js", "exact": "line", "why": "a record key (data field name), not shown" },
     { "file": "charm-nest-rose-ui.js", "exact": "line", "why": "a Rose Gold marker kind name (the green line), not shown" },
     { "file": "charm-nest-rose-ui.js", "exact": "lines", "why": "RoseStock.paint mode name, not shown" },
