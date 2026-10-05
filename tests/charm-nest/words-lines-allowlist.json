@@ -1,0 +1,55 @@
+{
+  "about": "Where the word 'line' / 'lines' is right in text a person reads (tests/charm-nest/words-lines.cjs). An item of an order is a PIECE: never add 'line' for it. Every entry has its reason.",
+  "scope": [
+    [".", "^(charm-nest-.*\\.(js|html)|order-timeline\\.js|station-.*\\.js|index\\.html|main\\.js|scanner\\.html|sort-scan\\.html|sorting(-2)?\\.html|weld(-scan)?-1\\.html|assembly(-scan)?-[0-9]\\.html|shipping(-scan)?-[0-9]\\.html|design(-message|-print)?(-1)?\\.html|etsy-mail-1\\.html|screenTwo\\.html|SKU_List_V1\\.html)$"],
+    ["netlify/functions", "^(_?charmNest.*|_orderTimeline|_stationActivity|employeeEfficiency|listOpenOrders|skuChecked)\\.js$"]
+  ],
+  "outOfScope": {
+    "files": [],
+    "why": "Other applications (Listing_Generator_1.html, Game_Generator_1.html, brites-*, the Google Ads and Etsy-mail agents' prompts, investor.html) are not read: their 'line' is ad copy, line art, a stock chart line or a line sheet, never an order's piece."
+  },
+  "phrases": [
+    { "pattern": "green (?:dash )?lines?", "why": "the Rose Gold green dash line (the cut contour), not an order's piece" },
+    { "pattern": "\\brose lines?\\b", "why": "the Rose Gold green line, in a log label" },
+    { "pattern": "\\b(?:cut|dashed|contour|black|grey|gray) lines?\\b", "why": "a drawn cut line of a charm outline" },
+    { "pattern": "\\bline (?:spacing|breaks?|count|gap)\\b", "why": "engraving text: the gap between, the breaks of, and the count of, lines of lettering" },
+    { "pattern": "\\bLines?\\u0001? ?<select data-a=\"linecount\"|\\bLines <select", "why": "the engraving line-count control" },
+    { "pattern": "\\bone per line\\b", "why": "copying order numbers: one per line of text" },
+    { "pattern": "\\bnew line\\b", "why": "Shift+Enter in a message box" },
+    { "pattern": "\\b(?:back|put back) in line\\b", "flags": "i", "why": "the idiom: back in the queue, not a piece" },
+    { "pattern": "\\bline sheets?\\b", "why": "a jewellery line sheet (a catalogue page), not a piece" },
+    { "pattern": "\\bline art\\b", "why": "black-and-white line art of a design" },
+    { "pattern": "\\bSKU lines?\\b", "why": "a SKU label line written under a charm in a master file (indexing), not an order piece" },
+    { "pattern": "\\blines?(?:\\(s\\))?\\u0001? with no charm above", "why": "SKU label lines in a master file that have no charm above them" },
+    { "pattern": "\\bdates the line\\b", "why": "Rose Gold: Cut Sheet dates the green dash line it draws" },
+    { "pattern": "\\bor change that line\\b", "why": "Etsy mail: a line of the reply being written, whose attachment is missing" },
+    { "pattern": "further lines stack under it", "why": "the SKU label lines under a charm in a master file (Settings help)" },
+    { "pattern": "\\blines?-[\\w-]*", "why": "CSS and ids: line-height, line-clamp, line-through, line-<hash>" },
+    { "pattern": "[\\w]-lines?\\b", "why": "CSS and ids: cc-line-item, bg-line, sub-line, tl-line" },
+    { "pattern": "--lines?\\b", "why": "the CSS variable --line (the hairline colour)" },
+    { "pattern": "<\\/?line\\b", "why": "an SVG <line> element" },
+    { "pattern": "\\bline (?:\\d+|\\u0001) is not a group code", "why": "a DXF file's own line number in a parse error" }
+  ],
+  "literals": [
+    { "file": "charm-nest-dxf.js", "exact": "LINE", "why": "the DXF entity name LINE (a file format keyword)" },
+    { "file": "charm-nest-efficiency.js", "exact": "line", "why": "the SVG element name passed to the drawing helper" },
+    { "file": "charm-nest-flow-rose.js", "exact": "(\u0001 lines)", "why": "how many green dash lines were just saved on the sheet" },
+    { "file": "charm-nest-sheetwin.js", "exact": "sheet window: run lines", "why": "a console warning label, not shown on the page" },
+    { "file": "station-activity.js", "exact": "line", "why": "a record key (data field name), not shown" },
+    { "file": "charm-nest-rose-ui.js", "exact": "line", "why": "a Rose Gold marker kind name (the green line), not shown" },
+    { "file": "charm-nest-rose-ui.js", "exact": "lines", "why": "RoseStock.paint mode name, not shown" },
+    { "file": "charm-nest-1.html", "exact": "lines", "why": "RoseStock.paint mode name, not shown" },
+    { "file": "netlify/functions/charmNestLibrary.js", "exact": "lines", "why": "Firestore field name in a field list, not shown" },
+    { "file": "netlify/functions/_charmNestCustomRead.js", "exact": "lines", "why": "JSON schema field name of the request" },
+    { "file": "netlify/functions/_charmNestCustomRead.js", "startsWith": "You sort order lines for", "why": "the instruction given to the AI (a prompt: not shown to a person, and changing it would change saved readings)" },
+    { "file": "netlify/functions/_charmNestCustomRead.js", "startsWith": "Other lines in the same order", "why": "text sent to the AI with each question, not shown" },
+    { "file": "netlify/functions/_charmNestCustomRead.js", "exact": "\u0001 order line\u0001 follow.", "why": "text sent to the AI with each question, not shown" },
+    { "file": "netlify/functions/_charmNestAgent.js", "startsWith": "You read one Etsy order line", "why": "the instruction given to the AI (a prompt: not shown to a person)" },
+    { "file": "netlify/functions/_charmNestAgent.js", "startsWith": "You are the quality reviewer", "why": "the instruction given to the AI (a prompt)" },
+    { "file": "netlify/functions/_charmNestAgent.js", "startsWith": "You are nesting jewelry charms", "why": "the instruction given to the AI (a prompt)" },
+    { "file": "netlify/functions/_charmNestAgent.js", "startsWith": "Grade EVERY numbered charm", "why": "the instruction given to the AI (a prompt)" },
+    { "file": "netlify/functions/_charmNestAgent.js", "startsWith": "You look at the rendered BACK", "why": "the instruction given to the AI (a prompt)" },
+    { "file": "sorting.html", "startsWith": "You are classifying metal colour", "why": "the instruction given to the AI (a prompt)" },
+    { "file": "sorting.html", "startsWith": "You are classifying metal color", "why": "the instruction given to the AI (a prompt: 'cut lines' are colour thresholds)" }
+  ]
+}

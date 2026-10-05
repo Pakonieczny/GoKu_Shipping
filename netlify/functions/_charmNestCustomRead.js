@@ -187,7 +187,7 @@ async function run(body, opts = {}) {
   const admin = opts.admin || require("./firebaseAdmin"), db = opts.db || admin.firestore();
   const anthropic = opts.anthropic || require("./_etsyMailAnthropic"), fetch = opts.fetch || require("node-fetch");
   const lines = (Array.isArray(body.lines) ? body.lines : []).slice(0, MAX_LINES).map(cleanLine).filter(l => l.key && l.hash);
-  if (!lines.length) return { error: "no lines" };
+  if (!lines.length) return { error: "no pieces" };
   const ctx = await enrich(db, lines, fetch);
   const reads = {}, usage = { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0 }, problems = [];
   const batches = []; for (let i = 0; i < lines.length; i += PER_CALL) batches.push(lines.slice(i, i + PER_CALL));
@@ -235,8 +235,8 @@ async function lookup(db, items, sandbox) {
 async function decide(db, FV, b, sandbox) {
   // one line (key) or the lines of one decision (keys: an Unknown SKU card can hold many orders)
   const keys = [...new Set((Array.isArray(b.keys) ? b.keys : [b.key]).map(cleanKey).filter(Boolean))];
-  if (!keys.length) return { error: "which line?" };
-  if (keys.length > 400) return { error: "too many lines in one decision" };
+  if (!keys.length) return { error: "which piece?" };
+  if (keys.length > 400) return { error: "too many pieces in one decision" };
   const kind = b.kind == null ? null : KINDS.includes(b.kind) ? b.kind : null;
   if (b.kind != null && !kind) return { error: "bad kind" };
   const rec = kind ? { kind, by: str(b.by, 60) || "someone", at: Date.now() } : null, field = sandbox ? "decidedSandbox" : "decided";

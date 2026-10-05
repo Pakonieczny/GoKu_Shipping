@@ -15,7 +15,9 @@ const S='Charm_Nest_Sheets',SET='Charm_Nest_Sets',RUN='Charm_Nest_Runs';
     const old=new Map(ids.map(id=>[id,R.processStamps(st.doc(S,id))]));
     const setSeals=structuredClone(st.doc(SET,'set-fixture').processSeals);
     // A current intake check must not turn a return from Completed into a new intake process.
-    for(const l of Object.values(st.doc(RUN,'run-fixture').lines)){l.state='unmatched';l.problems=['unmatchedSku'];}
+    // (the pieces are on their sheets, so a stale problem on their own line is nothing; what a sheet waits for is ANOTHER piece of its order: a new line no master has)
+    const lines=st.doc(RUN,'run-fixture').lines;
+    for(const [k,l] of Object.entries(lines)){l.state='unmatched';l.problems=['unmatchedSku'];lines[l.orderId+'_9']={orderId:l.orderId,state:'unmatched',problems:['unmatchedSku'],sku:'NEW-SKU',poolIds:[]};}
     assert.equal((await mark({done:false})).status,200);
     let r=await status();assert(R.laserGroup(r.sets[0],r.sheets).ready,'the whole reopened set returns to Laser');
     assert(r.sheets.every(s=>s.laser.ready && !s.laserDoneAt));
