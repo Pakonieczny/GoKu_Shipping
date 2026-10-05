@@ -103,12 +103,13 @@ vm.runInContext(slice(html, 'async function markBritesDesigned(', '/**\n * Load 
   sh.label.files[0].payload='stale'; assert.throws(valid, /QR labels/); qr();
   set.labelFiles=[]; assert.throws(valid, /QR labels/); qr();
   rows=[{state:'written',spec:{quantity:1,engraveCandidate:true},order:{receiptId:'101'}, poolIds:['p1'], engrave:{needed:true,approved:true,state:'approved'}}];
-  assert.throws(valid, /back engraving/);
-  rows[0].engrave.state='written'; assert.throws(valid, /back engraving/);
+  // (the sheet's own missing back file is its own step, not an order waiting for itself: the set says what to finish)
+  assert.throws(valid, /engraving approvals, saved back files/);
+  rows[0].engrave.state='written'; assert.throws(valid, /engraving approvals, saved back files/);
   sh.backPool=[{poolId:'p1',approvedBy:'Paul',approvedAt:123,verified:{geometry:{ok:true},file:{ok:true}},outputs:{ai:{path:'backs/p1.ai',url:'https://fixture/p1.ai'}}}];
   valid();
   jobs.set('edit', {copies:['p1'],state:'review'}); assert.throws(valid, /still needs/); jobs.clear();
-  sh.backPool[0].verified.file.ok=false; assert.throws(valid, /back engraving/);
+  sh.backPool[0].verified.file.ok=false; assert.throws(valid, /engraving approvals, saved back files/);
   rows[0].engrave={needed:false,approved:true,state:'skipped'};sh.backPool=[];valid();
   const orderRows = [{state:'written',spec:{}},{state:'pooled',spec:{}}];
   assert.equal(O.evaluateOrder(orderRows).committable,false, 'a mixed-material order waits for its other sheet');
