@@ -280,7 +280,9 @@ async function inbox(browser) {
   await until(async () => { await flush(page); return mine(device).some(e => e.action === 'complete'); }, 'the conversation done');
   const got = mine(device);
   assert.deepStrictEqual(brief(got), ['note|3521000444|0|0', 'error||0|0', 'error||0|0', 'complete||0|0'], 'inbox: a reply, a failed reply, a refused Done, a conversation done, once each');
-  assert.deepStrictEqual(got.map(e => e.detail), ['reply sent', 'reply not sent', 'status change not saved', 'conversation done']);
+  // (the reply's note also says how long the customer waited: the fake thread's first message is an hour old)
+  assert(/^reply sent · first reply (59|60|61)m$/.test(got[0].detail), 'the reply note: ' + got[0].detail);
+  assert.deepStrictEqual(got.slice(1).map(e => e.detail), ['reply not sent', 'status change not saved', 'conversation done']);
   look(got, { person: 'Paul Inbox', station: 'inbox', device });
   await ctx.close();
   console.log('inbox: reply note, failed-reply error, conversation-done complete, once each');
