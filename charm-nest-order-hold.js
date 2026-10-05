@@ -246,7 +246,9 @@
       if (!P.canHold && !(resumed && P.blockedWhy === "This order is already on hold." && lifted.length)) return fail(P.blockedWhy || "This order cannot be put on hold.");
       journal.set(rid, { rid, who, note, at: t0, lifted: (before && before.lifted) || [], done: (before && before.done) || [], names: (before && before.names) || [] });
       A.begun = true;
-      const heldBefore = new Set(W.Orders.rows().filter(r => String(r.order.receiptId) === rid && r.hold).map(r => r.key));   // (lines already on hold keep their own reason)
+      // lines already on hold keep their own reason; but lines this same hold took off before a reload are part of this hold, and get its one reason
+      const earlier = h => resumed && ((before && before.lifted) || []).length > 0 && /^Taken off /.test(h) && h.endsWith(` by ${who}${note ? ": " + note : ""}`);
+      const heldBefore = new Set(W.Orders.rows().filter(r => String(r.order.receiptId) === rid && r.hold && !earlier(String(r.hold))).map(r => r.key));
       const off = P.canHold ? K.offPlan(rid) : { ok: [], stay: [], ids: new Set() };
       const sheetOrder = sheetsAll(), pos = sh => sheetOrder.indexOf(sh);
       // sheets that share a line of the order (its copies are on both) come off together: the window's own rule is that a line leaves whole
@@ -337,7 +339,7 @@
         for (const sh of cl.sheets) { const c = counts.get(sh); await finish(sh, c.n, c.spots); }
       }
       // 2 · the order's lines wait under On hold with one plain reason, whichever sheets it came off
-      const text = doneNames.length ? `Taken off ${joinAnd(uniq(doneNames))} by ${who}${note ? ": " + note : ""}` : `Put on hold by ${who}${note ? ": " + note : ""}`;
+      const text = doneNames.length ? `Taken off ${uniq(doneNames).join(", ")} by ${who}${note ? ": " + note : ""}` : `Put on hold by ${who}${note ? ": " + note : ""}`;
       let marked = 0;
       for (const r of W.Orders.rows()) {
         if (String(r.order.receiptId) !== rid || r.state === "gone") continue;

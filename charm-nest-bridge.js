@@ -1571,7 +1571,7 @@ const Orders = window.Orders = (() => {
       const why = attn ? (r.problems.map(x => Review.problemText(x)).join(" · ") || r.reason || "") : r.state === "waiting" ? (r.reason || "") : "";
       const gateBtn = r.state === "waiting" && r.wait ? `<button class="relHold" type="button" data-gate="${r.wait.kind === "slow" ? "release" : "cut"}" data-gm="${esc(r.wait.material)}" title="${r.wait.kind === "slow" ? "send " + esc(labelOf(r.wait.material)) + " to the laser with this set instead of waiting" : "cut the partial " + esc(labelOf(r.wait.material)) + " sheet now"}">${r.wait.kind === "slow" ? "Send now" : "Cut it anyway"}</button>` : "";
       const mail = window.CustomerMail ? CustomerMail.badgeStamp(r.order.receiptId) : "", team = window.TeamMail ? TeamMail.stamp(r) : "";
-      const stamp=JSON.stringify([cards,r.order,r.line,r.spec,r.state,st,r.hold,r.wait,why,where,due,date,mail,team]);
+      const stamp=JSON.stringify([cards,r.order,r.line,r.spec,r.state,st,r.hold,r.wait,why,where,due,date,mail,team,!!r.hold && OV.pile === "hold" && !!window.CancelUI]);
       const cached=orderNodes.get(r.key);
       if(cached?.stamp===stamp){orderNodes.delete(r.key);orderNodes.set(r.key,cached);wanted.push(cached.node);mounts.push([cached.node,r]);continue;}
       const node = el("div", (cards ? "ocard" : "doneRow workRow orderListRow") + " hoverItem" + (attn ? " attn" : ""));
@@ -1585,8 +1585,10 @@ const Orders = window.Orders = (() => {
       node.onclick = e => { if (e.target.closest("button,[role=button]") !== node && e.target.closest("button,[role=button]")) return; OrderWin.open(r.key, { from: node }); };
       node.onkeydown=e=>{if(e.target===node && (e.key==="Enter" || e.key===" ")){e.preventDefault();OrderWin.open(r.key, { from: node });}};
       // Release hold: the line goes back in line; drawn at once, so it is seen leaving On hold for Open Orders
-      { const rh = node.querySelector(".relHold:not([data-gate])"); if (rh) rh.onclick = e => { e.stopPropagation(); Review.repool(r); render(); }; }
+      { const rh = node.querySelector(".relHold:not([data-gate])"); if (rh) rh.onclick = e => { e.stopPropagation(); if (window.HoldUI && HoldUI.canRelease()) { HoldUI.release(String(r.order.receiptId), { button: rh }).then(x => { if (x && x.used === false) { Review.repool(r); render(); } }); return; } Review.repool(r); render(); }; }
       { const gb = node.querySelector("[data-gate]"); if (gb) gb.onclick = e => { e.stopPropagation(); gb.disabled = true; (gb.dataset.gate === "release" ? Gate.release(gb.dataset.gm) : Gate.cutAnyway(gb.dataset.gm)).catch(err => toast(err.message, "bad", 6000)); }; }
+      // Cancel Order beside Release hold, on the On hold pile only (charm-nest-cancel-ui.js; the stamp above carries the pile)
+      if (r.hold && OV.pile === "hold" && window.CancelUI) { try { CancelUI.mount(node, r); } catch (err) { console.warn("Cancel Order button", err); } }
       // an order can be several lines on several cards: hovering one lifts all of them, the way the station does
       node.dataset.rid = String(r.order.receiptId);
       // (the old node's decoded pictures move over once the update has measured where the old node stood)
@@ -9517,10 +9519,12 @@ const Review = window.Review = (() => {
     return x;
   }
   const actStamp = x => x ? [CustomPrint.stamp(x), CustomSheet.stamp(x), x.rows.map(r => r.key + ":" + r.state + ":" + (r.poolIds || []).length).join()].join("|") : "";
+  /** Whether the card's order shows a Hold button (HoldUI): the card is drawn again when that changes (an order held, cancelled or released). */
+  const holdStamp = row => (row && row.order && window.HoldUI ? HoldUI.stamp(row.order.receiptId) : "");
   /** What a decision card is drawn from: while it reads the same, the card (and whatever is typed in it) is kept. */
   function stampOf(it) {
     const row=it.row || rowsOf(it)[0],group=rowsOf(it);
-    return JSON.stringify([it.kind,it.why,it.problem,it.problems,row?.spec,row?.line,row?.poolIds,row?.state,group.map(r=>[r.key,r.order.receiptId]),!!it.info,!!it.done,!!it.decided,it.record&&[it.record.lastPrintedAt,it.record.prints,it.record.stamps,it.record.completedAt,it.record.decidedAt,it.record.by],it.alsoSent&&[it.alsoSent.at,it.alsoSent.by,it.alsoSent.stamps],it.kind==="customOrder"?CustomPrint.stamp(it)+"|"+CustomSheet.stamp(it):actStamp(actOf(it)),CustomRead.stamp(row)]);
+    return JSON.stringify([it.kind,it.why,it.problem,it.problems,row?.spec,row?.line,row?.poolIds,row?.state,group.map(r=>[r.key,r.order.receiptId]),!!it.info,!!it.done,!!it.decided,it.record&&[it.record.lastPrintedAt,it.record.prints,it.record.stamps,it.record.completedAt,it.record.decidedAt,it.record.by],it.alsoSent&&[it.alsoSent.at,it.alsoSent.by,it.alsoSent.stamps],it.kind==="customOrder"?CustomPrint.stamp(it)+"|"+CustomSheet.stamp(it):actStamp(actOf(it)),CustomRead.stamp(row),holdStamp(row)]);
   }
   /* ── Custom Orders that ask nothing, and those completed ── */
   const infoItems = new Map();
@@ -9632,6 +9636,9 @@ const Review = window.Review = (() => {
     host.innerHTML='';host.appendChild(card(it));host._rvStamp=stamp;host._rvKey=it.key;
     const refocus=putTyped(host,was);if(refocus)refocus();
   }
+  /** The place of the Hold button in a card's buttons (Paul, 5 Oct: an orange Hold button on the Review cards, open and completed): it acts on the whole
+   *  order the card shows; none while the card is busy (a label being made, a name asked) and none for an order that is held or cancelled. */
+  const holdSlotFor=(row,it,busy)=>row&&row.order&&window.HoldUI&&!(busy&&!it.decided)?HoldUI.slot({rid:String(row.order.receiptId),source:'review',label:row.spec?.designSku||row.line?.sku||''}):'';
   function reviewRow(it) {
     const row=it.row || rowsOf(it)[0],group=rowsOf(it);
     const stamp=stampOf(it);
@@ -9680,7 +9687,8 @@ const Review = window.Review = (() => {
       +(cu&&it.done&&row?`<button class="btn ghost sm" data-cu-reopen title="move this order back to Open (a printed label stays printed)">Reopen</button>`:''))+placedActs;
     const media=row?ListMedia.pair(row):`<div class="compareUnavailable">${cu?'Order no longer in the pull':'Production review'}</div>`;
     const summary=row?purchaseMarkup(row):rec?`<div class="purchaseType"><span class="purchaseLabel">Listing</span><strong>${esc(rec.title || '—')}</strong></div>`:'<span class="purchaseMissing">Sheet-level decision</span>';
-    node.innerHTML=media+`<div class="engravingIdentity"><span class="queueLabel">${esc(queue)}</span><div class="engravingOrder"><b class="mono">${esc(row?.order?.receiptId || it.rid || 'Production')}</b><span class="sku mono">${esc(row?.spec?.designSku || row?.line?.sku || rec?.sku || '')}</span></div><span class="purchaseLabel${aiChip?' aiLabel':''}">${esc(cu?(spc?.label || 'Custom order'):(KIND_WORDS[it.kind] || it.kind))}${aiChip}</span><span class="rowExcerpt reviewReason" title="${esc(it.why || '')}">${esc((cu&&!it.info&&row&&!row.spec?.special?.decided&&row.spec?.special?.read?.summary) || it.why || 'Decision needed')}</span>${group.length>1 ? `<span class="groupScope">${orders.size} orders · ${group.length} pieces · first item shown</span>` : ''}</div><div class="purchaseSummary">${summary}</div><div class="rowActions">${acts}</div>${cs?CustomSheet.stripHtml(cx):''}`;
+    node.innerHTML=media+`<div class="engravingIdentity"><span class="queueLabel">${esc(queue)}</span><div class="engravingOrder"><b class="mono">${esc(row?.order?.receiptId || it.rid || 'Production')}</b><span class="sku mono">${esc(row?.spec?.designSku || row?.line?.sku || rec?.sku || '')}</span></div><span class="purchaseLabel${aiChip?' aiLabel':''}">${esc(cu?(spc?.label || 'Custom order'):(KIND_WORDS[it.kind] || it.kind))}${aiChip}</span><span class="rowExcerpt reviewReason" title="${esc(it.why || '')}">${esc((cu&&!it.info&&row&&!row.spec?.special?.decided&&row.spec?.special?.read?.summary) || it.why || 'Decision needed')}</span>${group.length>1 ? `<span class="groupScope">${orders.size} orders · ${group.length} pieces · first item shown</span>` : ''}</div><div class="purchaseSummary">${summary}</div><div class="rowActions">${acts}${holdSlotFor(row,it,busy)}</div>${cs?CustomSheet.stripHtml(cx):''}`;
+    if(window.HoldUI)HoldUI.fill(node);   // (the one orange Hold button, beside Print QR label / Complete Order / Reopen)
     // (its custom buttons as a custom card's, and a click on the card opens its order; one whose line has left the pull
     // opens the order by its number)
     if(cx||row)wireAct(node,cx||{key:'rv:'+it.key,rows:[]},cx?cs:null,row);
@@ -11239,10 +11247,16 @@ const OrderWin = window.OrderWin = (() => {
       // (one seal, the latest the card above does not draw, sits by the button that made it: by "Completed" when it is the Complete
       // seal, by Print again when it is a print seal; "+N" last, for the others the Timeline holds)
       const byDone = c.pick && c.pick.how === "button";
-      return CustomPrint.failNote(it) + CU_DONE_BTN + (byDone ? c.sealOf(c.pick) : "") + print + (!byDone ? c.sealOf(c.pick) : "") + c.moreBtn + undo;
+      return CustomPrint.failNote(it) + CU_DONE_BTN + (byDone ? c.sealOf(c.pick) : "") + print + (!byDone ? c.sealOf(c.pick) : "") + c.moreBtn + holdSlotOf(it) + undo;
     }
     return CustomPrint.failNote(it) + print +
-      (c.can ? CustomPrint.keptButtonHtml(it, "complete", "ghost", "Complete Order", "mark this order completed now without printing its label; it moves to Completed", "xs", c.keptC) + c.moreBtn : "") + undo;
+      (c.can ? CustomPrint.keptButtonHtml(it, "complete", "ghost", "Complete Order", "mark this order completed now without printing its label; it moves to Completed", "xs", c.keptC) + c.moreBtn : "") + holdSlotOf(it) + undo;
+  }
+  /** The place of the orange Hold button on a piece's row, last among its buttons (Paul, 5 Oct: Hold beside Print QR label / Complete Order): HoldUI.fill
+   *  makes the button once the row is drawn. It acts on the WHOLE order, whichever piece's row it is on; none for an order that is held or cancelled. */
+  function holdSlotOf(it) {
+    const r = it && (it.row || (it.rows && it.rows[0]));
+    return r && r.order && window.HoldUI ? tryDo(() => HoldUI.slot({ rid: String(r.order.receiptId), source: "orderWindow", label: pieceName(r) })) || "" : "";
   }
   /** Complete Order in its done state: the green the button takes once its seal is on it (sealedDone), with "Completed" for its
    *  words. It answers no press (a disabled button); its title says where a completed order is reopened. */
@@ -11402,6 +11416,7 @@ const OrderWin = window.OrderWin = (() => {
   /** What a press on a piece's controls does (h: the span holding them, data-pc-act its piece's key): the card as it is when pressed, not
    *  as it was drawn, of an order that is still the one the window shows. typed: the names being typed in the rows drawn before. */
   function wirePcAct(h, typed) {
+    if (window.HoldUI) tryDo(() => HoldUI.fill(h));   // (the row's Hold button: the one component the Review cards draw too)
     const key = h.dataset.pcAct, here = () => { const w = W.dlg && W.dlg.open ? rowOf(W.key) : null; return w ? String(w.order.receiptId) : ""; };
     const now = () => { const r = rowOf(key), at = here(); return r && at && String(r.order.receiptId) === at ? tryDo(() => pieceItem(key)) : null; }, it = now();
     if (!it) return;
@@ -11435,7 +11450,7 @@ const OrderWin = window.OrderWin = (() => {
     const c = cuState(it), label = c.decided ? "Sent to sheet" : (r.spec && r.spec.special && r.spec.special.label) || (c.rec && c.rec.category) || it.category || "";
     if (c.decided) {
       const designs = tryDo(() => CustomSheet.cardOf(it));
-      return { it, decided: true, label, why: it.why || "", html: c.seals + (designs && designs.files.length ? '<button type="button" class="btn ghost xs" data-cu-view-designs>View designs</button>' : "") + '<button type="button" class="btn ghost xs" data-cu-open-sheet>Open sheet</button><button type="button" class="btn ghost xs" data-cu-history>History</button>' };
+      return { it, decided: true, label, why: it.why || "", html: c.seals + (designs && designs.files.length ? '<button type="button" class="btn ghost xs" data-cu-view-designs>View designs</button>' : "") + '<button type="button" class="btn ghost xs" data-cu-open-sheet>Open sheet</button><button type="button" class="btn ghost xs" data-cu-history>History</button>' + holdSlotOf(it) };
     }
     const html = tryDo(() => cuControls(it, c).trim()) || "";
     return html ? { it, html, label, why: it.why || "" } : null;

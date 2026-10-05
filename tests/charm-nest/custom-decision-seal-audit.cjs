@@ -102,7 +102,7 @@ function auditReview() {
     assert.equal(row.querySelectorAll('.seal-sheet').length, 1, 'the actual Completed row of a send has one original send seal');
     assert.doesNotMatch(row.querySelector('.seal-sheet svg').textContent, /paul|COMPLETE|QR LABEL/);
     assert.match(row.textContent, /2\/5 nested/, 'live progress remains visible');
-    assert.deepEqual(Array.from(row.querySelectorAll('.rowActions button'), button => button.textContent), ['View designs', 'Open sheet', 'History']);
+    assert.deepEqual(Array.from(row.querySelectorAll('.rowActions button'), button => button.textContent).filter(t => t !== 'Hold'), ['View designs', 'Open sheet', 'History']);
     row.querySelector('[data-cu-sheet]').click(); row.querySelector('[data-cu-history]').click();
     assert.deepEqual(opened, [{ key: '4171770802_1', view: 'sheet' }, { key: '4171770802_1', view: 'timeline' }], 'links reach the actual sheet and history views');
     const first = row.querySelector('.seal-sheet').innerHTML; w.auditRender({ still: true });
