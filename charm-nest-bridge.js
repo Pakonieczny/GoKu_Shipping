@@ -5689,6 +5689,32 @@ button.flowDot:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
     }
     return R.explain(p,ctx);
   }
+  /* What holds one sheet back, for the '!' panel (charm-nest-library-issues.js): CharmNestReadiness.issues for the sheet (round 2,
+     interface B; until it exists the panel adapts explain()'s items), each order issue with its order's Etsy listing id and
+     buyer, which is all the panel needs to show the order's picture and name. A read only: nothing is worked out for a card
+     that has no panel open, and a refresh pass (batch) shares the projections it already made. */
+  function issuesOf(id,from){
+    const rec=records.get(id);if(!rec)return null;
+    const card=from?.closest?.('[data-laser-card]') || [...document.querySelectorAll('[data-laser-card]')].find(c=>(c._laserSheets || []).includes(id)) || {_laserSheets:[id]};
+    const lookup=()=>R.lookup({rows:Orders.rows()}),p=projected(rec),ctx={lookup};
+    if(p.setId && !p.draft && p.solidIncluded!==false){
+      const st=sets.get(p.setId) || (card._laserSet?.setId===p.setId?card._laserSet:null);
+      if(st){ctx.set=st;ctx.sheets=(st.sheetIds || []).map(x=>records.get(x)).filter(Boolean).map(projected);}else ctx.setMissing=true;
+    }
+    const e=R.explain(p,ctx),label=e.label || R.sheetLabel(p),out={id,label,code:(/^(\S+) Sheet \d+$/.exec(label) || [])[1] || '',metal:p.metal || '',ready:e.ready,done:e.done,step:e.step,explain:e,checking:!!sealPoll || checkingNow || live.checking};
+    if(typeof R.issues==='function'){
+      out.issues=R.issues(p,ctx) || [];
+      const want=new Set(out.issues.filter(i=>i.orderId && (!i.listingId || !i.customer)).map(i=>String(i.orderId)));
+      if(want.size){
+        const by=new Map();
+        for(const r of Orders.rows()){const rid=String(r.order?.receiptId || r.orderId || '');if(want.has(rid)){const o=by.get(rid) || {};if(!o.listingId && r.line?.listingId)o.listingId=String(r.line.listingId);if(!o.customer && r.order?.buyer?.name)o.customer=r.order.buyer.name;by.set(rid,o);}}
+        out.issues=out.issues.map(i=>{const o=i.orderId && by.get(String(i.orderId));return o?{...i,listingId:i.listingId || o.listingId || '',customer:i.customer || o.customer || ''}:i;});
+      }
+    }
+    return out;
+  }
+  // an order's listing photo (the cache the Orders tab uses; a cached lookup, never a new Etsy call): url, or null
+  const photoOf=lid=>{lid=String(lid || '');if(!lid)return Promise.resolve(null);const u=ListMedia.peek(lid);return u?Promise.resolve(u):ListMedia.listing(lid).then(x=>x || null,()=>null);};
   /* The '!' (the issues panel, charm-nest-library-issues.js, opens from it): a real button in the rail of a sheet that is not
      ready, on every blocked step, on the step the sheet is at when a person can act on it (Engraving, Back files, QR label,
      Order check), and on Laser cutting when the sheet itself is done but waits for the other sheets of its set. A ready or cut
@@ -5771,6 +5797,7 @@ button.flowDot:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
     if(needsSeals && !polling && !sealPoll && S.cloud.ok)sealPoll=setTimeout(()=>{sealPoll=0;poll(true);},Math.max(0,5100-(Date.now()-lastPoll)));
     document.querySelectorAll('[data-laser-area]').forEach(area=>{const hasItems=!!area.querySelector('.laserAreaItems')?.children.length;area.hidden=area.dataset.laserArea!=='ready' && !hasItems;const empty=area.querySelector('.laserEmpty');if(empty)empty.hidden=hasItems;});
     if(moved.length)landed(home,before,moved);
+    try{window.LibraryIssues?.refresh?.();}catch(e){console.warn('Library issues',e);}   // (an open '!' panel follows what this pass drew)
   }
   // the cards that moved are drawn at their new place: they glide from where they stood, and a card that reached Laser cutting
   // leaves a soft ring when it has settled (never over a glide: both move the same card)
@@ -6069,7 +6096,7 @@ button.flowDot:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
   window.addEventListener?.('online',()=>{live.fails=0;readSoon(false);resumeReload();});
   /** What the live read is doing (the test reads it): reads in flight, failures in a row, whether the cloud knows ifRevs. */
   const liveState=()=>({busy:live.busy,fails:live.fails,legacy:live.legacy,armed:!!live.timer,revs:live.revs?Object.keys(live.revs).length:0,reload:live.reload});
-  return {record,sheet,group,canCut,labels,sections,place,changed,saved,poll,nudge,liveState,projected,batch,acceptProcess,openChecklist,explain:(kind,id,card)=>explainOf({kind,id},card || {_laserSheets:[id]},()=>R.lookup({rows:Orders.rows()}))};
+  return {record,sheet,group,canCut,labels,sections,place,changed,saved,poll,nudge,liveState,projected,batch,acceptProcess,openChecklist,issuesOf,photo:photoOf,explain:(kind,id,card)=>explainOf({kind,id},card || {_laserSheets:[id]},()=>R.lookup({rows:Orders.rows()}))};
 })();
 
 /* ═══ 22 · Sets — one run, one date, one folder, one numbering across materials ═══ */
