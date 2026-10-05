@@ -2351,11 +2351,14 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
 .setUndoChip .spin{width:10px;height:10px;flex:0 0 10px;border:2px solid var(--line);border-top-color:var(--ink70);border-radius:50%;animation:spin .7s linear infinite}
 .setUndoChip.ok{color:#3c5a39;background:var(--sageSoft);border-color:#cddcc9}
 @media (prefers-reduced-motion:reduce){.setUndoChip,.ldSign{animation:none}}
-/* Approve for laser cutting (charm-nest-bridge.js, LaserReview): one button under every sheet still in progress (never one on a set card), directly under that sheet's small rail; disabled, with its plain reason beside it, while a person's own step comes first */
+/* Approve for laser cutting (charm-nest-bridge.js, LaserReview): one button under every sheet still in progress (never one on a set card), directly under that sheet's small rail; grey (aria-disabled, so it keeps the keyboard), with its plain reason beside it, while a person's own step comes first. A set of several sheets is approved as ONE: all of its buttons are green together or grey together */
 .approveBox{display:grid;gap:6px;min-width:0}
 .approveRow{display:flex;align-items:center;gap:6px 10px;flex-wrap:wrap;min-width:0}
 .approveBtn{flex:0 0 auto}
 .approveBtn:disabled{background:var(--paper2);border-color:var(--line);color:var(--ink45);opacity:1}
+.approveBtn[aria-disabled=true]{background:var(--paper2);border-color:var(--line);color:var(--ink45);opacity:1;cursor:default}
+.approveBtn[aria-disabled=true]:hover{opacity:1}
+.approveBtn[aria-disabled=true]:active{transform:none}
 .approveBtn .spin{vertical-align:-2px}
 .approveWhy{min-width:0;font:500 11.5px/1.35 var(--sans);color:var(--ink45)}
 button.approveReason{border:0;background:none;padding:0;font:inherit;color:inherit;text-align:left;cursor:pointer}
@@ -6701,7 +6704,7 @@ boot();
      Design Station's sign-in), the same name every seal it stamps carries. -->
 <script src="station-session.js?v=20261002-ea1"></script>
 <script src="station-activity.js?v=20261003-reset-clean"></script>
-<script src="charm-nest-bridge.js?v=20261005-lis2-cardinal4-zoom-psb1-egl1"></script>
+<script src="charm-nest-bridge.js?v=20261005-lis2-cardinal4-zoom-psb1-egl1-setgate1"></script>
 <script>
 try {
   const nameNow = () => { try { const n = String((window.CNEmployee && CNEmployee.name()) || "").trim(); return /^\d+$/.test(n) ? "" : n; } catch (_) { return ""; } };
@@ -6738,7 +6741,7 @@ try {
 <script src="charm-nest-flow-rose.js?v=20261003-rg2"></script>
 <script src="charm-nest-export-ui.js?v=20260925-done"></script>
 <script src="charm-nest-library.js?v=20261005-egl1"></script>
-<script src="charm-nest-flow.js?v=20261005-cardinal3"></script>
+<script src="charm-nest-flow.js?v=20261005-cardinal3-setgate1"></script>
 <script src="charm-nest-library-approval-ui.js?v=20261005-so2"></script>
 <script src="charm-nest-library-fx.js?v=20261003-fx2"></script>
 <script src="charm-nest-library-dnd.js?v=20261005-so2"></script>

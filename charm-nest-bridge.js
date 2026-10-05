@@ -5838,19 +5838,33 @@ button.flowDot:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
   const flowReady=()=>typeof window.LibraryFlow?.approve==='function';
   const laying=p=>!!(p.dirty || p.saving || ['nesting','finishing','queued','error'].includes(p.status));
   // null: nothing to offer (ready, cut or gone) · {why:''}: a press can do it · {why:'plain words'}: a person's own step comes first (quiet: the
-  // rail already says it, so no line is drawn for it)
+  // rail already says it, so no line is drawn for it). A lone sheet's own test: CharmNestReadiness.approveBlock, the one the set's gate is made of.
   function approveCase(recs){
     recs=recs.filter(Boolean);if(!recs.length)return null;
-    if(recs[0].archived || projected(recs[0]).laserDoneAt || sheet(recs[0]).ready)return null;
-    const todo=recs.map(projected).filter(p=>!p.archived && !R.laserSheet(p).ready).map(p=>({p,r:R.laserSheet(p)}));
-    if(!todo.length)return {why:''};
-    const waiting=todo.reduce((n,x)=>n+(x.r.included?x.r.waiting:0),0);
-    if(waiting)return {why:`Waiting on ${plural(waiting,'back engraving')}`,quiet:true};   // (quiet: the rail's current step and its '!' say it; the button only keeps it for a screen reader)
-    const busy=todo.filter(x=>laying(x.p)).length;
-    if(busy)return {why:'Still being laid out'};
-    const out=todo.filter(x=>!x.r.included);
-    if(out.length)return {why:out[0].p.draft?'Still a draft':'Not included in a set yet'};
-    return {why:''};
+    const p=projected(recs[0]);
+    if(p.archived || p.laserDoneAt || R.laserSheet(p).ready)return null;
+    const b=R.approveBlock(p);
+    if(!b)return {why:''};
+    if(b.step==='engraving')return {why:`Waiting on ${plural(R.laserSheet(p).waiting,'back engraving')}`,quiet:true};   // (quiet: the rail's current step and its '!' say it; the button only keeps it for a screen reader)
+    return {why:b.why.replace(/^./,c=>c.toUpperCase())};
+  }
+  /* A set advances as ONE (Paul, 5 Oct, round 7: "you cannot have a green approved button on a single sheet that is part of a set where the
+     other sheets are not ready yet"). A set of several sheets has ONE gate (CharmNestReadiness.setGate): every sheet of it ready to be
+     approved, or none is. Its answer is drawn on every sheet that is not completed, in the same pass: green on all of them, or grey on all
+     of them with the plain line naming the first sheet that is not ready and what it lacks (never quiet, never red). A loose group, a set of
+     one sheet and a sheet card are their own sheet's test (approveCase), as before. */
+  function gateOf(card){
+    const st=card._laserSet;
+    if(card.dataset.laserCard!=='set' || !st?.setId || st.standalone || st.working)return null;
+    const ids=[...new Set((st.sheetIds?.length?st.sheetIds:card._laserSheets) || [])];
+    if(ids.length<2)return null;
+    return R.setGate(st,(card._laserSheets || []).map(id=>records.get(id)).filter(Boolean).map(projected));
+  }
+  // what each sheet of a set card offers, from the set's one gate
+  function gateCases(card,gate){
+    const out=new Map(),first=gate.blockers[0];
+    for(const r of gate.sheets)if(!r.missing && r.state!=='past')out.set(r.sheetId,gate.ready?{why:'',set:true}:{why:gate.reason,set:true,blocker:first?.sheetId || ''});
+    return out;
   }
   function makeApproveBox(host,kind,id){
     const box=document.createElement('div');box.className='approveBox';box.dataset.approveFor=boxKey(kind,id);box.dataset.nodrag='';box._kind=kind;box._id=id;
@@ -5867,37 +5881,52 @@ button.flowDot:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
     host.appendChild(box);   // (last in its sheet's article: under the sheet, its QR label and its rail)
     return box;
   }
+  // one press approves a whole set of several sheets (its boxes share one key: one action at a time, every box busy together)
+  const approvalKey=box=>box._setId?'set:'+box._setId:box.dataset.approveFor;
+  const hostOf=box=>box._setId?(box.closest('.setCard') || box.parentElement):box.parentElement;
   function paintApprove(box,c){
-    // (the reason is a link when there is something to open: the sheet's '!' on its rail, which opens the issues panel)
-    const key=box.dataset.approveFor,busy=approving.has(key),open=typeof window.LaserReview?.openChecklist==='function' && !!box.parentElement?.querySelector('.flowBox [data-issues-open]');
-    const mode=!c?'done':busy?'busy':c.why?'blocked':'ready',sig=[mode,c?.why || '',c?.quiet?1:0,open?1:0,box._name || ''].join('|');
+    // (the reason is a link when there is something to open: the '!' on the rail of the sheet it is about, which opens the issues panel)
+    const key=approvalKey(box),busy=approving.has(key),about=c?.blocker || box._id,card=hostOf(box);
+    const open=typeof window.LaserReview?.openChecklist==='function' && !!(c?.set?card.querySelector(`.flowBox[data-flow-for="sheet:${about}"] [data-issues-open]`):box.parentElement?.querySelector('.flowBox [data-issues-open]'));
+    const mode=!c?'done':busy?'busy':c.why?'blocked':'ready',sig=[mode,c?.why || '',c?.quiet?1:0,open?1:0,about,box._name || ''].join('|');
     box._case=c;
     if(box.dataset.sig===sig)return;
     box.dataset.sig=sig;box.dataset.mode=mode;
-    const btn=box.querySelector('[data-approve-btn]'),why=box.querySelector('[data-approve-why]');
-    btn.disabled=mode!=='ready';btn.setAttribute('aria-busy',busy?'true':'false');
+    const btn=box.querySelector('[data-approve-btn]'),why=box.querySelector('[data-approve-why]'),reasonId=`${box.dataset.approveFor.replace(/\W+/g,'-')}-why`;
+    // aria-disabled, never `disabled`: a button that turns grey while it holds the keyboard keeps it, and its reason is read with it
+    btn.setAttribute('aria-disabled',mode!=='ready'?'true':'false');btn.setAttribute('aria-busy',busy?'true':'false');
     btn.setAttribute('aria-label','Approve for laser cutting'+(box._name?': '+box._name:'')+(mode==='blocked'?` (not yet: ${c.why})`:''));
+    if(mode==='blocked' && !c.quiet)btn.setAttribute('aria-describedby',reasonId);else btn.removeAttribute('aria-describedby');
     btn.innerHTML=busy?'<i class="spin" aria-hidden="true"></i>Approving…':'Approve for laser cutting';
+    why.id=reasonId;
     why.innerHTML=mode!=='blocked' || c.quiet?'':open?`<button type="button" class="approveReason" data-approve-reason>${esc(c.why)}</button>`:`<span class="approveReason">${esc(c.why)}</span>`;
   }
-  function syncBox(host,kind,id,c,name){
+  // every box of the set the box belongs to, at once (a press on one sheet is the whole set's one action: all of them show it together)
+  function paintAll(box){
+    if(!box._setId){paintApprove(box,box._case);return;}
+    for(const b of hostOf(box).querySelectorAll('.approveBox'))if(b._setId===box._setId)paintApprove(b,b._case);
+  }
+  function syncBox(host,kind,id,c,name,setId){
     const key=boxKey(kind,id);let box=[...host.children].find(x=>x.dataset?.approveFor===key);
     if(!c){
       if(!box)return;
-      if(approving.has(key) || (box.dataset.keep && Date.now()<box._until))paintApprove(box,null);else box.remove();
+      box._setId=setId || '';
+      if(approving.has(approvalKey(box)) || (box.dataset.keep && Date.now()<box._until))paintApprove(box,null);else box.remove();
       return;
     }
     if(!box)box=makeApproveBox(host,kind,id);
-    box._name=name || '';paintApprove(box,c);
+    box._name=name || '';box._setId=setId || '';paintApprove(box,c);
     if(box.dataset.keep && Date.now()>box._until)hidePlan(box);
   }
-  // one button per sheet, in that sheet's own article (a set of one sheet and a set of several alike); none for the set
+  // one button per sheet, in that sheet's own article (a set of one sheet and a set of several alike); none for the set. In a set of several
+  // they are one decision (gateOf), made once for the card and drawn on all of its sheets in this pass.
   function syncApprove(card){
     const kind=card.dataset.laserCard,on=flowReady() && !!card.closest('[data-laser-area="pending"]'),items=[];
-    const add=(host,rec)=>{if(rec)items.push([host,rec.id,on?approveCase([rec]):null,rec.folder || rec.fileBase || '']);};
+    const gate=on && kind==='set'?gateOf(card):null,cases=gate?gateCases(card,gate):null,setId=gate?card._laserSet.setId:'';
+    const add=(host,rec)=>{if(rec)items.push([host,rec.id,on?(cases?cases.get(rec.id) || null:approveCase([rec])):null,rec.folder || rec.fileBase || '',setId]);};
     if(kind==='set')for(const art of card.querySelectorAll('.sheetsRow > .librarySheet'))add(art,records.get(art.querySelector(':scope > .libCard')?.dataset.id));
     else if(kind==='sheet')add(card,records.get(card._laserSheets?.[0]));
-    for(const [host,id,c,name] of items)syncBox(host,'sheet',id,c,name);
+    for(const [host,id,c,name,sid] of items)syncBox(host,'sheet',id,c,name,sid);
   }
   function planHtml(plan,error,canCommit){
     const say=x=>`<b>${esc(x.label || x.key || '')}</b>${x.detail?` <span>${esc(x.detail)}</span>`:''}`;
@@ -5917,7 +5946,7 @@ button.flowDot:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
   }
   // LibraryApprovalUI draws the plan on the card; without it (or if it fails) the same lines are drawn here as plain text
   function showPlan(box,plan,error){
-    const ui=window.LibraryApprovalUI,card=box.parentElement,host=box.querySelector('[data-approve-plan]');
+    const ui=window.LibraryApprovalUI,card=hostOf(box),host=box.querySelector('[data-approve-plan]');
     box._plan=error?null:plan;box._ui=false;
     if(!error && typeof ui?.show==='function'){
       try{host.hidden=true;host.innerHTML='';ui.show(card,plan,{title:'Approve for laser cutting',onConfirm:keys=>confirmPlan(box,keys),onCancel:()=>cancelPlan(box)});box._ui=true;return;}
@@ -5929,13 +5958,13 @@ button.flowDot:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
   }
   function hidePlan(box){
     const host=box.querySelector('[data-approve-plan]');
-    if(box._ui){try{window.LibraryApprovalUI?.hide?.(box.parentElement);}catch(e){}box._ui=false;}
+    if(box._ui){try{window.LibraryApprovalUI?.hide?.(hostOf(box));}catch(e){}box._ui=false;}
     host.hidden=true;host.innerHTML='';delete box.dataset.keep;
     if(box.dataset.mode==='done')changed();
   }
   function cancelPlan(box){box._plan=null;hidePlan(box);}
   function openWhy(box){
-    const host=box.parentElement,card=host.closest('[data-laser-card]') || host,info={kind:box._kind,id:box._id};let handled=false;
+    const host=box.parentElement,card=host.closest('[data-laser-card]') || host,info={kind:box._kind,id:box._case?.blocker || box._id};let handled=false;   // (the reason of a set names a sheet: its '!' opens)
     try{handled=!!window.LaserReview?.openChecklist?.(card,info);}catch(e){console.warn('Checklist',e);}
     try{host.dispatchEvent(new window.CustomEvent('library-checklist-open',{bubbles:true,detail:{...info,card,handled}}));}catch(e){}   // (handled: this card has already opened its '!')
   }
@@ -5946,28 +5975,29 @@ button.flowDot:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
     if(ok)setTimeout(()=>{if(box.isConnected && box.closest('[data-laser-area="pending"]'))poll(true,true);},2200);
   }
   async function pressApprove(box){
-    const key=box.dataset.approveFor,flow=window.LibraryFlow;
-    if(approving.has(key) || box._case?.why || typeof flow?.approve!=='function')return;   // (a second press while one runs does nothing)
-    approving.add(key);hidePlan(box);paintApprove(box,box._case);
+    const key=approvalKey(box),flow=window.LibraryFlow;
+    if(approving.has(key) || box._case?.why || typeof flow?.approve!=='function')return;   // (a second press while one runs does nothing; a grey one presses nothing)
+    approving.add(key);hidePlan(box);paintAll(box);
     let plan=null,error='';
-    try{plan=await flow.approve({kind:box._kind,id:box._id,by:window.CNEmployee?.name?.() || undefined});plan=plan?.plan || plan;if(!plan)error='No answer came back';}
+    // a sheet of a set of several: the SET is approved, as one action (one plan, one Moving bar), every sheet with its own records and seals
+    try{plan=await flow.approve({kind:box._setId?'set':box._kind,id:box._setId || box._id,by:window.CNEmployee?.name?.() || undefined});plan=plan?.plan || plan;if(!plan)error='No answer came back';}
     catch(e){error=e?.message || String(e);}
     finally{approving.delete(key);}
-    paintApprove(box,box._case);
+    paintAll(box);
     showPlan(box,plan,error);
     afterApprove(box,!error && plan?.ok!==false && !(plan?.needs || []).length && !(plan?.confirm || []).length);
   }
   async function confirmPlan(box,keys){
-    const key=box.dataset.approveFor,flow=window.LibraryFlow,plan=box._plan;
+    const key=approvalKey(box),flow=window.LibraryFlow,plan=box._plan;
     if(approving.has(key) || typeof flow?.commit!=='function' || !plan)return;
-    approving.add(key);paintApprove(box,box._case);
+    approving.add(key);paintAll(box);
     let res=null,error='';
     try{res=await flow.commit(plan,{confirmed:[].concat(keys || []),by:window.CNEmployee?.name?.() || undefined});if(res && res.ok===false && !error)error=res.error || 'Could not finish';}
     catch(e){error=e?.message || String(e);}
     finally{approving.delete(key);}
-    paintApprove(box,box._case);
+    paintAll(box);
     const ui=window.LibraryApprovalUI;
-    if(box._ui && typeof ui?.update==='function'){try{ui.update(box.parentElement,error?{ok:false,error}:res);}catch(e){console.warn('Approval view',e);}}
+    if(box._ui && typeof ui?.update==='function'){try{ui.update(hostOf(box),error?{ok:false,error}:res);}catch(e){console.warn('Approval view',e);}}
     else{box._ui=false;showPlan(box,error?null:{ok:true,auto:(res?.applied || []).map(a=>({label:a.label || a.key})),needs:[],confirm:[]},error);}
     afterApprove(box,!error);
   }
