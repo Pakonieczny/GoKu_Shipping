@@ -261,6 +261,20 @@ const ListMedia = (() => {
     const out=await vector(row,px);
     return typeof out==='string'?out:(out&&out.toDataURL?out.toDataURL('image/png'):null);
   }
+  /** A line's vector design as ONE small picture for a hover card (the piece dots, charm-nest-piece-dots.js): the very picture the order window's
+   *  "Vector design" shows (vector(row): its renderer and its master-preview cache), as a data address; null when the line has no design. Never a second renderer. */
+  async function vectorThumb(row) {
+    const out=await vector(row);
+    return typeof out==='string'?out:(out&&out.toDataURL?out.toDataURL('image/png'):null);
+  }
+  /** What makes two lines' vector designs one picture: the pieces of one design (its SKU and size) share a thumbnail; a line with no SKU is its own pooled charm's; '' when there is nothing to draw. */
+  function vectorKey(row) {
+    if(!row || row.spec?.noDesign)return '';
+    const sku=String(row.spec?.designSku || row.line?.sku || '').toUpperCase();
+    if(sku)return 'sku:'+sku+'|'+(row.spec?.size || '');
+    const id=(row.poolIds || []).find(x=>Pool.charmOf(x)?.outline);
+    return id?'pool:'+id:'';
+  }
   /** A line's vector design into one box: a list row's, or the order window's beside its listing photo. */
   function vectorInto(host,row) {
     const sku=row?.spec?.designSku || row?.line?.sku || '';
@@ -283,8 +297,10 @@ const ListMedia = (() => {
     const io=window.IntersectionObserver ? new IntersectionObserver(es=>{if(es.some(e=>e.isIntersecting))go();},{rootMargin:'160px'}) : null;
     button.onclick=go;host.appendChild(button);if(io){pages.set(host,io);io.observe(button);}
   }
-  return {pair,mount,vectorInto,vectorBig,watch,more,listing,prepare,start,peek:id=>photos.get(String(id || '')) || null};
+  return {pair,mount,vectorInto,vectorBig,vectorThumb,vectorKey,watch,more,listing,prepare,start,peek:id=>photos.get(String(id || '')) || null};
 })();
+// (the piece dots' hover card, charm-nest-piece-dots.js, reads the vector design through these two only: ListMedia itself stays private to this page's code)
+window.PieceMedia = { vectorKey: ListMedia.vectorKey, vectorThumb: ListMedia.vectorThumb };
 const clockFormat = new Intl.DateTimeFormat([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });   // made once: a formatter costs far more to make than to use
 const fmtT = t => clockFormat.format(new Date(t));
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -12511,6 +12527,8 @@ const OrderWin = window.OrderWin = (() => {
     showOrder(rid, r);
     W.key = key;
     if (other) W.piece = null; else if (W.piece && W.piece !== key) W.piece = key;
+    // (a piece dot's press, Paul 5 Oct round 15: the switch opens ON that piece, so the Overview, the Sheet tab, the back engraving and the pictures are its own at once; an order of one line has no switch)
+    if (opts.pick && r.key === key && !r.loading && linesOf(r).length > 1) W.piece = key;
     if (other) sheetWant = null;
     if (opts.sheetId || opts.poolId) sheetWant = { rid, sheetId: opts.sheetId || "", poolId: opts.poolId || "" };
     if (other) { primePools(rid); sheetReset(); unmountTimeline(); loadEvents(rid); const n = byId("owNowCard"); if (n) n._html = ""; const c = byId("owShCount"); if (c) c.textContent = ""; }
@@ -12641,7 +12659,8 @@ const OrderWin = window.OrderWin = (() => {
   /** The look-up's spinner line put away, and whatever look-up is still running told to leave it so. */
   function lookDone() { W.look++; const l = byId("owLoading"); if (l) l.hidden = true; }
   /** Opens an order by its number, wherever it is: the pull's line when it has one, else built from the records.
-   *  opts: { highlight, from, view } (a search passes highlight: the number is lit as the view opens). */
+   *  opts: { highlight, from, view, poolId, row, pick } (a search passes highlight: the number is lit as the view opens; a piece dot passes poolId, row: { key } and pick: the window opens
+   *  on that piece, the piece switcher selected on it, as an order of more than one line shows it). */
   async function openOrder(rid, opts = {}) {
     // (waits only while a stamp is being made: otherwise the view moves in this very turn, so its slide is already on
     // the page when the caller looks for it, and the plate is not drawn again until that slide has landed)
@@ -12693,7 +12712,7 @@ const OrderWin = window.OrderWin = (() => {
     tryDo(() => window.OrderPieces && OrderPieces.learn(rid, { rows }));   // (the order's lines as the records give them: its pieces are told from them too)
     // the note already read while the order was looked up shows at once on its lines
     if (stub.spec && stub.spec.staffNote) for (const row of rows) if (row.spec && !row.spec.staffNote) { row.spec.staffNote = stub.spec.staffNote; row.order.staffNote = stub.spec.staffNote; }
-    show((opts.row && opts.row.key && rows.find(r => r.key === opts.row.key)) || ofPool(rows, opts.poolId) || rows[0], { walk: false, view: W.view, sheetId: o.sheetId, poolId: o.poolId }); shown();
+    show((opts.row && opts.row.key && rows.find(r => r.key === opts.row.key)) || ofPool(rows, opts.poolId) || rows[0], { walk: false, view: W.view, sheetId: o.sheetId, poolId: o.poolId, pick: o.pick }); shown();
   }
   // (a repaint asked from outside, an image or a record arriving, waits for the view to land)
   return { open, openOrder, focusSearch, paint: () => hold("paint", () => { if (W.dlg && W.dlg.open && !W.closing) paint(); }), close: () => shut(), isOpen: () => !!(W.dlg && W.dlg.open && !W.closing), key: () => W.key, view: () => W.view, setView: v => setView(v), repaintThread: () => paintThread(true), _sheet: () => SV.info, _feed: () => W.feed,
