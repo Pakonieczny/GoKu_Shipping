@@ -623,7 +623,10 @@ async function main() {
       await openPiece(mp, 0);
       // (the window's own header is wider than a phone's screen and the window opens scrolled sideways: that is as it was; the frames are scrolled into view here)
       await mp.evaluate(() => document.getElementById('owPhoto').scrollIntoView({ block: 'center', inline: 'nearest' })); await mp.waitForTimeout(200);
-      const wide0 = await mp.evaluate(() => document.getElementById('orderWin').scrollWidth);
+      // (the header's live "Now" line is drawn as the order's timeline answers and is what makes the window as wide as it is: the width is taken once it has stopped changing,
+      //  so the check below is about the zoom, not about when the timeline came)
+      let wide0 = -1;
+      for (let i = 0, same = 0; i < 24 && same < 3; i++) { const w = await mp.evaluate(() => document.getElementById('orderWin').scrollWidth); same = w === wide0 ? same + 1 : 0; wide0 = w; await mp.waitForTimeout(400); }
       const fit390 = await mp.evaluate(() => ({ doc: document.documentElement.scrollWidth, iw: innerWidth, frames: ['owPhoto', 'owVector'].map(id => { const r = document.getElementById(id).getBoundingClientRect(); return [Math.round(r.left), Math.round(r.right)]; }) }));
       check(fit390.doc <= fit390.iw + 1 && fit390.frames.every(([l, r]) => l >= 0 && r <= fit390.iw + 1), 'at 390 px the page does not scroll sideways and both frames, scrolled into view, lie inside the screen: ' + JSON.stringify(fit390));
       await mp.locator(PHm).scrollIntoViewIfNeeded(); await mp.waitForTimeout(200);
