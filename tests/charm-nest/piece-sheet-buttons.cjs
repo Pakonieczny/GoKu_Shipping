@@ -236,41 +236,39 @@ async function main() {
     assert.deepEqual(u.chips.map(c => [c.text, c.off]), [['Not on a sheet yet', true], ['GF Sheet 1', false]]);
     await closeWin(); await page.evaluate(() => document.getElementById('psbDoor').remove());
 
-    // ── 6 · the Timeline's sheet links answer for one piece too ──
-    // (the step's own "Open sheet", the strip's under the rail; the Timeline of the CUTE piece lists its steps alone)
+    // ── 6 · the Timeline lists one piece's steps alone, and opens no sheet at all ──
+    // (the pane under the chart, whose "Open sheet" answered for one piece, went on 5 Oct 2026, so a step on the Timeline never leads to a
+    //  sheet any more; the Sheet tab and the chips on the Overview are the doors, and sections 1-5 hold them. What stays here is that the
+    //  steps are the picked piece's own, that none of them is a way to another piece's sheet, and that pressing one does nothing.)
     const stalePlaced = ev('placed', 3000, { sheet: 'GF Sheet 1', sheetId: GF1, lineKey: `${I5.rid}_${I5.ta}`, data: { poolId: pid(I5, 'ta') } });   // (a step of the CUTE piece, older, on a sheet it has since left)
     await page.evaluate(k => OrderWin.open(k), keyOf(I5, 'ta')); await settle();
     await page.click('.owTabsV [data-ow-view="timeline"]');
     const steps = () => page.evaluate(() => [...document.querySelectorAll('#owTimeline .tlSt[data-key]')].map(x => x.dataset.key));
-    const detail = () => page.evaluate(() => { const b = document.querySelector('#owTimeline .tlDetail .tlOpenSheet'); return b ? { off: b.getAttribute('aria-disabled') === 'true', why: b.dataset.why || '', pool: b.dataset.pool } : null; });
-    const strip = () => page.evaluate(() => { const s = document.querySelector('#owTimeline .tlNowS'), b = s && s.querySelector('.tlOpenSheet'); return s ? { text: s.textContent.replace(/\s+/g, ' ').trim(), btn: b ? { off: b.getAttribute('aria-disabled') === 'true', why: b.dataset.why || '' } : null } : null; });
+    const links = () => page.evaluate(() => [...document.querySelectorAll('#owTimeline .tlOpenSheet')].filter(b => b.getClientRects().length && getComputedStyle(b).visibility !== 'hidden').length);
     const open = key => page.evaluate(k => { document.querySelector(`#owTimeline .tlSt[data-key="${k}"]`).click(); }, key);
-    const waitDetail = () => page.waitForFunction(() => document.querySelector('#owTimeline .tlDetail .tlOpenSheet'), null, { timeout: 8000 });
+    // a press on a step does nothing but grow its seal: no sheet opens, no note says anything, the view stays
+    const quiet = async (key, what) => {
+      await clearNotes(); await open(key); await page.waitForTimeout(400); const q = await ui();
+      assert.equal(q.view, 'timeline', what + ': the view stays on the Timeline'); assert.equal(q.note.length, 0, what + ': no note: ' + JSON.stringify(q.note));
+      assert.equal(await page.evaluate(() => document.querySelectorAll('#owTimeline .tlDetail, #owTimeline .tlBig').length), 0, what + ': no detail drawn');
+      assert.equal(await links(), 0, what + ': no sheet link on the Timeline');
+      await page.mouse.move(5, 5); await page.waitForTimeout(250);
+    };
     await page.waitForFunction(() => document.querySelectorAll('#owTimeline .tlSt[data-key]').length >= 2, null, { timeout: 15000 });
-    // all pieces: HEALTH1's own "placed" step opens its sheet; the CUTE piece's older one, naming a sheet it has left, is greyed and inert
+    // all pieces: HEALTH1's own "placed" step and the CUTE piece's older one, naming a sheet it has left
     const all = await steps(); assert.deepEqual(all, ['arrived~e1', `placed~${healthPlaced}`, `placed~${stalePlaced}`].sort((x, y) => all.indexOf(x) - all.indexOf(y)), JSON.stringify(all)); assert(all.includes(`placed~${healthPlaced}`) && all.includes(`placed~${stalePlaced}`) && all.length === 3);
-    await open(`placed~${healthPlaced}`); await waitDetail(); let d = await detail(); assert(d && !d.off, 'HEALTH1\'s step opens its sheet: ' + JSON.stringify(d));
-    await open(`placed~${stalePlaced}`); await page.waitForFunction(() => document.querySelector('#owTimeline .tlDetail .tlOpenSheet[aria-disabled="true"]'), null, { timeout: 8000 });
-    d = await detail(); assert(d.off && /^CUTE TRICERATOPS W\/ HEARTS is no longer on that sheet$/.test(d.why), JSON.stringify(d));
-    await clearNotes(); await page.click('#owTimeline .tlDetail .tlOpenSheet', { force: true }); await oneNote(); u = await ui();
-    assert.equal(u.view, 'timeline', 'the greyed link went nowhere'); assert.match(u.note[0], /no longer on that sheet/);
-    // (the control is at the foot of the window: its note stands above it, whole on screen)
-    const nr = await page.evaluate(() => { const r = document.querySelector('.mNote').getBoundingClientRect(); return { top: r.top, bottom: r.bottom, h: innerHeight }; }); assert(nr.top >= 0 && nr.bottom <= nr.h, 'the note is whole on screen: ' + JSON.stringify(nr));
-    await shot('6-timeline-cute-step-link-greyed');
-    // the strip (all pieces): the sheet is named for the piece that sits on it, not read as the whole order's
-    const st = await strip(); assert(st && /HEALTH1 on GF Sheet 1/.test(st.text) && st.btn && !st.btn.off, JSON.stringify(st));
-    // CUTE picked: its own steps alone, none of HEALTH1's; the same grey; HEALTH1's step is not there to open
+    await quiet(`placed~${healthPlaced}`, "HEALTH1's step"); await quiet(`placed~${stalePlaced}`, "the CUTE piece's older step");
+    await shot('6-timeline-cute-step-no-link');
+    // CUTE picked: its own steps alone, none of HEALTH1's
     await pick(keyOf(I5, 'ta'));
     await page.waitForFunction(() => document.querySelectorAll('#owTimeline .tlSt[data-key]').length === 2, null, { timeout: 8000 });
     assert.deepEqual(await steps(), ['arrived~e1', `placed~${stalePlaced}`]);
-    await open(`placed~${stalePlaced}`); await page.waitForFunction(() => document.querySelector('#owTimeline .tlDetail .tlOpenSheet[aria-disabled="true"]'), null, { timeout: 8000 });
-    d = await detail(); assert(d.off && /no longer on that sheet/.test(d.why), JSON.stringify(d));
-    const st2 = await strip(); assert(!st2 || !st2.btn || st2.btn.off, 'the strip of the CUTE piece does not open HEALTH1\'s sheet: ' + JSON.stringify(st2));
-    // HEALTH1 picked: its own sheet, open, and it opens
+    await quiet(`placed~${stalePlaced}`, 'CUTE picked');
+    // HEALTH1 picked: its own steps; its sheet is reached from the Sheet tab, as in section 3
     await pick(keyOf(I5, 'tb'));
     await page.waitForFunction(({ h, st }) => { const k = [...document.querySelectorAll('#owTimeline .tlSt[data-key]')].map(x => x.dataset.key); return k.includes('placed~' + h) && !k.includes('placed~' + st); }, { h: healthPlaced, st: stalePlaced }, { timeout: 8000 });
-    await open(`placed~${healthPlaced}`); await waitDetail(); d = await detail(); assert(d && !d.off, JSON.stringify(d));
-    await page.click('#owTimeline .tlDetail .tlOpenSheet'); await drawn(GF1); assert.equal((await ui()).view, 'sheet');
+    await quiet(`placed~${healthPlaced}`, 'HEALTH1 picked');
+    await page.click('.owTabsV [data-ow-view="sheet"]'); await drawn(GF1); assert.equal((await ui()).view, 'sheet', "HEALTH1's sheet opens from the Sheet tab");
     await closeWin();
 
     // ── 7 · the header's rail of the 3-piece order, from each piece's side: "Nested" is marked for the pieces on a sheet only ──

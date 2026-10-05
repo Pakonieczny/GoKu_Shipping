@@ -2,7 +2,7 @@
 // spec lays out: nothing runs past its column or the screen, the chrome is one header and one tab row, and a cancelled
 // order says so without covering the header's step names.
 //   - the team composer (paperclip, box, send, hint) stays inside its 380px column; the send button is not cut off
-//   - the Timeline's filters sit in the tab row and its own Now + rail strip is not drawn under the header's rail
+//   - the Timeline's tab row holds no chip (no filters, no legend: the detail pane is gone), its own Now + rail strip is not drawn under the header's rail and nothing is drawn under the chart
 //   - a day column's head ("10:05 AM – 1:12 PM · 3") never runs into the next day
 //   - the header rail's step names are 8.5px, and a cancelled order's big stamp is not drawn over them
 //   - "Where it is now" shows the station's icon in its badge disc; a line of a 2-line order reads "line 1 of 2"
@@ -132,23 +132,17 @@ function fixture({ MAIN, CX, D }) {
       assert(await page.evaluate(() => !(document.querySelector('#owNowCard .tlNowSeal') && document.querySelector('#owNowCard .who'))), 'with a seal, no who · time line beside it (the seal says it)');
       const purchased = await page.evaluate(() => { const m = [...document.querySelectorAll('#owMeta .m')].find(x => /Purchased/i.test(x.querySelector('i').textContent)); const s = m.querySelector('span'); return s.getClientRects().length === 1 ? s.getBoundingClientRect().height : 99; });
       assert(purchased < 22, 'the purchase date reads on one line: ' + purchased);
-      // 2 · its Timeline: the one quiet chip in the tab row, no second Now and rail strip, day heads inside their columns
+      // 2 · its Timeline: no chip in the tab row (the one quiet Stamps chip went with the detail pane, 5 Oct), no second Now and rail strip, no pane under the chart, day heads inside their columns
       await view('timeline'); await snap('normal-timeline');
       const tl = await page.evaluate(() => {
         const tools = document.getElementById('owTlTools'), top = document.querySelector('#owTimeline .tlTop'), grid = document.querySelector('#owTimeline .tlGrid');
         const heads = [...document.querySelectorAll('#owTimeline .tlDay:not(.idle)')].map(d => { const r = d.getBoundingClientRect(), s = d.querySelector('.dh small'); return { day: d.querySelector('.dh').firstChild.textContent, right: r.right, textRight: s.getBoundingClientRect().left + s.scrollWidth, cut: s.scrollWidth > s.clientWidth + 1 }; });
-        const chip = tools.querySelector('.tlChip'), cs = chip && getComputedStyle(chip);
-        return { chips: tools.querySelectorAll('.tlChip').length, chipText: chip && chip.textContent, chipFs: cs && cs.fontSize, top: top ? getComputedStyle(top).display : 'none', gridTop: grid.getBoundingClientRect().top, heads };
+        return { chips: document.querySelectorAll('#owTlTools .tlChip, #owTimeline .tlChip').length, legend: document.querySelectorAll('#owTimeline .tlLegend').length, pane: document.querySelectorAll('#owTimeline .tlDetail, #owTimeline .tlBig, #owTimeline .tlAround').length, top: top ? getComputedStyle(top).display : 'none', gridTop: grid.getBoundingClientRect().top, heads };
       });
-      assert.equal(tl.chips, 1, 'one quiet chip in the tab row: the filters are gone'); assert.equal(tl.chipText, 'Stamps');
+      assert.equal(tl.chips, 0, 'no chip in the tab row: the filters went earlier, the Stamps chip with the detail pane'); assert.equal(tl.legend, 0, 'and no legend to open'); assert.equal(tl.pane, 0, 'and no detail pane under the chart');
       assert.equal(tl.top, 'none', 'no second Now + rail strip under the header');
       assert(tl.gridTop <= 92, 'the lanes start right under the tab row: ' + tl.gridTop);
-      assert.equal(tl.chipFs, '11px', 'the chip at 11px');
       for (const h of tl.heads) assert(!h.cut && h.textRight <= h.right - 4, `${h.day}: its head stays inside its column (${Math.round(h.textRight)} > ${Math.round(h.right)})`);
-      // the Stamps chip still opens the legend of the seals from the tab row
-      await page.click('#owTlTools .tlChip[data-legend]');
-      await page.waitForFunction(() => document.querySelectorAll('#owTimeline .tlLegend figure').length > 0 && !!document.querySelector('#owTlTools .tlChip.on'));
-      await page.click('#owTlTools .tlChip[data-legend]');
       await close();
       assert.equal(await page.evaluate(() => document.querySelectorAll('#owTlTools .tlBar').length), 0, 'closing takes the bar out of the tab row');
 
@@ -184,5 +178,5 @@ function fixture({ MAIN, CX, D }) {
     }
   } finally { await browser.close(); srv.close(); }
   if (shots.length) console.log('  shots: ' + shots.join(', '));
-  console.log('  ✓ composer inside its column, filters in the tab row, day heads inside their columns, rail names at 8.5px, cancelled without a stamp over them, badge icon, no "line 1 of 2" (the piece switch instead), one-line dates, centred empty plate');
+  console.log('  ✓ composer inside its column, no chip in the tab row and no pane under the chart, day heads inside their columns, rail names at 8.5px, cancelled without a stamp over them, badge icon, no "line 1 of 2" (the piece switch instead), one-line dates, centred empty plate');
 })().then(() => console.log('Order view design OK')).catch(e => { console.error(e); process.exit(1); });
