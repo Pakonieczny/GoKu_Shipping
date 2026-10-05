@@ -2178,7 +2178,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     const job = x.eng && x.eng.job, rec = W.rec;
     RET.ctx = { sheetId: rec.id, poolId: x.poolId || x.id, rid: x.rid, key: job ? job.key : null, label: `${CODE[rec.metal] || ""} Sheet ${sheetNoOf(rec)}`, was: job ? job.state : null };
     if (b) b.innerHTML = `<span class="spin"></span>Opening Engrave…`;
-    close().then(() => {
+    const plain = () => close().then(() => {
       const v = Engrave.view();
       if (job && ["approved", "written", "skipped"].includes(job.state)) Engrave.restoreView(Object.assign({}, v, { tab: "done", focus: null, list: false, chosen: true, q: x.rid || "" }));
       else if (job) Engrave.restoreView(Object.assign({}, v, { tab: "place", focus: job.key, list: false, chosen: true, q: "" }));
@@ -2186,6 +2186,14 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       setMode("engrave"); Engrave.render();
       returnPill();
     });
+    // (this charm's own order and piece, its details open, the order's number in the search: EngraveLink, which this window
+    // closes for; the way back stays as it was. Without it, the tab as it always was)
+    if (window.EngraveLink && typeof EngraveLink.open === "function") {
+      let p; try { p = EngraveLink.open({ rid: x.rid, key: job ? job.key : undefined, poolId: x.poolId || x.id, closeFirst: () => close() }); } catch (_) { p = Promise.reject(); }
+      p.then(() => returnPill(), () => plain());
+      return;
+    }
+    plain();
   }
   function returnPill() {
     if (!RET.el) {
