@@ -509,6 +509,7 @@ async function libraryProbes(page, mode, R, variant) {
     }
   }
   await sharedProbes(page, mode, R);
+  await sharedModalProbes(page, mode, R);
   await issuesProbes(page, mode, R, variant);
   await librarySearchProbes(page, mode, R);
   await page.evaluate(() => CN.setMode('orders'));
@@ -526,7 +527,7 @@ function splitTruth(moving, dest) {
   const out = [];
   for (const o of sharedTruth()) {
     const here = o.sheets.filter(x => moving.includes(x)), there = o.sheets.filter(x => !moving.includes(x) && (SHEET[x].set || null) !== dest);
-    if (here.length && there.length) out.push({ rid: o.rid, there: there.map(x => sheetLabel(SHEET[x])).sort() });
+    if (here.length && there.length) out.push({ rid: o.rid, there: there.map(x => sheetLabel(SHEET[x])).sort(), thereIds: there });
   }
   return out;
 }
@@ -540,12 +541,28 @@ async function sharedProbes(page, mode, R) {
     R.eq('K1', `${at}, the shared orders of that group`, (g.orders || []).slice().sort(), want.orders, 'the orders that tie them');
     for (const dest of [null, ...SETS.map(x => x.id)]) {
       const items = await ask('between', [S.id, dest]), w = splitTruth([S.id], dest);
-      R.eq('K1', `${at} moved to ${dest || 'no set'}, the orders it would split`, Array.isArray(items) ? items.map(i => ({ rid: i.orderId, there: (i.there || []).slice().sort() })).sort((a, b) => a.rid < b.rid ? -1 : 1) : items, w, 'the orders that would be split');
+      R.eq('K1', `${at} moved to ${dest || 'no set'}, the orders it would split`, Array.isArray(items) ? items.map(i => ({ rid: i.orderId, there: (i.there || []).slice().sort() })).sort((a, b) => a.rid < b.rid ? -1 : 1) : items, w.map(x => ({ rid: x.rid, there: x.there })), 'the orders that would be split');
     }
   }
   for (const set of SETS) {
     const items = await ask('between', [set.id, null]), w = splitTruth(SHEETS.filter(x => x.set === set.id).map(x => x.id), set.id);
-    R.eq('K1', `Set ${set.seq} kept as it is, the orders already split across sets`, Array.isArray(items) ? items.map(i => ({ rid: i.orderId, there: (i.there || []).slice().sort() })).sort((a, b) => a.rid < b.rid ? -1 : 1) : items, w, 'the orders split across sets');
+    R.eq('K1', `Set ${set.seq} kept as it is, the orders already split across sets`, Array.isArray(items) ? items.map(i => ({ rid: i.orderId, there: (i.there || []).slice().sort() })).sort((a, b) => a.rid < b.rid ? -1 : 1) : items, w.map(x => ({ rid: x.rid, there: x.there })), 'the orders split across sets');
+  }
+}
+
+/* K2: the shared-orders window (SharedOrdersModal), the pop-up that says which orders keep a sheet in its set: one card per order, each piece with the sheet it is on. */
+async function sharedModalProbes(page, mode, R) {
+  if (!(await page.evaluate(() => !!(window.SharedOrdersModal && SharedOrdersModal.open)))) { R.check('K2', 'SharedOrdersModal', false, 'window.SharedOrdersModal is not on the page'); return; }
+  for (const S of SHEETS) for (const dest of [null, ...SETS.map(x => x.id)]) {
+    const want = splitTruth([S.id], dest), at = `${sheetLabel(S)} moved to ${dest || 'no set'}`;
+    await page.evaluate(([id, dest]) => { try { SharedOrdersModal.close(); } catch (_) {} try { SharedOrdersModal.open({ sheetId: id, targetSetId: dest }); } catch (_) {} }, [S.id, dest]);
+    const read = () => page.evaluate(() => [...document.querySelectorAll('.soDlg .soCard')].map(card => ({ rid: card.dataset.order, pieces: [...card.querySelectorAll('.soPiece')].map(p => `${(p.querySelector('.soChip')?.textContent || '').trim()} ${p.classList.contains('here') ? 'here' : 'there'}`).sort() })).sort((a, b) => a.rid < b.rid ? -1 : 1));
+    let got = await read(), prev = '';
+    for (let i = 0; i < 8 && JSON.stringify(got) !== prev; i++) { prev = JSON.stringify(got); await sleep(450); got = await read(); }
+    const exp = want.map(w => ({ rid: w.rid, pieces: truth.pieces(w.rid).filter(p => p.sheetId && (p.sheetId === S.id || w.thereIds.includes(p.sheetId))).map(p => `${short(sheetLabel(SHEET[p.sheetId]))} ${p.sheetId === S.id ? 'here' : 'there'}`).sort() }));
+    R.eq('K2', `${at}, the orders on the cards`, got.map(c => c.rid), exp.map(c => c.rid), 'the orders the window lists');
+    for (const e of exp) { const c = got.find(x => x.rid === e.rid); if (c) R.eq('K2', `${at}, order ${e.rid}`, c.pieces, e.pieces, 'the pieces on its card with the sheet each is on'); }
+    await page.evaluate(() => { try { SharedOrdersModal.close(); } catch (_) {} }); await sleep(450);
   }
 }
 
@@ -680,6 +697,7 @@ const SURFACES = {
   C1: 'Library · the order count on each sheet of a set card (and its QR label)',
   C3: 'Library · the Library\'s own order-number search: how many sheets and sets hold the order, and the set cards it keeps',
   C5: 'Library · the orders a sheet is held back by (a piece on no sheet, no SKU): what the "!" panel reads',
+  K2: 'SharedOrders window · the pop-up for a blocked move: the orders on its cards and the sheet each of their pieces is on',
   K1: 'SharedOrders · the sheets that must stay together and the orders a move would split (the cardinal rule)',
   D1: 'Orders list · the state word of a line (nested only when every piece is on a sheet)',
   D3: 'Header search · the sheets named on an order\'s card',

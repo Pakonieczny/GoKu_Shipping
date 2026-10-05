@@ -6668,7 +6668,7 @@ boot();
      Design Station's sign-in), the same name every seal it stamps carries. -->
 <script src="station-session.js?v=20261002-ea1"></script>
 <script src="station-activity.js?v=20261003-reset-clean"></script>
-<script src="charm-nest-bridge.js?v=20261005-lis2-cardinal4-zoom-psb1-egl1"></script>
+<script src="charm-nest-bridge.js?v=20261005-lis2-cardinal4-zoom-psb1-egl1-osc1"></script>
 <script>
 try {
   const nameNow = () => { try { const n = String((window.CNEmployee && CNEmployee.name()) || "").trim(); return /^\d+$/.test(n) ? "" : n; } catch (_) { return ""; } };
@@ -6696,7 +6696,7 @@ try {
       set(v) { d.set.call(window.B, v); try { const n = String(d.get.call(window.B) || "").trim(); if (n && !/^\d+$/.test(n)) StationSession.signedIn({ name: n, id: null }); } catch (_) {} } });
 } catch (_) {}
 </script>
-<script src="charm-nest-sheetwin.js?v=20261005-pieces-cardinal2"></script>
+<script src="charm-nest-sheetwin.js?v=20261005-pieces-cardinal2-osc1"></script>
 <!-- the one way into the engraving of one order's piece (the order window, the Sheet tab and the Sheet window call it; each keeps its own way without it) -->
 <script src="charm-nest-engrave-link.js?v=20261005-el2"></script>
 <script src="charm-nest-tour.js?v=20260929-m11"></script>
@@ -6712,7 +6712,7 @@ try {
 <script src="charm-nest-library-engraving.js?v=20261005-egl1"></script>
 <script src="charm-nest-library-issues.js?v=20261005-lis4"></script>
 <script src="charm-nest-shared-orders-modal.js?v=20261005-so5"></script>
-<script src="charm-nest-search.js?v=20260929-m5"></script>
+<script src="charm-nest-search.js?v=20260929-m5-osc1"></script>
 <script src="charm-nest-signins.js?v=20260929-m5"></script>
 <script src="charm-nest-efficiency.js?v=20261003-ef5"></script>
 <!-- ══ one order line: what it is, what the customer said, what the shop said, and how to settle it ══ -->
