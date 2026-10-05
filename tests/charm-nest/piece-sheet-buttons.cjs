@@ -39,12 +39,11 @@ async function main() {
   poolRow(T3, 'ta', 'HEART_A', 'gold', GF1, 1, 'GF'); poolRow(T3, 'tc', 'STAR_C', 'silver', SS1, 1, 'SS');
   poolRow(OT, 'ta', 'OTHER_GF', 'gold', GF1, 1, 'GF');
   poolRow(OUT, 'ta', 'MOON_O', 'silver', SS1, 1, 'SS'); poolRow(OUT, 'tb', 'RING_O', 'silver', null, 0, 'SS');   // (outside the pull)
-  // Emily Chambers' timeline: arrived, the CUTE piece placed on GF Sheet 1 (an older step: it has since left that sheet), HEALTH1 placed on it
+  // Emily Chambers' timeline: arrived, HEALTH1 placed on GF Sheet 1 (the CUTE piece has nothing: its SKU is in no master file)
   const evAt = Date.now(); let evN = 0;
-  const ev = (type, ago, extra) => srv.st.put('Order_Timeline', `${I5.rid}~${type}~e${++evN}`, Object.assign({ orderId: I5.rid, type, at: evAt - ago * 60000, by: 'Test Operator', source: 'sorter', station: '', text: '', data: {} }, extra || {}));
+  const ev = (type, ago, extra) => { const id = `e${++evN}`; srv.st.put('Order_Timeline', `${I5.rid}~${type}~${id}`, Object.assign({ orderId: I5.rid, type, at: evAt - ago * 60000, by: 'Test Operator', source: 'sorter', station: '', text: '', data: {} }, extra || {})); return id; };
   ev('arrived', 4000, { source: 'etsy', by: 'Etsy' });
-  ev('placed', 3000, { sheet: 'GF Sheet 1', sheetId: GF1, lineKey: `${I5.rid}_${I5.ta}`, data: { poolId: pid(I5, 'ta') } });
-  ev('placed', 2000, { sheet: 'GF Sheet 1', sheetId: GF1, lineKey: `${I5.rid}_${I5.tb}`, data: { poolId: pid(I5, 'tb') } });
+  const healthPlaced = ev('placed', 2000, { sheet: 'GF Sheet 1', sheetId: GF1, lineKey: `${I5.rid}_${I5.tb}`, data: { poolId: pid(I5, 'tb') } });
   // the 3-piece order's timeline: arrived, HEART_A placed on GF Sheet 1, STAR_C placed on SS Sheet 1; the piece with no SKU has no step of its own
   const ev3 = (type, ago, extra) => srv.st.put('Order_Timeline', `${T3.rid}~${type}~e${++evN}`, Object.assign({ orderId: T3.rid, type, at: evAt - ago * 60000, by: 'Test Operator', source: 'sorter', station: '', text: '', data: {} }, extra || {}));
   ev3('arrived', 4000, { source: 'etsy', by: 'Etsy' });
@@ -219,8 +218,24 @@ async function main() {
     u = await ui(); assert(u.btn.off && u.tab.off && /^This piece is not on a sheet yet: it is waiting to be placed$/.test(u.btn.why), JSON.stringify([u.btn, u.tab]));
     await closeWin();
 
+    // ── 5b · the other doors into an order on a given piece: a Review card (its piece's row), the Library's "Open order" (no piece named) ──
+    for (const [what, k] of [['Review card on the CUTE piece', 'ta'], ['Review card on the HEALTH1 piece', 'tb']]) {
+      await page.evaluate(({ rid, key, pool }) => { const b = document.createElement('button'); b.id = 'psbDoor'; document.body.appendChild(b); openOrderFrom(b, rid, { row: { key }, poolId: pool }); }, { rid: I5.rid, key: keyOf(I5, k), pool: pid(I5, k) });
+      await settle(); u = await ui();
+      assert.equal(u.view, 'info'); assert.equal(u.piece, null, 'all pieces in front, the piece of the card shown');
+      if (k === 'ta') { assert(u.btn.off && /^CUTE TRICERATOPS W\/ HEARTS is not on a sheet yet: /.test(u.btn.why), what + ': ' + JSON.stringify(u.btn)); assert(u.tab.off, what); }
+      else { assert(!u.btn.off && !u.tab.off && u.tab.count === '1 sheet', what + ': ' + JSON.stringify([u.btn, u.tab])); }
+      assert.deepEqual(u.chips.map(c => [c.text, c.off]), [['Not on a sheet yet', true], ['GF Sheet 1', false]], what + ': ' + JSON.stringify(u.chips));
+      await closeWin(); await page.evaluate(() => document.getElementById('psbDoor').remove());
+    }
+    await page.evaluate(rid => { const b = document.createElement('button'); b.id = 'psbDoor'; document.body.appendChild(b); openOrderFrom(b, rid); }, I5.rid);   // (the Library: the order, no piece named: its first)
+    await settle(); u = await ui(); assert(u.btn.off && u.tab.off, "the Library's Open order, first piece CUTE: " + JSON.stringify([u.btn, u.tab]));
+    assert.deepEqual(u.chips.map(c => [c.text, c.off]), [['Not on a sheet yet', true], ['GF Sheet 1', false]]);
+    await closeWin(); await page.evaluate(() => document.getElementById('psbDoor').remove());
+
     // ── 6 · the Timeline's sheet links answer for one piece too ──
     // (the step's own "Open sheet", the strip's under the rail; the Timeline of the CUTE piece lists its steps alone)
+    const stalePlaced = ev('placed', 3000, { sheet: 'GF Sheet 1', sheetId: GF1, lineKey: `${I5.rid}_${I5.ta}`, data: { poolId: pid(I5, 'ta') } });   // (a step of the CUTE piece, older, on a sheet it has since left)
     await page.evaluate(k => OrderWin.open(k), keyOf(I5, 'ta')); await settle();
     await page.click('.owTabsV [data-ow-view="timeline"]');
     const steps = () => page.evaluate(() => [...document.querySelectorAll('#owTimeline .tlSt[data-key]')].map(x => x.dataset.key));
@@ -230,9 +245,9 @@ async function main() {
     const waitDetail = () => page.waitForFunction(() => document.querySelector('#owTimeline .tlDetail .tlOpenSheet'), null, { timeout: 8000 });
     await page.waitForFunction(() => document.querySelectorAll('#owTimeline .tlSt[data-key]').length >= 2, null, { timeout: 15000 });
     // all pieces: HEALTH1's own "placed" step opens its sheet; the CUTE piece's older one, naming a sheet it has left, is greyed and inert
-    const all = await steps(); assert.deepEqual(all, ['arrived~e1', 'placed~e2', 'placed~e3'], JSON.stringify(all));
-    await open('placed~e3'); await waitDetail(); let d = await detail(); assert(d && !d.off, 'HEALTH1\'s step opens its sheet: ' + JSON.stringify(d));
-    await open('placed~e2'); await page.waitForFunction(() => document.querySelector('#owTimeline .tlDetail .tlOpenSheet[aria-disabled="true"]'), null, { timeout: 8000 });
+    const all = await steps(); assert.deepEqual(all, ['arrived~e1', `placed~${healthPlaced}`, `placed~${stalePlaced}`].sort((x, y) => all.indexOf(x) - all.indexOf(y)), JSON.stringify(all)); assert(all.includes(`placed~${healthPlaced}`) && all.includes(`placed~${stalePlaced}`) && all.length === 3);
+    await open(`placed~${healthPlaced}`); await waitDetail(); let d = await detail(); assert(d && !d.off, 'HEALTH1\'s step opens its sheet: ' + JSON.stringify(d));
+    await open(`placed~${stalePlaced}`); await page.waitForFunction(() => document.querySelector('#owTimeline .tlDetail .tlOpenSheet[aria-disabled="true"]'), null, { timeout: 8000 });
     d = await detail(); assert(d.off && /^CUTE TRICERATOPS W\/ HEARTS is no longer on that sheet$/.test(d.why), JSON.stringify(d));
     await clearNotes(); await page.click('#owTimeline .tlDetail .tlOpenSheet', { force: true }); await oneNote(); u = await ui();
     assert.equal(u.view, 'timeline', 'the greyed link went nowhere'); assert.match(u.note[0], /no longer on that sheet/);
@@ -244,14 +259,14 @@ async function main() {
     // CUTE picked: its own steps alone, none of HEALTH1's; the same grey; HEALTH1's step is not there to open
     await pick(keyOf(I5, 'ta'));
     await page.waitForFunction(() => document.querySelectorAll('#owTimeline .tlSt[data-key]').length === 2, null, { timeout: 8000 });
-    assert.deepEqual(await steps(), ['arrived~e1', 'placed~e2']);
-    await open('placed~e2'); await page.waitForFunction(() => document.querySelector('#owTimeline .tlDetail .tlOpenSheet[aria-disabled="true"]'), null, { timeout: 8000 });
+    assert.deepEqual(await steps(), ['arrived~e1', `placed~${stalePlaced}`]);
+    await open(`placed~${stalePlaced}`); await page.waitForFunction(() => document.querySelector('#owTimeline .tlDetail .tlOpenSheet[aria-disabled="true"]'), null, { timeout: 8000 });
     d = await detail(); assert(d.off && /no longer on that sheet/.test(d.why), JSON.stringify(d));
     const st2 = await strip(); assert(!st2 || !st2.btn || st2.btn.off, 'the strip of the CUTE piece does not open HEALTH1\'s sheet: ' + JSON.stringify(st2));
     // HEALTH1 picked: its own sheet, open, and it opens
     await pick(keyOf(I5, 'tb'));
-    await page.waitForFunction(() => { const k = [...document.querySelectorAll('#owTimeline .tlSt[data-key]')].map(x => x.dataset.key); return k.includes('placed~e3') && !k.includes('placed~e2'); }, null, { timeout: 8000 });
-    await open('placed~e3'); await waitDetail(); d = await detail(); assert(d && !d.off, JSON.stringify(d));
+    await page.waitForFunction(({ h, st }) => { const k = [...document.querySelectorAll('#owTimeline .tlSt[data-key]')].map(x => x.dataset.key); return k.includes('placed~' + h) && !k.includes('placed~' + st); }, { h: healthPlaced, st: stalePlaced }, { timeout: 8000 });
+    await open(`placed~${healthPlaced}`); await waitDetail(); d = await detail(); assert(d && !d.off, JSON.stringify(d));
     await page.click('#owTimeline .tlDetail .tlOpenSheet'); await drawn(GF1); assert.equal((await ui()).view, 'sheet');
     await closeWin();
 
