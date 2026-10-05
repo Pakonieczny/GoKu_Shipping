@@ -118,7 +118,6 @@ const until = async (fn, ms = 20000, what = '') => { const t0 = Date.now(); for 
     if (!(REAL || o.real)) for (const re of [/charm-nest-flow\.js/, /charm-nest-library-(fx|approval-ui)\.js/, /charm-nest-flow-rose\.js/]) await ctx.route(re, r => r.fulfill({ status: 200, contentType: 'text/javascript', body: '/* left out by the test */' }));
     await ctx.addInitScript(() => { try { if (!localStorage.getItem('cn.employee')) localStorage.setItem('cn.employee', 'Tester'); } catch (_) { /* about:blank */ } window.confirm = () => true; window.prompt = () => 'Tester'; window.alert = () => {}; });
     const page = await ctx.newPage(), errors = [];
-    page.on('pageerror', e => { errors.push('page: ' + e.message); if (process.env.DEBUG) console.log('PAGEERROR', e.message, (e.stack || '').split('\n').slice(0, 4).join(' | ')); });
     page.on('console', m => { if (m.type() === 'error' && !/firebase stub|Failed to load resource/.test(m.text())) errors.push('console: ' + m.text().slice(0, 300)); });
     await page.exposeFunction('__fixtureMove', (id, to) => moveSheet(st, id, to));
     if (o.flow) {
@@ -166,9 +165,14 @@ const until = async (fn, ms = 20000, what = '') => { const t0 = Date.now(); for 
   const quiet = page => page.evaluate(() => new Promise(res => { let t = setTimeout(done, 2000), n = 0; const stop = setTimeout(done, 15000); const o = new MutationObserver(() => { clearTimeout(t); t = setTimeout(done, 2000); }); o.observe(document.getElementById('libBody'), { childList: true, subtree: true, attributes: true }); function done() { o.disconnect(); clearTimeout(t); clearTimeout(stop); res(true); } }));
   /** Focus the grip, press Enter and read the menu: its title and each entry (name, greyed, the line under it). */
   async function menuOf(page, grip) {
-    await page.evaluate(s => document.querySelector(s).focus(), grip);
-    await page.keyboard.press('Enter');
-    await settled(page);
+    // (a late redraw of the lists would take an open menu away with its card: then it is opened again, as a person would)
+    for (let tries = 0; tries < 4; tries++) {
+      await page.evaluate(s => document.querySelector(s).focus(), grip);
+      await page.keyboard.press('Enter');
+      await settled(page);
+      await page.waitForTimeout(250);
+      if (await page.evaluate(() => !!document.querySelector('#libBody .dndMenuWrap') && document.activeElement && !!document.activeElement.closest('#libBody'))) break;
+    }
     return page.evaluate(() => ({
       title: document.querySelector('#libBody .dndMenuTitle').textContent,
       items: [...document.querySelectorAll('#libBody .dndMenu .dndMenuItem')].map(x => ({ name: x.firstChild.textContent, off: x.getAttribute('aria-disabled') === 'true', note: x.lastChild.textContent })),
@@ -238,18 +242,12 @@ const until = async (fn, ms = 20000, what = '') => { const t0 = Date.now(); for 
     await page.keyboard.press('End'); assert.equal(await at(), 'Set 1');
     await page.keyboard.press('Home'); assert.equal(await at(), 'Laser cutting');
     await page.evaluate(() => { __calls.length = 0; });
-    if (process.env.DEBUG) await page.evaluate(() => { window.__fo = []; document.addEventListener('focusout', e => __fo.push([e.target.outerHTML.slice(0, 70), e.relatedTarget && e.relatedTarget.tagName, (new Error().stack || '').split('\n').slice(1, 4).join('|')]), true); new MutationObserver(ms => { for (const m of ms) for (const n of m.removedNodes) if (n.nodeType === 1 && (n.matches('.dndMenuWrap, .libCard, .setCard, .dndMenuItem') || n.querySelector('.dndMenuItem'))) __fo.push(['REMOVED', n.className, (new Error().stack || '').slice(0, 10)]); }).observe(document.body, { childList: true, subtree: true }); });
-    if (process.env.DEBUG) console.log('DBG0', await page.evaluate(() => document.activeElement.outerHTML.slice(0, 100)));
     await page.keyboard.press('Enter');                                   // on the greyed Laser cutting: nothing happens
-    if (process.env.DEBUG) { await page.waitForTimeout(700); console.log('DBGFO', await page.evaluate(() => JSON.stringify(__fo))); }
-    if (process.env.DEBUG) console.log('DBG1', await page.evaluate(() => document.activeElement.outerHTML.slice(0, 100)));
     await page.waitForTimeout(500);
     assert.equal(await page.evaluate(() => __calls.filter(c => c[0] === 'plan').length), 0, 'Enter on a greyed entry plans nothing');
     assert.equal(await page.evaluate(() => !!document.querySelector('#libBody .dndMenuWrap')), true, 'and the menu stays open');
     await page.keyboard.press('ArrowDown');                               // Completed
-    if (process.env.DEBUG) console.log('DBG', await at(), await page.evaluate(() => JSON.stringify([__calls, LibraryDnd.state(), !!document.querySelector('#libBody .dndMenuWrap')])));
     await page.keyboard.press('Enter');
-    if (process.env.DEBUG) { await page.waitForTimeout(800); console.log('DBG2', await page.evaluate(() => JSON.stringify([__calls, LibraryDnd.state(), document.activeElement.outerHTML.slice(0, 120)]))); }
     await until(() => page.evaluate(() => __calls.some(c => c[0] === 'plan' && c[1] === 'sheet' && c[2] === 'dC01' && c[3] === '{"area":"completed"}')), 4000, 'Enter on Completed plans the move');
     await until(() => page.evaluate(() => __calls.some(c => c[0] === 'commit' && c[1] === 'dC01')), 5000, 'and commits it');
     await page.evaluate(() => LibraryDnd.cancel()); await dismiss(page);
