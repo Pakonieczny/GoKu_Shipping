@@ -39,6 +39,9 @@
   const lsJson = (k, d) => { try { const v = JSON.parse(localStorage.getItem(k) || "null"); return v == null ? d : v; } catch (_) { return d; } };
   const clean = (v, n) => String(v == null ? "" : v).replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim().slice(0, n);
   const safeId = v => { const s = clean(v, 60); return !s || /^\d+$/.test(s) ? "" : s; };   // a PIN (digits) is never kept or sent
+  /** a person's name as it is sent and kept: digit runs of four or more are dropped ("Marco 123456" typed by mistake is "Marco": a number
+      could be a PIN) and a name with no letter is nobody. Names the pages already tidy (the Design Stations, the sorter) come out unchanged. */
+  const cleanName = v => { const s = clean(String(v == null ? "" : v).replace(/\d{4,}/g, " "), 80); return /\p{L}/u.test(s) ? s : ""; };
 
   /* ── New York time ── */
   let fmt = null;
@@ -88,7 +91,7 @@
   function person() {
     try {
       const p = cfg.person ? cfg.person() : null;
-      const name = p && clean(p.name, 80);
+      const name = p && cleanName(p.name);
       return name ? { name, id: safeId(p.id) } : null;
     } catch (_) { return null; }
   }
@@ -299,7 +302,7 @@
   function signedIn(who) {
     try {
       if (!ready) return;
-      const name = clean(who && who.name, 80);
+      const name = cleanName(who && who.name);
       if (!name) return;
       const today = nyDay();
       markDay(name, today); seen = name; quiet = "";

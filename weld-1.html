@@ -985,8 +985,8 @@
   <!-- Sign-in time per person and computer, and the midnight sign-out (station-session.js). The PIN is never kept or sent:
        the session carries the name only. At midnight (New York) the PIN box comes back; the order, the fields and the chat
        stay on screen. -->
-  <script src="station-session.js?v=20261002-ea1"></script>
-  <script src="station-activity.js?v=20261005-e2live"></script>
+  <script src="station-session.js?v=20261005-et2"></script>
+  <script src="station-activity.js?v=20261005-et2"></script>
   <!-- Phone scans that arrive while nobody is signed in wait here and load, in order, right after the next sign-in (station-scan-queue.js). -->
   <script src="station-scan-queue.js?v=20261003-sq1"></script>
   <script>
@@ -1177,7 +1177,7 @@
         const why = weldRefusal(orderData);               // the same test the seal uses: no seal, one `reject`
         if (why) { weldLiveEnd(id); return weldAct("reject", { orderId: id, detail: why }); }
         weldLive(id, orderData, "Welded");
-        if (look === "failed") weldAct("error", { orderId: id, detail: "Etsy order lookup failed" + (orderData && orderData.error ? ": " + String(orderData.error).slice(0, 60) : "") });
+        if (look === "failed") weldAct("error", { orderId: id, detail: "Etsy order lookup failed" });   // (a category only: Etsy's own words are never sent)
         if (weldCounted.has(id)) return;                // the same order scanned again: already counted
         weldCounted.set(id, Date.now());
         if (weldCounted.size > 500) weldCounted.delete(weldCounted.keys().next().value);

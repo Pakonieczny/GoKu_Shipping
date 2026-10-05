@@ -10,6 +10,8 @@
 //   • the order chat: a message sent is a note, one that fails an error; a picture dropped in is a note, one that fails an error
 //   • the live board (station-live-order.js → StationActivity.working/idle): a scan is the order in hand with every piece, a label
 //     adds a note, Complete Order (and a cancel alert) puts nothing in hand; an order Etsy cannot find is never in hand
+//   • the station doors down (every request fails) or hanging (never answered): the scan, Buy & Print and Complete Order work as
+//     before, quickly, with no page error; the events wait in the queue and are delivered once each when the server is back
 //   • signed out again: nothing more is recorded; no request anywhere carries the PIN
 //   node tests/stations/shipping-activity.cjs [playwright-core dir]
 const path = require('path'), assert = require('assert'), fs = require('fs'), http = require('http');
@@ -71,7 +73,7 @@ async function run(browser, origin, n, mode) {
   const doorBodies = []; let mapGets = 0;   // the server's login door ({ pinLogin }) is the one request that carries the number: kept apart
   const activity = [];      // every event sent to the station door ({ activity: [...] })
   const lives = [];         // every live write ({ live: {...} }): the order in hand right now
-  const state = { etsyPost: 200 };
+  const state = { etsyPost: 200, doors: mode === 'down' || mode === 'hang' ? mode : 'up', doorHits: 0, etsyPosts: 0, labels: 0 };
   const ctx = await browser.newContext({ viewport: { width: 1500, height: 950 } });
   const js = body => ({ status: 200, contentType: 'text/javascript', headers: { 'Cross-Origin-Resource-Policy': 'cross-origin' }, body });
   const json = (status, obj) => ({ status, contentType: 'application/json', body: JSON.stringify(obj) });
@@ -92,17 +94,22 @@ async function run(browser, origin, n, mode) {
         if (fn === 'firebaseOrders') {
           if (body && body.pinLogin !== undefined) { requests.pop(); doorBodies.push(text); return route.fulfill(json(200, body.pinLogin === PIN ? { ok: true, name: WHO } : { ok: false, error: 'not on the list' })); }
           if (req.method() === 'GET' && /employee/i.test(url.searchParams.get('orderId') || '')) { mapGets++; return route.fulfill(json(401, { success: false })); }   // the roster is never asked for
+          if (state.doors !== 'up' && body && (Array.isArray(body.activity) || body.live || body.session)) {   // the station doors (live, activity, session) are down or never answer
+            state.doorHits++;
+            return state.doors === 'down' ? route.abort('connectionfailed') : undefined;                       // ('hang': the request is simply never answered)
+          }
           if (body && Array.isArray(body.activity)) { activity.push(...body.activity); return route.fulfill(json(200, { success: true, written: body.activity.length, duplicate: 0, refused: 0, scrubbed: 0 })); }
           if (body && body.live) { lives.push(body.live); return route.fulfill(json(200, { success: true, written: 1 })); }
           if (body && body.newMessage && state.msgFail) return route.fulfill(json(500, { success: false, error: 'down' }));
           if (body && (body.session || body.timeline || body.newMessage)) return route.fulfill(json(200, { success: true }));
           return route.fulfill(json(404, { error: 'Order not found' }));
         }
-        if (fn === 'trackOrderProxy') return state.etsyPost === 200
+        if (fn === 'trackOrderProxy') return (state.etsyPosts++, state.etsyPost === 200)
           ? route.fulfill(json(200, { orderId: 987654, orderNumber: body && body.receiptId }))
           : route.fulfill(json(state.etsyPost, { error: 'boom, customer at 123 Main St' }));
         if (fn === 'testChitChats') {
           const r = url.searchParams.get('resource');
+          if (r === 'shipment') state.labels++;
           if (r === 'shipment') return route.fulfill(json(200, { shipment: { id: url.searchParams.get('id'), carrier: 'usps', carrier_tracking_code: 'TRK123', postage_label_png_url: 'https://chitchats.test/label.png' } }));
           if (r === 'label') return url.searchParams.get('format') === 'png'
             ? route.fulfill({ status: 200, contentType: 'image/png', body: PNG_1PX }) : route.fulfill(json(404, { error: 'no pdf' }));
@@ -191,6 +198,32 @@ async function run(browser, origin, n, mode) {
     await say('secret words about the chain');
     state.msgFail = true; await say('words that fail'); state.msgFail = false;
     await drop(true); await drop(false);
+  } else if (mode === 'down' || mode === 'hang') {
+    // the station doors are down (every request fails) or hang (no request is ever answered): the scan, the label and Complete
+    // Order work exactly as with a healthy server, nothing is slowed or blocked, nothing throws, and the events wait in the queue
+    const t0 = Date.now();
+    await typeOrder('1111111111');
+    await clickBuy();
+    await clickComplete();
+    const took = Date.now() - t0;
+    assert(state.labels >= 1, mode + ': Buy & Print went through to the label service');
+    assert.strictEqual(state.etsyPosts, 1, mode + ': Complete Order went through to Etsy');
+    assert(took < 8000, mode + ': scan + label + Complete took ' + took + ' ms (the page waited for the station doors)');
+    assert(state.doorHits > 0, mode + ': the station doors were tried');
+    const pending = await page.evaluate(() => window.StationActivity.pending());
+    assert(pending >= 3, mode + ': scan, print and complete wait in the queue: ' + pending);
+    assert.deepStrictEqual(activity, [], mode + ': nothing reached the server');
+    assert.deepStrictEqual(errors, [], mode + ': no page errors');
+    if (mode === 'down') {                       // the server is back: what waited goes out once each, with the order's pieces
+      state.doors = 'up';
+      await flush();
+      assert.deepStrictEqual(activity.map(e => `${e.action}:${e.orderId}:${e.parts || 0}:${e.orders || 0}`), ['scan:1111111111:3:0', 'print:1111111111:0:0', 'complete:1111111111:3:1'], 'down: the waiting events are delivered, once each');
+      assert.strictEqual(await page.evaluate(() => window.StationActivity.pending()), 0, 'down: nothing is left waiting');
+    }
+    assert(!requests.some(r => r.url.includes(PIN) || r.text.includes(PIN)), 'the PIN is in no request');
+    assert.deepStrictEqual(errors, [], 'no page errors');
+    await ctx.close();
+    return `${mode}: scan + label + Complete in ${took} ms, ${pending} events kept${mode === 'down' ? ', all delivered after the server came back' : ''}`;
   } else {
     // cancelled order: typed scan → alert (reject); Complete and Buy & Print refused ("do it anyway" declined)
     await typeOrder('2222222222');
@@ -286,7 +319,11 @@ async function run(browser, origin, n, mode) {
   try {
     for (const n of [1, 2, 3]) {
       out.push(`shipping-${n} ${await run(browser, origin, n, 'run')}`);
-      if (n === 1) out.push(`shipping-${n} ${await run(browser, origin, n, 'cancel')}`);   // the code is shared: one page is enough
+      if (n === 1) {                                                                         // the code is shared: one page is enough
+        out.push(`shipping-${n} ${await run(browser, origin, n, 'cancel')}`);
+        out.push(`shipping-${n} ${await run(browser, origin, n, 'down')}`);
+        out.push(`shipping-${n} ${await run(browser, origin, n, 'hang')}`);
+      }
     }
     console.log(`shipping activity OK in ${((Date.now() - t0) / 1000).toFixed(1)} s · ${out.join(' · ')}`);
   } finally { await browser.close(); srv.close(); }
