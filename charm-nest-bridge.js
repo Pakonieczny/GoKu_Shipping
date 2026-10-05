@@ -11436,7 +11436,9 @@ const OrderWin = window.OrderWin = (() => {
     // (a Rose Gold sheet behind its saved green line keeps its pieces until it is cut: nothing comes off it)
     const lined = rec && !cut && rec.metal === "rose" && !!(rec.roseLine || rec.rosePlan || rec.roseProtected || rec.rosePlanHash || rec.rosePlanJson || rec.roseProtectedJson);
     const facts = rec ? [sheetName(list[SV.at] || { metal: rec.metal, n: inf.sheet.n }), inf.stock ? `${Math.round(inf.stock.wPt * 25.4 / 72)} × ${Math.round(inf.stock.hPt * 25.4 / 72)} mm` : "", rec.setSeq ? "Set-" + rec.setSeq : "", cut ? "cut " + new Date(+cut).toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" }) : rec.status || ""].filter(Boolean).join(" · ") : "";
-    const mine = inf ? inf.mine : [], x0 = mine.find(x => x.poolId === SV.focus) || mine[0] || null;
+    // (the charm shown when none was picked on the sheet: the piece this window is on (the Overview's switcher), so the Overview's back
+    // engraving card and this tab's are always about the same piece; only then the first charm of the order on the sheet)
+    const mine = inf ? inf.mine : [], x0 = mine.find(x => x.poolId === SV.focus) || mine.find(x => x.poolId && (r.poolIds || []).includes(x.poolId)) || mine[0] || null;
     // (the line of the charm shown: an order split over sheets and metals speaks of that charm, not of the line opened)
     const lr = (x0 && x0.poolId && linesOf(r).find(l => (l.poolIds || []).includes(x0.poolId))) || r;
     const sp = lr.spec || {}, sku = (x0 && x0.sku) || sp.designSku || lr.line.sku || "";
@@ -11991,8 +11993,11 @@ const OrderWin = window.OrderWin = (() => {
     // gone from the pull, cancelled or no longer open, shows those lines as they are)
     const ofRid = (Orders.rows() || []).filter(r => String(r.order.receiptId) === rid), live = ofRid.filter(r => r.state !== "gone");
     const pulled = live.length ? live : ofRid;
+    // (the piece asked for: the line named, else the line that holds the pool id named (a copy's id starts with its line's key), else the order's first;
+    // Paul, 5 Oct, round 3: every place that opens the order shows the piece it was pressed for, with that piece's own back engraving)
+    const ofPool = (list, pid) => { pid = String(pid || ""); return pid ? list.find(r => (r.poolIds || []).includes(pid)) || list.find(r => pid.startsWith(r.key + "_")) || null : null; };
     const mine = opts.row && opts.row.key ? pulled.find(r => r.key === opts.row.key) : null;
-    if (pulled.length) return show(mine || pulled[0], o);
+    if (pulled.length) return show(mine || ofPool(pulled, opts.poolId) || pulled[0], o);
     const tok = ++W.look, stub = stubRow(rid);
     // what the page already knows of the order (the search index as it stands, the picture already fetched) is drawn
     // at once, so the view flies with it; nothing is read or built for it here
@@ -12026,7 +12031,7 @@ const OrderWin = window.OrderWin = (() => {
     tryDo(() => window.OrderPieces && OrderPieces.learn(rid, { rows }));   // (the order's lines as the records give them: its pieces are told from them too)
     // the note already read while the order was looked up shows at once on its lines
     if (stub.spec && stub.spec.staffNote) for (const row of rows) if (row.spec && !row.spec.staffNote) { row.spec.staffNote = stub.spec.staffNote; row.order.staffNote = stub.spec.staffNote; }
-    show(rows[0], { walk: false, view: W.view, sheetId: o.sheetId, poolId: o.poolId }); shown();
+    show((opts.row && opts.row.key && rows.find(r => r.key === opts.row.key)) || ofPool(rows, opts.poolId) || rows[0], { walk: false, view: W.view, sheetId: o.sheetId, poolId: o.poolId }); shown();
   }
   // (a repaint asked from outside, an image or a record arriving, waits for the view to land)
   return { open, openOrder, focusSearch, paint: () => hold("paint", () => { if (W.dlg && W.dlg.open && !W.closing) paint(); }), close: () => shut(), isOpen: () => !!(W.dlg && W.dlg.open && !W.closing), key: () => W.key, view: () => W.view, setView: v => setView(v), repaintThread: () => paintThread(true), _sheet: () => SV.info, _feed: () => W.feed,
