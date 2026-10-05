@@ -165,8 +165,10 @@ async function page() {
       await fit(old.pg, 1440, 900);
       await old.pg.evaluate(() => { S.sheets.silver.active = 0; showPage('silver', 0); });
       await (await old.pg.$(card('silver'))).screenshot({ path: path.join(shots, 'sheet-menu-nest-before-silver.png') });
+      for (const m of ['gold14k', 'silver', 'gold']) { await old.pg.evaluate(mm => showPage(mm, 0), m); await (await old.pg.$(card(m) + ' .shControls')).screenshot({ path: path.join(shots, `sheet-menu-nest-row-${m}-before.png`) }); }
       await fit(old.pg, 480, 900);
       for (const m of ['silver', 'gold14k']) await (await old.pg.$(card(m))).screenshot({ path: path.join(shots, `sheet-menu-nest-before-${m}-480.png`) });
+      await fit(old.pg, 320, 900); for (const m of ['silver', 'gold14k']) { await old.pg.evaluate(mm => showPage(mm, 0), m); await (await old.pg.$(card(m) + ' .shControls')).screenshot({ path: path.join(shots, `sheet-menu-nest-row-${m}-before-320.png`) }); }
     }
     await old.context.close();
     console.log(`  ✓ page: without the script the old tabs stay (${before.silver.oldCount} tabs on the six-sheet card; the row ${before.silver.rowH}px high)`);
@@ -293,31 +295,21 @@ async function page() {
     assert(p.rows.length === 14 && p.scrolls && p.b <= p.vh - 4 && p.t >= p.barB + 4, `14 sheets on a short screen scroll inside the menu: ${JSON.stringify({ t: p.t, b: p.b, vh: p.vh, scrolls: p.scrolls, listH: p.listH })}`);
     await pg.keyboard.press('End'); const endFocus = await panel(pg); assert.equal(endFocus.focus.startsWith('Sheet 14'), true, 'End reaches the last of fourteen'); assert.equal(await pg.evaluate(() => { const r = document.activeElement.getBoundingClientRect(), l = document.querySelector('.shmList').getBoundingClientRect(); return r.top >= l.top - 1 && r.bottom <= l.bottom + 1; }), true, 'and scrolls it into view');
     await pg.keyboard.press('Escape'); await gone(pg);
-    const place = await pg.evaluate(() => { const sc = document.querySelector('.sheetCard[data-m="rose"]'); let n = sc; while (n && n !== document.body) { const o = getComputedStyle(n).overflowY; if (/(auto|scroll)/.test(o) && n.scrollHeight > n.clientHeight) break; n = n.parentElement; } return { scroller: n && n !== document.body ? n.className || n.id || n.tagName : null }; });
-    // bring the 14K card's pill to the bottom of the screen by scrolling its container
-    const bottom = await pg.evaluate(() => { const c = document.querySelector('.sheetCard[data-m="gold14k"]'); c.scrollIntoView({ block: 'end' }); const b = c.querySelector('.shMenu').getBoundingClientRect(); return { top: Math.round(b.top), vh: innerHeight }; });
-    await tick(150); await pg.click(pillSel('gold14k')); await settle(pg); p = await panel(pg);
-    assert(p.b <= p.vh - 4 && p.t >= p.barB + 4, `${JSON.stringify({ t: p.t, b: p.b, vh: p.vh, barB: p.barB, bottom })}`);
-    const nearBottom = await pg.evaluate(() => { const b = document.querySelector('.sheetCard[data-m="gold14k"] .shMenu').getBoundingClientRect(); return innerHeight - b.bottom; });
-    console.log(`  ✓ page: inside the screen at 320 / 480 / 900 / 1440 px; on a 420px screen the fourteen-sheet list scrolls inside itself (menu ${p.h}px, pill ${nearBottom}px from the bottom; opens ${p.up ? 'upward' : 'downward'}; scroller ${place.scroller})`);
-    await pg.keyboard.press('Escape'); await gone(pg);
-    // a forced upward case on a roomy screen: the pill pushed to the bottom edge
-    await fit(pg, 900, 700);
-    const up = await pg.evaluate(async () => {
-      const c = document.querySelector('.sheetCard[data-m="silver"]'), host = c.querySelector('.shMenu'); const orig = host.getBoundingClientRect.bind(host);
-      return { ok: true };
-    }); assert(up.ok);
-    await pg.evaluate(() => { const c = document.querySelector('.sheetCard[data-m="silver"]'); c.scrollIntoView({ block: 'start' }); }); await tick(100);
+    assert.equal(p.up, false, 'with room below the pill it opens downward');
+    // a card lower in the page, brought (by the page's own scroller) to 40px above the bottom of a short screen: no room below, so it opens upward
     await fit(pg, 900, 330);
-    await pg.evaluate(() => { const c = document.querySelector('.sheetCard[data-m="silver"]'), b = c.querySelector('.shMenu').getBoundingClientRect(), sc = (() => { let n = c; while (n && n !== document.body) { if (/(auto|scroll)/.test(getComputedStyle(n).overflowY) && n.scrollHeight > n.clientHeight) return n; n = n.parentElement; } return null; })(); if (sc) sc.scrollTop += b.top - (innerHeight - 90); });
-    await tick(150);
-    const posn = await pg.evaluate(() => { const b = document.querySelector('.sheetCard[data-m="silver"] .shMenu').getBoundingClientRect(); return { top: Math.round(b.top), bottom: Math.round(b.bottom), vh: innerHeight }; });
-    if (posn.bottom < posn.vh && posn.top > 150) {
-      await pg.click(pillSel('silver')); await settle(pg); p = await panel(pg);
-      assert(p.up, `no room below: it opens upward (${JSON.stringify({ posn, t: p.t, b: p.b })})`); assert(p.b <= posn.top && p.t >= p.barB + 4, 'above the pill, under the top bar');
-      await pg.keyboard.press('Escape'); await gone(pg);
-      console.log(`  ✓ page: with no room below the pill (${posn.vh - posn.bottom}px) the menu opens upward, over the pill's card, under the top bar`);
-    } else console.log(`  – (the scroller could not bring the pill near the bottom: ${JSON.stringify(posn)}; the upward case was not reached)`);
+    const bring = (metal, below) => pg.evaluate(([m, gap]) => { const c = document.querySelector(`.sheetCard[data-m="${m}"]`); let n = c; while (n && n !== document.body) { if (/(auto|scroll)/.test(getComputedStyle(n).overflowY) && n.scrollHeight > n.clientHeight) break; n = n.parentElement; } const b = c.querySelector('.shMenu').getBoundingClientRect(); if (n && n !== document.body) n.scrollTop += b.bottom - (innerHeight - gap); const a = c.querySelector('.shMenu').getBoundingClientRect(); return { top: Math.round(a.top), bottom: Math.round(a.bottom), vh: innerHeight }; }, [metal, below]);
+    const posn = await bring('rose', 40); await tick(150);
+    assert(Math.abs(posn.vh - posn.bottom - 40) <= 3, `the pill is brought near the bottom of the screen (${JSON.stringify(posn)})`);
+    await pg.click(pillSel('rose')); await settle(pg); p = await panel(pg);
+    assert.equal(p.up, true, `no room below: it opens upward (${JSON.stringify({ posn, t: p.t, b: p.b })})`); assert(p.b <= posn.top && p.t >= p.barB + 4, 'above the pill, under the top bar'); assert.equal(p.rows.length, 2);
+    await pg.keyboard.press('Escape'); await gone(pg);
+    // the same with fourteen sheets: there is room neither way, so it takes the larger side and scrolls inside itself
+    const posn2 = await bring('gold10k', 60); await tick(150);
+    await pg.click(pillSel('gold10k')); await settle(pg); p = await panel(pg);
+    assert(p.t >= p.barB + 4 && p.b <= p.vh - 4 && p.scrolls && p.rows.length === 14, `fourteen sheets with little room: whole inside the screen, scrolling inside (${JSON.stringify({ posn2, t: p.t, b: p.b, vh: p.vh, listH: p.listH })})`);
+    await pg.keyboard.press('Escape'); await gone(pg);
+    console.log('  ✓ page: inside the screen at 320 / 480 / 900 / 1440 px; on a 420px screen fourteen sheets scroll inside the menu; with room below it opens downward; with the pill 40px from the bottom of a 330px screen it opens upward under the top bar, and fourteen sheets there still fit the screen');
     await fit(pg, 1440, 900);
 
     // 8 · it survives renderCard / refreshAllCards, and follows the list live while open
@@ -380,8 +372,11 @@ async function page() {
       await fit(pg, 1440, 900); await pg.evaluate(() => { for (const x of S.sheets.silver.pages) x.el = null; });
       await pg.evaluate(() => location.reload()); await pg.waitForFunction(() => window.CN && CN.S.cloud.ok === true, null, { timeout: 60000 }); await seed(pg); await tick(500);
       await (await pg.$(card('silver'))).screenshot({ path: path.join(shots, 'sheet-menu-nest-after-silver.png') });
+      for (const m of ['gold14k', 'silver', 'gold']) { await pg.evaluate(mm => showPage(mm, 0), m); await (await pg.$(card(m) + ' .shControls')).screenshot({ path: path.join(shots, `sheet-menu-nest-row-${m}-after.png`) }); }
       await fit(pg, 480, 900);
       for (const m of ['silver', 'gold14k']) await (await pg.$(card(m))).screenshot({ path: path.join(shots, `sheet-menu-nest-after-${m}-480.png`) });
+      await fit(pg, 320, 900); for (const m of ['silver', 'gold14k']) { await pg.evaluate(mm => showPage(mm, 0), m); await (await pg.$(card(m) + ' .shControls')).screenshot({ path: path.join(shots, `sheet-menu-nest-row-${m}-after-320.png`) }); }
+      await fit(pg, 480, 900);
       await pg.click(pillSel('silver')); await settle(pg); await tick(200);
       await pg.screenshot({ path: path.join(shots, 'sheet-menu-nest-open-silver-480.png'), clip: await pg.evaluate(() => { const c = document.querySelector('.sheetCard[data-m="silver"]').getBoundingClientRect(); return { x: Math.max(0, Math.floor(c.left) - 6), y: Math.max(0, Math.floor(c.top) - 6), width: Math.min(innerWidth - Math.max(0, Math.floor(c.left) - 6), Math.ceil(c.width) + 12), height: 320 }; }) });
       await pg.keyboard.press('Escape'); await gone(pg);
