@@ -5,14 +5,18 @@
 //
 // It seeds ONE set of multi-piece orders into a fake backend (bridge-server.cjs: the real charmNestLibrary handler over an
 // in-memory Firestore) and into the page, then opens EVERY surface that shows or computes "which sheet holds which piece of
-// an order" (the inventory: /mnt/project-files/plans/library-flow/surfaces-inventory.md, ids A1..F4 below) from every side
+// an order" (the inventory and the final table: /mnt/project-files/plans/library-flow/surfaces-inventory.md and order-assoc-final-surfaces.md;
+// ids: A order window, B sheet window, C Library, D lists and search, E timeline, G server, H OrderPieces, K SharedOrders and its window) from every side
 // (opened from each piece, from each sheet) and compares what each one says with the ground truth computed from the fixture.
 //
 //   node tests/charm-nest/multi-sheet-order-e2e.cjs            all surfaces, exit 1 on any wrong surface
 //   node tests/charm-nest/multi-sheet-order-e2e.cjs --list     print the failing surfaces and exit 0 (to record a baseline)
 //   node tests/charm-nest/multi-sheet-order-e2e.cjs --only A3,B1   only those surface ids
 //   node tests/charm-nest/multi-sheet-order-e2e.cjs --dump     print every wrong screen, not the first three (--json <file> saves them all)
-//   --modes live,pool,rec,recall,out   --variants ok,pool,sheet,set,state   --orders 4170000003   (narrow the matrix; --quick = a short one)
+//   --modes live,pool,rec,recall,out   --variants ok,pool,sheet,set,state,stale   --orders 4170000003   (narrow the matrix; --quick = a short one)
+//   The full matrix is 20 page-state/store combinations and takes 20 to 35 minutes on a loaded machine (CONC=3 SHARDS=1); under heavy load a hover or a click can
+//   miss its window: rerun the wrong combination alone before believing a red.
+//   Cases a record's own list decides (a sheet record that lists no poolIds, one that still lists a left order) are printed as "known, by design" (KNOWN below), never counted.
 //   PW_DIR=/opt/node22/lib/node_modules/playwright/node_modules  (CHROMIUM=<chrome> to override)
 //
 // Truth is computed from the FIXTURE below, never from OrderPieces: a separate check asserts window.OrderPieces (when the

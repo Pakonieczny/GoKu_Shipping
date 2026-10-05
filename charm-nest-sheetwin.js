@@ -1208,6 +1208,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     if (W.view === "sheet") renderSheetPane(); else if (W.sel) renderTrail(W.sel);
   }
   function sheetInfo(sid, set) {
+    if (sid === W.id && W.rec) return { id: sid, metal: W.rec.metal, n: sheetNoOf(W.rec), name: W.rec.folder || W.rec.fileBase || sid };   // (this window's own sheet: its record is read)
     const lib = (S.library.rows || []).find(r => r.id === sid);
     if (lib) return { id: sid, metal: lib.metal, n: sheetNoOf(lib), name: lib.folder || lib.fileBase || sid };
     const lf = (set.labelFiles || []).find(f => f.sheetId === sid), name = lf?.sheet || "";
