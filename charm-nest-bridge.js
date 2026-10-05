@@ -2423,10 +2423,13 @@ const Pool = window.Pool = (() => {
     const byMetal = new Map(); for (const c of charms) { if (on.has(c.poolId)) continue; const m = prep.custom ? c.metal : sp.material; if (!byMetal.has(m)) byMetal.set(m, []); byMetal.get(m).push(c); }
     for (const [metal, list] of byMetal) {
       let page=window.LiveNest ? LiveNest.intakePage(metal, run, row.order.receiptId) : pagesOf(metal).at(-1);
-      if((run && page.runId && page.runId!==run.runId) || (window.LiveNest&&LiveNest.closed(page)))page=addPage(metal);
+      // (a sheet kept for this order's own release stays open to the rest of the order's pieces: the order goes on one sheet whole)
+      const shut = p => { const k = row.releasing && p.keepRelease && p.keepRelease.rid === String(row.order.receiptId) ? p.keepRelease : null; if (k) p.keepRelease = null; try { return !!(window.LiveNest && LiveNest.closed(p)); } finally { if (k) p.keepRelease = k; } };
+      if((run && page.runId && page.runId!==run.runId) || shut(page))page=addPage(metal);
       S.sheets[metal].active=pagesOf(metal).indexOf(page);if(!page.el)window.CN?.showPage(metal,S.sheets[metal].active);   // the card shows the page its buttons act on
       if (run) page.runId = run.runId;
       for (const c of list) if (!page.charms.includes(c)) page.charms.push(c);
+      if (row.releasing && window.Gate?.keep) { Gate.keep(page); if (page.keepRelease) page.keepRelease.rid = String(row.order.receiptId); }   // (an order released from hold, OrderHold.release: a sheet already in its set keeps its set while it takes the order, from this moment: the set assembly would drop it while it nests)
       if(page.placements.length){page.intakeAppend=true;page.appendOnly=true;page.dirty=true;if(!['nesting','finishing','queued'].includes(page.status))page.status='ready';renderCard(page);}else sheetDirty(page);
     }
     for (const p of pools) if (!on.has(p.poolId) || !B.pool.rows.has(p.poolId)) B.pool.rows.set(p.poolId, saved.has(p.poolId) ? Object.assign({}, p, saved.get(p.poolId)) : p);
