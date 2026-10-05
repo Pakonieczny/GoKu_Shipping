@@ -2378,7 +2378,7 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
 .setUndoChip .spin{width:10px;height:10px;flex:0 0 10px;border:2px solid var(--line);border-top-color:var(--ink70);border-radius:50%;animation:spin .7s linear infinite}
 .setUndoChip.ok{color:#3c5a39;background:var(--sageSoft);border-color:#cddcc9}
 @media (prefers-reduced-motion:reduce){.setUndoChip,.ldSign{animation:none}}
-/* Approve for laser cutting (charm-nest-bridge.js, LaserReview): one button under every sheet still in progress (never one on a set card), directly under that sheet's small rail; grey (aria-disabled, so it keeps the keyboard), with its plain reason beside it, while a person's own step comes first. A set of several sheets is approved as ONE: all of its buttons are green together or grey together */
+/* Approve for laser cutting (charm-nest-bridge.js, LaserReview): ONE button for a set, last in its card under the sheet columns and left aligned (none on a sheet that is part of it); a sheet that is part of no set keeps its own, directly under its small rail. Grey (aria-disabled, so it keeps the keyboard), with its plain reason beside it, while a person's own step comes first. A set of several sheets is approved as ONE: its one button is green only when every sheet of it is ready */
 .approveBox{display:grid;gap:6px;min-width:0}
 .approveRow{display:flex;align-items:center;gap:6px 10px;flex-wrap:wrap;min-width:0}
 .approveBtn{flex:0 0 auto}
