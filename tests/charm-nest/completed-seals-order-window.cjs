@@ -70,9 +70,10 @@ async function main() {
 
   const browser = await chromium.launch({ executablePath: process.env.CHROMIUM || '/opt/pw-browsers/chromium-1194/chrome-linux/chrome', args: ['--no-sandbox'] });
   try {
-    const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, timezoneId: 'America/Toronto' });
+    const outside = [], errors = []; let context, page;
+    const bootPage = async timezoneId => {   // (a page of the app in a browser of that zone)
+    context = await browser.newContext({ viewport: { width: 1440, height: 900 }, timezoneId });
     const js = body => ({ status: 200, contentType: 'text/javascript', headers: { 'Cross-Origin-Resource-Policy': 'cross-origin', 'Access-Control-Allow-Origin': '*' }, body });
-    const outside = [];
     await context.route(u => !/^http:\/\/(127\.0\.0\.1|localhost)[:/]/.test(u.href), r => {
       const u = r.request().url();
       if (/cdn\.jsdelivr\.net\/npm\/pdfmake@[^/]+\/build\/pdfmake/.test(u)) return r.fulfill(js(PDFMAKE));
@@ -83,7 +84,7 @@ async function main() {
       return r.abort();
     });
     await context.addInitScript(() => { try { if (!sessionStorage.getItem('__seeded')) { localStorage.setItem('cn.settings', JSON.stringify({ v: 26, dsOrigin: 'http://127.0.0.1:9', runMode: 'manual', sound: 'off', notify: 'off', review: 'on' })); localStorage.setItem('cn.employee', 'Paul'); sessionStorage.setItem('__seeded', '1'); } } catch (_) {} window.prompt = () => 'Paul'; });
-    const page = await context.newPage(), errors = [];
+    page = await context.newPage();
     page.setDefaultTimeout(30000);
     page.on('pageerror', e => { errors.push(e.message); console.error('page error:', String(e.stack || e.message).split('\n').slice(0, 4).join(' | ')); });
     await page.goto(`${srv.sorterOrigin}/charm-nest-1.html`, { waitUntil: 'load' });
@@ -96,6 +97,8 @@ async function main() {
     }, { orders: [A.order, Bo.order, C.order, D.order], snakePool: pidOf(A, 'snake') });
     await page.waitForFunction(() => Object.keys(B.maps.customDone).length >= 6, null, { timeout: 20000 });   // (the records are read: every piece here is completed, so the Open list is empty)
     await page.waitForTimeout(800);
+    };
+    await bootPage('America/Toronto');
 
     const shot = async name => { if (shots) { await page.mouse.move(3, 3); await page.waitForTimeout(900); await page.screenshot({ path: path.join(shots, 's1-' + name + '.png') }); } };
     const idle = () => page.evaluate(() => Seal.whenIdle());
@@ -253,8 +256,16 @@ async function main() {
     await shot('d-single'); await layout('d', [[390, 844]]);
     await closeWin();
 
+    // ── 7 · a browser in another zone (Tokyo): the card's line and its seal still say the same moment, both in the shop's zone (Paul, 5 Oct: line 12:41 PM, seal 10:57 AM) ──
+    await context.close(); await bootPage('Asia/Tokyo');
+    await openWin(kOf(Bo, 'foot'), 3);
+    s = await snap();
+    assert.deepEqual(s.card, [OC('12:41 PM')], 'Tokyo: the card\'s seal: ' + JSON.stringify(s.card));
+    assert(/Mon\s+12:41\s?PM/i.test(s.line || ''), 'Tokyo: the card\'s line reads the shop\'s zone, as the seal does: ' + s.line);
+    await closeWin();
+
     assert.deepEqual(outside, [], 'no Etsy call'); assert.deepEqual(errors, [], 'no page error');
-    console.log('  ok  every Completed piece and the complete order keep their seals in the order window: rows, both "Completed by hand" boxes, the card (one ORDER COMPLETE of the press its line says; none while a piece is on a sheet), the Timeline once, the Sheet tab; older and timeline-only records read, nothing recorded shows no seal; no tooltips; fits 1440/900/390; reopen keeps every seal; a mutant that drops them is caught');
+    console.log('  ok  every Completed piece and the complete order keep their seals in the order window: rows, both "Completed by hand" boxes, the card (one ORDER COMPLETE of the press its line says; none while a piece is on a sheet), the Timeline once, the Sheet tab; older and timeline-only records read, nothing recorded shows no seal; no tooltips; fits 1440/900/390; reopen keeps every seal; the card line and its seal read the same zone in a browser of another zone; a mutant that drops them is caught');
   } finally { await browser.close(); srv.close(); }
 }
 main().catch(e => { console.error(e); process.exit(1); });

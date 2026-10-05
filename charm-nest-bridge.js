@@ -11582,6 +11582,10 @@ const OrderWin = window.OrderWin = (() => {
     if (!html) return "";
     try { const t = document.createElement("template"); t.innerHTML = html; const m = JSON.parse(t.content.querySelector("svg[data-seal-model]").getAttribute("data-seal-model")); return sealKey(m.action, m.at); } catch (_) { return ""; }
   }
+  /** A time the way the seals say it: the shop's zone (America/Toronto), never this browser's. A line beside a seal reads the same moment as the seal
+   *  (Paul, 5 Oct 2026: the card said 12:41 PM, its seal 10:57 AM). One helper from the Timeline (OrderTimelineUI.whenOf / timeOf). */
+  const shopWhen = t => { const U = window.OrderTimelineUI; return U && U.whenOf ? U.whenOf(t) : new Date(t).toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" }); };
+  const shopTime = t => { const U = window.OrderTimelineUI; return U && U.timeOf ? U.timeOf(t) : new Date(t).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }); };
   function nowOf(r) {
     const T = (window.OrderTimeline && OrderTimeline.TYPES) || {}, evs = W.evFor === String(r.order.receiptId) ? shownEvents() : null;
     const cx = (evs && lastOf(evs, e => e.type === "cancelled" || e.type === "etsyCancelled")) || (W.cancelled ? { type: "cancelled", at: W.cancelled.at, by: W.cancelled.by, text: W.cancelled.reason || "" } : null);
@@ -11592,7 +11596,7 @@ const OrderWin = window.OrderWin = (() => {
     // (the order is completed by hand when every piece is: the ONE press that completed it, which the card's line and its ORDER COMPLETE seal both
     //  say (handDoneOf; paintNow hands it to nowStamps), never a later reprint of a label)
     const UI = window.OrderTimelineUI, hand = evs && UI && UI.handDoneOf ? tryDo(() => UI.handDoneOf(slowestEvents() || evs)) : null;
-    if (hand) { const who = tryDo(() => UI.personOf(hand)) || ""; return { tone: "done", pill: "Order completed", k: "Order completed", t: `Completed${who ? " by " + who : ""} · ${new Date(hand.at).toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" })}`, ev: hand, hand }; }
+    if (hand) { const who = tryDo(() => UI.personOf(hand)) || ""; return { tone: "done", pill: "Order completed", k: "Order completed", t: `Completed${who ? " by " + who : ""} · ${shopWhen(hand.at)}`, ev: hand, hand }; }
     const back = e => e.type === "sealCompleted" && evs.some(x => +x.at >= +e.at && UI && UI.opStepOf && UI.opStepOf(x) === "reopen" && (!x.lineKey || !e.lineKey || x.lineKey === e.lineKey));
     // (a piece's completion that stands, its Complete Order press or its QR label, is that PIECE's: while another piece is not done the order is where
     //  its slowest piece is, so the card's words and seal never come from it; its row, its box and the Timeline carry it)
@@ -11646,13 +11650,13 @@ const OrderWin = window.OrderWin = (() => {
     const noSh = byId("owPlateWrap") && byId("owPlateWrap").querySelector(".owPlateNone[data-none]"); if (noSh) { const h = noSheetHtml(r); if (noSh._h !== h) { noSh._h = h; noSh.innerHTML = h; } }
     pill.hidden = !n.pill; pill.textContent = n.pill || ""; pill.className = "owNow" + (n.tone ? " " + n.tone : "");
     const count = byId("owTlCount"); if (count) count.textContent = W.events && W.evFor === String(r.order.receiptId) && W.events.length ? String(W.events.length) : "";
-    const live = byId("owLive"); if (live) { const e = W.events && W.events.length ? W.events[W.events.length - 1] : null; live.textContent = e ? "Updated live · last change " + new Date(e.at).toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" }) + (e.by ? " · " + e.by : "") : ""; }
+    const live = byId("owLive"); if (live) { const e = W.events && W.events.length ? W.events[W.events.length - 1] : null; live.textContent = e ? "Updated live · last change " + shopWhen(e.at) + (e.by ? " · " + e.by : "") : ""; }
     paintPieceSum();
     paintSheetTab(r); sheetSettle(r);
     const card = byId("owNowCard"); if (!card) return;
     if (r.loading) { card.hidden = true; return; }
     const e = n.ev;
-    const who = e && (e.station || e.by) ? `<span class="who"><i>${(window.OrderTimelineUI && OrderTimelineUI.iconOf && tryDo(() => OrderTimelineUI.iconOf(e))) || ""}</i>${e.station ? `<b>${esc((window.OrderTimelineUI && OrderTimelineUI.placeOf && tryDo(() => OrderTimelineUI.placeOf(e))) || e.station)}</b>` : ""}${esc((window.OrderTimelineUI && OrderTimelineUI.personOf && tryDo(() => OrderTimelineUI.personOf(e))) || e.by || "")}${e.at ? " · " + esc(new Date(e.at).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })) : ""}</span>` : "";
+    const who = e && (e.station || e.by) ? `<span class="who"><i>${(window.OrderTimelineUI && OrderTimelineUI.iconOf && tryDo(() => OrderTimelineUI.iconOf(e))) || ""}</i>${e.station ? `<b>${esc((window.OrderTimelineUI && OrderTimelineUI.placeOf && tryDo(() => OrderTimelineUI.placeOf(e))) || e.station)}</b>` : ""}${esc((window.OrderTimelineUI && OrderTimelineUI.personOf && tryDo(() => OrderTimelineUI.personOf(e))) || e.by || "")}${e.at ? " · " + esc(shopTime(e.at)) : ""}</span>` : "";
     // Timeline's shared seal: the current milestone of this order or piece, using the standard responsive size.
     // What is holding it up (a decision nobody made, a hold nobody let go) is said in
     // plain words instead.
@@ -12012,7 +12016,7 @@ const OrderWin = window.OrderWin = (() => {
     const fix = p ? reviewItemOf(p.key) : null;
     const icon = `<svg class="owNoneIcon" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="6" y="9" width="36" height="30" rx="5" stroke-dasharray="3.2 4.2"/><path d="M17 27c0-4 3-7 7-7s7 3 7 7-3 6-7 6-7-2-7-6z" opacity=".5"/></svg>`;
     // a piece completed by hand needs no sheet: it is resolved, not waiting for one
-    if (p && p.hand) return icon + `<b>Completed by hand</b><span class="owNoneWhy">${esc("It needs no sheet.")}</span>` + (p && sc.multi ? `<span class="owNonePc"><i style="--c:${esc(colorOf(p.metal))}"></i>${esc(p.name)}</span>` : "") + handSealOf(p, r) +
+    if (p && p.hand) return icon + `<b>Completed by hand</b>${handSealOf(handOfRow(p.row), p.key)}<span class="owNoneWhy">${esc("It needs no sheet.")}</span>` + (p && sc.multi ? `<span class="owNonePc"><i style="--c:${esc(colorOf(p.metal))}"></i>${esc(p.name)}</span>` : "") +
       (fix ? `<button type="button" class="btn ghost sm" data-none-fix="${esc(p.key)}">Open in Review <span aria-hidden="true">›</span></button>` : "");
     return icon + `<b>Not on a sheet yet</b><span class="owNoneWhy">${esc(why || (String(st[1] || "").replace(/^\d\/\d\s+/, "") || "It waits for its turn") + " — its pieces are drawn here once they are placed on a sheet.")}</span>` +
       (p && sc.multi ? `<span class="owNonePc"><i style="--c:${esc(colorOf(p.metal))}"></i>${esc(p.name)}</span>` : "") +
@@ -12034,10 +12038,13 @@ const OrderWin = window.OrderWin = (() => {
    *  rule every screen and the server read). It needs no sheet: never "not on a sheet yet". Reopen takes it back. */
   const handOfRow = x => { try { return window.CharmNestReadiness && window.CharmNestReadiness.handOf ? window.CharmNestReadiness.handOf(x) : null; } catch (_) { return null; } };
   const HAND_WHY = "it was completed by hand and needs no sheet";
+  /** The small seal of a piece completed by hand (its record, the piece's line key): the press that completed it and "+N" for the rest, Seal.compact, the very
+   *  component of the one-line bar; the order's timeline fills in a completion the record does not carry. "" when nothing was recorded (no seal is made up). */
+  const handSealOf = (rec, lineKey) => { try { return window.Seal && Seal.compact ? Seal.compact(rec || null, { lineKey, events: W.events || null }) : ""; } catch (_) { return ""; } };
   /** The completion seal of a piece completed by hand, small, for its "Completed by hand" box (Paul, 5 Oct 2026: "The Complete orders/pieces are missing their
    *  associated stamp/seal"). One helper (Seal.pieceRow) reads it: the piece's own record by its LINE key (stamps; else what the record names), else what the
    *  permanent timeline kept of that piece. Nothing recorded: no seal and no words (nothing is invented). */
-  function handSealOf(p, r) {
+  function handBoxSealOf(p, r) {
     if (!p || !window.Seal || !Seal.pieceRow) return "";
     const x = p.row || {}, rec = handOfRow(x) || (B.maps.customDone && B.maps.customDone[p.key]) || (x.spec && x.spec.customDone) || null;
     const events = r && W.evFor === String(r.order.receiptId) ? W.events : null;
@@ -12142,7 +12149,7 @@ const OrderWin = window.OrderWin = (() => {
         const why = named ? "Completed by hand: it needs no sheet" : "This piece was completed by hand: it needs no sheet";   // (resolved: the chip is greyed, and says so)
         const chip = `<button type="button" class="owShChip off" data-pc="${esc(p.key)}" data-hand="1" aria-disabled="true" data-why="${esc(why)}" title="${esc(why)}"><i></i><span><b>Completed by hand</b><span>${esc(named ? p.name : "It needs no sheet")}</span></span></button>`;
         // (with several pieces each box is its own piece's: it draws that piece's completion seal. A single piece's seal is the card's own, drawn once beside it)
-        const seal = named ? handSealOf(p, r) : "";
+        const seal = named ? handBoxSealOf(p, r) : "";
         chips.push(seal ? `<span class="owShItem">${chip}${seal}</span>` : chip);
       } else {
         const why = `${named ? "Not on a sheet yet" : "This piece is not on a sheet yet"}: ${p.why}`;   // (named: the chip says whose it is)
@@ -12288,7 +12295,7 @@ const OrderWin = window.OrderWin = (() => {
     const mineBy = new Map(mine.map(x => [x.poolId || x.id, x]));
     for (const p of OP && OP.of ? OP.of(rid) : []) if (!p.gone) {
       const x = mineBy.get(p.poolId) || null;
-      add(p.poolId, { poolId: p.poolId, sku: (x && x.sku) || p.sku, copy: p.copy, qty: p.qty, here: !!x || !!(cur && cur.id && p.sheetId === cur.id), piece: x, nested: p.nested, loading: p.loading, hand: !!p.hand, sheetId: p.sheetId, metal: p.metal, n: p.sheetNo, label: p.sheetLabel, reason: p.reason });
+      add(p.poolId, { poolId: p.poolId, sku: (x && x.sku) || p.sku, copy: p.copy, qty: p.qty, here: !!x || !!(cur && cur.id && p.sheetId === cur.id), piece: x, nested: p.nested, loading: p.loading, hand: p.hand || null, lineKey: p.lineKey || "", sheetId: p.sheetId, metal: p.metal, n: p.sheetNo, label: p.sheetLabel, reason: p.reason });
     }
     for (const x of mine) if (!items.has(x.poolId || x.id)) add(x.poolId || x.id, { poolId: x.poolId, sku: x.sku, copy: x.copy, qty: x.qty, here: true, nested: true, piece: x });
     if (!OP) for (const x of linesOf(r)) for (const pid of x.poolIds || []) if (!items.has(pid)) add(pid, { poolId: pid, sku: (x.spec && x.spec.designSku) || x.line.sku, copy: +pid.split("_").pop() || 1, qty: (x.spec && x.spec.quantity) || x.line.quantity });
@@ -12304,7 +12311,7 @@ const OrderWin = window.OrderWin = (() => {
     const vis = list.map((s, i) => i).filter(i => SCOPE.ok(i));   // (the sheets of the piece shown, or of all of them: never another piece's)
     // (a sheet's own tab names it, so a piece and its tab always say the same; nothing is said while its sheets are still being found)
     const tabOf = it => it.sheetId ? list.find(s => s.id === it.sheetId) : null;
-    const where = it => it.here ? `<em style="--c:var(--gold2)">this sheet</em>` : it.nested ? `<em style="--c:${esc(colorOf((tabOf(it) || it).metal))}">${esc(tabOf(it) ? sheetName(tabOf(it)) : it.label || "on a sheet")}</em>` : it.hand ? `<em title="a person completed it by hand: it needs no sheet">completed by hand</em>` : it.loading || !SV.list ? `<em></em>` : `<em>not on a sheet yet</em>`;
+    const where = it => it.here ? `<em style="--c:var(--gold2)">this sheet</em>` : it.nested ? `<em style="--c:${esc(colorOf((tabOf(it) || it).metal))}">${esc(tabOf(it) ? sheetName(tabOf(it)) : it.label || "on a sheet")}</em>` : it.hand ? `<em><span title="a person completed it by hand: it needs no sheet">completed by hand</span>${handSealOf(it.hand, it.lineKey)}</em>` : it.loading || !SV.list ? `<em></em>` : `<em>not on a sheet yet</em>`;
     panel.innerHTML =
       (vis.length ? `<section><div class="owSheetFindRow"><span class="fLabel">Sheet</span><label class="cnOrderFind"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="m10.5 10.5 3 3"/></svg><input id="owSheetOrderFind" type="search" inputmode="numeric" placeholder="Order # on sheet" aria-label="Search order numbers on this sheet" aria-controls="owSheetMatches" autocomplete="off" spellcheck="false"></label></div><div class="owShTabs">${vis.map(i => `<button type="button" data-at="${i}" class="${i === SV.at ? "on" : ""}" style="--c:${esc(colorOf(list[i].metal))}"><i></i>${esc(sheetName(list[i]))}</button>`).join("")}</div>${facts ? `<div class="sub" style="margin-top:8px">${esc(facts)}</div>` : ""}</section>` : "") +
       `<div class="owSheetMatches" id="owSheetMatches" role="list" aria-live="polite" hidden></div>` +

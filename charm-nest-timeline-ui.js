@@ -580,6 +580,8 @@
   const timeOf = t => TIME(new Date(+t || Date.now()));
   const longWhen = t => LONG(new Date(+t)) + " · " + timeOf(t);
   const shortWhen = t => `${SHORT_DAY(new Date(+t)).toUpperCase()} ${timeOf(t)}`;
+  /** "Mon 12:41 PM" in the shop's zone, the one every seal says its time in (a line beside a seal never reads another zone: Paul, 5 Oct 2026). */
+  const whenOf = t => `${SHORT_DAY(new Date(+t))} ${timeOf(t)}`;
   function ago(t) {
     const s = (Date.now() - t) / 1000; if (!(t > 0)) return ""; if (s < 45) return "just now";
     const m = s / 60; if (m < 60) return Math.round(m) + " min ago";
@@ -2292,6 +2294,6 @@
   function iconOf(x) { const e = x && norm(x); return e ? iconSvg((LANE[e.lane] || LANE.office).ic) : ""; }
 
   root.OrderTimelineUI = { mount, feed, stampSvg, derive, STAGES, stagesFor, ofPiece, summary, isStud, engraveOf, KIND, labelOf, nowStamps, wireNow, iconOf, sealed, sealsOf, blockerOf, requirementsOf, explainOn,
-    stepOf, labelStepOf, personOf, placeOf, opStepOf, handStepOf, handOf, handDoneOf, handLive, handSealOf, faceModel };
+    stepOf, labelStepOf, personOf, placeOf, opStepOf, whenOf, timeOf, handStepOf, handOf, handDoneOf, handLive, handSealOf, faceModel };
   root.OrderTimelineUI.pollOpenMs = POLL_OPEN;   // how often the open order view's feed reads (tests may set another before it opens)
 })(typeof window !== "undefined" ? window : globalThis);
