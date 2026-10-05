@@ -6,7 +6,7 @@
 // Fixture: Paul's order 4170837249 (Leslie Suhr): CABLE CHAIN ONLY (a custom piece, Unknown SKU, in Review) and two MIDDLE 9935
 // pieces on GF Sheet 1 and RG Sheet 1; and 4170837260: two pieces in Review (ALPHA CHAIN, BETA CHAIN) and one on a sheet.
 // Proves, in headless Chromium over the real charmNestLibrary ops and an in-memory store (nothing live, no Etsy, no paid call):
-//  - the buttons appear on the Review pieces' rows only; the pieces on sheets keep their words ("On GF Sheet 1 · next: ...")
+//  - the buttons appear on the Review pieces' rows only; the pieces on sheets keep their status chip ("GF Sheet 1": no "next: ..." any more, see piece-status-chip.cjs)
 //  - the row's controls are the Review card's own buttons (one code), and the Review card's buttons for the same piece
 //  - Complete Order from the row: one completion, one seal, written to the cloud record (customPut), pressed in "Order window" on the
 //    order's timeline; the row, the Review tab (Completed) and the header read it at once; a double press is one
@@ -136,7 +136,7 @@ async function main() {
     assert(R[0].act && R[0].tag === 'DIV', 'the piece in Review has a row with its card\'s buttons');
     assert.deepEqual(R[0].btns, ['Print QR label', 'Complete Order'], 'Print QR label and Complete Order, as its Review card has them: ' + JSON.stringify(R[0]));
     assert.equal(R[0].st, null, 'its words are not shown beside them (they are in place of the words)');
-    for (const r of [R[1], R[2]]) { assert(!r.act && r.plain && r.tag === 'DIV' && r.hold === 1 && r.btns.length === 0, 'a piece on a sheet keeps its row, its words and, at the right end, one orange Hold: ' + JSON.stringify(r)); assert.match(r.st, /^On (GF|RG) Sheet 1 · next: Laser cut$/, 'and its words: ' + r.st); }
+    for (const r of [R[1], R[2]]) { assert(!r.act && r.plain && r.tag === 'DIV' && r.hold === 1 && r.btns.length === 0, 'a piece on a sheet keeps its row, its words and, at the right end, one orange Hold: ' + JSON.stringify(r)); assert.match(r.st, /^(GF|RG) Sheet 1$/, 'and its status chip, no "next: ...": ' + r.st); }
     // (no tan Custom Orders bar at the foot: its buttons were a second copy of these)
     assert(await noBar(), 'no Custom Orders bar, open'); const d1 = await dupes(); assert.deepEqual(d1, { [`${cable} | Print QR label`]: 1, [`${cable} | Complete Order`]: 1 }, 'each button exactly once, on its own row: ' + JSON.stringify(d1));
     // and the Review tab's card for the same piece has those buttons
@@ -299,7 +299,7 @@ async function main() {
     R = await rows();
     assert.deepEqual(R.map(r => [r.key, r.act]), [[alpha, true], [beta, true], [charm, false]]);
     for (const r of R.slice(0, 2)) assert.deepEqual(r.btns, ['Print QR label', 'Complete Order'], r.key);
-    assert.match(R[2].st, /^On GF Sheet 1/);
+    assert.match(R[2].st, /^GF Sheet 1$/);
     assert(await noBar(), 'the piece shown is on a sheet: no Custom Orders bar, yet the Review pieces have their buttons');
     await shot("r8-2-1440-two-pieces");
     // pressing Complete Order on BETA with no name known: the question is asked in BETA's row, and only there
@@ -358,7 +358,7 @@ async function main() {
     await page.waitForFunction(() => /Sheet 1/.test((document.querySelector('#owPcSum .owPcRow .st:not(.owPcSr)') || {}).textContent || ''), null, { timeout: 15000 });
     R = await rows();
     assert.deepEqual(R.map(r => r.key), [blue, longer], 'the two pieces');
-    assert(!R[0].act && /^On GF Sheet 1 · next: Laser cut$/.test(R[0].st), 'BLUE keeps its words: ' + JSON.stringify(R[0]));
+    assert(!R[0].act && /^GF Sheet 1$/.test(R[0].st), 'BLUE keeps its status chip: ' + JSON.stringify(R[0]));
     assert(R[1].act && !R[1].solo && R[1].tag === 'DIV', 'LONGER CHAIN has its card\'s buttons on its row'); assert.deepEqual(R[1].btns, ['Print QR label', 'Complete Order']);
     const lname = await page.evaluate(k => document.querySelector(`#owPcSum [data-piece="${k}"] .nm`).textContent.trim(), longer);
     assert(/^LONGER CHAIN 5682/.test(lname), 'its name leads its row: ' + lname);
@@ -402,15 +402,17 @@ async function main() {
     await layout('solo-printed');
     await closeWin();
 
-    // ── 9 · one piece picked in an order of several: its row alone, with its buttons; all pieces again brings every row back ──
+    // ── 9 · one piece picked in an order of several: every row stays, the piece's is marked and keeps its buttons; showing all again unmarks it ──
     await openWin(cable, 3);
-    await page.click(`#owPieceSw [data-piece="${cable}"]`);
-    await page.waitForFunction(() => document.querySelectorAll('#owPcSum .owPcRow').length === 1 && document.querySelector('#owPcSum .owPcRow.solo'), null, { timeout: 15000 });
-    R = await rows(); assert(R[0].key === cable && R[0].label === 'This piece' && R[0].act && !R[0].btns.includes('Reopen'), JSON.stringify(R[0]));
-    assert(await noBar(), 'no bar with one piece picked'); assert(R[0].btns.includes('Completed'), JSON.stringify(R[0].btns));
+    await page.click(`#owPcSum [data-piece="${cable}"] .dot`);
+    await page.waitForFunction(k => OrderWin.selectedPiece() === k && document.querySelectorAll('#owPcSum .owPcRow').length === 3 && document.querySelector(`#owPcSum .owPcRow.sel[data-piece="${k}"]`), cable, { timeout: 15000 });
+    R = await rows(); assert(R.length === 3 && R.every(r => !r.solo), 'every row stays: ' + JSON.stringify(R.map(r => r.solo)));
+    assert(R.find(r => r.key === cable).act && !R.find(r => r.key === cable).btns.includes('Reopen'), JSON.stringify(R.find(r => r.key === cable)));
+    assert(await noBar(), 'no bar with one piece picked'); assert(R.find(r => r.key === cable).btns.includes('Completed'), JSON.stringify(R.find(r => r.key === cable).btns));
+    // (a press on the card's own buttons in a row is the card's: it picks nothing; here the picked piece stays picked)
     await layout('picked', [[1440, 900], [390, 844]]);
-    await page.click('#owPieceSw [data-piece=""]');
-    await page.waitForFunction(() => document.querySelectorAll('#owPcSum .owPcRow').length === 3 && !document.querySelector('#owPcSum .owPcRow.solo'), null, { timeout: 15000 });
+    await page.click('#owPcSum [data-pc-all]');
+    await page.waitForFunction(() => OrderWin.selectedPiece() === null && document.querySelectorAll('#owPcSum .owPcRow').length === 3 && !document.querySelector('#owPcSum .owPcRow.solo, #owPcSum .owPcRow.sel'), null, { timeout: 15000 });
     await closeWin();
     assert.deepEqual(outside, [], 'no Etsy call');
     assert.deepEqual(errors, [], 'no page errors');

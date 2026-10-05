@@ -253,15 +253,15 @@ async function openPiece(page, mode, o, l) {
   await page.waitForFunction(rid => OrderWin.isOpen() && document.getElementById('owTitle')?.dataset.rid === rid && document.getElementById('owLoading')?.hidden !== false, o.rid, { timeout: 15000 });
   const live = truth.liveLines(o.rid);
   if (live.length > 1 || live.some(x => x.qty > 1)) {
-    await page.waitForFunction(n => document.querySelectorAll('#owPieceSw [data-piece]:not([data-piece=""])').length >= n, live.length, { timeout: 8000 }).catch(() => {});
-    await page.evaluate(k => { const b = document.querySelector(`#owPieceSw [data-piece="${k}"]`); if (b) b.click(); }, l.key);
+    await page.waitForFunction(n => document.querySelectorAll('#owPcSum .owPcRow[data-piece]').length >= n, live.length, { timeout: 8000 }).catch(() => {});
+    await page.evaluate(k => OrderWin.selectPiece(k), l.key);
   }
   await settle(page, () => ({ n: document.getElementById('owTlCount')?.textContent || '', now: document.getElementById('owNow')?.textContent || '' }), null, { max: 5000, quiet: 250, ready: v => /\d/.test(v && v.n) });
 }
 const OV = () => ({
-  piece: [...document.querySelectorAll('#owPieceSw [data-piece]')].filter(b => b.classList.contains('on')).map(b => b.dataset.piece || '*'),
-  pieces: [...document.querySelectorAll('#owPieceSw [data-piece]')].map(b => b.dataset.piece || '*'),
-  swHidden: document.getElementById('owPieceSw')?.hidden !== false,
+  piece: [...document.querySelectorAll('#owPcSum .owPcRow.sel')].map(b => b.dataset.piece || '*').concat(document.querySelector('#owPcSum .owPcState') && !document.querySelector('#owPcSum .owPcRow.sel') ? ['*'] : []),
+  pieces: ['*', ...[...document.querySelectorAll('#owPcSum .owPcRow[data-piece]')].map(b => b.dataset.piece)],
+  swHidden: !document.querySelector('#owPcSum .owPcRow[data-piece]'),
   chips: [...document.querySelectorAll('#owNowCard .owShChip:not(.off)')].map(b => (b.querySelector('b')?.textContent || '').trim()),
   offChips: document.querySelectorAll('#owNowCard .owShChip.off').length,
   sheetBtn: (b => b ? { disabled: !!b.disabled || b.getAttribute('aria-disabled') === 'true', title: b.title || '' } : null)(document.querySelector('#owNowCard [data-go="sheet"]')),
@@ -295,18 +295,18 @@ async function orderWindowProbes(page, mode, R, orders) {
       if (!here) continue;   // a cancelled piece is no longer in the order the window opens (the other probes cover the Cancelled list)
       await openPiece(page, mode, o, l);
       let ov = await settle(page, OV, null, { max: 2500, quiet: 200 });
-      if (live.length > 1 && here) R.check('A2', side, ov.piece.length === 1 && ov.piece[0] === l.key, `the switcher shows ${JSON.stringify(ov.piece)} chosen, not ${l.key}`);
+      if (live.length > 1 && here) R.check('A2', side, ov.piece.length === 1 && ov.piece[0] === l.key, `the pieces list shows ${JSON.stringify(ov.piece)} chosen, not ${l.key}`);
       // A8 / E2 "Where it is now": every piece on its own row, saying the sheet it is on
       if (live.length > 1 && here) {
-        await page.evaluate(() => document.querySelector('#owPieceSw [data-piece=""]')?.click());
+        await page.evaluate(() => OrderWin.selectPiece(null));
         const sum = await settle(page, OV, null, { max: 2500, quiet: 250, ready: v => v.sum.length > 0 });
         for (const p of live) {
-          const row = sum.sum.find(x => x.key === p.key), want = truth.sheetsOfLine(o.rid, p.key), onWord = row && /^On (GF|SS|RG|10K|14K) Sheet \d+/.exec(row.st);
+          const row = sum.sum.find(x => x.key === p.key), want = truth.sheetsOfLine(o.rid, p.key), onWord = row && /^(?:On )?(GF|SS|RG|10K|14K) Sheet \d+/.exec(row.st);
           if (!row) { R.check('A8', `${o.rid} all pieces, ${pieceName(p)}`, false, `no row for ${pieceName(p)} in "Where it is now"`); continue; }
           if (want.length) R.check('A8', `${o.rid} all pieces, ${pieceName(p)} (seen from ${pieceName(l)})`, !!onWord && want.includes(norm(row.st)), `${pieceName(p)} is on ${want.join(' + ')} but "Where it is now" says "${row.st}"`);
           else R.check('A8', `${o.rid} all pieces, ${pieceName(p)} (seen from ${pieceName(l)})`, !onWord, `${pieceName(p)} is on no sheet but "Where it is now" says "${row.st}"`);
         }
-        await page.evaluate(k => document.querySelector(`#owPieceSw [data-piece="${k}"]`)?.click(), l.key);
+        await page.evaluate(k => OrderWin.selectPiece(k), l.key);
         ov = await settle(page, OV, null, { max: 2500, quiet: 200 });
       }
       // A6: the Sheet cell of the Overview grid
@@ -356,8 +356,8 @@ async function orderWindowProbes(page, mode, R, orders) {
       // ── the rail: the Nested step is reached for a piece on a sheet and not for one on none ──
       if (here && live.length > 1) {
         await page.evaluate(() => OrderWin.setView('timeline'));
-        await page.evaluate(k => document.querySelector(`#owPieceSw [data-piece="${k}"]`)?.click(), l.key);
-        const rail = await settle(page, () => ({ text: (document.querySelector('#owRail, #orderWin .tlRail')?.innerText || '').replace(/\s+/g, ' '), on: [...document.querySelectorAll('#owPieceSw [data-piece].on')].map(b => b.dataset.piece) }), null, { max: 6000, quiet: 400, ready: v => v && !/Loading/i.test(v.text) && v.text.length > 20 });
+        await page.evaluate(k => OrderWin.selectPiece(k), l.key);
+        const rail = await settle(page, () => ({ text: (document.querySelector('#owRail, #orderWin .tlRail')?.innerText || '').replace(/\s+/g, ' '), on: [OrderWin.selectedPiece()].filter(Boolean) }), null, { max: 6000, quiet: 400, ready: v => v && !/Loading/i.test(v.text) && v.text.length > 20 });
         const reached = /ON SHEET\s+\d{1,2}\s+[A-Z]{3}/i.test(rail.text);
         R.check('E2', side, reached === (mine.length > 0), `the piece is ${mine.length ? 'on ' + mine.join(' + ') : 'on no sheet'} and the rail ${reached ? 'shows' : 'does not show'} it nested (${JSON.stringify(rail.text.slice(0, 120))})`);
         // E3: the step explainer of Nested (hover on the header rail): done, and naming a sheet the piece is on, or not done
