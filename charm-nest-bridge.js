@@ -5550,15 +5550,13 @@ const LaserReview = window.LaserReview = (()=>{
 .flowStep.ready .flowDot::after{content:"";width:6px;height:6px;border-radius:50%;background:var(--sage)}
 .flowStep span{display:none;white-space:nowrap}
 .flowStep.current span{color:var(--ink);font-weight:600}
-.flowStep.blocked.current span{color:var(--clay)}
 .flowFoot{display:flex;align-items:center;gap:8px;min-width:0}
 .flowNow{font-size:11px;color:var(--ink45)}.flowNow b{color:var(--ink);font-weight:600}
-.flowBox[data-state=blocked] .flowNow b{color:var(--clay)}
 @container (min-width:430px){.flowStep span{display:block}.flowNow{display:none}.flowFoot:not(:has(.flowBusy)){display:none}}
 .flowBusy{flex:none;display:inline-flex;align-items:center;gap:5px;font-size:11px;color:var(--ink45)}
 .flowBusy .spin{width:10px;height:10px;border:2px solid rgba(0,0,0,.15);border-top-color:var(--ink45);border-radius:50%;animation:spin .7s linear infinite}
 button.flowDot{appearance:none;-webkit-appearance:none;margin:0;padding:0;cursor:pointer;-webkit-tap-highlight-color:transparent;transition:transform .15s ease,box-shadow .15s ease}
-button.flowDot::before{content:"";position:absolute;inset:-9px}
+button.flowDot::before{content:"";position:absolute;inset:-11px}
 button.flowDot:hover{transform:scale(1.14)}
 button.flowDot:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
 .flowStep.waiting .flowBang{background:var(--card);border-color:var(--gold2);color:#8a6a1f}
@@ -5722,14 +5720,15 @@ button.flowDot:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
   const approving=new Set(),boxKey=(kind,id)=>kind+':'+id,plural=(n,w)=>`${n} ${w}${n===1?'':'s'}`;
   const flowReady=()=>typeof window.LibraryFlow?.approve==='function';
   const laying=p=>!!(p.dirty || p.saving || ['nesting','finishing','queued','error'].includes(p.status));
-  // null: nothing to offer (ready, cut or gone) · {why:''}: a press can do it · {why:'plain words'}: a person's own step comes first
+  // null: nothing to offer (ready, cut or gone) · {why:''}: a press can do it · {why:'plain words'}: a person's own step comes first (quiet: the
+  // rail already says it, so no line is drawn for it)
   function approveCase(recs){
     recs=recs.filter(Boolean);if(!recs.length)return null;
     if(recs[0].archived || projected(recs[0]).laserDoneAt || sheet(recs[0]).ready)return null;
     const todo=recs.map(projected).filter(p=>!p.archived && !R.laserSheet(p).ready).map(p=>({p,r:R.laserSheet(p)}));
     if(!todo.length)return {why:''};
     const waiting=todo.reduce((n,x)=>n+(x.r.included?x.r.waiting:0),0);
-    if(waiting)return {why:`Waiting on ${plural(waiting,'back engraving')}`};
+    if(waiting)return {why:`Waiting on ${plural(waiting,'back engraving')}`,quiet:true};   // (quiet: the rail's current step and its '!' say it; the button only keeps it for a screen reader)
     const busy=todo.filter(x=>laying(x.p)).length;
     if(busy)return {why:'Still being laid out'};
     const out=todo.filter(x=>!x.r.included);
@@ -5754,15 +5753,15 @@ button.flowDot:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
   function paintApprove(box,c){
     // (the reason is a link when there is something to open: the sheet's '!' on its rail, which opens the issues panel)
     const key=box.dataset.approveFor,busy=approving.has(key),open=typeof window.LaserReview?.openChecklist==='function' && !!box.parentElement?.querySelector('.flowBox [data-issues-open]');
-    const mode=!c?'done':busy?'busy':c.why?'blocked':'ready',sig=[mode,c?.why || '',open?1:0,box._name || ''].join('|');
+    const mode=!c?'done':busy?'busy':c.why?'blocked':'ready',sig=[mode,c?.why || '',c?.quiet?1:0,open?1:0,box._name || ''].join('|');
     box._case=c;
     if(box.dataset.sig===sig)return;
     box.dataset.sig=sig;box.dataset.mode=mode;
     const btn=box.querySelector('[data-approve-btn]'),why=box.querySelector('[data-approve-why]');
     btn.disabled=mode!=='ready';btn.setAttribute('aria-busy',busy?'true':'false');
-    btn.setAttribute('aria-label','Approve for laser cutting'+(box._name?': '+box._name:''));
+    btn.setAttribute('aria-label','Approve for laser cutting'+(box._name?': '+box._name:'')+(mode==='blocked'?` (not yet: ${c.why})`:''));
     btn.innerHTML=busy?'<i class="spin" aria-hidden="true"></i>Approving…':'Approve for laser cutting';
-    why.innerHTML=mode!=='blocked'?'':open?`<button type="button" class="approveReason" data-approve-reason>${esc(c.why)}</button>`:`<span class="approveReason">${esc(c.why)}</span>`;
+    why.innerHTML=mode!=='blocked' || c.quiet?'':open?`<button type="button" class="approveReason" data-approve-reason>${esc(c.why)}</button>`:`<span class="approveReason">${esc(c.why)}</span>`;
   }
   function syncBox(host,kind,id,c,name){
     const key=boxKey(kind,id);let box=[...host.children].find(x=>x.dataset?.approveFor===key);
