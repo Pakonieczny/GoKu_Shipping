@@ -99,14 +99,14 @@ const isObj = v => !!v && typeof v === "object" && !Array.isArray(v);
 const r1 = x => Math.round(x * 10) / 10;
 const cleanName = v => String(v == null ? "" : v).replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim().slice(0, 80);
 const okName = n => !!n && /\p{L}/u.test(n);                     // a name with no letter ("123456") is a PIN, never a person
-const fold = n => cleanName(n).normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase()
-  .replace(/['‘’`´]/g, "").replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+const fold = n => cleanName(n).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase()
+  .replace(/['\u2018\u2019`\u00b4]/g, "").replace(/[^\p{L}\p{N}]+/gu, " ").trim();
 function niceName(raw) {
   const s = cleanName(raw).replace(/_+/g, " ").replace(/\s+/g, " ").trim();
   if (!s) return "";
   let words = s.split(" ");
   if (/\p{L}{3}/u.test(s) && (s === s.toLowerCase() || s === s.toUpperCase()))
-    words = words.map(w => w.toLowerCase().replace(/(^|[-'’.])(\p{L})/gu, (_, a, b) => a + b.toUpperCase()));
+    words = words.map(w => w.toLowerCase().replace(/(^|[-'\u2019.])(\p{L})/gu, (_, a, b) => a + b.toUpperCase()));
   if (words.length > 1) words = words.map(w => /^\p{L}$/u.test(w) ? w + "." : w);
   return words.join(" ");
 }
@@ -147,8 +147,12 @@ const clockText = min => { if (min == null) return null; const t = Math.round(mi
 const partsFmt = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hourCycle: "h23", year: "numeric", month: "numeric", day: "numeric", hour: "numeric", minute: "numeric", second: "numeric" });
 function nyParts(t) { const o = {}; for (const p of partsFmt.formatToParts(new Date(t))) if (p.type !== "literal") o[p.type] = +p.value; return o; }
 const pad = n => String(n).padStart(2, "0");
-const nyDay = t => { const p = nyParts(t); return `${p.year}-${pad(p.month)}-${pad(p.day)}`; };
-const nyMinutes = t => { const p = nyParts(t); return (p.hour % 24) * 60 + p.minute; };
+/** Minutes after New York midnight on the clock (a 23 or 25 hour day, when the clocks change, asks the time zone). */
+const nyMinutes = t => {
+  const d = nyDay(t), m0 = nyMidnight(d);
+  if (nyMidnight(addDays(d, 1)) - m0 === DAY_MS) return Math.floor((t - m0) / 60000);
+  const p = nyParts(t); return (p.hour % 24) * 60 + p.minute;
+};
 const midnights = new Map();
 function nyMidnight(day) {
   let t = midnights.get(day); if (t != null) return t;
@@ -157,11 +161,29 @@ function nyMidnight(day) {
   if (midnights.size > 900) midnights.clear();
   midnights.set(day, t); return t;
 }
-const addDays = (day, n) => { const [y, m, d] = day.split("-").map(Number); return new Date(Date.UTC(y, m - 1, d + n)).toISOString().slice(0, 10); };
+/* day strings <-> whole days since 1970 (both remembered, so day arithmetic is a map lookup after the first time) */
+const d2e = new Map(), e2d = new Map();
+function dayEpoch(day) {
+  let e = d2e.get(day);
+  if (e === undefined) { const [y, m, d] = day.split("-").map(Number); e = Math.floor(Date.UTC(y, m - 1, d) / DAY_MS); if (d2e.size > 4000) d2e.clear(); d2e.set(day, e); }
+  return e;
+}
+function epochDay(e) {
+  let s = e2d.get(e);
+  if (s === undefined) { s = new Date(e * DAY_MS).toISOString().slice(0, 10); if (e2d.size > 4000) e2d.clear(); e2d.set(e, s); }
+  return s;
+}
+const addDays = (day, n) => epochDay(dayEpoch(day) + n);
 const validDay = s => typeof s === "string" && DAY_RE.test(s) && addDays(s, 0) === s;
-const weekdayOf = day => { const [y, m, d] = day.split("-").map(Number); return new Date(Date.UTC(y, m - 1, d)).getUTCDay(); };
+const weekdayOf = day => (((dayEpoch(day) % 7) + 7) % 7 + 4) % 7;                       // 0 = Sunday
+/** The New York day of a moment (ms): a guess from the UTC date, corrected by the remembered New York midnights. */
+function nyDay(t) {
+  let g = epochDay(Math.floor((t - 5 * 3600e3) / DAY_MS));
+  if (t >= nyMidnight(addDays(g, 1))) g = addDays(g, 1); else if (t < nyMidnight(g)) g = addDays(g, -1);
+  return g;
+}
 function dayList(from, to) { const out = []; for (let d = from, i = 0; d <= to && i < MAX_DAY_LIST; d = addDays(d, 1), i++) out.push(d); return out; }
-const daysBetween = (a, b) => Math.round((Date.parse(b + "T00:00:00Z") - Date.parse(a + "T00:00:00Z")) / DAY_MS);
+const daysBetween = (a, b) => dayEpoch(b) - dayEpoch(a);
 
 /* Milliseconds covered by [s, e] pairs, an overlap counted once (one person at two computers). */
 function covered(spans) {
@@ -223,10 +245,11 @@ function ingest(rows, keyOf, now, win, sandbox) {
     if (la > pd.last) pd.last = la;
     if (isObj(x.touched)) for (const id of Object.keys(x.touched)) { const o = String(id).replace(/\D/g, ""); if (o) pd.touched.add(o); }
   }
+  const lo = nyMidnight(win.from), hi = nyMidnight(addDays(win.to, 1));
   for (const s of rows.sessions || []) {
     if (!isObj(s)) continue;
     const name = cleanName(s.person); if (!okName(name)) continue;
-    const sp = spanOf(s, now); if (!sp) continue;
+    const sp = spanOf(s, now); if (!sp || sp.end < lo || sp.start >= hi) continue;            // (outside the window: skipped before any day arithmetic)
     for (const c of clip(sp, win.from, win.to)) { const pd = get(name, c.day); if (pd) pd.spans.push(c); }
   }
   return { by, forms };
@@ -332,7 +355,7 @@ function compute(m) {
     const pd = mine.get(d) || null, c = { day: d, state: "", signedMs: 0, firstIn: null, lastOut: null, parts: null, orders: null, others: null,
       late: false, short: false, extra: false, estimated: false, lengthKnown: true, endedBy: null, _startFromWork: false };
     if (d > today) { c.state = "future"; all.push(c); continue; }
-    if (d < trackingStart) { c.state = "unknown"; c.note = "Before sign-in logging began (" + trackingStart + ")."; all.push(c); continue; }
+    if (d < trackingStart) { c.state = "unknown"; c.note = "Before sign-in logging began."; all.push(c); continue; }
     const isToday = d === today, present = !!(pd && pd.present), tDay = teamDay(d);
     c.others = Math.max(0, (team.get(d) || 0) - (pd && pd.teamPresent ? 1 : 0));
     if (present) {
@@ -357,7 +380,17 @@ function compute(m) {
     else if (c.state === "off") cur = 0;
   }
   const inRange = all.filter(c => c.day >= from);
-  const calendar = inRange.map(c => { const o = Object.assign({}, c); delete o._startFromWork; return o; });
+  const calendar = inRange.map(c => {            // flags are present only when true (a year of days stays small)
+    const o = { day: c.day, state: c.state, signedMs: c.signedMs, firstIn: c.firstIn, lastOut: c.lastOut, parts: c.parts, orders: c.orders, others: c.others };
+    if (c.late) o.late = true;
+    if (c.short) o.short = true;
+    if (c.extra) o.extra = true;
+    if (c.estimated) o.estimated = true;
+    if (!c.lengthKnown) o.lengthKnown = false;
+    if (c.endedBy) o.endedBy = c.endedBy;
+    if (c.note) o.note = c.note;
+    return o;
+  });
 
   // the counts, over the period asked for
   let workingDays = 0, daysWorked = 0, daysOff = 0, extraDays = 0, shortDays = 0, lateDays = 0;
@@ -489,6 +522,7 @@ async function readParts(ctx, a, z, today, kind) {
 }
 async function loadAliases(ctx) {
   if (typeof ctx.keyOf === "function") return { keyOf: name => String(ctx.keyOf(name) || ""), aliases: ctx.aliases || null, error: "" };
+  if (ctx.prof && typeof ctx.prof.nameKey === "function") return { keyOf: name => String(ctx.prof.nameKey(name) || ""), aliases: ctx.aliases || null, error: "" };
   if (ctx.aliases && ctx.aliases.map instanceof Map) return { keyOf: keyFn(ctx.aliases), aliases: ctx.aliases, error: "" };
   let aliases = buildAliases(null), error = "";
   if (ctx.db) {
@@ -521,11 +555,46 @@ async function loadRows(ctx, a, z, today) {
   await Promise.all(tasks);
   return out;
 }
+const dedupe = list => { const seen = new Set(), out = []; for (const r of list) { if (r && r.id) { if (seen.has(r.id)) continue; seen.add(r.id); } out.push(r); } return out; };
+
+/** The numbers of a window that are worth setting next to the window before it. */
+const PREV_KEYS = ["workingDays", "daysWorked", "daysOff", "extraDays", "lateDays", "shortDays", "attendanceRate", "avgShiftMs", "medianShiftMs", "medianStart", "medianEnd"];
+const hoursOf = v => v == null ? null : r1(v / 3600000);
+/** The same numbers in the employee page's METRIC shape ({label, unit, value, prev, delta, deltaPct, better, def, estimated, why?, n}), for KPI cards and hovers. */
+function metricsOf(a, p) {
+  const est = a.estimated.fields, n = a.workingDays;
+  const one = (label, unit, value, prev, better, def, e) => {
+    const m = { label, unit, value, prev: prev == null ? null : prev, delta: value == null || prev == null ? null : r1(value - prev),
+      deltaPct: value == null || prev == null || !prev ? null : r1(100 * (value - prev) / prev), better, def, estimated: !!(e && e.estimated) };
+    if (e && e.estimated) m.why = e.why;
+    m.n = n;
+    return m;
+  };
+  const D = DEFINITIONS, pv = k => p ? p[k] : null;
+  return {
+    workingDays: one("Working days", "days", a.workingDays, pv("workingDays"), null, D.workingDays, est.workingDays),
+    daysWorked: one("Days worked", "days", a.daysWorked, pv("daysWorked"), "up", D.daysWorked, est.daysWorked),
+    daysOff: one("Days off", "days", a.daysOff, pv("daysOff"), "down", D.daysOff, est.daysOff),
+    extraDays: one("Extra days", "days", a.extraDays, pv("extraDays"), "up", D.extraDays, null),
+    shortDays: one("Short days", "days", a.shortDays, pv("shortDays"), "down", D.shortDays, est.shortDays),
+    lateDays: one("Late starts", "days", a.lateDays, pv("lateDays"), "down", D.lateDays, est.lateDays),
+    attendanceRate: one("Days worked, share", "percent", a.attendanceRate, pv("attendanceRate"), "up", D.attendanceRate, est.daysWorked),
+    avgShiftHours: one("Average shift", "hours", hoursOf(a.avgShiftMs), p ? hoursOf(p.avgShiftMs) : null, null, D.avgShiftMs, est.avgShiftMs),
+    medianStart: one("Usual start", "clock", a.medianStart, pv("medianStart"), null, D.medianStart, est.medianStart),
+    medianEnd: one("Usual finish", "clock", a.medianEnd, pv("medianEnd"), null, D.medianEnd, est.medianEnd),
+    currentStreak: one("Current streak", "days", a.streaks.current, null, "up", D.streaks, null),
+    longestStreak: one("Longest streak", "days", a.streaks.best, null, "up", D.streaks, null)
+  };
+}
 
 /* ── the entry ────────────────────────────────────────────────────────────── */
 /**
- * attendance(ctx, { name, from, to }) -> Promise<answer>
+ * attendance(ctx, { name, from, to, prev? }) -> Promise<answer>
+ *   prev = { from, to } of the window right before (the employee page passes it): the same counts for it come back as `prev`
+ *   and their differences as `delta`.
  * An answer with ok:false is returned (never thrown) for a bad request or when neither collection could be read.
+ * Called from the employee page's `person` op, `ctx` is that request's context with ctx.prof: the rows it has already read
+ * (ctx.prof.raw, for ctx.prof.loadFrom..to) are used, and only the older days needed to learn the person's usual shift are read here.
  */
 async function attendance(ctx, args) {
   ctx = ctx || {}; args = args || {};
@@ -538,22 +607,43 @@ async function attendance(ctx, args) {
   const maxTo = addDays(today, MAX_FUTURE_DAYS);
   if (to > maxTo) to = maxTo;
   if (daysBetween(from, to) + 1 > MAX_DAYS) { from = addDays(to, -(MAX_DAYS - 1)); notes.push(`The period was cut to the last ${MAX_DAYS} days.`); }
+  const pv = args.prev && validDay(args.prev.from) && validDay(args.prev.to) && args.prev.from <= args.prev.to && daysBetween(args.prev.from, args.prev.to) < MAX_DAYS && args.prev.to < from ? { from: args.prev.from, to: args.prev.to } : null;
   const sandbox = ctx.sandbox === true || ctx.mode === "sandbox" || ctx.prefix === "Sandbox_";
   ctx = Object.assign({}, ctx, { prefix: sandbox ? "Sandbox_" : "", life: ctx.life != null ? ctx.life : (sandbox ? TTL_LIVE : Infinity) });
   const trackingStart = validDay(ctx.trackingStart) ? ctx.trackingStart : LOGGING_START;
-  // the days to read: the period, and enough before it to learn the person's usual shift (never before logging began or after today)
-  const readTo = to < today ? to : today;
-  let baseFrom = addDays(readTo, -(RULES.baselineDays - 1)); if (baseFrom > from) baseFrom = from;
-  if (baseFrom < addDays(to, -(MAX_DAYS - 1))) baseFrom = addDays(to, -(MAX_DAYS - 1));
-  const readFrom = baseFrom < trackingStart ? trackingStart : baseFrom;
+  // the days to learn from: the period, and enough before it to learn the person's usual shift (never before logging began or after today)
+  const baseOf = (f, t) => { const rt = t < today ? t : today, b = addDays(rt, -(RULES.baselineDays - 1)); return b < f ? b : f; };
+  let baseFrom = baseOf(from, to), prevBase = pv ? baseOf(pv.from, pv.to) : null;
+  const want = prevBase && prevBase < baseFrom ? prevBase : baseFrom;
+  const readTo = to < today ? to : today, wantFrom = want < trackingStart ? trackingStart : want;
   const [al, sc] = await Promise.all([loadAliases(ctx), loadSchedule(ctx)]);
   const key = al.keyOf(name);
   let rows = { rollups: [], sessions: [], errors: [], capped: [], failed: 0, handedIn: false };
-  if (readFrom <= readTo) rows = await loadRows(ctx, readFrom, readTo, today);
+  const prof = ctx.prof && ctx.prof.raw && Array.isArray(ctx.prof.raw.rollups) && Array.isArray(ctx.prof.raw.sessions) && validDay(ctx.prof.loadFrom) ? ctx.prof : null;
+  if (prof) {
+    // the rows the employee page's loader has already read, plus only the older days still needed
+    rows = { rollups: prof.raw.rollups, sessions: prof.raw.sessions, errors: [], capped: [], failed: 0, handedIn: false };
+    const have = prof.loadFrom;
+    if (wantFrom < have) {
+      const extra = await loadRows(Object.assign({}, ctx, { rollups: undefined, sessions: undefined, loadRollups: undefined, loadSessions: undefined }), wantFrom, addDays(have, -1), today);
+      rows.rollups = prof.raw.rollups.concat(extra.rollups); rows.sessions = dedupe(prof.raw.sessions.concat(extra.sessions));
+      rows.errors = extra.errors; rows.capped = extra.capped;
+      if (extra.failed) { const floor = have < trackingStart ? trackingStart : have; if (baseFrom < floor) baseFrom = floor; if (prevBase != null && prevBase < floor) prevBase = floor; }
+    }
+  } else if (wantFrom <= readTo) rows = await loadRows(ctx, wantFrom, readTo, today);
   // rows handed in as arrays cover only what their owner says (rowsFrom, else just the period): never learn from days they may lack
-  if (rows.handedIn) baseFrom = validDay(ctx.rowsFrom) && ctx.rowsFrom < from ? ctx.rowsFrom : from;
+  if (rows.handedIn) { const f = validDay(ctx.rowsFrom) && ctx.rowsFrom < from ? ctx.rowsFrom : from; baseFrom = f; if (pv) prevBase = validDay(ctx.rowsFrom) && ctx.rowsFrom < pv.from ? ctx.rowsFrom : pv.from; }
   if (rows.failed >= 2) return { ok: false, unavailable: true, error: "the data could not be read just now", errors: rows.errors };
-  const answer = compute({ target: key, display: niceName(name), from, to, today, now, rows, keyOf: al.keyOf, aliases: al.aliases, schedule: sc.schedule, trackingStart, baseFrom, sandbox, mode: sandbox ? "sandbox" : "real" });
+  const base = { target: key, display: niceName(name), today, now, rows, keyOf: al.keyOf, aliases: al.aliases, schedule: sc.schedule, trackingStart, sandbox, mode: sandbox ? "sandbox" : "real" };
+  const answer = compute(Object.assign({ from, to, baseFrom }, base));
+  let p = null;
+  if (pv) {
+    p = compute(Object.assign({ from: pv.from, to: pv.to, baseFrom: prevBase }, base));
+    const prev = { from: pv.from, to: pv.to, days: daysBetween(pv.from, pv.to) + 1 }, delta = {};
+    for (const k of PREV_KEYS) { prev[k] = p[k]; delta[k] = answer[k] == null || p[k] == null ? null : r1(answer[k] - p[k]); }
+    answer.prev = prev; answer.delta = delta;
+  }
+  answer.metrics = metricsOf(answer, p);
   const errors = rows.errors.concat(al.error ? [al.error] : [], sc.error ? [sc.error] : []);
   if (notes.length) answer.notes = notes.concat(answer.notes);
   if (rows.capped.length) answer.notes.push("Some lists were cut at their size limit: " + rows.capped.join(", ") + ". Counts may be too low.");

@@ -5,7 +5,7 @@
 //   a Saturday the team did work, a Saturday it did not, today (pending), reads (rollups + sessions only, cached), the optional schedule.
 //   node tests/stations/employee-attendance.cjs
 'use strict';
-const path = require('path'), assert = require('assert');
+const path = require('path'), assert = require('assert'), Module = require('module');
 const root = path.join(__dirname, '../..');
 const M = require(path.join(root, 'netlify/functions/_employeeAttendance.js'));
 const T = M._t;
@@ -45,6 +45,15 @@ function fakeStore() {
     readsOf: name => reads.filter(r => r.name === name), docs: name => [...data(name).values()].map(keep) };
 }
 const admin = { firestore: { Timestamp: Ts } };
+/* the real console function over the fake admin: the `person` op calls attendance() with its own prepared context (section 15) */
+const fakeAdmin = { firestore: Object.assign(() => ({}), { Timestamp: Ts, FieldValue: { serverTimestamp: () => 'ts' } }) };
+const realLoad = Module._load;
+Module._load = function (req, ...rest) { if (/[\/]firebaseAdmin(\.js)?$/.test(req)) return fakeAdmin; return realLoad.call(this, req, ...rest); };
+const EFF = require(path.join(root, 'netlify/functions/employeeEfficiency.js'));
+const EP = require(path.join(root, 'netlify/functions/_editPasscode.js'));
+Module._load = realLoad;
+const PASS = 'synthetic-pass-9f3k';
+process.env.EDIT_PASSCODE = PASS;
 
 const say = (...a) => process.stdout.write(a.join(' ') + '\n');
 const realNow = Date.now;
@@ -135,6 +144,18 @@ const att = (st, name, from, to, o) => M.attendance(ctxOf(st, o), { name, from, 
   const st = realShop();
   const FROM = '2026-09-28';
 
+  /* ── 0 · the clock: New York days, daylight saving, week days ── */
+  const Z = iso => Date.parse(iso);
+  assert.strictEqual(T.nyDay(Z('2026-10-03T03:59:59Z')), '2026-10-02'); assert.strictEqual(T.nyDay(Z('2026-10-03T04:00:00Z')), '2026-10-03', 'EDT midnight is 04:00 UTC');
+  assert.strictEqual(T.nyDay(Z('2026-11-02T04:59:59Z')), '2026-11-01'); assert.strictEqual(T.nyDay(Z('2026-11-02T05:00:00Z')), '2026-11-02', 'EST midnight is 05:00 UTC');
+  assert.strictEqual(T.nyMidnight('2026-11-02') - T.nyMidnight('2026-11-01'), 25 * HOUR, 'the fall-back day is 25 hours'); assert.strictEqual(T.nyMidnight('2027-03-15') - T.nyMidnight('2027-03-14'), 23 * HOUR, 'the spring day is 23');
+  assert.strictEqual(T.nyMinutes(Z('2026-10-20T12:30:00Z')), 8 * 60 + 30, '08:30 EDT'); assert.strictEqual(T.nyMinutes(Z('2026-12-10T13:30:00Z')), 8 * 60 + 30, '08:30 EST');
+  assert.strictEqual(T.nyMinutes(Z('2026-11-01T14:00:00Z')), 9 * 60, 'on the 25-hour day the clock says 09:00 (not ten hours after midnight)');
+  assert.strictEqual(T.nyMinutes(Z('2027-03-14T14:00:00Z')), 10 * 60, 'and on the 23-hour day 10:00');
+  assert.strictEqual(T.weekdayOf('2026-10-02'), 5, 'a Friday'); assert.strictEqual(T.weekdayOf('2026-10-04'), 0, 'a Sunday'); assert.strictEqual(T.weekdayOf('2026-10-05'), 1);
+  assert.strictEqual(T.addDays('2028-02-28', 1), '2028-02-29'); assert.strictEqual(T.addDays('2026-12-31', 1), '2027-01-01'); assert.strictEqual(T.addDays('2026-03-01', -1), '2026-02-28');
+  say('clock: New York midnights (EDT and EST), 23 and 25 hour days, minutes on the clock across the change, week days, month and year ends');
+
   /* ── 1 · the shape ── */
   const r = await att(st, 'Tess Welder', FROM, TODAY);
   assert.strictEqual(r.ok, true); assert.strictEqual(r.mode, 'real'); assert.strictEqual(r.found, true); assert.strictEqual(r.name, 'Tess Welder');
@@ -142,7 +163,9 @@ const att = (st, name, from, to, o) => M.attendance(ctxOf(st, o), { name, from, 
   assert.strictEqual(r.calendar.length, 85, 'one entry per day, 28 Sep to 21 Dec');
   for (const k of ['workingDays', 'daysWorked', 'daysOff', 'extraDays', 'lateDays', 'shortDays', 'avgShiftMs', 'medianStart', 'medianEnd', 'streaks', 'byWeekday', 'definitions', 'estimated', 'rules', 'states', 'notes'])
     assert(k in r, 'has ' + k);
-  for (const c of r.calendar) for (const k of ['day', 'state', 'signedMs', 'firstIn', 'lastOut', 'parts', 'orders', 'others', 'late', 'short', 'extra', 'estimated', 'endedBy', 'lengthKnown']) assert(k in c, c.day + ' has ' + k);
+  for (const c of r.calendar) for (const k of ['day', 'state', 'signedMs', 'firstIn', 'lastOut', 'parts', 'orders', 'others']) assert(k in c, c.day + ' has ' + k);
+  assert(r.calendar.every(c => ['late', 'short', 'extra', 'estimated'].every(k => c[k] === undefined || c[k] === true) && (c.lengthKnown === undefined || c.lengthKnown === false)), 'flags are present only when true');
+  assert(r.calendar.filter(c => c.late).length === 1 && r.calendar.filter(c => c.short).length === 2, 'the flags that are set');
   assert(r.calendar.every((c, i) => i === 0 || c.day > r.calendar[i - 1].day), 'oldest first');
   assert(r.calendar.every(c => ['worked', 'partial', 'off', 'closed', 'future', 'pending', 'before', 'unknown'].includes(c.state)), 'only the documented states');
   assert.strictEqual(r.states.length, 8); assert(r.states.every(s => s.state && s.label && s.def));
@@ -196,12 +219,12 @@ const att = (st, name, from, to, o) => M.attendance(ctxOf(st, o), { name, from, 
   assert.strictEqual(by(r, '2026-11-10').late, true, 'first in at 10:15, usual start 08:00'); assert.strictEqual(by(r, '2026-11-10').state, 'worked');
   assert.strictEqual(r.rules.usualStart, 8 * 60); assert.strictEqual(r.rules.usualStartText, '8:00 AM');
   assert.strictEqual(r.lateDays, 1); assert.strictEqual(r.calendar.filter(c => c.late).length, 1);
-  assert.strictEqual(by(r, '2026-10-22').late, false, '08:05 is not late');
+  assert(!by(r, '2026-10-22').late, '08:05 is not late');
   say('half day (3.5 h of a usual 8.5 h) and a ten-minute sign-in are short; 10:15 against a usual 08:00 is late; 08:05 is not');
 
   /* ── 5 · the midnight auto sign-out, estimates ── */
   const mid = by(r, '2026-10-22');
-  assert.strictEqual(mid.endedBy, 'midnight'); assert.strictEqual(mid.estimated, true); assert.strictEqual(mid.lengthKnown, true);
+  assert.strictEqual(mid.endedBy, 'midnight'); assert.strictEqual(mid.estimated, true); assert(mid.lengthKnown !== false);
   assert.strictEqual(mid.lastOut, at('2026-10-22', '16:20'), 'cut back to her last recorded action, not midnight');
   assert.strictEqual(mid.signedMs, at('2026-10-22', '16:20') - at('2026-10-22', '08:05'), '8 h 15 m, not a 16 hour shift');
   assert.strictEqual(mid.state, 'worked');
@@ -210,8 +233,7 @@ const att = (st, name, from, to, o) => M.attendance(ctxOf(st, o), { name, from, 
   assert.strictEqual(rec.signedMs, at('2026-12-03', '15:55') - at('2026-12-03', '08:10'), 'no sign-in: the span of the recorded work'); assert.strictEqual(rec.firstIn, at('2026-12-03', '08:10'));
   const lost = by(r, '2026-12-04');
   assert.strictEqual(lost.state, 'worked', 'signed in, nothing recorded after: worked, never short'); assert.strictEqual(lost.lengthKnown, false);
-  assert.strictEqual(lost.signedMs, null); assert.strictEqual(lost.lastOut, null); assert.strictEqual(lost.estimated, true); assert.strictEqual(lost.short, false);
-  assert.strictEqual(lost.late, false);
+  assert.strictEqual(lost.signedMs, null); assert.strictEqual(lost.lastOut, null); assert.strictEqual(lost.estimated, true); assert(!lost.short); assert(!lost.late);
   assert(r.estimated.any && r.estimated.days.includes('2026-10-22') && r.estimated.days.includes('2026-12-03') && r.estimated.days.includes('2026-12-04'));
   for (const f of ['avgShiftMs', 'medianShiftMs', 'medianEnd', 'shortDays']) { assert.strictEqual(r.estimated.fields[f].estimated, true, f + ' depends on estimates'); assert(r.estimated.fields[f].why.length > 20); }
   for (const f of ['daysOff', 'workingDays', 'daysWorked']) assert.strictEqual(r.estimated.fields[f].estimated, false, f + ' does not');
@@ -360,12 +382,67 @@ const att = (st, name, from, to, o) => M.attendance(ctxOf(st, o), { name, from, 
   assert.strictEqual(dayRange.readsOf('Efficiency_Daily').length, 1, 'a window of days that are over is one range query'); assert.strictEqual(dayRange.readsOf('Station_Sessions').length, 1);
   say('reads: rollups and sessions by day range (days over: 10 min cache; today: 5 s), two config docs; nothing per event');
 
-  /* ── 14 · no PIN anywhere ── */
-  const all = JSON.stringify([r, ra, newt, mia, zoe, sbr, e0, wide, wk, one]);
+  /* ── 14 · the window before: prev and delta ── */
+  const pw = await M.attendance(ctxOf(st), { name: 'Tess Welder', from: '2026-11-02', to: '2026-11-08', prev: { from: '2026-10-26', to: '2026-11-01' } });
+  assert.deepStrictEqual([pw.workingDays, pw.daysWorked, pw.daysOff], [5, 4, 1], 'the week of 4 Nov: one day off');
+  assert.deepStrictEqual([pw.prev.from, pw.prev.to, pw.prev.days, pw.prev.workingDays, pw.prev.daysOff], ['2026-10-26', '2026-11-01', 7, 5, 0]);
+  assert.strictEqual(pw.delta.daysOff, 1); assert.strictEqual(pw.delta.workingDays, 0); assert.strictEqual(pw.delta.daysWorked, -1); assert.strictEqual(pw.delta.attendanceRate, -20);
+  assert.strictEqual(pw.prev.lateDays, 0); assert.strictEqual(pw.prev.attendanceRate, 100);
+  const pw2 = await M.attendance(ctxOf(st), { name: 'Tess Welder', from: '2026-12-07', to: '2026-12-13', prev: { from: '2026-11-30', to: '2026-12-06' } });
+  assert.strictEqual(pw2.prev.extraDays, 1, 'the extra Saturday of the week before'); assert.strictEqual(pw2.delta.extraDays, -1); assert.strictEqual(pw2.delta.daysOff, 0);
+  assert.strictEqual(pw2.prev.avgShiftMs, null === pw2.prev.avgShiftMs ? null : pw2.prev.avgShiftMs); assert(pw2.prev.avgShiftMs > 7 * HOUR, 'the week before has an average shift');
+  for (const bad of [{ from: '2026-11-05', to: '2026-11-20' }, { from: '2026-11-01', to: '2026-10-01' }, { from: 'x', to: 'y' }, null]) assert.strictEqual((await M.attendance(ctxOf(st), { name: 'Tess Welder', from: '2026-11-02', to: '2026-11-08', prev: bad })).prev, undefined, 'a window that overlaps or is not a window is ignored');
+  const pw3 = await M.attendance(ctxOf(st), { name: 'Tess Welder', from: '2026-12-07', to: '2026-12-13' });
+  assert.strictEqual(pw3.prev, undefined); assert.strictEqual(pw3.delta, undefined, 'no prev asked: no prev answered');
+  // the same numbers in the METRIC shape of the employee page
+  const MK = ['workingDays', 'daysWorked', 'daysOff', 'extraDays', 'shortDays', 'lateDays', 'attendanceRate', 'avgShiftHours', 'medianStart', 'medianEnd', 'currentStreak', 'longestStreak'];
+  assert.deepStrictEqual(Object.keys(pw.metrics), MK);
+  for (const k of MK) { const m = pw.metrics[k]; for (const f of ['label', 'unit', 'value', 'prev', 'delta', 'deltaPct', 'better', 'def', 'estimated']) assert(f in m, k + ' has ' + f); assert(typeof m.label === 'string' && typeof m.def === 'string' && m.def.length > 15, k + ' label and def'); assert(['days', 'percent', 'hours', 'clock'].includes(m.unit), k + ' unit'); }
+  assert.deepStrictEqual([pw.metrics.daysOff.value, pw.metrics.daysOff.prev, pw.metrics.daysOff.delta, pw.metrics.daysOff.better, pw.metrics.daysOff.unit], [1, 0, 1, 'down', 'days']);
+  assert.strictEqual(pw.metrics.daysOff.deltaPct, null, 'a percent change from zero is null'); assert.strictEqual(pw.metrics.daysWorked.deltaPct, -20); assert.strictEqual(pw.metrics.daysWorked.better, 'up');
+  assert.strictEqual(pw.metrics.attendanceRate.value, 80); assert.strictEqual(pw.metrics.attendanceRate.prev, 100); assert.strictEqual(pw.metrics.attendanceRate.delta, -20); assert.strictEqual(pw.metrics.attendanceRate.unit, 'percent');
+  assert.strictEqual(pw.metrics.avgShiftHours.unit, 'hours'); assert(pw.metrics.avgShiftHours.value > 7 && pw.metrics.avgShiftHours.value < 9); assert.strictEqual(pw.metrics.medianStart.unit, 'clock'); assert.strictEqual(pw.metrics.medianStart.value, 480);
+  assert.strictEqual(pw.metrics.currentStreak.prev, null); assert.strictEqual(pw.metrics.currentStreak.value, pw.streaks.current);
+  assert.strictEqual(r.metrics.avgShiftHours.estimated, true); assert(/estimated length/.test(r.metrics.avgShiftHours.why), 'an estimated metric says why'); assert.strictEqual(r.metrics.daysOff.estimated, false);
+  assert.strictEqual(r.metrics.daysOff.prev, null); assert.strictEqual(r.metrics.daysOff.n, 55);
+  assert.strictEqual(newt.metrics.daysOff.value, 0); assert.strictEqual(e0.metrics.avgShiftHours.value, null, 'a number that cannot be known is null, never a fake zero'); assert.strictEqual(e0.metrics.attendanceRate.value, null);
+  say('prev: the same counts for the window before, and their differences; a bad or overlapping prev is ignored; METRIC shape (label, unit, value, prev, delta, better, def, estimated)');
+
+  /* ── 15 · through the real person op (the employee page's data) ── */
+  EP.resetCache();
+  let ip = 0;
+  const person = async (store, body) => { const x = await EFF._t.handle({ httpMethod: 'POST', headers: { 'x-nf-client-connection-ip': '203.0.113.' + (++ip) }, body: JSON.stringify(Object.assign({ op: 'person', key: PASS, name: 'Tess Welder' }, body)) }, store.db); return { status: x.statusCode, body: JSON.parse(x.body || '{}') }; };
+  const quarter = await person(st, { range: 'quarter' });
+  assert.strictEqual(quarter.status, 200); assert.strictEqual(quarter.body.ok, true);
+  assert(quarter.body.attendance && quarter.body.attendance.ok === true, 'the person answer carries attendance');
+  assert.deepStrictEqual(quarter.body.calendar, quarter.body.attendance.calendar, 'and calendar');
+  const qa = quarter.body.attendance;
+  assert.strictEqual(qa.from, '2026-09-23'); assert.strictEqual(qa.to, TODAY); assert.strictEqual(qa.calendar.length, 90);
+  assert.deepStrictEqual([qa.workingDays, qa.daysWorked, qa.daysOff, qa.extraDays, qa.shortDays, qa.lateDays], [55, 52, 3, 1, 2, 1], 'the same numbers as reading the collections directly');
+  assert.strictEqual(qa.calendar.filter(c => c.state === 'unknown').length, 9, '23 Sep to 1 Oct are not tracked'); assert(qa.prev && qa.delta, 'compare is on by default: prev and delta');
+  assert.strictEqual(qa.prev.days, 90);
+  const week = await person(st, { range: 'week', compare: false });
+  const wa = week.body.attendance;
+  assert.strictEqual(wa.calendar.length, 7); assert.strictEqual(wa.rules.usualShiftMs, 8.5 * HOUR, 'a week asked for: her usual shift is learned from the 90 days before, read here');
+  assert.strictEqual(wa.rules.usualStart, 480); assert.strictEqual(wa.prev, undefined, 'compare:false: no prev');
+  assert.strictEqual(wa.calendar[wa.calendar.length - 1].state, 'pending', 'today'); assert.strictEqual(wa.streaks.current, 32);
+  const sbp = await person(st, { range: 'month', sandbox: true });
+  assert.strictEqual(sbp.body.attendance.mode, 'sandbox'); assert.strictEqual(sbp.body.attendance.daysWorked, 2, 'sandbox through the real op: only the rehearsal'); assert.strictEqual(sbp.body.attendance.extraDays, 1);
+  const noone = await person(st, { range: 'week', name: 'Nobody Here' });
+  assert.strictEqual(noone.body.found, false); assert.strictEqual(noone.body.attendance.found, false); assert.strictEqual(noone.body.attendance.daysOff, 0, 'a name nobody has used is never "off"');
+  const dayOnly = await person(st, { range: 'day', day: '2026-10-14' });
+  assert.strictEqual(dayOnly.body.attendance.calendar.length, 1); assert.strictEqual(dayOnly.body.attendance.calendar[0].state, 'off'); assert.strictEqual(dayOnly.body.attendance.daysOff, 1);
+  const bytes = JSON.stringify(quarter.body).length;
+  assert(bytes < 400000, 'the quarter answer is a sensible size (' + bytes + ' bytes)');
+  say('through the real person op: attendance and calendar in the answer, the same numbers, prev and delta, the 90-day learning read on top of a week, sandbox, an unknown name, a one-day view');
+
+  /* ── 16 · no PIN anywhere ── */
+  const all = JSON.stringify([r, ra, newt, mia, zoe, sbr, e0, wide, wk, one, pw, pw2, quarter.body, week.body, sbp.body, noone.body, dayOnly.body]);
   assert(!all.includes(PIN), 'the PIN never appears'); assert(!all.includes('913482')); assert(!/employeeId/.test(all), 'the employeeId field is never copied');
   assert(!/passcode|editpass/i.test(all), 'no passcode word in any answer');
   for (const x of [r, ra, newt, zoe]) assert.strictEqual(typeof x.name, 'string');
   assert(!JSON.stringify(r).includes('Paul K') && !JSON.stringify(r).includes('Raj'), "other people's names are never in a person's answer");
+  assert(!JSON.stringify(quarter.body.attendance).includes('Raj') && !JSON.stringify(quarter.body.attendance).includes('Mia'), "nor in the attendance part of the person op");
   say('no PIN, no employeeId, no passcode and no other person in any answer');
 
   Date.now = realNow;
