@@ -93,17 +93,17 @@ async function main() {
     let u = await ui();
     assert.equal(u.view, 'info'); assert.equal(u.piece, null, 'all pieces');
     assert.deepEqual(u.pills.map(p => p.t.split(' ')[0]), ['All', 'CUTE', 'HEALTH1'], JSON.stringify(u.pills));
-    assert(u.pills.find(p => /^CUTE/.test(p.t)).noSheet && !u.pills.find(p => /^HEALTH1/.test(p.t)).noSheet, 'the piece on no sheet says so on its tab: ' + JSON.stringify(u.pills));
+    assert(u.pills.find(p => /^CUTE/.test(p.t)).noSheet &&!u.pills.find(p => /^HEALTH1/.test(p.t)).noSheet, 'the piece on no sheet says so on its tab: ' + JSON.stringify(u.pills));
     // the Sheet button answers for the piece on show (CUTE): greyed, inert, its reason in plain words
-    assert(u.btn.off && /^CUTE TRICERATOPS W\/ HEARTS is not on a sheet yet: its SKU is unknown$/.test(u.btn.why), 'Sheet button greyed with its reason: ' + JSON.stringify(u.btn));
+    assert(u.btn.off && /^CUTE TRICERATOPS W\/ HEARTS is not on a sheet yet: its SKU is not in any master file$/.test(u.btn.why), 'Sheet button greyed with its reason: ' + JSON.stringify(u.btn));
     assert(u.tab.off && u.tab.cls && u.tab.count === '', 'the Sheet tab is greyed too and counts nothing: ' + JSON.stringify(u.tab));
     // each piece's own sheet, separately: HEALTH1's chip is open, CUTE's is muted and inert
     assert.deepEqual(u.chips.map(c => [c.text, c.sub, c.off]), [['Not on a sheet yet', 'CUTE TRICERATOPS W/ HEARTS', true], ['GF Sheet 1', 'HEALTH1', false]], JSON.stringify(u.chips));
-    assert(/not on a sheet yet: its SKU is unknown/.test(u.chips[0].why));
+    assert(/not on a sheet yet: its SKU is not in any master file/.test(u.chips[0].why));
     await shot('1-overview-all-opened-on-cute');
     // pressing the greyed Sheet button, its chip and the Sheet tab: nothing opens; the reason is said, once
     await page.click('#owNowCard [data-go="sheet"]', { force: true });
-    u = await ui(); assert.equal(u.view, 'info', 'the Sheet button went nowhere'); assert.equal(u.note.length, 1); assert.match(u.note[0], /not on a sheet yet: its SKU is unknown/);
+    u = await ui(); assert.equal(u.view, 'info', 'the Sheet button went nowhere'); assert.equal(u.note.length, 1); assert.match(u.note[0], /not on a sheet yet: its SKU is not in any master file/);
     await shot('2-reason-on-press');
     await page.click('#owNowCard .owShChip.off', { force: true });
     await oneNote(); u = await ui(); assert.equal(u.view, 'info'); assert.equal(u.note.length, 1, 'one note at a time: ' + JSON.stringify(u.note));
@@ -131,16 +131,16 @@ async function main() {
     await pick(keyOf(I5, 'ta'));
     u = await ui();
     assert.equal(u.piece, keyOf(I5, 'ta'));
-    assert(u.btn.off && /^This piece is not on a sheet yet: its SKU is unknown$/.test(u.btn.why), JSON.stringify(u.btn));
-    assert.deepEqual(u.chips.map(c => [c.text, c.sub, c.off]), [['Not on a sheet yet', 'Its SKU is unknown', true]], 'one muted chip, no sheet of the other piece: ' + JSON.stringify(u.chips));
+    assert(u.btn.off && /^This piece is not on a sheet yet: its SKU is not in any master file$/.test(u.btn.why), JSON.stringify(u.btn));
+    assert.deepEqual(u.chips.map(c => [c.text, c.sub, c.off]), [['Not on a sheet yet', 'Its SKU is not in any master file', true]], 'one muted chip, no sheet of the other piece: ' + JSON.stringify(u.chips));
     assert(u.tab.off && u.tab.count === '', JSON.stringify(u.tab));
     await shot('3-overview-cute-picked');
-    await page.click('#owNowCard [data-go="sheet"]', { force: true }); u = await ui(); assert.equal(u.view, 'info'); assert.match(u.note.join('|'), /^This piece is not on a sheet yet: its SKU is unknown$/); await clearNotes();
+    await page.click('#owNowCard [data-go="sheet"]', { force: true }); u = await ui(); assert.equal(u.view, 'info'); assert.match(u.note.join('|'), /^This piece is not on a sheet yet: its SKU is not in any master file$/); await clearNotes();
     // reached by another way (the view asked for directly): "Not on a sheet yet", the reason, and NOT the other piece's sheet
     await page.evaluate(() => OrderWin.setView('sheet'));
     await page.waitForFunction(() => document.querySelector('#owPlateWrap .owPlateNone[data-none]'), null, { timeout: 8000 });
     sp = await sheetPanel();
-    assert.match(sp.none, /^Not on a sheet yet Its SKU is unknown\. CUTE TRICERATOPS W\/ HEARTS/, sp.none); assert.equal(sp.sheet, null, 'no sheet drawn'); assert.deepEqual(sp.tabs, [], 'no sheet tab'); assert(sp.canvasHidden, 'the plate is not drawn');
+    assert.match(sp.none, /^Not on a sheet yet Its SKU is not in any master file\. CUTE TRICERATOPS W\/ HEARTS/, sp.none); assert.equal(sp.sheet, null, 'no sheet drawn'); assert.deepEqual(sp.tabs, [], 'no sheet tab'); assert(sp.canvasHidden, 'the plate is not drawn');
     assert.equal(sp.count, '', 'the count counts real sheets only'); assert.equal(await page.evaluate(() => OrderWin._sheet() === null), true);
     await shot('4-sheet-tab-empty-state');
     // (still on the Sheet view: its tab is the selected one, never greyed)
@@ -203,9 +203,9 @@ async function main() {
     u = await ui();
     assert.equal(u.chips.filter(c => !c.off).map(c => c.text).join(), 'SS Sheet 1'); assert.equal(u.chips.filter(c => c.off).length, 1, 'the pooled piece has its muted chip: ' + JSON.stringify(u.chips));
     const outKeys = await page.evaluate(() => OrderWin._scope().all.map(p => [p.key, p.nested, p.why]));
-    const cold = outKeys.find(x => !x[1]); assert(cold && /not been placed on a sheet yet/.test(cold[2]), JSON.stringify(outKeys));
+    const cold = outKeys.find(x => !x[1]); assert(cold && /^it is waiting to be placed$/.test(cold[2]), JSON.stringify(outKeys));
     await pick(cold[0]);
-    u = await ui(); assert(u.btn.off && u.tab.off && /^This piece is not on a sheet yet: it has not been placed on a sheet yet$/.test(u.btn.why), JSON.stringify([u.btn, u.tab]));
+    u = await ui(); assert(u.btn.off && u.tab.off && /^This piece is not on a sheet yet: it is waiting to be placed$/.test(u.btn.why), JSON.stringify([u.btn, u.tab]));
     await closeWin();
     assert.deepEqual(errors, [], 'no page errors');
     console.log('  ✓ piece-scoped Sheet affordances: greyed and inert for a piece on no sheet (button, chip, tab, panel), reason on press and focus, empty state not another piece\'s sheet, counts of real sheets, scope follows a piece chosen in the panel, same from the Orders list and an order outside the pull');
