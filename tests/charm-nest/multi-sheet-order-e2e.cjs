@@ -301,7 +301,7 @@ async function orderWindowProbes(page, mode, R, orders) {
         await page.evaluate(() => document.querySelector('#owPieceSw [data-piece=""]')?.click());
         const sum = await settle(page, OV, null, { max: 2500, quiet: 250, ready: v => v.sum.length > 0 });
         for (const p of live) {
-          const row = sum.sum.find(x => x.key === p.key), want = truth.sheetsOfLine(o.rid, p.key), onWord = row && /^On (GF|SS|RG|10K|14K) Sheet \d+/.exec(row.st);
+          const row = sum.sum.find(x => x.key === p.key), want = truth.sheetsOfLine(o.rid, p.key), onWord = row && /^(?:On )?(GF|SS|RG|10K|14K) Sheet \d+/.exec(row.st);
           if (!row) { R.check('A8', `${o.rid} all pieces, ${pieceName(p)}`, false, `no row for ${pieceName(p)} in "Where it is now"`); continue; }
           if (want.length) R.check('A8', `${o.rid} all pieces, ${pieceName(p)} (seen from ${pieceName(l)})`, !!onWord && want.includes(norm(row.st)), `${pieceName(p)} is on ${want.join(' + ')} but "Where it is now" says "${row.st}"`);
           else R.check('A8', `${o.rid} all pieces, ${pieceName(p)} (seen from ${pieceName(l)})`, !onWord, `${pieceName(p)} is on no sheet but "Where it is now" says "${row.st}"`);

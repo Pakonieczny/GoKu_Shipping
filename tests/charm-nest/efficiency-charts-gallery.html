@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Employee efficiency charts: gallery (fixture)</title>
+<!-- Every chart of charm-nest-efficiency-charts.js on invented data, for the tests and for the eye.
+     Open it by file path or from the repo root; `EfficiencyCharts` is read from ../../charm-nest-efficiency-charts.js.
+     window.GAL = { charts, data, setRange(r), tick(), model, TODAY } is the handle the Playwright test (efficiency-charts.cjs) uses. -->
+<style>
+/* the console's tokens, copied from charm-nest-1.html so the charts look as they will in the console */
+:root{--paper:#f3f0ea;--paper2:#ebe5d9;--card:#fffefb;--card2:#faf7f1;--ink:#1c1a17;--ink70:#5b554c;--ink45:#938c80;--ink25:#c4bdb0;--line:#e4ddd0;--line2:#efe9dd;--velvet:#221f1b;--gold:#a9823f;--gold2:#caa861;--goldSoft:#f0e6cd;--sage:#5f7a5b;--sageSoft:#e7eddf;--clay:#b0563f;--claySoft:#f4e3dc;--slate:#4a6b78;--m-silver:#8d95a0;--m-rose:#c08578;--sans:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,system-ui,sans-serif;--mono:ui-monospace,'SF Mono',Menlo,Consolas,monospace;--sh:0 1px 2px rgba(30,26,20,.04),0 9px 28px rgba(30,26,20,.06)}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{background:var(--paper);color:var(--ink);font:14px/1.45 var(--sans);-webkit-font-smoothing:antialiased}
+main{max-width:1440px;margin:0 auto;padding:14px 16px 60px;display:grid;gap:14px}
+h1{font:700 15px var(--sans);margin:0}
+.bar{display:flex;gap:8px 14px;align-items:center;flex-wrap:wrap}
+.chips{display:inline-flex;border:1px solid var(--line);border-radius:999px;background:var(--card);padding:2px}
+.chips button{border:0;background:transparent;border-radius:999px;padding:5px 12px;font:600 12px var(--sans);color:var(--ink70)}
+.chips button[aria-pressed=true]{background:var(--ink);color:#fff}
+.btn{border:1px solid var(--line);background:var(--card);border-radius:999px;padding:5px 13px;font:600 12px var(--sans);color:var(--ink70)}
+.btn:hover{background:var(--card2);color:var(--ink)}
+.grid{display:grid;gap:14px;grid-template-columns:repeat(2,minmax(0,1fr))}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 16px 12px;min-width:0}
+.card.wide{grid-column:1/-1}
+.lab{font-size:10.5px;letter-spacing:.07em;text-transform:uppercase;color:var(--ink45);font-weight:700;margin:0 0 8px;display:flex;gap:10px;align-items:baseline}
+.lab small{letter-spacing:0;text-transform:none;font-weight:500}
+.kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:0}
+.kpi{padding:2px 16px;min-width:0}.kpi+.kpi{border-left:1px solid var(--line2)}
+.kv{font:600 30px/1.1 var(--sans);letter-spacing:-.025em}.kl{font-size:10.5px;letter-spacing:.07em;text-transform:uppercase;color:var(--ink45);font-weight:700}
+.kpi .sp{margin-top:6px;height:28px}
+@media (max-width:900px){.grid{grid-template-columns:minmax(0,1fr)}.kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.kpi:nth-child(3){border-left:0}.kpi:nth-child(n+3){margin-top:10px}}
+</style>
+</head>
+<body>
+<main>
+  <div class="bar"><h1>Employee efficiency charts</h1>
+    <span class="chips" id="range" role="group" aria-label="Range"><button data-r="day">Day</button><button data-r="week">Week</button><button data-r="month" aria-pressed="true">Month</button><button data-r="quarter">3 months</button><button data-r="year">Year</button></span>
+    <button class="btn" id="tick">Live tick</button><button class="btn" id="load">Show loading</button><button class="btn" id="none">Show empty</button><button class="btn" id="back">Back to data</button>
+  </div>
+
+  <div class="card"><div class="kpis" id="kpis">
+    <div class="kpi"><div class="kl">Pieces</div><div class="kv" id="k-parts">0</div><div class="sp" id="g-spark1"></div></div>
+    <div class="kpi"><div class="kl">Orders</div><div class="kv" id="k-orders">0</div><div class="sp" id="g-spark2"></div></div>
+    <div class="kpi"><div class="kl">Per active hour</div><div class="kv" id="k-rate">0</div><div class="sp" id="g-spark3"></div></div>
+    <div class="kpi"><div class="kl">Days off</div><div class="kv" id="k-off">0</div><div class="sp" id="g-spark4"></div></div>
+  </div></div>
+
+  <div class="card wide"><p class="lab">Pieces a day <small>line · previous period dashed · typical range band</small></p><div id="g-line"></div></div>
+  <div class="grid">
+    <div class="card"><p class="lab">Pieces and orders <small>two lines</small></p><div id="g-multi"></div></div>
+    <div class="card"><p class="lab">Pieces per active hour <small>area</small></p><div id="g-area"></div></div>
+    <div class="card"><p class="lab">Pieces by hour of the day <small>bars · the current hour in gold</small></p><div id="g-hours"></div></div>
+    <div class="card"><p class="lab">Pieces and orders a day <small>grouped bars · previous period tick</small></p><div id="g-grouped"></div></div>
+    <div class="card"><p class="lab">Station mix <small>stacked columns</small></p><div id="g-stackbars"></div></div>
+    <div class="card"><p class="lab">Station mix over time <small>stacked area</small></p><div id="g-stacked"></div></div>
+    <div class="card"><p class="lab">When the pieces happen <small>hour heat map, last 10 days</small></p><div id="g-heat"></div></div>
+    <div class="card"><p class="lab">Busiest hours <small>one row</small></p><div id="g-strip"></div></div>
+    <div class="card"><p class="lab">October <small>calendar · click a day</small></p><div id="g-calmonth"></div><p id="picked" style="margin:6px 0 0;font-size:12px;color:var(--ink45)">Click a day</p></div>
+    <div class="card"><p class="lab">The year <small>calendar</small></p><div id="g-calyear"></div></div>
+    <div class="card"><p class="lab">Where the time went <small>donut</small></p><div id="g-donut"></div></div>
+    <div class="card"><p class="lab">States <small>empty and loading</small></p><div id="g-empty"></div><div id="g-loading" style="margin-top:10px"></div></div>
+  </div>
+</main>
+<script src="../../charm-nest-efficiency-charts.js"></script>
+<script>
+(function () {
+  "use strict";
+  const EC = window.EfficiencyCharts, TODAY = "2026-10-05"; // a Monday
+  const rng = seed => () => { seed |= 0; seed = seed + 0x6D2B79F5 | 0; let t = Math.imul(seed ^ seed >>> 15, 1 | seed); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; };
+  const R = rng(20261005);
+  const add = (d, n) => new Date(Date.UTC(+d.slice(0, 4), +d.slice(5, 7) - 1, +d.slice(8, 10) + n, 12)).toISOString().slice(0, 10);
+  const dow = d => new Date(Date.UTC(+d.slice(0, 4), +d.slice(5, 7) - 1, +d.slice(8, 10), 12)).getUTCDay();
+  /* the invented shop: 800 days, Monday to Friday, a few days off, a few short days; today is part-way through */
+  const STATIONS = ["welding", "assembly", "shipping", "sorting", "design"], model = {};
+  for (let i = 0; i < 800 + 40; i++) {
+    const day = add(TODAY, 40 - i), wd = dow(day), future = day > TODAY, weekend = wd === 0 || wd === 6;
+    const r = R(), r2 = R(), r3 = R();
+    let state = future ? "future" : weekend ? "closed" : r < .08 ? "off" : r < .15 ? "partial" : "worked";
+    if (day === TODAY) state = "worked";
+    const signedMs = state === "worked" ? (6.2 + r2 * 2.2) * 3600e3 : state === "partial" ? (1.5 + r2 * 2) * 3600e3 : 0;
+    const full = state === "worked" || state === "partial";
+    const parts = !full ? null : Math.round((state === "partial" ? .4 : 1) * (70 + 110 * r3 + (i < 120 ? 20 : 0)));
+    const orders = parts == null ? null : Math.max(1, Math.round(parts * (.62 + R() * .12)));
+    const m = { day, state, signedMs: signedMs || null, parts, orders, perHour: full ? Math.round(parts / (signedMs / 3600e3 * .075)) : null, st: {} };
+    if (day === TODAY) { m.parts = 29; m.orders = 25; m.perHour = 328; m.signedMs = 4.1 * 3600e3; }
+    if (full) { let left = m.parts; STATIONS.forEach((s, k) => { const w = [.38, .24, .17, .13, .08][k] * (.7 + R() * .6); m.st[s] = Math.round(m.parts * w); }); void left; }
+    model[day] = m;
+  }
+  const hc = {};
+  const hoursOf = day => {
+    if (hc[day]) return hc[day];
+    const m = model[day], out = new Array(24).fill(0);
+    if (!m || m.parts == null) return (hc[day] = out.map(() => null));
+    const rr = rng(+day.replace(/-/g, "")), peak = 8 + Math.round(rr() * 3);
+    for (let h = 7; h <= 17; h++) out[h] = Math.round(m.parts * Math.exp(-Math.pow((h - peak) / 2.6, 2)) / 5.2 * (.7 + rr() * .6));
+    if (day === TODAY) { out.fill(0); out[0] = 1; out[8] = 19; out[9] = 3; out[10] = 2; out[11] = 2; out[12] = 2; }
+    return (hc[day] = out);
+  };
+  const win = (n, end) => { const a = []; for (let i = n - 1; i >= 0; i--) a.push(add(end, -i)); return a; };
+  const NDAYS = { week: 7, month: 30, quarter: 90, year: 365 };
+  const median = a => { const b = a.filter(v => v != null).sort((x, y) => x - y); return b.length ? b[Math.floor(b.length / 2)] : null; };
+  const p90 = a => { const b = a.filter(v => v != null).sort((x, y) => x - y); return b.length ? b[Math.min(b.length - 1, Math.floor(b.length * .9))] : null; };
+  const val = (day, k) => { const m = model[day]; return m && m[k] != null ? m[k] : null; };
+  const weekKey = d => add(d, -((dow(d) + 6) % 7));
+
+  function build(range) {
+    if (range === "day") {
+      const hrs = hoursOf(TODAY), prevH = hoursOf(add(TODAY, -3)), x = Array.from({ length: 24 }, (_, i) => i);
+      return { range, kind: "hour", x, parts: hrs.map((v, i) => (i > 12 ? null : v)), prevParts: prevH, orders: hrs.map((v, i) => (i > 12 ? null : v == null ? null : Math.round(v * .7))), prevOrders: prevH.map(v => (v == null ? null : Math.round(v * .7))), rate: hrs.map((v, i) => (i > 12 || !v ? null : Math.round(v * 1.3))), prevRate: prevH.map(v => (v ? Math.round(v * 1.3) : null)), band: null, bars: hrs.map(v => v || 0), station: STATIONS.map(s => ({ key: s, label: s[0].toUpperCase() + s.slice(1), values: x.map(h => (h < 7 || h > 12 ? null : Math.round((hrs[h] || 0) * ({ welding: .38, assembly: .24, shipping: .17, sorting: .13, design: .08 })[s]))) })) };
+    }
+    const n = NDAYS[range], days = win(n, TODAY), prev = win(n, add(TODAY, -n));
+    if (range === "year") { // one point per week (Monday), as the server does for windows over 92 days
+      const weeks = [...new Set(days.map(weekKey))], pw = [...new Set(prev.map(weekKey))];
+      const sum = (set, k) => weeks.map(w => { const ds = set.filter(d => weekKey(d) === w).map(d => val(d, k)).filter(v => v != null); return ds.length ? ds.reduce((a, b) => a + b, 0) : null; });
+      const psum = k => pw.map(w => { const ds = prev.filter(d => weekKey(d) === w).map(d => val(d, k)).filter(v => v != null); return ds.length ? ds.reduce((a, b) => a + b, 0) : null; });
+      const parts = sum(days, "parts"), orders = sum(days, "orders"), pp = psum("parts"), po = psum("orders");
+      const rate = weeks.map(w => { const ds = days.filter(d => weekKey(d) === w).map(d => val(d, "perHour")).filter(v => v != null); return ds.length ? Math.round(ds.reduce((a, b) => a + b, 0) / ds.length) : null; });
+      return { range, kind: "week", x: weeks, parts, prevParts: pp.slice(0, weeks.length), orders, prevOrders: po.slice(0, weeks.length), rate, prevRate: rate.map(() => null), band: null, bars: parts, station: STATIONS.map(s => ({ key: s, label: s[0].toUpperCase() + s.slice(1), values: weeks.map(w => { const ds = days.filter(d => weekKey(d) === w && model[d].st[s] != null).map(d => model[d].st[s]); return ds.length ? ds.reduce((a, b) => a + b, 0) : null; }) })) };
+    }
+    const parts = days.map(d => val(d, "parts")), orders = days.map(d => val(d, "orders")), rate = days.map(d => val(d, "perHour"));
+    const lo = [], hi = []; days.forEach((d, i) => { const w = parts.slice(Math.max(0, i - 13), i + 1); lo.push(parts[i] == null ? null : median(w)); hi.push(parts[i] == null ? null : p90(w)); });
+    return { range, kind: "day", x: days, parts, prevParts: prev.map(d => val(d, "parts")), orders, prevOrders: prev.map(d => val(d, "orders")), rate, prevRate: prev.map(d => val(d, "perHour")), band: { lo, hi }, bars: parts, station: STATIONS.map(s => ({ key: s, label: s[0].toUpperCase() + s.slice(1), values: days.map(d => (model[d].st[s] != null ? model[d].st[s] : null)) })) };
+  }
+
+  /* ── mount every chart ── */
+  const $ = id => document.getElementById(id), charts = {};
+  const dayName = d => d;
+  charts.line = EC.line($("g-line"), { unit: "pieces", height: 240, def: "Pieces finished, net of undo, on the days the person was signed in.", name: "Pieces a day", seriesLabel: "Pieces", tipRows: p => (p.meta ? [["Orders", String(p.meta.orders)]] : []) });
+  charts.multi = EC.line($("g-multi"), { height: 220, name: "Pieces and orders" });
+  charts.area = EC.area($("g-area"), { unit: "pieces/hour", height: 220, name: "Pieces per active hour", seriesLabel: "Pieces per active hour" });
+  charts.hours = EC.bars($("g-hours"), { unit: "pieces", height: 200, name: "Pieces by hour", seriesLabel: "Pieces", xKind: "hour" });
+  charts.grouped = EC.bars($("g-grouped"), { height: 200, name: "Pieces and orders a day" });
+  charts.stackbars = EC.bars($("g-stackbars"), { stack: true, unit: "pieces", height: 200, name: "Station mix" });
+  charts.stacked = EC.stacked ? EC.stacked($("g-stacked"), { unit: "pieces", height: 220, name: "Station mix over time" }) : null;
+  charts.heat = EC.hourHeatmap($("g-heat"), { unit: "pieces", nowHour: 12, name: "Pieces by hour and day", hourFrom: 5, hourTo: 20 });
+  charts.strip = EC.hourHeatmap($("g-strip"), { unit: "pieces", nowHour: 12, name: "Busiest hours", hourFrom: 5, hourTo: 20 });
+  charts.calmonth = EC.calendarHeat($("g-calmonth"), { name: "October", today: TODAY, selected: "2026-10-02", onDay: (day, item) => { $("picked").textContent = "Opened " + day + " (" + item.state + ")"; window.__picked = day; charts.calmonth.update(undefined, { selected: day }); } });
+  charts.calyear = EC.calendarHeat($("g-calyear"), { name: "The year", today: TODAY });
+  charts.donut = EC.donut ? EC.donut($("g-donut"), { unit: "pieces", name: "Where the time went" }) : null;
+  charts.empty = EC.line($("g-empty"), { unit: "pieces", height: 130, name: "Empty example" });
+  charts.loading = EC.line($("g-loading"), { unit: "pieces", height: 130, name: "Loading example", loadingLabel: "Loading pieces" });
+  charts.spark1 = EC.sparkline($("g-spark1"), { unit: "pieces" }); charts.spark2 = EC.sparkline($("g-spark2"), { unit: "orders" }); charts.spark3 = EC.sparkline($("g-spark3"), { unit: "pieces/hour" }); charts.spark4 = EC.sparkline($("g-spark4"), { unit: "days", fill: false });
+
+  let cur = null, curRange = "month";
+  const total = a => a.reduce((s, v) => s + (v || 0), 0);
+  function apply(range, o) {
+    curRange = range; const D = cur = build(range), meta = D.x.map((_, i) => ({ orders: D.orders[i] }));
+    const hasPrev = D.prevParts.some(v => v != null), xk = D.kind === "hour" ? "hour" : undefined, optsX = { xKind: xk }, closed = D.kind === "day" ? D.x.map(d => model[d].state === "closed") : undefined;
+    charts.line.update({ x: D.x, series: [{ key: "parts", label: "Pieces", values: D.parts, prev: hasPrev ? D.prevParts : null }], band: D.band ? { lo: D.band.lo, hi: D.band.hi, label: "Typical (median to p90)" } : null, meta, closed }, optsX);
+    charts.multi.update({ x: D.x, series: [{ key: "parts", label: "Pieces", values: D.parts }, { key: "orders", label: "Orders", values: D.orders }], closed }, optsX);
+    charts.area.update({ x: D.x, series: [{ key: "rate", label: "Per active hour", values: D.rate, prev: D.prevRate.some(v => v != null) ? D.prevRate : null }], closed }, optsX);
+    charts.hours.update({ x: Array.from({ length: 24 }, (_, i) => i), series: [{ key: "parts", label: "Pieces", values: hoursOf(TODAY).map((v, i) => (i > 12 ? 0 : v || 0)), prev: hoursOf(add(TODAY, -3)).map(v => v || 0) }], highlight: 12 }, { xKind: "hour" });
+    charts.grouped.update({ x: D.x, series: [{ key: "parts", label: "Pieces", values: D.parts, prev: hasPrev ? D.prevParts : null }, { key: "orders", label: "Orders", values: D.orders }], closed }, optsX);
+    charts.stackbars.update({ x: D.x, series: D.station, closed }, optsX);
+    if (charts.stacked) charts.stacked.update({ x: D.x, series: D.station, closed }, optsX);
+    const rows = win(10, TODAY).reverse().map(d => ({ key: d, label: EC.fmt.day(d, "wd"), values: hoursOf(d) }));
+    charts.heat.update({ rows });
+    const agg = new Array(24).fill(0); rows.forEach(r => r.values.forEach((v, h) => { agg[h] += v || 0; })); charts.strip.update({ values: agg });
+    const cal = []; win(40, add(TODAY, 25)).forEach(d => { if (d.slice(0, 7) === "2026-10") cal.push({ day: d, state: model[d].state === "worked" && d === TODAY ? "worked" : model[d].state, signedMs: model[d].signedMs, parts: model[d].parts, orders: model[d].orders, firstIn: model[d].signedMs ? 8 * 60 + 5 : null, lastOut: model[d].signedMs ? 8 * 60 + 5 + Math.round(model[d].signedMs / 60000) : null }); });
+    charts.calmonth.update({ days: cal, today: TODAY });
+    const ycal = []; win(430, add(TODAY, 25)).forEach(d => { if (d >= "2025-11-01" && d <= "2026-10-31") ycal.push({ day: d, state: model[d].state, signedMs: model[d].signedMs, parts: model[d].parts, orders: model[d].orders }); });
+    charts.calyear.update({ days: ycal, today: TODAY });
+    const slices = STATIONS.map(s => ({ key: s, label: s[0].toUpperCase() + s.slice(1), value: total(win(30, TODAY).map(d => model[d].st[s] || 0)) }));
+    if (charts.donut) charts.donut.update({ slices, center: { value: total(slices.map(s => s.value)), label: "pieces in 30 days" } });
+    const last = win(14, TODAY), sp = k => last.map(d => val(d, k));
+    charts.spark1.update({ values: sp("parts"), x: last }); charts.spark2.update({ values: sp("orders"), x: last }); charts.spark3.update({ values: sp("perHour"), x: last }); charts.spark4.update({ values: last.map(d => (model[d].state === "off" ? 1 : 0)), x: last });
+    EC.countUp($("k-parts"), null, total(D.parts)); EC.countUp($("k-orders"), null, total(D.orders)); EC.countUp($("k-rate"), null, Math.round(total(D.rate) / Math.max(1, D.rate.filter(v => v != null).length)));
+    EC.countUp($("k-off"), null, win(NDAYS[range === "day" ? "week" : range] || 30, TODAY).filter(d => model[d].state === "off").length);
+    document.querySelectorAll("#range button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.r === range)));
+    charts.empty.update({ x: win(14, TODAY), series: [{ key: "parts", label: "Pieces", values: new Array(14).fill(null) }] }, { emptyText: "No activity in this range" });
+    charts.loading.update({ loading: true });
+  }
+  function tick() { // a live tick: today's figures go up and every chart morphs in place
+    const m = model[TODAY]; m.parts += 3; m.orders += 2; m.perHour += 4; hoursOf(TODAY)[12] += 3; m.st.welding = (m.st.welding || 0) + 2; m.st.assembly = (m.st.assembly || 0) + 1;
+    apply(curRange);
+  }
+  document.querySelectorAll("#range button").forEach(b => b.addEventListener("click", () => apply(b.dataset.r)));
+  $("tick").addEventListener("click", tick);
+  $("load").addEventListener("click", () => { for (const k of ["line", "multi", "area", "hours", "grouped", "stackbars", "stacked", "heat", "strip", "calmonth", "calyear", "donut"]) if (charts[k]) charts[k].setLoading(true); });
+  $("none").addEventListener("click", () => { for (const k of ["line", "multi", "area", "hours", "grouped", "stackbars", "stacked"]) if (charts[k]) charts[k].update({ x: [], series: [] }); charts.heat.update({ rows: [] }); charts.strip.update({ values: [] }); charts.calmonth.update({ days: [] }); charts.calyear.update({ days: [] }); if (charts.donut) charts.donut.update({ slices: [] }); });
+  $("back").addEventListener("click", () => apply(curRange));
+  window.GAL = { charts, model, TODAY, build, apply, setRange: apply, tick, get data() { return cur; }, EC };
+  apply("month");
+})();
+</script>
+</body>
+</html>
