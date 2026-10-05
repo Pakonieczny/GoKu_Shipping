@@ -131,6 +131,10 @@ const eq = (a, b, m) => assert.deepEqual(JSON.parse(JSON.stringify(a === undefin
   d.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'End', bubbles: true, cancelable: true })); assert.equal(d.activeElement, rs[rs.length - 1]);
   d.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true })); assert.equal(d.activeElement, rs[0], 'Tab wraps inside the panel');
   w.eval('LibraryIssues.close()'); await tick(200);
+  // whatever asks the card for its checklist (the Approve button's plain reason, the 'library-checklist-open' event) presses the sheet's '!' for the person: one panel, once
+  assert.equal(L.openChecklist(card, { kind: 'sheet', id: 'gf1' }), true, 'openChecklist finds the sheet\'s \'!\''); await tick(); assert(panel(), 'and the panel is open'); w.eval('LibraryIssues.close()'); await tick(200);
+  card.dispatchEvent(new w.CustomEvent('library-checklist-open', { bubbles: true, detail: { kind: 'sheet', id: 'gf1' } })); await tick();
+  assert.equal(d.querySelectorAll('.lisPanel').length, 1, 'the event opens it once (not pressed twice, which would close it)'); w.eval('LibraryIssues.close()'); await tick(200);
 
   // ── 4. live: the panel stays open and its rows follow the Library's own refresh (no poller of its own)
   w.__feed.gf1 = F.issues('gf1', 5); b1.click(); await tick(); p = panel();
