@@ -30,9 +30,11 @@ test('old texture completions do not replace newer exact selection or restart a 
   f.shows[0].resolve(false); await Promise.resolve(); assert.equal(f.guide.snapshot().shownProduct.id, 'gid://shopify/Product/124');
   f.hide(); f.shows[1].resolve(true); await Promise.resolve(); assert.equal(f.guide.snapshot().shownProduct, null); assert.equal(f.guide.showProduct(product), false);
 });
-test('floating reuses the existing scene and celebration is a finite original turn', async t => {
+test('docked presentation reuses the existing scene and confirmation is a finite restrained gesture', async t => {
   const f = await controller(t); f.guide.setFloating(true); assert.equal(f.guide.snapshot().floating, true); assert.equal(f.floats.at(-1), true); f.guide.setFloating(false); assert.equal(f.floats.at(-1), false);
-  assert.ok(avatar.poseFor({mannerism: 'confirm', mannerismElapsed: .5}).bodyYaw > .1);
+  const confirm = avatar.poseFor({mannerism: 'confirm', mannerismElapsed: .5});
+  assert.equal(confirm.bodyYaw, 0); assert.ok(confirm.offer > 0); assert.ok(confirm.nod > 0);
+  assert.equal(avatar.poseFor({mannerism: 'confirm', mannerismElapsed: 2}).offer, 0);
   assert.equal(avatar.poseFor({mannerism: 'confirm', mannerismElapsed: 2}).bodyYaw, 0);
   assert.equal(avatar.poseFor({mannerism: 'confirm', mannerismElapsed: .5, emotion: 'calm'}).bodyYaw, 0);
 });

@@ -93,10 +93,13 @@ test('actual production mesh construction stays finite and adaptive tessellation
     assert.equal(highResult.validIndices, true);
     assert.equal(adaptiveResult.finiteBuffers, true);
     assert.equal(adaptiveResult.validIndices, true);
-    assert.equal(highResult.meshes, 42);
-    assert.equal(adaptiveResult.meshes, 42);
-    assert.equal(highResult.triangles, 430320);
-    assert.equal(adaptiveResult.triangles, 296072);
+    // The expressive face and grounded ankle/sole assemblies add twelve meshes.
+    assert.equal(highResult.meshes, 54);
+    assert.equal(adaptiveResult.meshes, 54);
+    assert.equal(highResult.triangles, 455776);
+    assert.equal(adaptiveResult.triangles, 313308);
+    assert.deepEqual(highResult.graphicFace, {brows: 2, shutters: 2, cheekFacets: 2, smileGlyph: true, signalMarkers: 3});
+    assert.deepEqual(adaptiveResult.graphicFace, highResult.graphicFace);
     assert.ok(adaptiveResult.triangles <= highResult.triangles * .7);
   } finally {
     diagnostic.dispose(high);
@@ -107,7 +110,9 @@ test('actual production mesh construction stays finite and adaptive tessellation
 test('scene network and source budgets prevent accidental eager or oversized avatar regressions', () => {
   const controller = fs.readFileSync(path.join(root, 'brites-concierge-avatar.js'), 'utf8');
   assert.ok(fileBytes('assets/brites-concierge-avatar-scene.mjs') <= 640 * 1024);
-  assert.ok(fileBytes('brites-concierge-avatar.js') <= 40 * 1024);
+  // Allow the semantic facial rig and bounded page-wide gaze controller while
+  // retaining the same on-demand compiled-scene download limit.
+  assert.ok(fileBytes('brites-concierge-avatar.js') <= 48 * 1024);
   assert.ok(fileBytes('brites-concierge-avatar.css') <= 12 * 1024);
   assert.doesNotMatch(controller, /avatar-concept\.png/);
   assert.match(controller, /await import\(moduleUrl\)/);

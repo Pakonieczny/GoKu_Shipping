@@ -109,13 +109,14 @@ test('continuous scene animation receives seconds, survives repeated sync and ob
   assert.equal(h.engine.snapshot().frames, beforePause + 1);
 });
 
-test('idle head movement is readable without pointer input and ongoing speech gestures follow actual audio', () => {
+test('idle support stays still and speech gestures require measured output and a real phrase onset', () => {
   const first = avatar.poseFor({state: 'idle', time: 1}), later = avatar.poseFor({state: 'idle', time: 7});
-  assert.notEqual(first.headYaw, later.headYaw);
-  assert.notEqual(first.headRoll, later.headRoll);
-  assert.notEqual(first.headPitch, later.headPitch);
+  assert.equal(first.headYaw, later.headYaw);
+  assert.equal(first.headRoll, later.headRoll);
+  assert.equal(first.headPitch, later.headPitch);
+  assert.equal(first.bob, 0); assert.equal(later.bob, 0);
   const silent = avatar.poseFor({state: 'speaking', time: 14, elapsed: 14, level: 0});
-  const audible = avatar.poseFor({state: 'speaking', time: 14, elapsed: 14, level: 1});
+  const audible = avatar.poseFor({state: 'speaking', time: 14, elapsed: 14, level: 1, speechBeatElapsed: .25});
   assert.ok(audible.mouthOpen > silent.mouthOpen * 5);
   assert.ok(audible.armLiftRight > silent.armLiftRight);
   assert.ok(audible.phraseGesture > 0);

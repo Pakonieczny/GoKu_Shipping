@@ -17,7 +17,15 @@ function buildModel(profile = 'high') {
 }
 function inspect(model) {
   const result = {profile: model.quality.name, triangles: 0, vertices: 0, meshes: 0, instancedCopies: 0, uniqueGeometries: model.geometries.size, materialSlots: Object.keys(model.materials).length, rig: {eyeAssemblies: model.eyes.length, brows: model.eyes.filter(eye => eye.brow).length, upperAndLowerLids: model.eyes.reduce((n, eye) => n + (eye.topLid ? 1 : 0) + (eye.bottomLid ? 1 : 0), 0), armAssemblies: model.arms.length, head: true}, finiteBuffers: true, validIndices: true};
-  model.avatar.traverse(object => {if (!object.isMesh) return; const position = object.geometry.attributes.position, index = object.geometry.index, copies = object.isInstancedMesh ? object.count : 1; result.triangles += (index ? index.count : position.count) / 3 * copies; result.vertices += position.count * copies; result.meshes++; if (object.isInstancedMesh) result.instancedCopies += copies;});
+  result.graphicFace = {brows: 0, shutters: 0, cheekFacets: 0, smileGlyph: false, signalMarkers: 0};
+  model.avatar.traverse(object => {if (!object.isMesh) return; const position = object.geometry.attributes.position, index = object.geometry.index, copies = object.isInstancedMesh ? object.count : 1; result.triangles += (index ? index.count : position.count) / 3 * copies; result.vertices += position.count * copies; result.meshes++; if (object.isInstancedMesh) result.instancedCopies += copies;
+    if (/^expression-brow-/.test(object.name)) result.graphicFace.brows++;
+    if (/^expression-(?:upper|lower)-shutter$/.test(object.name)) result.graphicFace.shutters++;
+    if (/^expression-cheek-/.test(object.name)) result.graphicFace.cheekFacets++;
+    if (object.name === 'expression-smile-glyph') result.graphicFace.smileGlyph = true;
+    if (/^expression-signal-/.test(object.name)) result.graphicFace.signalMarkers++;
+  });
+  result.rig.brows = result.graphicFace.brows;
   for (const geometry of model.geometries) {const position = geometry.attributes.position; for (const name of ['position', 'normal', 'uv']) {const attribute = geometry.attributes[name]; if (attribute && !Array.from(attribute.array).every(Number.isFinite)) result.finiteBuffers = false;} const index = geometry.index; if (index && Array.from(index.array).some(value => value < 0 || value >= position.count || !Number.isInteger(value))) result.validIndices = false;}
   result.triangles = Math.round(result.triangles); return result;
 }

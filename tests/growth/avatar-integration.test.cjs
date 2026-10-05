@@ -157,7 +157,9 @@ test('reduced motion keeps expression changes but removes timed motion', async t
   const first = h.sceneOptions.onFrame(1), later = h.sceneOptions.onFrame(9);
   assert.deepEqual(first, later); assert.equal(first.bob, 0); assert.equal(first.gesture, 0); assert.equal(first.bodyRoll, 0);
   h.visibility.motion(false); assert.equal(h.calls.motion.at(-1).reducedMotion, false);
-  assert.notDeepEqual(h.sceneOptions.onFrame(1), h.sceneOptions.onFrame(9));
+  const resumed = h.sceneOptions.onFrame(1);
+  assert.equal(resumed.bob, 0); assert.equal(resumed.gazeY, 0);
+  h.api.setLevel(.25); assert.notEqual(h.sceneOptions.onFrame(9).mouthOpen, resumed.mouthOpen, 'expression follows measured output, not a fake wall-clock pulse');
 });
 
 test('scene loading rejection resolves a static fallback', async t => {
@@ -238,7 +240,7 @@ test('invalid avatar states and extreme pointer/speech values are bounded', asyn
   h.api.setState('untrusted arbitrary state'); assert.equal(h.api.snapshot().state, 'idle');
   h.api.setState('speaking'); h.api.lookAt(100, -100); h.api.setLevel(100);
   const pose = h.sceneOptions.onFrame(4);
-  assert.ok(Math.abs(pose.headYaw) <= .1); assert.ok(pose.mouthOpen <= 1); assert.ok(Math.abs(pose.gazeY) <= .038);
+  assert.ok(Math.abs(pose.headYaw) <= .1); assert.ok(pose.mouthOpen <= 1); assert.ok(Math.abs(pose.gazeY) <= .07);
 });
 
 for (const failure of ['invalidate', 'motion', 'render']) test(failure + ' engine failure becomes a safe fallback after initialization', async t => {

@@ -72,6 +72,7 @@ test('real aperture equalizer changes only with actual speech energy, keeping si
   f.pose(silent, 1); const quiet = f.apertureGeometry.attributes.position.array.slice();
   f.pose(silent, 2); assert.deepEqual(f.apertureGeometry.attributes.position.array, quiet, 'no invented audio vibration');
   f.pose(avatar.poseFor({state: 'speaking', time: 1, level: .8}), 1); const audio = f.apertureGeometry.attributes.position.array.slice();
-  f.pose(avatar.poseFor({state: 'speaking', time: 1, level: .8}), 2); assert.notDeepEqual(f.apertureGeometry.attributes.position.array, audio);
+  f.pose(avatar.poseFor({state: 'speaking', time: 1, level: .8}), 2); assert.deepEqual(f.apertureGeometry.attributes.position.array, audio, 'held energy cannot generate a fake pulse');
+  f.pose(avatar.poseFor({state: 'speaking', time: 2, level: .25}), 2); assert.notDeepEqual(f.apertureGeometry.attributes.position.array, audio, 'different measured output changes the aperture');
   assert.ok(f.statusBars.every(bar => bar.visible === false), 'speaking remains inside the eye, not a separate mouth');
 });

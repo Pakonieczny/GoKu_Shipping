@@ -30,7 +30,9 @@ test('eyes anticipate, head follows and body settles on a duration-scaled finite
 });
 test('intensity scales distinct original warm and curious poses without changing speech authority', () => {
   const sample = intensity => avatar.poseFor({state: 'speaking', level: .8, emotion: 'curious', time: .5, mannerism: 'focus', mannerismElapsed: .5, performance: {...plan, intensity}, mannerismDurationMs: 1800});
-  const quiet = sample(0), expressive = sample(1); assert.ok(expressive.headRoll > quiet.headRoll + .08); assert.ok(expressive.eyeScaleX < quiet.eyeScaleX);
+  const quiet = sample(0), expressive = sample(1);
+  assert.ok(expressive.headRoll > quiet.headRoll); assert.ok(Math.abs(expressive.headRoll) < .09);
+  assert.ok(expressive.faceBrowTilt > quiet.faceBrowTilt + .5); assert.ok(expressive.faceBrowLift > quiet.faceBrowLift + .3); assert.ok(expressive.eyeScaleX < quiet.eyeScaleX);
   assert.equal(quiet.speechEnergy, expressive.speechEnergy); assert.equal(quiet.mouthOpen, expressive.mouthOpen);
   const warm = avatar.poseFor({emotion: 'warm', performance: {...plan, mood: 'warm'}}); assert.ok(warm.eyeScaleY < 1); assert.ok(warm.eyeDeformation > 0);
 });
@@ -44,7 +46,8 @@ test('controller expires once, restores previous mood and ignores overwritten co
 test('voice state and genuine energy blend with current model-selected performance without replay', async t => {
   const f = await fixture(t); f.guide.perform({...plan, gesture: 'present', mood: 'warm'}); const id = f.guide.snapshot().mannerism.id;
   f.guide.setState('speaking'); f.guide.setLevel(.8); f.advance(700);
-  assert.equal(f.guide.snapshot().mannerism.id, id); assert.equal(f.pose().speechEnergy, .8); assert.ok(f.pose().stanceScale > 1); assert.ok(f.pose().bodyDepth > 0);
+  assert.equal(f.guide.snapshot().mannerism.id, id); assert.equal(f.pose().speechEnergy, .8);
+  assert.equal(f.pose().stanceScale, 1); assert.equal(f.pose().bodyDepth, 0); assert.ok(f.pose().offer > 0);
   f.guide.setLevel(0); assert.equal(f.pose().phraseGesture, 0);
 });
 test('quiet reassurance suppresses joy and has a bounded slow nod rather than a dance', async t => {

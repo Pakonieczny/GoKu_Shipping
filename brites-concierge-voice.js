@@ -41,7 +41,10 @@
     disabled:'OpenAI voice is not enabled in this preview. You can still type.',
     signIn:'Sign in to the isolated preview before testing live voice.',
     expired:'Select Talk to me again to start a fresh voice session.',
-    rate:'Please wait before starting another voice session.'
+    rate:'Please wait before starting another voice session.',
+    availabilityTimeout:'The voice availability check timed out. You can retry or type here.',
+    setupTimeout:'The voice connection timed out. You can retry or type here.',
+    disconnected:'OpenAI voice disconnected. You can still type.'
   });
   function microphoneError(error){
     const name=error?.name;
@@ -51,18 +54,25 @@
     return Error(error?.message===MESSAGES.micTimeout?MESSAGES.micTimeout:MESSAGES.micUnknown);
   }
   function safeErrorMessage(error){return Object.values(MESSAGES).includes(error?.message)?error.message:MESSAGES.unavailable;}
+  function publicFailure(error){
+    const message=safeErrorMessage(error),entry=Object.entries(MESSAGES).find(([,value])=>value===message),kind=entry?.[0]||'unavailable';
+    const code={signIn:'PREVIEW_SIGN_IN_REQUIRED',allocation:'VOICE_ALLOCATION_UNAVAILABLE',disabled:'VOICE_DISABLED',expired:'VOICE_SESSION_EXPIRED',rate:'VOICE_RATE_LIMITED',micDenied:'MIC_PERMISSION_REQUIRED',micMissing:'MIC_NOT_FOUND',micBusy:'MIC_UNAVAILABLE',micTimeout:'MIC_PERMISSION_TIMEOUT',micUnknown:'MIC_UNAVAILABLE',playback:'AUDIO_PLAYBACK_BLOCKED',unsupported:'BROWSER_UNSUPPORTED',network:'VOICE_NETWORK_FAILED',media:'VOICE_MEDIA_FAILED',availabilityTimeout:'VOICE_AVAILABILITY_TIMEOUT',setupTimeout:'VOICE_SETUP_TIMEOUT',disconnected:'VOICE_DISCONNECTED'}[kind]||'VOICE_UNAVAILABLE';
+    const recovery=kind==='signIn'?'sign-in':kind==='playback'?'playback':kind==='micDenied'||kind==='micTimeout'?'permission':kind==='disabled'||kind==='allocation'||kind==='unsupported'?'type':'retry';
+    return Object.freeze({code,message,recovery,retryable:!['type','sign-in'].includes(recovery)});
+  }
   function create(options={}){
     const rt=options.runtime||globalThis,doc=rt.document,nav=rt.navigator,endpoint=options.endpoint||'/api/concierge-voice';
     const ownOrigin=rt.location?.origin||'https://preview.invalid';
     if(new URL(endpoint,ownOrigin).origin!==ownOrigin)throw Error('Voice endpoint must be on this website.');
     const notify=(key,...args)=>{try{if(typeof options[key]==='function')options[key](...args);}catch{}};
-    let epoch=0,turnVersion=0,state='idle',disposed=false,pc=null,dc=null,mic=null,audio=null,ctx=null,raf=null,deadline=null,abort=null,stopCredential=null,closing=null,outputPlaying=false,inputSpeaking=false,responsePending=false;
+    let epoch=0,turnVersion=0,state='idle',disposed=false,pc=null,dc=null,mic=null,audio=null,ctx=null,raf=null,deadline=null,abort=null,stopCredential=null,closing=null,outputPlaying=false,inputSpeaking=false,responsePending=false,lastError=null,playbackBlocked=false;
     let continuation=null,continuationUsed=false,contextSnapshot='',inputMeter=null,outputMeter=null,activeInputItemId='',activeInputCommitted=false,responseRequest=0,turnTools=0,turnChainClosed=false,activePerformanceResponseId='',turnPerformanceUsed=false,performanceContinuationUsed=false;const sources=[],timers=new Set(),pending=new Set(),toolCalls=new Set(),toolControllers=new Set(),speechTurns=new Map(),responseTurns=new Map(),issuedResponses=new Map(),performanceResponses=new Map(),performanceCalls=new Set();
     const eventId=value=>typeof value==='string'&&value.length>0&&value.length<=200&&!/[\u0000-\u001f\u007f]/.test(value)?value:'';
     function remember(map,key,value){if(!key||map.has(key))return;map.set(key,value);if(map.size>100)map.delete(map.keys().next().value);}
     function timeout(ms,fn){const id=rt.setTimeout(()=>{timers.delete(id);fn();},ms);timers.add(id);return id;}
     function clear(id){if(id!=null){rt.clearTimeout(id);timers.delete(id);}}
     function setState(next){if(state===next)return;state=next;notify('onState',next);}
+    function reportFailure(error){lastError=publicFailure(error);notify('onError',lastError.message,lastError);return lastError;}
     function send(value){if(dc?.readyState==='open'){dc.send(JSON.stringify(value));return true;}return false;}
     function updateContext(value){
       if(disposed||doc?.hidden||state==='idle'||state==='closing'||dc?.readyState!=='open')return false;
@@ -104,9 +114,15 @@
     }
     async function request(body,{signal,keepalive=false}={}){
       const headers={...(typeof options.headers==='function'?options.headers():options.headers||{}),'Content-Type':'application/json'};
-      const response=await rt.fetch(endpoint,{method:'POST',headers,credentials:'same-origin',body:JSON.stringify(body),signal,keepalive});let data;
-      try{data=await response.json();}catch{throw Error('OpenAI voice returned an invalid connection answer.');}
-      if(!response.ok||data.enabled===false){const known={VOICE_ALLOCATION_UNAVAILABLE:MESSAGES.allocation,VOICE_DISABLED:MESSAGES.disabled,PREVIEW_SIGN_IN_REQUIRED:MESSAGES.signIn,VOICE_SESSION_EXPIRED:MESSAGES.expired};const error=Error(known[data.code]||(response.status===429?MESSAGES.rate:MESSAGES.unavailable));error.code=data.code||'';throw error;}return data;
+      // Never follow a moved endpoint: a custom preview operator header must
+      // stay on this exact request, even if an intermediary returns a redirect.
+      const response=await rt.fetch(endpoint,{method:'POST',headers,credentials:'same-origin',redirect:'error',body:JSON.stringify(body),signal,keepalive});let data;
+      try{data=await response.json();}catch{data=null;}
+      // Authentication redirects and intermediary HTML errors are not provider
+      // failures. Preserve the actionable local explanation without exposing
+      // an upstream body, arbitrary code or credentials to the shopper.
+      if(!response.ok||data?.enabled===false){const known={VOICE_ALLOCATION_UNAVAILABLE:MESSAGES.allocation,VOICE_DISABLED:MESSAGES.disabled,PREVIEW_SIGN_IN_REQUIRED:MESSAGES.signIn,VOICE_SESSION_EXPIRED:MESSAGES.expired};throw Error(known[data?.code]||(response.status===401?MESSAGES.signIn:response.status===429?MESSAGES.rate:data?.enabled===false&&!data?.code?MESSAGES.disabled:MESSAGES.unavailable));}
+      if(!data||typeof data!=='object'||Array.isArray(data)||body.action==='capabilities'&&data.enabled!==true)throw Error(MESSAGES.unavailable);return data;
     }
     function cleanup(){
       for(const controller of toolControllers)controller.abort();toolControllers.clear();
@@ -116,13 +132,33 @@
       mic?.getTracks().forEach(track=>track.stop());mic=null;
       if(audio){audio.pause();audio.srcObject=null;audio.remove?.();audio=null;}
       sources.forEach(node=>{try{node.disconnect();}catch{}});sources.length=0;
-      if(ctx){ctx.close().catch(()=>{});ctx=null;}
+      if(ctx){try{Promise.resolve(ctx.close()).catch(()=>{});}catch{}ctx=null;}
       if(dc){dc.onopen=dc.onmessage=dc.onerror=dc.onclose=null;dc.close();dc=null;}
       if(pc){pc.ontrack=pc.onconnectionstatechange=null;pc.close();pc=null;}
-      continuation=null;continuationUsed=false;contextSnapshot='';inputMeter=outputMeter=null;outputPlaying=inputSpeaking=responsePending=false;activeInputItemId='';activeInputCommitted=false;turnTools=0;turnChainClosed=false;activePerformanceResponseId='';turnPerformanceUsed=performanceContinuationUsed=false;toolCalls.clear();speechTurns.clear();responseTurns.clear();issuedResponses.clear();performanceResponses.clear();performanceCalls.clear();notify('onLevel',{input:0,output:0});
+      continuation=null;continuationUsed=false;contextSnapshot='';inputMeter=outputMeter=null;outputPlaying=inputSpeaking=responsePending=playbackBlocked=false;activeInputItemId='';activeInputCommitted=false;turnTools=0;turnChainClosed=false;activePerformanceResponseId='';turnPerformanceUsed=performanceContinuationUsed=false;toolCalls.clear();speechTurns.clear();responseTurns.clear();issuedResponses.clear();performanceResponses.clear();performanceCalls.clear();notify('onLevel',{input:0,output:0});
     }
-    function meter(stream,channel){if(!ctx)return null;const source=ctx.createMediaStreamSource(stream),analyser=ctx.createAnalyser();analyser.fftSize=512;source.connect(analyser);sources.push(source,analyser);return {channel,analyser,samples:new Float32Array(analyser.fftSize)};}
-    function sample(){if(disposed||!ctx)return;const levels={input:0,output:0};for(const value of [inputMeter,outputMeter])if(value){value.analyser.getFloatTimeDomainData(value.samples);levels[value.channel]=rms(value.samples);}notify('onLevel',levels);raf=rt.requestAnimationFrame?.(sample);}
+    function meter(stream,channel){if(!ctx)return null;try{const source=ctx.createMediaStreamSource(stream),analyser=ctx.createAnalyser();analyser.fftSize=512;source.connect(analyser);sources.push(source,analyser);return {channel,analyser,samples:new Float32Array(analyser.fftSize)};}catch{return null;}}
+    function blockPlayback(current,playbackAudio,stream){
+      if(current!==epoch||disposed||state==='closing'||state==='idle'||audio!==playbackAudio||playbackAudio.srcObject!==stream)return;
+      playbackBlocked=true;lastError=publicFailure(Error(MESSAGES.playback));
+      // A recoverable autoplay gate must not masquerade as a disconnected
+      // session, nor leave a microphone alive behind an idle host UI.
+      if(typeof options.onPlaybackBlocked==='function')notify('onPlaybackBlocked',lastError.message,lastError);
+      else {reportFailure(Error(MESSAGES.playback));void stop('playback');}
+    }
+    async function resumeAudio(){
+      if(disposed||state==='idle'||state==='closing'||!audio?.srcObject)return false;
+      const current=epoch,playbackAudio=audio,stream=audio.srcObject;
+      try{
+        // Invoke both operations before the first await so a visible recovery
+        // button's user activation reaches the browser playback APIs.
+        if(ctx){try{Promise.resolve(ctx.resume()).catch(()=>{});}catch{}}
+        const played=Promise.resolve(playbackAudio.play());await bounded(played,5000,MESSAGES.playback);
+        if(current!==epoch||disposed||audio!==playbackAudio||state==='idle'||state==='closing')return false;
+        playbackBlocked=false;if(lastError?.code==='AUDIO_PLAYBACK_BLOCKED')lastError=null;notify('onPlaybackResumed');settleState();return true;
+      }catch{blockPlayback(current,playbackAudio,stream);return false;}
+    }
+    function sample(){if(disposed||!ctx)return;const levels={input:0,output:0};for(const value of [inputMeter,outputMeter])if(value){try{value.analyser.getFloatTimeDomainData(value.samples);levels[value.channel]=rms(value.samples);}catch{/* A visual meter cannot interrupt the voice session. */}}notify('onLevel',levels);try{raf=rt.requestAnimationFrame?.(sample);}catch{raf=null;}}
     function settleState(){if(state==='idle'||state==='closing')return;if(outputPlaying)setState('speaking');else if(inputSpeaking)setState('listening');else if(toolControllers.size||responsePending)setState('thinking');else setState('listening');}
     function executePerformance(event){
       const responseId=eventId(event.response_id),callId=eventId(event.call_id),bound=responseId?responseTurns.get(responseId):null,performance=performanceResponses.get(responseId);
@@ -240,51 +276,56 @@
     }
     async function start(){
       if(disposed)throw Error('Voice adapter is closed.');if(state!=='idle')return false;
-      const current=++epoch;++turnVersion;setState('connecting');abort=new rt.AbortController();
+      const current=++epoch;++turnVersion;lastError=null;playbackBlocked=false;setState('connecting');abort=new rt.AbortController();
       try{
         if(!rt.RTCPeerConnection||!nav?.mediaDevices?.getUserMedia)throw Error(MESSAGES.unsupported);
         // Check explicit sandbox allocation/provider configuration before
         // requesting access to the shopper's microphone.
-        const capabilities=await bounded(request({action:'capabilities'},{signal:abort.signal}),12000,'OpenAI voice availability check timed out.');
+        notify('onConnectionPhase','checking');
+        const capabilities=await bounded(request({action:'capabilities'},{signal:abort.signal}),12000,MESSAGES.availabilityTimeout);
         if(current!==epoch)throw Error('Voice start cancelled.');
+        notify('onConnectionPhase','microphone');
         let gum;try{gum=nav.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true},video:false});}catch(error){throw microphoneError(error);}
         gum.then(stream=>{if(current!==epoch||disposed)stream.getTracks().forEach(track=>track.stop());},()=>{});
         try{mic=await bounded(gum,20000,MESSAGES.micTimeout);}catch(error){throw microphoneError(error);}if(current!==epoch)throw Error('Voice start cancelled.');
+        notify('onConnectionPhase','connecting');
         pc=new rt.RTCPeerConnection();audio=doc.createElement('audio');audio.autoplay=true;audio.setAttribute('aria-hidden','true');audio.hidden=true;doc.body?.appendChild(audio);
-        const AudioContext=rt.AudioContext||rt.webkitAudioContext;if(AudioContext){ctx=new AudioContext();await bounded(ctx.resume(),5000,MESSAGES.audioSetup);inputMeter=meter(mic,'input');sample();}
-        pc.ontrack=event=>{if(current!==epoch)return;const stream=event.streams?.[0]||(rt.MediaStream?new rt.MediaStream([event.track]):null);if(!stream)return;audio.srcObject=stream;outputMeter=meter(stream,'output');const playbackAudio=audio;playbackAudio.play().catch(()=>{if(current===epoch&&!disposed&&state!=='closing'&&state!=='idle'&&audio===playbackAudio&&playbackAudio.srcObject===stream)notify('onError',MESSAGES.playback);});};
+        // Web Audio is only the optional visual meter. A suspended/missing
+        // AudioContext must never prevent native WebRTC speech from connecting.
+        const AudioContext=rt.AudioContext||rt.webkitAudioContext;if(AudioContext){try{ctx=new AudioContext();Promise.resolve(ctx.resume()).catch(()=>{});inputMeter=meter(mic,'input');sample();}catch{try{Promise.resolve(ctx?.close()).catch(()=>{});}catch{}ctx=null;}}
+        pc.ontrack=event=>{if(current!==epoch||!audio||state==='closing'||state==='idle')return;const stream=event.streams?.[0]||(rt.MediaStream?new rt.MediaStream([event.track]):null);if(!stream)return;audio.srcObject=stream;outputMeter=meter(stream,'output');const playbackAudio=audio;try{Promise.resolve(playbackAudio.play()).catch(()=>blockPlayback(current,playbackAudio,stream));}catch{blockPlayback(current,playbackAudio,stream);}};
         mic.getAudioTracks().forEach(track=>pc.addTrack(track,mic));
-        dc=pc.createDataChannel('oai-events');const channel=dc,connection=pc;channel.onmessage=event=>receive(event.data,current);channel.onerror=()=>{if(current!==epoch||disposed||dc!==channel||state==='closing'||state==='idle')return;notify('onError','OpenAI voice disconnected. You can still type.');void stop('connection');};
-        connection.onconnectionstatechange=()=>{if(current!==epoch||disposed||pc!==connection||state==='closing'||state==='idle')return;if(['failed','closed'].includes(connection.connectionState)){notify('onError',MESSAGES.media);void stop('connection');}};
-        const ready=new Promise((resolve,reject)=>{channel.onopen=resolve;channel.onclose=()=>{if(current!==epoch||disposed||dc!==channel)return;if(state==='connecting')reject(Error(MESSAGES.media));else if(state!=='closing'&&state!=='idle'){notify('onError',MESSAGES.media);void stop('connection');}};});ready.catch(()=>{});
-        const offer=await bounded(pc.createOffer(),5000,'Voice negotiation timed out.');await bounded(pc.setLocalDescription(offer),5000,'Voice negotiation timed out.');
+        dc=pc.createDataChannel('oai-events');const channel=dc,connection=pc;channel.onmessage=event=>receive(event.data,current);channel.onerror=()=>{if(current!==epoch||disposed||dc!==channel||state==='closing'||state==='idle')return;reportFailure(Error(MESSAGES.disconnected));void stop('connection');};
+        connection.onconnectionstatechange=()=>{if(current!==epoch||disposed||pc!==connection||state==='closing'||state==='idle')return;if(['failed','closed'].includes(connection.connectionState)){reportFailure(Error(MESSAGES.media));void stop('connection');}};
+        const ready=new Promise((resolve,reject)=>{channel.onopen=resolve;channel.onclose=()=>{if(current!==epoch||disposed||dc!==channel)return;if(state==='connecting')reject(Error(MESSAGES.media));else if(state!=='closing'&&state!=='idle'){reportFailure(Error(MESSAGES.media));void stop('connection');}};});ready.catch(()=>{});
+        const offer=await bounded(pc.createOffer(),5000,MESSAGES.setupTimeout);await bounded(pc.setLocalDescription(offer),5000,MESSAGES.setupTimeout);
         await gatherIce(pc,current);if(current!==epoch)throw Error('Voice start cancelled.');
         const opening=request({action:'start',sdp:pc.localDescription?.sdp||offer.sdp,...(capabilities.demoToken?{demoToken:capabilities.demoToken}:{})},{signal:abort.signal});
         opening.then(answer=>{if(current!==epoch)void stopLateAnswer(answer);},()=>{});
-        const answer=await bounded(opening,15000,'OpenAI voice setup timed out.');
+        const answer=await bounded(opening,15000,MESSAGES.setupTimeout);
         if(current!==epoch)throw Error('Voice start cancelled.');
         if(typeof answer.sdp!=='string'||!/^v=0\r?\n/.test(answer.sdp)||typeof answer.stopToken!=='string')throw Error('OpenAI voice answer could not be verified.');
         stopCredential=answer.stopToken;
-        await bounded(pc.setRemoteDescription({type:'answer',sdp:answer.sdp}),5000,'Voice negotiation timed out.');await bounded(ready,10000,MESSAGES.media);
+        await bounded(pc.setRemoteDescription({type:'answer',sdp:answer.sdp}),5000,MESSAGES.setupTimeout);await bounded(ready,10000,MESSAGES.media);
         if(current!==epoch)throw Error('Voice start cancelled.');
         const duration=Math.min(120000,Math.max(1000,Number(answer.maxDurationMs)||120000),Number.isFinite(answer.expiresAt)?Math.max(0,answer.expiresAt-Date.now()):120000);
-        deadline=timeout(duration,()=>void stop('limit'));setState('listening');
+        deadline=timeout(duration,()=>void stop('limit'));setState('listening');notify('onConnectionPhase','connected');
         try{if(typeof options.getContext==='function')updateContext(options.getContext());}catch{}
         if(options.greeting!==false){requestResponse({instructions:'Greet the shopper warmly in one short sentence, then ask whether this is a piece for them or a gift. Do not name products or promise any shop facts yet. Speak as the Brites AI concierge, with a relaxed natural voice.',tool_choice:'none',max_output_tokens:300},turnVersion,'');settleState();}
         return true;
-      }catch(error){if(current===epoch){notify('onError',safeErrorMessage(error));await stop('failed');}return false;}
+      }catch(error){if(current===epoch){reportFailure(error);await stop('failed');}return false;}
     }
     function stop(reason='user'){
       if(closing)return closing;if(state==='idle'){cleanup();return Promise.resolve();}
-      const token=stopCredential;stopCredential=null;setState('closing');++epoch;abort?.abort();mic?.getTracks().forEach(track=>track.stop());interrupt('stop');cleanup();
+      const token=stopCredential,stoppedError=['failed','connection','playback'].includes(reason)?lastError:null;stopCredential=null;setState('closing');++epoch;abort?.abort();mic?.getTracks().forEach(track=>track.stop());interrupt('stop');cleanup();
       // WebRTC cancellation clears output immediately. The server hangs up the
       // exact signed call; its independently recorded deadline remains a backup.
-      closing=(async()=>{if(token){try{const result=await bounded(request({action:'stop',stopToken:token},{keepalive:true}),5500,'Voice stop confirmation timed out.');notify('onClose',{serverStopped:result.stopped===true});}catch{notify('onClose',{serverStopped:false});}}cleanup();setState('idle');notify('onStopped',reason);})().finally(()=>{closing=null;});return closing;
+      closing=(async()=>{if(token){try{const result=await bounded(request({action:'stop',stopToken:token},{keepalive:true}),5500,'Voice stop confirmation timed out.');notify('onClose',{serverStopped:result.stopped===true});}catch{notify('onClose',{serverStopped:false});}}cleanup();setState('idle');notify('onStopped',reason,{error:stoppedError});})().finally(()=>{closing=null;});return closing;
     }
     const onHidden=()=>{if(doc?.hidden)void stop('hidden');},onPageHide=()=>void stop('pagehide');
     doc?.addEventListener('visibilitychange',onHidden);rt.addEventListener?.('pagehide',onPageHide);
     async function dispose(){disposed=true;doc?.removeEventListener('visibilitychange',onHidden);rt.removeEventListener?.('pagehide',onPageHide);await stop('disposed');}
-    return {start,stop,cancel:stop,interrupt,dispose,updateContext,get state(){return state;}};
+    return {start,stop,cancel:stop,interrupt,dispose,updateContext,resumeAudio,get state(){return state;},get lastError(){return lastError;},get playbackBlocked(){return playbackBlocked;}};
   }
-  return {create,rms,validateToolArguments,publicContext};
+  return {create,rms,validateToolArguments,publicContext,MESSAGES,publicFailure};
 });

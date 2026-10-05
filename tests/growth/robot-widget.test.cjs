@@ -65,7 +65,7 @@ test('explicit Talk loads the adapter once; feature-disabled start returns an in
 test('adapter script failure and start rejection restore inactive controls while typed shopping remains usable', async t => {
   const h=harness(t,{startThrows:true});h.open();h.voiceButton.click();await settle();h.loader().dispatchEvent(new h.win.Event('error'));await settle();
   assert.equal(h.voiceButton.disabled,false);assert.equal(h.voiceCalls.start,0);assert.equal(h.voiceButton.getAttribute('aria-pressed'),'false');
-  assert.equal(h.root.querySelector('.voice-state').textContent,'Here to help','failed adapter load must not leave a perpetual availability spinner');
+  assert.equal(h.root.querySelector('.voice-state').textContent,'Voice not connected','failed adapter load must retain a truthful connection result');
   await h.activate();assert.equal(h.voiceButton.disabled,false);assert.equal(h.voiceButton.getAttribute('aria-pressed'),'false');
   assert.match(h.root.querySelector('.status').textContent,/Voice is unavailable/);
   await h.ask('A bunny necklace');assert.equal(h.root.querySelectorAll('.card').length,1);assert.deepEqual(h.deviceCalls,[]);
@@ -117,7 +117,7 @@ test('dismissed or malformed voice tool calls return a safe error without checki
 test('voice constructor failure cannot strand the Talk control in a disabled loading state',async t=>{
   const h=harness(t,{createThrows:true});h.open();await h.activate();
   assert.equal(h.voiceButton.disabled,false);assert.equal(h.voiceButton.getAttribute('aria-pressed'),'false');
-  assert.equal(h.root.querySelector('.voice-state').textContent,'Here to help');
+  assert.equal(h.root.querySelector('.voice-state').textContent,'Voice not connected');
   await h.ask('A bunny necklace');assert.equal(h.root.querySelectorAll('.card').length,1);
 });
 

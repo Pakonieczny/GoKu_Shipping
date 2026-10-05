@@ -45,9 +45,11 @@ test('unbounded time, elapsed, gaze and amplitude cannot create non-finite rig d
 test('calm and reassuring contexts remove celebratory bounce and large gestures', () => {
   for (const emotion of ['calm', 'reassuring']) {
     const success = avatar.poseFor({state: 'success', time: 0, elapsed: .6, emotion});
-    assert.equal(success.emotion, emotion); assert.equal(success.bob, 0); assert.equal(success.headRoll, -.012); assert.equal(success.armLift, .025);
+    assert.equal(success.emotion, emotion); assert.equal(success.bob, 0); assert.ok(Math.abs(success.headRoll) < .02); assert.equal(success.armLift, .025);
   }
-  assert.ok(avatar.poseFor({state: 'success', time: 0, elapsed: .6, emotion: 'celebrate'}).bob > .1);
+  const celebration = avatar.poseFor({state: 'success', time: 0, elapsed: .6, emotion: 'celebrate'});
+  assert.equal(celebration.faceExpression, 'delighted'); assert.ok(celebration.smileCurve > .6);
+  assert.ok(celebration.bob >= 0 && celebration.bob <= .012); assert.equal(celebration.bodyYaw, 0);
   assert.equal(avatar.validEmotion('untrusted'), null);
 });
 test('reduced motion preserves every mood without timed blinks, breathing or ring rotation', () => {
@@ -67,7 +69,7 @@ test('WebGL failure gives an explicitly animated 2-D vector robot, with no portr
   assert.equal(h.api.element.style.getPropertyValue('--brites-eye-color'), '#ab87ff');
   h.api.setState('speaking'); h.api.setLevel(.8);
   assert.equal(h.api.element.style.getPropertyValue('--brites-speech-level'), '0.8');
-  assert.equal(h.api.element.style.getPropertyValue('--brites-speech-scale'), '1.112');
+  assert.equal(h.api.element.style.getPropertyValue('--brites-speech-scale'), '1.064');
   h.api.setEmotion('calm'); h.api.setState('success'); assert.match(h.api.element.querySelector('.brites-avatar__caption').textContent, /Here with you/);
   assert.equal(h.api.snapshot().emotion, 'calm');
 });
@@ -96,7 +98,8 @@ test('user pause stops the WebGL scene and resumed rendering receives the explic
 });
 test('vector animation stylesheet has explicit pause/reduced-motion bounds and no raster fallback', () => {
   const css = fs.readFileSync(require.resolve('../../brites-concierge-avatar.css'), 'utf8');
-  assert.match(css, /@keyframes britesRobotBlink/); assert.match(css, /@keyframes britesRobotSpeak/);
+  assert.match(css, /@keyframes britesRobotBlink/); assert.match(css, /@keyframes britesRobotOffer/);
+  assert.doesNotMatch(css, /@keyframes britesRobot(?:Speak|Float|Look)/);
   assert.match(css, /data-motion=paused.*animation-play-state:paused/);
   assert.match(css, /prefers-reduced-motion:reduce.*animation:none/);
   assert.doesNotMatch(css, /data-image=ready/);
