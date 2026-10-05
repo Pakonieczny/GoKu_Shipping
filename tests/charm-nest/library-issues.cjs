@@ -47,7 +47,7 @@ const eq = (a, b, m) => assert.deepEqual(JSON.parse(JSON.stringify(a === undefin
     const feed = { id: 'gf1', label: 'GF Sheet 1', code: 'GF', metal: 'gold', issues: F.issues('gf1', 3, { keys: ['pooled', 'noSku', 'otherSheetNotReady'], own: 'engraving' }) };
     let m = LI.model(feed, { step: 'orders' });
     assert.equal(m.title, 'Order check'); assert.equal(m.own, null, 'the Order check panel lists the orders only'); assert.equal(m.orders.length, 3); assert.equal(m.groups, null, 'three issues are plain rows, not groups');
-    eq(m.orders.map(o => o.reason.chip), ['1 piece not on a sheet yet', '1 piece has no SKU', 'Waits on SS Sheet 1']);
+    eq(m.orders.map(o => o.reason.chip), ['Not on a sheet yet', 'No SKU', 'Waits on SS Sheet 1']);
     eq(m.orders.map(o => o.reason.tone), ['gold', 'clay', 'slate']); assert.equal(m.hard, true, 'a missing SKU needs a person');
     m = LI.model(feed, { step: 'engraving' });
     assert.equal(m.title, 'Engraving'); assert.equal(m.orders.length, 0); assert.equal(m.count, 0); eq([m.own.go, m.own.label], ['engraving', 'Open engraving approvals'], 'for Engraving only the single link');
@@ -58,7 +58,7 @@ const eq = (a, b, m) => assert.deepEqual(JSON.parse(JSON.stringify(a === undefin
     m = LI.model({ ...feed, issues: [] }, { step: 'orders' }); assert(!m.own && !m.count, 'no issues, nothing to show');
     // an engraving issue that names an order is not a row (Paul: no back engraving status in this list)
     m = LI.model({ ...feed, issues: [{ step: 'engraving', key: 'x', orderId: '7', customer: 'X', open: { type: 'order', id: '7' } }, ...F.issues('gf1', 1, { keys: ['noDesign'] })] }, { step: 'orders' });
-    eq(m.orders.map(o => o.reason.chip), ['1 piece has no design']);
+    eq(m.orders.map(o => o.reason.chip), ['No design']);
     // the order is listed once; long lists group by reason
     m = LI.model({ ...feed, issues: [...F.issues('gf1', 2, { keys: ['pooled'] }), ...F.issues('gf1', 2, { keys: ['pooled'] })] }, { step: 'orders' }); assert.equal(m.orders.length, 2, 'an order is listed once');
     m = LI.model({ ...feed, issues: F.issues('gf1', 40) }, { step: 'orders' });
@@ -90,7 +90,7 @@ const eq = (a, b, m) => assert.deepEqual(JSON.parse(JSON.stringify(a === undefin
   b1.click(); await tick();
   let p = panel(); assert(p, 'the \'!\' opens the panel'); assert.equal(p.getAttribute('role'), 'dialog'); assert.equal(b1.getAttribute('aria-expanded'), 'true'); assert.equal(p.parentElement, d.body, 'a fixed layer on the page, not inside the card');
   assert.equal(rowsOf(p).length, 5); assert.match(p.querySelector('.lisHead b').textContent, /^Order check$/); assert.match(p.querySelector('.lisCount').textContent, /5 issues/i);
-  assert.match(texts(p), /1 piece not on a sheet yet/); assert.match(texts(p), /Waits on SS Sheet 1/); assert.match(texts(p), /1 piece has no SKU/);
+  assert.match(texts(p), /Not on a sheet yet/); assert.match(texts(p), /Waits on SS Sheet 1/); assert.match(texts(p), /No SKU/); assert(rowsOf(p).every(r => r.querySelector('.lisChip').textContent.split(' ').length <= 6), 'one short chip: six words at most');
   for (const bad of [/\bNesting\b/, /\bBack files\b/, /\bQR label\b/, /\bEngraving\b/, /Layout verified/, /\b\d+ of \d+\b/, /\blines?\b/i, /back engraving/i]) assert(!bad.test(texts(p)), `nothing about completed steps or engraving: ${bad}`);
   assert.equal(p.querySelectorAll('svg path[d*="M2.6 6.3"]').length, 0, 'no completed ticks');
   const first = rowsOf(p)[0]; assert.equal(first.querySelector('b').textContent, w.__feed.gf1[0].orderId); assert.equal(first.querySelector('i').textContent, 'Nathaly Soto');
@@ -98,6 +98,9 @@ const eq = (a, b, m) => assert.deepEqual(JSON.parse(JSON.stringify(a === undefin
   assert(d.activeElement && p.contains(d.activeElement), 'focus moves into the panel');
   // pictures: the listing photo from the page's own cache, the quiet piece icon until it is there
   assert.equal(first.querySelectorAll('.lisTh svg').length, 1, 'a quiet piece icon where there is no picture yet');
+  assert.equal(p.querySelectorAll('[data-lid],[data-listing],[data-vector]').length, 0, 'a row\'s picture tile carries none of the page\'s photo-loader hooks (it wrote "Awaiting photo preparation" into the tile once the order rows loaded)');
+  // the page's own photo loader (ListMedia / wantImage) walks [data-lid]: run its selector on our panel and nothing is found to write into
+  assert.equal(d.querySelectorAll('[data-lid]').length, 0);
 
   // ── 2. a press on a row hands over to the page's own helpers; the panel comes back when that window closes, with what is left
   const orderId = w.__feed.gf1[1].orderId;
@@ -135,8 +138,8 @@ const eq = (a, b, m) => assert.deepEqual(JSON.parse(JSON.stringify(a === undefin
   w.__feed.gf1 = [{ ...w.__feed.gf1[0], key: 'noSku' }, ...w.__feed.gf1.slice(2), ...F.issues('gf1', 1, { start: 4200000000, keys: ['held'] })];   // row 1 changed its reason, row 2 is gone, a new one arrives
   L.changed(); await tick(300);
   assert.equal(panel(), p, 'the same panel, updated in place'); const now = rowsOf(p);
-  assert.equal(now.length, 5, 'one fell away, one arrived'); assert(!now.some(r => r.dataset.id === ids[1]), 'the row that is no longer an issue folds away'); assert(now.some(r => /on hold/.test(r.textContent) && r.dataset.id === '4200000000'), 'a new issue slides in');
-  assert.match(now[0].textContent, /1 piece has no SKU/, 'a row re-words itself when its reason changes'); assert.equal(now.find(r => r.dataset.id === ids[2]), keep, 'a row that did not change is the same element'); assert.equal(keep.querySelector('.lisTh'), keepImg);
+  assert.equal(now.length, 5, 'one fell away, one arrived'); assert(!now.some(r => r.dataset.id === ids[1]), 'the row that is no longer an issue folds away'); assert(now.some(r => /On hold/.test(r.textContent) && r.dataset.id === '4200000000'), 'a new issue slides in');
+  assert.match(now[0].textContent, /No SKU/, 'a row re-words itself when its reason changes'); assert.equal(now.find(r => r.dataset.id === ids[2]), keep, 'a row that did not change is the same element'); assert.equal(keep.querySelector('.lisTh'), keepImg);
   assert.equal(b1.getAttribute('aria-expanded'), 'true');
   // the card drawn anew (its '!' is a new element): the panel follows it
   const parent = b1.parentElement; b1.remove(); const b2 = bang(); b2.dataset.issuesId = 'gf1'; (parent.isConnected ? parent : card).appendChild(b2); L.changed(); await tick(200);
@@ -160,10 +163,13 @@ const eq = (a, b, m) => assert.deepEqual(JSON.parse(JSON.stringify(a === undefin
   // ── 6. forty issues: groups by reason, each folded with its count and a stack of pictures; "Show N more"
   w.__feed.gf1 = F.issues('gf1', 40); bang().click(); await tick(); p = panel();
   const heads = [...p.querySelectorAll('.lisGroup')]; assert(heads.length >= 3 && heads.length <= 9, 'grouped by reason'); assert.equal(rowsOf(p).length, 0, 'folded: the groups show a count and a stack, not forty rows');
-  assert(heads.every(h => h.querySelector('.lisN') && h.querySelector('.lisStack') && h.getAttribute('aria-expanded') === 'false'));
+  assert(heads.every(h => h.querySelector('.lisStack') && h.getAttribute('aria-expanded') === 'false' && /order/.test(h.getAttribute('aria-label'))));
+  assert(heads.every(h => { const n = h.dataset.issueOrders.split(',').length; return (n > 3) === !h.querySelector('.lisN'); }), 'a folded group says its size once: by the pictures and "+N" when there are more than three, by a count when there are not');
   assert.match(p.querySelector('.lisCount').textContent, /40 issues/i);
+  assert(heads.every(h => { const t = [...h.querySelectorAll('.lisStack .lisMini')]; const n = h.dataset.issueOrders.split(',').length; return n > 3 ? t.length === 4 && /^\+\d+$/.test(t[3].textContent) && +t[3].textContent.slice(1) === n - 3 : t.length === n; }), 'a folded group shows at most three pictures, then "+N"');
+  assert.equal(p.querySelectorAll('[data-lid],[data-listing],[data-vector]').length, 0, 'none of the page\'s own photo loaders\' hooks: it would write its "Awaiting photo preparation" status words into our tiles');
   heads[0].click(); await tick(300); assert.equal(heads[0].getAttribute('aria-expanded'), 'true'); const shown = rowsOf(p).length; assert(shown >= 3 && shown <= 4, `a group opens to a few rows (${shown})`);
-  const more = p.querySelector('.lisMore'); assert(more && /^Show \d+ more$/.test(more.textContent)); const total = +heads[0].querySelector('.lisN').textContent; assert.equal(+/\d+/.exec(more.textContent)[0], total - shown);
+  const more = p.querySelector('.lisMore'); assert(more && /^Show \d+ more$/.test(more.textContent)); const total = heads[0].dataset.issueOrders.split(',').length; assert.equal(+heads[0].querySelector('.lisN').textContent, total, 'an open group says how many it holds'); assert.equal(+/\d+/.exec(more.textContent)[0], total - shown);
   more.click(); await tick(300); assert.equal(rowsOf(p).length, total, 'Show more shows the rest'); assert.equal(p.querySelector('.lisMore').textContent, 'Show less');
   assert(!/\blines?\b/i.test(texts(p)), 'pieces, never lines'); w.eval('LibraryIssues.close()'); await tick(200);
 
@@ -185,7 +191,7 @@ const eq = (a, b, m) => assert.deepEqual(JSON.parse(JSON.stringify(a === undefin
     const rb = card.querySelector('.flowBox button.flowBang[data-issues-step="orders"]'); assert(rb, 'the rail has its \'!\' on the Order check step');
     rb.click(); await tick(); p = panel(); assert(p, 'the \'!\' opens the panel from the real issues');
     eq(rowsOf(p).map(r => r.dataset.issueOrder), ids.slice(0, 4), 'one row per order that something holds back, nothing for the orders that are ready');
-    eq(rowsOf(p).map(r => r.querySelector('.lisChip').textContent), ['1 piece not on a sheet yet', '1 piece has no SKU', 'Waits on SS Sheet 1', 'On hold: check customer changes'], 'one short plain reason each, a held piece says why');
+    eq(rowsOf(p).map(r => r.querySelector('.lisChip').textContent), ['Not on a sheet yet', 'No SKU', 'Waits on SS Sheet 1', 'On hold: check customer changes'], 'one short plain reason each, a held piece says why');
     eq(rowsOf(p).map(r => r.querySelector('.lisWho i').textContent), ['Nathaly Soto', 'Emily Chambers', 'Leslie Suhr', 'Jechelle Aragones'], 'the customer comes with the issue');
     assert.equal(w.LibraryIssues.listed().length > 0, true); assert.equal(p.getAttribute('data-issues-for'), 'sheet:gf1');
     assert(!/Order 4|completed|Nesting|QR label|Back files|\blines?\b/i.test(texts(p)), 'only issues, in pieces');

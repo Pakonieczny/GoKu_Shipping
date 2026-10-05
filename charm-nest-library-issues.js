@@ -39,12 +39,13 @@
   const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
   const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
   const sheetsWord = labels => labels.length === 1 ? labels[0] : labels.length ? plural(labels.length, 'sheet', 'sheets') : 'another sheet';
+  // one short plain reason per order: the same words as its group's header (the dots beside it already say which piece)
   const REASON = {
-    pooled: { tone: 'gold', group: () => 'Not on a sheet yet', chip: n => `${plural(n, 'piece', 'pieces')} not on a sheet yet` },
-    noSku: { tone: 'clay', group: () => 'No SKU', chip: n => n === 1 ? '1 piece has no SKU' : `${n} pieces have no SKU` },
-    unmatched: { tone: 'clay', group: () => 'Unknown SKU', chip: n => n === 1 ? '1 piece has an unknown SKU' : `${n} pieces have unknown SKUs` },
-    noDesign: { tone: 'clay', group: () => 'No design', chip: n => n === 1 ? '1 piece has no design' : `${n} pieces have no design` },
-    held: { tone: 'clay', group: () => 'On hold', chip: n => n === 1 ? '1 piece is on hold' : `${n} pieces are on hold` },
+    pooled: { tone: 'gold', group: () => 'Not on a sheet yet', chip: () => 'Not on a sheet yet' },
+    noSku: { tone: 'clay', group: () => 'No SKU', chip: () => 'No SKU' },
+    unmatched: { tone: 'clay', group: () => 'Unknown SKU', chip: () => 'Unknown SKU' },
+    noDesign: { tone: 'clay', group: () => 'No design', chip: () => 'No design' },
+    held: { tone: 'clay', group: () => 'On hold', chip: () => 'On hold' },
     otherSheetNotReady: { tone: 'slate', group: s => `Waits on ${s}`, chip: (n, s) => `Waits on ${s}` },
     unverified: { tone: 'gold', group: () => 'Not checked yet', chip: () => 'Not checked yet' }
   };
@@ -171,8 +172,9 @@
     chev: '<svg class="lisCh" viewBox="0 0 16 16" aria-hidden="true"><path d="M6 3.5 10.5 8 6 12.5"/></svg>'
   };
   const photos = new Map();   // listing id -> { url | null, busy, at }
-  const thumbHtml = o => `<span class="lisTh" data-lid="${esc(o.listingId)}" data-url="${esc(o.thumb)}">${ICON.piece}</span>`;
-  const dotsHtml = o => `<span class="lisDots" aria-hidden="true">${o.dots.map(d => `<i class="lisDot${d.ring ? ' ring' : ''}"${d.metal ? ` data-m="${esc(d.metal)}"` : ''}${d.tone ? ` data-t="${d.tone}"` : ''}></i>`).join('')}</span>`;
+  // (our own attribute names: the page's photo loader fills every [data-lid] / [data-listing] it finds with its status words)
+  const thumbHtml = o => `<span class="lisTh" data-lis-lid="${esc(o.listingId)}" data-lis-url="${esc(o.thumb)}">${ICON.piece}</span>`;
+  const dotsHtml = o => `<span class="lisDots" role="img" aria-label="${esc(`${plural(o.dots.length, 'piece', 'pieces')}, ${o.dots.filter(d => d.ring).length} waiting`)}">${o.dots.map(d => `<i class="lisDot${d.ring ? ' ring' : ''}"${d.metal ? ` data-m="${esc(d.metal)}"` : ''}${d.tone ? ` data-t="${d.tone}"` : ''}></i>`).join('')}</span>`;
   const rowHtml = (o, chip) => `<button type="button" class="lisRow lisGo" data-go="${o.go}" data-id="${esc(o.target)}" data-pool="${esc(o.pool)}" data-issue-step="orders" data-issue-key="${esc(o.key)}" data-issue-order="${esc(o.orderId)}" aria-label="${esc(`Open order ${o.orderId}${o.customer ? ', ' + o.customer : ''}${chip ? ', ' + o.reason.chip : ''}`)}">${thumbHtml(o)}<span class="lisTx"><span class="lisWho"><b>${esc(o.orderId)}</b>${o.customer ? `<i>${esc(o.customer)}</i>` : ''}</span><span class="lisSub">${dotsHtml(o)}${chip ? `<span class="lisChip ${o.reason.tone}">${esc(o.reason.chip)}</span>` : ''}</span></span>${ICON.chev}</button>`;
   const sheetRowHtml = s => { const inner = `<span class="lisTh lisTile" ${s.metal ? `data-m="${esc(s.metal)}"` : ''}>${esc(s.code || '')}</span><span class="lisTx"><span class="lisWho"><b class="sans">${esc(s.label)}</b></span><span class="lisSub"><span class="lisChip slate">${esc(s.chip)}</span></span></span>`, hook = ` data-issue-step="laser" data-issue-key="${esc(s.key)}" data-issue-sheet="${esc(s.id)}"`;
     return s.id ? `<button type="button" class="lisRow lisGo" data-go="sheet" data-id="${esc(s.id)}"${hook} aria-label="${esc('Open ' + s.label)}">${inner}${ICON.chev}</button>` : `<div class="lisRow lisStatic"${hook}>${inner}<span></span></div>`; };
@@ -190,10 +192,11 @@
     if (m.groups) {
       for (const g of m.groups) {
         const open = openGroup(m, g, ui), full = ui.more.has(g.k), list = open ? (full ? g.orders : g.orders.slice(0, SHOWN)) : [];
-        const stack = open ? '' : `<span class="lisStack" aria-hidden="true">${g.orders.slice(0, 4).map(o => `<span class="lisMini" data-lid="${esc(o.listingId)}" data-url="${esc(o.thumb)}"></span>`).join('')}</span>`;
-        out.push({ k: g.k + ':h', html: `<button type="button" class="lisGroup" data-fold="${esc(g.k)}" data-issue-group="${esc(g.orders[0].key)}" data-issue-orders="${esc(g.orders.map(o => o.orderId).join(','))}" aria-expanded="${open}"><span class="lisChip big ${g.tone}">${esc(g.text)}</span><span class="lisN">${g.orders.length}</span>${stack}${ICON.chev}</button>` });
+        // a folded group: up to three pictures overlapping, then "+N" (never a fourth empty disc)
+        const stack = open ? '' : `<span class="lisStack" aria-hidden="true">${g.orders.slice(0, 3).map(o => `<span class="lisMini" data-lis-lid="${esc(o.listingId)}" data-lis-url="${esc(o.thumb)}">${ICON.piece}</span>`).join('')}${g.orders.length > 3 ? `<span class="lisMini lisPlus">+${g.orders.length - 3}</span>` : ''}</span>`;
+        out.push({ k: g.k + ':h', html: `<button type="button" class="lisGroup" data-fold="${esc(g.k)}" data-issue-group="${esc(g.orders[0].key)}" data-issue-orders="${esc(g.orders.map(o => o.orderId).join(','))}" aria-label="${esc(`${g.text}, ${plural(g.orders.length, 'order', 'orders')}`)}" aria-expanded="${open}"><span class="lisChip big ${g.tone}">${esc(g.text)}</span>${open || g.orders.length <= 3 ? `<span class="lisN">${g.orders.length}</span>` : ''}${stack}${ICON.chev}</button>` });
         for (const o of list) out.push({ k: o.k, html: rowHtml(o, false) });
-        if (open && g.orders.length > SHOWN) out.push({ k: g.k + ':m', html: `<button type="button" class="lisMore" data-more="${esc(g.k)}" aria-expanded="${full}">${full ? 'Show less' : `Show ${g.orders.length - SHOWN} more`}</button>` });
+        if (open && g.orders.length > SHOWN) out.push({ k: g.k + ':m', html: `<button type="button" class="lisMore" data-more="${esc(g.k)}" aria-expanded="${full}">${full ? 'Show less' : `Show ${g.orders.length - SHOWN} more`}${ICON.chev}</button>` });
       }
     } else for (const o of m.orders) out.push({ k: o.k, html: rowHtml(o, true) });
     for (const b of out) b.sig = b.html;
@@ -239,19 +242,19 @@
 .lisTile[data-m]{--c:var(--mc)}
 .lisSpin{position:absolute;right:3px;bottom:3px;width:10px;height:10px;border:2px solid var(--line,#e4ddd0);border-top-color:var(--ink70,#5b554c);border-radius:50%;animation:lisSpin .7s linear infinite}
 @keyframes lisSpin{to{transform:rotate(360deg)}}
-.lisTx{min-width:0;display:grid;gap:5px;align-content:center}
+.lisTx{flex:1 1 auto;min-width:0;display:grid;gap:5px;align-content:center}
 .lisWho{display:flex;align-items:baseline;gap:7px;min-width:0}
 .lisWho b{flex:none;font:700 12px/1.2 var(--mono,monospace);color:var(--ink,#1c1a17);letter-spacing:0}
 .lisWho b.sans{font:600 13px/1.25 var(--sans,system-ui,sans-serif)}
 .lisWho i{min-width:0;font:11px/1.2 var(--sans,system-ui,sans-serif);font-style:normal;color:var(--ink45,#938c80);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.lisSub{display:flex;align-items:center;gap:7px;min-width:0}
+.lisSub{display:flex;align-items:center;gap:6px;min-width:0}
 .lisDots{display:inline-flex;gap:3px;flex:none}
-.lisDot{width:8px;height:8px;border-radius:50%;background:var(--ink25,#c4bdb0)}
+.lisDot{width:10px;height:10px;border-radius:50%;background:var(--ink25,#c4bdb0)}
 .lisDot[data-m]{background:var(--mc)}
 .lisDot.ring{background:transparent;border:2px solid var(--clay,#b0563f)}
 .lisDot.ring[data-t=gold]{border-color:var(--gold2,#caa861)}.lisDot.ring[data-t=slate]{border-color:var(--slate,#4a6b78)}.lisDot.ring[data-m]{border-color:var(--mc)}
-.lisChip{display:inline-flex;align-items:center;gap:5px;min-width:0;max-width:100%;font:650 10.5px/1 var(--sans,system-ui,sans-serif);padding:4px 8px 4px 7px;border-radius:999px;background:var(--goldSoft,#f0e6cd);color:#7a5a1d;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.lisChip::before{content:"";flex:none;width:5px;height:5px;border-radius:50%;background:currentColor;opacity:.7}
+.lisChip{display:inline-block;flex:0 1 auto;min-width:0;max-width:100%;font:650 10.5px/1.1 var(--sans,system-ui,sans-serif);padding:4px 8px 4px 7px;border-radius:999px;background:var(--goldSoft,#f0e6cd);color:#7a5a1d;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.lisChip::before{content:"";display:inline-block;width:5px;height:5px;margin:0 5px 1px 0;vertical-align:middle;border-radius:50%;background:currentColor;opacity:.7}
 .lisChip.clay{background:var(--claySoft,#f4e3dc);color:#8a3a26}
 .lisChip.slate{background:var(--slateSoft,#e1ebee);color:#33525d}
 .lisChip.big{font-size:11px;padding:5px 10px 5px 8px}
@@ -268,12 +271,19 @@ button.lisOwn{cursor:pointer}button.lisOwn:hover,button.lisOwn:focus-visible{bor
 .lisGroup:focus-visible{outline:2px solid var(--gold,#a9823f);outline-offset:1px}
 .lisGroup .lisCh{opacity:1;transition:transform .22s cubic-bezier(.2,.8,.2,1)}
 .lisGroup[aria-expanded=true] .lisCh{transform:rotate(90deg)}
-.lisN{font:700 10px/1 var(--mono,monospace);color:var(--ink45,#938c80)}
+.lisN{flex:none;font:700 10px/1 var(--mono,monospace);color:var(--ink70,#5b554c);background:var(--paper2,#ebe5d9);border-radius:999px;padding:3px 7px}
 .lisStack{margin-left:auto;display:flex;padding-left:8px}
 .lisGroup>.lisCh{margin-left:auto}.lisStack+.lisCh{margin-left:2px}
-.lisMini{position:relative;width:22px;height:22px;margin-left:-8px;border-radius:50%;border:2px solid var(--card,#fffefb);background:var(--paper2,#ebe5d9);overflow:hidden;box-shadow:0 0 0 1px var(--line2,#efe9dd)}
-.lisMore{all:unset;box-sizing:border-box;cursor:pointer;display:block;margin:1px 0 3px 56px;padding:4px 8px;font:600 11.5px/1.2 var(--sans,system-ui,sans-serif);color:var(--slate,#4a6b78);border-radius:8px}
-.lisMore:hover{text-decoration:underline}
+.lisMini{position:relative;flex:none;width:24px;height:24px;margin-left:-8px;border-radius:50%;border:2px solid var(--card,#fffefb);background:var(--paper2,#ebe5d9);overflow:hidden;box-shadow:0 0 0 1px var(--line2,#efe9dd);display:grid;place-items:center;color:var(--ink25,#c4bdb0)}
+.lisMini svg{width:12px;height:12px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+.lisMini.has svg{opacity:0}
+.lisPlus{font:700 9.5px/1 var(--mono,monospace);color:var(--ink70,#5b554c);letter-spacing:0}
+.lisTh:not(.lisTile){font-size:0;line-height:0}
+.lisTh:not(.lisTile)>:not(svg):not(img):not(.lisSpin){display:none!important}
+.lisMore{all:unset;box-sizing:border-box;cursor:pointer;display:flex;align-items:center;justify-content:flex-start;gap:5px;width:100%;min-height:32px;padding:4px 8px 4px 57px;font:650 11px/1.2 var(--sans,system-ui,sans-serif);color:var(--ink70,#5b554c);border-radius:10px}
+.lisMore:hover{color:var(--ink,#1c1a17);background:var(--card2,#faf7f1)}
+.lisMore .lisCh{width:12px;height:12px;opacity:.75;transform:rotate(90deg);transition:transform .22s cubic-bezier(.2,.8,.2,1)}
+.lisMore[aria-expanded=true] .lisCh{transform:rotate(-90deg)}
 .lisStatic{cursor:default}
 button.flowDot[data-issues-open]{position:relative;cursor:pointer}
 button.flowDot[data-issues-open]::before{content:"";position:absolute;inset:-9px;border-radius:50%}
@@ -306,9 +316,9 @@ button.flowDot[data-issues-open][aria-expanded="true"]{box-shadow:0 0 0 4px rgba
   }
   function pictures(scope) {
     const L = root.LaserReview, now = Date.now();
-    for (const host of scope.querySelectorAll('[data-lid],[data-url]')) {
+    for (const host of scope.querySelectorAll('[data-lis-lid],[data-lis-url]')) {
       if (host.querySelector('img')) continue;
-      const lid = host.dataset.lid, url = host.dataset.url;
+      const lid = host.dataset.lisLid, url = host.dataset.lisUrl;
       if (url) { lay(host, url); continue; }
       if (!lid || !L || typeof L.photo !== 'function') continue;
       const rec = photos.get(lid);
@@ -343,15 +353,21 @@ button.flowDot[data-issues-open][aria-expanded="true"]{box-shadow:0 0 0 4px rgba
   function place() {
     const p = st.panel, a = st.anchor;
     if (!p || !a || !a.isConnected) return false;
-    const ar = a.getBoundingClientRect(), whole = (a.closest && a.closest('.flowStep') || a).getBoundingClientRect();   // (below the step's label, never over it)
+    // (below the rail and its "Order check · step 5 of 7" line, never over them; as wide as the sheet's own card, so the next sheet's rail and Approve stay in view)
+    const ar = a.getBoundingClientRect(), whole = (a.closest && (a.closest('.flowBox') || a.closest('.flowStep')) || a).getBoundingClientRect(), cardEl = a.closest && a.closest('.librarySheet,[data-laser-card="sheet"]'), card = cardEl ? cardEl.getBoundingClientRect() : null;
     if (!ar.width && !ar.height) return false;
     const vw = root.innerWidth || 1200, vh = root.innerHeight || 800, bar = doc.querySelector('.topbar');
-    const lo = Math.max(8, (bar ? bar.getBoundingClientRect().bottom : 0) + 8), hi = vh - 8, w = Math.min(336, vw - 16), gap = 11;
-    p.style.width = w + 'px'; p.style.maxHeight = 'none';
-    const h0 = p.offsetHeight, below = hi - (whole.bottom + gap), above = whole.top - gap - lo, down = h0 <= below || below >= above;
+    const lo = Math.max(8, (bar ? bar.getBoundingClientRect().bottom : 0) + 8), hi = vh - 8, gap = 11;
+    let w = Math.min(336, vw - 16); if (card && card.width >= 280 && card.width < w) w = Math.round(card.width);
+    // (the sheet's Approve button sits right under its rail: opening below, the panel starts above the button and covers it whole, never leaving a strip of it showing along the panel's edge)
+    const apEl = cardEl && cardEl.querySelector('.approveBox'), apr = apEl ? apEl.getBoundingClientRect() : null, under = !!(apr && apr.height && apr.top >= whole.bottom - 2);
+    const gapDown = under ? Math.max(5, Math.min(gap, apr.top - 4 - whole.bottom)) : gap, topDown = whole.bottom + gapDown;
+    p.style.width = w + 'px'; p.style.maxHeight = 'none'; p.style.minHeight = '';
+    const h0 = p.offsetHeight, below = hi - topDown, above = whole.top - gap - lo, down = h0 <= below || below >= above;
     const room = Math.max(140, down ? below : above);
-    p.style.maxHeight = room + 'px';
-    const h = Math.min(h0, room), x = clamp(ar.left + ar.width / 2 - 34, 8, vw - w - 8), y = down ? whole.bottom + gap : whole.top - gap - h, ax = clamp(ar.left + ar.width / 2 - x, 20, w - 20);
+    p.style.maxHeight = room + 'px'; p.style.minHeight = down && under ? Math.min(room, Math.max(0, Math.ceil(apr.bottom + 4 - topDown))) + 'px' : '';
+    const dot = ar.left + ar.width / 2, inCard = card && card.width >= w ? [card.left, card.right - w] : [8, vw - w - 8];
+    const h = Math.min(Math.max(h0, parseFloat(p.style.minHeight) || 0), room), x = clamp(clamp(dot - 26, inCard[0], inCard[1]), 8, vw - w - 8), y = down ? topDown : whole.top - gap - h, ax = clamp(dot - x, 20, w - 20);
     p.style.left = Math.round(x) + 'px'; p.style.top = Math.round(Math.max(lo, y)) + 'px';
     p.style.setProperty('--ax', ax + 'px'); p.style.setProperty('--ox', ax + 'px'); p.style.setProperty('--oy', (down ? -6 : h + 6) + 'px');
     p.classList.toggle('up', !down);
@@ -379,11 +395,10 @@ button.flowDot[data-issues-open][aria-expanded="true"]{box-shadow:0 0 0 4px rgba
         tmp.innerHTML = b.html; n._sig = b.sig;
         const now = tmp.firstElementChild;
         if (had && now && had.classList.contains('lisGroup') && now.classList.contains('lisGroup')) {   // (a group header changes in place: its chevron turns, it does not blink)
-          had.setAttribute('aria-expanded', now.getAttribute('aria-expanded'));
-          const os = had.querySelector('.lisStack'), ns = now.querySelector('.lisStack');
-          if (os && !ns) os.remove(); else if (!os && ns) had.insertBefore(ns, had.querySelector('.lisCh'));
-          had.querySelector('.lisN').textContent = now.querySelector('.lisN').textContent;
-          const oc = had.querySelector('.lisChip'), nc = now.querySelector('.lisChip'); if (oc.outerHTML !== nc.outerHTML) oc.replaceWith(nc);
+          had.setAttribute('aria-expanded', now.getAttribute('aria-expanded')); had.setAttribute('aria-label', now.getAttribute('aria-label') || '');
+          const ch = had.querySelector('.lisCh');   // (the chevron stays: it turns; everything else is made again)
+          for (const c of [...had.children]) if (c !== ch) c.remove();
+          for (const c of [...now.children]) if (!c.classList.contains('lisCh')) had.insertBefore(c, ch);
         } else { n.replaceChildren(...tmp.childNodes); if (keep) n.querySelector('.lisGo,.lisMore')?.focus({ preventScroll: true }); }
       }
       if (prev ? prev.nextSibling !== n : body.firstChild !== n) body.insertBefore(n, prev ? prev.nextSibling : body.firstChild);
