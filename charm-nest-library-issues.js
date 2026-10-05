@@ -25,10 +25,11 @@
 
    Round 7 (Paul: "it's on both sheets and both sheets are in the same set" · "a single sheet cannot advance without the rest of its set"):
    a set advances as ONE. A mate sheet of the same set that is not ready is never listed as an issue of an order ("Waits on SS Sheet 1"
-   is gone for a sheet of the same set; an order split between two sets still is one, "Split from RG Sheet 1"). The set's wait is
-   said ONCE, quietly, at the top of the panel: "Waiting for SS Sheet 1 · Engraving", a row that opens that sheet. It is not an issue:
-   it is not counted in the header and never makes a red '!' (a sheet with nothing but a set wait shows a quiet clock on its rail).
-   The entries come from CharmNestReadiness.issues as {step:'laser', key:'waitsOnSheet', quiet:true, label, stepLabel, why, counter, open}.
+   is gone for a sheet of the same set; an order split between two sets still is one, "Split from RG Sheet 1").
+   Round 8 (Paul: "Remove any references to the other sheet from this list ... only related items to that particular sheet"): the set's wait
+   is no part of a sheet's list either. There is no "Waiting for SS Sheet 1" row, no 'Waiting' header and no clock on the rail: the panel counts
+   only what belongs to this sheet, and the set's wait is said once, under the grey Approve button (its reason line and the shortcut that
+   opens the sheet that holds the set). A feed entry {step:'laser', key:'waitsOnSheet'} is dropped here whatever sent it.
 
    Closes on Esc (focus goes back to the '!'), a press outside, the '!' pressed again, the sheet leaving the screen, or
    when nothing is left to show. Keyboard: Tab / Shift+Tab stay inside, Up/Down/Home/End move between rows, Enter opens.
@@ -58,7 +59,7 @@
     split: { tone: 'slate', group: s => `Split from ${s}`, chip: (n, s) => `Split from ${s}` },
     unverified: { tone: 'gold', group: () => 'Not checked yet', chip: () => 'Not checked yet' }
   };
-  const MATE = { waitsOnSheet: 'Not ready yet', missingSheet: 'Not found', setMissing: 'Set not loaded' };
+  const MATE = { missingSheet: 'Not found', setMissing: 'Set not loaded' };
   // a sentence the readiness gave for a reason this panel has no wording for: at most six words, "line" said as "piece"
   const tidy = t => {
     const w = String(t || '').replace(/\s+/g, ' ').replace(/\b(other )?lines\b/gi, '$1pieces').replace(/\bline\b/gi, 'piece').replace(/[.\s]+$/, '').split(' ').filter(Boolean);
@@ -94,7 +95,7 @@
           }
         }
       } else if (s.key === 'laser') {
-        for (const it of s.items) if (it.kind === 'sheet') out.push({ step: 'laser', key: 'waitsOnSheet', quiet: true, label: it.label, open: { type: 'sheet', id: it.id } });
+        continue;   // (the set's wait is said under the Approve button, never in this list)
       } else if (!own && OWN[s.key]) {
         own = true;
         out.unshift({ step: s.key, key: s.key, label: OWN[s.key].label, open: { type: 'sheet', id: feed.id } });
@@ -122,32 +123,23 @@
   }
   function model(feed, opts) {
     opts = opts || {};
-    const every = Array.isArray(feed && feed.issues) ? feed.issues.filter(Boolean) : [];
-    // the set's wait (quiet: not an issue, not counted) is told apart from the issues: it is said once at the top of whichever panel opens
-    // ('waitsOnSheet' is only ever the set's wait now, quiet or not: a mate of the same set never counts as an issue)
-    const isWait = it => it.step === 'laser' && (it.quiet === true || it.key === 'waitsOnSheet'), quiet = every.filter(isWait), all = every.filter(it => !isWait(it));
+    // only what belongs to this sheet: a set mate that merely is not ready is the SET's wait, said under the Approve button, never a row of this list
+    const isWait = it => it.step === 'laser' && (it.quiet === true || it.key === 'waitsOnSheet'), all = (Array.isArray(feed && feed.issues) ? feed.issues : []).filter(it => it && !isWait(it));
     // one panel per step of the rail: the '!' on Order check lists the orders, on Engraving the one link, on Laser cutting the sheets;
     // a '!' whose own step has nothing falls back to whatever the sheet is held by (never an empty panel)
     const mine = opts.step ? all.filter(it => (it.step || 'orders') === opts.step) : [];
     const list = mine.length ? mine : all, step = mine.length ? opts.step : (list[0] && (list[0].step || 'orders')) || opts.step || '';
     const label = String((feed && feed.label) || ''), parts = /^(\S+)\s+(.*)$/.exec(label) || [];
     const code = (feed && feed.code) || (METAL_OF[parts[1]] ? parts[1] : ''), name = code && parts[2] ? parts[2] : label;
-    const m = { id: feed && feed.id, label, code, metal: (feed && feed.metal) || METAL_OF[code] || '', name, step, title: STEP[step] || 'Needs attention', own: null, notes: [], sheets: [], orders: [], waits: [], groups: null, count: 0, hard: false, checking: !!(feed && feed.checking) };
+    const m = { id: feed && feed.id, label, code, metal: (feed && feed.metal) || METAL_OF[code] || '', name, step, title: STEP[step] || 'Needs attention', own: null, notes: [], sheets: [], orders: [], groups: null, count: 0, hard: false, checking: !!(feed && feed.checking) };
     const seen = new Set();
-    for (const it of quiet) {
-      const id = String((it.open && it.open.id) || ''), lc = (/^([A-Z0-9]{2,3}) Sheet/.exec(it.label || '') || [])[1] || '';
-      if (!id || seen.has('w:' + id)) continue;
-      seen.add('w:' + id);
-      const c = it.counter && +it.counter.of > 0 ? `${+it.counter.done || 0} / ${+it.counter.of}` : '';
-      m.waits.push({ k: 'w:' + id, id, label: String(it.label || 'Sheet'), code: lc, metal: METAL_OF[lc] || '', step: String(it.stepLabel || ''), why: String(it.why || ''), counter: c });
-    }
     for (const it of list) {
       if (it.step === 'laser') {
         const id = (it.open && it.open.id) || '';
         if (seen.has('s:' + (id || it.label))) continue;
         seen.add('s:' + (id || it.label));
         const lc = (/^([A-Z0-9]{2,3}) Sheet/.exec(it.label || '') || [])[1] || '';
-        m.sheets.push({ k: 's:' + (id || it.label), id: String(id), label: String(it.label || 'Sheet'), code: lc, metal: METAL_OF[lc] || '', key: it.key || 'waitsOnSheet', chip: MATE[it.key] || MATE.waitsOnSheet });
+        m.sheets.push({ k: 's:' + (id || it.label), id: String(id), label: String(it.label || 'Sheet'), code: lc, metal: METAL_OF[lc] || '', key: it.key || 'missingSheet', chip: MATE[it.key] || MATE.missingSheet });
       } else if (it.orderId && (!it.step || it.step === 'orders')) {
         const id = String(it.orderId);
         if (seen.has('o:' + id)) continue;   // an order is listed once
@@ -199,14 +191,8 @@
     return s.id ? `<button type="button" class="lisRow lisGo" data-go="sheet" data-id="${esc(s.id)}"${hook} aria-label="${esc('Open ' + s.label)}">${inner}${ICON.chev}</button>` : `<div class="lisRow lisStatic"${hook}>${inner}<span></span></div>`; };
   // the groups of a long list start folded (a chip, a count, a stack of pictures) unless there is only one; a press unfolds one
   const openGroup = (m, g, ui) => ui.fold.has(g.k) ? ui.fold.get(g.k) : m.groups.length === 1;
-  // the set's wait: one quiet row per sheet that keeps the set from being approved ("Waiting for SS Sheet 1 · Engraving"); a press opens that sheet
-  const waitRowHtml = w => {
-    const say = `Waiting for ${w.label}${w.step ? ', ' + w.step.toLowerCase() : ''}${w.counter ? ', ' + w.counter : ''}`;
-    return `<button type="button" class="lisWait lisGo" data-go="sheet" data-id="${esc(w.id)}" data-issue-step="laser" data-issue-key="waitsOnSheet" data-issue-sheet="${esc(w.id)}" data-quiet="1" title="${esc(say + ': open ' + w.label)}" aria-label="${esc(say + '. Open ' + w.label)}"><span class="lisWaitI">${ICON.clock}</span><span class="lisWaitTx">Waiting for <b>${esc(w.label)}</b>${w.step ? `<i> · ${esc(w.step)}</i>` : ''}</span>${w.counter ? `<span class="lisWaitN">${esc(w.counter)}</span>` : ''}${ICON.chev}</button>`;
-  };
   function blocks(m, ui) {
     const out = [];
-    for (const w of m.waits) out.push({ k: w.k, html: waitRowHtml(w) });
     if (m.own) {
       const o = m.own, inner = `<span class="lisOwnI">${ICON[o.icon] || ICON.bang}</span><span>${esc(o.label)}</span>${o.go ? ICON.chev : ''}`;
       const hook = ` data-issue-step="${esc(o.step)}" data-issue-key="${esc(o.key)}"`;
@@ -227,7 +213,7 @@
     for (const b of out) b.sig = b.html;
     return out;
   }
-  const sigOf = (m, ui) => JSON.stringify([m.title, m.hard, m.checking, m.count, m.waits.length, m.own && [m.own.k, m.own.label], blocks(m, ui).map(b => b.html)]);
+  const sigOf = (m, ui) => JSON.stringify([m.title, m.hard, m.checking, m.count, m.own && [m.own.k, m.own.label], blocks(m, ui).map(b => b.html)]);
 
   /* ═══ state ═══ */
   const st = { open: false, id: '', step: '', anchor: null, panel: null, body: null, head: null, handed: false, back: null, more: new Set(), fold: new Map(), sig: '', io: null, anim: null, seq: 0, shown: false };
@@ -310,22 +296,10 @@ button.lisOwn{cursor:pointer}button.lisOwn:hover,button.lisOwn:focus-visible{bor
 .lisMore .lisCh{width:12px;height:12px;opacity:.75;transform:rotate(90deg);transition:transform .22s cubic-bezier(.2,.8,.2,1)}
 .lisMore[aria-expanded=true] .lisCh{transform:rotate(-90deg)}
 .lisStatic{cursor:default}
-.lisWait{all:unset;box-sizing:border-box;display:flex;align-items:center;gap:8px;width:100%;min-height:34px;padding:5px 8px;border-radius:10px;font:12px/1.3 var(--sans,system-ui,sans-serif);color:var(--ink70,#5b554c);cursor:pointer;transition:background .15s}
-.lisWait:hover,.lisWait:focus-visible{background:var(--card2,#faf7f1)}
-.lisWait:focus-visible{outline:2px solid var(--gold,#a9823f);outline-offset:1px}
-.lisWaitI{flex:none;width:22px;height:22px;border-radius:50%;display:grid;place-items:center;background:var(--paper2,#ebe5d9);color:var(--ink45,#938c80)}
-.lisWaitI svg{width:13px;height:13px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
-.lisWaitTx{flex:1 1 auto;min-width:0;white-space:normal;overflow-wrap:anywhere}   /* (it wraps to a second line rather than cut the step's name off) */
-.lisWaitTx b{font-weight:650;color:var(--ink,#1c1a17)}
-.lisWaitTx i{font-style:normal;color:var(--ink45,#938c80)}
-.lisWaitN{flex:none;font:700 10px/1 var(--mono,monospace);color:var(--ink70,#5b554c);background:var(--paper2,#ebe5d9);border-radius:999px;padding:3px 7px}
-.lisWait .lisCh{opacity:1}
-.lisCount.quiet{color:var(--ink70,#5b554c);background:var(--paper2,#ebe5d9)}
 button.flowDot[data-issues-open][aria-expanded="true"]{box-shadow:0 0 0 4px rgba(176,86,63,.2)!important}
-button.flowDot[data-issues-open][data-issues-quiet][aria-expanded="true"]{box-shadow:0 0 0 4px var(--line,#e4ddd0)!important}
 @media (hover:none){.lisCh{opacity:1}}
 @media (max-width:480px){.lisRow{min-height:56px}}
-@media (prefers-reduced-motion:reduce){.lisCh,.lisRow,.lisOwn,.lisWait,.lisTh img,.lisMini img{transition:none}.lisRow:hover,.lisRow:focus-visible,button.lisOwn:hover{transform:none}.lisSpin{animation-duration:1.6s}}`;
+@media (prefers-reduced-motion:reduce){.lisCh,.lisRow,.lisOwn,.lisTh img,.lisMini img{transition:none}.lisRow:hover,.lisRow:focus-visible,button.lisOwn:hover{transform:none}.lisSpin{animation-duration:1.6s}}`;
     doc.head.appendChild(s);
   }
 
@@ -411,7 +385,7 @@ button.flowDot[data-issues-open][data-issues-quiet][aria-expanded="true"]{box-sh
   /* drawing the panel from a model: the first time all at once, afterwards by row, so what is still true does not flicker */
   function paintHead(m) {
     const n = m.count;
-    st.head.innerHTML = `<b>${esc(m.title)}</b>${m.checking ? '<span class="lisBusy" role="status"><i class="lisSpin" aria-hidden="true"></i>Checking…</span>' : ''}${n ? `<span class="lisCount${m.hard ? ' clay' : ''}">${plural(n, 'issue', 'issues')}</span>` : m.waits.length ? '<span class="lisCount quiet">Waiting</span>' : ''}`;
+    st.head.innerHTML = `<b>${esc(m.title)}</b>${m.checking ? '<span class="lisBusy" role="status"><i class="lisSpin" aria-hidden="true"></i>Checking…</span>' : ''}${n ? `<span class="lisCount${m.hard ? ' clay' : ''}">${plural(n, 'issue', 'issues')}</span>` : ''}`;
   }
   function draw(m, first) {
     const bs = blocks(m, st), body = st.body, old = new Map([...body.children].map(n => [n.dataset.k, n]));
@@ -455,7 +429,7 @@ button.flowDot[data-issues-open][data-issues-quiet][aria-expanded="true"]{box-sh
     if (st.open) closeNow();
     const feed = feedOf(id, btn); if (!feed) return false;
     const m = model(feed, { step: stepOf(btn) });
-    if (!m.own && !m.count && !m.waits.length) return false;   // (a '!' drawn a moment before the sheet became ready: nothing to say)
+    if (!m.own && !m.count) return false;   // (a '!' drawn a moment before the sheet became ready: nothing to say)
     Object.assign(st, { open: true, id, step: stepOf(btn), anchor: btn, handed: false, back: null, more: new Set(), fold: new Map(), sig: '', seq: st.seq + 1, shown: false });
     const p = st.panel = doc.createElement('div');
     p.className = 'lisPanel'; p.id = 'libIssuesPanel'; p.setAttribute('data-issues-for', 'sheet:' + id); p.setAttribute('role', 'dialog'); p.setAttribute('aria-modal', 'false'); p.setAttribute('aria-label', `What holds ${m.label || 'this sheet'} back`); p.tabIndex = -1;
@@ -497,7 +471,7 @@ button.flowDot[data-issues-open][data-issues-quiet][aria-expanded="true"]{box-sh
     if (a !== st.anchor) rebind(a);
     if (st.handed) return true;   // (shown again, from fresh data, when the window handed over to closes)
     const feed = feedOf(st.id, a), m = feed && model(feed, { step: st.step });
-    if (!m || (!m.own && !m.count && !m.waits.length)) { close(); return false; }
+    if (!m || (!m.own && !m.count)) { close(); return false; }
     mark(true);
     const sig = sigOf(m, st);
     if (sig !== st.sig) { st.sig = sig; draw(m, false); } else pictures(st.panel);
@@ -575,7 +549,7 @@ button.flowDot[data-issues-open][data-issues-quiet][aria-expanded="true"]{box-sh
     if (!a) { close(); return; }
     if (a !== st.anchor) rebind(a);
     const feed = feedOf(st.id, a), m = feed && model(feed, { step: st.step });
-    if (!m || (!m.own && !m.count && !m.waits.length)) { close(); return; }
+    if (!m || (!m.own && !m.count)) { close(); return; }
     mark(true);
     st.sig = sigOf(m, st); draw(m, false); place();
     anim(p, reduced() ? [{ opacity: 0 }, { opacity: 1 }] : [{ opacity: 0, transform: 'scale(.97)' }, { opacity: 1, transform: 'none' }], { duration: reduced() ? 90 : 420, easing: EASE });
@@ -638,7 +612,6 @@ button.flowDot[data-issues-open][data-issues-quiet][aria-expanded="true"]{box-sh
     if (m.own) out.push({ step: m.own.step, key: m.own.key });
     for (const o of m.orders) out.push({ step: 'orders', key: o.key, orderId: o.orderId });
     for (const x of m.sheets) out.push({ step: 'laser', key: x.key, sheetId: x.id });
-    for (const x of m.waits) out.push({ step: 'laser', key: 'waitsOnSheet', sheetId: x.id, quiet: true });
     return out;
   }
   root.LibraryIssues = { open, close, refresh, listed, isOpen: () => st.open, model, adapt, current: () => st.open ? { id: st.id, step: st.step, handed: st.handed } : null };

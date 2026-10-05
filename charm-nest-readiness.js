@@ -353,8 +353,8 @@
   }
   /* ── issues: only what truly holds a sheet back (the "!" panel, the Order check step, the server's gate all read this) ─────────────
    * Never a finished step, never a back-engraving count. One entry per order that has another piece holding it back (see "Pieces"
-   * above), at most one entry for the sheet's own current blocker (no order), and, for a sheet of a set, one QUIET entry per set mate that keeps the
-   * set from being approved (the set's wait, said once; never an order's issue). Pure: the sheet's own record (its orderReadiness, as the server answers it) or, when ctx.rows and ctx.allSheets are
+   * above), at most one entry for the sheet's own current blocker (no order), and, for a sheet of a set, only real set trouble (a sheet of the set that cannot
+   * be found). A set mate that merely is not ready is never listed (round 8): the set's wait is said once, under the Approve button (setGate's reason). Pure: the sheet's own record (its orderReadiness, as the server answers it) or, when ctx.rows and ctx.allSheets are
    * given (the page, or a test), the pieces read from those. */
   const PIECE_PHRASE={pooled:'not on a sheet yet',noSku:'no SKU',held:'held'};
   // an order split across two sets (round 7): its other piece sits on a not-ready sheet of ANOTHER set than the asking sheet's. The cardinal rule
@@ -419,17 +419,17 @@
       }
       if(unread.length)out.push({step:'orders',key:'unverified',label:'Orders not checked yet',orderIds:unread,sheetId:sid,sheetLabel:label,open:{type:'sheet',id:sid}});
     }
-    // A set advances as one (round 7): a sheet's set mates that keep the set from being approved are the SET's wait, never an order's problem.
-    // It is said once, as a quiet entry ({quiet:true}: not an issue, not counted, no red '!'), read from setGate, the Approve buttons' own truth.
+    // A set advances as one, and its wait is the SET's, said once where the Approve button is (setGate's reason line): a sheet's list holds only what
+    // belongs to that sheet (round 8: "only related items to that particular sheet"), so no entry names a set mate that merely is not ready.
     // Only what is truly wrong with the set stays an issue: a sheet of the set that cannot be found, or the set itself not being loaded (those are
     // asked, as before, of a sheet that is itself ready: it is what then holds it).
     if(want('laser') && !(+s.laserDoneAt>0) && s.setId && !s.draft && s.solidIncluded!==false){
       const itself=sheet(rec).included && (completedBefore(rec) || sheet(rec).ready);
       if(ctx.set){
-        const mates=[...new Map((ctx.sheets || []).filter(m=>!m.archived).map(m=>[m.id || m.sheetId,m])).values()].filter(m=>(m.id || m.sheetId)!==sid).map(m=>reps?readFrom(m,reps):m);
-        const gate=setGate(ctx.set,[rec,...mates]),lost=new Set(gate.sheets.filter(x=>x.missing).map(x=>x.sheetId));
-        for(const w of gate.blockers)if(w.sheetId!==sid && !lost.has(w.sheetId))out.push({step:'laser',key:'waitsOnSheet',quiet:true,label:w.sheetLabel,stepKey:w.step,stepLabel:w.stepLabel,why:w.why,counter:w.counter || null,text:w.text,sheetId:sid,sheetLabel:label,open:{type:'sheet',id:w.sheetId}});
-        if(itself)for(const i of ctx.set.sheetIds || [])if(i!==sid && !mates.some(m=>(m.id || m.sheetId)===i))out.push({step:'laser',key:'missingSheet',label:'Sheet missing',sheetId:sid,sheetLabel:label,open:{type:'sheet',id:i}});
+        if(itself){
+          const have=new Set((ctx.sheets || []).filter(m=>!m.archived).map(m=>m.id || m.sheetId));
+          for(const i of ctx.set.sheetIds || [])if(i!==sid && !have.has(i))out.push({step:'laser',key:'missingSheet',label:'Sheet missing',sheetId:sid,sheetLabel:label,open:{type:'sheet',id:i}});
+        }
       }else if(itself && ctx.setMissing)out.push({step:'laser',key:'setMissing',label:'Set not loaded',sheetId:sid,sheetLabel:label,open:{type:'sheet',id:sid}});
     }
     return out;
@@ -439,8 +439,7 @@
    *   order issue (step 'orders', one per order): key 'pooled'|'noSku'|'unmatched'|'noDesign'|'held'|'otherSheetNotReady' (the first of these among the pieces holding it),
    *     orderId, orderLabel, customer, listingId, thumb, pieceCount, pieces:[{index,key,poolId,label,kind,sheetId|null,sheetLabel|null,stage,why}] (the OTHER pieces that hold it), why, open:{type:'order',id,poolId}
    *   own blocker (no order): key 'archived'|'held'|'notInSet'|'roseLine'|'layout'|'approvalsNeeded'|'backFilesMissing'|'qrMissing', label (a few words, no counts), open:{type:'sheet',id}
-   *   set wait (step 'laser', QUIET: {quiet:true}, not an issue, not counted): key 'waitsOnSheet', label (the mate's sheet name), stepKey/stepLabel ('engraving'/'Engraving'),
-   *     why ('back engravings 7 of 25'), counter {done,of}|null, text, open:{type:'sheet',id: the mate}; read from setGate, for every sheet of a set but the mate itself
+   *   no set wait: a set mate that merely is not ready is the SET's wait, said once under the Approve button (setGate().reason), never an entry of a sheet's list
    *   set trouble (step 'laser', real): key 'missingSheet'|'setMissing', label, open:{type:'sheet',id}
    *   an order split across sets: an order issue whose pieces name the other set (split:true, setLabel), worded "Split between Set 1 and Set 2"
    *  ctx (all optional): steps (the steps to report, default all) · rows + allSheets (every order row and EVERY live sheet: the pieces are read from these) · sheets/set/setMissing
@@ -455,8 +454,8 @@
     return out;
   }
   /* ── A set advances as ONE (Paul, 5 Oct, round 7: "you cannot have a green approved button on a single sheet that is part of a
-   * set where the other sheets are not ready yet"). ONE truth for the Approve button, its grey reason, the server's refusal and the
-   * set-level wait row: setGate(set, sheets). Pure (no page, no network): `sheets` are the set's records as the caller reads them
+   * set where the other sheets are not ready yet"). ONE truth for the Approve button, its grey reason and the server's refusal:
+   * setGate(set, sheets). (Round 8: the set's wait is said there and nowhere else; no sheet's issue list carries it.) Pure (no page, no network): `sheets` are the set's records as the caller reads them
    * (the page: LaserReview's projections; the server: its hydrated records).
    *
    * "Ready to be approved" is a sheet's HARD test, the one the button always used for a lone sheet (approveBlock): back engravings

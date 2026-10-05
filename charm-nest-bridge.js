@@ -5716,10 +5716,6 @@ button.flowDot:hover{transform:scale(1.14)}
 button.flowDot:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
 .flowStep.waiting .flowBang{background:var(--card);border-color:var(--gold2);color:#8a6a1f}
 .flowStep.waiting .flowBang::after{display:none}
-.flowStep.waiting .flowWait{background:var(--card);border-color:var(--ink25);color:var(--ink45)}
-.flowStep.waiting.current .flowWait{border-color:var(--ink25);box-shadow:0 0 0 3px var(--line)}
-.flowStep.waiting.current .flowWait::after{display:none}
-.flowWait svg{width:10px;height:10px;stroke:var(--ink45);stroke-width:1.5}
 @media (prefers-reduced-motion:reduce){button.flowDot{transition:none}button.flowDot:hover{transform:none}}`;
     document.head.appendChild(s);
   }
@@ -5779,33 +5775,29 @@ button.flowDot:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
      ready, on every blocked step, on the step the sheet is at when a person can act on it (Engraving, Back files, QR label,
      Order check), and on Laser cutting when the sheet itself is done but something REAL is wrong with its set (a sheet of it
      cannot be found, the set is not loaded). A ready or cut sheet, and a step that is only running (Nesting), show none.
-     Round 7 (Paul: "you cannot have a green approved button on a single sheet that is part of a set where the other sheets are not
-     ready yet"): a set advances as ONE, so a sheet that is done and only waits for a mate sheet of its own set is not in trouble.
-     It shows no '!' but a quiet clock on Laser cutting (a grey ring, no colour of its own, [data-issues-quiet]); a press opens the
-     same panel, which says the wait once ("Waiting for SS Sheet 1 · Engraving") with a shortcut to that sheet. The attributes are the
-     hook: [data-issues-open] with the sheet (data-issues-id / data-sheet-id) and the step (data-issues-step / data-step). */
+     A set advances as ONE (round 7), and its wait is the SET's, not this sheet's (round 8, Paul: "only related items to that particular sheet"):
+     a sheet that is done and only waits for a mate sheet of its own set shows no '!' and no mark of any kind on Laser cutting, and its list
+     names no other sheet. The wait is said once, under the grey Approve button (its reason line, whose shortcut opens the '!' of the sheet that
+     holds the set). The attributes are the hook: [data-issues-open] with the sheet (data-issues-id / data-sheet-id) and the step
+     (data-issues-step / data-step). */
   const BANG={engraving:1,backFiles:1,qr:1,orders:1};
-  const CLOCK='<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M6 2.9V6l2.1 1.3"/></svg>';
-  // w: what the laser step of this sheet has to say, {real, waits} (laserWaitOf), or null when it has nothing to say / was not read
+  // w: what the laser step of this sheet has to say, {real} (laserTroubleOf), or null when it has nothing to say / was not read
   const bangOn=(e,s,w)=>!e.ready && !e.done && (s.state==='blocked' || (!!s.current && (!!BANG[s.key] || (s.key==='laser' && (!w || w.real>0)))));
-  const waitOn=(e,s,w)=>!e.ready && !e.done && s.key==='laser' && !!s.current && !!w && w.real===0 && w.waits>0;
   /* The laser step of a sheet that is done but whose set is not ready, read from CharmNestReadiness.issues (the one truth the panel
-     lists too): {real, waits} = the real set trouble and the quiet waits for a mate sheet. Nothing is read for any other state. */
-  function laserWaitOf(id,e,card,lookup){
+     lists too): {real} = the real set trouble (a sheet of the set that cannot be found, the set not loaded); a mate sheet that merely is not
+     ready is no trouble of this sheet (it is the set's wait, said under the Approve button). Nothing is read for any other state. */
+  function laserTroubleOf(id,e,card,lookup){
     if(e.ready || e.done || e.step!=='laser' || typeof R.issues!=='function')return null;
     const rec=records.get(id);if(!rec)return null;
     try{
-      const p=projected(rec),list=R.issues(p,sheetCtx(p,card,{lookup,steps:['laser']})) || [];
-      const wait=i=>i.quiet===true || i.key==='waitsOnSheet';
-      return {real:list.filter(i=>!wait(i)).length,waits:list.filter(wait).length};
-    }catch(err){console.warn('Library set wait',err);return null;}
+      const p=projected(rec);
+      return {real:(R.issues(p,sheetCtx(p,card,{lookup,steps:['laser']})) || []).length};
+    }catch(err){console.warn('Library set trouble',err);return null;}
   }
   function railHtml(e,id,open,w){
-    const hook=(s,cls,quiet)=>`<button type="button" class="flowDot ${cls}" data-issues-open${quiet?' data-issues-quiet="1"':''} data-issues-kind="sheet" data-issues-id="${esc(id)}" data-issues-step="${s.key}" data-sheet-id="${esc(id)}" data-step="${s.key}" aria-haspopup="dialog" aria-expanded="${open && (open===s.key || open==='true')?'true':'false'}"`;
+    const hook=(s,cls)=>`<button type="button" class="flowDot ${cls}" data-issues-open data-issues-kind="sheet" data-issues-id="${esc(id)}" data-issues-step="${s.key}" data-sheet-id="${esc(id)}" data-step="${s.key}" aria-haspopup="dialog" aria-expanded="${open && (open===s.key || open==='true')?'true':'false'}"`;
     const dot=s=>bangOn(e,s,w)
       ?`${hook(s,'flowBang')} aria-label="What holds this sheet back">!</button>`
-      :waitOn(e,s,w)
-      ?`${hook(s,'flowWait',true)} aria-label="This sheet is done. Its set waits for another sheet">${CLOCK}</button>`
       :`<i class="flowDot">${s.state==='done'?CHECK:s.state==='blocked'?'!':''}</i>`;
     return `<ol class="flowRail" aria-label="Process steps">${e.steps.map(s=>`<li class="flowStep ${s.state}${s.current?' current':''}${s.current && e.ready && s.key==='laser'?' ready':''}"${s.current?' aria-current="step"':''} title="${esc(`${s.label}: ${s.detail}`)}">${dot(s)}<span>${esc(s.label)}</span></li>`).join('')}</ol>`;
   }
@@ -5819,7 +5811,7 @@ button.flowDot:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
   }
   function flowDraw(box,e,id,w){
     const pending=!e.ready && !e.done,checking=pending && (!!sealPoll || checkingNow || live.checking);
-    const sig=JSON.stringify([e.ready,e.done,e.step,e.steps.map(s=>[s.state,s.detail,s.current?1:0]),checking,box.dataset.issuesOpen || '',w?[w.real,w.waits]:0]);
+    const sig=JSON.stringify([e.ready,e.done,e.step,e.steps.map(s=>[s.state,s.detail,s.current?1:0]),checking,box.dataset.issuesOpen || '',w?w.real:0]);
     if(box._sig===sig)return;
     box._sig=sig;
     const state=e.done?'done':e.ready?'ready':e.steps.some(s=>s.current && s.state==='blocked')?'blocked':'waiting',at=e.steps.findIndex(s=>s.current),now=e.steps[at];
@@ -5833,7 +5825,7 @@ button.flowDot:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
       flowCss();
       const slots=flowSlots(card);
       for(const old of card.querySelectorAll('.flowBox'))if(!slots.some(s=>old.dataset.flowFor===`${s.kind}:${s.id}` && old.parentElement===s.host))old.remove();   // (a set's own box of an older drawing, a sheet that left)
-      for(const slot of slots){const e=explainOf(slot,card,lookup);if(e)flowDraw(flowBox(slot),e,slot.id,laserWaitOf(slot.id,e,card,lookup));}
+      for(const slot of slots){const e=explainOf(slot,card,lookup);if(e)flowDraw(flowBox(slot),e,slot.id,laserTroubleOf(slot.id,e,card,lookup));}
     }catch(err){console.warn('Library step rail',err);}
   }
   /** The '!' of a sheet card, or of the first sheet of a set card that has one (the plain reason on a disabled Approve button
@@ -5844,6 +5836,7 @@ button.flowDot:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
     const host=which?.kind==='sheet'?[...card.querySelectorAll('.flowBox')].find(b=>b.dataset.flowFor===`sheet:${which.id}`):card;
     const bang=host && (host.querySelector('.flowStep.current [data-issues-open]') || host.querySelector('[data-issues-open]'));
     if(!bang)return false;
+    try{bang.scrollIntoView?.({block:'nearest'});}catch(e){}   // (the panel stays only while its '!' is on screen: on a phone the sheet that holds the set can be below the fold)
     bang.click();return true;
   }
   document.addEventListener('library-checklist-open',ev=>{if(ev.detail?.handled)return;const card=ev.target?.closest?.('[data-laser-card]');if(card)openChecklist(card,ev.detail);});
