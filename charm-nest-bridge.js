@@ -429,7 +429,9 @@ const humanAct = window.CNAct = (action, o) => {
       return false;
     }
     if (WORKSPACE_SANDBOX && !w.sandbox) return false;
-    return logAs(action, opts, station);
+    const logged = logAs(action, opts, station);
+    try { if (window.CNLive) CNLive.pressed(action, opts, station); } catch (_) {}      // (the live board: a press keeps the open order alive, a completion ends it)
+    return logged;
   } catch (_) { return false; }
 };
 /** A name is set: what was pressed before it, in the last 20 minutes, is recorded under it. */
@@ -442,6 +444,61 @@ humanAct.release = () => {
 };
 humanAct.drop = () => { held.length = 0; };       // (the midnight sign-out: yesterday's presses are never put under tomorrow's name)
 humanAct.held = () => held.length;
+/* The live stations board (station-activity.js working() / idle(); plans/employee-hr/api.md): what this page has open RIGHT NOW.
+   Sorter: the order whose window is open, with a piece for each of its lines. Laser: the sheet window while its sheet says "Ready
+   for laser". It shows at once, ends when the window closes (or the order or the sheet is completed), a press keeps it alive and
+   20 quiet minutes end it. The same rules as CNAct: nothing without a signed-in name (it never asks for one) and nothing from a
+   sandbox page that is not signed in as the sandbox. It never throws, waits or touches the network here, so the sorter works
+   exactly as before when the live layer is missing or down. */
+const CNLive = window.CNLive = (() => {
+  const HOLD = 20 * 60e3, seen = { sorter: "", laser: "" }, since = { sorter: null };
+  const A = () => { const a = window.StationActivity; return a && typeof a.working === "function" ? a : null; };
+  const who = () => { try { if (!A() || !sessionUp()) return null; const w = sessionWho(); return w && !(WORKSPACE_SANDBOX && !w.sandbox) ? w : null; } catch (_) { return null; } };
+  /** the order of the open window: rows are its lines (the pull's, or those read from the records) */
+  function order(rid, rows) {
+    try {
+      rid = String(rid || "").replace(/\D/g, ""); const w = who();
+      if (!rid || !w) return false;
+      const all = (rows || []).filter(r => r && r.order && r.line && !r.loading), here = all.filter(r => r.state !== "gone"), use = (here.length ? here : all).slice(0, 24);
+      const pieces = use.map((r, i) => {
+        const l = r.line, sp = r.spec || {}, q = Math.floor(+l.quantity) || 1, sku = String(sp.designSku || l.sku || "");
+        const title = String(l.title || (r.snap && r.snap.title) || "").replace(/\s+/g, " ").trim().slice(0, 50);
+        return { id: rid + "_" + (String(l.transactionId || "").replace(/\D/g, "").slice(0, 20) || i + 1), label: (q > 1 ? q + " x " : "") + (title || sku || "Piece " + (i + 1)), sku, listingId: l.listingId, size: sp.size };
+      });
+      const customer = String((use[0] && use[0].order.buyer && use[0].order.buyer.name) || "");
+      const fp = JSON.stringify([w.person, w.device, rid, customer, pieces]);
+      if (seen.sorter === fp) return true;
+      seen.sorter = fp;
+      if (!since.sorter || since.sorter.rid !== rid) since.sorter = { rid, at: Date.now() };       // (one scan time for the whole opening, however often the lines are read again)
+      return A().working({ station: "sorter", rid, orderNumber: rid, customer, pieces, pieceCount: use.length, holdMs: HOLD, scannedAt: since.sorter.at });
+    } catch (_) { return false; }
+  }
+  /** the laser sheet of the open sheet window (title: "GF Sheet 2 · Set 4") */
+  function sheet(title) {
+    try {
+      title = String(title || "").trim(); const w = who();
+      if (!title || !w) return false;
+      const fp = JSON.stringify([w.person, w.device, title]);
+      if (seen.laser === fp) return true;
+      seen.laser = fp;
+      return A().working({ kind: "sheet", station: "laser", title, holdMs: HOLD });
+    } catch (_) { return false; }
+  }
+  /** the window of that station closed (or its sheet is not for the laser): the slot is empty, and the next opening shows again */
+  function close(station) {
+    try { seen[station] = ""; if (station === "sorter") since.sorter = null; const a = window.StationActivity; return !!(a && typeof a.idle === "function" && a.idle({ station })); } catch (_) { return false; }
+  }
+  /** a press here: it keeps what is open alive; completing the open order (or a sheet at the laser) ends it, the window staying as it is */
+  function pressed(action, opts, station) {
+    try {
+      const a = window.StationActivity; if (!a) return;
+      if (action === "complete" && station === "laser") a.idle({ station: "laser" });
+      else if (action === "complete" && opts && opts.orders === 1 && opts.orderId) a.idle({ station: "sorter", rid: String(opts.orderId) });
+      else if (typeof a.touch === "function") a.touch();
+    } catch (_) {}
+  }
+  return { order, sheet, close, pressed };
+})();
 const piecesOfRows = rows => { try { return (rows || []).reduce((n, r) => n + Math.max(1, Math.floor(+(r && r.line && r.line.quantity) || 1)), 0); } catch (_) { return 0; } };
 /* Who the server's Nested stamps name (placed, setCommitted: poolUpdate), Paul, 28 Sep (station tracking E). The sorter
    has no person login of its own (its passcode is shared): the person on duty is the name its sign-in keeps (cn.employee,
@@ -10779,7 +10836,7 @@ const OrderWin = window.OrderWin = (() => {
     // state — the late event used to clear its line, so the next repaint closed it, and could save the note box's old
     // text onto the new order; open() saves the note of the order it leaves)
     W.dlg.addEventListener("close", () => {
-      if (W.dlg.open) return; tryDo(() => window.CNZoomPan && CNZoomPan.forget("ow:")); giveBack(0); clearTimeout(W.noteTimer); saveNote(); if (W.early) refreshNote({ order: { receiptId: W.early.rid } }); clearInterval(W.poll); W.poll = 0; W.key = null; stashTray();
+      if (W.dlg.open) return; tryDo(() => window.CNLive && CNLive.close("sorter")); tryDo(() => window.CNZoomPan && CNZoomPan.forget("ow:")); giveBack(0); clearTimeout(W.noteTimer); saveNote(); if (W.early) refreshNote({ order: { receiptId: W.early.rid } }); clearInterval(W.poll); W.poll = 0; W.key = null; stashTray();
       W.closing = false; stopMotion(); flightGone(); W.dlg.classList.remove("owGrow", "owBack"); endFind();
       unmountTimeline(); tryDo(() => { if (W.engCard) W.engCard.destroy(); W.engCard = null; }); W.row = null; W.rows = null; W.listed = null; W.look++; sheetReset(); SV.shown = null; W.dlg.classList.remove("owCancelled"); lookDone();
       try { window.CustomerMail?.orderClosed(); } catch (_) {}
@@ -11151,6 +11208,7 @@ const OrderWin = window.OrderWin = (() => {
     const r = rowOf(W.key); if (!r) { if (W.dlg && W.dlg.open && !W.closing) W.dlg.close(); return; }
     const sp = r.spec || {};
     const sibs = linesOf(r), li = Math.max(0, sibs.findIndex(x => x.key === r.key));
+    tryDo(() => window.CNLive && CNLive.order(r.order.receiptId, sibs));      // the live stations board: this is the order in hand (nothing when it was only cleared)
     paintHead(r, sibs, li);
     paintPieces(r, sibs);
     const mp = byId("owMetal"); mp.textContent = r.material ? labelOf(r.material) : (sp.materialLabel || (r.loading ? "…" : "no material"));
