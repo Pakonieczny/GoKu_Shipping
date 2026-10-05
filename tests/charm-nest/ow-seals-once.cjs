@@ -54,7 +54,7 @@ const ORDERS = [{ receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * DAY, up
     const overview = () => page.evaluate(() => {
       const out = [], root = document.getElementById('orderWin'), pane = root.querySelector('.owVInfo') || root;
       const of = s => { const m = s.querySelector('svg[data-seal-model]'); if (!m) return null; try { const j = JSON.parse(m.getAttribute('data-seal-model')); return j.action + ' · ' + j.date + ' ' + j.time; } catch (_) { return null; } };
-      for (const s of root.querySelectorAll('.seal, .tlNowSeal, .tlSeal, .tlSt, .tlBig')) {
+      for (const s of root.querySelectorAll('.seal, .tlNowSeal, .tlSeal, .tlSt')) {
         const r = s.getBoundingClientRect(); if (!(r.width > 4 && r.height > 4) || !s.offsetParent) continue;
         const where = s.closest('#owPcSum') ? 'bar' : s.closest('#owNowCard') ? 'now' : s.closest('#owRail') ? 'strip' : s.closest('.owVTimeline,.owVTl,.tlRoot') ? 'timeline' : 'other';
         out.push({ where, what: of(s), w: Math.round(r.width), cls: String(s.className).split(' ')[0] });

@@ -2,8 +2,9 @@
 // stand-in for the site (bridge-server.cjs). OrderTimeline.get is stubbed with one order of 31 events over six days and a
 // cancelled one, each with the `where` the server's whereOf gives; one more order goes through the real client and the
 // stand-in's timelineAdd/timelineGet. Checks the Now line and the milestone rail, the lanes and their stamps, rest (the grown seal), click
-// (inline detail: reason, Open sheet, Around this step), the noise that draws no seal, a live event arriving, the 20 s
-// refresh (shortened here), focus(), an error with Retry, compact mode, reduced motion and destroy() leaving no timers.
+// (the seal grows in place and nothing else opens: the chart has no detail pane since 5 Oct 2026; timeline-no-detail-pane.cjs pins
+// that), the noise that draws no seal, a live event arriving, the 20 s refresh (shortened here), focus() (a gentle ring on the seal),
+// an error with Retry, compact mode, reduced motion and destroy() leaving no timers.
 //   node tests/charm-nest/timeline-ui.cjs [playwright-core dir]      (SHOTS=<dir> saves the three screenshots there)
 const fs = require('fs'), path = require('path'), assert = require('assert');
 const root = path.join(__dirname, '../..');
@@ -43,7 +44,9 @@ function fixture({ MAIN, CX }) {
     M(2, '10:32', 'roseCut', 'Marco R.', { station: 'laser', sheet: 'RG Sheet 7', sheetId: 'sh-rg7', text: 'RG Sheet 7 cut on the green line' }),
     M(2, '13:10', 'scan', 'Ana P.', { source: 'station', station: 'sorting', device: 'sorting-1', text: 'Scanned at Sorting' }),
     M(2, '13:12', 'sorted', 'Ana P.', { source: 'station', station: 'sorting', device: 'sorting-1', text: 'Both pieces sorted to the order' }),
-    M(2, '13:14', 'sealPrinted', 'Ana P.', { station: 'sorting', text: 'QR label printed', data: { n: 1 } }),
+    // (the Sorting station's QR label: a sealed print. It was a sealPrinted until 5 Oct 2026, when a sealPrinted became a hand completion that
+    //  finishes the order — "Order completed by hand" — which is not what this order's story is about)
+    M(2, '13:14', 'labelPrinted', 'Ana P.', { station: 'sorting', text: 'QR label printed', data: { n: 1 } }),
     M(3, '09:40', 'scan', 'Marco R.', { source: 'station', station: 'welding', device: 'weld-1', text: 'Scanned at Welding' }),
     M(3, '10:15', 'welded', 'Marco R.', { source: 'station', station: 'welding', device: 'weld-1', text: 'Jump rings closed' }),
     M(3, '10:16', 'note', 'Marco R.', { source: 'station', station: 'welding', text: 'Ring on the Aster re-welded, looks good.' }),
@@ -121,7 +124,7 @@ function fixture({ MAIN, CX }) {
   await page.waitForFunction(() => window.__el.querySelectorAll('.tlSt[data-key]').length === 10, null, { timeout: 5000 });
   const r0 = await page.evaluate(() => ({ n: window.__evList.length, first: window.__evList[0], now: window.__nowSaid.text, next: window.__nowSaid.next, step: window.__nowSaid.step, drawn: [...window.__el.querySelectorAll('.tlSt[data-key]')].map(b => b.dataset.key.split('~')[0]) }));
   assert.equal(r0.n, 31); assert.equal(r0.first.type, 'arrived'); assert.equal(r0.first.id, `${MAIN}~arrived~e1`); assert.equal(r0.first.x, undefined, 'the host gets the records, not the drawing');
-  assert.deepEqual(r0.drawn, ['arrived', 'placed', 'engraveApproved', 'held', 'released', 'laserDone', 'sorted', 'sealPrinted', 'welded', 'assembled'], 'seals: the milestones, what a person did and the label printed — ' + r0.drawn);
+  assert.deepEqual(r0.drawn, ['arrived', 'placed', 'engraveApproved', 'held', 'released', 'laserDone', 'sorted', 'labelPrinted', 'welded', 'assembled'], 'seals: the milestones, what a person did and the label printed — ' + r0.drawn);
   assert.equal(r0.now, 'Packed'); assert.equal(r0.next, 'Shipped'); assert.equal(r0.step, 6);
   ok.push('mounts on a detached container: a spinner line says what it loads, then 10 seals (milestones, the hold/release and the QR label printed), while onEvents still hands the host all 31 records; onNow "Packed", next Shipped');
   await page.evaluate(() => window.__host(window.__el));
@@ -166,10 +169,10 @@ function fixture({ MAIN, CX }) {
   for (const k of ['words', 'reading', 'cand', 'etsy']) assert.equal(se[k], sf.neck, k + ': a back engraving, or not known yet, keeps Engraved');
   assert.equal(se.mix, sf.neck, 'an order with any engraved piece shows Engraved'); assert.equal(se.allPlain, bare, 'an order of plain pieces does not');
   assert.equal(se.kept, sf.neck, 'an engraveApproved event keeps the step on a plain piece (what happened is always drawn)');
-  assert.match(r.sub, /Shipping/); assert.match(r.sub, /Dana K\./); assert.match(r.sub, /next: Shipped/); assert.match(r.sub, new RegExp('on ' + where[MAIN].sheet));
+  assert.match(r.sub, /Shipping/); assert.match(r.sub, /Dana K\./); assert.doesNotMatch(r.sub, /next/i, 'no "next: ..." in the Now line (Paul, 5 Oct, point 4): ' + r.sub); assert.doesNotMatch(r.sub, /Shipped/, 'and no step ahead is named in it'); assert.match(r.sub, new RegExp('on ' + where[MAIN].sheet));
   await page.click('.tlNowS .tlOpenSheet');
   assert.deepEqual(await page.evaluate(() => window.__sheet), [where[MAIN].sheetId, null], 'Open sheet on the where\'s sheet (the last one cut)');
-  ok.push('Now reads the server\'s where ("Packed", Shipping · Dana K., next: Shipped, on RG Sheet 7 + Open sheet); the 8-step rail: 7 stamped, Shipped pulses; stagesFor: Welded only for stud earrings, Engraved only with a back engraving (unknown keeps it); 5 day columns + 1 idle; NOW · AT SHIPPING');
+  ok.push('Now reads the server\'s where ("Packed", Shipping · Dana K., on RG Sheet 7 + Open sheet, no "next: ..." in it); the 8-step rail: 7 stamped, Shipped pulses; stagesFor: Welded only for stud earrings, Engraved only with a back engraving (unknown keeps it); 5 day columns + 1 idle; NOW · AT SHIPPING');
 
   // ── rest on a stamp (500 ms): its seal grows where it stands, by the shared adaptive curve (Seal.zoom); no loupe, no second seal,
   //    no dark caption; the step explainer card sits under the grown seal; the dot keeps the hover (Paul, 2026-10-02) ──
@@ -205,53 +208,50 @@ function fixture({ MAIN, CX }) {
   await page.hover(`.tlSt.ghost[data-stage="${ghostK}"]`); await page.waitForTimeout(1500);
   assert(await page.evaluate(() => window.__el.querySelectorAll('.tlExp .rq:not(.ok)').length) > 0, 'a dashed stamp to come shows its missing lines');
   await shot('tlui-d-step-card');
+  // a click on a step to come does not pin a fuller version anywhere (the chart has no pane to pin it in): it rings that step's dashed
+  // stamp on its lane, and nothing is drawn under the chart
   await page.click(`.tlStop[data-stage="${futK}"]`); await page.waitForTimeout(150);
-  const pinned = await page.evaluate(() => ({ pin: !!window.__el.querySelector('.tlDetail .tlPin'), path: window.__el.querySelectorAll('.tlDetail .tlPath2 button').length, need: window.__el.querySelectorAll('.tlDetail .tlPin .rq:not(.ok)').length }));
-  assert(pinned.pin && pinned.need > 0 && pinned.path >= 7, 'a click pins the step inline with the whole path: ' + JSON.stringify(pinned));
-  await shot('tlui-d-pinned');
-  await page.mouse.move(700, 880); await page.waitForTimeout(300);   // (a seal rested on has its own Escape first: it goes back, then the pin)
-  await page.keyboard.press('Escape'); await page.waitForTimeout(100);
-  assert.equal(await page.evaluate(() => !!window.__el.querySelector('.tlDetail .tlPin')), false, 'Escape unpins');
-  await page.mouse.move(700, 880); await page.waitForTimeout(200);
-  ok.push(`step explainer: hovering "${futK}" (to come) shows a card below its dot with ${r.need} missing line(s), no dark tooltip; a dashed stamp says the same; a click pins it inline with the path, Escape unpins`);
+  const pinned = await page.evaluate(k => ({ pane: !!window.__el.querySelector('.tlDetail, .tlPin, .tlPath2'), ghostRing: [...window.__el.querySelectorAll('.tlSt.ghost.sel')].map(g => g.dataset.stage), want: k }), futK);
+  assert(!pinned.pane && pinned.ghostRing.length === 1 && pinned.ghostRing[0] === futK, 'a click on a step to come rings its dashed stamp and pins nothing: ' + JSON.stringify(pinned));
+  await shot('tlui-d-ringed');
+  await page.mouse.move(700, 880); await page.waitForTimeout(300);
+  ok.push(`step explainer: hovering "${futK}" (to come) shows a card below its dot with ${r.need} missing line(s), no dark tooltip; a dashed stamp says the same; a click rings its dashed stamp and pins nothing`);
 
-  // ── click: the detail opens inline (no dialog), with before → after, the sheet and Open sheet ──
+  // ── click: the seal grows where it stands (Seal.zoom) and that is all: no detail opens under the chart, no dialog, nothing is selected ──
+  const paneNow = () => page.evaluate(() => ({ pane: window.__el.querySelectorAll('.tlDetail, .tlBig, .tlAround, .tlArw, .tlPin, .tlPath2, .tlLegend, .tlChip').length, sel: window.__el.querySelectorAll('.tlSt.sel').length, lit: window.__el.querySelectorAll('.tlLane.on').length, dialogs: document.querySelectorAll('dialog[open]').length, grown: [...document.querySelectorAll('[data-seal-zoom]')].map(g => (g.closest('[data-key]') || g).dataset.key || '?') }));
+  await page.evaluate(() => { window.__sheet = null; });   // (the Now strip's Open sheet set it above)
+  // (the dashed stamp rung above is still rung: a click on a seal neither moves that ring nor adds one)
+  const ring0 = await paneNow(); assert.deepEqual([ring0.sel, ring0.lit], [1, 1], 'the ring from the click on the step to come is still there: ' + JSON.stringify(ring0));
   await page.click('.tlSt[data-key="placed~e4"]');
   await page.waitForTimeout(350);
-  r = await page.evaluate(() => { const d = window.__el.querySelector('.tlDetail'); return { h: d.querySelector('h3').textContent, kind: d.querySelector('.tlLbl').textContent, ba: [...d.querySelectorAll('.tlBA .m span')].map(s => s.textContent), badge: d.querySelector('.tlBadge').textContent, facts: [...d.querySelectorAll('.tlMeta .m')].map(m => m.textContent).join(' | '), around: [...d.querySelectorAll('.tlArw')].length, cur: d.querySelector('.tlArw.cur b').textContent, sel: window.__el.querySelectorAll('.tlSt.sel').length, lane: window.__el.querySelector('.tlLane.on').dataset.lane, dialogs: document.querySelectorAll('dialog[open]').length }; });
-  assert.equal(r.h, 'Tiny Initial Tag placed on 14K Sheet 3'); assert.match(r.kind, /milestone 2 of 10/);
-  assert.match(r.badge, /Sheet & laser/i); assert.match(r.badge, /Automatic/);
-  assert.match(r.facts, /Sheet14K Sheet 3/); assert.equal(r.around, 4); assert.equal(r.cur, 'Tiny Initial Tag placed on 14K Sheet 3');
-  assert.equal(r.sel, 1); assert.equal(r.lane, 'sheet'); assert.equal(r.dialogs, 0, 'no pop-up');
-  await page.click('.tlDetail .tlOpenSheet');
-  assert.deepEqual(await page.evaluate(() => window.__sheet), ['sh-k3', `${MAIN}_555_1`]);
-  ok.push('click: inline detail (milestone 2 of 10, station badge, facts, 4 around); Open sheet calls onSheet(sh-k3, poolId); no dialog');
-  await page.click('.tlSt[data-key="held~e7"]'); await page.waitForTimeout(150);
-  assert.match(await page.$eval('.tlDetail .tlWhy', d => d.textContent), /Why it was held.*H or K/);
-  // Earlier / Later and the arrow keys
-  await page.click('.tlDetail [data-step="1"]'); await page.waitForTimeout(120);
-  assert.equal(await page.$eval('.tlDetail h3', h => h.textContent), 'Released — initial H confirmed', 'Later walks the seals, not the noise between them');
-  await page.keyboard.press('ArrowLeft'); await page.waitForTimeout(120);
-  assert.equal(await page.$eval('.tlDetail h3', h => h.textContent), 'Held — waiting on the buyer');
-  await page.click('.tlDetail .tlArw:nth-of-type(1)'); await page.waitForTimeout(120);
-  ok.push('a hold shows its reason; Earlier/Later, ← → and Around this step move the detail, seal to seal');
+  r = await paneNow();
+  assert.deepEqual(r, { pane: 0, sel: 1, lit: 1, dialogs: 0, grown: ['placed~e4'] }, 'a click grows that one seal and opens, selects and lights nothing new, and no pop-up: ' + JSON.stringify(r));
+  assert.deepEqual(await page.$$eval('.tlSt.sel', b => b.map(x => x.dataset.stage || x.dataset.key)), [futK], 'the ring stays where it was');
+  assert.equal(await page.evaluate(() => window.__sheet), null, 'Open sheet is not reachable from the chart any more, so a click never calls onSheet');
+  ok.push('click: the one seal grows in place; no detail pane, no selection, no lit lane, no dialog, onSheet not called');
+  await page.click('.tlSt[data-key="held~e7"]'); await page.waitForTimeout(350);
+  r = await paneNow();
+  assert.deepEqual(r, { pane: 0, sel: 1, lit: 1, dialogs: 0, grown: ['held~e7'] }, 'a hold seal the same (its reason is in the record and the Now line, not a pane under the chart): ' + JSON.stringify(r));
+  // the arrow keys walk nothing (the detail they used to move is gone), and Escape puts the grown seal back
+  const keysTxt = () => page.evaluate(() => window.__el.querySelector('.tlGrid').textContent);
+  const before = await keysTxt();
+  await page.keyboard.press('ArrowLeft'); await page.keyboard.press('ArrowRight'); await page.waitForTimeout(150);
+  assert.equal(await keysTxt(), before, '← → change nothing on the chart'); assert.equal((await paneNow()).sel, 1, 'and select nothing (the one old ring stays)');
+  await page.keyboard.press('Escape'); await page.waitForTimeout(250);
+  assert.equal((await paneNow()).grown.length, 0, 'Escape puts the grown seal back');
+  ok.push('a hold seal grows the same way; ← → walk nothing; Escape puts the seal back');
 
-  // ── the noise draws no seal, and the filter chips are gone: one quiet "Stamps" chip is left ──
-  const chips = await page.$$eval('.tlChip', c => c.map(x => x.textContent));
-  assert.deepEqual(chips, ['Stamps'], 'the All · Milestones · Stations · Sheets · Holds & cancels · Messages chips are gone: ' + chips);
-  const noise = await page.$$eval('.tlSt[data-key]', s => s.map(b => b.dataset.key.split('~')[0]).filter(t => ['pulled', 'interpreted', 'scan', 'moved', 'qrLabel', 'setCommitted', 'included', 'merged', 'note', 'teamMessage', 'customerMessage', 'packed', 'labelPrinted', 'decided', 'sizeChanged', 'roseLine', 'roseCut', 'engraveNeeded'].includes(t)));
+  // ── the noise draws no seal; the filter chips and the Stamps legend chip are gone with the pane (nothing is left to open it) ──
+  assert.equal(await page.$$eval('.tlChip, .tlLegend', c => c.length), 0, 'no chips, no legend: the All · Milestones · Stations · Sheets · Holds & cancels · Messages chips went earlier, the one quiet "Stamps" chip with the pane');
+  const noise = await page.$$eval('.tlSt[data-key]', s => s.map(b => b.dataset.key.split('~')[0]).filter(t => ['pulled', 'interpreted', 'scan', 'moved', 'qrLabel', 'setCommitted', 'included', 'merged', 'note', 'teamMessage', 'customerMessage', 'packed', 'decided', 'sizeChanged', 'roseLine', 'roseCut', 'engraveNeeded'].includes(t)));
   assert.deepEqual(noise, [], 'read, pulled, scanned, moved, QR label, set committed … draw no seal');
+  assert.equal(await page.$$eval('.tlSt[data-key^="labelPrinted"]', s => s.length), 1, 'only the Sorting station\'s QR label is a seal; the shipping label stays with Shipped');
   assert.equal(await page.$$eval('.tlSt.dim', s => s.length), 0, 'nothing is dimmed any more');
   await page.click('.tlSt[data-key="welded~e25"]'); await page.waitForTimeout(350);
   await page.hover('.tlSt[data-key="sorted~e22"]'); await page.waitForTimeout(1500);
   await shot('tlui-2-hover-filter');
   await page.mouse.move(700, 880);
-  await page.click('.tlChip[data-legend]'); await page.waitForTimeout(200);
-  // (the legend explains the eight seal families, each with the actions that use it, since 30 Sep; once it listed each kind drawn)
-  const leg = await page.$$eval('.tlLegend figure', f => f.map(n => [n.dataset.sealFamily, n.querySelector('figcaption small').textContent.trim() !== '']));
-  assert.deepEqual(leg, ['received', 'prepared', 'engraving', 'laser', 'finishing', 'fulfilment', 'exceptions', 'cancelled'].map(k => [k, true]), 'the legend shows the eight seal families, each naming its actions, not all 45 kinds: ' + JSON.stringify(leg));
-  await page.click('.tlChip[data-legend]'); await page.waitForTimeout(250);
-  ok.push(`the noise draws no seal; the filter chips are gone (one quiet "Stamps" chip left) and the legend is ${leg.length} seal families, not 45`);
+  ok.push('the noise draws no seal; no filter chip, no legend chip');
 
   // ── live: a new event from this page is pressed in by the shared physical stamp (Seal.press, since 30 Sep: it waits unseen
   //    until contact, then the detail follows it) and the rail moves on ──
@@ -262,10 +262,10 @@ function fixture({ MAIN, CX }) {
   assert.equal(r.n, 11); assert(r.pending && r.hidden === 'hidden', 'the new stamp waits unseen for its press: ' + JSON.stringify(r));
   assert.deepEqual(r.cur, [], 'Shipped is the last step'); assert.equal(r.done, 8); assert.equal(r.now, 'Shipped', 'the page\'s own step moves Now ahead of the server\'s where');
   assert.equal(r.ghosts, 0); assert(r.nowAnim > 0, 'the NOW line glides');
-  await page.waitForFunction(() => !window.__el.querySelector('.tlSt.pending, .tlSt.wet') && /Shipped — USPS/.test(window.__el.querySelector('.tlDetail h3').textContent), null, { timeout: 15000 });
-  r = await page.evaluate(() => { const q = s => [...window.__el.querySelectorAll(s)]; const s = q('.tlSt[data-key="shipped~live-ship-1"]')[0]; return { shown: !!s && getComputedStyle(s.querySelector('svg')).visibility === 'visible', h: q('.tlDetail h3')[0].textContent, tools: document.querySelectorAll('.sealTool').length }; });
+  await page.waitForFunction(() => !window.__el.querySelector('.tlSt.pending, .tlSt.wet') && !document.querySelector('.sealTool'), null, { timeout: 15000 });   // (the stamp lands, then its press is cleared away)
+  r = await page.evaluate(() => { const q = s => [...window.__el.querySelectorAll(s)]; const s = q('.tlSt[data-key="shipped~live-ship-1"]')[0]; return { shown: !!s && getComputedStyle(s.querySelector('svg')).visibility === 'visible', pane: q('.tlDetail').length, ring: q('.tlSt.sel').length, tools: document.querySelectorAll('.sealTool').length }; });
   assert(r.shown && r.tools === 0, 'the stamp stays, pressed, and the press is cleared away: ' + JSON.stringify(r));
-  assert.equal(r.h, 'Shipped — USPS acceptance scan', 'the reader was on the latest step, so the detail follows the new one once it is pressed');
+  assert(r.pane === 0 && r.ring === 0, 'no detail follows it and nothing is ringed: it is simply on the chart: ' + JSON.stringify(r));
   await page.waitForTimeout(1300);
   await shot('tlui-1-live-timeline');
   // the refresh every pollMs while visible (20 s in the app) asks again and keeps the live step
@@ -274,7 +274,7 @@ function fixture({ MAIN, CX }) {
   await page.waitForTimeout(250);
   assert.equal(await page.$$eval('.tlSt[data-key]', s => s.length), 11);
   assert.equal(await page.$$eval('.tlStop.d', s => s.length), 8, 'the server\'s older where does not take the rail back');
-  ok.push('live: OrderTimeline.record presses the Shipped stamp in (unseen until the stamp lands), NOW glides, the detail follows once it is pressed, the rail ends at Shipped; the timed refresh asks again and keeps it');
+  ok.push('live: OrderTimeline.record presses the Shipped stamp in (unseen until the stamp lands), NOW glides, no detail follows it, the rail ends at Shipped; the timed refresh asks again and keeps it');
 
   // ── focus(eventId) ──
   assert.equal(await page.evaluate(MAIN => window.__tl.focus(`${MAIN}~sorted~e22`), MAIN), true);
@@ -287,7 +287,7 @@ function fixture({ MAIN, CX }) {
   // a rail stamp opens its step
   await page.click('.tlStop[data-stage="laser"]'); await page.waitForTimeout(150);
   assert.equal(await page.$eval('.tlSt.sel', b => b.dataset.key), 'laserDone~e19', "the rail opens that step's seal (its rose cut is noise, and draws none)");
-  ok.push('focus(eventId) selects and shows the event; a rail stamp opens its step');
+  ok.push('focus(eventId) rings the event\'s seal on the chart (no pane); a rail stamp rings its step\'s seal');
 
   // ── destroy(): nothing left behind ──
   r = await page.evaluate(async () => { const before = window.__tlTimers.size; window.__tl.destroy(); const after = window.__tlTimers.size, g = window.__gets; await new Promise(r => setTimeout(r, 2200)); OrderTimeline.record({ orderId: '4176208841', type: 'note', text: 'after destroy', id: 'x1' }); return { before, after, gets: window.__gets - g, left: window.__el.children.length, host: document.querySelector('.tlTestHost').remove() }; });
@@ -305,12 +305,14 @@ function fixture({ MAIN, CX }) {
   assert.match(r.stamp, /^ETSY CANCELLED \d{1,2} [A-Z]{3} \d{4} \d{1,2}:\d\d [AP]M$/, 'the cancellation seal reads ETSY CANCELLED, its date and time: ' + r.stamp);
   assert.deepEqual(r.x, ['laser'], 'a clay ✕ where it stopped (engraved, never cut)'); assert.equal(r.gone, 4);
   assert.match(r.line, /^CANCELLED · /); assert.equal(r.hatch, 1); assert.equal(r.ghosts, 0);
-  await page.click('.tlSt[data-key="removed~e37"]'); await page.waitForTimeout(350);
-  assert.match(await page.$eval('.tlDetail .tlWhy', d => d.textContent), /Why it was taken off.*not cut yet/);
-  await page.click('.tlSt[data-key="etsyCancelled~e36"]'); await page.waitForTimeout(400);
-  assert.match(await page.$eval('.tlDetail .tlWhy', d => d.textContent), /Why it was cancelled.*Buyer requested/);
+  // (the reasons are in the Now strip above and in the record; a click on a seal only grows it, there is no pane to explain it in)
+  for (const k of ['removed~e37', 'etsyCancelled~e36']) {
+    await page.click(`.tlSt[data-key="${k}"]`); await page.waitForTimeout(350);
+    r = await page.evaluate(() => ({ pane: window.__el.querySelectorAll('.tlDetail, .tlWhy').length, grown: [...document.querySelectorAll('[data-seal-zoom]')].map(g => (g.closest('[data-key]') || g).dataset.key), sel: window.__el.querySelectorAll('.tlSt.sel').length }));
+    assert.deepEqual(r, { pane: 0, grown: [k], sel: 0 }, k + ': grows, opens nothing: ' + JSON.stringify(r));
+  }
   await shot('tlui-3-cancelled');
-  ok.push('cancelled: red ETSY CANCELLED seal on the rail, the Now line says do not proceed, ✕ at Laser cut and later steps struck, clay line with hatching, no ghosts, reasons in the detail');
+  ok.push('cancelled: red ETSY CANCELLED seal on the rail, the Now line says do not proceed (with its reason), ✕ at Laser cut and later steps struck, clay line with hatching, no ghosts; a click on its seals only grows them');
   await page.evaluate(() => { window.__tl.destroy(); document.querySelector('.tlTestHost').remove(); });
 
   // ── an error says so, with Retry; compact draws the rail only ──

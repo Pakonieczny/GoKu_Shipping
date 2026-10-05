@@ -210,7 +210,7 @@ function probe() {
 /* ── the page, as the user left it ── */
 function viewState() {
   const q = s => document.querySelector(s);
-  const ow = window.OrderWin && OrderWin.isOpen() ? { key: OrderWin.key(), view: (q('#orderWin [data-ow-view][aria-selected="true"]') || {}).dataset?.owView || null, draft: (q('#owInput') || {}).value || '', note: (q('#owNote') || {}).value || '' } : null;
+  const ow = window.OrderWin && OrderWin.isOpen() ? { key: OrderWin.key(), view: (q('#orderWin [data-ow-view][aria-selected="true"]') || {}).dataset?.owView || null, draft: (q('#owInput') || {}).value || '' } : null;
   return { mode: CN.S.mode, chip: (q('#reviewView .ordBar .egTab.on') || {}).dataset?.k || null, cseg: (q('#reviewView .rvSeg .on') || {}).dataset?.cseg || null,
     scroll: Math.round(q('#reviewView .egPane.scroll')?.scrollTop ?? -1), maxScroll: (e => e ? Math.round(e.scrollHeight - e.clientHeight) : -1)(q('#reviewView .egPane.scroll')), orderWin: ow, designs: !!q('#cuDlg')?.open,
     dialogs: [...document.querySelectorAll('dialog[open]')].map(d => d.id).join(',') || '',
