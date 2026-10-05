@@ -36,6 +36,7 @@ const eq = (a, b, m) => assert.deepEqual(JSON.parse(JSON.stringify(a === undefin
   w.eval('window.Sets=(()=>{' + bridge.slice(a, b) + bridge.slice(c, e) + ';return {libraryCard};})();');
   const L = w.LaserReview, R = w.CharmNestReadiness, body = d.getElementById('libBody');
   // the exact shape of CharmNestReadiness.issues; the test sets window.__feed[sheetId]
+  const realIssues = R.issues;
   let readCount = 0; w.__feed = {}; R.issues = s => { readCount++; return w.__feed[s.id || s.sheetId] || []; };
   w.eval(fs.readFileSync(path.join(root, 'charm-nest-library-issues.js'), 'utf8'));
   const LI = w.LibraryIssues;
@@ -82,6 +83,7 @@ const eq = (a, b, m) => assert.deepEqual(JSON.parse(JSON.stringify(a === undefin
   const bang = (step = 'orders', id = 'gf1') => { const box = card.querySelector('.flowBox') || card; let b = box.querySelector('button[data-issues-open][data-issues-step="' + step + '"]'); if (!b) { b = d.createElement('button'); b.type = 'button'; b.className = 'flowDot flowBang'; b.setAttribute('data-issues-open', ''); b.dataset.issuesKind = 'sheet'; b.dataset.issuesId = id; b.dataset.issuesStep = step; b.setAttribute('aria-haspopup', 'dialog'); b.setAttribute('aria-expanded', 'false'); b.textContent = '!'; (box.querySelector('.flowStep') || box).appendChild(b); } return b; };
   const panel = () => d.getElementById('libIssuesPanel');
   const b1 = bang();
+  assert(card.querySelector('.flowBox button.flowBang[data-issues-open][data-issues-kind="sheet"][data-issues-id="gf1"][data-issues-step="orders"]') === b1, 'the set card\'s own rail carries the \'!\' on the Order check step (nothing is faked here)');
   assert.equal(panel(), null, 'closed until the \'!\' is pressed');
   readCount = 0; L.changed(); await tick(); assert.equal(readCount, 0, 'a closed panel costs the Library frame nothing: issues() is not read');
 
@@ -169,6 +171,39 @@ const eq = (a, b, m) => assert.deepEqual(JSON.parse(JSON.stringify(a === undefin
   w.__feed.gf1 = F.issues('gf1', 2, { lid: 'P', names: ['Maximiliana Alexandria von Habsburg-Lothringen-Esterházy'] }); photos.set('P0', 'data:image/svg+xml;utf8,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg"/>'));
   w.eval('LaserReview.photo = lid => ListMedia.listing(lid)'); bang().click(); await tick(100); p = panel();
   assert.equal(p.querySelector('.lisWho').children.length, 2, 'one short line: the number and the name'); assert(rowsOf(p)[0].querySelector('.lisTh img'), 'the listing photo is laid in when the cache has it'); w.eval('LibraryIssues.close()'); await tick(200);
+
+  // ── 8b. the REAL CharmNestReadiness.issues feeds the panel (records as the server answers them: orderReadiness with blocks)
+  {
+    R.issues = realIssues;
+    const rec = F.sheet('gf1', { n: 6 }), ids = rec.orders, blk = (key, i, extra = {}) => ({ key, index: 2, label: 'Charm', poolId: ids[i] + '_x_2', lineKey: ids[i] + '_x', sheetId: null, sheetLabel: null, why: { pooled: 'A piece is not on a saved sheet yet', noSku: 'SKU not in a master', held: 'Check customer changes', otherSheetNotReady: 'SS Sheet 1: back engraving files are not saved' }[key], ...extra });
+    const rpt = (i, b, name, lid) => ({ ready: false, key: b.key, why: b.why, blocks: [b], onSheets: ['gf1'], pieceCount: 2, customer: name, listingId: lid });
+    rec.orderReadiness[ids[0]] = rpt(0, blk('pooled', 0), 'Nathaly Soto', 'L1');
+    rec.orderReadiness[ids[1]] = rpt(1, blk('noSku', 1), 'Emily Chambers', 'L2');
+    rec.orderReadiness[ids[2]] = rpt(2, blk('otherSheetNotReady', 2, { sheetId: 'ss1', sheetLabel: 'SS Sheet 1', stage: 'backs' }), 'Leslie Suhr', 'L3');
+    rec.orderReadiness[ids[3]] = rpt(3, blk('held', 3, { sheetId: 'gf1', sheetLabel: 'GF Sheet 1' }), 'Jechelle Aragones', 'L4');
+    L.record(rec); L.changed(); await tick();
+    const rb = card.querySelector('.flowBox button.flowBang[data-issues-step="orders"]'); assert(rb, 'the rail has its \'!\' on the Order check step');
+    rb.click(); await tick(); p = panel(); assert(p, 'the \'!\' opens the panel from the real issues');
+    eq(rowsOf(p).map(r => r.dataset.issueOrder), ids.slice(0, 4), 'one row per order that something holds back, nothing for the orders that are ready');
+    eq(rowsOf(p).map(r => r.querySelector('.lisChip').textContent), ['1 piece not on a sheet yet', '1 piece has no SKU', 'Waits on SS Sheet 1', 'On hold: check customer changes'], 'one short plain reason each, a held piece says why');
+    eq(rowsOf(p).map(r => r.querySelector('.lisWho i').textContent), ['Nathaly Soto', 'Emily Chambers', 'Leslie Suhr', 'Jechelle Aragones'], 'the customer comes with the issue');
+    assert.equal(w.LibraryIssues.listed().length > 0, true); assert.equal(p.getAttribute('data-issues-for'), 'sheet:gf1');
+    assert(!/Order 4|completed|Nesting|QR label|Back files|\blines?\b/i.test(texts(p)), 'only issues, in pieces');
+    // an order nothing was read for: ONE quiet chip for the sheet, never a row per order
+    for (const i of [4, 5]) rec.orderReadiness[ids[i]] = { ready: false, why: 'Order readiness has not been verified' };
+    L.record(rec); L.changed(); await tick(300); p = panel();
+    assert.equal(p.querySelectorAll('.lisNote').length, 1, 'Orders not checked yet is one chip'); assert.match(p.querySelector('.lisNote').textContent, /^Orders not checked yet$/); assert.equal(p.querySelector('.lisNote').dataset.issueOrders, ids.slice(4).join(','));
+    assert.equal(rowsOf(p).length, 4, 'no row for the unread orders'); assert.match(p.querySelector('.lisCount').textContent, /5 issues/);
+    // a one-piece order held by a person holds the sheet: its row says Held
+    rec.orderReadiness[ids[0]] = { ready: false, key: 'held', why: 'Order changes need review', blocks: [blk('held', 0, { why: 'Order changes need review' })], onSheets: ['gf1'], pieceCount: 1, customer: 'Solo Piece', listingId: 'L9' };
+    L.record(rec); L.changed(); await tick(300);
+    const solo = rowsOf(p).find(r => r.dataset.issueOrder === ids[0]); assert.match(solo.querySelector('.lisChip').textContent, /^On hold: order changes need review$/);
+    // only its unread orders left: the panel is just that chip
+    for (const i of [0, 1, 2, 3]) rec.orderReadiness[ids[i]] = { ready: true };
+    L.record(rec); L.changed(); await tick(300); p = panel(); assert(p && rowsOf(p).length === 0 && p.querySelectorAll('.lisNote').length === 1, 'the chip alone stays');
+    w.eval('LibraryIssues.close()'); await tick(200);
+    R.issues = (s) => { readCount++; return w.__feed[s.id || s.sheetId] || []; };
+  }
 
   // ── 8. a sheet that is ready has no panel; nothing here wrote, opened or stamped anything on its own
   assert(!calls.some(c => !['mode', 'sheet', 'order'].includes(c[0]))); assert(!/undefined|\[object|NaN/.test(body.textContent + (panel()?.textContent || '')), 'no stray placeholders');

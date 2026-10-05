@@ -100,7 +100,15 @@
     const r = REASON[it.key];
     if (!r) { const text = tidy((pieces[0] && pieces[0].why) || it.why || it.label || 'Not ready') || 'Not ready'; return { id: 'x:' + text, tone: 'gold', chip: text, group: text }; }
     const s = it.key === 'otherSheetNotReady' ? sheetsWord(labels) : '';
-    return { id: it.key + (s ? ':' + s : ''), tone: r.tone, chip: r.chip(n, s), group: r.group(s) };
+    let chip = r.chip(n, s);
+    if (it.key === 'held') {   // a held piece says why it is held ("A piece of this order is held: Check customer changes" -> "On hold: check customer changes")
+      // (the held piece's own words, else the order's: "A piece of this order is held: Check customer changes")
+      const hp = pieces.find(p => p && (p.kind === 'held' || /held/i.test(p.why || ''))) || pieces[0], own = String((hp && hp.why) || '').replace(/^.*\bheld:\s*/i, ''), whole = /\bheld:\s*(.+)$/i.exec(String(it.why || ''));
+      const useful = t => t && !/^(a )?piece\b/i.test(t) && !/^(held|on hold)\.?$/i.test(t.trim());
+      const tail = tidy(useful(own) ? own : whole && useful(whole[1]) ? whole[1] : '').replace(/…$/, '');
+      if (tail) { const w = tail.split(' ').slice(0, 4).join(' '); chip = 'On hold: ' + (/^[A-Z][a-z]/.test(w) ? w[0].toLowerCase() + w.slice(1) : w); }
+    }
+    return { id: it.key + (s ? ':' + s : ''), tone: r.tone, chip, group: r.group(s) };
   }
   function model(feed, opts) {
     opts = opts || {};
@@ -111,7 +119,7 @@
     const list = mine.length ? mine : all, step = mine.length ? opts.step : (list[0] && (list[0].step || 'orders')) || opts.step || '';
     const label = String((feed && feed.label) || ''), parts = /^(\S+)\s+(.*)$/.exec(label) || [];
     const code = (feed && feed.code) || (METAL_OF[parts[1]] ? parts[1] : ''), name = code && parts[2] ? parts[2] : label;
-    const m = { id: feed && feed.id, label, code, metal: (feed && feed.metal) || METAL_OF[code] || '', name, step, title: STEP[step] || 'Needs attention', own: null, sheets: [], orders: [], groups: null, count: 0, hard: false, checking: !!(feed && feed.checking) };
+    const m = { id: feed && feed.id, label, code, metal: (feed && feed.metal) || METAL_OF[code] || '', name, step, title: STEP[step] || 'Needs attention', own: null, notes: [], sheets: [], orders: [], groups: null, count: 0, hard: false, checking: !!(feed && feed.checking) };
     const seen = new Set();
     for (const it of list) {
       if (it.step === 'laser') {
@@ -132,12 +140,16 @@
         const cust = String(it.customer || '').trim();
         m.orders.push({ k: 'o:' + id, orderId: id, key: it.key || '', customer: cust, listingId: it.listingId ? String(it.listingId) : '', thumb: typeof it.thumb === 'string' ? it.thumb : (it.thumb && it.thumb.url) || '', reason: r, dots, go: type === 'piece' ? 'piece' : type === 'sheet' ? 'sheet' : 'order', target: String((it.open && it.open.id) || id), pool: pool ? String(pool) : '' });
         if (HARD.has(it.key)) m.hard = true;
+      } else if (it.key === 'unverified' && !it.orderId) {   // the sheet's orders could not be read yet: ONE quiet chip for the whole sheet, worded from the readiness' own label
+        if (seen.has('n:unverified')) continue;
+        seen.add('n:unverified');
+        m.notes.push({ k: 'n:unverified', key: 'unverified', step: 'orders', label: tidy(it.label) || 'Orders not checked yet', orders: (Array.isArray(it.orderIds) ? it.orderIds : []).map(String), tone: 'gold' });
       } else if (!it.orderId && !m.own && OWN[it.step]) {
         const o = OWN[it.step], go = o.go || (it.open && it.open.type === 'sheet' ? 'sheet' : '');
         m.own = { k: 'own:' + it.step, step: it.step, key: it.key || it.step, label: o.go ? o.label : String(it.label || o.label), icon: o.icon, go, target: String((it.open && it.open.id) || (feed && feed.id) || '') };
       }
     }
-    m.count = m.orders.length + m.sheets.length;
+    m.count = m.orders.length + m.sheets.length + m.notes.length;
     if (m.orders.length > SIX) {
       const by = new Map();
       for (const o of m.orders) { const g = by.get(o.reason.id) || { k: 'g:' + o.reason.id, tone: o.reason.tone, text: o.reason.group, orders: [] }; g.orders.push(o); by.set(o.reason.id, g); }
@@ -155,6 +167,7 @@
     qr: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h2.5v2.5H14zM18 18h2v2h-2z"/></svg>',
     grid: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M4 12h16M12 4v16"/></svg>',
     bang: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"/><path d="M12 8v4.6M12 15.6v.2"/></svg>',
+    clock: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"/><path d="M12 7.6V12l3 1.8"/></svg>',
     chev: '<svg class="lisCh" viewBox="0 0 16 16" aria-hidden="true"><path d="M6 3.5 10.5 8 6 12.5"/></svg>'
   };
   const photos = new Map();   // listing id -> { url | null, busy, at }
@@ -172,6 +185,7 @@
       const hook = ` data-issue-step="${esc(o.step)}" data-issue-key="${esc(o.key)}"`;
       out.push({ k: o.k, html: o.go ? `<button type="button" class="lisOwn lisGo" data-go="${o.go}" data-id="${esc(o.target)}"${hook}>${inner}</button>` : `<div class="lisOwn"${hook}>${inner}</div>` });
     }
+    for (const n of m.notes) out.push({ k: n.k, html: `<div class="lisOwn lisNote ${n.tone}" data-issue-step="${esc(n.step)}" data-issue-key="${esc(n.key)}" data-issue-orders="${esc(n.orders.join(','))}"><span class="lisOwnI">${ICON.clock}</span><span>${esc(n.label)}</span></div>` });
     for (const s of m.sheets) out.push({ k: s.k, html: sheetRowHtml(s) });
     if (m.groups) {
       for (const g of m.groups) {
