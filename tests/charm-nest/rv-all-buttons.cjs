@@ -119,7 +119,9 @@ const COLUMN = sel => { const n = document.querySelector(sel); return [...n.quer
     await page.waitForFunction(() => OrderWin.isOpen() && OrderWin.key() === '4174476673_41744766731', null, { timeout: 10000 });
     await page.waitForTimeout(300);
     assert.deepEqual(await asked(), none, 'Custom Orders: its order, and no question box either');
-    assert.match(await page.evaluate(() => document.getElementById('owCustom').textContent), /Custom Orders/, 'its custom line (label and buttons) stays');
+    await page.waitForFunction(() => document.querySelector('#owPcSum [data-cu-complete]'), null, { timeout: 10000 });
+    assert.equal(await page.evaluate(() => !!document.getElementById('owCustom')), false, 'no tan Custom Orders bar in the window (5 Oct, round 8)');
+    assert.match(await page.evaluate(() => document.getElementById('owPcSum').textContent), /Print QR label[\s\S]*Complete Order/, 'its piece\'s own row carries its buttons');
     await page.click('#owClose'); await page.waitForFunction(() => !OrderWin.isOpen());
     await page.click('#reviewView .egTab[data-k="unmatchedSku"]');
 

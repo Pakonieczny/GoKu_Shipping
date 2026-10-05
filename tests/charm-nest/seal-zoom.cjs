@@ -10,7 +10,7 @@
 //    and below the top bar, and unclipped; leaving puts every style back (transform, filter, overflow, z-index);
 //  · a pointer sweeping across a seal for 300 ms zooms nothing, one resting 560 ms does (the delay is 500 ms); Tab zooms at once; Esc returns it;
 //  · the real surfaces: the Review card's seals, the order window's header strip (24 px, in a 44 px box that clips), its
-//    custom-order bar (once 1 px wide), the timeline's lane stamps and detail seal: each grows, in view, unclipped;
+//    piece row (once 1 px wide), the timeline's lane stamps and detail seal: each grows, in view, unclipped;
 //  · only transform, filter and opacity move; a finger's tap zooms and a second tap returns it; reduced motion is short.
 //   SHOTS=<dir> node tests/charm-nest/seal-zoom.cjs [playwright-core dir]
 const fs = require('fs'), path = require('path'), assert = require('assert/strict');
@@ -185,11 +185,11 @@ const ORDERS = [{ receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * DAY, up
 
     // ═══ 6 · the order window ═══
     await page.evaluate(k => OrderWin.open(k), KEY);
-    await page.waitForFunction(() => document.querySelectorAll('#owRail .tlStop .tlSeal').length > 3 && document.querySelectorAll('#owCustom .sealRow .seal').length >= 1, null, { timeout: 15000 });
+    await page.waitForFunction(() => document.querySelectorAll('#owRail .tlStop .tlSeal').length > 3 && document.querySelectorAll('#owPcSum .sealRow .seal').length >= 1, null, { timeout: 15000 });
     await page.waitForTimeout(1200); await page.mouse.move(700, 600);
-    // the order window's custom-order bar: its seals were 1px wide
-    const bar = await page.evaluate(() => [...document.querySelectorAll('#owCustom .sealRow .seal')].map(s => s.offsetWidth));
-    check(bar.length === 1 && bar.every(w => w >= 18), 'the custom-order bar\'s one seal (the others are on the Timeline: +N) has a real size again: ' + bar.join(', ') + ' px');
+    // the order window's piece row: its seals were 1px wide
+    const bar = await page.evaluate(() => [...document.querySelectorAll('#owPcSum .sealRow .seal')].map(s => s.offsetWidth));
+    check(bar.length === 1 && bar.every(w => w >= 18), 'the piece row\'s one seal (the others are on the Timeline: +N) has a real size again: ' + bar.join(', ') + ' px');
     // 6a · the header strip: 24px seals in a 44px box that clips
     const stops = '#owRail .tlStop .tlSeal:not(.pending)', nStops = await page.evaluate(sel => document.querySelectorAll(sel).length, stops);
     const done = await page.evaluate(sel => [...document.querySelectorAll(sel)].map((s, i) => [i, s.closest('.tlStop').className]).filter(([, c]) => /\bd\b/.test(c)).map(([i]) => i), stops);
@@ -206,9 +206,9 @@ const ORDERS = [{ receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * DAY, up
       const back = await X.probe(stops, i);
       check(back.tf === base.tf && !back.running && await page.evaluate(() => ['owRail', 'orderWin'].every(id => !document.getElementById(id).style.overflow)), 'the strip is closed again, the seal as it was');
     }
-    // 6b · the custom-order bar's seals (the Completed card of the order window)
+    // 6b · the piece row's seals (the Completed card of the order window)
     {
-      const sel = '#owCustom .sealRow .seal', p = await X.point(sel, 0); await page.mouse.move(p.x, p.y, { steps: 3 });
+      const sel = '#owPcSum .sealRow .seal', p = await X.point(sel, 0); await page.mouse.move(p.x, p.y, { steps: 3 });
       await page.waitForFunction(sel => document.querySelector(sel).dataset.sealZoom, sel, { timeout: 4000 }); await X.settle();
       const z = await X.probe(sel, 0);
       check(near(z.k, await scaleOf(z.size, 72)) && z.k > 1.2 && fits(z, 72) && z.inView && !z.clipped.length, `the bar's ${z.size}px seal: grown ×${z.k}, in view, not clipped ${JSON.stringify(z.clipped)}`);
