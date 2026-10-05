@@ -259,7 +259,7 @@
 .efpFound{display:flex;align-items:center;gap:9px;padding:9px 14px;border:1px solid var(--line);background:var(--card2);border-radius:10px;color:var(--ink70);font-size:12px}
 @container efp (max-width:1180px){.efpKpis{grid-template-columns:repeat(4,minmax(0,1fr))}.efpO{grid-template-columns:88px minmax(130px,1fr) 104px minmax(0,1.6fr) 48px}.efpDay{min-width:132px}}
 @container efp (max-width:900px){.efpGrid.g2,.efpGrid.g75,.efpGrid.g57{grid-template-columns:minmax(0,1fr)}.efpKpis{grid-template-columns:repeat(2,minmax(0,1fr))}.efpO{grid-template-columns:78px minmax(0,1fr) 92px 44px;grid-template-areas:"t n s q" "p p p p";gap:6px 10px}.efpO>.efpOt{grid-area:t}.efpO>.efpOn{grid-area:n}.efpO>.efpOs{grid-area:s}.efpO>.efpOp{grid-area:p}.efpO>.efpQr{grid-area:q;width:44px;height:44px}}
-@container efp (max-width:640px){.efpAv{width:42px;height:42px;flex-basis:42px;font-size:14px}.efpName{font-size:18px}.efpChips{flex:1 1 100%}.efpBar{gap:6px 8px;padding:6px 8px}.efpSeg{order:1;max-width:100%;overflow-x:auto;scrollbar-width:none}.efpSeg button{padding:4px 9px;flex:0 0 auto}.efpNav{order:2;flex:1 1 100%}.efpDay{flex:1;min-width:0}.efpBusy{order:3}
+@container efp (max-width:640px){.efpAv{width:42px;height:42px;flex-basis:42px;font-size:14px}.efpName{font-size:18px;white-space:normal;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;line-clamp:2;overflow-wrap:anywhere}.efpChips{flex:1 1 100%}.efpBar{gap:6px 8px;padding:6px 8px}.efpSeg{order:1;max-width:100%;overflow-x:auto;scrollbar-width:none}.efpSeg button{padding:4px 9px;flex:0 0 auto}.efpNav{order:2;flex:1 1 100%}.efpDay{flex:1;min-width:0}.efpBusy{order:3}
 .efpRtH b{flex:1 1 100%;order:-2}.efpRtH span{order:-1;margin-left:0;color:var(--ink);font-weight:700}
 .efpKpis{gap:8px}.efpKL{font-size:9.5px;letter-spacing:.04em;min-height:2.6em;align-items:flex-end}.efpK{padding:11px 12px 9px}.efpKV{font-size:25px}.efpKsp{flex-basis:48px}.efpChart{padding:11px 12px 12px}.efpNowCard{grid-template-columns:auto minmax(0,1fr);padding:11px 12px}.efpNowCard>.efpQr{display:none}
 .efpO{grid-template-columns:70px minmax(0,1fr) 44px;grid-template-areas:"t n q" "s s s" "p p p"}.efpO>.efpOs{grid-area:s;display:flex;gap:10px;align-items:baseline}.efpIr{grid-template-columns:100px minmax(0,1fr);grid-template-areas:"t n" "r r"}.efpIr>time{grid-area:t}.efpIr>.efpOid{grid-area:n}.efpIr>span{grid-area:r}.efpIgh,.efpIgl,.efpRates{padding-left:12px;padding-right:12px}.efpFind{padding:10px 12px 6px}.efpOl{padding:0 2px 4px}
@@ -733,8 +733,8 @@
       else txt = L || M ? "Not signed in now" : "";
       if (E.where._h !== txt) { E.where._h = txt; E.where.innerHTML = txt; }
       const here = L ? L.stationKey : "", st = (M && M.stations.length ? M.stations : []).slice(0, 5), sig = st.map(x => x.station + x.minutes + x.parts).join() + "|" + here + !!w;
-      if (E.chips._sig !== sig) { E.chips._sig = sig; E.chips.innerHTML = st.map(x => `<span class="efpChip${w && here && x.station === here ? " now" : ""}" title="${esc(x.parts != null ? nf(x.parts) + " pieces" : "")}"><b>${esc(x.label)}</b>${esc(x.minutes != null ? durMs(x.minutes * 60000) : x.parts != null ? nf(x.parts) + " parts" : "")}</span>`).join(""); }
-      if (M && M.spellings.length > 1) E.name.title = `Also seen as: ${M.spellings.filter(x => x !== M.name).join(", ")}`;
+      if (E.chips._sig !== sig) { E.chips._sig = sig; E.chips.innerHTML = st.map(x => `<span class="efpChip${w && here && x.station === here ? " now" : ""}" title="${esc(x.parts != null ? nf(x.parts) + " pieces" : "")}"><b>${esc(x.label)}</b>${esc(x.minutes != null ? durMs(x.minutes * 60000) : x.parts != null ? nf(x.parts) + " pieces" : "")}</span>`).join(""); }
+      E.name.title = S.name + (M && M.spellings.length > 1 ? `. Also seen as: ${M.spellings.filter(x => x !== M.name).join(", ")}` : "");
     }
 
     /* ── the figures ── */

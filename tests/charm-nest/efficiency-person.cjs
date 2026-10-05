@@ -106,7 +106,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     assert.equal(await page.evaluate(() => location.hash), '#efficiency/person/Ana%20M.', 'the person is in the address');
     await loaded(page, 'week'); pf.setDelay(null);
     assert.equal(await page.locator(`${V} dialog[open], dialog[open]`).count(), 0, 'a page, not a pop-up');
-    assert.equal((await page.locator(`${P} .efpName`).innerText()).trim(), 'Ana M.'); assert.equal((await page.locator(`${P} .efpAv`).innerText()).trim(), 'AM', 'initials');
+    assert.equal((await page.locator(`${P} .efpName`).innerText()).trim(), 'Ana M.'); assert.equal((await page.locator(`${P} .efpAv`).innerText()).trim(), 'AM', 'initials'); assert(/^Ana M\./.test(await page.locator(`${P} .efpName`).getAttribute('title') || ''), 'the full name is always on the heading\'s hover (a long one is cut on a phone)');
     await page.waitForFunction(sel => /Signed in\s*at\s*Welding/.test(document.querySelector(sel).textContent), `${P} .efpWhere`, { timeout: 8000 });
     assert(/since/.test(await page.locator(`${P} .efpWhere`).innerText()), 'since when');
     assert(await page.locator(`${P} .efpChip`).count() >= 3 && await page.locator(`${P} .efpChip.now`).count() === 1, 'station chips, the one she is at marked');
