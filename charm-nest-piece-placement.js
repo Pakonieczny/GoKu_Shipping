@@ -173,8 +173,9 @@
     // (a hold nobody released, in the permanent timeline, on a piece no sheet holds: it is held, whatever the line's own marker still says; the marker, when set, already said so)
     if (out.state === 'waiting' && h.held && !out.onSheet) out = Object.assign(out, holdAnswer({ reason: h.held.text, at: h.held.at, by: h.held.by }, false, ''));
     if (!out.since && (out.state === 'waiting' || out.state === 'hold') && h.at) { out.since = h.at; out.by = out.by || h.by; }
-    // (taken off by an event: that; or the history still says it was placed, and no record holds it now: its sheet was deleted or its set undone behind the timeline)
-    if (!out.onSheet) out.wasOn = h.wasOn || (h.on ? Object.assign({}, h.on, { until: 0, by: '', how: 'gone', reason: '' }) : null);
+    // (taken off by an event: that; or the history still says it was placed, and no record holds it now: its sheet was deleted or its set undone behind the timeline.
+    //  A piece on hold with no event that took it off says its hold alone: the hold is why it is on no sheet, and nothing in the history tells when it came off)
+    if (!out.onSheet) out.wasOn = h.wasOn || (h.on && out.state !== 'hold' ? Object.assign({}, h.on, { until: 0, by: '', how: 'gone', reason: '' }) : null);
     out.sig = sigOf(out);
     return out;
   }
