@@ -2878,7 +2878,7 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-pdf.js?v=20260924-followup"></script>
 <script src="charm-nest-dxf.js?v=20260927-custom"></script>
 <script src="charm-nest-motion.js?v=20261003-zg-seal-small"></script>
-<script src="charm-nest-timeline-ui.js?v=20261003-tl-seal-zg-live-fast"></script>
+<script src="charm-nest-timeline-ui.js?v=20261005-pieces"></script>
 <script src="charm-nest-geom.js?v=20260921-material"></script>
 <script src="charm-nest-engrave-fit.js"></script>
 <script src="charm-nest-assets.js"></script>
@@ -2888,7 +2888,7 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-readiness.js?v=20261003-explain-held2"></script>
 <script src="charm-nest-export.js"></script>
 <script src="charm-nest-text.js"></script>
-<script src="charm-nest-orders.js?v=20260930-live-search"></script>
+<script src="charm-nest-orders.js?v=20261005-pieces"></script>
 <script src="charm-nest-background.js?v=20260930-stamp-barrier"></script>
 <script>
 /* ═════════════════════════════════════════════════════════════════════════
@@ -6073,7 +6073,7 @@ function openCharm(sh, c, placement) {
     <div style="display:grid;grid-template-columns:200px 1fr;gap:18px;align-items:start">
       <img crossorigin="anonymous" src="${cors(c.thumb)}" style="width:200px;aspect-ratio:1;object-fit:contain;background:#fff;border:1px solid var(--line);border-radius:10px">
       <div>
-        <div class="field"><label>Layer name</label><input id="ciName" value="${esc(c.name || "")}"${line ? " readonly" : ""}><div class="help">${line ? "An order line: named by its order and SKU." : ""}${line ? "" : c.namedBy === "claude" ? `Named by Claude${c.confidence ? ` (${Math.round(c.confidence * 100)}% sure)` : ""}${c.label ? ` — “${esc(c.label)}”` : ""}` : c.namedBy === "operator" ? "Named by an operator" : c.namedBy === "library" ? "From the charm library" : "File-based name"}${line ? "" : ". Renames are remembered for this artwork."}</div></div>
+        <div class="field"><label>Layer name</label><input id="ciName" value="${esc(c.name || "")}"${line ? " readonly" : ""}><div class="help">${line ? "An order piece: named by its order and SKU." : ""}${line ? "" : c.namedBy === "claude" ? `Named by Claude${c.confidence ? ` (${Math.round(c.confidence * 100)}% sure)` : ""}${c.label ? ` — “${esc(c.label)}”` : ""}` : c.namedBy === "operator" ? "Named by an operator" : c.namedBy === "library" ? "From the charm library" : "File-based name"}${line ? "" : ". Renames are remembered for this artwork."}</div></div>
         <dl class="kv"><dt>Source</dt><dd>${esc(c.sourceName)} · #${c.index + 1}</dd><dt>Size</dt><dd>${fmt.mm(c.widthPt)} × ${fmt.mm(c.heightPt)}</dd><dt>Silhouette</dt><dd>${fmt.area(c.areaPt2)} · ${c.members.length} elements${c.qty > 1 ? ` · ×${c.qty} on this file` : ""}</dd><dt>Geometry hash</dt><dd>${c.hash}</dd>${pl ? `<dt>Placed</dt><dd>${pl.angle}° at ${fmt.mm(pl.cxPt)}, ${fmt.mm(pl.cyPt)} from top-left</dd>` : ""}${c.open ? `<dt>Status</dt><dd style="color:#8a3a26">open path — excluded from nesting</dd>` : ""}</dl>
         <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">
           ${pl ? `<button class="btn ghost sm" id="ciPin">${c.pinned && !c.arrivalPin ? "Unpin" : "Pin here"}</button>` : ""}
@@ -6615,7 +6615,7 @@ boot();
      Design Station's sign-in), the same name every seal it stamps carries. -->
 <script src="station-session.js?v=20261002-ea1"></script>
 <script src="station-activity.js?v=20261003-reset-clean"></script>
-<script src="charm-nest-bridge.js?v=20261003-many1"></script>
+<script src="charm-nest-bridge.js?v=20261005-pieces"></script>
 <script>
 try {
   const nameNow = () => { try { const n = String((window.CNEmployee && CNEmployee.name()) || "").trim(); return /^\d+$/.test(n) ? "" : n; } catch (_) { return ""; } };
@@ -6643,9 +6643,9 @@ try {
       set(v) { d.set.call(window.B, v); try { const n = String(d.get.call(window.B) || "").trim(); if (n && !/^\d+$/.test(n)) StationSession.signedIn({ name: n, id: null }); } catch (_) {} } });
 } catch (_) {}
 </script>
-<script src="charm-nest-sheetwin.js?v=20261003-fl2"></script>
+<script src="charm-nest-sheetwin.js?v=20261005-pieces"></script>
 <script src="charm-nest-tour.js?v=20260929-m11"></script>
-<script src="charm-nest-mail.js?v=20261003-reset-clean"></script>
+<script src="charm-nest-mail.js?v=20261005-pieces"></script>
 <script src="charm-nest-rose-ui.js?v=20261003-rg2"></script>
 <script src="charm-nest-flow-rose.js?v=20261003-rg2"></script>
 <script src="charm-nest-export-ui.js?v=20260925-done"></script>
@@ -6667,8 +6667,8 @@ try {
         <span class="owNow" id="owNow" hidden></span>
         <span class="pill neutral" id="owMetal">—</span>
         <span class="mono owPos" id="owPos"></span>
-        <button type="button" class="owIconBtn" id="owPrev" title="The line before this one" aria-label="Previous line"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg></button>
-        <button type="button" class="owIconBtn" id="owNext" title="The next line" aria-label="Next line"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg></button>
+        <button type="button" class="owIconBtn" id="owPrev" title="The piece before this one" aria-label="Previous piece"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg></button>
+        <button type="button" class="owIconBtn" id="owNext" title="The next piece" aria-label="Next piece"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg></button>
         <button type="button" class="owIconBtn" id="owClose" title="Close (Esc)" aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
       </div>
     </div>
