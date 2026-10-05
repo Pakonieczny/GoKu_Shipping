@@ -489,8 +489,6 @@ dialog.owin{width:min(1320px,97vw);max-height:min(94vh,1040px)}
 .fLabel{display:block;font:10px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--ink45);font-weight:700;margin:0 0 5px}
 .fLabel .soft{text-transform:none;letter-spacing:0;font-weight:400;color:var(--ink45);font-family:var(--sans)}
 .owField{margin-bottom:12px}
-.owIn{width:100%;border:1px solid var(--line);border-radius:10px;padding:9px 11px;font:13px var(--sans);background:var(--card);resize:vertical;color:var(--ink)}
-.owIn[readonly]{background:var(--paper2);color:var(--ink70)}
 /* the one field that must be read exactly: it grows to its content and is never boxed into a scroller */
 .owSaid{font:14px/1.5 var(--serif);background:var(--paper2);border:1px solid var(--line);border-radius:10px;padding:9px 11px;overflow-wrap:anywhere;white-space:pre-wrap;min-height:44px}
 .owSaid .lbl{display:block;font:9.5px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--ink45);font-weight:700;margin:6px 0 2px}
@@ -2757,16 +2755,13 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 .rvItem .cuStep>.rvItem{border:0;box-shadow:none;background:transparent;padding:0;border-left:0}
 .rvItem .cuStep>.rvItem>.rh .ttl,.rvItem .cuStep>.rvItem>.rh .sub,.rvItem .cuStep>.rvItem>.ev,.rvItem .cuStep>.rvItem>.why{display:none}
 .rvItem .cuStep>.rvItem>.rh{padding-bottom:0;border-bottom:0}
-/* the order window: a custom order's one line, and notes left for the next person */
+/* the order window: a custom order's one line */
 .owPcRow .pcAct .sealRow{margin:calc(var(--seal-fit,var(--seal-base)) * -.28) 0;max-width:50%;flex:0 0 auto}
 /* the small seals a piece keeps in the Orders list (completed by hand, printed) and an order's on its Cancelled card: their records keep them for good */
 .orderListRow .rowActions .sealRow,.ocard .rowActions .sealRow,.cxSeals .sealRow{margin:3px 0 3px 3px;max-width:100%}
 .cxSeals{margin-top:3px}
 .owPcRow .pcAct .owCuMore{flex:0 0 auto;border:0;background:transparent;color:var(--ink45);font:700 10.5px var(--sans);padding:3px 5px;margin-left:-4px;border-radius:6px;cursor:pointer;white-space:nowrap}
 .owPcRow .pcAct .owCuMore:hover,.owPcRow .pcAct .owCuMore:focus-visible{color:var(--ink);background:var(--card2)}
-.owNoteField .fLabel{color:var(--ink)}
-.owNoteField .owIn{border-color:var(--goldLine)}
-.owNoteField .owIn.has{background:#fdf7e6;border-color:var(--gold2);font-size:13.5px}
 </style>
 <link rel="preload" href="charm-nest-stamp-walnut.png" as="image">
 <link rel="stylesheet" href="charm-nest-activity.css?v=20261003-seal-small">
@@ -6775,7 +6770,7 @@ boot();
      Design Station's sign-in), the same name every seal it stamps carries. -->
 <script src="station-session.js?v=20261002-ea1"></script>
 <script src="station-activity.js?v=20261005-e2live"></script>
-<script src="charm-nest-bridge.js?v=20261005-lis2-cardinal4-zoom-psb1-egl1-osc1-r3f-setgate1-hand1-sameset1-rl1-nowait1-opt1-rt1-pcr1-one1-st1-five1-pd1-zp1-rel2-cx1-hold2-sl2-sealsh1-sealpc2-live1-pst1-nofix1-pcsel1-pst2-sk1"></script>
+<script src="charm-nest-bridge.js?v=20261005-lis2-cardinal4-zoom-psb1-egl1-osc1-r3f-setgate1-hand1-sameset1-rl1-nowait1-opt1-rt1-pcr1-one1-st1-five1-pd1-zp1-rel2-cx1-hold2-sl2-sealsh1-sealpc2-live1-pst1-nofix1-pcsel1-pst2-sk1-nonote1"></script>
 <script src="charm-nest-review-live.js?v=20261005-rl1"></script>
 <script src="charm-nest-hold-ui.js?v=20261005-hold2"></script>
 <script>
@@ -6877,7 +6872,6 @@ try {
           <div class="owPcSum" id="owPcSum" hidden></div>
           <div id="owFix"></div>
           <div class="owField"><label class="fLabel">What the customer wrote</label><div class="owSaid" id="owNotes">— No notes —</div></div>
-          <div class="owField owNoteField"><label class="fLabel" for="owNote">Order notes <span class="soft">— for whoever opens this order next · saved to the order by itself, every station and sorter sees them</span></label><textarea class="owIn" id="owNote" rows="3" placeholder="Leave a note on this order for the next person who opens it…"></textarea></div>
           <div class="owMeta" id="owMeta"></div>
         </div>
       </div>
@@ -6896,7 +6890,7 @@ try {
             <textarea id="owInput" rows="1" placeholder="Message every station on this order…"></textarea>
             <button type="button" class="owIco send" id="owSend" title="Send (Enter)" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2L11 13"/><path d="M22 2l-7 20-4-9-9-4 20-7z"/></svg></button>
           </div>
-          <div class="owHint"><span class="owLink ok" id="owLink" title="Messages and the staff note save straight to the order's record"><i></i>Live</span><span class="owHintT"><kbd>Enter</kbd> send · <kbd>Shift</kbd>+<kbd>Enter</kbd> new line · paste or drop images</span></div>
+          <div class="owHint"><span class="owLink ok" id="owLink" title="Messages save straight to the order's record"><i></i>Live</span><span class="owHintT"><kbd>Enter</kbd> send · <kbd>Shift</kbd>+<kbd>Enter</kbd> new line · paste or drop images</span></div>
         </div>
         <input type="file" id="owFile" accept="image/*" multiple hidden>
         </div>

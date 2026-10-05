@@ -1,8 +1,7 @@
 // Adversarial (28 Sep, wave 3, area 8): the order view's Overview. The Team tab follows the order on screen while an order
-// outside the pull is still read (it kept the thread of the order shown before, under the new order's number); a note
-// saved just before the order's record is read again is not put back to the old words by that read answering late; a
-// note written at another station shows on every line of the order as it opens; Next slides the next line in, and the
-// close shrinks the view back into its row — both seen moving, and smooth.
+// outside the pull is still read (it kept the thread of the order shown before, under the new order's number); the Order
+// notes box is gone (5 Oct 2026), so a note written at another station shows nowhere in the window and the record keeps it;
+// Next slides the next line in, and the close shrinks the view back into its row — both seen moving, and smooth.
 // Headless Chromium against the fake site (bridge-server.cjs); every request that is not to the loopback is aborted.
 //   node tests/charm-nest/adv-overview.cjs   (PW_DIR=<playwright node_modules>, CHROMIUM=<chrome>)
 const path = require('path'), assert = require('assert/strict');
@@ -52,7 +51,6 @@ async function main() {
       Orders.interpretAll(); CN.setMode('orders'); Orders.render();
     }, [order(A, 'Hannah Whitford', 'Old note'), order(B2, 'Ava Patel')]);
     const a1 = `${A.rid}_${A.tids[0]}`, a2 = `${A.rid}_${A.tids[1]}`;
-    const noteIs = (v, ms = 3000) => page.waitForFunction(v => document.getElementById('owNote').value === v, v, { timeout: ms }).then(() => true, () => false);
     const serverNote = rid => (srv.st.doc('Brites_Orders', rid) || {})['Staff Note'];
     const until = async (f, ms = 6000) => { for (const t0 = Date.now(); !f(); ) { if (Date.now() - t0 > ms) return false; await new Promise(r => setTimeout(r, 50)); } return true; };
     const closed = () => page.waitForFunction(() => !document.getElementById('orderWin').open, null, { timeout: 4000 });
@@ -64,13 +62,14 @@ async function main() {
     const smooth = (w, what) => { const ok = !w.slow.length && !w.lt.some(x => x > 50), msg = `${what}: smooth (${w.n} frames, max ${w.max} ms, slow ${JSON.stringify(w.slow)}, long tasks ${JSON.stringify(w.lt)})`; if (ok || !busy) check(ok, msg); else console.log(`  – ${msg} — not judged: load ${require('os').loadavg()[0].toFixed(1)} on ${require('os').cpus().length} cores`); };
     const unwatch = () => page.evaluate(() => { const w = window.__w; w.on = false; try { w.po.disconnect(); } catch (_) {} const d = w.d.slice(1); return { n: d.length, max: Math.round(Math.max(0, ...d)), slow: d.filter(x => x > 34).map(Math.round), lt: w.lt }; });
 
-    // 1 · a note written at another station shows on every line of the order as the view opens
+    // 1 · the Order notes box is gone (Paul, 5 Oct 2026): a note written at another station stays in the order's record
+    //     and shows nowhere in the window, as the view opens or after
     srv.st.put('Brites_Orders', A.rid, { 'Staff Note': 'Welding: chain swapped to 18 in' });
     await page.click(`#ordItems [data-key="${a1}"]`);
     await page.waitForFunction(() => OrderWin.isOpen());
-    check(await noteIs('Welding: chain swapped to 18 in'), 'a note written at another station shows as the view opens');
-    const both = await page.evaluate(ks => ks.map(k => B.orders.byKey.get(k).spec.staffNote), [a1, a2]);
-    check(both.every(n => n === 'Welding: chain swapped to 18 in'), 'and is on every line of the order: ' + JSON.stringify(both));
+    await page.waitForTimeout(900);
+    const shown1 = await page.evaluate(() => ({ box: !!document.getElementById('owNote'), text: /Welding: chain swapped|Order notes/.test(document.getElementById('orderWin').textContent) }));
+    check(!shown1.box && !shown1.text, 'a note written at another station is not shown, and there is no notes box: ' + JSON.stringify(shown1));
     await settled();
 
     // 2 · Next slides the next line in: seen moving, smoothly (transform and opacity only)
@@ -91,22 +90,14 @@ async function main() {
     smooth(sl, 'Next');
     await page.waitForFunction(k => OrderWin.key() === k, a2);
 
-    // 3 · a note saved just before the record is read again (typed, then Next to the order's other line): the read,
-    //     taken before the save landed and answering after it, does not put the old words back
+    // 3 · Previous and Next keep walking the order's lines with no box, and the order's record is left as it was
     await page.click('#owPrev');
     await page.waitForFunction(k => OrderWin.key() === k, a1);
     await page.waitForTimeout(400);
-    let release = null; const gate = new Promise(r => { release = r; });
-    const stale = JSON.stringify({ success: true, data: { 'Staff Note': 'Welding: chain swapped to 18 in' } });
-    await page.route(/\/\.netlify\/functions\/firebaseOrders\?orderId=/, async r => { await gate; return r.fulfill({ status: 200, contentType: 'application/json', body: stale }); });
-    await page.fill('#owNote', 'Rush: ships Monday');
     await page.click('#owNext');
     await page.waitForFunction(k => OrderWin.key() === k, a2);
-    check(await until(() => serverNote(A.rid) === 'Rush: ships Monday'), 'the note is saved');
-    await page.waitForTimeout(300);   // (the save's answer taken in)
-    release(); await page.waitForTimeout(400);
-    check(await noteIs('Rush: ships Monday', 1500), 'a read taken before the save and answering after it keeps the note just saved: ' + await page.inputValue('#owNote'));
-    await page.unroute(/\/\.netlify\/functions\/firebaseOrders\?orderId=/);
+    await page.waitForTimeout(400);
+    check(!(await page.$('#owNote')) && serverNote(A.rid) === 'Welding: chain swapped to 18 in', 'no notes box on either line, and the record\'s note is untouched: ' + serverNote(A.rid));
 
     // 4 · the Team tab follows the order on screen: an order outside the pull opened in place (the header search) while
     //     it is still read shows its own thread, never the thread of the order shown before
