@@ -11,6 +11,7 @@
 "use strict";
 const ACT = "Station_Activity", DAILY = "Efficiency_Daily";
 const { STATIONS } = require("./_orderTimeline");           // one list of stations for the timeline, the sessions and this
+let issueKinds = null; try { issueKinds = require("./_activityKinds"); } catch (_) {}   // (the issue counters are an extra: without the file the rollup is as before)
 const ACTIONS = new Set(["scan", "reject", "complete", "print", "undo", "error", "note"]);
 const MAX_BATCH = 50, MAX_EVENT_BYTES = 600, MAX_BODY_CHARS = 40000;
 const ACTIVE_GAP_MS = 5 * 60000, GAP_CAP_MS = 3600000, MAX_AGE_MS = 7 * 86400000, MAX_PARTS = 100000, MAX_TOUCHED = 3000;
@@ -95,6 +96,12 @@ function rollupPatch(FV, prev, day, person, evs, prefix) {
   for (const ev of evs) {
     first = Math.min(first, ev.at); last = Math.max(last, ev.at);
     tally(st[ev.station] || (st[ev.station] = {}), ev);
+    // Issue counters (plans/employee-hr/api.md, E10): the kind of this event as small counters x_* on its station (cancel alerts,
+    // holds, reprints, "again" scans, lookup failures, the inbox's replies ...), so a year of them is counted without reading events.
+    // Stateless per event (the same counters whatever order a batch is written in). Never breaks the write.
+    if (issueKinds) try {
+      for (const [k, v] of Object.entries(issueKinds.classify(ev).x)) bump(st[ev.station], k, v);
+    } catch (_) {}
     const sp = span[ev.station] || (span[ev.station] = { first: Infinity, last: 0 });
     sp.first = Math.min(sp.first, ev.at); sp.last = Math.max(sp.last, ev.at);
     const sc = ev.action === "scan" ? 1 : 0, pr = ev.action === "complete" ? ev.parts : 0, un = ev.action === "undo" ? ev.parts : 0;
@@ -122,6 +129,8 @@ function rollupPatch(FV, prev, day, person, evs, prefix) {
   if (Object.keys(hh).length) out.hours = hh;
   if (Object.keys(touched).length) out.touched = touched;
   if (prefix) out.sandbox = true;
+  // ixv: every event of this day was counted with the x_* counters (a day that began before they existed is left without it, so the reader shows dashes, not zeros)
+  if (issueKinds && (!prev.events || prev.ixv === 1)) out.ixv = 1;
   return out;
 }
 
