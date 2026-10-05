@@ -2298,7 +2298,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     for (const r of window.Orders ? Orders.rows() : []) {
       const line = new Set(r.poolIds || []); if (line.size < 2) continue;
       const held = stayF.find(o => line.has(o.id)); if (!held || !okF.some(o => line.has(o.id))) continue;
-      for (const o of okF.filter(o => line.has(o.id))) stayF.push(Object.assign(o, { why: `its line stays together (a copy is on ${held.where}: ${held.why})` }));
+      for (const o of okF.filter(o => line.has(o.id))) stayF.push(Object.assign(o, { why: `its piece stays together (a copy is on ${held.where}: ${held.why})` }));
       okF = okF.filter(o => !line.has(o.id));
     }
     return { rid, whole, ids, ok: okF, stay: stayF };
@@ -2325,11 +2325,11 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       const text = then === "cancel"
         ? `The order leaves every list in the sorter. Its record is kept under Orders › Cancelled, where it can be restored.${n ? " Every other charm stays where it is, and each sheet gets a new QR label." : ""}`
         : !n ? "" : whole ? `The order waits under On hold, here and in Orders, until someone puts it back. Every other charm stays exactly where it is, and each sheet gets a new QR label.`
-        : `${lineN > 1 ? `Its line (${lineN} copies) waits` : "Only this charm waits"} under On hold; the order's other pieces stay and are cut.`;
+        : `${lineN > 1 ? `Its piece (${lineN} copies) waits` : "Only this charm waits"} under On hold; the order's other pieces stay and are cut.`;
       const label = then === "cancel" ? (n ? "Take off and cancel" : "Cancel the order") : "Take off and hold";
       host.innerHTML = `<div class="swOff" role="group" aria-label="Take off the sheet"><h4>Take off the sheet</h4>
         <div class="pick">${many ? `<label class="opt"><input type="radio" name="swOffWho" value="all"${pick === "all" ? " checked" : ""}><b>The whole order · ${mates.ids.size} pieces</b><small>${esc(listWhere(mates.ok.concat(mates.stay)))}</small></label>` : ""}
-        <label class="opt"><input type="radio" name="swOffWho" value="one"${pick === "one" ? " checked" : ""}><b>${lineN > 1 ? `This line · ${lineN} copies` : many ? "Only this charm" : "This charm"}</b><small>${esc(x.sku || x.name)}${lineN > 1 ? ", its copies go together" : x.qty > 1 ? ` · copy ${x.copy} of ${x.qty}` : ""} · ${esc(lineN > 1 ? listWhere(one.ok.concat(one.stay)) : sheetWord(W.id, W.rec.fileBase))}</small></label></div>
+        <label class="opt"><input type="radio" name="swOffWho" value="one"${pick === "one" ? " checked" : ""}><b>${lineN > 1 ? `This piece · ${lineN} copies` : many ? "Only this charm" : "This charm"}</b><small>${esc(x.sku || x.name)}${lineN > 1 ? ", its copies go together" : x.qty > 1 ? ` · copy ${x.copy} of ${x.qty}` : ""} · ${esc(lineN > 1 ? listWhere(one.ok.concat(one.stay)) : sheetWord(W.id, W.rec.fileBase))}</small></label></div>
         ${x.rid ? `<div class="then" role="radiogroup" aria-label="Then"><span class="fLabel">Then</span><button type="button" role="radio" data-then="hold" aria-checked="${then === "hold"}">${ICON.pause}Put on hold</button><button type="button" role="radio" data-then="cancel" aria-checked="${then === "cancel"}"${whole ? "" : ' disabled title="Only a whole order can be cancelled"'}>${ICON.off}Cancel the order</button></div>` : ""}
         <input class="swNote" type="text" maxlength="200" placeholder="${then === "cancel" ? "Why it was cancelled (optional)" : "Note for whoever puts it back (optional)"}" value="${esc(note)}" aria-label="Note">
         ${stay}${text ? `<div class="note">${text}</div>` : ""}
@@ -2761,7 +2761,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       // stations read this record; "Fully Refunded" is not a cancel on its own, so that one can be restored)
       const etsyX = /cancel/i.test(c.etsyStatus || (etsy ? "cancel" : ""));
       return `<div class="cxId"><b class="mono">${esc(rid)}</b><span>${esc(c.buyer || "")}</span></div>
-        <div class="cxWhat">${lines.map(l => `<span class="mono" title="${esc(l.title || "")}">${esc(l.sku || "no SKU")}${l.quantity > 1 ? ` ×${l.quantity}` : ""}</span>`).join("") || `<i>no lines kept</i>`}</div>
+        <div class="cxWhat">${lines.map(l => `<span class="mono" title="${esc(l.title || "")}">${esc(l.sku || "no SKU")}${l.quantity > 1 ? ` ×${l.quantity}` : ""}</span>`).join("") || `<i>no pieces kept</i>`}</div>
         <div class="cxWhy"><div class="cxWho"><span class="cxBadge ${etsy ? "etsy" : "person"}">${etsy ? "Cancelled on Etsy" : `Cancelled by ${esc(c.by || "someone")}`}</span>${!etsy && etsyX ? `<span class="cxBadge etsy">Cancelled on Etsy too</span>` : ""}<time datetime="${c.at ? new Date(+c.at).toISOString() : ""}">${esc(when(+c.at))}</time></div>
           <div class="cxReason${why ? "" : " none"}">${why ? esc(why) : etsy ? "Etsy gave no reason" : "No reason given"}</div>
           ${fates.length ? `<div class="cxFates">${fates.map(f => `<span class="${f.cut ? "cut" : "off"}">${esc(f.text)}</span>`).join("")}</div>` : ""}</div>
@@ -2924,7 +2924,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     const queued = rows.length;
     const saved = await dropOrder(rid).then(() => true, () => RunCtl.save(B.run).then(() => true)).catch(e => { console.warn("sheet window: run after cancel", e); toast(`Order ${rid} is cancelled; the run will save it with its next change (${e.message})`, "", 7000); return false; });
     // its lines out of the queue, a step of the cancel on its timeline (Paul, 29 Sep 00:26), saying whether the run kept it
-    if (queued && cancelAt) AutoCancel.step(rid, cancelAt, "the queue", saved ? "removed" : "failed", o.who, saved ? `Taken out of the queue (${queued} line${queued === 1 ? "" : "s"})` : "Taken out of the queue here; the run saves it with its next change");
+    if (queued && cancelAt) AutoCancel.step(rid, cancelAt, "the queue", saved ? "removed" : "failed", o.who, saved ? `Taken out of the queue (${queued} piece${queued === 1 ? "" : "s"})` : "Taken out of the queue here; the run saves it with its next change");
     agent({ bridge: true }, "DS", `Order ${rid} cancelled by ${o.who}${o.note ? " (" + o.note + ")" : ""}: taken off every list; its record is kept under Orders › Cancelled`);
     goneSt.state = "ok"; paint();
   }
@@ -3203,7 +3203,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
             data: { reason, sheets: [sh.sheetId || ""], sheetNames: [whereOf(sh)], pieces: ids1.length, copies: ids1.length, poolIds: ids1.slice(0, 40), auto: true, cancel: true, outcome: "removed" }, id: `${j.removedAt}-${sh.sheetId || "pool"}` });
         }
         // its lines out of the queue (Orders and the run), a step of the cancel too
-        if (plan.rows.length && j.runSaved) step(rid, at, "the queue", "removed", by, `Taken out of the queue (${plan.rows.length} line${plan.rows.length === 1 ? "" : "s"})`);
+        if (plan.rows.length && j.runSaved) step(rid, at, "the queue", "removed", by, `Taken out of the queue (${plan.rows.length} piece${plan.rows.length === 1 ? "" : "s"})`);
         const d = read().done[rid];
         if (plan.left.length && !(d && +d.at === at) && +j.noticed !== at) { notify(rid, at, plan.left); j.noticed = at; upd(x => { x.noticed = at; }); }
         // what became of it, sheet by sheet, on its cancel record (Orders › Cancelled reads it); kept in the journal until

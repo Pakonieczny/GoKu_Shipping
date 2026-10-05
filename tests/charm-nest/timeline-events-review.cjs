@@ -103,7 +103,7 @@ const DESIGN_DXF = DG(0, 'SECTION', 2, 'HEADER', 9, '$INSUNITS', 70, 4, 0, 'ENDS
     await act('4179000004', 'unmatchedSku', 'nodesign');
     await until('decided', '4179000004');
     // skipped from the order window (no card): the line is skipped and the queue synced, as toggleSkip does
-    await page.evaluate(() => { const r = B.orders.byKey.get('4179000006_41790000061'); r.state = 'skipped'; r.reason = 'line skipped by Test Operator'; r.problems = []; r.hold = r.reason; Review.syncOrderItems(); });
+    await page.evaluate(() => { const r = B.orders.byKey.get('4179000006_41790000061'); r.state = 'skipped'; r.reason = 'piece skipped by Test Operator'; r.problems = []; r.hold = r.reason; Review.syncOrderItems(); });
     await until('skipped', '4179000006');
     ev = await events();
     const dA = of(ev, 'decided', '4179000001')[0];

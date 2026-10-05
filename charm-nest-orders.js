@@ -470,7 +470,7 @@
       if (r.spec && r.spec.noDesign) return { key: r.key, ok: true, why: "no design (chain/packaging)" };
       if (r.state === "gone") return { key: r.key, ok: false, why: "order gone from Etsy" };
       if (r.problems && r.problems.length) return { key: r.key, ok: false, why: r.problems[0].kind === "needsMaterial" ? "needs material" : r.problems[0].kind === "needsMapping" ? "needs an option mapped" : r.problems[0].kind === "unmatchedSku" ? "SKU not in a master" : r.problems[0].kind === "missingSize" ? "no design for that size" : r.problems[0].kind };
-      if (!DONE_STATES.has(r.state)) return { key: r.key, ok: false, why: r.reason || `line is ${r.state || "not nested"}` };
+      if (!DONE_STATES.has(r.state)) return { key: r.key, ok: false, why: r.reason || `piece is ${r.state || "not nested"}` };
       if (r.engrave && r.engrave.needed && !r.engrave.approved) return { key: r.key, ok: false, why: r.engrave.state === "skipped" ? null : (r.engrave.state === "review" ? "engraving awaiting review" : r.engrave.state === "words" ? "engraving words need a decision" : r.engrave.reason || "engraving not approved") };
       return { key: r.key, ok: true, why: null };
     }).map(l => (l.why === null && !l.ok ? Object.assign(l, { ok: true }) : l));

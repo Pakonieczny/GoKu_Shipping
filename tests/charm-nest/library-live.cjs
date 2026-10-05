@@ -223,16 +223,17 @@ async function page() {
   const n5 = requests.length; ctx.S.mode = 'orders'; await advance(20000); assert.equal(requests.length, n5, 'not in another view'); ctx.S.mode = 'library'; L.changed(); await advance(700); assert(requests.length > n5, 'back in the Library it reads again');
   assert.equal(reloads.length, 0, 'nothing here has moved a sheet to another set: the list was never read again');
 
-  // 10. the open checklist and the Moving bar survive a redraw a change causes (A, waiting on one back engraving, then on two)
+  // 10. the sheet's rail (with its '!') and the Moving bar survive a redraw a change causes (A, waiting on one back engraving, then on two)
   world.latency = 120; put(sheet('shA', { updatedAt: 40, poolIds: ['shA1', 'shA2'], placedCount: 2, engraving: { shA1: { needed: false, state: 'none', approved: true }, shA2: { needed: true, state: 'words', approved: false } } }));
   await advance(3500); assert.equal(area(cards.A), 'pending');
-  assert.equal(L.openChecklist(cards.A, { kind: 'sheet', id: 'shA' }), true, 'the checklist opens');
-  const boxBefore = cards.A.querySelector('.flowBox'), textBefore = boxBefore.querySelector('.flowText').textContent, glidesBefore = glides.length;
+  let bangs = 0; document.addEventListener('click', e => { if (e.target.closest && e.target.closest('[data-issues-open]')) bangs++; });
+  assert.equal(L.openChecklist(cards.A, { kind: 'sheet', id: 'shA' }), true, "the sheet's '!' is pressed (the issues panel opens from it)"); assert.equal(bangs, 1, 'once');
+  const boxBefore = cards.A.querySelector('.flowBox'), textBefore = boxBefore.querySelector('.flowStep.current').title, glidesBefore = glides.length;
   const bar = document.createElement('div'); bar.dataset.libraryApproval = ''; bar.textContent = 'Moving'; cards.A.appendChild(bar);
   put(sheet('shA', { updatedAt: 41, poolIds: ['shA1', 'shA2', 'shA3'], placedCount: 3, engraving: { shA1: { needed: false, state: 'none', approved: true }, shA2: { needed: true, state: 'words', approved: false }, shA3: { needed: true, state: 'words', approved: false } } }));
   await advance(3500);
-  assert.notEqual(boxBefore.querySelector('.flowText').textContent, textBefore, 'the card says what is left now'); assert(boxBefore.isConnected && cards.A.querySelector('.flowBox') === boxBefore, 'in the same box');
-  assert.equal(boxBefore.querySelector('.flowList').hidden, false, 'the checklist is still open'); assert(bar.isConnected && bar.parentElement === cards.A, 'the Moving bar is still on its card');
+  assert.notEqual(boxBefore.querySelector('.flowStep.current').title, textBefore, 'the rail says what is left now'); assert(boxBefore.isConnected && cards.A.querySelector('.flowBox') === boxBefore, 'in the same box');
+  assert.equal(boxBefore.querySelectorAll('[data-issues-open]').length, 1, "and still carries its '!'"); assert(bar.isConnected && bar.parentElement === cards.A, 'the Moving bar is still on its card');
   assert.equal(glides.length, glidesBefore, 'a card that did not change place does not glide');
   bar.remove();
 
@@ -255,6 +256,6 @@ async function page() {
 (async () => {
   const cost = await cloud();
   const live = await page();
-  console.log('Library live OK: laserStatus is a pure read unless recordSeals is true, ifRevs answers "unchanged" from one read per watched document, a local change shows in ' + live.quick + ' ms and one made elsewhere in ' + live.slow + ' ms, back-off to 30 s, silent while hidden, one read in flight, no recordSeals:true on the fast path, unchanged answers redraw nothing, checklist and Moving bar survive, cards glide between In progress and Laser cutting');
+  console.log('Library live OK: laserStatus is a pure read unless recordSeals is true, ifRevs answers "unchanged" from one read per watched document, a local change shows in ' + live.quick + ' ms and one made elsewhere in ' + live.slow + ' ms, back-off to 30 s, silent while hidden, one read in flight, no recordSeals:true on the fast path, unchanged answers redraw nothing, rail and Moving bar survive, cards glide between In progress and Laser cutting');
   console.log('Cost of one probe (documents read), against a full read:'); console.table(cost);
 })().catch(e => { console.error(e); process.exitCode = 1; });

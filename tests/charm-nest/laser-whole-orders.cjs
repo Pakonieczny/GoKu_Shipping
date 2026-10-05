@@ -37,6 +37,16 @@ const S='Charm_Nest_Sheets',SET='Charm_Nest_Sets',RUN='Charm_Nest_Runs';
     st.put(S,'rose-other',{label:second.label});
     r=await status();assert(R.laserGroup(r.sets[0],r.sheets).ready,'the complete order becomes ready, including the dependent sheet’s other plain piece');
     assert.equal(st.doc(S,'ready-sheet').processSeals.length,blue.length+1,'readiness returning appends a new seal');
+    // (Paul, 5 Oct) where a piece sits is read from the sheets, not from its line's stored state: a line still 'pooled' whose piece is on a saved sheet holds nothing
+    const plain=()=>call({op:'laserStatus',sheetIds:['ready-sheet']}),mine=r=>r.sheets.find(s=>s.id==='ready-sheet').orderReadiness[order];
+    run.lines[order+'_1'].state='pooled';assert.equal(mine(await plain()).ready,true,'a piece on this sheet is not waited for because its line says pooled');
+    run.lines[order+'_1'].state='written';
+    run.lines[key].state='pooled';run.lines[key].problems=['unmatchedSku'];assert.equal(mine(await plain()).ready,true,'a stale problem on a piece that is on a ready sheet (rose-other) holds nothing');
+    run.lines[key].state='written';delete run.lines[key].problems;
+    // another line of the order that no master has: the order has two pieces, and the second holds it
+    run.lines[order+'_9']={orderId:order,state:'unmatched',problems:['unmatchedSku'],sku:'ZZ',poolIds:[]};
+    assert.equal(mine(await plain()).ready,false);assert.equal(mine(await plain()).key,'unmatched');
+    delete run.lines[order+'_9'];assert.equal(mine(await plain()).ready,true);
     run.lines[key].hold='Check customer changes';r=await status();assert.match(r.sheets.find(s=>s.id==='ready-sheet').orderReadiness[order].why,/customer changes/);
     delete run.lines[key].hold;
     run.lines[order+'_3']={orderId:order,state:'committed',sku:'CHAIN-ONLY',poolIds:[]};
