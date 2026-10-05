@@ -157,6 +157,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     await page.click(`${P} [data-more-group="Production"]`); assert.equal(await page.locator(`${P} .efpK[data-k="kpis.partsPerSignedHour"]`).isVisible(), true, 'More figures opens it');
     for (const g of ['Production', 'Speed', 'Time', 'Attendance', 'Quality', 'Contact']) assert(await page.locator(`${P} .efpGroup .efpLabel span`, { hasText: g }).count() === 1, 'group ' + g);
     assert((await page.locator(`${P} .efpK .efpKV`).allInnerTexts()).every(t => !/NaN|undefined|null/.test(t)), 'no NaN on a card');
+    assert((await page.locator(`${P} .efpK .efpKL`).allInnerTexts()).every(t => !/seconds/i.test(t)) && /Working time per order/i.test((await page.locator(`${P} .efpK[data-k="kpis.secPerOrderMean"] .efpKL`).innerText())), 'a label never names seconds when the value is shown as minutes');
     // keyboard: a group of figures is one Tab stop, and the arrow keys, Home and End move inside it
     assert.equal(await page.locator(`${P} .efpK[tabindex="0"]`).count(), 6, 'one Tab stop for each of the six groups of figures');
     const kf = page.locator(`${P} .efpK[tabindex="0"]`).first(), kk0 = await kf.getAttribute('data-k'); await kf.focus(); await page.keyboard.press('ArrowRight');
@@ -309,6 +310,9 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     for (const w of [900, 390]) {
       await page.setViewportSize({ width: w, height: 900 }); await rail(page, w < 600); await openPerson(page, 'Ana M.');
       for (const r of ['day', 'month', 'year']) { await page.click(`${P} .efpSeg button[data-range="${r}"]`); await loaded(page, r); await settle(page, 200); const f = await fit(); assert(f.page <= 1 && f.efp <= 1 && !f.beyond.length, `${w}px ${r}: no sideways scroll ${JSON.stringify(f)}`); }
+      // cards in one row share their top: label, number and the foot all line up whatever extra lines a neighbour has
+      const rows = await page.evaluate(() => { const bad = []; document.querySelectorAll('#efficiencyView .efp .efpKpis').forEach(g => { const rowsBy = new Map(); [...g.children].filter(c => c.offsetParent).forEach(c => { const t = Math.round(c.getBoundingClientRect().top); (rowsBy.get(t) || rowsBy.set(t, []).get(t)).push(c); }); rowsBy.forEach(cs => { if (cs.length < 2) return; for (const sel of ['.efpKL', '.efpKV']) { const tops = cs.map(c => Math.round(c.querySelector(sel).getBoundingClientRect().top)); if (Math.max(...tops) - Math.min(...tops) > 1) bad.push(sel + ' ' + tops.join('/') + ' ' + cs.map(c => c.dataset.k).join(',')); } const bot = cs.map(c => Math.round(c.getBoundingClientRect().bottom)); if (Math.max(...bot) - Math.min(...bot) > 1) bad.push('bottom ' + bot.join('/')); }); }); return bad; });
+      assert.deepEqual(rows, [], `${w}px: figure cards in a row line up`);
       const small = await page.evaluate(() => [...document.querySelectorAll('#efficiencyView .efp button, #efficiencyView .efp input')].filter(e => e.offsetParent && e.getBoundingClientRect().width < 18 && !e.closest('.efc')).length); assert.equal(small, 0, `${w}px: no unreachably small control`);
       await page.evaluate(() => Efficiency.go('people')); await page.waitForFunction(() => !EfficiencyEmployee.instances.length);
     }

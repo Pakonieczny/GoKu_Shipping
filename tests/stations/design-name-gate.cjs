@@ -169,6 +169,8 @@ async function designPage(browser, file, device) {
   await page.evaluate(([a, b]) => {
     orderCache[a] = [{ quantity: 2 }, { quantity: 1 }]; orderCache[b] = [{ quantity: 1 }];
     pendingLists = { gold: [a, b] }; pendingJobs = buildPrintJobs(pendingLists);
+    try { SETTINGS.labelsFromSorter = false; } catch (_) {}                   // (boot() loads the settings again once the passcode gate has answered: on a slow start that replaced the object set above)
+    document.getElementById('qrPreviewPrintBtn').classList.remove('hidden'); // design-1: the print route, whose button the preview would hide
     document.getElementById('qrPreviewPrintBtn').disabled = false;           // as the preview does once it has labels
     openDlg(document.getElementById('qrPreviewModal'));
   }, [A, B]);

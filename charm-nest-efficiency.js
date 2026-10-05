@@ -62,6 +62,26 @@
   const ago = s => (s < 2 ? "just now" : s < 60 ? `${Math.round(s)}s ago` : s < 3600 ? `${Math.floor(s / 60)}m ago` : `${Math.floor(s / 3600)}h ago`);
   const stName = s => NAMES[s] || (s ? s.charAt(0).toUpperCase() + s.slice(1) : "Station");
 
+  /* ── hover cards: the stations board's own light card (EfficiencyStations.hoverCard) on the Overview's numbers, each with one plain line saying what
+   *  it is. Without that module the same words stay a native title. `tx(node, text)` keeps the live detail of a card (what a title used to say). ── */
+  const HC = {
+    parts: ["Parts", "Pieces finished at a station, minus any taken back with Undo."],
+    orders: ["Orders", "Different orders worked. An order that passed two stations counts once."],
+    on: ["People on now", "People signed in at a station right now."],
+    rate: ["Parts per active hour", "Finished parts divided by active time. Gaps over 5 minutes between actions do not count as active."],
+    scans: ["Scanned", "Pieces scanned. A scan is not a finished piece."],
+    sec: ["Per scan", "Active seconds per scan: active time divided by the number of scans."],
+    active: ["Active", "Active time as a share of the time signed in. Gaps over 5 minutes between actions count as idle."],
+    byhour: ["By hour", "Parts finished in each hour of the shop day (New York time)."],
+    here: ["At this station now", "The people signed in here who are working right now."]
+  };
+  const hcOn = () => !!(root.EfficiencyStations && root.EfficiencyStations.hoverCard);
+  const hc = (node, spec) => { if (node && hcOn()) root.EfficiencyStations.hoverCard(node, spec); return node; };
+  const tx = (node, text) => { if (!node) return; node._tx = text || ""; if (!hcOn()) node.title = text || ""; };
+  const shown = node => String(node ? node.textContent : "").replace(/[▼▲]/g, "").replace(/\s+/g, " ").trim();
+  /** a number with its name, its value as shown, one line of definition and (when the row has it) the live detail */
+  const metricCard = (node, key, ctx, val) => hc(node, () => { const v = val ? val() : shown(node); return { title: HC[key][0], sub: typeof ctx === "function" ? ctx() : ctx || "", rows: v && v !== "—" ? [{ k: "Now", v }] : [], note: HC[key][1], foot: node._tx || "" }; });
+
   /* ── motion: one tween for numbers and chart geometry (instant under reduced motion) ── */
   function tween(ms, step, done) {
     if (still() || !(ms > 0)) { step(1); if (done) done(); return () => {}; }
@@ -211,9 +231,11 @@
       tip.appendChild(el("div", "efTipT")).textContent = t.t;
       tip.appendChild(el("div", "efTipV")).textContent = t.v;
       for (const [k, v] of t.rows || []) { const r = tip.appendChild(el("div", "efTipR")); r.appendChild(el("span")).textContent = k; r.appendChild(el("b")).textContent = v; }
+      if (t.def) tip.appendChild(el("div", "efTipF")).textContent = t.def;
       tip.hidden = false;
-      const { slot } = S.geo, w = tip.offsetWidth || 120, cx = L + slot * (i + .5);
-      tip.style.left = Math.max(2, Math.min(S.W - w - 2, cx - w / 2)) + "px";
+      const { slot } = S.geo, w = tip.offsetWidth || 120, cx = L + slot * (i + .5), gap = Math.max(12, slot / 2 + 8);
+      let x = cx + gap; if (x + w > S.W - 2) x = cx - gap - w;
+      tip.style.left = Math.max(2, Math.min(S.W - w - 2, x)) + "px";
     }
     function hide() { if (S.idx >= 0 && S.cols[S.idx]) S.cols[S.idx].classList.remove("hov"); S.idx = -1; tip.hidden = true; }
     function set(d) {
@@ -304,7 +326,7 @@
 .efNote span:before{content:"";display:inline-block;width:5px;height:5px;border-radius:50%;background:var(--gold2);margin-right:8px;vertical-align:1px}
 .efCard{background:var(--card);border:1px solid var(--line);border-radius:12px;min-width:0}
 .efKpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr))}
-.efKpi{padding:14px 22px 6px;display:grid;gap:3px;min-width:0}.efKpi+.efKpi{border-left:1px solid var(--line2)}
+.efKpi{padding:14px 22px 6px;display:grid;gap:3px;min-width:0;outline:none;transition:background .2s ease}.efKpi:hover,.efKpi:focus-visible{background:var(--card2)}.efKpi:focus-visible{box-shadow:inset 0 0 0 2px var(--gold)}.efKpi+.efKpi{border-left:1px solid var(--line2)}
 .efKL .s{display:none}.efKL{font-size:10.5px;letter-spacing:.07em;text-transform:uppercase;color:var(--ink45);font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .efKV{font:600 36px/1.05 var(--sans);letter-spacing:-.025em;font-variant-numeric:proportional-nums}
 .efKS{font-size:11.5px;color:var(--ink45);min-height:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -317,9 +339,10 @@
 .efTick,.efXl{font:10px var(--sans);fill:var(--ink45)}.efXl.on{fill:var(--gold);font-weight:700}
 .efCol{fill:#85807a;transition:fill .15s}.efCol.hi{fill:var(--gold)}.efCol.hov{fill:var(--ink)}.efCol.hi.hov{fill:var(--gold2)}
 .efVal{font:650 11px var(--sans);fill:var(--ink)}.efVal.soft{fill:var(--ink45);font-weight:600}
-.efTip{position:absolute;top:-4px;z-index:3;pointer-events:none;background:var(--velvet);color:#f6f1e6;border-radius:9px;padding:7px 10px;font-size:11px;box-shadow:0 8px 24px rgba(20,16,10,.22);white-space:nowrap;display:grid;gap:1px}
-.efTip[hidden]{display:none}.efTipT{color:#cdc4b2;font-size:10.5px}.efTipV{font:650 14px var(--sans)}
-.efTipR{display:flex;justify-content:space-between;gap:16px;color:#cdc4b2}.efTipR b{color:#fff;font-weight:650}
+.efTip{position:absolute;top:-4px;z-index:3;pointer-events:none;background:var(--card,#fffefb);color:var(--ink70);border:1px solid var(--line);border-radius:11px;padding:9px 12px 9px;font-size:11px;box-shadow:0 10px 26px rgba(30,26,20,.13),0 1px 3px rgba(30,26,20,.07);white-space:nowrap;display:grid;gap:2px}
+.efTip[hidden]{display:none}.efTipT{color:var(--ink45);font-size:10.5px;letter-spacing:.07em;text-transform:uppercase;font-weight:700}.efTipV{font:650 14px var(--sans);color:var(--ink)}
+.efTipR{display:flex;justify-content:space-between;gap:16px;color:var(--ink45)}.efTipR b{color:var(--ink);font-weight:650;font-variant-numeric:tabular-nums}
+.efTipF{margin-top:5px;padding-top:6px;border-top:1px solid var(--line2);color:var(--ink45);font-size:10.5px;line-height:1.35;white-space:normal;max-width:216px}
 .efLabel{font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink45);font-weight:750;display:flex;align-items:center;gap:8px;margin:0 2px 7px}
 .efLabel:after{content:"";flex:1;height:1px;background:var(--line);order:1}.efLabel b{color:var(--ink70);letter-spacing:0;font-weight:700}
 .efSR{display:grid;grid-template-columns:96px minmax(0,1fr) 72px 72px 112px;align-items:center;gap:14px;padding:6px 18px;min-height:34px}
@@ -329,7 +352,7 @@
 .efSW{color:var(--ink70);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.efSW.none{color:var(--ink25)}.efQuiet{font-style:normal;color:var(--ink45);font-size:11px;margin-left:10px}.efQuiet:before{content:"";display:inline-block;width:5px;height:5px;border-radius:50%;background:var(--gold2);margin-right:6px;vertical-align:1px}
 .efSV{text-align:right;font-variant-numeric:tabular-nums;font-weight:650;white-space:nowrap}.efSV small{font-weight:500;color:var(--ink45);margin-left:4px;font-size:10.5px}
 .efSpark{display:block;overflow:visible}.efSL{fill:none;stroke:#6f6a62;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}.efSA{fill:rgba(93,90,82,.08);stroke:none}.efSD{fill:var(--gold);stroke:var(--card);stroke-width:1.5}
-.efPH,.efPRow{display:grid;grid-template-columns:minmax(170px,1fr) minmax(214px,1.7fr) 56px 56px 66px 56px 66px 100px 92px;align-items:center;gap:0 12px}
+.efPH,.efPRow{display:grid;grid-template-columns:minmax(214px,1.2fr) minmax(214px,1.5fr) 56px 56px 66px 56px 66px 100px 92px;align-items:center;gap:0 12px}
 .efPH{padding:9px 18px 8px;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink45);font-weight:700;border-bottom:1px solid var(--line2)}
 .efPH span:nth-child(n+3):nth-child(-n+7){text-align:right}.ef[data-range="n"] .efPHs{visibility:hidden}
 .efP+.efP{border-top:1px solid var(--line2)}.efP{transition:background .3s}.efP.open{background:var(--card2)}.efP.open:last-child{border-radius:0 0 12px 12px}
@@ -419,8 +442,8 @@
 .efSi.fresh .efAv,.efRc.on .efAv{box-shadow:0 0 0 2px var(--card),0 0 0 4px var(--sage);background:var(--sageSoft);color:#3c5a39}
 .efSiN{font-weight:700;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:flex;gap:7px;align-items:baseline}.efSiN em{font-style:normal;font-weight:600;font-size:11px;color:var(--ink70)}
 .efSiW{grid-column:2;font-size:11.5px;color:var(--ink45);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.efWkList{display:grid;min-width:0}
-.efWk{padding:11px 16px;border-top:1px solid var(--line2);min-width:0;transition:background .25s}.efWk:first-child{border-top:0}.efWk:hover{background:var(--card2)}
+.efWkList{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,430px),1fr));min-width:0;padding:5px}
+.efWk{padding:6px;min-width:0;border-radius:14px;transition:background .25s}.efWk:hover{background:var(--card2)}
 .efOc{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:6px 14px;align-items:center;min-width:0}
 .efOcMedia{display:flex;align-items:center;gap:6px;min-width:0;width:196px}
 .efOcImg{width:54px;height:54px;border-radius:10px;border:1px solid var(--line);background:var(--paper2) center/cover no-repeat;flex:0 0 54px;transition:transform .25s cubic-bezier(.2,.8,.2,1),box-shadow .25s;position:relative}
@@ -493,7 +516,7 @@
 }
 @container ef (max-width:640px){
  .efHint{display:none}.efView{order:3}.efRcFig{grid-template-columns:repeat(4,minmax(0,1fr))}.efRoster{grid-template-columns:1fr}.efRTools .efQ{margin-left:0}
- .efOcImg{width:46px;height:46px;flex-basis:46px}.efWk{padding:10px 14px}.efSiGrid{padding:10px}
+ .efOcImg{width:46px;height:46px;flex-basis:46px}.efWk{padding:5px}.efSiGrid{padding:10px}
 }
 @media (prefers-reduced-motion:reduce){.ef *{transition:none!important;animation:none!important}}`;
     doc.head.appendChild(s);
@@ -555,6 +578,9 @@
     st.charts.hours = columns(host.querySelector(".efChart"), { height: 124, name: "Parts per hour", maxW: 24, unit: "parts", labelW: 26, thin: true });
     st.charts.tA = columns(host.querySelector(".efChartA"), { height: 118, name: "Parts per day", maxW: 18, unit: "parts", labelW: 40 });
     st.charts.tB = columns(host.querySelector(".efChartB"), { height: 118, name: "Orders per day", maxW: 18, unit: "orders", labelW: 40 });
+    // hover cards: the four figures (a tab stop each, so the card opens from the keyboard too) and the people table's column heads
+    for (const [k, node] of Object.entries(E.kpi)) { node.tabIndex = 0; hc(node, () => { const lab = node.querySelector(".efKL .l") || node.querySelector(".efKL"); return { title: shown(lab), rows: [{ k: "Now", v: shown(node.querySelector(".efKV")) }], note: HC[k][1], foot: shown(node.querySelector(".efKS")) }; }); }
+    host.querySelectorAll(".efPH span").forEach((n, i) => { const k = [null, null, "parts", "scans", "orders", "rate", "sec", "byhour", "active"][i]; if (k) hc(n, () => ({ title: HC[k][0], note: HC[k][1] })); });
     host.addEventListener("click", onClick); E.tabsBar.addEventListener("keydown", onKeyTabs);
     E.keyIn.form.addEventListener("submit", onKey); E.find.addEventListener("submit", onFind);
     E.keyIn.addEventListener("input", () => { if (st.keyErr) { st.keyErr = ""; setText(E.keyErr, ""); } });
@@ -905,7 +931,7 @@
     if (!trend) {
       const w = st.win, hrs = hoursOf(w), vals = hrs.map(h => M.biz.hours[h]), sts = [...M.biz.stations.values()];
       setText(E.gHours.querySelector(".efGT"), title);
-      const tips = hrs.map((h, i) => ({ t: hourLabel(h) + (h === w.nowH ? " · now" : ""), v: `${nf(vals[i])} ${noun}`, rows: sts.filter(s => s.hours && s.hours[h] > 0).sort((a, b) => b.hours[h] - a.hours[h]).map(s => [stName(s.station), nf(s.hours[h])]) }));
+      const tips = hrs.map((h, i) => ({ t: hourLabel(h) + (h === w.nowH ? " · now" : ""), v: `${nf(vals[i])} ${noun}`, rows: sts.filter(s => s.hours && s.hours[h] > 0).sort((a, b) => b.hours[h] - a.hours[h]).map(s => [stName(s.station), nf(s.hours[h])]), def: ev ? "Parts finished in this hour at all stations, minus any taken back with Undo." : "Order steps sealed in this hour at all stations." }));
       st.charts.hours.set({ name: title, labels: hrs.map(hourShort), values: vals, hi: w.today ? hrs.indexOf(w.nowH) : -1, tips });
       let pk = -1; vals.forEach((v, i) => { if (v > 0 && (pk < 0 || v > vals[pk])) pk = i; });
       setText(E.gp, pk >= 0 ? `Busiest hour · ${hourLabel(hrs[pk])}` : M.biz.parts ? "" : `No ${ev ? "parts" : "steps"} recorded yet`);
@@ -914,8 +940,8 @@
       for (let i = n - 1; i >= 0; i--) days.push(addDays(end, -i));
       const rows = days.map(d => byDay.get(d) || { day: d, parts: 0, orders: 0, people: 0, source: "none" }), lab = days.map((d, i) => (n <= 7 ? wdFmt.format(dayDate(d)) : (i % 5 === (n - 1) % 5 || i === 0 ? mdFmt.format(dayDate(d)) : "")));
       const hi = end === today() ? n - 1 : -1, logged = d => d.source === "events" || d.source === "mixed" || !d.source;
-      const tipP = d => ({ t: dayFmt.format(dayDate(d.day)), v: logged(d) ? `${nf(d.parts)} parts` : d.source === "seals" ? "Parts not logged" : "No activity", rows: [["Orders", nf(d.orders)], ["People", nf(d.people)]] });
-      const tipO = d => ({ t: dayFmt.format(dayDate(d.day)), v: `${nf(d.orders)} orders`, rows: (logged(d) ? [["Parts", nf(d.parts)]] : []).concat([["People", nf(d.people)]]) });
+      const tipP = d => ({ t: dayFmt.format(dayDate(d.day)), v: logged(d) ? `${nf(d.parts)} parts` : d.source === "seals" ? "Parts not logged" : "No activity", rows: [["Orders", nf(d.orders)], ["People", nf(d.people)]], def: "Parts finished that day at all stations, minus any taken back with Undo." });
+      const tipO = d => ({ t: dayFmt.format(dayDate(d.day)), v: `${nf(d.orders)} orders`, rows: (logged(d) ? [["Parts", nf(d.parts)]] : []).concat([["People", nf(d.people)]]), def: "Different orders worked that day. An order that passed two stations counts once." });
       if (ev) st.charts.tA.set({ labels: lab, values: rows.map(d => (logged(d) ? d.parts : 0)), hi, tips: rows.map(tipP) });
       st.charts.tB.set({ labels: lab, values: rows.map(d => d.orders), hi, tips: rows.map(tipO) });
     }
@@ -936,13 +962,17 @@
         e.dataset.station = k; setText(e.querySelector(".efSN"), stName(k));
         r = { e, w: e.querySelector(".efSW"), parts: e.querySelector('[data-c="parts"] .efNum'), orders: e.querySelector('[data-c="orders"] .efNum'), sp: spark(e.querySelector(".efSp"), { w: 112, h: 22 }), spEl: e.querySelector(".efSp") };
         st.stRows.set(k, r);
+        const sn = () => stName(k);
+        metricCard(e.querySelector('[data-c="parts"]'), "parts", sn, () => shown(r.parts)); metricCard(e.querySelector('[data-c="orders"]'), "orders", sn, () => shown(r.orders));
+        hc(r.w, () => (r.names ? { title: HC.here[0], sub: sn(), note: r.names, foot: r.quiet || HC.here[1] } : null));
+        hc(r.spEl, () => (r.spEl.style.visibility === "hidden" ? null : { title: HC.byhour[0], sub: sn(), note: HC.byhour[1] }));
       }
       const s = M.biz.stations.get(k) || { parts: 0, orders: 0, now: [], hours: null };
       const now = M.past ? [] : s.now, hrs = s.hours || [];
       r.e.classList.toggle("on", now.length > 0);
       const names = now.join(", "), w = st.win; let quiet = "";
       if (names && !trend && w.today && w.nowH >= 2 && hrs.length) { let last = -1; for (let h = w.nowH; h >= 0; h--) if (hrs[h] > 0) { last = h; break; } if (last >= 0 && w.nowH - last >= 2) quiet = `No parts since ${hourLabel(last + 1)}`; }
-      const sig = names + "|" + quiet; if (r.sig !== sig) { r.sig = sig; r.w.textContent = names || "—"; if (quiet) r.w.appendChild(el("em", "efQuiet")).textContent = quiet; r.w.classList.toggle("none", !names); r.w.title = names + (quiet ? " · " + quiet : ""); }
+      const sig = names + "|" + quiet; if (r.sig !== sig) { r.sig = sig; r.w.textContent = names || "—"; if (quiet) r.w.appendChild(el("em", "efQuiet")).textContent = quiet; r.w.classList.toggle("none", !names); r.names = names; r.quiet = quiet; if (!hcOn()) r.w.title = names + (quiet ? " · " + quiet : ""); }
       const evS = M.sources.events !== false;
       fig(r.parts, s.parts, evS, nf, first); fig(r.orders, s.orders, evS || !!M.sources.seals, nf, first);
       const idle = evS && !s.parts && !s.orders && !now.length; r.e.classList.toggle("idle", idle);   // a station with nothing yet is quiet on screen too
@@ -956,17 +986,22 @@
   function personRow(name) {
     const e = el("article", "efP"); e.dataset.name = name;
     e.innerHTML = `<div class="efPRow">
-  <button type="button" class="efWho" title="Open ${esc(name)}'s page"><i class="efSt" aria-hidden="true"></i><span class="efName"></span><span class="efWhen"></span></button>
+  <button type="button" class="efWho"><i class="efSt" aria-hidden="true"></i><span class="efName"></span><span class="efWhen"></span></button>
   <div class="efChips"></div>
   <div class="efN" data-l="Parts"><b data-r="parts">0</b></div><div class="efN" data-l="Scanned"><b data-r="scans">0</b></div>
-  <button type="button" class="efN efOrd" data-l="Orders" aria-expanded="false" title="Open the newest orders"><b><span data-r="orders">0</span><i aria-hidden="true">▼</i></b></button>
+  <button type="button" class="efN efOrd" data-l="Orders" aria-expanded="false" aria-description="Open the newest orders"><b><span data-r="orders">0</span><i aria-hidden="true">▼</i></b></button>
   <div class="efN" data-l="Per hour"><b data-r="rate">—</b></div><div class="efN" data-l="Per scan"><b data-r="sec">—</b></div>
   <div class="efSp" data-l="By hour"></div>
-  <div class="efAct" title=""><i><b></b></i><span>—</span></div></div>
+  <div class="efAct"><i><b></b></i><span>—</span></div></div>
 <div class="efPanel"><div class="efPanelIn"><div class="efPanelBox"></div></div></div>`;
     const r = { e, name, who: e.querySelector(".efWho"), ord: e.querySelector(".efOrd"), nm: e.querySelector(".efName"), when: e.querySelector(".efWhen"), st: e.querySelector(".efSt"), chips: e.querySelector(".efChips"), parts: e.querySelector('[data-r="parts"]'), scans: e.querySelector('[data-r="scans"]'),
       orders: e.querySelector('[data-r="orders"]'), rate: e.querySelector('[data-r="rate"]'), sec: e.querySelector('[data-r="sec"]'), spEl: e.querySelector(".efSp"), act: e.querySelector(".efAct"), bar: e.querySelector(".efAct b"), pct: e.querySelector(".efAct span"), box: e.querySelector(".efPanelBox"), chipSig: "", ordSig: "", built: false };
     r.sp = spark(r.spEl, { w: 100, h: 22 }); setText(r.nm, name);
+    const who = () => r.name;
+    metricCard(r.parts.parentNode, "parts", who); metricCard(r.scans.parentNode, "scans", who); metricCard(r.ord, "orders", who); metricCard(r.rate.parentNode, "rate", who); metricCard(r.sec.parentNode, "sec", who);
+    metricCard(r.act, "active", who);
+    hc(r.spEl, () => (r.spEl.style.visibility === "hidden" ? null : { title: HC.byhour[0], sub: r.name, note: HC.byhour[1], foot: r.spEl._tx || "" }));
+    hc(r.who, () => ({ avatar: r.name, title: r.name, sub: r.st.classList.contains("on") ? "On now" : "Locked out", rows: r.when.textContent ? [{ k: "Day", v: r.when.textContent }] : [], note: "Press to open their page." }));
     return r;
   }
   /** "Parts scanned" is the pieces scanned; when a station logged scans without a piece count, the scans themselves. */
@@ -982,21 +1017,21 @@
   }
   function updatePerson(r, p, M, first) {
     const on = p.on && !M.past;
-    r.st.classList.toggle("on", on); r.st.title = on ? "On now" : "Locked out"; r.who.setAttribute("aria-label", `${p.name}, ${on ? "on now" : "locked out"}. ${whenText(p, M)}`);
-    const wt = whenText(p, M); setText(r.when, wt); r.when.title = wt;
+    r.st.classList.toggle("on", on); r.who.setAttribute("aria-label", `${p.name}, ${on ? "on now" : "locked out"}. ${whenText(p, M)}`);
+    const wt = whenText(p, M); setText(r.when, wt);
     const chipSig = p.stations.map(s => s.station + s.minutes).join() + "|" + p.nowAt.join() + on;
     if (chipSig !== r.chipSig) { r.chipSig = chipSig; r.chips.innerHTML = p.stations.length ? p.stations.map(s => `<span class="efChip${p.nowAt.includes(s.station) && on ? " now" : ""}"><b>${esc(stName(s.station))}</b>${esc(dur(s.minutes))}</span>`).join("") : `<span class="efMuted">—</span>`; }
     const t = p.t, src = p.source, kParts = src !== "seals" && src !== "sessions", kOther = src !== "sessions";   // seals know orders and scans, not parts; sessions know only time
     const sc = scanned(t);
     fig(r.parts, t.parts, kParts, nf, first); fig(r.scans, sc.n, kOther, nf, first); fig(r.orders, t.orders, kOther, nf, first);
     fig(r.rate, t.rate, kParts && t.rate > 0, rateTxt, first); fig(r.sec, t.secPerScan, kOther && t.secPerScan > 0, secTxt, first);
-    r.parts.title = kParts ? "" : src === "seals" ? "Parts were not logged then; sealed work counts orders and scans" : "";
-    r.scans.title = kOther && sc.n ? sc.tip : "";
-    r.rate.title = t.rate ? "Parts per active hour" : ""; r.sec.title = t.secPerScan ? "Active seconds per scan" : "";
+    tx(r.parts.parentNode, kParts ? "" : src === "seals" ? "Parts were not logged then; sealed work counts orders and scans" : "");
+    tx(r.scans.parentNode, kOther && sc.n ? sc.tip : "");
+    tx(r.ord, "Press to open the newest orders");
     const tot = t.activeMin + t.idleMin, pc = tot >= 1 ? Math.round(t.activeMin / tot * 100) : null;
     r.bar.style.width = pc == null ? "0%" : pc + "%"; setText(r.pct, pc == null ? "—" : pc + "%");
-    r.act.title = pc == null ? "No activity timing yet" : `Active ${dur(t.activeMin)} · idle ${dur(t.idleMin)}${t.signedInMin ? ` · signed in ${dur(t.signedInMin)}` : ""}`;
-    const steps = src === "seals"; r.spEl.style.visibility = M.days > 1 || !(kParts || steps) ? "hidden" : ""; r.spEl.title = steps ? "Order steps by hour" : "Parts by hour";
+    tx(r.act, pc == null ? "No activity timing yet" : `Active ${dur(t.activeMin)} · idle ${dur(t.idleMin)}${t.signedInMin ? ` · signed in ${dur(t.signedInMin)}` : ""}`);
+    const steps = src === "seals"; r.spEl.style.visibility = M.days > 1 || !(kParts || steps) ? "hidden" : ""; tx(r.spEl, steps ? "Order steps by hour" : "");
     if (M.days === 1 && (kParts || steps)) { const w = st.win, vals = []; for (let h = w.lo; h <= w.hi; h++) vals.push(p.perHour[h] || 0); r.sp.set(vals, w.today ? Math.min(vals.length - 1, w.nowH - w.lo) : vals.length - 1); }
     if (r.built) paintPanel(r, p);
     r.p = p;
@@ -1125,7 +1160,7 @@
         h.sig = sig; const n = h.range, end = (st.M && st.M.day) || today(), by = new Map(d.days.map(x => [x.day, x])), days = []; for (let i = n - 1; i >= 0; i--) days.push(addDays(end, -i));
         const rows = days.map(x => by.get(x) || { day: x, parts: 0, orders: 0, scans: 0, signedInMin: 0, activeMin: 0, idleMin: 0, firstIn: null, lastOut: null });
         h.chart.set({ labels: days.map((x, i) => (n <= 7 ? wdFmt.format(dayDate(x)) : (i % 5 === (n - 1) % 5 || i === 0 ? mdFmt.format(dayDate(x)) : ""))), values: rows.map(x => x.parts), hi: end === today() ? n - 1 : -1,
-          tips: rows.map(x => ({ t: dayFmt.format(dayDate(x.day)), v: `${nf(x.parts)} parts`, rows: [["Orders", nf(x.orders)], ["Scans", nf(x.scans)], ["Signed in", x.signedInMin ? dur(x.signedInMin) : "—"]].concat(x.firstIn ? [["In · out", `${clock(x.firstIn)}${x.lastOut ? " · " + clock(x.lastOut) : ""}`]] : []) })) });
+          tips: rows.map(x => ({ t: dayFmt.format(dayDate(x.day)), v: `${nf(x.parts)} parts`, rows: [["Orders", nf(x.orders)], ["Scans", nf(x.scans)], ["Signed in", x.signedInMin ? dur(x.signedInMin) : "—"]].concat(x.firstIn ? [["In · out", `${clock(x.firstIn)}${x.lastOut ? " · " + clock(x.lastOut) : ""}`]] : []), def: "Parts this person finished that day, minus any taken back with Undo." })) });
         sum.textContent = d.worked ? `${d.worked} day${d.worked === 1 ? "" : "s"} worked · ${nf(d.parts)} parts · ${nf(d.orders)} orders · ${dur(d.signedInMin)} signed in` : "No activity in these days.";
       }
     } else sum.textContent = "";
@@ -1170,7 +1205,9 @@
   function siRow(p) {
     const e = el("button", "efSi"); e.type = "button"; e.dataset.name = p.name;
     e.innerHTML = `<span class="efAv" aria-hidden="true"></span><span class="efSiN"><span class="efSiNm"></span><em></em></span><span class="efSiW"></span>`;
-    return { e, av: e.querySelector(".efAv"), nm: e.querySelector(".efSiNm"), stn: e.querySelector("em"), w: e.querySelector(".efSiW"), p };
+    const r = { e, av: e.querySelector(".efAv"), nm: e.querySelector(".efSiNm"), stn: e.querySelector("em"), w: e.querySelector(".efSiW"), p };
+    hc(e, () => { const q = r.p || p, ls = q.lastSeenAt ? Math.max(0, (now() - q.lastSeenAt) / 1000) : null; return { avatar: q.name, title: q.name, sub: `Signed in at ${stationOf(r.L, q.stationKey)}`, rows: [{ k: "Since", v: q.since ? clock(q.since) : "—", d: "When this person signed in at this station" }, { k: "Last seen", v: ls == null ? "—" : ago(ls), d: "The last sign of life from the station" }], note: "Press to open their page." }; });
+    return r;
   }
   function renderSignedIn(L, first) {
     const list = L ? L.signedIn : [], seen = new Set();
@@ -1181,7 +1218,7 @@
       r.p = p; setText(r.av, initials(p.name)); setText(r.nm, p.name); setText(r.stn, stationOf(L, p.stationKey)); setText(r.w, siText(p));
       const seenAgo = p.lastSeenAt ? now() - p.lastSeenAt : 0, ok = !p.lastSeenAt || seenAgo < 6 * 60000;
       r.e.classList.toggle("fresh", ok);
-      r.e.title = `${p.name} · signed in at ${stationOf(L, p.stationKey)}${p.since ? ` since ${clock(p.since)}` : ""}${p.lastSeenAt ? ` · last seen ${clock(p.lastSeenAt)}` : ""} · open ${p.name}'s page`;
+      r.p = p; r.L = L; if (!hcOn()) r.e.title = `${p.name} · signed in at ${stationOf(L, p.stationKey)}${p.since ? ` since ${clock(p.since)}` : ""}${p.lastSeenAt ? ` · last seen ${clock(p.lastSeenAt)}` : ""} · open ${p.name}'s page`;
       r.e.setAttribute("aria-label", `${p.name}, ${stationOf(L, p.stationKey)}, ${siText(p)}. Open their page`);
       if (fresh) { E.siGrid.appendChild(r.e); enter(r.e, first); }
     }
