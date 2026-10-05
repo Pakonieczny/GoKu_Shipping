@@ -24,7 +24,7 @@ function fixture() {
   const row = makeRow(), rec = sentRecord(), rows = new Map([[row.key,row]]), calls = {views:[], designs:[], prints:[], completes:[], reopens:[], notices:[], reads:[], hydration:[]};
   const item = {kind:'customOrder', key:'csent:custom:4175152234', info:true, decided:true, done:false, row, rows:[row], record:rec, why:'Its designs are on the sheets'};
   const state = {row, item, sent:{sent:{at,by:'Paul',lines:{[key]:[{f:'file',i:0}]}}}, files:[{id:'file'}], ready:true, apiRecord:rec, cloudRecords:{}};
-  w.B = {maps:{customKept:{}, customSent:{}}};
+  w.B = {maps:{customKept:{}, customSent:{}, customDone:{}}};   // (cuState reads the piece's own record by its line key from customDone: the loaded maps always have it)
   w.W = {key:row.key, dlg:d.querySelector('#orderWin'), closing:false, pieces:[], piece:null, events:null, cancelled:null};
   w.byId = id => d.getElementById(id);
   w.el = (tag, cls, html) => { const n = d.createElement(tag); if (cls) n.className = cls; if (html != null) n.innerHTML = html; return n; };
@@ -58,11 +58,12 @@ function fixture() {
   w.Seal.add = () => { throw Error('historical rendering must never add a seal'); };
   w.Seal.press = () => { throw Error('historical rendering must never replay a stamp'); };
   w.Motion.note = (b, opts) => { calls.notices.push(opts); return d.createElement('span'); };
-  w.eval(section('  function paintSend(', '  /** The order\'s notes as they stand now:'));
+  w.eval(section('  function paintSend(', '  /* ── an order of several pieces'));   // (up to where the pieces list begins: the notes box that used to end this stretch is gone, 5 Oct)
   // (a piece's row: the timeline's summary and the piece list are answered here; the controls and their wiring are the production code)
   w.OrderTimelineUI = {STAGES:['arrived'], summary:(events, pieces) => ({each:pieces.map(p => ({p, D:{step:0, stages:[{}], hand:false, cancelled:false, W:null}, steps:[]})), rail:[], step:0})};
   w.piecesOf = rows => rows.map(x => ({key:x.key, name:'Piece', metal:null, form:'', qty:1, line:{}}));
   w.colorOf = () => '#ccc'; w.pieceMeta = () => ''; w.pickPiece = () => {};
+  w.eval(section('  function markPieces(', '  /** The presses on the "Its pieces" list'));   // (paintPieceSum marks the row picked in place, 5 Oct: the pieces list is the selector)
   w.eval(section('  function paintPieceSum(', '  /* ── Where it is now'));
   w.Orders = {
     loadMaps:async() => {},

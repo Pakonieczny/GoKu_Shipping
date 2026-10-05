@@ -48,7 +48,10 @@ const DEVICE_LABEL = {}; for (const s of CATALOG) for (const [d, l] of s.devices
 const str = (v, n) => String(v == null ? "" : v).replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim().slice(0, n);
 const int = (v, lo, hi) => { const x = Math.round(Number(v)); return Number.isFinite(x) ? Math.max(lo, Math.min(hi, x)) : lo; };
 const pinLike = s => /^\d{4,8}$/.test(s);                                // a PIN is digits only: never kept as an id
+/** A name never carries a PIN: four or more digits in a name (after it, glued to it, spaced "12 34 56") are a login number that slipped in; they are dropped ("Paul 482915" is "Paul"). */
+const noPin = s => (s.match(/\p{Nd}/gu) || []).length >= 4 ? s.replace(/\p{Nd}+/gu, " ").replace(/\s+/g, " ").trim() : s;
 const hasLetter = s => /\p{L}/u.test(s);
+const idText = v => { const s = str(v, 40); return pinLike(s) ? "" : s.replace(/(?<!\d)\d{6}(?!\d)/g, "[#]"); };            // (an order number of 10 digits stays; a 4 to 8 digit one is a login number, not an order)
 const digits = (v, n) => String(v == null ? "" : v).replace(/\D/g, "").slice(0, n);
 /** free text: no digits-only text, no lone 6-digit number (a PIN) */
 const text = (v, n) => { const s = str(v, n); return /^\d+$/.test(s) ? "" : s.replace(/(?<!\d)\d{6}(?!\d)/g, "[#]"); };
@@ -117,7 +120,7 @@ async function write(db, FV, live, opts) {
   const event = live.event === "work" || live.event === "beat" || live.event === "idle" ? live.event : "";
   const station = typeof live.station === "string" && STATIONS.has(live.station) ? live.station : "";
   const device = str(live.device, 40).replace(/[^\w .:-]/g, "");
-  const person = str(live.person, 80);
+  const person = noPin(str(live.person, 200)).slice(0, 80);
   if (!event || !station || !device || !person || !hasLetter(person)) return [400, { error: "not a live event" }];   // no letter (digits, "123 456") = a PIN, never a name
   const id = docId(station, device, person);
   if (!idOk(id)) return [400, { error: "not a live event" }];
@@ -222,19 +225,20 @@ async function listings(ctx, ids) {
 }
 /** the buyer's name and the saved item pictures of an order the Design Station completed (Design_Order_Archive/{rid}) → Map rid → { buyer, items:[{transactionId, sku, url}] } */
 async function archives(ctx, rids) {
-  const need = rids.filter(s => remembered(ctx, "archive", s) === undefined);
+  const mk = s => ctx.prefix + s;                                  // (a store of its own: the real shop and the Sandbox keep different archives for one order id, and one instance serves both)
+  const need = rids.filter(s => remembered(ctx, "archive", mk(s)) === undefined);
   if (need.length) {
     const refs = need.map(s => col(ctx, "Design_Order_Archive").doc(s));
     const snaps = typeof ctx.db.getAll === "function" ? await ctx.db.getAll(...refs, { fieldMask: ["buyer.name", "ship.name", "items"] }) : await Promise.all(refs.map(r => r.get()));
     need.forEach((s, i) => {
       const d = snaps[i] && snaps[i].exists ? (snaps[i].data() || {}) : null;
-      if (!d) return keep(ctx, "archive", s, null);
+      if (!d) return keep(ctx, "archive", mk(s), null);
       const items = (Array.isArray(d.items) ? d.items : []).slice(0, 40).map(it => it && typeof it === "object" ? { transactionId: digits(it.transactionId || it.transaction_id, 20), sku: str(it.sku, 60), url: httpsOnly(it.mirrorUrl) || httpsOnly(it.imageUrl) } : null).filter(Boolean);
       const buyer = text(d.buyer && d.buyer.name || d.ship && d.ship.name || "", 60);
-      keep(ctx, "archive", s, { buyer: hasLetter(buyer) ? buyer : "", items });
+      keep(ctx, "archive", mk(s), { buyer: hasLetter(buyer) ? buyer : "", items });
     });
   }
-  return new Map(rids.map(s => [s, remembered(ctx, "archive", s) || null]));
+  return new Map(rids.map(s => [s, remembered(ctx, "archive", mk(s)) || null]));
 }
 
 /** fills each current order with its thumbnails and customer, from what is already stored */
@@ -292,7 +296,7 @@ function readLive(ctx, H) {
 function readSessions(ctx, H) {
   return H.cached(ctx, `lsess|${ctx.prefix}`, TTL.sessions, async () => {
     const snap = await col(ctx, "Station_Sessions").where("startAt", ">=", H.nyMidnight(ctx.today)).orderBy("startAt", "desc").limit(LIM.sessions + 1).get();
-    const rows = []; for (const d of snap.docs.slice(0, LIM.sessions)) { const v = d.data() || {}; rows.push({ person: str(v.person, 80), station: str(v.station, 20), device: str(v.device, 40), startAt: ms(v.startAt), lastSeenAt: ms(v.lastSeenAt), endAt: ms(v.endAt) }); }
+    const rows = []; for (const d of snap.docs.slice(0, LIM.sessions)) { const v = d.data() || {}; rows.push({ person: str(v.person, 80), station: str(v.station, 20), device: text(v.device, 40), startAt: ms(v.startAt), lastSeenAt: ms(v.lastSeenAt), endAt: ms(v.endAt) }); }
     return { rows, capped: snap.docs.length > LIM.sessions };
   });
 }
@@ -300,10 +304,11 @@ function readSessions(ctx, H) {
 function readToday(ctx, H) {
   return H.cached(ctx, `ltoday|${ctx.prefix}`, TTL.today, async () => {
     let q = col(ctx, "Efficiency_Daily").where("day", "==", ctx.today).limit(LIM.rollups + 1);
-    if (typeof q.select === "function") q = q.select("day", "person", "stations");
+    if (typeof q.select === "function") q = q.select("day", "person", "stations", "sandbox");
     const snap = await q.get(), by = {};
     for (const d of snap.docs.slice(0, LIM.rollups)) {
       const v = d.data() || {};
+      if (!!v.sandbox !== !!ctx.prefix) continue;                       // (a document of the other store never counts, as in every other reader)
       for (const [st, x] of Object.entries(v.stations && typeof v.stations === "object" ? v.stations : {})) {
         if (!x || typeof x !== "object") continue;
         const t = by[st] || (by[st] = { parts: 0, orders: 0, scans: 0, lastAt: 0 });
@@ -333,10 +338,11 @@ async function op(ctx, body, H) {
   for (const v of lr.ok ? lr.value.rows : []) {
     if (!STATIONS.has(v.station) || now - ms(v.beatAt) > STALE_MS) continue;
     if (v.state === "working" && (v.rid || v.title)) {
-      cur.push({ station: v.station, person: H.display(v.person), device: v.device, deviceLabel: DEVICE_LABEL[v.device] || v.device, kind: v.kind === "sheet" ? "sheet" : "order",
-        rid: v.rid || "", orderNumber: v.orderNumber || v.rid || "", customer: v.customer || "", title: v.title || "", scannedAt: ms(v.scannedAt) || ms(v.eventAt), beatAt: ms(v.beatAt), since: ms(v.sinceAt) || 0,
+      const dev = text(v.device, 40);                                    // (a stored device that is a number, or an object, or "constructor" is no device: never shown as it is)
+      cur.push({ station: v.station, person: H.display(v.person), device: dev, deviceLabel: Object.prototype.hasOwnProperty.call(DEVICE_LABEL, dev) ? DEVICE_LABEL[dev] : dev, kind: v.kind === "sheet" ? "sheet" : "order",
+        rid: idText(v.rid), orderNumber: idText(v.orderNumber) || idText(v.rid), customer: text(v.customer, 60), title: text(v.title, 80), scannedAt: ms(v.scannedAt) || ms(v.eventAt), beatAt: ms(v.beatAt), since: ms(v.sinceAt) || 0,
         pieces: (Array.isArray(v.pieces) ? v.pieces : []).slice(0, MAX_PIECES).map(p => ({ id: str(p && p.id, 40), label: str(p && p.label, 60), sku: str(p && p.sku, 60), listingId: str(p && p.listingId, 20), size: str(p && p.size, 6) })),
-        pieceCount: Math.max(0, Number(v.pieceCount) || 0), note: v.note || "" });
+        pieceCount: Math.max(0, Number(v.pieceCount) || 0), note: text(v.note, 80) });
     } else if (v.state === "idle") idleLive.push(v);
   }
   cur.sort((a, b) => b.scannedAt - a.scannedAt || (a.device < b.device ? -1 : 1));
@@ -366,7 +372,7 @@ async function op(ctx, body, H) {
     const devs = new Map(s.devices.map(([d, l]) => [d, { device: d, label: l, state: "offline", person: "", since: 0 }]));
     for (const p of folks) { const x = devs.get(p.device) || { device: p.device, label: DEVICE_LABEL[p.device] || p.device, state: "offline", person: "", since: 0 }; devs.set(p.device, x); x.state = "idle"; x.person = p.name; x.since = p.since; }
     for (const c of mine) { const x = devs.get(c.device) || { device: c.device, label: c.deviceLabel, state: "offline", person: "", since: 0 }; devs.set(c.device, x); x.state = "working"; x.person = c.person; x.since = c.since || x.since; }
-    const t = today[s.key] || { parts: 0, orders: 0, scans: 0, lastAt: 0 };
+    const t = today[s.key] || (tr.ok ? { parts: 0, orders: 0, scans: 0, lastAt: 0 } : { parts: null, orders: null, scans: null, lastAt: 0 });   // (today's rollups could not be read: the counts are unknown, a dash, never a 0)
     let lastEventAt = t.lastAt;
     for (const c of mine) lastEventAt = Math.max(lastEventAt, c.scannedAt);
     for (const v of idleLive) if (v.station === s.key) lastEventAt = Math.max(lastEventAt, ms(v.idleAt) || ms(v.eventAt));

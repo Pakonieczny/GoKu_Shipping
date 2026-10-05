@@ -97,7 +97,9 @@ const num = v => Number.isFinite(+v) ? +v : 0;
 const ms = v => v == null ? 0 : typeof v.toMillis === "function" ? v.toMillis() : v instanceof Date ? v.getTime() : Number.isFinite(+v) ? +v : 0;
 const isObj = v => !!v && typeof v === "object" && !Array.isArray(v);
 const r1 = x => Math.round(x * 10) / 10;
-const cleanName = v => String(v == null ? "" : v).replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim().slice(0, 80);
+/* A name never carries a PIN: four or more digits in a name are a login number that slipped in, so the digits are dropped ("Paul 482915" is "Paul"); the same rule as the console's. */
+const noPin = s => (s.match(/\p{Nd}/gu) || []).length >= 4 ? s.replace(/\p{Nd}+/gu, " ").replace(/\s+/g, " ").trim() : s;
+const cleanName = v => noPin(String(v == null ? "" : v).replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim().slice(0, 200)).slice(0, 80);
 const okName = n => !!n && /\p{L}/u.test(n);                     // a name with no letter ("123456") is a PIN, never a person
 const fold = n => cleanName(n).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase()
   .replace(/['\u2018\u2019`\u00b4]/g, "").replace(/[^\p{L}\p{N}]+/gu, " ").trim();
@@ -243,7 +245,10 @@ function ingest(rows, keyOf, now, win, sandbox) {
     pd.act = true; pd.events += Math.max(0, num(x.events)); pd.parts += net; pd.orders += ord;
     if (fa > 0 && (!pd.first || fa < pd.first)) pd.first = fa;
     if (la > pd.last) pd.last = la;
-    if (isObj(x.touched)) for (const id of Object.keys(x.touched)) { const o = String(id).replace(/\D/g, ""); if (o) pd.touched.add(o); }
+    if (isObj(x.touched)) for (const [id, m] of Object.entries(x.touched)) {
+      const o = String(id).replace(/\D/g, "");
+      if (o && isObj(m) && Object.keys(m).some(k => m[k] && k !== "inbox")) pd.touched.add(o);      // (a customer conversation seen only at the inbox is not an order worked: the same count as the person page)
+    }
   }
   const lo = nyMidnight(win.from), hi = nyMidnight(addDays(win.to, 1));
   for (const s of rows.sessions || []) {

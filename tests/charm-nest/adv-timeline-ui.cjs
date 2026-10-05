@@ -3,7 +3,7 @@
 //  2 · a live step redraws 100 events inside a frame (< 16 ms) and keeps the stamps already drawn;
 //  3 · a restore whose cancelRestored event was not written: the server's where (the record) says not cancelled;
 //  4 · the header rail's grown seal goes back when the hovered ✕ turns back into a step (a restore arrives while hovering);
-//  5 · ← → from an "Around this step" row keep the keyboard there, and from a stamp the focus follows the step;
+//  5 · the keyboard: a stamp is a button that grows where it stands, ← → walk nothing (the detail pane they used to move is gone);
 //  6 · the CANCELLED stamp follows the cancel (a person's, then Etsy's); unknown and odd types still draw.
 //   node tests/charm-nest/adv-timeline-ui.cjs     (PW_DIR=<playwright node_modules>, CHROMIUM=<chrome>)
 const fs = require('fs'), path = require('path'), vm = require('vm'), assert = require('assert/strict');
@@ -116,25 +116,24 @@ const Timeline = require(path.join(root, 'netlify/functions/_orderTimeline.js'))
     const O = '4100000400';
     await page.evaluate(id => { window.__fx[id] = { events: ['bogus', 'arrived', 'constructor', 'toString', 'placed'].map((type, i) => ({ id: `${id}~${type}~o${i}`, type, at: Date.now() - (5 - i) * 36e5 })), cancelled: null, where: null }; window.__mount(id); }, O);
     await painted(2);
-    r = await page.evaluate(() => { for (const b of window.__el.querySelectorAll('.tlSt[data-key]')) b.click(); for (const c of window.__el.querySelectorAll('.tlChip')) c.click(); return { n: window.__el.querySelectorAll('.tlSt[data-key]').length, now: window.__el.querySelector('.tlNowT').textContent }; });
+    r = await page.evaluate(() => { for (const b of window.__el.querySelectorAll('.tlSt[data-key]')) b.click(); return { n: window.__el.querySelectorAll('.tlSt[data-key]').length, now: window.__el.querySelector('.tlNowT').textContent }; });
     assert.equal(r.n, 2, 'bogus, constructor and toString draw no seal; arrived and placed do'); assert.equal(r.now, 'On a sheet');
     console.log('  ✓ 6 · the CANCELLED stamp (by Paul) goes to ETSY CANCELLED with the record; unknown and prototype-named types draw and click');
 
-    // ── 5 · keyboard ──
+    // ── 5 · keyboard: a stamp is a button that grows where it stands; ← → walk nothing and there is no detail pane to move ──
     await page.evaluate(id => window.__mount(id), R); await painted(sealsOf(base) + 1); await page.waitForTimeout(500);
     r = await page.evaluate(() => {
-      const el = window.__el, lbl = () => el.querySelector('.tlDetail .tlLbl').textContent.replace(/ ·.*/, '') + '#' + el.querySelector('.tlDetail .tlLbl').textContent.match(/milestone (\d+)/)[1];
-      const key = k => document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true }));
-      el.querySelector('.tlSt[data-key]').click(); el.querySelector('.tlArw').focus();
-      const out = [lbl()]; for (let i = 0; i < 3; i++) { key('ArrowRight'); out.push(lbl() + (document.activeElement.classList.contains('tlArw') ? '' : '!lost')); }
-      const st = el.querySelectorAll('.tlSt[data-key]')[6]; st.click(); st.focus(); key('ArrowLeft'); key('ArrowLeft');
-      out.push(lbl() + '@' + (document.activeElement.dataset.key || document.activeElement.tagName));
-      return out;
+      const el = window.__el, key = k => document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true }));
+      const st = el.querySelectorAll('.tlSt[data-key]')[6]; st.focus();
+      const was = document.activeElement.dataset.key; key('ArrowLeft'); key('ArrowLeft'); key('ArrowRight');
+      const walked = { was, now: document.activeElement.dataset.key, sel: el.querySelectorAll('.tlSt.sel').length, pane: el.querySelectorAll('.tlDetail, .tlArw, .tlBig, .tlPin').length };
+      st.click();   // (Enter or Space on a button is a click)
+      return { walked, grown: [...document.querySelectorAll('[data-seal-zoom]')].map(g => (g.closest('[data-key]') || g).dataset.key), sel: el.querySelectorAll('.tlSt.sel').length, pane: el.querySelectorAll('.tlDetail, .tlArw, .tlBig, .tlPin').length, tag: st.tagName, stamps: el.querySelectorAll('.tlSt[data-key]').length };
     });
-    assert.deepEqual(r.slice(0, 4).map(x => x.split('#')[1]), ['1', '2', '3', '4'], 'three → from an Around row move three steps: ' + r.join(' '));
-    assert(!r.slice(1, 4).some(x => x.endsWith('!lost')), 'the keyboard stays on the Around list');
-    assert.match(r[4], /#5@/); assert.equal(r[4].split('@')[1], await page.evaluate(() => [...window.__el.querySelectorAll('.tlSt[data-key]')][4].dataset.key), 'the focus follows the step on the lanes');
-    console.log('  ✓ 5 · ← → : from an Around row three steps in a row, from a stamp the focus follows');
+    assert.equal(r.tag, 'BUTTON', 'a stamp is a real button, reached with Tab');
+    assert.deepEqual(r.walked, { was: r.walked.was, now: r.walked.was, sel: 0, pane: 0 }, '← → move neither the focus nor a selection, and draw nothing: ' + JSON.stringify(r.walked));
+    assert.deepEqual([r.grown.length, r.sel, r.pane], [1, 0, 0], 'Enter or Space on a stamp grows that one seal and opens nothing: ' + JSON.stringify(r));
+    console.log('  ✓ 5 · keyboard: a stamp is a button that grows in place; ← → walk nothing; no pane to open');
 
     // ── 4 · header rail: hovering the ✕ while the restore arrives ──
     const C = '4100000500', ev4 = base.map(e => Object.assign({}, e, { id: e.id.replace(R, C), orderId: C })), cx4 = Object.assign({}, cxEv, { id: `${C}~cancelled~c1`, orderId: C });
