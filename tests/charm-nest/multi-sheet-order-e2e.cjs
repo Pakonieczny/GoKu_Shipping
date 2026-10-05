@@ -364,9 +364,12 @@ async function orderWindowProbes(page, mode, R, orders) {
         const box = await page.evaluate(() => { const b = [...document.querySelectorAll('#owRail [data-stage]')].find(x => x.dataset.stage === 'sheet' && x.getBoundingClientRect().width > 0); if (!b) return null; const r = b.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; });
         if (box) {
           let card = null;
-          for (let a = 0; a < 3 && !card; a++) {   // (a hover while the rail is still settling shows nothing: move off and on again)
-            await page.mouse.move(2, 2); await sleep(250); await page.mouse.move(box.x, box.y);
-            card = await page.waitForFunction(() => { const e = document.querySelector('.tlExp.on'); return e && e.innerText.trim() ? e.innerText.replace(/\s+/g, ' ') : null; }, null, { timeout: 4000 }).then(h => h.jsonValue(), () => null);
+          // (a hover while the rail is still redrawing, or on a machine so busy that the seal is redrawn between the pointer arriving and its
+          //  rest delay running out, shows nothing: move off and on again, finding the seal anew each time, up to 6 times)
+          for (let a = 0; a < 6 && !card; a++) {
+            const at = await page.evaluate(() => { const b = [...document.querySelectorAll('#owRail [data-stage]')].find(x => x.dataset.stage === 'sheet' && x.getBoundingClientRect().width > 0); if (!b) return null; const r = b.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; }) || box;
+            await page.mouse.move(2, 2); await sleep(300); await page.mouse.move(at.x - 2, at.y); await page.mouse.move(at.x, at.y);
+            card = await page.waitForFunction(() => { const e = document.querySelector('.tlExp.on'); return e && e.innerText.trim() ? e.innerText.replace(/\s+/g, ' ') : null; }, null, { timeout: 3500 }).then(h => h.jsonValue(), () => null);
           }
           const done = !!card && /\bDONE\b/.test(card), names = mine.filter(m => (card || '').includes(m));
           R.check('E3', side, !!card && done === (mine.length > 0) && (!mine.length || names.length > 0), `the piece is ${mine.length ? 'on ' + mine.join(' + ') : 'on no sheet'} and the Nested step says ${JSON.stringify((card || 'nothing').slice(0, 140))}`);
@@ -559,14 +562,20 @@ async function sharedModalProbes(page, mode, R) {
   if (!(await page.evaluate(() => !!(window.SharedOrdersModal && SharedOrdersModal.open)))) { R.check('K2', 'SharedOrdersModal', false, 'window.SharedOrdersModal is not on the page'); return; }
   for (const S of SHEETS) for (const dest of [null, ...SETS.map(x => x.id)]) {
     const want = splitTruth([S.id], dest), at = `${sheetLabel(S)} moved to ${dest || 'no set'}`;
-    await page.evaluate(([id, dest]) => { try { SharedOrdersModal.close(); } catch (_) {} try { SharedOrdersModal.open({ sheetId: id, targetSetId: dest }); } catch (_) {} }, [S.id, dest]);
-    const read = () => page.evaluate(() => [...document.querySelectorAll('.soDlg .soCard')].map(card => ({ rid: card.dataset.order, pieces: [...card.querySelectorAll('.soPiece')].map(p => `${(p.querySelector('.soChip')?.textContent || '').trim()} ${p.classList.contains('here') ? 'here' : 'there'}`).sort() })).sort((a, b) => a.rid < b.rid ? -1 : 1));
-    let got = await read(), prev = '';
-    for (let i = 0; i < 8 && JSON.stringify(got) !== prev; i++) { prev = JSON.stringify(got); await sleep(450); got = await read(); }
+    // (the window that was closed stays in the page for 700 ms before it is taken out: wait for it to go, then read only the window that is open,
+    //  once it has done loading, and when two reads 450 ms apart agree)
+    await page.evaluate(() => { try { SharedOrdersModal.close(); } catch (_) {} });
+    await page.waitForFunction(() => !document.querySelector('dialog.soDlg'), null, { timeout: 8000 }).catch(() => {});
+    await page.evaluate(([id, dest]) => { try { SharedOrdersModal.open({ sheetId: id, targetSetId: dest }); } catch (_) {} }, [S.id, dest]);
+    const read = () => page.evaluate(() => { const d = document.querySelector('dialog.soDlg[open]'); if (!d) return null; return { loading: d.dataset.state === 'loading', cards: [...d.querySelectorAll('.soCard')].map(card => ({ rid: card.dataset.order, pieces: [...card.querySelectorAll('.soPiece')].map(p => `${(p.querySelector('.soChip')?.textContent || '').trim()} ${p.classList.contains('here') ? 'here' : 'there'}`).sort() })).sort((a, b) => a.rid < b.rid ? -1 : 1) }; });
+    let now = await read(), prev = '';
+    for (let i = 0; i < 24; i++) { const sig = JSON.stringify(now); if (now && !now.loading && sig === prev) break; prev = sig; await sleep(450); now = await read(); }
+    const got = (now && now.cards) || [];
     const exp = want.map(w => ({ rid: w.rid, pieces: truth.pieces(w.rid).filter(p => p.sheetId && (p.sheetId === S.id || w.thereIds.includes(p.sheetId))).map(p => `${short(sheetLabel(SHEET[p.sheetId]))} ${p.sheetId === S.id ? 'here' : 'there'}`).sort() }));
     R.eq('K2', `${at}, the orders on the cards`, got.map(c => c.rid), exp.map(c => c.rid), 'the orders the window lists');
     for (const e of exp) { const c = got.find(x => x.rid === e.rid); if (c) R.eq('K2', `${at}, order ${e.rid}`, c.pieces, e.pieces, 'the pieces on its card with the sheet each is on'); }
-    await page.evaluate(() => { try { SharedOrdersModal.close(); } catch (_) {} }); await sleep(450);
+    await page.evaluate(() => { try { SharedOrdersModal.close(); } catch (_) {} });
+    await page.waitForFunction(() => !document.querySelector('dialog.soDlg'), null, { timeout: 8000 }).catch(() => {});
   }
 }
 
@@ -575,8 +584,9 @@ async function librarySearchProbes(page, mode, R) {
   const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
   for (const o of FIX) {
     const sheets = [...new Set(truth.pieces(o.rid).filter(p => p.sheetId).map(p => p.sheetId))], sets = [...new Set(sheets.map(id => SHEET[id].set))];
-    await page.fill('#libSearch', o.rid); await page.press('#libSearch', 'Enter');
-    const line = await page.waitForFunction(() => { const t = (document.querySelector('.ldFound') || {}).innerText || ''; return /hold|holds|No current sheet|Could not/.test(t) && !/Looking through/.test(t) ? t.replace(/\s+/g, ' ').trim() : null; }, null, { timeout: 15000 }).then(h => h.jsonValue()).catch(() => null);
+    try { await page.waitForSelector('#libSearch', { state: 'visible', timeout: 15000 }); await page.fill('#libSearch', o.rid, { timeout: 15000 }); await page.press('#libSearch', 'Enter'); }
+    catch (e) { R.check('C3', `order ${o.rid}`, false, `the Library search box could not be typed in: ${String(e.message).split('\n')[0]}`); continue; }
+    const line =await page.waitForFunction(() => { const t = (document.querySelector('.ldFound') || {}).innerText || ''; return /hold|holds|No current sheet|Could not/.test(t) && !/Looking through/.test(t) ? t.replace(/\s+/g, ' ').trim() : null; }, null, { timeout: 15000 }).then(h => h.jsonValue()).catch(() => null);
     await sleep(500);
     const cards = await page.evaluate(() => [...document.querySelectorAll('#libBody .setCard')].map(c => (c.querySelector('[data-set-title]')?.textContent || '').trim()));
     if (!sheets.length) R.check('C3', `order ${o.rid} (on no sheet)`, !!line && /^No current sheet/.test(line), `the Library search says "${line}", no sheet holds the order`);
@@ -589,7 +599,7 @@ async function librarySearchProbes(page, mode, R) {
     }
   }
   await page.click('.ldClear').catch(() => {});
-  await page.fill('#libSearch', ''); await page.press('#libSearch', 'Enter').catch(() => {});
+  await page.fill('#libSearch', '', { timeout: 5000 }).catch(() => {}); await page.press('#libSearch', 'Enter', { timeout: 5000 }).catch(() => {});
 }
 
 /* C5: what the Library says holds a sheet back about its ORDERS (the '!' panel reads this: LaserReview.issuesOf), against the pieces the fixture says are on no sheet.
