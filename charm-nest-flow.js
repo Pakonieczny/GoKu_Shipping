@@ -24,6 +24,13 @@
  *                        sheet just is not offered to the laser; moving it to Laser cutting again lifts it
  *   into a set           the sheet window's own Include / Make QR label paths (Gate.changeMembership, release): a set of a
  *                        run still open is made by that run's release rules, a committed set is fixed
+ * A set advances as ONE (Paul, 5 Oct, round 7: "you cannot have a green approved button on a single sheet that is part of a set
+ * where the other sheets are not ready yet"). Going forward (Approve, or a drop on Laser cutting), a sheet of a set of several is
+ * planned WITH its set: every sheet's own steps (hold lifted, QR label) and one seal for the set, in one action. First the set's gate
+ * (CharmNestReadiness.setGate, the lone button's hard test for every sheet): while any sheet of it is not ready to be approved the
+ * plan carries the need `setGate` (label = the plain reason, items = the blocking sheets), no step and no auto line, so approve and
+ * commit write nothing at all, for a sheet and for the set alike. A set of one sheet and a loose sheet are planned as before. The
+ * server twin refuses the same (op flowApply, 409). A step that only restores a failed move carries restore:true and is never refused.
  * Cardinal rule of a Set of Sheets (Paul, 5 Oct; charm-nest-shared-orders.js): every sheet that shares a multi-piece order with
  * another is in the SAME set. A move into or out of a set that would separate such sheets is not a plan that can be committed:
  * plan.needs gets key `sharedOrders` ("Orders shared with another sheet", items = SharedOrders.between's
@@ -155,6 +162,19 @@
     return out;
   }
 
+  /* ── a set advances as ONE: its gate ───────────────────────────────────────────────────────────────────────────
+   * CharmNestReadiness.setGate over the records of the set (the sheets and the set as flowState answers them): every sheet of it
+   * ready to be approved, or none is. The button, the page's grey reason and the server's refusal read the same function. */
+  function setGateOf(v) {
+    const R = RD();
+    if (!v.set || !R || typeof R.setGate !== 'function') return null;
+    return R.setGate(v.set, v.members);
+  }
+  function gateNeed(v, gate) {
+    return { key: 'setGate', label: gate.reason, detail: `${setName(v.set)} is approved together, so every sheet of it must be ready first.`,
+      items: gate.blockers.slice(0, LISTED).map(b => ({ kind: 'sheet', id: b.sheetId, label: b.sheetLabel, why: b.why })) };
+  }
+
   /* ── planning ───────────────────────────────────────────────────────────────────────────────────────────────── */
   const blank = (kind, id, move) => Object.defineProperty({ ok: false, kind, id, move, from: { area: null, setId: null }, to: { area: null, setId: null }, auto: [], needs: [], confirm: [], notes: [] }, 'steps', { value: [], writable: true, enumerable: false });
   const nameOf = env => env.by ? env.by : 'you';
@@ -174,21 +194,29 @@
     if (!AREAS.includes(to.area)) { plan.needs.push({ key: 'target', label: 'That is not a place a sheet can go', detail: 'Drop it on In progress, Laser cutting, Completed or a set.', items: [] }); return finish(plan); }
     plan.to = { area: to.area, setId: plan.from.setId, label: AREA[to.area] };
     if (from === to.area) { plan.noop = true; plan.notes.push(`${v.label} is already in ${AREA[from]}.`); return finish(plan); }
-    const mine = v.kind === 'set' ? v.members : [v.sheet], grouped = v.kind === 'sheet' && !!v.set && v.set.sheetIds.length > 1;
-    if (grouped) plan.notes.push(`${v.label} travels with ${setName(v.set)}: its sheets are cut together.`);
+    const grouped = v.kind === 'sheet' && !!v.set && v.set.sheetIds.length > 1;
+    // A set advances as ONE (Paul, 5 Oct, round 7): going forward, a sheet of a set of several is approved and moved WITH its set, so
+    // one press or one drop covers every sheet (never half a set), and the set's own gate (CharmNestReadiness.setGate: every sheet
+    // ready to be approved, the lone button's hard test) is read first. Going back is a hold on the sheet moved, as before.
+    const withSet = grouped && from === 'progress', mine = v.kind === 'set' || withSet ? v.members : [v.sheet];
+    if (grouped) plan.notes.push(withSet ? `${v.label} is approved with ${setName(v.set)}: its sheets move together.` : `${v.label} travels with ${setName(v.set)}: its sheets are cut together.`);
     if (from === 'progress') {               // forwards: Laser cutting, or Completed through it
+      const several = !!v.set && (v.set.sheetIds || []).length > 1, gate = several ? setGateOf(v) : null;
       const gaps = mine.map(m => sheetGaps(m, { ...env, own: new Set(v.members.map(sid)) }));
-      plan.needs.push(...foldNeeds(gaps.flatMap(g => g.needs), v.kind === 'set' && mine.length > 1));
+      plan.needs.push(...foldNeeds(gaps.flatMap(g => g.needs), (v.kind === 'set' || withSet) && mine.length > 1));
       for (const g of gaps) { plan.steps.push(...g.steps); plan.auto.push(...g.auto); }
       plan.auto.push(...checkLines(gaps, mine));
       if (v.setMissing) plan.needs.push({ key: 'set', label: `The set of ${v.label} could not be read`, detail: 'Refresh the Library and try again.', items: [] });
       if (v.kind === 'set' && !mine.length) plan.needs.push({ key: 'members', label: 'This set has no sheets', detail: 'A set without sheets cannot be cut.', items: [] });
       for (const i of v.missing) plan.needs.push({ key: 'members', label: 'A sheet of this set cannot be found', detail: `Sheet ${i} is listed in ${setName(v.set)} but is missing or removed.`, items: [] });
-      if (grouped) {             // a sheet is cut with its set: the other sheets must be ready too
-        const others = v.members.filter(m => sid(m) !== v.id && !memberReady(m)), R = RD();
-        if (others.length) plan.needs.push({ key: 'members', label: `${count(others.length, 'other sheet')} of ${setName(v.set)} not ready`, detail: `${setName(v.set)} is cut together, so every sheet in it must be ready first.`,
-          items: others.slice(0, LISTED).map(m => { let why = 'is not ready'; try { why = R.explain(m, { kind: 'sheet', rows: env.rows || [] }).nextText.replace(/\.$/, ''); } catch (_) { /* the plain words stand */ } return { kind: 'sheet', id: sid(m), label: sheetName(m), why }; }) });
+      if (gate && !gate.ready) {   // one sheet of the set cannot be approved yet: NO sheet is, and nothing at all is done (no hold lifted, no QR label)
+        plan.needs = plan.needs.filter(n => n.key !== 'members');
+        plan.needs.unshift(gateNeed(v, gate));
+        plan.steps.length = 0; plan.auto = []; plan.confirm = [];
+        plan.gate = gate;
+        return finish(plan);
       }
+      // (a sheet of a set of several is planned WITH its set, above: the other sheets' own gaps are already in `needs`, and what the move does for them is in `auto`)
       roseConfirm(plan, mine, env);                // (adds the roseLine confirm and its step: only an explicit press runs it)
       const t = sealTarget(v);
       if (!sealed(v, t)) plan.auto.push({ key: 'seal', label: `Ready seal recorded by ${nameOf(env)}`, detail: 'The blue seal that says it is ready for Laser cutting, with your name and the time.', stamp: true, seal: { how: 'laserReady' }, ...(env.by ? { by: env.by } : {}) });
@@ -469,7 +497,7 @@
           undo.push({ key: s.key, fn: () => flow([{ type: 'hold', sheetIds: s.sheetIds, note: 'Hold restored: the move was not completed' }], by) });
         } else if (s.type === 'hold') {
           await flow([{ type: 'hold', sheetIds: s.sheetIds, note: s.note }], by, { expect: Object.fromEntries(s.sheetIds.map(i => [i, { held: false }])) });
-          undo.push({ key: s.key, fn: () => flow([{ type: 'release', sheetIds: s.sheetIds }], by) });
+          undo.push({ key: s.key, fn: () => flow([{ type: 'release', sheetIds: s.sheetIds, restore: true }], by) });
         } else if (s.type === 'qrLabel') {
           if (typeof hooks.remakeLabel !== 'function') throw new Error('The QR label cannot be made from here: open the sheet and press Make QR label');
           await hooks.remakeLabel(s.sheetId);
