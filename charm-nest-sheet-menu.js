@@ -51,7 +51,6 @@
   const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
   const reduced = () => { try { return root.Motion && root.Motion.reduced ? !!root.Motion.reduced() : !!(root.matchMedia && root.matchMedia('(prefers-reduced-motion: reduce)').matches); } catch (_) { return false; } };
   const anim = (el, frames, o) => { try { return el && el.animate ? el.animate(frames, o) : null; } catch (_) { return null; } };
-  const mounts = new Set();
   const live = { m: null, io: null, frame: 0 };   // the one open menu (there is never more than one)
 
   /* the pill is the engraving control's pill (EngravingToggle: .owSeg, one button, 7 px chevron, 2/7 px padding), so the two sit
@@ -61,7 +60,7 @@
 .shMenu[hidden]{display:none}
 .shMenu.owSeg button,.shMenu.owSeg .shmBtn{display:inline-flex;align-items:center;gap:4px;min-width:0;max-width:100%;flex:0 1 auto;padding:2px 7px;line-height:1.2;font:600 10.5px/1.2 var(--sans,system-ui,sans-serif);letter-spacing:.02em;color:var(--ink,#1c1a17)}
 .shMenu.owSeg .shmChip{cursor:default;border-radius:6px}
-.shMenu .shmName{flex:0 1 auto;min-width:1.4em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.shMenu .shmName{flex:0 1 auto;min-width:2.6em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .shMenu .shmMark,.shmPanel .shmMark{flex:0 0 auto;font-style:normal;font-weight:500;opacity:.7;font-variant-numeric:tabular-nums;white-space:nowrap}
 .shMenu .shmMark:empty,.shmPanel .shmMark:empty{display:none}
 .shMenu .shmChev{width:7px;height:7px;flex:0 0 auto;display:block;transition:transform .2s ease}
@@ -70,7 +69,6 @@
 .shMenu button[aria-expanded="true"]{background:var(--card,#fffefb);box-shadow:0 1px 2px rgba(30,26,20,.12)}
 .shmSpin{display:inline-block;flex:0 0 auto;width:10px;height:10px;box-sizing:border-box;border:2px solid rgba(0,0,0,.15);border-top-color:currentColor;border-radius:50%;animation:shmSpin .7s linear infinite}
 @keyframes shmSpin{to{transform:rotate(360deg)}}
-.shmSr{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
 .shmPanel{position:fixed;z-index:2147483000;left:0;top:0;min-width:150px;max-width:calc(100vw - 16px);display:flex;flex-direction:column;box-sizing:border-box;background:var(--card,#fffefb);color:var(--ink,#1c1a17);border:1px solid var(--line,#e4ddd0);border-radius:12px;box-shadow:0 1px 0 rgba(255,255,255,.6) inset,0 14px 34px rgba(30,26,20,.16),0 2px 6px rgba(30,26,20,.06);font:11px/1.3 var(--sans,system-ui,sans-serif);transform-origin:var(--ox,20px) var(--oy,-6px);opacity:0;-webkit-font-smoothing:antialiased}
 .shmPanel *{box-sizing:border-box}
 .shmPanel::before{content:"";position:absolute;left:var(--ax,20px);top:-6px;width:10px;height:10px;margin-left:-5px;background:var(--card,#fffefb);border-left:1px solid var(--line,#e4ddd0);border-top:1px solid var(--line,#e4ddd0);transform:rotate(45deg)}
@@ -129,7 +127,7 @@
 
   /* ── the pill ── */
   function markNode(it, cls) {
-    if (it.spin) { const s = el('span', 'shmSpin'); s.setAttribute('role', 'img'); s.setAttribute('aria-label', it.spinLabel); return s; }
+    if (it.spin) { const s = el('span', 'shmSpin'); s.setAttribute('role', 'img'); s.setAttribute('aria-label', it.spinLabel); s.title = it.spinLabel; return s; }
     return el('span', cls || 'shmMark', it.mark);
   }
   function paintPill(m) {
@@ -140,8 +138,8 @@
     name.textContent = it ? it.label : '';
     if (it && it.color) { if (!dot) { const x = el('span', 'shmDot'); x.setAttribute('aria-hidden', 'true'); b.prepend(x); } b.querySelector('.shmDot').style.setProperty('--shm-dot', it.color); } else if (dot) dot.remove();
     if (it && it.badge) { if (!bg) name.after(el('span', 'shmBadge', it.badge)); else bg.textContent = it.badge; } else if (bg) bg.remove();
-    const mk = it ? markNode(it) : el('span', 'shmMark', '');
-    if (old) old.replaceWith(mk); else (b.querySelector('.shmBadge') || name).after(mk);
+    if (it && it.spin && old && old.classList.contains('shmSpin')) { if (old.getAttribute('aria-label') !== it.spinLabel) { old.setAttribute('aria-label', it.spinLabel); old.title = it.spinLabel; } }   // (a spinner already turning is left turning)
+    else { const mk = it ? markNode(it) : el('span', 'shmMark', ''); if (old) old.replaceWith(mk); else (b.querySelector('.shmBadge') || name).after(mk); }
     const says = it ? [it.label, it.badge, it.aria || (it.spin ? it.spinLabel : it.mark)].filter(Boolean).join(', ') : '';
     if (menu) {
       b.setAttribute('aria-label', `${says}. Choose a sheet, ${m.items.length} in this list`);
@@ -151,7 +149,7 @@
     m.wrap.setAttribute('data-sheets', String(m.items.length));
     // the least room the pill needs to keep its mark and chevron whole (the name gives way first): the host's own minimum width, from
     // character counts (no layout read), so a row with every control in it overflows at the far end rather than cutting the pill
-    const chars = it ? (it.spin ? 2 : it.mark.length) : 0, min = 20 + 15 + (menu ? 11 : 0) + (chars ? 4 + chars * 7 : 0) + (it && it.color ? 12 : 0) + (it && it.badge ? 14 + it.badge.length * 6 : 0);
+    const chars = it ? (it.spin ? 2 : it.mark.length) : 0, min = 20 + 28 + (menu ? 11 : 0) + (chars ? 4 + chars * 7 : 0) + (it && it.color ? 12 : 0) + (it && it.badge ? 14 + it.badge.length * 6 : 0);
     try { m.host.style.setProperty('--shm-min', min + 'px'); } catch (_) {}
   }
   function buildPill(m, menu) {
@@ -191,7 +189,7 @@
     const swap = (cls, text) => { const n = r.querySelector('.' + cls); if (text) { if (!n) r.append(el('span', cls, text)); else if (n.textContent !== text) n.textContent = text; } else if (n) n.remove(); };
     swap('shmNote', it.note); swap('shmBadge', it.badge);
     const spin = r.querySelector('.shmSpin'), mark = r.querySelector('.shmMark');
-    if (it.spin) { if (mark) mark.remove(); if (!spin) r.append(markNode(it)); else if (spin.getAttribute('aria-label') !== it.spinLabel) spin.setAttribute('aria-label', it.spinLabel); }
+    if (it.spin) { if (mark) mark.remove(); if (!spin) r.append(markNode(it)); else if (spin.getAttribute('aria-label') !== it.spinLabel) { spin.setAttribute('aria-label', it.spinLabel); spin.title = it.spinLabel; } }
     else { if (spin) spin.remove(); swap('shmMark', it.mark); }
     return r;
   }
@@ -280,7 +278,7 @@
       m.rows.delete(r.dataset.id); r.classList.add('gone'); r.setAttribute('aria-hidden', 'true'); r.tabIndex = -1; r.removeAttribute('role');
       const h = r.offsetHeight, a = !reduced() && anim(r, [{ opacity: 1, maxHeight: h + 'px' }, { opacity: 0, maxHeight: '0px', minHeight: '0px', paddingTop: '0px', paddingBottom: '0px' }], { duration: 170, easing: 'ease-in', fill: 'forwards' });
       const done = () => { try { r.remove(); } catch (_) {} };
-      if (a && a.finished) a.finished.then(done, done); else done();
+      if (a && a.finished) { a.finished.then(done, done); setTimeout(done, 500); } else done();   // (and never left behind if the animation does not finish)
     }
     let ref = list.firstChild;
     for (const it of m.items) {
@@ -302,7 +300,6 @@
       items: [], sig: '', mode: '', btn: null, open: false, panel: null, list: null, rows: null, seq: 0 };
     const wrap = m.wrap = el('span', 'owSeg shMenu'); wrap.setAttribute('data-sheetmenu', m.key);
     host.appendChild(wrap);
-    mounts.add(m);
     const api = {
       get button() { return m.btn; },
       key: () => m.key,
@@ -320,7 +317,7 @@
         m.sig = sig; m.items = next; paintPill(m);
         if (live.m === m) { if (m.panel) m.panel.setAttribute('aria-label', m.label || 'Sheets'); patch(m); }
       },
-      destroy() { m.destroyed = true; if (live.m === m) closeMenu(m, { source: 'gone', now: true, quiet: false }); mounts.delete(m); try { m.wrap.remove(); } catch (_) {} m.btn = null; }
+      destroy() { m.destroyed = true; if (live.m === m) closeMenu(m, { source: 'gone', now: true, quiet: false }); try { m.wrap.remove(); } catch (_) {} m.btn = null; }
     };
     m.api = api; m.pick = (id, source) => {
       const it = m.items.find(i => i.id === id); if (!it || it.disabled) return false;
