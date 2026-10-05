@@ -5813,23 +5813,53 @@ i.flowDot::before{content:"";position:absolute;inset:-7px}
   }
   /* The milestone circles (Paul, 5 Oct: "a slight expanding zoom for each of the timeline milestones similar to the Seals and a small extra info
      popup over each milestone when hovering"). Each circle is a zoom dot of the shared seal engine (charm-nest-motion.js, data-zoom-dot) and carries
-     what the small card over it says (data-tip: the step's name, its state in plain words, the one line explain() gives for it, and who and when
-     for a step the laser finished: only what the sheet's record already holds), as its own label too. The card is drawn by charm-nest-rail-tip.js.
+     what the small card over it says (data-tip: the step's name, its state in plain words, the one line explain() gives for it, and when a done step
+     was completed and by whom when a person did it, tipWhen below: only what the sheet's record already holds), as its own label too. The card is drawn by charm-nest-rail-tip.js.
      A redraw patches the rail where it stands (railPaint), so the circle a pointer or the keyboard is on is the same element after it and
      its zoom and card go on; no circle has a listener of its own. */
   const TIP_WAITS={orders:1,laser:1};
   const tipState=s=>s.state==='done'?'Done':s.state==='blocked'?'Blocked':!s.current?(s.key==='laser' || s.key==='completed'?'Not started':'Waiting'):TIP_WAITS[s.key]?'Waiting':'In progress';
-  function tipBy(s,id){
-    if(s.state!=='done' || (s.key!=='laser' && s.key!=='completed'))return '';
-    const rec=records.get(id),stamp=rec && (R.processStamps?.(rec) || []).filter(x=>x.how==='laserDone' && +x.at>0).pop(),at=+(rec?.laserDoneAt || stamp?.at || 0),by=String(rec?.laserDoneBy || stamp?.by || '').trim();
-    if(!(at>0))return by;
-    let when='';try{when=new Date(at).toLocaleString(undefined,{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'});}catch(_){}
-    return [by,when].filter(Boolean).join(' · ');
+  /* When a DONE step was completed (Paul, 5 Oct, 13:16 UTC: "Please add the date and time each step was completed on."): what CharmNestReadiness.stepTimes
+     says of the sheet's own record, the same words on the page and on the server. "Oct 3, 2:05 PM · by Paul" (the year only when it is not this year, in the
+     shop's own time as the seals' captions are, a person only when one is recorded); a done step the record has no time for says so quietly and plainly
+     ("Time not recorded") and never a guess; a step that needs no time (no back engraving was needed) and a step with no timed event of its own say nothing.
+     Nothing is read or asked for here: the record carries it. A record is worked out once (it is a new object whenever it changes). */
+  const timed=new WeakMap();
+  function timesOf(rec){
+    if(!rec || typeof rec!=='object' || typeof R.stepTimes!=='function')return null;
+    const key=[rec.laserDoneAt,rec.stepStamps,rec.processSeals,rec.backPool || rec.backs,rec.engraving],hit=timed.get(rec);
+    if(hit && hit.key.every((x,i)=>x===key[i]))return hit.times;
+    let times=null;try{times=R.stepTimes(rec);}catch(err){console.warn('Library step times',err);}
+    timed.set(rec,{key,times});return times;
+  }
+  function stepWhen(at){
+    try{
+      const d=new Date(at),zone='America/Toronto',year=x=>new Intl.DateTimeFormat('en-US',{timeZone:zone,year:'numeric'}).format(x);
+      return d.toLocaleString('en-US',{timeZone:zone,month:'short',day:'numeric',...(year(d)===year(new Date())?{}:{year:'numeric'}),hour:'numeric',minute:'2-digit'}).replace(/\u202f/g,' ');
+    }catch(_){return '';}
+  }
+  function tipWhen(s,id){
+    if(s.state!=='done')return '';
+    const t=timesOf(records.get(id))?.[s.key];
+    if(t===undefined || (t && t.plain))return '';
+    const when=t && t.at>0?stepWhen(t.at):'';
+    return when?[when,t.by?`by ${t.by}`:''].filter(Boolean).join(' · '):'Time not recorded';
+  }
+  /* A step of a sheet that changed since the server last noted the steps (its stepState): the Library's pass is asked for soon (as it is for a sheet
+     that became ready), once for each change, and the pass records when the step was completed (CharmNestReadiness.stepsRecord, written in the same
+     pass as the process seals). What the minute's check finds is recorded then. The live read never records: it carries recordSeals:false. */
+  const stepAsked=new Map();
+  function stepBehind(s,sig){
+    if(!s || s.laserDoneAt || typeof R.stepsRecord!=='function')return false;
+    let r=null;try{r=R.stepsRecord(s,Date.now());}catch(err){return false;}
+    if(!r || !(r.added.length || r.flipped))return false;
+    const now=JSON.stringify(r.state);
+    return sig?now:stepAsked.get(s.id || s.sheetId)!==now;
   }
   function railStamp(ol,e,id){
     [...ol.children].forEach((li,i)=>{
       const s=e.steps[i],dot=li.querySelector('.flowDot');if(!s || !dot)return;
-      const by=tipBy(s,id),state=tipState(s);
+      const by=tipWhen(s,id),state=tipState(s);
       dot.setAttribute('data-zoom-dot','');dot.setAttribute('data-step',s.key);
       dot.setAttribute('data-tip',[s.label,state,s.detail,by].join('\n'));
       dot.setAttribute('aria-label',`${s.label}. ${state}. ${s.detail}${by?` ${by}.`:''}`);
@@ -5866,7 +5896,7 @@ i.flowDot::before{content:"";position:absolute;inset:-7px}
   }
   function flowDraw(box,e,id,w){
     const pending=!e.ready && !e.done,checking=pending && (!!sealPoll || checkingNow || live.checking);
-    const sig=JSON.stringify([e.ready,e.done,e.step,e.steps.map(s=>[s.state,s.detail,s.current?1:0]),checking,box.dataset.issuesOpen || '',w?w.real:0,e.done?[records.get(id)?.laserDoneAt || 0,records.get(id)?.laserDoneBy || '']:0]);
+    const sig=JSON.stringify([e.ready,e.done,e.step,e.steps.map(s=>[s.state,s.detail,s.current?1:0]),checking,box.dataset.issuesOpen || '',w?w.real:0,e.steps.map(x=>x.state==='done'?tipWhen(x,id):''),e.done?[records.get(id)?.laserDoneAt || 0,records.get(id)?.laserDoneBy || '']:0]);
     if(box._sig===sig)return;
     box._sig=sig;
     const state=e.done?'done':e.ready?'ready':e.steps.some(s=>s.current && s.state==='blocked')?'blocked':'waiting',at=e.steps.findIndex(s=>s.current),now=e.steps[at];
@@ -5902,11 +5932,12 @@ i.flowDot::before{content:"";position:absolute;inset:-7px}
     batch(paint);
   }
   function paint(){
-    let needsSeals=false,names=null,before=null,home=null;const lookup=()=>names || (names=R.lookup({rows:Orders.rows()})),moved=[];
+    let needsSeals=false,names=null,before=null,home=null;const lookup=()=>names || (names=R.lookup({rows:Orders.rows()})),moved=[],stepWant=[];
     document.querySelectorAll('[data-laser-card]').forEach(card=>{
       if(!card._laserSheets)return;   // (a copy of a card flying to a tab, charm-nest-motion.js, is not a card: it holds none of its records)
       const sheets=(card._laserSheets || []).map(id=>records.get(id)).filter(Boolean),report=card._laserSet?group(card._laserSet,sheets):{...sheet(sheets[0] || {}),ready:canCut(sheets[0] || {})};
       if(sheets.some(s=>!s.laserDoneAt && sheet(s).ready!==!!s.processReady))needsSeals=true;
+      for(const s of sheets)if(stepBehind(s)){needsSeals=true;stepWant.push(s);}   // (a step changed since the server last noted the steps: the pass records when it was completed)
       if(card._laserSet?.setId && !card._laserSet.standalone && !card._laserSet.working && !card._laserSet.laserDoneAt && report.ready!==!!card._laserSet.processReady)needsSeals=true;
       flowDecorate(card,lookup);
       const seal=card.querySelector('[data-laser-seal]');if(seal){const html=R.seal(report,card._laserSet?'Set':'Sheet',card._laserSet || sheets[0]);if(seal.innerHTML!==html)seal.innerHTML=html;}
@@ -5923,7 +5954,7 @@ i.flowDot::before{content:"";position:absolute;inset:-7px}
       ordered.forEach((card,i)=>{if(list.children[i]!==card)list.insertBefore(card,list.children[i] || null);});
     }
     if(window.LibraryDone)LibraryDone.refreshCards(document.getElementById('libBody'));
-    if(needsSeals && !polling && !sealPoll && S.cloud.ok)sealPoll=setTimeout(()=>{sealPoll=0;poll(true);},Math.max(0,5100-(Date.now()-lastPoll)));
+    if(needsSeals && !polling && !sealPoll && S.cloud.ok){for(const s of stepWant)stepAsked.set(s.id || s.sheetId,stepBehind(s,true));sealPoll=setTimeout(()=>{sealPoll=0;poll(true);},Math.max(0,5100-(Date.now()-lastPoll)));}
     document.querySelectorAll('[data-laser-area]').forEach(area=>{const hasItems=!!area.querySelector('.laserAreaItems')?.children.length;area.hidden=area.dataset.laserArea!=='ready' && !hasItems;const empty=area.querySelector('.laserEmpty');if(empty)empty.hidden=hasItems;});
     if(moved.length)landed(home,before,moved);
     try{window.LibraryIssues?.refresh?.();}catch(e){console.warn('Library issues',e);}   // (an open '!' panel follows what this pass drew)

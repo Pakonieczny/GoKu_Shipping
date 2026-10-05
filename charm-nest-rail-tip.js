@@ -5,7 +5,7 @@
    pointer (a click, a tap or Tab does it at once), grows it a little in place and puts it back on leaving, Esc, a scroll or a press elsewhere.
    This file only DRAWS what the engine says. It listens for the engine's "dotzoom" event, so the card and the zoom are one hover: they come
    together and go together, and nothing here has a timer of its own for the pointer.
-   What the card says is on the circle itself (data-tip: step name, state in plain words, one line, and who and when for a step the laser finished),
+   What the card says is on the circle itself (data-tip: step name, state in plain words, one line, and when a done step was completed and by whom),
    stamped by the Library's rail (charm-nest-bridge.js) from CharmNestReadiness.explain and the sheet's own record: no read, no network call. The
    same words are the circle's aria-label.
    The card: one rounded card with a tiny arrow, above the circle (below it when there is no room above), kept inside the screen and under the top
