@@ -1190,20 +1190,36 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
         .sort((a, b) => (a.metal || "").localeCompare(b.metal || "") || a.n - b.n);
       renderSheetChips(); if (W.sel) lightChips(W.sel.rid);
       if (W.view === "sheet") renderSheetPane(); else if (W.sel) renderTrail(W.sel);
+      const unknown = W.setSheets.filter(x => x.guess); if (unknown.length) readUnknown(unknown, tok);
     } catch (e) { console.warn("sheet window: set", e); }
+  }
+  /** A sheet of the set that nothing on this page names (no Library row yet, no label file, not held live) is read from its own record
+   *  once: its chip and its tags on the orders said "GF 1" for it, whatever its metal. Until then it is just "Sheet". */
+  async function readUnknown(list, tok) {
+    await Promise.all(list.map(async x => {
+      try {
+        const r = await api("charmNestLibrary", { op: "getSheet", id: x.id }, { quiet: true, timeoutMs: 12000 }), rec = r && r.sheet;
+        if (rec) Object.assign(x, { metal: rec.metal || "", n: sheetNoOf(rec), name: rec.folder || rec.fileBase || x.name, guess: false });
+      } catch (_) { /* it stays "Sheet": nothing is invented */ }
+    }));
+    if (tok !== W.token || !W.dlg || !W.dlg.open) return;
+    W.setSheets.sort((a, b) => (a.metal || "").localeCompare(b.metal || "") || a.n - b.n);
+    renderSheetChips(); if (W.sel) lightChips(W.sel.rid);
+    if (W.view === "sheet") renderSheetPane(); else if (W.sel) renderTrail(W.sel);
   }
   function sheetInfo(sid, set) {
     const lib = (S.library.rows || []).find(r => r.id === sid);
     if (lib) return { id: sid, metal: lib.metal, n: sheetNoOf(lib), name: lib.folder || lib.fileBase || sid };
     const lf = (set.labelFiles || []).find(f => f.sheetId === sid), name = lf?.sheet || "";
     const code = (/^([A-Z0-9]+)_/.exec(name) || [])[1];
-    const live = allSheets().find(p => p.sheetId === sid);
-    return { id: sid, metal: live?.metal || METAL_OF_CODE[code] || "gold", n: live?.sheetIndex || +((/_Sheet-(\d+)/.exec(name) || [])[1]) || 1, name: name || sid };
+    const live = allSheets().find(p => p.sheetId === sid), no = live?.sheetIndex || +((/_Sheet-(\d+)/.exec(name) || [])[1]) || 0, metal = live?.metal || METAL_OF_CODE[code] || "";
+    // (nothing names it: not a gold sheet 1 by default; readUnknown reads its record)
+    return { id: sid, metal, n: no || 1, name: name || sid, guess: !(metal && no) };
   }
   function renderSheetChips() {
     const E = W.el, list = W.setSheets.length ? W.setSheets : (W.rec ? [{ id: W.rec.id, metal: W.rec.metal, n: sheetNoOf(W.rec) }] : []);
     E.sheets.hidden = list.length < 2;
-    E.sheets.innerHTML = list.map(s => `<button type="button" class="swChip" data-sheet="${esc(s.id)}" style="--c:${colorOf(s.metal)}"${s.id === W.id ? ' aria-current="true"' : ""} title="${esc(s.name || "")}${FREED.get(s.id)?.length ? " · has freed room" : ""}"${FREED.get(s.id)?.length ? " data-freed" : ""}><i></i>${esc(CODE[s.metal] || "")} ${s.n}<b></b></button>`).join("");
+    E.sheets.innerHTML = list.map(s => `<button type="button" class="swChip" data-sheet="${esc(s.id)}" style="--c:${colorOf(s.metal)}"${s.id === W.id ? ' aria-current="true"' : ""} title="${esc(s.name || "")}${FREED.get(s.id)?.length ? " · has freed room" : ""}"${FREED.get(s.id)?.length ? " data-freed" : ""}><i></i>${s.guess ? "Sheet" : `${esc(CODE[s.metal] || "")} ${s.n}`}<b></b></button>`).join("");
     E.sheets.querySelectorAll("[data-sheet]").forEach(b => b.onclick = () => { if (b.dataset.sheet !== W.id) switchSheet(b.dataset.sheet); });
   }
   function lightChips(rid) {
@@ -1646,7 +1662,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     const ps = orderPieces(rid);
     if (ps) {
       const ids = new Map(); for (const p of ps) if (!p.gone && p.nested && p.sheetId && p.sheetId !== W.id && !ids.has(p.sheetId)) ids.set(p.sheetId, p);
-      return [...ids.values()].map(p => W.setSheets.find(s => s.id === p.sheetId) || { id: p.sheetId, metal: METAL_OF_CODE[(/^(\S+)\s/.exec(p.sheetLabel || "") || [])[1]] || p.metal || "", n: p.sheetNo || "?", name: p.sheetLabel || p.sheetId })
+      return [...ids.values()].map(p => { const k = W.setSheets.find(s => s.id === p.sheetId); return k && !k.guess ? k : { id: p.sheetId, metal: METAL_OF_CODE[(/^(\S+)\s/.exec(p.sheetLabel || "") || [])[1]] || p.metal || "", n: p.sheetNo || "?", name: p.sheetLabel || p.sheetId }; })   // (what the sheets' records say of it, over a sheet this window only guessed at)
         .sort((a, b) => String(a.metal || "").localeCompare(String(b.metal || "")) || (a.n || 0) - (b.n || 0));
     }
     if (!rid || !W.set?.orders?.[rid]) return [];
