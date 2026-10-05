@@ -579,7 +579,7 @@ async function op_putSheet(b) {
     // an order line goes on a sheet once (Paul, 29 Sep: a design went on its sheet twice): a record that would place one
     // piece twice is refused, in words; one saved so before this check saves as it was, to be put right by hand
     const twice = ids => { const seen = new Set(), dup = new Set(); for (const id of Array.isArray(ids) ? ids : []) if (id) { if (seen.has(id)) dup.add(id); seen.add(id); } return dup; };
-    if (Array.isArray(s.poolIds)) { const was = twice(old.poolIds), extra = [...twice(s.poolIds)].filter(id => !was.has(id)); if (extra.length) return { error: `Sheet ${s.id} was not saved: it would put ${extra.length === 1 ? "piece " + extra[0] : `${extra.length} pieces (${extra.slice(0, 3).join(", ")})`} on it twice — an order line goes on a sheet once`, status: 409 }; }
+    if (Array.isArray(s.poolIds)) { const was = twice(old.poolIds), extra = [...twice(s.poolIds)].filter(id => !was.has(id)); if (extra.length) return { error: `Sheet ${s.id} was not saved: it would put ${extra.length === 1 ? "piece " + extra[0] : `${extra.length} pieces (${extra.slice(0, 3).join(", ")})`} on it twice — a piece goes on a sheet once`, status: 409 }; }
     // a piece a cleanup took off this sheet on purpose (its record's `cleanup`, rg-cleanup-2026-09-29) is not put back by
     // a page that still shows the sheet as it was before: that page reloads first
     const cleared = new Set(old.cleanup ? [].concat(old.cleanup.removedPoolIds || [], old.cleanup.removedCharmIds || []) : []);
@@ -1649,7 +1649,7 @@ async function op_runPut(b) {
   const r = b.run || {}; const id = str(r.runId, 80); if (!isId(id)) return { error: "bad run id" };
   const doc = Object.assign({}, r, { runId: id, updatedAt: FV.serverTimestamp() }); delete doc.liveLines;
   const parts = r.lines && typeof r.lines === "object" && !Array.isArray(r.lines) ? liveParts(id, r.lines) : null;
-  if (parts && parts.some(p => p.bytes > 1000000)) return { error: "an order line of this run is too large to save" };
+  if (parts && parts.some(p => p.bytes > 1000000)) return { error: "a piece of this run is too large to save" };
   if (parts) { delete doc.lines; doc.liveLines = { ids: parts.map(p => p.id), lines: parts.reduce((n, p) => n + p.lines, 0), bytes: parts.reduce((n, p) => n + p.bytes, 0) }; }
   const plain = Object.assign({}, doc, { updatedAt: 0 }), bytes = Buffer.byteLength(JSON.stringify(plain)), entries = OrderRules.indexEntries(plain);   // measured without the server's time mark
   if (Math.max(bytes / RUN_DOC_BYTES, entries / RUN_DOC_ENTRIES) > 0.7 && !runSizeWarned.has(PREFIX + id)) { runSizeWarned.add(PREFIX + id); console.warn(`[charmNestLibrary] run ${id}${PREFIX ? " (sandbox)" : ""}: its record is ${Math.round(bytes / 1024)} KB of the 1,024 KB and ${entries} of the 40,000 index entries one Firestore document can hold. A full record cannot be saved, and the run stops.`); }
@@ -1685,10 +1685,10 @@ async function op_runArchive(b) {
     const json = p && typeof p.json === "string" ? p.json : "", bytes = Buffer.byteLength(json);
     if (!bytes || bytes > LINE_PART_BYTES) return { error: "an archive part is JSON text of at most 900 KB" };
     let lines = null; try { lines = JSON.parse(json); } catch (_) { return { error: "an archive part is not JSON" }; }
-    if (!lines || typeof lines !== "object" || Array.isArray(lines) || !Object.keys(lines).length) return { error: "an archive part holds no lines" };
+    if (!lines || typeof lines !== "object" || Array.isArray(lines) || !Object.keys(lines).length) return { error: "an archive part holds no pieces" };
     const keys = Object.keys(lines), orders = [...new Set(Object.values(lines).map(l => String((l && l.orderId) ?? "")).filter(Boolean))];
     const decisions = JSON.stringify(decisionsByLine(lines));
-    if (bytes + Buffer.byteLength(decisions) + Buffer.byteLength(JSON.stringify(keys.concat(orders))) > 1000000) return { error: "an archive part is too large to keep with its lists; send fewer lines in it" };
+    if (bytes + Buffer.byteLength(decisions) + Buffer.byteLength(JSON.stringify(keys.concat(orders))) > 1000000) return { error: "an archive part is too large to keep with its lists; send fewer pieces in it" };
     const digest = require("crypto").createHash("sha256").update(json).digest("hex").slice(0, 40);
     docs.push([col(RUN_LINES).doc(`${id}~${digest}`), { runId: id, lines: keys.length, bytes, json, keys, orders, decisions, decisionsVersion: DECISIONS_VERSION, at, seq: i, createdAt: FV.serverTimestamp() }]);
   }
@@ -2403,7 +2403,7 @@ function customSheetEvents(r) {
   }, { source: "sorter" })).filter(Boolean);
 }
 async function op_customSheetPut(b) {
-  const doc = cleanCustomSheet(b); if (!doc) return { error: "valid custom sheet files, signed decision and line copy mapping required" };
+  const doc = cleanCustomSheet(b); if (!doc) return { error: "valid custom sheet files, signed decision and piece copy mapping required" };
   // Cleanup markers describe what happened to a copy later; its original assignment and signed decision stay fixed.
   const decision = r => ({ ck: r.ck, rid: r.rid, files: r.files, sent: { id: r.sent.id, at: r.sent.at, by: r.sent.by,
     lines: Object.fromEntries(Object.entries(r.sent.lines).map(([key, pcs]) => [key, pcs.map(pc => ({ f: pc.f, i: pc.i }))])) } });
@@ -2413,7 +2413,7 @@ async function op_customSheetPut(b) {
     const snap = await tx.get(ref), old = snap.exists ? snap.data() : null;
     if (old && customSheetCanonical(decision(old)) !== fingerprint) return { error: "These custom designs were already sent with a different decision; reload the original send before retrying", status: 409 };
     const claimed = lineRefs.length ? await tx.getAll(...lineRefs) : [];
-    if (claimed.some(s => s.exists && (s.data().ck !== doc.ck || s.data().sendId !== doc.sent.id))) return { error: "A line of this order already belongs to another custom sheet decision", status: 409 };
+    if (claimed.some(s => s.exists && (s.data().ck !== doc.ck || s.data().sendId !== doc.sent.id))) return { error: "A piece of this order already belongs to another custom sheet decision", status: 409 };
     const phase = old?.phase === "sent" ? "sent" : doc.phase, next = Object.assign({}, old || doc, { phase });
     let removalChanged = false;
     if (old) next.sent = Object.assign({}, old.sent, { lines: Object.fromEntries(Object.entries(old.sent.lines).map(([key, pcs]) => [key, pcs.map((pc, i) => {
@@ -2505,7 +2505,7 @@ async function legacyCustomSheets(lineKeys, known) {
   return { records, truncated: timedOut || next < candidates.length || lines.length > 40 };
 }
 async function op_customSheetGet(b) {
-  if (!Array.isArray(b.keys) && !Array.isArray(b.lineKeys) && !Array.isArray(b.legacyLineKeys)) return { error: "known custom card keys or line keys required" };
+  if (!Array.isArray(b.keys) && !Array.isArray(b.lineKeys) && !Array.isArray(b.legacyLineKeys)) return { error: "known custom card keys or piece keys required" };
   const asked = [...new Set((Array.isArray(b.keys) ? b.keys : []).filter(customSheetKeyOk))], lines = [...new Set((Array.isArray(b.lineKeys) ? b.lineKeys : []).map(String).filter(lineKeyOk))];
   const keys = new Set(asked.slice(0, 1000));
   for (let i = 0; i < Math.min(lines.length, 1000); i += 100) {
@@ -2542,7 +2542,7 @@ const legacyStamps = c => {
   return out.sort((a, b) => a.at - b.at);
 };
 async function op_customPut(b) {
-  const key = String(b.key || ""); if (!lineKeyOk(key)) return { error: "key (the line's receipt_transaction) required" };
+  const key = String(b.key || ""); if (!lineKeyOk(key)) return { error: "key (the piece's receipt_transaction) required" };
   const label = b.label && typeof b.label === "object" ? b.label : null, labelJson = label ? JSON.stringify(label) : "";
   const now = Date.now(), ref = col(CUSTOM).doc(key), snap = await ref.get(), cur = snap.exists ? snap.data() : null;
   const button = b.how === "button", who = str(b.by || "operator", 80);
@@ -2581,7 +2581,7 @@ async function op_customReopen(b) {
     history: (Array.isArray(cur.history) ? cur.history : []).concat(Object.assign({ how, at: now, by: who }, b.from ? { from: str(b.from, 40) } : {})).slice(-STAMPS_MAX) };
   if (!Array.isArray(cur.stamps)) doc.stamps = legacyStamps(cur);
   await ref.set(doc, { merge: true });
-  const seals = (doc.stamps || cur.stamps || []).length, what = cur.sku || cur.title || "custom line";
+  const seals = (doc.stamps || cur.stamps || []).length, what = cur.sku || cur.title || "custom piece";
   await stamp(() => ({ orderId: cur.receiptId || orderOfKey(key), type: "note", at: now, by: who, station: "sorter", lineKey: key, transactionId: cur.transactionId || key.split("_")[1] || "",
     text: `Custom order ${how === "undo" ? "completion undone" : "reopened"} by ${who}: ${str(what, 80)} · back to Open (its ${seals === 1 ? "seal stays" : seals + " seals stay"})`,
     data: { reopened: how, seals, sku: cur.sku || "", ...pressedIn(b) }, id: `customReopen-${key}-${now}` }), "custom reopen");
