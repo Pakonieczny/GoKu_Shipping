@@ -76,12 +76,20 @@ function sheet(id,{n=28,metal='gold',setId='set1',index=1,base=1000}={}){
     // a redraw of the same card gives the same single rail
     const again=w.Sets.libraryCard(set1,[gf],[gf]);body.querySelector('[data-laser-area="pending"] .laserAreaItems').appendChild(again);blocked.remove();L.changed();await tick();
     assert.equal(flows(again).length,1);noSetLevel(again);
-    // the Approve button hook: the plain reason opens the issues panel from the sheet's '!' (one press, not two)
+    // the Approve button hook: a reason the rail cannot say opens the issues panel from the sheet's '!' (one press, not two); the
+    // engraving count is the rail's to say, so the button draws no line for it
     w.LibraryFlow={approve:async()=>({})};
-    const steady=sheet('gf9',{n:1,setId:'set9',base:9000});steady.engraving={'9000_t0_1':{needed:true,state:'words',approved:false}};steady.backPool=[];
+    const waits=sheet('gf8',{n:1,setId:'set8',base:8500});waits.engraving={'8500_t0_1':{needed:true,state:'words',approved:false}};waits.backPool=[];
+    const quiet=addSet({setId:'set8',seq:8,name:'Set 8',sheetIds:['gf8'],status:'open'},[waits]);L.changed();await tick();
+    assert.equal(quiet.querySelector('.approveBox [data-approve-why]').textContent,'','no "Waiting on N back engravings" line: the Engraving step and its \'!\' say it');
+    assert.match(quiet.querySelector('.approveBox [data-approve-btn]').getAttribute('aria-label'),/Waiting on 1 back engraving/);
+    assert.equal(quiet.querySelector('.approveBox [data-approve-reason]'),null);
+    quiet.remove();
+    const steady=sheet('gf9',{n:1,setId:'set9',base:9000});steady.solidIncluded=false;
     const reason=addSet({setId:'set9',seq:9,name:'Set 9',sheetIds:['gf9'],status:'open'},[steady]);L.changed();await tick();
     const why=reason.querySelector('.approveBox [data-approve-reason]');assert(why,'the disabled button\'s reason is a link while the sheet carries a \'!\'');
-    pressed.length=0;why.click();assert.deepEqual(pressed,[['gf9','engraving']],"the reason link presses the sheet's '!' exactly once");
+    assert.equal(why.textContent,'Not included in a set yet');
+    pressed.length=0;why.click();assert.deepEqual(pressed,[['gf9','nesting']],"the reason link presses the sheet's '!' exactly once");
     assert.equal(reason.querySelectorAll('.approveBox').length,1,'and the set of one sheet has one Approve button, under the sheet');
     assert.equal(reason.querySelector('.approveBox').previousElementSibling,reason.querySelector('.flowBox'),'directly under its rail');
     reason.remove();delete w.LibraryFlow;

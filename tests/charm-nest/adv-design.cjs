@@ -170,7 +170,11 @@ function fixture({ MAIN, CX, D }) {
       await close();
 
       // 5 · a custom order on no sheet: the message in the middle of the plate area
-      await openKey(CU, CU.tid); await view('sheet');
+      //    (its Sheet tab is greyed and inert, Paul 5 Oct: a piece on no sheet is never sent to another's; the plate is reached as a search or a
+      //    Review card reaches it, by opening the order on its Sheet view)
+      await openKey(CU, CU.tid);
+      assert.equal(await page.evaluate(() => document.querySelector('.owTabsV [data-ow-view="sheet"]').getAttribute('aria-disabled')), 'true', 'the Sheet tab of a piece on no sheet is greyed');
+      await page.evaluate(() => OrderWin.setView('sheet')); await settled(); await page.waitForFunction(() => document.getElementById('owPlateWait').hidden, null, { timeout: 15000 }).catch(() => {}); await page.waitForTimeout(700);
       await page.waitForSelector('#owPlateWrap .owPlateNone'); await snap('custom-sheet');
       const wrap = await box('#owPlateWrap'), none = await box('#owPlateWrap .owPlateNone');
       assert(Math.abs((none.t + none.b) / 2 - (wrap.t + wrap.b) / 2) < 40, `"Not on a sheet yet" is centred: ${none.t}–${none.b} in ${wrap.t}–${wrap.b}`);

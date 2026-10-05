@@ -41,6 +41,8 @@ const ListZoom = (() => {
   function observe(box){if(resize&&!observed.has(box)){observed.add(box);resize.observe(box);}}
   function detach(box){bound.get(box)?.dispose();bound.delete(box);resize?.unobserve(box);observed.delete(box);box.classList.remove('zoomReady');box.removeAttribute('title');const reset=box.closest('figure')?.querySelector('.thumbReset');if(reset){reset.hidden=true;reset.onclick=null;}}
   function bind(box,key){
+    // (a picture that opens the viewer, the order window's, never zooms in place: PhotoView does the zooming and panning)
+    if(box.hasAttribute('data-viewer')){if(bound.has(box))detach(box);return;}
     const im=box.querySelector('img,canvas');if(!im)return;
     if(bound.get(box)?.im===im){observe(box);return;}
     detach(box);const abort=new AbortController(),on=(name,fn,opts={})=>box.addEventListener(name,fn,{...opts,signal:abort.signal});
@@ -242,15 +244,22 @@ const ListMedia = (() => {
     let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b;});pending.set(id,{promise,resolve,reject});wanted.add(id);flushPhotos();return promise;
   }
   const catalog=new Map();
-  async function vector(row) {
+  // (`px`, from the picture viewer, draws the same design large from the same source: never the thumbnail enlarged)
+  async function vector(row,px) {
     if(!row || row.spec?.noDesign)return null;
     const charm=(row.poolIds || []).map(id=>Pool.charmOf(id)).find(c=>c?.outline && c.members?.length);
-    if(charm)return P.frontPreview ? P.frontPreview(charm,220) : Engrave.renderFront(charm,220);
+    if(charm)return P.frontPreview ? P.frontPreview(charm,px || 220) : Engrave.renderFront(charm,px || 220);
     const sku=row.spec?.designSku || row.line?.sku;if(!sku)return null;
     let entry=Master.entryFor(sku);
     if(!entry){if(!catalog.has(sku))catalog.set(sku,Master.fetchEntry(sku).finally(()=>catalog.delete(sku)));entry=await catalog.get(sku);}
     if(!entry)return null;
-    return Pool.masterPreview(entry,row.spec?.size,true);
+    return px ? Pool.masterFront(entry,row.spec?.size,px) : Pool.masterPreview(entry,row.spec?.size,true);
+  }
+  /** A line's vector design drawn large on white (about 1600 px) for the picture viewer, as an address the viewer's picture
+   *  can show; null when the line has no design. */
+  async function vectorBig(row,px=1600) {
+    const out=await vector(row,px);
+    return typeof out==='string'?out:(out&&out.toDataURL?out.toDataURL('image/png'):null);
   }
   /** A line's vector design into one box: a list row's, or the order window's beside its listing photo. */
   function vectorInto(host,row) {
@@ -274,7 +283,7 @@ const ListMedia = (() => {
     const io=window.IntersectionObserver ? new IntersectionObserver(es=>{if(es.some(e=>e.isIntersecting))go();},{rootMargin:'160px'}) : null;
     button.onclick=go;host.appendChild(button);if(io){pages.set(host,io);io.observe(button);}
   }
-  return {pair,mount,vectorInto,watch,more,listing,prepare,start,peek:id=>photos.get(String(id || '')) || null};
+  return {pair,mount,vectorInto,vectorBig,watch,more,listing,prepare,start,peek:id=>photos.get(String(id || '')) || null};
 })();
 const clockFormat = new Intl.DateTimeFormat([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });   // made once: a formatter costs far more to make than to use
 const fmtT = t => clockFormat.format(new Date(t));
@@ -2236,6 +2245,14 @@ const Pool = window.Pool = (() => {
     while(masterPreviewCache.size>80)masterPreviewCache.delete(masterPreviewCache.keys().next().value);
     try{return await task;}catch(e){masterPreviewCache.delete(key);throw e;}
   }
+  /** The same picture as masterPreview(…, true) drawn at `px` for the picture viewer. Looking registers nothing (no pool
+   *  source, no cache of a large picture): the master is read, drawn and let go, or its pooled copy is drawn. */
+  async function masterFront(entry,size,px) {
+    const path=sizeEntry(entry,size)?.aiPath;
+    if(!path)throw new Error("No design file");
+    const cached=B.pool.sources.get(path),charm=cached?cached.charms[0]:(await readMasterCharm(entry,size)).charm;
+    return P.frontPreview ? P.frontPreview(charm,px) : Engrave.renderFront(charm,px);
+  }
   /** Upgrade cached geometry before a recovered sheet can be used again. */
   async function repairRecoveredGeometry(d) {
     const sources=(d.sources || []).concat(Object.values(d.poolSources || {}));
@@ -2516,7 +2533,7 @@ const Pool = window.Pool = (() => {
     row.state = recs.length && recs.every(p => p.state === "committed") ? "committed" : recs.length && recs.every(p => p.sheetId) ? "written" : "pooled";
     row.reason = null; return true;
   }
-  return { poolAdd, addAll, masterCharm, masterPreview, cloneCharm, update, charmOf, sheetOf, holding, sizeEntry, repairRecoveredGeometry, onSheets, settle, tryLater, recover };
+  return { poolAdd, addAll, masterCharm, masterPreview, masterFront, cloneCharm, update, charmOf, sheetOf, holding, sizeEntry, repairRecoveredGeometry, onSheets, settle, tryLater, recover };
 })();
 
 /* Carry-forward is keyed by immutable order-line identity. A changed Etsy line is always re-interpreted. */
@@ -2721,22 +2738,32 @@ const Gate = window.Gate = (() => {
     const name = p => `${labelOf(p.metal)} Sheet ${p.page}`;
     const buyer = id => { const r = Orders.rows().find(r => String(r.order?.receiptId) === id); return r?.order?.buyer?.name || ""; };
     const others = split.map(x => x.sheet), orders = [...new Set(split.flatMap(x => x.orders))], one = orders.length === 1;
-    const line = x => `<li><b>${esc(name(x.sheet))}</b><span>${x.orders.slice(0, 4).map(id => `Order ${esc(id)}${buyer(id) ? ` · ${esc(buyer(id))}` : ""}`).join("<br>")}${x.orders.length > 4 ? `<br>and ${x.orders.length - 4} more` : ""}</span></li>`;
+    const line = x => `<li><b>${esc(name(x.sheet))}</b><span>${!x.orders.length ? "shares an order with another of these sheets" : x.orders.slice(0, 4).map(id => `Order ${esc(id)}${buyer(id) ? ` · ${esc(buyer(id))}` : ""}`).join("<br>")}${x.orders.length > 4 ? `<br>and ${x.orders.length - 4} more` : ""}</span></li>`;
     return new Promise(resolve => {
       const d = document.createElement("dialog"); d.className = "splitDlg"; d.setAttribute("aria-labelledby", "splitT"); d.setAttribute("aria-describedby", "splitP");
       d.innerHTML = `<div class="dlg"><div class="dlgHead"><h3 id="splitT">${one ? "An order is" : orders.length + " orders are"} on two sheets</h3></div>
-        <div class="dlgBody"><p id="splitP">${esc(name(sh))} shares ${one ? "an order" : orders.length + " orders"} with ${others.length > 1 ? "sheets that are" : "a sheet that is"} ${included ? "not in the current set" : "staying in the current set"}. ${included ? "Included" : "Taken out"} on its own, ${one ? "the order is" : "these orders are"} cut in two parts, at different times.</p><ul class="splitList">${split.map(line).join("")}</ul></div>
-        <div class="dlgFoot"><div class="left"><button type="button" class="btn ghost sm" data-k="cancel">Cancel</button></div><button type="button" class="btn ghost sm" data-k="one">Only ${esc(name(sh))}</button><button type="button" class="btn sage sm" data-k="all">${included ? "Include" : "Take out"} ${others.length > 1 ? "all " + (others.length + 1) + " sheets" : "both sheets"}</button></div></div>`;
+        <div class="dlgBody"><p id="splitP">${esc(name(sh))} shares ${one ? "an order" : orders.length + " orders"} with ${others.length > 1 ? "sheets that are" : "a sheet that is"} ${included ? "not in the current set" : "staying in the current set"}. Sheets that share an order are always in the same set, so they are ${included ? "included" : "taken out"} together.</p><ul class="splitList">${split.map(line).join("")}</ul></div>
+        <div class="dlgFoot"><div class="left"><button type="button" class="btn ghost sm" data-k="cancel">Cancel</button></div><button type="button" class="btn sage sm" data-k="all">${included ? "Include" : "Take out"} ${others.length > 1 ? "all " + (others.length + 1) + " sheets" : "both sheets"}</button></div></div>`;
       document.body.appendChild(d);
       const done = v => { if (d.open) d.close(); d.remove(); resolve(v); };
       d.querySelector("[data-k=all]").onclick = () => done([sh, ...others]);
-      d.querySelector("[data-k=one]").onclick = () => done([sh]);
       d.querySelector("[data-k=cancel]").onclick = () => done(null);
       d.addEventListener("cancel", e => { e.preventDefault(); done(null); });
       d.showModal(); d.querySelector("[data-k=all]").focus();
     });
   }
+  /* The cardinal rule of a Set of Sheets (Paul, 5 Oct; charm-nest-shared-orders.js): every sheet that shares a multi-piece order with
+     another is in the SAME set. policy() is the sheet's own release rule (basePolicy) with the rule's two marks on top: cardinalApply
+     (below) reads the live pages at every assembly and marks which sheets the rule pulls in with a partner (cardinalPull) and which
+     wait for a partner that cannot join yet (cardinalHold). The marks are derived, never saved: recomputed from the pages each time,
+     so an order taken off, a piece nested somewhere else or a sheet finishing moves the sets at once. */
   function policy(sh, seq, choices = selected()) {
+    const r = basePolicy(sh, seq, choices);
+    if (sh.cardinalHold && r.include) return Object.assign({}, r, { include: false, reason: sh.cardinalHold });
+    if (sh.cardinalPull && !r.include) return Object.assign({}, r, { include: true, reason: sh.cardinalPull });
+    return r;
+  }
+  function basePolicy(sh, seq, choices = selected()) {
     return O_.sheetRelease({ material: sh.metal, verified: !!sh.verification?.ok, placed: sh.placements.length,
       stopped: sh.endedBy === "stopped", dirty: sh.dirty || ["nesting", "finishing", "queued"].includes(sh.status), full: !!sh.releaseFull, topup: sh.topup && !sh.topup.closedAt ? { tried: (sh.topup.tried || []).length, of: TOPUP.orders } : false }, { seq, selected: solid(sh.metal) ? Object.assign({}, choices, { [sh.metal]: picked(sh, choices) }) : choices });
   }
@@ -2764,6 +2791,84 @@ const Gate = window.Gate = (() => {
   const holding = p => !!p.keepRelease && Date.now() - (+p.keepRelease.at || 0) < 600000;
   /** A released sheet that pieces are taken off keeps its set and gets its label made again (see holding). */
   const keep = p => { if ((p.releaseFull || (p.setId && !p.draft)) && !p.roseCutAt && !p.laserDoneAt && !p.recalled) p.keepRelease = { full: !!p.releaseFull, at: Date.now() }; };
+  const SOrd = () => (window.SharedOrders && window.SharedOrders.fromPage && window.SharedOrders.core) ? window.SharedOrders : null;
+  const sheetNameOf = p => `${labelOf(p.metal)} Sheet ${p.page}`;
+  const ordersWords = os => os.length === 1 ? `order ${os[0]}` : `orders ${os.slice(0, 3).join(", ")}${os.length > 3 ? " and more" : ""}`;
+  /** The run's pages as the rule reads them: { sheets: [core sheets], page: id -> page, id: page -> id }. */
+  function cardinalView(run) {
+    const SO = SOrd(); if (!SO || !run) return null;
+    const sheets = [], page = new Map(), idOf = new Map();
+    for (const p of allSheets().filter(p => p.runId === run.runId)) { const n = SO.fromPage(p); if (n) { sheets.push(n); page.set(n.id, p); idOf.set(p, n.id); } }
+    return { SO, sheets, page, idOf, norm: new Map(sheets.map(n => [n.id, n])) };
+  }
+  /** Why a sheet cannot join a set now, in plain words ("" when it can). `ready` = the run's sheets with saved files. */
+  function cannotJoin(p, ready) {
+    if (p.metal === "rose") return "a Rose Gold sheet joins a set only by its own Cut Sheet press";
+    if (p.endedBy === "stopped") return "its nesting was stopped";
+    if (p.dirty || ["nesting", "finishing", "queued"].includes(p.status) || (p.persisted && !p.persistedDone)) return "it is still being nested or saved";
+    if (!(p.placements || []).length) return "nothing is placed on it";
+    if (!p.verification?.ok) return "its layout has not been verified yet";
+    if (!ready.has(p)) return "its sheet files are not saved yet";
+    return "";
+  }
+  /** Marks the run's pages (p.cardinalPull / p.cardinalHold / p.cardinalNote) from the live pages: assembleNow and validateRelease. */
+  function cardinalApply(run, pages, set, choices = selected()) {
+    for (const p of allSheets().filter(p => p.runId === run.runId)) { delete p.cardinalPull; delete p.cardinalHold; delete p.cardinalNote; }
+    const V = cardinalView(run); if (!V) return [];
+    const ready = new Set(pages), seq = set ? set.seq : 2, wants = p => basePolicy(p, seq, choices).include, inSetNow = p => !!set && p.setId === set.setId && !p.draft;
+    const out = [];
+    for (const g of V.SO.core.groups(V.sheets)) {
+      const members = g.ids.map(id => V.page.get(id)).filter(Boolean), orders = g.orders, fixed = g.ids.filter(id => V.norm.get(id).fixed);
+      if (fixed.length) {
+        // a sheet of the group is cut, or in a set already sent to the station: the others can never be in its set. Nothing is held back
+        // for it (the work goes on); each sheet that is not fixed says so, with the exact reason.
+        const why = fixed.map(f => `${V.norm.get(f).label}: ${V.norm.get(f).fixed}`).join("; ");
+        for (const p of members) if (!fixed.includes(V.idOf.get(p))) p.cardinalNote = `${ordersWords(orders)} also on ${why}, so ${members.length > 2 ? "they cannot" : "it cannot"} be in the same set`;
+        out.push({ ids: g.ids, orders, state: "fixed", why });
+        continue;
+      }
+      const wanting = members.filter(wants); if (!wanting.length) continue;
+      const need = members.filter(p => !wants(p)), stuck = need.map(p => ({ p, w: cannotJoin(p, ready) })).filter(x => x.w);
+      const together = o => `Shares ${ordersWords(orders)} with ${members.filter(m => m !== o).map(sheetNameOf).join(", ")}`;
+      if (!stuck.length) { for (const p of need) p.cardinalPull = together(p); out.push({ ids: g.ids, orders, state: "together", why: "" }); continue; }
+      const waits = stuck.map(x => `${sheetNameOf(x.p)} (${x.w})`).join("; ");
+      if (wanting.some(inSetNow)) {
+        // the set is started: the sheets that can come do, the rest are told about
+        for (const p of need) if (!stuck.some(x => x.p === p)) p.cardinalPull = together(p);
+        for (const p of members) p.cardinalNote = `${ordersWords(orders)} also on ${stuck.map(x => sheetNameOf(x.p)).join(", ")}, which cannot join the set yet: ${stuck.map(x => x.w).join("; ")}`;
+        out.push({ ids: g.ids, orders, state: "partial", why: waits });
+        continue;
+      }
+      // nothing of it is in the set yet: nobody starts a split; the sheets that want in wait for the others
+      for (const p of wanting) p.cardinalHold = `Waits for ${waits}: sheets that share ${ordersWords(orders)} go into the set together`;
+      out.push({ ids: g.ids, orders, state: "waiting", why: waits });
+    }
+    return out;
+  }
+  /** What the rule says of one sheet changing set on its own (a tick of Include): { list: the solid sheets that change with it,
+   *  blocked: the plain reason it cannot ("" when it can), orders }. */
+  function cardinalFor(sh, included) {
+    const run = B.run, V = run && sh.runId === run.runId ? cardinalView(run) : null, me = V && V.idOf.get(sh);
+    if (!V || !me) return { list: [sh], blocked: "", orders: [] };
+    const g = V.SO.core.groupOf(V.sheets, me); if (g.ids.length < 2) return { list: [sh], blocked: "", orders: [] };
+    const members = g.ids.map(id => V.page.get(id)).filter(Boolean), set = Sets.ofRun(run.runId).find(s => s.group === "dispatch" && !s.committedAt), seq = set ? set.seq : 2;
+    const list = members.filter(p => solid(p.metal) && membershipEditable(p) && (p === sh || picked(p) !== !!included)), stays = [];
+    const shares = p => g.orders.filter(o => V.norm.get(V.idOf.get(p)).pieces.some(x => x.orderId === o));   // (the orders this sheet carries of the group's)
+    for (const p of members) {
+      if (list.includes(p)) continue;
+      const n = V.norm.get(V.idOf.get(p));
+      if ((n && n.fixed) || (included && p.metal === "rose" && !basePolicy(p, seq).include) || (!included && basePolicy(p, seq).include)) stays.push(p);   // (cut or committed, a Rose Gold sheet that joins only by its own press, a sheet in the set on its own)
+    }
+    // one plain line: the names, no reasons and no instruction (the shared-orders window says the rest)
+    const shared = new Set(stays.flatMap(shares));
+    return { list: list.length ? list : [sh], orders: g.orders, blocked: stays.length ? `${sheetNameOf(sh)} stays with ${stays.map(sheetNameOf).join(" and ")}: they share ${shared.size === 1 ? "an order" : "orders"}.` : "" };
+  }
+  /** The multi-piece orders of a set's sheets that also have pieces on a sheet of its run outside it that could still join it. */
+  function cardinalSplit(set) {
+    const V = B.run && B.run.runId === set.runId ? cardinalView(B.run) : null; if (!V) return [];
+    const ids = V.sheets.filter(n => n.setId === set.setId).map(n => n.id);
+    return V.SO.core.between(V.sheets, ids, set.setId).filter(it => it.thereIds.some(i => !V.norm.get(i).fixed));
+  }
   let assemblyQueue = Promise.resolve();
   function assemble(run, context) {
     const ops = window.CharmNestOperations;
@@ -2778,11 +2883,13 @@ const Gate = window.Gate = (() => {
     const committedSheets = new Set(Sets.ofRun(run.runId).filter(s => s.committedAt).flatMap(s => s.sheetIds));
     const pages = allSheets().filter(p => p.runId === run.runId && p.outputs && p.persistedDone && !committedSheets.has(p.sheetId));
     let set = Sets.ofRun(run.runId).find(s => s.group === "dispatch" && !s.committedAt);
+    cardinalApply(run, pages, set, choices);   // (sheets that share a multi-piece order come in together, or wait together)
     const regular = pages.filter(p => p.metal !== "rose" && release(p, 2).include);
     const roses = pages.filter(p => p.metal === "rose" && release(p, 2).include);
     if (!set && (regular.length || roses.length)) set = await Sets.ensure(run.runId, "dispatch", { roseOnly: !regular.length && choices.rose !== true });
     if (!set) { run.heldSheets = pages.length; return; }
     if (set.committedAt) return;
+    cardinalApply(run, pages, set, choices);   // (again with the set's own number: Rose Gold's even-numbered rule reads it)
     // (a sheet being rewritten by hand in the sheet window keeps its place and gets its new label once it is written)
     for (const sh of allSheets().filter(p => p.runId === run.runId && p.setId === set.setId && !holding(p) && !release(p, set.seq).include)) {
       const previous = {draft:sh.draft,setId:sh.setId,seq:sh.seq,sheetIndex:sh.sheetIndex,label:sh.label};
@@ -2818,7 +2925,7 @@ const Gate = window.Gate = (() => {
       // Membership changes reuse verified artwork and approved backs. Only the
       // manifest metadata and QR need saving; never re-render/re-upload the AI.
       try {
-        await api("charmNestLibrary", {op:"putSheet", sheet:{id:sh.sheetId,draft:false,setId:set.setId,setSeq:set.seq,sheetIndex:sh.sheetIndex,fileBase:sh.fileBase,folder:sh.fileBase,solidIncluded:solid(sh.metal) ? picked(sh, choices) : null}});
+        await api("charmNestLibrary", {op:"putSheet", sheet:{id:sh.sheetId,draft:false,setId:set.setId,setSeq:set.seq,sheetIndex:sh.sheetIndex,fileBase:sh.fileBase,folder:sh.fileBase,solidIncluded:solid(sh.metal) ? (picked(sh, choices) ? true : sh.cardinalPull ? null : false) : null}});   // (a solid sheet the cardinal rule pulled in is in without its own tick: null, so it never reloads as ticked)
         await Sets.onSheetSaved(sh, sh.charms, undefined, {setOverride:set});
         if (Engrave.saveSheetBacks) await Engrave.saveSheetBacks(sh);
         sh.problem = null;
@@ -2850,7 +2957,7 @@ const Gate = window.Gate = (() => {
     const set = Sets.ofRun(run.runId).find(s=>s.group==='dispatch');
     return rows.map(row=>{
       if(row.runId!==run.runId || !solid(row.metal)) return row;
-      const live=allSheets().find(p=>p.sheetId===row.id), included=live ? picked(live) : !!selected()[row.metal] && row.solidIncluded!==false;
+      const live=allSheets().find(p=>p.sheetId===row.id), included=live ? picked(live) || !!live.cardinalPull : !!selected()[row.metal] && row.solidIncluded!==false;
       return {...row,solidIncluded:included,...(!included ? {draft:true,setId:null,setSeq:null,sheetIndex:null,label:null} : set && live && policy(live,set.seq).include ? {draft:false,setId:set.setId,setSeq:set.seq,sheetIndex:live.sheetIndex || row.sheetIndex} : {})};
     });
   }
@@ -2948,13 +3055,21 @@ const Gate = window.Gate = (() => {
     const include=node.querySelector('[data-solid="include"]');include.checked=!!included;include.disabled=!membershipEditable(sh)||!!sh.roseCutAt;
     // a locked checkbox says why, as the size control below it does
     const runNow=B.run,locked=!include.disabled?'':sh.roseCutAt?'Cut · it stays in its set':sh.recalled?'A saved sheet · its set is fixed':runNow&&['complete','abandoned'].includes(runNow.status)?'The run is finished':committing(runNow)?'The set is being committed':'This sheet is in a committed set · it stays there';
-    node.querySelector('[data-solid="status"]').textContent=R.membershipError?'Selection not saved':R.membershipPending?'Saving selection…':locked;
+    node.querySelector('[data-solid="status"]').textContent=R.membershipError?'Selection not saved':R.membershipPending?'Saving selection…':locked||sh.cardinalHold||sh.cardinalPull||sh.cardinalNote||'';
     if(sh.el)sh.el.querySelector(".shHead").title=policy(sh,seq).reason;   // the same hover answer the Gold and Silver cards give
     const retry=node.querySelector('[data-solid="retry"]');retry.hidden=!R.membershipError;
     retry.onclick=()=>changeMembership(m,m==='rose'?!!selected()[m]:picked(sh),sh).catch(()=>{});
     include.onchange=async e=>{
       if(!membershipEditable(sh))return renderRelease(sh,node);
-      const want=e.target.checked,split=solid(m)?splitWith(sh,want):[];let list=[sh];
+      const want=e.target.checked,rule=solid(m)?cardinalFor(sh,want):{list:[sh],blocked:''};let list=[sh];
+      // the cardinal rule: sheets that share a multi-piece order change set together; one that cannot follow stops the change, and says why
+      if(rule.blocked){
+        const details=node.querySelector('.sheetOptions');if(details){details.open=false;(R.optionsOpen ||= {})[m]=false;}
+        renderRelease(sh,node);
+        if(window.SharedOrdersModal&&SharedOrdersModal.open)try{SharedOrdersModal.open({sheetId:sh.sheetId,targetSetId:null,reason:rule.blocked});return;}catch(_){/* the toast says it */}
+        return toast(rule.blocked,'bad',12000);
+      }
+      const split=rule.list.length>1?rule.list.filter(p=>p!==sh).map(p=>({sheet:p,orders:[...ordersOn(p)].filter(id=>ordersOn(sh).has(id))})):[];
       if(split.length){
         const details=node.querySelector('.sheetOptions');if(details){details.open=false;(R.optionsOpen ||= {})[m]=false;}
         list=await askSplit(sh,want,split);
@@ -3721,7 +3836,8 @@ const Gate = window.Gate = (() => {
     el2.className = cls; el2.classList.remove("hidden"); el2.innerHTML = html;
     const b = el2.querySelector("[data-gate]"); if (b) b.onclick = () => { b.disabled = true; (b.dataset.gate === "release" ? release(m) : cutAnyway(m)).catch(e => toast(e.message, "bad", 6000)); };
   }
-  return { solidSelected:(m, sh) => sh && solid(m) ? picked(sh) : anyPicked(m), splitWith, changeMembership, flush, projectLibraryRecords, refreshMembership, load, plan, afterPool, release, cutAnyway, renderCard, footprint, modern, policy, assemble, holding, keep, upgrade, selected, nestable, renderRelease, mergePlan, mergeSheets, mergeStage, mergeFx: () => ({ live: FX.size }), state: () => R };
+  return { solidSelected:(m, sh) => sh && solid(m) ? picked(sh) || !!sh.cardinalPull : anyPicked(m),   // (a solid sheet the cardinal rule pulled in is in the set)
+     splitWith, cardinalFor, cardinalApply, cardinalSplit, changeMembership, flush, projectLibraryRecords, refreshMembership, load, plan, afterPool, release, cutAnyway, renderCard, footprint, modern, policy, assemble, holding, keep, upgrade, selected, nestable, renderRelease, mergePlan, mergeSheets, mergeStage, mergeFx: () => ({ live: FX.size }), state: () => R };
 })();
 
 /* ═══ 21 · Engrave — the words, the checked flip, the fit, the review, the back files ═══ */
@@ -5550,15 +5666,13 @@ const LaserReview = window.LaserReview = (()=>{
 .flowStep.ready .flowDot::after{content:"";width:6px;height:6px;border-radius:50%;background:var(--sage)}
 .flowStep span{display:none;white-space:nowrap}
 .flowStep.current span{color:var(--ink);font-weight:600}
-.flowStep.blocked.current span{color:var(--clay)}
 .flowFoot{display:flex;align-items:center;gap:8px;min-width:0}
 .flowNow{font-size:11px;color:var(--ink45)}.flowNow b{color:var(--ink);font-weight:600}
-.flowBox[data-state=blocked] .flowNow b{color:var(--clay)}
 @container (min-width:430px){.flowStep span{display:block}.flowNow{display:none}.flowFoot:not(:has(.flowBusy)){display:none}}
 .flowBusy{flex:none;display:inline-flex;align-items:center;gap:5px;font-size:11px;color:var(--ink45)}
 .flowBusy .spin{width:10px;height:10px;border:2px solid rgba(0,0,0,.15);border-top-color:var(--ink45);border-radius:50%;animation:spin .7s linear infinite}
 button.flowDot{appearance:none;-webkit-appearance:none;margin:0;padding:0;cursor:pointer;-webkit-tap-highlight-color:transparent;transition:transform .15s ease,box-shadow .15s ease}
-button.flowDot::before{content:"";position:absolute;inset:-9px}
+button.flowDot::before{content:"";position:absolute;inset:-11px}
 button.flowDot:hover{transform:scale(1.14)}
 button.flowDot:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
 .flowStep.waiting .flowBang{background:var(--card);border-color:var(--gold2);color:#8a6a1f}
@@ -5592,6 +5706,32 @@ button.flowDot:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
     }
     return R.explain(p,ctx);
   }
+  /* What holds one sheet back, for the '!' panel (charm-nest-library-issues.js): CharmNestReadiness.issues for the sheet (round 2,
+     interface B; until it exists the panel adapts explain()'s items), each order issue with its order's Etsy listing id and
+     buyer, which is all the panel needs to show the order's picture and name. A read only: nothing is worked out for a card
+     that has no panel open, and a refresh pass (batch) shares the projections it already made. */
+  function issuesOf(id,from){
+    const rec=records.get(id);if(!rec)return null;
+    const card=from?.closest?.('[data-laser-card]') || [...document.querySelectorAll('[data-laser-card]')].find(c=>(c._laserSheets || []).includes(id)) || {_laserSheets:[id]};
+    const lookup=()=>R.lookup({rows:Orders.rows()}),p=projected(rec),ctx={lookup};
+    if(p.setId && !p.draft && p.solidIncluded!==false){
+      const st=sets.get(p.setId) || (card._laserSet?.setId===p.setId?card._laserSet:null);
+      if(st){ctx.set=st;ctx.sheets=(st.sheetIds || []).map(x=>records.get(x)).filter(Boolean).map(projected);}else ctx.setMissing=true;
+    }
+    const e=R.explain(p,ctx),label=e.label || R.sheetLabel(p),out={id,label,code:(/^(\S+) Sheet \d+$/.exec(label) || [])[1] || '',metal:p.metal || '',ready:e.ready,done:e.done,step:e.step,explain:e,checking:!!sealPoll || checkingNow || live.checking};
+    if(typeof R.issues==='function'){
+      out.issues=R.issues(p,ctx) || [];
+      const want=new Set(out.issues.filter(i=>i.orderId && (!i.listingId || !i.customer)).map(i=>String(i.orderId)));
+      if(want.size){
+        const by=new Map();
+        for(const r of Orders.rows()){const rid=String(r.order?.receiptId || r.orderId || '');if(want.has(rid)){const o=by.get(rid) || {};if(!o.listingId && r.line?.listingId)o.listingId=String(r.line.listingId);if(!o.customer && r.order?.buyer?.name)o.customer=r.order.buyer.name;by.set(rid,o);}}
+        out.issues=out.issues.map(i=>{const o=i.orderId && by.get(String(i.orderId));return o?{...i,listingId:i.listingId || o.listingId || '',customer:i.customer || o.customer || ''}:i;});
+      }
+    }
+    return out;
+  }
+  // an order's listing photo (the cache the Orders tab uses; a cached lookup, never a new Etsy call): url, or null
+  const photoOf=lid=>{lid=String(lid || '');if(!lid)return Promise.resolve(null);const u=ListMedia.peek(lid);return u?Promise.resolve(u):ListMedia.listing(lid).then(x=>x || null,()=>null);};
   /* The '!' (the issues panel, charm-nest-library-issues.js, opens from it): a real button in the rail of a sheet that is not
      ready, on every blocked step, on the step the sheet is at when a person can act on it (Engraving, Back files, QR label,
      Order check), and on Laser cutting when the sheet itself is done but waits for the other sheets of its set. A ready or cut
@@ -5674,6 +5814,7 @@ button.flowDot:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
     if(needsSeals && !polling && !sealPoll && S.cloud.ok)sealPoll=setTimeout(()=>{sealPoll=0;poll(true);},Math.max(0,5100-(Date.now()-lastPoll)));
     document.querySelectorAll('[data-laser-area]').forEach(area=>{const hasItems=!!area.querySelector('.laserAreaItems')?.children.length;area.hidden=area.dataset.laserArea!=='ready' && !hasItems;const empty=area.querySelector('.laserEmpty');if(empty)empty.hidden=hasItems;});
     if(moved.length)landed(home,before,moved);
+    try{window.LibraryIssues?.refresh?.();}catch(e){console.warn('Library issues',e);}   // (an open '!' panel follows what this pass drew)
   }
   // the cards that moved are drawn at their new place: they glide from where they stood, and a card that reached Laser cutting
   // leaves a soft ring when it has settled (never over a glide: both move the same card)
@@ -5695,14 +5836,15 @@ button.flowDot:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
   const approving=new Set(),boxKey=(kind,id)=>kind+':'+id,plural=(n,w)=>`${n} ${w}${n===1?'':'s'}`;
   const flowReady=()=>typeof window.LibraryFlow?.approve==='function';
   const laying=p=>!!(p.dirty || p.saving || ['nesting','finishing','queued','error'].includes(p.status));
-  // null: nothing to offer (ready, cut or gone) · {why:''}: a press can do it · {why:'plain words'}: a person's own step comes first
+  // null: nothing to offer (ready, cut or gone) · {why:''}: a press can do it · {why:'plain words'}: a person's own step comes first (quiet: the
+  // rail already says it, so no line is drawn for it)
   function approveCase(recs){
     recs=recs.filter(Boolean);if(!recs.length)return null;
     if(recs[0].archived || projected(recs[0]).laserDoneAt || sheet(recs[0]).ready)return null;
     const todo=recs.map(projected).filter(p=>!p.archived && !R.laserSheet(p).ready).map(p=>({p,r:R.laserSheet(p)}));
     if(!todo.length)return {why:''};
     const waiting=todo.reduce((n,x)=>n+(x.r.included?x.r.waiting:0),0);
-    if(waiting)return {why:`Waiting on ${plural(waiting,'back engraving')}`};
+    if(waiting)return {why:`Waiting on ${plural(waiting,'back engraving')}`,quiet:true};   // (quiet: the rail's current step and its '!' say it; the button only keeps it for a screen reader)
     const busy=todo.filter(x=>laying(x.p)).length;
     if(busy)return {why:'Still being laid out'};
     const out=todo.filter(x=>!x.r.included);
@@ -5727,15 +5869,15 @@ button.flowDot:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
   function paintApprove(box,c){
     // (the reason is a link when there is something to open: the sheet's '!' on its rail, which opens the issues panel)
     const key=box.dataset.approveFor,busy=approving.has(key),open=typeof window.LaserReview?.openChecklist==='function' && !!box.parentElement?.querySelector('.flowBox [data-issues-open]');
-    const mode=!c?'done':busy?'busy':c.why?'blocked':'ready',sig=[mode,c?.why || '',open?1:0,box._name || ''].join('|');
+    const mode=!c?'done':busy?'busy':c.why?'blocked':'ready',sig=[mode,c?.why || '',c?.quiet?1:0,open?1:0,box._name || ''].join('|');
     box._case=c;
     if(box.dataset.sig===sig)return;
     box.dataset.sig=sig;box.dataset.mode=mode;
     const btn=box.querySelector('[data-approve-btn]'),why=box.querySelector('[data-approve-why]');
     btn.disabled=mode!=='ready';btn.setAttribute('aria-busy',busy?'true':'false');
-    btn.setAttribute('aria-label','Approve for laser cutting'+(box._name?': '+box._name:''));
+    btn.setAttribute('aria-label','Approve for laser cutting'+(box._name?': '+box._name:'')+(mode==='blocked'?` (not yet: ${c.why})`:''));
     btn.innerHTML=busy?'<i class="spin" aria-hidden="true"></i>Approving…':'Approve for laser cutting';
-    why.innerHTML=mode!=='blocked'?'':open?`<button type="button" class="approveReason" data-approve-reason>${esc(c.why)}</button>`:`<span class="approveReason">${esc(c.why)}</span>`;
+    why.innerHTML=mode!=='blocked' || c.quiet?'':open?`<button type="button" class="approveReason" data-approve-reason>${esc(c.why)}</button>`:`<span class="approveReason">${esc(c.why)}</span>`;
   }
   function syncBox(host,kind,id,c,name){
     const key=boxKey(kind,id);let box=[...host.children].find(x=>x.dataset?.approveFor===key);
@@ -5918,7 +6060,7 @@ button.flowDot:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
       live.fails=0;
       if(!r.unchanged){
         live.revs=r.revs || null;live.legacy=!r.revs;   // (a cloud that does not know ifRevs answers in full every time: asked less often)
-        if(seq>live.applied){live.applied=seq;if(applyStatus(r,ids,false))changed();}
+        if(seq>live.applied){live.applied=seq;if(applyStatus(r,ids,false)){changed();try{window.SharedOrders?.refreshed?.();}catch(_){}}}   // (the shared-orders window redraws from the same read)
       }
     }catch(e){if(++live.fails===1)console.warn('Library live read',e);}
     finally{
@@ -5971,7 +6113,7 @@ button.flowDot:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
   window.addEventListener?.('online',()=>{live.fails=0;readSoon(false);resumeReload();});
   /** What the live read is doing (the test reads it): reads in flight, failures in a row, whether the cloud knows ifRevs. */
   const liveState=()=>({busy:live.busy,fails:live.fails,legacy:live.legacy,armed:!!live.timer,revs:live.revs?Object.keys(live.revs).length:0,reload:live.reload});
-  return {record,sheet,group,canCut,labels,sections,place,changed,saved,poll,nudge,liveState,projected,batch,acceptProcess,openChecklist,explain:(kind,id,card)=>explainOf({kind,id},card || {_laserSheets:[id]},()=>R.lookup({rows:Orders.rows()}))};
+  return {record,sheet,group,canCut,labels,sections,place,changed,saved,poll,nudge,liveState,projected,batch,acceptProcess,openChecklist,issuesOf,photo:photoOf,explain:(kind,id,card)=>explainOf({kind,id},card || {_laserSheets:[id]},()=>R.lookup({rows:Orders.rows()}))};
 })();
 
 /* ═══ 22 · Sets — one run, one date, one folder, one numbering across materials ═══ */
@@ -6122,6 +6264,12 @@ const Sets = window.Sets = (() => {
     const pendingRelease = message => Object.assign(new Error(message), {releasePending:true});
     const sheets = sheetsOf(set);
     if (sheets.some(sh => sh.runHold)) throw pendingRelease("A sheet in this set still needs attention");
+    // the cardinal rule: every sheet that shares a multi-piece order with a sheet of this set is in it
+    const split = Gate.cardinalSplit ? Gate.cardinalSplit(set) : [];
+    if (split.length) {
+      const there = [...new Set(split.flatMap(i => i.there))], os = split.map(i => i.orderId);
+      throw pendingRelease(`${os.length === 1 ? "Order " + os[0] + " is" : "Orders " + os.slice(0, 3).join(", ") + (os.length > 3 ? " and more are" : " are")} also on ${there.join(", ")}, which ${there.length === 1 ? "is" : "are"} not in this set: sheets that share a multi-piece order go into the same set`);
+    }
     const sheetPools=new Set(sheets.flatMap(sh=>sh.charms.filter(c=>sh.placements.some(p=>p.id===c.id)).map(c=>c.poolId)));
     // A cancelled order is dropped from the set, not waited for: a piece of it that could not come off its sheet is cut with it and set aside
     if(Orders.rows().some(row=>row.state !== "gone" && (row.changePending || row.hold) && row.poolIds.some(id=>sheetPools.has(id))))throw pendingRelease("An order on this sheet changed or needs review");
@@ -10252,11 +10400,66 @@ const OrderWin = window.OrderWin = (() => {
   // the lines of the order on screen: the pull's, or those read from the records
   const linesOf = r => { const rid = String(r.order.receiptId); const pulled = (Orders.rows() || []).filter(x => String(x.order.receiptId) === rid && x.state !== "gone"); return pulled.length ? pulled : (W.rows && W.rows.some(x => x === r) ? W.rows : [r]); };
 
+  /* The two pictures at the left of the Overview (the Etsy listing photo and the vector design) open the one viewer the
+     inbox photos use (PhotoView, charm-nest-mail.js: wheel, pinch, double-click and double-tap, + − 0, drag, ← →, Esc) as a
+     layer of this window, so the window under it stays as it was and Esc closes the viewer only. Both pictures of the piece
+     on show are its list: ← → step between them, and the caption says which one it is. The thumbnails themselves never
+     zoom. The photo opens at the largest size Etsy keeps, the vector is drawn again large (never the small thumbnail
+     enlarged). */
+  const PIC_SIZES = ["fullxfull", "1588xN"];   // (largest first: a size that cannot be had falls back to the next, and last to the thumbnail's own)
+  /** The addresses of an Etsy photo in its larger sizes: [largest, …, the one given]. Photos come through the image proxy
+   *  (…/imageProxy?url=<Etsy address>); an address that is not Etsy's usual shape has no larger size to look for. */
+  function bigPhoto(url) {
+    const own = cors(url), at = String(url);
+    let raw = at, wrap = null;
+    try { const u = new URL(at, location.href); if (u.searchParams.get("url")) { raw = u.searchParams.get("url"); wrap = u.pathname + "?url="; } } catch (_) {}
+    const m = /\/il_(\d+x(?:\d+|N)|fullxfull)\./.exec(raw);
+    if (!m || !/^https:\/\/[^/]*etsystatic\.com\//.test(raw)) return [own];
+    // (only sizes above the one given: a photo already at the largest or the next size is not swapped for a smaller one)
+    const has = PIC_SIZES.indexOf(m[1]), above = has < 0 ? PIC_SIZES : PIC_SIZES.slice(0, has);   // (-1: a size of its own, 570xN and the like: both are larger)
+    const sized = size => { const a = raw.replace(/\/il_(?:\d+x(?:\d+|N)|fullxfull)\./, `/il_${size}.`); return wrap ? wrap + encodeURIComponent(a) : a; };
+    return [...above.map(sized), own];
+  }
+  const bigVectors = new Map();   // the drawings made for the viewer, newest last (a few: they are large)
+  function bigVector(r) {
+    const key = JSON.stringify([r.key, r.spec && r.spec.designSku, r.spec && r.spec.size, r.poolIds]);
+    if (!bigVectors.has(key)) {
+      const task = Promise.resolve().then(() => ListMedia.vectorBig(r, 1600)).catch(e => { bigVectors.delete(key); throw e; });
+      bigVectors.set(key, task); while (bigVectors.size > 4) bigVectors.delete(bigVectors.keys().next().value);
+    }
+    return bigVectors.get(key);
+  }
+  /** The pictures of the piece on show, as the viewer's list: the Etsy photo (when there is one) and the vector design. */
+  function picItems(r) {
+    const sku = (r.spec && r.spec.designSku) || r.line.sku || "", pcs = W.pieces || [], n = pcs.length, ix = pcs.findIndex(p => p.key === r.key);
+    const tail = (n > 1 && ix >= 0 ? ` · Piece ${ix + 1} of ${n}` : "") + (sku ? ` · ${sku}` : "");
+    const items = [], url = tryDo(() => Orders.imageFor(r)) || (r.loading ? r.peek : null);
+    if (url) { const v = bigPhoto(url); items.push({ which: "photo", src: v[0], fall: v.slice(1, -1), back: v.length > 1 ? v[v.length - 1] : null, cors: true, cap: "Etsy listing" + tail, wait: "Loading the photo…" }); }
+    if (!(r.spec && r.spec.noDesign) && sku) items.push({ which: "vector", load: () => bigVector(r), orig: false, cap: "Vector design" + tail, wait: "Drawing the vector design…", none: "This piece has no vector design.", fail: "The vector design could not be drawn." });
+    return items;
+  }
+  /** Open the viewer on the picture clicked (`which`: "photo" or "vector"), or do nothing when that one has no picture. */
+  function openPic(which, opener) {
+    const r = rowOf(W.key); if (!r) return;
+    const items = tryDo(() => picItems(r)) || [], at = items.findIndex(x => x.which === which);
+    if (at < 0) return;
+    const PV = window.PhotoView;
+    if (PV && PV.openItems) tryDo(() => PV.openItems(items, at, opener, { noun: "picture" }));
+    else if (items[at].src) window.open(items[at].src, "_blank", "noopener");   // (the viewer's file did not load: the photo, at least, in a tab of its own)
+  }
+  function wirePics() {
+    for (const [id, which] of [["owPhotoBox", "photo"], ["owVectorBox", "vector"]]) {
+      const b = byId(id); if (!b) continue;
+      b.addEventListener("click", e => { e.preventDefault(); openPic(which, b); });
+      b.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); e.stopPropagation(); openPic(which, b); } });
+    }
+  }
+
   function wire() {
     if (W.wired) return; W.wired = true;
     W.dlg = byId("orderWin"); if (!W.dlg) return;
     // the sheet records of the order read (OrderPieces): the Sheet tab's tabs and piece list, and the Overview, follow them
-    tryDo(() => window.OrderPieces && OrderPieces.subscribe(() => hold("pieces", () => { const rid = W.rid; if (!rid || !W.dlg.open || W.closing) return; pieceTabs(rid); if (W.view === "sheet" && SV.list) paintPanel(SV.info); const r = rowOf(W.key); if (r) paintNow(r); })));
+    tryDo(() => window.OrderPieces && OrderPieces.subscribe(() => hold("pieces", () => { const rid = W.rid; if (!rid || !W.dlg.open || W.closing) return; pieceTabs(rid); if (W.view === "sheet" && SV.list) paintPanel(SV.info); const r = rowOf(W.key); if (r) { tryDo(() => paintPieces(r, linesOf(r))); paintNow(r); } })));
     byId("owClose").onclick = () => shut();
     // Esc goes back into what was clicked, as the close button does
     W.dlg.addEventListener("cancel", e => { e.preventDefault(); if (finding()) endFind(true); else shut(); });
@@ -10270,12 +10473,12 @@ const OrderWin = window.OrderWin = (() => {
     W.dlg.addEventListener("close", () => {
       if (W.dlg.open) return; giveBack(0); clearTimeout(W.noteTimer); saveNote(); if (W.early) refreshNote({ order: { receiptId: W.early.rid } }); clearInterval(W.poll); W.poll = 0; W.key = null; stashTray();
       W.closing = false; stopMotion(); flightGone(); W.dlg.classList.remove("owGrow", "owBack"); endFind();
-      unmountTimeline(); W.row = null; W.rows = null; W.listed = null; W.look++; sheetReset(); SV.shown = null; W.dlg.classList.remove("owCancelled"); lookDone();
+      unmountTimeline(); tryDo(() => { if (W.engCard) W.engCard.destroy(); W.engCard = null; }); W.row = null; W.rows = null; W.listed = null; W.look++; sheetReset(); SV.shown = null; W.dlg.classList.remove("owCancelled"); lookDone();
       try { window.CustomerMail?.orderClosed(); } catch (_) {}
     });
     // back from a Send to Sheet flight that took the view out of the way (SendTour): drawn as it is now, still unseen
     W.dlg.addEventListener("tour:back", () => { if (W.dlg.open && !W.closing) tryDo(paint); });
-    byId("owPhoto").onclick = e => e.currentTarget.classList.toggle("zoom");
+    wirePics();
     byId("owCopy").onclick = async () => { const r = rowOf(W.key); const sku = r && ((r.spec && r.spec.designSku) || r.line.sku); if (!sku) return; try { await navigator.clipboard.writeText(sku); toast("SKU copied", "ok", 1800); } catch (_) {} };
     byId("owWhoBtn").onclick = () => { NameBar.open({ onSet: paintWho }); };
     const note = byId("owNote");
@@ -10304,8 +10507,25 @@ const OrderWin = window.OrderWin = (() => {
     tabs.querySelectorAll("[data-ow-view]").forEach(b => b.addEventListener("click", () => setView(b.dataset.owView)));
     tabs.addEventListener("keydown", e => {
       if (!e.target.closest("[role=tab]") || (e.key !== "ArrowLeft" && e.key !== "ArrowRight")) return;
-      e.preventDefault(); const i = VIEWS.indexOf(W.view), v = VIEWS[(i + (e.key === "ArrowRight" ? 1 : VIEWS.length - 1)) % VIEWS.length];
-      setView(v); tabs.querySelector(`[data-ow-view="${v}"]`)?.focus();
+      // (from the tab that has focus: a Sheet tab greyed for the piece in focus is reached, says why, and is never opened)
+      e.preventDefault(); const i = VIEWS.indexOf(e.target.closest("[data-ow-view]")?.dataset.owView || W.view), v = VIEWS[(i + (e.key === "ArrowRight" ? 1 : VIEWS.length - 1)) % VIEWS.length], t = tabs.querySelector(`[data-ow-view="${v}"]`);
+      if (t && t.getAttribute("aria-disabled") === "true") { t.focus(); return; }
+      setView(v); t?.focus();
+    });
+    // a greyed control (the Sheet button, a sheet chip, the Sheet tab of a piece on no sheet) is inert: a press, Enter or Space says
+    // why in one plain sentence and goes nowhere; the keyboard reaching it says it too. Caught before the control's own handler.
+    W.dlg.addEventListener("click", e => {
+      const b = e.target.closest && e.target.closest('[aria-disabled="true"][data-why]'); if (!b || !W.dlg.contains(b)) return;
+      e.preventDefault(); e.stopPropagation(); sheetSay(b, b.dataset.why);
+    }, true);
+    W.dlg.addEventListener("focusin", e => {
+      const b = e.target.closest && e.target.closest('[aria-disabled="true"][data-why]'); if (b && b.matches(":focus-visible")) sheetSay(b, b.dataset.why);
+    });
+    // "Not on a sheet yet": the way to put it right, where the app has one (the piece's card in Review)
+    byId("owPlateWrap").addEventListener("click", async e => {
+      const b = e.target.closest && e.target.closest("[data-none-fix]"); if (!b) return;
+      const it = reviewItemOf(b.dataset.noneFix); if (!it || !window.Review?.showCard) return;
+      await shut(); Review.showCard(String(it.key), "open");
     });
     byId("owRail").addEventListener("click", e => { if (!e.defaultPrevented && W.view !== "timeline") setView("timeline"); });
     byId("owPieceSw")?.addEventListener("click", e => { const b = e.target.closest("[data-piece]"); if (b) pickPiece(b.dataset.piece || null); });
@@ -10601,6 +10821,21 @@ const OrderWin = window.OrderWin = (() => {
       a.finished.then(gone, gone); setTimeout(gone, FOLD.ms + 400);   // (a hidden tab draws no frames)
     }
   }
+  /** The back engraving of the piece shown, under its pictures: the one card the Sheet tab draws (OrderEngraving, charm-nest-order-engraving.js),
+   *  here for the line the Overview holds. Each piece of an order has its own back, its own job and its own approval, so the card is
+   *  the one of the line shown and swaps with the piece (nothing of the piece before stays). It follows Engrave's jobs and the order's
+   *  timeline feed (an approval made anywhere shows within a second or two) and asks for no read of its own. */
+  function paintEng(r) {
+    const host = byId("owEng"), OE = window.OrderEngraving; if (!host || !OE || !r) return;
+    const rid = String(r.order.receiptId);
+    const ctx = { rid, key: r.key, poolId: (r.poolIds || [])[0] || "", piece: W.piece || r.key, row: r,
+      events: () => (W.evFor === rid ? W.events : null),
+      // (the back's own words from the Sheet tab, for an order read from the records that Engrave holds no job for)
+      sheetEng: () => { const x = SV.info && (SV.info.mine || []).find(m => m.poolId && (r.poolIds || []).includes(m.poolId)); return (x && x.eng) || null; },
+      // (an approval made elsewhere, or here: what hangs on it is drawn again: the red box, the Engraving cell, the Sheet tab)
+      changed: () => { if (!W.dlg || !W.dlg.open || W.closing) return; if (SV.info && W.view === "sheet") tryDo(() => paintPanel(SV.info)); hold("paint", () => { if (W.dlg.open && !W.closing) paint(); }); } };
+    if (W.engCard && W.engCard.el === host) W.engCard.update(ctx); else W.engCard = OE.mount(host, ctx);
+  }
   /** Paint the window from the row it is showing. */
   function paint() {
     if(window.Seal?.defer('order-view-paint',paint))return;
@@ -10612,13 +10847,13 @@ const OrderWin = window.OrderWin = (() => {
     const mp = byId("owMetal"); mp.textContent = r.material ? labelOf(r.material) : (sp.materialLabel || (r.loading ? "…" : "no material"));
     mp.className = "pill " + (r.material || r.loading ? "neutral" : "bad");
     const ph = byId("owPhoto"); const url = tryDo(() => Orders.imageFor(r)) || (r.loading ? r.peek : null);
-    ph.classList.remove("zoom");
     ph.innerHTML = url ? '<img crossorigin="anonymous" alt="" src="' + esc(cors(url)) + '">' : r.loading ? '<span class="owSk owSkPic" aria-hidden="true"></span>' : '<span class="ph">no image</span>';
     ph.dataset.lid = String(r.line.listingId || ""); if (url) ph.dataset.painted = "1"; else { delete ph.dataset.painted; if (r.line.listingId) tryDo(() => Orders.wantImage(r.line.listingId)); }
     // the charm's vector design under the listing photo, as the lists show the two side by side (the window showed the
     // photo alone, or "no image" while the photo was not ready)
     const vh = byId("owVector"); if (vh) tryDo(() => ListMedia.vectorInto(vh, r));
     byId("owSku").textContent = "SKU: " + (sp.designSku || r.line.sku || "—");
+    paintEng(r);
     // the one field that must be read exactly: labelled, whole, and never boxed into a scroller under the staff note
     const said = [];
     // a line read before the placeholder cleanup (CharmNestOrders.visible) shows clean too
@@ -10667,7 +10902,15 @@ const OrderWin = window.OrderWin = (() => {
     if (inPull(r.key) && r.engrave && r.engrave.needed && !r.engrave.approved) {
       const box = el("div", "owFix", '<div class="t">Its engraving is still to be settled</div>');
       const b = el("button", "btn ghost sm", "Open it in Engraving");
-      b.onclick = () => { W.dlg.close(); setMode("engrave"); Engrave.render(); };
+      // (the engraving of THIS order's piece, its details open, the order's number in the search: EngraveLink, Paul 5 Oct
+      // "it only open the Engraving tab list with no specific order selected"; without it, the tab as it always was)
+      const plain = () => { W.dlg.close(); setMode("engrave"); Engrave.render(); };
+      b.onclick = () => {
+        if (!window.EngraveLink || typeof EngraveLink.open !== "function") return plain();
+        if (b.disabled) return;
+        b.disabled = true; b.innerHTML = '<span class="spin"></span>Opening Engraving…';
+        EngraveLink.open({ rid, key: r.key, poolId: (r.poolIds || [])[0] }).catch(plain).finally(() => { b.disabled = false; b.textContent = "Open it in Engraving"; });
+      };
       box.appendChild(b); fix.appendChild(box);
     }
     if (inPull(r.key) || r._customSentDecision || tryDo(() => CustomSheet.decisionOf?.(r))) paintCustom(r); else { const bar = byId("owCustom"); if (bar) { bar.hidden = true; bar.innerHTML = ""; bar._stamp = ""; } }
@@ -10813,8 +11056,12 @@ const OrderWin = window.OrderWin = (() => {
           sw.innerHTML = `<i class="owPcThumb" aria-hidden="true"></i><button type="button" data-piece="">All ${total} pieces</button>` +
             ps.map(p => `<button type="button" data-piece="${esc(p.key)}" title="${esc(`${p.name} · ${pieceMeta(p)}: only this piece's steps`)}"><i class="dot" style="--c:${esc(colorOf(p.metal))}"></i><span>${esc(p.name)}<small> · ${esc(pieceMeta(p))}</small></span></button>`).join("");
         }
+        const sc = sheetScope(r);
         sw.querySelectorAll("[data-piece]").forEach(b => {
-          const key = b.dataset.piece || null, on = key === W.piece;
+          const key = b.dataset.piece || null, on = key === W.piece, pc = key && sc.all.find(x => x.key === key), off = !!(pc && !pc.nested && !pc.loading);
+          // (a piece on no sheet says so on its tab, as it does on its Sheet button)
+          if (pc) b.title = `${pc.name} · ${pieceMeta(ps.find(p => p.key === key) || pc)}: only this piece's steps${off ? " · not on a sheet yet" : ""}`;
+          b.classList.toggle("noSheet", off);
           b.classList.toggle("on", on); b.setAttribute("aria-pressed", on ? "true" : "false");
           // (all pieces shown: the one whose photo and details the Overview holds has a small gold dot)
           b.classList.toggle("shown", !W.piece && key === r.key);
@@ -10928,6 +11175,7 @@ const OrderWin = window.OrderWin = (() => {
   function paintNow(r) {
     if(window.Seal?.defer('order-now',()=>paintNow(rowOf(W.key))))return;
     if (!r) return;
+    paintEng(r);
     // Older compact order rows omitted approval metadata. Their permanent timeline keeps the exact signature.
     const events=W.evFor===String(r.order.receiptId)?W.events:[],historical=CNEngravingSeals.fromEvents(events,r);
     if(historical.length){
@@ -10946,6 +11194,7 @@ const OrderWin = window.OrderWin = (() => {
     const count = byId("owTlCount"); if (count) count.textContent = W.events && W.evFor === String(r.order.receiptId) && W.events.length ? String(W.events.length) : "";
     const live = byId("owLive"); if (live) { const e = W.events && W.events.length ? W.events[W.events.length - 1] : null; live.textContent = e ? "Updated live · last change " + new Date(e.at).toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" }) + (e.by ? " · " + e.by : "") : ""; }
     paintPieceSum();
+    paintSheetTab(r); sheetSettle(r);
     const card = byId("owNowCard"); if (!card) return;
     if (r.loading) { card.hidden = true; return; }
     const e = n.ev;
@@ -10959,15 +11208,16 @@ const OrderWin = window.OrderWin = (() => {
     const sealNow = sealKeyOf(st && st.seal);
     if (!W.nowSeal || W.nowSeal.key !== sealNow) { W.nowSeal = { key: sealNow }; const cb = byId("owCustom"); if (cb && !cb.hidden) paintCustom(r); }
     const recent = st ? st.recent : "";
-    const sheets = (SV.list || []).slice(0, 3).map((s, i) => `<button type="button" class="owShChip" data-sh="${i}" style="--c:${esc(colorOf(s.metal))}"><i></i><span><b>${esc(sheetName(s))}</b><span>${esc(s.state || "open it")}</span></span></button>`).join("");
+    // (the Sheet button and the sheet chips answer for one piece each: a piece on no sheet has them greyed, never another piece's)
+    const sh = sheetCard(r);
     card.hidden = false; card.className = "owNowCard" + (n.tone === "bad" ? " bad" : "") + (st && st.seal ? " sealed" : "");
     // the blocker is the card's own line then, so it is never said twice
     const head = bl && String(bl.text || "").trim() ? { k: bl.label, t: bl.text, row: "" } : { k: n.k, t: n.t || "", row: recent };
     // (with a seal, no "who · time" line beside it: the seal says who and when, Paul 29 Sep 00:19, "the Seal is what matters")
-    const html = `${st ? st.seal : ""}<div><div class="k">${esc(head.k)}</div><div class="t">${esc(head.t)}</div>${st && st.seal ? "" : who}<div class="row">${head.row}<button type="button" class="btn ghost xs" data-go="timeline">Open timeline</button>${(SV.list && SV.list.length) || !SV.rid ? "" : ""}<button type="button" class="btn ghost xs" data-go="sheet">Sheet</button></div></div><div class="shs">${sheets}</div>`;
+    const html = `${st ? st.seal : ""}<div><div class="k">${esc(head.k)}</div><div class="t">${esc(head.t)}</div>${st && st.seal ? "" : who}<div class="row">${head.row}<button type="button" class="btn ghost xs" data-go="timeline">Open timeline</button>${sh.btn}</div></div><div class="shs">${sh.chips}</div>`;
     if (card._html === html) return; card._html = html; card.innerHTML = html;
     card.querySelectorAll("[data-go]").forEach(b => b.onclick = () => setView(b.dataset.go));
-    card.querySelectorAll("[data-sh]").forEach(b => b.onclick = () => { SV.at = +b.dataset.sh; setView("sheet"); sheetDraw(); });
+    card.querySelectorAll("[data-pc]:not([aria-disabled])").forEach(b => b.onclick = () => openSheetOf(b.dataset.pc, b.dataset.sheet, b.dataset.pool));
     if (st) tryDo(() => UI.wireNow(card, ev => { setView("timeline"); tryDo(() => W.tl && W.tl.focus(ev)); }));
     // hovering the seal or a stamp says what the step needs (timeline-ui's step explainer); a click pins it on the Timeline
     const rid = String(r.order.receiptId);
@@ -11044,6 +11294,7 @@ const OrderWin = window.OrderWin = (() => {
     if (!VIEWS.includes(v)) v = "info";
     const prev = W.view, chatWas = !!(W.dlg.open && chatHost(prev)); if (chatWas) chatKeep();
     W.view = v;
+    { const r0 = W.key && rowOf(W.key); if (r0) tryDo(() => paintSheetTab(r0)); }   // (the Sheet tab is greyed only while another view is in front)
     if (prev === "sheet" && v !== "sheet") sheetPause();
     W.dlg.querySelectorAll(".owTabsV [data-ow-view]").forEach(b => { const on = b.dataset.owView === v; b.setAttribute("aria-selected", on ? "true" : "false"); b.tabIndex = on ? 0 : -1; });
     W.dlg.querySelectorAll(".owTools .owGrp").forEach(g => g.classList.toggle("on", g.dataset.for === v));
@@ -11069,7 +11320,14 @@ const OrderWin = window.OrderWin = (() => {
   /* ── the timeline: timeline-ui's component, in the Timeline view and (compact) in the header ── */
   function tlOpts(rid, extra) {
     return Object.assign({ orderId: rid, highlight: W.hl || null, live: true, feed: W.feed && W.feed.orderId === rid ? heldFeed(W.feed) : null, pieces: W.pieces, piece: W.piece,
-      onSheet: (sheetId, poolId) => { setView("sheet"); sheetShow(sheetId, poolId); },
+      // (a sheet link of the Timeline opens that sheet only while the piece it is about is on it: else it says so, and stays)
+      // (and a link greyed beforehand when it is not that piece's sheet; with several pieces in front, the strip names the one on it)
+      sheetLink: (sheetId, poolId) => tryDo(() => sheetLinkSay(sheetId, poolId)),
+      onSheet: (sheetId, poolId) => {
+        const no = sheetLinkBlock(sheetId, poolId);
+        if (no) { sheetSay(W.dlg.querySelector(`.tlOpenSheet[data-sheet="${CSS.escape(String(sheetId || ""))}"]`) || W.dlg, no); return; }
+        setView("sheet", { noLoad: true }); sheetShow(sheetId, poolId);
+      },
       onOpen: ev => { if (W.view !== "timeline") setView("timeline"); tryDo(() => W.tl && W.tl.focus && W.tl.focus(ev)); },
       // the order's own steps, header rail and Timeline alike: Welded only when one of its pieces is a stud earring,
       // Engraved only when one carries a back engraving (or is not read yet)
@@ -11106,6 +11364,11 @@ const OrderWin = window.OrderWin = (() => {
      drawn whole and sharp beside them — nothing is ever laid over the sheet (SheetWin.drawOrder),
      its back engraving and every piece of the order; "Open full sheet" hands over to the sheet window and comes back ── */
   const SV = { q: "", rid: null, list: null, at: 0, tok: 0, epoch: 0, info: null, shown: null, pools: null, focus: null, finding: null, drawing: null, fade: null };
+  // the piece scope of this view (Paul, 5 Oct, point 5: the Sheet view answers for ONE piece, else for all of them, and
+  // never shows another piece's sheet for a piece that is on none): fit picks the sheet to open, ok says whether sheet
+  // i of the list belongs to the scope, pick finds a sheet by its id or a piece of it, count words the tab's count, pin
+  // chooses the charm shown, follow moves the scope to the piece a sheet was chosen for (set by the scope code below)
+  const SCOPE = { fit: () => 0, ok: () => true, pick: (id) => (SV.list || []).findIndex(s => s.id === id), count: list => list.length ? list.length + (list.length === 1 ? " sheet" : " sheets") : "", pin: () => {}, follow: () => {} };
   // while a sheet is read the plate steps back a little; only one such fade at a time, and it is always let go of, so a
   // sheet switched while the last was still reading never leaves the plate half-faded (a haze over the charms)
   function plateFade(a) { if (SV.fade) tryDo(() => SV.fade.cancel()); SV.fade = a || null; }
@@ -11203,8 +11466,8 @@ const OrderWin = window.OrderWin = (() => {
           const list = await sheetsFor(r);
           await landed(); await slid();
           if (epoch !== SV.epoch || SV.rid !== rid || !W.dlg?.open || W.closing) return;
-          SV.list = list; SV.at = 0; paintNow(rowOf(W.key));
-          const cnt = byId("owShCount"); if (cnt) cnt.textContent = list.length ? list.length + (list.length === 1 ? " sheet" : " sheets") : "";
+          SV.list = list; SV.at = SCOPE.fit(list); paintNow(rowOf(W.key));
+          const cnt = byId("owShCount"); if (cnt) cnt.textContent = SCOPE.count(list);
         } catch (e) {
           if (epoch !== SV.epoch || SV.rid !== rid || !W.dlg?.open || W.closing) return;
           plateWait(null);
@@ -11218,12 +11481,20 @@ const OrderWin = window.OrderWin = (() => {
     } else if (SV.finding) await SV.finding;
     await landed(); await slid();
     if (epoch !== SV.epoch || SV.rid !== rid || !SV.list || !W.dlg?.open || W.closing || W.view !== "sheet" || String(rowOf(W.key)?.order.receiptId || "") !== rid) return;
-    if (sheetId) { const i = SV.list.findIndex(s => s.id === sheetId); if (i >= 0) SV.at = i; }
+    // (a sheet asked for by its id, or by a piece on it: only when it belongs to the scope, else the one shown stays)
+    let moved = false;
+    // (the sheet left selected under another scope — the piece changed meanwhile — is not this piece's: the scope's own, or none)
+    if (!sheetId && !poolId && !SCOPE.ok(SV.at)) { SV.at = SCOPE.fit(SV.list); SV.focus = null; }
+    if (sheetId || poolId) { const i = SCOPE.pick(sheetId, poolId); if (i >= 0 && i !== SV.at && SCOPE.ok(i)) { SV.at = i; moved = true; } }
     if (poolId) SV.focus = poolId;
-    if (sheetId || !SV.info || SV.info.sheetAt !== SV.at) sheetDraw(); else if (poolId) SV.info.focus(poolId); else SV.info.redraw();
+    if (sheetId || moved || !SV.info || SV.info.sheetAt !== SV.at) sheetDraw(); else if (poolId) SV.info.focus(poolId); else SV.info.redraw();
   }
   function sheetDraw() {
     const r = rowOf(W.key), cv = byId("owSheetCv"); if (!r || !SV.list) return;
+    // (a sheet chosen that is not the scope's — another piece's, from the panel's list of pieces: the scope moves to that
+    // piece, so the plate and the piece shown are always the same piece's)
+    if (SV.list[SV.at] && !SCOPE.ok(SV.at)) SCOPE.follow(SV.at);
+    SCOPE.pin();
     const s = SV.list[SV.at], rid = String(r.order.receiptId), epoch = SV.epoch, active = SV.drawing;
     if (active && active.epoch === epoch && active.rid === rid && active.sheet === s && active.at === SV.at) return active.promise;
     const drawing = { epoch, rid, sheet: s, at: SV.at }, tok = ++SV.tok;
@@ -11277,9 +11548,232 @@ const OrderWin = window.OrderWin = (() => {
       // (until its cancel record is read, nothing is said about where it was)
       return `<b>${esc(c ? (fates.length ? "Cancelled · " + fates.map(f => f.text).join(" · ") : "Cancelled before it reached a sheet") : "Cancelled")}</b><span>${esc(n.t || "")}</span>`;
     }
-    const st = tryDo(() => Orders.statePill(r)) || ["", r.state || ""];
-    return `<b>Not on a sheet yet</b><span>${esc(String(st[1] || "").replace(/^\d\/\d\s+/, "") || "It waits for its turn")} — its pieces are drawn here once they are placed on a sheet.</span>`;
+    // not on a sheet yet: the piece this view answers for, why, and the way to put it right when the app has one
+    const sc = tryDo(() => sheetScope(r)), p = sc && (sc.sel || (sc.all.some(x => x.nested) ? sc.focus : sc.shown)), st = tryDo(() => Orders.statePill(r)) || ["", r.state || ""];
+    const why = !sc || !p ? "" : sc.multi && !sc.sel && sc.all.every(x => !x.nested) ? "None of its pieces is on a sheet yet." : upperFirst(lowerFirst(p.why)) + ".";
+    const fix = p ? reviewItemOf(p.key) : null;
+    const icon = `<svg class="owNoneIcon" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="6" y="9" width="36" height="30" rx="5" stroke-dasharray="3.2 4.2"/><path d="M17 27c0-4 3-7 7-7s7 3 7 7-3 6-7 6-7-2-7-6z" opacity=".5"/></svg>`;
+    return icon + `<b>Not on a sheet yet</b><span class="owNoneWhy">${esc(why || (String(st[1] || "").replace(/^\d\/\d\s+/, "") || "It waits for its turn") + " — its pieces are drawn here once they are placed on a sheet.")}</span>` +
+      (p && sc.multi ? `<span class="owNonePc"><i style="--c:${esc(colorOf(p.metal))}"></i>${esc(p.name)}</span>` : "") +
+      (fix ? `<button type="button" class="btn ghost sm" data-none-fix="${esc(p.key)}">Open in Review <span aria-hidden="true">›</span></button>` : "");
   }
+  /* ── the Sheet buttons answer for ONE piece (Paul, 5 Oct 2026, point 5) ──
+     "When I'm on the charm that has no SKU and I click on any of the 'Sheet' buttons/options then it takes me to the sheet
+     that has the other charm ... the option to go to a sheet for a charm that is not yet nested should be greyed out and
+     unavailable to the user ... those two should not be mixed."
+     The scope is the piece picked in the switch, else all of them; the focus is that piece, else the one on show. A piece
+     that is on no sheet (no SKU, unmatched, no design, held, not placed yet) has no Sheet button, chip or link: greyed, inert,
+     with its one plain reason on a press or on focus. The Sheet view shows only the scope's sheets, so a piece on none gets
+     "Not on a sheet yet" and never another piece's sheet. With all pieces each chip names its piece and that piece's own
+     sheet. The pieces and their sheets come from window.OrderPieces (one truth for every screen) when it has the order;
+     until it has, from the same rows and pool records (Pool.sheetOf, the pool rows, the order's pool list). */
+  const lowerFirst = t => String(t || "").trim().replace(/[.\s]+$/, "").replace(/^[A-Z](?=[a-z])/, c => c.toLowerCase());
+  const upperFirst = t => String(t || "").replace(/^./, c => c.toUpperCase());
+  /** Why a line is on no sheet, in a few plain words. */
+  function pieceWhy(x) {
+    const sp = x.spec || {}, pb = (x.problems || [])[0] || null, kind = pb && pb.kind, st = x.state, sku = String(sp.designSku || (x.line && x.line.sku) || "").trim();
+    if (st === "gone") return "it was cancelled";
+    if (st === "skipped") return "it is skipped";
+    if (kind === "unmatchedSku" || st === "unmatched" || (x.hold && /master file|unknown sku/i.test(String(x.reason || "")))) return sku ? "its SKU is not in any master file" : "it has no SKU";
+    if (kind === "needsMapping") return "one of its options is not mapped yet";
+    if (kind === "needsMaterial") return "its metal is not chosen yet";
+    if (sp.noDesign || st === "noDesign") return "it has no design to cut";
+    if (x.hold || st === "held") return "it is on hold";
+    if (st === "oversize") return "it is too big for the plate";
+    if (!sku) return "it has no SKU";
+    return "it is waiting to be placed";
+  }
+  /** Each line of the order as a piece with the sheets its copies are on: { key, name, metal, qty, sheets [{ id, page, metal,
+   *  n, label, pools }], nested (a copy is on a sheet), loading, why (when not nested), row }. */
+  function scopePieces(r) {
+    if (r.loading) return [{ key: r.key, name: pieceName(r), metal: r.material || null, form: "", qty: 1, sheets: [], nested: false, loading: true, why: "", row: r }];
+    const rid = String(r.order.receiptId); let op = null;
+    try { op = window.OrderPieces && OrderPieces.of ? OrderPieces.of(rid) : null; } catch (_) { op = null; }
+    const dead = p => !!p && ["abandoned", "superseded"].includes(p.state);
+    return linesOf(r).map(x => {
+      const sp = x.spec || {}, key = x.key, pools = (x.poolIds || []).map(String), sheets = new Map(), on = new Set(), qty = Math.max(1, Math.round(+(sp.quantity || (x.line && x.line.quantity)) || 1));
+      const put = (pid, id, page, o) => {
+        on.add(pid); const k = id || page || "?", cur = sheets.get(k) || { id: id || null, page: id ? null : page || null, pools: [] };
+        for (const a of ["metal", "n", "label"]) if (o[a] != null && o[a] !== "" && cur[a] == null) cur[a] = o[a];
+        if (!cur.pools.includes(pid)) cur.pools.push(pid); sheets.set(k, cur);
+      };
+      const mine = Array.isArray(op) ? op.filter(c => c && c.lineKey === key) : [];
+      let loading = false, why = "";
+      if (mine.length) {
+        // (OrderPieces: one entry per copy; records not read yet, or not readable just now: the piece is not said to be on no sheet)
+        for (const c of mine) {
+          if (c.loading || c.unsure) loading = true;
+          const pid = String(c.poolId || c.key);
+          if (c.nested) { const pg = !c.sheetId && window.Pool && Pool.sheetOf ? tryDo(() => Pool.sheetOf(pid)) : null; put(pid, c.sheetId || null, pg, { metal: c.metal, n: c.sheetNo, label: c.sheetLabel }); }
+          else if (!why && c.reason) why = lowerFirst(c.reason);
+        }
+        // (a held piece whose SKU is not in any master file says that, its root cause, rather than that it is on hold)
+        const root = !why || /on hold/.test(why) ? pieceWhy(x) : "";
+        if (root && /SKU/.test(root)) why = root;
+        // (this piece is not on a sheet yet: it is waiting to be placed -- said once, not twice)
+        if (/^it is (waiting to be placed on a sheet|not on a sheet yet)$/.test(why)) why = "it is waiting to be placed";
+      } else {
+        for (const pid of pools) {
+          const pg = window.Pool && Pool.sheetOf ? tryDo(() => Pool.sheetOf(pid)) : null;
+          if (pg) put(pid, pg.sheetId || null, pg, { metal: pg.metal, n: pg.sheetIndex || pg.page || 1 });
+          const p2 = B.pool && B.pool.rows && B.pool.rows.get(pid);
+          if (p2 && p2.sheetId && !dead(p2)) put(pid, p2.sheetId, null, { metal: p2.material, n: nOf(p2.sheetName) });
+        }
+        // the order's pool records: the ones read with the order (outside the pull), the Sheet view's, or the one read as it opened
+        const read = x._pools || SV.pools || (W.pools && W.pools.rid === rid ? W.pools.list : null);
+        for (const p of read || []) if (p.sheetId && !dead(p) && (p.lineKey === key || pools.includes(String(p.poolId)) || String(p.poolId).startsWith(key + "_"))) put(String(p.poolId), p.sheetId, null, { metal: p.material, n: nOf(p.sheetName) });
+        // (pieces of this line pooled, on no sheet in what this page holds, and the records not read yet: not said to be on none)
+        if (!on.size && pools.length && !read && !pools.some(id => B.pool && B.pool.rows && B.pool.rows.has(id))) loading = true;
+      }
+      const nested = on.size > 0;
+      return { key, name: pieceName(x), metal: x.material || sp.material || null, form: sp.form || "", qty, nested, loading: loading && !nested, row: x,
+        sheets: [...sheets.values()].map(s => Object.assign(s, { label: s.label || sheetName(s) })), why: nested ? "" : why || pieceWhy(x) };
+    });
+  }
+  /** The scope: all (every piece of the order), shown (the piece the window shows), sel (the piece picked, else null), focus
+   *  (sel, else shown), mine (the pieces the Sheet view answers for). */
+  function sheetScope(r) {
+    const all = scopePieces(r), shown = all.find(p => p.key === r.key) || all[0] || null, sel = W.piece ? all.find(p => p.key === W.piece) || null : null;
+    return { all, shown, sel, focus: sel || shown, mine: sel ? [sel] : all, multi: all.length > 1 };
+  }
+  const holds = (p, s) => !!(p && s) && p.sheets.some(h => h.id && s.id ? h.id === s.id : !!(h.page && s.page && h.page === s.page));
+  const sheetKeyOf = h => h.id || h.page;
+  /** The Sheet view's own sheets: those of the piece picked (a piece on none: none), else all of the order's. When no piece
+   *  of the order is known on any sheet, the records say nothing about which is whose, and none is held back. */
+  function scopeIdx(list, sc) {
+    list = list || []; const all = list.map((s, i) => i);
+    if (!sc.sel || !sc.all.some(p => p.nested)) return all;
+    return all.filter(i => holds(sc.sel, list[i]));
+  }
+  /** The plain sentence why the focus piece's Sheet buttons are greyed (null: they are open). A cancelled order keeps its
+   *  Sheet view: it says which sheet the order was taken off. */
+  function sheetBlock(r) {
+    if (!r || r.loading || r.state === "gone" || W.cancelled || (tryDo(() => nowOf(r)) || {}).cancelled) return null;
+    if (window.CustomSheet && tryDo(() => CustomSheet.decisionOf && CustomSheet.decisionOf(r))) return null;   // (a custom order sent to its sheet is on it)
+    const sc = sheetScope(r), p = sc.focus; if (!p || p.loading || p.nested) return null;
+    return `${sc.multi && !sc.sel ? "Not on a sheet yet" : "This piece is not on a sheet yet"}: ${p.why}`;   // (all pieces in front: the chip beside it names the piece)
+  }
+  /** The Overview card's own Sheet affordances: its Sheet button and one chip for each sheet of the scope's pieces (all pieces:
+   *  each piece's own, named; a piece on none: a muted chip, inert). */
+  function sheetCard(r) {
+    const sc = sheetScope(r), block = sheetBlock(r), named = sc.multi && !sc.sel, list = SV.list && SV.rid === String(r.order.receiptId) ? SV.list : null, chips = [];
+    for (const p of sc.mine) {
+      if (p.loading) continue;
+      if (p.nested) for (const h of p.sheets) {
+        const e = list && list.find(s => h.id && s.id ? h.id === s.id : h.page && s.page === h.page), state = (e && e.state) || "";
+        chips.push(`<button type="button" class="owShChip" data-pc="${esc(p.key)}" data-sheet="${esc(h.id || "")}" data-pool="${esc(h.pools[0] || "")}" style="--c:${esc(colorOf(h.metal || p.metal))}"><i></i><span><b>${esc(e ? sheetName(e) : h.label)}</b><span>${esc(named ? p.name + (state ? " · " + state : "") : state || "open it")}</span></span></button>`);
+      } else {
+        const why = `${named ? "Not on a sheet yet" : "This piece is not on a sheet yet"}: ${p.why}`;   // (named: the chip says whose it is)
+        chips.push(`<button type="button" class="owShChip off" data-pc="${esc(p.key)}" aria-disabled="true" data-why="${esc(why)}" title="${esc(why)}"><i></i><span><b>Not on a sheet yet</b><span>${esc(named ? p.name : upperFirst(p.why))}</span></span></button>`);
+      }
+    }
+    const shown = chips.slice(0, 4);
+    return { btn: `<button type="button" class="btn ghost xs${block ? " off" : ""}" data-go="sheet"${block ? ` aria-disabled="true" data-why="${esc(block)}" title="${esc(block)}"` : ""}>Sheet</button>`,
+      chips: shown.join("") + (chips.length > shown.length ? `<span class="owShMore">+${chips.length - shown.length} more</span>` : "") };
+  }
+  /** A chip for one piece's own sheet: the Sheet view opens on that sheet, with that piece's charm chosen. */
+  function openSheetOf(key, sid, pool) {
+    const r = rowOf(W.key); if (!r) return;
+    const sc = sheetScope(r), p = sc.all.find(x => x.key === key); if (!p || !p.nested) return;
+    setView("sheet", { noLoad: true }); sheetShow(sid || null, pool || (p.sheets[0] && p.sheets[0].pools[0]) || null);
+  }
+  /** The Sheet tab: greyed (and not opened) while the piece in focus is on no sheet; its count is the scope's real sheets. */
+  function paintSheetTab(r) {
+    const tab = W.dlg && W.dlg.querySelector('.owTabsV [data-ow-view="sheet"]'), cnt = byId("owShCount"); if (!tab) return;
+    const why = W.view === "sheet" ? "" : sheetBlock(r) || "";
+    tab.classList.toggle("off", !!why);
+    if (why) { tab.setAttribute("aria-disabled", "true"); tab.dataset.why = why; tab.title = why; } else { tab.removeAttribute("aria-disabled"); delete tab.dataset.why; tab.removeAttribute("title"); }
+    if (!cnt) return;
+    let n = 0;
+    if (!why && !r.loading) {
+      const sc = sheetScope(r), list = SV.list && SV.rid === String(r.order.receiptId) ? SV.list : null;
+      n = list ? scopeIdx(list, sc).length : new Set(sc.mine.flatMap(p => p.sheets.map(sheetKeyOf))).size;
+    }
+    const t = n ? n + (n === 1 ? " sheet" : " sheets") : ""; if (cnt.textContent !== t) cnt.textContent = t;
+  }
+  /** The Sheet view in front while the scope moved under it (another piece picked, the piece's sheet taken away): the sheet
+   *  shown is the scope's, or "Not on a sheet yet". */
+  function sheetSettle(r) {
+    if (W.view !== "sheet" || !SV.list || SV.rid !== String(r.order.receiptId) || SV.finding || SV.drawing) return;
+    const vis = scopeIdx(SV.list, sheetScope(r)); if (vis.includes(SV.at)) return;
+    SV.at = SCOPE.fit(SV.list); SV.focus = null; paintPanel(null); sheetDraw();
+  }
+  /** What a greyed control says: one plain sentence in the app's own note, under the control (a press, or the keyboard). */
+  let whyNote = null;
+  function sheetSay(anchor, text) {
+    if (!text) return;
+    // (a press that also brought the focus says it once)
+    if (whyNote && whyNote.isConnected && whyNote._say === text && whyNote._el === anchor && Date.now() - whyNote._at < 900) return;
+    try { if (whyNote && whyNote.close) whyNote.close(); } catch (_) {}
+    whyNote = null;
+    const n = window.Motion && Motion.note && anchor ? tryDo(() => Motion.note(anchor, { text, ms: 4800 })) : null;
+    if (n) {
+      n._say = text; n._el = anchor; n._at = Date.now(); W.dlg.appendChild(n); whyNote = n;
+      // (a control at the foot of the window: the note stands above it, never cut off by the edge)
+      tryDo(() => {
+        const a = anchor.getBoundingClientRect(), h = n.offsetHeight;
+        if (a.bottom + 10 + h > innerHeight - 8 && a.top - 10 - h > 8) { n.style.top = (a.top - 10 - h) + "px"; const ar = n.querySelector(".mNoteArrow"); if (ar) ar.hidden = true; }
+      });
+    } else toast(text, "", 4000);
+  }
+  /** The order's pool records, read as it opens and again with the window's 20 s read (the same read-only poolList the Sheet view
+   *  makes), so that a piece is said to be on no sheet only once they have been read. OrderPieces, when the page has it, is that read. */
+  function primePools(rid, again) {
+    if (window.OrderPieces || !/^\d{4,20}$/.test(String(rid))) return;
+    if (W.pools && W.pools.rid === rid && (!again || W.pools.busy || !W.pools.list)) return;
+    const mine = W.pools && W.pools.rid === rid ? W.pools : (W.pools = { rid, list: null, busy: false });
+    mine.busy = true;
+    sheetRead({ op: "poolList", orderId: rid }).then(j => {
+      mine.busy = false; if (W.pools !== mine) return;
+      const list = (j.pools || []).filter(p => !["abandoned", "superseded"].includes(p.state)), was = JSON.stringify((mine.list || []).map(p => [p.poolId, p.sheetId]));
+      mine.list = list;
+      if (W.dlg && W.dlg.open && !W.closing && W.rid === rid && (!again || was !== JSON.stringify(list.map(p => [p.poolId, p.sheetId])))) tryDo(paint);
+    }).catch(e => { mine.busy = false; console.warn("order view: the order's pieces", e.message); });
+  }
+  /** A Review card's own way to a piece's question (an unknown SKU, an option to map): the quick fix the empty Sheet view offers. */
+  function reviewItemOf(key) {
+    try { return window.Review && Review.items ? Review.items().find(x => x.kind !== "customOrder" && (x.rows && x.rows.length ? x.rows : x.row ? [x.row] : []).some(rw => rw.key === key && rw.state !== "gone")) || null : null; } catch (_) { return null; }
+  }
+  /** A link to a sheet from the Timeline: open only when the piece it is about is on that sheet now. */
+  function sheetLinkBlock(sheetId, poolId) {
+    const r = rowOf(W.key); if (!r || r.loading || W.cancelled) return null;
+    const sc = sheetScope(r), owner = poolId ? sc.all.find(p => String(poolId).startsWith(p.key + "_")) || null : sc.sel;
+    if (owner && !holds(owner, { id: sheetId || null })) return `${owner.name} is no longer on that sheet`;
+    return null;
+  }
+  /** What the Timeline's sheet link says before it is pressed: { off } when the piece it is about is not on that sheet, { piece } when
+   *  several pieces are in front and only some of them sit on it (so "on GF Sheet 1" is never read as the whole order's). */
+  function sheetLinkSay(sheetId, poolId) {
+    const r = rowOf(W.key); if (!r || r.loading || W.cancelled) return null;
+    const off = sheetLinkBlock(sheetId, poolId); if (off) return { off };
+    const sc = sheetScope(r); if (!sc.multi || sc.sel) return null;
+    const on = sc.all.filter(p => p.nested && holds(p, { id: sheetId || null }));
+    return on.length && on.length < sc.all.length ? { piece: on.map(p => p.name).join(" and ") } : null;
+  }
+  Object.assign(SCOPE, {
+    fit(list) {
+      const r = rowOf(W.key); if (!r) return 0; const sc = sheetScope(r), vis = scopeIdx(list, sc); if (!vis.length) return -1;
+      const own = !sc.sel && sc.shown ? vis.find(i => holds(sc.shown, list[i])) : undefined;
+      return own != null ? own : vis[0];
+    },
+    ok(i) { const r = rowOf(W.key); if (!r || !SV.list) return true; return scopeIdx(SV.list, sheetScope(r)).includes(i); },
+    pick(id, pool) {
+      const list = SV.list || []; let i = id ? list.findIndex(s => s.id === id) : -1;
+      if (i < 0 && pool) { const pg = window.Pool && Pool.sheetOf ? tryDo(() => Pool.sheetOf(pool)) : null; if (pg) i = list.findIndex(s => (pg.sheetId && s.id === pg.sheetId) || s.page === pg); }
+      return i;
+    },
+    count(list) { const r = rowOf(W.key); if (!r) return ""; const n = scopeIdx(list, sheetScope(r)).length; return n ? n + (n === 1 ? " sheet" : " sheets") : ""; },
+    // the charm the panel speaks of, with one piece picked: that piece's own on the sheet shown, never a neighbour's
+    pin() {
+      if (!W.piece || SV.focus || !SV.list) return; const r = rowOf(W.key), s = SV.list[SV.at]; if (!r || !s) return;
+      const p = sheetScope(r).sel, h = p && p.sheets.find(x => x.id && s.id ? x.id === s.id : x.page && x.page === s.page); if (h && h.pools[0]) SV.focus = h.pools[0];
+    },
+    follow(i) {
+      const r = rowOf(W.key), s = SV.list && SV.list[i]; if (!r || !s) return; const sc = sheetScope(r);
+      const own = (SV.focus && sc.all.find(p => String(SV.focus).startsWith(p.key + "_") && holds(p, s))) || sc.all.find(p => holds(p, s)) || null;
+      if (own) pickPiece(own.key); else if (W.piece) pickPiece(null);
+    }
+  });
   function paintFoot(inf) {
     const live = inf.pieces.length, orders = new Set(inf.pieces.map(x => x.rid).filter(Boolean)).size, rec = inf.rec;
     const eng = W.face === "back" && inf.engraved ? tryDo(() => inf.engraved()) || 0 : 0;
@@ -11297,7 +11791,9 @@ const OrderWin = window.OrderWin = (() => {
     // (a Rose Gold sheet behind its saved green line keeps its pieces until it is cut: nothing comes off it)
     const lined = rec && !cut && rec.metal === "rose" && !!(rec.roseLine || rec.rosePlan || rec.roseProtected || rec.rosePlanHash || rec.rosePlanJson || rec.roseProtectedJson);
     const facts = rec ? [sheetName(list[SV.at] || { metal: rec.metal, n: inf.sheet.n }), inf.stock ? `${Math.round(inf.stock.wPt * 25.4 / 72)} × ${Math.round(inf.stock.hPt * 25.4 / 72)} mm` : "", rec.setSeq ? "Set-" + rec.setSeq : "", cut ? "cut " + new Date(+cut).toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" }) : rec.status || ""].filter(Boolean).join(" · ") : "";
-    const mine = inf ? inf.mine : [], x0 = mine.find(x => x.poolId === SV.focus) || mine[0] || null;
+    // (the charm shown when none was picked on the sheet: the piece this window is on (the Overview's switcher), so the Overview's back
+    // engraving card and this tab's are always about the same piece; only then the first charm of the order on the sheet)
+    const mine = inf ? inf.mine : [], x0 = mine.find(x => x.poolId === SV.focus) || mine.find(x => x.poolId && (r.poolIds || []).includes(x.poolId)) || mine[0] || null;
     // (the line of the charm shown: an order split over sheets and metals speaks of that charm, not of the line opened)
     const lr = (x0 && x0.poolId && linesOf(r).find(l => (l.poolIds || []).includes(x0.poolId))) || r;
     const sp = lr.spec || {}, sku = (x0 && x0.sku) || sp.designSku || lr.line.sku || "";
@@ -11323,11 +11819,12 @@ const OrderWin = window.OrderWin = (() => {
       : {kind:"none"};
     const engHtml=CNEngravingSeals.panel(eng);
     const bk = BK.length && BK[BK.length - 1].to === rid ? BK[BK.length - 1] : null;
+    const vis = list.map((s, i) => i).filter(i => SCOPE.ok(i));   // (the sheets of the piece shown, or of all of them: never another piece's)
     // (a sheet's own tab names it, so a piece and its tab always say the same; nothing is said while its sheets are still being found)
     const tabOf = it => it.sheetId ? list.find(s => s.id === it.sheetId) : null;
     const where = it => it.here ? `<em style="--c:var(--gold2)">this sheet</em>` : it.nested ? `<em style="--c:${esc(colorOf((tabOf(it) || it).metal))}">${esc(tabOf(it) ? sheetName(tabOf(it)) : it.label || "on a sheet")}</em>` : it.loading || !SV.list ? `<em></em>` : `<em>not on a sheet yet</em>`;
     panel.innerHTML =
-      (list.length ? `<section><div class="owSheetFindRow"><span class="fLabel">Sheet</span><label class="cnOrderFind"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="m10.5 10.5 3 3"/></svg><input id="owSheetOrderFind" type="search" inputmode="numeric" placeholder="Order # on sheet" aria-label="Search order numbers on this sheet" aria-controls="owSheetMatches" autocomplete="off" spellcheck="false"></label></div><div class="owShTabs">${list.map((s, i) => `<button type="button" data-at="${i}" class="${i === SV.at ? "on" : ""}" style="--c:${esc(colorOf(s.metal))}"><i></i>${esc(sheetName(s))}</button>`).join("")}</div>${facts ? `<div class="sub" style="margin-top:8px">${esc(facts)}</div>` : ""}</section>` : "") +
+      (vis.length ? `<section><div class="owSheetFindRow"><span class="fLabel">Sheet</span><label class="cnOrderFind"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="m10.5 10.5 3 3"/></svg><input id="owSheetOrderFind" type="search" inputmode="numeric" placeholder="Order # on sheet" aria-label="Search order numbers on this sheet" aria-controls="owSheetMatches" autocomplete="off" spellcheck="false"></label></div><div class="owShTabs">${vis.map(i => `<button type="button" data-at="${i}" class="${i === SV.at ? "on" : ""}" style="--c:${esc(colorOf(list[i].metal))}"><i></i>${esc(sheetName(list[i]))}</button>`).join("")}</div>${facts ? `<div class="sub" style="margin-top:8px">${esc(facts)}</div>` : ""}</section>` : "") +
       `<div class="owSheetMatches" id="owSheetMatches" role="list" aria-live="polite" hidden></div>` +
       `<section><div class="owOrdHd"><span class="fLabel">Order</span>${bk ? `<button type="button" class="btn ghost xs" data-ow-back title="Back to order ${esc(bk.rid)}, as it was"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg>Back to order ${esc(bk.rid)}</button>` : ""}</div><div class="big">${esc(rid)}</div><div class="sub">${esc([o.buyer && o.buyer.name, placed ? "ordered " + placed : "", ship].filter(Boolean).join(" · "))}</div></section>` +
       `<section class="owCharm"><div class="pic" data-pic></div><div><b>${esc(sku || "—")}</b>${x0 && x0.c ? `<span>${esc((x0.c.widthPt * 25.4 / 72).toFixed(1))} × ${esc((x0.c.heightPt * 25.4 / 72).toFixed(1))} mm</span>` : ""}<span>${esc(lr.material ? labelOf(lr.material) : rec ? labelOf(rec.metal) : "")}${sp.size ? " · size " + esc(sp.size) : ""}</span></div></section>` +
@@ -11360,6 +11857,10 @@ const OrderWin = window.OrderWin = (() => {
         finally{ap.removeAttribute("aria-busy");ap.textContent="Approved";}
       },
       open:async()=>{
+        // (this piece's own engraving, details open, the order's number in the search: EngraveLink, which also closes this window)
+        if(window.EngraveLink && typeof EngraveLink.open==="function"){
+          try{await EngraveLink.open({rid,key:eng.job?.key || lr.key,poolId:x0?.poolId || SV.focus || undefined});return;}catch(e){console.warn("engrave link:",e);}
+        }
         await shut();
         const v=Engrave.view(),done=["approved","written","skipped"].includes(eng.job?.state) || eng.kind==="approved";
         Engrave.restoreView({...v,tab:done?"done":"place",focus:done?null:eng.job?.key || lr.key,list:false,chosen:true,q:done?rid:""});
@@ -11706,7 +12207,7 @@ const OrderWin = window.OrderWin = (() => {
     showOrder(rid, r);
     W.key = key;
     if (other) W.piece = null; else if (W.piece && W.piece !== key) W.piece = key;
-    if (other) { sheetReset(); unmountTimeline(); loadEvents(rid); const n = byId("owNowCard"); if (n) n._html = ""; const c = byId("owShCount"); if (c) c.textContent = ""; }
+    if (other) { primePools(rid); sheetReset(); unmountTimeline(); loadEvents(rid); const n = byId("owNowCard"); if (n) n._html = ""; const c = byId("owShCount"); if (c) c.textContent = ""; }
     // which sheet holds which piece of the order: read from the sheets' own records, once per opening (and again when its timeline says a piece moved)
     if (other) tryDo(() => window.OrderPieces && OrderPieces.load(rid));
     if (other && W.face === "back") turnPlate("front");
@@ -11735,7 +12236,7 @@ const OrderWin = window.OrderWin = (() => {
     TeamMail.load(rid, !r.loading);
     // what the other stations write shows within about 20 s while the window is open and in view
     clearInterval(W.poll);
-    W.poll = setInterval(() => { if (W.dlg.open && W.rid && !document.hidden) TeamMail.load(W.rid); }, 20000);
+    W.poll = setInterval(() => { if (W.dlg.open && W.rid && !document.hidden) { TeamMail.load(W.rid); primePools(W.rid, true); } }, 20000);
   }
   function open(key, opts) {
     const r = inPull(key) || (W.row && W.row.key === key ? W.row : null);
@@ -11848,8 +12349,11 @@ const OrderWin = window.OrderWin = (() => {
     // gone from the pull, cancelled or no longer open, shows those lines as they are)
     const ofRid = (Orders.rows() || []).filter(r => String(r.order.receiptId) === rid), live = ofRid.filter(r => r.state !== "gone");
     const pulled = live.length ? live : ofRid;
+    // (the piece asked for: the line named, else the line that holds the pool id named (a copy's id starts with its line's key), else the order's first;
+    // Paul, 5 Oct, round 3: every place that opens the order shows the piece it was pressed for, with that piece's own back engraving)
+    const ofPool = (list, pid) => { pid = String(pid || ""); return pid ? list.find(r => (r.poolIds || []).includes(pid)) || list.find(r => pid.startsWith(r.key + "_")) || null : null; };
     const mine = opts.row && opts.row.key ? pulled.find(r => r.key === opts.row.key) : null;
-    if (pulled.length) return show(mine || pulled[0], o);
+    if (pulled.length) return show(mine || ofPool(pulled, opts.poolId) || pulled[0], o);
     const tok = ++W.look, stub = stubRow(rid);
     // what the page already knows of the order (the search index as it stands, the picture already fetched) is drawn
     // at once, so the view flies with it; nothing is read or built for it here
@@ -11883,10 +12387,12 @@ const OrderWin = window.OrderWin = (() => {
     tryDo(() => window.OrderPieces && OrderPieces.learn(rid, { rows }));   // (the order's lines as the records give them: its pieces are told from them too)
     // the note already read while the order was looked up shows at once on its lines
     if (stub.spec && stub.spec.staffNote) for (const row of rows) if (row.spec && !row.spec.staffNote) { row.spec.staffNote = stub.spec.staffNote; row.order.staffNote = stub.spec.staffNote; }
-    show(rows[0], { walk: false, view: W.view, sheetId: o.sheetId, poolId: o.poolId }); shown();
+    show((opts.row && opts.row.key && rows.find(r => r.key === opts.row.key)) || ofPool(rows, opts.poolId) || rows[0], { walk: false, view: W.view, sheetId: o.sheetId, poolId: o.poolId }); shown();
   }
   // (a repaint asked from outside, an image or a record arriving, waits for the view to land)
   return { open, openOrder, focusSearch, paint: () => hold("paint", () => { if (W.dlg && W.dlg.open && !W.closing) paint(); }), close: () => shut(), isOpen: () => !!(W.dlg && W.dlg.open && !W.closing), key: () => W.key, view: () => W.view, setView: v => setView(v), repaintThread: () => paintThread(true), _sheet: () => SV.info, _feed: () => W.feed,
+    // (read-only, for the checks: the pieces of the order on screen, each with the sheets it is on, and the one in focus)
+    _scope: () => { const r = rowOf(W.key); if (!r) return null; const sc = sheetScope(r), cut = p => p && { key: p.key, name: p.name, nested: p.nested, loading: p.loading, why: p.why, sheets: p.sheets.map(h => ({ id: h.id, label: h.label })) }; return { all: sc.all.map(cut), focus: sc.focus && sc.focus.key, sel: sc.sel && sc.sel.key, piece: W.piece, block: sheetBlock(r) }; },
     // the order number of the open view, and "something was just done here": its timeline reads now and again 1.5 s later
     rid: () => W.rid, nudge: () => { try { if (W.dlg && W.dlg.open && !W.closing && W.feed && W.feed.nudge) W.feed.nudge(); } catch (_) {} } };
 })();
@@ -13447,7 +13953,7 @@ const LiveNest = window.LiveNest = (() => {
     return plan;
   }
   // the page's own marks first; the sets of its run are looked at only when none says so
-  const closed = p => !!p.roseCutAt || !!p.recalled || !!p.releaseFull || !!window.Gate?.holding?.(p) || !!p.laserDoneAt || (!(p.metal==='rose'&&(p.rosePlan||p.roseProtected)) && (!!p.runHold || !!p.intakeFinalized)) ||
+  const closed = p => !!p.roseCutAt || !!p.recalled || !!p.releaseFull || !!p.cardinalPull || !!window.Gate?.holding?.(p) || !!p.laserDoneAt || (!(p.metal==='rose'&&(p.rosePlan||p.roseProtected)) && (!!p.runHold || !!p.intakeFinalized)) ||
     Sets.ofRun(p.runId).some(set=>set.committedAt && set.sheetIds.includes(p.sheetId));
   /* Gold and Silver arrivals go to the run's earliest open sheet first (the pool puts them on the same one). An order
      that misses its gaps moves on to the next sheet, and the earlier sheet stays first in line: once a newer page existed

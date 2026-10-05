@@ -201,10 +201,37 @@ async function readinessRecords(records,{revs=null}={}) {
   await productionReadiness(records,{revs});
   return records.map(s=>({...s,laser:Readiness.laserSheet(s)}));
 }
+/* An order's pieces are not always all in the run of the sheet that carries one of them: a later pull can take a line the
+   first run did not, and a piece pooled in an older run is placed by a newer one. The run record lists its orders, and an
+   archive part lists its own, so the runs that hold an order are found by asking those lists (array-contains-any, 15
+   orders to a query because each is asked in its two spellings, text and number; only the lists come back). Every order
+   asked about is answered, the runs of the orders it was asked of last (a minute) kept in this instance, because the
+   Library reads the same sheets every few seconds and a run starts holding an order rarely. A reader that needs the
+   answer exact (a transaction, which writes a seal on it) never uses what was kept. */
+const HOLDERS_MAX = 5000, holders = new Map(), holdersMs = () => (process.env.CHARM_NEST_HOLDERS_MS === undefined ? 60000 : Math.max(0, +process.env.CHARM_NEST_HOLDERS_MS || 0));   // (a test sets it to 0)
+async function runsOfOrders(get, orders, fresh) {
+  const out = new Map(), now = Date.now(), ttl = holdersMs(), ask = [];
+  for (const o of orders) {
+    const kept = fresh ? null : holders.get(PREFIX + o);
+    if (kept && now - kept.at < ttl) out.set(o, new Set(kept.runs)); else { out.set(o, new Set()); ask.push(o); }
+  }
+  const forms = v => [String(v)].concat(Number.isSafeInteger(+v) ? [+v] : []);
+  for (let i = 0; i < ask.length; i += 15) {
+    const batch = ask.slice(i, i + 15), values = batch.flatMap(forms), asked = new Set(batch);
+    const [a, b] = await Promise.all([get(col(RUNS).where("orders", "array-contains-any", values).select("orders")), get(col(RUN_LINES).where("orders", "array-contains-any", values).select("runId", "orders"))]);
+    for (const [docs, runOf] of [[a.docs, d => d.id], [b.docs, d => d.data().runId]]) for (const d of docs) {
+      const id = runOf(d);
+      if (isId(id)) for (const o of new Set((d.data().orders || []).map(String))) if (asked.has(o)) out.get(o).add(id);
+    }
+    if (!fresh && ttl) for (const o of batch) holders.set(PREFIX + o, { at: now, runs: [...out.get(o)] });
+  }
+  if (holders.size > HOLDERS_MAX) { for (const [k, v] of holders) if (now - v.at >= ttl) holders.delete(k); if (holders.size > HOLDERS_MAX) holders.clear(); }
+  return out;
+}
 // Verify whole orders from their current saved lines, including archived lines and copies on another sheet.
 // The caller's transaction reads the live run and every dependent sheet before it writes a seal or completion.
 async function productionReadiness(records,{tx=null,revs=null}={}) {
-  const get=ref=>tx?tx.get(ref):ref.get(),runs=new Map(),lines=new Map(),wanted=new Set(records.flatMap(Readiness.orderIds));
+  const get=ref=>tx?tx.get(ref):ref.get(),runs=new Map(),lines=new Map(),wanted=new Set(records.flatMap(Readiness.orderIds)),unverified=new Set();
   for(const id of [...new Set(records.map(s=>s.runId).filter(isId))]){
     const snap=await get(col(RUNS).doc(id)),run=snap.exists?await withLiveLines(id,snap.data()):null;
     if(revs)revs['r:'+id]=revOf(snap);
@@ -212,10 +239,31 @@ async function productionReadiness(records,{tx=null,revs=null}={}) {
     const archived=run?.lineArchive?await archivedLines(id,{orders:wanted}):{lines:{}};
     for(const [key,l] of Object.entries({...archived.lines,...run?.lines}))if(wanted.has(String(l.orderId || key.split('_')[0])))lines.set(key,{...l,key,orderId:String(l.orderId || key.split('_')[0])});
   }
+  // The rest of an order can be in another run. Only a sheet that is still to be cut asks (a sheet cut once before is ready whatever its orders say), and only
+  // the lines no run read already holds are added: the sheet's own run keeps its word for a line both hold. When the runs of the asked orders cannot be read,
+  // those orders stay unverified rather than reading as whole.
+  const seen=new Map([...runs.keys()].map(id=>[id,new Set(wanted)])),looked=new Set();
+  const crossRuns=async asking=>{
+    asking=asking.filter(o=>!looked.has(o));for(const o of asking)looked.add(o);
+    if(!asking.length)return;
+    const found=await runsOfOrders(get,asking,!!tx),extra=new Map();
+    for(const [order,ids] of found)for(const id of ids){if(!extra.has(id))extra.set(id,new Set());extra.get(id).add(order);}
+    for(const [id,asked] of extra){
+      const had=seen.get(id) || new Set(),orders=new Set([...asked].filter(o=>!had.has(o)));
+      if(!orders.size)continue;
+      let run=runs.get(id);
+      if(!run){const snap=await get(col(RUNS).doc(id));run=snap.exists?await withLiveLines(id,snap.data()):null;if(revs)revs['r:'+id]=revOf(snap);runs.set(id,run || {});}
+      const archived=run?.lineArchive?await archivedLines(id,{orders}):{lines:{}};
+      for(const [key,l] of Object.entries({...archived.lines,...run?.lines})){const order=String(l.orderId || key.split('_')[0]);if(orders.has(order) && !lines.has(key))lines.set(key,{...l,key,orderId:order});}
+      seen.set(id,new Set([...had,...orders]));
+    }
+  };
+  const asking=[...new Set(records.filter(s=>!Readiness.completedBefore(s)).flatMap(Readiness.orderIds))];
+  try{await crossRuns(asking);}catch(e){console.warn('[charmNestLibrary] the runs of these orders could not be read:',e && e.message);for(const o of asking)unverified.add(o);}
   const evidence=new Map(records.map(s=>[s.id || s.sheetId,s]));
   // an order whose pieces are not all on these sheets: the sheets that hold the rest are read too. A line that lost its pool ids is read by the ids the pool gives
-  // its copies ("<line key>_<n>"); a committed line without pieces is a no-design candidate (below), not a lost piece
-  const present=new Set(records.flatMap(Readiness.idsOf)),lostIds=l=>!(l.poolIds || []).length && l.state!=='gone' && !l.noDesign && !l.problems?.length && !['committed','written','labelled'].includes(l.state),
+  // its copies ("<line key>_<n>"), a committed or written one too: it may be a no-design candidate (below), but until that is known its copies may be on a sheet that is not asked
+  const present=new Set(records.flatMap(Readiness.idsOf)),lostIds=l=>!(l.poolIds || []).length && l.state!=='gone' && !l.noDesign && !l.problems?.length,
     missingOrders=[...new Set([...lines.values()].filter(l=>(l.poolIds || []).some(id=>!present.has(id)) || (lostIds(l) && Readiness.copyIds(l,l.key).some(id=>!present.has(id)))).map(l=>l.orderId))];
   for(let i=0;i<missingOrders.length;i+=30){
     const snap=await get(col(SHEETS).where('orders','array-contains-any',missingOrders.slice(i,i+30)).select(...SLIM_SHEET));
@@ -229,7 +277,11 @@ async function productionReadiness(records,{tx=null,revs=null}={}) {
     const run=runs.get(id),orders=new Set(dependencies.filter(s=>s.runId===id).flatMap(Readiness.orderIds));
     const archived=run?.lineArchive?await archivedLines(id,{orders}):{lines:{}};
     for(const [key,l] of Object.entries({...archived.lines,...run?.lines}))if(orders.has(String(l.orderId || key.split('_')[0])))lines.set(key,{...l,key,orderId:String(l.orderId || key.split('_')[0])});
+    seen.set(id,new Set([...(seen.get(id) || []),...orders]));
   }
+  // a sheet that carries one of these orders can carry pieces of other orders whose lines are in another run: its engraving evidence is read there too, or its plain
+  // pieces would read as undecided and the sheet as not ready (a failed read leaves them undecided, which holds the order back)
+  try{await crossRuns([...new Set(dependencies.filter(s=>!Readiness.completedBefore(s)).flatMap(Readiness.orderIds))]);}catch(e){console.warn('[charmNestLibrary] the runs of the other sheets\' orders could not be read:',e && e.message);}
   // No-design exemptions are explicit in new records; an older committed chain may only name its approved SKU.
   const candidates=[...lines.values()].filter(l=>!l.poolIds?.length && !l.noDesign && ['committed','written','labelled'].includes(l.state));
   if(candidates.length){
@@ -251,7 +303,7 @@ async function productionReadiness(records,{tx=null,revs=null}={}) {
   for(const s of evidence.values())s.engraving=Object.fromEntries(Readiness.idsOf(s).map(id=>[id,decisions[id] || {needed:true,state:'unknown',approved:false}]));
   const orders=Readiness.orderReports([...lines.values()],[...evidence.values()]);
   // each sheet's own reading of its orders: an order waits only for its OTHER pieces (Readiness.forSheet), never for a piece on this very sheet
-  for(const s of records)s.orderReadiness=Object.fromEntries(Readiness.orderIds(s).map(id=>[id,Readiness.forSheet(orders[id],s.id || s.sheetId) || {ready:false,why:'Order readiness has not been verified'}]));
+  for(const s of records)s.orderReadiness=Object.fromEntries(Readiness.orderIds(s).map(id=>[id,(!unverified.has(id) && Readiness.forSheet(orders[id],s.id || s.sheetId)) || {ready:false,why:'Order readiness has not been verified'}]));
   return records;
 }
 
@@ -1573,6 +1625,15 @@ async function op_setUpdate(b) {
       const records=docs.filter(d=>d.exists).map(d=>({...d.data(),id:d.id,laserHold:null}));
       await productionReadiness(records,{tx});
       if(records.some(s=>s.setId!==id) || !Readiness.set(next,records).ready)throw new Error('Set cannot be completed: every sheet needs approved engraving, verified back files, front files and QR labels');
+      // the cardinal rule (charm-nest-shared-orders.js): a set is completed only with every sheet that shares a multi-piece
+      // order with one of its own, unless that sheet can no longer join (cut, or in a set already sent to the station)
+      if(!(old.exists && /^complete/.test(String(old.data().status || '')))){
+        const split=await splitOfSet(id,ids);
+        if(split.length){
+          const there=[...new Set(split.flatMap(it=>it.there))];
+          throw new Error(`Set cannot be completed: ${split.length===1?'order '+split[0].orderId+' also has pieces':split.length+' orders ('+split.slice(0,4).map(it=>it.orderId).join(', ')+(split.length>4?', ...':'')+') also have pieces'} on ${there.join(', ')}, which ${there.length===1?'is':'are'} not in this set. Sheets that share a multi-piece order stay in the same set: put them in one set, or take the order off one of the sheets.`);
+        }
+      }
     }
     // each field the patch names replaces the stored one whole, and a field it leaves out stays as it was: a set with merge
     // merged a map into the stored one key by key, so an order taken off a set stayed on its record for good
@@ -2843,7 +2904,15 @@ OPS.sessionsList = op_sessionsList;
    written by the ops that already own it (laserDone: marking, process seals, op_laserStatus' recordProcessReadiness);
    the only new fact is a person's HOLD (`laserHold` on a sheet: {at, by, note}), which takes a ready sheet back to In
    progress without touching one approval, seal or cut record (Readiness.sheet: a held sheet is not included).
-   · flowState  {sheetIds, setIds}   read only: laserStatus' records and sets, each set's own record, and whether each run is open
+   · flowState  {sheetIds, setIds, move?}   read only: laserStatus' records and sets, each set's own record, and whether each run is open.
+     With `move` ({kind, id, to:{set|newSet}, together?}) for a move into or out of a set it also answers the cardinal rule of a Set
+     of Sheets (charm-nest-shared-orders.js: sheets that share a multi-piece order are always in ONE set): `shared`, the orders such a
+     move would split (each with its pieces, the sheets on each side and any sheet that cannot change set, with the reason), and `group`,
+     the sheets that must travel together. · sharedOrders {kind, id, to, together?}   the same answer alone (read only).
+     flowApply has no membership step (hold / release / seal never change a sheet's set), so it has nothing to refuse for the rule;
+     the writes that do change membership are the page's putSheet / setUpdate, and setUpdate refuses to record a set complete while a
+     sheet that shares one of its multi-piece orders is outside it (the list of orders and sheets in the answer). A move whose plan
+     the cloud says splits an order is refused by the page at commit, which plans again from these records first.
    · flowApply  {steps:[{type:"hold"|"release", sheetIds, note}], expect?, by}   all steps in ONE transaction: every sheet is read first and
      checked against `expect` ({sheetId:{held:bool}}, what the plan saw), so a sheet changed since the plan was made refuses the
      whole call and nothing is written. A repeat finds the sheets as asked and writes nothing (idempotent). Each change adds an
@@ -2861,7 +2930,64 @@ async function op_flowState(b) {
   }
   const runIds = [...new Set((status.sheets || []).map(x => x.runId).concat(docs.map(x => x.runId)).filter(isId))].slice(0, 100), runs = {};
   for (const id of runIds) { const r = await col(RUNS).doc(id).get(); runs[id] = { exists: r.exists, open: r.exists && !["complete", "abandoned"].includes(String((r.data() || {}).status || "")) }; }
-  return { sheets: status.sheets || [], sets: status.sets || [], setDocs: docs, runs, checkedAt: Date.now() };
+  // the cardinal rule of a Set of Sheets (below): for a move into a set, the orders it would split, read from the records
+  const mv = b.move && typeof b.move === "object" ? b.move : null;
+  const shared = mv && mv.to && (mv.to.set || mv.to.newSet) ? await sharedAnswer(mv) : null;
+  return { sheets: status.sheets || [], sets: status.sets || [], setDocs: docs, runs, checkedAt: Date.now(), ...(shared ? { shared: shared.shared, group: shared.group } : {}) };
+}
+/* ── The cardinal rule of a Set of Sheets (Paul, 5 Oct 2026; charm-nest-shared-orders.js, window.SharedOrders, which this
+   file shares): every sheet that shares a multi-piece order with another is in the SAME set. Read only here: the sheets that
+   hold pieces of the moving sheets' orders (one query by order for each step outwards, a few steps at most), their sets for
+   the reasons a sheet cannot change set (cut, completed, set committed), and the core's answer. `to` is {set} or {newSet}. ── */
+const SharedRule = require("../../charm-nest-shared-orders.js").core;
+const SHARED_FIELDS = ["id", "sheetId", "metal", "metalLabel", "page", "sheetIndex", "setId", "draft", "solidIncluded", "poolIds", "orders", "archived", "runId", "laserDoneAt", "roseCutAt", "fileBase"];
+const sharedOrdersOf = d => [...new Set((Array.isArray(d.orders) ? d.orders.map(String) : []).concat((Array.isArray(d.poolIds) ? d.poolIds : []).map(orderOfKey)).filter(x => /^\d{1,30}$/.test(x)))];
+/** The sheets that share orders with `seedIds`, outwards (a sheet that shares with a sheet that shares): { sheets: [core sheets], more: true when a cap cut it short }. */
+async function sharedSheets(seedIds, { rounds = 4, cap = 500 } = {}) {
+  const docs = new Map(), seenOrders = new Set();
+  const take = (id, data) => { if (data && !data.archived && !docs.has(id)) { docs.set(id, { ...data, id }); return true; } return false; };
+  let frontier = [];
+  const ids = [...new Set(seedIds.filter(isId))].slice(0, 300);
+  for (let i = 0; i < ids.length; i += 100) for (const d of await db.getAll(...ids.slice(i, i + 100).map(id => col(SHEETS).doc(id)), { fieldMask: SHARED_FIELDS })) if (d.exists && take(d.id, d.data())) frontier.push(docs.get(d.id));
+  let more = false;
+  for (let round = 0; round < rounds && frontier.length; round++) {
+    const orders = [];
+    for (const d of frontier) for (const o of sharedOrdersOf(d)) if (!seenOrders.has(o)) { seenOrders.add(o); orders.push(o); }
+    frontier = [];
+    for (let i = 0; i < orders.length; i += 30) {
+      const snap = await col(SHEETS).where("orders", "array-contains-any", orders.slice(i, i + 30)).select(...SHARED_FIELDS).get();
+      for (const d of snap.docs) if (take(d.id, d.data())) frontier.push(docs.get(d.id));
+    }
+    if (docs.size > cap) { more = true; break; }
+  }
+  if (frontier.length && !more) more = true;       // (the last step found sheets whose own orders were not followed)
+  const setIds = [...new Set([...docs.values()].filter(d => d.setId && !d.draft && d.solidIncluded !== false).map(d => String(d.setId)).filter(isId))], sets = new Map();
+  for (let i = 0; i < setIds.length; i += 100) for (const d of await db.getAll(...setIds.slice(i, i + 100).map(id => col(SETS).doc(id)), { fieldMask: ["setId", "seq", "name", "status", "committedAt", "laserDoneAt"] })) if (d.exists) sets.set(d.id, d.data());
+  const sheets = [...docs.values()].map(d => SharedRule.sheetOf(d, { label: sheetLabel(d), fixed: SharedRule.fixedWhy(d, SharedRule.effectiveSet(d) ? sets.get(String(d.setId)) : null) })).filter(Boolean);
+  return { sheets, more };
+}
+async function sharedAnswer(move) {
+  const kind = move.kind === "set" ? "set" : "sheet", id = str(move.id, 80), to = move.to || {};
+  const dest = to.newSet ? "new" : isId(to.set) ? String(to.set) : null;
+  let seeds = [id];
+  if (kind === "set") { if (!isId(id)) return { shared: [], group: { ids: [], labels: [], orders: [], fixed: [] } }; const s = await col(SETS).doc(id).get(); seeds = s.exists ? (s.data().sheetIds || []).map(String) : []; }
+  else if (!isId(id)) return { shared: [], group: { ids: [id], labels: [], orders: [], fixed: [] } };
+  const { sheets, more } = await sharedSheets(seeds), by = new Map(sheets.map(s => [s.id, s]));
+  let moving = kind === "set" ? seeds : [id];
+  if (move.together && kind === "sheet") moving = SharedRule.groupOf(sheets, id).ids;
+  const items = SharedRule.between(sheets, moving, kind === "set" && !dest ? id : dest);
+  const g = kind === "sheet" ? SharedRule.groupOf(sheets, id) : { ids: moving, orders: [] };
+  return { shared: items, group: { ids: g.ids, labels: g.ids.map(i => (by.get(i) || {}).label || i), members: g.ids.map(i => ({ id: i, label: (by.get(i) || {}).label || i, setId: (by.get(i) || {}).setId || null })), orders: g.orders, fixed: g.ids.filter(i => by.get(i) && by.get(i).fixed).map(i => ({ sheetId: i, sheetLabel: by.get(i).label, why: by.get(i).fixed })), ...(more ? { more: true } : {}) } };
+}
+/** The orders of a set's sheets that also have pieces on a sheet outside it that COULD still join it (not cut, not in a committed set). */
+async function splitOfSet(setId, memberIds) {
+  const { sheets } = await sharedSheets(memberIds), items = SharedRule.between(sheets, memberIds, setId);
+  const by = new Map(sheets.map(s => [s.id, s]));
+  return items.filter(it => it.thereIds.some(i => by.get(i) && !by.get(i).fixed));
+}
+async function op_sharedOrders(b) {
+  const to = b.to && typeof b.to === "object" ? b.to : {};
+  return { ok: true, ...(await sharedAnswer({ kind: b.kind, id: b.id, to, together: !!b.together })) };
 }
 async function op_flowApply(b) {
   const by = str(b.by, 80).trim();
@@ -2924,6 +3050,7 @@ async function op_flowApply(b) {
 }
 OPS.flowState = op_flowState;
 OPS.flowApply = op_flowApply;
+OPS.sharedOrders = op_sharedOrders;
 OPS.getOrderPieces = op_getOrderPieces;   // where each piece of an order is (OrderPieces); read only
 
 exports.ops = OPS;   // the connections check runs the same queries the app runs

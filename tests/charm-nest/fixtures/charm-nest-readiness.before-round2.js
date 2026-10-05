@@ -7,8 +7,7 @@
   const url=x=>typeof x==='string'?x:x?.url;
   function decisions(rows){
     const out={};
-    // (a line whose record lost its pool ids is read by the ids the pool gives its copies, "<line key>_<n>", as orderReports reads them)
-    for(const row of rows || [])for(const id of copyIds(row,lineKeyOf(row))) {
+    for(const row of rows || [])for(const id of row.poolIds || []) {
       const e=row.engrave;
       // a cancelled order's piece left on a released sheet is cut and set aside, so it waits on no engraving decision
       // A line with no personalization, message or note has nothing to engrave, before its engraving check has run too.
@@ -40,8 +39,7 @@
       approval:total>0 && waiting===0,
       backs:total>0 && saved===required,
       qr:labels.length>0 && labels.every(f=>f.path && f.url && f.payload) && orders.every(id=>covered.has(String(id))),
-      // an order waits for its OTHER pieces only: whatever sits on this sheet is this sheet's own readiness, shown by its own steps
-      orders:options.physicalOnly===true || orderIds(s).every(id=>forSheet(s.orderReadiness?.[id],sid)?.ready===true)
+      orders:options.physicalOnly===true || orderIds(s).every(id=>s.orderReadiness?.[id]?.ready===true)
     };
     // a person's hold (Library move back to In progress, LibraryFlow) keeps every approval and seal but takes it out of Laser cutting
     const included=!s.draft && s.solidIncluded!==false && !s.archived && !held(s);
@@ -69,117 +67,41 @@
     const complete=expected.length>0 && expected.length===unique.length && expected.every(id=>unique.some(x=>(x.id || x.sheetId)===id));
     return {...set(s,unique),ready:complete && unique.every(x=>laserSheet(x).ready)};
   }
-  /* ── Pieces, and what an order waits for (Paul, 5 Oct: "Pooled orders are only truthful when a given order has multi pieces that
-   * are spread across 2 or more sheets. Same with the SKU missing issues"). One piece is one copy of a line (a line of quantity 2 is
-   * two pieces; their pool ids are "<line key>_<n>"). Where a piece sits is read from the sheets that list its pool id, never from the
-   * line's stored state (a line stays 'pooled' in its record until its set is written, and its problems list can be older than its
-   * match): a piece listed by a saved sheet is NESTED, and that wins over a stale state or problem.
-   * An order is an issue for sheet X only when X holds a piece of it AND some OTHER piece (one not on X) is
-   *   · not on any sheet yet ('pooled'), or has no SKU ('noSku'), a SKU no master has ('unmatched') or no design ('noDesign') there, or
-   *   · held (a person's hold or an Etsy change waiting for review), or
-   *   · on a different sheet that is not ready ('otherSheetNotReady': that sheet's own physical readiness, never its order check, so
-   *     two sheets can never wait on each other).
-   * Pieces on X itself never block through the order check (X's own readiness shows through its own steps), single-piece orders are
-   * never an issue for what other pieces do (they have none), and cancelled ('gone') and no-design pieces never block. One exception,
-   * because it is a person's or Etsy's explicit stop and not an inference about where pieces are: a HELD piece (a person's hold, or an
-   * Etsy change waiting for review) holds the sheet wherever it sits, even a one-piece order on this very sheet (as before). */
-  const KEYS=['pooled','noSku','unmatched','noDesign','held','otherSheetNotReady'];   // which kind names an order that has several
-  const PROBLEM_WORDS={unmatchedSku:'SKU not in a master',needsMaterial:'needs material',needsMapping:'needs an option mapped',missingSize:'no design for that size',blockedSku:'SKU is blocked',oversize:'does not fit the plate'};
-  const PROBLEM_KEY={needsMaterial:'unmatched',needsMapping:'unmatched',blockedSku:'noDesign',missingSize:'noDesign',oversize:'noDesign'};
-  const STAGE_WORDS={layout:'layout needs verification',front:'cutting files are missing',approval:'engraving needs approval',backs:'back engraving files are not saved',qr:'QR labels are missing'};
-  const rank=k=>{const i=KEYS.indexOf(k);return i<0?KEYS.length:i;};
-  const tailNo=k=>{const m=/_(\d+)$/.exec(String(k||''));return m?+m[1]:0;};
-  const qtyOf=l=>Math.max(1,Math.floor(+(l.spec?.quantity || l.quantity) || 1));
-  const titleOf=l=>String(l.line?.title || l.snap?.title || l.spec?.designSku || l.sku || '').replace(/\s+/g,' ').trim();
-  // the copies of a line: its pool ids, and (when the record lost some) the "<line key>_<n>" ids the pool gives them
-  function copyIds(l,key){
-    const ids=[...new Set((Array.isArray(l.poolIds)?l.poolIds:[]).filter(Boolean).map(String))],want=qtyOf(l);
-    for(let n=1;key && ids.length<want;n++){const d=`${key}_${n}`;if(!ids.includes(d))ids.push(d);}
-    return ids.sort((a,b)=>tailNo(a)-tailNo(b));       // a piece is "piece 2" by its copy number, whatever order the record lists them in (OrderPieces numbers them alike)
-  }
-  const lineKeyOf=(l,id)=>String(l.key || [id || l.order?.receiptId || l.orderId,l.transactionId || l.line?.transactionId].filter(Boolean).join('_') || '');
-  // a line's own problem as a kind: no SKU at all, a SKU no master has, or no design for it
-  function problemOf(l){
-    const p=Array.isArray(l.problems)?l.problems[0]:null;
-    let kind=p && typeof p==='object'?p.kind:p;
-    // an older record may carry only the state the page gave the line
-    if(!kind){if(l.state==='unmatched')kind='unmatchedSku';else if(l.state==='oversize')kind='oversize';else if(l.state==='held')return {key:'held',why:String(l.reason || 'Held for review')};else return null;}
-    let key=PROBLEM_KEY[kind] || 'unmatched';
-    if(kind==='unmatchedSku'){
-      const sku=String(l.spec?.designSku ?? l.sku ?? l.line?.sku ?? (p && p.sku) ?? '').trim();
-      key=!sku || (p && typeof p==='object' && /no SKU/i.test(p.reason || ''))?'noSku':'unmatched';
-    }
-    return {key,why:PROBLEM_WORDS[kind] || String(kind)};
-  }
-  // a sheet's readiness for another sheet's order: the physical stages only (never its own order check), a cut sheet, or one cut before
-  const physicalReady=(s,r)=>+s.laserDoneAt>0 || (r.included && (completedBefore(s) || r.ready));
-  function readOrders(rows,sheets){
-    const copies=new Map(),phys=new Map(),groups=new Map(),orders=new Map();
-    for(const s of sheets || [])if(!s.archived){
-      const r=sheet(s,{physicalOnly:true});
-      phys.set(s,{ok:physicalReady(s,r),stage:Object.keys(r.stages).find(k=>!r.stages[k]) || (held(s)?'held':r.included?'':'included')});
-      for(const id of idsOf(s)){const xs=copies.get(id)||[];xs.push(s);copies.set(id,xs);}
-    }
-    for(const row of rows || []){const id=String(row.order?.receiptId || row.orderId || String(row.key || '').split('_')[0] || '');if(!id)continue;const xs=groups.get(id)||[];xs.push(row);groups.set(id,xs);}
-    for(const [id,lines] of groups){
-      const pieces=[];let customer='',listingId='';
-      for(const l of lines.slice().sort((a,b)=>tailNo(a.key)-tailNo(b.key))){
-        customer=customer || l.order?.buyer?.name || l.snap?.buyer || '';
-        listingId=listingId || String(l.line?.listingId || l.snap?.listingId || '');
-        if(l.state==='gone')continue;                                                     // cancelled: cut and set aside, never waited for
-        if(l.spec?.noDesign || l.noDesign || l.state==='noDesign')continue;               // nothing to cut
-        const key=lineKeyOf(l,id) || id,hold=l.hold || l.changePending?String(l.hold || 'Order changes need review'):'',problem=problemOf(l);
-        for(const pid of copyIds(l,key)){
-          const on=copies.get(pid) || [];
-          let block=null;
-          if(hold)block={key:'held',why:hold};
-          else if(!on.length)block=problem?{key:problem.key,why:problem.why}:{key:'pooled',why:'A piece is not on a saved sheet yet'};
-          else if(!on.some(s=>+s.laserDoneAt>0 || phys.get(s).ok)){
-            const s=on.find(x=>!phys.get(x).ok) || on[0],stage=phys.get(s).stage;
-            block={key:'otherSheetNotReady',stage,why:`${s.metalLabel || s.metal || 'Sheet'}: ${STAGE_WORDS[stage] || (stage==='held'?'held back from Laser cutting':stage==='included'?'not in a set yet':'not ready for laser cutting')}`};
-          }
-          const at=on.length?on[0]:null;
-          pieces.push({index:pieces.length+1,key:pid,poolId:pid,lineKey:key,label:titleOf(l),state:l.state,sheetId:at?(at.id || at.sheetId):null,sheetLabel:at?sheetLabel(at):null,sheetIds:on.map(s=>s.id || s.sheetId),block});
-        }
-      }
-      orders.set(id,{pieces,customer,listingId});
-    }
-    return orders;
-  }
-  const head=bs=>{const b=bs.slice().sort((x,y)=>rank(x.key)-rank(y.key))[0];return {key:b.key,why:b.why,line:b.lineKey,...(b.sheetId?{sheetId:b.sheetId,sheetLabel:b.sheetLabel}:{}),...(b.stage?{stage:b.stage}:{})};};
-  /** orderReports(rows, allSheets): what each order waits for, whichever sheet asks. { [orderId]: {ready:true} | {ready:false, key, why, line, sheetId?, sheetLabel?, stage?,
-   *  blocks:[{key,index,label,poolId,lineKey,sheetId|null,sheetLabel|null,why,stage?}], onSheets, pieceCount, customer, listingId} }.
-   *  `blocks` are the pieces that hold the order back (see above), each with the sheet it sits on; forSheet() reads them from one sheet. */
+  // An order travels whole: every line and copy needs its design, files, decisions and labels,
+  // including a second metal on another sheet. No-design and cancelled lines require no cutting.
   function orderReports(rows,sheets){
-    const out={};
-    for(const [id,o] of readOrders(rows,sheets)){
-      const blocks=o.pieces.filter(p=>p.block).map(p=>({key:p.block.key,index:p.index,label:p.label,poolId:p.poolId,lineKey:p.lineKey,sheetId:p.sheetId,sheetLabel:p.sheetLabel,...(p.sheetIds.length>1?{sheetIds:p.sheetIds}:{}),why:p.block.why,...(p.block.stage?{stage:p.block.stage}:{})}));
-      out[id]=blocks.length?{ready:false,...head(blocks),blocks,onSheets:[...new Set(o.pieces.flatMap(p=>p.sheetIds))],pieceCount:o.pieces.length,customer:o.customer,listingId:o.listingId}:{ready:true};
+    const groups=new Map(),copies=new Map(),physical=new Map();
+    for(const s of sheets || [])if(!s.archived){physical.set(s,sheet(s,{physicalOnly:true}));for(const id of idsOf(s)){const xs=copies.get(id)||[];xs.push(s);copies.set(id,xs);}}
+    for(const row of rows || []){const id=String(row.order?.receiptId || row.orderId || String(row.key || '').split('_')[0] || '');if(!id)continue;const xs=groups.get(id)||[];xs.push(row);groups.set(id,xs);}
+    const out={},problems={unmatchedSku:'SKU not in a master',needsMaterial:'needs material',needsMapping:'needs an option mapped',missingSize:'no design for that size'};
+    for(const [id,lines] of groups){
+      let block=null;
+      for(const l of lines){
+        let why='',other=null;
+        if(l.state==='gone')continue;
+        if(l.hold || l.changePending)why=l.hold || 'Order changes need review';
+        else if(l.spec?.noDesign || l.noDesign || l.state==='noDesign')continue;
+        else if(l.problems?.length){const p=l.problems[0].kind || l.problems[0];why=problems[p] || String(p);}
+        else if(!['written','labelled','committed'].includes(l.state))why=l.reason || `line is ${l.state || 'not ready'}`;
+        else if(!l.poolIds?.length || l.poolIds.length<(+(l.spec?.quantity || l.quantity) || 1))why='Not every copy has a saved sheet';
+        else for(const pid of l.poolIds){
+          const on=copies.get(pid)||[];
+          if(!on.some(s=>+s.laserDoneAt>0 || physical.get(s).ready)){
+            const s=on[0],r=s && physical.get(s),stage=r && Object.keys(r.stages).find(k=>!r.stages[k]);
+            const missing={layout:'layout needs verification',front:'cutting files are missing',approval:'engraving needs approval',backs:'back engraving files are not saved',qr:'QR labels are missing'};
+            why=s?`${s.metalLabel || s.metal || 'Sheet'}: ${missing[stage] || (held(s)?'held back from Laser cutting':r.included?'not ready for laser cutting':'not in a set yet')}`:'An item is not on a saved sheet';
+            // which sheet and which step hold the order back (explain() names them; the words above are unchanged)
+            if(s)other={sheetId:s.id || s.sheetId,sheetLabel:sheetLabel(s),stage:stage || (held(s)?'held':r.included?'':'included')};
+            break;
+          }
+        }
+        if(why){block={ready:false,line:l.key || [id,l.transactionId].filter(Boolean).join('_'),why,...(other || {})};break;}
+      }
+      out[id]=block || {ready:true};
     }
     return out;
   }
-  /** forSheet(report, sheetId): an order's report as one sheet reads it. The pieces on that sheet are not its order check (that sheet's own steps show
-   *  them), and an order it holds nothing of is not its order. {ready:true} when nothing else holds the order back. Reports without blocks (an older record,
-   *  or the server's "not verified") are read as they are. */
-  function forSheet(r,sid){
-    if(!r || r.ready===true || !Array.isArray(r.blocks) || !sid)return r;
-    if(Array.isArray(r.onSheets) && !r.onSheets.includes(sid))return {ready:true};
-    // (a held piece stops the sheet wherever it sits: a person's hold or an Etsy change waiting for review is no inference about where pieces are)
-    const mine=r.blocks.filter(b=>b.key==='held' || (b.sheetId!==sid && !(b.sheetIds && b.sheetIds.includes(sid))));
-    if(!mine.length)return {ready:true};
-    if(mine.length===r.blocks.length)return r;
-    return {ready:false,...head(mine),blocks:mine,onSheets:r.onSheets,pieceCount:r.pieceCount,customer:r.customer,listingId:r.listingId};
-  }
-  /** pieces(rows, allSheets): every live piece of every order and where it sits: { [orderId]: [{index,key,poolId,lineKey,label,state,sheetId|null,sheetLabel|null,sheetIds,problem|null,held}] }. */
-  function pieces(rows,sheets){
-    const out={};
-    for(const [id,o] of readOrders(rows,sheets))out[id]=o.pieces.map(({block,...p})=>({...p,problem:block && ['noSku','unmatched','noDesign'].includes(block.key)?block.key:null,held:!!(block && block.key==='held')}));
-    return out;
-  }
-  const orderBlockers=s=>{
-    const sid=s.id || s.sheetId;
-    return orderIds(s).map(id=>[id,s.orderReadiness?.[id]?forSheet(s.orderReadiness[id],sid):{ready:false,why:'Order readiness has not been verified'}]).filter(([,r])=>r.ready!==true).map(([id,r])=>({id,...r}));
-  };
+  const orderBlockers=s=>orderIds(s).filter(id=>s.orderReadiness?.[id]?.ready!==true).map(id=>({id,...(s.orderReadiness?.[id] || {ready:false,why:'Order readiness has not been verified'})}));
   const filed=s=>+s.laserDoneAt>0 && !s.laserSetPending;
   // These are historical facts, independent of today's readiness or completion flag.
   // Old completion records have an exact signer/time; the former blue icon did not.
@@ -304,16 +226,16 @@
     ok.qr=st.qr;
     detail.qr=ok.qr?`QR label made for ${count(orders.length,'order')}.`:!files.length?'No QR label has been made for this sheet yet.':uncovered.length?`The QR label leaves out ${count(uncovered.length,'order')}.`:'The QR label file is incomplete.';
     short.qr=!files.length?'the QR label has not been made':uncovered.length?`the QR label must also cover ${count(uncovered.length,'order')}`:'the QR label is incomplete';
-    // Order check: built on issues(): only an order with another piece holding it back is listed (a piece on this sheet, or an order of one piece, never is)
-    const ids=orderIds(s),checked=!!s.orderReadiness,blockers=checked?sheetIssues(s,{perOrder:true},['orders']):[];
+    // Order check: an order travels whole, so another line of it on another sheet (or a held line) waits it here
+    const blockers=orderBlockers(s),ids=orderIds(s),checked=!!s.orderReadiness;
     if(!checked && ids.length)own('orders','Its orders have not been checked yet: they are checked when the Library refreshes');
     else{
-      const seen=new Set();
-      for(const b of blockers.slice(0,LISTED))items.orders.push({kind:'order',id:b.orderId,label:N.order(b.orderId),why:b.why,...(b.otherSheetId?{sheetId:b.otherSheetId}:{})});
-      for(const b of blockers)for(const p of b.pieces)if(p.kind==='otherSheetNotReady' && p.sheetId && p.sheetId!==id && !seen.has(p.sheetId)){
-        seen.add(p.sheetId);
-        const n=blockers.filter(x=>x.pieces.some(y=>y.sheetId===p.sheetId && y.kind==='otherSheetNotReady')).length;
-        items.orders.push({kind:'sheet',id:p.sheetId,label:p.sheetLabel,why:`Holds ${count(n,'order')} of this sheet back: ${MISSING[p.stage] || 'it is not ready'}`});
+      const seen=new Set(),why=b=>b.sheetLabel && b.stage?`Its other piece is on ${b.sheetLabel}, and ${MISSING[b.stage] || 'it is not ready'}`:/^Not every copy has a saved sheet/i.test(b.why)?'Not every piece of this order is on a saved sheet yet':/not on a saved sheet/i.test(b.why)?'One of its other pieces is not on a saved sheet yet':/^line is /i.test(b.why)?`One of its other lines is still '${String(b.why).slice(8)}'`:sentence(b.why).replace(/\.$/,'');
+      for(const b of blockers.slice(0,LISTED))items.orders.push({kind:'order',id:b.id,label:N.order(b.id),why:why(b),...(b.sheetId?{sheetId:b.sheetId}:{})});
+      for(const b of blockers)if(b.sheetId && b.sheetId!==id && !seen.has(b.sheetId)){
+        seen.add(b.sheetId);
+        const n=blockers.filter(x=>x.sheetId===b.sheetId).length;
+        items.orders.push({kind:'sheet',id:b.sheetId,label:b.sheetLabel,why:`Holds ${count(n,'order')} of this sheet back: ${MISSING[b.stage] || 'it is not ready'}`});
       }
       if(blockers.length>LISTED)items.orders.push({kind:'sheet',id,label,why:`${count(blockers.length-LISTED,'more order')} also wait for other pieces`});
       if(blockers.length)hard.orders=true;
@@ -321,98 +243,8 @@
     ok.orders=st.orders;
     const first=items.orders[0];
     detail.orders=ok.orders?(ids.length?`All ${count(ids.length,'order')} on this sheet have every other piece ready.`:'No orders to check.'):checked?`${blockers.length} of ${count(ids.length,'order')} ${blockers.length===1?'waits':'wait'} for other pieces to be ready.`:'Its orders have not been checked yet.';
-    short.orders=!checked?'its orders have not been checked yet':!blockers.length?'its orders wait for other pieces':blockers.length===1?`${N.order(blockers[0].orderId)} waits for another piece: ${lower(first.why)}`:`${count(blockers.length,'order')} wait for other pieces, for example ${N.order(blockers[0].orderId)}: ${lower(first.why)}`;
+    short.orders=!checked?'its orders have not been checked yet':!blockers.length?'its orders wait for other pieces':blockers.length===1?`${N.order(blockers[0].id)} waits for another piece: ${lower(first.why)}`:`${count(blockers.length,'order')} wait for other pieces, for example ${N.order(blockers[0].id)}: ${lower(first.why)}`;
     return {id,label,r,again,ok,hard,items,detail,short};
-  }
-  /* ── issues: only what truly holds a sheet back (the "!" panel, the Order check step, the server's gate all read this) ─────────────
-   * Never a finished step, never a back-engraving count. One entry per order that has another piece holding it back (see "Pieces"
-   * above), at most one entry for the sheet's own current blocker (no order), and, for a sheet that is itself ready, one per set mate
-   * that is not. Pure: the sheet's own record (its orderReadiness, as the server answers it) or, when ctx.rows and ctx.allSheets are
-   * given (the page, or a test), the pieces read from those. */
-  const PIECE_PHRASE={pooled:'not on a sheet yet',noSku:'no SKU',held:'held'};
-  const pieceLine=b=>b.key==='pooled'?'Not on a sheet yet':b.key==='noSku'?'No SKU':b.key==='otherSheetNotReady'?`On ${b.sheetLabel || 'another sheet'}, not ready yet`:sentence(b.why);
-  // the words of what holds an order back, from its blocks (older reports without blocks: their own words, as they were mapped before)
-  function orderWhy(r){
-    const bs=Array.isArray(r.blocks)?r.blocks:[];
-    if(!bs.length){
-      const w=String(r.why || '');
-      return /^Not every copy has a saved sheet/i.test(w)?'Not every piece of this order is on a saved sheet yet':/not on a saved sheet/i.test(w)?'One of its other pieces is not on a saved sheet yet':/^(line|piece) is /i.test(w)?`One of its other pieces is still '${w.replace(/^(line|piece) is /i,'')}'`:sentence(w || 'Not checked yet').replace(/\.$/,'');
-    }
-    if(bs.length===1){
-      const b=bs[0];
-      return b.key==='pooled'?'Its other piece is not on a sheet yet':b.key==='noSku'?'Its other piece has no SKU':b.key==='held'?`A piece of this order is held: ${b.why}`:b.key==='otherSheetNotReady'?`Its other piece is on ${b.sheetLabel || 'another sheet'}, and ${MISSING[b.stage] || 'it is not ready'}`:`Its other piece: ${b.why}`;
-    }
-    const phrase=b=>PIECE_PHRASE[b.key] || (b.key==='otherSheetNotReady'?`on ${b.sheetLabel || 'another sheet'}`:b.why);
-    return `${bs.length} of its other pieces wait: ${[...new Set(bs.map(phrase))].join(', ')}`;
-  }
-  function orderIssue(id,r,ctx){
-    const bs=Array.isArray(r.blocks)?r.blocks:[],h=bs.length?head(bs):null,first=h && bs.find(b=>b.key===h.key);
-    return {step:'orders',key:h?h.key:'unverified',orderId:id,orderLabel:`Order ${id}`,customer:r.customer || '',listingId:r.listingId || '',thumb:typeof ctx.thumb==='function'?ctx.thumb(id) || null:null,
-      pieceCount:r.pieceCount || 0,pieces:bs.map(b=>({index:b.index,key:b.poolId,poolId:b.poolId,label:b.label,kind:b.key,sheetId:b.sheetId || null,sheetLabel:b.sheetLabel || null,stage:b.stage || '',why:pieceLine(b)})),
-      why:orderWhy(r),open:{type:'order',id,...(first?{poolId:first.poolId}:{})},...(h && h.sheetId?{otherSheetId:h.sheetId}:{})};
-  }
-  // the sheet's own current blocker: the first of its own steps still behind, as a short label (no counts, no engraving rows)
-  function ownIssue(s){
-    const id=s.id || s.sheetId,label=sheetLabel(s),r=sheet(s),st=r.stages,mk=(step,key,text)=>({step,key,label:text,sheetId:id,sheetLabel:label,open:{type:'sheet',id}});
-    if(s.archived)return mk('nesting','archived','Sheet removed');
-    if(held(s))return mk('nesting','held','Held back');
-    if(s.draft)return mk('nesting','notInSet','Not in a set yet');
-    if(s.solidIncluded===false)return mk('nesting','notInSet','Not included yet');
-    if(completedBefore(s))return null;                      // cut once before: reopening keeps that approval, only a place in a set is asked
-    if(s.metal==='rose' && s.roseStockId && !s.rosePlanHash)return mk('nesting','roseLine','Green line needed');
-    if(!(st.layout && st.front))return mk('nesting','layout',st.layout && !st.front?'Cutting files missing':'Layout not ready');
-    if(!st.approval)return mk('engraving','approvalsNeeded','Approvals needed');
-    if(!st.backs)return mk('backFiles','backFilesMissing','Back files missing');
-    if(!st.qr)return mk('qr','qrMissing','QR label missing');
-    return null;
-  }
-  const ALL_STEPS=['nesting','engraving','backFiles','qr','orders','laser'];
-  // the reports of one reading of the rows and every sheet, made once for however many sheets of a set ask (the same rows and sheets give the same answer)
-  const readings=new WeakMap();
-  const reportsOf=ctx=>{let r=readings.get(ctx.allSheets);if(!r || r.rows!==ctx.rows){r={rows:ctx.rows,reps:orderReports(ctx.rows,ctx.allSheets)};readings.set(ctx.allSheets,r);}return r.reps;};
-  // a sheet as it reads its own orders from those reports
-  const readFrom=(s,reps)=>{const sid=s.id || s.sheetId;return {...s,orderReadiness:Object.fromEntries(orderIds(s).map(id=>[id,forSheet(reps[id],sid) || {ready:false,why:'Order readiness has not been verified'}]))};};
-  function sheetIssues(s,ctx,steps){
-    const sid=s.id || s.sheetId,want=k=>steps.includes(k),out=[],label=sheetLabel(s),reps=ctx.rows && ctx.allSheets?reportsOf(ctx):null;
-    // pieces read from the page's rows and every live sheet, instead of the record's own answer
-    const rec=reps?readFrom(s,reps):s;
-    const own=ownIssue(rec);
-    if(own && want(own.step))out.push(own);
-    if(want('orders') && !completedBefore(rec) && rec.orderReadiness){
-      const unread=[];
-      for(const b of orderBlockers(rec)){
-        // an order nothing was read for is one entry for the sheet ("not checked yet"), not one for each of its orders
-        if(!Array.isArray(b.blocks) && !ctx.perOrder){unread.push(b.id);continue;}
-        out.push({...orderIssue(b.id,b,ctx),sheetId:sid,sheetLabel:label});
-      }
-      if(unread.length)out.push({step:'orders',key:'unverified',label:'Orders not checked yet',orderIds:unread,sheetId:sid,sheetLabel:label,open:{type:'sheet',id:sid}});
-    }
-    // a sheet that is ready itself is cut with its set: the set's other sheets that are not ready hold it
-    if(want('laser') && !(+s.laserDoneAt>0) && s.setId && !s.draft && s.solidIncluded!==false && sheet(rec).included && (completedBefore(rec) || sheet(rec).ready)){
-      if(ctx.set){
-        const mates=[...new Map((ctx.sheets || []).filter(m=>!m.archived).map(m=>[m.id || m.sheetId,m])).values()].filter(m=>(m.id || m.sheetId)!==sid).map(m=>reps?readFrom(m,reps):m);
-        for(const m of mates)if(!laserSheet(m).ready)out.push({step:'laser',key:'waitsOnSheet',label:sheetLabel(m),sheetId:sid,sheetLabel:label,open:{type:'sheet',id:m.id || m.sheetId}});
-        for(const i of ctx.set.sheetIds || [])if(i!==sid && !mates.some(m=>(m.id || m.sheetId)===i))out.push({step:'laser',key:'missingSheet',label:'Sheet missing',sheetId:sid,sheetLabel:label,open:{type:'sheet',id:i}});
-      }else if(ctx.setMissing)out.push({step:'laser',key:'setMissing',label:'Set not loaded',sheetId:sid,sheetLabel:label,open:{type:'sheet',id:sid}});
-    }
-    return out;
-  }
-  /** issues(sheetOrSet, ctx): the real issues holding a sheet or set back from Laser cutting.
-   *  → [{ step:'nesting'|'engraving'|'backFiles'|'qr'|'orders'|'laser', key, sheetId, sheetLabel, ... }]
-   *   order issue (step 'orders', one per order): key 'pooled'|'noSku'|'unmatched'|'noDesign'|'held'|'otherSheetNotReady' (the first of these among the pieces holding it),
-   *     orderId, orderLabel, customer, listingId, thumb, pieceCount, pieces:[{index,key,poolId,label,kind,sheetId|null,sheetLabel|null,stage,why}] (the OTHER pieces that hold it), why, open:{type:'order',id,poolId}
-   *   own blocker (no order): key 'archived'|'held'|'notInSet'|'roseLine'|'layout'|'approvalsNeeded'|'backFilesMissing'|'qrMissing', label (a few words, no counts), open:{type:'sheet',id}
-   *   set mate (step 'laser'): key 'waitsOnSheet'|'missingSheet'|'setMissing', label, open:{type:'sheet',id}
-   *  ctx (all optional): steps (the steps to report, default all) · rows + allSheets (every order row and EVERY live sheet: the pieces are read from these) · sheets/set/setMissing
-   *  as explain reads them · thumb(orderId) → url. A cut sheet or set has none. */
-  function issues(subject,ctx={}){
-    const s=subject || {},steps=Array.isArray(ctx.steps)?ctx.steps:ALL_STEPS,kind=ctx.kind || (s.kind==='set' || (Array.isArray(s.sheetIds) && !s.poolIds && !s.id && !s.sheetId)?'set':'sheet');
-    if(kind!=='set')return +s.laserDoneAt>0?[]:sheetIssues(s,ctx,steps);
-    if(+s.laserDoneAt>0)return [];
-    const raw=[...new Map((ctx.sheets || s.sheets || (ctx.allSheets || []).filter(x=>(s.sheetIds || []).includes(x.id || x.sheetId))).map(x=>[x.id || x.sheetId,x])).values()],live=raw.filter(x=>!x.archived),out=[];
-    for(const i of [...new Set(s.sheetIds || live.map(x=>x.id || x.sheetId))])if(!live.some(x=>(x.id || x.sheetId)===i) && steps.includes('nesting'))out.push({step:'nesting',key:'missingSheet',label:'Sheet missing',sheetId:i,sheetLabel:'A sheet of this set',open:{type:'sheet',id:i}});
-    for(const m of live)out.push(...issues(m,{...ctx,kind:'sheet',set:s,sheets:raw,steps:steps.filter(k=>k!=='laser')}));
-    return out;
   }
   // the card the page draws: x[k] = {ok,hard,items,detail,short} for the five steps, in the words of a sheet or a set
   function build(kind,id,label,x,ready,done,laserWords,laserShort,laserItems){
@@ -486,5 +318,5 @@
     }
     return e;
   }
-  return {idsOf,orderIds,decisions,held,sheet,set,completedBefore,laserSheet,laserGroup,orderReports,forSheet,pieces,issues,copyIds,orderBlockers,filed,processStamps,seal,counter,explain,lookup:names,STEPS:STEPS.map(([key,label])=>({key,label})),sheetLabel};
+  return {idsOf,orderIds,decisions,held,sheet,set,completedBefore,laserSheet,laserGroup,orderReports,orderBlockers,filed,processStamps,seal,counter,explain,lookup:names,STEPS:STEPS.map(([key,label])=>({key,label})),sheetLabel};
 });

@@ -249,6 +249,27 @@ assert.equal(R.sheet(fixed).ready,true);assert.equal(R.laserSheet(fixed).ready,t
   assert.deepEqual(orderIssues(gf,rs).map(i=>[i.orderId,i.key]),[['95','unmatched'],['96','held'],['97','noDesign']]);
 }
 
+// 12d. A line whose record lost its pool ids: its engraving decision is read by the derived copy id too (the sheet is not "waiting" for it, and no other sheet
+// waits for that sheet); the set mates of a ready sheet read in recompute mode
+{
+  const lost=row('4170000001','7001',{poolIds:[]});lost.spec.engraveCandidate=false;
+  assert.deepEqual(R.decisions([lost])['4170000001_7001_1'],{needed:false,state:'none',approved:true});
+  const other=row('4170000002','7002'),third=row('4170000002','7003');other.spec.engraveCandidate=third.spec.engraveCandidate=false;
+  const gf=sheet('gf-1','gold',['4170000001_7001_1','4170000002_7002_1'],{approved:false}),ssX=sheet('ss-1','silver',['4170000002_7003_1'],{approved:false});
+  const rs=[lost,other,third],dec=R.decisions(rs);
+  for(const x of [gf,ssX])x.engraving=Object.fromEntries(R.idsOf(x).map(id=>[id,dec[id] || {needed:true,state:'unknown',approved:false}]));
+  assert.equal(R.sheet(gf).stages.approval,true,'a piece of a line with nothing to engrave, whose record lost its ids, needs no approval');
+  assert.deepEqual(R.issues(ssX,{rows:rs,allSheets:[gf,ssX],steps:['orders']}),[],'GF Sheet 1 is ready, so the order on both sheets is no issue');
+  const a=sheet('a-sheet','gold',['50_a_1']),b=sheet('b-sheet','silver',['51_a_1']),set={setId:'set1',sheetIds:['a-sheet','b-sheet']};
+  assert.deepEqual(R.issues(a,{rows:[row('50','a'),row('51','a')],allSheets:[a,b],set,sheets:[a,b]}),[],'two ready sheets of one set hold nothing in recompute mode');
+  for(const ids of [['60_a_1','60_a_3'],['60_a_3','60_a_1']]){
+    const p=R.pieces([row('60','a',{quantity:3,poolIds:ids})],[sheet('s60x','gold',['60_a_1','60_a_3'])])['60'];
+    assert.deepEqual(p.map(x=>[x.index,x.key,x.sheetId]),[[1,'60_a_1','s60x'],[2,'60_a_2',null],[3,'60_a_3','s60x']],'numbered by copy number, whatever order the record lists them in');
+  }
+  const mate=sheet('b-sheet','silver',['51_a_1'],{approved:false});
+  assert.deepEqual(R.issues(a,{rows:[row('50','a'),row('51','a')],allSheets:[a,mate],set,sheets:[a,mate]}).map(i=>[i.key,i.label]),[['waitsOnSheet','SS Sheet 1']]);
+}
+
 // 12c. Randomised: the scenario is made from ground truth (where each piece really is, what is wrong with its line), the rows and sheets are derived from it
 // with stale states, stale problem lists and lost pool ids mixed in, and what issues() says for a sheet must be what the ground truth says.
 {
@@ -348,11 +369,26 @@ assert.equal(R.sheet(fixed).ready,true);assert.equal(R.laserSheet(fixed).ready,t
     lines[solo+'_2']={orderId:solo,state:'pooled',quantity:1,poolIds:[],engraveCandidate:false};
     const r3=await call({op:'laserStatus',sheetIds:['ss-1','gf-1']});assert.deepEqual(Object.entries(r3.sheets.find(s=>s.id==='gf-1').orderReadiness).filter(([,v])=>v.ready!==true).map(([o,v])=>[o,v.key]),[[solo,'pooled']]);
     // a line whose record lost its pool ids: its copy is found by the id the pool gave it, on a sheet of another set that this answer did not ask for
-    st.put(S,'ss-1',{setId:'set-two',poolIds:[...pools,two+'_2_1',solo+'_2_1'],orders:[...pools.map(p=>p.split('_')[0]),two,solo]});
+    const every=[...pools.map(p=>p.split('_')[0]),two,solo];
+    st.put(S,'ss-1',{setId:'set-two',poolIds:[...pools,two+'_2_1',solo+'_2_1'],orders:every,label:{files:[{path:'ss-1-qr.png',url:img,payload:'x',orders:every}]}});
     st.put(SET,'set-two',{setId:'set-two',seq:2,day:'2026-10-05',runId:'run1',sheetIds:['ss-1'],orders:{},status:'labelled',updatedAt:ts,createdAt:ts});
     st.put(SET,'set1',{sheetIds:['gf-1']});
     const r4=await call({op:'laserStatus',sheetIds:['gf-1']});assert.deepEqual(r4.sheets.map(s=>s.id),['gf-1']);
-    assert.deepEqual(Object.entries(r4.sheets[0].orderReadiness).filter(([,v])=>v.ready!==true).map(([o,v])=>[o,v.key,v.sheetLabel]),[[two,'otherSheetNotReady','SS Sheet 1'],[solo,'otherSheetNotReady','SS Sheet 1']],'found on SS Sheet 1 (not "pooled"); that sheet is not ready because it cannot read the engraving of a piece whose record lost its ids');
+    assert.deepEqual(Object.entries(r4.sheets[0].orderReadiness).filter(([,v])=>v.ready!==true),[],'found on SS Sheet 1 by the derived id, and its engraving decision read by that id too: SS Sheet 1 is ready, nothing waits');
+    lines[solo+'_2'].engraveCandidate=true;   // the same piece with something to engrave and no decision: SS Sheet 1 now waits for it, and GF Sheet 1 names that sheet
+    const r5=await call({op:'laserStatus',sheetIds:['gf-1']});
+    assert.deepEqual(Object.entries(r5.sheets[0].orderReadiness).filter(([,v])=>v.ready!==true).map(([o,v])=>[o,v.key,v.sheetLabel]),[[two,'otherSheetNotReady','SS Sheet 1'],[solo,'otherSheetNotReady','SS Sheet 1']]);
+    // a WRITTEN line that lost its pool ids is as lost as a pooled one (it could also be a SKU with no design, which is only known later): when this sheet is asked
+    // alone, the sheet that lists the line's copy is read too, so the piece is on a sheet and the order is no issue (a sheet that lists ONLY this order)
+    const lone='4170777001',loneLines={};
+    loneLines[lone+'_7001']={orderId:lone,state:'written',quantity:1,poolIds:[],sku:'SKU-7001',engraveCandidate:false,snap:{buyer:'Someone'}};
+    loneLines[lone+'_7002']={orderId:lone,state:'written',quantity:1,poolIds:[lone+'_7002_1'],sku:'SKU-7002',engraveCandidate:false,snap:{buyer:'Someone'}};
+    st.put(RUN,'run9',{runId:'run9',lines:loneLines});
+    mk('x9-sheet','gold',[lone+'_7001_1'],{setId:'set9a',runId:'run9'});mk('y9-sheet','silver',[lone+'_7002_1'],{setId:'set9b',runId:'run9'});
+    st.put(SET,'set9a',{setId:'set9a',seq:3,day:'2026-10-05',runId:'run9',sheetIds:['x9-sheet'],orders:{},status:'labelled',updatedAt:ts,createdAt:ts});
+    st.put(SET,'set9b',{setId:'set9b',seq:4,day:'2026-10-05',runId:'run9',sheetIds:['y9-sheet'],orders:{},status:'labelled',updatedAt:ts,createdAt:ts});
+    const r6=await call({op:'laserStatus',sheetIds:['y9-sheet']});
+    assert.deepEqual(r6.sheets.map(s=>[s.id,s.orderReadiness[lone],s.laser.ready]),[['y9-sheet',{ready:true},true]],'a written line without pool ids, its copy on a sheet that was not asked, is no issue');
     console.log('issues-truth OK');
   }finally{server.close();}
 })().catch(e=>{console.error(e);process.exitCode=1;});
