@@ -20,7 +20,7 @@ const READINESS = process.env.ISSUES_IMPL || path.join(__dirname, '../../charm-n
 const O = require('./issues-oracle.cjs');
 const S = require('./issues-shop.cjs');
 const P = require('./issues-property.cjs');
-const { paulShop } = require('./issues-paul.cjs');
+const { paulShop, paulRound8Shop } = require('./issues-paul.cjs');
 
 const argv = (name, dflt) => { const i = process.argv.indexOf('--' + name); if (i < 0) return dflt; const v = process.argv[i + 1]; return v == null || v.startsWith('--') ? true : isNaN(+v) ? v : +v; };
 const sleep = n => new Promise(r => setTimeout(r, n));
@@ -132,7 +132,8 @@ async function checkShop(shop, tag) {
     const text = clone.textContent.replace(/\s+/g, ' ');
     const head = panel.querySelector('.lisCount');
     if (waitRows.length && !wt.any && head && !head.classList.contains('quiet')) out.push({ type: 'panelWaitCounted', sheet: sid, detail: `the header counts the set's wait: ${SHOW(head.textContent)}` });
-    if (/\bWaits on\b/.test(panel.textContent)) out.push({ type: 'panelWaitsOn', sheet: sid, detail: 'the old words "Waits on" for a sheet of the same set' });
+    // ("Waits on RG Sheet 1, in no set" is the round-8 wording for a real piece on a not-ready sheet that is in NO set: a real wait, said as that; only the plain "Waits on" for the same set is the old one)
+    if (/\bWaits on\b/.test(panel.textContent.replace(/Waits on [A-Z0-9]{2,3} Sheet \d+, in no set/g, ''))) out.push({ type: 'panelWaitsOn', sheet: sid, detail: 'the old words "Waits on" for a sheet of the same set' });
     if (isQuiet) {
       COV.quietPanels++;
       if (rows.length || folded.length || own.length) out.push({ type: 'panelQuietNotAlone', sheet: sid, detail: `a set wait panel lists ${rows.length} order rows, ${own.length} own entries` });
@@ -191,6 +192,54 @@ async function checkShop(shop, tag) {
   return out;
 }
 
+/** Round 8, Paul's order 4170837249 on the screen: GF Sheet 1's '!' Order check panel for RG Sheet 1 held / not ready in no set, in the same set and in another set, with the chain
+ *  completed by hand by each button (print only, Complete Order only, both) or not at all (and reopened). The panel lists the order ONCE for the real piece on the real sheet, says "in no set"
+ *  / the split in its own words, and never names or blames the chain; nothing is listed when RG Sheet 1 is in GF's own set (the set's wait, said where Approve is). */
+async function panelOf(shop, sid) {
+  const pg = boot(), { w, d, L, LI, body, net } = pg, recs = JSON.parse(JSON.stringify(P.serverLike(shop)));
+  w.__rows = JSON.parse(JSON.stringify(S.uiRows(shop)));
+  const sets = shop.sets.map(x => ({ ...x, status: 'saved', name: 'Set ' + x.seq, day: '2026-10-05', seq: x.seq }));
+  L.sections(body); for (const r of recs) L.record(r);
+  for (const g of w.Sets.libraryGroups(sets, recs)) { const card = w.Sets.libraryCard(g, g.sheets, g.sheets); L.place(card, L.group(g, g.sheets).ready, body); }
+  L.changed(); await sleep(40);
+  const bangs = [...body.querySelectorAll('button[data-issues-open]')].filter(b => b.getAttribute('data-issues-id') === sid && !b.hasAttribute('data-issues-quiet')), res = { steps: bangs.map(b => b.getAttribute('data-issues-step')), rows: [], text: '', net };
+  const open = bangs.find(b => b.getAttribute('data-issues-step') === 'orders');
+  if (open) {
+    open.click(); const panel = await until(() => d.getElementById('libIssuesPanel'));
+    if (panel) { res.rows = [...panel.querySelectorAll('.lisRow[data-issue-step="orders"]')].map(x => ({ order: x.getAttribute('data-issue-order'), key: x.getAttribute('data-issue-key'), chip: ((x.querySelector('.lisChip') || {}).textContent || '').trim(), dots: x.querySelectorAll('.lisDot').length })); res.text = panel.textContent.replace(/\s+/g, ' '); res.count = ((panel.querySelector('.lisCount') || {}).textContent || '').trim(); }
+    LI.close(); await sleep(5);
+  }
+  res.net = net.length; w.close();
+  return res;
+}
+async function roundEight() {
+  const out = [], seen = { panels: 0, noSet: 0, split: 0, same: 0 };
+  const PRESS = [['print only', ['print']], ['Complete Order only', ['button']], ['both buttons', ['print', 'button']]];
+  for (const own of ['held', 'noQr', 'unverified']) for (const [pname, presses] of PRESS) {
+    for (const [name, setId, chip] of [['in no set', null, 'Waits on RG Sheet 1, in no set'], ['in another set', 'set-2', 'Split from RG Sheet 1'], ['in the same set', 'set-1', null]]) {
+      const tag = `round 8: RG Sheet 1 ${own}, ${name}, chain ${pname}`, r = await panelOf(paulRound8Shop({ own, setId, presses }), 'gf-sheet-1');
+      const say = (type, detail) => out.push({ type, sheet: 'gf-sheet-1', detail: `${tag}: ${detail}` });
+      if (r.net) say('networkCall', `${r.net} calls`);
+      if (chip === null) { if (r.steps.length) say('round8SameSetBang', `a '!' on ${r.steps.join(',')} for a wait inside GF's own set`); seen.same++; continue; }
+      seen.panels++; seen[setId === null ? 'noSet' : 'split']++;
+      if (!r.steps.includes('orders')) { say('round8NoBang', `no '!' on Order check (steps ${r.steps.join(',')})`); continue; }
+      if (r.rows.length !== 1 || r.rows[0].order !== '4170837249' || r.rows[0].key !== 'otherSheetNotReady') say('round8Rows', `the panel lists ${JSON.stringify(r.rows)}`);
+      else if (r.rows[0].chip !== chip) say('round8Chip', `chip "${r.rows[0].chip}", wanted "${chip}"`);
+      if (/CABLE|chain|Completed/i.test(r.text)) say('round8NamesChain', SHOW(r.text));
+      if (setId === null && !/in no set/.test(r.text)) say('round8NoSetWords', SHOW(r.text));
+      if (/\blines?\b/i.test(r.text)) say('panelCompletedWords', 'the word "lines": ' + SHOW(r.text));
+      if (/^(1|2)\b/.test(r.count) && !/^1\b/.test(r.count)) say('round8Count', `header ${SHOW(r.count)}: one issue, the real piece`);
+    }
+  }
+  // never pressed / reopened: the chain holds GF Sheet 1 as a piece with no SKU, and the RG piece is told beside it as what it is
+  for (const [pname, spec] of [['never pressed', { presses: null }], ['pressed, then reopened', { presses: ['print', 'button'], reopened: true }]]) {
+    const r = await panelOf(paulRound8Shop({ own: 'held', setId: null, ...spec }), 'gf-sheet-1');
+    if (r.rows.length !== 1 || r.rows[0].key !== 'noSku') out.push({ type: 'round8Unpressed', sheet: 'gf-sheet-1', detail: `${pname}: the chain holds it (No SKU): ${JSON.stringify(r.rows)}` });
+    else if (r.rows[0].chip !== 'No SKU') out.push({ type: 'round8Unpressed', sheet: 'gf-sheet-1', detail: `${pname}: chip ${r.rows[0].chip}` });
+  }
+  return { out, seen };
+}
+
 /** One gold sheet with 18 two-piece orders whose other piece is pooled, has no SKU, is held, or sits on a silver sheet that is not ready. */
 function bigShop() {
   const sheets = [{ id: 'big-sheet-1', metal: 'gold', index: 1, own: 'ok', setId: 'set-big' }, { id: 'big-sheet-2', metal: 'silver', index: 1, own: 'noQr', setId: 'set-big' }];
@@ -219,10 +268,12 @@ async function main() {
   };
   await run(paulShop(), 'Paul\'s shop');
   await run(bigShop(), 'a long list (18 orders on one sheet)');
+  let r8 = null;
+  { r8 = await roundEight(); ran++; if (r8.out.length) { bad++; for (const x of r8.out) counts[x.type] = (counts[x.type] || 0) + 1; console.log(`\nUI DISAGREEMENT (Paul's order 4170837249, round 8):\n  ${r8.out.slice(0, 5).map(x => `${x.type} ${x.detail}`).join('\n  ')}`); } }
   for (let i = 0; i < shops && Date.now() - t0 < argv('budget-ms', 60000); i++) { const spec = S.makeSpec(seed0 * 9973 + i, { noLost: false, ghost: true }); pairs += spec.sheets.length; await run(S.materialize(spec), 'seed ' + spec.seed); }
   // the quiet clock and its panel must have been exercised (a harness that never meets a set wait proves nothing)
   if (!COV.quietMarks || !COV.quietPanels || !COV.waitRows) { bad++; counts.coverage = 1; console.log(`\nCOVERAGE: the set's quiet wait was never drawn ${JSON.stringify({ quietMarks: COV.quietMarks, quietPanels: COV.quietPanels, waitRows: COV.waitRows })}`); }
-  console.log(`${bad ? 'FAIL' : 'PASS'}: the Issues list on screen (real LaserReview, set cards and panel) vs the oracle: ${ran} shops (${pairs} random sheets + Paul's), ${bad} disagree ${JSON.stringify(counts)} in ${Date.now() - t0} ms\n  covered: ${JSON.stringify(COV)}`);
+  console.log(`${bad ? 'FAIL' : 'PASS'}: the Issues list on screen (real LaserReview, set cards and panel) vs the oracle: ${ran} shops (${pairs} random sheets + Paul's), ${bad} disagree ${JSON.stringify(counts)} in ${Date.now() - t0} ms\n  covered: ${JSON.stringify(COV)}\n  round 8 (Paul's order 4170837249 with the chain completed by hand): ${JSON.stringify(r8 && r8.seen)}`);
   process.exit(bad ? 1 : 0);
 }
 main().catch(e => { console.error(e); process.exit(1); });

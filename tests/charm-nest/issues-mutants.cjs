@@ -26,6 +26,8 @@ function refIssues(sheet, ctx, mut = {}) {
   // the two mutants that read the custom order's record wrongly look at it directly (the shop's own Charm_Custom_Orders record of the line)
   const handNow = (key, l) => {
     if (mut.forgetsHand) return false;
+    // (round 8) only the Complete Order button releases a piece: a QR label printed from Custom Orders is no completion, as a quick reading of `how` could make it
+    if (mut.printNotHand) { const c = ctx.shop && ctx.shop.customs && ctx.shop.customs[key]; return !!c && c.state !== 'open' && c.how === 'button'; }
     if (mut.reopenIsDone || mut.sheetIsHand) { const c = ctx.shop && ctx.shop.customs && ctx.shop.customs[key]; return !!c && (mut.reopenIsDone || c.state !== 'open') && (mut.sheetIsHand || c.how !== 'sheet'); }
     return l.hand;
   };
@@ -68,12 +70,16 @@ function refIssues(sheet, ctx, mut = {}) {
         const me = O.effSet(sheet);
         if (mut.sameSetWaits || !(me && on.every(s => O.effSet(s) === me))) why = 'otherSheetNotReady';
       }
-      if (why) bad.push({ p, why, on, split: why === 'otherSheetNotReady' && !!O.effSet(sheet) && !(p.l.hold || p.l.changePending) && on.some(s => O.effSet(s) && O.effSet(s) !== O.effSet(sheet)) });
+      const split = why === 'otherSheetNotReady' && !!O.effSet(sheet) && !(p.l.hold || p.l.changePending) && on.some(s => O.effSet(s) && O.effSet(s) !== O.effSet(sheet));
+      // round 8: its not-ready sheet is in no set while this one is in one (the mutant noSetSilent says nothing of it; noSetForSplit calls any other set's sheet "no set")
+      const noSet = why === 'otherSheetNotReady' && !split && !!O.effSet(sheet) && !(p.l.hold || p.l.changePending) && !mut.noSetSilent && on.every(s => !O.effSet(s));
+      if (why) bad.push({ p, why, on, split, noSet });
     }
     if (bad.length) {
-      const sp = bad.find(b => b.split), here = sheet.setSeq ? `Set ${sheet.setSeq}` : '', there = sp ? (() => { const o = sp.on.find(s => O.effSet(s) && O.effSet(s) !== O.effSet(sheet)); return o && o.setSeq ? `Set ${o.setSeq}` : ''; })() : '';
-      out.push({ step: 'orders', key: bad[0].why, orderId: oid, sheetId: sheet.id, pieceCount: pieces.length, ...(sp ? { split: true, ...(here && there && here !== there ? { sets: [here, there] } : {}) } : {}), why: sp && here && there ? `Split between ${here} and ${there}: its other piece` : 'x',
-        pieces: bad.map(b => ({ index: pieces.indexOf(b.p) + 1, lineKey: b.p.key, copy: b.p.copy, poolId: b.p.pid, kind: b.why, sheetLabel: b.on[0] ? O.labelOf(b.on[0]) : null, why: 'x', ...(b.split ? { split: true } : {}) })) });
+      const sp = bad.find(b => b.split), ns = !sp && bad.find(b => b.noSet), here = sheet.setSeq ? `Set ${sheet.setSeq}` : '', there = sp ? (() => { const o = sp.on.find(s => O.effSet(s) && O.effSet(s) !== O.effSet(sheet)); return o && o.setSeq ? `Set ${o.setSeq}` : ''; })() : '';
+      out.push({ step: 'orders', key: bad[0].why, orderId: oid, sheetId: sheet.id, pieceCount: pieces.length, ...(sp ? { split: true, ...(here && there && here !== there ? { sets: [here, there] } : {}) } : ns ? { noSet: true } : {}),
+        why: sp && here && there ? `Split between ${here} and ${there}: its other piece` : ns && bad.length === 1 ? `Its other piece is on ${O.labelOf(ns.on[0])}, which is in no set` : 'x',
+        pieces: bad.map(b => ({ index: pieces.indexOf(b.p) + 1, lineKey: b.p.key, copy: b.p.copy, poolId: b.p.pid, kind: b.why, sheetLabel: b.on[0] ? O.labelOf(b.on[0]) : null, why: b.noSet ? `On ${O.labelOf(b.on[0])}, in no set and not ready yet` : 'x', ...(b.split ? { split: true } : b.noSet ? { noSet: true } : {}) })) });
     }
   }
   return out;
@@ -84,7 +90,9 @@ const MUTANTS = {
   archivedCounts: { archived: 1 }, problemBeatsNested: { problemBeatsNested: 1 }, ordersListed: { ordersListed: 1 }, ignoresQuantity: { noQty: 1 }, noCompletedBefore: { noCompletedBefore: 1 }, loudCompleted: { completedBeforeLoud: 1 },
   // Paul, round 6 point 1: a piece completed by hand is resolved. The mistakes: forgetting it (the stale run record still says 'unmatched'), letting it beat a hold,
   // reading a reopened custom order, or one sent to the sheets (how 'sheet'), as completed by hand
-  handBlocks: { forgetsHand: 1 }, handBeatsHold: { handBeatsHold: 1 }, reopenedStaysResolved: { reopenIsDone: 1 }, sentToSheetsIsHand: { sheetIsHand: 1 }
+  handBlocks: { forgetsHand: 1 }, handBeatsHold: { handBeatsHold: 1 }, reopenedStaysResolved: { reopenIsDone: 1 }, sentToSheetsIsHand: { sheetIsHand: 1 },
+  // round 8: Print QR label alone releases a piece too (either button, or both); and a wait for a sheet in no set is said as that
+  printLeavesItHolding: { printNotHand: 1 }, noSetUnsaid: { noSetSilent: 1 }
 };
 
 function caught(name, mut, shops) {
@@ -106,6 +114,13 @@ function realWithOldRule() {
   const m = { exports: {} }; new Function('module', 'exports', 'self', src.replace(target, 'true'))(m, m.exports, undefined);
   return m.exports;
 }
+/** The REAL module with one rule of round 8 taken out again, built from its own source so it can never drift from it. */
+function realMutant(target, replacement) {
+  const file = require('path').join(__dirname, '../../charm-nest-readiness.js'), src = fs.readFileSync(file, 'utf8');
+  assert(src.includes(target), `the rule is where the mutant expects it: ${target}`);
+  const m = { exports: {} }; new Function('module', 'exports', 'self', src.replace(target, replacement))(m, m.exports, undefined);
+  return m.exports;
+}
 function main() {
   const results = {};
   for (const [name, mut] of Object.entries(MUTANTS)) {
@@ -120,11 +135,19 @@ function main() {
   assert(real, 'the shipped module with the same-set rule put back went undetected by the harness');
   const paulOld = P.disagreementsWith(back, paulShop(), ['rows', 'records', 'pre']).filter(d => d.type === 'falsePositive' || d.type === 'sameSetWaitListed');
   assert(P.mateChecks(back, paulShop()).some(d => d.type === 'sameSetWaitListed') || paulOld.length, 'putting the same-set wait back is caught on a shop shaped like Paul\'s');
+  // round 8, on the code that ships: (1) only a Complete Order press releases a piece (a QR label printed from Custom Orders does not), (2) a wait for a sheet in no
+  // set is worded as the plain wait again
+  const realMuts = { 'print alone does not release': realMutant("c.state!=='open' && c.how!=='sheet'", "c.state!=='open' && c.how==='button'"), 'no-set wait unsaid': realMutant('const noSetFrom=(b,me)=>!!(', 'const noSetFrom=(b,me)=>false && !!(') };
+  const realHits = {};
+  for (const [name, impl] of Object.entries(realMuts)) {
+    let hit = null; for (let i = 0; i < 400 && !hit; i++) { const d = P.disagreementsWith(impl, S.materialize(S.makeSpec(500000 + i)), ['rows', 'records', 'pre']); if (d.length) hit = { shop: i, type: d[0].type }; }
+    assert(hit, `the shipped module with "${name}" went undetected by the harness`); realHits[name] = hit;
+  }
   // the old code, a real mutant: caught on Paul's shop
   const paul = P.oldAgainstOracle(paulShop());
   // (round 7: both sheets are in ONE set, so even the five shared orders are no issue: the old code's 53 listed orders are all false alarms)
   assert(paul.falseAlarms >= 53 && paul.real === 0, 'the old code is caught on a shop shaped like Paul\'s');
-  console.log(`PASS: clean reference agrees with the oracle; ${Object.keys(MUTANTS).length - 1} mutants all caught (${Object.entries(results).filter(([k]) => k !== 'clean').map(([k, v]) => `${k}:${v.type}@${v.shop}`).join(', ')}); same-set rule put back in the shipped module caught (${real.type}@${real.shop}); old code caught on Paul's shop (${paul.falseAlarms} false alarms)`);
+  console.log(`PASS: clean reference agrees with the oracle; ${Object.keys(MUTANTS).length - 1} mutants all caught (${Object.entries(results).filter(([k]) => k !== 'clean').map(([k, v]) => `${k}:${v.type}@${v.shop}`).join(', ')}); same-set rule put back in the shipped module caught (${real.type}@${real.shop}); round-8 rules taken out of the shipped module caught (${Object.entries(realHits).map(([k, v]) => `${k}: ${v.type}@${v.shop}`).join(', ')}); old code caught on Paul's shop (${paul.falseAlarms} false alarms)`);
 }
 if (require.main === module) main();
 module.exports = { refIssues, MUTANTS };

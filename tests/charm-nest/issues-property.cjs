@@ -109,6 +109,15 @@ function listChecks(R, shop, mode, got) {
           if (here && there.length === 1 && e.pieces.length === 1 && !new RegExp('^Split between ' + here + ' and ' + there[0] + ': ').test(e.why)) out.push({ type: 'splitWhy', mode, sheet: sid, order: id, detail: e.why });
           if (/^Waits? on|not ready yet$/i.test(String(e.why))) out.push({ type: 'splitSaysWaits', mode, sheet: sid, order: id, detail: e.why });
         }
+        // round 8: the one honest wait for a real piece on a not-ready sheet that is in NO set says so, in the real piece's and the real sheet's words (never the split's,
+        // never the plain "not ready yet"), and only then; no other issue claims a missing set
+        const wantNoSet = !wantSplit && r.offenders.some(o => o.noSet);
+        if (!!e.noSet !== wantNoSet) out.push({ type: 'wrongNoSetIssue', mode, sheet: sid, order: id, detail: `issue noSet ${!!e.noSet}, oracle ${wantNoSet}` });
+        if (e.noSet) {
+          const nos = r.offenders.filter(o => o.noSet);
+          if (e.pieces.length === 1 && nos.length === 1 && e.key === 'otherSheetNotReady' && !new RegExp('^Its other piece is on ' + nos[0].sheets[0].label + ', which is in no set').test(e.why)) out.push({ type: 'noSetWhy', mode, sheet: sid, order: id, detail: e.why });
+          if (/^Split|another set/i.test(String(e.why)) && e.pieces.length === 1) out.push({ type: 'noSetSaysSplit', mode, sheet: sid, order: id, detail: e.why });
+        }
         out.push(...pieceChecks(e, r, t, mode, sid, id));
       }
       for (const id of Object.keys(real)) if (!ids.includes(id)) out.push({ type: 'falseNegative', mode, sheet: sid, order: id, detail: JSON.stringify(real[id].offenders.map(o => [o.lineKey, o.copy, [...o.reasons], o.sheets.map(s => s.label)])) });
@@ -155,6 +164,10 @@ function pieceChecks(e, r, t, mode, sid, id) {
     if (o.sheets.length ? !wantLabels.includes(p.sheetLabel) : p.sheetLabel != null) out.push({ type: 'wrongSheetName', mode, sheet: sid, order: id, detail: `piece ${p.poolId} on ${JSON.stringify(wantLabels)} but entry says ${p.sheetLabel}` });
     // an order split between two sets stays a real issue and says so; a wait inside the sheet's own set is never listed (round 7)
     if (p.kind === 'otherSheetNotReady' && !!p.split !== !!o.split) out.push({ type: 'wrongSplit', mode, sheet: sid, order: id, detail: `piece ${p.poolId}: split ${!!p.split}, oracle ${!!o.split}` });
+    // (round 8) a piece on a not-ready sheet that is in no set is flagged noSet, with that said in its own line; nothing else is
+    if (p.kind === 'otherSheetNotReady' && !!p.noSet !== !!o.noSet) out.push({ type: 'wrongNoSet', mode, sheet: sid, order: id, detail: `piece ${p.poolId}: noSet ${!!p.noSet}, oracle ${!!o.noSet}` });
+    if (p.noSet && !/in no set/.test(String(p.why))) out.push({ type: 'noSetPieceWords', mode, sheet: sid, order: id, detail: `piece ${p.poolId}: ${p.why}` });
+    if (p.kind === 'otherSheetNotReady' && !p.noSet && !p.split && /in no set/.test(String(p.why))) out.push({ type: 'noSetClaimed', mode, sheet: sid, order: id, detail: `piece ${p.poolId}: ${p.why}` });
     if (p.kind && !o.reasons.has(p.kind)) out.push({ type: 'wrongPieceKind', mode, sheet: sid, order: id, detail: `piece ${p.poolId} shown as ${p.kind}; real: ${[...o.reasons].join('/')}` });
   }
   for (const k of off.keys()) if (!seen.has(k)) out.push({ type: 'missingPiece', mode, sheet: sid, order: id, detail: `blocking piece ${k} not listed` });
@@ -269,7 +282,7 @@ const allChecks = shop => {
 function runProperty() {
   const shops = argv('shops', 2500), seed0 = argv('seed', 1), budget = argv('budget-ms', 25000), dual = !!argv('dual', false), noLost = !!argv('no-lost', false), ghost = !!argv('ghost', false), t0 = Date.now(), counts = {};
   let ran = 0, bad = 0, sheets = 0, issuesSeen = 0, expected = 0;
-  const cov = { sameSetDropped: 0, splitIssues: 0, setWaits: 0, shopsWithDrop: 0 };   // what the shops exercised: orders the OLD rule listed for a same-set wait, splits kept, set waits said
+  const cov = { sameSetDropped: 0, splitIssues: 0, setWaits: 0, shopsWithDrop: 0, noSetIssues: 0, handPrintOnly: 0, handCompleteOnly: 0, handBoth: 0 };   // what the shops exercised: orders the OLD rule listed for a same-set wait, splits kept, set waits said
   for (let i = 0; i < shops && Date.now() - t0 < budget; i++, ran++) {
     const spec = S.makeSpec(seed0 * 100003 + i, { dual, noLost, ghost }), shop = S.materialize(spec), d = allChecks(shop);
     const tr = O.truth(shop);
@@ -279,7 +292,10 @@ function runProperty() {
       cov.sameSetDropped += Object.keys(was.sheets[sid].orders).filter(o => !tr.sheets[sid].orders[o]).length;
       cov.splitIssues += Object.values(tr.sheets[sid].orders).filter(o => o.offenders.some(x => x.split)).length;
       cov.setWaits += O.setWaits(shop, tr, sid).length;
+      cov.noSetIssues += Object.values(tr.sheets[sid].orders).filter(o => !o.offenders.some(x => x.split) && o.offenders.some(x => x.noSet)).length;
     }
+    // the presses behind the pieces completed by hand that the shop's sheets could be held back by (print only, Complete Order only, both): each must have been exercised
+    for (const o of spec.orders) for (const l of o.lines) if (l.hand && l.hand.state === 'completed' && l.hand.presses && l.state !== 'gone') { const k = new Set(l.hand.presses); if (k.size > 1) cov.handBoth++; else if (k.has('print')) cov.handPrintOnly++; else cov.handCompleteOnly++; }
     if (Object.keys(was.sheets).some(sid => Object.keys(was.sheets[sid].orders).some(o => !tr.sheets[sid].orders[o]))) cov.shopsWithDrop++;
     if (!d.length) continue;
     bad++;
@@ -290,8 +306,8 @@ function runProperty() {
     }
   }
   console.log(`${bad ? 'FAIL' : 'PASS'}: ${ran} shops, ${sheets} sheets, ${expected} real order issues expected, ${bad} shops disagree ${JSON.stringify(counts)} in ${Date.now() - t0} ms`);
-  console.log(`  covered: ${JSON.stringify(cov)}  (same-set waits the old rule listed and the new one does not; orders split between two sets, still listed; quiet set waits expected)`);
-  if (!argv('no-coverage', false) && ran >= 300 && (cov.sameSetDropped < 5 || cov.splitIssues < 5 || cov.setWaits < 5)) { console.log('FAIL: the random shops did not exercise the same-set rule, the split-between-sets rule and the set wait'); return false; }
+  console.log(`  covered: ${JSON.stringify(cov)}  (same-set waits the old rule listed and the new one does not; orders split between two sets, still listed; quiet set waits expected; waits for a sheet in no set, said so; pieces completed by hand by print only / Complete Order only / both)`);
+  if (!argv('no-coverage', false) && ran >= 300 && (cov.sameSetDropped < 5 || cov.splitIssues < 5 || cov.setWaits < 5 || cov.noSetIssues < 5 || cov.handPrintOnly < 5 || cov.handCompleteOnly < 5 || cov.handBoth < 5)) { console.log('FAIL: the random shops did not exercise the same-set rule, the split-between-sets rule, the set wait, the no-set wait and the three press states of a piece completed by hand'); return false; }
   return bad === 0;
 }
 
