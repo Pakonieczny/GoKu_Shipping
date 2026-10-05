@@ -262,6 +262,10 @@ assert.equal(R.sheet(fixed).ready,true);assert.equal(R.laserSheet(fixed).ready,t
   assert.deepEqual(R.issues(ssX,{rows:rs,allSheets:[gf,ssX],steps:['orders']}),[],'GF Sheet 1 is ready, so the order on both sheets is no issue');
   const a=sheet('a-sheet','gold',['50_a_1']),b=sheet('b-sheet','silver',['51_a_1']),set={setId:'set1',sheetIds:['a-sheet','b-sheet']};
   assert.deepEqual(R.issues(a,{rows:[row('50','a'),row('51','a')],allSheets:[a,b],set,sheets:[a,b]}),[],'two ready sheets of one set hold nothing in recompute mode');
+  for(const ids of [['60_a_1','60_a_3'],['60_a_3','60_a_1']]){
+    const p=R.pieces([row('60','a',{quantity:3,poolIds:ids})],[sheet('s60x','gold',['60_a_1','60_a_3'])])['60'];
+    assert.deepEqual(p.map(x=>[x.index,x.key,x.sheetId]),[[1,'60_a_1','s60x'],[2,'60_a_2',null],[3,'60_a_3','s60x']],'numbered by copy number, whatever order the record lists them in');
+  }
   const mate=sheet('b-sheet','silver',['51_a_1'],{approved:false});
   assert.deepEqual(R.issues(a,{rows:[row('50','a'),row('51','a')],allSheets:[a,mate],set,sheets:[a,mate]}).map(i=>[i.key,i.label]),[['waitsOnSheet','SS Sheet 1']]);
 }
