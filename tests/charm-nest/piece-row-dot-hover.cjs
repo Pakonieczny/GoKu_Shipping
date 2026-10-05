@@ -120,7 +120,8 @@ async function main() {
     assert.deepEqual(m, { opened: 0, shown: false, grown: 0 }, 'a quick pass over the dots opens nothing: ' + JSON.stringify(m));
   };
   const rowsInfo = page => page.evaluate(() => [...document.querySelectorAll('#owPcSum .owPcRow')].map(r => ({ key: (r.querySelector('[data-pdot]') || { getAttribute: () => '' }).getAttribute('data-pdot-piece'), dots: [...r.querySelectorAll('i[data-pdot]')].map(d => ({ step: d.getAttribute('data-pdot'), on: d.classList.contains('on'), label: d.getAttribute('aria-label'), tab: d.getAttribute('tabindex'), role: d.getAttribute('role'), title: d.getAttribute('title'), zoom: d.getAttribute('data-zoom-dot'), delay: d.getAttribute('data-zoom-delay'), group: d.getAttribute('data-zoom-group'), rid: d.getAttribute('data-pdot-rid') })), btns: [...r.querySelectorAll('button')].map(b => b.textContent.trim()).filter(Boolean) })));
-  const nRows = page => page.evaluate(() => document.querySelectorAll('#owPcSum .owPcRow').length);
+  // (how many rows are the selected piece: a press on a dot must select none)
+  const nRows = page => page.evaluate(() => document.querySelectorAll('#owPcSum .owPcRow.sel').length);
 
   try {
     const { context, page } = await open();
@@ -167,11 +168,11 @@ async function main() {
       assert(ms >= 330, `a pointer that left the row and came back waits the whole delay (${Math.round(ms)} ms)`); await away(page); }
 
     // ── 4 · a click opens at once and holds; a second click, Esc or a scroll puts it back; it never selects the row ──
-    { const sel = dot(gf, 'laser'), c = await centre(page, sel), n0 = await nRows(page), picked = () => page.evaluate(() => document.querySelectorAll('#owPcSum .owPcRow').length);
+    { const sel = dot(gf, 'laser'), c = await centre(page, sel), n0 = await nRows(page), picked = () => nRows(page);
       await page.mouse.move(c.x - 60, c.y - 30); await page.mouse.move(c.x, c.y, { steps: 2 }); await page.evaluate(() => { window.__t.open = 0; }); await page.mouse.down(); await page.mouse.up(); assert.equal(await shownWithin(page, sel, 1500), true, 'a click opens the card');
       const atOnce = await page.evaluate(() => window.__t.open - window.__t.down); assert(atOnce >= 0 && atOnce < 200, `at once, not after the rest (${Math.round(atOnce)} ms after the press)`);
       await sleep(300); let m = await read(page, sel); assert(m.k >= 1.5);
-      assert.equal(await picked(), n0, 'a click on a dot does not select the row (the list of pieces is as it was)');
+      assert.equal(await picked(), 0, 'a click on a dot does not select the row'); assert.equal(n0, 0);
       await sleep(900); m = await read(page, sel); assert.equal(m.shown, true, 'held while the pointer stays');
       await page.mouse.down(); await page.mouse.up(); assert.equal(await goneWithin(page, sel), true, 'a second click puts it back');
       await page.mouse.down(); await page.mouse.up(); assert.equal(await shownWithin(page, sel, 1500), true);
@@ -179,7 +180,9 @@ async function main() {
       await page.mouse.move(c.x + 1, c.y + 1); await page.mouse.down(); await page.mouse.up(); assert.equal(await shownWithin(page, sel, 1500), true);
       await page.evaluate(() => document.querySelector('.owBody').dispatchEvent(new Event('scroll'))); assert.equal(await goneWithin(page, sel), true, 'a scroll puts it back');
       await page.mouse.move(c.x, c.y); await page.mouse.down(); await page.mouse.up(); await shownWithin(page, sel, 1500); await page.mouse.move(c.x + 220, c.y + 90, { steps: 4 });
-      assert.equal(await goneWithin(page, sel), true, 'moving away puts it back'); assert.equal(await picked(), n0); await away(page); }
+      assert.equal(await goneWithin(page, sel), true, 'moving away puts it back'); assert.equal(await picked(), 0);
+      // (the same detector sees a real selection: a press on the row's name picks the piece, and again puts it back)
+      await away(page); await page.click(`#owPcSum .owPcRow[data-piece="${gf}"] .owPcName`); assert.equal(await picked(), 1, 'the detector: a press on the name selects the row'); await page.click(`#owPcSum .owPcRow[data-piece="${gf}"] .owPcName`); assert.equal(await picked(), 0); await away(page); }
 
     // ── 5 · the card's words ──
     { // a done step: who, where and when
@@ -290,8 +293,8 @@ async function main() {
     // ── 11 · touch: a tap opens at once and holds; a tap elsewhere puts it back ──
     { const { context: tctx, page: tp } = await open({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
       const sel = dot(gf, 'sorted'); await tp.evaluate(sel => document.querySelector(sel).scrollIntoView({ block: 'center' }), sel); await sleep(250);
-      const n0 = await nRows(tp); await tp.tap(sel); await sleep(250); let m = await read(tp, sel); assert.equal(m.shown, true, 'touch: a tap opens the card at once'); assert.equal(m.tip.state, 'Done'); assert.equal(await nRows(tp), n0, 'and does not select the row');
-      await tp.tap(sel); assert.equal(await goneWithin(tp, sel), true, 'a second tap puts it back'); await tp.tap(sel); assert.equal(await shownWithin(tp, sel, 1500), true);
+      const n0 = await nRows(tp); await tp.tap(sel); await sleep(600); let m = await read(tp, sel);   // (taps are apart by more than a double-tap) assert.equal(m.shown, true, 'touch: a tap opens the card at once'); assert.equal(m.tip.state, 'Done'); assert.equal(await nRows(tp), n0, 'and does not select the row');
+      await tp.tap(sel); assert.equal(await goneWithin(tp, sel), true, 'a second tap puts it back'); await sleep(600); await tp.tap(sel); assert.equal(await shownWithin(tp, sel, 3000), true); await sleep(600);
       await tp.tap('.owHead', { position: { x: 6, y: 6 } }).catch(() => {}); assert.equal(await goneWithin(tp, sel), true, 'a tap elsewhere puts it back');
       await tctx.close(); }
 
