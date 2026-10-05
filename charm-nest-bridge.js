@@ -5702,17 +5702,19 @@ const LaserReview = window.LaserReview = (()=>{
 @container (min-width:430px){.flowStep span{display:block}.flowNow{display:none}.flowFoot:not(:has(.flowBusy)){display:none}}
 .flowBusy{flex:none;display:inline-flex;align-items:center;gap:5px;font-size:11px;color:var(--ink45)}
 .flowBusy .spin{width:10px;height:10px;border:2px solid rgba(0,0,0,.15);border-top-color:var(--ink45);border-radius:50%;animation:spin .7s linear infinite}
-button.flowDot{appearance:none;-webkit-appearance:none;margin:0;padding:0;cursor:pointer;-webkit-tap-highlight-color:transparent;transition:transform .15s ease,box-shadow .15s ease}
+button.flowDot{appearance:none;-webkit-appearance:none;margin:0;padding:0;cursor:pointer;-webkit-tap-highlight-color:transparent;transition:box-shadow .15s ease}
 button.flowDot::before{content:"";position:absolute;inset:-11px}
-button.flowDot:hover{transform:scale(1.14)}
-button.flowDot:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
+i.flowDot::before{content:"";position:absolute;inset:-7px}
+.flowDot:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
+.flowDot.sealZoomed{box-shadow:0 0 0 calc(1.5px / var(--zk,1)) var(--ring,var(--line))!important}
+.flowStep.done{--ring:var(--sage)}.flowStep.blocked{--ring:var(--clay)}.flowStep.waiting.current{--ring:var(--gold2)}.flowStep.ready{--ring:var(--sage)}
 .flowStep.waiting .flowBang{background:var(--card);border-color:var(--gold2);color:#8a6a1f}
 .flowStep.waiting .flowBang::after{display:none}
 .flowStep.waiting .flowWait{background:var(--card);border-color:var(--ink25);color:var(--ink45)}
 .flowStep.waiting.current .flowWait{border-color:var(--ink25);box-shadow:0 0 0 3px var(--line)}
 .flowStep.waiting.current .flowWait::after{display:none}
 .flowWait svg{width:10px;height:10px;stroke:var(--ink45);stroke-width:1.5}
-@media (prefers-reduced-motion:reduce){button.flowDot{transition:none}button.flowDot:hover{transform:none}}`;
+@media (prefers-reduced-motion:reduce){button.flowDot{transition:none}}`;
     document.head.appendChild(s);
   }
   /* What a card shows (Paul, 5 Oct: "I don't need 2 green approve this sheet button ... I also don't want this large progress bar.
@@ -5799,7 +5801,7 @@ button.flowDot:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
       :waitOn(e,s,w)
       ?`${hook(s,'flowWait',true)} aria-label="This sheet is done. Its set waits for another sheet">${CLOCK}</button>`
       :`<i class="flowDot">${s.state==='done'?CHECK:s.state==='blocked'?'!':''}</i>`;
-    return `<ol class="flowRail" aria-label="Process steps">${e.steps.map(s=>`<li class="flowStep ${s.state}${s.current?' current':''}${s.current && e.ready && s.key==='laser'?' ready':''}"${s.current?' aria-current="step"':''} title="${esc(`${s.label}: ${s.detail}`)}">${dot(s)}<span>${esc(s.label)}</span></li>`).join('')}</ol>`;
+    return `<ol class="flowRail" aria-label="Process steps">${e.steps.map(s=>`<li class="flowStep ${s.state}${s.current?' current':''}${s.current && e.ready && s.key==='laser'?' ready':''}"${s.current?' aria-current="step"':''}>${dot(s)}<span>${esc(s.label)}</span></li>`).join('')}</ol>`;
   }
   function flowBox(slot){
     const key=`${slot.kind}:${slot.id}`;let box=[...slot.host.children].find(x=>x.classList?.contains('flowBox') && x.dataset.flowFor===key);
@@ -5809,16 +5811,69 @@ button.flowDot:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
     slot.host.insertBefore(box,slot.host.querySelector(':scope > .approveBox') || null);   // (under the sheet, and under its QR label; its Approve button follows)
     return box;
   }
+  /* The milestone circles (Paul, 5 Oct: "a slight expanding zoom for each of the timeline milestones similar to the Seals and a small extra info
+     popup over each milestone when hovering"). Each circle is a zoom dot of the shared seal engine (charm-nest-motion.js, data-zoom-dot) and carries
+     what the small card over it says (data-tip: the step's name, its state in plain words, the one line explain() gives for it, and who and when
+     for a step the laser finished: only what the sheet's record already holds), as its own label too. The card is drawn by charm-nest-rail-tip.js.
+     A redraw patches the rail where it stands (railPaint), so the circle a pointer or the keyboard is on is the same element after it and
+     its zoom and card go on; no circle has a listener of its own. */
+  const TIP_WAITS={orders:1,laser:1};
+  const tipState=s=>s.state==='done'?'Done':s.state==='blocked'?'Blocked':!s.current?(s.key==='laser' || s.key==='completed'?'Not started':'Waiting'):TIP_WAITS[s.key]?'Waiting':'In progress';
+  function tipBy(s,id){
+    if(s.state!=='done' || (s.key!=='laser' && s.key!=='completed'))return '';
+    const rec=records.get(id),stamp=rec && (R.processStamps?.(rec) || []).filter(x=>x.how==='laserDone' && +x.at>0).pop(),at=+(rec?.laserDoneAt || stamp?.at || 0),by=String(rec?.laserDoneBy || stamp?.by || '').trim();
+    if(!(at>0))return by;
+    let when='';try{when=new Date(at).toLocaleString(undefined,{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'});}catch(_){}
+    return [by,when].filter(Boolean).join(' · ');
+  }
+  function railStamp(ol,e,id){
+    [...ol.children].forEach((li,i)=>{
+      const s=e.steps[i],dot=li.querySelector('.flowDot');if(!s || !dot)return;
+      const by=tipBy(s,id),state=tipState(s);
+      dot.setAttribute('data-zoom-dot','');dot.setAttribute('data-step',s.key);
+      dot.setAttribute('data-tip',[s.label,state,s.detail,by].join('\n'));
+      dot.setAttribute('aria-label',`${s.label}. ${state}. ${s.detail}${by?` ${by}.`:''}`);
+      if(dot.tagName==='I'){dot.setAttribute('role','img');dot.setAttribute('tabindex',s.current?'0':'-1');}
+      else if(dot.hasAttribute('data-issues-open'))dot.setAttribute('aria-description',dot.hasAttribute('data-issues-quiet')?'Press to see what this sheet waits for':'Press to see what holds this sheet back');   // (the label is the card's words; what a press does is said apart)   // (one stop in the rail for the keyboard: the circle it is at; the arrow keys move along it, charm-nest-rail-tip.js)
+    });
+  }
+  // one rail patched into another: the elements stay, so does whatever the page has put on them (the zoom's class and style, the focus, the '!' panel's marks)
+  const KEEP_ATTR={class:1,'aria-expanded':1,'aria-controls':1,style:1};
+  function attrsInto(a,b,skip){
+    for(const n of [...a.getAttributeNames()])if(!b.hasAttribute(n) && !(skip && skip[n]))a.removeAttribute(n);
+    for(const n of b.getAttributeNames())if(!(skip && skip[n]) && a.getAttribute(n)!==b.getAttribute(n))a.setAttribute(n,b.getAttribute(n));
+  }
+  function classInto(a,b){
+    const want=new Set(b.classList);if(a.classList.contains('sealZoomed'))want.add('sealZoomed');
+    for(const c of [...a.classList])if(!want.has(c))a.classList.remove(c);
+    for(const c of want)if(!a.classList.contains(c))a.classList.add(c);
+  }
+  function railPaint(box,html,e,id){
+    const tpl=document.createElement('template');tpl.innerHTML=html;
+    const nu=tpl.content,newOl=nu.querySelector('.flowRail'),ol=box.querySelector(':scope > .flowRail');
+    if(newOl)railStamp(newOl,e,id);
+    if(!ol || !newOl || ol.children.length!==newOl.children.length){box.replaceChildren(...nu.childNodes);return;}
+    const foot=box.querySelector(':scope > .flowFoot'),newFoot=nu.querySelector('.flowFoot');
+    attrsInto(ol,newOl);
+    [...ol.children].forEach((li,i)=>{
+      const nl=newOl.children[i];attrsInto(li,nl,KEEP_ATTR);classInto(li,nl);
+      const a=li.querySelector('.flowDot'),b=nl.querySelector('.flowDot');
+      if(a && b && a.tagName===b.tagName){attrsInto(a,b,KEEP_ATTR);classInto(a,b);if(a.innerHTML!==b.innerHTML)a.innerHTML=b.innerHTML;}
+      else if(a && b)a.replaceWith(b);
+      const x=li.querySelector(':scope > span'),y=nl.querySelector(':scope > span');if(x && y && x.textContent!==y.textContent)x.textContent=y.textContent;
+    });
+    if(foot && newFoot)foot.replaceWith(newFoot);else if(newFoot)box.appendChild(newFoot);else foot?.remove();
+  }
   function flowDraw(box,e,id,w){
     const pending=!e.ready && !e.done,checking=pending && (!!sealPoll || checkingNow || live.checking);
-    const sig=JSON.stringify([e.ready,e.done,e.step,e.steps.map(s=>[s.state,s.detail,s.current?1:0]),checking,box.dataset.issuesOpen || '',w?[w.real,w.waits]:0]);
+    const sig=JSON.stringify([e.ready,e.done,e.step,e.steps.map(s=>[s.state,s.detail,s.current?1:0]),checking,box.dataset.issuesOpen || '',w?[w.real,w.waits]:0,e.done?[records.get(id)?.laserDoneAt || 0,records.get(id)?.laserDoneBy || '']:0]);
     if(box._sig===sig)return;
     box._sig=sig;
     const state=e.done?'done':e.ready?'ready':e.steps.some(s=>s.current && s.state==='blocked')?'blocked':'waiting',at=e.steps.findIndex(s=>s.current),now=e.steps[at];
     const kept=box.contains(document.activeElement)?document.activeElement.dataset?.step || '':'';
     box.dataset.state=state;
-    box.innerHTML=railHtml(e,id,box.dataset.issuesOpen,w)+`<div class="flowFoot">${now?`<div class="flowNow"><b>${esc(now.label)}</b> · step ${at+1} of ${e.steps.length}</div>`:''}${checking?'<span class="flowBusy" role="status"><i class="spin"></i>Checking…</span>':''}</div>`;
-    if(kept)box.querySelector(`[data-issues-open][data-step="${kept}"]`)?.focus({preventScroll:true});   // (a redraw keeps the keyboard where it was)
+    railPaint(box,railHtml(e,id,box.dataset.issuesOpen,w)+`<div class="flowFoot">${now?`<div class="flowNow"><b>${esc(now.label)}</b> · step ${at+1} of ${e.steps.length}</div>`:''}${checking?'<span class="flowBusy" role="status"><i class="spin"></i>Checking…</span>':''}</div>`,e,id);
+    if(kept){const f=box.querySelector(`.flowDot[data-step="${kept}"]`);if(f && document.activeElement!==f)f.focus({preventScroll:true});}   // (a redraw keeps the keyboard where it was)
   }
   function flowDecorate(card,lookup){
     try{
