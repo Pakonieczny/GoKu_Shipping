@@ -3558,9 +3558,11 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       k.at = at.length ? Math.min(...at) : 0;
       k.row = rs[0] || null; k.area = k.pieces.reduce((n, z) => n + (+z.c.areaPt2 || 0), 0);
       k.waiting = k.pieces.every(z => !z.placed);
+      // a waiting order released from hold (frontAt) comes ahead of the other waiting orders, the one released first first (Paul, 5 Oct)
+      k.front = k.waiting ? Math.min(...rs.map(r => +r.frontAt || 0).concat(k.pieces.map(z => +z.c.frontAt || 0)).filter(v => v > 0), Infinity) : 0; if (!isFinite(k.front)) k.front = 0;
       out.push(k);
     }
-    return out.sort((a, b) => (a.at || 9e15) - (b.at || 9e15) || a.rid.localeCompare(b.rid));
+    return out.sort((a, b) => (a.front && b.front ? a.front - b.front : b.front ? 1 : a.front ? -1 : 0) || (a.at || 9e15) - (b.at || 9e15) || a.rid.localeCompare(b.rid));
   }
   function plateGrid(target) {
     const job = buildJob(target), byId = new Map(target.charms.map(c => [c.id, c]));
