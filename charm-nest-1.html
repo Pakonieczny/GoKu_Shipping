@@ -3890,12 +3890,13 @@ function removePage(pg) {
 /** A multi-piece order is never split across sheets: if any of its pieces was held back, the whole order goes to the next sheet. */
 function keepOrdersWhole(sh, byId) {
   const orderOf = id => { const c = byId.get(id); return c ? (c.order || c.id) : id; };
+  const rank = typeof orderRank === "function" ? orderRank : c => +(c && c.orderDate) || 0;   // (the date the nest ranks an order by; one released from hold is ahead of every date)
   const bad = new Set(sh.rejects.map(orderOf));
   // a topping-up sheet takes any later order that fits its gaps, so a younger one is not lifted for an older miss
-  const dated = !(sh.topup && !sh.topup.closedAt) && [...byId.values()].some(c => orderRank(c) > 0);
-  const cutoff = dated && sh.rejects.length ? Math.min(...sh.rejects.map(id => orderRank(byId.get(id)))) : Infinity;
+  const dated = !(sh.topup && !sh.topup.closedAt) && [...byId.values()].some(c => rank(c) > 0);
+  const cutoff = dated && sh.rejects.length ? Math.min(...sh.rejects.map(id => rank(byId.get(id)))) : Infinity;
   const locked=new Set([...(sh.roseProtected?.placements||[]),...(sh.appendOnly?sh.nestInitial||[]:[])].map(p=>p.id));
-  const lifted = sh.placements.filter(p => !locked.has(p.id)&&(bad.has(orderOf(p.id)) || (dated && orderRank(byId.get(p.id)) > cutoff)));
+  const lifted = sh.placements.filter(p => !locked.has(p.id)&&(bad.has(orderOf(p.id)) || (dated && rank(byId.get(p.id)) > cutoff)));
   if (!lifted.length) return;
   sh.placements = sh.placements.filter(p => !lifted.includes(p));
   sh.rejects.push(...lifted.map(p => p.id));
@@ -4320,7 +4321,7 @@ const FEED_ORDERS = 3;
 const orderKey = c => String(c.order || c.id);
 /* The date the nest's oldest-first rule reads for a piece: its order's date, and for a piece of an order released from hold
    (frontAt) a time ahead of every real order date, so it is placed first, in the order the holds were released (Paul, 5 Oct). */
-const orderRank = c => CharmNestOrders.rankDate(c);
+const orderRank = c => (typeof CharmNestOrders !== "undefined" && CharmNestOrders.rankDate ? CharmNestOrders.rankDate(c) : +(c && c.orderDate) || 0);
 /** The charms this search places, and those it leaves waiting for their turn (sh.feedWait). */
 function feedTurn(sh, items) {
   sh.feedWait = null;

@@ -284,7 +284,7 @@ async function run(kind, browser) {
 
     check(!errors.length, 'no page errors ' + errors.join(' | '));
   } catch (e) { fails.push(`${kind}: ${e.message}`); console.log(`  FAIL ${kind} · ${e.stack || e.message}`); }
-  finally { try { fs.writeFileSync(path.join(process.env.TMPDIR || '/tmp', `order-release-${kind}-console.log`), said.join('\n')); } catch (_) {} await context.close(); srv.close(); }
+  finally { try { fs.writeFileSync(path.join(process.env.LOGDIR || require('os').tmpdir(), `order-release-${kind}-console.log`), said.join('\n')); } catch (_) {} await context.close(); srv.close(); }
 }
 
 (async () => {
