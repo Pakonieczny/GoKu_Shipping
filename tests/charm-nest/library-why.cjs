@@ -1,8 +1,8 @@
 // The Library says where a sheet stands on the way to Laser cutting: ONE small step rail directly under each sheet (a set of one
 // sheet, a set of several, a loose group alike), a '!' button on the step that holds a sheet that is not ready, and nothing at
-// all at set level: no set rail, no "what is left" line, no checklist (Paul, 5 Oct: "remove this UI completely from a multi
-// sheets set ... each sheet has its own progress timeline"). The real LaserReview and set card code in a DOM, offline fixtures
-// only (no cloud, no live set).
+// all at set level but ONE Approve button at the bottom of the card: no set rail, no "what is left" line, no checklist (Paul, 5 Oct:
+// "remove this UI completely from a multi sheets set ... each sheet has its own progress timeline"); round 12: one Approve button per
+// set, none on the sheets inside it. The real LaserReview and set card code in a DOM, offline fixtures only (no cloud, no live set).
 const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),{JSDOM}=require('jsdom');
 const root=path.join(__dirname,'../..');
 const tick=(n=40)=>new Promise(r=>setTimeout(r,n));
@@ -36,7 +36,9 @@ function sheet(id,{n=28,metal='gold',setId='set1',index=1,base=1000}={}){
   const bangs=box=>[...box.querySelectorAll('[data-issues-open]')];
   const pressed=[];d.addEventListener('click',e=>{const b=e.target.closest?.('[data-issues-open]');if(b)pressed.push([b.dataset.issuesId,b.dataset.issuesStep]);});
   const noSetLevel=card=>{
-    assert.equal(card.querySelectorAll(':scope > .flowBox, :scope > .approveBox').length,0,'a set card carries no rail and no Approve button of its own');
+    assert.equal(card.querySelectorAll(':scope > .flowBox').length,0,'a set card carries no rail of its own');
+    const own=[...card.querySelectorAll(':scope > .approveBox')];assert(own.length<=1 && (!own.length || card.lastElementChild===own[0]),'a set card carries at most ONE Approve button, last, under its sheets');
+    assert.equal(card.querySelectorAll('.librarySheet .approveBox').length,0,'and no sheet that is part of the set has one');
     assert.equal(card.querySelectorAll('.flowLine, .flowList, [data-flow-toggle], .flowText, .flowItem').length,0,'no "what is left" line and no checklist anywhere on it');
     assert(!card.querySelector(':scope > .sheetsRow').previousElementSibling.matches('.flowBox, .approveBox'),'nothing sits between the set title and its sheets');
   };
@@ -56,8 +58,8 @@ function sheet(id,{n=28,metal='gold',setId='set1',index=1,base=1000}={}){
     noSetLevel(blocked);
     assert.equal(flows(blocked).length,1,'a set of one sheet has exactly one rail: its sheet\'s, not a set\'s on top');
     const box=flows(blocked)[0];assert.equal(box.dataset.flowFor,'sheet:gf1');assert.equal(box.dataset.state,'blocked');
-    assert.deepEqual(stepsOf(box),[['Nesting','done',false],['Engraving','done',false],['Back files','done',false],['QR label','done',false],['Order check','blocked',true],['Laser cutting','waiting',false],['Completed','waiting',false]]);
-    assert.equal(box.querySelectorAll('.flowStep.done .flowDot svg').length,4,'done steps carry a check');
+    assert.deepEqual(stepsOf(box),[['Nesting','done',false],['Engraving','done',false],['Order check','blocked',true],['Laser cutting','waiting',false],['Completed','waiting',false]]);
+    assert.equal(box.querySelectorAll('.flowStep.done .flowDot svg').length,2,'done steps carry a check');
     assert.match(box.querySelector('.flowStep.blocked .flowDot').textContent,/!/,'the blocked step is marked');
     // the '!' is a real button with the stable hook the issues panel attaches to
     assert.equal(bangs(box).length,1,"one '!' on the sheet that is not ready");
@@ -67,7 +69,7 @@ function sheet(id,{n=28,metal='gold',setId='set1',index=1,base=1000}={}){
     assert.equal(bang.getAttribute('aria-haspopup'),'dialog');assert.equal(bang.getAttribute('aria-expanded'),'false');assert.match(bang.getAttribute('aria-label'),/^Order check\. Blocked\. /);assert.match(bang.getAttribute('aria-description'),/holds this sheet back/);
     assert.equal(bang.classList.contains('flowDot'),true,'it keeps the dot\'s look');
     assert.equal(box.querySelectorAll('.flowLine, .flowList, [data-flow-toggle]').length,0,'no red line and no checklist toggle under the rail');
-    assert.match(box.querySelector('.flowNow').textContent,/Order check · step 5 of 7/);
+    assert.match(box.querySelector('.flowNow').textContent,/Order check · step 3 of 5/);
     // where it sits: in the sheet's own article, outside the clickable preview card, under the QR label, above its one Approve button
     const art=box.parentElement;assert(art.classList.contains('librarySheet'),'the rail sits in its sheet\'s article');
     assert(!blocked.querySelector('.libCard').contains(box),'not inside the sheet card (its click opens the sheet)');
@@ -86,19 +88,23 @@ function sheet(id,{n=28,metal='gold',setId='set1',index=1,base=1000}={}){
     assert.equal(quiet.querySelector('.approveBox [data-approve-reason]'),null);
     quiet.remove();
     const steady=sheet('gf9',{n:1,setId:'set9',base:9000});steady.solidIncluded=false;
-    const reason=addSet({setId:'set9',seq:9,name:'Set 9',sheetIds:['gf9'],status:'open'},[steady]);L.changed();await tick();
+    const reason=addSet({standalone:true,working:true,sheetIds:undefined,status:'not included in a set'},[steady]);L.changed();await tick();
     const why=reason.querySelector('.approveBox [data-approve-reason]');assert(why,'the disabled button\'s reason is a link while the sheet carries a \'!\'');
     assert.equal(why.textContent,'Not included in a set yet');
     pressed.length=0;why.click();assert.deepEqual(pressed,[['gf9','nesting']],"the reason link presses the sheet's '!' exactly once");
-    assert.equal(reason.querySelectorAll('.approveBox').length,1,'and the set of one sheet has one Approve button, under the sheet');
+    assert.equal(reason.querySelectorAll('.approveBox').length,1,'and a sheet left out of its set (it is part of no set) has its own Approve button, under the sheet');
     assert.equal(reason.querySelector('.approveBox').previousElementSibling,reason.querySelector('.flowBox'),'directly under its rail');
+    // a set of one sheet: one button at set level, none on the sheet
+    const solo=addSet({setId:'set10',seq:10,name:'Set 10',sheetIds:['gf10'],status:'open'},[sheet('gf10',{n:1,setId:'set10',base:9100,index:1})]);L.changed();await tick();
+    assert.equal(solo.closest('[data-laser-area]').dataset.laserArea,'ready','a ready set of one sheet is in Laser cutting: no button');assert.equal(solo.querySelectorAll('.approveBox').length,0);
+    solo.remove();
     reason.remove();delete w.LibraryFlow;
     // real time: the other sheet's engraving is approved elsewhere and the Library learns it: the card moves and re-draws in the same frame
     L.record({...gf,orderReadiness:Object.fromEntries(R.orderIds(gf).map(o=>[o,{ready:true}])),updatedAt:2});L.changed();await tick();
     assert.equal(again.closest('[data-laser-area]').dataset.laserArea,'ready');
     const ready=flows(again)[0];assert.equal(ready.dataset.state,'ready');assert.equal(bangs(ready).length,0,"no '!' once ready");
-    assert.deepEqual(stepsOf(ready).map(x=>x[1]),['done','done','done','done','done','waiting','waiting']);assert(ready.querySelector('.flowStep.current.ready span').textContent==='Laser cutting','Laser cutting is the highlighted step');
-    assert.equal(ready.querySelectorAll('.flowDot').length,7);assert(![...ready.querySelectorAll('button')].length,'a ready sheet\'s rail has no buttons');
+    assert.deepEqual(stepsOf(ready).map(x=>x[1]),['done','done','done','waiting','waiting']);assert(ready.querySelector('.flowStep.current.ready span').textContent==='Laser cutting','Laser cutting is the highlighted step');
+    assert.equal(ready.querySelectorAll('.flowDot').length,5,'five circles: Nesting, Engraving, Order check, Laser cutting, Completed');assert(![...ready.querySelectorAll('button')].length,'a ready sheet\'s rail has no buttons');
     // an engraving reopened on the page: back to In progress, within a frame; the '!' moves to the Engraving step
     jobs.set('j',{copies:['2000_x_1'],state:'words'});L.changed();await tick();
     assert.equal(again.closest('[data-laser-area]').dataset.laserArea,'pending');
@@ -134,18 +140,18 @@ function sheet(id,{n=28,metal='gold',setId='set1',index=1,base=1000}={}){
     assert(!bs[0].querySelector('button,[data-issues-open],[data-issues-quiet],.flowWait,.flowBang') && bs[0].querySelector('.flowStep.current i.flowDot'),"a plain current dot: nothing is wrong with this sheet, and its list names no other sheet");
     assert(bs[1].querySelector('.flowBang[data-issues-open]') && !bs[1].querySelector('[data-issues-quiet]'),"the sheet that holds the set keeps its real '!'");
     assert.match(bs[0].querySelector('.flowStep.current .flowDot').getAttribute('aria-label'),/Set 3 is cut together/);
-    // (round 7: a set advances as ONE: the finished sheet carries the same grey button as the sheet that is not ready, naming it)
-    assert.deepEqual([...two.querySelectorAll('.approveBox')].map(b=>b.dataset.approveFor),['sheet:m1','sheet:m2'],'one Approve button under each sheet of the set, none for the set; both grey while a sheet is not ready');
-    assert.deepEqual([...two.querySelectorAll('.approveBox [data-approve-btn]')].map(b=>b.getAttribute('aria-disabled')),['true','true']);
-    assert.deepEqual([...two.querySelectorAll('.approveBox [data-approve-why]')].map(b=>b.textContent),['SS Sheet 2 · back engravings 1 of 3','SS Sheet 2 · back engravings 1 of 3'],'both name the sheet that is not ready');
-    assert.equal(two.querySelector('.approveBox[data-approve-for="sheet:m2"]').previousElementSibling,bs[1],'directly under that sheet\'s rail');
+    // (round 7: a set advances as ONE; round 12: so it has ONE grey button, at the bottom of the card, naming the sheet that is not ready, and no sheet has its own)
+    assert.deepEqual([...two.querySelectorAll('.approveBox')].map(b=>b.dataset.approveFor),['set:set3'],'one Approve button for the set, none under any sheet; grey while a sheet is not ready');
+    assert.deepEqual([...two.querySelectorAll('.approveBox [data-approve-btn]')].map(b=>b.getAttribute('aria-disabled')),['true']);
+    assert.deepEqual([...two.querySelectorAll('.approveBox [data-approve-why]')].map(b=>b.textContent),['SS Sheet 2 · back engravings 1 of 3'],'it names the sheet that is not ready');
+    assert.equal(two.querySelector('.approveBox'),two.lastElementChild,'last in the set card, under the sheet columns');
     // the hooks the Approve button uses
     pressed.length=0;two.dispatchEvent(new w.CustomEvent('library-checklist-open',{bubbles:true,detail:{kind:'set',id:'set3'}}));
     assert.equal(pressed.length,1,"library-checklist-open presses one '!' of the card");
     pressed.length=0;assert.equal(L.openChecklist(two,{kind:'sheet',id:'m2'}),true);assert.deepEqual(pressed,[['m2','engraving']],"openChecklist presses that sheet's '!'");
     pressed.length=0;assert.equal(L.openChecklist(two,{kind:'sheet',id:'m1'}),false);assert.deepEqual(pressed,[],"the sheet that only waits has no '!' to press: its Approve line opens the sheet that holds the set instead");
-    // that line: the grey reason under the finished sheet's button is a link, and it presses the '!' of the sheet it names (m2, Engraving), not the finished sheet's own
-    pressed.length=0;two.querySelector('.approveBox[data-approve-for="sheet:m1"] [data-approve-reason]').click();assert.deepEqual(pressed,[['m2','engraving']],"the reason under the finished sheet's button opens SS Sheet 2's '!'");
+    // that line: the grey reason under the set's button is a link, and it presses the '!' of the sheet it names (m2, Engraving)
+    pressed.length=0;two.querySelector('.approveBox[data-approve-for="set:set3"] [data-approve-reason]').click();assert.deepEqual(pressed,[['m2','engraving']],"the reason under the set's button opens SS Sheet 2's '!'");
     pressed.length=0;two.dispatchEvent(new w.CustomEvent('library-checklist-open',{bubbles:true,detail:{kind:'sheet',id:'m2',handled:true}}));assert.equal(pressed.length,0,'an event already handled is not pressed a second time');
     assert.equal(L.openChecklist(two,{kind:'sheet',id:'zzz'}),false,'a sheet that is not on the card has no \'!\'');
     // the rail of a sheet that belongs to the set stays out of the set's own area when it is drawn again
@@ -167,8 +173,13 @@ function sheet(id,{n=28,metal='gold',setId='set1',index=1,base=1000}={}){
     L.place(flat,false,body);w.LibraryFlow={approve:async()=>({})};L.changed();await tick();
     assert.deepEqual(flows(flat).map(x=>x.dataset.flowFor),['sheet:z1']);assert.equal(bangs(flows(flat)[0]).length,1);assert.equal(flat.querySelectorAll('.approveBox').length,1);
     assert.equal(flat.querySelector('.approveBox').previousElementSibling,flows(flat)[0],'the sheet card: rail, then its one button');
+    // a sheet card of a sheet that is part of a set has no button (its set's one button is on the set's card)
+    const inset=sheet('z2',{n:1,setId:'set77',base:9700});inset.engraving={'9700_t0_1':{needed:true,state:'words',approved:false}};inset.backPool=[];L.record(inset);
+    const flat2=d.createElement('article');flat2.className='librarySheet';flat2.dataset.laserCard='sheet';flat2._laserSheets=['z2'];flat2.innerHTML='<div class="libCard" data-id="z2"><span data-sheet-status="z2"></span></div>';
+    L.place(flat2,false,body);L.changed();await tick();
+    assert.deepEqual(flows(flat2).map(x=>x.dataset.flowFor),['sheet:z2'],'its rail stays');assert.equal(flat2.querySelectorAll('.approveBox').length,0,'but it has no Approve button: it is part of a set');
     assert(!/undefined|\[object|NaN/.test(body.textContent),'no stray placeholders in any sentence');
     assert(!/\blines?\b/i.test(body.textContent.replace(/green dash line/gi,'')),'the cards say pieces, never lines');
-    console.log("Library why OK: one small rail under each sheet (set of one, set of several, loose group, sheet card), none at set level, '!' button hook on the blocking step with the sheet and step in data attributes, one Approve button under each sheet that is not ready, live re-draw, keyboard focus kept, ready and blocked sheets, missing and loose sets");
+    console.log("Library why OK: one small rail under each sheet (set of one, set of several, loose group, sheet card), none at set level, '!' button hook on the blocking step with the sheet and step in data attributes, one Approve button per set and one under each sheet of no set, live re-draw, keyboard focus kept, ready and blocked sheets, missing and loose sets");
   }finally{dom.window.close();}
 })().catch(e=>{console.error(e);process.exitCode=1;});

@@ -69,7 +69,8 @@ function newIssues(shop, mode = 'rows', R = NEW) {
   for (const s of all) out[s.id] = R.issues(s, { rows, allSheets: all });
   return out;
 }
-const orderEntries = list => (list || []).filter(i => i && i.step === 'orders' && i.key !== 'unverified');
+// (round 13: the sheet's QR label is a row of Order check too, but an own row with no order: it is read by ownChecks, never as an order issue)
+const orderEntries = list => (list || []).filter(i => i && i.step === 'orders' && i.key !== 'unverified' && i.orderId);
 const unverifiedEntries = list => (list || []).filter(i => i && i.step === 'orders' && i.key === 'unverified');
 const ownEntries = list => (list || []).filter(i => i && !i.orderId && i.step !== 'laser' && i.key !== 'unverified');
 const num = v => (+v > 0 ? +v : 0);
@@ -185,10 +186,18 @@ function explainChecks(R, shop) {
     try { e = R.explain(rec, { rows }); } catch (ex) { out.push({ type: 'throws', mode: 'explain', sheet: rec.id, detail: ex.message }); continue; }
     if (e.ready !== !!tr.laserReady && !num(rec.laserDoneAt)) out.push({ type: 'explainReady', mode: 'explain', sheet: rec.id, detail: `explain ready ${e.ready}, oracle ${tr.laserReady}` });
     if (num(rec.laserDoneAt) || tr.completedBefore) continue;
-    const st = e.steps.find(x => x.key === 'orders'), want = Object.keys(tr.orders).concat(tr.ghosts).sort();
-    const have = [...new Set(st.items.filter(i => i.kind === 'order').map(i => String(i.id)))].sort();
+    const st = e.steps.find(x => x.key === 'orders'), want = Object.keys(tr.orders).concat(tr.ghosts).sort(), ph = tr.physical;
+    // round 13: five steps. Engraving is done exactly when every back is approved AND saved (the oracle's own two stages); Order check exactly when no order waits AND the QR label is made
+    if (JSON.stringify(e.steps.map(x => x.key)) !== JSON.stringify(['nesting', 'engraving', 'orders', 'laser', 'completed'])) out.push({ type: 'explainSteps', mode: 'explain', sheet: rec.id, detail: e.steps.map(x => x.key).join(',') });
+    const eng = e.steps.find(x => x.key === 'engraving');
+    if ((eng.state === 'done') !== !!(ph.approval && ph.backs)) out.push({ type: 'explainEngraving', mode: 'explain', sheet: rec.id, detail: `engraving ${eng.state}; oracle approval ${ph.approval}, saved ${ph.backs}` });
+    if (ph.approval && !ph.backs && !/^Saving back files: \d+ of \d+\.$|failed its check/.test(eng.detail)) out.push({ type: 'explainSavingWords', mode: 'explain', sheet: rec.id, detail: eng.detail });
+    const have = [...new Set(st.items.filter(i => i.kind === 'order' && i.part !== 'qr').map(i => String(i.id)))].sort();
     if (st.state === 'done' && want.length) out.push({ type: 'explainOrdersDone', mode: 'explain', sheet: rec.id, detail: `says done, oracle: ${want.join(',')}` });
-    if (st.state !== 'done' && !want.length) out.push({ type: 'explainOrdersFalse', mode: 'explain', sheet: rec.id, detail: `${st.state}: ${st.detail}` });
+    if (st.state === 'done' && !ph.qr) out.push({ type: 'explainQrDone', mode: 'explain', sheet: rec.id, detail: 'Order check says done with no complete QR label' });
+    if (st.state !== 'done' && !want.length && ph.qr) out.push({ type: 'explainOrdersFalse', mode: 'explain', sheet: rec.id, detail: `${st.state}: ${st.detail}` });
+    if (!ph.qr && !st.items.some(i => i.part === 'qr')) out.push({ type: 'explainQrItems', mode: 'explain', sheet: rec.id, detail: 'no QR row under Order check' });
+    if (ph.qr && st.items.some(i => i.part === 'qr')) out.push({ type: 'explainQrItems', mode: 'explain', sheet: rec.id, detail: 'a QR row with the label made' });
     if (JSON.stringify(have) !== JSON.stringify(want)) out.push({ type: 'explainOrderItems', mode: 'explain', sheet: rec.id, detail: `items ${JSON.stringify(have)} oracle ${JSON.stringify(want)}` });
   }
   return out;
@@ -236,7 +245,7 @@ function setChecks(R, shop) {
         if (O.ownTruth(s, t.lines).length) want.push(`own|${id}`);
       }
       // an own entry may name any true key: compare step-less (sheet only)
-      const haveN = got.map(i => (i.step === 'orders' ? `orders|${i.sheetId}|${i.key === 'unverified' ? 'unverified' : i.orderId}` : `own|${i.sheetId}`)).sort(), wantN = want.sort();
+      const haveN = got.map(i => (i.step === 'orders' && (i.orderId || i.key === 'unverified') ? `orders|${i.sheetId}|${i.key === 'unverified' ? 'unverified' : i.orderId}` : `own|${i.sheetId}`)).sort(), wantN = want.sort();
       if (JSON.stringify(haveN) !== JSON.stringify(wantN)) out.push({ type: 'setUnion', mode: 'set-' + mode, set: set.setId, detail: `got ${JSON.stringify(haveN).slice(0, 300)} want ${JSON.stringify(wantN).slice(0, 300)}` });
     }
   }

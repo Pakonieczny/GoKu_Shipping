@@ -75,16 +75,22 @@
   };
   const OWN = {
     engraving: { label: 'Open engraving approvals', icon: 'pen', go: 'engraving' },
-    backFiles: { label: 'Back files not saved yet', icon: 'file' },
-    qr: { label: 'QR label missing', icon: 'qr' },
     nesting: { label: 'Layout not ready', icon: 'grid' }
   };
+  // the rail has five steps (round 13): saving the back files is part of Engraving and the QR label part of Order check, each said by its own
+  // plain row and opening the sheet (where Make QR label is), never an engraving approval
+  const OWN_KEY = {
+    backFilesMissing: { label: 'Saving back files', icon: 'file' },
+    qrMissing: { label: 'QR label not made yet', icon: 'qr' }
+  };
+  // a feed made when the rail had seven steps may still name the two steps that were folded in: they read as the step that took them over
+  const FOLDED = { backFiles: 'engraving', qr: 'orders' }, norm = k => (k && Object.prototype.hasOwnProperty.call(FOLDED, k) ? FOLDED[k] : k);
   const METAL_OF = { GF: 'gold', SS: 'silver', RG: 'rose', '10K': 'gold10k', '14K': 'gold14k' };
   const METAL_KEYS = new Set(Object.values(METAL_OF));
   const codeOf = label => (/^([A-Z0-9]{2,3}) Sheet/.exec(label || '') || [])[1] || '';   // "RG Sheet 1" -> "RG"
   const lineOfPool = pool => String(pool || '').replace(/_\d+$/, '');                     // a copy's pool id starts with its line's key
   const NO_DESIGN = new Set(['noSku', 'unmatched', 'noDesign']);                           // a piece with one of these has no vector design to show
-  const STEP = { nesting: 'Nesting', engraving: 'Engraving', backFiles: 'Back files', qr: 'QR label', orders: 'Order check', laser: 'Laser cutting' };   // the rail's own words
+  const STEP = { nesting: 'Nesting', engraving: 'Engraving', orders: 'Order check', laser: 'Laser cutting' };   // the rail's own words
   const HARD = new Set(['noSku', 'unmatched', 'noDesign', 'held']);   // a person has to fix these (the count chip turns clay); the others only wait
   const SIX = 6, SHOWN = 3;   // more than SIX issues fold into groups; a group shows SHOWN rows before "Show N more"
 
@@ -96,8 +102,10 @@
     for (const s of e.steps) {
       if (s.state === 'done' || !s.items) continue;
       if (s.key === 'orders') {
+        // (the sheet's QR label is no order: it is the one row "QR label not made yet", as the issues of the readiness give it)
+        if (s.items.some(it => it.part === 'qr') && !out.some(x => x.key === 'qrMissing')) out.unshift({ step: 'orders', key: 'qrMissing', label: OWN_KEY.qrMissing.label, open: { type: 'sheet', id: feed.id } });
         for (const it of s.items) {
-          if (it.kind === 'order') {
+          if (it.kind === 'order' && it.part !== 'qr') {
             const m = /^Order (\d+)(?: \((.*)\))?$/.exec(it.label || '') || [];
             const why = String(it.why || ''), other = /on ([A-Z0-9]{2,3} Sheet \d+)/.exec(why);
             const key = /SKU not in a master|no SKU/i.test(why) ? 'unmatched' : /no design/i.test(why) ? 'noDesign' : /hold|need review/i.test(why) ? 'held' : other ? 'otherSheetNotReady'
@@ -107,6 +115,9 @@
         }
       } else if (s.key === 'laser') {
         continue;   // (the set's wait is said under the Approve button, never in this list)
+      } else if (!own && s.key === 'engraving' && s.items.length && s.items.every(it => it.part === 'files')) {   // (only the back files are still being saved: no approval to open)
+        own = true;
+        out.unshift({ step: 'engraving', key: 'backFilesMissing', label: OWN_KEY.backFilesMissing.label, open: { type: 'sheet', id: feed.id } });
       } else if (!own && OWN[s.key]) {
         own = true;
         out.unshift({ step: s.key, key: s.key, label: OWN[s.key].label, open: { type: 'sheet', id: feed.id } });
@@ -136,11 +147,11 @@
   function model(feed, opts) {
     opts = opts || {};
     // only what belongs to this sheet: a set mate that merely is not ready is the SET's wait, said under the Approve button, never a row of this list
-    const isWait = it => it.step === 'laser' && (it.quiet === true || it.key === 'waitsOnSheet'), all = (Array.isArray(feed && feed.issues) ? feed.issues : []).filter(it => it && !isWait(it));
+    const isWait = it => it.step === 'laser' && (it.quiet === true || it.key === 'waitsOnSheet'), all = (Array.isArray(feed && feed.issues) ? feed.issues : []).filter(it => it && !isWait(it)).map(it => it.step && norm(it.step) !== it.step ? Object.assign({}, it, { step: norm(it.step) }) : it);
     // one panel per step of the rail: the '!' on Order check lists the orders, on Engraving the one link, on Laser cutting the sheets;
     // a '!' whose own step has nothing falls back to whatever the sheet is held by (never an empty panel)
-    const mine = opts.step ? all.filter(it => (it.step || 'orders') === opts.step) : [];
-    const list = mine.length ? mine : all, step = mine.length ? opts.step : (list[0] && (list[0].step || 'orders')) || opts.step || '';
+    const want = norm(opts.step), mine = want ? all.filter(it => (it.step || 'orders') === want) : [];
+    const list = mine.length ? mine : all, step = mine.length ? want : (list[0] && (list[0].step || 'orders')) || want || '';
     const label = String((feed && feed.label) || ''), parts = /^(\S+)\s+(.*)$/.exec(label) || [];
     const code = (feed && feed.code) || (METAL_OF[parts[1]] ? parts[1] : ''), name = code && parts[2] ? parts[2] : label;
     const m = { id: feed && feed.id, label, code, metal: (feed && feed.metal) || METAL_OF[code] || '', name, step, title: STEP[step] || 'Needs attention', own: null, notes: [], sheets: [], orders: [], groups: null, count: 0, hard: false, checking: !!(feed && feed.checking) };
@@ -173,9 +184,9 @@
         if (seen.has('n:unverified')) continue;
         seen.add('n:unverified');
         m.notes.push({ k: 'n:unverified', key: 'unverified', step: 'orders', label: tidy(it.label) || 'Orders not checked yet', orders: (Array.isArray(it.orderIds) ? it.orderIds : []).map(String), tone: 'gold' });
-      } else if (!it.orderId && !m.own && OWN[it.step]) {
-        const o = OWN[it.step], go = o.go || (it.open && it.open.type === 'sheet' ? 'sheet' : '');
-        m.own = { k: 'own:' + it.step, step: it.step, key: it.key || it.step, label: o.go ? o.label : String(it.label || o.label), icon: o.icon, go, target: String((it.open && it.open.id) || (feed && feed.id) || '') };
+      } else if (!it.orderId && !m.own && (OWN_KEY[it.key] || OWN[it.step])) {
+        const o = OWN_KEY[it.key] || OWN[it.step], go = o.go || (it.open && it.open.type === 'sheet' ? 'sheet' : '');
+        m.own = { k: 'own:' + it.step, step: it.step, key: it.key || it.step, label: o.go || OWN_KEY[it.key] ? o.label : String(it.label || o.label), icon: o.icon, go, target: String((it.open && it.open.id) || (feed && feed.id) || '') };
       }
     }
     m.count = m.orders.length + m.sheets.length + m.notes.length;
@@ -393,21 +404,30 @@ button.flowDot[data-issues-open][aria-expanded="true"]{box-shadow:0 0 0 4px rgba
   function place() {
     const p = st.panel, a = st.anchor;
     if (!p || !a || !a.isConnected) return false;
-    // (below the rail and its "Order check · step 5 of 7" line, never over them; as wide as the sheet's own card, so the next sheet's rail and Approve stay in view)
+    // (below the rail and its "Order check · step 3 of 5" line, never over them; as wide as the sheet's own card, so the next sheet's rail and Approve stay in view)
     const ar = a.getBoundingClientRect(), whole = (a.closest && (a.closest('.flowBox') || a.closest('.flowStep')) || a).getBoundingClientRect(), cardEl = a.closest && a.closest('.librarySheet,[data-laser-card="sheet"]'), card = cardEl ? cardEl.getBoundingClientRect() : null;
     if (!ar.width && !ar.height) return false;
     const vw = root.innerWidth || 1200, vh = root.innerHeight || 800, bar = doc.querySelector('.topbar');
     const lo = Math.max(8, (bar ? bar.getBoundingClientRect().bottom : 0) + 8), hi = vh - 8, gap = 11;
     let w = Math.min(336, vw - 16); if (card && card.width >= 280 && card.width < w) w = Math.round(card.width);
-    // (the sheet's Approve button sits right under its rail: opening below, the panel starts above the button and covers it whole, never leaving a strip of it showing along the panel's edge)
-    const apEl = cardEl && cardEl.querySelector('.approveBox'), apr = apEl ? apEl.getBoundingClientRect() : null, under = !!(apr && apr.height && apr.top >= whole.bottom - 2);
+    // (the Approve button sits right under the rail: opening below, the panel starts above the button and covers it whole, never leaving a strip of it showing along the panel's edge.
+    //  A sheet that is part of a set has none of its own: the set's one button is the card's last row, its button and its line, and the same holds wherever the panel reaches it)
+    const dot = ar.left + ar.width / 2, inCard = card && card.width >= w ? [card.left, card.right - w] : [8, vw - w - 8], x = clamp(clamp(dot - 26, inCard[0], inCard[1]), 8, vw - w - 8);
+    const own = cardEl && cardEl.querySelector('.approveBox'), setEl = !own && cardEl && cardEl.closest && cardEl.closest('.setCard'), setBox = setEl && setEl.querySelector(':scope > .approveBox');
+    let apr = own ? own.getBoundingClientRect() : null;
+    if (!apr && setBox) {
+      const rs = [setBox.querySelector('[data-approve-btn]'), setBox.querySelector('[data-approve-why]')].filter(e => e && e.getClientRects().length).map(e => e.getBoundingClientRect());
+      if (rs.length) apr = { left: Math.min(...rs.map(r => r.left)), right: Math.max(...rs.map(r => r.right)), top: Math.min(...rs.map(r => r.top)), bottom: Math.max(...rs.map(r => r.bottom)), height: 1 };
+    }
+    const sideways = !!(apr && apr.left < x + w && apr.right > x), under = !!(sideways && apr.height && apr.top >= whole.bottom - 2 && (own || apr.top - whole.bottom <= 20));
     const gapDown = under ? Math.max(5, Math.min(gap, apr.top - 4 - whole.bottom)) : gap, topDown = whole.bottom + gapDown;
     p.style.width = w + 'px'; p.style.maxHeight = 'none'; p.style.minHeight = '';
     const h0 = p.offsetHeight, below = hi - topDown, above = whole.top - gap - lo, down = h0 <= below || below >= above;
     const room = Math.max(140, down ? below : above);
-    p.style.maxHeight = room + 'px'; p.style.minHeight = down && under ? Math.min(room, Math.max(0, Math.ceil(apr.bottom + 4 - topDown))) + 'px' : '';
-    const dot = ar.left + ar.width / 2, inCard = card && card.width >= w ? [card.left, card.right - w] : [8, vw - w - 8];
-    const h = Math.min(Math.max(h0, parseFloat(p.style.minHeight) || 0), room), x = clamp(clamp(dot - 26, inCard[0], inCard[1]), 8, vw - w - 8), y = down ? topDown : whole.top - gap - h, ax = clamp(dot - x, 20, w - 20);
+    // (a button further down that the panel only reaches into is covered whole too)
+    const reach = !!(down && sideways && !under && apr.top > topDown && topDown + h0 > apr.top - 2 && topDown + h0 < apr.bottom + 4);
+    p.style.maxHeight = room + 'px'; p.style.minHeight = down && (under || reach) ? Math.min(room, Math.max(0, Math.ceil(apr.bottom + 4 - topDown))) + 'px' : '';
+    const h = Math.min(Math.max(h0, parseFloat(p.style.minHeight) || 0), room), y = down ? topDown : whole.top - gap - h, ax = clamp(dot - x, 20, w - 20);
     p.style.left = Math.round(x) + 'px'; p.style.top = Math.round(Math.max(lo, y)) + 'px';
     p.style.setProperty('--ax', ax + 'px'); p.style.setProperty('--ox', ax + 'px'); p.style.setProperty('--oy', (down ? -6 : h + 6) + 'px');
     p.classList.toggle('up', !down);

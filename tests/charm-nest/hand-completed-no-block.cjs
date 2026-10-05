@@ -97,11 +97,11 @@ function pageChecks(v) {
   if (v.blocked) { ok(rep && rep.ready === false && rep.key === v.blocked, `${tag}: the order blocks with ${v.blocked}, got ${JSON.stringify(rep && [rep.ready, rep.key])}`); eq(rep.blocks.map(b => b.lineKey), [CHAIN], `${tag}: it is the chain that blocks`); }
   else eq(rep, { ready: true }, `${tag}: nothing blocks the order`);
   for (const id of [GF, RG]) {
-    const sh = sheets.find(s => s.id === id), list = R.issues(sh, { rows, allSheets: sheets }).filter(i => i.step === 'orders'), recs = pre.find(s => s.id === id);
+    const sh = sheets.find(s => s.id === id), list = R.issues(sh, { rows, allSheets: sheets }).filter(i => i.step === 'orders' && i.orderId), recs = pre.find(s => s.id === id);
     eq(list.length, v.blocked ? 1 : 0, `${tag}: ${id}: the '!' panel lists ${v.blocked ? 'the order' : 'no order issue'}`);
     if (v.blocked) { eq(list[0].key, v.blocked, `${tag}: ${id}: its reason`); eq(list[0].pieces.map(p => p.poolId), [`${CHAIN}_1`], `${tag}: ${id}: the piece named is the chain`); }
     // the server's way (the record answered with its orderReadiness): the same '!' list, the Order check step and the laser gate
-    eq(R.issues(recs, {}).filter(i => i.step === 'orders').length, v.blocked ? 1 : 0, `${tag}: ${id}: the answered record lists the same`);
+    eq(R.issues(recs, {}).filter(i => i.step === 'orders' && i.orderId).length, v.blocked ? 1 : 0, `${tag}: ${id}: the answered record lists the same`);
     const step = R.explain(recs, { rows }).steps.find(s => s.key === 'orders');
     eq(step.state === 'done', !v.blocked, `${tag}: ${id}: the Order check step is ${v.blocked ? 'not ' : ''}done (${step.state}: ${step.detail})`);
     eq(R.laserSheet(recs).ready, !v.blocked, `${tag}: ${id}: laserSheet.ready`);
@@ -159,7 +159,7 @@ async function serverChecks(srv, v) {
     else { eq(rd, { ready: true }, `${tag}: ${id}: the server says the order is whole`); eq(s.laser.ready, true, `${tag}: ${id}: laser-ready`); }
   }
   // the server's answer is the page's answer (one truth): the Library's '!' list from the answered records
-  for (const id of [GF, RG]) eq(R.issues(a.sheets.find(x => x.id === id), {}).filter(i => i.step === 'orders').length, v.blocked ? 1 : 0, `${tag}: ${id}: the Library's '!' list from the server's answer`);
+  for (const id of [GF, RG]) eq(R.issues(a.sheets.find(x => x.id === id), {}).filter(i => i.step === 'orders' && i.orderId).length, v.blocked ? 1 : 0, `${tag}: ${id}: the Library's '!' list from the server's answer`);
   // setUpdate: recording the set complete is refused with the order not whole, allowed with it whole
   seed(srv.st, shop, false);
   const logged = console.error; console.error = () => {};   // (a refusal is logged by the handler: expected here)
@@ -296,7 +296,7 @@ function rgPageChecks() {
     const mid = rep.blocks.find(b => b.lineKey === MID_RG);
     eq([mid.key, mid.sheetLabel, mid.setId], ['otherSheetNotReady', 'RG Sheet 1', c.setId], `${tag}: the MIDDLE RG piece waits for RG Sheet 1, whose set is ${c.setId}`);
     // GF Sheet 1's '!' panel (rows + every sheet, the page's own reading) and the record the server answers
-    const list = R.issues(gf, { rows, allSheets: sheets }).filter(i => i.step === 'orders'), answered = R.issues(pre.find(s => s.id === GF), {}).filter(i => i.step === 'orders');
+    const list = R.issues(gf, { rows, allSheets: sheets }).filter(i => i.step === 'orders' && i.orderId), answered = R.issues(pre.find(s => s.id === GF), {}).filter(i => i.step === 'orders' && i.orderId);
     for (const l of [list, answered]) {
       eq(l.length, want.length ? 1 : 0, `${tag}: GF Sheet 1 lists ${want.length ? 'the order once' : 'no order'}`);
       if (want.length) eq(l[0].pieces.map(p => p.poolId).sort(), want.slice().sort(), `${tag}: exactly these pieces`);
@@ -313,7 +313,7 @@ function rgPageChecks() {
     if (want.length) { eq(step.state, 'blocked', `${tag}: the step is blocked by a real wait`); eq(step.items.filter(i => i.kind === 'order').map(i => i.id), [ORDER], `${tag}: it lists the order`); eq(step.items.find(i => i.kind === 'order').why, list[0].why, `${tag}: with the issue's own words`); }
     if (want.length === 1 && !c.same && c.setId === null) ok(step.items.some(i => i.kind === 'sheet' && i.id === RG && (RG_OWN[c.own] ? /^Holds 1 order of this sheet back: it is in no set, and / : /^Holds 1 order of this sheet back: it is not in a set yet$/).test(i.why)), `${tag}: the checklist says the sheet has no set: ${JSON.stringify(step.items)}`);
     // RG Sheet 1's own panel: the chain (unreleased) holds it; GF Sheet 1 is ready, so nothing else does
-    eq(R.issues(rg, { rows, allSheets: sheets }).filter(i => i.step === 'orders').map(i => i.pieces.map(p => p.poolId)), c.released ? [] : [[`${CHAIN}_1`]], `${tag}: RG Sheet 1's own panel`);
+    eq(R.issues(rg, { rows, allSheets: sheets }).filter(i => i.step === 'orders' && i.orderId).map(i => i.pieces.map(p => p.poolId)), c.released ? [] : [[`${CHAIN}_1`]], `${tag}: RG Sheet 1's own panel`);
     n++;
   }
   return n;
@@ -330,7 +330,7 @@ async function rgServerChecks(srv) {
     else {
       eq(rd.blocks.map(b => b.poolId).sort(), want.slice().sort(), `${tag}: the server's blocks are exactly the pieces that hold`);
       eq(rd.pieceCount, c.released ? 2 : 3, `${tag}: the server counts the pieces the same way`);
-      const l = R.issues(gf, {}).filter(i => i.step === 'orders');
+      const l = R.issues(gf, {}).filter(i => i.step === 'orders' && i.orderId);
       eq(l.length, 1, `${tag}: the Library's '!' list from the server's answer`);
       if (want.length === 1 && !c.same) rgWords(c, l[0], tag + ' (from the server)');
     }
@@ -403,7 +403,7 @@ async function fiveServerChecks(srv) {
   const post = body => fetch(srv.sorterOrigin + '/.netlify/functions/charmNestLibrary', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }).then(async r => ({ status: r.status, ...(await r.json()) }));
   const keys = NAMES.map((_, i) => `${FIVE}_${2001 + i}`);
   seed(srv.st, S.materialize(fiveSpec()), false);
-  const state = async () => { const s = (await post({ op: 'laserStatus', sheetIds: [SS] })).sheets[0], rd = s.orderReadiness[FIVE]; return { rd, ready: s.laser.ready, holding: rd.ready === true ? [] : rd.blocks.map(b => b.lineKey).sort(), issues: R.issues(s, {}).filter(i => i.step === 'orders') }; };
+  const state = async () => { const s = (await post({ op: 'laserStatus', sheetIds: [SS] })).sheets[0], rd = s.orderReadiness[FIVE]; return { rd, ready: s.laser.ready, holding: rd.ready === true ? [] : rd.blocks.map(b => b.lineKey).sort(), issues: R.issues(s, {}).filter(i => i.step === 'orders' && i.orderId) }; };
   const put = (i, how) => post({ op: 'customPut', key: keys[i], by: 'Seth', how, receiptId: FIVE, transactionId: String(2001 + i), sku: '', title: NAMES[i], category: 'Custom order', kind: 'custom', from: 'Review' });
   let s = await state();
   eq(s.holding, keys.slice().sort(), 'five pieces, none pressed (as in the screenshot): each of the four Review pieces holds SS Sheet 1'); eq(s.ready, false, 'SS Sheet 1 is not laser-ready'); eq(s.issues.length, 1, 'one order issue'); eq(s.issues[0].pieces.length, 4, 'naming the four pieces');
@@ -428,7 +428,7 @@ async function fiveServerChecks(srv) {
     const spec = fiveSpec();
     presses.forEach((p, i) => { if (p) spec.orders[0].lines[1 + i].hand = p === 'open' ? hand('button', 'open', 'stale', ['button']) : hand(p[0], 'completed', 'stale', p); });
     const shop = S.materialize(spec), rows = S.uiRows(shop), sheets = P.pageSheets(shop), ss = sheets.find(x => x.id === SS);
-    const holding = presses.map((p, i) => (!p || p === 'open' ? `${FIVE}_${2001 + i}_1` : null)).filter(Boolean), list = R.issues(ss, { rows, allSheets: sheets }).filter(i => i.step === 'orders');
+    const holding = presses.map((p, i) => (!p || p === 'open' ? `${FIVE}_${2001 + i}_1` : null)).filter(Boolean), list = R.issues(ss, { rows, allSheets: sheets }).filter(i => i.step === 'orders' && i.orderId);
     eq(list.length ? list[0].pieces.map(p => p.poolId).sort() : [], holding.sort(), `page: ${JSON.stringify(presses)}: the pieces that hold SS Sheet 1`);
     eq(R.laserSheet(P.serverLike(shop).find(x => x.id === SS)).ready, !holding.length, `page: ${JSON.stringify(presses)}: SS Sheet 1 laser-ready`);
     eq(CO.evaluateOrder(rows).committable, !holding.length, `page: ${JSON.stringify(presses)}: the sorter's set release gate`);
@@ -455,7 +455,7 @@ async function rgMembershipChecks(srv) {
     const shop = S.materialize(imgSpec(h)), rows = S.uiRows(shop), sheets = P.pageSheets(shop), pre = P.serverLike(shop);
     for (const s of sheets) { eq(card(s), SET, `${pressName}: the card puts ${s.id} in Set 1`); eq(R.setOf(s), SET, `${pressName}: and the order check reads ${s.id} in Set 1`); }
     for (const id of [GF, SS, RG]) {
-      eq(R.issues(sheets.find(x => x.id === id), { rows, allSheets: sheets }).filter(i => i.step === 'orders'), [], `${pressName}: ${id}: no order is listed`);
+      eq(R.issues(sheets.find(x => x.id === id), { rows, allSheets: sheets }).filter(i => i.step === 'orders' && i.orderId), [], `${pressName}: ${id}: no order is listed`);
       eq(R.explain(pre.find(x => x.id === id), { rows }).steps.find(x => x.key === 'orders').state, 'done', `${pressName}: ${id}: Order check is done`);
       eq(R.laserSheet(pre.find(x => x.id === id)).ready, true, `${pressName}: ${id}: laser-ready`);
     }
@@ -469,7 +469,7 @@ async function rgMembershipChecks(srv) {
   }
   // 3. through the server: not joined yet (a draft in no set): the wait is listed, and said as a sheet in no set; the Cut Sheet press writes the membership on the sheet and the wait is gone at
   //    the next read, which the cheap "unchanged?" read sees at once. Not ready but joined: the wait is the set's, not the order's.
-  const words = a => { const gf = a.sheets.find(s => s.id === GF), rd = gf.orderReadiness[ORDER], l = rd.ready === true ? [] : R.issues(gf, {}).filter(i => i.step === 'orders'); return { rd, l, gf }; };
+  const words = a => { const gf = a.sheets.find(s => s.id === GF), rd = gf.orderReadiness[ORDER], l = rd.ready === true ? [] : R.issues(gf, {}).filter(i => i.step === 'orders' && i.orderId); return { rd, l, gf }; };
   const join = (set, seq) => srv.st.put('Charm_Nest_Sheets', RG, { draft: false, setId: set, setSeq: seq, sheetIndex: 1, solidIncluded: null });   // (the fields the Cut Sheet press and a drag into a set save)
   for (const [name, own, ready] of [['a draft that is complete in every other way', 'draft', true], ['a sheet whose QR labels are missing', 'noQr', false]]) {
     const h = hand('button', 'completed', 'stale', ['button']);
@@ -515,7 +515,7 @@ async function boundaryChecks(srv) {
     const shop = S.materialize(spec), tag = `${name}, ${presses.join('+')}`;
     eq(P.disagreementsWith(R, shop, ['rows', 'records', 'pre']), [], `${tag}: the page agrees with the oracle`);
     eq(await check(srv, shop, [GF, RG], false), [], `${tag}: the server agrees with the oracle`);
-    const rows = S.uiRows(shop), sheets = P.pageSheets(shop), list = R.issues(sheets.find(s => s.id === GF), { rows, allSheets: sheets }).filter(i => i.step === 'orders');
+    const rows = S.uiRows(shop), sheets = P.pageSheets(shop), list = R.issues(sheets.find(s => s.id === GF), { rows, allSheets: sheets }).filter(i => i.step === 'orders' && i.orderId);
     eq(list.length, 1, `${tag}: GF Sheet 1 lists the order once (RG Sheet 1 is not ready and in no set)`);
     eq(list[0].pieces.map(p => [p.poolId, p.noSet === true]), [[`${MID_RG}_1`, true]], `${tag}: only the MIDDLE RG piece, told as on a sheet in no set; the chain is not named`);
     n++;

@@ -225,7 +225,7 @@ const must = (list, what) => { if (list.length) { console.error(`FAIL: ${what}\n
         for (const g of w.Sets.libraryGroups(sets, recs)) { const card = w.Sets.libraryCard(g, g.sheets, g.sheets); L.place(card, L.group(g, g.sheets).ready, body); }
         L.changed(); await sleep(60);
         const marks = id => [...body.querySelectorAll(`button[data-issues-open][data-issues-id="${id}"]`)], gf = marks(GF), ss = marks(SS), closePanel = async () => { d.querySelectorAll('.lisPanel').forEach(n => n.classList.remove('handed')); LI.close(); await sleep(10); d.querySelectorAll('#libIssuesPanel').forEach(n => n.remove()); };
-        const approve = id => body.querySelector(`.approveBox[data-approve-for="sheet:${id}"]`), say = id => { const bx = approve(id); return bx ? bx.querySelector('[data-approve-why]').textContent.trim() : null; };
+        const approve = () => body.querySelector('.approveBox[data-level="set"]'), say = () => { const bx = approve(); return bx ? bx.querySelector('[data-approve-why]').textContent.trim() : null; };
         // nothing of the quiet wait anywhere on the page: no clock, no wait mark, no wait row, no 'Waiting' header
         if (d.querySelector('[data-issues-quiet],.flowWait,.lisWait,.lisCount.quiet')) bad.push(`${label}: a quiet clock, wait mark or wait row is on the page`);
         // the sheet that holds the set: its own real '!' (Engraving), its panel has no wait
@@ -233,16 +233,18 @@ const must = (list, what) => { if (list.length) { console.error(`FAIL: ${what}\n
         if (sq) bad.push(`${label}: SS Sheet 1 has a quiet clock`);
         if (sreal.length !== 1 || sreal[0].getAttribute('data-issues-step') !== 'engraving') bad.push(`${label}: SS Sheet 1's marks: ${sreal.map(b => b.getAttribute('data-issues-step'))}`);
         else { sreal[0].click(); const panel = await until(() => d.getElementById('libIssuesPanel')); if (!panel) bad.push(`${label}: SS Sheet 1's '!' opens no panel`); else { if (panel.querySelector('.lisWait')) bad.push(`${label}: SS Sheet 1's panel shows a wait`); if (panel.querySelectorAll('.lisRow').length) bad.push(`${label}: SS Sheet 1's engraving panel lists orders`); await closePanel(); } }
-        // the set's wait is said ONCE, under the grey Approve button of every sheet that is not cut: the sheet that holds the set, and what it lacks; a press on it opens SS Sheet 1's '!'
-        for (const id of [GF, SS]) {
-          const box = approve(id), btn = box && box.querySelector('[data-approve-btn]');
-          if (!box) { bad.push(`${label}: no Approve button under ${id}`); continue; }
-          if (btn.getAttribute('aria-disabled') !== 'true') bad.push(`${label}: ${id}'s Approve button is not grey while SS Sheet 1 is not ready`);
-          if (!/^SS Sheet 1 · back engravings \d+ of \d+$/.test(say(id) || '')) bad.push(`${label}: ${id}'s reason line says "${say(id)}"`);
-        }
-        const why = approve(GF) && approve(GF).querySelector('button[data-approve-reason]');
-        if (!why) bad.push(`${label}: GF Sheet 1's reason line is not a link to SS Sheet 1's '!'`);
-        else { why.click(); const panel = await until(() => d.getElementById('libIssuesPanel')); if (!panel) bad.push(`${label}: the reason line under GF Sheet 1's button opens no panel`); else { if (panel.getAttribute('data-issues-for') !== 'sheet:' + SS) bad.push(`${label}: the reason line opened ${panel.getAttribute('data-issues-for')}, not SS Sheet 1's panel`); await closePanel(); } }
+        // the set's wait is said ONCE, under the set's ONE grey Approve button (round 12: no sheet has its own): the sheet that holds the set, and what it lacks; a press on it opens SS Sheet 1's '!'
+        { const box = approve(), btn = box && box.querySelector('[data-approve-btn]');
+          const inSets = [GF, SS].filter(id => body.querySelector(`.librarySheet:has([data-flow-for="sheet:${id}"]) .approveBox`));   // (a Rose Gold sheet of no set, in its own group, keeps its own button)
+          if (body.querySelectorAll('.approveBox[data-level="set"]').length !== 1 || inSets.length) bad.push(`${label}: ${body.querySelectorAll('.approveBox[data-level="set"]').length} set Approve button(s), expected one, and ${inSets.join(',') || 'no'} sheet of the set has its own`);
+          if (!box) bad.push(`${label}: no Approve button on the set`);
+          else {
+            if (btn.getAttribute('aria-disabled') !== 'true') bad.push(`${label}: the set's Approve button is not grey while SS Sheet 1 is not ready`);
+            if (!/^SS Sheet 1 · back engravings \d+ of \d+$/.test(say() || '')) bad.push(`${label}: the reason line says "${say()}"`);
+          } }
+        const why = approve() && approve().querySelector('button[data-approve-reason]');
+        if (!why) bad.push(`${label}: the set's reason line is not a link to SS Sheet 1's '!'`);
+        else { why.click(); const panel = await until(() => d.getElementById('libIssuesPanel')); if (!panel) bad.push(`${label}: the reason line under the set's button opens no panel`); else { if (panel.getAttribute('data-issues-for') !== 'sheet:' + SS) bad.push(`${label}: the reason line opened ${panel.getAttribute('data-issues-for')}, not SS Sheet 1's panel`); await closePanel(); } }
         const gfCard = body.querySelector(`[data-laser-card]`);
         if (image2) {
           // Paul's image 2: GF Sheet 1's Order check, the four orders of this sheet; no row, header, count or word of SS Sheet 1
@@ -263,9 +265,10 @@ const must = (list, what) => { if (list.length) { console.error(`FAIL: ${what}\n
               await closePanel();
             }
           }
-          // the one place that says SS Sheet 1 holds the set: the Approve line under GF Sheet 1 (and not twice)
-          const mentions = (gfCard ? [...body.querySelectorAll(`.librarySheet`)] : []).filter(x => x.querySelector(`[data-approve-for="sheet:${GF}"]`)).map(x => (x.textContent.match(/SS Sheet 1/g) || []).length);
-          if (mentions.length !== 1 || mentions[0] !== 1) bad.push(`${label}: SS Sheet 1 is named ${JSON.stringify(mentions)} times in GF Sheet 1's own article, expected once (its Approve line)`);
+          // the one place that says SS Sheet 1 holds the set: the set's Approve line (and not twice); GF Sheet 1's own article names no other sheet at all
+          const gfArt = body.querySelector(`.librarySheet:has([data-flow-for="sheet:${GF}"])`), line = (approve() ? approve().textContent.match(/SS Sheet 1/g) || [] : []).length;
+          if (line !== 1) bad.push(`${label}: SS Sheet 1 is named ${line} times in the set's Approve line, expected once`);
+          if (!gfArt || /SS Sheet 1/.test(gfArt.textContent)) bad.push(`${label}: GF Sheet 1's own article names SS Sheet 1`);
         } else {
           // the shop where GF Sheet 1 is fine: its rail carries NO mark at all (no '!', no clock), Laser cutting is its plain current dot
           if (gf.length) bad.push(`${label}: GF Sheet 1 has ${gf.length} mark(s) on its rail (${gf.map(b => b.getAttribute('data-issues-step') + (b.hasAttribute('data-issues-quiet') ? ':quiet' : ':bang')).join(',')}); it is fine`);

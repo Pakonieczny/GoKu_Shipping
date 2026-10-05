@@ -222,6 +222,89 @@
     }
     return stamps;
   }
+  /* ── Step times (Paul, 5 Oct 2026 13:16 UTC: "Please add the date and time each step was completed on.") ──────────────────────────
+   * The small card over a circle of the Library's step rail (charm-nest-rail-tip.js) says when a DONE step was completed. One reading,
+   * the page's and the server's, in this file:
+   *   stepFacts(s)      which of the three recorded steps the sheet has passed NOW (the rail's own tests)
+   *   stepsRecord(s)    what the server's pass (recordProcessReadiness, the one that already writes the process seals) appends to the sheet
+   *   stepStamps(s)     the recorded completions, oldest first (they are NOT seals: they are never drawn, only read by the card)
+   *   stepTimes(s)      for every circle of the rail: when it was completed, who did it when a person did, and the first time too
+   * What "completed" means, step by step (the exact event, and where its time comes from):
+   *   Nesting       the sheet's FINAL layout is verified, its cutting files are saved and it has left Draft for its set (stages.layout and
+   *                 stages.front, in a set). Recorded when the pass first sees it; its time is the sheet record's own last update at that moment
+   *                 (never later than the pass), because the save that completed it is the write that last touched the record. No person: the
+   *                 nester is automatic. A sheet from before this recording has no time (the page's records carry no single time for it).
+   *   Engraving     the LAST back engraving of the sheet is approved (stages.approval: every piece decided). Its time is that approval's own time
+   *                 (the back's approvedAt, "the approval, not the save") and its person the sorter's typed name on it (approvedBy). A sheet from
+   *                 before the recording is read the same way from its backs when every one carries its approval time. A sheet that needs no back
+   *                 engraving has nothing to time, so its card shows no time line. Saving the approved backs as files follows the approval and is
+   *                 not what is timed.
+   *   Order check   this gate (no other piece of an order holds the sheet) cleared: the pass's first sight of it, no person. A sheet from before
+   *                 the recording has the moment nothing held it (its latest laserReady seal): by then the gate was clear.
+   *   Laser cutting the cut: the sheet marked cut on the laser (op_laserDone: laserDoneAt, laserDoneBy; the latest laserDone seal when the
+   *   Completed     record lost the field). Marking a sheet cut is what completes it, one press, so these two circles truly show the same moment.
+   * A step that goes back to not-done (a new order lands, an engraving is reopened) and completes again appends a NEW stamp: every stamp is
+   * kept, the card shows the most recent, the first stays in the record (stepTimes().first). Nothing here ever removes or rewrites a stamp. */
+  const STEP_LOG=['nesting','engraving','orders'],MAX_STEP_STAMPS=300;
+  const STEPS_FROM=Date.UTC(2026,9,5,14,30);       // a sheet created from here on is watched from its start; an older one is only watched from the pass that first sees it (no time is made up for what it did before)
+  const REAL_FROM=Date.UTC(2020,0,1);             // a time before this is no time (an unset field, a placeholder)
+  const msOf=v=>v && typeof v.toMillis==='function'?v.toMillis():+v || 0;
+  const person=by=>{by=String(by || '').trim();return /^(system|operator|not recorded)$/i.test(by)?'':by;};
+  function stepFacts(s={}){
+    const r=sheet(s),joined=!s.archived && !s.draft && s.solidIncluded!==false;
+    return {nesting:joined && !!r.stages.layout && !!r.stages.front,engraving:!!r.stages.approval,orders:!!r.stages.orders};
+  }
+  // the last back engraving's own approval: {at,by}, {plain:true} when the sheet needs no back engraving, null when it is not through or the backs do not carry their times
+  function engravedLast(s){
+    const r=sheet(s);
+    if(!(r.total>0 && r.waiting===0))return null;
+    if(r.required===0)return {plain:true};
+    let at=0,by='';
+    for(const c of copies(s)){
+      if(c.plain)continue;
+      const b=c.back;if(!(b && msOf(b.approvedAt)>=REAL_FROM && b.approvedBy))return null;
+      if(msOf(b.approvedAt)>=at){at=msOf(b.approvedAt);by=person(b.approvedBy);}
+    }
+    return at>0?{at,by}:null;
+  }
+  function stepStamps(s={}){
+    return (Array.isArray(s.stepStamps)?s.stepStamps:[]).filter(x=>x && STEP_LOG.includes(x.step) && msOf(x.at)>=REAL_FROM).map(x=>({id:x.id?String(x.id):'',step:x.step,at:msOf(x.at),by:person(x.by)})).sort((a,b)=>a.at-b.at);
+  }
+  function stepEvent(k,s,now,n){
+    let at=now,by='';
+    if(k==='nesting'){const u=msOf(s.updatedAt);if(u>=REAL_FROM && u<=now)at=u;}
+    else if(k==='engraving'){const e=engravedLast(s);if(e && e.plain)return null;if(e && e.at<=now){at=e.at;by=e.by;}}
+    return {id:`${k}-${at}-${n}`,step:k,at,by};
+  }
+  /** stepsRecord(s, now): what the pass writes for a sheet's steps → null (nothing to write) or {state, stamps, added, flipped, baseline}:
+   *  state = which steps are done now (stepState), stamps = the sheet's whole stepStamps (the old ones kept as they are, the new ones after them),
+   *  added = the new stamps, flipped = a step changed since the last pass (the page asks for a pass soon), baseline = the first sight of an older sheet
+   *  (its steps are taken as they stand; no stamp, so no time is made up for what it did before). A sheet already cut has nothing more to record. */
+  function stepsRecord(s={},now=Date.now()){
+    if(msOf(s.laserDoneAt)>0)return null;
+    const facts=stepFacts(s),had=!!s.stepState && typeof s.stepState==='object',log=Array.isArray(s.stepStamps)?s.stepStamps:[],fresh=!had && msOf(s.createdAt)>=STEPS_FROM;
+    const state={},added=[];let flipped=false;
+    for(const k of STEP_LOG){
+      const is=!!facts[k],was=had?!!s.stepState[k]:fresh?false:is;
+      state[k]=is;
+      if(had && was!==is)flipped=true;
+      if(is && !was && log.length+added.length<MAX_STEP_STAMPS){const e=stepEvent(k,s,now,log.length+added.length);if(e)added.push(e);}
+    }
+    if(had && !added.length && !flipped)return null;
+    return {state,stamps:log.concat(added),added,flipped,baseline:!had};
+  }
+  /** stepTimes(s): for each circle key → {at, by, first, recorded} (when it was completed, the person when one did it, the first completion; recorded:false
+   *  = read from the sheet's older records), {plain:true} (nothing to time: no back engraving needed), or null (done, but nothing on record says when). */
+  function stepTimes(s={}){
+    const log=stepStamps(s),pick=k=>{const xs=log.filter(x=>x.step===k),l=xs[xs.length-1];return l?{at:l.at,by:l.by,first:xs[0].at,recorded:true}:null;};
+    const out={nesting:pick('nesting'),engraving:pick('engraving'),orders:pick('orders')};
+    if(!out.engraving){const e=engravedLast(s);if(e)out.engraving=e.plain?{plain:true}:{at:e.at,by:e.by,first:e.at,recorded:false};}
+    const stamps=processStamps(s),ready=stamps.filter(x=>x.how==='laserReady' && msOf(x.at)>=REAL_FROM).pop();
+    if(!out.orders && ready)out.orders={at:msOf(ready.at),by:'',first:msOf(stamps.find(x=>x.how==='laserReady' && msOf(x.at)>=REAL_FROM).at),recorded:false};
+    const cuts=stamps.filter(x=>x.how==='laserDone' && msOf(x.at)>=REAL_FROM),cut=cuts[cuts.length-1],at=msOf(s.laserDoneAt)>=REAL_FROM?msOf(s.laserDoneAt):cut?msOf(cut.at):0;
+    out.laser=out.completed=at>0?{at,by:person(s.laserDoneBy || cut?.by),first:cuts.length?msOf(cuts[0].at):at,recorded:true}:null;
+    return out;
+  }
   // Readiness is expressed by the section and saved-back counter, never a preview stamp.
   // Recorded process seals have their own historical row; rendering them here would duplicate them.
   function seal(r,scope='Sheet',source){return '';}
@@ -234,9 +317,18 @@
    * (no network, no page state) and decides nothing itself. Every "done" below is the same stage the gate above reads
    * (sheet(), laserSheet(), laserGroup(), orderReports()), so the words can never say ready where the section says not. */
   const CODE={gold:'GF',silver:'SS',rose:'RG',gold10k:'10K',gold14k:'14K'};
-  const STEPS=[['nesting','Nesting'],['engraving','Engraving'],['backFiles','Back files'],['qr','QR label'],['orders','Order check'],['laser','Laser cutting'],['completed','Completed']];
-  const GATED=['nesting','engraving','backFiles','qr','orders'],LISTED=30;   // the steps before Laser cutting · items listed per step (its words count the rest)
-  const stepName=k=>STEPS.find(t=>t[0]===k)[1];
+  /* The rail has five steps (round 13, Paul: "These 2 points show the same thing", "this one is also completely unnecessary because the QR code is
+   * right there"): the former Back files and QR label steps are folded into the steps that absorb them, and nothing that gates a sheet changed.
+   *   Engraving   = every back engraving approved AND every approved back saved as a file (the stage `backs`); while the files are being saved it
+   *                 is in progress, "Saving back files: 22 of 25"
+   *   Order check = every order's other pieces ready AND the sheet's QR label made (the stage `qr`): the label covers every order on the sheet
+   * A record, a link or a test made when the rail had seven steps may still name the two old keys: stepKey() maps them onto the step that took them
+   * over, and nothing stored under them is ever read as an error, rewritten or removed (processSeals, flowHistory and stamps never carried a step key). */
+  const STEPS=[['nesting','Nesting'],['engraving','Engraving'],['orders','Order check'],['laser','Laser cutting'],['completed','Completed']];
+  const GATED=['nesting','engraving','orders'],LISTED=30;   // the steps before Laser cutting · items listed per step (its words count the rest)
+  const FOLDED={backFiles:'engraving',qr:'orders'};
+  const stepKey=k=>Object.prototype.hasOwnProperty.call(FOLDED,k)?FOLDED[k]:k;
+  const stepName=k=>(STEPS.find(t=>t[0]===stepKey(k)) || [k,String(k || '')])[1];
   const sheetNo=s=>s.sheetIndex || +((/_Sheet-(\d+)/.exec(s.folder || s.fileBase || '') || [])[1]) || s.page || 1;
   const sheetLabel=s=>`${CODE[s.metal] || s.metalLabel || ''} Sheet ${sheetNo(s)}`.trim();
   const setName=s=>s.name || (s.seq || s.setSeq ? `Set ${s.seq || s.setSeq}` : 'This set');
@@ -273,10 +365,10 @@
       return {id,accepted,saved,back:b,state:d?.state || 'unknown'};
     });
   }
-  // one sheet's own five steps: ok[k] (the gate's stage), hard[k] (a problem, not only waiting), items[k], detail[k], short[k]
+  // one sheet's own three gated steps: ok[k] (the gate's stage), hard[k] (a problem, not only waiting), items[k], detail[k], short[k]
   function sheetSteps(s,N){
     const id=s.id || s.sheetId,label=sheetLabel(s),r=sheet(s),again=completedBefore(s),cs=copies(s),st=r.stages;
-    const items={nesting:[],engraving:[],backFiles:[],qr:[],orders:[]},hard={},ok={},detail={},short={};
+    const items={nesting:[],engraving:[],orders:[]},hard={},ok={},detail={},short={};
     const own=(k,why,isHard)=>{items[k].push({kind:'sheet',id,label,why});if(isHard)hard[k]=true;};
     // Nesting: a layout that is verified, saved cutting files, and a place in a set
     const working=!!(s.dirty || s.saving || ['nesting','finishing','queued'].includes(s.status));
@@ -301,40 +393,39 @@
     ok.nesting=r.included && st.layout && st.front;
     detail.nesting=ok.nesting?'Layout verified and cutting files saved.':items.nesting.length?sentence(items.nesting.slice(0,2).map(x=>x.why).join('; ')):'The layout is not ready.';
     short.nesting=lower(items.nesting[0]?.why || 'the layout is not ready');
-    // Engraving: every back approved, or the piece needs none
+    // Engraving: every back approved (or the piece needs none) AND every approved back saved as a verified file (the stage `backs`: it was the
+    // Back files step until round 13 and gates exactly as before; saving normally takes seconds, so it shows as Engraving in progress)
     const pending=cs.filter(c=>!c.plain && !c.accepted),unknown=Math.max(0,(+s.placedCount || s.placements?.length || 0)-idsOf(s).length);
     for(const c of pending.slice(0,LISTED)){items.engraving.push({kind:'charm',id:c.id,label:N.charm(c.id),why:ENGRAVE_WAIT[c.state] || 'Its back engraving is not approved yet'});if(c.state==='blocked')hard.engraving=true;}
     if(pending.length>LISTED)items.engraving.push({kind:'sheet',id,label,why:`${count(pending.length-LISTED,'more piece')} also wait for approval`});
     if(unknown)items.engraving.push({kind:'sheet',id,label,why:`${count(unknown,'placed piece')} cannot be matched to an order, so ${unknown===1?'its':'their'} engraving cannot be checked`});
-    ok.engraving=st.approval;
-    detail.engraving=ok.engraving?(r.required?`Every back engraving is approved (${r.required} of ${r.required}).`:'No back engravings are needed on this sheet.'):`${count(r.waiting,'back engraving')} still ${r.waiting===1?'needs':'need'} approval (${r.approved} of ${r.required} approved).`;
-    short.engraving=`${count(r.waiting,'back engraving')} still ${r.waiting===1?'needs':'need'} approval`;
-    // Back files: each approved back saved as a verified file
-    const unsaved=cs.filter(c=>!c.plain && c.accepted && !c.saved);
+    const unsaved=cs.filter(c=>!c.plain && c.accepted && !c.saved);let failedFile=false;
     for(const c of unsaved.slice(0,LISTED)){
       const failed=!!c.back && (c.back.verified?.file?.ok===false || c.back.verified?.geometry?.ok===false);
-      items.backFiles.push({kind:'charm',id:c.id,label:N.charm(c.id),why:failed?'Its saved back file failed its check: approve the back again':c.back?.approvedAt?'Approved, and its back file is still being saved':'Approved, but its back file is not saved yet'});
-      if(failed)hard.backFiles=true;
+      items.engraving.push({kind:'charm',id:c.id,label:N.charm(c.id),part:'files',why:failed?'Its saved back file failed its check: approve the back again':c.back?.approvedAt?'Approved, and its back file is still being saved':'Approved, but its back file is not saved yet'});
+      if(failed){hard.engraving=true;failedFile=true;}
     }
-    if(unsaved.length>LISTED)items.backFiles.push({kind:'sheet',id,label,why:`${count(unsaved.length-LISTED,'more back file')} also wait to be saved`});
-    ok.backFiles=st.backs;
-    detail.backFiles=ok.backFiles?(r.required?`All ${r.required} approved backs are saved as files.`:'No back files are needed on this sheet.'):`${r.saved} of ${r.required} back files are saved${r.waiting?`; ${count(r.waiting,'back')} still ${r.waiting===1?'waits':'wait'} for approval first`:''}.`;
-    short.backFiles=unsaved.length?`${count(unsaved.length,'approved back file')} still ${unsaved.length===1?'needs':'need'} saving`:'the back files wait for the engravings';
-    // QR label: one label that covers every order on the sheet
-    const files=s.label?.files || [],covered=new Set(files.flatMap(f=>f.orders || []).map(String)),orders=(s.orders || s.label?.orders || []).map(String);
-    const uncovered=files.length?orders.filter(o=>!covered.has(o)):[];
-    if(!files.length)own('qr','There is no QR label yet');
+    if(unsaved.length>LISTED)items.engraving.push({kind:'sheet',id,label,part:'files',why:`${count(unsaved.length-LISTED,'more back file')} also wait to be saved`});
+    ok.engraving=st.approval && st.backs;
+    const saving=`Saving back files: ${r.saved} of ${r.required}`;
+    detail.engraving=ok.engraving?(r.required?`Every back engraving is approved (${r.required} of ${r.required}).`:'No back engravings are needed on this sheet.'):!st.approval?`${count(r.waiting,'back engraving')} still ${r.waiting===1?'needs':'need'} approval (${r.approved} of ${r.required} approved).`:failedFile?`A saved back file failed its check: approve that back again (${r.saved} of ${r.required} saved).`:saving+'.';
+    short.engraving=!st.approval?`${count(r.waiting,'back engraving')} still ${r.waiting===1?'needs':'need'} approval`:failedFile?'a saved back file failed its check: approve that back again':lower(saving);
+    // Order check: built on issues(): only an order with another piece holding it back is listed (a piece on this sheet, or an order of one piece, never is),
+    // and the sheet's QR label (the stage `qr`, the QR label step until round 13): one label that covers every order on the sheet. A missing label is soft (the
+    // press of Approve makes it), an incomplete one or one that leaves orders out is hard, exactly as before.
+    const files=s.label?.files || [],covered=new Set(files.flatMap(f=>f.orders || []).map(String)),sheetOrders=(s.orders || s.label?.orders || []).map(String);
+    const uncovered=files.length?sheetOrders.filter(o=>!covered.has(o)):[];
+    const qrOwn=(why,isHard)=>{items.orders.push({kind:'sheet',id,label,part:'qr',why});if(isHard)hard.orders=true;};
+    if(!files.length)qrOwn('QR label not made yet');
     else{
-      if(files.some(f=>!(f.path && f.url && f.payload)))own('qr','The QR label is incomplete: make it again',true);
-      for(const o of uncovered.slice(0,LISTED))items.qr.push({kind:'order',id:o,label:N.order(o),why:'This order is not on the QR label'});
-      if(uncovered.length>LISTED)items.qr.push({kind:'sheet',id,label,why:`${count(uncovered.length-LISTED,'more order')} are not on the QR label either`});
-      if(uncovered.length)hard.qr=true;
+      if(files.some(f=>!(f.path && f.url && f.payload)))qrOwn('The QR label is incomplete: make it again',true);
+      for(const o of uncovered.slice(0,LISTED))items.orders.push({kind:'order',id:o,label:N.order(o),part:'qr',why:'This order is not on the QR label'});
+      if(uncovered.length>LISTED)items.orders.push({kind:'sheet',id,label,part:'qr',why:`${count(uncovered.length-LISTED,'more order')} are not on the QR label either`});
+      if(uncovered.length)hard.orders=true;
     }
-    ok.qr=st.qr;
-    detail.qr=ok.qr?`QR label made for ${count(orders.length,'order')}.`:!files.length?'No QR label has been made for this sheet yet.':uncovered.length?`The QR label leaves out ${count(uncovered.length,'order')}.`:'The QR label file is incomplete.';
-    short.qr=!files.length?'the QR label has not been made':uncovered.length?`the QR label must also cover ${count(uncovered.length,'order')}`:'the QR label is incomplete';
-    // Order check: built on issues(): only an order with another piece holding it back is listed (a piece on this sheet, or an order of one piece, never is)
-    const ids=orderIds(s),checked=!!s.orderReadiness,blockers=checked?sheetIssues(s,{perOrder:true},['orders']):[];
+    const qrDetail=st.qr?'':!files.length?'QR label not made yet.':uncovered.length?`The QR label leaves out ${count(uncovered.length,'order')}.`:'The QR label file is incomplete.';
+    const qrShort=st.qr?'':!files.length?'QR label not made yet':uncovered.length?`the QR label must also cover ${count(uncovered.length,'order')}`:'the QR label is incomplete';
+    const ids=orderIds(s),checked=!!s.orderReadiness,blockers=checked?sheetIssues(s,{perOrder:true},['orders']).filter(b=>b.orderId):[];
     if(!checked && ids.length)own('orders','Its orders have not been checked yet: they are checked when the Library refreshes');
     else{
       const seen=new Set();
@@ -347,10 +438,11 @@
       if(blockers.length>LISTED)items.orders.push({kind:'sheet',id,label,why:`${count(blockers.length-LISTED,'more order')} also wait for other pieces`});
       if(blockers.length)hard.orders=true;
     }
-    ok.orders=st.orders;
-    const first=items.orders[0];
-    detail.orders=ok.orders?(ids.length?`All ${count(ids.length,'order')} on this sheet have every other piece ready.`:'No orders to check.'):checked?`${blockers.length} of ${count(ids.length,'order')} ${blockers.length===1?'waits':'wait'} for other pieces to be ready.`:'Its orders have not been checked yet.';
-    short.orders=!checked?'its orders have not been checked yet':!blockers.length?'its orders wait for other pieces':blockers.length===1?`${N.order(blockers[0].orderId)} waits for another piece: ${lower(first.why)}`:`${count(blockers.length,'order')} wait for other pieces, for example ${N.order(blockers[0].orderId)}: ${lower(first.why)}`;
+    ok.orders=st.orders && st.qr;
+    const first=items.orders.find(i=>i.part!=='qr' && i.kind==='order'),waitsDetail=checked?`${blockers.length} of ${count(ids.length,'order')} ${blockers.length===1?'waits':'wait'} for other pieces to be ready.`:'Its orders have not been checked yet.';
+    const waitsShort=!checked?'its orders have not been checked yet':!blockers.length?'its orders wait for other pieces':blockers.length===1?`${N.order(blockers[0].orderId)} waits for another piece: ${lower(first.why)}`:`${count(blockers.length,'order')} wait for other pieces, for example ${N.order(blockers[0].orderId)}: ${lower(first.why)}`;
+    detail.orders=ok.orders?(ids.length?`All ${count(ids.length,'order')} on this sheet have every other piece ready.`:'No orders to check.'):[qrDetail,st.orders?'':waitsDetail].filter(Boolean).join(' ');
+    short.orders=st.qr?waitsShort:st.orders?qrShort:`${qrShort}, and ${waitsShort}`;
     return {id,label,r,again,ok,hard,items,detail,short};
   }
   /* ── issues: only what truly holds a sheet back (the "!" panel, the Order check step, the server's gate all read this) ─────────────
@@ -399,11 +491,11 @@
     if(s.metal==='rose' && s.roseStockId && !s.rosePlanHash)return mk('nesting','roseLine','Green line needed');
     if(!(st.layout && st.front))return mk('nesting','layout',st.layout && !st.front?'Cutting files missing':'Layout not ready');
     if(!st.approval)return mk('engraving','approvalsNeeded','Approvals needed');
-    if(!st.backs)return mk('backFiles','backFilesMissing','Back files missing');
-    if(!st.qr)return mk('qr','qrMissing','QR label missing');
+    if(!st.backs)return mk('engraving','backFilesMissing','Saving back files');   // (the Engraving step since round 13: the saved files are part of it)
+    if(!st.qr)return mk('orders','qrMissing','QR label not made yet');          // (the Order check step since round 13: the label covers every order on the sheet)
     return null;
   }
-  const ALL_STEPS=['nesting','engraving','backFiles','qr','orders','laser'];
+  const ALL_STEPS=['nesting','engraving','orders','laser'];
   // the reports of one reading of the rows and every sheet, made once for however many sheets of a set ask (the same rows and sheets give the same answer)
   const readings=new WeakMap();
   const reportsOf=ctx=>{let r=readings.get(ctx.allSheets);if(!r || r.rows!==ctx.rows){r={rows:ctx.rows,reps:orderReports(ctx.rows,ctx.allSheets)};readings.set(ctx.allSheets,r);}return r.reps;};
@@ -440,17 +532,17 @@
     return out;
   }
   /** issues(sheetOrSet, ctx): the real issues holding a sheet or set back from Laser cutting.
-   *  → [{ step:'nesting'|'engraving'|'backFiles'|'qr'|'orders'|'laser', key, sheetId, sheetLabel, ... }]
+   *  → [{ step:'nesting'|'engraving'|'orders'|'laser', key, sheetId, sheetLabel, ... }]
    *   order issue (step 'orders', one per order): key 'pooled'|'noSku'|'unmatched'|'noDesign'|'held'|'otherSheetNotReady' (the first of these among the pieces holding it),
    *     orderId, orderLabel, customer, listingId, thumb, pieceCount, pieces:[{index,key,poolId,label,kind,sheetId|null,sheetLabel|null,stage,why}] (the OTHER pieces that hold it), why, open:{type:'order',id,poolId}
-   *   own blocker (no order): key 'archived'|'held'|'notInSet'|'roseLine'|'layout'|'approvalsNeeded'|'backFilesMissing'|'qrMissing', label (a few words, no counts), open:{type:'sheet',id}
+   *   own blocker (no order): key 'archived'|'held'|'notInSet'|'roseLine'|'layout'|'approvalsNeeded'|'backFilesMissing' (step engraving: "Saving back files")|'qrMissing' (step orders: "QR label not made yet"), label (a few words, no counts), open:{type:'sheet',id}
    *   no set wait: a set mate that merely is not ready is the SET's wait, said once under the Approve button (setGate().reason), never an entry of a sheet's list
    *   set trouble (step 'laser', real): key 'missingSheet'|'setMissing', label, open:{type:'sheet',id}
    *   an order split across sets: an order issue whose pieces name the other set (split:true, setLabel), worded "Split between Set 1 and Set 2"
    *  ctx (all optional): steps (the steps to report, default all) · rows + allSheets (every order row and EVERY live sheet: the pieces are read from these) · sheets/set/setMissing
    *  as explain reads them · thumb(orderId) → url. A cut sheet or set has none. */
   function issues(subject,ctx={}){
-    const s=subject || {},steps=Array.isArray(ctx.steps)?ctx.steps:ALL_STEPS,kind=ctx.kind || (s.kind==='set' || (Array.isArray(s.sheetIds) && !s.poolIds && !s.id && !s.sheetId)?'set':'sheet');
+    const s=subject || {},steps=Array.isArray(ctx.steps)?[...new Set(ctx.steps.map(stepKey))]:ALL_STEPS,kind=ctx.kind || (s.kind==='set' || (Array.isArray(s.sheetIds) && !s.poolIds && !s.id && !s.sheetId)?'set':'sheet');
     if(kind!=='set')return +s.laserDoneAt>0?[]:sheetIssues(s,ctx,steps);
     if(+s.laserDoneAt>0)return [];
     const raw=[...new Map((ctx.sheets || s.sheets || (ctx.allSheets || []).filter(x=>(s.sheetIds || []).includes(x.id || x.sheetId))).map(x=>[x.id || x.sheetId,x])).values()],live=raw.filter(x=>!x.archived),out=[];
@@ -507,7 +599,7 @@
     const reason=blockers.length?blockers[0].text+(blockers.length>1?`, and ${blockers.length-1} more`:''):'';
     return {ready:order.length>0 && !blockers.length,blockers,reason,sheets:out,toApprove:out.filter(x=>!x.missing && x.state!=='past').map(x=>x.sheetId),single:order.length<2,setLabel:setName(st)};
   }
-  // the card the page draws: x[k] = {ok,hard,items,detail,short} for the five steps, in the words of a sheet or a set
+  // the card the page draws: x[k] = {ok,hard,items,detail,short} for the three gated steps, in the words of a sheet or a set
   function build(kind,id,label,x,ready,done,laserWords,laserShort,laserItems){
     const behind=GATED.filter(k=>!x[k].ok),now=done?'completed':behind[0] || 'laser';
     const steps=STEPS.map(([key,name])=>{
@@ -579,5 +671,5 @@
     }
     return e;
   }
-  return {idsOf,orderIds,decisions,held,isHand,handOf,sheet,set,completedBefore,laserSheet,laserGroup,setGate,approveBlock,setOf,orderReports,forSheet,pieces,issues,copyIds,orderBlockers,filed,processStamps,seal,counter,explain,lookup:names,STEPS:STEPS.map(([key,label])=>({key,label})),sheetLabel};
+  return {idsOf,orderIds,decisions,held,isHand,handOf,sheet,set,completedBefore,laserSheet,laserGroup,setGate,approveBlock,setOf,orderReports,forSheet,pieces,issues,copyIds,orderBlockers,filed,processStamps,STEP_LOG,STEPS_FROM,stepFacts,stepStamps,stepsRecord,stepTimes,seal,counter,explain,lookup:names,STEPS:STEPS.map(([key,label])=>({key,label})),stepKey,sheetLabel};
 });

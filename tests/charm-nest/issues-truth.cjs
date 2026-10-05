@@ -22,7 +22,7 @@ function row(order,txn,o={}){
 }
 const srv=r=>({key:r.key,orderId:r.order.receiptId,state:r.state,poolIds:r.poolIds,quantity:r.spec.quantity,sku:r.spec.designSku,noDesign:r.spec.noDesign,problems:r.problems.map(p=>p.kind),hold:r.hold,changePending:r.changePending,snap:{title:r.line.title,listingId:r.line.listingId,buyer:r.order.buyer.name},transactionId:r.line.transactionId});
 const of=(s,rows,all)=>R.issues(s,{rows,allSheets:all||[s]});
-const orderIssues=(s,rows,all)=>of(s,rows,all).filter(i=>i.step==='orders');
+const orderIssues=(s,rows,all)=>of(s,rows,all).filter(i=>i.step==='orders' && i.orderId);   // (round 13: the sheet's own QR label row is under Order check too, but it is no order)
 const step=(e,k)=>e.steps.find(x=>x.key===k);
 const strings=(x,out=[])=>{if(typeof x==='string')out.push(x);else if(x&&typeof x==='object')for(const v of Object.values(x))strings(v,out);return out;};
 
@@ -161,6 +161,7 @@ assert.equal(R.sheet(fixed).ready,true);assert.equal(R.laserSheet(fixed).ready,t
   // an order the sheet lists but holds no piece of (an old list) is not its order
   const stale=sheet('gf1','gold',['12_a_1'],{extra:{orders:['12','13']}});
   assert.equal(orderIssues(stale,[row('12','a'),row('13','a',{poolIds:['13_a_1'],state:'pooled'}),row('13','b',{state:'pooled',poolIds:[]})]).length,0);
+  assert.deepEqual(of(stale,[row('12','a')]).filter(i=>i.step==='orders' && !i.orderId && i.key!=='unverified').map(i=>[i.key,i.label,i.orderId]),[['qrMissing','QR label not made yet',undefined]],'its label leaves out order 13: the one plain row under Order check, no order');
 }
 
 // 6. Cancelled, no-design and held pieces
@@ -242,11 +243,15 @@ assert.equal(R.sheet(fixed).ready,true);assert.equal(R.laserSheet(fixed).ready,t
   assert.deepEqual(k(mk(s=>{s.metal='rose';s.roseStockId='st';})),[['nesting','roseLine']]);
   const unapproved=s=>{s.backPool=[];s.engraving={'60_a_1':{needed:true,state:'review',approved:false}};};
   assert.deepEqual(k(mk(unapproved)),[['engraving','approvalsNeeded']],'approvals first');
-  assert.deepEqual(k(mk(s=>s.backPool=[])),[['backFiles','backFilesMissing']],'approved but not saved');
-  assert.deepEqual(k(mk(s=>s.backPool[0].outputs=null)),[['backFiles','backFilesMissing']]);
-  assert.deepEqual(k(mk(s=>s.label.files=[])),[['qr','qrMissing']]);
+  // (round 13: the saved back files are part of Engraving and the QR label part of Order check: the rail has five steps)
+  assert.deepEqual(k(mk(s=>s.backPool=[])),[['engraving','backFilesMissing']],'approved but not saved');
+  assert.deepEqual(k(mk(s=>s.backPool[0].outputs=null)),[['engraving','backFilesMissing']]);
+  assert.deepEqual(k(mk(s=>s.label.files=[])),[['orders','qrMissing']]);
+  assert.deepEqual(R.issues(mk(s=>s.backPool=[]),{}).map(i=>i.label),['Saving back files']);assert.deepEqual(R.issues(mk(s=>s.label.files=[]),{}).map(i=>i.label),['QR label not made yet']);
+  assert.deepEqual(R.issues(mk(s=>s.label.files=[]),{steps:['qr']}).map(i=>i.key),['qrMissing'],'an older caller that still asks for the QR label step is read as Order check');
+  assert.deepEqual(R.issues(mk(s=>s.backPool=[]),{steps:['backFiles']}).map(i=>i.key),['backFilesMissing'],'and Back files as Engraving');
   assert.deepEqual(k(mk(s=>{s.verification.ok=false;s.label.files=[];})),[['nesting','layout']],'one entry: the first step still behind');
-  assert.deepEqual(R.issues(mk(s=>{s.verification.ok=false;s.label.files=[];}),{steps:['qr']}),[],'steps limits it');
+  assert.deepEqual(R.issues(mk(s=>{s.verification.ok=false;s.label.files=[];}),{steps:['orders']}),[],'steps limits it');
   assert(R.issues(mk(unapproved),{}).every(i=>i.label.split(' ').length<=4 && !/\d/.test(i.label)));
   const again=mk(s=>{unapproved(s);s.processSeals=[{how:'laserDone',at:9}];});assert.deepEqual(k(again),[],'a sheet cut once before keeps its approval');
 }

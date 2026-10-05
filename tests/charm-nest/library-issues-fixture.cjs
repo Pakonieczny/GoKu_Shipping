@@ -22,7 +22,9 @@ const KEYS = ['pooled', 'otherSheetNotReady', 'noSku', 'pooled', 'otherSheetNotR
    `trouble` the real set trouble (a sheet of the set that cannot be found), and a key 'split' an order split between two sets (key otherSheetNotReady, split:true). */
 function issues(sheetId, n, { keys, own = null, mates = [], trouble = [], names = NAMES, start = 4170250000, lid = 'L' } = {}) {
   const out = [];
-  if (own) out.push({ step: own, key: { engraving: 'approvalsNeeded', backFiles: 'backFilesMissing', qr: 'qrMissing', nesting: 'layout' }[own], label: { engraving: 'Approvals needed', backFiles: 'Back files missing', qr: 'QR label missing', nesting: 'Layout not ready' }[own], open: { type: 'sheet', id: sheetId } });
+  // own: 'engraving' (approvals), 'saving' (the approved backs' files are still being saved: Engraving), 'qr' (the QR label: Order check), 'nesting' (the rail has five steps since round 13)
+  const OWNS = { engraving: ['engraving', 'approvalsNeeded', 'Approvals needed'], saving: ['engraving', 'backFilesMissing', 'Saving back files'], qr: ['orders', 'qrMissing', 'QR label not made yet'], nesting: ['nesting', 'layout', 'Layout not ready'] };
+  if (own) out.push({ step: OWNS[own][0], key: OWNS[own][1], label: OWNS[own][2], open: { type: 'sheet', id: sheetId } });
   for (let i = 0; i < n; i++) {
     const pick = (keys || KEYS)[i % (keys || KEYS).length], split = pick === 'split', key = split ? 'otherSheetNotReady' : pick, id = String(start + i * 137), sheetLabel = key === 'otherSheetNotReady' ? 'SS Sheet 1' : null;
     out.push({ step: 'orders', key, orderId: id, orderLabel: 'Order ' + id, customer: names[i % names.length], listingId: lid + (i % 12), thumb: null, pieceCount: 2, ...(split ? { split: true, sets: ['Set 1', 'Set 2'] } : {}), pieces: [{ index: 2, key: id + '_b', label: 'Charm', sheetLabel, why: key, ...(split ? { split: true, setLabel: 'Set 2' } : {}) }], open: { type: 'order', id } });
@@ -70,7 +72,7 @@ Object.assign(window, {
   LibraryFlow: { approve: async () => { window.__calls.push(['approve']); return { ok: true, auto: [], needs: [], confirm: [], notes: [] }; } },   /* (so the sheets carry their Approve button; a press is only recorded) */
   ListMedia: { peek: id => window.__photos.get(id) || null, listing: id => new Promise(r => setTimeout(() => r(window.__photoOf ? window.__photoOf(id) : null), 120 + (parseInt(String(id).replace(/\\D/g, ''), 10) || 0) * 25)) }
 });`;
-async function openPage(browser, { width = 1440, height = 900, fake = true, errors = [], touch = false, source = read } = {}) {   // (source: how a script file is read: a mutation check hands in a copy with one change)
+async function openPage(browser, { width = 1440, height = 900, fake = true, errors = [], touch = false, bridge: bridgeSrc = '', source = read } = {}) {   // (bridge: a changed copy of the bridge: the mutants · source: how a script file is read: a mutation check hands in a copy with one change)
   const context = await browser.newContext({ viewport: { width, height }, deviceScaleFactor: 2, ...(touch ? { hasTouch: true } : {}) });
   const page = await context.newPage();
   page.on('pageerror', e => { errors.push(e.message); console.error('page error:', String(e.stack || e.message).split('\n').slice(0, 3).join(' | ')); });
@@ -80,7 +82,7 @@ async function openPage(browser, { width = 1440, height = 900, fake = true, erro
   for (const f of ['charm-nest-orders.js']) await page.addScriptTag({ content: source(f) });
   await page.evaluate(() => { window.O = window.CharmNestOrders; });
   for (const f of ['charm-nest-readiness.js', 'charm-nest-activity.js', 'charm-nest-motion.js']) await page.addScriptTag({ content: source(f) });
-  const bridge = source('charm-nest-bridge.js');
+  const bridge = bridgeSrc || source('charm-nest-bridge.js');   // (a test may hand it a changed copy: the mutants)
   await page.addScriptTag({ content: bridge.slice(bridge.indexOf('const LaserReview ='), bridge.indexOf('/* ═══ 22 · Sets — one run')) });
   const a = bridge.indexOf('  function libraryGroups('), b = bridge.indexOf('  /** A set card whose completion', a), c = bridge.indexOf('  async function renderLibrary(body, opts)', b), e = bridge.indexOf('  return { releaseIssue', c);
   await page.addScriptTag({ content: 'window.Sets=(()=>{' + bridge.slice(a, b) + bridge.slice(c, e) + ';return {libraryCard};})();' });
