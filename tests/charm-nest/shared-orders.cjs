@@ -110,17 +110,17 @@ const X = '3900000001', Y = '3900000002', Z = '3900000003', W = '3900000004', P 
     let p = await LF.plan({ kind: 'sheet', id: 'live-a', to: { newSet: true } });
     assert.equal(p.ok, false); assert.equal(p.needs[0].key, 'sharedOrders', JSON.stringify(p.needs.map(n => n.key)));
     assert.deepEqual(p.needs[0].items.map(i => i.orderId), [X], 'exactly the order that prevents it'); assert.deepEqual(p.shared.map(i => i.orderId), [X]);
-    assert(/pieces on another sheet/.test(p.needs[0].label)); assert(/GF Sheet 2/.test(p.needs[0].detail)); assert(p.group.includes('GF Sheet 1') && p.group.includes('GF Sheet 2'), JSON.stringify(p.group));
+    assert.equal(p.needs[0].label, 'Orders shared with another sheet'); assert(p.needs[0].label.split(' ').length <= 7 && p.needs[0].detail.split(/[.!?]\s/).length === 1, 'a short label and one short sentence'); assert(JSON.stringify(p.needs[0].items).includes('GF Sheet 2'), 'the other sheet is named by the items, with the pictures'); assert(p.group.includes('GF Sheet 1') && p.group.includes('GF Sheet 2'), JSON.stringify(p.group));
     assert.equal(p.needs[0].items[0].pieces.length, 2); assert.equal(p.needs[0].items[0].pieces[0].sheetLabel === 'GF Sheet 1' || p.needs[0].items[0].pieces[0].sheetLabel === 'GF Sheet 2', true);
     assert.equal(sheetsSnapshot(), before, 'a plan writes nothing'); assert.equal(writes().length, callsBefore);
-    let c = await LF.commit(p, { by: 'Paul' }); assert.equal(c.ok, false); assert(/pieces on another sheet/.test(c.error)); assert.equal(sheetsSnapshot(), before, 'a refused commit writes nothing'); assert.equal(joins.length, 0);
+    let c = await LF.commit(p, { by: 'Paul' }); assert.equal(c.ok, false); assert(/shared with another sheet/.test(c.error)); assert.equal(sheetsSnapshot(), before, 'a refused commit writes nothing'); assert.equal(joins.length, 0);
     // joining the set its mate is already in is allowed, and nothing else is asked
     p = await LF.plan({ kind: 'sheet', id: 'live-a', to: { set: 'set-3' } }); assert.equal(p.ok, true, JSON.stringify(p.needs)); assert.equal(p.shared, undefined); assert(!p.confirm.some(x => x.key === 'together'));
     // a sheet without shared orders: the plan is the plain one
     p = await LF.plan({ kind: 'sheet', id: 'live-b', to: { set: 'set-3' } }); assert.equal(p.ok, true); assert.equal(p.shared, undefined); assert(!p.needs.some(x => x.key === 'sharedOrders')); assert(p.steps.some(x => x.type === 'include' && !x.with));
     // out of a set: the sheet that stays behind is named, and the base reasons come after the cardinal one
     p = await LF.plan({ kind: 'sheet', id: 'mem-1', to: { set: 'set-3' } }); assert.equal(p.ok, false); assert.equal(p.needs[0].key, 'sharedOrders'); assert.deepEqual(p.needs[0].items.map(i => i.orderId), [M]);
-    assert(/cannot leave its set/.test(p.needs[0].detail) && /GF Sheet 2/.test(p.needs[0].detail), p.needs[0].detail); assert(p.needs.length > 1, 'the round-1 reasons are still told');
+    assert(/stay in one set/.test(p.needs[0].detail) && JSON.stringify(p.needs[0].items).includes('GF Sheet 2'), JSON.stringify(p.needs[0])); assert(p.needs.length > 1, 'the round-1 reasons are still told');
     // a mate in a committed set can never join: the exact reason, no way through
     p = await LF.plan({ kind: 'sheet', id: 'cm-d', to: { set: 'set-3' } }); assert.equal(p.ok, false); assert.equal(p.needs[0].key, 'sharedOrders'); assert(/Set 2 was committed to the Design Station/.test(p.needs[0].detail), p.needs[0].detail); assert.deepEqual(p.confirm, []);
     c = await LF.commit(p, { by: 'Paul', confirmed: ['together', 'splitOrders'] }); assert.equal(c.ok, false, 'no yes key lifts it'); assert.equal(sheetsSnapshot(), before);
@@ -184,7 +184,7 @@ const X = '3900000001', Y = '3900000002', Z = '3900000003', W = '3900000004', P 
     // a gold sheet that shares an order with a Rose Gold one: Rose Gold is never pulled in on its own, the person is told why
     p = await LF.plan({ kind: 'sheet', id: 'gold-r', to: { set: 'set-3' } }); assert.equal(p.ok, false); assert.equal(p.needs[0].key, 'sharedOrders'); assert(/Rose Gold sheet joins a set only by its own Cut Sheet press/.test(p.needs[0].detail), p.needs[0].detail); assert.deepEqual(p.needs[0].items.map(i => i.orderId), [R]);
     // 10K and 14K: the sheets of one order go in together (the old "only this sheet" choice is gone), through one yes
-    p = await LF.plan({ kind: 'sheet', id: 'k10-a', to: { set: 'set-3' } }); assert.equal(p.ok, true, JSON.stringify(p.needs)); assert.deepEqual(p.confirm.map(x => x.key), ['together']); assert(/10K Sheet 1/.test(p.confirm[0].detail) && /14K Sheet 1/.test(p.confirm[0].detail), p.confirm[0].detail);
+    p = await LF.plan({ kind: 'sheet', id: 'k10-a', to: { set: 'set-3' } }); assert.equal(p.ok, true, JSON.stringify(p.needs)); assert.deepEqual(p.confirm.map(x => x.key), ['together']); assert(/10K Sheet 1/.test(p.confirm[0].label) && /14K Sheet 1/.test(p.confirm[0].label) && /so they go in together/.test(p.confirm[0].detail), p.confirm[0].label + ' / ' + p.confirm[0].detail);
     assert(!p.confirm.some(x => x.key === 'splitOrders'));
     // a page whose live read still reports the old per-sheet split (an older page) gets the same plan: both join
     LF.configure({ live: id => id === 'k10-a' ? { runHere: true, draft: true, dispatchSetId: 'set-3', can: { ok: true }, split: [{ label: '14K Sheet 1', orders: [T] }] } : liveHook(id) });
