@@ -578,7 +578,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     await sampler();
     await page.click(rel);
     await page.waitForFunction(() => document.getElementById('hfxLayer') && CN.S.mode === 'nest', null, { timeout: 30000 });
-    for (const [re, name] of [['First in line', 'd2-release-film-1-first-in-line'], ['Finding a spot', 'd2-release-film-2-spot'], ['Placing the pieces', 'd2-release-film-3-placing'], ['Placed on', 'd2-release-film-4-placed']]) { try { await page.waitForFunction(re => { const l = document.querySelector('#hfxLayer .hfxLive'); return l && l.textContent.includes(re); }, re, { timeout: 60000 }); await shot(name, 120); } catch (_) { console.log('  (no frame for ' + re + ')'); } }
+    for (const [re, name] of [['First in the queue', 'd2-release-film-1-first-in-line'], ['Finding a spot', 'd2-release-film-2-spot'], ['Placing the pieces', 'd2-release-film-3-placing'], ['Placed on', 'd2-release-film-4-placed']]) { try { await page.waitForFunction(re => { const l = document.querySelector('#hfxLayer .hfxLive'); return l && l.textContent.includes(re); }, re, { timeout: 60000 }); await shot(name, 120); } catch (_) { console.log('  (no frame for ' + re + ')'); } }
     await waitHome(H1, 'D');
     const fr = await sampled(); frames.push(['D', fr]);
     const note = await page.evaluate(() => { const n = document.querySelector('.mNote'); return n ? { text: n.querySelector('.mNoteT').textContent.trim(), btns: [...n.querySelectorAll('.mNoteBtn')].map(b => b.textContent.trim()) } : null; });
@@ -617,7 +617,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     pass('the data: its four pieces stand on ' + gold.label + ' and ' + silver.label + ' (the saved sheets list them), the lines are back in line with their place at the front, one "Released from hold by Paul" step names the sheet and the time, the held steps are still there');
     // ── the film ──
     const log = await fxLog(), caps = captionsOf(log);
-    const order = inOrder(caps, [/^Releasing order 4170000100/, /^First in line, ahead of new orders/, /^Finding a spot on/, /^Placing the pieces on/, /^Placed on/, /^Order 4170000100 is released/]);
+    const order = inOrder(caps, [/^Releasing order 4170000100/, /^First in the queue, ahead of new orders/, /^Finding a spot on/, /^Placing the pieces on/, /^Placed on/, /^Order 4170000100 is released/]);
     assert.equal(order, true, 'the release captions followed the steps in order: ' + order);
     const flights = log.filter(e => e.ev === 'flight').map(e => e.key);
     for (const s of steps.filter(s => s.type === 'flight')) for (const id of s.poolIds) assert(flights.includes(`place:${s.toSheetId}:${id}`), `the film flew ${id} to ${s.toSheetId} (flights: ${flights.join(', ')})`);

@@ -32,8 +32,8 @@
            sheetDone { sheetId, charmCount, density }   "27 pieces · 74% full"
            held { rid }                    "Order … is on hold", then home; done ends the film; error { message, sheetId } says
                                            so and goes home too
-   RELEASE intro: the order's card lifts out of On hold, its design rises and flies into a "Next in line" tray as the Nest
-           tab comes in; queued { front } "First in line, ahead of new orders"; target { sheetId, label, spot, newSheet };
+   RELEASE intro: the order's card lifts out of On hold, its design rises and flies into an "Up next" tray as the Nest
+           tab comes in; queued { front } "First in the queue, ahead of new orders"; target { sheetId, label, spot, newSheet };
            flight { toSheetId, poolIds } the pieces fly from the tray onto the sheet; placed settles them with a gentle
            pulse; qr; released { rid }; done. Home: Orders, On hold, with a note that says where the order went.
 
@@ -625,7 +625,7 @@
       const card = holdCard(this.rid), r = card && rectOf(card), th = card && (rectOf(card.querySelector(".comparePair, .cuDzThumbs, .rowMedia")) || r), M = motion();
       const img = card && card.querySelector(".comparePair img, .cuDzThumbs img, img"); this.pic = (img && (img.currentSrc || img.src)) || "";
       this.say(`Releasing order ${this.rid}`, "back in line");
-      const mk = this.tray("Next in line", NEXT, "");
+      const mk = this.tray("Up next", NEXT, "");
       if (r && M && !this.reduced) {
         const g = M.ghost(card, r, null, card); this.ghosts.add(g); g.dataset.hfx = "card:" + this.rid;
         this.anim(g, [{ transform: "none", opacity: 1 }, { transform: "translate(0,-6px) scale(1.012)", opacity: 1, offset: .35 }, { transform: "translate(0,-14px) scale(.985)", opacity: 0 }], { duration: 900, easing: SOFT }).then(() => { this.ghosts.delete(g); g.remove(); });
@@ -754,7 +754,7 @@
   const REL = {
     async start() {},
     async queued(s) {
-      this.say(s.front === false ? "Back in line" : "First in line, ahead of new orders", `Order ${this.rid}`);
+      this.say(s.front === false ? "Back in line" : "First in the queue, ahead of new orders", `Order ${this.rid}`);
       if (this.mark) this.mark.set("1st");
       await this.hold();
     },
