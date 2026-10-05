@@ -247,6 +247,8 @@
     const rows0 = rowsOfOrder(rid), resumed = rows0.some(r => r.releasing);
     emit(Object.assign({ type: 'start', rid }, resumed ? { resumed: true } : {}));
     if (!G.Orders || !G.Review || !G.B) return fail('The sorter is not ready yet; try again in a moment.', 'start');
+    // (a Hold still taking this order off its sheets: its first lines are under On hold already, and a release now would put them back while the rest comes off)
+    if (OH.status && (OH.status(rid) || {}).running) return fail(`Order ${rid} is being put on hold right now, so it cannot be released yet. It is still on hold: press Release hold again when that has finished.`, 'start');
     if (!rows0.length) return fail(`Order ${rid} is not in this sorter.`, 'start');
     if (G.Cancelled && G.Cancelled.has && G.Cancelled.has(rid)) return fail(`Order ${rid} was cancelled.`, 'start');
     if (!rows0.some(r => r.hold || r.releasing)) return fail('This order is not on hold.', 'start');
@@ -331,7 +333,6 @@
     RUNNING.set(rid, p); return p;
   };
   OH.releaseStatus = rid => { const l = LAST.get(str(rid)); return { running: RUNNING.has(str(rid)), step: l ? l.step : null }; };
-
   /** A release a reload (or an error) cut short: its lines still carry `releasing`, so the release is finished here, once at a time. */
   OH.resumeReleases = async function resumeReleases() {
     if (!G.Orders || !G.Orders.rows || !G.B || !G.B.run) return [];

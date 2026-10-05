@@ -8390,7 +8390,9 @@ window.DesignStation = {
     }
     try { if (reason === "midnight") toast("Signed out at midnight. Sign back in and set your name in the chat.", "", 8000); } catch (_) {}
   }
-  try { if (window.StationSession) StationSession.init({ station: "design", device: "design-1", person, signOut }); } catch (_) {}
+  // the sandbox flag is the page's own (the address says ?sandbox=1 or 0, and a tab keeps it): the sign-in and every event follow it,
+  // so a sandbox tab opened again without the address never writes into the real station numbers
+  try { if (window.StationSession) StationSession.init({ station: "design", device: "design-1", person, signOut, sandbox: (typeof SANDBOX !== "undefined") ? !!SANDBOX : undefined }); } catch (_) {}
 })();
 </script>
 </body>
