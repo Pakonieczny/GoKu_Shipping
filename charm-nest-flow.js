@@ -103,7 +103,7 @@
   function sheetGaps(rec, env) {
     const L = laserOf(rec), st = L.stages || {}, id = sid(rec), label = sheetName(rec), g = { needs: [], auto: [], steps: [], checks: {} };
     const ex = explainSteps(rec, env);
-    const need = (key, lab, detail, items, n) => g.needs.push({ key, lab, n: n || 1, detail, items: (items || []).slice(0, LISTED), sheet: label });
+    const need = (key, lab, detail, items, n, of) => g.needs.push({ key, lab, n: n || 1, of: of || 0, detail, items: (items || []).slice(0, LISTED), sheet: label });
     if (held(rec)) {
       g.auto.push({ key: 'release:' + id, label: `${label} released from its hold`, detail: `Held back${rec.laserHold.by ? ' by ' + rec.laserHold.by : ''}; every approval and seal it had is kept.` });
       g.steps.push({ type: 'release', sheetIds: [id], key: 'release:' + id });
@@ -120,24 +120,30 @@
     } else g.checks.layout = { ok: true };
     if (st.layout && !st.front) need('files', () => 'Cutting files missing', 'The cutting file (.ai) or the sheet picture is not saved yet.');
     else if (!st.layout && !st.front) need('files', () => 'Cutting files missing', 'The cutting file (.ai) or the sheet picture is not saved yet.');
+    // Engraving is the approved backs AND their saved files (round 13: the Back files step is part of it; the gate is the same). The files are
+    // saved right after an approval and it normally takes seconds, so the gap says so in plain words.
+    const engFiles = ex.engraving && ex.engraving.items ? ex.engraving.items.filter(i => i.part === 'files') : [];
     if (!st.approval) need('engraving', n => `${count(n, 'back engraving')} not approved`, ex.engraving && ex.engraving.detail || `${count(L.waiting, 'back engraving')} still need approval.`, ex.engraving && ex.engraving.items, Math.max(1, L.waiting));
-    else if (L.required) g.checks.engraving = { ok: true, a: L.approved, r: L.required };
-    if (!st.backs && st.approval) need('backFiles', n => `${count(n, 'back file')} not saved`, ex.backFiles && ex.backFiles.detail || `${L.saved} of ${L.required} approved backs are saved as files.`, ex.backFiles && ex.backFiles.items, Math.max(1, L.required - L.saved));
-    else if (st.backs && L.required) g.checks.backFiles = { ok: true, a: L.saved, r: L.required };
+    else if (!st.backs) {
+      const failed = !!(ex.engraving && ex.engraving.state === 'blocked');
+      need('engravingFiles', (n, of) => failed ? 'A saved back file failed its check' : `Saving back files: ${Math.max(0, of - n)} of ${of}`,
+        failed && ex.engraving.detail || 'Each approved back is saved as a file before the sheet can be cut. This normally takes a few seconds.', engFiles, Math.max(1, L.required - L.saved), L.required);
+    } else if (L.required) g.checks.engraving = { ok: true, a: L.approved, r: L.required };
+    // the QR label belongs to Order check (it covers every order on the sheet): made by the press when it can be, else a gap with its one shortcut
     if (!st.qr) {
       const orders = (rec.orders || (rec.label && rec.label.orders) || []).length, rose = rec.metal === 'rose' && !rec.roseCutAt, can = !rose && orders > 0 && rec.verification?.ok === true && !!(rec.outputs && (rec.outputs.ai || rec.outputs.preview)) && env.canRelabel !== false;
       if (can) {
         g.auto.push({ key: 'qrLabel:' + id, label: `${label}: QR label made`, detail: `A QR label for ${count(orders, 'order')} is made and saved with the sheet.`, stamp: true });
         g.steps.push({ type: 'qrLabel', sheetId: id, key: 'qrLabel:' + id });
-      } else need('qr', () => 'QR label missing', rose ? 'A Rose Gold sheet gets its QR label when Cut Sheet is pressed: open it on the Nest tab and press Cut Sheet there.' : orders ? 'The QR label cannot be made from here: open the sheet and press Make QR label.' : 'There is no order on this sheet to put on a label.', ex.qr && ex.qr.items);
+      } else need('qrLabel', () => 'QR label not made yet', rose ? 'A Rose Gold sheet gets its QR label when Cut Sheet is pressed: open it on the Nest tab and press Cut Sheet there.' : orders ? 'The QR label cannot be made from here: open the sheet and press Make QR label.' : 'There is no order on this sheet to put on a label.', ex.orders && ex.orders.items ? ex.orders.items.filter(i => i.part === 'qr') : []);
     }
     // an order waits for every piece of it. A piece on this sheet, or on a sheet of the same move, is no wait of its own:
     // that sheet's own gaps are listed (or done) above, and the order passes when they are
     const together = id => !!(env.own && env.own.has(id));
     const blockers = Object.entries(rec.orderReadiness || {}).filter(([, v]) => v && v.ready !== true && !together(v.sheetId));
     if (!st.orders && blockers.length) {
-      need('orders', n => `${count(n, 'order')} waiting for other pieces`, ex.orders && ex.orders.detail || 'Every piece of an order must be ready before any of it is cut.',
-        ex.orders && ex.orders.items && ex.orders.items.length ? ex.orders.items : blockers.map(([oid, v]) => ({ kind: 'order', id: oid, label: `Order ${oid}`, why: v.why || 'Another piece of this order is not ready' })), Math.max(1, blockers.length));
+      need('orders', n => `${count(n, 'order')} waiting for other pieces`, st.qr && ex.orders && ex.orders.detail || 'Every piece of an order must be ready before any of it is cut.',
+        ex.orders && ex.orders.items && ex.orders.items.filter(i => i.part !== 'qr').length ? ex.orders.items.filter(i => i.part !== 'qr') : blockers.map(([oid, v]) => ({ kind: 'order', id: oid, label: `Order ${oid}`, why: v.why || 'Another piece of this order is not ready' })), Math.max(1, blockers.length));
     } else if (Object.keys(rec.orderReadiness || {}).length && !blockers.length) g.checks.orders = { ok: true };
     return g;
   }
@@ -145,19 +151,18 @@
   function foldNeeds(list, several) {
     const out = new Map();
     for (const n of list) {
-      const e = out.get(n.key) || { key: n.key, lab: n.lab, n: 0, detail: [], items: [], sheets: [] };
-      e.n += n.n; e.detail.push(several ? `${n.sheet}: ${n.detail}` : n.detail); e.items.push(...n.items); e.sheets.push(n.sheet);
+      const e = out.get(n.key) || { key: n.key, lab: n.lab, n: 0, of: 0, detail: [], items: [], sheets: [] };
+      e.n += n.n; e.of += n.of; e.detail.push(several ? `${n.sheet}: ${n.detail}` : n.detail); e.items.push(...n.items); e.sheets.push(n.sheet);
       out.set(n.key, e);
     }
-    return [...out.values()].map(e => ({ key: e.key, label: e.lab(e.n) + (several && e.sheets.length > 1 && !/\d/.test(e.lab(e.n)) ? ` (${e.sheets.length} sheets)` : ''), detail: e.detail.join(' '), items: e.items.slice(0, LISTED) }));
+    return [...out.values()].map(e => ({ key: e.key, label: e.lab(e.n, e.of) + (several && e.sheets.length > 1 && !/\d/.test(e.lab(e.n, e.of)) ? ` (${e.sheets.length} sheets)` : ''), detail: e.detail.join(' '), items: e.items.slice(0, LISTED) }));
   }
   // the checks that passed on every sheet, said once ("Layout verified", not once a sheet)
   function checkLines(gaps, mine) {
     const out = [], every = t => gaps.every(g => g.checks[t] && g.checks[t].ok), n = mine.length, tail = n > 1 ? ` · ${count(n, 'sheet')}` : '';
     const sum = (t, k) => gaps.reduce((a, g) => a + ((g.checks[t] && g.checks[t][k]) || 0), 0);
     if (every('layout')) out.push({ key: 'check:layout', label: 'Layout verified' + tail, detail: 'The saved layout passed its check.', check: true });
-    if (every('engraving')) out.push({ key: 'check:engraving', label: `Back engravings approved · ${sum('engraving', 'a')} of ${sum('engraving', 'r')}`, detail: 'Every back engraving on it is approved.', check: true });
-    if (every('backFiles')) out.push({ key: 'check:backFiles', label: `Back files saved · ${sum('backFiles', 'a')} of ${sum('backFiles', 'r')}`, detail: 'Every approved back is saved as a verified file.', check: true });
+    if (every('engraving')) out.push({ key: 'check:engraving', label: `Back engravings approved · ${sum('engraving', 'a')} of ${sum('engraving', 'r')}`, detail: 'Every back engraving on it is approved, and its back file is saved.', check: true });
     if (every('orders')) out.push({ key: 'check:orders', label: "Every order's other pieces ready" + tail, detail: 'Nothing on it waits for a piece on another sheet.', check: true });
     return out;
   }

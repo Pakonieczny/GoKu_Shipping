@@ -18,9 +18,12 @@ const rows=[{key:'1000_t0',order:{receiptId:'1000',buyer:{name:'Ada Lovelace'}},
 const ok=sheet('s1');
 let e=R.explain(ok);
 assert.equal(e.kind,'sheet');assert.equal(e.id,'s1');assert.equal(e.ready,true);assert.equal(e.done,false);assert.equal(e.step,'laser');
-assert.deepEqual(e.steps.map(s=>s.key),['nesting','engraving','backFiles','qr','orders','laser','completed']);
-assert.deepEqual(e.steps.map(s=>s.label),['Nesting','Engraving','Back files','QR label','Order check','Laser cutting','Completed']);
-assert.deepEqual(states(e),{nesting:'done',engraving:'done',backFiles:'done',qr:'done',orders:'done',laser:'waiting',completed:'waiting'});
+assert.deepEqual(e.steps.map(s=>s.key),['nesting','engraving','orders','laser','completed'],'round 13: five steps, Back files and QR label are folded into Engraving and Order check');
+assert.deepEqual(e.steps.map(s=>s.label),['Nesting','Engraving','Order check','Laser cutting','Completed']);
+assert.deepEqual(states(e),{nesting:'done',engraving:'done',orders:'done',laser:'waiting',completed:'waiting'});
+assert.equal(step(e,'engraving').detail,'Every back engraving is approved (3 of 3).','the plain words of the Engraving popup are unchanged');
+assert.deepEqual(R.STEPS.map(s=>s.key),['nesting','engraving','orders','laser','completed']);
+assert.equal(R.stepKey('backFiles'),'engraving');assert.equal(R.stepKey('qr'),'orders');assert.equal(R.stepKey('laser'),'laser','an old step key reads as the step that took it over');
 assert.equal(e.steps.filter(s=>s.current).length,1);assert.equal(step(e,'laser').current,true);
 assert.match(e.nextText,/ready for laser cutting/i);
 assert.equal(e.ready,R.laserSheet(ok).ready,'ready is the gate\'s own answer');
@@ -32,27 +35,42 @@ e=R.explain(eng,{rows:[...rows,{key:'1001_t1',order:{receiptId:'1001'},line:{tit
 assert.equal(e.ready,false);assert.equal(e.step,'engraving');assert.equal(states(e).engraving,'waiting');assert.equal(states(e).nesting,'done');
 assert.equal(step(e,'engraving').items.length,2);assert(step(e,'engraving').items.every(i=>i.kind==='charm' && i.id && i.label && i.why));
 assert.match(step(e,'engraving').items[0].label,/Order 1001/);assert.match(step(e,'engraving').items[0].label,/Moon charm/);
-assert.match(e.nextText,/2 back engravings still need approval/);assert.match(e.nextText,/then Back files/);
+assert.match(e.nextText,/2 back engravings still need approval/);assert.doesNotMatch(e.nextText,/then/,'nothing after Engraving is behind: the saved files and the QR label are only part of it');
 assert.equal(R.sheet(eng).waiting,2,'the checklist counts what the gate counts');
 
 // 3. back files unsaved: approved, no saved file yet (and a failed file check is a problem, not a wait)
 const bf=sheet('s3');bf.backPool[1]={...bf.backPool[1],outputs:null};bf.backPool[2]={...bf.backPool[2],verified:{geometry:{ok:true},file:{ok:false}}};
+// (round 13: the saved files are part of ENGRAVING: it is done only when every back is approved AND saved; the gate itself is the same stage as before)
 e=R.explain(bf);
-assert.equal(e.step,'backFiles');assert.equal(states(e).engraving,'done');assert.equal(states(e).backFiles,'blocked','a back whose saved file failed its check needs a person');
-assert.equal(step(e,'backFiles').items.length,2);assert.match(step(e,'backFiles').items.map(i=>i.why).join(' '),/still being saved/);assert.match(step(e,'backFiles').items.map(i=>i.why).join(' '),/failed its check/);
-assert.match(e.nextText,/2 approved back files still need saving/);
+assert.equal(e.step,'engraving');assert.equal(states(e).engraving,'blocked','a back whose saved file failed its check needs a person');assert.equal(states(e).nesting,'done');
+assert.equal(step(e,'engraving').items.length,2);assert.match(step(e,'engraving').items.map(i=>i.why).join(' '),/still being saved/);assert.match(step(e,'engraving').items.map(i=>i.why).join(' '),/failed its check/);
+assert(step(e,'engraving').items.every(i=>i.part==='files'),'the unsaved files are the part of Engraving that flow reads');
+assert.match(step(e,'engraving').detail,/failed its check: approve that back again \(1 of 3 saved\)/);
+assert.match(e.nextText,/saved back file failed its check: approve that back again/);
+assert.equal(R.sheet(bf).stages.backs,false,'the sheet is still not ready: the gate did not change');assert.equal(e.ready,false);
 const bf2=sheet('s3b');bf2.backPool[1]={...bf2.backPool[1],outputs:null};
-assert.equal(R.explain(bf2).steps.find(s=>s.key==='backFiles').state,'waiting','a file still being saved only waits');
-assert.equal(R.sheet(bf2).saved,2);
+assert.equal(R.explain(bf2).steps.find(s=>s.key==='engraving').state,'waiting','a file still being saved only waits');
+assert.equal(R.explain(bf2).step,'engraving');assert.equal(step(R.explain(bf2),'engraving').current,true,'Engraving is the step in progress');
+assert.equal(step(R.explain(bf2),'engraving').detail,'Saving back files: 2 of 3.','the plain line');
+assert.match(R.explain(bf2).nextText,/^Saving back files: 2 of 3\./);
+assert.equal(R.sheet(bf2).saved,2);assert.equal(R.sheet(bf2).stages.backs,false);assert.equal(R.sheet(bf2).ready,false);
+assert.deepEqual(R.issues(bf2,{}).map(i=>[i.step,i.key,i.label]),[['engraving','backFilesMissing','Saving back files']],'issues(): the one plain row, under Engraving');
 
 // 4. QR missing, incomplete, and not covering every order
 const qr=sheet('s4');qr.label={files:[]};
-e=R.explain(qr);assert.equal(e.step,'qr');assert.equal(states(e).qr,'waiting');assert.match(step(e,'qr').detail,/No QR label/);assert.match(e.nextText,/QR label has not been made/);
+// (round 13: the QR label is part of ORDER CHECK; a missing label is soft (waiting), an incomplete one or one that leaves orders out is hard (blocked), as before)
+e=R.explain(qr);assert.equal(e.step,'orders');assert.equal(states(e).orders,'waiting');assert.equal(step(e,'orders').detail,'QR label not made yet.');assert.match(e.nextText,/^QR label not made yet\./);
+assert.equal(R.sheet(qr).stages.qr,false);assert.equal(e.ready,false,'the sheet is still not ready: the gate did not change');
+assert.deepEqual(step(e,'orders').items.map(i=>[i.kind,i.part,i.why]),[['sheet','qr','QR label not made yet']]);
+assert.deepEqual(R.issues(qr,{}).map(i=>[i.step,i.key,i.label]),[['orders','qrMissing','QR label not made yet']],'issues(): the one plain row, under Order check');
 const qr2=sheet('s4b');qr2.label.files[0].orders=['1000'];
-e=R.explain(qr2);assert.equal(states(e).qr,'blocked');assert.deepEqual(step(e,'qr').items.map(i=>i.id),['1001','1002']);assert(step(e,'qr').items.every(i=>i.kind==='order' && /Order 100\d/.test(i.label)));
+e=R.explain(qr2);assert.equal(states(e).orders,'blocked');assert.equal(e.step,'orders');assert.deepEqual(step(e,'orders').items.filter(i=>i.part==='qr').map(i=>i.id),['1001','1002']);assert(step(e,'orders').items.every(i=>i.kind==='order' && /Order 100\d/.test(i.label)));
 assert.match(e.nextText,/must also cover 2 orders/);
-const qr3=sheet('s4c');delete qr3.label.files[0].payload;assert.equal(states(R.explain(qr3)).qr,'blocked');
+const qr3=sheet('s4c');delete qr3.label.files[0].payload;assert.equal(states(R.explain(qr3)).orders,'blocked');
 assert.equal(R.sheet(qr2).stages.qr,false);
+// a sheet short of both its QR label and an order's other piece says both under Order check
+const both=sheet('s4d');both.label={files:[]};both.orderReadiness['1000']={ready:false,why:'Not every copy has a saved sheet',blocks:[{key:'pooled',index:2,label:'X',poolId:'1000_t0_2',lineKey:'1000_t0',sheetId:null,sheetLabel:null,why:'A piece is not on a saved sheet yet'}],onSheets:['s4d'],pieceCount:2};
+e=R.explain(both);assert.equal(e.step,'orders');assert.match(step(e,'orders').detail,/^QR label not made yet\. 1 of 3 orders waits for other pieces/);assert.match(e.nextText,/^QR label not made yet, and /);
 
 // 5. Paul's sheet: every back saved and a QR label, but an order has another line on another sheet that is not ready
 const a=sheet('gf1',{n:3,index:1}),b=sheet('rg1',{n:2,metal:'rose',index:1,setId:'set2'});
@@ -69,7 +87,7 @@ a.orderReadiness=Object.fromEntries(R.orderIds(a).map(o=>[o,reports[o] || {ready
 const names=[{key:'2000_x',order:{receiptId:'2000',buyer:{name:'Grace Hopper'}},line:{title:'Star'},poolIds:['2000_x_1']}];
 e=R.explain(a,{rows:names});
 assert.equal(R.sheet(a).stages.orders,false);assert.deepEqual([R.sheet(a).saved,R.sheet(a).required],[4,4],'4 / 4 backs saved');
-assert.equal(e.ready,false);assert.equal(e.step,'orders');assert.deepEqual(states(e),{nesting:'done',engraving:'done',backFiles:'done',qr:'done',orders:'blocked',laser:'waiting',completed:'waiting'});
+assert.equal(e.ready,false);assert.equal(e.step,'orders');assert.deepEqual(states(e),{nesting:'done',engraving:'done',orders:'blocked',laser:'waiting',completed:'waiting'});
 const oi=step(e,'orders').items;
 assert.deepEqual(oi.map(i=>[i.kind,i.id]),[['order','2000'],['sheet','rg1']],'the order and the sheet that holds it');
 assert.match(oi[0].label,/Order 2000 \(Grace Hopper\)/);assert.match(oi[0].why,/other piece is on RG Sheet 1/);assert.match(oi[0].why,/engraving needs approval/);
@@ -155,4 +173,4 @@ const held=sheet('h1');held.laserHold={at:5,by:'Paul'};e=R.explain(held);assert.
 
 // every item carries a label and a reason; no ids without a label
 for(const x of [eng,bf,qr2,a,m1]){const r=R.explain(x,{rows:names});for(const s of r.steps)for(const i of s.items){assert(['order','charm','sheet'].includes(i.kind));assert(i.id && i.label && i.why,JSON.stringify(i));}}
-console.log('explain OK: all ready, order check lists only other pieces, engraving waiting, back files unsaved, QR missing, order held by another sheet, set with a blocked member, missing/archived/excluded members, sheet held by its set');
+console.log('explain OK: five steps, all ready, order check lists only other pieces, engraving waiting, back files saving (part of Engraving), QR label missing (part of Order check), order held by another sheet, set with a blocked member, missing/archived/excluded members, sheet held by its set');
