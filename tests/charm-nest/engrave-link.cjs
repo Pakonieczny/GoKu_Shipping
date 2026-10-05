@@ -3,7 +3,8 @@
 // specific order selected"). window.EngraveLink.open (charm-nest-engrave-link.js) is the one way in; checked here from
 // the three places that used to open the tab by themselves, on a single-piece order and on an order of 3 pieces
 // (4170837249's shape), with other orders about that would be in front if the piece were not asked for by name:
-//   · the red box in the order window's Overview ("Its engraving is still to be settled" / "Open it in Engraving");
+//   · the Back engraving card in the order window's Overview (its shortcut into Engrave; the red "Its engraving is still to be
+//     settled" box that was a second door was removed on 5 Oct 2026, and the window never says it again);
 //   · the Sheet tab's shortcut (Confirm the words in Engrave / View in Engrave);
 //   · the Sheet window's own (the window closes, the way back stays);
 //   · a piece whose job is not loaded yet is waited for (small labelled spinner, bounded), a missing job falls back to
@@ -94,29 +95,29 @@ async function main() {
       return w;
     };
 
-    // ── 1 · the red box ──
+    // ── 1 · the order window's Back engraving card (the red box that used to be a second door is gone) ──
     const redBox = async (o, i) => {
       await page.evaluate(k => OrderWin.open(k), keyOf(o, i));
-      await page.waitForSelector('#owFix .owFix button', { timeout: 15000 });
-      const t = await page.evaluate(() => document.querySelector('#owFix .owFix').textContent);
-      assert(/still to be settled/.test(t) && /Open it in Engraving/.test(t), 'the red box is there: ' + t);
-      await page.click('#owFix .owFix button');
+      await page.waitForSelector('#owEng [data-e=engrave]', { timeout: 15000 });
+      const t = await page.evaluate(() => document.getElementById('orderWin').textContent);
+      assert(!/still to be settled|Open it in Engraving/i.test(t), 'the red box is not in the order window: ' + t.slice(0, 200));
+      await page.click('#owEng [data-e=engrave]');
     };
-    await redBox(A, 0); await lands(A, 0, 'place', 'red box, one piece');
+    await redBox(A, 0); await lands(A, 0, 'place', 'order window card, one piece');
     await reset();
-    await redBox(B, 1); const w1 = await lands(B, 1, 'place', 'red box, piece 2 of 3');
+    await redBox(B, 1); const w1 = await lands(B, 1, 'place', 'order window card, piece 2 of 3');
     check(!w1.cards.includes(keyOf(B, 0)) && !w1.cards.includes(keyOf(C, 0)), 'the first piece of the order, and the order that was in front, are not what opened');
     await reset();
-    await redBox(B, 0); await lands(B, 0, 'place', 'red box, piece 1 of 3');
+    await redBox(B, 0); await lands(B, 0, 'place', 'order window card, piece 1 of 3');
     await reset();
-    // the same order, the piece chosen on the window's Its pieces list (the Overview follows it), then the box
+    // the same order, the piece chosen on the window's Its pieces list (the Overview follows it), then the card's shortcut
     await page.evaluate(k => OrderWin.open(k), keyOf(B, 0));
     await page.waitForSelector('#owPcSum .owPcRow[data-piece]', { timeout: 15000 });
     await page.click(`#owPcSum .owPcRow[data-piece="${keyOf(B, 1)}"] .dot`);
     await page.waitForFunction(k => OrderWin.key() === k, keyOf(B, 1));
-    await page.waitForSelector('#owFix .owFix button');
-    await page.click('#owFix .owFix button');
-    await lands(B, 1, 'place', 'red box after choosing piece 2 on the pieces list');
+    await page.waitForSelector('#owEng [data-e=engrave]');
+    await page.click('#owEng [data-e=engrave]');
+    await lands(B, 1, 'place', 'order window card after choosing piece 2 on the pieces list');
     await reset();
 
     // ── 2 · the Sheet tab's shortcut ──
@@ -171,15 +172,15 @@ async function main() {
     check(copy2.copies === 2 && copy2.found, 'resolve: the second copy of a piece with two copies finds the piece\'s job');
     await page.evaluate(() => { const row = B.orders.byKey.get('4180000001_41800000011'); row.poolIds = ['4180000001_41800000011_1']; Engrave.ensureJob(row); });
 
-    // an order view opened from the Sheet window (it gave the window away): the box closes both, nothing is left over the tab
+    // an order view opened from the Sheet window (it gave the window away): the card's shortcut closes both, nothing is left over the tab
     await page.evaluate(({ sh, pid }) => SheetWin.open(sh, { select: pid }), { sh: SH, pid: pool(B, 1) });
     await page.waitForFunction(pid => { const W = SheetWin._W; return W.sel && W.sel.poolId === pid && W.view === 'piece' && !W.flip && !W.flying && W.el.detail.querySelector('[data-r2=openOrd]'); }, pool(B, 1), { timeout: 30000 });
     await page.waitForTimeout(500);
     await page.click('[data-r2=openOrd]');
-    await page.waitForFunction(() => OrderWin.isOpen() && document.querySelector('#owFix .owFix button'), null, { timeout: 15000 });
+    await page.waitForFunction(() => OrderWin.isOpen() && document.querySelector('#owEng [data-e=engrave]'), null, { timeout: 15000 });
     await page.waitForTimeout(600);
-    await page.click('#owFix .owFix button');
-    const w4 = await lands(B, 1, 'place', 'red box of an order view opened from the Sheet window');
+    await page.click('#owEng [data-e=engrave]');
+    const w4 = await lands(B, 1, 'place', 'card of an order view opened from the Sheet window');
     check(!w4.sheetWin && !w4.orderWin, 'neither the order view nor the Sheet window it came from is left over the Engraving tab');
     await reset();
 

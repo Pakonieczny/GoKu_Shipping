@@ -7,8 +7,8 @@
 // the chain with no back engraving, and what only shows when they act together:
 //   1 Overview: thumbnails whole, the card under them              6 the pictures zoom in place (click, wheel, drag, Esc) and the
 //   2 the piece switcher swaps card, pictures and each piece's zoom     card; a zoom while an approval's seal is being pressed
-//   3 the red box and the card's "View in Engrave" land alike      7 other doors: openOrderFrom / Issues rows / Sheet window / search
-//   4 Approve on the card: name, one seal, permanent, red box,     8 390 and 900 px wide: no overlap, no sideways scroll
+//   3 the card's "Adjust / View in Engrave" lands on the piece        7 other doors: openOrderFrom / Issues rows / Sheet window / search
+//   4 Approve on the card: name, one seal, permanent,              8 390 and 900 px wide: no overlap, no sideways scroll
 //     timeline, Sheet tab, the Engraving tab's Decided             9 twenty piece switches while a seal is pressing
 //   5 approved in the Engraving tab / the Sheet tab: the card      10 Sandbox and production never mix; a module missing: the window works
 //     follows within about 2 s
@@ -156,7 +156,7 @@ async function main() {
       const seals = [...h.querySelectorAll('.egButtonSeal .seal svg[data-seal-model]')].map(s => { try { const m = JSON.parse(s.getAttribute('data-seal-model')); return m.action + '|' + m.by; } catch (_) { return '?'; } });
       const r = h.getBoundingClientRect(), sku = document.getElementById('owSku').getBoundingClientRect(), vec = document.getElementById('owVector').getBoundingClientRect(), ph = document.getElementById('owPhoto').getBoundingClientRect();
       return { hidden: h.hidden, state: e ? e.dataset.state : '', words: (q('.words') || {}).textContent || '', chip: (q('.top span') || {}).textContent || '', title: (q('.top b') || {}).textContent || '', approve: !!q('[data-e=approve]'), disabled: !!(q('.egApproveButton') || {}).disabled,
-        open: ((q('[data-e=engrave]') || {}).textContent || '').trim(), preview: !!q('.pv canvas, .pv img'), seals, wait: (q('.owEngWait') || {}).textContent || '', red: document.querySelectorAll('#owFix .owFix').length,
+        open: ((q('[data-e=engrave]') || {}).textContent || '').trim(), preview: !!q('.pv canvas, .pv img'), seals, wait: (q('.owEngWait') || {}).textContent || '', red: (document.getElementById('orderWin').textContent.match(/still to be settled/gi) || []).length,
         under: r.height > 0 && r.top >= Math.max(sku.bottom, vec.bottom, ph.bottom) - 1 && Math.abs(r.left - ph.left) < 2, w: Math.round(r.width), h: Math.round(r.height), lid: document.getElementById('owPhoto').dataset.lid || '', key: OrderWin.key() };
     });
     // the zoom of a picture, read from the picture itself (data-scale: the state; the transition on its way is not waited for), and what could have opened
@@ -187,7 +187,7 @@ async function main() {
     await settled(); await page.mouse.move(700, 890);
     let c = await card();
     check(c.state === 'approve' && c.words === 'KMB //\nSMH' && c.approve && c.preview && c.open === 'Adjust in Engrave →' && c.title === 'Check the back, then approve', 'the card: words "KMB // SMH", the Approved button, the placement picture, Adjust in Engrave: ' + JSON.stringify([c.state, c.words, c.approve, c.preview, c.open]));
-    check(c.under && c.red === 1, 'it sits under the Etsy listing, the Vector design and the SKU line, and the red box is there too');
+    check(c.under && c.red === 0, 'it sits under the Etsy listing, the Vector design and the SKU line, and no red "still to be settled" box is in the window');
     const thumbs = () => page.evaluate(() => ['owPhoto', 'owVector'].map(id => {
       const b = document.getElementById(id), e = b.querySelector('img,canvas'); if (!e) return { id, none: true };
       const br = b.getBoundingClientRect(), er = e.getBoundingClientRect(), cs = getComputedStyle(e), t = /matrix\(([^)]+)\)/.exec(cs.transform), tm = t ? t[1].split(',').map(Number) : [1, 0, 0, 1, 0, 0];
@@ -235,23 +235,23 @@ async function main() {
     const log = await page.evaluate(() => __log);
     check(log.length > 0 && !log.some(l => l.wrong), 'at no moment did a card show another piece\'s words, or a card on the chain (' + log.length + ' changes seen)');
 
-    // ══ 3 · the red box and the card's shortcut land on the same place ══
+    // ══ 3 · the card's shortcut lands on the piece's own placement card (the red box that was a second door is gone) ══
     step = '3'; say(step);
     await page.evaluate(() => { window.__realRenderOn = false; });
     // (the Engraving tab of a job in review draws a placement card from a real fit, which this world does not have: its drawing is counted, its place is read)
     await page.evaluate(() => { Engrave.render = function () { __renders++; }; });
-    c = await card(); check(c.red === 1, 'the red box "Its engraving is still to be settled" is in the window');
-    await page.click('#owFix .owFix button');
+    c = await card(); check(c.red === 0, 'no red box "Its engraving is still to be settled" in the window, though the engraving is not settled');
+    await page.click('#owEng [data-e=engrave]');
     await page.waitForFunction(() => !OrderWin.isOpen() && CN.S.mode === 'engrave', null, { timeout: 15000 });
-    const viaRed = await view(), vr = JSON.parse(viaRed);
-    check(vr.tab === 'place' && vr.focus === k.r && vr.chosen === true && vr.list === false && vr.q === B.rid, 'red box → Open it in Engraving: the Engraving tab is on piece 3\'s own placement card, the search box on the order: ' + viaRed);
+    const viaCard1 = await view(), vr = JSON.parse(viaCard1);
+    check(vr.tab === 'place' && vr.focus === k.r && vr.chosen === true && vr.list === false && vr.q === B.rid, 'the card\'s "Adjust in Engrave": the Engraving tab is on piece 3\'s own placement card, the search box on the order: ' + viaCard1);
     check(await page.evaluate(() => document.querySelectorAll('dialog[open]').length) === 0, 'the order window is closed: no pop-up on a pop-up');
     await resetEngrave(); await open(k.r); await waitCard('approve');
-    check((await card()).red === 1 && (await card()).state === 'approve' && (await winState()).view === 'info', 'back in the order window (opened again): the Overview, the card and the red box as they were');
+    check((await card()).red === 0 && (await card()).state === 'approve' && (await winState()).view === 'info', 'back in the order window (opened again): the Overview and the card as they were');
     await page.click('#owEng [data-e=engrave]');
     await page.waitForFunction(() => !OrderWin.isOpen() && CN.S.mode === 'engrave', null, { timeout: 15000 });
     const viaCard = await view();
-    check(viaCard === viaRed, 'the card\'s "Adjust in Engrave" lands on exactly the same place as the red box: ' + viaCard);
+    check(viaCard === viaCard1, 'the card\'s "Adjust in Engrave" lands on exactly the same place again: ' + viaCard);
     await resetEngrave();
     // the Decided tab of the approved piece (piece 2): real drawing of its row, opened
     await page.evaluate(() => { Engrave.render = window.__realRender; });
@@ -283,7 +283,7 @@ async function main() {
     const ap = await approvals();
     check(ap.length === 1 && ap[0] === `${k.r}|${who}|true`, 'Engrave.approve was called once, for piece 3\'s job, with the name and the button that is on screen: ' + JSON.stringify(ap));
     check(c.state === 'approved' && c.disabled && !c.approve && c.seals.length === 1 && c.seals[0] === `BACK ENGRAVING|${who}` && c.open === 'View in Engrave →', 'the card reads approved, with exactly one BACK ENGRAVING seal on its button: ' + JSON.stringify([c.state, c.seals, c.open]));
-    check(c.red === 0, 'the red box is gone');
+    check(c.red === 0, 'and no "still to be settled" box beside it');
     if (shots) await page.screenshot({ path: path.join(shots, '4-approved-1440.png') });
     await page.evaluate(() => { const b = document.querySelector('#owEng .egApproveButton'); b.disabled = false; b.click(); b.click(); });
     await page.waitForTimeout(500);
@@ -312,7 +312,6 @@ async function main() {
     await page.evaluate(k => { const j = Engrave.items().get(k), at = Date.now(); CNEngravingSeals.add(j, 'engraveApproved', 'Sam Tester', at); Object.assign(j, { state: 'approved', approvedBy: 'Sam Tester', approvedAt: at }); Object.assign(j.row.engrave, { state: 'approved', approved: true, approvedBy: 'Sam Tester', approvedAt: at }); }, key(R2, 0));
     const f1 = await waitCard('approved', 4000), took = Date.now() - t0; c = await card();
     check(f1 && took <= 2500 && !c.approve && c.disabled && c.seals.length === 1 && c.seals[0] === 'BACK ENGRAVING|Sam Tester', `approved in the Engraving tab: the open card follows in ${took} ms, one seal, nobody can approve it twice`);
-    check(await page.waitForFunction(() => !document.querySelector('#owFix .owFix'), null, { timeout: 4000 }).then(() => true, () => false), 'and the red box goes with it');
     await closeWin(); await open(key(R2, 1)); await waitCard('approve');
     await page.click('.owTabsV [data-ow-view="sheet"]');
     await page.waitForFunction(() => document.querySelector('#owSheetPanel [data-engraving-panel] [data-e=approve]'), null, { timeout: 20000 });
