@@ -402,15 +402,17 @@ async function main() {
     await layout('solo-printed');
     await closeWin();
 
-    // ── 9 · one piece picked in an order of several: its row alone, with its buttons; all pieces again brings every row back ──
+    // ── 9 · one piece picked in an order of several: every row stays, the piece's is marked and keeps its buttons; showing all again unmarks it ──
     await openWin(cable, 3);
-    await page.click(`#owPieceSw [data-piece="${cable}"]`);
-    await page.waitForFunction(() => document.querySelectorAll('#owPcSum .owPcRow').length === 1 && document.querySelector('#owPcSum .owPcRow.solo'), null, { timeout: 15000 });
-    R = await rows(); assert(R[0].key === cable && R[0].label === 'This piece' && R[0].act && !R[0].btns.includes('Reopen'), JSON.stringify(R[0]));
-    assert(await noBar(), 'no bar with one piece picked'); assert(R[0].btns.includes('Completed'), JSON.stringify(R[0].btns));
+    await page.click(`#owPcSum [data-piece="${cable}"] .dot`);
+    await page.waitForFunction(k => OrderWin.selectedPiece() === k && document.querySelectorAll('#owPcSum .owPcRow').length === 3 && document.querySelector(`#owPcSum .owPcRow.sel[data-piece="${k}"]`), cable, { timeout: 15000 });
+    R = await rows(); assert(R.length === 3 && R.every(r => !r.solo), 'every row stays: ' + JSON.stringify(R.map(r => r.solo)));
+    assert(R.find(r => r.key === cable).act && !R.find(r => r.key === cable).btns.includes('Reopen'), JSON.stringify(R.find(r => r.key === cable)));
+    assert(await noBar(), 'no bar with one piece picked'); assert(R.find(r => r.key === cable).btns.includes('Completed'), JSON.stringify(R.find(r => r.key === cable).btns));
+    // (a press on the card's own buttons in a row is the card's: it picks nothing; here the picked piece stays picked)
     await layout('picked', [[1440, 900], [390, 844]]);
-    await page.click('#owPieceSw [data-piece=""]');
-    await page.waitForFunction(() => document.querySelectorAll('#owPcSum .owPcRow').length === 3 && !document.querySelector('#owPcSum .owPcRow.solo'), null, { timeout: 15000 });
+    await page.click('#owPcSum [data-pc-all]');
+    await page.waitForFunction(() => OrderWin.selectedPiece() === null && document.querySelectorAll('#owPcSum .owPcRow').length === 3 && !document.querySelector('#owPcSum .owPcRow.solo, #owPcSum .owPcRow.sel'), null, { timeout: 15000 });
     await closeWin();
     assert.deepEqual(outside, [], 'no Etsy call');
     assert.deepEqual(errors, [], 'no page errors');

@@ -12,14 +12,17 @@
  *                                          one picture per piece of a multi-piece order; hovering a picture or the QR grows it in place (never
  *                                          full screen), a press opens the order the way every other list does (openOrderFrom). → element
  *                                          with .update(next), .finish(text)
- *    EfficiencyStations.watch(fn, o?)      a share of the one live poll (for the Overview), → stop
  *    EfficiencyStations.options            { pollMs, zoomDelay, doneMs, source, ... }      EfficiencyStations.norm(answer)  the view model
  *
- *  What it reads: employeeEfficiency op "live" (plans/employee-hr/api.md), POST { op:"live", key, ...opts.params() }; key = the console's
+ *  What it reads: employeeEfficiency op "live" (plans/employee-hr/api.md, E2 section 4), POST { op:"live", key, sandbox? }; key = the console's
  *  manager passcode, held in sessionStorage (cn.eff.key) by the shell, never in a URL or a log. Answer: { ok, at, mode, stations:[{ key, label,
- *  state: working | idle | offline, people:[name | { name, ... }], current:[{ person, rid, orderNumber, customer, scannedAt, thumbUrl,
- *  qr:{ text }, pieces:[{ id, label, thumbUrl }], note }], lastEventAt, counts:{ partsToday, ordersToday } }], signedIn:[{ name, stationKey,
- *  since, lastSeenAt }] }. A missing field is simply not shown: nothing here is invented.
+ *  state: working | idle | offline, people:[name | { name, ... }], devices:[{ device, label, state, person, since }], current:[{ id, person,
+ *  device, deviceLabel, kind: order | sheet, rid, orderNumber, customer, title, scannedAt, beatAt, note, thumbUrl, vectorUrl, photoUrl, qr:{ text }
+ *  | null, pieces:[{ id, label, sku, thumbUrl, vectorUrl, photoUrl }], pieceCount }], lastEventAt, counts:{ partsToday, ordersToday, scansToday },
+ *  spark? (optional: parts per 5 minutes of the last hour, oldest first; drawn only when present) }], signedIn:[{ name, stationKey, since,
+ *  lastSeenAt }] }. A missing field is simply not shown: nothing here is invented. A person's hover card also asks op "person" (range day,
+ *  compare false; E4's kpis with their own label, unit and one-line definition) once the pointer has rested on it, and keeps the answer a minute.
+ *  A laser sheet (kind "sheet") has a title and no QR: it is shown with its title, "since started", and nothing to open.
  *
  *  Live: one request about every 3 s, only while the board is on screen (in a tab that is shown, in a page that is in sight), none while
  *  hidden; the next one starts after the last one ended, backs off after a failure and says "Reconnecting". The timers are local: a card's
@@ -32,7 +35,7 @@
   const doc = root.document;
   if (!doc || root.EfficiencyStations) return;
   const TZ = "America/New_York", KEY_STORE = "cn.eff.key", EASE = "cubic-bezier(.2,.8,.2,1)";
-  const options = { pollMs: 3000, maxBackoffMs: 15000, timeoutMs: 10000, tickMs: 250, zoomDelay: 500, zoomMs: 300, flyMs: 760, doneMs: 2800, quietAfterMs: 20000, enterMs: 460, growMs: 480, endpoint: "", source: null };
+  const options = { pollMs: 3000, maxBackoffMs: 15000, timeoutMs: 10000, tickMs: 250, zoomDelay: 500, zoomMs: 300, tipDwell: 250, flyMs: 760, doneMs: 2800, quietAfterMs: 20000, enterMs: 460, growMs: 480, endpoint: "", source: null };
   const N = v => { v = +v; return Number.isFinite(v) ? v : 0; };
   const T = v => { v = +v; return Number.isFinite(v) && v > 0 ? v : null; };
   const has = v => v !== null && v !== undefined && v !== "" && Number.isFinite(+v);
@@ -64,14 +67,18 @@
   const cap = s => (s ? s.charAt(0).toUpperCase() + s.slice(1) : "Station");
 
   /* ── the answer, normalised (a missing field is empty, never a crash, never a guess) ── */
+  const str = v => (v == null ? "" : String(v));
+  /** One order (or laser sheet) in somebody's hand. Inside the console E1's model leaves some fields out; its `raw` is the server's own entry, read first. */
   function normCurrent(c, st) {
-    c = c || {};
-    const rid = String(c.rid != null && c.rid !== "" ? c.rid : c.orderNumber || ""), num = String(c.orderNumber || c.rid || "");
-    const pieces = (Array.isArray(c.pieces) ? c.pieces : []).filter(Boolean).map((p, i) => ({ id: String(p.id != null ? p.id : ""), label: String(p.label || ""), thumbUrl: String(p.thumbUrl || ""), n: i + 1 }));
-    const qr = typeof c.qr === "string" ? c.qr : String((c.qr && c.qr.text) || num || rid);
-    const person = String(c.person || "");
-    return { id: `${low(person)}|${rid}`, person, rid, orderNumber: num, customer: String(c.customer || ""), scannedAt: T(c.scannedAt), thumbUrl: String(c.thumbUrl || ""), qr, pieces, note: c.note ? String(c.note) : "",
-      station: String(c.station || (st && st.key) || ""), stationLabel: String(c.stationLabel || (st && st.label) || "") };
+    if (c && c._n) return c;   // already normalised
+    c = c || {}; const r = c.raw && typeof c.raw === "object" ? c.raw : c;
+    const rid = str(r.rid != null && r.rid !== "" ? r.rid : r.orderNumber), num = str(r.orderNumber || r.rid), kind = r.kind === "sheet" ? "sheet" : "order", title = str(r.title);
+    const pieces = (Array.isArray(r.pieces) ? r.pieces : []).filter(Boolean).map((p, i) => ({ id: str(p.id), label: str(p.label), sku: str(p.sku), thumbUrl: str(p.thumbUrl), vectorUrl: str(p.vectorUrl), photoUrl: str(p.photoUrl), n: i + 1 }));
+    const qr = kind === "sheet" ? "" : typeof r.qr === "string" ? r.qr : str((r.qr && r.qr.text) || num || rid);
+    const person = str(c.person || r.person), sid = str(r.id);
+    return { _n: 1, id: `${low(sid || person)}|${low(rid || title)}`, sid, kind, title, person, device: str(r.device), deviceLabel: str(r.deviceLabel), rid, orderNumber: num, customer: str(r.customer), scannedAt: T(r.scannedAt), beatAt: T(r.beatAt),
+      thumbUrl: str(r.thumbUrl), photoUrl: str(r.photoUrl), vectorUrl: str(r.vectorUrl), qr, pieces, pieceCount: Math.max(pieces.length, Math.round(N(r.pieceCount))), note: r.note ? str(r.note) : "",
+      station: str(c.station || r.station || (st && st.key)), stationLabel: str(c.stationLabel || r.stationLabel || (st && st.label)) };
   }
   const sparkOf = s => {
     const a = s.spark || s.lastHour || s.sparkline || s.hourly;
@@ -92,12 +99,13 @@
     const sign = new Map(signedIn.map(x => [low(x.name), x]));
     const stations = (Array.isArray(r.stations) ? r.stations : []).filter(s => s && (s.key || s.label)).map(s => {
       const key = String(s.key || low(s.label)), label = String(s.label || cap(key));
-      const current = (Array.isArray(s.current) ? s.current : []).filter(c => c && (c.rid || c.orderNumber)).map(c => normCurrent(c, { key, label }));
+      const current = (Array.isArray(s.current) ? s.current : []).filter(c => c && (c.rid || c.orderNumber || (c.kind === "sheet" && c.title))).map(c => normCurrent(c, { key, label }));
       const people = (Array.isArray(s.people) ? s.people : []).map(p => normPerson(p, sign)).filter(p => p.name);
       for (const c of current) if (c.person && !people.some(p => low(p.name) === low(c.person))) people.push(normPerson(c.person, sign));
-      const k = s.counts || {};
+      const k = s.counts || {}, cnt = v => (has(v) ? N(v) : null);
+      const devices = (Array.isArray(s.devices) ? s.devices : []).filter(d => d && (d.device || d.label)).map(d => ({ device: str(d.device), label: str(d.label || d.device), state: ["working", "idle", "offline"].includes(d.state) ? d.state : "offline", person: str(d.person), since: T(d.since) }));
       const state = ["working", "idle", "offline"].includes(s.state) ? s.state : current.length ? "working" : people.length ? "idle" : "offline";
-      return { key, label, state, people, current, lastEventAt: T(s.lastEventAt), counts: { parts: has(k.partsToday != null ? k.partsToday : k.parts) ? N(k.partsToday != null ? k.partsToday : k.parts) : null, orders: has(k.ordersToday != null ? k.ordersToday : k.orders) ? N(k.ordersToday != null ? k.ordersToday : k.orders) : null }, spark: sparkOf(s) };
+      return { key, label, state, people, current, lastEventAt: T(s.lastEventAt), counts: { parts: cnt(k.partsToday != null ? k.partsToday : k.parts), orders: cnt(k.ordersToday != null ? k.ordersToday : k.orders), scans: cnt(k.scansToday != null ? k.scansToday : k.scans) }, devices, spark: sparkOf(s) };
     });
     return { at: T(r.at), mode: r.mode === "sandbox" ? "sandbox" : "real", stations, signedIn };
   }
@@ -148,31 +156,38 @@
     return vecCache.get(key).then(u => { if (!u) vecCache.delete(key); return u; });
   }
   const PH_ICON = '<svg viewBox="0 0 24 24" width="40%" height="40%" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><circle cx="9" cy="10" r="1.6"/><path d="M4 17l5-4.5 3.5 3L16 12l4 4"/></svg>';
-  /** One picture box: set({ url, rid, pool, fit, label }) shows the address, falls back to the vector design, then to a placeholder; a stale answer never lands. */
+  const PH_SHEET = '<svg viewBox="0 0 24 24" width="44%" height="44%" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="3.5" width="17" height="17" rx="2"/><circle cx="9" cy="9" r="2"/><path d="M13 8h4M7 14h10M7 17.5h6"/></svg>';
+  /** The addresses to try for one picture, in order, each with how it sits in its box (a vector design is drawn whole, a photo fills the box). */
+  function urlsOf(o, piece) {
+    const out = [], add = (u, fit) => { if (u && !out.some(x => x.u === u)) out.push({ u, fit }); };
+    add(o.thumbUrl, o.thumbUrl && o.thumbUrl === o.vectorUrl ? "contain" : "cover");
+    if (piece) { add(o.vectorUrl, "contain"); add(o.photoUrl, "cover"); } else { add(o.photoUrl, "cover"); add(o.vectorUrl, "contain"); }
+    return out;
+  }
+  /** One picture box: set({ urls | url, rid, pool, fit, label, icon }) shows the first address that loads, then the vector design (PieceMedia), then a placeholder; a stale answer never lands. */
   function pictureBox(cls, zoomSize) {
     const box = h("div", cls); box.dataset.zoom = zoomSize; box.tabIndex = 0; box.setAttribute("role", "img");
-    let tok = 0, sig = "";
-    const ph = why => { const p = h("span", "esPh"); p.innerHTML = PH_ICON; p.title = why || "No picture yet"; p.dataset.ph = "1"; box.replaceChildren(p); box.dataset.state = "none"; };
-    const show = (src, fit, my) => {
-      const im = new root.Image(); im.alt = ""; im.decoding = "async"; im.draggable = false; im.referrerPolicy = "no-referrer"; im.className = "esImg " + (fit || "cover");
+    let tok = 0, sig = "", ctx = null;
+    const ph = why => { const p = h("span", "esPh"); p.innerHTML = ctx && ctx.icon === "sheet" ? PH_SHEET : PH_ICON; p.title = why || (ctx && ctx.icon === "sheet" ? "A laser sheet" : "No picture yet"); p.dataset.ph = "1"; box.replaceChildren(p); box.dataset.state = "none"; };
+    const show = (i, my) => {
+      const it = ctx.urls[i], im = new root.Image(); im.alt = ""; im.decoding = "async"; im.draggable = false; im.referrerPolicy = "no-referrer"; im.className = "esImg " + (it.fit || "cover");
       im.onload = () => { if (my !== tok) return; box.replaceChildren(im); box.dataset.state = "ready"; raf(() => im.classList.add("on")); };
-      im.onerror = () => { if (my !== tok) return; fallback(my, true); };
-      im.src = src;
+      im.onerror = () => { if (my !== tok) return; if (i + 1 < ctx.urls.length) show(i + 1, my); else vector(my, true); };
+      im.src = it.u;
     };
-    let ctx = null;
-    const fallback = (my, afterFail) => {
+    const vector = (my, afterFail) => {
       if (my !== tok) return;
-      if (ctx.vector && ctx.vector.tried !== my) {
-        ctx.vector.tried = my;
-        vectorOf(ctx.rid, ctx.pool).then(u => { if (my !== tok) return; u ? show(u, "contain", my) : ph(afterFail ? "The picture could not be loaded" : "No picture yet"); });
+      if (ctx.vector) {
+        vectorOf(ctx.rid, ctx.pool).then(u => { if (my !== tok) return; if (!u) return ph(afterFail ? "The picture could not be loaded" : "No picture yet"); const im = new root.Image(); im.alt = ""; im.decoding = "async"; im.draggable = false; im.className = "esImg contain"; im.onload = () => { if (my !== tok) return; box.replaceChildren(im); box.dataset.state = "ready"; raf(() => im.classList.add("on")); }; im.onerror = () => { if (my === tok) ph("The picture could not be loaded"); }; im.src = u; });
       } else ph(afterFail ? "The picture could not be loaded" : "No picture yet");
     };
     box.set = o => {
-      const s = JSON.stringify([o.url || "", o.rid || "", o.pool || "", o.vector !== false]); if (s === sig) return; sig = s; const my = ++tok;
-      ctx = { rid: o.rid, pool: o.pool, vector: o.vector === false ? null : {} };
+      const urls = (o.urls || (o.url ? [{ u: o.url, fit: o.fit }] : [])).filter(x => x && x.u);
+      const s = JSON.stringify([urls.map(x => x.u + "|" + x.fit), o.rid || "", o.pool || "", o.vector !== false, o.icon || ""]); if (s === sig) return; sig = s; const my = ++tok;
+      ctx = { urls, rid: o.rid, pool: o.pool, vector: o.vector !== false && !o.icon, icon: o.icon || "" };
       if (o.label) box.setAttribute("aria-label", o.label);
-      if (!box.firstChild) { box.dataset.state = "wait"; }
-      if (o.url) show(o.url, o.fit, my); else fallback(my, false);
+      if (!box.firstChild) box.dataset.state = "wait";
+      if (urls.length) show(0, my); else vector(my, false);
     };
     return box;
   }
@@ -222,7 +237,7 @@
   }
 
   /* ── the hover card: one floating card for every station light and every person ── */
-  const Tp = { el: null, node: null, timer: 0, wired: false };
+  const Tp = { el: null, node: null, timer: 0, lazy: 0, wired: false };
   function tipSpec(spec) {
     const t = Tp.el; t.textContent = "";
     const head = t.appendChild(h("div", "esTipH"));
@@ -232,6 +247,8 @@
       const dl = t.appendChild(h("dl", "esTipR"));
       for (const r of spec.rows) { const row = dl.appendChild(h("div")); row.appendChild(h("dt", "", r.k)); row.appendChild(h("dd", "", r.v)); if (r.d) row.appendChild(h("small", "", r.d)); }
     }
+    if (spec.wait) { const w = t.appendChild(h("p", "esTipW")); w.setAttribute("role", "status"); w.append(h("span", "esSpin"), h("span", "", spec.wait)); }
+    if (spec.note) t.appendChild(h("p", "esTipN", spec.note));
     if (spec.spark) { const w = t.appendChild(h("div", "esTipS")); w.appendChild(sparkSvg(spec.spark, 220, 38)); w.appendChild(h("small", "", spec.sparkNote || "Last hour")); }
     if (spec.foot) t.appendChild(h("p", "esTipF", spec.foot));
   }
@@ -250,10 +267,14 @@
     const layer = node.closest("dialog[open]") || doc.body; if (Tp.el.parentNode !== layer) layer.appendChild(Tp.el);
     const was = Tp.node; Tp.node = node; tipSpec(spec); tipPlace(node);
     Tp.el.setAttribute("data-on", "");
+    // a card that needs a read (what a person did today) waits a moment for the pointer to rest, so a pointer passing over asks for nothing
+    clearTimeout(Tp.lazy); Tp.lazy = 0;
+    if (spec.lazy) { const nd = node, again = () => { if (Tp.node === nd) tipRefresh(); }; Tp.lazy = setTimeout(() => { Tp.lazy = 0; if (Tp.node !== nd) return; let p = null; try { p = spec.lazy(); } catch (_) {} Promise.resolve(p).then(again, again); }, options.tipDwell); }
     if (!was && !still() && Tp.el.animate) Tp.el.animate([{ transform: "translateY(3px)", opacity: 0 }, { transform: "none", opacity: 1 }], { duration: 140, easing: "ease-out" });
   }
   function tipHide(wait) {
     clearTimeout(Tp.timer);
+    clearTimeout(Tp.lazy); Tp.lazy = 0;   // a pointer that has gone asks for nothing
     const go = () => { Tp.node = null; if (Tp.el) Tp.el.removeAttribute("data-on"); };
     if (wait) Tp.timer = setTimeout(go, 70); else go();
   }
@@ -308,6 +329,13 @@
 
   /* ══ THE ORDER CARD ══ */
   const CHECK = '<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8.5l3.2 3L13 4.8"/></svg>';
+  /** Where it happens, in words: the page of the station when it has its own name ("Assembly 2"), else the station; on the board the row says the station already. */
+  function whereOf(c, hide) {
+    const st = c.stationLabel, dv = c.deviceLabel;
+    if (!dv || low(dv) === low(st)) return hide ? "" : st;
+    return hide || !st || low(dv).includes(low(st)) ? dv : `${st} · ${dv}`;
+  }
+  /** One card. `cur` is an entry of the live answer's `current`; o: { stationKey, stationLabel, hideStation, onPerson (false: the name is not a link), onOpen, personTip }. */
   function orderCard(cur, o) {
     o = o || {}; css(); wire();
     let c = normCurrent(cur, { key: o.stationKey, label: o.stationLabel });
@@ -320,49 +348,65 @@
     const nt = h("div", "esNote"); main.append(l1, who, tm, nt);
     card.append(th, main, qr, pcs);
     for (const z of [th, qr]) zoomBind(z);
+    const goPerson = o.onPerson === false ? null : o.onPerson || (n => { const a = sharedApi(); return a && typeof a.openPerson === "function" ? a.openPerson(n) : undefined; });
     let stopTick = null, pieceSig = "";
     const timer = t => { if (card.dataset.done) return; const s = c.scannedAt ? since(t - c.scannedAt) : "—"; setText(tv, s); };
     function paint(first) {
-      card.dataset.rid = c.rid; card.dataset.person = c.person;
-      setText(oid, c.orderNumber || c.rid); oid.setAttribute("aria-label", `Open order ${c.orderNumber || c.rid}`); oid.title = "Open this order";
+      const sheet = c.kind === "sheet", name = sheet ? c.title || "Laser sheet" : c.orderNumber || c.rid;
+      card.dataset.rid = c.rid; card.dataset.person = c.person; card.dataset.kind = c.kind;
+      setText(oid, name); oid.disabled = sheet; oid.setAttribute("aria-label", sheet ? `Laser sheet ${name}` : `Open order ${name}`); oid.title = sheet ? "A laser sheet being cut" : "Open this order";
       setText(cust, c.customer); cust.hidden = !c.customer; cust.title = c.customer;
-      av.dataset.t = tone(c.person); setText(av, initials(c.person)); av.hidden = !c.person; setText(pn, c.person); pn.hidden = !c.person; setText(sn, c.stationLabel); sn.hidden = !c.stationLabel || !!o.hideStation;
-      who.hidden = !c.person && (!c.stationLabel || !!o.hideStation);
+      const where = whereOf(c, !!o.hideStation);
+      av.dataset.t = tone(c.person); setText(av, initials(c.person)); av.hidden = !c.person; setText(pn, c.person); pn.hidden = !c.person; setText(sn, where); sn.hidden = !where;
+      who.hidden = !c.person && !where;
+      setText(tl, sheet ? "since started" : "since scanned");
       setText(nt, c.note); nt.hidden = !c.note;
-      const multi = c.pieces.length > 1, first1 = c.pieces[0];
-      th.set({ url: c.thumbUrl || (first1 && first1.thumbUrl) || "", rid: c.rid, pool: first1 && first1.id, label: `Picture of order ${c.orderNumber}` });
-      const qsrc = qrUrl(c.qr); qr.set({ url: qsrc, vector: false, fit: "contain", label: `QR code of order ${c.orderNumber}` });
-      const sig = JSON.stringify(c.pieces.map(p => [p.id, p.label, p.thumbUrl]));
+      const total = Math.max(c.pieceCount, c.pieces.length), multi = !sheet && total > 1, first1 = c.pieces[0];
+      let urls = urlsOf(c, false); if (!urls.length && first1) urls = urlsOf(first1, true);
+      th.set({ urls, rid: c.rid, pool: first1 && first1.id, label: sheet ? `Laser sheet ${name}` : `Picture of order ${name}`, icon: sheet ? "sheet" : "", vector: !sheet });
+      qr.hidden = sheet; if (!sheet) qr.set({ url: qrUrl(c.qr), vector: false, fit: "contain", label: `QR code of order ${name}` });
+      card.classList.toggle("sheet", sheet); card.classList.toggle("lp", !!goPerson);
+      const sig = JSON.stringify([total, c.pieces.map(p => [p.id, p.label, p.thumbUrl, p.vectorUrl, p.photoUrl])]);
       if (multi && sig !== pieceSig) {
-        pieceSig = sig; pcs.textContent = ""; pcs.hidden = false; pcs.setAttribute("aria-label", `${c.pieces.length} pieces`);
-        pcs.appendChild(h("span", "esPcL", `${c.pieces.length} pieces`));
+        pieceSig = sig; pcs.textContent = ""; pcs.hidden = false; pcs.setAttribute("aria-label", `${total} pieces`);
+        pcs.appendChild(h("span", "esPcL", `${total} pieces`));
         c.pieces.forEach((p, i) => {
           const fig = h("figure", "esPc"), box = pictureBox("esPcTh", 136); box.dataset.kind = "piece"; box.dataset.n = p.n; box.tabIndex = i === 0 ? 0 : -1;
-          const label = p.label || `Piece ${p.n}`; box.title = label; box.set({ url: p.thumbUrl, rid: c.rid, pool: p.id, label: `${label}` });
+          const label = p.label || `Piece ${p.n}`; box.title = label; box.set({ urls: urlsOf(p, true), rid: c.rid, pool: p.id, label: `${label}` });
           zoomBind(box);
           box.addEventListener("keydown", ev => { if (ev.key !== "ArrowRight" && ev.key !== "ArrowLeft") return; const all = [...pcs.querySelectorAll(".esPcTh")], to = all[clamp(all.indexOf(box) + (ev.key === "ArrowRight" ? 1 : -1), 0, all.length - 1)]; if (to && to !== box) { ev.preventDefault(); all.forEach(x => { x.tabIndex = -1; }); to.tabIndex = 0; to.focus({ preventScroll: true }); } });
           fig.append(box, h("figcaption", "", String(p.n))); pcs.appendChild(fig);
         });
+        if (total > c.pieces.length) {   // the answer lists the first few; the rest are counted, not pictured
+          if (c.pieces.length) { const more = h("figure", "esPc"), m = h("span", "esMore", `+${total - c.pieces.length}`); m.title = `${total - c.pieces.length} more pieces are not shown`; more.append(m, h("figcaption", "", "more")); pcs.appendChild(more); }
+          else pcs.appendChild(h("span", "esPcNone", "No pictures are stored for these pieces yet"));
+        }
       } else if (!multi) { pieceSig = ""; pcs.textContent = ""; pcs.hidden = true; }
-      card.dataset.pieces = String(c.pieces.length);
-      card.setAttribute("aria-label", `Order ${c.orderNumber}${c.customer ? ` for ${c.customer}` : ""}${c.person ? `, ${c.person}` : ""}${c.stationLabel ? ` at ${c.stationLabel}` : ""}${c.pieces.length > 1 ? `, ${c.pieces.length} pieces` : ""}`);
-      tv.title = c.scannedAt ? `Scanned at ${clock(c.scannedAt)}` : "No scan time yet"; timer(now());
+      card.dataset.pieces = String(total);
+      card.setAttribute("aria-label", sheet ? `Laser sheet ${name}${c.person ? `, ${c.person}` : ""}${where ? ` at ${where}` : ""}` : `Order ${name}${c.customer ? ` for ${c.customer}` : ""}${c.person ? `, ${c.person}` : ""}${where ? ` at ${where}` : ""}${total > 1 ? `, ${total} pieces` : ""}`);
+      tv.title = c.scannedAt ? `${sheet ? "Started" : "Scanned"} at ${clock(c.scannedAt)}` : sheet ? "No start time yet" : "No scan time yet"; timer(now());
       if (first) tip();
     }
     const tip = () => {
-      av.dataset.esTip = ""; av._esTip = () => (o.personTip ? o.personTip(c) : { avatar: c.person, title: c.person || "Unknown", sub: c.stationLabel ? `At ${c.stationLabel}` : "", rows: [c.scannedAt ? { k: "Scanned", v: clock(c.scannedAt), d: "When this order was scanned at the station" } : null, { k: "Order", v: c.orderNumber }].filter(Boolean), foot: "Logged activity, not effort." });
+      av.dataset.esTip = "";
+      av._esTip = () => {
+        if (o.personTip) return o.personTip(c);
+        const a = sharedApi(), sheet = c.kind === "sheet", head = [c.scannedAt ? { k: sheet ? "Started" : "Scanned", v: clock(c.scannedAt), d: sheet ? "When this sheet was started" : "When this order was scanned at the station" } : null, sheet ? { k: "Sheet", v: c.title } : { k: "Order", v: c.orderNumber }].filter(Boolean), at = whereOf(c, false);
+        return addFacts({ avatar: c.person, title: c.person || "Unknown", sub: at ? `At ${at}` : "", foot: "Logged activity, not effort." }, head, [], c.person, a ? String(a.view && a.view()) : "real", a && c.person ? body => a.call(body) : null);
+      };
     };
     card.addEventListener("pointerdown", ev => { card._pt = ev.pointerType; }, true);
     card.addEventListener("click", ev => {
       const z = ev.target.closest && ev.target.closest("[data-zoom]");
       if (z && card._pt === "touch" && Z.node !== z) { ev.preventDefault(); ev.stopPropagation(); zoomIn(z); return; }   // a tap grows a picture; a tap on the grown one, or anywhere else, opens the order
-      if (o.onPerson && ev.target.closest(".esWho") && c.person) { ev.preventDefault(); o.onPerson(c.person, c); return; }
+      if (goPerson && ev.target.closest(".esWho") && c.person) { ev.preventDefault(); goPerson(c.person, c); return; }
+      if (c.kind === "sheet") return;   // a laser sheet is not an order: nothing to open
       let taken = false; try { taken = o.onOpen ? o.onOpen(c, card) === true : false; } catch (e) { warn("open", e); }
       if (!taken) openOrder(card, c);
     });
     paint(true);
     stopTick = track(tv, timer);
-    card.update = next => { const was = c.id; c = normCurrent(next, { key: c.station, label: c.stationLabel }); if (!c.station) c.station = ""; paint(false); card.dataset.id = c.id; return was; };
+    card.update = next => { const was = c.id; c = normCurrent(next, { key: c.station, label: c.stationLabel }); paint(false); card.dataset.id = c.id; return was; };
     card.finish = text => {
       card.dataset.done = "1"; if (stopTick) { stopTick(); stopTick = null; }
       dn.innerHTML = CHECK; dn.appendChild(doc.createTextNode(" " + text)); dn.hidden = false; tv.hidden = true; tl.hidden = true; card.classList.add("done");
@@ -380,8 +424,8 @@
     const e = new Error(net ? "The service cannot be reached from here." : status === 401 ? "That passcode was not accepted." : status === 403 ? "No manager passcode is set up yet." : status === 404 ? "The efficiency service is not published yet (404)." : status === 429 ? "Too many requests. Paused for a moment." : `The stations could not be read${srv ? ` (${srv})` : status ? ` (${status})` : ""}.`);
     e.status = status || 0; e.auth = status === 401 || status === 403; e.net = !!net; return e;
   }
-  async function request(sub, signal) {
-    const body = Object.assign({ op: "live" }, sub.params ? sub.params() : {});
+  async function request(sub, signal, ask) {
+    const body = Object.assign({}, sub.params ? sub.params() : {}, ask || { op: "live" });
     if (options.source) return options.source(body, signal);
     const key = keyOf(sub); if (!key) { const e = new Error("Locked: the manager passcode is asked in the console."); e.locked = true; throw e; }
     body.key = key;
@@ -389,6 +433,10 @@
     const txt = await res.text(); let j = null; try { j = JSON.parse(txt); } catch (_) {}
     if (!res.ok || !j || j.ok === false) throw failure(res.status, j);
     return j;
+  }
+  function askOwn(sub, body) {
+    const ctl = root.AbortController ? new AbortController() : null, to = ctl ? setTimeout(() => ctl.abort(), options.timeoutMs) : 0;
+    return request(sub, ctl && ctl.signal, body).finally(() => clearTimeout(to));
   }
   const Feed = (() => {
     const subs = new Set(); let timer = 0, busy = false, fails = 0, okAt = 0, nCalls = 0, inflight = null;
@@ -436,6 +484,44 @@
     return v === "sandbox" ? { sandbox: true } : {};
   }
 
+  /* ── what a person did today, for their hover card: op person (the employee page's own read: one day, no comparison), asked only when a card
+        is about to open, kept a minute (half a minute after a failure); the service's own label, unit and one-line definition of every number are shown ── */
+  const PF = new Map();
+  const pfGet = (mode, name) => { const e = PF.get(mode + "|" + low(name)); return e && (e.pending || Date.now() - e.at < (e.err ? 30000 : 60000)) ? e : null; };
+  const round1 = v => Math.round(v * 10) / 10;
+  function pfValue(m) {
+    const v = +m.value, u = String(m.unit || "");
+    return u === "seconds" ? words(v * 1000) : u === "hours" ? words(v * 3600000) : u === "percent" ? `${round1(v)}%` : /\/hour$/.test(u) ? `${round1(v)} an hour` : /\/day$/.test(u) ? `${round1(v)} a day` : nf(v);
+  }
+  function pfRows(j) {
+    const K = (j && j.kpis) || null, rows = [];
+    if (!K) return rows;
+    for (const k of ["parts", "orders", "secPerOrderMedian", "activeHours", "idleHours", "partsPerActiveHour"]) {
+      const m = K[k]; if (!m || m.value == null || m.value === "" || !Number.isFinite(+m.value)) continue;
+      rows.push({ k: str(m.label || k), v: pfValue(m), d: str(m.def) + (m.estimated ? ` (estimated${m.why ? ": " + str(m.why).slice(0, 90) : ""})` : "") });
+    }
+    return rows;
+  }
+  function pfLoad(mode, name, ask) {
+    const got = pfGet(mode, name); if (got) return got.pending || Promise.resolve(got);
+    const ent = { at: Date.now(), pending: null, err: null, rows: null, found: true };
+    PF.set(mode + "|" + low(name), ent);
+    ent.pending = Promise.resolve().then(() => ask({ op: "person", name, range: "day", compare: false })).then(j => { ent.rows = pfRows(j); ent.found = !(j && j.found === false); ent.known = !!(j && j.kpis); }, e => { ent.err = e || true; }).then(() => { ent.pending = null; ent.at = Date.now(); if (PF.size > 120) PF.delete(PF.keys().next().value); return ent; });
+    return ent.pending;
+  }
+  /** Adds the day's numbers to a person's hover card: the rows when they are in, a labelled wait line while they are on their way, a quiet note when they cannot be had. */
+  function addFacts(spec, head, live, name, mode, ask) {
+    spec.rows = head.concat(live);
+    if (!ask) return spec;
+    const e = pfGet(mode, name);
+    if (e && !e.pending && e.rows && e.rows.length) spec.rows = head.concat(e.rows, live.filter(r => r.k === "Longest idle"));
+    else if (!e || e.pending) { spec.wait = "Reading today's numbers…"; spec.lazy = () => pfLoad(mode, name, ask); }
+    else if (e.err) spec.note = "Today's numbers could not be read just now.";
+    else if (!e.found) spec.note = "Nothing is logged for this person today yet.";
+    else if (!live.length) spec.note = "Today's numbers are not available from the service yet.";
+    return spec;
+  }
+
   /* ══ THE BOARD ══ */
   const stateWord = { working: "Working", idle: "Idle", offline: "Offline" };
   function mount(el, opts) {
@@ -443,13 +529,15 @@
     if (!el) return { unmount() {}, refresh() { return Promise.resolve(); } };
     const R = h("div", "es"); R.dataset.es = "";
     R.innerHTML = `<div class="esHead"><span class="esSum" aria-live="polite"></span><span class="esLive" data-s="load" role="status"><i class="esDot"></i><span class="esSpin" aria-hidden="true"></span><span class="esLiveT">Connecting…</span></span></div>
-<p class="esNone" hidden>No station is processing an order right now</p>
+<p class="esNone" hidden>No one is working on an order right now</p>
 <div class="esWait" role="status"><span class="esSpin" aria-hidden="true"></span><span class="esWaitT">Reading the stations…</span><button type="button" class="esRetry" hidden>Try now</button></div>
 <div class="esList" hidden></div>`;
     el.appendChild(R);
     const E = { sum: R.querySelector(".esSum"), live: R.querySelector(".esLive"), liveT: R.querySelector(".esLiveT"), none: R.querySelector(".esNone"), wait: R.querySelector(".esWait"), waitT: R.querySelector(".esWaitT"), retry: R.querySelector(".esRetry"), list: R.querySelector(".esList") };
     const S = { rows: new Map(), data: null, okAt: 0, lastApply: 0, busy: false, err: null, dead: false, timers: new Set() };
+    const E1 = !opts.own && !options.source ? sharedApi() : null;   // inside the console: its door to the data (one read, its passcode, its Real | Sandbox choice)
     let shared = null;
+    const goPerson = opts.onPerson === false ? null : opts.onPerson || (E1 && typeof E1.openPerson === "function" ? n => E1.openPerson(n) : null);
     const later = (fn, ms) => { const t = setTimeout(() => { S.timers.delete(t); fn(); }, ms); S.timers.add(t); return t; };
 
     /* the status line, honest: live, updating, reconnecting, locked */
@@ -484,28 +572,37 @@
       const s = X.data, rows = [];
       if (s.counts.parts != null) rows.push({ k: "Parts today", v: nf(s.counts.parts), d: "Pieces scanned or completed here today" });
       if (s.counts.orders != null) rows.push({ k: "Orders today", v: nf(s.counts.orders), d: "Different orders handled here today" });
+      if (s.counts.scans != null) rows.push({ k: "Scans today", v: nf(s.counts.scans), d: "Scans logged at this station today" });
       if (s.lastEventAt) rows.push({ k: "Last event", v: `${clock(s.lastEventAt)} · ${ago((now() - s.lastEventAt) / 1000)}`, d: "The last scan or action logged at this station" });
       if (s.people.length) rows.push({ k: s.people.length === 1 ? "Person" : "People", v: s.people.map(p => p.name).join(", ") });
+      if (s.devices.length > 1 || (s.devices.length === 1 && s.devices[0].state !== "offline" && low(s.devices[0].label) !== low(s.label))) {   // the pages of the station and who is on each
+        const on = s.devices.filter(d => d.state !== "offline").length;
+        s.devices.slice(0, 6).forEach((d, i) => rows.push({ k: d.label, v: d.state === "offline" ? "Offline" : `${d.person ? d.person + " · " : ""}${stateWord[d.state]}`, d: i === 0 ? `Pages of this station: ${on} of ${s.devices.length} in use` : "" }));
+        if (s.devices.length > 6) rows.push({ k: "", v: `+${s.devices.length - 6} more pages` });
+      }
       return { state: s.state, title: s.label, sub: `${stateWord[s.state]}${s.state === "working" && s.current.length ? ` · ${s.current.length} ${s.current.length === 1 ? "order" : "orders"}` : ""}`, rows, spark: s.spark, sparkNote: "Parts, last hour", foot: "Logged activity only: it shows what was scanned, not effort." };
     }
+    const ask = body => (shared ? shared.call(body) : askOwn(sub, body));
+    const modeKey = () => { if (shared) { let v = ""; try { v = shared.view(); } catch (_) {} return String(v || "real"); } return viewParams(opts).sandbox ? "sandbox" : "real"; };
     function personTip(X, p) {
-      const s = X.data, cur = s.current.find(c => low(c.person) === low(p.name)), rows = [];
-      if (p.since) rows.push({ k: "Signed in since", v: `${clock(p.since)} · ${words(now() - p.since)}`, d: "When this person signed in at a station today" });
-      if (p.lastSeenAt) rows.push({ k: "Last seen", v: ago((now() - p.lastSeenAt) / 1000), d: "The last sign of life from the station" });
-      if (p.parts != null) rows.push({ k: "Parts today", v: nf(p.parts), d: "Pieces scanned or completed today" });
-      if (p.orders != null) rows.push({ k: "Orders today", v: nf(p.orders), d: "Different orders handled today" });
-      if (p.medianMs != null) rows.push({ k: "Median per order", v: words(p.medianMs), d: "The middle time from scan to done" });
-      if (p.longestIdleMs != null) rows.push({ k: "Longest idle", v: words(p.longestIdleMs), d: "The longest gap with nothing logged today" });
-      return { avatar: p.name, title: p.name, sub: `${s.label}${cur ? ` · on order ${cur.orderNumber}` : s.state === "working" ? " · between orders" : ""}`, rows, foot: "Logged activity, not effort: a phone scan counts for the desktop's signed-in person." };
+      const s = X.data, cur = s.current.find(c => low(c.person) === low(p.name)), head = [], live = [];
+      if (p.since) head.push({ k: "Signed in since", v: `${clock(p.since)} · ${words(now() - p.since)}`, d: "When this person signed in at a station today" });
+      if (p.lastSeenAt) head.push({ k: "Last seen", v: ago((now() - p.lastSeenAt) / 1000), d: "The last sign of life from the station" });
+      if (p.parts != null) live.push({ k: "Parts today", v: nf(p.parts), d: "Pieces scanned or completed today" });
+      if (p.orders != null) live.push({ k: "Orders today", v: nf(p.orders), d: "Different orders handled today" });
+      if (p.medianMs != null) live.push({ k: "Median per order", v: words(p.medianMs), d: "The middle time from scan to done" });
+      if (p.longestIdleMs != null) live.push({ k: "Longest idle", v: words(p.longestIdleMs), d: "The longest gap with nothing logged today" });
+      const spec = { avatar: p.name, title: p.name, sub: `${s.label}${cur ? ` · ${cur.kind === "sheet" ? "on sheet " + cur.title : "on order " + cur.orderNumber}` : s.state === "working" ? " · between orders" : ""}`, foot: "Logged activity, not effort: a phone scan counts for the desktop's signed-in person." };
+      return addFacts(spec, head, live, p.name, modeKey(), p.name ? ask : null);
     }
     function chip(X, p) {
       const c = h("span", "esPer"); c.dataset.name = p.name; c.setAttribute("tabindex", "0"); c.dataset.esTip = "";
       const a = h("span", "esAv", initials(p.name)); a.dataset.t = tone(p.name); c.append(a, h("span", "esPn", p.name));
       c._esTip = () => personTip(X, c._p); c._p = p;
-      if (opts.onPerson) c.addEventListener("click", () => opts.onPerson(c._p.name));
+      if (goPerson) { c.addEventListener("click", () => goPerson(c._p.name)); c.dataset.link = ""; }
       return c;
     }
-    const cardFor = (X, c) => orderCard(c, { hideStation: true, onPerson: opts.onPerson, onOpen: opts.onOpen, personTip: cc => personTip(X, X.data.people.find(p => low(p.name) === low(cc.person)) || { name: cc.person }) });
+    const cardFor = (X, c) => orderCard(c, { hideStation: true, onPerson: goPerson || false, onOpen: opts.onOpen, personTip: cc => personTip(X, X.data.people.find(p => low(p.name) === low(cc.person)) || { name: cc.person }) });
 
     /* a thing arrives or leaves */
     const fade = (n, from, to, ms, fill) => { if (still() || !n.animate) return null; return n.animate([from, to], { duration: ms || 220, easing: EASE, fill: fill || "backwards" }); };
@@ -613,7 +710,6 @@
     }
     // Inside the console the board rides the shell's own read of op live (Efficiency.api.onLive: ONE request for the Overview and this board, the
     // shell's passcode, its Real | Sandbox choice and its visibility rules). On its own page it polls op live itself.
-    const E1 = !opts.own && !options.source ? sharedApi() : null;
     const sub = { active: () => !S.dead && shown(R), params: () => Object.assign(viewParams(opts), typeof opts.params === "function" ? opts.params() : opts.params || {}), key: opts.key, busy: b => { S.busy = b; paintLive(); },
       data: (j, at) => { if (S.dead) return; try { apply(j, at); } catch (e) { warn("draw", e); fail(Object.assign(new Error("The answer could not be drawn."), { status: 0 }), at); } }, fail: (e, at) => { if (!S.dead) fail(e, at); } };
     let io = null, off = null;
@@ -623,6 +719,7 @@
     return {
       /** The console has shown this board (or wants it fresh now): read at once. */
       refresh() { return E1 ? E1.call({ op: "live" }).then(r => { if (!S.dead) apply(r, Date.now()); }, () => {}) : Feed.now(); },
+      destroy() { this.unmount(); },
       unmount() {
         if (S.dead) return; S.dead = true; if (E1) { if (off) off(); } else Feed.remove(sub); if (io) io.disconnect(); stopLive(); stopIdle();
         for (const t of S.timers) clearTimeout(t); S.timers.clear();
@@ -672,6 +769,7 @@
 .esStState{font-size:11.5px;color:var(--ink45,#938c80);white-space:nowrap}
 .esPeople{display:flex;flex-wrap:wrap;gap:4px 6px;min-width:0}
 .esPer{display:inline-flex;align-items:center;gap:6px;padding:2px 10px 2px 2px;border-radius:999px;border:1px solid var(--line,#e4ddd0);background:var(--card2,#faf7f1);font-size:11.5px;color:var(--ink70,#5b554c);min-width:0;max-width:100%;transition:border-color .2s,background .2s;cursor:default}
+.esPer[data-link]{cursor:pointer}
 .esPer:hover,.esPer:focus-visible{border-color:var(--ink25,#c4bdb0);background:var(--card,#fffefb);color:var(--ink,#1c1a17)}
 .esPer .esPn{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .esAv{display:inline-grid;place-items:center;width:22px;height:22px;border-radius:50%;font:700 9.5px/1 var(--sans,system-ui,sans-serif);letter-spacing:.02em;flex:0 0 22px;background:var(--sageSoft,#e7eddf);color:#46603f;cursor:default}
@@ -690,6 +788,9 @@
 /* the order card */
 .esCard{position:relative;display:grid;grid-template-columns:72px minmax(0,1fr) 72px;gap:0 12px;align-items:center;background:var(--card2,#faf7f1);border:1px solid var(--line,#e4ddd0);border-radius:12px;padding:10px;min-width:0;cursor:pointer;transition:border-color .2s,transform .25s}
 .esCard:hover{border-color:var(--goldLine,#e3d3a6);transform:translateY(-1px)}
+.esCard.sheet{grid-template-columns:72px minmax(0,1fr);cursor:default}.esCard.sheet:hover{transform:none}
+.esCard.lp .esWho{cursor:pointer}.esCard.lp .esWho:hover .esPn{text-decoration:underline;text-decoration-color:var(--gold2,#caa861);text-underline-offset:3px}
+.esOid:disabled{cursor:default;color:var(--ink,#1c1a17);opacity:1}.esOid:disabled:hover{background:transparent;text-decoration:none}
 .esCard.done{cursor:default}.esCard.done:hover{transform:none;border-color:var(--line,#e4ddd0)}
 .esCard.done .esTh,.esCard.done .esQr,.esCard.done .esPieces,.esCard.done .esL1,.esCard.done .esWho{opacity:.55}
 .esTh,.esQr,.esPcTh{position:relative;display:grid;place-items:center;border-radius:9px;background:#fff;border:1px solid var(--line2,#efe9dd);isolation:isolate;outline-offset:2px;cursor:pointer;flex:none}
@@ -718,6 +819,8 @@
 .esPcL{align-self:center;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink45,#938c80);font-weight:700;margin-right:4px;white-space:nowrap}
 .esPc{margin:0;display:grid;justify-items:center;gap:3px}.esPc figcaption{font-size:10px;color:var(--ink45,#938c80);font-variant-numeric:tabular-nums}
 .esPcTh{width:44px;height:44px;border-radius:8px}
+.esMore{display:grid;place-items:center;width:44px;height:44px;border-radius:8px;border:1px dashed var(--line,#e4ddd0);color:var(--ink45,#938c80);font:650 12px var(--sans,system-ui,sans-serif);font-variant-numeric:tabular-nums}
+.esPcNone{align-self:center;font-size:11.5px;color:var(--ink45,#938c80)}
 /* the hover card */
 .esTip{position:fixed;z-index:2147483200;left:0;top:0;width:max-content;max-width:min(300px,calc(100vw - 16px));padding:12px 14px 11px;border-radius:12px;background:var(--card,#fffefb);color:var(--ink70,#5b554c);border:1px solid var(--line,#e4ddd0);box-shadow:0 12px 34px rgba(30,26,20,.18),0 2px 6px rgba(30,26,20,.08);visibility:hidden;opacity:0;pointer-events:none;font-size:12px;line-height:1.35;display:grid;gap:9px}
 .esTip[data-on]{visibility:visible;opacity:1}
@@ -728,6 +831,8 @@
 .esTipR{margin:0;display:grid;gap:7px}.esTipR>div{display:grid;grid-template-columns:1fr auto;column-gap:16px;align-items:baseline}
 .esTipR dt{font-size:10.5px;letter-spacing:.07em;text-transform:uppercase;color:var(--ink45,#938c80);font-weight:700}.esTipR dd{margin:0;color:var(--ink,#1c1a17);font-weight:650;font-variant-numeric:tabular-nums;text-align:right}
 .esTipR small{grid-column:1/-1;color:var(--ink45,#938c80);font-size:10.5px;margin-top:1px}
+.esTipW{margin:0;display:flex;align-items:center;gap:8px;font-size:11.5px;color:var(--ink45,#938c80)}
+.esTipN{margin:0;font-size:11.5px;color:var(--ink45,#938c80)}
 .esTipS{display:grid;gap:2px}.esTipS small{color:var(--ink45,#938c80);font-size:10.5px}
 .esTipF{margin:0;padding-top:8px;border-top:1px solid var(--line2,#efe9dd);font-size:10.5px;color:var(--ink45,#938c80)}
 @container (max-width:560px){
@@ -735,7 +840,7 @@
  .esLive .esLiveT{max-width:100%}
 }
 @container (max-width:420px){
- .esCard{grid-template-columns:56px minmax(0,1fr) 56px;gap:0 10px;padding:9px}.esTh,.esQr{width:56px;height:56px}.esT{font-size:15px}
+ .esCard{grid-template-columns:56px minmax(0,1fr) 56px;gap:0 10px;padding:9px}.esCard.sheet{grid-template-columns:56px minmax(0,1fr)}.esTh,.esQr{width:56px;height:56px}.esT{font-size:15px}
 }
 @media (prefers-reduced-motion:reduce){.es *,.esCard *,.esTip *{transition:none!important;animation:none!important}.esCard{transition:none}.esLive[data-s=live] .esDot:after,.esSt[data-state=working] .esLight:after{animation:none}}`;
     (doc.head || doc.documentElement).appendChild(s);
