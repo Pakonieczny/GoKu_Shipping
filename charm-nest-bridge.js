@@ -11080,18 +11080,23 @@ const OrderWin = window.OrderWin = (() => {
   }
   /** The back engraving of the piece shown, under its pictures: the one card the Sheet tab draws (OrderEngraving, charm-nest-order-engraving.js),
    *  here for the line the Overview holds. Each piece of an order has its own back, its own job and its own approval, so the card is
-   *  the one of the line shown and swaps with the piece (nothing of the piece before stays). It follows Engrave's jobs and the order's
-   *  timeline feed (an approval made anywhere shows within a second or two) and asks for no read of its own. */
+   *  the one of the line shown and swaps with the piece (nothing of the piece before stays); an order of several names the piece on its
+   *  card, and with "All pieces" shown every piece that has a back engraving has its own compact card (Paul, 5 Oct, round 17). It follows
+   *  Engrave's jobs and the order's timeline feed (an approval made anywhere shows within a second or two) and asks for no read of its own. */
   function paintEng(r) {
     const host = byId("owEng"), OE = window.OrderEngraving; if (!host || !OE || !r) return;
-    const rid = String(r.order.receiptId);
-    const ctx = { rid, key: r.key, poolId: (r.poolIds || [])[0] || "", piece: W.piece || r.key, row: r,
+    const rid = String(r.order.receiptId), ps = W.pieces || [], multi = ps.length > 1, all = multi && !W.piece;
+    const meta = p => tryDo(() => pieceMeta(p)) || "";
+    // (the back's own words from the Sheet tab, for an order read from the records that Engrave holds no job for)
+    const sheetEngOf = x => () => { const m = SV.info && (SV.info.mine || []).find(y => y.poolId && (x.poolIds || []).includes(y.poolId)); return (m && m.eng) || null; };
+    const here = multi && !all ? ps.find(p => p.key === r.key) : null;
+    const ctx = { rid, key: r.key, poolId: (r.poolIds || [])[0] || "", piece: W.piece || r.key, row: r, label: here ? here.name : "", meta: here ? meta(here) : "",
       events: () => (W.evFor === rid ? W.events : null),
-      // (the back's own words from the Sheet tab, for an order read from the records that Engrave holds no job for)
-      sheetEng: () => { const x = SV.info && (SV.info.mine || []).find(m => m.poolId && (r.poolIds || []).includes(m.poolId)); return (x && x.eng) || null; },
+      sheetEng: sheetEngOf(r),
+      pieces: all ? ps.map(p => { const x = rowOf(p.key); return x && { key: p.key, poolId: (p.pools || [])[0] || (x.poolIds || [])[0] || "", row: x, label: p.name, meta: meta(p), sheetEng: sheetEngOf(x) }; }).filter(Boolean).sort((a, b) => (b.key === r.key) - (a.key === r.key)) : undefined,   // (the line the order was opened on first)
       // (an approval made elsewhere, or here: what hangs on it is drawn again: the Engraving cell, the Sheet tab)
       changed: () => { if (!W.dlg || !W.dlg.open || W.closing) return; if (SV.info && W.view === "sheet") tryDo(() => paintPanel(SV.info)); hold("paint", () => { if (W.dlg.open && !W.closing) paint(); }); } };
-    if (W.engCard && W.engCard.el === host) W.engCard.update(ctx); else W.engCard = OE.mount(host, ctx);
+    if (W.engCard && W.engCard.el === host && W.engCard.mode === (all ? "list" : "one")) W.engCard.update(ctx); else W.engCard = OE.mount(host, ctx);
   }
   /** Paint the window from the row it is showing. */
   function paint() {

@@ -41,7 +41,9 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   assert.equal(N2.src.att.avgShiftHours.est, true, 'an estimated figure says so'); assert(/time clock/.test(N2.attNote), 'the honest sentence about days off is kept');
   const L = j(E.pickLive({ at: 5, signedIn: [{ name: 'Ana M.', stationKey: 'welding', since: 1, lastSeenAt: 2 }], stations: [{ key: 'welding', label: 'Welding', current: [{ person: 'Ana M.', rid: '35210001', station: 'welding' }, { person: 'Someone Else', rid: '9' }] }] }, 'Ana M.'));
   assert.equal(L.where.stationKey, 'welding'); assert.deepEqual(L.current.map(c => c.rid), ['35210001'], 'only this person\'s order is in the card'); assert.equal(L.current[0].stationLabel, 'Welding');
-  console.log('  ✓ periods are rolling windows, a missing figure stays a dash, the answer\'s shapes are read, the live card picks this person only');
+  const snapA = { at: 5, signedIn: [{ name: 'Ana M.', stationKey: 'welding', since: 1, lastSeenAt: 2 }], stations: [{ key: 'welding', label: 'Welding', current: [{ person: 'Ana M.', rid: '35210001', station: 'welding' }] }] };
+  assert.equal(j(E.pickLive(snapA, 'Ana Maria')).where, null, 'another spelling alone is not recognised'); assert.equal(j(E.pickLive(snapA, 'Ana Maria', ['Ana Maria', 'Ana M.'])).where.stationKey, 'welding', 'a spelling the server lists (E4 spellings) finds the person on the live board');
+  console.log('  ✓ periods are rolling windows, a missing figure stays a dash, the answer\'s shapes are read, the live card picks this person only (under any spelling the server lists)');
 }
 
 (async () => {
@@ -155,6 +157,13 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     await page.click(`${P} [data-more-group="Production"]`); assert.equal(await page.locator(`${P} .efpK[data-k="kpis.partsPerSignedHour"]`).isVisible(), true, 'More figures opens it');
     for (const g of ['Production', 'Speed', 'Time', 'Attendance', 'Quality', 'Contact']) assert(await page.locator(`${P} .efpGroup .efpLabel span`, { hasText: g }).count() === 1, 'group ' + g);
     assert((await page.locator(`${P} .efpK .efpKV`).allInnerTexts()).every(t => !/NaN|undefined|null/.test(t)), 'no NaN on a card');
+    // keyboard: a group of figures is one Tab stop, and the arrow keys, Home and End move inside it
+    assert.equal(await page.locator(`${P} .efpK[tabindex="0"]`).count(), 6, 'one Tab stop for each of the six groups of figures');
+    const kf = page.locator(`${P} .efpK[tabindex="0"]`).first(), kk0 = await kf.getAttribute('data-k'); await kf.focus(); await page.keyboard.press('ArrowRight');
+    const kk1 = await page.evaluate(() => (document.activeElement && document.activeElement.dataset ? document.activeElement.dataset.k : '')); assert(kk1 && kk1 !== kk0, 'an arrow key moves to the next figure of the group');
+    await page.keyboard.press('End'); const kk2 = await page.evaluate(() => document.activeElement.dataset.k); await page.keyboard.press('Home'); assert.equal(await page.evaluate(() => document.activeElement.dataset.k), kk0, 'Home goes back to the first figure'); assert(kk2 !== kk0, 'End goes to the last');
+    assert.equal(await page.locator(`${P} .efpK[tabindex="0"]`).count(), 6, 'still one stop for each group'); assert.equal(await page.locator(`${P} .efpRt[tabindex="0"]`).count(), 1, 'the rates are one Tab stop too');
+    await page.evaluate(() => document.activeElement && document.activeElement.blur());
     console.log('  ✓ every range (Day, Week, Month, 3 months, Year, Custom) reads its window and agrees with the fixture; earlier/later/Today; change vs the period before, "no data" where none; hover definitions with counted/estimated');
 
     /* ── 4 · charts, calendar (E7's EfficiencyCharts draws them; the page hands over the data) ── */
@@ -340,14 +349,19 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     /* ── screenshots (fixture only) ── */
     if (SHOTS) {
       fs.mkdirSync(SHOTS, { recursive: true }); const S = await boot({ reducedMotion: 'reduce' }), sp = S.page;
+      // the console scrolls inside its own box, so the window is made as tall as the whole page before a full-page picture (else the lower part is not painted)
+      // (the order list pages in more rows whenever its end is on screen, so the pictures show its first rows only: the page keeps one steady height)
+      const fit = async w => { await sp.addStyleTag({ content: '#efficiencyView .efoRow:nth-child(n+7){display:none!important}#efficiencyView .efoSent{display:none!important}' }).catch(() => {}); await sp.setViewportSize({ width: w, height: 900 }); await sp.waitForTimeout(500); const sh = await sp.evaluate(() => document.querySelector('#efficiencyView').scrollHeight); await sp.setViewportSize({ width: w, height: Math.min(15000, sh + 80) }); await sp.waitForTimeout(600); };
       for (const w of [1440, 900, 390]) {
         await sp.setViewportSize({ width: w, height: 3400 }); await rail(sp, w < 600); await openPerson(sp, 'Ana M.');
-        for (const [r, label] of [['day', 'day'], ['month', 'month'], ['year', 'year']]) { await sp.click(`${P} .efpSeg button[data-range="${r}"]`); await loaded(sp, r); await sp.waitForTimeout(1300); await sp.mouse.move(2, 2); await sp.locator(V).screenshot({ path: path.join(SHOTS, `${w}-${label}.png`) }); }
+        for (const [r, label] of [['day', 'day'], ['month', 'month'], ['year', 'year']]) { await sp.click(`${P} .efpSeg button[data-range="${r}"]`); await loaded(sp, r); await sp.waitForTimeout(1300); await sp.mouse.move(2, 2); await fit(w); await sp.locator(V).screenshot({ path: path.join(SHOTS, `${w}-${label}.png`) }); }
         if (w === 1440) {
           await sp.click(`${P} .efpSeg button[data-range="month"]`); await loaded(sp, 'month'); await sp.waitForTimeout(1300);
           await sp.locator(`${P} [data-c="tp"] svg.efc-svg`).scrollIntoViewIfNeeded(); const s3 = await sp.locator(`${P} [data-c="tp"] svg.efc-svg`).boundingBox(); await sp.mouse.move(s3.x + s3.width * .62, s3.y + s3.height * .5); await sp.waitForTimeout(250);
           await sp.screenshot({ path: path.join(SHOTS, '1440-chart-hover.png'), clip: { x: Math.max(0, s3.x - 40), y: s3.y - 70, width: Math.min(1100, 1440 - s3.x + 40), height: s3.height + 120 } });
           const d = sp.locator(`${P} [data-c="cal"] .efc-day.worked:not(.today)`).nth(4); await d.scrollIntoViewIfNeeded(); const db = await d.boundingBox(); await sp.mouse.move(db.x + db.width / 2, db.y + db.height / 2); await sp.waitForTimeout(250); const cb = await sp.locator(`${P} [data-c="cal"]`).boundingBox(); await sp.screenshot({ path: path.join(SHOTS, '1440-calendar-hover.png'), clip: { x: cb.x - 10, y: cb.y - 10, width: cb.width + 20, height: cb.height + 20 } });
+          const kh = sp.locator(`${P} .efpK:not(.hidden)`).nth(4); await kh.scrollIntoViewIfNeeded(); const kb = await kh.boundingBox(); await sp.mouse.move(kb.x + kb.width / 2, kb.y + kb.height / 2); await sp.waitForTimeout(400);
+          await sp.screenshot({ path: path.join(SHOTS, '1440-kpi-hover.png'), clip: { x: Math.max(0, kb.x - 20), y: Math.max(0, kb.y - 200), width: Math.min(700, 1440 - kb.x + 20), height: kb.height + 260 } });
           await sp.mouse.move(2, 2); await sp.fill(`${P} input[name="efoq"]`, 'Maya'); await sp.waitForTimeout(1500); const ob2 = await sp.locator(`${P} .efpOrdersHost`).boundingBox(); await sp.screenshot({ path: path.join(SHOTS, '1440-search.png'), clip: { x: ob2.x - 10, y: ob2.y - 40, width: ob2.width + 20, height: Math.min(ob2.height + 50, 700) } });
           await sp.fill(`${P} input[name="efoq"]`, '');
         }

@@ -23,17 +23,75 @@
   function html(job){const seals=list(job);return seals.length && root?.Seal?`<span class="sealRow engravingSeals" data-seal-group data-seal-count="${seals.length}" role="group" aria-label="Engraving approval history">${seals.map(s=>root.Seal.html(s,regularSize(),'engravingSeal')).join('')}</span>`:'';}
   const esc=s=>String(s ?? '').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   function record(e){return {key:e.job?.key,engravingSeals:merge(e.job,e.job?.row?.engrave,...(e.job?.backs || []),e.job?.editOriginal,e.back,e.saved),state:e.kind==='approved'?'approved':e.kind==='skipped'?'skipped':e.job?.state,approvedAt:e.kind==='approved'?e.at:0,approvedBy:e.kind==='approved'?e.by:'',decidedAt:e.kind==='skipped'?e.at:0,decidedBy:e.kind==='skipped'?e.by:''};}
-  /** Both sheet inspectors use exactly the same back preview, words, approval and historical seals. */
+  /* ── the back engraving card, one card for every place an order is shown (the order window's Overview and Sheet tab, the sheet window) ──
+   * What it says is read from the real data the host hands over (e: {kind, job, text, note, working, reason, back, by, at, saved,
+   * pieceLabel, pieceMeta, compact}): one quiet status, the plain reason what is missing, the words as read and what is unclear, the back
+   * preview, the piece it belongs to, and two real buttons: Fix in Engraving (EngraveLink) and Approve engraving (the host's own approval,
+   * which presses the permanent BACK ENGRAVING seal on that very button). Approving is offered only where it is possible; where it is not
+   * (the words are not confirmed, the back is not ready) the button is there, disabled, with one line of why. */
+  const STATUS={approve:'To approve',words:'Words to confirm',preparing:'Being prepared',approved:'Approved',skipped:'Cut plain',none:'No back engraving'};
+  const WHY={approve:'Waiting for your approval',words:'The words need a decision',approved:'The back is approved',skipped:'Cut plain: nothing on the back'};
+  const SOURCE={personalization:'the personalisation box',personalisation:'the personalisation box',buyerMessage:"the buyer's message",staffNote:'the staff note',messages:'the staff messages'};
+  const NOT_ENGRAVABLE=/not engravable|cannot (?:be |take )engrav|design.*engrav/i;
+  let askN=0;
+  /** What is unclear about the words, in plain lines: what was read with a question, and what the buyer asked for that the words alone do not carry. */
+  function unclear(e){
+    const job=e.job || {},out=[],add=t=>{t=String(t ?? '').trim();if(t && !NOT_ENGRAVABLE.test(t) && !out.includes(t))out.push(t);};
+    if(e.kind!=='words' && e.kind!=='approve')return out;
+    if(e.kind==='words')add(e.reason || job.reason);
+    for(const q of job.questions || [])add(q);
+    const r=job.requests || {};
+    if(r.side && !['back','unspecified'].includes(r.side))add(`Asked for the ${r.side} side`);
+    if(r.font)add(`Asked for the font ${r.font}`);
+    if(r.handwriting)add('Asked for handwriting');
+    if(r.image)add('Asked for an image');
+    return out.slice(0,4);
+  }
+  /** Can this card approve the back, and when not, the one plain reason why. */
+  function canApprove(e){
+    const job=e.job;
+    if(e.kind==='words')return {why:'Confirm the words in Engraving first: words that are not confirmed are never approved.'};
+    if(e.kind==='preparing')return {why:'Not ready to approve: the back is still being prepared.'};
+    if(e.kind==='approve'){
+      if(!job)return {why:'Not loaded here yet: use Fix in Engraving to approve it.'};
+      if(job.row?.state==='gone')return {why:'This order has left the pull (cancelled or shipped), so it is not approved here.'};
+      return {ok:true};
+    }
+    return {};
+  }
+  /** Where the words came from, and who settled them. */
+  function readFrom(e){
+    const job=e.job || {};
+    if(job.decision?.by)return `Words confirmed by ${job.decision.by}`;
+    if(!job.source || job.source==='none')return '';
+    const pct=Math.round((+job.confidence || 0)*100);
+    return `Read from ${SOURCE[job.source] || job.source}${pct>0?` · ${pct}% sure`:''}`;
+  }
+  /** Both sheet inspectors and the order window use exactly the same back preview, words, approval and historical seals. */
   function panel(e={kind:'none'}){
-    const states={approve:'To approve',words:'Words to confirm',preparing:'Being prepared',approved:'Approved',skipped:'Cut plain'},kind=e.kind || 'none';
-    const title=kind==='approve'?'Check the back, then approve':kind==='approved'?'Engraved on the back':kind==='words'?'The words need a decision':kind==='none'?'No back engraving':'Back engraving';
-    const all=list(record(e));
-    const approval=kind==='approve' && e.job || kind==='approved';
-    const history=approval?'':html({seals:all});
-    const approve=approval?`<span class="egApproveWrap"><button type="button" class="btn sage sm egApproveButton"${kind==='approved'?' disabled aria-label="Back engraving approved"':' data-e="approve"'}>Approved</button>${all.length && root?.Seal?`<span class="sealRow egButtonSeal" data-seal-group data-seal-count="${all.length}" role="group" aria-label="Engraving approval history">${all.map(s=>root.Seal.html(s,regularSize(),'engravingSeal')).join('')}</span>`:''}</span>`:'';
-    const open=kind==='none' || kind==='skipped'?'':`<button type="button" class="btn ghost sm" data-e="engrave">${kind==='approve'?'Adjust in Engrave':kind==='approved'?'View in Engrave':kind==='words'?'Confirm the words in Engrave':'Open in Engrave'} <span aria-hidden="true">→</span></button>`;
+    const kind=e.kind || 'none',status=STATUS[kind] || '',compact=!!e.compact;
+    const all=list(record(e)),ap=canApprove(e),done=kind==='approved' || kind==='skipped';
+    const sealsHtml=all.length && root?.Seal?`<span class="sealRow egButtonSeal" data-seal-group data-seal-count="${all.length}" role="group" aria-label="Engraving approval history">${all.map(s=>root.Seal.html(s,regularSize(),'engravingSeal')).join('')}</span>`:'';
+    // (the seals rest on the button once it is approved; before that an earlier approval's seals sit below, so no seal covers the words "Approve engraving": the new one is pressed on the button)
+    const history=kind==='approved'?'':html({seals:all});
+    const why=kind==='preparing'?(e.job?.state==='classify'?'The words are not read yet':'Preview not ready yet'):(WHY[kind] || 'Back engraving');
+    const reasonId='egWhy'+(++askN);
+    let approve='';
+    if(kind==='approved')approve=`<span class="egApproveWrap"><button type="button" class="btn sage sm egApproveButton" disabled aria-label="Back engraving approved">Approved</button>${sealsHtml}</span>`;
+    else if(ap.ok)approve=`<span class="egApproveWrap"><button type="button" class="btn sage sm egApproveButton egAsk" data-e="approve">Approve engraving</button></span>`;
+    else if(ap.why)approve=`<span class="egApproveWrap"><button type="button" class="btn sm egApproveButton egAsk egOff" disabled aria-describedby="${reasonId}">Approve engraving</button></span><span class="egOffWhy" id="${reasonId}">${esc(ap.why)}</span>`;
+    const open=kind==='none'?'':`<button type="button" class="btn ${kind==='words'?'gold':'ghost'} sm egOpen" data-e="engrave">${done?'View in Engraving':'Fix in Engraving'} <span aria-hidden="true">→</span></button>`;
+    const acts=kind==='words'?open+approve:approve+open;
+    if(kind==='none')return `${compact?'':'<span class="fLabel">Back engraving</span>'}<div class="swEng egCard${compact?' egCompact':''}" data-state="none"><div class="top"><b>No back engraving</b></div></div>`;
     const preview=['approve','approved'].includes(kind)?'<div class="pv" data-engraving-preview></div>':'';
-    return `<span class="fLabel">Back engraving</span><div class="swEng" data-state="${esc(kind)}"><div class="top"><b>${title}</b>${states[kind]?`<span>${states[kind]}</span>`:''}</div>${preview}${e.text?`<div class="words">${esc(e.text)}</div>`:''}${e.note?`<div class="by">${esc(e.note)}</div>`:''}<div class="acts">${approve}${open}</div>${history?`<div class="egHistory">${history}</div>`:''}</div>`;
+    const lbl=kind==='approve' || kind==='approved'?'Words on the back':'Words as read',from=kind==='approved'?'':readFrom(e);
+    const words=e.text?`<div class="egWords"><span class="egLbl">${lbl}</span><div class="words">${esc(e.text)}</div>${from?`<span class="egMeta">${esc(from)}</span>`:''}</div>`
+      :kind==='words' || kind==='preparing'?`<div class="egWords"><span class="egLbl">${lbl}</span><div class="words egNone">Nothing read yet</div></div>`:'';
+    const un=unclear(e),unclearHtml=un.length?`<div class="egUnclear"><span class="egLbl">${kind==='words'?'What is unclear':'Worth a look'}</span><ul>${un.map(t=>`<li>${esc(t)}</li>`).join('')}</ul></div>`:'';
+    const sub=e.note?`<span class="by egSub">${e.working?'<span class="owSpin" aria-hidden="true"></span>':''}<span>${esc(e.note)}</span></span>`:'';
+    const forPiece=e.pieceLabel?`<span class="egFor"><b>${esc(e.pieceLabel)}</b>${e.pieceMeta?` <small>${esc(e.pieceMeta)}</small>`:''}</span>`:'';
+    const pill=status?`<span class="egPill" data-s="${esc(kind)}"><i aria-hidden="true"></i>${status}</span>`:'';
+    return `${compact?'':'<span class="fLabel">Back engraving</span>'}<div class="swEng egCard${compact?' egCompact':''}" data-state="${esc(kind)}"><div class="top egTop">${forPiece}${pill}</div><div class="egWhy"><b>${why}</b>${sub}</div>${preview}${words}${unclearHtml}<div class="acts">${acts}</div>${history?`<div class="egHistory">${history}</div>`:''}</div>`;
   }
   /** The preview zooms and pans where it lies (charm-nest-zoompan.js, the one module for every order picture): a click zooms in on the
    *  point clicked, a drag pans, the frame keeps its size. `zoom` ({id, key}) names the place and what it shows, so a card drawn again for
@@ -44,14 +102,33 @@
       hires:fitted?async({px})=>{const size=Math.max(900,Math.min(1800,Math.ceil(px/300)*300)),cv=root.Engrave.renderBack(job,size,{hatch:false,grid:false});cv.setAttribute('role','img');cv.setAttribute('aria-label','The full back engraving');return{el:cv,px:size};}:undefined});}catch(_){}
   }
   function wirePanel(host,e,{approve,open,imageUrl,zoom}={}){
-    host.querySelector('[data-e=approve]')?.addEventListener('click',ev=>approve?.(ev.currentTarget));
-    host.querySelector('[data-e=engrave]')?.addEventListener('click',ev=>open?.(ev.currentTarget));
+    // Approve engraving: the host's own approval runs (its name bar, Engrave.approve, the BACK ENGRAVING seal pressed on this very button). The wait
+    // before the stamp is said on the button, with a small spinner; a refusal gives the button back as it was.
+    host.querySelector('[data-e=approve]')?.addEventListener('click',ev=>{
+      const btn=ev.currentTarget;if(btn.disabled || !approve)return;
+      const was=btn.innerHTML;let run;
+      try{run=approve(btn);}catch(err){console.warn('engraving card: approve',err);return;}
+      if(!run || typeof run.then!=='function')return;
+      if(btn.disabled && btn.isConnected)btn.innerHTML='<span class="spin"></span>Approving…';
+      const back=()=>{if(btn.isConnected && !btn.closest('[data-state=approved]')){btn.innerHTML=was;btn.removeAttribute('aria-busy');}};
+      run.then(back,err=>{console.warn('engraving card: approve',err);back();});
+    });
+    // Fix / View in Engraving: the host opens that exact order and piece (EngraveLink.open); the wait is a small labelled spinner on the button.
+    host.querySelector('[data-e=engrave]')?.addEventListener('click',ev=>{
+      const btn=ev.currentTarget;if(btn.disabled)return;
+      const was=btn.innerHTML;let run;
+      try{run=open?.(btn);}catch(err){console.warn('engraving card: open',err);return;}
+      if(!run || typeof run.then!=='function')return;
+      btn.disabled=true;btn.setAttribute('aria-busy','true');btn.innerHTML='<span class="spin"></span>Opening Engraving…';
+      const back=()=>{if(btn.isConnected){btn.disabled=false;btn.removeAttribute('aria-busy');btn.innerHTML=was;}};
+      run.then(back,err=>{console.warn('engraving card: open',err);back();});
+    });
     const slot=host.querySelector('[data-engraving-preview]');if(!slot)return;
     const job=e.job,img=e.back && (e.back.outputs?.png?.url || e.back.png || e.back.preview);
     // A fresh placement must use the current fit; an old approved thumbnail must not disguise edits.
     if(job?.fit && job?.view && root?.Engrave?.renderBack){try{const cv=root.Engrave.renderBack(job,600,{hatch:false,grid:false});cv.setAttribute('role','img');cv.setAttribute('aria-label','The full back engraving');slot.replaceChildren(cv);zoomPreview(slot,zoom,job,true);return;}catch(_){}}
     if(img){const im=root.document.createElement('img');im.alt='The full approved back engraving';im.crossOrigin='anonymous';im.src=imageUrl?imageUrl(img):img;slot.replaceChildren(im);zoomPreview(slot,zoom,job,false);return;}
-    slot.innerHTML='<span class="by">Open in Engrave to see the back</span>';
+    slot.classList.add('egPvNone');slot.innerHTML='<span class="by">No preview here: see the back in Engraving</span>';
   }
   async function press(button,stamp){
     if(!button || !root?.Seal)return;
