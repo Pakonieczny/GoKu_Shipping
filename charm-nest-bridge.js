@@ -10900,7 +10900,9 @@ const OrderWin = window.OrderWin = (() => {
     // (a line whose engraving is still to be settled says so, with the way to the Engraving tab: no question is asked)
     const fix = byId("owFix"), fold = foldFrom(fix, r.key);
     fix.innerHTML = "";
-    if (inPull(r.key) && r.engrave && r.engrave.needed && !r.engrave.approved) {
+    // (not beside a card that says approved: an approval another computer made reaches the card from the order's timeline before it reaches this page's records)
+    const cardSaysApproved = !!(W.engCard && W.engCard.kind && tryDo(() => W.engCard.kind()) === "approved");
+    if (inPull(r.key) && r.engrave && r.engrave.needed && !r.engrave.approved && !cardSaysApproved) {
       const box = el("div", "owFix", '<div class="t">Its engraving is still to be settled</div>');
       const b = el("button", "btn ghost sm", "Open it in Engraving");
       // (the engraving of THIS order's piece, its details open, the order's number in the search: EngraveLink, Paul 5 Oct
