@@ -3420,7 +3420,7 @@ const Gate = window.Gate = (() => {
     // the ones that went back: from the picture to their sheet's tab, then its "+N"
     const byPage = new Map(); for (const [id, p] of back) byPage.set(p, (byPage.get(p) || []).concat(id));
     for (const [p, ids] of byPage) {
-      const tab = [...card.querySelectorAll('[data-r="tabs"] button[data-i]')].find(x => pagesOf(m)[+x.dataset.i] === p), tr = tab && tab.getClientRects().length ? tab.getBoundingClientRect() : null;
+      const tab = typeof sheetTabEl === "function" ? sheetTabEl(card, p) : [...card.querySelectorAll('[data-r="tabs"] button[data-i]')].find(x => pagesOf(m)[+x.dataset.i] === p), tr = tab && tab.getClientRects().length ? tab.getBoundingClientRect() : null;
       const to = tr ? { x: tr.left + tr.width / 2, y: tr.top + tr.height / 2 } : { x: wr.right - 24, y: wr.top + 24 };
       ids.slice(0, 8).forEach((id, j) => {
         const c = cap.pages.flatMap(e => e.charms).find(x => x.id === id); if (!c?.thumb) return;
@@ -3737,7 +3737,7 @@ const Gate = window.Gate = (() => {
         Object.assign(plus.style, { width: "", height: "" }); plus.textContent = "+" + count;
         play(plus, [{ transform: "translate(-50%,-50%) scale(.7)", opacity: 0 }, { transform: "translate(-50%,calc(-50% - 12px)) scale(1)", opacity: 1, offset: .28 }, { transform: "translate(-50%,calc(-50% - 16px)) scale(1)", opacity: 1, offset: .62 }, { transform: "translate(-50%,calc(-50% - 30px)) scale(1)", opacity: 0 }], { duration: 980, easing: "ease-out", fill: "forwards" });
       }
-      const tab = [...card.querySelectorAll('[data-r="tabs"] button[data-i]')].find(x => pagesOf(m)[+x.dataset.i] === cap.target);
+      const tab = typeof sheetTabEl === "function" ? sheetTabEl(card, cap.target) : [...card.querySelectorAll('[data-r="tabs"] button[data-i]')].find(x => pagesOf(m)[+x.dataset.i] === cap.target);
       if (tab && tab.getClientRects().length) play(tab, [{ transform: "scale(1)" }, { transform: "scale(1.14)", offset: .32 }, { transform: "scale(.97)", offset: .62 }, { transform: "scale(1)" }], { duration: 700, easing: "ease-out" });
     }));
     cue(END, () => stop(false));
@@ -10472,7 +10472,7 @@ const OrderWin = window.OrderWin = (() => {
     if (W.wired) return; W.wired = true;
     W.dlg = byId("orderWin"); if (!W.dlg) return;
     // the sheet records of the order read (OrderPieces): the Sheet tab's tabs and piece list, and the Overview, follow them
-    tryDo(() => window.OrderPieces && OrderPieces.subscribe(() => hold("pieces", () => { const rid = W.rid; if (!rid || !W.dlg.open || W.closing) return; pieceTabs(rid); if (W.view === "sheet" && SV.list) paintPanel(SV.info); const r = rowOf(W.key); if (r) { tryDo(() => paintPieces(r, linesOf(r))); paintNow(r); } })));
+    tryDo(() => window.OrderPieces && OrderPieces.subscribe(() => hold("pieces", () => { const rid = W.rid; if (!rid || !W.dlg.open || W.closing) return; pieceTabs(rid); if (W.view === "sheet" && SV.list) paintPanel(SV.info); const r = rowOf(W.key); if (r) { tryDo(() => paintPieces(r, linesOf(r))); paintSheetCell(r); paintNow(r); } })));
     byId("owClose").onclick = () => shut();
     // Esc goes back into what was clicked, as the close button does
     W.dlg.addEventListener("cancel", e => { e.preventDefault(); if (finding()) endFind(true); else shut(); });
@@ -10883,7 +10883,7 @@ const OrderWin = window.OrderWin = (() => {
     if (r.loading) notes.setAttribute("aria-label", "Reading the order…"); else notes.removeAttribute("aria-label");
     const again = notes.querySelector("[data-ow-retry]"); if (again) again.onclick = () => openOrder(String(r.order.receiptId), { view: W.view, keepFrom: true, highlight: W.hl || undefined });
     paintNote(r);
-    const st = tryDo(() => Orders.statePill(r)) || ["neutral", r.state || "—"], where = tryDo(() => Orders.placeOf(r));
+    const st = tryDo(() => Orders.statePill(r)) || ["neutral", r.state || "—"], sheetCell = sheetCellOf(r);
     const mcell = (lbl, val) => '<div class="m"><i>' + esc(lbl) + '</i><span>' + esc(val) + '</span></div>';
     // the order itself (its number, when it was bought and by whom) and everything that was picked at the purchase, not
     // only the options the sorter could map: a custom order is read from exactly these
@@ -10899,7 +10899,7 @@ const OrderWin = window.OrderWin = (() => {
       mcell("Quantity", String(sp.quantity || r.line.quantity || 1)) +
       mcell("Metal", r.material ? labelOf(r.material) : (sp.materialLabel || "none")) +
       mcell("State", st[1]) +
-      (where ? mcell("Sheet", (where.set ? where.set + " · " : "") + (where.sheet || "")) : "") +
+      (sheetCell ? mcell("Sheet", sheetCell) : "") +
       mcell("Ship by", tryDo(() => Orders.shipTxt(r)) || "—") +
       (sp.form ? mcell("Form", sp.form) : "") + (sp.size ? mcell("Size", sp.size) : "") + (sp.chain ? mcell("Chain", sp.chain) : "") +
       (r.engrave && (r.engrave.needed || CNEngravingSeals.list(r.engrave).length) ? `<div class="m"><i>Engraving</i><span>${esc((r.engrave.approved ? "approved" : r.engrave.state || "waiting") + (r.engrave.text ? " · " + r.engrave.text : ""))}</span>${CNEngravingSeals.html(Engrave.jobOf(r) || r.engrave)}</div>` : "") +
@@ -10913,7 +10913,9 @@ const OrderWin = window.OrderWin = (() => {
     // (a line whose engraving is still to be settled says so, with the way to the Engraving tab: no question is asked)
     const fix = byId("owFix"), fold = foldFrom(fix, r.key);
     fix.innerHTML = "";
-    if (inPull(r.key) && r.engrave && r.engrave.needed && !r.engrave.approved) {
+    // (not beside a card that says approved: an approval another computer made reaches the card from the order's timeline before it reaches this page's records)
+    const cardSaysApproved = !!(W.engCard && W.engCard.kind && tryDo(() => W.engCard.kind()) === "approved");
+    if (inPull(r.key) && r.engrave && r.engrave.needed && !r.engrave.approved && !cardSaysApproved) {
       const box = el("div", "owFix", '<div class="t">Its engraving is still to be settled</div>');
       const b = el("button", "btn ghost sm", "Open it in Engraving");
       // (the engraving of THIS order's piece, its details open, the order's number in the search: EngraveLink, Paul 5 Oct
@@ -11231,6 +11233,23 @@ const OrderWin = window.OrderWin = (() => {
     const st = tryDo(() => Orders.statePill(r)) || ["neutral", r.state || ""], where = tryDo(() => Orders.placeOf(r));
     return { tone: st[0] === "bad" ? "bad" : st[0] === "ok" ? "done" : "", pill: String(st[1] || "").replace(/^\d\/\d\s+/, ""), k: "Where it is now", t: r.loading ? "Reading the order's records…" : (st[1] ? st[1].replace(/^\d\/\d\s+/, "") : "") + (where ? " · " + (where.sheet || "") : ""), ev: null };
   }
+  /** The Overview grid's Sheet cell: every sheet this line's pieces are on (OrderPieces: the sheets' own records), the one sheet the
+   *  pool row names while those are not read. A piece on two sheets says both; nothing is said for a piece on none. */
+  function sheetCellOf(r) {
+    const ps = window.OrderPieces ? tryDo(() => OrderPieces.ofRow(r)) : null;
+    const labels = ps ? [...new Map(ps.filter(p => p.nested && p.sheetLabel).map(p => [p.sheetId || p.sheetLabel, p.sheetLabel])).values()] : [];
+    if (labels.length) return labels.join(" + ");
+    const where = tryDo(() => Orders.placeOf(r)); return where ? (where.set ? where.set + " · " : "") + (where.sheet || "") : "";
+  }
+  /** The grid's Sheet cell redrawn alone when the sheets' records land (the grid is drawn once, as the order opens). */
+  function paintSheetCell(r) {
+    const meta = byId("owMeta"); if (!meta || !r || r.loading) return;
+    const cells = [...meta.querySelectorAll(".m")], mine = cells.find(m => m.querySelector("i") && m.querySelector("i").textContent === "Sheet"), text = sheetCellOf(r);
+    if (!text) { if (mine) mine.remove(); return; }
+    if (mine) { const sp = mine.querySelector("span"); if (sp && sp.textContent !== text) sp.textContent = text; return; }
+    const at = cells.find(m => m.querySelector("i") && m.querySelector("i").textContent === "State"), cell = el("div", "m"); cell.innerHTML = "<i>Sheet</i><span>" + esc(text) + "</span>";
+    if (at) at.after(cell); else meta.appendChild(cell);
+  }
   function paintNow(r) {
     if(window.Seal?.defer('order-now',()=>paintNow(rowOf(W.key))))return;
     if (!r) return;
@@ -11441,6 +11460,8 @@ const OrderWin = window.OrderWin = (() => {
      same sheet, with the same charm chosen and on the same side. BK: the orders gone through, newest last. */
   const BK = [];
   let keepFor = null, slideP = null;
+  /** The sheet the person came from (the sheet window's Open order): the Sheet tab, opened later from Overview, starts on it, once. */
+  let sheetWant = null;
   const slid = () => slideP || Promise.resolve();
   const nOf = name => +((/_Sheet-(\d+)/.exec(name || "") || [])[1]) || null;
   /** Every sheet the order has pieces on: the pages this sorter holds, the pool's records, and else the Library's search. */
@@ -11544,6 +11565,8 @@ const OrderWin = window.OrderWin = (() => {
     let moved = false;
     // (the sheet left selected under another scope — the piece changed meanwhile — is not this piece's: the scope's own, or none)
     if (!sheetId && !poolId && !SCOPE.ok(SV.at)) { SV.at = SCOPE.fit(SV.list); SV.focus = null; }
+    if (!sheetId && !poolId && sheetWant && sheetWant.rid === rid) { sheetId = sheetWant.sheetId; poolId = sheetWant.poolId; }   // (the sheet the person came from: only when it is in the scope, below)
+    if (sheetWant && sheetWant.rid === rid) sheetWant = null;
     if (sheetId || poolId) { const i = SCOPE.pick(sheetId, poolId); if (i >= 0 && i !== SV.at && SCOPE.ok(i)) { SV.at = i; moved = true; } }
     if (poolId) SV.focus = poolId;
     if (sheetId || moved || !SV.info || SV.info.sheetAt !== SV.at) sheetDraw(); else if (poolId) SV.info.focus(poolId); else SV.info.redraw();
@@ -12266,6 +12289,8 @@ const OrderWin = window.OrderWin = (() => {
     showOrder(rid, r);
     W.key = key;
     if (other) W.piece = null; else if (W.piece && W.piece !== key) W.piece = key;
+    if (other) sheetWant = null;
+    if (opts.sheetId || opts.poolId) sheetWant = { rid, sheetId: opts.sheetId || "", poolId: opts.poolId || "" };
     if (other) { primePools(rid); sheetReset(); unmountTimeline(); loadEvents(rid); const n = byId("owNowCard"); if (n) n._html = ""; const c = byId("owShCount"); if (c) c.textContent = ""; }
     // which sheet holds which piece of the order: read from the sheets' own records, once per opening (and again when its timeline says a piece moved)
     if (other) tryDo(() => window.OrderPieces && OrderPieces.load(rid));

@@ -387,7 +387,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   const W = {
     dlg: null, el: {}, id: null, rec: null, live: null, st: null, pieces: [], byId: new Map(), byPool: new Map(), orders: new Map(),
     set: null, setSheets: [], sel: null, hover: null, view: "sheet", q: "", filter: "all", token: 0, geom: false, view0: null,
-    k: 1, R: 0, dpr: 1, showBacks: true, face: "front", backs: null, backsAsked: false, backsWait: "", fx: [], raf: 0, pools: new Map(), trailFor: null, from: null, ro: null, freed: [], work: null, fill: null, fillRun: 0, ghost: null, flow: null,
+    k: 1, R: 0, dpr: 1, showBacks: true, face: "front", backs: null, backsAsked: false, backsWait: "", fx: [], raf: 0, pools: new Map(), trailFor: null, opAsked: new Set(), opMemo: null, opSub: null, opT: 0, from: null, ro: null, freed: [], work: null, fill: null, fillRun: 0, ghost: null, flow: null,
     // motion: orders leaving with the change in progress (rid → { how, keep }), orders drawn where they land until
     // their sheet is saved, the list's view last drawn, and how long a flight keeps the view it started from
     going: new Map(), landing: [], inbound: new Map(), listKey: null, listQ: null, stay: 0
@@ -1061,7 +1061,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       if (window.LaserReview) LaserReview.record(rec);
       W.rec = rec; W.st = stockOf(rec); W.live = liveOf(id);
       if (backFace()) W.backs = backsOf(rec, W.live, W.backsList);
-      head(rec, false); indexPieces(); pruneFreed(); fitPlate(); renderStrip(); renderSheetPane(); renderFoot(); renderMenu(); unstill();
+      head(rec, false); indexPieces(); if (fresh) W.opAsked = new Set(); readPieces(!!again); pruneFreed(); fitPlate(); renderStrip(); renderSheetPane(); renderFoot(); renderMenu(); unstill();
       E.addBtn.hidden = !canAdd();
       if (!rec.outputs?.preview?.url && !W.live && !W.pvCard) E.pv.removeAttribute("src"); else if (rec.outputs?.preview?.url && !E.pv.getAttribute("src")) E.pv.src = cors(rec.outputs.preview.url);
       // the charm clicked is the one the window opens on, as soon as the sheet's pieces are known: the panel comes in
@@ -1190,26 +1190,46 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
         .sort((a, b) => (a.metal || "").localeCompare(b.metal || "") || a.n - b.n);
       renderSheetChips(); if (W.sel) lightChips(W.sel.rid);
       if (W.view === "sheet") renderSheetPane(); else if (W.sel) renderTrail(W.sel);
+      const unknown = W.setSheets.filter(x => x.guess); if (unknown.length) readUnknown(unknown, tok);
     } catch (e) { console.warn("sheet window: set", e); }
   }
+  /** A sheet of the set that nothing on this page names (no Library row yet, no label file, not held live) is read from its own record
+   *  once: its chip and its tags on the orders said "GF 1" for it, whatever its metal. Until then it is just "Sheet". */
+  async function readUnknown(list, tok) {
+    await Promise.all(list.map(async x => {
+      try {
+        const r = await api("charmNestLibrary", { op: "getSheet", id: x.id }, { quiet: true, timeoutMs: 12000 }), rec = r && r.sheet;
+        if (rec) Object.assign(x, { metal: rec.metal || "", n: sheetNoOf(rec), name: rec.folder || rec.fileBase || x.name, guess: false });
+      } catch (_) { /* it stays "Sheet": nothing is invented */ }
+    }));
+    if (tok !== W.token || !W.dlg || !W.dlg.open) return;
+    W.setSheets.sort((a, b) => (a.metal || "").localeCompare(b.metal || "") || a.n - b.n);
+    renderSheetChips(); if (W.sel) lightChips(W.sel.rid);
+    if (W.view === "sheet") renderSheetPane(); else if (W.sel) renderTrail(W.sel);
+  }
   function sheetInfo(sid, set) {
+    if (sid === W.id && W.rec) return { id: sid, metal: W.rec.metal, n: sheetNoOf(W.rec), name: W.rec.folder || W.rec.fileBase || sid };   // (this window's own sheet: its record is read)
     const lib = (S.library.rows || []).find(r => r.id === sid);
     if (lib) return { id: sid, metal: lib.metal, n: sheetNoOf(lib), name: lib.folder || lib.fileBase || sid };
     const lf = (set.labelFiles || []).find(f => f.sheetId === sid), name = lf?.sheet || "";
     const code = (/^([A-Z0-9]+)_/.exec(name) || [])[1];
-    const live = allSheets().find(p => p.sheetId === sid);
-    return { id: sid, metal: live?.metal || METAL_OF_CODE[code] || "gold", n: live?.sheetIndex || +((/_Sheet-(\d+)/.exec(name) || [])[1]) || 1, name: name || sid };
+    const live = allSheets().find(p => p.sheetId === sid), no = live?.sheetIndex || +((/_Sheet-(\d+)/.exec(name) || [])[1]) || 0, metal = live?.metal || METAL_OF_CODE[code] || "";
+    // (nothing names it: not a gold sheet 1 by default; readUnknown reads its record)
+    return { id: sid, metal, n: no || 1, name: name || sid, guess: !(metal && no) };
   }
   function renderSheetChips() {
     const E = W.el, list = W.setSheets.length ? W.setSheets : (W.rec ? [{ id: W.rec.id, metal: W.rec.metal, n: sheetNoOf(W.rec) }] : []);
     E.sheets.hidden = list.length < 2;
-    E.sheets.innerHTML = list.map(s => `<button type="button" class="swChip" data-sheet="${esc(s.id)}" style="--c:${colorOf(s.metal)}"${s.id === W.id ? ' aria-current="true"' : ""} title="${esc(s.name || "")}${FREED.get(s.id)?.length ? " · has freed room" : ""}"${FREED.get(s.id)?.length ? " data-freed" : ""}><i></i>${esc(CODE[s.metal] || "")} ${s.n}<b></b></button>`).join("");
+    E.sheets.innerHTML = list.map(s => `<button type="button" class="swChip" data-sheet="${esc(s.id)}" style="--c:${colorOf(s.metal)}"${s.id === W.id ? ' aria-current="true"' : ""} title="${esc(s.name || "")}${FREED.get(s.id)?.length ? " · has freed room" : ""}"${FREED.get(s.id)?.length ? " data-freed" : ""}><i></i>${s.guess ? "Sheet" : `${esc(CODE[s.metal] || "")} ${s.n}`}<b></b></button>`).join("");
     E.sheets.querySelectorAll("[data-sheet]").forEach(b => b.onclick = () => { if (b.dataset.sheet !== W.id) switchSheet(b.dataset.sheet); });
   }
   function lightChips(rid) {
-    const counts = new Map();
-    if (rid && W.set?.orders?.[rid]) for (const l of linesOf(W.set.orders[rid])) for (const c of l.copies || []) counts.set(c.sheetId, (counts.get(c.sheetId) || 0) + 1);
-    if (rid) for (const p of W.pools.get(rid) || []) if (p.sheetId && !counts.has(p.sheetId) && !["abandoned", "superseded"].includes(p.state)) counts.set(p.sheetId, 1);
+    const counts = new Map(), ps = orderPieces(rid);
+    if (ps) { for (const p of ps) if (!p.gone && p.nested && p.sheetId) counts.set(p.sheetId, (counts.get(p.sheetId) || 0) + 1); }
+    else {
+      if (rid && W.set?.orders?.[rid]) for (const l of linesOf(W.set.orders[rid])) for (const c of l.copies || []) counts.set(c.sheetId, (counts.get(c.sheetId) || 0) + 1);
+      if (rid) for (const p of W.pools.get(rid) || []) if (p.sheetId && !counts.has(p.sheetId) && !["abandoned", "superseded"].includes(p.state)) counts.set(p.sheetId, 1);
+    }
     W.el.sheets.querySelectorAll("[data-sheet]").forEach(b => { const n = counts.get(b.dataset.sheet) || 0; b.classList.toggle("lit", n > 0); b.querySelector("b").textContent = n || ""; });
   }
   const linesOf = o => Array.isArray(o?.lines) ? o.lines : Object.values(o?.lines || {});
@@ -1615,7 +1635,37 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     let x = cx + 16, y = cy + 18; if (x + tw > W.cssW - 6) x = cx - tw - 14; if (y + th > W.cssH - 6) y = cy - th - 12;
     t.style.transform = `translate(${Math.max(4, x)}px,${Math.max(4, y)}px)`; t.classList.add("on");
   }
+  /* ── where the pieces of an order are: ONE truth (OrderPieces) ──
+     The set record's copies (the tags, the lit chips) knew only the sheets of THIS set, and the pool rows only what a save wrote:
+     a piece on a sheet of another set, or one no set record listed, was "only on this sheet". The sheets' own records, then the
+     pages this sorter holds, say it for every sheet; what is not read yet is asked for once, and the list redraws when it lands. */
+  function orderPieces(rid) {
+    const op = window.OrderPieces; if (!op || !op.of || !rid || rid === "—") return null;
+    const now = Date.now(), m = W.opMemo;
+    if (m && m.id === W.id && now - m.t < 300) { const hit = m.map.get(rid); if (hit) return hit; } else W.opMemo = { id: W.id, t: now, map: new Map() };
+    const ps = tryDo(() => op.of(rid)) || null; if (ps) W.opMemo.map.set(rid, ps);
+    return ps;
+  }
+  /** The orders of this sheet read once (the sheet records of every order on it), then again whenever the page learns more. */
+  function readPieces(force) {
+    const op = window.OrderPieces; if (!op || !op.load) return;
+    if (!W.opSub && op.subscribe) W.opSub = op.subscribe(() => { if (!W.dlg || !W.dlg.open || !W.rec) return; clearTimeout(W.opT); W.opT = setTimeout(paintPieces, 60); });
+    const ids = [...W.orders.keys()].filter(k => k !== "—");
+    if (ids.length) tryDo(() => op.load(ids, force ? { force: true } : undefined));
+  }
+  function paintPieces() {
+    if (!W.dlg || !W.dlg.open || !W.rec) return;
+    W.opMemo = null;
+    if (W.view === "sheet") renderSheetPane(); else if (W.sel) renderTrail(W.sel);
+    lightChips(W.sel?.rid || null);
+  }
   function otherSheets(rid) {
+    const ps = orderPieces(rid);
+    if (ps) {
+      const ids = new Map(); for (const p of ps) if (!p.gone && p.nested && p.sheetId && p.sheetId !== W.id && !ids.has(p.sheetId)) ids.set(p.sheetId, p);
+      return [...ids.values()].map(p => { const k = W.setSheets.find(s => s.id === p.sheetId); return k && !k.guess ? k : { id: p.sheetId, metal: METAL_OF_CODE[(/^(\S+)\s/.exec(p.sheetLabel || "") || [])[1]] || p.metal || "", n: p.sheetNo || "?", name: p.sheetLabel || p.sheetId }; })   // (what the sheets' records say of it, over a sheet this window only guessed at)
+        .sort((a, b) => String(a.metal || "").localeCompare(String(b.metal || "")) || (a.n || 0) - (b.n || 0));
+    }
     if (!rid || !W.set?.orders?.[rid]) return [];
     const ids = new Set(); for (const l of linesOf(W.set.orders[rid])) for (const c of l.copies || []) if (c.sheetId && c.sheetId !== W.id) ids.add(c.sheetId);
     return [...ids].map(id => W.setSheets.find(s => s.id === id) || { id, metal: "", n: "?" });
@@ -2017,12 +2067,30 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   }
 
   /* ── the order's pieces, here and elsewhere ── */
-  function renderTrail(x) {
-    const host = W.el.detail.querySelector("[data-r2=trail]"), headN = W.el.detail.querySelector("[data-r2=trailHead]"); if (!host) return;
-    const rid = x.rid; if (!rid) { host.innerHTML = `<li class="off"><span class="n"></span><span class="sku">Not part of an order</span></li>`; return; }
+  /** The pieces of x's order, each with where it is: from OrderPieces (the sheets' own records first); the set record and the pool rows
+   *  only where this page has no OrderPieces. A charm this sheet's own record places is always on this sheet. */
+  function trailItems(x, rid) {
+    const mine = (W.orders.get(rid) || []).filter(y => !y.gone), ops = orderPieces(rid);
+    const sortOf = list => list.sort((a, b) => (a.sheetId === W.id ? 0 : 1) - (b.sheetId === W.id ? 0 : 1) || String(a.sku).localeCompare(String(b.sku)) || (a.copy || 0) - (b.copy || 0));
+    if (ops) {
+      const op = window.OrderPieces; if (op.load && !W.opAsked.has(rid)) { W.opAsked.add(rid); tryDo(() => op.load(rid)); }
+      const used = new Set(), list = [];
+      for (const p of ops) {
+        if (p.gone) continue;
+        const onHere = p.nested && p.sheetId === W.id;
+        let y = p.poolId ? W.byPool.get(p.poolId) || null : null;
+        if (!y && onHere) y = mine.find(z => !used.has(z) && z.sku === p.sku && (z.copy || 1) === p.copy) || null;
+        if (y) used.add(y);
+        list.push({ poolId: p.poolId, piece: onHere ? y : null, sku: p.sku, label: p.label === "Piece" ? "" : p.label, copy: p.copy, qty: p.qty, here: onHere, sheetId: p.nested ? p.sheetId : null,
+          metal: onHere ? W.rec.metal : METAL_OF_CODE[(/^(\S+)\s/.exec(p.sheetLabel || "") || [])[1]] || p.metal, n: onHere ? sheetNoOf(W.rec) : p.sheetNo,
+          state: p.nested ? "" : p.loading ? "loading" : p.unsure ? "unsure" : "none", reason: p.reason || "" });
+      }
+      for (const y of mine) if (!used.has(y)) list.push({ poolId: y.poolId, piece: y, sku: y.sku, copy: y.copy, qty: y.qty, here: true, sheetId: W.id, metal: W.rec.metal, n: sheetNoOf(W.rec), state: "" });
+      return sortOf(list);
+    }
     const items = new Map();
     const add = (poolId, v) => { const k = poolId || v.key; items.set(k, Object.assign(items.get(k) || {}, v)); };
-    for (const y of W.orders.get(rid) || []) if (!y.gone) add(y.poolId || y.id, { poolId: y.poolId, piece: y, sku: y.sku, copy: y.copy, qty: y.qty, sheetId: W.id, metal: W.rec.metal, n: sheetNoOf(W.rec) });
+    for (const y of mine) add(y.poolId || y.id, { poolId: y.poolId, piece: y, sku: y.sku, copy: y.copy, qty: y.qty, sheetId: W.id, metal: W.rec.metal, n: sheetNoOf(W.rec) });
     if (W.set?.orders?.[rid]) for (const l of linesOf(W.set.orders[rid])) for (const c of l.copies || []) if (!items.has(c.poolId)) { const s = W.setSheets.find(z => z.id === c.sheetId); add(c.poolId, { poolId: c.poolId, sku: l.sku, copy: c.copy, sheetId: c.sheetId, metal: s?.metal, n: s?.n, name: c.sheet }); }
     for (const p of W.pools.get(rid) || []) {
       if (["abandoned", "superseded"].includes(p.state)) continue;
@@ -2032,14 +2100,21 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     }
     // a piece the pool has not put on a sheet yet may already sit on one this sorter holds
     for (const it of items.values()) if (!it.sheetId && it.poolId && window.Pool) { const sh = Pool.sheetOf(it.poolId); if (sh && sh.sheetId) Object.assign(it, { sheetId: sh.sheetId, metal: sh.metal, n: sh.sheetIndex || sh.page || 1 }); }
-    const list = [...items.values()].sort((a, b) => (a.sheetId === W.id ? 0 : 1) - (b.sheetId === W.id ? 0 : 1) || String(a.sku).localeCompare(String(b.sku)) || (a.copy || 0) - (b.copy || 0));
+    return sortOf([...items.values()].map(it => Object.assign(it, { here: it.sheetId === W.id, state: it.sheetId ? "" : "none" })));
+  }
+  function renderTrail(x) {
+    const host = W.el.detail.querySelector("[data-r2=trail]"), headN = W.el.detail.querySelector("[data-r2=trailHead]"); if (!host) return;
+    const rid = x.rid; if (!rid) { host.innerHTML = `<li class="off"><span class="n"></span><span class="sku">Not part of an order</span></li>`; return; }
+    const list = trailItems(x, rid);
     headN.textContent = `This order · ${list.length} piece${list.length === 1 ? "" : "s"}`;
     host.innerHTML = list.map((it, i) => {
-      const here = it.sheetId === W.id, cur = it.piece === x;
+      const here = it.here, cur = it.piece === x;
       const where = here ? `<span class="where" style="--c:${colorOf(W.rec.metal)}"><i></i>${cur ? "this charm" : "on this sheet"}</span>`
         : it.sheetId ? `<span class="where" style="--c:${colorOf(it.metal)}"><i></i>${esc(CODE[it.metal] || "")} Sheet ${esc(it.n || "?")}${ICON.go}</span>`
-        : `<span class="where"><i style="background:var(--ink25)"></i>not on a sheet yet</span>`;
-      return `<li data-i="${i}" class="${cur ? "cur" : !it.sheetId ? "off" : ""}"><span class="n">${i + 1}</span><span class="sku">${esc(it.sku || "")}${it.qty > 1 ? `<small>copy ${it.copy} of ${it.qty}</small>` : ""}</span>${where}</li>`;
+        : it.state === "loading" ? `<span class="where"><i style="background:var(--ink25)"></i>reading its sheet…</span>`
+        : it.state === "unsure" ? `<span class="where" title="${esc(it.reason || "")}"><i style="background:var(--ink25)"></i>sheet not read just now</span>`
+        : `<span class="where"${it.reason ? ` title="${esc(it.reason.charAt(0).toUpperCase() + it.reason.slice(1))}"` : ""}><i style="background:var(--ink25)"></i>not on a sheet yet</span>`;
+      return `<li data-i="${i}" class="${cur ? "cur" : !it.sheetId && !here ? "off" : ""}"><span class="n">${i + 1}</span><span class="sku">${esc(it.sku || it.label || "No SKU")}${it.qty > 1 ? `<small>copy ${it.copy} of ${it.qty}</small>` : ""}</span>${where}</li>`;
     }).join("");
     host.querySelectorAll("li[data-i]").forEach(li => {
       const it = list[+li.dataset.i];
