@@ -407,7 +407,7 @@ async function aliases() {
   const g = b.people[0];
   assert.strictEqual(g.totals.signedInMin, 90, 'the 30 overlapping minutes are counted once (60 + 60 - 30)');
   assert.deepStrictEqual(g.stations.map(s => [s.station, s.minutes]).sort(), [['inbox', 60], ['sorting', 60]], 'per-station minutes stay per page');
-  assert.strictEqual(g.totals.parts, 30); assert.strictEqual(g.totals.scans, 14); assert.strictEqual(g.totals.activeMin, 30); assert.strictEqual(g.totals.orders, 2, 'distinct orders across both spellings');
+  assert.strictEqual(g.totals.parts, 30); assert.strictEqual(g.totals.scans, 14); assert.strictEqual(g.totals.activeMin, 30); assert.strictEqual(g.totals.orders, 1, 'distinct orders across both spellings; 3521000101 was seen only at the inbox: a customer conversation is not an order worked (the person page and the calendar count the same way)');
   assert.strictEqual(g.firstIn, T0); assert.strictEqual(g.lastOut, T0 + 5400000);
   assert.deepStrictEqual(b.feed.map(f => f.person), ['Giovanna', 'Giovanna'], 'the feed uses the one display name');
   assert.deepStrictEqual(g.orders.map(o => o.orderId).sort(), ['3521000100', '3521000101']);

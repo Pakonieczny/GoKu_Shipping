@@ -20,6 +20,7 @@
  *
  *  No composite index: one equality query per order, sorted in memory (an order has tens of events, not thousands). */
 "use strict";
+const Placement = require("./_charmNestPlacement");   // where a piece is now: one set of rules for the sorter's reads and this derivation
 const COL = "Order_Timeline";
 const CANCELLED = "Charm_Nest_Cancelled";
 const TYPES = new Set([
@@ -120,13 +121,14 @@ async function get(db, orderId, opts = {}) {
   const cancelled = can.exists ? (x => { delete x.createdAt; return x; })(can.data()) : null;
   const sandbox = !!opts.prefix;
   if (!derived) { const events = chronology(recorded, { sandbox }).sort(byTime); return { orderId: id, events, cancelled, where: whereOf(events, cancelled, { record: true }), now: Date.now(), truncated: snap.truncated, leftOut: leftOutOf(snap) }; }
-  const { events: raw, sheets, errors, timedOut } = derived.value || { events: [], sheets: null, errors: [], timedOut: true };
+  const { events: raw, sheets, errors, timedOut, placementRev, placement } = derived.value || { events: [], sheets: null, errors: [], timedOut: true };
   const cancelEvents = cancelled ? finalize(id, cancelEventsOf(id, cancelled)) : [];
   const kept = dedupe(recorded, cancelEvents.concat(raw)); kept.forEach(e => { delete e.series; });
   const events = chronology(recorded.concat(kept), { sandbox }).sort(byTime);
   const out = { orderId: id, events, cancelled, where: whereOf(events, cancelled, { sheets, record: true }), now: Date.now(), truncated: snap.truncated, leftOut: leftOutOf(snap), derived: { count: kept.length, dropped: cancelEvents.length + raw.length - kept.length } };
   if (errors && errors.length) out.derived.errors = errors.slice(0, 12);
   if (timedOut) out.derived.timedOut = true;
+  if (placementRev) { out.placementRev = placementRev; if (placement) out.placement = placement; }
   return out;
 }
 /** Which of these orders are cancelled, with who/when/why: what a station asks right after a scan. */
@@ -173,7 +175,7 @@ const SANDBOXED_DEFAULT = new Set(["Charm_Nest_Rose_Stock", "Charm_Nest_Sheets",
 const STATION_SANDBOXED = new Set(["Brites_Orders", "Design_Completed Orders", "Design_Order_Archive"]);
 const CAP = { pools: 200, sheets: 40, custom: 40, reads: 40, messages: 120, backs: 100, sets: 20, rose: 6 };
 const SHEET_FIELDS = ["id", "metal", "metalLabel", "sheetIndex", "page", "setId", "setSeq", "fileBase", "stock", "poolIds", "orders", "label", "archived", "draft", "laserDoneAt", "laserDoneBy", "roseCutAt", "roseStockId", "rosePlanHash", "createdAt", "cardStartedAt", "updatedAt", "runId"];
-const POOL_FIELDS = ["poolId", "orderId", "transactionId", "lineKey", "runId", "setId", "sheetId", "sheetName", "sku", "material", "copy", "state", "orderDate", "createdAt", "updatedAt", "removedAt", "removedBy", "removedReason", "movedAt", "movedBy", "movedFrom", "movedTo", "engraveApprovedBy", "committedAt"];
+const POOL_FIELDS = ["poolId", "orderId", "transactionId", "lineKey", "runId", "setId", "sheetId", "sheetName", "sku", "material", "copy", "state", "orderDate", "createdAt", "updatedAt", "removedAt", "removedBy", "removedReason", "movedAt", "movedBy", "movedFrom", "movedTo", "engraveApprovedBy", "committedAt", "heldAt", "heldBy", "heldReason", "repooledAt"];
 const CUSTOM_FIELDS = ["key", "receiptId", "transactionId", "sku", "title", "kind", "completedAt", "completedBy", "how", "printedAt", "printedBy", "lastPrintedAt", "lastPrintedBy", "prints", "stamps"];
 const BACK_FIELDS = ["poolId", "sheetId", "setId", "approvedAt", "approvedBy", "text", "invalidated", "transactionId", "copy"];
 const SET_FIELDS = ["setId", "seq", "name", "day", "committedAt", "committed", "refused", "status"];
@@ -443,7 +445,18 @@ async function deriveEvents(db, id, opts) {
   if (archAt && !arch.setId) ev("note", archAt, Object.assign({ by: s(arch.completedBy, 80) }, designed));
   if (done && msOf(done.completedAt)) ev("note", msOf(done.completedAt), Object.assign({ by: "" }, designed));
 
-  return { events: finalize(id, out), sheets: sheetS ? sheets.map(d => ({ sheetId: d._id, sheet: sheetLabel(d), setId: s(d.setId, 100), cut: n(d.laserDoneAt) > 0 || n(d.roseCutAt) > 0 })) : null, errors };
+  // where each piece is NOW: the sheet records that list it, but not a record that still lists a piece its row says was taken off
+  // (a hold writes both in one commit now; a record the hold never reached is stale, and the take-off wins: reconcile). The page
+  // gets `placementRev` too, a digest of the update times of the pool rows and sheet records read here: it changes when any of
+  // them is written, so a page that holds one reads the order's pieces again only when it moved (no extra read of its own).
+  let rec = null, placementRev = null;
+  if (poolS && sheetS) {
+    rec = Placement.reconcile({ orderId: id, pools, sheets: sheets.map(d => Object.assign({ id: d._id }, d)), hinted: new Map() });
+    placementRev = Placement.digest([...poolS.docs.map(d => `p:${d.id}:${Placement.revOf(d)}`), ...sheetS.docs.map(d => `s:${d.id}:${Placement.revOf(d)}`)]);
+  }
+  const holds = rec ? rec.sheets.filter(d => !d.staleListed || (d.poolIds || []).some(x => String(x).startsWith(id + "_"))) : sheets;
+  const placement = rec ? { summary: rec.summary, repaired: rec.repaired.slice(0, 20), pieces: Object.keys(rec.placement).length <= 60 ? rec.placement : null } : null;
+  return { events: finalize(id, out), sheets: sheetS ? holds.map(d => ({ sheetId: d._id || d.id, sheet: sheetLabel(d), setId: s(d.setId, 100), cut: n(d.laserDoneAt) > 0 || n(d.roseCutAt) > 0 })) : null, errors, placementRev, placement };
 }
 
 /** Whether two events say the same thing: the same type, within ±3 minutes (at any time for a derived event whose time

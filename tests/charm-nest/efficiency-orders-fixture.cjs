@@ -1,7 +1,8 @@
 // A fake `personOrders` (plans/employee-hr/api.md, E4 section) for the order list's tests and screenshots (charm-nest-efficiency-orders.js).
 // FAKE DATA ONLY: invented customers, invented order numbers, drawn pictures as data addresses, a fake passcode. No network, no Firestore.
 //   const F = require('./efficiency-orders-fixture.cjs'); const fx = F.make(); fx.answer(body) → { status, json }
-//   fx.add(n) makes n new orders at the top (as if the person just worked them) · fx.state.fail = 2 fails the next two calls with 503
+//   fx.add(n) makes n new orders at the top (as if the person just worked them) · fx.touch(i) takes order i to the top (worked again)
+//   fx.state.fail = 2 fails the next two calls with 503 · fx.state.notes = ['...'] is what the answer's `notes` say · `sort` is ignored, like E4's
 //   fx.state.calls logs { op, q, cursor, limit, from, to, station, name } of every call (never the key) · fx.setDelay(fn(body) → ms)
 const KEY = 'fixture-pass-123';
 const NY_DAY = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' });
@@ -16,7 +17,7 @@ const pic = (i, label) => 'data:image/svg+xml,' + encodeURIComponent(`<svg xmlns
 
 function make(opts = {}) {
   const t0 = Date.now(), base = opts.now || Date.now();
-  const st = { calls: [], fail: 0, key: opts.key || KEY, delay: null, added: 0, mode: 'real' };
+  const st = { calls: [], fail: 0, key: opts.key || KEY, delay: null, added: 0, mode: 'real', person: opts.person || 'Giovanna' };
   const now = () => base + (Date.now() - t0);
   const count = opts.count == null ? 60 : opts.count;
   const orders = [];
@@ -28,7 +29,7 @@ function make(opts = {}) {
     const undone = i % 9 === 2 ? 1 : 0, rejected = i % 17 === 6 ? 1 : 0;
     const issues = [];
     if (undone) issues.push({ kind: 'undone', label: 'Completion undone', at: at + 60000, note: '' });
-    if (rejected) issues.push({ kind: 'rejected', label: 'Piece rejected', at: at + 90000, note: 'scratched' });
+    if (rejected) issues.push({ kind: 'refused', label: 'Piece refused', at: at + 90000, note: 'scratched' });
     if (i % 15 === 4) issues.push({ kind: 'reprint', label: 'Label reprinted', at: at + 30000, note: '' });
     return { rid, number: rid, at, day: ymd(at), station, stations: i % 5 === 1 ? [station, STATIONS[(i + 1) % 4]] : [station], durationMs: dur, spanMs: dur + 90000,
       scans: 2 + (i % 5), completes: i % 6 === 5 ? 0 : 1, prints: i % 3, parts: np, undone, rejected, errors: 0,
@@ -44,12 +45,13 @@ function make(opts = {}) {
     return ws.every(w => hay.includes(w));
   }
   function personOrders(b) {
-    const limit = Math.max(1, Math.min(100, +b.limit || 25)), off = /^c(\d+)$/.test(b.cursor || '') ? +b.cursor.slice(1) : 0;
+    if (b.name && String(b.name).toLowerCase() !== st.person.toLowerCase()) return { ok: true, now: now(), mode: st.mode, name: b.name, found: false, q: b.q || '', total: 0, scanned: 0, searched: { orders: 0, withDetails: 0 }, orders: [], next: null, notes: [] };
+    const limit = Math.max(1, Math.min(100, +b.limit || 25)), off = /^o(\d+)$/.test(b.cursor || '') ? +b.cursor.slice(1) : 0;
     let list = orders.filter(o => (!b.from || o.day >= b.from) && (!b.to || o.day <= b.to) && (!b.station || o.stations.includes(b.station)));
     const scanned = list.length; list = list.filter(o => hit(o, b.q));
-    if (b.sort === 'slowest') list = list.slice().sort((x, y) => y.durationMs - x.durationMs); else if (b.sort === 'fastest') list = list.slice().sort((x, y) => x.durationMs - y.durationMs);
-    const page = list.slice(off, off + limit), next = off + limit < list.length ? 'c' + (off + limit) : null;
-    return { ok: true, now: now(), mode: st.mode, name: b.name, found: scanned > 0 || true, q: b.q || '', from: b.from || '', to: b.to || '', total: list.length, scanned, searched: { orders: scanned, withDetails: Math.min(scanned, st.withDetails == null ? scanned : st.withDetails) },
+    // (E4 lists newest first by the last action and ignores `sort` today: so does this)
+    const page = list.slice(off, off + limit), next = off + limit < list.length ? 'o' + (off + limit) : null;
+    return { ok: true, now: now(), mode: st.mode, name: b.name, found: true, total: list.length, scanned, searched: { orders: scanned, withDetails: Math.min(scanned, st.withDetails == null ? scanned : st.withDetails) },
       orders: page, next, notes: st.notes || [] };
   }
   /** What the harness answers to a POST body (the passcode is the only gate). */
@@ -61,7 +63,16 @@ function make(opts = {}) {
     return { status: 200, json: personOrders(body) };
   }
   /** n new orders at the top, worked just now (the newest first). */
-  function add(n = 1) { for (let k = 0; k < n; k++) { st.added++; const o = build(1000 + st.added, now() - k * 20000); o.rid = String(3529000000 + st.added); o.number = o.rid; o.qr = { text: o.rid }; o.customer = 'Fresh Customer ' + st.added; orders.unshift(o); } }
-  return { answer, add, state: st, orders, hit, setDelay(f) { st.delay = f; }, delayFor(body) { return st.delay ? +st.delay(body) || 0 : 0 } };
+  function add(n = 1) {
+    const fresh = [];
+    for (let k = 0; k < n; k++) { st.added++; const o = build(1000 + st.added, now() - k * 1000); o.rid = String(3529000000 + st.added); o.number = o.rid; o.qr = { text: o.rid }; o.customer = 'Fresh Customer ' + st.added; fresh.push(o); }
+    orders.unshift(...fresh);   // (the first of them is the newest)
+  }
+  /** An order worked again: it takes the top of the list (the server lists newest first by the LAST action, which is not the first action's time). */
+  function touch(i) {
+    const o = orders.splice(i, 1)[0], t = now(); o.steps[0].lastAt = t; o.issues = o.issues.concat([{ kind: 'reprint', label: 'Label reprinted', at: t, note: '' }]);
+    orders.unshift(o); return o;
+  }
+  return { answer, add, touch, state: st, orders, hit, setDelay(f) { st.delay = f; }, delayFor(body) { return st.delay ? +st.delay(body) || 0 : 0 } };
 }
 module.exports = { make, KEY, ymd, pic };

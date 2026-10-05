@@ -114,9 +114,11 @@ const ORDERS = [{ receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * DAY, up
     await shot(page, 'timeline-prints-1-hover');
     await page.mouse.move(5, 5);
     await page.click(`#owTimeline .tlSt[data-key="${d[0].key}"]`); await page.waitForTimeout(400);
-    const det = await page.evaluate(() => ({ h: document.querySelector('#owTimeline .tlDetail h3').textContent, badge: document.querySelector('#owTimeline .tlDetail .tlBadge em').textContent, big: [...document.querySelectorAll('#owTimeline .tlBig text')].map(t => t.textContent).join(' | ') }));
-    assert.equal(det.h, 'QR label printed · Print Nº 1 · Charm Sorter'); assert.equal(det.badge, 'Charm Sorter'); assert.match(det.big, /QR LABEL \| PRINTED/);
-    console.log(`  ✓ Timeline: 3 print seals (Charm Sorter Nº 1, Nº 2 on Office; Sorting station Nº 1 on Sorting), none for the shipping label; rest and detail say the number, time, who and where; the tab still says ${count}`);
+    // (a click only grows the seal now: the detail pane that used to say the same under the chart went on 5 Oct 2026; the number, who and where are its accessible name and the card)
+    const det = await page.evaluate(() => ({ pane: document.querySelectorAll('#owTimeline .tlDetail, #owTimeline .tlBig').length, grown: [...document.querySelectorAll('[data-seal-zoom]')].map(g => (g.closest('[data-key]') || g).dataset.key) }));
+    assert.deepEqual(det, { pane: 0, grown: [d[0].key] }, 'a click on a print seal grows it and opens no detail: ' + JSON.stringify(det));
+    assert.match(d[0].say, /QR label printed · Print Nº 1 · Charm Sorter/); assert.match(d[0].say, /paul/i);
+    console.log(`  ✓ Timeline: 3 print seals (Charm Sorter Nº 1, Nº 2 on Office; Sorting station Nº 1 on Sorting), none for the shipping label; rest says the number, time, who and where, a click grows the seal and opens no detail; the tab still says ${count}`);
 
     // 5 · a third print from the order window: a new seal, the others stay
     await page.click('[data-ow-view="info"]');

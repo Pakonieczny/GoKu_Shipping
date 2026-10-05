@@ -9,8 +9,8 @@
 //  · the Review card: a click on the printed-label seal prints nothing; a click on a seal where it lies over its button presses that button
 //    exactly once (the action, not the zoom, wins there);
 //  · the order window: the header strip seal (opens its step on the Timeline AND grows), the piece row's seals, the timeline's lane
-//    stamp (selects its step AND grows, no explainer card), its detail seal (a click grows it, a second puts it back), and the "Where it is
-//    now" seal (its click opens the step on the Timeline: no zoom, the view is gone).
+//    stamp (a click only grows it: the detail pane under the chart went on 5 Oct 2026, so nothing is selected or opened and there is no
+//    explainer card), and the "Where it is now" seal (its click opens the step on the Timeline: no zoom, the view is gone).
 //   SHOTS=<dir> node tests/charm-nest/seal-click-zoom.cjs [playwright-core dir]
 const fs = require('fs'), path = require('path'), assert = require('assert/strict');
 const root = path.join(__dirname, '../..');
@@ -183,30 +183,29 @@ const ORDERS = [{ receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * DAY, up
       await page.waitForTimeout(600); const still = await zoomed();
       check(still <= 1, '…and at most that one seal is grown afterwards (' + still + ')'); await away();
     }
-    // the Timeline: a lane stamp selects its step and grows (no explainer card for a click); the detail seal grows, and a second click puts it back
+    // the Timeline: a lane stamp grows at once and that is all (the detail pane under the chart went on 5 Oct 2026): no step is selected, no
+    // detail drawn, no explainer card for a click; a second click on a stamp (a button) leaves it grown; Escape or leaving puts it back
     await page.waitForSelector('#orderWin .tlSt[data-key]', { timeout: 8000 }); await page.waitForTimeout(900);
     {
       const sel = '#orderWin .tlSt[data-key]:not(.pending)', key = await page.evaluate(sel => document.querySelectorAll(sel)[1].dataset.key, sel);
+      // (the header strip click above opened its step on the Timeline, which put the gentle ring on that step's seal: a click on a stamp neither moves nor adds one)
+      const rung = () => page.evaluate(() => [...document.querySelectorAll('#orderWin .tlSt.sel')].map(b => b.dataset.key || b.dataset.stage).join() + '|' + [...document.querySelectorAll('#orderWin .tlLane.on')].map(l => l.dataset.lane).join());
+      const ring0 = await rung();
+      const nothing = async () => await page.evaluate(() => !document.querySelector('#orderWin .tlDetail, #orderWin .tlBig, #orderWin .tlArw, #orderWin .tlPin, .tlExp.on')) && await rung() === ring0;
+      const rest = await page.evaluate(sel => document.querySelectorAll(sel)[1].offsetWidth, sel);
       const r = await click(sel, 1);
-      // (selecting a step lays the lanes out again, which puts the grown stamp back once; it grows again at once, a frame or two later)
-      check(r.t105 != null && r.t105 <= 250 && r.tTarget != null && r.tTarget <= 600, `timeline lane stamp: a click grew it (×1.05 in ${r.t105 == null ? '–' : r.t105.toFixed(0)} ms, target ×${r.k} in ${r.tTarget == null ? '–' : r.tTarget.toFixed(0)} ms)`);
-      check(await page.evaluate(k => (document.querySelector('#orderWin .tlBig') || {}).dataset.key === k, key) && await page.evaluate(() => !document.querySelector('.tlExp.on')), '…its step is selected in the detail, and no explainer card opened');
+      // (nothing is laid out again by the click, so the stamp grows in a frame or two like any other seal; the chart's stamps rest at the size their room allows, up to the shared
+      //  84 px, and one at or over the order window's 72px cap is lifted and straightened, not grown any more: it has no ×1.05 to reach)
+      check((r.k === 1 ? rest >= 72 : r.t105 != null && r.t105 <= 120) && r.tTarget != null && r.tTarget <= 400, `timeline lane stamp (${rest}px at rest): a click ${r.k === 1 ? 'lifted' : 'grew'} it (×1.05 in ${r.t105 == null ? '–' : r.t105.toFixed(0)} ms, target ×${r.k} in ${r.tTarget == null ? '–' : r.tTarget.toFixed(0)} ms)`);
+      check(await zoomed() === 1 && await page.evaluate(k => (document.querySelector('[data-seal-zoom]').closest('[data-key]') || {}).dataset.key === k, key), '…it is that one stamp that is grown');
+      check(await nothing(), '…and nothing else opened: no detail pane, no other step selected or lane lit, no explainer card');
+      check(await page.evaluate(() => document.querySelectorAll('#orderWin .tlUI > *:not([hidden])').length) >= 1 && await page.evaluate(() => [...document.querySelectorAll('#orderWin .tlUI > *')].filter(n => getComputedStyle(n).display !== 'none' && !n.matches('.tlGrid, .tlBar, .tlNow, .tlTop, .tlMsg, .tlExp, .tlZoom')).length === 0), '…and the chart is all there is under the tab row (no empty box or divider left where the pane was)');
       if (shots) await page.screenshot({ path: path.join(shots, '3-timeline-stamp-click.png') });
       const p = await point(sel, 1); await page.mouse.click(p.x, p.y); await page.waitForTimeout(350);
-      check(await zoomed() === 1, '…a second click on a stamp (a button) leaves it grown, selecting again');
+      check(await zoomed() === 1 && await nothing(), '…a second click on a stamp (a button) leaves it grown, and still opens nothing');
+      await page.keyboard.press('Escape'); await gone();
+      check(await zoomed() === 0, '…Escape puts it back');
       await away();
-      // an "Around this step" seal: its click selects that step (and the detail is drawn again), and no other seal is left grown by it
-      {
-        const asel = '#orderWin .tlArw:not(.cur) .sv', key2 = await page.evaluate(sel => document.querySelector(sel).dataset.key, asel);
-        await click(asel, 0); await page.waitForTimeout(300);
-        check(await page.evaluate(k => (document.querySelector('#orderWin .tlBig') || {}).dataset.key === k, key2) && await page.evaluate(k => [...document.querySelectorAll('[data-seal-zoom]')].every(e => (e.closest('[data-key]') || e).dataset.key === k), key2), 'an "Around this step" seal: its click selects that step, and no neighbour is left grown');
-        await away();
-      }
-      const big = '#orderWin .tlBig', rb = await click(big, 0);
-      // (a detail seal drawn wider than the order window's 72px cap is not grown at all, only lifted: its zoom then has no ×1.05 to reach)
-      check((rb.k === 1 || (rb.t105 != null && rb.t105 <= 120)) && rb.tTarget != null && rb.tTarget <= 400, `timeline detail seal: a click grew it (×1.05 in ${rb.t105 == null ? '–' : rb.t105.toFixed(0)} ms, target ×${rb.k} in ${rb.tTarget == null ? '–' : rb.tTarget.toFixed(0)} ms)`);
-      const pb = await point(big, 0); await page.mouse.click(pb.x, pb.y); await gone();
-      check(await zoomed() === 0, '…and a second click puts it back'); await away();
     }
     // the Overview's "Where it is now" seal: its click opens the step on the Timeline (the Overview goes away), so there is nothing to zoom
     await page.click('#orderWin [data-ow-view="info"]'); await page.waitForSelector('#orderWin .tlNowSeal', { timeout: 8000 }); await page.waitForTimeout(700);
