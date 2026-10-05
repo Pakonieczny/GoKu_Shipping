@@ -63,6 +63,9 @@ function fixture() {
   w.OrderTimelineUI = {STAGES:['arrived'], summary:(events, pieces) => ({each:pieces.map(p => ({p, D:{step:0, stages:[{}], hand:false, cancelled:false, W:null}, steps:[]})), rail:[], step:0})};
   w.piecesOf = rows => rows.map(x => ({key:x.key, name:'Piece', metal:null, form:'', qty:1, line:{}}));
   w.colorOf = () => '#ccc'; w.pieceMeta = () => ''; w.pickPiece = () => {};
+  w.pieceDotsHtml = () => '<span class="steps"></span>';   // (a row's six dots are the dots' own tests': piece-dot-hover, rail-five-steps)
+  w.pdotHeld = () => null; w.pdotBack = () => {};   // (a dot that had the focus keeps it over a redraw: the dots' own tests)
+  w.placeOfKey = () => null;   // (the placement truth is read from the open window's records, none here: the row says what the piece's own record says)
   w.eval(section('  function markPieces(', '  /** The presses on the "Its pieces" list'));   // (paintPieceSum marks the row picked in place, 5 Oct: the pieces list is the selector)
   w.eval(section('  function paintPieceSum(', '  /* ── Where it is now'));
   w.Orders = {
