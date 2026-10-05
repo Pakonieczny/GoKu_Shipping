@@ -144,8 +144,8 @@ async function main() {
     await page.waitForFunction(() => !document.getElementById('orderWin').open, null, { timeout: 3000 });
 
     // 3 · On hold: a skipped line opened there, its skip undone, leaves that list; Previous and Next stay
-    await page.evaluate(k => { const r = B.orders.byKey.get(k); r.state = 'skipped'; r.hold = r.reason = 'line skipped by Test Operator'; }, b1);
-    await page.evaluate(k => { const r = B.orders.byKey.get(k); r.state = 'skipped'; r.hold = r.reason = 'line skipped by Test Operator'; }, a1);
+    await page.evaluate(k => { const r = B.orders.byKey.get(k); r.state = 'skipped'; r.hold = r.reason = 'piece skipped by Test Operator'; }, b1);
+    await page.evaluate(k => { const r = B.orders.byKey.get(k); r.state = 'skipped'; r.hold = r.reason = 'piece skipped by Test Operator'; }, a1);
     await page.evaluate(() => { Orders.view().pile = 'hold'; Orders.render(); });
     assert.deepEqual((await page.evaluate(() => Orders.visibleRows().map(r => r.key))).sort(), [a1, b1].sort(), 'On hold lists the two skipped lines');
     const first = await page.evaluate(() => Orders.visibleRows()[0].key);
