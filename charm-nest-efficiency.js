@@ -155,7 +155,7 @@
     return { ok: true, at: M.now, mode: "", stations: [], signedIn, current: [], derived: true };
   }
   /** "37 s", "4 m 12 s", "12 m", "1 h 5 m": a time that visibly ticks while it is short. */
-  const since = ms => { ms = Math.max(0, N(ms)); const s = Math.floor(ms / 1000); if (s < 60) return `${s} s`; const m = Math.floor(s / 60); if (m < 10) return `${m} m ${s % 60} s`; if (m < 60) return `${m} m`; return `${Math.floor(m / 60)} h${m % 60 ? ` ${m % 60} m` : ""}`; };
+  const since = ms => { ms = Math.max(0, N(ms)); const s = Math.floor(ms / 1000); if (s < 60) return `${s}s`; const m = Math.floor(s / 60); if (m < 10) return `${m}m ${s % 60}s`; if (m < 60) return `${m}m`; return `${Math.floor(m / 60)}h${m % 60 ? ` ${m % 60}m` : ""}`; };
   const initials = name => { const w = String(name).replace(/[._]/g, " ").trim().split(/\s+/).filter(Boolean); return ((w[0] || "?").charAt(0) + (w.length > 1 ? w[w.length - 1].charAt(0) : "")).toUpperCase(); };
 
   /* ── charts: inline SVG, thin marks, one baseline, the current hour in gold ── */
@@ -422,10 +422,10 @@
 .efWkList{display:grid;min-width:0}
 .efWk{padding:11px 16px;border-top:1px solid var(--line2);min-width:0;transition:background .25s}.efWk:first-child{border-top:0}.efWk:hover{background:var(--card2)}
 .efOc{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:6px 14px;align-items:center;min-width:0}
-.efOcMedia{display:flex;align-items:center;gap:6px;min-width:0}
+.efOcMedia{display:flex;align-items:center;gap:6px;min-width:0;width:196px}
 .efOcImg{width:54px;height:54px;border-radius:10px;border:1px solid var(--line);background:var(--paper2) center/cover no-repeat;flex:0 0 54px;transition:transform .25s cubic-bezier(.2,.8,.2,1),box-shadow .25s;position:relative}
 .efOcImg:hover{transform:scale(2.1);z-index:8;box-shadow:0 12px 30px rgba(30,24,14,.28);transform-origin:left center}
-.efOcPcs{display:flex;gap:4px;flex-wrap:wrap;max-width:190px}.efOcPc{width:26px;height:26px;border-radius:7px;border:1px solid var(--line);background:var(--paper2) center/cover no-repeat;flex:0 0 26px;transition:transform .2s;position:relative}.efOcPc:hover{transform:scale(2.2);z-index:8;box-shadow:0 8px 20px rgba(30,24,14,.25)}
+.efOcPcs{display:flex;gap:4px;flex-wrap:wrap;flex:1 1 auto;min-width:0}.efOcPc{width:26px;height:26px;border-radius:7px;border:1px solid var(--line);background:var(--paper2) center/cover no-repeat;flex:0 0 26px;transition:transform .2s;position:relative}.efOcPc:hover{transform:scale(2.2);z-index:8;box-shadow:0 8px 20px rgba(30,24,14,.25)}
 .efOcInfo{min-width:0;display:grid;gap:1px}
 .efOcTop{display:flex;align-items:baseline;gap:8px;min-width:0;flex-wrap:wrap}
 .efOcWho{font-weight:700;font-size:13px}.efOcSt{font-size:11.5px;color:var(--ink70)}
@@ -472,7 +472,7 @@
  .efSR{grid-template-columns:90px minmax(0,1fr) 64px 64px 100px;padding:9px 14px}
 }
 @container ef (max-width:760px){
- .efOc{grid-template-columns:minmax(0,1fr) auto}.efOcMedia{grid-column:1/-1;order:2}.efOcQr{grid-row:1;grid-column:2}.efOcInfo{order:1}.efOcPcs{max-width:none}
+ .efOc{grid-template-columns:minmax(0,1fr) auto}.efOcMedia{grid-column:1/-1;order:2;width:auto}.efOcQr{grid-row:1;grid-column:2}.efOcInfo{order:1}.efOcPcs{max-width:none}
  .efSi{flex:1 1 100%}
 }
 @container ef (max-width:640px){
