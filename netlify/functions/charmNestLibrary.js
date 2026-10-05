@@ -1132,6 +1132,55 @@ async function op_poolGet(b) {
   for (let i = 0; i < ids.length; i += 30) { const snaps = await db.getAll(...ids.slice(i, i + 30).map(id => col(POOL).doc(id))); for (const s of snaps) if (s.exists) { const r = s.data(); r.updatedAt = ms(r.updatedAt); out[s.id] = r; } }
   return { pools: out };
 }
+/* Where each piece of an order is, from the records that can say so (Paul, 5 Oct: a Silver piece on SS Sheet 1 read "not on a
+   sheet yet" from its order's Gold Filled sheet). The pool row's sheetId is only a hint (a re-nest, a restart or an older run
+   clears it while the sheet still holds the piece); the SAVED SHEETS that list the piece in poolIds are the truth. One light
+   read per order (no readiness work): the order's pool rows (every state, the page decides what an abandoned one means) and the
+   saved sheets that name the order or any of its pool ids, each with only the fields placing a piece needs and only the poolIds
+   of this order. The page (charm-nest-order-pieces.js, OrderPieces) decides from these. Read only. */
+const PIECE_SHEET_FIELDS = ["id", "sheetId", "metal", "metalLabel", "fileBase", "folder", "sheetIndex", "page", "setId", "setSeq", "poolIds", "orders", "archived", "laserDoneAt", "roseCutAt", "draft", "solidIncluded", "status", "runId", "updatedAt", "createdAt", "laserHold"];
+async function op_getOrderPieces(b) {
+  // sheetIds: the same fields of those sheets with ALL their poolIds (who shares a sheet with whom), read by id
+  const sheetIds = (Array.isArray(b.sheetIds) ? b.sheetIds : []).filter(isId).slice(0, 40);
+  const ids = [...new Set((Array.isArray(b.orderIds) ? b.orderIds : [b.orderId]).map(x => String(x == null ? "" : x).replace(/\D/g, "")).filter(x => /^\d{4,20}$/.test(x)))].slice(0, 40);
+  if (!ids.length && !sheetIds.length) return { error: "orderId required" };
+  const bySheet = {};
+  for (let i = 0; i < sheetIds.length; i += 30) for (const d of await db.getAll(...sheetIds.slice(i, i + 30).map(id => col(SHEETS).doc(id)), { fieldMask: PIECE_SHEET_FIELDS })) {
+    if (!d.exists) continue; const s = d.data(); if (s.archived) continue;
+    bySheet[d.id] = { id: d.id, metal: s.metal || null, fileBase: s.fileBase || s.folder || null, folder: s.folder || null, sheetIndex: num(s.sheetIndex) || null, page: num(s.page) || null, setId: s.setId || null, setSeq: num(s.setSeq) || null, poolIds: (s.poolIds || []).map(String), orders: (s.orders || []).map(String).slice(0, 500),
+      laserDoneAt: num(s.laserDoneAt) || null, roseCutAt: num(s.roseCutAt) || null, draft: !!s.draft, solidIncluded: s.solidIncluded == null ? null : !!s.solidIncluded, status: s.status || null, runId: s.runId || null, updatedAt: ms(s.updatedAt), createdAt: ms(s.createdAt) };
+  }
+  if (!ids.length) return { ok: true, orders: {}, sheets: bySheet };
+  const both = id => [id].concat(Number.isSafeInteger(+id) ? [+id] : []);
+  const pools = new Map(ids.map(id => [id, []])), sheets = new Map(), sheetsOf = new Map(ids.map(id => [id, new Map()]));
+  for (let i = 0; i < ids.length; i += 10) {
+    const part = ids.slice(i, i + 10), values = part.flatMap(both);
+    const [ps, xs] = await Promise.all([
+      col(POOL).where("orderId", "in", values).limit(2000).get(),
+      col(SHEETS).where("orders", "array-contains-any", values).limit(HISTORY_CAP.sheets).select(...PIECE_SHEET_FIELDS).get()
+    ]);
+    for (const d of ps.docs) { const r = d.data(), rid = String(r.orderId == null ? String(d.id).split("_")[0] : r.orderId); if (pools.has(rid)) { r.updatedAt = ms(r.updatedAt); r.createdAt = ms(r.createdAt); pools.get(rid).push(r); } }
+    for (const d of xs.docs) sheets.set(d.id, { ...d.data(), id: d.id });
+  }
+  // sheets that list one of the order's pieces although their `orders` list does not name the order (an older or cut-down record)
+  const listed = new Set([...sheets.values()].flatMap(s => s.poolIds || []).map(String));
+  const missing = [...pools.values()].flat().map(p => String(p.poolId)).filter(id => !listed.has(id));
+  for (let i = 0; i < missing.length; i += 30) for (const d of (await col(SHEETS).where("poolIds", "array-contains-any", missing.slice(i, i + 30)).select(...PIECE_SHEET_FIELDS).get()).docs) if (!sheets.has(d.id)) sheets.set(d.id, { ...d.data(), id: d.id });
+  const orders = {};
+  for (const rid of ids) {
+    const mine = [];
+    for (const s of sheets.values()) {
+      if (s.archived) continue;
+      const has = (s.orders || []).map(String).includes(rid) || (s.poolIds || []).some(p => String(p).startsWith(rid + "_"));
+      if (!has) continue;
+      mine.push({ id: s.id, metal: s.metal || null, metalLabel: s.metalLabel || null, fileBase: s.fileBase || s.folder || null, folder: s.folder || null, sheetIndex: num(s.sheetIndex) || null, page: num(s.page) || null, setId: s.setId || null, setSeq: num(s.setSeq) || null,
+        poolIds: (s.poolIds || []).map(String).filter(p => p.startsWith(rid + "_")), poolCount: (s.poolIds || []).length, laserDoneAt: num(s.laserDoneAt) || null, roseCutAt: num(s.roseCutAt) || null, draft: !!s.draft, solidIncluded: s.solidIncluded == null ? null : !!s.solidIncluded,
+        status: s.status || null, runId: s.runId || null, updatedAt: ms(s.updatedAt), createdAt: ms(s.createdAt) });
+    }
+    orders[rid] = { pools: pools.get(rid), sheets: mine };
+  }
+  return { ok: true, orders, sheets: bySheet };
+}
 // ── backs ──
 /* ── the sandbox snapshot: what the emulated Etsy serves (etsySandbox.js). The sorter uploads the JSON through
    charmNestOutput and records it here; reset clears the sandbox's own records so a run can start clean. ── */
@@ -2875,6 +2924,7 @@ async function op_flowApply(b) {
 }
 OPS.flowState = op_flowState;
 OPS.flowApply = op_flowApply;
+OPS.getOrderPieces = op_getOrderPieces;   // where each piece of an order is (OrderPieces); read only
 
 exports.ops = OPS;   // the connections check runs the same queries the app runs
 exports.handler = async (event) => {

@@ -1331,10 +1331,12 @@ const Orders = window.Orders = (() => {
   /* Thirteen state words in four colours said nothing about order. The five that are progress now carry their place in
      the run, so "3/5 nested" reads as progress; the exceptions stay unnumbered, so a problem reads differently. */
   const PROGRESS = ["pooled", "nested", "written", "labelled", "committed"];
+  const nestedRow = r => { try { return !!(window.OrderPieces && OrderPieces.nestedOfRow(r)); } catch (_) { return false; } };
   function stateWords(r) {
     // a line stays "pooled" in the record until its set is written; once every piece of it sits on a sheet it reads as
     // nested (the list said "1/5 pooled" for a charm already cut into a sheet: audit, 25 Sep)
-    const state = r.state === "pooled" && window.Pool && (r.poolIds || []).length && r.poolIds.every(id => Pool.sheetOf(id)) ? "nested" : r.state;
+    // (every piece placed on a sheet: a page of this sorter holds it, or a saved sheet's own record lists it: OrderPieces)
+    const state = r.state === "pooled" && ((window.Pool && (r.poolIds || []).length && r.poolIds.every(id => Pool.sheetOf(id))) || nestedRow(r)) ? "nested" : r.state;
     // a special line that is not cut says which: finished by hand under Custom Orders, or chain only
     if (state === "noDesign" && r.spec && r.spec.customDone) return ["ok", "custom · done"];
     if (state === "noDesign" && r.spec && r.spec.special && r.spec.special.notCut) return ["info", r.spec.special.label.toLowerCase()];
@@ -1358,6 +1360,8 @@ const Orders = window.Orders = (() => {
   /** Where this line physically is: the set and the sheet it was nested on. "What's where", answered on the line itself. */
   function placeOf(r) {
     for (const id of r.poolIds || []) { const p2 = B.pool.rows.get(id); if (p2 && (p2.sheetName || p2.sheetId)) return { set: p2.setId || "", sheet: p2.sheetName || p2.sheetId, sheetId: p2.sheetId || null }; }
+    // (the pool rows say nothing, or no longer name the sheet: the saved sheet that lists the piece does)
+    try { const at = window.OrderPieces && OrderPieces.ofRow(r).find(p => p.nested && p.sheetLabel); if (at) return { set: at.setId || "", sheet: at.sheetLabel, sheetId: at.sheetId || null }; } catch (_) {}
     return null;
   }
   /** Everything a person needs to recognise one line, as a card or as a row: the same fields either way. */
@@ -10278,6 +10282,8 @@ const OrderWin = window.OrderWin = (() => {
   function wire() {
     if (W.wired) return; W.wired = true;
     W.dlg = byId("orderWin"); if (!W.dlg) return;
+    // the sheet records of the order read (OrderPieces): the Sheet tab's tabs and piece list, and the Overview, follow them
+    tryDo(() => window.OrderPieces && OrderPieces.subscribe(() => hold("pieces", () => { const rid = W.rid; if (!rid || !W.dlg.open || W.closing) return; pieceTabs(rid); if (W.view === "sheet" && SV.list) paintPanel(SV.info); const r = rowOf(W.key); if (r) paintNow(r); })));
     byId("owClose").onclick = () => shut();
     // Esc goes back into what was clicked, as the close button does
     W.dlg.addEventListener("cancel", e => { e.preventDefault(); if (finding()) endFind(true); else shut(); });
@@ -10809,6 +10815,7 @@ const OrderWin = window.OrderWin = (() => {
         const p2 = B.pool && B.pool.rows && B.pool.rows.get(pid); if (p2 && p2.sheetId) sheets.add(p2.sheetId);
       }
       for (const p of (x._pools || SV.pools || [])) if (p.sheetId && (p.lineKey === x.key || pools.includes(String(p.poolId)))) sheets.add(p.sheetId);
+      if (window.OrderPieces) for (const p of tryDo(() => OrderPieces.ofRow(x)) || []) if (p.sheetId) sheets.add(p.sheetId);   // (the sheets' own records: a pool row that lost its sheet does not hide the piece's steps)
       return { key: x.key, tid: String(x.line.transactionId || ""), qty: Math.max(1, Math.round(+(sp.quantity || x.line.quantity) || 1)), pools, sheets: [...sheets],
         // (its Engrave state and whether it could carry a back engraving: stagesFor leaves Engraved out for a plain piece)
         line: Object.assign({}, x.line, { form: sp.form || null, designSku: sp.designSku || null, material: m, size: sp.size || null,
@@ -10899,6 +10906,9 @@ const OrderWin = window.OrderWin = (() => {
   /* One read of the order's timeline per open (timeline-ui's feed), shared by this card, the header rail and the
      Timeline tab, and followed while the view is open (each used to read it for itself: three reads an open, and a
      poll each). A new order, or the view closing, drops the feed: an answer for the order left behind paints nothing. */
+  /** What the timeline says about where pieces went (placed, moved, taken off, cancelled, committed): changes when a piece changes sheet. */
+  const SHEET_EV = new Set(["placed", "moved", "removed", "renested", "merged", "included", "excluded", "cancelled", "cancelRestored", "held", "released", "restored", "setCommitted", "laserDone", "roseCut"]);
+  const sheetSig = list => Array.isArray(list) ? list.filter(e => SHEET_EV.has(e.type)).length + ":" + (list.filter(e => SHEET_EV.has(e.type)).at(-1) || {}).at : null;
   function loadEvents(rid) {
     W.events = null; W.evFor = rid; W.cancelled = null; W.nowSeal = null;
     if (W.feed) tryDo(() => W.feed.destroy()); W.feed = null;
@@ -10906,7 +10916,9 @@ const OrderWin = window.OrderWin = (() => {
     const f = UI && UI.feed ? tryDo(() => UI.feed(rid)) : null;
     const take = j => {
       if (W.evFor !== rid || W.feed !== f) return;
-      W.events = (j && j.events) || []; W.cancelled = j && j.cancelled ? (j.cancelled[rid] || (j.cancelled.orderId ? j.cancelled : null)) : null;
+      const before = sheetSig(W.events); W.events = (j && j.events) || []; W.cancelled = j && j.cancelled ? (j.cancelled[rid] || (j.cancelled.orderId ? j.cancelled : null)) : null;
+      // a piece placed, moved or taken off since the sheet records were read: they are read again (no poller of its own: this feed is the clock)
+      if (before !== null && before !== sheetSig(W.events)) tryDo(() => window.OrderPieces && OrderPieces.load(rid, { force: true }));
       hold("now", () => { const r = rowOf(W.key); if (r && String(r.order.receiptId) === rid) paintNow(r); }, [byId("owNowCard"), byId("owNow")]);
     };
     if (f) { W.feed = f; f.subscribe(k => { if (k === "data") take(f.answer); else if (k === "error" && W.feed === f) console.warn("order view: timeline", f.error); }); f.refresh(); return; }
@@ -11007,6 +11019,10 @@ const OrderWin = window.OrderWin = (() => {
       const sp = x.spec || {}, ids = x.poolIds || [];
       let onSheet = ids.length > 0;
       for (const id of ids) { const pg = window.Pool && Pool.sheetOf ? tryDo(() => Pool.sheetOf(id)) : null; if (pg) pages.add(pg); else onSheet = false; }
+      // (a piece on a sheet this sorter does not hold live is on a sheet all the same: the saved sheet's record says so; and while the
+      // records are not read yet nothing is said about it: a step is never held back by a piece nobody has looked for)
+      const op = window.OrderPieces && tryDo(() => OrderPieces.ofRow(x));
+      if (op && op.length && !op.some(p => p.unsure)) onSheet = op.every(p => p.nested || p.loading);
       const pb = (x.problems || [])[0];
       return { sku: sp.designSku || (x.line && x.line.sku) || "", form: sp.form || "", title: (x.line && x.line.title) || "", state: x.state, reason: x.reason || "", wait: x.wait || null, hold: !!x.hold,
         problem: pb ? String(x.reason || pb.reason || pb.kind || "") : "", engrave: x.engrave || null, engraveCandidate: sp.engraveCandidate, special: sp.special ? sp.special.label || "" : "", onSheet };
@@ -11159,6 +11175,10 @@ const OrderWin = window.OrderWin = (() => {
         for (const p of pools) if (p.sheetId) add(p.sheetId, { metal: p.material, n: nOf(p.sheetName) });
       } catch (e) { failed = e; console.warn("order view: the order's pieces", e.message); }
       if (!current()) return list();
+      // the sheets' own records say which sheets hold the order's pieces: each gets its tab, whatever the pool rows still say
+      // (a piece on SS Sheet 1 whose pool row lost its sheet id used to have no tab and read "not on a sheet yet" from the other sheet)
+      const OP = window.OrderPieces;
+      if (OP && OP.load) { try { await OP.load(rid); } catch (_) {} if (!current()) return list(); for (const s of OP.spread(rid).sheets) if (s.sheetId) add(s.sheetId, { metal: s.metal, n: s.sheetNo || null }); }
       if (!out.size && !live.length && /^\d{4,20}$/.test(rid)) {
         try {
           const f = await sheetRead({ op: "findSheets", q: rid, fallback: false });
@@ -11186,6 +11206,14 @@ const OrderWin = window.OrderWin = (() => {
       return list();
     }
     return enrich();
+  }
+  /** A tab for every sheet that holds a piece of the order, by the sheets' own records (OrderPieces): true when one was added. */
+  function pieceTabs(rid) {
+    const OP = window.OrderPieces; if (!OP || !OP.spread || !SV.list || SV.rid !== rid) return false;
+    let added = false;
+    for (const s of OP.spread(rid).sheets) if (s.sheetId && !SV.list.some(x => x.id === s.sheetId)) { SV.list.push({ id: s.sheetId, metal: s.metal, n: s.sheetNo || null }); added = true; }
+    if (added) { const count = byId("owShCount"); if (count) count.textContent = SV.list.length + (SV.list.length === 1 ? " sheet" : " sheets"); }
+    return added;
   }
   function plateWait(text) { const w = byId("owPlateWait"); if (!w) return; w.hidden = !text; if (text) w.lastElementChild.textContent = text; }
   async function sheetShow(sheetId, poolId) {
@@ -11301,11 +11329,19 @@ const OrderWin = window.OrderWin = (() => {
     const lr = (x0 && x0.poolId && linesOf(r).find(l => (l.poolIds || []).includes(x0.poolId))) || r;
     const sp = lr.spec || {}, sku = (x0 && x0.sku) || sp.designSku || lr.line.sku || "";
     // every piece of the order: on this sheet, on its other sheets, and not on one yet
-    const items = new Map(), add = (k, v) => items.set(k, Object.assign(items.get(k) || {}, v));
-    for (const x of mine) add(x.poolId || x.id, { poolId: x.poolId, sku: x.sku, copy: x.copy, qty: x.qty, here: true, piece: x });
-    for (const p of SV.pools || []) if (!items.has(p.poolId)) add(p.poolId, { poolId: p.poolId, sku: p.sku, copy: p.copy, qty: p.quantity, sheetId: p.sheetId || null, metal: p.material, n: nOf(p.sheetName) });
-    for (const x of linesOf(r)) for (const pid of x.poolIds || []) if (!items.has(pid)) add(pid, { poolId: pid, sku: (x.spec && x.spec.designSku) || x.line.sku, copy: +pid.split("_").pop() || 1, qty: (x.spec && x.spec.quantity) || x.line.quantity });
-    if (!items.size) for (const x of linesOf(r)) add(x.key, { sku: (x.spec && x.spec.designSku) || x.line.sku, qty: (x.spec && x.spec.quantity) || x.line.quantity, copy: 1 });
+    // every piece of the order from ONE truth (OrderPieces: the sheets' own records first, then the pages this sorter holds, the pool
+    // row's sheet only as a hint): on this sheet, on its other sheets, and not on one yet. "This sheet" and "the other sheets" are
+    // told the same way now, so a piece reads the same from every side of its order (it used to say "not on a sheet yet" from the
+    // Gold Filled sheet for a piece that is on SS Sheet 1: this sheet came from the sheet's record, the others from the pool rows)
+    const OP = window.OrderPieces, cur = list[SV.at] || null, items = new Map(), add = (k, v) => items.set(k, Object.assign(items.get(k) || {}, v));
+    const mineBy = new Map(mine.map(x => [x.poolId || x.id, x]));
+    for (const p of OP && OP.of ? OP.of(rid) : []) if (!p.gone) {
+      const x = mineBy.get(p.poolId) || null;
+      add(p.poolId, { poolId: p.poolId, sku: (x && x.sku) || p.sku, copy: p.copy, qty: p.qty, here: !!x || !!(cur && cur.id && p.sheetId === cur.id), piece: x, nested: p.nested, loading: p.loading, sheetId: p.sheetId, metal: p.metal, n: p.sheetNo, label: p.sheetLabel, reason: p.reason });
+    }
+    for (const x of mine) if (!items.has(x.poolId || x.id)) add(x.poolId || x.id, { poolId: x.poolId, sku: x.sku, copy: x.copy, qty: x.qty, here: true, nested: true, piece: x });
+    if (!OP) for (const x of linesOf(r)) for (const pid of x.poolIds || []) if (!items.has(pid)) add(pid, { poolId: pid, sku: (x.spec && x.spec.designSku) || x.line.sku, copy: +pid.split("_").pop() || 1, qty: (x.spec && x.spec.quantity) || x.line.quantity });
+    if (!items.size) for (const x of linesOf(r)) add(x.key, { sku: (x.spec && x.spec.designSku) || x.line.sku, qty: (x.spec && x.spec.quantity) || x.line.quantity, copy: 1, loading: !SV.list });
     const pieces = [...items.values()];
     const job=x0?.eng?.job || Engrave.jobOf(lr),re=lr.engrave;
     const eng=job ? {job,back:x0?.eng?.back,saved:re,kind:["approved","written"].includes(job.state)?"approved":job.state==="review"?"approve":job.state==="skipped"?"skipped":["words","blocked"].includes(job.state)?"words":job.state==="none"?"none":"preparing",text:job.text,by:job.approvedBy,at:job.approvedAt,note:x0?.eng?.note}
@@ -11314,14 +11350,16 @@ const OrderWin = window.OrderWin = (() => {
       : {kind:"none"};
     const engHtml=CNEngravingSeals.panel(eng);
     const bk = BK.length && BK[BK.length - 1].to === rid ? BK[BK.length - 1] : null;
-    const where = it => it.here ? `<em style="--c:var(--gold2)">this sheet</em>` : it.sheetId ? `<em style="--c:${esc(colorOf(it.metal))}">${esc(sheetName({ metal: it.metal, n: it.n }))}</em>` : SV.list ? `<em>not on a sheet yet</em>` : `<em></em>`;   // (nothing said while its sheets are still being found)
+    // (a sheet's own tab names it, so a piece and its tab always say the same; nothing is said while its sheets are still being found)
+    const tabOf = it => it.sheetId ? list.find(s => s.id === it.sheetId) : null;
+    const where = it => it.here ? `<em style="--c:var(--gold2)">this sheet</em>` : it.nested ? `<em style="--c:${esc(colorOf((tabOf(it) || it).metal))}">${esc(tabOf(it) ? sheetName(tabOf(it)) : it.label || "on a sheet")}</em>` : it.loading || !SV.list ? `<em></em>` : `<em>not on a sheet yet</em>`;
     panel.innerHTML =
       (list.length ? `<section><div class="owSheetFindRow"><span class="fLabel">Sheet</span><label class="cnOrderFind"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="m10.5 10.5 3 3"/></svg><input id="owSheetOrderFind" type="search" inputmode="numeric" placeholder="Order # on sheet" aria-label="Search order numbers on this sheet" aria-controls="owSheetMatches" autocomplete="off" spellcheck="false"></label></div><div class="owShTabs">${list.map((s, i) => `<button type="button" data-at="${i}" class="${i === SV.at ? "on" : ""}" style="--c:${esc(colorOf(s.metal))}"><i></i>${esc(sheetName(s))}</button>`).join("")}</div>${facts ? `<div class="sub" style="margin-top:8px">${esc(facts)}</div>` : ""}</section>` : "") +
       `<div class="owSheetMatches" id="owSheetMatches" role="list" aria-live="polite" hidden></div>` +
       `<section><div class="owOrdHd"><span class="fLabel">Order</span>${bk ? `<button type="button" class="btn ghost xs" data-ow-back title="Back to order ${esc(bk.rid)}, as it was"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg>Back to order ${esc(bk.rid)}</button>` : ""}</div><div class="big">${esc(rid)}</div><div class="sub">${esc([o.buyer && o.buyer.name, placed ? "ordered " + placed : "", ship].filter(Boolean).join(" · "))}</div></section>` +
       `<section class="owCharm"><div class="pic" data-pic></div><div><b>${esc(sku || "—")}</b>${x0 && x0.c ? `<span>${esc((x0.c.widthPt * 25.4 / 72).toFixed(1))} × ${esc((x0.c.heightPt * 25.4 / 72).toFixed(1))} mm</span>` : ""}<span>${esc(lr.material ? labelOf(lr.material) : rec ? labelOf(rec.metal) : "")}${sp.size ? " · size " + esc(sp.size) : ""}</span></div></section>` +
       `<section class="swSection" data-engraving-panel>${engHtml}</section>` +
-      `<section><span class="fLabel">This order · ${pieces.length} piece${pieces.length === 1 ? "" : "s"}</span><ul class="owPieces">${pieces.map((it, i) => `<li data-i="${i}" class="${it.here && (!SV.focus || it.poolId === SV.focus || !x0 || x0 === it.piece) && it.piece === x0 ? "on" : !it.here && !it.sheetId ? "off" : ""}"><span class="n">${i + 1}</span><span class="sku">${esc(it.sku || "")}${it.qty > 1 ? ` <small>copy ${it.copy} of ${it.qty}</small>` : ""}</span>${where(it)}</li>`).join("")}</ul></section>` +
+      `<section><span class="fLabel">This order · ${pieces.length} piece${pieces.length === 1 ? "" : "s"}</span><ul class="owPieces">${pieces.map((it, i) => `<li data-i="${i}" class="${it.here && (!SV.focus || it.poolId === SV.focus || !x0 || x0 === it.piece) && it.piece === x0 ? "on" : !it.here && !it.nested && !it.loading ? "off" : ""}"><span class="n">${i + 1}</span><span class="sku">${esc(it.sku || "")}${it.qty > 1 ? ` <small>copy ${it.copy} of ${it.qty}</small>` : ""}</span>${where(it)}</li>`).join("")}</ul></section>` +
       (rec ? `<div class="acts"><button type="button" class="btn ghost sm" data-full${cut ? "" : ""}>Open full sheet ›</button><button type="button" class="btn ghost sm" data-off${cut || lined ? " disabled" : ""}${lined ? ` title="Inside the saved Rose Gold green line: its pieces stay on the sheet until it is cut, then are set aside"` : ""}>Take off the sheet…</button>${cut ? `<span class="why">Cut — it can no longer be taken off</span>` : lined ? `<span class="why">Inside the saved green line</span>` : ""}</div>` : "");
     // the charm's own picture: its drawing on this sheet, else the order's vector
     const pic = panel.querySelector("[data-pic]"); if (pic) { if (x0 && x0.c) { const c2 = document.createElement("canvas"); c2.width = c2.height = 184; drawCharmInto(c2, x0.c); pic.appendChild(c2); } else tryDo(() => ListMedia.vectorInto(pic, lr)); }
@@ -11696,6 +11734,8 @@ const OrderWin = window.OrderWin = (() => {
     W.key = key;
     if (other) W.piece = null; else if (W.piece && W.piece !== key) W.piece = key;
     if (other) { sheetReset(); unmountTimeline(); loadEvents(rid); const n = byId("owNowCard"); if (n) n._html = ""; const c = byId("owShCount"); if (c) c.textContent = ""; }
+    // which sheet holds which piece of the order: read from the sheets' own records, once per opening (and again when its timeline says a piece moved)
+    if (other) tryDo(() => window.OrderPieces && OrderPieces.load(rid));
     if (other && W.face === "back") turnPlate("front");
     paint();
     if (fresh) {
@@ -11867,6 +11907,7 @@ const OrderWin = window.OrderWin = (() => {
       return;
     }
     W.rows = rows;
+    tryDo(() => window.OrderPieces && OrderPieces.learn(rid, { rows }));   // (the order's lines as the records give them: its pieces are told from them too)
     // the note already read while the order was looked up shows at once on its lines
     if (stub.spec && stub.spec.staffNote) for (const row of rows) if (row.spec && !row.spec.staffNote) { row.spec.staffNote = stub.spec.staffNote; row.order.staffNote = stub.spec.staffNote; }
     show(rows[0], { walk: false, view: W.view, sheetId: o.sheetId, poolId: o.poolId }); shown();

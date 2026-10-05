@@ -249,6 +249,61 @@ assert.equal(R.sheet(fixed).ready,true);assert.equal(R.laserSheet(fixed).ready,t
   assert.deepEqual(orderIssues(gf,rs).map(i=>[i.orderId,i.key]),[['95','unmatched'],['96','held'],['97','noDesign']]);
 }
 
+// 12c. Randomised: the scenario is made from ground truth (where each piece really is, what is wrong with its line), the rows and sheets are derived from it
+// with stale states, stale problem lists and lost pool ids mixed in, and what issues() says for a sheet must be what the ground truth says.
+{
+  let seed=20261005;const rnd=()=>{seed|=0;seed=seed+0x6D2B79F5|0;let t=Math.imul(seed^seed>>>15,1|seed);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;},pick=a=>a[Math.floor(rnd()*a.length)];
+  const PREC=['pooled','noSku','unmatched','noDesign','held','otherSheetNotReady'];
+  let cases=0,withIssue=0;
+  for(let n=0;n<1500;n++){
+    const where=['X','Y','Z'],ready={X:rnd()<.5,Y:rnd()<.6,Z:rnd()<.6},orders=[];
+    for(let o=0;o<1+Math.floor(rnd()*4);o++){
+      const lines=[];
+      for(let l=0;l<1+Math.floor(rnd()*3);l++){
+        const kind=pick(['plain','plain','plain','plain','gone','noDesign','noSku','unmatched','noDesign2','held','change']),q=1+(rnd()<.3?1:0);
+        lines.push({txn:'t'+l,q,kind,lost:rnd()<.25,staleState:rnd()<.4,copies:[...Array(q)].map(()=>({place:rnd()<.2?null:pick(where)}))});
+      }
+      orders.push({id:String(9000+o),lines});
+    }
+    const sheetPools={X:[],Y:[],Z:[]},rows=[];
+    for(const o of orders)for(const l of o.lines){
+      const key=`${o.id}_${l.txn}`,ids=l.copies.map((c,i)=>`${key}_${i+1}`);
+      l.copies.forEach((c,i)=>{if(c.place && !['gone','noDesign'].includes(l.kind))sheetPools[c.place].push(ids[i]);});
+      const defect={noSku:'noSku',unmatched:'unmatched',noDesign2:'noDesign'}[l.kind];
+      const r=row(o.id,l.txn,{quantity:l.q,poolIds:l.lost?[]:ids,sku:l.kind==='noSku'?'':'SKU-'+l.txn,state:l.kind==='gone'?'gone':l.kind==='noDesign'?'noDesign':defect?(l.copies.some(c=>!c.place)?'unmatched':'pooled'):l.staleState?'pooled':'written',
+        problems:defect?[{noSku:'unmatchedSku',unmatched:'unmatchedSku',noDesign:'missingSize'}[defect]]:l.staleState && l.copies.every(c=>c.place) && rnd()<.5?['unmatchedSku']:[],hold:l.kind==='held'?'Check customer changes':null,changePending:l.kind==='change'});
+      if(l.kind==='noDesign')r.spec.noDesign=true;
+      rows.push(r);
+    }
+    const all=Object.keys(sheetPools).filter(k=>sheetPools[k].length).map(k=>sheet(k+'x-1',{X:'gold',Y:'silver',Z:'rose'}[k],sheetPools[k],{approved:ready[k],index:1}));
+    const X=all.find(x=>x.id==='Xx-1');if(!X)continue;
+    // ground truth for sheet X
+    const expected={};
+    for(const o of orders){
+      const live=[];
+      for(const l of o.lines){if(l.kind==='gone'||l.kind==='noDesign')continue;l.copies.forEach(c=>live.push({l,c}));}
+      if(!live.some(p=>p.c.place==='X'))continue;
+      const keys=new Set();
+      for(const {l,c} of live){
+        const heldNow=l.kind==='held' || l.kind==='change';
+        if(heldNow){keys.add('held');continue;}
+        if(c.place==='X')continue;
+        if(c.place===null){keys.add(({noSku:'noSku',unmatched:'unmatched',noDesign2:'noDesign'})[l.kind] || 'pooled');continue;}
+        if(!ready[c.place])keys.add('otherSheetNotReady');
+      }
+      if(keys.size)expected[o.id]=PREC.find(k=>keys.has(k));
+    }
+    // a piece with a defect that is nested elsewhere is nested: the generator only gives a defect kind to unnested copies of that line when they have no place; the nested copies of such a line are stale
+    const got=Object.fromEntries(orderIssues(X,rows,all).map(i=>[i.orderId,i.key]));
+    assert.deepEqual(got,expected,'case '+n+' '+JSON.stringify({ready,orders}));
+    const reps=R.orderReports(rows,all),rec=clone(X);rec.orderReadiness=Object.fromEntries(R.orderIds(X).map(o=>[o,R.forSheet(reps[o],X.id)]));
+    assert.deepEqual(Object.fromEntries(R.issues(rec,{}).filter(i=>i.step==='orders').map(i=>[i.orderId,i.key])),expected,'precomputed map, case '+n);
+    assert.equal(R.sheet(rec).stages.orders,Object.keys(expected).length===0,'stage, case '+n);
+    cases++;if(Object.keys(expected).length)withIssue++;
+  }
+  assert(cases>800 && withIssue>200 && cases-withIssue>200,`a useful mix of cases: ${withIssue} of ${cases} have an issue`);
+}
+
 // 13. The real handlers: laserStatus answers each sheet with its own reading of its orders
 (async()=>{
   const {start}=require('./bridge-server.cjs');
