@@ -26,7 +26,7 @@
  *                        run still open is made by that run's release rules, a committed set is fixed
  * Cardinal rule of a Set of Sheets (Paul, 5 Oct; charm-nest-shared-orders.js): every sheet that shares a multi-piece order with
  * another is in the SAME set. A move into or out of a set that would separate such sheets is not a plan that can be committed:
- * plan.needs gets key `sharedOrders` ("These orders have pieces on another sheet of this set", items = SharedOrders.between's
+ * plan.needs gets key `sharedOrders` ("Orders shared with another sheet", items = SharedOrders.between's
  * shape, also plan.shared; plan.group the labels of the sheets that must travel together) and nothing is written. Moving the
  * whole group together is allowed: when every sheet of the group can join, the plan asks for one yes (confirm key `together`,
  * commit includes them all); `plan({..., together:true})` plans that explicitly. The orders come from the records (op flowState
@@ -273,29 +273,29 @@
   function planMembershipBase(state, v, to, plan, env) {
     const need = (key, label, detail, items) => plan.needs.push({ key, label, detail, items: items || [] });
     plan.to = { area: null, setId: to.set || null, label: to.newSet ? 'A new set' : 'The set' };
-    if (v.kind !== 'sheet') { need('wholeSet', 'A whole set cannot be dropped into a set', 'Move its sheets one at a time.'); return finish(plan); }
+    if (v.kind !== 'sheet') { need('wholeSet', 'A set cannot go into a set', 'Move its sheets one at a time.'); return finish(plan); }
     const s = v.sheet, T = to.set ? state.sets[to.set] : null, live = (state.live || {})[v.id] || null, run = (state.runs || {})[s.runId] || null;
     if (to.set && !T) { need('noSet', 'That set could not be found', 'Refresh the Library and try again.'); return finish(plan); }
     if (T) plan.to = { area: null, setId: T.setId, label: setName(T) };
     if (T && inSet(s) && T.setId === s.setId) { plan.noop = true; plan.notes.push(`${v.label} is already in ${setName(T)}.`); return finish(plan); }
-    if (s.roseCutAt) { need('sheetCut', `${v.label} was already cut`, 'Its Rose Gold cut is recorded, and a recorded cut is permanent: a cut sheet stays in the set it was cut in.'); return finish(plan); }
-    if (+s.laserDoneAt > 0) { need('sheetCompleted', `${v.label} is completed`, 'A completed sheet keeps its cut record and its set. Move it back to Laser cutting first.'); return finish(plan); }
+    if (s.roseCutAt) { need('sheetCut', `${v.label} was already cut`, 'A recorded cut is permanent: a cut sheet stays in the set it was cut in.'); return finish(plan); }
+    if (+s.laserDoneAt > 0) { need('sheetCompleted', `${v.label} is completed`, 'It keeps its cut record and set until it is moved back to Laser cutting.'); return finish(plan); }
     if (T && +T.laserDoneAt > 0) need('setCompleted', `${setName(T)} is completed`, 'A completed set takes no more sheets.');
-    else if (T && committedSet(T)) need('setCommitted', `${setName(T)} was already committed to the station`, 'Its sheets, labels and orders are fixed. The next set takes new sheets.');
+    else if (T && committedSet(T)) need('setCommitted', `${setName(T)} is already committed`, 'The next set takes new sheets.');
     else if (T && /superseded/.test(String(T.status || ''))) need('setClosed', `${setName(T)} was replaced`, 'Drop it on a current set.');
     if (plan.needs.length) return finish(plan);
     const from = inSet(s) ? state.sets[s.setId] || null : null, fromName = from ? setName(from) : 'its set';
     if (from && committedSet(from)) {
-      need('leaveCommitted', `${v.label} is in ${fromName}, which was committed to the Design Station`, `${fromName}'s orders were marked designed at the station and its QR labels name this sheet, so taking the sheet out would undo that commit. A move never does that: press Undo set on ${fromName}'s card first (it reopens the set at the station and keeps every file), then move the sheet.`);
+      need('leaveCommitted', `${fromName} is committed to the station`, `Moving it out would undo that commit: press Undo set on ${fromName}'s card first.`);
       return finish(plan);
     }
-    if (run && run.open && !(live && live.runHere)) { need('runElsewhere', 'This sheet belongs to a run that is open on another screen', 'Move it from the screen that runs it, so the two screens do not undo each other.'); return finish(plan); }
-    if (!live) { need('fixedSet', `${v.label} was made by another run`, `${from ? fromName + ' is' : 'Its set is'} fixed: that run is finished, and the open run builds its set only from its own sheets (it would write the set again without this one at its next save).`); return finish(plan); }
+    if (run && run.open && !(live && live.runHere)) { need('runElsewhere', 'Its run is open on another screen', 'Move it from that screen, so the two do not undo each other.'); return finish(plan); }
+    if (!live) { need('fixedSet', `${from ? fromName : v.label} is closed`, from ? 'Its run is finished, so its sheets stay together.' : 'Its run is finished, so it stays as it is.'); return finish(plan); }
     const open = live.dispatchSetId || null, openName = open && state.sets[open] ? setName(state.sets[open]) : 'the open set';
-    if (inSet(s)) { need('runOwned', `${v.label} is already in ${state.sets[s.setId] ? setName(state.sets[s.setId]) : 'a set'}`, 'The open run puts sheets in its sets by its release rules, so a sheet in a set cannot be moved to another one.'); return finish(plan); }
+    if (inSet(s)) { need('runOwned', `Already in ${state.sets[s.setId] ? setName(state.sets[s.setId]) : 'a set'}`, 'A sheet in a set cannot be moved to another one.'); return finish(plan); }
     if (to.set && T.setId !== open) need('notOpenSet', `${setName(T)} is not the open set`, open ? `Drop it on ${openName}, the set that is open now.` : 'There is no open set; drop it on New set.');
-    else if (to.newSet && open) need('openSetExists', `${openName} is still open`, `A new set is made when the open one is committed. Drop the sheet on ${openName}.`);
-    else if (live.can && live.can.ok === false) need('include', `${v.label} cannot join a set yet`, live.can.reason || 'Nest and verify it first.');
+    else if (to.newSet && open) need('openSetExists', `${openName} is still open`, `Drop the sheet on ${openName}.`);
+    else if (live.can && live.can.ok === false) need('include', 'Not ready to join a set', live.can.reason || 'Nest and verify it first.');
     else if (s.metal === 'rose' ? env.canRose === false : env.canJoin === false) need('join', 'Joining a set is not available here', s.metal === 'rose' ? 'Open the sheet on the Nest tab and press Cut Sheet there.' : 'Open the sheet and use Include or Make QR label.');
     if (plan.needs.length) return finish(plan);
     if (s.metal === 'rose') { roseJoin(plan, v, s, T, to, live, env); return finish(plan); }
@@ -306,7 +306,7 @@
     plan.steps.push({ type: 'include', sheetId: v.id, setId: T ? T.setId : null, newSet: !!to.newSet, key: 'membership' });
     // (the sheets that share an order with this one come with it: withCardinal, below, says so and asks for the one yes; a page
     //  that cannot say who they are still never offers "only this sheet")
-    for (const sp of live.split || []) plan.confirm.push({ key: 'splitOrders', label: `${count(sp.orders.length, 'order')} also on ${sp.label}`, detail: `${sp.orders.slice(0, 4).map(o => 'Order ' + o).join(', ')}${sp.orders.length > 4 ? ' and more' : ''} ${sp.orders.length === 1 ? 'is' : 'are'} on both sheets, so ${sp.label} joins ${target} with ${v.label} (sheets that share a multi-piece order stay in the same set). Press to include both.` });
+    for (const sp of live.split || []) plan.confirm.push({ key: 'splitOrders', label: `${count(sp.orders.length, 'order')} also on ${sp.label}`, detail: `${sp.orders.slice(0, 4).map(o => 'Order ' + o).join(', ')}${sp.orders.length > 4 ? ' and more' : ''} ${sp.orders.length === 1 ? 'is' : 'are'} on both sheets, so ${sp.label} joins ${target} with ${v.label}.` });
     return finish(plan);
   }
 
@@ -346,17 +346,16 @@
     if (joining && !stuck.length) {
       plan.confirm = plan.confirm.filter(c => c.key !== 'splitOrders');
       plan.confirm.push({ key: 'together', label: mates.length === 1 ? `${mates[0].label} joins ${target} with ${v.label}` : mates.length <= 3 ? `${mates.slice(0, -1).map(m => m.label).join(', ')} and ${mates[mates.length - 1].label} join ${target} with ${v.label}` : `${count(mates.length, 'sheet')} join ${target} with ${v.label}`,
-        detail: `${orderWords} ${items.length === 1 ? 'has' : 'have'} pieces on ${mates.length === 1 ? 'both sheets' : 'these sheets'}, and sheets that share a multi-piece order stay in the same set. Press to include ${names.join(', ')} together.` });
+        detail: `${orderWords} ${items.length === 1 ? 'has' : 'have'} pieces on ${mates.length === 1 ? 'both sheets' : 'these sheets'}, so they go in together.` });
       for (const m of mates) plan.auto.push({ key: 'membership:' + m.id, label: `${m.label} added to ${target}`, detail: `It shares ${items.length === 1 ? 'an order' : 'orders'} with ${v.label}, so it joins with it, with its QR label.` });
       const st = plan.steps.find(x => x.type === 'include'); if (st) st.with = mates.map(m => m.id);
       return finish(plan);
     }
     const lockedWhy = id => { for (const i of items) { const l = (i.locked || []).find(z => z.sheetId === id); if (l) return l.why; } return ''; };
     const why = stuck.map(x => `${x.m.label}: ${lockedWhy(x.m.id) || (x.l ? (x.l.rose ? 'a Rose Gold sheet joins a set only by its own Cut Sheet press' : x.l.can && x.l.can.reason ? x.l.can.reason.replace(/\.$/, '') : !x.l.runHere ? 'it is not on a page of the open run' : 'it cannot join a set yet') : 'it is not open on this page')}`);
-    plan.needs.unshift({ key: 'sharedOrders', label: leaving ? 'These orders have pieces on another sheet of this set' : 'These orders have pieces on another sheet that must join the same set', items: items.map(i => ({ ...i, why: `on ${[i.here].concat(i.there || []).filter(Boolean).join(' and ')}` })),
-      detail: leaving
-        ? `${v.label} cannot leave its set: ${orderWords} ${items.length === 1 ? 'is' : 'are'} also on ${mates.map(m => m.label).join(', ')}, which ${mates.length === 1 ? 'stays' : 'stay'} in it, and sheets that share a multi-piece order are always in the same set. Take ${items.length === 1 ? 'the order' : 'these orders'} off one of the sheets (hold or cancel ${items.length === 1 ? 'it' : 'them'}) to move it.`
-        : `${v.label} cannot join ${target} on its own: ${orderWords} ${items.length === 1 ? 'is' : 'are'} also on ${mates.map(m => m.label).join(', ')}, and sheets that share a multi-piece order go into the same set. ${v.sheet.metal === 'rose' ? `A Rose Gold sheet joins by its own Cut Sheet press, which brings the sheets it shares ${items.length === 1 ? 'an order' : 'orders'} with once they are ready` : why.length ? 'Settle ' + why.join('; ') : `${names.join(', ')} go in together once the other reasons are settled`}, or take ${items.length === 1 ? 'the order' : 'these orders'} off one of the sheets.` });
+    plan.needs.unshift({ key: 'sharedOrders', label: 'Orders shared with another sheet', items: items.map(i => ({ ...i, why: `on ${[i.here].concat(i.there || []).filter(Boolean).join(' and ')}` })),
+      // (one short sentence: the shared-orders window shows the orders and sheets; when a sheet cannot come, its own reason)
+      detail: leaving ? 'Sheets that share an order stay in one set.' : why.length ? `${why[0]}${why.length > 1 ? ` (and ${why.length - 1} more)` : ''}.` : 'Sheets that share an order go into one set.' });
     return finish(plan);
   }
 

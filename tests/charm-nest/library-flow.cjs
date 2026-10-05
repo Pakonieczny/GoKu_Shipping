@@ -203,7 +203,7 @@ const S = 'Charm_Nest_Sheets', SET = 'Charm_Nest_Sets', RUN = 'Charm_Nest_Runs',
     assert(p.auto.some(a => a.key === 'membership' && /Set 3/.test(a.label)) && p.auto.some(a => /QR label made for Set 3/.test(a.label)));
     assert.equal(joins.length, 0, 'a plan joins nothing'); r = await LF.commit(p, { by: 'Paul' }); assert.equal(r.ok, true, JSON.stringify(r)); assert.deepEqual(joins, [{ id: 'live1', setId: 'set-3', newSet: false, split: null }]);
     p = await LF.plan({ kind: 'sheet', id: 'solo', to: { set: 'set-2' } }); assert.equal(p.ok, false); assert(p.needs.some(x => x.key === 'setCommitted'), JSON.stringify(p.needs));
-    p = await LF.plan({ kind: 'sheet', id: 'solo', to: { set: 'set-1' } }); assert.equal(p.ok, false); assert(p.needs.some(x => x.key === 'fixedSet'), JSON.stringify(p.needs));
+    p = await LF.plan({ kind: 'sheet', id: 'solo', to: { set: 'set-1' } }); assert.equal(p.ok, false); assert(p.needs.some(x => x.key === 'fixedSet'), JSON.stringify(p.needs)); { const fx = p.needs.find(x => x.key === 'fixedSet'); assert(fx.label.split(' ').length <= 7 && /finished/.test(fx.label + ' ' + fx.detail) && !/next save|open run builds/.test(fx.detail) && fx.detail.split(/[.!?]\s/).length === 1, 'plain words, one short sentence: ' + fx.label + ' / ' + fx.detail); }
     p = await LF.plan({ kind: 'sheet', id: 'opn-1', to: { set: 'set-1' } }); assert.equal(p.ok, false); p = await LF.plan({ kind: 'sheet', id: 'live1', to: { newSet: true } }); assert(p.needs.some(x => x.key === 'openSetExists') || p.needs.some(x => x.key === 'notOpenSet') || p.noop || !p.ok);
     p = await LF.plan({ kind: 'set', id: 'set-1', to: { set: 'set-3' } }); assert(p.needs.some(x => x.key === 'wholeSet'));
     p = await LF.plan({ kind: 'sheet', id: 'solo', to: { set: 'set-1' } }); assert.equal(p.noop, undefined);
@@ -263,8 +263,8 @@ const S = 'Charm_Nest_Sheets', SET = 'Charm_Nest_Sets', RUN = 'Charm_Nest_Runs',
 
     // ── I. a sheet out of a committed or finished set: the exact reason, and the way through ──
     p = await LF.plan({ kind: 'sheet', id: 'cmt-2', to: { set: 'set-3' } }); assert.equal(p.ok, false);
-    const lc = p.needs.find(x => x.key === 'leaveCommitted'); assert(lc && /Set 4, which was committed to the Design Station/.test(lc.label) && /Undo set/.test(lc.detail) && /undo that commit/.test(lc.detail), JSON.stringify(p.needs)); assert.deepEqual(p.confirm, []);
-    r = await LF.commit(p, { by: 'Paul', confirmed: ['leaveSet', 'roseSet'] }); assert.equal(r.ok, false, 'no yes key lifts a block'); assert(/committed to the Design Station/.test(r.error));
+    const lc = p.needs.find(x => x.key === 'leaveCommitted'); assert(lc && /Set 4 is committed to the station/.test(lc.label) && lc.label.split(' ').length <= 7 && /Undo set/.test(lc.detail) && /undo that commit/.test(lc.detail), JSON.stringify(p.needs)); assert.deepEqual(p.confirm, []);
+    r = await LF.commit(p, { by: 'Paul', confirmed: ['leaveSet', 'roseSet'] }); assert.equal(r.ok, false, 'no yes key lifts a block'); assert(/committed to the station/.test(r.error) && /Undo set/.test(r.error));
     p = await LF.plan({ kind: 'sheet', id: 'cmt-1', to: { set: 'set-3' } }); assert(p.needs.some(x => x.key === 'leaveCommitted'), 'a sheet of a committed set of a finished run: the same plain reason');
     p = await LF.plan({ kind: 'sheet', id: 'rg-cut', to: { set: 'set-3' } }); assert(p.needs.some(x => x.key === 'sheetCut' && /permanent/.test(x.detail) && /stays in the set it was cut in/.test(x.detail)), JSON.stringify(p.needs));
     st.put(S, 'solo', { laserDoneAt: now - 100 }); p = await LF.plan({ kind: 'sheet', id: 'solo', to: { set: 'set-3' } }); assert(p.needs.some(x => x.key === 'sheetCompleted' && /cut record/.test(x.detail)), JSON.stringify(p.needs)); st.doc(S, 'solo').laserDoneAt = undefined;
