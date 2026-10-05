@@ -41,7 +41,9 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   assert.equal(N2.src.att.avgShiftHours.est, true, 'an estimated figure says so'); assert(/time clock/.test(N2.attNote), 'the honest sentence about days off is kept');
   const L = j(E.pickLive({ at: 5, signedIn: [{ name: 'Ana M.', stationKey: 'welding', since: 1, lastSeenAt: 2 }], stations: [{ key: 'welding', label: 'Welding', current: [{ person: 'Ana M.', rid: '35210001', station: 'welding' }, { person: 'Someone Else', rid: '9' }] }] }, 'Ana M.'));
   assert.equal(L.where.stationKey, 'welding'); assert.deepEqual(L.current.map(c => c.rid), ['35210001'], 'only this person\'s order is in the card'); assert.equal(L.current[0].stationLabel, 'Welding');
-  console.log('  ✓ periods are rolling windows, a missing figure stays a dash, the answer\'s shapes are read, the live card picks this person only');
+  const snapA = { at: 5, signedIn: [{ name: 'Ana M.', stationKey: 'welding', since: 1, lastSeenAt: 2 }], stations: [{ key: 'welding', label: 'Welding', current: [{ person: 'Ana M.', rid: '35210001', station: 'welding' }] }] };
+  assert.equal(j(E.pickLive(snapA, 'Ana Maria')).where, null, 'another spelling alone is not recognised'); assert.equal(j(E.pickLive(snapA, 'Ana Maria', ['Ana Maria', 'Ana M.'])).where.stationKey, 'welding', 'a spelling the server lists (E4 spellings) finds the person on the live board');
+  console.log('  ✓ periods are rolling windows, a missing figure stays a dash, the answer\'s shapes are read, the live card picks this person only (under any spelling the server lists)');
 }
 
 (async () => {

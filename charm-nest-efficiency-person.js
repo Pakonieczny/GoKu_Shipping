@@ -419,12 +419,12 @@
     return { orders, next: r.next == null || r.next === "" ? "" : String(r.next), total: num(r.total) };
   }
   /** The console's `live` snapshot, reduced to this person: where they are, since when, and the order or orders in their hands. */
-  function pickLive(r, name) {
-    const me = slug(name), out = { at: num(r && r.at), where: null, current: [], stationKey: "" };
+  function pickLive(r, name, also) {
+    const mine = new Set([slug(name)].concat(A(also).filter(Boolean).map(slug))), isMe = n => mine.has(slug(n)), out = { at: num(r && r.at), where: null, current: [], stationKey: "" };
     if (!r) return out;
-    const sig = A(r.signedIn).find(s => s && slug(s.name) === me);
+    const sig = A(r.signedIn).find(s => s && isMe(s.name));
     if (sig) { out.where = { name: String(sig.name), stationKey: String(sig.stationKey || ""), since: num(sig.since), lastSeenAt: num(sig.lastSeenAt) }; out.stationKey = out.where.stationKey; }
-    const seen = new Set(), add = (c, st) => { if (!c || slug(c.person) !== me) return; const id = String(c.rid || c.orderNumber || ""); if (seen.has(id)) return; seen.add(id); out.current.push(Object.assign({}, c, { stationKey: c.station || (st && st.key) || "", stationLabel: c.stationLabel || (st && st.label) || stName(c.station || (st && st.key)) })); };
+    const seen = new Set(), add = (c, st) => { if (!c || !isMe(c.person)) return; const id = String(c.rid || c.orderNumber || ""); if (seen.has(id)) return; seen.add(id); out.current.push(Object.assign({}, c, { stationKey: c.station || (st && st.key) || "", stationLabel: c.stationLabel || (st && st.label) || stName(c.station || (st && st.key)) })); };
     for (const c of A(r.current)) add(c, null); for (const st of A(r.stations)) for (const c of A(st && st.current)) add(c, st);
     if (!out.stationKey && out.current[0]) out.stationKey = out.current[0].stationKey;
     return out;
@@ -984,7 +984,7 @@
         if (!S.M) { setText(E.waitT, `${S.err} Trying again.`); E.wait.querySelector(".spin").style.visibility = "hidden"; } else E.body.classList.remove("dim");
       } finally { if (gen === S.gen) { S.busy = false; paintBusy(""); paintLive(); if (!S.locked) schedule("range", S.fails ? backoff(S.fails) : period().to >= today() ? options.rangeMs : options.rangeMs * 4); } }
     }
-    function applyLive(snap) { S.live = pickLive(snap, S.name); S.liveAt = Date.now(); S.liveFails = 0; renderLive(); renderHead(); paintLive(); }
+    function applyLive(snap) { S.live = pickLive(snap, S.name, S.M && S.M.spellings); S.liveAt = Date.now(); S.liveFails = 0; renderLive(); renderHead(); paintLive(); }
     async function pollLive() {
       clearTimeout(T.live); T.live = 0; if (unsubLive || !visible() || S.liveBusy) return; S.liveBusy = true;
       try { const r = await call({ op: "live" }); if (S.dead) return; applyLive(r); }
