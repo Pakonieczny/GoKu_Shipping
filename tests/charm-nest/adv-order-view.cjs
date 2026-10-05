@@ -110,10 +110,10 @@ async function main() {
     await page.keyboard.press('Escape'); await closed();
 
     // 4 · a cancelled order whose line is still in the pull as gone (the Cancelled tab opens it by number): the view
-    //     offers no Skip switch, and the switch never turns the line back into a pulled one
+    //     has no Skip switch at all (it is gone from every order window), and the line stays gone
     await page.evaluate(rid => { OrderWin.openOrder(rid, {}); }, G.rid);
     await page.waitForFunction(rid => document.getElementById('owLoading').hidden && document.getElementById('owTitle').textContent === 'Order ' + rid && !/Reading the order/.test(document.getElementById('owNotes').textContent), G.rid, { timeout: 15000 });
-    s = await page.evaluate(key => { const skip = !document.getElementById('owSkipBox').hidden; document.getElementById('owSkip').click(); document.getElementById('owSkip').click(); return { skip, sub: document.getElementById('owSub').textContent, said: document.getElementById('owNotes').textContent, state: Orders.rows().find(r => r.key === key).state }; }, `${G.rid}_${G.tid}`);
+    s = await page.evaluate(key => { const skip = !!document.getElementById('owSkip') || !!document.getElementById('owSkipBox'); return { skip, sub: document.getElementById('owSub').textContent, said: document.getElementById('owNotes').textContent, state: Orders.rows().find(r => r.key === key).state }; }, `${G.rid}_${G.tid}`);
     check(/Gone Buyer/.test(s.sub) && !/never pulled/.test(s.said), `gone line: the pull's line is shown, not "never pulled" (${JSON.stringify(s)})`);
     check(!s.skip && s.state === 'gone', `gone line: no Skip switch, and it stays gone (${JSON.stringify(s)})`);
     await page.keyboard.press('Escape'); await closed();

@@ -3,7 +3,7 @@
 // line by Next, it is what that line shows (it showed the old note, and the next edit there put the old words back); a
 // note typed while an order outside the pull is still being read is kept and saved, and the Customer tab points at the
 // order on screen from the first frame (it kept the order shown before, so a message typed meanwhile went to that
-// buyer); Previous and Next stay once the line leaves the list it was opened from (a skip undone in On hold).
+// buyer); Previous and Next stay once the line leaves the list it was opened from (a hold released in On hold).
 // Headless Chromium against the fake site (bridge-server.cjs); every request that is not to the loopback is aborted and
 // the inbox link (etsyMailOrderLink) is answered here: no message leaves the test.
 //   node tests/charm-nest/adv-orderwin.cjs   (PW_DIR=<playwright node_modules>, CHROMIUM=<chrome>)
@@ -143,15 +143,17 @@ async function main() {
     await page.click('#owClose');
     await page.waitForFunction(() => !document.getElementById('orderWin').open, null, { timeout: 3000 });
 
-    // 3 · On hold: a skipped line opened there, its skip undone, leaves that list; Previous and Next stay
+    // 3 · On hold: a line skipped before (the order window has no Skip switch any more: the stored skip stays as it was) opened there,
+    //     then released from On hold (Release hold: Review.repool), leaves that list; Previous and Next stay
     await page.evaluate(k => { const r = B.orders.byKey.get(k); r.state = 'skipped'; r.hold = r.reason = 'piece skipped by Test Operator'; }, b1);
     await page.evaluate(k => { const r = B.orders.byKey.get(k); r.state = 'skipped'; r.hold = r.reason = 'piece skipped by Test Operator'; }, a1);
     await page.evaluate(() => { Orders.view().pile = 'hold'; Orders.render(); });
     assert.deepEqual((await page.evaluate(() => Orders.visibleRows().map(r => r.key))).sort(), [a1, b1].sort(), 'On hold lists the two skipped lines');
     const first = await page.evaluate(() => Orders.visibleRows()[0].key);
     await page.evaluate(k => OrderWin.open(k), first);
-    await page.waitForFunction(k => OrderWin.key() === k && !document.getElementById('owSkipBox').hidden, first);
-    await page.click('#owSkip');
+    await page.waitForFunction(k => OrderWin.key() === k, first);
+    assert(await page.evaluate(k => !document.getElementById('owSkip') && B.orders.byKey.get(k).state === 'skipped', first), 'the window offers no Skip switch, and opening it leaves the stored skip alone');
+    await page.evaluate(k => Review.repool(B.orders.byKey.get(k)), first);
     await page.waitForFunction(k => B.orders.byKey.get(k).state !== 'skipped', first);
     const nav = await page.evaluate(() => ({ next: !document.getElementById('owNext').hidden, dis: document.getElementById('owNext').disabled, list: Orders.visibleRows().map(r => r.key) }));
     assert(nav.next && !nav.dis, 'Next stays once the line has left the On hold list: ' + JSON.stringify(nav));

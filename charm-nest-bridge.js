@@ -9180,7 +9180,7 @@ const Review = window.Review = (() => {
         }
         if (done !== false || now - a.at > 600000) answers.delete(k);
       }
-      // a line skipped from its order window (no card) is recorded when the sync first sees it skipped
+      // a line skipped without a card is recorded when the sync first sees it skipped (the order window no longer has a Skip switch: a line skipped there before keeps its stored state)
       if (full) {
         const live = new Set();
         for (const r of Orders.rows()) {
@@ -10864,7 +10864,6 @@ const OrderWin = window.OrderWin = (() => {
     const pane = W.dlg.querySelector("#owPaneTeam") || W.dlg.querySelector(".owChat");
     pane.addEventListener("dragover", e => { e.preventDefault(); });
     pane.addEventListener("drop", e => { e.preventDefault(); addFiles([...(e.dataTransfer.files || [])].filter(f => f.type.startsWith("image/"))); });
-    byId("owSkip").onclick = e => { e.preventDefault(); toggleSkip(); };
     byId("owPrev").onclick = () => step(-1);
     byId("owNext").onclick = () => step(1);
     // the views: a tab, the arrow keys on the tab row, the header's rail (its steps are on the Timeline)
@@ -11092,19 +11091,33 @@ const OrderWin = window.OrderWin = (() => {
     t.scrollTop = stick ? t.scrollHeight : at;
     if (stick) t.querySelectorAll("img").forEach(img => { if (!img.complete) img.addEventListener("load", () => { t.scrollTop = t.scrollHeight; }, { once: true }); });
   }
+  /** The live line at the right end of the tab row ("Updated live · last change Mon 12:44 PM · Paul"), where the Skip switch
+   *  used to stand: right-aligned, and when the row is short it breaks only between its parts (each part is kept whole),
+   *  never in the middle of a time or a name. Its text reads as ever; it is redrawn only when it reads differently. */
+  function paintLive(live, e) {
+    const when = e ? shopWhen(e.at) : "", by = e && e.by ? String(e.by) : "", key = e ? when + "␟" + by : "";
+    if (live._key === key) return;
+    live._key = key; live.textContent = "";
+    if (!e) return;
+    const parts = ["Updated live ·", "last change", when + (by ? " ·" : "")]; if (by) parts.push(by);
+    parts.forEach((t, i) => {
+      if (i) live.appendChild(document.createTextNode(" "));
+      const s = document.createElement("span");
+      // ("Updated" steps aside on a phone, where the row has little room: "Live · last change …"; the text itself is unchanged)
+      if (i === 0) { const lead = document.createElement("span"); lead.className = "lead"; lead.textContent = "Updated "; s.appendChild(lead); s.appendChild(document.createTextNode("live ·")); }
+      else s.textContent = t;
+      live.appendChild(s);
+    });
+  }
   /** The Team tab's dot: something new from another station while the Customer tab is in front. */
   function paintTeamDot() {
     const dot = byId("owTabTeam")?.querySelector(".owDot"); if (!dot) return;
     dot.hidden = !(W.rid && byId("owPaneTeam")?.hidden && TeamMail.isNew(W.rid, TeamMail.thread(W.rid).list));
   }
-  function toggleSkip() {
-    const r = inPull(W.key); if (!r || r.state === "gone") return;
-    const who = me() || askEmployee(); if (!who) return;
-    const on = r.state !== "skipped";
-    if (on) { r.state = "skipped"; r.reason = "piece skipped by " + who; r.problems = []; r.hold = r.reason; }
-    else { r.state = "pulled"; r.reason = null; r.hold = null; Orders.interpretAll(); }
-    Review.syncOrderItems(); Orders.render(); RunCtl.poke(); paint();
-  }
+  /* (There is no "Skip this Order" switch in this window any more, Paul 5 Oct: nothing here sets a line's skip. A line that
+     was skipped before keeps its stored state ("skipped", with its hold); the placement code reads it in Pool.addAll, which
+     only places lines that are pulled, held without a hold, unmatched, oversize or waiting, so it stays off every sheet
+     until someone releases it from On hold.) */
   const when = t => new Date(t).toLocaleString(undefined, { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" });
   /** The header: the order's number (lit when it was searched for), who bought it, how many pieces and when it ships.
    *  (It said "Order 1 of 3", then "line 1 of 3": the first of the order's 3 lines was on screen, never 1 of 3 orders.
@@ -11124,7 +11137,7 @@ const OrderWin = window.OrderWin = (() => {
     else sub.textContent = [buyer, qty ? qty + (qty === 1 ? " piece" : " pieces") : "", ship].filter(Boolean).join(" · ");
     // Previous and Next walk the Orders list the person is looking at, and only then
     const list = W.walk ? siblings() : [];
-    // a line that has just left the list it was walked in (its skip undone under On hold, a fix that filtered it out)
+    // a line that has just left the list it was walked in (its hold released under On hold, a fix that filtered it out)
     // keeps Previous and Next, from where it was (they used to vanish, and the walk ended there)
     const i = list.findIndex(x => x.key === r.key);
     if (i >= 0) { W.at = i; W.listed = r.key; }
@@ -11132,8 +11145,6 @@ const OrderWin = window.OrderWin = (() => {
     const pos = byId("owPos"); if (pos) pos.textContent = on && i >= 0 ? (i + 1) + " of " + list.length : "";
     const pv = byId("owPrev"), nx = byId("owNext");
     pv.hidden = nx.hidden = !on; pv.disabled = i >= 0 ? i <= 0 : W.at <= 0; nx.disabled = i >= 0 ? i >= list.length - 1 : W.at >= list.length;
-    // the Skip switch is the cutting flow's: a line of the pull
-    byId("owSkipBox").hidden = !inPull(r.key) || r.state === "gone";
   }
   /** The back engraving of the piece shown, under its pictures: the one card the Sheet tab draws (OrderEngraving, charm-nest-order-engraving.js),
    *  here for the line the Overview holds. Each piece of an order has its own back, its own job and its own approval, so the card is
@@ -11220,7 +11231,6 @@ const OrderWin = window.OrderWin = (() => {
     // from this UI and all detailed order modals"): the Back engraving card under the pictures says what the engraving waits
     // for and has its own way into Engraving. (#owFix stays in the page, empty: nothing draws in it.)
     paintSend(r);
-    const sw = byId("owSkip"); sw.setAttribute("aria-checked", r.state === "skipped" ? "true" : "false");
     paintNow(r);
     paintWho();
     if (W.view === "sheet" && SV.rid && SV.rid !== rid) sheetShow();
@@ -11755,7 +11765,7 @@ const OrderWin = window.OrderWin = (() => {
     const noSh = byId("owPlateWrap") && byId("owPlateWrap").querySelector(".owPlateNone[data-none]"); if (noSh) { const h = noSheetHtml(r); if (noSh._h !== h) { noSh._h = h; noSh.innerHTML = h; } }
     pill.hidden = !n.pill; pill.textContent = n.pill || ""; pill.className = "owNow" + (n.tone ? " " + n.tone : "");
     const count = byId("owTlCount"); if (count) count.textContent = W.events && W.evFor === String(r.order.receiptId) && W.events.length ? String(W.events.length) : "";
-    const live = byId("owLive"); if (live) { const e = W.events && W.events.length ? W.events[W.events.length - 1] : null; live.textContent = e ? "Updated live · last change " + shopWhen(e.at) + (e.by ? " · " + e.by : "") : ""; }
+    const live = byId("owLive"); if (live) paintLive(live, W.events && W.events.length ? W.events[W.events.length - 1] : null);
     paintPieceSum();
     paintSheetTab(r); sheetSettle(r);
     const card = byId("owNowCard"); if (!card) return;
