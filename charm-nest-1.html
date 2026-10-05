@@ -799,6 +799,9 @@ dialog.phv.layer.phvIn{background:transparent}
 .owShChip.off i{background:transparent;box-shadow:inset 0 0 0 1.5px var(--ink25)}
 .owShChip.off b{color:var(--ink45);font-weight:500}
 .owShChip:focus-visible{outline:2px solid var(--slate);outline-offset:2px}
+.owShItem{position:relative;min-width:0}
+.owShItem>.owShChip{width:100%;padding-right:44px}
+.owShItem>.sealRow{position:absolute;right:10px;top:50%;margin:calc(var(--seal-fit,22px) * -.5) 0 0;max-width:40px}
 .owShMore{font:10.5px var(--sans);color:var(--ink45);padding-left:4px}
 .owNowCard .btn.off,.owNowCard .btn.off:hover{opacity:.45;cursor:default;background:transparent}
 .owTabsV>[role=tab].off,.owTabsV>[role=tab].off:hover{color:var(--ink25);cursor:default;transition:none}   /* (greyed the moment the order's records land, which can be while the window opens: only transform, opacity and clip-path move then) */
@@ -2952,7 +2955,7 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-pdf.js?v=20260924-followup"></script>
 <script src="charm-nest-dxf.js?v=20260927-custom"></script>
 <script src="charm-nest-motion.js?v=20261005-zg-seal-small-rt1-sealpc1-sealcmp1"></script>
-<script src="charm-nest-timeline-ui.js?v=20261005-pieces-psb1-hand2-print1-q1next1"></script>
+<script src="charm-nest-timeline-ui.js?v=20261005-pieces-psb1-hand2-print1-sealpc2-q1next1"></script>
 <script src="charm-nest-geom.js?v=20260921-material"></script>
 <script src="charm-nest-engrave-fit.js"></script>
 <script src="charm-nest-assets.js"></script>
@@ -6746,7 +6749,7 @@ boot();
      Design Station's sign-in), the same name every seal it stamps carries. -->
 <script src="station-session.js?v=20261002-ea1"></script>
 <script src="station-activity.js?v=20261003-reset-clean"></script>
-<script src="charm-nest-bridge.js?v=20261005-lis2-cardinal4-zoom-psb1-egl1-osc1-r3f-setgate1-hand1-sameset1-rl1-nowait1-opt1-rt1-pcr1-one1-st1-five1-pd1-zp1-rel2-cx1-hold2-sl2-sealsh1"></script>
+<script src="charm-nest-bridge.js?v=20261005-lis2-cardinal4-zoom-psb1-egl1-osc1-r3f-setgate1-hand1-sameset1-rl1-nowait1-opt1-rt1-pcr1-one1-st1-five1-pd1-zp1-rel2-cx1-hold2-sl2-sealsh1-sealpc2"></script>
 <script src="charm-nest-review-live.js?v=20261005-rl1"></script>
 <script src="charm-nest-hold-ui.js?v=20261005-hold2"></script>
 <script>
@@ -6798,11 +6801,14 @@ try {
 <script src="charm-nest-piece-dots.js?v=20261005-pd1"></script>
 <script src="charm-nest-library-issues.js?v=20261005-lis6-nowait1-noset1-one1-five1-pd1"></script>
 <script src="charm-nest-rail-tip.js?v=20261005-rt2"></script>
+<script src="charm-nest-piece-seals.js?v=20261005-pg1"></script>
 <script src="charm-nest-cancel-ui.js?v=20261005-cx1"></script>
 <script src="charm-nest-shared-orders-modal.js?v=20261005-so5"></script>
 <script src="charm-nest-search.js?v=20260929-m5-osc1-sealsh1"></script>
 <script src="charm-nest-signins.js?v=20260929-m5"></script>
-<script src="charm-nest-efficiency.js?v=20261005-ef6"></script>
+<script src="charm-nest-efficiency-charts.js?v=20261005-efc1"></script>
+<script src="charm-nest-efficiency-stations.js?v=20261005-es1"></script>
+<script src="charm-nest-efficiency.js?v=20261005-ef7-es1"></script>
 <script src="charm-nest-efficiency-orders.js?v=20261005-eo1"></script>
 <!-- ══ one order line: what it is, what the customer said, what the shop said, and how to settle it ══ -->
 <dialog id="orderWin" class="owin owFull" aria-labelledby="owTitle" data-no-grow>

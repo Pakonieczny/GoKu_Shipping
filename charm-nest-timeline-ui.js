@@ -540,6 +540,27 @@
     const v = [...last.values()];
     return v.length && v.every(Boolean) ? v.reduce((a, b) => (+b.at >= +a.at ? b : a)) : null;
   }
+  /** Every press that completes a piece by hand and still stands (no Reopen of its line after it): the pieces' own completions. A Set of the
+   *  very events given. While another piece of the order is not done, none of them is the ORDER's event (handDoneOf). */
+  function handLive(events) {
+    const by = new Map();
+    for (const e of events || []) { const k = handStepOf(e); if (!k) continue; const l = e.lineKey || ""; if (k === "complete") { if (!by.has(l)) by.set(l, []); by.get(l).push(e); } else by.delete(l); }
+    return new Set([...by.values()].flat());
+  }
+  /** The event that COMPLETED the order by hand (what the "Where it is now" card says and stamps; Paul, 5 Oct: the line said 12:41 PM and the seal
+   *  10:57 AM): null unless handOf says every piece pressed stands completed; else the latest of the presses that completed each piece (the first press
+   *  after its last Reopen: a QR label printed again later is a reprint, never the completion, as the record's completedAt keeps it). One event: the card's
+   *  line takes its time and person, its seal (handSealOf) the same. */
+  function handDoneOf(events) {
+    if (!handOf(events)) return null;
+    const first = new Map();
+    for (const e of events || []) { const k = handStepOf(e); if (!k) continue; const l = e.lineKey || ""; if (k === "complete") { if (!first.has(l)) first.set(l, e); } else first.delete(l); }
+    const v = [...first.values()];
+    return v.length ? v.reduce((a, b) => (+b.at >= +a.at ? b : a)) : null;
+  }
+  /** The order's ORDER COMPLETE seal for the press that completed it (handDoneOf): a Complete Order press is its own seal as it is; a QR label that
+   *  completed the order is the order's completion at that same moment, by that same person (the label's own QR seal stays on its piece and the Timeline). */
+  const handSealOf = h => (h && h.type === "sealPrinted" ? Object.assign({}, h, { type: "sealCompleted", print: null, lane: "office", milestone: true, data: Object.assign({}, h.data, { how: "order" }) }) : h || null);
 
   const pt = (r, a) => [60 + r * Math.cos(a * Math.PI / 180), 60 + r * Math.sin(a * Math.PI / 180)];
   const arc = (r, a0, a1, sw) => { const [x0, y0] = pt(r, a0), [x1, y1] = pt(r, a1), span = sw ? (a1 - a0 + 360) % 360 : (a0 - a1 + 360) % 360; return `M${x0.toFixed(2)} ${y0.toFixed(2)}A${r} ${r} 0 ${span > 180 ? 1 : 0} ${sw} ${x1.toFixed(2)} ${y1.toFixed(2)}`; };
@@ -559,6 +580,8 @@
   const timeOf = t => TIME(new Date(+t || Date.now()));
   const longWhen = t => LONG(new Date(+t)) + " · " + timeOf(t);
   const shortWhen = t => `${SHORT_DAY(new Date(+t)).toUpperCase()} ${timeOf(t)}`;
+  /** "Mon 12:41 PM" in the shop's zone, the one every seal says its time in (a line beside a seal never reads another zone: Paul, 5 Oct 2026). */
+  const whenOf = t => `${SHORT_DAY(new Date(+t))} ${timeOf(t)}`;
   function ago(t) {
     const s = (Date.now() - t) / 1000; if (!(t > 0)) return ""; if (s < 45) return "just now";
     const m = s / 60; if (m < 60) return Math.round(m) + " min ago";
@@ -2190,7 +2213,8 @@
   }
 
   /* ════ the order view's "Where it is now" card (spec §3, §8) ════
-     nowStamps(events, { ev, cancelled }) → { seal, recent } HTML: the latest step's seal at the shared 84px size, including cancelled orders; all compact groups
+     nowStamps(events, { ev, cancelled, hand }) → { seal, recent } HTML: the latest step's seal at the shared 84px size, including cancelled orders (hand: handDoneOf, the press
+     that completed the order: its ORDER COMPLETE seal, the same event as the card's line); all compact groups
      fit the same seal uniformly, and every full face grows to 168px on hover.
      wireNow(card, onOpen) once that HTML is in the page: a stamp click → onOpen({ id }); historical rendering is silent. */
   function nowStamps(events, o) {
@@ -2198,8 +2222,12 @@
     const evs = (events || []).map(norm).filter(Boolean).sort(byAt), c = o.cancelled;
     // the seal of the milestone it is at now — never a "read" or a "?" (Paul, 28 Sep) — and, when something is holding
     // it up, that in plain words in place of the old row of stamps
-    const seals = sealsOf(evs), asked = o.ev && norm(o.ev);
-    const last = (asked && sealed(asked) ? asked : seals[seals.length - 1]) || null;
+    // (the order completed by hand, o.hand = handDoneOf: the card's line and its seal are that one event, the order's ORDER COMPLETE; any other card
+    //  never wears a piece's completion: while another piece is not done, the order is where its slowest piece is, and the pieces' own seals stand on
+    //  their rows, their boxes and the Timeline)
+    const seals = sealsOf(evs), hand = o.hand ? handSealOf(norm(o.hand)) : null, asked = hand || (o.ev && norm(o.ev));
+    const liveKeys = hand ? null : new Set([...handLive(evs)].map(e => e.key)), pool = liveKeys && liveKeys.size ? seals.filter(e => !liveKeys.has(e.key)) : seals;
+    const last = (hand || (asked && sealed(asked) && !(liveKeys && liveKeys.has(asked.key)) ? asked : pool[pool.length - 1])) || null;
     const blocker = c ? null : blockerOf(evs);
     let seal = "";
     if (c) {
@@ -2270,6 +2298,6 @@
   function iconOf(x) { const e = x && norm(x); return e ? iconSvg((LANE[e.lane] || LANE.office).ic) : ""; }
 
   root.OrderTimelineUI = { mount, feed, stampSvg, derive, STAGES, stagesFor, ofPiece, summary, isStud, engraveOf, KIND, labelOf, nowStamps, wireNow, iconOf, sealed, sealsOf, blockerOf, requirementsOf, explainOn,
-    stepOf, labelStepOf, personOf, placeOf, opStepOf, handOf, faceModel };
+    stepOf, labelStepOf, personOf, placeOf, opStepOf, whenOf, timeOf, handStepOf, handOf, handDoneOf, handLive, handSealOf, faceModel };
   root.OrderTimelineUI.pollOpenMs = POLL_OPEN;   // how often the open order view's feed reads (tests may set another before it opens)
 })(typeof window !== "undefined" ? window : globalThis);
