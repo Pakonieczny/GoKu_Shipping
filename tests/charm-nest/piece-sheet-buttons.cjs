@@ -212,7 +212,7 @@ async function main() {
 
     // ── 5 · an order outside the pull (a search), one piece on a sheet and one pooled and not placed yet ──
     await page.evaluate(rid => OrderWin.openOrder(rid, { highlight: true }), OUT.rid);
-    await page.waitForFunction(() => OrderWin.isOpen() && document.getElementById('owLoading').hidden && document.querySelectorAll('#owPcSum .owPcRow[data-piece]').length === 3, null, { timeout: 20000 });
+    await page.waitForFunction(() => OrderWin.isOpen() && document.getElementById('owLoading').hidden && document.querySelectorAll('#owPcSum .owPcRow[data-piece]').length === 2, null, { timeout: 20000 });   // (the order's two pieces, one row each: the chip row's 'All' button, which made it 3, is gone)
     u = await ui();
     assert.equal(u.chips.filter(c => !c.off).map(c => c.text).join(), 'SS Sheet 1'); assert.equal(u.chips.filter(c => c.off).length, 1, 'the pooled piece has its muted chip: ' + JSON.stringify(u.chips));
     const outKeys = await page.evaluate(() => OrderWin._scope().all.map(p => [p.key, p.nested, p.why]));
