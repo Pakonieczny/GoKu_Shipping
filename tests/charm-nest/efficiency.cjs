@@ -61,7 +61,14 @@ const F = require('./efficiency-fixture.cjs');
   const track = page => { const errs = [], logs = []; page.on('pageerror', e => errs.push(e.message)); page.on('console', m => { logs.push(m.text()); /* the browser's own notice for the 401s, 403s, 405s, 429s and 503s this test forces on purpose is not an error of the page */ if (m.type() === 'error' && !(/status of (401|403|405|429|503)/.test(m.text()) && /employeeEfficiency/.test((m.location() && m.location().url) || ''))) errs.push('console: ' + m.text()); }); return { errs, logs }; };
   const openConsole = async page => { await page.click('#moreMenu > summary'); await page.click('#moreMenu .moreList button[data-mode="efficiency"]'); };
   const V = '#efficiencyView';
-  const calls = () => fx.state.calls.filter(c => c.op === 'overview');
+  /** the text of the hover card a figure opens (the light card of the stations board); the scroll lands first, because a scroll closes a card */
+  const card = async (sel, page) => {
+    const loc = page.locator(sel); await loc.scrollIntoViewIfNeeded();
+    await page.mouse.move(2, 2); await page.evaluate(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))));
+    await loc.hover(); await page.waitForSelector('.esTip[data-on]', { timeout: 5000 });
+    const t = await page.locator('.esTip[data-on]').innerText(); await page.mouse.move(2, 2); return t;
+  };
+  const calls =() => fx.state.calls.filter(c => c.op === 'overview');
   try {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, reducedMotion: 'reduce' });
     await wire(ctx);
@@ -134,7 +141,9 @@ const F = require('./efficiency-fixture.cjs');
     assert.equal(await page.locator(`${V} .efP:nth-child(1) .efChip.now`).count(), 1, 'where they are now');
     const fig = await page.$$eval(`${V} .efP:nth-child(1) .efN b`, bs => bs.map(b => b.textContent.replace(/[^\d.a-z ]/gi, '').trim()));
     assert.deepEqual(fig.slice(0, 3), ['223', '195', '37'], 'parts, pieces scanned, orders: ' + fig.join('|'));
-    assert.equal(await page.locator(`${V} .efP:nth-child(1) [data-r="scans"]`).getAttribute('title'), '195 pieces scanned in 186 scans', 'the scan actions are one hover away');
+    const scanCard = await card(`${V} .efP:nth-child(1) [data-r="scans"]`, page);
+    assert(/195 pieces scanned in 186 scans/.test(scanCard), 'the scan actions are one hover away (the hover card says them): ' + scanCard);
+    assert(/Pieces scanned\. A scan is not a finished piece\./.test(scanCard), 'and defines the figure in one line');
     assert(await page.locator(`${V} .efP:nth-child(1) .efSpark`).count() === 1 && await page.locator(`${V} .efP:nth-child(1) .efAct i`).count() === 1, 'a sparkline and the active-vs-idle bar');
     // no figure twice in a card (a collapsed card's visible text; the figures are distinct in the fixture)
     for (const i of [1, 2, 3, 4]) {
@@ -274,8 +283,8 @@ const F = require('./efficiency-fixture.cjs');
     assert(/steps/.test(await page.locator(`${V} .efChart svg`).getAttribute('aria-label')), 'and neither does its label');
     assert.equal(await page.locator(`${V} .efKpi[data-k="parts"]`).isVisible(), false, 'no Parts figure that would read as zero'); assert.equal(await page.locator(`${V} .efKpi[data-k="orders"]`).isVisible(), true);
     assert.equal((await txt(`${V} .efP:nth-child(1) [data-r="parts"]`)).trim(), '—', 'a dash, not a zero'); assert.equal((await txt(`${V} .efP:nth-child(1) [data-r="rate"]`)).trim(), '—');
-    assert.equal(await page.locator(`${V} .efP:nth-child(1) [data-r="scans"]`).getAttribute('title'), '186 scans (pieces were not counted)', 'scans without a piece count say so');
-    assert.equal(await page.locator(`${V} .efP:nth-child(1) .efSp`).getAttribute('title'), 'Order steps by hour');
+    assert(/186 scans \(pieces were not counted\)/.test(await card(`${V} .efP:nth-child(1) [data-r="scans"]`, page)), 'scans without a piece count say so');
+    assert(/Order steps by hour/.test(await card(`${V} .efP:nth-child(1) .efSp`, page)));
     assert.equal((await page.locator(`${V} .efWhen`).allInnerTexts()).some(t => /sealed work/.test(t)), false, 'the note says it once');
     await page.click(`${V} [data-days="7"]`); await page.waitForFunction(() => !document.querySelector('#efficiencyView [data-g="trend"]').classList.contains('hidden'), null, { timeout: 8000 });
     assert.equal(await page.locator(`${V} [data-g="trend"] [data-t="parts"]`).isVisible(), false, 'no parts per day from history that has none'); assert.equal(await page.locator(`${V} [data-g="trend"] [data-t="orders"]`).isVisible(), true);
