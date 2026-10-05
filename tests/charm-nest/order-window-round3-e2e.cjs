@@ -379,8 +379,9 @@ async function main() {
     await page.click('#owPhoto'); await loaded();
     await page.evaluate(() => OrderWin.close());
     await page.waitForFunction(() => !OrderWin.isOpen() && !document.getElementById('orderWin').open, null, { timeout: 8000 }).catch(() => {});
+    const orphanGone = await closedViewer(3000);   // (the window's close event, which the viewer waits for, comes a moment after the window is closed)
     const orphan = await page.evaluate(() => ({ viewers: document.querySelectorAll('dialog.phv[open]').length, win: document.getElementById('orderWin').open, over: PhotoView.isOpen() }));
-    check(orphan.viewers === 0 && !orphan.win && !orphan.over, 'the order window closed by code while the viewer was open: the viewer is closed with it: ' + JSON.stringify(orphan));
+    check(orphanGone && orphan.viewers === 0 && !orphan.win && !orphan.over, 'the order window closed by code while the viewer was open: the viewer is closed with it: ' + JSON.stringify(orphan));
     await open(key(R5, 0)); await picsReady(); await page.click('#owVector'); await loaded(); v = await viewer();
     check(v && v.layer && v.inWin && /Vector design/.test(v.cap), 'the next opening of the window and of the viewer is clean (a layer of the window again)');
     await page.keyboard.press('Escape'); await closedViewer(); await closeWin();
