@@ -11120,7 +11120,7 @@ const OrderWin = window.OrderWin = (() => {
      was skipped before keeps its stored state ("skipped", with its hold); the placement code reads it in Pool.addAll, which
      only places lines that are pulled, held without a hold, unmatched, oversize or waiting, so it stays off every sheet
      until someone releases it from On hold.) */
-  const when =t => new Date(t).toLocaleString(undefined, { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" });
+  const when = t => new Date(t).toLocaleString(undefined, { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" });
   /** The header: the order's number (lit when it was searched for), who bought it, how many pieces and when it ships.
    *  (It said "Order 1 of 3", then "line 1 of 3": the first of the order's 3 lines was on screen, never 1 of 3 orders.
    *  Paul found it confusing: the line under it says "3 pieces", and the piece switcher names the piece shown.) */
