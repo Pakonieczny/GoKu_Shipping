@@ -3420,7 +3420,7 @@ const Gate = window.Gate = (() => {
     // the ones that went back: from the picture to their sheet's tab, then its "+N"
     const byPage = new Map(); for (const [id, p] of back) byPage.set(p, (byPage.get(p) || []).concat(id));
     for (const [p, ids] of byPage) {
-      const tab = [...card.querySelectorAll('[data-r="tabs"] button[data-i]')].find(x => pagesOf(m)[+x.dataset.i] === p), tr = tab && tab.getClientRects().length ? tab.getBoundingClientRect() : null;
+      const tab = typeof sheetTabEl === "function" ? sheetTabEl(card, p) : [...card.querySelectorAll('[data-r="tabs"] button[data-i]')].find(x => pagesOf(m)[+x.dataset.i] === p), tr = tab && tab.getClientRects().length ? tab.getBoundingClientRect() : null;
       const to = tr ? { x: tr.left + tr.width / 2, y: tr.top + tr.height / 2 } : { x: wr.right - 24, y: wr.top + 24 };
       ids.slice(0, 8).forEach((id, j) => {
         const c = cap.pages.flatMap(e => e.charms).find(x => x.id === id); if (!c?.thumb) return;
@@ -3737,7 +3737,7 @@ const Gate = window.Gate = (() => {
         Object.assign(plus.style, { width: "", height: "" }); plus.textContent = "+" + count;
         play(plus, [{ transform: "translate(-50%,-50%) scale(.7)", opacity: 0 }, { transform: "translate(-50%,calc(-50% - 12px)) scale(1)", opacity: 1, offset: .28 }, { transform: "translate(-50%,calc(-50% - 16px)) scale(1)", opacity: 1, offset: .62 }, { transform: "translate(-50%,calc(-50% - 30px)) scale(1)", opacity: 0 }], { duration: 980, easing: "ease-out", fill: "forwards" });
       }
-      const tab = [...card.querySelectorAll('[data-r="tabs"] button[data-i]')].find(x => pagesOf(m)[+x.dataset.i] === cap.target);
+      const tab = typeof sheetTabEl === "function" ? sheetTabEl(card, cap.target) : [...card.querySelectorAll('[data-r="tabs"] button[data-i]')].find(x => pagesOf(m)[+x.dataset.i] === cap.target);
       if (tab && tab.getClientRects().length) play(tab, [{ transform: "scale(1)" }, { transform: "scale(1.14)", offset: .32 }, { transform: "scale(.97)", offset: .62 }, { transform: "scale(1)" }], { duration: 700, easing: "ease-out" });
     }));
     cue(END, () => stop(false));
@@ -4650,7 +4650,7 @@ const Engrave = window.Engrave = (() => {
     refreshAllCards();
     for (const el of document.querySelectorAll("[data-back-sheet]")) {
       const id = el.dataset.backSheet, sh = allSheets().find(p=>p.sheetId === id) || S.library.rows.find(p=>p.id === id);
-      if (sh) el.innerHTML = backsMarkup(sh);
+      if (sh) { el.innerHTML = backsMarkup(sh); window.LibraryEngraving?.sync?.(el); }   // (a Library card's small show/hide follows the shelf's pieces)
     }
     Session.schedule();
   }

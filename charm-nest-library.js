@@ -567,6 +567,7 @@
       b.title=done?'Return the set and its sheets to Laser cutting':'Confirm laser cutting is finished for every remaining sheet';
     }
     if (window.LibraryDnd) window.LibraryDnd.decorate(root);   // the grip (drag, or Move to…) on each card: charm-nest-library-dnd.js
+    if (window.LibraryEngraving) window.LibraryEngraving.decorate(root);   // the small show/hide of each sheet's back-engraving shelf: charm-nest-library-engraving.js
   }
   function act(kind, id, done, btn) {
     if (btn) btn.classList.add('busy');

@@ -285,6 +285,23 @@ async function smallWorld(browser, shot) {
           });
           seen.push({ key, want, got });
           if (!i && rid === P(1)) await shot(page, 'A02-order-window-piece1');
+          if (!want) {
+            // 5 · the same piece opened the ordinary way: its Sheet button, Sheet tab and sheet chip are greyed with a reason, and a click on them goes nowhere
+            await page.evaluate(() => { try { OrderWin.close(); } catch (_) { /* closed */ } }); await page.waitForTimeout(450);
+            await page.evaluate(k => OrderWin.open(k), key);
+            await until(() => page.evaluate(() => OrderWin.isOpen() && !!document.querySelector('#owNowCard [data-go="sheet"]')), 8000, 'order window open (info view)');
+            await page.waitForTimeout(2200);
+            const ctl = await page.evaluate(() => {
+              const q = s => document.querySelector(s), t = q('.owTabsV [data-ow-view="sheet"]'), btn = q('#owNowCard [data-go="sheet"]');
+              const off = e => !!e && e.getAttribute('aria-disabled') === 'true';
+              return { view: OrderWin.view(), btnOff: off(btn), btnWhy: btn ? btn.dataset.why || '' : '', tabOff: off(t), chips: [...document.querySelectorAll('#owNowCard .owShChip')].map(c => ({ t: c.textContent.replace(/\s+/g, ' ').trim(), off: off(c) })) };
+            });
+            await page.click('#owNowCard [data-go="sheet"]', { force: true }).catch(() => {}); await page.waitForTimeout(700);
+            await page.click('.owTabsV [data-ow-view="sheet"]', { force: true }).catch(() => {}); await page.waitForTimeout(700);
+            ctl.afterClicks = await page.evaluate(() => ({ view: OrderWin.view(), sheet: !!(OrderWin._sheet && OrderWin._sheet()) }));
+            seen[seen.length - 1].ctl = ctl;
+            if (!out.info.ctlShot) { out.info.ctlShot = 1; await shot(page, 'A02b-unnested-piece-sheet-controls'); }
+          }
         } catch (e) { seen.push({ key, want, err: e.message }); }
         await page.evaluate(() => { try { OrderWin.close(); } catch (_) { /* closed */ } }); await page.waitForTimeout(350);
       }
@@ -293,8 +310,13 @@ async function smallWorld(browser, shot) {
     hard('an order window opens on every piece of the shared orders (no error, no hang)', seen.every(s => !s.err), seen.filter(s => s.err).map(s => s.key + ': ' + s.err).join(' | '));
     const wrongSheet = seen.filter(s => !s.err && s.want && s.got.sheet && s.got.sheet !== s.want);
     accept('1/5 · each piece\'s Sheet tab shows that piece\'s own sheet (the sheet the pool says)', wrongSheet.length === 0, wrongSheet.map(s => `${s.key}: wants ${s.want}, shows ${s.got.sheet}`).join(' | '));
-    const noSheetShows = seen.filter(s => !s.err && !s.want && s.got.sheet);
-    accept('5 · a piece that is on no sheet (unnested / no SKU) never shows another piece\'s sheet', noSheetShows.length === 0, noSheetShows.map(s => `${s.key}: shows ${s.got.sheet}`).join(' | '));
+    // (a piece on no sheet, opened the ordinary way: every Sheet door greyed with its reason, clicks go nowhere; opened straight onto the Sheet view
+    //  with all pieces in front, the window may draw the sheets of the pieces that have one, and then its piece list says this piece is not on a sheet yet)
+    const noSheet = seen.filter(s => !s.err && !s.want);
+    const notGreyed = noSheet.filter(s => !s.ctl || !(s.ctl.btnOff && s.ctl.tabOff && /not on a sheet yet/i.test(s.ctl.btnWhy) && s.ctl.chips.some(c => /not on a sheet yet/i.test(c.t) && c.off)) || s.ctl.afterClicks.view !== 'info' || s.ctl.afterClicks.sheet);
+    accept('5 · a piece that is on no sheet (unnested / no SKU): its Sheet button, Sheet tab and sheet chip are greyed with "not on a sheet yet", and clicking them goes nowhere', noSheet.length > 0 && notGreyed.length === 0, noSheet.length ? notGreyed.map(s => `${s.key}: ${JSON.stringify(s.ctl)}`).join(' | ') : 'the fixture has no piece on no sheet');
+    const claims = noSheet.filter(s => s.got.sheet && !s.got.pieces.some(t => /not on a sheet yet/i.test(t)));
+    accept('5 · the Sheet view of an order never presents the other piece\'s sheet as this piece\'s: its piece list says "not on a sheet yet" for the piece that is on none', claims.length === 0, claims.map(s => `${s.key}: shows ${s.got.sheet}, list: ${s.got.pieces.join(' / ')}`).join(' | '));
     const lies = seen.filter(s => !s.err && s.want && s.got.pieces.some(t => /not on a sheet yet/i.test(t)) && ORDERS.find(o => s.key.startsWith(o[0]))[2].every(pc => pc[2]));
     accept('1 · a piece list never says "not on a sheet yet" for a piece that is on a sheet', lies.length === 0, lies.map(s => s.key + ': ' + s.got.pieces.join(' / ')).join(' | '));
     const wrote2 = h.since('windows').filter(isWrite);
@@ -341,7 +363,12 @@ async function smallWorld(browser, shot) {
       await page.waitForTimeout(2200);
       return { note, chipState, chipWhy };
     }
-    const closeOverlays = async () => { await page.keyboard.press('Escape').catch(() => {}); await page.evaluate(() => { document.querySelectorAll('dialog[open]').forEach(d => { try { d.close(); } catch (_) { /* gone */ } }); }); await page.waitForTimeout(500); };
+    const closeOverlays = async () => {
+      await page.evaluate(() => { try { if (window.SharedOrdersModal && SharedOrdersModal.isOpen && SharedOrdersModal.isOpen()) SharedOrdersModal.close(); } catch (_) { /* closed */ } });
+      await page.waitForTimeout(900);                                         // (its way out is animated)
+      await page.keyboard.press('Escape').catch(() => {}); await page.waitForTimeout(500);
+      await page.evaluate(() => { document.querySelectorAll('dialog[open]').forEach(d => { try { d.close(); } catch (_) { /* gone */ } }); }); await page.waitForTimeout(500);
+    };
     const modalUp = () => page.evaluate(() => !!(document.querySelector('[data-shared-orders-modal], .sharedOrdersModal, #sharedOrdersModal, dialog.sharedOrders[open], .soModal, [data-so-modal]')) || !!(window.SharedOrdersModal && SharedOrdersModal.isOpen && SharedOrdersModal.isOpen()));
     const hasModule = () => page.evaluate(() => !!window.SharedOrdersModal);
 
@@ -376,6 +403,29 @@ async function smallWorld(browser, shot) {
       const writes2 = h.since('drag2').filter(isWrite).filter(c => !sealCheck(c));
       info('writes after the drag to Set 2', writes2.map(c => c.fn + ':' + c.op + (c.steps ? '[' + c.steps + ']' : '')));
       if (where2.gfA1 === where2.ssA1) hard('a refused drag onto another set writes nothing', writes2.length === 0, writes2.map(c => c.fn + ':' + c.op).join(','));
+      if (m2) {
+        const listed = () => page.evaluate(() => ({ cards: document.querySelectorAll('.soCard').length, tiles: document.querySelectorAll('.soCard .soTile').length, opens: document.querySelectorAll('.soCard [data-open]').length, text: (document.querySelector('.soHead, .soTitle, dialog.soDlg h2, [data-so-title]') || {}).textContent || '' }));
+        await until(async () => (await listed()).cards > 0, 8000, 'the modal lists its orders').catch(() => {});
+        const L1 = await listed();
+        info('shared-orders modal', L1);
+        accept('6 · the modal lists exactly the 4 orders the two sheets share, each with thumbnails and a link to the order', L1.cards === 4 && L1.tiles >= 8 && L1.opens === 4, JSON.stringify(L1));
+        await shot(page, 'A06-shared-orders-modal');
+        const n0 = L1.cards;
+        // an order is opened from it, and the way back brings the modal up again with the same orders
+        await page.evaluate(() => document.querySelector('.soCard [data-open]').click());
+        const opened = await until(() => page.evaluate(() => !!(window.OrderWin && OrderWin.isOpen())), 8000, 'the order opens from the modal').then(() => true, () => false);
+        await page.waitForTimeout(1200);
+        const back = await page.evaluate(() => !!document.getElementById('soBack'));
+        await shot(page, 'A07-order-opened-from-modal');
+        accept('6 · an order opened from the modal shows the order view with a way back to the modal', opened && back, JSON.stringify({ opened, back }));
+        if (back) {
+          await page.evaluate(() => document.getElementById('soBack').click());
+          const again = await until(() => page.evaluate(() => !!(window.SharedOrdersModal && SharedOrdersModal.isOpen && SharedOrdersModal.isOpen())), 8000, 'back to the modal').then(() => true, () => false);
+          await page.waitForTimeout(1000);
+          const L2 = await listed();
+          accept('6 · going back from the order returns to the modal with the remaining shared orders', again && L2.cards === n0, JSON.stringify({ again, before: n0, after: L2.cards }));
+        } else await page.evaluate(() => { try { OrderWin.close(); } catch (_) { /* closed */ } });
+      }
       await closeOverlays();
       await sweep(h, 'A5b drag onto another set');
     }
