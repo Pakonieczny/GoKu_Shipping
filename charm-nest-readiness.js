@@ -429,6 +429,55 @@
     for(const m of live)out.push(...issues(m,{...ctx,kind:'sheet',set:s,sheets:raw,steps:steps.filter(k=>k!=='laser')}));
     return out;
   }
+  /* ── A set advances as ONE (Paul, 5 Oct, round 7: "you cannot have a green approved button on a single sheet that is part of a
+   * set where the other sheets are not ready yet"). ONE truth for the Approve button, its grey reason, the server's refusal and the
+   * set-level wait row: setGate(set, sheets). Pure (no page, no network): `sheets` are the set's records as the caller reads them
+   * (the page: LaserReview's projections; the server: its hydrated records).
+   *
+   * "Ready to be approved" is a sheet's HARD test, the one the button always used for a lone sheet (approveBlock): back engravings
+   * all decided, the layout not being made, the sheet in its set. Everything a press itself does or lists afterwards is soft and
+   * never greys a button: the QR label (made by the press), a hold (lifted by it), an order waiting for another piece, a layout
+   * check or cutting file still to come, a Rose Gold green line (its own yes). The old same-set "waits on its mate" is no part of
+   * a sheet's own test: that wait is the SET's, said once here.
+   *   · a sheet that is completed (cut) or already fully ready has nothing left to approve and never blocks;
+   *   · a held sheet (a person's hold) is joined to its set: the press lifts the hold;
+   *   · a sheet of the set that cannot be found (removed, not loaded) blocks, as laserGroup reads it;
+   *   · a loose sheet or a set of one sheet is its own gate: the same test as the lone button.
+   * → { ready, blockers:[{sheetId, sheetLabel, step:'engraving'|'nesting', stepLabel, why, counter:{done,of}|null, text}], reason, sheets:[{sheetId,
+   *     sheetLabel, state:'past'|'ready'|'open'|'blocked', ...blocker}], toApprove:[sheetId] (not completed), single, setLabel }
+   *   reason: one plain line, the first blocking sheet and what it lacks ("SS Sheet 1 · back engravings 7 of 25, and 2 more"). */
+  const laying=s=>!!(s.dirty || s.saving || ['nesting','finishing','queued','error'].includes(s.status));
+  const joinedNow=s=>!s.draft && s.solidIncluded!==false;   // (a person's hold is no membership problem: Approve lifts it)
+  /** approveBlock(sheet): why a press cannot approve this sheet yet, or null (nothing hard stands in the way; also null for a cut or already ready sheet). */
+  function approveBlock(s){
+    s=s || {};
+    const r=laserSheet(s);
+    if(s.archived || +s.laserDoneAt>0 || r.ready)return null;
+    if(joinedNow(s) && r.waiting)return {step:'engraving',stepLabel:stepName('engraving'),why:`back engravings ${r.approved} of ${r.required}`,counter:{done:r.approved,of:r.required}};
+    if(laying(s))return {step:'nesting',stepLabel:stepName('nesting'),why:'still being laid out',counter:null};
+    if(!joinedNow(s))return {step:'nesting',stepLabel:stepName('nesting'),why:s.draft?'still a draft':'not included in a set yet',counter:null};
+    return null;
+  }
+  function setGate(set,sheets){
+    const st=set || {},idOf=x=>x.id || x.sheetId;
+    const raw=[...new Map((sheets || []).filter(Boolean).map(x=>[idOf(x),x])).values()],live=raw.filter(x=>!x.archived);
+    const expected=[...new Set(Array.isArray(st.sheetIds) && st.sheetIds.length?st.sheetIds:live.map(idOf))];
+    const order=expected.concat(live.map(idOf).filter(i=>!expected.includes(i)));
+    const out=[],blockers=[];
+    for(const i of order){
+      const m=live.find(x=>idOf(x)===i);
+      if(!m){
+        const b={sheetId:i,sheetLabel:'A sheet of this set',step:'nesting',stepLabel:stepName('nesting'),why:'cannot be found',counter:null};
+        b.text=`${b.sheetLabel} · ${b.why}`;blockers.push(b);out.push({...b,state:'blocked',missing:true});continue;
+      }
+      const label=sheetLabel(m),b=approveBlock(m),done=+m.laserDoneAt>0;
+      const row={sheetId:i,sheetLabel:label,state:done?'past':b?'blocked':laserSheet(m).ready?'ready':'open'};
+      if(b){Object.assign(row,b,{text:`${label} · ${b.why}`});blockers.push({sheetId:i,sheetLabel:label,...b,text:row.text});}
+      out.push(row);
+    }
+    const reason=blockers.length?blockers[0].text+(blockers.length>1?`, and ${blockers.length-1} more`:''):'';
+    return {ready:order.length>0 && !blockers.length,blockers,reason,sheets:out,toApprove:out.filter(x=>!x.missing && x.state!=='past').map(x=>x.sheetId),single:order.length<2,setLabel:setName(st)};
+  }
   // the card the page draws: x[k] = {ok,hard,items,detail,short} for the five steps, in the words of a sheet or a set
   function build(kind,id,label,x,ready,done,laserWords,laserShort,laserItems){
     const behind=GATED.filter(k=>!x[k].ok),now=done?'completed':behind[0] || 'laser';
@@ -501,5 +550,5 @@
     }
     return e;
   }
-  return {idsOf,orderIds,decisions,held,isHand,handOf,sheet,set,completedBefore,laserSheet,laserGroup,orderReports,forSheet,pieces,issues,copyIds,orderBlockers,filed,processStamps,seal,counter,explain,lookup:names,STEPS:STEPS.map(([key,label])=>({key,label})),sheetLabel};
+  return {idsOf,orderIds,decisions,held,isHand,handOf,sheet,set,completedBefore,laserSheet,laserGroup,setGate,approveBlock,orderReports,forSheet,pieces,issues,copyIds,orderBlockers,filed,processStamps,seal,counter,explain,lookup:names,STEPS:STEPS.map(([key,label])=>({key,label})),sheetLabel};
 });
