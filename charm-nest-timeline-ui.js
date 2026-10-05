@@ -1061,6 +1061,8 @@
 .tlNowS .why{flex-basis:100%;font:12px/1.4 var(--sans);color:#8a3a26;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .tlLink{border:0;background:none;padding:0;font:600 11px var(--sans);color:var(--gold);text-decoration:underline;text-underline-offset:2px;text-decoration-color:var(--goldLine)}
 .tlLink:hover{text-decoration-color:currentColor}
+.tlOpenSheet[aria-disabled="true"]{opacity:.45;cursor:not-allowed;color:var(--ink45);text-decoration-color:transparent;transform:none;box-shadow:none}
+.tlOpenSheet[aria-disabled="true"]:hover{opacity:.45;background:transparent;text-decoration-color:transparent;transform:none;box-shadow:none}
 .tlRail{position:relative;flex:3 1 520px;min-width:0;max-width:860px;margin-left:auto}
 .tlStops{position:relative;display:grid;grid-template-columns:repeat(var(--n,9),minmax(0,1fr));margin:0;padding:0}
 .tlTrack,.tlFill{position:absolute;top:calc(var(--seal-fit,var(--seal-size,84px)) / 2);height:2px;border-radius:2px;left:calc(100% / (2 * var(--n,9)));right:calc(100% / (2 * var(--n,9)))}
@@ -1645,6 +1647,10 @@
       if (T.textContent !== nt.t) { T.textContent = nt.t; if (!o.first) anim(T, [{ opacity: 0, transform: "translateY(4px)" }, { opacity: 1, transform: "none" }], 320); }
       paintNowSub();
     }
+    /** The host's say on a sheet link (opts.sheetLink(sheetId, poolId) → { piece, off } or nothing): which piece it is about (named in the
+     *  strip when the order has several), and, when that piece is not on that sheet, why: the link is greyed and inert and the host says the reason. */
+    const linkSay = (sheetId, pool) => { try { return typeof opts.sheetLink === "function" ? opts.sheetLink(String(sheetId || ""), pool || null) || null : null; } catch (_) { return null; } };
+    const openBtn = (cls, sheetId, pool, h) => `<button type="button" class="${cls}${h && h.off ? " off" : ""}" data-sheet="${esc(sheetId)}" data-pool="${esc(pool)}"${h && h.off ? ` aria-disabled="true" data-why="${esc(h.off)}" title="${esc(h.off)}"` : ""}>Open sheet</button>`;
     function paintNowSub() {
       const D = S.D; if (!D) return;
       const s = $(".tlNowS");
@@ -1659,8 +1665,9 @@
       const st = W.station || e.station || "", at = +W.at || e.at;
       const who = { station: st, by: W.by || whoOf(e), lane: STATION_LANE[st] || e.lane, source: e.source };
       const next = D.cur >= 0 && !D.hold ? STAGES[D.cur].l : "", pool = W.sheetId ? S.events.filter(x => x.sheetId === W.sheetId).map(poolOf).filter(Boolean).pop() || "" : "";
+      const hl = W.sheetId ? linkSay(W.sheetId, pool) : null;
       put(`${badge(who, true)}<span>${esc(shortWhen(at))} · ${esc(ago(at))}</span>${next ? `<span>next: ${esc(next)}</span>` : ""}` +
-        (W.sheetId ? `<span>on ${esc(W.sheet || W.sheetId)}</span>${opts.onSheet ? `<button type="button" class="tlLink tlOpenSheet" data-sheet="${esc(W.sheetId)}" data-pool="${esc(pool)}">Open sheet</button>` : ""}` : ""));
+        (W.sheetId ? `<span>${hl && hl.piece ? esc(hl.piece) + " " : ""}on ${esc(W.sheet || W.sheetId)}</span>${opts.onSheet ? openBtn("tlLink tlOpenSheet", W.sheetId, pool, hl) : ""}` : ""));
     }
     function paintRail(D, o) {
       const wrap = $(".tlStops"), rail = $(".tlRail"), R = D.rail || STAGES.map((s, i) => ({ s, i }));
@@ -1891,7 +1898,7 @@
         (facts.length ? `<div class="tlMeta">${facts.map(([k, v]) => `<div class="m"><i>${esc(k)}</i><span>${esc(v)}</span></div>`).join("")}</div>` : "") +
         nextHtml(D) +
         `<div class="tlActs"><button type="button" class="btn ghost sm" data-step="-1"${i ? "" : " disabled"}>‹ Earlier</button><button type="button" class="btn ghost sm" data-step="1"${i < evs.length - 1 ? "" : " disabled"}>Later ›</button>` +
-        (e.sheetId && opts.onSheet ? `<button type="button" class="btn sm tlOpenSheet" data-sheet="${esc(e.sheetId)}" data-pool="${esc(poolOf(e))}">Open sheet</button>` : "") + `</div></div>` +
+        (e.sheetId && opts.onSheet ? openBtn("btn sm tlOpenSheet", e.sheetId, poolOf(e), linkSay(e.sheetId, poolOf(e))) : "") + `</div></div>` +
         `<div class="tlAround"><span class="tlLbl">Around this step</span>${around.map(a => `<button type="button" class="tlArw${a.key === e.key ? " cur" : ""}" data-key="${esc(a.key)}"><span class="sv" data-key="${esc(a.key)}" style="transform:rotate(${rotOf(a)}deg)">${stampSvg(a, true, { tex: false })}</span><div><b>${esc(titleOf(a, 60))}</b><span>${esc(shortWhen(a.at))} · ${esc(whoOf(a))}</span></div></button>`).join("")}</div></div>`;
       if (quiet && html === detHtml && det.firstChild && det.firstChild.classList.contains("tlDetIn")) return;
       det.innerHTML = detHtml = html;
@@ -2011,7 +2018,7 @@
         `<div class="tlDetMain"><div class="tlPinH" style="justify-content:flex-start"><span class="tlLbl">${q.n ? `Step ${q.n} of ${q.of}` : "Not a step of this order"}</span><span class="xs ${q.state}${partDone(q) ? " now" : ""}">${esc(partDone(q) ? "Part done" : STATE_WORD[q.state] || "")}</span></div>` +
         `<h3>${esc(s.l)}</h3><div class="tlWhen">${q.state === "done" || q.state === "skipped" ? "What was done" : q.need.some(n => n.kind === "person") ? "Waiting on a person" : "What is still missing"}</div>` +
         reqLines(q, true) +
-        `<div class="tlActs">${ev ? `<button type="button" class="btn ghost sm" data-open-ev="${esc(ev.key)}">Show the step</button>` : ""}${sheet && opts.onSheet ? `<button type="button" class="btn ghost sm tlOpenSheet" data-sheet="${esc(sheet.sheetId)}" data-pool="${esc(poolOf(sheet))}">Open sheet</button>` : ""}<button type="button" class="btn ghost sm" data-unpin>Close</button></div></div>` +
+        `<div class="tlActs">${ev ? `<button type="button" class="btn ghost sm" data-open-ev="${esc(ev.key)}">Show the step</button>` : ""}${sheet && opts.onSheet ? openBtn("btn ghost sm tlOpenSheet", sheet.sheetId, poolOf(sheet), linkSay(sheet.sheetId, poolOf(sheet))) : ""}<button type="button" class="btn ghost sm" data-unpin>Close</button></div></div>` +
         `<div class="tlAround"><span class="tlLbl">The path</span><div class="tlPath2">${path}</div></div></div>`;
       if (quiet && html === detHtml) return true;
       det.innerHTML = detHtml = html;
@@ -2035,7 +2042,8 @@
       const oe = t.closest("[data-open-ev]"); if (oe) { S.pin = null; for (const b of $$(".tlStop.pinned")) b.classList.remove("pinned"); select(oe.dataset.openEv, 0, { scroll: true }); return; }
       const gh = t.closest(".tlSt.ghost[data-stage]"); if (gh) { pin(STAGES.findIndex(s => s.k === gh.dataset.stage)); return; }
       const chip = t.closest(".tlChip"); if (chip) { toggleLegend(); return; }
-      const os = t.closest(".tlOpenSheet"); if (os) { ev.preventDefault(); hideZoom(true); try { if (typeof opts.onSheet === "function") opts.onSheet(os.dataset.sheet, os.dataset.pool || null); } catch (e) { try { console.warn("[OrderTimelineUI] onSheet:", e); } catch (_) {} } return; }
+      const os = t.closest(".tlOpenSheet"); if (os && os.getAttribute("aria-disabled") === "true") { ev.preventDefault(); return; }
+      if (os) { ev.preventDefault(); hideZoom(true); try { if (typeof opts.onSheet === "function") opts.onSheet(os.dataset.sheet, os.dataset.pool || null); } catch (e) { try { console.warn("[OrderTimelineUI] onSheet:", e); } catch (_) {} } return; }
       const st = t.closest(".tlSt[data-key], .tlArw[data-key]");
       if (st) { const k = st.dataset.key, a = S.shown.findIndex(e => e.key === S.sel), b = S.shown.findIndex(e => e.key === k); select(k, a < 0 || a === b ? 0 : b > a ? 1 : -1, { scroll: st.classList.contains("tlArw") }); return; }
       const step = t.closest("[data-step]"); if (step) { stepBy(+step.dataset.step || 0); return; }
