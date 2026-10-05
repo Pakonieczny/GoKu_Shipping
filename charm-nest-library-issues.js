@@ -315,13 +315,14 @@ button.lisOwn{cursor:pointer}button.lisOwn:hover,button.lisOwn:focus-visible{bor
 .lisWait:focus-visible{outline:2px solid var(--gold,#a9823f);outline-offset:1px}
 .lisWaitI{flex:none;width:22px;height:22px;border-radius:50%;display:grid;place-items:center;background:var(--paper2,#ebe5d9);color:var(--ink45,#938c80)}
 .lisWaitI svg{width:13px;height:13px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
-.lisWaitTx{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.lisWaitTx{flex:1 1 auto;min-width:0;white-space:normal;overflow-wrap:anywhere}   /* (it wraps to a second line rather than cut the step's name off) */
 .lisWaitTx b{font-weight:650;color:var(--ink,#1c1a17)}
 .lisWaitTx i{font-style:normal;color:var(--ink45,#938c80)}
 .lisWaitN{flex:none;font:700 10px/1 var(--mono,monospace);color:var(--ink70,#5b554c);background:var(--paper2,#ebe5d9);border-radius:999px;padding:3px 7px}
 .lisWait .lisCh{opacity:1}
 .lisCount.quiet{color:var(--ink70,#5b554c);background:var(--paper2,#ebe5d9)}
 button.flowDot[data-issues-open][aria-expanded="true"]{box-shadow:0 0 0 4px rgba(176,86,63,.2)!important}
+button.flowDot[data-issues-open][data-issues-quiet][aria-expanded="true"]{box-shadow:0 0 0 4px var(--line,#e4ddd0)!important}
 @media (hover:none){.lisCh{opacity:1}}
 @media (max-width:480px){.lisRow{min-height:56px}}
 @media (prefers-reduced-motion:reduce){.lisCh,.lisRow,.lisOwn,.lisWait,.lisTh img,.lisMini img{transition:none}.lisRow:hover,.lisRow:focus-visible,button.lisOwn:hover{transform:none}.lisSpin{animation-duration:1.6s}}`;
