@@ -67,6 +67,8 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   const rectOf = async (page, sel) => page.$eval(sel, e => { const r = e.getBoundingClientRect(); return { left: r.left, top: r.top, right: r.right, bottom: r.bottom, width: r.width, height: r.height }; });
   const calls = () => fx.state.calls.length;
   const forced = new Set();
+  // a resting pointer grows a picture after a short wait and an animation: wait for it to land (a loaded machine is slower than the clock)
+  const grown = async (pg, sel) => { await pg.waitForFunction(() => !!EfficiencyStations.zoomed(), null, { timeout: 6000 }); let last = -1; for (let i = 0; i < 30; i++) { const w = (await rectOf(pg, sel)).width; if (w === last) return; last = w; await sleep(130); } };
   try {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     await wire(ctx);
@@ -172,7 +174,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     const r0 = await rectOf(page, sel);
     await page.hover(sel); await sleep(40);
     assert.equal(await page.evaluate(() => !!EfficiencyStations.zoomed()), false, 'a pointer passing over does not zoom at once (a resting pointer does)');
-    await sleep(760);
+    await grown(page, sel);
     const r1 = await rectOf(page, sel);
     assert(r1.width > r0.width * 1.9 && r1.width < 260, `the picture grows where it stands: ${r0.width} -> ${r1.width}`);
     assert(Math.abs((r1.left + r1.right) / 2 - (r0.left + r0.right) / 2) < 40, 'about its own place, not full screen');
@@ -185,15 +187,15 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     assert(Math.abs(r2.width - r0.width) < 1, `and put back: ${r2.width}`); assert.equal(await page.evaluate(() => EfficiencyStations.zoomed()), null);
     // the QR grows the same way
     const qsel = `${card('3521000101')} .esQr`, q0 = await rectOf(page, qsel);
-    await page.hover(qsel); await sleep(700);
+    await page.hover(qsel); await grown(page, qsel);
     const q1 = await rectOf(page, qsel); assert(q1.width > q0.width * 2 && q1.width < 260, `the QR grows: ${q0.width} -> ${q1.width}`);
     await page.keyboard.press('Escape'); await sleep(450); assert(Math.abs((await rectOf(page, qsel)).width - q0.width) < 1, 'Esc puts it back');
     // a piece picture, and a picture at the very top of the scrolling stage is nudged into view
     const psel = `${card('3521000303')} .esPcTh >> nth=0`, p0 = await rectOf(page, psel);
-    await page.hover(psel); await sleep(700); const p1 = await rectOf(page, psel); assert(p1.width > p0.width * 2.4, `a piece picture grows too: ${p0.width} -> ${p1.width}`);
+    await page.hover(psel); await grown(page, psel); const p1 = await rectOf(page, psel); assert(p1.width > p0.width * 2.4, `a piece picture grows too: ${p0.width} -> ${p1.width}`);
     await page.mouse.move(5, 5); await sleep(400);
     await page.evaluate(() => { const s = document.getElementById('stage'), c = document.querySelector('#esHost .esCard[data-rid="3521000101"]'); s.scrollTop += c.getBoundingClientRect().top - s.getBoundingClientRect().top - 2; });
-    await page.hover(sel); await sleep(700);
+    await page.hover(sel); await grown(page, sel);
     const stage2 = await rectOf(page, '#stage'), r3 = await rectOf(page, sel);
     assert(r3.top >= stage2.top - 1 && r3.width > r0.width * 1.9, `nudged down inside the scrolling stage: top ${r3.top} vs ${stage2.top}`);
     await page.mouse.move(5, 5); await sleep(400); await page.evaluate(() => { document.getElementById('stage').scrollTop = 0; });
@@ -309,7 +311,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     assert.equal(await rp.evaluate(() => window.__g), 0, 'reduced motion: nothing flies');
     assert.equal(await rp.evaluate(() => document.getAnimations().filter(a => a.effect && a.effect.target && a.effect.target.closest && a.effect.target.closest('#esHost')).length), 0, 'reduced motion: not one animation on the board');
     const rs = `${card('3521000606')} .esTh`, w0 = (await rectOf(rp, rs)).width;
-    await rp.hover(rs); await sleep(600); assert.equal(Math.round((await rectOf(rp, rs)).width), Math.round(w0), 'reduced motion: a picture does not grow (the ring is the sign)');
+    await rp.hover(rs); await rp.waitForFunction(() => !!EfficiencyStations.zoomed(), null, { timeout: 6000 }); await sleep(400); assert.equal(Math.round((await rectOf(rp, rs)).width), Math.round(w0), 'reduced motion: a picture does not grow (the ring is the sign)');
     assert.equal(await rp.evaluate(() => !!EfficiencyStations.zoomed()), true);
     fx.finish('sorting', 'Dana S.'); await rp.evaluate(() => __b.refresh()); await rp.waitForSelector(`${card('3521000606')}.done`); await rp.waitForFunction(sel => !document.querySelector(sel), card('3521000606'), { timeout: 3000 });
     assert.deepEqual(R.errs, [], 'no errors under reduced motion: ' + R.errs.join(' | '));

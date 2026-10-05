@@ -218,6 +218,35 @@
   }
   const pending = () => Object.entries(journal.all()).filter(([rid]) => !active.has(rid)).map(([rid, j]) => ({ rid, name: j.who || "", startedAt: j.at || 0, step: j.step || null, sheetId: j.sheetId || null }));
 
+  /* ── is what this page shows still what the Library holds? ──
+     Another page, or another computer, may have held, cancelled or moved this order, or changed a sheet it is on, since this page read them.
+     A hold made from the old picture would write it back over the newer one (held pieces on a saved sheet again, a cancelled order held).
+     So before anything changes, the order and the sheets it comes off are read from the Library (reads only) and compared; a difference ends
+     the run plainly with nothing changed. A sheet this page is still saving, or has not saved, is not compared (its own save is the newer). */
+  const libApi = () => (W.CN && W.CN.api) || W.api || null;
+  const placedIdsOf = sh => (sh.placements || []).map(p => { const c = (sh.charms || []).find(z => z.id === p.id); return c && c.poolId; }).filter(Boolean);
+  async function sheetDrift(sh) {
+    const api = libApi();
+    if (!api || !sh || !sh.sheetId || sh.dirty || sh.problem || !sh.persistedDone || ["nesting", "finishing", "queued"].includes(sh.status)) return null;
+    let rec = null;
+    try { rec = ((await api("charmNestLibrary", { op: "getSheet", id: sh.sheetId }, { quiet: true, timeoutMs: 12000 })) || {}).sheet; } catch (_) { return null; }   // (not readable now: the run's own read-back checks what it wrote)
+    if (!rec) return null;
+    const saved = new Set([...(rec.poolIds || []), ...(rec.charms || []).map(c => c && c.poolId)].filter(Boolean)), mine = new Set((sh.charms || []).map(c => c.poolId).filter(Boolean));
+    const lacking = placedIdsOf(sh).filter(id => !saved.has(id)), extra = (rec.poolIds || []).filter(id => !mine.has(id));
+    return lacking.length || extra.length ? `${kit().word(sh)} was changed on another page or computer after this page read it` : null;
+  }
+  async function drift(rid, off) {
+    try { if (W.Cancelled && typeof W.Cancelled.load === "function") await W.Cancelled.load(true); } catch (_) { /* the list as it was */ }
+    if (W.Cancelled && typeof W.Cancelled.has === "function" && W.Cancelled.has(rid)) return "This order was cancelled on another page or computer. Restore it under Orders > Cancelled first.";
+    const api = libApi(), ids = off.ok.map(o => o.id).slice(0, 300);
+    if (api && ids.length) {
+      let r = null; try { r = await api("charmNestLibrary", { op: "poolGet", poolIds: ids }, { quiet: true, timeoutMs: 12000 }); } catch (_) { r = null; }
+      if (r && r.pools && ids.some(id => r.pools[id] && ["abandoned", "superseded"].includes(r.pools[id].state))) return "This order was put on hold, cancelled or changed on another page or computer after this page read it. Nothing was changed here: reload this page and look again.";
+    }
+    for (const sh of uniq(off.ok.map(o => o.sh))) { const why = await sheetDrift(sh); if (why) return `${why}. Nothing was changed here: close the other page, reload this one and try again.`; }
+    return null;
+  }
+
   /* ── run(rid, { name, note, onStep }) ── */
   async function run(rid, opts) {
     rid = String(rid); opts = opts || {};
@@ -246,6 +275,7 @@
       // a run a reload cut short: the sheets it had lifted pieces from still wait for their fill and label
       const lifted = (before && before.lifted || []).filter(id => !(before.done || []).includes(id));
       if (!P.canHold && !(resumed && P.blockedWhy === "This order is already on hold." && lifted.length)) return fail(P.blockedWhy || "This order cannot be put on hold.");
+      if (P.canHold) { const why = await drift(rid, K.offPlan(rid)); if (why) return fail(why); }
       // (a release a reload cut short, its lines still carrying `releasing`, is given up now: the person's hold is the newer decision,
       //  and the page's own check for unfinished releases must not lift it again)
       for (const r of W.Orders.rows()) if (String(r.order.receiptId) === rid && r.releasing) delete r.releasing;
@@ -301,7 +331,8 @@
         else if (freed) {
           const r = await K.fill(sh, who, {
             skip: [rid], avoid: [...pendingIds],
-            from: it => emit({ type: "fillFrom", toSheetId: id, fromSheetId: [...it.k.srcs][0] ? [...it.k.srcs][0].sheetId || null : null, rid: it.k.rid, poolIds: uniq(it.spots.map(s => s.c.poolId)), source: it.source }),
+            // (an order is not moved from a sheet another page changed meanwhile: its picture here is old; the spot stays free)
+            from: async it => { for (const src of it.k.srcs) { const why = await sheetDrift(src); if (why) throw new Error(`${why}, so order ${it.k.rid} was not moved`); } emit({ type: "fillFrom", toSheetId: id, fromSheetId: [...it.k.srcs][0] ? [...it.k.srcs][0].sheetId || null : null, rid: it.k.rid, poolIds: uniq(it.spots.map(s => s.c.poolId)), source: it.source }); },
             placed: it => emit({ type: "fillPlaced", sheetId: id, rid: it.k.rid, poolIds: uniq(it.spots.map(s => s.c.poolId)) }),
             skipped: (it, e) => emit({ type: "fillSkipped", sheetId: id, rid: it.k.rid, why: String((e && e.message) || e || "it did not fit") }),
           });
@@ -317,6 +348,12 @@
         const sh = sheetsAll().find(z => z.sheetId === id); if (!sh || todoIds.has(id)) continue;
         if (!(await idle())) return fail("Another change is still running; the hold carries on when you press it again.", id);
         emit({ type: "sheetBegin", sheetId: id, label: wordOf(sh) });
+        // (its pieces are off in memory, but a save that failed, or a reload that cut it short, left the saved sheet as it was: it is written again first,
+        //  so the Library never keeps listing a piece that is on hold)
+        if (typeof K.rewrite === "function" && (sh.problem || sh.dirty || !sh.persistedDone)) {
+          try { await K.rewrite(sh); }
+          catch (e) { return fail(`${wordOf(sh)} could not be saved again: ${String((e && e.message) || e).replace(/^.*?: /, "")}. Nothing more was taken off; press Hold again to finish.`, id); }
+        }
         await finish(sh, null);
       }
       // 1 · each cluster of sheets: the pieces lift, come off (verified, labels made again), and the room is filled

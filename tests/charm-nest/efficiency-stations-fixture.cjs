@@ -75,13 +75,13 @@ function make(opts = {}) {
 function e2(j) {
   const now = j.at, st = k => j.stations.find(s => s.key === k);
   const a = st('assembly'), w = st('welding');
-  Object.assign(a.current[0], { id: 'assembly__assembly-2__Anna M.', device: 'assembly-2', deviceLabel: 'Assembly 2', kind: 'order', title: '', thumbUrl: BROKEN, photoUrl: pic(202, 'photo'), vectorUrl: pic(202, 'vector'), beatAt: now - 4000, pieceCount: 2 });
-  Object.assign(a.current[1], { id: 'assembly__assembly-3__Ivy R.', device: 'assembly-3', deviceLabel: 'Assembly 3', kind: 'order', title: '', thumbUrl: '', photoUrl: '', vectorUrl: pic(203, 'vector'), beatAt: now - 9000, pieceCount: 0 });
+  if (a.current[0]) Object.assign(a.current[0], { id: 'assembly__assembly-2__Anna M.', device: 'assembly-2', deviceLabel: 'Assembly 2', kind: 'order', title: '', thumbUrl: BROKEN, photoUrl: pic(202, 'photo'), vectorUrl: pic(202, 'vector'), beatAt: now - 4000, pieceCount: 2 });
+  if (a.current[1]) Object.assign(a.current[1], { id: 'assembly__assembly-3__Ivy R.', device: 'assembly-3', deviceLabel: 'Assembly 3', kind: 'order', title: '', thumbUrl: '', photoUrl: '', vectorUrl: pic(203, 'vector'), beatAt: now - 9000, pieceCount: 0 });
   a.devices = [{ device: 'assembly-1', label: 'Assembly 1', state: 'offline', person: '', since: null }, { device: 'assembly-2', label: 'Assembly 2', state: 'working', person: 'Anna M.', since: now - 4 * 3600000 }, { device: 'assembly-3', label: 'Assembly 3', state: 'working', person: 'Ivy R.', since: now - 3 * 3600000 }, { device: 'assembly-4', label: 'Assembly 4', state: 'offline', person: '', since: null }];
   a.counts.scansToday = 77;
-  w.current[0].pieces = w.current[0].pieces.map(p => Object.assign({}, p));
+  if (w.current[0] && w.current[0].pieces.length) { w.current[0].pieces = w.current[0].pieces.map(p => Object.assign({}, p));
   w.current[0].pieces[0] = { id: '3521000303_1', label: 'Piece 1', sku: 'ARC-1', thumbUrl: '', vectorUrl: pic(301, 'vector'), photoUrl: '' };
-  Object.assign(w.current[0], { id: 'welding__weld-1__Giovanna C.', device: 'weld-1', deviceLabel: 'Welding', kind: 'order', pieceCount: 5 });
+  Object.assign(w.current[0], { id: 'welding__weld-1__Giovanna C.', device: 'weld-1', deviceLabel: 'Welding', kind: 'order', pieceCount: 5 }); }
   const laser = { key: 'laser', label: 'Laser', state: 'working', people: ['Paul K.'], lastEventAt: now - 20000, counts: { partsToday: 12, ordersToday: 4, scansToday: 19 },
     devices: [{ device: 'laser-1', label: 'Laser 1', state: 'working', person: 'Paul K.', since: now - 2 * 3600000 }],
     current: [{ id: 'laser__laser-1__Paul K.', person: 'Paul K.', device: 'laser-1', deviceLabel: 'Laser 1', kind: 'sheet', rid: '', orderNumber: '', customer: '', title: 'GF Sheet 2 · Set 4', scannedAt: now - 130000, beatAt: now - 5000, note: '', thumbUrl: '', vectorUrl: '', photoUrl: '', qr: null, pieces: [], pieceCount: 0 }] };
