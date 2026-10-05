@@ -353,8 +353,10 @@
     }
     const lockedWhy = id => { for (const i of items) { const l = (i.locked || []).find(z => z.sheetId === id); if (l) return l.why; } return ''; };
     const why = stuck.map(x => `${x.m.label}: ${lockedWhy(x.m.id) || (x.l ? (x.l.rose ? 'a Rose Gold sheet joins a set only by its own Cut Sheet press' : x.l.can && x.l.can.reason ? x.l.can.reason.replace(/\.$/, '') : !x.l.runHere ? 'it is not on a page of the open run' : 'it cannot join a set yet') : 'it is not open on this page')}`);
-    plan.needs.unshift({ key: 'sharedOrders', label: leaving ? 'These orders have pieces on another sheet of this set' : 'These orders have pieces on another sheet that must join the same set', items,
-      detail: `${v.label} cannot ${leaving ? 'leave its set' : 'join ' + target} on its own: sheets that share a multi-piece order stay in the same set. ${leaving ? `Move ${names.join(', ')} together` : why.length ? 'Settle ' + why.join('; ') : `Move ${names.join(', ')} together`}, or take ${items.length === 1 ? 'the order' : 'these orders'} off one of the sheets.` });
+    plan.needs.unshift({ key: 'sharedOrders', label: leaving ? 'These orders have pieces on another sheet of this set' : 'These orders have pieces on another sheet that must join the same set', items: items.map(i => ({ ...i, why: `on ${[i.here].concat(i.there || []).filter(Boolean).join(' and ')}` })),
+      detail: leaving
+        ? `${v.label} cannot leave its set: ${orderWords} ${items.length === 1 ? 'is' : 'are'} also on ${mates.map(m => m.label).join(', ')}, which ${mates.length === 1 ? 'stays' : 'stay'} in it, and sheets that share a multi-piece order are always in the same set. Take ${items.length === 1 ? 'the order' : 'these orders'} off one of the sheets (hold or cancel ${items.length === 1 ? 'it' : 'them'}) to move it.`
+        : `${v.label} cannot join ${target} on its own: ${orderWords} ${items.length === 1 ? 'is' : 'are'} also on ${mates.map(m => m.label).join(', ')}, and sheets that share a multi-piece order go into the same set. ${v.sheet.metal === 'rose' ? `A Rose Gold sheet joins by its own Cut Sheet press, which brings the sheets it shares ${items.length === 1 ? 'an order' : 'orders'} with once they are ready` : why.length ? 'Settle ' + why.join('; ') : `${names.join(', ')} go in together once the other reasons are settled`}, or take ${items.length === 1 ? 'the order' : 'these orders'} off one of the sheets.` });
     return finish(plan);
   }
 

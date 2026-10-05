@@ -2852,7 +2852,15 @@ OPS.sessionsList = op_sessionsList;
    written by the ops that already own it (laserDone: marking, process seals, op_laserStatus' recordProcessReadiness);
    the only new fact is a person's HOLD (`laserHold` on a sheet: {at, by, note}), which takes a ready sheet back to In
    progress without touching one approval, seal or cut record (Readiness.sheet: a held sheet is not included).
-   · flowState  {sheetIds, setIds}   read only: laserStatus' records and sets, each set's own record, and whether each run is open
+   · flowState  {sheetIds, setIds, move?}   read only: laserStatus' records and sets, each set's own record, and whether each run is open.
+     With `move` ({kind, id, to:{set|newSet}, together?}) for a move into or out of a set it also answers the cardinal rule of a Set
+     of Sheets (charm-nest-shared-orders.js: sheets that share a multi-piece order are always in ONE set): `shared`, the orders such a
+     move would split (each with its pieces, the sheets on each side and any sheet that cannot change set, with the reason), and `group`,
+     the sheets that must travel together. · sharedOrders {kind, id, to, together?}   the same answer alone (read only).
+     flowApply has no membership step (hold / release / seal never change a sheet's set), so it has nothing to refuse for the rule;
+     the writes that do change membership are the page's putSheet / setUpdate, and setUpdate refuses to record a set complete while a
+     sheet that shares one of its multi-piece orders is outside it (the list of orders and sheets in the answer). A move whose plan
+     the cloud says splits an order is refused by the page at commit, which plans again from these records first.
    · flowApply  {steps:[{type:"hold"|"release", sheetIds, note}], expect?, by}   all steps in ONE transaction: every sheet is read first and
      checked against `expect` ({sheetId:{held:bool}}, what the plan saw), so a sheet changed since the plan was made refuses the
      whole call and nothing is written. A repeat finds the sheets as asked and writes nothing (idempotent). Each change adds an

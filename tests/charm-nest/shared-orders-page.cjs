@@ -125,6 +125,8 @@ const GOLD = [[A, 1, 1], [B, 2, 1], [E, 4, 1], [G, 6, 1]], SILVER = [[A, 3, 1], 
     assert(after.told.changed > t0.changed && after.told.nudge > t0.nudge && after.told.orderWin > t0.orderWin && after.told.subs > t0.subs, 'LaserReview, the order window and the subscribers were told within the call: ' + JSON.stringify([t0, after.told]));
     ok.push('removeFromSheet(hold, this sheet): piece off, record held (no removal), A stops tying the sheets at once, LaserReview + order window + subscribers nudged');
 
+    // the Library's live read (bridge.js) says SharedOrders.refreshed() when it applied a change from another computer: the subscribers hear it
+    const subs0 = await page.evaluate(() => { const n = window.__told.subs; SharedOrders.refreshed(); return [n, window.__told.subs]; }); assert.strictEqual(subs0[1], subs0[0] + 1, 'a live read that changed a card reaches the subscribers');
     // ── 4. Cancel the whole order E: off both sheets, kept under Cancelled ──
     const cancel = await page.evaluate(({ E }) => SharedOrders.removeFromSheet(E, 'gold-open-1', { mode: 'cancel', by: 'Tester', note: 'customer cancelled' }), { E });
     assert.strictEqual(cancel.ok, true, JSON.stringify(cancel)); assert.deepStrictEqual(cancel.removed.map(x => x.id).sort(), [pid(E, 4, 1), pid(E, 7, 1)].sort(), JSON.stringify(cancel));

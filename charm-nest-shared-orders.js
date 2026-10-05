@@ -147,6 +147,7 @@
     sets: null                    // (setId) -> set record (committedAt, status, seq) | null
   };
   const subs = new Set();
+  let opHooked = false;
   function tell() { for (const f of [...subs]) { try { f(); } catch (e) { console.warn('SharedOrders listener', e); } } }
   const safe = (f, d) => { try { const v = f(); return v === undefined ? d : v; } catch (_) { return d; } };
   const libraryRows = () => safe(() => root.CN.S.library.rows, []) || [];
@@ -283,7 +284,10 @@
   }
 
   const api = {
-    between: pageBetween, groupOf: pageGroupOf, composition: pageComposition, removeFromSheet, subscribe: fn => { subs.add(fn); return () => subs.delete(fn); }, changed,
+    between: pageBetween, groupOf: pageGroupOf, composition: pageComposition, removeFromSheet, changed,
+    // fn() after a removal here, after the Library's live read applied a change (bridge.js calls refreshed), and when OrderPieces read something
+    subscribe: fn => { subs.add(fn); if (!opHooked && root.OrderPieces && typeof root.OrderPieces.subscribe === 'function') { opHooked = true; try { root.OrderPieces.subscribe(tell); } catch (_) { opHooked = false; } } return () => subs.delete(fn); },
+    refreshed: tell,
     sheets: pageSheets, fromPage, enrich, configure: o => { Object.assign(hooks, o || {}); return api; }, hooks, core
   };
   return api;

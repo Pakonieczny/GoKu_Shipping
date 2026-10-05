@@ -6017,7 +6017,7 @@ button.flowDot:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
       live.fails=0;
       if(!r.unchanged){
         live.revs=r.revs || null;live.legacy=!r.revs;   // (a cloud that does not know ifRevs answers in full every time: asked less often)
-        if(seq>live.applied){live.applied=seq;if(applyStatus(r,ids,false))changed();}
+        if(seq>live.applied){live.applied=seq;if(applyStatus(r,ids,false)){changed();try{window.SharedOrders?.refreshed?.();}catch(_){}}}   // (the shared-orders window redraws from the same read)
       }
     }catch(e){if(++live.fails===1)console.warn('Library live read',e);}
     finally{
