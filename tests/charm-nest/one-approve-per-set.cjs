@@ -95,7 +95,7 @@ function basics(p) {
   if (set.boxes.length !== 1 || set.boxes[0].key !== 'set:set1') bad.push(`the set card has ${set.boxes.length} button(s) of its own (${set.boxes.map(b => b.key)}), expected exactly set:set1`);
   if (!set.lastIsBox) bad.push('the set\'s button is not the last thing in its card');
   for (const sh of set.sheets) if (sh.boxes.length) bad.push(`${sh.id}, a sheet that is part of the set, has ${sh.boxes.length} Approve button(s) of its own`);
-  for (const sh of set.sheets) if (!sh.rail || sh.steps !== 7) bad.push(`${sh.id} lost its small rail`);
+  for (const sh of set.sheets) if (!sh.rail || sh.steps !== 5) bad.push(`${sh.id} lost its small rail`);
   if (set.setRails) bad.push('a set-level progress bar is back');
   if (!loose || loose.boxes.length !== 1) bad.push(`the sheet that is part of no set has ${loose ? loose.boxes.length : 'no card'} button(s), expected its own`);
   if (!joined || joined.boxes.length !== 0) bad.push(`a sheet card of a sheet that is part of a set has ${joined ? joined.boxes.length : 'no card'} button(s), expected none`);
@@ -120,8 +120,8 @@ const basicCards = () => { const p = paul(false); return [{ type: 'set', set: p.
       const p = await probe(page), set = p.sets[0];
       assert.equal(p.total, 1, `${tag}: exactly one Approve button on the page`); assert.deepEqual(set.boxes.map(b => b.key), ['set:set1'], `${tag}: in the set card`); assert(set.lastIsBox, `${tag}: last in the card, under the columns`);
       assert.deepEqual(set.sheets.map(s => s.boxes.length), [0, 0, 0], `${tag}: none in GF Sheet 1, RG Sheet 1 or SS Sheet 1`);
-      assert.deepEqual(set.sheets.map(s => [s.rail, s.steps]), [[true, 7], [true, 7], [true, 7]], `${tag}: every sheet keeps its own small rail`); assert.equal(set.setRails, 0, `${tag}: no set-level progress bar`);
-      assert(set.sheets.every(s => /step \d of 7/.test(s.now)), `${tag}: and its "step N of 7" line`);
+      assert.deepEqual(set.sheets.map(s => [s.rail, s.steps]), [[true, 5], [true, 5], [true, 5]], `${tag}: every sheet keeps its own small rail (five steps since round 13)`); assert.equal(set.setRails, 0, `${tag}: no set-level progress bar`);
+      assert(set.sheets.every(s => /step \d of 5/.test(s.now)), `${tag}: and its "step N of 5" line`);
       const b = set.boxes[0]; assert.equal(b.grey, true, `${tag}: grey`); assert.equal(b.mode, 'blocked');
       assert.equal(b.why, 'SS Sheet 1 · back engravings 7 of 25', `${tag}: one plain reason naming the blocking sheet and what is missing`); assert.equal(b.link, true, `${tag}: and a link`);
       assert(!/\blines?\b/i.test(b.why), 'pieces, never lines');

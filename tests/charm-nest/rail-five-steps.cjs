@@ -249,7 +249,7 @@ const OLD_HISTORY = [{ id: 'hold-1', at: 1, by: 'Paul', type: 'hold', step: 'bac
       noRemovedWords([...box.querySelectorAll('[data-tip],[aria-label],[title]')].flatMap(x => [x.getAttribute('data-tip') || '', x.getAttribute('aria-label') || '', x.getAttribute('title') || '']).flatMap(t => t.split('\n')).filter(Boolean).concat(box.textContent), box.dataset.flowFor);
       for (const x of box.querySelectorAll('[data-issues-open]')) assert(['engraving', 'orders', 'nesting', 'laser'].includes(x.dataset.step), `the '!' names a step of the five: ${x.dataset.step}`);
     }
-    const flows = card => [...card.querySelectorAll('.flowBox')], tip = dot => String(dot.getAttribute('data-tip')).replace(/\n+$/, '');   // (the last line of a card is who did it: empty here)
+    const flows = card => [...card.querySelectorAll('.flowBox')], tip = dot => String(dot.getAttribute('data-tip')).split('\n').slice(0, 3).join('\n');   // (name, state, the plain line; the fourth line of a card is when a done step was completed: the step times' own test reads that)
     // a sheet whose approved backs are being saved: Engraving in progress, the plain line on its circle's card
     const sv = flows(cards.saving)[0], eng = sv.querySelector('.flowStep.current');
     assert.equal(eng.querySelector('span').textContent, 'Engraving'); assert(eng.classList.contains('waiting') && !eng.classList.contains('blocked'));
