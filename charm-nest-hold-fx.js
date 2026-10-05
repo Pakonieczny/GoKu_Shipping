@@ -72,27 +72,27 @@
   const own = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
 
   const CSS = `
-#hfxLayer{--hfxOrange:var(--holdOrange,var(--clay,#b0563f));--hfxSoft:var(--holdOrangeSoft,var(--claySoft,#f4e3dc));position:fixed;inset:0;z-index:139;pointer-events:none;overflow:hidden;contain:strict}
+#hfxLayer{--hfxOrange:var(--holdOrange,var(--warn,#a2591c));--hfxSoft:var(--holdOrangeSoft,color-mix(in srgb,var(--hfxOrange) 11%,#fffefb));--hfxInk:color-mix(in srgb,var(--hfxOrange) 72%,#000);position:fixed;inset:0;z-index:139;pointer-events:none;overflow:hidden;contain:strict}
 #hfxLayer>*{position:fixed}
 #hfxLayer .hfxLive{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
 .hfxVeil{background:var(--paper,#f3f0ea);opacity:0}
 .hfxCap{display:flex;align-items:center;gap:10px;max-width:min(580px,calc(100vw - 32px));padding:9px 18px 9px 14px;border-radius:999px;background:rgba(255,254,250,.97);border:1px solid var(--goldLine,#e3d3a6);box-shadow:0 12px 32px rgba(30,24,16,.14),0 2px 6px rgba(30,24,16,.06);color:var(--ink,#1c1a17);white-space:nowrap;transform:translate(-50%,0);will-change:transform,opacity}
-.hfxCap>i{flex:0 0 auto;width:10px;height:10px;border-radius:50%;background:var(--hfxOrange);box-shadow:0 0 0 3px rgba(176,86,63,.16)}
+.hfxCap>i{flex:0 0 auto;width:10px;height:10px;border-radius:50%;background:var(--hfxOrange);box-shadow:0 0 0 3px color-mix(in srgb,var(--hfxOrange) 16%,transparent)}
 .hfxCap>b{font:600 16px/1.2 var(--serif,Georgia,serif);letter-spacing:.01em;min-width:0;overflow:hidden;text-overflow:ellipsis}
 .hfxCap>small{font:600 12px/1.2 var(--sans,system-ui,sans-serif);color:var(--ink70,#5b554c);padding-left:11px;border-left:1px solid var(--goldLine,#e3d3a6);min-width:0;max-width:min(300px,32vw);overflow:hidden;text-overflow:ellipsis}
-.hfxCap.bad{border-color:var(--hfxOrange)}.hfxCap.bad>b{color:#8a3a26}
-.hfxCap.wait>i{background:transparent;box-shadow:none;border:2px solid rgba(176,86,63,.25);border-top-color:var(--hfxOrange);animation:hfxSpin .9s linear infinite}
+.hfxCap.bad{border-color:var(--hfxOrange)}.hfxCap.bad>b{color:var(--hfxInk)}
+.hfxCap.wait>i{background:transparent;box-shadow:none;border:2px solid color-mix(in srgb,var(--hfxOrange) 25%,transparent);border-top-color:var(--hfxOrange);animation:hfxSpin .9s linear infinite}
 @keyframes hfxSpin{to{transform:rotate(360deg)}}
 .hfxSkip{pointer-events:auto;display:inline-flex;align-items:center;gap:7px;border:1px solid var(--line,#e4ddd0);background:rgba(255,254,250,.95);color:var(--ink70,#5b554c);font:600 12px/1 var(--sans,system-ui,sans-serif);padding:8px 13px;border-radius:999px;cursor:pointer;box-shadow:0 6px 18px rgba(30,24,16,.1);will-change:opacity}
 .hfxSkip:hover,.hfxSkip:focus-visible{color:var(--ink,#1c1a17);border-color:var(--goldLine,#e3d3a6);outline:none}
 .hfxSkip kbd{font:600 10px var(--mono,ui-monospace,monospace);color:var(--ink45,#938c80);border:1px solid var(--line,#e4ddd0);border-radius:5px;padding:2px 5px}
-.hfxMark{display:flex;align-items:center;gap:8px;padding:7px 10px 7px 11px;border-radius:12px;background:var(--hfxSoft);border:1px solid var(--hfxOrange);color:#8a3a26;font:700 12px/1 var(--sans,system-ui,sans-serif);letter-spacing:.02em;box-shadow:0 8px 22px rgba(30,24,16,.12);will-change:transform,opacity}
+.hfxMark{display:flex;align-items:center;gap:8px;padding:7px 10px 7px 11px;border-radius:12px;background:var(--hfxSoft);border:1px solid var(--hfxOrange);color:var(--hfxInk);font:700 12px/1 var(--sans,system-ui,sans-serif);letter-spacing:.02em;box-shadow:0 8px 22px rgba(30,24,16,.12);will-change:transform,opacity}
 .hfxMark svg{width:17px;height:17px;flex:0 0 auto}
 .hfxMark em{font:800 12px/1 var(--mono,ui-monospace,monospace);font-style:normal;min-width:38px;box-sizing:border-box;text-align:center;background:var(--hfxOrange);color:#fff;border-radius:999px;padding:3px 7px}
 .hfxMark em:empty{visibility:hidden}   /* (it keeps its room: the marker never shifts under a flight) */
 .hfxMark.mGot{background-color:var(--hfxSoft)!important;box-shadow:0 8px 22px rgba(30,24,16,.12)!important;transition:none!important}
-.hfxGlow{border-radius:9px;box-shadow:0 0 0 2px var(--hfxOrange),0 0 24px 4px rgba(176,86,63,.32);opacity:0;will-change:transform,opacity}
-.hfxSpot{box-sizing:border-box;border-radius:9px;border:1.5px dashed var(--hfxOrange);background:rgba(176,86,63,.06);opacity:0;will-change:transform,opacity}
+.hfxGlow{border-radius:9px;box-shadow:0 0 0 2px var(--hfxOrange),0 0 24px 4px color-mix(in srgb,var(--hfxOrange) 32%,transparent);opacity:0;will-change:transform,opacity}
+.hfxSpot{box-sizing:border-box;border-radius:9px;border:1.5px dashed var(--hfxOrange);background:color-mix(in srgb,var(--hfxOrange) 6%,transparent);opacity:0;will-change:transform,opacity}
 .hfxRing{border-radius:50%;border:2px solid var(--gold,#a9823f);box-shadow:0 0 14px rgba(184,137,58,.45);will-change:transform,opacity}
 .hfxRing.pill{border-radius:999px}
 .hfxChip{will-change:transform,opacity}
@@ -108,7 +108,7 @@
 .hfxRow svg{width:12px;height:12px;flex:0 0 auto;color:var(--hfxOrange)}
 .hfxRow b{font-weight:700;color:var(--ink,#1c1a17)}
 .hfxRow .tick{display:inline-block;color:var(--hfxOrange);clip-path:inset(0 0 0 0)}
-.hfxNew{padding:3px 10px;border-radius:999px;border:1px dashed var(--hfxOrange);background:var(--hfxSoft);color:#8a3a26;font:700 11px/1.2 var(--sans,system-ui,sans-serif);will-change:transform,opacity}
+.hfxNew{padding:3px 10px;border-radius:999px;border:1px dashed var(--hfxOrange);background:var(--hfxSoft);color:var(--hfxInk);font:700 11px/1.2 var(--sans,system-ui,sans-serif);will-change:transform,opacity}
 .hfxLit{z-index:4}
 .hfxDim>.sheetCard:not(.hfxLit){opacity:.42;transition:opacity .4s ease}
 @media (prefers-reduced-motion:reduce){.hfxCap.wait>i{animation:none}.hfxDim>.sheetCard:not(.hfxLit){transition:none}}`;
@@ -403,9 +403,13 @@
     /* ── the caption, the tray, the Skip: the top of the stage, under the top bar ── */
     place() {
       const s = stageBox(), c = this.cap;
-      if (c && c.isConnected) { c.style.left = s.left + s.width / 2 + "px"; c.style.top = s.top + 12 + "px"; }
-      if (this.skipEl && this.skipEl.isConnected) { this.skipEl.style.left = s.left + 16 + "px"; this.skipEl.style.top = s.top + 12 + "px"; }
-      if (this.mark && this.mark.el.isConnected) this.mark.at(s);
+      if (c && c.isConnected) { c.style.left = s.left + s.width / 2 + "px"; c.style.top = s.top + 5 + "px"; }   // (just above the sheets' tab rows)
+      const mk = this.mark && this.mark.el.isConnected ? this.mark : null; if (mk) mk.at(s);
+      const k = this.skipEl && this.skipEl.isConnected ? this.skipEl : null;
+      if (k) {   // Skip stands beside the On hold marker, at the right: the sheets' names, at the left, stay readable
+        const m = mk ? mk.el.getBoundingClientRect() : null, w = k.offsetWidth || 80, h = k.offsetHeight || 30;
+        k.style.left = Math.max(s.left + 8, m ? m.left - 10 - w : s.right - 16 - w) + "px"; k.style.top = (m ? m.top + (m.height - h) / 2 : s.top + 12) + "px";
+      }
     }
     say(main, small, o = {}) {
       if (this.over) return;
@@ -435,9 +439,9 @@
       const m = this.node("hfxMark"); m.innerHTML = `${icon || ""}<span></span><em>${em == null ? "" : em}</em>`; m.querySelector("span").textContent = label; m.style.opacity = this.ff ? "1" : "0";
       const api = { el: m, n: 0, label,
         at: st => { const w = m.offsetWidth || 120, narrow = st.width < 820; m.style.left = Math.max(st.left + 8, st.right - 16 - w) + "px"; m.style.top = st.top + (narrow ? 62 : 12) + "px"; },
-        add: k => { api.n += k; m.querySelector("em").textContent = String(api.n); api.at(stageBox()); if (!this.reduced && !this.ff) m.querySelector("em").animate([{ transform: "scale(1)" }, { transform: "scale(1.22)", offset: .35 }, { transform: "scale(1)" }], { duration: 380, easing: "ease-out" }); },
-        set: t => { m.querySelector("em").textContent = t; api.at(stageBox()); },
-        done: () => { m.querySelector("em").textContent = "\u2713"; api.at(stageBox()); } };
+        add: k => { api.n += k; m.querySelector("em").textContent = String(api.n); this.place(); if (!this.reduced && !this.ff) m.querySelector("em").animate([{ transform: "scale(1)" }, { transform: "scale(1.22)", offset: .35 }, { transform: "scale(1)" }], { duration: 380, easing: "ease-out" }); },
+        set: t => { m.querySelector("em").textContent = t; this.place(); },
+        done: () => { m.querySelector("em").textContent = "\u2713"; this.place(); } };
       this.mark = api; api.at(stageBox());
       this.anim(m, this.reduced ? [{ opacity: 0 }, { opacity: 1 }] : [{ opacity: 0, transform: "translateY(-8px)" }, { opacity: 1, transform: "none" }], { duration: this.reduced ? GENTLE.cap : 380, easing: IN });
       return api;
@@ -586,7 +590,7 @@
       for (const id of [...this.spots.keys()]) this.clearSheet(id);
       if (this.mark) this.anim(this.mark.el, [{ opacity: 1 }, { opacity: 0 }], { duration: 260, easing: "ease-in" });
       if (this.cap) { const c = this.cap; this.cap = null; this.anim(c, [{ opacity: 1 }, { opacity: 0 }], { duration: 260, easing: "ease-in" }); }
-      if (this.stay) return;
+      if (this.stay) { stayPut(this.rid); return; }
       await returnToOnHold(this.rid, { from, instant: this.ff, released: this.kind === "release", text: this.doneText, via: this });
     }
     end() {
@@ -707,7 +711,7 @@
     /** Nothing waiting fits (or a spot stays open): said once, quietly, and the hold goes on. */
     async fillSkipped(s) {
       const why = String(s.why || "").replace(/^\w/, c => c.toUpperCase()).slice(0, 90);
-      this.say("Leaving the spot open", why); await this.hold(this.ms(this.reduced ? GENTLE.read : 900));
+      this.say("Nothing fits this spot yet", why); await this.hold(this.ms(this.reduced ? GENTLE.read : 900));
     },
     async fillPlaced(s) {
       const ids = (s.poolIds || []).map(String); await this.on(s.sheetId, s); const n = await this.settle(s.sheetId, ids);
@@ -801,6 +805,11 @@
     const p = goHome(rid, opts || {}).catch(e => { tryDo(() => console.warn("hold fx", e)); return false; });
     RET.set(key, p); p.then(() => setTimeout(() => { if (RET.get(key) === p) RET.delete(key); }, 3000));
     return p;
+  }
+  /** The person chose a tab: the way home, called right after by the glue, is answered with "not taken" and moves nothing. */
+  function stayPut(rid) {
+    const key = "r:" + rid, p = Promise.resolve(false); if (RET.has(key)) return; RET.set(key, p);
+    setTimeout(() => { if (RET.get(key) === p) RET.delete(key); }, 3000);
   }
   async function goHome(rid, o) {
     const via = o.via || null, S = via || new Stage();

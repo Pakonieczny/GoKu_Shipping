@@ -427,8 +427,27 @@ const ALLOWED = new Set(['transform', 'opacity', 'clipPath', 'offset', 'easing',
       await page.waitForFunction(() => CN.S.mode === 'nest', null, { timeout: 8000 }); await sleep(900);
       await page.click('#modeSeg [data-mode="review"]');
       const done = await finished(8000); assert.equal(done.skipped, false); assert.equal(done.ok, true);
-      await sleep(1800); const s = await state(); assert.equal(s.mode, 'review', 'the person stays where they went'); clean(s, 'after a tab was picked'); noWarn('tab-pick');
+      await sleep(1800); const s = await state(); assert.equal(s.mode, 'review', 'the person stays where they went'); clean(s, 'after a tab was picked');
+      assert.equal(await page.evaluate(rid => OrderHoldFx.returnToOnHold(rid), RID), false, 'the glue\'s own way home, called right after, takes nobody back');
+      await sleep(900); assert.equal(await page.evaluate(() => CN.S.mode), 'review', 'the person is still on the tab they chose'); noWarn('tab-pick');
       pass('A tab picked during the film: it ends there, the person stays on the tab they chose, nothing left');
+    });
+
+    /* 7b · a spot nothing fits (fillSkipped) and a step type it does not know */
+    await scene('fill-skipped', async () => {
+      const RID = '4174601845';
+      await open();
+      const steps = [holdSteps(RID)[0], holdSteps(RID)[1], holdSteps(RID)[2], { type: 'mystery', x: 1 }, { type: 'removed', sheetId: 'sh1', removed: 2 }, { type: 'fillBegin', sheetId: 'sh1', spots: 2 },
+        { type: 'fillSkipped', sheetId: 'sh1', why: 'no waiting order fits yet' }, { type: 'qr', sheetId: 'sh1' }, { type: 'sheetDone', sheetId: 'sh1', charmCount: 23, density: 0.7 }, { type: 'held', rid: RID }, { type: 'done' }];
+      await play('hold', RID, steps, 0, { before: () => { engine.takeOffSilver(); } });
+      const done = await finished(); assert.equal(done.ok, true);
+      const caps = await captions(); const k = caps.find(c => c.main === 'Nothing fits this spot yet'); assert.ok(k, 'a quiet caption for a spot nothing fits: ' + JSON.stringify(caps.map(c => c.main)));
+      assert.equal(k.small, 'No waiting order fits yet');
+      assert.ok(await page.evaluate(() => OrderHoldFx.events().some(e => e.ev === 'ignored' && e.type === 'mystery')), 'a step it does not know is ignored');
+      assert.equal(caps[caps.length - 1].main, `Order ${RID} is on hold`);
+      const s = await settledAt(RID); assert.equal(s.mode, 'orders'); assert.equal(s.pile, 'hold'); assert.ok(s.cards.includes(RID));
+      await sleep(300); clean(await state(), 'after a skipped fill'); noWarn('fill-skipped');
+      pass('A skipped fill: "Nothing fits this spot yet" with the reason; an unknown step type is ignored; home on Orders > On hold');
     });
 
     /* 8 · the engine stops with an error: said plainly, then home */
