@@ -112,7 +112,7 @@ async function main() {
     const natOf = (sel, w) => page.waitForFunction(({ sel, w }) => { const m = document.querySelector(sel + ' img, ' + sel + ' canvas'); return m && (m.naturalWidth || m.width) === w && (m.complete !== false); }, { sel, w }, { timeout: 20000 });
     const bigOf = (sel, w) => page.waitForFunction(({ sel, w }) => { const m = document.querySelector(sel + ' img, ' + sel + ' canvas'); return m && Math.max(m.naturalWidth || m.width, m.naturalHeight || m.height) >= w; }, { sel, w }, { timeout: 20000 });
     const tap = async (sel, fx = .5, fy = .5) => { const b = await page.locator(sel).boundingBox(); await page.mouse.click(b.x + b.width * fx, b.y + b.height * fy); };
-    const piece = async i => { await page.click(`#owPieceSw [data-piece="${keys[i]}"]`); await page.waitForFunction(k => OrderWin.key() === k && document.querySelector('#owPhoto img')?.complete, keys[i], { timeout: 10000 }); await settled(); };
+    const piece = async i => { await page.click(`#owPcSum .owPcRow[data-piece="${keys[i]}"] .dot`); await page.waitForFunction(k => OrderWin.key() === k && document.querySelector('#owPhoto img')?.complete, keys[i], { timeout: 10000 }); await settled(); };
 
     // 1 · open the order (piece 1): both pictures drawn, each a focusable frame that zooms where it lies, no tooltip, no reset button
     await page.click(`#ordItems [data-key="${keys[0]}"]`);

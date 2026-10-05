@@ -344,7 +344,7 @@
     const tip = C.tip = h("div", "efc-tip"); tip.id = C.id + "-tip"; tip.setAttribute("role", "tooltip"); tip.setAttribute("aria-hidden", "true"); box.appendChild(tip);
     el.appendChild(box);
     C.later = (fn, ms) => { const t = setTimeout(() => { C.timers.delete(t); if (!C.dead) fn(); }, ms); C.timers.add(t); return t; };
-    C.tween = (ms, step, done) => { const st = tween(ms, step, () => { C.stops.delete(st); if (done) done(); }); C.stops.add(st); return st; };
+    C.tween = (ms, step, done) => { let st = noop, fin = false; st = tween(ms, step, () => { fin = true; C.stops.delete(st); if (done) done(); }); if (!fin) C.stops.add(st); return st; };
     C.on = (target, type, fn, opt) => { target.addEventListener(type, fn, opt); C.listeners.push(() => target.removeEventListener(type, fn, opt)); };
     C.width = () => Math.floor(box.clientWidth || el.clientWidth || 0) || C.o.width || 560;
     C.phone = () => C.width() < 520;
@@ -352,15 +352,15 @@
     C.fmtLong = () => (typeof C.o.fmt === "function" ? C.o.fmt : byUnit(C.o.unit, false));
     C.fmtTick = () => (typeof C.o.tickFmt === "function" ? C.o.tickFmt : byUnit(C.o.unit, true));
     C.setState = (mode, text) => {
-      const st = C.state === mode && C.stateText === text;
-      C.state = mode; C.stateText = text;
+      const label = text || (mode === "empty" ? C.opt("emptyText", "No activity in this range") : mode === "loading" ? C.opt("loadingLabel", "Loading") : ""), st = C.state === mode && C.stateText === label;
+      C.state = mode; C.stateText = label;
       box.dataset.state = mode === "loading" ? (C.drawn ? "ready" : "loading") : mode;
       C.body.style.minHeight = !C.drawn && mode !== "ready" ? Math.round(C.o.minHeight || C.o.height || 140) + "px" : "";
       if (mode === "loading") box.dataset.loading = "1"; else delete box.dataset.loading;
       if (st) return;
       C.stateEl.textContent = "";
-      if (mode === "empty") C.stateEl.appendChild(h("div", "efc-empty", text || C.opt("emptyText", "No activity in this range")));
-      else if (mode === "loading") { const w = h("div", "efc-wait"); w.setAttribute("role", "status"); w.appendChild(h("i", "efc-spin")); w.appendChild(h("span", null, text || C.opt("loadingLabel", "Loading"))); C.stateEl.appendChild(w); }
+      if (mode === "empty") C.stateEl.appendChild(h("div", "efc-empty", label));
+      else if (mode === "loading") { const w = h("div", "efc-wait"); w.setAttribute("role", "status"); w.appendChild(h("i", "efc-spin")); w.appendChild(h("span", null, label)); C.stateEl.appendChild(w); }
     };
     C.setLoading = (on, label) => { if (on) C.setState("loading", label); else if (C.state === "loading") C.setState(C.hasData === false ? "empty" : "ready"); };
     /** The legend under the drawing: items [{ label, css?, kind:'sq'|'line'|'dash'|'band'|'tick' }]; hidden when empty. */
@@ -556,7 +556,7 @@
   const fwd = segs => segs.map(s => "C" + pt2(s[2], s[3]) + " " + pt2(s[4], s[5]) + " " + pt2(s[6], s[7])).join("");
   const back = segs => segs.slice().reverse().map(s => "C" + pt2(s[4], s[5]) + " " + pt2(s[2], s[3]) + " " + pt2(s[0], s[1])).join("");
   /** Runs of consecutive non-null points. */
-  function runs(xs, ys, skip) { const out = []; let cur = null; for (let i = 0; i < ys.length; i++) { if (ys[i] == null) { if (!(skip && skip[i])) cur = null; continue; } if (!cur) { cur = []; out.push(cur); } cur.push([xs[i], ys[i]]); } return out; }
+  function runs(xs, ys, skip) { const out = []; let cur = null; for (let i = 0; i < ys.length; i++) { if (ys[i] == null) { if (!(skip && skip[i])) cur = null; continue; } if (!cur) { cur = []; out.push(cur); } cur.push([xs[i], ys[i], i]); } return out; }
   const linePath = rs => rs.map(r => (r.length === 1 ? "M" + pt2(r[0][0], r[0][1]) + "h0.01" : "M" + pt2(r[0][0], r[0][1]) + fwd(curveSegs(r)))).join("");
 
   /* ═════════════ line · area · stacked area · sparkline ═════════════ */
@@ -589,7 +589,7 @@
     /* the svg and its fixed layers are built once; series elements are kept by key */
     function ensure() {
       if (S.svg) return;
-      const svg = S.svg = mk(null, "svg", { class: "efc-svg", role: "group", "aria-roledescription": "chart", tabindex: spark && C.o.hover === false ? "-1" : "0", "aria-describedby": C.tip.id });
+      const svg = S.svg = mk(null, "svg", { class: "efc-svg", role: "group", "aria-roledescription": "chart", tabindex: spark && (C.o.hover === false || C.o.focusable === false) ? "-1" : "0", "aria-describedby": C.tip.id, "aria-label": C.o.name || (spark ? "Trend" : "Chart") });
       C.body.appendChild(svg);
       yax = yAxis(C, svg); xax = xAxis(svg);
       layers.closed = mk(svg, "g"); layers.band = mk(svg, "g"); layers.ser = mk(svg, "g");
@@ -628,7 +628,7 @@
           if (stacked) {
             const lowArr = below, lowRs = lowArr ? lowArr.map(v => (v == null ? null : yOf(v))) : null;
             for (const r of runs(xs, pys, d.closed)) {
-              const idx = r.map(p => xs.indexOf(p[0])); const segsT = curveSegs(r);
+              const idx = r.map(p => p[2]); const segsT = curveSegs(r);
               const lowPts = idx.map((ii, k) => [r[k][0], lowRs ? (lowRs[ii] == null ? base : lowRs[ii]) : base]);
               if (r.length === 1) { dA += "M" + pt2(r[0][0], r[0][1]) + "L" + pt2(r[0][0], lowPts[0][1]) + "Z"; continue; }
               dA += "M" + pt2(r[0][0], r[0][1]) + fwd(segsT) + "L" + pt2(lowPts[lowPts.length - 1][0], lowPts[lowPts.length - 1][1]) + back(curveSegs(lowPts)) + "Z";
@@ -728,7 +728,7 @@
       if (d.band) { if (!bandEl) { bandEl = mk(layers.band, "path", { class: "efc-band" }); } } else if (bandEl) { bandEl.remove(); bandEl = null; }
       const dsig = d.series.map(s => s.key + s.css).join("|"); if (dsig !== S.dsig) { S.dsig = dsig; dotsFor(d); }
     }
-    function sigOf(d) { return JSON.stringify([d.kind, d.xs, d.series.map(s => [s.key, s.values, s.prev, s.css]), d.band]); }
+    function sigOf(d) { return JSON.stringify([d.kind, d.xs, d.series.map(s => [s.key, s.values, s.prev, s.css]), d.band, d.closed]); }
     function update(data, opts) {
       if (C.dead) return;
       const mode = intake(C, data, opts); if (mode === "wait") return;
@@ -744,6 +744,7 @@
       const sc = scale(d), sig = sigOf(d) + "|" + C.width() + "|" + (o.height || 0) + "|" + (o.share ? 1 : 0) + "|" + o.unit + "|" + (o.area ? 1 : 0);
       if (data !== undefined && sig === S.sig && !(opts && (opts.loading != null))) { /* nothing moved: the card may need new text */ if (S.hover != null) show(S.hover, S.hoverSrc); C.setState(d.hasData ? "ready" : "empty"); return; }
       S.sig = sig; S.raw = data === undefined ? S.raw : data;
+      hit.setAttribute("class", "efc-hit" + (o.onRange ? " zoom" : o.onPoint ? " can" : ""));
       if (!d.hasData) { C.setState("empty"); } else C.setState("ready");
       { const items = []; if (d.series.length > 1) d.series.forEach((x, i) => items.push({ label: x.label, css: colorFor(x.key, i, x.color), kind: stacked ? "sq" : "line" })); if (!stacked && d.series.some(x => x.prev)) items.push({ label: o.prevLabel || "Previous period", kind: "dash" }); if (d.band) items.push({ label: d.band.label, kind: "band" }); C.legend(d.hasData ? items : []); }
       build(d, o); const g = layout(d, sc), to = targetOf(d, g, sc);
@@ -905,7 +906,7 @@
     const stackOn = () => !!C.o.stack;
     function ensure() {
       if (S.svg) return;
-      const svg = S.svg = mk(null, "svg", { class: "efc-svg", role: "group", "aria-roledescription": "chart", tabindex: "0", "aria-describedby": C.tip.id });
+      const svg = S.svg = mk(null, "svg", { class: "efc-svg", role: "group", "aria-roledescription": "chart", tabindex: "0", "aria-describedby": C.tip.id, "aria-label": C.o.name || "Chart" });
       C.body.appendChild(svg); yax = yAxis(C, svg); xax = xAxis(svg);
       layers.slot = mk(svg, "g"); layers.bars = mk(svg, "g"); layers.pv = mk(svg, "g"); layers.val = mk(svg, "g");
       hit = mk(svg, "rect", { class: "efc-hit", fill: "transparent" });
@@ -978,7 +979,7 @@
       xax.set(xTicks(d, g.slot, g.W < 520), g.xc, g, S.hi < 0 ? -1 : S.hi);
       layers.slot.parentNode.classList.toggle("efc-dimmed", false);
     }
-    function sigOf(d) { return JSON.stringify([d.kind, d.xs, d.series.map(s => [s.key, s.values, s.prev, s.css]), S.hiRaw]); }
+    function sigOf(d) { return JSON.stringify([d.kind, d.xs, d.series.map(s => [s.key, s.values, s.prev, s.css]), S.hiRaw, d.closed]); }
     function update(data, opts) {
       if (C.dead) return;
       if (intake(C, data, opts) === "wait") return;
@@ -1117,7 +1118,7 @@
     }
     function buildSvg(m, g) {
       if (S.svg) S.svg.remove();
-      const svg = S.svg = mk(null, "svg", { class: "efc-svg", role: "group", "aria-roledescription": "chart", tabindex: "0", width: g.W, height: g.H, viewBox: "0 0 " + g.W + " " + g.H, "aria-describedby": C.tip.id });
+      const svg = S.svg = mk(null, "svg", { class: "efc-svg", role: "group", "aria-roledescription": "chart", tabindex: "0", width: g.W, height: g.H, viewBox: "0 0 " + g.W + " " + g.H, "aria-describedby": C.tip.id, "aria-label": C.o.name || "Heat map" });
       C.body.appendChild(svg); S.cells = [];
       const x0 = g.labW;
       m.rows.forEach((r, ri) => { const y = g.top + ri * g.ch; if (g.labW) { const t = mk(svg, "text", { class: "efc-tick", x: g.labW - 8, y: y + g.ch / 2 + 3.5, "text-anchor": "end" }); t.textContent = r.label; }
@@ -1198,11 +1199,11 @@
       while (y < ly || (y === ly && m <= lm)) { mons.push({ y, m, key: y + "-" + String(m).padStart(2, "0") }); m++; if (m > 12) { m = 1; y++; } if (mons.length > 40) break; }
       const gap = phone ? 3 : 4, head = 22;
       if (kind === "month" && mons.length === 1) {
-        const cw = (W - gap * 6) / 7, ch = clamp(cw * .62, 34, 54), wd = 34;
+        const cw = Math.min(96, (W - gap * 6) / 7), ch = clamp(cw * .62, 34, 54), wd = 34;
         const wks = weeksOf(mons[0]); const H = wd + wks * (ch + gap) + 2;
         return { kind: "month", W, H, mons: [Object.assign(mons[0], { ox: 0, oy: 0, cw, ch, gap, wd, wks })], cw, ch, gap, legend: true };
       }
-      const minW = phone ? 150 : 176, cols = clamp(Math.floor((W + 14) / (minW + 14)), 1, 4), mw = (W - (cols - 1) * 14) / cols, cw = Math.min(30, Math.floor((mw - 6 * 3) / 7)), ch = cw, g2 = 3;
+      const minW = phone ? 150 : 176, cols = clamp(Math.floor((W + 14) / (minW + 14)), 1, 4), mw = (W - (cols - 1) * 14) / cols, cw = Math.min(34, Math.floor((mw - 6 * 3) / 7)), ch = cw, g2 = 3;
       let yy = 0; const rowsH = []; mons.forEach((mo, k) => { const wks = weeksOf(mo), bh = head + 12 + wks * (ch + g2); const r = Math.floor(k / cols); rowsH[r] = Math.max(rowsH[r] || 0, bh); });
       mons.forEach((mo, k) => { const r = Math.floor(k / cols), c = k % cols; let y0 = 0; for (let q = 0; q < r; q++) y0 += rowsH[q] + 12; Object.assign(mo, { ox: c * (mw + 14), oy: y0, cw, ch, gap: g2, wd: head + 10, wks: weeksOf(mo), head, mw }); });
       yy = rowsH.reduce((a, b) => a + b + 12, 0) - 12;
@@ -1225,8 +1226,9 @@
     }
     function draw(n) {
       const W = C.width(), kind = layoutKind(n.list.length, W), g = S.g = geometry(n.list, kind, W); C.W = g.W; C.H = g.H;
+      const hadFocus = !!S.svg && doc.activeElement === S.svg;
       if (S.svg) S.svg.remove();
-      const svg = S.svg = mk(null, "svg", { class: "efc-svg", role: "group", "aria-roledescription": "calendar", tabindex: "0", width: g.W, height: g.H, viewBox: "0 0 " + g.W + " " + g.H, "aria-describedby": C.tip.id });
+      const svg = S.svg = mk(null, "svg", { class: "efc-svg", role: "group", "aria-roledescription": "calendar", "aria-label": C.o.name || "Calendar", tabindex: "0", width: g.W, height: g.H, viewBox: "0 0 " + g.W + " " + g.H, "aria-describedby": C.tip.id });
       C.body.appendChild(svg);
       S.days = new Map(n.list.map(x => [x.day, x])); S.cells = new Map(); S.order = n.list.map(x => x.day);
       const reduce = still(), lk = JSON.stringify([n.list[0].day, n.list[n.list.length - 1].day, n.list.length, g.kind, g.W]), animate = !reduce && lk !== S.layoutKey; S.layoutKey = lk;
@@ -1255,6 +1257,7 @@
       });
       S.first = false;
       wire(svg);
+      if (hadFocus) { S.ptr = true; try { svg.focus({ preventScroll: true }); } catch (_) {} S.ptr = false; }
     }
     function infoCard(day) {
       const it = S.days.get(day), o = C.o, rows = []; if (!it) return null;
@@ -1346,7 +1349,7 @@
     function build() {
       const D = S.size = sizeOf(), sw = Math.round(clamp(D * .1, 12, 20)), r = (D - sw) / 2 - 6, G = S.G = { D, sw, r, cx: D / 2, cy: D / 2 };
       if (S.svg) S.svg.remove();
-      const svg = S.svg = mk(null, "svg", { class: "efc-svg", role: "group", "aria-roledescription": "chart", tabindex: "0", width: D, height: D, viewBox: "0 0 " + D + " " + D, "aria-describedby": C.tip.id });
+      const svg = S.svg = mk(null, "svg", { class: "efc-svg", role: "group", "aria-roledescription": "chart", tabindex: "0", width: D, height: D, viewBox: "0 0 " + D + " " + D, "aria-describedby": C.tip.id, "aria-label": C.o.name || "Share" });
       C.body.appendChild(svg); C.W = C.width(); C.H = D;
       const track = mk(svg, "circle", { cx: G.cx, cy: G.cy, r, fill: "none", "stroke-width": sw }); track.style.stroke = "var(--efc-line2)";
       gArcs = mk(svg, "g"); S.arcs = new Map();

@@ -165,7 +165,7 @@ async function main() {
     await page.waitForFunction(() => !document.getElementById('orderWin').open, null, { timeout: 2000 });
 
     // 7 · an order of two pieces (Paul, 28 Sep: "convoluted and confusing especially on multipiece orders"): a switch of
-    //     "All 2 pieces" and each piece; all pieces put the order where its slowest piece is, a step some pieces reached
+    //     the Its pieces list ("Showing all 2 pieces", each piece a row to pick); all pieces put the order where its slowest piece is, a step some pieces reached
     //     says how many; one piece shows only its own steps. The header no longer says "line 1 of 2".
     const D2 = { rid: '4174322410', t1: '41743224101', t2: '41743224102' }, k1 = `${D2.rid}_${D2.t1}`, k2 = `${D2.rid}_${D2.t2}`;
     await page.evaluate(({ D2, k1, k2, SHIP }) => {
@@ -178,29 +178,29 @@ async function main() {
       const get = OrderTimeline.get; OrderTimeline.get = (id, ...r) => String(id) === D2.rid ? Promise.resolve({ events, cancelled: null, where: null }) : get.call(OrderTimeline, id, ...r);
       OrderWin.open(k1);
     }, { D2, k1, k2, SHIP });
-    await page.waitForFunction(() => { const sw = document.getElementById('owPieceSw'); return sw && !sw.hidden && sw.querySelectorAll('button').length === 3 && document.querySelector('#owRail [data-stage="laser"] .tlCnt:not([hidden])'); }, null, { timeout: 15000 });
+    await page.waitForFunction(() => document.querySelectorAll('#owPcSum .owPcRow[data-piece]').length === 2 && document.querySelector('#owRail [data-stage="laser"] .tlCnt:not([hidden])'), null, { timeout: 15000 });
     await settled();
-    const v7 = await page.evaluate(() => ({ title: document.getElementById('owTitle').textContent, sw: [...document.querySelectorAll('#owPieceSw button')].map(b => b.textContent.trim()), on: document.querySelector('#owPieceSw button.on').textContent.trim(),
+    const v7 = await page.evaluate(() => ({ title: document.getElementById('owTitle').textContent, sw: [...document.querySelectorAll('#owPcSum .owPcRow[data-piece] .owPcName')].map(b => b.textContent.trim()), state: document.querySelector('#owPcSum .owPcState').textContent.trim(), sel: OrderWin.selectedPiece(), chipRow: !!document.getElementById('owPieceSw'),
       sheet: document.querySelector('#owRail [data-stage="sheet"]').className, laser: [document.querySelector('#owRail [data-stage="laser"]').className, document.querySelector('#owRail [data-stage="laser"] .tlCnt').textContent],
       rows: [...document.querySelectorAll('#owPcSum .owPcRow')].map(r => r.className + ' | ' + r.textContent) }));
     assert.equal(v7.title, `Order ${D2.rid}`, 'no "line 1 of 2" in the header');
-    assert.equal(v7.sw[0], 'All 2 pieces'); assert.match(v7.sw[1], /^SHEEP 3 · GF/); assert.match(v7.sw[2], /^COW 1 · GF/); assert.equal(v7.on, 'All 2 pieces', 'all pieces first');
+    assert.equal(v7.sw.length, 2); assert.match(v7.sw[0], /^SHEEP 3 · GF/); assert.match(v7.sw[1], /^COW 1 · GF/); assert.equal(v7.state, 'Showing all 2 pieces', 'all pieces first'); assert.equal(v7.sel, null); assert.equal(v7.chipRow, false, 'no chip row');
     assert.match(v7.sheet, /\bd\b/, 'both pieces are on a sheet: done'); assert.doesNotMatch(v7.laser[0], /\bd\b/, 'one piece is not cut yet: the order is where its slowest piece is'); assert.equal(v7.laser[1], '1 of 2');
     assert.equal(v7.rows.length, 2, 'each piece on a row under where it is now'); assert.match(v7.rows[1], /slow/, 'the slowest piece in gold');
     if (shots) await page.screenshot({ path: path.join(shots, 'order-view-pieces-all.png') });
     // one piece: its line on the Overview, only its own steps on the rail and the Timeline
-    await page.click('#owPieceSw button:nth-of-type(2)');
-    await page.waitForFunction(k1 => OrderWin.key() === k1 && /\bd\b/.test(document.querySelector('#owRail [data-stage="laser"]').className) && document.querySelector('#owRail [data-stage="laser"] .tlCnt').hidden && document.querySelectorAll('#owPcSum .owPcRow').length < 2, k1);   // (one piece picked: the rows of all of them are gone; its own row, with its Hold, may stay)
-    await page.click('#owPieceSw button:nth-of-type(3)');
+    await page.click(`#owPcSum .owPcRow[data-piece="${k1}"] .dot`);
+    await page.waitForFunction(k1 => OrderWin.key() === k1 && OrderWin.selectedPiece() === k1 && /\bd\b/.test(document.querySelector('#owRail [data-stage="laser"]').className) && document.querySelector('#owRail [data-stage="laser"] .tlCnt').hidden && document.querySelectorAll('#owPcSum .owPcRow').length === 2, k1);   // (one piece picked: its row is marked, the rows of the others stay)
+    await page.click(`#owPcSum .owPcRow[data-piece="${k2}"] .dot`);
     await page.waitForFunction(k2 => OrderWin.key() === k2 && !/\bd\b/.test(document.querySelector('#owRail [data-stage="laser"]').className) && /COW/.test(document.getElementById('owSku').textContent), k2);
     await page.click('.owTabsV [data-ow-view="timeline"]');
-    await page.waitForFunction(() => !document.getElementById('owPieceSw').hidden && document.querySelectorAll('#owTimeline .tlSt[data-key]').length === 2, null, { timeout: 15000 });
+    await page.waitForFunction(() => !document.getElementById('owPieceSw') && document.querySelectorAll('#owTimeline .tlSt[data-key]').length === 2, null, { timeout: 15000 });
     if (shots) await page.screenshot({ path: path.join(shots, 'order-view-pieces-one.png') });
-    await page.click('#owPieceSw button:nth-of-type(1)');
+    await page.evaluate(() => OrderWin.selectPiece(null));   // (the Timeline has no list of pieces: the pick is made on the Overview, or by the API)
     await page.waitForFunction(() => document.querySelectorAll('#owTimeline .tlSt[data-key]').length === 4 && !!document.querySelector('#owRail [data-stage="laser"] .tlCnt:not([hidden])'));
-    // a one-piece order has no switch
+    // a one-piece order has no pieces to pick
     await page.evaluate(k => OrderWin.open(k), `${A.rid}_${A.tid}`);
-    await page.waitForFunction(rid => document.getElementById('owTitle').textContent === 'Order ' + rid && document.getElementById('owPieceSw').hidden, A.rid);
+    await page.waitForFunction(rid => document.getElementById('owTitle').textContent === 'Order ' + rid && !document.getElementById('owPieceSw') && !document.querySelector('#owPcSum [data-piece]') && OrderWin.selectedPiece() === null, A.rid);
     await page.keyboard.press('Escape');
     await page.waitForFunction(() => !document.getElementById('orderWin').open, null, { timeout: 2000 });
 
