@@ -80,7 +80,7 @@ const ORDERS = [{ receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * DAY, up
         inView: r.left >= 0 && r.top >= 0 && r.right <= innerWidth && r.bottom <= innerHeight, top: tb && !s.closest('dialog') ? tb.getBoundingClientRect().bottom : 0, clipped, animated, running: s.getAnimations().length,
         titled: s.hasAttribute('title'), openedBoxes: [...document.querySelectorAll('[style*="z-index: 900"]')].length, inDialog: !!s.closest('dialog') };
     }, [sel, n]),
-    settle: () => page.waitForFunction(() => !document.getAnimations().some(a => a.playState === 'running' && Number.isFinite(a.effect.getComputedTiming().endTime) && a.effect.target && a.effect.target.closest && a.effect.target.closest('[data-seal-zoom],.seal,.tlSeal,.tlSt,.tlBig,.tlNowSeal')), null, { timeout: 5000 }),
+    settle: () => page.waitForFunction(() => !document.getAnimations().some(a => a.playState === 'running' && Number.isFinite(a.effect.getComputedTiming().endTime) && a.effect.target && a.effect.target.closest && a.effect.target.closest('[data-seal-zoom],.seal,.tlSeal,.tlSt,.tlNowSeal')), null, { timeout: 5000 }),
     gone: () => page.waitForFunction(() => !document.querySelector('[data-seal-zoom]') && !document.querySelector('.sealZoomed') && !document.querySelector('[style*="z-index: 900"]'), null, { timeout: 4000 }),
     zoomed: () => page.evaluate(() => [...document.querySelectorAll('[data-seal-zoom]')].length),
   });
