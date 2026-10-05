@@ -631,6 +631,60 @@
       } finally {anchor.stop();t.remove();}
     }
     const hasPrint = rec => list(rec).some(s => kindOf(s) === "print");
+    /* ── one piece's seals, from every place the shop recorded them (Paul, 5 Oct 2026: "The 'Complete' orders/pieces are missing
+       their associated stamp/seal") ── THE helper every surface calls for a piece (a custom order's line) that was completed by
+       hand, printed or reopened: the record's own stamps, else what an older record kept (list), else the real completion the record
+       names (completedAt / completedBy / how), else the permanent order timeline's own seal events for that line (a Complete Order
+       press, a QR label printed). Read only: a seal is only ever made from a person, a time and a press that were recorded; nothing
+       recorded, no seal. The same press is one seal (its record and its timeline event share one clock reading: a second of leeway).
+       Reopen and Undo never take a seal away: the stamps stay on the record, and a reopened record's seals are listed here as before. */
+    const SAME_PRESS_MS = 1500;
+    const handKind = s => (s.how === "button" ? "button" : s.how === "print" ? "print" : "");
+    /** ofPiece(rec, { events, lineKey }) → every seal of one piece, oldest first: { how: "button" | "print" | "sheet", at, by, n (a
+     *  print's number), src: "stamps" | "record" | "timeline" }. rec: the custom record (B.maps.customDone[key], B.maps.customKept[key],
+     *  row.spec.customDone), or null. events: the order's permanent timeline (OrderTimeline.get / the order window's W.events), optional;
+     *  only the events of lineKey (default rec.key) count, none that names no line. */
+    function ofPiece(rec, o) {
+      o = o || {};
+      const st = list(rec).map(s => Object.assign({ src: "stamps" }, s)), key = String(o.lineKey || (rec && rec.key) || "");
+      const near = (how, at) => st.some(s => s.how === how && Math.abs(+s.at - at) <= SAME_PRESS_MS);
+      // the completion the record itself names (a record whose stamps were lost, or one that only ever kept completedAt)
+      if (rec && rec.state !== "open" && rec.how !== "sheet" && +rec.completedAt > 0) {
+        const how = rec.how === "button" ? "button" : "print";
+        if (!near(how, +rec.completedAt)) st.push({ how, at: +rec.completedAt, by: String(rec.completedBy || ""), src: "record" });
+      }
+      // the permanent timeline's seal events of this line that the record does not carry
+      if (key) for (const e of Array.isArray(o.events) ? o.events : []) {
+        if (!e || String(e.lineKey || "") !== key || !(+e.at > 0)) continue;
+        const how = e.type === "sealPrinted" ? "print" : e.type === "sealCompleted" && !(e.data && e.data.how === "print") ? "button" : "";
+        if (how && !near(how, +e.at)) st.push({ how, at: +e.at, by: String(e.by || ""), src: "timeline" });
+      }
+      st.sort((a, b) => a.at - b.at);
+      let n = 0; for (const s of st) if (kindOf(s) === "print") s.n = ++n;
+      const counted = rec ? +rec.prints || 0 : 0; if (counted > n) { const k = counted - n; for (const s of st) if (kindOf(s) === "print") s.n += k; }
+      return st;
+    }
+    /** completionOf(rec, { events, lineKey }) → the one seal of the press that completed the piece as it stands now (the record's
+     *  completedAt / how / completedBy), or null: not completed (open, reopened, sent to its sheet), or nothing recorded of it. */
+    function completionOf(rec, o) {
+      if (!rec || rec.state === "open" || rec.how === "sheet") return null;
+      const all = ofPiece(rec, o).filter(s => handKind(s)), at = +rec.completedAt || 0;
+      if (at > 0) { const how = rec.how === "button" ? "button" : "print"; return all.find(s => s.how === how && Math.abs(+s.at - at) <= SAME_PRESS_MS) || { how, at, by: String(rec.completedBy || ""), src: "record" }; }
+      return all.length ? all[all.length - 1] : null;   // (no completion time kept: the latest press recorded)
+    }
+    /** pieceRow(rec, { events, lineKey, size, max, only, how, pending }) → the HTML of the piece's seals, small (Seal.row's mini row: one fit
+     *  for all of them), or "". size: 22 by default (the order window's); only: "completion" (just that seal, as the Completed by hand box
+     *  draws it); how: "button" | "print" (only that kind: the row that rests each by its own button); max: at most that many, the latest
+     *  (numbers kept: a print is still its own number); pending: the time of a seal just pressed (it is stamped when drawn). */
+    function pieceRow(rec, o) {
+      o = o || {};
+      let st = o.only === "completion" ? [completionOf(rec, o)].filter(Boolean) : ofPiece(rec, o);
+      if (o.how) st = st.filter(s => (s.how === "button") === (o.how === "button") && handKind(s));
+      if (!st.length) return "";
+      const total = st.filter(s => kindOf(s) === "print").length ? Math.max(...st.filter(s => kindOf(s) === "print").map(s => s.n || 0)) : 0;
+      if (o.max > 0 && st.length > o.max) st = st.slice(-o.max);
+      return row({ stamps: st, prints: total }, { size: +o.size || 22, pending: o.pending });
+    }
     const WOOD_URL=(()=>{try{return new URL('charm-nest-stamp-walnut.png',doc.currentScript?.src || doc.baseURI).href;}catch(_){return 'charm-nest-stamp-walnut.png';}})();
     /** The rubber die and walnut head share the exact outline of the ink they leave. */
     function tool(kind, source) {
@@ -969,7 +1023,7 @@
       rectOf(el) { const st = ZS.get(el); return st && st.on ? Object.assign({}, st.rect) : null; },
       check() { if (Zm.want && !Zm.want.isConnected) cancelWant(); for (const st of [...ACT]) if (!st.el.isConnected) zoomHide(true, st.el); }
     };
-    return { list, html, row, svg, face, modelOf, tool, sound:Sound, stampOn, press, pressPending, hasPrint, titleOf, INK, FAMILY, BASE_SIZE, zoom, zoomScale, busy, whenIdle, defer, fit, fitGroups };
+    return { list, html, row, svg, face, modelOf, tool, sound:Sound, stampOn, press, pressPending, hasPrint, ofPiece, completionOf, pieceRow, titleOf, INK, FAMILY, BASE_SIZE, zoom, zoomScale, busy, whenIdle, defer, fit, fitGroups };
   })();
 
   /* ════ Pop-ups: every window grows out of what opened it, and goes back into it ════
