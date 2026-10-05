@@ -86,7 +86,8 @@ function textsOf(file) {
   const src = fs.readFileSync(path.join(ROOT, file), 'utf8');
   if (/\.js$|\.cjs$/.test(file)) return jsStrings(src, 1);
   const out = [];
-  const lineAt = idx => src.slice(0, idx).split('\n').length;
+  const starts = [0]; for (let k = src.indexOf('\n'); k !== -1; k = src.indexOf('\n', k + 1)) starts.push(k + 1);
+  const lineAt = idx => { let lo = 0, hi = starts.length - 1; while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (starts[mid] <= idx) lo = mid; else hi = mid - 1; } return lo + 1; };
   const blank = s => s.replace(/[^\n]/g, ' ');
   let markup = src.replace(/<!--[\s\S]*?-->/g, blank);
   const sre = /<script\b([^>]*)>([\s\S]*?)<\/script>/gi; let m;
