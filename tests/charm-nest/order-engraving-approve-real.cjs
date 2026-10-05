@@ -462,7 +462,7 @@ const engW = key => x => { const s = JSON.stringify(x.body || {}), pool = poolOf
       await page.evaluate(() => CN.setMode('orders'));
       await open(); await h.waitState(WIN, 'approve', 25000);
       // no name on this computer: the window's own small bar asks, and nothing is approved before it is answered
-      const n0 = net.log.length, c0 = await calls();
+      const n0 = net.log.length; let c0 = await calls();
       await watchCard(WIN);
       await page.click(WIN + ' [data-e=approve]');
       const bar = await page.waitForSelector('input[aria-label^="Your name"]', { timeout: 6000 }).then(() => true, () => false);
@@ -470,7 +470,17 @@ const engW = key => x => { const s = JSON.stringify(x.body || {}), pool = poolOf
       const wrote = net.log.slice(n0).filter(engW(K.O5)).map(x => x.fn + ':' + x.op);
       check(bar && A.dialogs.length === 0 && (await calls()).approve.length === c0.approve.length && !wrote.length, 'no name saved: the Sheet window\'s own bar asks (no browser pop-up), and nothing is approved or written until it is answered: ' + JSON.stringify([bar, A.dialogs, (await calls()).approve.length - c0.approve.length, wrote, dbg]));
       await shot(page, 'real-sheetwin-name', '[data-r2=eng]');
+      // the checkpoint on this computer fails (no room): the window's card says so in plain words where the button is, gives the button back, seals and writes nothing
+      await page.evaluate(() => { window.__idbFail = true; if (!window.__idbPatched) { window.__idbPatched = true; const p = IDBObjectStore.prototype.put; IDBObjectStore.prototype.put = function () { if (window.__idbFail) throw new DOMException('no room left', 'QuotaExceededError'); return p.apply(this, arguments); }; } });
       await page.fill('input[aria-label^="Your name"]', 'Sheet Operator'); await page.click('button[data-nm=go]');
+      await page.waitForFunction(() => document.querySelector('[data-r2=eng] .egFail'), null, { timeout: 40000 }).catch(() => {});
+      await page.waitForTimeout(500);
+      const cf = await h.read(WIN), jf = await h.job(K.O5);
+      check(cf && cf.state === 'approve' && /could not be saved on this browser/.test(cf.fail) && cf.failRole === 'alert' && cf.approve && !cf.approve.disabled && cf.approve.live && cf.approve.text === 'Approve engraving' && cf.sealCount === 0 && jf.seals.length === 0 && !net.log.slice(n0).some(engW(K.O5)), 'a failing checkpoint in the Sheet window: the card says so in plain words where the button is, gives the button back, no seal, nothing written: ' + JSON.stringify(cf && [cf.state, cf.fail, cf.approve, jf.seals]));
+      await page.evaluate(() => { window.__idbFail = false; });
+      c0 = await calls();
+      await watchCard(WIN);
+      await page.click(WIN + ' [data-e=approve]');
       await page.waitForFunction(() => window.__w.some(s => /Approving… \(off,live,spin\)/.test(s)) || window.__w.some(s => /^approved/.test(s)), null, { timeout: 15000 }).catch(() => {});
       await page.dblclick(WIN + ' .egApproveButton', { force: true, noWaitAfter: true }).catch(() => {});
       await page.evaluate(() => { try { document.querySelector('[data-r2=eng] .egApproveButton').dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })); } catch (_) {} });

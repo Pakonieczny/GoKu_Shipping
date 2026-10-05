@@ -2129,7 +2129,9 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   async function approveHere(x, b) {
     const job = x.eng && x.eng.job; if (!job) return;
     if (job.state !== 'review') { renderEng(x); return; }   // (a card that is out of date approves nothing: only a placement waiting for approval is approved)
-    const who = needName(() => approveHere(x, b)); if (!who) return;
+    // (no name yet: the name bar asks; once given, the same button is pressed again through the card's own handler, so the spinner, the plain failure line and
+    //  the out-of-date guard are the card's, as for a press with the name known; a card drawn again meanwhile is not pressed for the person)
+    const who = needName(() => { if (b.isConnected && !b.disabled) b.click(); }); if (!who) return;
     CNEngravingSeals.busyLabel(b);   // (a small spinner and "Approving…" until the stamp: Engrave.approve puts "Approved" on the button as it starts, so the wait is said again after it)
     try {
       const run = Engrave.approve(job, who, b); CNEngravingSeals.busyLabel(b);
@@ -2139,7 +2141,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       renderEng(x, true); renderStrip(); renderOrders(); paintFx();
       if (window.RunCtl) RunCtl.poke();
     } catch (e) { toast("Not approved: " + e.message, "bad", 6000); b.disabled = false; }
-    finally { b.removeAttribute('aria-busy'); b.textContent = 'Approved'; }
+    finally { b.removeAttribute('aria-busy'); if (b.isConnected && ["approved", "written"].includes(job.state)) b.textContent = 'Approved'; }   // (a press that did not go through is given back by the card as it was: it never says Approved)
   }
 
   /* ── the order's pieces, here and elsewhere ── */
