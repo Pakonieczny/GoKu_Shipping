@@ -1129,11 +1129,16 @@ const Orders = window.Orders = (() => {
   const cap = (v, n) => String(v == null ? "" : v).slice(0, n);
   function lineRecord(row) {
     const l = row.line, o = row.order;
+    // A line a person completed by hand (Review → Complete Order, or its QR label printed: CharmNestReadiness.isHand) needs no sheet. The run record only HINTS
+    // that (handDone): the server reads the custom order's own record (a run saves its lines when it pools, not when a card is completed, and a Reopen since
+    // would leave this copy stale) and trusts nothing here. Such a line is not noDesign for that reason, so a stale record can never keep a reopened piece resolved.
+    const cd = row.spec && row.spec.customDone, hand = !!cd && cd.state !== "open" && cd.how !== "sheet";
     return [row.key, { state: row.state, poolIds: row.poolIds, reason: row.reason, hold: row.hold || null, wait: row.wait || null, sku: row.spec && row.spec.designSku, material: row.material || (row.spec && row.spec.material) || null, quantity: row.spec ? row.spec.quantity : 1,
       engrave: row.engrave ? { needed: !!row.engrave.needed, state: row.engrave.state, approved: !!row.engrave.approved, approvedAt:row.engrave.approvedAt || 0, approvedBy:row.engrave.approvedBy || "", decidedAt:row.engrave.decidedAt || 0, seals:row.engrave.seals || [], text: row.engrave.text || null } : null,
       // The server reads this record, not the row, before it records a set as complete: a line with nothing to engrave
       // must read as plain there too, including before its engraving check has run.
-      engraveCandidate: row.spec ? !!row.spec.engraveCandidate : null, noDesign:!!row.spec?.noDesign,
+      engraveCandidate: row.spec ? !!row.spec.engraveCandidate : null, noDesign: hand ? !!(row.spec.special && row.spec.special.notCut) : !!row.spec?.noDesign,
+      ...(hand ? { handDone: { at: +cd.completedAt || 0, by: cap(cd.completedBy, 80), how: cd.how === "button" ? "button" : "print" } } : {}),
       activityAt:row.activityAt || 0, changePending:!!row.changePending,repoolChanged:!!row.repoolChanged,arrivedAt: row.arrivedAt || 0, createTs: o.createTs || 0, materialOverride: row.materialOverride || null, sizeOverride: row.sizeOverride || null, problems: (row.problems || []).map(p => p.kind), updateTs: o.updateTs, orderId: o.receiptId, transactionId: l.transactionId,
       snap: { title: cap(l.title, 160), listingId: cap(l.listingId, 24), metalKey: cap(l.metalKey, 24), metalLabel: cap(l.metalLabel, 40),
         orderNumber: cap(o.orderNumber, 24), buyer: cap(o.buyer && o.buyer.name, 60), shipBy: +o.shipBy || 0, isGift: !!o.isGift,
@@ -11554,6 +11559,9 @@ const OrderWin = window.OrderWin = (() => {
     const why = !sc || !p ? "" : sc.multi && !sc.sel && sc.all.every(x => !x.nested) ? "None of its pieces is on a sheet yet." : upperFirst(lowerFirst(p.why)) + ".";
     const fix = p ? reviewItemOf(p.key) : null;
     const icon = `<svg class="owNoneIcon" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="6" y="9" width="36" height="30" rx="5" stroke-dasharray="3.2 4.2"/><path d="M17 27c0-4 3-7 7-7s7 3 7 7-3 6-7 6-7-2-7-6z" opacity=".5"/></svg>`;
+    // a piece completed by hand needs no sheet: it is resolved, not waiting for one
+    if (p && p.hand) return icon + `<b>Completed by hand</b><span class="owNoneWhy">${esc("It needs no sheet.")}</span>` + (p && sc.multi ? `<span class="owNonePc"><i style="--c:${esc(colorOf(p.metal))}"></i>${esc(p.name)}</span>` : "") +
+      (fix ? `<button type="button" class="btn ghost sm" data-none-fix="${esc(p.key)}">Open in Review <span aria-hidden="true">›</span></button>` : "");
     return icon + `<b>Not on a sheet yet</b><span class="owNoneWhy">${esc(why || (String(st[1] || "").replace(/^\d\/\d\s+/, "") || "It waits for its turn") + " — its pieces are drawn here once they are placed on a sheet.")}</span>` +
       (p && sc.multi ? `<span class="owNonePc"><i style="--c:${esc(colorOf(p.metal))}"></i>${esc(p.name)}</span>` : "") +
       (fix ? `<button type="button" class="btn ghost sm" data-none-fix="${esc(p.key)}">Open in Review <span aria-hidden="true">›</span></button>` : "");
@@ -11570,11 +11578,16 @@ const OrderWin = window.OrderWin = (() => {
      until it has, from the same rows and pool records (Pool.sheetOf, the pool rows, the order's pool list). */
   const lowerFirst = t => String(t || "").trim().replace(/[.\s]+$/, "").replace(/^[A-Z](?=[a-z])/, c => c.toLowerCase());
   const upperFirst = t => String(t || "").replace(/^./, c => c.toUpperCase());
+  /** A piece a person completed by hand (Review → Complete Order, or its QR label printed from Custom Orders): the custom order's own record (CharmNestReadiness.handOf, the one
+   *  rule every screen and the server read). It needs no sheet: never "not on a sheet yet". Reopen takes it back. */
+  const handOfRow = x => { try { return window.CharmNestReadiness && window.CharmNestReadiness.handOf ? window.CharmNestReadiness.handOf(x) : null; } catch (_) { return null; } };
+  const HAND_WHY = "it was completed by hand and needs no sheet";
   /** Why a line is on no sheet, in a few plain words. */
   function pieceWhy(x) {
     const sp = x.spec || {}, pb = (x.problems || [])[0] || null, kind = pb && pb.kind, st = x.state, sku = String(sp.designSku || (x.line && x.line.sku) || "").trim();
     if (st === "gone") return "it was cancelled";
     if (st === "skipped") return "it is skipped";
+    if (!x.hold && handOfRow(x)) return HAND_WHY;
     if (kind === "unmatchedSku" || st === "unmatched" || (x.hold && /master file|unknown sku/i.test(String(x.reason || "")))) return sku ? "its SKU is not in any master file" : "it has no SKU";
     if (kind === "needsMapping") return "one of its options is not mapped yet";
     if (kind === "needsMaterial") return "its metal is not chosen yet";
@@ -11626,9 +11639,9 @@ const OrderWin = window.OrderWin = (() => {
         // (pieces of this line pooled, on no sheet in what this page holds, and the records not read yet: not said to be on none)
         if (!on.size && pools.length && !read && !pools.some(id => B.pool && B.pool.rows && B.pool.rows.has(id))) loading = true;
       }
-      const nested = on.size > 0;
-      return { key, name: pieceName(x), metal: x.material || sp.material || null, form: sp.form || "", qty, nested, loading: loading && !nested, row: x,
-        sheets: [...sheets.values()].map(s => Object.assign(s, { label: s.label || sheetName(s) })), why: nested ? "" : why || pieceWhy(x) };
+      const nested = on.size > 0, hand = !nested && !x.hold && !!(handOfRow(x) || mine.some(c => c && c.hand));
+      return { key, name: pieceName(x), metal: x.material || sp.material || null, form: sp.form || "", qty, nested, hand, loading: loading && !nested && !hand, row: x,
+        sheets: [...sheets.values()].map(s => Object.assign(s, { label: s.label || sheetName(s) })), why: nested ? "" : hand ? HAND_WHY : why || pieceWhy(x) };
     });
   }
   /** The scope: all (every piece of the order), shown (the piece the window shows), sel (the piece picked, else null), focus
@@ -11652,6 +11665,7 @@ const OrderWin = window.OrderWin = (() => {
     if (!r || r.loading || r.state === "gone" || W.cancelled || (tryDo(() => nowOf(r)) || {}).cancelled) return null;
     if (window.CustomSheet && tryDo(() => CustomSheet.decisionOf && CustomSheet.decisionOf(r))) return null;   // (a custom order sent to its sheet is on it)
     const sc = sheetScope(r), p = sc.focus; if (!p || p.loading || p.nested) return null;
+    if (p.hand) return sc.multi && !sc.sel ? "Completed by hand: it needs no sheet" : "This piece was completed by hand: it needs no sheet";   // (resolved, never "not on a sheet yet")
     return `${sc.multi && !sc.sel ? "Not on a sheet yet" : "This piece is not on a sheet yet"}: ${p.why}`;   // (all pieces in front: the chip beside it names the piece)
   }
   /** The Overview card's own Sheet affordances: its Sheet button and one chip for each sheet of the scope's pieces (all pieces:
@@ -11663,6 +11677,9 @@ const OrderWin = window.OrderWin = (() => {
       if (p.nested) for (const h of p.sheets) {
         const e = list && list.find(s => h.id && s.id ? h.id === s.id : h.page && s.page === h.page), state = (e && e.state) || "";
         chips.push(`<button type="button" class="owShChip" data-pc="${esc(p.key)}" data-sheet="${esc(h.id || "")}" data-pool="${esc(h.pools[0] || "")}" style="--c:${esc(colorOf(h.metal || p.metal))}"><i></i><span><b>${esc(e ? sheetName(e) : h.label)}</b><span>${esc(named ? p.name + (state ? " · " + state : "") : state || "open it")}</span></span></button>`);
+      } else if (p.hand) {
+        const why = named ? "Completed by hand: it needs no sheet" : "This piece was completed by hand: it needs no sheet";   // (resolved: the chip is greyed, and says so)
+        chips.push(`<button type="button" class="owShChip off" data-pc="${esc(p.key)}" data-hand="1" aria-disabled="true" data-why="${esc(why)}" title="${esc(why)}"><i></i><span><b>Completed by hand</b><span>${esc(named ? p.name : "It needs no sheet")}</span></span></button>`);
       } else {
         const why = `${named ? "Not on a sheet yet" : "This piece is not on a sheet yet"}: ${p.why}`;   // (named: the chip says whose it is)
         chips.push(`<button type="button" class="owShChip off" data-pc="${esc(p.key)}" aria-disabled="true" data-why="${esc(why)}" title="${esc(why)}"><i></i><span><b>Not on a sheet yet</b><span>${esc(named ? p.name : upperFirst(p.why))}</span></span></button>`);

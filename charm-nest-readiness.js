@@ -5,6 +5,14 @@
   const idsOf=s=>[...new Set((s.poolIds || []).filter(Boolean))];
   const held=s=>!!(s && s.laserHold && +s.laserHold.at>0);
   const url=x=>typeof x==='string'?x:x?.url;
+  /* A piece a person completed by hand (Review → Complete Order, or the QR label printed from Custom Orders; Paul, 5 Oct: "this chain only piece
+   * obviously does not go on any sheet so I approve that by pressing the complete button ... but it's still blocking this sheet") is RESOLVED:
+   * it needs no sheet, waits for nothing and holds no other piece back. Both sides read the same truth, the custom order's own record
+   * ({state:'completed', how:'button'|'print', completedAt, completedBy}): the page as a row's spec.customDone, the server as the line's handDone
+   * (charmNestLibrary productionReadiness reads its own Charm_Custom_Orders record, never the page's). Reopen (state 'open') takes it back and the
+   * piece blocks again; a custom order sent to the sheets with its own designs (how 'sheet') is cut, not completed by hand. */
+  const isHand=c=>!!c && typeof c==='object' && c.state!=='open' && c.how!=='sheet';
+  const handOf=l=>{const c=l && (l.handDone || l.spec?.customDone);return isHand(c)?c:null;};
   function decisions(rows){
     const out={};
     // (a line whose record lost its pool ids is read by the ids the pool gives its copies, "<line key>_<n>", as orderReports reads them)
@@ -80,7 +88,9 @@
    *   · on a different sheet that is not ready ('otherSheetNotReady': that sheet's own physical readiness, never its order check, so
    *     two sheets can never wait on each other).
    * Pieces on X itself never block through the order check (X's own readiness shows through its own steps), single-piece orders are
-   * never an issue for what other pieces do (they have none), and cancelled ('gone') and no-design pieces never block. One exception,
+   * never an issue for what other pieces do (they have none), and cancelled ('gone'), no-design and completed-by-hand pieces (handOf: Review's
+   * Complete Order, or the QR label printed from Custom Orders: a resolved piece needs no sheet) are not pieces at all and never block; Reopen
+   * makes the piece one again. One exception,
    * because it is a person's or Etsy's explicit stop and not an inference about where pieces are: a HELD piece (a person's hold, or an
    * Etsy change waiting for review) holds the sheet wherever it sits, even a one-piece order on this very sheet (as before). */
   const KEYS=['pooled','noSku','unmatched','noDesign','held','otherSheetNotReady'];   // which kind names an order that has several
@@ -127,10 +137,15 @@
         customer=customer || l.order?.buyer?.name || l.snap?.buyer || '';
         listingId=listingId || String(l.line?.listingId || l.snap?.listingId || '');
         if(l.state==='gone')continue;                                                     // cancelled: cut and set aside, never waited for
-        if(l.spec?.noDesign || l.noDesign || l.state==='noDesign')continue;               // nothing to cut
-        const key=lineKeyOf(l,id) || id,hold=l.hold || l.changePending?String(l.hold || 'Order changes need review'):'',problem=problemOf(l);
+        const hold=l.hold || l.changePending?String(l.hold || 'Order changes need review'):'',hand=handOf(l);
+        if(!hand && (l.spec?.noDesign || l.noDesign || l.state==='noDesign'))continue;    // nothing to cut
+        const key=lineKeyOf(l,id) || id,problem=problemOf(l);
         for(const pid of copyIds(l,key)){
           const on=copies.get(pid) || [];
+          // completed by hand: a copy on no sheet is resolved (it needs none, waits for nothing and holds nothing: the piece is not one of the order's pieces),
+          // unless the line is held as well (a person's or Etsy's explicit stop holds wherever the piece is). A copy that sits on a saved sheet is cut there,
+          // and stays a piece of that sheet's order.
+          if(hand && !hold && !on.length)continue;
           let block=null;
           if(hold)block={key:'held',why:hold};
           else if(!on.length)block=problem?{key:problem.key,why:problem.why}:{key:'pooled',why:'A piece is not on a saved sheet yet'};
@@ -486,5 +501,5 @@
     }
     return e;
   }
-  return {idsOf,orderIds,decisions,held,sheet,set,completedBefore,laserSheet,laserGroup,orderReports,forSheet,pieces,issues,copyIds,orderBlockers,filed,processStamps,seal,counter,explain,lookup:names,STEPS:STEPS.map(([key,label])=>({key,label})),sheetLabel};
+  return {idsOf,orderIds,decisions,held,isHand,handOf,sheet,set,completedBefore,laserSheet,laserGroup,orderReports,forSheet,pieces,issues,copyIds,orderBlockers,filed,processStamps,seal,counter,explain,lookup:names,STEPS:STEPS.map(([key,label])=>({key,label})),sheetLabel};
 });
