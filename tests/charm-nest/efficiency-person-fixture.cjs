@@ -92,15 +92,15 @@ function make(opts = {}) {
     const mm = (key, label, unit, better, def, fn, extra) => { const [v, pv] = f(fn); return [key, M(label, unit, v == null ? null : r1(v), pv == null ? null : r1(pv), better, def, extra)]; };
     const hrs = s => (s.activeMs == null ? null : s.activeMs / HR);
     return Object.fromEntries([
-      mm('parts', 'Parts', 'pieces', 'up', 'Pieces finished at a station, net of undos.', s => s.parts, { n: S.parts }),
+      mm('parts', 'Pieces finished', 'pieces', 'up', 'Pieces finished at a station, net of undos.', s => s.parts, { n: S.parts }),
       mm('orders', 'Orders', 'orders', 'up', 'Distinct orders worked on.', s => s.orders),
       mm('ordersCompleted', 'Orders completed', 'orders', 'up', 'Orders finished at a station.', s => s.completes),
       mm('scans', 'Scans', 'scans', 'up', 'Scan actions logged under this name.', s => s.scans, { estimated: true, why: 'A phone scan is credited to the desktop that receives it.' }),
       mm('prints', 'Labels printed', 'prints', null, 'Labels printed.', s => s.prints),
-      mm('partsPerDay', 'Parts per day worked', 'pieces/day', 'up', 'Parts divided by days worked.', s => div(s.parts, s.worked)),
+      mm('partsPerDay', 'Pieces per day worked', 'pieces/day', 'up', 'Pieces divided by days worked.', s => div(s.parts, s.worked)),
       mm('ordersPerDay', 'Orders per day worked', 'orders/day', 'up', 'Orders divided by days worked.', s => div(s.orders, s.worked)),
-      mm('partsPerActiveHour', 'Parts per active hour', 'pieces/hour', 'up', 'Parts divided by active hours.', s => div(s.parts, hrs(s))),
-      mm('partsPerSignedHour', 'Parts per signed-in hour', 'pieces/hour', 'up', 'Parts divided by signed-in hours.', s => div(s.parts, s.signedMs == null ? null : s.signedMs / HR)),
+      mm('partsPerActiveHour', 'Pieces per active hour', 'pieces/hour', 'up', 'Pieces divided by active hours.', s => div(s.parts, hrs(s))),
+      mm('partsPerSignedHour', 'Pieces per signed-in hour', 'pieces/hour', 'up', 'Pieces divided by signed-in hours.', s => div(s.parts, s.signedMs == null ? null : s.signedMs / HR)),
       mm('bestDay', 'Best day', 'pieces', 'up', 'The day with the most parts.', s => (s.best ? s.best.parts : null), { day: S.best ? S.best.day : undefined }),
       mm('peakHour', 'Busiest hour', 'clock', null, 'The hour with the most parts.', s => (s.peak == null ? null : s.peak * 60)),
       mm('secPerOrderMean', 'Average per order', 'seconds', 'down', 'Active seconds divided by orders.', s => div(s.activeMs == null ? null : s.activeMs / 1000, s.orders)),

@@ -375,7 +375,7 @@ async function main() {
       sel = dot(pa, 'sheet'); await rest(hp, sel); m = await read(hp, sel); assert.equal(m.tip.state, 'Done', 'the sorted piece\'s Nested is Done (history)'); await away(hp);
       // a mutant that ignores the placement (the dots read the history alone) is caught by the held-order check
       await openOrder(HELD, 12, 6); await heldIsFenced();   // (the real page passes)
-      await hp.evaluate(() => { window.__PP = window.PiecePlacement; window.PiecePlacement = Object.assign({}, window.__PP, { of: () => null }); });
+      await hp.evaluate(() => { window.__PP = window.PiecePlacement; window.PiecePlacement = null; });   // (the module gone: neither the window's own placement (refreshPlacement) nor PiecePlacement.of answers)
       await openOrder(PAST, 12, 5); await openOrder(HELD, 12, 6);
       let caught = false; try { await heldIsFenced(); } catch (e) { caught = /one solid dot/.test(String(e.message)); }
       assert(caught, 'with the placement ignored, the held pieces read Nested solid from the history: the check catches it');

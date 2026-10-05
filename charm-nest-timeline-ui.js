@@ -733,10 +733,11 @@
    *  the furthest step reached (W.step counts the full rail: a step this order does not take is passed over), cur: the
    *  step being worked towards (-1 when all are done, or it was completed by hand), stop: where a cancelled order
    *  stopped, hand: the Complete Order press that completed it by hand (handOf; the steps after `step` are skipped). */
-  function derive(events, cancelRec, where, rail) {
+  const PLACE_STATES = new Set(["sheet", "waiting", "hold", "hand", "cancelled", "loading"]);
+  function derive(events, cancelRec, where, rail, place) {
     events = events || [];
     rail = Array.isArray(rail) && rail.length ? rail : STAGES;
-    const W = where && typeof where === "object" ? where : Object.assign(whereOf(events, cancelRec), typeof where === "string" && where ? { label: where, text: where } : {});
+    let W = where && typeof where === "object" ? where : Object.assign(whereOf(events, cancelRec), typeof where === "string" && where ? { label: where, text: where } : {});
     const stages = rail.map(() => ({ first: null, last: null }));
     let lastHold = null, lastCancel = null;
     for (const e of events) {
@@ -745,17 +746,45 @@
       if (e.type === "held" || e.type === "released" || e.type === "restored") lastHold = e;
       if (CANCEL_TYPES.has(e.type) || e.type === "cancelRestored") lastCancel = e;
     }
-    const full = clamp(Number.isFinite(+W.step) ? Math.round(+W.step) : -1, -1, STAGES.length - 1);
-    const step = full < 0 ? -1 : rail.filter(s => STAGES.indexOf(s) <= full).length - 1;
-    const cur = step + 1 < rail.length ? step + 1 : -1;
+    let full = clamp(Number.isFinite(+W.step) ? Math.round(+W.step) : -1, -1, STAGES.length - 1);
     let cancelled = null;
     if (cancelRec && typeof cancelRec === "object") cancelled = { at: +cancelRec.at || (lastCancel && lastCancel.at) || 0, by: str(cancelRec.by, 80), why: str(cancelRec.why, 400), source: cancelRec.source || (cancelRec.by === "Etsy" ? "etsy" : "sorter") };
     else if (lastCancel && lastCancel.type !== "cancelRestored" && W.cancelled !== false) cancelled = { at: lastCancel.at, by: whoOf(lastCancel), why: reasonOf(lastCancel) || lastCancel.text, source: lastCancel.type === "etsyCancelled" ? "etsy" : lastCancel.source };
     else if (W.cancelled) cancelled = { at: +W.since || +W.at || 0, by: str(W.by, 80), why: "", source: "" };
-    const hold = !cancelled && W.stage === "held" ? (lastHold && lastHold.type === "held" ? lastHold : { type: "held", at: +W.since || 0, text: "", data: null }) : null;
+    let hold = !cancelled && W.stage === "held" ? (lastHold && lastHold.type === "held" ? lastHold : { type: "held", at: +W.since || 0, text: "", data: null }) : null;
     const hand = cancelled ? null : handOf(events);
-    return { W, rail, stages, step, cur: hand ? -1 : cur, stop: cancelled ? Math.min(step + 1, rail.length - 1) : -1, cancelled, hold, hand, last: events[events.length - 1] || null };
+    /* Where the piece IS now (the page's PiecePlacement, opts.placement): history is what happened, and `step` is its high-water mark: no event lowers it, so
+       a piece placed once and taken off since (a hold, a remove, its sheet deleted, its set undone) kept Nested and a step after it: "On hold" under dots that
+       said "Nested, next: Laser cut" (Paul, 5 Oct 2026, image 3). With a placement the steps follow the CURRENT state: a piece on no sheet (place.fence) has
+       Nested and every later step hollow, unless the history already shows it cut (a piece cannot un-cut: `beyond`); a piece on a sheet has Nested done at least
+       (`raised`: the sheet's record may be a moment ahead of the timeline). W (the words "On a sheet" / "Waiting") and the hold follow it too. The events, and
+       every seal on the Timeline, are untouched: this only decides what is DONE, never what happened. */
+    const pl = place && typeof place === "object" && PLACE_STATES.has(place.state) ? place : null;
+    let fenced = false, raised = false, beyond = false;
+    if (pl && !cancelled && !hand && pl.state !== "cancelled" && pl.state !== "hand" && pl.state !== "loading") {
+      if (pl.fence && full >= 1) { if (full < 3) { full = 0; fenced = true; } else beyond = true; }
+      else if (pl.floor >= 1 && full < 1) { full = 1; raised = true; }
+      const st = W.stage, said = (stage, label) => ({ stage, label, text: label });
+      if (pl.state === "hold") {
+        hold = (lastHold && lastHold.type === "held" ? lastHold : null) || { type: "held", at: +pl.since || +W.since || 0, text: pl.reason || "", data: null };
+        if (!beyond && st !== "held") W = Object.assign({}, W, said("held", "On hold"), pl.onSheet ? {} : { sheet: "", sheetId: "" });
+      } else if (pl.state === "waiting" || pl.state === "sheet") {
+        hold = null;
+        if (pl.fence && !beyond && (st === "sheet" || st === "held")) W = Object.assign({}, W, said("waiting", pl.text || "Waiting for a sheet"), { sheet: "", sheetId: "" });
+        else if (pl.state === "sheet" && pl.sheets && pl.sheets.length) {
+          const a = pl.sheets[0], names = pl.sheets.map(x => x.label).filter(Boolean).join(" + ") || "a sheet", mine = W.sheetId && pl.sheets.some(x => x.id === W.sheetId);
+          if (st === "waiting" || st === "review" || st === "designed" || st === "held") W = Object.assign({}, W, said("sheet", "On " + names), { sheet: a.label || "", sheetId: a.id || "" });
+          else if (st === "sheet" && !mine && a.id) W = Object.assign({}, W, { sheet: a.label || W.sheet, sheetId: a.id });
+        }
+      }
+    }
+    const step = full < 0 ? -1 : rail.filter(s => STAGES.indexOf(s) <= full).length - 1;
+    const cur = step + 1 < rail.length ? step + 1 : -1;
+    return { W, rail, stages, step, cur: hand ? -1 : cur, stop: cancelled ? Math.min(step + 1, rail.length - 1) : -1, cancelled, hold, hand, last: events[events.length - 1] || null, place: pl, fenced, raised, beyond };
   }
+  /** Whether step i (an index into STAGES) counts as done for a derived piece or order: reached, or stamped, and (placement) not a step after Nested that a
+   *  piece taken off its sheet no longer stands on. ONE rule for the row's dots, the rail's counts and the Timeline (never `D.step` or `first` alone). */
+  const stepDone = (D, i) => !!D && (D.step >= i || (!D.fenced && !!(D.stages && D.stages[i] && D.stages[i].first)));
 
   /* ════ orders of several pieces (Paul, 28 Sep: "very convoluted and confusing especially on multipiece orders") ════
      A piece is one line of the order: { key (its lineKey), tid, qty, line, pools [poolIds], sheets [sheetIds] }. An event
@@ -773,14 +802,16 @@
   /** The order across its pieces: each piece where it stands (derive over its own events, its own steps), each rail step
    *  with how many pieces reached it (a line of 2 counts 2) out of those that take it, and the step of the slowest piece,
    *  which is where the order is. → { each: [{ p, D, steps, events }], rail: [{ s, i, n, of }], step } */
-  function summary(events, pieces, cancelRec) {
+  function summary(events, pieces, cancelRec, placeOf) {
     const evs = (events || []).map(x => (x && x.lane ? x : norm(x))).filter(Boolean).sort(byAt), ps = pieces || [];
-    const each = ps.map(p => { const list = evs.filter(e => ofPiece(e, p, ps)); return { p, D: derive(list, cancelRec), steps: keepDone(stagesFor(p.line), list), events: list }; });
+    // (placeOf(key), or a piece's own .place: where the piece IS now, the PiecePlacement; see derive)
+    const placed = p => { try { return typeof placeOf === "function" ? placeOf(p.key) || null : p.place || null; } catch (_) { return null; } };
+    const each = ps.map(p => { const list = evs.filter(e => ofPiece(e, p, ps)); return { p, D: derive(list, cancelRec, null, null, placed(p)), steps: keepDone(stagesFor(p.line), list), events: list }; });
     const rail = STAGES.map((s, i) => ({ s, i, n: 0, of: 0 }));
     for (const x of each) for (const s of x.steps) {
       const i = STAGES.indexOf(s); if (i < 0) continue;
       const q = Math.max(1, Math.round(+x.p.qty || 1)); rail[i].of += q;
-      if (x.D.step >= i || x.D.stages[i].first || x.D.hand) rail[i].n += q;
+      if (stepDone(x.D, i) || x.D.hand) rail[i].n += q;
     }
     // (a piece completed by hand waits on no step: the order is where its slowest other piece is)
     return { each, rail: rail.filter(r => r.of), step: each.length ? Math.min(...each.map(x => (x.D.hand ? STAGES.length - 1 : x.D.step))) : -1 };
@@ -837,7 +868,7 @@
     const i = typeof step === "number" ? step : STAGES.findIndex(s => s.k === (step && typeof step === "object" ? step.k : step));
     const s = STAGES[i]; if (!s) return null;
     const evs = (data.events || []).map(e => e && e.lane && e.key ? e : norm(e)).filter(Boolean).sort(byAt);
-    let D = data.D || derive(evs, data.cancelled || null, data.where || null);
+    let D = data.D || derive(evs, data.cancelled || null, data.where || null, null, data.place || null);
     // (derive's own rail is the steps themselves; the rail a view draws is railed's { s, i })
     if (!Array.isArray(D.rail) || !D.rail.length || !D.rail[0].s) D = railed(D, keepDone(data.stages, evs));
     const R = D.rail, pos = R.findIndex(r => r.i === i);
@@ -853,6 +884,18 @@
     };
     for (const e of evs) if (STOP_OF[e.type] === i) done.push(doneOf(e));
     if (state === "done" && !done.length) done.push({ t: s.l, sub: "done before the timeline was kept" });
+    /* A piece that is on no sheet NOW (the placement: D.fenced) has Nested and the steps after it still to do, whatever happened before. What happened stays
+       on the Timeline, every seal of it; here it is only said in the past tense ("Was on SS Sheet 1 until Paul took it off, 5 Oct 12:44 AM"), never as a
+       step done (Paul, 5 Oct 2026, image 3). */
+    const fenced = !!(D.fenced && state !== "done" && state !== "none");
+    let wasNote = "";
+    if (fenced) {
+      const pl = data.place || D.place || null, earlier = done.splice(0);
+      if (s.k === "sheet") {
+        const was = (pl && pl.wasOn) || (root.PiecePlacement && root.PiecePlacement.history ? root.PiecePlacement.history(evs).wasOn : null);
+        wasNote = was && was.until ? `Was on ${was.label || "a sheet"} until ${was.by ? was.by + " took it off" : "it was taken off"}, ${shortWhen(was.until)}` : was && was.label ? `Was on ${was.label} earlier` : earlier.length ? "Was on a sheet earlier" : "";
+      } else for (const d of earlier) facts.push(`Earlier: ${d.t} · ${d.sub}`);
+    }
     /* the order's labels (Paul, 28 Sep 23:51): its QR label printed at the Sorting station or the Design Station is said
        under Sorted, "Label printed at the Sorting station by Ana P." (the latest print per place), or "Label not printed
        yet"; a shipping label under Shipped */
@@ -868,7 +911,7 @@
       if (e.type === "scan" ? SCAN_STEP[e.station] === s.k : quiet.includes(e.type) && STOP_OF[e.type] == null)
         facts.push(`${titleOf(e, 70)}${e.type === "scan" ? " · " + whoOf(e) : ""} · ${shortWhen(e.at)}`);
     }
-    const out = () => ({ k: s.k, label: s.l, i, n: pos + 1, of: R.length, state, done, need, facts: facts.slice(-6) });
+    const out = () => ({ k: s.k, label: s.l, i, n: pos + 1, of: R.length, state, done, need, facts: facts.slice(-6), fenced, was: wasNote });
     const add = (kind, t) => { if (t && !need.some(n => n.t === t)) need.push({ kind, t: String(t).slice(0, 220) }); };
     if (state === "none") { facts.push(`${s.none || "Not a step"} for ${lines.length === 1 ? "this piece" : "this order"}`); return out(); }
     if (state === "gone" || state === "stopped") { add("stop", D.cancelled && D.cancelled.source === "etsy" ? "Cancelled on Etsy: this step will not happen" : "Cancelled: this step will not happen"); return out(); }
@@ -893,6 +936,7 @@
     };
     if (state === "done") { if (s.k === "sheet") loose(); noLabel(); return out(); }
     if (state === "later") { const cp = R.findIndex(r => r.i === D.cur); add("after", `${STAGES[Math.max(0, D.cur)].l}${cp >= 0 && cp < pos - 1 ? " and the steps between" : ""}`); }
+    if (fenced && s.k === "sheet") { add(D.hold ? "person" : "wait", "Not on a sheet now"); if (wasNote) add("was", wasNote); }
     if (D.hold) { const r = reasonOf(D.hold) || D.hold.text || ""; add("person", `On hold${r ? ": " + r.slice(0, 120) : ""}. Release it in Review`); }
     if (state === "now" && s.k !== "sheet") loose();
     if (s.k === "arrived") add("wait", HOW.arrived);
@@ -926,7 +970,7 @@
     noLabel();
     return out();
   }
-  const REQ_WORD = { wait: "Waiting", person: "Needs a person", next: "Next", after: "After", stop: "Stopped", label: "" };
+  const REQ_WORD = { wait: "Waiting", person: "Needs a person", next: "Next", after: "After", stop: "Stopped", label: "", was: "" };   // (was: what the history says, in the past tense: never a step to do)
   // (a label not printed yet is said, but a step that is done stays done: only a real need makes it "Part done")
   const partDone = q => q.state === "done" && q.need.some(n => n.kind !== "label");
   const STATE_WORD = { done: "Done", now: "Next", later: "To come", stopped: "Stopped here", gone: "Won't happen", none: "Not needed", skipped: "Skipped" };
@@ -987,11 +1031,12 @@
     const SEL = ".tlNowSeal, .tlMini, [data-tl-step]";
     const stepOf = b => {
       const g = (typeof host._tlExpGet === "function" && host._tlExpGet()) || {};
-      const evs = (g.events || []).map(norm).filter(Boolean).sort(byAt), D = railed(derive(evs, g.cancelled || null, g.where || null), keepDone(g.stages, evs));
+      // (g.D: the rail's own derived state, mount().state(), so the card and the rail can never disagree; g.place: where the piece IS now, see derive)
+      const evs = (g.events || []).map(norm).filter(Boolean).sort(byAt), D = g.D && Array.isArray(g.D.rail) && g.D.rail[0] && g.D.rail[0].s ? g.D : railed(derive(evs, g.cancelled || null, g.where || null, null, g.place || null), keepDone(g.stages, evs));
       let i = b.dataset.tlStep ? STAGES.findIndex(s => s.k === b.dataset.tlStep) : -1;
       if (i < 0 && b.dataset.tlEv) { const e = evs.find(x => x.id === b.dataset.tlEv); if (e && own(STOP_OF, e.type)) i = STOP_OF[e.type]; }
       if (i < 0) i = D.cancelled ? D.stop : D.cur >= 0 ? D.cur : D.step;
-      return i >= 0 ? requirementsOf(i, { events: evs, D, context: g.context }) : null;
+      return i >= 0 ? requirementsOf(i, { events: evs, D, context: g.context, place: g.place || null }) : null;
     };
     const foot = () => { const f = card.querySelector(".xf"); if (f && cur) f.textContent = `${cur.n ? `Step ${cur.n} of ${cur.of}` : "Not a step of this order"}${typeof host._tlExpPin === "function" ? " · click seal to open on the Timeline" : ""}`; };
     const show = (b, kb) => {
@@ -1168,7 +1213,7 @@
 .tlReq .rq>i{width:14px;height:14px;margin-top:1px;border-radius:50%;border:1.5px solid var(--ink25,#c4bdb0);display:grid;place-items:center}
 .tlReq .rq.ok>i{border:0;background:var(--sage,#6f8d6a);color:#fff}.tlReq .rq.ok>i svg{width:9px;height:9px}
 .tlReq .rq.person>i{border-color:#c79a3a}.tlReq .rq.stop>i{border-color:var(--clay,#b0563f)}
-.tlReq .rq.after>i,.tlReq .rq.next>i{border-style:dashed}
+.tlReq .rq.after>i,.tlReq .rq.next>i{border-style:dashed}.tlReq .rq.was>i{border-style:dotted}.tlReq .rq.was span{color:var(--ink45)}
 .tlReq .rq span{min-width:0;overflow-wrap:anywhere}
 .tlReq .rq.ok span{color:var(--ink)}
 .tlReq .rq small{display:block;font:10px var(--mono,monospace);color:var(--ink45);margin-top:1px}
@@ -1436,6 +1481,10 @@
     // events/byKey: what is drawn (one piece's, or all); every/allKeys: all the order's (opts.pieces, opts.piece: agent F)
     const S = { events: [], shown: [], shownKeys: new Set(), byKey: new Map(), every: [], allKeys: new Map(), pieces: Array.isArray(opts.pieces) ? opts.pieces : [], piece: opts.piece || null, cancelled: null, where: null, D: null, mark: null, markStage: null, hl: new Set(), sig: "",
       stamping: null, deferredPaint: null, loaded: false, loading: null, error: "", dead: false, lastLoad: 0, seq: 0, nowX: 0, pendingFocus: null, hlDone: false };
+    // where the piece IS now (opts.placement(key|null) -> the page's PiecePlacement; null asks for the order's: one piece's, or the roll-up of all); see derive
+    const plaOf = k => { try { return typeof opts.placement === "function" ? opts.placement(k == null ? null : k) || null : null; } catch (err) { warn("placement", err); return null; } };
+    const pieceSig = x => JSON.stringify(x.map(p => [p.key, p.qty, p.pools, p.sheets])) + "#" + plaSig(x);
+    const plaSig = ps => [plaOf(null)].concat((ps || []).map(p => plaOf(p.key))).map(q => (q && q.sig) || "").join("|");
     const timers = new Set();
     const later = (fn, ms) => { const t = setTimeout(() => { timers.delete(t); if (!S.dead) fn(); }, ms); timers.add(t); return t; };
     const cancelT = t => { if (t) { clearTimeout(t); timers.delete(t); } return 0; };
@@ -1535,7 +1584,7 @@
     }
     /** What is drawn, in one string: an answer that says the same repaints nothing (a stamp still dropping keeps going). */
     function sigOf() {
-      return S.every.map(e => e.key + (e.pending ? "*" : "")).join("|") + "#" + (S.cancelled ? S.cancelled.at || 1 : 0) + "#" + JSON.stringify(S.where || "");
+      return S.every.map(e => e.key + (e.pending ? "*" : "")).join("|") + "#" + (S.cancelled ? S.cancelled.at || 1 : 0) + "#" + JSON.stringify(S.where || "") + "#" + plaSig(S.pieces);
     }
     function afterFirst() {
       if (S.pendingFocus != null) { const id = S.pendingFocus; S.pendingFocus = null; if (focus(id)) return; }
@@ -1580,7 +1629,7 @@
       }
       measure();
       sealHover.cancel(true); // a redraw cannot preserve hover just because a larger parent still matches :hover
-      const D = S.D = deriveNow();
+      const D = S.D = deriveNow(); S.psig = pieceSig(S.pieces);
       // every event stays in S.events (the host, and the step explainer, read them all); only the seals are drawn
       S.shown = withPrints(S.events); S.shownKeys = new Set(S.shown.map(e => e.key));
       const now = Date.now(), pressKeys = (o.fresh || []).filter(k => { const e = S.byKey.get(k); return e && (e.live || e.pending || (!e.derived && +e.at >= now - 300000 && +e.at <= now + 60000)); });
@@ -1629,10 +1678,10 @@
     }
     function deriveNow() {
       const p = pieceNow();
-      if (p) return railed(derive(S.events, S.cancelled), withDone(stagesFor(p.line), S.events));
-      const D = derive(S.events, S.cancelled, whereNow());
+      if (p) return railed(derive(S.events, S.cancelled, null, null, plaOf(p.key)), withDone(stagesFor(p.line), S.events));
+      const D = derive(S.events, S.cancelled, whereNow(), null, plaOf(null));
       if (S.pieces.length < 2) return railed(D, railNow(S.events));
-      const sum = summary(S.every, S.pieces, S.cancelled), far = D.step;
+      const sum = summary(S.every, S.pieces, S.cancelled, plaOf), far = D.step;
       if (D.hand && !sum.each.every(x => x.D.hand)) D.hand = null;   // (completed by hand: every piece of it)
       D.step = Math.min(D.step, sum.step);
       // a step that every piece taking it has passed is not what the order waits on (a stud's Welded, done, while the
@@ -1644,9 +1693,10 @@
      *  The rail and the lanes cross over to it, from the side it lies on (dir). */
     function setPieces(list, key, dir) {
       if (S.dead) return;
-      const ps = Array.isArray(list) ? list : S.pieces, sigP = x => JSON.stringify(x.map(p => [p.key, p.qty, p.pools, p.sheets]));
+      const ps = Array.isArray(list) ? list : S.pieces;
       key = key || null;
-      const moved = key !== S.piece, changed = sigP(ps) !== sigP(S.pieces);
+      // (the pieces AND where each is now: a piece taken off its sheet changes the rail with no change of pieces; S.psig is what was drawn last)
+      const moved = key !== S.piece, changed = pieceSig(ps) !== S.psig;
       if (!moved && !changed) return;
       S.pieces = ps; S.piece = key; narrow();
       if (moved || (S.mark && !S.byKey.has(S.mark))) { S.mark = null; S.markStage = null; }   // (the ring was round another piece's stamp)
@@ -1947,7 +1997,8 @@
       if (b.dataset.key) return S.byKey.get(b.dataset.key) || null;
       const i = STAGES.findIndex(s => s.k === b.dataset.stage); if (i < 0 || !S.D) return null;
       if ((b.classList.contains("x") || b.classList.contains("tlCxStamp")) && S.D.cancelled) return S.events.filter(e => CANCEL_TYPES.has(e.type)).pop() || { key: "x", type: "cancelled", at: S.D.cancelled.at, by: S.D.cancelled.by, lane: "office", data: null };
-      return S.D.stages[i].first || { key: "future-" + STAGES[i].k, type: STAGES[i].kind, at: 0, ghost: true, by: "" };
+      // (a step the piece no longer stands on, taken off its sheet, is drawn as a ghost: its zoom is the ghost too, the real seal stays on the Timeline)
+      return (stepDone(S.D, i) && S.D.stages[i].first) || { key: "future-" + STAGES[i].k, type: STAGES[i].kind, at: 0, ghost: true, by: "" };
     }
     const liftOf = b => b.classList.contains("tlStop") ? b.querySelector(".tlSeal") : b;
     function showZoom(b, kb) {
@@ -2017,7 +2068,7 @@
      *  (or, for a step not reached, its dashed stamp). */
     function stageClick(stop, click) {
       const e = evOfEl(stop);
-      const i = STAGES.findIndex(s => s.k === stop.dataset.stage), last = S.D && i >= 0 && S.D.stages[i].last;
+      const i = STAGES.findIndex(s => s.k === stop.dataset.stage), last = S.D && i >= 0 && (!S.D.fenced || stepDone(S.D, i)) && S.D.stages[i].last;
       const target = stop.classList.contains("x") ? e : last || e;
       if (!target || !target.key || !S.byKey.has(target.key)) {
         if (i >= 0 && S.loaded) {
@@ -2139,7 +2190,8 @@
       try { if (root.OrderTimeline && typeof root.OrderTimeline.onRecord === "function") unsub = root.OrderTimeline.onRecord(onRecord); } catch (_) {}
       if (!src) { doc.addEventListener("visibilitychange", onVis); arm(); }   // (a feed polls for every mount)
     }
-    return { refresh, destroy, focus, setPieces };
+    // state(): the derived state last drawn (D: steps, hold, placement), for a host's step card to read the very same answer as the rail
+    return { refresh, destroy, focus, setPieces, state: () => S.D };
   }
 
   /* ════ the order view's "Where it is now" card (spec §3, §8) ════
@@ -2227,7 +2279,7 @@
   /** The icon of the lane an event belongs to (the station badge's disc), as SVG markup; "" for no event. */
   function iconOf(x) { const e = x && norm(x); return e ? iconSvg((LANE[e.lane] || LANE.office).ic) : ""; }
 
-  root.OrderTimelineUI = { mount, feed, stampSvg, derive, STAGES, stagesFor, ofPiece, summary, isStud, engraveOf, KIND, labelOf, nowStamps, wireNow, iconOf, sealed, sealsOf, blockerOf, requirementsOf, explainOn,
+  root.OrderTimelineUI = { mount, feed, stampSvg, derive, stepDone, STAGES, stagesFor, ofPiece, summary, isStud, engraveOf, KIND, labelOf, nowStamps, wireNow, iconOf, sealed, sealsOf, blockerOf, requirementsOf, explainOn,
     stepOf, labelStepOf, personOf, placeOf, opStepOf, whenOf, timeOf, handStepOf, handOf, handDoneOf, handLive, handSealOf, faceModel };
   root.OrderTimelineUI.pollOpenMs = POLL_OPEN;   // how often the open order view's feed reads (tests may set another before it opens)
 })(typeof window !== "undefined" ? window : globalThis);

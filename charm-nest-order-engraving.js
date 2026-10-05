@@ -5,10 +5,13 @@
  *
  * It is not a second copy of the Sheet tab's card: it draws the very same card (CNEngravingSeals.panel + wirePanel, the same
  * classes, the same preview, the same words box, the same Approved button with the BACK ENGRAVING seal pressed on it through
- * CNEngravingSeals.press inside Engrave.approve, the same "View in Engrave" button), only for a piece found by its order, its
- * line and its pool id instead of by a sheet.
+ * CNEngravingSeals.press inside Engrave.approve, the same "Fix in Engraving" / "View in Engraving" button), only for a piece found by
+ * its order, its line and its pool id instead of by a sheet. The card says in plain words what is needed (the words as read and what
+ * is unclear, the back preview, one quiet status and its reason) and has two real buttons: Fix in Engraving (EngraveLink, that order
+ * and piece) and Approve engraving (right there, when the words are confirmed; otherwise off with a one-line reason).
  *
- *   OrderEngraving.mount(host, { rid, key, poolId, piece, row?, events?, changed?, sheetEng? }) -> { update(ctx), destroy(), refresh(), el }
+ *   OrderEngraving.mount(host, { rid, key, poolId, piece, row?, events?, changed?, sheetEng?, label?, meta?, compact?, pieces? })
+ *       -> { update(ctx), destroy(), refresh(), el, mode: 'one' | 'list' }
  *       rid     the order (receipt id)           key    the order line's key (what Engrave keeps its job under)
  *       poolId  the piece's pool id (optional: the line's first)       piece  the piece picked on the order's switcher (kept for EngraveLink)
  *       row     the order line itself, for an order that is not in the pull (the order window builds it from the records)
@@ -18,6 +21,11 @@
  *               and after this card's own approval: the host repaints what depends on it (the Engraving cell, the
  *               Sheet tab)
  *       sheetEng a function giving the Sheet tab's own reading of this piece (used only when Engrave holds no job for it)
+ *       label   the piece's name, meta its line under the name: named on the card when the order has several pieces
+ *       compact a smaller card (a shorter preview): the cards of the list below
+ *       pieces  [{ key, poolId, row, label, meta, sheetEng }]: "All pieces" of an order of several. One compact card for each piece
+ *               that has a back engraving (a piece without one draws nothing), under one "Back engraving" label, in the order given;
+ *               the host is hidden when none has. mount() draws the list for two or more pieces and the one card otherwise
  *     update(ctx)   told again (the order window paints often): the card is drawn again only when what it shows changed; a
  *                   different order, line or piece swaps the card at once (nothing of the piece before stays on screen)
  *     destroy()     the card goes, its timers with it
@@ -44,12 +52,9 @@
     const d = doc(); if (!d || d.getElementById('owEngCss')) return;
     const s = d.createElement('style'); s.id = 'owEngCss';
     s.textContent = '.owEng{display:grid;gap:6px;min-width:0;margin-top:6px}.owEng[hidden]{display:none}.owEng>.owEngCard{display:grid;gap:6px;min-width:0}.owEng .fLabel{margin:0}'
-      + '.owEng .swEng .pv{position:relative}.owEngWait{display:flex;align-items:center;gap:8px;min-width:0;padding:9px 12px;border:1px solid var(--line);border-radius:12px;background:var(--card);font:11px var(--sans);color:var(--ink45)}'
-      + '.owEngPvWait{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;gap:7px;background:#fff;font:11px var(--sans);color:var(--ink45)}'
-      + '.owEng .by.owEngBy{display:flex;align-items:center;gap:7px}.owEng .by.owEngBy .owSpin{width:11px;height:11px;flex-basis:11px}'
-      // the Overview's column is narrow (200 px, the Sheet tab's panel is ~340): the seal still rests half over the button at its full size,
-      // so the button is a little shorter (the rule that places the seal names the button's width) and the seals' own padding goes
-      + '.owEng .swEng .btn.egApproveButton{min-width:136px}.owEng .swEng .egApproveWrap>.egButtonSeal{left:calc(136px - var(--seal-fit,var(--seal-base,50px)) / 2 + 8px);padding:0;gap:6px}';
+      + '.owEng.owEngList{gap:10px}.owEng.owEngList>.owEng{margin-top:0}'
+      + '.owEngWait{display:flex;align-items:center;gap:8px;min-width:0;padding:9px 12px;border:1px solid var(--line);border-radius:12px;background:var(--card);font:11px var(--sans);color:var(--ink45)}'
+      + '.owEngPvWait{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;gap:7px;background:#fff;font:11px var(--sans);color:var(--ink45)}';
     (d.head || d.documentElement).appendChild(s);
   }
   const waitNode = text => { const n = doc().createElement('div'); n.className = 'owEngWait'; n.setAttribute('role', 'status'); n.setAttribute('aria-live', 'polite'); n.innerHTML = `<span class="owSpin" aria-hidden="true"></span><span>${esc(text)}</span>`; return n; };
@@ -85,8 +90,8 @@
     if (s === 'words' || s === 'blocked') return Object.assign(base, { kind: 'words', text: job.text, reason: job.reason });
     const working = !!(E && E.isWorking && tryDo(() => E.isWorking(job), false));
     const note = working ? (s === 'classify' ? 'Reading the words…' : 'Fitting the words on the back…')
-      : s === 'classify' ? 'Its words are not read yet: confirm them in Engrave'
-      : E && E.canFit && !tryDo(() => E.canFit(job), true) ? 'Waits for its sheet to be written, then it is fitted' : 'Waits its turn in Engrave';
+      : s === 'classify' ? 'Confirm them in Engraving, or wait for them to be read'
+      : E && E.canFit && !tryDo(() => E.canFit(job), true) ? 'Waits for its sheet to be written, then it is fitted' : 'Waits its turn in Engraving';
     return Object.assign(base, { kind: 'preparing', text: job.text, working, note });
   }
   function fromSaved(re) {
@@ -139,7 +144,7 @@
   function disarm() { if (timer && !live.size) { root.clearInterval(timer); timer = 0; } }
   if (root.document && root.document.addEventListener) root.document.addEventListener('visibilitychange', () => { if (!hidden()) tick(); });
 
-  function mount(host, ctx0) {
+  function mountOne(host, ctx0) {
     css();
     if (!host) return null;
     if (host._orderEngraving) tryDo(() => host._orderEngraving.destroy());
@@ -161,7 +166,7 @@
       if (!eng || eng.kind === 'none') { host.hidden = true; host.replaceChildren(); return; }
       host.hidden = false;
       const card = doc().createElement('div'); card.className = 'owEngCard'; card.dataset.orderEngraving = eng.kind; card.setAttribute('role', 'group'); card.setAttribute('aria-label', 'Back engraving of this piece');
-      card.innerHTML = S.panel(eng);
+      card.innerHTML = S.panel(Object.assign({}, eng, { pieceLabel: ctx.label || '', pieceMeta: ctx.meta || '', compact: !!ctx.compact }));
       host.replaceChildren(card);
       // (the preview zooms and pans where it lies, as the order's two pictures do: charm-nest-zoompan.js; kept for this piece when the card is drawn again)
       S.wirePanel(card, eng, { imageUrl: u => (/^https?:/.test(u) ? cors(u) : u), approve: b => approve(b), open: b => openEngrave(b), zoom: { id: 'ow:eng', key: ident(ctx) } });
@@ -170,17 +175,16 @@
       if (im && !im.complete) {
         const w = doc().createElement('span'); w.className = 'owEngPvWait'; w.innerHTML = '<span class="owSpin" aria-hidden="true"></span><span>Loading the back…</span>'; pv.appendChild(w);
         im.addEventListener('load', () => w.remove(), { once: true });
-        im.addEventListener('error', () => { pv.innerHTML = '<span class="by">Open in Engrave to see the back</span>'; }, { once: true });
+        im.addEventListener('error', () => { pv.classList.add('egPvNone'); pv.innerHTML = '<span class="by">No preview here: see the back in Engraving</span>'; }, { once: true });
       }
-      const by = card.querySelector('.swEng > .by');
-      if (by && eng.kind === 'preparing' && eng.working) { by.classList.add('owEngBy'); const sp = doc().createElement('span'); sp.className = 'owSpin'; sp.setAttribute('aria-hidden', 'true'); by.prepend(sp); by.setAttribute('role', 'status'); }
+      const sub = card.querySelector('.egSub'); if (sub && eng.kind === 'preparing' && eng.working) sub.setAttribute('role', 'status');
     }
     /** Look again; draw only when what the card shows has changed (or at once when asked). `quiet`: the host is not told. */
     function refresh(force, quiet) {
       if (gone || !host.isConnected) return;
       attached = true;
       if (busy) return;   // (this card's own approval is on its way: it draws the end of it)
-      const r = engOf(ctx, seenAt), s = sigOf(r), has = !!(r.loading || r.eng && r.eng.kind !== 'none');
+      const r = engOf(ctx, seenAt), s = sigOf(r) + '|' + (ctx.label || '') + '|' + (ctx.meta || '') + '|' + (ctx.compact ? 1 : 0), has = !!(r.loading || r.eng && r.eng.kind !== 'none');
       last = r;
       if (!force && s === sig) return;
       // (something is here to show but cannot be drawn yet: the window is not on screen, or a seal is being pressed: it says so)
@@ -197,7 +201,7 @@
       const who = tryDo(() => (root.CNEmployee && (root.CNEmployee.name() || root.CNEmployee.ask())) || '', '');
       if (!who) return;
       const token = busy = ++nextId; const key = ident(ctx);
-      btn.disabled = true; btn.textContent = 'Approved'; btn.setAttribute('aria-busy', 'true');
+      btn.disabled = true; btn.setAttribute('aria-busy', 'true');
       let ok = false;
       try {
         await root.Engrave.approve(job, who, btn);
@@ -206,28 +210,26 @@
         // (Engrave.approve says nothing for a line that has left the pull, a cancelled order's: a press that did nothing says why)
         if (!ok && job.row && job.row.state === 'gone') say('This order has left the pull (cancelled or shipped), so its back engraving is not approved here.', '', 6000);
       } catch (e) { say('Not approved: ' + (e && e.message || e), 'bad', 6000); if (btn.isConnected) btn.disabled = false; }
-      finally { if (btn.isConnected) { btn.removeAttribute('aria-busy'); btn.textContent = 'Approved'; } if (busy === token) busy = 0; }
+      finally { if (btn.isConnected) btn.removeAttribute('aria-busy'); if (busy === token) busy = 0; }
       if (!ok || gone) return;
       poke();
       if (ident(ctx) === key) refresh(true, true);
       told(last);
     }
     async function openEngrave(btn) {
+      // (the button's own wait, a small labelled spinner, is the card's: CNEngravingSeals.wirePanel)
       const r = last || engOf(ctx, seenAt), t = target(r), link = root.EngraveLink;
-      const html = btn && btn.innerHTML;
-      if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spin"></span>Opening Engrave…'; }
       try {
         if (link && typeof link.open === 'function') await link.open(t);
         else await fallbackOpen(r, t);
-      } catch (e) { say('Could not open Engrave: ' + (e && e.message || e), 'bad', 5000); }
-      finally { if (btn && btn.isConnected) { btn.disabled = false; btn.innerHTML = html; } }
+      } catch (e) { say('Could not open Engraving: ' + (e && e.message || e), 'bad', 5000); }
     }
     function reset() {
       busy = 0; sig = null; shown = null; last = null; seenAt = Date.now();
       host.replaceChildren(); host.hidden = true;
     }
     const handle = {
-      el: host,
+      el: host, mode: 'one',
       update(next) {
         if (gone) return;
         const was = ident(ctx); ctx = Object.assign({}, next);
@@ -252,9 +254,57 @@
     reset(); refresh(true, true);
     return handle;
   }
+  /** Several pieces at once ("All pieces" on the order window): one compact card per piece that has a back engraving, each its own card (its own
+   *  words, state and approval, its own Fix and Approve buttons) under one label, each naming its piece. ctx.pieces: [{ key, poolId, row, label, meta, sheetEng? }];
+   *  the rest of ctx (rid, events, changed) is shared. A piece with no back engraving draws nothing; none at all hides the host. */
+  function mountList(host, ctx0) {
+    css();
+    if (!host) return null;
+    if (host._orderEngraving) tryDo(() => host._orderEngraving.destroy());
+    let ctx = Object.assign({}, ctx0), gone = false;
+    const kids = new Map();
+    const head = doc().createElement('span'); head.className = 'fLabel'; head.textContent = 'Back engraving';
+    host.classList.add('owEng', 'owEngList'); host.replaceChildren(head);
+    const told = r => { if (typeof ctx.changed === 'function') tryDo(() => ctx.changed(r)); };
+    const recompute = () => { const any = [...kids.values()].some(k => !k.el.hidden); host.hidden = !any; head.style.display = any ? '' : 'none'; };
+    function sync() {
+      const want = (Array.isArray(ctx.pieces) ? ctx.pieces : []).filter(p => p && p.key);
+      const keys = new Set(want.map(p => p.key));
+      for (const [k, v] of [...kids]) if (!keys.has(k)) { tryDo(() => v.handle.destroy()); v.el.remove(); kids.delete(k); }
+      host.hidden = false;   // (a host we hid ourselves has no box: the cards inside are drawn only where they can be seen)
+      let at = head;
+      for (const p of want) {
+        let k = kids.get(p.key);
+        if (!k) { k = { el: doc().createElement('div'), handle: null }; kids.set(p.key, k); }
+        if (at.nextSibling !== k.el) host.insertBefore(k.el, at.nextSibling);
+        at = k.el;
+        const kctx = Object.assign({}, ctx, { key: p.key, poolId: p.poolId || '', row: p.row, piece: p.key, label: p.label || '', meta: p.meta || '', compact: true, pieces: undefined, sheetEng: p.sheetEng, changed: r => { recompute(); told(r); } });
+        if (!k.handle) k.handle = mountOne(k.el, kctx); else k.handle.update(kctx);
+      }
+      recompute();
+    }
+    const handle = {
+      el: host, mode: 'list',
+      update(next) { if (gone) return; ctx = Object.assign({}, next); sync(); },
+      refresh(force) { for (const k of kids.values()) tryDo(() => k.handle.refresh(force)); recompute(); },
+      kind: () => '',
+      destroy() {
+        if (gone) return; gone = true; live.delete(handle); disarm();
+        for (const k of kids.values()) tryDo(() => k.handle.destroy());
+        kids.clear(); host.replaceChildren(); host.hidden = true; host.classList.remove('owEng', 'owEngList');
+        if (host._orderEngraving === handle) delete host._orderEngraving;
+      },
+      _tick() { if (!host.isConnected) return; recompute(); }
+    };
+    host._orderEngraving = handle; live.add(handle); arm();
+    sync();
+    return handle;
+  }
+  /** The one door: a card for one piece, or (ctx.pieces, more than one) a compact card for each. */
+  const mount = (host, ctx0) => (ctx0 && Array.isArray(ctx0.pieces) && ctx0.pieces.length > 1 ? mountList(host, ctx0) : mountOne(host, ctx0));
   /** The way to Engrave while EngraveLink is not here: the Sheet tab's own (close the window, open that order's engraving). */
   async function fallbackOpen(r, t) {
-    const E = root.Engrave; if (!E || !E.restoreView) throw new Error('Engrave is not ready');
+    const E = root.Engrave; if (!E || !E.restoreView) throw new Error('Engraving is not ready');
     try { if (root.OrderWin && root.OrderWin.close) await root.OrderWin.close(); } catch (_) {}
     const job = r.job, done = DONE.concat(['skipped']).includes(job && job.state) || (r.eng && r.eng.kind === 'approved');
     E.restoreView(Object.assign({}, E.view(), { tab: done ? 'done' : 'place', focus: done ? null : (job && job.key) || t.key, list: false, chosen: true, q: done ? t.rid : '' }));

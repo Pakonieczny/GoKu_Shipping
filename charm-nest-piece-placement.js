@@ -85,6 +85,13 @@
   };
   const sigOf = p => [p.key || '', p.state, p.onSheet ? 1 : 0, p.partial ? 1 : 0, p.sheets.map(s => (s.id || s.label) + (s.cut ? '!' : '')).join('+'), p.text, p.why, p.how || '', p.since || 0, p.wasOn ? (p.wasOn.sheetId || p.wasOn.label) + '@' + (p.wasOn.until || 0) : ''].join('~');
 
+  /** The answer for a piece a person's stop is on (a hold takes it off its sheet; a sheet that is already cut keeps it, and then it is both: held, and physically there). */
+  function holdAnswer(hold, onSheet, on) {
+    const reason = str(hold.reason, 200).replace(/^(on )?hold\s*[:·-]\s*/i, '');
+    return { state: 'hold', text: onSheet ? on : 'On hold', say: onSheet ? `On hold, still on ${on}` : 'On hold, off its sheet', reason: /^(hold|on hold|held)$/i.test(reason) ? '' : reason, why: 'it is on hold' + (reason && !/^(hold|on hold|held)$/i.test(reason) ? ': ' + reason : ''),
+      next: onSheet ? null : 'sheet', nextText: onSheet ? '' : `be released, then ${NEXT_TEXT}`, fence: !onSheet, floor: onSheet ? 1 : 0, since: hold.at, by: hold.by };
+  }
+
   /** The answer for one piece, from the facts of now. */
   function resolve(f) {
     f = f && typeof f === 'object' ? f : {};
@@ -100,9 +107,7 @@
       // (a cancelled piece may still sit on a cut sheet: it is still said to be cancelled)
       p = { state: 'cancelled', text: 'Cancelled', say: 'Cancelled' + (onSheet ? `, still on ${on}` : ''), why: 'it was cancelled', next: null, nextText: '', fence: false, floor: 0, since: +cx.at || 0, by: str(cx.by, 80) };
     } else if (hold) {
-      // (a hold takes the piece off its sheet; a sheet that is already cut keeps it, and then it is both: held, and physically there)
-      p = { state: 'hold', text: 'On hold', say: onSheet ? `On hold, still on ${on}` : 'On hold, off its sheet', why: 'it is on hold' + (hold.reason && !/^(hold|on hold|held)$/i.test(hold.reason) ? ': ' + hold.reason.replace(/^(on )?hold\s*[:·-]\s*/i, '') : ''),
-        next: onSheet ? null : 'sheet', nextText: onSheet ? '' : `be released, then ${NEXT_TEXT}`, fence: !onSheet, floor: onSheet ? 1 : 0, since: hold.at, by: hold.by };
+      p = holdAnswer(hold, onSheet, on);
     } else if (hand) {
       const how = hand.how === 'button' ? 'button' : 'print';
       p = { state: 'hand', text: 'Completed by hand', say: how === 'button' ? 'Completed by hand with Complete Order' : 'Completed by hand, its QR label printed', why: 'it was completed by hand and needs no sheet', next: null, nextText: '', fence: false, floor: 0, how, since: +hand.completedAt || 0, by: str(hand.completedBy, 80) };
@@ -164,9 +169,13 @@
   /** The Placement with when / who / the sheet it was taken off, from this piece's own events. Nothing about the state changes. */
   function withHistory(place, events) {
     if (!place) return place;
-    const h = history(events), out = Object.assign({}, place);
+    const h = history(events); let out = Object.assign({}, place);
+    // (a hold nobody released, in the permanent timeline, on a piece no sheet holds: it is held, whatever the line's own marker still says; the marker, when set, already said so)
+    if (out.state === 'waiting' && h.held && !out.onSheet) out = Object.assign(out, holdAnswer({ reason: h.held.text, at: h.held.at, by: h.held.by }, false, ''));
     if (!out.since && (out.state === 'waiting' || out.state === 'hold') && h.at) { out.since = h.at; out.by = out.by || h.by; }
-    if (!out.onSheet && h.wasOn) out.wasOn = h.wasOn;
+    // (taken off by an event: that; or the history still says it was placed, and no record holds it now: its sheet was deleted or its set undone behind the timeline.
+    //  A piece on hold with no event that took it off says its hold alone: the hold is why it is on no sheet, and nothing in the history tells when it came off)
+    if (!out.onSheet) out.wasOn = h.wasOn || (h.on && out.state !== 'hold' ? Object.assign({}, h.on, { until: 0, by: '', how: 'gone', reason: '' }) : null);
     out.sig = sigOf(out);
     return out;
   }

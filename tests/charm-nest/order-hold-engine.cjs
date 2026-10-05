@@ -39,6 +39,14 @@ function pureTests() {
   assert(P.effects.some(t => /2 waiting orders and 1 order from SS Sheet 2 fill the 4 empty spots/i.test(t)), 'it says what moves in: ' + P.effects.join(' | '));
   assert(P.effects.some(t => /QR labels are made on 2 sheets/.test(t)) && P.effects.some(t => /Release hold/.test(t)) && P.effects.some(t => /Nothing is deleted/.test(t)), 'QR, release and nothing deleted are said');
   assert(!P.effects.some(t => /\blines?\b/i.test(t)), 'never "lines" in a sentence a person reads');
+  // ONE order that fills a spot on each of two sheets (a gold piece into the gold sheet, a silver piece into the silver sheet) is "1 order", not one for each sheet
+  P = OH.planFrom(Object.assign(base(four), { candidates: [{ rid: '905', source: 'newerSheet', metal: 'gold', fromSheetId: 'gf-sheet-3', fromSheetLabel: 'GF Sheet 3', spots: 2 }, { rid: '905', source: 'newerSheet', metal: 'silver', fromSheetId: 'ss-sheet-2', fromSheetLabel: 'SS Sheet 2', spots: 2 }] }));
+  assert.deepStrictEqual(P.fills.map(f => [f.sheetId, f.source, f.orders, f.rids]), [['gf-sheet-2', 'newerSheet', 1, ['905']], ['ss-sheet-1', 'newerSheet', 1, ['905']]], 'the same order is named for both sheets: ' + JSON.stringify(P.fills));
+  assert(P.effects.some(t => /^(?:Up to )?1 order from GF Sheet 3 and SS Sheet 2 fills the 4 empty spots\.$/.test(t)) && !P.effects.some(t => /\b2 orders\b/.test(t)), 'one order on two sheets reads "1 order ... fills": ' + P.effects.join(' | '));
+  P = OH.planFrom(Object.assign(base(four), { candidates: [{ rid: '905', source: 'newerSheet', metal: 'gold', fromSheetId: 'gf-sheet-3', fromSheetLabel: 'GF Sheet 3', spots: 2 }, { rid: '906', source: 'newerSheet', metal: 'silver', fromSheetId: 'ss-sheet-2', fromSheetLabel: 'SS Sheet 2', spots: 2 }] }));
+  assert(P.effects.some(t => /^(?:Up to )?2 orders from GF Sheet 3 and SS Sheet 2 fill the 4 empty spots\.$/.test(t)), 'two different orders still read "2 orders ... fill": ' + P.effects.join(' | '));
+  P = OH.planFrom(Object.assign(base(four), { candidates: [{ rid: '905', source: 'waiting', metal: 'gold', spots: 2 }, { rid: '905', source: 'waiting', metal: 'silver', spots: 2 }] }));
+  assert(P.effects.some(t => /^(?:Up to )?1 waiting order fills the 4 empty spots\.$/.test(t)), 'one waiting order on two sheets reads "1 waiting order fills": ' + P.effects.join(' | '));
   // nothing fits
   P = OH.planFrom(base(four));
   assert(P.canHold && P.fills.every(f => f.source === 'none') && P.fills.reduce((n, f) => n + f.spots, 0) === 4, 'no candidate: every spot stays free');
@@ -502,6 +510,34 @@ const fixture = spec => {
     assert(await page.evaluate(() => { const p = SheetWin._W && CN.S.sheets.gold.pages[1]; return p.setId === 'set-9' && !p.keepRelease; }), 'the sheet stays in its set (its hold-over mark is gone)');
     await noLoss(allIds(S9), 'scenario 9');
     ok.push('only a newer sheet gives an order away; a sheet in a set stays in it with its set named in the plan');
+
+    /* scenario 10 · ONE order fills a spot on two sheets: the oldest order of the newer sheets has a gold piece on the newer GF Sheet 3 and a silver
+       piece on the newer SS Sheet 2, so it fills the gold spot and the silver spot. The sentence counts it once (not once for each sheet),
+       and the run does take that one order for both sheets, as the plan said */
+    const H10 = '4170001300', M10 = '4170000600';
+    const S10 = {
+      sheets: [
+        { id: 's10-gold-2', metal: 'gold', page: 2, items: [[H10, 1, 1, 0, 0], ['4170000201', 7, 1, 1, 0]] },
+        { id: 's10-silver-1', metal: 'silver', page: 1, items: [[H10, 2, 1, 0, 0], ['4170000203', 9, 1, 1, 0]] },
+        { id: 's10-gold-3', metal: 'gold', page: 3, items: [[M10, 5, 1, 0, 0], ['4170000301', 6, 1, 1, 0]] },
+        { id: 's10-silver-2', metal: 'silver', page: 2, items: [[M10, 6, 1, 0, 0], ['4170000401', 11, 1, 1, 0]] },
+      ],
+      orders: { [H10]: O(9000, [1, 1, 'gold'], [2, 1, 'silver']), [M10]: O(9500, [5, 1, 'gold'], [6, 1, 'silver']), '4170000201': O(8000, [7, 1, 'gold']), '4170000203': O(8200, [9, 1, 'silver']),
+        '4170000301': O(7000, [6, 1, 'gold']), '4170000401': O(5000, [11, 1, 'silver']) },
+    };
+    await setup(S10);
+    plan = await planOf(H10);
+    assert(plan.canHold && plan.estimate === false, 'the room was really searched: ' + JSON.stringify([plan.canHold, plan.estimate, plan.blockedWhy]));
+    assert.deepStrictEqual(plan.fills.filter(f => f.source !== 'none').map(f => [f.sheetId, f.source, f.fromSheetLabel, f.orders, f.rids]), [['s10-gold-2', 'newerSheet', 'GF Sheet 3', 1, [M10]], ['s10-silver-1', 'newerSheet', 'SS Sheet 2', 1, [M10]]], 'the plan names the same order for both sheets: ' + JSON.stringify(plan.fills));
+    assert(plan.effects.includes('1 order from GF Sheet 3 and SS Sheet 2 fills the 2 empty spots.') && !plan.effects.some(t => /\b2 orders\b/.test(t)), 'it reads "1 order ... fills", not "2 orders": ' + plan.effects.join(' | '));
+    res = await runHold(H10);
+    assert(res.r.ok && res.r.held === true, 'the hold goes through: ' + JSON.stringify(res.r.error));
+    const from10 = res.steps.filter(s => s.type === 'fillFrom');
+    assert.deepStrictEqual(from10.map(s => [s.toSheetId, s.rid]), [['s10-gold-2', M10], ['s10-silver-1', M10]], 'the run took that ONE order for both sheets: ' + JSON.stringify(from10.map(s => [s.toSheetId, s.rid, s.source])));
+    sh = await onSheets();
+    assert(sh['s10-gold-2'].includes(pid(M10, 5, 1)) && sh['s10-silver-1'].includes(pid(M10, 6, 1)) && !sh['s10-gold-2'].includes(pid(H10, 1, 1)) && !sh['s10-silver-1'].includes(pid(H10, 2, 1)), 'its gold piece stands on GF Sheet 2, its silver piece on SS Sheet 1: ' + JSON.stringify(sh));
+    await noLoss(allIds(S10), 'scenario 10');
+    ok.push('one order that fills a spot on two sheets is counted once in the sentence ("1 order from GF Sheet 3 and SS Sheet 2 fills the 2 empty spots") and the run takes that one order for both');
     assert.deepStrictEqual(errors, [], 'no page errors');
     console.log('order-hold-engine: all passed\n  ' + ok.join('\n  '));
   } catch (e) {

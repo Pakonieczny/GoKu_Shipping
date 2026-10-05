@@ -208,9 +208,21 @@
      network inside the call. The person is the sign-in's NAME (never a PIN); nobody signed in = nothing. Thumbnails and the QR
      are resolved by the server from data the app already stores (never Etsy): the page only says which order and which pieces. */
   const LIVE_STATIONS = new Set(["sorting", "welding", "assembly", "shipping", "design", "laser", "sorter", "qr", "inbox"]);
-  const LIVE = { keepAlive: 30000, tick: 5000, refresh: 120000, coalesce: 15000, hold: 600000, holdMax: 1800000, pieces: 24, backoff: 60000, bytes: 7000 };
+  const LIVE = { keepAlive: 30000, tick: 5000, refresh: 120000, coalesce: 15000, hold: 600000, holdMax: 1800000, pieces: 24, backoff: 60000, bytes: 7000, burst: 5, every: 2000 };
   const slots = new Map(), owed = [];            // station → what is current · idles the server still has to hear
-  let liveTimer = 0, liveBusy = false, liveHooked = false;
+  let liveTimer = 0, liveBusy = false, liveHooked = false, liveWake = 0, liveTokens = LIVE.burst, liveTokenAt = 0;
+  /** Order changes ("work" writes) are limited to a burst of 5 and then one every 2 s (only the newest order is ever sent): a stuck scanner
+      or 100 scans in 10 s cost about 10 writes, and cannot use up the shop's 600 a minute (one address) that every station's beat shares. */
+  function liveRoom(now) {
+    if (!liveTokenAt || now < liveTokenAt) liveTokenAt = now;               // (a clock set back never freezes it)
+    const add = Math.floor((now - liveTokenAt) / LIVE.every);
+    if (add > 0) { liveTokens = Math.min(LIVE.burst, liveTokens + add); liveTokenAt += add * LIVE.every; }
+    return liveTokens >= 1;
+  }
+  function liveLater(now) {
+    if (liveWake) return;
+    liveWake = setTimeout(() => { liveWake = 0; livePump(); }, Math.max(250, liveTokenAt + LIVE.every - now));
+  }
   const scrub = (v, n) => { const s = clean(v, n); return /^\d+$/.test(s) ? "" : s.replace(/(?<!\d)\d{6}(?!\d)/g, "[#]"); };
   const livePieces = list => (Array.isArray(list) ? list : []).slice(0, LIVE.pieces).map(p => {
     if (!p || typeof p !== "object") return null;
@@ -229,6 +241,7 @@
     if (s.sandbox) b.sandbox = true;
     if (event === "beat") return { live: b };
     b.computer = s.computer; b.session = s.session; b.startAt = s.startAt;
+    b.sentAt = Date.now();                       // this computer's clock now: the server shifts the scan time by the difference to its own (a clock that is minutes off)
     if (event === "work") {
       b.order = Object.assign({}, s.order);
       while (JSON.stringify({ live: b }).length > LIVE.bytes && b.order.pieces.length) b.order.pieces = b.order.pieces.slice(0, Math.max(0, b.order.pieces.length - 4));
@@ -254,10 +267,12 @@
         for (const x of slots.values()) {
           if (now < (x.nextTry || 0)) continue;
           if (x.sentFp !== liveFp(x) || now - (x.workAt || 0) >= LIVE.refresh) event = "work"; else if (now - x.sentAt >= LIVE.keepAlive) event = "beat";
+          if (event === "work" && !liveRoom(now)) { event = ""; liveLater(now); continue; }      // a burst of new orders: the newest goes in a moment
           if (event) { s = x; break; }
         }
       }
       if (!s || !event) return;
+      if (event === "work") liveTokens = Math.max(0, liveTokens - 1);
       const fp = liveFp(s);
       liveBusy = true; s.attempted = true;
       livePost(s.sandbox, liveBody(s, event), false).then(r => {
@@ -328,7 +343,12 @@
         hold: int(o.holdMs == null ? LIVE.hold : o.holdMs, 5000, LIVE.holdMax), touchedAt: now });
       slots.set(station, slot);
       if (!liveTimer) { liveTimer = setInterval(liveTick, LIVE.tick); }
-      if (!liveHooked) { liveHooked = true; try { window.addEventListener("pagehide", liveLeave); } catch (_) {} }
+      if (!liveHooked) {
+        liveHooked = true;
+        try { window.addEventListener("pagehide", liveLeave); } catch (_) {}
+        // the network is back: what backed off while it was down is tried at once (not after the one-minute wait)
+        try { window.addEventListener("online", () => { for (const x of [...slots.values(), ...owed]) { x.failures = 0; x.nextTry = 0; } setTimeout(livePump, 0); }); } catch (_) {}
+      }
       setTimeout(livePump, 0);
       return true;
     } catch (e) { warn("working:", e); return false; }
