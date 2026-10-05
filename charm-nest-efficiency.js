@@ -147,7 +147,7 @@
       .sort((a, b) => (a.since || 0) - (b.since || 0) || a.name.localeCompare(b.name));
     const current = []; for (const s of stations) for (const c of s.current) current.push(c);
     current.sort((a, b) => (a.scannedAt || 0) - (b.scannedAt || 0) || a.person.localeCompare(b.person));
-    return { ok: r.ok !== false, at: N(r.at), mode: r.mode === "sandbox" ? "sandbox" : r.mode === "real" ? "real" : "", stations, signedIn, current };
+    return { ok: r.ok !== false, at: N(r.at), mode: r.mode === "sandbox" ? "sandbox" : r.mode === "real" ? "real" : "", stations, signedIn, current, raw: r };   // (raw: the stations board reads fields this model leaves out: per-person facts, the last-hour line)
   }
   /** When the server has no `live` read yet: the people the overview says are on now, with what it knows (no order, no last-seen). */
   function liveFromOverview(M) {
