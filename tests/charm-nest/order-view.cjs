@@ -173,7 +173,7 @@ async function main() {
     if (shots) await page.screenshot({ path: path.join(shots, 'order-view-pieces-all.png') });
     // one piece: its line on the Overview, only its own steps on the rail and the Timeline
     await page.click('#owPieceSw button:nth-of-type(2)');
-    await page.waitForFunction(k1 => OrderWin.key() === k1 && /\bd\b/.test(document.querySelector('#owRail [data-stage="laser"]').className) && document.querySelector('#owRail [data-stage="laser"] .tlCnt').hidden && document.getElementById('owPcSum').hidden, k1);
+    await page.waitForFunction(k1 => OrderWin.key() === k1 && /\bd\b/.test(document.querySelector('#owRail [data-stage="laser"]').className) && document.querySelector('#owRail [data-stage="laser"] .tlCnt').hidden && document.querySelectorAll('#owPcSum .owPcRow').length < 2, k1);   // (one piece picked: the rows of all of them are gone; its own row, with its Hold, may stay)
     await page.click('#owPieceSw button:nth-of-type(3)');
     await page.waitForFunction(k2 => OrderWin.key() === k2 && !/\bd\b/.test(document.querySelector('#owRail [data-stage="laser"]').className) && /COW/.test(document.getElementById('owSku').textContent), k2);
     await page.click('.owTabsV [data-ow-view="timeline"]');

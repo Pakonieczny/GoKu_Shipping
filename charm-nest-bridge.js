@@ -11258,6 +11258,11 @@ const OrderWin = window.OrderWin = (() => {
     const r = it && (it.row || (it.rows && it.rows[0]));
     return r && r.order && window.HoldUI ? tryDo(() => HoldUI.slot({ rid: String(r.order.receiptId), source: "orderWindow", label: pieceName(r) })) || "" : "";
   }
+  /** The same place for a piece by its key (a piece in no card has no item): the order of its row, its name for the label. */
+  function holdSlotOfKey(key) {
+    const r = rowOf(key);
+    return r && r.order && window.HoldUI ? tryDo(() => HoldUI.slot({ rid: String(r.order.receiptId), source: "orderWindow", label: pieceName(r) })) || "" : "";
+  }
   /** Complete Order in its done state: the green the button takes once its seal is on it (sealedDone), with "Completed" for its
    *  words. It answers no press (a disabled button); its title says where a completed order is reopened. */
   const CU_DONE_BTN = `<button type="button" class="btn sealedDone xs cuDoneState" data-cu-done data-seal-btn disabled title="Completed. To reopen it, use the Review tab">Completed</button>`;
@@ -11379,7 +11384,9 @@ const OrderWin = window.OrderWin = (() => {
    *  Review tab has that card's own buttons and seals on its row, at the right end of the name's line in place of its words (Paul, 5 Oct,
    *  round 8: the buttons "on the same line", and the Custom Orders bar that repeated them is gone, so a single-piece order, or one
    *  piece picked, has its own row alone when it has any). A piece sent to its sheet has its seal and its ways to the designs and the
-   *  sheet there. */
+   *  sheet there. EVERY other piece, in a card or not (an ordinary piece on a sheet), has the orange Hold at the right end of its row, where its words
+   *  sit (Paul, 5 Oct: Hold matters most for ordinary orders): the same HoldUI button as the cards', and a single piece with nothing else to press has
+   *  a row of its own for it. */
   function paintPieceSum() {
     const box = byId("owPcSum"); if (!box) return;
     const UI = window.OrderTimelineUI, ps = W.pieces || [], all = !W.piece && ps.length > 1, r0 = rowOf(W.key);
@@ -11388,7 +11395,9 @@ const OrderWin = window.OrderWin = (() => {
     // (an order of several waits for its timeline; one piece's row is drawn at once, its buttons never wait for it)
     const sum = list.length && UI && UI.summary && (!all || W.events) ? tryDo(() => UI.summary(W.events || [], list, W.cancelled)) : null;
     const ctls = sum ? new Map(sum.each.map(x => [x.p.key, tryDo(() => pieceCtl(x.p.key))])) : null;
-    if (!sum || (!all && !ctls.get(list[0].key))) { box.hidden = true; box._h = ""; box.innerHTML = ""; return; }
+    // (the Hold of a piece that has no buttons of its own: a place for it, empty when the order cannot be held, or HoldUI is not there)
+    const holds = sum ? new Map(sum.each.map(x => [x.p.key, ctls.get(x.p.key) ? "" : holdSlotOfKey(x.p.key)])) : null;
+    if (!sum || (!all && !ctls.get(list[0].key) && !holds.get(list[0].key))) { box.hidden = true; box._h = ""; box.innerHTML = ""; return; }
     const at = s => UI.STAGES.indexOf(s);
     const html = `<span class="fLabel">${all ? "Its pieces · the order is where the slowest one is" : ps.length > 1 ? "This piece" : "Its piece"}</span>` + sum.each.map(x => {
       const nx = x.steps.find(s => at(s) > x.D.step), slow = all && x.D.step === sum.step;
@@ -11398,6 +11407,15 @@ const OrderWin = window.OrderWin = (() => {
       // a piece that is in the Review tab has that card's own buttons (and seals) here, in place of its words: a press is a press
       // there; a piece in no card keeps its words
       const ctl = ctls.get(x.p.key);
+      // (a piece in no card keeps its words, and its Hold at the right end of the row; nothing nests in a button, so with a Hold the row is a
+      // group like the card rows are, its name the button that opens the piece, and a press anywhere else on it still does the same)
+      const hold = holds.get(x.p.key);
+      if (!ctl && hold) {
+        const aria = x.p.name + (pieceMeta(x.p) ? " · " + pieceMeta(x.p) : "");
+        return `<div class="owPcRow hasAct hasHold${all ? " hasWords" : " solo"}${slow ? " slow" : ""}"${all ? ` data-piece="${esc(x.p.key)}"` : ""} role="group" aria-label="${esc(aria)}">${dot}` +
+          (all ? `<button type="button" class="nm owPcName" title="Show only this piece">${nm}</button>` : `<span class="nm owPcName">${nm}</span>`) +
+          (all ? st : st.replace('class="st"', 'class="st owPcSr"')) + `<span class="pcAct" data-pc-hold>${hold}</span>${steps}</div>`;
+      }
       if (!ctl) return `<button type="button" class="owPcRow${slow ? " slow" : ""}" data-piece="${esc(x.p.key)}" title="Show only this piece">${dot}<span class="nm">${nm}</span>${st}${steps}</button>`;
       // (what the card is, said beside the name: the kind of custom order it is, which the bar used to say)
       const meta = [pieceMeta(x.p) ? esc(pieceMeta(x.p)) : "", ctl.label ? `<span class="kind" title="${esc(ctl.why)}">${esc(ctl.label)}</span>` : ""].filter(Boolean).join(" · ");
@@ -11412,6 +11430,7 @@ const OrderWin = window.OrderWin = (() => {
     const typed = [...box.querySelectorAll("[data-cu-name]")].map(i => ({ key: i.closest("[data-pc-act]")?.dataset.pcAct, v: i.value, on: document.activeElement === i, a: i.selectionStart, b: i.selectionEnd })).filter(t => t.key);
     box._h = html; box.innerHTML = html;
     box.querySelectorAll("[data-pc-act]").forEach(h => wirePcAct(h, typed));
+    if (window.HoldUI) tryDo(() => HoldUI.fill(box));   // (the Hold of the rows that have no card's buttons)
   }
   /** What a press on a piece's controls does (h: the span holding them, data-pc-act its piece's key): the card as it is when pressed, not
    *  as it was drawn, of an order that is still the one the window shows. typed: the names being typed in the rows drawn before. */
