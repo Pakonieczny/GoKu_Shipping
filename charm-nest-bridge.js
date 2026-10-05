@@ -7662,10 +7662,16 @@ const CustomPrint = window.CustomPrint = (() => {
   /** The kept seals of one kind ("print" | "button") of an open card, as they were, on the button that made them: the
    *  same seals (their look and turn come from who and when), never pressed again on a redraw. "" when there are none. */
   function keptSeals(it, how, only) {
-    const rec = keptOf(it); if (!rec || !window.Seal) return "";
-    // (only: the one stamp a piece's row in the order window draws, small; {} for none of this kind)
-    const st = Seal.list(rec).filter(x => (x.how === "button") === (how === "button") && (!only || (x.how === only.how && x.at === only.at)));
-    return st.length ? Seal.row({ stamps: st, prints: only ? st[0].n || 0 : +rec.prints || 0 }, only ? { size: 22 } : undefined) : "";
+    if (!window.Seal) return "";
+    const kind = x => (x.how === "button") === (how === "button");
+    // (only: the stamps a piece's row in the order window draws, small, each on the button of its own kind: one stamp, or the list; {} or [] for none of this kind)
+    if (only) {
+      const st = (Array.isArray(only) ? only : only.how ? [only] : []).filter(kind);
+      return st.length ? Seal.row({ stamps: st, prints: st.reduce((m, x) => Math.max(m, x.n || 0), 0) }, { size: 22 }) : "";
+    }
+    const rec = keptOf(it); if (!rec) return "";
+    const st = Seal.list(rec).filter(kind);
+    return st.length ? Seal.row({ stamps: st, prints: +rec.prints || 0 }) : "";
   }
   /** Records just written: a completed one is read as completed, and no longer as reopened. */
   function keepDone(saved) {
@@ -11259,24 +11265,38 @@ const OrderWin = window.OrderWin = (() => {
    *  is gone, round 8). What the card is (cuState), its buttons and seals (cuControls) and what a press does (wireCu) are the
    *  Review card's own: CustomPrint's print and complete with their busy states, the name asked and the Undo, and the seals as
    *  Seal draws them. */
-  function cuState(it) {
+  function cuState(it, key) {
     const rec = it.record || null, decided = !!(it.decided || rec && rec.how === "sheet");
     const busy = decided ? "" : CustomPrint.statusHtml(it, "xs"), can = !decided && Review.printable(it);
-    const printed = !!(it.done && rec && window.Seal && Seal.hasPrint(rec));
-    // One seal per fact on this screen (Paul, 2 Oct 21:07: "too many seals showing here ... only show the seals that are
-    // necessary"): the "Where it is now" card above draws one of the record's seals (its Order complete), so a row
-    // never draws it again; it draws at most the latest of each kind, and says how many more the Timeline holds. Only
-    // what is drawn changes: the record keeps every seal, and the Timeline tab lists them all.
-    const above = (W.nowSeal && W.nowSeal.key) || "";
-    const kept = !it.done && !decided && window.Seal ? CustomPrint.keptOf(it) : null;   // (a reopened line: the seals its record keeps, each on the button that made them)
-    const all = window.Seal ? (rec && (it.done || decided) ? Seal.list(rec) : kept ? Seal.list(kept) : []) : [];
-    const rest = all.filter(s => !(above && sealKey(Seal.modelOf(s).action, s.at) === above)), pick = rest[rest.length - 1] || null, more = decided ? 0 : Math.max(0, rest.length - 1);
-    // Completed: one seal of the record's (above), beside the print button, and "+N" to the Timeline for the others
-    // (a line sent to its sheet has its History button for that).
+    // The seals of THIS piece (Paul, 5 Oct: "The Complete orders/pieces are missing their associated stamp/seal"): the piece's own record by its line key
+    // (a card may hold several lines; the card's record is the first line's), and what the permanent timeline recorded of it (Seal.ofPiece: stamps, what an
+    // older record kept, the completion the record names, the timeline's events; nothing invented, the same press once).
+    const pr = key ? rowOf(key) : null, own = !decided && key ? B.maps.customDone[key] || (pr && pr.spec && pr.spec.customDone) || B.maps.customKept[key] || null : null;
+    const base = decided ? rec : own || (it.done ? rec : CustomPrint.keptOf(it));
+    const lineKey = key || (base && base.key) || "";
+    const evs = pr && W.evFor === String(pr.order.receiptId) ? W.events : null;
+    const all = window.Seal && base ? Seal.ofPiece(base, { events: evs, lineKey }) : [];
+    const printed = !!(it.done && all.some(s => s.how === "print"));
+    // One seal per fact on this screen (Paul, 2 Oct 21:07: "too many seals showing here ... only show the seals that are necessary"): in an order of ONE
+    // piece (or one piece picked) the "Where it is now" card draws that piece's completion, so its row never draws that same seal again, draws the latest
+    // of the others and says how many more the Timeline holds. In an order of SEVERAL pieces the card's seal is the ORDER's completion, a fact of its own,
+    // and every piece draws all of its own seals, small, on its row (the latest six, "+N" for any earlier). Only what is drawn changes: the record keeps
+    // every seal, and the Timeline tab lists them all.
+    const multi = !W.piece && (W.pieces || []).length > 1, ROW_MAX = 6;
+    const above = multi ? "" : (W.nowSeal && W.nowSeal.key) || "";
+    const rest = all.filter(s => !(above && sealKey(Seal.modelOf(s).action, s.at) === above)), pick = rest[rest.length - 1] || null;
+    const more = decided ? 0 : multi ? Math.max(0, rest.length - ROW_MAX) : Math.max(0, rest.length - 1);
+    const shown = multi ? rest.slice(Math.max(0, rest.length - ROW_MAX)) : pick ? [pick] : [];
+    // Completed: its seals beside the button that made each, and "+N" to the Timeline for the others (a line sent to its sheet has its History button for that).
     const moreOf = n => n > 0 ? `<button type="button" class="owCuMore" data-cu-more title="${n} more seal${n > 1 ? "s" : ""}: open the Timeline" aria-label="${n} more seal${n > 1 ? "s" : ""}: open the Timeline">+${n}</button>` : "";
-    const moreBtn = moreOf(more), sealOf = st => st ? Seal.row({ stamps: [st], prints: st.n || 0 }, { size: 22, pending: decided ? false : CustomPrint.freshOf("cu:" + String(it.key).replace(/^[a-z]+:/, "")) }) : "";
-    const seals = (pick && (it.done || decided) ? sealOf(pick) : "") + (it.done || decided ? moreBtn : "");
-    return { rec, decided, busy, can, printed, above, pick, more, moreBtn, moreOf, sealOf, rest, seals, keptP: pick && pick.how !== "button" ? pick : {}, keptC: pick && pick.how === "button" ? pick : {} };
+    const moreBtn = moreOf(more), pending = decided ? false : CustomPrint.freshOf("cu:" + String(it.key).replace(/^[a-z]+:/, ""));
+    const group = list => list.length ? Seal.row({ stamps: list, prints: list.reduce((m, x) => Math.max(m, x.n || 0), 0) }, { size: 22, pending }) : "";
+    const sealOf = st => st ? Seal.row({ stamps: [st], prints: st.n || 0 }, { size: 22, pending }) : "";
+    const byHow = how => shown.filter(x => (x.how === "button") === (how === "button"));
+    const seals = (multi ? group(shown) : pick && (it.done || decided) ? sealOf(pick) : "") + (it.done || decided ? moreBtn : "");
+    return { rec, decided, busy, can, printed, above, pick, more, moreBtn, moreOf, sealOf, rest, seals, multi, shown, btnSeals: group(byHow("button")), printSeals: group(byHow("print")),
+      // (a reopened card's kept seals, each on the button that made it: all of them in an order of several, the one in an order of one)
+      keptP: multi ? byHow("print") : pick && pick.how !== "button" ? pick : {}, keptC: multi ? byHow("button") : pick && pick.how === "button" ? pick : {} };
   }
   /** The buttons and seals of an open or completed card (not one sent to its sheet): Print QR label and Complete Order with the
    *  seals they kept, or Print again and its seal and "+N"; a spinner and what is happening, the name asked for, or
@@ -11292,6 +11312,7 @@ const OrderWin = window.OrderWin = (() => {
     if (it.done) {
       // (one seal, the latest the card above does not draw, sits by the button that made it: by "Completed" when it is the Complete
       // seal, by Print again when it is a print seal; "+N" last, for the others the Timeline holds)
+      if (c.multi) return CustomPrint.failNote(it) + CU_DONE_BTN + c.btnSeals + print + c.printSeals + c.moreBtn + holdSlotOf(it) + undo;
       const byDone = c.pick && c.pick.how === "button";
       return CustomPrint.failNote(it) + CU_DONE_BTN + (byDone ? c.sealOf(c.pick) : "") + print + (!byDone ? c.sealOf(c.pick) : "") + c.moreBtn + holdSlotOf(it) + undo;
     }
@@ -11422,7 +11443,10 @@ const OrderWin = window.OrderWin = (() => {
   function slowestEvents() {
     const UI = window.OrderTimelineUI, ps = W.pieces || [];
     if (W.piece || ps.length < 2 || !W.events || !UI || !UI.summary) return null;
-    const sum = tryDo(() => UI.summary(W.events, ps, W.cancelled)), x = sum && sum.each.find(y => y.D.step === sum.step);
+    // (a piece completed by hand is never the slowest: its steps are skipped, but a custom piece completed by its QR label reads one step in, as the
+    //  record's own completion event says, and could be taken for the piece the order waits on while another piece, on a sheet, is still to be cut: Paul's
+    //  order 4171711853 read "Order completed" with SNAKE 5 on RG Sheet 1)
+    const sum = tryDo(() => UI.summary(W.events, ps, W.cancelled)), x = sum && sum.each.find(y => !y.D.hand && y.D.step === sum.step);
     return x ? x.events : null;
   }
   /* ── the dots of a piece's row (Paul, 5 Oct 2026, point 5: "Enable each of these solid and hollow green dots into a active hover state like the other
@@ -11556,7 +11580,7 @@ const OrderWin = window.OrderWin = (() => {
     if (!it) return;
     // (another piece picked, where there is more than one; the one piece of a single-piece order is already the one shown)
     const toPiece = k => { if ((W.pieces || []).length > 1) pickPiece(k); };
-    if (cuState(it).decided) {
+    if (cuState(it, key).decided) {
       // a piece sent to its sheet: its designs, its sheet and its history
       const db = h.querySelector("[data-cu-view-designs]"); if (db) db.onclick = () => { const current = now(); if (current) CustomSheet.open(current, { from: db }); };
       const sb = h.querySelector("[data-cu-open-sheet]"); if (sb) sb.onclick = () => { if (now()) { toPiece(key); setView("sheet"); } };
@@ -11581,7 +11605,7 @@ const OrderWin = window.OrderWin = (() => {
    *  { it, html, label, why, decided }, or null for a piece with nothing to press. */
   function pieceCtl(key) {
     const r = rowOf(key), it = pieceItem(key); if (!r || !it) return null;
-    const c = cuState(it), label = c.decided ? "Sent to sheet" : (r.spec && r.spec.special && r.spec.special.label) || (c.rec && c.rec.category) || it.category || "";
+    const c = cuState(it, key), label = c.decided ? "Sent to sheet" : (r.spec && r.spec.special && r.spec.special.label) || (c.rec && c.rec.category) || it.category || "";
     if (c.decided) {
       const designs = tryDo(() => CustomSheet.cardOf(it));
       return { it, decided: true, label, why: it.why || "", html: c.seals + (designs && designs.files.length ? '<button type="button" class="btn ghost xs" data-cu-view-designs>View designs</button>' : "") + '<button type="button" class="btn ghost xs" data-cu-open-sheet>Open sheet</button><button type="button" class="btn ghost xs" data-cu-history>History</button>' + holdSlotOf(it) };
@@ -11627,6 +11651,10 @@ const OrderWin = window.OrderWin = (() => {
     if (!html) return "";
     try { const t = document.createElement("template"); t.innerHTML = html; const m = JSON.parse(t.content.querySelector("svg[data-seal-model]").getAttribute("data-seal-model")); return sealKey(m.action, m.at); } catch (_) { return ""; }
   }
+  /** A time the way the seals say it: the shop's zone (America/Toronto), never this browser's. A line beside a seal reads the same moment as the seal
+   *  (Paul, 5 Oct 2026: the card said 12:41 PM, its seal 10:57 AM). One helper from the Timeline (OrderTimelineUI.whenOf / timeOf). */
+  const shopWhen = t => { const U = window.OrderTimelineUI; return U && U.whenOf ? U.whenOf(t) : new Date(t).toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" }); };
+  const shopTime = t => { const U = window.OrderTimelineUI; return U && U.timeOf ? U.timeOf(t) : new Date(t).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }); };
   function nowOf(r) {
     const T = (window.OrderTimeline && OrderTimeline.TYPES) || {}, evs = W.evFor === String(r.order.receiptId) ? shownEvents() : null;
     const cx = (evs && lastOf(evs, e => e.type === "cancelled" || e.type === "etsyCancelled")) || (W.cancelled ? { type: "cancelled", at: W.cancelled.at, by: W.cancelled.by, text: W.cancelled.reason || "" } : null);
@@ -11634,12 +11662,18 @@ const OrderWin = window.OrderWin = (() => {
     if (cx && !restored) return { tone: "bad", pill: "Cancelled", k: "Cancelled", t: cx.type === "etsyCancelled" ? "Cancelled on Etsy" : "Cancelled" + (cx.by ? " by " + cx.by : ""), ev: cx, cancelled: true };
     // completed by hand (a Complete Order press no Reopen came after): completed, by whom and when, as the rail and the
     // Timeline say; a Reopen takes the completion back (its seals stay), so it is where it was before
-    const UI = window.OrderTimelineUI, hand = evs && UI && UI.handOf ? tryDo(() => UI.handOf(slowestEvents() || evs)) : null;
-    if (hand) { const who = tryDo(() => UI.personOf(hand)) || ""; return { tone: "done", pill: "Order completed", k: "Order completed", t: `Completed${who ? " by " + who : ""} · ${new Date(hand.at).toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" })}`, ev: hand }; }
+    // (the order is completed by hand when every piece is: the ONE press that completed it, which the card's line and its ORDER COMPLETE seal both
+    //  say (handDoneOf; paintNow hands it to nowStamps), never a later reprint of a label)
+    const UI = window.OrderTimelineUI, hand = evs && UI && UI.handDoneOf ? tryDo(() => UI.handDoneOf(slowestEvents() || evs)) : null;
+    if (hand) { const who = tryDo(() => UI.personOf(hand)) || ""; return { tone: "done", pill: "Order completed", k: "Order completed", t: `Completed${who ? " by " + who : ""} · ${shopWhen(hand.at)}`, ev: hand, hand }; }
     const back = e => e.type === "sealCompleted" && evs.some(x => +x.at >= +e.at && UI && UI.opStepOf && UI.opStepOf(x) === "reopen" && (!x.lineKey || !e.lineKey || x.lineKey === e.lineKey));
+    // (a piece's completion that stands, its Complete Order press or its QR label, is that PIECE's: while another piece is not done the order is where
+    //  its slowest piece is, so the card's words and seal never come from it; its row, its box and the Timeline carry it)
+    const live = evs && UI && UI.handLive ? tryDo(() => UI.handLive(evs)) : null, liveLines = new Set([...(live || [])].map(e => e.lineKey || ""));
+    const mine = e => !!live && live.size > 0 && (live.has(e) || ((e.type === "sealCompleted" || e.type === "sealPrinted") && liveLines.has(e.lineKey || "")));
     // (all pieces of an order of several: its step is its slowest piece's, as the rail says)
-    const ms = evs && lastOf(slowestEvents() || evs, e => ((T[e.type] && T[e.type].milestone) || e.milestone) && !back(e));
-    const last = evs && lastOf(evs, e => e.type !== "note" && e.type !== "teamMessage" && e.type !== "customerMessage" && !back(e));
+    const ms = evs && lastOf(slowestEvents() || evs, e => ((T[e.type] && T[e.type].milestone) || e.milestone) && !back(e) && !mine(e));
+    const last = evs && lastOf(evs, e => e.type !== "note" && e.type !== "teamMessage" && e.type !== "customerMessage" && !back(e) && !mine(e));
     if (ms || last) {
       const e = last || ms, ty = T[e.type] || {}, mt = ms ? (T[ms.type] || {}) : ty;
       const g = GROUP_NOW[mt.group] || mt.label || "In progress";
@@ -11685,17 +11719,17 @@ const OrderWin = window.OrderWin = (() => {
     const noSh = byId("owPlateWrap") && byId("owPlateWrap").querySelector(".owPlateNone[data-none]"); if (noSh) { const h = noSheetHtml(r); if (noSh._h !== h) { noSh._h = h; noSh.innerHTML = h; } }
     pill.hidden = !n.pill; pill.textContent = n.pill || ""; pill.className = "owNow" + (n.tone ? " " + n.tone : "");
     const count = byId("owTlCount"); if (count) count.textContent = W.events && W.evFor === String(r.order.receiptId) && W.events.length ? String(W.events.length) : "";
-    const live = byId("owLive"); if (live) { const e = W.events && W.events.length ? W.events[W.events.length - 1] : null; live.textContent = e ? "Updated live · last change " + new Date(e.at).toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" }) + (e.by ? " · " + e.by : "") : ""; }
+    const live = byId("owLive"); if (live) { const e = W.events && W.events.length ? W.events[W.events.length - 1] : null; live.textContent = e ? "Updated live · last change " + shopWhen(e.at) + (e.by ? " · " + e.by : "") : ""; }
     paintPieceSum();
     paintSheetTab(r); sheetSettle(r);
     const card = byId("owNowCard"); if (!card) return;
     if (r.loading) { card.hidden = true; return; }
     const e = n.ev;
-    const who = e && (e.station || e.by) ? `<span class="who"><i>${(window.OrderTimelineUI && OrderTimelineUI.iconOf && tryDo(() => OrderTimelineUI.iconOf(e))) || ""}</i>${e.station ? `<b>${esc((window.OrderTimelineUI && OrderTimelineUI.placeOf && tryDo(() => OrderTimelineUI.placeOf(e))) || e.station)}</b>` : ""}${esc((window.OrderTimelineUI && OrderTimelineUI.personOf && tryDo(() => OrderTimelineUI.personOf(e))) || e.by || "")}${e.at ? " · " + esc(new Date(e.at).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })) : ""}</span>` : "";
+    const who = e && (e.station || e.by) ? `<span class="who"><i>${(window.OrderTimelineUI && OrderTimelineUI.iconOf && tryDo(() => OrderTimelineUI.iconOf(e))) || ""}</i>${e.station ? `<b>${esc((window.OrderTimelineUI && OrderTimelineUI.placeOf && tryDo(() => OrderTimelineUI.placeOf(e))) || e.station)}</b>` : ""}${esc((window.OrderTimelineUI && OrderTimelineUI.personOf && tryDo(() => OrderTimelineUI.personOf(e))) || e.by || "")}${e.at ? " · " + esc(shopTime(e.at)) : ""}</span>` : "";
     // Timeline's shared seal: the current milestone of this order or piece, using the standard responsive size.
     // What is holding it up (a decision nobody made, a hold nobody let go) is said in
     // plain words instead.
-    const UI = window.OrderTimelineUI, shown = shownEvents(), st = UI && UI.nowStamps && shown && shown.length ? tryDo(() => UI.nowStamps(shown, { ev: e, cancelled: n.cancelled ? e : null })) : null;
+    const UI = window.OrderTimelineUI, shown = shownEvents(), st = UI && UI.nowStamps && shown && shown.length ? tryDo(() => UI.nowStamps(shown, { ev: e, cancelled: n.cancelled ? e : null, hand: n.hand || null })) : null;
     const bl = (st && st.blocker) || null;
     // (a piece's row under this card draws no seal this card draws: it is told which one, and repaints if that changes)
     const sealNow = sealKeyOf(st && st.seal);
@@ -12077,6 +12111,15 @@ const OrderWin = window.OrderWin = (() => {
   /** The small seal of a piece completed by hand (its record, the piece's line key): the press that completed it and "+N" for the rest, Seal.compact, the very
    *  component of the one-line bar; the order's timeline fills in a completion the record does not carry. "" when nothing was recorded (no seal is made up). */
   const handSealOf = (rec, lineKey) => { try { return window.Seal && Seal.compact ? Seal.compact(rec || null, { lineKey, events: W.events || null }) : ""; } catch (_) { return ""; } };
+  /** The completion seal of a piece completed by hand, small, for its "Completed by hand" box (Paul, 5 Oct 2026: "The Complete orders/pieces are missing their
+   *  associated stamp/seal"). One helper (Seal.pieceRow) reads it: the piece's own record by its LINE key (stamps; else what the record names), else what the
+   *  permanent timeline kept of that piece. Nothing recorded: no seal and no words (nothing is invented). */
+  function handBoxSealOf(p, r) {
+    if (!p || !window.Seal || !Seal.pieceRow) return "";
+    const x = p.row || {}, rec = handOfRow(x) || (B.maps.customDone && B.maps.customDone[p.key]) || (x.spec && x.spec.customDone) || null;
+    const events = r && W.evFor === String(r.order.receiptId) ? W.events : null;
+    return tryDo(() => Seal.pieceRow(rec, { events, lineKey: p.key, only: "completion", size: 22 })) || "";
+  }
   /** Why a line is on no sheet, in a few plain words. */
   function pieceWhy(x) {
     const sp = x.spec || {}, pb = (x.problems || [])[0] || null, kind = pb && pb.kind, st = x.state, sku = String(sp.designSku || (x.line && x.line.sku) || "").trim();
@@ -12174,7 +12217,10 @@ const OrderWin = window.OrderWin = (() => {
         chips.push(`<button type="button" class="owShChip" data-pc="${esc(p.key)}" data-sheet="${esc(h.id || "")}" data-pool="${esc(h.pools[0] || "")}" style="--c:${esc(colorOf(h.metal || p.metal))}"><i></i><span><b>${esc(e ? sheetName(e) : h.label)}</b><span>${esc(named ? p.name + (state ? " · " + state : "") : state || "open it")}</span></span></button>`);
       } else if (p.hand) {
         const why = named ? "Completed by hand: it needs no sheet" : "This piece was completed by hand: it needs no sheet";   // (resolved: the chip is greyed, and says so)
-        chips.push(`<button type="button" class="owShChip off" data-pc="${esc(p.key)}" data-hand="1" aria-disabled="true" data-why="${esc(why)}" title="${esc(why)}"><i></i><span><b>Completed by hand</b><span>${esc(named ? p.name : "It needs no sheet")}</span></span></button>`);
+        const chip = `<button type="button" class="owShChip off" data-pc="${esc(p.key)}" data-hand="1" aria-disabled="true" data-why="${esc(why)}" title="${esc(why)}"><i></i><span><b>Completed by hand</b><span>${esc(named ? p.name : "It needs no sheet")}</span></span></button>`;
+        // (with several pieces each box is its own piece's: it draws that piece's completion seal. A single piece's seal is the card's own, drawn once beside it)
+        const seal = named ? handBoxSealOf(p, r) : "";
+        chips.push(seal ? `<span class="owShItem">${chip}${seal}</span>` : chip);
       } else {
         const why = `${named ? "Not on a sheet yet" : "This piece is not on a sheet yet"}: ${p.why}`;   // (named: the chip says whose it is)
         chips.push(`<button type="button" class="owShChip off" data-pc="${esc(p.key)}" aria-disabled="true" data-why="${esc(why)}" title="${esc(why)}"><i></i><span><b>Not on a sheet yet</b><span>${esc(named ? p.name : upperFirst(p.why))}</span></span></button>`);

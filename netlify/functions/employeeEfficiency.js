@@ -229,7 +229,8 @@ function eventRow(id, d, ctx) {
   // the feed's order and cursor follow the COMMIT time (ts): serverAt is read before the write, and a transaction that waits
   // for a retry commits later, so a poll could pass an event whose serverAt is older than its cursor and never show it
   return { id: String(d.id || id).slice(0, 100), at, k: tsMs || serverAt, tsMs: tsMs || serverAt, person, station: String(d.station || ""), device: String(d.device || "").slice(0, 40), action,
-    orderId: digits(d.orderId), parts: Math.max(0, Math.floor(num(d.parts))), detail: scrub(d.detail), sincePrevMs: Math.max(0, num(d.sincePrevMs)), day: typeof d.day === "string" ? d.day : "" };
+    orderId: digits(d.orderId), parts: Math.max(0, Math.floor(num(d.parts))), detail: scrub(d.detail), sincePrevMs: Math.max(0, num(d.sincePrevMs)), day: typeof d.day === "string" ? d.day : "",
+    orders: num(d.orders) >= 1 ? 1 : 0, seq: Math.max(0, num(d.seq)) };   // (orders: the action finished an order; seq: the device's counter: the issue counts replay the writer's order with them)
 }
 const byNewest = (a, b) => b.k - a.k || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0);
 /** The newest events of everybody, kept in the instance: loaded once (newest 500), then only topped up. */

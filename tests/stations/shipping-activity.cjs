@@ -8,6 +8,8 @@
 //   • failures: an order Etsy cannot find, and an Etsy post that fails, are errors with a category only (never the raw message)
 //   • a cancelled order: the scan is a reject, a refused "do it anyway" a note; no label, no complete
 //   • the order chat: a message sent is a note, one that fails an error; a picture dropped in is a note, one that fails an error
+//   • the live board (station-live-order.js → StationActivity.working/idle): a scan is the order in hand with every piece, a label
+//     adds a note, Complete Order (and a cancel alert) puts nothing in hand; an order Etsy cannot find is never in hand
 //   • signed out again: nothing more is recorded; no request anywhere carries the PIN
 //   node tests/stations/shipping-activity.cjs [playwright-core dir]
 const path = require('path'), assert = require('assert'), fs = require('fs'), http = require('http');
@@ -68,6 +70,7 @@ async function run(browser, origin, n, mode) {
   const requests = [];      // every request to the loopback server: { url, method, text }
   const doorBodies = []; let mapGets = 0;   // the server's login door ({ pinLogin }) is the one request that carries the number: kept apart
   const activity = [];      // every event sent to the station door ({ activity: [...] })
+  const lives = [];         // every live write ({ live: {...} }): the order in hand right now
   const state = { etsyPost: 200 };
   const ctx = await browser.newContext({ viewport: { width: 1500, height: 950 } });
   const js = body => ({ status: 200, contentType: 'text/javascript', headers: { 'Cross-Origin-Resource-Policy': 'cross-origin' }, body });
@@ -90,6 +93,7 @@ async function run(browser, origin, n, mode) {
           if (body && body.pinLogin !== undefined) { requests.pop(); doorBodies.push(text); return route.fulfill(json(200, body.pinLogin === PIN ? { ok: true, name: WHO } : { ok: false, error: 'not on the list' })); }
           if (req.method() === 'GET' && /employee/i.test(url.searchParams.get('orderId') || '')) { mapGets++; return route.fulfill(json(401, { success: false })); }   // the roster is never asked for
           if (body && Array.isArray(body.activity)) { activity.push(...body.activity); return route.fulfill(json(200, { success: true, written: body.activity.length, duplicate: 0, refused: 0, scrubbed: 0 })); }
+          if (body && body.live) { lives.push(body.live); return route.fulfill(json(200, { success: true, written: 1 })); }
           if (body && body.newMessage && state.msgFail) return route.fulfill(json(500, { success: false, error: 'down' }));
           if (body && (body.session || body.timeline || body.newMessage)) return route.fulfill(json(200, { success: true }));
           return route.fulfill(json(404, { error: 'Order not found' }));
@@ -202,6 +206,25 @@ async function run(browser, origin, n, mode) {
   await typeOrder('2222222222');
   await flush();
   assert.strictEqual(activity.length, before, 'signed out again: no further event');
+
+  // the live board: the order in hand right now (every write is this person's, at this station and page, with no PIN)
+  await settle(600);
+  const live = lives.filter(l => l.event !== 'beat');
+  for (const l of lives) {
+    assert.strictEqual(l.person, WHO, 'live: the person is the employee name'); assert.strictEqual(l.station, 'shipping'); assert.strictEqual(l.device, `shipping-${n}`);
+    assert(!('sandbox' in l), 'live: a real page writes the real board');
+  }
+  const liveBrief = live.map(l => l.event + ':' + (l.order ? `${l.order.rid}:${l.order.pieces.length}:${l.order.note}` : l.ended.rid));
+  if (mode === 'run') {
+    assert.deepStrictEqual(liveBrief, ['work:1111111111:3:', 'work:2222222222:1:phone scan', 'work:2222222222:1:Label printed', 'idle:2222222222', 'work:1111111111:3:', 'idle:1111111111'],
+      'live: a scan puts the order in hand with its pieces; a label is a note; Complete puts nothing in hand; an order Etsy cannot find is never in hand: ' + liveBrief.join(' | '));
+    assert.deepStrictEqual(live[0].order.pieces.map(p => p.sku), ['CHARM-A', 'CHARM-A', 'CHARM-B'], 'live: one piece per unit, with its sku');
+    assert.strictEqual(live[1].order.scannedAt, live[2].order.scannedAt, 'live: a note keeps the scan time');
+    assert.strictEqual(live[3].ended.scannedAt, live[1].order.scannedAt, 'live: the end names the scan it ends');
+  } else {
+    assert.deepStrictEqual(liveBrief, [], 'live: a cancelled order is never in hand');
+  }
+  assert(!JSON.stringify(lives).includes(PIN), 'live: no PIN in any live write');
 
   // every event: this person, station and device; one event per moment; the pieces and the order
   for (const e of activity) {
