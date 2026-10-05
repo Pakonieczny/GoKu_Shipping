@@ -1,10 +1,10 @@
-// The Timeline tab scrolls as one page (Paul, 29 Sep: "the scrolling only scrolls the tiny bit of the UI at the bottom ... please
-// ensure that the progress chart also scrolls so that the entire page is scrolling"). On a short window the chart used to stay
-// put and only the details panel under it scrolled, a sliver too small to read. Now the order window's Timeline view is the one
-// scroller (the wheel over the chart scrolls the page too), the foot of the chart can be brought fully into view, the chart's own
-// sideways scroll stays, the top of the chart shows at scroll 0, and nothing scrolls sideways. (The details panel under the chart went
-// on 5 Oct 2026: the chart is the whole page, and none is drawn under it.) Checked at a short laptop window, a small window and a phone. The Overview tab and the
-// header's rail (the compact timeline) are left as they were. Runs in headless Chromium against the local fake site.
+// The Timeline tab does not scroll (Paul, 5 Oct 2026: "the full chart should always be visible on one screen without scrolling"). On 29 Sep it was the
+// other way round, the tab was one long page (chart and details) the order window scrolled; with the chart fitted to the room (charm-nest-timeline-ui.js,
+// "the chart fits its room") a short window, a small window and a phone all show the whole chart at once: the tab does not scroll up and down, the chart does
+// not scroll sideways, a wheel over the chart moves nothing, the chart is the tab's box, and the seals are drawn at the size the room allows. The Overview
+// tab and the header's rail (the compact timeline) are left as they were. (timeline-fit-screen.cjs is the full proof of the fit over the six screens and the
+// live re-fits; this one keeps the short-window, small-window and phone contract of the old page scroll, turned round.) Runs in headless Chromium against the
+// local fake site.
 //   SHOTS=<dir> node tests/charm-nest/timeline-page-scroll.cjs [playwright-core dir]
 const fs = require('fs'), path = require('path'), assert = require('assert/strict');
 const root = path.join(__dirname, '../..');
@@ -50,61 +50,49 @@ const ORDERS = [{ receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * DAY, up
     await page.waitForFunction(() => document.querySelectorAll("#owTimeline .tlSt[data-key]").length >= 2, null, { timeout: 20000 });
     await page.waitForTimeout(1200);   // (the entrance animations)
 
-    // where things are now: the page (the Timeline view), the chart, and the last thing drawn on it
+    // where things are now: the tab, the chart, the drawing's seals
     const look = () => page.evaluate(() => {
       const v = document.querySelector('#orderWin .owVTime'), g = document.querySelector('#owTimeline .tlGrid'), sc = document.querySelector('#owTimeline .tlScroll');
       const vr = v.getBoundingClientRect(), gr = g.getBoundingClientRect();
-      let last = 0; for (const n of document.querySelectorAll('#owTimeline .tlUI *')) { const r = n.getBoundingClientRect(); if (r.width && r.height && getComputedStyle(n).visibility !== 'hidden' && getComputedStyle(n).display !== 'none') last = Math.max(last, r.bottom); }
       const rail = document.querySelector('#owRail .tlUI.compact');
-      return { vTop: vr.top, vBottom: vr.bottom, vh: v.clientHeight, sh: v.scrollHeight, st: v.scrollTop, sw: v.scrollWidth, cw: v.clientWidth, gTop: gr.top, gBottom: gr.bottom, gh: gr.height, last, pane: document.querySelectorAll('#owTimeline .tlDetail, #owTimeline .tlBig, #owTimeline .tlArw').length,
-        chartOverflowX: getComputedStyle(sc).overflowX, scrollerOwn: [...document.querySelectorAll('#owTimeline *')].filter(n => n !== sc && /(auto|scroll)/.test(getComputedStyle(n).overflowY) && n.scrollHeight > n.clientHeight + 1).length,
-        rail: rail ? Math.round(rail.getBoundingClientRect().height) : 0, inner: innerHeight };
+      return { vTop: vr.top, vBottom: vr.bottom, vh: v.clientHeight, sh: v.scrollHeight, st: v.scrollTop, sw: v.scrollWidth, cw: v.clientWidth, gTop: gr.top, gBottom: gr.bottom, gh: gr.height, gs: g.scrollHeight - g.clientHeight, ss: [sc.scrollWidth - sc.clientWidth, sc.scrollHeight - sc.clientHeight],
+        chartOverflowX: getComputedStyle(sc).overflowX, scrollerOwn: [...document.querySelectorAll('#owTimeline *')].filter(n => /(auto|scroll)/.test(getComputedStyle(n).overflowY) && n.scrollHeight > n.clientHeight + 1).length,
+        pane: document.querySelectorAll('#owTimeline .tlDetail, #owTimeline .tlBig, #owTimeline .tlArw').length, rail: rail ? Math.round(rail.getBoundingClientRect().height) : 0, inner: innerHeight, doc: document.scrollingElement.scrollHeight - innerHeight,
+        seal: Math.max(...[...document.querySelectorAll('#owTimeline .tlCanvas .tlSt[data-key]')].map(b => b.offsetWidth)), lane: parseFloat(getComputedStyle(document.querySelector('#owTimeline .tlLane')).height) };
     });
     const sizes = [[1280, 520], [800, 600], [390, 700]];
     for (const [w, h] of sizes) {
-      await page.setViewportSize({ width: w, height: h }); await page.waitForTimeout(500);
+      await page.setViewportSize({ width: w, height: h }); await page.waitForTimeout(700);
       const tag = `${w}x${h}`;
-      await page.evaluate(() => { document.querySelector('#orderWin .owVTime').scrollTop = 0; });
       const a = await look();
-      // scroll 0: the top of the chart is on screen, and the page is longer than the window (it scrolls as a whole)
-      assert(a.gTop >= a.vTop - 0.5 && a.gTop < a.vBottom, `${tag}: the top of the chart shows at scroll 0: ` + JSON.stringify(a));
+      // nothing is drawn under the chart (the detail pane went on 5 Oct), the tab does not scroll, and the chart is the tab's box
       assert.equal(a.pane, 0, `${tag}: no detail pane under the chart`);
-      assert.equal(a.st, 0, `${tag}: it starts at the top`);
-      assert.equal(a.scrollerOwn, 0, `${tag}: no inner panel scrolls up and down on its own`);
-      assert.equal(a.chartOverflowX, 'auto', `${tag}: the chart keeps its own sideways scroll`);
+      assert(a.sh <= a.vh + 1, `${tag}: the Timeline tab does not scroll up and down: ${a.sh} > ${a.vh}`);
+      assert.equal(a.st, 0, `${tag}: it is at the top`);
       assert(a.sw <= a.cw + 1, `${tag}: nothing scrolls sideways: ${a.sw} > ${a.cw}`);
-      assert(a.cw <= w + 1, `${tag}: the page is no wider than the screen (a phone shows all of it): ${a.cw}`);
+      assert(a.cw <= w + 1 && a.doc <= 1, `${tag}: the page is no wider or taller than the screen: ${a.cw}, ${a.doc}`);
+      assert(Math.abs(a.gTop - a.vTop) <= 3 && Math.abs(a.gBottom - a.vBottom) <= 3, `${tag}: the chart is the tab's box: ${a.gTop}-${a.gBottom} in ${a.vTop}-${a.vBottom}`);
+      assert(!/(auto|scroll)/.test(a.chartOverflowX), `${tag}: the chart has no sideways scroll: ${a.chartOverflowX}`);
+      assert.equal(a.scrollerOwn, 0, `${tag}: no panel scrolls up and down on its own`);
+      assert(a.gs <= 0 && a.ss[0] <= 0 && a.ss[1] <= 0, `${tag}: the chart shows all of itself: ${a.gs} ${a.ss}`);
       if (w > 900) assert(a.rail > 10, `${tag}: the header's compact rail is still drawn: ${a.rail}`);   // (under 900 px the page hides it, as before)
-      // the seals on this page are small (Paul, 3 Oct: "All of these seals are too big ... they can be much smaller"): about 40% under the shared
-      // 84 px, each place with its own size, the lanes cut to fit them (the zoom, not the resting size, is what reads a seal)
-      const z = await page.evaluate(() => { const px = (s, p) => { const e = document.querySelector(s); return e ? parseFloat(getComputedStyle(e)[p || 'width']) : 0; };
-        return { chart: px('#owTimeline .tlSt[data-key]'), rail: px('#owRail .tlStop .tlSeal'), lane: px('#owTimeline .tlLane', 'height'), canvas: px('#owTimeline .tlCanvas', 'height') }; });
-      assert(z.chart >= 20 && z.chart <= 28, `${tag}: a chart seal rests at about 26px, not 42: ${z.chart}`);
-      if (w > 900) assert(z.rail >= 16 && z.rail <= 22, `${tag}: the header rail's seals are about 20px, not 24: ${z.rail}`);
-      assert(z.lane >= 36 && z.lane <= 46 && z.canvas <= 380, `${tag}: the lanes are cut to fit the smaller seals (lane ${z.lane}px, chart ${z.canvas}px)`);
-      if (shots) await page.screenshot({ path: path.join(shots, `${tag}-top.png`) });
-      // the wheel over the chart scrolls the whole page, not the chart alone (when the page is longer than the window at all)
+      // the seals take the room the lanes give them (the shared 84 px at most), the lanes are cut to the screen's height
+      assert(a.seal >= (w < 500 ? 18 : 24) && a.seal <= 84, `${tag}: the chart's seals are drawn to the room: ${a.seal}`);
+      assert(a.lane * 7 <= a.vh && a.lane * 7 >= a.vh - 140, `${tag}: seven lanes share the tab's height: ${a.lane} x 7 in ${a.vh}`);
+      if (shots) await page.screenshot({ path: path.join(shots, `${tag}-tab.png`) });
+      // a wheel over the chart moves nothing: the whole chart is on screen
       const box = await page.evaluate(() => { const r = document.querySelector('#owTimeline .tlScroll').getBoundingClientRect(); return { x: r.left + r.width / 2, y: Math.min(r.top + 60, innerHeight - 30) }; });
-      let scrolls = a.sh > a.vh + 1;
-      if (scrolls) {
-        await page.mouse.move(box.x, box.y); await page.mouse.wheel(0, 240); await page.waitForTimeout(400);
-        const b = await look();
-        assert(b.st > 0, `${tag}: the wheel over the chart scrolled the page: ${b.st}`);
-        assert(b.gTop < a.gTop, `${tag}: the chart moved with the page: chart ${a.gTop} -> ${b.gTop}`);
-      }
-      // the end: the foot of the chart (and whatever is the last thing drawn) is fully in view, with nothing under it
-      await page.evaluate(() => { const v = document.querySelector('#orderWin .owVTime'); v.scrollTop = v.scrollHeight; }); await page.waitForTimeout(300);
-      const c = await look();
-      assert(c.st + c.vh >= c.sh - 1, `${tag}: reached the end`);
-      assert(c.last <= c.vBottom + 0.5 && c.last <= c.inner, `${tag}: the last thing drawn ends inside the window: ${c.last} (window ${c.vBottom}/${c.inner})`);
-      assert(c.gBottom <= c.vBottom + 0.5 && c.last - c.gBottom < 24, `${tag}: the chart ends inside the window and nothing but the chart is under it: chart foot ${c.gBottom}, last ${c.last}, window ${c.vBottom}`);
-      if (shots) await page.screenshot({ path: path.join(shots, `${tag}-end.png`) });
-      console.log(`  ✓ ${tag}: page ${a.sh}px in a ${a.vh}px window${scrolls ? ', the wheel moves the whole page' : ' (it fits: no scroll needed)'}, the chart's foot ends ${Math.round(c.vBottom - c.gBottom)}px above the window's foot, no pane under it`);
+      await page.mouse.move(box.x, box.y); await page.mouse.wheel(0, 240); await page.mouse.wheel(120, 0); await page.waitForTimeout(400);
+      const b = await look();
+      assert.equal(b.st, 0, `${tag}: the wheel over the chart scrolled the tab: ${b.st}`);
+      assert(Math.abs(b.gTop - a.gTop) < 1 && Math.abs(b.seal - a.seal) < .5, `${tag}: the chart did not move: ${a.gTop} -> ${b.gTop}`);
+      console.log(`  ✓ ${tag}: the tab is ${a.vh}px and does not scroll, the chart is its box, seals ${a.seal}px on ${a.lane}px lanes, the wheel moves nothing`);
     }
 
     // the other tab is as it was
     await page.setViewportSize({ width: 1280, height: 520 });
-    await page.evaluate(() => OrderWin.setView('info')); await page.waitForTimeout(400);
+    await page.mouse.move(3, 3); await page.waitForTimeout(500);   // (a seal under the pointer is zoomed, and a view switch waits for it to let go)
+    await page.evaluate(() => OrderWin.setView('info')); await page.waitForTimeout(600);
     const info = await page.evaluate(() => { const v = document.querySelector('#orderWin .owVInfo'), t = document.querySelector('#orderWin .owVTime'); return { info: getComputedStyle(v).display, h: v.getBoundingClientRect().height, time: t.hidden ? 'none' : getComputedStyle(t).display }; });
     assert.equal(info.info, 'grid'); assert(info.h > 200, 'the Overview fills the window: ' + info.h); assert.equal(info.time, 'none');
     await page.setViewportSize({ width: 390, height: 700 }); await page.waitForTimeout(400);

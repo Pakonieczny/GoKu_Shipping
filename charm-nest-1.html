@@ -785,11 +785,12 @@ dialog.phv.layer.phvIn{background:transparent}
 #orderWin.owFull .owVInfo{display:grid;grid-template-columns:minmax(0,1fr) var(--owSide)}
 #orderWin.owFull .owMain{grid-template-columns:var(--owPics) minmax(0,1fr);gap:22px;padding:18px 22px 28px 18px;overflow:auto}
 #orderWin.owFull .owChat{border-left:1px solid var(--line)}
-#orderWin.owFull .owVTime{display:flex;flex-direction:column;overflow:auto}
-/* the whole Timeline tab is the chart (the detail pane under it is gone, Paul 5 Oct 2026): .owVTime is the only scroller and the chart keeps
-   its own height (never squeezed to a sliver); the chart's own sideways scroll stays on .tlScroll */
-#orderWin.owFull .owTimeline{flex:1 0 auto;display:flex;flex-direction:column}
-#orderWin.owFull .owTimeline .tlUI:not(.compact){flex:1 0 auto;min-height:auto}
+#orderWin.owFull .owVTime{display:flex;flex-direction:column;overflow:hidden}
+/* the whole Timeline tab is the chart, on one screen (Paul, 5 Oct 2026: the detail pane under it is gone, "the full chart should always be visible on
+   one screen without scrolling, this needs to be dynamic in nature"): the chart takes all the room under the tab row down to the foot of the window
+   and fits itself to it (timeline-ui.js, "the chart fits its room"), so nothing here scrolls: not the tab, not the chart */
+#orderWin.owFull .owTimeline{flex:1 1 0;min-height:0;display:flex;flex-direction:column}
+#orderWin.owFull .owTimeline .tlUI:not(.compact){flex:1 1 0;min-height:0}
 /* one thin header and one tab row (spec §1, §5): the header's rail and pill already say where the order is, so the
    timeline's own Now and rail strip is not drawn a second time here, and its live badge and summary are in the tab row */
 #orderWin.owFull .owTimeline .tlUI:not(.compact)>.tlTop{display:none}
@@ -2981,7 +2982,7 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-pdf.js?v=20260924-followup"></script>
 <script src="charm-nest-dxf.js?v=20260927-custom"></script>
 <script src="charm-nest-motion.js?v=20261005-zg-seal-small-rt1-sealpc1-sealcmp1-pdot1"></script>
-<script src="charm-nest-timeline-ui.js?v=20261005-pieces-psb1-hand2-print1-sealpc2-q1next1-tl1"></script>
+<script src="charm-nest-timeline-ui.js?v=20261005-pieces-psb1-hand2-print1-sealpc2-q1next1-tl1-tl2fit1"></script>
 <script src="charm-nest-geom.js?v=20260921-material"></script>
 <script src="charm-nest-engrave-fit.js"></script>
 <script src="charm-nest-assets.js"></script>
