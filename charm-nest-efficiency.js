@@ -139,7 +139,7 @@
         person: String(c.person || ""), rid: String(c.rid || c.orderNumber || ""), orderNumber: String(c.orderNumber || c.rid || ""), customer: String(c.customer || ""),
         scannedAt: T(c.scannedAt), thumbUrl: String(c.thumbUrl || ""), qr: c.qr && c.qr.text ? { text: String(c.qr.text) } : null, note: c.note ? String(c.note) : "",
         pieces: arr(c.pieces).filter(p => p && (p.id != null || p.label || p.thumbUrl)).map(p => ({ id: String(p.id == null ? "" : p.id), label: String(p.label || ""), thumbUrl: String(p.thumbUrl || "") })),
-        station: key, stationLabel: label }));
+        station: key, stationLabel: label, raw: c }));   // (raw: the server's own entry; the shared order card reads what this model leaves out: kind, title, device, vectorUrl, photoUrl, pieceCount)
       return { key, label, state: ["working", "idle", "offline"].includes(s.state) ? s.state : (current.length ? "working" : "idle"), people: arr(s.people).map(String), current,
         lastEventAt: T(s.lastEventAt), counts: { partsToday: N(s.counts && s.counts.partsToday), ordersToday: N(s.counts && s.counts.ordersToday) } };
     });
