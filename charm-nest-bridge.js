@@ -5517,13 +5517,14 @@ const LaserReview = window.LaserReview = (()=>{
     body.innerHTML='<section class="laserSection readyArea" data-laser-area="ready"><h2>Laser cutting <span>Ready sheets and sets</span></h2><p class="laserEmpty">No sheets are ready for cutting yet.</p><div class="laserAreaItems"></div></section><section class="laserSection" data-laser-area="pending"><h2>In progress</h2><div class="laserAreaItems"></div></section>';
   }
   function place(card,ready,body){body.querySelector(`[data-laser-area="${ready?'ready':'pending'}"] .laserAreaItems`).appendChild(card);}
-  /* ── The step rail, the "what is left" line and the checklist (Paul, 3 Oct: "I'm not sure why this sheet did not advance to
-     Laser Cutting ... I often find myself wondering what is still remaining"). Every sheet card and set card shows where it
-     stands on the process steps; a card still In progress says in one line what it waits for, and a tap lists it: each item
-     names the order, charm or sheet and opens it. The words come from CharmNestReadiness.explain, which reads the same stages
-     the sections do, so a card can never say ready where it sits In progress. Drawn from refresh(): whatever changes a card
-     (an approval, a saved back, a label, a poll) re-draws it with the next frame, and only when its words changed. */
-  const openFlow=new Set(),CHECK='<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2.6 6.3l2.2 2.2 4.6-4.9"/></svg>';
+  /* ── The step rail (Paul, 3 Oct: "I'm not sure why this sheet did not advance to Laser Cutting ... I often find myself
+     wondering what is still remaining"; 5 Oct: "I want the little ones ... directly underneath each sheet"). Every sheet shows,
+     directly under it, one small rail of where it stands on the process steps; a sheet that is not ready carries a '!' on the
+     step that holds it back, and a press on it opens the issues panel (charm-nest-library-issues.js). A set card shows none.
+     The words come from CharmNestReadiness.explain, which reads the same stages the sections do, so a card can never say ready
+     where it sits In progress. Drawn from refresh(): whatever changes a card (an approval, a saved back, a label, a poll)
+     re-draws it with the next frame, and only when what the rail shows changed. */
+  const CHECK='<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2.6 6.3l2.2 2.2 4.6-4.9"/></svg>';
   let checkingNow=false;
   function flowCss(){
     if(document.getElementById('flowWhyCss'))return;
@@ -5546,44 +5547,29 @@ const LaserReview = window.LaserReview = (()=>{
 .flowStep span{display:none;white-space:nowrap}
 .flowStep.current span{color:var(--ink);font-weight:600}
 .flowStep.blocked.current span{color:var(--clay)}
+.flowFoot{display:flex;align-items:center;gap:8px;min-width:0}
 .flowNow{font-size:11px;color:var(--ink45)}.flowNow b{color:var(--ink);font-weight:600}
 .flowBox[data-state=blocked] .flowNow b{color:var(--clay)}
-@container (min-width:430px){.flowStep span{display:block}.flowNow{display:none}}
-.flowLine{all:unset;box-sizing:border-box;display:flex;align-items:flex-start;gap:7px;width:100%;padding:3px 0;cursor:pointer;font:12px/1.4 var(--sans);color:var(--ink70)}
-.flowLine:focus-visible{outline:2px solid var(--gold);outline-offset:2px;border-radius:6px}
-.flowMark{flex:0 0 7px;height:7px;margin-top:5px;border-radius:50%;background:var(--gold2)}
-.flowBox[data-state=blocked] .flowMark{background:var(--clay)}
-.flowBox[data-state=blocked] .flowText{color:#8a3a26}
-.flowText{flex:1 1 auto;min-width:0;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
-.flowLine[aria-expanded=true] .flowText{display:block;overflow:visible}
-.flowCaret{flex:none;font:600 15px/1.1 var(--sans);color:var(--ink45);transition:transform .15s}
-.flowLine[aria-expanded=true] .flowCaret{transform:rotate(90deg)}
+@container (min-width:430px){.flowStep span{display:block}.flowNow{display:none}.flowFoot:not(:has(.flowBusy)){display:none}}
 .flowBusy{flex:none;display:inline-flex;align-items:center;gap:5px;font-size:11px;color:var(--ink45)}
 .flowBusy .spin{width:10px;height:10px;border:2px solid rgba(0,0,0,.15);border-top-color:var(--ink45);border-radius:50%;animation:spin .7s linear infinite}
-.flowList{list-style:none;margin:0;padding:8px 0 2px;display:grid;gap:8px;border-top:1px solid var(--line2)}
-.flowList[hidden]{display:none}
-.flowRow{display:grid;grid-template-columns:16px minmax(0,1fr);gap:1px 8px;align-items:start}
-.flowRow>i{grid-row:1/3;width:16px;height:16px;border-radius:50%;margin-top:1px;display:grid;place-items:center;font:700 9px/1 var(--sans);font-style:normal;color:#fff;background:var(--ink25)}
-.flowRow>i svg{width:9px;height:9px;fill:none;stroke:#fff;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
-.flowRow.done>i{background:var(--sage)}.flowRow.waiting>i{background:var(--gold2)}.flowRow.blocked>i{background:var(--clay)}
-.flowRow>b{font-weight:600;color:var(--ink)}
-.flowRow>small{grid-column:2;font-size:11.5px;color:var(--ink70);line-height:1.4}
-.flowItems{grid-column:2;list-style:none;margin:3px 0 0;padding:0;display:grid;gap:4px}
-.flowItem{all:unset;box-sizing:border-box;display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;padding:5px 9px;border:1px solid var(--line);border-radius:8px;background:var(--card2);cursor:pointer;font:12px/1.35 var(--sans);color:var(--ink)}
-.flowItem:hover{border-color:var(--gold2)}.flowItem:focus-visible{outline:2px solid var(--gold);outline-offset:1px}
-.flowItem>span{min-width:0}.flowItem b{font-weight:600}.flowItem small{display:block;font-size:11px;color:var(--ink70)}
-.flowItem>em{flex:none;font:600 14px/1 var(--sans);font-style:normal;color:var(--ink45)}
-.flowMore{all:unset;cursor:pointer;font:11.5px var(--sans);color:var(--slate);padding:2px 9px}.flowMore:hover{text-decoration:underline}
-.flowItems>li[hidden]{display:none}`;
+button.flowDot{appearance:none;-webkit-appearance:none;margin:0;padding:0;cursor:pointer;-webkit-tap-highlight-color:transparent;transition:transform .15s ease,box-shadow .15s ease}
+button.flowDot::before{content:"";position:absolute;inset:-9px}
+button.flowDot:hover{transform:scale(1.14)}
+button.flowDot:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
+.flowStep.waiting .flowBang{background:var(--card);border-color:var(--gold2);color:#8a6a1f}
+.flowStep.waiting .flowBang::after{display:none}
+@media (prefers-reduced-motion:reduce){button.flowDot{transition:none}button.flowDot:hover{transform:none}}`;
     document.head.appendChild(s);
   }
-  // the chain of what to show on a card: a set card for a real set (its sheets only when it holds several), and each sheet
-  // card; a loose group (14K / 10K solids, sheets held for a later set) is not a set, so its sheets each carry their own
+  /* What a card shows (Paul, 5 Oct: "I don't need 2 green approve this sheet button ... I also don't want this large progress bar.
+     I want the little ones ... directly underneath each sheet", and "Remove this UI completely from a multi sheets set ... Each
+     sheet has its own progress timeline"): a set card carries no rail, no line and no Approve button of its own. Only a sheet does,
+     one small rail directly under that sheet (and, under the rail, its one Approve button): in a set of one sheet, in a set of
+     several, in a loose group (14K / 10K solids, sheets held for a later set) and on a sheet card of its own alike. */
   function flowSlots(card){
-    const kind=card.dataset.laserCard,st=card._laserSet,out=[],articles=kind==='sheet'?[card]:[...card.querySelectorAll('.librarySheet')];
-    const real=kind==='set' && !!st?.setId && !st.standalone && !st.working;
-    if(real)out.push({host:card,kind:'set',id:st.setId});
-    if(!real || articles.length>1)for(const a of articles){
+    const kind=card.dataset.laserCard,out=[],articles=kind==='sheet'?[card]:[...card.querySelectorAll('.librarySheet')];
+    for(const a of articles){
       const id=a.querySelector('.libCard')?.dataset.id || a.querySelector('[data-laser-sheet]')?.dataset.laserSheet || (kind==='sheet'?card._laserSheets?.[0]:'');
       if(id)out.push({host:a,kind:'sheet',id});
     }
@@ -5602,73 +5588,57 @@ const LaserReview = window.LaserReview = (()=>{
     }
     return R.explain(p,ctx);
   }
-  function railHtml(e){
-    const at=e.steps.findIndex(s=>s.current),now=e.steps[at];
-    return `<ol class="flowRail" aria-label="Process steps">${e.steps.map(s=>`<li class="flowStep ${s.state}${s.current?' current':''}${s.current && e.ready && s.key==='laser'?' ready':''}"${s.current?' aria-current="step"':''} title="${esc(`${s.label}: ${s.detail}`)}"><i class="flowDot">${s.state==='done'?CHECK:s.state==='blocked'?'!':''}</i><span>${esc(s.label)}</span></li>`).join('')}</ol>${now?`<div class="flowNow"><b>${esc(now.label)}</b> · step ${at+1} of ${e.steps.length}</div>`:''}`;
-  }
-  function listHtml(e,own){
-    // (a sheet's own card leaves out the items that only point back at that sheet)
-    const itemsOf=s=>s.state==='done'?[]:s.items.filter(it=>!(own && it.kind==='sheet' && it.id===own));
-    const itemHtml=(it,n)=>`<li${n>=8?' hidden data-more':''}><button type="button" class="flowItem" data-fi-kind="${esc(it.kind)}" data-fi-id="${esc(it.id)}"><span><b>${esc(it.label)}</b><small>${esc(it.why)}</small></span><em aria-hidden="true">›</em></button></li>`;
-    return e.steps.filter(s=>s.key!=='completed' && (s.key!=='laser' || (!e.ready && s.items.length))).map(s=>{
-      const items=itemsOf(s);
-      return `<li class="flowRow ${s.state}"><i>${s.state==='done'?CHECK:s.state==='blocked'?'!':''}</i><b>${esc(s.label)}</b><small>${esc(s.detail)}</small>${items.length?`<ul class="flowItems">${items.map(itemHtml).join('')}${items.length>8?`<li><button type="button" class="flowMore" data-fi-more>Show ${items.length-8} more</button></li>`:''}</ul>`:''}</li>`;
-    }).join('');
-  }
-  function openItem(btn){
-    const kind=btn.dataset.fiKind,id=btn.dataset.fiId;
-    if(kind==='sheet'){if(typeof window.openLibrarySheet==='function')return window.openLibrarySheet(id);return window.SheetWin?.open?.(id);}
-    const rid=String(id).split('_')[0].replace(/\D/g,'');if(!rid)return;
-    if(typeof window.openOrderFrom==='function')return window.openOrderFrom(btn,rid,kind==='charm'?{poolId:id}:{});
-    return window.OrderWin?.openOrder?.(rid,{from:btn});
+  /* The '!' (the issues panel, charm-nest-library-issues.js, opens from it): a real button in the rail of a sheet that is not
+     ready, on every blocked step, on the step the sheet is at when a person can act on it (Engraving, Back files, QR label,
+     Order check), and on Laser cutting when the sheet itself is done but waits for the other sheets of its set. A ready or cut
+     sheet, and a step that is only running (Nesting), show none. The attributes are the hook: [data-issues-open] with the
+     sheet (data-issues-id / data-sheet-id) and the step (data-issues-step / data-step). */
+  const BANG={engraving:1,backFiles:1,qr:1,orders:1};
+  const bangOn=(e,s)=>!e.ready && !e.done && (s.state==='blocked' || (!!s.current && (!!BANG[s.key] || s.key==='laser')));
+  function railHtml(e,id,open){
+    const dot=s=>bangOn(e,s)
+      ?`<button type="button" class="flowDot flowBang" data-issues-open data-issues-kind="sheet" data-issues-id="${esc(id)}" data-issues-step="${s.key}" data-sheet-id="${esc(id)}" data-step="${s.key}" aria-haspopup="dialog" aria-expanded="${open && (open===s.key || open==='true')?'true':'false'}" aria-label="What holds this sheet back">!</button>`
+      :`<i class="flowDot">${s.state==='done'?CHECK:s.state==='blocked'?'!':''}</i>`;
+    return `<ol class="flowRail" aria-label="Process steps">${e.steps.map(s=>`<li class="flowStep ${s.state}${s.current?' current':''}${s.current && e.ready && s.key==='laser'?' ready':''}"${s.current?' aria-current="step"':''} title="${esc(`${s.label}: ${s.detail}`)}">${dot(s)}<span>${esc(s.label)}</span></li>`).join('')}</ol>`;
   }
   function flowBox(slot){
     const key=`${slot.kind}:${slot.id}`;let box=[...slot.host.children].find(x=>x.classList?.contains('flowBox') && x.dataset.flowFor===key);
     if(box)return box;
     for(const old of [...slot.host.children])if(old.classList?.contains('flowBox'))old.remove();   // (the card now stands for another record)
     box=document.createElement('div');box.className='flowBox';box.dataset.flowFor=key;
-    box.addEventListener('click',ev=>{
-      const t=ev.target.closest?.('button');if(!t)return;
-      if(t.hasAttribute('data-flow-toggle')){ev.stopPropagation();setFlowOpen(box,box.querySelector('.flowList')?.hidden!==false);}
-      else if(t.hasAttribute('data-fi-more')){ev.stopPropagation();t.closest('ul').querySelectorAll('[data-more]').forEach(n=>n.hidden=false);t.closest('li').remove();}
-      else if(t.hasAttribute('data-fi-kind')){ev.stopPropagation();openItem(t);}
-    });
-    const after=slot.kind==='set'?slot.host.querySelector(':scope > .sheetsRow'):null,last=slot.host.querySelector(':scope > .approveBox');
-    if(after)slot.host.insertBefore(box,after);else slot.host.insertBefore(box,last || null);
+    slot.host.insertBefore(box,slot.host.querySelector(':scope > .approveBox') || null);   // (under the sheet, and under its QR label; its Approve button follows)
     return box;
   }
-  function setFlowOpen(box,open){
-    const list=box.querySelector('.flowList'),line=box.querySelector('.flowLine');if(!list || !line)return;
-    list.hidden=!open;line.setAttribute('aria-expanded',open?'true':'false');
-    if(open)openFlow.add(box.dataset.flowFor);else openFlow.delete(box.dataset.flowFor);
-  }
-  function flowDraw(box,e,own){
-    const checking=!!sealPoll || checkingNow || live.checking,open=openFlow.has(box.dataset.flowFor),line=!e.ready && !e.done;
-    const sig=JSON.stringify([e.ready,e.done,e.step,e.nextText,e.steps.map(s=>[s.state,s.detail,s.items.map(i=>i.id+'|'+i.why)]),checking,line]);
+  function flowDraw(box,e,id){
+    const pending=!e.ready && !e.done,checking=pending && (!!sealPoll || checkingNow || live.checking);
+    const sig=JSON.stringify([e.ready,e.done,e.step,e.steps.map(s=>[s.state,s.detail,s.current?1:0]),checking,box.dataset.issuesOpen || '']);
     if(box._sig===sig)return;
     box._sig=sig;
-    const state=e.done?'done':e.ready?'ready':e.steps.some(s=>s.current && s.state==='blocked')?'blocked':'waiting',hadFocus=box.contains(document.activeElement)?document.activeElement.className:'';
+    const state=e.done?'done':e.ready?'ready':e.steps.some(s=>s.current && s.state==='blocked')?'blocked':'waiting',at=e.steps.findIndex(s=>s.current),now=e.steps[at];
+    const kept=box.contains(document.activeElement)?document.activeElement.dataset?.step || '':'';
     box.dataset.state=state;
-    box.innerHTML=railHtml(e)+(line?`<button type="button" class="flowLine" data-flow-toggle aria-expanded="${open}"><i class="flowMark"></i><span class="flowText">${esc(e.nextText)}</span>${checking?'<span class="flowBusy" role="status"><i class="spin"></i>Checking…</span>':''}<b class="flowCaret" aria-hidden="true">›</b></button><ul class="flowList"${open?'':' hidden'}>${listHtml(e,own)}</ul>`:'');
-    if(hadFocus==='flowLine')box.querySelector('.flowLine')?.focus({preventScroll:true});
+    box.innerHTML=railHtml(e,id,box.dataset.issuesOpen)+`<div class="flowFoot">${now?`<div class="flowNow"><b>${esc(now.label)}</b> · step ${at+1} of ${e.steps.length}</div>`:''}${checking?'<span class="flowBusy" role="status"><i class="spin"></i>Checking…</span>':''}</div>`;
+    if(kept)box.querySelector(`[data-issues-open][data-step="${kept}"]`)?.focus({preventScroll:true});   // (a redraw keeps the keyboard where it was)
   }
   function flowDecorate(card,lookup){
     try{
       flowCss();
       const slots=flowSlots(card);
-      for(const old of card.querySelectorAll('.flowBox'))if(!slots.some(s=>old.dataset.flowFor===`${s.kind}:${s.id}` && old.parentElement===s.host))old.remove();
-      for(const slot of slots){const e=explainOf(slot,card,lookup);if(e)flowDraw(flowBox(slot),e,slot.kind==='sheet'?slot.id:'');}
+      for(const old of card.querySelectorAll('.flowBox'))if(!slots.some(s=>old.dataset.flowFor===`${s.kind}:${s.id}` && old.parentElement===s.host))old.remove();   // (a set's own box of an older drawing, a sheet that left)
+      for(const slot of slots){const e=explainOf(slot,card,lookup);if(e)flowDraw(flowBox(slot),e,slot.id);}
     }catch(err){console.warn('Library step rail',err);}
   }
-  /** Open a card's checklist (the plain reason on a disabled button points here): {kind:'sheet'|'set', id}. */
+  /** The '!' of a sheet card, or of the first sheet of a set card that has one (the plain reason on a disabled Approve button
+      points here): {kind:'sheet'|'set', id}. A press on it opens the issues panel; true when there was a '!' to press. */
   function openChecklist(card,which){
     if(!card)return false;
-    const key=`${which?.kind || (card._laserSet?.setId?'set':'sheet')}:${which?.id || card._laserSet?.setId || card._laserSheets?.[0]}`;
     flowDecorate(card,()=>R.lookup({rows:Orders.rows()}));
-    const box=[...card.querySelectorAll('.flowBox')].find(b=>b.dataset.flowFor===key);if(!box || !box.querySelector('.flowList'))return false;   // (a ready card has no list)
-    setFlowOpen(box,true);box.scrollIntoView?.({block:'nearest',behavior:'smooth'});box.querySelector('.flowLine')?.focus?.({preventScroll:true});return true;
+    const host=which?.kind==='sheet'?[...card.querySelectorAll('.flowBox')].find(b=>b.dataset.flowFor===`sheet:${which.id}`):card;
+    const bang=host && (host.querySelector('.flowStep.current [data-issues-open]') || host.querySelector('[data-issues-open]'));
+    if(!bang)return false;
+    bang.click();return true;
   }
-  document.addEventListener('library-checklist-open',ev=>{const card=ev.target?.closest?.('[data-laser-card]');if(card)openChecklist(card,ev.detail);});
+  document.addEventListener('library-checklist-open',ev=>{if(ev.detail?.handled)return;const card=ev.target?.closest?.('[data-laser-card]');if(card)openChecklist(card,ev.detail);});
   function refresh(){
     frame=0;
     if(window.Seal?.defer("laser-refresh",refresh))return;
@@ -5689,7 +5659,7 @@ const LaserReview = window.LaserReview = (()=>{
       // a card whose readiness changed moves between In progress and Laser cutting: where it stood is measured first, so it glides
       // there (the Library's own glide, charm-nest-library.js) instead of jumping; while a flight is drawing (LibraryFx) that is its to show
       const body=card.closest('#libBody');if(body && card.parentElement!==body.querySelector(`[data-laser-area="${report.ready?'ready':'pending'}"] .laserAreaItems`)){if(!before && !body.querySelector('[data-fx-hide]')){home=body;before=window.LibraryDone?.snapshot?.(body) || null;}place(card,report.ready,body);moved.push([card,report.ready]);}
-      syncApprove(card,report,sheets);   // the manual "Approve for laser cutting" button (below)
+      syncApprove(card);   // the manual "Approve for laser cutting" button of each sheet (below)
     });
     for(const list of document.querySelectorAll('#libBody .laserAreaItems')){
       const value=card=>({...card._laserSet,sheets:(card._laserSheets || []).map(id=>records.get(id)).filter(Boolean)});
@@ -5711,7 +5681,8 @@ const LaserReview = window.LaserReview = (()=>{
     }catch(e){console.warn('Library glide',e);}
   }
   /* ── Approve for laser cutting (Paul, 3 Oct: "There is also no way for the user to manually approve a given sheet or set of
-     sheets.") Every sheet and set card under In progress carries one button. A press asks LibraryFlow (charm-nest-flow.js)
+     sheets."; 5 Oct: "I don't need 2 green approve this sheet button. Please remove the top one.") Every sheet under In
+     progress carries one button, directly under that sheet's rail; a set card carries none of its own. A press asks LibraryFlow (charm-nest-flow.js)
      to run every safe automatic step for the person signed in and to list what is still missing; LibraryApprovalUI
      (charm-nest-library-approval-ui.js) shows that on the card, a plain list does when it is not loaded. A card only a
      person's decision can move on (back engravings not approved) keeps the button, disabled, with the plain reason beside
@@ -5721,20 +5692,20 @@ const LaserReview = window.LaserReview = (()=>{
   const flowReady=()=>typeof window.LibraryFlow?.approve==='function';
   const laying=p=>!!(p.dirty || p.saving || ['nesting','finishing','queued','error'].includes(p.status));
   // null: nothing to offer (ready, cut or gone) · {why:''}: a press can do it · {why:'plain words'}: a person's own step comes first
-  function approveCase(kind,recs,st){
+  function approveCase(recs){
     recs=recs.filter(Boolean);if(!recs.length)return null;
-    if(kind==='set'?(st.laserDoneAt || group(st,recs).ready):(recs[0].archived || projected(recs[0]).laserDoneAt || sheet(recs[0]).ready))return null;
+    if(recs[0].archived || projected(recs[0]).laserDoneAt || sheet(recs[0]).ready)return null;
     const todo=recs.map(projected).filter(p=>!p.archived && !R.laserSheet(p).ready).map(p=>({p,r:R.laserSheet(p)}));
     if(!todo.length)return {why:''};
     const waiting=todo.reduce((n,x)=>n+(x.r.included?x.r.waiting:0),0);
     if(waiting)return {why:`Waiting on ${plural(waiting,'back engraving')}`};
     const busy=todo.filter(x=>laying(x.p)).length;
-    if(busy)return {why:kind==='set'?`${plural(busy,'sheet')} still being laid out`:'Still being laid out'};
+    if(busy)return {why:'Still being laid out'};
     const out=todo.filter(x=>!x.r.included);
-    if(out.length)return {why:kind==='set'?`${plural(out.length,'sheet')} not included in the set yet`:out[0].p.draft?'Still a draft':'Not included in a set yet'};
+    if(out.length)return {why:out[0].p.draft?'Still a draft':'Not included in a set yet'};
     return {why:''};
   }
-  function makeApproveBox(host,kind,id,before){
+  function makeApproveBox(host,kind,id){
     const box=document.createElement('div');box.className='approveBox';box.dataset.approveFor=boxKey(kind,id);box.dataset.nodrag='';box._kind=kind;box._id=id;
     box.innerHTML='<div class="approveRow"><button type="button" class="btn sage sm approveBtn" data-approve-btn></button><span class="approveWhy" data-approve-why></span></div><div class="approvePlan" data-approve-plan role="status" aria-live="polite" hidden></div>';
     box.onclick=e=>{
@@ -5746,11 +5717,12 @@ const LaserReview = window.LaserReview = (()=>{
       else if(t.matches('[data-approve-no]'))cancelPlan(box);
       else if(t.matches('[data-approve-hide]'))hidePlan(box);
     };
-    host.insertBefore(box,before && before.parentNode===host?before:null);
+    host.appendChild(box);   // (last in its sheet's article: under the sheet, its QR label and its rail)
     return box;
   }
   function paintApprove(box,c){
-    const key=box.dataset.approveFor,busy=approving.has(key),open=typeof window.LaserReview?.openChecklist==='function';
+    // (the reason is a link when there is something to open: the sheet's '!' on its rail, which opens the issues panel)
+    const key=box.dataset.approveFor,busy=approving.has(key),open=typeof window.LaserReview?.openChecklist==='function' && !!box.parentElement?.querySelector('.flowBox [data-issues-open]');
     const mode=!c?'done':busy?'busy':c.why?'blocked':'ready',sig=[mode,c?.why || '',open?1:0,box._name || ''].join('|');
     box._case=c;
     if(box.dataset.sig===sig)return;
@@ -5761,26 +5733,24 @@ const LaserReview = window.LaserReview = (()=>{
     btn.innerHTML=busy?'<i class="spin" aria-hidden="true"></i>Approving…':'Approve for laser cutting';
     why.innerHTML=mode!=='blocked'?'':open?`<button type="button" class="approveReason" data-approve-reason>${esc(c.why)}</button>`:`<span class="approveReason">${esc(c.why)}</span>`;
   }
-  function syncBox(host,kind,id,c,before,name){
+  function syncBox(host,kind,id,c,name){
     const key=boxKey(kind,id);let box=[...host.children].find(x=>x.dataset?.approveFor===key);
     if(!c){
       if(!box)return;
       if(approving.has(key) || (box.dataset.keep && Date.now()<box._until))paintApprove(box,null);else box.remove();
       return;
     }
-    if(!box)box=makeApproveBox(host,kind,id,before);
+    if(!box)box=makeApproveBox(host,kind,id);
     box._name=name || '';paintApprove(box,c);
     if(box.dataset.keep && Date.now()>box._until)hidePlan(box);
   }
-  function syncApprove(card,report,sheets){
-    const kind=card.dataset.laserCard,on=flowReady() && !!card.closest('[data-laser-area="pending"]'),st=card._laserSet,items=[];
-    if(kind==='set'){
-      items.push([card,'set',st?.setId,on && st?.setId && !st.standalone && !st.working?approveCase('set',sheets,st):null,card.querySelector(':scope > .sheetsRow'),st?.seq?O.setLabel(st.seq):'']);
-      for(const art of card.querySelectorAll('.sheetsRow > .librarySheet')){const id=art.querySelector(':scope > .libCard')?.dataset.id,rec=records.get(id);if(rec)items.push([art,'sheet',id,on?approveCase('sheet',[rec]):null,null,rec.folder || rec.fileBase || '']);}
-    }else if(kind==='sheet'){
-      const id=card._laserSheets?.[0],rec=records.get(id);if(rec)items.push([card,'sheet',id,on?approveCase('sheet',[rec]):null,null,rec.folder || rec.fileBase || '']);
-    }
-    for(const [host,k,id,c,before,name] of items)if(id)syncBox(host,k,id,c,before,name);
+  // one button per sheet, in that sheet's own article (a set of one sheet and a set of several alike); none for the set
+  function syncApprove(card){
+    const kind=card.dataset.laserCard,on=flowReady() && !!card.closest('[data-laser-area="pending"]'),items=[];
+    const add=(host,rec)=>{if(rec)items.push([host,rec.id,on?approveCase([rec]):null,rec.folder || rec.fileBase || '']);};
+    if(kind==='set')for(const art of card.querySelectorAll('.sheetsRow > .librarySheet'))add(art,records.get(art.querySelector(':scope > .libCard')?.dataset.id));
+    else if(kind==='sheet')add(card,records.get(card._laserSheets?.[0]));
+    for(const [host,id,c,name] of items)syncBox(host,'sheet',id,c,name);
   }
   function planHtml(plan,error,canCommit){
     const say=x=>`<b>${esc(x.label || x.key || '')}</b>${x.detail?` <span>${esc(x.detail)}</span>`:''}`;
@@ -5818,9 +5788,9 @@ const LaserReview = window.LaserReview = (()=>{
   }
   function cancelPlan(box){box._plan=null;hidePlan(box);}
   function openWhy(box){
-    const card=box.parentElement,info={kind:box._kind,id:box._id};
-    try{window.LaserReview?.openChecklist?.(card,info);}catch(e){console.warn('Checklist',e);}
-    try{card.dispatchEvent(new window.CustomEvent('library-checklist-open',{bubbles:true,detail:{...info,card}}));}catch(e){}
+    const host=box.parentElement,card=host.closest('[data-laser-card]') || host,info={kind:box._kind,id:box._id};let handled=false;
+    try{handled=!!window.LaserReview?.openChecklist?.(card,info);}catch(e){console.warn('Checklist',e);}
+    try{host.dispatchEvent(new window.CustomEvent('library-checklist-open',{bubbles:true,detail:{...info,card,handled}}));}catch(e){}   // (handled: this card has already opened its '!')
   }
   // what happens on the card after a press: the card is drawn again from the cloud at once (it moves to Laser cutting when
   // the plan went through), and once more a moment later in case a write was still landing
