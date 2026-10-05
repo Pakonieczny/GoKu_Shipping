@@ -60,6 +60,7 @@ function fakeShared(cfg) {
       store.calls.push(JSON.parse(JSON.stringify(a))); await sleep(store.delay);
       if (store.fail) return { ok: false, error: store.fail };
       if (store.stay) return { ok: true, removed: [], stayed: store.stay };
+      if (store.stuck) return { ok: true, scope: 'order', removed: [a.orderId + '_1'], stayed: [] };   // (written, but the page has not caught up: the order is still listed)
       store.held[a.orderId] = a.mode; subs.forEach(f => { try { f(); } catch (_) {} });
       return { ok: true, scope: 'order', removed: [a.orderId + '_1'], stayed: [] };
     },
@@ -366,6 +367,15 @@ const until = async (fn, ms = 8000, what = '') => { ms *= SLOW; const t0 = Date.
     await until(async () => (await cards(page)).length === 2, 4000, 'the second try works');
     assert.deepEqual(errors, [], 'no page errors: ' + errors.join(' | '));
     ok.push('5 · a failed change says so in one short line, keeps the card, and Try again works');
+    // written, but the page has not caught up in time: one short line, no button, it fades by itself (the live reads finish the job)
+    await page.evaluate(() => { __so.stuck = true; });
+    await choose(page, orders[0].id, 'hold'); await page.click('.soAsk [data-yes]');
+    await until(() => vis(page, `.soCard[data-order="${orders[0].id}"] .soNote`), 16000, 'the fallback note shows');
+    assert.equal(await text(page, `.soCard[data-order="${orders[0].id}"] .soNote p`), 'Taken off. This list updates by itself.');
+    assert.equal(await page.$$eval(`.soCard[data-order="${orders[0].id}"] .soNote button`, a => a.length), 0, 'no button on it');
+    assert.equal(await page.$$eval('.soBusy', a => a.length), 0, 'no spinner left behind');
+    await until(async () => (await page.$$(`.soCard[data-order="${orders[0].id}"] .soNote`)).length === 0, 9000, 'and it goes by itself');
+    ok.push('5 · a write the page has not caught up with: one short line ("Taken off. This list updates by itself."), no button, it goes by itself');
     await ctx.close();
   }
 

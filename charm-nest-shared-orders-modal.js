@@ -699,7 +699,7 @@ dialog.soDlg:focus,dialog.soDlg:focus-visible{outline:none}
       if (!live(M) || !c2.isConnected) return;
       await reread(M, 'removed');
       if (!live(M) || !c2.isConnected || !M.orders.find(x => x.orderId === o.orderId)) return;
-      if (Date.now() - t0 > SETTLE_MAX) { c2.dataset.state = ''; setBusy(c2, ''); setNote(c2, '', 'Taken off, but this list has not caught up yet. It follows by itself.', [{ label: 'OK', fn: () => setNote(c2, '', '') }]); return; }
+      if (Date.now() - t0 > SETTLE_MAX) { c2.dataset.state = ''; setBusy(c2, ''); setNote(c2, '', 'Taken off. This list updates by itself.'); const n2 = c2.querySelector(':scope > .soNote'); setTimeout(() => { if (n2 && n2.isConnected) n2.remove(); }, 4500); return; }
       setTimeout(wait, 450);
     };
     wait();
@@ -830,7 +830,7 @@ dialog.soDlg:focus,dialog.soDlg:focus-visible{outline:none}
     close: () => { if (CUR) closeIt(CUR, 'close'); },
     isOpen: () => !!(CUR && live(CUR) && CUR.dlg.open),
     current: () => (CUR && live(CUR) ? handleOf(CUR) : null),
-    version: '20261005-3',
+    version: '20261005-4',
     _normalize: normalize
   };
 })();
