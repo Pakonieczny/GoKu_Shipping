@@ -136,7 +136,7 @@ async function main() {
     assert(await page.evaluate(() => OrderWin.isOpen()), 'still open after a repaint');
     await page.click('.owTabsV [data-ow-view="sheet"]');
     await page.waitForFunction(rid => { const i = OrderWin._sheet(); return i && i.mine.length === 1 && i.mine[0].rid === rid && document.getElementById('owPlateWait').hidden; }, C.rid, { timeout: 15000 });
-    assert.match(await page.textContent('#owSheetPanel .owBackEng'), /Love, Mom/, 'its back engraving');
+    assert.match(await page.textContent('#owSheetPanel [data-engraving-panel]'), /Love, Mom/, 'its back engraving');   // (the one back engraving card, rebuilt 5 Oct: it holds the words as the sheet record keeps them)
     // a click on another order's charm opens that order here, on the same sheet
     const pa = await page.evaluate(k => OrderWin._sheet().pointOf(k), poolOf(A));
     await page.mouse.click(pa.x, pa.y);
@@ -168,6 +168,12 @@ async function main() {
     //     the Its pieces list ("Showing all 2 pieces", each piece a row to pick); all pieces put the order where its slowest piece is, a step some pieces reached
     //     says how many; one piece shows only its own steps. The header no longer says "line 1 of 2".
     const D2 = { rid: '4174322410', t1: '41743224101', t2: '41743224102' }, k1 = `${D2.rid}_${D2.t1}`, k2 = `${D2.rid}_${D2.t2}`;
+    // (where each piece is NOW is the sheets' own records, not the timeline's old `placed` events (placement truth, 5 Oct): the two pieces are on their sheets there too)
+    for (const [t, sid, nm, n, sku] of [[D2.t1, 'sh-a', 'GF_Sheet-1', 1, 'SHEEP_3'], [D2.t2, 'sh-b', 'GF_Sheet-2', 2, 'COW_1']]) {
+      const pool = `${D2.rid}_${t}_1`;
+      srv.st.put('Charm_Nest_Sheets', sid, { id: sid, metal: 'gold', sheetIndex: n, day: '2026-10-05', status: 'written', density: 0.42, stock: { wPt: 283.46, hPt: 141.73 }, orders: [D2.rid], placements: [box('pd' + n, 80, 60)], charms: [{ id: 'pd' + n, name: `${D2.rid} · ${sku}`, poolId: pool, order: D2.rid, sku }] });
+      srv.st.put('Charm_Pool', pool, { poolId: pool, orderId: D2.rid, transactionId: t, lineKey: `${D2.rid}_${t}`, sku, material: 'gold', copy: 1, quantity: 1, state: 'placed', sheetId: sid, sheetName: nm, runId: null, updatedAt: Date.now() });
+    }
     await page.evaluate(({ D2, k1, k2, SHIP }) => {
       const T0 = Date.now() - 3 * 3600e3, ln = (tid, sku) => ({ transactionId: tid, listingId: '18000' + tid.slice(-4), sku, title: sku.replace(/_/g, ' ') + ' necklace', quantity: 1, expectedShipDate: SHIP, variations: [{ name: 'Metal', value: '14k Gold Filled' }], metalKey: 'gold', metalLabel: 'GF 14/20', personalization: [], buyerMessage: '' });
       const order = { receiptId: D2.rid, orderNumber: D2.rid, createTs: Math.floor(T0 / 1000) - 60, updateTs: Math.floor(T0 / 1000), shipBy: SHIP, buyer: { name: 'Stephanie Lopez' }, buyerMessage: '', isGift: false, giftMessage: '', staffNote: '', messages: [], lines: [ln(D2.t1, 'SHEEP_3'), ln(D2.t2, 'COW_1')] };
