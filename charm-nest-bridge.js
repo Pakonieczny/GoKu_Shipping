@@ -2852,16 +2852,16 @@ const Gate = window.Gate = (() => {
     if (!V || !me) return { list: [sh], blocked: "", orders: [] };
     const g = V.SO.core.groupOf(V.sheets, me); if (g.ids.length < 2) return { list: [sh], blocked: "", orders: [] };
     const members = g.ids.map(id => V.page.get(id)).filter(Boolean), set = Sets.ofRun(run.runId).find(s => s.group === "dispatch" && !s.committedAt), seq = set ? set.seq : 2;
-    const list = members.filter(p => solid(p.metal) && membershipEditable(p) && (p === sh || picked(p) !== !!included)), reasons = [];
+    const list = members.filter(p => solid(p.metal) && membershipEditable(p) && (p === sh || picked(p) !== !!included)), stays = [];
     const shares = p => g.orders.filter(o => V.norm.get(V.idOf.get(p)).pieces.some(x => x.orderId === o));   // (the orders this sheet carries of the group's)
     for (const p of members) {
       if (list.includes(p)) continue;
-      const n = V.norm.get(V.idOf.get(p)), on = `${ordersWords(shares(p))} also on ${sheetNameOf(p)}`;
-      if (n && n.fixed) reasons.push(`${on}, which cannot change set: ${n.fixed}`);
-      else if (included && p.metal === "rose" && !basePolicy(p, seq).include) reasons.push(`${on}, and a Rose Gold sheet joins a set only by its own Cut Sheet press`);
-      else if (!included && basePolicy(p, seq).include) reasons.push(`${on}, which is in the set on its own (${basePolicy(p, seq).reason.toLowerCase()})`);
+      const n = V.norm.get(V.idOf.get(p));
+      if ((n && n.fixed) || (included && p.metal === "rose" && !basePolicy(p, seq).include) || (!included && basePolicy(p, seq).include)) stays.push(p);   // (cut or committed, a Rose Gold sheet that joins only by its own press, a sheet in the set on its own)
     }
-    return { list: list.length ? list : [sh], orders: g.orders, blocked: reasons.length ? `${reasons.join("; ").replace(/^o/, "O")}. Sheets that share a multi-piece order stay in the same set: take the order off one of the sheets.` : "" };
+    // one plain line: the names, no reasons and no instruction (the shared-orders window says the rest)
+    const shared = new Set(stays.flatMap(shares));
+    return { list: list.length ? list : [sh], orders: g.orders, blocked: stays.length ? `${sheetNameOf(sh)} stays with ${stays.map(sheetNameOf).join(" and ")}: they share ${shared.size === 1 ? "an order" : "orders"}.` : "" };
   }
   /** The multi-piece orders of a set's sheets that also have pieces on a sheet of its run outside it that could still join it. */
   function cardinalSplit(set) {
