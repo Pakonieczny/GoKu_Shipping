@@ -270,7 +270,7 @@
     if (doc.getElementById("efStyle")) return;
     const s = doc.createElement("style"); s.id = "efStyle";
     s.textContent = `
-#efficiencyView{container-type:inline-size;container-name:ef;gap:12px;min-width:0;color:var(--ink);font-size:12.5px;padding-bottom:6px}
+#efficiencyView{container-type:inline-size;container-name:ef;gap:12px;min-width:0;color:var(--ink);font-size:12.5px;padding-bottom:6px;margin-inline:-10px;padding-inline:10px}
 .ef .hidden{display:none!important}
 .efBar{position:sticky;top:-6px;z-index:6;display:flex;align-items:center;gap:6px 12px;flex-wrap:wrap;min-height:34px;margin:-6px -10px 0;padding:5px 12px;background:rgba(243,240,234,.94);backdrop-filter:blur(10px);border-bottom:1px solid var(--line)}
 .efHead{display:flex;align-items:center;gap:6px 12px;min-width:0;flex-wrap:wrap}
@@ -564,9 +564,12 @@
     if (root.MutationObserver) new MutationObserver(visibility).observe(host, { attributes: true, attributeFilter: ["class"] });
     doc.addEventListener("visibilitychange", visibility);
     root.addEventListener("popstate", onHash); root.addEventListener("hashchange", onHash);
-    if (root.ResizeObserver) new ResizeObserver(() => placeInk(false)).observe(E.bar);
+    stackBars(); if (root.ResizeObserver) new ResizeObserver(() => { placeInk(false); stackBars(); }).observe(E.bar);
     return true;
   }
+  /** The employee page's own range bar is sticky too; its CSS reads --efp-top. Set to this bar's visible height (plus a hair) it stacks under this bar;
+   *  left unset it stuck at 4 px and covered the lower half of this bar (the Live light, Real | Sandbox, the tabs) as soon as the page was scrolled. */
+  function stackBars() { try { const h = E.bar.offsetHeight; if (h > 0) host.style.setProperty("--efp-top", Math.max(4, h - 6 + 4) + "px"); } catch (_) {} }
 
   /* ── the bar ── */
   function segs() { host.querySelectorAll(".efSeg button").forEach(b => { const on = +b.dataset.days === st.days; b.classList.toggle("on", on); b.setAttribute("aria-pressed", on); }); }
@@ -667,7 +670,7 @@
   }
   function showRoute(animate) {
     const key = (st.person ? "p:" + st.person : st.tab);
-    const changed = st.rt !== key; st.rt = key;
+    const changed = st.rt !== key; st.rt = key; if (changed) st.navN = (st.navN || 0) + 1;     // (navN counts the routes shown: Back's safety net below looks at it)
     paintTabs(); paintPages(animate && changed); ensureMounts();
     if (changed && st.key && st.shown) { if (needOverview()) { if (!st.busy && (!st.at || Date.now() - st.at > 2000)) poll(); else if (!st.timer) schedule(options.pollMs); } renderRoster(st.M); }
     if (changed && animate) { try { const sc = doc.querySelector(".stage"); if (sc) sc.scrollTop = 0; } catch (_) {} }
@@ -713,7 +716,9 @@
   function backFromPerson() {
     if (!st.person) return;
     const leave = () => route(st.tab || "people", "", { push: false });
-    if (st.back && root.history.length > 1) { st.back = false; const was = hashFor(); try { root.history.back(); } catch (_) { leave(); return; } setTimeout(() => { if (st.person && hashFor() === was) leave(); }, 300); } else leave();
+    // Back asks the browser to go back; when the browser did nothing (the page was opened straight on this address) the safety net leaves by hand.
+    // It must not act when ANY route was shown meanwhile: the person went back and opened the same page again within 300 ms, which is the same address.
+    if (st.back && root.history.length > 1) { st.back = false; const was = hashFor(), n = st.navN || 0; try { root.history.back(); } catch (_) { leave(); return; } setTimeout(() => { if ((st.navN || 0) === n && st.person && hashFor() === was) leave(); }, 300); } else leave();
   }
 
   /* ── the status line: it says only what is true ── */
