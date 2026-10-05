@@ -842,7 +842,7 @@
       const own = parseInt(el.getAttribute("data-zoom-delay"), 10), base = own >= 0 && own <= 2000 ? own : ZOOM_DELAY, g = el.getAttribute("data-zoom-group"), w = Zm.warm;
       return g && w && w.g === g && Date.now() - w.at < DOT_WARM_FOR ? Math.min(base, DOT_WARM) : base;
     };
-    const dotEvent = (el, on) => { try { doc.dispatchEvent(new CustomEvent("dotzoom", { detail: { el, on } })); } catch (_) {} };
+    const dotEvent = (el, on, why) => { try { doc.dispatchEvent(new CustomEvent("dotzoom", { detail: { el, on, why: why || "" } })); } catch (_) {} };   // (why: "leave" when the pointer left the dot; "" for Esc, a scroll, a click, a redraw)
     // (the page may say no, for as long as something else holds the screen: a "dotzoom" with detail.ask that it cancels)
     const dotAllowed = el => { try { return doc.dispatchEvent(new CustomEvent("dotzoom", { cancelable: true, detail: { el, ask: true } })); } catch (_) { return true; } };
     const ZOOM_GROW = 300, ZOOM_BACK = 230, ZOOM_EASE = "cubic-bezier(.2,.9,.25,1.14)", ZOOM_BACK_EASE = "cubic-bezier(.3,0,.2,1)", ZOOM_Z = 900, ZOOM_M = 6;
@@ -860,7 +860,7 @@
       return [1, 0, 0, 1, 0, 0];
     };
     const ZS = new WeakMap(), ACT = new Set();   // seal -> its zoom: { el, on, anim, paper, undo, k, rect, touch, keyboard, managed }; ACT: every zoom still on screen
-    const Zm = { cur: null, want: null, t: 0, watch: 0, point: null, hover: false, pre: null, off: null, warm: null };   // pre: the seal already grown when a press began; off: the seal a click put back (the pointer resting on it must not bring it round again)
+    const Zm = { cur: null, want: null, t: 0, watch: 0, point: null, hover: false, pre: null, off: null, warm: null, why: "" };   // pre: the seal already grown when a press began; off: the seal a click put back (the pointer resting on it must not bring it round again)
     const paperOf = s => s.querySelector("[data-seal-paper]");
     /** What clips or covers a grown seal, worked out for the seal's final rectangle; → what to open and where to nudge. */
     function zoomPlan(el, k, r, W, H) {
@@ -932,7 +932,7 @@
       if (!st.on) { if (now) done(); return; }
       st.on = false; if (Zm.cur === st) Zm.cur = null;
       if (!Zm.cur && Zm.watch) { clearInterval(Zm.watch); Zm.watch = 0; }
-      if (isDot(e)) dotEvent(e, false);
+      if (isDot(e)) { const why = Zm.why; Zm.why = ""; dotEvent(e, false, why); }
       if (now || !e.isConnected || !e.animate) { done(); return; }
       const cs = getComputedStyle(e), from = { transform: cs.transform, filter: cs.filter, opacity: cs.opacity }, pp = paperOf(e), pfrom = pp ? getComputedStyle(pp).opacity : "0";
       st.anim && st.anim.cancel(); st.paper && st.paper.cancel();
@@ -969,7 +969,7 @@
       Zm.t = setTimeout(() => { Zm.t = 0; if (Zm.hover && Zm.want === s && zoomable(s) && pointed(s)) zoomShow(s); else cancelWant(); }, dotDelay(s));
     }, true);
     // (a pointer that leaves an open dot of a group notes it: the next dot of that group opens after a short beat, dotDelay)
-    const leave = () => { const c = Zm.cur; if (c && c.on && isDot(c.el) && c.el.hasAttribute("data-zoom-group") && !c.keyboard && !c.touch) Zm.warm = { g: c.el.getAttribute("data-zoom-group"), at: Date.now() }; zoomHide(false); };
+    const leave = () => { const c = Zm.cur; if (c && c.on && isDot(c.el) && c.el.hasAttribute("data-zoom-group") && !c.keyboard && !c.touch) Zm.warm = { g: c.el.getAttribute("data-zoom-group"), at: Date.now() }; Zm.why = "leave"; zoomHide(false); Zm.why = ""; };
     doc.addEventListener("pointerout", e => {
       if (e.pointerType === "touch") return;
       const from = sealAt(e.target); if (!from || from.contains(e.relatedTarget)) return;

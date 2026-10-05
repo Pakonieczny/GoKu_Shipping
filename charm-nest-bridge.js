@@ -11503,9 +11503,10 @@ const OrderWin = window.OrderWin = (() => {
         if (pick) { const t = String(pick.t).replace(/\s+/g, " ").trim(); line = t.charAt(0).toUpperCase() + t.slice(1); if (line.length > 150) line = line.slice(0, 147).trimEnd() + "…"; }
       }
     }
-    // the seal slot: window.PieceSeals.render(stepKey, pieceCtx, { done }) -> HTML or a node (the real seal of a done step, the unfinished one of a step still to do), or nothing
+    // the seal slot (PieceSeals, charm-nest-piece-seals.js: which step has a seal is its to say): the real seal of a done step, the unfinished one of a step still to
+    // come, nothing for a step that has none. The words beside it are this card's own (who, where, when), so the seal's caption is off.
     const ps = window.PieceSeals;
-    const seal = ps && typeof ps.render === "function" ? tryDo(() => ps.render(s.k, { rid, key, piece: x.p, step: s.k, stage: x.D.stages[i] || null, event: ev, at: ev ? +ev.at : 0, events: x.events, D: x.D, done: st.done }, { done: st.done })) : null;
+    const seal = ps && typeof ps.render === "function" ? tryDo(() => ps.render(s.k, Object.assign({}, x, { pieces: (W.pieces && W.pieces.length) ? W.pieces : [x.p] }), { done: st.done, caption: false, size: 40 })) : null;
     return { name: s.l, state: st.word, line, by, seal: seal || null };
   }
   { const RT = window.RailTip = window.RailTip || {}; RT.pieceDot = pieceDotInfo; }   // (charm-nest-rail-tip.js draws the card: it asks this when a dot's card opens)

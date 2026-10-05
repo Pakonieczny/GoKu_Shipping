@@ -23,7 +23,11 @@
    (charm-nest-bridge.js sets it: no read, no network call; seal: HTML or a node, what window.PieceSeals.render drew, or nothing). Everything else is
    the rail's: a click, a tap, Enter or Space opens it at once and holds it until the pointer leaves, Esc or a scroll; Tab opens it; the arrow keys move
    along the row (one Tab stop per row); the card is never clickable. A press on a dot belongs to the dot: it never reaches the row under it.
-   A card over a dot inside a window (a <dialog>) lives in that window's layer, so it shows over it, and is placed by where it really is on screen. */
+   A card over a dot inside a window (a <dialog>) lives in that window's layer, so it shows over it, and is placed by where it really is on screen.
+   A REAL seal in the card (a done step's, from PieceSeals) is the one thing in it that takes the pointer, so it zooms in place like every seal (rest 500 ms,
+   click at once): the rest of the card stays click-through, so the row's buttons stay pressable. The card keeps itself for a moment after the pointer
+   leaves the dot (HOLD_MS) so the pointer can travel to the seal, and then for as long as it is on the seal; a seal put away (second click, Esc, a scroll,
+   the pointer leaving) takes the card with it. The unfinished seal of a step still to come is only looked at. */
 (function (root) {
   'use strict';
   const doc = root.document;
@@ -34,7 +38,7 @@
   const CIRCLE = '.flowRail .flowDot[data-zoom-dot], [data-pdot][data-zoom-dot]';
   const isP = d => !!(d && d.hasAttribute && d.hasAttribute('data-pdot'));
   const API = root.RailTip = root.RailTip || {};   // (the page may have put its resolver on it before this file ran)
-  const st = { el: null, tip: null, box: null, flow: '', step: '', kind: '', rid: '', piece: '', sig: '', text: '', anim: null, mo: null, watch: 0, wait: 0 };
+  const st = { el: null, tip: null, box: null, flow: '', step: '', kind: '', rid: '', piece: '', sig: '', text: '', anim: null, mo: null, watch: 0, wait: 0, held: 0, heldAt: 0, over: false, sealOn: false };
 
   function css() {
     if (doc.getElementById('railTipCss')) return;
@@ -49,7 +53,10 @@
 .railTip[data-state="Done"] .rtState{color:var(--sage,#5f7a5b)}
 .railTip[data-state="Blocked"] .rtState{color:var(--clay,#b0563f)}
 .rtLine,.rtBy{margin:3px 0 0;overflow-wrap:anywhere}
+.railTip{display:flex;flex-direction:column}
 .rtSeal{display:flex;justify-content:center;margin:7px 0 1px}
+.railTip.below .rtSeal{order:-1;margin:1px 0 7px}
+.railTip .rtSeal.live .seal{pointer-events:auto}
 .rtBy{font-size:10px;color:var(--ink45,#938c80)}
 .railTip::after{content:"";position:absolute;left:var(--ax);bottom:-3.5px;width:7px;height:7px;margin-left:-3.5px;background:var(--card,#fffefb);border:1px solid var(--line,#e4ddd0);border-top:0;border-left:0;border-radius:0 0 2px 0;transform:rotate(45deg)}
 .railTip.below::after{bottom:auto;top:-3.5px;transform:rotate(225deg)}`;
@@ -89,6 +96,10 @@
       seal = doc.createElement('div'); seal.className = 'rtSeal';
       if (typeof info.seal === 'string') seal.innerHTML = info.seal; else if (info.seal.nodeType === 1) seal.append(info.seal);
       if (!seal.firstChild) seal = null;
+      else if (seal.querySelector('.seal')) {   // (a real seal: it takes the pointer; the card is aria-hidden and goes with focus, so it is no Tab stop here)
+        seal.classList.add('live');
+        for (const n of seal.querySelectorAll('[tabindex]')) n.setAttribute('tabindex', '-1');
+      }
     }
     t.replaceChildren(...[head, info.line && node('p', 'rtLine', info.line), info.by && node('p', 'rtBy', info.by), seal].filter(Boolean));
   }
@@ -119,6 +130,7 @@
     const info = d && d.isConnected ? infoOf(d) : null;
     if (!info || suppressed(d)) return;
     const t = make(d), was = st.el === d && t.hasAttribute('data-on');
+    unhold();
     st.el = d; st.kind = isP(d) ? 'pdot' : 'rail';
     st.box = st.kind === 'pdot' ? d.closest('.owPcSum') || d.parentElement : d.closest('.flowBox');
     st.flow = st.kind === 'rail' && st.box ? st.box.dataset.flowFor || '' : ''; st.step = st.kind === 'rail' ? d.getAttribute('data-step') || '' : d.getAttribute('data-pdot') || '';
@@ -134,7 +146,7 @@
     watch();
   }
   function hide(now) {
-    unwatch();
+    unwatch(); unhold();
     const t = st.tip; st.el = null; st.box = null;
     if (!t || !t.hasAttribute('data-on')) return;
     if (st.anim) { st.anim.cancel(); st.anim = null; }
@@ -144,6 +156,30 @@
     a.finished.then(() => { if (st.anim === a) { st.anim = null; off(); a.cancel(); } }, () => {});
   }
   const away = d => { try { if (root.Seal && root.Seal.zoom) root.Seal.zoom.hide(false, d); } catch (_) {} };
+  /* The card kept for its real seal: the pointer left the dot (the engine says why: "leave") while the card holds a live seal. For HOLD_MS the pointer may
+     travel there; once it is on the seal the card stays while it is; a seal that was grown and is put back ends it, and so does leaving the seal. */
+  const HOLD_MS = 280;
+  const zoomedIn = () => { const z = root.Seal && root.Seal.zoom, c = z && z.current; return !!(c && st.tip && st.tip.contains(c)); };
+  function unhold() { if (st.held) { clearInterval(st.held); st.held = 0; } st.over = false; st.sealOn = false; }
+  function holdFor() {
+    if (!st.tip || !st.tip.querySelector('.rtSeal.live')) return false;
+    unwatch(); unhold(); st.heldAt = Date.now();
+    st.held = setInterval(() => {
+      if (!st.tip || !st.tip.hasAttribute('data-on')) { unhold(); return; }
+      const on = zoomedIn(); if (on) st.sealOn = true;
+      if (st.sealOn && !on) { hide(false); return; }   // (the seal was grown and has been put back: done with it)
+      if (!st.over && !on && Date.now() - st.heldAt > HOLD_MS) hide(false);
+    }, 90);
+    return true;
+  }
+  doc.addEventListener('pointerover', ev => { if (st.held && ev.target.closest && ev.target.closest('.railTip .rtSeal.live .seal')) st.over = true; }, true);
+  doc.addEventListener('pointerout', ev => {
+    if (!st.held || !st.over) return;
+    const to = ev.relatedTarget; if (to && to.closest && to.closest('.railTip .rtSeal.live .seal')) return;
+    st.over = false; st.heldAt = Date.now() - HOLD_MS + 120;   // (a short moment to come back)
+  }, true);
+  root.addEventListener('scroll', () => { if (st.held) hide(true); }, true);
+  root.addEventListener('keydown', ev => { if (st.held && ev.key === 'Escape') hide(false); }, true);
   /* while a card shows: it follows its circle's words, goes with an issues panel or a window that opens, and is handed to the circle that replaced it */
   function watch() {
     unwatch();
@@ -195,7 +231,7 @@
     const d = ev.detail && ev.detail.el; if (!d) return;
     if (ev.detail.ask) { if (d.matches && d.matches(CIRCLE) && suppressed(d)) ev.preventDefault(); return; }   // (an issues panel or a window is open: the circles stay still too, and Esc is the panel's)
     if (ev.detail.on) { if (d.matches && d.matches(CIRCLE)) show(d); }
-    else if (st.el === d) hide(false);
+    else if (st.el === d) { if (ev.detail.why === 'leave' && !st.held && holdFor()) return; hide(false); }
   });
   // the arrow keys move the keyboard along a rail (or a piece's row of dots): one Tab stop for the whole rail, every circle reachable
   doc.addEventListener('keydown', ev => {

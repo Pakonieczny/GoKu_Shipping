@@ -155,7 +155,7 @@ async function main() {
       await sleep(250); m = await read(page, sel);
       assert(m.k >= 1.5 && m.k <= 1.9, `grown gently in place (${m.k})`); assert.match(m.ring, /rgb/, 'a thin ring'); assert.equal(m.tip.inDialog, true, 'the card is in the window\'s layer, so it shows over it');
       assert.equal(await page.evaluate(sel => getComputedStyle(document.querySelector(sel)).transform !== 'none', sel), true, 'the growth is a transform');
-      await away(page); m = await read(page, sel); assert(m.k < 1.05 && !m.shown, `leaving puts both back (${m.k}, ${m.shown})`); }
+      await away(page, 100); assert.equal(await goneWithin(page, sel), true, 'leaving puts both back (the card of a done step waits a moment for its seal)'); }
 
     // ── 3 · the next dot opens after a short beat once a card was open; the whole 350 again after the row was left (measured in the page, so load does not matter) ──
     { const a = dot(gf, 'laser'), b = dot(gf, 'sorted'), ca = await centre(page, a), cb = await (async () => { const bb = await (await page.$(b)).boundingBox(); return { x: bb.x + bb.width / 2, y: bb.y + bb.height / 2 }; })();
@@ -228,15 +228,37 @@ async function main() {
       const t = await page.evaluate(() => { const b = [...document.querySelectorAll('#owPcSum .holdBtn')][0]; window.__held = 0; b.addEventListener('click', e => { window.__held++; e.stopImmediatePropagation(); e.preventDefault(); }, true); const q = b.getBoundingClientRect(); return { x: q.left + q.width / 2, y: q.top + q.height / 2 }; });
       await page.mouse.click(t.x, t.y); assert.equal(await page.evaluate(() => window.__held), 1, 'a click on the row\'s Hold arrives at the Hold'); await away(page); }
 
-    // ── 8 · the seal slot ──
-    { await page.evaluate(() => { window.__asked = []; window.PieceSeals = { render: (step, ctx, o) => { window.__asked.push({ step, key: ctx && ctx.key, rid: ctx && ctx.rid, done: o && o.done, ctxDone: ctx && ctx.done, piece: !!(ctx && ctx.piece), at: ctx && ctx.at }); return step === 'sorted' ? '<svg data-test-seal viewBox="0 0 10 10" width="40" height="40" style="opacity:' + (o.done ? 1 : .45) + '"><circle cx="5" cy="5" r="4"/></svg>' : ''; } }; });
-      let sel = dot(gf, 'sorted'); await rest(page, sel, 650); let m = await read(page, sel);
-      assert(/data-test-seal/.test(m.tip.seal), 'what PieceSeals drew is in the card: ' + m.tip.seal);
-      const ask = await page.evaluate(() => window.__asked.filter(a => a.step === 'sorted').pop()); assert.deepEqual({ ...ask, at: !!ask.at }, { step: 'sorted', key: gf, rid: P.rid, done: true, ctxDone: true, piece: true, at: true }, 'asked with the step, the piece and whether it is done');
-      await away(page); sel = dot(gf, 'shipped'); await rest(page, sel, 650); m = await read(page, sel); assert.equal(m.tip.seal, '', 'a step with no seal has no slot');
-      await away(page); await page.evaluate(() => { window.PieceSeals = { render: (step, ctx, o) => step === 'assembled' ? '<svg data-test-seal viewBox="0 0 10 10" width="40" height="40" style="opacity:.45"><circle cx="5" cy="5" r="4"/></svg>' : '' }; });
-      sel = dot(gf, 'assembled'); await rest(page, sel, 650); m = await read(page, sel); assert(/data-test-seal/.test(m.tip.seal) && m.tip.state === 'Not yet', 'the unfinished seal of a step still to do'); assert(m.tip.t >= 7.5 && m.tip.b <= m.vh - 7.5, 'the card with its seal is inside the screen'); await away(page);
-      await page.evaluate(() => { delete window.PieceSeals; }); sel = dot(gf, 'sorted'); await rest(page, sel, 650); m = await read(page, sel); assert.equal(m.tip.seal, '', 'without PieceSeals: no slot, nothing broken'); assert.equal(m.tip.name, 'Sorted'); await away(page); }
+    // ── 8 · the seal slot: the hook (a stand-in module), then the real PieceSeals (the real seal of a done step, the unfinished one of a step to come) ──
+    { await page.evaluate(() => { window.__real = window.PieceSeals; window.__asked = []; window.PieceSeals = { render: (step, ctx, o) => { window.__asked.push({ step, key: ctx && ctx.p && ctx.p.key, events: Array.isArray(ctx && ctx.events), pieces: Array.isArray(ctx && ctx.pieces), done: o && o.done, caption: o && o.caption }); return step === 'sorted' ? '<svg data-test-seal viewBox="0 0 10 10" width="40" height="40"><circle cx="5" cy="5" r="4"/></svg>' : null; } }; });
+      let sel = dot(gf, 'sorted'); await rest(page, sel); let m = await read(page, sel);
+      assert(/data-test-seal/.test(m.tip.seal), 'what PieceSeals returned is in the card: ' + m.tip.seal);
+      const ask = await page.evaluate(() => window.__asked.filter(a => a.step === 'sorted').pop()); assert.deepEqual(ask, { step: 'sorted', key: gf, events: true, pieces: true, done: true, caption: false }, 'asked with the step, the piece, the events and whether it is done: ' + JSON.stringify(ask));
+      await away(page); sel = dot(gf, 'shipped'); await rest(page, sel); m = await read(page, sel); assert.equal(m.tip.seal, '', 'null from PieceSeals: no slot');
+      await away(page); await page.evaluate(() => { delete window.PieceSeals; });
+      sel = dot(gf, 'sorted'); await rest(page, sel); m = await read(page, sel); assert.equal(m.tip.seal, '', 'without PieceSeals: no slot, nothing broken'); assert.equal(m.tip.name, 'Sorted'); await away(page);
+      await page.evaluate(() => { window.PieceSeals = window.__real; }); }
+    { const seal = page2 => page2.evaluate(() => { const t = document.querySelector('.railTip[data-on]'), q = t && t.querySelector('.rtSeal'); if (!q) return null; const s = q.querySelector('.seal'), g = q.querySelector('.pgGhost'), r = (s || g || q).getBoundingClientRect(), tr = t.getBoundingClientRect(); return { real: !!s, ghost: !!g, state: q.querySelector('[data-pg-state]') && q.querySelector('[data-pg-state]').getAttribute('data-pg-state'), live: q.classList.contains('live'), tab: s ? s.getAttribute('tabindex') : null, pe: s ? getComputedStyle(s).pointerEvents : g ? getComputedStyle(g).pointerEvents : '', cardPe: getComputedStyle(t).pointerEvents, caption: !!q.querySelector('.pgBy'), x: (r.left + r.right) / 2, y: (r.top + r.bottom) / 2, w: r.width, h: r.height, below: t.classList.contains('below'), inside: r.left >= tr.left && r.right <= tr.right && r.top >= tr.top && r.bottom <= tr.bottom }; });
+      // a done step with a recorded seal: the real seal; a step to come: the unfinished one; the words are the card's own (no second caption)
+      let sel = dot(gf, 'sorted'); await rest(page, sel); let q = await seal(page);
+      assert(q && q.real && !q.ghost && q.state === 'done' && q.live, 'a done step: the real seal in the card ' + JSON.stringify(q)); assert.equal(q.caption, false, 'the card writes who and when; the seal has no caption'); assert.equal(q.tab, '-1', 'no Tab stop inside the card'); assert.equal(q.pe, 'auto', 'the real seal takes the pointer, so it zooms'); assert.equal(q.cardPe, 'none', 'the rest of the card does not'); assert(q.inside && q.w >= 30, 'the seal is inside the card, a small one'); await away(page);
+      sel = dot(gf, 'assembled'); await rest(page, sel); q = await seal(page); assert(q && q.ghost && !q.real && q.state === 'missing' && !q.live, 'a step still to come: the unfinished seal ' + JSON.stringify(q)); assert.equal(q.pe, 'none'); await away(page);
+      sel = dot(gf, 'laser'); await rest(page, sel); q = await seal(page); assert(q && q.real, 'Laser cut is done: its real seal'); await away(page);
+      sel = dot(cable, 'sheet'); await rest(page, sel); q = await seal(page); assert(q && q.ghost, 'a piece not on a sheet yet: the unfinished Nested seal'); await away(page);
+      // the card gives way everywhere but the seal: the point under its text is what is under it, the point on its seal is the seal
+      sel = dot(gf, 'sorted'); await rest(page, sel); q = await seal(page);
+      const under = await page.evaluate(({ x, y }) => { const t = document.querySelector('.railTip'), r = t.getBoundingClientRect(), e1 = document.elementFromPoint(x, y), e2 = document.elementFromPoint(r.left + 20, r.top + 10); return { onSeal: !!(e1 && e1.closest('.railTip .seal')), text: !!(e2 && e2.closest('.railTip')) }; }, q);
+      assert.deepEqual(under, { onSeal: true, text: false }, 'only the seal takes the pointer: ' + JSON.stringify(under));
+      // the pointer travels from the dot to the seal: the card waits for it, and the seal zooms in place after its own rest (500 ms)
+      const c = await centre(page, sel); await page.mouse.move(c.x, c.y);
+      const steps = 6; for (let i = 1; i <= steps; i++) { await page.mouse.move(c.x + (q.x - c.x) * i / steps, c.y + (q.y - c.y) * i / steps); await sleep(20); }
+      await sleep(250); assert((await seal(page)), 'the card is still there with the pointer on its seal');
+      await sleep(900); const zoomed = await page.evaluate(() => { const s = document.querySelector('.railTip .seal'), r = s && s.getBoundingClientRect(); return { cls: !!(s && s.classList.contains('sealZoomed')), k: s ? +(r.width / s.offsetWidth).toFixed(2) : 0, tip: !!document.querySelector('.railTip[data-on]') }; });
+      assert(zoomed.cls && zoomed.k >= 1.15 && zoomed.tip, 'the real seal in the card grew in place on rest, the card stayed: ' + JSON.stringify(zoomed));
+      await away(page); await sleep(700); assert.deepEqual(await page.evaluate(() => ({ tip: !!document.querySelector('.railTip[data-on]'), grown: document.querySelectorAll('.railTip .sealZoomed').length })), { tip: false, grown: 0 }, 'leaving the seal puts both away');
+      // the pointer leaves the dot for nowhere: the card is gone soon, and a pointer resting on the dot opens it again
+      sel = dot(gf, 'sorted'); await rest(page, sel); await away(page, 100); await sleep(800); assert.equal(await page.evaluate(() => !!document.querySelector('.railTip[data-on]')), false, 'a pointer that leaves the dot for elsewhere: the card goes (a moment late for a seal, never held)');
+      // Esc puts away a held card too
+      await rest(page, sel); const c2 = await centre(page, sel); await page.mouse.move(c2.x, c2.y - 14, { steps: 2 }); await page.keyboard.press('Escape'); await sleep(900); assert.equal(await page.evaluate(() => !!document.querySelector('.railTip[data-on]')), false, 'Esc puts the card away'); await away(page); }
 
     // ── 9 · 1440, 900, 390: the card fits, the page is not made wider ──
     for (const [w, h] of [[1440, 900], [900, 800], [390, 844]]) {
