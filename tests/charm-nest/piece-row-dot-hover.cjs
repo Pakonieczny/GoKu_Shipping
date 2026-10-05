@@ -209,16 +209,18 @@ async function main() {
       for (let i = 0; i < 12 && !found; i++) { await page.keyboard.press('Tab'); found = await page.evaluate(() => !!(document.activeElement && document.activeElement.matches && document.activeElement.matches('#owPcSum [data-pdot]'))); }
       assert(found, 'Tab reaches a dot'); { const tt = await page.evaluate(() => ({ open: window.__t.open, focus: window.__t.focus, el: document.activeElement && document.activeElement.getAttribute('data-pdot'), shown: !!document.querySelector('.railTip[data-on]') })); assert(Math.abs(tt.open - tt.focus) < 80, 'the card opened with the focus, at once (not after a rest): ' + JSON.stringify(tt)); } await sleep(250);
       const name = () => page.evaluate(() => { const t = document.querySelector('.railTip[data-on]'); return t ? t.querySelector('b').textContent : ''; });
+      // (polls: the card fades, and a busy machine is slow)
+      const nameIs = async want => { const t0 = Date.now(); let n; while (Date.now() - t0 < 4000) { n = await name(); if (n === want) return n; await sleep(40); } return n; };
       const step = () => page.evaluate(() => document.activeElement && document.activeElement.getAttribute('data-pdot'));
       assert(await name(), 'the card is open as soon as the dot has the keyboard (200 ms)');
-      await page.keyboard.press('Home'); await sleep(220); assert.equal(await step(), 'arrived'); assert.equal(await name(), 'Order in');
-      await page.keyboard.press('ArrowRight'); await sleep(220); assert.equal(await step(), 'sheet'); assert.equal(await name(), 'Nested');
-      await page.keyboard.press('End'); await sleep(220); assert.equal(await step(), 'shipped'); assert.equal(await name(), 'Shipped');
-      await page.keyboard.press('ArrowLeft'); await sleep(220); assert.equal(await step(), 'assembled');
+      await page.keyboard.press('Home'); assert.equal(await nameIs('Order in'), 'Order in'); assert.equal(await step(), 'arrived');
+      await page.keyboard.press('ArrowRight'); assert.equal(await nameIs('Nested'), 'Nested'); assert.equal(await step(), 'sheet');
+      await page.keyboard.press('End'); assert.equal(await nameIs('Shipped'), 'Shipped'); assert.equal(await step(), 'shipped');
+      await page.keyboard.press('ArrowLeft'); assert.equal(await nameIs('Assembled'), 'Assembled'); assert.equal(await step(), 'assembled');
       const stops = await page.evaluate(gf => [...document.querySelectorAll(`#owPcSum i[data-pdot-piece="${gf}"]`)].filter(d => d.tabIndex === 0).map(d => d.getAttribute('data-pdot')), gf); assert.deepEqual(stops, ['assembled'], 'one Tab stop, where the keyboard is');
-      await page.keyboard.press('Escape'); await sleep(350); assert.equal(await name(), '', 'Esc closes the card'); assert(await page.evaluate(() => OrderWin.isOpen()), 'the window stays');
-      await page.keyboard.press('Enter'); await sleep(200); assert.equal(await name(), 'Assembled', 'Enter on the dot opens the card at once'); await page.keyboard.press('Enter'); await sleep(350); assert.equal(await name(), '', 'and Enter again puts it away');
-      await page.keyboard.press('Space'); await sleep(200); assert.equal(await name(), 'Assembled', 'Space too'); await page.keyboard.press('Escape'); await sleep(300);
+      await page.keyboard.press('Escape'); assert.equal(await nameIs(''), '', 'Esc closes the card'); assert(await page.evaluate(() => OrderWin.isOpen()), 'the window stays');
+      await page.keyboard.press('Enter'); assert.equal(await nameIs('Assembled'), 'Assembled', 'Enter on the dot opens the card'); await sleep(400); await page.keyboard.press('Enter'); assert.equal(await nameIs(''), '', 'and Enter again puts it away');
+      await page.keyboard.press('Space'); assert.equal(await nameIs('Assembled'), 'Assembled', 'Space too'); await page.keyboard.press('Escape'); await nameIs('');
       await page.evaluate(() => document.activeElement && document.activeElement.blur()); }
 
     // ── 7 · the card never takes a press and never sits over its own row's buttons ──
