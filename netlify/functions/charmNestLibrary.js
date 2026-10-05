@@ -44,6 +44,8 @@ const OrderRules = require("../../charm-nest-orders.js");
 const Readiness = require("../../charm-nest-readiness.js");
 const Activity = require("../../charm-nest-activity.js");
 const EngravingSeals = require("../../charm-nest-engraving-seals.js");
+// the one cloud rule for "is this piece on a sheet" (what is authoritative, the take-off in one commit, the repair on read, placementRev)
+const Placement = require("./_charmNestPlacement");
 // A run's archived lines keep the readiness policy's decisions as they were when written (op_runArchive); a part written
 // under another version of Readiness.decisions is decided again from its lines when read (decisionsOfRun).
 const DECISIONS_VERSION = require("crypto").createHash("sha256").update(String(Readiness.decisions)).digest("hex").slice(0, 16);
@@ -686,6 +688,15 @@ async function op_putSheet(b) {
       const back = [...new Set([...(Array.isArray(s.poolIds) ? s.poolIds : []), ...(Array.isArray(s.charms) ? s.charms.flatMap(c => [c && c.id, c && c.poolId]) : []), ...(Array.isArray(s.placements) ? s.placements.map(p => p && p.id) : [])].filter(id => cleared.has(id)))];
       if (back.length) return { error: `Sheet ${s.id} was not saved: it would put back ${back[0]}, which was taken off this sheet on purpose (${old.cleanup.id || "cleanup"}). Reload the page to see the sheet as it is now`, status: 409 };
     }
+    // a piece taken off on purpose (held, cancelled: its pool row says so) is not put back by a page that still shows it on the
+    // sheet — a second tab, or a save that was under way when the hold was pressed. The take-off already left this record
+    // (poolTakeOff), so the piece is a NEW name here; Release re-pools the row first, which is the only way back. A piece the
+    // record already lists is never in question, so a save of a sheet as it stands is never refused by this.
+    if (Array.isArray(s.poolIds)) {
+      const had = new Set((old.poolIds || []).map(String)), added = [...new Set(s.poolIds.map(String))].filter(id => !had.has(id) && isPoolId(id)), off = [];
+      for (let i = 0; i < added.length && i < 400; i += 100) for (const r of await tx.getAll(...added.slice(i, Math.min(added.length, i + 100)).map(id => col(POOL).doc(id)), { fieldMask: ["state", "sheetId", "heldAt", "removedAt", "heldBy", "removedBy", Placement.REPOOLED] })) if (r.exists && Placement.takenOff(r.data())) off.push(r.id);
+      if (off.length) return { error: `Sheet ${s.id} was not saved: it would put back ${off.length === 1 ? "piece " + off[0] : `${off.length} pieces (${off.slice(0, 3).join(", ")})`}, which ${off.length === 1 ? "was" : "were"} taken off on purpose (on hold or cancelled). Reload the page to see the sheet as it is now`, status: 409, taken: off.slice(0, 20) };
+    }
     if(old.roseCutAt && (s.placements || s.stock || s.sources))throw new Error('This layout was already cut. Start a new sheet to use its remnant');
     const protection=require('./_charmNestRoseStock'),guard=protection.protectedLayout(old);
     if(Object.prototype.hasOwnProperty.call(s,'placements'))protection.assertProtected(guard,s.placements);
@@ -809,11 +820,24 @@ async function op_deleteSheet(b) {
   if (!isId(b.id)) return { error: "bad id" };
   if (String(b.code || "") !== DELETE_CODE) return { error: "wrong passcode", status: 403 };
   const ref = col(SHEETS).doc(b.id);
+  let cleared = [];
   const d = await db.runTransaction(async tx => {
     const snap = await tx.get(ref); if (!snap.exists) return null;
     const sheet = snap.data();
     if (!sheet.roseCutAt && (sheet.rosePlanJson || sheet.roseProtectedJson)) throw new Error('A planned or protected Rose Gold contour cannot be deleted');
-    tx.delete(ref); return sheet;
+    // the record goes in the SAME commit as every pointer to it: the pieces whose rows name this sheet become "on no sheet" (their
+    // state and take-off marks are theirs and stay), and an open set stops listing it. A sheet gone with its pointers left behind
+    // read "on sheet X" from the pool row and from the set, for a sheet nobody could open (the sheet-gone drift).
+    const [pools, sets] = await Promise.all([
+      tx.get(col(POOL).where("sheetId", "==", b.id).select("state", "setId", "orderId").limit(400)),
+      tx.get(col(SETS).where("sheetIds", "array-contains", b.id).select("sheetIds", "committedAt", "laserDoneAt", "status").limit(20))]);
+    const at = FV.serverTimestamp();
+    tx.delete(ref);
+    cleared = [];
+    for (const p of pools.docs) { const r = p.data(); tx.set(p.ref, Object.assign({ sheetId: null, sheetName: null, sheetIdWas: b.id, updatedAt: at }, r.setId && r.setId === sheet.setId ? { setId: null } : {}), { merge: true }); cleared.push(p.id); }
+    // a set that was committed or cut keeps its record of what went to the laser; only an open one is edited
+    for (const s of sets.docs) { const r = s.data(); if (r.committedAt || num(r.laserDoneAt) > 0) continue; tx.update(s.ref, { sheetIds: (r.sheetIds || []).filter(x => x !== b.id), updatedAt: at }); }
+    return sheet;
   });
   if (d) {
     const bucket = admin.storage().bucket();
@@ -824,7 +848,7 @@ async function op_deleteSheet(b) {
     for (let i = 0; i < backs.length; i += 100) for (const s of await db.getAll(...backs.slice(i, i + 100).map(bk => col(BACK).doc(bk.poolId)))) if (s.exists) for (const k of ["ai", "png"]) { const p = s.data().outputs && s.data().outputs[k] && s.data().outputs[k].path; if (p) named.add(p); }
     await archiveFiles(backs.flatMap(bk => ["ai", "png"].map(k => bk.outputs && bk.outputs[k] && bk.outputs[k].path)).filter(p => p && !named.has(p)).map(from => ({ from, to: archivePath(from) })));
   }
-  return { ok: true, deleted: !!d };
+  return { ok: true, deleted: !!d, unlinked: cleared.length };
 }
 /** A sheet's own five files, and the .pdf beside its .ai, which is written only when the sheet is final (op_sheetPdf). */
 const outputPaths = d => { const o = d.outputs || {}, ai = o.ai && o.ai.path; return [...new Set(["ai", "pdf", "labelled", "report", "preview"].map(k => o[k] && o[k].path).concat(ai && /\.ai$/.test(ai) ? [ai.replace(/\.ai$/, ".pdf")] : []).filter(Boolean))]; };
@@ -1182,17 +1206,57 @@ async function op_poolPut(b) {
     if (cur && cur.runId && p.runId && cur.runId !== p.runId && !["complete", "abandoned", "committed"].includes(cur.state) && (Date.now() - (ms(cur.updatedAt) || 0)) < 24 * 3600 * 1000 && await liveRun(cur.runId)) { out.contended.push({ poolId: p.poolId, runId: cur.runId }); continue; }
     if (onSheet.has(p.poolId)) { out.placed.push(onSheet.get(p.poolId)); continue; }
     const doc = Object.assign({}, p, { poolId: p.poolId, updatedAt: FV.serverTimestamp() }); if (!cur) doc.createdAt = FV.serverTimestamp();
+    // a row taken off on purpose (held, cancelled) that is made up again is live again: its take-off marks stay (the order's history
+    // reads them), so the row says when it was made live, and no reader takes the old marks for a take-off still in force
+    if (cur && p.state && !Placement.TAKE_OFF_STATES.has(p.state) && Placement.takenOff(cur)) doc[Placement.REPOOLED] = FV.serverTimestamp();
     batch.set(col(POOL).doc(p.poolId), doc, { merge: true }); out.written++;
     if (++n >= 400) { await batch.commit(); batch = db.batch(); n = 0; }
   }
   if (n) await batch.commit();
   return Object.assign({ ok: true }, out);
 }
+/* A take-off is ONE commit: the pieces' rows say they are off ("abandoned", no sheet, and the take-off's own mark) and the sheet
+   records that listed them stop listing them (their piece list, the orders they still name, their backs and counts, and dirty: true,
+   Readiness's flag that the layout must be written again). Written as two requests, the row said "on hold" for as long as the
+   page took to rewrite its sheet (a nest, then a save: minutes, and for ever when the page was closed) while the sheet still said
+   "on SS Sheet 1": the hold card, the piece rows, the Library and the timeline's "where" each read a different one of them
+   (Paul, 5 Oct 2026, order 4174601819). A sheet that is cut or archived is a record of what was made and is not edited; the
+   page's own rewrite of the sheet (its files, charms, labels) follows as before and replaces dirty with what the page knows.
+   The pieces' rows are read first only when the order's timeline is told of the change: the sheet each piece leaves goes into
+   `before` even when its row never named one (a piece on a sheet still filling), so "taken off GF Sheet 1" names the sheet. */
+const TAKE_OFF_SHEET_FIELDS = ["poolIds", "orders", "backPool", "placedCount", "charmCount", "archived", "laserDoneAt", "roseCutAt", "setId", "metal", "fileBase", "folder", "sheetIndex", "page"];
+async function poolTakeOff(ids, patch, told) {
+  let before = told ? new Map() : null; const edited = [];
+  for (let i = 0; i < ids.length; i += 200) {
+    const part = ids.slice(i, i + 200), want = new Set(part);
+    const made = await db.runTransaction(async tx => {
+      // (every read first: a transaction writes after it has read)
+      const rows = told ? await tx.getAll(...part.map(id => col(POOL).doc(id))) : [], sheets = new Map();
+      for (let j = 0; j < part.length; j += 30) for (const d of (await tx.get(col(SHEETS).where("poolIds", "array-contains-any", part.slice(j, j + 30)).select(...TAKE_OFF_SHEET_FIELDS))).docs) sheets.set(d.id, Object.assign(d.data(), { id: d.id }));
+      const at = FV.serverTimestamp(), where = new Map(), seen = new Map(), touched = [];
+      for (const s of sheets.values()) for (const id of s.poolIds || []) if (want.has(String(id)) && !where.has(String(id))) where.set(String(id), s);
+      for (const r of rows) { const prev = r.exists ? r.data() : null, s = where.get(r.id); seen.set(r.id, prev && !prev.sheetId && s ? Object.assign({}, prev, { sheetId: s.id, sheetName: s.fileBase || s.folder || null, setId: prev.setId || s.setId || null, material: prev.material || s.metal || null }) : prev); }
+      for (const id of part) tx.set(col(POOL).doc(id), Object.assign({}, patch, { updatedAt: at, [Placement.REPOOLED]: null }), { merge: true });
+      for (const s of sheets.values()) { const t = Placement.takeOffUpdate(s, want, at); if (!t) continue; tx.update(col(SHEETS).doc(s.id), t.update); touched.push({ sheetId: s.id, pieces: t.removed.length }); }
+      return { seen, touched };   // (a retried attempt answers afresh: only the committed one is used)
+    });
+    if (before) for (const [k, v] of made.seen) before.set(k, v);
+    edited.push(...made.touched);
+  }
+  return { before, edited };
+}
 async function op_poolUpdate(b) {
   const ids = (Array.isArray(b.poolIds) ? b.poolIds : [b.poolId]).filter(isPoolId).slice(0, 400); if (!ids.length) return { error: "bad pool id" };
   // a change the order's timeline records (poolEvents) reads the rows first: the sheet a charm leaves, its set, and
   // whether the row already says so (a retry)
   const p = b.patch && typeof b.patch === "object" ? b.patch : {}, told = !!(p.removedBy || p.removedAt || p.movedBy || p.movedAt || p.committedAt || (p.state === "written" && p.sheetId));
+  // a take-off (hold, cancel, an order gone from Etsy) is one commit across the pieces' rows AND the sheets that list them
+  if (Placement.isTakeOff(p)) {
+    const done = await poolTakeOff(ids, p, told);
+    if (told) await stamp(() => poolEvents(ids, p, done.before, b), "pool");
+    if (told && /^cancel/i.test(String(p.removedReason || ""))) await noteCancelRemovals(ids, p, done.before, b);
+    return { ok: true, count: ids.length, sheets: done.edited };
+  }
   let before = null;
   if (told) try { before = new Map(); for (let i = 0; i < ids.length; i += 100) (await db.getAll(...ids.slice(i, i + 100).map(id => col(POOL).doc(id)))).forEach((s, j) => before.set(ids[i + j], s.exists ? s.data() : null)); }
   catch (e) { before = null; console.warn("[charmNestLibrary] pool rows not read for the timeline:", e.message || e); }
