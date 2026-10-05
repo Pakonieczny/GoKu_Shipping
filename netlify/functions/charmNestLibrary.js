@@ -1625,6 +1625,15 @@ async function op_setUpdate(b) {
       const records=docs.filter(d=>d.exists).map(d=>({...d.data(),id:d.id,laserHold:null}));
       await productionReadiness(records,{tx});
       if(records.some(s=>s.setId!==id) || !Readiness.set(next,records).ready)throw new Error('Set cannot be completed: every sheet needs approved engraving, verified back files, front files and QR labels');
+      // the cardinal rule (charm-nest-shared-orders.js): a set is completed only with every sheet that shares a multi-piece
+      // order with one of its own, unless that sheet can no longer join (cut, or in a set already sent to the station)
+      if(!(old.exists && /^complete/.test(String(old.data().status || '')))){
+        const split=await splitOfSet(id,ids);
+        if(split.length){
+          const there=[...new Set(split.flatMap(it=>it.there))];
+          throw new Error(`Set cannot be completed: ${split.length===1?'order '+split[0].orderId+' also has pieces':split.length+' orders ('+split.slice(0,4).map(it=>it.orderId).join(', ')+(split.length>4?', ...':'')+') also have pieces'} on ${there.join(', ')}, which ${there.length===1?'is':'are'} not in this set. Sheets that share a multi-piece order stay in the same set: put them in one set, or take the order off one of the sheets.`);
+        }
+      }
     }
     // each field the patch names replaces the stored one whole, and a field it leaves out stays as it was: a set with merge
     // merged a map into the stored one key by key, so an order taken off a set stayed on its record for good
@@ -2895,7 +2904,15 @@ OPS.sessionsList = op_sessionsList;
    written by the ops that already own it (laserDone: marking, process seals, op_laserStatus' recordProcessReadiness);
    the only new fact is a person's HOLD (`laserHold` on a sheet: {at, by, note}), which takes a ready sheet back to In
    progress without touching one approval, seal or cut record (Readiness.sheet: a held sheet is not included).
-   · flowState  {sheetIds, setIds}   read only: laserStatus' records and sets, each set's own record, and whether each run is open
+   · flowState  {sheetIds, setIds, move?}   read only: laserStatus' records and sets, each set's own record, and whether each run is open.
+     With `move` ({kind, id, to:{set|newSet}, together?}) for a move into or out of a set it also answers the cardinal rule of a Set
+     of Sheets (charm-nest-shared-orders.js: sheets that share a multi-piece order are always in ONE set): `shared`, the orders such a
+     move would split (each with its pieces, the sheets on each side and any sheet that cannot change set, with the reason), and `group`,
+     the sheets that must travel together. · sharedOrders {kind, id, to, together?}   the same answer alone (read only).
+     flowApply has no membership step (hold / release / seal never change a sheet's set), so it has nothing to refuse for the rule;
+     the writes that do change membership are the page's putSheet / setUpdate, and setUpdate refuses to record a set complete while a
+     sheet that shares one of its multi-piece orders is outside it (the list of orders and sheets in the answer). A move whose plan
+     the cloud says splits an order is refused by the page at commit, which plans again from these records first.
    · flowApply  {steps:[{type:"hold"|"release", sheetIds, note}], expect?, by}   all steps in ONE transaction: every sheet is read first and
      checked against `expect` ({sheetId:{held:bool}}, what the plan saw), so a sheet changed since the plan was made refuses the
      whole call and nothing is written. A repeat finds the sheets as asked and writes nothing (idempotent). Each change adds an
@@ -2913,7 +2930,64 @@ async function op_flowState(b) {
   }
   const runIds = [...new Set((status.sheets || []).map(x => x.runId).concat(docs.map(x => x.runId)).filter(isId))].slice(0, 100), runs = {};
   for (const id of runIds) { const r = await col(RUNS).doc(id).get(); runs[id] = { exists: r.exists, open: r.exists && !["complete", "abandoned"].includes(String((r.data() || {}).status || "")) }; }
-  return { sheets: status.sheets || [], sets: status.sets || [], setDocs: docs, runs, checkedAt: Date.now() };
+  // the cardinal rule of a Set of Sheets (below): for a move into a set, the orders it would split, read from the records
+  const mv = b.move && typeof b.move === "object" ? b.move : null;
+  const shared = mv && mv.to && (mv.to.set || mv.to.newSet) ? await sharedAnswer(mv) : null;
+  return { sheets: status.sheets || [], sets: status.sets || [], setDocs: docs, runs, checkedAt: Date.now(), ...(shared ? { shared: shared.shared, group: shared.group } : {}) };
+}
+/* ── The cardinal rule of a Set of Sheets (Paul, 5 Oct 2026; charm-nest-shared-orders.js, window.SharedOrders, which this
+   file shares): every sheet that shares a multi-piece order with another is in the SAME set. Read only here: the sheets that
+   hold pieces of the moving sheets' orders (one query by order for each step outwards, a few steps at most), their sets for
+   the reasons a sheet cannot change set (cut, completed, set committed), and the core's answer. `to` is {set} or {newSet}. ── */
+const SharedRule = require("../../charm-nest-shared-orders.js").core;
+const SHARED_FIELDS = ["id", "sheetId", "metal", "metalLabel", "page", "sheetIndex", "setId", "draft", "solidIncluded", "poolIds", "orders", "archived", "runId", "laserDoneAt", "roseCutAt", "fileBase"];
+const sharedOrdersOf = d => [...new Set((Array.isArray(d.orders) ? d.orders.map(String) : []).concat((Array.isArray(d.poolIds) ? d.poolIds : []).map(orderOfKey)).filter(x => /^\d{1,30}$/.test(x)))];
+/** The sheets that share orders with `seedIds`, outwards (a sheet that shares with a sheet that shares): { sheets: [core sheets], more: true when a cap cut it short }. */
+async function sharedSheets(seedIds, { rounds = 4, cap = 500 } = {}) {
+  const docs = new Map(), seenOrders = new Set();
+  const take = (id, data) => { if (data && !data.archived && !docs.has(id)) { docs.set(id, { ...data, id }); return true; } return false; };
+  let frontier = [];
+  const ids = [...new Set(seedIds.filter(isId))].slice(0, 300);
+  for (let i = 0; i < ids.length; i += 100) for (const d of await db.getAll(...ids.slice(i, i + 100).map(id => col(SHEETS).doc(id)), { fieldMask: SHARED_FIELDS })) if (d.exists && take(d.id, d.data())) frontier.push(docs.get(d.id));
+  let more = false;
+  for (let round = 0; round < rounds && frontier.length; round++) {
+    const orders = [];
+    for (const d of frontier) for (const o of sharedOrdersOf(d)) if (!seenOrders.has(o)) { seenOrders.add(o); orders.push(o); }
+    frontier = [];
+    for (let i = 0; i < orders.length; i += 30) {
+      const snap = await col(SHEETS).where("orders", "array-contains-any", orders.slice(i, i + 30)).select(...SHARED_FIELDS).get();
+      for (const d of snap.docs) if (take(d.id, d.data())) frontier.push(docs.get(d.id));
+    }
+    if (docs.size > cap) { more = true; break; }
+  }
+  if (frontier.length && !more) more = true;       // (the last step found sheets whose own orders were not followed)
+  const setIds = [...new Set([...docs.values()].filter(d => d.setId && !d.draft && d.solidIncluded !== false).map(d => String(d.setId)).filter(isId))], sets = new Map();
+  for (let i = 0; i < setIds.length; i += 100) for (const d of await db.getAll(...setIds.slice(i, i + 100).map(id => col(SETS).doc(id)), { fieldMask: ["setId", "seq", "name", "status", "committedAt", "laserDoneAt"] })) if (d.exists) sets.set(d.id, d.data());
+  const sheets = [...docs.values()].map(d => SharedRule.sheetOf(d, { label: sheetLabel(d), fixed: SharedRule.fixedWhy(d, SharedRule.effectiveSet(d) ? sets.get(String(d.setId)) : null) })).filter(Boolean);
+  return { sheets, more };
+}
+async function sharedAnswer(move) {
+  const kind = move.kind === "set" ? "set" : "sheet", id = str(move.id, 80), to = move.to || {};
+  const dest = to.newSet ? "new" : isId(to.set) ? String(to.set) : null;
+  let seeds = [id];
+  if (kind === "set") { if (!isId(id)) return { shared: [], group: { ids: [], labels: [], orders: [], fixed: [] } }; const s = await col(SETS).doc(id).get(); seeds = s.exists ? (s.data().sheetIds || []).map(String) : []; }
+  else if (!isId(id)) return { shared: [], group: { ids: [id], labels: [], orders: [], fixed: [] } };
+  const { sheets, more } = await sharedSheets(seeds), by = new Map(sheets.map(s => [s.id, s]));
+  let moving = kind === "set" ? seeds : [id];
+  if (move.together && kind === "sheet") moving = SharedRule.groupOf(sheets, id).ids;
+  const items = SharedRule.between(sheets, moving, kind === "set" && !dest ? id : dest);
+  const g = kind === "sheet" ? SharedRule.groupOf(sheets, id) : { ids: moving, orders: [] };
+  return { shared: items, group: { ids: g.ids, labels: g.ids.map(i => (by.get(i) || {}).label || i), members: g.ids.map(i => ({ id: i, label: (by.get(i) || {}).label || i, setId: (by.get(i) || {}).setId || null })), orders: g.orders, fixed: g.ids.filter(i => by.get(i) && by.get(i).fixed).map(i => ({ sheetId: i, sheetLabel: by.get(i).label, why: by.get(i).fixed })), ...(more ? { more: true } : {}) } };
+}
+/** The orders of a set's sheets that also have pieces on a sheet outside it that COULD still join it (not cut, not in a committed set). */
+async function splitOfSet(setId, memberIds) {
+  const { sheets } = await sharedSheets(memberIds), items = SharedRule.between(sheets, memberIds, setId);
+  const by = new Map(sheets.map(s => [s.id, s]));
+  return items.filter(it => it.thereIds.some(i => by.get(i) && !by.get(i).fixed));
+}
+async function op_sharedOrders(b) {
+  const to = b.to && typeof b.to === "object" ? b.to : {};
+  return { ok: true, ...(await sharedAnswer({ kind: b.kind, id: b.id, to, together: !!b.together })) };
 }
 async function op_flowApply(b) {
   const by = str(b.by, 80).trim();
@@ -2976,6 +3050,7 @@ async function op_flowApply(b) {
 }
 OPS.flowState = op_flowState;
 OPS.flowApply = op_flowApply;
+OPS.sharedOrders = op_sharedOrders;
 OPS.getOrderPieces = op_getOrderPieces;   // where each piece of an order is (OrderPieces); read only
 
 exports.ops = OPS;   // the connections check runs the same queries the app runs
