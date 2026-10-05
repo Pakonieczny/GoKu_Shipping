@@ -3,7 +3,7 @@
 'use strict';
 const assert = require('node:assert/strict');
 const { truth, issueOrders, setWaits, hardBlock } = require('./issues-oracle.cjs');
-const { materialize } = require('./issues-shop.cjs');
+const { materialize, keyOf } = require('./issues-shop.cjs');
 
 const sheet = (id, metal, own = 'ok', setId = 'set-1', index = 1) => ({ id, metal, index, own, setId });
 const copy = (sheet, pooled = true) => ({ sheet, pooled });
@@ -208,5 +208,52 @@ t('same set, both ready', two(SA, SB), { A: [], B: [] });
   // the set wait never depends on an order issue: B with an order problem of its own (a piece of its order still unnested) is soft, so it is not a set wait
   const soft = shop([SA, SB], [order(1, line({ metal: 'silver', copies: [copy('B')] }), line({ copies: [POOLED], state: 'pooled' }))]);
   assert.equal(hardBlock(soft.sheets.find(x => x.id === 'B'), truth(soft)), null, 'an order waiting for another piece is soft'); assert.deepEqual(setWaits(soft, truth(soft), 'A'), []); n++;
+}
+// ── round 8: Paul's own order 4170837249 (CABLE CHAIN ONLY completed by hand, MIDDLE 9935 GF on GF Sheet 1, MIDDLE 9935 RG on RG Sheet 1), and "either or both buttons" ──────────
+// "If either or both of the buttons Print QR Label, Complete Order are pressed than that piece should be considered released and nothing should hold this order or it's parent sheets"
+{
+  const ORDER = 4170837249, GF = sheet('GF', 'gold', 'ok', 'set-1');
+  // every press state of a Review card: print only, Complete Order only, both in either order, reprints; customPut records each as state 'completed'
+  const PRESS = { 'print only': ['print'], 'Complete Order only': ['button'], 'print then Complete Order': ['print', 'button'], 'Complete Order then print': ['button', 'print'], 'printed three times': ['print', 'print', 'print'] };
+  const chain = (presses, o = {}) => line({ metal: 'rose', copies: [NONE], problems: ['unmatchedSku'], sku: '', state: 'unmatched', ...(presses ? { hand: { how: presses[0], state: 'completed', rec: 'stale', presses } } : {}), ...o });
+  const mk = (presses, rg, o) => { const c = chain(presses, o), mid = line({ copies: [copy('GF')] }), rgl = line({ metal: 'rose', copies: [copy('RG')] }); return { s: shop([GF, rg], [order(ORDER, c, mid, rgl)]), chain: keyOf({ id: String(ORDER) }, c), rgPiece: keyOf({ id: String(ORDER) }, rgl) }; };
+  const keys = (tr, sid) => ((tr.sheets[sid].orders[ORDER] || {}).offenders || []).map(o => o.lineKey);
+  for (const [press, presses] of Object.entries(PRESS)) {
+    // RG Sheet 1 held / not ready, in NO set (Paul's case): GF waits for MIDDLE RG alone, flagged noSet; the chain is never named
+    for (const own of ['noQr', 'held', 'unverified', 'roseNoPlan']) {
+      const none = mk(presses, sheet('RG', 'rose', own, null)), tr = truth(none.s);
+      assert.deepEqual(keys(tr, 'GF'), [none.rgPiece], `${press}, RG Sheet 1 ${own}, in no set: GF waits only for the MIDDLE RG piece`);
+      const o = tr.sheets.GF.orders[ORDER].offenders[0]; assert.equal(o.noSet, true, 'a sheet in no set says so'); assert.equal(o.split, undefined); assert.equal(o.sheets[0].label, 'RG Sheet 1');
+      assert.deepEqual(issues(none.s, 'RG'), [], 'RG Sheet 1 itself: GF is ready, so nothing of the order waits for it');
+      // in the SAME set the wait is the set's, never the order's; in ANOTHER set it is a split (still the real piece on the real sheet)
+      const same = mk(presses, sheet('RG', 'rose', own, 'set-1')); assert.deepEqual(issues(same.s, 'GF'), [], `${press}, RG Sheet 1 ${own}, same set: not an order issue`);
+      const other = mk(presses, sheet('RG', 'rose', own, 'set-2')), tr2 = truth(other.s);
+      assert.deepEqual(keys(tr2, 'GF'), [other.rgPiece], `${press}, RG Sheet 1 ${own}, another set: the same one piece`); assert.equal(tr2.sheets.GF.orders[ORDER].offenders[0].split, true); assert.equal(tr2.sheets.GF.orders[ORDER].offenders[0].noSet, undefined);
+      n++;
+    }
+    // RG Sheet 1 ready: nothing holds GF; the pressed chain contributes nothing, whichever button was pressed
+    t(`${press}: both sheets ready`, mk(presses, sheet('RG', 'rose', 'ok', 'set-1')).s, { GF: [], RG: [] });
+    t(`${press}: the run's copy of the chain still says waiting`, mk(presses, sheet('RG', 'rose', 'ok', 'set-1'), { state: 'waiting' }).s, { GF: [], RG: [] });
+  }
+  // unpressed, reopened, held: the chain is a piece, so it holds both sheets (RG ready, in the same set: the chain alone)
+  const rgOk = sheet('RG', 'rose', 'ok', 'set-1');
+  for (const [name, x] of [['never pressed', mk(null, rgOk)], ['reopened after print', mk(null, rgOk, { hand: { how: 'print', state: 'open', rec: 'stale', presses: ['print'] } })], ['reopened after both', mk(null, rgOk, { hand: { how: 'button', state: 'open', rec: 'stale', presses: ['button', 'print'] } })],
+    ['printed, but held', mk(['print'], rgOk, { hold: 'Customer changed the order', state: 'held' })]]) {
+    const tr = truth(x.s); assert.deepEqual(keys(tr, 'GF'), [x.chain], `${name}: only the chain holds GF Sheet 1`); assert.deepEqual(keys(tr, 'RG'), [x.chain], `${name}: and RG Sheet 1`); n++;
+  }
+  // an unpressed chain AND an RG piece on a sheet in no set: both are named, each as what it is (the RG piece as noSet)
+  { const x = mk(null, sheet('RG', 'rose', 'noQr', null)), tr = truth(x.s), offs = tr.sheets.GF.orders[ORDER].offenders; assert.deepEqual(keys(tr, 'GF').sort(), [x.chain, x.rgPiece].sort()); assert.equal(offs.find(o => o.lineKey === x.rgPiece).noSet, true); assert.equal(offs.find(o => o.lineKey === x.chain).noSet, undefined); n++; }
+  // a cancelled chain (completed by hand or not) is unchanged
+  t('cancelled chain, RG in no set: only the RG piece waits', mk(['print'], sheet('RG', 'rose', 'noQr', null), { state: 'gone' }).s, { GF: [ORDER], RG: [] });
+  // the screenshot (5 Oct, 12:34): an order of four Review pieces (COMPASS, BEACH, WOLF, KAYAK) and one piece on SS Sheet 1 (AQUATIC DOLPHIN)
+  const SS = sheet('SS', 'silver', 'ok', 'set-1'), rid = 4170999001;
+  const review = (h, o = {}) => line({ metal: 'silver', copies: [NONE], problems: ['unmatchedSku'], sku: '', state: 'unmatched', ...(h ? { hand: { how: h.presses[0], state: h.state || 'completed', rec: 'stale', presses: h.presses } } : {}), ...o });
+  const five = (...hs) => { const ls = hs.map(h => review(h)); return { s: shop([SS], [order(rid, line({ metal: 'silver', copies: [copy('SS')] }), ...ls)]), keys: ls.map(l => keyOf({ id: String(rid) }, l)) }; };
+  const left = f => ((truth(f.s).sheets.SS.orders[rid] || {}).offenders || []).map(o => o.lineKey).sort();
+  const P = (...presses) => ({ presses }), PO = (...presses) => ({ presses, state: 'open' });
+  { const f = five(P('print'), P('button'), P('print', 'button'), P('button', 'print', 'print')); assert.deepEqual(left(f), [], 'every Review piece pressed (print, Complete Order, both, reprinted): nothing holds the sheet'); n++; }
+  { const f = five(null, null, null, null); assert.deepEqual(left(f), f.keys.slice().sort(), 'none pressed (as in the screenshot): each of the four holds the sheet'); n++; }
+  { const f = five(P('print'), null, P('button'), null); assert.deepEqual(left(f), [f.keys[1], f.keys[3]].sort(), 'two pressed, two not: only the two not pressed hold it'); n++; }
+  { const f = five(P('print'), PO('button'), P('print', 'button'), P('button')); assert.deepEqual(left(f), [f.keys[1]], 'one reopened: only that one holds it again'); n++; }
 }
 console.log(`PASS: ${n} hand-made cases agree with Paul's rules (oracle self-check)`);

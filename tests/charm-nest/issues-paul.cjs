@@ -25,4 +25,15 @@ function paulSpec({ gf = 62, ss = 43, shared = 5, unapproved = 18 } = {}) {
   return { seed: 7, sandbox: false, sheets, orders, archivedSheets: [] };
 }
 const paulShop = o => materialize(paulSpec(o));
-module.exports = { paulSpec, paulShop };
+
+/** Round 8 (5 Oct, 12:18): order 4170837249 (Leslie Suhr), three pieces. CABLE CHAIN ONLY (Rose Gold, an unknown SKU) was completed by hand in Review (the buttons it was pressed
+ *  with are `presses`, in order: 'print' | 'button'; null = never pressed), MIDDLE 9935 GF sits on GF Sheet 1 (Set-1) and MIDDLE 9935 RG on RG Sheet 1, which is `own` (held, not ready ...) and
+ *  in `setId` (null: in no set, as in his screenshot; 'set-1': GF's own set; 'set-2': another set). GF Sheet 1 is fine in every other way. */
+function paulRound8Spec({ own = 'held', setId = null, presses = ['button'], reopened = false } = {}) {
+  const base = { q: 1, kind: 'paul', copies: [], state: 'written', problems: [], hold: null, change: false, engrave: 'plain', noDesign: false, stale: false };
+  const chain = { ...base, tx: 1001, metal: 'rose', copies: [{ sheet: null, pooled: false }], state: 'unmatched', problems: ['unmatchedSku'], sku: '', ...(presses ? { hand: { how: presses[0], state: reopened ? 'open' : 'completed', rec: 'stale', presses } } : {}) };
+  return { seed: 8, sandbox: false, archivedSheets: [],
+    sheets: [{ id: 'gf-sheet-1', metal: 'gold', index: 1, own: 'ok', setId: 'set-1' }, { id: 'rg-sheet-1', metal: 'rose', index: 1, own, setId }],
+    orders: [{ id: '4170837249', buyer: 'Leslie Suhr', lines: [chain, { ...base, tx: 1002, metal: 'gold', sku: 'MIDDLE-9935', copies: [{ sheet: 'gf-sheet-1', pooled: true }] }, { ...base, tx: 1003, metal: 'rose', sku: 'MIDDLE-9935', copies: [{ sheet: 'rg-sheet-1', pooled: true }] }] }] };
+}
+module.exports = { paulSpec, paulShop, paulRound8Spec, paulRound8Shop: o => materialize(paulRound8Spec(o)) };

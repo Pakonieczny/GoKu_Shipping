@@ -1,5 +1,7 @@
 /* Actual OrderWin rendering/lookup functions, with controlled saved records.
- * No live orders, network requests, or synthetic approval stamps are written. */
+ * No live orders, network requests, or synthetic approval stamps are written.
+ * (5 Oct, round 8: the tan Custom Orders bar is gone from the order window; what it drew for a piece sent to its sheet, or completed by hand,
+ * is on that piece's own row under "Its pieces" (paintPieceSum, pieceCtl, wirePcAct), which is what runs here. No Reopen button in the window.) */
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const { JSDOM } = require('jsdom');
@@ -13,7 +15,7 @@ const at = Date.UTC(2026, 9, 2, 2, 59), key = '4175152234_1';
 const makeRow = (k = key) => ({ key:k, state:'pooled', order:{receiptId:k.split('_')[0]}, line:{transactionId:k.split('_')[1]}, spec:{}, poolIds:[k + '_1'] });
 const sentRecord = () => ({ id:'original-send', state:'decided', how:'sheet', at, by:'Paul', decidedAt:at, receiptId:'4175152234', category:'Custom designs', stamps:[{how:'sheet', id:'original-send', at, by:'Paul'}] });
 function fixture() {
-  const dom = new JSDOM('<dialog id="orderWin" open><header><span id="owNow"></span></header><main><div id="owFix"></div></main></dialog><div id="toasts"></div>', {runScripts:'outside-only', pretendToBeVisual:true, url:'https://sorter.test'});
+  const dom = new JSDOM('<dialog id="orderWin" open><header><span id="owNow"></span></header><main><div id="owFix"></div><div class="owPcSum" id="owPcSum" hidden></div></main></dialog><div id="toasts"></div>', {runScripts:'outside-only', pretendToBeVisual:true, url:'https://sorter.test'});
   const w = dom.window, d = w.document;
   w.matchMedia = () => ({matches:true});
   w.Element.prototype.getAnimations = () => [];
@@ -23,7 +25,7 @@ function fixture() {
   const item = {kind:'customOrder', key:'csent:custom:4175152234', info:true, decided:true, done:false, row, rows:[row], record:rec, why:'Its designs are on the sheets'};
   const state = {row, item, sent:{sent:{at,by:'Paul',lines:{[key]:[{f:'file',i:0}]}}}, files:[{id:'file'}], ready:true, apiRecord:rec, cloudRecords:{}};
   w.B = {maps:{customKept:{}, customSent:{}}};
-  w.W = {key:row.key, dlg:d.querySelector('#orderWin'), closing:false};
+  w.W = {key:row.key, dlg:d.querySelector('#orderWin'), closing:false, pieces:[], piece:null, events:null, cancelled:null};
   w.byId = id => d.getElementById(id);
   w.el = (tag, cls, html) => { const n = d.createElement(tag); if (cls) n.className = cls; if (html != null) n.innerHTML = html; return n; };
   w.esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -34,12 +36,13 @@ function fixture() {
   w.setView = view => calls.views.push(view);
   w.Review = {
     customItemFor(k, fallback) { calls.lookup = {k,fallback}; return state.item; },
+    pieceItemFor:() => state.item && !state.item.decided && !state.item.foldedInto ? state.item : null,   // (a card in the Review tab, not one sent to its sheet)
     actFor:() => state.item,
     printable:it => !it.decided
   };
   w.CustomSheet = {
     sentOf:() => state.sent,
-    decisionOf:r => r._customSentDecision || w.B.maps.customSent[r.key],
+    decisionOf:r => state.sent?.sent || r._customSentDecision || w.B.maps.customSent[r.key],
     cardOf:() => ({files:state.files, sent:!!state.sent, open:state.ready, why:'', busy:''}),
     stamp:() => JSON.stringify(state.files),
     hydrate:records => { calls.hydration.push(records); state.files = records[0].files; },
@@ -56,6 +59,11 @@ function fixture() {
   w.Seal.press = () => { throw Error('historical rendering must never replay a stamp'); };
   w.Motion.note = (b, opts) => { calls.notices.push(opts); return d.createElement('span'); };
   w.eval(section('  function paintSend(', '  /** The order\'s notes as they stand now:'));
+  // (a piece's row: the timeline's summary and the piece list are answered here; the controls and their wiring are the production code)
+  w.OrderTimelineUI = {STAGES:['arrived'], summary:(events, pieces) => ({each:pieces.map(p => ({p, D:{step:0, stages:[{}], hand:false, cancelled:false, W:null}, steps:[]})), rail:[], step:0})};
+  w.piecesOf = rows => rows.map(x => ({key:x.key, name:'Piece', metal:null, form:'', qty:1, line:{}}));
+  w.colorOf = () => '#ccc'; w.pieceMeta = () => ''; w.pickPiece = () => {};
+  w.eval(section('  function paintPieceSum(', '  /* ── Where it is now'));
   w.Orders = {
     loadMaps:async() => {},
     rowFromRecord:(k, l) => Object.assign(makeRow(k), {state:l.state || 'pooled'})
@@ -71,15 +79,15 @@ function fixture() {
   };
   w.eval(section('  async function sheetRead(', '  async function sheetsFor('));
   w.eval(section('  async function lookUp(', '  /** The look-up\'s spinner line put away'));
-  return {dom,w,d,row,rec,item,rows,state,calls,bar:() => d.getElementById('owCustom'),close:() => dom.window.close()};
+  return {dom,w,d,row,rec,item,rows,state,calls,bar:() => d.getElementById('owPcSum'),close:() => dom.window.close()};
 }
 async function main() {
   let cases = 0;
   {
     const f = fixture();
     try {
-      f.w.paintCustom(f.row);
-      assert(!f.bar().hidden, 'an ordinary sent row has the same decision bar as a special custom row');
+      f.w.paintPieceSum();
+      assert(!f.bar().hidden, 'an ordinary sent piece has its row with its sent controls, as a special custom piece has its own');
       assert.match(f.bar().textContent, /Sent to sheet/);
       const seal = f.bar().querySelector('.seal-sheet');
       assert(seal, 'actual shared SENT TO SHEET seal is rendered inline');
@@ -87,11 +95,11 @@ async function main() {
       assert.match(seal.getAttribute('aria-label'), /by Paul/);
       assert.doesNotMatch(seal.querySelector('svg').textContent, /Paul/, 'signer stays in shared hover detail');
       assert.equal(f.bar().querySelector('.seal.pending'), null, 'old saved decision is never an invisible pending stamp');
-      assert.equal(f.bar().querySelector('[data-cu-complete], [data-cu-print], [data-cu-reopen]'), null, 'sent designs offer no hand-completion controls');
+      assert.equal(f.bar().querySelector('[data-cu-complete], [data-cu-print], [data-cu-reopen], [data-cu-done]'), null, 'sent designs offer no hand-completion controls');
       f.bar().querySelector('[data-cu-open-sheet]').click(); f.bar().querySelector('[data-cu-history]').click(); f.bar().querySelector('[data-cu-view-designs]').click();
       assert.deepEqual(f.calls.views, ['sheet','timeline']); assert.equal(f.calls.designs[0],f.item);
       const snapshot = JSON.stringify(f.rec);
-      f.w.paintCustom(f.row); assert.equal(f.bar().querySelector('.seal-sheet'), seal, 'unchanged redraw keeps the historical seal node');
+      f.w.paintPieceSum(); assert.equal(f.bar().querySelector('.seal-sheet'), seal, 'unchanged redraw keeps the historical seal node');
       assert.equal(JSON.stringify(f.rec), snapshot, 'rendering changes no saved signer, date, or history');
       cases++;
     } finally { f.close(); }
@@ -99,14 +107,14 @@ async function main() {
   {
     const f = fixture();
     try {
-      f.rec.stamps.unshift({how:'print',at:at-60000,by:'Seth'}); f.w.paintCustom(f.row);
+      f.rec.stamps.unshift({how:'print',at:at-60000,by:'Seth'}); f.w.paintPieceSum();
       // (the bar draws one small seal, the latest the card above does not show, and the Timeline through History holds the rest, since 2 Oct:
       //  each seal once on the overview. Display only: every seal stays in the record, none is replaced, and each is reachable)
       assert.equal(f.bar().querySelectorAll('.seal').length,1, 'one seal in the bar');
       assert(f.bar().querySelector('.seal-sheet'), 'the latest is the sent seal');
       assert.deepEqual(f.rec.stamps.map(x => [x.how,x.by]),[['print','Seth'],['sheet','Paul']], 'previous QR history remains in the record beside the sent seal');
       f.bar().querySelector('[data-cu-history]').click(); assert.equal(f.calls.views[f.calls.views.length - 1],'timeline','and is reachable through History');
-      f.rec.stamps.push({how:'engraveApproved',at:at+60000,by:'Paul'}); f.w.paintCustom(f.row);
+      f.rec.stamps.push({how:'engraveApproved',at:at+60000,by:'Paul'}); f.w.paintPieceSum();
       assert.equal(f.bar().querySelectorAll('.seal').length,1, 'still one seal in the bar: the latest real history');
       assert(f.bar().querySelector('.seal-engraveApproved'), 'additional real history becomes the seal shown');
       assert.deepEqual(f.rec.stamps.map(x => x.how),['print','sheet','engraveApproved'], 'every earlier seal is still in the record, none replaced');
@@ -117,7 +125,7 @@ async function main() {
   {
     const f = fixture();
     try {
-      f.state.files = []; f.w.paintCustom(f.row);
+      f.state.files = []; f.w.paintPieceSum();
       assert(f.bar().querySelector('[data-cu-open-sheet]')); assert(f.bar().querySelector('[data-cu-history]'));
       assert.equal(f.bar().querySelector('[data-cu-view-designs]'),null,'unavailable source designs are not offered as a broken action');
       f.w.W.key = 'another-order'; f.bar().querySelector('[data-cu-open-sheet]').click(); f.bar().querySelector('[data-cu-history]').click();
@@ -128,7 +136,7 @@ async function main() {
   {
     const f = fixture();
     try {
-      f.state.sent = null; f.state.item = null; f.w.paintCustom(f.row);
+      f.state.sent = null; f.state.item = null; f.w.paintPieceSum();
       assert(f.bar().hidden, 'an unfinished send with no durable decision shows no fictional historical seal');
       cases++;
     } finally { f.close(); }
@@ -141,7 +149,7 @@ async function main() {
       assert.equal(f.w.B.maps.customSent[old.key], f.rec);
       assert.equal(old.spec.customDone, undefined, 'send is not falsely read as hand completion');
       f.rows.set(old.key,old); f.w.W.key = old.key; f.state.sent = null;
-      f.w.paintCustom(old);
+      f.w.paintPieceSum();
       assert.equal(f.calls.lookup.fallback,old,'popup lookup passes its historical row to Review');
       assert(f.bar().querySelector('.seal-sheet'),'outside-pull popup shows the same saved signature');
       cases++;
@@ -154,9 +162,12 @@ async function main() {
       const [old] = await f.w.lookUp('4175152234',() => {});
       assert.equal(old.spec.customDone, f.state.apiRecord, 'actual hand completion still loads'); assert.equal(old._customSentDecision,undefined);
       f.row.spec.customDone = f.state.apiRecord; f.state.sent = null; f.item.decided = false; f.item.done = true; f.item.record = f.state.apiRecord;
-      f.w.paintCustom(f.row);
-      assert(f.bar().querySelector('.seal-button')); assert(f.bar().querySelector('[data-cu-reopen]')); assert(f.bar().querySelector('[data-cu-print]'));
-      f.bar().querySelector('[data-cu-reopen]').click(); assert.equal(f.calls.reopens[0],f.item,'historical completed action remains functional');
+      f.w.paintPieceSum();
+      assert(f.bar().querySelector('.seal-button')); assert(f.bar().querySelector('[data-cu-print]'));
+      // the Complete Order button in its done state, and no Reopen in the order window (it stays in the Review tab)
+      assert.equal(f.bar().querySelector('[data-cu-done]').textContent, 'Completed'); assert(f.bar().querySelector('[data-cu-done]').disabled);
+      assert.equal(f.bar().querySelector('[data-cu-reopen]'), null, 'no Reopen button in the order window'); assert(![...f.bar().querySelectorAll('button')].some(b => /^\s*Reopen\s*$/.test(b.textContent)));
+      f.bar().querySelector('[data-cu-print]').click(); assert.equal(f.calls.prints[0],f.item,'historical completed action remains functional');
       cases++;
     } finally { f.close(); }
   }
@@ -184,13 +195,13 @@ async function main() {
       const [old] = await f.w.lookUp('4175152234',() => {});
       f.rows.set(old.key,old); f.w.W.key = old.key; f.state.sent = null;
       f.w.Review.customItemFor = (k, fallback) => f.w.sentItemFor(fallback || f.rows.get(k));
-      f.w.paintCustom(old);
+      f.w.paintPieceSum();
       const seal = f.bar().querySelector('.seal-sheet');
       assert(seal, 'actual Review adapter connects a cloud sent record to actual popup shared rendering');
       assert.equal(seal.dataset.at, String(at)); assert.match(seal.getAttribute('aria-label'), /by Paul/);
       assert.equal(f.bar().querySelectorAll('.seal-sheet').length,1, 'adapter and saved stamp produce one historical decision');
       assert.equal(old.spec.customDone,undefined);
-      f.w.paintCustom(old); assert.equal(f.bar().querySelector('.seal-sheet'),seal, 'adapting a new record object does not restamp it');
+      f.w.paintPieceSum(); assert.equal(f.bar().querySelector('.seal-sheet'),seal, 'adapting a new record object does not restamp it');
       cases++;
     } finally { f.close(); }
   }
@@ -235,7 +246,7 @@ async function main() {
       assert.equal(f.w.B.customDesigns[ck].sent.id,decision.id); assert.equal(f.w.B.customDesigns[ck].sent.by,'Seth');
       assert.equal(f.w.B.orders.byKey.size,0,'looking at an old order never adopts it into live intake or re-pools it');
       if(legacy){assert.equal(old.spec.special,undefined,'ordinary legacy custom designs need no special/custom-order classification');assert.equal(f.w.B.pool.rows.size,0,'legacy lookup does not add pool copies');}
-      f.w.paintCustom(old);
+      f.w.paintPieceSum();
       const seal = f.bar().querySelector('.seal-sheet'); assert.equal(seal.dataset.at,String(decision.at)); assert.match(seal.getAttribute('aria-label'),/by Seth/);
       const designs = f.bar().querySelector('[data-cu-view-designs]'); assert(designs,'cloud-only source files expose a working View designs action'); designs.click();
       assert.equal(f.calls.designs[0].record.id,decision.id); assert(f.bar().querySelector('[data-cu-open-sheet]')); assert(f.bar().querySelector('[data-cu-history]'));

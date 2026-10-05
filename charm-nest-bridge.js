@@ -7565,7 +7565,7 @@ const CustomPrint = window.CustomPrint = (() => {
    *  same seals (their look and turn come from who and when), never pressed again on a redraw. "" when there are none. */
   function keptSeals(it, how, only) {
     const rec = keptOf(it); if (!rec || !window.Seal) return "";
-    // (only: the one stamp the order window's custom-order bar draws, small; {} for none of this kind)
+    // (only: the one stamp a piece's row in the order window draws, small; {} for none of this kind)
     const st = Seal.list(rec).filter(x => (x.how === "button") === (how === "button") && (!only || (x.how === only.how && x.at === only.at)));
     return st.length ? Seal.row({ stamps: st, prints: only ? st[0].n || 0 : +rec.prints || 0 }, only ? { size: 22 } : undefined) : "";
   }
@@ -11113,7 +11113,6 @@ const OrderWin = window.OrderWin = (() => {
       };
       box.appendChild(b); fix.appendChild(box);
     }
-    if (inPull(r.key) || r._customSentDecision || tryDo(() => CustomSheet.decisionOf?.(r))) paintCustom(r); else { const bar = byId("owCustom"); if (bar) { bar.hidden = true; bar.innerHTML = ""; bar._stamp = ""; } }
     paintSend(r);
     foldTo(fold);
     const sw = byId("owSkip"); sw.setAttribute("aria-checked", r.state === "skipped" ? "true" : "false");
@@ -11146,17 +11145,17 @@ const OrderWin = window.OrderWin = (() => {
       }
     };
   }
-  /** A custom card's one line of controls, drawn in two places by this one code (Paul, 5 Oct: "look exactly the same"): the bar
-   *  under "Where it is now" and a piece's row under "Its pieces". What the card is (cuState), its buttons and seals (cuControls)
-   *  and what a press does (wireCu) are the Review card's own: CustomPrint's print, complete and reopen with their busy states,
-   *  the name asked and the Undo, and the seals as Seal draws them. */
+  /** A piece's controls at the right end of its row under "Its pieces" (Paul, 5 Oct; the Custom Orders bar that repeated them
+   *  is gone, round 8). What the card is (cuState), its buttons and seals (cuControls) and what a press does (wireCu) are the
+   *  Review card's own: CustomPrint's print and complete with their busy states, the name asked and the Undo, and the seals as
+   *  Seal draws them. */
   function cuState(it) {
     const rec = it.record || null, decided = !!(it.decided || rec && rec.how === "sheet");
     const busy = decided ? "" : CustomPrint.statusHtml(it, "xs"), can = !decided && Review.printable(it);
     const printed = !!(it.done && rec && window.Seal && Seal.hasPrint(rec));
     // One seal per fact on this screen (Paul, 2 Oct 21:07: "too many seals showing here ... only show the seals that are
-    // necessary"): the "Where it is now" card above draws one of the record's seals (its Order complete), so this line
-    // never draws it again; it draws at most the latest of the others, and says how many more the Timeline holds. Only
+    // necessary"): the "Where it is now" card above draws one of the record's seals (its Order complete), so a row
+    // never draws it again; it draws at most the latest of each kind, and says how many more the Timeline holds. Only
     // what is drawn changes: the record keeps every seal, and the Timeline tab lists them all.
     const above = (W.nowSeal && W.nowSeal.key) || "";
     const kept = !it.done && !decided && window.Seal ? CustomPrint.keptOf(it) : null;   // (a reopened line: the seals its record keeps, each on the button that made them)
@@ -11164,20 +11163,34 @@ const OrderWin = window.OrderWin = (() => {
     const rest = all.filter(s => !(above && sealKey(Seal.modelOf(s).action, s.at) === above)), pick = rest[rest.length - 1] || null, more = decided ? 0 : Math.max(0, rest.length - 1);
     // Completed: one seal of the record's (above), beside the print button, and "+N" to the Timeline for the others
     // (a line sent to its sheet has its History button for that).
-    const moreBtn = more ? `<button type="button" class="owCuMore" data-cu-more title="${more} more seal${more > 1 ? "s" : ""}: open the Timeline" aria-label="${more} more seal${more > 1 ? "s" : ""}: open the Timeline">+${more}</button>` : "";
-    const seals = (pick && (it.done || decided) ? Seal.row({ stamps: [pick], prints: pick.n || 0 }, { size: 22, pending: decided ? false : CustomPrint.freshOf("cu:" + String(it.key).replace(/^[a-z]+:/, "")) }) : "") + (it.done || decided ? moreBtn : "");
-    return { rec, decided, busy, can, printed, above, pick, more, moreBtn, seals, keptP: pick && pick.how !== "button" ? pick : {}, keptC: pick && pick.how === "button" ? pick : {} };
+    const moreOf = n => n > 0 ? `<button type="button" class="owCuMore" data-cu-more title="${n} more seal${n > 1 ? "s" : ""}: open the Timeline" aria-label="${n} more seal${n > 1 ? "s" : ""}: open the Timeline">+${n}</button>` : "";
+    const moreBtn = moreOf(more), sealOf = st => st ? Seal.row({ stamps: [st], prints: st.n || 0 }, { size: 22, pending: decided ? false : CustomPrint.freshOf("cu:" + String(it.key).replace(/^[a-z]+:/, "")) }) : "";
+    const seals = (pick && (it.done || decided) ? sealOf(pick) : "") + (it.done || decided ? moreBtn : "");
+    return { rec, decided, busy, can, printed, above, pick, more, moreBtn, moreOf, sealOf, rest, seals, keptP: pick && pick.how !== "button" ? pick : {}, keptC: pick && pick.how === "button" ? pick : {} };
   }
   /** The buttons and seals of an open or completed card (not one sent to its sheet): Print QR label and Complete Order with the
-   *  seals they kept, or Print again, the seal, "+N" and Reopen; a spinner and what is happening, the name asked for, or
-   *  "Marked completed · Undo" in place of the buttons. "" when the card has nothing to press. */
+   *  seals they kept, or Print again and its seal and "+N"; a spinner and what is happening, the name asked for, or
+   *  "Marked completed · Undo" in place of the buttons. "" when the card has nothing to press. There is no Reopen here (Paul,
+   *  5 Oct, round 8: "Remove the Reopen button from this modal"): a completed order is reopened in the Review tab. A completed
+   *  piece shows the Complete Order button in its done state, "Completed", and Print again, with one seal resting by the button that
+   *  made it, then "+N" for the other seals the Timeline holds. */
   function cuControls(it, c) {
     if (c.busy && !c.busy.includes("cuUndo")) return c.busy;
-    return CustomPrint.failNote(it) + (c.can ? (it.done ? CustomPrint.buttonHtml(it, "print", c.printed ? "sealedPrint" : "ghost", c.printed ? "Print again" : "Print QR label", `print this order's 1 × 1 in QR sticker for the sorting station${c.printed ? " again" : ""}`, "xs", "data-seal-btn")
-        : CustomPrint.keptButtonHtml(it, "print", "gold", "Print QR label", "print this order's 1 × 1 in QR sticker for the sorting station; the order then moves to Completed", "xs", c.keptP)) : "") + c.seals +
-      (c.can && !it.done ? CustomPrint.keptButtonHtml(it, "complete", "ghost", "Complete Order", "mark this order completed now without printing its label; it moves to Completed", "xs", c.keptC) + c.moreBtn : "") +
-      (it.done ? `<button type="button" class="btn ghost xs" data-cu-reopen title="move this order back to Open (a printed label stays printed)">Reopen</button>` : "") + (c.busy && c.busy.includes("cuUndo") ? c.busy : "");
+    const undo = c.busy && c.busy.includes("cuUndo") ? c.busy : "";
+    const print = !c.can ? "" : it.done ? CustomPrint.buttonHtml(it, "print", c.printed ? "sealedPrint" : "ghost", c.printed ? "Print again" : "Print QR label", `print this order's 1 × 1 in QR sticker for the sorting station${c.printed ? " again" : ""}`, "xs", "data-seal-btn")
+      : CustomPrint.keptButtonHtml(it, "print", "gold", "Print QR label", "print this order's 1 × 1 in QR sticker for the sorting station; the order then moves to Completed", "xs", c.keptP);
+    if (it.done) {
+      // (one seal, the latest the card above does not draw, sits by the button that made it: by "Completed" when it is the Complete
+      // seal, by Print again when it is a print seal; "+N" last, for the others the Timeline holds)
+      const byDone = c.pick && c.pick.how === "button";
+      return CustomPrint.failNote(it) + CU_DONE_BTN + (byDone ? c.sealOf(c.pick) : "") + print + (!byDone ? c.sealOf(c.pick) : "") + c.moreBtn + undo;
+    }
+    return CustomPrint.failNote(it) + print +
+      (c.can ? CustomPrint.keptButtonHtml(it, "complete", "ghost", "Complete Order", "mark this order completed now without printing its label; it moves to Completed", "xs", c.keptC) + c.moreBtn : "") + undo;
   }
+  /** Complete Order in its done state: the green the button takes once its seal is on it (sealedDone), with "Completed" for its
+   *  words. It answers no press (a disabled button); its title says where a completed order is reopened. */
+  const CU_DONE_BTN = `<button type="button" class="btn sealedDone xs cuDoneState" data-cu-done data-seal-btn disabled title="Completed. To reopen it, use the Review tab">Completed</button>`;
   /** What a press on those controls does: the card as it is when pressed (now), not as it was drawn, goes through CustomPrint.
    *  Returns the name field when one is asked in `host`. ex.more: where "+N" leads (the Timeline by default); ex.press: told
    *  what is being pressed, to run it (so a row can say it was the one pressed for the length of the press). */
@@ -11185,37 +11198,8 @@ const OrderWin = window.OrderWin = (() => {
     const hook = (sel, f) => { const b = host.querySelector(sel); if (b) b.onclick = () => { const current = now(); if (!current) return; if (ex && ex.press) ex.press(() => f(current)); else f(current); }; };
     hook("[data-cu-print]", c => CustomPrint.print(c));
     hook("[data-cu-complete]", c => CustomPrint.complete(c));
-    hook("[data-cu-reopen]", c => CustomPrint.reopen(c));
     const mb = host.querySelector("[data-cu-more]"); if (mb) mb.onclick = () => { if (now()) { if (ex && ex.more) ex.more(); else setView("timeline"); } };
     return CustomPrint.wire(host, it);
-  }
-  /** A custom order's own line: what kind it is, where it stands, and its QR label — the same
-   *  sorting-station sticker, printed and completed as from its Custom Orders card (CustomPrint). One line, no window. */
-  function paintCustom(r) {
-    const fix = byId("owFix"); if (!fix || !fix.parentNode) return;
-    let bar = byId("owCustom");
-    if (!bar) { bar = el("div", "owCustom"); bar.id = "owCustom"; bar.setAttribute("aria-live", "polite"); fix.parentNode.insertBefore(bar, fix); }
-    // (a line completed by hand and reopened keeps its seals here too, on its Review card's buttons)
-    const sent = window.CustomSheet && tryDo(() => CustomSheet.sentOf(r) || CustomSheet.decisionOf?.(r));
-    const it = r.spec && (r.spec.special || r.spec.customDone || sent) ? Review.customItemFor(r.key, r) : r.spec && B.maps.customKept && B.maps.customKept[r.key] ? Review.actFor(r.key) : null;
-    if (!it) { bar.hidden = true; bar.innerHTML = ""; bar._stamp = ""; return; }
-    const c = cuState(it), rec = c.rec, decided = c.decided, designs = decided && tryDo(() => CustomSheet.cardOf(it)), can = c.can;
-    const label = (r.spec.special && r.spec.special.label) || (rec && rec.category) || it.category || "Custom order";
-    const why = it.info || it.done || decided ? it.why : can ? "print its label once made by hand, or complete it" : it.why || "its pieces are on the sheets";
-    const stamp = JSON.stringify([it.key, label, why, CustomPrint.stamp(it), decided && CustomSheet.stamp(it), !!it.done, decided, can, rec && (rec.stamps || []), rec && rec.prints, c.above]);
-    bar.hidden = false;
-    if (bar._stamp === stamp) return;
-    bar._stamp = stamp; bar.className = "owCustom" + (it.done ? " done" : "");
-    // (a spinner and what is happening, the name asked for, or "Marked completed · Undo" in place of the buttons)
-    bar.innerHTML = `<span class="tag">${decided ? "Designs · Sent to sheet" : `Custom Orders · ${esc(label)}${it.done ? " · completed" : ""}`}</span><span class="w" title="${esc(why)}">${esc(why)}</span>` +
-      (decided ? c.seals + (designs && designs.files.length ? '<button type="button" class="btn ghost xs" data-cu-view-designs>View designs</button>' : '') + '<button type="button" class="btn ghost xs" data-cu-open-sheet>Open sheet</button><button type="button" class="btn ghost xs" data-cu-history>History</button>'
-        : cuControls(it, c));
-    // the card as it is when pressed, not as it was drawn: a repool in between may have changed its lines
-    const now = () => W.key === r.key && rowOf(r.key) ? Review.customItemFor(r.key, rowOf(r.key)) || it : null;
-    const db = bar.querySelector("[data-cu-view-designs]"); if (db) db.onclick = () => { const current = now(); if (current) CustomSheet.open(current, { from: db }); };
-    const sb = bar.querySelector("[data-cu-open-sheet]"); if (sb) sb.onclick = () => { if (now()) setView("sheet"); };
-    const hb = bar.querySelector("[data-cu-history]"); if (hb) hb.onclick = () => { if (now()) setView("timeline"); };
-    const who = wireCu(bar, it, now); if (who) who.focus({ preventScroll: true });
   }
   /** The order's notes as they stand now: another station, or another sorter, may have written since this pull. Read
    *  only; a note being typed, or one waiting to be saved, is never replaced by what the record said a moment ago. */
@@ -11320,47 +11304,85 @@ const OrderWin = window.OrderWin = (() => {
     const sum = tryDo(() => UI.summary(W.events, ps, W.cancelled)), x = sum && sum.each.find(y => y.D.step === sum.step);
     return x ? x.events : null;
   }
-  /** All pieces: each one on a row under "Where it is now", where it is, what comes next and its steps as dots; the
-   *  slowest (where the order is) in gold. A row opens that piece. */
+  /** The pieces on rows under "Where it is now": where each is, what comes next and its steps as dots. An order of several with no
+   *  piece picked has every piece on a row (the slowest, where the order is, in gold; a row opens that piece). A piece that is in the
+   *  Review tab has that card's own buttons and seals on its row, at the right end of the name's line in place of its words (Paul, 5 Oct,
+   *  round 8: the buttons "on the same line", and the Custom Orders bar that repeated them is gone, so a single-piece order, or one
+   *  piece picked, has its own row alone when it has any). A piece sent to its sheet has its seal and its ways to the designs and the
+   *  sheet there. */
   function paintPieceSum() {
     const box = byId("owPcSum"); if (!box) return;
-    const UI = window.OrderTimelineUI, ps = W.pieces || [];
-    const sum = !W.piece && ps.length > 1 && W.events && UI && UI.summary ? tryDo(() => UI.summary(W.events, ps, W.cancelled)) : null;
-    if (!sum) { box.hidden = true; box._h = ""; return; }
+    const UI = window.OrderTimelineUI, ps = W.pieces || [], all = !W.piece && ps.length > 1, r0 = rowOf(W.key);
+    let list = ps;
+    if (!all) { const key = W.piece || W.key, p = ps.find(x => x.key === key) || (r0 && !r0.loading && r0.key === key ? tryDo(() => piecesOf([r0])[0]) : null); list = p ? [p] : []; }
+    // (an order of several waits for its timeline; one piece's row is drawn at once, its buttons never wait for it)
+    const sum = list.length && UI && UI.summary && (!all || W.events) ? tryDo(() => UI.summary(W.events || [], list, W.cancelled)) : null;
+    const ctls = sum ? new Map(sum.each.map(x => [x.p.key, tryDo(() => pieceCtl(x.p.key))])) : null;
+    if (!sum || (!all && !ctls.get(list[0].key))) { box.hidden = true; box._h = ""; box.innerHTML = ""; return; }
     const at = s => UI.STAGES.indexOf(s);
-    const html = `<span class="fLabel">Its pieces · the order is where the slowest one is</span>` + sum.each.map(x => {
-      const nx = x.steps.find(s => at(s) > x.D.step), slow = x.D.step === sum.step;
+    const html = `<span class="fLabel">${all ? "Its pieces · the order is where the slowest one is" : ps.length > 1 ? "This piece" : "Its piece"}</span>` + sum.each.map(x => {
+      const nx = x.steps.find(s => at(s) > x.D.step), slow = all && x.D.step === sum.step;
       const dot = `<i class="dot" style="--c:${esc(colorOf(x.p.metal))}"></i>`, nm = `<b>${esc(x.p.name)}</b> · ${esc(pieceMeta(x.p))}`;
       const st = `<span class="st">${esc(x.D.hand ? "Completed by hand" : (x.D.W && x.D.W.label) || "Waiting")}${nx && !x.D.cancelled && !x.D.hand ? " · next: " + esc(nx.l) : ""}</span>`;
       const steps = `<span class="steps" aria-hidden="true">${x.steps.map(s => `<i class="${x.D.step >= at(s) || (x.D.stages[at(s)] || {}).first ? "on" : ""}"></i>`).join("")}</span>`;
       // a piece that is in the Review tab has that card's own buttons (and seals) here, in place of its words: a press is a press
-      // there (Paul, 5 Oct); a piece in no card keeps its words
-      const act = pieceActs(x.p.key);
-      if (!act) return `<button type="button" class="owPcRow${slow ? " slow" : ""}" data-piece="${esc(x.p.key)}" title="Show only this piece">${dot}<span class="nm">${nm}</span>${st}${steps}</button>`;
-      return `<div class="owPcRow hasAct${slow ? " slow" : ""}" data-piece="${esc(x.p.key)}" role="group" aria-label="${esc(x.p.name + " · " + pieceMeta(x.p))}">${dot}<button type="button" class="nm owPcName" title="Show only this piece">${nm}</button>` +
-        `<span class="pcAct" data-pc-act="${esc(x.p.key)}">${act}</span>${st.replace('class="st"', 'class="st owPcSr"')}${steps}</div>`;
+      // there; a piece in no card keeps its words
+      const ctl = ctls.get(x.p.key);
+      if (!ctl) return `<button type="button" class="owPcRow${slow ? " slow" : ""}" data-piece="${esc(x.p.key)}" title="Show only this piece">${dot}<span class="nm">${nm}</span>${st}${steps}</button>`;
+      // (what the card is, said beside the name: the kind of custom order it is, which the bar used to say)
+      const meta = [pieceMeta(x.p) ? esc(pieceMeta(x.p)) : "", ctl.label ? `<span class="kind" title="${esc(ctl.why)}">${esc(ctl.label)}</span>` : ""].filter(Boolean).join(" · ");
+      const name = `<b>${esc(x.p.name)}</b>${meta ? " · " + meta : ""}`, aria = x.p.name + (pieceMeta(x.p) ? " · " + pieceMeta(x.p) : "") + (ctl.label ? " · " + ctl.label : "");
+      return `<div class="owPcRow hasAct${slow ? " slow" : ""}${all ? "" : " solo"}"${all ? ` data-piece="${esc(x.p.key)}"` : ""} role="group" aria-label="${esc(aria)}">${dot}` +
+        (all ? `<button type="button" class="nm owPcName" title="Show only this piece">${name}</button>` : `<span class="nm owPcName">${name}</span>`) +
+        `<span class="pcAct" data-pc-act="${esc(x.p.key)}">${ctl.html}</span>${st.replace('class="st"', 'class="st owPcSr"')}${steps}</div>`;
     }).join("");
     box.hidden = false;
     if (box._h === html) return;
     // (a name being typed in a row's question is carried over a redraw, the field and where its cursor was)
     const typed = [...box.querySelectorAll("[data-cu-name]")].map(i => ({ key: i.closest("[data-pc-act]")?.dataset.pcAct, v: i.value, on: document.activeElement === i, a: i.selectionStart, b: i.selectionEnd })).filter(t => t.key);
     box._h = html; box.innerHTML = html;
-    box.querySelectorAll("[data-pc-act]").forEach(h => {
-      const key = h.dataset.pcAct, now = () => { const r = W.dlg && W.dlg.open ? inPull(key) : null; return r && tryDo(() => Review.pieceItemFor(r)) || null; }, it = now();
-      if (!it) return;
-      // (the press runs inside this call: a question it asks is drawn, and its field given the focus, in the row that was pressed)
-      const who = wireCu(h, it, now, { press: f => { W.pcAsk = key; try { f(); } finally { W.pcAsk = ""; } }, more: () => { pickPiece(key); setView("timeline"); } });
-      const box2 = h.querySelector("[data-cu-name]"), was = typed.find(t => t.key === key);
-      if (box2 && was && was.v) { box2.value = was.v; if (was.on) { box2.focus({ preventScroll: true }); try { box2.setSelectionRange(was.a, was.b); } catch (_) {} } }
-      else if (who && W.pcAsk === key) who.focus({ preventScroll: true });
-    });
+    box.querySelectorAll("[data-pc-act]").forEach(h => wirePcAct(h, typed));
   }
-  /** The controls of a piece's card in the Review tab (a piece is a line of the order), drawn by the one code the Custom Orders bar
-   *  uses; "" for a piece in no card or one with nothing to press (it is on a sheet, or sent to one). */
-  function pieceActs(key) {
-    const r = inPull(key); if (!r) return "";
-    const it = tryDo(() => Review.pieceItemFor(r)); if (!it) return "";
-    return tryDo(() => cuControls(it, cuState(it)).trim()) || "";
+  /** What a press on a piece's controls does (h: the span holding them, data-pc-act its piece's key): the card as it is when pressed, not
+   *  as it was drawn, of an order that is still the one the window shows. typed: the names being typed in the rows drawn before. */
+  function wirePcAct(h, typed) {
+    const key = h.dataset.pcAct, here = () => { const w = W.dlg && W.dlg.open ? rowOf(W.key) : null; return w ? String(w.order.receiptId) : ""; };
+    const now = () => { const r = rowOf(key), at = here(); return r && at && String(r.order.receiptId) === at ? tryDo(() => pieceItem(key)) : null; }, it = now();
+    if (!it) return;
+    // (another piece picked, where there is more than one; the one piece of a single-piece order is already the one shown)
+    const toPiece = k => { if ((W.pieces || []).length > 1) pickPiece(k); };
+    if (cuState(it).decided) {
+      // a piece sent to its sheet: its designs, its sheet and its history
+      const db = h.querySelector("[data-cu-view-designs]"); if (db) db.onclick = () => { const current = now(); if (current) CustomSheet.open(current, { from: db }); };
+      const sb = h.querySelector("[data-cu-open-sheet]"); if (sb) sb.onclick = () => { if (now()) { toPiece(key); setView("sheet"); } };
+      const hb = h.querySelector("[data-cu-history]"); if (hb) hb.onclick = () => { if (now()) { toPiece(key); setView("timeline"); } };
+      return;
+    }
+    // (the press runs inside this call: a question it asks is drawn, and its field given the focus, in the row that was pressed)
+    const who = wireCu(h, it, now, { press: f => { W.pcAsk = key; try { f(); } finally { W.pcAsk = ""; } }, more: () => { toPiece(key); setView("timeline"); } });
+    const box2 = h.querySelector("[data-cu-name]"), was = (typed || []).find(t => t.key === key);
+    if (box2 && was && was.v) { box2.value = was.v; if (was.on) { box2.focus({ preventScroll: true }); try { box2.setSelectionRange(was.a, was.b); } catch (_) {} } }
+    else if (who && W.pcAsk === key) who.focus({ preventScroll: true });
+  }
+  /** The card a piece has in the Review tab (a piece is a line of the order), or the card of the designs sent to its sheet; null for a
+   *  piece in no card or one with nothing to press. */
+  function pieceItem(key) {
+    const r = rowOf(key); if (!r) return null;
+    const it = tryDo(() => Review.pieceItemFor(r)); if (it) return it;
+    const sent = window.CustomSheet && tryDo(() => CustomSheet.decisionOf(r)) ? tryDo(() => Review.customItemFor(r.key, r)) : null;
+    return sent && sent.decided ? sent : null;
+  }
+  /** What a piece has at the right end of its row, drawn by the one code the Review card's buttons come from (cuState, cuControls):
+   *  { it, html, label, why, decided }, or null for a piece with nothing to press. */
+  function pieceCtl(key) {
+    const r = rowOf(key), it = pieceItem(key); if (!r || !it) return null;
+    const c = cuState(it), label = c.decided ? "Sent to sheet" : (r.spec && r.spec.special && r.spec.special.label) || (c.rec && c.rec.category) || it.category || "";
+    if (c.decided) {
+      const designs = tryDo(() => CustomSheet.cardOf(it));
+      return { it, decided: true, label, why: it.why || "", html: c.seals + (designs && designs.files.length ? '<button type="button" class="btn ghost xs" data-cu-view-designs>View designs</button>' : "") + '<button type="button" class="btn ghost xs" data-cu-open-sheet>Open sheet</button><button type="button" class="btn ghost xs" data-cu-history>History</button>' };
+    }
+    const html = tryDo(() => cuControls(it, c).trim()) || "";
+    return html ? { it, html, label, why: it.why || "" } : null;
   }
 
   /* ── Where it is now, and the order's Now in the header ──
@@ -11375,7 +11397,7 @@ const OrderWin = window.OrderWin = (() => {
   const SHEET_EV = new Set(["placed", "moved", "removed", "renested", "merged", "included", "excluded", "cancelled", "cancelRestored", "held", "released", "restored", "setCommitted", "laserDone", "roseCut"]);
   const sheetSig = list => Array.isArray(list) ? list.filter(e => SHEET_EV.has(e.type)).length + ":" + (list.filter(e => SHEET_EV.has(e.type)).at(-1) || {}).at : null;
   // a completion, a print or a reopen of a custom piece (its seal and its note): when the feed brings one this page has not seen, the
-  // Review feed reads the records at once (ReviewLive.nudge: one read, not a poller), so the window's Custom Orders bar and its pieces follow
+  // Review feed reads the records at once (ReviewLive.nudge: one read, not a poller), so the window's pieces follow
   const customSig = list => Array.isArray(list) ? list.filter(e => e.type === "sealCompleted" || e.type === "sealPrinted" || (e.type === "note" && e.data && e.data.reopened)).map(e => e.type + ":" + (e.id || e.at)).join() : null;
   function loadEvents(rid) {
     W.events = null; W.evFor = rid; W.cancelled = null; W.nowSeal = null;
@@ -11394,7 +11416,7 @@ const OrderWin = window.OrderWin = (() => {
     Promise.resolve().then(() => T.get(rid)).then(take).catch(e => { if (W.evFor === rid) { W.events = null; console.warn("order view: timeline", e && e.message); } });
   }
   /** What a seal says: its action and the minute it was pressed, as it reads on its face. Two seals that say the same
-   *  are one fact (the custom-order bar draws none that the Now card draws); "" for a seal that says no time. */
+   *  are one fact (a piece's row draws none that the Now card draws); "" for a seal that says no time. */
   const sealKey = (action, at) => action && +at > 0 ? String(action).toUpperCase() + "@" + Math.floor(+at / 60000) : "";
   function sealKeyOf(html) {
     if (!html) return "";
@@ -11470,9 +11492,9 @@ const OrderWin = window.OrderWin = (() => {
     // plain words instead.
     const UI = window.OrderTimelineUI, shown = shownEvents(), st = UI && UI.nowStamps && shown && shown.length ? tryDo(() => UI.nowStamps(shown, { ev: e, cancelled: n.cancelled ? e : null })) : null;
     const bl = (st && st.blocker) || null;
-    // (the custom-order bar under this card draws no seal this card draws: it is told which one, and repaints if that changes)
+    // (a piece's row under this card draws no seal this card draws: it is told which one, and repaints if that changes)
     const sealNow = sealKeyOf(st && st.seal);
-    if (!W.nowSeal || W.nowSeal.key !== sealNow) { W.nowSeal = { key: sealNow }; const cb = byId("owCustom"); if (cb && !cb.hidden) paintCustom(r); }
+    if (!W.nowSeal || W.nowSeal.key !== sealNow) { W.nowSeal = { key: sealNow }; paintPieceSum(); }
     const recent = st ? st.recent : "";
     // (the Sheet button and the sheet chips answer for one piece each: a piece on no sheet has them greyed, never another piece's)
     const sh = sheetCard(r);

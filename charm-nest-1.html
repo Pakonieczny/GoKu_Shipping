@@ -722,25 +722,26 @@ dialog.phv.layer.phvIn{background:transparent}
 .owPcRow .steps{display:inline-flex;gap:4px}
 .owPcRow .steps i{width:6px;height:6px;border-radius:50%;box-shadow:inset 0 0 0 1px var(--ink25);transition:background .3s}
 .owPcRow .steps i.on{background:var(--sage);box-shadow:none}
-/* a piece that is in the Review tab has its card's own buttons and seals here, in place of its words (Paul, 5 Oct): compact (xs, as
-   the Custom Orders bar draws them), beside the name while the row is wide and under it, dots column unmoved, when it is not */
+/* a piece that is in the Review tab has its card's own buttons and seals here, at the right end of its row, where the words of the other
+   pieces sit (Paul, 5 Oct, round 8: "to the right side of the chain only listing and NOT below it"): the name, then the buttons, right
+   aligned and wrapping among themselves when the room is short, then the dots. Never under the name, at any width. */
 .owPcSum{container-type:inline-size}
 .owPcRow.hasAct{position:relative;cursor:pointer}
-.owPcSum .owPcRow.hasAct{grid-template-columns:8px minmax(0,1.2fr) minmax(max-content,1fr) auto}   /* (the words' own columns, but never narrower than the buttons: the name gives way first) */
+.owPcSum .owPcRow.hasAct{grid-template-columns:8px minmax(8em,1fr) auto auto}   /* (the buttons take what they need; the name gives way first, down to a few words) */
 .owPcRow.hasAct:hover{transform:none}
 .owPcRow .owPcName{border:0;background:transparent;padding:0;margin:0;font:inherit;color:inherit;text-align:left;cursor:pointer;border-radius:4px;min-width:0}
+.owPcRow.hasAct .owPcName{white-space:normal;overflow-wrap:anywhere}   /* (a name that gives way goes on a second line, not under the buttons) */
 .owPcRow .owPcName:focus-visible{outline:2px solid var(--slate);outline-offset:2px}
-.owPcRow .pcAct{display:flex;align-items:center;flex-wrap:wrap;gap:4px 8px;min-width:0;cursor:default}
+.owPcRow .nm .kind{font-weight:400;color:var(--ink45)}   /* (what kind of order the piece is, beside its name) */
+.owPcRow.solo{cursor:default}.owPcRow.solo:hover{background:transparent}   /* (one piece's own row: there is no other piece to open) */
+.owPcRow.solo .owPcName{cursor:default}
+.owPcRow .pcAct{display:flex;align-items:center;justify-content:flex-end;flex-wrap:wrap;gap:4px 8px;min-width:0;cursor:default}
 .owPcRow .pcAct .btn{flex:0 0 auto}
-.owPcRow .pcAct .cuWho{flex-wrap:wrap}.owPcRow .pcAct .cuWho input{width:9em}
+.owPcRow .pcAct .cuWho{flex-wrap:wrap;justify-content:flex-end}.owPcRow .pcAct .cuWho input{width:9em}
+.owPcRow .pcAct .cuStat,.owPcRow .pcAct .cuUndo{white-space:normal;justify-content:flex-end;text-align:right;min-width:0}   /* (what is happening, or the Undo: it wraps among itself rather than run out to the left under the name) */
+.owPcRow .pcAct .btn.cuDoneState:disabled{opacity:1;cursor:default}
+.owPcRow .pcAct .btn.sealedDone.cuDoneState:hover{background:#e2eee6}
 .owPcRow .owPcSr{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0 0 0 0);border:0;white-space:nowrap}
-@container (max-width:760px){
-  .owPcSum .owPcRow.hasAct{grid-template-columns:8px minmax(0,1fr) auto;row-gap:4px}
-  .owPcRow.hasAct .dot{grid-row:1;grid-column:1}
-  .owPcRow.hasAct .owPcName{grid-row:1;grid-column:2}
-  .owPcRow.hasAct .steps{grid-row:1;grid-column:3}
-  .owPcRow.hasAct .pcAct{grid-row:2;grid-column:2 / -1}
-}
 /* what is being waited for, said on one line */
 .owLoading{display:flex;align-items:center;gap:9px;padding:8px 18px;font:12px var(--sans);color:var(--ink70);border-bottom:1px solid var(--line2);background:var(--card2)}
 .owLoading[hidden]{display:none}
@@ -2719,16 +2720,9 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 .rvItem .cuStep>.rvItem>.rh .ttl,.rvItem .cuStep>.rvItem>.rh .sub,.rvItem .cuStep>.rvItem>.ev,.rvItem .cuStep>.rvItem>.why{display:none}
 .rvItem .cuStep>.rvItem>.rh{padding-bottom:0;border-bottom:0}
 /* the order window: a custom order's one line, and notes left for the next person */
-.owCustom{display:flex;align-items:center;gap:8px;min-width:0;border:1px solid var(--goldLine);background:var(--goldSoft);border-radius:10px;padding:5px 8px 5px 10px;margin-bottom:10px}
-.owCustom[hidden]{display:none}
-.owCustom.done{border-color:var(--sage);background:var(--sageSoft)}
-.owCustom .tag{font:700 10px var(--mono);letter-spacing:.08em;text-transform:uppercase;white-space:nowrap;color:#6b4f1d}
-.owCustom.done .tag{color:#3f5b3a}
-.owCustom .w{flex:1 1 auto;min-width:0;font-size:12px;color:var(--ink70);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.owCustom .btn{flex:0 0 auto}
-.owCustom .sealRow,.owPcRow .pcAct .sealRow{margin:calc(var(--seal-fit,var(--seal-base)) * -.28) 0;max-width:50%;flex:0 0 auto}
-.owCustom .owCuMore,.owPcRow .pcAct .owCuMore{flex:0 0 auto;border:0;background:transparent;color:var(--ink45);font:700 10.5px var(--sans);padding:3px 5px;margin-left:-4px;border-radius:6px;cursor:pointer;white-space:nowrap}
-.owCustom .owCuMore:hover,.owCustom .owCuMore:focus-visible,.owPcRow .pcAct .owCuMore:hover,.owPcRow .pcAct .owCuMore:focus-visible{color:var(--ink);background:var(--card2)}
+.owPcRow .pcAct .sealRow{margin:calc(var(--seal-fit,var(--seal-base)) * -.28) 0;max-width:50%;flex:0 0 auto}
+.owPcRow .pcAct .owCuMore{flex:0 0 auto;border:0;background:transparent;color:var(--ink45);font:700 10.5px var(--sans);padding:3px 5px;margin-left:-4px;border-radius:6px;cursor:pointer;white-space:nowrap}
+.owPcRow .pcAct .owCuMore:hover,.owPcRow .pcAct .owCuMore:focus-visible{color:var(--ink);background:var(--card2)}
 .owNoteField .fLabel{color:var(--ink)}
 .owNoteField .owIn{border-color:var(--goldLine)}
 .owNoteField .owIn.has{background:#fdf7e6;border-color:var(--gold2);font-size:13.5px}
@@ -2945,7 +2939,7 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-pdf.js?v=20260924-followup"></script>
 <script src="charm-nest-dxf.js?v=20260927-custom"></script>
 <script src="charm-nest-motion.js?v=20261003-zg-seal-small-rt1"></script>
-<script src="charm-nest-timeline-ui.js?v=20261005-pieces-psb1-hand1"></script>
+<script src="charm-nest-timeline-ui.js?v=20261005-pieces-psb1-hand2-print1"></script>
 <script src="charm-nest-geom.js?v=20260921-material"></script>
 <script src="charm-nest-engrave-fit.js"></script>
 <script src="charm-nest-assets.js"></script>
@@ -2954,7 +2948,7 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-sheet-menu.js?v=20261005-shm1"></script>
 <script src="charm-nest-activity.js?v=20261001-compact-controls"></script>
 <script src="charm-nest-engraving-seals.js?v=20261003-seal-small"></script>
-<script src="charm-nest-readiness.js?v=20261005-issues-truth4-setgate1-hand1-sameset1-nowait1"></script>
+<script src="charm-nest-readiness.js?v=20261005-issues-truth4-setgate1-hand1-sameset1-nowait1-noset1"></script>
 <script src="charm-nest-export.js"></script>
 <script src="charm-nest-text.js"></script>
 <script src="charm-nest-orders.js?v=20261005-pieces-hand1"></script>
@@ -6734,7 +6728,7 @@ boot();
      Design Station's sign-in), the same name every seal it stamps carries. -->
 <script src="station-session.js?v=20261002-ea1"></script>
 <script src="station-activity.js?v=20261003-reset-clean"></script>
-<script src="charm-nest-bridge.js?v=20261005-lis2-cardinal4-zoom-psb1-egl1-osc1-r3f-setgate1-hand1-sameset1-rl1-nowait1-opt1-rt1"></script>
+<script src="charm-nest-bridge.js?v=20261005-lis2-cardinal4-zoom-psb1-egl1-osc1-r3f-setgate1-hand1-sameset1-rl1-nowait1-opt1-rt1-pcr1"></script>
 <script src="charm-nest-review-live.js?v=20261005-rl1"></script>
 <script>
 try {
@@ -6777,7 +6771,7 @@ try {
 <script src="charm-nest-library-fx.js?v=20261003-fx2"></script>
 <script src="charm-nest-library-dnd.js?v=20261005-so2-mm1"></script>
 <script src="charm-nest-library-engraving.js?v=20261005-egl1"></script>
-<script src="charm-nest-library-issues.js?v=20261005-lis6-nowait1"></script>
+<script src="charm-nest-library-issues.js?v=20261005-lis6-nowait1-noset1"></script>
 <script src="charm-nest-rail-tip.js?v=20261005-rt1"></script>
 <script src="charm-nest-shared-orders-modal.js?v=20261005-so5"></script>
 <script src="charm-nest-search.js?v=20260929-m5-osc1"></script>
@@ -6823,7 +6817,6 @@ try {
         <div class="owInfoMain">
           <div class="owNowCard" id="owNowCard" hidden></div>
           <div class="owPcSum" id="owPcSum" hidden></div>
-          <div id="owCustom" class="owCustom" aria-live="polite" hidden></div>
           <div id="owFix"></div>
           <div class="owField"><label class="fLabel">What the customer wrote</label><div class="owSaid" id="owNotes">— No notes —</div></div>
           <div class="owField owNoteField"><label class="fLabel" for="owNote">Order notes <span class="soft">— for whoever opens this order next · saved to the order by itself, every station and sorter sees them</span></label><textarea class="owIn" id="owNote" rows="3" placeholder="Leave a note on this order for the next person who opens it…"></textarea></div>
