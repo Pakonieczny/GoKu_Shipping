@@ -359,10 +359,11 @@ async function browserChecks() {
     // the order window: everything about the order, its conversations and its notes
     await page.click('#rvList .reviewListRow[data-rid="4176576272"] .engravingIdentity');
     await page.waitForFunction(() => OrderWin.isOpen());
-    const win = await page.evaluate(() => ({ title: document.getElementById('owTitle').textContent, custom: document.getElementById('owCustom').hidden ? null : document.getElementById('owCustom').textContent,
+    await page.waitForFunction(() => !document.getElementById('owPcSum').hidden, null, { timeout: 10000 });   // (its piece's row, with its buttons)
+    const win = await page.evaluate(() => ({ title: document.getElementById('owTitle').textContent, custom: document.getElementById('owPcSum').hidden ? null : document.getElementById('owPcSum').textContent, bar: !!document.getElementById('owCustom'),
       meta: [...document.querySelectorAll('#owMeta .m')].map(m => m.querySelector('i').textContent + ': ' + m.querySelector('span').textContent), fix: !!document.querySelector('#owFix .rvItem[data-kind=customOrder]'),
       note: document.querySelector('label[for=owNote]').textContent, tabs: [...document.querySelectorAll('#orderWin [data-ow-tab]')].map(b => [...b.children].map(c => c.textContent.trim()).filter(Boolean).join(' ')), dialogs: document.querySelectorAll('dialog[open]').length }));
-    assert.match(win.title, /4176576272/); assert.match(win.custom || '', /Custom Orders · Rework/); assert.match(win.custom, /Retry print/, "the print that did not open keeps its seal and offers Retry print (28 Sep)");
+    assert.match(win.title, /4176576272/); assert.equal(win.bar, false, 'no tan Custom Orders bar in the window (5 Oct, round 8)'); assert.match(win.custom || '', /Rework/, 'its piece\'s row says what kind of order it is'); assert.match(win.custom, /Retry print/, "the print that did not open keeps its seal and offers Retry print (28 Sep), on its piece's row");
     for (const want of ['Order: 4176576272', 'Buyer: Buyer 6272', 'Price: 144', 'Custom order: Rework · SKU RE_5460', 'Title: MODIFICATION REWORK FREE SHIPPING']) assert(win.meta.includes(want), want + ' in ' + JSON.stringify(win.meta));
     assert(win.meta.some(m => /^Purchased: Sep 27, 2026/.test(m)), 'when it was bought: ' + JSON.stringify(win.meta));
     assert.equal(win.fix, false, 'no decision box in the window (29 Sep 01:01)'); assert.match(win.note, /^Order notes/); assert.deepEqual(win.tabs, ['Team internal', 'Customer on Etsy'], 'the team\'s thread and the customer\'s, side by side');

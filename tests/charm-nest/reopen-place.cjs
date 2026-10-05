@@ -89,23 +89,28 @@ const MID = 4; let RID, KEY;
     const rec = srv.st.doc('Charm_Custom_Orders', KEY);
     assert.deepEqual([rec.state, (rec.stamps || []).map(s => s.how)], ['open', ['button']], 'the record keeps its seal: ' + JSON.stringify(rec));
 
-    // the same from the order window: Complete Order and Reopen there; once it closes, the card is where it was, marked
+    // the same through the order window: Complete Order there (the window has no Reopen button since 5 Oct, round 8: Reopen stays in the Review
+    // tab); closed, the card is reopened under Completed and is where it was, marked
     await page.evaluate(() => { document.querySelector('#reviewView .egPane.scroll').scrollTop = 0; });
     await page.evaluate(k => OrderWin.open(k), KEY);
-    await page.waitForSelector('#owCustom [data-cu-complete]');
-    await page.click('#owCustom [data-cu-complete]');
+    await page.waitForSelector('#owPcSum [data-cu-complete]');
+    await page.click('#owPcSum [data-cu-complete]');
     await page.waitForFunction(k => B.maps.customDone[k], KEY); await settle();
-    await page.waitForSelector('#owCustom [data-cu-reopen]');
-    await page.click('#owCustom [data-cu-reopen]');
-    await page.waitForFunction(k => !B.maps.customDone[k] && B.maps.customKept[k] && document.querySelector('#owCustom [data-cu-complete]'), KEY); await settle();
+    await page.waitForSelector('#owPcSum [data-cu-done]');
+    assert.equal(await page.evaluate(() => document.querySelectorAll('#orderWin [data-cu-reopen]').length), 0, 'the order window has no Reopen button');
     await page.click('#owClose'); await page.waitForFunction(() => !OrderWin.isOpen());
+    await seg('done'); await page.waitForSelector(card + ' [data-cu-reopen]');
+    await page.waitForTimeout(1200);
+    await page.click(card + ' [data-cu-reopen]');
+    await page.waitForFunction(k => !B.maps.customDone[k] && B.maps.customKept[k], KEY); await settle();
+    await seg('open'); await page.waitForSelector(card);
     await page.waitForFunction(sel => { const n = document.querySelector(sel), p = n.closest('.scroll').getBoundingClientRect(), r = n.getBoundingClientRect(); return n.classList.contains('mFound') && r.top >= p.top - 1 && r.bottom <= p.bottom + 1; }, card, { timeout: 5000 });
-    assert.deepEqual(await order(), custom0, 'reopened from the order window: every card where it was');
+    assert.deepEqual(await order(), custom0, 'completed in the order window, reopened in Review: every card where it was');
     assert.deepEqual(srv.st.doc('Charm_Custom_Orders', KEY).stamps.map(s => s.how), ['button', 'button'], 'both seals kept');
 
     assert.deepEqual(outside, [], 'no Etsy or AI call');
     assert.deepEqual(errors, [], 'no page errors');
-    console.log('  ✓ completed in the middle of the list, reopened (from Completed, then from the order window): back at its index under Open and Custom Orders, in view and marked, seals kept, same N of M');
+    console.log('  ✓ completed in the middle of the list, reopened (from Completed; and completed from the order window, reopened from Completed): back at its index under Open and Custom Orders, in view and marked, seals kept, same N of M');
     console.log('Reopen place OK');
   } finally { await browser.close(); srv.close(); }
 })().catch(e => { console.error(e); process.exit(1); });

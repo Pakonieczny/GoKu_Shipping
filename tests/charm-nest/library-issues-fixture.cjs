@@ -70,8 +70,8 @@ Object.assign(window, {
   LibraryFlow: { approve: async () => { window.__calls.push(['approve']); return { ok: true, auto: [], needs: [], confirm: [], notes: [] }; } },   /* (so the sheets carry their Approve button; a press is only recorded) */
   ListMedia: { peek: id => window.__photos.get(id) || null, listing: id => new Promise(r => setTimeout(() => r(window.__photoOf ? window.__photoOf(id) : null), 120 + (parseInt(String(id).replace(/\\D/g, ''), 10) || 0) * 25)) }
 });`;
-async function openPage(browser, { width = 1440, height = 900, fake = true, errors = [] } = {}) {
-  const context = await browser.newContext({ viewport: { width, height }, deviceScaleFactor: 2 });
+async function openPage(browser, { width = 1440, height = 900, fake = true, errors = [], touch = false } = {}) {
+  const context = await browser.newContext({ viewport: { width, height }, deviceScaleFactor: 2, ...(touch ? { hasTouch: true } : {}) });
   const page = await context.newPage();
   page.on('pageerror', e => { errors.push(e.message); console.error('page error:', String(e.stack || e.message).split('\n').slice(0, 3).join(' | ')); });
   await page.route(u => !/^about:|^data:/.test(u.href), r => r.abort());
@@ -86,6 +86,7 @@ async function openPage(browser, { width = 1440, height = 900, fake = true, erro
   await page.addScriptTag({ content: 'window.Sets=(()=>{' + bridge.slice(a, b) + bridge.slice(c, e) + ';return {libraryCard};})();' });
   if (fake) await page.addScriptTag({ content: 'CharmNestReadiness.issues=(s)=>window.__feed[s.id||s.sheetId]||[];' });   // (the exact shape of issues(), set by the test: window.__feed[sheetId] = [...])
   await page.addScriptTag({ content: read('charm-nest-library-issues.js') });
+  await page.addScriptTag({ content: read('charm-nest-rail-tip.js') });   // (the small card over a rail circle: it only answers the zoom engine's "dotzoom", so every other test is unchanged by it)
   return { page, context };
 }
 module.exports = { root, read, back, sheet, issues, photo, sheetPicture, shell, openPage, NAMES };

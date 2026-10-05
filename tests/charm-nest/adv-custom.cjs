@@ -58,7 +58,7 @@ async function main() {
     const at = k => page.waitForFunction(k => OrderWin.key() === k && !document.querySelector('#orderWin').classList.contains('owLoading'), k);
     // what the window asks: the #owFix box (a custom line's is empty: no engraving waits), its question's controls, its words
     const asked = () => page.evaluate(() => ({ fix: document.getElementById('owFix').innerHTML, controls: document.querySelectorAll('#orderWin .cuStep, #orderWin .owFixCard, #orderWin .rvItem, #orderWin [data-f=mat]').length,
-      words: /waiting on a decision|decide below/i.test(document.getElementById('orderWin').textContent), custom: !document.getElementById('owCustom').hidden }));
+      words: /waiting on a decision|decide below/i.test(document.getElementById('orderWin').textContent), custom: !!document.querySelector('#owPcSum:not([hidden]) [data-pc-act]') }));   // (a custom order's own line: its piece's row, with its buttons, under the pieces)
     const none = { fix: '', controls: 0, words: false }, bare = ({ custom, ...got }) => got;
     await page.evaluate(k => OrderWin.open(k), A);
     await at(A); await page.waitForTimeout(300);

@@ -98,8 +98,8 @@ const opsOf = evs => evs.filter(opOf).map(e => [opOf(e), e.by, (e.data && e.data
     await page.waitForFunction(k => B.maps.customDone[k], KU); await idle(); await stamped(); await calm();
     // and in the order window
     await page.evaluate(k => OrderWin.open(k), K);
-    await page.waitForSelector('#owCustom [data-cu-complete]', { state: 'visible' });
-    await page.click('#owCustom [data-cu-complete]');
+    await page.waitForSelector('#owPcSum [data-cu-complete]', { state: 'visible' });
+    await page.click('#owPcSum [data-cu-complete]');
     await page.waitForFunction(k => B.maps.customDone[k], K); await idle();
     const recorded = rid => opsOf(srv.st.list('Order_Timeline').filter(e => e.orderId === rid).sort((x, y) => x.at - y.at));
     assert.deepEqual(recorded(RID), [['complete', 'Test Operator', 'Review · Custom Orders', false], ['reopen', 'Test Operator', 'Review · Custom Orders', false], ['complete', 'Test Operator', 'Order window', false]], 'the page says where each was pressed: ' + JSON.stringify(recorded(RID)));
@@ -183,10 +183,17 @@ const opsOf = evs => evs.filter(opOf).map(e => [opOf(e), e.by, (e.data && e.data
     await page.mouse.move(700, 930); await page.waitForTimeout(300);
     console.log(`  ✓ completed by hand: pill "${s.pill}", Order in then skipped steps, NOW "${s.nowLine}", no dashed steps, Now card "${s.k} · ${s.t}", no decision, no next list, the Complete point's card says it is done`);
 
-    // (5) Reopen in the order window: back to open everywhere, every seal kept (2 Complete, 2 Reopen)
-    await page.evaluate(() => OrderWin.setView('info')); await page.waitForSelector('#owCustom [data-cu-reopen]', { state: 'visible' });
-    await page.click('#owCustom [data-cu-reopen]');
-    await page.waitForFunction(k => !B.maps.customDone[k], K); await idle(); await calm();
+    // (5) Reopen (in the Review tab, under Completed: the order window has no Reopen button since 5 Oct, round 8): back to open everywhere,
+    //     every seal kept (2 Complete, 2 Reopen)
+    await page.evaluate(() => OrderWin.setView('info'));
+    assert.equal(await page.evaluate(() => document.querySelectorAll('#orderWin [data-cu-reopen]').length), 0, 'the order window has no Reopen button');
+    await page.evaluate(() => OrderWin.close()); await page.waitForFunction(() => !OrderWin.isOpen()); await idle(); await stamped();
+    await page.click('#reviewView .rvSeg [data-cseg="done"]');   // (both orders are completed: no Open tab chips are left, the Completed switch is)
+    await page.click(`#rvList .reviewListRow[data-rid="${RID}"] [data-cu-reopen]`);
+    await page.waitForFunction(k => !B.maps.customDone[k], K); await idle(); await stamped(); await calm();
+    await page.click('#reviewView .rvSeg [data-cseg="open"]');
+    await page.evaluate(k => OrderWin.open(k), K);
+    await page.waitForSelector('#owPcSum [data-cu-complete]', { state: 'visible' }); await calm();
     await page.evaluate(() => OrderWin.setView('timeline'));
     await page.waitForFunction(() => document.querySelectorAll('#owTimeline .tlSt[data-key^="reopened~"]').length === 2 && document.getElementById('owNow').textContent !== 'Order completed', null, { timeout: 15000 });
     await page.waitForTimeout(500);
@@ -198,8 +205,8 @@ const opsOf = evs => evs.filter(opOf).map(e => [opOf(e), e.by, (e.data && e.data
     assert.notEqual(s.k, 'Order completed', 'the Now card is open again: ' + s.card);
     console.log(`  ✓ reopened: pill "${s.pill}", step row open (next: ${s.stops.find(x => x[1] === 'c')[0]}), NOW "${s.nowLine}", ${s.ghosts} steps to come, Now card "${s.k}"; all 4 seals kept`);
     // Complete again: completed again
-    await page.evaluate(() => OrderWin.setView('info')); await page.waitForSelector('#owCustom [data-cu-complete]', { state: 'visible' });
-    await page.click('#owCustom [data-cu-complete]');
+    await page.evaluate(() => OrderWin.setView('info')); await page.waitForSelector('#owPcSum [data-cu-complete]', { state: 'visible' });
+    await page.click('#owPcSum [data-cu-complete]');
     await page.waitForFunction(k => B.maps.customDone[k], K); await idle(); await calm();
     await page.evaluate(() => OrderWin.setView('timeline'));
     await page.waitForFunction(() => document.querySelectorAll('#owTimeline .tlSt[data-key^="sealCompleted~"]').length === 3 && document.getElementById('owNow').textContent === 'Order completed', null, { timeout: 15000 });
@@ -222,7 +229,7 @@ const opsOf = evs => evs.filter(opOf).map(e => [opOf(e), e.by, (e.data && e.data
     await mount(RID);
     await page.waitForFunction(() => window.__el.querySelectorAll('.tlSt[data-key^="reopened~"]').length === 2 && window.__ev, null, { timeout: 10000 });
     const host = await page.evaluate(() => window.__ev.filter(e => e.data && e.data.reopened).map(e => [e.type, e.text]));
-    assert.deepEqual(host.map(x => x[0]), ['note', 'note'], 'type note (the Reopen under Completed, then the one in the order window)'); assert.match(host[0][1], /^Custom order reopened by Test Operator/, 'its own words');
+    assert.deepEqual(host.map(x => x[0]), ['note', 'note'], 'type note (the Reopen under Completed, then the second one, again under Completed)'); assert.match(host[0][1], /^Custom order reopened by Test Operator/, 'its own words');
     // Paul's order as its records keep it: its one completion drawn (the rim: the sorter, where older presses were made)
     await mount(P, await tl(P));
     await page.waitForFunction(() => window.__el.querySelectorAll('.tlSt[data-key]').length >= 2, null, { timeout: 10000 });

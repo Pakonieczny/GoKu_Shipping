@@ -350,8 +350,8 @@ const brief = e => [e.action, e.orderId, e.parts, e.orders, e.person, e.station,
       assert(/Complete Order/.test(completes[1].detail));
       // 4 · the Undo the order window offers for 12 s after a completion is an undo (what was produced is taken back)
       await page.evaluate(k => OrderWin.open(k), KEY);
-      await page.waitForSelector('#owCustom [data-cu-undo]');
-      await page.click('#owCustom [data-cu-undo]');
+      await page.waitForSelector('#owPcSum [data-cu-undo]');
+      await page.click('#owPcSum [data-cu-undo]');
       await page.waitForFunction(k => !B.maps.customDone[k], KEY); await settle(); await flush();
       assert.deepStrictEqual(rec.ev('undo').map(brief), [['undo', RID, 2, 1, 'Tess Sorter', 'sorter', 'charm-nest-1']], 'Undo is an undo');
       // 5 · an Undo the server refuses is one error, and not an undo (nothing was taken back); the completion stands
@@ -362,8 +362,8 @@ const brief = e => [e.action, e.orderId, e.parts, e.orders, e.person, e.station,
       const undos0 = rec.ev('undo').length;
       refuseReopen = true;
       await page.evaluate(k => OrderWin.open(k), KEY);
-      await page.waitForSelector('#owCustom [data-cu-undo]');
-      await page.click('#owCustom [data-cu-undo]');
+      await page.waitForSelector('#owPcSum [data-cu-undo]');
+      await page.click('#owPcSum [data-cu-undo]');
       for (let i = 0; i < 40 && !rec.ev('error').some(e => /Undo not completed/.test(e.detail)); i++) { await wait(250); await flush(); }
       refuseReopen = false;
       assert.deepStrictEqual(rec.ev('error').filter(e => /Undo not completed/.test(e.detail)).map(brief), [['error', RID, 0, 0, 'Tess Sorter', 'sorter', 'charm-nest-1']], 'a refused Undo is one error');
