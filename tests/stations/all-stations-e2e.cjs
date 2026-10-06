@@ -18,7 +18,7 @@
 // inbox's recorder (the real recordOutcome). Etsy, Chit Chats and the model are faked or refused; every other host is refused and written down.
 // Every check names the workers whose pieces it needs; a check that fails while one of them has not landed is PENDING (with the name), not failed.
 //
-//   node tests/stations/all-stations-e2e.cjs            (CHROMIUM=... PW_DIR=... SHOTS_DIR=... ONLY_CHECKS=A-,B- STRICT=1 PHASES=A,B,C)
+//   node tests/stations/all-stations-e2e.cjs            (CHROMIUM=... PW_DIR=... SHOTS_DIR=... ONLY_CHECKS=A-,B- STRICT=1 PHASES=A,B,C,D)
 'use strict';
 const fs = require('fs'), os = require('os'), path = require('path'), { spawnSync } = require('child_process');
 const root = path.join(__dirname, '../..');
@@ -27,7 +27,7 @@ const pwCore = (() => { for (const d of [pwDir, path.join(root, 'node_modules'),
 const { chromium } = pwCore;
 const CHROME = process.env.CHROMIUM || (() => { try { const d = '/opt/pw-browsers'; const c = fs.readdirSync(d).filter(x => /^chromium-/.test(x)).sort().pop(); return c ? path.join(d, c, 'chrome-linux/chrome') : undefined; } catch (_) { return undefined; } })();
 const SHOTS = process.env.SHOTS_DIR || (fs.existsSync('/mnt/project-files/plans/stations-round2') ? '/mnt/project-files/plans/stations-round2/st1-shots' : path.join(os.tmpdir(), 'st1-shots'));
-const PHASES = (process.env.PHASES || 'A,B,C').split(',');
+const PHASES = (process.env.PHASES || 'A,B,C,D').split(',');
 
 const { World, sleep } = require('./all-stations/world.cjs');
 const { Apps, until } = require('./all-stations/apps.cjs');
@@ -561,11 +561,48 @@ fs.mkdirSync(SHOTS, { recursive: true });
     const keptK = new Set(['weld', 'laser']);
     const nonAdmin = crew.filter(c => !keptK.has(c.k)), keptCrew = crew.filter(c => keptK.has(c.k));
     const OWN = ['AD1', 'AD2', 'AD3', 'AD4'];
+    /* ── how the portal words a sign-out (UX1 item 14; AD4's endedText / endPill): the person page's Out row (Day view) and the Sign-ins window's pill, read at 1440 and
+       pictured at 1280 and 390 px ── */
+    const SIZES = [[1280, 900], [390, 844]];
+    const sized = async (target, tag) => { for (const [w, h] of SIZES) { await portal.setViewportSize({ width: w, height: h }).catch(() => {}); await sleep(900); await shot(target, tag + '-' + w); } await portal.setViewportSize({ width: 1440, height: 1000 }).catch(() => {}); await sleep(500); };
+    const outRowOf = async (person, tag) => {
+      const pv = await P.personPage(person, { settle: 3500, range: 'day' });
+      const out = await portal.evaluate(sel => { const e = document.querySelector(sel + ' .efpShiftT'); return e ? e.innerText.replace(/\s+/g, ' ').trim() : ''; }, P.V);
+      // (the picture is the window as a person sees it, scrolled to the day's In / Out line; the page's own scroll box is taller than the window)
+      for (const [w, h] of SIZES) {
+        await portal.setViewportSize({ width: w, height: h }).catch(() => {}); await sleep(900);
+        await portal.evaluate(sel => { const e = document.querySelector(sel + ' .efpShift'); if (e) e.scrollIntoView({ block: 'center' }); }, P.V).catch(() => {}); await sleep(500);
+        await shot(portal, tag + '-person-' + person.replace(/\W+/g, '').toLowerCase() + '-' + w);
+      }
+      await portal.setViewportSize({ width: 1440, height: 1000 }).catch(() => {}); await sleep(500);
+      await P.back();
+      return out;
+    };
+    let signinsRoute = false;
+    const signinsPills = async (tag, focus) => {
+      // (the Library gate wants the operator passcode; the Sign-ins window's read is the one call given the fake passcode here, nothing else of the page is)
+      if (!signinsRoute) { signinsRoute = true; await portal.route(/charmNestLibrary/, route => { const rq = route.request(); (/"sessionsList"/.test(rq.postData() || '') ? route.continue({ headers: Object.assign({}, rq.headers(), { 'x-edit-passcode': W.pass }) }) : route.continue()).catch(() => {}); }); }
+      await portal.evaluate(() => SignIns.open());
+      try {
+        try { await portal.waitForSelector('#dlgSignins .siGroup', { timeout: 30000 }); }
+        catch (e) { throw new Error('the Sign-ins window shows no sign-ins: "' + (await portal.evaluate(() => { const d = document.getElementById('dlgSignins'); return d ? d.innerText.replace(/\s+/g, ' ').slice(0, 300) : 'no window'; }).catch(() => '?')) + '"'); }
+        await sleep(1800);
+        const rows = await portal.$$eval('#dlgSignins .siGroup', gs => gs.map(g => ({ who: ((g.querySelector('.siGHead b') || {}).textContent || '').trim(), rows: [...g.querySelectorAll('tbody tr')].map(tr => ({ where: tr.children[0].innerText.replace(/\s+/g, ' ').trim(), pill: ((tr.querySelector('.pill') || {}).textContent || '').trim() })) })));
+        for (const [w, h] of SIZES) {         // (pictured scrolled to the person's group, where the Ended pills are)
+          await portal.setViewportSize({ width: w, height: h }).catch(() => {}); await sleep(900);
+          await portal.evaluate(f => { const g = [...document.querySelectorAll('#dlgSignins .siGroup')].find(x => ((x.querySelector('.siGHead b') || {}).textContent || '').trim() === f); if (g) g.scrollIntoView({ block: 'center' }); }, focus || '').catch(() => {}); await sleep(500);
+          await shot(portal.locator('#dlgSignins'), tag + '-signins-' + w);
+        }
+        await portal.setViewportSize({ width: 1440, height: 1000 }).catch(() => {}); await sleep(500);
+        return rows;
+      } finally { await portal.evaluate(() => SignIns.close()).catch(() => {}); await sleep(400); }      // (a window left open would block every click that follows)
+    };
+    const pillsOf = (rows, who, stationRe) => rows.filter(g => g.who === who).flatMap(g => g.rows).filter(r => stationRe.test(r.where)).map(r => r.pill);
     await check('C-IDLE1', 'ten minutes without input: everybody who is not an Admin, not at Welding and not at Laser is signed out at every station (sessions end "idle"); Welding (both tasks) and Laser are still signed in', OWN, async () => {
       const bad = [];
       for (const c of nonAdmin) {
         const s = await sessionFor(c.person, c.device, c.task === undefined ? undefined : c.task);
-        if (!s || s.endAt == null) bad.push(c.person + '@' + c.device + ' still signed in'); else if (s.endReason !== 'idle') bad.push(c.person + '@' + c.device + ' ended "' + s.endReason + '"');
+        if (!s || s.endAt == null) { const pg = S.pages[c.k], li = pg && !pg.isClosed() ? await lastInputOf(pg) : 0, nw = await W.now(); bad.push(c.person + '@' + c.device + ' still signed in (session ' + JSON.stringify(s && { start: hhmm(s.startAt), beat: s.lastBeat && hhmm(s.lastBeat), li: s.lastInputAt && hhmm(s.lastInputAt), station: s.station }) + '; the page\'s last input ' + (li ? Math.round((nw - li) / 1000) + ' s ago' : 'unknown') + ', before the quiet ' + (before[c.person + '@' + c.device] ? Math.round((nw - before[c.person + '@' + c.device]) / 1000) + ' s ago' : 'unknown') + ')'); } else if (s.endReason !== 'idle') bad.push(c.person + '@' + c.device + ' ended "' + s.endReason + '"');
       }
       for (const c of keptCrew) {
         const s = await sessionFor(c.person, c.device, c.task);
@@ -628,12 +665,23 @@ fs.mkdirSync(SHOTS, { recursive: true });
       await W.jump(lenaIn + 65 * 60000 - await W.now()); await sleep(4000); await W.advance(30000, { step: 15000, settle: 200 });
       const s = await endedAs(PEOPLE.laserApp, 'charm-nest-1', undefined, 25000);
       eq(s.endReason, 'idle', PEOPLE.laserApp + ' ended');
-      assert(Math.abs(s.endAt - lenaIn) < 20000, PEOPLE.laserApp + '\'s hours end ' + Math.round((s.endAt - lenaIn) / 1000) + ' s from her last input');
+      assert(Math.abs(s.endAt - lenaIn) < 20000, PEOPLE.laserApp + '\'s hours end ' + Math.round((s.endAt - lenaIn) / 1000) + ' s from her last input · record: ' + JSON.stringify({ start: hhmm(s.startAt) + ':' + Math.round(((s.startAt / 1000) % 60)), beat: s.lastBeat && Math.round((s.lastBeat - lenaIn) / 1000), li: s.lastInputAt && Math.round((s.lastInputAt - lenaIn) / 1000), end: Math.round((s.endAt - lenaIn) / 1000), by: s.endReason, via: s.endSource || s.endedBy || '', keys: Object.keys(s).filter(k => /end|last|input|source|by/i.test(k)) }));
       assert(await loginShown('laser'), PEOPLE.laserApp + '\'s page shows no sign-in after an hour');
     });
     await check('C-LASER2', 'the portal says why the Laser person is out: "Signed out after 1 hour without input" (not ten minutes)', ['AD3', 'AD4'], async () => {
       const pv = await P.personPage(PEOPLE.laserApp, { settle: 3500, range: 'day' }); await P.back();
       assert(/Signed out after 1 hour without input/.test(pv.text) && !/after 10 minutes without input/.test(pv.text), 'the person page of ' + PEOPLE.laserApp + ' says: "' + pv.where + '" · ' + (/Signed out[^.]{0,60}/.exec(pv.text) || ['(nothing about a sign-out)'])[0]);
+    });
+    await check('C-WORDS1', 'the portal words each idle sign-out by its station: Laser "Signed out after 1 hour without input" (person page Out row) and "1 hour without input" (Sign-ins pill); the others "10 minutes" / "10 min"; Welding is still signed in; no "10 min" for a Laser or Welding person', ['AD3', 'AD4'], async () => {
+      const lena = await outRowOf(PEOPLE.laserApp, 'C-words1-laser'), mich = await outRowOf(PEOPLE.asm, 'C-words1-assembly');
+      assert(/Signed out after 1 hour without input/.test(lena) && !/10 minutes/.test(lena), PEOPLE.laserApp + '\'s Out row says: "' + lena + '"');
+      assert(/Signed out after 10 minutes without input/.test(mich), PEOPLE.asm + '\'s Out row says: "' + mich + '"');
+      const rows = await signinsPills('C-words1', PEOPLE.laserApp);
+      eq(pillsOf(rows, PEOPLE.laserApp, /Laser/i), ['1 hour without input'], PEOPLE.laserApp + '\'s Laser pill');
+      eq(pillsOf(rows, PEOPLE.asm, /Assembly/i), ['10 min without input'], PEOPLE.asm + '\'s Assembly pill');
+      for (const n of [PEOPLE.matcher, PEOPLE.welder]) assert(pillsOf(rows, n, /Welding/i).every(x => x === 'Signed in'), n + ' (Welding, no idle sign-out) shows "' + pillsOf(rows, n, /Welding/i).join() + '"');
+      const wrong = rows.flatMap(g => g.rows.filter(r => /Laser|Welding/i.test(r.where) && /^10 min/.test(r.pill)).map(r => g.who + ' ' + r.where + ' "' + r.pill + '"'));
+      assert(!wrong.length, 'a Laser or Welding person reads "10 min": ' + wrong.join(' ; '));
     });
     await check('C-POLICY', 'the pages carry the table of Addendum 2 and its words: Welding closes at 17:00 only, Laser one hour (30 minutes from five), the rest ten minutes', ['AD3'], async () => {
       const r = await S.pages.laser.evaluate(() => ({ w: StationSession.policy('welding'), l: StationSession.policy('laser'), d: StationSession.policy('assembly'),
@@ -706,6 +754,13 @@ fs.mkdirSync(SHOTS, { recursive: true });
         const pv = await P.personPage(PEOPLE.matcher, { settle: 3500, range: 'day' }); await P.back();
         assert(/Signed out at 5:00 pm/.test(pv.text), 'the person page of ' + PEOPLE.matcher + ' does not say it was five o\'clock: "' + pv.where + '"');
       });
+      await check('C-WORDS2', 'the portal words the 17:00 sign-out of Welding: "Signed out at 5:00 pm" (Out row, both people) and "5:00 pm" (Sign-ins pill), never ten minutes', ['AD3', 'AD4'], async () => {
+        for (const n of [PEOPLE.matcher, PEOPLE.welder]) { const out = await outRowOf(n, 'C-words2-weld'); assert(/Signed out at 5:00 pm/.test(out) && !/10 minutes|without input/.test(out), n + '\'s Out row says: "' + out + '"'); }
+        const rows = await signinsPills('C-words2', PEOPLE.matcher);
+        for (const n of [PEOPLE.matcher, PEOPLE.welder]) { const l = pillsOf(rows, n, /Welding/i); assert(l.length && l[l.length - 1] === '5:00 pm', n + ' Sign-ins pills at Welding: "' + l.join() + '"'); }
+        const wrong = rows.flatMap(g => g.rows.filter(r => /Welding/i.test(r.where) && /without input/.test(r.pill)).map(r => g.who + ' "' + r.pill + '"'));
+        assert(!wrong.length, 'a Welding person reads "without input": ' + wrong.join(' ; '));
+      });
       // the two sleeping computers wake at 17:01 by the shop's clock: no input since 16:20
       await stepTo(17, 1);
       await W.syncClock(asleep[0]); await W.syncClock(asleep[1]); asleep.length = 0; await sleep(5000);
@@ -739,7 +794,7 @@ fs.mkdirSync(SHOTS, { recursive: true });
         const adm = await sessionFor('Paul K.', 'charm-nest-1'); assert(adm && adm.endAt == null || (await portal.evaluate(() => !!StationActivity.who())), 'the Admin was signed out');
       });
       await check('C-LASER4', 'Laser after five: input at 16:45 keeps her in at 17:00 (the limit is 30 minutes from five), thirty minutes after that input she is signed out ("closing"), the hours end at the input; the portal says "Signed out at 5:00 pm"', OWN, async () => {
-        assert(at500.lena && at500.lena.endAt == null, PEOPLE.laserApp + ' was signed out at 17:00 with input fifteen minutes earlier: ' + JSON.stringify([at500.lena && at500.lena.endReason]));
+        assert(at500.lena && at500.lena.endAt == null, PEOPLE.laserApp + ' was signed out at 17:00 with input fifteen minutes earlier: ' + JSON.stringify([at500.lena && at500.lena.endReason]) + ' · session ' + JSON.stringify(at500.lena && { start: hhmm(at500.lena.startAt), end: at500.lena.endAt && hhmm(at500.lena.endAt), beat: at500.lena.lastBeat && hhmm(at500.lena.lastBeat), li: at500.lena.lastInputAt && hhmm(at500.lena.lastInputAt), station: at500.lena.station }) + ' · the page\'s last input ' + (S.last.lenaInput ? hhmm(S.last.lenaInput) : 'none') + ' (sign-in again was at ' + (lenaIn2 ? hhmm(lenaIn2) : '?') + ')');
         const s = await endedAs(PEOPLE.laserApp, 'charm-nest-1', undefined, 25000);
         eq(s.endReason, 'closing', PEOPLE.laserApp + ' ended');
         assert(S.last.lenaInput > 0 && Math.abs(s.endAt - S.last.lenaInput) < 20000, PEOPLE.laserApp + '\'s hours end at ' + hhmm(s.endAt) + ', her last input was ' + (S.last.lenaInput ? hhmm(S.last.lenaInput) : 'unknown'));
@@ -747,7 +802,67 @@ fs.mkdirSync(SHOTS, { recursive: true });
         const pv = await P.personPage(PEOPLE.laserApp, { settle: 3500, range: 'day' }); await P.back();
         assert(/Signed out at 5:00 pm/.test(pv.text), 'the person page of ' + PEOPLE.laserApp + ' does not say it was five o\'clock: "' + pv.where + '"');
       });
+      await check('C-WORDS3', 'the portal words Laser after five: "Signed out at 5:00 pm after 30 minutes without input" (Out row) and "5:00 pm · 30 min without input" (Sign-ins pill, next to the morning\'s "1 hour without input")', ['AD3', 'AD4'], async () => {
+        const out = await outRowOf(PEOPLE.laserApp, 'C-words3-laser');
+        assert(/Signed out at 5:00 pm after 30 minutes without input/.test(out), PEOPLE.laserApp + '\'s Out row says: "' + out + '"');
+        const rows = await signinsPills('C-words3', PEOPLE.laserApp);
+        eq(pillsOf(rows, PEOPLE.laserApp, /Laser/i), ['1 hour without input', '5:00 pm · 30 min without input'], PEOPLE.laserApp + '\'s Laser pills');
+      });
     }
+  }
+
+  /* ═════════════════════════════ PHASE D · one person, two station pages in ONE browser profile (AS2, commit 4825c70f) ═════════════════════════════ */
+  if (PHASES.includes('D')) {
+    say('\nD · one person at two station pages of one computer (one browser profile)');
+    keep.stop();
+    // The station pages of a computer share the sign-in keys (employee_id / employee_name): a person signed in at assembly-1 also has a session at an assembly-2 page open in the
+    // same browser. Before AS2 each page judged idle by its own input only: the page nobody touched signed the person out after ten minutes, which cleared the SHARED keys, and
+    // the page being worked in kept looking signed in while its session had ended and every scan after that was dropped.
+    await check('D-AS2', 'two Assembly pages in ONE browser profile, one person (assembly-1 worked, assembly-2 never touched): twelve minutes with input at one page only, the person is not signed out at either page, the sign-in stays, and phone scans keep recording at both; with no input anywhere both end together at the person\'s last input', ['AD1', 'AD2'], async () => {
+      const who = PEOPLE.asmSmoke;
+      // (the kept assembly-2 page of phase A is another computer listening to the very same phone relay: a scan would be taken by whichever page sees it first, so that computer is switched off)
+      if (S.pages.asm2 && !S.pages.asm2.isClosed()) await W.closeContext(S.pages.asm2.context());
+      const ctx = await W.context({ label: 'one computer, two station pages' });
+      try {
+        const p1 = await A.pin(ctx, 'assembly-1.html', who);
+        const p2 = await A.pin(ctx, 'assembly-2.html', who, { signIn: false });            // (the same browser profile: the kept sign-in is picked up, nobody types a number here)
+        await p2.waitForFunction(() => window.isEmployeeLoggedIn === true && window.StationActivity && StationActivity.who(), null, { timeout: 25000 });
+        for (const dev of ['assembly-1', 'assembly-2']) await until(async () => { const s = await sessionFor(who, dev); return !!s && s.endAt == null; }, 'a running session for ' + who + ' at ' + dev, 25000);
+        // a scan and a stamp at the page being worked in, before the quiet
+        await scanned('assembly-scan-1.html', R.asm6, p1, R.asm6); await sleep(1200); await A.say(p1, 'QA1'); await A.flush(p1);
+        await seen([{ action: 'scan', device: 'assembly-1', person: who, orderId: R.asm6 }, { action: 'complete', device: 'assembly-1', person: who, orderId: R.asm6 }]);
+        // twelve minutes: a real touch at assembly-1 every four minutes, nothing at all at assembly-2 (its own input is older than the ten minutes)
+        let el = 0;
+        await W.advance(12 * 60000, { step: 60000, settle: 150, between: async d => { el += d; if (el % 240000 === 0) { await p1.mouse.move(150 + (el / 60000) * 7, 170).catch(() => {}); await p1.mouse.move(170 + (el / 60000) * 7, 190).catch(() => {}); } } });
+        await sleep(3000); await W.advance(20000, { step: 10000, settle: 300 });
+        const li2 = await lastInputOf(p2), now = await W.now();
+        assert(now - li2 > 11 * 60000, 'the page nobody touched had input ' + Math.round((now - li2) / 1000) + ' s ago: the test did not leave it quiet');
+        const a1 = await sessionFor(who, 'assembly-1'), a2 = await sessionFor(who, 'assembly-2');
+        assert(a1 && a1.endAt == null, who + ' was signed out at assembly-1 (the page being worked in) after twelve minutes: "' + (a1 && a1.endReason) + '"');
+        assert(a2 && a2.endAt == null, who + ' was signed out at assembly-2 (the untouched page) although the same person was working at assembly-1: "' + (a2 && a2.endReason) + '"');
+        for (const [k, pg] of [['assembly-1', p1], ['assembly-2', p2]]) {
+          const st = await pg.evaluate(() => ({ on: window.isEmployeeLoggedIn === true, id: !!localStorage.getItem('employee_id'), name: localStorage.getItem('employee_name') || '' }));
+          assert(st.on && st.id && st.name, k + ': the page shows the person signed out or the shared sign-in was cleared: ' + JSON.stringify({ on: st.on, id: st.id, name: st.name }));
+        }
+        await shot(p1, 'D1-assembly-1-after-twelve-minutes-one-page-touched');
+        // scans keep recording: one at the worked page, one at the untouched page
+        await scanned('assembly-scan-1.html', R.asm7, p1, R.asm7); await sleep(1200); await A.say(p1, 'QA1'); await A.flush(p1);
+        await seen([{ action: 'scan', device: 'assembly-1', person: who, orderId: R.asm7 }, { action: 'complete', device: 'assembly-1', person: who, orderId: R.asm7 }]);
+        await scanned('assembly-scan-2.html', R.asm8, p2, R.asm8); await sleep(1200); await A.say(p2, 'QA1'); await A.flush(p2);
+        await seen([{ action: 'scan', device: 'assembly-2', person: who, orderId: R.asm8 }, { action: 'complete', device: 'assembly-2', person: who, orderId: R.asm8 }]);
+        assert((await events(e => e.person === who && (e.device === 'assembly-1' || e.device === 'assembly-2') && [R.asm6, R.asm7, R.asm8].includes(e.orderId) && e.action === 'complete')).length === 3, 'not exactly three completions for the three orders');
+        // no input anywhere any more: both sessions end together, at the person's latest input at either page (not at each page's own older one)
+        const lastAny = Math.max(await lastInputOf(p1), await lastInputOf(p2));
+        await W.advance(11 * 60000, { step: 60000, settle: 150 }); await sleep(4000); await W.advance(60000, { step: 30000, settle: 300 });
+        const bad = [];
+        for (const dev of ['assembly-1', 'assembly-2']) {
+          const e = await endedAs(who, dev, undefined, 25000);
+          if (!['idle', 'closing'].includes(e.endReason)) bad.push(dev + ' ended "' + e.endReason + '"');
+          if (Math.abs(e.endAt - lastAny) > 20000) bad.push(dev + ': the hours end ' + Math.round((e.endAt - lastAny) / 1000) + ' s from the person\'s last input at either page');
+        }
+        assert(!bad.length, bad.join(' ; '));
+      } finally { await W.closeContext(ctx); }
+    });
   }
 
   /* ═════════════════════════════ the whole run: nothing outside, nothing paid, no PIN ═════════════════════════════ */
@@ -786,6 +901,7 @@ fs.mkdirSync(SHOTS, { recursive: true });
     });
   }
   say(table());
+  say('clock operations on a browser that failed (a failed one leaves that computer\'s clock behind and looks like a product defect): ' + W.clockFailures.length + (W.clockFailures.length ? ' · ' + JSON.stringify(W.clockFailures.slice(0, 5)) : ''));
   fs.writeFileSync(path.join(SHOTS, 'st1-results.json'), JSON.stringify({ at: new Date().toISOString(), seconds: Math.round((Date.now() - t00) / 1000), landed: landedAll(), results }, null, 1));
   const failed = results.filter(r => r.status === 'FAILED').length, pend = results.filter(r => r.status === 'PENDING').length;
   process.exit(failed || (process.env.STRICT && pend) ? 1 : 0);

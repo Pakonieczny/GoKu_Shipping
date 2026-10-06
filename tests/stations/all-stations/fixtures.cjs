@@ -23,6 +23,9 @@ const R = {
   asm3: add('3820000203', 'Ava Frost', [LINE('3820000203', 'Leaf Charm, gold', 1, 'CH-LEAF-GF', 1912340014)]),
   asm4: add('3820000204', 'Alma Cole', [LINE('3820000204', 'Bee Charm, silver', 3, 'CH-BEE-SS', 1912340015)]),
   asm5: add('3820000205', 'Aldo Rowe', [LINE('3820000205', 'Moon Charm, gold', 2, 'CH-MOON-GF', 1912340011, [{ formatted_name: 'Size', formatted_value: 'S' }])]),
+  asm6: add('3820000206', 'Alba Ness', [LINE('3820000206', 'Leaf Charm, silver', 1, 'CH-LEAF-SS', 1912340016)]),      // (D-AS2: one person, two Assembly pages of one computer)
+  asm7: add('3820000207', 'Arlo Dunn', [LINE('3820000207', 'Bee Charm, gold', 2, 'CH-BEE-GF', 1912340017)]),
+  asm8: add('3820000208', 'Aria Penn', [LINE('3820000208', 'Star Charm, gold', 1, 'CH-STAR-GF', 1912340018)]),
   ship1: add('3820000301', 'Sam Clarke', [LINE('3820000301', 'Moon Charm, gold', 1, 'CH-MOON-GF', 1912340011), LINE('3820000301', 'Leaf Charm, gold', 1, 'CH-LEAF-GF', 1912340014)]),
   ship2: add('3820000302', 'Sue Dane', [LINE('3820000302', 'Heart Charm, rose', 1, 'CH-HEART-RG', 1912340012)]),
   ship3: add('3820000303', 'Seth Lake', [LINE('3820000303', 'Star Charm, silver', 2, 'CH-STAR-SS', 1912340013)]),

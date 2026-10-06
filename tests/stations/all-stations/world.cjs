@@ -24,7 +24,7 @@ const PDFMAKE_STUB = `window.__pdfMade = []; window.pdfMake = { vfs: {}, fonts: 
 const JQUERY_STUB = 'window.$=window.jQuery=function(){var o={on:function(){return o},ready:function(f){try{f()}catch(e){}return o},off:function(){return o},each:function(){return o},css:function(){return o},hide:function(){return o},show:function(){return o}};return o};';
 
 class World {
-  constructor() { this.child = null; this.ctl = ''; this.sorterOrigin = ''; this.stationOrigin = ''; this.pass = ''; this.pages = []; this.ctxs = []; this.outside = []; this.stubbed = []; this.errors = []; this.browser = null; }
+  constructor() { this.child = null; this.ctl = ''; this.sorterOrigin = ''; this.stationOrigin = ''; this.pass = ''; this.pages = []; this.ctxs = []; this.outside = []; this.stubbed = []; this.errors = []; this.clockFailures = []; this.browser = null; }
 
   static async start(o) {
     const W = new World(); W.browser = o.browser;
@@ -95,8 +95,10 @@ class World {
   async jump(ms, o) {
     o = o || {};
     await this.skew(ms);
-    for (const c of this.ctxs) { if (o.except && o.except.includes(c)) continue; try { await c.clock.fastForward(ms); } catch (_) {} }
+    for (const c of this.ctxs) { if (o.except && o.except.includes(c)) continue; await this.tick(c, 'fastForward', ms); }
   }
+  /** a clock operation on one computer; a failure (a slow machine, a closed page) is written down: a computer whose clock was left behind looks like a product defect */
+  async tick(c, op, ms) { try { await c.clock[op](ms); } catch (e) { this.clockFailures.push({ ctx: c.__label || '?', op, ms, why: String(e && e.message || e).slice(0, 100) }); } }
   /** one computer asleep through a stretch of time: its clock jumps (its timers fire once, on waking), the shop's clock is not touched here */
   async wake(ctx, ms) { try { await ctx.clock.fastForward(ms); } catch (_) {} }
   /** a computer that slept wakes at the shop's time: its clock jumps to it (its timers fire once, as when a lid opens), so what it then sends carries a true time */
@@ -119,7 +121,7 @@ class World {
       for (let rest = d; rest > 0; rest -= 8000) {
         const s = Math.min(8000, rest);
         await this.skew(s);
-        for (const c of this.ctxs) { if (o.except && o.except.includes(c)) continue; try { await c.clock.runFor(s); } catch (_) {} }
+        for (const c of this.ctxs) { if (o.except && o.except.includes(c)) continue; await this.tick(c, 'runFor', s); }
       }
       if (o.between) await o.between(d);
       await sleep(o.settle || 120);
