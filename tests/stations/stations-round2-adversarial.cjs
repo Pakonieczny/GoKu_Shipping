@@ -286,7 +286,8 @@ function openTab(pc, o = {}) {
     if (body && Array.isArray(body.activity)) tab.acts.push(...body.activity);
     if (!tab.online) { rec.status = 'offline'; throw FAIL_FETCH(); }
     const deliver = async () => {
-      if (tab.forceStatus) { rec.status = tab.forceStatus; return { status: tab.forceStatus, ok: false, json: async () => ({}), text: async () => '{}' }; }
+      const forced = tab.forceStatus || (tab.failIf && tab.failIf(rec));          // failIf(rec) -> a status to answer that ONE request with (the Admin lookup, say), or falsy
+      if (forced) { rec.status = forced; return { status: forced, ok: false, json: async () => ({}), text: async () => '{}' }; }
       if (u.pathname === '/.netlify/functions/firebaseOrders') {
         const r = await door.handler({ httpMethod: rec.method, headers: { 'x-nf-client-connection-ip': tab.ip }, queryStringParameters: Object.fromEntries(u.searchParams), body: text || undefined });
         rec.status = r.statusCode; rec.reply = r.body;
@@ -648,7 +649,7 @@ async function welding() {
 /* ═════════════════════════ 1 · auto sign-out: the server side (AD2: _stationAdmins.js, _stationAutoSignout.js, the session door) ═════════════════════════ */
 const HAVE = {
   ad2: !!ADMINS && exists('netlify/functions/_stationAutoSignout.js'),
-  ad1: /["']idle["']/.test(SCRIPTS.session) && /lastInputAt/.test(SCRIPTS.session) && /stationAdmin/.test(SCRIPTS.session),
+  ad1: !!process.env.FORCE_AD1 || /["']idle["']/.test(SCRIPTS.session) && /lastInputAt/.test(SCRIPTS.session) && /stationAdmin/.test(SCRIPTS.session),
   ws1page: /weld_people/.test(read('weld-1.html')),
   ld1: /laser or design/i.test(read('charm-nest-1.html')) || /CNRole/.test(read('charm-nest-1.html')) || /CNRole/.test(read('charm-nest-bridge.js')),
   ws3: /matched/.test(SCRIPTS.queue)
@@ -880,6 +881,188 @@ async function autoServer() {
   });
 }
 
+/* ═════════════════════════ 1b · auto sign-out, the page side (AD1: the idle and 5 pm timers in station-session.js, the Admin lookup) ═════════════════════════ */
+async function autoPage() {
+  const NON = 'Ana Tester', ADM = 'Paul K', BEN = 'Ben Tester';
+  const single = (pc, o) => openTab(pc, Object.assign({ page: 'assembly-1.html', station: 'assembly', device: 'assembly-1' }, o || {}));
+  const multi = (pc, o) => openTab(pc, Object.assign({ multi: true, station: 'welding', device: 'weld-1' }, o || {}));
+  const lookups = tab => tab.reqs.filter(r => r.body && r.body.stationAdmin !== undefined);
+  const near = (a, b, ms = 1500) => Math.abs(a - b) <= ms;
+  const typing = async (tab, every, total, type = 'keydown') => { for (let t = 0; t < total; t += every) { await advance(every); tab.input(type); } };
+  const isLookup = rec => rec.body && rec.body.stationAdmin !== undefined;
+  await section('1b · auto sign-out, the page side', async () => {
+    if (!HAVE.ad1) { pending('Rule A and B in the page, the Admin lookup, sleep, clock jumps, reload, two tabs, background tab, offline', 'AD1 (station-session.js idle/closing timers and the stationAdmin lookup) is not on main yet'); return; }
+
+    await check('Rule A: 10 minutes without input signs a non-Admin out through the page, with the reason idle, once; the end is the LAST INPUT; 9:30 of quiet does not', async () => {
+      world(); const pc = computer('a'), tab = single(pc); tab.login(NON); await advance(2 * MIN); tab.input('keydown'); const last = wall();
+      await advance(9 * MIN + 30000); eq(tab.signOuts, [], 'not at 9:30 of quiet'); ok(open_().length === 1, 'still open');
+      await advance(MIN); eq(tab.signOuts, ['idle'], 'the page signed out with the reason idle');
+      const d = endedAt(NON); eq(d.length, 1, dumpSessions()); eq(d[0].endReason, 'idle'); ok(near(d[0].endAt, last), 'ends at the last input: ' + iso(d[0].endAt) + ' vs ' + iso(last));
+      await advance(30 * MIN); eq(tab.signOuts, ['idle'], 'once'); eq(tab.kind('end').length, 1, 'one end sent'); eq(tab.errors, []);
+    });
+
+    await check('every kind of user input counts (pointer, touch, key, wheel, click); the network coming back and a storage event do not', async () => {
+      for (const type of ['pointerdown', 'mousedown', 'touchstart', 'keydown', 'wheel', 'click']) {
+        world(); const pc = computer('e'), tab = single(pc); tab.login(NON); await advance(9 * MIN); tab.input(type); await advance(9 * MIN); eq(tab.signOuts, [], `${type} counts as input`);
+      }
+      for (const quiet of ['online', 'storage']) {
+        world(); const pc = computer('q'), tab = single(pc); tab.login(NON); await advance(9 * MIN);
+        if (quiet === 'online') tab.w.dispatchEvent(new tab.w.Event('online')); else tab.w.dispatchEvent(new tab.w.StorageEvent('storage', { key: 'other', newValue: 'x' }));
+        await advance(2 * MIN); eq(tab.signOuts, ['idle'], `${quiet} is not input`);
+      }
+    });
+
+    await check('a person who types every 9 minutes for 3 hours is never signed out; every beat carries the last input (page clock, never in its future)', async () => {
+      world(); const pc = computer('t'), tab = single(pc); tab.login(NON); await typing(tab, 9 * MIN, 3 * HOUR);
+      eq(tab.signOuts, []); ok(open_().length === 1, 'open');
+      const beats = tab.kind('beat'); ok(beats.length >= 30, 'beats: ' + beats.length);
+      for (const b of beats) { ok(Number(b.lastInputAt) > 1e12, 'a beat carries lastInputAt: ' + JSON.stringify(b)); ok(b.lastInputAt <= (b.sentAt || b.at) + 1000, 'last input is not in the future of the page clock'); ok((b.sentAt || b.at) - b.lastInputAt <= 10 * MIN, 'a typing person\'s last input is under 10 minutes old at every beat'); }
+    });
+
+    await check('an Admin is never signed out for idleness (3 hours, no input), asked of the door once per sign-in with the name in the body only, nothing stored; midnight still ends the Admin', async () => {
+      world(); const pc = computer('adm'), tab = single(pc); tab.login(ADM); await advance(3 * HOUR);
+      eq(tab.signOuts, [], 'the Admin stays'); ok(open_().length === 1, 'open');
+      const L = lookups(tab); eq(L.length, 1, 'asked once: ' + L.length); ok(!/Paul/.test(L[0].url), 'the name is not in the URL'); eq(L[0].method, 'POST');
+      ok(![...pc.mem.entries()].some(([k, v]) => /"?admin"?\s*[:=]\s*"?true/i.test(k + '=' + v)), 'the answer is not kept in storage: ' + JSON.stringify([...pc.mem.keys()]));
+      const mid = nyAt('2026-10-08', 0, 0); await goTo(mid + 3 * MIN);
+      eq(tab.signOuts, ['midnight'], 'midnight ends everybody, the Admin too'); const d = endedAt(ADM); eq(d.length, 1); eq(d[0].endReason, 'midnight'); eq(d[0].endAt, mid);
+    });
+
+    await check('the Admin lookup that fails in any way means NOT Admin: offline, 500, 403, 404, 429, no answer at all; the person is signed out after 10 quiet minutes', async () => {
+      for (const mode of ['offline', '500', '403', '404', '429', 'never']) {
+        world(); const pc = computer('f'), tab = single(pc);
+        if (mode === 'offline') tab.setOnline(false); else if (mode === 'never') tab.hold = rec => isLookup(rec); else tab.failIf = rec => isLookup(rec) && Number(mode);
+        tab.login(ADM); await advance(2000); if (mode === 'offline') tab.setOnline(true);
+        await advance(11 * MIN); eq(tab.signOuts, ['idle'], `${mode}: signed out for idleness (fail closed)`); eq(tab.errors, [], mode + ': no page errors');
+      }
+    });
+
+    await check('a slow Admin answer: the person is not kept waiting, and a late answer (even "true") never breaks the page or signs anybody out twice', async () => {
+      world(); const pc = computer('slow'), tab = single(pc); tab.hold = rec => isLookup(rec); tab.login(ADM); await advance(6 * MIN);
+      ok(open_().length === 1, 'signed in while the door has not answered'); tab.input('keydown'); await tab.release(); await advance(2 * MIN);
+      ok(tab.signOuts.length <= 1, 'at most one sign-out: ' + JSON.stringify(tab.signOuts)); eq(tab.errors, []);
+      await advance(15 * MIN); ok(tab.signOuts.length <= 1, 'still at most one: ' + JSON.stringify(tab.signOuts)); ok(endedAt(ADM).length <= 1, dumpSessions());
+    });
+
+    await check('closing at 17:00 Toronto (ordinary and both daylight-saving days): quiet since 16:50 is out at 17:00 at the last input; input at 16:55 stays and Rule A takes over; a sign-in at 17:20 stays while typing', async () => {
+      for (const day of ['2026-10-07', '2026-03-08', '2026-03-09', '2026-11-01', '2026-11-02']) {
+        const m = (h, mi) => nyAt(day, h, mi);
+        world(iso(m(16, 30))); let pc = computer('c'), tab = single(pc); tab.login(NON); await goTo(m(16, 50)); tab.input('keydown'); await goTo(m(17, 3));
+        eq(tab.signOuts.length, 1, `${day}: signed out by 17:03: ${JSON.stringify(tab.signOuts)}`); ok(/^(closing|idle)$/.test(tab.signOuts[0]), `${day}: reason ${tab.signOuts[0]}`);
+        let d = endedAt(NON); eq(d.length, 1, dumpSessions()); ok(near(d[0].endAt, m(16, 50)) && /^(closing|idle)$/.test(d[0].endReason), `${day}: ends at the last input 16:50: ${iso(d[0].endAt)} ${d[0].endReason}`);
+        world(iso(m(16, 30))); pc = computer('c2'); tab = single(pc); tab.login(NON); await goTo(m(16, 55)); tab.input('keydown'); await goTo(m(17, 3)); eq(tab.signOuts, [], `${day}: input at 16:55 stays at 17:03`);
+        await goTo(m(17, 8)); eq(tab.signOuts, ['idle'], `${day}: then idle from 16:55`); d = endedAt(NON); ok(near(d[0].endAt, m(16, 55)), `${day}: ends at 16:55: ${iso(d[0].endAt)}`);
+        world(iso(m(17, 20))); pc = computer('c3'); tab = single(pc); tab.login(NON); await typing(tab, 5 * MIN, 30 * MIN); eq(tab.signOuts, [], `${day}: a sign-in after 17:00 stays while typing`);
+      }
+    });
+
+    await check('a computer that sleeps 40 minutes (the clock runs on, timers stand still) or freezes: on wake the person is signed out at the LAST INPUT, never at the wake-up, never still signed in', async () => {
+      for (const how of ['sleep', 'freeze']) {
+        world(); const pc = computer('s'), tab = single(pc); tab.login(NON); await advance(2 * MIN); tab.input('keydown'); const last = wall();
+        if (how === 'sleep') await sleepFor(40 * MIN); else await freeze(40 * MIN);
+        await advance(70000);
+        ok(tab.signOuts.length === 1 && /^(idle|closing)$/.test(tab.signOuts[0]), `${how}: the page signed out for idleness: ${JSON.stringify(tab.signOuts)}`);
+        const d = endedAt(NON); eq(d.length, 1, `${how}: ${dumpSessions()}`); ok(d[0].endAt <= last + 1500, `${how}: ends at the last input, not at the wake-up: ${iso(d[0].endAt)} vs ${iso(last)}`); ok(/^(idle|closing)$/.test(d[0].endReason), `${how}: reason ${d[0].endReason}`);
+      }
+    });
+
+    await check('the computer\'s clock set 3 hours FORWARD under a typing person signs nobody out; set 2 hours BACK under an idle one still ends at the real last input', async () => {
+      world(); let pc = computer('cf'), tab = single(pc); tab.login(NON); await advance(2 * MIN); tab.input('keydown'); tab.skew += 3 * HOUR; await advance(2 * MIN);
+      eq(tab.signOuts, [], 'a clock set forward is not 3 hours of quiet'); ok(open_().length === 1); tab.input('keydown'); await advance(5 * MIN); eq(tab.signOuts, []);
+      world(); pc = computer('cb'); tab = single(pc); tab.login(NON); await advance(2 * MIN); tab.input('keydown'); const real = wall(); tab.skew -= 2 * HOUR; await advance(11 * MIN);
+      eq(tab.signOuts, ['idle'], 'ended for idleness after 10 quiet minutes of real time'); const d = endedAt(NON); eq(d.length, 1, dumpSessions());
+      ok(near(d[0].endAt, real, 3000), `the end is the real moment of the last input, not 2 hours off: ${iso(d[0].endAt)} vs ${iso(real)}`);
+    });
+
+    await check('a page whose own clock is 20 minutes fast or slow: the server end is still the last input in the server\'s time', async () => {
+      for (const skew of [20 * MIN, -20 * MIN]) {
+        world(); const pc = computer('k'), tab = single(pc, { skew }); tab.login(NON); await advance(2 * MIN); tab.input('keydown'); const real = wall(); await advance(12 * MIN);
+        eq(tab.signOuts, ['idle'], `skew ${skew / MIN}: signed out`); const d = endedAt(NON); eq(d.length, 1, dumpSessions()); ok(near(d[0].endAt, real, 4000), `skew ${skew / MIN}: ${iso(d[0].endAt)} vs ${iso(real)}`);
+      }
+    });
+
+    await check('a page reloaded in the middle of an idle spell keeps the idle clock: 8 quiet minutes, a reload, 3 more: signed out at the ORIGINAL last input', async () => {
+      world(); const pc = computer('r'), tab = single(pc); tab.login(NON); await advance(MIN); tab.input('keydown'); const last = wall(); await advance(8 * MIN); tab.close();
+      const t2 = single(pc); await advance(3 * MIN); eq(t2.signOuts, ['idle'], 'a reload is not input: the idle spell goes on'); const d = endedAt(NON); eq(d.length, 1, dumpSessions()); ok(near(d[0].endAt, last), 'at the original last input: ' + iso(d[0].endAt) + ' vs ' + iso(last));
+      eq(open_().filter(x => x.person === NON).length, 0, 'nothing left open');
+    });
+
+    await check('two tabs of one person at one station: input in EITHER keeps the person in; quiet in both ends it once, at the last input of either', async () => {
+      world(); const pc = computer('two'), a = single(pc); a.login(NON); await advance(1000); const b = single(pc);
+      await advance(9 * MIN); b.input('keydown'); const lastB = wall(); await advance(9 * MIN); eq(a.signOuts, [], 'tab A: the person typed in B 9 minutes ago'); eq(b.signOuts, []); ok(open_().length === 1);
+      await advance(2 * MIN); const n = a.signOuts.length + b.signOuts.length; ok(n >= 1 && n <= 2, 'signed out (once per page callback): ' + JSON.stringify([a.signOuts, b.signOuts]));
+      const d = endedAt(NON); eq(d.length, 1, dumpSessions()); ok(near(d[0].endAt, lastB), 'at the last input of either tab: ' + iso(d[0].endAt) + ' vs ' + iso(lastB)); eq(a.kind('end').length + b.kind('end').length >= 1, true);
+      eq(cur.writesOf('Station_Sessions').filter(w => w[2] === 'set' && w[1] === d[0].id).length >= 2, true);
+    });
+
+    await check('input that arrives only as a relayed phone scan (StationSession.touch) keeps the person in', async () => {
+      world(); const pc = computer('sc'), tab = single(pc); tab.login(NON); for (let i = 0; i < 6; i++) { await advance(9 * MIN); tab.SS.touch(); } eq(tab.signOuts, [], 'scans every 9 minutes for an hour: no sign-out'); ok(open_().length === 1);
+      await advance(11 * MIN); eq(tab.signOuts, ['idle'], 'then 11 quiet minutes');
+    });
+
+    await check('a hidden (background) tab: timers run once a minute; it is still signed out within about 11 minutes, at the last input; coming back after a long time signs out at once', async () => {
+      world(); let pc = computer('h1'), tab = single(pc); tab.login(NON); await advance(MIN); tab.input('keydown'); const last = wall(); tab.hide(); await advance(13 * MIN);
+      eq(tab.signOuts, ['idle'], 'signed out although the tab is hidden'); let d = endedAt(NON); eq(d.length, 1, dumpSessions()); ok(near(d[0].endAt, last), 'at the last input: ' + iso(d[0].endAt) + ' vs ' + iso(last));
+      world(); pc = computer('h2'); tab = single(pc, { throttle: false }); tab.login(NON); await advance(MIN); tab.input('keydown'); tab.hide(); await sleepFor(2 * HOUR); tab.show(); await advance(5000);
+      eq(tab.signOuts.length, 1, 'back after two hours: signed out at once: ' + JSON.stringify(tab.signOuts)); d = endedAt(NON); ok(d.length === 1 && d[0].endAt < wall() - HOUR, 'the end is the last input, long ago: ' + dumpSessions());
+    });
+
+    await check('offline when the idle time comes: the sign-out happens on the page at once, the end is kept and sent on reconnect with the LAST INPUT as its time, once', async () => {
+      world(); const pc = computer('o'), tab = single(pc); tab.login(NON); await advance(2 * MIN); tab.input('keydown'); const last = wall(); tab.setOnline(false); await advance(11 * MIN);
+      eq(tab.signOuts, ['idle'], 'signed out on the page although offline'); await advance(20 * MIN); tab.setOnline(true); await advance(2 * MIN);
+      const d = endedAt(NON); eq(d.length, 1, dumpSessions()); ok(near(d[0].endAt, last, 3000), 'at the last input: ' + iso(d[0].endAt) + ' vs ' + iso(last)); ok(/^(idle|closed)$/.test(d[0].endReason), d[0].endReason);
+      await advance(10 * MIN); eq(endedAt(NON).length, 1); eq(tab.signOuts.length, 1);
+    });
+
+    await check('20 minutes with no network while typing is not an idle person: still signed in afterwards (a new session when the old one was closed), never the login screen', async () => {
+      world(); const pc = computer('n'), tab = single(pc); tab.login(NON); await advance(2 * MIN); tab.setOnline(false); await typing(tab, 4 * MIN, 20 * MIN); tab.setOnline(true); await advance(6 * MIN);
+      eq(tab.signOuts, [], 'typed all the time: no sign-out'); ok(open_().filter(d => d.person === NON).length === 1, 'exactly one open session of the person: ' + dumpSessions());
+    });
+
+    await check('two people at the Welding page: input counts for both; quiet for 10 minutes ends the non-Admin ONLY through the page\'s per-person sign-out; the Admin carries on', async () => {
+      world(); const pc = computer('w'), tab = multi(pc); tab.login('Tess Welder', 'welding'); tab.login(ADM, 'matching'); await advance(2 * MIN); tab.input('keydown'); await advance(9 * MIN); tab.input('pointerdown'); await advance(9 * MIN);
+      eq(tab.signOuts, [], 'input counts for both: nobody is out 18 minutes after the first input'); await advance(2 * MIN);
+      eq(tab.signOuts.map(x => x[0] + ':' + x[1].name + ':' + x[1].task), ['idle:Tess Welder:welding'], 'only Tess, with her name and task');
+      eq(open_().map(d => d.person), [ADM], 'the Admin\'s session is the only one open: ' + dumpSessions()); eq(tab.who().map(p => p.name), [ADM]);
+      const t = endedAt('Tess Welder'); eq(t.length, 1); eq(t[0].endReason, 'idle');
+      await advance(3 * HOUR); eq(open_().map(d => d.person), [ADM], 'the Admin is still in after 3 more hours'); eq(tab.signOuts.length, 1);
+    });
+
+    await check('one person at two stations on two computers: each page ends its own session on its own idle time', async () => {
+      world(); const a = single(computer('x1')), w = multi(computer('x2')); a.login(NON); w.login(NON, 'welding'); await advance(2 * MIN); a.input('keydown'); await advance(9 * MIN); w.input('keydown'); await advance(2 * MIN);
+      eq(a.signOuts, ['idle'], 'the assembly page is out (10 quiet minutes there)'); eq(w.signOuts, [], 'the welding page had input 2 minutes ago');
+      const d = stationDocs().filter(x => x.person === NON); eq(d.filter(x => x.endAt).map(x => x.station), ['assembly'], dumpSessions());
+    });
+
+    await check('after an idle sign-out the same person signs in again: a new session, its own idle clock from the new sign-in, the old end stands', async () => {
+      world(); const pc = computer('again'), tab = single(pc); tab.login(NON); await advance(12 * MIN); eq(tab.signOuts, ['idle']); const first = endedAt(NON)[0];
+      await advance(5 * MIN); tab.login(NON); await advance(8 * MIN); eq(tab.signOuts, ['idle'], 'the new sign-in is not out after 8 minutes'); await advance(3 * MIN); eq(tab.signOuts, ['idle', 'idle']);
+      const all = stationDocs().filter(d => d.person === NON); eq(all.length, 2, dumpSessions()); eq(cur.get('Station_Sessions', first.id).endAt, first.endAt, 'the first end stands'); ok(all.every(d => d.endAt && d.endReason === 'idle'));
+    });
+
+    await check('midnight New York beside the new rules: a typing person and an idle one end at midnight/at their last input; the Admin at midnight', async () => {
+      const day = '2026-10-07', m = (h, mi) => nyAt(day, h, mi), mid = nyAt('2026-10-08', 0, 0);
+      world(iso(m(23, 40))); const a = single(computer('m1')), b = single(computer('m2')), c = single(computer('m3'));
+      a.login(NON); b.login(BEN); c.login(ADM); await advance(MIN); b.input('keydown'); const lastB = wall();
+      await typing(a, 5 * MIN, 25 * MIN); await goTo(mid + 3 * MIN);
+      eq(a.signOuts, ['midnight']); eq(c.signOuts, ['midnight']); eq(b.signOuts, ['idle'], 'Ben was idle long before midnight');
+      eq(endedAt(NON)[0].endAt, mid); eq(endedAt(ADM)[0].endAt, mid); ok(near(endedAt(BEN)[0].endAt, lastB), 'Ben ends at his last input: ' + iso(endedAt(BEN)[0].endAt));
+    });
+
+    await check('sandbox and real stay apart: an idle sign-out of a sandbox page ends only the sandbox session', async () => {
+      world(); const real = single(computer('sr')), sb = single(computer('ss'), { sandbox: true }); real.login(NON); sb.login(BEN); await advance(12 * MIN);
+      eq(real.signOuts, ['idle']); eq(sb.signOuts, ['idle']); eq(cur.all('Station_Sessions').filter(d => d.person === BEN).length, 0, 'Ben is not in the real store'); eq(cur.all('Sandbox_Station_Sessions').filter(d => d.person === NON).length, 0, 'Ana is not in the sandbox store');
+      ok(cur.all('Sandbox_Station_Sessions').every(d => d.endReason === 'idle') && cur.all('Station_Sessions').every(d => d.endReason === 'idle'));
+    });
+
+    await check('no PIN, no keystroke, no input content is stored or sent: only times', async () => {
+      world(); const pc = computer('priv'), tab = single(pc); tab.login(NON); for (let i = 0; i < 5; i++) { tab.input('keydown'); await advance(30000); }
+      const sent = JSON.stringify(tab.reqs.map(r => r.body)); ok(!/keydown|pointerdown|key":|"code"/i.test(sent.replace(/lastInputAt/g, '')), 'no event names or keys in what was sent');
+      ok(![...pc.mem.values()].some(v => /keydown|pointerdown/.test(v)), 'nothing about keys in storage');
+    });
+  });
+}
+
 /* ═════════════════════════ 2b · the Welding scanner: who a scan is credited to ═════════════════════════ */
 async function scanner() {
   const T = { A: 'Tess Welder', B: 'Ray Welder', C: 'Ivy Third' };
@@ -1063,6 +1246,7 @@ async function fold() {
   await welding();
   await scanner();
   await autoServer();
+  await autoPage();
   await fold();
   // the PIN canary: nothing stored, logged or sent anywhere in the run carries a synthetic Employee Number
   await section('0 · the PIN canary', async () => {
