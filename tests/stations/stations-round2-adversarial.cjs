@@ -233,7 +233,7 @@ const sessionDoc = (id, who, station, startAt, endAt, extra) => Object.assign({ 
 const ids = (base, n) => Array.from({ length: n }, (_, i) => String(base + i));
 
 /* ═════════════════════════ pages: jsdom + the real scripts, one storage per computer, the real doors behind a fake network ═════════════════════════ */
-const SCRIPTS = { session: read('station-session.js'), activity: read('station-activity.js'), queue: read('station-scan-queue.js') };
+const SCRIPTS = { session: process.env.ST2_SESSION_JS ? fs.readFileSync(process.env.ST2_SESSION_JS, 'utf8') : read('station-session.js'), activity: read('station-activity.js'), queue: read('station-scan-queue.js') };
 const extraScript = f => (exists(f) ? read(f) : null);
 let pcN = 0;
 /** a clean world at a chosen moment: every page gone, no timers, an empty shop, the wall clock at `start` */
@@ -623,6 +623,15 @@ async function welding() {
       cur.put('Station_Sessions', 'two-3', sessionDoc('two-3', 'Two Places', 'assembly', t - 40 * MIN, null, { device: 'assembly-1', lastSeenAt: t - MIN }));
       cur.put('Station_Sessions', 'two-4', sessionDoc('two-4', 'Two Places', 'welding', t - 20 * MIN, null, { device: 'weld-1', task: 'matching', lastSeenAt: t - MIN }));
       const L = await board({ op: 'live' }); eq(L.status, 200); eq(new Set((L.body.signedIn || []).map(x => x.name)).size, 1, 'one person on, at two stations: ' + JSON.stringify((L.body.signedIn || []).map(x => [x.name, x.stationKey])));
+    });
+    await check('two tabs of a single-person page: another person signing in on one tab is followed by the other tab with ONE new session; the first person ends "switched" once; a tab closed leaves the session going', async () => {
+      world(); const pc = computer('bench'), one = () => openTab(pc, { page: 'assembly-1.html', station: 'assembly', device: 'assembly-1' });
+      const a = one(); a.login('Ana Tester'); await advance(1000); const b = one(); await advance(1000);
+      a.login('Ben Tester'); await advance(70000);
+      eq(open_().map(d => d.person), ['Ben Tester'], dumpSessions()); eq(stationDocs().filter(d => d.person === 'Ana Tester').length, 1, 'one session for Ana'); eq(stationDocs().find(d => d.person === 'Ana Tester').endReason, 'switched');
+      eq(stationDocs().filter(d => d.person === 'Ben Tester').length, 1, 'one session for Ben, not one per tab: ' + dumpSessions());
+      a.close(); await advance(20 * MIN); eq(open_().map(d => d.person), ['Ben Tester'], 'the other tab keeps the session going after one tab is closed: ' + dumpSessions()); ok(open_()[0].lastSeenAt > wall() - 6 * MIN, 'and keeps beating it');
+      eq(a.errors.concat(b.errors), []);
     });
     await check('hostile people: a PIN, a respelled task, an odd task or a name with digits never makes a session of the wrong shape', async () => {
       world(); const pc = computer('bench'), tab = mk(pc);
