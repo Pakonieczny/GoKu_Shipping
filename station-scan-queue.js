@@ -17,9 +17,11 @@
  *
  * The Welding station (stations round 2, plans/stations-round2/api.md): its scanner app is used while a person matches welded stud earrings
  * to their orders, so EVERY scan that reaches the page is one `matched` activity event (StationActivity.matched: the order, the real scan
- * time, the person credited by rule R3, or `unattributed` when nobody is signed in as Matching). The queue does it, once per scan: when
- * the scan arrives and somebody is signed in (the people signed in AT THAT TIME are credited), otherwise when the drain starts after the
- * next sign-in (a scan made while nobody was signed in is credited at the replay, with its real scan time). It is on for a page whose
+ * time, the person credited by rule R3, or `unattributed` when nobody was signed in as Matching). The queue does it, once per scan: when
+ * the scan arrives and somebody is signed in, otherwise when the drain starts after the next sign-in. Either way the credit is the Matching
+ * person who was signed in AT THE SCAN'S REAL TIME (StationSession.whoAt): a scan made while nobody was in Matching is stored unattributed
+ * even when somebody signs in before it is recorded, and an offline phone's late scan is never credited to whoever is in when it
+ * arrives (ST2, 6 Oct 2026; the order itself still loads under whoever is signed in when it runs). It is on for a page whose
  * StationSession station is "welding" (or create({ matched: true | false }) says so). The same order twice within 10 s, or the same
  * scan id twice, is one scan. A scan arriving is also input at the station (StationSession.touch()): it keeps the signed-in people awake.
  *
@@ -27,8 +29,7 @@
  * kept in sessionStorage until then (one tab; the order numbers only, never a person, a PIN or a passcode). At most 100 wait;
  * the oldest are kept and the note says so when more were scanned. No network, no Firestore, no Etsy: that stays with `run`.
  * Never breaks the page: every entry point is wrapped. The person is never stored here: the page's own activity and timeline code
- * credits whoever is signed in when `run` loads the order, and the matched event takes its person from StationSession.who() when it is
- * recorded. */
+ * credits whoever is signed in when `run` loads the order, and the matched event takes its person from StationSession.whoAt(scan time). */
 (function () {
   "use strict";
   if (window.StationScanQueue) return;
@@ -94,7 +95,7 @@
         return !!(p && p.station === "welding" && window.StationActivity && typeof StationActivity.matched === "function");
       } catch (_) { return false; }
     }
-    function record(it) {                             // once per scan: the credit is whoever StationSession.who() says right now
+    function record(it) {                             // once per scan: the credit is who StationSession.whoAt() says was signed in at the scan's real time (never the person who signs in later)
       if (!it || it.m) return;
       it.m = 1;
       try { StationActivity.matched({ orderId: it.n, at: it.at, scanId: it.s, detail: "phone scan" }); } catch (_) {}

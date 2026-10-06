@@ -211,6 +211,77 @@
     } catch (_) {}
   }
   const persist = s => { if (s && s.key !== undefined) saveRecs(); else saveRec(s); };
+  /* A multi page also keeps WHO WAS IN WHICH TASK WHEN (names and times, a week, 120 sessions: station_session.<station>.<device>.hist) so a phone
+     scan that reaches the page late (the phone was offline) is credited to the person who was signed in at the SCAN's real time, never to
+     whoever signed in afterwards (rule R3; StationSession.whoAt). The key starts "station_session." so a write to it does not wake a tick. */
+  const histKey = () => "station_session." + cfg.station + "." + cfg.device + ".hist";
+  const HIST_MAX = 120, HIST_MS = 7 * 86400e3;
+  function loadHist() {
+    const l = lsJson(histKey(), []);
+    if (!Array.isArray(l)) return [];
+    const out = [];
+    for (const h of l) {                                                    // (whatever else is in storage is not a session: only well-formed spans count, and a name is cleaned like any other)
+      if (!h || typeof h !== "object" || typeof h.i !== "string" || typeof h.n !== "string" || typeof h.t !== "string") continue;
+      const f = Number(h.f), e = Number(h.e), n = cleanName(h.n);
+      if (n && Number.isFinite(f) && Number.isFinite(e) && f > 0 && e >= f) out.push({ i: h.i, n, t: h.t, f, e, u: Number(h.u) || 0 });
+    }
+    return out;
+  }
+  function addHist(s) {
+    try {
+      if (!s || s.key === undefined) return;
+      const now = Date.now(), f = Number(s.startAt) || 0, e = Number(s.endAt) || 0;
+      if (!(f > 0) || !(e >= f)) return;                                // (a start in the future, a clock set back: no span to remember)
+      const u = Math.min(e, Math.max(f, Number(s.touchedAt) || 0));
+      const l = loadHist().filter(h => h.i !== s.id && now - Number(h.e) < HIST_MS);
+      l.push({ i: s.id, n: s.name, t: s.task || "", f, e, u });
+      lsSet(histKey(), JSON.stringify(l.slice(-HIST_MAX)));
+    } catch (_) {}
+  }
+  function who(task) {
+    try {
+      if (cfg.multi) {                                // the Matching person (latest input if two; nobody: null), or the one of `task`
+        const s = ready ? pick(task) : null;
+        return s ? { person: s.name, station: cfg.station, device: cfg.device, computer: computerId(), session: s.id, startAt: s.startAt, sandbox: !!cfg.sandbox, task: s.task } : null;
+      }
+      if (!ready || !cur) return null;
+      const p = person();
+      if (!p || p.name !== cur.name) return null;
+      const w = { person: p.name, station: stationOf(cur), device: cfg.device, computer: computerId(), session: cur.id, startAt: cur.startAt, sandbox: !!cfg.sandbox };
+      if (cur.role) w.role = cur.role;
+      return w;
+    } catch (_) { return null; }
+  }
+  /** who was signed in under `task` (default: the credit task, "matching") at time ts (ms): the same answer as who(task), for a moment
+      in the past. Two in the task then: the one with the latest input at that moment (a sign-in is an input). Nobody: null (the caller
+      stores the scan as unattributed). A welder is never returned for the Matching question. A page that is not multi: who() when the
+      session had started by then, else null. */
+  function whoAt(ts, task) {
+    try {
+      if (!ready) return null;
+      ts = Number(ts);
+      if (!(ts > 0)) return cfg.multi ? who(task) : who();
+      const now = Date.now(); ts = Math.min(ts, now);
+      if (!cfg.multi) { const w = who(); return w && Number(w.startAt) <= ts ? w : null; }
+      task = task === undefined ? cfg.creditTask : cleanTask(task);
+      const ids = new Set(), c = [];
+      for (const h of loadHist()) {                                         // ended (first: another tab may have ended a session this tab still holds)
+        ids.add(h.i);
+        if (task && h.t !== task) continue;
+        if (Number(h.f) <= ts && ts <= Number(h.e)) c.push({ i: h.i, n: h.n, t: h.t, f: Number(h.f), r: Number(h.u) > 0 && Number(h.u) <= ts ? Math.max(Number(h.f), Number(h.u)) : Number(h.f) });
+      }
+      for (const s of [...many.values(), ...loadRecs()]) {                  // running now (this tab's, then the other tabs' records)
+        if (!s || s.ended || ids.has(s.id)) continue;
+        ids.add(s.id);
+        if (task && s.task !== task) continue;
+        const f = Number(s.startAt) || 0, u = Number(s.touchedAt) || 0;
+        if (f > 0 && f <= ts) c.push({ i: s.id, n: s.name, t: s.task, f, r: u > 0 && u <= ts ? Math.max(f, u) : f });
+      }
+      let best = null;
+      for (const x of c) if (!best || x.r > best.r || (x.r === best.r && (x.f > best.f || (x.f === best.f && x.i > best.i)))) best = x;
+      return best ? { person: best.n, station: cfg.station, device: cfg.device, computer: computerId(), session: best.i, startAt: best.f, sandbox: !!cfg.sandbox, task: best.t } : null;
+    } catch (_) { return null; }
+  }
 
   /* ── the door ── */
   const URL_ = () => "/.netlify/functions/firebaseOrders" + (cfg.sandbox ? "?sandbox=1" : "");
@@ -483,6 +554,7 @@
       else if ((reason === "idle" || reason === "closing") && inputOf(s)) at = Math.min(now, inputOf(s));
     }
     s.ended = true; s.endReason = reason; s.endAt = at;
+    addHist(s);                                                // (a multi page remembers who was in which task when: a scan that waited is credited by it)
     if (s.key !== undefined) { many.delete(s.key); snap.delete(s.key); }       // (a multi page's session: it leaves the running list before it is saved)
     if (s.key !== undefined) persist(s);
     else { const k = loadRec(); if (!(k && k.id !== s.id && !k.ended)) saveRec(s); }       // (a second tab of this computer that already started the next session keeps it as the page's record: this one's end must not wipe it, or both tabs would start one each; ST2)
@@ -849,20 +921,9 @@
     lastInput: () => lastIn,
     /** who is working now, for station-activity.js: { person, station, device, computer, session, startAt, sandbox }, or null
         when nobody is signed in (or this page's session is not running). The name only, never a PIN. */
-    who: task => {
-      try {
-        if (cfg.multi) {                                // the Matching person (latest input if two; nobody: null), or the one of `task`
-          const s = ready ? pick(task) : null;
-          return s ? { person: s.name, station: cfg.station, device: cfg.device, computer: computerId(), session: s.id, startAt: s.startAt, sandbox: !!cfg.sandbox, task: s.task } : null;
-        }
-        if (!ready || !cur) return null;
-        const p = person();
-        if (!p || p.name !== cur.name) return null;
-        const w = { person: p.name, station: stationOf(cur), device: cfg.device, computer: computerId(), session: cur.id, startAt: cur.startAt, sandbox: !!cfg.sandbox };
-        if (cur.role) w.role = cur.role;
-        return w;
-      } catch (_) { return null; }
-    },
+    who,
+    /** who was working at time ts (ms), the same answer for a moment in the past (see whoAt above): a scan that waited is credited by it */
+    whoAt,
     /** this page (known even when nobody is signed in): { station, device, computer, sandbox }, or null before init */
     page: () => {
       try { return ready ? { station: stationNow(), device: cfg.device, computer: computerId(), sandbox: !!cfg.sandbox } : null; } catch (_) { return null; }

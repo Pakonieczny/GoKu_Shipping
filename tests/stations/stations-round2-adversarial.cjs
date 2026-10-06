@@ -1241,6 +1241,7 @@ async function scanner() {
       tab.login(T.B, 'matching'); await advance(2 * MIN); await flushAct();
       const m = mdocs(); eq(m.length, 2, JSON.stringify(m.map(d => [d.orderId, d.person]))); ok(m[0].at >= t0 - 1000 && m[0].at <= t0 + 2000, 'the real scan time: ' + iso(m[0].at) + ' vs ' + iso(t0));
       eq(new Set(m.map(d => d.id)).size, 2);
+      ok(m.every(d => d.person === 'Unattributed' && d.unattributed === true), 'nobody was in Matching when they were scanned: not Ray, who signed in afterwards: ' + m.map(d => d.person));
     });
     await check('a scan from before midnight is never credited to whoever signs in after it', async () => {
       world('2026-10-08T03:55:00Z');                                         // 23:55 New York
@@ -1280,7 +1281,57 @@ async function scanner() {
       tab.scan('3521001001', { at: scanAt, sent: wall(), id: 'late1' });       // the phone is back: it pushes the old scan now
       await flushAct();
       const m = mdocs(); eq(m.length, 1); eq(m[0].person, T.A, 'Tess was in Matching when the earring was scanned; Ray signed in afterwards: ' + m[0].person);
-    }, { known: 'D1' });
+      ok(m[0].session.startsWith('welding__weld-1__Tess_Welder__matching__'), 'and it is Tess\'s own session: ' + m[0].session); eq(m[0].unattributed, undefined);
+    });
+    await check('a late scan is credited by who was in at the scan time: two at once, one, the gap between people, nobody; also after a reload of the page', async () => {
+      world(); const pc = computer('bench'); let tab = desk(pc);
+      tab.login(T.A, 'matching'); await advance(MIN); const t1 = wall();                    // Tess alone
+      await advance(30000); tab.login(T.C, 'matching'); await advance(30000); const t2 = wall();       // Tess and Ivy: Ivy signed in last
+      await advance(30000); tab.logout(T.C, 'matching'); await advance(30000); const t3 = wall();      // Tess again
+      await advance(30000); tab.logout(T.A, 'matching'); await advance(30000); const t4 = wall();      // nobody
+      tab.close(); await advance(30000); tab = desk(pc); await advance(5000);                           // the page was reloaded with nobody in
+      tab.login(T.B, 'matching'); await advance(MIN);                                                    // Ray signs in; the phone has been offline
+      const orders = ['3521001201', '3521001202', '3521001203', '3521001204'];
+      [t1, t2, t3, t4].forEach((at, i) => tab.scan(orders[i], { at, sent: wall(), id: 'lt' + i }));
+      await flushAct();
+      const by = o => mdocs().filter(d => d.orderId === o)[0];
+      eq(by(orders[0]).person, T.A, 'alone in Matching then: Tess'); eq(by(orders[1]).person, T.C, 'two in Matching then: the one who signed in last, Ivy'); eq(by(orders[2]).person, T.A, 'Ivy was out again: Tess');
+      eq(by(orders[3]).person, 'Unattributed', 'nobody was in Matching then: not Ray, who signs in later'); eq(by(orders[3]).unattributed, true); eq(by(orders[3]).session, '');
+      ok(mdocs().every(d => d.person !== T.B), 'Ray was credited with none of them');
+      eq(tab.errors, [], 'no page errors');
+    });
+    await check('a late scan: the same person in both tasks is Matching for it; a welder is never the answer; the edges of a session (the very moment of the sign-in, one millisecond before)', async () => {
+      world(); const pc = computer('bench'), tab = desk(pc);
+      tab.login(T.A, 'welding'); await advance(MIN); const w1 = wall() - 30000;                          // Tess is Welding only
+      tab.login(T.A, 'matching'); const edge = wall(); await advance(MIN); const m1 = wall();              // and from now on Matching too
+      tab.login(T.B, 'matching'); await advance(MIN); const bAt = wall() - MIN;                            // (Ray signed in a minute ago)
+      tab.scan('3521001301', { at: w1, id: 'e1' }); tab.scan('3521001302', { at: edge - 1, id: 'e2' }); tab.scan('3521001303', { at: edge, id: 'e3' });
+      tab.scan('3521001304', { at: m1 - 1, id: 'e4' });
+      tab.scan('3521001305', { at: bAt - 1, id: 'e5' }); tab.scan('3521001306', { at: bAt, id: 'e6' });
+      await flushAct(); const by = o => mdocs().filter(d => d.orderId === o)[0];
+      eq(by('3521001301').person, 'Unattributed', 'Tess was in Welding only: a welder is never credited');
+      eq(by('3521001302').person, 'Unattributed', 'one millisecond before she signed in as Matching: nobody');
+      eq(by('3521001303').person, T.A, 'at the very moment of the sign-in'); ok(by('3521001303').session.includes('__matching__'), 'her Matching session: ' + by('3521001303').session);
+      eq(by('3521001304').person, T.A, 'a moment before Ray came, Tess was the only one');
+      eq(by('3521001305').person, T.A, 'one millisecond before Ray'); eq(by('3521001306').person, T.B, 'the moment Ray signed in: two in Matching, the one who signed in last');
+    });
+    await check('a late scan: a sign-out in the other tab of the computer is believed (also before this tab has looked), and the stored history of who was in is only trusted when it is well formed', async () => {
+      world(); const pc = computer('bench'); const a = desk(pc), b = desk(pc);
+      a.login(T.A, 'matching'); await advance(MIN); const during = wall() - 20000;
+      b.logout(T.A, 'matching'); const out = wall();                                                      // the other tab signed her out; tab a has not looked yet (the storage event comes after this line)
+      eq(a.SS.whoAt(out - 1, 'matching') && a.SS.whoAt(out - 1, 'matching').person, T.A, 'she was in at 1 ms before'); eq(a.SS.whoAt(during, 'matching').person, T.A);
+      await advance(300);
+      eq(a.SS.whoAt(out + 100, 'matching'), null, 'after the other tab signed her out nobody is in Matching: she is not credited'); eq(a.SS.whoAt(during, 'matching').person, T.A, 'she still was in then');
+      eq(a.SS.whoAt(NaN), null, 'a time that is not a time'); eq(a.SS.whoAt('x', 'matching'), null); eq(a.SS.whoAt(-5, 'matching'), null); eq(a.SS.whoAt(1e18, 'matching'), null, 'a time in the future is now: nobody is in');
+      for (const junk of ['{"a":1}', '[null,5,"x",{"i":1}]', '[{"i":"x","n":"123456","t":"matching","f":1,"e":99999999999999}]', '[{"i":"y","n":"","t":"matching","f":1,"e":99999999999999}]', '[{"i":"z","n":"Zed","t":"matching","f":"abc","e":null}]', 'not json', '"str"', '[' + '{"i":"k","n":"Kay","t":"matching","f":5,"e":4},'.repeat(3000) + '5]', 'null', '{}']) {
+        world(); const p2 = computer('junk'); const k = desk(p2); k.login(T.B, 'matching'); await advance(MIN);
+        p2.set('station_session.welding.weld-1.hist', junk); const now = wall();
+        k.scan('3521001501', { at: now - 5000, id: 'j1' }); k.scan('3521001502', { at: now - 1000, id: 'j2' });
+        k.logout(T.B, 'matching'); await advance(MIN); k.scan('3521001503', { at: now - 500, id: 'j3' }); await flushAct();
+        eq(k.errors, [], 'no page error for ' + junk.slice(0, 30)); const d = mdocs();
+        eq(d.map(x => x.person), [T.B, T.B], 'Ray, who was in, is the answer for both scans whatever is in the history: ' + junk.slice(0, 30));
+      }
+    });
   });
 }
 
