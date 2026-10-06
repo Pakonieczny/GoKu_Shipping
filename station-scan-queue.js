@@ -171,7 +171,10 @@
         touchStation();
         var it = { n: n, at: relay ? info.at : now };
         if (info.id) it.s = info.id;
-        if (on) { seenAt[n] = it.at; if (info.id) seenIds[info.id] = true; }
+        if (on) {
+          if (Object.keys(seenAt).length > 500) seenAt = {}; if (Object.keys(seenIds).length > 500) seenIds = {};
+          seenAt[n] = it.at; if (info.id) seenIds[info.id] = true;
+        }
         if (list.length >= max) {                                        // (the scan cannot wait for a load, but its record is never dropped)
           extra++; if (on) record(it); render(); return false;
         }

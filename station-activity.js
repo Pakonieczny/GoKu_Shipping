@@ -166,7 +166,7 @@
       // the gap since this person's previous action (a long replay never turns into idle time: the gap only counts forward from an earlier action)
       let base = at;
       if (w) {
-        const own = Number(seen.last[person]) || 0, last = lsJson(K.last + device, null) || memLast[device] || null;
+        const own = Number(seen.last['p:' + person]) || 0, last = lsJson(K.last + device, null) || memLast[device] || null;
         const other = last && last.person === person && Number(last.at) > 0 ? Number(last.at) : 0;
         const from = [own, other, Number(w.startAt) || 0].filter(t => t > 0 && t <= at);
         if (from.length) base = Math.max(...from);
@@ -183,7 +183,7 @@
       }
       if (bytes(JSON.stringify(ev)) > EVENT_BYTES) return false;
       seen.ids[id] = at; seen.orders[orderId] = Math.max(prev, at);
-      if (w) seen.last[person] = Math.max(Number(seen.last[person]) || 0, at);
+      if (w) seen.last['p:' + person] = Math.max(Number(seen.last['p:' + person]) || 0, at);
       lsSet(K.seen + device, JSON.stringify(seen));
       queue.push(ev);
       if (queue.length > MAX_QUEUE) { warn("the queue is full: the oldest " + (queue.length - MAX_QUEUE) + " event(s) were dropped"); queue = queue.slice(-MAX_QUEUE); }
