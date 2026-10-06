@@ -52,7 +52,8 @@ const liveFlood = { seen: new Map(), PER_MIN: 600, allow: flood.allow };
    Times are ms. The server stamps them: a start and a beat are "now"; an end may say an earlier moment (an end sent late,
    from a browser that was offline) but never before the last beat the server saw, never after now, and never past the
    New York midnight after the start (everybody is signed out at midnight). A beat after 15 quiet minutes does not bring
-   a session back: it ended "closed" at its last beat, and the page starts a new one. A PIN is never kept.
+   a session back: it ended "closed" at its last beat, and the page starts a new one (Welding and Laser are the exception: a station with no idle
+   sign-out, or a limit longer than that, keeps the session open; _stationSignoutPolicy.js has the one table of numbers). A PIN is never kept.
    Auto sign-out (_stationAutoSignout.js, plans/stations-round2/api.md "AD2"): a start, beat or end may carry `lastInputAt` (the page's
    last user input) and `sentAt` (the page's clock, to undo a wrong computer clock); the document keeps `lastInputAt` (server clock,
    never backwards) and `admin` (set when it starts). A non-Admin session whose page reports 10+ minutes without input, or whose page
@@ -120,9 +121,12 @@ async function sessionWrite(s) {
     const reported = AS.pageTime(s.lastInputAt, skew, now), prevInput = prev ? (Number(prev.lastInputAt) || 0) : 0;
     const lastInput = Math.max(reported, prevInput) > 0 ? Math.min(Math.max(reported, prevInput, startAt), now) : 0;
     const adm = AS.adminState({ admin: prev ? prev.admin : undefined, person: prev && prev.person ? prev.person : person }, list);   // true | false | null (unknown)
+    const stn = prev && prev.station ? prev.station : station;                                // (the station's own sign-out rules: _stationSignoutPolicy.js; Welding and Laser are not closed by 15 quiet minutes)
     let endAt = null, endReason = null, lastSeenAt = now;
     if (ev === "end") {
-      if (reason === "idle" || reason === "closing") {          // the page names its LAST INPUT as the end: it may be before the last beat, never before an input already known
+      if (reason === "closing" && AS.policyOf(stn).closeAt17 === "always" && startAt < AS.closingInstant(startAt)) {     // Welding's 17:00: the end is 17:00 sharp whatever the last input (a page that loads after it names 17:00 as its end)
+        endAt = Math.min(now, AS.closingInstant(startAt)); endReason = reason;
+      } else if (reason === "idle" || reason === "closing") {          // the page names its LAST INPUT as the end: it may be before the last beat, never before an input already known
         const at = AS.pageTime(clientAt, skew, now);
         endAt = Math.min(now, Math.max(startAt, lastInput || 0, at || lastInput || lastSeen)); endReason = reason;
       } else {
@@ -131,16 +135,18 @@ async function sessionWrite(s) {
       }
       if (endAt > cap) { endAt = cap; endReason = "midnight"; }
       lastSeenAt = Math.max(lastSeen, endAt);
-    } else if (prev && now - lastSeen >= SESSION_CLOSED_MS) {
-      // a page silent for 15 minutes does not come back: a non-Admin with a known last input ends "idle" at it, the rest "closed" at the last beat (the old rule)
-      const d = AS.decide({ startAt, lastSeenAt: lastSeen, lastInputAt: prev.lastInputAt }, now, adm === null ? true : adm);
+    } else if (prev && now - lastSeen >= SESSION_CLOSED_MS && !(adm === false && AS.keptOpen({ station: stn, startAt, lastSeenAt: lastSeen }, now))) {      // (an Admin, or unknown, has only the old rule on every station)
+      // a page silent for 15 minutes does not come back: a non-Admin with a known last input ends "idle" at it, the rest "closed" at the last beat (the old rule).
+      // (Not for a station that keeps a quiet page open, Welding until 17:00 and Laser inside its 60 / 30 minutes: that beat is the same session carrying on.)
+      const d = AS.decide({ startAt, lastSeenAt: lastSeen, lastInputAt: prev.lastInputAt, station: stn }, now, adm === null ? true : adm);
       if (d) { endAt = d.endAt; endReason = d.endReason; } else { endAt = Math.min(lastSeen, cap); endReason = lastSeen > cap ? "midnight" : "closed"; }
       lastSeenAt = lastSeen;
     } else if (now > cap) {
       endAt = cap; endReason = "midnight"; lastSeenAt = Math.max(lastSeen, cap);
-    } else if (prev && reported > 0 && adm !== null) {
-      // a live beat that says the person has had no input for 10 minutes: the page should have signed out; the end is the last input
-      const d = AS.decide({ startAt, lastSeenAt: now, lastInputAt: lastInput }, now, adm);
+    } else if (prev && adm !== null && (reported > 0 || AS.policyOf(stn).closeAt17 === "always")) {      // (Welding's 17:00 does not depend on any input)
+      // a live beat that says the person has had no input for the station's limit (10 minutes; Laser 60, 30 from 17:00), or Welding's 17:00 has passed: the page should have
+      // signed out; the end is the last input (Welding: 17:00 sharp)
+      const d = AS.decide({ startAt, lastSeenAt: now, lastInputAt: lastInput, station: stn }, now, adm);
       if (d) { endAt = d.endAt; endReason = d.endReason; }
     }
     const minutes = Math.max(0, Math.round(((endAt != null ? endAt : lastSeenAt) - startAt) / 6000) / 10);

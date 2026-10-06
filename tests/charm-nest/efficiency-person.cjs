@@ -33,6 +33,10 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   assert.equal(N.src.kpis.parts.v, null, 'a figure the data does not know stays null: a dash, never a zero'); assert.equal(N.src.kpis.orders.v, 7);
   assert.equal(N.series[0].parts, null); assert.equal(N.series[0].hasData, false); assert.equal(N.series[2].scans, 3); assert.equal(N.src.kpis.scans.v, 7, 'a total the server did not send is the days added up, and says so'); assert.equal(N.src.kpis.scans.derived, true);
   assert.equal(N.cal[0].state, 'before', 'an unknown calendar state is not invented');
+  { // the station's own words for a sign-out by the rules (AD4): only with idle or closing, short, never HTML
+    const D = j(E.norm({ ok: true, name: 'Zed', found: true, series: [], calendar: [{ day: '2026-10-01', state: 'worked', endedBy: 'idle', endedText: 'Signed out after 1 hour without input' }, { day: '2026-10-02', state: 'worked', endedBy: 'closing', endedText: 'Signed out at 5:00 pm' }, { day: '2026-10-03', state: 'worked', endedBy: 'signOut', endedText: 'Signed out after 1 hour without input' }, { day: '2026-10-04', state: 'worked', endedBy: 'idle' }, { day: '2026-10-05', state: 'worked', endedBy: 'idle', endedText: 7 }] }, { name: 'Zed' }));
+    assert.deepEqual(D.cal.map(c => [c.ended, c.endedText]), [['idle', 'Signed out after 1 hour without input'], ['closing', 'Signed out at 5:00 pm'], ['', ''], ['idle', ''], ['idle', '']], 'the day carries its station\'s sentence for idle and closing only; an older service sends none and the page falls back to its own words');
+  }
   assert.equal(j(E.norm(null)).found, true); assert.deepEqual(j(E.norm({}).series), []);
   const fx = F.make(), A = fx.person({ op: 'person', name: 'Ana M.', range: 'month', compare: true }), N2 = j(E.norm(A, { name: 'Ana M.' }));
   assert.equal(N2.src.kpis.parts.v, A.kpis.parts.value); assert.equal(N2.src.kpis.parts.prev, A.kpis.parts.prev); assert.equal(N2.series.length, 30); assert.equal(N2.cal.length, 30);

@@ -59,10 +59,14 @@ async function door() {
     assert.strictEqual(doc('weld-1-ABCD-k1').endAt, MIDNIGHT); assert.strictEqual(doc('weld-1-ABCD-k1').endReason, 'midnight');
     assert.strictEqual(doc('weld-1-ABCD-k1').minutes, 20);
     r = await post(S({ event: 'beat' })); assert.strictEqual(r.body.ended, true, 'an ended session stays ended');
-    // 15 quiet minutes: a beat does not bring it back, it closed at its last beat
-    await post(S({ id: 'weld-1-ABCD-k2' }));
-    const t2 = now; now += 20 * 60000; r = await post(S({ id: 'weld-1-ABCD-k2', event: 'beat' }));
+    // 15 quiet minutes: a beat does not bring it back, it closed at its last beat (a station with the default rule; Welding and Laser keep a quiet page open: auto-signout-server.cjs)
+    await post(S({ id: 'weld-1-ABCD-k2', station: 'assembly', device: 'assembly-1' }));
+    const t2 = now; now += 20 * 60000; r = await post(S({ id: 'weld-1-ABCD-k2', station: 'assembly', device: 'assembly-1', event: 'beat' }));
     assert.strictEqual(doc('weld-1-ABCD-k2').endReason, 'closed'); assert.strictEqual(doc('weld-1-ABCD-k2').endAt, t2);
+    // ... but not a Welding page (it is signed out at 17:00, never by quiet): the same 20 minutes is the same session carrying on
+    await post(S({ id: 'weld-1-ABCD-k2w' }));
+    now += 20 * 60000; r = await post(S({ id: 'weld-1-ABCD-k2w', event: 'beat' }));
+    assert.strictEqual(r.body.ended, false); assert.strictEqual(doc('weld-1-ABCD-k2w').endAt, null); assert.strictEqual(doc('weld-1-ABCD-k2w').lastSeenAt, now);
     // a late end (sent from an outbox) keeps its own moment, never before the last beat, never after now
     await post(S({ id: 'weld-1-ABCD-k3' })); const t3 = now; now += 4 * 60000; await post(S({ id: 'weld-1-ABCD-k3', event: 'beat' }));
     now += 60000; r = await post(S({ id: 'weld-1-ABCD-k3', event: 'end', reason: 'signOut', at: t3 }));
