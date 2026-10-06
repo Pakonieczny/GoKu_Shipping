@@ -851,7 +851,13 @@
    *  behaviour of the board's own cards; one card is shared by all of them. */
   function hoverCard(node, spec) { if (!node || typeof spec !== "function") return node; css(); wire(); node.dataset.esTip = ""; node._esTip = spec; return node; }
 
-  root.EfficiencyStations = { mount, orderCard, norm, options, qr: qrUrl, fmt: { since, words, ago, initials }, openOrder, hoverCard,
+  /** ONE Sorting station (Paul, 6 Oct 2026): the stored station keys "sorter" (the Sorter app) and "qr" (the QR Printer page) are shown as "sorting"; every other key is
+   *  returned as it is. Mirror of displayStation in netlify/functions/_activityKinds.js: history keeps its old keys, only what is SHOWN folds. A Sorter-app session of a
+   *  Laser or Design person is stored under "laser" or "design" and does not fold. */
+  const DISPLAY_FOLD = { sorter: "sorting", qr: "sorting" };
+  const displayStation = key => (typeof key !== "string" ? (key == null ? "" : displayStation(String(key))) : Object.prototype.hasOwnProperty.call(DISPLAY_FOLD, key) ? DISPLAY_FOLD[key] : key);
+
+  root.EfficiencyStations = { mount, orderCard, norm, options, qr: qrUrl, fmt: { since, words, ago, initials }, openOrder, hoverCard, displayStation,
     /* for the checks */
     feed: { get calls() { return Feed.calls; }, get busy() { return Feed.busy; }, get fails() { return Feed.fails; }, wake: () => Feed.wake(), now: () => Feed.now() }, zoomed: () => Z.node, tip: () => Tp.el };
 })(typeof self !== "undefined" ? self : this);

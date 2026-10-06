@@ -29,6 +29,10 @@
   const KEY_STORE = "cn.eff.key", DAYS_STORE = "cn.eff.days", VIEW_STORE = "cn.eff.view";
   const NAMES = { shipping: "Shipping", assembly: "Assembly", welding: "Welding", sorting: "Sorting", design: "Design", laser: "Laser", sorter: "Sorter", qr: "QR printer", inbox: "Inbox" };
   const CORE = ["shipping", "assembly", "welding", "sorting", "design"], EXTRA = ["laser", "sorter", "qr", "inbox"];
+  /* ONE Sorting station (Paul, 6 Oct 2026): the stored keys "sorter" (the Sorter app) and "qr" (the QR Printer page) are SHOWN as "sorting". Same rule as displayStation in
+     netlify/functions/_activityKinds.js and EfficiencyStations.displayStation; history keeps its old keys, only what is read folds. Laser and Design are stored under their own keys. */
+  const DISPLAY_FOLD = { sorter: "sorting", qr: "sorting" };
+  const displayStation = key => (typeof key !== "string" ? (key == null ? "" : displayStation(String(key))) : Object.prototype.hasOwnProperty.call(DISPLAY_FOLD, key) ? DISPLAY_FOLD[key] : key);
   const ACTIONS = { scan: "scanned", complete: "completed", print: "printed", reject: "rejected", undo: "undid", error: "error", note: "noted" };
   const EASE = "cubic-bezier(.2,.8,.2,1)";
   const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -1421,6 +1425,7 @@
     setInterval(tickLive, Math.max(250, +options.tickMs || 1000));
   }
   if (doc.getElementById("efficiencyView")) mount(); else doc.addEventListener("DOMContentLoaded", mount, { once: true });
-  root.Efficiency = { open, go: goTo, options, norm, normHist, normOrder, normLive, niceMax, api,
+  if (root.EfficiencyStations && typeof root.EfficiencyStations.displayStation !== "function") root.EfficiencyStations.displayStation = displayStation;   // (the stations module is older than this file: the same function)
+  root.Efficiency = { open, go: goTo, options, norm, normHist, normOrder, normLive, niceMax, api, displayStation,
     get state() { return { key: !!st.key, days: st.days, day: st.day, shown: st.shown, fails: st.fails, busy: st.busy, at: st.at, rows: [...st.rows.keys()], view: st.view, tab: st.tab, person: st.person, liveAt: st.liveAt, liveSupported: st.liveSupported, liveFails: st.liveFails, mounted: Object.keys(st.mounts).filter(k => st.mounts[k]) }; } };
 })(window);

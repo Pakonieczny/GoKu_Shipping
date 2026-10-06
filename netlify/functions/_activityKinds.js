@@ -15,6 +15,26 @@
  *  what it is NOT. */
 "use strict";
 
+/* ── ONE Sorting station (Paul, 6 Oct 2026: "both QR Printer and the Sort are part of that same station") ──
+ *  The Sorter app (charm-nest-1, station key "sorter") and the QR Printer page (station key "qr") are devices of the one Sorting
+ *  station. What is already stored under those keys stays exactly as it is (events, sessions, rollups, seals are permanent history:
+ *  never rewritten); the fold happens only when the portal READS a station key, through displayStation(key). New writes may keep
+ *  the old keys. Only the KEYS "sorter" and "qr" fold: a Sorter-app session of a Laser or Design person is written under the station
+ *  key "laser" or "design" (device charm-nest-1) and so never folds into Sorting. The client mirror is EfficiencyStations.displayStation
+ *  (charm-nest-efficiency-stations.js); the two lists must agree (tests/stations/sorting-fold.cjs checks it). */
+const STATION_FOLD = Object.freeze({ sorter: "sorting", qr: "sorting" });
+/** The key the portal shows for a stored station key: "sorter" and "qr" are "sorting"; every other key is returned as it is ("" for no key). */
+function displayStation(key) {
+  if (typeof key !== "string") return key == null ? "" : displayStation(String(key));
+  return Object.prototype.hasOwnProperty.call(STATION_FOLD, key) ? STATION_FOLD[key] : key;
+}
+/** Every stored station key that is shown as this display key, in catalog order: storedStations("sorting") is ["sorting", "sorter", "qr"]. */
+function storedStations(display) {
+  const d = displayStation(display), out = [d];
+  for (const k of Object.keys(STATION_FOLD)) if (STATION_FOLD[k] === d) out.push(k);
+  return out;
+}
+
 /** issue kind -> the rollup counter that counts it (kinds that are plain subtractions of the old counters have none:
     `undone` = undos, `refused` = rejects not in a kind below, `failed` = errors that are not a lookup failure or a failed reply) */
 const KIND_X = { cancelAlert: "x_cancel", heldOrSkipped: "x_held", unknownSku: "x_sku", qaFlag: "x_flag", lookupFailed: "x_lookup", reprint: "x_reprint", rescan: "x_rescan" };
@@ -100,4 +120,4 @@ function classify(ev) {
   return out;
 }
 
-module.exports = { KIND_X, INBOX_X, X_KEYS, kindOf, inboxOf, classify };
+module.exports = { KIND_X, INBOX_X, X_KEYS, STATION_FOLD, displayStation, storedStations, kindOf, inboxOf, classify };
