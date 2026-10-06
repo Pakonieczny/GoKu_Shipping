@@ -629,7 +629,7 @@ async function opOrders(ctx, body) {
   const evOut = [];
   for (const e of act) {
     const s = step(e.station, e.person, "events"); touch(s, e.at);
-    if (e.action === "scan") s.scans++; else if (e.action === "complete") { s.completes++; s.parts += e.parts; } else if (e.action === "print") s.prints++; else if (e.action === "undo") s.parts = Math.max(0, s.parts - e.parts);
+    if (e.action === "scan" || e.action === "matched") s.scans++; else if (e.action === "complete") { s.completes++; s.parts += e.parts; } else if (e.action === "print") s.prints++; else if (e.action === "undo") s.parts = Math.max(0, s.parts - e.parts);
     if (e.sincePrevMs > 0 && e.sincePrevMs <= ACTIVE_GAP_MS) s.workMs += e.sincePrevMs;
     evOut.push({ at: e.at, person: canonOf(ctx, nameKeyOf(ctx, e.person)) || niceName(e.person), station: e.station, device: e.device, action: e.action, parts: e.parts, detail: e.detail, source: "events" });
   }

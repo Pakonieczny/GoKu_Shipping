@@ -427,7 +427,7 @@ async function op(ctx, body, H) {
     for (const c of mine) if (!people.some(p => p.name === c.person)) people.push({ name: c.person, since: c.since || c.scannedAt, lastSeenAt: c.beatAt, lastInputAt: null, device: c.device, deviceLabel: c.deviceLabel });
     const names = [...new Set(people.map(p => p.name))];
     const devs = new Map(s.devices.map(([d, l]) => [d, { device: d, label: l, state: "offline", person: "", since: 0 }]));
-    for (const p of onPages) { const x = devs.get(p.device) || { device: p.device, label: deviceLabel(s.key, p.device), state: "offline", person: "", since: 0 }; devs.set(p.device, x); x.state = "idle"; x.person = x.person && x.person !== p.name && !x.person.split(", ").includes(p.name) ? x.person + ", " + p.name : p.name; x.since = x.since ? Math.min(x.since, p.since) : p.since; }
+    for (const p of onPages) { const x = devs.get(p.device) || { device: p.device, label: deviceLabel(s.key, p.device), state: "offline", person: "", since: 0 }; devs.set(p.device, x); x.state = "idle"; x.person = !x.person ? p.name : x.person.split(", ").includes(p.name) ? x.person : x.person + ", " + p.name; x.since = x.since ? Math.min(x.since, p.since) : p.since; }
     for (const c of mine) { const x = devs.get(c.device) || { device: c.device, label: c.deviceLabel, state: "offline", person: "", since: 0 }; devs.set(c.device, x); x.state = "working"; if (!x.person) x.person = c.person; x.since = c.since || x.since; }
     const t = today[s.key] || (tr.ok ? { parts: 0, orders: 0, scans: 0, lastAt: 0, matched: 0, unattributed: 0 } : { parts: null, orders: null, scans: null, lastAt: 0, matched: null, unattributed: null });   // (today's rollups could not be read: the counts are unknown, a dash, never a 0)
     let lastEventAt = t.lastAt;
