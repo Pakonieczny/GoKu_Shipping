@@ -69,6 +69,9 @@ async function sorterPage(browser, srv, errors, { sandbox = false } = {}) {
   page.on('pageerror', e => { errors.push(e.message); console.error('page error:', e.message); });
   await page.goto(`${srv.sorterOrigin}/charm-nest-1.html`, { waitUntil: 'load' });
   await page.waitForFunction(() => window.CN && window.Orders && window.Review && window.CNAct && window.CNEmployee && window.StationActivity && window.StationSession && window.LibraryDone && window.RoseStock && CN.S.cloud.ok === true, null, { timeout: 60000 });
+  // this test is about the Admin's station and person routing (the sorter as it signs in for the Admin: no "Laser or Design?" step, no role);
+  // the role step has its own test, tests/charm-nest/sorter-role-signin.cjs
+  await page.evaluate(() => window.CNRole && CNRole.setAdminLookup(async () => true));
   return { context, page, rec, flush: () => page.evaluate(() => StationActivity.flush()) };
 }
 
