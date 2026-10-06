@@ -119,7 +119,7 @@
     if (doc.getElementById("efpStyle")) return;
     const s = doc.createElement("style"); s.id = "efpStyle";
     s.textContent = `
-.efp{container-type:inline-size;container-name:efp;position:relative;display:grid;gap:12px;min-width:0;color:var(--ink);font-size:12.5px;padding-bottom:8px;align-content:start}
+.efp{container-type:inline-size;container-name:efp;position:relative;display:grid;grid-template-columns:minmax(0,1fr);gap:12px;min-width:0;color:var(--ink);font-size:12.5px;padding-bottom:8px;align-content:start}
 .efp,.efp *{box-sizing:border-box}.efp .hidden{display:none!important}
 .efp button{font-family:inherit}
 .efp .spin{width:11px;height:11px;border:2px solid var(--line);border-top-color:var(--ink70);border-radius:50%;animation:spin .7s linear infinite;flex:0 0 11px;display:inline-block}
@@ -261,11 +261,12 @@
 .efpFound{display:flex;align-items:center;gap:9px;padding:9px 14px;border:1px solid var(--line);background:var(--card2);border-radius:10px;color:var(--ink70);font-size:12px}
 @container efp (max-width:1180px){.efpKpis{grid-template-columns:repeat(4,minmax(0,1fr))}.efpO{grid-template-columns:88px minmax(130px,1fr) 104px minmax(0,1.6fr) 48px}.efpDay{min-width:132px}}
 @container efp (max-width:900px){.efpGrid.g2,.efpGrid.g75,.efpGrid.g57{grid-template-columns:minmax(0,1fr)}.efpKpis{grid-template-columns:repeat(2,minmax(0,1fr))}.efpO{grid-template-columns:78px minmax(0,1fr) 92px 44px;grid-template-areas:"t n s q" "p p p p";gap:6px 10px}.efpO>.efpOt{grid-area:t}.efpO>.efpOn{grid-area:n}.efpO>.efpOs{grid-area:s}.efpO>.efpOp{grid-area:p}.efpO>.efpQr{grid-area:q;width:44px;height:44px}}
-@container efp (max-width:640px){.efpAv{width:42px;height:42px;flex-basis:42px;font-size:14px}.efpName{font-size:18px;white-space:normal;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;line-clamp:2;overflow-wrap:anywhere}.efpChips{flex:1 1 100%}.efpBar{gap:6px 8px;padding:6px 8px}.efpSeg{order:1;max-width:100%;overflow-x:auto;scrollbar-width:none}.efpSeg button{padding:4px 9px;flex:0 0 auto}.efpNav{order:2;flex:1 1 100%}.efpDay{flex:1;min-width:0}.efpBusy{order:3}
+@container efp (max-width:640px){.efpWhere{white-space:normal}.efpAv{width:42px;height:42px;flex-basis:42px;font-size:14px}.efpName{font-size:18px;white-space:normal;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;line-clamp:2;overflow-wrap:anywhere}.efpChips{flex:1 1 100%}.efpBar{gap:6px 8px;padding:6px 8px}.efpSeg{order:1;max-width:100%;overflow-x:auto;scrollbar-width:none}.efpSeg button{padding:4px 9px;flex:0 0 auto}.efpNav{order:2;flex:1 1 100%}.efpDay{flex:1;min-width:0}.efpBusy{order:3}
 .efpRtH b{flex:1 1 100%;order:-2}.efpRtH span{order:-1;margin-left:0;color:var(--ink);font-weight:700}
 .efpKpis{gap:8px}.efpKL{font-size:9.5px;letter-spacing:.04em;min-height:2.6em;align-items:flex-end}.efpK{padding:11px 12px 9px}.efpKV{font-size:25px}.efpKsp{flex-basis:48px}.efpChart{padding:11px 12px 12px}.efpNowCard{grid-template-columns:auto minmax(0,1fr);padding:11px 12px}.efpNowCard>.efpQr{display:none}
 .efpO{grid-template-columns:70px minmax(0,1fr) 44px;grid-template-areas:"t n q" "s s s" "p p p"}.efpO>.efpOs{grid-area:s;display:flex;gap:10px;align-items:baseline}.efpIr{grid-template-columns:100px minmax(0,1fr);grid-template-areas:"t n" "r r"}.efpIr>time{grid-area:t}.efpIr>.efpOid{grid-area:n}.efpIr>span{grid-area:r}.efpIgh,.efpIgl,.efpRates{padding-left:12px;padding-right:12px}.efpPad,.efpIs>.efpHow,.efpNone,.efpSum{padding-left:12px;padding-right:12px}.efpFind{padding:10px 12px 6px}.efpOl{padding:0 2px 4px}
 }
+@container efp (max-width:330px){.efpKsp{display:none}.efpKV{font-size:22px}.efpKD span{white-space:normal}.efpTog{max-width:100%}.efpTog button{padding:2px 5px}.efp .efpTRm{white-space:normal}}
 @media (prefers-reduced-motion:reduce){.efp *,.efp *:before,.efp *:after{transition:none!important;animation:none!important}}`;
     doc.head.appendChild(s);
   }
@@ -581,6 +582,7 @@
     });
   }
   function fmtFor(key, unit) {
+    if (key === "messagesPerCustomer" || key === "repliesPerDay") return nf1;   // (the two inbox averages keep their decimal)
     if (key === "timeToFirstReplyMin" || unit === "minutes") return v => durMs(v * 60000);
     if (key === "peakHour") return v => (unit === "clock" ? clockMin(v) : hourLabel(Math.round(v) % 24));
     if (key === "issuesPer100Orders") return nf1;
@@ -593,6 +595,45 @@
   const nameOf = (m, d) => String((m && m.label) || d.label || "").replace(/\bseconds\b/i, "time");
   const metricAt = (M, full) => { for (const name of ALIAS[full] || [full]) { const [ns, k] = name.split("."); const m = M.src[ns] && M.src[ns][k]; if (m) return m; } return null; };
   const shortKey = full => full.split(".")[1];
+
+  /* ════════════ INBOX (IN2, Paul 6 Oct 2026, R8): everything this person SENT from the inbox, in the same date chips ════════════
+   *  A clearly separate "Inbox" section of this page: replies sent, the orders they cover, distinct customers, total messages, messages per customer
+   *  (average and a top list), a per-day chart (per hour for a Day) and the list of orders covered. Read from op personInbox (plans/stations-round2/api.md,
+   *  section IN2; the same window and Real | Sandbox as op person). The figures are the page's own cards (efpK), the charts EfficiencyCharts, the order list
+   *  EfficiencyOrders (station "inbox"): the very same components as every other section. A figure the server does not know is a dash, never a zero. */
+  options.inboxOp = "personInbox"; options.inboxMs = 30000; options.inboxTop = 10; options.inboxShow = 5;
+  const IN_GROUP = ["Inbox", ["inbox.replies", "inbox.orders", "inbox.customers", "inbox.messages"], ["inbox.messagesPerCustomer", "inbox.maxPerCustomer", "inbox.repliesPerDay", "inbox.daysActive"]];
+  const IN_KEYS = IN_GROUP[1].concat(IN_GROUP[2]).map(k => k.slice(6));
+  Object.assign(CARD, {
+    "inbox.replies": { label: "Replies sent", unit: "count", better: null, sp: "replies", def: "Replies this person sent from the inbox in the period. Only what a person actually sent: an AI draft nobody sent is not counted." },
+    "inbox.orders": { label: "Orders covered", unit: "orders", better: null, sp: "orders", def: "Different orders those replies were about. Several replies on one order count once." },
+    "inbox.customers": { label: "Customers", unit: "count", better: null, sp: "customers", def: "Different customers who got a reply from this person in the period." },
+    "inbox.messages": { label: "Messages sent", unit: "count", better: null, sp: "messages", def: "Messages sent to customers. A reply that goes out as several messages counts each one." },
+    "inbox.messagesPerCustomer": { label: "Messages per customer", unit: "count", better: null, def: "Messages sent divided by customers: how many messages the average customer got in the period." },
+    "inbox.maxPerCustomer": { label: "Most to one customer", unit: "count", better: null, def: "The most messages any one customer got from this person in the period." },
+    "inbox.repliesPerDay": { label: "Replies per day with replies", unit: "count", better: null, def: "Replies sent divided by the days on which at least one reply was sent." },
+    "inbox.daysActive": { label: "Days with replies", unit: "days", better: null, def: "Days on which this person sent at least one reply from the inbox." }
+  });
+  const IN_MEASURE = { replies: ["Replies", "reply", "replies"], messages: ["Messages", "message", "messages"], orders: ["Orders", "order", "orders"], customers: ["Customers", "customer", "customers"] };
+  /** The `personInbox` answer, in the shape of plans/stations-round2/api.md (IN2): every field is optional, a missing one is null (a dash). */
+  function normInbox(r, req) {
+    r = r && typeof r === "object" ? r : {}; req = req || {};
+    const tot = r.totals && typeof r.totals === "object" ? r.totals : r.kpis && typeof r.kpis === "object" ? r.kpis : {}, src = {};
+    for (const k of IN_KEYS) if (tot[k] != null) src[k] = metric(k, tot[k], null, "inbox." + k);
+    const series = A(r.series).filter(p => p && p.day).map(p => ({ day: String(p.day), to: isDay(p.to) ? p.to : String(p.day), days: num(p.days) || 1, replies: num(p.replies), orders: num(p.orders), customers: num(p.customers), messages: num(p.messages) }));
+    const hr = A(r.hours), hours = hr.length ? Array.from({ length: 24 }, (_, h) => { const x = hr.find(e => e && +e.hour === h) || {}; return { hour: h, replies: num(x.replies), messages: num(x.messages) }; }) : [];
+    const pc = r.perCustomer && typeof r.perCustomer === "object" ? r.perCustomer : null;
+    const per = pc ? { average: num(pc.average), median: num(pc.median), max: num(pc.max), total: num(pc.total),
+      dist: A(pc.distribution).filter(d => d && d.customers != null).map(d => ({ messages: num(d.messages), customers: num(d.customers), plus: !!d.plus })),
+      top: A(pc.top).filter(t => t && (t.customer != null || t.rid != null)).map(t => ({ customer: String(t.customer || ""), messages: num(t.messages), replies: num(t.replies), orders: num(t.orders), lastAt: num(t.lastAt), rid: t.rid != null ? String(t.rid).replace(/\D/g, "") : "" })) } : null;
+    const derive = (k, v) => { if (!src[k] && v != null) src[k] = metric(k, v, { derived: true }, "inbox." + k); };
+    if (series.some(p => p.replies != null)) derive("replies", sumK(series, p => p.replies));
+    if (series.some(p => p.messages != null)) derive("messages", sumK(series, p => p.messages));
+    if (per) { derive("messagesPerCustomer", per.average); derive("maxPerCustomer", per.max); }
+    const un = r.unknown && typeof r.unknown === "object" ? { replies: num(r.unknown.replies), messages: num(r.unknown.messages) } : null;
+    return { found: r.found !== false, name: String(r.name || req.name || ""), from: isDay(r.from) ? r.from : req.from || "", to: isDay(r.to) ? r.to : req.to || "", days: num(r.days), today: isDay(r.today) ? r.today : "", live: !!r.live, prev: r.prev && r.prev.from ? { from: String(r.prev.from), to: String(r.prev.to), days: num(r.prev.days) } : null,
+      granularity: r.granularity === "week" ? "week" : "day", knownFrom: isDay(r.knownFrom) ? r.knownFrom : "", src, series, hours, per, unknown: un && (un.replies || un.messages) ? un : null, notes: A(r.notes).map(String).filter(Boolean), partial: !!r.partial, errors: A(r.errors).map(String), now: num(r.now) };
+  }
 
   /* ════════════ the page ════════════ */
   function mount(host, o) {
@@ -642,6 +683,225 @@
       E.wait.classList.add("hidden"); paintLive(); try { o.onAuth && o.onAuth(e); } catch (_) {}
     }
 
+    /* ── INBOX (IN2): the Inbox section. Its figures are the page's own cards (E.k["inbox.*"], drawn by renderKpis from M.src.inbox), the chart is
+          EfficiencyCharts.bars, the list is EfficiencyOrders (station "inbox"). Its own read (op personInbox) follows the date chips; a service
+          that does not know the op says so quietly and nothing else on the page changes. ── */
+    S.inb = { topAll: false, r: null, key: "", asked: "", busy: false, err: "", unsupported: false, fails: 0, gen: 0, at: 0, cache: new Map(), metric: "replies", ordersSig: "", drawn: false };
+    T.inbox = 0; T.inTick = 0; POLL.inbox = () => fetchInbox(true);
+    let inOrdersH = null;
+    const inRange = () => { const p = period(); return { from: p.from, to: p.to }; };
+    const inboxMetrics = () => (S.inb.r ? S.inb.r.src : {});
+    function inboxStyle() {
+      if (doc.getElementById("efpInStyle")) return;
+      const s = doc.createElement("style"); s.id = "efpInStyle";
+      s.textContent = `
+.efpIn{display:grid;gap:12px;min-width:0;align-content:start}
+.efpIn .efpLabel{margin-bottom:0}
+.efpInN:empty{display:none}.efpInOL{margin-top:6px}.efpInOn:empty{display:none}
+.efpInBusy{order:3;display:inline-flex;align-items:center;gap:7px;color:var(--ink45);font-size:11.5px;letter-spacing:0;text-transform:none;font-weight:500;opacity:0;transition:opacity .2s;min-width:0}.efpInBusy.on{opacity:1}
+.efpInBody{display:grid;gap:12px;min-width:0;transition:opacity .25s ease}.efpInBody.dim{opacity:.5}
+.efpInMsg{justify-content:space-between;flex-wrap:wrap}.efpInMsg .btn,.efpInMsg button{margin-left:auto}
+.efpInMsg button{border:1px solid var(--line);background:var(--card);border-radius:999px;padding:3px 12px;font:650 11.5px var(--sans);color:var(--ink70);cursor:pointer}.efpInMsg button:hover{background:var(--paper2);color:var(--ink)}
+.efpInDist{min-width:0}.efpInDist:empty{display:none}
+.efpInTop{display:grid;gap:1px;min-width:0;position:relative}
+.efpTR{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:3px 12px;align-items:baseline;width:100%;border:0;background:transparent;border-radius:10px;padding:7px 10px;margin:0;text-align:left;color:var(--ink);font-family:inherit;cursor:default;transition:background .2s}
+.efpTR[data-order]{cursor:pointer}.efpTR:hover,.efpTR:focus-visible{background:var(--card2)}.efpTR:focus-visible{outline:2px solid var(--gold);outline-offset:-2px}
+.efpTRn{font-weight:650;font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.efpTRv{font:700 13px var(--sans);font-variant-numeric:tabular-nums;white-space:nowrap}.efpTRv small{font-weight:500;color:var(--ink45);font-size:11px;margin-left:3px}
+.efpTRm{grid-column:1/-1;color:var(--ink45);font-size:11px;font-variant-numeric:tabular-nums;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.efpTRb{grid-column:1/-1;display:block;height:5px;border-radius:3px;background:var(--line2);overflow:hidden}.efpTRb i{display:block;height:100%;width:0;background:var(--gold2);border-radius:3px;transition:width .55s cubic-bezier(.2,.8,.2,1)}
+.efpInNone{padding:14px 10px;color:var(--ink45);font-size:12.5px}
+.efpInMoreB{justify-self:start;margin:4px 0 0 8px;border:0;background:transparent;color:var(--gold);font:700 11.5px var(--sans);padding:4px 6px;border-radius:6px;cursor:pointer}.efpInMoreB:hover{background:var(--goldSoft)}.efpInMoreB:focus-visible{outline:2px solid var(--gold);outline-offset:1px}
+.efpInOrders{padding:2px 2px 4px;min-width:0}.efpInOrdersMod{display:block}.efpInOrders.hidden{display:none}
+.efpInChartNote{color:var(--ink45);font-size:11px}
+.efpLabel .efpInLr{order:2;letter-spacing:0;text-transform:none;font-weight:500;font-size:11.5px}
+.efpIn .efpInFoot{display:grid;gap:3px;margin:0 2px;color:var(--ink45);font-size:11.5px;line-height:1.5}`;
+      doc.head.appendChild(s);
+    }
+    /** The inbox section: its figure cards (the very same card as every other group), charts, list, and the section's own listeners. */
+    function inboxBuild(q) {
+      inboxStyle();
+      const sec = q(".efpIn"); if (!sec) return;
+      E.in = { sec, n: q(".efpInN"), lr: q(".efpInLr"), busy: q(".efpInBusy"), busyT: q(".efpInBusyT"), msg: q(".efpInMsg"), body: q(".efpInBody"), kp: q(".efpInK"), cp: q('[data-c="inb"] .efpCP'), chH: q('[data-c="inb"] .efpCh'), card: q('[data-c="inb"]'), topCP: q('[data-c="inbTop"] .efpCP'),
+        distH: q(".efpInDist"), top: q(".efpInTop"), topL: q(".efpInTopL"), orders: q(".efpInOrders"), ordersN: q(".efpInOn"), foot: q(".efpInFoot") };
+      const [gname, prim, more] = IN_GROUP;
+      for (const full of prim.concat(more)) {
+        const key = shortKey(full), d = cardOf(full), c = el("div", "efpK", `<span class="efpKL"><span class="t"></span></span><span class="efpKR"><b class="efpKV">—</b><span class="efpKsp"></span></span><span class="efpKD"></span><span class="efpKF"><span class="efpKS"></span><span class="efpKT"></span></span>`);
+        c.tabIndex = -1; c.dataset.k = full; c.setAttribute("role", "group"); setText(c.querySelector(".t"), d.label); if (more.includes(full)) c.classList.add("hidden", "extra");
+        E.k[full] = { card: c, val: c.querySelector(".efpKV"), d: c.querySelector(".efpKD"), s: c.querySelector(".efpKS"), tag: c.querySelector(".efpKT"), sp: null, spH: c.querySelector(".efpKsp"), t: c.querySelector(".t"), group: gname };
+        c.addEventListener("pointerenter", () => showHC(full)); c.addEventListener("pointerleave", hideHC); c.addEventListener("focus", () => showHC(full)); c.addEventListener("blur", hideHC);
+        E.in.kp.appendChild(c);
+      }
+      roveInit(E.in.kp, ".efpK");
+      charts.inb = chart("bars", E.in.chH, { height: 262, name: "Replies sent", emptyText: "No replies in this range" });
+      charts.inDist = chart("bars", E.in.distH, { height: 96, name: "Customers by messages received", emptyText: "" });
+      mini.top = miniTip(E.in.top);
+      sec.addEventListener("click", e => {
+        const b = e.target.closest && e.target.closest("button"); if (!b || !sec.contains(b)) return;
+        if (b.dataset.inmetric) { S.inb.metric = b.dataset.inmetric; renderInbox(S.M, S.M && buckets(S.M, today(), now())); return; }
+        if (b.hasAttribute("data-inretry")) { S.inb.fails = 0; fetchInbox(false); }
+        if (b.hasAttribute("data-intopmore")) { S.inb.topAll = !S.inb.topAll; E.in.top._sig = ""; paintTop(S.inb.r); }
+      });
+      const EO = root.EfficiencyOrders;
+      if (EO && typeof EO.mount === "function") {
+        try {
+          const host1 = el("div", "efpInOrdersMod"), r0 = inRange(); E.in.orders.appendChild(host1);
+          inOrdersH = EO.mount(host1, { name: S.name, station: "inbox", range: r0, filters: false, dateFields: false, moreButton: true, pollMs: 15000, onOpen: (rid, btn) => openOrder(btn || host1, rid) }); S.inb.ordersSig = JSON.stringify(r0);
+          if (!inOrdersH) host1.remove();
+        } catch (e) { console.warn("[efficiency person] inbox order list:", e && e.message); inOrdersH = null; }
+      }
+      E.in.orders.classList.toggle("hidden", !inOrdersH); E.in.sec.querySelector(".efpInOL").classList.toggle("hidden", !inOrdersH);
+      T.inTick = setInterval(() => { if (S.dead || S.locked) return; if (visible() && !T.inbox && !S.inb.busy) schedule("inbox", 200); }, 1000);
+    }
+    function syncInOrders() {
+      if (!inOrdersH) return; const r = inRange(), sig = JSON.stringify(r); if (sig === S.inb.ordersSig) return; S.inb.ordersSig = sig;
+      if (typeof inOrdersH.setRange === "function") { try { inOrdersH.setRange(r); } catch (e) { console.warn("[efficiency person] inbox order list range:", e && e.message); } }
+    }
+    function inboxEnd() { if (inOrdersH) { try { (inOrdersH.unmount || inOrdersH.destroy).call(inOrdersH); } catch (_) {} inOrdersH = null; } }
+    const inReq = () => { const p = period(); return { op: options.inboxOp, name: S.name, range: S.range === "custom" ? { from: p.from, to: p.to } : S.range, day: S.range === "custom" ? p.to : S.anchor, compare: true, top: options.inboxTop }; };
+    /** The window changed (or the page opened): a stored answer is shown at once and made fresh; otherwise the old figures stay, dimmed, until the new ones arrive. */
+    function inboxGo() {
+      if (!E.in) return; const I = S.inb, key = reqKey(), hit = I.cache.get(key);
+      syncInOrders();
+      if (hit) { I.r = hit.r; I.key = key; I.err = ""; applyInbox(); } else { E.in.body.classList.add("dim"); paintInbox(); }
+      if (!hit || Date.now() - hit.at > 4000) fetchInbox(false); else schedule("inbox", options.inboxMs);
+    }
+    async function fetchInbox(poll) {
+      clearTimeout(T.inbox); T.inbox = 0; const I = S.inb; if (S.dead || S.locked || !E.in) return; if (poll && (!visible() || I.busy)) return;
+      if (I.busy && !poll) { I.gen++; }   // (a newer window: the older answer is dropped when it lands)
+      const key = reqKey(), gen = ++I.gen; I.busy = true; I.asked = key; paintInbox();
+      try {
+        const r = await call(inReq()); if (gen !== I.gen || S.dead) return;
+        const p = period(), R = normInbox(r, { name: S.name, from: p.from, to: p.to });
+        I.cache.set(key, { r: R, at: Date.now() }); while (I.cache.size > options.cacheMax) I.cache.delete(I.cache.keys().next().value);
+        I.r = R; I.key = key; I.err = ""; I.unsupported = false; I.fails = 0; I.at = Date.now(); applyInbox();
+      } catch (e) {
+        if (gen !== I.gen || S.dead || (e && e.name === "AbortError")) return;
+        if (isAuth(e)) { lockOut(e); return; }
+        if ((e && (e.status === 404 || e.status === 405)) || (e && e.status === 400 && /unknown op/i.test(String(e.serverError || e.message)))) { I.unsupported = true; I.err = ""; } else { I.err = String((e && e.message) || e).slice(0, 160); I.fails++; }
+      } finally { if (gen === I.gen) { I.busy = false; paintInbox(); if (!S.locked && !S.dead) schedule("inbox", I.unsupported ? options.inboxMs * 4 : I.fails ? backoff(I.fails) : period().to >= today() ? options.inboxMs : options.inboxMs * 4); } }
+    }
+    /** New inbox figures: they ride in M.src like every other figure, so the cards, the hover card and the count-up are the page's own. */
+    function applyInbox() {
+      const M = S.M, I = S.inb; paintInbox(); if (!M) return;
+      M.src.inbox = inboxMetrics(); const B = buckets(M, today(), now()), first = !I.drawn; I.drawn = true;
+      renderKpis(M, B, first); renderInbox(M, B);
+    }
+    /** What a card under the figures says in one plain line. */
+    function inboxSub(full, m) {
+      const R = S.inb.r; if (!R || m.v == null) return ""; const v = k => (R.src[k] ? R.src[k].v : null);
+      switch (shortKey(full)) {
+        case "replies": return v("daysActive") > 0 ? `${nf1(m.v / v("daysActive"))} per day with replies` : "";
+        case "orders": { if (v("replies") == null || !(m.v > 0)) return ""; const x = Math.round(v("replies") / m.v * 10) / 10; return `${nf1(x)} ${x === 1 ? "reply" : "replies"} per order`; }
+        case "customers": { if (v("messages") == null || !(m.v > 0)) return ""; const x = Math.round(v("messages") / m.v * 10) / 10; return `${nf1(x)} ${x === 1 ? "message" : "messages"} each`; }
+        case "messages": return v("replies") != null && v("replies") > 0 && v("replies") !== m.v ? `${nf1(m.v / v("replies"))} per reply` : "";
+        case "messagesPerCustomer": return R.per && R.per.median != null ? `middle customer ${nf1(R.per.median)}` : "";
+        case "maxPerCustomer": { const t = R.per && R.per.top[0]; return t && t.customer ? t.customer : ""; }
+        case "daysActive": { const n = R.from && R.to ? diffDays(R.from, R.to) + 1 : null; return n ? `of ${nf(n)} ${n === 1 ? "day" : "days"}` : ""; }
+        default: return "";
+      }
+    }
+    /** The little trend line of a card: the inbox's own series on the page's buckets (hours for a Day). */
+    function inboxSpark(full, B) {
+      const R = S.inb.r, sp = cardOf(full).sp; if (!R || !sp) return [];
+      if (B.kind === "hour") return (sp === "replies" || sp === "messages") && R.hours.length ? B.items.map(x => (x.future ? null : num((R.hours[+x.key] || {})[sp]))) : [];
+      const by = new Map(R.series.map(p => [p.day, p])); return B.items.map(x => { if (x.future) return null; const p = by.get(x.key); return p ? p[sp] : null; });
+    }
+    /** The chart's buckets: hours for a Day, else the server's days (every day of the window, a gap where nothing is known) or weeks. */
+    function inBuckets(R) {
+      const td = today(), from = R.from, to = R.to, n = diffDays(from, to) + 1;
+      if (n === 1) {
+        const hs = R.hours, act = []; hs.forEach(h => { if (nz(h.replies) > 0 || nz(h.messages) > 0) act.push(h.hour); });
+        const nowH = from === td ? nyParts(now()).hour : -1; let lo = 7, hi = 18; if (act.length) { lo = Math.min(lo, ...act); hi = Math.max(hi, ...act); } if (nowH >= 0) hi = Math.max(hi, Math.min(23, nowH));
+        const items = []; for (let h = lo; h <= hi; h++) { const x = hs[h] || { replies: null, messages: null }; items.push({ key: String(h), label: hourShort(h), title: hourLabel(h) + (h === nowH ? " · now" : ""), replies: x.replies, messages: x.messages, orders: null, customers: null, future: nowH >= 0 && h > nowH, pickable: false }); }
+        return { kind: "hour", noun: "hour", items, hi: nowH >= 0 ? items.findIndex(i => +i.key === nowH) : -1 };
+      }
+      if (R.granularity === "week") {
+        const items = R.series.map(p => Object.assign({}, p, { key: p.day, label: mdLbl(p.day), title: p.days > 1 ? `${mdLbl(p.day)} – ${mdLbl(p.to)}` : mdLbl(p.day), future: p.day > td, pickable: p.day <= td, span: [p.day, p.to] }));
+        return { kind: "week", noun: "week", items, hi: td >= from && td <= to ? items.findIndex(i => i.span[0] <= td && td <= i.span[1]) : -1 };
+      }
+      const by = new Map(R.series.map(p => [p.day, p])), items = [];
+      for (let d = from, i = 0; d <= to && i < 800; d = addDays(d, 1), i++) { const p = by.get(d) || { replies: null, orders: null, customers: null, messages: null }; items.push(Object.assign({}, p, { day: d, key: d, label: n <= 7 ? wdNum.format(dayDate(d)) : (items.length % 5 === 0 || d === to ? mdLbl(d) : ""), title: dayLbl(d), future: d > td, pickable: d <= td })); }
+      return { kind: "day", noun: "day", items, hi: td >= from && td <= to ? items.findIndex(x => x.day === td) : -1 };
+    }
+    const inPlural = (k, v) => (v === 1 ? IN_MEASURE[k][1] : IN_MEASURE[k][2]);
+    /** The status line of the section: reading, not available yet, could not be read; the quiet notes (what is known and what is not). */
+    function paintInbox() {
+      const e = E.in; if (!e) return; const I = S.inb, R = I.r, stale = I.busy && (!R || I.key !== reqKey());
+      e.busy.classList.toggle("on", stale); setText(e.busyT, stale ? "Reading the inbox…" : "");
+      e.body.classList.toggle("dim", !!(stale && R));
+      const p = period(); setText(e.lr, periodLabel(S.range, p, today()));
+      let msg = "";
+      if (I.unsupported) msg = `<span>Inbox figures are not available from the service yet.</span>`;
+      else if (I.err && !R) msg = `<span>The inbox figures could not be read just now. Trying again.</span><button type="button" data-inretry>Try now</button>`;
+      else if (I.err && R) msg = `<span>The inbox figures could not be updated just now.</span><button type="button" data-inretry>Try now</button>`;
+      if (e.msg._h !== msg) { e.msg._h = msg; e.msg.innerHTML = msg; } e.msg.classList.toggle("hidden", !msg);
+      e.body.classList.toggle("hidden", I.unsupported && !R);
+    }
+    /** The chart, the customers card and the notes (the figures are drawn by renderKpis). */
+    function renderInbox(M, B) {
+      const e = E.in, I = S.inb, R = I.r; if (!e || !M) return; paintInbox();
+      const rep = R && R.src.replies, dm = R && R.src[I.metric];
+      setText(e.n, rep && rep.v != null ? nf(rep.v) : "");
+      // the chart: replies (or messages, orders, customers) per day, per week beyond 92 days, per hour for a Day
+      let ib = null; if (R) { ib = inBuckets(R); }
+      if (ib) setText(e.card.querySelector(".efpCT"), `Sent per ${ib.noun}`);
+      const avail = !ib || ib.kind === "hour" ? ["replies", "messages"] : ["replies", "messages", "orders", "customers"]; if (!avail.includes(I.metric)) I.metric = "replies";
+      e.sec.querySelectorAll("[data-inmetric]").forEach(b => { const ok = avail.includes(b.dataset.inmetric), on = b.dataset.inmetric === I.metric; b.classList.toggle("hidden", !ok); b.classList.toggle("on", on); b.setAttribute("aria-pressed", on); });
+      if (charts.inb) {
+        if (!R) { if (I.err) charts.inb.update(null, { emptyText: "Not read just now" }); } else {
+          const mt = I.metric, rows = ib.items.filter(x => !x.future), vals = rows.map(x => x[mt]), known = vals.filter(v => v != null), hiItem = ib.items[ib.hi], kind = ib.kind, xKind = kind === "hour" ? "hour" : kind === "week" ? "week" : "day", hiX = kind === "hour" ? rows.indexOf(hiItem) : hiItem ? hiItem.key : null;
+          const xs = rows.map(x => (kind === "hour" ? +x.key : x.key)), noun = IN_MEASURE[mt], onPoint = p => { const m = p.meta; if (!m || !m.pickable) return; if (kind === "day") go({ range: "day", anchor: m.key }); else if (kind === "week") go({ range: "week", anchor: m.span[1] > today() ? today() : m.span[1] }); };
+          const other = (k, x) => [IN_MEASURE[k][0], x[k] == null ? "—" : nf(x[k])], click = x => (x && x.pickable ? [{ k: kind === "day" ? "Click to open this day" : "Click to open this week", v: "", muted: true }] : []);
+          charts.inb.update({ x: xs, series: [{ key: "v", label: noun[0], values: vals }], highlight: hiX, meta: rows }, { unit: "count", xKind, fmt: v => (v == null ? "—" : `${nf(v)} ${v === 1 ? noun[1] : noun[2]}`), tickFmt: v => nf(v), def: dm && dm.def || "", name: `${noun[0]} sent per ${ib.noun}`, onPoint, nullText: "Nothing recorded", emptyText: known.length ? "No replies in this range" : "Not recorded for this range",
+            tipRows: p => { const x = p.meta; if (!x || p.values.v == null) return []; return (kind === "hour" ? [other(mt === "replies" ? "messages" : "replies", x)] : ["replies", "messages", "orders", "customers"].filter(k => k !== mt).map(k => other(k, x))).concat(click(x)); } });
+          const worked = rows.filter(x => x[mt] != null && x[mt] > 0), avg = kind !== "hour" && worked.length > 1 ? worked.reduce((n, x) => n + x[mt], 0) / worked.length : null;
+          setText(e.cp, avg != null ? `average ${nf1(avg)} per ${ib.noun} with ${noun[2]}` : kind === "hour" && known.length ? (() => { let pk = -1; vals.forEach((v, i) => { if (v > 0 && (pk < 0 || v > vals[pk])) pk = i; }); return pk >= 0 ? `busiest hour ${hourLabel(+rows[pk].key)}` : ""; })() : "");
+        }
+      }
+      // customers: messages per customer (the average, how they are spread, and who got the most)
+      const per = R && R.per, avg = R && R.src.messagesPerCustomer;
+      setText(e.topCP, avg && avg.v != null ? `average ${nf1(avg.v)} per customer` : "");
+      if (charts.inDist) {
+        const dist = per ? per.dist.filter(d => d.messages != null) : [];
+        e.distH.classList.toggle("hidden", !dist.length);
+        if (dist.length) charts.inDist.update({ x: dist.map(d => (d.plus ? `${d.messages}+` : String(d.messages))), series: [{ key: "c", label: "Customers", values: dist.map(d => d.customers) }], meta: dist }, { unit: "count", fmt: v => (v == null ? "—" : `${nf(v)} ${v === 1 ? "customer" : "customers"}`), tickFmt: v => nf(v), name: "Customers by messages received", emptyText: "", label: p => { const d = p.meta; return !d ? String(p.x) : d.plus ? `${d.messages} or more messages` : `${d.messages} ${d.messages === 1 ? "message" : "messages"} each`; }, def: "How many customers got one, two, three, four, or five or more messages from this person in the period." });
+      }
+      paintTop(R);
+      // the orders covered: the list follows the window; its label carries the figure
+      const orc = R && R.src.orders; setText(e.ordersN, orc && orc.v != null ? nf(orc.v) : "");
+      // what is known and what is not
+      const lines = [];
+      if (R) {
+        if (R.knownFrom && R.from && R.from < R.knownFrom) lines.push(`The inbox keeps its own record of sent replies from ${fullFmt.format(dayDate(R.knownFrom))}: earlier days show a dash, not zero.`);
+        if (R.unknown) lines.push(`${nf(R.unknown.replies)} ${R.unknown.replies === 1 ? "reply" : "replies"} in this period ${R.unknown.replies === 1 ? "was" : "were"} sent before a name was recorded (unknown): they are not counted for anyone.`);
+        for (const n of R.notes) lines.push(n);
+        if (R.partial && !R.notes.length) lines.push("Part of the inbox records could not be read just now, so some figures may be low.");
+      }
+      lines.push("Only replies a person actually sent count. AI drafts nobody sent, and the AI's own replies, are left out.");
+      const sig = lines.join("|"); if (e.foot._sig !== sig) { e.foot._sig = sig; e.foot.textContent = ""; for (const l of lines) e.foot.appendChild(el("div")).textContent = l; }
+      roveFix(e.kp, ".efpK");   // (one Tab stop for the group, whichever cards "More figures" shows)
+    }
+    /** The customers who got the most messages: each row opens that customer's newest order; the same bar and hover card as the rates. */
+    function paintTop(R) {
+      const e = E.in, per = R && R.per, all = per ? per.top : [], few = options.inboxShow, more = all.length > few, top = more && !S.inb.topAll ? all.slice(0, few) : all, sig = JSON.stringify([top, all.length, S.inb.topAll, R && R.from, R && R.to, !!R]); if (e.top._sig === sig) return; e.top._sig = sig;
+      const keep = e.top.querySelector(".efpTip"); e.top.textContent = ""; if (keep) e.top.appendChild(keep);
+      e.topL.classList.toggle("hidden", !top.length);
+      if (!top.length) { const msg = !R ? (S.inb.err ? "Not read just now" : "Reading the inbox…") : per && per.total === 0 || R.src.replies && R.src.replies.v === 0 ? "No replies were sent in this range" : "The customers are not listed for this range"; e.top.insertBefore(el("div", "efpInNone", esc(msg)), e.top.firstChild); return; }
+      const max = Math.max(1, ...top.map(t => nz(t.messages))), td = today();
+      top.forEach((t, i) => {
+        const b = el(t.rid ? "button" : "div", "efpTR"); if (t.rid) { b.type = "button"; b.dataset.order = t.rid; }
+        const meta = [t.orders != null ? `${nf(t.orders)} ${t.orders === 1 ? "order" : "orders"}` : "", t.replies != null ? `${nf(t.replies)} ${t.replies === 1 ? "reply" : "replies"}` : "", t.lastAt ? `last ${stamp(t.lastAt, td)}` : ""].filter(Boolean).join(" · ");
+        b.innerHTML = `<span class="efpTRn">${esc(t.customer || "Customer")}</span><span class="efpTRv">${t.messages != null ? nf(t.messages) : "—"}<small>${t.messages === 1 ? "message" : "messages"}</small></span><span class="efpTRm">${esc(meta)}</span><span class="efpTRb"><i data-w="${(nz(t.messages) / max * 100).toFixed(1)}"></i></span>`;
+        const tip = { t: t.customer || "Customer", v: t.messages != null ? `${nf(t.messages)} ${t.messages === 1 ? "message" : "messages"}` : "—", rows: [].concat(t.replies != null ? [["Replies", nf(t.replies)]] : [], t.orders != null ? [["Orders", nf(t.orders)]] : [], t.lastAt ? [["Last message", stamp(t.lastAt, td)]] : [], per && per.total ? [["Rank", `${i + 1} of ${nf(per.total)} customers`]] : []), hint: t.rid ? "Click to open their newest order." : "" };
+        b.setAttribute("aria-label", `${t.customer || "Customer"}: ${t.messages != null ? nf(t.messages) : "no"} messages${meta ? ". " + meta : ""}${t.rid ? ". Open their newest order" : ""}`);
+        b.addEventListener("pointerenter", () => mini.top.show(b, tip)); b.addEventListener("pointerleave", () => mini.top.hide()); b.addEventListener("focus", () => mini.top.show(b, tip)); b.addEventListener("blur", () => mini.top.hide());
+        e.top.insertBefore(b, e.top.querySelector(".efpTip"));
+      });
+      if (more) { const t = el("button", "efpInMoreB"); t.type = "button"; t.setAttribute("data-intopmore", ""); t.setAttribute("aria-expanded", !!S.inb.topAll); t.textContent = S.inb.topAll ? `Show the top ${few}` : `Show all ${all.length}`; e.top.insertBefore(t, e.top.querySelector(".efpTip")); }
+      requestAnimationFrame(() => e.top.querySelectorAll(".efpTRb i").forEach(x => { x.style.width = x.dataset.w + "%"; }));
+    }
+
     /* ── build once; everything after updates in place ── */
     const CHEV = `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 3 5 8l5 5"/></svg>`;
     const SEARCH = `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="m10.5 10.5 3 3"/></svg>`;
@@ -682,6 +942,19 @@
     <section aria-label="Issues"><div class="efpLabel">Issues <b class="efpIN"></b></div><div class="efpCard efpIs"></div></section>
     <section aria-label="Success and contact rates"><div class="efpLabel">Success and contact</div><div class="efpCard efpRates"></div></section>
   </div>
+  <section class="efpIn" aria-label="Inbox"><div class="efpLabel"><span>Inbox</span><b class="efpInN"></b><span class="efpInLr"></span><button type="button" class="efpLink" data-more-group="Inbox" aria-expanded="false">More figures</button><span class="efpInBusy" role="status"><span class="spin" aria-hidden="true"></span><span class="efpInBusyT"></span></span></div>
+    <div class="efpInMsg efpFound hidden" role="status"></div>
+    <div class="efpInBody">
+      <div class="efpKpis efpInK" role="group" aria-label="Inbox figures"></div>
+      <div class="efpGrid g75">
+        <div class="efpCard efpChart" data-c="inb"><div class="efpCH"><span class="efpCT">Sent per day</span><span class="seg efpTog" role="group" aria-label="Measure">${Object.keys(IN_MEASURE).map(k => `<button type="button" data-inmetric="${k}">${IN_MEASURE[k][0]}</button>`).join("")}</span><span class="efpCP"></span></div><div class="efpCh"></div></div>
+        <div class="efpCard efpChart" data-c="inbTop"><div class="efpCH"><span class="efpCT">Messages per customer</span><span class="efpCP"></span></div><div class="efpInDist"></div><div class="efpSub efpInTopL">Most messages</div><div class="efpInTop"></div></div>
+      </div>
+      <div class="efpLabel efpInOL"><span>Orders covered</span><b class="efpInOn"></b></div>
+      <div class="efpCard efpInOrders"></div>
+      <div class="efpInFoot"></div>
+    </div>
+  </section>
   <section class="efpLaserS hidden" aria-label="Laser sheets"></section>
   <section aria-label="Orders"><div class="efpLabel">Orders <b class="efpON"></b><span class="efpLr"></span><button type="button" class="efpLink" data-orders-all>Show all time</button></div>
     <div class="efpCard efpOrdersHost"><div class="efpOrdersOwn"><div class="efpFind"><label class="efpSearch">${SEARCH}<input type="text" name="q" inputmode="search" autocomplete="off" spellcheck="false" placeholder="Search orders: number, customer or station" aria-label="Search this person's orders"><button type="button" class="efpIcon hidden" data-clear aria-label="Clear the search">✕</button></label><span class="efpSt" role="status"></span></div>
@@ -714,6 +987,7 @@
         cal: chart("calendarHeat", E.calH, { name: "Days worked" }), mix: chart("donut", E.mixH, { name: "Station mix" }), heat: chart("hourHeatmap", E.heatH, { name: "Busiest hours of the day" }),
         wt: chart("bars", q('[data-c="wt"] .efpCh'), { height: 170, name: "Welding station: time by task", stack: true }), wm: chart("bars", q('[data-c="wm"] .efpCh'), { height: 170, name: "Orders matched" }) };
       mini = { rate: miniTip(E.rates), shift: miniTip(E.shiftH) };
+      inboxBuild(q);
       setText(E.name, S.name); setText(E.av, initials(S.name)); E.av.dataset.t = String(tint(S.name));
       root0.addEventListener("click", onClick); root0.addEventListener("submit", onSubmit);
       E.find.addEventListener("input", onSearchInput); E.find.addEventListener("keydown", e => { if (e.key === "Escape" && E.find.value) { e.preventDefault(); E.find.value = ""; onSearchInput(); } });
@@ -763,7 +1037,7 @@
       const M = S.M, L = S.live, w = L && L.where, td = today(), seen = (M && M.to >= td && M.lastSeen) || S.seenAt || null;
       E.av.toggleAttribute("data-on", !!w);
       let txt;
-      if (w) txt = `Signed in${w.stationKey ? ` at <b>${esc(stName(w.stationKey))}</b>` : ""}${w.tasks && w.tasks.length ? ` as ${esc(w.tasks.map(t => t.charAt(0).toUpperCase() + t.slice(1)).join(" and "))}` : ""}${w.since ? ` · since ${esc(stamp(w.since, td))}` : ""}`;
+      if (w) txt = `Signed in${w.stationKey ? ` at <b>${esc(stName(w.stationKey))}</b>` : ""}${w.tasks && w.tasks.length ? ` · ${w.tasks.length > 1 ? "Tasks" : "Task"}: ${esc(w.tasks.map(t => t.charAt(0).toUpperCase() + t.slice(1)).join(" and "))}` : ""}${w.since ? ` · since ${esc(stamp(w.since, td))}` : ""}`;
       else if (seen) txt = `${L ? "Not signed in · last" : "Last"} seen <b>${esc(stamp(seen, td))}</b>`;
       else txt = L || M ? "Not signed in now" : "";
       if (E.where._h !== txt) { E.where._h = txt; E.where.innerHTML = txt; }
@@ -787,6 +1061,7 @@
     }
     const kv = (M, full) => { const m = metricAt(M, full); return m ? m.v : null; };
     function subFor(full, m, M) {
+      if (full.startsWith("inbox.")) return inboxSub(full, m);
       const key = shortKey(full), work = kv(M, "att.daysWorked"), off = M.cal.filter(c => c.state === "off");
       switch (key) {
         case "parts": return m.v != null && work > 0 ? `${nf(m.v / work)} per day worked` : "";
@@ -805,6 +1080,7 @@
       }
     }
     function sparkFor(full, B, M) {
+      if (full.startsWith("inbox.")) return inboxSpark(full, B);
       const key = shortKey(full), sp = cardOf(full).sp; if (!sp) return [];
       const it = B.items;
       if (B.kind === "hour") return sp === "parts" || sp === "scans" ? it.map(x => (x.future ? null : x[sp])) : [];
@@ -832,7 +1108,7 @@
         const rd = diffDays(M.from, M.to) + 1, tag = m && m.est ? "est." : m && m.daysCounted != null && m.daysCounted < rd && m.v != null ? `${nf(m.daysCounted)} of ${nf(rd)} days` : m && m.window && evs ? "recent" : m && m.derived ? "sum" : ""; setText(k.tag, tag);
         // a small trend line joins the days that have a figure (a day off or a future day would cut it into stubs); the charts below keep every gap
         const sp = m ? sparkFor(full, B, M).filter(x => x != null) : [], known = sp.length, on = known >= 3 && !k.card.classList.contains("hidden") && root.EfficiencyCharts;
-        if (on) { if (!k.sp) k.sp = chart("sparkline", k.spH, { height: 26, hover: false, fill: false, name: `${nameOf(m, d)} across the range` }); if (k.sp) k.sp.update({ values: sp }); k.spH.style.visibility = ""; }
+        if (on) { if (!k.sp) k.sp = chart("sparkline", k.spH, { height: 26, hover: false, fill: false, emptyText: "", name: `${nameOf(m, d)} across the range` }); if (k.sp) k.sp.update({ values: sp }); k.spH.style.visibility = ""; }
         else { if (k.sp) { k.sp.destroy(); k.sp = null; } k.spH.style.visibility = "hidden"; }
         k.card.setAttribute("aria-label", `${nameOf(m, d)}: ${m && m.v != null ? fmt(m.v) : "no data"}. ${(m && m.def) || d.def}`);
       }
@@ -994,6 +1270,7 @@
     }
     function render(M, first) {
       const B = buckets(M, today(), now()); paintBar(); renderHead(); renderNote(M); renderKpis(M, B, first); renderCharts(M, B); renderWelding(M, B); renderCal(); renderMix(M); renderHeat(M, B); renderIssues(M); renderRates(M); syncMatched(M); paintLive();
+      renderInbox(M, B);
     }
 
     /* ── the live card: the order in this person's hands right now ── */
@@ -1035,6 +1312,7 @@
       const p = period(), M = norm(r, { name: S.name, from: p.from, to: p.to }); if (!M.from || !M.to) { M.from = p.from; M.to = p.to; }
       const first = !S.M || !!fromCache; if (num(r.now) && !fromCache && typeof o.now !== "function" && !(EA() && EA().now)) S.off = num(r.now) - Date.now();
       if (M.lastSeen && M.to >= today()) S.seenAt = Math.max(S.seenAt || 0, M.lastSeen);       // "last seen" survives a switch to a day that has none (only windows that reach today say anything about now)
+      M.src.inbox = inboxMetrics();
       S.M = M; S.at = at || Date.now(); E.wait.classList.add("hidden"); E.body.classList.remove("hidden"); E.body.classList.remove("dim"); if (!S.locked) E.msg.classList.add("hidden");
       render(M, first);
       if (laserH) laserH.repaint();
@@ -1075,6 +1353,7 @@
       S.gen++; if (S.ctl) { try { S.ctl.abort(); } catch (_) {} } S.busy = false; S.fails = 0; S.err = ""; paintBar(); syncOrders(); hideHC(); S.calx = S.calx && S.M && S.calx.to === period().to ? S.calx : null;
       try { o.onState && o.onState({ range: S.range, day: S.anchor, from: period().from, to: period().to }); } catch (_) {}
       syncLaser();
+      inboxGo();
       const key = reqKey(), hit = S.cache.get(key);
       if (hit) accept(hit.r, true, hit.at); else E.body.classList.add("dim");
       clearTimeout(T.cal); T.cal = 0; if (S.M) schedule("cal", hit ? 200 : 900);
@@ -1215,6 +1494,7 @@
       if (typeof unsubLive === "function") { try { unsubLive(); } catch (_) {} } if (ordersH) { try { (ordersH.unmount || ordersH.destroy || ordersH).call(ordersH); } catch (_) {} } if (matchedH) { try { (matchedH.unmount || matchedH.destroy || matchedH).call(matchedH); } catch (_) {} }
       if (laserH) { try { laserH.unmount(); } catch (_) {} laserH = null; }
       doc.removeEventListener("visibilitychange", onVisible); try { if (root.Seal && root.Seal.zoom && root.Seal.zoom.away) root.Seal.zoom.away(); } catch (_) {}
+      inboxEnd();
       if (root0.parentNode) root0.remove(); instances.delete(api);
     }
     function refresh() { if (S.dead) return; if (laserH) laserH.refresh(); S.cache.clear(); S.gen++; S.fails = 0; fetchRange(S.gen, false); pollLive(); pollCal(); if (ordersH && typeof ordersH.refresh === "function") ordersH.refresh(); else loadOrders(true); if (matchedH && typeof matchedH.refresh === "function") matchedH.refresh(); }
@@ -1232,5 +1512,5 @@
     return api;
   }
   const instances = new Set();
-  root.EfficiencyEmployee = { mount, options, norm, normOrders, pickLive, buckets, periodOf, shiftAnchor, periodLabel, CARD, GROUPS, get instances() { return [...instances]; } };
+  root.EfficiencyEmployee = { mount, options, norm, normOrders, normInbox, pickLive, buckets, periodOf, shiftAnchor, periodLabel, CARD, GROUPS, get instances() { return [...instances]; } };
 })(window);

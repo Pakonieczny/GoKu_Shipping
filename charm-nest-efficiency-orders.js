@@ -22,6 +22,7 @@
  *                        the console holds for this tab (sessionStorage 'cn.eff.key', sent as `key`, never shown, logged or stored by this file). An
  *                        error it throws is shown as its message; one with .auth or .locked stops the live polling.
  *      opts.onRange      ({from,to} | null) → called when the list's own date fields or its "Clear" change the range (so the host's chips can follow)
+ *      opts.moreButton   true pages on a "Show more orders" button instead of as the end of the list scrolls into view (for a list with other content below it)
  *      opts.limit        orders per page (25)    opts.pollMs   milliseconds between live checks (5000; 0 = no live checks)
  *      opts.prefer       'photo' (default): a piece shows its stored picture, else its vector design; 'vector': the design first
  *      opts.onState      (info) → called when the list changes: { total, scanned, rows, loading, error, query }
@@ -115,6 +116,7 @@
       const why = o.issues.filter(i => ISSUE_KINDS.has(i.kind)).map(i => i.label || i.kind);
       return { s: "issue", label: "Issue", why: why.length ? why.join(", ") : o.rejected ? "A piece was rejected" : "An error was logged on this order" };
     }
+    if (o.replies > 0) return { s: "completed", label: "Replied", why: "A reply was sent on this order from the inbox" };   // (inbox rows, IN2: the server says how many replies and messages this person sent on the order)
     if (o.undone > 0 || kinds.has("undone")) return { s: "reopened", label: "Reopened", why: "A completion of this order was undone, so it was opened again" };
     if (o.completes > 0) return { s: "completed", label: "Completed", why: "Completed here at least once" };
     return { s: "handled", label: "Handled", why: "Scanned or printed here; no completion by this person" };
@@ -132,7 +134,8 @@
     const q = o.qr && typeof o.qr === "object" ? S_(o.qr.text) : S_(o.qr);
     const out = { rid, number: S_(o.number).replace(/^#/, "") || rid, at, lastAt, day: S_(o.day), station, stations, durationMs: o.durationMs == null || !Number.isFinite(+o.durationMs) ? null : Math.max(0, +o.durationMs), spanMs: o.spanMs == null || !Number.isFinite(+o.spanMs) ? null : Math.max(0, +o.spanMs),
       scans: N(o.scans), completes: N(o.completes), prints: N(o.prints), parts: N(o.parts), undone: N(o.undone), rejected: N(o.rejected), errors: N(o.errors), steps, issues, customer: S_(o.customer).trim(), info: o.info !== false,
-      thumbUrl: safeUrl(o.thumbUrl), qr: q || rid, pieces, piecesCount: Math.max(pieces.length, N(o.piecesCount)) };
+      thumbUrl: safeUrl(o.thumbUrl), qr: q || rid, pieces, piecesCount: Math.max(pieces.length, N(o.piecesCount)),
+      replies: o.replies == null || !Number.isFinite(+o.replies) ? null : Math.max(0, +o.replies), messages: o.messages == null || !Number.isFinite(+o.messages) ? null : Math.max(0, +o.messages) };
     out.status = statusOf(out);
     return out;
   }
@@ -142,7 +145,7 @@
     return { ok: a.ok !== false, now: T(a.now) || 0, mode: S_(a.mode), found: a.found !== false, total: a.total == null ? orders.length : N(a.total), scanned: N(a.scanned), searched: se, orders, next: a.next ? S_(a.next) : "", notes: arr(a.notes).map(S_).filter(Boolean), partial: !!a.partial, sort: S_(a.sort) };
   }
   /** What makes a row look different: any change redraws that row's regions (and no other). */
-  const sigOf = o => JSON.stringify([o.number, o.customer, o.at, o.lastAt, o.station, o.stations, o.durationMs, o.spanMs, o.scans, o.completes, o.prints, o.parts, o.undone, o.rejected, o.errors, o.issues.map(i => i.kind + i.at), o.thumbUrl, o.qr, o.piecesCount, o.pieces.map(p => [p.id, p.label, p.sku, p.thumbUrl]), o.steps.map(s => [s.station, s.lastAt, s.durationMs])]);
+  const sigOf = o => JSON.stringify([o.number, o.customer, o.at, o.lastAt, o.station, o.stations, o.durationMs, o.spanMs, o.scans, o.completes, o.prints, o.parts, o.undone, o.rejected, o.errors, o.replies, o.messages, o.issues.map(i => i.kind + i.at), o.thumbUrl, o.qr, o.piecesCount, o.pieces.map(p => [p.id, p.label, p.sku, p.thumbUrl]), o.steps.map(s => [s.station, s.lastAt, s.durationMs])]);
 
   /* ── words typed, marked in the text ── */
   const words = q => S_(q).toLowerCase().split(/\s+/).filter(Boolean);
@@ -564,8 +567,10 @@
     if (root.IntersectionObserver) {
       ioView = new root.IntersectionObserver(es => { const was = M.inView; M.inView = es[es.length - 1].isIntersecting; if (M.inView && !was) resume(); else if (!M.inView) paintLive(); }, { rootMargin: "120px" });
       ioView.observe(root_);
-      ioMore = new root.IntersectionObserver(es => { M.sentSeen = es[es.length - 1].isIntersecting; if (M.sentSeen) loadMore(); }, { rootMargin: "360px" });
-      ioMore.observe(E.sent);
+      if (!opts.moreButton) {   // (a list with something below it pages on a button instead: an observer would keep loading while the content below is scrolled to)
+        ioMore = new root.IntersectionObserver(es => { M.sentSeen = es[es.length - 1].isIntersecting; if (M.sentSeen) loadMore(); }, { rootMargin: "360px" });
+        ioMore.observe(E.sent);
+      }
     }
     /** After a page lands the end of the list may still be in view (a tall screen, short pages): ask the observer again. */
     function maybeMore() { if (!ioMore) return; if (M.next && !M.more && !M.busy && !M.err) { ioMore.unobserve(E.sent); ioMore.observe(E.sent); } }
@@ -690,7 +695,7 @@
       const extra = o.stations.length > 1 ? `<em title="${esc(o.stations.map(stName).join(", "))}">+${o.stations.length - 1}</em>` : "";
       setHtml(R.meta, `${w ? `<time class="efoWhen" datetime="${new Date(o.at).toISOString()}"><span class="d">${hlDate(o, w.d, ws)}</span><span class="t">${active ? '<i class="efoNow" title="Active in the last two minutes"></i>' : ""}${esc(w.t)}</span></time>` : `<span class="efoWhen"></span>`}`
         + `<span class="efoSt">${o.station ? `<b class="efoChip" data-st="${esc(o.station)}"><i></i>${hl(stName(o.station), ws)}</b>${extra}` : ""}</span>`
-        + `<span class="efoDur" title="Logged working time on this order"><b>${esc(fmtDur(o.durationMs))}</b><small>Worked</small></span>`
+        + (o.replies != null ? `<span class="efoDur" title="Replies this person sent on this order${o.messages != null ? ` (${nf(o.messages)} ${o.messages === 1 ? "message" : "messages"})` : ""}"><b>${esc(nf(o.replies))}</b><small>${o.replies === 1 ? "Reply" : "Replies"}</small></span>` : `<span class="efoDur" title="Logged working time on this order"><b>${esc(fmtDur(o.durationMs))}</b><small>Worked</small></span>`)
         + `<span class="efoStat" data-s="${o.status.s}" title="${esc(o.status.why)}">${esc(o.status.label)}</span>`);
       const q = qrUrl(o.qr);
       setHtml(R.qr, q ? `<button type="button" class="efoZ efoQr" data-zoom-dot="${options.zoom}" data-qr="${esc(o.qr)}" tabindex="-1" aria-label="${esc("QR code of order " + o.number)}"><img src="${esc(q)}" alt="" draggable="false"></button>` : `<span class="efoZ efoQr ph" data-qr="${esc(o.qr)}" aria-hidden="true">${QRPH}</span>`);
@@ -717,7 +722,7 @@
     const tipEl = () => { if (!tip) { tip = el("div", "efoTip"); tip.setAttribute("role", "tooltip"); doc.body.appendChild(tip); } return tip; };
     function factsHtml(o) {
       const w = o.at ? when(o.at, nowMs()) : null, last = o.lastAt && o.lastAt !== o.at ? clockFmt.format(new Date(o.lastAt)) : "";
-      const g = [["Worked", fmtDur(o.durationMs)], ["Start to finish", fmtDur(o.spanMs)], ["Scans", nf(o.scans)], ["Completed", nf(o.completes)], ["Labels printed", nf(o.prints)], ["Pieces", nf(o.parts || 0)]];
+      const g = (o.replies != null ? [["Replies sent", nf(o.replies)], ["Messages sent", o.messages == null ? "—" : nf(o.messages)]] : []).concat([["Worked", fmtDur(o.durationMs)], ["Start to finish", fmtDur(o.spanMs)], ["Scans", nf(o.scans)], ["Completed", nf(o.completes)], ["Labels printed", nf(o.prints)], ["Pieces", nf(o.parts || 0)]]);
       const steps = o.steps.map(s => `<div class="efoTipR"><span>${esc(stName(s.station))}</span><b>${s.firstAt ? esc(clockFmt.format(new Date(s.firstAt))) : "—"}</b><span>${esc(fmtDur(s.durationMs))}${s.parts ? ` · ${nf(s.parts)} piece${s.parts === 1 ? "" : "s"}` : ""}</span></div>`).join("");
       const iss = o.issues.map(i => `<div class="efoTipI">${esc(i.label || i.kind)}${i.at ? " · " + esc(clockFmt.format(new Date(i.at))) : ""}${i.note ? " · " + esc(i.note) : ""}</div>`).join("");
       return `<div class="efoTipH"><b>#${esc(o.number)}</b><span>${esc(o.status.label)}</span></div>`

@@ -150,16 +150,16 @@ function weldingFor(j, o = {}) {
     console.log('  ✓ Day, Week, Month, 3 months, Year: the figures, the charts and the matched list follow the date chips');
 
     /* ── 5 · the header and the station chip ── */
-    await page.waitForFunction(sel => /Signed in\s*at\s*Welding\s*as\s*Welding and Matching/.test(document.querySelector(sel).textContent), `${P} .efpWhere`, { timeout: 8000 });
+    await page.waitForFunction(sel => /Signed in\s*at\s*Welding\s*·\s*Tasks:\s*Welding and Matching/.test(document.querySelector(sel).textContent), `${P} .efpWhere`, { timeout: 8000 });
     const chip = await page.locator(`${P} .efpChip`, { hasText: 'Welding' }).first().getAttribute('title'); assert(/Welding .* · Matching .* · \d+ matched/.test(chip), 'the station chip says minutes per task and matched, not pieces: ' + chip);
-    console.log('  ✓ header: signed in at Welding as Welding and Matching; the station chip says matched and the minutes per task');
+    console.log('  ✓ header: signed in at Welding, Tasks: Welding and Matching; the station chip says matched and the minutes per task');
 
     /* ── 4 · a person with nothing at Welding ── */
     W.on = false; await page.evaluate(() => { EfficiencyEmployee.instances[0].go({ range: 'month' }); }); await loaded(page, 'month'); await page.evaluate(() => { EfficiencyEmployee.instances[0].go({ range: 'week' }); }); await loaded(page, 'week');
     await page.evaluate(() => { EfficiencyEmployee.instances[0].go({}); document.querySelector('#efficiencyView .efp'); });
     await page.evaluate(() => { const h = EfficiencyEmployee.instances[0]; h.go({ anchor: h.state.anchor }); }); await page.waitForFunction(() => !EfficiencyEmployee.instances[0].state.welding, null, { timeout: 8000 });
     assert.equal(await page.locator(`${P} .efpGroup[data-g="Welding station"]`).isVisible(), false, 'no Welding group'); assert.equal(await page.locator(`${P} .efpWC`).isVisible(), false, 'no welding charts'); assert.equal(await page.locator(`${P} .efpWO`).isVisible(), false, 'no matched list');
-    assert.equal(await page.locator(`${P} .efpK[tabindex="0"]`).count(), 6, 'the Welding group is not a Tab stop when it is not there: one stop for each of the six groups');
+    assert.equal(await page.locator(`${P} .efpKGroups .efpK[tabindex="0"]`).count(), 6, 'the Welding group is not a Tab stop when it is not there: one stop for each of the six groups');
     console.log('  ✓ no welding time, no Welding group, charts or list; the figures keep their six Tab stops');
 
     /* ── 6 · the Overview ── */

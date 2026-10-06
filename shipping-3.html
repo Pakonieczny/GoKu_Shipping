@@ -461,6 +461,13 @@
 
   </style>
 
+  <style id="loginWaitCss">
+  /* the wait for the number check: a small spinner and "Checking…" in the prompt line, Log In disabled (only a rotation moves; a still ring with reduced motion) */
+  #loginModalPrompt .login-spin { display: inline-block; width: 14px; height: 14px; margin: -3px 9px 0 0; box-sizing: border-box; vertical-align: middle; border: 2px solid currentColor; border-top-color: transparent; border-radius: 50%; animation: loginSpin .8s linear infinite; }
+  #employeeLoginBtn[disabled] { cursor: progress; }
+  @keyframes loginSpin { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { #loginModalPrompt .login-spin { animation: none; } }
+  </style>
 </head>
 
 <body>
@@ -976,7 +983,7 @@
   <!-- The order in hand right now (scan = working, Complete / cancelled = idle), for the console's live stations board (station-live-order.js). Optional: without it nothing changes. -->
   <script src="station-live-order.js?v=20261005-et2"></script>
   <!-- Phone scans that arrive while nobody is signed in wait here and load, in order, right after the next sign-in (station-scan-queue.js). -->
-  <script src="station-scan-queue.js?v=20261006-as1"></script>
+  <script src="station-scan-queue.js?v=20261006-int1"></script>
   <script>
     try {
       StationSession.init({
@@ -1032,7 +1039,7 @@
   <!-- Order timeline: this station records each scan, label and shipment on the order's timeline and stops a
        cancelled order ("CANCELLED ORDER — DO NOT PROCEED"). Optional: without station-timeline.js nothing changes. -->
   <script src="order-timeline.js?v=20260929-cx-a"></script>
-  <script src="station-timeline.js?v=20260928-fxS"></script>
+  <script src="station-timeline.js?v=20261006-int1"></script>
   <script>
     (function () {
       const soft = (p) => { try { if (p && typeof p.catch === "function") p.catch(e => console.warn("StationTimeline:", e)); } catch (_) {} };
@@ -2643,6 +2650,22 @@ function metalToBadge(label){
          });
        })();
 
+      /* UX1: the wait for the number check (up to 15 s on a bad connection): the prompt line becomes a small spinner and "Checking…" and Log In
+         is disabled until the answer, so a second press cannot send a second check; cleared on every way out of the handler below */
+      const loginBusy = function (on) {
+        try {
+          const p = document.getElementById("loginModalPrompt"); if (!p || !employeeLoginBtn) return;
+          if (on) {
+            if (p.classList.contains("login-busy")) return;
+            p.dataset.was = p.textContent; p.classList.add("login-busy"); p.textContent = "";
+            const s = document.createElement("span"); s.className = "login-spin"; s.setAttribute("aria-hidden", "true"); p.appendChild(s); p.appendChild(document.createTextNode("Checking…"));
+            employeeLoginBtn.disabled = true; employeeLoginBtn.setAttribute("aria-busy", "true");
+          } else if (p.classList.contains("login-busy")) {
+            p.classList.remove("login-busy"); p.textContent = p.dataset.was || "Please enter your 6-digit Employee Number:"; delete p.dataset.was;
+            employeeLoginBtn.disabled = false; employeeLoginBtn.removeAttribute("aria-busy");
+          }
+        } catch (_) {}
+      };
       if(employeeLoginBtn){
         employeeLoginBtn.addEventListener("click", async function(){
           try {
@@ -2651,6 +2674,7 @@ function metalToBadge(label){
                M.toast({html: "Please enter a valid 6-digit Employee Number!"});
               return;
             }
+            loginBusy(true);
             /* The server checks the number and answers with that person's name only (firebaseOrders {pinLogin}); the list of
                everyone's numbers is not downloaded. Only when that check cannot be reached at all (no network, a timeout, a server
                error, a server that does not know it yet) is the old list download tried. An answer, yes or no, is final. */
@@ -2715,6 +2739,8 @@ function metalToBadge(label){
           } catch(errEN){
             console.error("Error in employee login flow:", errEN);
             M.toast({ html: "Error: " + errEN.message });
+          } finally {
+            loginBusy(false);
           }
         });
       }

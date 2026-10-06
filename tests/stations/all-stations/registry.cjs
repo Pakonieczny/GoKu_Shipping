@@ -24,6 +24,8 @@ const PROBES = {
   WS3: () => has('weld-scan-1.html', 'weldScanOutbox'),
   AD1: () => has('station-session.js', 'stationAdmin') || inApi('AD1'),
   AD2: () => exists('netlify/functions/_stationAdmins.js'),
+  AD3: () => has('station-session.js', 'hour without input'),                                       // client: Welding closes at 17:00 only, Laser waits an hour (30 minutes from five)
+  AD4: () => has('netlify/functions/_stationAutoSignout.js', 'hour without input'),                 // server: the same table
   LD1: () => exists('charm-nest-role.js'),
   LD2: () => has('netlify/functions/_stationLive.js', 'Sorter app (Laser)'),
   LS1: () => exists('netlify/functions/_laserSheetTime.js'),
@@ -33,7 +35,9 @@ const PROBES = {
   SA1: () => inApi('SA1'), SA2: () => inApi('SA2'), SA3: () => inApi('SA3'), SA4: () => inApi('SA4') || exists('design-scan.html'), SA5: () => exists('charm-nest-laser-act.js') || inApi('SA5')
 };
 // (WS2's api.md section describes the server half; the board's Welding card is its other half, so its probe alone decides; IN2's section was written first as the shape it expects, the client is its other half)
-const PROBE_ONLY = new Set(['WS2', 'IN2']);
+// (AD1's api.md section is written before its code reaches main: the client timers are what the checks need, so its probe alone decides too)
+// (AD3 / AD4, Addendum 2 of the plan: per-station limits. Their api.md sections may be written first; the one-hour Laser wording in the client / server file is the marker of the finished code)
+const PROBE_ONLY = new Set(['WS2', 'IN2', 'AD1', 'AD3', 'AD4']);
 const landed = id => { try { return !!(PROBES[id] ? (PROBES[id]() || (!PROBE_ONLY.has(id) && inApi(id))) : inApi(id)); } catch (_) { return false; } };
 
 const results = [];

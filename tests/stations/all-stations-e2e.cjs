@@ -377,15 +377,29 @@ fs.mkdirSync(SHOTS, { recursive: true });
     await check('B-BD3-laser', 'laser card: the sheet in hand of the Laser person', ['SA5', 'LD2'], async () => {
       await boardUntil('laser', () => { const c = cardOf('laser'); assert(c.cards.some(x => /GF Sheet 3/.test(x.text) && x.text.includes(PEOPLE.laserApp)), 'no sheet card for ' + PEOPLE.laserApp + ': ' + JSON.stringify(c.cards)); });
     });
-    await check('B-BD3-weld', 'welding card: the people, the task each is in, and the orders matched', ['WS2', 'WS1'], async () => {
-      const c = cardOf('welding'); assert(hasCard(c, R.weldA) || /matched/i.test(c.text), 'the Welding card shows no matched order: ' + c.text.slice(0, 200));
+    await check('B-BD3-weld', 'welding card: the people, the task each is in, and the orders matched (credited to the person in Matching, never to the welder)', ['WS2', 'WS1'], async () => {
+      await boardUntil('welding', () => {
+        const c = cardOf('welding'); assert(c.weld && c.weld.visible, 'the Welding card has no Welding block (the two groups and the matched list): ' + c.text.slice(0, 160));
+        const row = c.weld.rows.find(m => m.text.includes(R.weldA)); assert(row, 'no matched row for ' + R.weldA + ': ' + JSON.stringify(c.weld.rows.map(m => m.text)));
+        assert(row.text.includes(PEOPLE.matcher), 'the matched row does not say ' + PEOPLE.matcher + ': ' + row.text);
+        assert(!c.weld.rows.some(m => m.text.includes(PEOPLE.welder)), 'a matched order is credited to the welder: ' + JSON.stringify(c.weld.rows.map(m => m.text)));
+        const task = Object.fromEntries(c.people.map(p => [p.name, p.task]));
+        eq([task[PEOPLE.matcher], task[PEOPLE.welder]], ['matching', 'welding'], 'the task each person is in');
+      }, 20000);
     });
-    await check('B-BD4', 'Welding shows two groups (Welding and Matching, one person each) and NO order throughput', ['WS2', 'WS1'], async () => {
+    await check('B-BD4', 'Welding shows two groups (Welding and Matching, one person each) and NO order throughput (no pieces, no orders on the card; the Overview row shows matched and time on task instead)', ['WS2', 'WS1'], async () => {
       const c = cardOf('welding');
       const groups = c.groups.map(g => [g.group.toLowerCase(), g.people.sort().join()]).sort();
       eq(groups, [['matching', PEOPLE.matcher], ['welding', PEOPLE.welder]], 'the two groups');
-      assert(!/pieces\b.*\borders\b/i.test(c.counts) || !c.countsVisible, 'the Welding card draws order throughput: "' + c.counts + '"');
-      const ov = (await P.overviewStations()).find(r => r.key === 'welding'); assert(!ov || (ov.parts || 0) === 0 && (ov.orders || 0) === 0, 'the Overview counts Welding pieces/orders: ' + JSON.stringify(ov));
+      assert(!c.countsVisible, 'the Welding card draws order throughput: "' + c.counts + '"');
+      assert(!/\b\d+\s*pieces?\b/i.test(c.weld ? c.weld.text : c.text) && !/\b\d+\s*orders?\s+today\b/i.test(c.weld ? c.weld.text : c.text), 'the Welding block talks about pieces or orders: ' + (c.weld ? c.weld.text : c.text).slice(0, 200));
+      // the Overview's Welding row: the reader counts no pieces and no orders; the row draws "matched" and the time on task where the others draw pieces and orders
+      const bw = ((await W.eff({ op: 'overview', trend: false })).business.stations || []).find(x => x.station === 'welding');
+      assert(bw && !(bw.parts > 0) && !(bw.orders > 0), 'the reader counts Welding pieces or orders: ' + JSON.stringify(bw));
+      const ov = (await P.overviewStations()).find(r => r.key === 'welding'); assert(ov, 'the Overview has no Welding row');
+      assert(ov.weld && /matched/i.test(ov.partsLabel) && !/pieces?/i.test(ov.partsLabel), 'the Overview\'s Welding row counts "pieces": ' + JSON.stringify(ov));
+      assert(!/orders?/i.test(ov.ordersLabel) && /^(\d+(\.\d+)?\s*(h|m|min)\b.*|—)$/i.test(ov.ordersText), 'the Overview\'s Welding row counts orders, not time on task: ' + JSON.stringify(ov));
+      eq([ov.parts], [bw.matched || 0], 'the Overview\'s Welding "matched" vs the reader');
     });
     await check('B-BD5', 'Laser and Design are two separate cards: each person is on the card of the role they signed in under, nobody on both', ['LD2', 'LD1'], async () => {
       const L = names(cardOf('laser')), D = names(cardOf('design'));
@@ -395,6 +409,7 @@ fs.mkdirSync(SHOTS, { recursive: true });
       assert(/Sorter app \(Design\)/.test(dc) && !/Sorter app \(Laser\)/.test(dc), 'Design card does not say where Dara is: ' + dc.slice(0, 300));
       assert(/Sorter app \(Laser\)/.test(lc) && !/Sorter app \(Design\)/.test(lc), 'Laser card does not say where Lena is: ' + lc.slice(0, 300));
     });
+    await P.tab('stations');   // (the checks above read the Overview too: the cards are on screen again for the pictures)
     await shot(portal, 'B2-board-after-checks');
     for (const key of Object.keys(WHO)) { try { const el = portal.locator(`#efficiencyView .es .esSt[data-key="${key}"]`); await shot(el, 'card-' + key + '-crew'); } catch (_) {} }
 
@@ -473,8 +488,16 @@ fs.mkdirSync(SHOTS, { recursive: true });
       assert(m.welding.matched >= 1, 'no matched scans for ' + PEOPLE.matcher);
       const w = await W.eff({ op: 'person', name: PEOPLE.welder, range: 'day' });
       assert(w.welding && w.welding.hours.welding > 0 && !(w.welding.hours.matching > 0), 'the welder has Matching time or none at Welding: ' + JSON.stringify(w.welding && w.welding.hours));
-      const pv = await P.personPage(PEOPLE.matcher, { settle: 3000 }); await P.back();
+      // on screen (WS2's "Welding station" figures): Matching hours and Orders matched equal the reader's, Welding hours are the welder's
+      const dig = s => String(s).replace(/[^\d.]/g, ''), mins = t => { const s = String(t), h = /(\d+(?:\.\d+)?)\s*h/i.exec(s), mm = /(\d+(?:\.\d+)?)\s*m(?:in)?\b/i.exec(s); return h || mm ? (h ? parseFloat(h[1]) * 60 : 0) + (mm ? parseFloat(mm[1]) : 0) : null; };
+      const pv = await P.personPage(PEOPLE.matcher, { settle: 3000, range: 'day' }); await P.back();
       assert(/matching/i.test(pv.text) && /matched/i.test(pv.text), 'the page of ' + PEOPLE.matcher + ' does not show Matching hours or the matched count');
+      assert(pv.kpis['welding.matchedOrders'] != null && pv.kpis['welding.matchingHours'] != null, 'no "Orders matched" / "Matching hours" figure on the page of ' + PEOPLE.matcher + ' (figures: ' + Object.keys(pv.kpis).join(',') + ')');
+      eq(dig(pv.kpis['welding.matchedOrders']), String(m.welding.matched), 'Orders matched on the page of ' + PEOPLE.matcher);
+      const shownMin = mins(pv.kpis['welding.matchingHours']); assert(shownMin != null && Math.abs(shownMin - m.welding.hours.matching * 60) <= 1.5, 'Matching hours on the page "' + pv.kpis['welding.matchingHours'] + '" vs the reader ' + (m.welding.hours.matching * 60).toFixed(1) + ' min');
+      const pw = await P.personPage(PEOPLE.welder, { settle: 3000, range: 'day' }); await P.back();
+      const wMin = mins(pw.kpis['welding.weldingHours']); assert(wMin != null && Math.abs(wMin - w.welding.hours.welding * 60) <= 1.5, 'Welding hours on the page of ' + PEOPLE.welder + ' "' + pw.kpis['welding.weldingHours'] + '" vs the reader ' + (w.welding.hours.welding * 60).toFixed(1) + ' min');
+      assert(!(mins(pw.kpis['welding.matchingHours']) > 0), PEOPLE.welder + ' shows Matching hours: "' + pw.kpis['welding.matchingHours'] + '"');
       const n = await W.eff({ op: 'person', name: PEOPLE.multi, range: 'day' });
       eq(n.stations.map(s => s.station).sort(), ['assembly', 'design', 'laser'], 'the stations in Nico\'s page (Design and Laser are separate)');
     });
@@ -490,10 +513,19 @@ fs.mkdirSync(SHOTS, { recursive: true });
       const bp = live.inbox.byPerson.find(p => p.name === PEOPLE.inbox); assert(bp && bp.replies === 3, 'byPerson has no Ines with 3 replies: ' + JSON.stringify(live.inbox.byPerson));
     });
     await check('B-IN2', 'Inbox (screen): the board\'s Inbox card and the person page\'s Inbox section show 3 replies, 2 orders, 2 customers', ['IN2', 'IN1'], async () => {
-      await boardUntil('inbox', () => { const c = cardOf('inbox'); assert(/\b3\b[^.]*repl/i.test(c.text) && /\b2\b[^.]*order/i.test(c.text), 'the Inbox card says: ' + c.text.slice(0, 200)); }, 15000);
-      const pv = await P.personPage(PEOPLE.inbox, { settle: 3500 }); await P.back();
-      assert(/Inbox/.test(pv.text) && /replies sent\s*3/i.test(pv.text) && /orders[^.]{0,20}\b2\b/i.test(pv.text) && /customers?\s*2/i.test(pv.text), 'the person page of ' + PEOPLE.inbox + ' has no Inbox section with 3 / 2 / 2');
+      await boardUntil('inbox', () => {
+        const c = cardOf('inbox');
+        assert(/\b3\s*repl/i.test(c.text) && /\b2\s*orders?\b/i.test(c.text), 'the Inbox card does not say 3 replies and 2 orders: ' + c.text.slice(0, 220));
+        assert(/\b2\s*customers?\b/i.test(c.text) && /\b3\s*messages?\b/i.test(c.text), 'the Inbox card does not say 2 customers and 3 messages: ' + c.text.slice(0, 220));
+        assert(c.people.some(p => p.name === PEOPLE.inbox), 'the Inbox card does not name ' + PEOPLE.inbox);
+      }, 20000);
+      const pv = await P.personPage(PEOPLE.inbox, { settle: 3500, range: 'day' }); await P.back();
+      const dig = s => String(s == null ? '' : s).replace(/[^\d.]/g, '');
+      assert(/Inbox/.test(pv.text), 'the person page of ' + PEOPLE.inbox + ' has no Inbox section');
+      eq([dig(pv.kpis['inbox.replies']), dig(pv.kpis['inbox.orders']), dig(pv.kpis['inbox.customers'])], ['3', '2', '2'], 'the Inbox figures on the page of ' + PEOPLE.inbox + ' (replies sent, orders covered, customers)');
     });
+    // the Inbox card with its replies block (it draws a moment after the first pictures were taken): its picture is taken again once the check has seen it
+    if (landed('IN2')) { try { await P.tab('stations'); await portal.waitForSelector('#efficiencyView .es .esSt[data-key="inbox"] .esIn', { timeout: 10000 }); await shot(portal.locator('#efficiencyView .es .esSt[data-key="inbox"]'), 'card-inbox-crew'); } catch (_) {} }
     await shot(portal, 'B3-board-final');
   }
 
@@ -525,12 +557,19 @@ fs.mkdirSync(SHOTS, { recursive: true });
     await W.advance(11 * 60000, { step: 60000, settle: 200 });
     await sleep(4000);
     await W.advance(60000, { step: 30000, settle: 300 });
-    const nonAdmin = crew.filter(c => true);
-    await check('C-IDLE1', 'ten minutes without input: every person who is not an Admin is signed out at every station (sessions end "idle")', ['AD1', 'AD2'], async () => {
+    // Addendum 2 of the plan (Paul, 6 Oct 20:10 UTC): Welding (both tasks) has NO idle sign-out, Laser waits an hour (30 minutes from five); every other station keeps the ten minutes
+    const keptK = new Set(['weld', 'laser']);
+    const nonAdmin = crew.filter(c => !keptK.has(c.k)), keptCrew = crew.filter(c => keptK.has(c.k));
+    const OWN = ['AD1', 'AD2', 'AD3', 'AD4'];
+    await check('C-IDLE1', 'ten minutes without input: everybody who is not an Admin, not at Welding and not at Laser is signed out at every station (sessions end "idle"); Welding (both tasks) and Laser are still signed in', OWN, async () => {
       const bad = [];
       for (const c of nonAdmin) {
         const s = await sessionFor(c.person, c.device, c.task === undefined ? undefined : c.task);
         if (!s || s.endAt == null) bad.push(c.person + '@' + c.device + ' still signed in'); else if (s.endReason !== 'idle') bad.push(c.person + '@' + c.device + ' ended "' + s.endReason + '"');
+      }
+      for (const c of keptCrew) {
+        const s = await sessionFor(c.person, c.device, c.task);
+        if (!s) bad.push(c.person + '@' + c.device + ': no session'); else if (s.endAt != null) bad.push(c.person + '@' + c.device + ' was signed out ("' + s.endReason + '") after twelve quiet minutes: Welding has no idle limit and Laser waits an hour');
       }
       assert(!bad.length, bad.join(' ; '));
     });
@@ -550,8 +589,9 @@ fs.mkdirSync(SHOTS, { recursive: true });
       }
       assert(!bad.length, bad.join(' ; '));
     });
-    await check('C-IDLE4', 'the portal shows the sign-out plainly: nobody but the Admin on the board, "Signed out after 10 minutes without input" on the person\'s page', ['AD2', 'AD1'], async () => {
-      await boardUntil('after quiet', () => { for (const [k, c] of Object.entries(Object.fromEntries(S.board.map(s => [s.key, s])))) { const left = c.people.map(p => p.name).filter(n => n !== 'Paul K.'); assert(!left.length, k + ' still lists ' + left.join()); } }, 40000);
+    await check('C-IDLE4', 'the portal shows the sign-out plainly: on the board only the Admin, Welding\'s two people and the Laser person are left, "Signed out after 10 minutes without input" on the person\'s page', ['AD2', 'AD1'], async () => {
+      const stay = new Set(['Paul K.', ...keptCrew.map(c => c.person)]);
+      await boardUntil('after quiet', () => { for (const [k, c] of Object.entries(Object.fromEntries(S.board.map(s => [s.key, s])))) { const left = c.people.map(p => p.name).filter(n => !stay.has(n)); assert(!left.length, k + ' still lists ' + left.join()); } }, 40000);
       await shot(portal, 'C1-board-after-ten-quiet-minutes');
       const pv = await P.personPage(PEOPLE.asm, { settle: 3500, range: 'day' }); await P.back();
       assert(/Signed out after 10 minutes without input/.test(pv.text), 'the person page of ' + PEOPLE.asm + ' does not say why they are out: "' + pv.where + '"');
@@ -564,14 +604,50 @@ fs.mkdirSync(SHOTS, { recursive: true });
       if (k === 'weld') return p.evaluate(() => weldRoster().length === 0 && !!document.getElementById('employeeLoginBtn') && document.getElementById('employeeLoginBtn').offsetParent !== null);
       return p.evaluate(() => window.isEmployeeLoggedIn === false && !!document.getElementById('employeeLoginBtn') && document.getElementById('employeeLoginBtn').offsetParent !== null);
     };
-    await check('C-LOST1', 'nothing lost after the idle sign-out: each page shows its own sign-in again, and the orders in the boxes, the sorting batch, the typed notes and the draft are still on screen', ['SA1', 'SA2', 'SA3', 'SA4', 'IN3', 'WS1', 'AD1'], async () => {
+    await check('C-LOST1', 'nothing lost after the idle sign-out: each page shows its own sign-in again (Welding and Laser are still signed in), and the orders in the boxes, the sorting batch, the typed notes and the draft are still on screen', ['SA1', 'SA2', 'SA3', 'SA4', 'IN3', 'WS1', 'AD1', 'AD3', 'AD4'], async () => {
       const bad = [], out = [];
-      for (const k of ['weld', 'asm2', 'ship1', 'sort', 'dmsg', 'laser', 'designApp', 'inbox']) if (!(await loginShown(k))) bad.push(k + ': no sign-in shown (still signed in, or the page lost its state)'); else out.push(k);
+      for (const k of ['weld', 'asm2', 'ship1', 'sort', 'dmsg', 'laser', 'designApp', 'inbox']) {
+        const shown = await loginShown(k);
+        if (keptK.has(k)) { if (shown) bad.push(k + ': signed out after twelve quiet minutes (Welding has no idle limit, Laser waits an hour)'); }
+        else if (!shown) bad.push(k + ': no sign-in shown (still signed in, or the page lost its state)'); else out.push(k);
+      }
       assert(out.length, 'nobody was signed out, so there is nothing to compare: ' + bad.join(' ; '));
       const now = await screenOf();
       for (const [k, v] of Object.entries(screenBefore)) { const n = now[k]; if (!n) { bad.push(k + ' page gone'); continue; } for (const f of Object.keys(v)) if (v[f] && String(n[f]) !== String(v[f])) bad.push(k + '.' + f + ' was "' + v[f] + '" now "' + n[f] + '"'); }
       assert((screenBefore.asm2 || {}).msg === S.last.asmDraft && (screenBefore.inbox || {}).draft === S.last.inboxDraft, 'the typed note and draft were not on screen before the quiet');
       assert(!bad.length, bad.join(' ; '));
+    });
+
+    /* ── Addendum 2: Laser waits an hour; Welding is never signed out for being quiet ── */
+    const lenaIn = before[PEOPLE.laserApp + '@charm-nest-1'];
+    await check('C-LASER1', 'Laser waits an hour, not ten minutes: still signed in 50 minutes after the last input, signed out ("idle") after 60, the hours ending at that last input', OWN, async () => {
+      assert(lenaIn > 0, 'no last input recorded for ' + PEOPLE.laserApp);
+      await W.jump(lenaIn + 50 * 60000 - await W.now()); await sleep(4000); await W.advance(30000, { step: 15000, settle: 200 });
+      const s1 = await sessionFor(PEOPLE.laserApp, 'charm-nest-1'); assert(s1 && s1.endAt == null, PEOPLE.laserApp + ' was signed out 50 minutes after her last input (' + (s1 && s1.endReason) + ')');
+      assert(!(await loginShown('laser')), PEOPLE.laserApp + '\'s page shows the sign-in 50 minutes after her last input');
+      await W.jump(lenaIn + 65 * 60000 - await W.now()); await sleep(4000); await W.advance(30000, { step: 15000, settle: 200 });
+      const s = await endedAs(PEOPLE.laserApp, 'charm-nest-1', undefined, 25000);
+      eq(s.endReason, 'idle', PEOPLE.laserApp + ' ended');
+      assert(Math.abs(s.endAt - lenaIn) < 20000, PEOPLE.laserApp + '\'s hours end ' + Math.round((s.endAt - lenaIn) / 1000) + ' s from her last input');
+      assert(await loginShown('laser'), PEOPLE.laserApp + '\'s page shows no sign-in after an hour');
+    });
+    await check('C-LASER2', 'the portal says why the Laser person is out: "Signed out after 1 hour without input" (not ten minutes)', ['AD3', 'AD4'], async () => {
+      const pv = await P.personPage(PEOPLE.laserApp, { settle: 3500, range: 'day' }); await P.back();
+      assert(/Signed out after 1 hour without input/.test(pv.text) && !/after 10 minutes without input/.test(pv.text), 'the person page of ' + PEOPLE.laserApp + ' says: "' + pv.where + '" · ' + (/Signed out[^.]{0,60}/.exec(pv.text) || ['(nothing about a sign-out)'])[0]);
+    });
+    await check('C-POLICY', 'the pages carry the table of Addendum 2 and its words: Welding closes at 17:00 only, Laser one hour (30 minutes from five), the rest ten minutes', ['AD3'], async () => {
+      const r = await S.pages.laser.evaluate(() => ({ w: StationSession.policy('welding'), l: StationSession.policy('laser'), d: StationSession.policy('assembly'),
+        words: [StationSession.notice('idle', 'laser'), StationSession.notice('closing', 'laser'), StationSession.notice('closing', 'welding'), StationSession.notice('idle', 'assembly'), StationSession.notice('closing', 'assembly')] }));
+      eq(r.w, { idleMin: 0, idleMinAfter17: 0, closeAt17: 'always' }, 'the Welding row');
+      eq(r.l, { idleMin: 60, idleMinAfter17: 30, closeAt17: 'idleWindow' }, 'the Laser row');
+      eq(r.d, { idleMin: 10, idleMinAfter17: 10, closeAt17: 'idleWindow' }, 'the default row');
+      eq(r.words, ['Signed out after 1 hour without input.', 'Signed out at 5:00 pm after 30 minutes without input.', 'Signed out at 5:00 pm.', 'Signed out after 10 minutes without input.', 'Signed out at 5:00 pm.'], 'the notices');
+    });
+    await check('C-WELD1', 'Welding has no idle sign-out: both people (Welding and Matching) are still signed in more than an hour after the last input, on the page and in the records', OWN, async () => {
+      const bad = [];
+      for (const c of keptCrew.filter(c => c.k === 'weld')) { const s = await sessionFor(c.person, c.device, c.task); if (!s || s.endAt != null) bad.push(c.person + ' (' + c.task + ') was signed out' + (s ? ' "' + s.endReason + '"' : '')); }
+      assert(!bad.length, bad.join(' ; ') + ' (the shop is ' + hhmm(await W.now()) + ')');
+      assert(!(await loginShown('weld')), 'the weld-1 page shows its sign-in');
     });
 
     /* ── 17:00 Toronto: the same four desks signed in again in the late afternoon; two keep working, two computers sleep through five ── */
@@ -587,16 +663,49 @@ fs.mkdirSync(SHOTS, { recursive: true });
         for (const [, person, dev] of desks) await openSession(person, dev);
         assert((await S.pages.inbox.evaluate(() => (document.getElementById('emDraftText') || {}).value)) === S.last.inboxDraft, 'the inbox draft did not come back at the next sign-in');
       });
+      await check('C-WELD2', 'Welding is still signed in at 16:20 after a whole day without a sign-out (both people, the page and the records)', OWN, async () => {
+        const bad = [];
+        for (const c of keptCrew.filter(c => c.k === 'weld')) { const s = await sessionFor(c.person, c.device, c.task); if (!s || s.endAt != null) bad.push(c.person + ' (' + c.task + ') was signed out' + (s ? ' "' + s.endReason + '"' : '')); }
+        assert(!bad.length, bad.join(' ; '));
+        assert(!(await loginShown('weld')), 'the weld-1 page shows its sign-in');
+      });
+      let lenaIn2 = 0;
+      await check('C-LASER3', 'late afternoon: the Laser person signs in again as Laser (16:20)', ['LD1', 'AD3', 'AD4'], async () => {
+        await A.sorterRole(S.pages.laser, PEOPLE.laserApp, 'laser');
+        const s = await openSession(PEOPLE.laserApp, 'charm-nest-1'); assert(s.startAt > TOR(16, 0), 'the new Laser session did not start in the afternoon');
+        lenaIn2 = await lastInputOf(S.pages.laser);
+      });
       const poke = p => p.mouse.move(70 + Math.random() * 300, 150 + Math.random() * 200).then(() => p.mouse.move(90 + Math.random() * 300, 160 + Math.random() * 200)).catch(() => {});
       const asleep = [S.pages.sort.context(), S.pages.inbox.context()];
       S.last.sleepInput = { [PEOPLE.sort]: await lastInputOf(S.pages.sort), [PEOPLE.inbox]: await lastInputOf(S.pages.inbox) };
       const sleptDraft = await S.pages.inbox.evaluate(() => { const t = document.getElementById('emDraftText'); if (t) { t.value = t.value + ' (typed just before five)'; t.dispatchEvent(new Event('input', { bubbles: true })); return t.value; } return ''; });
       S.last.ivyInput = 0;
+      S.last.weldInput = 0; S.last.lenaInput = 0;
       const stepTo = async (h, m) => {
-        for (;;) { const n = await W.now(); if (n >= TOR(h, m)) return; await W.advance(60000, { step: 60000, except: asleep, settle: 150, between: async () => { const t = await W.now(); if (t <= TOR(17, 5)) await poke(S.pages.asm2); if (t <= TOR(16, 55)) { await poke(S.pages.ship1); S.last.ivyInput = await lastInputOf(S.pages.ship1); } } }); }
+        for (;;) {
+          const n = await W.now(); if (n >= TOR(h, m)) return;
+          await W.advance(60000, { step: 60000, except: asleep, settle: 150, between: async () => {
+            const t = await W.now(); if (t <= TOR(17, 5)) await poke(S.pages.asm2);
+            if (t <= TOR(16, 55)) { await poke(S.pages.ship1); S.last.ivyInput = await lastInputOf(S.pages.ship1); }
+            if (t <= TOR(16, 58)) { await poke(S.pages.weld); S.last.weldInput = await lastInputOf(S.pages.weld); }     // (Welding: input two minutes before five still gets the 17:00 sign-out: no activity condition)
+            if (!S.last.lenaInput && t >= TOR(16, 45)) { await poke(S.pages.laser); S.last.lenaInput = await lastInputOf(S.pages.laser); }   // (Laser: the last input is 16:45, so thirty minutes end at 17:15)
+          } });
+        }
       };
       await stepTo(17, 0); await W.advance(30000, { step: 30000, except: asleep, settle: 150 });
-      const at500 = { asm: await sessionFor(PEOPLE.asm, 'assembly-2'), ship: await sessionFor(PEOPLE.ship, 'shipping-1') };
+      const at500 = { asm: await sessionFor(PEOPLE.asm, 'assembly-2'), ship: await sessionFor(PEOPLE.ship, 'shipping-1'), lena: await sessionFor(PEOPLE.laserApp, 'charm-nest-1') };
+      await check('C-WELD3', 'at 17:00 Toronto Welding signs out every person, whatever their last input (input at 16:58): reason "closing", the hours end at 17:00 sharp; the page shows its sign-in; the portal says "Signed out at 5:00 pm"', OWN, async () => {
+        const bad = [];
+        for (const c of keptCrew.filter(c => c.k === 'weld')) {
+          const s = await endedAs(c.person, c.device, c.task, 25000);
+          if (s.endReason !== 'closing') bad.push(c.person + ' ended "' + s.endReason + '"');
+          if (Math.abs(s.endAt - TOR(17, 0)) > 5000) bad.push(c.person + '\'s hours end at ' + hhmm(s.endAt) + ' (' + Math.round((s.endAt - TOR(17, 0)) / 1000) + ' s from 17:00)');
+        }
+        assert(!bad.length, bad.join(' ; ') + ' (last input at the page ' + (S.last.weldInput ? hhmm(S.last.weldInput) : 'unknown') + ')');
+        assert(await loginShown('weld'), 'the weld-1 page shows no sign-in');
+        const pv = await P.personPage(PEOPLE.matcher, { settle: 3500, range: 'day' }); await P.back();
+        assert(/Signed out at 5:00 pm/.test(pv.text), 'the person page of ' + PEOPLE.matcher + ' does not say it was five o\'clock: "' + pv.where + '"');
+      });
       // the two sleeping computers wake at 17:01 by the shop's clock: no input since 16:20
       await stepTo(17, 1);
       await W.syncClock(asleep[0]); await W.syncClock(asleep[1]); asleep.length = 0; await sleep(5000);
@@ -628,6 +737,15 @@ fs.mkdirSync(SHOTS, { recursive: true });
         const m = await endedAs(PEOPLE.asm, 'assembly-2', undefined, 25000); eq(m.endReason, 'idle', 'Michael ended');
         assert(m.endAt > TOR(17, 3) && m.endAt < TOR(17, 8), 'Michael\'s hours end at ' + hhmm(m.endAt) + ', his last input was about 17:05');
         const adm = await sessionFor('Paul K.', 'charm-nest-1'); assert(adm && adm.endAt == null || (await portal.evaluate(() => !!StationActivity.who())), 'the Admin was signed out');
+      });
+      await check('C-LASER4', 'Laser after five: input at 16:45 keeps her in at 17:00 (the limit is 30 minutes from five), thirty minutes after that input she is signed out ("closing"), the hours end at the input; the portal says "Signed out at 5:00 pm"', OWN, async () => {
+        assert(at500.lena && at500.lena.endAt == null, PEOPLE.laserApp + ' was signed out at 17:00 with input fifteen minutes earlier: ' + JSON.stringify([at500.lena && at500.lena.endReason]));
+        const s = await endedAs(PEOPLE.laserApp, 'charm-nest-1', undefined, 25000);
+        eq(s.endReason, 'closing', PEOPLE.laserApp + ' ended');
+        assert(S.last.lenaInput > 0 && Math.abs(s.endAt - S.last.lenaInput) < 20000, PEOPLE.laserApp + '\'s hours end at ' + hhmm(s.endAt) + ', her last input was ' + (S.last.lenaInput ? hhmm(S.last.lenaInput) : 'unknown'));
+        assert(await loginShown('laser'), PEOPLE.laserApp + '\'s page shows no sign-in');
+        const pv = await P.personPage(PEOPLE.laserApp, { settle: 3500, range: 'day' }); await P.back();
+        assert(/Signed out at 5:00 pm/.test(pv.text), 'the person page of ' + PEOPLE.laserApp + ' does not say it was five o\'clock: "' + pv.where + '"');
       });
     }
   }
