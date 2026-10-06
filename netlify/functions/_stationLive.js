@@ -32,6 +32,7 @@ const STALE_MS = 180000;           // a document with no keep-alive for this lon
 const COALESCE_MS = 15000;         // a repeat of the same write inside this is not written again
 const MAX_BODY_CHARS = 8000, MAX_PIECES = 24, MAX_AGE_MS = 12 * 3600e3, SESSION_GONE_MS = 15 * 60000;
 const TTL = { live: 2000, sessions: 15000, today: 20000, found: 15 * 60000, miss: 60000 };
+const UNATTRIBUTED_NOTE = "Scanned with nobody in Matching";     // what the board says of a matched scan made while nobody was signed in under Matching (R3 of stations round 2)
 const LIM = { live: 200, sessions: 300, rollups: 200, matched: 400, matchedShown: 30 };
 
 /* what the console lists, in order: key, label (as StationSession shows it), the pages that make up the station.
@@ -417,7 +418,7 @@ async function op(ctx, body, H) {
   const today = tr.ok ? tr.value.by : {}, stations = [];
   // the Welding station: today's matched scans (newest first, dressed with the order's thumbnail like a current order) and the time signed in per task today
   const todayStart = H.nyMidnight(ctx.today), matchedRows = mr.ok ? mr.value.rows : [];
-  const matched = matchedRows.slice(0, LIM.matchedShown).map(m => ({ kind: "order", rid: m.rid, orderNumber: m.rid, at: m.at, person: m.unattributed ? "" : H.display(m.person), task: "matching", unattributed: m.unattributed, customer: "", pieces: [], pieceCount: 0, note: "" }));
+  const matched = matchedRows.slice(0, LIM.matchedShown).map(m => ({ kind: "order", rid: m.rid, orderNumber: m.rid, at: m.at, person: m.unattributed ? "" : H.display(m.person), task: "matching", unattributed: m.unattributed, customer: "", pieces: [], pieceCount: 0, note: m.unattributed ? UNATTRIBUTED_NOTE : "" }));
   if (matched.length) { try { errors.push(...await dress(ctx, matched)); } catch (e) { errors.push("matched: " + String((e && e.message) || e).slice(0, 120)); } }
   const lastScan = new Map(); for (const m of matchedRows) if (!m.unattributed) { const n = H.display(m.person); lastScan.set(n, Math.max(lastScan.get(n) || 0, m.at)); }
   const weldRows = (sr.ok ? sr.value.rows : []).filter(r => r.station === "welding" && r.startAt > 0 && r.person && hasLetter(r.person));
@@ -445,7 +446,7 @@ async function op(ctx, body, H) {
       row.noThroughput = true;
       row.counts = { partsToday: null, ordersToday: null, scansToday: tr.ok ? t.matched : null };
       row.today = { day: ctx.today, matched: tr.ok ? t.matched : null, unattributed: tr.ok ? t.unattributed : null, taskMs: { welding: taskMsOf("welding"), matching: taskMsOf("matching"), unknown: taskMsOf("unknown") } };
-      row.matched = matched.map(m => ({ rid: m.rid, orderNumber: m.orderNumber, at: m.at, person: m.person, task: m.task, unattributed: m.unattributed, customer: m.customer, thumbUrl: m.thumbUrl || "", vectorUrl: m.vectorUrl || "", photoUrl: m.photoUrl || "", pieceCount: m.pieceCount, pieces: m.pieces }));
+      row.matched = matched.map(m => ({ rid: m.rid, orderNumber: m.orderNumber, at: m.at, person: m.person, task: m.task, unattributed: m.unattributed, note: m.note, customer: m.customer, thumbUrl: m.thumbUrl || "", vectorUrl: m.vectorUrl || "", photoUrl: m.photoUrl || "", pieceCount: m.pieceCount, pieces: m.pieces }));
     }
     stations.push(row);
   }

@@ -78,7 +78,7 @@ const WCAT = {
 };
 
 function make(K) {
-  const KIND = K.KIND || { throughput: () => true, readStationCounters: (st, v) => v, UNATTRIBUTED: "Unattributed" };      // (the Welding station is not counted in throughput: see _activityKinds.js)
+  const KIND = K.KIND || { throughput: () => true, readStationCounters: (st, v) => v, UNATTRIBUTED: "Unattributed", echoScans: () => new Set() };      // (the Welding station is not counted in throughput: see _activityKinds.js)
   const { COL, LIM, ms, num, r1, zeros, digits, cleanName, okName, okStation, niceName, bestForm, nameKeyOf, canonOf, scrub, validDay, addDays,
     nyDay, nyMidnight, clip, covered, spanOf, cached, readRollups, readEventsStart, eventRow, col, json, safe, tmpl, KEYS } = K;
   const DAY = 86400000;
@@ -226,7 +226,8 @@ function make(K) {
   function readPersonDayEvents(ctx, form, day) {
     return cached(ctx, `pev|${ctx.prefix}|${form}|${day}`, day === ctx.today ? TTL.evLive : TTL.ev, async () => {
       const snap = await col(ctx, COL.activity).where("person", "==", form).where("day", "==", day).limit(CAP.eventsPerDay + 1).get();
-      const rows = []; for (const d of snap.docs.slice(0, CAP.eventsPerDay)) { const e = eventRow(d.id, d.data() || {}, ctx); if (e) rows.push(e); }
+      const all = []; for (const d of snap.docs.slice(0, CAP.eventsPerDay)) { const e = eventRow(d.id, d.data() || {}, ctx); if (e) all.push(e); }
+      const echo = KIND.echoScans(all), rows = echo.size ? all.filter(e => !echo.has(e)) : all;       // (a phone scan is the matched event: the desk page's own scan of it is not a second one)
       return { rows, capped: snap.docs.length > CAP.eventsPerDay };
     });
   }
