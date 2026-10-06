@@ -28,7 +28,7 @@
   const options = { pollMs: 10000, liveMs: 3000, tickMs: 1000, maxBackoffMs: 60000, holdMs: 60000, growMs: 480, timeoutMs: 9000, staleMs: 13000, nudgeMs: 4000, mountRetryMs: 400, mountGiveUpMs: 20000, tabMs: 260 };
   const KEY_STORE = "cn.eff.key", DAYS_STORE = "cn.eff.days", VIEW_STORE = "cn.eff.view";
   const NAMES = { shipping: "Shipping", assembly: "Assembly", welding: "Welding", sorting: "Sorting", design: "Design", laser: "Laser", sorter: "Sorter", qr: "QR printer", inbox: "Inbox" };
-  const CORE = ["shipping", "assembly", "welding", "sorting", "design"], EXTRA = ["laser", "sorter", "qr", "inbox"];
+  const CORE = ["shipping", "assembly", "welding", "sorting", "design", "laser"], EXTRA = ["sorter", "qr", "inbox"];   // (Laser and Design are two stations of their own: both always have a row, as on the Stations board)
   /* ONE Sorting station (Paul, 6 Oct 2026): the stored keys "sorter" (the Sorter app) and "qr" (the QR Printer page) are SHOWN as "sorting". Same rule as displayStation in
      netlify/functions/_activityKinds.js and EfficiencyStations.displayStation; history keeps its old keys, only what is read folds. Laser and Design are stored under their own keys. */
   const DISPLAY_FOLD = { sorter: "sorting", qr: "sorting" };
@@ -165,10 +165,10 @@
         scannedAt: T(c.scannedAt), thumbUrl: String(c.thumbUrl || ""), qr: c.qr && c.qr.text ? { text: String(c.qr.text) } : null, note: c.note ? String(c.note) : "",
         pieces: arr(c.pieces).filter(p => p && (p.id != null || p.label || p.thumbUrl)).map(p => ({ id: String(p.id == null ? "" : p.id), label: String(p.label || ""), thumbUrl: String(p.thumbUrl || "") })),
         station: key, stationLabel: label, raw: c }));   // (raw: the server's own entry; the shared order card reads what this model leaves out: kind, title, device, vectorUrl, photoUrl, pieceCount)
-      return { key, label, state: ["working", "idle", "offline"].includes(s.state) ? s.state : (current.length ? "working" : "idle"), people: arr(s.people).map(String), current,
+      return { key, label, state: ["working", "idle", "offline"].includes(s.state) ? s.state : (current.length ? "working" : "idle"), people: arr(s.people).map(x => String(x && typeof x === "object" ? x.name || "" : x)).filter(Boolean), current,
         lastEventAt: T(s.lastEventAt), counts: { partsToday: N(s.counts && s.counts.partsToday), ordersToday: N(s.counts && s.counts.ordersToday) } };
     });
-    const signedIn = arr(r.signedIn).filter(p => p && p.name).map(p => ({ name: String(p.name), stationKey: String(p.stationKey || p.station || ""), since: T(p.since), lastSeenAt: T(p.lastSeenAt) }))
+    const signedIn = arr(r.signedIn).filter(p => p && p.name).map(p => ({ name: String(p.name), stationKey: String(p.stationKey || p.station || ""), since: T(p.since), lastSeenAt: T(p.lastSeenAt), task: p.task === "welding" || p.task === "matching" ? p.task : "", lastInputAt: T(p.lastInputAt) }))
       .sort((a, b) => (a.since || 0) - (b.since || 0) || a.name.localeCompare(b.name));
     const current = []; for (const s of stations) for (const c of s.current) current.push(c);
     current.sort((a, b) => (a.scannedAt || 0) - (b.scannedAt || 0) || a.person.localeCompare(b.person));

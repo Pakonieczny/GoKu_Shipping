@@ -9701,25 +9701,49 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
       return null;
     }
 
+    // ─── Whose words these are ──────────────────────────────────────────
+    // The words typed in a reply box belong to the person who typed them. A
+    // sign-out (10 minutes without input, 5 pm, midnight, the Sign out
+    // button) keeps them in this page, and the same person signing in again
+    // finds them where they were. When a DIFFERENT person signs in, those
+    // words are set aside under the first person's name (emClaimFor, below):
+    // the box starts empty for the new person, who can neither see nor send
+    // them, and they are back the next time the first person signs in. Only
+    // this tab holds them.
+    /** A user (or a username, or nothing = the signed-in one) as the lower-case username; "" when nobody is signed in. */
+    function emPersonKey(u) {
+      const x = u === undefined ? state.currentUser : u;
+      const n = x && (typeof x === "string" ? x : x.username);
+      return String(n || "").toLowerCase().replace(/[^a-z0-9_-]/g, "").slice(0, 40);
+    }
+
     // ─── Unsent replies ─────────────────────────────────────────────────
     // A send that fails after its text left the reply box puts the text
     // back. When the operator has moved on (another thread, or new text in
     // the box) it is kept here per thread and returns the next time that
-    // thread's reply box is empty.
+    // thread's reply box is empty. Each is kept under the person who wrote
+    // it and comes back for that person only.
     const UNSENT_KEY = "em.unsent.";
-    function stashUnsentText(threadId, text) {
+    function stashUnsentText(threadId, text, by) {
       if (!threadId || !String(text || "").trim()) return;
-      try { localStorage.setItem(UNSENT_KEY + threadId, JSON.stringify({ text: String(text), atMs: Date.now() })); } catch (_) {}
+      const who = by == null ? emPersonKey() : String(by);
+      try { localStorage.setItem(UNSENT_KEY + threadId + (who ? "~" + who : ""), JSON.stringify({ text: String(text), atMs: Date.now(), by: who || undefined })); } catch (_) {}
     }
     function takeUnsentText(threadId) {
-      try {
-        const raw = localStorage.getItem(UNSENT_KEY + threadId);
-        if (!raw) return "";
-        localStorage.removeItem(UNSENT_KEY + threadId);
-        const v = JSON.parse(raw);
-        // A week-old failed send is no longer what the operator meant to say.
-        return v && v.text && Date.now() - (v.atMs || 0) < 7 * 86400000 ? String(v.text) : "";
-      } catch (_) { return ""; }
+      const me = emPersonKey();
+      const keys = me ? [UNSENT_KEY + threadId + "~" + me, UNSENT_KEY + threadId] : [UNSENT_KEY + threadId];
+      for (const k of keys) {
+        try {
+          const raw = localStorage.getItem(k);
+          if (!raw) continue;
+          const v = JSON.parse(raw);
+          if (v && v.by && v.by !== me) continue;   // somebody else's words stay put for them
+          localStorage.removeItem(k);
+          // A week-old failed send is no longer what the operator meant to say.
+          if (v && v.text && Date.now() - (v.atMs || 0) < 7 * 86400000) return String(v.text);
+        } catch (_) {}
+      }
+      return "";
     }
     function restoreUnsentText(threadId) {
       const deskTa = $("emDraftText");
@@ -9821,6 +9845,132 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
     });
     window.addEventListener("pagehide", () => keepTypedText());
     document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") keepTypedText(); });
+
+    // ─── Signing in on a page another person left ───────────────────────
+    // emClaimFor(user) runs at every sign-in (before the inbox shows). The same
+    // person as before: nothing changes, their typed words are right where they
+    // were. Another person: what the first typed (every conversation's kept
+    // reply, and the reply in the box on screen) is set aside under the first
+    // person's name, the boxes start empty, and the Polish "Undo" and the
+    // translation preview of those words go with them; the new person's own
+    // set-aside words (if they signed in here before) are put back. Nothing is
+    // deleted: the first person's words return when they sign in again. AI
+    // drafts are the conversation's, not a person's, and stay as they are.
+    const OWNER_KEY = "em.owner", PARKED_KEY = "em.parked.";
+    let _ownerMem = null;
+    const _parkedMem = new Map();   // username → { typed: { threadId: { text, polish } }, atMs } or null
+    function _ownerGet() {
+      if (_ownerMem != null) return _ownerMem;
+      try { return sessionStorage.getItem(OWNER_KEY) || ""; } catch (_) { return ""; }
+    }
+    function _ownerSet(k) {
+      _ownerMem = k || "";
+      try { if (k) sessionStorage.setItem(OWNER_KEY, k); else sessionStorage.removeItem(OWNER_KEY); } catch (_) {}
+    }
+    function _parkedGet(k) {
+      if (_parkedMem.has(k)) return _parkedMem.get(k);
+      try {
+        const v = JSON.parse(sessionStorage.getItem(PARKED_KEY + k) || "null");
+        if (v && typeof v === "object" && v.typed && typeof v.typed === "object") { _parkedMem.set(k, v); return v; }
+      } catch (_) {}
+      return null;
+    }
+    function _parkedSet(k, v) {
+      _parkedMem.set(k, v || null);
+      try { if (v) sessionStorage.setItem(PARKED_KEY + k, JSON.stringify(v)); else sessionStorage.removeItem(PARKED_KEY + k); } catch (_) {}
+    }
+    function emParkTypedOf(owner) {
+      keepTypedText();   // what is in the box on screen now goes in with the rest
+      const typed = {};
+      const ids = new Set(_typedMem.keys());
+      try {
+        for (let i = 0; i < sessionStorage.length; i++) {
+          const k = sessionStorage.key(i);
+          if (k && k.indexOf(TYPED_KEY) === 0) ids.add(k.slice(TYPED_KEY.length));
+        }
+      } catch (_) {}
+      ids.forEach((tid) => {
+        const e = _typedGet(tid);
+        if (e && String(e.text || "").trim()) typed[tid] = e;
+        _typedSet(tid, null);
+      });
+      // The boxes on screen start empty for the next person.
+      const deskTa = $("emDraftText");
+      const mobTa = document.getElementById("mComposerTextarea");
+      const own = !!(deskTa && deskTa.__emOwn);
+      if (deskTa && own) { deskTa.value = ""; deskTa.__emOwn = false; try { autoSizeDraftTextarea(deskTa); } catch (_) {} }
+      if (mobTa && (own || (!deskTa && mobTa.value.trim()))) {
+        mobTa.value = "";
+        try { if (typeof mAutoGrow === "function") mAutoGrow(mobTa); } catch (_) {}
+        const mSend = document.getElementById("mComposerSend");
+        if (mSend) mSend.disabled = true;
+      }
+      if (state.polish) { state.polish = null; closePolishNote(); }
+      if (state.composerTranslation || state.composerEnglishPreview) {
+        try { clearComposerTranslation(); } catch (_) {}
+        try { if (typeof window.mNotifyTranslationChanged === "function") window.mNotifyTranslationChanged(); } catch (_) {}
+      }
+      if (Object.keys(typed).length) {
+        const old = _parkedGet(owner);
+        _parkedSet(owner, { typed: Object.assign({}, old && old.typed, typed), atMs: Date.now() });
+      }
+    }
+    function emRestoreParkedFor(owner) {
+      const b = _parkedGet(owner);
+      if (!b || !b.typed) return;
+      Object.keys(b.typed).forEach((tid) => { if (!_typedGet(tid)) _typedSet(tid, b.typed[tid]); });
+      _parkedSet(owner, null);
+      // the open conversation's box gets its words at once; the others when they are opened
+      try { if (state.selectedId) restoreTypedText(state.selectedId); } catch (_) {}
+    }
+    function emPruneUnsent() {
+      try {
+        const now = Date.now(), dead = [];
+        for (let i = 0; i < localStorage.length; i++) {
+          const k = localStorage.key(i);
+          if (!k || k.indexOf(UNSENT_KEY) !== 0) continue;
+          try { const v = JSON.parse(localStorage.getItem(k) || "null"); if (!v || now - (v.atMs || 0) >= 7 * 86400000) dead.push(k); } catch (_) { dead.push(k); }
+        }
+        dead.forEach((k) => localStorage.removeItem(k));
+      } catch (_) {}
+    }
+    function emClaimFor(user) {
+      try {
+        const me = emPersonKey(user);
+        if (!me) return;
+        const prev = _ownerGet();
+        if (prev && prev !== me) emParkTypedOf(prev);
+        _ownerSet(me);
+        if (prev !== me) emRestoreParkedFor(me);
+        emPruneUnsent();
+      } catch (e) { console.warn("[signin] claim:", e && e.message); }
+    }
+
+    // ─── Work that finishes after its person has signed out ─────────────
+    // A reply that was on its way, or an AI draft being written, when its
+    // person was signed out still goes through (nothing here stops it). What
+    // the efficiency log records about it belongs to the person who pressed
+    // the button: it is logged at once while they are signed in, otherwise it
+    // waits (40 minutes at most, in this tab) for them to sign in again, and
+    // is never written under someone else's name.
+    const _heldForPerson = [];   // { by, fn, at }
+    function emAsPresser(by, fn) {
+      try {
+        if (!by || emPersonKey() === by) return fn();
+        _heldForPerson.push({ by, fn, at: Date.now() });
+        while (_heldForPerson.length > 20) _heldForPerson.shift();
+      } catch (_) {}
+    }
+    function emFlushHeldFor(me) {
+      try {
+        const now = Date.now();
+        for (let i = _heldForPerson.length - 1; i >= 0; i--) if (now - _heldForPerson[i].at > 40 * 60000) _heldForPerson.splice(i, 1);
+        for (let i = 0; i < _heldForPerson.length;) {
+          if (_heldForPerson[i].by === me) { const h = _heldForPerson.splice(i, 1)[0]; try { h.fn(); } catch (_) {} }
+          else i++;
+        }
+      } catch (_) {}
+    }
 
     // ─── v5.30 — Starred-thread toggle (robust v5.30.3) ───────────────
     //
@@ -17812,7 +17962,7 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
       return (t && (t.customerName || t.etsyUsername)) || "another conversation";
     }
     function aiRunStart(threadId, mode) {
-      const run = { status: "running", mode, startedAt: Date.now() };
+      const run = { status: "running", mode, startedAt: Date.now(), by: emPersonKey() || undefined };   // (by: who asked, for the efficiency log)
       aiRunMap().set(threadId, run);
       aiRunsSave(); aiRunsRepaint(); aiRunEnsureTicker();
       return run;
@@ -17846,7 +17996,8 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
       if (aiRunMap().get(threadId) !== run) return;
       try {   // efficiency log: this operator asked for a draft and it came back (counts only; never the words)
         const x = (state.threads || []).find(y => y && y.id === threadId);
-        window.MailSignals && MailSignals.drafted(threadId, mode || run.mode, String((x && x.etsyOrderId) || ""));
+        // (logged under the person who asked; if they are signed out when it lands it waits for them)
+        emAsPresser(run.by, () => { window.MailSignals && MailSignals.drafted(threadId, mode || run.mode, String((x && x.etsyOrderId) || "")); });
       } catch (_) {}
       run.status = "done";
       run.recovering = false;
@@ -21119,6 +21270,13 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
 
     /** Operator clicked "Send via Etsy" (desktop, or the phone's send button). */
     async function sendViaEtsy(threadId, opts = {}) {
+      // A reply goes out under the person who is signed in and pressed Send. Nobody signed in (the sign-in screen is
+      // up after a 10-minute, 5 pm or midnight sign-out): nothing is sent, nothing else changes, the words stay in the box.
+      const sentBy = emPersonKey();
+      if (!sentBy) {
+        toast("Sign in to send this reply. Your words are kept.");
+        return false;
+      }
       // ──── v3.32 — Manual send clears any active quiet-period defer ────
       // If the thread is parked in deferred_quiet_period, an operator
       // hitting Send via Etsy is the final word on this conversation
@@ -21310,7 +21468,7 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
       } catch (e) {
         try {
           const x = (state.threads || []).find(y => y && y.id === threadId);
-          window.StationActivity && StationActivity.log("error", { orderId: String((x && x.etsyOrderId) || "").replace(/\D/g, ""), detail: "reply not sent" });   // efficiency log
+          emAsPresser(sentBy, () => { window.StationActivity && StationActivity.log("error", { orderId: String((x && x.etsyOrderId) || "").replace(/\D/g, ""), detail: "reply not sent" }); });   // efficiency log (under the person who pressed Send)
         } catch (_) {}
         const why = e && e.status === 401 ? "" :
           (e && e.data && e.data.errorCode === "SEND_DISABLED") ? "sending is switched off (turn it back on from the banner)" :
@@ -21319,9 +21477,12 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
           removeLocalSend(threadId, local.id);
           if (state.selectedId === threadId) drawThreadNow();
           if (designNote) giveBackDesignSwitch(threadId, designNote);
-          const back = restoreFailedSend(threadId, snap);
+          // Somebody else is signed in now: the words wait for the person who wrote them, never in this person's box.
+          const elsewhere = !!emPersonKey() && emPersonKey() !== sentBy;
+          const back = elsewhere ? (stashUnsentText(threadId, snap.typed, sentBy), false) : restoreFailedSend(threadId, snap);
           if (why) {
             toast(back ? `Not sent: ${why}. Your reply is back in the box.`
+                       : elsewhere ? `Not sent: ${why}. The reply was kept for the person who wrote it.`
                        : `Not sent: ${why}. Your reply was kept for that thread's reply box.`, 7000);
           }
           if (back && e && e.data && e.data.errorCode === "PROMISED_ATTACHMENT_MISSING") showPromisedFilePicker(e.data.missing);
@@ -21335,7 +21496,7 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
       // words, the customer or the address.
       // (station-mail-signals.js adds how it started (AI draft, edited or not), how long the customer waited, and keeps the
       // reply on a short list until the Etsy helper says delivered or failed.)
-      try {
+      try { emAsPresser(sentBy, () => {   // (under the person who pressed Send, even if they have signed out since: it waits for them)
         const x = (state.threads || []).find(y => y && y.id === threadId);
         const oid = String((x && x.etsyOrderId) || "").replace(/\D/g, "");
         const sentWords = (resp && typeof resp.text === "string" && resp.text) ? resp.text : text;
@@ -21355,7 +21516,7 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
         } else {
           window.StationActivity && StationActivity.log("note", { orderId: oid, detail: designNote ? "reply sent · design note" : "reply sent" });
         }
-      } catch (_) {}
+      }); } catch (_) {}
       try { window.InboxLive && InboxLive.end(threadId); } catch (_) {}   // the live board: the reply is on its way, nothing in hand
       // Queued. The bubble reads "sending…" until the extension reports it
       // delivered (noteDraftStatus), then like any message until Etsy's copy
@@ -27507,7 +27668,12 @@ const EtsyMailAuth=(()=>{
     return ui.show("signin");
   }
 
+  // The station signed this person out (10 minutes without input, 5 pm, midnight): its one-line reason stays on the sign-in
+  // screen until the next sign-in. A reply to a request made with the old token must not replace it or pull the cursor
+  // back to the username box while the next person is typing.
+  let held=false;
   function fail(e){
+    if(held&&e&&e.status===401) return;
     if(e.kind==="network"){ ui.conn("bad","Can't reach the server — retrying…"); ui.show("signin"); ui.banner("signin","warn",NOTICE.network); return; }
     // v6.1 — Only a definitive auth failure (401/403) invalidates the
     // cached credentials. A 5xx or other hiccup used to wipe the stored
@@ -27576,6 +27742,7 @@ const EtsyMailAuth=(()=>{
     }catch{}
   }
   function enter(res,{silent=false,welcome=false}={}){
+    held=false;
     auth.user={username:res.username,displayName:res.displayName,role:(res.role==="owner"?"master_admin":res.role==="operator"?"user":(res.role||"user"))}; auth.phase="ready";
     emit("authchange",{user:auth.user}); hooks.applyRole&&hooks.applyRole(auth.user);
     const finish=()=>{document.body.classList.add("authed");hooks.onAuthed&&hooks.onAuthed(auth.user);};
@@ -27593,13 +27760,28 @@ const EtsyMailAuth=(()=>{
     checkUsername:(username)=>transport("etsyMailAuth",{body:{op:"checkUsername",username}}),
   };
 
+  /** The name a station session is written under: the operator's display name; their username only when it is a name
+      (a username of digits only could be a PIN: never used). Nothing here ever holds a PIN or a password. */
+  function stationName(u){
+    try{
+      var pick=function(v){ var s=String(v==null?"":v).replace(/[\u0000-\u001f\u007f]/g," ").replace(/\d{4,}/g," ").replace(/\s+/g," ").trim(); return /\p{L}/u.test(s)?s.slice(0,80):""; };
+      return pick(u&&u.displayName)||pick(u&&u.username);
+    }catch(_){ return ""; }
+  }
+  /** The id a station session carries: the username, unless it is digits only (could be a PIN: then none). */
+  function stationId(u){ var s=String(u==null?"":u); return /^\d+$/.test(s)?"":s; }
   /** Sign-in time: the account signed in on this computer (never blocks or throws into the sign-in). */
-  function stationSignedIn(res){ try{ if(window.StationSession&&res&&res.username) StationSession.signedIn({name:String(res.displayName||res.username),id:String(res.username)}); }catch(_){} }
+  function stationSignedIn(res){
+    try{ if(window.StationSession&&res&&res.username){ var nm=stationName(res); if(nm) StationSession.signedIn({name:nm,id:stationId(res.username)}); } }catch(_){}
+    try{ hooks.onStationSignedIn&&hooks.onStationSignedIn(res); }catch(_){}
+  }
+  /** The station signed this person out: keep the reason on the sign-in screen (see `held`). */
+  function hold(on){ held=!!on; }
   function lock(){ try{document.body.classList.remove("authed");}catch(_){} if(ui&&ui.show){ try{ui.conn&&ui.conn(null,"");}catch(_){} ui.show("signin"); } }
   function emit(n,d){window.dispatchEvent(new CustomEvent(n,{detail:d}));}
-  const hooks={onAuthed:null,onSignedOut:null,applyRole:null};
+  const hooks={onAuthed:null,onSignedOut:null,applyRole:null,onStationSignedIn:null};
   let ui=null; const bindUI=u=>ui=u;
-  return {boot,signIn,signUp,signOut,validateInvite,onApiError,team,auth,bindUI,hooks,transport,lock,stationSignedIn,CAPS,ROLE_CAPS,ROLE_LABEL,NOTICE};
+  return {boot,signIn,signUp,signOut,validateInvite,onApiError,team,auth,bindUI,hooks,transport,lock,stationSignedIn,stationName,stationId,hold,CAPS,ROLE_CAPS,ROLE_LABEL,NOTICE};
 })();
 
 (function(){
@@ -27896,6 +28078,7 @@ const EtsyMailAuth=(()=>{
      This keeps every existing data-owner-only / isOwner() gate working while
      the badge shows the new labels (Master Admin / User). */
   A.hooks.applyRole=function(user){
+    try{ emClaimFor(user); }catch(_){}   // another person than the last one here: the last one's typed words are set aside first
     var legacy = user.role==="master_admin" ? "owner" : "operator";
     state.currentUser = { username:user.username, displayName:user.displayName, role:legacy };
     state.isOwner = (user.role==="master_admin");
@@ -27914,7 +28097,12 @@ const EtsyMailAuth=(()=>{
     try{ if(typeof fetchCountsNow==="function") fetchCountsNow(); }catch(_){}
     try{ handleOrderLinkHash(); }catch(_){}
   };
+  A.hooks.onStationSignedIn=function(res){
+    // work that finished while this person was signed out (see emAsPresser) is recorded now, under them
+    try{ emFlushHeldFor(emPersonKey(res)); }catch(_){}
+  };
   A.hooks.onSignedOut=function(){
+    try{ keepTypedText(); }catch(_){}   // the Sign out button: the reply typed so far is kept (for this person) before the pane is emptied
     try{ smartReset(); }catch(_){}
     state.currentUser=null; state.isOwner=false;
     try{ applyRoleVisibility(); }catch(_){}
@@ -27927,27 +28115,84 @@ const EtsyMailAuth=(()=>{
     if(window.IS_MOBILE){ try{window.mNotifyAuthChanged&&window.mNotifyAuthChanged();}catch(_){} try{window.mNotifyThreadsChanged&&window.mNotifyThreadsChanged();}catch(_){} try{window.mNotifyMessagesChanged&&window.mNotifyMessagesChanged();}catch(_){} }
   };
 
-  /* Sign-in time per person and computer. The person is the operator account this browser holds a session for. At
-     midnight (New York) the session token and its cached identity go, the server session is ended best-effort, and the
-     sign-in screen covers the inbox. The thread list, the open thread and a reply being typed stay underneath, and
-     the next sign-in picks up where they are. */
+  /* Sign-in time per person and computer, and the station's automatic sign-outs. The person is the operator account this
+     browser holds a session for, written under the display name (never a PIN-like username, never a password). The
+     station signs a non-Admin operator out after 10 minutes without input ("idle"), at 5:00 pm Toronto time unless there
+     was input in the last 10 minutes ("closing"), and at midnight New York time ("midnight"); Admin is exempt from the
+     first two. Each time: the session token and its cached identity go, the server session is ended best-effort, and the
+     inbox's own sign-in screen covers the page with one calm line saying why. Nothing else changes underneath: the
+     thread list, the open conversation, the reply being typed, an AI draft being written, a reply on its way, the
+     queued sends and the background polling carry on. The same person signing in again finds everything where it was;
+     another person signing in does not see or send the first person's typed words (emClaimFor sets them aside). */
   function stationPerson(){
     try{
       if(!emReadSessionToken()) return null;
       var u=A.auth.user||emReadSessionProfile();
-      return u&&u.username?{name:String(u.displayName||u.username),id:String(u.username)}:null;
+      var nm=A.stationName(u);
+      return u&&u.username&&nm?{name:nm,id:A.stationId(u.username)}:null;
     }catch(_){ return null; }
   }
-  function stationSignOut(reason){
-    try{ A.transport("etsyMailAuth",{body:{op:"logout"}}).catch(function(){}); }catch(_){}   // sends the token still held here
+  var STATION_NOTICE={
+    midnight:"Signed out at midnight. Sign in again to open the inbox.",
+    idle:"Signed out after 10 minutes without input. Sign in to pick up where you left off.",
+    closing:"Signed out at 5:00 pm. Sign in to pick up where you left off."
+  };
+  function stationSignOut(reason){ stationEnd(reason,false); }
+  /** fromOtherTab: another tab of this inbox already ended the shared sign-in (it ended the server session and cleared the token). */
+  function stationEnd(reason,fromOtherTab){
+    try{ keepTypedText(); }catch(_){}   // the reply typed so far is kept with its conversation, for this person
+    if(!fromOtherTab){
+      try{ localStorage.setItem("em.signoutWhy",String(reason)+"|"+Date.now()); }catch(_){}   // tells the other tabs why, before the token goes
+      try{ A.transport("etsyMailAuth",{body:{op:"logout"}}).catch(function(){}); }catch(_){}   // sends the token still held here
+    }
     try{ emClearSessionToken(); }catch(_){}
     try{ localStorage.removeItem("etsymail_session_user"); }catch(_){}
     try{ A.auth.user=null; A.auth.phase="signin"; state.currentUser=null; state.isOwner=false; applyRoleVisibility(); }catch(_){}
     try{ A.lock(); }catch(_){}
-    if(reason==="midnight"){ try{ ui.banner("signin","warn","Signed out at midnight. Sign in again to open the inbox."); }catch(_){} }
+    var note=STATION_NOTICE[reason];
+    if(note){ try{ A.hold(true); ui.banner("signin","warn",note); }catch(_){} }
     if(window.IS_MOBILE){ try{window.mNotifyAuthChanged&&window.mNotifyAuthChanged();}catch(_){} }
   }
   try{ if(window.StationSession) StationSession.init({station:"inbox",device:"etsy-mail-1",person:stationPerson,signOut:stationSignOut}); }catch(_){}
+  /* Any input at this page is activity for the 10-minute rule: a key, a click or tap (the Polish and AI Draft buttons
+     are clicks), a mouse wheel or touch scroll, the pointer moving, typing or dictating in the reply box. Only real
+     input counts (isTrusted): the page's own timers, the polling, the AI's words arriving and code that clicks for itself
+     never do. One mark a second at most; nothing about the input (what, where, which key) is kept or sent. */
+  try{
+    var lastMark=0, lastShare=0;
+    var markInput=function(e){
+      try{
+        if(e&&e.isTrusted===false) return;
+        var t=Date.now(); if(t-lastMark<1000) return; lastMark=t;
+        if(window.StationSession&&typeof StationSession.touch==="function") StationSession.touch(t);
+        // Two inbox tabs on one computer share one sign-in (the token is in localStorage): input in either keeps both from
+        // timing out, so a quiet tab never signs out the one somebody is working in. (Written at most every 5 s; only a time.)
+        if(t-lastShare>=5000){ lastShare=t; try{ localStorage.setItem("em.lastInput",String(t)); }catch(_){} }
+      }catch(_){}
+    };
+    ["pointerdown","pointermove","keydown","wheel","touchstart","touchmove","input","click"].forEach(function(n){ window.addEventListener(n,markInput,{capture:true,passive:true}); });
+    window.addEventListener("storage",function(e){   // fires in the other tabs only
+      try{
+        if(e.key!=="em.lastInput"||!e.newValue) return;
+        var v=Number(e.newValue); if(!(v>0)) return;
+        if(window.StationSession&&typeof StationSession.touch==="function") StationSession.touch(v);
+      }catch(_){}
+    });
+    /* Two tabs, one sign-in: when another tab ends or replaces the shared sign-in (idle, closing, midnight, the Sign out
+       button), this tab, which still shows the inbox, goes to the sign-in screen too, with the same reason, keeping what
+       was typed. A tab-only sign-in ("Keep me signed in" off) is not shared and is left alone. */
+    window.addEventListener("storage",function(e){
+      try{
+        if(e.key!=="etsymail_session"||e.newValue===e.oldValue) return;
+        if(!document.body.classList.contains("authed")) return;
+        if(sessionStorage.getItem("etsymail_session")) return;
+        var why="signOut";
+        try{ var w=String(localStorage.getItem("em.signoutWhy")||"").split("|"); if(w[0]&&STATION_NOTICE[w[0]]&&Date.now()-Number(w[1])<20000) why=w[0]; }catch(_){}
+        try{ if(window.StationSession&&typeof StationSession.signedOut==="function") StationSession.signedOut(why); }catch(_){}
+        stationEnd(why,true);
+      }catch(_){}
+    });
+  }catch(_){}
 
   /* deep-link invites (#invite=CODE) are handled by boot(); boot() itself
      is kicked off by bootstrapSession() during the app's DOMContentLoaded. */

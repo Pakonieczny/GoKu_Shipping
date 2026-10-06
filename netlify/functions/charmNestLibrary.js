@@ -3060,7 +3060,9 @@ async function op_sessionsList(b) {
   // the server's times are kept as milliseconds or as Firestore times, and one range never matches the other kind: both are read
   const TS = admin.firestore.Timestamp, ranges = [[since, until]];
   if (TS && typeof TS.fromMillis === "function") ranges.push([TS.fromMillis(since), TS.fromMillis(until)]);
-  const snaps = await Promise.all(ranges.map(([a, z]) => db.collection(SESSIONS).where("startAt", ">=", a).where("startAt", "<", z).orderBy("startAt", "desc").limit(limit + 1).get()));
+  const raw = await Promise.all(ranges.map(([a, z]) => db.collection(SESSIONS).where("startAt", ">=", a).where("startAt", "<", z).orderBy("startAt", "desc").limit(limit + 1).get()));
+  // the auto sign-out rules (_stationAutoSignout.js): a session idle for 10 minutes, past 5:00 pm Toronto with no recent input, or whose page died is ended at the person's last input (reason idle or closing)
+  const snaps = await Promise.all(raw.map(r => require("./_stationAutoSignout").settledSnap({ db, prefix: "", now }, r)));
   const seen = new Set(), rows = [];
   for (const s of snaps) for (const d of s.docs) if (!seen.has(d.id)) { seen.add(d.id); const r = sessionRow(d.id, d.data() || {}, now); if (r) rows.push(r); }
   rows.sort((x, y) => y.startAt - x.startAt || (x.id < y.id ? -1 : x.id > y.id ? 1 : 0));

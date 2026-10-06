@@ -116,7 +116,9 @@ async function run(browser, dev, station, ip) {
   await wait(300);
 
   const count = k => reqs.filter(q => q.kind === k).length;
-  const state = () => page.evaluate(() => ({ name: localStorage.getItem('employee_name'), toasts: window.__toasts.join(' | '), raw: document.getElementById('employeeNumberInput').dataset.raw || '',
+  /* (weld-1 keeps who is signed in as names under tasks in weld_people, and no longer writes employee_name) */
+  const state = () => page.evaluate(() => ({ name: (() => { const r = localStorage.getItem('weld_people'); if (r !== null) { try { const l = JSON.parse(r); return l.length ? l[0].name : null; } catch (_) {} } return localStorage.getItem('employee_name'); })(),
+    toasts: window.__toasts.join(' | '), raw: document.getElementById('employeeNumberInput').dataset.raw || '',
     boxOpen: !!document.getElementById('userLoginModal').__m.isOpen }));
   const starts = () => reqs.filter(q => q.kind === 'session').map(q => JSON.parse(q.text).session).filter(s => s.event === 'start');
   /* type a number, press Log In, and wait for the page to say something (a toast) */
@@ -125,8 +127,15 @@ async function run(browser, dev, station, ip) {
     await page.focus('#employeeNumberInput'); await page.keyboard.type(pin);
     await page.click('#employeeLoginBtn', { force: true });
     if (hang) { for (let i = 0; i < 100 && !reqs.some(q => q.kind === 'op'); i++) await wait(30); await page.clock.runFor(16000); }
-    for (let i = 0; i < 300; i++) { const s = await state(); if (s.toasts) return s; await wait(30); }
+    for (let i = 0; i < 300; i++) { const s = await state(); if (s.toasts) return dev === 'weld-1' ? await weldTask(s) : s; await wait(30); }
     throw new Error(dev + ': the page said nothing');
+  };
+  /* the Welding station asks "Welding or Matching?" after a number is accepted; the person is signed in once a task is chosen */
+  const weldTask = async s => {
+    if (!/Welcome/.test(s.toasts)) return s;
+    await page.evaluate(() => document.getElementById('weldTaskMatching').click());
+    for (let i = 0; i < 100; i++) { const t = await state(); if (t.name) return t; await wait(30); }
+    return s;
   };
   const signOut = async () => {
     await page.click('#signOutBtn', { force: true });
