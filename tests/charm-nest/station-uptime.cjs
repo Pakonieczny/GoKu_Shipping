@@ -173,9 +173,9 @@ section('caches are bounded', async () => {
   vm.createContext(detail); vm.runInContext('var archiveDetail=new Map();' + cut('function keepArchiveDetail(', 'async function trimArchiveDetailStore') + ';this.keep=keepArchiveDetail;this.size=()=>archiveDetail.size;', detail);
   for (let i = 0; i < 300; i++) detail.keep(String(i), { i }); assert.equal(detail.size(), 200, 'opened History records: the 200 most recent in memory');
 
-  // sandbox.reset clears every sandbox-only key and cache, not only the ledger
-  const keys = new Map([['ledger:sandbox', '{}'], ['commits:sandbox', '{}'], ['orders:sandbox', '{}'], ['images:sandbox', '[]'], ['token', 'keep']]);
-  const sb = { SANDBOX: true, completedOrders: new Set(['1']), LS: { ledger: 'ledger:sandbox' }, LSK: { commits: 'commits:sandbox' }, CACHE_KEY: 'orders:sandbox', __imagesKey: 'images:sandbox', detailCache: new Map([['1', {}]]), __imagesCache: new Map([['1', []]]), __imagesSaved: new Map([['1', {}]]), __imagesMiss: new Map(), notesCache: new Map([['1', 'n']]), msgCache: new Map([['1', []]]), allOpenReceipts: [1], S: {}, localStorage: { removeItem: k => keys.delete(k) } };
+  // sandbox.reset clears every sandbox-only key and cache, not only the ledger (RG2: and the sandbox's chat drafts, designStation.chatDrafts.v1 + NS, which the page added on 3 Oct: the page's global NS is given to the slice)
+  const keys = new Map([['ledger:sandbox', '{}'], ['commits:sandbox', '{}'], ['orders:sandbox', '{}'], ['images:sandbox', '[]'], ['designStation.chatDrafts.v1:sandbox', '{}'], ['token', 'keep']]);
+  const sb = { SANDBOX: true, NS: ':sandbox', completedOrders: new Set(['1']), LS: { ledger: 'ledger:sandbox' }, LSK: { commits: 'commits:sandbox' }, CACHE_KEY: 'orders:sandbox', __imagesKey: 'images:sandbox', detailCache: new Map([['1', {}]]), __imagesCache: new Map([['1', []]]), __imagesSaved: new Map([['1', {}]]), __imagesMiss: new Map(), notesCache: new Map([['1', 'n']]), msgCache: new Map([['1', []]]), allOpenReceipts: [1], S: {}, localStorage: { removeItem: k => keys.delete(k) } };
   vm.createContext(sb); vm.runInContext('var cmds={' + cut('    async "sandbox.reset"() {', '    /** The open receipts exactly as Etsy returned them') + '};', sb);
   await sb.cmds['sandbox.reset']();
   assert.deepEqual([...keys.keys()], ['token'], 'sandbox.reset removes the sandbox ledger, commit memory, order and photo caches');
