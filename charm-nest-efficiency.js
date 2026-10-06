@@ -33,7 +33,7 @@
      netlify/functions/_activityKinds.js and EfficiencyStations.displayStation; history keeps its old keys, only what is read folds. Laser and Design are stored under their own keys. */
   const DISPLAY_FOLD = { sorter: "sorting", qr: "sorting" };
   const displayStation = key => (typeof key !== "string" ? (key == null ? "" : displayStation(String(key))) : Object.prototype.hasOwnProperty.call(DISPLAY_FOLD, key) ? DISPLAY_FOLD[key] : key);
-  const ACTIONS = { scan: "scanned", complete: "completed", print: "printed", reject: "rejected", undo: "undid", error: "error", note: "noted" };
+  const ACTIONS = { scan: "scanned", matched: "matched", complete: "completed", print: "printed", reject: "rejected", undo: "undid", error: "error", note: "noted" };
   const EASE = "cubic-bezier(.2,.8,.2,1)";
   const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const el = (tag, cls, html) => { const e = doc.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; };
@@ -111,11 +111,13 @@
   /* ── the answer, normalised (a missing field is zero or empty, never a crash) ── */
   function hours24(a) { const o = new Array(24).fill(0); if (Array.isArray(a)) for (let i = 0; i < 24; i++) o[i] = Math.max(0, N(a[i])); return o; }
   const sum24 = list => { const o = new Array(24).fill(0); for (const a of list) for (let i = 0; i < 24; i++) o[i] += a[i]; return o; };
+  /** The Welding station's minutes signed in per task (welding | matching | unknown = an old sign-in with no task), or null for a station that counts pieces. */
+  const taskMin = m => (m && typeof m === "object" ? { welding: N(m.welding), matching: N(m.matching), unknown: N(m.unknown) } : null);
   function norm(r) {
     r = r || {};
     const people = (Array.isArray(r.people) ? r.people : []).filter(p => p && p.name).map(p => {
       const t = p.totals || {}, orders = (Array.isArray(p.orders) ? p.orders : []).filter(o => o && o.orderId).map(o => ({ orderId: String(o.orderId), stations: (Array.isArray(o.stations) ? o.stations : []).map(String), parts: N(o.parts), lastAt: T(o.lastAt) }));
-      const stations = (Array.isArray(p.stations) ? p.stations : []).filter(s => s && s.station).map(s => ({ station: String(s.station), minutes: N(s.minutes), parts: N(s.parts), scanParts: N(s.scanParts), scans: N(s.scans), completes: N(s.completes), prints: N(s.prints), orders: N(s.orders) })).sort((a, b) => b.minutes - a.minutes);
+      const stations = (Array.isArray(p.stations) ? p.stations : []).filter(s => s && s.station).map(s => ({ station: String(s.station), minutes: N(s.minutes), parts: N(s.parts), scanParts: N(s.scanParts), scans: N(s.scans), completes: N(s.completes), prints: N(s.prints), orders: N(s.orders), matched: N(s.matched), taskMin: taskMin(s.taskMin) })).sort((a, b) => b.minutes - a.minutes);
       const x = { parts: N(t.parts), scanParts: N(t.scanParts), scans: N(t.scans), rejects: N(t.rejects), errors: N(t.errors), orders: t.orders == null ? orders.length : N(t.orders), activeMin: N(t.activeMin), idleMin: N(t.idleMin), signedInMin: N(t.signedInMin), rate: N(t.rate), secPerScan: N(t.secPerScan) };
       if (!x.rate && x.activeMin >= 1 && x.parts) x.rate = x.parts / (x.activeMin / 60);
       if (!x.secPerScan && x.activeMin >= 1 && x.scans) x.secPerScan = x.activeMin * 60 / x.scans;
@@ -123,9 +125,9 @@
     });
     const b = r.business || {}, bt = b.totals || {};
     const stRows = new Map();
-    for (const s of Array.isArray(b.stations) ? b.stations : []) if (s && s.station) stRows.set(String(s.station), { station: String(s.station), parts: N(s.parts), scans: N(s.scans), orders: N(s.orders), now: (Array.isArray(s.peopleNow) ? s.peopleNow : []).map(String), hours: new Array(24).fill(0) });
+    for (const s of Array.isArray(b.stations) ? b.stations : []) if (s && s.station) stRows.set(String(s.station), { station: String(s.station), parts: N(s.parts), scans: N(s.scans), orders: N(s.orders), matched: N(s.matched), taskMin: taskMin(s.taskMin), now: (Array.isArray(s.peopleNow) ? s.peopleNow : []).map(String), hours: new Array(24).fill(0) });
     const ph = b.perHour && typeof b.perHour === "object" ? b.perHour : {};
-    for (const k of Object.keys(ph)) { if (!stRows.has(k)) stRows.set(k, { station: k, parts: 0, scans: 0, orders: 0, now: [], hours: null }); stRows.get(k).hours = hours24(ph[k]); }
+    for (const k of Object.keys(ph)) { if (!stRows.has(k)) stRows.set(k, { station: k, parts: 0, scans: 0, orders: 0, matched: 0, taskMin: null, now: [], hours: null }); stRows.get(k).hours = hours24(ph[k]); }
     const hoursAll = Object.keys(ph).length ? sum24(Object.keys(ph).map(k => hours24(ph[k]))) : sum24(people.map(p => p.perHour));
     const sumP = k => people.reduce((n, p) => n + p.t[k], 0);
     const activeMin = sumP("activeMin"), parts = bt.parts == null ? sumP("parts") : N(bt.parts);
@@ -966,7 +968,7 @@
       if (!r) {
         const e = el("div", "efSR", `<span class="efSN"></span><span class="efSW none">—</span><span class="efSV" data-c="parts"><b class="efNum">0</b><small>pieces</small></span><span class="efSV" data-c="orders"><b class="efNum">0</b><small>orders</small></span><span class="efSp"></span>`);
         e.dataset.station = k; setText(e.querySelector(".efSN"), stName(k));
-        r = { e, w: e.querySelector(".efSW"), parts: e.querySelector('[data-c="parts"] .efNum'), orders: e.querySelector('[data-c="orders"] .efNum'), sp: spark(e.querySelector(".efSp"), { w: 112, h: 22 }), spEl: e.querySelector(".efSp") };
+        r = { e, w: e.querySelector(".efSW"), pc: e.querySelector('[data-c="parts"]'), oc: e.querySelector('[data-c="orders"]'), pl: e.querySelector('[data-c="parts"] small'), ol: e.querySelector('[data-c="orders"] small'), wd: false, s: null, parts: e.querySelector('[data-c="parts"] .efNum'), orders: e.querySelector('[data-c="orders"] .efNum'), sp: spark(e.querySelector(".efSp"), { w: 112, h: 22 }), spEl: e.querySelector(".efSp") };
         st.stRows.set(k, r);
         const sn = () => stName(k);
         metricCard(e.querySelector('[data-c="parts"]'), "parts", sn, () => shown(r.parts)); metricCard(e.querySelector('[data-c="orders"]'), "orders", sn, () => shown(r.orders));
@@ -979,10 +981,18 @@
       const names = now.join(", "), w = st.win; let quiet = "";
       if (names && !trend && w.today && w.nowH >= 2 && hrs.length) { let last = -1; for (let h = w.nowH; h >= 0; h--) if (hrs[h] > 0) { last = h; break; } if (last >= 0 && w.nowH - last >= 2) quiet = `No pieces since ${hourLabel(last + 1)}`; }
       const sig = names + "|" + quiet; if (r.sig !== sig) { r.sig = sig; r.w.textContent = names || "—"; if (quiet) r.w.appendChild(el("em", "efQuiet")).textContent = quiet; r.w.classList.toggle("none", !names); r.names = names; r.quiet = quiet; if (!hcOn()) r.w.title = names + (quiet ? " · " + quiet : ""); }
-      const evS = M.sources.events !== false;
-      fig(r.parts, s.parts, evS, nf, first); fig(r.orders, s.orders, evS || !!M.sources.seals, nf, first);
-      const idle = evS && !s.parts && !s.orders && !now.length; r.e.classList.toggle("idle", idle);   // a station with nothing yet is quiet on screen too
-      r.spEl.style.visibility = trend || !evS || idle ? "hidden" : "";
+      const evS = M.sources.events !== false, wd = !!s.taskMin, tm = s.taskMin || { welding: 0, matching: 0, unknown: 0 }, tmTot = tm.welding + tm.matching + tm.unknown;
+      r.s = s;
+      if (wd !== r.wd) {   // the Welding station (R2 of stations round 2): its matched scans and its time on task stand where pieces and orders are, and the cards say so
+        r.wd = wd; r.e.dataset.weld = wd ? "1" : ""; setText(r.pl, wd ? "matched" : "pieces"); setText(r.ol, wd ? "" : "orders"); if (wd) r.oc.setAttribute("aria-label", "Time on task"); else r.oc.removeAttribute("aria-label");   // (the time stands alone: "on task" does not fit the column; its card says it)
+        if (wd) {
+          hc(r.pc, () => ({ title: "Matched", sub: stName(k), rows: r.s && shown(r.parts) !== "—" ? [{ k: "Now", v: shown(r.parts) }] : [], note: "Order codes scanned as Matching. A scan is not a finished piece or a completed order: the Welding station is not counted in pieces or orders." }));
+          hc(r.oc, () => { const t = (r.s && r.s.taskMin) || tm; return { title: "Time on task", sub: stName(k), rows: [{ k: "Welding", v: dur(t.welding + t.unknown) }, { k: "Matching", v: dur(t.matching) }].concat(t.unknown > 0 ? [{ k: "No task recorded", v: dur(t.unknown), d: "Older sign-ins: counted as Welding" }] : []), note: "Time signed in at the Welding station, per task. Two people in the same task at once count once." }; });
+        } else { metricCard(r.pc, "parts", () => stName(k), () => shown(r.parts)); metricCard(r.oc, "orders", () => stName(k), () => shown(r.orders)); }
+      }
+      if (wd) { fig(r.parts, s.matched, evS, nf, first); fig(r.orders, tmTot, evS, dur, first); } else { fig(r.parts, s.parts, evS, nf, first); fig(r.orders, s.orders, evS || !!M.sources.seals, nf, first); }
+      const idle = evS && (wd ? !s.matched && !tmTot : !s.parts && !s.orders) && !now.length; r.e.classList.toggle("idle", idle);   // a station with nothing yet is quiet on screen too
+      r.spEl.style.visibility = trend || !evS || idle || wd ? "hidden" : "";
       if (!trend && evS) { const w = st.win, vals = []; for (let h = w.lo; h <= w.hi; h++) vals.push((s.hours || [])[h] || 0); r.sp.set(vals, w.today ? Math.min(vals.length - 1, w.nowH - w.lo) : vals.length - 1); }
     }
     // keep the rows in the same order, add late ones at the end, drop none that were shown
@@ -1025,8 +1035,8 @@
     const on = p.on && !M.past;
     r.st.classList.toggle("on", on); r.who.setAttribute("aria-label", `${p.name}, ${on ? "on now" : "locked out"}. ${whenText(p, M)}`);
     const wt = whenText(p, M); setText(r.when, wt);
-    const chipSig = p.stations.map(s => s.station + s.minutes).join() + "|" + p.nowAt.join() + on;
-    if (chipSig !== r.chipSig) { r.chipSig = chipSig; r.chips.innerHTML = p.stations.length ? p.stations.map(s => `<span class="efChip${p.nowAt.includes(s.station) && on ? " now" : ""}"><b>${esc(stName(s.station))}</b>${esc(dur(s.minutes))}</span>`).join("") : `<span class="efMuted">—</span>`; }
+    const chipSig = p.stations.map(s => s.station + s.minutes + (s.taskMin ? ":" + s.taskMin.welding + "/" + s.taskMin.matching + "/" + s.taskMin.unknown : "")).join() + "|" + p.nowAt.join() + on;
+    if (chipSig !== r.chipSig) { r.chipSig = chipSig; r.chips.innerHTML = p.stations.length ? p.stations.map(s => `<span class="efChip${p.nowAt.includes(s.station) && on ? " now" : ""}"${s.taskMin ? ` title="Welding ${esc(dur(s.taskMin.welding + s.taskMin.unknown))} · Matching ${esc(dur(s.taskMin.matching))}"` : ""}><b>${esc(stName(s.station))}</b>${esc(dur(s.minutes))}</span>`).join("") : `<span class="efMuted">—</span>`; }
     const t = p.t, src = p.source, kParts = src !== "seals" && src !== "sessions", kOther = src !== "sessions";   // seals know orders and scans, not parts; sessions know only time
     const sc = scanned(t);
     fig(r.parts, t.parts, kParts, nf, first); fig(r.scans, sc.n, kOther, nf, first); fig(r.orders, t.orders, kOther, nf, first);
@@ -1079,7 +1089,7 @@
   function paintOrders(r, p) {
     const pane = r.box.querySelector('[data-p="orders"]'), multi = p.stations.length > 1;
     const sig = JSON.stringify([p.orders, multi ? p.stations : 0]); if (r.ordSig === sig) return; r.ordSig = sig;
-    const table = multi ? `<div><div class="efLabel" style="margin-top:0">By station</div><table class="efMini"><thead><tr><th>Station</th><th>Pieces</th><th>Scanned</th><th>Orders</th></tr></thead><tbody>${p.stations.map(s => `<tr><td>${esc(stName(s.station))}</td><td>${nf(s.parts)}</td><td>${nf(scanned(s).n)}</td><td>${nf(s.orders)}</td></tr>`).join("")}</tbody></table></div>` : "";
+    const table = multi ? `<div><div class="efLabel" style="margin-top:0">By station</div><table class="efMini"><thead><tr><th>Station</th><th>Pieces</th><th>Scanned</th><th>Orders</th></tr></thead><tbody>${p.stations.map(s => `<tr><td>${esc(stName(s.station))}${s.taskMin ? `<small class="efMuted" title="Welding ${esc(dur(s.taskMin.welding + s.taskMin.unknown))} · Matching ${esc(dur(s.taskMin.matching))}"> · ${nf(s.matched)} matched</small>` : ""}</td><td>${s.taskMin ? "—" : nf(s.parts)}</td><td>${nf(scanned(s).n)}</td><td>${s.taskMin ? "—" : nf(s.orders)}</td></tr>`).join("")}</tbody></table></div>` : "";
     const row = o => `<div class="efOw" data-oid="${esc(o.orderId)}"><div class="efOr"><button type="button" class="efOid" data-order="${esc(o.orderId)}" title="Open this order">${esc(o.orderId)}</button><span class="st">${esc(o.stations.map(stName).join(" · "))}</span><span class="pt">${o.parts ? pcs(o.parts) : ""}</span><time>${o.lastAt ? esc(clock(o.lastAt)) : ""}</time><button type="button" class="efOx" data-steps="${esc(o.orderId)}" aria-expanded="false" aria-label="Who worked order ${esc(o.orderId)}, where and for how long" title="Who, where and for how long"><i aria-hidden="true">▼</i></button></div><div class="efOxw"><div class="efOxi"><div class="efOxb"></div></div></div></div>`;
     const orders = p.orders.length ? `<div class="efOl">${p.orders.map(row).join("")}</div>`
       : `<div class="efMuted">${p.t.orders ? "The newest orders are listed once stations send events." : "No orders yet."}</div>`;

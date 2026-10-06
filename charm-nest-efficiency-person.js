@@ -160,7 +160,7 @@
 .efpNote{margin:0;display:grid;gap:2px;color:var(--ink70);font-size:12px;padding:0 2px}
 .efpNote span:before{content:"";display:inline-block;width:5px;height:5px;border-radius:50%;background:var(--gold2);margin-right:8px;vertical-align:1px}
 .efpLabel{font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink45);font-weight:750;display:flex;align-items:center;gap:8px;margin:0 2px 9px}
-.efpLabel:after{content:"";flex:1;height:1px;background:var(--line);order:1}.efpLabel b{color:var(--ink70);letter-spacing:0;font-weight:700}.efpLabel .efpLr{order:2;letter-spacing:0;text-transform:none;font-weight:500;font-size:11.5px}
+.efpLabel:after{content:"";flex:1;height:1px;background:var(--line);order:1}.efpLabel b{color:var(--ink70);letter-spacing:0;font-weight:700}.efpLabel .efpLr,.efpLabel .efpWR{order:2;letter-spacing:0;text-transform:none;font-weight:500;font-size:11.5px}
 .efpCard{background:var(--card);border:1px solid var(--line);border-radius:12px;min-width:0}
 .efpNow{display:grid;gap:10px}
 .efpNowIdle{display:flex;align-items:center;gap:10px;padding:11px 16px;color:var(--ink45);font-size:12px}.efpNowIdle b{color:var(--ink70);font-weight:650}.efpNowIdle i{width:7px;height:7px;border-radius:50%;background:var(--ink25);flex:0 0 7px}
@@ -332,11 +332,16 @@
     meanFirstReplyMs: { label: "First reply (average)", unit: "ms", better: "down", def: "The average time from a customer's first message to this person's first reply." },
     conversationsDone: { label: "Conversations done", unit: "count", better: "up", def: "Conversations this person archived as done." },
     reopened: { label: "Reopened", unit: "count", better: "down", def: "Conversations this person reopened after marking them done." },
-    reopenRate: { label: "Reopen rate", unit: "percent", better: "down", def: "Conversations reopened divided by conversations done." }
+    reopenRate: { label: "Reopen rate", unit: "percent", better: "down", def: "Conversations reopened divided by conversations done." },
+    weldingHours: { label: "Welding hours", unit: "hours", better: null, def: "Time signed in at the Welding station under the Welding task (welding the studs to the charm). It is signed-in time: welding has no scans, so it is never counted in pieces or orders.", sp: "weldingMs" },
+    matchingHours: { label: "Matching hours", unit: "hours", better: null, def: "Time signed in at the Welding station under the Matching task (matching the welded earrings to their orders with the scanner app and adding the backings).", sp: "matchingMs" },
+    matchedOrders: { label: "Orders matched", unit: "orders", better: null, def: "Order codes scanned as Matching at the Welding station. Every scan counts, so an order scanned twice counts twice. Not a completion: the Welding station is not counted in pieces or orders.", sp: "matched" },
+    unknownHours: { label: "Welding (task not recorded)", unit: "hours", better: null, def: "Time signed in at the Welding station in older sign-ins that did not say which task. It is read as Welding time and nothing stored is changed.", sp: "unknownMs" }
   };
   /** Which cards the page shows: [group, [primary keys], [more keys]], and where each one is looked up (kpis | att | rates | contact | issues). */
   const GROUPS = [
     ["Production", ["kpis.parts", "kpis.orders", "kpis.partsPerActiveHour", "kpis.partsPerDay"], ["kpis.partsPerSignedHour", "kpis.ordersPerDay", "kpis.ordersCompleted", "kpis.scans", "kpis.bestDay", "kpis.peakHour"]],
+    ["Welding station", ["welding.weldingHours", "welding.matchingHours", "welding.matchedOrders", "welding.unknownHours"], []],      // (shown only for a person with time or a matched scan at the Welding station)
     ["Speed", ["kpis.secPerOrderMedian", "kpis.secPerOrderP90", "kpis.secPerOrderMean", "kpis.secBetweenScansMedian"], ["kpis.secPerScanMean"]],
     ["Time", ["kpis.activeShare", "kpis.signedHours", "kpis.activeHours", "att.avgShiftHours"], ["kpis.idleHours", "kpis.unloggedHours", "att.medianStart", "att.medianEnd"]],
     ["Attendance", ["att.daysWorked", "att.daysOff", "att.lateDays", "att.shortDays"], ["att.attendanceRate", "att.extraDays", "att.currentStreak", "att.longestStreak"]],
@@ -361,7 +366,7 @@
   function normPoint(p) {
     p = p || {};
     return { day: String(p.day || ""), to: isDay(p.to) ? p.to : String(p.day || ""), days: num(p.days) || 1, workedDays: num(p.workedDays), hasData: p.hasData !== false && p.parts !== null, parts: num(p.parts), orders: num(p.orders), scans: num(p.scans), completes: num(p.completes), prints: num(p.prints), rejects: num(p.rejects), errors: num(p.errors), undos: num(p.undos),
-      activeMs: num(p.activeMs), idleMs: num(p.idleMs), signedMs: num(p.signedMs), perActiveHour: num(p.perActiveHour), perSignedHour: num(p.perSignedHour), secPerOrder: num(p.secPerOrder), medianSecPerOrder: num(p.medianSecPerOrder), firstIn: num(p.firstIn), lastOut: num(p.lastOut), shiftMs: num(p.shiftMs), state: p.state ? String(p.state) : "" };
+      activeMs: num(p.activeMs), idleMs: num(p.idleMs), signedMs: num(p.signedMs), weldingMs: num(p.weldingMs), matchingMs: num(p.matchingMs), unknownMs: num(p.unknownMs), matched: num(p.matched), perActiveHour: num(p.perActiveHour), perSignedHour: num(p.perSignedHour), secPerOrder: num(p.secPerOrder), medianSecPerOrder: num(p.medianSecPerOrder), firstIn: num(p.firstIn), lastOut: num(p.lastOut), shiftMs: num(p.shiftMs), state: p.state ? String(p.state) : "" };
   }
   const CAL = { worked: 1, partial: 1, off: 1, closed: 1, before: 1, future: 1, pending: 1, unknown: 1 };
   /** The `person` answer, in the shapes of plans/employee-hr/api.md; every field is optional. */
@@ -369,9 +374,19 @@
     r = r || {}; req = req || {};
     const series = A(r.series).filter(p => p && p.day).map(normPoint), hoursRaw = A(r.hours);
     const hours = hoursRaw.length ? Array.from({ length: 24 }, (_, h) => { const x = hoursRaw.find(e => e && +e.hour === h) || hoursRaw[h] || {}; return { hour: h, parts: num(x.parts), scans: num(x.scans), perDay: num(x.perDay) }; }) : [];
-    const stations = A(r.stations).filter(s => s && s.station).map(s => ({ station: String(s.station), label: String(s.label || stName(s.station)), parts: num(s.parts), orders: num(s.orders), scans: num(s.scans), completes: num(s.completes), prints: num(s.prints), minutes: num(s.minutes), shareParts: num(s.shareParts), shareMinutes: num(s.shareMinutes), perActiveHour: num(s.perActiveHour) }));
+    const stations = A(r.stations).filter(s => s && s.station).map(s => ({ station: String(s.station), label: String(s.label || stName(s.station)), parts: num(s.parts), orders: num(s.orders), scans: num(s.scans), completes: num(s.completes), prints: num(s.prints), minutes: num(s.minutes), shareParts: num(s.shareParts), shareMinutes: num(s.shareMinutes), perActiveHour: num(s.perActiveHour), matched: num(s.matched), taskMin: s.taskMin && typeof s.taskMin === "object" ? { welding: nz(s.taskMin.welding), matching: nz(s.taskMin.matching), unknown: nz(s.taskMin.unknown) } : null }));
     const cal = A(r.calendar).filter(c => c && c.day).map(c => ({ day: String(c.day), state: CAL[c.state] ? String(c.state) : "before", signedMs: num(c.signedMs), activeMs: num(c.activeMs), firstIn: num(c.firstIn), lastOut: num(c.lastOut), parts: num(c.parts), orders: num(c.orders), late: !!c.late, short: !!c.short, extra: !!c.extra, est: !!c.estimated, lengthKnown: c.lengthKnown !== false, note: c.note ? String(c.note) : "", weekend: !!c.weekend, others: num(c.others), ended: c.endedBy === "idle" || c.endedBy === "closing" ? c.endedBy : "" })).sort((a, b) => (a.day < b.day ? -1 : 1));
-    const src = { kpis: {}, att: {}, rates: {}, contact: {}, issues: {} };
+    const src = { kpis: {}, att: {}, rates: {}, contact: {}, issues: {}, welding: {} };
+    // the Welding station (stations round 2): time signed in per task and the orders matched; null when the person has nothing there in this window. Its points ride on the same buckets as `series`.
+    const wr = r.welding && typeof r.welding === "object" ? r.welding : null;
+    const welding = wr ? { label: String(wr.label || "Welding station"), def: String(wr.def || ""), matched: num(wr.matched), hours: { welding: num(wr.hours && wr.hours.welding), matching: num(wr.hours && wr.hours.matching), unknown: num(wr.hours && wr.hours.unknown), station: num(wr.hours && wr.hours.station) } } : null;
+    if (wr) {
+      const wm = wr.metrics && typeof wr.metrics === "object" ? wr.metrics : {};
+      for (const k of ["weldingHours", "matchingHours", "matchedOrders"]) if (wm[k] != null) src.welding[k] = metric(k, wm[k], null, "welding." + k);
+      if (welding.hours.unknown > 0) src.welding.unknownHours = metric("unknownHours", { value: welding.hours.unknown, unit: "hours" }, { derived: false }, "welding.unknownHours");
+      const wp = new Map(A(wr.series).filter(p => p && p.day).map(p => [String(p.day), p]));
+      for (const p of series) { const w = wp.get(p.day); if (w) { p.weldingMs = num(w.weldingMs); p.matchingMs = num(w.matchingMs); p.unknownMs = num(w.unknownMs); p.matched = num(w.matched); } }
+    }
     for (const k of Object.keys(r.kpis || {})) src.kpis[k] = metric(k, r.kpis[k]);
     // attendance (E9): attendance.metrics = METRICs (workingDays daysWorked daysOff extraDays shortDays lateDays attendanceRate avgShiftHours medianStart medianEnd currentStreak longestStreak)
     const at = r.attendance && typeof r.attendance === "object" ? r.attendance : {}, am = at.metrics && typeof at.metrics === "object" ? at.metrics : {};
@@ -407,7 +422,7 @@
     const last = cal.filter(c => c.signedMs > 0 || c.lastOut || c.firstIn).pop(), lastSeen = last ? (last.lastOut || last.firstIn) : null;
     return { name: String(r.name || req.name || ""), found: r.found !== false, spellings: A(r.spellings).map(String), mode: String(r.mode || ""), range: r.range, from: isDay(r.from) ? r.from : req.from, to: isDay(r.to) ? r.to : req.to, days: num(r.days), today: isDay(r.today) ? r.today : "", live: !!r.live, prev: r.prev && r.prev.from ? { from: String(r.prev.from), to: String(r.prev.to), days: num(r.prev.days) } : null,
       granularity: r.granularity === "week" ? "week" : "day", trackingStart: isDay(r.trackingStart) ? r.trackingStart : "", firstDay: isDay(r.firstDay) ? r.firstDay : "", eventWindow: r.eventWindow && r.eventWindow.from ? r.eventWindow : null, rules: r.rules || {},
-      src, series, hours, stations, cal, att: r.attendance || null, attNote, issues, contact, cannotTell: A(r.cannotTell).filter(c => c && c.text).map(c => ({ topic: String(c.topic || ""), text: String(c.text) })), notes: A(r.notes).map(String).filter(Boolean), partial: !!r.partial, errors: A(r.errors).map(String), now: num(r.now), lastSeen, lastStation: "" };
+      src, welding, series, hours, stations, cal, att: r.attendance || null, attNote, issues, contact, cannotTell: A(r.cannotTell).filter(c => c && c.text).map(c => ({ topic: String(c.topic || ""), text: String(c.text) })), notes: A(r.notes).map(String).filter(Boolean), partial: !!r.partial, errors: A(r.errors).map(String), now: num(r.now), lastSeen, lastStation: "" };
   }
   /** `personOrders` (E4's shape; E8's list reads it itself, this is the page's own small list until that module is in the page). */
   function normOrders(r) {
@@ -422,8 +437,11 @@
   function pickLive(r, name, also) {
     const mine = new Set([slug(name)].concat(A(also).filter(Boolean).map(slug))), isMe = n => mine.has(slug(n)), out = { at: num(r && r.at), where: null, current: [], stationKey: "" };
     if (!r) return out;
-    const sig = A(r.signedIn).find(s => s && isMe(s.name));
-    if (sig) { out.where = { name: String(sig.name), stationKey: String(sig.stationKey || ""), since: num(sig.since), lastSeenAt: num(sig.lastSeenAt) }; out.stationKey = out.where.stationKey; }
+    const mineIn = A(r.signedIn).filter(s => s && isMe(s.name)), sig = mineIn[0];
+    if (sig) {   // (a person in two tasks at the Welding station has two rows: one place, both tasks)
+      const here = mineIn.filter(s => String(s.stationKey || "") === String(sig.stationKey || "")), tasks = ["welding", "matching"].filter(t => here.some(s => s.task === t));
+      out.where = { name: String(sig.name), stationKey: String(sig.stationKey || ""), since: here.reduce((m, s) => (num(s.since) && (m == null || s.since < m) ? s.since : m), null) || num(sig.since), lastSeenAt: here.reduce((m, s) => Math.max(m, num(s.lastSeenAt) || 0), 0) || num(sig.lastSeenAt), tasks, lastInputAt: here.reduce((m, s) => Math.max(m, num(s.lastInputAt) || 0), 0) || null }; out.stationKey = out.where.stationKey;
+    }
     const seen = new Set(), add = (c, st) => { if (!c || !isMe(c.person)) return; const id = String(c.rid || c.orderNumber || ""); if (seen.has(id)) return; seen.add(id); out.current.push(Object.assign({}, c, { stationKey: c.station || (st && st.key) || "", stationLabel: c.stationLabel || (st && st.label) || stName(c.station || (st && st.key)) })); };
     for (const c of A(r.current)) add(c, null); for (const st of A(r.stations)) for (const c of A(st && st.current)) add(c, st);
     if (!out.stationKey && out.current[0]) out.stationKey = out.current[0].stationKey;
@@ -582,7 +600,7 @@
     const T = { range: 0, live: 0, cal: 0, orders: 0, tick: 0, deb: 0 };
     const root0 = el("div", "efp in"); root0.setAttribute("aria-label", `${S.name}, employee page`);
     host.textContent = ""; host.appendChild(root0);
-    const E = {}; let charts = {}, mini = {}, io = null, unsubLive = null, ordersH = null;
+    const E = {}; let charts = {}, mini = {}, io = null, unsubLive = null, ordersH = null, matchedH = null;
     /** One chart of E7's EfficiencyCharts in `host` (null, with a quiet line, when the library is not in the page). */
     function chart(kind, host, opts) {
       const lib = root.EfficiencyCharts; host.textContent = "";
@@ -643,6 +661,10 @@
     <div class="efpCard efpChart" data-c="tm"><div class="efpCH"><span class="efpCT">Active vs signed in</span><span class="efpCP"></span></div><div class="efpCh"></div></div>
     <div class="efpCard efpChart wide hidden" data-c="shift"><div class="efpCH"><span class="efpCT">The shift</span><span class="efpCP"></span></div><div class="efpShiftH efpXY"></div></div>
   </div>
+  <div class="efpGrid g2 efpWC hidden">
+    <div class="efpCard efpChart" data-c="wt"><div class="efpCH"><span class="efpCT">Welding station: time by task</span><span class="efpCP"></span></div><div class="efpCh"></div></div>
+    <div class="efpCard efpChart" data-c="wm"><div class="efpCH"><span class="efpCT">Orders matched</span><span class="efpCP"></span></div><div class="efpCh"></div></div>
+  </div>
   <div class="efpGrid g75">
     <div class="efpCard efpChart" data-c="cal"><div class="efpCH"><span class="efpCT">Days worked</span><span class="efpCP"></span></div><div class="efpCalH"></div><div class="efpHow efpCalNote hidden"></div></div>
     <div class="efpCard efpChart" data-c="mix"><div class="efpCH"><span class="efpCT">Station mix</span><span class="efpCP"></span></div><div class="efpMixH"></div></div>
@@ -655,6 +677,8 @@
   <section aria-label="Orders"><div class="efpLabel">Orders <b class="efpON"></b><span class="efpLr"></span><button type="button" class="efpLink" data-orders-all>Show all time</button></div>
     <div class="efpCard efpOrdersHost"><div class="efpOrdersOwn"><div class="efpFind"><label class="efpSearch">${SEARCH}<input type="text" name="q" inputmode="search" autocomplete="off" spellcheck="false" placeholder="Search orders: number, customer or station" aria-label="Search this person's orders"><button type="button" class="efpIcon hidden" data-clear aria-label="Clear the search">✕</button></label><span class="efpSt" role="status"></span></div>
       <div class="efpOl"></div><div class="efpMore"></div></div></div></section>
+  <section class="efpWO hidden" aria-label="Orders matched"><div class="efpLabel">Orders matched <b class="efpWON"></b><span class="efpWR"></span></div>
+    <div class="efpCard efpOrdersHost efpWOrders"></div></section>
   <div class="efpCannot hidden"></div>
   <p class="efpFoot">These figures are logged activity, not effort: a phone scan is credited to the signed-in desktop's person, the sorter's name is typed, and label reprints and QA notes are signals, not verdicts. Hover any number for how it is worked out.</p>
 </div>
@@ -663,7 +687,7 @@
       Object.assign(E, { back: q(".efpBack"), av: q(".efpAv"), name: q(".efpName"), where: q(".efpWhere"), chips: q(".efpChips"), live: q(".efpLive"), liveT: q(".efpLiveT"), bar: q(".efpBar"), day: q(".efpDay"), prev: q('[data-nav="-1"]'), next: q('[data-nav="1"]'), today: q(".efpToday"),
         custom: q(".efpCustom"), busy: q(".efpBusy"), busyT: q(".efpBusyT"), msg: q(".efpMsg"), wait: q(".efpWait"), waitT: q(".efpWaitT"), nowS: q(".efpNowS"), now: q(".efpNow"), body: q(".efpBody"), note: q(".efpNote"), kg: q(".efpKGroups"),
         hc: q(".efpHC"), tpP: q('[data-c="tp"] .efpCP'), calP: q('[data-c="cal"] .efpCP'), mixP: q('[data-c="mix"] .efpCP'), heatP: q('[data-c="heat"] .efpCP'), shiftP: q('[data-c="shift"] .efpCP'), calH: q(".efpCalH"), calNote: q(".efpCalNote"), mixH: q(".efpMixH"), heatH: q(".efpHeatH"), shiftH: q(".efpShiftH"), iN: q(".efpIN"), is: q(".efpIs"), rates: q(".efpRates"),
-        oN: q(".efpON"), find: q(".efpSearch input"), clear: q("[data-clear]"), st: q(".efpFind .efpSt"), ol: q(".efpOl"), more: q(".efpMore"), heat: q('[data-c="heat"]'), cSp: q('[data-c="sp"]'), cTm: q('[data-c="tm"]'), cShift: q('[data-c="shift"]'), ordersHost: q(".efpOrdersHost"), ordersOwn: q(".efpOrdersOwn"), cannot: q(".efpCannot"), lr: q(".efpLr"), oAll: q("[data-orders-all]") });
+        oN: q(".efpON"), find: q(".efpSearch input"), clear: q("[data-clear]"), st: q(".efpFind .efpSt"), ol: q(".efpOl"), more: q(".efpMore"), heat: q('[data-c="heat"]'), cSp: q('[data-c="sp"]'), cTm: q('[data-c="tm"]'), cShift: q('[data-c="shift"]'), wc: q(".efpWC"), wtP: q('[data-c="wt"] .efpCP'), wmP: q('[data-c="wm"] .efpCP'), wo: q(".efpWO"), woN: q(".efpWON"), woLr: q(".efpWR"), woHost: q(".efpWOrders"), ordersHost: q(".efpOrdersHost"), ordersOwn: q(".efpOrdersOwn"), cannot: q(".efpCannot"), lr: q(".efpLr"), oAll: q("[data-orders-all]") });
       E.k = {};
       for (const [gname, prim, more] of GROUPS) {
         const g = el("div", "efpGroup"), grid = el("div", "efpKpis"), lab = g.appendChild(el("div", "efpLabel")); lab.appendChild(el("span")).textContent = gname;
@@ -675,10 +699,11 @@
           E.k[full] = { card: c, val: c.querySelector(".efpKV"), d: c.querySelector(".efpKD"), s: c.querySelector(".efpKS"), tag: c.querySelector(".efpKT"), sp: null, spH: c.querySelector(".efpKsp"), t: c.querySelector(".t"), group: gname };
           grid.appendChild(c);
         }
-        E.kg.appendChild(g);
+        g.dataset.g = gname; (E.groups || (E.groups = {}))[gname] = g; E.kg.appendChild(g);
       }
       charts = { tp: chart("bars", q('[data-c="tp"] .efpCh'), { height: 188, name: "Throughput", emptyText: "No activity in this range" }), sp: chart("line", q('[data-c="sp"] .efpCh'), { height: 170, name: "Speed per order" }), tm: chart("bars", q('[data-c="tm"] .efpCh'), { height: 170, name: "Active vs signed in" }),
-        cal: chart("calendarHeat", E.calH, { name: "Days worked" }), mix: chart("donut", E.mixH, { name: "Station mix" }), heat: chart("hourHeatmap", E.heatH, { name: "Busiest hours of the day" }) };
+        cal: chart("calendarHeat", E.calH, { name: "Days worked" }), mix: chart("donut", E.mixH, { name: "Station mix" }), heat: chart("hourHeatmap", E.heatH, { name: "Busiest hours of the day" }),
+        wt: chart("bars", q('[data-c="wt"] .efpCh'), { height: 170, name: "Welding station: time by task", stack: true }), wm: chart("bars", q('[data-c="wm"] .efpCh'), { height: 170, name: "Orders matched" }) };
       mini = { rate: miniTip(E.rates), shift: miniTip(E.shiftH) };
       setText(E.name, S.name); setText(E.av, initials(S.name)); E.av.dataset.t = String(tint(S.name));
       root0.addEventListener("click", onClick); root0.addEventListener("submit", onSubmit);
@@ -729,12 +754,12 @@
       const M = S.M, L = S.live, w = L && L.where, td = today(), seen = (M && M.to >= td && M.lastSeen) || S.seenAt || null;
       E.av.toggleAttribute("data-on", !!w);
       let txt;
-      if (w) txt = `Signed in${w.stationKey ? ` at <b>${esc(stName(w.stationKey))}</b>` : ""}${w.since ? ` · since ${esc(stamp(w.since, td))}` : ""}`;
+      if (w) txt = `Signed in${w.stationKey ? ` at <b>${esc(stName(w.stationKey))}</b>` : ""}${w.tasks && w.tasks.length ? ` as ${esc(w.tasks.map(t => t.charAt(0).toUpperCase() + t.slice(1)).join(" and "))}` : ""}${w.since ? ` · since ${esc(stamp(w.since, td))}` : ""}`;
       else if (seen) txt = `${L ? "Not signed in · last" : "Last"} seen <b>${esc(stamp(seen, td))}</b>`;
       else txt = L || M ? "Not signed in now" : "";
       if (E.where._h !== txt) { E.where._h = txt; E.where.innerHTML = txt; }
-      const here = L ? L.stationKey : "", st = (M && M.stations.length ? M.stations : []).slice(0, 5), sig = st.map(x => x.station + x.minutes + x.parts).join() + "|" + here + !!w;
-      if (E.chips._sig !== sig) { E.chips._sig = sig; E.chips.innerHTML = st.map(x => `<span class="efpChip${w && here && x.station === here ? " now" : ""}" title="${esc(x.parts != null ? nf(x.parts) + " pieces" : "")}"><b>${esc(x.label)}</b>${esc(x.minutes != null ? durMs(x.minutes * 60000) : x.parts != null ? nf(x.parts) + " pieces" : "")}</span>`).join(""); }
+      const here = L ? L.stationKey : "", st = (M && M.stations.length ? M.stations : []).slice(0, 5), sig = st.map(x => x.station + x.minutes + x.parts + (x.taskMin ? ":" + x.matched + ":" + x.taskMin.welding + "/" + x.taskMin.matching : "")).join() + "|" + here + !!w;
+      if (E.chips._sig !== sig) { E.chips._sig = sig; E.chips.innerHTML = st.map(x => `<span class="efpChip${w && here && x.station === here ? " now" : ""}" title="${esc(x.taskMin ? `Welding ${durMs((x.taskMin.welding + x.taskMin.unknown) * 60000)} · Matching ${durMs(x.taskMin.matching * 60000)} · ${nf(x.matched)} matched` : x.parts != null ? nf(x.parts) + " pieces" : "")}"><b>${esc(x.label)}</b>${esc(x.minutes != null ? durMs(x.minutes * 60000) : x.parts != null ? nf(x.parts) + " pieces" : "")}</span>`).join(""); }
       E.name.title = S.name + (M && M.spellings.length > 1 ? `. Also seen as: ${M.spellings.filter(x => x !== M.name).join(", ")}` : "");
     }
 
@@ -765,6 +790,8 @@
         case "issuesPer100Orders": return kv(M, "issues.issues") != null && kv(M, "kpis.orders") != null ? `${nf(kv(M, "issues.issues"))} in ${nf(kv(M, "kpis.orders"))} orders` : "";
         case "firstPass": case "deliveryRate": case "failureRate": case "reworkRate": case "successRate": case "holdRate": case "reprintRate": case "rescanRate": case "reopenRate": case "editedShare": return m.num != null && m.den ? `${nf(m.num)} of ${nf(m.den)}` : "";
         case "lateDays": case "shortDays": return m.v === 0 ? "none" : "";
+        case "weldingHours": case "matchingHours": return M.welding && M.welding.hours.station > 0 ? `of ${hoursTxt(M.welding.hours.station * HOUR_MS)} at the Welding station` : "";
+        case "matchedOrders": return m.v > 0 ? "scans, not completions" : "";
         default: return "";
       }
     }
@@ -776,6 +803,7 @@
       switch (sp) {
         case "issuesDay": return B.kind === "day" && M.issues && M.issues.byDay.size ? f(x => { const b = M.issues.byDay.get(x.day); return b && b.total != null ? b.total : null; }) : [];
         case "share": return f(x => (x.activeMs != null && x.signedMs > 0 ? Math.min(100, x.activeMs / x.signedMs * 100) : null));
+        case "weldingMs": case "matchingMs": case "unknownMs": return f(x => (x[sp] == null ? null : x[sp] / HOUR_MS));
         case "worked": return B.kind === "day" ? f(x => (x.state === "worked" || x.state === "partial" ? 1 : x.state === "off" ? 0 : null)) : [];
         case "off": return B.kind === "day" ? f(x => (x.state === "off" ? 1 : x.state === "worked" || x.state === "partial" ? 0 : null)) : [];
         default: return f(x => x[sp]);
@@ -783,8 +811,10 @@
     }
     function renderKpis(M, B, first) {
       const evs = M.eventWindow;
+      if (E.groups && E.groups["Welding station"]) E.groups["Welding station"].classList.toggle("hidden", !M.welding);
       for (const full of Object.keys(E.k)) {
         const k = E.k[full], key = shortKey(full), d = cardOf(full), m = metricAt(M, full), unit = (m && m.unit) || d.unit, fmt = fmtFor(key, unit);
+        if (full.startsWith("welding.")) k.card.classList.toggle("hidden", !M.welding || !m);   // (every card of the group hidden: the group is not a Tab stop either)
         const contactOff = full.startsWith("contact.") && M.contact && M.contact.available === false;
         setNum(k.val, m ? m.v : null, fmt, first); setText(k.t, nameOf(m, d));
         const dl = M.prev && m ? deltaOf(m, key, unit) : { txt: "", cls: "" }, sig = dl.txt + "|" + dl.cls + "|" + dl.none + "|" + S.range + "|" + (m ? m.v : "x");
@@ -823,6 +853,33 @@
       const sg = rows.map(x => (x.signedMs == null ? null : x.signedMs / HOUR_MS)), ac = rows.map(x => (x.activeMs == null ? null : x.activeMs / HOUR_MS)), adef = metricAt(M, "kpis.activeShare");
       if (charts.tm) charts.tm.update({ x: xs, series: [{ key: "signed", label: "Signed in", values: sg, color: "ink25" }, { key: "active", label: "Active", values: ac, color: "ink70" }], meta: rows }, { unit: "hours", better: null, xKind, fmt: v => durMs(v * HOUR_MS), def: adef && adef.def || "", emptyText: "No sign-in time in this range", onPoint,
         tipRows: p => { const x = p.meta; if (!x || x.signedMs == null && x.activeMs == null) return []; return [["Active share", x.signedMs > 0 && x.activeMs != null ? pctTxt(Math.min(1, x.activeMs / x.signedMs)) : "—"], row("Pieces", x.parts)].concat(click(x)); } });
+    }
+    /* the Welding station: hours signed in per task (stacked), and the orders matched, on the same buckets as the other charts (a Day is one bar) */
+    function renderWelding(M, B) {
+      const W = M.welding, on = !!W; E.wc.classList.toggle("hidden", !on); if (!on) return;
+      const hour = B.kind === "hour", items = hour ? M.series.map(p => Object.assign({}, p, { key: p.day, label: mdLbl(p.day), title: dayLbl(p.day), future: false, pickable: false })) : B.items.filter(x => !x.future);
+      const xs = items.map(x => x.key), kind = hour ? "day" : B.kind, H = v => (v == null ? null : v / HOUR_MS), hiX = !hour && B.items[B.hi] ? B.items[B.hi].key : hour && items.length ? items[items.length - 1].key : null;
+      const onPoint = p => { const m = p.meta; if (!m || !m.pickable) return; if (kind === "day") go({ range: "day", anchor: m.key }); else if (kind === "week") go({ range: "week", anchor: m.span[1] > today() ? today() : m.span[1] }); };
+      const click = x => (x && x.pickable ? [{ k: kind === "day" ? "Click to open this day" : "Click to open this week", v: "", muted: true }] : []);
+      const hasUnknown = items.some(x => nz(x.unknownMs) > 0), wdef = (metricAt(M, "welding.weldingHours") || {}).def || CARD.weldingHours.def, mdef = (metricAt(M, "welding.matchedOrders") || {}).def || CARD.matchedOrders.def;
+      if (charts.wt) charts.wt.update({ x: xs, series: [{ key: "welding", label: "Welding", values: items.map(x => H(x.weldingMs)) }, { key: "matching", label: "Matching", values: items.map(x => H(x.matchingMs)), color: "gold2" }].concat(hasUnknown ? [{ key: "unknown", label: "Welding (task not recorded)", values: items.map(x => H(x.unknownMs)), color: "ink25" }] : []), highlight: hiX, meta: items },
+        { unit: "hours", stack: true, xKind: kind, fmt: v => durMs(v * HOUR_MS), def: wdef, emptyText: "No time at the Welding station in this range", onPoint, name: "Welding station: time signed in by task", tipRows: p => { const x = p.meta; if (!x) return []; return [["Signed in at Welding", durMs(nz(x.weldingMs) + nz(x.matchingMs) + nz(x.unknownMs))]].concat(click(x)); } });
+      if (charts.wm) charts.wm.update({ x: xs, series: [{ key: "matched", label: "Orders matched", values: items.map(x => x.matched) }], highlight: hiX, meta: items },
+        { unit: "orders", xKind: kind, fmt: nf, def: mdef, emptyText: "No orders matched in this range", onPoint, name: "Orders matched, per " + (hour ? "day" : B.noun), tipRows: p => click(p.meta) });
+      const wh = W.hours, tot = nz(wh.welding) + nz(wh.matching) + nz(wh.unknown);
+      setText(E.wtP, tot > 0 ? `${hoursTxt(nz(wh.welding) * HOUR_MS + nz(wh.unknown) * HOUR_MS)} welding · ${hoursTxt(nz(wh.matching) * HOUR_MS)} matching` : "");
+      setText(E.wmP, W.matched != null && W.matched > 0 ? `${nf(W.matched)} ${W.matched === 1 ? "scan" : "scans"}` : "");
+    }
+    /** The orders this person matched: the shared order list (EfficiencyOrders) asked for `matched` orders, over the same days as the date chips. Mounted once the person has Welding time. */
+    function syncMatched(M) {
+      const on = !!(M && M.welding), EO = root.EfficiencyOrders; E.wo.classList.toggle("hidden", !on || !(EO && typeof EO.mount === "function"));
+      if (!on || !EO || typeof EO.mount !== "function") return;
+      const r = ordersRange(), label = S.ordersAll ? "All time" : periodLabel(S.range, period(), today()); setText(E.woLr, label);
+      if (!matchedH) {
+        try { const host2 = el("div", "efpOrdersMod"); E.woHost.appendChild(host2); const h = EO.mount(host2, { name: S.name, range: r, dateFields: false, filters: false, call: (body, signal) => call(Object.assign({}, body, { matched: true }), signal), onOpen: (rid, btn) => openOrder(btn || host2, rid), onState: i => { try { setText(E.woN, i && i.total != null ? nf(i.total) : ""); } catch (_) {} } }); if (h) { matchedH = h; S.matchedSig = JSON.stringify(r); return; } host2.remove(); } catch (e) { console.warn("[efficiency person] matched orders:", e && e.message); }
+        return;
+      }
+      const sig = JSON.stringify(r); if (sig !== S.matchedSig) { S.matchedSig = sig; if (typeof matchedH.setRange === "function") { try { matchedH.setRange(r); } catch (e) { console.warn("[efficiency person] matched orders range:", e && e.message); } } }
     }
     /* how a day ended when the station signed the person out by itself (the auto sign-out: both are normal sign-outs, hours end at the last input) */
     const ENDED_WORDS = { idle: "Signed out after 10 minutes without input", closing: "Signed out at 5:00 pm" };
@@ -869,7 +926,7 @@
       if (!charts.mix) return;
       charts.mix.update({ slices: st.map(s => ({ key: s.station, label: s.label, value: val(s), meta: s })), center: tot ? { value: tot, label: byParts ? "pieces" : "time" } : null },
         { unit: byParts ? "pieces" : "min", centerLabel: byParts ? "pieces" : "time", emptyText: M.stations.length ? "No station activity in this range" : "No station data in this range", def: byParts ? "Pieces finished at each station in this range." : "Time signed in at each station in this range.",
-          tipRows: x => { const s = x.meta; return s && !Array.isArray(s) ? [["Orders", s.orders == null ? "—" : nf(s.orders)], ["Time", s.minutes == null ? "—" : durMs(s.minutes * 60000)], ["Per active hour", rateTxt(s.perActiveHour)]] : []; } });
+          tipRows: x => { const s = x.meta; if (s && !Array.isArray(s) && s.taskMin) return [["Matched", s.matched == null ? "—" : nf(s.matched)], ["Welding", durMs((s.taskMin.welding + s.taskMin.unknown) * 60000)], ["Matching", durMs(s.taskMin.matching * 60000)]]; return s && !Array.isArray(s) ? [["Orders", s.orders == null ? "—" : nf(s.orders)], ["Time", s.minutes == null ? "—" : durMs(s.minutes * 60000)], ["Per active hour", rateTxt(s.perActiveHour)]] : []; } });
     }
 
     /* busiest hours: the hours of the day over the range */
@@ -927,7 +984,7 @@
       const ct = M.cannotTell, csig = JSON.stringify(ct); if (E.cannot._sig !== csig) { E.cannot._sig = csig; E.cannot.innerHTML = ct.length ? `<div><b>What this cannot tell you</b></div>` + ct.map(c => `<div>${c.topic ? `<b>${esc(c.topic)}.</b> ` : ""}${esc(c.text)}</div>`).join("") : ""; E.cannot.classList.toggle("hidden", !ct.length); }
     }
     function render(M, first) {
-      const B = buckets(M, today(), now()); paintBar(); renderHead(); renderNote(M); renderKpis(M, B, first); renderCharts(M, B); renderCal(); renderMix(M); renderHeat(M, B); renderIssues(M); renderRates(M); paintLive();
+      const B = buckets(M, today(), now()); paintBar(); renderHead(); renderNote(M); renderKpis(M, B, first); renderCharts(M, B); renderWelding(M, B); renderCal(); renderMix(M); renderHeat(M, B); renderIssues(M); renderRates(M); syncMatched(M); paintLive();
     }
 
     /* ── the live card: the order in this person's hands right now ── */
@@ -1078,6 +1135,7 @@
       setText(E.lr, S.ordersAll ? "All time" : periodLabel(S.range, period(), today())); E.oAll.classList.remove("hidden"); setText(E.oAll, S.ordersAll ? "Only this period" : "Show all time");
     }
     function syncOrders() {
+      if (S.M) syncMatched(S.M);
       if (!ordersH) return; paintOrdersLabel();
       const r = ordersRange(), sig = JSON.stringify(r); if (sig === S.ordersSig) return; S.ordersSig = sig;
       if (typeof ordersH.setRange === "function") { try { ordersH.setRange(r); } catch (e) { console.warn("[efficiency person] order list range:", e && e.message); } }
@@ -1135,16 +1193,16 @@
     function unmount() {
       if (S.dead) return; S.dead = true; for (const k of Object.keys(T)) { clearTimeout(T[k]); clearInterval(T[k]); T[k] = 0; }
       if (S.ctl) { try { S.ctl.abort(); } catch (_) {} } if (io) io.disconnect(); Object.values(charts).forEach(c => c && c.destroy && c.destroy()); for (const k of Object.keys(E.k || {})) if (E.k[k].sp) E.k[k].sp.destroy();
-      if (typeof unsubLive === "function") { try { unsubLive(); } catch (_) {} } if (ordersH) { try { (ordersH.unmount || ordersH.destroy || ordersH).call(ordersH); } catch (_) {} }
+      if (typeof unsubLive === "function") { try { unsubLive(); } catch (_) {} } if (ordersH) { try { (ordersH.unmount || ordersH.destroy || ordersH).call(ordersH); } catch (_) {} } if (matchedH) { try { (matchedH.unmount || matchedH.destroy || matchedH).call(matchedH); } catch (_) {} }
       doc.removeEventListener("visibilitychange", onVisible); try { if (root.Seal && root.Seal.zoom && root.Seal.zoom.away) root.Seal.zoom.away(); } catch (_) {}
       if (root0.parentNode) root0.remove(); instances.delete(api);
     }
-    function refresh() { if (S.dead) return; S.cache.clear(); S.gen++; S.fails = 0; fetchRange(S.gen, false); pollLive(); pollCal(); if (ordersH && typeof ordersH.refresh === "function") ordersH.refresh(); else loadOrders(true); }
+    function refresh() { if (S.dead) return; S.cache.clear(); S.gen++; S.fails = 0; fetchRange(S.gen, false); pollLive(); pollCal(); if (ordersH && typeof ordersH.refresh === "function") ordersH.refresh(); else loadOrders(true); if (matchedH && typeof matchedH.refresh === "function") matchedH.refresh(); }
 
     build(); paintBar(); setText(E.waitT, `Reading ${S.name}'s history…`);
     if (!o.onBack) E.back.classList.add("hidden");
     doc.addEventListener("visibilitychange", onVisible); T.tick = setInterval(tick, Math.max(250, options.tickMs));
-    const api = { unmount, destroy: unmount, refresh, get state() { return { name: S.name, range: S.range, anchor: S.anchor, from: period().from, to: period().to, metric: S.metric, locked: S.locked, fails: S.fails, liveFails: S.liveFails, orders: S.orders.list.length, query: S.orders.q, loaded: !!S.M, at: S.at, ordersModule: !!ordersH }; }, go, el: root0 };
+    const api = { unmount, destroy: unmount, refresh, get state() { return { name: S.name, range: S.range, anchor: S.anchor, from: period().from, to: period().to, metric: S.metric, locked: S.locked, fails: S.fails, liveFails: S.liveFails, orders: S.orders.list.length, query: S.orders.q, loaded: !!S.M, at: S.at, ordersModule: !!ordersH, welding: !!(S.M && S.M.welding), matchedModule: !!matchedH }; }, go, el: root0 };
     instances.add(api);
     // the live card: the console's own live read when it offers one, else this page asks for `live` itself
     const subscribe = typeof o.onLive === "function" ? o.onLive : EA() && typeof EA().onLive === "function" ? EA().onLive : null;
