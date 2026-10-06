@@ -104,6 +104,7 @@ const assets = [
   "order-timeline.js",
   "station-timeline.js",
   "station-session.js",
+  "charm-nest-role.js",
   "station-activity.js",
   "station-scan-queue.js",
   "station-mail-signals.js",
