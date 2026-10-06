@@ -320,6 +320,7 @@ const liveBrief = (rec, device) => rec.lives.filter(l => l.event !== 'beat' && l
       page.on('pageerror', e => { errors.push(e.message); console.error('page error:', e.message); });
       await page.goto(`${srv.sorterOrigin}/charm-nest-1.html`, { waitUntil: 'load' });
       await page.waitForFunction(() => window.CN && window.Orders && window.Review && window.CustomPrint && window.Seal && window.CNAct && window.StationActivity && CN.S.cloud.ok === true, null, { timeout: 60000 });
+      await page.evaluate(() => window.CNRole && CNRole.setAdminLookup(async () => true));   // (the Admin's sign-in: no "Laser or Design?" step; that has tests/charm-nest/sorter-role-signin.cjs)
       const RID = '4176576272', KEY = '4176576272_41765762721', SHIP = Math.floor(Date.UTC(2026, 9, 2, 17) / 1000), DAY = 86400;
       const ORDERS = [{ receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * DAY, updateTs: SHIP - 5 * DAY + 60, shipBy: SHIP, buyer: { name: 'Jessica Strom' }, buyerMessage: '', isGift: false, giftMessage: '', staffNote: '', messages: [],
         lines: [{ transactionId: '41765762721', listingId: '1800062721', sku: 'RE_5460', title: 'MODIFICATION REWORK FREE SHIPPING', quantity: 2, expectedShipDate: SHIP, variations: [{ name: 'Price', value: '144' }], metalKey: '', metalLabel: '', personalization: '' }] }];

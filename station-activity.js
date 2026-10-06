@@ -4,6 +4,8 @@
  *
  *    window.StationActivity && StationActivity.log("scan" | "reject" | "complete" | "print" | "undo" | "error" | "note",
  *        { orderId, line, sku, parts, orders, detail })          → true when queued, false when not
+ *    StationActivity.matched({ orderId, at?, scanId?, detail? }) → the Welding station's scanner app: one order QR matched (see "matched" below;
+ *                               log("matched", …) is the same call). StationActivity.matcher() → who a scan would be credited to now, or null.
  *    StationActivity.flush()    → Promise (sends what is queued now)
  *    StationActivity.pending()  → how many events are not acknowledged yet
  *    StationActivity.who()      → the identity the next event would carry, or null
@@ -21,9 +23,9 @@
 (function () {
   "use strict";
   if (window.StationActivity) return;
-  const ACTIONS = new Set(["scan", "reject", "complete", "print", "undo", "error", "note"]);
+  const ACTIONS = new Set(["scan", "reject", "complete", "print", "undo", "error", "note", "matched"]);
   const FLUSH_MS = 10000, BACKOFF_MAX = 120000, MAX_QUEUE = 500, BATCH = 50, EVENT_BYTES = 600, GAP_CAP = 3600000;
-  const K = { q: "station_activity_q.", seq: "station_activity_seq.", last: "station_activity_last." };
+  const K = { q: "station_activity_q.", seq: "station_activity_seq.", last: "station_activity_last.", seen: "station_matched_seen." };
   let queue = [], loadedFor = "", sending = null, failures = 0, nextTry = 0, batchMax = BATCH, started = false;
   const beaconed = new Set(), memSeq = {}, memLast = {};      // (kept in memory too: localStorage can be blocked or full)
 
@@ -75,6 +77,7 @@
   function log(action, o) {
     try {
       if (typeof action !== "string" || !ACTIONS.has(action)) return false;
+      if (action === "matched") return matched(o);              // one rule for every caller (the credit, the real scan time, the duplicate window)
       const w = whoNow();
       if (!w) return false;
       load(w.device);
@@ -95,6 +98,7 @@
         at: now, seq, sincePrevMs: int(now - base, 0, GAP_CAP)
       };
       if (w.sandbox) ev.sandbox = true;
+      if (w.role === "laser" || w.role === "design") ev.role = w.role;          // (the Sorter app: the role the person chose at sign-in; the station above is that role too)
       // the server takes at most 600 bytes an event: the optional text goes first
       for (const k of ["detail", "sku", "line"]) {
         while (bytes(JSON.stringify(ev)) > EVENT_BYTES && ev[k]) ev[k] = ev[k].length > 20 ? ev[k].slice(0, ev[k].length - 20) : "";
@@ -107,6 +111,91 @@
       start();
       return true;
     } catch (e) { warn("log:", e); return false; }
+  }
+
+  /* ── matched: one order QR scanned with the Welding station's scanner app (stations round 2; plans/stations-round2/api.md) ──
+     matched({ orderId, at?, scanId?, detail? })   (log("matched", …) is the same call)   → true when queued; false when not: no page, not the
+     Welding station, no usable order number, the same scan told twice, or the same order again within seconds.
+     The scanner app has no login: the desktop page that receives its relayed scan says who is credited, by rule R3, which StationSession.who()
+     keeps: the Matching person; two of them: the one with the latest input; nobody in Matching (a welder is never credited): the event is stored
+     `unattributed: true` with no person (the server files it under "Unattributed": "scanned with nobody in Matching"). The credit is decided
+     when this is called (station-scan-queue.js calls it when a scan arrives while somebody is signed in, otherwise at the replay right after
+     the next sign-in); `at` is the real scan time. A scan from an earlier shop day is never credited to whoever signs in later (unattributed).
+     The same order again within 10 s, or the same scanId, is ONE event. The event id is made from the scan, so a retry, a reload or a second
+     tab writes it once and the rollup counts it once. A repeat after those 10 s is its own event whose detail ends " · again" (for 12 h).
+     Matched work is scanned work, never an order completion (parts 0, orders 0). Nothing here touches the network (the queue sends it). */
+  const MATCH = { dupMs: 10000, againMs: 12 * 3600e3, idMs: 6 * 3600e3, lastMs: 3600e3, max: 200 };
+  const memSeen = {};
+  function seenOf(device, now) {
+    const s = memSeen[device] || (memSeen[device] = lsJson(K.seen + device, null) || {});
+    const age = { ids: MATCH.idMs, orders: MATCH.againMs, last: MATCH.lastMs };
+    for (const k of Object.keys(age)) {
+      if (!s[k] || typeof s[k] !== "object" || Array.isArray(s[k])) s[k] = {};
+      for (const [key, t] of Object.entries(s[k])) if (!(Number(t) > 0) || now - Number(t) >= age[k]) delete s[k][key];
+      const keys = Object.keys(s[k]);
+      if (keys.length > MATCH.max) for (const key of keys.sort((a, b) => s[k][a] - s[k][b]).slice(0, keys.length - MATCH.max)) delete s[k][key];
+    }
+    return s;
+  }
+  function matched(o) {
+    try {
+      o = o && typeof o === "object" ? o : {};
+      const page = pageNow();
+      if (!page || page.station !== "welding" || !page.device) return false;
+      const orderId = String(o.orderId == null ? "" : o.orderId).replace(/\D/g, "").slice(0, 30);
+      if (!orderId || pinLike(orderId)) return false;
+      const now = Date.now(), at0 = Number(o.at), at = at0 > 1e12 ? Math.min(Math.round(at0), now) : now;
+      const device = clean(page.device, 40);
+      load(device);
+      const seen = seenOf(device, now);
+      const scanKey = String(o.scanId == null ? "" : o.scanId).replace(/[^\w.:-]/g, "").slice(0, 24) || at.toString(36);
+      const id = `mt_${device}_${orderId}_${scanKey}`.replace(/[^\w.:-]/g, "_").slice(0, 100);
+      if (seen.ids[id] != null || queue.some(e => e.id === id)) return false;          // this very scan, told again
+      const prev = Number(seen.orders[orderId]) || 0;
+      if (prev && Math.abs(at - prev) < MATCH.dupMs) return false;                     // the same order within seconds: one scan
+      // the credit (R3): StationSession.who() = the Matching person (latest input if two), or nobody. A welder is never credited.
+      let w = whoNow();
+      if (w && w.task && w.task !== "matching") w = null;
+      try {
+        const S = window.StationSession, day = t => (S && typeof S.nyDay === "function" ? S.nyDay(t) : new Date(t).toDateString());
+        if (w && day(at) !== day(now)) w = null;                                       // a scan from an earlier day: not whoever signs in now
+      } catch (_) {}
+      const person = w ? clean(w.person, 80) : "";
+      let detail = clean(o.detail || "phone scan", 100);
+      if (/^\d+$/.test(detail)) detail = "phone scan"; else detail = detail.replace(/(?<!\d)\d{6}(?!\d)/g, "[#]");
+      if (prev && !/\bagain\b/i.test(detail)) detail += " · again";
+      // the gap since this person's previous action (a long replay never turns into idle time: the gap only counts forward from an earlier action)
+      let base = at;
+      if (w) {
+        const own = Number(seen.last['p:' + person]) || 0, last = lsJson(K.last + device, null) || memLast[device] || null;
+        const other = last && last.person === person && Number(last.at) > 0 ? Number(last.at) : 0;
+        const from = [own, other, Number(w.startAt) || 0].filter(t => t > 0 && t <= at);
+        if (from.length) base = Math.max(...from);
+      }
+      const ev = {
+        id, station: page.station, device, computer: String(page.computer || ""), session: w ? String(w.session || "") : "",
+        person, action: "matched", orderId, line: "", sku: "", parts: 0, orders: 0, detail, task: "matching",
+        at, seq: nextSeq(device), sincePrevMs: int(at - base, 0, GAP_CAP)
+      };
+      if (!w) ev.unattributed = true;
+      if (page.sandbox) ev.sandbox = true;
+      for (const k of ["detail", "session"]) {
+        while (bytes(JSON.stringify(ev)) > EVENT_BYTES && ev[k]) ev[k] = ev[k].length > 20 ? ev[k].slice(0, ev[k].length - 20) : "";
+      }
+      if (bytes(JSON.stringify(ev)) > EVENT_BYTES) return false;
+      seen.ids[id] = at; seen.orders[orderId] = Math.max(prev, at);
+      if (w) seen.last['p:' + person] = Math.max(Number(seen.last['p:' + person]) || 0, at);
+      lsSet(K.seen + device, JSON.stringify(seen));
+      queue.push(ev);
+      if (queue.length > MAX_QUEUE) { warn("the queue is full: the oldest " + (queue.length - MAX_QUEUE) + " event(s) were dropped"); queue = queue.slice(-MAX_QUEUE); }
+      save(device);
+      start();
+      return true;
+    } catch (e) { warn("matched:", e); return false; }
+  }
+  /** who a scan would be credited to right now (rule R3), as { person, task, session }, or null (it would be stored unattributed) */
+  function matcher() {
+    try { const w = whoNow(); return w && (!w.task || w.task === "matching") ? { person: w.person, task: "matching", session: String(w.session || "") } : null; } catch (_) { return null; }
   }
 
   /* ── sending ── */
@@ -369,9 +458,9 @@
   }
   const touch = () => { try { const now = Date.now(); for (const s of slots.values()) s.touchedAt = now; return slots.size > 0; } catch (_) { return false; } };
   window.StationActivity = {
-    log, flush: () => flush(true), pending: () => queue.length, discard, working, idle, touch,
+    log, matched, matcher, flush: () => flush(true), pending: () => queue.length, discard, working, idle, touch,
     current: () => [...slots.values()].map(s => ({ station: s.station, device: s.device, rid: s.order.rid, orderNumber: s.order.orderNumber, kind: s.order.kind, scannedAt: s.order.scannedAt, pieces: s.order.pieces.length, sent: s.sentFp === liveFp(s) })),
-    who: () => { const w = whoNow(); return w ? { person: w.person, station: w.station, device: w.device, computer: w.computer, session: w.session } : null; }
+    who: () => { const w = whoNow(); return w ? Object.assign({ person: w.person, station: w.station, device: w.device, computer: w.computer, session: w.session }, w.role ? { role: w.role } : {}) : null; }
   };
   // events left from an earlier page load (offline, closed too fast) go out soon after the station has set itself up
   try { start(); setTimeout(() => { try { flush(); } catch (_) {} }, 4000); } catch (_) {}
