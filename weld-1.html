@@ -1098,9 +1098,9 @@
        the session carries the name only. At midnight (New York) the PIN box comes back; the order, the fields and the chat
        stay on screen. -->
   <script src="station-session.js?v=20261006-as2"></script>
-  <script src="station-activity.js?v=20261006-ws3"></script>
+  <script src="station-activity.js?v=20261006-int1"></script>
   <!-- Phone scans that arrive while nobody is signed in wait here and load, in order, right after the next sign-in (station-scan-queue.js). -->
-  <script src="station-scan-queue.js?v=20261006-ws3"></script>
+  <script src="station-scan-queue.js?v=20261006-int1"></script>
   <script>
     /* Who is signed in here: several people at once (Paul, 6 Oct 2026: one welds while another matches, same page), each under
        a task, "welding" or "matching". The page keeps them in localStorage.weld_people = [{ name, task, at }] (names and tasks
@@ -1188,7 +1188,7 @@
 
   <!-- Order timeline: every scan here is recorded (who, when) and a cancelled order raises the full-screen alert -->
   <script src="order-timeline.js?v=20260929-cx-a"></script>
-  <script src="station-timeline.js?v=20261006-ws1"></script>
+  <script src="station-timeline.js?v=20261006-int1"></script>
   <script>
     /* Who welds: the person signed in with this station's 6-digit PIN login (Brites_Orders/"Employee Numbers"), by the
        name the login stored. Never the typed "Employee Name" field (a guess) and never an earlier person: the timeline

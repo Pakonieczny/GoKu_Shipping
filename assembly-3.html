@@ -995,9 +995,9 @@
   <script src="station-session.js?v=20261006-as2"></script>
   <!-- Employee efficiency: each real action here (an order opened, the Team's done stamp, a flag, a failure) is one event with
        the person signed in, this station and the time (station-activity.js). Never a PIN. -->
-  <script src="station-activity.js?v=20261005-et2"></script>
+  <script src="station-activity.js?v=20261006-int1"></script>
   <!-- Phone scans that arrive while nobody is signed in wait here and load, in order, right after the next sign-in (station-scan-queue.js). -->
-  <script src="station-scan-queue.js?v=20261006-ws3"></script>
+  <script src="station-scan-queue.js?v=20261006-int1"></script>
   <script>
     try {
       StationSession.init({
@@ -1056,7 +1056,7 @@
   </script>
 
   <!-- Order timeline: records this station's scans and steps, and shows the cancelled-order alert (optional: the page works without it) -->
-  <script src="order-timeline.js?v=20260929-cx-a"></script><script src="station-timeline.js?v=20260928-fxS"></script>
+  <script src="order-timeline.js?v=20260929-cx-a"></script><script src="station-timeline.js?v=20261006-int1"></script>
 
   <script>
     /********** Global Variables **********/
