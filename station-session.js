@@ -662,7 +662,14 @@
     try {
       const today = nyDay(), p = person();
       if (cur && cur.day !== today) { midnight(); return; }
-      if (!p) { if (cur) finish(cur, "signOut"); seen = ""; quiet = ""; return; }
+      if (!p) {
+        /* the sign-in is gone: a person signed out by hand, or ANOTHER station page of this computer signed them out first (the station pages share the
+           sign-in keys; when nobody had input for the limit, whichever page's timer fires first clears them for all). In that second case this page's own
+           rule is due as well, so it ends the same way, at the last input with the reason, not as a hand sign-out at the moment it noticed (that would
+           count the whole quiet time as hours at this page; ST3, 6 Oct 2026) */
+        if (cur) { const d = !cur.ended && knownAdmin(cur) !== true ? dueRule(cur, inputOf(cur), Date.now()) : null; if (d) lapse(cur, d.reason, d.at); else finish(cur, "signOut"); }
+        seen = ""; quiet = ""; return;
+      }
       if (p.name === quiet) return;
       if (p.pending) {          // named but not signed in yet (the Sorter's "Laser or Design?" is not answered): no session, but the day is kept like any sign-in, so the day turning clears the name
         if (cur) finish(cur, "signOut");

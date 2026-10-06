@@ -614,8 +614,8 @@ async function clockAndTabs() {
   assert(env.beats().filter(b => b.device === 'assembly-2').every(b => b.lastInputAt > Lw - 29 * MIN), 'the quiet page reports the person\'s input at the other page');
   env.advance(11 * MIN); await settle();
   assert(w1.signOuts.length + w2.signOuts.length >= 1 && !w1.loggedIn(), 'signed out once the person was quiet at both for 10 minutes');
-  const ends2 = env.ends(); assert(ends2.length >= 2 && ends2.every(x => x.reason === 'idle' || x.reason === 'signOut'), 'both sessions ended: ' + JSON.stringify(ends2.map(x => [x.device, x.reason])));
-  assert(ends2.filter(x => x.reason === 'idle').every(x => x.at === Lw), 'an idle end is at the last input of the person at either page');
+  const ends2 = env.ends(); assert(ends2.length >= 2 && ends2.every(x => x.reason === 'idle'), 'both sessions ended "idle" (the page that finds the shared login cleared by the other page ends its own session by its own rule, not as a hand sign-out at the moment it noticed): ' + JSON.stringify(ends2.map(x => [x.device, x.reason])));
+  assert(ends2.every(x => x.at === Lw), 'both ends are at the last input of the person at either page: ' + JSON.stringify(ends2.map(x => [x.device, Lw - x.at])));
   // a reload of the quiet page while the person works at the other does not find the login lapsed
   env = makeEnv(today); const r1 = openPage(env, { station: 'assembly', device: 'assembly-1' }).init(); r1.signIn('Tess Welder'); await settle();
   const r2 = openPage(env, { station: 'assembly', device: 'assembly-2' }).init(); await settle();
