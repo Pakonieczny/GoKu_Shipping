@@ -245,7 +245,9 @@ async function ruleA() {
   assert(!/secret|KeyS|typed/i.test(everything), 'no keystroke, no text in any request or in storage');
   for (const s of env.sessionPosts()) assert(Object.keys(s).every(x => ['id', 'event', 'person', 'employeeId', 'station', 'device', 'computerId', 'computerLabel', 'at', 'reason', 'lastInputAt', 'sentAt'].includes(x)), 'the session body keeps its shape: ' + Object.keys(s));
   const stored = [...env.storage.keys()].filter(x => /^station_|employee/.test(x)).sort();
-  assert.deepStrictEqual(stored, ['employee_id', 'employee_name', 'station_computer_id', 'station_session.assembly.assembly-1', 'station_signin_day', 'station_signin_days'].sort(), 'nothing new is stored: ' + stored);
+  assert.deepStrictEqual(stored, ['employee_id', 'employee_name', 'station_computer_id', 'station_person_input', 'station_session.assembly.assembly-1', 'station_signin_day', 'station_signin_days'].sort(), 'nothing new is stored: ' + stored);
+  // (station_person_input = { person: time }: the person's last input at any station page of this computer, a time and the name already kept in station_signin_days)
+  assert(/^\{("[^"]+":\d+,?)*\}$/.test(env.storage.get('station_person_input')), 'the shared input record holds names and times only: ' + env.storage.get('station_person_input'));
   console.log('A: idle at exactly 10:00 (not 9:59), input resets, a script\'s own events are not input, one stamp a second, no content kept');
 }
 
@@ -596,6 +598,32 @@ async function clockAndTabs() {
   assert(ends.every(x => x.id === ends[0].id), 'a second tab that sees the login gone only repeats the end of the same session (the door keeps the first)');
   assert.strictEqual(env.starts().length, 1, 'one session for the two tabs');
   console.log('clock and tabs: a clock set back is not input from the future (out 10 minutes after the change, at the change); typing after it counts; two tabs share one idle clock');
+
+  // two DIFFERENT station pages of one computer (assembly-1 and assembly-2 share the sign-in keys employee_id / employee_name, so a person signed in at
+  // one has a session at the other too, even if nobody touches it). Work at one keeps the person in at BOTH: the quiet page must never sign the person
+  // out (it clears the shared keys, and the page being worked in would keep looking signed in while it recorded nothing). AS2, 6 Oct 2026.
+  env = makeEnv(today);
+  const w1 = openPage(env, { station: 'assembly', device: 'assembly-1' }).init(); w1.signIn('Tess Welder'); await settle();
+  const w2 = openPage(env, { station: 'assembly', device: 'assembly-2' }).init(); await settle();
+  assert.strictEqual(env.starts().length, 2, 'both pages have a session for the person (shared login keys)');
+  for (let i = 0; i < 7; i++) { env.advance(4 * MIN); w1.win.fire('keydown'); await settle(); }          // 28 minutes of work at assembly-1 only
+  const Lw = env.clock.t;
+  assert.strictEqual(w1.signOuts.length + w2.signOuts.length, 0, 'the quiet page did not sign the person out while they worked at the other');
+  assert(w1.loggedIn(), 'the shared login is still there');
+  assert.strictEqual(env.ends().length, 0, 'no session was ended while the person worked');
+  assert(env.beats().filter(b => b.device === 'assembly-2').every(b => b.lastInputAt > Lw - 29 * MIN), 'the quiet page reports the person\'s input at the other page');
+  env.advance(11 * MIN); await settle();
+  assert(w1.signOuts.length + w2.signOuts.length >= 1 && !w1.loggedIn(), 'signed out once the person was quiet at both for 10 minutes');
+  const ends2 = env.ends(); assert(ends2.length >= 2 && ends2.every(x => x.reason === 'idle' || x.reason === 'signOut'), 'both sessions ended: ' + JSON.stringify(ends2.map(x => [x.device, x.reason])));
+  assert(ends2.filter(x => x.reason === 'idle').every(x => x.at === Lw), 'an idle end is at the last input of the person at either page');
+  // a reload of the quiet page while the person works at the other does not find the login lapsed
+  env = makeEnv(today); const r1 = openPage(env, { station: 'assembly', device: 'assembly-1' }).init(); r1.signIn('Tess Welder'); await settle();
+  const r2 = openPage(env, { station: 'assembly', device: 'assembly-2' }).init(); await settle();
+  env.advance(9 * MIN); r1.win.fire('keydown'); r2.close(); env.advance(9 * MIN); r1.win.fire('keydown'); await settle();
+  const r2b = openPage(env, { station: 'assembly', device: 'assembly-2' }).init(); await settle();
+  assert.strictEqual(r2b.signOuts.length, 0, 'a page opened again while the person works at the other one finds them still signed in');
+  assert(r2b.loggedIn(), 'the login is kept');
+  console.log('two station pages of one computer: work at one keeps the person in at both; the quiet page never clears the shared login under a page being worked in; a reload of the quiet page does not lapse');
 }
 
 /* ── 7b · two people at one page (the Welding station's multi mode) ── */
