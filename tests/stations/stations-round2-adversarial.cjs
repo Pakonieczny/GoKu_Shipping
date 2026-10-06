@@ -760,7 +760,9 @@ const HAVE = {
   ad1: !!process.env.FORCE_AD1 || /["']idle["']/.test(SCRIPTS.session) && /lastInputAt/.test(SCRIPTS.session) && /stationAdmin/.test(SCRIPTS.session),
   ws1page: /weld_people/.test(read('weld-1.html')),
   ld1: /laser or design/i.test(read('charm-nest-1.html')) || /CNRole/.test(read('charm-nest-1.html')) || /CNRole/.test(read('charm-nest-bridge.js')),
-  ws3: /matched/.test(SCRIPTS.queue)
+  ws3: /matched/.test(SCRIPTS.queue),
+  ad4: exists('netlify/functions/_stationSignoutPolicy.js'),                                 // Addendum 2 on the server (Welding at 17:00 only, Laser 60/30 minutes)
+  ad3: /POLICY\s*=/.test(SCRIPTS.session) && /closeAt17/.test(SCRIPTS.session) || !!process.env.FORCE_AD3                     // Addendum 2 on the page
 };
 const tAt = (m, base = '2026-10-07T13:00:00Z') => Date.parse(base) + m * MIN;
 const toWall = t => { if (t > wall()) clock.mono += t - wall(); };
@@ -854,6 +856,70 @@ async function autoServer() {
         ok(sdoc(s.id).endAt === m(16, 40), `${day}: ends at the last input: ${iso(sdoc(s.id).endAt || 0)}`);
       }
     });
+    /* ── Addendum 2 (Paul, 6 Oct 2026 20:10 UTC): Welding is signed out only at 17:00 Toronto; Laser after 1 hour of quiet (30 minutes from 17:00); everything else as before ── */
+    if (!HAVE.ad4) pending('per-station limits on the server: Welding only at 17:00, Laser 60/30 minutes, dead pages of both', 'AD4 (_stationSignoutPolicy.js) is not on main yet');
+    else {
+      const WELD = o => SESS(Object.assign({ station: 'welding', device: 'weld-1', task: 'matching', person: NON, computerId: 'pc-WLD' + String(++n2).padStart(9, '0') }, o || {}));
+      const LASER = o => SESS(Object.assign({ station: 'laser', device: 'charm-nest-1', role: 'laser', person: NON, computerId: 'pc-LSR' + String(++n2).padStart(9, '0') }, o || {}));
+      let n2 = 0;
+      const DAYS = ['2026-10-07', '2026-03-08', '2026-11-01', '2026-12-24'];                        // an ordinary day and the two daylight-saving days
+      const run = (day, mk) => { const m = (h, mi, sec = 0) => nyAt(day, h, mi, sec), put = (s, ev, at, L, x) => { toWall(at); return send(s, ev, Object.assign({ lastInputAt: L }, x || {})); }; const beats = async (s, from, to, L) => { let r = null; for (let t = from; t <= to; t += 5 * MIN) { r = await put(s, 'beat', t, typeof L === 'function' ? L(t) : L); if (r.body && r.body.ended) break; } return r; }; return { m, put, beats, begin: async (at, o) => { world(iso(at)); toWall(at); const s = mk(o); const r = await send(s, 'start', { lastInputAt: at }); eq(r.status, 200); return s; } }; };
+      await check('Welding on the server: never ended by quiet before 17:00 (6 hours, no input at all), ended at 17:00 SHARP (closing) whatever the last input; a sign-in after 17:00 stays until midnight; ordinary and both daylight-saving days', async () => {
+        for (const day of DAYS) {
+          const { m, put, begin, beats } = run(day, WELD);
+          let s = await begin(m(9, 0)), r;
+          for (let t = m(9, 5); t <= m(16, 55); t += 5 * MIN) { r = await put(s, 'beat', t, m(9, 0)); ok(!r.body.ended, `${day}: a welder with no input since 09:00 is still in at ${iso(t)}: ${JSON.stringify(r.body)}`); }
+          r = await put(s, 'beat', m(16, 59, 59), m(9, 0)); ok(!r.body.ended, `${day}: 16:59:59 is not 17:00`);
+          r = await put(s, 'beat', m(17, 0), m(9, 0)); ok(r.body.ended === true && r.body.endReason === 'closing', `${day}: at 17:00 sharp: ${JSON.stringify(r.body)}`);
+          eq(sdoc(s.id).endAt, m(17, 0), `${day}: the end is 17:00 sharp, not the last input, not the beat`); eq(sdoc(s.id).endReason, 'closing');
+          // a page that kept getting input and reports it late: the end is still 17:00
+          s = await begin(m(9, 0)); await beats(s, m(9, 5), m(16, 55), t => t - MIN); await put(s, 'beat', m(16, 58), m(16, 58)); r = await put(s, 'beat', m(17, 12), m(17, 10));
+          ok(r.body.ended === true && sdoc(s.id).endAt === m(17, 0) && sdoc(s.id).endReason === 'closing', `${day}: input after 17:00 on a frozen page does not move the end: ${iso(sdoc(s.id).endAt || 0)}`);
+          // a dead page (nobody beats from 10:00): not ended by the 15-minute rule, ended at 17:00 when it is read
+          s = await begin(m(9, 0)); await beats(s, m(9, 5), m(10, 0), m(9, 30)); toWall(m(16, 59, 30)); await board({ op: 'live' }); await board({ op: 'overview', days: 1 }); ok(sdoc(s.id).endAt == null, `${day}: a quiet Welding page is open at 16:59:30`);
+          toWall(m(21, 30)); await board({ op: 'live' }); eq(sdoc(s.id).endAt, m(17, 0), `${day}: found at 21:30 it ends at 17:00`); eq(sdoc(s.id).endReason, 'closing');
+          // a session that began after 17:00 is not due at 17:00 (its 17:00 had passed); it ends at midnight
+          s = await begin(m(17, 20)); r = await beats(s, m(17, 25), m(20, 0), m(17, 20)); ok(!r.body.ended, `${day}: a sign-in at 17:20 is still in at 20:00: ${JSON.stringify(r.body)}`);
+          const mid = m(23, 59, 59) + 1000; r = await put(s, 'beat', mid + 3 * MIN, mid + 2 * MIN);
+          ok(r.body.ended === true && sdoc(s.id).endAt === mid && sdoc(s.id).endReason === 'midnight', `${day}: midnight ends it, at midnight: ${JSON.stringify([sdoc(s.id).endAt && iso(sdoc(s.id).endAt), sdoc(s.id).endReason])}`);
+        }
+      });
+      await check('Welding on the server: an explicit sign-out or switch from the page is honoured at any time, the Admin keeps the old 15-minute rule, another station is untouched', async () => {
+        const { m, put, begin } = run('2026-10-07', WELD);
+        let s = await begin(m(9, 0)); let r = await put(s, 'end', m(11, 0), m(10, 58), { reason: 'signOut', at: m(11, 0) }); eq(r.status, 200); eq(sdoc(s.id).endAt, m(11, 0), 'a Sign Out is a Sign Out'); eq(sdoc(s.id).endReason, 'signOut');
+        const adm = run('2026-10-07', o => WELD(Object.assign({ person: 'Paul K' }, o || {}))); s = await adm.begin(adm.m(9, 0)); await adm.put(s, 'beat', adm.m(9, 5), adm.m(9, 5)); toWall(adm.m(9, 40)); await board({ op: 'live' });
+        ok(sdoc(s.id).endAt === adm.m(9, 5) && sdoc(s.id).endReason === 'closed' || sdoc(s.id).endAt == null, 'an Admin on Welding whose page died is closed at the last beat (the old rule) or still open, never idle or closing: ' + JSON.stringify([sdoc(s.id).endAt && iso(sdoc(s.id).endAt), sdoc(s.id).endReason]));
+        const oth = run('2026-10-07', ASM); s = await oth.begin(oth.m(9, 0)); r = await oth.put(s, 'beat', oth.m(9, 11), oth.m(9, 0)); ok(r.body.ended === true && r.body.endReason === 'idle', 'an Assembly page is still ended after 10 quiet minutes: ' + JSON.stringify(r.body));
+      });
+      await check('Laser on the server: 40 minutes of quiet at 16:30 stays; an hour before 17:00 ends at the last input (idle); from 17:00 the limit is 30 minutes (closing, at the last input); typing past 17:00 stays; ordinary and both daylight-saving days', async () => {
+        for (const day of DAYS) {
+          const { m, put, begin, beats } = run(day, LASER);
+          let s = await begin(m(15, 0)), r = await beats(s, m(15, 5), m(15, 50), t => Math.min(t, m(15, 50)));
+          r = await beats(s, m(15, 55), m(16, 30), m(15, 50)); ok(!r.body.ended, `${day}: 16:30 with the last input 15:50 (40 min) stays: ${JSON.stringify(r.body)}`);
+          r = await beats(s, m(16, 35), m(16, 45), m(15, 50)); r = await put(s, 'beat', m(16, 49, 59), m(15, 50)); ok(!r.body.ended, `${day}: 59:59 of quiet stays`);
+          r = await put(s, 'beat', m(16, 50, 1), m(15, 50)); ok(r.body.ended === true && sdoc(s.id).endAt === m(15, 50) && sdoc(s.id).endReason === 'idle', `${day}: an hour of quiet before 17:00: idle at the last input: ${JSON.stringify(r.body)} ${iso(sdoc(s.id).endAt || 0)}`);
+          s = await begin(m(16, 0)); await put(s, 'beat', m(16, 25), m(16, 25)); await beats(s, m(16, 30), m(16, 55), m(16, 25)); r = await put(s, 'beat', m(17, 0), m(16, 25)); ok(r.body.ended === true && sdoc(s.id).endAt === m(16, 25) && sdoc(s.id).endReason === 'closing', `${day}: at 17:00 with 35 quiet minutes: out, closing, at the last input: ${JSON.stringify(r.body)} ${iso(sdoc(s.id).endAt || 0)}`);
+          s = await begin(m(16, 0)); await put(s, 'beat', m(16, 30), m(16, 30)); await beats(s, m(16, 35), m(16, 55), m(16, 30)); r = await put(s, 'beat', m(17, 0), m(16, 30)); ok(r.body.ended === true && sdoc(s.id).endAt === m(16, 30), `${day}: last input 16:30:00 is out at 17:00:00: ${JSON.stringify(r.body)}`);
+          s = await begin(m(16, 0)); await put(s, 'beat', m(16, 30, 1), m(16, 30, 1)); await beats(s, m(16, 35, 1), m(16, 55, 1), m(16, 30, 1)); r = await put(s, 'beat', m(17, 0), m(16, 30, 1)); ok(!r.body.ended, `${day}: last input 16:30:01 is not out at 17:00:00`);
+          r = await put(s, 'beat', m(17, 0, 1), m(16, 30, 1)); ok(r.body.ended === true && sdoc(s.id).endReason === 'closing' && sdoc(s.id).endAt === m(16, 30, 1), `${day}: but at 17:00:01: ${JSON.stringify(r.body)}`);
+          s = await begin(m(16, 0)); await put(s, 'beat', m(16, 45), m(16, 45)); await beats(s, m(16, 50), m(16, 55), m(16, 45)); r = await put(s, 'beat', m(17, 0), m(16, 45)); ok(!r.body.ended, `${day}: last input 16:45 stays at 17:00`);
+          await beats(s, m(17, 5), m(17, 10), m(16, 45)); r = await put(s, 'beat', m(17, 14, 59), m(16, 45)); ok(!r.body.ended, `${day}: and at 17:14:59`); r = await put(s, 'beat', m(17, 15), m(16, 45)); ok(r.body.ended === true && sdoc(s.id).endReason === 'closing' && sdoc(s.id).endAt === m(16, 45), `${day}: out at 17:15, closing, ended 16:45: ${JSON.stringify(r.body)}`);
+          s = await begin(m(16, 0)); await put(s, 'beat', m(16, 55), m(16, 55)); for (let t = m(17, 5); t <= m(18, 30); t += 5 * MIN) { r = await put(s, 'beat', t, t - MIN); ok(!r.body.ended, `${day}: typing past 17:00 stays (${iso(t)})`); }
+          r = await put(s, 'beat', m(19, 2), m(18, 29)); ok(r.body.ended === true && sdoc(s.id).endReason === 'closing', `${day}: 30 minutes after the last input it is out (closing)`);
+          // found by a read after a long silence: idle when its hour was over before 17:00, closing when the half hour ended after it
+          s = await begin(m(15, 0)); await put(s, 'beat', m(15, 59, 59), m(15, 59, 59)); toWall(m(17, 30)); await board({ op: 'live' }); ok(sdoc(s.id).endReason === 'idle' && sdoc(s.id).endAt === m(15, 59, 59), `${day}: last input 15:59:59 found at 17:30: idle (its hour was up at 16:59:59): ${JSON.stringify([sdoc(s.id).endReason, sdoc(s.id).endAt && iso(sdoc(s.id).endAt)])}`);
+          s = await begin(m(15, 0)); await beats(s, m(15, 30), m(16, 0), t => Math.min(t, m(16, 0))); toWall(m(17, 30)); await board({ op: 'live' }); ok(sdoc(s.id).endReason === 'closing' && sdoc(s.id).endAt === m(16, 0), `${day}: last input 16:00:00 found at 17:30: closing: ${JSON.stringify([sdoc(s.id).endReason, sdoc(s.id).endAt && iso(sdoc(s.id).endAt)])}`);
+        }
+      });
+      await check('Laser on the server: a dead page is not ended by the 15-minute rule (the sheet clock keeps its start): open after 45 quiet minutes, ended at its last input after the hour; the Admin keeps the old rule', async () => {
+        const { m, put, begin } = run('2026-10-07', LASER);
+        let s = await begin(m(13, 30)); await put(s, 'beat', m(14, 0), m(14, 0)); toWall(m(14, 20)); await board({ op: 'live' }); ok(sdoc(s.id).endAt == null, 'a Laser page that has been quiet 20 minutes is open');
+        toWall(m(14, 59)); await board({ op: 'overview', days: 1 }); ok(sdoc(s.id).endAt == null, 'and at 59 minutes');
+        toWall(m(15, 5)); await board({ op: 'live' }); eq(sdoc(s.id).endAt, m(14, 0), 'ended at its last input once the hour is over'); eq(sdoc(s.id).endReason, 'idle');
+        const adm = run('2026-10-07', o => LASER(Object.assign({ person: 'Paul K' }, o || {}))); s = await adm.begin(adm.m(13, 30)); await adm.beats(s, adm.m(13, 35), adm.m(14, 0), t => t - MIN); toWall(adm.m(14, 30)); await board({ op: 'live' });
+        ok(sdoc(s.id).endAt == null || (sdoc(s.id).endReason === 'closed' && sdoc(s.id).endAt === adm.m(14, 0)), 'an Admin on Laser: open or closed at the last beat, never idle: ' + JSON.stringify([sdoc(s.id).endAt && iso(sdoc(s.id).endAt), sdoc(s.id).endReason]));
+      });
+    }
     await check('an ended session cannot be ended again, reopened or rewritten by a late client end, a late beat or a second read; the first end stands', async () => {
       world(); const s = await startAt(0); await beatAt(s, 5, 1); toWall(tAt(21)); await readers.live();
       const d0 = sdoc(s.id); eq(d0.endReason, 'idle');
