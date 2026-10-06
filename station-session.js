@@ -53,6 +53,8 @@
     multi: false, people: null, creditTask: "matching" };
   let ready = false, cur = null, seen = "", quiet = "", tickT = 0, midT = 0, memId = "", labelBox = null;
   const many = new Map(), manyQuiet = new Set();        // multi pages: running sessions by person and task; people the page has not dropped yet
+  const unseen = new Map();                            // multi pages: people listed with no session and no record yet, by when this page first saw them (monotonic ms)
+  const monoNow = () => { try { if (typeof performance !== "undefined" && performance && typeof performance.now === "function") return performance.now(); } catch (_) {} return Date.now(); };
   let snap = new Map();                                // multi pages: the sessions kept in storage, while a reload or a second tab picks them up
   let lastIn = 0;                                      // the latest input at this page (ms)
 
@@ -345,8 +347,19 @@
         if (manyQuiet.has(p.key)) continue;
         const d = dayOf(p.name);
         if (d && d !== today) { mMidnight(); return; }
-        if (!many.has(p.key)) { markDay(p.name, today); mBegin(p, true); }
+        if (!many.has(p.key)) {
+          /* a person who just appeared on the page with no session and no saved record: a sign-in in another tab of this computer writes the page's
+             list a moment BEFORE its session record, and the storage event can win that race, so this tab would start a second session for the same
+             person. Look once more (about a second and a half on) before starting one; the record is there by then and is gone on with (ST2). */
+          if (!snap.has(p.key)) {
+            const first = unseen.get(p.key), mono = monoNow();
+            if (first === undefined) { unseen.set(p.key, mono); setTimeout(tick, 1500); continue; }
+            if (mono - first < 1400) continue;
+          }
+          unseen.delete(p.key); markDay(p.name, today); mBegin(p, true);
+        }
       }
+      for (const k of [...unseen.keys()]) if (!keys.has(k)) unseen.delete(k);
     } catch (e) { warn("reconcile:", e); }
     snap = new Map();
   }
