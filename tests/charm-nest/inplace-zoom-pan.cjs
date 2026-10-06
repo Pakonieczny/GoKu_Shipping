@@ -625,6 +625,9 @@ async function main() {
       await mp.evaluate(() => document.getElementById('owPhoto').scrollIntoView({ block: 'center', inline: 'nearest' })); await mp.waitForTimeout(200);
       // (the header's live "Now" line is drawn as the order's timeline answers and is what makes the window as wide as it is: the width is taken once it has stopped changing,
       //  so the check below is about the zoom, not about when the timeline came)
+      // (what makes it that wide is the header's status chip, "1 of 3 not on a sheet yet", until the sheets have been read: that took 0.9 to 1.6 s here, run to run, which a
+      //  stretch of three equal readings (1.2 s) can sit inside; so the chip is waited for first, then the width must hold still)
+      await mp.waitForFunction(() => { const r = document.querySelector('#orderWin .owRight'); return !r || !/not on a sheet yet/i.test(r.textContent); }, null, { timeout: 15000 }).catch(() => {});
       let wide0 = -1;
       for (let i = 0, same = 0; i < 24 && same < 3; i++) { const w = await mp.evaluate(() => document.getElementById('orderWin').scrollWidth); same = w === wide0 ? same + 1 : 0; wide0 = w; await mp.waitForTimeout(400); }
       const fit390 = await mp.evaluate(() => ({ doc: document.documentElement.scrollWidth, iw: innerWidth, frames: ['owPhoto', 'owVector'].map(id => { const r = document.getElementById(id).getBoundingClientRect(); return [Math.round(r.left), Math.round(r.right)]; }) }));
