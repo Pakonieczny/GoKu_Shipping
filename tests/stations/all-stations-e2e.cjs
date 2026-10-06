@@ -289,7 +289,7 @@ fs.mkdirSync(SHOTS, { recursive: true });
       await seen([{ action: 'complete', device: 'charm-nest-1', person: PEOPLE.designApp, station: 'design', role: 'design', orderId: R.des5 }]);
       const s = await openSession(PEOPLE.designApp, 'charm-nest-1'); eq([s.station, s.role], ['design', 'design'], 'the Design session');
     });
-    await check('A-MU1', 'one person at three stations in a day: Nico at Assembly (above), then Design in the Sorter app, then Sorting', ['LD1', 'SA2', 'SA1'], async () => {
+    await check('A-MU1', 'one person at three stations in a day: Nico at Assembly (above), then Design in the Sorter app, then one tap to Laser', ['LD1', 'SA2', 'SA1'], async () => {
       const page = await A.sorterApp(null, { label: 'nico' });
       await A.sorterRole(page, PEOPLE.multi, 'design');
       await page.evaluate(([rid]) => { CNAct('complete', { orderId: rid, parts: 1, orders: 1, detail: 'custom design approved' }); }, [R.des6]);
@@ -311,6 +311,11 @@ fs.mkdirSync(SHOTS, { recursive: true });
 
   /* ═════════════════════════════ PHASE B · the portal ═════════════════════════════ */
   let portal;
+  const cardOf = key => { const c = (S.board || []).find(s => s.key === key); assert(c, 'the board has no ' + key + ' card (it has ' + (S.board || []).map(s => s.key).join(', ') + ')'); return c; };
+  const names = c => c.people.map(p => p.name).sort();
+  // the board needs a few seconds after the work: poll until it says what the shop's own records say (the readers cache for a moment, by design).
+  // (while S.quiet is set nobody touches a station page: waiting must not count as input at any desk)
+  const boardUntil = async (what, fn, ms) => { const t0 = Date.now(); let last; for (;;) { S.board = await P.board(); try { fn(); return; } catch (e) { last = e; } if (Date.now() - t0 > (ms || 40000)) throw last; await sleep(1500); if (!S.quiet) await keep.poke(); } };
   if (PHASES.includes('B')) {
     say('\nB · the Employee efficiency portal (Real view)');
     await W.advance(90000, { step: 30000, between: async () => { await keep.poke(); } });
@@ -330,10 +335,6 @@ fs.mkdirSync(SHOTS, { recursive: true });
       eq(await P.view(), 'real', 'the console view');
       S.board = await P.board(); assert(S.board.length >= 6, 'the board lists ' + S.board.length + ' stations');
     });
-    const cardOf = key => { const c = (S.board || []).find(s => s.key === key); assert(c, 'the board has no ' + key + ' card (it has ' + (S.board || []).map(s => s.key).join(', ') + ')'); return c; };
-    const names = c => c.people.map(p => p.name).sort();
-    // the board needs a few seconds after the work: poll until it says what the shop's own records say (the readers cache for a moment, by design)
-    const boardUntil = async (what, fn, ms) => { const t0 = Date.now(); let last; for (;;) { S.board = await P.board(); try { fn(); return; } catch (e) { last = e; } if (Date.now() - t0 > (ms || 40000)) throw last; await sleep(1500); await keep.poke(); } };
     await shot(portal, 'B1-board-crew');
 
     await check('B-BD1', 'the board has NO Sorter and NO QR Printer card (they are Sorting)', ['PB1'], async () => {
@@ -434,12 +435,15 @@ fs.mkdirSync(SHOTS, { recursive: true });
               assert(Math.abs(st.minutes - (tr.mins[st.station] || 0)) <= 1.0, person + ' at ' + st.station + ': ' + st.minutes + ' min on the page, ' + (tr.mins[st.station] || 0).toFixed(1) + ' from the sessions');
             }
             assert(ovRow, 'the Overview has no row for ' + person);
-            eq([ovRow.totals.parts, ovRow.totals.orders], [mv(srv.kpis.parts), mv(srv.kpis.orders)], person + ': Overview row vs the person page (pieces, orders)');
+            // (a person with no throughput at all, a Welding-only person, has a dash on the page and 0 in the Overview: the same "nothing")
+            eq([ovRow.totals.parts, ovRow.totals.orders], [mv(srv.kpis.parts) == null ? 0 : mv(srv.kpis.parts), mv(srv.kpis.orders) == null ? 0 : mv(srv.kpis.orders)], person + ': Overview row vs the person page (pieces, orders)');
             for (const st of srv.stations) { const o = ovRow.stations.find(x => x.station === st.station); assert(o, 'the Overview row has no ' + st.station); eq([o.parts, o.orders], [st.parts, st.orders], person + ' at ' + st.station + ': Overview row vs person (pieces, orders)'); assert(Math.abs(o.minutes - st.minutes) <= 0.6, person + ' at ' + st.station + ': Overview ' + o.minutes + ' min vs person ' + st.minutes); }
             // on screen
             assert(pv.name === person || pv.name === nameOnPage, 'the page names ' + pv.name);
-            eq(String(pv.kpis['kpis.parts']).replace(/[^\d.]/g, ''), String(mv(srv.kpis.parts)), person + ': "Pieces finished" on screen');
-            eq(String(pv.kpis['kpis.orders']).replace(/[^\d.]/g, ''), String(mv(srv.kpis.orders)), person + ': "Orders worked" on screen');
+            for (const [k, what] of [['parts', '"Pieces finished"'], ['orders', '"Orders worked"']]) {
+              const on = String(pv.kpis['kpis.' + k]).replace(/[^\d.]/g, ''), want = mv(srv.kpis[k]);
+              assert(want == null ? (on === '' || on === '0') : on === String(want), person + ': ' + what + ' on screen is "' + pv.kpis['kpis.' + k] + '", the reader says ' + want);
+            }
             for (const st of srv.stations) assert(new RegExp(st.label + '\\s*[\\d.]+\\s*(min|m|h)').test(pv.chips) || pv.chips.includes(st.label), person + ': the page shows no hours chip for ' + st.label + ': "' + pv.chips + '"');
             break;
           } catch (e) { if (Date.now() - t0 > 60000) throw e; await sleep(2500); await keep.poke(); }
@@ -507,6 +511,7 @@ fs.mkdirSync(SHOTS, { recursive: true });
     const before = {};
     keep.stop();
     await keep.poke();
+    S.quiet = true;                                                          // (from here on nothing waits by touching a station page)
     for (const c of crew) { const p = c.k === 'laser' || c.k === 'designApp' ? S.pages[c.k] : S.pages[c.k]; if (p && !p.isClosed()) before[c.person + '@' + c.device] = await lastInputOf(p); }
     const screenBefore = await screenOf();
     const quietFrom = await W.now();
@@ -524,7 +529,9 @@ fs.mkdirSync(SHOTS, { recursive: true });
       }
       assert(!bad.length, bad.join(' ; '));
     });
-    await check('C-IDLE2', 'the Admin (Paul K at the Sorter app) is NOT signed out', ['AD1', 'AD2'], async () => {
+    await check('C-IDLE2', 'the Admin (Paul K at the Sorter app) is NOT signed out, while the others are (the same quiet)', ['AD1', 'AD2'], async () => {
+      let gone = 0; for (const c of nonAdmin) { const s = await sessionFor(c.person, c.device, c.task); if (s && s.endAt != null) gone++; }
+      assert(gone > 0, 'nobody else was signed out in that quiet, so the Admin staying in proves nothing');
       const s = await openSession('Paul K.', 'charm-nest-1'); assert(s.endAt == null, 'the Admin session ended');
       assert(await portal.evaluate(() => !!StationActivity.who()), 'the Admin is signed out in the page');
     });
@@ -624,7 +631,11 @@ fs.mkdirSync(SHOTS, { recursive: true });
     assert(!stats.egress.length, 'the shop reached out: ' + JSON.stringify(stats.egress.slice(0, 4)));
     assert(![...W.outside, ...stats.egress].some(x => /etsy/i.test(JSON.stringify(x))), 'a request went to Etsy');
   });
-  await check('Z-PAID', 'zero paid calls (no model, no Etsy API, no AI draft)', [], async () => { assert(stats.paid === 0, stats.paid + ' paid calls: ' + JSON.stringify(stats.paidNames)); assert(!Object.keys(stats.unfaked).length, 'functions nobody faked: ' + JSON.stringify(stats.unfaked)); });
+  await check('Z-PAID', 'zero paid calls: no model, no Etsy API, no AI draft ever ran (a paid-looking call is answered by the fake "AI is off" and counted)', [], async () => {
+    assert(stats.paid === 0, stats.paid + ' paid calls reached real code: ' + JSON.stringify(stats.paidNames));
+    assert(!Object.keys(stats.unfaked).length, 'functions nobody faked: ' + JSON.stringify(stats.unfaked));
+    if (stats.paidTried) say('           (' + stats.paidTried + ' paid-looking call(s) were tried by the pages and answered by the fake, none bought anything: ' + JSON.stringify(stats.paidNames) + ')');
+  });
   await check('Z-PIN', 'no PIN in any request, response or stored record (the roster itself apart)', [], async () => {
     assert(stats.pinLeaks === 0, stats.pinLeaks + ' leaks counted by the shop');
     for (const coll of ['Station_Sessions', 'Station_Activity', 'Station_Live', 'Efficiency_Daily', 'EtsyMail_ReplyDaily']) { const txt = JSON.stringify(await W.list(coll)); assert(!hasPin(txt), 'a PIN is stored in ' + coll); }
