@@ -49,6 +49,14 @@ const PASS = 'synthetic-pass-not-real', S = 'Charm_Nest_Sheets', DEV = 'charm-ne
   const brief = e => [e.action, e.station, e.person, e.orderId, e.line, e.parts, e.orders];
   const byOrder = (a, b) => (a.orderId < b.orderId ? -1 : a.orderId > b.orderId ? 1 : 0);
 
+  /** LD1's real sign-in at the Sorter: a name, then "Laser or Design?" (the Admin, by the server's answer, is not asked and has no role) */
+  const signIn = async (page, name, as) => {
+    await page.evaluate(([n, adm]) => { CNRole.setAdminLookup(async () => adm); B.employee = n; }, [name, as === 'admin']);
+    if (as !== 'admin') { await page.waitForFunction(() => CNRole.state() === 'ask'); await page.evaluate(r => CNRole.choose(r), as); }
+    await page.waitForFunction(([n, r]) => { const w = StationActivity.who(); return !!w && w.person === n && (w.role || '') === r; }, [name, as === 'admin' ? '' : as]);
+  };
+  const signOut = async page => { await page.evaluate(() => { StationSession.signedOut('signOut'); try { localStorage.removeItem('cn.employee'); } catch (_) {} B.employee = ''; }); await page.waitForFunction(() => CNRole.state() === 'none'); };
+
   const browser = await chromium.launch({ executablePath: CHROME, args: ['--no-sandbox'] });
   const errors = [];
   /** a sorter page on the fake backend; `name` is the person kept in cn.employee ('' = nobody named) */
@@ -89,7 +97,7 @@ const PASS = 'synthetic-pass-not-real', S = 'Charm_Nest_Sheets', DEV = 'charm-ne
     page.setDefaultTimeout(30000);
     page.on('pageerror', e => { errors.push(e.message); console.error('page error:', e.message); });
     await page.goto(`${srv.sorterOrigin}/charm-nest-1.html`, { waitUntil: 'load' });
-    await page.waitForFunction(() => window.CN && window.Orders && window.CNAct && window.CNLive && window.CNLaserAct && window.StationActivity && window.StationSession && window.LibraryDone && window.LibraryFlow && window.RoseStock && CN.S.cloud.ok === true, null, { timeout: 60000 });
+    await page.waitForFunction(() => window.CN && window.Orders && window.CNAct && window.CNLive && window.CNLaserAct && window.CNRole && window.StationActivity && window.StationSession && window.LibraryDone && window.LibraryFlow && window.RoseStock && CN.S.cloud.ok === true, null, { timeout: 60000 });
     const flush = async () => { await page.evaluate(() => StationActivity.flush()); await wait(700); };
     /** the events written since the last call; waits for `n` of them (a flush and a look every half second, 20 s at most) */
     let seen = events().length;
@@ -102,16 +110,17 @@ const PASS = 'synthetic-pass-not-real', S = 'Charm_Nest_Sheets', DEV = 'charm-ne
   }
 
   try {
-    /* ───────────── 1 · no role: the laser-side presses, one event for each order ───────────── */
+    /* ───────────── 1 · no role (the Admin): the laser-side presses, one event for each order ───────────── */
     {
-      const { context, page, rec, flush, fresh, none } = await sorterPage('Tess Welder');
+      const { context, page, rec, flush, fresh, none } = await sorterPage('');
+      await signIn(page, 'Tess Welder', 'admin');
       await page.evaluate(() => CN.setMode('library')); await wait(600); await page.evaluate(() => CN.setMode('library'));   // (shown once; asked again as the first answers arrive)
       await wait(4000);
       for (let i = 0; ; i++) {      // (a load-timing flake of the page's first Library show: asked again, never more than three times)
         try { await page.waitForSelector('.approveBox[data-approve-for="sheet:held-sheet"][data-mode="ready"] [data-approve-btn]', { state: 'visible', timeout: 15000 }); break; }
         catch (e) { if (i >= 2) throw e; await page.evaluate(() => CN.setMode('library')); await wait(1500); }
       }
-      assert.strictEqual(await page.evaluate(() => StationSession.role ? String(StationSession.role() || '') : ''), '', 'no role chosen: unchanged behaviour');
+      assert.deepStrictEqual(await page.evaluate(() => [StationSession.role(), StationSession.who().station]), ['', 'sorter'], 'no role: the sorter, as before');
 
       // Approve for laser cutting, the real button: the hold lifted and the person's ready seal, ONE press
       await page.click('.approveBox[data-approve-for="sheet:held-sheet"] [data-approve-btn]');
@@ -156,6 +165,14 @@ const PASS = 'synthetic-pass-not-real', S = 'Charm_Nest_Sheets', DEV = 'charm-ne
       assert(ev.every(e => e.detail === 'put back in progress · GF Sheet 4'));
       assert(st.doc(S, 'held-sheet').laserHold, 'and the sheet is held again');
 
+      // a SET approved (the seal is on the set): an event for each order of each of its sheets, the set's name in the words
+      await page.evaluate(() => CNLaserAct.flow([{ type: 'seal', kind: 'set', id: 'set-fixture' }]));
+      ev = await fresh(3);
+      assert.deepStrictEqual(ev.map(e => [e.action, e.station, e.orderId, e.line, e.detail]).sort(), [
+        ['note', 'laser', '3700000100', 'cut-sheet', 'approved for laser cutting · Set 1'],
+        ['note', 'laser', '3700000101', 'ready-sheet', 'approved for laser cutting · Set 1'],
+        ['note', 'laser', '3700000102', 'pending-sheet', 'approved for laser cutting · Set 1']], 'a set: ' + JSON.stringify(ev.map(brief)));
+
       // Rose Gold's Cut Sheet (the real RoseStock.record): an event for each order of the sheet; a sheet whose orders are not known is one event
       await page.evaluate(async () => {
         const base = { metal: 'rose', setId: 'set1', draft: false, recalled: { roseStockId: 'rgs' }, rosePlanHash: 'hash', roseRevision: 0, roseStock: { id: 'rgs', revision: 0 }, roseHistory: [] };
@@ -175,21 +192,19 @@ const PASS = 'synthetic-pass-not-real', S = 'Charm_Nest_Sheets', DEV = 'charm-ne
       // and no live slot of the laser was made by any of it
       assert.deepStrictEqual(rec.live.filter(l => l.station === 'laser'), [], 'no live laser slot from pressing buttons in the Library');
 
-      /* ───────────── 2 · the signed-in role routes everything, and the live board follows it ───────────── */
-      const who0 = await page.evaluate(() => { window.__who0 = StationSession.who; return StationSession.who().station; });
-      assert.strictEqual(who0, 'sorter', 'the page signs in as the sorter');
+      /* ───────────── 2 · the signed-in role (LD1) routes everything, and the live board follows it ───────────── */
       const act = (action, o) => page.evaluate(([a, x]) => CNAct(a, x), [action, o]);
       const rows = [{ order: { receiptId: '3700000301', buyer: { name: 'Pat Example' } }, line: { transactionId: '1', quantity: 2, title: 'Fixture charm', sku: 'FX-1' }, spec: { designSku: 'FX-1', size: 'S' }, state: 'pulled' }];
 
-      // role "laser" (StationSession.role(), LD1's): a sorter press, a print and a laser cut are all Laser
-      await page.evaluate(() => { window.__role = 'laser'; StationSession.role = () => window.__role; });
+      // a Laser person: a sorter press, a print and a laser cut are all Laser, with the role on each
+      await signOut(page); await signIn(page, 'Tess Welder', 'laser');
+      assert.deepStrictEqual(await page.evaluate(() => [StationSession.role(), StationActivity.who().station]), ['laser', 'laser'], 'signed in as Laser');
       await act('complete', { orderId: '3700000301', parts: 2, orders: 1, detail: 'Complete Order' });
       await act('print', { orderId: '3700000301', parts: 2, detail: 'QR label' });
       await page.evaluate(() => CNLaserAct.cut(true, { name: 'GF Sheet 4', ids: ['held-sheet'], rec: LibraryDone.recordOf }));
       ev = await fresh(4);
-      assert.deepStrictEqual(ev.map(e => [e.action, e.station, e.person, e.device]), [['complete', 'laser', 'Tess Welder', DEV], ['print', 'laser', 'Tess Welder', DEV], ['complete', 'laser', 'Tess Welder', DEV], ['complete', 'laser', 'Tess Welder', DEV]], 'a Laser person: all of it is Laser: ' + JSON.stringify(ev.map(brief)));
-      assert.strictEqual(await page.evaluate(() => StationSession.who === window.__who0), true, "the page's sign-in is put back after each");
-      assert.strictEqual(await page.evaluate(() => StationActivity.who().station), 'sorter', 'the sign-in itself is untouched');
+      assert.deepStrictEqual(ev.map(e => [e.action, e.station, e.person, e.device, e.role]), [['complete', 'laser', 'Tess Welder', DEV, 'laser'], ['print', 'laser', 'Tess Welder', DEV, 'laser'], ['complete', 'laser', 'Tess Welder', DEV, 'laser'], ['complete', 'laser', 'Tess Welder', DEV, 'laser']], 'a Laser person: all of it is Laser: ' + JSON.stringify(ev.map(brief)));
+      assert.deepStrictEqual(ev.slice(2).map(e => [e.orderId, e.line, e.parts]).sort(), [['3700000301', 'held-sheet', 2], ['3700000302', 'held-sheet', 1]], 'and the laser cut is still one event for each order');
 
       // the live board: the order in hand, then the sheet in hand (the same Laser slot), with the person and the time since it was opened
       await page.evaluate(rs => CNLive.order('3700000301', rs), rows);
@@ -204,31 +219,35 @@ const PASS = 'synthetic-pass-not-real', S = 'Charm_Nest_Sheets', DEV = 'charm-ne
       await page.evaluate(() => CNLive.close('sorter'));
       await wait(2600);
       assert.strictEqual((await live()).laser.length, 1, "the order window's close leaves the sheet in hand alone");
+      // closing the sheet window while the order window is open: the order in hand shows again
+      await page.evaluate(rs => CNLive.order('3700000301', rs), rows);
+      await page.evaluate(() => CNLive.close('laser'));
+      cur = await live(c => c.laser.length === 1 && c.laser[0].kind === 'order');
+      assert.deepStrictEqual(cur.laser.map(c => [c.kind, c.rid]), [['order', '3700000301']], "the sheet window's close leaves the order window's order in hand: " + JSON.stringify(cur.laser));
+      await page.evaluate(() => CNLive.close('sorter'));
+      assert.strictEqual((await live(c => c.laser.length === 0)).laser.length, 0, 'and closing it ends the card');
       // a laser cut ends the sheet in hand
+      await page.evaluate(() => CNLive.sheet('GF Sheet 4 · Set 2'));
+      assert.strictEqual((await live(c => c.laser.length === 1)).laser.length, 1);
       await page.evaluate(() => CNLaserAct.cut(true, { name: 'GF Sheet 4', ids: ['held-sheet'], rec: LibraryDone.recordOf }));
       assert.strictEqual((await live(c => c.laser.length === 0)).laser.length, 0, 'a laser cut ends the sheet at the Laser card');
       await fresh(2);
 
-      // a role switch while a window stays open: Laser to Design (the old slot ends, the new one shows), through the session's station as well
+      // the quiet switch to Design: the Laser card ends, and the open windows show at the Design card; every press is Design now
       await page.evaluate(rs => CNLive.order('3700000301', rs), rows);
       assert.strictEqual((await live(c => c.laser.length === 1)).laser.length, 1);
-      await page.evaluate(() => { window.__role = ''; StationSession.role = undefined; const real = window.__who0; StationSession.who = function () { const w = real.apply(StationSession, arguments); return w && Object.assign({}, w, { station: 'design' }); }; });
-      await page.evaluate(rs => CNLive.order('3700000301', rs), rows);        // (the open window is shown again)
-      await act('undo', { station: 'laser', parts: 1, detail: 'GF Sheet 4 returned to Laser cutting' });
+      await page.evaluate(() => CNRole.switchTo('design'));
+      await page.waitForFunction(() => StationActivity.who() && StationActivity.who().role === 'design');
+      cur = await live(c => c.laser.length === 0);
+      assert.strictEqual(cur.laser.length, 0, 'the Laser card ended with the switch');
+      await page.evaluate(rs => CNLive.order('3700000301', rs), rows);        // (the open window shows again at the page's next read of it)
       await page.evaluate(() => CNLive.sheet('GF Sheet 4'));
+      await act('undo', { station: 'laser', parts: 1, detail: 'GF Sheet 4 returned to Laser cutting' });
       ev = await fresh(1);
-      assert.deepStrictEqual(ev.map(e => [e.action, e.station, e.person]), [['undo', 'design', 'Tess Welder']], 'a Design person (the session says design): a laser-side press is Design: ' + JSON.stringify(ev.map(brief)));
-      cur = await live(c => c.design.length === 1 && c.laser.length === 0);
-      assert.deepStrictEqual([cur.design.map(c => [c.person, c.kind, c.title]), cur.laser.length], [[['Tess Welder', 'sheet', 'GF Sheet 4']], 0], 'the old Laser slot ended and the Design card shows the sheet: ' + JSON.stringify(cur));
-      await page.evaluate(() => { StationSession.who = window.__who0; });
-      await page.evaluate(() => CNLive.close('laser'));
-      await wait(500);
-
-      // Admin, or a person who chose no role: everything as the call site asked, as before
-      await act('complete', { station: 'laser', parts: 1, detail: 'x' });
-      await act('complete', { orderId: '3700000301', parts: 1, orders: 1, detail: 'Complete Order' });
-      ev = await fresh(2);
-      assert.deepStrictEqual(ev.map(e => [e.station, e.person]), [['laser', 'Tess Welder'], ['sorter', 'Tess Welder']], 'no role: as the call site asked');
+      assert.deepStrictEqual(ev.map(e => [e.action, e.station, e.person, e.role]), [['undo', 'design', 'Tess Welder', 'design']], 'a Design person: a laser-side press is Design: ' + JSON.stringify(ev.map(brief)));
+      cur = await live(c => c.design.length === 1 && c.design[0].kind === 'sheet');
+      assert.deepStrictEqual([cur.design.map(c => [c.person, c.kind, c.title]), cur.laser.length], [[['Tess Welder', 'sheet', 'GF Sheet 4']], 0], 'the Design card shows the sheet in hand: ' + JSON.stringify(cur));
+      await page.evaluate(() => { CNLive.close('sorter'); CNLive.close('laser'); });
 
       // the sorter's pressed buttons are never keystrokes or hovers: an input in the page writes nothing
       await page.mouse.move(300, 300); await page.keyboard.press('Shift'); await page.mouse.click(5, 5);
@@ -244,9 +263,14 @@ const PASS = 'synthetic-pass-not-real', S = 'Charm_Nest_Sheets', DEV = 'charm-ne
       assert.strictEqual(await page.evaluate(() => CNAct.held()), 1, 'kept, not lost, not blocked');
       await none();
       await page.waitForSelector('.cnNameBar');
-      await page.evaluate(() => { B.employee = 'mia  cutter'; });
+      // the name typed, then "Laser or Design?" (LD1): the press waits for the role as well, then is recorded under both
+      await page.evaluate(() => { CNRole.setAdminLookup(async () => false); B.employee = 'mia  cutter'; });
+      await page.waitForFunction(() => CNRole.state() === 'ask');
+      assert.strictEqual(await page.evaluate(() => CNAct.held()), 1, 'still kept while the role is asked');
+      await none();
+      await page.evaluate(() => CNRole.choose('laser'));
       const ev = (await fresh(2)).sort(byOrder);
-      assert.deepStrictEqual(ev.map(brief), [['complete', 'laser', 'Mia Cutter', '3700000301', 'held-sheet', 2, 0], ['complete', 'laser', 'Mia Cutter', '3700000302', 'held-sheet', 1, 0]], 'under the typed name, an event for each order: ' + JSON.stringify(ev.map(brief)));
+      assert.deepStrictEqual(ev.map(e => brief(e).concat(e.role)), [['complete', 'laser', 'Mia Cutter', '3700000301', 'held-sheet', 2, 0, 'laser'], ['complete', 'laser', 'Mia Cutter', '3700000302', 'held-sheet', 1, 0, 'laser']], 'under the typed name and the role, an event for each order: ' + JSON.stringify(ev.map(brief)));
       assert.strictEqual(await page.evaluate(() => CNAct.held()), 0);
       assert.deepStrictEqual(await page.evaluate(() => window.__prompts), [], 'no browser pop-up');
       await context.close();
