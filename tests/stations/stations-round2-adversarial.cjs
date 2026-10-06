@@ -271,7 +271,7 @@ function openTab(pc, o = {}) {
   const D = w.Date;
   class FD extends D { constructor(...a) { if (a.length === 0) super(wall() + tab.skew); else super(...a); } static now() { return wall() + tab.skew; } }
   w.Date = FD;
-  w.performance = { now: () => clock.mono, timeOrigin: 0 };           // (the monotonic clock: a page can tell a clock that was set from time that passed)
+  Object.defineProperty(w, 'performance', { value: { now: () => clock.mono, timeOrigin: 0 }, configurable: true, writable: true });     // (the monotonic clock: a page can tell a clock that was set from time that passed; jsdom's own performance is an accessor that ignores a plain assignment)
   const addTimer = (fn, ms, every, args) => { const t = { id: ++clock.seq, tab, fn: () => fn(...args), due: clock.mono + Math.max(0, Number(ms) || 0), every }; clock.timers.push(t); return t.id; };
   w.setTimeout = (fn, ms, ...a) => addTimer(typeof fn === 'function' ? fn : () => {}, ms, null, a);
   w.setInterval = (fn, ms, ...a) => addTimer(typeof fn === 'function' ? fn : () => {}, Math.max(1, Number(ms) || 1), Math.max(1, Number(ms) || 1), a);
@@ -325,6 +325,8 @@ function openTab(pc, o = {}) {
   };
   tab.who = () => (o.multi ? JSON.parse(pc.ls('fx_people') || '[]') : (pc.ls('employee_id') && pc.ls('employee_name') ? [{ name: pc.ls('employee_name') }] : []));
   tab.input = (type = 'pointerdown') => { const E = /^key/.test(type) ? w.KeyboardEvent : /^(mouse|click|pointer|wheel)/.test(type) ? w.MouseEvent : w.Event; w.document.body.dispatchEvent(new E(type, { bubbles: true, cancelable: true })); };
+  /** a person working at the page: a tap every `every` ms (default 4 minutes) until the tab is closed; for tests that are not about idleness */
+  tab.typing = (every = 4 * 60000) => { w.setInterval(() => { try { tab.input(); } catch (_) {} }, every); return tab; };
   tab.hide = () => { tab.hidden = true; w.document.dispatchEvent(new w.Event('visibilitychange')); };
   tab.show = () => { tab.hidden = false; w.document.dispatchEvent(new w.Event('visibilitychange')); w.dispatchEvent(new w.Event('focus')); };
   tab.setOnline = on => { tab.online = on; w.dispatchEvent(new w.Event(on ? 'online' : 'offline')); };
@@ -387,6 +389,13 @@ async function hostile() {
       const dv = SESS({ device: '../../etc/passwd\u0000<b>' }); await sess(dv); ok(/^[\w .:-]*$/.test(sdoc(dv.id).device), 'device is cleaned: ' + sdoc(dv.id).device);
       for (const d of stationDocs()) { ok(!/\d{4}/.test(d.person) && /\p{L}/u.test(d.person), `stored person ${JSON.stringify(d.person)}`); ok(!d.employeeId || !/^\d+$/.test(d.employeeId), 'no digits-only employee id stored'); }
       ok(!cur.dump().includes(PIN), 'the PIN is nowhere in the store');
+    });
+    await check('login door: a stored name with markup comes back without angle brackets (nine station pages put the name into a toast as html); an all-markup name is "not on the list"', async () => {
+      const st = freshKeep(); const P3 = '135792', P4 = '246813';
+      st.put('Brites_Orders', 'Employee Numbers', { [P3]: 'Evil <img src=x onerror="alert(1)"> Name', [P4]: '<<>>' });
+      const a = await doorPost({ pinLogin: P3 }); ok(a.status === 200 && a.body.ok === true, 'a known number: ' + JSON.stringify(a.body));
+      ok(!/[<>]/.test(a.body.name) && /Evil/.test(a.body.name) && /Name/.test(a.body.name), 'the name has no angle brackets: ' + JSON.stringify(a.body.name));
+      const b = await doorPost({ pinLogin: P4 }); ok(b.status === 200 && b.body.ok === false, 'a name of only angle brackets is nobody: ' + JSON.stringify(b.body));
     });
     await check('every door: a body that is not an object is a 4xx, never a 5xx', async () => {
       freshKeep(); const bad = [];
@@ -501,7 +510,7 @@ function tickWall(ms) { clock.mono += ms; }
 const DBG = process.env.ST2_DEBUG ? (...a) => realConsole.log('[dbg]', ...a.map(x => typeof x === 'string' ? x : JSON.stringify(x))) : () => {};
 async function welding() {
   const A = { name: 'Tess Welder', task: 'welding' }, B = { name: 'Ray Welder', task: 'matching' }, C = { name: 'Ivy Third', task: 'matching' };
-  const mk = (pc, extra) => openTab(pc, Object.assign({ multi: true, station: 'welding', device: 'weld-1' }, extra || {}));
+  const mk = (pc, extra) => openTab(pc, Object.assign({ multi: true, station: 'welding', device: 'weld-1' }, extra || {})).typing();     // (a person at work: a tap every 4 minutes, so AD1's idle rule is not what these checks are about)
   const key = x => x.name + '|' + (x.task || '');
   const docsOf = (p, t) => stationDocs().filter(d => d.person === p.name && (d.task || '') === (t || p.task || ''));
   const peopleOf = tab => Array.from(tab.SS.people()).map(p => key(p)).sort();
@@ -653,12 +662,46 @@ async function welding() {
       const L = await board({ op: 'live' }); eq(L.status, 200); eq(new Set((L.body.signedIn || []).map(x => x.name)).size, 1, 'one person on, at two stations: ' + JSON.stringify((L.body.signedIn || []).map(x => [x.name, x.stationKey])));
     });
     await check('two tabs of a single-person page: another person signing in on one tab is followed by the other tab with ONE new session; the first person ends "switched" once; a tab closed leaves the session going', async () => {
-      world(); const pc = computer('bench'), one = () => openTab(pc, { page: 'assembly-1.html', station: 'assembly', device: 'assembly-1' });
+      world(); const pc = computer('bench'), one = () => openTab(pc, { page: 'assembly-1.html', station: 'assembly', device: 'assembly-1' }).typing();
       const a = one(); a.login('Ana Tester'); await advance(1000); const b = one(); await advance(1000);
       a.login('Ben Tester'); await advance(70000);
       eq(open_().map(d => d.person), ['Ben Tester'], dumpSessions()); eq(stationDocs().filter(d => d.person === 'Ana Tester').length, 1, 'one session for Ana'); eq(stationDocs().find(d => d.person === 'Ana Tester').endReason, 'switched');
       eq(stationDocs().filter(d => d.person === 'Ben Tester').length, 1, 'one session for Ben, not one per tab: ' + dumpSessions());
       a.close(); await advance(20 * MIN); eq(open_().map(d => d.person), ['Ben Tester'], 'the other tab keeps the session going after one tab is closed: ' + dumpSessions()); ok(open_()[0].lastSeenAt > wall() - 6 * MIN, 'and keeps beating it');
+      eq(a.errors.concat(b.errors), []);
+    });
+    await check('two tabs of a two-person page: each sign-in is ONE session however many tabs follow it, a sign-out in one tab ends that person once, a tab crashed changes nobody', async () => {
+      world(); const pc = computer('bench'), a = mk(pc); a.login(A.name, A.task); await advance(1000);
+      const b = mk(pc); await advance(2000);
+      eq(open_().length, 1, 'a second tab restores Tess and starts nothing: ' + dumpSessions());
+      a.login(B.name, B.task); await advance(70000);
+      eq(open_().map(d => d.person + '|' + d.task).sort(), [key(A), key(B)].sort(), 'Ray signed in on tab one: both tabs follow, ONE session for Ray: ' + dumpSessions());
+      eq(stationDocs().length, 2, 'two documents, not one per tab: ' + dumpSessions());
+      eq(peopleOf(b), [key(A), key(B)].sort(), 'the other tab sees both');
+      b.login(C.name, C.task); await advance(70000);
+      eq(open_().length, 3, 'a third person on the second tab: three sessions, none doubled: ' + dumpSessions()); eq(stationDocs().length, 3);
+      a.logout(B.name, B.task); await advance(70000);
+      eq(open_().map(d => d.person).sort(), [A.name, C.name].sort(), 'Ray left from tab one: only Ray ended: ' + dumpSessions());
+      eq(stationDocs().filter(d => d.person === B.name).length, 1); eq(stationDocs().find(d => d.person === B.name).endReason, 'signOut');
+      a.kill(); await advance(20 * MIN);
+      eq(open_().map(d => d.person).sort(), [A.name, C.name].sort(), 'a crashed tab changes nobody while the other keeps beating: ' + dumpSessions()); ok(open_().every(d => d.lastSeenAt > wall() - 6 * MIN), 'both are still being beaten');
+      b.logout(A.name, A.task); b.logout(C.name, C.task); await advance(70000);
+      eq(open_().length, 0, dumpSessions()); eq(stationDocs().length, 3, 'three sign-ins, three documents'); ok(stationDocs().every(d => d.endReason === 'signOut'), dumpSessions());
+      eq(a.errors.concat(b.errors), []);
+    });
+    await check('two tabs: a person the page lists a moment before the session record exists is one session (whichever tab looks first), and a person no tab ever signed in is still started once, within seconds (the real-browser version of the race is in stations-round2-weld-page.cjs)', async () => {
+      world(); const pc = computer('bench'), a = mk(pc), b = mk(pc);
+      b.login(A.name, A.task); await advance(3000);
+      eq(open_().length, 1, dumpSessions());
+      const l = JSON.parse(pc.ls('fx_people')); l.push({ name: B.name, task: B.task }); b.storage().setItem('fx_people', JSON.stringify(l));      // tab B: the list first ...
+      await settle(4); await advance(100);                                                                                                                          // ... tab A looks right now (the storage event), no record yet ...
+      b.SS.signedIn({ name: B.name, task: B.task }); await advance(8000);                                                                          // ... and tab B's session record follows
+      eq(stationDocs().filter(d => d.person === B.name).length, 1, 'one session for Ray, not one per tab: ' + dumpSessions());
+      eq(open_().length, 2, dumpSessions());
+      // a person the page lists that no tab ever signed in (a page that sets its list and never calls signedIn): still started, within a few seconds
+      const l2 = JSON.parse(pc.ls('fx_people')); l2.push({ name: C.name, task: C.task }); a.storage().setItem('fx_people', JSON.stringify(l2));
+      for (let i = 0; i < 8; i++) await advance(1000);
+      eq(stationDocs().filter(d => d.person === C.name).length, 1, 'started once, a moment after the page listed it: ' + dumpSessions());
       eq(a.errors.concat(b.errors), []);
     });
     await check('hostile people: a PIN, a respelled task, an odd task or a name with digits never makes a session of the wrong shape', async () => {
@@ -1243,6 +1286,7 @@ function sorter(pc, o = {}) {
   tab.pick = r => { const b = tab.bar; if (!b || b.state !== 'ask') throw new Error('the question is not on screen: ' + JSON.stringify(tab.bars.map(x => x.state))); b.onPick(r); };
   tab.role = () => w.CNRole.role(); tab.state = () => w.CNRole.state();
   tab.press = (o2) => w.StationActivity.log('scan', Object.assign({ orderId: '3521000' + (200 + (++evN % 700)) }, o2 || {}));
+  if (o.typing !== false) tab.typing();
   return tab;
 }
 async function laserDesign() {
@@ -1463,6 +1507,15 @@ async function fold() {
   await autoPage();
   await laserDesign();
   await fold();
+  // the page half for weld-1.html runs in a real browser (Playwright) in its own process: PW_DIR=<playwright node_modules>
+  await section('2c · weld-1.html in a real browser', async () => {
+    if (!HAVE.ws1page) { pending('the Welding page: chips, double taps, hostile names, storage garbage, two tabs, midnight, a crash', 'weld-1.html has no roster yet (WS1)'); return; }
+    if (!process.env.PW_DIR) { pending('the Welding page in a real browser', 'set PW_DIR=<playwright node_modules> to run tests/stations/stations-round2-weld-page.cjs'); return; }
+    await check('the Welding page in a real browser (tests/stations/stations-round2-weld-page.cjs): taps, clock set back, hostile names, storage garbage, two tabs, midnight, a crash', async () => {
+      const r = require('child_process').spawnSync(process.execPath, [path.join(root, 'tests/stations/stations-round2-weld-page.cjs')], { env: Object.assign({}, process.env), encoding: 'utf8', timeout: 900000 });
+      ok(r.status === 0, 'the page tests failed (exit ' + r.status + '):\n' + String(r.stdout || '').split('\n').filter(l => /FAIL|^\s{6}\S/.test(l)).slice(0, 12).join('\n') + String(r.stderr || '').slice(-600));
+    });
+  });
   // the PIN canary: nothing stored, logged or sent anywhere in the run carries a synthetic Employee Number
   await section('0 · the PIN canary', async () => {
     await check('no synthetic PIN in any store or log of the run', async () => {

@@ -124,7 +124,7 @@ async function sharedFailed(db) {
 /** the stored value as a name: one tidy line, never empty, never only digits (a number alone is not a name); "" otherwise */
 function tidyName(v) {
   if (typeof v !== "string") return "";
-  const s = v.replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim();
+  const s = v.replace(/[\u0000-\u001f\u007f<>]/g, " ").replace(/\s+/g, " ").trim();      // (no angle brackets: the station pages put the name into a toast as html; ST2)
   return s && !/^\d+$/.test(s) ? s : "";
 }
 
