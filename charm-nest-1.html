@@ -398,6 +398,8 @@ select.topSel{border:1px solid var(--line);background:var(--card);border-radius:
    controls — a toast was an invisible click shield over the button underneath it. They come down from under the
    top bar instead, where no screen puts anything. */
 .toasts{position:fixed;right:18px;top:var(--chromeH,96px);z-index:300;display:flex;flex-direction:column;gap:8px;pointer-events:none;max-width:min(420px,42vw)}
+/* UX1: on a phone-width window 42vw is a column of one word per line (the sign-out notice read "Signed / out / after / 10 ..."): the notices take the width instead */
+@media (max-width:700px){.toasts{left:10px;right:10px;max-width:none}.toasts .toast{max-width:none}}
 .toast .m{min-width:0}
 .toast .x{font:700 11px var(--mono);opacity:.7}
 .toast .c{border:0;background:transparent;color:inherit;opacity:.55;cursor:pointer;font-size:13px;line-height:1;padding:0 0 0 4px}
