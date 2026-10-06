@@ -140,7 +140,9 @@ function welding(now, o = {}) {
       const c0 = fx.state.calls.length, t0 = await text(page, `${WS} .esWp[data-name="Max M."][data-task=matching] .esWi`); await sleep(2300);
       const t1 = await text(page, `${WS} .esWp[data-name="Max M."][data-task=matching] .esWi`); assert.notEqual(t0, t1, 'the time since last input ticks'); assert.equal(fx.state.calls.length, c0, '… with no request');
       // the station row keeps its light and name; the summary counts a person once (Max is in two tasks)
-      assert.equal(await text(page, `${V} .esSum`), '3 of 7 stations working · 4 people on', 'five sign-in rows, Max in two tasks: four people on');
+      const on = await page.evaluate(() => { const d = __b.data, s = new Set(); for (const x of d.signedIn) s.add(x.name.toLowerCase()); for (const st of d.stations) for (const p of st.people) s.add(p.name.toLowerCase()); return { n: s.size, stations: d.stations.length, welding: d.signedIn.filter(x => x.stationKey === 'welding').length, wNames: new Set(d.signedIn.filter(x => x.stationKey === 'welding').map(x => x.name.toLowerCase())).size }; });
+      assert.equal(on.welding, 5, 'five sign-in rows at Welding'); assert.equal(on.wNames, 4, '… of four people: Max is in two tasks');
+      assert.equal(await text(page, `${V} .esSum`), `3 of ${on.stations} stations working · ${on.n} people on`, 'a person is counted once, however many tasks or pages');
       console.log('  ✓ two groups: who is in each (a person in both is in both, an old sign-in is Welding and says so), time on task, time since last input ticking; no pieces or orders on the card');
     }
 
