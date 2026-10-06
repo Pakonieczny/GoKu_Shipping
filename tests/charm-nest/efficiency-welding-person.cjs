@@ -159,7 +159,7 @@ function weldingFor(j, o = {}) {
     await page.evaluate(() => { EfficiencyEmployee.instances[0].go({}); document.querySelector('#efficiencyView .efp'); });
     await page.evaluate(() => { const h = EfficiencyEmployee.instances[0]; h.go({ anchor: h.state.anchor }); }); await page.waitForFunction(() => !EfficiencyEmployee.instances[0].state.welding, null, { timeout: 8000 });
     assert.equal(await page.locator(`${P} .efpGroup[data-g="Welding station"]`).isVisible(), false, 'no Welding group'); assert.equal(await page.locator(`${P} .efpWC`).isVisible(), false, 'no welding charts'); assert.equal(await page.locator(`${P} .efpWO`).isVisible(), false, 'no matched list');
-    assert.equal(await page.locator(`${P} .efpK[tabindex="0"]`).count(), 6, 'the Welding group is not a Tab stop when it is not there: one stop for each of the six groups');
+    assert.equal(await page.locator(`${P} .efpKGroups .efpK[tabindex="0"]`).count(), 6, 'the Welding group is not a Tab stop when it is not there: one stop for each of the six groups');
     console.log('  ✓ no welding time, no Welding group, charts or list; the figures keep their six Tab stops');
 
     /* ── 6 · the Overview ── */
