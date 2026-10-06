@@ -116,20 +116,20 @@ function make(opts = {}) {
     const days = [1, 7, 30].includes(+b.days) ? +b.days : 1, end = b.day && b.day <= today() ? b.day : today();
     const hours = arr({ 0: 1, 8: 19, 9: 3, 10: 2, 11: 2, 12: 2 }), trend = [];
     for (let i = 13; i >= 0; i--) trend.push({ day: addDays(end, -i), parts: i === 0 ? 29 : 0, orders: i === 0 ? 25 : 0, people: i === 0 ? 1 : 0, source: i === 0 ? 'events' : 'none' });
-    const paul = { name: 'Paul', status: end === today() ? 'on' : 'out', firstIn: nyAt(end, 0, 40), lastOut: null, onSince: end === today() ? nyAt(end, 0, 40) : null, inDay: end, nowAt: end === today() ? ['sorter'] : [], source: 'events',
-      stations: [{ station: 'sorter', minutes: 726, parts: 29, scanParts: 0, scans: 0, completes: 25, prints: 0, orders: 25 }],
+    const paul = { name: 'Paul', status: end === today() ? 'on' : 'out', firstIn: nyAt(end, 0, 40), lastOut: null, onSince: end === today() ? nyAt(end, 0, 40) : null, inDay: end, nowAt: end === today() ? ['sorting'] : [], source: 'events',
+      stations: [{ station: 'sorting', minutes: 726, parts: 29, scanParts: 0, scans: 0, completes: 25, prints: 0, orders: 25 }],
       totals: { parts: 29, scanParts: 0, scans: 0, orders: 25, rejects: 0, errors: 0, activeMin: 5, idleMin: 700, signedInMin: 726, rate: 328, secPerScan: 0 }, perHour: hours, orders: [] };
     const zero = n => ({ station: n, parts: 0, scans: 0, orders: 0, peopleNow: [] });
     return { ok: true, now: now(), day: end, days, cursor: 'c0', delta: false, people: [paul],
-      business: { totals: { parts: 29, scans: 0, orders: 25, people: 1 }, perHour: { sorter: hours }, stations: ['sorting', 'welding', 'assembly', 'shipping'].map(zero).concat([{ station: 'sorter', parts: 29, scans: 0, orders: 25, peopleNow: end === today() ? ['Paul'] : [] }]), trend: b.trend === false ? trend.slice(-1) : trend },
-      feed: [{ id: 'sb1', at: now() - 60000, person: 'Paul', station: 'sorter', action: 'complete', orderId: '3521009001', parts: 1 }], sources: { events: true, seals: false, sessions: true }, notes: [] };
+      business: { totals: { parts: 29, scans: 0, orders: 25, people: 1 }, perHour: { sorting: hours }, stations: [{ station: 'sorting', parts: 29, scans: 0, orders: 25, peopleNow: end === today() ? ['Paul'] : [] }].concat(['welding', 'assembly', 'shipping'].map(zero)), trend: b.trend === false ? trend.slice(-1) : trend },
+      feed: [{ id: 'sb1', at: now() - 60000, person: 'Paul', station: 'sorting', action: 'complete', orderId: '3521009001', parts: 1 }], sources: { events: true, seals: false, sessions: true }, notes: [] };
   }
   /** op live: who is signed in right now and the order each station has now. */
   function liveAnswer(sb) {
     const t = now(), T = base, d = today(), thumb = (c, l) => svg(c, l);
     if (sb) return { ok: true, at: t, mode: 'sandbox', stations: [
-      { key: 'sorter', label: 'Sorter', state: 'working', people: ['Paul'], current: [{ person: 'Paul', rid: '3521009001', orderNumber: '3521009001', customer: 'Sandbox Buyer', scannedAt: T - 95000, thumbUrl: thumb('#d9cfb8', 'S'), qr: { text: '3521009001' }, pieces: [{ id: 's1', label: 'Piece 1', thumbUrl: thumb('#c8bb9c', '1') }] }], lastEventAt: T - 95000, counts: { partsToday: 29, ordersToday: 25 } }],
-      signedIn: [{ name: 'Paul', stationKey: 'sorter', since: nyAt(d, 0, 40), lastSeenAt: T - 40000 }] };
+      { key: 'sorting', label: 'Sorting', state: 'working', people: ['Paul'], current: [{ person: 'Paul', rid: '3521009001', orderNumber: '3521009001', customer: 'Sandbox Buyer', scannedAt: T - 95000, thumbUrl: thumb('#d9cfb8', 'S'), qr: { text: '3521009001' }, pieces: [{ id: 's1', label: 'Piece 1', thumbUrl: thumb('#c8bb9c', '1') }] }], lastEventAt: T - 95000, counts: { partsToday: 29, ordersToday: 25 } }],
+      signedIn: [{ name: 'Paul', stationKey: 'sorting', since: nyAt(d, 0, 40), lastSeenAt: T - 40000 }] };
     const cur = (person, rid, ago, n, c) => ({ person, rid, orderNumber: rid, customer: 'Buyer ' + rid.slice(-3), scannedAt: T - ago, thumbUrl: thumb(c, 'O'), qr: { text: rid }, pieces: Array.from({ length: n }, (_, i) => ({ id: rid + '-' + i, label: 'Piece ' + (i + 1), thumbUrl: thumb(c, String(i + 1)) })) });
     const bump = st.bumps * 3;
     return { ok: true, at: t, mode: 'real', stations: [

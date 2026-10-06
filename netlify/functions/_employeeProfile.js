@@ -179,6 +179,7 @@ function make(K) {
         const st = displayStation(st0);                                // (counters stored under "sorter" or "qr" add to Sorting)
         const v = KIND.readStationCounters(st, v0);                          // (the Welding station keeps its scans, time and matched count, never pieces, orders or completions)
         const a = pd.st[st] || (pd.st[st] = tmpl()); for (const k of KEYS) a[k] += Math.max(0, num(v[k]));
+        const ob = pd.ob || (pd.ob = {}), o = ob[st] || (ob[st] = {}); o[st0] = (o[st0] || 0) + Math.max(0, num(v.orders) - num(v.undoOrders));
         const fa = ms(v.firstAt), la = ms(v.lastAt); if (fa > 0 && (!pd.inFirst || fa < pd.inFirst)) pd.inFirst = fa; if (la > pd.inLast) pd.inLast = la;
       }
       for (const [hh, h] of Object.entries(x.hours && typeof x.hours === "object" ? x.hours : {})) {
@@ -207,6 +208,8 @@ function make(K) {
     for (const P of people.values()) {
       P.display = P.canon || niceName(bestForm(P.formCount));
       for (const pd of P.days.values()) {
+        // an order finished at two pages of ONE station (the Sorter app, then a sorting page) is one order there: the larger of the pages' own counts, not their sum
+        for (const [st, src] of Object.entries(pd.ob || {})) { const a = pd.st[st]; if (a && Object.keys(src).length > 1) { a.orders = Math.max(...Object.values(src)); a.undoOrders = 0; } }
         if (pd.spans.length) {
           pd.signedMs = covered(pd.spans.map(x => [x.s, x.e])); pd.rawMs = pd.spans.reduce((n, x) => n + (x.e - x.s), 0);
           const per = {}; for (const x of pd.spans) (per[x.station] || (per[x.station] = [])).push([x.s, x.e]);
