@@ -37,7 +37,7 @@
     playback:'Your browser paused OpenAI audio. End voice and start again to allow playback.',
     unsupported:'This browser cannot start OpenAI voice. Try a browser with microphone access, or type here.',
     audioSetup:'Voice audio initialization timed out.',
-    allocation:'This preview’s voice allocation is paused. You can still type.',
+    allocation:'This preview\u2019s voice allocation is paused. You can still type.',
     disabled:'OpenAI voice is not enabled in this preview. You can still type.',
     signIn:'Sign in to the isolated preview before testing live voice.',
     expired:'Select Talk to me again to start a fresh voice session.',
@@ -121,7 +121,7 @@
       // Authentication redirects and intermediary HTML errors are not provider
       // failures. Preserve the actionable local explanation without exposing
       // an upstream body, arbitrary code or credentials to the shopper.
-      if(!response.ok||data?.enabled===false){const known={VOICE_ALLOCATION_UNAVAILABLE:MESSAGES.allocation,VOICE_DISABLED:MESSAGES.disabled,PREVIEW_SIGN_IN_REQUIRED:MESSAGES.signIn,VOICE_SESSION_EXPIRED:MESSAGES.expired};throw Error(known[data?.code]||(response.status===401?MESSAGES.signIn:response.status===429?MESSAGES.rate:data?.enabled===false&&!data?.code?MESSAGES.disabled:MESSAGES.unavailable));}
+      if(!response.ok||data?.enabled===false){const known={VOICE_ALLOCATION_UNAVAILABLE:MESSAGES.allocation,VOICE_DISABLED:MESSAGES.disabled,PREVIEW_SIGN_IN_REQUIRED:MESSAGES.signIn,VOICE_SESSION_EXPIRED:MESSAGES.expired,VOICE_SESSION_REUSED:MESSAGES.expired,VOICE_GUARD_UNAVAILABLE:MESSAGES.unavailable};throw Error(known[data?.code]||(response.status===401?MESSAGES.signIn:response.status===429?MESSAGES.rate:data?.enabled===false&&!data?.code?MESSAGES.disabled:MESSAGES.unavailable));}
       if(!data||typeof data!=='object'||Array.isArray(data)||body.action==='capabilities'&&data.enabled!==true)throw Error(MESSAGES.unavailable);return data;
     }
     function cleanup(){
@@ -180,7 +180,7 @@
       const output=event.response?.output,hasOutput=Array.isArray(output)&&output.some(item=>Array.isArray(item?.content)&&item.content.some(part=>['audio','output_audio','text','output_text'].includes(part?.type))),hasOtherTool=Array.isArray(output)&&output.some(item=>item?.type==='function_call'&&item.name!=='set_avatar_performance');
       if(!wasActive||event.response?.status!=='completed'||!performance.expression||performance.otherTool||hasOtherTool||performance.hadContent||hasOutput||performanceContinuationUsed||outputPlaying||inputSpeaking||doc?.hidden||!bound||bound.toolsDisabled||bound.turnVersion!==turnVersion||!activeInputCommitted||bound.inputItemId!==activeInputItemId)return;
       performanceContinuationUsed=true;
-      requestResponse({tool_choice:'none',max_output_tokens:400,instructions:'Answer the shopper’s current utterance naturally and briefly. The presentation cue was internal: do not mention tools, animation, or technical details. Do not call tools or add unverified product facts.'},bound.turnVersion,bound.inputItemId);
+      requestResponse({tool_choice:'none',max_output_tokens:400,instructions:'Answer the shopper\u2019s current utterance naturally and briefly. The presentation cue was internal: do not mention tools, animation, or technical details. Do not call tools or add unverified product facts.'},bound.turnVersion,bound.inputItemId);
     }
     async function executeTool(event,current){
       const callId=eventId(event.call_id);if(!callId||toolCalls.has(callId))return;
