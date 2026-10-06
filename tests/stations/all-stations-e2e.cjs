@@ -39,6 +39,7 @@ const R = FX.R, THREADS = FX.THREAD_IDS;
 
 const assert = (ok, msg) => { if (!ok) throw new Error(msg); };
 const eq = (a, b, msg) => { const x = JSON.stringify(a), y = JSON.stringify(b); if (x !== y) throw new Error(msg + ': got ' + x + ', wanted ' + y); };
+const mv = x => (x && typeof x === 'object' ? x.value : x);          // (the reader hands figures as { value, prev, delta ... })
 const same = (a, b) => JSON.stringify([...a].sort()) === JSON.stringify([...b].sort());
 const say = s => process.stdout.write(s + '\n');
 const TOR = (h, m) => Date.parse('2026-10-07T00:00:00Z') + 4 * 3600e3 + (h * 60 + m) * 60e3;        // Toronto wall time on the test day (EDT, UTC-4)
@@ -433,12 +434,12 @@ fs.mkdirSync(SHOTS, { recursive: true });
               assert(Math.abs(st.minutes - (tr.mins[st.station] || 0)) <= 1.0, person + ' at ' + st.station + ': ' + st.minutes + ' min on the page, ' + (tr.mins[st.station] || 0).toFixed(1) + ' from the sessions');
             }
             assert(ovRow, 'the Overview has no row for ' + person);
-            eq([ovRow.totals.parts, ovRow.totals.orders], [srv.kpis.parts, srv.kpis.orders], person + ': Overview row vs the person page (pieces, orders)');
+            eq([ovRow.totals.parts, ovRow.totals.orders], [mv(srv.kpis.parts), mv(srv.kpis.orders)], person + ': Overview row vs the person page (pieces, orders)');
             for (const st of srv.stations) { const o = ovRow.stations.find(x => x.station === st.station); assert(o, 'the Overview row has no ' + st.station); eq([o.parts, o.orders], [st.parts, st.orders], person + ' at ' + st.station + ': Overview row vs person (pieces, orders)'); assert(Math.abs(o.minutes - st.minutes) <= 0.6, person + ' at ' + st.station + ': Overview ' + o.minutes + ' min vs person ' + st.minutes); }
             // on screen
             assert(pv.name === person || pv.name === nameOnPage, 'the page names ' + pv.name);
-            eq(String(pv.kpis['kpis.parts']).replace(/[^\d.]/g, ''), String(srv.kpis.parts), person + ': "Pieces finished" on screen');
-            eq(String(pv.kpis['kpis.orders']).replace(/[^\d.]/g, ''), String(srv.kpis.orders), person + ': "Orders worked" on screen');
+            eq(String(pv.kpis['kpis.parts']).replace(/[^\d.]/g, ''), String(mv(srv.kpis.parts)), person + ': "Pieces finished" on screen');
+            eq(String(pv.kpis['kpis.orders']).replace(/[^\d.]/g, ''), String(mv(srv.kpis.orders)), person + ': "Orders worked" on screen');
             for (const st of srv.stations) assert(new RegExp(st.label + '\\s*[\\d.]+\\s*(min|m|h)').test(pv.chips) || pv.chips.includes(st.label), person + ': the page shows no hours chip for ' + st.label + ': "' + pv.chips + '"');
             break;
           } catch (e) { if (Date.now() - t0 > 60000) throw e; await sleep(2500); await keep.poke(); }
@@ -543,21 +544,76 @@ fs.mkdirSync(SHOTS, { recursive: true });
       const pv = await P.personPage(PEOPLE.asm, { settle: 3500 }); await P.back();
       assert(/Signed out after 10 minutes without input/.test(pv.text), 'the person page of ' + PEOPLE.asm + ' does not say why they are out: "' + pv.where + '"');
     });
-    await check('C-LOST1', 'nothing lost after the idle sign-out: the orders in the boxes, the sorting batch and the typed notes and drafts are still on every screen', ['SA1', 'SA2', 'SA3', 'SA4', 'IN3', 'WS1'], async () => {
-      const now = await screenOf(), bad = [];
+    const loginShown = async k => {
+      const p = S.pages[k]; if (!p || p.isClosed()) return false;
+      if (k === 'sort') return p.evaluate(() => /Set your name/i.test((document.querySelector('#sortingAsChip .st-as-name') || {}).textContent || ''));
+      if (k === 'inbox') return p.evaluate(() => !document.body.classList.contains('authed'));
+      if (k === 'laser' || k === 'designApp') return p.evaluate(() => !CNEmployee.name() && StationSession.role() === '');
+      if (k === 'weld') return p.evaluate(() => weldRoster().length === 0 && !!document.getElementById('employeeLoginBtn') && document.getElementById('employeeLoginBtn').offsetParent !== null);
+      return p.evaluate(() => window.isEmployeeLoggedIn === false && !!document.getElementById('employeeLoginBtn') && document.getElementById('employeeLoginBtn').offsetParent !== null);
+    };
+    await check('C-LOST1', 'nothing lost after the idle sign-out: each page shows its own sign-in again, and the orders in the boxes, the sorting batch, the typed notes and the draft are still on screen', ['SA1', 'SA2', 'SA3', 'SA4', 'IN3', 'WS1', 'AD1'], async () => {
+      const bad = [], out = [];
+      for (const k of ['weld', 'asm2', 'ship1', 'sort', 'dmsg', 'laser', 'designApp', 'inbox']) if (!(await loginShown(k))) bad.push(k + ': no sign-in shown (still signed in, or the page lost its state)'); else out.push(k);
+      assert(out.length, 'nobody was signed out, so there is nothing to compare: ' + bad.join(' ; '));
+      const now = await screenOf();
       for (const [k, v] of Object.entries(screenBefore)) { const n = now[k]; if (!n) { bad.push(k + ' page gone'); continue; } for (const f of Object.keys(v)) if (v[f] && String(n[f]) !== String(v[f])) bad.push(k + '.' + f + ' was "' + v[f] + '" now "' + n[f] + '"'); }
+      assert((screenBefore.asm2 || {}).msg === S.last.asmDraft && (screenBefore.inbox || {}).draft === S.last.inboxDraft, 'the typed note and draft were not on screen before the quiet');
       assert(!bad.length, bad.join(' ; '));
-      assert((screenBefore.asm2 || {}).msg === S.last.asmDraft, 'the assembly note was not typed before');
-    });
-    await check('C-IN3', 'the inbox keeps the draft and sign-in screen says why; its own sign-out suite passes against the real station-session.js', ['IN3', 'AD1'], async () => {
-      assert(landed('AD1'), 'AD1\'s timers are not on main yet (SS=real needs them)');
-      const r = spawnSync(process.execPath, [path.join(root, 'tests/etsy-mail/inbox-signout-rules.cjs')], { env: Object.assign({}, process.env, { SS: 'real', PW_DIR: path.dirname(path.dirname(require.resolve(path.join(pwDir || '/opt/node22/lib/node_modules/playwright/node_modules', 'playwright-core/package.json')))) }), encoding: 'utf8', timeout: 600000 });
-      const out = (r.stdout || '') + (r.stderr || ''); const fails = out.split('\n').filter(l => /^\s*FAIL/.test(l));
-      assert(r.status === 0 && !fails.length, 'inbox-signout-rules (SS=real) exit ' + r.status + (fails.length ? ': ' + fails.slice(0, 4).join(' | ') : ': ' + out.slice(-300)));
     });
 
-    /* ── 17:00 Toronto ── */
-    pending('C-FIVE1', 'at 17:00 Toronto a person with no recent input is signed out ("Signed out at 5:00 pm"); one with input in the last ten minutes stays, then goes idle', ['AD1'], 'written to the contract in AD2 §4 and the inbox suite; runs when AD1\'s timers are on main');
+    /* ── 17:00 Toronto: the same four desks signed in again in the late afternoon; two keep working, two computers sleep through five ── */
+    if (!landed('AD1') && !process.env.FORCE_C2) {
+      pending('C-FIVE1', 'at 17:00 Toronto the ones with input in the last ten minutes stay (then go idle ten minutes after their last input)', ['AD1'], 'runs when AD1\'s timers are on main (or FORCE_C2=1)');
+      pending('C-FIVE2', 'a computer that slept through 17:00 with no recent input is signed out when it wakes: hours end at its last input, the portal says so plainly, the draft is kept', ['AD1'], 'runs when AD1\'s timers are on main (or FORCE_C2=1)');
+      pending('C-FIVE3', 'the Admin is still signed in after 17:00 and after more quiet', ['AD1'], 'runs when AD1\'s timers are on main (or FORCE_C2=1)');
+    } else {
+      await W.jump(TOR(16, 20) - await W.now()); await sleep(3000);
+      const desks = [['asm2', PEOPLE.asm, 'assembly-2'], ['ship1', PEOPLE.ship, 'shipping-1'], ['sort', PEOPLE.sort, 'sorting-1'], ['inbox', PEOPLE.inbox, 'etsy-mail-1']];
+      await check('C-FIVE0', 'late afternoon: the four desks sign in again (PIN, name or inbox sign-in), the inbox draft is back', ['AD1', 'IN3'], async () => {
+        await A.pinSignIn(S.pages.asm2, PEOPLE.asm); await A.pinSignIn(S.pages.ship1, PEOPLE.ship); await A.sortingSignIn(S.pages.sort, PEOPLE.sort); await A.inboxSignIn(S.pages.inbox, 'ines');
+        for (const [, person, dev] of desks) await openSession(person, dev);
+        assert((await S.pages.inbox.evaluate(() => (document.getElementById('emDraftText') || {}).value)) === S.last.inboxDraft, 'the inbox draft did not come back at the next sign-in');
+      });
+      const poke = p => p.mouse.move(70 + Math.random() * 300, 150 + Math.random() * 200).then(() => p.mouse.move(90 + Math.random() * 300, 160 + Math.random() * 200)).catch(() => {});
+      const asleep = [S.pages.sort.context(), S.pages.inbox.context()];
+      S.last.sleepInput = { [PEOPLE.sort]: await lastInputOf(S.pages.sort), [PEOPLE.inbox]: await lastInputOf(S.pages.inbox) };
+      const sleptDraft = await S.pages.inbox.evaluate(() => { const t = document.getElementById('emDraftText'); if (t) { t.value = t.value + ' (typed just before five)'; t.dispatchEvent(new Event('input', { bubbles: true })); return t.value; } return ''; });
+      S.last.ivyInput = 0;
+      const stepTo = async (h, m) => {
+        for (;;) { const n = await W.now(); if (n >= TOR(h, m)) return; await W.advance(60000, { step: 60000, except: asleep, settle: 150, between: async () => { const t = await W.now(); if (t <= TOR(17, 5)) await poke(S.pages.asm2); if (t <= TOR(16, 55)) { await poke(S.pages.ship1); S.last.ivyInput = await lastInputOf(S.pages.ship1); } } }); }
+      };
+      await stepTo(17, 0); await W.advance(30000, { step: 30000, except: asleep, settle: 150 });
+      const at500 = { asm: await sessionFor(PEOPLE.asm, 'assembly-2'), ship: await sessionFor(PEOPLE.ship, 'shipping-1') };
+      await check('C-FIVE1', 'at 17:00 Toronto the ones with input in the last ten minutes stay signed in; ten minutes after their last input they go idle', ['AD1', 'AD2'], async () => {
+        assert(at500.asm.endAt == null && at500.ship.endAt == null, 'signed out at 17:00 with recent input: ' + JSON.stringify([at500.asm.endReason, at500.ship.endReason]));
+        await stepTo(17, 7);
+        const ship = await endedAs(PEOPLE.ship, 'shipping-1', undefined, 25000); eq(ship.endReason, 'idle', 'Ivy (last input 16:55) ended');
+        assert(Math.abs(ship.endAt - S.last.ivyInput) < 20000, 'Ivy\'s hours end ' + Math.round((ship.endAt - S.last.ivyInput) / 1000) + ' s from her last input');
+        assert((await sessionFor(PEOPLE.asm, 'assembly-2')).endAt == null, 'Michael (input at 17:05) is already out at 17:07');
+      });
+      // the two sleeping computers wake at 17:01 by their own clocks: no input since 16:25
+      await W.wake(asleep[0], TOR(17, 1) - TOR(16, 25)); await W.wake(asleep[1], TOR(17, 1) - TOR(16, 25)); await sleep(5000);
+      await W.advance(40000, { step: 20000, settle: 200 });
+      await check('C-FIVE2', 'a computer that slept through 17:00 with no recent input is signed out when it wakes; hours end at its last input; the portal says so plainly; the draft stays', ['AD1', 'AD2', 'IN3'], async () => {
+        for (const [k, person, dev] of [['sort', PEOPLE.sort, 'sorting-1'], ['inbox', PEOPLE.inbox, 'etsy-mail-1']]) {
+          const s = await endedAs(person, dev, undefined, 25000);
+          assert(['idle', 'closing'].includes(s.endReason), person + ' ended "' + s.endReason + '"');
+          assert(Math.abs(s.endAt - S.last.sleepInput[person]) < 20000, person + '\'s hours end ' + Math.round((s.endAt - S.last.sleepInput[person]) / 1000) + ' s from the last input');
+          assert(await loginShown(k), person + '\'s page shows no sign-in');
+        }
+        assert((await S.pages.inbox.evaluate(() => (document.getElementById('emDraftText') || {}).value)) === sleptDraft, 'the inbox draft changed across the sign-out');
+        const pv = await P.personPage(PEOPLE.sort, { settle: 3500 }); await P.back();
+        assert(/Signed out (after 10 minutes without input|at 5:00 pm)/.test(pv.text), 'the person page of ' + PEOPLE.sort + ' does not say why they are out: "' + pv.where + '"');
+        await shot(portal, 'C2-board-after-five');
+      });
+      await check('C-FIVE3', 'the Admin is still signed in after 17:00 and more quiet; Michael goes idle ten minutes after his last input (17:15), not at five', ['AD1', 'AD2'], async () => {
+        await stepTo(17, 17);
+        const m = await endedAs(PEOPLE.asm, 'assembly-2', undefined, 25000); eq(m.endReason, 'idle', 'Michael ended');
+        assert(m.endAt > TOR(17, 3) && m.endAt < TOR(17, 8), 'Michael\'s hours end at ' + hhmm(m.endAt) + ', his last input was about 17:05');
+        const adm = await sessionFor('Paul K.', 'charm-nest-1'); assert(adm && adm.endAt == null || (await portal.evaluate(() => !!StationActivity.who())), 'the Admin was signed out');
+      });
+    }
   }
 
   /* ═════════════════════════════ the whole run: nothing outside, nothing paid, no PIN ═════════════════════════════ */
@@ -577,9 +633,20 @@ fs.mkdirSync(SHOTS, { recursive: true });
     const errs = W.errors.filter(e => !/Failed to fetch|Load failed|ResizeObserver/.test(e)); assert(!errs.length, errs.slice(0, 4).join(' | '));
   });
 
+  await browser.close(); W.stop();
+  // the inbox's own sign-out suite runs against the real station-session.js once AD1's timers are on main (it opens its own browser, so ours is closed first)
+  if (PHASES.includes('C')) {
+    await check('C-IN3', 'the inbox suite (IN3: idle, 5 pm, Admin, input, a reply in flight, another person) passes against the REAL station-session.js: SS=real node tests/etsy-mail/inbox-signout-rules.cjs', ['IN3', 'AD1'], async () => {
+      assert(landed('AD1'), 'AD1 timers are not on main yet (SS=real needs them)');
+      const env = Object.assign({}, process.env, { SS: 'real' });
+      if (!env.PW_DIR) env.PW_DIR = path.dirname(require.resolve('playwright-core/package.json', { paths: [pwDir || '/opt/node22/lib/node_modules/playwright/node_modules', root] }));
+      const r = spawnSync(process.execPath, [path.join(root, 'tests/etsy-mail/inbox-signout-rules.cjs')], { env, encoding: 'utf8', timeout: 900000 });
+      const out = (r.stdout || '') + (r.stderr || ''); const fails = out.split('\n').filter(l => /^\s*FAIL/.test(l));
+      assert(r.status === 0 && !fails.length, 'inbox-signout-rules (SS=real) exit ' + r.status + (fails.length ? ': ' + fails.slice(0, 4).join(' | ') : ': ' + out.slice(-300)));
+    });
+  }
   say(table());
   fs.writeFileSync(path.join(SHOTS, 'st1-results.json'), JSON.stringify({ at: new Date().toISOString(), seconds: Math.round((Date.now() - t00) / 1000), landed: landedAll(), results }, null, 1));
-  await browser.close(); W.stop();
   const failed = results.filter(r => r.status === 'FAILED').length, pend = results.filter(r => r.status === 'PENDING').length;
   process.exit(failed || (process.env.STRICT && pend) ? 1 : 0);
 })().catch(e => { console.error('THE TEST ITSELF BROKE:', e && e.stack || e); process.exit(2); });

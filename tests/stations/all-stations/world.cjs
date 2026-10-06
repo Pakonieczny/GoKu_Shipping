@@ -91,6 +91,12 @@ class World {
     this.ctxs = this.ctxs.filter(c => c !== ctx);
     try { await ctx.close(); } catch (_) {}
   }
+  /** a long jump of the shop's clock (a night, an afternoon): every computer's clock jumps with it and its timers fire once, as a page wakes after a long gap */
+  async jump(ms, o) {
+    o = o || {};
+    await this.skew(ms);
+    for (const c of this.ctxs) { if (o.except && o.except.includes(c)) continue; try { await c.clock.fastForward(ms); } catch (_) {} }
+  }
   /** one computer asleep through a stretch of time: its clock jumps (its timers fire once, on waking), the shop's clock is not touched here */
   async wake(ctx, ms) { try { await ctx.clock.fastForward(ms); } catch (_) {} }
   /** the fake clock of every browser context moves together (and the shop's own clock with it): steps of `step` ms, so timers and beats fire as they would */
