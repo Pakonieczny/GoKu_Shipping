@@ -43,7 +43,7 @@ function apply(prev, data, merge) {
   }
   return out;
 }
-const ref = p => ({ path: p, id: p.split('/').pop() });
+const ref = p => ({ path: p, id: p.split('/').pop(), set: async (d, o) => { docs.set(p, apply(docs.get(p), d, !!(o && o.merge))); } });
 const snap = r => ({ exists: docs.has(r.path), data: () => docs.get(r.path), ref: r });
 const fakeDb = {
   collection: c => ({ doc: id => ref(c + '/' + id) }),
@@ -147,6 +147,8 @@ async function main() {
       let b = {}; try { b = JSON.parse(req.postData() || '{}'); } catch (_) {}
       if (b.orderNumber === 'weld-scan-1' && b.orderNumField !== undefined) {
         net.bodies.push(b);
+        const stored = await send(b);                                         // the real door writes the relay document (Brites_Orders/weld-scan-1)
+        if (stored.status !== 200) return json(r, stored.body, stored.status);
         const data = Object.assign(net.relay, { 'Order Number': b.orderNumField, 'Client Name': b.clientName, 'Brites Messages': b.britesMessages, 'Shipping Label Timestamps': b.shippingLabelTimestamps, 'Employee Name': b.employeeName, 'Staff Note': b.staffNote });
         const copy = JSON.parse(JSON.stringify(data));
         if (net.desk) await net.desk.evaluate(d => { const cbs = window.__fbSnaps['Brites_Orders/weld-scan-1']; cbs[cbs.length - 1]({ exists: true, data: () => d }); }, copy);
@@ -387,6 +389,9 @@ async function main() {
       assert.equal(net.bodies.at(-1).shippingLabelTimestamps, new Date(nb.at).toISOString(), 'the scan time stays where it always was');
       assert.equal(matchedOf(live)[0].person, A); assert.ok(Math.abs(matchedOf(live)[0].at - nb.at) < 2000);
       assert.deepEqual(await outbox(), [], 'sent: nothing left on the phone');
+      const relayDoc = docs.get('Brites_Orders/weld-scan-1');
+      assert.ok(relayDoc && relayDoc['Order Number'] === live && relayDoc['Shipping Label Timestamps'] === new Date(nb.at).toISOString() && JSON.parse(relayDoc['Staff Note']).id === nb.id, 'the real door stores the relay document with the scan\'s time and id: ' + JSON.stringify(relayDoc));
+      assert.equal(relayDoc['Employee Name'], 'ScannerBot', 'no person: the phone never says who');
       // offline: three scans are kept on the phone
       net.down = true; await phoneCtx.setOffline(true);
       const t1 = Date.now(); await scan(o1); await wait(1100); await scan(o2); await wait(1100); await scan(o3);
