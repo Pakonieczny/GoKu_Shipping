@@ -46,7 +46,7 @@ function harness(t) {
 }
 
 test('the real scene has readable faceted face geometry, not only recoloured eye rings', t => {
-  const h = harness(t), names = ['expression-brow-left', 'expression-brow-right', 'expression-upper-shutter', 'expression-lower-shutter', 'expression-cheek-left', 'expression-cheek-right', 'expression-smile-glyph', 'expression-signal-0', 'expression-signal-1', 'expression-signal-2'];
+  const h = harness(t), names = ['expression-brow-left', 'expression-brow-right', 'expression-eye-left', 'expression-eye-right', 'expression-cheek-left', 'expression-cheek-right', 'expression-smile-glyph', 'expression-signal-0', 'expression-signal-1', 'expression-signal-2'];
   for (const name of names) {
     const mesh = h.get(name); assert.ok(mesh?.isMesh, name); assert.equal(mesh.visible, true, name);
     for (const attribute of Object.values(mesh.geometry.attributes)) assert.ok([...attribute.array].every(Number.isFinite), name + ' finite buffer');
@@ -54,21 +54,21 @@ test('the real scene has readable faceted face geometry, not only recoloured eye
     if (mesh.geometry.index) assert.ok([...mesh.geometry.index.array].every(index => index >= 0 && index < mesh.geometry.attributes.position.count), name + ' valid indices');
   }
   const description = h.engine.snapshot().character.faceGeometry;
-  assert.deepEqual({...description}, {brows: 2, shutters: 2, cheekFacets: 2, smileGlyph: true, signalMarkers: 3});
+  assert.deepEqual({...description}, {lightRibbons: 2, brows: 2, shutters: 0, cheekFacets: 2, smileGlyph: true, signalMarkers: 3, appreciationGlyphs: 2, speechBars: 5});
   assert.match(h.declarations.interactionProfile.signal, /brow silhouette/);
 });
 
-test('warmth and delight change smile curvature, cheek facets and shutters without changing identity', t => {
+test('warmth and delight change smile curvature, cheek facets and both eye silhouettes', t => {
   const h = harness(t); h.pose({faceExpression: 'neutral', faceBrowLift: 0, faceBrowTilt: 0, smileCurve: .1, eyeSmile: 0, lidClosure: 0, cheekGlow: .1});
-  const neutral = {smile: h.get('expression-smile-glyph').scale.y, cheek: h.get('expression-cheek-left').scale.x, shutter: h.get('expression-lower-shutter').position.y};
+  const neutral = {smile: h.get('expression-smile-glyph').scale.y, cheek: h.get('expression-cheek-left').scale.x, eyes: ['expression-eye-left','expression-eye-right'].map(name=>h.get(name).geometry.attributes.position.array.slice())};
   h.pose({faceExpression: 'warm', faceBrowLift: .2, faceBrowTilt: 0, smileCurve: .75, eyeSmile: .7, lidClosure: .098, cheekGlow: .75});
   assert.ok(h.get('expression-smile-glyph').scale.y > neutral.smile * 2);
   assert.ok(h.get('expression-cheek-left').scale.x > neutral.cheek);
-  assert.ok(h.get('expression-lower-shutter').position.y > neutral.shutter);
+  for(const [i,name] of ['expression-eye-left','expression-eye-right'].entries())assert.notDeepEqual(h.get(name).geometry.attributes.position.array,neutral.eyes[i]);
   assert.equal(h.engine.snapshot().character.faceExpression, 'warm');
   h.pose({faceExpression: 'delighted', smileCurve: 1, cheekGlow: 1});
   assert.equal(h.engine.snapshot().character.faceExpression, 'delighted');
-  assert.equal(h.engine.snapshot().character.digitalEyes, 1);
+  assert.equal(h.engine.snapshot().character.digitalEyes, 2);
 });
 
 test('curiosity makes a readable raised-brow asymmetry while reassurance relaxes it', t => {
@@ -83,11 +83,11 @@ test('curiosity makes a readable raised-brow asymmetry while reassurance relaxes
 
 test('expression cue inputs are bounded and malformed cues cannot deform face geometry into NaN', t => {
   const h = harness(t); h.pose({faceBrowLift: Infinity, faceBrowTilt: NaN, eyeSmile: -99, cheekGlow: 99, smileCurve: NaN, faceSignal: -Infinity, lidClosure: 99});
-  for (const name of ['expression-brow-left', 'expression-brow-right', 'expression-upper-shutter', 'expression-lower-shutter', 'expression-cheek-left', 'expression-smile-glyph']) {
+  for (const name of ['expression-brow-left', 'expression-brow-right', 'expression-eye-left', 'expression-eye-right', 'expression-cheek-left', 'expression-smile-glyph']) {
     const part = h.get(name); for (const vector of [part.position, part.rotation, part.scale]) for (const key of ['x', 'y', 'z']) assert.ok(Number.isFinite(vector[key]), name + '.' + key);
   }
   assert.ok(h.get('expression-cheek-left').scale.x <= 1.1);
-  assert.ok(h.get('expression-lower-shutter').position.y <= -.086 + 1e-8);
+  for(const name of ['expression-eye-left','expression-eye-right'])assert.ok([...h.get(name).geometry.attributes.position.array].every(Number.isFinite));
 });
 
 test('soles remain exactly supported when speech and legacy bob/scale inputs vary', t => {
@@ -128,7 +128,7 @@ test('face-anchor projection stays finite and accurate across tall and narrow la
   const h = harness(t);
   for (const [width, height] of [[480, 440], [180, 440], [390, 280], [980, 440]]) {
     h.resize(width, height); h.pose({headPitch: 0, headYaw: 0});
-    const anchor = h.engine.gazeAnchor(), projected = h.get('articulated-expression-head').localToWorld(new THREE.Vector3(0, .022, .685)).project(h.camera);
+    const anchor = h.engine.gazeAnchor(), projected = h.get('articulated-expression-head').localToWorld(new THREE.Vector3(0, .112, .71)).project(h.camera);
     assert.ok(anchor.x > 0 && anchor.x < 1); assert.ok(anchor.y > 0 && anchor.y < 1);
     assert.ok(Math.abs(anchor.x - (projected.x + 1) / 2) < 1e-9); assert.ok(Math.abs(anchor.y - (1 - projected.y) / 2) < 1e-9);
     assert.deepEqual({...h.engine.snapshot().gazeAnchor}, {...anchor});
@@ -152,15 +152,15 @@ test('time alone no longer spins a visible face ornament or loops a speech arm',
 });
 
 test('idle, silent speech and held output levels keep scene orientation and status shapes steady', t => {
-  const h = harness(t), names = ['supported-upper-body', 'articulated-expression-head', 'retired-aperture-ornament', 'retired-status-bar-0', 'retired-status-bar-1', 'retired-status-bar-2', 'retired-status-bar-3', 'retired-status-bar-4'];
+  const h = harness(t), names = ['supported-upper-body', 'articulated-expression-head', 'retired-aperture-ornament', 'expression-speech-bar-0', 'expression-speech-bar-1', 'expression-speech-bar-2', 'expression-speech-bar-3', 'expression-speech-bar-4'];
   const capture = () => names.map(name => {const part = h.get(name); return {name, position: part.position.toArray(), rotation: part.rotation.toArray(), scale: part.scale.toArray()};});
   for (const state of ['idle', 'speaking', 'thinking', 'listening']) for (const speechEnergy of [0, .8]) {
     const fields = {state, speechEnergy, mouthOpen: speechEnergy, statusWave: 0, headPitch: 0, headYaw: 0, headRoll: 0, bodyRoll: 0, bodyYaw: 0, lean: 0, ringRotation: -.1, armLiftLeft: 0, armLiftRight: 0, offer: 0, helloWave: 0};
     h.advance(1000); h.pose(fields); const first = capture();
     h.advance(11000); h.pose(fields); assert.deepEqual(capture(), first, state + ' held energy ' + speechEnergy);
   }
-  h.pose({state: 'speaking', speechEnergy: 0, statusWave: 0}); const silent = h.get('retired-status-bar-2').scale.y;
-  h.pose({state: 'speaking', speechEnergy: .8, statusWave: 0}); assert.ok(h.get('retired-status-bar-2').scale.y > silent);
+  h.pose({state: 'speaking', speechEnergy: 0, statusWave: 0}); const silent = h.get('expression-speech-bar-2').scale.y;
+  h.pose({state: 'speaking', speechEnergy: .8, statusWave: 0}); assert.ok(h.get('expression-speech-bar-2').scale.y > silent);
 });
 
 test('2-D fallback removes float, automatic look, orbit and speech gesture loops', () => {
