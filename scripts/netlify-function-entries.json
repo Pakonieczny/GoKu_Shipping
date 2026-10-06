@@ -190,6 +190,7 @@
     "_activityKinds.js",
     "_stationActivity.js",
     "_stationLive.js",
+    "_laserSheetTime.js",
     "_stationPinLogin.js",
     "_orderCancel.js",
     "_etsyApiMeter.js",

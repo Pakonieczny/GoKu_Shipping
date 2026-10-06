@@ -2248,12 +2248,27 @@ async function op_laserDone(b) {
   });
   if (res.error) return res;
   const marks = res.marks || []; delete res.marks;
+  /* How long each sheet marked here took (Paul, 6 Oct: "elapsed time since most recent login or, if login is continuous, since the last sheet was marked completed";
+     _laserSheetTime.js): decided once, on the server's own clock, from the person's Laser sign-in (Station_Sessions) and their earlier completions, and written once to
+     Laser_Sheet_Times beside the page's own figure (b.laserTime). A completion taken back writes a marker, never an edit. It never fails the press: a failure is logged and
+     the sheet is marked as it was. */
+  let timed = null;
+  try {
+    const LT = require("./_laserSheetTime"), changed = marks.filter(m => (done ? !(m.was > 0) : m.was > 0));
+    if (done) {
+      timed = await LT.recordDone(db, FV, PREFIX, { by, at, device, via, client: LT.cleanClient(b.laserTime),
+        marks: changed.map(m => ({ sheetId: m.sheetId, sheet: sheetLabel(m.d), setId: m.d.setId || res.setId || "", setSeq: m.d.setSeq, metal: m.d.metal,
+          pieces: num(m.d.placedCount) || (Array.isArray(m.d.placements) ? m.d.placements.length : 0), orders: new Set(m.orders.map(String)).size })) });
+      if (timed.sheets.length) res.laserTime = { at, sheets: timed.sheets };
+    } else await LT.recordUndone(db, FV, PREFIX, { by, at, marks: changed.map(m => ({ sheetId: m.sheetId, was: m.was })) });
+  } catch (e) { console.warn("[charmNestLibrary] sheet time not recorded:", (e && e.message) || e); }
+  const timeOf = new Map(((timed && timed.sheets) || []).map(x => [x.sheetId, x]));
   /* every order on each sheet the call marked (laserDone, a milestone) or took the mark from (a note, "laser cut
      undone"). Only a sheet whose mark changed: one marked again keeps its first event, a retry adds none. */
   await stamp(() => marks.filter(m => (done ? !(m.was > 0) : m.was > 0)).flatMap(m => {
-    const sheet = sheetLabel(m.d), orders = [...new Set(m.orders.map(String))].slice(0, 300);
+    const sheet = sheetLabel(m.d), orders = [...new Set(m.orders.map(String))].slice(0, 300), tm = timeOf.get(m.sheetId);
     return orders.map(orderId => done
-      ? { orderId, type: "laserDone", at, by, station: "laser", device, sheetId: m.sheetId, sheet, setId: res.setId || "", text: sheet, data: { signedIn: true, marked: kind, via: via || undefined }, id: `${m.sheetId}-${at}` }
+      ? { orderId, type: "laserDone", at, by, station: "laser", device, sheetId: m.sheetId, sheet, setId: res.setId || "", text: sheet, data: Object.assign({ signedIn: true, marked: kind, via: via || undefined }, tm && tm.seconds != null ? { sheetSeconds: tm.seconds, startedFrom: tm.startedFrom } : {}), id: `${m.sheetId}-${at}` }
       : { orderId, type: "note", at, by, station: "laser", device, sheetId: m.sheetId, sheet, setId: res.setId || "", text: `laser cut undone · ${sheet}`, data: { undone: "laserDone", laserDoneAt: m.was, laserDoneBy: m.wasBy, signedIn: !!by, via: via || undefined }, id: `laserUndone-${m.sheetId}-${m.was}` });
   }), "laser done");
   return Object.assign(res, { counts: await doneCounts() });
@@ -3052,6 +3067,15 @@ async function op_sessionsList(b) {
   return { sessions: rows.slice(0, limit), truncated: rows.length > limit, since, until, now, goneAfterMs: SESSION_GONE_MS };
 }
 OPS.sessionsList = op_sessionsList;
+
+/* ── laserSheetLast {by}: that person's newest standing sheet completion of the last 26 hours (_laserSheetTime.js). The Sorter page asks it to know the PREVIOUS
+   completion of the person after a reload or on another computer, so its own figure for the next sheet counts from it (the server decides the stored figure itself). Read only. ── */
+OPS.laserSheetLast = async b => {
+  const by = str(b.by, 80).trim();
+  if (!by) return { error: "Say whose clock" };
+  const now = Date.now();
+  return { ok: true, now, last: await require("./_laserSheetTime").lastFor(db, PREFIX, by, now) };
+};
 
 /* ── The Library's moves (charm-nest-flow.js, window.LibraryFlow; Paul, 3 Oct: drag a sheet or a set between In progress,
    Laser cutting and Completed, forwards and backwards). Where a sheet or set stands is read from its records, never stored:

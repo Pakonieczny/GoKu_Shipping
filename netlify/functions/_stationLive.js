@@ -394,6 +394,9 @@ async function op(ctx, body, H) {
         scannedAt: c.scannedAt, beatAt: c.beatAt, thumbUrl: c.thumbUrl, photoUrl: c.photoUrl, vectorUrl: c.vectorUrl, qr: c.qr, pieces: c.pieces, pieceCount: c.pieceCount, note: c.note })),
       devices: [...devs.values()], lastEventAt: lastEventAt || null, counts: { partsToday: t.parts, ordersToday: t.orders, scansToday: t.scans } });
   }
+  // the Laser station's sheet times (LS1, R7; _laserSheetTime.js): the last sheet's time and today's average. Its own read, kept 15 s; the card says nothing when it cannot be read.
+  const ls = await safe(require("./_laserSheetTime").liveBlock(ctx, H), "laser sheet times");
+  if (ls.ok) { const L = stations.find(x => x.key === "laser"); if (L) L.laserSheet = ls.value; } else errors.push(ls.label + ": " + ls.error);
   const out = { ok: true, at: now, mode: ctx.prefix ? "sandbox" : "real", day: ctx.today, keepAliveMs: KEEPALIVE_MS, staleMs: STALE_MS, stations, signedIn };
   if (errors.length) { out.partial = true; out.errors = errors; }
   else if (capped) out.partial = true;
