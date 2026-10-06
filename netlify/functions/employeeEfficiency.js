@@ -475,6 +475,10 @@ function summarize(pds) {
   const sum = k => stations.reduce((n, s) => n + s[k], 0);
   let active = 0, activeTp = 0, idle = 0, rejects = 0, errors = 0;      // (activeTp: the working time of the stations that count in throughput, the divisor of the pieces-per-hour rate)
   for (const a of Object.values(acc)) { rejects += a.rejects; errors += a.errors; }
+  // worked at the Welding station alone: nothing was logged at a station that counts in throughput (the person page's own rule: a day with none has no pieces or orders to show), yet there was Welding work (a scan, a print, a match or time signed in)
+  let tpAct = false, ntAct = false;
+  for (const [st, a] of Object.entries(acc)) { const any = a.scans + a.completes + a.prints + a.rejects + a.errors + a.undos + a.notes > 0; if (KIND.throughput(st)) { if (any) tpAct = true; } else if (any || a.matched > 0) ntAct = true; }
+  for (const [st, v] of Object.entries(stMs)) if (!KIND.throughput(st) && v > 0) ntAct = true;
   // working and quiet time: each station keeps its own gaps, so a person signed in at two computers at once (overlapping
   // sessions, counted once in signedInMin) adds the gaps of both. Active plus idle can never exceed the time signed in.
   for (const pd of pds) {
@@ -487,7 +491,7 @@ function summarize(pds) {
   const totals = { parts, scanParts: sum("scanParts"), scans, orders: ids.size ? workIds : ordersFin, rejects, errors, activeMin: r1(active / 60000), idleMin: r1(idle / 60000), signedInMin: r1(signed / 60000),
     rate: activeTp >= 60000 ? r1(parts / (activeTp / 3600000)) : 0, secPerScan: evScans > 0 && active > 0 ? r1(active / 1000 / evScans) : 0 };   // (seal scans carry no time: only logged scans divide the active time)
   const source = hasE && hasS ? "mixed" : hasE ? "events" : hasS ? "seals" : hasAny || signed > 0 ? "sessions" : "none";
-  return { stations, totals, perHour: hours.map(shown), hs, ids, source, hasAny: hasAny || signed > 0 };
+  return { stations, totals, perHour: hours.map(shown), hs, ids, source, hasAny: hasAny || signed > 0, weldOnly: !tpAct && ntAct };
 }
 
 /* ── overview ── */
@@ -535,8 +539,8 @@ async function buildOverview(ctx, day, days, withTrend) {
     for (const [id, set] of S.ids) { let s = allIds.get(id); if (!s) allIds.set(id, s = new Set()); set.forEach(x => s.add(x)); for (const st of set) (stIds[st] || (stIds[st] = new Set())).add(id); }
     for (const [st, arr] of Object.entries(S.hs)) { const t = perStationHours[st] || (perStationHours[st] = zeros(24)); for (let h = 0; h < 24; h++) t[h] += arr[h]; }
     for (const st of nowAt) (stNow[st] || (stNow[st] = [])).push(name);
-    people.push({ name, status: live.length ? "on" : "out", firstIn: inPd ? inPd.firstIn : null, lastOut: live.length || !inPd || !inPd.lastOut ? null : inPd.lastOut,
-      onSince: live.length ? Math.min(...live.map(s => s.start)) : null, inDay: inPd ? inPd.day : null, nowAt, source: S.source, stations: S.stations, totals: S.totals, perHour: S.perHour, orders });
+    people.push(Object.assign({ name, status: live.length ? "on" : "out", firstIn: inPd ? inPd.firstIn : null, lastOut: live.length || !inPd || !inPd.lastOut ? null : inPd.lastOut,
+      onSince: live.length ? Math.min(...live.map(s => s.start)) : null, inDay: inPd ? inPd.day : null, nowAt, source: S.source, stations: S.stations, totals: S.totals, perHour: S.perHour, orders }, S.weldOnly ? { noThroughput: true } : {}));   // (noThroughput: worked at the Welding station only: no pieces or orders to count, shown as a dash with the time on task and the matched count)
   }
   people.sort((a, b) => (a.status === "on" ? 0 : 1) - (b.status === "on" ? 0 : 1) || b.totals.parts - a.totals.parts || a.name.localeCompare(b.name));
   // the business: summed over EVERYBODY, then the list is cut (the totals must not lose the people the list does not show)
