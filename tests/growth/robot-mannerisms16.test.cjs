@@ -85,23 +85,25 @@ function cpuMeshFixture() {
   const start = source.indexOf('  const head = new THREE.Group();'), end = source.indexOf('  const decoration = mesh(', start), poseStart = source.indexOf('  const whiteColor = new THREE.Color('), poseEnd = source.indexOf('  function render(pose', poseStart);
   assert.ok(start > 0 && end > start && poseStart > end && poseEnd > poseStart);
   const names = ['ivory','gold','paleGold','face','lidMaterial','eyeMaterial','pupilMaterial','glint','gemMaterial','corneaMaterial','irisMaterial','mouthMaterial'];
-  const materials = Object.fromEntries(names.map(name => [name, new THREE.MeshPhysicalMaterial()]));
-  const script = '(()=>{const geometries=new Set(),geometry=value=>{geometries.add(value);return value;},segments=(high,minimum=16)=>Math.max(minimum,Math.round(high*quality.geometryScale)),avatar=new THREE.Group();' + source.slice(start,end) + '\nconst key=new THREE.SpotLight(),eyeLight=new THREE.PointLight();let sampleTime=1,reducedMotion=false;' + source.slice(poseStart,poseEnd) + '\nreturn {avatar,arms,apertureGeometry,pose:value=>applyPose(value),destroy:()=>geometries.forEach(value=>value.dispose())};})()';
+  const materials = Object.fromEntries(names.map(name => [name, ['irisMaterial', 'mouthMaterial', 'glint'].includes(name) ? new THREE.MeshBasicMaterial({toneMapped: false}) : new THREE.MeshPhysicalMaterial()]));
+  const script = '(()=>{const geometries=new Set(),geometry=value=>{geometries.add(value);return value;},segments=(high,minimum=16)=>Math.max(minimum,Math.round(high*quality.geometryScale)),avatar=new THREE.Group();' + source.slice(start,end) + '\nconst key=new THREE.SpotLight(),eyeLight=new THREE.PointLight();let sampleTime=1,reducedMotion=false;' + source.slice(poseStart,poseEnd) + '\nreturn {avatar,arms,eyes,statusBars,heartGlyphs,pose:value=>applyPose(value),destroy:()=>geometries.forEach(value=>value.dispose())};})()';
   const model = vm.runInNewContext(script, {THREE, quality: avatar.qualityFor({width:390}), ...materials, AVATAR_SCENE_DECLARATIONS: {stateColors:{idle:'#4aa8ff',listening:'#49c9ff',thinking:'#ab87ff',speaking:'#ffcb79',success:'#72ddd1',error:'#ffc28e'}}});
   return {...model, dispose(){model.destroy(); Object.values(materials).forEach(value => value.dispose());}};
 }
 test('production mesh does not celebrate a calm memorial confirmation', () => {
   const f = cpuMeshFixture(); try {
-    f.pose(avatar.poseFor({state:'idle',emotion:'calm',time:0})); const neutral = f.apertureGeometry.attributes.position.array.slice();
-    f.pose(avatar.poseFor({state:'success',emotion:'calm',time:0,elapsed:.6})); assert.deepEqual(f.apertureGeometry.attributes.position.array,neutral);
+    f.pose(avatar.poseFor({state:'idle',emotion:'calm',time:0})); const neutral = f.eyes.map(eye => eye.apertureGeometry.attributes.position.array.slice());
+    f.pose(avatar.poseFor({state:'success',emotion:'calm',time:0,elapsed:.6})); assert.equal(f.eyes.length, 2);
+    f.eyes.forEach((eye, index) => assert.deepEqual(eye.apertureGeometry.attributes.position.array, neutral[index]));
+    assert.ok(f.statusBars.every(bar => !bar.visible)); assert.ok(f.heartGlyphs.every(heart => !heart.visible));
     assert.equal(f.avatar.position.y, 0); for (const {group} of f.arms) assert.ok(group.rotation.y === 0);
   } finally {f.dispose();}
 });
 test('production mesh consumes eye deformation and only offers one arm during a greeting', () => {
   const f = cpuMeshFixture(); try {
-    const base = avatar.poseFor({state:'idle',time:0}); f.pose(base); const before = f.apertureGeometry.attributes.position.array.slice();
-    f.pose({...base,eyeScaleX:1.1,eyeScaleY:.85,eyeDeformation:.2}); assert.notDeepEqual(f.apertureGeometry.attributes.position.array,before);
-    assert.ok([...f.apertureGeometry.attributes.position.array].every(Number.isFinite));
+    const base = avatar.poseFor({state:'idle',time:0}); f.pose(base); const before = f.eyes.map(eye => eye.apertureGeometry.attributes.position.array.slice());
+    f.pose({...base,eyeScaleX:1.1,eyeScaleY:.85,eyeDeformation:.2});
+    f.eyes.forEach((eye, index) => {assert.notDeepEqual(eye.apertureGeometry.attributes.position.array, before[index]); assert.ok([...eye.apertureGeometry.attributes.position.array].every(Number.isFinite)); assert.ok([...eye.apertureGeometry.attributes.normal.array].every(Number.isFinite));});
     f.pose(avatar.poseFor({state:'idle',time:0,mannerism:'greet',mannerismElapsed:.55}));
     const left = f.arms.find(row => row.side === -1).group, right = f.arms.find(row => row.side === 1).group;
     assert.ok(left.rotation.y === 0); assert.ok(right.rotation.y > 0); assert.ok(Math.abs(right.rotation.z) > Math.abs(left.rotation.z));
