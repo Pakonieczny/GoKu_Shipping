@@ -8,6 +8,10 @@
  *    - per person: two Laser people have their own clocks;
  *    - never earlier than the sign-in: an idle, 5 pm, midnight or manual sign-out and a new sign-in restarts the clock;
  *    - a completion with no Laser session (Admin, no role, a Design session) has NO time: it is stored as unknown, never invented.
+ *    - "had a Laser session" = the sign-in was still OPEN by the stations' own rules at that moment (_stationAutoSignout.decide, the very rules the board and
+ *      the sweep apply: Laser is signed out after 60 minutes without input, 30 from 17:00, at the LAST INPUT, and a quiet page is not closed after 15 minutes).
+ *      So a Laser person who starts a long cut and leaves the page alone, a sleeping computer, a page whose beats did not arrive: the sign-in still covers the sheet
+ *      while the station keeps it open. A sign-out the rules already made (idle at the last input, 5 pm, midnight, switching role) ends the clock; a new sign-in restarts it.
  *
  *  THE RECORD: Laser_Sheet_Times/{sheetId}__{at} (Sandbox_Laser_Sheet_Times in the sandbox), one document per sheet completion, written
  *  once by op laserDone (charmNestLibrary.js) from the server's own clock, the Station_Sessions documents and the earlier records
@@ -20,9 +24,10 @@
  *  summarize) has no I/O and is what the test checks against the page's copy. */
 "use strict";
 
+const AutoSignout = require("./_stationAutoSignout");     // the stations' sign-out rules (pure at load: no Firestore until a call): the one place that says when a Laser sign-in ended
 const COLL = "Laser_Sheet_Times", SESSIONS = "Station_Sessions";
 const DONE = "laserSheetDone", UNDONE = "laserSheetUndone";
-const SESSION_GONE_MS = 15 * 60000;            // a session with no beat for this long is closed (the same rule as every reader of Station_Sessions)
+const SESSION_GONE_MS = 15 * 60000;            // a page with no beat for this long is "quiet": most stations close it, the Laser station keeps it until its own limit (stillOpen)
 const LOOKBACK_MS = 26 * 3600e3;               // a Laser sign-in older than this cannot cover a completion: everybody is signed out at midnight (26 h covers the longest day)
 const TOLERANCE_ABS_S = 10, TOLERANCE_REL = 0.05;   // the page's figure and the server's agree within 10 s or 5 %
 const MAX_SECONDS = 24 * 3600;
@@ -58,8 +63,18 @@ function computeStart(at, loginAt, prevAt) {
   return { startAt, startedFrom: fromPrev ? "previousSheet" : "login", seconds: Math.max(0, Math.min(MAX_SECONDS, Math.round((at - startAt) / 1000))) };
 }
 
+/** Was this OPEN Laser sign-in (no end stored yet) still the person's at the moment `at`? By the stations' own rules (_stationAutoSignout.decide, the ones the board and the sweep
+ *  apply to the same rows): not when the rules had already ended it by then (Laser: 60 minutes without input before 17:00, 30 from 17:00, at the last input; an Admin's row keeps the
+ *  old 15 quiet minutes) and not past the New York midnight after it started. A page that is merely quiet (a long cut, a sleeping computer, beats that did not arrive) is still signed in
+ *  while the station keeps it open, so the sheet is timed from the sign-in. */
+function stillOpen(s, startAt, at) {
+  if (at >= AutoSignout.nyMidnightAfter(startAt)) return false;
+  const d = AutoSignout.decide({ startAt, lastSeenAt: ms(s.lastSeenAt), lastInputAt: ms(s.lastInputAt), station: "laser" }, at, s.admin === true);
+  return !d || d.endAt >= at - 1000;
+}
+
 /** The Laser session of this person that covers the moment `at`: the most recent sign-in as Laser at or before it that had not ended
- *  (or ended at or after it) and whose page had not gone quiet for 15 minutes. rows are Station_Sessions documents as stored. null for none. */
+ *  (or ended at or after it); an open one counts while the stations' rules still keep it open (stillOpen). rows are Station_Sessions documents as stored. null for none. */
 function pickSession(rows, key, at) {
   if (!key || !(at > 0)) return null;
   let best = null;
@@ -67,9 +82,9 @@ function pickSession(rows, key, at) {
     if (!s || personKey(s.person) !== key) continue;
     if (s.station !== "laser" && s.role !== "laser") continue;          // (the Sorter app's session of a Laser person: station "laser", LD1; role "laser" is read too)
     const startAt = ms(s.startAt); if (!(startAt > 0) || startAt > at) continue;
-    const endAt = ms(s.endAt), seen = Math.max(startAt, ms(s.lastSeenAt));
+    const endAt = ms(s.endAt);
     if (endAt > 0) { if (endAt < at - 1000) continue; }
-    else if (at - seen >= SESSION_GONE_MS) continue;                    // a page that stopped beating more than 15 minutes ago was closed at its last beat
+    else if (!stillOpen(s, startAt, at)) continue;                      // ended by the rules before this moment (idle at its last input, 5 pm, midnight) though the end is not stored yet
     if (!best || startAt > best.startAt) best = { id: str(s.id, 100), startAt, device: str(s.device, 40) };
   }
   return best;
@@ -287,5 +302,5 @@ async function liveBlock(ctx, H) {
     last: last ? { at: last.at, person: H.display(last.person), sheet: last.sheet, sheetId: last.sheetId, seconds: last.seconds, startedFrom: last.startedFrom, pieces: last.pieces, orders: last.orders, together: last.together } : null };
 }
 
-module.exports = { COLL, DONE, UNDONE, SESSION_GONE_MS, LOOKBACK_MS, personKey, cleanName, computeStart, pickSession, pickPrevious, standing, summarize, cleanClient, decide, agree,
+module.exports = { COLL, DONE, UNDONE, SESSION_GONE_MS, LOOKBACK_MS, personKey, cleanName, computeStart, stillOpen, pickSession, pickPrevious, standing, summarize, cleanClient, decide, agree,
   context, recordDone, recordUndone, lastFor, readRange, readSince, rowOf, seriesOf, opSheets, liveBlock, nyDay, addDays, validDay, diffDays };

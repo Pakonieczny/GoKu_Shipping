@@ -519,7 +519,7 @@ async function buildOverview(ctx, day, days, withTrend) {
   const rangeDays = dayList(from, day), people = [];
   const ordersOf = new Map();
   for (const e of inRange) {
-    if (!e.orderId) continue;
+    if (!e.orderId || !KIND.throughput(e.station)) continue;       // (an order only the Welding station touched is not an order worked: not in the count, so not in the list either; its matches have their own list)
     const k = nameKeyOf(ctx, e.person); let m = ordersOf.get(k); if (!m) ordersOf.set(k, m = new Map());
     let o = m.get(e.orderId); if (!o) m.set(e.orderId, o = { orderId: e.orderId, stations: new Set(), made: 0, undone: 0, lastAt: 0 });
     if (e.station) o.stations.add(e.station);

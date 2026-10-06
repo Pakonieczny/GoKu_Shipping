@@ -171,6 +171,7 @@
     let stream = null;
     let scanningInterval = null;
     let lastScanned = "";
+    let rescanWhenGone = "", codeGone = 0;   // see "desk presence" below
     let audioUnlocked = false; // We'll beep only if this is true
     let audioCtx = null;       // For Web Audio API
 
@@ -228,7 +229,12 @@
           const frame = ctx.getImageData(0, 0, canvas.width, canvas.height);
           const qrResult = jsQR(frame.data, frame.width, frame.height);
           if (qrResult) {
+            codeGone = 0;
             handleScannedCode(qrResult.data);
+          } else if (rescanWhenGone && ++codeGone >= 3) {
+            // the code that went to a desk nobody was signed in at has been out of view for 1.5 s: showing it again is a new scan
+            if (lastScanned === rescanWhenGone) lastScanned = "";
+            rescanWhenGone = ""; codeGone = 0;
           }
         }, 500);
       } catch (err) {
@@ -335,13 +341,39 @@
         if (Array.isArray(kept)) outbox = kept.filter(x => x && typeof x.c === "string" && x.c && Date.now() - (Number(x.at) || 0) < 30 * 60000).slice(-20);
       } catch (_) {}
     }
+    /* Desk presence. A scan counts only when the desk page (assembly-N.html) is open AND somebody is signed in there; this phone has no sign-in of its
+       own, so after a scan it asks the shop (firebaseOrders ?deskFor=, which reads the desk's own sign-in record: a yes or no, never a name) and says so
+       plainly when nobody is. "out" = the shop says nobody is signed in at this desk, "in" = somebody is, "unknown" = this phone could not find out (no
+       network, an older shop): then it says nothing extra. A scan sent while the answer is "out" says so in the same write ("no desk signed in"), which
+       lets a desk that opens within 10 minutes pick it up (assembly-N.html) instead of losing it. */
+    const DESK_DEVICE = RELAY_DOC.replace("-scan-", "-");                 // assembly-scan-4 -> assembly-4
+    const DESK_NAME = "Assembly " + DESK_DEVICE.split("-").pop();
+    let deskState = "unknown", deskAt = 0;
+    async function deskCheck(maxAgeMs) {
+      if (deskState !== "unknown" && Date.now() - deskAt < maxAgeMs) return deskState;
+      let timer = 0;
+      try {
+        const ctl = typeof AbortController === "function" ? new AbortController() : null;
+        timer = ctl ? setTimeout(() => ctl.abort(), 3000) : 0;
+        const response = await fetch("/.netlify/functions/firebaseOrders?deskFor=" + encodeURIComponent(DESK_DEVICE) + "&t=" + Date.now(), { cache: "no-store", signal: ctl ? ctl.signal : undefined });
+        const result = response.ok ? await response.json() : null;
+        deskState = result && result.success === true && typeof result.signedIn === "boolean" ? (result.signedIn ? "in" : "out") : "unknown";
+      } catch (_) { deskState = "unknown"; }
+      if (timer) clearTimeout(timer);
+      deskAt = Date.now();
+      return deskState;
+    }
+    function deskToast(thisScan) {
+      M.toast({ html: "Nobody is signed in at the " + DESK_NAME + " desk. Sign in there so " + (thisScan ? "this scan counts." : "your scans count."), displayLength: 15000, classes: "orange darken-3" });
+    }
+
     /** one write of one scan: "sent", "retry" (no network, 5xx, 429, 408) or "drop" (the station's door refused it for good) */
-    async function relayOnce(codeVal) {
+    async function relayOnce(codeVal, desk) {
       const bodyData = {
         orderNumber: RELAY_DOC,
         orderNumField: codeVal,
         clientName: "Scanner Page",
-        britesMessages: "(Auto push from assembly-scan-4.html)",
+        britesMessages: "(Auto push from assembly-scan-4.html" + (desk === "out" ? "; no desk signed in" : "") + ")",
         shippingLabelTimestamps: new Date().toISOString(),
         employeeName: "ScannerBot"
       };
@@ -367,7 +399,8 @@
         while (outbox.length) {
           const code = outbox[0].c;
           M.toast({ html: "Sending to Firestore doc '" + RELAY_DOC + "': " + code });
-          const r = await relayOnce(code);
+          const desk = await deskCheck(4000);                   // asked before the write (an answer under 4 s old is reused), so the scan can carry it
+          const r = await relayOnce(code, desk);
           if (r === "retry") {
             relayTries++;
             M.toast({ html: "Not sent yet, trying again: " + code });
@@ -376,8 +409,10 @@
             return;
           }
           outbox.shift(); saveOutbox(); relayTries = 0;
-          if (r === "sent") M.toast({ html: "Firestore updated: doc '" + RELAY_DOC + "' => " + code });
-          else { M.toast({ html: "Error: the station did not accept " + code }); if (lastScanned === code) lastScanned = ""; }   // it can be scanned again
+          if (r === "sent") {
+            M.toast({ html: "Firestore updated: doc '" + RELAY_DOC + "' => " + code });
+            if (desk === "out") { deskToast(true); rescanWhenGone = code; }   // sent, but nobody is signed in at the desk: say so, and let the same code be scanned again once the desk has someone
+          } else { M.toast({ html: "Error: the station did not accept " + code }); if (lastScanned === code) lastScanned = ""; }   // it can be scanned again
           if (outbox.length) await new Promise(res => setTimeout(res, 800));       // the desktop reads one scan at a time
         }
       } finally { relaying = false; }
@@ -487,6 +522,8 @@
       applyPositions();
       // Start the camera scanning automatically
       startCamera();
+      // Tell the assembler at once when nobody is signed in at the desk
+      setTimeout(async () => { if (await deskCheck(0) === "out") deskToast(false); }, 1500);
       // Hook up "Open Config" button to show config modal
       document.getElementById("openConfigBtnScanner").addEventListener("click", () => {
         scannerPopulateConfigTable();

@@ -1016,8 +1016,13 @@ async function laser() {
   env = makeEnv(today); pg = mk(env, 'laser'); pg.signIn('Tess Laser'); await settle();
   env.advance(30 * MIN); pg.win.fire('click'); const sw = env.clock.t; pg.st.role = 'design'; pg.ss.roleChanged(); await settle();
   assert.strictEqual(pg.signOuts.length, 0, 'a switch is not a sign-out'); assert.strictEqual(env.ends().length, 1); assert(env.ends()[0].reason === 'switched' && env.ends()[0].station === 'laser'); assert.strictEqual(env.starts().length, 2); assert.strictEqual(env.starts()[1].station, 'design');
+  assert.strictEqual(env.adminGets(), 1, 'a role switch of the same person is not a new sign-in: the Admin door is not asked again');
   env.advance(9 * MIN + 30 * SEC); await settle(); assert.strictEqual(pg.signOuts.length, 0); env.set(sw + 10 * MIN); pg.wake();
   assert.strictEqual(pg.signOuts.length, 1, 'now under Design: 10 minutes from the switch'); assert.strictEqual(pg.signOuts[0].who.station, 'design'); assert.strictEqual(pg.signOuts[0].reason, 'idle'); assert.strictEqual(env.ends().at(-1).at, sw);
+  // ... but another person taking the page over is a new sign-in and is asked fresh (the switch that ends the first person's session is "switched" too)
+  env = makeEnv(today); pg = mk(env, 'laser'); pg.signIn('Tess Laser'); await settle(); assert.strictEqual(env.adminGets(), 1);
+  pg.signIn('Ray Other'); await settle();
+  assert.strictEqual(env.ends().length, 1); assert.strictEqual(env.ends()[0].reason, 'switched'); assert.strictEqual(env.adminGets(), 2, 'a different person is asked fresh'); assert.strictEqual(env.asks[1].body.stationAdmin, 'Ray Other');
   env = makeEnv(today); pg = mk(env, 'design'); pg.signIn('Tess Laser'); await settle();
   for (let i = 0; i < 6; i++) { env.advance(5 * MIN); pg.win.fire('click'); }                                                       // 30 minutes of work under Design (a tap every 5 minutes), then Laser
   const sw2 = env.clock.t; pg.st.role = 'laser'; pg.ss.roleChanged(); await settle();

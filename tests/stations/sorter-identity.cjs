@@ -311,13 +311,19 @@ async function sorterPage(browser, srv, errors, { sandbox = false } = {}) {
       win.window = win; vm.createContext(win);
       vm.runInContext(fs.readFileSync(path.join(root, 'charm-nest-efficiency.js'), 'utf8'), win);
       const E = win.Efficiency, j = o => JSON.parse(JSON.stringify(o));
-      const M = j(E.norm({ ok: true, now: 5, day: '2026-10-03', people: [{ name: 'Tess Welder', status: 'on', nowAt: ['sorter'], totals: { parts: 8 }, stations: [{ station: 'sorter', minutes: 30, parts: 3, orders: 2 }, { station: 'laser', minutes: 5, parts: 5, scans: 0, completes: 2 }] }],
-        business: { totals: { parts: 8 }, stations: [{ station: 'sorting', parts: 0 }, { station: 'sorter', parts: 3, orders: 2, peopleNow: ['Tess Welder'] }, { station: 'laser', parts: 5, orders: 0, peopleNow: [] }] } }));
-      assert.deepStrictEqual(M.people[0].stations.map(s => s.station).sort(), ['laser', 'sorter'], 'a person keeps both stations');
-      assert.strictEqual(M.biz.stations.get ? M.biz.stations.get('laser').parts : 5, 5, 'the business view keeps laser as a station with its parts');
+      // (PB1, stations round 2: the stored key `sorter` is a device of the ONE Sorting station; the console folds it into `sorting` when it READS a station key.
+      //  History and the writers keep `sorter`; `laser` is its own station and never folds.)
+      const raw = { ok: true, now: 5, day: '2026-10-03', people: [{ name: 'Tess Welder', status: 'on', nowAt: ['sorter'], totals: { parts: 8 }, stations: [{ station: 'sorter', minutes: 30, parts: 3, orders: 2 }, { station: 'laser', minutes: 5, parts: 5, scans: 0, completes: 2 }] }],
+        business: { totals: { parts: 8 }, stations: [{ station: 'sorting', parts: 0 }, { station: 'sorter', parts: 3, orders: 2, peopleNow: ['Tess Welder'] }, { station: 'laser', parts: 5, orders: 0, peopleNow: [] }] } };
+      const M = j(E.norm(raw)), B = E.norm(raw).biz.stations;
+      assert.deepStrictEqual(M.people[0].stations.map(s => s.station).sort(), ['laser', 'sorting'], 'a person keeps both stations: the sorter folds into Sorting on read, laser stays its own');
+      assert.deepStrictEqual(M.people[0].nowAt, ['sorting'], 'and is "now at" Sorting, never at a Sorter card');
+      assert.deepStrictEqual([...B.keys()].sort(), ['laser', 'sorting'], 'the business view has no `sorter` station');
+      assert.strictEqual(B.get('laser').parts, 5, 'the business view keeps laser as a station with its parts');
+      assert.strictEqual(B.get('sorting').parts, 3, 'the Sorter app\'s pieces are counted once, under Sorting');
       const SA = require('../../netlify/functions/_stationActivity.js');
       assert(SA.STATIONS.has('laser') && SA.STATIONS.has('sorter'), 'the server accepts both stations');
-      console.log('console: laser and sorter are separate stations on both sides');
+      console.log('console: the sorter folds into Sorting on read and laser stays its own station; the server still accepts both stored keys');
     }
   } finally { await browser.close(); srv.close(); }
 

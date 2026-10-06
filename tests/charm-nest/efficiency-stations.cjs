@@ -401,5 +401,26 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     assert.deepEqual(N9.errs, [], 'no errors: ' + N9.errs.join(' | ')); assert(N9.logs.every(l => !/Stations board/.test(l)), 'no warnings from the board');
     await c9.close();
     console.log('  ✓ the live layer\'s shape: a laser sheet, device labels, piece counts, two kinds of picture, the station\'s pages; the day\'s numbers on a person\'s card (lazy, kept a minute, labelled, with definitions)');
+
+    /* ── 10 · FX1: the Laser card agrees with its own sheet times (a Laser person who completed sheets today never reads "0 pieces 0 orders" or "no activity yet today") ── */
+    const laserHook = (sheets, last, counts) => j => {
+      const now = j.at;
+      j.stations.splice(j.stations.findIndex(x => x.key === 'inbox'), 0, { key: 'laser', label: 'Laser', state: 'idle', people: [{ name: 'Ana M.', since: now - 3 * 3600000 }], current: [], lastEventAt: null, counts, devices: [],
+        laserSheet: { day: '2026-10-06', today: { sheets, timed: sheets, avgSec: sheets ? 540 : null }, last: last ? Object.assign({ at: now - 15 * 60000, person: 'Ana M.', sheet: 'GF Sheet 1', seconds: 540, startedFrom: 'login' }, last) : null } });
+      return j;
+    };
+    fx = F.make(); fx.setHook(laserHook(3, {}, { partsToday: 0, ordersToday: 0 }));
+    const c10 = await browser.newContext({ viewport: { width: 1440, height: 900 } }); await wire(c10);
+    const N10 = await load(c10); const p10 = N10.page; cur = p10;
+    await p10.evaluate(k => sessionStorage.setItem('cn.eff.key', k), F.KEY);
+    await mount(p10); await p10.waitForSelector(`${V} .esSt[data-key=laser]`); await sleep(500);
+    const lc = sel => p10.$eval(`${V} .esSt[data-key=laser] ${sel}`, e => e.innerText.replace(/\s+/g, ' ').trim());
+    const cn = await lc('.esCnt'), idle = await lc('.esIdle');
+    assert(/3 sheets/.test(cn) && !/\b0 pieces/.test(cn) && !/\b0 orders/.test(cn), 'FX1: three sheets done today: the counters say sheets, not 0 pieces 0 orders: ' + cn);
+    assert(/^Idle · last sheet \d+:\d\d (AM|PM) \(\d+ m ago\)$/.test(idle), 'FX1: the idle line follows the last sheet, never "no activity yet today": ' + idle);
+    fx.setHook(laserHook(0, null, { partsToday: 0, ordersToday: 0 })); await p10.evaluate(() => __b.refresh()); await p10.waitForFunction(() => /no activity yet today/.test(document.querySelector('#esHost .esSt[data-key=laser] .esIdle').innerText), null, { timeout: 5000 });
+    const cn0 = await lc('.esCnt'); assert(/0 pieces/.test(cn0) && /0 orders/.test(cn0) && !/sheets/.test(cn0), 'FX1: with no sheet today the card is honest as before (0 pieces, 0 orders, no activity yet): ' + cn0);
+    await c10.close();
+    console.log('  ✓ FX1: the Laser card says the sheets done today (not 0 pieces 0 orders) and "Idle · last sheet 10:09 AM"; with no sheet today it is as before');
   } finally { await browser.close(); srv.close(); }
 })().catch(e => { console.error(e); process.exit(1); });
