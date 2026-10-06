@@ -150,9 +150,10 @@ async function station() {
     assert.strictEqual(await page.evaluate(() => localStorage.getItem('station_signin_day')), '2026-09-28');
     await page.fill('#etsyOrderNumber', '3521000777');                                     // work on screen
 
-    await page.clock.runFor(6 * 60000);
+    const active = async ms => { for (let left = ms, n = 0; left > 0; n++) { await page.mouse.move(120 + (n % 40), 220 + (n % 7)); const step = Math.min(left, 4 * 60000); await page.clock.runFor(step); left -= step; } };   // a hand at the screen: input every 4 minutes
+    await active(6 * 60000);
     assert(sessions.some(s => s.event === 'beat' && s.id === start.id), 'a beat every 5 minutes');
-    await page.clock.runFor(15 * 60000);                                                    // past midnight
+    await active(15 * 60000);                                                               // past midnight
     const end = await until(() => sessions.find(s => s.event === 'end' && s.id === start.id), 'the midnight end');
     assert.strictEqual(end.reason, 'midnight'); assert.strictEqual(end.at, MIDNIGHT);
     const after = await page.evaluate(() => ({ id: localStorage.getItem('employee_id'), name: localStorage.getItem('employee_name'), people: localStorage.getItem('weld_people'), in: window.isEmployeeLoggedIn,

@@ -41,7 +41,7 @@ async function openFixture(browser, time) {
     const u = new URL(r.request().url()), m = r.request().method();
     if (u.origin !== ORIGIN) return r.abort();
     if (u.pathname === '/fixture.html') return r.fulfill({ status: 200, contentType: 'text/html', body: fixture });
-    if (u.pathname.startsWith('/.netlify/functions/')) { if (m === 'POST') { const b = JSON.parse(r.request().postData() || '{}'); if (b.session) sent.push(b.session); } return json(r, { success: true }); }
+    if (u.pathname.startsWith('/.netlify/functions/')) { if (m === 'POST') { const b = JSON.parse(r.request().postData() || '{}'); if (b.session) sent.push(b.session); if (b.stationAdmin !== undefined) return json(r, { ok: true, admin: b.stationAdmin === 'Paul K' }); } return json(r, { success: true }); }
     const file = path.join(root, decodeURIComponent(u.pathname));
     if (file.startsWith(root) && fs.existsSync(file) && fs.statSync(file).isFile()) return r.fulfill({ status: 200, path: file });
     return r.fulfill({ status: 404, body: 'not here' });
@@ -117,14 +117,22 @@ async function api(browser) {
   assert(kinds().includes('end:Ray Matcher:matching:signOut'), 'a name the page no longer lists is signed out');
   assert.deepStrictEqual(await people(), [{ name: 'Tess Welder', task: 'welding' }]);
 
-  // 20 minutes frozen: the session closed at its last beat and a new one goes on from now
+  // 20 minutes frozen. Tess is not an Admin: 10 minutes without input signs her out (Rule A) at her last input, and the page's signOut takes her off its list.
+  // Paul K is the Admin (the door says so): exempt, so the old rule stays for him: closed at his last beat, and a new session goes on from now.
+  await signIn('Paul K', 'welding', ''); await flush(); await page.clock.runFor(2000); await wait(150);
   await page.evaluate(() => { StationSession.touch(); });
+  const touchAt = await page.evaluate(() => StationSession.lastInput());
   const firstTess = sent.find(s => s.person === 'Tess Welder' && s.task === 'welding' && s.event === 'start').id;
+  const firstPaul = sent.find(s => s.person === 'Paul K' && s.event === 'start').id;
   await page.clock.fastForward(20 * 60000); await page.clock.runFor(31000); await wait(150);
-  assert(sent.some(s => s.id === firstTess && s.event === 'end' && s.reason === 'closed'), 'closed at its last beat');
-  const restarted = sent.filter(s => s.event === 'start' && s.person === 'Tess Welder' && s.task === 'welding');
-  assert.strictEqual(restarted.length, 2, 'and started again from now');
-  assert.notStrictEqual(restarted[1].id, firstTess);
+  const tessEnd = sent.find(s => s.id === firstTess && s.event === 'end');
+  assert(tessEnd && tessEnd.reason === 'idle' && tessEnd.at === touchAt, 'a non-Admin frozen for 20 minutes is signed out (idle) at the last input: ' + JSON.stringify(tessEnd));
+  assert(sent.some(s => s.id === firstPaul && s.event === 'end' && s.reason === 'closed'), 'the Admin: closed at his last beat');
+  assert.strictEqual(sent.filter(s => s.event === 'start' && s.person === 'Tess Welder' && s.task === 'welding').length, 1, 'Tess is not started again');
+  const restarted = sent.filter(s => s.event === 'start' && s.person === 'Paul K');
+  assert.strictEqual(restarted.length, 2, 'the Admin starts again from now'); assert.notStrictEqual(restarted[1].id, firstPaul);
+  assert.deepStrictEqual(await people(), [{ name: 'Paul K', task: 'welding' }]);
+  assert.deepStrictEqual(await page.evaluate(() => __signOuts.filter(x => x[0] === 'idle').map(x => x[1].name)), ['Tess Welder'], 'the page signed Tess out through its callback with the reason');
 
   assert.deepStrictEqual(errors, [], 'no page error');
   await ctx.close();
