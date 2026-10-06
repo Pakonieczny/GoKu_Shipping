@@ -312,7 +312,9 @@ let MAIN;
   const mv = A.people.find(p => p.name === 'Michael V.');
   eq([mv.firstIn, mv.lastOut], [D2(8), D2(9, 30)], 'Michael V.: first in 08:00 on the first computer, out 09:30 on the last (one person, three spellings)');
   eq(mv.stations.map(s => [s.station, s.minutes]), [['design', 60], ['sorting', 60], ['welding', 60]], 'minutes per station stay per station (Welding, with no counted pieces, is listed last); the 90 signed-in minutes count the overlap once');
-  eq(mv.orders.map(o => o.orderId).sort(), [O(10), O(11), O(12), O(13), O(14)], 'five distinct orders (order 10 was worked at two stations and counts once)');
+  eq(mv.orders.map(o => o.orderId).sort(), [O(10), O(12), O(13), O(14)], 'four distinct orders (order 10 was worked at two stations and counts once; order 11 was only touched at the Welding station: not an order worked, so neither counted nor listed)');
+  eq(mv.orders.find(o => o.orderId === O(10)).stations.sort(), ['sorting'], 'and the Welding station is not named as a station that worked an order');
+  for (const p of A.people) eq(p.orders.length, p.totals.orders, p.name + ': the list of orders and the number of orders are the same (the list is cut only above ' + 'its own limit, far more than a day holds)');
   // the business
   eq(A.business.totals, { parts: 36, scans: 12, orders: 12, people: 9 }, 'the business adds up the nine people (the 17 pieces and 3 orders that only the Welding station touched are not throughput)');
   eq(A.people.reduce((n, p) => n + p.totals.parts, 0), 36); eq(A.people.reduce((n, p) => n + p.totals.scans, 0), 12);
