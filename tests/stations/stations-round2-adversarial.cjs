@@ -594,6 +594,12 @@ async function welding() {
       await advance(40 * MIN);
       tab = mk(pc); await advance(2000);
       const old = stationDocs().filter(d => d.startAt < killed);
+      if (HAVE.ad3 && HAVE.ad4) {         // Addendum 2: Welding is never ended by quiet or by the 15-minute rule: the next page goes on with the same two sessions, and 17:00 Toronto ends them, at 17:00
+        eq(stationDocs().length, 2, 'the page after the crash started nothing new: ' + dumpSessions()); ok(old.every(d => d.endAt == null), 'a crashed Welding page is not closed after 15 minutes: ' + dumpSessions());
+        await goTo(Date.parse('2026-10-07T21:03:00Z')); const ends = stationDocs();
+        eq(ends.length, 2); for (const d of ends) { eq(d.endAt, Date.parse('2026-10-07T21:00:00Z'), 'ended at 17:00 sharp: ' + dumpSessions()); eq(d.endReason, 'closing'); }
+        tab.close(); return;
+      }
       eq(old.length, 2); for (const d of old) { ok(d.endAt != null && d.endAt <= killed + 1000 && d.endAt >= killed - 5.5 * MIN, `ended near the crash: ${dumpSessions()} (crash ${iso(killed).slice(11, 19)})`); ok(['closed', 'signOut', 'idle'].includes(d.endReason), 'reason ' + d.endReason); }
       tab.close();
     });
@@ -1203,12 +1209,50 @@ async function autoPage() {
     await check('two people at the Welding page: input counts for both; quiet for 10 minutes ends the non-Admin ONLY through the page\'s per-person sign-out; the Admin carries on', async () => {
       world(); const pc = computer('w'), tab = multi(pc); tab.login('Tess Welder', 'welding'); tab.login(ADM, 'matching'); await advance(2 * MIN); tab.input('keydown'); await advance(9 * MIN); tab.input('pointerdown'); await advance(9 * MIN);
       eq(tab.signOuts, [], 'input counts for both: nobody is out 18 minutes after the first input'); await advance(2 * MIN);
+      if (HAVE.ad3) {         // Addendum 2: the Welding page has NO idle rule; only 17:00 Toronto signs the non-Admin out, at 17:00 sharp; the Admin carries on
+        eq(tab.signOuts, [], 'twenty quiet minutes at the Welding page: nobody is out'); await advance(6 * HOUR); eq(tab.signOuts, [], 'six quiet hours (to 15:20): still nobody'); eq(open_().length, 2, 'both sessions are open: ' + dumpSessions());
+        await goTo(nyAt('2026-10-07', 17, 0, 30));
+        eq(tab.signOuts.map(x => x[0] + ':' + x[1].name + ':' + x[1].task), ['closing:Tess Welder:welding'], 'at 17:00 only Tess (with her name and task), reason closing');
+        const t = endedAt('Tess Welder'); eq(t.length, 1); eq(t[0].endReason, 'closing'); eq(t[0].endAt, nyAt('2026-10-07', 17, 0), 'the end is 17:00 sharp');
+        eq(open_().map(d => d.person), [ADM], 'the Admin is the only one still open'); await advance(3 * HOUR); eq(open_().map(d => d.person), [ADM], 'the Admin is still in after 3 more hours'); eq(tab.signOuts.length, 1); return;
+      }
       eq(tab.signOuts.map(x => x[0] + ':' + x[1].name + ':' + x[1].task), ['idle:Tess Welder:welding'], 'only Tess, with her name and task');
       eq(open_().map(d => d.person), [ADM], 'the Admin\'s session is the only one open: ' + dumpSessions()); eq(tab.who().map(p => p.name), [ADM]);
       const t = endedAt('Tess Welder'); eq(t.length, 1); eq(t[0].endReason, 'idle');
       await advance(3 * HOUR); eq(open_().map(d => d.person), [ADM], 'the Admin is still in after 3 more hours'); eq(tab.signOuts.length, 1);
     });
 
+    if (!HAVE.ad3) pending('per-station limits on the page: Welding only at 17:00 sharp, Laser 60/30 minutes, the Design role and everything else 10', 'AD3 (the POLICY table in station-session.js) is not on main yet');
+    else {
+      const DAY = '2026-10-07', at_ = (h, mi, s = 0) => nyAt(DAY, h, mi, s);
+      const laser = (pc, role = 'laser') => single(pc, { station: 'sorter', device: 'charm-nest-1', initExtra: { role: () => role } });
+      const ends = name => endedAt(name).map(d => [d.endReason, d.endAt]);
+      await check('Laser on the page: 45 quiet minutes at 16:30 stay, the hour ends it at the last input (idle); a Design person at the same Sorter app keeps the 10 minutes', async () => {
+        world(iso(at_(15, 40))); const pc = computer('lz'), tab = laser(pc); tab.login('Lena Laser'); await advance(5 * MIN); tab.input('keydown'); const last = wall();
+        await goTo(at_(16, 30)); eq(tab.signOuts, [], 'quiet since 15:45: 45 minutes at 16:30: still in'); eq(open_().map(d => d.station + '/' + d.role), ['laser/laser'], 'a Laser session: ' + dumpSessions());
+        await goTo(at_(16, 44)); eq(tab.signOuts, [], '59 minutes: still in'); await goTo(at_(16, 47));
+        eq(tab.signOuts, ['idle'], 'an hour: out, reason idle'); const e = endedAt('Lena Laser'); eq(e.length, 1); ok(near(e[0].endAt, last, 11000), 'ended at the last input: ' + iso(e[0].endAt) + ' vs ' + iso(last));
+        world(iso(at_(10, 0))); const pd = computer('dz'), td = laser(pd, 'design'); td.login('Dara Design'); await advance(11 * MIN); eq(td.signOuts, ['idle'], 'the Design role at the same page is out after 10 minutes'); tab.close(); td.close();
+      });
+      await check('Laser on the page: at 17:00 a person quiet 35 minutes is out (closing, at the last input); 30 quiet minutes before 17:00 stay until 17:00; typing past 17:00 stays; out 30 minutes after the last input', async () => {
+        world(iso(at_(16, 0))); let pc = computer('l1'), tab = laser(pc); tab.login('Lena Laser'); await advance(20 * MIN); tab.input('keydown'); const l1 = wall();      // 16:20, quiet from here
+        await goTo(at_(16, 59, 50)); eq(tab.signOuts, [], 'still in at 16:59:50 (39 minutes of quiet)'); await goTo(at_(17, 1));
+        eq(tab.signOuts, ['closing'], 'at 17:00: 40 quiet minutes: out, closing'); ok(near(endedAt('Lena Laser')[0].endAt, l1, 11000), 'ended at the last input 16:20: ' + iso(endedAt('Lena Laser')[0].endAt)); tab.close();
+        world(iso(at_(16, 0))); pc = computer('l2'); tab = laser(pc); tab.login('Lena Laser'); await advance(45 * MIN); tab.input('keydown'); const l2 = wall();                                   // 16:45
+        await goTo(at_(17, 0, 30)); eq(tab.signOuts, [], 'input at 16:45 stays at 17:00'); await goTo(at_(17, 14)); eq(tab.signOuts, [], 'and at 17:14'); await goTo(at_(17, 16));
+        eq(tab.signOuts, ['closing'], 'out at 17:15'); ok(near(endedAt('Lena Laser')[0].endAt, l2, 11000), 'ended at the last input 16:45: ' + iso(endedAt('Lena Laser')[0].endAt)); tab.close();
+        world(iso(at_(16, 40))); pc = computer('l3'); tab = laser(pc); tab.login('Lena Laser'); for (let t = at_(16, 44); t <= at_(18, 30); t += 4 * MIN) { await goTo(t); tab.input('keydown'); }
+        eq(tab.signOuts, [], 'typing past 17:00 stays in'); const l3 = wall(); await goTo(l3 + 29 * MIN); eq(tab.signOuts, [], '29 quiet minutes after 17:00: still in'); await goTo(l3 + 31 * MIN);
+        eq(tab.signOuts, ['closing'], '30 minutes after the last input: out'); ok(near(endedAt('Lena Laser')[0].endAt, l3, 11000), 'at the last input'); tab.close();
+      });
+      await check('Welding on the page: six quiet hours stay, 17:00 sharp signs the non-Admin out whatever the last input and a sign-in after 17:00 stays; the Laser sheet clock is not restarted by a sleeping computer', async () => {
+        world(iso(at_(9, 0))); let pc = computer('wz'), tab = multi(pc); tab.login('Tess Welder', 'welding'); tab.login(ADM, 'matching'); await goTo(at_(15, 0)); eq(tab.signOuts, [], 'six quiet hours: nobody is out'); eq(open_().length, 2);
+        await goTo(at_(16, 59, 55)); eq(tab.signOuts, []); await goTo(at_(17, 0, 30)); eq(tab.signOuts.map(x => x[0] + ':' + x[1].name), ['closing:Tess Welder']); eq(endedAt('Tess Welder')[0].endAt, at_(17, 0), '17:00:00 sharp'); eq(open_().map(d => d.person), [ADM], 'the Admin stays');
+        tab.close(); world(iso(at_(17, 20))); pc = computer('wz2'); tab = multi(pc); tab.login('Ray Welder', 'matching'); await goTo(at_(20, 0)); eq(tab.signOuts, [], 'a sign-in at 17:20 is still in at 20:00'); tab.close();
+        world(iso(at_(10, 0))); pc = computer('lz2'); tab = laser(pc); tab.login('Lena Laser'); tab.input('keydown'); await advance(2000); const id0 = open_()[0].id; await sleepFor(40 * MIN); await advance(5000);          // the computer sleeps 40 minutes (the clock runs on, timers stand still)
+        eq(tab.signOuts, [], 'a Laser person whose computer slept 40 minutes is not signed out'); eq(open_().map(d => d.id), [id0], 'and the same session carries on (a new one would restart the sheet clock): ' + dumpSessions()); tab.close();
+      });
+    }
     await check('one person at two stations on two computers: each page ends its own session on its own idle time', async () => {
       world(); const a = single(computer('x1')), w = multi(computer('x2')); a.login(NON); w.login(NON, 'welding'); await advance(8 * MIN); w.input('keydown'); await advance(3 * MIN);
       eq(a.signOuts, ['idle'], 'the assembly page is out (10 quiet minutes there)'); eq(w.signOuts, [], 'the welding page had input 3 minutes ago');
