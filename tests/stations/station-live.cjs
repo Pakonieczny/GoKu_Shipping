@@ -126,7 +126,7 @@ const B = (o = {}) => Object.assign({ v: 1, event: 'beat', station: 'welding', d
     assert.strictEqual(a.headers['Cache-Control'], 'no-store');
     assert.deepStrictEqual(a.body.stations.map(x => x.key), ['sorting', 'welding', 'assembly', 'shipping', 'design', 'laser', 'sorter', 'qr', 'inbox'], 'every station is listed, working or not');
     const wd = station(a, 'welding');
-    assert.strictEqual(wd.label, 'Welding'); assert.strictEqual(wd.state, 'working'); assert.deepStrictEqual(wd.people, ['Tess Welder']);
+    assert.strictEqual(wd.label, 'Welding'); assert.strictEqual(wd.state, 'working'); assert.deepStrictEqual(wd.names, ['Tess Welder']);
     assert.strictEqual(wd.current.length, 1);
     const c = wd.current[0];
     assert.strictEqual(c.person, 'Tess Welder'); assert.strictEqual(c.rid, '3521000777'); assert.strictEqual(c.orderNumber, '3521000777'); assert.strictEqual(c.customer, 'Sam P.');
@@ -137,11 +137,11 @@ const B = (o = {}) => Object.assign({ v: 1, event: 'beat', station: 'welding', d
     assert.strictEqual(c.pieces[1].thumbUrl, URL_GF, 'no size: the design\'s own thumbnail'); assert.strictEqual(c.pieces[1].label, 'Stud earrings, gold'); assert.strictEqual(c.pieces[1].id, '3521000777_9001_2');
     assert.strictEqual(c.thumbUrl, URL_GF_L, 'the order\'s thumbnail is its first piece\'s design'); assert.strictEqual(c.photoUrl, URL_PHOTO);
     assert(!('listingId' in c.pieces[0]) && !('size' in c.pieces[0]), 'the lookup hints do not leave the server');
-    assert.deepStrictEqual(wd.counts, { partsToday: 12 + 3, ordersToday: 8, scansToday: 11 }, 'today\'s numbers, parts net of undo');
+    assert.deepStrictEqual(wd.counts, { partsToday: null, ordersToday: null, scansToday: 0 }, 'the Welding station is not counted in throughput: no pieces, no orders today (its matched scans are counted instead; see welding-portal.cjs)');
     assert.strictEqual(wd.lastEventAt, NOW, 'the current scan is the latest event');
     assert.strictEqual(wd.devices.find(x => x.device === 'weld-1').state, 'working');
     const as = station(a, 'assembly');
-    assert.strictEqual(as.state, 'idle', 'signed in, nothing in hand'); assert.deepStrictEqual(as.people, ['Ray Welder']); assert.strictEqual(as.current.length, 0);
+    assert.strictEqual(as.state, 'idle', 'signed in, nothing in hand'); assert.deepStrictEqual(as.names, ['Ray Welder']); assert.strictEqual(as.current.length, 0);
     assert.deepStrictEqual(as.devices.map(x => [x.device, x.state]), [['assembly-1', 'offline'], ['assembly-2', 'idle'], ['assembly-3', 'offline'], ['assembly-4', 'offline']]);
     assert.strictEqual(as.lastEventAt, NOW - 300000);
     assert.strictEqual(station(a, 'shipping').state, 'offline', 'a session that went quiet for 15 minutes is not on'); assert.strictEqual(station(a, 'design').state, 'offline', 'an ended session is not on');
@@ -219,7 +219,7 @@ const B = (o = {}) => Object.assign({ v: 1, event: 'beat', station: 'welding', d
     await post(W({ station: 'assembly', device: 'assembly-2', person: 'Ray Welder', order: { kind: 'order', rid: '3521000002', scannedAt: NOW - 30000 } }));
     const a = await ask(), as = station(a, 'assembly');
     assert.strictEqual(as.state, 'working'); assert.strictEqual(as.current.length, 2); assert.deepStrictEqual(as.current.map(c => c.person), ['Ray Welder', 'Tess Welder'], 'newest scan first');
-    assert.deepStrictEqual(as.people.sort(), ['Mia Packer', 'Ray Welder', 'Tess Welder']);
+    assert.deepStrictEqual(as.names.sort(), ['Mia Packer', 'Ray Welder', 'Tess Welder']);
     assert.deepStrictEqual(as.devices.map(x => [x.device, x.state, x.person]), [['assembly-1', 'working', 'Tess Welder'], ['assembly-2', 'working', 'Ray Welder'], ['assembly-3', 'idle', 'Mia Packer'], ['assembly-4', 'offline', '']]);
     assert.strictEqual(s.count('Station_Live'), 2, 'one document per person and page');
     // one person, two stations on one page (the sorter and its laser): two documents, both shown
@@ -233,7 +233,7 @@ const B = (o = {}) => Object.assign({ v: 1, event: 'beat', station: 'welding', d
     await post(W({ station: 'shipping', device: 'shipping-1', person: 'Michael_V', order: { kind: 'order', rid: '3521000004', scannedAt: NOW } }));
     await post(W({ station: 'shipping', device: 'shipping-2', person: 'Michael V.', order: { kind: 'order', rid: '3521000005', scannedAt: NOW } }));
     tick(3000); const c = await ask(); const sh = station(c, 'shipping');
-    assert.deepStrictEqual(sh.people, ['Michael V.'], 'one person'); assert.deepStrictEqual(sh.current.map(x => x.person), ['Michael V.', 'Michael V.']);
+    assert.deepStrictEqual(sh.names, ['Michael V.'], 'one person'); assert.deepStrictEqual(sh.current.map(x => x.person), ['Michael V.', 'Michael V.']);
     say('5 two people at one station, one person at two stations, one name spelled two ways');
   }
 

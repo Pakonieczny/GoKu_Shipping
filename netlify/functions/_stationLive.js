@@ -21,13 +21,16 @@
 "use strict";
 const LIVE = "Station_Live";
 const { STATIONS } = require("./_orderTimeline");           // one list of stations for the timeline, the sessions, the activity and this
+/* The Welding station (Paul, 6 Oct 2026): two tasks (welding | matching), two people at once, never counted in throughput; see _activityKinds.js */
+let KIND = null; try { KIND = require("./_activityKinds"); } catch (_) {}
+if (!KIND) KIND = { throughput: () => true, readStationCounters: (st, v) => v, UNATTRIBUTED: "Unattributed", isMatched: () => false };
 
 const KEEPALIVE_MS = 30000;        // what the browser does (station-activity.js); told to the console in the answer
 const STALE_MS = 180000;           // a document with no keep-alive for this long is not shown
 const COALESCE_MS = 15000;         // a repeat of the same write inside this is not written again
 const MAX_BODY_CHARS = 8000, MAX_PIECES = 24, MAX_AGE_MS = 12 * 3600e3, SESSION_GONE_MS = 15 * 60000;
 const TTL = { live: 2000, sessions: 15000, today: 20000, found: 15 * 60000, miss: 60000 };
-const LIM = { live: 200, sessions: 300, rollups: 200 };
+const LIM = { live: 200, sessions: 300, rollups: 200, matched: 400, matchedShown: 30 };
 
 /* what the console lists, in order: key, label (as StationSession shows it), the pages that make up the station */
 const CATALOG = [
@@ -296,7 +299,7 @@ function readLive(ctx, H) {
 function readSessions(ctx, H) {
   return H.cached(ctx, `lsess|${ctx.prefix}`, TTL.sessions, async () => {
     const snap = await col(ctx, "Station_Sessions").where("startAt", ">=", H.nyMidnight(ctx.today)).orderBy("startAt", "desc").limit(LIM.sessions + 1).get();
-    const rows = []; for (const d of snap.docs.slice(0, LIM.sessions)) { const v = d.data() || {}; rows.push({ person: str(v.person, 80), station: str(v.station, 20), device: text(v.device, 40), startAt: ms(v.startAt), lastSeenAt: ms(v.lastSeenAt), endAt: ms(v.endAt) }); }
+    const rows = []; for (const d of snap.docs.slice(0, LIM.sessions)) { const v = d.data() || {}; const station = str(v.station, 20); rows.push({ person: str(v.person, 80), station, device: text(v.device, 40), startAt: ms(v.startAt), lastSeenAt: ms(v.lastSeenAt), endAt: ms(v.endAt), task: station === "welding" && (v.task === "welding" || v.task === "matching") ? v.task : "", role: v.role === "laser" || v.role === "design" ? v.role : "", lastInputAt: ms(v.lastInputAt) }); }
     return { rows, capped: snap.docs.length > LIM.sessions };
   });
 }
@@ -309,22 +312,49 @@ function readToday(ctx, H) {
     for (const d of snap.docs.slice(0, LIM.rollups)) {
       const v = d.data() || {};
       if (!!v.sandbox !== !!ctx.prefix) continue;                       // (a document of the other store never counts, as in every other reader)
-      for (const [st, x] of Object.entries(v.stations && typeof v.stations === "object" ? v.stations : {})) {
-        if (!x || typeof x !== "object") continue;
-        const t = by[st] || (by[st] = { parts: 0, orders: 0, scans: 0, lastAt: 0 });
+      for (const [st, x0] of Object.entries(v.stations && typeof v.stations === "object" ? v.stations : {})) {
+        if (!x0 || typeof x0 !== "object") continue;
+        const x = KIND.readStationCounters(st, x0);                         // (the Welding station keeps its scans and matched count, never pieces or orders)
+        const t = by[st] || (by[st] = { parts: 0, orders: 0, scans: 0, lastAt: 0, matched: 0, unattributed: 0 });
         t.parts += Math.max(0, (Number(x.parts) || 0) - (Number(x.undoParts) || 0));
         t.orders += Math.max(0, (Number(x.orders) || 0) - (Number(x.undoOrders) || 0));
         t.scans += Math.max(0, Number(x.scans) || 0);
+        const mt = Math.max(0, Number(x.matched) || 0); t.matched += mt; if (v.person === KIND.UNATTRIBUTED) t.unattributed += mt;
         t.lastAt = Math.max(t.lastAt, ms(x.lastAt));
       }
       // the orders the person touched today and where (a scan counts the moment it happens; "orders" above counts only the finished ones)
-      if (v.touched && typeof v.touched === "object") for (const [oid, sts] of Object.entries(v.touched)) if (sts && typeof sts === "object") for (const st of Object.keys(sts)) (touched[st] || (touched[st] = new Set())).add(oid);
+      if (v.touched && typeof v.touched === "object") for (const [oid, sts] of Object.entries(v.touched)) if (sts && typeof sts === "object") for (const st of Object.keys(sts)) if (KIND.throughput(st)) (touched[st] || (touched[st] = new Set())).add(oid);
     }
     // A station's orders today = the orders worked there, as the Overview counts them (an order in hand is one the moment it is scanned), never fewer than the finished ones.
     // Counting only the finished ones made the Stations board say 9 where the Overview, the People cards and the person page said 10 while one order was in hand.
-    for (const [st, set] of Object.entries(touched)) { const t = by[st] || (by[st] = { parts: 0, orders: 0, scans: 0, lastAt: 0 }); t.orders = Math.max(t.orders, set.size); }
+    for (const [st, set] of Object.entries(touched)) { const t = by[st] || (by[st] = { parts: 0, orders: 0, scans: 0, lastAt: 0, matched: 0, unattributed: 0 }); t.orders = Math.max(t.orders, set.size); }
     return { by, capped: snap.docs.length > LIM.rollups };
   });
+}
+
+/** Today's matched scans at the Welding station (newest first), read only when today's rollups say there are some (the answer is kept while that count stays the same):
+ *  two equalities (day, station), no index; the scans of the person in Matching or of nobody ("Unattributed"). */
+function readMatched(ctx, H, count) {
+  if (!(count > 0)) return Promise.resolve({ rows: [], capped: false });
+  return H.cached(ctx, `lmatched|${ctx.prefix}|${ctx.today}|${count}`, 60000, async () => {
+    const snap = await col(ctx, "Station_Activity").where("day", "==", ctx.today).where("station", "==", "welding").limit(LIM.matched + 1).get();
+    const rows = [];
+    for (const d of snap.docs.slice(0, LIM.matched)) {
+      const v = d.data() || {};
+      if (!!v.sandbox !== !!ctx.prefix || !KIND.isMatched({ action: v.action, task: v.task, station: v.station })) continue;
+      const rid = idText(digits(v.orderId, 30)); if (!rid) continue;
+      rows.push({ rid, at: ms(v.at), person: str(v.person, 80), task: "matching", unattributed: v.unattributed === true || v.person === KIND.UNATTRIBUTED });
+    }
+    rows.sort((a, b) => b.at - a.at || (a.rid < b.rid ? -1 : 1));
+    return { rows, capped: snap.docs.length > LIM.matched };
+  });
+}
+/** Milliseconds covered by [s, e] pairs, an overlap counted once. */
+function covered(spans) {
+  let total = 0, a = -Infinity, z = -Infinity;
+  for (const [s, e] of spans.slice().sort((x, y) => x[0] - y[0])) { if (s > z) { if (z > a) total += z - a; a = s; z = e; } else z = Math.max(z, e); }
+  if (z > a) total += z - a;
+  return total;
 }
 
 /**
@@ -334,8 +364,9 @@ function readToday(ctx, H) {
 async function op(ctx, body, H) {
   const now = ctx.now;
   const [lr, sr, tr] = await Promise.all([safe(readLive(ctx, H), "live"), safe(readSessions(ctx, H), "sessions"), safe(readToday(ctx, H), "today")]);
+  const mr = await safe(readMatched(ctx, H, tr.ok && tr.value.by.welding ? tr.value.by.welding.matched : 0), "matched");
   if (!lr.ok && !sr.ok) { const e = new Error("both reads failed"); e.unavailable = [lr.error, sr.error]; throw e; }
-  const errors = [lr, sr, tr].filter(r => !r.ok).map(r => r.label + ": " + r.error);
+  const errors = [lr, sr, tr, mr].filter(r => !r.ok).map(r => r.label + ": " + r.error);
   const capped = [lr, sr, tr].filter(r => r.ok && r.value.capped).length > 0;
 
   // 1 · the current orders (a document that beat inside STALE_MS and says it is working), newest scan first
@@ -360,31 +391,53 @@ async function op(ctx, body, H) {
     if (!s.person || !hasLetter(s.person) || !STATIONS.has(s.station) || s.endAt) continue;
     const last = Math.max(s.startAt, s.lastSeenAt);
     if (!(s.startAt > 0) || now - last >= SESSION_GONE_MS) continue;
-    const name = H.display(s.person), k = `${s.station}|${s.device}|${name}`, had = open.get(k);
-    if (had) { had.since = Math.min(had.since, s.startAt); had.lastSeenAt = Math.max(had.lastSeenAt, last); continue; }
+    const name = H.display(s.person), k = `${s.station}|${s.device}|${name}|${s.task}|${s.role}`, had = open.get(k);   // (one row per page, person and task: two people at the Welding station, or one person in both tasks, are separate rows)
+    if (had) { had.since = Math.min(had.since, s.startAt); had.lastSeenAt = Math.max(had.lastSeenAt, last); if (s.lastInputAt) had.lastInputAt = Math.max(had.lastInputAt || 0, s.lastInputAt); continue; }
     const row = { name, stationKey: s.station, device: s.device, since: s.startAt, lastSeenAt: last };
+    if (s.task) row.task = s.task;
+    if (s.role) row.role = s.role;
+    if (s.lastInputAt) row.lastInputAt = s.lastInputAt;
     open.set(k, row); signedIn.push(row);
   }
   // a person working at a page whose session is not in today's list (the sorter's laser station has none): shown as signed in there while they work
-  for (const c of cur) { const k = `${c.station}|${c.device}|${c.person}`; if (!open.has(k)) { const r = { name: c.person, stationKey: c.station, device: c.device, since: c.since || c.scannedAt, lastSeenAt: c.beatAt }; open.set(k, r); signedIn.push(r); } }
+  for (const c of cur) { const k = `${c.station}|${c.device}|${c.person}||`; if (![...open.keys()].some(x => x.startsWith(`${c.station}|${c.device}|${c.person}|`)) && !open.has(k)) { const r = { name: c.person, stationKey: c.station, device: c.device, since: c.since || c.scannedAt, lastSeenAt: c.beatAt }; open.set(k, r); signedIn.push(r); } }
   signedIn.sort((a, b) => a.since - b.since || (a.name < b.name ? -1 : 1));
 
   // 3 · the stations
   const today = tr.ok ? tr.value.by : {}, stations = [];
+  // the Welding station: today's matched scans (newest first, dressed with the order's thumbnail like a current order) and the time signed in per task today
+  const todayStart = H.nyMidnight(ctx.today), matchedRows = mr.ok ? mr.value.rows : [];
+  const matched = matchedRows.slice(0, LIM.matchedShown).map(m => ({ kind: "order", rid: m.rid, orderNumber: m.rid, at: m.at, person: m.unattributed ? "" : H.display(m.person), task: "matching", unattributed: m.unattributed, customer: "", pieces: [], pieceCount: 0, note: "" }));
+  if (matched.length) { try { errors.push(...await dress(ctx, matched)); } catch (e) { errors.push("matched: " + String((e && e.message) || e).slice(0, 120)); } }
+  const lastScan = new Map(); for (const m of matchedRows) if (!m.unattributed) { const n = H.display(m.person); lastScan.set(n, Math.max(lastScan.get(n) || 0, m.at)); }
+  const weldRows = (sr.ok ? sr.value.rows : []).filter(r => r.station === "welding" && r.startAt > 0 && r.person && hasLetter(r.person));
+  const spanOf = r => [Math.max(r.startAt, todayStart), r.endAt || (now - Math.max(r.startAt, r.lastSeenAt) < SESSION_GONE_MS ? now : Math.max(r.startAt, r.lastSeenAt))];
+  const taskMsOf = (match, who) => covered(weldRows.filter(r => (r.task || "unknown") === match && (!who || H.display(r.person) === who)).map(spanOf).filter(x => x[1] > x[0]));
   for (const s of CATALOG) {
     const mine = cur.filter(c => c.station === s.key), folks = signedIn.filter(p => p.stationKey === s.key);
-    const people = [...new Set(folks.map(p => p.name).concat(mine.map(c => c.person)))];
+    const people = folks.map(p => { const o = { name: p.name, since: p.since, lastSeenAt: p.lastSeenAt, lastInputAt: p.lastInputAt || null, device: p.device, deviceLabel: Object.prototype.hasOwnProperty.call(DEVICE_LABEL, p.device) ? DEVICE_LABEL[p.device] : p.device }; if (p.task) o.task = p.task; if (p.role) o.role = p.role; return o; });
+    for (const c of mine) if (!people.some(p => p.name === c.person)) people.push({ name: c.person, since: c.since || c.scannedAt, lastSeenAt: c.beatAt, lastInputAt: null, device: c.device, deviceLabel: c.deviceLabel });
+    const names = [...new Set(people.map(p => p.name))];
     const devs = new Map(s.devices.map(([d, l]) => [d, { device: d, label: l, state: "offline", person: "", since: 0 }]));
-    for (const p of folks) { const x = devs.get(p.device) || { device: p.device, label: DEVICE_LABEL[p.device] || p.device, state: "offline", person: "", since: 0 }; devs.set(p.device, x); x.state = "idle"; x.person = p.name; x.since = p.since; }
-    for (const c of mine) { const x = devs.get(c.device) || { device: c.device, label: c.deviceLabel, state: "offline", person: "", since: 0 }; devs.set(c.device, x); x.state = "working"; x.person = c.person; x.since = c.since || x.since; }
-    const t = today[s.key] || (tr.ok ? { parts: 0, orders: 0, scans: 0, lastAt: 0 } : { parts: null, orders: null, scans: null, lastAt: 0 });   // (today's rollups could not be read: the counts are unknown, a dash, never a 0)
+    for (const p of folks) { const x = devs.get(p.device) || { device: p.device, label: DEVICE_LABEL[p.device] || p.device, state: "offline", person: "", since: 0 }; devs.set(p.device, x); x.state = "idle"; x.person = x.person && x.person !== p.name && !x.person.split(", ").includes(p.name) ? x.person + ", " + p.name : p.name; x.since = x.since ? Math.min(x.since, p.since) : p.since; }
+    for (const c of mine) { const x = devs.get(c.device) || { device: c.device, label: c.deviceLabel, state: "offline", person: "", since: 0 }; devs.set(c.device, x); x.state = "working"; if (!x.person) x.person = c.person; x.since = c.since || x.since; }
+    const t = today[s.key] || (tr.ok ? { parts: 0, orders: 0, scans: 0, lastAt: 0, matched: 0, unattributed: 0 } : { parts: null, orders: null, scans: null, lastAt: 0, matched: null, unattributed: null });   // (today's rollups could not be read: the counts are unknown, a dash, never a 0)
     let lastEventAt = t.lastAt;
     for (const c of mine) lastEventAt = Math.max(lastEventAt, c.scannedAt);
     for (const v of idleLive) if (v.station === s.key) lastEventAt = Math.max(lastEventAt, ms(v.idleAt) || ms(v.eventAt));
-    stations.push({ key: s.key, label: s.label, state: mine.length ? "working" : folks.length ? "idle" : "offline", people,
+    const row = { key: s.key, label: s.label, state: mine.length ? "working" : folks.length ? "idle" : "offline", people, names,
       current: mine.map(c => ({ id: `${c.station}__${c.device}__${c.person}`, person: c.person, device: c.device, deviceLabel: c.deviceLabel, kind: c.kind, rid: c.rid, orderNumber: c.orderNumber, customer: c.customer, title: c.title,
         scannedAt: c.scannedAt, beatAt: c.beatAt, thumbUrl: c.thumbUrl, photoUrl: c.photoUrl, vectorUrl: c.vectorUrl, qr: c.qr, pieces: c.pieces, pieceCount: c.pieceCount, note: c.note })),
-      devices: [...devs.values()], lastEventAt: lastEventAt || null, counts: { partsToday: t.parts, ordersToday: t.orders, scansToday: t.scans } });
+      devices: [...devs.values()], lastEventAt: lastEventAt || null, counts: { partsToday: t.parts, ordersToday: t.orders, scansToday: t.scans } };
+    if (!KIND.throughput(s.key)) {
+      // never "pieces / orders today" here: time on task per task and the matched scans stand in their place
+      for (const p of people) { if (p.task === "matching") { const n = lastScan.get(p.name); if (n && n > (p.lastInputAt || 0)) p.lastInputAt = n; } p.todayMs = taskMsOf(p.task || "unknown", p.name); }
+      row.noThroughput = true;
+      row.counts = { partsToday: null, ordersToday: null, scansToday: tr.ok ? t.matched : null };
+      row.today = { day: ctx.today, matched: tr.ok ? t.matched : null, unattributed: tr.ok ? t.unattributed : null, taskMs: { welding: taskMsOf("welding"), matching: taskMsOf("matching"), unknown: taskMsOf("unknown") } };
+      row.matched = matched.map(m => ({ rid: m.rid, orderNumber: m.orderNumber, at: m.at, person: m.person, task: m.task, unattributed: m.unattributed, customer: m.customer, thumbUrl: m.thumbUrl || "", vectorUrl: m.vectorUrl || "", photoUrl: m.photoUrl || "", pieceCount: m.pieceCount, pieces: m.pieces }));
+    }
+    stations.push(row);
   }
   const out = { ok: true, at: now, mode: ctx.prefix ? "sandbox" : "real", day: ctx.today, keepAliveMs: KEEPALIVE_MS, staleMs: STALE_MS, stations, signedIn };
   if (errors.length) { out.partial = true; out.errors = errors; }

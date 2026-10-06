@@ -15,6 +15,8 @@
 //   6 · the console's view model from the real answers
 //   node tests/stations/efficiency-crosscheck.cjs
 'use strict';
+require(require('path').join(__dirname, '../../netlify/functions/_activityKinds.js')).NO_THROUGHPUT.clear();   // this suite uses 'welding' as a plain fixture station for the generic arithmetic: the Welding station's own rule (not counted in throughput, R2 of stations round 2) is tested in welding-portal.cjs
+
 const path = require('path'), assert = require('assert'), Module = require('module'), vm = require('vm'), fs = require('fs');
 const root = path.join(__dirname, '../..');
 
