@@ -4,7 +4,14 @@
  *  activity threshold"). The page does it itself (station-session.js, AD1); this is the same rule for a page that died or never said so, so
  *  that it holds when a computer is switched off, a tab crashes or a browser sleeps.
  *
- *  THE RULES  (a session = one document of Station_Sessions; `B` its last beat, `L` its last input; both server clock, ms)
+ *  PER STATION (Paul, 6 Oct 2026 20:10 UTC, plans/stations-round2/plan.md "Addendum 2"): the numbers live in ONE table, _stationSignoutPolicy.js, the very
+ *  same table the page carries (station-session.js POLICY; a test compares them). default = the rules below, 10 minutes. WELDING: no idle sign-out at
+ *  all; at 17:00 America/Toronto every Welding person is signed out, end time 17:00 sharp, reason "closing", whatever their last input (a session that
+ *  began after 17:00 waits for the New York midnight). LASER: 60 minutes without input before 17:00 (reason "idle"), 30 minutes from 17:00 on (reason
+ *  "closing"); the end is always the last input. The 15 minute "closed" rule (a page with no beat) does not end a Welding or a Laser session early: a
+ *  silent Laser page is ended when its limit has passed since its last beat (60 minutes; 30 minutes counted from 17:00), a Welding one at 17:00.
+ *  An explicit end the page itself sends (Sign out, switching person, pagehide) is not automatic and is stored as it always was.
+ *  THE RULES  (a session = one document of Station_Sessions; `B` its last beat, `L` its last input; both server clock, ms; the default station's numbers)
  *    · An ended session is never touched, never rewritten, nothing is ever deleted.
  *    · Unknown whether the person is an Admin (the list unreadable and no stored flag): left open, decided on a later look.
  *    · Admin (stored `admin: true`, or the list says so now): exempt from the idle and the 5 pm rule. Only the old rule: a page silent for
@@ -24,6 +31,7 @@
  *  Contract: /mnt/project-files/plans/stations-round2/api.md ("AD2"). Nothing here calls Etsy. */
 "use strict";
 const Admins = require("./_stationAdmins");
+const Policy = require("./_stationSignoutPolicy");
 
 const COLL = "Station_Sessions";
 const IDLE_MS = 10 * 60000, CLOSED_MS = 15 * 60000;
@@ -84,26 +92,44 @@ function pageTime(t, skew, now) {
 const minutesOf = (start, end) => Math.max(0, Math.round((end - start) / 6000) / 10);
 
 /**
- * What to do with an OPEN session, from what is known. `s` = { startAt, lastSeenAt, lastInputAt?, endAt? } (ms or Firestore times);
+ * What to do with an OPEN session, from what is known. `s` = { startAt, lastSeenAt, lastInputAt?, endAt?, station? } (ms or Firestore times);
  * `adm` = true (Admin) | false | null (unknown). Returns null (leave it) or { endAt, endReason, rule }.
  * `rule` says which rule decided it: "idle" | "closing" | "closed" | "midnight".
+ * The station's row in _stationSignoutPolicy.js says which numbers apply (no `station`, or one with no row of its own: the default).
  */
 function decide(s, now, adm) {
   const start = ms(s && s.startAt);
   if (!(start > 0) || ms(s.endAt)) return null;                                      // not a session, or already ended: never rewritten
-  const B = Math.max(start, ms(s.lastSeenAt) || start), cap = nyMidnightAfter(start);
-  const dead = now - B >= CLOSED_MS;
-  const old = () => dead ? { endAt: Math.min(B, cap), endReason: B > cap ? "midnight" : "closed", rule: B > cap ? "midnight" : "closed" } : null;
+  const B = Math.max(start, ms(s.lastSeenAt) || start), cap = nyMidnightAfter(start), C = closingInstant(start);
+  const P = Policy.of(s.station);
   if (adm === null) return null;
-  const Lraw = ms(s.lastInputAt);
-  if (adm === true || !(Lraw > 0)) return old();                                      // an Admin, or a page that never reported input: the old rule
+  // the old rule: a page silent for 15 minutes ended "closed" at its last beat ("midnight" when that beat is past the session's own midnight)
+  const silent = () => ({ endAt: Math.min(B, cap), endReason: B > cap ? "midnight" : "closed", rule: B > cap ? "midnight" : "closed" });
+  if (adm === true) return now - B >= CLOSED_MS ? silent() : null;                   // an Admin: only the old rule, whatever the station
+  if (P.closeAt17 === "always" && start < C && now >= C) return { endAt: C, endReason: "closing", rule: "closing" };      // Welding: 17:00 sharp, whatever the last input
+  if (!Policy.hasIdle(P)) return now >= cap ? { endAt: cap, endReason: "midnight", rule: "midnight" } : null;        // no idle rule: only the midnight is left (a Welding session that began after 17:00)
+  const Lraw = ms(s.lastInputAt), dead = now >= Policy.deadAt(P, start, B, C, cap);
+  if (!(Lraw > 0)) return dead ? silent() : null;                                    // a page that never reported input: its last beat, once its station's silence has passed
   const L = Math.min(Math.max(Lraw, start), B);
-  if (!dead && B - L < IDLE_MS) return null;                                         // fresh beat, input inside the window: stays
+  if (!dead && Policy.dueAt(P, L, C) > B) return null;                               // the page spoke recently and its own report is inside the limit: stays
   if (L > cap) return { endAt: cap, endReason: "midnight", rule: "midnight" };
-  const C = closingInstant(start);
-  const closing = start < C && C <= B && L <= C - IDLE_MS;
-  return { endAt: closing ? Math.min(L, C) : L, endReason: closing ? "closing" : "idle", rule: closing ? "closing" : "idle" };
+  // "closing" or "idle"? A limit that changes at 17:00 (Laser) is "closing" when the sign-out falls at or after 17:00 and "idle" before it. The default's single
+  // limit is "closing" only when the server first hears at or after 17:00 from a person with no input in the window before it, else "idle" (Rule B, as built).
+  const closing = Policy.limitChangesAt17(P) ? Policy.dueAt(P, L, C) >= C : start < C && C <= B && L <= C - P.idleMinAfter17 * 60000;
+  return { endAt: L, endReason: closing ? "closing" : "idle", rule: closing ? "closing" : "idle" };
 }
+
+/** Does the readers' own derived "closed" (a page silent for 15 minutes counted as ended at its last beat) NOT apply to this stored session? True when its station keeps a quiet
+ *  page open (Laser inside its limit, Welding before 17:00): the person is still signed in until the rules above end the session. `row` as stored (station, startAt, lastSeenAt). */
+function keptOpen(row, now) {
+  const start = ms(row && row.startAt); if (!(start > 0)) return false;
+  const B = Math.max(start, ms(row.lastSeenAt) || start);
+  return Policy.keptOpen(row.station, start, B, closingInstant(start), nyMidnightAfter(start), now == null ? deps.now() : now);
+}
+/** What a sign-out by the rules is called, in plain words, for a station and a reason (the portal's wording: the person page's Out row); "" for any other reason */
+const endText = (station, reason) => Policy.endText(station, reason) || END_TEXT[reason] || "";
+/** the same as a short label for a pill (the sorter's Sign-ins window) */
+const endPill = (station, reason) => Policy.endPill(station, reason);
 
 /** true | false | null for a stored session row and the loaded list */
 function adminState(row, list) {
@@ -220,5 +246,5 @@ async function sweep(opts) {
 }
 function resetSweep() { sweptAt = 0; recent.clear(); }
 
-module.exports = { COLL, IDLE_MS, CLOSED_MS, CLOSING_ZONE, CLOSING_HOUR, END_REASONS, END_TEXT, decide, adminState, settle, settledSnap, sweep, endOne,
+module.exports = { COLL, IDLE_MS, CLOSED_MS, CLOSING_ZONE, CLOSING_HOUR, END_REASONS, END_TEXT, POLICY: Policy.POLICY, policyOf: Policy.of, policy: Policy.copyOf, endText, endPill, keptOpen, decide, adminState, settle, settledSnap, sweep, endOne,
   closingInstant, nyMidnightAfter, skewOf, pageTime, minutesOf, resetSweep, deps };

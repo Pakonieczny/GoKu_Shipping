@@ -53,7 +53,7 @@ const put = (id, d) => store.set('Station_Sessions/' + id, d);
   // (closed at his last beat); Dee: times kept as Firestore times, ended at midnight; Old: outside the span asked for.
   put('ana1', { id: 'ana1', person: 'Ana P.', employeeId: '123456', station: 'assembly', device: 'assembly-2', computerId: 'c-aaaa1111', computerLabel: 'Assembly 2 · a111', startAt: NOW - 300 * MIN, lastSeenAt: NOW - 181 * MIN, endAt: NOW - 180 * MIN, endReason: 'signOut', minutes: 120 });
   put('ben1', { id: 'ben1', person: 'Ben', employeeId: '654321', station: 'shipping', device: 'shipping-1', computerId: 'c-bbbb', computerLabel: 'Shipping 1 · b222', startAt: NOW - 95 * MIN, lastSeenAt: NOW - 3 * MIN });
-  put('cy1', { id: 'cy1', person: 'Cy', station: 'welding', device: 'weld-1', computerId: 'c-cccc', computerLabel: 'Weld 1 · c333', startAt: NOW - 100 * MIN, lastSeenAt: NOW - 40 * MIN });
+  put('cy1', { id: 'cy1', person: 'Cy', station: 'assembly', device: 'assembly-1', computerId: 'c-cccc', computerLabel: 'Assembly 1 · c333', startAt: NOW - 100 * MIN, lastSeenAt: NOW - 40 * MIN });       // (a default-rule station: Welding and Laser keep a quiet page open, auto-signout-server.cjs)
   put('dee1', { id: 'dee1', person: 'Dee', station: 'sorting', computerId: 'c-dddd', startAt: new TS(NOW - 26 * 60 * MIN), lastSeenAt: new TS(NOW - 20 * 60 * MIN), endAt: new TS(NOW - 20 * 60 * MIN), endReason: 'midnight', minutes: 360 });
   put('old1', { id: 'old1', person: 'Old', station: 'sorting', startAt: NOW - 90 * 24 * 60 * MIN, lastSeenAt: NOW - 90 * 24 * 60 * MIN });
   put('bad1', { id: 'bad1', person: 'No start', station: 'sorting' });
@@ -81,6 +81,15 @@ const put = (id, d) => store.set('Station_Sessions/' + id, d);
   assert.equal((await call({ op: 'sessionsList' })).status, 401);
   assert.equal((await call({ op: 'sessionsList' }, { 'X-Edit-Passcode': 'sesame' })).status, 200);
   delete process.env.EDIT_PASSCODE;
+  // the station's own words for a sign-out by the rules (AD4): a short label for the pill, only for idle and closing
+  put('pl-1', { id: 'pl-1', person: 'Lia L.', station: 'laser', device: 'charm-nest-1', computerId: 'c-pl1', startAt: NOW - 200 * MIN, lastSeenAt: NOW - 100 * MIN, endAt: NOW - 100 * MIN, endReason: 'idle', minutes: 100, admin: false });
+  put('pl-2', { id: 'pl-2', person: 'Lola L.', station: 'laser', device: 'charm-nest-1', computerId: 'c-pl2', startAt: NOW - 210 * MIN, lastSeenAt: NOW - 110 * MIN, endAt: NOW - 110 * MIN, endReason: 'closing', minutes: 100, admin: false });
+  put('pl-3', { id: 'pl-3', person: 'Wen W.', station: 'welding', device: 'weld-1', computerId: 'c-pl3', startAt: NOW - 220 * MIN, lastSeenAt: NOW - 120 * MIN, endAt: NOW - 120 * MIN, endReason: 'closing', minutes: 100, admin: false });
+  put('pl-4', { id: 'pl-4', person: 'Dan D.', station: 'sorting', device: 'sorting-1', computerId: 'c-pl4', startAt: NOW - 230 * MIN, lastSeenAt: NOW - 130 * MIN, endAt: NOW - 130 * MIN, endReason: 'idle', minutes: 100, admin: false });
+  put('pl-5', { id: 'pl-5', person: 'Sam S.', station: 'sorting', device: 'sorting-1', computerId: 'c-pl5', startAt: NOW - 240 * MIN, lastSeenAt: NOW - 140 * MIN, endAt: NOW - 140 * MIN, endReason: 'signOut', minutes: 100, admin: false });
+  r = await call({ op: 'sessionsList', since: NOW - 3 * 24 * 60 * MIN });
+  const pl = Object.fromEntries(r.body.sessions.map(s => [s.id, s.endPill]));
+  assert.deepEqual([pl['pl-1'], pl['pl-2'], pl['pl-3'], pl['pl-4'], pl['pl-5']], ['1 hour without input', '5:00 pm · 30 min without input', '5:00 pm', '10 min without input', undefined], 'Laser, Welding and the default each word their own sign-out; a hand sign-out has no label');
   console.log('  ✓ sessionsList: one range on startAt, bounded, closed/live worked out when read, no id, gated');
 
   /* ── 2 · the view's days and totals ── */
@@ -133,6 +142,8 @@ const put = (id, d) => store.set('Station_Sessions/' + id, d);
           const sessions = [
             { id: 's-ben', person: 'Ben', station: 'shipping', device: 'shipping-1', computerId: 'c-b', computerLabel: 'Shipping 1 · b222', startAt: n - 95 * MIN, lastSeenAt: n - 2 * MIN, endAt: null, endReason: null, minutes: 95, live: true },
             { id: 's-ana', person: 'Ana P.', station: 'assembly', device: 'assembly-2', computerId: 'c-a', computerLabel: 'Assembly 2 · a111', startAt: n - 300 * MIN, lastSeenAt: n - 181 * MIN, endAt: n - 180 * MIN, endReason: 'signOut', minutes: 120, live: false },
+            { id: 's-lia', person: 'Lia L.', station: 'laser', device: 'charm-nest-1', computerId: 'c-l', computerLabel: 'Sorter · c444', startAt: n - 200 * MIN, lastSeenAt: n - 100 * MIN, endAt: n - 100 * MIN, endReason: 'idle', endPill: '1 hour without input', minutes: 100, live: false },
+            { id: 's-wen', person: 'Wen W.', station: 'welding', device: 'weld-1', computerId: 'c-w', computerLabel: 'Weld 1 · w555', startAt: n - 220 * MIN, lastSeenAt: n - 120 * MIN, endAt: n - 120 * MIN, endReason: 'closing', endPill: '5:00 pm', minutes: 100, live: false },
             { id: 's-cy', person: 'Cy', station: 'welding', device: 'weld-1', computerId: 'c-c', computerLabel: 'Weld 1 · c333', startAt: n - 30 * 60 * MIN, lastSeenAt: n - 26 * 60 * MIN, endAt: n - 26 * 60 * MIN, endReason: 'closed', minutes: 240, live: false }
           ];
           return route.fulfill({ status: 200, contentType: 'application/json', headers: { 'Access-Control-Allow-Origin': '*' }, body: JSON.stringify({ sessions, truncated: false, since: b.since, until: n + 60000, now: n }) });
@@ -161,6 +172,7 @@ const put = (id, d) => store.set('Station_Sessions/' + id, d);
     assert(/today/i.test(head) && /Ana P\./.test(head) && /2 h/.test(head) && /Cy/.test(head) && /4 h/.test(head), 'time per person per day: ' + head);
     const body = await page.locator('#dlgSignins .siBody').innerText();
     assert(/Signed out/.test(body) && /Closed · no heartbeat/.test(body) && /Signed in/.test(body), 'why each ended');
+    assert(/1 hour without input/.test(body) && /5:00 pm/.test(body) && !/10 min without input/.test(body), 'the station\'s own label for a sign-out by the rules (Laser 1 hour, Welding 5:00 pm)');
     await page.click('#dlgSignins .seg[data-k="by"] button[data-v="computer"]');
     assert(/Assembly 2 · a111/.test(await page.locator('#dlgSignins .siGHead').first().innerText() + await page.locator('#dlgSignins .siBody').innerText()), 'per computer');
     // reads again while open; past the (faked) midnight "Today" becomes "Yesterday"
