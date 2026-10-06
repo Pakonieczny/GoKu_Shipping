@@ -106,6 +106,12 @@
       role: low(o.role || g.role), device: str(o.device || g.device), deviceLabel: str(o.deviceLabel || g.deviceLabel),
       parts: pick("partsToday", "parts"), orders: pick("ordersToday", "orders"), medianMs: pick("medianOrderMs", "medianMs", "medianPerOrderMs"), longestIdleMs: pick("longestIdleMs", "maxIdleMs") };
   }
+  /** The Inbox station's own block (IN2, plans/stations-round2/api.md): what was SENT today by everyone, and by each person. A count the answer lacks is null (never drawn as 0). */
+  function normInboxToday(x) {
+    if (!x || typeof x !== "object") return null; const c = v => (has(v) ? N(v) : null);
+    return { day: str(x.day), replies: c(x.replies), orders: c(x.orders), customers: c(x.customers), messages: c(x.messages), unknown: c(x.unknown),
+      byPerson: (Array.isArray(x.byPerson) ? x.byPerson : []).filter(p => p && p.name).map(p => ({ name: str(p.name), replies: c(p.replies), orders: c(p.orders), customers: c(p.customers), messages: c(p.messages) })) };
+  }
   /** One matched scan of the Welding station today (an order code scanned as Matching). `person` is "" for a scan made with nobody in Matching. */
   function normMatched(m) {
     m = m || {}; const rid = str(m.rid != null && m.rid !== "" ? m.rid : m.orderNumber), un = m.unattributed === true;
@@ -158,7 +164,9 @@
       const devices = (Array.isArray(s.devices) ? s.devices : []).filter(d => d && (d.device || d.label)).map(d => ({ device: str(d.device), label: str(d.label || d.device), state: ["working", "idle", "offline"].includes(d.state) ? d.state : "offline", person: str(d.person), since: T(d.since) }));
       for (const p of people) if (!p.deviceLabel) { const d = devices.find(x => x.state !== "offline" && x.person && low(x.person) === low(p.name)); if (d) { p.device = p.device || d.device; p.deviceLabel = d.label; } }   // (no page named for the person: the station's own page list says where they are)
       const state = ["working", "idle", "offline"].includes(s.state) ? s.state : current.length ? "working" : people.length ? "idle" : "offline";
-      const out = { key, label, state, people, current, lastEventAt: T(s.lastEventAt), counts: { parts: cnt(k.partsToday != null ? k.partsToday : k.parts), orders: cnt(k.ordersToday != null ? k.ordersToday : k.orders), scans: cnt(k.scansToday != null ? k.scansToday : k.scans) }, devices, spark: sparkOf(s), noThroughput: s.noThroughput === true, today: null, matched: [] };
+      const out = { key, label, state, people, current, lastEventAt: T(s.lastEventAt), counts: { parts: cnt(k.partsToday != null ? k.partsToday : k.parts), orders: cnt(k.ordersToday != null ? k.ordersToday : k.orders), scans: cnt(k.scansToday != null ? k.scansToday : k.scans) }, devices, spark: sparkOf(s), noThroughput: s.noThroughput === true, today: null, matched: [], inbox: null };
+      const ib = normInboxToday(s.inbox);   // (the Inbox station: today's replies and orders covered take the place of pieces and orders; the card says so)
+      if (ib) { out.inbox = ib; out.counts = { parts: ib.replies, orders: ib.orders, scans: null }; }
       if (out.noThroughput) {   // the Welding station: never pieces or orders; the matched scans, the time on task per task, and today's matched list
         const t = s.today && typeof s.today === "object" ? s.today : {}, m = t.taskMs && typeof t.taskMs === "object" ? t.taskMs : null;
         out.counts.parts = null; out.counts.orders = null;
@@ -690,9 +698,17 @@
         const who = [...new Set(s.people.map(p => p.name))]; if (who.length) rows.push({ k: who.length === 1 ? "Person" : "People", v: who.join(", ") });
         return { state: s.state, title: s.label, sub: `${stateWord[s.state]}${who.length > 1 ? ` · ${who.length} people` : ""}`, rows, foot: "Logged activity only. Welding is not counted in pieces or orders." };
       }
-      if (s.counts.parts != null) rows.push({ k: "Pieces today", v: nf(s.counts.parts), d: "Pieces scanned or completed here today" });
-      if (s.counts.orders != null) rows.push({ k: "Orders today", v: nf(s.counts.orders), d: "Different orders handled here today" });
-      if (s.counts.scans != null) rows.push({ k: "Scans today", v: nf(s.counts.scans), d: "Scans logged at this station today" });
+      const ib = s.inbox;
+      if (ib) {   // the Inbox: what people SENT today (an AI draft nobody sent is not counted)
+        if (ib.replies != null) rows.push({ k: "Replies today", v: nf(ib.replies), d: "Replies people sent from the inbox today" });
+        if (ib.orders != null) rows.push({ k: "Orders covered", v: nf(ib.orders), d: "Different orders those replies were about" });
+        if (ib.customers != null) rows.push({ k: "Customers", v: nf(ib.customers), d: "Different customers who got a reply today" });
+        if (ib.messages != null) rows.push({ k: "Messages sent", v: nf(ib.messages), d: "Messages sent to customers today" });
+        if (ib.unknown) rows.push({ k: "No name recorded", v: nf(ib.unknown), d: "Replies with no operator name: counted for nobody" });
+      }
+      if (!ib && s.counts.parts != null) rows.push({ k: "Pieces today", v: nf(s.counts.parts), d: "Pieces scanned or completed here today" });
+      if (!ib && s.counts.orders != null) rows.push({ k: "Orders today", v: nf(s.counts.orders), d: "Different orders handled here today" });
+      if (!ib && s.counts.scans != null) rows.push({ k: "Scans today", v: nf(s.counts.scans), d: "Scans logged at this station today" });
       if (s.lastEventAt) rows.push({ k: "Last event", v: `${clock(s.lastEventAt)} · ${ago((now() - s.lastEventAt) / 1000)}`, d: "The last scan or action logged at this station" });
       const who = [...new Set(s.people.map(p => p.name))];   // (one name once, however many pages or tasks they are signed in at)
       if (who.length) rows.push({ k: who.length === 1 ? "Person" : "People", v: who.join(", ") });
@@ -701,7 +717,7 @@
         s.devices.slice(0, 6).forEach((d, i) => rows.push({ k: d.label, v: d.state === "offline" ? "Offline" : `${d.person ? d.person + " · " : ""}${stateWord[d.state]}`, d: i === 0 ? `Pages of this station: ${on} of ${s.devices.length} in use` : "" }));
         if (s.devices.length > 6) rows.push({ k: "", v: `+${s.devices.length - 6} more pages` });
       }
-      return { state: s.state, title: s.label, sub: `${stateWord[s.state]}${s.state === "working" && s.current.length ? ` · ${s.current.length} ${s.current.length === 1 ? "order" : "orders"}` : ""}`, rows, spark: s.spark, sparkNote: "Pieces, last hour", foot: "Logged activity only: it shows what was scanned, not effort." };
+      return { state: s.state, title: s.label, sub: `${stateWord[s.state]}${s.state === "working" && s.current.length ? ` · ${s.current.length} ${s.current.length === 1 ? "order" : "orders"}` : ""}`, rows, spark: s.spark, sparkNote: "Pieces, last hour", foot: ib ? "Only replies a person sent count: it shows what was sent, not effort." : "Logged activity only: it shows what was scanned, not effort." };
     }
     const ask = body => (shared ? shared.call(body) : askOwn(sub, body));
     const modeKey = () => { if (shared) { let v = ""; try { v = shared.view(); } catch (_) {} return String(v || "real"); } return viewParams(opts).sandbox ? "sandbox" : "real"; };
@@ -715,6 +731,9 @@
       if (p.since) head.push({ k: "Signed in since", v: `${clock(p.since)} · ${words(now() - p.since)}`, d: "When this person signed in at a station today" });
       if (p.lastInputAt) head.push({ k: "Last input", v: ago((now() - p.lastInputAt) / 1000), d: "The last time this person touched the station page (a tap, a key, a scan)" });
       if (p.lastSeenAt) head.push({ k: "Last seen", v: ago((now() - p.lastSeenAt) / 1000), d: "The last sign of life from the station" });
+      if (s.inbox && !p.lastInputAt) head.push({ k: "Last input", v: "None reported yet", d: "The last pointer, touch, key or scroll at the inbox page (not a sign-out)" });
+      const ibp = s.inbox && s.inbox.byPerson.find(b => low(b.name) === low(p.name));
+      if (ibp) { if (ibp.replies != null) live.push({ k: "Replies today", v: nf(ibp.replies), d: "Replies this person sent from the inbox today" }); if (ibp.orders != null) live.push({ k: "Orders covered", v: nf(ibp.orders), d: "Different orders those replies were about" }); if (ibp.customers != null) live.push({ k: "Customers", v: nf(ibp.customers), d: "Different customers who got a reply today" }); if (ibp.messages != null) live.push({ k: "Messages sent", v: nf(ibp.messages), d: "Messages sent to customers today" }); }
       if (!wd && p.parts != null) live.push({ k: "Pieces today", v: nf(p.parts), d: "Pieces scanned or completed today" });
       if (!wd && p.orders != null) live.push({ k: "Orders today", v: nf(p.orders), d: "Different orders handled today" });
       if (!wd && p.medianMs != null) live.push({ k: "Median per order", v: words(p.medianMs), d: "The middle time from scan to done" });
@@ -850,6 +869,47 @@
     // "last input 12 s ago" follows the clock
     const stopWeld = track(R, () => { const t = now(); for (const X of S.rows.values()) for (const r of X.wrows.values()) { const it = inputText(r.p, t); if (r.inp.textContent !== it) setText(r.inp, it); } });
 
+    /* the Inbox card (IN2): the head says today's replies and orders covered (relabelled here); the body says who is signed in, since when, and how long
+          ago their last input was (ticking from the server clock, no request). A person whose page has not reported input is said so, never guessed. */
+    function inboxRowText(r, t) {
+      const q = r.p; if (!q) return;
+      setText(r.a, q.since ? `Signed in ${clock(q.since)} · ${words(t - q.since)}` : "Signed in");
+      const idle = q.lastInputAt ? t - q.lastInputAt : null;
+      setText(r.b, idle == null ? "No input reported yet" : idle < 3000 ? "Last input just now" : `Last input ${words(idle)} ago`); r.b.dataset.quiet = idle == null ? "1" : "";
+    }
+    /** The answer stopped carrying the inbox block (an older service, or it could not be read): the card goes back to the plain one. */
+    function inboxOff(X) {
+      for (const r of X.inb.rows.values()) if (r.stop) r.stop();
+      X.inb.box.remove(); const w = X.inb.was; X.inb = null; delete X.el.dataset.inbox;
+      if (w.lab) w.lab.nodeValue = w.text; X.cnt.title = w.title;
+    }
+    function inboxCard(X, s, ctx) {
+      const ib = s.inbox; if (!ib) { if (X.inb) inboxOff(X); return; }
+      if (!X.inb) {
+        X.inb = { box: h("div", "esIn"), sum: h("p", "esInSum"), who: h("div", "esInWho"), rows: new Map(), was: { lab: null, text: "", title: X.cnt.title } }; X.inb.box.append(X.inb.sum, X.inb.who); X.body.insertBefore(X.inb.box, X.body.firstChild);
+        const lab = X.parts && X.parts.parentNode && X.parts.parentNode.lastChild; if (lab && lab.nodeType === 3) { X.inb.was.lab = lab; X.inb.was.text = lab.nodeValue; lab.nodeValue = " replies"; }
+        X.el.dataset.inbox = "1"; X.cnt.title = "Replies people sent from the inbox today, and the orders they cover";
+      }
+      const bits = [ib.customers != null ? `${nf(ib.customers)} ${ib.customers === 1 ? "customer" : "customers"}` : "", ib.messages != null ? `${nf(ib.messages)} ${ib.messages === 1 ? "message" : "messages"}` : ""].filter(Boolean);
+      let line = bits.length ? `${bits.join(" · ")} today` : "";
+      if (ib.unknown) line += `${line ? " · " : ""}${nf(ib.unknown)} ${ib.unknown === 1 ? "reply has" : "replies have"} no name recorded`;
+      setText(X.inb.sum, line); X.inb.sum.hidden = !line;
+      const keep = new Set(), by = new Map(ib.byPerson.map(p => [low(p.name), p]));
+      for (const p of s.people.slice().sort((a, b) => (a.since || 1e15) - (b.since || 1e15))) {
+        const k = low(p.name); keep.add(k); let r = X.inb.rows.get(k);
+        if (!r) {
+          const row = h("div", "esInP"), c = chip(X, p), m = h("span", "esInM"), a = h("span", "esInA"), b = h("span", "esInB"), n = h("span", "esInR"); m.append(a, b, n); row.append(c, m); row.dataset.name = p.name;
+          a.title = "When this person signed in at the inbox"; b.title = "Time since the last pointer, touch, key or scroll at the inbox page";
+          r = { row, chip: c, a, b, n, p, stop: null }; r.stop = track(row, t => inboxRowText(r, t));
+          X.inb.rows.set(k, r); X.inb.who.appendChild(row); if (!ctx.quiet) fade(row, { opacity: 0, transform: "translateY(4px)" }, { opacity: 1, transform: "none" }, 300);
+        }
+        r.p = p; r.chip._p = p; r.row.dataset.since = p.since || ""; r.row.dataset.lastInput = p.lastInputAt || "";
+        const mine = by.get(k), rp = mine ? mine.replies : null; setText(r.n, rp != null ? `${nf(rp)} ${rp === 1 ? "reply" : "replies"} today` : ""); r.n.hidden = rp == null;
+        inboxRowText(r, now());
+      }
+      for (const [k, r] of X.inb.rows) if (!keep.has(k)) { X.inb.rows.delete(k); if (r.stop) r.stop(); const a = ctx.quiet ? null : fade(r.row, { opacity: 1, transform: "none" }, { opacity: 0, transform: "translateY(4px)" }, 240, "forwards"); if (a) a.finished.then(() => r.row.remove(), () => r.row.remove()); else r.row.remove(); }
+      X.inb.box.hidden = !line && !X.inb.rows.size;
+    }
     function update(X, s, ctx) {
       X.data = s; const e = X.el, was = e.dataset.state;
       if (was !== s.state) { e.dataset.state = s.state; if (was && !ctx.quiet && !still() && X.light.animate) X.light.animate([{ transform: "scale(1)" }, { transform: "scale(1.5)", offset: .4 }, { transform: "scale(1)" }], { duration: 520, easing: EASE }); }
@@ -860,6 +920,7 @@
       X.cnt.hidden = wd || (s.counts.parts == null && s.counts.orders == null);
       X.cntW.hidden = !wd || !s.today || s.today.matched == null; X.weld.hidden = !wd; if (wd && s.today && s.today.matched != null) setNum(X.matchedN, s.today.matched, ctx.quiet);
       for (const [k, n] of [["parts", X.parts], ["orders", X.orders]]) { const v = s.counts[k]; n.parentNode.hidden = v == null; if (v != null) setNum(n, v, ctx.quiet); }
+      inboxCard(X, s, ctx);
       const sig = s.spark ? s.spark.join() : ""; if (sig !== X.sparkSig) { X.sparkSig = sig; X.sparkW.textContent = ""; if (s.spark) { X.sparkW.appendChild(sparkSvg(s.spark, 84, 22)); X.sparkW.title = "Pieces in the last hour"; } }
       // people: arrive and leave softly
       const keep = new Set();
@@ -1101,6 +1162,15 @@
 .esTipN{margin:0;font-size:11.5px;color:var(--ink45,#938c80)}
 .esTipS{display:grid;gap:2px}.esTipS small{color:var(--ink45,#938c80);font-size:10.5px}
 .esTipF{margin:0;padding-top:8px;border-top:1px solid var(--line2,#efe9dd);font-size:10.5px;color:var(--ink45,#938c80)}
+/* the Inbox card (IN2) */
+.esSt[data-inbox] .esPeople{display:none}
+.esIn{grid-column:1/-1;display:grid;gap:10px;min-width:0}
+.esInSum{margin:0;font-size:12px;color:var(--ink45,#938c80);font-variant-numeric:tabular-nums}
+.esInWho{display:grid;gap:8px;min-width:0}
+.esInP{display:flex;align-items:center;flex-wrap:wrap;gap:4px 14px;min-width:0}
+.esInM{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 14px;font-size:11.5px;color:var(--ink45,#938c80);font-variant-numeric:tabular-nums;min-width:0}
+.esInM span{white-space:nowrap}.esInA{color:var(--ink70,#5b554c)}.esInR{color:var(--ink,#1c1a17);font-weight:650}
+.esInB[data-quiet="1"]{color:var(--ink25,#c4bdb0)}
 @container (max-width:720px){
  .esWeld{grid-template-columns:minmax(0,1fr);padding:0 12px 12px}
 }

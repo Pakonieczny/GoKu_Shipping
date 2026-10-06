@@ -355,7 +355,7 @@ function backend(env) {
         rows = await orderRows(page); assert(rows.length > 0 && rows.every(r => r.text.includes(withCust.customer)), `searching the customer "${withCust.customer}": ${rows.length} rows, all theirs`);
       }
       await searchFor('zzzqq'); await waitFor(page, () => /No orders match/.test(document.querySelector('#efficiencyView .efp').textContent), null, 15000);
-      await page.locator(`${P} .efoClear`).first().click().catch(() => {}); await searchFor(''); await settleList(mine.total);
+      await page.locator(`${P} .efpOrdersMod .efoClear`).first().click().catch(() => {}); await searchFor(''); await settleList(mine.total);
       // an order opens the sorter's order window (zooming from the row)
       rows = await orderRows(page); const target = rows[1].rid;
       await page.locator(`${P} .efpOrdersHost:not(.efpWOrders) .efoRow[data-rid="${target}"] .efoOpen`).click();
