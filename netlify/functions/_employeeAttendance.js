@@ -33,6 +33,10 @@
  *  No PIN, passcode or digits-only name is ever read into the answer (the session's employeeId field is never touched).
  *  ───────────────────────────────────────────────────────────────────────────── */
 "use strict";
+/* The Welding station (Paul, 6 Oct 2026) is not counted in pieces or orders, and a matched scan made with nobody in Matching belongs to nobody ("Unattributed"):
+   see _activityKinds.js. Its sign-in time (two tasks at once count once) and its first and last action still make the person's day. */
+let KIND = null; try { KIND = require("./_activityKinds"); } catch (_) {}
+if (!KIND || typeof KIND.readStationCounters !== "function") KIND = { throughput: () => true, readStationCounters: (st, v) => v, UNATTRIBUTED: "Unattributed" };
 const AutoSignout = require("./_stationAutoSignout");     // idle (10 minutes without input) and closing (5:00 pm Toronto) ends: normal sign-outs, ended at the person's last input
 
 /* ── rules (all in one place; every one is echoed in the answer under `rules`) ── */
@@ -217,7 +221,7 @@ function clip(sp, from, to) {
 }
 
 /* ── the person-days ──────────────────────────────────────────────────────── */
-const newPD = day => ({ day, act: false, events: 0, first: 0, last: 0, parts: 0, orders: 0, touched: new Set(), spans: [] });
+const newPD = day => ({ day, act: false, counted: false, events: 0, first: 0, last: 0, parts: 0, orders: 0, touched: new Set(), spans: [] });
 
 /** Rows → Map(personKey → Map(day → person-day)), spellings seen per person. Rows before `start` or outside `win` are ignored. */
 function ingest(rows, keyOf, now, win, sandbox) {
@@ -231,11 +235,14 @@ function ingest(rows, keyOf, now, win, sandbox) {
   };
   for (const x of rows.rollups || []) {
     if (!isObj(x) || !validDay(x.day) || x.day < win.from || x.day > win.to || !!x.sandbox !== sandbox) continue;
+    if (x.person === KIND.UNATTRIBUTED) continue;                 // (a matched scan made with nobody in Matching has no person: the Stations board counts it)
     const name = cleanName(x.person); if (!okName(name)) continue;
-    let fa = ms(x.firstAt), la = ms(x.lastAt), net = 0, ord = 0, any = num(x.events) > 0;
-    for (const v of Object.values(isObj(x.stations) ? x.stations : {})) {
-      if (!isObj(v)) continue;
+    let fa = ms(x.firstAt), la = ms(x.lastAt), net = 0, ord = 0, any = num(x.events) > 0, counted = false;
+    for (const [st, v0] of Object.entries(isObj(x.stations) ? x.stations : {})) {
+      if (!isObj(v0)) continue;
       any = true;
+      const v = KIND.readStationCounters(st, v0);                  // (the Welding station keeps its first and last action, never pieces or orders)
+      if (KIND.throughput(st)) counted = true;
       net += Math.max(0, num(v.parts) - num(v.undoParts)); ord += Math.max(0, num(v.orders) - num(v.undoOrders));
       const f = ms(v.firstAt), l = ms(v.lastAt);
       if (f > 0 && (!fa || f < fa)) fa = f;
@@ -243,12 +250,12 @@ function ingest(rows, keyOf, now, win, sandbox) {
     }
     if (!any && !(fa > 0)) continue;                              // an empty rollup is no activity
     const pd = get(name, x.day); if (!pd) continue;
-    pd.act = true; pd.events += Math.max(0, num(x.events)); pd.parts += net; pd.orders += ord;
+    pd.act = true; pd.events += Math.max(0, num(x.events)); pd.parts += net; pd.orders += ord; if (counted) pd.counted = true;
     if (fa > 0 && (!pd.first || fa < pd.first)) pd.first = fa;
     if (la > pd.last) pd.last = la;
     if (isObj(x.touched)) for (const [id, m] of Object.entries(x.touched)) {
       const o = String(id).replace(/\D/g, "");
-      if (o && isObj(m) && Object.keys(m).some(k => m[k] && k !== "inbox")) pd.touched.add(o);      // (a customer conversation seen only at the inbox is not an order worked: the same count as the person page)
+      if (o && isObj(m) && Object.keys(m).some(k => m[k] && k !== "inbox" && KIND.throughput(k))) pd.touched.add(o);      // (a customer conversation seen only at the inbox is not an order worked: the same count as the person page)
     }
   }
   const lo = nyMidnight(win.from), hi = nyMidnight(addDays(win.to, 1));
@@ -292,8 +299,8 @@ function finish(pd, rules) {
   pd.endedBy = live ? "open" : !hasSession ? (pd.act ? "activity" : null) : !known ? "midnight" : midnight ? "midnight" : lastReason === "idle" || lastReason === "closing" ? lastReason : "signOut";
   pd.live = live;
   pd.teamPresent = pd.act || (pd.signedMs || 0) >= rules.minSignedMin * 60000;
-  pd.partsOut = pd.act ? pd.parts : null;
-  pd.ordersOut = pd.act ? (pd.touched.size || pd.orders) : null;
+  pd.partsOut = pd.act && pd.counted ? pd.parts : null;                       // (a day spent at the Welding station alone has no pieces or orders: empty, as when nothing was recorded)
+  pd.ordersOut = pd.act && pd.counted ? (pd.touched.size || pd.orders) : null;
   return pd;
 }
 

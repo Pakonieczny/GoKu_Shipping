@@ -102,7 +102,16 @@ async function sessionWrite(s) {
     const snap = await tx.get(ref), prev = snap.exists ? (snap.data() || {}) : null;
     if (prev && prev.computerId && prev.computerId !== computerId) return [409, { error: "not this computer's session" }];
     if (prev && prev.endAt != null) return [200, { success: true, id, ended: true, endReason: prev.endReason || null }];
-    if (!prev && ev === "end") return [200, { success: true, id, missing: true }];
+    if (!prev && ev === "end") {
+      // (ST2: an end can overtake its own start, two requests a moment apart arrive in either order, and a start sent offline never arrives:
+      //  the end used to be dropped as "missing" and the session then stayed open until its page went quiet. A person who is named is recorded
+      //  as a session of no length that ended at the end; the start that follows finds it ended and never reopens it. No name, nothing stored.)
+      if (!/\p{L}/u.test(person)) return [200, { success: true, id, missing: true }];
+      const at = AS.pageTime(clientAt, AS.skewOf(s.sentAt != null ? s.sentAt : null, now), now), t = Math.min(now, at || now);
+      const doc = Object.assign({ id, person, employeeId, station, device, computerId, computerLabel, startAt: t, lastSeenAt: t, endAt: t, endReason: reason, minutes: 0 }, task ? { task } : {}, role ? { role } : {});
+      tx.set(ref, doc, { merge: true });
+      return [200, { success: true, id, startAt: t, lastSeenAt: t, endAt: t, endReason: reason, minutes: 0, ended: true, recorded: true }];
+    }
     const startAt = prev ? (Number(prev.startAt) || now) : now;
     const lastSeen = prev ? (Number(prev.lastSeenAt) || startAt) : now;
     const cap = nyMidnightAfter(startAt);

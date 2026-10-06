@@ -218,9 +218,9 @@
       // Nothing disappears or gains a seal until the server accepts the laser-stage check.
       const r = await api('charmNestLibrary',{op:'laserDone',kind,id,done,by:by || undefined,stage:done?'laser':undefined,device:'charm-nest-1',via},{label:done?'Marking completed':'Returning to Laser cutting'});
       const t = r.at || Date.now();
-      // the efficiency record (station-activity.js): the laser operator's check, or taking it back (an undo); the pieces are the sheets' charms.
-      // It is the Laser station's work, not the sorter's: station 'laser' (its own column in the Employee efficiency console)
-      try { window.CNAct && window.CNAct(done ? 'complete' : 'undo', { station: 'laser', parts: (r.sheetIds && r.sheetIds.length ? r.sheetIds : ids).reduce((n, x) => n + (+((recordOf(x) || {}).pieces) || 0), 0), detail: `${name} ${done ? 'marked completed (laser)' : 'returned to Laser cutting'}` }); } catch (_) {}
+      // the efficiency record (station-activity.js, through charm-nest-laser-act.js): the laser operator's check, or taking it back (an undo).
+      // It is the Laser station's work, not the sorter's: one event for each order on the sheets this mark changed, with the sheet and its charms
+      try { window.CNLaserAct && window.CNLaserAct.cut(done, { name, ids: r.sheetIds && r.sheetIds.length ? r.sheetIds : ids, rec: recordOf }); } catch (_) {}
       for (const x of r.sheetIds || []) note('sheet:' + x,done,t,r.by);
       if (kind === 'set') note(key,done,t,r.by);
       if (r.setId && r.setDone != null) note('set:' + r.setId,!!r.setDone,t,r.by);
@@ -1105,7 +1105,7 @@
     if (S.mode === 'library') { writeHash(); if (L.tab === 'done') showDone(); else { const b = byId('libBody'); if (b.querySelector('.libCard, .libEmpty')) decorate(b); } }
   }
 
-  window.LibraryDone = { mark, isDone, isFiled, canComplete, addedSeals, refreshCards: root => pass(() => { cards(root, L.tab); partials(root); }), tab: () => L.tab, setTab, show, focus, rows, decorate, input, fromHash, glide, snapshot, glideFrom, counts: () => L.counts && Object.assign({}, L.counts) };
+  window.LibraryDone = { mark, isDone, isFiled, canComplete, addedSeals, recordOf, nameOf, setSheets, refreshCards: root => pass(() => { cards(root, L.tab); partials(root); }), tab: () => L.tab, setTab, show, focus, rows, decorate, input, fromHash, glide, snapshot, glideFrom, counts: () => L.counts && Object.assign({}, L.counts) };
   window.LibraryDone.reload = reload;
   if (doc.readyState === 'loading') doc.addEventListener('DOMContentLoaded', init); else init();
 })();
