@@ -9,7 +9,7 @@
     thinking: {color: '#ab87ff', emotion: 'curious', label: 'Thinking'},
     speaking: {color: '#ffcb79', emotion: 'explaining', label: 'Speaking'},
     success: {color: '#72ddd1', emotion: 'delighted', label: 'Happy to help'},
-    error: {color: '#ffc28e', emotion: 'considerate', label: 'Let’s try another way'}
+    error: {color: '#ffc28e', emotion: 'considerate', label: 'Let\u2019s try another way'}
   });
   const EMOTIONS = Object.freeze(['calm', 'curious', 'celebrate', 'reassuring', 'warm', 'appreciated']);
   const validEmotion = emotion => EMOTIONS.includes(emotion) ? emotion : null;
@@ -164,7 +164,8 @@
     const cssUrl = new URL(options.cssUrl || 'brites-concierge-avatar.css', base).href;
     const frame = doc.createElement('div'); frame.className = 'brites-avatar'; frame.dataset.state = validState(options.initialState); frame.setAttribute('role', 'img'); frame.setAttribute('aria-label', 'Brites jewellery gift guide');
     const surface = doc.createElement('div'); surface.className = 'brites-avatar__surface'; surface.style.visibility = 'hidden';
-    const fallback = doc.createElement('div'); fallback.className = 'brites-avatar__fallback';
+    const fallback = doc.createElement('div'); fallback.className = 'brites-avatar__fallback'; fallback.hidden = true; fallback.style.display = 'none';
+    const loadingNotice = doc.createElement('div'); loadingNotice.className = 'brites-avatar__loading'; loadingNotice.textContent = 'Preparing your guide\u2026'; loadingNotice.setAttribute('aria-hidden', 'true');
     const id = 'britesRobot' + (++instanceCount);
     fallback.innerHTML = `<svg viewBox="0 0 320 280" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
       <defs><linearGradient id="${id}Ivory" x2=".4" y2="1"><stop stop-color="#fffefa"/><stop offset="1" stop-color="#d9dfe4"/></linearGradient><linearGradient id="${id}Gold" x2=".2" y2="1"><stop stop-color="#f2dda8"/><stop offset=".5" stop-color="#ac824b"/><stop offset="1" stop-color="#e4c78e"/></linearGradient><radialGradient id="${id}Glass"><stop stop-color="#1e3848"/><stop offset="1" stop-color="#09121d"/></radialGradient></defs>
@@ -195,9 +196,11 @@
     const productCard = doc.createElement('figure'); productCard.className = 'brites-avatar__product'; productCard.hidden = true;
     const productImage = doc.createElement('img'); productImage.alt = ''; productImage.referrerPolicy = 'no-referrer'; productImage.crossOrigin = 'anonymous';
     const productLabel = doc.createElement('figcaption'); productLabel.textContent = 'Product photo'; productCard.append(productLabel);
-    frame.append(style, surface, fallback, caption, productCard); container.appendChild(frame);
+    frame.append(style, surface, fallback, loadingNotice, caption, productCard); container.appendChild(frame);
+    let constructionCleanup = null;
+    try {
     let state = validState(options.initialState), visible = options.visible === true, intersecting = true, destroyed = false, loading = false, engine = null, declarations = null, failed = false, paused = options.paused === true, emotion = options.emotion === 'appreciated' ? null : validEmotion(options.emotion), failureReason = null, level = 0, gaze = {x: 0, y: 0}, headGaze = {x: 0, y: 0}, gazeTarget = {x: 0, y: 0}, gazeAt = 0, pointerFrame = null, stateAt = 0, mannerism = null, mannerismAt = 0, mannerismId = 0, mannerismTimer = null, greetedThisOpening = false, productFocus = null, speechBeatAt = null, speechRested = true, appreciationAt = 0, appreciationTimer = null, appreciationEpoch = 0, previousEmotion = null, shownProduct = null, productEpoch = 0, floating = false, performance = null, performanceTimer = null, performanceEpoch = 0, performancePreviousEmotion = null, mannerismDurationMs = null;
-    let frameReady = false, pendingReadyType = null;
+    let frameReady = false, pendingReadyType = null, fallbackPresented = false;
     const media = win.matchMedia ? win.matchMedia('(prefers-reduced-motion: reduce)') : null;
     let reducedMotion = !!media?.matches, readyResolve;
     const ready = new Promise(resolve => {readyResolve = resolve;});
@@ -231,23 +234,26 @@
     function canDisplay() {return visible && intersecting && !doc.hidden && !destroyed;}
     function active() {return canDisplay() && !paused && !failed;}
     function hasWebglFrame() {return !!engine && !failed && frameReady;}
-    function fallbackMoving() {return canDisplay() && !paused && !reducedMotion && !hasWebglFrame();}
+    function fallbackMoving() {return fallbackPresented && canDisplay() && !paused && !reducedMotion && !hasWebglFrame();}
     function snapshot() {
       const scene = engine?.snapshot?.() || {};
       return {...scene, state, emotion, performance: performance ? {...performance} : null, gaze: {target: {...gazeTarget}, eye: {...gaze}, head: {...headGaze}, scope: 'visible-page-pointer'}, floating, shownProduct: shownProduct ? {id: shownProduct.id, handle: shownProduct.handle, title: shownProduct.title, format: 'verified-product-photo'} : null, productFocus: productFocus ? {...productFocus} : null, visible, intersecting, paused, reducedMotion, mode: hasWebglFrame() ? 'webgl' : failed ? 'fallback' : 'pending', loading, destroyed,
         mannerism: {name: mannerism, cue: BEHAVIOR_CUES[mannerism] || null, id: mannerismId, duration: mannerismDurationMs ? mannerismDurationMs / 1000 : MANNERISMS[mannerism] || 0, active: !!mannerism && canDisplay() && !paused && !reducedMotion, elapsed: mannerism ? Math.max(0, now() - mannerismAt) : 0},
         animated: hasWebglFrame() ? active() && !reducedMotion && scene.animated === true : fallbackMoving(),
-        fallback: {format: 'animated_svg_2d', active: canDisplay() && !hasWebglFrame(), animated: fallbackMoving(), reason: failureReason},
+        fallback: {format: 'animated_svg_2d', active: fallbackPresented && canDisplay() && !hasWebglFrame(), animated: fallbackMoving(), reason: failureReason},
         quality: {...quality}, declarations: declarations ? {schema: declarations.schema, source: declarations.source, textures: declarations.textures.map(value => ({...value}))} : null};
     }
     function syncLayers() {
       // Keep the renderer measurable, but show exactly one representation even
       // when the optional stylesheet is delayed, stale or unavailable.
-      const webgl = hasWebglFrame();
+      const webgl = hasWebglFrame(), showFallback = fallbackPresented && !webgl;
       frame.dataset.rendering = webgl ? 'webgl' : failed ? 'fallback' : loading || engine ? 'loading' : 'pending';
       surface.style.visibility = webgl ? 'visible' : 'hidden';
-      fallback.hidden = webgl;
-      fallback.style.display = webgl ? 'none' : '';
+      fallback.hidden = !showFallback;
+      fallback.style.display = showFallback ? '' : 'none';
+      loadingNotice.hidden = webgl || showFallback;
+      loadingNotice.style.display = loadingNotice.hidden ? 'none' : '';
+      loadingNotice.textContent = paused ? 'Your guide will appear when animation resumes.' : 'Preparing your guide\u2026';
     }
     function syncFallback() {
       syncLayers();
@@ -289,10 +295,11 @@
       frame.dataset.emotion = emotion || MOODS[state].emotion;
       frame.dataset.fallbackAnimated = String(fallbackMoving());
       const statusLabel = state === 'success' && (emotion === 'calm' || emotion === 'reassuring') ? 'Here with you' : MOODS[state].label;
-      caption.textContent = statusLabel + (failed ? ' · 2-D companion' : '');
-      frame.setAttribute('aria-label', 'Brites jewellery gift guide. ' + statusLabel + (failed ? '. Animated 2-D companion; 3-D unavailable.' : '') + (paused ? '. Animation paused.' : ''));
+      const pending = !hasWebglFrame() && !fallbackPresented;
+      caption.textContent = pending ? '' : statusLabel + (fallbackPresented ? ' \u00b7 2-D companion' : '');
+      frame.setAttribute('aria-label', 'Brites jewellery gift guide. ' + (pending ? 'Preparing your guide.' : statusLabel) + (fallbackPresented ? '. Animated 2-D companion; 3-D unavailable.' : '') + (paused ? '. Animation paused.' : ''));
     }
-    function renderingFailure(reason = 'WebGL rendering is unavailable') {reason = typeof reason === 'string' ? reason : 'WebGL rendering is unavailable'; const old = engine; engine = null; frameReady = false; pendingReadyType = null; failed = true; failureReason = reason; loading = false; frame.dataset.rendering = 'fallback'; try {old?.destroy();} catch {} finally {surface.replaceChildren();} syncFallback(); emit('fallback', {reason: failureReason, ...snapshot()}); readyResolve(snapshot());}
+    function renderingFailure(reason = 'WebGL rendering is unavailable') {reason = typeof reason === 'string' ? reason : 'WebGL rendering is unavailable'; const old = engine; engine = null; frameReady = false; pendingReadyType = null; fallbackPresented = true; failed = true; failureReason = reason; loading = false; frame.dataset.rendering = 'fallback'; try {old?.destroy();} catch {} finally {surface.replaceChildren();} syncFallback(); emit('fallback', {reason: failureReason, ...snapshot()}); readyResolve(snapshot());}
     function sync() {
       if (!canDisplay() || paused) {stopPointerFrame(); gaze = {x: 0, y: 0}; headGaze = {...gaze}; gazeTarget = {...gaze}; gazeAt = now(); cancelPerformance(); clearProduct(); cancelAppreciation(); cancelMannerism(); productFocus = null; level = 0; speechBeatAt = null; speechRested = true;}
       else if (reducedMotion) {stopPointerFrame(); cancelMannerism();}
@@ -303,7 +310,7 @@
           if (active()) {
             const drawing = engine; drawing.render(poseAt(now()), true);
             if (engine === drawing && !failed && !destroyed) {
-              frameReady = true; syncLayers();
+              frameReady = true; fallbackPresented = false; syncLayers();
               if (pendingReadyType) {const type = pendingReadyType; pendingReadyType = null; syncFallback(); emit(type, snapshot()); readyResolve(snapshot());}
             }
           }
@@ -317,7 +324,7 @@
         const sceneModule = options.loadScene ? await options.loadScene(moduleUrl) : await import(moduleUrl);
         if (destroyed) return;
         declarations = declaredScene(sceneModule.AVATAR_SCENE_DECLARATIONS, quality.textureSize);
-        engine = sceneModule.createAvatarScene({container: surface, quality, onFrame: t => poseAt(t), onError: renderingFailure, onContext: lost => {failed = lost; frameReady = false; pendingReadyType = lost ? null : 'restored'; failureReason = lost ? 'WebGL context was lost' : null; syncFallback(); if (lost) emit('fallback', snapshot()); sync();}});
+        engine = sceneModule.createAvatarScene({container: surface, quality, onFrame: t => poseAt(t), onError: renderingFailure, onContext: lost => {failed = lost; if (lost) fallbackPresented = true; frameReady = false; pendingReadyType = lost ? null : 'restored'; failureReason = lost ? 'WebGL context was lost' : null; syncFallback(); if (lost) emit('fallback', snapshot()); sync();}});
         if (destroyed) {engine.destroy(); return;}
         failed = false; failureReason = null; loading = false; engine.setFloating?.(floating); if (shownProduct) engine.showProduct?.(shownProduct); fallback.setAttribute('aria-hidden', 'true');
         sync();
@@ -397,14 +404,20 @@
     };
     const resetGaze = () => {if (canDisplay() && !paused) lookAt(0, 0, true);};
     const leavePage = event => {if (event.relatedTarget == null) resetGaze();};
+    let observer = null;
+    constructionCleanup = destroy;
     doc.addEventListener('visibilitychange', visibility); media?.addEventListener?.('change', motion);
     doc.addEventListener('pointermove', pointer, {passive: true, capture: true}); doc.addEventListener('pointerout', leavePage, {passive: true}); win.addEventListener('blur', resetGaze);
-    const observer = win.IntersectionObserver ? new win.IntersectionObserver(entries => {intersecting = entries.some(entry => entry.isIntersecting); sync();}, {threshold: 0}) : null;
+    observer = win.IntersectionObserver ? new win.IntersectionObserver(entries => {intersecting = entries.some(entry => entry.isIntersecting); sync();}, {threshold: 0}) : null;
     observer?.observe(frame);
     function destroy() {if (destroyed) return; destroyed = true; stopPointerFrame(); cancelPerformance(); clearProduct(); cancelAppreciation(); cancelMannerism(); observer?.disconnect(); doc.removeEventListener('visibilitychange', visibility); media?.removeEventListener?.('change', motion); doc.removeEventListener('pointermove', pointer, true); doc.removeEventListener('pointerout', leavePage); win.removeEventListener('blur', resetGaze); try {engine?.destroy();} catch {} engine = null; frame.remove(); readyResolve(snapshot());}
     if (visible && options.greetingOnOpen !== false) triggerGreeting();
     sync(); if (options.emotion === 'appreciated') setEmotion('appreciated');
     return {ready, triggerGreeting, setState, setVisible, setPaused, setEmotion, retry, setLevel, lookAt, focusProduct, clearFocus, showProduct, clearProduct, setFloating, perform, cancelPerformance: () => {if (destroyed) return; cancelPerformance(); sync();}, cue, snapshot, destroy, element: frame};
+    } catch (error) {
+      try {constructionCleanup?.();} catch {} finally {frame.remove();}
+      throw error;
+    }
   }
   const api = {create, MANNERISMS, BEHAVIOR_CUES, BLINK_EVENTS, BLINK_CYCLE, blinkFor, mannerismFor, FACE_EXPRESSIONS, faceFor, pointerGaze, STATES, EMOTIONS, validEmotion, validState, qualityFor, poseFor, productPhoto, validateAvatarPerformance, PERFORMANCE_GESTURES};
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
