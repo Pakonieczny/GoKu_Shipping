@@ -265,7 +265,7 @@ function backend(env) {
       if (st.anchor && st.anchor < td) { await page.click(`${P} .efpToday`); await ploaded(page, r); }
     };
     const pk = (page, k) => page.locator(`${P} .efpK[data-k="${k}"] .efpKV`).innerText().then(s => s.replace(/,/g, '').trim());
-    const orderRows = page => page.$$eval(`${P} .efoRow`, rs => rs.map(r => ({ rid: r.dataset.rid, text: r.innerText.replace(/\s+/g, ' ') })));
+    const orderRows = page => page.$$eval(`${P} .efpOrdersMod .efoRow`, rs => rs.map(r => ({ rid: r.dataset.rid, text: r.innerText.replace(/\s+/g, ' ') })));
     const pAsk = (name, range, day, extra) => B.ask(Object.assign({ op: 'person', name, range, compare: true }, day ? { day } : {}, extra || {}));
     const allOrders = async (name, from, to, q) => { const out = []; let cursor = ''; for (let i = 0; i < 80; i++) { const r = await B.ask({ op: 'personOrders', name, from, to, q: q || '', limit: 100, cursor }); out.push(...r.orders); if (!r.next) return { orders: out, total: r.total, scanned: r.scanned }; cursor = r.next; } throw new Error('too many pages'); };
     await section('C', 'a person: click a name, the full page, every range, hover, a calendar day, search an order, open it, the numbers agree', async () => {
@@ -323,12 +323,12 @@ function backend(env) {
       // search the orders in real time: by number (the last digits), by date, by customer; every count is the server's own
       const ST = await pstate(page), mine = await allOrders('Ana M.', ST.from, ST.to);
       assert(mine.orders.length >= 20, 'Ana has orders in the month: ' + mine.orders.length);
-      await page.locator(`${P} .efoSearch input`).evaluate(e => e.scrollIntoView({ block: 'center' })); await page.waitForSelector(`${P} .efoRow`, { timeout: 30000 });
-      await waitFor(page, n => { const c = document.querySelector('#efficiencyView .efp .efoCount'); return !!c && /^[\d,]+( of [\d,]+)? orders?$/.test(c.textContent.trim()) && +c.textContent.trim().split(' ')[0].replace(/,/g, '') === n; }, mine.total, 20000)
-        .catch(async () => { throw new Error(`the order list says "${await text(page, `${P} .efoCount`)}" for the month ${ST.from}..${ST.to}; the server counts ${mine.total}`); });
+      await page.locator(`${P} .efpOrdersMod .efoSearch input`).evaluate(e => e.scrollIntoView({ block: 'center' })); await page.waitForSelector(`${P} .efpOrdersMod .efoRow`, { timeout: 30000 });
+      await waitFor(page, n => { const c = document.querySelector('#efficiencyView .efp .efpOrdersMod .efoCount'); return !!c && /^[\d,]+( of [\d,]+)? orders?$/.test(c.textContent.trim()) && +c.textContent.trim().split(' ')[0].replace(/,/g, '') === n; }, mine.total, 20000)
+        .catch(async () => { throw new Error(`the order list says "${await text(page, `${P} .efpOrdersMod .efoCount`)}" for the month ${ST.from}..${ST.to}; the server counts ${mine.total}`); });
       const withCust = mine.orders.find(o => o.customer), pick = mine.orders[7];
-      const searchFor = async q => { await page.locator(`${P} .efoSearch input`).fill(q); await sleep(200); await waitFor(page, () => !document.querySelector('#efficiencyView .efp .efoWait:not([hidden])') && !(document.querySelector('#efficiencyView .efp .efoLive') || {}).dataset?.busy, null, 20000).catch(() => {}); };
-      const settleList = async total => waitFor(page, n => { const c = document.querySelector('#efficiencyView .efp .efoCount'); return !!c && /^[\d,]+( of [\d,]+)? orders?$/.test(c.textContent.trim()) && +c.textContent.trim().split(' ')[0].replace(/,/g, '') === n; }, total, 25000);
+      const searchFor = async q => { await page.locator(`${P} .efpOrdersMod .efoSearch input`).fill(q); await sleep(200); await waitFor(page, () => !document.querySelector('#efficiencyView .efp .efpOrdersMod .efoWait:not([hidden])') && !(document.querySelector('#efficiencyView .efp .efpOrdersMod .efoLive') || {}).dataset?.busy, null, 20000).catch(() => {}); };
+      const settleList = async total => waitFor(page, n => { const c = document.querySelector('#efficiencyView .efp .efpOrdersMod .efoCount'); return !!c && /^[\d,]+( of [\d,]+)? orders?$/.test(c.textContent.trim()) && +c.textContent.trim().split(' ')[0].replace(/,/g, '') === n; }, total, 25000);
       const last4 = pick.number.slice(-4); let srv = await allOrders('Ana M.', ST.from, ST.to, last4);
       await searchFor(last4); await settleList(srv.total);
       let rows = await orderRows(page); assert(rows.length === Math.min(srv.total, rows.length) && rows.some(r => r.rid === pick.rid), `searching "${last4}" finds the order ${pick.rid}: ${rows.length} rows`);
@@ -341,10 +341,10 @@ function backend(env) {
         rows = await orderRows(page); assert(rows.length > 0 && rows.every(r => r.text.includes(withCust.customer)), `searching the customer "${withCust.customer}": ${rows.length} rows, all theirs`);
       }
       await searchFor('zzzqq'); await waitFor(page, () => /No orders match/.test(document.querySelector('#efficiencyView .efp').textContent), null, 15000);
-      await page.locator(`${P} .efoClear`).first().click().catch(() => {}); await searchFor(''); await settleList(mine.total);
+      await page.locator(`${P} .efpOrdersMod .efoClear`).first().click().catch(() => {}); await searchFor(''); await settleList(mine.total);
       // an order opens the sorter's order window (zooming from the row)
       rows = await orderRows(page); const target = rows[1].rid;
-      await page.locator(`${P} .efoRow[data-rid="${target}"] .efoOpen`).click();
+      await page.locator(`${P} .efpOrdersMod .efoRow[data-rid="${target}"] .efoOpen`).click();
       await page.waitForSelector('#orderWin[open]', { timeout: 15000 });
       assert(new RegExp(target).test(await page.locator('#owTitle').innerText().catch(() => '') + await page.locator('#owSub').innerText().catch(() => '') + await page.locator('#orderWin').innerText()), 'the order window is for order ' + target);
       await shot(page, 'c5-order-window-1440');
@@ -626,9 +626,9 @@ function backend(env) {
         if (none) { const pg = [await pk(page, 'kpis.parts'), await pk(page, 'kpis.orders')]; rowsInfo.push(`${p.name}: card ${noneCard[p.name].join('/')}, page ${pg.join('/')}`); assert.equal(pg[0], noneCard[p.name][0], `${p.name}: the card and the page say the same about a person who logged no pieces (card "${noneCard[p.name][0]}", page "${pg[0]}")`); }
         else {
           await same(`${P} .efpK[data-k="kpis.parts"] .efpKV`, p.totals.parts, `${p.name}'s page (Day): pieces`); await same(`${P} .efpK[data-k="kpis.orders"] .efpKV`, p.totals.orders, `${p.name}'s page (Day): orders`);
-          await page.locator(`${P} .efoSearch input`).evaluate(e => e.scrollIntoView({ block: 'center' }));
-          await waitFor(page, n => { const c = document.querySelector('#efficiencyView .efp .efoCount'); return !!c && +c.textContent.trim().split(' ')[0].replace(/,/g, '') === n; }, p.totals.orders, 25000).catch(async () => { throw new Error(`${p.name}: the order list says "${await text(page, `${P} .efoCount`)}" for the day; the card says ${p.totals.orders} orders`); });
-          await waitFor(page, n => document.querySelectorAll('#efficiencyView .efp .efoRow').length >= n, p.totals.orders, 25000);
+          await page.locator(`${P} .efpOrdersMod .efoSearch input`).evaluate(e => e.scrollIntoView({ block: 'center' }));
+          await waitFor(page, n => { const c = document.querySelector('#efficiencyView .efp .efpOrdersMod .efoCount'); return !!c && +c.textContent.trim().split(' ')[0].replace(/,/g, '') === n; }, p.totals.orders, 25000).catch(async () => { throw new Error(`${p.name}: the order list says "${await text(page, `${P} .efpOrdersMod .efoCount`)}" for the day; the card says ${p.totals.orders} orders`); });
+          await waitFor(page, n => document.querySelectorAll('#efficiencyView .efp .efpOrdersMod .efoRow').length >= n, p.totals.orders, 25000);
           const rows = await orderRows(page); assert.equal(rows.length, p.totals.orders, `${p.name}: one row per order of the day`);
           if (process.env.DEBUGI) console.log('DEBUGI', JSON.stringify(rows.slice(0, 2)));
           const srvList = await allOrders(p.name, ov.day, ov.day); assert.equal(srvList.orders.reduce((a, o) => a + o.parts, 0), p.totals.parts, `${p.name}: the pieces of the day's orders add up to the card`);

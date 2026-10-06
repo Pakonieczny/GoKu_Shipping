@@ -16,6 +16,7 @@
 const fs = require('fs'), path = require('path'), vm = require('vm'), assert = require('assert/strict');
 const root = path.join(__dirname, '../..');
 const F = require('./efficiency-person-fixture.cjs'), EF = require('./efficiency-fixture.cjs');
+const IX = require('../stations/inbox-portal-fixture.cjs');   // (the Inbox section's reads: op personInbox, and personOrders for the Inbox station, answered on top of this fixture)
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 /* ── 1 · the page's own logic ── */
@@ -53,14 +54,14 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   const srv = await start({ receipts: [] });
   const browser = await chromium.launch({ executablePath: process.env.CHROMIUM || '/opt/pw-browsers/chromium-1194/chrome-linux/chrome', args: ['--no-sandbox'] });
   // both fakes keep the console's clock: Friday 2 Oct 2026, 3:42 PM New York
-  const pf = F.make({ now: Date.UTC(2026, 9, 2, 19, 42) }), ef = EF.make(), seen = { urls: [], aborted: 0 }, SHOTS = process.env.SHOTS || '';
+  const pf = F.make({ now: Date.UTC(2026, 9, 2, 19, 42) }), ix = IX.make({ pf, now: Date.UTC(2026, 9, 2, 19, 42) }), ef = EF.make(), seen = { urls: [], aborted: 0 }, SHOTS = process.env.SHOTS || '';
   const wire = async ctx => {
     await ctx.route(() => true, async route => {
       const u = new URL(route.request().url()); seen.urls.push(u.href);
       if (u.hostname !== '127.0.0.1' && u.hostname !== 'localhost') { seen.aborted++; return route.abort(); }
       if (u.pathname.endsWith('/employeeEfficiency')) {
         let b = {}; try { b = JSON.parse(route.request().postData() || '{}'); } catch (_) {}
-        const mine = ['person', 'personOrders', 'live'].includes(b.op), r = mine ? pf.answer(b) : ef.answer(b, route.request().headers());
+        const mine = ['person', 'personOrders', 'personInbox', 'live'].includes(b.op), r = mine ? (b.op === 'live' ? pf.answer(b) : ix.answer(b)) : ef.answer(b, route.request().headers());
         const d = mine ? pf.delayFor(b) : 0; if (d) await sleep(d);
         return route.fulfill({ status: r.status, contentType: 'application/json', headers: { 'Access-Control-Allow-Origin': '*' }, body: JSON.stringify(r.json) });
       }
@@ -159,11 +160,11 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     assert((await page.locator(`${P} .efpK .efpKV`).allInnerTexts()).every(t => !/NaN|undefined|null/.test(t)), 'no NaN on a card');
     assert((await page.locator(`${P} .efpK .efpKL`).allInnerTexts()).every(t => !/seconds/i.test(t)) && /Working time per order/i.test((await page.locator(`${P} .efpK[data-k="kpis.secPerOrderMean"] .efpKL`).innerText())), 'a label never names seconds when the value is shown as minutes');
     // keyboard: a group of figures is one Tab stop, and the arrow keys, Home and End move inside it
-    assert.equal(await page.locator(`${P} .efpK[tabindex="0"]`).count(), 6, 'one Tab stop for each of the six groups of figures');
-    const kf = page.locator(`${P} .efpK[tabindex="0"]`).first(), kk0 = await kf.getAttribute('data-k'); await kf.focus(); await page.keyboard.press('ArrowRight');
+    assert.equal(await page.locator(`${P} .efpKGroups .efpK[tabindex="0"]`).count(), 6, 'one Tab stop for each of the six groups of figures');
+    const kf = page.locator(`${P} .efpKGroups .efpK[tabindex="0"]`).first(), kk0 = await kf.getAttribute('data-k'); await kf.focus(); await page.keyboard.press('ArrowRight');
     const kk1 = await page.evaluate(() => (document.activeElement && document.activeElement.dataset ? document.activeElement.dataset.k : '')); assert(kk1 && kk1 !== kk0, 'an arrow key moves to the next figure of the group');
     await page.keyboard.press('End'); const kk2 = await page.evaluate(() => document.activeElement.dataset.k); await page.keyboard.press('Home'); assert.equal(await page.evaluate(() => document.activeElement.dataset.k), kk0, 'Home goes back to the first figure'); assert(kk2 !== kk0, 'End goes to the last');
-    assert.equal(await page.locator(`${P} .efpK[tabindex="0"]`).count(), 6, 'still one stop for each group'); assert.equal(await page.locator(`${P} .efpRt[tabindex="0"]`).count(), 1, 'the rates are one Tab stop too');
+    assert.equal(await page.locator(`${P} .efpKGroups .efpK[tabindex="0"]`).count(), 6, 'still one stop for each group'); assert.equal(await page.locator(`${P} .efpRt[tabindex="0"]`).count(), 1, 'the rates are one Tab stop too');
     await page.evaluate(() => document.activeElement && document.activeElement.blur());
     console.log('  ✓ every range (Day, Week, Month, 3 months, Year, Custom) reads its window and agrees with the fixture; earlier/later/Today; change vs the period before, "no data" where none; hover definitions with counted/estimated');
 
@@ -210,21 +211,21 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     assert(await page.locator(`${P} .efpRt`).count() >= 3 && /First-pass/.test(await page.locator(`${P} .efpRates`).innerText()) && /Sent/.test(await page.locator(`${P} .efpRates`).innerText()), 'rates and contact');
     // orders: E8's list
     assert(await page.locator(`${P} .efpOrdersMod .efo`).count() === 1 && await page.locator(`${P} .efpOrdersOwn`).isHidden(), 'the order list is E8\'s module');
-    await page.waitForFunction(sel => document.querySelectorAll(sel).length >= 20, `${P} .efoRow`, { timeout: 15000 });
-    const r0 = page.locator(`${P} .efoRow`).first(); assert(await r0.locator('.efoThumbs img, .efoThumbs .ph').count() >= 1 && await r0.locator('.efoQr').count() === 1, 'a picture per piece and a QR');
-    assert(await page.locator(`${P} .efoRow .efoThumbs`).evaluateAll(l => l.some(e => e.querySelectorAll('.efoTh').length > 1)), 'an order with several pieces shows one picture for each');
-    const nOrd = await page.locator(`${P} .efoRow`).count(); const q0 = orderCalls().length;
-    await page.fill(`${P} input[name="efoq"]`, 'Maya'); await page.waitForFunction(sel => { const r = [...document.querySelectorAll(sel)]; return r.length > 0 && r.length < 12 && r.every(e => /Maya/i.test(e.textContent)); }, `${P} .efoRow`, { timeout: 10000 });
+    await page.waitForFunction(sel => document.querySelectorAll(sel).length >= 20, `${P} .efpOrdersMod .efoRow`, { timeout: 15000 });
+    const r0 = page.locator(`${P} .efpOrdersMod .efoRow`).first(); assert(await r0.locator('.efoThumbs img, .efoThumbs .ph').count() >= 1 && await r0.locator('.efoQr').count() === 1, 'a picture per piece and a QR');
+    assert(await page.locator(`${P} .efpOrdersMod .efoRow .efoThumbs`).evaluateAll(l => l.some(e => e.querySelectorAll('.efoTh').length > 1)), 'an order with several pieces shows one picture for each');
+    const nOrd = await page.locator(`${P} .efpOrdersMod .efoRow`).count(); const q0 = orderCalls().length;
+    await page.fill(`${P} .efpOrdersMod input[name="efoq"]`, 'Maya'); await page.waitForFunction(sel => { const r = [...document.querySelectorAll(sel)]; return r.length > 0 && r.length < 12 && r.every(e => /Maya/i.test(e.textContent)); }, `${P} .efpOrdersMod .efoRow`, { timeout: 10000 });
     assert(orderCalls().slice(q0).some(c => c.q === 'Maya'), 'the search asks the server (real time)');
-    await page.fill(`${P} input[name="efoq"]`, ''); await page.waitForFunction(([sel, n]) => document.querySelectorAll(sel).length >= n, [`${P} .efoRow`, 20]);
-    for (let i = 0; i < 6 && await page.locator(`${P} .efoRow`).count() < 40; i++) { await page.locator(`${P} .efoSent`).scrollIntoViewIfNeeded(); await page.waitForTimeout(500); }
-    assert(await page.locator(`${P} .efoRow`).count() > nOrd && orderCalls().some(c => /^[oc]25$/.test(c.cursor || '')), 'scrolling pages the list');
-    await page.locator(`${P} .efoRow .efoOpen`).nth(1).click(); const orow = await page.locator(`${P} .efoRow`).nth(1).getAttribute('data-rid');
+    await page.fill(`${P} .efpOrdersMod input[name="efoq"]`, ''); await page.waitForFunction(([sel, n]) => document.querySelectorAll(sel).length >= n, [`${P} .efpOrdersMod .efoRow`, 20]);
+    for (let i = 0; i < 6 && await page.locator(`${P} .efpOrdersMod .efoRow`).count() < 40; i++) { await page.locator(`${P} .efpOrdersMod .efoSent`).scrollIntoViewIfNeeded(); await page.waitForTimeout(500); }
+    assert(await page.locator(`${P} .efpOrdersMod .efoRow`).count() > nOrd && orderCalls().some(c => /^[oc]25$/.test(c.cursor || '')), 'scrolling pages the list');
+    await page.locator(`${P} .efpOrdersMod .efoRow .efoOpen`).nth(1).click(); const orow = await page.locator(`${P} .efpOrdersMod .efoRow`).nth(1).getAttribute('data-rid');
     assert.deepEqual(await page.evaluate(() => window.__opened.slice(-1)), [orow], 'a row opens its order');
     console.log('  ✓ issues by kind (an order opens), rates and contact, the order list: pictures per piece and QR, search filters as you type, pages as you scroll, a row opens its order');
     // the list follows the date chips (E8's own From / To fields are off); "Show all time" lifts the range; Real <-> Sandbox mounts a fresh page
     const until = async (fn, what, ms = 8000) => { for (let t = 0; t < ms; t += 100) { if (fn()) return; await sleep(100); } throw new Error('timed out: ' + what); };
-    assert(orderCalls().some(c => c.from === TQ.from && c.to === TQ.to), 'the order list asks for the days the chips show'); assert.equal(await page.locator(`${P} .efo input[type="date"]:visible`).count(), 0, 'no second pair of date fields');
+    assert(orderCalls().some(c => c.from === TQ.from && c.to === TQ.to), 'the order list asks for the days the chips show'); assert.equal(await page.locator(`${P} .efpOrdersMod .efo input[type="date"]:visible`).count(), 0, 'no second pair of date fields');
     const o1 = orderCalls().length; await page.click(`${P} [data-orders-all]`); await until(() => orderCalls().slice(o1).some(c => !c.from && !c.to), 'all time'); assert(/All time/.test(await page.locator(`${P} .efpLr`).innerText()), 'the heading says all time');
     const o2 = orderCalls().length; await page.click(`${P} [data-orders-all]`); await until(() => orderCalls().slice(o2).some(c => c.from === TQ.from && c.to === TQ.to), 'back to the period');
     const o3 = orderCalls().length; await page.click(`${P} .efpSeg button[data-range="month"]`); await loaded(page, 'month'); const TM = truthOf('month'); await until(() => orderCalls().slice(o3).some(c => c.from === TM.from && c.to === TM.to), 'the list follows a new chip');
@@ -344,7 +345,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     assert(m.n > 20, 'frames were measured: ' + JSON.stringify(m)); assert(m.med < 500, 'the page is not frozen while switching ranges: ' + JSON.stringify(m)); if (calm && (m.med >= 40 || m.p95 >= 200)) console.log('  (note: slow frames on this machine, software drawing: ' + JSON.stringify(m) + ')'); assert(m.distinct >= (calm ? 6 : 3), 'numbers count to their value rather than jump: ' + m.distinct + ' values seen');
     await pg.click(`${P} .efpSeg button[data-range="month"]`); await loaded(pg, 'month'); await pg.waitForTimeout(700);
     // thumbnails zoom in place on a resting pointer (the shared engine), the QR too
-    const th = pg.locator(`${P} .efoRow .efoTh:not(.ph)`).first(); await th.scrollIntoViewIfNeeded(); await th.hover(); await pg.waitForFunction(() => document.querySelector('#efficiencyView .sealZoomed') && +document.querySelector('#efficiencyView .sealZoomed').dataset.sealZoom > 1.05, null, { timeout: 5000 });
+    const th = pg.locator(`${P} .efpOrdersMod .efoRow .efoTh:not(.ph)`).first(); await th.scrollIntoViewIfNeeded(); await th.hover(); await pg.waitForFunction(() => document.querySelector('#efficiencyView .sealZoomed') && +document.querySelector('#efficiencyView .sealZoomed').dataset.sealZoom > 1.05, null, { timeout: 5000 });
     assert.equal(await pg.evaluate(() => document.querySelectorAll('dialog[open]').length), 0, 'zoomed in place, never a pop-up'); await pg.mouse.move(5, 5);
     console.log('  ✓ motion: numbers count up to the new value, frames stay short (median ' + m.med.toFixed(1) + ' ms, 95th ' + m.p95.toFixed(1) + ' ms), thumbnails zoom in place');
     await B.ctx.close(); assert(B.errs.length === 0, 'no page errors (normal motion): ' + B.errs.join(' | '));
@@ -366,8 +367,8 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
           const d = sp.locator(`${P} [data-c="cal"] .efc-day.worked:not(.today)`).nth(4); await d.scrollIntoViewIfNeeded(); const db = await d.boundingBox(); await sp.mouse.move(db.x + db.width / 2, db.y + db.height / 2); await sp.waitForTimeout(250); const cb = await sp.locator(`${P} [data-c="cal"]`).boundingBox(); await sp.screenshot({ path: path.join(SHOTS, '1440-calendar-hover.png'), clip: { x: cb.x - 10, y: cb.y - 10, width: cb.width + 20, height: cb.height + 20 } });
           const kh = sp.locator(`${P} .efpK:not(.hidden)`).nth(4); await kh.scrollIntoViewIfNeeded(); const kb = await kh.boundingBox(); await sp.mouse.move(kb.x + kb.width / 2, kb.y + kb.height / 2); await sp.waitForTimeout(400);
           await sp.screenshot({ path: path.join(SHOTS, '1440-kpi-hover.png'), clip: { x: Math.max(0, kb.x - 20), y: Math.max(0, kb.y - 200), width: Math.min(700, 1440 - kb.x + 20), height: kb.height + 260 } });
-          await sp.mouse.move(2, 2); await sp.fill(`${P} input[name="efoq"]`, 'Maya'); await sp.waitForTimeout(1500); const ob2 = await sp.locator(`${P} .efpOrdersHost`).boundingBox(); await sp.screenshot({ path: path.join(SHOTS, '1440-search.png'), clip: { x: ob2.x - 10, y: ob2.y - 40, width: ob2.width + 20, height: Math.min(ob2.height + 50, 700) } });
-          await sp.fill(`${P} input[name="efoq"]`, '');
+          await sp.mouse.move(2, 2); await sp.fill(`${P} .efpOrdersMod input[name="efoq"]`, 'Maya'); await sp.waitForTimeout(1500); const ob2 = await sp.locator(`${P} .efpOrdersHost`).boundingBox(); await sp.screenshot({ path: path.join(SHOTS, '1440-search.png'), clip: { x: ob2.x - 10, y: ob2.y - 40, width: ob2.width + 20, height: Math.min(ob2.height + 50, 700) } });
+          await sp.fill(`${P} .efpOrdersMod input[name="efoq"]`, '');
         }
         await sp.evaluate(() => Efficiency.go('people')); await sp.waitForFunction(() => !EfficiencyEmployee.instances.length);
       }
