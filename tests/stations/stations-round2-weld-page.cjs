@@ -24,12 +24,15 @@ const MIDNIGHT = Date.parse('2026-10-07T04:00:00Z');       // 00:00 on 7 Oct in 
 
 const used = ['987654'];
 const fakePin = () => { for (;;) { const p = String(100000 + Math.floor(Math.random() * 900000)); if (!/^(\d)\1{5}$/.test(p) && !/(012345|123456|234567|345678|456789)/.test(p) && !used.includes(p)) { used.push(p); return p; } } };
-const PIN = { tess: fakePin(), ray: fakePin(), ivy: fakePin(), xss: fakePin(), quote: fakePin(), num: fakePin(), ctl: fakePin(), none: fakePin(), digits: fakePin() };
+const PIN = { tess: fakePin(), ray: fakePin(), ivy: fakePin(), xss: fakePin(), quote: fakePin(), num: fakePin(), ctl: fakePin(), none: fakePin(), digits: fakePin(), paul: fakePin() };
+const ADMINS = require(path.join(root, 'netlify/functions/_stationAdmins.js'));        // (the real name comparison: the stub door answers the way the real one does for the default list)
+const SESSION_JS = process.env.ST2_SESSION_JS || '';                                    // optional: another station-session.js to serve instead of the repository's
+const AD1 = /stationAdmin/.test(fs.readFileSync(SESSION_JS || path.join(root, 'station-session.js'), 'utf8')) || !!process.env.FORCE_AD1;
 const NUMBER = '987654';                                   // inside a name: the kind of number a PIN is
 const NAMES = {
   [PIN.tess]: 'Tess Welder', [PIN.ray]: 'Ray Matcher', [PIN.ivy]: 'Ivy Third',
   [PIN.xss]: '<img src=x onerror="window.__xss=(window.__xss||0)+1"> Evil', [PIN.quote]: 'Mary "Q" O\'Brien </button><b id="bad">x</b>',
-  [PIN.num]: 'Nina ' + NUMBER, [PIN.ctl]: 'Cy\u0001ril\u0007 Bell', [PIN.none]: '- - -', [PIN.digits]: NUMBER + ' ' + NUMBER
+  [PIN.num]: 'Nina ' + NUMBER, [PIN.ctl]: 'Cy\u0001ril\u0007 Bell', [PIN.none]: '- - -', [PIN.digits]: NUMBER + ' ' + NUMBER, [PIN.paul]: 'Paul K.'
 };
 
 const FIREBASE = `(function () {
@@ -56,7 +59,7 @@ const MATERIALIZE = `window.__toasts = []; window.__opens = 0; window.M = { Auto
   Dropdown: { init() {} } };`;
 
 async function context(browser, base, o = {}) {
-  const st = { sessions: [], events: [], timeline: [], doors: [], bodies: [], errors: [], roster: 0 };
+  const st = { sessions: [], events: [], timeline: [], doors: [], bodies: [], errors: [], roster: 0, admins: [] };
   const ctx = await browser.newContext({ viewport: o.viewport || { width: 1500, height: 900 }, hasTouch: !!o.touch });
   await ctx.route(() => true, r => r.abort());                                         // nothing leaves the machine
   await ctx.route(u => u.href.startsWith('http://127.0.0.1'), r => r.continue());
@@ -69,6 +72,7 @@ async function context(browser, base, o = {}) {
     if (req.method() === 'POST') {
       const text = req.postData() || '{}'; let b = {}; try { b = JSON.parse(text); } catch (_) {}
       if (fn === 'firebaseOrders' && b.pinLogin !== undefined) { st.doors.push(text); return reply(NAMES[b.pinLogin] !== undefined ? { ok: true, name: NAMES[b.pinLogin] } : { ok: false, error: 'not on the list' }); }
+      if (fn === 'firebaseOrders' && b.stationAdmin !== undefined) { st.admins.push({ body: text, url: req.url() }); return reply({ ok: true, admin: ['paul k', 'paul'].includes(ADMINS.keyOf(b.stationAdmin)) }); }
       st.bodies.push(text);
       if (fn === 'firebaseOrders' && b.session) { st.sessions.push(b.session); return reply({ success: true }); }
       if (fn === 'firebaseOrders' && Array.isArray(b.activity)) { st.events.push(...b.activity); return reply({ success: true, written: b.activity.length, duplicate: 0, refused: 0, scrubbed: 0 }); }
@@ -272,6 +276,47 @@ async function e_twoTabs(browser, base) {
   await noNumbers(st, A); noErrors(st); await ctx.close();
 }
 
+/* AD1 on the real page: ten quiet minutes sign out every non-Admin through the per-person callback, the Admin stays, real input resets the clock,
+   a reload after the lapse finds the login gone (the events here are real browser events, so they count as input) */
+async function h_idle(browser, base) {
+  if (!AD1) { console.log('  (skipped: station-session.js has no idle rule yet)'); return; }
+  const START = Date.parse('2026-10-07T15:00:00Z');                        // 11:00 in New York and in Toronto: nowhere near 17:00
+  let { ctx, st, page } = await context(browser, base, { time: START });
+  const starts = () => st.sessions.filter(x => x.event === 'start').length;
+  await signIn(page, PIN.tess, 'welding'); await signIn(page, PIN.ray, 'matching'); await signIn(page, PIN.paul, 'matching');
+  await until(() => starts() === 3, 'three starts');
+  assert.strictEqual(st.admins.length, 3, 'the door was asked once per sign-in: ' + st.admins.length);
+  assert(st.admins.every(a => !/Tess|Ray|Paul/.test(a.url) && /^\{"stationAdmin":"[^"]+"\}$/.test(a.body)), 'the name goes in the body only');
+  // real input from a person keeps everybody (it counts at the page): a mouse move every 5 minutes for 30 minutes
+  for (let i = 0; i < 6; i++) { await page.clock.runFor(5 * 60000); await page.mouse.move(100 + i * 7, 200 + i * 5); await wait(60); }
+  assert.strictEqual(sess(st, 'end').length, 0, 'nobody was signed out while a person was at the page');
+  // ten quiet minutes: the non-Admins leave together through the per-person callback; the Admin stays
+  const lastInput = await page.evaluate(() => StationSession.people()[0].lastInputAt);
+  await page.clock.runFor(11 * 60000); await wait(300);
+  assert.deepStrictEqual(sess(st, 'end').map(e => e.person + ':' + e.reason).sort(), ['Ray Matcher:idle', 'Tess Welder:idle']);
+  for (const e of sess(st, 'end')) assert(Math.abs(e.at - lastInput) < 12000, 'the end is the last input, not the moment it was noticed: ' + (e.at - lastInput) + ' ms');
+  assert.deepStrictEqual([await chips(page, 'welding'), await chips(page, 'matching')], [[], ['Paul K.']], 'only the Admin is left');
+  let s = await state(page); assert(s.loggedIn && !s.modalOpen, 'the page is not locked while somebody is in: ' + JSON.stringify(s));
+  assert.strictEqual(await page.evaluate(() => JSON.parse(localStorage.getItem('weld_people')).map(p => p.name).join()), 'Paul K.');
+  await page.clock.runFor(3 * 3600000); await wait(300);
+  assert.strictEqual(sess(st, 'end', 'Paul K.').length, 0, 'the Admin stays for three more hours'); assert.deepStrictEqual(await chips(page, 'matching'), ['Paul K.']);
+  assert(!/"admin"\s*:\s*true|admin=true/i.test(JSON.stringify(await page.evaluate(() => Object.entries(localStorage)))), 'the answer is not kept in storage');
+  // a person at the page signs the Admin out: nobody is left, the number box comes back
+  await tap(page, 'Paul K.', 'matching'); await until(() => sess(st, 'end', 'Paul K.').length === 1, 'Paul out'); s = await state(page); assert(!s.loggedIn && s.modalOpen, 'the number box is back');
+  await noNumbers(st, page); noErrors(st); await ctx.close();
+  // a page closed for 12 quiet minutes and then opened again: the login has lapsed, signed out at the last input, nobody started again
+  ({ ctx, st, page } = await context(browser, base, { time: START }));
+  await signIn(page, PIN.tess, 'welding'); await signIn(page, PIN.ray, 'matching'); await until(() => starts() === 2, 'two starts');
+  await page.mouse.move(300, 300); const li = await page.evaluate(() => StationSession.people()[0].lastInputAt);
+  await page.close(); await ctx.clock.runFor(12 * 60000);
+  page = await ctx.newPage(); page.on('pageerror', e => { if (!/gstatic\.com\/firebasejs|getApp/.test(String(e))) st.errors.push(String(e && e.message || e)); });
+  await page.goto(base + '/weld-1.html'); await page.waitForFunction(() => window.StationSession && window.weldAfterChange, null, { timeout: 20000 }); await wait(600);
+  assert.deepStrictEqual(sess(st, 'end').map(e => e.person + ':' + e.reason).sort(), ['Ray Matcher:idle', 'Tess Welder:idle'], 'both lapsed: ' + JSON.stringify(sess(st, 'end').map(e => [e.person, e.reason])));
+  for (const e of sess(st, 'end')) assert(Math.abs(e.at - li) < 12000, 'ended at the last input, not at the reload: ' + (e.at - li) + ' ms');
+  assert.strictEqual(starts(), 2, 'nobody was started again'); s = await state(page); assert(!s.loggedIn && s.modalOpen && !s.on, 'the number box: ' + JSON.stringify(s));
+  noErrors(st); await ctx.close();
+}
+
 async function f_midnightStep(browser, base) {
   const { ctx, st, page } = await context(browser, base, { time: MIDNIGHT - 6 * 60000 });
   await signIn(page, PIN.tess, 'welding'); await signIn(page, PIN.ray, 'matching'); await until(() => st.sessions.filter(s => s.event === 'start').length === 2, 'two starts');
@@ -303,8 +348,9 @@ async function g_crash(browser, base) {
 
 (async () => {
   const server = await new Promise(ok => { const s = http.createServer((req, res) => {
-    const f = path.join(root, decodeURIComponent(req.url.split('?')[0]));
-    if (!f.startsWith(root) || !fs.existsSync(f) || fs.statSync(f).isDirectory()) { res.writeHead(404); return res.end(); }
+    let f = path.join(root, decodeURIComponent(req.url.split('?')[0]));
+    if (SESSION_JS && f === path.join(root, 'station-session.js')) f = SESSION_JS;                // a work-in-progress client, to try the page against it
+    if (!f.startsWith(root) && f !== SESSION_JS || !fs.existsSync(f) || fs.statSync(f).isDirectory()) { res.writeHead(404); return res.end(); }
     res.writeHead(200, { 'Content-Type': MIME[path.extname(f)] || 'application/octet-stream' }); fs.createReadStream(f).pipe(res);
   }).listen(0, '127.0.0.1', () => ok(s)); });
   const base = `http://127.0.0.1:${server.address().port}`;
@@ -317,7 +363,8 @@ async function g_crash(browser, base) {
     ['garbage in weld_people: the page loads and shows only what is valid', d_garbage],
     ['two tabs of one computer: one session per sign-in, one end per sign-out, both tabs follow', e_twoTabs],
     ['midnight with the "Welding or Matching?" step open', f_midnightStep],
-    ['a page that crashes with two people signed in', g_crash]];
+    ['a page that crashes with two people signed in', g_crash],
+    ['AD1 on the real page: idle sign-out per person, the Admin stays, real input counts, a lapsed login after a reload', h_idle]];
   try { for (const [name, fn] of T) if (!only || name.includes(only)) await check(name, () => fn(browser, base)); }
   finally { await browser.close(); server.close(); }
   console.log(`\nweld-1.html page: ${results.pass} passed, ${results.fail.length} failed`);

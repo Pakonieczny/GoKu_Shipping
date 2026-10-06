@@ -91,15 +91,36 @@ class World {
     this.ctxs = this.ctxs.filter(c => c !== ctx);
     try { await ctx.close(); } catch (_) {}
   }
+  /** a long jump of the shop's clock (a night, an afternoon): every computer's clock jumps with it and its timers fire once, as a page wakes after a long gap */
+  async jump(ms, o) {
+    o = o || {};
+    await this.skew(ms);
+    for (const c of this.ctxs) { if (o.except && o.except.includes(c)) continue; try { await c.clock.fastForward(ms); } catch (_) {} }
+  }
   /** one computer asleep through a stretch of time: its clock jumps (its timers fire once, on waking), the shop's clock is not touched here */
   async wake(ctx, ms) { try { await ctx.clock.fastForward(ms); } catch (_) {} }
+  /** a computer that slept wakes at the shop's time: its clock jumps to it (its timers fire once, as when a lid opens), so what it then sends carries a true time */
+  async syncClock(ctx) {
+    try {
+      const pg = ctx.pages().find(p => !p.isClosed()); if (!pg) return 0;
+      const pt = await pg.evaluate(() => Date.now()), sn = await this.now();
+      if (sn > pt) await ctx.clock.fastForward(sn - pt);
+      return sn - pt;
+    } catch (_) { return 0; }
+  }
   /** the fake clock of every browser context moves together (and the shop's own clock with it): steps of `step` ms, so timers and beats fire as they would */
   async advance(ms, o) {
     o = o || {}; const step = o.step || 60000;
     for (let left = ms; left > 0; left -= step) {
       const d = Math.min(step, left);
-      await this.skew(d);
-      for (const c of this.ctxs) { if (o.except && o.except.includes(c)) continue; try { await c.clock.runFor(d); } catch (_) {} }
+      // The shop's clock and a computer's clock move one after the other, so while a page's timers fire inside its burst the two differ by up to the whole step. The
+      // session door undoes a computer clock that is 10 s or more off (AD2: sentAt), which would move every end time by that difference: so a step is cut into pieces
+      // of 8 s, and the two clocks never differ by 10 s while anything is sent.
+      for (let rest = d; rest > 0; rest -= 8000) {
+        const s = Math.min(8000, rest);
+        await this.skew(s);
+        for (const c of this.ctxs) { if (o.except && o.except.includes(c)) continue; try { await c.clock.runFor(s); } catch (_) {} }
+      }
       if (o.between) await o.between(d);
       await sleep(o.settle || 120);
     }
