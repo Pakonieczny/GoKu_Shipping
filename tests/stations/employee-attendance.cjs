@@ -5,6 +5,8 @@
 //   a Saturday the team did work, a Saturday it did not, today (pending), reads (rollups + sessions only, cached), the optional schedule.
 //   node tests/stations/employee-attendance.cjs
 'use strict';
+require(require('path').join(__dirname, '../../netlify/functions/_activityKinds.js')).NO_THROUGHPUT.clear();   // this suite uses 'welding' as a plain fixture station for the generic arithmetic: the Welding station's own rule (not counted in throughput, R2 of stations round 2) is tested in welding-portal.cjs
+
 const path = require('path'), assert = require('assert'), Module = require('module');
 const root = path.join(__dirname, '../..');
 const M = require(path.join(root, 'netlify/functions/_employeeAttendance.js'));
@@ -366,7 +368,7 @@ const att = (st, name, from, to, o) => M.attendance(ctxOf(st, o), { name, from, 
   assert.strictEqual(cost.readsOf('Efficiency_Daily').length, 2, 'two range queries for the rollups: the days that are over, and today');
   assert(cost.readsOf('Station_Sessions').length <= 4, 'two range queries for the sessions (twice each, for Firestore times)');
   assert(cost.readsOf('Efficiency_Daily').every(x => x.n < 400 && x.n > 0), 'each part is a day range of a few hundred documents at most');
-  assert(cost.readsOf('config').every(x => ['employeeAliases', 'employeeSchedule'].includes(x.doc)) && cost.readsOf('config').length === 2);
+  assert(cost.readsOf('config').every(x => ['employeeAliases', 'employeeSchedule', 'stationAdmins'].includes(x.doc)) && cost.readsOf('config').length <= 3, 'the two config documents, plus the Admin list the auto sign-out of stale sessions reads (kept a minute)');
   const readsBefore = cost.reads.length;
   await att(cost, 'Raj Packer', FROM, TODAY); await att(cost, 'Tess Welder', FROM, TODAY);
   assert.strictEqual(cost.reads.length, readsBefore, 'a second look within the cache life reads nothing more');
