@@ -92,8 +92,8 @@ const fresh = () => {
 const ipOf = () => '198.51.100.' + (++ipN % 250);
 
 /* the session door, as a station page speaks to it */
-const sess = (o) => Object.assign({ id: 'welding__weld-1__Tess_Welder__t1', event: 'beat', person: 'Tess Welder', station: 'welding', device: 'weld-1', computerId: 'pc-TESTAAAA',
-  computerLabel: 'Welding weld-1 · TEST', at: NOW, sentAt: NOW }, o);
+const sess = (o) => Object.assign({ id: 'welding__weld-1__Tess_Welder__t1', event: 'beat', person: 'Tess Welder', station: 'sorting', device: 'sorting-1', computerId: 'pc-TESTAAAA',
+  computerLabel: 'Sorting sorting-1 · TEST', at: NOW, sentAt: NOW }, o);       // (the default-policy station: 10 minutes. Welding and Laser have their own rows, checked in part 6)
 async function post(body, o = {}) {
   const r = await door.handler({ httpMethod: 'POST', headers: { 'x-nf-client-connection-ip': o.ip || ipOf() }, queryStringParameters: o.sandbox ? { sandbox: '1' } : {}, body: o.raw != null ? o.raw : JSON.stringify(body) });
   let b = {}; try { b = JSON.parse(r.body || '{}'); } catch (_) {}
@@ -102,7 +102,7 @@ async function post(body, o = {}) {
 const session = (o, opt) => post({ session: sess(o) }, opt);
 const doc = (id, o = {}) => cur.get((o.sandbox ? 'Sandbox_' : '') + 'Station_Sessions', id);
 /* a session as the door stored it, for the readers and the sweep */
-const seed = (id, o) => cur.put((o.sandbox ? 'Sandbox_' : '') + 'Station_Sessions', id, Object.assign({ id, person: 'Tess Welder', employeeId: '', station: 'welding', device: 'weld-1', computerId: 'pc-TESTAAAA', computerLabel: '',
+const seed = (id, o) => cur.put((o.sandbox ? 'Sandbox_' : '') + 'Station_Sessions', id, Object.assign({ id, person: 'Tess Welder', employeeId: '', station: 'sorting', device: 'sorting-1', computerId: 'pc-TESTAAAA', computerLabel: '',
   startAt: Z('2026-10-05T13:00:00Z'), lastSeenAt: Z('2026-10-05T13:00:00Z'), endAt: null, endReason: null, minutes: 0 }, o.d || {}));
 const live = async (o = {}) => {
   eff._t.cacheOf(dbNow).memo.clear();
@@ -417,7 +417,7 @@ const iso = ms => new Date(ms).toISOString();
     assert.strictEqual(row.endAt, T('13:50'), '(the stale row the reader holds is still patched for its own answer)');
   });
 
-  await check('4f two people at one station: each session is decided on its own, input at the page counts for both', async () => {
+  await check('4f two people at one page (a default-policy station): each session is decided on its own, input at the page counts for both', async () => {
     const s = fresh(); at('2026-10-05T14:21:00Z');
     const T = h => Z('2026-10-05T' + h + ':00Z');
     const two = (L) => { seed('w-weld', { d: { person: 'Tess Welder', task: 'welding', startAt: T('13:00'), lastSeenAt: T('14:20'), lastInputAt: L } }); seed('w-match', { d: { person: 'Marco R', task: 'matching', startAt: T('13:30'), lastSeenAt: T('14:20'), lastInputAt: L } }); seed('w-other', { d: { person: 'Ivy Y', station: 'sorting', device: 'sorting-1', startAt: T('13:00'), lastSeenAt: T('14:20'), lastInputAt: T('14:19') } }); };
@@ -528,6 +528,261 @@ const iso = ms => new Date(ms).toISOString();
     // the rule table for the portal's words
     assert.strictEqual(AS.END_TEXT.idle, 'Signed out after 10 minutes without input'); assert.strictEqual(AS.END_TEXT.closing, 'Signed out at 5:00 pm');
     assert.deepStrictEqual([...AS.END_REASONS], ['signOut', 'midnight', 'switched', 'closed', 'idle', 'closing']);
+  });
+
+  /* 6 · per-station sign-out (Paul, 6 Oct 2026 20:10 UTC, plan.md "Addendum 2"): Welding only at 17:00 Toronto, Laser after 1 hour (30 minutes from 17:00), the rest as built */
+  const T = h => Z('2026-10-05T' + h + ':00Z');                                    // Monday 5 Oct 2026, EDT: 09:00 = 13:00Z, 17:00 = 21:00Z
+  const row = (id, station, person, d) => seed(id, { d: Object.assign({ station, person, device: station === 'welding' ? 'weld-1' : station === 'laser' ? 'charm-nest-1' : station + '-1' }, station === 'welding' ? { task: 'welding' } : {}, d) });
+  const state = id => { const d = cur.get('Station_Sessions', id); return d.endAt ? d.endReason + '@' + iso(d.endAt).slice(11, 19) : 'open'; };
+  const names = out => out.body.signedIn.map(x => x.name).sort();
+
+  await check('6a the policy table: the documented one, frozen, the same for every station key, and equal to the page\'s table in station-session.js', async () => {
+    const want = { default: { idleMin: 10, idleMinAfter17: 10, closeAt17: 'idleWindow' }, welding: { idleMin: 0, idleMinAfter17: 0, closeAt17: 'always' }, laser: { idleMin: 60, idleMinAfter17: 30, closeAt17: 'idleWindow' } };
+    assert.deepStrictEqual(JSON.parse(JSON.stringify(AS.POLICY)), want, 'the table of the addendum');
+    assert(Object.isFrozen(AS.POLICY) && Object.isFrozen(AS.POLICY.welding), 'frozen');
+    const P = require(path.join(root, 'netlify/functions/_stationSignoutPolicy.js'));
+    for (const k of ['sorting', 'assembly', 'shipping', 'design', 'sorter', 'qr', 'inbox', '', 'default', 'constructor', '__proto__', 'toString', 'hasOwnProperty', 'nonsense']) assert.deepStrictEqual(P.copyOf(k), want.default, 'a station with no row of its own is the default: ' + JSON.stringify(k));
+    assert.deepStrictEqual(P.copyOf(null), want.default); assert.deepStrictEqual(P.copyOf(undefined), want.default);
+    assert.deepStrictEqual(P.copyOf('welding'), want.welding); assert.deepStrictEqual(P.copyOf(' Welding '), want.welding, 'case and spaces do not matter'); assert.deepStrictEqual(P.copyOf('laser'), want.laser);
+    // the page's table, read out of its source (StationSession.policy answers a copy of the station's row of this literal): the two can never drift apart
+    const src = require('fs').readFileSync(path.join(root, 'station-session.js'), 'utf8');
+    // (until AD3's page is on main the file has no word "policy" at all and only the server's half is checked, loudly; from the first push of AD3's table on, this check is strict: a page that speaks of a policy but whose table cannot be read out of it fails here)
+    if (!/policy/i.test(src)) { say('       (6a: station-session.js has no policy table yet: AD3 has not landed; the page half of this check is NOT run)'); return; }
+    const at0 = src.search(/\bconst\s+POLICY\s*=\s*\{/);
+    assert(at0 >= 0, 'station-session.js has no `const POLICY = {` table (AD3)');
+    let i = src.indexOf('{', at0), depth = 0, j = i;
+    for (; j < src.length; j++) { if (src[j] === '{') depth++; else if (src[j] === '}' && --depth === 0) break; }
+    const client = require('vm').runInNewContext('(' + src.slice(i, j + 1) + ')');
+    assert.deepStrictEqual(JSON.parse(JSON.stringify(client)), JSON.parse(JSON.stringify(AS.POLICY)), 'the page and the server carry the same table, value for value');
+    assert(/policy\s*[:(]/.test(src) || /function\s+policy\b/.test(src), 'the page exposes StationSession.policy');
+  });
+
+  await check('6b Welding: no idle sign-out at all (6 hours without input, a page silent for 6 hours, two people), the board keeps them', async () => {
+    const s = fresh(); at('2026-10-05T19:00:00Z');                                   // 15:00, before 17:00
+    row('w-live', 'welding', 'Tess Welder', { startAt: T('13:00'), lastSeenAt: NOW - 60000, lastInputAt: T('13:00') });        // the page beats, nobody touched it for 6 hours
+    row('w-dead', 'welding', 'Dead Dana', { startAt: T('13:00'), lastSeenAt: T('13:00'), lastInputAt: T('13:00') });          // the page went quiet at 09:00
+    row('w-match', 'welding', 'Marco R', { task: 'matching', startAt: T('14:00'), lastSeenAt: NOW - 120000, lastInputAt: T('14:00') });
+    row('w-noinput', 'welding', 'Old Page', { startAt: T('13:00'), lastSeenAt: T('13:00') });                                 // a page that never reported input
+    row('s-ctl', 'sorting', 'Ctl Cat', { startAt: T('13:00'), lastSeenAt: NOW - 60000, lastInputAt: T('13:00') });             // the control: a default station, 6 hours idle
+    const out = await live();
+    assert.strictEqual(out.status, 200);
+    assert.deepStrictEqual(names(out), ['Dead Dana', 'Marco R.', 'Old Page', 'Tess Welder'], 'every Welding person is still signed in; the sorting control is not');
+    for (const id of ['w-live', 'w-dead', 'w-match', 'w-noinput']) assert.strictEqual(state(id), 'open', id);
+    assert.strictEqual(state('s-ctl'), 'idle@13:00:00', 'the control ends idle at its last input');
+    assert.strictEqual(s.writesTo('Station_Sessions').length, 1, 'only the control was written');
+    // the hours of a quiet Welding page keep counting while it is signed in (a reader never closes it at its last beat)
+    const wl = out.body.stations.find(x => x.key === 'welding');
+    assert(wl && wl.people.length === 4, 'the Welding card lists the four people');
+    // decide() itself: 20 hours of no input before 17:00 is still nothing (a session of an earlier hour, read at 16:59:59)
+    const d0 = { startAt: T('13:00'), lastSeenAt: T('20:59'), lastInputAt: T('13:00'), station: 'welding' };
+    assert.strictEqual(AS.decide(d0, Z('2026-10-05T20:59:59Z'), false), null);
+    assert.strictEqual(AS.decide(Object.assign({}, d0, { station: 'sorting' }), Z('2026-10-05T20:59:59Z'), false).endReason, 'idle', '(the same row at a default station is long idle)');
+    // through the door: a beat after six quiet hours is the same session carrying on
+    fresh(); at('2026-10-05T13:00:00Z');
+    const id = 'welding__weld-1__Tess_Welder__welding__t1';
+    await session({ id, station: 'welding', device: 'weld-1', task: 'welding', event: 'start', lastInputAt: NOW });
+    at('2026-10-05T19:00:00Z'); let r = await session({ id, station: 'welding', device: 'weld-1', task: 'welding', lastInputAt: T('13:00') });
+    assert.strictEqual(r.body.ended, false, 'six quiet hours, then a beat: still the same session'); assert.strictEqual(doc(id).lastSeenAt, NOW); assert.strictEqual(doc(id).endAt, null);
+    at('2026-10-05T20:59:59Z'); r = await session({ id, station: 'welding', device: 'weld-1', task: 'welding', lastInputAt: T('13:00') });
+    assert.strictEqual(r.body.ended, false, '16:59:59');
+  });
+
+  await check('6c Welding: every person ends at 17:00 Toronto SHARP (closing), whatever the last input; 16:59 stays; a page read at 18:30; never rewritten', async () => {
+    const s = fresh();
+    const mk = () => {
+      row('c-a', 'welding', 'Anna Weld', { startAt: T('13:00'), lastSeenAt: T('20:58'), lastInputAt: T('13:00') });                          // beating, no input since 09:00
+      row('c-b', 'welding', 'Ben Weld', { startAt: T('13:00'), lastSeenAt: T('20:59'), lastInputAt: Z('2026-10-05T20:59:30Z') });           // input half a minute before 17:00
+      row('c-m', 'welding', 'Mia Match', { task: 'matching', startAt: T('14:00'), lastSeenAt: T('20:55'), lastInputAt: T('20:30') });       // the second person at the same page, the other task
+      row('c-out', 'welding', 'Out Early', { startAt: T('13:00'), lastSeenAt: T('20:30'), lastInputAt: T('20:30'), endAt: T('20:30'), endReason: 'signOut', minutes: 450 });   // signed himself out at 16:30
+    };
+    mk(); at('2026-10-05T20:59:59Z');
+    let out = await live();
+    assert.deepStrictEqual(names(out), ['Anna Weld', 'Ben Weld', 'Mia Match'], '16:59:59: everybody still in'); assert.strictEqual(s.writesTo('Station_Sessions').length, 0);
+    at('2026-10-05T21:00:00Z'); out = await live();
+    for (const id of ['c-a', 'c-b', 'c-m']) assert.strictEqual(state(id), 'closing@21:00:00', id + ': 17:00:00 sharp, not the last input');
+    assert.strictEqual(cur.get('Station_Sessions', 'c-a').minutes, 480); assert.strictEqual(cur.get('Station_Sessions', 'c-m').minutes, 420);
+    assert.strictEqual(state('c-out'), 'signOut@20:30:00', 'a person who signed out by hand is not touched');
+    assert.deepStrictEqual(names(out), [], 'nobody is signed in at Welding after 17:00');
+    for (const w of s.writesTo('Station_Sessions')) assert.deepStrictEqual(w.keys.sort(), ['endAt', 'endReason', 'minutes'], 'only the end is written');
+    assert.strictEqual(s.writesTo('Station_Sessions').length, 3);
+    // read at 18:30 for a page that last beat at 16:55 and then slept: the same answer, ended at 17:00 of that day
+    fresh(); row('d-1', 'welding', 'Sleepy Sam', { startAt: T('13:00'), lastSeenAt: T('20:55'), lastInputAt: T('20:50') }); at('2026-10-05T22:30:00Z');
+    await live(); assert.strictEqual(state('d-1'), 'closing@21:00:00', 'a page read at 18:30 is ended at 17:00 (not at its last beat, not at 18:30)');
+    // idempotent: again and again, by readers and by the sweep: one write each, nothing rewritten, nothing deleted
+    for (let k = 0; k < 3; k++) { await live(); AS.resetSweep(); await AS.sweep({ db: dbNow, now: NOW + k * 1000, force: true }); at(iso(NOW + 5000)); }
+    assert.strictEqual(cur.writesTo('Station_Sessions', 'd-1').length, 1, 'ended once'); assert.strictEqual(cur.count('Station_Sessions'), 1);
+    // a session that began AFTER 17:00 is never due at 17:00 (the next one is tomorrow's, the midnight comes first): it stays through the evening and ends at the midnight
+    fresh(); row('e-1', 'welding', 'Late Lou', { startAt: T('21:30'), lastSeenAt: T('22:25'), lastInputAt: T('21:30') }); at('2026-10-05T22:30:00Z');
+    await live(); assert.strictEqual(state('e-1'), 'open', 'signed in at 17:30: no idle sign-out, no 17:00');
+    at('2026-10-06T03:59:59Z'); AS.resetSweep(); await AS.sweep({ db: dbNow, now: NOW, force: true }); assert.strictEqual(state('e-1'), 'open');
+    at('2026-10-06T04:01:00Z'); AS.resetSweep(); await AS.sweep({ db: dbNow, now: NOW, force: true }); assert.strictEqual(state('e-1'), 'midnight@04:00:00', 'New York midnight ends everybody');
+    // through the door: a beat after 17:00 ends the session at 17:00; a page that loads after 17:00 names 17:00 as its end and keeps it (a reload's input is later)
+    fresh(); at('2026-10-05T13:00:00Z');
+    const id = 'welding__weld-1__Ivo_Weld__welding__t1', id2 = 'welding__weld-1__Uma_Weld__matching__t2', id3 = 'welding__weld-1__Ida_Weld__welding__t3';
+    for (const [i, p, t] of [[id, 'Ivo Weld', 'welding'], [id2, 'Uma Weld', 'matching'], [id3, 'Ida Weld', 'welding']]) await session({ id: i, person: p, station: 'welding', device: 'weld-1', task: t, event: 'start', lastInputAt: NOW });
+    at('2026-10-05T20:55:00Z'); for (const [i, p, t] of [[id, 'Ivo Weld', 'welding'], [id2, 'Uma Weld', 'matching'], [id3, 'Ida Weld', 'welding']]) await session({ id: i, person: p, station: 'welding', device: 'weld-1', task: t, lastInputAt: T('20:50') });
+    at('2026-10-05T21:03:00Z');
+    let r = await session({ id, person: 'Ivo Weld', station: 'welding', device: 'weld-1', task: 'welding', lastInputAt: Z('2026-10-05T21:02:30Z') });
+    assert.strictEqual(r.body.ended, true); assert.strictEqual(r.body.endReason, 'closing'); assert.strictEqual(r.body.endAt, T('21:00'), 'a beat at 17:03 ends the session at 17:00 sharp');
+    r = await session({ id: id2, person: 'Uma Weld', station: 'welding', device: 'weld-1', task: 'matching', event: 'end', reason: 'closing', at: T('21:00'), lastInputAt: Z('2026-10-05T21:03:00Z') });
+    assert.strictEqual(r.body.endAt, T('21:00'), 'the page\'s closing end, with an input after 17:00 in the same request: still 17:00 sharp'); assert.strictEqual(r.body.endReason, 'closing');
+    r = await session({ id: id3, person: 'Ida Weld', station: 'welding', device: 'weld-1', task: 'welding', event: 'end', reason: 'signOut', at: Z('2026-10-05T21:03:00Z') });
+    assert.strictEqual(r.body.endReason, 'signOut', 'an explicit sign-out (a person\'s own, or the page leaving) is stored as it always was'); assert.strictEqual(r.body.endAt, Z('2026-10-05T21:03:00Z'));
+    fresh(); at('2026-10-05T13:00:00Z'); await session({ id, person: 'Ivo Weld', station: 'welding', device: 'weld-1', task: 'welding', event: 'start', lastInputAt: NOW });
+    at('2026-10-05T14:20:00Z'); r = await session({ id, person: 'Ivo Weld', station: 'welding', device: 'weld-1', task: 'welding', event: 'end', reason: 'idle', at: T('14:05'), lastInputAt: T('14:05') });
+    assert.strictEqual(r.body.endReason, 'idle'); assert.strictEqual(r.body.endAt, T('14:05'), 'an end the page itself names is not second-guessed');
+  });
+
+  await check('6d Laser: 60 minutes before 17:00 (59:59 stays, 60:00 ends, "idle", end = last input), 10 minutes of nothing never ends it', async () => {
+    fresh(); at('2026-10-05T13:00:00Z');
+    const LID = n => `laser__charm-nest-1__${n}__t1`, L0 = T('13:30');
+    const lsess = (n, o) => session(Object.assign({ id: LID(n), person: n.replace('_', ' '), station: 'laser', device: 'charm-nest-1' }, o));
+    for (const n of ['Lena_A', 'Liam_B', 'Lola_C']) await lsess(n, { event: 'start', lastInputAt: NOW });
+    at('2026-10-05T13:30:00Z'); for (const n of ['Lena_A', 'Liam_B', 'Lola_C']) await lsess(n, { lastInputAt: L0 });
+    at('2026-10-05T13:45:00Z'); let r = await lsess('Lola_C', { lastInputAt: L0 });
+    assert.strictEqual(r.body.ended, false, '15 minutes without input is nothing for Laser (the default would be out at 10)');
+    at('2026-10-05T14:29:59Z'); r = await lsess('Lena_A', { lastInputAt: L0 });
+    assert.strictEqual(r.body.ended, false, '59:59 without input: stays'); assert.strictEqual(doc(LID('Lena_A')).endAt, null);
+    at('2026-10-05T14:30:00Z'); r = await lsess('Liam_B', { lastInputAt: L0 });
+    assert.strictEqual(r.body.ended, true, '60:00 without input: out'); assert.strictEqual(r.body.endReason, 'idle'); assert.strictEqual(r.body.endAt, L0, 'ended at the last input, not at 14:30');
+    assert.strictEqual(doc(LID('Liam_B')).minutes, 30);
+    // the same limit through the readers (the page is awake: its beat says how long it has had no input)
+    const s = fresh(); at('2026-10-05T14:29:59Z');
+    row('r-59', 'laser', 'Rae Fifty', { startAt: T('13:00'), lastSeenAt: NOW, lastInputAt: L0 }); row('r-60', 'laser', 'Rob Sixty', { startAt: T('13:00'), lastSeenAt: NOW, lastInputAt: Z('2026-10-05T13:29:59Z') });
+    let out = await live(); assert.deepStrictEqual(names(out), ['Rae Fifty']); assert.strictEqual(state('r-59'), 'open'); assert.strictEqual(state('r-60'), 'idle@13:29:59');
+    // the old 10-minute marks do nothing for a Laser person: 12 minutes, 25 minutes, 45 minutes
+    fresh(); at('2026-10-05T14:30:00Z'); for (const [n, m] of [['a', 12], ['b', 25], ['c', 45]]) row('k-' + n, 'laser', 'Kay ' + n.toUpperCase(), { startAt: T('13:00'), lastSeenAt: NOW, lastInputAt: NOW - m * 60000 });
+    out = await live(); assert.strictEqual(out.body.signedIn.length, 3); assert.strictEqual(cur.writesTo('Station_Sessions').length, 0);
+    // the Sorter app with no role (Admin) or with the Design role is the default: 10 minutes
+    fresh(); at('2026-10-05T14:30:00Z'); row('x-1', 'sorter', 'Sorter Sue', { startAt: T('13:00'), lastSeenAt: NOW, lastInputAt: NOW - 15 * 60000 }); row('x-2', 'design', 'Design Dee', { startAt: T('13:00'), lastSeenAt: NOW, lastInputAt: NOW - 15 * 60000 });
+    await live(); assert.strictEqual(state('x-1').slice(0, 4), 'idle'); assert.strictEqual(state('x-2').slice(0, 4), 'idle');
+  });
+
+  await check('6e Laser from 17:00 Toronto: 30 minutes; last input 16:25 is out at 17:00 (closing, ended 16:25), 16:45 stays and is out at 17:15 (closing, ended 16:45); 15:50 was out at 16:50 (idle)', async () => {
+    const run = async (L, B, now, station = 'laser') => { fresh(); row('x', station, 'Lisa Laser', { startAt: T('13:00'), lastSeenAt: B, lastInputAt: L }); at(iso(now)); await live(); return state('x'); };
+    assert.strictEqual(await run(T('20:25'), T('21:00'), T('21:00') + 5000), 'closing@20:25:00', 'the page beat at 17:00 with last input 16:25: out, ended at 16:25');
+    assert.strictEqual(await run(T('20:30'), T('21:00'), T('21:00') + 5000), 'closing@20:30:00', 'exactly 30 minutes: out');
+    assert.strictEqual(await run(Z('2026-10-05T20:30:01Z'), T('21:00'), T('21:00') + 5000), 'open', '29:59: stays');
+    assert.strictEqual(await run(T('20:45'), T('21:00'), T('21:00') + 5000), 'open', 'input at 16:45 stays at 17:00');
+    assert.strictEqual(await run(T('20:45'), Z('2026-10-05T21:14:59Z'), Z('2026-10-05T21:15:04Z')), 'open', '29:59 after 16:45: stays');
+    assert.strictEqual(await run(T('20:45'), T('21:15'), T('21:15') + 5000), 'closing@20:45:00', 'out at 17:15, ended at the last input 16:45');
+    assert.strictEqual(await run(T('19:50'), T('20:50'), T('20:50') + 5000), 'idle@19:50:00', 'last input 15:50: out at 16:50 (idle, 60 minutes), ended at 15:50');
+    assert.strictEqual(await run(T('19:50'), Z('2026-10-05T20:49:59Z'), Z('2026-10-05T20:50:04Z')), 'open', '16:49:59 beat: not yet');
+    assert.strictEqual(await run(T('20:00'), T('21:00'), T('21:00') + 5000), 'closing@20:00:00', 'last input 16:00: the 60 minutes end at exactly 17:00 and the limit from 17:00 is 30: closing');
+    assert.strictEqual(await run(Z('2026-10-05T19:59:59Z'), Z('2026-10-05T20:59:59Z'), Z('2026-10-05T21:00:01Z') - 1000), 'idle@19:59:59', 'last input 15:59:59: 60 minutes pass at 16:59:59, before 17:00: idle');
+    // a session that began after 17:00: the limit is the 30 minutes from the start
+    assert.strictEqual(await run(T('21:30'), Z('2026-10-05T21:59:59Z'), T('22:00')), 'open'); assert.strictEqual(await run(T('21:30'), T('22:00'), T('22:00') + 5000), 'closing@21:30:00', 'signed in at 17:30, no input: out after 30 minutes (closing), ended at the last input');
+    // the rule table, at the function: reason and end for a grid (what decide says is what every reader and the sweep do)
+    for (const [L, B, want] of [['20:25', '21:00', 'closing@20:25'], ['20:45', '21:14', null], ['20:45', '21:15', 'closing@20:45'], ['19:50', '20:50', 'idle@19:50'], ['19:51', '20:50', null], ['20:00', '20:59', null], ['20:00', '21:00', 'closing@20:00']]) {
+      const d = AS.decide({ startAt: T('13:00'), lastSeenAt: T(B), lastInputAt: T(L), station: 'laser' }, T(B) + 1000, false);
+      assert.strictEqual(d ? d.endReason + '@' + iso(d.endAt).slice(11, 16) : null, want, `decide L ${L} B ${B}`);
+    }
+    // the same row at a default station (10 minutes): unchanged (closing at 17:00 when the last input is 16:50 or before)
+    assert.strictEqual(await run(T('20:25'), T('21:00'), T('21:00') + 5000, 'sorting'), 'closing@20:25:00'); assert.strictEqual(await run(T('20:55'), T('21:02'), T('21:03'), 'sorting'), 'open');
+  });
+
+  await check('6f a dead page: Laser ends only when its limit has passed since the last beat (60 minutes, 30 counted from 17:00), Welding at 17:00; never at 15 minutes', async () => {
+    const dead = async (station, d, now, extra = {}) => { fresh(); row('x', station, station === 'welding' ? 'Dead Welder' : 'Dead Laser', Object.assign({ startAt: T('13:00') }, d)); at(iso(now)); const out = await live(); return [state('x'), names(out).length]; };
+    // Laser: last beat 12:00 (16:00Z), last input 11:55
+    const ld = { lastSeenAt: T('16:00'), lastInputAt: T('15:55') };
+    assert.deepStrictEqual(await dead('laser', ld, T('16:15') + 1000), ['open', 1], '15 minutes of silence: still signed in (the default would have closed it)');
+    assert.deepStrictEqual(await dead('laser', ld, T('16:30')), ['open', 1], '30 minutes');
+    assert.deepStrictEqual(await dead('laser', ld, Z('2026-10-05T16:59:59Z')), ['open', 1], '59:59 since the last beat');
+    assert.deepStrictEqual(await dead('laser', ld, T('17:00')), ['idle@15:55:00', 0], '60:00 since the last beat: ended at its last input');
+    // near 17:00: last beat 16:40, last input 16:35 -> the limit from 17:00 is 30 minutes counted from the beat: 17:10
+    const l2 = { lastSeenAt: T('20:40'), lastInputAt: T('20:35') };
+    assert.deepStrictEqual(await dead('laser', l2, Z('2026-10-05T21:09:59Z')), ['open', 1]); assert.deepStrictEqual(await dead('laser', l2, T('21:10')), ['closing@20:35:00', 0], 'closing: the sign-out falls after 17:00');
+    // no input ever reported: ended "closed" at its last beat once the limit has passed
+    const l3 = { lastSeenAt: T('16:00') };
+    assert.deepStrictEqual(await dead('laser', l3, T('16:30')), ['open', 1]); assert.deepStrictEqual(await dead('laser', l3, T('17:00')), ['closed@16:00:00', 0]);
+    // Welding: last beat 10:00, no input since: signed in until 17:00 sharp
+    const wd = { lastSeenAt: T('14:00'), lastInputAt: T('14:00') };
+    assert.deepStrictEqual(await dead('welding', wd, T('16:00')), ['open', 1]); assert.deepStrictEqual(await dead('welding', wd, Z('2026-10-05T20:59:59Z')), ['open', 1]);
+    assert.deepStrictEqual(await dead('welding', wd, T('21:00')), ['closing@21:00:00', 0]); assert.deepStrictEqual(await dead('welding', wd, T('22:30')), ['closing@21:00:00', 0]);
+    assert.deepStrictEqual(await dead('welding', { lastSeenAt: T('14:00') }, T('22:30')), ['closing@21:00:00', 0], 'a page that never reported input is ended at 17:00 too');
+    // the control: a default station's dead page is ended at its last input after 15 minutes, as before
+    assert.deepStrictEqual(await dead('assembly', { lastSeenAt: T('16:00'), lastInputAt: T('15:55') }, T('16:15')), ['idle@15:55:00', 0]);
+    // Admin keeps the old rule on every station: a quiet page is "closed" at its last beat after 15 minutes; no 17:00, no idle while it beats
+    fresh(); row('a-1', 'welding', 'Paul K', { startAt: T('13:00'), lastSeenAt: T('14:00'), lastInputAt: T('13:00') }); row('a-2', 'welding', 'Paul K', { task: 'matching', startAt: T('13:00'), lastSeenAt: T('22:25'), lastInputAt: T('13:00') });
+    at('2026-10-05T22:30:00Z'); await live(); assert.strictEqual(state('a-1'), 'closed@14:00:00'); assert.strictEqual(state('a-2'), 'open', 'an Admin whose page beats is not signed out at 17:00');
+    fresh(); row('a-3', 'laser', 'Paul K', { startAt: T('13:00'), lastSeenAt: T('16:00'), lastInputAt: T('15:55') }); at('2026-10-05T16:20:00Z'); await live(); assert.strictEqual(state('a-3'), 'closed@16:00:00', 'Admin: the old rule');
+    // ... and at the door: an Admin's Welding page that beats after 40 quiet minutes is the old rule too (closed at its last beat), a non-Admin's is the same session carrying on
+    fresh(); at('2026-10-05T13:00:00Z');
+    const pk = 'welding__weld-1__Paul_K__welding__t1', pj = 'welding__weld-1__Pia_J__welding__t2';
+    await session({ id: pk, person: 'Paul K', station: 'welding', device: 'weld-1', task: 'welding', event: 'start', lastInputAt: NOW }); await session({ id: pj, person: 'Pia J', station: 'welding', device: 'weld-1', task: 'welding', event: 'start', lastInputAt: NOW });
+    at('2026-10-05T13:40:00Z');
+    let rk = await session({ id: pk, person: 'Paul K', station: 'welding', device: 'weld-1', task: 'welding', lastInputAt: NOW }), rj = await session({ id: pj, person: 'Pia J', station: 'welding', device: 'weld-1', task: 'welding', lastInputAt: NOW });
+    assert.strictEqual(rk.body.ended, true); assert.strictEqual(rk.body.endReason, 'closed'); assert.strictEqual(rk.body.endAt, T('13:00')); assert.strictEqual(rj.body.ended, false);
+    // an unreadable Admin list: Welding and Laser sessions are left alone like every other
+    fresh(); row('u-1', 'welding', 'Unk Wen', { startAt: T('13:00'), lastSeenAt: T('13:05') }); row('u-2', 'laser', 'Unk Lee', { startAt: T('13:00'), lastSeenAt: T('13:05'), lastInputAt: T('13:00') });
+    cur.fail('config'); at('2026-10-05T22:30:00Z'); const sw = await AS.sweep({ db: dbNow, now: NOW, force: true });
+    assert.strictEqual(sw.stores.real.skipped, 2); assert.strictEqual(state('u-1'), 'open'); assert.strictEqual(state('u-2'), 'open');
+    cur.heal('config'); AS.resetSweep(); await AS.sweep({ db: dbNow, now: NOW + 1000, force: true }); assert.strictEqual(state('u-1'), 'closing@21:00:00'); assert.strictEqual(state('u-2'), 'closing@13:00:00'.replace('closing', 'idle'));
+  });
+
+  await check('6g the door: a beat after a long silence is the same session for Laser (inside its limit) and Welding; the default still closes it', async () => {
+    fresh(); at('2026-10-05T13:00:00Z');
+    const ids = { l: 'laser__charm-nest-1__Lia_L__t1', w: 'welding__weld-1__Wil_W__welding__t1', d: 'sorting__sorting-1__Dev_D__t1' };
+    const body = (k, o) => Object.assign({ id: ids[k], person: { l: 'Lia L', w: 'Wil W', d: 'Dev D' }[k], station: { l: 'laser', w: 'welding', d: 'sorting' }[k], device: { l: 'charm-nest-1', w: 'weld-1', d: 'sorting-1' }[k] }, k === 'w' ? { task: 'welding' } : {}, o);
+    for (const k of ['l', 'w', 'd']) await session(body(k, { event: 'start', lastInputAt: NOW }));
+    at('2026-10-05T13:40:00Z');                                                         // 40 quiet minutes, then the pages wake and beat with fresh input
+    const r = {}; for (const k of ['l', 'w', 'd']) r[k] = await session(body(k, { lastInputAt: NOW }));
+    assert.strictEqual(r.l.body.ended, false, 'Laser: the same session carries on'); assert.strictEqual(r.w.body.ended, false, 'Welding: the same session carries on');
+    assert.strictEqual(r.d.body.ended, true); assert.strictEqual(r.d.body.endReason, 'idle', 'the default: ended at its last input (10 minutes), as before');
+    assert.strictEqual(doc(ids.l).lastSeenAt, NOW); assert.strictEqual(doc(ids.l).startAt, T('13:00'), 'one session, the same start (a sheet clock is not restarted)');
+    // after the Laser limit has passed in silence, the beat does not bring it back
+    at('2026-10-05T15:00:00Z'); const r2 = await session(body('l', { lastInputAt: Z('2026-10-05T13:40:00Z') }));
+    assert.strictEqual(r2.body.ended, true); assert.strictEqual(r2.body.endReason, 'idle'); assert.strictEqual(r2.body.endAt, Z('2026-10-05T13:40:00Z'));
+  });
+
+  await check('6h daylight saving days: Welding ends at 17:00 local (22:00Z after 1 Nov, 21:00Z before it and after 14 Mar); Laser\'s 17:00 window follows', async () => {
+    for (const [day, c] of [['2026-10-31', '21:00'], ['2026-11-01', '22:00'], ['2026-11-02', '22:00'], ['2027-03-13', '22:00'], ['2027-03-14', '21:00'], ['2027-03-15', '21:00']]) {
+      const Zd = h => Z(`${day}T${h}:00Z`), startH = c === '21:00' ? '13:00' : '14:00', before = Z(`${day}T${c}:00Z`) - 1000;
+      fresh(); row('w', 'welding', 'Dst Wade', { startAt: Zd(startH), lastSeenAt: before - 60000, lastInputAt: Zd(startH) }); at(iso(before)); await live(); assert.strictEqual(state('w'), 'open', day + ' 16:59:59');
+      at(`${day}T${c}:00Z`); await live(); assert.strictEqual(state('w'), `closing@${c}:00`, day + ' 17:00 local');
+      // Laser: last input 35 minutes before 17:00 local, beat at 17:00 local: out (closing); last input 15 minutes before: stays
+      const cm = Z(`${day}T${c}:00Z`);
+      fresh(); row('l1', 'laser', 'Dst Lana', { startAt: Zd(startH), lastSeenAt: cm, lastInputAt: cm - 35 * 60000 }); row('l2', 'laser', 'Dst Lena', { startAt: Zd(startH), lastSeenAt: cm, lastInputAt: cm - 15 * 60000 });
+      at(iso(cm + 5000)); await live(); assert.strictEqual(state('l1'), 'closing@' + iso(cm - 35 * 60000).slice(11, 19), day + ' laser 35 minutes'); assert.strictEqual(state('l2'), 'open', day + ' laser 15 minutes');
+    }
+  });
+
+  await check('6i the sweep and the sandbox: Welding and Laser end by the same rules in each store alone; nothing is deleted; an Admin is not touched', async () => {
+    const s = fresh(); at('2026-10-05T21:05:00Z');
+    row('rw', 'welding', 'Real Wren', { startAt: T('13:00'), lastSeenAt: T('13:05'), lastInputAt: T('13:00') });
+    row('rl', 'laser', 'Real Lars', { startAt: T('13:00'), lastSeenAt: T('20:30'), lastInputAt: T('20:30') });
+    row('rp', 'welding', 'Paul K', { startAt: T('13:00'), lastSeenAt: T('21:04'), lastInputAt: T('13:00') });
+    seed('bw', { sandbox: true, d: { station: 'welding', task: 'matching', device: 'weld-1', person: 'Box Wren', startAt: T('13:00'), lastSeenAt: T('13:05'), lastInputAt: T('13:00') } });
+    seed('bl', { sandbox: true, d: { station: 'laser', device: 'charm-nest-1', person: 'Box Lars', startAt: T('13:00'), lastSeenAt: T('21:04'), lastInputAt: T('21:03') } });
+    const r = await cron.handler({ httpMethod: 'POST', headers: {}, body: '{}' }); assert.strictEqual(r.statusCode, 200);
+    assert.strictEqual(state('rw'), 'closing@21:00:00'); assert.strictEqual(state('rl'), 'closing@20:30:00'); assert.strictEqual(state('rp'), 'open', 'an Admin is exempt from 17:00');
+    const sb = id => { const d = cur.get('Sandbox_Station_Sessions', id); return d.endAt ? d.endReason + '@' + iso(d.endAt).slice(11, 19) : 'open'; };
+    assert.strictEqual(sb('bw'), 'closing@21:00:00'); assert.strictEqual(sb('bl'), 'open', 'a Sandbox_ Laser person with input a minute ago stays');
+    assert(!cur.get('Station_Sessions', 'bw') && !cur.get('Sandbox_Station_Sessions', 'rw'), 'the two stores never mix');
+    assert.strictEqual(s.count('Station_Sessions'), 3); assert.strictEqual(s.count('Sandbox_Station_Sessions'), 2, 'nothing deleted');
+    for (const w of s.writes) assert.deepStrictEqual(w.keys.sort(), ['endAt', 'endReason', 'minutes']);
+  });
+
+  await check('6j the portal\'s words and hours: Welding ends at 17:00, Laser at its last input; endedText says what happened at that station', async () => {
+    const att = async (name, now = Z('2026-10-05T23:30:00Z')) => { const a = await ATT.attendance({ db: dbNow, admin: { firestore: { Timestamp: Ts } }, now, today: '2026-10-05' }, { name, from: '2026-10-05', to: '2026-10-05' }); assert.strictEqual(a.ok, true); return a.calendar.find(x => x.day === '2026-10-05'); };
+    fresh(); at('2026-10-05T23:30:00Z');
+    row('h-w', 'welding', 'Wanda Welds', { startAt: T('13:00'), lastSeenAt: T('20:55'), lastInputAt: T('20:50') });
+    row('h-wo', 'welding', 'Wendy Out', { startAt: T('13:00'), lastSeenAt: T('18:00'), lastInputAt: T('18:00'), endAt: T('18:10'), endReason: 'signOut', minutes: 310 });
+    row('h-li', 'laser', 'Lena Idle', { startAt: T('13:00'), lastSeenAt: T('17:00'), lastInputAt: T('16:00') });          // idle 60 minutes at 16:00Z+60
+    row('h-lc', 'laser', 'Lola Closing', { startAt: T('13:00'), lastSeenAt: T('21:00'), lastInputAt: T('20:25') });
+    row('h-di', 'sorting', 'Dina Default', { startAt: T('13:00'), lastSeenAt: T('15:00'), lastInputAt: T('14:50') });
+    let c = await att('Wanda Welds'); assert.strictEqual(c.endedBy, 'closing'); assert.strictEqual(c.endedText, 'Signed out at 5:00 pm'); assert.strictEqual(c.lastOut, T('21:00'), 'Out = 17:00 sharp'); assert.strictEqual(c.signedMs, 480 * MIN, 'eight hours: the day ends at 17:00');
+    c = await att('Wendy Out'); assert.strictEqual(c.endedBy, 'signOut'); assert(!('endedText' in c), 'an explicit sign-out has no auto wording'); assert.strictEqual(c.lastOut, T('18:10'), 'her own sign-out stands');
+    c = await att('Lena Idle'); assert.strictEqual(c.endedBy, 'idle'); assert.strictEqual(c.endedText, 'Signed out after 1 hour without input'); assert.strictEqual(c.lastOut, T('16:00'), 'Laser: Out = the last input'); assert.strictEqual(c.signedMs, 180 * MIN);
+    c = await att('Lola Closing'); assert.strictEqual(c.endedBy, 'closing'); assert.strictEqual(c.endedText, 'Signed out at 5:00 pm after 30 minutes without input'); assert.strictEqual(c.lastOut, T('20:25'));
+    c = await att('Dina Default'); assert.strictEqual(c.endedBy, 'idle'); assert.strictEqual(c.endedText, 'Signed out after 10 minutes without input'); assert.strictEqual(c.lastOut, T('14:50'));
+    // the words themselves, and the Sign-ins window's short labels
+    for (const [stn, reason, text, pill] of [['laser', 'idle', 'Signed out after 1 hour without input', '1 hour without input'], ['laser', 'closing', 'Signed out at 5:00 pm after 30 minutes without input', '5:00 pm · 30 min without input'],
+      ['welding', 'closing', 'Signed out at 5:00 pm', '5:00 pm'], ['sorting', 'idle', 'Signed out after 10 minutes without input', '10 min without input'], ['sorting', 'closing', 'Signed out at 5:00 pm', '5:00 pm'], ['inbox', 'idle', 'Signed out after 10 minutes without input', '10 min without input'], ['design', 'closing', 'Signed out at 5:00 pm', '5:00 pm']]) {
+      assert.strictEqual(AS.endText(stn, reason), text, stn + ' ' + reason); assert.strictEqual(AS.endPill(stn, reason), pill, stn + ' ' + reason + ' pill');
+    }
+    assert.strictEqual(AS.endText('welding', 'idle'), 'Signed out after 10 minutes without input', '(Welding has no idle sign-out; a page that is not up to date and ended one itself keeps the default words, which are what that page did)');
+    assert.strictEqual(AS.endText('laser', 'signOut'), 'Signed out'); assert.strictEqual(AS.endPill('laser', 'signOut'), '');
   });
 
   const failed = results.filter(r => !r[1]);

@@ -4892,7 +4892,7 @@ body.authed #emAuthLayer .gate{animation:gate-out .4s var(--ease) forwards;}
 @keyframes nudge{0%{transform:translateY(-3px);opacity:.4;}100%{transform:none;opacity:1;}}
 #emAuthLayer .shake{animation:shake .4s var(--ease);}
 @keyframes shake{10%,90%{transform:translateX(-1px)}20%,80%{transform:translateX(2px)}30%,50%,70%{transform:translateX(-4px)}40%,60%{transform:translateX(4px)}}
-#emAuthLayer .rowflex{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:2px 0 18px;}
+#emAuthLayer .rowflex{display:flex;align-items:center;justify-content:flex-end;gap:10px;margin:2px 0 18px;}
 #emAuthLayer .remember{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--ink-soft);cursor:pointer;user-select:none;}
 #emAuthLayer .remember input{width:16px;height:16px;accent-color:var(--blue);cursor:pointer;}
 #emAuthLayer .linklike{background:none;border:none;padding:0;font:inherit;font-size:12.5px;color:var(--blue);cursor:pointer;font-weight:500;}
@@ -5344,7 +5344,7 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
         <div class="rl user"><div class="ic"><svg viewBox="0 0 24 24" fill="none"><path d="M4 5h16v11H4zM2 20h20" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></div><div><div class="t">User</div><div class="d">Full inbox: read, reply, move, delete.</div></div></div>
       </div>
       <p class="aside-note">An invite link decides which level a new account gets — chosen by a Master Admin when the link is made.</p>
-      <div class="aside-foot"><svg viewBox="0 0 24 24" fill="none"><path d="M6 10V8a6 6 0 1112 0v2" stroke="#8b95a0" stroke-width="1.6"/><rect x="4" y="10" width="16" height="10" rx="2" stroke="#8b95a0" stroke-width="1.6"/></svg>Stays signed in on this device · 30-day rolling sessions</div>
+      <div class="aside-foot"><svg viewBox="0 0 24 24" fill="none"><path d="M6 10V8a6 6 0 1112 0v2" stroke="#8b95a0" stroke-width="1.6"/><rect x="4" y="10" width="16" height="10" rx="2" stroke="#8b95a0" stroke-width="1.6"/></svg>Signed out after 10 minutes without input and at 5:00 pm (Admin: at midnight)</div>
     </aside>
 
     <main class="gate-main">
@@ -5362,7 +5362,7 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
           <div class="field has-reveal"><input id="siPass" type="password" autocomplete="current-password" placeholder="your password" />
             <button type="button" class="reveal" data-target="siPass" aria-label="Show password"><svg class="eye" viewBox="0 0 24 24" fill="none"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7-10-7-10-7Z" stroke="currentColor" stroke-width="1.7"/><circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="1.7"/></svg></button></div>
           <div class="caps" id="siCaps"><svg viewBox="0 0 24 24" fill="none"><path d="M12 4 5 11h4v5h6v-5h4L12 4Z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><rect x="9" y="18" width="6" height="2.5" rx=".6" fill="currentColor"/></svg>Caps Lock is on</div>
-          <div class="rowflex"><label class="remember"><input type="checkbox" id="siRemember" checked /> Keep me signed in</label><button type="button" class="linklike" id="siForgot">Forgot password?</button></div>
+          <div class="rowflex"><button type="button" class="linklike" id="siForgot">Forgot password?</button></div>
           <button class="btn blue" id="siBtn" type="submit"><span class="spin"></span><span class="lbl">Sign in</span></button>
         </form>
         <div class="divider">or</div>
@@ -6763,8 +6763,8 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
   <div class="em-toast" id="emToast"></div>
 
   <!-- Sign-in time per person and computer, and the midnight sign-out (New York time) -->
-  <script src="station-session.js?v=20261006-pi1"></script>
-  <script src="station-activity.js?v=20261006-int1"></script>
+  <script src="station-session.js?v=20261006-ad3"></script>
+  <script src="station-activity.js?v=20261006-st2"></script>
   <!-- The conversation in hand right now (opened = working, reply sent or Done = idle), for the console's live stations board (station-live-order.js). Optional: without it nothing changes. -->
   <script src="station-live-order.js?v=20261005-et2"></script>
   <!-- Contact signals per operator: replies drafted, sent, delivered, failed, edited before sending, time to first reply (station-mail-signals.js). Optional: without it nothing changes. -->
@@ -6921,12 +6921,13 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
      * the operator is auto-signed-in on every refresh (industry-standard
      * "remember me" semantics):
      *
-     *   • "Keep me signed in" CHECKED (default) → token persists in
-     *     localStorage and survives browser restarts (30-day rolling
-     *     session server-side).
-     *   • UNCHECKED → token lives in sessionStorage only (per-tab,
-     *     cleared when the tab closes) — the standard shared-computer
-     *     behavior.
+     *   • Sign-in screen: there is no "Keep me signed in" box any more (the
+     *     station rules end every non-Admin sign-in after 10 minutes without
+     *     input and at 5:00 pm; the Admin at midnight), so every sign-in is
+     *     stored in localStorage, shared by this inbox's tabs. The server's
+     *     30-day rolling session is never what keeps anybody in.
+     *   • remember === false (nothing passes it now) → token lives in
+     *     sessionStorage only (per-tab, cleared when the tab closes).
      *   • A cached identity profile {username, displayName, role} lets
      *     boot() re-enter the app INSTANTLY on refresh from cache, then
      *     re-validate the token in the background. Only a definitive
@@ -27730,9 +27731,8 @@ const EtsyMailAuth=(()=>{
     document.body.classList.remove("authed"); ui.conn(null,""); ui.show("signin"); ui.toast("Signed out");
   }
 
-  // v6.1 — "Keep me signed in" is real now (it used to be `void remember`):
-  // checked (default) → localStorage, survives browser restarts;
-  // unchecked → sessionStorage, cleared when the tab closes. The identity
+  // v6.1 — remember !== false (every sign-in now: the "Keep me signed in" box is gone, see emWriteSessionToken) → localStorage;
+  // false → sessionStorage, cleared when the tab closes. The identity
   // profile is cached alongside so the next boot can auto-enter instantly.
   function persist(res,remember){
     try{
@@ -27865,7 +27865,7 @@ const EtsyMailAuth=(()=>{
   /* ── SIGN IN ── */
   $("signinForm").addEventListener("submit",async e=>{
     e.preventDefault();ui.clearBanner("signin");ui.btnLoading($("siBtn"),true,"Signing in…");
-    const r=await A.signIn({username:$("siUser").value,password:$("siPass").value,remember:$("siRemember").checked});
+    const r=await A.signIn({username:$("siUser").value,password:$("siPass").value,remember:true});
     ui.btnLoading($("siBtn"),false);
     if(!r.ok){$("siPass").value="";ui.banner("signin","err",r.msg);(r.reason==="OPERATOR_NOT_FOUND"?$("siUser"):$("siPass")).focus();}
   });
@@ -28180,7 +28180,7 @@ const EtsyMailAuth=(()=>{
     });
     /* Two tabs, one sign-in: when another tab ends or replaces the shared sign-in (idle, closing, midnight, the Sign out
        button), this tab, which still shows the inbox, goes to the sign-in screen too, with the same reason, keeping what
-       was typed. A tab-only sign-in ("Keep me signed in" off) is not shared and is left alone. */
+       was typed. A tab-only sign-in (token in sessionStorage; nothing makes one now) is not shared and is left alone. */
     window.addEventListener("storage",function(e){
       try{
         if(e.key!=="etsymail_session"||e.newValue===e.oldValue) return;

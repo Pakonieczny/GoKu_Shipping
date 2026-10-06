@@ -405,6 +405,7 @@
 .efChips{display:flex;flex-wrap:wrap;gap:4px 5px;min-width:0}
 .efChip{display:inline-flex;gap:5px;align-items:baseline;border:1px solid var(--line);border-radius:999px;padding:2px 9px;font-size:11px;color:var(--ink70);white-space:nowrap;background:var(--card2)}
 .efChip b{font-weight:700;color:var(--ink)}.efChip.now{border-color:var(--sage);background:var(--sageSoft)}
+.efPW{flex:1 0 100%;font-size:11.5px;color:var(--ink45);font-variant-numeric:tabular-nums}
 .efN{text-align:right;font-variant-numeric:tabular-nums;min-width:0}.efN>b{font-weight:650;font-size:14px;display:block;white-space:nowrap}.efN:before{content:attr(data-l);display:none;font-size:10px;letter-spacing:.07em;text-transform:uppercase;color:var(--ink45);font-weight:700;margin-bottom:1px}
 .efOrd{border:0;background:transparent;border-radius:7px;padding:3px 4px;margin:-3px -4px;color:inherit}.efOrd:hover{background:var(--paper2)}.efOrd>b{display:inline-flex;align-items:center;gap:4px}
 .efOrd i{font-style:normal;color:var(--ink45);font-size:9px;transition:transform .25s ease}.efP.o-orders .efOrd i{transform:rotate(180deg)}
@@ -1070,12 +1071,14 @@
     const on = p.on && !M.past;
     r.st.classList.toggle("on", on); r.who.setAttribute("aria-label", `${p.name}, ${on ? "on now" : "locked out"}. ${whenText(p, M)}`);
     const wt = whenText(p, M); setText(r.when, wt);
-    const chipSig = p.stations.map(s => s.station + s.minutes + (s.taskMin ? ":" + s.taskMin.welding + "/" + s.taskMin.matching + "/" + s.taskMin.unknown : "")).join() + "|" + p.nowAt.join() + on;
-    if (chipSig !== r.chipSig) { r.chipSig = chipSig; r.chips.innerHTML = p.stations.length ? p.stations.map(s => `<span class="efChip${p.nowAt.includes(s.station) && on ? " now" : ""}"${s.taskMin ? ` title="Welding ${esc(dur(s.taskMin.welding + s.taskMin.unknown))} · Matching ${esc(dur(s.taskMin.matching))}"` : ""}><b>${esc(stName(s.station))}</b>${esc(dur(s.minutes))}</span>`).join("") : `<span class="efMuted">—</span>`; }
+    const wl = weldLine(p);   // (the Welding station's time on task and matched count: the People tab's own helper and wording)
+    const chipSig = p.stations.map(s => s.station + s.minutes + (s.taskMin ? ":" + s.taskMin.welding + "/" + s.taskMin.matching + "/" + s.taskMin.unknown : "")).join() + "|" + p.nowAt.join() + on + "|" + (wl ? wl.text : "");
+    if (chipSig !== r.chipSig) { r.chipSig = chipSig; r.chips.innerHTML = (p.stations.length ? p.stations.map(s => `<span class="efChip${p.nowAt.includes(s.station) && on ? " now" : ""}"${s.taskMin ? ` title="Welding ${esc(dur(s.taskMin.welding + s.taskMin.unknown))} · Matching ${esc(dur(s.taskMin.matching))}"` : ""}><b>${esc(stName(s.station))}</b>${esc(dur(s.minutes))}</span>`).join("") : `<span class="efMuted">—</span>`) + (wl ? `<span class="efPW" title="${esc(wl.title)}">${esc(wl.text)}</span>` : ""); }
     const t = p.t, src = p.source, kParts = src !== "seals" && src !== "sessions", kOther = src !== "sessions";   // seals know orders and scans, not parts; sessions know only time
     const sc = scanned(t);
-    fig(r.parts, t.parts, kParts, nf, first); fig(r.scans, sc.n, kOther, nf, first); fig(r.orders, t.orders, kOther, nf, first);
-    fig(r.rate, t.rate, kParts && t.rate > 0, rateTxt, first); fig(r.sec, t.secPerScan, kOther && t.secPerScan > 0, secTxt, first);
+    const nt = p.noThroughput;   // (Welding alone: no pieces, orders or rate to count, a dash as on the People tab and the person's page; scans stay, they are in the Scanned total)
+    fig(r.parts, t.parts, kParts && !nt, nf, first); fig(r.scans, sc.n, kOther, nf, first); fig(r.orders, t.orders, kOther && !nt, nf, first);
+    fig(r.rate, t.rate, kParts && t.rate > 0 && !nt, rateTxt, first); fig(r.sec, t.secPerScan, kOther && t.secPerScan > 0, secTxt, first);
     tx(r.parts.parentNode, kParts ? "" : src === "seals" ? "Pieces were not logged then; sealed work counts orders and scans" : "");
     tx(r.scans.parentNode, kOther && sc.n ? sc.tip : "");
     tx(r.ord, "Press to open the newest orders");

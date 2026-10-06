@@ -594,6 +594,12 @@ async function welding() {
       await advance(40 * MIN);
       tab = mk(pc); await advance(2000);
       const old = stationDocs().filter(d => d.startAt < killed);
+      if (HAVE.ad3 && HAVE.ad4) {         // Addendum 2: Welding is never ended by quiet or by the 15-minute rule: the next page goes on with the same two sessions, and 17:00 Toronto ends them, at 17:00
+        eq(stationDocs().length, 2, 'the page after the crash started nothing new: ' + dumpSessions()); ok(old.every(d => d.endAt == null), 'a crashed Welding page is not closed after 15 minutes: ' + dumpSessions());
+        await goTo(Date.parse('2026-10-07T21:03:00Z')); const ends = stationDocs();
+        eq(ends.length, 2); for (const d of ends) { eq(d.endAt, Date.parse('2026-10-07T21:00:00Z'), 'ended at 17:00 sharp: ' + dumpSessions()); eq(d.endReason, 'closing'); }
+        tab.close(); return;
+      }
       eq(old.length, 2); for (const d of old) { ok(d.endAt != null && d.endAt <= killed + 1000 && d.endAt >= killed - 5.5 * MIN, `ended near the crash: ${dumpSessions()} (crash ${iso(killed).slice(11, 19)})`); ok(['closed', 'signOut', 'idle'].includes(d.endReason), 'reason ' + d.endReason); }
       tab.close();
     });
@@ -760,7 +766,9 @@ const HAVE = {
   ad1: !!process.env.FORCE_AD1 || /["']idle["']/.test(SCRIPTS.session) && /lastInputAt/.test(SCRIPTS.session) && /stationAdmin/.test(SCRIPTS.session),
   ws1page: /weld_people/.test(read('weld-1.html')),
   ld1: /laser or design/i.test(read('charm-nest-1.html')) || /CNRole/.test(read('charm-nest-1.html')) || /CNRole/.test(read('charm-nest-bridge.js')),
-  ws3: /matched/.test(SCRIPTS.queue)
+  ws3: /matched/.test(SCRIPTS.queue),
+  ad4: exists('netlify/functions/_stationSignoutPolicy.js'),                                 // Addendum 2 on the server (Welding at 17:00 only, Laser 60/30 minutes)
+  ad3: /POLICY\s*=/.test(SCRIPTS.session) && /closeAt17/.test(SCRIPTS.session) || !!process.env.FORCE_AD3                     // Addendum 2 on the page
 };
 const tAt = (m, base = '2026-10-07T13:00:00Z') => Date.parse(base) + m * MIN;
 const toWall = t => { if (t > wall()) clock.mono += t - wall(); };
@@ -854,6 +862,70 @@ async function autoServer() {
         ok(sdoc(s.id).endAt === m(16, 40), `${day}: ends at the last input: ${iso(sdoc(s.id).endAt || 0)}`);
       }
     });
+    /* ── Addendum 2 (Paul, 6 Oct 2026 20:10 UTC): Welding is signed out only at 17:00 Toronto; Laser after 1 hour of quiet (30 minutes from 17:00); everything else as before ── */
+    if (!HAVE.ad4) pending('per-station limits on the server: Welding only at 17:00, Laser 60/30 minutes, dead pages of both', 'AD4 (_stationSignoutPolicy.js) is not on main yet');
+    else {
+      const WELD = o => SESS(Object.assign({ station: 'welding', device: 'weld-1', task: 'matching', person: NON, computerId: 'pc-WLD' + String(++n2).padStart(9, '0') }, o || {}));
+      const LASER = o => SESS(Object.assign({ station: 'laser', device: 'charm-nest-1', role: 'laser', person: NON, computerId: 'pc-LSR' + String(++n2).padStart(9, '0') }, o || {}));
+      let n2 = 0;
+      const DAYS = ['2026-10-07', '2026-03-08', '2026-11-01', '2026-12-24'];                        // an ordinary day and the two daylight-saving days
+      const run = (day, mk) => { const m = (h, mi, sec = 0) => nyAt(day, h, mi, sec), put = (s, ev, at, L, x) => { toWall(at); return send(s, ev, Object.assign({ lastInputAt: L }, x || {})); }; const beats = async (s, from, to, L) => { let r = null; for (let t = from; t <= to; t += 5 * MIN) { r = await put(s, 'beat', t, typeof L === 'function' ? L(t) : L); if (r.body && r.body.ended) break; } return r; }; return { m, put, beats, begin: async (at, o) => { world(iso(at)); toWall(at); const s = mk(o); const r = await send(s, 'start', { lastInputAt: at }); eq(r.status, 200); return s; } }; };
+      await check('Welding on the server: never ended by quiet before 17:00 (6 hours, no input at all), ended at 17:00 SHARP (closing) whatever the last input; a sign-in after 17:00 stays until midnight; ordinary and both daylight-saving days', async () => {
+        for (const day of DAYS) {
+          const { m, put, begin, beats } = run(day, WELD);
+          let s = await begin(m(9, 0)), r;
+          for (let t = m(9, 5); t <= m(16, 55); t += 5 * MIN) { r = await put(s, 'beat', t, m(9, 0)); ok(!r.body.ended, `${day}: a welder with no input since 09:00 is still in at ${iso(t)}: ${JSON.stringify(r.body)}`); }
+          r = await put(s, 'beat', m(16, 59, 59), m(9, 0)); ok(!r.body.ended, `${day}: 16:59:59 is not 17:00`);
+          r = await put(s, 'beat', m(17, 0), m(9, 0)); ok(r.body.ended === true && r.body.endReason === 'closing', `${day}: at 17:00 sharp: ${JSON.stringify(r.body)}`);
+          eq(sdoc(s.id).endAt, m(17, 0), `${day}: the end is 17:00 sharp, not the last input, not the beat`); eq(sdoc(s.id).endReason, 'closing');
+          // a page that kept getting input and reports it late: the end is still 17:00
+          s = await begin(m(9, 0)); await beats(s, m(9, 5), m(16, 55), t => t - MIN); await put(s, 'beat', m(16, 58), m(16, 58)); r = await put(s, 'beat', m(17, 12), m(17, 10));
+          ok(r.body.ended === true && sdoc(s.id).endAt === m(17, 0) && sdoc(s.id).endReason === 'closing', `${day}: input after 17:00 on a frozen page does not move the end: ${iso(sdoc(s.id).endAt || 0)}`);
+          // a dead page (nobody beats from 10:00): not ended by the 15-minute rule, ended at 17:00 when it is read
+          s = await begin(m(9, 0)); await beats(s, m(9, 5), m(10, 0), m(9, 30)); toWall(m(16, 59, 30)); await board({ op: 'live' }); await board({ op: 'overview', days: 1 }); ok(sdoc(s.id).endAt == null, `${day}: a quiet Welding page is open at 16:59:30`);
+          toWall(m(21, 30)); await board({ op: 'live' }); eq(sdoc(s.id).endAt, m(17, 0), `${day}: found at 21:30 it ends at 17:00`); eq(sdoc(s.id).endReason, 'closing');
+          // a session that began after 17:00 is not due at 17:00 (its 17:00 had passed); it ends at midnight
+          s = await begin(m(17, 20)); r = await beats(s, m(17, 25), m(20, 0), m(17, 20)); ok(!r.body.ended, `${day}: a sign-in at 17:20 is still in at 20:00: ${JSON.stringify(r.body)}`);
+          const mid = m(23, 59, 59) + 1000; r = await put(s, 'beat', mid + 3 * MIN, mid + 2 * MIN);
+          ok(r.body.ended === true && sdoc(s.id).endAt === mid && sdoc(s.id).endReason === 'midnight', `${day}: midnight ends it, at midnight: ${JSON.stringify([sdoc(s.id).endAt && iso(sdoc(s.id).endAt), sdoc(s.id).endReason])}`);
+        }
+      });
+      await check('Welding on the server: an explicit sign-out or switch from the page is honoured at any time, the Admin keeps the old 15-minute rule, another station is untouched', async () => {
+        const { m, put, begin } = run('2026-10-07', WELD);
+        let s = await begin(m(9, 0)); let r = await put(s, 'end', m(11, 0), m(10, 58), { reason: 'signOut', at: m(11, 0) }); eq(r.status, 200); eq(sdoc(s.id).endAt, m(11, 0), 'a Sign Out is a Sign Out'); eq(sdoc(s.id).endReason, 'signOut');
+        const adm = run('2026-10-07', o => WELD(Object.assign({ person: 'Paul K' }, o || {}))); s = await adm.begin(adm.m(9, 0)); await adm.put(s, 'beat', adm.m(9, 5), adm.m(9, 5)); toWall(adm.m(9, 40)); await board({ op: 'live' });
+        ok(sdoc(s.id).endAt === adm.m(9, 5) && sdoc(s.id).endReason === 'closed' || sdoc(s.id).endAt == null, 'an Admin on Welding whose page died is closed at the last beat (the old rule) or still open, never idle or closing: ' + JSON.stringify([sdoc(s.id).endAt && iso(sdoc(s.id).endAt), sdoc(s.id).endReason]));
+        const oth = run('2026-10-07', ASM); s = await oth.begin(oth.m(9, 0)); r = await oth.put(s, 'beat', oth.m(9, 11), oth.m(9, 0)); ok(r.body.ended === true && r.body.endReason === 'idle', 'an Assembly page is still ended after 10 quiet minutes: ' + JSON.stringify(r.body));
+      });
+      await check('Laser on the server: 40 minutes of quiet at 16:30 stays; an hour before 17:00 ends at the last input (idle); from 17:00 the limit is 30 minutes (closing, at the last input); typing past 17:00 stays; ordinary and both daylight-saving days', async () => {
+        for (const day of DAYS) {
+          const { m, put, begin, beats } = run(day, LASER);
+          let s = await begin(m(15, 0)), r = await beats(s, m(15, 5), m(15, 50), t => Math.min(t, m(15, 50)));
+          r = await beats(s, m(15, 55), m(16, 30), m(15, 50)); ok(!r.body.ended, `${day}: 16:30 with the last input 15:50 (40 min) stays: ${JSON.stringify(r.body)}`);
+          r = await beats(s, m(16, 35), m(16, 45), m(15, 50)); r = await put(s, 'beat', m(16, 49, 59), m(15, 50)); ok(!r.body.ended, `${day}: 59:59 of quiet stays`);
+          r = await put(s, 'beat', m(16, 50, 1), m(15, 50)); ok(r.body.ended === true && sdoc(s.id).endAt === m(15, 50) && sdoc(s.id).endReason === 'idle', `${day}: an hour of quiet before 17:00: idle at the last input: ${JSON.stringify(r.body)} ${iso(sdoc(s.id).endAt || 0)}`);
+          s = await begin(m(16, 0)); await put(s, 'beat', m(16, 25), m(16, 25)); await beats(s, m(16, 30), m(16, 55), m(16, 25)); r = await put(s, 'beat', m(17, 0), m(16, 25)); ok(r.body.ended === true && sdoc(s.id).endAt === m(16, 25) && sdoc(s.id).endReason === 'closing', `${day}: at 17:00 with 35 quiet minutes: out, closing, at the last input: ${JSON.stringify(r.body)} ${iso(sdoc(s.id).endAt || 0)}`);
+          s = await begin(m(16, 0)); await put(s, 'beat', m(16, 30), m(16, 30)); await beats(s, m(16, 35), m(16, 55), m(16, 30)); r = await put(s, 'beat', m(17, 0), m(16, 30)); ok(r.body.ended === true && sdoc(s.id).endAt === m(16, 30), `${day}: last input 16:30:00 is out at 17:00:00: ${JSON.stringify(r.body)}`);
+          s = await begin(m(16, 0)); await put(s, 'beat', m(16, 30, 1), m(16, 30, 1)); await beats(s, m(16, 35, 1), m(16, 55, 1), m(16, 30, 1)); r = await put(s, 'beat', m(17, 0), m(16, 30, 1)); ok(!r.body.ended, `${day}: last input 16:30:01 is not out at 17:00:00`);
+          r = await put(s, 'beat', m(17, 0, 1), m(16, 30, 1)); ok(r.body.ended === true && sdoc(s.id).endReason === 'closing' && sdoc(s.id).endAt === m(16, 30, 1), `${day}: but at 17:00:01: ${JSON.stringify(r.body)}`);
+          s = await begin(m(16, 0)); await put(s, 'beat', m(16, 45), m(16, 45)); await beats(s, m(16, 50), m(16, 55), m(16, 45)); r = await put(s, 'beat', m(17, 0), m(16, 45)); ok(!r.body.ended, `${day}: last input 16:45 stays at 17:00`);
+          await beats(s, m(17, 5), m(17, 10), m(16, 45)); r = await put(s, 'beat', m(17, 14, 59), m(16, 45)); ok(!r.body.ended, `${day}: and at 17:14:59`); r = await put(s, 'beat', m(17, 15), m(16, 45)); ok(r.body.ended === true && sdoc(s.id).endReason === 'closing' && sdoc(s.id).endAt === m(16, 45), `${day}: out at 17:15, closing, ended 16:45: ${JSON.stringify(r.body)}`);
+          s = await begin(m(16, 0)); await put(s, 'beat', m(16, 55), m(16, 55)); for (let t = m(17, 5); t <= m(18, 30); t += 5 * MIN) { r = await put(s, 'beat', t, t - MIN); ok(!r.body.ended, `${day}: typing past 17:00 stays (${iso(t)})`); }
+          r = await put(s, 'beat', m(19, 2), m(18, 29)); ok(r.body.ended === true && sdoc(s.id).endReason === 'closing', `${day}: 30 minutes after the last input it is out (closing)`);
+          // found by a read after a long silence: idle when its hour was over before 17:00, closing when the half hour ended after it
+          s = await begin(m(15, 0)); await put(s, 'beat', m(15, 59, 59), m(15, 59, 59)); toWall(m(17, 30)); await board({ op: 'live' }); ok(sdoc(s.id).endReason === 'idle' && sdoc(s.id).endAt === m(15, 59, 59), `${day}: last input 15:59:59 found at 17:30: idle (its hour was up at 16:59:59): ${JSON.stringify([sdoc(s.id).endReason, sdoc(s.id).endAt && iso(sdoc(s.id).endAt)])}`);
+          s = await begin(m(15, 0)); await beats(s, m(15, 30), m(16, 0), t => Math.min(t, m(16, 0))); toWall(m(17, 30)); await board({ op: 'live' }); ok(sdoc(s.id).endReason === 'closing' && sdoc(s.id).endAt === m(16, 0), `${day}: last input 16:00:00 found at 17:30: closing: ${JSON.stringify([sdoc(s.id).endReason, sdoc(s.id).endAt && iso(sdoc(s.id).endAt)])}`);
+        }
+      });
+      await check('Laser on the server: a dead page is not ended by the 15-minute rule (the sheet clock keeps its start): open after 45 quiet minutes, ended at its last input after the hour; the Admin keeps the old rule', async () => {
+        const { m, put, begin } = run('2026-10-07', LASER);
+        let s = await begin(m(13, 30)); await put(s, 'beat', m(14, 0), m(14, 0)); toWall(m(14, 20)); await board({ op: 'live' }); ok(sdoc(s.id).endAt == null, 'a Laser page that has been quiet 20 minutes is open');
+        toWall(m(14, 59)); await board({ op: 'overview', days: 1 }); ok(sdoc(s.id).endAt == null, 'and at 59 minutes');
+        toWall(m(15, 5)); await board({ op: 'live' }); eq(sdoc(s.id).endAt, m(14, 0), 'ended at its last input once the hour is over'); eq(sdoc(s.id).endReason, 'idle');
+        const adm = run('2026-10-07', o => LASER(Object.assign({ person: 'Paul K' }, o || {}))); s = await adm.begin(adm.m(13, 30)); await adm.beats(s, adm.m(13, 35), adm.m(14, 0), t => t - MIN); toWall(adm.m(14, 30)); await board({ op: 'live' });
+        ok(sdoc(s.id).endAt == null || (sdoc(s.id).endReason === 'closed' && sdoc(s.id).endAt === adm.m(14, 0)), 'an Admin on Laser: open or closed at the last beat, never idle: ' + JSON.stringify([sdoc(s.id).endAt && iso(sdoc(s.id).endAt), sdoc(s.id).endReason]));
+      });
+    }
     await check('an ended session cannot be ended again, reopened or rewritten by a late client end, a late beat or a second read; the first end stands', async () => {
       world(); const s = await startAt(0); await beatAt(s, 5, 1); toWall(tAt(21)); await readers.live();
       const d0 = sdoc(s.id); eq(d0.endReason, 'idle');
@@ -1137,12 +1209,50 @@ async function autoPage() {
     await check('two people at the Welding page: input counts for both; quiet for 10 minutes ends the non-Admin ONLY through the page\'s per-person sign-out; the Admin carries on', async () => {
       world(); const pc = computer('w'), tab = multi(pc); tab.login('Tess Welder', 'welding'); tab.login(ADM, 'matching'); await advance(2 * MIN); tab.input('keydown'); await advance(9 * MIN); tab.input('pointerdown'); await advance(9 * MIN);
       eq(tab.signOuts, [], 'input counts for both: nobody is out 18 minutes after the first input'); await advance(2 * MIN);
+      if (HAVE.ad3) {         // Addendum 2: the Welding page has NO idle rule; only 17:00 Toronto signs the non-Admin out, at 17:00 sharp; the Admin carries on
+        eq(tab.signOuts, [], 'twenty quiet minutes at the Welding page: nobody is out'); await advance(6 * HOUR); eq(tab.signOuts, [], 'six quiet hours (to 15:20): still nobody'); eq(open_().length, 2, 'both sessions are open: ' + dumpSessions());
+        await goTo(nyAt('2026-10-07', 17, 0, 30));
+        eq(tab.signOuts.map(x => x[0] + ':' + x[1].name + ':' + x[1].task), ['closing:Tess Welder:welding'], 'at 17:00 only Tess (with her name and task), reason closing');
+        const t = endedAt('Tess Welder'); eq(t.length, 1); eq(t[0].endReason, 'closing'); eq(t[0].endAt, nyAt('2026-10-07', 17, 0), 'the end is 17:00 sharp');
+        eq(open_().map(d => d.person), [ADM], 'the Admin is the only one still open'); await advance(3 * HOUR); eq(open_().map(d => d.person), [ADM], 'the Admin is still in after 3 more hours'); eq(tab.signOuts.length, 1); return;
+      }
       eq(tab.signOuts.map(x => x[0] + ':' + x[1].name + ':' + x[1].task), ['idle:Tess Welder:welding'], 'only Tess, with her name and task');
       eq(open_().map(d => d.person), [ADM], 'the Admin\'s session is the only one open: ' + dumpSessions()); eq(tab.who().map(p => p.name), [ADM]);
       const t = endedAt('Tess Welder'); eq(t.length, 1); eq(t[0].endReason, 'idle');
       await advance(3 * HOUR); eq(open_().map(d => d.person), [ADM], 'the Admin is still in after 3 more hours'); eq(tab.signOuts.length, 1);
     });
 
+    if (!HAVE.ad3) pending('per-station limits on the page: Welding only at 17:00 sharp, Laser 60/30 minutes, the Design role and everything else 10', 'AD3 (the POLICY table in station-session.js) is not on main yet');
+    else {
+      const DAY = '2026-10-07', at_ = (h, mi, s = 0) => nyAt(DAY, h, mi, s);
+      const laser = (pc, role = 'laser') => single(pc, { station: 'sorter', device: 'charm-nest-1', initExtra: { role: () => role } });
+      const ends = name => endedAt(name).map(d => [d.endReason, d.endAt]);
+      await check('Laser on the page: 45 quiet minutes at 16:30 stay, the hour ends it at the last input (idle); a Design person at the same Sorter app keeps the 10 minutes', async () => {
+        world(iso(at_(15, 40))); const pc = computer('lz'), tab = laser(pc); tab.login('Lena Laser'); await advance(5 * MIN); tab.input('keydown'); const last = wall();
+        await goTo(at_(16, 30)); eq(tab.signOuts, [], 'quiet since 15:45: 45 minutes at 16:30: still in'); eq(open_().map(d => d.station + '/' + d.role), ['laser/laser'], 'a Laser session: ' + dumpSessions());
+        await goTo(at_(16, 44)); eq(tab.signOuts, [], '59 minutes: still in'); await goTo(at_(16, 47));
+        eq(tab.signOuts, ['idle'], 'an hour: out, reason idle'); const e = endedAt('Lena Laser'); eq(e.length, 1); ok(near(e[0].endAt, last, 11000), 'ended at the last input: ' + iso(e[0].endAt) + ' vs ' + iso(last));
+        world(iso(at_(10, 0))); const pd = computer('dz'), td = laser(pd, 'design'); td.login('Dara Design'); await advance(11 * MIN); eq(td.signOuts, ['idle'], 'the Design role at the same page is out after 10 minutes'); tab.close(); td.close();
+      });
+      await check('Laser on the page: at 17:00 a person quiet 35 minutes is out (closing, at the last input); 30 quiet minutes before 17:00 stay until 17:00; typing past 17:00 stays; out 30 minutes after the last input', async () => {
+        world(iso(at_(16, 0))); let pc = computer('l1'), tab = laser(pc); tab.login('Lena Laser'); await advance(20 * MIN); tab.input('keydown'); const l1 = wall();      // 16:20, quiet from here
+        await goTo(at_(16, 59, 50)); eq(tab.signOuts, [], 'still in at 16:59:50 (39 minutes of quiet)'); await goTo(at_(17, 1));
+        eq(tab.signOuts, ['closing'], 'at 17:00: 40 quiet minutes: out, closing'); ok(near(endedAt('Lena Laser')[0].endAt, l1, 11000), 'ended at the last input 16:20: ' + iso(endedAt('Lena Laser')[0].endAt)); tab.close();
+        world(iso(at_(16, 0))); pc = computer('l2'); tab = laser(pc); tab.login('Lena Laser'); await advance(45 * MIN); tab.input('keydown'); const l2 = wall();                                   // 16:45
+        await goTo(at_(17, 0, 30)); eq(tab.signOuts, [], 'input at 16:45 stays at 17:00'); await goTo(at_(17, 14)); eq(tab.signOuts, [], 'and at 17:14'); await goTo(at_(17, 16));
+        eq(tab.signOuts, ['closing'], 'out at 17:15'); ok(near(endedAt('Lena Laser')[0].endAt, l2, 11000), 'ended at the last input 16:45: ' + iso(endedAt('Lena Laser')[0].endAt)); tab.close();
+        world(iso(at_(16, 40))); pc = computer('l3'); tab = laser(pc); tab.login('Lena Laser'); for (let t = at_(16, 44); t <= at_(18, 30); t += 4 * MIN) { await goTo(t); tab.input('keydown'); }
+        eq(tab.signOuts, [], 'typing past 17:00 stays in'); const l3 = wall(); await goTo(l3 + 29 * MIN); eq(tab.signOuts, [], '29 quiet minutes after 17:00: still in'); await goTo(l3 + 31 * MIN);
+        eq(tab.signOuts, ['closing'], '30 minutes after the last input: out'); ok(near(endedAt('Lena Laser')[0].endAt, l3, 11000), 'at the last input'); tab.close();
+      });
+      await check('Welding on the page: six quiet hours stay, 17:00 sharp signs the non-Admin out whatever the last input and a sign-in after 17:00 stays; the Laser sheet clock is not restarted by a sleeping computer', async () => {
+        world(iso(at_(9, 0))); let pc = computer('wz'), tab = multi(pc); tab.login('Tess Welder', 'welding'); tab.login(ADM, 'matching'); await goTo(at_(15, 0)); eq(tab.signOuts, [], 'six quiet hours: nobody is out'); eq(open_().length, 2);
+        await goTo(at_(16, 59, 55)); eq(tab.signOuts, []); await goTo(at_(17, 0, 30)); eq(tab.signOuts.map(x => x[0] + ':' + x[1].name), ['closing:Tess Welder']); eq(endedAt('Tess Welder')[0].endAt, at_(17, 0), '17:00:00 sharp'); eq(open_().map(d => d.person), [ADM], 'the Admin stays');
+        tab.close(); world(iso(at_(17, 20))); pc = computer('wz2'); tab = multi(pc); tab.login('Ray Welder', 'matching'); await goTo(at_(20, 0)); eq(tab.signOuts, [], 'a sign-in at 17:20 is still in at 20:00'); tab.close();
+        world(iso(at_(10, 0))); pc = computer('lz2'); tab = laser(pc); tab.login('Lena Laser'); tab.input('keydown'); await advance(2000); const id0 = open_()[0].id; await sleepFor(40 * MIN); await advance(5000);          // the computer sleeps 40 minutes (the clock runs on, timers stand still)
+        eq(tab.signOuts, [], 'a Laser person whose computer slept 40 minutes is not signed out'); eq(open_().map(d => d.id), [id0], 'and the same session carries on (a new one would restart the sheet clock): ' + dumpSessions()); tab.close();
+      });
+    }
     await check('one person at two stations on two computers: each page ends its own session on its own idle time', async () => {
       world(); const a = single(computer('x1')), w = multi(computer('x2')); a.login(NON); w.login(NON, 'welding'); await advance(8 * MIN); w.input('keydown'); await advance(3 * MIN);
       eq(a.signOuts, ['idle'], 'the assembly page is out (10 quiet minutes there)'); eq(w.signOuts, [], 'the welding page had input 3 minutes ago');
@@ -1241,6 +1351,7 @@ async function scanner() {
       tab.login(T.B, 'matching'); await advance(2 * MIN); await flushAct();
       const m = mdocs(); eq(m.length, 2, JSON.stringify(m.map(d => [d.orderId, d.person]))); ok(m[0].at >= t0 - 1000 && m[0].at <= t0 + 2000, 'the real scan time: ' + iso(m[0].at) + ' vs ' + iso(t0));
       eq(new Set(m.map(d => d.id)).size, 2);
+      ok(m.every(d => d.person === 'Unattributed' && d.unattributed === true), 'nobody was in Matching when they were scanned: not Ray, who signed in afterwards: ' + m.map(d => d.person));
     });
     await check('a scan from before midnight is never credited to whoever signs in after it', async () => {
       world('2026-10-08T03:55:00Z');                                         // 23:55 New York
@@ -1280,7 +1391,57 @@ async function scanner() {
       tab.scan('3521001001', { at: scanAt, sent: wall(), id: 'late1' });       // the phone is back: it pushes the old scan now
       await flushAct();
       const m = mdocs(); eq(m.length, 1); eq(m[0].person, T.A, 'Tess was in Matching when the earring was scanned; Ray signed in afterwards: ' + m[0].person);
-    }, { known: 'D1' });
+      ok(m[0].session.startsWith('welding__weld-1__Tess_Welder__matching__'), 'and it is Tess\'s own session: ' + m[0].session); eq(m[0].unattributed, undefined);
+    });
+    await check('a late scan is credited by who was in at the scan time: two at once, one, the gap between people, nobody; also after a reload of the page', async () => {
+      world(); const pc = computer('bench'); let tab = desk(pc);
+      tab.login(T.A, 'matching'); await advance(MIN); const t1 = wall();                    // Tess alone
+      await advance(30000); tab.login(T.C, 'matching'); await advance(30000); const t2 = wall();       // Tess and Ivy: Ivy signed in last
+      await advance(30000); tab.logout(T.C, 'matching'); await advance(30000); const t3 = wall();      // Tess again
+      await advance(30000); tab.logout(T.A, 'matching'); await advance(30000); const t4 = wall();      // nobody
+      tab.close(); await advance(30000); tab = desk(pc); await advance(5000);                           // the page was reloaded with nobody in
+      tab.login(T.B, 'matching'); await advance(MIN);                                                    // Ray signs in; the phone has been offline
+      const orders = ['3521001201', '3521001202', '3521001203', '3521001204'];
+      [t1, t2, t3, t4].forEach((at, i) => tab.scan(orders[i], { at, sent: wall(), id: 'lt' + i }));
+      await flushAct();
+      const by = o => mdocs().filter(d => d.orderId === o)[0];
+      eq(by(orders[0]).person, T.A, 'alone in Matching then: Tess'); eq(by(orders[1]).person, T.C, 'two in Matching then: the one who signed in last, Ivy'); eq(by(orders[2]).person, T.A, 'Ivy was out again: Tess');
+      eq(by(orders[3]).person, 'Unattributed', 'nobody was in Matching then: not Ray, who signs in later'); eq(by(orders[3]).unattributed, true); eq(by(orders[3]).session, '');
+      ok(mdocs().every(d => d.person !== T.B), 'Ray was credited with none of them');
+      eq(tab.errors, [], 'no page errors');
+    });
+    await check('a late scan: the same person in both tasks is Matching for it; a welder is never the answer; the edges of a session (the very moment of the sign-in, one millisecond before)', async () => {
+      world(); const pc = computer('bench'), tab = desk(pc);
+      tab.login(T.A, 'welding'); await advance(MIN); const w1 = wall() - 30000;                          // Tess is Welding only
+      tab.login(T.A, 'matching'); const edge = wall(); await advance(MIN); const m1 = wall();              // and from now on Matching too
+      tab.login(T.B, 'matching'); await advance(MIN); const bAt = wall() - MIN;                            // (Ray signed in a minute ago)
+      tab.scan('3521001301', { at: w1, id: 'e1' }); tab.scan('3521001302', { at: edge - 1, id: 'e2' }); tab.scan('3521001303', { at: edge, id: 'e3' });
+      tab.scan('3521001304', { at: m1 - 1, id: 'e4' });
+      tab.scan('3521001305', { at: bAt - 1, id: 'e5' }); tab.scan('3521001306', { at: bAt, id: 'e6' });
+      await flushAct(); const by = o => mdocs().filter(d => d.orderId === o)[0];
+      eq(by('3521001301').person, 'Unattributed', 'Tess was in Welding only: a welder is never credited');
+      eq(by('3521001302').person, 'Unattributed', 'one millisecond before she signed in as Matching: nobody');
+      eq(by('3521001303').person, T.A, 'at the very moment of the sign-in'); ok(by('3521001303').session.includes('__matching__'), 'her Matching session: ' + by('3521001303').session);
+      eq(by('3521001304').person, T.A, 'a moment before Ray came, Tess was the only one');
+      eq(by('3521001305').person, T.A, 'one millisecond before Ray'); eq(by('3521001306').person, T.B, 'the moment Ray signed in: two in Matching, the one who signed in last');
+    });
+    await check('a late scan: a sign-out in the other tab of the computer is believed (also before this tab has looked), and the stored history of who was in is only trusted when it is well formed', async () => {
+      world(); const pc = computer('bench'); const a = desk(pc), b = desk(pc);
+      a.login(T.A, 'matching'); await advance(MIN); const during = wall() - 20000;
+      b.logout(T.A, 'matching'); const out = wall();                                                      // the other tab signed her out; tab a has not looked yet (the storage event comes after this line)
+      eq(a.SS.whoAt(out - 1, 'matching') && a.SS.whoAt(out - 1, 'matching').person, T.A, 'she was in at 1 ms before'); eq(a.SS.whoAt(during, 'matching').person, T.A);
+      await advance(300);
+      eq(a.SS.whoAt(out + 100, 'matching'), null, 'after the other tab signed her out nobody is in Matching: she is not credited'); eq(a.SS.whoAt(during, 'matching').person, T.A, 'she still was in then');
+      eq(a.SS.whoAt(NaN), null, 'a time that is not a time'); eq(a.SS.whoAt('x', 'matching'), null); eq(a.SS.whoAt(-5, 'matching'), null); eq(a.SS.whoAt(1e18, 'matching'), null, 'a time in the future is now: nobody is in');
+      for (const junk of ['{"a":1}', '[null,5,"x",{"i":1}]', '[{"i":"x","n":"123456","t":"matching","f":1,"e":99999999999999}]', '[{"i":"y","n":"","t":"matching","f":1,"e":99999999999999}]', '[{"i":"z","n":"Zed","t":"matching","f":"abc","e":null}]', 'not json', '"str"', '[' + '{"i":"k","n":"Kay","t":"matching","f":5,"e":4},'.repeat(3000) + '5]', 'null', '{}']) {
+        world(); const p2 = computer('junk'); const k = desk(p2); k.login(T.B, 'matching'); await advance(MIN);
+        p2.set('station_session.welding.weld-1.hist', junk); const now = wall();
+        k.scan('3521001501', { at: now - 5000, id: 'j1' }); k.scan('3521001502', { at: now - 1000, id: 'j2' });
+        k.logout(T.B, 'matching'); await advance(MIN); k.scan('3521001503', { at: now - 500, id: 'j3' }); await flushAct();
+        eq(k.errors, [], 'no page error for ' + junk.slice(0, 30)); const d = mdocs();
+        eq(d.map(x => x.person), [T.B, T.B], 'Ray, who was in, is the answer for both scans whatever is in the history: ' + junk.slice(0, 30));
+      }
+    });
   });
 }
 

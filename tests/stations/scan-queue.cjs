@@ -109,6 +109,9 @@ async function scenario(browser, base, P) {
   const flush = () => page.evaluate(() => window.StationActivity.flush());
   const scanAct = P.file === 'weld-1.html' ? 'matched' : 'scan';              // (a phone scan at the Welding station is one `matched` event written by the queue; the page logs no plain `scan` for it)
   const scans = id => events.filter(e => e.device === P.device && e.action === scanAct && e.orderId === id);
+  /* who a waiting scan is credited to: the person who processed it on the pages that log a plain scan; at the Welding station (the `matched` event) the person who was in Matching when it
+     was SCANNED, so a scan that waited for a sign-in is unattributed, never whoever signed in afterwards (ST2, 6 Oct 2026; the order itself still loads under that person) */
+  const creditedTo = (e, name, why) => { if (P.file === 'weld-1.html') { assert.ok(e.unattributed === true && !e.person, 'the scan was made with nobody in Matching: unattributed, not ' + name + ': ' + JSON.stringify([e.person, e.unattributed])); } else assert.equal(e.person, name, why); };
   const note = () => page.evaluate(() => { const n = document.getElementById('stationScanQueueNote'); return n && n.style.display !== 'none' ? { text: n.textContent, role: n.getAttribute('role'), pe: getComputedStyle(n).pointerEvents } : null; });
   const stored = () => page.evaluate(k => sessionStorage.getItem(k), 'stationScanQueue.v1.' + P.device);
   const loaded = async id => { await until(async () => { await flush(); return scans(id).length >= 1; }, 'the scan of ' + id + ' on ' + P.device); };
@@ -156,7 +159,7 @@ async function scenario(browser, base, P) {
     await page.waitForTimeout(1500); await flush();
     for (const id of [A, B]) {
       assert.equal(scans(id).length, 1, 'one scan record for ' + id);
-      assert.equal(scans(id)[0].person, NAME_A); assert.equal(scans(id)[0].detail, 'phone scan');
+      creditedTo(scans(id)[0], NAME_A); assert.equal(scans(id)[0].detail, 'phone scan');
     }
     assert.ok(scans(A)[0].seq < scans(B)[0].seq && scans(A)[0].at <= scans(B)[0].at, 'A before B');
     assert.equal(await page.inputValue('#etsyOrderNumber'), B, 'the newest is the one on screen');
@@ -180,7 +183,7 @@ async function scenario(browser, base, P) {
     await signOut(); await signIn(PIN_A);
     await page.waitForTimeout(1800); await flush();
     assert.equal(await listeners(), 1, 'still one listener after three sign-ins');
-    assert.equal(scans(C).length, 1); assert.equal(scans(C)[0].person, NAME_B, 'credited to the person who processed it');
+    assert.equal(scans(C).length, 1); creditedTo(scans(C)[0], NAME_B, 'credited to the person who processed it');
     assert.equal(scans(D).length, 1); assert.equal(scans(D)[0].person, NAME_B);
     assert.equal(scans(A).length, 1); assert.equal(scans(B).length, 1);
     assert.equal(await note(), null); assert.equal(await stored(), null);

@@ -117,22 +117,30 @@ async function api(browser) {
   assert(kinds().includes('end:Ray Matcher:matching:signOut'), 'a name the page no longer lists is signed out');
   assert.deepStrictEqual(await people(), [{ name: 'Tess Welder', task: 'welding' }]);
 
-  // 20 minutes frozen. Tess is not an Admin: 10 minutes without input signs her out (Rule A) at her last input, and the page's signOut takes her off its list.
-  // Paul K is the Admin (the door says so): exempt, so the old rule stays for him: closed at his last beat, and a new session goes on from now.
+  // 20 minutes frozen. Welding has NO idle sign-out (Paul, Addendum 2): Tess (not an Admin) is not signed out, and a sleeping page is not closed either: her session goes on.
+  // Paul K is the Admin (the door says so): the old rule stays for him: closed at his last beat, and a new session goes on from now.
   await signIn('Paul K', 'welding', ''); await flush(); await page.clock.runFor(2000); await wait(150);
   await page.evaluate(() => { StationSession.touch(); });
-  const touchAt = await page.evaluate(() => StationSession.lastInput());
   const firstTess = sent.find(s => s.person === 'Tess Welder' && s.task === 'welding' && s.event === 'start').id;
   const firstPaul = sent.find(s => s.person === 'Paul K' && s.event === 'start').id;
   await page.clock.fastForward(20 * 60000); await page.clock.runFor(31000); await wait(150);
-  const tessEnd = sent.find(s => s.id === firstTess && s.event === 'end');
-  assert(tessEnd && tessEnd.reason === 'idle' && tessEnd.at === touchAt, 'a non-Admin frozen for 20 minutes is signed out (idle) at the last input: ' + JSON.stringify(tessEnd));
+  assert(!sent.some(s => s.id === firstTess && s.event === 'end'), 'a non-Admin Welding person frozen for 20 minutes is not signed out (no idle, no closed): ' + JSON.stringify(sent.filter(s => s.id === firstTess && s.event === 'end')));
   assert(sent.some(s => s.id === firstPaul && s.event === 'end' && s.reason === 'closed'), 'the Admin: closed at his last beat');
   assert.strictEqual(sent.filter(s => s.event === 'start' && s.person === 'Tess Welder' && s.task === 'welding').length, 1, 'Tess is not started again');
   const restarted = sent.filter(s => s.event === 'start' && s.person === 'Paul K');
   assert.strictEqual(restarted.length, 2, 'the Admin starts again from now'); assert.notStrictEqual(restarted[1].id, firstPaul);
-  assert.deepStrictEqual(await people(), [{ name: 'Paul K', task: 'welding' }]);
-  assert.deepStrictEqual(await page.evaluate(() => __signOuts.filter(x => x[0] === 'idle').map(x => x[1].name)), ['Tess Welder'], 'the page signed Tess out through its callback with the reason');
+  assert.deepStrictEqual(await people(), [{ name: 'Tess Welder', task: 'welding' }, { name: 'Paul K', task: 'welding' }], 'Tess is still on (her own session); the Admin started again');
+  assert.deepStrictEqual(await page.evaluate(() => __signOuts.filter(x => x[0] === 'idle').map(x => x[1].name)), [], 'the page was not told of any idle sign-out');
+  // 17:00 Toronto: every Welding person who is not an Admin is signed out, ended at 17:00 sharp (closing), once; the page's callback is told
+  const CLOSE = Date.parse('2026-10-06T21:00:00Z');
+  // (the Admin signs in again with a clean door answer: the answer of the restarted session above was asked while the fake clock ran 31 seconds in one go, which times a question out)
+  await signOut('Paul K', 'welding'); await flush(); await signIn('Paul K', 'welding', ''); await flush(); await page.clock.runFor(2000); await wait(150);
+  await page.clock.fastForward(CLOSE + 1000 - await page.evaluate(() => Date.now())); await page.clock.runFor(31000); await wait(150);
+  const tessClose = sent.find(s => s.id === firstTess && s.event === 'end');
+  assert(tessClose && tessClose.reason === 'closing' && tessClose.at === CLOSE, 'Welding: out at 17:00:00 sharp, closing: ' + JSON.stringify(tessClose));
+  assert.deepStrictEqual(await page.evaluate(() => __signOuts.filter(x => x[0] === 'closing').map(x => x[1].name)), ['Tess Welder'], 'the page signed Tess out through its callback, once, with the reason');
+  assert(!sent.some(s => s.person === 'Paul K' && s.event === 'end' && s.reason === 'closing'), 'the Admin is not signed out at 17:00');
+  assert.deepStrictEqual(await people(), [{ name: 'Paul K', task: 'welding' }], 'the Admin is still on');
 
   assert.deepStrictEqual(errors, [], 'no page error');
   await ctx.close();

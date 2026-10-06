@@ -11,8 +11,14 @@
 //   7  the first input after a long gap signs the person out first; beats and the end carry lastInputAt; the end is the last input
 //   7b two people at one page (multi mode): input at the page counts for both, an Admin stays, 17:00, reload, midnight
 //   8  every page that calls StationSession.init has a signOut that takes the reason and words idle / closing
-//   9  the real pages (weld-1, assembly-1, shipping-1, design-message-1, design, design-1, etsy-mail-1, sorting, sorting-2) with Playwright's clock:
-//      10 minutes without input signs out through the page's own callback with the reason in its notice; an Admin stays
+//   8b the policy table per station (AD3, Addendum 2): StationSession.policy(station) and the notices; the version tag is the same word in every page
+//   8c Welding: no idle rule (6 hours untouched), 17:00 Toronto sharp for every person whatever their input (16:59:59.999 stays, 17:00:00 out, ended 17:00),
+//      a page closed over 17:00 and loaded at 18:30 signs out at load ended 17:00, two people, an Admin, both DST days, a sleeping page is not closed
+//   8d Laser (the Sorter app's role): 1 hour idle (59:59 stays, 60:00 out), 16:30 with the last input 15:50 stays, from 17:00 30 minutes (16:25 out, 16:45 stays
+//      until 17:15), both DST days, Admin exempt, the Design role and a role switch still 10 minutes
+//   9  the real pages (assembly-1, shipping-1, design-message-1, design, design-1, etsy-mail-1, sorting, sorting-2) with Playwright's clock:
+//      10 minutes without input signs out through the page's own callback with the reason in its notice; an Admin stays; weld-1: no idle for 6 hours,
+//      17:00 sharp out; the Sorter: Laser one hour, Design 10 minutes
 //   node tests/stations/auto-signout.cjs            (part 9 needs Playwright: NODE_PATH=$(npm root -g) PW_DIR=$(npm root -g)/playwright/node_modules CHROMIUM=... )
 'use strict';
 const fs = require('fs'), path = require('path'), assert = require('assert'), vm = require('vm');
@@ -145,12 +151,13 @@ function openPage(env, o = {}) {
     loggedIn: () => !!env.storage.get(idKey),
     init(extra = {}) {
       ss.init(Object.assign({
-        station: o.station || 'welding', device: o.device || 'weld-1',
+        station: o.station || 'assembly', device: o.device || 'assembly-1',       // (the default policy: the Welding and Laser policies have their own sections)
         person: () => (env.storage.get(idKey) && env.storage.get(nameKey) ? { name: env.storage.get(nameKey), id: null } : null),
         signOut: (reason, who) => {
           win.__signOuts.push({ reason, who, at: clock.t });
           env.storage.delete(idKey); env.storage.delete(nameKey);
-          win.__toasts.push(ss.notice(reason, 'Please sign in with your Employee Number.') || 'Signed out at midnight.');
+          const said = ss.notice(reason, who && who.station);
+          win.__toasts.push(said ? said + ' Please sign in with your Employee Number.' : 'Signed out at midnight.');
         },
       }, extra));
       return page;
@@ -238,7 +245,7 @@ async function ruleA() {
   assert(!/secret|KeyS|typed/i.test(everything), 'no keystroke, no text in any request or in storage');
   for (const s of env.sessionPosts()) assert(Object.keys(s).every(x => ['id', 'event', 'person', 'employeeId', 'station', 'device', 'computerId', 'computerLabel', 'at', 'reason', 'lastInputAt', 'sentAt'].includes(x)), 'the session body keeps its shape: ' + Object.keys(s));
   const stored = [...env.storage.keys()].filter(x => /^station_|employee/.test(x)).sort();
-  assert.deepStrictEqual(stored, ['employee_id', 'employee_name', 'station_computer_id', 'station_person_input', 'station_session.welding.weld-1', 'station_signin_day', 'station_signin_days'].sort(), 'nothing new is stored: ' + stored);
+  assert.deepStrictEqual(stored, ['employee_id', 'employee_name', 'station_computer_id', 'station_person_input', 'station_session.assembly.assembly-1', 'station_signin_day', 'station_signin_days'].sort(), 'nothing new is stored: ' + stored);
   // (station_person_input = { person: time }: the person's last input at any station page of this computer, a time and the name already kept in station_signin_days)
   assert(/^\{("[^"]+":\d+,?)*\}$/.test(env.storage.get('station_person_input')), 'the shared input record holds names and times only: ' + env.storage.get('station_person_input'));
   console.log('A: idle at exactly 10:00 (not 9:59), input resets, a script\'s own events are not input, one stamp a second, no content kept');
@@ -621,20 +628,7 @@ async function clockAndTabs() {
 
 /* ── 7b · two people at one page (the Welding station's multi mode) ── */
 async function multi() {
-  /** a multi page: `list` is the page's own list of who is signed in; its signOut drops the person it is told about, as weld-1 does */
-  const mk = (env, preset = []) => {
-    const list = preset.map(p => Object.assign({}, p)), pg = openPage(env);
-    pg.list = list;
-    pg.init({
-      multi: true, people: () => list.map(p => Object.assign({}, p)),
-      signOut: (reason, who) => {
-        pg.win.__signOuts.push({ reason, who, at: env.clock.t });
-        const i = list.findIndex(p => p.name === who.name && (!who.task || p.task === who.task)); if (i >= 0) list.splice(i, 1);
-      },
-    });
-    pg.add = (name, task) => { list.push({ name, id: null, task }); pg.ss.signedIn({ name, id: null, task }); };
-    return pg;
-  };
+  const mk = (env, preset = []) => multiPage(env, preset, 'assembly', 'assembly-1');       // (the default policy: the 10-minute rules of a multi page; Welding has its own section)
   const ppl = pg => pg.ss.people().map(p => p.name + '/' + p.task).sort().join(',');
   const who = pg => pg.signOuts.map(x => x.who.name + '/' + x.who.task).sort();
   const both = pg => { pg.add('Tess Welder', 'welding'); pg.add('Ray Matcher', 'matching'); };
@@ -725,13 +719,330 @@ async function multi() {
   console.log('multi: input at the page counts for both people; each ends at the page\'s last input; an Admin stays; a hand sign-out leaves the other; 17:00; reload; midnight');
 }
 
+/* ── 10 · the per-station policy (Paul, Addendum 2): the table, Welding (no idle rule, 17:00 sharp), Laser (1 hour; 30 minutes from 17:00) ── */
+const T6 = u => Z('2026-10-06T' + u + 'Z');           // a UTC time on 6 Oct 2026; 17:00 in Toronto (EDT) is 21:00Z
+const CLOSE6 = T6('21:00:00');
+
+async function policyTable() {
+  const ss0 = openPage(makeEnv(today)).ss, plain = o => JSON.parse(JSON.stringify(o));          // (an object made inside the page's vm has the page's own Object.prototype: compare plain copies)
+  const ss = { policy: st => plain(ss0.policy(st)), notice: ss0.notice };
+  // the table, value for value (the server's _stationAutoSignout.js carries the same one; tests/stations/auto-signout-server.cjs compares them)
+  const want = {
+    default: { idleMin: 10, idleMinAfter17: 10, closeAt17: 'idleWindow' },
+    welding: { idleMin: 0, idleMinAfter17: 0, closeAt17: 'always' },
+    laser: { idleMin: 60, idleMinAfter17: 30, closeAt17: 'idleWindow' },
+  };
+  for (const st of ['sorting', 'assembly', 'shipping', 'design', 'sorter', 'qr', 'inbox', '', 'nobody', 'constructor', '__proto__', 'default', undefined, null, 5]) assert.deepStrictEqual(ss.policy(st), want.default, 'the default policy for ' + String(st));
+  assert.deepStrictEqual(ss.policy('welding'), want.welding); assert.deepStrictEqual(ss.policy('laser'), want.laser);
+  for (const st of ['sorting', 'welding', 'assembly', 'shipping', 'design', 'laser', 'sorter', 'qr', 'inbox']) assert.deepStrictEqual(Object.keys(ss.policy(st)).sort(), ['closeAt17', 'idleMin', 'idleMinAfter17'], st + ': one shape');
+  const p = ss0.policy('laser'); p.idleMin = 1; p.closeAt17 = 'always'; assert.deepStrictEqual(ss.policy('laser'), want.laser, 'policy() hands out a copy: nobody can change the table');
+  // the wording: laser 1 hour / 5:00 pm after 30 minutes, welding 5:00 pm, default as built, anything else empty
+  assert.strictEqual(ss.notice('idle', 'laser'), 'Signed out after 1 hour without input.');
+  assert.strictEqual(ss.notice('closing', 'laser'), 'Signed out at 5:00 pm after 30 minutes without input.');
+  assert.strictEqual(ss.notice('closing', 'welding'), 'Signed out at 5:00 pm.');
+  assert.strictEqual(ss.notice('idle', 'welding'), '', 'Welding is never signed out for being idle: there is no such wording');
+  for (const st of [undefined, '', 'sorting', 'assembly', 'shipping', 'design', 'sorter', 'qr', 'inbox']) {
+    assert.strictEqual(ss.notice('idle', st), 'Signed out after 10 minutes without input.'); assert.strictEqual(ss.notice('closing', st), 'Signed out at 5:00 pm.');
+  }
+  for (const r of ['midnight', 'signOut', 'switched', 'closed', '', undefined, 'whatever']) for (const st of ['laser', 'welding', 'design', undefined]) assert.strictEqual(ss.notice(r, st), '', 'only idle and closing have words: ' + r + ' / ' + st);
+  console.log('policy: the table (default 10/10/idleWindow, welding 0/0/always, laser 60/30/idleWindow) for all nine stations, a copy each time; the notices of each station');
+}
+
+/** a multi page (the Welding station's mode): `list` is the page's own list of who is signed in; its signOut drops the person it is told about, as weld-1 does */
+function multiPage(env, preset = [], station = 'welding', device = 'weld-1') {
+  const list = preset.map(p => Object.assign({}, p)), pg = openPage(env, { station, device });
+  pg.list = list;
+  pg.init({
+    multi: true, people: () => list.map(p => Object.assign({}, p)),
+    signOut: (reason, who) => {
+      const said = pg.ss.notice(reason, who && who.station);
+      pg.win.__signOuts.push({ reason, who, at: env.clock.t, said });
+      const i = list.findIndex(p => p.name === who.name && (!who.task || p.task === who.task)); if (i >= 0) list.splice(i, 1);
+    },
+  });
+  pg.add = (name, task) => { list.push({ name, id: null, task }); pg.ss.signedIn({ name, id: null, task }); };
+  return pg;
+}
+
+async function welding() {
+  const mk = (env, preset) => multiPage(env, preset, 'welding', 'weld-1');
+  const ppl = pg => pg.ss.people().map(p => p.name + '/' + p.task).sort().join(',');
+  const who = pg => pg.signOuts.map(x => x.who.name + '/' + x.who.task).sort();
+
+  // 1 · never idle: two people signed in at 10:00, nobody touches anything for 6 hours: both stay (their beats go on), the same sessions
+  let env = makeEnv(today), pg = mk(env);
+  pg.add('Tess Welder', 'welding'); pg.add('Ray Matcher', 'matching'); await settle();
+  const ids = env.starts().map(s => s.id).sort();
+  env.advance(6 * HOUR); await settle();                                              // 16:00, no input since the sign-ins
+  assert.strictEqual(pg.signOuts.length, 0, 'Welding: nobody is signed out after 6 hours with no input at all'); assert.strictEqual(ppl(pg), 'Ray Matcher/matching,Tess Welder/welding');
+  assert.strictEqual(env.ends().length, 0, 'no end was sent'); assert.strictEqual(env.starts().length, 2, 'no new session: the same two');
+  assert.strictEqual(JSON.stringify(pg.ss.people().map(p => p.session).sort()), JSON.stringify(ids));
+  assert(env.beats().length >= 2 * 65, 'their beats go on every 5 minutes: ' + env.beats().length);
+  assert.strictEqual(pg.ss.lastInput(), T0, 'and there was no input');
+  assert.strictEqual(env.errors.length, 0);
+  // 16:59:59.999 and 17:00:00 to the millisecond: out at exactly 17:00:00 (reason closing), whatever the last input was (here: none for 7 hours)
+  env.advanceTo(CLOSE6 - 15 * SEC); await settle(); assert.strictEqual(pg.signOuts.length, 0);
+  env.set(CLOSE6 - 1); pg.wake(); assert.strictEqual(pg.signOuts.length, 0, 'not at 16:59:59.999');
+  env.set(CLOSE6); pg.wake();
+  assert.deepStrictEqual(who(pg), ['Ray Matcher/matching', 'Tess Welder/welding'], 'both out at 17:00:00, once each'); assert(pg.signOuts.every(x => x.reason === 'closing' && x.who.station === 'welding'));
+  assert(pg.signOuts.every(x => x.said === 'Signed out at 5:00 pm.'), 'the notice: ' + pg.signOuts.map(x => x.said));
+  assert.strictEqual(env.ends().length, 2); assert(env.ends().every(e => e.reason === 'closing' && e.at === CLOSE6 && e.station === 'welding'), 'the end is 17:00 sharp: ' + env.ends().map(e => hhmm(e.at) + e.reason));
+  assert(env.ends().every(e => e.lastInputAt === T0 && e.sentAt >= CLOSE6), 'the end still carries the last input and sentAt');
+  assert.strictEqual(hhmm(env.ends()[0].at), '17:00:00'); assert.strictEqual(ppl(pg), '');
+  env.advance(10 * MIN); await settle(); assert.strictEqual(pg.signOuts.length, 2, 'each person once'); assert.strictEqual(env.ends().length, 2);
+
+  // 2 · whatever the input: input at 16:59:50 does not keep anybody (and does not move the end); an input AFTER 17:00 on a frozen page does not either
+  env = makeEnv('2026-10-06T20:30:00Z'); pg = mk(env); pg.add('Tess Welder', 'welding'); pg.add('Ray Matcher', 'matching'); await settle();
+  env.advanceTo(CLOSE6 - 10 * SEC); pg.win.fire('keydown'); env.set(CLOSE6); pg.wake();
+  assert.strictEqual(pg.signOuts.length, 2, 'input 10 seconds before 17:00 does not keep a Welding person'); assert(env.ends().every(e => e.at === CLOSE6 && e.reason === 'closing'));
+  env = makeEnv('2026-10-06T20:30:00Z'); pg = mk(env); pg.add('Tess Welder', 'welding'); await settle();
+  env.sleep(30 * MIN + 3 * SEC);                                                      // frozen across 17:00, thawed at 17:00:03 by a mouse move (no tick, no wake)
+  pg.win.fire('mousemove');
+  assert.strictEqual(pg.signOuts.length, 1, 'the page that was frozen across 17:00 signs out before the input counts'); assert.strictEqual(env.ends()[0].at, CLOSE6, 'ended at 17:00, not at the input'); assert.strictEqual(env.ends()[0].reason, 'closing');
+  // a person with a long-idle input (last input 5 hours before) is ended at 17:00 as well, not at the old input (Welding has no idle end)
+  env = makeEnv('2026-10-06T14:00:00Z'); pg = mk(env); pg.add('Tess Welder', 'welding'); await settle();
+  env.sleep(7 * HOUR); pg.wake();
+  assert.strictEqual(pg.signOuts.length, 1); assert.strictEqual(env.ends()[0].at, CLOSE6, 'a person who never touched anything is ended at 17:00, not at the sign-in'); assert.strictEqual(env.ends()[0].reason, 'closing');
+
+  // 3 · a page closed over 17:00 and loaded at 18:30: signed out while loading, ended 17:00 that day (no new session)
+  env = makeEnv(today); pg = mk(env); pg.add('Tess Welder', 'welding'); pg.add('Ray Matcher', 'matching'); await settle();
+  env.advance(2 * HOUR); pg.close(); await settle();                                  // closed at 12:00 with both signed in
+  env.sleep(6 * HOUR + 30 * MIN);                                                      // reopened at 18:30
+  assert.strictEqual(hhmm(env.clock.t), '18:30:00');
+  let pg2 = mk(env, pg.list); await settle();
+  assert.deepStrictEqual(who(pg2), ['Ray Matcher/matching', 'Tess Welder/welding'], 'both are signed out at load'); assert(pg2.signOuts.every(x => x.reason === 'closing' && x.said === 'Signed out at 5:00 pm.'));
+  assert.strictEqual(env.ends().length, 2); assert(env.ends().every(e => e.reason === 'closing' && e.at === CLOSE6), 'ended 17:00 sharp that day: ' + env.ends().map(e => hhmm(e.at)));
+  assert.strictEqual(env.starts().length, 2, 'nobody is started again'); assert.strictEqual(ppl(pg2), ''); assert.strictEqual(pg2.ss.current(), null);
+  // the same person loading at 16:30 goes on with the same session (a 4-hour gap is not an auto sign-out for Welding)
+  env = makeEnv(today); pg = mk(env); pg.add('Tess Welder', 'welding'); await settle(); const sid = env.starts()[0].id;
+  env.advance(2 * HOUR); pg.close(); await settle(); env.sleep(4 * HOUR + 30 * MIN);       // 16:30
+  pg2 = mk(env, pg.list); await settle();
+  assert.strictEqual(pg2.signOuts.length, 0); assert.strictEqual(env.starts().length, 1, 'no second start'); assert.strictEqual(pg2.ss.people()[0].session, sid, 'the same session goes on');
+  // a day later: a login left over 17:00 and found the next morning ended 17:00 of its own day (not at the midnight, not at the last beat)
+  env = makeEnv(today); pg = mk(env); pg.add('Tess Welder', 'welding'); await settle();
+  env.advance(2 * HOUR); pg.close(); await settle(); env.sleep(21 * HOUR);               // Wed 9 Oct... 7 Oct 09:00
+  assert.strictEqual(hhmm(env.clock.t), '09:00:00');
+  pg2 = mk(env, pg.list); await settle();
+  assert.strictEqual(env.ends().length, 1); assert.strictEqual(env.ends()[0].reason, 'closing'); assert.strictEqual(env.ends()[0].at, CLOSE6, 'ended at 17:00 of the day it started: ' + new Date(env.ends()[0].at).toISOString());
+  assert.strictEqual(pg2.signOuts.length, 1, 'the page is told once'); assert.strictEqual(pg2.signOuts[0].reason, 'midnight', 'the page is told the day turned (its own wording)'); assert.strictEqual(env.starts().length, 1);
+
+  // 4 · a page asleep for 3 hours before 17:00 is NOT closed (Welding has no 15-minute close either): the same sessions go on, beats resume
+  env = makeEnv(today); pg = mk(env); pg.add('Tess Welder', 'welding'); await settle(); const sid2 = env.starts()[0].id;
+  env.advance(2 * MIN); const beatsBefore = env.beats().length; env.sleep(3 * HOUR); pg.wake(); await settle();
+  assert.strictEqual(pg.signOuts.length, 0); assert.strictEqual(env.ends().length, 0, 'not closed'); assert.strictEqual(env.starts().length, 1); assert.strictEqual(pg.ss.people()[0].session, sid2);
+  assert(env.beats().length > beatsBefore, 'a beat went out when it woke');
+  // ... an Admin keeps the old behaviour (closed at the last beat, a new session from the wake)
+  env = makeEnv(today); env.admin = { 'paul k': true }; pg = mk(env); pg.add('Paul K', 'welding'); await settle();
+  env.advance(2 * MIN); env.sleep(3 * HOUR); pg.wake(); await settle();
+  assert.strictEqual(pg.signOuts.length, 0, 'the Admin is never signed out'); assert.strictEqual(env.ends().length, 1); assert.strictEqual(env.ends()[0].reason, 'closed', 'the Admin\'s page that slept: the old closed rule'); assert.strictEqual(env.starts().length, 2);
+
+  // 5 · a Welding sign-in after 17:00 is not signed out for 17:00 (it had passed): no idle either, until the midnight (New York)
+  env = makeEnv('2026-10-06T22:00:00Z'); pg = mk(env); pg.add('Tess Welder', 'welding'); await settle();           // 18:00
+  env.advance(5 * HOUR); await settle(); assert.strictEqual(pg.signOuts.length, 0, 'signed in at 18:00, still here at 23:00 with no input'); assert.strictEqual(env.ends().length, 0);
+  env.advanceTo(Z('2026-10-07T04:00:40Z')); await settle();
+  assert.strictEqual(pg.signOuts.length, 1); assert.strictEqual(pg.signOuts[0].reason, 'midnight'); assert.strictEqual(env.ends()[0].reason, 'midnight'); assert.strictEqual(env.ends()[0].at, Z('2026-10-07T04:00:00Z'));
+
+  // 6 · an Admin at Welding: not signed out at 17:00 (or any time) except by the midnight; the others go; the same person in both tasks goes from both, once each
+  env = makeEnv(today); env.admin = { 'paul k': true }; pg = mk(env);
+  pg.add('Paul K', 'welding'); pg.add('Tess Welder', 'welding'); pg.add('Tess Welder', 'matching'); pg.add('Ray Matcher', 'matching'); await settle();
+  env.advanceTo(CLOSE6 + 40 * SEC); await settle();
+  assert.deepStrictEqual(who(pg), ['Ray Matcher/matching', 'Tess Welder/matching', 'Tess Welder/welding'], 'once per person and task'); assert.strictEqual(ppl(pg), 'Paul K/welding', 'the Admin stays');
+  assert(env.ends().filter(e => e.person !== 'Paul K').every(e => e.reason === 'closing' && e.at === CLOSE6)); assert.strictEqual(env.ends().length, 3);
+  env.advanceTo(Z('2026-10-07T04:00:40Z')); await settle();
+  assert(pg.signOuts.some(x => x.who.name === 'Paul K' && x.reason === 'midnight'), 'midnight signs the Admin out'); assert.strictEqual(pg.signOuts.length, 4);
+  // an Admin the door could not answer for (offline at the sign-in) is treated as not Admin: signed out at 17:00 (fail closed, R5)
+  env = makeEnv(today); env.admin = { 'paul k': true }; env.door = 'offline'; pg = mk(env); pg.add('Paul K', 'welding'); await settle();
+  env.advanceTo(CLOSE6 + 40 * SEC); await settle(); assert.strictEqual(pg.signOuts.length, 1); assert.strictEqual(pg.signOuts[0].reason, 'closing');
+
+  // 7 · both DST change days: 17:00 sharp local, ten hours of no input before it change nothing (8 Mar: EDT from 03:00; 1 Nov: EST from 01:00)
+  for (const [day, closeIso, pre] of [['2026-03-08', '2026-03-08T21:00:00Z', 15], ['2026-11-01', '2026-11-01T22:00:00Z', 17]]) {
+    const C = Z(closeIso);
+    env = makeEnv(new Date(C - 12 * HOUR).toISOString()); pg = mk(env); pg.add('Tess Welder', 'welding'); pg.add('Ray Matcher', 'matching'); await settle();     // 05:00 local (after the change)
+    env.advanceTo(C - 20 * SEC); await settle(); assert.strictEqual(pg.signOuts.length, 0, day + ': nobody before 17:00 after 12 hours with no input');
+    env.set(C - 1); pg.wake(); assert.strictEqual(pg.signOuts.length, 0, day + ': not at 16:59:59.999');
+    env.set(C); pg.wake();
+    assert.strictEqual(pg.signOuts.length, 2, day + ': both out at 17:00'); assert(env.ends().every(e => e.at === C && e.reason === 'closing'), day + ': ended at 17:00 local'); assert.strictEqual(hhmm(env.ends()[0].at), '17:00:00');
+    // a page woken from a sleep across the clock change itself (01:00 local that morning, 4 hours asleep) keeps everybody
+    env = makeEnv(new Date(C - pre * HOUR).toISOString()); pg = mk(env); pg.add('Tess Welder', 'welding'); await settle(); env.sleep(4 * HOUR); pg.wake(); await settle();
+    assert.strictEqual(pg.signOuts.length, 0, day + ': a 4 hour sleep around the clock change is not a sign-out'); assert.strictEqual(env.ends().length, 0);
+  }
+
+  // 8 · the server (AD2/AD4) answering a beat "ended" never throws a Welding person out early and never fights the rule: before 17:00 a new session carries on;
+  //     the page's own 17:00 rule still ends it at 17:00
+  env = makeEnv(today); pg = mk(env); pg.add('Tess Welder', 'welding'); await settle();
+  env.endBeats = { [env.starts()[0].id]: 'closing' }; env.advance(5 * MIN + 10 * SEC); await settle();
+  assert.strictEqual(pg.signOuts.length, 0, 'a beat answered ended/closing at 10:05 does not sign a Welding person out'); assert.strictEqual(env.starts().length, 2, 'a new session carries on'); assert.strictEqual(env.ends()[0].reason, 'closed', 'the old one is closed on the record');
+  env.endBeats = null; env.advanceTo(CLOSE6 + 20 * SEC); await settle();
+  assert.strictEqual(pg.signOuts.length, 1); assert.strictEqual(pg.signOuts[0].reason, 'closing'); assert.strictEqual(env.ends().at(-1).at, CLOSE6);
+  // after 17:00 the server's own end of a beat (closing, a sweep that got there first) is the page's rule too: signed out at 17:00
+  env = makeEnv('2026-10-06T20:55:00Z'); pg = mk(env); pg.add('Tess Welder', 'welding'); await settle();
+  env.endBeats = { [env.starts()[0].id]: 'closing' }; env.advanceTo(CLOSE6 + 6 * MIN); await settle();
+  assert.strictEqual(pg.signOuts.length, 1); assert.strictEqual(env.ends().at(-1).at, CLOSE6, 'ended at 17:00, one person once'); assert.strictEqual(pg.signOuts.length, 1);
+  // a hand sign-out is untouched: the person ends now, reason signOut; the other carries on with no idle rule
+  env = makeEnv(today); pg = mk(env); pg.add('Tess Welder', 'welding'); pg.add('Ray Matcher', 'matching'); await settle();
+  env.advance(3 * HOUR); pg.win.fire('click'); pg.list.shift(); pg.ss.signedOut('signOut', { name: 'Tess Welder', task: 'welding' }); await settle();
+  assert.strictEqual(env.ends().length, 1); assert.strictEqual(env.ends()[0].reason, 'signOut'); assert.strictEqual(env.ends()[0].at, env.clock.t, 'a hand sign-out is now');
+  env.advance(3 * HOUR); await settle(); assert.strictEqual(ppl(pg), 'Ray Matcher/matching', 'the other is still in 3 hours later, no input');
+
+  // 9 · a single-person page at the Welding station (any page that is not multi) follows the same policy
+  env = makeEnv(today); pg = openPage(env, { station: 'welding', device: 'weld-1' }).init(); pg.signIn('Tess Welder'); await settle();
+  env.advance(6 * HOUR); await settle(); assert.strictEqual(pg.signOuts.length, 0, 'single page, Welding: no idle'); assert.strictEqual(env.ends().length, 0);
+  env.advanceTo(CLOSE6 + 20 * SEC); await settle(); assert.strictEqual(pg.signOuts.length, 1); assert.strictEqual(pg.signOuts[0].reason, 'closing'); assert.strictEqual(env.ends()[0].at, CLOSE6);
+  console.log('welding: no idle rule (6 hours untouched); 17:00:00 sharp for everybody whatever the input, each person once; a page closed over 17:00 and loaded at 18:30 is out at load, ended 17:00; the next morning too; an Admin stays; both DST days; a sleeping page is not closed; the server\'s ended beats do not fight it');
+}
+
+async function laser() {
+  /** the Sorter app with a role: station sorter, device charm-nest-1, the role in `st.role` (the page's CNRole) */
+  const mk = (env, role = 'laser') => { const st = { role }; const pg = openPage(env, { station: 'sorter', device: 'charm-nest-1' }).init({ role: () => st.role }); pg.st = st; return pg; };
+  const at = (env, u) => { env.set(T6(u)); };
+
+  // 1 · 59:59 and 60:00 (idle limit 1 hour): not at 10:00, not at 59:59.999, out at exactly 60:00 at the last input, with the Laser wording
+  let env = makeEnv(today), pg = mk(env); pg.signIn('Tess Laser'); await settle();
+  assert.strictEqual(env.starts()[0].station, 'laser', 'the session runs under station laser');
+  env.advance(10 * MIN + 10 * SEC); await settle(); assert.strictEqual(pg.signOuts.length, 0, 'Laser: 10 minutes is nothing');
+  env.advance(30 * MIN); await settle(); assert.strictEqual(pg.signOuts.length, 0, 'Laser: 40 minutes without input stays');
+  env.set(T0 + 60 * MIN - 1); pg.wake(); assert.strictEqual(pg.signOuts.length, 0, 'not at 59:59.999');
+  env.set(T0 + 60 * MIN); pg.wake();
+  assert.strictEqual(pg.signOuts.length, 1, 'out at exactly 60:00'); assert.strictEqual(pg.signOuts[0].reason, 'idle'); assert.strictEqual(pg.signOuts[0].who.station, 'laser');
+  assert.strictEqual(pg.win.__toasts[0], 'Signed out after 1 hour without input. Please sign in with your Employee Number.');
+  assert.strictEqual(env.ends().length, 1); assert(env.ends()[0].reason === 'idle' && env.ends()[0].at === T0 && env.ends()[0].lastInputAt === T0 && env.ends()[0].station === 'laser', 'ended at the last input, under the role');
+  env.advance(5 * MIN); await settle(); assert.strictEqual(pg.signOuts.length, 1, 'once'); assert.strictEqual(env.ends().length, 1);
+  // the timers alone, and input resets the hour
+  env = makeEnv(today); pg = mk(env); pg.signIn('Tess Laser'); await settle();
+  env.advance(30 * MIN); pg.win.fire('keydown'); const k = pg.ss.lastInput(); env.advance(59 * MIN); await settle();
+  assert.strictEqual(pg.signOuts.length, 0, 'a key at 30:00 moved the deadline to 90:00'); env.advance(1 * MIN + 10 * SEC); await settle();
+  assert.strictEqual(pg.signOuts.length, 1); assert.strictEqual(env.ends()[0].at, k); assert.strictEqual(env.ends()[0].reason, 'idle');
+
+  // 2 · 16:30 with the last input at 15:50 (40 minutes): stays; at 16:50 (an hour) it is out, ended 15:50, reason idle (still before 17:00)
+  env = makeEnv('2026-10-06T19:50:00Z'); pg = mk(env); pg.signIn('Tess Laser'); await settle();
+  at(env, '20:30:00'); pg.wake(); assert.strictEqual(pg.signOuts.length, 0, 'Laser at 16:30 with the last input 15:50 stays (40 minutes)');
+  at(env, '20:49:59'); pg.wake(); assert.strictEqual(pg.signOuts.length, 0);
+  at(env, '20:50:00'); pg.wake(); assert.strictEqual(pg.signOuts.length, 1, 'an hour at 16:50'); assert.strictEqual(pg.signOuts[0].reason, 'idle'); assert.strictEqual(env.ends()[0].at, T6('19:50:00'));
+  assert.strictEqual(pg.win.__toasts[0], 'Signed out after 1 hour without input. Please sign in with your Employee Number.');
+
+  // 3 · from 17:00 the limit is 30 minutes: 16:25 (35 minutes) is out AT 17:00 ended 16:25 (closing); 16:30:00 is out at 17:00:00, 16:30:01 is not
+  //    (the reason follows the moment the limit was reached: at or after 17:00 closing; an hour of quiet that was complete before 17:00 is idle, the page only found out later)
+  const CLOSING_TEXT = 'Signed out at 5:00 pm after 30 minutes without input. Please sign in with your Employee Number.', IDLE_HOUR_TEXT = 'Signed out after 1 hour without input. Please sign in with your Employee Number.';
+  for (const [li, looked, outReason] of [['20:25:00', '21:00:00', 'closing'], ['20:30:00', '21:00:00', 'closing'], ['20:30:01', '21:00:00', null], ['20:30:01', '21:00:01', 'closing'], ['20:00:00', '21:00:00', 'closing'],
+      ['19:59:59', '21:00:00', 'idle'], ['20:00:00', '20:59:59', null], ['19:50:00', '21:00:00', 'idle'], ['20:10:00', '21:00:00', 'closing'], ['20:10:00', '20:59:59', null]]) {
+    env = makeEnv(new Date(T6(li)).toISOString()); pg = mk(env); pg.signIn('Tess Laser'); await settle();
+    at(env, looked); pg.wake();
+    assert.strictEqual(pg.signOuts.length, outReason ? 1 : 0, `Laser, last input ${li}, looked at ${looked}`);
+    if (outReason) {
+      assert.strictEqual(pg.signOuts[0].reason, outReason, `${li} / ${looked}`); assert.strictEqual(env.ends()[0].at, T6(li), 'ended at the last input'); assert.strictEqual(env.ends()[0].reason, outReason);
+      assert.strictEqual(pg.win.__toasts[0], outReason === 'closing' ? CLOSING_TEXT : IDLE_HOUR_TEXT);
+    }
+  }
+  // 16:45: stays at 17:00 and 17:14:59, out at 17:15:00 (30 minutes), ended 16:45, reason closing
+  env = makeEnv('2026-10-06T20:45:00Z'); pg = mk(env); pg.signIn('Tess Laser'); await settle();
+  at(env, '21:00:00'); pg.wake(); assert.strictEqual(pg.signOuts.length, 0, 'Laser at 17:00 with the last input 16:45 stays');
+  at(env, '21:14:59'); pg.wake(); assert.strictEqual(pg.signOuts.length, 0);
+  at(env, '21:15:00'); pg.wake(); assert.strictEqual(pg.signOuts.length, 1, 'out at 17:15'); assert.strictEqual(pg.signOuts[0].reason, 'closing'); assert.strictEqual(env.ends()[0].at, T6('20:45:00'));
+  assert.strictEqual(env.ends()[0].reason, 'closing'); assert.strictEqual(pg.win.__toasts[0], 'Signed out at 5:00 pm after 30 minutes without input. Please sign in with your Employee Number.');
+  // the same, awake (the timers): 16:45 -> out at the first 10-second tick after 17:15
+  env = makeEnv('2026-10-06T20:45:00Z'); pg = mk(env); pg.signIn('Tess Laser'); await settle(); env.advance(29 * MIN); await settle(); assert.strictEqual(pg.signOuts.length, 0); env.advance(1 * MIN + 10 * SEC); await settle();
+  assert.strictEqual(pg.signOuts.length, 1); assert.strictEqual(env.ends()[0].at, T6('20:45:00')); assert.strictEqual(env.ends()[0].reason, 'closing');
+  // a person who keeps working past 17:00 (an input every 20 minutes) is not signed out; 30 minutes after the last one they are (closing)
+  env = makeEnv('2026-10-06T20:40:00Z'); pg = mk(env); pg.signIn('Tess Laser'); await settle();
+  for (let t = T6('21:00:00'); t <= T6('23:00:00'); t += 20 * MIN) { env.advanceTo(t); pg.win.fire('pointermove'); }
+  await settle(); assert.strictEqual(pg.signOuts.length, 0, 'working past 17:00 with input every 20 minutes'); const lastWork = pg.ss.lastInput(); assert.strictEqual(lastWork, T6('23:00:00'));
+  env.advanceTo(T6('23:29:50')); await settle(); assert.strictEqual(pg.signOuts.length, 0); env.advanceTo(T6('23:30:20')); await settle();
+  assert.strictEqual(pg.signOuts.length, 1); assert.strictEqual(pg.signOuts[0].reason, 'closing'); assert.strictEqual(env.ends()[0].at, lastWork);
+  // a page that slept: found at 17:30 with the last input at 14:00 (3.5 hours): out at the last input, idle (its hour was over at 15:00, before 17:00; the server's decide says the same); found at 15:30 (90 minutes): idle too
+  env = makeEnv('2026-10-06T18:00:00Z'); pg = mk(env); pg.signIn('Tess Laser'); await settle(); at(env, '21:30:00'); pg.wake();
+  assert.strictEqual(pg.signOuts.length, 1); assert.strictEqual(pg.signOuts[0].reason, 'idle'); assert.strictEqual(env.ends()[0].at, T6('18:00:00')); assert.strictEqual(env.ends()[0].reason, 'idle');
+  // ... and one whose hour ended after 17:00 (last input 16:10, found at 17:30) is closing
+  env = makeEnv('2026-10-06T20:10:00Z'); pg = mk(env); pg.signIn('Tess Laser'); await settle(); at(env, '21:30:00'); pg.wake();
+  assert.strictEqual(pg.signOuts.length, 1); assert.strictEqual(pg.signOuts[0].reason, 'closing'); assert.strictEqual(env.ends()[0].at, T6('20:10:00'));
+  env = makeEnv('2026-10-06T18:00:00Z'); pg = mk(env); pg.signIn('Tess Laser'); await settle(); at(env, '19:30:00'); pg.wake();
+  assert.strictEqual(pg.signOuts.length, 1); assert.strictEqual(pg.signOuts[0].reason, 'idle'); assert.strictEqual(env.ends()[0].at, T6('18:00:00'));
+  // the first input after a long gap signs out first (a frozen page: no tick), like the default
+  env = makeEnv(today); pg = mk(env); pg.signIn('Tess Laser'); await settle(); env.advance(2 * MIN); pg.win.fire('keydown');
+  env.sleep(70 * MIN); pg.win.fire('mousemove'); assert.strictEqual(pg.signOuts.length, 1, 'gone for 70 minutes: signed out before the input counts'); assert.strictEqual(env.ends()[0].at, T0 + 2 * MIN);
+  env = makeEnv(today); pg = mk(env); pg.signIn('Tess Laser'); await settle(); env.advance(2 * MIN); pg.win.fire('keydown');
+  env.sleep(45 * MIN); pg.win.fire('mousemove'); assert.strictEqual(pg.signOuts.length, 0, 'gone for 45 minutes: stays, and the input counts'); assert.strictEqual(pg.ss.lastInput(), env.clock.t);
+
+  // 4 · a sleeping page is not closed after 15 minutes (the sheet clock keeps its start): same session, a beat when it wakes; at the limit it signs out
+  env = makeEnv(today); pg = mk(env); pg.signIn('Tess Laser'); await settle(); const sid = env.starts()[0].id;
+  env.advance(2 * MIN); const nb = env.beats().length; env.sleep(40 * MIN); pg.wake(); await settle();
+  assert.strictEqual(pg.signOuts.length, 0); assert.strictEqual(env.ends().length, 0, 'not closed'); assert.strictEqual(env.starts().length, 1); assert.strictEqual(pg.ss.current().id, sid); assert(env.beats().length > nb);
+  // a reload within the hour goes on with the same session; one after the hour signs out while loading at the stored last input
+  env = makeEnv(today); pg = mk(env); pg.signIn('Tess Laser'); await settle(); const sid3 = env.starts()[0].id;
+  env.advance(3 * MIN); pg.win.fire('keydown'); env.advance(1 * MIN); pg.close(); env.sleep(40 * MIN);                    // reopened 41 minutes after the last input
+  let pg2 = mk(env); await settle();
+  assert.strictEqual(pg2.signOuts.length, 0); assert.strictEqual(env.starts().length, 1, 'no second start'); assert.strictEqual(pg2.ss.current().id, sid3, 'the same session: the sheet clock is not restarted');
+  env = makeEnv(today); pg = mk(env); pg.signIn('Tess Laser'); await settle();
+  env.advance(3 * MIN); pg.win.fire('keydown'); const lk = env.clock.t; env.advance(1 * MIN); pg.close(); env.sleep(62 * MIN);                    // reopened 63 minutes after the last input
+  pg2 = mk(env); await settle();
+  assert.strictEqual(pg2.signOuts.length, 1); assert.strictEqual(pg2.signOuts[0].reason, 'idle'); assert.strictEqual(env.ends()[0].at, lk, 'ended at the stored last input'); assert.strictEqual(env.starts().length, 1);
+
+  // 5 · both DST change days at 17:00 local: 16:25 (35 min) out at 17:00 closing at the input, 16:45 stays and goes at 17:15
+  for (const [day, closeIso] of [['2026-03-08', '2026-03-08T21:00:00Z'], ['2026-11-01', '2026-11-01T22:00:00Z']]) {
+    const C = Z(closeIso);
+    env = makeEnv(new Date(C - 35 * MIN).toISOString()); pg = mk(env); pg.signIn('Tess Laser'); await settle(); env.set(C); pg.wake();
+    assert.strictEqual(pg.signOuts.length, 1, day + ': 16:25 is out at 17:00'); assert.strictEqual(pg.signOuts[0].reason, 'closing'); assert.strictEqual(env.ends()[0].at, C - 35 * MIN);
+    env = makeEnv(new Date(C - 15 * MIN).toISOString()); pg = mk(env); pg.signIn('Tess Laser'); await settle(); env.set(C); pg.wake();
+    assert.strictEqual(pg.signOuts.length, 0, day + ': 16:45 stays at 17:00'); env.set(C + 15 * MIN - 1); pg.wake(); assert.strictEqual(pg.signOuts.length, 0);
+    env.set(C + 15 * MIN); pg.wake(); assert.strictEqual(pg.signOuts.length, 1); assert.strictEqual(env.ends()[0].at, C - 15 * MIN); assert.strictEqual(env.ends()[0].reason, 'closing');
+    // an hour is an hour of real time on that day too (10:00 local, nothing to do with the change)
+    env = makeEnv(new Date(C - 7 * HOUR).toISOString()); pg = mk(env); pg.signIn('Tess Laser'); await settle(); env.set(C - 7 * HOUR + 60 * MIN - 1); pg.wake();
+    assert.strictEqual(pg.signOuts.length, 0); env.set(C - 7 * HOUR + 60 * MIN); pg.wake(); assert.strictEqual(pg.signOuts.length, 1, day + ': 60 real minutes'); assert.strictEqual(env.ends()[0].reason, 'idle');
+  }
+  // across the spring change itself: 01:30 EST on 8 Mar is 06:30Z, one real hour later is 03:30 EDT
+  env = makeEnv('2026-03-08T06:30:00Z'); pg = mk(env); pg.signIn('Tess Laser'); await settle();
+  env.set(Z('2026-03-08T07:29:59Z')); pg.wake(); assert.strictEqual(pg.signOuts.length, 0); env.set(Z('2026-03-08T07:30:00Z')); pg.wake(); assert.strictEqual(pg.signOuts.length, 1, 'spring forward: 60 real minutes');
+  // and across the fall change: 01:30 EDT on 1 Nov is 05:30Z, one real hour later is 01:30 EST (the second 01:30), not two hours
+  env = makeEnv('2026-11-01T05:30:00Z'); pg = mk(env); pg.signIn('Tess Laser'); await settle();
+  env.set(Z('2026-11-01T06:29:59Z')); pg.wake(); assert.strictEqual(pg.signOuts.length, 0); env.set(Z('2026-11-01T06:30:00Z')); pg.wake(); assert.strictEqual(pg.signOuts.length, 1, 'fall back: 60 real minutes');
+
+  // 6 · an Admin (with or without a role) is exempt at every limit and at 17:00; unknown is not Admin
+  env = makeEnv(today); env.admin = { 'paul k': true }; pg = mk(env); pg.signIn('Paul K'); await settle();
+  env.advanceTo(T6('23:00:00')); await settle(); assert.strictEqual(pg.signOuts.length, 0, 'an Admin is not signed out after 9 hours or at 17:00'); assert(env.beats().every(b => b.person === 'Paul K'));
+  env = makeEnv(today); env.admin = { 'paul k': true }; env.door = '503'; pg = mk(env); pg.signIn('Paul K'); await settle();
+  env.advance(61 * MIN); await settle(); assert.strictEqual(pg.signOuts.length, 1, 'the door was down at the sign-in: not Admin (fail closed): out at the Laser hour'); assert.strictEqual(pg.signOuts[0].reason, 'idle');
+
+  // 7 · the Design role under the Sorter app is the default policy: 10 minutes, 17:00 as built, the notice says 10 minutes; the Admin's sorter (no role) as well
+  env = makeEnv(today); pg = mk(env, 'design'); pg.signIn('Dana Design'); await settle();
+  assert.strictEqual(env.starts()[0].station, 'design');
+  env.advance(9 * MIN + 59 * SEC); await settle(); assert.strictEqual(pg.signOuts.length, 0, 'Design: not at 9:59'); env.set(T0 + 10 * MIN); pg.wake();
+  assert.strictEqual(pg.signOuts.length, 1, 'Design: out at exactly 10:00'); assert.strictEqual(pg.signOuts[0].reason, 'idle'); assert.strictEqual(pg.signOuts[0].who.station, 'design');
+  assert.strictEqual(pg.win.__toasts[0], 'Signed out after 10 minutes without input. Please sign in with your Employee Number.'); assert.strictEqual(env.ends()[0].at, T0); assert.strictEqual(env.ends()[0].station, 'design');
+  env = makeEnv('2026-10-06T20:25:00Z'); pg = mk(env, 'design'); pg.signIn('Dana Design'); await settle(); env.set(T6('21:00:00')); pg.wake();
+  assert.strictEqual(pg.signOuts.length, 1, 'Design at 17:00 with the last input 16:25: closing as built'); assert.strictEqual(pg.signOuts[0].reason, 'closing'); assert.strictEqual(pg.win.__toasts[0], 'Signed out at 5:00 pm. Please sign in with your Employee Number.');
+  env = makeEnv(today); pg = mk(env, ''); pg.signIn('Tess Sorter'); await settle(); env.advance(10 * MIN + 10 * SEC); await settle();
+  assert.strictEqual(pg.signOuts.length, 1, 'no role (the sorter itself): 10 minutes'); assert.strictEqual(env.ends()[0].station, 'sorter');
+
+  // 8 · the role switch applies the new role's policy from the switch (the switch is a tap = input; the idle clock is the person's last input)
+  env = makeEnv(today); pg = mk(env, 'laser'); pg.signIn('Tess Laser'); await settle();
+  env.advance(30 * MIN); pg.win.fire('click'); const sw = env.clock.t; pg.st.role = 'design'; pg.ss.roleChanged(); await settle();
+  assert.strictEqual(pg.signOuts.length, 0, 'a switch is not a sign-out'); assert.strictEqual(env.ends().length, 1); assert(env.ends()[0].reason === 'switched' && env.ends()[0].station === 'laser'); assert.strictEqual(env.starts().length, 2); assert.strictEqual(env.starts()[1].station, 'design');
+  env.advance(9 * MIN + 30 * SEC); await settle(); assert.strictEqual(pg.signOuts.length, 0); env.set(sw + 10 * MIN); pg.wake();
+  assert.strictEqual(pg.signOuts.length, 1, 'now under Design: 10 minutes from the switch'); assert.strictEqual(pg.signOuts[0].who.station, 'design'); assert.strictEqual(pg.signOuts[0].reason, 'idle'); assert.strictEqual(env.ends().at(-1).at, sw);
+  env = makeEnv(today); pg = mk(env, 'design'); pg.signIn('Tess Laser'); await settle();
+  for (let i = 0; i < 6; i++) { env.advance(5 * MIN); pg.win.fire('click'); }                                                       // 30 minutes of work under Design (a tap every 5 minutes), then Laser
+  const sw2 = env.clock.t; pg.st.role = 'laser'; pg.ss.roleChanged(); await settle();
+  env.advance(10 * MIN + 20 * SEC); await settle(); assert.strictEqual(pg.signOuts.length, 0, 'now under Laser: 10 minutes is nothing'); env.set(sw2 + 60 * MIN - 1); pg.wake(); assert.strictEqual(pg.signOuts.length, 0);
+  env.set(sw2 + 60 * MIN); pg.wake(); assert.strictEqual(pg.signOuts.length, 1, 'an hour from the switch'); assert.strictEqual(pg.signOuts[0].who.station, 'laser'); assert.strictEqual(env.ends().at(-1).at, sw2);
+
+  // 9 · the server's ended beat (AD2) for a Laser person who is working: nobody is thrown out and nothing reopens fighting the rule; one who is past the limit is out at the last input
+  for (const answer of ['idle', 'closing', 'closed']) {
+    env = makeEnv(today); pg = mk(env); pg.signIn('Tess Laser'); await settle(); env.endBeats = { [env.starts()[0].id]: answer };
+    env.advance(2 * MIN); pg.win.fire('keydown'); env.advance(3 * MIN + 5 * SEC); await settle();
+    assert.strictEqual(pg.signOuts.length, 0, 'a beat answered ended/' + answer + ' does not sign out a Laser person who has been working'); assert.strictEqual(env.starts().length, 2); assert.strictEqual(env.ends()[0].reason, 'closed');
+  }
+  assert.strictEqual(env.errors.length, 0);
+  console.log('laser: 10 minutes is nothing, out at exactly 60:00 at the last input (59:59 stays); 16:30/15:50 stays, 17:00/16:25 out (ended 16:25), 16:45 out at 17:15; a sleeping page is not closed; both DST days; Admin exempt; Design role and the switch use the new role\'s limit');
+}
+
 /* ── 8 · every page ── */
 function pages() {
   const files = fs.readdirSync(root).filter(f => /\.html$/.test(f)).filter(f => /StationSession\.init\(/.test(fs.readFileSync(path.join(root, f), 'utf8')));
   assert(files.length >= 16, 'pages that call StationSession.init: ' + files.length);
+  const tags = new Set();
   for (const f of files) {
     const html = fs.readFileSync(path.join(root, f), 'utf8');
     assert(/station-session\.js\?v=\d{8}-/.test(html), f + ' loads station-session.js with a version tag');
+    tags.add(/station-session\.js\?v=([\w-]+)/.exec(html)[1]);
     const init = html.slice(html.indexOf('StationSession.init('));
     // the callback takes the reason: "signOut: reason =>", "signOut: (reason) =>", a named function(reason) handed over as signOut / stationSignOut
     const named = /StationSession\.init\(\{[^}]*signOut(?::\s*(\w+))?\s*[,}]/.exec(init.slice(0, 600));
@@ -741,12 +1052,18 @@ function pages() {
     } else assert(/signOut:\s*\(?\s*reason\b/.test(init.slice(0, 1500)), f + ': signOut: reason => …');
     // and it words idle / closing from StationSession.notice (midnight keeps the page's own wording)
     const region = html.slice(Math.max(0, html.indexOf('StationSession.init(') - 4500), html.indexOf('StationSession.init(') + 2500);
-    assert(/StationSession\s*&&\s*StationSession\.notice|StationSession\.notice\(/.test(region) || (/reason\s*===\s*["']idle["']/.test(region) && /reason\s*===\s*["']closing["']/.test(region) && /Signed out after 10 minutes without input/.test(region))
+    if (f === 'weld-1.html') {           // the Welding station is never signed out for being idle: 17:00 (and midnight) only, the wording is StationSession's for "welding"
+      assert(/StationSession\.notice\(reason,\s*"welding"\)/.test(html), f + ': words the 17:00 sign-out with StationSession.notice(reason, "welding")');
+      assert(!/Signed out after 10 minutes/.test(html), f + ': has no idle wording');
+    } else if (f === 'charm-nest-1.html') {      // the Sorter: the wording is the person's station's (Laser: 1 hour)
+      assert(/StationSession\.notice\(reason,\s*who\s*&&\s*who\.station\)/.test(html), f + ': words idle and closing with StationSession.notice(reason, who.station)');
+    } else assert(/StationSession\s*&&\s*StationSession\.notice|StationSession\.notice\(/.test(region) || (/reason\s*===\s*["']idle["']/.test(region) && /reason\s*===\s*["']closing["']/.test(region) && /Signed out after 10 minutes without input/.test(region))
       || (/\bidle\s*:\s*["']Signed out after 10 minutes without input/.test(html) && /\bclosing\s*:\s*["']Signed out at/.test(html)),        // (a map of the reasons to words, as design-1 keeps)
       f + ': its sign-out notice uses StationSession.notice(reason), or words idle and closing itself');
     assert(!/\bif\s*\(\s*reason\s*===\s*["']midnight["']\s*\)\s*\{?\s*(?:try\s*\{)?\s*(?:ui\.banner|toast|M\.toast)/.test(region), f + ': the notice is not limited to midnight');
   }
-  console.log('pages: ' + files.length + ' pages call StationSession.init; each signOut takes the reason and words idle / closing');
+  assert.strictEqual(tags.size, 1, 'one version word for station-session.js in every page: ' + [...tags]);
+  console.log('pages: ' + files.length + ' pages call StationSession.init; each signOut takes the reason and words idle / closing; one version tag (' + [...tags] + ')');
 }
 
 /* ── 9 · the real pages, the real module, Playwright's clock: ten minutes with no input ── */
@@ -877,12 +1194,40 @@ async function browserPages() {
     }
   });
   try {
-    await pageIdle(browser, weldPage()); console.log('browser: weld-1.html idle at 10:00 -> out of the roster, number box back, order stays, notice says why, end at the last input');
+    // weld-1 (Welding): NO idle rule at all (Paul, Addendum 2): 6 hours with no input and the person is still on the roster; at 17:00 Toronto sharp everybody is signed out,
+    // ended 17:00, whatever the input; the notice says 5:00 pm; the PIN box is back and the order on screen stays
+    {
+      const rec = { sessions: [], errors: [], gets: [], posts: [] };
+      const spec = weldPage();
+      const { ctx, page } = await openReal(browser, spec, rec);
+      await spec.work(page);
+      const li = await page.evaluate(() => StationSession.lastInput());
+      const CLOSE = Date.parse('2026-10-06T21:00:00Z');
+      await page.clock.runFor(2 * 3600000);                                                    // 12:00, every timer of the page has run, nobody touched anything
+      await page.clock.fastForward(4 * 3600000 - 30000);                                       // the computer sleeps till 15:59:30 (the fake-clock part of this test runs the full 6 hours awake)
+      assert.strictEqual(rec.sessions.filter(x => x.event === 'end').length, 0, 'weld-1: no end after 6 hours without input');
+      let st = await page.evaluate(() => ({ roster: JSON.parse(localStorage.getItem('weld_people') || '[]').map(p => p.name), cur: !!StationSession.current(), li: StationSession.lastInput() }));
+      assert.deepStrictEqual(st.roster, ['Tess Welder'], 'weld-1: still on the roster'); assert.strictEqual(st.cur, true); assert.strictEqual(st.li, li, 'and there was no input');
+      assert(rec.sessions.filter(x => x.event === 'beat').length >= 20, 'the beats go on');
+      const now0 = await page.evaluate(() => Date.now());
+      await page.clock.runFor(CLOSE - 5000 - now0);                                            // 16:59:55
+      assert.strictEqual(rec.sessions.filter(x => x.event === 'end').length, 0, 'weld-1: not before 17:00');
+      for (let i = 0; i < 40 && !rec.sessions.some(x => x.event === 'end'); i++) { await page.clock.runFor(1000); await wait(25); }
+      const end = await until(() => rec.sessions.find(x => x.event === 'end'), 'weld-1: the 17:00 end');
+      assert.strictEqual(end.reason, 'closing'); assert.strictEqual(end.at, CLOSE, 'weld-1: ended at 17:00 sharp, not at the last input'); assert.strictEqual(end.lastInputAt, li); assert.strictEqual(end.station, 'welding');
+      st = await page.evaluate(() => ({ roster: JSON.parse(localStorage.getItem('weld_people') || '[]').map(p => p.name), in: window.isEmployeeLoggedIn,
+        open: M.Modal.getInstance(document.getElementById('userLoginModal')).isOpen, order: document.getElementById('etsyOrderNumber').value, toast: (window.__toasts || []).join(' | ') }));
+      assert.deepStrictEqual(st.roster, [], 'weld-1: the roster is empty'); assert.notStrictEqual(st.in, true); assert.strictEqual(st.open, true, 'weld-1: the number box is back');
+      assert.strictEqual(st.order, '3521000777', 'weld-1: the work on screen stays'); assert(st.toast.includes('Signed out at 5:00 pm.') && !/without input|midnight/i.test(st.toast), 'weld-1: the notice says 5:00 pm: ' + st.toast);
+      assert.deepStrictEqual(rec.errors, [], 'weld-1: no page errors: ' + rec.errors.join('; '));
+      await ctx.close();
+      console.log('browser: weld-1.html no idle sign-out in 6 hours (2 awake + 4 asleep), 17:00 sharp for everybody -> out of the roster, number box back, order stays, "Signed out at 5:00 pm.", end 17:00');
+    }
     for (const f of ['assembly-1.html', 'shipping-1.html', 'design-message-1.html']) { await pageIdle(browser, pinPage(f)); console.log('browser: ' + f + ' idle at 10:00 -> PIN box, login cleared, order stays, notice says why, end at the last input'); }
     // an Admin (the door says so) stays on the same page
     {
       const rec = { sessions: [], errors: [], gets: [], posts: [] };
-      const spec = Object.assign(pinPage('weld-1.html'), { admin: true, local: { employee_id: pinKeys.employee_id, employee_name: 'Paul K' } });
+      const spec = Object.assign(pinPage('assembly-1.html'), { admin: true, local: { employee_id: pinKeys.employee_id, employee_name: 'Paul K' } });
       const { ctx, page } = await openReal(browser, spec, rec);
       await page.clock.runFor(2 * 3600000);
       assert.strictEqual(await page.evaluate(() => window.isEmployeeLoggedIn === true && !!StationSession.current()), true, 'an Admin is still signed in after 2 hours without input');
@@ -890,12 +1235,19 @@ async function browserPages() {
       assert(rec.sessions.some(x => x.event === 'beat' && x.lastInputAt > 0), 'his beats go on and carry lastInputAt');
       assert.strictEqual(rec.gets.length, 1, 'the door was asked once');
       await ctx.close();
-      console.log('browser: weld-1.html an Admin (the door says so) is still signed in after 2 hours without input, asked once');
+      console.log('browser: assembly-1.html an Admin (the door says so) is still signed in after 2 hours without input, asked once');
+      // and at Welding: an Admin is still on the roster after 17:00 (14:00Z + 8 hours = 18:00 Toronto)
+      const rec2 = { sessions: [], errors: [], gets: [], posts: [] };
+      const w = await openReal(browser, Object.assign(weldPage(), { admin: true, local: { employee_id: pinKeys.employee_id, employee_name: 'Paul K' } }), rec2);
+      await w.page.clock.runFor(8 * 3600000);
+      assert.strictEqual(await w.page.evaluate(() => window.isEmployeeLoggedIn === true && JSON.parse(localStorage.getItem('weld_people') || '[]').length === 1), true, 'an Admin at Welding is still on the roster after 17:00');
+      assert(!rec2.sessions.some(x => x.event === 'end'), 'no end was sent'); await w.ctx.close();
+      console.log('browser: weld-1.html an Admin stays on the roster past 17:00');
     }
     // only a person's own input counts: every kind of event a script dispatches (dispatchEvent, el.click(), a remote cursor) is not input; a real click is
     {
       const rec = { sessions: [], errors: [], gets: [], posts: [] };
-      const { ctx, page } = await openReal(browser, pinPage('weld-1.html'), rec);
+      const { ctx, page } = await openReal(browser, pinPage('assembly-1.html'), rec);
       const li0 = await page.evaluate(() => StationSession.lastInput());
       await page.clock.runFor(9 * 60000 + 20000);
       await page.evaluate(() => {
@@ -912,7 +1264,7 @@ async function browserPages() {
       assert.strictEqual(end.reason, 'idle'); assert.strictEqual(end.at, li0, 'the scripted events did not move the deadline: ended at the last real input');
       await ctx.close();
       const rec2 = { sessions: [], errors: [], gets: [], posts: [] };
-      const r2 = await openReal(browser, pinPage('weld-1.html'), rec2);
+      const r2 = await openReal(browser, pinPage('assembly-1.html'), rec2);
       await r2.page.clock.runFor(9 * 60000 + 20000);
       await r2.page.mouse.click(30, 30);                                           // a real click (the browser's own, isTrusted true)
       const lc = await r2.page.evaluate(() => StationSession.lastInput());
@@ -920,7 +1272,7 @@ async function browserPages() {
       await r2.page.clock.runFor(60000);
       assert.strictEqual(rec2.sessions.filter(x => x.event === 'end').length, 0, 'a real click at 9:20 keeps the person signed in past 10:00');
       await r2.ctx.close();
-      console.log('browser: weld-1.html only trusted events are input: scripted events (dispatchEvent, click(), keydown, mousemove) never keep anybody awake, a real click does');
+      console.log('browser: assembly-1.html only trusted events are input: scripted events (dispatchEvent, click(), keydown, mousemove) never keep anybody awake, a real click does');
     }
     // the Design Station: the name and this tab's passcode go and its own sign-in box asks again; the notice says why
     for (const file of ['design.html', 'design-1.html']) {
@@ -954,7 +1306,7 @@ async function browserPages() {
         } });
       console.log('browser: ' + file + ' idle at 10:00 -> name cleared, the chip asks again, notice says why');
     }
-    // the Sorter (charm-nest-1): the name it keeps is the sign-in; 10 minutes without input clears it, CN's own notice says why, the run is left alone
+    // the Sorter (charm-nest-1): the name it keeps is the sign-in; a Laser person is signed out after an hour, a Design person after 10 minutes, CN's own notice says why, the run is left alone
     {
       const { start } = require('../charm-nest/bridge-server.cjs');
       const srv = await start({ receipts: [] });
@@ -974,6 +1326,10 @@ async function browserPages() {
           return r.fallback();
         });
         await ctx.addInitScript(() => { try { localStorage.setItem('cn.settings', JSON.stringify({ v: 26, dsOrigin: 'http://127.0.0.1:9', runMode: 'manual', sound: 'off', notify: 'off', review: 'on', sandbox: 'off', sandboxStream: 'off' })); window.prompt = () => null; } catch (_) {} });
+        // the page's clock starts at 10:00 Toronto time of today whatever the real time of day is (an hour of Laser time must not meet the 17:00 rule); shift(ms) = ms after that
+        const tenAm = (() => { const d = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Toronto', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date()); let t = Date.parse(d + 'T14:00:00Z');
+          const h = +new Intl.DateTimeFormat('en-GB', { timeZone: 'America/Toronto', hour: '2-digit', hourCycle: 'h23' }).format(new Date(t)); return t + (10 - h) * 3600000; })();
+        await ctx.addInitScript(base => { try { const real = Date.now.bind(Date); window.__realNow = real; window.__off0 = base - real(); window.__off = window.__off0; Date.now = () => real() + window.__off; } catch (_) {} }, tenAm);
         const page = await ctx.newPage(); page.setDefaultTimeout(30000);
         page.on('pageerror', e => rec.errors.push(e.message));
         await page.goto(`${srv.sorterOrigin}/charm-nest-1.html`, { waitUntil: 'load' });
@@ -983,18 +1339,35 @@ async function browserPages() {
         await page.evaluate(() => { CNRole.choose('laser'); });
         await page.waitForFunction(() => StationSession.current() && StationSession.current().person === 'Tess Welder' && StationSession.current().station === 'laser');
         const li = await page.evaluate(() => StationSession.lastInput());
-        const shift = ms => page.evaluate(m => { if (!window.__realNow) window.__realNow = Date.now; Date.now = () => window.__realNow() + m; document.dispatchEvent(new Event('visibilitychange')); }, ms);
-        await shift(10 * 60000 - 2000); await wait(300);
-        assert(!rec.sessions.some(x => x.event === 'end'), 'sorter: not signed out before 10 minutes');
-        await shift(10 * 60000 + 30000);
-        const end = await until(() => rec.sessions.find(x => x.event === 'end'), 'sorter: the idle end');
+        const shift = ms => page.evaluate(m => { window.__off = window.__off0 + m; document.dispatchEvent(new Event('visibilitychange')); }, ms);
+        const ends = () => rec.sessions.filter(x => x.event === 'end');
+        const gone = () => page.evaluate(() => ({ name: localStorage.getItem('cn.employee'), role: CNRole.role(), b: B.employee, cur: StationSession.current(), toasts: [...document.querySelectorAll('#toasts .m')].map(n => n.textContent).join(' | ') }));
+        // LASER: 10 minutes (and 59 minutes) without input are nothing; an hour signs out, at the last input, with the Laser wording
+        await shift(10 * 60000 + 30000); await wait(300);
+        assert(!ends().length, 'sorter, Laser: not signed out at 10 minutes');
+        await shift(59 * 60000 + 30000); await wait(300);
+        assert(!ends().length, 'sorter, Laser: not signed out at 59 minutes');
+        await shift(60 * 60000 + 30000);
+        const end = await until(() => ends()[0], 'sorter: the idle end');
         assert.strictEqual(end.reason, 'idle'); assert(end.at >= li && end.at <= li + 5000, 'sorter: ended at the last input'); assert.strictEqual(end.station, 'laser', 'sorter: the end is under the role');
-        const st = await page.evaluate(() => ({ name: localStorage.getItem('cn.employee'), role: CNRole.role(), b: B.employee, cur: StationSession.current(), toasts: [...document.querySelectorAll('#toasts .m')].map(n => n.textContent).join(' | ') }));
+        let st = await gone();
         assert.strictEqual(st.name, null); assert.strictEqual(st.role, '', 'sorter: the role goes with the name'); assert.strictEqual(st.b, ''); assert.strictEqual(st.cur, null);
-        assert(st.toasts.includes(IDLE_TEXT) && /asked again/.test(st.toasts), 'sorter: the notice says why: ' + st.toasts);
+        assert(st.toasts.includes('Signed out after 1 hour without input.') && /asked again/.test(st.toasts), 'sorter: the Laser notice says one hour: ' + st.toasts);
+        // DESIGN (the same app, the other role): the default, 10 minutes, the old wording
+        await page.evaluate(() => { B.employee = 'Dana Design'; });
+        await page.waitForFunction(() => window.CNRole && CNRole.state() === 'ask');
+        await page.evaluate(() => { CNRole.choose('design'); });
+        await page.waitForFunction(() => StationSession.current() && StationSession.current().person === 'Dana Design' && StationSession.current().station === 'design');
+        await shift(60 * 60000 + 30000 + 9 * 60000); await wait(300);
+        assert.strictEqual(ends().length, 1, 'sorter, Design: not signed out at 9 minutes');
+        await shift(60 * 60000 + 30000 + 10 * 60000 + 30000);
+        const end2 = await until(() => ends()[1], 'sorter: the Design idle end');
+        assert.strictEqual(end2.reason, 'idle'); assert.strictEqual(end2.station, 'design'); assert.strictEqual(end2.person, 'Dana Design');
+        st = await gone();
+        assert(st.toasts.includes(IDLE_TEXT), 'sorter: the Design notice says 10 minutes: ' + st.toasts); assert.strictEqual(st.cur, null);
         assert.deepStrictEqual(rec.errors, [], 'sorter: no page errors: ' + rec.errors.join('; '));
         await ctx.close();
-        console.log('browser: charm-nest-1.html idle at 10:00 -> the name is cleared, the notice says why, the run is left alone');
+        console.log('browser: charm-nest-1.html Laser: nothing at 10 or 59 minutes, out at an hour with "Signed out after 1 hour without input."; Design: out at 10 minutes; the name is cleared, the run is left alone');
       } finally { srv.close(); }
     }
   } finally { await browser.close(); }
@@ -1002,7 +1375,7 @@ async function browserPages() {
 
 (async () => {
   const only = process.argv[2];
-  const parts = { ruleA, admin, ruleB, dst, reload, scansAndFrames, gapsAndPayloads, clockAndTabs, multi, pages, browserPages };
+  const parts = { ruleA, admin, ruleB, dst, reload, scansAndFrames, gapsAndPayloads, clockAndTabs, multi, policyTable, welding, laser, pages, browserPages };
   for (const [name, fn] of Object.entries(parts)) { if (only && only !== name) continue; await fn(); }
   console.log('auto-signout: all passed');
 })().catch(e => { console.error(e); process.exit(1); });

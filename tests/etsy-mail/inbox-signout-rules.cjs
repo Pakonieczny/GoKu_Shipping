@@ -285,6 +285,10 @@ const IDLE_MS = 10 * 60e3, TICK_PAD = 31e3;
       check(await page.evaluate(() => !localStorage.getItem("etsymail_session") && !sessionStorage.getItem("etsymail_session") && !localStorage.getItem("etsymail_session_profile")), "her token and cached identity are gone from this browser");
       check(await box(page) === DRAFT, "her reply is still in the page, in its box, under the sign-in screen");
       check(await selected(page, A), "the conversation she had open is still selected");
+      // FX1: the sign-in panel says what the station really does (it used to say "Stays signed in on this device · 30-day rolling sessions" and carried a pre-ticked "Keep me signed in")
+      const gate = await page.evaluate(() => ({ foot: ((document.querySelector("#emAuthLayer .aside-foot") || {}).textContent || "").trim(), box: !!document.getElementById("siRemember"), all: (document.getElementById("emAuthLayer") || {}).textContent || "" }));
+      check(/10 minutes without input/.test(gate.foot) && /5:00 pm/.test(gate.foot) && !/30-day|stays signed in/i.test(gate.foot), "FX1: the sign-in panel's footer tells the rule (10 minutes without input, 5:00 pm): " + JSON.stringify(gate.foot));
+      check(!gate.box && !/keep me signed in|30-day/i.test(gate.all), "FX1: no pre-ticked 'Keep me signed in' box and no 30-day wording anywhere on the sign-in screen");
       await shot(page, "2-sign-in-after-10-minutes");
       // background work carries on while the sign-in screen is up (polling is not input, and is not stopped)
       await run(page, 2 * 60e3);
@@ -303,6 +307,7 @@ const IDLE_MS = 10 * 60e3, TICK_PAD = 31e3;
       check(await selected(page, A), "on the same conversation");
       const starts = (await ss(page)).filter(c => c[0] === "signedIn" || c[0] === "start").map(c => c[1]);
       check(starts.some(s => s && s.name === "Ann Operator"), "a new session starts for Ann under her display name");
+      check(await page.evaluate(() => !!localStorage.getItem("etsymail_session") && !sessionStorage.getItem("etsymail_session")), "FX1: signing in through the form (no box any more) keeps the sign-in where the page's other tabs share it");
       await shot(page, "3-same-person-signed-in-again-reply-back");
       await ctx.close();
     }

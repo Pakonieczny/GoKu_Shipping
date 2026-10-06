@@ -290,7 +290,7 @@ function spanOf(s, now) {
   const start = ms(s.startAt); if (!(start > 0)) return null;
   const last = Math.max(start, ms(s.lastSeenAt) || start);
   let end = ms(s.endAt), live = false;
-  if (!end) { if (now - last >= GONE_MS) end = last; else { end = now; live = true; } }
+  if (!end) { if (now - last >= GONE_MS && !AutoSignout.keptOpen(s, now)) end = last; else { end = now; live = true; } }       // (a quiet page of Laser inside its limit, or of Welding before 17:00, is still signed in)
   end = Math.min(end, now); if (end < start) end = start;
   const station = String(s.station || "");
   return { id: String(s.id || ""), station: okStation(station) ? displayStation(station) : "", task: station === "welding" && (s.task === "welding" || s.task === "matching") ? s.task : "", start, end, live, last };       // (a key like "constructor" would break the per-station maps)
