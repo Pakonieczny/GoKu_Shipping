@@ -78,7 +78,7 @@ test('allocation read windows remain bounded and explicitly partial',async()=>{
   const f=fixture();f.rows.set('VoiceUsage/preview-budget',{reservedCents:65,spentCents:0,calls:65});for(let i=0;i<65;i++)f.rows.set('VoiceUsage/'+sessionId(i),{allocatedCents:1,startedAt:f.now()+i,reconcile:'provider_evidence_required'});
   for(let i=0;i<25;i++)f.rows.set('VoiceDeadlines/rtc_fixture'+i,{callId:'rtc_fixture'+i,at:f.now()+i,expiresAt:f.now()+1000,state:'closed',closedAt:f.now()+2000});
   const {value}=await inspect(f);assert.equal(value.records.length,50);assert.equal(value.recordWindow.truncated,true);assert.equal(value.recordWindow.heldCents,50);assert.equal(value.deadlineRecords.length,20);assert.equal(value.deadlineWindow.truncated,true);assert.equal(value.evidenceComplete,false);
-  assert.deepEqual(f.queries,[{name:'VoiceUsage',field:'startedAt',direction:'desc',limit:50},{name:'VoiceDeadlines',field:'at',direction:'desc',limit:20}]);assert.equal(f.counts.writes,0);assert.equal(f.counts.provider,0);
+  assert.deepEqual(f.queries,[{name:'VoiceUsage',field:'startedAt',direction:'desc',limit:50},{name:'VoiceDeadlines',field:'at',direction:'desc',limit:20},{name:'VoiceContinuations',field:'issuedAt',direction:'desc',limit:50}]);assert.equal(f.counts.writes,0);assert.equal(f.counts.provider,0);
 });
 test('successful future voice attempts retain exact private provider provenance and their full reservation',async()=>{
   const f=fixture(),demoToken=await token(f),response=await start(f,demoToken),publicAnswer=await response.json();assert.equal(response.status,200);assert.equal(typeof publicAnswer.stopToken,'string');
