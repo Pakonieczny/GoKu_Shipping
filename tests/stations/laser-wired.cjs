@@ -31,6 +31,10 @@ const PASS = 'synthetic-pass-not-real', S = 'Charm_Nest_Sheets', DEV = 'charm-ne
   assert(/<script src="charm-nest-laser-act\.js\?v=[^"]+"><\/script>/.test(html), 'charm-nest-1.html loads charm-nest-laser-act.js');
   assert(html.indexOf('charm-nest-laser-act.js') < html.indexOf('<script src="charm-nest-bridge.js'), 'before the bridge (which routes CNAct)');
   assert(/"charm-nest-laser-act\.js"/.test(build), 'scripts/build-public.cjs ships it');
+  // a set committed into the framed Design Station (and its Undo) is recorded by the Sorter, in the same run of steps that does it
+  const bridge = fs.readFileSync(path.join(root, 'charm-nest-bridge.js'), 'utf8');
+  assert(/DesignLink\.call\("complete\.commit"[\s\S]{0,2500}humanAct\.set\(false, r\.completed, set\.name\)[\s\S]{0,300}committed: \$\{r\.completed\.length\} order\(s\) marked design-complete/.test(bridge), 'Sets.commit records the set after the station committed it');
+  assert(/DesignLink\.call\("complete\.undo"[\s\S]{0,900}humanAct\.set\(true, reopened, set\.name\)/.test(bridge), 'Sets.undo records the undo after the station reopened the orders');
 
   const srv = await start({ receipts: [] });
   seed(srv);
@@ -252,6 +256,67 @@ const PASS = 'synthetic-pass-not-real', S = 'Charm_Nest_Sheets', DEV = 'charm-ne
       // the sorter's pressed buttons are never keystrokes or hovers: an input in the page writes nothing
       await page.mouse.move(300, 300); await page.keyboard.press('Shift'); await page.mouse.click(5, 5);
       await none();
+
+      /* ───────────── 2b · the Sorter app's DESIGN work (still the Design person above): labels, decisions, engraving approvals and the
+         sets committed into the framed Design Station are Design events with the name, the order and the role; as Laser they are Laser ───────────── */
+      const DS = e => [e.action, e.station, e.person, e.role, e.orderId, e.parts, e.orders];
+      // the calls are shaped exactly as the bridge's own (a label print, an engraving approved, a review decision)
+      await act('print', { orderId: '3700000301', parts: 2, detail: 'QR label' });
+      await act('complete', { orderId: '3700000301', line: '1', sku: 'FX-1', parts: 1, detail: 'engraving approved' });
+      await act('note', { orderId: '3700000302', detail: 'decided: heldOrder' });
+      ev = await fresh(3);
+      assert.deepStrictEqual(ev.map(DS), [['print', 'design', 'Tess Welder', 'design', '3700000301', 2, 0], ['complete', 'design', 'Tess Welder', 'design', '3700000301', 1, 0], ['note', 'design', 'Tess Welder', 'design', '3700000302', 0, 0]], 'a Design person\'s label, engraving approval and decision: ' + JSON.stringify(ev.map(brief)));
+      assert(ev.every(e => e.device === DEV && e.session && !e.sandbox), 'on this device and session');
+
+      // the set committed into the framed page: the framed page records nothing for a Sorter-driven commit, so the Sorter does, one event for each order
+      await page.evaluate(([rs]) => { window.__rowsWas = Orders.rows; Orders.rows = () => rs; }, [[
+        { order: { receiptId: '3700000301' }, line: { transactionId: '1', quantity: 2 }, state: 'committed' },
+        { order: { receiptId: '3700000302' }, line: { transactionId: '1', quantity: 1 }, state: 'committed' }]]);
+      assert.strictEqual(await page.evaluate(() => CNAct.set(false, ['3700000301', 3700000302, '3700000301'], 'Set  4')), true, 'recorded');
+      ev = (await fresh(2)).sort(byOrder);
+      assert.deepStrictEqual(ev.map(DS), [['complete', 'design', 'Tess Welder', 'design', '3700000301', 2, 1], ['complete', 'design', 'Tess Welder', 'design', '3700000302', 1, 1]], 'Design: a commit is a completion of each order, with its pieces: ' + JSON.stringify(ev.map(brief)));
+      assert(ev.every(e => e.detail === 'Set 4 committed (Design Station)' && e.device === DEV), 'its words: ' + ev[0].detail);
+
+      // the real Sets.undo (the station's own call stubbed, nothing leaves the page): the order this person's commit was recorded for is taken back
+      const undoSet = ids => page.evaluate(async ids => {
+        const calls = []; const was = [DesignLink.ensure, DesignLink.call];
+        DesignLink.ensure = async () => true; DesignLink.call = async (cmd, body) => { calls.push([cmd, (body.receiptIds || []).slice()]); return { ok: true }; };
+        try { await Sets.undo({ setId: 'set-sa5', runId: 'run-fixture', name: 'Set 4', committed: ids, offline: true, sheetIds: [], orders: {}, labelFiles: [] }); }
+        finally { [DesignLink.ensure, DesignLink.call] = was; }
+        return calls;
+      }, ids);
+      assert.deepStrictEqual(await undoSet(['3700000301']), [['complete.undo', ['3700000301']]], 'the station was asked to reopen it');
+      ev = await fresh(1);
+      assert.deepStrictEqual(ev.map(DS), [['undo', 'design', 'Tess Welder', 'design', '3700000301', 2, 1]], 'Design: the undo takes back the order this person completed: ' + JSON.stringify(ev.map(brief)));
+      assert.strictEqual(ev[0].detail, 'Set 4 completion undone (Design Station)');
+      // an order this person's commit was not recorded for (another person's, or from before this page opened) is a note, never a take-back
+      await undoSet(['3700000301', '3700000302']);
+      ev = (await fresh(2)).sort(byOrder);
+      assert.deepStrictEqual(ev.map(DS), [['note', 'design', 'Tess Welder', 'design', '3700000301', 0, 0], ['undo', 'design', 'Tess Welder', 'design', '3700000302', 1, 1]].sort((a, b) => (a[4] < b[4] ? -1 : 1)), 'Design: only what this person completed is undone: ' + JSON.stringify(ev.map(brief)));
+      await page.evaluate(() => { Orders.rows = window.__rowsWas; });
+
+      // the same actions as a Laser person: Laser events with the role, a commit is a note (the Design Station's completion is the Design person's)
+      await page.evaluate(() => CNRole.switchTo('laser'));
+      await page.waitForFunction(() => StationActivity.who() && StationActivity.who().role === 'laser');
+      await act('print', { orderId: '3700000301', parts: 2, detail: 'QR label' });
+      await page.evaluate(() => CNAct.set(false, ['3700000301'], 'Set 4'));
+      ev = await fresh(2);
+      assert.deepStrictEqual(ev.map(DS), [['print', 'laser', 'Tess Welder', 'laser', '3700000301', 2, 0], ['note', 'laser', 'Tess Welder', 'laser', '3700000301', 0, 0]], 'a Laser person: laser events, the commit a note: ' + JSON.stringify(ev.map(brief)));
+      assert.strictEqual(ev[1].detail, 'Set 4 committed (Design Station)');
+
+      // the Admin (no role): the commit is a note at the sorter, as every other press of the Admin's
+      await signOut(page); await signIn(page, 'Tess Welder', 'admin');
+      await page.evaluate(() => CNAct.set(false, ['3700000301'], 'Set 4'));
+      ev = await fresh(1);
+      assert.deepStrictEqual(ev.map(e => [e.action, e.station, e.person, e.orderId, e.orders]), [['note', 'sorter', 'Tess Welder', '3700000301', 0]], 'the Admin: a note at the sorter: ' + JSON.stringify(ev.map(brief)));
+
+      // nobody signed in: nothing is written, nothing is kept, nothing is asked (the commit itself ran; only its record is not made)
+      await signOut(page);
+      assert.strictEqual(await page.evaluate(() => CNAct.set(false, ['3700000301'], 'Set 4')), false);
+      assert.strictEqual(await page.evaluate(() => CNAct.held()), 0, 'not kept for a name: the commit is not a press of this person');
+      await none();
+      assert.deepStrictEqual(await page.evaluate(() => window.__prompts), [], 'no browser pop-up');
+      assert(!(await page.$('.cnNameBar')), 'and no name field offered');
 
       await context.close();
     }

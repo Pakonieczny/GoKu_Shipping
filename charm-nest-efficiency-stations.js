@@ -65,6 +65,11 @@
   const initials = name => { const w = String(name || "").trim().split(/[\s._-]+/).filter(Boolean); return w.length ? (w[0].charAt(0) + (w[1] ? w[1].charAt(0) : "")).toUpperCase() : "?"; };
   const tone = name => { let x = 0; for (const c of low(name)) x = (x * 31 + c.charCodeAt(0)) >>> 0; return x % 6; };
   const cap = s => (s ? s.charAt(0).toUpperCase() + s.slice(1) : "Station");
+  /** ONE Sorting station (Paul, 6 Oct 2026): the stored station keys "sorter" (the Sorter app) and "qr" (the QR Printer page) are shown as "sorting"; every other key is
+   *  returned as it is. Mirror of displayStation in netlify/functions/_activityKinds.js: history keeps its old keys, only what is SHOWN folds. A Sorter-app session of a
+   *  Laser or Design person is stored under "laser" or "design" and does not fold. */
+  const DISPLAY_FOLD = { sorter: "sorting", qr: "sorting" };
+  const displayStation = key => (typeof key !== "string" ? (key == null ? "" : displayStation(String(key))) : Object.prototype.hasOwnProperty.call(DISPLAY_FOLD, key) ? DISPLAY_FOLD[key] : key);
 
   /* ── the answer, normalised (a missing field is empty, never a crash, never a guess) ── */
   const str = v => (v == null ? "" : String(v));
@@ -94,12 +99,40 @@
       lastInputAt: T(o.lastInputAt != null ? o.lastInputAt : g.lastInputAt), role: low(o.role || g.role), device: str(o.device || g.device), deviceLabel: str(o.deviceLabel || g.deviceLabel),
       parts: pick("partsToday", "parts"), orders: pick("ordersToday", "orders"), medianMs: pick("medianOrderMs", "medianMs", "medianPerOrderMs"), longestIdleMs: pick("longestIdleMs", "maxIdleMs") };
   }
+  /** The raw station list of an answer with every row that folds into one station (stored "sorter" and "qr" rows are Sorting's) joined into the first: its orders in hand, people, pages and counts are added. */
+  function foldStations(list) {
+    const out = [], at = new Map(), rank = { working: 2, idle: 1, offline: 0 };
+    const mark = (x, k) => (x && typeof x === "object" ? Object.assign({}, x, { station: k }) : x);
+    for (const s of list) {
+      if (!s || !(s.key || s.label)) continue;
+      const k = displayStation(String(s.key || low(s.label))), had = at.get(k);
+      if (!had) {
+        const c = Object.assign({}, s, { key: k });
+        if (k !== String(s.key || "") && k === "sorting") c.label = "Sorting";
+        c.current = (Array.isArray(s.current) ? s.current : []).map(x => mark(x, k)); c.people = (Array.isArray(s.people) ? s.people : []).slice();
+        c.devices = (Array.isArray(s.devices) ? s.devices : []).slice(); c.counts = Object.assign({}, s.counts || {});
+        at.set(k, c); out.push(c); continue;
+      }
+      for (const x of Array.isArray(s.current) ? s.current : []) had.current.push(mark(x, k));
+      for (const p of Array.isArray(s.people) ? s.people : []) { const nm = low(typeof p === "string" ? p : p && p.name); if (nm && !had.people.some(q => low(typeof q === "string" ? q : q && q.name) === nm)) had.people.push(p); }
+      for (const d of Array.isArray(s.devices) ? s.devices : []) { const dv = had.devices.find(q => q && d && q.device === d.device); if (!dv) had.devices.push(d); else if (rank[d.state] > rank[dv.state]) Object.assign(dv, d); }
+      const hc = had.counts, sc = s.counts || {};
+      for (const f of ["partsToday", "ordersToday", "scansToday", "parts", "orders", "scans"]) if (has(sc[f])) hc[f] = (has(hc[f]) ? N(hc[f]) : 0) + N(sc[f]);
+      if (rank[s.state] > rank[had.state]) had.state = s.state;
+      had.lastEventAt = Math.max(N(had.lastEventAt), N(s.lastEventAt)) || had.lastEventAt;
+    }
+    return out;
+  }
   function norm(r) {
     r = r || {};
-    const signedIn = (Array.isArray(r.signedIn) ? r.signedIn : []).filter(x => x && x.name).map(x => ({ name: String(x.name), stationKey: String(x.stationKey || ""), since: T(x.since), lastSeenAt: T(x.lastSeenAt),
-      lastInputAt: T(x.lastInputAt), role: low(x.role), device: str(x.device) }));
+    const signedIn = [];                                                   // one row per person, station and role: signed in at the Sorter app and at a sorting page is ONE row (Sorting), never two
+    for (const x of (Array.isArray(r.signedIn) ? r.signedIn : []).filter(x => x && x.name).map(x => ({ name: String(x.name), stationKey: displayStation(String(x.stationKey || "")), since: T(x.since), lastSeenAt: T(x.lastSeenAt),
+      lastInputAt: T(x.lastInputAt), role: low(x.role), device: str(x.device) }))) {
+      const had = signedIn.find(y => low(y.name) === low(x.name) && y.stationKey === x.stationKey && y.role === x.role);
+      if (had) { had.since = had.since && x.since ? Math.min(had.since, x.since) : had.since || x.since; had.lastSeenAt = Math.max(had.lastSeenAt || 0, x.lastSeenAt || 0) || null; had.lastInputAt = Math.max(had.lastInputAt || 0, x.lastInputAt || 0) || null; had.device = had.device || x.device; } else signedIn.push(x);
+    }
     const signAny = new Map(signedIn.map(x => [low(x.name), x])), signAt = new Map(signedIn.map(x => [`${x.stationKey}|${low(x.name)}`, x]));
-    const stations = (Array.isArray(r.stations) ? r.stations : []).filter(s => s && (s.key || s.label)).map(s => {
+    const stations = foldStations(Array.isArray(r.stations) ? r.stations : []).filter(s => s && (s.key || s.label)).map(s => {
       const key = String(s.key || low(s.label)), label = String(s.label || cap(key));
       const current = (Array.isArray(s.current) ? s.current : []).filter(c => c && (c.rid || c.orderNumber || (c.kind === "sheet" && c.title))).map(c => normCurrent(c, { key, label }));
       const sign = { get: n => signAt.get(`${key}|${n}`) || signAny.get(n) };   // (a person at two stations: the row of THIS station first)
@@ -111,7 +144,15 @@
       const state = ["working", "idle", "offline"].includes(s.state) ? s.state : current.length ? "working" : people.length ? "idle" : "offline";
       return { key, label, state, people, current, lastEventAt: T(s.lastEventAt), counts: { parts: cnt(k.partsToday != null ? k.partsToday : k.parts), orders: cnt(k.ordersToday != null ? k.ordersToday : k.orders), scans: cnt(k.scansToday != null ? k.scansToday : k.scans) }, devices, spark: sparkOf(s) };
     });
+    // LS1: the Laser station's sheet times ({ today, last }) ride along on its entry (op live, netlify/functions/_stationLive.js)
+    for (const st of stations) { const raw = (Array.isArray(r.stations) ? r.stations : []).find(x => x && String(x.key || low(x.label)) === st.key); if (raw && raw.laserSheet) st.laserSheet = laserOf(raw.laserSheet); }
     return { at: T(r.at), mode: r.mode === "sandbox" ? "sandbox" : "real", stations, signedIn };
+  }
+  /** { today: { sheets, timed, avgSec }, last: { at, person, sheet, seconds, startedFrom } | null } of the Laser station, or null when the answer has none. A time the data does not know is null: never a zero. */
+  function laserOf(b) {
+    if (!b || typeof b !== "object") return null; const t = b.today && typeof b.today === "object" ? b.today : {}, l = b.last && typeof b.last === "object" && T(b.last.at) ? b.last : null;
+    return { today: { sheets: N(t.sheets), timed: N(t.timed), avgSec: has(t.avgSec) ? N(t.avgSec) : null },
+      last: l ? { at: T(l.at), person: str(l.person), sheet: str(l.sheet), seconds: has(l.seconds) ? N(l.seconds) : null, startedFrom: str(l.startedFrom) } : null };
   }
 
   /* ── the QR code of an order: the app's own generator (lib/qrcode.min.js, the one the QR labels use), drawn once per text with a quiet zone ── */
@@ -709,7 +750,19 @@
         X.body.appendChild(card); enterCard(X, card, ctx.quiet);
       }
       for (const [id, card] of X.cards) if (!seen.has(id)) { X.cards.delete(id); finishCard(X, card, card.data(), ctx); }
+      laserLine(X, s);
       idleLine(X);
+    }
+    /** LS1: on the Laser card one quiet line: the last sheet's time and today's average (the data is the stored per-sheet times; a sheet marked completed with no Laser sign-in has none). */
+    function laserLine(X, s) {
+      const L = s.laserSheet, has0 = L && (L.last || L.today.sheets > 0), sig = has0 ? JSON.stringify(L) : "";
+      if (sig === (X.lsSig || "")) return; X.lsSig = sig;
+      if (!has0) { if (X.ls) { X.ls.remove(); X.ls = null; } return; }
+      if (!X.ls) { X.ls = h("p", "esLs"); X.el.insertBefore(X.ls, X.body); }
+      const p = X.ls, add = (label, value, note) => { const i = h("span", "esLsI"); i.appendChild(h("span", "esLsL", label)); i.appendChild(h("b", "", value)); if (note) i.appendChild(h("span", "esLsN", note)); p.appendChild(i); };
+      p.textContent = "";
+      if (L.last) add("Last sheet", L.last.seconds != null ? words(L.last.seconds * 1000) : "no time", `${L.last.person ? L.last.person + " · " : ""}${clock(L.last.at)}${L.last.seconds == null ? " · not signed in as Laser" : ""}`);
+      add("Today's average", L.today.avgSec != null ? words(L.today.avgSec * 1000) : "no time yet", `${nf(L.today.sheets)} ${L.today.sheets === 1 ? "sheet" : "sheets"}${L.today.timed < L.today.sheets ? `, ${nf(L.today.timed)} timed` : ""}`);
     }
     function setNum(n, to, quiet) {
       to = N(to); if (n._v === to) return; const was = n._v == null ? to : (n._cur != null ? n._cur : n._v);
@@ -825,6 +878,8 @@
 .esSpark{display:block;overflow:visible}.esSL{fill:none;stroke:#6f6a62;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}.esSA{fill:rgba(93,90,82,.08);stroke:none}.esSD{fill:var(--gold,#a9823f);stroke:var(--card,#fffefb);stroke-width:1.5}
 .esStBody{padding:0 16px 14px;display:grid;gap:10px;grid-template-columns:repeat(auto-fill,minmax(min(100%,380px),1fr));align-items:start;min-width:0}
 .esStBody:empty{display:none}
+.esLs{display:flex;flex-wrap:wrap;gap:2px 22px;margin:-4px 0 0;padding:0 16px 10px;font-size:12px;color:var(--ink45,#938c80)}
+.esLsI{display:inline-flex;align-items:baseline;gap:6px;min-width:0}.esLsI b{color:var(--ink,#1c1a17);font-weight:650;font-variant-numeric:tabular-nums}.esLsL{text-transform:uppercase;letter-spacing:.08em;font-size:9.5px;font-weight:700}.esLsN{font-size:11px}
 .esRoster{grid-column:1/-1;display:flex;flex-direction:column;gap:3px;margin:-2px 0 0;font-size:12px;color:var(--ink45,#938c80);font-variant-numeric:tabular-nums;min-width:0}
 .esRo{display:block;min-width:0;overflow-wrap:anywhere}.esRo[hidden]{display:none}.esRo i{font-style:normal}.esRo i[hidden]{display:none}
 .esRoN{font-weight:650;color:var(--ink70,#5b554c)}
@@ -895,12 +950,6 @@
    *  returns { title, sub, avatar | state, rows:[{ k, v, d }], note, foot } (or null for no card). The element gets the platform's pointer, focus and touch
    *  behaviour of the board's own cards; one card is shared by all of them. */
   function hoverCard(node, spec) { if (!node || typeof spec !== "function") return node; css(); wire(); node.dataset.esTip = ""; node._esTip = spec; return node; }
-
-  /** ONE Sorting station (Paul, 6 Oct 2026): the stored station keys "sorter" (the Sorter app) and "qr" (the QR Printer page) are shown as "sorting"; every other key is
-   *  returned as it is. Mirror of displayStation in netlify/functions/_activityKinds.js: history keeps its old keys, only what is SHOWN folds. A Sorter-app session of a
-   *  Laser or Design person is stored under "laser" or "design" and does not fold. */
-  const DISPLAY_FOLD = { sorter: "sorting", qr: "sorting" };
-  const displayStation = key => (typeof key !== "string" ? (key == null ? "" : displayStation(String(key))) : Object.prototype.hasOwnProperty.call(DISPLAY_FOLD, key) ? DISPLAY_FOLD[key] : key);
 
   root.EfficiencyStations = { mount, orderCard, norm, options, qr: qrUrl, fmt: { since, words, ago, initials }, openOrder, hoverCard, displayStation,
     /* for the checks */

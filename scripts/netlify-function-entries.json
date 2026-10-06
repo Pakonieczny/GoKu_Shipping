@@ -194,6 +194,7 @@
     "_stationAdmins.js",
     "_stationAutoSignout.js",
     "_stationLive.js",
+    "_laserSheetTime.js",
     "_stationPinLogin.js",
     "_orderCancel.js",
     "_etsyApiMeter.js",
