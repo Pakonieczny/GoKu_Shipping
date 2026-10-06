@@ -329,12 +329,15 @@ function aggregate(A, docs, key, from, to) {
     let a = days.get(d.day); if (!a) days.set(d.day, a = { day: d.day, spell: new Set(), st: {}, ids: new Set(), ixv: true, events: 0 });
     a.spell.add(String(d.person)); a.events += num(d.events);
     if (d.ixv !== 1) a.ixv = false;                                  // one spelling without the marker makes the whole day "not counted"
+    const fin = {};
     for (const [s, v] of Object.entries(d.stations && typeof d.stations === "object" ? d.stations : {})) {
       if (!/^[a-z][\w-]{0,19}$/.test(s) || s in Object.prototype || !v || typeof v !== "object") continue;
       const ds = displayStation(s), t = a.st[ds] || (a.st[ds] = zero());        // (counters stored under "sorter" or "qr" add to Sorting)
-      for (const k of BASE) t[k] += Math.max(0, num(v[k]));
+      for (const k of BASE) if (k !== "orders" && k !== "undoOrders") t[k] += Math.max(0, num(v[k]));
+      fin[ds] = Math.max(fin[ds] || 0, Math.max(0, num(v.orders) - num(v.undoOrders)));      // (an order finished at the Sorter app and at a sorting page is one order at Sorting: the larger of the pages' counts)
       for (const k of K.X_KEYS) t[k] += Math.max(0, num(v[k]));
     }
+    for (const [ds, n] of Object.entries(fin)) a.st[ds].orders += n;
     for (const [id, m] of Object.entries(d.touched && typeof d.touched === "object" ? d.touched : {})) {
       const oid = digits(id); if (!oid || !m || typeof m !== "object") continue;
       if (Object.keys(m).some(s => m[s] && s !== "inbox")) a.ids.add(oid);

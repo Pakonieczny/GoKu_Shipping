@@ -120,13 +120,13 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 
     /* ── 3 · every station, every card ── */
     const stations = await page.$$eval(`${V} .esSt`, rs => rs.map(r => ({ key: r.dataset.key, state: r.dataset.state, name: r.querySelector('.esStName').textContent, people: [...r.querySelectorAll('.esPer')].map(p => p.textContent), cards: r.querySelectorAll('.esCard').length, idle: (r.querySelector('.esIdle') || {}).textContent || '' })));
-    assert.deepEqual(stations.map(s => [s.key, s.state]), [['shipping', 'working'], ['assembly', 'working'], ['welding', 'working'], ['sorting', 'idle'], ['design', 'offline'], ['sorter', 'working'], ['inbox', 'idle']], 'every station, in the server\'s order, with its state');
-    assert.deepEqual(stations.map(s => s.name), ['Shipping', 'Assembly', 'Welding', 'Sorting', 'Design', 'Sorter / Laser', 'Inbox']);
-    assert.deepEqual(stations.map(s => s.cards), [1, 2, 1, 0, 0, 1, 0], 'one card per person at work; none on a station that is not processing');
+    assert.deepEqual(stations.map(s => [s.key, s.state]), [['shipping', 'working'], ['assembly', 'working'], ['welding', 'working'], ['sorting', 'working'], ['design', 'offline'], ['inbox', 'idle']], 'every station, in the server\'s order, with its state (the Sorter app is a page of Sorting: no Sorter card)');
+    assert.deepEqual(stations.map(s => s.name), ['Shipping', 'Assembly', 'Welding', 'Sorting', 'Design', 'Inbox']);
+    assert.deepEqual(stations.map(s => s.cards), [1, 2, 1, 1, 0, 0], 'one card per person at work; none on a station that is not processing');
     assert.deepEqual(stations[1].people, ['AMAnna M.', 'IRIvy R.'], 'the people on a station, with initials');
-    assert(/^Idle · last event \d+:\d\d (AM|PM) \(1\d m ago\)$/.test(stations[3].idle), 'an idle station says so quietly with its last event time: ' + stations[3].idle);
+    assert(/^Idle · last event \d+:\d\d (AM|PM) \(\d+ m ago\)$/.test(stations[5].idle), 'an idle station says so quietly with its last event time: ' + stations[5].idle);
     assert(/^Offline · nobody is signed in$/.test(stations[4].idle), stations[4].idle);
-    assert.equal(await txt(`${V} .esSum`), '4 of 7 stations working · 7 people on');
+    assert.equal(await txt(`${V} .esSum`), '4 of 6 stations working · 7 people on');
     assert.equal(await page.isVisible(`${V} .esNone`), false, 'the empty line only when nothing is being processed');
     assert.equal(await page.$$eval(`${V} .esSt[data-state=working] .esLight`, ls => ls.every(l => getComputedStyle(l, '::after').animationName === 'esPulse')), true, 'a calm pulse on every light that is working');
     assert.equal(await page.$$eval(`${V} .esSt:not([data-state=working]) .esLight`, ls => ls.every(l => getComputedStyle(l, '::after').animationName === 'none')), true, 'and none on the others');
@@ -236,10 +236,10 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     await sleep(260); assert(await page.evaluate(() => !!document.querySelector('#motionLayer .mGhost')), 'a new order flies in: Motion\'s copy is on the layer while it travels');
     await sleep(1100);
     assert(await page.evaluate(() => window.__ghost) > 3 && await page.evaluate(() => !document.querySelector('#motionLayer .mGhost')), 'it landed and the copy is gone');
-    assert.equal(await page.$eval(`${V} .esSt[data-key=sorting]`, r => [r.dataset.state, r.querySelectorAll('.esCard').length, !!r.querySelector('.esIdle')].join()), 'working,1,false', 'the station is working now and its idle line has given way');
+    assert.equal(await page.$eval(`${V} .esSt[data-key=sorting]`, r => [r.dataset.state, r.querySelectorAll('.esCard').length, !!r.querySelector('.esIdle')].join()), 'working,2,false', 'the station is working (Paul K.\'s order at the Sorter app, and Dana S.\'s new one) and has no idle line');
     assert.equal(await page.$eval(card('3521000505'), c => getComputedStyle(c).visibility), 'visible');
     assert.equal(await page.$$eval(`${card('3521000505')} .esPcTh`, b => b.length), 2);
-    assert.equal(await txt(`${V} .esSum`), '5 of 7 stations working · 7 people on');
+    assert.equal(await txt(`${V} .esSum`), '4 of 6 stations working · 7 people on');
     // a finished order says how long it took and lifts away
     const sc303 = fx.find('welding').current[0].scannedAt; fx.finish('welding', 'Giovanna C.');
     await page.evaluate(() => __b.refresh()); await page.waitForSelector(`${card('3521000303')}.done`);
@@ -253,7 +253,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     fx.signOut('Rae T.'); await page.evaluate(() => __b.refresh());
     await page.waitForFunction(() => !document.querySelector('#esHost .esSt[data-key=inbox] .esPer'), null, { timeout: 3000 });
     assert.equal(await page.$eval(`${V} .esSt[data-key=inbox]`, r => r.dataset.state), 'offline', 'the last person left: offline');
-    assert.equal(await txt(`${V} .esSum`), '4 of 7 stations working · 6 people on', 'the summary follows (welding idle again)');
+    assert.equal(await txt(`${V} .esSum`), '3 of 6 stations working · 6 people on', 'the summary follows (welding idle again)');
     // the status line tells the truth
     assert(/^Live · updated (just now|\d+s ago)$/.test(await txt(`${V} .esLiveT`)), 'Live · updated Ns ago: ' + await txt(`${V} .esLiveT`));
     await page.evaluate(() => { EfficiencyStations.options.pollMs = 200; EfficiencyStations.options.maxBackoffMs = 400; });
@@ -267,8 +267,8 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     // honest empty states
     fx.clear(); await page.evaluate(() => __b.refresh()); await page.waitForFunction(() => !document.querySelector('#esHost .esCard'), null, { timeout: 5000 });
     assert.equal(await txt(`${V} .esNone`), 'No one is working on an order right now'); assert.equal(await page.isVisible(`${V} .esNone`), true);
-    assert.equal(await page.$$eval(`${V} .esSt`, r => r.length), 7, 'the stations stay listed, each saying so quietly');
-    assert.equal(await txt(`${V} .esSum`), '0 of 7 stations working · 6 people on');
+    assert.equal(await page.$$eval(`${V} .esSt`, r => r.length), 6, 'the stations stay listed, each saying so quietly');
+    assert.equal(await txt(`${V} .esSum`), '0 of 6 stations working · 6 people on');
     console.log('  ✓ live: a new order flies in, a finished one says "Done in …" and lifts away, people leave, Live / Reconnecting tell the truth, honest empty state');
 
     /* ── 7 · hidden: no request; shown again: reads at once ── */
@@ -343,7 +343,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     await p9.evaluate(k => sessionStorage.setItem('cn.eff.key', k), F.KEY);
     await mount(p9); await p9.waitForSelector(`${V} .esSt`); await sleep(500);
     const flat = async sel => (await p9.$eval(sel, e => e.innerText)).replace(/\s+/g, ' ').trim();
-    assert.deepEqual(await p9.$$eval(`${V} .esSt`, rs => rs.map(r => r.dataset.key)), ['shipping', 'assembly', 'welding', 'sorting', 'design', 'laser', 'sorter', 'inbox'], 'the laser station is a row like the others');
+    assert.deepEqual(await p9.$$eval(`${V} .esSt`, rs => rs.map(r => r.dataset.key)), ['shipping', 'assembly', 'welding', 'sorting', 'design', 'laser', 'inbox'], 'the laser station is a row like the others');
     // a laser sheet: its title, no QR, "since started", nothing to open
     const shc = `${V} .esSt[data-key=laser] .esCard`;
     const sc = await p9.$eval(shc, c => ({ kind: c.dataset.kind, oid: c.querySelector('.esOid').textContent, dis: c.querySelector('.esOid').disabled, qrRects: c.querySelector('.esQr').getClientRects().length, tl: c.querySelector('.esTl').textContent, t: c.querySelector('.esT').textContent, ph: !!c.querySelector('.esTh [data-ph]'), who: c.querySelector('.esWho').innerText.replace(/\s+/g, ' '), cols: getComputedStyle(c).gridTemplateColumns.split(' ').length }));

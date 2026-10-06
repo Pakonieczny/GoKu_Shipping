@@ -84,7 +84,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 
     /* the Real | Sandbox switch: the board is rebuilt from the other store */
     await page.click(`${V} .efView button[data-view="sandbox"]`);
-    await page.waitForFunction(() => { const r = document.querySelectorAll('#efficiencyView .esSt'); return r.length === 1 && r[0].dataset.key === 'sorter'; }, null, { timeout: 10000 });
+    await page.waitForFunction(() => { const r = document.querySelectorAll('#efficiencyView .esSt'); return r.length === 1 && r[0].dataset.key === 'sorting'; }, null, { timeout: 10000 });
     assert.equal(await page.$eval(`${V} .esSt .esCard .esOid`, e => e.textContent), '3521009001', 'Sandbox shows the sandbox copies only');
     assert(live().some(c => c.sandbox === true), 'the sandbox read was asked for with sandbox:true');
     await page.click(`${V} .efView button[data-view="real"]`);

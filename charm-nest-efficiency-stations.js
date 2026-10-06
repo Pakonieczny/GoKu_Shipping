@@ -65,6 +65,11 @@
   const initials = name => { const w = String(name || "").trim().split(/[\s._-]+/).filter(Boolean); return w.length ? (w[0].charAt(0) + (w[1] ? w[1].charAt(0) : "")).toUpperCase() : "?"; };
   const tone = name => { let x = 0; for (const c of low(name)) x = (x * 31 + c.charCodeAt(0)) >>> 0; return x % 6; };
   const cap = s => (s ? s.charAt(0).toUpperCase() + s.slice(1) : "Station");
+  /** ONE Sorting station (Paul, 6 Oct 2026): the stored station keys "sorter" (the Sorter app) and "qr" (the QR Printer page) are shown as "sorting"; every other key is
+   *  returned as it is. Mirror of displayStation in netlify/functions/_activityKinds.js: history keeps its old keys, only what is SHOWN folds. A Sorter-app session of a
+   *  Laser or Design person is stored under "laser" or "design" and does not fold. */
+  const DISPLAY_FOLD = { sorter: "sorting", qr: "sorting" };
+  const displayStation = key => (typeof key !== "string" ? (key == null ? "" : displayStation(String(key))) : Object.prototype.hasOwnProperty.call(DISPLAY_FOLD, key) ? DISPLAY_FOLD[key] : key);
 
   /* ── the answer, normalised (a missing field is empty, never a crash, never a guess) ── */
   const str = v => (v == null ? "" : String(v));
@@ -93,11 +98,39 @@
     return { name, since: T(o.since != null ? o.since : g.since), lastSeenAt: T(o.lastSeenAt != null ? o.lastSeenAt : g.lastSeenAt),
       parts: pick("partsToday", "parts"), orders: pick("ordersToday", "orders"), medianMs: pick("medianOrderMs", "medianMs", "medianPerOrderMs"), longestIdleMs: pick("longestIdleMs", "maxIdleMs") };
   }
+  /** The raw station list of an answer with every row that folds into one station (stored "sorter" and "qr" rows are Sorting's) joined into the first: its orders in hand, people, pages and counts are added. */
+  function foldStations(list) {
+    const out = [], at = new Map(), rank = { working: 2, idle: 1, offline: 0 };
+    const mark = (x, k) => (x && typeof x === "object" ? Object.assign({}, x, { station: k }) : x);
+    for (const s of list) {
+      if (!s || !(s.key || s.label)) continue;
+      const k = displayStation(String(s.key || low(s.label))), had = at.get(k);
+      if (!had) {
+        const c = Object.assign({}, s, { key: k });
+        if (k !== String(s.key || "") && k === "sorting") c.label = "Sorting";
+        c.current = (Array.isArray(s.current) ? s.current : []).map(x => mark(x, k)); c.people = (Array.isArray(s.people) ? s.people : []).slice();
+        c.devices = (Array.isArray(s.devices) ? s.devices : []).slice(); c.counts = Object.assign({}, s.counts || {});
+        at.set(k, c); out.push(c); continue;
+      }
+      for (const x of Array.isArray(s.current) ? s.current : []) had.current.push(mark(x, k));
+      for (const p of Array.isArray(s.people) ? s.people : []) { const nm = low(typeof p === "string" ? p : p && p.name); if (nm && !had.people.some(q => low(typeof q === "string" ? q : q && q.name) === nm)) had.people.push(p); }
+      for (const d of Array.isArray(s.devices) ? s.devices : []) { const dv = had.devices.find(q => q && d && q.device === d.device); if (!dv) had.devices.push(d); else if (rank[d.state] > rank[dv.state]) Object.assign(dv, d); }
+      const hc = had.counts, sc = s.counts || {};
+      for (const f of ["partsToday", "ordersToday", "scansToday", "parts", "orders", "scans"]) if (has(sc[f])) hc[f] = (has(hc[f]) ? N(hc[f]) : 0) + N(sc[f]);
+      if (rank[s.state] > rank[had.state]) had.state = s.state;
+      had.lastEventAt = Math.max(N(had.lastEventAt), N(s.lastEventAt)) || had.lastEventAt;
+    }
+    return out;
+  }
   function norm(r) {
     r = r || {};
-    const signedIn = (Array.isArray(r.signedIn) ? r.signedIn : []).filter(x => x && x.name).map(x => ({ name: String(x.name), stationKey: String(x.stationKey || ""), since: T(x.since), lastSeenAt: T(x.lastSeenAt) }));
+    const signedIn = [];                                                   // one row per person: signed in at the Sorter app and at a sorting page is ONE person on
+    for (const x of (Array.isArray(r.signedIn) ? r.signedIn : []).filter(x => x && x.name).map(x => ({ name: String(x.name), stationKey: displayStation(String(x.stationKey || "")), since: T(x.since), lastSeenAt: T(x.lastSeenAt) }))) {
+      const had = signedIn.find(y => low(y.name) === low(x.name));
+      if (had) { had.since = had.since && x.since ? Math.min(had.since, x.since) : had.since || x.since; had.lastSeenAt = Math.max(had.lastSeenAt || 0, x.lastSeenAt || 0) || null; } else signedIn.push(x);
+    }
     const sign = new Map(signedIn.map(x => [low(x.name), x]));
-    const stations = (Array.isArray(r.stations) ? r.stations : []).filter(s => s && (s.key || s.label)).map(s => {
+    const stations = foldStations(Array.isArray(r.stations) ? r.stations : []).filter(s => s && (s.key || s.label)).map(s => {
       const key = String(s.key || low(s.label)), label = String(s.label || cap(key));
       const current = (Array.isArray(s.current) ? s.current : []).filter(c => c && (c.rid || c.orderNumber || (c.kind === "sheet" && c.title))).map(c => normCurrent(c, { key, label }));
       const people = (Array.isArray(s.people) ? s.people : []).map(p => normPerson(p, sign)).filter(p => p.name);
@@ -850,12 +883,6 @@
    *  returns { title, sub, avatar | state, rows:[{ k, v, d }], note, foot } (or null for no card). The element gets the platform's pointer, focus and touch
    *  behaviour of the board's own cards; one card is shared by all of them. */
   function hoverCard(node, spec) { if (!node || typeof spec !== "function") return node; css(); wire(); node.dataset.esTip = ""; node._esTip = spec; return node; }
-
-  /** ONE Sorting station (Paul, 6 Oct 2026): the stored station keys "sorter" (the Sorter app) and "qr" (the QR Printer page) are shown as "sorting"; every other key is
-   *  returned as it is. Mirror of displayStation in netlify/functions/_activityKinds.js: history keeps its old keys, only what is SHOWN folds. A Sorter-app session of a
-   *  Laser or Design person is stored under "laser" or "design" and does not fold. */
-  const DISPLAY_FOLD = { sorter: "sorting", qr: "sorting" };
-  const displayStation = key => (typeof key !== "string" ? (key == null ? "" : displayStation(String(key))) : Object.prototype.hasOwnProperty.call(DISPLAY_FOLD, key) ? DISPLAY_FOLD[key] : key);
 
   root.EfficiencyStations = { mount, orderCard, norm, options, qr: qrUrl, fmt: { since, words, ago, initials }, openOrder, hoverCard, displayStation,
     /* for the checks */

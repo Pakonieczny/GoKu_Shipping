@@ -13,7 +13,9 @@
   if (root.SignIns) return;
   const doc = root.document, TZ = "America/New_York", DAY_MS = 86400000;
   const options = { pollMs: 30000, tickMs: 15000 };
-  const STATION = { sorting: "Sorting", welding: "Weld", assembly: "Assembly", shipping: "Shipping", design: "Design Station", laser: "Laser", sorter: "Sorter", qr: "QR Printer", inbox: "Inbox" };
+  const STATION = { sorting: "Sorting", welding: "Weld", assembly: "Assembly", shipping: "Shipping", design: "Design Station", laser: "Laser", inbox: "Inbox" };
+  /* ONE Sorting station: a session stored under "sorter" (the Sorter app) or "qr" (the QR Printer page) is shown as Sorting; the stored session is never changed (EfficiencyStations.displayStation, the server's rule) */
+  const dispSt = k => { const f = root.EfficiencyStations && root.EfficiencyStations.displayStation; return typeof f === "function" ? f(k) : (k === "sorter" || k === "qr" ? "sorting" : k); };
   const ENDS = { signOut: ["Signed out", "neutral"], midnight: ["Midnight", "neutral"], switched: ["Switched person", "info"], closed: ["Closed · no heartbeat", "warn"] };
   const RANGES = [[1, "Today"], [7, "7 days"], [30, "30 days"]];
   const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -47,7 +49,7 @@
   /* ── the view: sessions grouped by day, then by person or computer; time per person per day ── */
   const personOf = s => String(s.person || "").trim() || "Unknown";
   const computerOf = s => String(s.computerLabel || "").trim() || (s.computerId ? `Computer ${String(s.computerId).slice(-4)}` : "Unknown computer");
-  const stationOf = s => { const w = STATION[s.station] || s.station || "Station", d = String(s.device || "").trim(); return d && d.toLowerCase() !== String(s.station || "").toLowerCase() ? `${w} · ${d}` : w; };
+  const stationOf = s => { const key = dispSt(String(s.station || "")), w = STATION[key] || key || "Station", d = String(s.device || "").trim(); return d && d.toLowerCase() !== String(s.station || "").toLowerCase() && d.toLowerCase() !== key.toLowerCase() ? `${w} · ${d}` : w; };
   /** Minutes covered by these [start, end] spans, an overlap counted once (one person signed in on two computers). */
   function covered(spans) {
     let total = 0, a = -Infinity, z = -Infinity;

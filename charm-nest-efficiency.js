@@ -27,12 +27,13 @@
   const doc = root.document, TZ = "America/New_York", DAY_MS = 86400000;
   const options = { pollMs: 10000, liveMs: 3000, tickMs: 1000, maxBackoffMs: 60000, holdMs: 60000, growMs: 480, timeoutMs: 9000, staleMs: 13000, nudgeMs: 4000, mountRetryMs: 400, mountGiveUpMs: 20000, tabMs: 260 };
   const KEY_STORE = "cn.eff.key", DAYS_STORE = "cn.eff.days", VIEW_STORE = "cn.eff.view";
-  const NAMES = { shipping: "Shipping", assembly: "Assembly", welding: "Welding", sorting: "Sorting", design: "Design", laser: "Laser", sorter: "Sorter", qr: "QR printer", inbox: "Inbox" };
-  const CORE = ["shipping", "assembly", "welding", "sorting", "design"], EXTRA = ["laser", "sorter", "qr", "inbox"];
+  const NAMES = { shipping: "Shipping", assembly: "Assembly", welding: "Welding", sorting: "Sorting", design: "Design", laser: "Laser", inbox: "Inbox" };
+  const CORE = ["shipping", "assembly", "welding", "sorting", "design"], EXTRA = ["laser", "inbox"];
   /* ONE Sorting station (Paul, 6 Oct 2026): the stored keys "sorter" (the Sorter app) and "qr" (the QR Printer page) are SHOWN as "sorting". Same rule as displayStation in
      netlify/functions/_activityKinds.js and EfficiencyStations.displayStation; history keeps its old keys, only what is read folds. Laser and Design are stored under their own keys. */
   const DISPLAY_FOLD = { sorter: "sorting", qr: "sorting" };
   const displayStation = key => (typeof key !== "string" ? (key == null ? "" : displayStation(String(key))) : Object.prototype.hasOwnProperty.call(DISPLAY_FOLD, key) ? DISPLAY_FOLD[key] : key);
+  const foldKeys = list => [...new Set((Array.isArray(list) ? list : []).map(x => displayStation(String(x))))];   // a list of station keys, each folded, each once
   const ACTIONS = { scan: "scanned", complete: "completed", print: "printed", reject: "rejected", undo: "undid", error: "error", note: "noted" };
   const EASE = "cubic-bezier(.2,.8,.2,1)";
   const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -65,7 +66,7 @@
   const rateTxt = v => (v > 0 ? (v >= 10 ? nf(v) : (Math.round(v * 10) / 10).toString()) : "—");
   const secTxt = s => (s > 0 ? (s < 90 ? `${Math.round(s)} s` : `${(Math.round(s / 6) / 10).toString()} min`) : "—");
   const ago = s => (s < 2 ? "just now" : s < 60 ? `${Math.round(s)}s ago` : s < 3600 ? `${Math.floor(s / 60)}m ago` : `${Math.floor(s / 3600)}h ago`);
-  const stName = s => NAMES[s] || (s ? s.charAt(0).toUpperCase() + s.slice(1) : "Station");
+  const stName = s => NAMES[displayStation(s)] || (s ? s.charAt(0).toUpperCase() + s.slice(1) : "Station");
 
   /* ── hover cards: the stations board's own light card (EfficiencyStations.hoverCard) on the Overview's numbers, each with one plain line saying what
    *  it is. Without that module the same words stay a native title. `tx(node, text)` keeps the live detail of a card (what a title used to say). ── */
@@ -114,24 +115,34 @@
   function norm(r) {
     r = r || {};
     const people = (Array.isArray(r.people) ? r.people : []).filter(p => p && p.name).map(p => {
-      const t = p.totals || {}, orders = (Array.isArray(p.orders) ? p.orders : []).filter(o => o && o.orderId).map(o => ({ orderId: String(o.orderId), stations: (Array.isArray(o.stations) ? o.stations : []).map(String), parts: N(o.parts), lastAt: T(o.lastAt) }));
-      const stations = (Array.isArray(p.stations) ? p.stations : []).filter(s => s && s.station).map(s => ({ station: String(s.station), minutes: N(s.minutes), parts: N(s.parts), scanParts: N(s.scanParts), scans: N(s.scans), completes: N(s.completes), prints: N(s.prints), orders: N(s.orders) })).sort((a, b) => b.minutes - a.minutes);
+      const t = p.totals || {}, orders = (Array.isArray(p.orders) ? p.orders : []).filter(o => o && o.orderId).map(o => ({ orderId: String(o.orderId), stations: foldKeys(o.stations), parts: N(o.parts), lastAt: T(o.lastAt) }));
+      const stations = [];                                                    // (the server already answers with Sorting only; a stored "sorter" or "qr" row in an answer is added to Sorting's)
+      for (const s of (Array.isArray(p.stations) ? p.stations : []).filter(s => s && s.station)) {
+        const x = { station: displayStation(String(s.station)), minutes: N(s.minutes), parts: N(s.parts), scanParts: N(s.scanParts), scans: N(s.scans), completes: N(s.completes), prints: N(s.prints), orders: N(s.orders) }, had = stations.find(y => y.station === x.station);
+        if (had) for (const k of ["minutes", "parts", "scanParts", "scans", "completes", "prints", "orders"]) had[k] += x[k]; else stations.push(x);
+      }
+      stations.sort((a, b) => b.minutes - a.minutes);
       const x = { parts: N(t.parts), scanParts: N(t.scanParts), scans: N(t.scans), rejects: N(t.rejects), errors: N(t.errors), orders: t.orders == null ? orders.length : N(t.orders), activeMin: N(t.activeMin), idleMin: N(t.idleMin), signedInMin: N(t.signedInMin), rate: N(t.rate), secPerScan: N(t.secPerScan) };
       if (!x.rate && x.activeMin >= 1 && x.parts) x.rate = x.parts / (x.activeMin / 60);
       if (!x.secPerScan && x.activeMin >= 1 && x.scans) x.secPerScan = x.activeMin * 60 / x.scans;
-      return { name: String(p.name), on: p.status === "on", inDay: p.inDay ? String(p.inDay) : "", firstIn: T(p.firstIn), lastOut: T(p.lastOut), onSince: T(p.onSince), nowAt: (Array.isArray(p.nowAt) ? p.nowAt : []).map(String), source: String(p.source || ""), stations, t: x, perHour: hours24(p.perHour), orders };
+      return { name: String(p.name), on: p.status === "on", inDay: p.inDay ? String(p.inDay) : "", firstIn: T(p.firstIn), lastOut: T(p.lastOut), onSince: T(p.onSince), nowAt: foldKeys(p.nowAt), source: String(p.source || ""), stations, t: x, perHour: hours24(p.perHour), orders };
     });
     const b = r.business || {}, bt = b.totals || {};
     const stRows = new Map();
-    for (const s of Array.isArray(b.stations) ? b.stations : []) if (s && s.station) stRows.set(String(s.station), { station: String(s.station), parts: N(s.parts), scans: N(s.scans), orders: N(s.orders), now: (Array.isArray(s.peopleNow) ? s.peopleNow : []).map(String), hours: new Array(24).fill(0) });
-    const ph = b.perHour && typeof b.perHour === "object" ? b.perHour : {};
+    for (const s of Array.isArray(b.stations) ? b.stations : []) if (s && s.station) {
+      const k = displayStation(String(s.station)), had = stRows.get(k), now = (Array.isArray(s.peopleNow) ? s.peopleNow : []).map(String);
+      if (had) { had.parts += N(s.parts); had.scans += N(s.scans); had.orders += N(s.orders); for (const n of now) if (!had.now.includes(n)) had.now.push(n); }
+      else stRows.set(k, { station: k, parts: N(s.parts), scans: N(s.scans), orders: N(s.orders), now, hours: new Array(24).fill(0) });
+    }
+    const ph = {};                                                           // (per-hour pieces by station, a stored "sorter" or "qr" series added to Sorting's)
+    for (const [k0, v] of Object.entries(b.perHour && typeof b.perHour === "object" ? b.perHour : {})) { const k = displayStation(k0); ph[k] = ph[k] ? sum24([ph[k], hours24(v)]) : hours24(v); }
     for (const k of Object.keys(ph)) { if (!stRows.has(k)) stRows.set(k, { station: k, parts: 0, scans: 0, orders: 0, now: [], hours: null }); stRows.get(k).hours = hours24(ph[k]); }
     const hoursAll = Object.keys(ph).length ? sum24(Object.keys(ph).map(k => hours24(ph[k]))) : sum24(people.map(p => p.perHour));
     const sumP = k => people.reduce((n, p) => n + p.t[k], 0);
     const activeMin = sumP("activeMin"), parts = bt.parts == null ? sumP("parts") : N(bt.parts);
     // Design stations log a fixed-text "note" (no order, no parts) only to make work time exact: it stays in time use on the server, but is never a line of the feed
     const marker = f => f.action === "note" && !f.orderId && !N(f.parts) && (f.detail == null || /^(opened|selected) order$/i.test(String(f.detail).trim()));
-    const feed = (Array.isArray(r.feed) ? r.feed : []).filter(f => f && N(f.at) > 0 && !marker(f)).map(f => ({ id: String(f.id || `${f.at}|${f.person}|${f.action}|${f.orderId}`), at: N(f.at), person: String(f.person || ""), station: String(f.station || ""), action: String(f.action || ""), orderId: f.orderId ? String(f.orderId) : "", parts: N(f.parts) }));
+    const feed = (Array.isArray(r.feed) ? r.feed : []).filter(f => f && N(f.at) > 0 && !marker(f)).map(f => ({ id: String(f.id || `${f.at}|${f.person}|${f.action}|${f.orderId}`), at: N(f.at), person: String(f.person || ""), station: displayStation(String(f.station || "")), action: String(f.action || ""), orderId: f.orderId ? String(f.orderId) : "", parts: N(f.parts) }));
     return {
       day: String(r.day || ""), days: N(r.days) || 1, now: N(r.now), cursor: r.cursor == null ? "" : String(r.cursor), delta: !!r.delta, people,
       biz: { parts, scans: bt.scans == null ? sumP("scans") : N(bt.scans), orders: bt.orders == null ? sumP("orders") : N(bt.orders), people: bt.people == null ? people.length : N(bt.people), on: people.filter(p => p.on).length, rate: activeMin >= 1 ? parts / (activeMin / 60) : 0, hours: hoursAll, stations: stRows,
@@ -150,7 +161,7 @@
   /** One order (op orders): who touched it where, how long they worked and how long it waited between steps. */
   function normOrder(r) {
     r = r || {}; const t = r.totals || {};
-    const steps = (Array.isArray(r.steps) ? r.steps : []).filter(s => s && s.station).map(s => ({ station: String(s.station), person: String(s.person || ""), firstAt: T(s.firstAt), lastAt: T(s.lastAt), workMs: N(s.workMs), waitMs: N(s.waitMs), scans: N(s.scans), completes: N(s.completes), prints: N(s.prints), parts: N(s.parts), source: String(s.source || "events") }));
+    const steps = (Array.isArray(r.steps) ? r.steps : []).filter(s => s && s.station).map(s => ({ station: displayStation(String(s.station)), person: String(s.person || ""), firstAt: T(s.firstAt), lastAt: T(s.lastAt), workMs: N(s.workMs), waitMs: N(s.waitMs), scans: N(s.scans), completes: N(s.completes), prints: N(s.prints), parts: N(s.parts), source: String(s.source || "events") }));
     return { orderId: String(r.orderId || ""), steps, events: Array.isArray(r.events) ? r.events.length : 0, firstAt: T(t.firstAt), lastAt: T(t.lastAt), spanMs: N(t.spanMs), workMs: N(t.workMs), people: N(t.people), stations: N(t.stations), notes: (Array.isArray(r.notes) ? r.notes : []).map(String).filter(Boolean), partial: !!r.partial };
   }
 
@@ -158,7 +169,17 @@
   const arr = a => (Array.isArray(a) ? a : []);
   function normLive(r) {
     r = r || {};
-    const stations = arr(r.stations).filter(s => s && s.key).map(s => {
+    const rank = { working: 2, idle: 1, offline: 0 }, folded = [];            // (the server already lists Sorting once; a stored "sorter" or "qr" station in an answer is joined to it, never a card of its own)
+    for (const s of arr(r.stations).filter(s => s && s.key)) {
+      const k = displayStation(String(s.key)), had = folded.find(x => x.key === k);
+      if (!had) { folded.push(Object.assign({}, s, { key: k, label: k !== String(s.key) && k === "sorting" ? "Sorting" : s.label, current: arr(s.current).slice(), people: arr(s.people).slice(), counts: Object.assign({}, s.counts || {}) })); continue; }
+      for (const c of arr(s.current)) had.current.push(c);
+      for (const n of arr(s.people)) if (!had.people.map(String).includes(String(n))) had.people.push(n);
+      had.counts.partsToday = N(had.counts.partsToday) + N(s.counts && s.counts.partsToday); had.counts.ordersToday = N(had.counts.ordersToday) + N(s.counts && s.counts.ordersToday);
+      if ((rank[s.state] || 0) > (rank[had.state] || 0)) had.state = s.state;
+      had.lastEventAt = Math.max(N(had.lastEventAt), N(s.lastEventAt)) || had.lastEventAt;
+    }
+    const stations = folded.map(s => {
       const key = String(s.key), label = String(s.label || stName(key));
       const current = arr(s.current).filter(c => c && (c.person || c.rid || c.orderNumber)).map(c => ({
         person: String(c.person || ""), rid: String(c.rid || c.orderNumber || ""), orderNumber: String(c.orderNumber || c.rid || ""), customer: String(c.customer || ""),
@@ -168,8 +189,12 @@
       return { key, label, state: ["working", "idle", "offline"].includes(s.state) ? s.state : (current.length ? "working" : "idle"), people: arr(s.people).map(String), current,
         lastEventAt: T(s.lastEventAt), counts: { partsToday: N(s.counts && s.counts.partsToday), ordersToday: N(s.counts && s.counts.ordersToday) } };
     });
-    const signedIn = arr(r.signedIn).filter(p => p && p.name).map(p => ({ name: String(p.name), stationKey: String(p.stationKey || p.station || ""), since: T(p.since), lastSeenAt: T(p.lastSeenAt) }))
-      .sort((a, b) => (a.since || 0) - (b.since || 0) || a.name.localeCompare(b.name));
+    const signedIn = [];                                                     // one row per person: at the Sorter app and at a sorting page is ONE person on, never two
+    for (const p of arr(r.signedIn).filter(p => p && p.name).map(p => ({ name: String(p.name), stationKey: displayStation(String(p.stationKey || p.station || "")), since: T(p.since), lastSeenAt: T(p.lastSeenAt) }))) {
+      const had = signedIn.find(x => x.name.toLowerCase() === p.name.toLowerCase());
+      if (had) { had.since = had.since && p.since ? Math.min(had.since, p.since) : had.since || p.since; had.lastSeenAt = Math.max(had.lastSeenAt || 0, p.lastSeenAt || 0) || null; } else signedIn.push(p);
+    }
+    signedIn.sort((a, b) => (a.since || 0) - (b.since || 0) || a.name.localeCompare(b.name));
     const current = []; for (const s of stations) for (const c of s.current) current.push(c);
     current.sort((a, b) => (a.scannedAt || 0) - (b.scannedAt || 0) || a.person.localeCompare(b.person));
     return { ok: r.ok !== false, at: N(r.at), mode: r.mode === "sandbox" ? "sandbox" : r.mode === "real" ? "real" : "", stations, signedIn, current, raw: r };   // (raw: the stations board reads fields this model leaves out: per-person facts, the last-hour line)

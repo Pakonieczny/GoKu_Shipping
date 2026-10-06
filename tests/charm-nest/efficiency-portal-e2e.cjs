@@ -230,7 +230,8 @@ function backend(env) {
       assert.equal(await hash(page), '#efficiency/stations');
       const rows = await page.$$eval(`${V} .esSt`, rs => Object.fromEntries(rs.map(r => [r.dataset.key, { state: r.dataset.state, cards: [...r.querySelectorAll('.esCard')].map(c => c.dataset.rid) }])));
       assert.deepEqual(rows.welding, { state: 'working', cards: [R.weld] }); assert.deepEqual(rows.assembly.cards, [R.asm]); assert.deepEqual(rows.shipping.cards, [R.ship]); assert.deepEqual(rows.design.cards, [R.design]);
-      assert(['sorting', 'laser', 'sorter', 'qr', 'inbox'].every(k => rows[k] && rows[k].cards.length === 0), 'every other station is listed, with no order in hand: ' + JSON.stringify(Object.keys(rows)));
+      assert(['sorting', 'laser', 'inbox'].every(k => rows[k] && rows[k].cards.length === 0), 'every other station is listed, with no order in hand: ' + JSON.stringify(Object.keys(rows)));
+      assert(!rows.sorter && !rows.qr, 'the Sorter app and the QR Printer are part of Sorting: no card of their own: ' + JSON.stringify(Object.keys(rows)));
       // the board's own cards: every picture settles (none stays white), the QR decodes to the order, one picture per piece
       await waitFor(page, () => { const b = document.querySelectorAll('#efficiencyView .es .esCard [data-state="wait"]'); return !b.length && document.querySelectorAll('#efficiencyView .es .esCard .esQr img').length >= 4; }, null, 20000);
       for (const rid of Object.values(R)) assert.equal(await decodeQr(page, `${V} .es .esCard[data-rid="${rid}"] .esQr img`), rid, 'on the board too, the QR decodes to the order ' + rid);

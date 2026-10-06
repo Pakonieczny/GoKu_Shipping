@@ -26,7 +26,7 @@
   const doc = root.document, TZ = "America/New_York", DAY_MS = 86400000, HOUR_MS = 3600000;
   const options = { liveMs: 3000, rangeMs: 15000, calMs: 60000, ordersMs: 15000, tickMs: 1000, growMs: 480, debounceMs: 260, pageSize: 25, maxBackoffMs: 30000, cacheMax: 14 };
   const KEY_STORE = "cn.eff.key", RANGE_STORE = "cn.eff.p.range";
-  const NAMES = { shipping: "Shipping", assembly: "Assembly", welding: "Welding", sorting: "Sorting", design: "Design", laser: "Laser", sorter: "Sorter", qr: "QR printer", inbox: "Inbox" };
+  const NAMES = { shipping: "Shipping", assembly: "Assembly", welding: "Welding", sorting: "Sorting", design: "Design", laser: "Laser", inbox: "Inbox" };
   const RANGES = [["day", "Day"], ["week", "Week"], ["month", "Month"], ["quarter", "3 months"], ["year", "Year"], ["custom", "Custom"]];
   const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const el = (tag, cls, html) => { const e = doc.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; };
@@ -70,7 +70,9 @@
   const rateTxt = v => { v = num(v); return v == null || v <= 0 ? "—" : v >= 10 ? nf(v) : (Math.round(v * 10) / 10).toString(); };
   const pctTxt = f => (num(f) == null ? "—" : `${Math.round(f * 100)}%`);
   const ago = s => (s < 2 ? "just now" : s < 60 ? `${Math.round(s)}s ago` : s < 3600 ? `${Math.floor(s / 60)}m ago` : s < 86400 ? `${Math.floor(s / 3600)}h ago` : `${Math.floor(s / 86400)}d ago`);
-  const stName = s => NAMES[String(s || "").toLowerCase()] || (s ? String(s).charAt(0).toUpperCase() + String(s).slice(1) : "Station");
+  /* ONE Sorting station: a stored "sorter" or "qr" key is shown as Sorting (EfficiencyStations.displayStation, the same rule as the server's) */
+  const dispSt = k => { const f = root.EfficiencyStations && root.EfficiencyStations.displayStation; return typeof f === "function" ? f(k) : (k === "sorter" || k === "qr" ? "sorting" : k); };
+  const stName = s => NAMES[dispSt(String(s || "").toLowerCase())] || (s ? String(s).charAt(0).toUpperCase() + String(s).slice(1) : "Station");
   const initials = name => { const w = String(name || "?").replace(/[^\p{L}\p{N} ._-]/gu, "").split(/[ ._-]+/).filter(Boolean); return ((w[0] || "?").charAt(0) + (w.length > 1 ? w[w.length - 1].charAt(0) : "")).toUpperCase(); };
   const tint = name => { let h = 0; for (const c of String(name)) h = (h * 31 + c.charCodeAt(0)) >>> 0; return h % 4; };
   const stamp = (t, today) => (nyDay(t) === today ? clock(t) : `${mdLbl(nyDay(t))}, ${clock(t)}`);
@@ -369,7 +371,11 @@
     r = r || {}; req = req || {};
     const series = A(r.series).filter(p => p && p.day).map(normPoint), hoursRaw = A(r.hours);
     const hours = hoursRaw.length ? Array.from({ length: 24 }, (_, h) => { const x = hoursRaw.find(e => e && +e.hour === h) || hoursRaw[h] || {}; return { hour: h, parts: num(x.parts), scans: num(x.scans), perDay: num(x.perDay) }; }) : [];
-    const stations = A(r.stations).filter(s => s && s.station).map(s => ({ station: String(s.station), label: String(s.label || stName(s.station)), parts: num(s.parts), orders: num(s.orders), scans: num(s.scans), completes: num(s.completes), prints: num(s.prints), minutes: num(s.minutes), shareParts: num(s.shareParts), shareMinutes: num(s.shareMinutes), perActiveHour: num(s.perActiveHour) }));
+    const stations = [];                                                      // (the server already answers with Sorting only; a stored "sorter" or "qr" row in an answer is added to Sorting's, never a row of its own)
+    for (const s of A(r.stations).filter(s => s && s.station)) {
+      const key = dispSt(String(s.station).toLowerCase()), x = { station: key, label: String(key !== String(s.station).toLowerCase() ? stName(key) : (s.label || stName(key))), parts: num(s.parts), orders: num(s.orders), scans: num(s.scans), completes: num(s.completes), prints: num(s.prints), minutes: num(s.minutes), shareParts: num(s.shareParts), shareMinutes: num(s.shareMinutes), perActiveHour: num(s.perActiveHour) }, had = stations.find(y => y.station === key);
+      if (had) for (const k of ["parts", "orders", "scans", "completes", "prints", "minutes", "shareParts", "shareMinutes"]) had[k] += x[k]; else stations.push(x);
+    }
     const cal = A(r.calendar).filter(c => c && c.day).map(c => ({ day: String(c.day), state: CAL[c.state] ? String(c.state) : "before", signedMs: num(c.signedMs), activeMs: num(c.activeMs), firstIn: num(c.firstIn), lastOut: num(c.lastOut), parts: num(c.parts), orders: num(c.orders), late: !!c.late, short: !!c.short, extra: !!c.extra, est: !!c.estimated, lengthKnown: c.lengthKnown !== false, note: c.note ? String(c.note) : "", weekend: !!c.weekend, others: num(c.others) })).sort((a, b) => (a.day < b.day ? -1 : 1));
     const src = { kpis: {}, att: {}, rates: {}, contact: {}, issues: {} };
     for (const k of Object.keys(r.kpis || {})) src.kpis[k] = metric(k, r.kpis[k]);
@@ -423,8 +429,8 @@
     const mine = new Set([slug(name)].concat(A(also).filter(Boolean).map(slug))), isMe = n => mine.has(slug(n)), out = { at: num(r && r.at), where: null, current: [], stationKey: "" };
     if (!r) return out;
     const sig = A(r.signedIn).find(s => s && isMe(s.name));
-    if (sig) { out.where = { name: String(sig.name), stationKey: String(sig.stationKey || ""), since: num(sig.since), lastSeenAt: num(sig.lastSeenAt) }; out.stationKey = out.where.stationKey; }
-    const seen = new Set(), add = (c, st) => { if (!c || !isMe(c.person)) return; const id = String(c.rid || c.orderNumber || ""); if (seen.has(id)) return; seen.add(id); out.current.push(Object.assign({}, c, { stationKey: c.station || (st && st.key) || "", stationLabel: c.stationLabel || (st && st.label) || stName(c.station || (st && st.key)) })); };
+    if (sig) { out.where = { name: String(sig.name), stationKey: dispSt(String(sig.stationKey || "")), since: num(sig.since), lastSeenAt: num(sig.lastSeenAt) }; out.stationKey = out.where.stationKey; }
+    const seen = new Set(), add = (c, st) => { if (!c || !isMe(c.person)) return; const id = String(c.rid || c.orderNumber || ""); if (seen.has(id)) return; seen.add(id); out.current.push(Object.assign({}, c, { stationKey: dispSt(String(c.station || (st && st.key) || "")), stationLabel: c.stationLabel || (st && st.label) || stName(c.station || (st && st.key)) })); };
     for (const c of A(r.current)) add(c, null); for (const st of A(r.stations)) for (const c of A(st && st.current)) add(c, st);
     if (!out.stationKey && out.current[0]) out.stationKey = out.current[0].stationKey;
     return out;

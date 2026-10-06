@@ -172,7 +172,7 @@ seed();
     assert.equal(await page.locator(V).getAttribute('data-view'), 'sandbox'); assert.equal(await kpi(page, 'parts'), '29'); assert.equal(await kpi(page, 'orders'), '25'); assert.equal(await kpi(page, 'on'), '1');
     assert(await page.locator(`${V} .efFlag`).isVisible(), 'a flag says Sandbox data only'); assert.equal(await page.locator(`${V} .efHint`).isVisible(), false);
     await waitFor(page, () => document.querySelectorAll('#efficiencyView .efSi').length === 1);
-    assert.deepEqual(await chips(page), ['Paul']); assert(/Sorter/.test(await page.locator(`${V} .efSi`).innerText()));
+    assert.deepEqual(await chips(page), ['Paul']); assert(/Sorting/.test(await page.locator(`${V} .efSi`).innerText()), 'a session stored under the Sorter app shows as Sorting');
     await sleep(1200);
     assert(!/Giovanna|Anna|Michael|Ivy/.test(await page.locator(V).innerText()), 'nothing of the real crew on the Sandbox view');
     assert(calls().slice(m).length > 2 && calls().slice(m).every(c => c.sandbox === true), 'every request since the switch asked for the Sandbox copies');

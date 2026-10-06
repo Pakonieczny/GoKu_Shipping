@@ -30,9 +30,8 @@ function make(opts = {}) {
     { key: 'welding', label: 'Welding', people: [{ name: 'Giovanna C.', since: at() - 6 * 3600000 }],
       current: [mk('3521000303', { person: 'Giovanna C.', customer: 'Theo Fixture', scannedAt: at() - 252000, note: 'Waiting on the second piece', pieces: [{ id: '3521000303_1', label: 'Piece 1', thumbUrl: pic(301, 'vector') }, { id: '3521000303_2', label: 'Piece 2', thumbUrl: BROKEN }, { id: '3521000303_3', label: 'Piece 3', thumbUrl: pic(303, 'vector') }] })],
       lastEventAt: at() - 31000, counts: { partsToday: 64, ordersToday: 21 }, spark: [2, 3, 2, 5, 6, 4, 7, 5, 8, 6, 5, 7] },
-    { key: 'sorting', label: 'Sorting', people: [{ name: 'Dana S.', since: at() - 2 * 3600000 }], current: [], lastEventAt: at() - 12 * 60000, counts: { partsToday: 18, ordersToday: 6 } },
+    { key: 'sorting', label: 'Sorting', people: [{ name: 'Dana S.', since: at() - 2 * 3600000 }, { name: 'Paul K.', since: at() - 12 * 3600000 }], current: [mk('3521000404', { person: 'Paul K.', customer: 'Lena Fixture', thumbUrl: '', scannedAt: at() - 3720000, pieces: [] })], lastEventAt: at() - 5000, counts: { partsToday: 18 + 29, ordersToday: 6 + 25 } },   // (the Sorter app is a page of Sorting: Paul K.'s order is Sorting's)
     { key: 'design', label: 'Design', people: [], current: [], lastEventAt: null, counts: { partsToday: 0, ordersToday: 0 }, state: 'offline' },
-    { key: 'sorter', label: 'Sorter / Laser', people: [{ name: 'Paul K.', since: at() - 12 * 3600000 }], current: [mk('3521000404', { person: 'Paul K.', customer: 'Lena Fixture', thumbUrl: '', scannedAt: at() - 3720000, pieces: [] })], lastEventAt: at() - 5000, counts: { partsToday: 29, ordersToday: 25 } },
     { key: 'inbox', label: 'Inbox', people: [{ name: 'Rae T.', since: at() - 1 * 3600000 }], current: [], lastEventAt: at() - 3 * 60000, counts: { partsToday: 0, ordersToday: 0 } }
   ];
   const find = k => S.find(s => s.key === k);
@@ -85,7 +84,7 @@ function e2(j) {
   const laser = { key: 'laser', label: 'Laser', state: 'working', people: ['Paul K.'], lastEventAt: now - 20000, counts: { partsToday: 12, ordersToday: 4, scansToday: 19 },
     devices: [{ device: 'laser-1', label: 'Laser 1', state: 'working', person: 'Paul K.', since: now - 2 * 3600000 }],
     current: [{ id: 'laser__laser-1__Paul K.', person: 'Paul K.', device: 'laser-1', deviceLabel: 'Laser 1', kind: 'sheet', rid: '', orderNumber: '', customer: '', title: 'GF Sheet 2 · Set 4', scannedAt: now - 130000, beatAt: now - 5000, note: '', thumbUrl: '', vectorUrl: '', photoUrl: '', qr: null, pieces: [], pieceCount: 0 }] };
-  j.stations.splice(j.stations.findIndex(s => s.key === 'sorter'), 0, laser);
+  j.stations.splice(j.stations.findIndex(s => s.key === 'inbox'), 0, laser);
   return j;
 }
 module.exports = { make, KEY, pic, BROKEN, e2 };
