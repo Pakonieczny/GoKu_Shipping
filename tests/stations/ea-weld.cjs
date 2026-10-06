@@ -150,7 +150,9 @@ const seals = (order, type = 'welded') => st.events.filter(e => e.orderId === or
   // 3 · the phone relay with studs (1 + 2 pieces) and a necklace: one scan, one complete for the order
   await phone(MIXED);
   await outcome(MIXED, 'complete');
-  assert.deepStrictEqual(acts(MIXED).map(e => e.action), ['scan', 'complete'], 'one scan and ONE complete for a two-stud-line order: ' + JSON.stringify(acts(MIXED)));
+  assert.deepStrictEqual(acts(MIXED).filter(e => e.action !== 'matched').map(e => e.action), ['scan', 'complete'], 'one scan and ONE complete for a two-stud-line order: ' + JSON.stringify(acts(MIXED)));
+  // (stations round 2: a phone scan at the Welding station is also ONE `matched` event, credited to the person here; tests/stations/weld-scan-matched.cjs)
+  assert.deepStrictEqual(acts(MIXED, 'matched').map(e => [e.person, e.task, e.orders, e.parts]), [[WHO, 'matching', 0, 0]], 'and one matched, never a completion');
   assert.strictEqual(acts(MIXED, 'scan')[0].detail, 'phone scan'); assert.strictEqual(acts(MIXED, 'scan')[0].parts, 3);
   assert.strictEqual(acts(MIXED, 'complete')[0].parts, 3); assert.strictEqual(acts(MIXED, 'complete')[0].orders, 1);
   await tl();                                                        // the timeline: one welded per stud line, none for the necklace
