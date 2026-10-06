@@ -214,7 +214,8 @@
     else if (s.day !== nyDay(now)) { reason = "midnight"; at = Math.min(now, nextMidnight(s.startAt || now)); }
     s.ended = true; s.endReason = reason; s.endAt = at;
     if (s.key !== undefined) { many.delete(s.key); snap.delete(s.key); }       // (a multi page's session: it leaves the running list before it is saved)
-    persist(s);
+    if (s.key !== undefined) persist(s);
+    else { const k = loadRec(); if (!(k && k.id !== s.id && !k.ended)) saveRec(s); }       // (a second tab of this computer that already started the next session keeps it as the page's record: this one's end must not wipe it, or both tabs would start one each; ST2)
     if (s === cur) cur = null;
     sendEnd(body(s, "end", reason, at));
   }
@@ -248,7 +249,7 @@
       }
       if (cur && cur.name === p.name && stationOf(cur) !== stationNow()) {     // the role changed: the one session ends, the other starts
         seen = p.name; markDay(p.name, today);
-        finish(cur, "switched"); begin(p, false);
+        finish(cur, "switched"); begin(p, true);          // (resume: another tab that switched first has already started the new one, this tab goes on with it; ST2)
         return;
       }
       if (p.name !== seen) {                     // someone signed in here (or in another tab of this computer)
