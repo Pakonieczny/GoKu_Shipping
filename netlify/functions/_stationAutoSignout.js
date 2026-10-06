@@ -246,5 +246,5 @@ async function sweep(opts) {
 }
 function resetSweep() { sweptAt = 0; recent.clear(); }
 
-module.exports = { COLL, IDLE_MS, CLOSED_MS, CLOSING_ZONE, CLOSING_HOUR, END_REASONS, END_TEXT, POLICY: Policy.POLICY, policyOf: Policy.of, endText, endPill, keptOpen, decide, adminState, settle, settledSnap, sweep, endOne,
+module.exports = { COLL, IDLE_MS, CLOSED_MS, CLOSING_ZONE, CLOSING_HOUR, END_REASONS, END_TEXT, POLICY: Policy.POLICY, policyOf: Policy.of, policy: Policy.copyOf, endText, endPill, keptOpen, decide, adminState, settle, settledSnap, sweep, endOne,
   closingInstant, nyMidnightAfter, skewOf, pageTime, minutesOf, resetSweep, deps };

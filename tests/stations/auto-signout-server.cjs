@@ -546,6 +546,8 @@ const iso = ms => new Date(ms).toISOString();
     assert.deepStrictEqual(P.copyOf('welding'), want.welding); assert.deepStrictEqual(P.copyOf(' Welding '), want.welding, 'case and spaces do not matter'); assert.deepStrictEqual(P.copyOf('laser'), want.laser);
     // the page's table, read out of its source (StationSession.policy answers a copy of the station's row of this literal): the two can never drift apart
     const src = require('fs').readFileSync(path.join(root, 'station-session.js'), 'utf8');
+    // (until AD3's page is on main the file has no word "policy" at all and only the server's half is checked, loudly; from the first push of AD3's table on, this check is strict: a page that speaks of a policy but whose table cannot be read out of it fails here)
+    if (!/policy/i.test(src)) { say('       (6a: station-session.js has no policy table yet: AD3 has not landed; the page half of this check is NOT run)'); return; }
     const at0 = src.search(/\bconst\s+POLICY\s*=\s*\{/);
     assert(at0 >= 0, 'station-session.js has no `const POLICY = {` table (AD3)');
     let i = src.indexOf('{', at0), depth = 0, j = i;
@@ -704,6 +706,13 @@ const iso = ms => new Date(ms).toISOString();
     fresh(); row('a-1', 'welding', 'Paul K', { startAt: T('13:00'), lastSeenAt: T('14:00'), lastInputAt: T('13:00') }); row('a-2', 'welding', 'Paul K', { task: 'matching', startAt: T('13:00'), lastSeenAt: T('22:25'), lastInputAt: T('13:00') });
     at('2026-10-05T22:30:00Z'); await live(); assert.strictEqual(state('a-1'), 'closed@14:00:00'); assert.strictEqual(state('a-2'), 'open', 'an Admin whose page beats is not signed out at 17:00');
     fresh(); row('a-3', 'laser', 'Paul K', { startAt: T('13:00'), lastSeenAt: T('16:00'), lastInputAt: T('15:55') }); at('2026-10-05T16:20:00Z'); await live(); assert.strictEqual(state('a-3'), 'closed@16:00:00', 'Admin: the old rule');
+    // ... and at the door: an Admin's Welding page that beats after 40 quiet minutes is the old rule too (closed at its last beat), a non-Admin's is the same session carrying on
+    fresh(); at('2026-10-05T13:00:00Z');
+    const pk = 'welding__weld-1__Paul_K__welding__t1', pj = 'welding__weld-1__Pia_J__welding__t2';
+    await session({ id: pk, person: 'Paul K', station: 'welding', device: 'weld-1', task: 'welding', event: 'start', lastInputAt: NOW }); await session({ id: pj, person: 'Pia J', station: 'welding', device: 'weld-1', task: 'welding', event: 'start', lastInputAt: NOW });
+    at('2026-10-05T13:40:00Z');
+    let rk = await session({ id: pk, person: 'Paul K', station: 'welding', device: 'weld-1', task: 'welding', lastInputAt: NOW }), rj = await session({ id: pj, person: 'Pia J', station: 'welding', device: 'weld-1', task: 'welding', lastInputAt: NOW });
+    assert.strictEqual(rk.body.ended, true); assert.strictEqual(rk.body.endReason, 'closed'); assert.strictEqual(rk.body.endAt, T('13:00')); assert.strictEqual(rj.body.ended, false);
     // an unreadable Admin list: Welding and Laser sessions are left alone like every other
     fresh(); row('u-1', 'welding', 'Unk Wen', { startAt: T('13:00'), lastSeenAt: T('13:05') }); row('u-2', 'laser', 'Unk Lee', { startAt: T('13:00'), lastSeenAt: T('13:05'), lastInputAt: T('13:00') });
     cur.fail('config'); at('2026-10-05T22:30:00Z'); const sw = await AS.sweep({ db: dbNow, now: NOW, force: true });

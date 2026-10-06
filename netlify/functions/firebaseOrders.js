@@ -135,7 +135,7 @@ async function sessionWrite(s) {
       }
       if (endAt > cap) { endAt = cap; endReason = "midnight"; }
       lastSeenAt = Math.max(lastSeen, endAt);
-    } else if (prev && now - lastSeen >= SESSION_CLOSED_MS && !AS.keptOpen({ station: stn, startAt, lastSeenAt: lastSeen }, now)) {
+    } else if (prev && now - lastSeen >= SESSION_CLOSED_MS && !(adm === false && AS.keptOpen({ station: stn, startAt, lastSeenAt: lastSeen }, now))) {      // (an Admin, or unknown, has only the old rule on every station)
       // a page silent for 15 minutes does not come back: a non-Admin with a known last input ends "idle" at it, the rest "closed" at the last beat (the old rule).
       // (Not for a station that keeps a quiet page open, Welding until 17:00 and Laser inside its 60 / 30 minutes: that beat is the same session carrying on.)
       const d = AS.decide({ startAt, lastSeenAt: lastSeen, lastInputAt: prev.lastInputAt, station: stn }, now, adm === null ? true : adm);

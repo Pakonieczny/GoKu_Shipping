@@ -162,11 +162,13 @@ async function dayBoundary() {
   // an open session is counted to now, and a quiet one stops at its last beat
   const s2 = fresh(); NOW = Z('2026-10-03T14:00:00Z');
   s2.put('Station_Sessions', 'live-1', sess('live-1', 'Liv Live', 'welding', Z('2026-10-03T13:00:00Z'), { last: Z('2026-10-03T13:58:00Z') }));
-  s2.put('Station_Sessions', 'stale-1', sess('stale-1', 'Stan Stale', 'welding', Z('2026-10-03T12:00:00Z'), { last: Z('2026-10-03T12:30:00Z') }));
+  s2.put('Station_Sessions', 'stale-1', sess('stale-1', 'Stan Stale', 'assembly', Z('2026-10-03T12:00:00Z'), { last: Z('2026-10-03T12:30:00Z') }));
+  s2.put('Station_Sessions', 'stale-2', sess('stale-2', 'Wes Weld', 'welding', Z('2026-10-03T12:00:00Z'), { last: Z('2026-10-03T12:30:00Z') }));       // (Welding has no idle sign-out: a quiet page is signed in until 17:00 Toronto, AD4)
   const o = (await call(s2, {})).body, by = n => o.people.find(p => p.name === n);
   assert.strictEqual(by('Liv Live').totals.signedInMin, 60, 'open: to now'); assert.strictEqual(by('Liv Live').status, 'on');
   assert.strictEqual(by('Stan Stale').totals.signedInMin, 30, 'quiet for 15 minutes: closed at the last beat'); assert.strictEqual(by('Stan Stale').status, 'out');
   assert.strictEqual(by('Stan Stale').lastOut, Z('2026-10-03T12:30:00Z'));
+  assert.strictEqual(by('Wes Weld').totals.signedInMin, 120, 'a quiet Welding page is still signed in (to now) before 17:00'); assert.strictEqual(by('Wes Weld').status, 'on');
   say('day boundary: NY default day, DST day lengths, 60/60 split, midnight-ending span, overlap once, future/bad days, trend length, open/stale sessions');
 }
 
