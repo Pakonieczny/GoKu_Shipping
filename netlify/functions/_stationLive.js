@@ -22,6 +22,7 @@
 const LIVE = "Station_Live";
 const { STATIONS } = require("./_orderTimeline");           // one list of stations for the timeline, the sessions, the activity and this
 const { displayStation } = require("./_activityKinds");     // ONE Sorting station: the stored keys "sorter" (Sorter app) and "qr" (QR Printer page) are shown as "sorting"; history keeps its keys
+const AutoSignout = require("./_stationAutoSignout");       // the auto sign-out rules (idle after 10 minutes without input, 5:00 pm Toronto): a session they end is not "signed in" any more
 /* The Welding station (Paul, 6 Oct 2026): two tasks (welding | matching), two people at once, never counted in throughput; see _activityKinds.js */
 let KIND = null; try { KIND = require("./_activityKinds"); } catch (_) {}
 if (!KIND) KIND = { throughput: () => true, readStationCounters: (st, v) => v, UNATTRIBUTED: "Unattributed", isMatched: () => false };
@@ -300,7 +301,8 @@ function readLive(ctx, H) {
 /** today's sessions that are still open: who is signed in where (15 s) */
 function readSessions(ctx, H) {
   return H.cached(ctx, `lsess|${ctx.prefix}`, TTL.sessions, async () => {
-    const snap = await col(ctx, "Station_Sessions").where("startAt", ">=", H.nyMidnight(ctx.today)).orderBy("startAt", "desc").limit(LIM.sessions + 1).get();
+    // (a session the auto sign-out rules end, `idle` or `closing` at the person's last input, a page that died, is ended here and leaves the board: _stationAutoSignout.js)
+    const snap = await AutoSignout.settledSnap({ db: ctx.db, prefix: ctx.prefix, now: ctx.now }, await col(ctx, "Station_Sessions").where("startAt", ">=", H.nyMidnight(ctx.today)).orderBy("startAt", "desc").limit(LIM.sessions + 1).get());
     const rows = []; for (const d of snap.docs.slice(0, LIM.sessions)) { const v = d.data() || {}; const station = str(v.station, 20); rows.push({ person: str(v.person, 80), station, device: text(v.device, 40), startAt: ms(v.startAt), lastSeenAt: ms(v.lastSeenAt), endAt: ms(v.endAt), task: station === "welding" && (v.task === "welding" || v.task === "matching") ? v.task : "", role: v.role === "laser" || v.role === "design" ? v.role : "", lastInputAt: ms(v.lastInputAt) }); }
     return { rows, capped: snap.docs.length > LIM.sessions };
   });

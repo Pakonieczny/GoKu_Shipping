@@ -503,7 +503,7 @@ const protoClean = () => { assert.strictEqual(Object.keys(Object.prototype).leng
     let { st } = build();
     await person(st, G, 'week'); const cold = st.docsRead();
     ok(cold < 900, 'a cold week and the week before, with attendance and issues: ' + cold + ' documents (documented: 727 for the profile alone, +E10 order look-ups)');
-    ok(st.readsOf('Efficiency_Daily').length <= 3 && st.readsOf('config').length <= 2, 'rollups in at most 3 range queries, config at most 2 reads: ' + st.readsOf('Efficiency_Daily').length + '/' + st.readsOf('config').length);
+    ok(st.readsOf('Efficiency_Daily').length <= 3 && st.readsOf('config').length <= 3, 'rollups in at most 3 range queries, config at most 3 reads (aliases, schedule, the Admin list of the auto sign-out): ' + st.readsOf('Efficiency_Daily').length + '/' + st.readsOf('config').length);
     let d = dayReadTwice(st); ok(d.rollDup === 0 && d.evDup === 0 && d.sessDup === 0, 'no day, person-day or session range is read twice: ' + JSON.stringify(d));
     st.clear(); await person(st, G, 'week'); ok(st.docsRead() === 0, 'the same answer again: 0 documents, ' + st.docsRead());
     tick(6500); st.clear(); await person(st, G, 'week'); ok(st.docsRead() < 40 && st.docsOf('Station_Activity') === 0, 'a live week 6.5 s later: today only, ' + st.docsRead());
