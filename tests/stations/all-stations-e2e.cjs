@@ -89,7 +89,12 @@ fs.mkdirSync(SHOTS, { recursive: true });
     start() { if (!this.timer) this.timer = setInterval(() => this.poke(), 25000); }, stop() { clearInterval(this.timer); this.timer = null; }
   };
   const shot = async (target, name) => { try { await target.screenshot({ path: path.join(SHOTS, name + '.png') }); } catch (e) { say('   (no screenshot ' + name + ': ' + String(e.message).slice(0, 80) + ')'); } };
-  const lastInputOf = async page => page.evaluate(() => { try { return StationSession.lastInput(); } catch (_) { return 0; } });
+  // the time of a page's last input, in the SHOP's time (a computer's own clock can be seconds off, a browser that was opened late under load is; the session door
+  // undoes that with the time the page sends along, so the stored hours are in the shop's time and so is this)
+  const lastInputOf = async page => {
+    const [pt, li] = await page.evaluate(() => { try { return [Date.now(), StationSession.lastInput()]; } catch (_) { return [Date.now(), 0]; } });
+    const sn = await W.now(); return li ? li + (sn - pt) : 0;
+  };
 
   const phonesCtx = await W.context({ label: 'phones' });
   const scanned = async (file, code, desk, rid) => {     // a phone reads a QR through its camera; the desk page has the order in its box
@@ -548,7 +553,7 @@ fs.mkdirSync(SHOTS, { recursive: true });
     await check('C-IDLE4', 'the portal shows the sign-out plainly: nobody but the Admin on the board, "Signed out after 10 minutes without input" on the person\'s page', ['AD2', 'AD1'], async () => {
       await boardUntil('after quiet', () => { for (const [k, c] of Object.entries(Object.fromEntries(S.board.map(s => [s.key, s])))) { const left = c.people.map(p => p.name).filter(n => n !== 'Paul K.'); assert(!left.length, k + ' still lists ' + left.join()); } }, 40000);
       await shot(portal, 'C1-board-after-ten-quiet-minutes');
-      const pv = await P.personPage(PEOPLE.asm, { settle: 3500 }); await P.back();
+      const pv = await P.personPage(PEOPLE.asm, { settle: 3500, range: 'day' }); await P.back();
       assert(/Signed out after 10 minutes without input/.test(pv.text), 'the person page of ' + PEOPLE.asm + ' does not say why they are out: "' + pv.where + '"');
     });
     const loginShown = async k => {
@@ -592,27 +597,31 @@ fs.mkdirSync(SHOTS, { recursive: true });
       };
       await stepTo(17, 0); await W.advance(30000, { step: 30000, except: asleep, settle: 150 });
       const at500 = { asm: await sessionFor(PEOPLE.asm, 'assembly-2'), ship: await sessionFor(PEOPLE.ship, 'shipping-1') };
+      // the two sleeping computers wake at 17:01 by the shop's clock: no input since 16:20
+      await stepTo(17, 1);
+      await W.syncClock(asleep[0]); await W.syncClock(asleep[1]); asleep.length = 0; await sleep(5000);
+      await W.advance(40000, { step: 20000, settle: 200 });
+      await check('C-FIVE2', 'a computer that slept through 17:00 with no recent input is signed out when it wakes (reason "closing", or "idle" when its first beat reaches the shop first: both are 10+ minutes of no input); hours end at its last input; the portal says so plainly; the draft stays', ['AD1', 'AD2', 'IN3'], async () => {
+        const WORDS = { idle: /Signed out after 10 minutes without input/, closing: /Signed out at 5:00 pm/ };
+        for (const [k, person, dev] of [['sort', PEOPLE.sort, 'sorting-1'], ['inbox', PEOPLE.inbox, 'etsy-mail-1']]) {
+          const s = await endedAs(person, dev, undefined, 25000);
+          assert(['idle', 'closing'].includes(s.endReason), person + ' (no input since 16:20, woke at 17:01) ended "' + s.endReason + '"');
+          assert(Math.abs(s.endAt - S.last.sleepInput[person]) < 20000, person + '\'s hours end ' + Math.round((s.endAt - S.last.sleepInput[person]) / 1000) + ' s from the last input');
+          assert(await loginShown(k), person + '\'s page shows no sign-in');
+          S.last['why_' + k] = s.endReason;
+        }
+        assert((await S.pages.inbox.evaluate(() => (document.getElementById('emDraftText') || {}).value)) === sleptDraft, 'the inbox draft changed across the sign-out');
+        const pv = await P.personPage(PEOPLE.sort, { settle: 3500, range: 'day' }); await P.back();
+        assert(WORDS[S.last.why_sort].test(pv.text), 'the person page of ' + PEOPLE.sort + ' (ended "' + S.last.why_sort + '") does not say why: "' + pv.where + '"');
+        say('           (the reasons written: Sorting "' + S.last.why_sort + '", Inbox "' + S.last.why_inbox + '")');
+        await shot(portal, 'C2-board-after-five');
+      });
       await check('C-FIVE1', 'at 17:00 Toronto the ones with input in the last ten minutes stay signed in; ten minutes after their last input they go idle', ['AD1', 'AD2'], async () => {
         assert(at500.asm.endAt == null && at500.ship.endAt == null, 'signed out at 17:00 with recent input: ' + JSON.stringify([at500.asm.endReason, at500.ship.endReason]));
         await stepTo(17, 7);
         const ship = await endedAs(PEOPLE.ship, 'shipping-1', undefined, 25000); eq(ship.endReason, 'idle', 'Ivy (last input 16:55) ended');
         assert(Math.abs(ship.endAt - S.last.ivyInput) < 20000, 'Ivy\'s hours end ' + Math.round((ship.endAt - S.last.ivyInput) / 1000) + ' s from her last input');
         assert((await sessionFor(PEOPLE.asm, 'assembly-2')).endAt == null, 'Michael (input at 17:05) is already out at 17:07');
-      });
-      // the two sleeping computers wake at 17:01 by their own clocks: no input since 16:25
-      await W.wake(asleep[0], TOR(17, 1) - TOR(16, 25)); await W.wake(asleep[1], TOR(17, 1) - TOR(16, 25)); await sleep(5000);
-      await W.advance(40000, { step: 20000, settle: 200 });
-      await check('C-FIVE2', 'a computer that slept through 17:00 with no recent input is signed out when it wakes; hours end at its last input; the portal says so plainly; the draft stays', ['AD1', 'AD2', 'IN3'], async () => {
-        for (const [k, person, dev] of [['sort', PEOPLE.sort, 'sorting-1'], ['inbox', PEOPLE.inbox, 'etsy-mail-1']]) {
-          const s = await endedAs(person, dev, undefined, 25000);
-          assert(['idle', 'closing'].includes(s.endReason), person + ' ended "' + s.endReason + '"');
-          assert(Math.abs(s.endAt - S.last.sleepInput[person]) < 20000, person + '\'s hours end ' + Math.round((s.endAt - S.last.sleepInput[person]) / 1000) + ' s from the last input');
-          assert(await loginShown(k), person + '\'s page shows no sign-in');
-        }
-        assert((await S.pages.inbox.evaluate(() => (document.getElementById('emDraftText') || {}).value)) === sleptDraft, 'the inbox draft changed across the sign-out');
-        const pv = await P.personPage(PEOPLE.sort, { settle: 3500 }); await P.back();
-        assert(/Signed out (after 10 minutes without input|at 5:00 pm)/.test(pv.text), 'the person page of ' + PEOPLE.sort + ' does not say why they are out: "' + pv.where + '"');
-        await shot(portal, 'C2-board-after-five');
       });
       await check('C-FIVE3', 'the Admin is still signed in after 17:00 and more quiet; Michael goes idle ten minutes after his last input (17:15), not at five', ['AD1', 'AD2'], async () => {
         await stepTo(17, 17);
@@ -650,7 +659,9 @@ fs.mkdirSync(SHOTS, { recursive: true });
     await check('C-IN3', 'the inbox suite (IN3: idle, 5 pm, Admin, input, a reply in flight, another person) passes against the REAL station-session.js: SS=real node tests/etsy-mail/inbox-signout-rules.cjs', ['IN3', 'AD1'], async () => {
       assert(landed('AD1'), 'AD1 timers are not on main yet (SS=real needs them)');
       const env = Object.assign({}, process.env, { SS: 'real' });
-      if (!env.PW_DIR) env.PW_DIR = path.dirname(require.resolve('playwright-core/package.json', { paths: [pwDir || '/opt/node22/lib/node_modules/playwright/node_modules', root] }));
+      // (PW_DIR = the node_modules folder that holds playwright-core; CHROMIUM = the browser this test uses too)
+      if (!env.PW_DIR) env.PW_DIR = [pwDir, path.join(root, 'node_modules'), '/opt/node22/lib/node_modules/playwright/node_modules'].find(d => d && fs.existsSync(path.join(d, 'playwright-core'))) || '';
+      if (!env.CHROMIUM && CHROME) env.CHROMIUM = CHROME;
       const r = spawnSync(process.execPath, [path.join(root, 'tests/etsy-mail/inbox-signout-rules.cjs')], { env, encoding: 'utf8', timeout: 900000 });
       const out = (r.stdout || '') + (r.stderr || ''); const fails = out.split('\n').filter(l => /^\s*FAIL/.test(l));
       assert(r.status === 0 && !fails.length, 'inbox-signout-rules (SS=real) exit ' + r.status + (fails.length ? ': ' + fails.slice(0, 4).join(' | ') : ': ' + out.slice(-300)));
