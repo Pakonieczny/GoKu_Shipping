@@ -26,7 +26,7 @@
   const doc = root.document, TZ = "America/New_York", DAY_MS = 86400000, HOUR_MS = 3600000;
   const options = { liveMs: 3000, rangeMs: 15000, calMs: 60000, ordersMs: 15000, tickMs: 1000, growMs: 480, debounceMs: 260, pageSize: 25, maxBackoffMs: 30000, cacheMax: 14 };
   const KEY_STORE = "cn.eff.key", RANGE_STORE = "cn.eff.p.range";
-  const NAMES = { shipping: "Shipping", assembly: "Assembly", welding: "Welding", sorting: "Sorting", design: "Design", laser: "Laser", sorter: "Sorter", qr: "QR printer", inbox: "Inbox" };
+  const NAMES = { shipping: "Shipping", assembly: "Assembly", welding: "Welding", sorting: "Sorting", design: "Design", laser: "Laser", inbox: "Inbox" };
   const RANGES = [["day", "Day"], ["week", "Week"], ["month", "Month"], ["quarter", "3 months"], ["year", "Year"], ["custom", "Custom"]];
   const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const el = (tag, cls, html) => { const e = doc.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; };
@@ -70,7 +70,9 @@
   const rateTxt = v => { v = num(v); return v == null || v <= 0 ? "—" : v >= 10 ? nf(v) : (Math.round(v * 10) / 10).toString(); };
   const pctTxt = f => (num(f) == null ? "—" : `${Math.round(f * 100)}%`);
   const ago = s => (s < 2 ? "just now" : s < 60 ? `${Math.round(s)}s ago` : s < 3600 ? `${Math.floor(s / 60)}m ago` : s < 86400 ? `${Math.floor(s / 3600)}h ago` : `${Math.floor(s / 86400)}d ago`);
-  const stName = s => NAMES[String(s || "").toLowerCase()] || (s ? String(s).charAt(0).toUpperCase() + String(s).slice(1) : "Station");
+  /* ONE Sorting station: a stored "sorter" or "qr" key is shown as Sorting (EfficiencyStations.displayStation, the same rule as the server's) */
+  const dispSt = k => { const f = root.EfficiencyStations && root.EfficiencyStations.displayStation; return typeof f === "function" ? f(k) : (k === "sorter" || k === "qr" ? "sorting" : k); };
+  const stName = s => NAMES[dispSt(String(s || "").toLowerCase())] || (s ? String(s).charAt(0).toUpperCase() + String(s).slice(1) : "Station");
   const initials = name => { const w = String(name || "?").replace(/[^\p{L}\p{N} ._-]/gu, "").split(/[ ._-]+/).filter(Boolean); return ((w[0] || "?").charAt(0) + (w.length > 1 ? w[w.length - 1].charAt(0) : "")).toUpperCase(); };
   const tint = name => { let h = 0; for (const c of String(name)) h = (h * 31 + c.charCodeAt(0)) >>> 0; return h % 4; };
   const stamp = (t, today) => (nyDay(t) === today ? clock(t) : `${mdLbl(nyDay(t))}, ${clock(t)}`);
@@ -374,7 +376,12 @@
     r = r || {}; req = req || {};
     const series = A(r.series).filter(p => p && p.day).map(normPoint), hoursRaw = A(r.hours);
     const hours = hoursRaw.length ? Array.from({ length: 24 }, (_, h) => { const x = hoursRaw.find(e => e && +e.hour === h) || hoursRaw[h] || {}; return { hour: h, parts: num(x.parts), scans: num(x.scans), perDay: num(x.perDay) }; }) : [];
-    const stations = A(r.stations).filter(s => s && s.station).map(s => ({ station: String(s.station), label: String(s.label || stName(s.station)), parts: num(s.parts), orders: num(s.orders), scans: num(s.scans), completes: num(s.completes), prints: num(s.prints), minutes: num(s.minutes), shareParts: num(s.shareParts), shareMinutes: num(s.shareMinutes), perActiveHour: num(s.perActiveHour), matched: num(s.matched), taskMin: s.taskMin && typeof s.taskMin === "object" ? { welding: nz(s.taskMin.welding), matching: nz(s.taskMin.matching), unknown: nz(s.taskMin.unknown) } : null }));
+    const stations = [];                                                      // (the server already answers with Sorting only; a stored "sorter" or "qr" row in an answer is added to Sorting's, never a row of its own)
+    for (const s of A(r.stations).filter(s => s && s.station)) {
+      const key = dispSt(String(s.station).toLowerCase()), x = { station: key, label: String(key !== String(s.station).toLowerCase() ? stName(key) : (s.label || stName(key))), parts: num(s.parts), orders: num(s.orders), scans: num(s.scans), completes: num(s.completes), prints: num(s.prints), minutes: num(s.minutes), shareParts: num(s.shareParts), shareMinutes: num(s.shareMinutes), perActiveHour: num(s.perActiveHour), matched: num(s.matched),
+        taskMin: s.taskMin && typeof s.taskMin === "object" ? { welding: nz(s.taskMin.welding), matching: nz(s.taskMin.matching), unknown: nz(s.taskMin.unknown) } : null }, had = stations.find(y => y.station === key);
+      if (had) { for (const k of ["parts", "orders", "scans", "completes", "prints", "minutes", "shareParts", "shareMinutes"]) had[k] += x[k]; if (x.matched != null) had.matched = (had.matched || 0) + x.matched; } else stations.push(x);
+    }
     const cal = A(r.calendar).filter(c => c && c.day).map(c => ({ day: String(c.day), state: CAL[c.state] ? String(c.state) : "before", signedMs: num(c.signedMs), activeMs: num(c.activeMs), firstIn: num(c.firstIn), lastOut: num(c.lastOut), parts: num(c.parts), orders: num(c.orders), late: !!c.late, short: !!c.short, extra: !!c.extra, est: !!c.estimated, lengthKnown: c.lengthKnown !== false, note: c.note ? String(c.note) : "", weekend: !!c.weekend, others: num(c.others), ended: c.endedBy === "idle" || c.endedBy === "closing" ? c.endedBy : "" })).sort((a, b) => (a.day < b.day ? -1 : 1));
     const src = { kpis: {}, att: {}, rates: {}, contact: {}, issues: {}, welding: {} };
     // the Welding station (stations round 2): time signed in per task and the orders matched; null when the person has nothing there in this window. Its points ride on the same buckets as `series`.
@@ -439,10 +446,10 @@
     if (!r) return out;
     const mineIn = A(r.signedIn).filter(s => s && isMe(s.name)), sig = mineIn[0];
     if (sig) {   // (a person in two tasks at the Welding station has two rows: one place, both tasks)
-      const here = mineIn.filter(s => String(s.stationKey || "") === String(sig.stationKey || "")), tasks = ["welding", "matching"].filter(t => here.some(s => s.task === t));
-      out.where = { name: String(sig.name), stationKey: String(sig.stationKey || ""), since: here.reduce((m, s) => (num(s.since) && (m == null || s.since < m) ? s.since : m), null) || num(sig.since), lastSeenAt: here.reduce((m, s) => Math.max(m, num(s.lastSeenAt) || 0), 0) || num(sig.lastSeenAt), tasks, lastInputAt: here.reduce((m, s) => Math.max(m, num(s.lastInputAt) || 0), 0) || null }; out.stationKey = out.where.stationKey;
+      const sk = dispSt(String(sig.stationKey || "")), here = mineIn.filter(s => dispSt(String(s.stationKey || "")) === sk), tasks = ["welding", "matching"].filter(t => here.some(s => s.task === t));
+      out.where = { name: String(sig.name), stationKey: sk, since: here.reduce((m, s) => (num(s.since) && (m == null || s.since < m) ? s.since : m), null) || num(sig.since), lastSeenAt: here.reduce((m, s) => Math.max(m, num(s.lastSeenAt) || 0), 0) || num(sig.lastSeenAt), tasks, lastInputAt: here.reduce((m, s) => Math.max(m, num(s.lastInputAt) || 0), 0) || null }; out.stationKey = out.where.stationKey;
     }
-    const seen = new Set(), add = (c, st) => { if (!c || !isMe(c.person)) return; const id = String(c.rid || c.orderNumber || ""); if (seen.has(id)) return; seen.add(id); out.current.push(Object.assign({}, c, { stationKey: c.station || (st && st.key) || "", stationLabel: c.stationLabel || (st && st.label) || stName(c.station || (st && st.key)) })); };
+    const seen = new Set(), add = (c, st) => { if (!c || !isMe(c.person)) return; const id = String(c.rid || c.orderNumber || ""); if (seen.has(id)) return; seen.add(id); out.current.push(Object.assign({}, c, { stationKey: dispSt(String(c.station || (st && st.key) || "")), stationLabel: c.stationLabel || (st && st.label) || stName(c.station || (st && st.key)) })); };
     for (const c of A(r.current)) add(c, null); for (const st of A(r.stations)) for (const c of A(st && st.current)) add(c, st);
     if (!out.stationKey && out.current[0]) out.stationKey = out.current[0].stationKey;
     return out;
@@ -601,6 +608,7 @@
     const root0 = el("div", "efp in"); root0.setAttribute("aria-label", `${S.name}, employee page`);
     host.textContent = ""; host.appendChild(root0);
     const E = {}; let charts = {}, mini = {}, io = null, unsubLive = null, ordersH = null, matchedH = null;
+    let laserH = null;
     /** One chart of E7's EfficiencyCharts in `host` (null, with a quiet line, when the library is not in the page). */
     function chart(kind, host, opts) {
       const lib = root.EfficiencyCharts; host.textContent = "";
@@ -674,6 +682,7 @@
     <section aria-label="Issues"><div class="efpLabel">Issues <b class="efpIN"></b></div><div class="efpCard efpIs"></div></section>
     <section aria-label="Success and contact rates"><div class="efpLabel">Success and contact</div><div class="efpCard efpRates"></div></section>
   </div>
+  <section class="efpLaserS hidden" aria-label="Laser sheets"></section>
   <section aria-label="Orders"><div class="efpLabel">Orders <b class="efpON"></b><span class="efpLr"></span><button type="button" class="efpLink" data-orders-all>Show all time</button></div>
     <div class="efpCard efpOrdersHost"><div class="efpOrdersOwn"><div class="efpFind"><label class="efpSearch">${SEARCH}<input type="text" name="q" inputmode="search" autocomplete="off" spellcheck="false" placeholder="Search orders: number, customer or station" aria-label="Search this person's orders"><button type="button" class="efpIcon hidden" data-clear aria-label="Clear the search">✕</button></label><span class="efpSt" role="status"></span></div>
       <div class="efpOl"></div><div class="efpMore"></div></div></div></section>
@@ -1028,6 +1037,7 @@
       if (M.lastSeen && M.to >= today()) S.seenAt = Math.max(S.seenAt || 0, M.lastSeen);       // "last seen" survives a switch to a day that has none (only windows that reach today say anything about now)
       S.M = M; S.at = at || Date.now(); E.wait.classList.add("hidden"); E.body.classList.remove("hidden"); E.body.classList.remove("dim"); if (!S.locked) E.msg.classList.add("hidden");
       render(M, first);
+      if (laserH) laserH.repaint();
     }
     async function fetchRange(gen, poll) {
       clearTimeout(T.range); T.range = 0; if (S.dead || S.locked) return; if (poll && (!visible() || S.busy)) return;
@@ -1064,6 +1074,7 @@
       S.following = period().to >= today() && S.anchor >= today(); store.set(RANGE_STORE, S.range === "custom" ? "" : S.range);
       S.gen++; if (S.ctl) { try { S.ctl.abort(); } catch (_) {} } S.busy = false; S.fails = 0; S.err = ""; paintBar(); syncOrders(); hideHC(); S.calx = S.calx && S.M && S.calx.to === period().to ? S.calx : null;
       try { o.onState && o.onState({ range: S.range, day: S.anchor, from: period().from, to: period().to }); } catch (_) {}
+      syncLaser();
       const key = reqKey(), hit = S.cache.get(key);
       if (hit) accept(hit.r, true, hit.at); else E.body.classList.add("dim");
       clearTimeout(T.cal); T.cal = 0; if (S.M) schedule("cal", hit ? 200 : 900);
@@ -1148,6 +1159,14 @@
       if (root.IntersectionObserver) { io = new IntersectionObserver(es => { if (es.some(x => x.isIntersecting)) loadOrders(false); }, { rootMargin: "400px 0px" }); io.observe(E.more); }
       loadOrders(true); schedule("orders", options.ordersMs);
     }
+    /* ── the laser sheets (LS1: charm-nest-efficiency-laser.js draws its own section, which stays hidden for somebody with no sheet in the range; it follows the date chips) ── */
+    const laserRange = () => { const p = period(); return { from: p.from, to: p.to }; };
+    function syncLaser() { if (!laserH) return; try { laserH.setRange(laserRange()); } catch (e) { console.warn("[efficiency person] laser sheets range:", e && e.message); } }
+    function mountLaser() {
+      const EL = root.EfficiencyLaser, host1 = root0.querySelector(".efpLaserS"); if (!EL || typeof EL.mount !== "function" || !host1) return;
+      try { laserH = EL.mount(host1, { name: S.name, range: laserRange(), call: (b, sig) => call(b, sig), now, expected: () => !!(S.M && S.M.stations.some(s => s.station === "laser")), onError: e => { if (isAuth(e)) lockOut(e); } }) || null; }
+      catch (e) { console.warn("[efficiency person] laser sheets:", e && e.message); laserH = null; }
+    }
 
     /* ── clicks ── */
     function onClick(e) {
@@ -1194,10 +1213,11 @@
       if (S.dead) return; S.dead = true; for (const k of Object.keys(T)) { clearTimeout(T[k]); clearInterval(T[k]); T[k] = 0; }
       if (S.ctl) { try { S.ctl.abort(); } catch (_) {} } if (io) io.disconnect(); Object.values(charts).forEach(c => c && c.destroy && c.destroy()); for (const k of Object.keys(E.k || {})) if (E.k[k].sp) E.k[k].sp.destroy();
       if (typeof unsubLive === "function") { try { unsubLive(); } catch (_) {} } if (ordersH) { try { (ordersH.unmount || ordersH.destroy || ordersH).call(ordersH); } catch (_) {} } if (matchedH) { try { (matchedH.unmount || matchedH.destroy || matchedH).call(matchedH); } catch (_) {} }
+      if (laserH) { try { laserH.unmount(); } catch (_) {} laserH = null; }
       doc.removeEventListener("visibilitychange", onVisible); try { if (root.Seal && root.Seal.zoom && root.Seal.zoom.away) root.Seal.zoom.away(); } catch (_) {}
       if (root0.parentNode) root0.remove(); instances.delete(api);
     }
-    function refresh() { if (S.dead) return; S.cache.clear(); S.gen++; S.fails = 0; fetchRange(S.gen, false); pollLive(); pollCal(); if (ordersH && typeof ordersH.refresh === "function") ordersH.refresh(); else loadOrders(true); if (matchedH && typeof matchedH.refresh === "function") matchedH.refresh(); }
+    function refresh() { if (S.dead) return; if (laserH) laserH.refresh(); S.cache.clear(); S.gen++; S.fails = 0; fetchRange(S.gen, false); pollLive(); pollCal(); if (ordersH && typeof ordersH.refresh === "function") ordersH.refresh(); else loadOrders(true); if (matchedH && typeof matchedH.refresh === "function") matchedH.refresh(); }
 
     build(); paintBar(); setText(E.waitT, `Reading ${S.name}'s history…`);
     if (!o.onBack) E.back.classList.add("hidden");
@@ -1208,6 +1228,7 @@
     const subscribe = typeof o.onLive === "function" ? o.onLive : EA() && typeof EA().onLive === "function" ? EA().onLive : null;
     if (subscribe) { try { unsubLive = subscribe(applyLive) || true; } catch (_) { unsubLive = null; } const cur = typeof o.live === "function" ? o.live() : EA() && typeof EA().live === "function" ? EA().live() : null; if (cur) applyLive(cur); }
     go({}); if (!unsubLive) pollLive(); mountOrders();
+    mountLaser();
     return api;
   }
   const instances = new Set();

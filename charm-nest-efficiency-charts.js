@@ -181,12 +181,14 @@
 
   /* ── colours: the console's tokens, in the order that keeps hues apart; a key keeps its colour ── */
   const CYCLE = ["gold", "slate", "sage", "clay", "silver", "rose", "ink70", "gold2"];
-  const FIXED = { sorter: "gold", shipping: "slate", assembly: "sage", welding: "clay", sorting: "silver", design: "rose", laser: "ink70", inbox: "gold2", qr: "ink45", other: "ink25" };
+  const FIXED = { shipping: "slate", assembly: "sage", welding: "clay", sorting: "silver", design: "rose", laser: "ink70", inbox: "gold2", other: "ink25" };
+  /* ONE Sorting station: a series keyed "sorter" or "qr" is Sorting's, in Sorting's colour (EfficiencyStations.displayStation, the same rule as the server's) */
+  const stationKey = k => { const f = root.EfficiencyStations && root.EfficiencyStations.displayStation; return typeof f === "function" ? f(k) : (k === "sorter" || k === "qr" ? "sorting" : k); };
   const TOKEN_OK = /^(gold|gold2|slate|sage|clay|silver|rose|ink|ink70|ink45|ink25|goldSoft|sageSoft|claySoft)$/;
   const cssColor = c => (TOKEN_OK.test(c) ? "var(--efc-" + c + ")" : c);
   function colorFor(key, index, explicit) {
     if (explicit) return cssColor(String(explicit));
-    const k = String(key == null ? "" : key).toLowerCase();
+    const k = stationKey(String(key == null ? "" : key).toLowerCase());
     if (FIXED[k]) return cssColor(FIXED[k]);
     return cssColor(CYCLE[(index || 0) % CYCLE.length]);
   }

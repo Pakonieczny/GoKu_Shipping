@@ -462,7 +462,10 @@ window.CNEmployee = { name: employeeName, ask: askEmployee, normalize: normName,
    Station: `sorter` for the sorter's own work (approvals, labels, decisions, sends to a sheet); a laser or cutting mark (the
    Library's laser check, back to Laser cutting, the sheet window's Completed, Rose Gold's Cut Sheet) passes { station: "laser" }
    and is recorded at the Laser station, so each shows in its own column of the console. station-activity.js takes the station
-   from the sign-in and has no option for it, so the one call is made with the page's sign-in reporting that station.
+   from the sign-in and has no option for it, so the one call is made with the page's sign-in reporting that station. Every laser-side
+   press is made through CNLaserAct (charm-nest-laser-act.js), which says what it was and for which orders.
+   `each: [{ orderId, line, parts, sku }]` (optional) makes one event per entry (at most 200), each with the call's other options: a laser
+   sheet holds several orders and the person's page lists ORDERS, so each order of the sheet gets its own event, the sheet's id in `line`.
    Nobody named: the press is never blocked and never silently dropped. It is kept (25 at most, 20 minutes, in this tab only)
    and the small name field offers itself; when a name is set the kept presses are recorded under it.
    The sandbox: its sign-in and its events write only the Sandbox_ copies (charm-nest-1.html hands StationSession the sandbox
@@ -494,7 +497,10 @@ const humanAct = window.CNAct = (action, o) => {
     }
     if (WORKSPACE_SANDBOX && !w.sandbox) return false;
     // everything a Laser or Design person does in the app is that role's (R4); the Admin's keeps its own station (the sorter, or the laser for a laser mark)
-    const logged = logAs(action, opts, w.role || station);
+    const each = Array.isArray(opts.each) ? opts.each.filter(e => e && typeof e === "object").slice(0, 200) : null; delete opts.each;
+    let logged = false;
+    if (each && each.length) { for (const e of each) logged = logAs(action, Object.assign({}, opts, e), w.role || station) || logged; }
+    else logged = logAs(action, opts, w.role || station);
     try { if (window.CNLive) CNLive.pressed(action, opts, station); } catch (_) {}      // (the live board: a press keeps the open order alive, a completion ends it)
     return logged;
   } catch (_) { return false; }
@@ -509,14 +515,44 @@ humanAct.release = () => {
 };
 humanAct.drop = () => { held.length = 0; };       // (the midnight sign-out: yesterday's presses are never put under tomorrow's name)
 humanAct.held = () => held.length;
+/* A set committed into the framed Design Station (complete.commit: its orders are marked design-complete there) or its completion
+   undone (Undo set). The framed page has no person of its own when the Sorter drives it, so it records nothing; the person at the
+   Sorter is the one who did it, and it is recorded here, one event for each order (order id, the order's pieces), under the
+   signed-in NAME and, for a Laser or Design person, their role (LD1: everything in the app is the role's). A DESIGN person's commit
+   is `complete` with the order (the Design Station's own completion, orders 1) and its undo is `undo`, but only for an order this
+   person's commit was recorded for (the framed page does the same: it never takes back what another person completed); anyone
+   else's (the Admin, a Laser person) is a `note`, with no counts. It runs when a run commits by itself as well (the person at the
+   Sorter runs it), but never asks for a name or a role from there: nobody signed in for the stations = nothing, nothing held. */
+const setCredited = new Map();          // order id -> the person whose commit was recorded as a design completion (this tab only)
+humanAct.set = (undone, ids, name) => {
+  try {
+    ids = [...new Set((ids || []).map(x => String(x == null ? "" : x).replace(/\D/g, "")).filter(Boolean))];
+    const w = sessionWho();
+    if (!ids.length || !w || !window.StationActivity) return false;
+    const design = w.role === "design", rows = (window.Orders && typeof Orders.rows === "function" && Orders.rows()) || [];
+    const parts = id => piecesOfRows(rows.filter(r => r && r.order && String(r.order.receiptId) === id));
+    const label = String(name || "Set").replace(/\s+/g, " ").trim().slice(0, 40) || "Set";
+    const phrase = `${label} ${undone ? "completion undone" : "committed"} (Design Station)`;
+    const mine = id => setCredited.get(id) === w.person;
+    const used = undone ? ids.filter(mine) : ids, others = undone ? ids.filter(id => !mine(id)) : [];
+    let logged = false;
+    if (design && used.length) logged = humanAct(undone ? "undo" : "complete", { orders: 1, detail: phrase, each: used.slice(0, 200).map(id => ({ orderId: id, parts: parts(id) })) }) || logged;
+    const notes = design ? others : ids;
+    if (notes.length) logged = humanAct("note", { detail: phrase, each: notes.slice(0, 200).map(id => ({ orderId: id })) }) || logged;
+    if (design) for (const id of used) { if (undone) setCredited.delete(id); else setCredited.set(id, w.person); }
+    return logged;
+  } catch (_) { return false; }
+};
 /* The live stations board (station-activity.js working() / idle(); plans/employee-hr/api.md): what this page has open RIGHT NOW.
    Sorter: the order whose window is open, with a piece for each of its lines. Laser: the sheet window while its sheet says "Ready
    for laser". It shows at once, ends when the window closes (or the order or the sheet is completed), a press keeps it alive and
    20 quiet minutes end it. The same rules as CNAct: nothing without a signed-in name (it never asks for one) and nothing from a
    sandbox page that is not signed in as the sandbox. It never throws, waits or touches the network here, so the sorter works
-   exactly as before when the live layer is missing or down. */
+   exactly as before when the live layer is missing or down.
+   A Laser or Design person's two windows share ONE slot (their role's card): the window that opened last shows, closing the other
+   one leaves it alone, and when the window that shows is closed the one still open shows again. With no role they are two slots. */
 const CNLive = window.CNLive = (() => {
-  const HOLD = 20 * 60e3, seen = { sorter: "", laser: "" }, since = { sorter: null };
+  const HOLD = 20 * 60e3, seen = { sorter: "", laser: "" }, since = { sorter: null }, owner = {}, last = {};
   const A = () => { const a = window.StationActivity; return a && typeof a.working === "function" ? a : null; };
   // a Laser or Design person's open order and sheet are that role's live card (Paul, 6 Oct); the Admin's stay the sorter's and the laser's
   const at = st => { try { const w = sessionWho(); return (w && w.role) || st; } catch (_) { return st; } };
@@ -534,10 +570,13 @@ const CNLive = window.CNLive = (() => {
       });
       const customer = String((use[0] && use[0].order.buyer && use[0].order.buyer.name) || "");
       const fp = JSON.stringify([w.person, w.device, rid, customer, pieces]);
+      last.sorter = [rid, rows];
       if (seen.sorter === fp) return true;
       seen.sorter = fp;
       if (!since.sorter || since.sorter.rid !== rid) since.sorter = { rid, at: Date.now() };       // (one scan time for the whole opening, however often the lines are read again)
-      return A().working({ station: at("sorter"), rid, orderNumber: rid, customer, pieces, pieceCount: use.length, holdMs: HOLD, scannedAt: since.sorter.at });
+      const ok = A().working({ station: at("sorter"), rid, orderNumber: rid, customer, pieces, pieceCount: use.length, holdMs: HOLD, scannedAt: since.sorter.at });
+      if (ok) owner[at("sorter")] = "sorter";
+      return ok;
     } catch (_) { return false; }
   }
   /** the laser sheet of the open sheet window (title: "GF Sheet 2 · Set 4") */
@@ -546,20 +585,31 @@ const CNLive = window.CNLive = (() => {
       title = String(title || "").trim(); const w = who();
       if (!title || !w) return false;
       const fp = JSON.stringify([w.person, w.device, title]);
+      last.laser = title;
       if (seen.laser === fp) return true;
       seen.laser = fp;
-      return A().working({ kind: "sheet", station: at("laser"), title, holdMs: HOLD });
+      const ok = A().working({ kind: "sheet", station: at("laser"), title, holdMs: HOLD });
+      if (ok) owner[at("laser")] = "laser";
+      return ok;
     } catch (_) { return false; }
   }
   /** the window of that station closed (or its sheet is not for the laser): the slot is empty, and the next opening shows again */
   function close(station) {
-    try { seen[station] = ""; if (station === "sorter") since.sorter = null; const a = window.StationActivity; return !!(a && typeof a.idle === "function" && a.idle({ station: at(station) })); } catch (_) { return false; }
+    try {
+      const st = at(station), other = station === "sorter" ? "laser" : "sorter";
+      seen[station] = ""; last[station] = null; if (station === "sorter") since.sorter = null;
+      if (owner[st] && owner[st] !== station) return false;                  // (the other window put what the slot shows now: it is not this one's to end)
+      delete owner[st];
+      const a = window.StationActivity, ended = !!(a && typeof a.idle === "function" && a.idle({ station: st }));
+      if (seen[other] && last[other] && at(other) === st) { const x = last[other]; seen[other] = ""; try { if (other === "laser") sheet(x); else order(x[0], x[1]); } catch (_) {} }     // (the window still open shows again)
+      return ended;
+    } catch (_) { return false; }
   }
   /** a press here: it keeps what is open alive; completing the open order (or a sheet at the laser) ends it, the window staying as it is */
   function pressed(action, opts, station) {
     try {
       const a = window.StationActivity; if (!a) return;
-      if (action === "complete" && station === "laser") a.idle({ station: at("laser") });
+      if (action === "complete" && station === "laser") { const st = at("laser"); if (!owner[st] || owner[st] === "laser") { delete owner[st]; a.idle({ station: st }); } }
       else if (action === "complete" && opts && opts.orders === 1 && opts.orderId) a.idle({ station: at("sorter"), rid: String(opts.orderId) });
       else if (typeof a.touch === "function") a.touch();
     } catch (_) {}
@@ -6756,6 +6806,7 @@ const Sets = window.Sets = (() => {
     await Pool.update([...B.pool.rows.keys()].filter(id => r.completed.includes(B.pool.rows.get(id).orderId)), { state: "committed", committedAt: Date.now() }, stampWho());   // (the set committed: who)
     await save(set);
     for (const id of set.sheetIds || []) window.Session?.dropBest?.(id);
+    try { humanAct.set(false, r.completed, set.name); } catch (_) {}      // (the efficiency record: the person at the Sorter did this; the framed page records nothing)
     agent({ run: run.runId }, "DS", `${set.name} committed: ${r.completed.length} order(s) marked design-complete and sent DESIGNED :) internally · ${set.refused.length} refused · ${Object.keys(ev.held).length} held`);
     return { completed: r.completed, refused: set.refused, held: ev.held };
   }
@@ -6764,6 +6815,7 @@ const Sets = window.Sets = (() => {
     const reopened = (set.committed || []).map(String);
     if (reopened.length) { await DesignLink.ensure(); await DesignLink.call("complete.undo", { receiptIds: reopened }, { timeoutMs: 180000 }); }
     set.status = "awaiting review"; set.committed = []; set.committedAt = null; set.completedAt = null; set.completionDay = null; await save(set);
+    try { humanAct.set(true, reopened, set.name); } catch (_) {}
     window.SheetEvents?.undone(set, reopened);   // a note on each reopened order (idle time)
     await Pool.update([...B.pool.rows.keys()].filter(id => (B.pool.rows.get(id) || {}).setId === set.setId), { state: "written" });
     for (const row of Orders.rows()) if (row.state === "committed" && reopened.includes(String(row.order.receiptId))) row.state = "written";

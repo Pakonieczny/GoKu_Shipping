@@ -202,7 +202,8 @@ function backend(env) {
       const ctx = await getShared(), page = shared.page;
       assert.equal(await page.locator(`${V} .efWkList .esCard`).count(), 0, 'nobody has an order in hand yet'); assert(/No one is working on an order/.test(await text(page, `${V} .efWkList`)));
       // four station pages: welding, assembly, shipping, design (a new starter, Tess), each scans an order
-      const W = shared.W;
+      const W = shared.W; let finished = false;
+      try {   // (a check that stops half way must not leave its station pages signed in with an order in hand: the next sections read the same shop)
       W.weld = await stationPage(ctx, 'weld-1', 'Giovanna C.'); W.asm = await stationPage(ctx, 'assembly-2', 'Ana M.'); W.ship = await stationPage(ctx, 'shipping-1', 'Michael V.'); W.design = await stationPage(ctx, 'design-message', 'Tess Welder');
       await scan(W.weld, R.weld, 'phone scan'); await scan(W.asm, R.asm); await scan(W.ship, R.ship); await scan(W.design, R.design);
       // the beats reached the real door: one Station_Live document each, the person's NAME, never a PIN
@@ -230,25 +231,38 @@ function backend(env) {
       assert.equal(await hash(page), '#efficiency/stations');
       const rows = await page.$$eval(`${V} .esSt`, rs => Object.fromEntries(rs.map(r => [r.dataset.key, { state: r.dataset.state, cards: [...r.querySelectorAll('.esCard')].map(c => c.dataset.rid) }])));
       assert.deepEqual(rows.welding, { state: 'working', cards: [R.weld] }); assert.deepEqual(rows.assembly.cards, [R.asm]); assert.deepEqual(rows.shipping.cards, [R.ship]); assert.deepEqual(rows.design.cards, [R.design]);
-      assert(['sorting', 'laser', 'sorter', 'qr', 'inbox'].every(k => rows[k] && rows[k].cards.length === 0), 'every other station is listed, with no order in hand: ' + JSON.stringify(Object.keys(rows)));
+      assert(['sorting', 'laser', 'inbox'].every(k => rows[k] && rows[k].cards.length === 0), 'every other station is listed, with no order in hand: ' + JSON.stringify(Object.keys(rows)));
+      assert(!rows.sorter && !rows.qr, 'the Sorter app and the QR Printer are devices of Sorting, not stations of their own: ' + JSON.stringify(Object.keys(rows)));
       // the board's own cards: every picture settles (none stays white), the QR decodes to the order, one picture per piece
       await waitFor(page, () => { const b = document.querySelectorAll('#efficiencyView .es .esCard [data-state="wait"]'); return !b.length && document.querySelectorAll('#efficiencyView .es .esCard .esQr img').length >= 4; }, null, 20000);
       for (const rid of Object.values(R)) assert.equal(await decodeQr(page, `${V} .es .esCard[data-rid="${rid}"] .esQr img`), rid, 'on the board too, the QR decodes to the order ' + rid);
       assert.equal(await page.$$eval(`${V} .es .esSt[data-key="shipping"] .esPcTh img`, is => is.filter(i => i.complete && i.naturalWidth > 0).length), 4, 'the 4-piece order: four pictures, all loaded');
       assert.equal(await page.$$eval(`${V} .es .esSt[data-key="welding"] .esPcTh`, is => is.length), 3, 'the 3-piece order: three tiles');
       await shot(page, 'b2-stations-board-1440');
-      // a finished order moves the numbers (Overview KPI = the server's own, after the console's catch-up read)
+      // a finished order moves the numbers (Overview KPI = the server's own, after the console's catch-up read). Stations round 2 (R2): the Welding station is not
+      // counted in order throughput (it shows time on task and matched scans), so its finished order moves nothing and the Assembly order next to it moves the pieces
       const before = (await B.ask({ op: 'overview', trend: false })).business.totals;
       await finish(W.weld, R.weld, 3);
       await waitFor(page, rid => !document.querySelector(`#efficiencyView .es .esCard[data-rid="${rid}"]:not([data-leaving])`), R.weld, 30000);
+      await finish(W.asm, R.asm, 1);
+      await waitFor(page, rid => !document.querySelector(`#efficiencyView .es .esCard[data-rid="${rid}"]:not([data-leaving])`), R.asm, 30000);
       await page.click(`${V} .efTabBtn[data-tab="overview"]`);
-      await waitFor(page, p => +document.querySelector('#efficiencyView .efKpi[data-k="parts"] .efKV').textContent.replace(/,/g, '') === p, before.parts + 3, 40000);
+      await waitFor(page, p => +document.querySelector('#efficiencyView .efKpi[data-k="parts"] .efKV').textContent.replace(/,/g, '') === p, before.parts + 1, 40000)
+        .catch(async () => { throw new Error(`the Overview says ${await kpi(page, 'parts')} pieces; the Assembly order has 1 piece and the Welding order (3 pieces) is not throughput: expected ${before.parts + 1}`); });
+      await sleep(3500);   // (and it stays so: the Welding order is not counted by a later read either)
       const now = (await B.ask({ op: 'overview', trend: false })).business.totals;
-      assert.equal(now.parts, before.parts + 3, 'three pieces were finished'); assert.equal(await kpi(page, 'parts'), String(now.parts)); assert.equal(await kpi(page, 'orders'), String(now.orders), 'orders agree with the server');
+      assert.equal(now.parts, before.parts + 1, 'one piece was finished at Assembly; the three at Welding are not throughput'); assert.equal(now.orders, before.orders, 'orders in hand are counted the moment they are scanned (Assembly already counted its order); the Welding order is not counted at all, scanned or finished');
+      assert.equal(await kpi(page, 'parts'), String(now.parts)); assert.equal(await kpi(page, 'orders'), String(now.orders), 'orders agree with the server');
+      const wst = (await B.ask({ op: 'overview', trend: false })).business.stations.find(x => x.station === 'welding');
+      assert.deepEqual([wst.parts, wst.orders], [0, 0], 'the Welding station adds no pieces and no orders to the day');
       // the person at the Welding page signs out: she leaves Signed in now
       await W.weld.evaluate(() => window.__signOut()); await sleep(500);
       await waitFor(page, () => ![...document.querySelectorAll('#efficiencyView .efSiGrid .efSiNm')].some(e => /Giovanna/.test(e.textContent) && /Welding/.test(e.closest('.efSi').textContent)), null, 30000);
       await shot(page, 'b3-after-finish-and-signout-1440');
+      finished = true;
+      } finally {
+        if (!finished) for (const p of Object.values(W)) await p.evaluate(() => { try { window.__signOut(); } catch (_) {} }).catch(() => {});   // (signing out ends the order in hand: nothing stays open on the board)
+      }
     });
 
     /* ─────────────── C · a person: the full page, ranges, hover, a calendar day, order search, an order opens, numbers agree ─────────────── */
@@ -425,6 +439,7 @@ function backend(env) {
       const c2 = await counts(); assert.equal(c2.sD, c1.sD + 1, 'the Sandbox board was destroyed'); assert.equal(c2.sM, c1.sM + 1, 'and the real one mounted again');
       // a person's page: Ana is in the real crew only; Giovanna C. is in both stores with very different numbers
       await page.evaluate(() => Efficiency.go('person', 'Giovanna')); await settled(page, '#efficiency/person/Giovanna', 'efPgPerson'); await ensureRange(page, 'week');
+      const shown = v => (v == null ? '—' : String(v));   // (a figure nobody logged is a dash: in the Sandbox copies Giovanna works at Welding only, which logs no pieces since stations round 2, R2: Welding shows time on task and matched scans, not pieces and orders)
       const realG = await pAsk('Giovanna', 'week'), sbG = await B.ask({ op: 'person', name: 'Giovanna', range: 'week', compare: true, sandbox: true });
       assert.notEqual(realG.kpis.parts.value, sbG.kpis.parts.value, 'the two stores give different numbers for the same name (the test would not see a leak otherwise)');
       await waitFor(page, v => document.querySelector('#efficiencyView .efp .efpK[data-k="kpis.parts"] .efpKV').textContent.replace(/,/g, '').trim() === String(v), realG.kpis.parts.value, 45000)
@@ -433,7 +448,7 @@ function backend(env) {
       await page.click(`${V} .efView button[data-view="sandbox"]`);
       await waitFor(page, n => window.__m.pM > n, d0.pM, 20000); await ensureRange(page, 'week');
       const d1 = await counts(); assert.equal(d1.pD, d0.pD + 1, 'the real person page was destroyed'); assert.equal(d1.pM, d0.pM + 1, 'and a new one mounted for the Sandbox');
-      await waitFor(page, v => document.querySelector('#efficiencyView .efp .efpK[data-k="kpis.parts"] .efpKV').textContent.replace(/,/g, '').trim() === String(v), sbG.kpis.parts.value, 45000)
+      await waitFor(page, v => document.querySelector('#efficiencyView .efp .efpK[data-k="kpis.parts"] .efpKV').textContent.replace(/,/g, '').trim() === String(v), shown(sbG.kpis.parts.value), 45000)
         .catch(async () => { throw new Error(`Sandbox: the page shows ${await pk(page, 'kpis.parts')} pieces, the Sandbox copies say ${sbG.kpis.parts.value} (the real store says ${realG.kpis.parts.value})`); });
       assert.equal(await hash(page), '#efficiency/person/Giovanna', 'the same person stays in the address');
       await shot(page, 'e2-person-sandbox-1440');
@@ -442,8 +457,8 @@ function backend(env) {
       await page.click(`${V} .efView button[data-view="real"]`); await sleep(250); await page.click(`${V} .efView button[data-view="sandbox"]`);
       await waitFor(page, () => document.getElementById('efficiencyView').getAttribute('data-view') === 'sandbox', null, 10000); await sleep(4500); ctl.hook = null;
       await ensureRange(page, 'week');
-      await waitFor(page, v => document.querySelector('#efficiencyView .efp .efpK[data-k="kpis.parts"] .efpKV').textContent.replace(/,/g, '').trim() === String(v), sbG.kpis.parts.value, 45000).catch(() => {}); // the figure counts up to its final value
-      assert.equal(await pk(page, 'kpis.parts'), String(sbG.kpis.parts.value), `a slow real answer that arrived after the switch was thrown away (real says ${realG.kpis.parts.value}, Sandbox says ${sbG.kpis.parts.value}; mounts ${JSON.stringify(await counts())}; view ${await page.evaluate(() => document.getElementById('efficiencyView').getAttribute('data-view'))})`);
+      await waitFor(page, v => document.querySelector('#efficiencyView .efp .efpK[data-k="kpis.parts"] .efpKV').textContent.replace(/,/g, '').trim() === String(v), shown(sbG.kpis.parts.value), 45000).catch(() => {}); // the figure counts up to its final value
+      assert.equal(await pk(page, 'kpis.parts'), shown(sbG.kpis.parts.value), `a slow real answer that arrived after the switch was thrown away (real says ${realG.kpis.parts.value}, Sandbox says ${sbG.kpis.parts.value}; mounts ${JSON.stringify(await counts())}; view ${await page.evaluate(() => document.getElementById('efficiencyView').getAttribute('data-view'))})`);
       await page.click(`${V} .efView button[data-view="real"]`); await waitFor(page, v => document.querySelector('#efficiencyView .efp .efpK[data-k="kpis.parts"] .efpKV').textContent.replace(/,/g, '').trim() === String(v), realG.kpis.parts.value, 45000);
       await page.evaluate(() => Efficiency.go('overview')); await settled(page, '#efficiency', 'efPgOverview');
     });
@@ -588,7 +603,8 @@ function backend(env) {
       for (;;) {   // (both answers keep today's numbers for a few seconds, the live one for up to 20 s: wait until the Overview has the scan, then until the live answer agrees)
         ov = await B.ask({ op: 'overview', trend: false }); lv = await B.ask({ op: 'live' });
         if (ov.business.stations.find(x => x.station === 'sorting').orders < base + 1 && Date.now() - t0 < 40000) { await sleep(1500); continue; }
-        const diff = ov.business.stations.filter(x => (lv.stations.find(l => l.key === x.station) || { counts: {} }).counts.ordersToday !== x.orders).map(x => `${x.station}: overview ${x.orders}, live ${(lv.stations.find(l => l.key === x.station) || { counts: {} }).counts.ordersToday}`);
+        const want = x => (x.station === 'welding' ? null : x.orders);   // (the Welding station is not order throughput, R2: the Overview says 0 and the live board says "none" (null) and draws no pieces / orders for it)
+        const diff = ov.business.stations.filter(x => (lv.stations.find(l => l.key === x.station) || { counts: {} }).counts.ordersToday !== want(x)).map(x => `${x.station}: overview ${x.orders}, live ${(lv.stations.find(l => l.key === x.station) || { counts: {} }).counts.ordersToday}`);
         if (!diff.length) break; if (Date.now() - t0 > 40000) assert.fail('the live board and the Overview count a different number of orders per station while an order is in hand: ' + diff.join('; ')); await sleep(2000);
       }
       const T = ov.business.totals, names = ov.people.map(p => p.name), onNames = ov.people.filter(p => p.status === 'on').map(p => p.name).sort();
@@ -601,6 +617,13 @@ function backend(env) {
       await page.click(`${V} .efTabBtn[data-tab="stations"]`); await settled(page, '#efficiency/stations', 'efPgStations'); await page.waitForSelector(`${V} .es .esSt`, { timeout: 20000 });
       let boardParts = 0, boardOrders = 0;
       for (const s of ov.business.stations) {
+        if (s.station === 'welding') {   // Welding is time on task and matched scans (R2): no pieces, no orders on the board and none in the day's totals
+          const l = lv.stations.find(x => x.key === 'welding');
+          assert.deepEqual([s.parts, s.orders, l.counts.partsToday, l.counts.ordersToday], [0, 0, null, null], 'welding: the Overview adds nothing and the live board counts nothing');
+          assert.equal(await page.locator(`${V} .es .esSt[data-key="welding"] .esCnt [data-n="parts"]`).evaluate(e => e.parentNode.hidden), true, 'the board draws no pieces for Welding');
+          assert.equal(await page.locator(`${V} .es .esSt[data-key="welding"] .esCnt [data-n="orders"]`).evaluate(e => e.parentNode.hidden), true, 'and no orders');
+          continue;
+        }
         await same(`${V} .es .esSt[data-key="${s.station}"] .esCnt [data-n="parts"]`, s.parts, `the board's ${s.station} parts`); await same(`${V} .es .esSt[data-key="${s.station}"] .esCnt [data-n="orders"]`, s.orders, `the board's ${s.station} orders`);
         const l = lv.stations.find(x => x.key === s.station); assert.equal(l.counts.partsToday, s.parts, `${s.station}: the live door and the overview count the same parts`);
         boardParts += s.parts; boardOrders += s.orders;
@@ -623,7 +646,15 @@ function backend(env) {
         await page.click(`${V} .efRoster .efRc[data-name="${p.name}"]`); await settled(page, '#efficiency/person/' + encodeURIComponent(p.name), 'efPgPerson'); await ploaded(page);   // (the page keeps the range last chosen)
         if ((await pstate(page)).range !== 'day') await page.click(`${P} .efpSeg button[data-range="day"]`); await ploaded(page, 'day');
         const none = p.totals.parts === 0 && p.totals.orders === 0;
-        if (none) { const pg = [await pk(page, 'kpis.parts'), await pk(page, 'kpis.orders')]; rowsInfo.push(`${p.name}: card ${noneCard[p.name].join('/')}, page ${pg.join('/')}`); assert.equal(pg[0], noneCard[p.name][0], `${p.name}: the card and the page say the same about a person who logged no pieces (card "${noneCard[p.name][0]}", page "${pg[0]}")`); }
+        if (none) {
+          const pg = [await pk(page, 'kpis.parts'), await pk(page, 'kpis.orders')]; rowsInfo.push(`${p.name}: card ${noneCard[p.name].join('/')}, page ${pg.join('/')}`);
+          // stations round 2 (R2): the Welding station shows time on task and matched scans, not pieces and orders. Somebody who worked at Welding alone has no pieces to count:
+          // the Overview adds nothing for them (their People card says 0) and their page says a dash (nothing is measured), where everybody else's card and page say the same
+          const act = x => x.parts > 0 || x.orders > 0 || x.scans > 0 || x.matched > 0, sts = Array.isArray(p.stations) ? p.stations : [];   // (signed in at Assembly with nothing logged there is not work at Assembly)
+          const weldOnly = sts.some(x => x.station === 'welding' && act(x)) && !sts.some(x => x.station !== 'welding' && act(x));
+          if (weldOnly) assert(/^(\u2014|0)$/.test(noneCard[p.name][0]) && pg[0] === '\u2014', `${p.name} worked at Welding only: the card says a dash or 0 and the page a dash for pieces (card "${noneCard[p.name][0]}", page "${pg[0]}")`);
+          else assert.equal(pg[0], noneCard[p.name][0], `${p.name}: the card and the page say the same about a person who logged no pieces (card "${noneCard[p.name][0]}", page "${pg[0]}")`);
+        }
         else {
           await same(`${P} .efpK[data-k="kpis.parts"] .efpKV`, p.totals.parts, `${p.name}'s page (Day): pieces`); await same(`${P} .efpK[data-k="kpis.orders"] .efpKV`, p.totals.orders, `${p.name}'s page (Day): orders`);
           await page.locator(`${P} .efoSearch input`).evaluate(e => e.scrollIntoView({ block: 'center' }));

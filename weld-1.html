@@ -419,6 +419,76 @@
 
   </style>
 
+  <style id="weldRosterCss">
+  /* Who is signed in at the Welding station (Paul, 6 Oct 2026): several people at once, each under a task, shown as name chips
+     grouped Welding | Matching. One tap on a chip signs that person out of that task; Add person runs the same PIN and task
+     steps without ending anyone. Quiet, calm: nothing here moves except a colour. */
+  #titleSignedInAs, #employeeName { display: none !important; }   /* the roster replaces "Signed In As" (the name field still holds the chat's sender) */
+  body.weld-multi #signOutBtn { display: none !important; }       /* with two or more people here the one Sign Out button would end everybody's work: each signs out from their own chip */
+  /* in the page's own coordinates (between the title and the Sign Out button), like everything else on this page */
+  #weldRoster { position: absolute; left: 790px; top: 8px; width: 590px; z-index: 900; display: none; align-items: center; justify-content: flex-start; flex-wrap: wrap;
+    gap: 6px 16px; font: 13px/1.3 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif; color: #263238; }
+  #weldRoster.on { display: flex; }
+  #weldRoster .weld-group { display: flex; align-items: center; gap: 8px; padding-left: 16px; border-left: 1px solid #dfe6e9; }
+  #weldRoster .weld-group:first-child { padding-left: 0; border-left: 0; }
+  #weldRoster .weld-group-label { font-size: 11px; font-weight: 600; letter-spacing: .07em; text-transform: uppercase; color: #78909c; }
+  #weldRoster .weld-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  #weldRoster .weld-none { font-size: 12px; color: #b0bec5; }
+  #weldRoster .weld-chip, #weldRoster .weld-chip:focus, #weldRoster .weld-chip:active { display: inline-flex; align-items: center; gap: 8px; box-sizing: border-box;
+    min-height: 44px; max-width: 210px; margin: 0; padding: 0 12px 0 15px; border: 1px solid #cfd8dc; border-radius: 999px; background: #fff; color: #263238;
+    font: 600 13px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif; cursor: pointer; outline: none; text-transform: none;
+    transition: border-color .15s ease, background-color .15s ease; -webkit-tap-highlight-color: transparent; }
+  #weldRoster .weld-chip:hover { border-color: #26a69a; background: #f3faf9; }
+  #weldRoster .weld-chip:focus-visible, #weldRoster .weld-add:focus-visible { outline: 2px solid #26a69a; outline-offset: 2px; }
+  #weldRoster .weld-chip .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #weldRoster .weld-chip .x { flex: none; font-size: 17px; line-height: 1; font-weight: 400; color: #90a4ae; }
+  #weldRoster .weld-chip:hover .x { color: #455a64; }
+  #weldRoster .weld-add, #weldRoster .weld-add:focus, #weldRoster .weld-add:active { box-sizing: border-box; min-height: 44px; margin: 0; padding: 0 16px; border: 1px dashed #b0bec5; border-radius: 999px;
+    background: transparent; color: #546e7a; font: 500 13px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif; cursor: pointer; outline: none; text-transform: none;
+    transition: border-color .15s ease, color .15s ease; -webkit-tap-highlight-color: transparent; }
+  #weldRoster .weld-add:hover { border-color: #26a69a; color: #00796b; }
+  /* the task step ("Welding or Matching?") replaces the number box inside the same window: no second pop-up */
+  #weldTaskStep { display: none; padding: 20px 22px 54px; text-align: center; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif; }
+  #userLoginModal.weld-task { height: auto !important; min-height: 200px; max-width: calc(100vw - 24px); overflow: hidden !important; }
+  #userLoginModal.weld-task #userLoginModalContainer, #userLoginModal.weld-task #loginModalFooter, #userLoginModal.weld-task #weldLoginCancel { display: none !important; }
+  #userLoginModal.weld-task #weldTaskStep { display: block; }
+  #weldTaskStep h5 { margin: 0 0 4px; font-size: 1.5rem; line-height: 1.3; color: #212121; }
+  #weldTaskStep .weld-task-who { margin: 0 0 16px; font-size: 14px; color: #607d8b; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #weldTaskStep .weld-task-btns { display: flex; gap: 12px; }
+  #weldTaskStep .weld-task-btn, #weldTaskStep .weld-task-btn:focus { flex: 1 1 0; min-width: 0; box-sizing: border-box; min-height: 104px; margin: 0; padding: 14px 10px;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; border: 1px solid #cfd8dc; border-radius: 12px; background: #fff; color: #263238;
+    cursor: pointer; outline: none; text-transform: none; font-family: inherit; transition: border-color .15s ease, background-color .15s ease; -webkit-tap-highlight-color: transparent; }
+  #weldTaskStep .weld-task-btn:hover { border-color: #26a69a; background: #f3faf9; }
+  #weldTaskStep .weld-task-btn:focus-visible { outline: 2px solid #26a69a; outline-offset: 2px; }
+  #weldTaskStep .weld-task-btn b { font-size: 21px; font-weight: 600; line-height: 1.1; }
+  #weldTaskStep .weld-task-btn span { font-size: 12px; line-height: 1.35; color: #78909c; }
+  .weld-link, .weld-link:focus { position: absolute; bottom: 4px; left: 8px; display: inline-flex; align-items: center; min-width: 44px; min-height: 44px; margin: 0; padding: 0 8px; box-sizing: border-box; border: 0; background: transparent; color: #546e7a; font: 12px/1.3 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+    text-decoration: underline; cursor: pointer; outline: none; text-transform: none; }
+  .weld-link:hover { color: #00796b; }
+  .weld-link:focus-visible { outline: 2px solid #26a69a; outline-offset: 2px; }
+  #weldLoginCancel { display: none; z-index: 2; }
+  #userLoginModal.weld-add #weldLoginCancel { display: block; }
+  /* toasts are for reading: they never take a tap and never sit over a chip. On a wide window they start just below the roster (the page measures it:
+     --weld-toast-top); where the roster is along the bottom (below) they go along the top instead. */
+  #toast-container, #toast-container .toast { pointer-events: none !important; }
+  @media (min-width: 1101px) { #toast-container { top: var(--weld-toast-top, 112px) !important; bottom: auto !important; } }
+  @media (max-width: 1100px) {
+    #toast-container { top: 8px !important; bottom: auto !important; left: 8px !important; right: 8px !important; width: auto !important; min-width: 0 !important; max-width: none !important; }
+    #toast-container .toast { width: 100% !important; border-radius: 6px; }
+  }
+  /* a window narrower than the page (the roster would sit past the right edge): the roster sits along the bottom, left to right, so it is always in reach and never covers the order number */
+  @media (max-width: 1100px) {
+    #weldRoster { position: fixed; top: auto; bottom: 12px; left: 8px; right: 8px; width: auto; justify-content: flex-start; gap: 8px 12px;
+      padding: 8px 10px; background: #fff; border: 1px solid #e3e8ea; border-radius: 12px; box-shadow: 0 2px 10px rgba(0,0,0,.08); }
+    #weldRoster .weld-group { padding-left: 0; border-left: 0; flex-wrap: wrap; }
+  }
+  @media (max-width: 700px) {
+    #weldTaskStep .weld-task-btns { flex-direction: column; }
+    #weldTaskStep .weld-task-btn { min-height: 72px; }
+  }
+  @media (prefers-reduced-motion: reduce) { #weldRoster *, #weldTaskStep * { transition: none !important; } }
+  </style>
+
   <style id="ccGridNoOverlapFix">
   /* Grid columns shrink correctly and inputs stay inside their cells */
   .cc-grid     { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr) !important; gap: 12px !important; }
@@ -980,28 +1050,82 @@
     <div id="loginModalFooter" class="modal-footer">
       <button id="employeeLoginBtn" class="btn">Log In</button>
     </div>
+    <!-- Add person: nobody is signed out by it, so there is a way back -->
+    <button type="button" id="weldLoginCancel" class="weld-link">Cancel</button>
+    <!-- Second step, after the number is accepted: Welding or Matching? (the name only goes on; the number is already cleared) -->
+    <div id="weldTaskStep" role="group" aria-labelledby="weldTaskTitle">
+      <h5 id="weldTaskTitle">Welding or Matching?</h5>
+      <p id="weldTaskWho" class="weld-task-who"></p>
+      <div class="weld-task-btns">
+        <button type="button" id="weldTaskWelding" class="weld-task-btn" data-task="welding"><b>Welding</b><span>Welding the studs to the charms</span></button>
+        <button type="button" id="weldTaskMatching" class="weld-task-btn" data-task="matching"><b>Matching</b><span>Matching earrings to orders, adding the backings</span></button>
+      </div>
+      <button type="button" id="weldTaskBack" class="weld-link">Back</button>
+    </div>
+  </div>
+
+  <!-- Who is signed in, under which task: one chip each, grouped Welding | Matching. A tap on a chip signs that person out of that task. -->
+  <div id="weldRoster" role="group" aria-label="Who is signed in at this station">
+    <div class="weld-group" data-task="welding"><span class="weld-group-label">Welding</span><span class="weld-chips"></span></div>
+    <div class="weld-group" data-task="matching"><span class="weld-group-label">Matching</span><span class="weld-chips"></span></div>
+    <button type="button" id="weldAddPerson" class="weld-add">+ Add person</button>
   </div>
 
   <!-- Sign-in time per person and computer, and the midnight sign-out (station-session.js). The PIN is never kept or sent:
        the session carries the name only. At midnight (New York) the PIN box comes back; the order, the fields and the chat
        stay on screen. -->
-  <script src="station-session.js?v=20261005-et2"></script>
+  <script src="station-session.js?v=20261006-ws1"></script>
   <script src="station-activity.js?v=20261006-ws3"></script>
   <!-- Phone scans that arrive while nobody is signed in wait here and load, in order, right after the next sign-in (station-scan-queue.js). -->
   <script src="station-scan-queue.js?v=20261006-ws3"></script>
   <script>
+    /* Who is signed in here: several people at once (Paul, 6 Oct 2026: one welds while another matches, same page), each under
+       a task, "welding" or "matching". The page keeps them in localStorage.weld_people = [{ name, task, at }] (names and tasks
+       only: the number a person typed is never kept, and this page no longer writes employee_id / employee_name, which the other
+       station pages on this computer share). StationSession (multi mode) keeps one session per person and task. */
+    const WELD_KEY = "weld_people", WELD_TASKS = { welding: "Welding", matching: "Matching" };
+    const weldNameKey = n => String(n || "").toLowerCase();
+    function weldRoster() {            // [{ name, task, at }], tidy, no duplicates, oldest sign-in first
+      const out = [], seen = new Set();
+      try {
+        const raw = JSON.parse(localStorage.getItem(WELD_KEY) || "[]");
+        for (const p of Array.isArray(raw) ? raw : []) {
+          const name = String((p && p.name) || "").replace(/\s+/g, " ").trim().slice(0, 80), task = p && WELD_TASKS[p.task] ? p.task : "";
+          const k = weldNameKey(name) + "|" + task;
+          if (!name || /^\d+$/.test(name) || !task || seen.has(k)) continue;
+          seen.add(k); out.push({ name, task, at: Number(p.at) || 0 });
+        }
+      } catch (_) {}
+      return out;
+    }
+    function weldSave(list) { try { localStorage.setItem(WELD_KEY, JSON.stringify(list)); } catch (_) {} }
+    /* the person a task's work is credited to: StationSession says (the one with the latest input if two), else the latest sign-in */
+    function weldPerson(task) {
+      try { const w = window.StationSession && StationSession.who(task); if (w && w.person) return w.person; } catch (_) {}
+      let best = null;
+      for (const p of weldRoster()) if (p.task === task && (!best || p.at >= best.at)) best = p;
+      return best ? best.name : "";
+    }
+    /* who the chat's messages are sent as (the hidden name field): the Matching person, else the Welding person */
+    const weldChatName = () => weldPerson("matching") || weldPerson("welding");
+    /* the seals this page stamps on the order timeline ("welded"): the Welding person; with nobody in Welding, the person who is here (Matching) */
+    const weldSealPerson = () => weldPerson("welding") || weldPerson("matching");
+    /* a login left from before this release (employee_name + employee_id, no roster yet) is restored once as ONE person under Matching,
+       so nothing is lost across the release; they tap their chip and sign in again as Welding if that is their task */
+    (function weldMigrate() {
+      try {
+        if (localStorage.getItem(WELD_KEY) !== null) return;
+        const nm = String(localStorage.getItem("employee_name") || "").replace(/\s+/g, " ").trim().slice(0, 80);
+        if (localStorage.getItem("employee_id") && nm && !/^\d+$/.test(nm)) weldSave([{ name: nm, task: "matching", at: Date.now() }]);
+      } catch (_) {}
+    })();
     try {
       StationSession.init({
-        station: "welding", device: "weld-1",
-        person: () => { try { const n = localStorage.getItem("employee_name"); return localStorage.getItem("employee_id") && n ? { name: n, id: null } : null; } catch (_) { return null; } },
-        signOut: () => {
-          try { localStorage.removeItem("employee_id"); localStorage.removeItem("employee_name"); } catch (_) {}
-          if (window.isEmployeeLoggedIn !== true) return;          // still loading: the page shows the PIN box itself
-          window.isEmployeeLoggedIn = false;
-          try { const pin = document.getElementById("employeeNumberInput"); if (pin) { pin.dataset.raw = ""; pin.value = ""; } } catch (_) {}
-          try { const nm = document.getElementById("employeeName"); if (nm) nm.value = ""; } catch (_) {}
-          try { M.Modal.getInstance(document.getElementById("userLoginModal")).open(); } catch (_) {}
-          try { M.toast({ html: "Signed out at midnight. Please sign in with your Employee Number for the new day." }); } catch (_) {}
+        station: "welding", device: "weld-1", multi: true,
+        people: () => weldRoster().map(p => ({ name: p.name, task: p.task })),
+        signOut: (reason, who) => {                              // the day turned (or an idle / closing rule): once per person
+          try { weldSave(weldRoster().filter(p => !(who && weldNameKey(p.name) === weldNameKey(who.name) && p.task === who.task))); } catch (_) {}
+          try { if (window.weldAfterChange) window.weldAfterChange(reason, who, false); } catch (_) {}   // (not yet defined while the page loads: it shows the PIN box itself)
         },
         labelHost: "#userLoginModal", labelCss: "position:absolute;right:10px;bottom:6px;max-width:150px;text-align:right;"
       });
@@ -1037,7 +1161,7 @@
 
   <!-- Order timeline: every scan here is recorded (who, when) and a cancelled order raises the full-screen alert -->
   <script src="order-timeline.js?v=20260929-cx-a"></script>
-  <script src="station-timeline.js?v=20260928-fxS"></script>
+  <script src="station-timeline.js?v=20261006-ws1"></script>
   <script>
     /* Who welds: the person signed in with this station's 6-digit PIN login (Brites_Orders/"Employee Numbers"), by the
        name the login stored. Never the typed "Employee Name" field (a guess) and never an earlier person: the timeline
@@ -1045,7 +1169,7 @@
        The login's only id is the PIN itself, so no employee id is recorded. */
     function weldSignedIn() {
       let name = "";
-      try { if (localStorage.getItem("employee_id")) name = String(localStorage.getItem("employee_name") || "").trim().slice(0, 80); } catch (_) {}
+      try { name = weldSealPerson().slice(0, 80); } catch (_) {}   // two people can be here: the seal names the Welding person (with nobody in Welding, the Matching person who is here)
       try { if (window.OrderTimeline) OrderTimeline.config({ by: name }); } catch (_) {}
       return name;
     }
@@ -1123,7 +1247,7 @@
       try {
         if (!window.StationActivity) return;
         let who = "";
-        try { if (localStorage.getItem("employee_id")) who = String(localStorage.getItem("employee_name") || "").trim(); } catch (_) {}
+        try { if (weldRoster().length) who = weldChatName(); } catch (_) {}      // (somebody is signed in; StationActivity.log credits it by StationSession.who(): the Matching person)
         if (who) StationActivity.log(action, o);
       } catch (_) {}
     }
@@ -1165,7 +1289,10 @@
       try {
         const id = weldId(orderNumber), p = weldPieces(orderData);
         if (!id) return weldAct("error", { detail: "typed text is not an order number" });   // no digits: nothing to weld, and the timeline has no order to seal
-        weldAct("scan", { orderId: id, parts: p.parts, detail: (how === "scan" ? "phone scan" : String(how || "typed")) + (weldCounted.has(id) ? " · again" : "") });
+        /* a scan from the phone scanner app is recorded by the scan queue as ONE `matched` event (credited by StationSession.who(): the
+           Matching person, or nobody); this page does not also log its own plain `scan` for it, and never a `matched` itself. A number
+           typed or pasted at the desk is still a plain `scan`. */
+        if (how !== "scan") weldAct("scan", { orderId: id, parts: p.parts, detail: String(how || "typed") + (weldCounted.has(id) ? " · again" : "") });
         weldLive(id, orderData, "");
       } catch (_) {}
     }
@@ -1187,7 +1314,7 @@
       } catch (_) {}
     }
     try {
-      StationTimeline.init({ station: "welding", device: "weld-1", getEmployee: weldSignedIn });
+      StationTimeline.init({ station: "welding", device: "weld-1", getEmployee: weldSignedIn, exact: true });
     } catch (_) {}
   </script>
 
@@ -2494,27 +2621,6 @@ function metalToBadge(label){
         const userLoginModalElem = document.getElementById("userLoginModal");
         const userLoginModal = M.Modal.init(userLoginModalElem, { dismissible: false });
 
-        // --- employee auto-restore + OAuth guard ---------------------------
-        const oauthFlag  = localStorage.getItem("oauth_in_progress");
-        const savedEmpID = localStorage.getItem("employee_id");
-        const savedEmpNm = localStorage.getItem("employee_name");
-
-        /* A. employee already verified — stay logged-in */
-        if (savedEmpID) {
-          window.isEmployeeLoggedIn = true;
-          document.getElementById("employeeName").value = savedEmpNm || "";
-          startScannedOrderListener();
-
-          // if we’re just back from OAuth, clear flag for NEXT real reload
-          if (oauthFlag) setTimeout(() => localStorage.removeItem("oauth_in_progress"), 1000);
-        }
-        /* B. nobody stored → show login (unless mid-OAuth) */
-        else if (!oauthFlag) {
-          userLoginModal.open();
-        }
-        /* the phone-scan relay listens from page load, signed in or not (attached once): a scan that arrives before a sign-in waits for it */
-        startScannedOrderListener();
-
       // "Log In" button for employees
       var employeeLoginBtn = document.getElementById("employeeLoginBtn");
       var employeeNumberInput = document.getElementById("employeeNumberInput");
@@ -2535,6 +2641,145 @@ function metalToBadge(label){
            inp.value = "*".repeat(inp.dataset.raw.length);  /* render stars */
          });
        })();
+
+      /* ── Who is signed in: the roster chips, Add person, and the "Welding or Matching?" step ───────────────────────────────
+         The same window as the number box shows the step (no second pop-up). Nobody is ever signed out by somebody else signing
+         in; a chip signs out only that person, only from that task. */
+      const weldModalEl = document.getElementById("userLoginModal");
+      let weldPendingName = "", weldLastOut = 0;
+      const weldModal = () => { try { return M.Modal.getInstance(weldModalEl); } catch (_) { return null; } };
+      function weldToast(html) { try { M.toast({ html }); } catch (_) {} }
+
+      /* where a toast may start on a wide window: just below the roster, with room for the toast's own slide of 35px (CSS var, see weldRosterCss) */
+      function weldToastRoom() {
+        try { const box = document.getElementById("weldRoster"); document.documentElement.style.setProperty("--weld-toast-top", Math.max(112, box && box.offsetHeight ? box.offsetTop + box.offsetHeight + 48 : 0) + "px"); } catch (_) {}
+      }
+      window.addEventListener("resize", weldToastRoom);
+      function weldRenderRoster() {
+        const box = document.getElementById("weldRoster"); if (!box) return;
+        const list = weldRoster();
+        box.classList.toggle("on", list.length > 0);
+        document.body.classList.toggle("weld-multi", new Set(list.map(p => weldNameKey(p.name))).size > 1);   // two or more PEOPLE (one person in both tasks may still use Sign Out: it ends only them)
+        for (const task of Object.keys(WELD_TASKS)) {
+          const chips = box.querySelector('.weld-group[data-task="' + task + '"] .weld-chips'); if (!chips) continue;
+          chips.textContent = "";
+          const mine = list.filter(p => p.task === task);
+          if (!mine.length) { const n = document.createElement("span"); n.className = "weld-none"; n.textContent = "nobody"; chips.appendChild(n); continue; }
+          for (const p of mine) {
+            const b = document.createElement("button");
+            b.type = "button"; b.className = "weld-chip"; b.dataset.name = p.name; b.dataset.task = task;
+            b.setAttribute("aria-label", p.name + ", " + WELD_TASKS[task] + ". Tap to sign out of " + WELD_TASKS[task]);
+            b.title = p.name + ": sign out of " + WELD_TASKS[task];      // (a long name is shortened on the chip; the hover says it whole)
+            const nm = document.createElement("span"); nm.className = "nm"; nm.textContent = p.name;
+            const x = document.createElement("span"); x.className = "x"; x.setAttribute("aria-hidden", "true"); x.textContent = "×";
+            b.appendChild(nm); b.appendChild(x); chips.appendChild(b);
+          }
+        }
+        weldToastRoom();
+      }
+      /* the number box (step 1). addMode: somebody is already signed in, so there is a Cancel and nobody is signed out by this */
+      function weldOpenLogin(addMode) {
+        try {
+          weldPendingName = "";
+          weldModalEl.classList.remove("weld-task");
+          weldModalEl.classList.toggle("weld-add", !!addMode);
+          const t = document.getElementById("loginModalTitle"); if (t) t.textContent = addMode ? "Add person" : "User Log In";
+          try { employeeNumberInput.dataset.raw = ""; employeeNumberInput.value = ""; } catch (_) {}
+          const m = weldModal(); if (m && !m.isOpen) m.open();
+          setTimeout(() => { try { employeeNumberInput.focus(); } catch (_) {} }, 60);
+        } catch (_) {}
+      }
+      function weldCloseLogin() {          // (the step keeps its look while the window fades out; weldOpenLogin resets it on the next open)
+        try { weldPendingName = ""; const m = weldModal(); if (m) m.close(); } catch (_) {}
+      }
+      /* the number was accepted: the same window now asks "Welding or Matching?" */
+      function weldShowTaskStep(name) {
+        try {
+          weldPendingName = name;
+          const who = document.getElementById("weldTaskWho"); if (who) who.textContent = name + ", which task are you on?";
+          weldModalEl.classList.add("weld-task");
+          setTimeout(() => { try { document.getElementById("weldTaskWelding").focus(); } catch (_) {} }, 60);
+        } catch (_) {}
+      }
+      /* adds ONE person under a task (never ends another), and starts their session */
+      function weldSignIn(name, task) {
+        if (!name || !WELD_TASKS[task]) return;
+        const list = weldRoster(), had = list.some(p => weldNameKey(p.name) === weldNameKey(name) && p.task === task);
+        if (!had) { list.push({ name, task, at: Date.now() }); weldSave(list); }
+        try { window.StationSession && StationSession.signedIn({ name, id: null, task }); } catch (_) {}   // the name and task only, never the PIN
+        weldCloseLogin();
+        window.isEmployeeLoggedIn = true;
+        try { document.getElementById("employeeName").value = weldChatName(); } catch (_) {}
+        weldRenderRoster();
+        startScannedOrderListener();                    // (runs the phone scans that were waiting for a sign-in)
+        if (had) weldToast(name + " is already on " + WELD_TASKS[task] + ".");
+      }
+      /* signs ONE person out of ONE task; the others carry on untouched. The last one out brings the number box back. */
+      function weldSignOutOne(name, task, reason) {
+        weldSave(weldRoster().filter(p => !(weldNameKey(p.name) === weldNameKey(name) && p.task === task)));
+        try { window.StationSession && StationSession.signedOut(reason || "signOut", { name, task }); } catch (_) {}
+        weldAfterChange(reason || "signOut", { name, task }, true);
+      }
+      const WELD_OUT = { midnight: "Signed out at midnight. Please sign in with your Employee Number for the new day.",
+        idle: "Signed out after 10 minutes without input. Please sign in again.", closing: "Signed out at 5:00 pm. Please sign in again tomorrow." };
+      /* after anybody left the roster (a tap, midnight, idle, closing): the page follows the roster */
+      function weldAfterChange(reason, who, announce) {
+        try {
+          const list = weldRoster();
+          weldRenderRoster();
+          try { document.getElementById("employeeName").value = weldChatName(); } catch (_) {}
+          if (list.length) {
+            window.isEmployeeLoggedIn = true;
+            if (announce && who) weldToast(who.name + " signed out of " + WELD_TASKS[who.task] + ".");
+            return;
+          }
+          window.isEmployeeLoggedIn = false;
+          if (chatUnsub) chatUnsub();                  // stop Brites listener
+          weldOpenLogin(false);
+          weldToast(WELD_OUT[reason] || (reason === "signOut" ? "Signed out." : "Signed out. Please sign in again."));
+        } catch (_) {}
+      }
+      window.weldAfterChange = weldAfterChange;
+      document.getElementById("weldRoster").addEventListener("click", e => {
+        const chip = e.target.closest && e.target.closest(".weld-chip");
+        if (chip) {                                    // one tap: this person, this task
+          if (Date.now() - weldLastOut < 700) return;  // (a quick double tap must not sign out the chip that moved under the finger)
+          weldLastOut = Date.now(); weldSignOutOne(chip.dataset.name, chip.dataset.task, "signOut"); return;
+        }
+        if (e.target.closest && e.target.closest("#weldAddPerson")) weldOpenLogin(true);
+      });
+      document.getElementById("weldLoginCancel").addEventListener("click", weldCloseLogin);
+      document.getElementById("weldTaskBack").addEventListener("click", () => weldOpenLogin(weldRoster().length > 0));
+      for (const b of document.querySelectorAll("#weldTaskStep .weld-task-btn")) b.addEventListener("click", () => weldSignIn(weldPendingName, b.dataset.task));
+      window.addEventListener("storage", e => {        // another tab of this computer changed who is signed in
+        if (e.key !== WELD_KEY) return;
+        try {
+          const was = window.isEmployeeLoggedIn === true, now = weldRoster().length > 0;
+          if (was && !now) weldAfterChange("signOut", null, false);
+          else { weldRenderRoster(); window.isEmployeeLoggedIn = now; if (now && !was) { weldCloseLogin(); startScannedOrderListener(); } }
+        } catch (_) {}
+      });
+
+      // --- employee auto-restore + OAuth guard ---------------------------
+      const oauthFlag  = localStorage.getItem("oauth_in_progress");
+      const savedRoster = weldRoster();           // who is signed in here (names and tasks, see weldRoster)
+
+      /* A. somebody already verified — stay logged-in (everybody who was signed in stays) */
+      if (savedRoster.length) {
+        window.isEmployeeLoggedIn = true;
+        document.getElementById("employeeName").value = weldChatName();
+        weldRenderRoster();
+        startScannedOrderListener();
+
+        // if we’re just back from OAuth, clear flag for NEXT real reload
+        if (oauthFlag) setTimeout(() => localStorage.removeItem("oauth_in_progress"), 1000);
+      }
+      /* B. nobody stored → show login (unless mid-OAuth) */
+      else if (!oauthFlag) {
+        weldOpenLogin(false);
+      }
+      /* the phone-scan relay listens from page load, signed in or not (attached once): a scan that arrives before a sign-in waits for it */
+      startScannedOrderListener();
 
       if(employeeLoginBtn){
         employeeLoginBtn.addEventListener("click", async function(){
@@ -2591,15 +2836,10 @@ function metalToBadge(label){
             if(nameFound && !/^\d+$/.test(nameFound)){
               M.toast({ html: "Welcome, " + nameFound + "!" });
 
-              /* remember the current employee for future reloads */
-              localStorage.setItem("employee_id",  empNumber);
-              localStorage.setItem("employee_name", nameFound);
-              try { window.StationSession && StationSession.signedIn({ name: nameFound, id: null }); } catch (_) {}   // the name only, never the PIN
-
-              document.getElementById("employeeName").value = nameFound;
-              userLoginModal.close();
-              window.isEmployeeLoggedIn = true;
-              startScannedOrderListener();
+              /* the number is not kept anywhere: it is cleared now, and only the name goes on to the next step, "Welding or Matching?" */
+              try { employeeNumberInput.dataset.raw = ""; employeeNumberInput.value = ""; } catch (_) {}
+              empNumber = "";
+              weldShowTaskStep(nameFound);
             } else {
               /* never the digits typed (the box masks them): say what to do, and clear the box for the next try */
               M.toast({ html: "That Employee Number is not on the list. Check the 6 digits and try again." });
@@ -2695,18 +2935,11 @@ function metalToBadge(label){
       });
 
       /* ===== Sign-Out ===== */
+      /* (The button is hidden now: each person signs out of their own task by tapping their name chip. A click that still reaches it signs everybody out.) */
       document.getElementById("signOutBtn").addEventListener("click", () => {
-        /* clear employee & login state */
-        localStorage.removeItem("employee_id");
-        localStorage.removeItem("employee_name");
+        weldSave([]);
         try { window.StationSession && StationSession.signedOut("signOut"); } catch (_) {}
-        window.isEmployeeLoggedIn = false;
-        if (chatUnsub) chatUnsub();                 // stop Brites listener
-        /* show modal again */
-        M.Modal.getInstance(document.getElementById("userLoginModal")).open();
-        /* optional: blank out name field */
-        document.getElementById("employeeName").value = "";
-        M.toast({ html: "Signed out." });
+        weldAfterChange("signOut", null, false);     // nobody left: stop the Brites listener, blank the name field, show the number box again
       });
 
       /* Save Config → close modal + re-enable live UI clicks        */

@@ -65,8 +65,10 @@
   const doc = root.document, TZ = "America/New_York";
   const options = { pollMs: 5000, debounceMs: 200, pageSize: 25, capThumbs: 3, hoverMs: 260, maxBackoffMs: 60000, freshMs: 2400, orphanMs: 20000, zoom: 1.9, vectorConc: 2, vectorCap: 240, qrCap: 600, awayPx: 48 };
   const KEY_STORE = "cn.eff.key";
-  const NAMES = { shipping: "Shipping", assembly: "Assembly", welding: "Welding", sorting: "Sorting", design: "Design", laser: "Laser", sorter: "Sorter", qr: "QR printer", inbox: "Inbox" };
-  const CORE = ["sorting", "welding", "assembly", "shipping", "design"];
+  const NAMES = { shipping: "Shipping", assembly: "Assembly", welding: "Welding", sorting: "Sorting", design: "Design", laser: "Laser", inbox: "Inbox" };
+  const CORE = ["sorting", "welding", "assembly", "shipping", "design", "laser"];   // (Laser and Design are two stations of their own)
+  /* ONE Sorting station: a stored "sorter" or "qr" key is shown as Sorting (EfficiencyStations.displayStation, the same rule as the server's) */
+  const dispSt = k => { const f = root.EfficiencyStations && root.EfficiencyStations.displayStation; return typeof f === "function" ? f(k) : (k === "sorter" || k === "qr" ? "sorting" : k); };
   const SORTS = [["newest", "Newest"], ["slowest", "Slowest"], ["fastest", "Fastest"]];
   const ACTIVE_MS = 120000, TILES = 24;   // (the server lists at most 12 pieces of an order and says the true count; tiles are drawn for up to 24)
   const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -76,7 +78,7 @@
   const arr = v => (Array.isArray(v) ? v : []);
   const nf = n => Math.round(N(n)).toLocaleString("en-US");
   const still = () => !!(root.matchMedia && root.matchMedia("(prefers-reduced-motion: reduce)").matches);
-  const stName = s => NAMES[s] || (s ? s.charAt(0).toUpperCase() + s.slice(1) : "Station");
+  const stName = s => NAMES[dispSt(s)] || (s ? s.charAt(0).toUpperCase() + s.slice(1) : "Station");
   const aborted = e => !!(e && e.name === "AbortError");
   const el = (tag, cls, html) => { const e = doc.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; };
   const setText = (e, s) => { if (e && e.textContent !== s) e.textContent = s; };
@@ -593,8 +595,8 @@
     }
     function paintChips() {
       if (!showFilters) return;
-      const keys = [...CORE, ...[...M.stations].filter(s => s && !CORE.includes(s))];
-      if (M.station && !keys.includes(M.station)) keys.push(M.station);
+      const keys = [...CORE, ...[...M.stations].map(dispSt).filter((s, i, a) => s && !CORE.includes(s) && a.indexOf(s) === i)];
+      if (M.station && !keys.includes(dispSt(M.station))) keys.push(dispSt(M.station));
       const html = [["", "All stations"], ...keys.map(k => [k, stName(k)])].map(([k, l]) => `<button type="button" class="efoFc" data-st="${esc(k)}" aria-pressed="${M.station === k}">${esc(l)}</button>`).join("");
       setHtml(E.chips, html);
       for (const b of E.seg.querySelectorAll("button")) b.setAttribute("aria-pressed", String(b.dataset.sort === M.sort));
@@ -815,7 +817,7 @@
     /* ── the handle ── */
     function clearAll() { const had = !!(M.from || M.to); M.q = ""; M.station = ""; M.from = ""; M.to = ""; E.input.value = ""; paintChips(); if (had && typeof opts.onRange === "function") { try { opts.onRange(null); } catch (_) {} } return load(); }
     function setQuery(q) { q = S_(q).trim(); E.input.value = q; clearTimeout(M.debounce); M.debounce = 0; if (q === M.q && !M.err && M.loadedOnce) { paintBar(); return Promise.resolve(); } M.q = q; return load(); }
-    function setStation(s) { s = S_(s); if (s === M.station) return Promise.resolve(); M.station = s; paintChips(); return load(); }
+    function setStation(s) { s = dispSt(S_(s)); if (s === M.station) return Promise.resolve(); M.station = s; paintChips(); return load(); }
     function setSort(s) { if (!SORTS.some(x => x[0] === s) || s === M.sort) return Promise.resolve(); M.sort = s; paintChips(); if (M.sortSupport) return load(); order(); paintList(null); paintNote(); return Promise.resolve(); }
     function setRange(r) { const f = r ? S_(r.from) : "", t = r ? S_(r.to) : ""; if (f === M.from && t === M.to) return Promise.resolve(); M.from = f; M.to = t; paintChips(); return load(); }
     function setName(n) { n = S_(n).trim(); if (n === M.name) return Promise.resolve(); M.name = n; M.rows = []; M.byRid = new Map(); M.lo = 0; M.hi = 0; M.loadedOnce = false; return load(); }
