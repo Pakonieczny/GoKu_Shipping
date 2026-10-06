@@ -27,7 +27,7 @@ const hhmm = t => new Intl.DateTimeFormat('en-GB', { timeZone: 'America/Toronto'
 function makeEnv(startIso) {
   const clock = { t: Z(startIso), timers: [], seq: 1 };
   const env = {
-    clock, posts: [], gets: [], asks: [], endBeats: null, sessionStatus: 0, storage: new Map(), admin: {}, door: 'ok',           // door: ok | offline | confused | noOk | 503 | busy | refused
+    clock, posts: [], gets: [], asks: [], endBeats: null, sessionStatus: 0, holdDoor: null, storage: new Map(), admin: {}, door: 'ok',           // door: ok | offline | confused | noOk | 503 | busy | refused
     set(t) { clock.t = t; },
     /** the clock moves and the timers run in order (an open page) */
     advance(ms) {
@@ -104,8 +104,9 @@ function openPage(env, o = {}) {
         if (env.door === '503') return Promise.resolve({ status: 503, ok: false, json: async () => ({ error: 'the list cannot be read' }) });
         if (env.door === 'busy') return Promise.resolve({ status: 429, ok: false, json: async () => ({ ok: false, tooMany: true }) });
         if (env.door === 'refused') return Promise.resolve({ status: 400, ok: false, json: async () => ({ ok: false, error: 'bad name' }) });
-        const name = String(b.stationAdmin).toLowerCase();
-        return Promise.resolve({ status: 200, ok: true, json: async () => ({ ok: true, admin: !!env.admin[name] }) });
+        const name = String(b.stationAdmin).toLowerCase(), answer = () => ({ status: 200, ok: true, json: async () => ({ ok: true, admin: !!env.admin[name] }) });
+        if (env.holdDoor) return new Promise(res => env.holdDoor.push(() => res(answer())));            // a slow door: answered when the test lets it
+        return Promise.resolve(answer());
       }
       env.posts.push(b);
       if (env.sessionStatus) return Promise.resolve({ status: env.sessionStatus, ok: false, json: async () => ({ error: 'down' }) });
@@ -265,18 +266,23 @@ async function admin() {
     env.advance(10 * MIN + 10 * SEC); await settle();
     assert.strictEqual(pg.signOuts.length, 1, door + ': not Admin, signed out at 10 minutes');
     assert.strictEqual(pg.signOuts[0].reason, 'idle');
-    assert(env.adminGets() <= 6, door + ': a few tries a sign-in, not a flood (' + env.adminGets() + ')');
-    if (door === 'false') assert.strictEqual(env.adminGets(), 1, 'a clear answer is asked once');
-    if (door === 'confused' || door === 'noOk' || door === 'refused') assert.strictEqual(env.adminGets(), 1, door + ': a door that does not answer this is not asked again');
+    assert.strictEqual(env.adminGets(), 1, door + ': ONE question a sign-in, whatever the answer (never asked again)');
   }
-  // offline at the sign-in, back before the deadline: the answer arrives on a retry and the Admin stays
+  // R5: asked ONCE per sign-in. The door down at the sign-in is "not Admin" for that sign-in even when it comes back a minute later
+  // (the Admin signs in again); a late answer that does come (a slow door) is believed
   for (const down of ['offline', '503']) {
     env = makeEnv(today); env.admin = { 'paul k': true }; env.door = down;
     pg = openPage(env).init(); pg.signIn('Paul K'); await settle();
-    env.advance(2 * MIN); await settle(); env.door = 'ok'; env.advance(2 * MIN); await settle();
-    env.advance(30 * MIN); await settle();
-    assert.strictEqual(pg.signOuts.length, 0, 'a retry after the door came back (' + down + ') found the Admin');
+    env.advance(2 * MIN); await settle(); env.door = 'ok'; env.advance(30 * MIN); await settle();
+    assert.strictEqual(pg.signOuts.length, 1, 'the door was down at the sign-in (' + down + '): fail closed, signed out at idle'); assert.strictEqual(pg.signOuts[0].reason, 'idle');
+    assert.strictEqual(env.adminGets(), 1, 'asked once, not again when the door came back');
   }
+  env = makeEnv(today); env.admin = { 'paul k': true };
+  const holdAnswer = env.holdDoor = [];                                               // a slow door: the answer comes after 5 minutes, and says Admin
+  pg = openPage(env).init(); pg.signIn('Paul K'); await settle();
+  env.advance(5 * MIN); await settle(); assert.strictEqual(pg.signOuts.length, 0, 'not yet 10 minutes'); assert.strictEqual(holdAnswer.length, 1, 'one question waiting');
+  holdAnswer[0](); await settle(); env.advance(30 * MIN); await settle();
+  assert.strictEqual(pg.signOuts.length, 0, 'a late "Admin" answer is believed: no sign-out'); assert.strictEqual(env.adminGets(), 1);
   // a name is compared as the server compares it: this client sends the cleaned name, never digits (a PIN)
   env = makeEnv(today); env.admin = { 'paul k': true }; pg = openPage(env).init(); pg.signIn('Paul K 482915'); await settle();
   assert(env.asks.length === 1 && env.asks[0].body.stationAdmin === 'Paul K' && !/482915/.test(JSON.stringify(env.asks)), 'no digits of a PIN leave in the question');
@@ -524,13 +530,23 @@ async function gapsAndPayloads() {
   const idleEnd = env.ends()[0];
   assert.strictEqual(idleEnd.reason, 'idle'); assert.strictEqual(idleEnd.at, lastTouch, 'an idle end\'s at is the last input, not the time of the notice');
   assert.strictEqual(idleEnd.lastInputAt, lastTouch); assert(idleEnd.sentAt >= lastTouch + 10 * MIN, 'sentAt is the time it was sent, which is later than the end it records');
-  // a beat the server answers `ended: true` with idle or closing: the page signs the person out the same way; other end reasons are the page's own business
-  for (const [answer, signs] of [['idle', true], ['closing', true], ['midnight', false], ['closed', false]]) {
+  // a beat the server answers `ended: true` with idle, closing or closed while this page has had input a moment ago (the server ended it on what it
+  // knew, e.g. beats that did not arrive): nobody is thrown out of work; that session is over and a new one carries on from now. Another end
+  // reason (midnight, a hand sign-out elsewhere) is left to the page's own rules.
+  for (const [answer, reopens] of [['idle', true], ['closing', true], ['closed', true], ['midnight', false]]) {
     env = makeEnv(today); pg = openPage(env).init(); pg.signIn('Tess Welder'); await settle();
     env.endBeats = { [env.starts()[0].id]: answer };
-    env.advance(2 * MIN); pg.win.fire('keydown'); const L2 = env.clock.t; env.advance(3 * MIN + 5 * SEC); await settle();
-    assert.strictEqual(pg.signOuts.length, signs ? 1 : 0, 'a beat answered ended/' + answer + (signs ? ' signs the person out here' : ' is left to the page\'s own rules'));
-    if (signs) { assert.strictEqual(pg.signOuts[0].reason, answer); assert.strictEqual(env.ends()[0].reason, answer); assert.strictEqual(env.ends()[0].at, L2, 'at the last input'); }
+    env.advance(2 * MIN); pg.win.fire('keydown'); env.advance(3 * MIN + 5 * SEC); await settle();
+    assert.strictEqual(pg.signOuts.length, 0, 'a beat answered ended/' + answer + ' does not sign out a person who has been working');
+    assert.strictEqual(env.starts().length, reopens ? 2 : 1, 'a beat answered ended/' + answer + (reopens ? ': a new session carries on' : ': nothing new starts'));
+    if (reopens) assert.strictEqual(env.ends()[0].reason, 'closed', 'the old session is closed on the record');
+  }
+  // the same answer for a person who really has been away 10 minutes: signed out at the last input (the page's own rule), never later
+  for (const answer of ['idle', 'closing']) {
+    env = makeEnv(today); pg = openPage(env).init(); pg.signIn('Tess Welder'); await settle();
+    env.endBeats = { [env.starts()[0].id]: answer };
+    env.advance(2 * MIN); pg.win.fire('keydown'); const L2 = env.clock.t; env.advance(11 * MIN); await settle();
+    assert.strictEqual(pg.signOuts.length, 1, 'idle for 11 minutes: signed out once'); assert.strictEqual(pg.signOuts[0].reason, 'idle'); assert.strictEqual(env.ends()[0].at, L2, 'at the last input');
   }
   // an end that could not be sent is sent again later with a fresh sentAt (the server undoes the clock with it) and the SAME end time
   env = makeEnv(today); env.sessionStatus = 503; pg = openPage(env).init(); pg.signIn('Tess Welder'); await settle();
@@ -539,7 +555,40 @@ async function gapsAndPayloads() {
   env.advance(2 * MIN); await settle();
   const again = env.ends().filter(x => x.id === firstEnd.id);
   assert(again.length >= 2, 'the end was sent again once the door answered'); assert.strictEqual(again.at(-1).at, firstEnd.at); assert(again.at(-1).sentAt > firstSent, 'with a fresh sentAt');
-  console.log('payloads: start, beats and the end carry lastInputAt and sentAt; the first input after a gap signs out first; an asleep or frozen page ends at the last input; a beat answered ended/idle signs out; midnight unchanged');
+  console.log('payloads: start, beats and the end carry lastInputAt and sentAt; the first input after a gap signs out first; an asleep or frozen page ends at the last input; a beat answered ended/idle for a person who is working opens a new session instead of throwing them out; midnight unchanged');
+}
+
+/* ── 7a · the computer's clock set back, and two tabs of one computer ── */
+async function clockAndTabs() {
+  /** the wall clock is set back; the timers (a monotonic clock) are not affected: they keep their distance from now */
+  const setBack = (env, ms) => { env.clock.t -= ms; for (const x of env.clock.timers) x.at -= ms; };
+  // a clock set 2 hours BACK under a person who has been idle: the input "in the future" must not hold the rule still for 2 hours
+  let env = makeEnv(today), pg = openPage(env).init(); pg.signIn('Tess Welder'); await settle();
+  env.advance(2 * MIN); pg.win.fire('keydown'); setBack(env, 2 * HOUR); const back = env.clock.t;
+  env.advance(9 * MIN); await settle(); assert.strictEqual(pg.signOuts.length, 0, 'not signed out 9 minutes after the clock was set back');
+  env.advance(2 * MIN); await settle(); assert.strictEqual(pg.signOuts.length, 1, 'signed out 10 minutes after the change, not 2 hours');
+  assert.strictEqual(pg.signOuts[0].reason, 'idle'); const e = env.ends()[0];
+  assert(e.at >= back && e.at <= back + 15 * SEC, 'the end is about the moment of the change: ' + (e.at - back) + ' ms after it');
+  assert.strictEqual(env.errors.length, 0, 'no page error');
+  // the same with a person who then types: input after the change counts as usual
+  env = makeEnv(today); pg = openPage(env).init(); pg.signIn('Tess Welder'); await settle();
+  env.advance(2 * MIN); pg.win.fire('keydown'); setBack(env, 2 * HOUR);
+  for (let i = 0; i < 4; i++) { env.advance(5 * MIN); pg.win.fire('keydown'); }
+  assert.strictEqual(pg.signOuts.length, 0, 'a person working after the clock change stays in');
+  env.advance(11 * MIN); await settle(); assert.strictEqual(pg.signOuts.length, 1, 'and is signed out 10 minutes after the last key');
+
+  // two tabs of one computer share one sign-in: typing in either keeps the person in; the end is the last input of either
+  env = makeEnv(today); const a = openPage(env).init(); a.signIn('Tess Welder'); await settle();
+  const b = openPage(env).init(); await settle();
+  env.advance(8 * MIN); b.win.fire('keydown'); const Lb = env.clock.t;
+  env.advance(8 * MIN); await settle();
+  assert.strictEqual(a.signOuts.length + b.signOuts.length, 0, 'the other tab\'s input keeps the person in (16 minutes after sign-in, 8 after the last key)');
+  env.advance(3 * MIN); await settle();
+  assert(a.signOuts.length + b.signOuts.length >= 1, 'signed out once both tabs were quiet for 10 minutes');
+  const ends = env.ends(); assert(ends.length >= 1 && ends[0].reason === 'idle' && ends[0].at === Lb, 'the first end says idle at the last key of either tab: ' + JSON.stringify(ends.map(x => [x.reason, (x.at - Lb) / 1000])));
+  assert(ends.every(x => x.id === ends[0].id), 'a second tab that sees the login gone only repeats the end of the same session (the door keeps the first)');
+  assert.strictEqual(env.starts().length, 1, 'one session for the two tabs');
+  console.log('clock and tabs: a clock set back is not input from the future (out 10 minutes after the change, at the change); typing after it counts; two tabs share one idle clock');
 }
 
 /* ── 7b · two people at one page (the Welding station's multi mode) ── */
@@ -664,7 +713,8 @@ function pages() {
     } else assert(/signOut:\s*\(?\s*reason\b/.test(init.slice(0, 1500)), f + ': signOut: reason => …');
     // and it words idle / closing from StationSession.notice (midnight keeps the page's own wording)
     const region = html.slice(Math.max(0, html.indexOf('StationSession.init(') - 4500), html.indexOf('StationSession.init(') + 2500);
-    assert(/StationSession\s*&&\s*StationSession\.notice|StationSession\.notice\(/.test(region) || (/reason\s*===\s*["']idle["']/.test(region) && /reason\s*===\s*["']closing["']/.test(region) && /Signed out after 10 minutes without input/.test(region)),
+    assert(/StationSession\s*&&\s*StationSession\.notice|StationSession\.notice\(/.test(region) || (/reason\s*===\s*["']idle["']/.test(region) && /reason\s*===\s*["']closing["']/.test(region) && /Signed out after 10 minutes without input/.test(region))
+      || (/\bidle\s*:\s*["']Signed out after 10 minutes without input/.test(html) && /\bclosing\s*:\s*["']Signed out at/.test(html)),        // (a map of the reasons to words, as design-1 keeps)
       f + ': its sign-out notice uses StationSession.notice(reason), or words idle and closing itself');
     assert(!/\bif\s*\(\s*reason\s*===\s*["']midnight["']\s*\)\s*\{?\s*(?:try\s*\{)?\s*(?:ui\.banner|toast|M\.toast)/.test(region), f + ': the notice is not limited to midnight');
   }
@@ -787,8 +837,19 @@ async function browserPages() {
       assert(st.toast.includes(IDLE_TEXT) && !/midnight/i.test(st.toast), file + ': the notice says why: ' + st.toast);
     }
   });
+  /** weld-1 keeps a roster of the people signed in (weld_people), so the sign-out takes the person out of the roster; the number box is back when the roster is empty */
+  const weldPage = () => Object.assign(pinPage('weld-1.html'), {
+    after: async page => {
+      const st = await page.evaluate(() => ({ roster: JSON.parse(localStorage.getItem('weld_people') || '[]').map(p => p.name), in: window.isEmployeeLoggedIn,
+        open: M.Modal.getInstance(document.getElementById('userLoginModal')).isOpen, order: document.getElementById('etsyOrderNumber').value, toast: (window.__toasts || []).join(' | ') }));
+      assert.deepStrictEqual(st.roster, [], 'weld-1.html: the roster is empty'); assert.notStrictEqual(st.in, true);
+      assert.strictEqual(st.open, true, 'weld-1.html: the number box is back'); assert.strictEqual(st.order, '3521000777', 'weld-1.html: the work on screen stays');
+      assert(st.toast.includes(IDLE_TEXT) && !/midnight/i.test(st.toast), 'weld-1.html: the notice says why: ' + st.toast);
+    }
+  });
   try {
-    for (const f of ['weld-1.html', 'assembly-1.html', 'shipping-1.html', 'design-message-1.html']) { await pageIdle(browser, pinPage(f)); console.log('browser: ' + f + ' idle at 10:00 -> PIN box, login cleared, order stays, notice says why, end at the last input'); }
+    await pageIdle(browser, weldPage()); console.log('browser: weld-1.html idle at 10:00 -> out of the roster, number box back, order stays, notice says why, end at the last input');
+    for (const f of ['assembly-1.html', 'shipping-1.html', 'design-message-1.html']) { await pageIdle(browser, pinPage(f)); console.log('browser: ' + f + ' idle at 10:00 -> PIN box, login cleared, order stays, notice says why, end at the last input'); }
     // an Admin (the door says so) stays on the same page
     {
       const rec = { sessions: [], errors: [], gets: [], posts: [] };
@@ -851,7 +912,7 @@ async function browserPages() {
       after: async page => {
         const st = await page.evaluate(() => ({ tok: localStorage.getItem('etsymail_session') || sessionStorage.getItem('etsymail_session'), authed: document.body.classList.contains('authed'),
           banner: document.getElementById('siBanner').classList.contains('show') && document.getElementById('siBannerText').textContent }));
-        assert.deepStrictEqual(st, { tok: null, authed: false, banner: IDLE_TEXT + '. Sign in again to open the inbox.' }, 'inbox after idle');
+        assert(st.tok === null && st.authed === false && typeof st.banner === 'string' && st.banner.startsWith(IDLE_TEXT + '.'), 'inbox after idle (the token goes, the sign-in screen says why): ' + JSON.stringify(st));
       } });
     console.log('browser: etsy-mail-1.html idle at 10:00 -> token gone, sign-in screen with the reason');
     // Sorting: the "Sorting as" name is the sign-in: cleared, the chip asks again, the notice says why
@@ -889,16 +950,18 @@ async function browserPages() {
         await page.goto(`${srv.sorterOrigin}/charm-nest-1.html`, { waitUntil: 'load' });
         await page.waitForFunction(() => window.CN && window.CNEmployee && window.StationSession && window.B && CN.S.cloud.ok === true, null, { timeout: 60000 });
         await page.evaluate(() => { B.employee = 'Tess Welder'; });
-        await page.waitForFunction(() => StationSession.current() && StationSession.current().person === 'Tess Welder');
+        await page.waitForFunction(() => window.CNRole && CNRole.state() === 'ask');                        // (not the Admin: asked Laser or Design once; nobody is signed in until it is answered)
+        await page.evaluate(() => { CNRole.choose('laser'); });
+        await page.waitForFunction(() => StationSession.current() && StationSession.current().person === 'Tess Welder' && StationSession.current().station === 'laser');
         const li = await page.evaluate(() => StationSession.lastInput());
         const shift = ms => page.evaluate(m => { if (!window.__realNow) window.__realNow = Date.now; Date.now = () => window.__realNow() + m; document.dispatchEvent(new Event('visibilitychange')); }, ms);
         await shift(10 * 60000 - 2000); await wait(300);
         assert(!rec.sessions.some(x => x.event === 'end'), 'sorter: not signed out before 10 minutes');
         await shift(10 * 60000 + 30000);
         const end = await until(() => rec.sessions.find(x => x.event === 'end'), 'sorter: the idle end');
-        assert.strictEqual(end.reason, 'idle'); assert(end.at >= li && end.at <= li + 5000, 'sorter: ended at the last input');
-        const st = await page.evaluate(() => ({ name: localStorage.getItem('cn.employee'), b: B.employee, cur: StationSession.current(), toasts: [...document.querySelectorAll('#toasts .m')].map(n => n.textContent).join(' | ') }));
-        assert.strictEqual(st.name, null); assert.strictEqual(st.b, ''); assert.strictEqual(st.cur, null);
+        assert.strictEqual(end.reason, 'idle'); assert(end.at >= li && end.at <= li + 5000, 'sorter: ended at the last input'); assert.strictEqual(end.station, 'laser', 'sorter: the end is under the role');
+        const st = await page.evaluate(() => ({ name: localStorage.getItem('cn.employee'), role: CNRole.role(), b: B.employee, cur: StationSession.current(), toasts: [...document.querySelectorAll('#toasts .m')].map(n => n.textContent).join(' | ') }));
+        assert.strictEqual(st.name, null); assert.strictEqual(st.role, '', 'sorter: the role goes with the name'); assert.strictEqual(st.b, ''); assert.strictEqual(st.cur, null);
         assert(st.toasts.includes(IDLE_TEXT) && /asked again/.test(st.toasts), 'sorter: the notice says why: ' + st.toasts);
         assert.deepStrictEqual(rec.errors, [], 'sorter: no page errors: ' + rec.errors.join('; '));
         await ctx.close();
@@ -910,7 +973,7 @@ async function browserPages() {
 
 (async () => {
   const only = process.argv[2];
-  const parts = { ruleA, admin, ruleB, dst, reload, scansAndFrames, gapsAndPayloads, multi, pages, browserPages };
+  const parts = { ruleA, admin, ruleB, dst, reload, scansAndFrames, gapsAndPayloads, clockAndTabs, multi, pages, browserPages };
   for (const [name, fn] of Object.entries(parts)) { if (only && only !== name) continue; await fn(); }
   console.log('auto-signout: all passed');
 })().catch(e => { console.error(e); process.exit(1); });

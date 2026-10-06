@@ -251,10 +251,34 @@
       the stored one for a record left by an earlier load */
   function inputOf(s) {
     if (!s) return 0;
-    const li = runsHere(s) ? Math.max(lastIn, Number(s.li) || 0) : Number(s.li) || 0;
-    return li > 0 ? Math.min(Date.now(), Math.max(li, Number(s.startAt) || 0)) : 0;
+    const now = Date.now(), li = runsHere(s) ? Math.max(lastIn, Number(s.li) || 0) : Number(s.li) || 0, st = Number(s.startAt) || 0;
+    return li > 0 ? Math.min(now, Math.max(li, st <= now + 5000 ? st : 0)) : 0;        // (a start in the future is a clock set back: not an input)
   }
-  function mark(t) { lastIn = Math.max(lastIn, t); stampAt = Math.max(stampAt, t); }
+  function mark(t) { lastIn = Math.max(lastIn, t); stampAt = Math.max(stampAt, t); shareInput(t); }
+  /* Two tabs of one computer run the same page and share one sign-in record: input in EITHER keeps the person in. The record holds the
+     last input (a time), written at most every 5 seconds, and every rule check reads the other tab's latest first. */
+  let sharedAt = 0;
+  function shareInput(t) {
+    try {
+      if (!ready || t - sharedAt < 5000) return;
+      sharedAt = t;
+      if (cfg.multi) { if (many.size) { for (const s of many.values()) s.li = Math.max(Number(s.li) || 0, lastIn); savedLi = lastIn; saveRecs(); } }
+      else if (cur) { cur.li = Math.max(Number(cur.li) || 0, lastIn); savedLi = cur.li; saveShared(cur); }
+    } catch (_) {}
+  }
+  /** writes the page's record only while it is still this session's (a second tab that already went on to another one keeps it) */
+  function saveShared(s) { const r = loadRec(); if (!r || r.id === s.id) saveRec(s); }
+  function syncShared() {
+    try {
+      const now = Date.now(), fresh = li => li > 0 && li <= now + 5000;        // (a time in the future is a clock that was set back: not input)
+      if (cfg.multi) {
+        for (const r of loadRecs()) { const s = many.get(r.key); const li = Number(r.li) || 0; if (s && s.id === r.id && fresh(li) && li > (Number(s.li) || 0)) s.li = Math.min(li, now); }
+      } else if (cur) {
+        const r = loadRec(), li = Number(r && r.li) || 0;
+        if (r && r.id === cur.id && !r.ended && fresh(li) && li > (Number(cur.li) || 0)) cur.li = Math.min(li, now);
+      }
+    } catch (_) {}
+  }
   /** records input at time t (ms), at most one stamp a second. When the gap since the last input had already reached 10 minutes, the
       sign-out that gap earned happens first (the person was gone), and only then does this input count. */
   function stamp(t, remote) {
@@ -305,8 +329,9 @@
         .catch(() => { clearTimeout(to); return null; });
     } catch (_) { return Promise.resolve(null); }
   }
-  /** Promise → true | false | null. null = not known (offline, no answer): the person is treated as not Admin. */
-  function isAdmin(name) {
+  /** Promise → true | false | null. null = not known (offline, no answer): the person is treated as not Admin. A sign-in asks once
+      (fresh = true); a page that calls it for its own reasons (before a sign-in) may ask again, a little apart. */
+  function isAdmin(name, fresh) {
     const n = cleanName(name); if (!n) return Promise.resolve(null);
     const k = adminKey(n), today = nyDay(), now = Date.now();
     let e = admins.get(k);
@@ -314,7 +339,7 @@
     if (e && typeof e.v === "boolean") return Promise.resolve(e.v);
     if (e && e.p) return e.p;
     if (!e) { e = { v: null, day: today, p: null, tries: 0, at: 0 }; admins.set(k, e); }
-    if (e.tries >= 6 || now - e.at < 40000) return Promise.resolve(null);     // a few tries a sign-in, a little apart
+    if (!fresh && (e.tries >= 6 || now - e.at < 40000)) return Promise.resolve(null);     // (a page asking on its own: a few tries, a little apart)
     e.tries++; e.at = now;
     e.p = adminDoor(n).then(v => { e.p = null; if (typeof v === "boolean") { e.v = v; return v; } if (v === undefined) e.tries = 99; return null; }, () => { e.p = null; return null; });
     return e.p;
@@ -327,9 +352,12 @@
     if (e && e.day === nyDay() && typeof e.v === "boolean") { s.adm = e.v; return e.v; }
     return null;
   }
+  /** ONE question for a sign-in (and one more when a kept sign-in is picked up again by a reload with no answer stored): no answer, or a
+      late one, is "not Admin" until it comes; it is never asked again for that sign-in (R5: fail closed) */
   function askAdmin(s) {
-    if (!s || knownAdmin(s) !== null) return;
-    isAdmin(s.name).then(v => { if (typeof v === "boolean" && !s.ended) { s.adm = v; if (runsHere(s)) persist(s); } }, () => {});
+    if (!s || s.asked || knownAdmin(s) !== null) return;
+    s.asked = true;
+    isAdmin(s.name, true).then(v => { if (typeof v === "boolean" && !s.ended) { s.adm = v; if (runsHere(s)) persist(s); } }, () => {});
   }
 
   /** the sessions this page runs now: one (a single-person page), or one per person and task (a page in multi mode) */
@@ -342,10 +370,20 @@
     if (now - L >= IDLE_MS) return { reason: "idle", at: L };
     return null;
   }
+  /** the computer's clock was set back: an input that is "in the future" would hold the idle clock still until the clock caught up
+      (hours). It is taken as happening now, once, so the person is signed out 10 minutes after the change at the latest. */
+  function rebase(now) {
+    let moved = false;
+    if (lastIn > now + 5000) { lastIn = now; stampAt = Math.min(stampAt, now); savedLi = Math.min(savedLi, now); sharedAt = Math.min(sharedAt, now); moved = true; }
+    for (const s of liveSessions()) if (Number(s.li) > now + 5000) { s.li = now; moved = true; }
+    if (moved) { try { if (cfg.multi) saveRecs(); else if (cur) saveShared(cur); } catch (_) {} }          // (the shared record loses its future time too)
+  }
   /** signs out everybody who is due (not an Admin; a day that turned is the midnight rule's) */
   function checkRules(now) {
     if (!ready) return;
     now = now || Date.now();
+    syncShared();
+    rebase(now);
     const today = nyDay(now);
     for (const s of liveSessions().slice()) {
       if (!s || s.ended || s.day !== today || knownAdmin(s) === true) continue;
@@ -366,7 +404,6 @@
     try {
       if (!ready) return;
       checkRules(Date.now());
-      for (const s of liveSessions()) if (knownAdmin(s) === null) askAdmin(s);        // an answer that has not come yet is asked again, a little apart
     } catch (e) { warn("rulesTick:", e); }
   }
 
@@ -386,7 +423,7 @@
       if (resume && same && r.name === p.name && r.day === today) {
         // (a reload inside the 10 minutes is input and goes on with the session; one after them finds the login lapsed)
         if (lapsedWhileClosed(r, now)) return;
-        if (now - (r.lastBeat || 0) < CLOSED_MS) { cur = r; mark(now); cur.li = lastIn; beat(); askAdmin(cur); return; }
+        if (now - (r.lastBeat || 0) < CLOSED_MS) { cur = r; cur.asked = false; mark(now); cur.li = lastIn; beat(); askAdmin(cur); return; }
       }
       finish(r, r.name === p.name && same ? "signOut" : "switched");
     }
@@ -401,15 +438,24 @@
   function beat(s) {
     s = s || cur;
     if (!s) return;
+    syncShared();
     s.lastBeat = Date.now(); s.li = Math.max(Number(s.li) || 0, lastIn); if (s === cur) savedLi = s.li; persist(s);
     post(body(s, "beat")).then(r => { if (r && r.j && r.j.ended === true) serverEnded(s, r.j.endReason); });
   }
-  /** a beat that was answered `ended: true` with idle or closing: the server (AD2) already ended this session at its last input, so the
-      page signs the person out the same way and does not carry on unrecorded. Any other end reason is left to the page's own rules. */
+  /** a beat that was answered `ended: true` by the server (AD2) with idle, closing or closed: the server ended this session on what it
+      knew (a page whose beats did not arrive, e.g. the network was away). The page knows more. When its own rules agree (the last input
+      is 10 minutes old, or 17:00 passed) the person is signed out the same way. When they do not (the person has been working), that
+      session is over on the server and a new one carries on from now, so the person is never thrown out for a network gap and the
+      time after it is recorded. Any other end reason (midnight, signOut, switched: another tab or page ended it) is left alone. */
   function serverEnded(s, reason) {
     try {
-      if ((reason !== "idle" && reason !== "closing") || !s || s.ended || !runsHere(s)) return;
-      lapse(s, reason, inputOf(s) || undefined);
+      if ((reason !== "idle" && reason !== "closing" && reason !== "closed") || !s || s.ended || !runsHere(s)) return;
+      const now = Date.now(), L = inputOf(s), due = knownAdmin(s) === true || s.day !== nyDay(now) ? null : dueRule(L, now);
+      if (due) { lapse(s, due.reason, due.at); return; }
+      const key = s.key, name = s.name, at = Math.min(now, Math.max(Number(s.startAt) || 0, Number(s.lastBeat) || 0));
+      finish(s, "closed", at);                                // (the server already has its end: this one is only kept for the record and is ignored there)
+      if (key !== undefined) { const p = pagePeople().find(x => x.key === key); if (p && !manyQuiet.has(p.key)) mBegin(p, false); }
+      else { const p = person(); if (p && !p.pending && p.name === name && p.name !== quiet) begin(p, false); }
     } catch (e) { warn("serverEnded:", e); }
   }
   /** ends a session. With an `at` (Rule A or B) it ends at that time, the last input. Otherwise: one that went quiet for 15
@@ -419,7 +465,7 @@
     if (!s || s.ended) return;
     const now = Date.now(), quietFor = now - (s.lastBeat || s.startAt || 0);
     if (runsHere(s)) s.li = Math.max(Number(s.li) || 0, lastIn);
-    if (at != null && Number.isFinite(at)) at = Math.max(Number(s.startAt) || 0, Math.min(now, at));
+    if (at != null && Number.isFinite(at)) { const st = Number(s.startAt) || 0; at = Math.max(st <= now + 5000 ? st : 0, Math.min(now, at)); }       // (a start in the future is a clock set back)
     else {
       at = now;
       if (quietFor >= CLOSED_MS) {
@@ -493,7 +539,7 @@
         if (p && !p.pending && p.name !== quiet) begin(p, false);
       }
       if (cur && Date.now() - (cur.lastBeat || 0) >= BEAT_MS) beat();
-      else if (cur && lastIn > savedLi) { cur.li = savedLi = lastIn; saveRec(cur); }     // the clock a reload goes on from
+      else if (cur && lastIn > savedLi) { cur.li = savedLi = lastIn; saveShared(cur); }     // the clock a reload goes on from
       flush();
       if (labelBox && !labelBox.querySelector("input") && labelBox.dataset.t !== label()) paint(labelBox);
     } catch (e) { warn("tick:", e); }
@@ -538,7 +584,7 @@
       if (resume && old.day === today) {
         // (a reload inside the 10 minutes is input and goes on with the session; one after them finds the login lapsed, not given a new session)
         if (lapsedWhileClosed(old, now)) return null;
-        if (now - (old.lastBeat || 0) < CLOSED_MS) { many.set(p.key, old); snap.delete(p.key); old.li = Math.max(Number(old.li) || 0, lastIn); beat(old); askAdmin(old); return old; }
+        if (now - (old.lastBeat || 0) < CLOSED_MS) { many.set(p.key, old); snap.delete(p.key); old.li = Math.max(Number(old.li) || 0, lastIn); old.asked = false; beat(old); askAdmin(old); return old; }
       }
       many.set(p.key, old); finish(old, "signOut");        // (finish says "closed" or "midnight" when that is what happened)
     }

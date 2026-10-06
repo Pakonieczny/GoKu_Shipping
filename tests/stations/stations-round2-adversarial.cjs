@@ -21,8 +21,8 @@
 'use strict';
 const fs = require('fs'), path = require('path'), assert = require('assert'), Module = require('module');
 const root = path.join(__dirname, '../..');
-let JSDOM;
-for (const d of [process.env.JSDOM_DIR, process.argv[2], path.join(root, 'node_modules')].filter(Boolean)) { try { ({ JSDOM } = require(path.join(d, 'jsdom'))); break; } catch (_) {} }
+let JSDOM, jsdomUtils = null;          // (jsdomUtils: a person's input must be a TRUSTED event, which a script's dispatchEvent never is; AD1's rule)
+for (const d of [process.env.JSDOM_DIR, process.argv[2], path.join(root, 'node_modules')].filter(Boolean)) { try { ({ JSDOM } = require(path.join(d, 'jsdom'))); try { jsdomUtils = require(path.join(d, 'jsdom/lib/jsdom/living/generated/utils.js')); } catch (_) {} break; } catch (_) {} }
 if (!JSDOM) { try { ({ JSDOM } = require('jsdom')); } catch (_) { console.error('jsdom not found: set JSDOM_DIR'); process.exit(2); } }
 const read = f => fs.readFileSync(path.join(root, f), 'utf8');
 const exists = f => fs.existsSync(path.join(root, f));
@@ -320,11 +320,17 @@ function openTab(pc, o = {}) {
     else { tab.storage().setItem('employee_id', 'x-' + name.length); tab.storage().setItem('employee_name', name); w.StationSession.signedIn({ name, id: null }); }
   };
   tab.logout = (name, task) => {
+    tab.input('click');                                                  // (a person who signs out pressed a button: input at the page)
     if (o.multi) { const l = JSON.parse(pc.ls('fx_people') || '[]'); tab.storage().setItem('fx_people', JSON.stringify(l.filter(p => !(p.name === name && (p.task || '') === (task || ''))))); w.StationSession.signedOut('signOut', { name, task: task || '' }); }
     else { tab.storage().removeItem('employee_id'); tab.storage().removeItem('employee_name'); w.StationSession.signedOut('signOut'); }
   };
   tab.who = () => (o.multi ? JSON.parse(pc.ls('fx_people') || '[]') : (pc.ls('employee_id') && pc.ls('employee_name') ? [{ name: pc.ls('employee_name') }] : []));
-  tab.input = (type = 'pointerdown') => { const E = /^key/.test(type) ? w.KeyboardEvent : /^(mouse|click|pointer|wheel)/.test(type) ? w.MouseEvent : w.Event; w.document.body.dispatchEvent(new E(type, { bubbles: true, cancelable: true })); };
+  /** a person's input at the page: the browser's own (trusted) event, as the idle rule needs; `trusted = false` is a script's event */
+  tab.input = (type = 'pointerdown', trusted = true) => {
+    const E = /^key/.test(type) ? w.KeyboardEvent : /^(mouse|click|pointer|wheel)/.test(type) ? w.MouseEvent : w.Event, ev = new E(type, { bubbles: true, cancelable: true });
+    if (trusted && jsdomUtils) { jsdomUtils.implForWrapper(ev).isTrusted = true; jsdomUtils.implForWrapper(w.document.body)._dispatch(jsdomUtils.implForWrapper(ev)); }       // (dispatchEvent() itself makes an event untrusted)
+    else w.document.body.dispatchEvent(ev);
+  };
   tab.hide = () => { tab.hidden = true; w.document.dispatchEvent(new w.Event('visibilitychange')); };
   tab.show = () => { tab.hidden = false; w.document.dispatchEvent(new w.Event('visibilitychange')); w.dispatchEvent(new w.Event('focus')); };
   tab.setOnline = on => { tab.online = on; w.dispatchEvent(new w.Event(on ? 'online' : 'offline')); };
@@ -505,6 +511,8 @@ async function welding() {
   const key = x => x.name + '|' + (x.task || '');
   const docsOf = (p, t) => stationDocs().filter(d => d.person === p.name && (d.task || '') === (t || p.task || ''));
   const peopleOf = tab => Array.from(tab.SS.people()).map(p => key(p)).sort();
+  /** time passes with somebody working at the page (a key every 4 minutes): the 10 minute idle rule (AD1) signs out a page nobody touches */
+  const busy = async (tab, ms) => { for (let t = 0; t < ms; t += 4 * MIN) { await advance(Math.min(4 * MIN, ms - t)); tab.input('keydown'); } };
   await section('2 · two-person welding', async () => {
     await check('every order of signing in and out: each person has a session of their own and nobody else is touched', async () => {
       const plans = [['+A', '+B', '-A', '-B'], ['+A', '+B', '-B', '-A'], ['+A', '-A', '+B', '-B'], ['+B', '+A', '-B', '-A'], ['+A', '+B', '-A', '+A', '-B', '-A'], ['+A', '+B', '+B', '+A', '-A', '-A', '-B', '-B'], ['+B', '-B', '+B', '-B', '+A', '-A']];
@@ -568,7 +576,7 @@ async function welding() {
     });
     await check('a page that crashes with two people signed in: both are closed at their last beat, never later', async () => {
       world(); const pc = computer('bench'); let tab = mk(pc);
-      tab.login(A.name, A.task); tab.login(B.name, B.task); await advance(12 * MIN);
+      tab.login(A.name, A.task); tab.login(B.name, B.task); await busy(tab, 12 * MIN);
       const killed = wall(); tab.kill();
       await advance(40 * MIN);
       tab = mk(pc); await advance(2000);
@@ -589,7 +597,7 @@ async function welding() {
     await check('the board: two people at Welding under two tasks, time on task per task, matched scans counted once, a scan with nobody in Matching never credited, no pieces or orders for Welding', async () => {
       const st = world('2026-10-07T15:00:00Z');                          // 11:00 in New York
       const pc = computer('bench'), tab = mk(pc);
-      tab.login(A.name, 'welding'); await advance(30 * MIN); tab.login(B.name, 'matching'); await advance(10 * MIN);
+      tab.login(A.name, 'welding'); await busy(tab, 30 * MIN); tab.login(B.name, 'matching'); await busy(tab, 10 * MIN);
       const scan = (who, rid, extra) => EV(Object.assign({ station: 'welding', device: 'weld-1', person: who, action: 'matched', task: 'matching', orderId: rid, parts: 0, orders: 0, detail: 'phone scan' }, extra || {}));
       const e1 = scan(B.name, '3521000101'), e2 = scan(B.name, '3521000102'), e3 = scan('', '3521000103', { unattributed: true }), e4 = scan(B.name, '3521000101', { detail: 'phone scan · again' });
       const r = await acts([e1, e2, e3, e4, e1]); eq(r.body.written, 4, 'a replay of one scan is stored once: ' + JSON.stringify(r.body));
@@ -658,7 +666,7 @@ async function welding() {
       a.login('Ben Tester'); await advance(70000);
       eq(open_().map(d => d.person), ['Ben Tester'], dumpSessions()); eq(stationDocs().filter(d => d.person === 'Ana Tester').length, 1, 'one session for Ana'); eq(stationDocs().find(d => d.person === 'Ana Tester').endReason, 'switched');
       eq(stationDocs().filter(d => d.person === 'Ben Tester').length, 1, 'one session for Ben, not one per tab: ' + dumpSessions());
-      a.close(); await advance(20 * MIN); eq(open_().map(d => d.person), ['Ben Tester'], 'the other tab keeps the session going after one tab is closed: ' + dumpSessions()); ok(open_()[0].lastSeenAt > wall() - 6 * MIN, 'and keeps beating it');
+      a.close(); await busy(b, 20 * MIN); eq(open_().map(d => d.person), ['Ben Tester'], 'the other tab keeps the session going after one tab is closed: ' + dumpSessions()); ok(open_()[0].lastSeenAt > wall() - 6 * MIN, 'and keeps beating it');
       eq(a.errors.concat(b.errors), []);
     });
     await check('hostile people: a PIN, a respelled task, an odd task or a name with digits never makes a session of the wrong shape', async () => {
@@ -942,6 +950,7 @@ async function autoPage() {
   const lookups = tab => tab.reqs.filter(r => r.body && r.body.stationAdmin !== undefined);
   const near = (a, b, ms = 1500) => Math.abs(a - b) <= ms;
   const typing = async (tab, every, total, type = 'keydown') => { for (let t = 0; t < total; t += every) { await advance(every); tab.input(type); } };
+  const typeTo = async (tab, t, every = 5 * MIN) => { while (wall() < t) { await advance(Math.min(every, t - wall())); tab.input('keydown'); } };       // working until t (the last key at t)
   const isLookup = rec => rec.body && rec.body.stationAdmin !== undefined;
   await section('1b · auto sign-out, the page side', async () => {
     if (!HAVE.ad1) { pending('Rule A and B in the page, the Admin lookup, sleep, clock jumps, reload, two tabs, background tab, offline', 'AD1 (station-session.js idle/closing timers and the stationAdmin lookup) is not on main yet'); return; }
@@ -1000,10 +1009,10 @@ async function autoPage() {
     await check('closing at 17:00 Toronto (ordinary and both daylight-saving days): quiet since 16:50 is out at 17:00 at the last input; input at 16:55 stays and Rule A takes over; a sign-in at 17:20 stays while typing', async () => {
       for (const day of ['2026-10-07', '2026-03-08', '2026-03-09', '2026-11-01', '2026-11-02']) {
         const m = (h, mi) => nyAt(day, h, mi);
-        world(iso(m(16, 30))); let pc = computer('c'), tab = single(pc); tab.login(NON); await goTo(m(16, 50)); tab.input('keydown'); await goTo(m(17, 3));
+        world(iso(m(16, 30))); let pc = computer('c'), tab = single(pc); tab.login(NON); await typeTo(tab, m(16, 50)); await goTo(m(17, 3));
         eq(tab.signOuts.length, 1, `${day}: signed out by 17:03: ${JSON.stringify(tab.signOuts)}`); ok(/^(closing|idle)$/.test(tab.signOuts[0]), `${day}: reason ${tab.signOuts[0]}`);
         let d = endedAt(NON); eq(d.length, 1, dumpSessions()); ok(near(d[0].endAt, m(16, 50)) && /^(closing|idle)$/.test(d[0].endReason), `${day}: ends at the last input 16:50: ${iso(d[0].endAt)} ${d[0].endReason}`);
-        world(iso(m(16, 30))); pc = computer('c2'); tab = single(pc); tab.login(NON); await goTo(m(16, 55)); tab.input('keydown'); await goTo(m(17, 3)); eq(tab.signOuts, [], `${day}: input at 16:55 stays at 17:03`);
+        world(iso(m(16, 30))); pc = computer('c2'); tab = single(pc); tab.login(NON); await typeTo(tab, m(16, 55)); await goTo(m(17, 3)); eq(tab.signOuts, [], `${day}: input at 16:55 stays at 17:03`);
         await goTo(m(17, 8)); eq(tab.signOuts, ['idle'], `${day}: then idle from 16:55`); d = endedAt(NON); ok(near(d[0].endAt, m(16, 55)), `${day}: ends at 16:55: ${iso(d[0].endAt)}`);
         world(iso(m(17, 20))); pc = computer('c3'); tab = single(pc); tab.login(NON); await typing(tab, 5 * MIN, 30 * MIN); eq(tab.signOuts, [], `${day}: a sign-in after 17:00 stays while typing`);
       }
@@ -1019,12 +1028,13 @@ async function autoPage() {
       }
     });
 
-    await check('the computer\'s clock set 3 hours FORWARD under a typing person signs nobody out; set 2 hours BACK under an idle one still ends at the real last input', async () => {
-      world(); let pc = computer('cf'), tab = single(pc); tab.login(NON); await advance(2 * MIN); tab.input('keydown'); tab.skew += 3 * HOUR; await advance(2 * MIN);
-      eq(tab.signOuts, [], 'a clock set forward is not 3 hours of quiet'); ok(open_().length === 1); tab.input('keydown'); await advance(5 * MIN); eq(tab.signOuts, []);
+    await check('the computer\'s clock set 3 hours FORWARD is the same as 3 hours of quiet (a sleep looks the same; the rule reads Date.now): signed out honestly at the last input, no page error, signing in again works; set 2 hours BACK under an idle one it ends about the real last input', async () => {
+      world(); let pc = computer('cf'), tab = single(pc); tab.login(NON); await advance(2 * MIN); tab.input('keydown'); const lastCf = wall(); tab.skew += 3 * HOUR; await advance(2 * MIN);
+      eq(tab.signOuts, ['idle'], 'a clock set forward is 3 hours without input'); const dcf = endedAt(NON); eq(dcf.length, 1, dumpSessions()); ok(dcf[0].endAt <= lastCf + 11000 && dcf[0].endAt >= lastCf - 3 * MIN, 'ended at or before the last input, never after the jump: ' + iso(dcf[0].endAt) + ' vs ' + iso(lastCf)); eq(tab.errors, []);        // (the server reads the 3 hours as the page's clock error and moves the end back by it, but never before the session's own start)
+      tab.login(NON); await advance(2 * MIN); eq(tab.signOuts, ['idle'], 'signing in again works on the new clock'); ok(open_().length === 1);
       world(); pc = computer('cb'); tab = single(pc); tab.login(NON); await advance(2 * MIN); tab.input('keydown'); const real = wall(); tab.skew -= 2 * HOUR; await advance(11 * MIN);
       eq(tab.signOuts, ['idle'], 'ended for idleness after 10 quiet minutes of real time'); const d = endedAt(NON); eq(d.length, 1, dumpSessions());
-      ok(near(d[0].endAt, real, 3000), `the end is the real moment of the last input, not 2 hours off: ${iso(d[0].endAt)} vs ${iso(real)}`);
+      ok(near(d[0].endAt, real, 11000), `the end is about the real moment of the last input, not 2 hours off: ${iso(d[0].endAt)} vs ${iso(real)}`);
     });
 
     await check('a page whose own clock is 20 minutes fast or slow: the server end is still the last input in the server\'s time', async () => {
@@ -1034,10 +1044,13 @@ async function autoPage() {
       }
     });
 
-    await check('a page reloaded in the middle of an idle spell keeps the idle clock: 8 quiet minutes, a reload, 3 more: signed out at the ORIGINAL last input', async () => {
-      world(); const pc = computer('r'), tab = single(pc); tab.login(NON); await advance(MIN); tab.input('keydown'); const last = wall(); await advance(8 * MIN); tab.close();
-      const t2 = single(pc); await advance(3 * MIN); eq(t2.signOuts, ['idle'], 'a reload is not input: the idle spell goes on'); const d = endedAt(NON); eq(d.length, 1, dumpSessions()); ok(near(d[0].endAt, last), 'at the original last input: ' + iso(d[0].endAt) + ' vs ' + iso(last));
+    await check('a reload is input (the idle clock goes on from the load): 8 quiet minutes, a reload, 9 more: still in; then signed out 10 minutes after the load; a login left while the page was closed 11 minutes is signed out at load, at its last input', async () => {
+      world(); const pc = computer('r'), tab = single(pc); tab.login(NON); await advance(MIN); tab.input('keydown'); await advance(8 * MIN); tab.close();
+      const t2 = single(pc); const load = wall(); await advance(9 * MIN); eq(t2.signOuts, [], 'a reload is input: the spell starts again from the load'); eq(open_().filter(x => x.person === NON).length, 1, 'one session goes on across the reload');
+      await advance(2 * MIN); eq(t2.signOuts, ['idle']); const d = endedAt(NON); eq(d.length, 1, dumpSessions()); ok(near(d[0].endAt, load, 11000), 'at the load, the last input: ' + iso(d[0].endAt) + ' vs ' + iso(load));
       eq(open_().filter(x => x.person === NON).length, 0, 'nothing left open');
+      world(); const pc2 = computer('r2'), t3 = single(pc2); t3.login(NON); await advance(MIN); t3.input('keydown'); const last3 = wall(); await advance(MIN); t3.close(); await advance(2000); await sleepFor(11 * MIN);
+      const t4 = single(pc2); await advance(3000); eq(t4.signOuts, ['idle'], 'signed out while the page loads'); const d4 = endedAt(NON); eq(d4.length, 1, dumpSessions()); ok(near(d4[0].endAt, last3, 11000), 'at the last input it had stored: ' + iso(d4[0].endAt) + ' vs ' + iso(last3));
     });
 
     await check('two tabs of one person at one station: input in EITHER keeps the person in; quiet in both ends it once, at the last input of either', async () => {
@@ -1063,7 +1076,7 @@ async function autoPage() {
     await check('offline when the idle time comes: the sign-out happens on the page at once, the end is kept and sent on reconnect with the LAST INPUT as its time, once', async () => {
       world(); const pc = computer('o'), tab = single(pc); tab.login(NON); await advance(2 * MIN); tab.input('keydown'); const last = wall(); tab.setOnline(false); await advance(11 * MIN);
       eq(tab.signOuts, ['idle'], 'signed out on the page although offline'); await advance(20 * MIN); tab.setOnline(true); await advance(2 * MIN);
-      const d = endedAt(NON); eq(d.length, 1, dumpSessions()); ok(near(d[0].endAt, last, 3000), 'at the last input: ' + iso(d[0].endAt) + ' vs ' + iso(last)); ok(/^(idle|closed)$/.test(d[0].endReason), d[0].endReason);
+      const d = endedAt(NON); eq(d.length, 1, dumpSessions()); ok(near(d[0].endAt, last, 11000), 'at the last input: ' + iso(d[0].endAt) + ' vs ' + iso(last)); ok(/^(idle|closed)$/.test(d[0].endReason), d[0].endReason);        // (the server undoes a page clock only from 10 s: this harness answers 10 s later)
       await advance(10 * MIN); eq(endedAt(NON).length, 1); eq(tab.signOuts.length, 1);
     });
 
@@ -1082,7 +1095,7 @@ async function autoPage() {
     });
 
     await check('one person at two stations on two computers: each page ends its own session on its own idle time', async () => {
-      world(); const a = single(computer('x1')), w = multi(computer('x2')); a.login(NON); w.login(NON, 'welding'); await advance(2 * MIN); a.input('keydown'); await advance(9 * MIN); w.input('keydown'); await advance(2 * MIN);
+      world(); const a = single(computer('x1')), w = multi(computer('x2')); a.login(NON); w.login(NON, 'welding'); await advance(2 * MIN); a.input('keydown'); w.input('keydown'); await advance(9 * MIN); w.input('keydown'); await advance(2 * MIN);
       eq(a.signOuts, ['idle'], 'the assembly page is out (10 quiet minutes there)'); eq(w.signOuts, [], 'the welding page had input 2 minutes ago');
       const d = stationDocs().filter(x => x.person === NON); eq(d.filter(x => x.endAt).map(x => x.station), ['assembly'], dumpSessions());
     });
@@ -1323,11 +1336,12 @@ async function laserDesign() {
       ok(all.filter(d => d.endAt).every(d => d.endReason === 'switched' && d.station === 'laser'), 'the laser one ended switched: ' + dumpSessions());
     });
 
-    await check('a reload keeps the name and the role and goes on with the SAME session (no second start); after 20 minutes away it is a new session under the same role; the question is not asked again', async () => {
+    await check('a reload keeps the name and the role and goes on with the SAME session (no second start); after 20 minutes away the login has lapsed (10 minutes without input): ended idle at the last input, name and role asked again', async () => {
       world(); const pc = computer('rl'), tab = sorter(pc); tab.name(DANA); await advance(1500); tab.pick('design'); await advance(1500); const id = tab.kind('start')[0].id;
       await advance(7 * MIN); tab.close(); const t2 = sorter(pc); await advance(3000);
       eq(t2.state(), 'role'); eq(t2.role(), 'design'); eq(t2.asked(), 0, 'not asked again'); eq(t2.kind('start').length, 0, 'no second start'); ok(t2.kind('beat').every(b => b.id === id), 'the same session goes on');
-      t2.close(); await advance(20 * MIN); const t3 = sorter(pc); await advance(3000); eq(t3.role(), 'design'); const all = mine(DANA); ok(all.length === 2 && all[0].endAt && all[1].endAt == null && all[1].station === 'design', 'a new session under the same role: ' + dumpSessions());
+      t2.close(); await advance(20 * MIN); const t3 = sorter(pc); await advance(3000); eq(t3.role(), '', 'the role goes with the name'); const all = mine(DANA);
+      ok(all.length === 1 && all[0].endAt && all[0].endReason === 'idle' && all[0].station === 'design', 'ended idle under its role, no new session: ' + dumpSessions()); eq(t3.kind('start').length, 0, 'nothing started for a lapsed login');
     });
 
     await check('the sign-out (midnight, and AD1\'s idle and closing) takes the role with the name: the next sign-in is asked again, an event is never recorded under yesterday\'s role', async () => {
