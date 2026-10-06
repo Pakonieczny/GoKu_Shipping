@@ -59,14 +59,42 @@ function partA() {
   assert.equal(LT.pickSession([ses({ startAt: at + 1000 })], key, at), null, 'a sign-in that starts after the sheet');
   assert.equal(LT.pickSession([ses({ endAt: at - 5 * MIN })], key, at), null, 'a sign-out before the sheet ends the clock');
   assert.equal(LT.pickSession([ses({ endAt: at + 5 * MIN })], key, at).startAt, at - 20 * MIN, 'a sign-out after it does not');
-  assert.equal(LT.pickSession([ses({ lastSeenAt: at - 16 * MIN })], key, at), null, 'a page quiet for 15 minutes was closed at its last beat');
+  // CHANGED 6 Oct (RG2): a Laser page that is merely quiet for 16 minutes still covers the sheet. Paul's Addendum 2 made the Laser station keep a sign-in open until ITS limit (60 minutes
+  // without input, 30 from 17:00; _stationAutoSignout.decide / keptOpen): the board shows that person signed in, so the sheet cut while the page was quiet is timed from the sign-in. It used to
+  // be unknown here (the old 15 quiet minutes, which no longer sign a Laser person out).
+  assert.equal(LT.pickSession([ses({ lastSeenAt: at - 16 * MIN })], key, at).startAt, at - 20 * MIN, 'a page quiet for 16 minutes is still signed in at the Laser station');
   assert.equal(LT.pickSession([ses({ id: 'older-1234', startAt: at - 50 * MIN }), ses({ id: 'newer-1234', startAt: at - 5 * MIN })], key, at).id, 'newer-1234', 'the most recent sign-in wins');
   const doc = (o) => Object.assign({ kind: 'laserSheetDone', personKey: key, sheetId: 'x', at: at - 5 * MIN }, o);
   assert.equal(LT.pickPrevious([doc({ sheetId: 'a', at: at - 9 * MIN }), doc({ sheetId: 'b', at: at - 4 * MIN })], key, at, at - 20 * MIN).sheetId, 'b', 'the latest one');
   assert.equal(LT.pickPrevious([doc({ at: at - 30 * MIN })], key, at, at - 20 * MIN), null, 'one from before the sign-in');
   assert.equal(LT.pickPrevious([doc({ personKey: 'ben r' })], key, at, at - 20 * MIN), null, 'another person');
   assert.equal(LT.pickPrevious([doc({ sheetId: 'a', at: at - 9 * MIN }), { kind: 'laserSheetUndone', sheetId: 'a', was: at - 9 * MIN }], key, at, at - 20 * MIN), null, 'a completion that was taken back is not a previous sheet');
-  ok('which sign-in covers a sheet (name folding, Laser station or role, ended, quiet 15 minutes, latest wins) and which completion is the previous one');
+  ok('which sign-in covers a sheet (name folding, Laser station or role, ended, a quiet page, latest wins) and which completion is the previous one');
+
+  // the Laser station's own limits decide whether an OPEN sign-in still covers the moment (RG2; _stationAutoSignout.decide, the rules the board and the sweep apply to the same rows):
+  // 60 minutes without input before 17:00 Toronto, 30 from 17:00, ended AT THE LAST INPUT; an Admin's row keeps the old 15 minutes; the New York midnight ends everybody
+  const NYT = (h, m = 0, s = 0) => Date.UTC(2026, 9, 6, h + 4, m, s);                  // Tuesday 6 Oct 2026 on the New York / Toronto clock (EDT)
+  const open = o => ses(Object.assign({ id: 'open-0001', startAt: NYT(9, 0), lastSeenAt: NYT(9, 0), lastInputAt: undefined }, o));
+  const covers = (row, t) => !!LT.pickSession([row], key, t);
+  assert(covers(open({ lastSeenAt: NYT(10, 0) }), NYT(10, 16)), 'a page quiet for 16 minutes still covers the sheet (the sheet being cut while nobody touches the page)');
+  assert(covers(open({ lastSeenAt: NYT(10, 0) }), NYT(10, 59, 59)), '59:59 without a beat still covers');
+  assert(!covers(open({ lastSeenAt: NYT(10, 0) }), NYT(11, 0)), '60:00 without a beat is a dead page the rules ended at its last beat: not covered');
+  assert(covers(open({ lastSeenAt: NYT(10, 58), lastInputAt: NYT(10, 0) }), NYT(11, 0)), 'an input 60 minutes old that the page has not reported yet: the server waits for the page\'s own word, so it still covers');
+  assert(!covers(open({ lastSeenAt: NYT(11, 5), lastInputAt: NYT(10, 0) }), NYT(11, 6)), 'a beat that reported 60 minutes without input ended the session AT the last input (10:00, idle): the sheet at 11:06 is not covered');
+  assert(covers(open({ startAt: NYT(15, 0), lastSeenAt: NYT(17, 10), lastInputAt: NYT(17, 5) }), NYT(17, 20)), 'from 17:00 the limit is 30 minutes: input 15 minutes ago still covers');
+  assert(!covers(open({ startAt: NYT(15, 0), lastSeenAt: NYT(17, 20), lastInputAt: NYT(16, 40) }), NYT(17, 21)), 'from 17:00 an input 41 minutes old ended the session at it (closing): not covered');
+  assert(covers(open({ startAt: NYT(15, 0), lastSeenAt: NYT(16, 55), lastInputAt: NYT(16, 40) }), NYT(16, 59)), 'before 17:00 an input 19 minutes old covers');
+  assert(!covers(open({ admin: true, lastSeenAt: NYT(10, 0) }), NYT(10, 16)), 'an Admin\'s row keeps the old rule: 15 quiet minutes closed it at its last beat');
+  assert(covers(open({ station: 'sorter', role: 'laser', lastSeenAt: NYT(10, 0) }), NYT(10, 20)), 'the Sorter app\'s Laser role is judged by the Laser limits, not the default ten minutes');
+  const lateStart = Date.UTC(2026, 9, 7, 3, 0);                                         // 23:00 on Tue 6 Oct, an hour before the New York midnight (04:00Z)
+  assert(!covers(open({ startAt: lateStart, lastSeenAt: Date.UTC(2026, 9, 7, 3, 58) }), Date.UTC(2026, 9, 7, 4, 10)), 'past the New York midnight the sign-in is over, however fresh its beat: a sheet at 00:10 is not timed from 23:00');
+  assert(covers(open({ startAt: Date.UTC(2026, 9, 7, 4, 5), lastSeenAt: Date.UTC(2026, 9, 7, 4, 25) }), Date.UTC(2026, 9, 7, 4, 30)), 'a sign-in made after the midnight covers the new day');
+  // a session the rules ended idle (the end is stored at the LAST INPUT) and a new sign-in made afterwards: the sheet is the new sign-in's
+  const idled = open({ id: 'idled-0001', lastSeenAt: NYT(10, 0), endAt: NYT(10, 0), endReason: 'idle' }), again = open({ id: 'again-0002', startAt: NYT(10, 20), lastSeenAt: NYT(10, 25) });
+  assert(!covers(idled, NYT(10, 30)), 'a session ended idle at its last input does not cover a later sheet');
+  assert.equal(LT.pickSession([idled, again], key, NYT(10, 30)).id, 'again-0002', 'a person signed in again after the idle sign-out: the new sign-in covers it');
+  assert.equal(LT.pickSession([idled], key, NYT(10, 0) + 500).id, 'idled-0001', 'a sheet marked at the very moment of the sign-out still belongs to that sign-in');
+  ok('an open Laser sign-in covers a sheet while the station keeps it open: a quiet page (15+ minutes), 59:59 / 60:00, input not yet reported, 30 minutes from 17:00, ended at the last input, an Admin\'s old rule, the midnight, a new sign-in after an idle one');
 
   // the figure of one press
   const sess = { id: 'sess-a-0001', startAt: at - 20 * MIN }, prev = { at: at - 5 * MIN, sheetId: 'p' };
@@ -227,10 +255,23 @@ async function partB() {
     await adv(1 * MIN); await press('sh-e2', 'Dee', { body: { laserTime: { v: 1, role: '', seconds: null, startedFrom: 'unknown' } } });
     eq(only('sh-e2'), { seconds: null, source: 'none', startedFrom: 'unknown' });
     ok('a Laser page whose start write never reached the server keeps its own sign-in time (flagged unverified); a page with no Laser role has none');
-    // a page that stopped beating more than 15 minutes ago was closed at its last beat: the sheet marked now is not covered by that sign-in
+    // CHANGED 6 Oct (RG2): a Laser page that stopped beating 20 minutes ago is still signed in (Paul's Addendum 2: the Laser station signs out after 60 minutes without input, 30 from 17:00,
+    // never after 15 quiet minutes; the board, the hours and the sweep all still show that person signed in): the sheet cut while nobody touched the page counts from the sign-in. It used
+    // to be unknown (the old "closed after 15 quiet minutes"). Past the Laser limit the dead page is over and the sheet is unknown again.
     await signIn('quin-laser-0006', 'Quin T.', { quiet: true }); mkSheet('sh-q1'); await adv(20 * MIN);
-    await press('sh-q1', 'Quin T.'); eq(only('sh-q1'), { seconds: null, source: 'none', startedFrom: 'unknown' });
-    ok('a Laser page that went quiet for 15 minutes no longer covers a sheet marked later: unknown, not 20 minutes');
+    await press('sh-q1', 'Quin T.'); eq(only('sh-q1'), { seconds: 1200, source: 'server', startedFrom: 'login', session: 'quin-laser-0006', verified: true });
+    ok('a Laser page that went quiet for 20 minutes still covers the sheet marked later: 20 minutes from the sign-in (the station keeps it open)');
+    await signIn('rae-laser-0007', 'Rae V.', { quiet: true }); mkSheet('sh-r1'); mkSheet('sh-r2'); await adv(61 * MIN);
+    await press('sh-r1', 'Rae V.'); eq(only('sh-r1'), { seconds: null, source: 'none', startedFrom: 'unknown' });
+    await adv(1 * MIN); await signIn('rae-laser-0008', 'Rae V.'); await adv(8 * MIN); await beat('rae-laser-0008', 'Rae V.');
+    await press('sh-r2', 'Rae V.'); eq(only('sh-r2'), { seconds: 480, source: 'server', startedFrom: 'login', session: 'rae-laser-0008', prevAt: null });
+    ok('a Laser page silent past its 60 minute limit no longer covers a sheet (unknown, not 61 minutes); signed in again, the clock restarts at the new sign-in');
+    // a session ended idle (by the page, at its last input), a sheet marked with nobody signed in, then a new sign-in: the new one's clock
+    mkSheet('sh-i1'); mkSheet('sh-i2'); await signIn('ida-laser-0009', 'Ida W.'); await adv(10 * MIN); await signOut('ida-laser-0009', 'Ida W.', { reason: 'idle' });
+    await adv(30 * MIN); await press('sh-i1', 'Ida W.'); eq(only('sh-i1'), { seconds: null, source: 'none', startedFrom: 'unknown' });
+    await adv(1 * MIN); await signIn('ida-laser-0010', 'Ida W.'); await adv(6 * MIN); await beat('ida-laser-0010', 'Ida W.');
+    await press('sh-i2', 'Ida W.'); eq(only('sh-i2'), { seconds: 360, startedFrom: 'login', session: 'ida-laser-0010', prevAt: null });
+    ok('a sheet marked after an idle sign-out has no time; signed in again, it counts from the new sign-in and not from before the idle sign-out');
 
     /* undo and marking again: history is kept, an undone completion is not standing */
     const b1Before = j(only('sh-b1'));
@@ -241,7 +282,7 @@ async function partB() {
     await adv(6 * MIN); await beat('ben-laser-0002', 'Ben R.');
     const rb1b = await press('sh-b1', 'Ben R.');
     const b1s = recsOf('sh-b1'); assert.equal(b1s.length, 2, 'marked again = a second record; the first stays');
-    const b1New = b1s.find(d => d.at === rb1b.at); eq(b1New, { prevSheetId: 'sh-b4', startedFrom: 'previousSheet', seconds: (rb1b.at - only('sh-b4').at) / 1000 }); assert.equal(b1New.seconds, 8 * 60 + 60 + 20 * 60 + 6 * 60, 'counted from his last STANDING sheet (b4), not from the sheet he took back');
+    const b1New = b1s.find(d => d.at === rb1b.at); eq(b1New, { prevSheetId: 'sh-b4', startedFrom: 'previousSheet', seconds: (rb1b.at - only('sh-b4').at) / 1000 }); assert.equal(b1New.seconds, (8 + 1 + 20 + 61 + 1 + 8 + 10 + 30 + 1 + 6 + 6) * 60, 'counted from his last STANDING sheet (b4), not from the sheet he took back');
     assert.deepEqual(Object.assign({ _id: `sh-b1__${rb1.at}` }, j(rec('sh-b1', rb1.at))), b1Before, 'and the first record of b1 is exactly as it was');
     ok('undo writes a marker and edits nothing; marking again is a new record whose previous sheet is the last STANDING one');
 
@@ -463,6 +504,9 @@ async function partD(srv) {
     const mountPerson = (name, range) => page.evaluate(([name, range]) => {
       document.getElementById('ls1Host') && document.getElementById('ls1Host').remove();
       const h = document.createElement('div'); h.id = 'ls1Host'; h.style.cssText = 'position:fixed;inset:0;overflow:auto;background:var(--paper,#f6f2ea);z-index:99999;padding:16px;display:block'; document.body.appendChild(h);
+      // (RG2: the person page's ORDER LIST asks through the console shell's own api.call, which here holds no passcode: every poll reached the real door as a WRONG passcode, ten of them in a
+      //  minute are answered 429 to everybody at that address, and the Laser read after them was refused: a failure that depended on how fast the machine ran. It goes to the same fixture as the rest.)
+      try { if (window.Efficiency && Efficiency.api) Efficiency.api.call = (b) => window.__ls1call(b); } catch (_) {}
       window.__p && window.__p.unmount(); window.__p = EfficiencyEmployee.mount(h, { name, range, call: (b) => window.__ls1call(b), onBack: () => {} }); return true;
     }, [name, range]);
     globalThis.__ls1delay = 2500;
@@ -503,11 +547,13 @@ async function partD(srv) {
     await page.click('#ls1Host button[data-range="week"]'); await page.waitForFunction(n => +document.querySelector('#ls1Host .efpLaserS [data-n]').textContent === n, expectWeek.length, { timeout: 15000 });
 
     // a person who never cut a sheet has no section
+    // (RG2: the section starts HIDDEN and shows only when the read says this person has a sheet, so "hidden" is also the state before the answer: the old wait took it for "answered, nothing" and
+    //  read the count before the read had come back. The wait is for the section to SHOW with Eli's two; the person with no sheet waits for the read to have been asked, then a moment.)
     await mountPerson('Eli W.', 'week'); await page.waitForSelector('#ls1Host .efpLaserS', { state: 'attached' });
-    await page.waitForFunction(() => document.querySelector('#ls1Host .efpLaserS [data-n]') && document.querySelector('#ls1Host .efpLaserS [data-n]').textContent !== '' || document.querySelector('#ls1Host .efpLaserS').classList.contains('hidden'), null, { timeout: 15000 });
+    await page.waitForFunction(() => { const s = document.querySelector('#ls1Host .efpLaserS'), n = s && s.querySelector('[data-n]'); return !!n && !s.classList.contains('hidden') && n.textContent === '2'; }, null, { timeout: 15000 });
     // (Eli did cut 2 sheets today: his own, never Ana's)
     U = await ui(); assert.equal(+U.n, 2, 'Eli sees his own two sheets'); assert.equal(U.rows.length, 2);
-    await mountPerson('Cleo Nobody', 'week'); await sleep(900);
+    await mountPerson('Cleo Nobody', 'week'); for (let i = 0; i < 300 && !st.__calls.includes('laserSheets:Cleo Nobody'); i++) await sleep(50); assert(st.__calls.includes('laserSheets:Cleo Nobody'), 'the page asked for Cleo\'s sheets'); await sleep(900);
     assert.equal(await page.$eval('#ls1Host .efpLaserS', s => s.hidden || s.classList.contains('hidden')), true, 'nobody cut a sheet: the section is not shown');
     ok('a person with no laser sheet in the range has no Laser section; another person sees only their own sheets');
 

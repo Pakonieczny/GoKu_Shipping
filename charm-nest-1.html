@@ -6890,6 +6890,9 @@ try {
   if (d && typeof d.get === "function" && typeof d.set === "function")
     Object.defineProperty(window.B, "employee", { configurable: true, enumerable: true, get: d.get,
       set(v) { d.set.call(window.B, v); try { const n = String(d.get.call(window.B) || "").trim(); if (n && !/^\d+$/.test(n)) { if (roleOn()) CNRole.nameSet(n); else StationSession.signedIn({ name: n, id: null }); } else if (!n && roleOn()) CNRole.nameSet(""); } catch (_) {} } });
+  // ONE place asks the server whether a name is the Admin: StationSession's own (once per sign-in, kept for it). The role step needs the answer
+  // before it shows its question and the session asks it again when it starts, so without this a non-Admin's sign-in was two requests to the door.
+  try { if (roleOn() && typeof CNRole.setAdminLookup === "function" && typeof StationSession.isAdmin === "function") CNRole.setAdminLookup(n => StationSession.isAdmin(n, true)); } catch (_) {}
   // a name kept from before (a reload): the Admin answer is had quietly; a person who is not the Admin is asked at their next press
   try { if (roleOn()) CNRole.start(); } catch (_) {}
 } catch (_) {}
