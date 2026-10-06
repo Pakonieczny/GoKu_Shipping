@@ -28,7 +28,7 @@
   const options = { pollMs: 10000, liveMs: 3000, tickMs: 1000, maxBackoffMs: 60000, holdMs: 60000, growMs: 480, timeoutMs: 9000, staleMs: 13000, nudgeMs: 4000, mountRetryMs: 400, mountGiveUpMs: 20000, tabMs: 260 };
   const KEY_STORE = "cn.eff.key", DAYS_STORE = "cn.eff.days", VIEW_STORE = "cn.eff.view";
   const NAMES = { shipping: "Shipping", assembly: "Assembly", welding: "Welding", sorting: "Sorting", design: "Design", laser: "Laser", inbox: "Inbox" };
-  const CORE = ["shipping", "assembly", "welding", "sorting", "design"], EXTRA = ["laser", "inbox"];
+  const CORE = ["shipping", "assembly", "welding", "sorting", "design", "laser"], EXTRA = ["inbox"];   // (Laser and Design are two stations of their own: both always have a row, as on the Stations board; the Sorter app and the QR Printer are Sorting's pages, no row of their own)
   /* ONE Sorting station (Paul, 6 Oct 2026): the stored keys "sorter" (the Sorter app) and "qr" (the QR Printer page) are SHOWN as "sorting". Same rule as displayStation in
      netlify/functions/_activityKinds.js and EfficiencyStations.displayStation; history keeps its old keys, only what is read folds. Laser and Design are stored under their own keys. */
   const DISPLAY_FOLD = { sorter: "sorting", qr: "sorting" };

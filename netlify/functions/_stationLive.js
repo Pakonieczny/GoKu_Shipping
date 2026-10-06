@@ -36,14 +36,15 @@ const UNATTRIBUTED_NOTE = "Scanned with nobody in Matching";     // what the boa
 const LIM = { live: 200, sessions: 300, rollups: 200, matched: 400, matchedShown: 30 };
 
 /* what the console lists, in order: key, label (as StationSession shows it), the pages that make up the station.
-   Sorting is ONE station (Paul, 6 Oct 2026): its pages are the two sorting computers, the Sorter app (nesting) and the QR Printer page. There is no "Sorter" or "QR Printer" station here. */
+   Laser and Design are two stations of their own, tracked independently: a Laser or Design person signs in at the Sorter app (device charm-nest-1, stored under station
+   "laser" or "design" by the app's Laser or Design step), and Design also has its own Design Station pages. Sorting is ONE station (Paul, 6 Oct 2026): its pages are the two sorting computers, the Sorter app (nesting) and the QR Printer page. There is no "Sorter" or "QR Printer" station here. */
 const CATALOG = [
   { key: "sorting", label: "Sorting", devices: [["sorting-1", "Sorting 1"], ["sorting-2", "Sorting 2"], ["charm-nest-1", "Sorter (nesting)"], ["qr-printer", "QR Printer"]] },
   { key: "welding", label: "Welding", devices: [["weld-1", "Welding"]] },
   { key: "assembly", label: "Assembly", devices: [["assembly-1", "Assembly 1"], ["assembly-2", "Assembly 2"], ["assembly-3", "Assembly 3"], ["assembly-4", "Assembly 4"]] },
   { key: "shipping", label: "Shipping", devices: [["shipping-1", "Shipping 1"], ["shipping-2", "Shipping 2"], ["shipping-3", "Shipping 3"]] },
-  { key: "design", label: "Design", devices: [["design", "Design"], ["design-1", "Design 1"], ["design-message", "Design messages"], ["design-message-1", "Design messages 1"]] },
-  { key: "laser", label: "Laser", devices: [] },
+  { key: "design", label: "Design", devices: [["design", "Design"], ["design-1", "Design 1"], ["design-message", "Design messages"], ["design-message-1", "Design messages 1"], ["charm-nest-1", "Sorter app (Design)"]] },
+  { key: "laser", label: "Laser", devices: [["charm-nest-1", "Sorter app (Laser)"]] },
   { key: "inbox", label: "Inbox", devices: [["etsy-mail-1", "Inbox"]] }
 ];
 const LABELS = Object.fromEntries(CATALOG.map(s => [s.key, s.label]));

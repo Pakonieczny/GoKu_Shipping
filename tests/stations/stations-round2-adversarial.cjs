@@ -233,7 +233,7 @@ const sessionDoc = (id, who, station, startAt, endAt, extra) => Object.assign({ 
 const ids = (base, n) => Array.from({ length: n }, (_, i) => String(base + i));
 
 /* ═════════════════════════ pages: jsdom + the real scripts, one storage per computer, the real doors behind a fake network ═════════════════════════ */
-const SCRIPTS = { session: read('station-session.js'), activity: read('station-activity.js'), queue: read('station-scan-queue.js') };
+const SCRIPTS = { session: process.env.ST2_SESSION_JS ? fs.readFileSync(process.env.ST2_SESSION_JS, 'utf8') : read('station-session.js'), activity: read('station-activity.js'), queue: read('station-scan-queue.js') };
 const extraScript = f => (exists(f) ? read(f) : null);
 let pcN = 0;
 /** a clean world at a chosen moment: every page gone, no timers, an empty shop, the wall clock at `start` */
@@ -286,7 +286,8 @@ function openTab(pc, o = {}) {
     if (body && Array.isArray(body.activity)) tab.acts.push(...body.activity);
     if (!tab.online) { rec.status = 'offline'; throw FAIL_FETCH(); }
     const deliver = async () => {
-      if (tab.forceStatus) { rec.status = tab.forceStatus; return { status: tab.forceStatus, ok: false, json: async () => ({}), text: async () => '{}' }; }
+      const forced = tab.forceStatus || (tab.failIf && tab.failIf(rec));          // failIf(rec) -> a status to answer that ONE request with (the Admin lookup, say), or falsy
+      if (forced) { rec.status = forced; return { status: forced, ok: false, json: async () => ({}), text: async () => '{}' }; }
       if (u.pathname === '/.netlify/functions/firebaseOrders') {
         const r = await door.handler({ httpMethod: rec.method, headers: { 'x-nf-client-connection-ip': tab.ip }, queryStringParameters: Object.fromEntries(u.searchParams), body: text || undefined });
         rec.status = r.statusCode; rec.reply = r.body;
@@ -427,6 +428,34 @@ async function hostile() {
       const d = EV({ station: 'assembly', device: 'assembly-1', action: 'scan', unattributed: true, person: 'Ray Welder' }); await acts([d]);
       const x = cur.get('Station_Activity', d.id); ok(x && x.person === 'Ray Welder' && x.unattributed === undefined, 'the unattributed flag at another station is ignored, the named person stays: ' + JSON.stringify(x && [x.person, x.unattributed]));
     });
+    await check('activity door: a scan stored as Unattributed is replaced by the same scan with its person (two computers hear one phone scan), the rollups follow; every other repeat changes nothing', async () => {
+      const R = (day, who) => cur.get('Efficiency_Daily', `${day}__${who}`), W = (day, who) => (R(day, who) && R(day, who).stations.welding) || {};
+      const mk = (o = {}) => EV(Object.assign({ action: 'matched', task: 'matching', orderId: '3521000777' }, o));
+      freshKeep(); const u1 = mk({ unattributed: true, person: '' }); await acts([u1]);
+      eq(W(TODAY, 'Unattributed').matched, 1, 'counted as unattributed first'); eq(R(TODAY, 'Unattributed').events, 1);
+      let r = await acts([Object.assign({}, u1, { unattributed: undefined, person: 'Ray Welder', session: 'welding__weld-1__Ray_Welder__matching__x1' })]); eq(r.status, 200);
+      let d = cur.get('Station_Activity', u1.id); eq(d.person, 'Ray Welder'); ok(d.unattributed === undefined, 'no longer unattributed'); eq(cur.all('Station_Activity').length, 1, 'still one event');
+      eq(W(TODAY, 'Ray Welder').matched, 1, 'Ray is credited'); eq(R(TODAY, 'Ray Welder').events, 1); eq(W(TODAY, 'Unattributed').matched, 0, 'given back by Unattributed'); eq(W(TODAY, 'Unattributed').scans, 0); eq(R(TODAY, 'Unattributed').events, 0);
+      const hr = R(TODAY, 'Unattributed').hours || {}; ok(Object.values(hr).every(h => !h.scans && (!h.by || !h.by.welding || !h.by.welding.scans)), 'no scans left in the hours of Unattributed: ' + JSON.stringify(hr));
+      // a different person's copy of an already credited scan, and an unattributed copy after it: nothing changes
+      const before = JSON.stringify([cur.get('Station_Activity', u1.id), R(TODAY, 'Ray Welder'), R(TODAY, 'Unattributed')]);
+      await acts([Object.assign({}, u1, { unattributed: undefined, person: 'Tess Welder' }), Object.assign({}, u1, { unattributed: true, person: '' })]);
+      eq(JSON.stringify([cur.get('Station_Activity', u1.id), R(TODAY, 'Ray Welder'), R(TODAY, 'Unattributed')]), before, 'a second person or an unattributed copy never changes a credited scan'); ok(!R(TODAY, 'Tess Welder'), 'Tess got nothing');
+      // both copies in ONE request, either order: one event, the person's
+      for (const order of [[0, 1], [1, 0]]) {
+        freshKeep(); const e = mk({ orderId: '3521000778' }), a = Object.assign({}, e, { unattributed: true, person: '' }), b = Object.assign({}, e, { person: 'Ray Welder' }); await acts(order.map(i => [a, b][i]));
+        eq(cur.all('Station_Activity').length, 1, order + ': one event'); eq(cur.all('Station_Activity')[0].person, 'Ray Welder', order + ': the person\'s copy'); eq(W(TODAY, 'Ray Welder').matched, 1); ok(!R(TODAY, 'Unattributed') || !W(TODAY, 'Unattributed').matched, order + ': nothing unattributed');
+      }
+      // only `matched` upgrades: a plain scan with the same id is not touched; and the sandbox keeps its own books
+      freshKeep(); const s1 = mk({ action: 'scan', unattributed: true, person: '', orderId: '3521000779' }); await acts([s1]); await acts([Object.assign({}, s1, { unattributed: undefined, person: 'Ray Welder' })]);
+      eq(cur.get('Station_Activity', s1.id).person, 'Unattributed', 'a plain scan with the same id is a repeat: nothing replaced');
+      freshKeep(); const sb = mk({ unattributed: true, person: '', sandbox: true, orderId: '3521000780' }); await acts([sb], { sandbox: true }); await acts([Object.assign({}, sb, { unattributed: undefined, person: 'Ray Welder' })], { sandbox: true });
+      eq(cur.get('Sandbox_Station_Activity', sb.id).person, 'Ray Welder', 'upgraded in the sandbox'); eq(cur.all('Station_Activity').length, 0, 'nothing in the real store'); eq(cur.all('Efficiency_Daily').length, 0, 'no real rollup');
+      // across midnight: the unattributed copy of 23:59 and the person's copy of 00:00 (two computers, a second apart)
+      world('2026-10-08T03:59:30Z'); const m1 = mk({ unattributed: true, person: '', orderId: '3521000781', at: wall() }); await acts([m1]); tickWall(40000);
+      await acts([Object.assign({}, m1, { unattributed: undefined, person: 'Ray Welder', at: wall() })]);
+      eq(W('2026-10-07', 'Unattributed').matched, 0, 'the old day gave it back'); eq(W('2026-10-08', 'Ray Welder').matched, 1, 'the new day counted it once'); eq(cur.all('Station_Activity').length, 1);
+    });
     await check('live door: odd stations, devices and people are refused or cleaned, a PIN in a name never reaches a document id', async () => {
       freshKeep();
       const L = o => ({ v: 1, event: 'work', station: 'welding', device: 'weld-1', person: 'Tess Welder', order: { kind: 'order', rid: '3521000777', scannedAt: wall() }, ...o });
@@ -451,13 +480,16 @@ async function hostile() {
       const dEnd = sdoc(o.id);
       for (const ev of ['start', 'beat', 'end', 'end', 'start']) { tickWall(5000); const rr = await sess(Object.assign({}, o, { event: ev, reason: 'idle', at: wall() })); eq(rr.body.ended, true, ev + ' after the end'); }
       eq(sdoc(o.id).endAt, dEnd.endAt, 'the end time never moves'); eq(sdoc(o.id).endReason, dEnd.endReason, 'the end reason never changes');
-      // the end arriving BEFORE the start (the start request was slow): the later start must not leave a session that lives forever
-      const q = SESS(); r = await sess({ id: q.id, event: 'end', person: q.person, station: q.station, computerId: q.computerId, reason: 'signOut', at: wall() }); ok(r.status === 200, 'an end with no start: ' + r.status);
-      r = await sess(q); ok(r.status === 200, 'then the late start');
-      const g = sdoc(q.id); ok(g, 'the late start made a document');
-      tickWall(30 * MIN);
-      r = await sess(Object.assign({}, q, { event: 'beat' }));
-      ok(sdoc(q.id).endAt != null, 'a session whose end arrived first is closed by the next beat after 15 quiet minutes (not open forever): ' + JSON.stringify(sdoc(q.id)));
+      // the end arriving BEFORE the start (the start request was slow, or never came): recorded at once as ended; the late start finds it ended and never reopens it
+      const q = SESS(); r = await sess({ id: q.id, event: 'end', person: q.person, station: q.station, computerId: q.computerId, reason: 'signOut', at: wall() }); ok(r.status === 200 && r.body.ended === true, 'an end with no start is recorded: ' + JSON.stringify(r.body));
+      const g0 = sdoc(q.id); ok(g0 && g0.endAt != null && g0.endReason === 'signOut' && g0.minutes === 0, 'recorded as a session that ended: ' + JSON.stringify(g0));
+      r = await sess(q); ok(r.status === 200 && r.body.ended === true, 'the late start finds it ended: ' + JSON.stringify(r.body)); eq(sdoc(q.id).endAt, g0.endAt, 'and does not reopen it');
+      tickWall(30 * MIN); r = await sess(Object.assign({}, q, { event: 'beat' })); eq(r.body.ended, true); eq(sdoc(q.id).endAt, g0.endAt, 'a later beat changes nothing'); eq(open_().filter(d => d._id === q.id).length, 0, 'not open');
+      // an end with no usable name stores nothing (a PIN is not a name), and another computer cannot take over the id afterwards by ending it first... only the first writer owns it, as for a start
+      for (const person of ['', '   ', PIN, '12 34 56']) { const n = SESS({ person }); r = await sess(Object.assign({}, n, { event: 'end', reason: 'signOut' })); eq(r.status, 200); ok(!sdoc(n.id), `an end with the name ${JSON.stringify(person)} stores nothing`); }
+      const t = SESS({ task: 'matching' }); r = await sess(Object.assign({}, t, { event: 'end', reason: 'idle', at: wall() - 5 * MIN })); ok(sdoc(t.id) && sdoc(t.id).task === 'matching' && sdoc(t.id).endReason === 'idle', 'task and reason kept: ' + JSON.stringify(sdoc(t.id)));
+      ok(sdoc(t.id).endAt <= wall() && sdoc(t.id).endAt >= wall() - 6 * MIN, 'the end is the time the page names (not later than now)');
+      const far = SESS(); await sess(Object.assign({}, far, { event: 'end', at: wall() + 5 * HOUR })); ok(sdoc(far.id).endAt <= wall(), 'an end in the future is clamped to now');
     });
   });
 }
@@ -607,6 +639,28 @@ async function welding() {
       eq(p.totals.orders, 1, 'overview person orders'); eq(O.body.business.totals.orders, 1, 'business orders');
       eq(Q.body.total, 1, 'the person\'s order list agrees with the number above it: ' + (Q.body.orders || []).map(o => o.rid));
     });
+    await check('one person signed in at two stations at once (two computers, a missed sign-out): signed time is covered once, each station keeps its own hours, the board counts one person', async () => {
+      const st = world('2026-10-07T19:00:00Z');
+      st.put('Station_Sessions', 'two-1', sessionDoc('two-1', 'Two Places', 'assembly', nyAt(TODAY, 9), nyAt(TODAY, 10), { device: 'assembly-1' }));
+      st.put('Station_Sessions', 'two-2', sessionDoc('two-2', 'Two Places', 'welding', nyAt(TODAY, 9, 30), nyAt(TODAY, 10, 30), { device: 'weld-1', task: 'welding' }));
+      const O = await board({ op: 'overview', days: 1 }); const p = O.body.people.find(x => x.name === 'Two Places'); ok(p, 'the person is in the overview');
+      eq(p.totals.signedInMin, 90, 'the union of 9:00-10:00 and 9:30-10:30 is 90 minutes, not 120: ' + p.totals.signedInMin);
+      const row = k => (p.stations || []).find(x => x.station === k) || {}; const mins = r => r.signedInMin != null ? r.signedInMin : r.hoursMin != null ? r.hoursMin : r.minutes;
+      ok(mins(row('assembly')) === 60 && mins(row('welding')) === 60, 'each station keeps its own hour: ' + JSON.stringify(p.stations));
+      world('2026-10-07T14:00:00Z'); const t = wall();
+      cur.put('Station_Sessions', 'two-3', sessionDoc('two-3', 'Two Places', 'assembly', t - 40 * MIN, null, { device: 'assembly-1', lastSeenAt: t - MIN }));
+      cur.put('Station_Sessions', 'two-4', sessionDoc('two-4', 'Two Places', 'welding', t - 20 * MIN, null, { device: 'weld-1', task: 'matching', lastSeenAt: t - MIN }));
+      const L = await board({ op: 'live' }); eq(L.status, 200); eq(new Set((L.body.signedIn || []).map(x => x.name)).size, 1, 'one person on, at two stations: ' + JSON.stringify((L.body.signedIn || []).map(x => [x.name, x.stationKey])));
+    });
+    await check('two tabs of a single-person page: another person signing in on one tab is followed by the other tab with ONE new session; the first person ends "switched" once; a tab closed leaves the session going', async () => {
+      world(); const pc = computer('bench'), one = () => openTab(pc, { page: 'assembly-1.html', station: 'assembly', device: 'assembly-1' });
+      const a = one(); a.login('Ana Tester'); await advance(1000); const b = one(); await advance(1000);
+      a.login('Ben Tester'); await advance(70000);
+      eq(open_().map(d => d.person), ['Ben Tester'], dumpSessions()); eq(stationDocs().filter(d => d.person === 'Ana Tester').length, 1, 'one session for Ana'); eq(stationDocs().find(d => d.person === 'Ana Tester').endReason, 'switched');
+      eq(stationDocs().filter(d => d.person === 'Ben Tester').length, 1, 'one session for Ben, not one per tab: ' + dumpSessions());
+      a.close(); await advance(20 * MIN); eq(open_().map(d => d.person), ['Ben Tester'], 'the other tab keeps the session going after one tab is closed: ' + dumpSessions()); ok(open_()[0].lastSeenAt > wall() - 6 * MIN, 'and keeps beating it');
+      eq(a.errors.concat(b.errors), []);
+    });
     await check('hostile people: a PIN, a respelled task, an odd task or a name with digits never makes a session of the wrong shape', async () => {
       world(); const pc = computer('bench'), tab = mk(pc);
       for (const who of [{ name: PIN, task: 'matching' }, { name: '   ', task: 'matching' }, { name: '', task: 'welding' }, null, undefined, 5, { task: 'welding' }]) tab.SS.signedIn(who);
@@ -648,7 +702,7 @@ async function welding() {
 /* ═════════════════════════ 1 · auto sign-out: the server side (AD2: _stationAdmins.js, _stationAutoSignout.js, the session door) ═════════════════════════ */
 const HAVE = {
   ad2: !!ADMINS && exists('netlify/functions/_stationAutoSignout.js'),
-  ad1: /["']idle["']/.test(SCRIPTS.session) && /lastInputAt/.test(SCRIPTS.session) && /stationAdmin/.test(SCRIPTS.session),
+  ad1: !!process.env.FORCE_AD1 || /["']idle["']/.test(SCRIPTS.session) && /lastInputAt/.test(SCRIPTS.session) && /stationAdmin/.test(SCRIPTS.session),
   ws1page: /weld_people/.test(read('weld-1.html')),
   ld1: /laser or design/i.test(read('charm-nest-1.html')) || /CNRole/.test(read('charm-nest-1.html')) || /CNRole/.test(read('charm-nest-bridge.js')),
   ws3: /matched/.test(SCRIPTS.queue)
@@ -880,6 +934,188 @@ async function autoServer() {
   });
 }
 
+/* ═════════════════════════ 1b · auto sign-out, the page side (AD1: the idle and 5 pm timers in station-session.js, the Admin lookup) ═════════════════════════ */
+async function autoPage() {
+  const NON = 'Ana Tester', ADM = 'Paul K', BEN = 'Ben Tester';
+  const single = (pc, o) => openTab(pc, Object.assign({ page: 'assembly-1.html', station: 'assembly', device: 'assembly-1' }, o || {}));
+  const multi = (pc, o) => openTab(pc, Object.assign({ multi: true, station: 'welding', device: 'weld-1' }, o || {}));
+  const lookups = tab => tab.reqs.filter(r => r.body && r.body.stationAdmin !== undefined);
+  const near = (a, b, ms = 1500) => Math.abs(a - b) <= ms;
+  const typing = async (tab, every, total, type = 'keydown') => { for (let t = 0; t < total; t += every) { await advance(every); tab.input(type); } };
+  const isLookup = rec => rec.body && rec.body.stationAdmin !== undefined;
+  await section('1b · auto sign-out, the page side', async () => {
+    if (!HAVE.ad1) { pending('Rule A and B in the page, the Admin lookup, sleep, clock jumps, reload, two tabs, background tab, offline', 'AD1 (station-session.js idle/closing timers and the stationAdmin lookup) is not on main yet'); return; }
+
+    await check('Rule A: 10 minutes without input signs a non-Admin out through the page, with the reason idle, once; the end is the LAST INPUT; 9:30 of quiet does not', async () => {
+      world(); const pc = computer('a'), tab = single(pc); tab.login(NON); await advance(2 * MIN); tab.input('keydown'); const last = wall();
+      await advance(9 * MIN + 30000); eq(tab.signOuts, [], 'not at 9:30 of quiet'); ok(open_().length === 1, 'still open');
+      await advance(MIN); eq(tab.signOuts, ['idle'], 'the page signed out with the reason idle');
+      const d = endedAt(NON); eq(d.length, 1, dumpSessions()); eq(d[0].endReason, 'idle'); ok(near(d[0].endAt, last), 'ends at the last input: ' + iso(d[0].endAt) + ' vs ' + iso(last));
+      await advance(30 * MIN); eq(tab.signOuts, ['idle'], 'once'); eq(tab.kind('end').length, 1, 'one end sent'); eq(tab.errors, []);
+    });
+
+    await check('every kind of user input counts (pointer, touch, key, wheel, click); the network coming back and a storage event do not', async () => {
+      for (const type of ['pointerdown', 'mousedown', 'touchstart', 'keydown', 'wheel', 'click']) {
+        world(); const pc = computer('e'), tab = single(pc); tab.login(NON); await advance(9 * MIN); tab.input(type); await advance(9 * MIN); eq(tab.signOuts, [], `${type} counts as input`);
+      }
+      for (const quiet of ['online', 'storage']) {
+        world(); const pc = computer('q'), tab = single(pc); tab.login(NON); await advance(9 * MIN);
+        if (quiet === 'online') tab.w.dispatchEvent(new tab.w.Event('online')); else tab.w.dispatchEvent(new tab.w.StorageEvent('storage', { key: 'other', newValue: 'x' }));
+        await advance(2 * MIN); eq(tab.signOuts, ['idle'], `${quiet} is not input`);
+      }
+    });
+
+    await check('a person who types every 9 minutes for 3 hours is never signed out; every beat carries the last input (page clock, never in its future)', async () => {
+      world(); const pc = computer('t'), tab = single(pc); tab.login(NON); await typing(tab, 9 * MIN, 3 * HOUR);
+      eq(tab.signOuts, []); ok(open_().length === 1, 'open');
+      const beats = tab.kind('beat'); ok(beats.length >= 30, 'beats: ' + beats.length);
+      for (const b of beats) { ok(Number(b.lastInputAt) > 1e12, 'a beat carries lastInputAt: ' + JSON.stringify(b)); ok(b.lastInputAt <= (b.sentAt || b.at) + 1000, 'last input is not in the future of the page clock'); ok((b.sentAt || b.at) - b.lastInputAt <= 10 * MIN, 'a typing person\'s last input is under 10 minutes old at every beat'); }
+    });
+
+    await check('an Admin is never signed out for idleness (3 hours, no input), asked of the door once per sign-in with the name in the body only, nothing stored; midnight still ends the Admin', async () => {
+      world(); const pc = computer('adm'), tab = single(pc); tab.login(ADM); await advance(3 * HOUR);
+      eq(tab.signOuts, [], 'the Admin stays'); ok(open_().length === 1, 'open');
+      const L = lookups(tab); eq(L.length, 1, 'asked once: ' + L.length); ok(!/Paul/.test(L[0].url), 'the name is not in the URL'); eq(L[0].method, 'POST');
+      ok(![...pc.mem.entries()].some(([k, v]) => /"?admin"?\s*[:=]\s*"?true/i.test(k + '=' + v)), 'the answer is not kept in storage: ' + JSON.stringify([...pc.mem.keys()]));
+      const mid = nyAt('2026-10-08', 0, 0); await goTo(mid + 3 * MIN);
+      eq(tab.signOuts, ['midnight'], 'midnight ends everybody, the Admin too'); const d = endedAt(ADM); eq(d.length, 1); eq(d[0].endReason, 'midnight'); eq(d[0].endAt, mid);
+    });
+
+    await check('the Admin lookup that fails in any way means NOT Admin: offline, 500, 403, 404, 429, no answer at all; the person is signed out after 10 quiet minutes', async () => {
+      for (const mode of ['offline', '500', '403', '404', '429', 'never']) {
+        world(); const pc = computer('f'), tab = single(pc);
+        if (mode === 'offline') tab.setOnline(false); else if (mode === 'never') tab.hold = rec => isLookup(rec); else tab.failIf = rec => isLookup(rec) && Number(mode);
+        tab.login(ADM); await advance(2000); if (mode === 'offline') tab.setOnline(true);
+        await advance(11 * MIN); eq(tab.signOuts, ['idle'], `${mode}: signed out for idleness (fail closed)`); eq(tab.errors, [], mode + ': no page errors');
+      }
+    });
+
+    await check('a slow Admin answer: the person is not kept waiting, and a late answer (even "true") never breaks the page or signs anybody out twice', async () => {
+      world(); const pc = computer('slow'), tab = single(pc); tab.hold = rec => isLookup(rec); tab.login(ADM); await advance(6 * MIN);
+      ok(open_().length === 1, 'signed in while the door has not answered'); tab.input('keydown'); await tab.release(); await advance(2 * MIN);
+      ok(tab.signOuts.length <= 1, 'at most one sign-out: ' + JSON.stringify(tab.signOuts)); eq(tab.errors, []);
+      await advance(15 * MIN); ok(tab.signOuts.length <= 1, 'still at most one: ' + JSON.stringify(tab.signOuts)); ok(endedAt(ADM).length <= 1, dumpSessions());
+    });
+
+    await check('closing at 17:00 Toronto (ordinary and both daylight-saving days): quiet since 16:50 is out at 17:00 at the last input; input at 16:55 stays and Rule A takes over; a sign-in at 17:20 stays while typing', async () => {
+      for (const day of ['2026-10-07', '2026-03-08', '2026-03-09', '2026-11-01', '2026-11-02']) {
+        const m = (h, mi) => nyAt(day, h, mi);
+        world(iso(m(16, 30))); let pc = computer('c'), tab = single(pc); tab.login(NON); await goTo(m(16, 50)); tab.input('keydown'); await goTo(m(17, 3));
+        eq(tab.signOuts.length, 1, `${day}: signed out by 17:03: ${JSON.stringify(tab.signOuts)}`); ok(/^(closing|idle)$/.test(tab.signOuts[0]), `${day}: reason ${tab.signOuts[0]}`);
+        let d = endedAt(NON); eq(d.length, 1, dumpSessions()); ok(near(d[0].endAt, m(16, 50)) && /^(closing|idle)$/.test(d[0].endReason), `${day}: ends at the last input 16:50: ${iso(d[0].endAt)} ${d[0].endReason}`);
+        world(iso(m(16, 30))); pc = computer('c2'); tab = single(pc); tab.login(NON); await goTo(m(16, 55)); tab.input('keydown'); await goTo(m(17, 3)); eq(tab.signOuts, [], `${day}: input at 16:55 stays at 17:03`);
+        await goTo(m(17, 8)); eq(tab.signOuts, ['idle'], `${day}: then idle from 16:55`); d = endedAt(NON); ok(near(d[0].endAt, m(16, 55)), `${day}: ends at 16:55: ${iso(d[0].endAt)}`);
+        world(iso(m(17, 20))); pc = computer('c3'); tab = single(pc); tab.login(NON); await typing(tab, 5 * MIN, 30 * MIN); eq(tab.signOuts, [], `${day}: a sign-in after 17:00 stays while typing`);
+      }
+    });
+
+    await check('a computer that sleeps 40 minutes (the clock runs on, timers stand still) or freezes: on wake the person is signed out at the LAST INPUT, never at the wake-up, never still signed in', async () => {
+      for (const how of ['sleep', 'freeze']) {
+        world(); const pc = computer('s'), tab = single(pc); tab.login(NON); await advance(2 * MIN); tab.input('keydown'); const last = wall();
+        if (how === 'sleep') await sleepFor(40 * MIN); else await freeze(40 * MIN);
+        await advance(70000);
+        ok(tab.signOuts.length === 1 && /^(idle|closing)$/.test(tab.signOuts[0]), `${how}: the page signed out for idleness: ${JSON.stringify(tab.signOuts)}`);
+        const d = endedAt(NON); eq(d.length, 1, `${how}: ${dumpSessions()}`); ok(d[0].endAt <= last + 1500, `${how}: ends at the last input, not at the wake-up: ${iso(d[0].endAt)} vs ${iso(last)}`); ok(/^(idle|closing)$/.test(d[0].endReason), `${how}: reason ${d[0].endReason}`);
+      }
+    });
+
+    await check('the computer\'s clock set 3 hours FORWARD under a typing person signs nobody out; set 2 hours BACK under an idle one still ends at the real last input', async () => {
+      world(); let pc = computer('cf'), tab = single(pc); tab.login(NON); await advance(2 * MIN); tab.input('keydown'); tab.skew += 3 * HOUR; await advance(2 * MIN);
+      eq(tab.signOuts, [], 'a clock set forward is not 3 hours of quiet'); ok(open_().length === 1); tab.input('keydown'); await advance(5 * MIN); eq(tab.signOuts, []);
+      world(); pc = computer('cb'); tab = single(pc); tab.login(NON); await advance(2 * MIN); tab.input('keydown'); const real = wall(); tab.skew -= 2 * HOUR; await advance(11 * MIN);
+      eq(tab.signOuts, ['idle'], 'ended for idleness after 10 quiet minutes of real time'); const d = endedAt(NON); eq(d.length, 1, dumpSessions());
+      ok(near(d[0].endAt, real, 3000), `the end is the real moment of the last input, not 2 hours off: ${iso(d[0].endAt)} vs ${iso(real)}`);
+    });
+
+    await check('a page whose own clock is 20 minutes fast or slow: the server end is still the last input in the server\'s time', async () => {
+      for (const skew of [20 * MIN, -20 * MIN]) {
+        world(); const pc = computer('k'), tab = single(pc, { skew }); tab.login(NON); await advance(2 * MIN); tab.input('keydown'); const real = wall(); await advance(12 * MIN);
+        eq(tab.signOuts, ['idle'], `skew ${skew / MIN}: signed out`); const d = endedAt(NON); eq(d.length, 1, dumpSessions()); ok(near(d[0].endAt, real, 4000), `skew ${skew / MIN}: ${iso(d[0].endAt)} vs ${iso(real)}`);
+      }
+    });
+
+    await check('a page reloaded in the middle of an idle spell keeps the idle clock: 8 quiet minutes, a reload, 3 more: signed out at the ORIGINAL last input', async () => {
+      world(); const pc = computer('r'), tab = single(pc); tab.login(NON); await advance(MIN); tab.input('keydown'); const last = wall(); await advance(8 * MIN); tab.close();
+      const t2 = single(pc); await advance(3 * MIN); eq(t2.signOuts, ['idle'], 'a reload is not input: the idle spell goes on'); const d = endedAt(NON); eq(d.length, 1, dumpSessions()); ok(near(d[0].endAt, last), 'at the original last input: ' + iso(d[0].endAt) + ' vs ' + iso(last));
+      eq(open_().filter(x => x.person === NON).length, 0, 'nothing left open');
+    });
+
+    await check('two tabs of one person at one station: input in EITHER keeps the person in; quiet in both ends it once, at the last input of either', async () => {
+      world(); const pc = computer('two'), a = single(pc); a.login(NON); await advance(1000); const b = single(pc);
+      await advance(9 * MIN); b.input('keydown'); const lastB = wall(); await advance(9 * MIN); eq(a.signOuts, [], 'tab A: the person typed in B 9 minutes ago'); eq(b.signOuts, []); ok(open_().length === 1);
+      await advance(2 * MIN); const n = a.signOuts.length + b.signOuts.length; ok(n >= 1 && n <= 2, 'signed out (once per page callback): ' + JSON.stringify([a.signOuts, b.signOuts]));
+      const d = endedAt(NON); eq(d.length, 1, dumpSessions()); ok(near(d[0].endAt, lastB), 'at the last input of either tab: ' + iso(d[0].endAt) + ' vs ' + iso(lastB)); eq(a.kind('end').length + b.kind('end').length >= 1, true);
+      eq(cur.writesOf('Station_Sessions').filter(w => w[2] === 'set' && w[1] === d[0].id).length >= 2, true);
+    });
+
+    await check('input that arrives only as a relayed phone scan (StationSession.touch) keeps the person in', async () => {
+      world(); const pc = computer('sc'), tab = single(pc); tab.login(NON); for (let i = 0; i < 6; i++) { await advance(9 * MIN); tab.SS.touch(); } eq(tab.signOuts, [], 'scans every 9 minutes for an hour: no sign-out'); ok(open_().length === 1);
+      await advance(11 * MIN); eq(tab.signOuts, ['idle'], 'then 11 quiet minutes');
+    });
+
+    await check('a hidden (background) tab: timers run once a minute; it is still signed out within about 11 minutes, at the last input; coming back after a long time signs out at once', async () => {
+      world(); let pc = computer('h1'), tab = single(pc); tab.login(NON); await advance(MIN); tab.input('keydown'); const last = wall(); tab.hide(); await advance(13 * MIN);
+      eq(tab.signOuts, ['idle'], 'signed out although the tab is hidden'); let d = endedAt(NON); eq(d.length, 1, dumpSessions()); ok(near(d[0].endAt, last), 'at the last input: ' + iso(d[0].endAt) + ' vs ' + iso(last));
+      world(); pc = computer('h2'); tab = single(pc, { throttle: false }); tab.login(NON); await advance(MIN); tab.input('keydown'); tab.hide(); await sleepFor(2 * HOUR); tab.show(); await advance(5000);
+      eq(tab.signOuts.length, 1, 'back after two hours: signed out at once: ' + JSON.stringify(tab.signOuts)); d = endedAt(NON); ok(d.length === 1 && d[0].endAt < wall() - HOUR, 'the end is the last input, long ago: ' + dumpSessions());
+    });
+
+    await check('offline when the idle time comes: the sign-out happens on the page at once, the end is kept and sent on reconnect with the LAST INPUT as its time, once', async () => {
+      world(); const pc = computer('o'), tab = single(pc); tab.login(NON); await advance(2 * MIN); tab.input('keydown'); const last = wall(); tab.setOnline(false); await advance(11 * MIN);
+      eq(tab.signOuts, ['idle'], 'signed out on the page although offline'); await advance(20 * MIN); tab.setOnline(true); await advance(2 * MIN);
+      const d = endedAt(NON); eq(d.length, 1, dumpSessions()); ok(near(d[0].endAt, last, 3000), 'at the last input: ' + iso(d[0].endAt) + ' vs ' + iso(last)); ok(/^(idle|closed)$/.test(d[0].endReason), d[0].endReason);
+      await advance(10 * MIN); eq(endedAt(NON).length, 1); eq(tab.signOuts.length, 1);
+    });
+
+    await check('20 minutes with no network while typing is not an idle person: still signed in afterwards (a new session when the old one was closed), never the login screen', async () => {
+      world(); const pc = computer('n'), tab = single(pc); tab.login(NON); await advance(2 * MIN); tab.setOnline(false); await typing(tab, 4 * MIN, 20 * MIN); tab.setOnline(true); await advance(6 * MIN);
+      eq(tab.signOuts, [], 'typed all the time: no sign-out'); ok(open_().filter(d => d.person === NON).length === 1, 'exactly one open session of the person: ' + dumpSessions());
+    });
+
+    await check('two people at the Welding page: input counts for both; quiet for 10 minutes ends the non-Admin ONLY through the page\'s per-person sign-out; the Admin carries on', async () => {
+      world(); const pc = computer('w'), tab = multi(pc); tab.login('Tess Welder', 'welding'); tab.login(ADM, 'matching'); await advance(2 * MIN); tab.input('keydown'); await advance(9 * MIN); tab.input('pointerdown'); await advance(9 * MIN);
+      eq(tab.signOuts, [], 'input counts for both: nobody is out 18 minutes after the first input'); await advance(2 * MIN);
+      eq(tab.signOuts.map(x => x[0] + ':' + x[1].name + ':' + x[1].task), ['idle:Tess Welder:welding'], 'only Tess, with her name and task');
+      eq(open_().map(d => d.person), [ADM], 'the Admin\'s session is the only one open: ' + dumpSessions()); eq(tab.who().map(p => p.name), [ADM]);
+      const t = endedAt('Tess Welder'); eq(t.length, 1); eq(t[0].endReason, 'idle');
+      await advance(3 * HOUR); eq(open_().map(d => d.person), [ADM], 'the Admin is still in after 3 more hours'); eq(tab.signOuts.length, 1);
+    });
+
+    await check('one person at two stations on two computers: each page ends its own session on its own idle time', async () => {
+      world(); const a = single(computer('x1')), w = multi(computer('x2')); a.login(NON); w.login(NON, 'welding'); await advance(2 * MIN); a.input('keydown'); await advance(9 * MIN); w.input('keydown'); await advance(2 * MIN);
+      eq(a.signOuts, ['idle'], 'the assembly page is out (10 quiet minutes there)'); eq(w.signOuts, [], 'the welding page had input 2 minutes ago');
+      const d = stationDocs().filter(x => x.person === NON); eq(d.filter(x => x.endAt).map(x => x.station), ['assembly'], dumpSessions());
+    });
+
+    await check('after an idle sign-out the same person signs in again: a new session, its own idle clock from the new sign-in, the old end stands', async () => {
+      world(); const pc = computer('again'), tab = single(pc); tab.login(NON); await advance(12 * MIN); eq(tab.signOuts, ['idle']); const first = endedAt(NON)[0];
+      await advance(5 * MIN); tab.login(NON); await advance(8 * MIN); eq(tab.signOuts, ['idle'], 'the new sign-in is not out after 8 minutes'); await advance(3 * MIN); eq(tab.signOuts, ['idle', 'idle']);
+      const all = stationDocs().filter(d => d.person === NON); eq(all.length, 2, dumpSessions()); eq(cur.get('Station_Sessions', first.id).endAt, first.endAt, 'the first end stands'); ok(all.every(d => d.endAt && d.endReason === 'idle'));
+    });
+
+    await check('midnight New York beside the new rules: a typing person and an idle one end at midnight/at their last input; the Admin at midnight', async () => {
+      const day = '2026-10-07', m = (h, mi) => nyAt(day, h, mi), mid = nyAt('2026-10-08', 0, 0);
+      world(iso(m(23, 40))); const a = single(computer('m1')), b = single(computer('m2')), c = single(computer('m3'));
+      a.login(NON); b.login(BEN); c.login(ADM); await advance(MIN); b.input('keydown'); const lastB = wall();
+      await typing(a, 5 * MIN, 25 * MIN); await goTo(mid + 3 * MIN);
+      eq(a.signOuts, ['midnight']); eq(c.signOuts, ['midnight']); eq(b.signOuts, ['idle'], 'Ben was idle long before midnight');
+      eq(endedAt(NON)[0].endAt, mid); eq(endedAt(ADM)[0].endAt, mid); ok(near(endedAt(BEN)[0].endAt, lastB), 'Ben ends at his last input: ' + iso(endedAt(BEN)[0].endAt));
+    });
+
+    await check('sandbox and real stay apart: an idle sign-out of a sandbox page ends only the sandbox session', async () => {
+      world(); const real = single(computer('sr')), sb = single(computer('ss'), { sandbox: true }); real.login(NON); sb.login(BEN); await advance(12 * MIN);
+      eq(real.signOuts, ['idle']); eq(sb.signOuts, ['idle']); eq(cur.all('Station_Sessions').filter(d => d.person === BEN).length, 0, 'Ben is not in the real store'); eq(cur.all('Sandbox_Station_Sessions').filter(d => d.person === NON).length, 0, 'Ana is not in the sandbox store');
+      ok(cur.all('Sandbox_Station_Sessions').every(d => d.endReason === 'idle') && cur.all('Station_Sessions').every(d => d.endReason === 'idle'));
+    });
+
+    await check('no PIN, no keystroke, no input content is stored or sent: only times', async () => {
+      world(); const pc = computer('priv'), tab = single(pc); tab.login(NON); for (let i = 0; i < 5; i++) { tab.input('keydown'); await advance(30000); }
+      const sent = JSON.stringify(tab.reqs.map(r => r.body)); ok(!/keydown|pointerdown|key":|"code"/i.test(sent.replace(/lastInputAt/g, '')), 'no event names or keys in what was sent');
+      ok(![...pc.mem.values()].some(v => /keydown|pointerdown/.test(v)), 'nothing about keys in storage');
+    });
+  });
+}
+
 /* ═════════════════════════ 2b · the Welding scanner: who a scan is credited to ═════════════════════════ */
 async function scanner() {
   const T = { A: 'Tess Welder', B: 'Ray Welder', C: 'Ivy Third' };
@@ -960,6 +1196,20 @@ async function scanner() {
       const m = mdocs(); eq(m.length, 2); ok(m.every(d => d.person === T.B), 'credited to the person who scanned (the event was written when the scan arrived): ' + m.map(d => d.person));
       await advance(5 * MIN); eq(mdocs().length, 2, 'sent once');
     });
+    await check('two computers at the Welding station receive the same phone scan: ONE matched event, credited to the Matching person whichever computer reaches the server first', async () => {
+      for (const first of ['welder', 'matcher']) {
+        world(); const w = desk(computer('benchW')), m = desk(computer('benchM'));
+        w.login(T.A, 'welding'); m.login(T.B, 'matching'); await advance(MIN);
+        const slow = first === 'welder' ? m : w; slow.hold = rec => rec.body && Array.isArray(rec.body.activity);
+        const at = wall(); w.scan('3521001101', { at, id: 'twopc1' }); m.scan('3521001101', { at, id: 'twopc1' });
+        await flushAct(); await slow.release(); await advance(2000);
+        const d = mdocs(); eq(d.length, 1, `${first} first: one event: ` + JSON.stringify(d.map(x => [x.person, x.unattributed])));
+        eq(d[0].person, T.B, `${first} first: credited to the Matching person: ${d[0].person}`); ok(!d[0].unattributed, `${first} first: not unattributed`);
+        const r = cur.get('Efficiency_Daily', `${TODAY}__${T.B}`), u = cur.get('Efficiency_Daily', `${TODAY}__Unattributed`);
+        ok(r && r.stations.welding.matched === 1, `${first} first: Ray's rollup counts it: ` + JSON.stringify(r && r.stations.welding)); ok(!u || !u.stations.welding || !u.stations.welding.matched, `${first} first: nothing counted as unattributed: ` + JSON.stringify(u && u.stations));
+        const L = await board({ op: 'live' }), ws = (L.body.stations || []).find(x => x.key === 'welding') || {}; eq(ws.today && ws.today.matched, 1, `${first} first: the board counts one matched scan`); eq(ws.today && ws.today.unattributed, 0, `${first} first: and none unattributed`);
+      }
+    });
     await check('the scan is credited by who was signed in at the SCAN time when the phone sent it late (offline replay)', async () => {
       world(); const pc = computer('bench'), tab = desk(pc);
       tab.login(T.A, 'matching'); await advance(MIN);
@@ -969,6 +1219,153 @@ async function scanner() {
       await flushAct();
       const m = mdocs(); eq(m.length, 1); eq(m[0].person, T.A, 'Tess was in Matching when the earring was scanned; Ray signed in afterwards: ' + m[0].person);
     }, { known: 'D1' });
+  });
+}
+
+/* ═════════════════════════ 3 · Laser or Design in the Sorter app (LD1: charm-nest-role.js, the page's own sign-in glue, the role on sessions and events) ═════════════════════════ */
+/** the Sorter page's own sign-in glue, taken from charm-nest-1.html itself so the test cannot drift from the page */
+function sorterGlue() {
+  const html = read('charm-nest-1.html'), at = html.indexOf('const roleOn = () => !!(window.CNRole');
+  if (at < 0) return null;
+  const from = html.lastIndexOf('<script>', at), to = html.indexOf('</script>', at);
+  return html.slice(from + '<script>'.length, to);
+}
+/** the Sorter app on a computer: the real station-session.js, station-activity.js and charm-nest-role.js, the page's real glue, a stand-in for the name bar */
+function sorter(pc, o = {}) {
+  const tab = openTab(pc, Object.assign({ page: 'charm-nest-1.html', station: 'sorter', device: 'charm-nest-1', scripts: ['session', 'activity', 'charm-nest-role.js'], init: false }, o));
+  const w = tab.w, ls = () => w.localStorage; tab.bars = []; tab.toasts = []; tab.bar = null;
+  w.CNEmployee = { name: () => ls().getItem('cn.employee') || '', roleBar: spec => { tab.bars.push(spec); tab.bar = spec && spec.state !== 'off' ? spec : null; return true; } };
+  w.CN = { toast: t => tab.toasts.push(String(t)) };
+  w.B = {}; Object.defineProperty(w.B, 'employee', { configurable: true, enumerable: true, get: () => ls().getItem('cn.employee') || '', set: v => { v = String(v == null ? '' : v).trim(); if (v) ls().setItem('cn.employee', v); else ls().removeItem('cn.employee'); } });
+  w.eval(sorterGlue());
+  tab.name = n => { w.B.employee = n; };
+  tab.asked = () => tab.bars.filter(b => b.state === 'ask').length;
+  tab.pick = r => { const b = tab.bar; if (!b || b.state !== 'ask') throw new Error('the question is not on screen: ' + JSON.stringify(tab.bars.map(x => x.state))); b.onPick(r); };
+  tab.role = () => w.CNRole.role(); tab.state = () => w.CNRole.state();
+  tab.press = (o2) => w.StationActivity.log('scan', Object.assign({ orderId: '3521000' + (200 + (++evN % 700)) }, o2 || {}));
+  return tab;
+}
+async function laserDesign() {
+  const DANA = 'Dana Laser', BEN = 'Ben Design';
+  const mine = name => stationDocs().filter(d => d.person === name).sort((a, b) => a.startAt - b.startAt);
+  const isLookup = rec => rec.body && rec.body.stationAdmin !== undefined;
+  await section('3 · Laser or Design in the Sorter app', async () => {
+    if (!HAVE.ld1 || !sorterGlue()) { pending('the Laser or Design question', 'LD1 (charm-nest-role.js and the Sorter page glue) is not on main yet'); return; }
+
+    await check('the door keeps a session role only for station laser or design with role equal to the station; every other value is dropped, never an error, never stored raw', async () => {
+      world(); let n = 0;
+      const cases = [['laser', 'laser', 'laser'], ['design', 'design', 'design'], ['laser', 'design', ''], ['design', 'laser', ''], ['sorter', 'laser', ''], ['welding', 'design', ''], ['assembly', 'laser', ''],
+        ['laser', { a: 1 }, ''], ['laser', ['laser'], ''], ['laser', '__proto__', ''], ['laser', 'LASER', ''], ['laser', ' laser', ''], ['laser', 'laser\u0000', ''], ['laser', PIN, ''], ['design', 482915, ''], ['laser', null, ''], ['laser', undefined, '']];
+      for (const [station, role, kept] of cases) {
+        const s = SESS({ station, device: 'charm-nest-1', person: 'Role Tester', computerId: 'pc-ROLE' + String(++n).padStart(8, '0'), role }); const r = await sess(s);
+        eq(r.status, 200, `${station}/${JSON.stringify(role)}: ${JSON.stringify(r.body)}`); const d = sdoc(s.id); eq(d.role === undefined ? '' : d.role, kept, `${station}/${JSON.stringify(role)} stored role`);
+        ok(!JSON.stringify(d).includes(PIN), 'no PIN in the document');
+      }
+    });
+
+    await check('an activity event with a role: kept for laser and design only; one with NO role is simply stored without; a hostile role is dropped, never an error', async () => {
+      world(); const evs = [EV({ station: 'laser', role: 'laser' }), EV({ station: 'design', role: 'design' }), EV({ station: 'sorter' }), EV({ station: 'laser', role: 'admin' }), EV({ station: 'laser', role: { x: 1 } }), EV({ station: 'sorter', role: '__proto__' }), EV({ station: 'laser', role: PIN })];
+      const r = await acts(evs); eq(r.status, 200, JSON.stringify(r.body)); const d = cur.all('Station_Activity'); eq(d.length, 7, 'every event stored');
+      const by = id => d.find(x => x.id === id); eq(by(evs[0].id).role, 'laser'); eq(by(evs[1].id).role, 'design'); for (const i of [2, 3, 4, 5, 6]) ok(by(evs[i].id).role === undefined, `event ${i} has no role stored: ${by(evs[i].id).role}`);
+    });
+
+    await check('the Admin (any spelling) is never asked and signs in as before: station sorter, no role, no question, a reload asks the door quietly and goes on with the same session', async () => {
+      for (const nm of ['Paul K', 'paul  k', 'PAUL_K', 'Paul']) {
+        world(); const pc = computer('adm'), tab = sorter(pc); tab.name(nm); await advance(1500);
+        eq(tab.state(), 'admin', nm); eq(tab.asked(), 0, `${nm}: never asked`); eq(tab.role(), ''); const s = tab.kind('start'); eq(s.length, 1, `${nm}: one start`); eq(s[0].station, 'sorter'); ok(!s[0].role, 'no role on the Admin\'s session');
+        ok(tab.press() === true, 'an Admin\'s press is recorded'); await advance(31000); const ev = cur.all('Station_Activity'); eq(ev.length, 1); eq(ev[0].station, 'sorter'); ok(ev[0].role === undefined, 'no role on the Admin\'s event');
+        tab.close(); const t2 = sorter(pc); await advance(3000); eq(t2.state(), 'admin', 'a reload: the Admin again'); eq(t2.asked(), 0); eq(t2.kind('start').length, 0, 'no second start after a reload'); eq(open_().length, 1, dumpSessions());
+        ok(![...pc.mem.values()].some(v => /"admin"\s*:\s*true/.test(v)), 'the Admin answer is never stored');
+      }
+    });
+
+    await check('a non-Admin is asked ONCE per sign-in: nobody is signed in and nothing is recorded until the answer; then the session and every event carry the role', async () => {
+      world(); const pc = computer('d'), tab = sorter(pc); tab.name(DANA); await advance(1500);
+      eq(tab.state(), 'ask'); ok(tab.asked() >= 1, 'asked'); eq(tab.kind('start').length, 0, 'nobody is signed in yet'); eq(tab.press(), false, 'no event before the answer'); eq(tab.w.StationActivity.pending(), 0);
+      tab.name(DANA); tab.name(DANA); await advance(1000); eq(tab.kind('start').length, 0, 'asking again is not a sign-in');
+      tab.pick('laser'); await advance(1500); eq(tab.state(), 'role'); eq(tab.role(), 'laser');
+      const s = tab.kind('start'); eq(s.length, 1, 'one start'); eq(s[0].station, 'laser'); eq(s[0].role, 'laser'); eq(s[0].device, 'charm-nest-1'); eq(sdoc(s[0].id).role, 'laser');
+      ok(tab.press(), 'a press is recorded'); await advance(31000); const ev = cur.all('Station_Activity'); eq(ev.length, 1); eq(ev[0].station, 'laser'); eq(ev[0].role, 'laser'); eq(ev[0].session, s[0].id);
+      const before = tab.asked(); tab.name(DANA); await advance(1000); eq(tab.asked(), before, 'the next approval sets the same name: not asked again'); eq(tab.kind('start').length, 1, 'no second start');
+      eq(tab.errors, []);
+    });
+
+    await check('role switching, including seven switches in one breath: sessions follow one another and never overlap, only the last is open, each earlier one ended "switched"; nonsense roles change nothing', async () => {
+      world(); const pc = computer('sw'), tab = sorter(pc); tab.name(DANA); await advance(1500); tab.pick('laser'); await advance(1500);
+      const R = tab.w.CNRole; for (let i = 0; i < 7; i++) R.switchTo(R.other(tab.role())); await advance(5000);
+      const all = mine(DANA); eq(all.length, 8, dumpSessions()); eq(all.filter(d => d.endAt == null).length, 1, 'one open');
+      for (let i = 0; i < all.length - 1; i++) { ok(all[i].endAt != null && all[i].endAt <= all[i + 1].startAt, `session ${i} ends before session ${i + 1} starts: ${iso(all[i].endAt || 0)} ${iso(all[i + 1].startAt)}`); eq(all[i].endReason, 'switched', 'switched'); }
+      ok(['laser', 'design'].includes(all[7].station) && all[7].station === tab.role() && all[7].role === tab.role(), 'the open one is the current role: ' + dumpSessions()); ok(all.every(d => d.station === d.role && d.device === 'charm-nest-1'), 'station is role on every one');
+      const was = tab.role(); for (const bad of ['admin', '__proto__', 'constructor', '', null, undefined, 5, {}, ['laser'], 'LASER']) { R.switchTo(bad); R.choose(bad); } await advance(2000); eq(tab.role(), was, 'nothing changed: ' + JSON.stringify([tab.role(), was, tab.w.localStorage.getItem('cn.role')])); eq(mine(DANA).length, 8, 'no new session: ' + dumpSessions());
+      R.switchTo(was); eq(mine(DANA).length, 8, 'the same role again: nothing happens');
+    });
+
+    await check('a slow, a failing and an out-of-order Admin answer: the person is asked (fail closed), a late answer for an older name never changes the newer person, and nobody is signed in by an answer for somebody else', async () => {
+      for (const mode of ['offline', '500', 'slow']) {
+        world(); const pc = computer('f'), tab = sorter(pc);
+        if (mode === 'offline') tab.setOnline(false); else if (mode === '500') tab.failIf = rec => isLookup(rec) && 500; else tab.hold = rec => isLookup(rec);
+        tab.name('Paul K'); await advance(mode === 'slow' ? 7000 : 1500); eq(tab.state(), 'ask', `${mode}: not told is not the Admin: asked`); eq(tab.kind('start').length, 0, `${mode}: no session before the answer`);
+        if (mode === 'slow') { await tab.release(); await advance(1000); eq(tab.state(), 'ask', 'a late "true" does not flip a person who was already asked'); }
+        eq(tab.errors, [], mode + ': no page errors');
+      }
+      world(); let pc = computer('race'), tab = sorter(pc); tab.hold = rec => isLookup(rec); tab.name(DANA); await advance(100); tab.name(BEN); await advance(100); eq(tab.parked.length, 2);
+      await tab.release([1, 0]); await advance(1500); eq(tab.state(), 'ask', 'Ben is asked'); tab.pick('design'); await advance(1500);
+      eq(mine(DANA).length, 0, 'Dana has no session'); eq(mine(BEN).length, 1); eq(mine(BEN)[0].station, 'design'); eq(tab.w.localStorage.getItem('cn.employee'), BEN);
+      world(); pc = computer('gone'); tab = sorter(pc); tab.hold = rec => isLookup(rec); tab.name('Paul K'); await advance(100); tab.name(''); await advance(100); await tab.release(); await advance(1500);
+      eq(tab.state(), 'none', 'signed out while the door was thinking: the answer for Paul K changes nothing'); eq(stationDocs().length, 0, 'no session for a name that left');
+    });
+
+    await check('an Admin who was offline at sign-in picks a role (asked, fail closed); when the network is back the door says Admin: the role session ends "switched" and the sorter session starts', async () => {
+      world(); const pc = computer('off'), tab = sorter(pc); tab.setOnline(false); tab.name('Paul K'); await advance(7000); eq(tab.state(), 'ask'); tab.pick('laser'); await advance(2000);
+      ok(tab.w.CNRole.unknown(), 'the page knows it was not told'); tab.setOnline(true); await advance(3000);
+      eq(tab.state(), 'admin', 'now the Admin'); eq(tab.role(), ''); const all = mine('Paul K'); ok(all.length >= 1, dumpSessions());
+      const open = all.filter(d => d.endAt == null); eq(open.length, 1, dumpSessions()); eq(open[0].station, 'sorter'); ok(!open[0].role, 'the Admin\'s open session has no role');
+      ok(all.filter(d => d.endAt).every(d => d.endReason === 'switched' && d.station === 'laser'), 'the laser one ended switched: ' + dumpSessions());
+    });
+
+    await check('a reload keeps the name and the role and goes on with the SAME session (no second start); after 20 minutes away it is a new session under the same role; the question is not asked again', async () => {
+      world(); const pc = computer('rl'), tab = sorter(pc); tab.name(DANA); await advance(1500); tab.pick('design'); await advance(1500); const id = tab.kind('start')[0].id;
+      await advance(7 * MIN); tab.close(); const t2 = sorter(pc); await advance(3000);
+      eq(t2.state(), 'role'); eq(t2.role(), 'design'); eq(t2.asked(), 0, 'not asked again'); eq(t2.kind('start').length, 0, 'no second start'); ok(t2.kind('beat').every(b => b.id === id), 'the same session goes on');
+      t2.close(); await advance(20 * MIN); const t3 = sorter(pc); await advance(3000); eq(t3.role(), 'design'); const all = mine(DANA); ok(all.length === 2 && all[0].endAt && all[1].endAt == null && all[1].station === 'design', 'a new session under the same role: ' + dumpSessions());
+    });
+
+    await check('the sign-out (midnight, and AD1\'s idle and closing) takes the role with the name: the next sign-in is asked again, an event is never recorded under yesterday\'s role', async () => {
+      world(iso(nyAt('2026-10-07', 23, 50))); const pc = computer('so'), tab = sorter(pc); tab.name(DANA); await advance(1500); tab.pick('laser'); await advance(MIN);
+      await goTo(nyAt('2026-10-08', 0, 3)); eq(tab.state(), 'none', 'signed out at midnight'); eq(tab.w.localStorage.getItem('cn.role'), null, 'the role is gone from storage'); ok(tab.toasts.some(t => /midnight/i.test(t)), 'one calm line: ' + JSON.stringify(tab.toasts));
+      eq(tab.press(), false, 'no event after the sign-out'); const d = mine(DANA); eq(d.length, 1); eq(d[0].endReason, 'midnight');
+      tab.name(DANA); await advance(1500); eq(tab.state(), 'ask', 'asked again at the next sign-in'); eq(mine(DANA).length, 1, 'no new session until the answer');
+    });
+
+    await check('two tabs of the Sorter app on one computer: a switch in one is followed by the other without a second session, and a name cleared in one is cleared for both', async () => {
+      world(); const pc = computer('two'), a = sorter(pc); a.name(DANA); await advance(1500); a.pick('laser'); await advance(1500); const b = sorter(pc); await advance(3000);
+      eq(b.role(), 'laser', 'the second tab knows the role'); a.w.CNRole.switchTo('design'); await advance(2 * MIN);
+      eq(mine(DANA).filter(d => d.endAt == null).length, 1, 'one open session after the switch: ' + dumpSessions()); eq(mine(DANA).filter(d => d.endAt == null)[0].station, 'design');
+      b.press(); a.press(); await advance(31000); ok(cur.all('Station_Activity').every(e => e.station === 'design' && e.role === 'design'), 'both tabs record under the new role: ' + JSON.stringify(cur.all('Station_Activity').map(e => [e.station, e.role])));
+    });
+
+    await check('the Laser and the Design person show on the board under THEIR station, the Admin under Sorting; one name is one person; Sorting never lists the role people', async () => {
+      world(); const pc1 = computer('b1'), pc2 = computer('b2'), pc3 = computer('b3'), a = sorter(pc1), b = sorter(pc2), c = sorter(pc3);
+      a.name(DANA); b.name(BEN); c.name('Paul K'); await advance(1500); a.pick('laser'); b.pick('design'); await advance(4000);
+      const r = await board({ op: 'live' }); eq(r.status, 200); const st = k => (r.body.stations || []).find(s => s.key === k) || {}; const nm = s => (s.people || []).map(p => (typeof p === 'string' ? p : p.name)).sort();
+      ok(nm(st('laser')).includes(DANA) && !nm(st('laser')).includes(BEN), 'Laser: ' + nm(st('laser'))); ok(nm(st('design')).includes(BEN) && !nm(st('design')).includes(DANA), 'Design: ' + nm(st('design')));
+      ok(nm(st('sorting')).some(n => /^Paul K/.test(n)) && !nm(st('sorting')).includes(DANA) && !nm(st('sorting')).includes(BEN), 'Sorting: ' + nm(st('sorting')));
+      eq(new Set((r.body.signedIn || []).map(p => p.name)).size, 3, 'three people on');
+    });
+
+    await check('sandbox and real stay apart for the role: a sandbox Sorter writes its role session and events only to the Sandbox_ store', async () => {
+      world(); const pc = computer('sb'), tab = sorter(pc, { sandbox: true }); tab.name(DANA); await advance(1500); tab.pick('laser'); await advance(1500); tab.press(); await advance(31000);
+      eq(cur.all('Station_Sessions').length, 0, 'nothing in the real sessions'); eq(cur.all('Station_Activity').length, 0, 'nothing in the real events');
+      const s = cur.all('Sandbox_Station_Sessions'); eq(s.length, 1); eq(s[0].role, 'laser'); eq(cur.all('Sandbox_Station_Activity').length, 1);
+    });
+
+    await check('hostile names at the Sorter: a PIN, digits with letters, markup, 300 characters, a prototype name: never stored raw, never a PIN, never a page error', async () => {
+      for (const nm of [PIN, '482915 Dana', 'Dana <img src=x onerror=alert(1)>', 'x'.repeat(300), '__proto__', 'constructor', 'Paul K ' + PIN, 'D\u0000ana']) {
+        world(); const pc = computer('h'), tab = sorter(pc); tab.name(nm); await advance(1500); if (tab.state() === 'ask') { tab.pick('laser'); await advance(1500); }
+        eq(tab.errors, [], JSON.stringify(nm).slice(0, 30) + ': no page errors'); const dump = cur.dump(); ok(!dump.includes(PIN), JSON.stringify(nm).slice(0, 30) + ': the PIN is nowhere in the store');
+        for (const d of stationDocs()) ok(d.person.length <= 80 && !/[\u0000-\u001f]/.test(d.person) && /\p{L}/u.test(d.person), 'a clean name: ' + JSON.stringify(d.person));
+      }
+    });
   });
 }
 
@@ -1063,6 +1460,8 @@ async function fold() {
   await welding();
   await scanner();
   await autoServer();
+  await autoPage();
+  await laserDesign();
   await fold();
   // the PIN canary: nothing stored, logged or sent anywhere in the run carries a synthetic Employee Number
   await section('0 · the PIN canary', async () => {

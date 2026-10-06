@@ -242,7 +242,7 @@ async function reads() {
   assert.deepStrictEqual(lv.signedIn.map(p => [p.name, p.stationKey]), [['Ben R.', 'sorting'], ['Ana M.', 'sorting'], ['Cy L.', 'laser']], 'Signed in now: Ana at the Sorter app and at a sorting page is ONE row');
   assert.strictEqual(lv.signedIn.length, 3, 'the count of people on');
   assert.strictEqual(laser.state, 'working'); assert.deepStrictEqual(laser.names, ['Cy L.']); assert.strictEqual(laser.current.length, 1); assert.strictEqual(laser.current[0].title, 'GF Sheet 1');
-  assert.deepStrictEqual(laser.devices.map(d => [d.device, d.label, d.state, d.person]), [['charm-nest-1', 'Sorter app', 'working', 'Cy L.']], 'a Laser person at the Sorter app is at Laser (page: Sorter app), not at Sorting');
+  assert.deepStrictEqual(laser.devices.map(d => [d.device, d.label, d.state, d.person]), [['charm-nest-1', 'Sorter app (Laser)', 'working', 'Cy L.']], 'a Laser person at the Sorter app is at Laser (page: Sorter app (Laser)), not at Sorting');
   assert(!sorting.names.includes('Cy L.'), 'and not a person of Sorting');
   noSorterOrQr(lv, 'the live board');
   say('2 server reads: Overview (day, week), person (both forms), order list (+ old filter and word), one order, live board: Sorting only; totals = sum; one person once; time and orders counted once');
@@ -262,13 +262,13 @@ async function reads() {
   dst.put('Efficiency_Daily', `${DAY}__Di D.`, { day: DAY, person: 'Di D.', v: 1, events: 4, firstAt: Z('2026-10-05T14:00:00Z'), lastAt: Z('2026-10-05T14:50:00Z'), stations: { design: stat({ completes: 2, parts: 3, orders: 2, activeMs: 120000 }), sorter: stat({ completes: 1, parts: 1, orders: 1, activeMs: 60000 }) }, hours: {}, touched: { [O(31)]: { design: true }, [O(32)]: { design: true }, [O(33)]: { sorter: true } } });
   const dlv = await ask(dst, { op: 'live' });
   const dd = dlv.stations.find(s => s.key === 'design'), ds = dlv.stations.find(s => s.key === 'sorting');
-  assert.deepStrictEqual(dd.names, ['Di D.']); assert.deepStrictEqual(dd.devices.map(d => [d.device, d.label, d.state]).filter(x => x[0] === 'charm-nest-1'), [['charm-nest-1', 'Sorter app', 'idle']], 'a Design person at the Sorter app is at Design');
+  assert.deepStrictEqual(dd.names, ['Di D.']); assert.deepStrictEqual(dd.devices.map(d => [d.device, d.label, d.state]).filter(x => x[0] === 'charm-nest-1'), [['charm-nest-1', 'Sorter app (Design)', 'idle']], 'a Design person at the Sorter app is at Design');
   assert.deepStrictEqual(ds.names, [], 'nobody at Sorting: a session stored as design is never Sorting\'s'); assert.deepStrictEqual(dlv.signedIn.map(p => [p.name, p.stationKey]), [['Di D.', 'design']]);
   assert.deepStrictEqual(ds.counts, { partsToday: 1, ordersToday: 1, scansToday: 0 }, 'and only what was stored under sorter counts for Sorting');
   assert.deepStrictEqual(dd.counts, { partsToday: 3, ordersToday: 2, scansToday: 0 });
   const dov = await ask(dst, { op: 'overview', day: DAY, days: 1, trend: false });
   assert.deepStrictEqual(dov.people[0].stations.map(s => [s.station, s.parts]).sort(), [['design', 3], ['sorting', 1]], 'Design and Sorting stay two stations for one person');
-  say('3 Laser and Design at the Sorter app: stored as laser / design, shown on their own card (page "Sorter app"), never folded into Sorting');
+  say('3 Laser and Design at the Sorter app: stored as laser / design, shown on their own card (page "Sorter app (Laser)" or "(Design)"), never folded into Sorting');
   return answers;
 }
 
@@ -356,7 +356,7 @@ async function browser() {
     assert.deepStrictEqual(out.keys, ['sorting', 'laser', 'inbox'], 'the board draws one Sorting card');
     assert.deepStrictEqual(out.names, ['Sorting', 'Laser', 'Inbox']); assert(!/\bSorter\b|QR Printer/.test(out.names.join(' ')), 'no Sorter card and no QR Printer card');
     assert.strictEqual(out.cards, 2, 'the two orders in hand at the Sorter app are on the Sorting card');
-    assert(/3 people on/.test(out.sum) || /3 people/.test(out.sum), 'the summary counts Ana once: ' + out.sum);
+    assert(/ 4 people on/.test(out.sum), 'the summary counts each of the four people (Ana, Ben, Dana, Cy) once, Ana though she is at two pages: ' + out.sum);
     assert.deepStrictEqual(errs, [], 'no page error');
     say('6 browser: an answer that still has Sorter and QR Printer rows draws one Sorting card (' + out.names.join(', ') + '), "' + out.sum + '"');
   } finally { await browser.close(); srv.close(); }
