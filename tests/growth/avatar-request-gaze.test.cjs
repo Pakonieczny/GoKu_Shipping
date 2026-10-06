@@ -130,7 +130,9 @@ test('fallback face paths and visible graphic details change with real emotion/s
   const neutral = {brow: brow.getAttribute('d'), smile: smile.getAttribute('d')};
   f.guide.setState('listening'); assert.equal(f.guide.element.dataset.faceExpression, 'attentive'); assert.notEqual(brow.getAttribute('d'), neutral.brow);
   f.guide.setEmotion('warm'); assert.equal(f.guide.element.dataset.faceExpression, 'warm'); assert.notEqual(smile.getAttribute('d'), neutral.smile);
-  assert.equal(f.guide.element.querySelectorAll('.brites-avatar__face-design path').length, 6);
+  assert.equal(f.guide.element.querySelectorAll('.brites-avatar__eye path').length, 2);
+  const left=f.guide.element.querySelector('.brites-avatar__ribbon--left'),ribbon=left.getAttribute('d');f.guide.setEmotion('curious');assert.notEqual(left.getAttribute('d'),ribbon);
+  assert.equal(f.guide.element.querySelector('.brites-avatar__halo'),null);
   f.pointer(650, 100); f.advance(700);
   assert.ok(parseFloat(f.guide.element.style.getPropertyValue('--brites-gaze-y')) < 0, 'SVG screen coordinate points up');
 });
