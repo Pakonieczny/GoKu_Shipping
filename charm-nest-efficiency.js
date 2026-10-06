@@ -507,7 +507,7 @@
 .efRc:hover{transform:translateY(-2px);border-color:var(--goldLine);box-shadow:0 10px 26px rgba(60,48,30,.1)}.efRc:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
 .efRcTop{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:2px 11px;align-items:center}
 .efRcTop .efAv{width:36px;height:36px;font-size:12px;grid-row:1/3}
-.efRcName{font-weight:700;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.efRcWhen{grid-column:2;font-size:11.5px;color:var(--ink45);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.efRcName{font-weight:700;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.efRcWhen{grid-column:2;font-size:11.5px;color:var(--ink45);min-width:0}
 .efRcGo{grid-row:1/3;grid-column:3;color:var(--ink25);font-size:18px;transition:transform .2s,color .2s}.efRc:hover .efRcGo{transform:translateX(3px);color:var(--gold)}
 .efRcFig{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px}
 .efRcFig div{display:grid;gap:1px}.efRcFig b{font:650 15px var(--sans);font-variant-numeric:tabular-nums}.efRcFig span{font-size:10px;letter-spacing:.07em;text-transform:uppercase;color:var(--ink45);font-weight:700}
