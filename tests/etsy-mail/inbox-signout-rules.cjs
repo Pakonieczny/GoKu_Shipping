@@ -500,6 +500,48 @@ const IDLE_MS = 10 * 60e3, TICK_PAD = 31e3;
       check(!JSON.stringify(calls.filter(c => c.name === "firebaseOrders")).includes("5550123"), "nor in anything sent to the station door");
       await ctx.close();
     }
+    /* ═══ 8 · two tabs ═══ */
+    console.log("\n8 · two inbox tabs on one computer share one sign-in and one clock");
+    {
+      calls = []; draftA = null;
+      const { ctx, page } = await open(MORNING, "ann");
+      const page2 = await ctx.newPage();
+      page2.on("pageerror", e => errorsAll.push(String(e)));
+      await page2.goto(`http://127.0.0.1:${server.address().port}/etsy-mail-1.html`);
+      await until(() => authed(page2), "the second tab to open");
+      await run(page, 6 * 60e3);
+      await openThread(page, A);                                           // input in the first tab only, six minutes in
+      await typeInBox(page, "Hi Mia, tab one words");
+      await wait(300);
+      await run(page, 6 * 60e3 + 1000);                                    // twelve minutes: the second tab has had none of its own
+      check(await authed(page) && await authed(page2), "12 minutes in, with input in tab 1 at minute 6: neither tab is signed out (a quiet tab does not sign out the one in use)");
+      await run(page, 6 * 60e3);                                           // 18 minutes: 12 since the last input anywhere
+      await until(async () => !(await authed(page)) && !(await authed(page2)), "both tabs signed out once nobody has typed for 10 minutes");
+      check(true, "both tabs are signed out once there has been no input in either for 10 minutes");
+      await until(async () => !!(await banner(page)) && !!(await banner(page2)), "the calm line on both sign-in screens");
+      check(/10 minutes/.test(await banner(page)) && /10 minutes/.test(await banner(page2)), "and both sign-in screens say why: " + JSON.stringify(await banner(page)));
+      check((await box(page)) === "Hi Mia, tab one words", "the words typed in tab 1 are still in tab 1's box");
+      check(!(await page.evaluate(() => localStorage.getItem("etsymail_session"))), "the shared token is gone");
+      await ctx.close();
+    }
+    /* ═══ 8b · the Sign out button in one tab ═══ */
+    console.log("\n8b · pressing Sign out in one tab signs the other tab out too, keeping what was typed");
+    {
+      calls = []; draftA = null;
+      const { ctx, page } = await open(MORNING, "ann");
+      const page2 = await ctx.newPage();
+      page2.on("pageerror", e => errorsAll.push(String(e)));
+      await page2.goto(`http://127.0.0.1:${server.address().port}/etsy-mail-1.html`);
+      await until(() => authed(page2), "the second tab to open");
+      await openThread(page, A);
+      await typeInBox(page, "Hi Mia, still here");
+      await page2.evaluate(() => document.getElementById("emSignOutBtn").click());   // the Sign out button (it sits in the settings panel)
+      await until(async () => !(await authed(page2)) && !(await authed(page)), "both tabs on the sign-in screen");
+      check(true, "Sign out in tab 2 puts tab 1 on the sign-in screen too (the sign-in is shared)");
+      check((await box(page)) === "Hi Mia, still here", "tab 1's typed words are still in its box");
+      check(!enqueues().length, "nothing was sent");
+      await ctx.close();
+    }
     check(errorsAll.length === 0, "no page errors" + (errorsAll.length ? ": " + errorsAll.slice(0, 3).join(" | ") : ""));
   } finally {
     await browser.close();
