@@ -510,7 +510,7 @@ function tickWall(ms) { clock.mono += ms; }
 const DBG = process.env.ST2_DEBUG ? (...a) => realConsole.log('[dbg]', ...a.map(x => typeof x === 'string' ? x : JSON.stringify(x))) : () => {};
 async function welding() {
   const A = { name: 'Tess Welder', task: 'welding' }, B = { name: 'Ray Welder', task: 'matching' }, C = { name: 'Ivy Third', task: 'matching' };
-  const mk = (pc, extra) => openTab(pc, Object.assign({ multi: true, station: 'welding', device: 'weld-1' }, extra || {}));
+  const mk = (pc, extra) => openTab(pc, Object.assign({ multi: true, station: 'welding', device: 'weld-1' }, extra || {})).typing();     // (a person at work: a tap every 4 minutes, so AD1's idle rule is not what these checks are about)
   const key = x => x.name + '|' + (x.task || '');
   const docsOf = (p, t) => stationDocs().filter(d => d.person === p.name && (d.task || '') === (t || p.task || ''));
   const peopleOf = tab => Array.from(tab.SS.people()).map(p => key(p)).sort();
@@ -662,7 +662,7 @@ async function welding() {
       const L = await board({ op: 'live' }); eq(L.status, 200); eq(new Set((L.body.signedIn || []).map(x => x.name)).size, 1, 'one person on, at two stations: ' + JSON.stringify((L.body.signedIn || []).map(x => [x.name, x.stationKey])));
     });
     await check('two tabs of a single-person page: another person signing in on one tab is followed by the other tab with ONE new session; the first person ends "switched" once; a tab closed leaves the session going', async () => {
-      world(); const pc = computer('bench'), one = () => openTab(pc, { page: 'assembly-1.html', station: 'assembly', device: 'assembly-1' });
+      world(); const pc = computer('bench'), one = () => openTab(pc, { page: 'assembly-1.html', station: 'assembly', device: 'assembly-1' }).typing();
       const a = one(); a.login('Ana Tester'); await advance(1000); const b = one(); await advance(1000);
       a.login('Ben Tester'); await advance(70000);
       eq(open_().map(d => d.person), ['Ben Tester'], dumpSessions()); eq(stationDocs().filter(d => d.person === 'Ana Tester').length, 1, 'one session for Ana'); eq(stationDocs().find(d => d.person === 'Ana Tester').endReason, 'switched');
@@ -1286,6 +1286,7 @@ function sorter(pc, o = {}) {
   tab.pick = r => { const b = tab.bar; if (!b || b.state !== 'ask') throw new Error('the question is not on screen: ' + JSON.stringify(tab.bars.map(x => x.state))); b.onPick(r); };
   tab.role = () => w.CNRole.role(); tab.state = () => w.CNRole.state();
   tab.press = (o2) => w.StationActivity.log('scan', Object.assign({ orderId: '3521000' + (200 + (++evN % 700)) }, o2 || {}));
+  if (o.typing !== false) tab.typing();
   return tab;
 }
 async function laserDesign() {
