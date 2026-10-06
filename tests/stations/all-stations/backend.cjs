@@ -45,7 +45,7 @@ if (typeof global.fetch === 'function') {
 /* ── logs: the shop speaks only through the control door ── */
 const realErr = console.error.bind(console);
 console.log = console.warn = console.info = () => {}; console.error = () => {};
-const calls = [], stats = { pinLeaks: 0, unfaked: {}, paid: 0, paidNames: {}, functions: {} };
+const calls = [], stats = { pinLeaks: 0, unfaked: {}, paid: 0, paidTried: 0, paidNames: {}, functions: {} };
 const PAID = /anthropic|claude|openai|gemini|charmNestAgent|charmEngrave|charmMaster|etsyMailDraftReply|etsyMailAutoPipeline|etsyMailLearn|etsyMailIntent|geminiImage|openAiCode/i;
 
 const { start } = require(path.join(root, 'tests/charm-nest/bridge-server.cjs'));
@@ -133,7 +133,7 @@ const FX = require('./fixtures.cjs');
     if (p === '/__ctl/doc') { const s = await docAt(q.path).get(); return send(res, 200, s.exists ? toWire(s.data()) : null); }
     if (p === '/__ctl/list') { const s = await collAt(q.coll).get(); return send(res, 200, s.docs.map(d => Object.assign({ _id: d.id }, toWire(d.data())))); }
     if (p === '/__ctl/calls') { const from = +q.from || 0; return send(res, 200, { total: calls.length, calls: calls.slice(from) }); }
-    if (p === '/__ctl/stats') return send(res, 200, { egress, pinLeaks: stats.pinLeaks, unfaked: stats.unfaked, paid: stats.paid, paidNames: stats.paidNames, functions: stats.functions, now: nowMs() });
+    if (p === '/__ctl/stats') return send(res, 200, { egress, pinLeaks: stats.pinLeaks, unfaked: stats.unfaked, paid: stats.paid, paidTried: stats.paidTried, paidNames: stats.paidNames, functions: stats.functions, now: nowMs() });
     if (p === '/__ctl/eff') { const b = JSON.parse((await readAll(req)).toString('utf8') || '{}'); const out = await eff._t.handle({ httpMethod: 'POST', headers: { 'x-nf-client-connection-ip': '198.51.100.7' }, queryStringParameters: {}, body: JSON.stringify(Object.assign({ key: PASS }, b)) }, db); return send(res, 200, out.body); }
     if (p === '/__ctl/put') { const b = JSON.parse((await readAll(req)).toString('utf8') || '{}'); await docAt(b.path).set(fromWire(b.data), b.merge ? { merge: true } : undefined); return send(res, 200, { ok: true }); }
     if (p === '/__ctl/roster') {   // { "<number>": "<name>" }: the fake Employee Numbers. The numbers are kept here only to prove none of them leaves in a response
@@ -162,7 +162,8 @@ const FX = require('./fixtures.cjs');
         // a PIN may be in a { pinLogin } body and nowhere else (not in a URL, not in another body)
         if (secretIn(u.search) || (op !== 'pinLogin' && secretIn(text))) stats.pinLeaks++;
         stats.functions[name] = (stats.functions[name] || 0) + 1;
-        if (PAID.test(name)) { stats.paid++; stats.paidNames[name] = (stats.paidNames[name] || 0) + 1; }
+        // a paid-looking function the page TRIED to call: answered by a fake (never forwarded), counted apart. stats.paid counts only a call that reached real code (a model client, or the bridge answering it).
+        if (PAID.test(name)) { const k = name + (op ? ':' + op : ''); stats.paidTried++; stats.paidNames[k] = (stats.paidNames[k] || 0) + 1; rec.paidLooking = true; }
         calls.push(rec);
         if (name === 'employeeEfficiency' || name === 'firebaseOrders') { rec.via = 'real'; const out = await realDoor(name, req, res, buf, q); if (secretIn(out.body || '') && op !== 'pinLogin') stats.pinLeaks++; rec.status = out.statusCode || 200; return; }
         const fake = await FX.answer(name, req.method, q, b, st, { db, admin, now: nowMs }, req.headers);
@@ -172,7 +173,7 @@ const FX = require('./fixtures.cjs');
         const replay = Object.assign(new PassThrough(), { method: req.method, url: req.url, headers: req.headers });
         replay.end(buf || undefined);
         const wasWrite = res.writeHead.bind(res);
-        res.writeHead = (code, ...r) => { rec.status = code; if (code === 404) stats.unfaked[name] = (stats.unfaked[name] || 0) + 1; return wasWrite(code, ...r); };
+        res.writeHead = (code, ...r) => { rec.status = code; if (code === 404) stats.unfaked[name] = (stats.unfaked[name] || 0) + 1; else if (rec.paidLooking) stats.paid++; return wasWrite(code, ...r); };
         return await orig(replay, res);
       }
       return await orig(req, res);

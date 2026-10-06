@@ -99,6 +99,7 @@ let calls = [];
 const holds = {};                       // kind -> { p, release }: a request the fake answers only when released
 const hold = kind => { let release; const p = new Promise(r => { release = r; }); holds[kind] = { p, release }; return release; };
 let draftA = null;
+let adminNames = [];                                                         // the Admin list of the page opened last (open(time, as, admins))
 async function fake(method, url, body, headers) {
   const u = new URL(url, "http://x");
   const name = u.pathname.split("/").pop();
@@ -139,6 +140,8 @@ async function fake(method, url, body, headers) {
     return { ok: true, draftId: "draft_" + b.threadId, attachments: b.attachments || [], text: b.text };
   }
   if (name === "etsyMailDraftSend") return { ok: true, draft: { status: "queued" } };
+  // the Admin door (AD2): { stationAdmin: name } -> { ok: true, admin }. The stand-in reads window.__admins itself; the REAL station-session.js asks this door once per sign-in.
+  if (name === "firebaseOrders" && typeof b.stationAdmin === "string") { const key = s => String(s).toLowerCase().replace(/[^a-z0-9]+/g, " ").trim(); return { ok: true, admin: adminNames.some(a => key(a) === key(b.stationAdmin)) }; }
   if (name === "firebaseOrders") return { ok: true };
   return { ok: true };
 }
@@ -178,6 +181,7 @@ const IDLE_MS = 10 * 60e3, TICK_PAD = 31e3;
 
   /** a page of the inbox on the fake clock, signed in as `as` (cached session) when given */
   async function open(time, as, admins) {
+    adminNames = admins || [];
     const ctx = await browser.newContext({ viewport: { width: 1400, height: 900 } });
     await ctx.route(u => !/^http:\/\/127\.0\.0\.1[:/]/.test(u.href), r => r.abort());
     await ctx.addInitScript(({ as, admins }) => {
@@ -220,7 +224,12 @@ const IDLE_MS = 10 * 60e3, TICK_PAD = 31e3;
   const box = page => page.evaluate(() => { const t = document.getElementById("emDraftText"); return t ? t.value : null; });
   const typeInBox = async (page, text) => { await page.click("#emDraftText"); await page.keyboard.type(text); };
   const selected = (page, id) => page.evaluate(id => { const b = document.querySelector(`[data-id="${id}"]`); return !!(b && (b.classList.contains("active") || b.classList.contains("selected"))); }, id);
-  const ss = page => page.evaluate(() => (window.__ss && window.__ss.calls) || []);
+  // what the page told StationSession's door: the stand-in keeps its own list; the REAL station-session.js has none, so with SS=real the same list is read from the
+  // session posts the fake door received ({ session: { event: start|beat|end, person, reason } }, in this scenario's calls), in the stand-in's own shape
+  const ss = async page => USE_REAL
+    ? calls.filter(c => c.name === "firebaseOrders" && c.b && c.b.session && c.b.session.event && c.b.session.event !== "beat")
+        .map(c => [c.b.session.event === "start" ? "signedIn" : c.b.session.event, { name: c.b.session.person, id: c.b.session.employeeId || "", reason: c.b.session.reason }])
+    : page.evaluate(() => (window.__ss && window.__ss.calls) || []);
   const ended = async page => (await ss(page)).filter(c => c[0] === "end").map(c => c[1]);
   const lastInput = page => page.evaluate(() => (window.StationSession && StationSession.lastInput && StationSession.lastInput()) || 0);
   const run = (page, ms) => page.clock.runFor(ms);
