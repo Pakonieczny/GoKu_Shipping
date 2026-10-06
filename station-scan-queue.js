@@ -15,6 +15,7 @@
  * Rules: a scan leaves the list the moment it starts (so it can never run twice, not even after a reload mid-load), and it is
  * kept in sessionStorage until then (one tab; the order numbers only, never a person, a PIN or a passcode). At most 100 wait;
  * the oldest are kept and the note says so when more were scanned. No network, no Firestore, no Etsy: that stays with `run`.
+ * Every offered scan also counts as input for the auto sign-out (StationSession.touch: the time only, never the order).
  * Never breaks the page: every entry point is wrapped. The person is not stored: the page's own activity and timeline code
  * credits whoever is signed in when `run` loads the order. */
 (function () {
@@ -91,6 +92,8 @@
       try {
         var n = clean(order);
         if (!n) return false;
+        // a scan from the station's scanner app is input at this page (the auto sign-out's 10 minutes): the time only, never the order
+        try { if (window.StationSession && StationSession.touch) StationSession.touch(); } catch (_) {}
         if (list.length >= max) { extra++; render(); return false; }
         list.push({ n: n, at: Date.now() });
         save(); render();

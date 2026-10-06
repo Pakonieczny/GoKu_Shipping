@@ -7163,12 +7163,12 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
 
 
 <!-- Sign-in time per person and computer, and the midnight sign-out (New York time) -->
-<script src="station-session.js?v=20261005-et2"></script>
+<script src="station-session.js?v=20261006-as1"></script>
 <script src="station-activity.js?v=20261005-et2"></script>
 <!-- The order in hand right now (opened here = working), for the console's live stations board (station-live-order.js). Optional: without it nothing changes. -->
 <script src="station-live-order.js?v=20261005-et2"></script>
 <!-- Phone scans that arrive while nobody is signed in wait here and load, in order, right after the next sign-in (station-scan-queue.js). -->
-<script src="station-scan-queue.js?v=20261003-sq1"></script>
+<script src="station-scan-queue.js?v=20261006-as1"></script>
 <script>
   (function () {
     /* The PIN login keeps employee_id (the PIN itself) and employee_name. A session carries the name only. */
@@ -7186,7 +7186,7 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
       try { var f = document.getElementById("employeeName"); if (f) f.value = ""; } catch (_) {}
       try { var p = document.getElementById("employeeNumberInput"); if (p) { p.value = ""; p.dataset.raw = ""; } } catch (_) {}
       try { var m = window.M && M.Modal.getInstance(document.getElementById("userLoginModal")); if (m && !m.isOpen) m.open(); } catch (_) {}
-      try { if (reason === "midnight" && window.M && M.toast) M.toast({ html: "Signed out at midnight. Enter your Employee Number to sign back in." }); } catch (_) {}
+      try { const t = reason === "midnight" ? "Signed out at midnight. Enter your Employee Number to sign back in." : (window.StationSession && StationSession.notice(reason, "Enter your Employee Number to sign back in.")); if (t && window.M && M.toast) M.toast({ html: t }); } catch (_) {}
     }
     try { if (window.StationSession) StationSession.init({ station: "design", device: "design-message", person: person, signOut: signOut }); } catch (_) {}
   })();

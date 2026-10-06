@@ -985,25 +985,26 @@
   <!-- Sign-in time per person and computer, and the midnight sign-out (station-session.js). The PIN is never kept or sent:
        the session carries the name only. At midnight (New York) the PIN box comes back; the order, the fields and the chat
        stay on screen. -->
-  <script src="station-session.js?v=20261005-et2"></script>
+  <script src="station-session.js?v=20261006-as1"></script>
   <!-- Employee efficiency: each real action here (an order opened, the Team's done stamp, a flag, a failure) is one event with
        the person signed in, this station and the time (station-activity.js). Never a PIN. -->
   <script src="station-activity.js?v=20261005-et2"></script>
   <!-- Phone scans that arrive while nobody is signed in wait here and load, in order, right after the next sign-in (station-scan-queue.js). -->
-  <script src="station-scan-queue.js?v=20261003-sq1"></script>
+  <script src="station-scan-queue.js?v=20261006-as1"></script>
   <script>
     try {
       StationSession.init({
         station: "assembly", device: "assembly-2",
         person: () => { try { const n = localStorage.getItem("employee_name"); return localStorage.getItem("employee_id") && n ? { name: n, id: null } : null; } catch (_) { return null; } },
-        signOut: () => {
+        // reason: "midnight" (the day turned), "idle" (10 minutes without input) or "closing" (5:00 pm Toronto); the work on screen stays
+        signOut: reason => {
           try { localStorage.removeItem("employee_id"); localStorage.removeItem("employee_name"); } catch (_) {}
           if (window.isEmployeeLoggedIn !== true) return;          // still loading: the page shows the PIN box itself
           window.isEmployeeLoggedIn = false;
           try { const pin = document.getElementById("employeeNumberInput"); if (pin) { pin.dataset.raw = ""; pin.value = ""; } } catch (_) {}
           try { const nm = document.getElementById("employeeName"); if (nm) nm.value = ""; } catch (_) {}
           try { M.Modal.getInstance(document.getElementById("userLoginModal")).open(); } catch (_) {}
-          try { M.toast({ html: "Signed out at midnight. Please sign in with your Employee Number for the new day." }); } catch (_) {}
+          try { M.toast({ html: (window.StationSession && StationSession.notice(reason, "Please sign in with your Employee Number.")) || "Signed out at midnight. Please sign in with your Employee Number for the new day." }); } catch (_) {}
         },
         labelHost: "#userLoginModal", labelCss: "position:absolute;right:10px;bottom:6px;max-width:150px;text-align:right;"
       });

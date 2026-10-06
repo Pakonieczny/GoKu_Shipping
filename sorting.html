@@ -508,7 +508,7 @@
   <!-- Sign-in time per person and computer, and the midnight sign-out (station-session.js). Here the sign-in is the
        "Sorting as" name: at midnight (New York) it is cleared and the chip asks for a name again; the batch on screen
        and the scanner stay as they are. -->
-  <script src="station-session.js?v=20261005-et2"></script>
+  <script src="station-session.js?v=20261006-as1"></script>
   <!-- What each person did here (scans, stickers printed, orders sorted, rejects) for the Employee efficiency console: the
        person, station and device are the StationSession's. Without the file nothing changes. -->
   <script src="station-activity.js?v=20261005-et2"></script>
@@ -520,14 +520,15 @@
       StationSession.init({
         station: "sorting", device: "sorting-1",
         person: () => { try { const n = (localStorage.getItem("sorting.employee") || "").trim(); return n ? { name: n, id: null } : null; } catch (_) { return null; } },
-        signOut: () => {
+        // reason: "midnight", "idle" (10 minutes without input) or "closing" (5:00 pm Toronto); the batch on screen stays
+        signOut: reason => {
           let was = "";
           try { was = localStorage.getItem("sorting.employee") || ""; localStorage.removeItem("sorting.employee"); localStorage.removeItem("sorting.employeeVia"); } catch (_) {}
           try {
             const btn = document.querySelector("#sortingAsChip .st-as-name");
             if (btn) { btn.textContent = "Set your name"; btn.classList.add("st-unset"); btn.title = "Click to set who is sorting"; }
           } catch (_) {}
-          if (was) { try { window.M && M.toast && M.toast({ html: "Signed out at midnight. Click “Set your name” to sign in for the new day." }); } catch (_) {} }
+          if (was) { try { window.M && M.toast && M.toast({ html: (window.StationSession && StationSession.notice(reason, "Click “Set your name” to sign in again.")) || "Signed out at midnight. Click “Set your name” to sign in for the new day." }); } catch (_) {} }
         }
       });
     } catch (_) {}
@@ -1441,6 +1442,7 @@ async function startScannedSortingListener() {
         }
       }
       console.log("Scanned Sorting code =>", scannedVal);
+      try { window.StationSession && StationSession.touch && StationSession.touch(); } catch (_) {}   // a scan from the scanner app is input (the auto sign-out's 10 minutes)
 
       const input = document.getElementById("etsyOrderNumber");
       if (!input) return;

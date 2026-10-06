@@ -6763,7 +6763,7 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
   <div class="em-toast" id="emToast"></div>
 
   <!-- Sign-in time per person and computer, and the midnight sign-out (New York time) -->
-  <script src="station-session.js?v=20261005-et2"></script>
+  <script src="station-session.js?v=20261006-as1"></script>
   <script src="station-activity.js?v=20261005-et2"></script>
   <!-- The conversation in hand right now (opened = working, reply sent or Done = idle), for the console's live stations board (station-live-order.js). Optional: without it nothing changes. -->
   <script src="station-live-order.js?v=20261005-et2"></script>
@@ -27944,7 +27944,7 @@ const EtsyMailAuth=(()=>{
     try{ localStorage.removeItem("etsymail_session_user"); }catch(_){}
     try{ A.auth.user=null; A.auth.phase="signin"; state.currentUser=null; state.isOwner=false; applyRoleVisibility(); }catch(_){}
     try{ A.lock(); }catch(_){}
-    if(reason==="midnight"){ try{ ui.banner("signin","warn","Signed out at midnight. Sign in again to open the inbox."); }catch(_){} }
+    { const t=reason==="midnight"?"Signed out at midnight. Sign in again to open the inbox.":(window.StationSession&&StationSession.notice(reason,"Sign in again to open the inbox.")); if(t){ try{ ui.banner("signin","warn",t); }catch(_){} } }
     if(window.IS_MOBILE){ try{window.mNotifyAuthChanged&&window.mNotifyAuthChanged();}catch(_){} }
   }
   try{ if(window.StationSession) StationSession.init({station:"inbox",device:"etsy-mail-1",person:stationPerson,signOut:stationSignOut}); }catch(_){}

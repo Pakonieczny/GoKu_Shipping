@@ -352,7 +352,7 @@
   <!-- Who is sorting here, how long they are signed in (station-session.js, with the midnight sign-out) and what they did
        (station-activity.js), as on sorting.html: the "Sorting as" name or 6-digit employee number (checked by the
        server against "Employee Numbers"; the number is never kept or logged). Each piece is optional: the page works without it. -->
-  <script src="station-session.js?v=20261005-et2"></script>
+  <script src="station-session.js?v=20261006-as1"></script>
   <script src="station-activity.js?v=20261005-et2"></script>
   <!-- The batch in hand right now (scanned = working, every sticker printed = idle), for the console's live stations board
        (station-live-order.js). Optional: without it nothing changes. -->
@@ -436,11 +436,12 @@
       StationSession.init({
         station: "sorting", device: "sorting-2",
         person: () => { const n = getEmployee(); return n ? { name: n, id: null } : null; },
-        signOut: () => {
+        // reason: "midnight", "idle" (10 minutes without input) or "closing" (5:00 pm Toronto); the batch on screen stays
+        signOut: reason => {
           let was = "";
           try { was = localStorage.getItem(EMP_KEY) || ""; localStorage.removeItem(EMP_KEY); localStorage.removeItem(VIA_KEY); } catch (_) {}
           renderChip();
-          if (was) toast("Signed out at midnight. Click “Set your name” to sign in for the new day.");
+          if (was) toast((window.StationSession && StationSession.notice(reason, "Click “Set your name” to sign in again.")) || "Signed out at midnight. Click “Set your name” to sign in for the new day.");
         }
       });
     } catch (_) {}
@@ -956,6 +957,7 @@ async function startScannedSortingListener() {
       }
       const scannedVal = docData["Order Number"];
       console.log("Scanned Sorting code =>", scannedVal);
+      try { window.StationSession && StationSession.touch && StationSession.touch(); } catch (_) {}   // a scan from the scanner app is input (the auto sign-out's 10 minutes)
 
       const input = document.getElementById("etsyOrderNumber");
       if (!input) return;
