@@ -164,7 +164,7 @@
       const devices = (Array.isArray(s.devices) ? s.devices : []).filter(d => d && (d.device || d.label)).map(d => ({ device: str(d.device), label: str(d.label || d.device), state: ["working", "idle", "offline"].includes(d.state) ? d.state : "offline", person: str(d.person), since: T(d.since) }));
       for (const p of people) if (!p.deviceLabel) { const d = devices.find(x => x.state !== "offline" && x.person && low(x.person) === low(p.name)); if (d) { p.device = p.device || d.device; p.deviceLabel = d.label; } }   // (no page named for the person: the station's own page list says where they are)
       const state = ["working", "idle", "offline"].includes(s.state) ? s.state : current.length ? "working" : people.length ? "idle" : "offline";
-      const out = { key, label, state, people, current, lastEventAt: T(s.lastEventAt), counts: { parts: cnt(k.partsToday != null ? k.partsToday : k.parts), orders: cnt(k.ordersToday != null ? k.ordersToday : k.orders), scans: cnt(k.scansToday != null ? k.scansToday : k.scans) }, devices, spark: sparkOf(s), noThroughput: s.noThroughput === true, today: null, matched: [], inbox: null };
+      const out = { key, label, state, people, current, lastEventAt: T(s.lastEventAt), counts: { parts: cnt(k.partsToday != null ? k.partsToday : k.parts), orders: cnt(k.ordersToday != null ? k.ordersToday : k.orders), scans: cnt(k.scansToday != null ? k.scansToday : k.scans) }, devices, spark: sparkOf(s), noThroughput: s.noThroughput === true, today: null, matched: [], inbox: null, lastIsSheet: false };
       const ib = normInboxToday(s.inbox);   // (the Inbox station: today's replies and orders covered take the place of pieces and orders; the card says so)
       if (ib) { out.inbox = ib; out.counts = { parts: ib.replies, orders: ib.orders, scans: null }; }
       if (out.noThroughput) {   // the Welding station: never pieces or orders; the matched scans, the time on task per task, and today's matched list
@@ -176,7 +176,8 @@
       return out;
     });
     // LS1: the Laser station's sheet times ({ today, last }) ride along on its entry (op live, netlify/functions/_stationLive.js)
-    for (const st of stations) { const raw = (Array.isArray(r.stations) ? r.stations : []).find(x => x && String(x.key || low(x.label)) === st.key); if (raw && raw.laserSheet) st.laserSheet = laserOf(raw.laserSheet); }
+    for (const st of stations) { const raw = (Array.isArray(r.stations) ? r.stations : []).find(x => x && String(x.key || low(x.label)) === st.key); if (raw && raw.laserSheet) { st.laserSheet = laserOf(raw.laserSheet); const l = st.laserSheet && st.laserSheet.last; if (l && l.at && l.at >= (st.lastEventAt || 0)) { st.lastEventAt = l.at; st.lastIsSheet = true; } } }
+    // (a sheet marked completed is the Laser station's own work: when it is the newest thing, the card's "last event" and its idle line say so, never "no activity yet today")
     return { at: T(r.at), mode: r.mode === "sandbox" ? "sandbox" : "real", stations, signedIn };
   }
   /** { today: { sheets, timed, avgSec }, last: { at, person, sheet, seconds, startedFrom } | null } of the Laser station, or null when the answer has none. A time the data does not know is null: never a zero. */
@@ -706,6 +707,7 @@
         if (ib.messages != null) rows.push({ k: "Messages sent", v: nf(ib.messages), d: "Messages sent to customers today" });
         if (ib.unknown) rows.push({ k: "No name recorded", v: nf(ib.unknown), d: "Replies with no operator name: counted for nobody" });
       }
+      if (s.key === "laser" && s.laserSheet && s.laserSheet.today.sheets > 0) rows.push({ k: "Sheets today", v: nf(s.laserSheet.today.sheets), d: "Cut sheets a person marked completed today" });
       if (!ib && s.counts.parts != null) rows.push({ k: "Pieces today", v: nf(s.counts.parts), d: "Pieces scanned or completed here today" });
       if (!ib && s.counts.orders != null) rows.push({ k: "Orders today", v: nf(s.counts.orders), d: "Different orders handled here today" });
       if (!ib && s.counts.scans != null) rows.push({ k: "Scans today", v: nf(s.counts.scans), d: "Scans logged at this station today" });
@@ -778,7 +780,7 @@
       const s = X.data, none = !X.cards.size && !X.leaving;
       let t = "";
       if (none) {
-        const last = s.lastEventAt ? `last event ${clock(s.lastEventAt)} (${ago((now() - s.lastEventAt) / 1000)})` : "";
+        const last = s.lastEventAt ? `last ${s.lastIsSheet ? "sheet" : "event"} ${clock(s.lastEventAt)} (${ago((now() - s.lastEventAt) / 1000)})` : "";
         t = s.state === "offline" ? `Offline · nobody is signed in${last ? " · " + last : ""}` : s.state === "working" ? `Working${s.inbox ? "" : " · no order open right now"}${last ? " · " + last : ""}` : `Idle · ${last || "no activity yet today"}`;
       }
       if (!t) { if (X.idle) { X.idle.remove(); X.idle = null; } return; }
@@ -917,9 +919,12 @@
       e.dataset.weld = wd ? "1" : "";
       setText(X.name, s.label); setText(X.state, stateWord[s.state] + (s.state === "working" && folks > 1 ? ` · ${folks} people` : ""));
       X.id.setAttribute("aria-label", `${s.label}, ${stateWord[s.state].toLowerCase()}`);
-      X.cnt.hidden = wd || (s.counts.parts == null && s.counts.orders == null);
+      const sh = s.key === "laser" && s.laserSheet && s.laserSheet.today.sheets > 0 ? s.laserSheet.today.sheets : 0;   // a Laser person's work is sheets: with sheets done today, "0 pieces 0 orders" never stands beside them
+      X.cnt.hidden = wd || (s.counts.parts == null && s.counts.orders == null && !sh);
+      if (sh) { if (!X.sheets) { const sp = h("span"), b = h("b"); sp.append(b, " sheets"); X.cnt.insertBefore(sp, X.parts.parentNode); X.sheets = b; } setNum(X.sheets, sh, ctx.quiet); }
+      else if (X.sheets) { X.sheets.parentNode.remove(); X.sheets = null; }
       X.cntW.hidden = !wd || !s.today || s.today.matched == null; X.weld.hidden = !wd; if (wd && s.today && s.today.matched != null) setNum(X.matchedN, s.today.matched, ctx.quiet);
-      for (const [k, n] of [["parts", X.parts], ["orders", X.orders]]) { const v = s.counts[k]; n.parentNode.hidden = v == null; if (v != null) setNum(n, v, ctx.quiet); }
+      for (const [k, n] of [["parts", X.parts], ["orders", X.orders]]) { const v = s.counts[k]; n.parentNode.hidden = v == null || (sh > 0 && v === 0); if (v != null) setNum(n, v, ctx.quiet); }
       inboxCard(X, s, ctx);
       const sig = s.spark ? s.spark.join() : ""; if (sig !== X.sparkSig) { X.sparkSig = sig; X.sparkW.textContent = ""; if (s.spark) { X.sparkW.appendChild(sparkSvg(s.spark, 84, 22)); X.sparkW.title = "Pieces in the last hour"; } }
       // people: arrive and leave softly

@@ -178,11 +178,17 @@ function weldingFor(j, o = {}) {
     await page.locator(`${V} .efP[data-name="Giovanna"] .efOrd`).click(); await page.waitForSelector(`${V} .efP[data-name="Giovanna"] .efMini`, { timeout: 8000 });
     const wr = page.locator(`${V} .efP[data-name="Giovanna"] .efMini tbody tr`, { hasText: 'Welding' }); const cells = (await wr.locator('td').allInnerTexts()).map(x => x.replace(/\s+/g, ' ').trim());
     assert.deepEqual([cells[1], cells[3]], ['—', '—'], 'the Welding row of the by-station table has no pieces and no orders: ' + cells.join('|')); assert(/12 matched/.test(cells[0]), 'it says matched: ' + cells[0]);
+    // FX1: the same person's row in the Overview's People list reads the same flag: a dash for pieces, orders and per hour (the number it showed before was a zero that read as "did nothing"), and the very same time-on-task line the People card has (the helper is shared)
+    const ovRow = page.locator(`${V} .efP[data-name="Giovanna"]`);
+    const ovFig = [await txt(ovRow.locator('[data-r="parts"]')), await txt(ovRow.locator('[data-r="orders"]')), await txt(ovRow.locator('[data-r="rate"]'))], ovLine = await txt(ovRow.locator('.efPW'));
+    assert.deepEqual(ovFig, ['—', '—', '—'], 'Overview People row, Welding alone: a dash for pieces, orders and per hour: ' + ovFig.join('|'));
+    await shot(page, 'overview-person-welding-1440.png', `${V} .efP[data-name="Giovanna"]`);
     // the People card of somebody who worked at Welding alone: a dash for pieces and orders (as the person's page says), the time on task and the matched count instead; everybody else's card is as before
     await page.evaluate(() => { Efficiency.go('people'); });
     const gcard = page.locator(`${V} .efRoster .efRc[data-name="Giovanna"]`); await gcard.waitFor({ timeout: 10000 });
     assert.deepEqual([await txt(gcard.locator('[data-f="parts"]')), await txt(gcard.locator('[data-f="orders"]')), await txt(gcard.locator('[data-f="rate"]'))], ['—', '—', '—'], 'Welding alone: a dash for pieces, orders and per hour on the People card');
     const wline = await txt(gcard.locator('.efRcW')); assert.equal(wline, 'Welding 4 h · Matching 4 h · 12 matched', 'the time on task per task and the matched count stand in: ' + wline);
+    assert.equal(ovLine, wline, 'FX1: the Overview People row says it in the very same words as the People card: ' + ovLine);
     await shot(page, 'people-welding-1440.png', `${V} .efRoster`);
     const others = await page.$$eval(`${V} .efRoster .efRc`, cs => cs.filter(c => c.dataset.name !== 'Giovanna').map(c => c.querySelector('[data-f="parts"]').innerText.trim()));
     assert(others.length > 0 && others.some(t => /^\d/.test(t)), 'everybody else still has pieces on the card: ' + others.join(','));
