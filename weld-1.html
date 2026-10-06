@@ -986,9 +986,9 @@
        the session carries the name only. At midnight (New York) the PIN box comes back; the order, the fields and the chat
        stay on screen. -->
   <script src="station-session.js?v=20261005-et2"></script>
-  <script src="station-activity.js?v=20261005-et2"></script>
+  <script src="station-activity.js?v=20261006-ws3"></script>
   <!-- Phone scans that arrive while nobody is signed in wait here and load, in order, right after the next sign-in (station-scan-queue.js). -->
-  <script src="station-scan-queue.js?v=20261003-sq1"></script>
+  <script src="station-scan-queue.js?v=20261006-ws3"></script>
   <script>
     try {
       StationSession.init({
@@ -3672,7 +3672,7 @@ function metalToBadge(label){
               if (!scanQueue && !window.isEmployeeLoggedIn) return;   // (queue script missing: as before, nobody signed in = nothing to do)
               if (orderNumber === lastScanProcessed) return;   // duplicate → ignore
               lastScanProcessed = orderNumber;                 // remember newest hit
-              if (scanQueue) scanQueue.offer(orderNumber);     // kept: loads now when signed in, else right after the next sign-in
+              if (scanQueue) scanQueue.offer(orderNumber, data);   // kept: loads now when signed in, else right after the next sign-in; the relay data carries the scan's real time and id (every scan is also one `matched` event, station-scan-queue.js)
               else processScannedOrder(orderNumber);
 
               /* one-shot: wipe the field so it can’t be reused */
