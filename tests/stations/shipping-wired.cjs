@@ -288,13 +288,14 @@ async function run(browser, origin, n, full) {
   await page.evaluate(doc => window.__fsSnaps['Brites_Orders/' + doc].forEach(cb => cb({ exists: true, data: () => ({}) })), DOC);
 
   /* 1 · nobody signed in: a phone scan from THIS station's scanner waits; nothing is recorded, nobody is on the board */
+  const touches00 = await page.evaluate(() => window.__touches);
   const first = await phoneScan('3333333333');
   ok(first['Order Number'] === '3333333333' && first['Employee Name'] === 'ScannerBot', DEV + ': the scanner relays its code under the bot name, to its own doc');
   ok(log.scannerPosts[0].orderNumber === DOC && log.scannerPosts[0].orderNumField === '3333333333' && !('person' in log.scannerPosts[0]), DEV + ': the scanner write is for ' + DOC + ' and names no person');
   const w1 = await until(async () => { const s = await loginState(); return s.noteShown && s; }, DEV + ': the waiting scan is announced');
   ok(/^1 phone scan waiting for a sign-in/.test(w1.note), DEV + ': one small note says the scan waits: ' + w1.note);
   ok((await orderOnScreen()) === '' && stored('Station_Activity').length === 0 && stored('Station_Sessions').length === 0 && stored('Station_Live').length === 0, DEV + ': signed out: nothing loaded, nothing recorded, nobody on the board');
-  ok(await page.evaluate(() => window.__touches) >= 1, DEV + ': the relayed scan was told to StationSession.touch (input at the station), even with nobody signed in');
+  ok(await page.evaluate(() => window.__touches) > touches00, DEV + ': the relayed scan was told to StationSession.touch (input at the station), even with nobody signed in');
 
   /* 2 · the PIN sign-in: ONE session under the NAME; the waiting scan loads and is the signed-in person's */
   const t0 = Date.now();
