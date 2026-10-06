@@ -112,6 +112,7 @@ function make(K) {
       const snaps = await Promise.all(ranges.map(([a, z]) => col(ctx, COL.sessions).where("startAt", ">=", a).where("startAt", "<", z).orderBy("startAt", "desc").limit(LIM.sessions + 1).get()));
       const seen = new Set(), rows = []; let truncated = false;
       for (const s of snaps) { if (s.docs.length > LIM.sessions) truncated = true; for (const d of s.docs.slice(0, LIM.sessions)) if (!seen.has(d.id)) { seen.add(d.id); rows.push(Object.assign({ id: d.id }, d.data() || {})); } }
+      await require("./_stationAutoSignout").settle({ db: ctx.db, prefix: ctx.prefix, now: ctx.now }, rows);       // the auto sign-out rules (idle, 5:00 pm Toronto, a page that died): the session ends at the person's last input
       return { rows, truncated };
     });
   }

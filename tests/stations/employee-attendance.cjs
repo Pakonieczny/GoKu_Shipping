@@ -366,7 +366,7 @@ const att = (st, name, from, to, o) => M.attendance(ctxOf(st, o), { name, from, 
   assert.strictEqual(cost.readsOf('Efficiency_Daily').length, 2, 'two range queries for the rollups: the days that are over, and today');
   assert(cost.readsOf('Station_Sessions').length <= 4, 'two range queries for the sessions (twice each, for Firestore times)');
   assert(cost.readsOf('Efficiency_Daily').every(x => x.n < 400 && x.n > 0), 'each part is a day range of a few hundred documents at most');
-  assert(cost.readsOf('config').every(x => ['employeeAliases', 'employeeSchedule'].includes(x.doc)) && cost.readsOf('config').length === 2);
+  assert(cost.readsOf('config').every(x => ['employeeAliases', 'employeeSchedule', 'stationAdmins'].includes(x.doc)) && cost.readsOf('config').length <= 3, 'the two config documents, plus the Admin list the auto sign-out of stale sessions reads (kept a minute)');
   const readsBefore = cost.reads.length;
   await att(cost, 'Raj Packer', FROM, TODAY); await att(cost, 'Tess Welder', FROM, TODAY);
   assert.strictEqual(cost.reads.length, readsBefore, 'a second look within the cache life reads nothing more');

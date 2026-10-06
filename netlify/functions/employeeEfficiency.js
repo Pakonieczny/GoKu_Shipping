@@ -25,6 +25,7 @@
  *  ───────────────────────────────────────────────────────────────────────────── */
 "use strict";
 const EP = require("./_editPasscode");
+const AutoSignout = require("./_stationAutoSignout");
 const { CORS, parseBody, num } = require("./_charmNestAuth");
 const admin = require("./firebaseAdmin");
 const { displayStation } = require("./_activityKinds");      // ONE Sorting station: the stored keys "sorter" and "qr" are SHOWN as "sorting" (history keeps its keys; only a read folds them)
@@ -194,6 +195,7 @@ function readSessionsRange(ctx, fromMs, toMs) {
     const snaps = await Promise.all(ranges.map(([a, z]) => col(ctx, COL.sessions).where("startAt", ">=", a).where("startAt", "<", z).orderBy("startAt", "desc").limit(LIM.sessions + 1).get()));
     const seen = new Set(), rows = []; let truncated = false;
     for (const s of snaps) { if (s.docs.length > LIM.sessions) truncated = true; for (const d of s.docs.slice(0, LIM.sessions)) if (!seen.has(d.id)) { seen.add(d.id); rows.push(Object.assign({ id: d.id }, d.data() || {})); } }
+    await AutoSignout.settle({ db: ctx.db, prefix: ctx.prefix, now: ctx.now }, rows);       // the auto sign-out rules: a session that is idle (10 minutes without input), past 5:00 pm Toronto with no recent input, or whose page died ends at the person's last input (_stationAutoSignout.js)
     return { rows, truncated };
   });
 }
