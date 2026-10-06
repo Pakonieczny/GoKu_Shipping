@@ -383,7 +383,7 @@
         taskMin: s.taskMin && typeof s.taskMin === "object" ? { welding: nz(s.taskMin.welding), matching: nz(s.taskMin.matching), unknown: nz(s.taskMin.unknown) } : null }, had = stations.find(y => y.station === key);
       if (had) { for (const k of ["parts", "orders", "scans", "completes", "prints", "minutes", "shareParts", "shareMinutes"]) had[k] += x[k]; if (x.matched != null) had.matched = (had.matched || 0) + x.matched; } else stations.push(x);
     }
-    const cal = A(r.calendar).filter(c => c && c.day).map(c => ({ day: String(c.day), state: CAL[c.state] ? String(c.state) : "before", signedMs: num(c.signedMs), activeMs: num(c.activeMs), firstIn: num(c.firstIn), lastOut: num(c.lastOut), parts: num(c.parts), orders: num(c.orders), late: !!c.late, short: !!c.short, extra: !!c.extra, est: !!c.estimated, lengthKnown: c.lengthKnown !== false, note: c.note ? String(c.note) : "", weekend: !!c.weekend, others: num(c.others), ended: c.endedBy === "idle" || c.endedBy === "closing" ? c.endedBy : "" })).sort((a, b) => (a.day < b.day ? -1 : 1));
+    const cal = A(r.calendar).filter(c => c && c.day).map(c => ({ day: String(c.day), state: CAL[c.state] ? String(c.state) : "before", signedMs: num(c.signedMs), activeMs: num(c.activeMs), firstIn: num(c.firstIn), lastOut: num(c.lastOut), parts: num(c.parts), orders: num(c.orders), late: !!c.late, short: !!c.short, extra: !!c.extra, est: !!c.estimated, lengthKnown: c.lengthKnown !== false, note: c.note ? String(c.note) : "", weekend: !!c.weekend, others: num(c.others), ended: c.endedBy === "idle" || c.endedBy === "closing" ? c.endedBy : "", endedText: (c.endedBy === "idle" || c.endedBy === "closing") && typeof c.endedText === "string" ? c.endedText.slice(0, 120) : "" })).sort((a, b) => (a.day < b.day ? -1 : 1));
     const src = { kpis: {}, att: {}, rates: {}, contact: {}, issues: {}, welding: {} };
     // the Welding station (stations round 2): time signed in per task and the orders matched; null when the person has nothing there in this window. Its points ride on the same buckets as `series`.
     const wr = r.welding && typeof r.welding === "object" ? r.welding : null;
@@ -1168,6 +1168,8 @@
     }
     /* how a day ended when the station signed the person out by itself (the auto sign-out: both are normal sign-outs, hours end at the last input) */
     const ENDED_WORDS = { idle: "Signed out after 10 minutes without input", closing: "Signed out at 5:00 pm" };
+    /* (the station's own words come with the day: Laser "Signed out after 1 hour without input" / "Signed out at 5:00 pm after 30 minutes without input", Welding "Signed out at 5:00 pm"; the two above are for an older service) */
+    const endedWord = c => (c && c.ended ? c.endedText || ENDED_WORDS[c.ended] || "" : "");
     /* the Day view: one shift, in, out, and what the signed-in time was made of */
     function renderShift(M) {
       const c = M.cal[0] || {}, p = M.series[0] || {}, td = today(), host0 = E.shiftH, tipEl = host0.querySelector(".efpTip");
@@ -1177,7 +1179,7 @@
       if (!(sg > 0)) { const why = { off: "A day off: a team working day on which this person never signed in.", closed: "The team did not work this day.", before: "Before this person's first record.", future: "Not yet.", pending: "Not signed in yet today." }[c.state] || "Not signed in this day."; box.innerHTML = `<div class="efpEmptyBox" style="padding:12px 0">${esc(why)}</div>`; setText(E.shiftP, ""); host0.insertBefore(box, tipEl); return; }
       setText(E.shiftP, c.late ? "late start" : c.short ? "short day" : "");
       const pc = v => (v > 0 && sg > 0 ? Math.max(0, Math.min(100, v / sg * 100)) : 0);
-      box.innerHTML = `<div class="efpShiftT"><span>In <b>${c.firstIn ? esc(clock(c.firstIn)) : "—"}</b></span><span>Out <b>${c.lastOut ? esc(clock(c.lastOut)) : M.from === td ? "still in" : "—"}</b></span>${ENDED_WORDS[c.ended] ? `<span>${esc(ENDED_WORDS[c.ended])}</span>` : ""}<span>Signed in <b>${esc(durMs(sg))}</b></span>${ac != null ? `<span>Active <b>${esc(durMs(ac))}</b>${sg > 0 ? ` (${pctTxt(Math.min(1, ac / sg))})` : ""}</span>` : ""}</div>
+      box.innerHTML = `<div class="efpShiftT"><span>In <b>${c.firstIn ? esc(clock(c.firstIn)) : "—"}</b></span><span>Out <b>${c.lastOut ? esc(clock(c.lastOut)) : M.from === td ? "still in" : "—"}</b></span>${endedWord(c) ? `<span>${esc(endedWord(c))}</span>` : ""}<span>Signed in <b>${esc(durMs(sg))}</b></span>${ac != null ? `<span>Active <b>${esc(durMs(ac))}</b>${sg > 0 ? ` (${pctTxt(Math.min(1, ac / sg))})` : ""}</span>` : ""}</div>
 <div class="efpSB"><i class="a" data-w="${pc(ac).toFixed(1)}"></i><i class="i" data-w="${pc(id).toFixed(1)}"></i><i class="u" data-w="${pc(ul).toFixed(1)}"></i></div>
 <div class="efpSLeg"><span><i style="background:#6f6a62"></i>Active</span><span><i style="background:var(--gold2)"></i>Idle (gaps over 5 minutes)</span><span><i style="background:var(--line)"></i>No action logged</span></div>`;
       host0.insertBefore(box, tipEl);

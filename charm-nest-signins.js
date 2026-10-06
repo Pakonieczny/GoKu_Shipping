@@ -162,7 +162,9 @@ table.siT{width:100%;border-collapse:collapse;font-size:12.5px}
     el.classList.toggle("bad", !!st.err && !st.busy);
     el.innerHTML = st.busy ? `<span class="spin" aria-hidden="true"></span>Reading…` : st.err ? `Not read: ${esc(st.err.slice(0, 120))} · trying again` : st.at ? `Updated ${esc(clock(st.at + st.off))}` : "";
   }
-  const pill = r => { if (r.live) return `<span class="pill ok">Signed in</span>`; const e = ENDS[r.endReason] || [r.endReason ? String(r.endReason) : "Ended", "neutral"]; return `<span class="pill ${e[1]}">${esc(e[0])}</span>`; };
+  const pill = r => { if (r.live) return `<span class="pill ok">Signed in</span>`; const e = ENDS[r.endReason] || [r.endReason ? String(r.endReason) : "Ended", "neutral"];
+    const w = (r.endReason === "idle" || r.endReason === "closing") && typeof r.endPill === "string" && r.endPill ? r.endPill.slice(0, 60) : e[0];      /* (the station's own label: Laser "1 hour without input", Welding "5:00 pm") */
+    return `<span class="pill ${e[1]}">${esc(w)}</span>`; };
   const durCell = (key, min, cls) => `<span class="${cls || "siDur"}" data-dur="${esc(key)}">${esc(dur(min))}</span>`;
   function sessionsTable(g, by) {
     const first = by === "computer" ? "Person" : "Station · computer";
