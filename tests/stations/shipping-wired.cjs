@@ -259,11 +259,12 @@ async function run(browser, origin, n, full) {
   const brief = () => events().map(e => `${e.action}:${e.orderId}:${e.parts || 0}:${e.orders || 0}`);
   const eventsHave = async (action, orderId, why) => { await flush(); return until(async () => { await flush(); return events().find(e => e.action === action && e.orderId === orderId); }, why || (action + ' ' + orderId)); };
   const orderOnScreen = () => page.evaluate(() => document.getElementById('etsyOrderNumber').value);
+  const toastsNow = () => page.evaluate(() => window.__toasts.slice());
   const login = async () => {
     await page.evaluate(() => { const i = document.getElementById('employeeNumberInput'); i.dataset.raw = ''; i.value = ''; });
     await page.focus('#employeeNumberInput'); await page.keyboard.type(PIN);
     await page.click('#employeeLoginBtn', { force: true });
-    await page.waitForFunction(() => window.isEmployeeLoggedIn === true);
+    await until(() => page.evaluate(() => window.isEmployeeLoggedIn === true), 'the PIN login works (toasts: ' + 'see below)', 12000).catch(async e => { throw new Error(e.message.replace('see below', JSON.stringify((await toastsNow()).slice(-3))) + ' pin box length ' + (await page.evaluate(() => document.getElementById('employeeNumberInput').value.length))); });
   };
   const typeOrder = async id => {              // a typed scan: one more `typed` scan event for this order
     const typed = () => events().filter(e => e.action === 'scan' && e.orderId === id && e.detail === 'typed').length, n0 = typed();
@@ -281,7 +282,6 @@ async function run(browser, origin, n, full) {
     await (deliverTo || page).evaluate(([doc, dd]) => { const cbs = window.__fsSnaps['Brites_Orders/' + doc]; cbs.forEach(cb => cb({ exists: true, data: () => dd })); }, [DOC, d]);
     return d;
   };
-  const toastsNow = () => page.evaluate(() => window.__toasts.slice());
   const loginState = () => page.evaluate(() => ({ id: localStorage.getItem('employee_id'), name: localStorage.getItem('employee_name'), on: window.isEmployeeLoggedIn, opens: window.__opens.slice(), pin: document.getElementById('employeeNumberInput').value, note: (document.getElementById('stationScanQueueNote') || {}).textContent || '', noteShown: !!(document.getElementById('stationScanQueueNote') && document.getElementById('stationScanQueueNote').style.display !== 'none') }));
 
   // the first (empty) delivery of the relay listener is skipped by the page on purpose: deliver it, as Firestore does
@@ -313,7 +313,8 @@ async function run(browser, origin, n, full) {
   eq([liveDoc.person, liveDoc.device, liveDoc.note, liveDoc.pieces.length], [WHO, DEV, 'phone scan', 2], DEV + ': the live document names the person, the page, how it came in, both pieces');
   const board = await ask({ op: 'live' });
   const sh = board.stations.find(s => s.key === 'shipping');
-  eq([sh.state, sh.people, sh.current.length], ['working', [WHO], 1], DEV + ': the board: Shipping is working, with this person');
+  const whoNames = x => (Array.isArray(x.names) ? x.names : (x.people || []).map(p => (typeof p === 'string' ? p : p.name)));          // (C4: people are objects now, `names` the plain list)
+  eq([sh.state, whoNames(sh), sh.current.length], ['working', [WHO], 1], DEV + ': the board: Shipping is working, with this person');
   const cur = sh.current[0];
   ok(cur.person === WHO && cur.rid === '3333333333' && cur.device === DEV && cur.deviceLabel === `Shipping ${n}` && cur.qr && cur.qr.text === '3333333333' && cur.note === 'phone scan', DEV + ': the card names the order, the person, the page, the QR text, the note');
   ok(cur.pieces.length === 2 && cur.pieces.every(p => p.thumbUrl === URL_A && p.photoUrl === URL_PHOTO), DEV + ': one thumbnail per piece (the design of that size, and the listing photo)');
