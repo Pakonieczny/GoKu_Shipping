@@ -113,6 +113,8 @@ const EP = require(path.join(root, 'netlify/functions/_editPasscode.js'));
 const KINDS = require(path.join(root, 'netlify/functions/_activityKinds.js'));
 const ACT = require(path.join(root, 'netlify/functions/_stationActivity.js'));
 const ADMINS = tryReq('netlify/functions/_stationAdmins.js');             // AD2 (null until it is pushed)
+const AUTO = tryReq('netlify/functions/_stationAutoSignout.js');
+const SWEEPFN = tryReq('netlify/functions/stationSessionsSweepCron.js');
 Module._load = realLoad;
 const PASS = 'synthetic-pass-st2-4q';
 process.env.EDIT_PASSCODE = PASS;
@@ -175,6 +177,7 @@ const results = { pass: 0, fail: [], known: [], pending: [] };
 let SECTION = '';
 const say = (...a) => process.stdout.write(a.join(' ') + '\n');
 async function check(name, fn, o = {}) {
+  if (process.env.ONLY && !name.includes(process.env.ONLY)) return;                  // ONLY="text" runs the checks whose name has that text (debugging)
   const was = { mono: clock.mono, off: clock.off };
   try { await fn(); results.pass++; }
   catch (e) {
@@ -655,13 +658,14 @@ const toWall = t => { if (t > wall()) clock.mono += t - wall(); };
 async function autoServer() {
   await section('1 · auto sign-out, the server side', async () => {
     if (!HAVE.ad2) { pending('Rule A and B on the server, the Admin list and its door', 'AD2 (_stationAdmins.js, _stationAutoSignout.js) is not on main yet'); return; }
-    const SWEEP = tryReq('netlify/functions/stationSessionsSweepCron.js');
     const NON = 'Ana Tester';
     const ASM = o => Object.assign(SESS({ station: 'assembly', device: 'assembly-1', person: NON, computerId: 'pc-ASMPC0000001' }), o || {});
     const send = (s, ev, extra) => sess(Object.assign({}, s, { event: ev, at: wall(), sentAt: wall() }, extra || {}));
     const readers = { live: () => board({ op: 'live' }), overview: () => board({ op: 'overview', days: 1 }), person: () => board({ op: 'person', name: NON, range: 'day' }) };
     const startAt = async (m, o = {}) => { toWall(tAt(m)); const s = ASM(o); const r = await send(s, 'start', { lastInputAt: wall() }); eq(r.status, 200, 'start ' + JSON.stringify(r.body)); return s; };
     const beatAt = async (s, m, L, o = {}) => { toWall(tAt(m)); return send(s, 'beat', { lastInputAt: tAt(L) }, o); };
+    /** a page that is alive: a beat every 5 minutes from minute `from` to `to` (clock in minutes after 09:00), each reporting the last input `L(minute)`; returns the last answer */
+    const alive = async (s, from, to, L, o = {}) => { let r = null; for (let m = from; m <= to; m += 5) { r = await beatAt(s, m, typeof L === 'function' ? L(m) : L, o); if (r.body && r.body.ended) break; } return r; };
 
     for (const kind of Object.keys(readers)) await check(`a page that died ends at its LAST INPUT, reason idle, when the ${kind} read finds it; reading again changes nothing`, async () => {
       world('2026-10-07T13:00:00Z'); toWall(tAt(0));
@@ -682,10 +686,10 @@ async function autoServer() {
     });
     await check('an Admin is never ended for idleness (any spelling), a lookalike is', async () => {
       let n = 0;
-      for (const [name, admin] of [['Paul K', true], ['paul k', true], ['  Paul   K ', true], ['PAUL K.', true], ['Paul_K', true], ['Paul', true], ['Paul K 482915', true], ['Pauline', false], ['Paul Kx', false], ['Paula K', false], ['Pаul K', false], ['P a u l K', false], ['Paul Kowalski', false], ['Paulk', false]]) {
+      for (const [name, admin] of [['Paul K', true], ['paul k', true], ['  Paul   K ', true], ['Paul K\u0000', true], ['Paul\tK', true], ['PAUL K.', true], ['Paul_K', true], ['Paul', true], ['Paul K 482915', true], ['Pauline', false], ['Paul Kx', false], ['Paula K', false], ['Pаul K', false], ['P a u l K', false], ['Paul Kowalski', false], ['Paulk', false]]) {
         world(); const s = await startAt(0, { person: name, computerId: 'pc-ADM' + String(++n).padStart(9, '0') });
         eq(sdoc(s.id).admin, admin, `${JSON.stringify(name)} is ${admin ? '' : 'not '}an Admin on the document`);
-        await beatAt(s, 5, 0); const r = await beatAt(s, 60, 0);                 // an hour of beats with no input at all
+        const r = await alive(s, 5, 60, 0);                                       // an hour of beats, every five minutes, with no input at all
         if (admin) ok(!r.body.ended && sdoc(s.id).endAt == null, `${name}: an hour with no input does not end an Admin: ${JSON.stringify(r.body)}`);
         else ok(r.body.ended === true && sdoc(s.id).endReason === 'idle', `${name}: a non-Admin is ended: ${JSON.stringify(r.body)}`);
       }
@@ -716,15 +720,29 @@ async function autoServer() {
       let n = 0;
       for (const day of ['2026-10-07', '2026-03-07', '2026-03-08', '2026-03-09', '2026-10-31', '2026-11-01', '2026-11-02', '2026-12-24']) {
         const m = (h, mi) => nyAt(day, h, mi), cid = () => 'pc-CLS' + String(++n).padStart(9, '0');
-        world(iso(m(14, 0))); toWall(m(14, 0)); let s = ASM({ computerId: cid() }); await send(s, 'start', { lastInputAt: m(14, 0) });
-        toWall(m(17, 2)); let r = await send(s, 'beat', { lastInputAt: m(16, 45) });           // alive at 17:02, last input 16:45: no input in the last 10 minutes of the day
+        const beat = (s, at, L) => { toWall(at); return send(s, 'beat', { lastInputAt: L }); };
+        const begin = async (at) => { world(iso(at)); toWall(at); const s = ASM({ computerId: cid() }); await send(s, 'start', { lastInputAt: at }); return s; };
+        // typed until 16:45, a beat at 16:52 (7 quiet minutes: stays), the next beat 17:02: no input in the last 10 minutes before 17:00
+        let s = await begin(m(16, 40)); await beat(s, m(16, 45), m(16, 45)); let r = await beat(s, m(16, 52), m(16, 45)); ok(!r.body.ended, `${day}: 7 quiet minutes before 17:00 stays: ${JSON.stringify(r.body)}`);
+        r = await beat(s, m(17, 2), m(16, 45));
         ok(r.body.ended === true && sdoc(s.id).endAt === m(16, 45), `${day}: ended at the last input 16:45: ${JSON.stringify(r.body)} ${sdoc(s.id).endAt && iso(sdoc(s.id).endAt)} vs ${iso(m(16, 45))}`);
         eq(sdoc(s.id).endReason, 'closing', `${day}: the reason is "closing" (started before 17:00, last beat after it, no input after 16:50)`);
-        world(iso(m(14, 0))); toWall(m(14, 0)); s = ASM({ computerId: cid() }); await send(s, 'start', { lastInputAt: m(14, 0) });
-        toWall(m(17, 2)); r = await send(s, 'beat', { lastInputAt: m(16, 55) }); ok(!r.body.ended, `${day}: input at 16:55 stays at 17:02: ${JSON.stringify(r.body)}`);
-        toWall(m(17, 7)); r = await send(s, 'beat', { lastInputAt: m(16, 55) }); ok(r.body.ended === true && sdoc(s.id).endAt === m(16, 55) && sdoc(s.id).endReason === 'idle', `${day}: then Rule A from 16:55: ${JSON.stringify(r.body)} ${sdoc(s.id).endReason}`);
-        world(iso(m(17, 20))); toWall(m(17, 20)); s = ASM({ computerId: cid() }); await send(s, 'start', { lastInputAt: m(17, 20) });
-        toWall(m(17, 40)); r = await send(s, 'beat', { lastInputAt: m(17, 38) }); ok(!r.body.ended, `${day}: a sign-in at 17:20 stays in while there is input: ${JSON.stringify(r.body)}`);
+        // typed at 16:55: stays at 17:02, then the idle rule runs from 16:55
+        s = await begin(m(16, 40)); await beat(s, m(16, 45), m(16, 45)); await beat(s, m(16, 55), m(16, 55));
+        r = await beat(s, m(17, 2), m(16, 55)); ok(!r.body.ended, `${day}: input at 16:55 stays at 17:02: ${JSON.stringify(r.body)}`);
+        r = await beat(s, m(17, 7), m(16, 55)); ok(r.body.ended === true && sdoc(s.id).endAt === m(16, 55) && sdoc(s.id).endReason === 'idle', `${day}: then Rule A from 16:55: ${JSON.stringify(r.body)} ${sdoc(s.id).endReason}`);
+        // exactly 16:50 is "no input in the last 10 minutes"; 16:51 is input inside them
+        s = await begin(m(16, 40)); await beat(s, m(16, 50), m(16, 50)); r = await beat(s, m(17, 0), m(16, 50)); ok(r.body.ended === true && sdoc(s.id).endReason === 'closing' && sdoc(s.id).endAt === m(16, 50), `${day}: input at exactly 16:50 is closing: ${JSON.stringify(r.body)}`);
+        s = await begin(m(16, 40)); await beat(s, m(16, 51), m(16, 51)); r = await beat(s, m(17, 0), m(16, 51)); ok(!r.body.ended, `${day}: input at 16:51 stays at 17:00: ${JSON.stringify(r.body)}`);
+        r = await beat(s, m(17, 1), m(16, 51)); ok(r.body.ended === true && sdoc(s.id).endReason === 'idle' && sdoc(s.id).endAt === m(16, 51), `${day}: 10 quiet minutes after 16:51 is Rule A, not closing: ${JSON.stringify(r.body)}`);
+        // a person who signs in after 17:00 and keeps typing stays (the rule is for sessions that were open at 17:00)
+        s = await begin(m(17, 20)); await beat(s, m(17, 25), m(17, 24)); await beat(s, m(17, 30), m(17, 29)); await beat(s, m(17, 35), m(17, 34)); r = await beat(s, m(17, 40), m(17, 38)); ok(!r.body.ended, `${day}: a sign-in at 17:20 stays in while there is input: ${JSON.stringify(r.body)}`);
+        // a page that died at 16:46 and is found at 17:30: it ends at its last input, not at 17:00 and not at 17:30 (it was gone before 17:00: plain idle)
+        s = await begin(m(16, 40)); await beat(s, m(16, 45), m(16, 45)); toWall(m(17, 30)); await board({ op: 'live' });
+        eq(sdoc(s.id).endAt, m(16, 45), `${day}: a dead page found at 17:30 ends at its last input`); eq(sdoc(s.id).endReason, 'idle', `${day}: a page that died before 17:00`);
+        // a page that was alive at 17:00 (its beat says so) with no input since 16:40, then died: closing, at 16:40
+        s = await begin(m(16, 30)); await beat(s, m(16, 40), m(16, 40)); await beat(s, m(16, 49), m(16, 40)); await beat(s, m(16, 59), m(16, 40)); toWall(m(17, 40)); await board({ op: 'live' });
+        ok(sdoc(s.id).endAt === m(16, 40), `${day}: ends at the last input: ${iso(sdoc(s.id).endAt || 0)}`);
       }
     });
     await check('an ended session cannot be ended again, reopened or rewritten by a late client end, a late beat or a second read; the first end stands', async () => {
@@ -761,12 +779,14 @@ async function autoServer() {
       world(iso(m(23, 30)));
       const live = ASM({ computerId: 'pc-MID000000001' }), adm = ASM({ computerId: 'pc-MID000000002', person: 'Paul K' }), idle = ASM({ computerId: 'pc-MID000000003', person: 'Ida Idle' });
       toWall(m(23, 30)); for (const s of [live, adm, idle]) await send(s, 'start', { lastInputAt: m(23, 30) });
-      toWall(m(23, 55)); await send(live, 'beat', { lastInputAt: m(23, 54) }); await send(adm, 'beat', { lastInputAt: m(23, 30) }); await send(idle, 'beat', { lastInputAt: m(23, 31) });
+      for (const k of [5, 10, 15, 20, 25]) { toWall(m(23, 30) + k * MIN); await send(live, 'beat', { lastInputAt: wall() - MIN }); await send(adm, 'beat', { lastInputAt: m(23, 30) }); if (k <= 10) await send(idle, 'beat', { lastInputAt: m(23, 31) }); }
+      toWall(mid - 2 * MIN); await send(live, 'beat', { lastInputAt: wall() - MIN }); await send(adm, 'beat', { lastInputAt: m(23, 30) });
       toWall(mid + 3 * MIN); await send(live, 'beat', { lastInputAt: mid + 2 * MIN }); await send(adm, 'beat', { lastInputAt: m(23, 30) });
-      eq(sdoc(live.id).endReason, 'midnight'); eq(sdoc(live.id).endAt, mid, 'a live person at midnight');
-      eq(sdoc(adm.id).endReason, 'midnight'); eq(sdoc(adm.id).endAt, mid, 'the Admin is not exempt from midnight');
-      toWall(mid + 30 * MIN); await board({ op: 'live' });
-      eq(sdoc(idle.id).endAt, m(23, 31), 'an idle page found after midnight ends at its last input, not at midnight'); eq(sdoc(idle.id).endReason, 'idle');
+      const show = d => JSON.stringify([d.endAt && iso(d.endAt), d.endReason, d.lastSeenAt && iso(d.lastSeenAt), d.lastInputAt && iso(d.lastInputAt)]);
+      eq(sdoc(live.id).endReason, 'midnight', 'a live person at midnight: ' + show(sdoc(live.id))); eq(sdoc(live.id).endAt, mid, 'a live person at midnight');
+      eq(sdoc(adm.id).endReason, 'midnight', 'the Admin at midnight: ' + show(sdoc(adm.id))); eq(sdoc(adm.id).endAt, mid, 'the Admin is not exempt from midnight');
+      toWall(mid + 30 * MIN); AUTO.resetSweep(); await AUTO.sweep({ db: cur.db, force: true });
+      eq(sdoc(idle.id).endAt, m(23, 31), 'an idle page found after midnight (by the sweep) ends at its last input, not at midnight'); eq(sdoc(idle.id).endReason, 'idle');
     });
     await check('a session with no lastInputAt (an older page) is still closed by the old rule, at its last beat', async () => {
       world(); toWall(tAt(0)); const s = ASM(); await send(s, 'start'); toWall(tAt(5)); await send(s, 'beat'); toWall(tAt(30)); await readers.live();
@@ -776,14 +796,14 @@ async function autoServer() {
       freshKeep(); const q = (body, o) => doorPost(body, o);
       let r = await q({ stationAdmin: 'Paul K' }); ok(r.status === 200 && r.body.ok === true && r.body.admin === true, JSON.stringify(r.body)); eq(Object.keys(r.body).sort().join(), 'admin,ok', 'only ok and admin');
       r = await q({ stationAdmin: 'Tess Welder' }); ok(r.body.ok === true && r.body.admin === false);
-      for (const nm of [PIN, '48 29 15', '', '   ', '__proto__', 'constructor', 'toString', 'Paul K\u0000', 'x'.repeat(201)]) { r = await q({ stationAdmin: nm }); ok((r.status === 200 && r.body.admin === false) || r.status === 400, `name ${JSON.stringify(nm).slice(0, 20)}: ${r.status} ${JSON.stringify(r.body)}`); ok(!JSON.stringify(r.body).includes(PIN) && !JSON.stringify(r.body).includes('Paul'), 'no echo'); }
+      for (const nm of [PIN, '48 29 15', '', '   ', '__proto__', 'constructor', 'toString', 'x'.repeat(201)]) { r = await q({ stationAdmin: nm }); ok((r.status === 200 && r.body.admin === false) || r.status === 400, `name ${JSON.stringify(nm).slice(0, 20)}: ${r.status} ${JSON.stringify(r.body)}`); ok(!JSON.stringify(r.body).includes(PIN) && !JSON.stringify(r.body).includes('Paul'), 'no echo'); }
       for (const nm of [5, null, {}, [], ['Paul K'], true]) { r = await q({ stationAdmin: nm }); ok(r.status === 400 || (r.status === 200 && r.body.admin === false), `non-text ${JSON.stringify(nm)}: ${r.status}`); }
       r = await q({ stationAdmin: 'Paul K', pad: 'x'.repeat(1100) }); eq(r.status, 413);
       let locked = 0; for (let i = 0; i < 60; i++) { r = await q({ stationAdmin: 'Guess ' + i }, { ip: '192.0.2.77' }); if (r.status === 429) locked++; } ok(locked >= 15, 'a flood from one address is locked out: ' + locked);
       r = await q({ stationAdmin: 'Tess' }, { ip: '192.0.2.78' }); eq(r.status, 200, 'another address is not locked');
     });
     await check('the Admin list: a missing or empty or odd document falls back to Paul K and Paul; odd entries are ignored; Tess is never an Admin', async () => {
-      for (const doc of [undefined, {}, { names: [] }, { names: 'Paul K' }, { names: { a: 1 } }, { names: null }, { names: [null, 5, {}, [], PIN] }]) {
+      for (const doc of [undefined, {}, { names: [] }, { names: 'Paul K' }, { names: { a: 1 } }, { names: null }, { names: [null, 5, {}, [], '135792'] }]) {
         freshKeep(); if (doc !== undefined) cur.put('config', 'stationAdmins', doc); try { ADMINS._reset && ADMINS._reset(); } catch (_) {}
         const a = await ADMINS.isAdmin(cur.db, 'Paul K'), b = await ADMINS.isAdmin(cur.db, 'Tess Welder'), c = await ADMINS.isAdmin(cur.db, 'toString');
         ok(a === true && b === false && c === false, `doc ${JSON.stringify(doc)}: Paul K ${a}, Tess ${b}, toString ${c}`);
@@ -797,10 +817,66 @@ async function autoServer() {
       ok((await ADMINS.isAdmin(cur.db, 'Tess Welder')) !== true, 'Tess is not an Admin because the list is down');
       cur.heal('config');
     });
-    if (SWEEP) await check('the scheduled sweep answers 403 to a direct call and writes nothing', async () => {
-      world(); const s = await startAt(0); await beatAt(s, 5, 1); toWall(tAt(40)); const n = cur.writesOf('Station_Sessions').length;
-      const r = await SWEEP.handler({ httpMethod: 'POST', headers: {}, body: '{}' }); ok(r && (r.statusCode === 403 || r.statusCode === 401 || r.statusCode === 405), 'direct call: ' + JSON.stringify(r)); eq(cur.writesOf('Station_Sessions').length, n);
-    }); else pending('the sweep function', 'stationSessionsSweepCron.js not on main');
+    const sweepNow = async () => { AUTO.resetSweep(); return AUTO.sweep({ db: cur.db, force: true }); };
+    const seedRow = (id, o) => { cur.put('Station_Sessions', id, Object.assign({ id, person: 'Seed Person', employeeId: '', station: 'assembly', device: 'assembly-1', computerId: 'pc-SEED' + id.replace(/\W/g, '').slice(-8).padEnd(8, '0'), computerLabel: '', startAt: tAt(0), lastSeenAt: tAt(5), lastInputAt: tAt(1), endAt: null, endReason: null, minutes: 0 }, o)); };
+    await check('the sweep: dead non-Admins end at their LAST INPUT (idle), live ones stay, an Admin and an old page by the old rule; a second sweep writes nothing', async () => {
+      world(); const dead = await startAt(0, { person: 'Dee Dead', computerId: 'pc-SWDEAD00001' }); await beatAt(dead, 5, 1);
+      const adm = await startAt(0, { person: 'Paul K', computerId: 'pc-SWADMIN0001' }); await beatAt(adm, 5, 0);
+      toWall(tAt(0)); const old = ASM({ computerId: 'pc-SWOLDPG0001', person: 'Old Page' }); await send(old, 'start'); toWall(tAt(5)); await send(old, 'beat');
+      const live = await startAt(0, { person: 'Lee Live', computerId: 'pc-SWLIVE00001' }); await alive(live, 5, 38, m => m - 1);
+      const advLive = await startAt(38, { person: 'Pam K', computerId: 'pc-SWPAULK0001' }); await beatAt(advLive, 38, 38);
+      toWall(tAt(40)); const r = await sweepNow(); ok(r.stores && r.stores.real && r.stores.sandbox, 'both stores swept: ' + JSON.stringify(r));
+      eq(sdoc(dead.id).endAt, tAt(1), 'a dead page ends at its last input'); eq(sdoc(dead.id).endReason, 'idle'); eq(sdoc(dead.id).minutes, 1);
+      eq(sdoc(adm.id).endAt, tAt(5), 'an Admin whose page died: the old rule, at the last beat'); eq(sdoc(adm.id).endReason, 'closed');
+      eq(sdoc(old.id).endAt, tAt(5), 'an old page with no last input: the old rule'); eq(sdoc(old.id).endReason, 'closed');
+      ok(sdoc(live.id).endAt == null, 'a page with a fresh beat and input stays'); ok(sdoc(advLive.id).endAt == null, 'a person on the list by a lookalike name but fresh beats stays');
+      const w = cur.writesOf('Station_Sessions').length, snap = JSON.stringify(cur.all('Station_Sessions'));
+      toWall(tAt(41)); const r2 = await sweepNow(); eq(cur.writesOf('Station_Sessions').length, w, 'a second sweep writes nothing: ' + JSON.stringify(r2)); eq(JSON.stringify(cur.all('Station_Sessions')), snap, 'nothing else changed');
+      eq(cur.writesOf('Sandbox_Station_Sessions').length, 0, 'the sandbox store was not written');
+    });
+    await check('the sweep: only endAt, endReason and minutes of an open session change; nothing is deleted; another collection is never written', async () => {
+      world(); const a = await startAt(0, { person: 'Fay Field' }); await beatAt(a, 5, 1); toWall(tAt(40));
+      const before = cur.get('Station_Sessions', a.id), writes0 = cur.writes.length; await sweepNow();
+      const after = cur.get('Station_Sessions', a.id); const changed = Object.keys(after).filter(k => JSON.stringify(after[k]) !== JSON.stringify(before[k])).sort();
+      eq(changed, ['endAt', 'endReason', 'minutes'], 'the changed fields: ' + changed);
+      const w = cur.writes.slice(writes0); ok(w.length >= 1 && w.every(x => x[0] === 'Station_Sessions' && x[2] !== 'delete'), 'only session writes, no delete: ' + JSON.stringify(w));
+    });
+    await check('the sweep: yesterday\'s dead sessions (found after midnight) end at their last input or last beat, never at midnight and never at the time of the sweep', async () => {
+      const day = '2026-10-07', m = (h, mi) => nyAt(day, h, mi); world(iso(m(23, 30))); toWall(m(23, 30));
+      const non = ASM({ computerId: 'pc-YDNON000001', person: 'Yda Non' }), adm = ASM({ computerId: 'pc-YDADM000001', person: 'Paul' });
+      for (const s of [non, adm]) await send(s, 'start', { lastInputAt: m(23, 30) });
+      for (const k of [5, 10]) { toWall(m(23, 30) + k * MIN); await send(non, 'beat', { lastInputAt: m(23, 31) }); await send(adm, 'beat', { lastInputAt: m(23, 30) }); }
+      toWall(nyAt('2026-10-08', 0, 40)); await sweepNow();
+      eq(sdoc(non.id).endAt, m(23, 31), 'the person: the last input'); eq(sdoc(non.id).endReason, 'idle');
+      eq(sdoc(adm.id).endAt, m(23, 40), 'the Admin: the last beat'); eq(sdoc(adm.id).endReason, 'closed');
+    });
+    await check('the sweep: the real and the sandbox store are each swept on their own; a store that cannot be read does not stop the other; the handler answers 200 and never throws', async () => {
+      world(); const real = await startAt(0, { computerId: 'pc-SWREAL00001' });
+      const sb = ASM({ computerId: 'pc-SWSAND00001', person: 'Sandy Tester' }); await sess(Object.assign({}, sb, { event: 'start', at: wall(), sentAt: wall(), lastInputAt: wall() }), { sandbox: true });
+      await beatAt(real, 5, 1); await sess(Object.assign({}, sb, { event: 'beat', at: wall(), sentAt: wall(), lastInputAt: tAt(1) }), { sandbox: true });
+      toWall(tAt(40)); cur.fail('Station_Sessions');
+      const r = await sweepNow(); ok(r.stores.real && r.stores.real.error, 'the real store reports its error: ' + JSON.stringify(r.stores.real)); cur.heal('Station_Sessions');
+      eq(cur.get('Sandbox_Station_Sessions', sb.id).endAt, tAt(1), 'the sandbox store was still swept: ' + JSON.stringify(cur.get('Sandbox_Station_Sessions', sb.id))); ok(sdoc(real.id).endAt == null, 'the real one waits for the next look');
+      cur.fail('Station_Sessions'); cur.fail('Sandbox_Station_Sessions'); AUTO.resetSweep(); toWall(wall() + 2 * MIN);
+      const h = await SWEEPFN.handler({}); ok(h.statusCode === 200 && JSON.parse(h.body).ok === true, 'the handler answers 200 with both stores down: ' + JSON.stringify(h)); cur.heal('Station_Sessions'); cur.heal('Sandbox_Station_Sessions');
+      AUTO.resetSweep(); toWall(wall() + 2 * MIN); const h2 = await SWEEPFN.handler({}); eq(h2.statusCode, 200); ok(sdoc(real.id).endAt === tAt(1), 'the next sweep ends it at its last input: ' + iso(sdoc(real.id).endAt || 0));
+      ok(/^\*\/5 \* \* \* \*$/.test(SWEEPFN.config.schedule), 'the schedule is every five minutes');
+    });
+    await check('the sweep with the Admin list unreadable leaves a session without a stored flag open; once the list can be read it is decided', async () => {
+      world(); seedRow('unk-1', { person: 'Una Known' }); seedRow('unk-2', { person: 'Paul K' }); seedRow('unk-3', { person: 'Stored Out', admin: false }); toWall(tAt(40)); cur.fail('config');
+      await sweepNow(); ok(sdoc('unk-1').endAt == null && sdoc('unk-2').endAt == null, 'unknown means left open (and never ended wrongly)'); eq(sdoc('unk-3').endReason, 'idle', 'a stored admin:false is enough to decide');
+      cur.heal('config'); try { ADMINS.forget(cur.db); } catch (_) {} await sweepNow();
+      eq(sdoc('unk-1').endReason, 'idle', 'decided later'); eq(sdoc('unk-2').endReason, 'closed', 'Paul K, an Admin: the old rule');
+    });
+    await check('the sweep never ends more than 100 in a run and never throws on odd rows (no start, a text for a time, endAt 0, a person with no name)', async () => {
+      world(); for (let i = 0; i < 130; i++) seedRow('bulk-' + i, { person: 'Bulk ' + String.fromCharCode(65 + (i % 26)) + ' Person' });
+      seedRow('odd-1', { startAt: 'soon' }); seedRow('odd-2', { startAt: null }); seedRow('odd-3', { person: '', lastSeenAt: 'x', lastInputAt: 'y' }); seedRow('odd-4', { person: null, startAt: tAt(0), lastSeenAt: {}, lastInputAt: [] }); seedRow('odd-5', { lastInputAt: 1e18 }); seedRow('odd-6', { lastInputAt: -4, startAt: 5 });
+      toWall(tAt(40)); const r = await sweepNow(); ok(r.stores.real.written <= 100, 'at most 100 written: ' + JSON.stringify(r.stores.real));
+      const ended = n => cur.all('Station_Sessions').filter(d => d.endAt).length; ok(ended() >= 90 && ended() <= 106, 'about 100 ended: ' + ended());
+      await advance(31000); AUTO.resetSweep(); const r2 = await AUTO.sweep({ db: cur.db, force: true });
+      ok(cur.all('Station_Sessions').filter(d => /^bulk-/.test(d._id)).every(d => d.endAt), 'the rest of the 130 end in the next run: ' + JSON.stringify(r2.stores.real));
+      for (const d of cur.all('Station_Sessions').filter(d => d.endAt && /^odd-/.test(d._id))) ok(Number.isFinite(d.endAt) && d.endAt >= 0 && Number.isFinite(d.minutes), 'odd row ' + d._id + ' ended sanely: ' + JSON.stringify(d));
+    });
   });
 }
 
