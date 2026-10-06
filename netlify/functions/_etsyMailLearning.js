@@ -8,6 +8,9 @@
  *    EtsyMail_DraftOutcomes/{id}   one per sent reply
  *    EtsyMail_KnowledgeGaps/{id}   one per missing fact, counted
  *    EtsyMail_Config/learningStats weekly counts (unchanged/light/rewrite)
+ *    EtsyMail_ReplyDaily/{day}     one small entry per sent reply, for the Employee portal's
+ *                                  inbox figures (who, auto or manual, order, customer); see
+ *                                  replyEntry() and _employeeInbox.js (Paul, 6 Oct 2026)
  */
 
 "use strict";
@@ -17,6 +20,7 @@ const crypto = require("crypto");
 const OUTCOMES_COLL = "EtsyMail_DraftOutcomes";
 const GAPS_COLL     = "EtsyMail_KnowledgeGaps";
 const STATS_DOC     = "learningStats";
+const REPLY_DAILY_COLL = "EtsyMail_ReplyDaily";
 const SENT_STATUSES = new Set(["sent", "sent_unverified", "sent_text_only", "queued", "sending"]);
 
 // ── comparison (pure) ────────────────────────────────────────────────
@@ -79,17 +83,63 @@ function isoWeek(ms) {
   return `${y}-W${String(w).padStart(2, "0")}`;
 }
 
+// ── the sent-reply entry (for the portal's inbox figures) ────────────
+
+// The shop's day, daylight saving included. America/Toronto is the same Eastern clock (same days, same changes), so this is
+// the portal's own rule (employeeEfficiency.js nyDay) and the portal reads the document by the same day.
+const REPLY_DAY_FMT = new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit" });
+function replyDay(ms) { return REPLY_DAY_FMT.format(new Date(ms)); }          // "2026-10-06"
+
+const foldText = s => String(s == null ? "" : s).normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+const plainText = (s, n) => String(s == null ? "" : s).replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim().slice(0, n);
+
+/** One small entry per sent reply: who (the inbox username the page sent, "" when none), manual or auto, the conversation's order
+ *  number, the customer (a short key, so "messages per customer" can be counted, and the name for a top list) and the
+ *  conversation number. Pure; JSON-safe; about 120 bytes. Auto = the auto-pipeline (sendOrigin "auto" or a system: name):
+ *  never a person. No text of the reply, no address, no PIN is ever in it. */
+function replyEntry({ atMs, employeeName, sendOrigin, thread, threadId }) {
+  const t = thread && typeof thread === "object" ? thread : {};
+  const by = plainText(employeeName, 60);
+  const th = String(threadId || "").replace(/\D/g, "").slice(0, 24);
+  const oid = String(t.etsyOrderId || t.linkedOrderId || "").replace(/\D/g, "");
+  const ident = foldText(t.etsyUsername) || foldText(t.customerName) || th;
+  return {
+    t: Math.floor(Number(atMs) || Date.now()),
+    by,
+    o: sendOrigin === "auto" || /^system:/i.test(by) ? "a" : "m",
+    r: /^\d{9,14}$/.test(oid) ? oid : "",
+    c: ident ? crypto.createHash("sha1").update(ident).digest("hex").slice(0, 12) : "",
+    n: plainText(t.customerName, 40),
+    th
+  };
+}
+
+/** Append the entry to the day's document. Its own try/catch: never throws, and the send never waits on a failure. */
+async function recordReply({ db, admin, entry }) {
+  try {
+    const FV = admin.firestore.FieldValue, day = replyDay(entry.t);
+    await db.collection(REPLY_DAILY_COLL).doc(day).set({ day, updatedAtMs: Date.now(), replies: FV.arrayUnion(entry) }, { merge: true });
+    return true;
+  } catch (e) {
+    console.warn("[learning] reply entry not recorded:", e.message);
+    return false;
+  }
+}
+
 // ── writes ───────────────────────────────────────────────────────────
 
 /** One record per sent reply. prev is the draft doc as it stood before
  *  this send (the AI's text, if the AI wrote it). Never throws. */
 async function recordOutcome({ db, admin, draftId, threadId, prev, sentText, sendOrigin, employeeName, polished = false }) {
+  let replyP = null;
   try {
     const FV = admin.firestore.FieldValue;
     const now = Date.now();
     const aiText = prev && prev.generatedByAI && !SENT_STATUSES.has(prev.status) ? String(prev.text || "") : "";
     let thread = {};
     try { const t = await db.collection("EtsyMail_Threads").doc(threadId).get(); thread = t.exists ? (t.data() || {}) : {}; } catch {}
+    // the portal's inbox figures: who sent it, which order, which customer (independent of the learning record below)
+    try { replyP = recordReply({ db, admin, entry: replyEntry({ atMs: now, employeeName, sendOrigin, thread, threadId }) }); } catch (e) { console.warn("[learning] reply entry skipped:", e.message); }
     const cmp = aiText ? compareTexts(aiText, sentText) : null;
     const kind = cmp ? cmp.kind : "staff_only";
     const manual = sendOrigin !== "auto";
@@ -124,6 +174,8 @@ async function recordOutcome({ db, admin, draftId, threadId, prev, sentText, sen
   } catch (e) {
     console.warn("[learning] outcome not recorded:", e.message);
     return null;
+  } finally {
+    if (replyP) await replyP;                         // (recordReply never rejects; awaited so the function does not end before the write)
   }
 }
 
@@ -175,4 +227,4 @@ function lessonHoldReason(text) {
   return null;
 }
 
-module.exports = { OUTCOMES_COLL, GAPS_COLL, STATS_DOC, compareTexts, isoWeek, recordOutcome, recordMissingFacts, gapId, lessonHoldReason };
+module.exports = { OUTCOMES_COLL, GAPS_COLL, STATS_DOC, REPLY_DAILY_COLL, compareTexts, isoWeek, replyDay, replyEntry, recordReply, recordOutcome, recordMissingFacts, gapId, lessonHoldReason };

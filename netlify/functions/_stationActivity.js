@@ -146,17 +146,26 @@ function rollupPatch(FV, prev, day, person, evs, prefix) {
   return out;
 }
 
-/** Writes a batch. Returns { written, duplicate, refused, scrubbed }. Events already stored change nothing and add to no rollup. */
+/** A scan that was stored with nobody credited ("Unattributed") and now arrives again with its person: two computers at the Welding station
+ *  hear the same phone scan, and the one with nobody in Matching may reach the server first. The person's copy wins (ST2). */
+const upgrades = (d, ex) => d.action === "matched" && ex && ex.action === "matched" && ex.unattributed === true && d.unattributed !== true;
+
+/** Writes a batch. Returns { written, duplicate, refused, scrubbed }. Events already stored change nothing and add to no rollup, with ONE
+ *  exception: a `matched` scan stored as Unattributed is replaced by the same scan with a person (the Unattributed rollup gives it back). */
 async function add(db, FV, events, opts) {
   const prefix = (opts && opts.prefix) || "", col = name => db.collection(prefix + name);
   const now = Date.now();
   let refused = 0, scrubbed = 0, duplicate = 0;
-  const seen = new Set(), docs = [];
+  const seen = new Map(), docs = [];
   for (const raw of events) {
     const r = clean(raw, now, prefix);
     if (r.refused) { refused++; continue; }
-    if (seen.has(r.doc.id)) { duplicate++; continue; }          // the same id twice in one request counts once
-    seen.add(r.doc.id); docs.push(r.doc);
+    if (seen.has(r.doc.id)) {                                    // the same id twice in one request counts once (the scan with its person, when one copy has it)
+      const was = seen.get(r.doc.id);
+      if (upgrades(r.doc, was)) { docs[docs.indexOf(was)] = r.doc; seen.set(r.doc.id, r.doc); } else duplicate++;
+      continue;
+    }
+    seen.set(r.doc.id, r.doc); docs.push(r.doc);
     if (r.scrubbed) scrubbed++;
   }
   if (!docs.length) return { written: 0, duplicate, refused, scrubbed };
@@ -166,14 +175,24 @@ async function add(db, FV, events, opts) {
     const gl = [...groups.values()], evRefs = docs.map(d => col(ACT).doc(d.id));
     const snaps = await tx.getAll(...evRefs, ...gl.map(g => g.ref));
     const fresh = docs.filter((d, i) => !snaps[i].exists);
-    for (const d of fresh) groups.get(rollupId(d.day, d.person)).docs.push(d);
-    for (const d of fresh) tx.set(col(ACT).doc(d.id), Object.assign({}, d, { ts: FV.serverTimestamp() }));
+    const up = docs.map((d, i) => ({ d, ex: snaps[i].exists ? (snaps[i].data() || {}) : null })).filter(u => u.ex && upgrades(u.d, u.ex));
+    // the Unattributed rollups the replaced scans were counted in (all reads before the first write)
+    const back = new Map();
+    for (const u of up) { const k = rollupId(u.ex.day, UNATTRIBUTED); if (!back.has(k)) back.set(k, { day: u.ex.day, ref: col(DAILY).doc(k), evs: [] }); back.get(k).evs.push(u.ex); }
+    const backList = [...back.values()], backSnaps = backList.length ? await tx.getAll(...backList.map(b => b.ref)) : [];
+    for (const d of fresh.concat(up.map(u => u.d))) groups.get(rollupId(d.day, d.person)).docs.push(d);
+    for (const d of fresh.concat(up.map(u => u.d))) tx.set(col(ACT).doc(d.id), Object.assign({}, d, { ts: FV.serverTimestamp() }));
     gl.forEach((g, i) => {
       if (!g.docs.length) return;
       const s = snaps[docs.length + i];
       tx.set(g.ref, rollupPatch(FV, s && s.exists ? (s.data() || {}) : null, g.day, g.person, g.docs, prefix), { merge: true });
     });
-    return fresh.length;
+    const NEG = { increment: n => FV.increment(-n), serverTimestamp: FV.serverTimestamp };
+    backList.forEach((b, i) => {
+      const s = backSnaps[i];
+      if (s && s.exists) tx.set(b.ref, rollupPatch(NEG, s.data() || {}, b.day, UNATTRIBUTED, b.evs, prefix), { merge: true });
+    });
+    return fresh.length + up.length;
   });
   return { written, duplicate: duplicate + (docs.length - written), refused, scrubbed };
 }

@@ -508,10 +508,10 @@
   <!-- Sign-in time per person and computer, and the midnight sign-out (station-session.js). Here the sign-in is the
        "Sorting as" name: at midnight (New York) it is cleared and the chip asks for a name again; the batch on screen
        and the scanner stay as they are. -->
-  <script src="station-session.js?v=20261005-et2"></script>
+  <script src="station-session.js?v=20261006-as2"></script>
   <!-- What each person did here (scans, stickers printed, orders sorted, rejects) for the Employee efficiency console: the
        person, station and device are the StationSession's. Without the file nothing changes. -->
-  <script src="station-activity.js?v=20261005-et2"></script>
+  <script src="station-activity.js?v=20261006-int1"></script>
   <!-- The batch in hand right now (scanned = working, every sticker printed = idle), for the console's live stations board
        (station-live-order.js). Optional: without it nothing changes. -->
   <script src="station-live-order.js?v=20261005-et2"></script>
@@ -520,14 +520,22 @@
       StationSession.init({
         station: "sorting", device: "sorting-1",
         person: () => { try { const n = (localStorage.getItem("sorting.employee") || "").trim(); return n ? { name: n, id: null } : null; } catch (_) { return null; } },
-        signOut: () => {
+        // The sign-in ended by itself (midnight, 10 minutes without input, 5:00 pm): this page clears ITS login (the name, how it
+        // was set, and any phone scan kept for the next sign-in) and shows its own sign-in again, one calm line, no pop-up. The batch
+        // on screen, the stickers and the scanner stay exactly as they are; the next name set here signs in again.
+        signOut: reason => {
           let was = "";
           try { was = localStorage.getItem("sorting.employee") || ""; localStorage.removeItem("sorting.employee"); localStorage.removeItem("sorting.employeeVia"); } catch (_) {}
+          try { window.SortTL && SortTL.dropKept && SortTL.dropKept(); } catch (_) {}
           try {
             const btn = document.querySelector("#sortingAsChip .st-as-name");
             if (btn) { btn.textContent = "Set your name"; btn.classList.add("st-unset"); btn.title = "Click to set who is sorting"; }
           } catch (_) {}
-          if (was) { try { window.M && M.toast && M.toast({ html: "Signed out at midnight. Click “Set your name” to sign in for the new day." }); } catch (_) {} }
+          const why = reason === "idle" ? "Signed out after 10 minutes without input. Click “Set your name” to sign in again."
+            : reason === "closing" ? "Signed out at 5:00 pm. Click “Set your name” to sign in again."
+            : reason === "midnight" || !reason ? "Signed out at midnight. Click “Set your name” to sign in for the new day."
+            : "Signed out. Click “Set your name” to sign in again.";
+          if (was) { try { window.M && M.toast && M.toast({ html: why }); } catch (_) {} }
         }
       });
     } catch (_) {}
@@ -545,7 +553,7 @@
   <!-- Order timeline: the shared client and the station module (every scan recorded, cancelled orders flagged).
        If either is missing the page works exactly as before. -->
   <script src="order-timeline.js?v=20260929-cx-a"></script>
-  <script src="station-timeline.js?v=20260928-fxS"></script>
+  <script src="station-timeline.js?v=20261006-int1"></script>
 
   <!-- Everything is in this single <script> block -->
   <script>
@@ -1446,6 +1454,10 @@ async function startScannedSortingListener() {
       if (!input) return;
       input.value = scannedVal;
 
+      // A new phone scan is input at this station: it keeps the signed-in person's sign-in alive (the 10-minute rule counts
+      // the scanner as input; station-session.js). Guarded: without the call nothing changes.
+      try { window.StationSession && typeof StationSession.touch === "function" && StationSession.touch(); } catch (_) {}
+
       // [NEW: reset states as if app just opened]
       disableSendMatch();
       disableMatchPrintFlow();
@@ -1609,7 +1621,7 @@ window.SortTL = (function () {
   // The 6-digit employee number of the stations' existing login (Brites_Orders/"Employee Numbers", checked by the server
   // as weld, assembly and shipping check it): the chip keeps the name it knows. The number itself is never kept or recorded.
   // the sign-in time on this computer (station-session.js): the name only, never the number
-  function sessionIn(name) { try { window.StationSession && StationSession.signedIn({ name, id: null }); } catch (_) {} }
+  function sessionIn(name) { try { window.StationSession && StationSession.signedIn({ name, id: null }); } catch (_) {} release(); }
   let signingIn = false;
   async function signIn(num) {
     if (signingIn) return;
@@ -1701,7 +1713,7 @@ window.SortTL = (function () {
   // (the batch's efficiency record is kept apart from the timeline's: it is returned to the caller, who hands it back to
   //  batchLoaded, so a second batch entered meanwhile never reports the first one's orders)
   function batchStart(orderIds, src) {
-    const sc = { ids: [...new Set((orderIds || []).map(x => String(x).trim()).filter(Boolean))], how: (src && src.how) || "typed", done: false };
+    const sc = { ids: [...new Set((orderIds || []).map(x => String(x).trim()).filter(Boolean))], how: (src && src.how) || "typed", relay: !!src, done: false };
     scanned = sc;
     try { trackBatch(orderIds, src); } catch (e) { console.warn("Timeline batch failed:", e); }
     return sc;
@@ -1737,25 +1749,49 @@ window.SortTL = (function () {
     if (!me || !data || !/^cancel/i.test(String(data.status || ""))) return;
     flag(me, String(orderId), { why: "Cancelled on Etsy", source: "etsy" });
   }
+  // one scan per order of the batch, with the pieces it holds; an order that did not load is an error (not found)
+  function recordBatch(how, recs) {
+    for (const r of recs) {
+      if (r.parts) act("scan", { orderId: r.id, parts: r.parts, detail: how });
+      else act("error", { orderId: r.id, detail: "order not found or not loaded (" + how + ")" });
+    }
+  }
+  // the batch is now in hand: every order that loaded, with all its pieces (the cancelled ones already alerted count as done)
+  function batchInHand(how, recs) {
+    try {
+      const okIds = recs.filter(r => r.parts > 0).map(r => r.id);
+      if (okIds.length) {
+        const items = (window.cachedOrderItems || []).filter(it => idsOfItem(it).some(x => okIds.includes(x)));
+        liveBatch = { ids: okIds, done: new Set() };
+        live("batch", okIds, items, { note: how === "typed" ? "" : how });
+        if (cur) for (const id of [...cur.alerted]) liveStep(id);
+      } else { liveBatch = null; live("end"); }
+    } catch (_) {}
+  }
+  const signedNow = () => { try { return !!(window.StationActivity && typeof StationActivity.who === "function" && StationActivity.who()); } catch (_) { return false; } };
+  const KEEP_MS = 20 * 60 * 1000, KEEP_MAX = 25, kept = [];
+  function keepBatch(sc, recs) { kept.push({ at: Date.now(), how: sc.how, recs }); if (kept.length > KEEP_MAX) kept.shift(); }
+  /** a name is set: the phone batches kept while nobody was signed in (last 20 minutes) are this person's scans, and the newest is in hand */
+  function release() {
+    try {
+      if (!kept.length || !signedNow()) return;
+      const now = Date.now(), fresh = kept.splice(0).filter(k => now - k.at <= KEEP_MS);
+      for (const k of fresh) recordBatch(k.how, k.recs);
+      const last = fresh[fresh.length - 1];
+      const onScreen = last ? last.recs.filter(r => (window.cachedOrderItems || []).some(it => idsOfItem(it).includes(r.id))) : [];
+      if (onScreen.length) batchInHand(last.how, onScreen);       // (a batch no longer on screen is not put in hand)
+    } catch (_) {}
+  }
+  const dropKept = () => { kept.length = 0; };       // (a sign-out ended: what was kept before it is never put under the next name)
   function batchLoaded(sc) {
-    // one scan per order of the batch, with the pieces it holds; an order that did not load is an error (not found)
     sc = sc || scanned;
     if (sc && !sc.done) {
       sc.done = true; if (scanned === sc) scanned = null;
-      for (const id of sc.ids) {
-        const parts = piecesOf(id);
-        if (parts) act("scan", { orderId: id, parts, detail: sc.how });
-        else act("error", { orderId: id, detail: "order not found or not loaded (" + sc.how + ")" });
-      }
-      try {   // the batch is now in hand: every order that loaded, with all its pieces (the cancelled ones already alerted count as done)
-        const okIds = sc.ids.filter(id => piecesOf(id) > 0);
-        if (okIds.length) {
-          const items = (window.cachedOrderItems || []).filter(it => idsOfItem(it).some(x => okIds.includes(x)));
-          liveBatch = { ids: okIds, done: new Set() };
-          live("batch", okIds, items, { note: sc.how === "typed" ? "" : sc.how });
-          if (cur) for (const id of [...cur.alerted]) liveStep(id);
-        } else { liveBatch = null; live("end"); }
-      } catch (_) {}
+      const recs = sc.ids.map(id => ({ id, parts: piecesOf(id) }));
+      // A phone batch that loads while nobody is signed in is not lost to nobody: it loads on screen as ever (nothing is blocked)
+      // and is kept for 20 minutes in this tab; the person who signs in next has it recorded as their scan and in hand (release).
+      if (sc.relay && !signedNow()) { keepBatch(sc, recs); }
+      else { recordBatch(sc.how, recs); batchInHand(sc.how, recs); }
     }
     const me = cur;
     if (!me) return;
@@ -1890,7 +1926,7 @@ window.SortTL = (function () {
 
   return Object.assign(api, {
     active: () => !!window.StationTimeline,
-    getEmployee, batchStart, etsyReceipt, batchLoaded, markTiles, allowPrint, printOne, sorted, isKnownCancelled
+    getEmployee, batchStart, etsyReceipt, batchLoaded, markTiles, allowPrint, printOne, sorted, isKnownCancelled, dropKept, kept: () => kept.length
   });
 })();
 

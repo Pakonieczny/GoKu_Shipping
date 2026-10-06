@@ -99,6 +99,7 @@ async function scenario(browser, base, P) {
   const signIn = async pin => {
     await page.evaluate(p => { const i = document.getElementById('employeeNumberInput'); i.dataset.raw = p; i.value = '******'; }, pin);
     await page.evaluate(() => document.getElementById('employeeLoginBtn').click());
+    if (P.file === 'weld-1.html') await page.click('#weldTaskMatching', { timeout: 10000 });         // the Welding station asks "Welding or Matching?" after the number; scans are credited to Matching
     await page.waitForFunction(() => window.isEmployeeLoggedIn === true && window.StationActivity.who(), null, { timeout: 10000 });
   };
   const signOut = async () => {
@@ -106,7 +107,8 @@ async function scenario(browser, base, P) {
     await page.waitForFunction(() => window.isEmployeeLoggedIn === false, null, { timeout: 5000 });
   };
   const flush = () => page.evaluate(() => window.StationActivity.flush());
-  const scans = id => events.filter(e => e.device === P.device && e.action === 'scan' && e.orderId === id);
+  const scanAct = P.file === 'weld-1.html' ? 'matched' : 'scan';              // (a phone scan at the Welding station is one `matched` event written by the queue; the page logs no plain `scan` for it)
+  const scans = id => events.filter(e => e.device === P.device && e.action === scanAct && e.orderId === id);
   const note = () => page.evaluate(() => { const n = document.getElementById('stationScanQueueNote'); return n && n.style.display !== 'none' ? { text: n.textContent, role: n.getAttribute('role'), pe: getComputedStyle(n).pointerEvents } : null; });
   const stored = () => page.evaluate(k => sessionStorage.getItem(k), 'stationScanQueue.v1.' + P.device);
   const loaded = async id => { await until(async () => { await flush(); return scans(id).length >= 1; }, 'the scan of ' + id + ' on ' + P.device); };
@@ -158,7 +160,7 @@ async function scenario(browser, base, P) {
     }
     assert.ok(scans(A)[0].seq < scans(B)[0].seq && scans(A)[0].at <= scans(B)[0].at, 'A before B');
     assert.equal(await page.inputValue('#etsyOrderNumber'), B, 'the newest is the one on screen');
-    assert.equal(events.filter(e => e.action === 'scan').length, 2, 'nothing else recorded');
+    assert.equal(events.filter(e => e.action === scanAct).length, 2, 'nothing else recorded');
     assert.equal(await listeners(), 1);
   });
 
@@ -228,7 +230,7 @@ async function main() {
         ['weld-1', 'weld-scan-1'], ['assembly-1', 'assembly-scan-1'], ['shipping-1', 'shipping-scan-1'], ['design-message', 'design-scan-11']];
       for (const [dev, relay] of copies) {
         const s = fs.readFileSync(path.join(root, dev + '.html'), 'utf8');
-        assert.equal((s.match(/<script src="station-scan-queue\.js\?v=20261003-sq1"><\/script>/g) || []).length, 1, dev + ': script tag');
+        assert.equal((s.match(/<script src="station-scan-queue\.js\?v=\d{8}-\w+"><\/script>/g) || []).length, 1, dev + ': script tag');   // (weld-1 loads the version that records the Welding station's scans as `matched`: tests/stations/weld-scan-matched.cjs)
         assert.ok(s.includes(`device: "${dev}",\n          signedIn:`), dev + ': queue device');
         assert.equal((s.match(new RegExp(`\\.doc\\("${relay}"\\)`, 'g')) || []).length, 2, dev + ': relay doc (listen + clear)');
         assert.equal((s.match(/\.doc\("(?:weld|assembly|shipping|design)-scan-\d+"\)/g) || []).length, 2, dev + ': no other relay');

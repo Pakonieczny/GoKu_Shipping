@@ -126,6 +126,8 @@ html[data-rail=sm] .brand .tag{display:none}
 .moreMenu .moreList button{display:flex;align-items:center;gap:6px;justify-content:flex-start;border:0;background:transparent;border-radius:8px;padding:8px 11px;font:700 12.5px var(--sans);color:var(--ink);cursor:pointer;white-space:nowrap}
 .moreMenu .moreList button:hover{background:var(--paper2)}
 .moreMenu .moreList button.on{background:var(--velvet);color:#fff}
+.moreMenu .moreList button[hidden]{display:none}
+#btnRoleSwitch{font-weight:600;color:var(--ink70)}
 html:not(.sandbox) .moreList .sandboxOnly{display:none}
 .btn{border:1px solid var(--ink);background:var(--ink);color:#fff;border-radius:9px;padding:8px 13px;font-weight:650;transition:opacity .15s,transform .08s;white-space:nowrap}
 .btn:hover{opacity:.9}.btn:active{transform:translateY(1px)}
@@ -396,6 +398,8 @@ select.topSel{border:1px solid var(--line);background:var(--card);border-radius:
    controls — a toast was an invisible click shield over the button underneath it. They come down from under the
    top bar instead, where no screen puts anything. */
 .toasts{position:fixed;right:18px;top:var(--chromeH,96px);z-index:300;display:flex;flex-direction:column;gap:8px;pointer-events:none;max-width:min(420px,42vw)}
+/* UX1: on a phone-width window 42vw is a column of one word per line (the sign-out notice read "Signed / out / after / 10 ..."): the notices take the width instead */
+@media (max-width:700px){.toasts{left:10px;right:10px;max-width:none}.toasts .toast{max-width:none}}
 .toast .m{min-width:0}
 .toast .x{font:700 11px var(--mono);opacity:.7}
 .toast .c{border:0;background:transparent;color:inherit;opacity:.55;cursor:pointer;font-size:13px;line-height:1;padding:0 0 0 4px}
@@ -2815,6 +2819,7 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
             <div class="menuLabel">Workspace</div>
             <button data-mode="design">Design Station<i class="cnt" id="tabDesignN"></i></button><button data-mode="master">Master files</button><button data-mode="efficiency" title="Who is in, what they made and scanned, throughput by hour: the whole shop">Employee efficiency</button>
             <div class="menuSection"><label class="menuLabel" for="stockSel">Sheet preset · GF / SS / Rose</label><select class="topSel" id="stockSel" title="Solid gold uses its own custom size"></select></div>
+            <button id="btnRoleSwitch" type="button" hidden>Laser · switch to Design</button>
             <button id="btnSettings">Settings<span class="menuHint">⚙</span></button>
             <div class="menuSection"><div class="menuLabel">Etsy API calls</div><span class="etsyPill" id="etsyPill" title="API calls counted by the Design Station"><b id="etsyPillN">Waiting for station…</b></span></div>
           </div>
@@ -3218,6 +3223,9 @@ async function api(fn, body, opts = {}) {
   const ms = opts.timeoutMs || (fn === "charmNestOutput" || /^(putSheet|getSheet|listSheets|history|runPut|runArchive|restoreSheet|purgeHistory|putCharms|masterPutFile|masterPutIndex|masterGetMany|sandboxPut)$/.test(body && body.op) ? 300000 : 60000);
   try {
     const payload = Object.assign({}, body || {}); if (WORKSPACE_SANDBOX) payload.sandbox = true;   // the sandbox tags every cloud call
+    // A sheet marked completed carries how long it took this Laser person by the page's own count (charm-nest-laser-time.js); the server decides and stores the figure (R7)
+    let laserSent = null;
+    if (fn === "charmNestLibrary" && payload.op === "laserDone" && window.LaserSheetTime) { try { if (payload.done !== false) laserSent = payload.laserTime = window.LaserSheetTime.measure(payload.by); else window.LaserSheetTime.forget(payload.by); } catch (_) {} }
     const res = await fetch(`${FN}/${fn}`, { method: "POST", headers, body: JSON.stringify(payload), signal: window.AbortSignal && AbortSignal.timeout ? AbortSignal.timeout(ms) : undefined });
     const txt = await readBody(res, bar);
     let data = null, page = false; try { data = JSON.parse(txt); } catch (_) { page = true; data = { error: txt.trim() ? cloudWords(txt, res.status).slice(0, 200) : "" }; }
@@ -3228,6 +3236,7 @@ async function api(fn, body, opts = {}) {
     // returned as the result, so a sheet or a run record counted as saved when nothing was (audit, 25 Sep)
     if (page) throw Object.assign(new Error(data.error || "The cloud sent back an empty answer"), { status: res.status, data, transient: true });
     if (S.cloud.ok === false && !S.cloud.locked) cloudRecovered();   // any answer says the cloud is back
+    if (laserSent) { try { window.LaserSheetTime.noted(data, laserSent, payload.by); } catch (_) {} }   // (the accepted press is this person's previous completion from now on)
     // a write to the library can be a step of an order (a piece placed or taken off, a sheet cut, a back saved, a set
     // committed, a cancel): the order view that is open reads its timeline again now and 1.5 s later, not at its next poll
     // (Paul, 3 Oct 04:03). Reads, and writes that no order's timeline shows, do not ask.
@@ -6779,9 +6788,14 @@ boot();
 <!-- How long each person is signed in here, and what they did (station-session.js, station-activity.js). The sorter has no
      personal login: the person is the name it keeps (cn.employee: typed at the first approval, label or decision, or the
      Design Station's sign-in), the same name every seal it stamps carries. -->
-<script src="station-session.js?v=20261005-et2"></script>
-<script src="station-activity.js?v=20261005-et2"></script>
-<script src="charm-nest-bridge.js?v=20261005-lis2-cardinal4-zoom-psb1-egl1-osc1-r3f-setgate1-hand1-sameset1-rl1-nowait1-opt1-rt1-pcr1-one1-st1-five1-pd1-zp1-rel2-cx1-hold2-sl2-sealsh1-sealpc2-live1-pst1-nofix1-pcsel1-pst2-sk1-nonote1-pdot3-pr1-lvx1-rvx1-pl1-en2-pf5-en3"></script>
+<script src="station-session.js?v=20261006-as2"></script>
+<script src="station-activity.js?v=20261006-int1"></script>
+<!-- how long each cut sheet took the Laser person (charm-nest-laser-time.js; R7): the page's own count, sent with the completion; the server decides and stores it -->
+<script src="charm-nest-laser-time.js?v=20261006-ls1"></script>
+<script src="charm-nest-laser-act.js?v=20261006-sa5"></script>
+<!-- Laser or Design? the role of a non-Admin sign-in (charm-nest-role.js: CNRole; the question is the name bar's second step, charm-nest-bridge.js NameBar) -->
+<script src="charm-nest-role.js?v=20261006-int1"></script>
+<script src="charm-nest-bridge.js?v=20261005-lis2-cardinal4-zoom-psb1-egl1-osc1-r3f-setgate1-hand1-sameset1-rl1-nowait1-opt1-rt1-pcr1-one1-st1-five1-pd1-zp1-rel2-cx1-hold2-sl2-sealsh1-sealpc2-live1-pst1-nofix1-pcsel1-pst2-sk1-nonote1-pdot3-pr1-lvx1-rvx1-pl1-en2-pf5-en3-ld1-sa5b"></script>
 <script src="charm-nest-review-live.js?v=20261005-rl1-pf1-pf2"></script>
 <script src="charm-nest-hold-ui.js?v=20261005-hold3-pf1"></script>
 <script>
@@ -6790,17 +6804,27 @@ try {
   // The sandbox (Settings; the page reloads when it is switched) is a rehearsal on emulated orders: its sign-in times and its
   // work are written to the Sandbox_ copies only (the same door, ?sandbox=1), so they never reach the real Efficiency numbers.
   const sandboxNow = () => { try { return (typeof WORKSPACE_SANDBOX !== "undefined" ? !!WORKSPACE_SANDBOX : S.settings.sandbox === "on") || /[?&]sandbox=1\b/.test(location.search); } catch (_) { return /[?&]sandbox=1\b/.test(location.search); } };
+  // Laser or Design (charm-nest-role.js, Paul 6 Oct): the Admin signs in as the sorter, as before; anyone else is signed in once the
+  // small name bar's second step is answered, and then as that role (the session's station is `laser` or `design`, device charm-nest-1)
+  const roleOn = () => !!(window.CNRole && window.CNEmployee && typeof CNEmployee.roleBar === "function");
   StationSession.init({
     station: "sorter", device: "charm-nest-1", sandbox: sandboxNow(),
-    person: () => { const n = nameNow(); return n ? { name: n, id: null } : null; },
+    person: () => { const n = nameNow(); return n ? (!roleOn() || CNRole.ready() ? { name: n, id: null } : { name: n, id: null, pending: true }) : null; },
+    role: () => (roleOn() ? CNRole.role() : ""),
     // midnight (New York): the name is cleared, so the next approval, label or decision asks who is working; what is on
     // screen and the run are left as they are. What was pressed before a name was set is not put under tomorrow's name.
-    signOut: () => {
+    // (the same for the other ways the sign-in ends by itself: 10 minutes without input and 5:00 pm. One calm line, no pop-up; the
+    // sheets, the run and every open window stay as they are.)
+    signOut: reason => {
       const was = nameNow();
       try { localStorage.removeItem("cn.employee"); } catch (_) {}
       try { if (window.B) B.employee = ""; } catch (_) {}
       try { window.CNAct && CNAct.drop && CNAct.drop(); } catch (_) {}
-      if (was) { try { window.CN && CN.toast("Signed out at midnight. Your name is asked again at your next approval, label or decision.", "", 7000); } catch (_) {} }
+      try { window.CNRole && CNRole.clear(); } catch (_) {}        // (the role goes with the name: the next sign-in is asked again; true for every reason: midnight, idle, closing)
+      const why = reason === "idle" ? "Signed out after 10 minutes without input."
+        : reason === "closing" ? "Signed out at 5:00 pm."
+        : reason === "midnight" || !reason ? "Signed out at midnight." : "Signed out.";
+      if (was) { try { window.CN && CN.toast(why + " Your name is asked again at your next approval, label or decision.", "", 7000); } catch (_) {} }
     }
   });
   // a name set anywhere (an approval, a label, the sheet window, the small name field, the Design Station's sign-in) is a
@@ -6808,7 +6832,9 @@ try {
   const d = Object.getOwnPropertyDescriptor(window.B, "employee");
   if (d && typeof d.get === "function" && typeof d.set === "function")
     Object.defineProperty(window.B, "employee", { configurable: true, enumerable: true, get: d.get,
-      set(v) { d.set.call(window.B, v); try { const n = String(d.get.call(window.B) || "").trim(); if (n && !/^\d+$/.test(n)) StationSession.signedIn({ name: n, id: null }); } catch (_) {} } });
+      set(v) { d.set.call(window.B, v); try { const n = String(d.get.call(window.B) || "").trim(); if (n && !/^\d+$/.test(n)) { if (roleOn()) CNRole.nameSet(n); else StationSession.signedIn({ name: n, id: null }); } else if (!n && roleOn()) CNRole.nameSet(""); } catch (_) {} } });
+  // a name kept from before (a reload): the Admin answer is had quietly; a person who is not the Admin is asked at their next press
+  try { if (roleOn()) CNRole.start(); } catch (_) {}
 } catch (_) {}
 </script>
 <script src="charm-nest-sheetwin.js?v=20261005-pieces-cardinal2-osc1-shm1-osc2-zp1-rel1-oh1-sl2-sealsh1-live1-hk3-en2-pf6-en3b"></script>
@@ -6821,11 +6847,11 @@ try {
 <!-- the cinematic Hold and Release: the order seen moving sheet to sheet (OrderHoldFx.playHold, playRelease, returnToOnHold), driven by the engine's own steps -->
 <script src="charm-nest-hold-fx.js?v=20261005-hfx3"></script>
 <script src="charm-nest-mail.js?v=20261005-pv-seal-zp1"></script>
-<script src="charm-nest-rose-ui.js?v=20261005-rg3-opt1"></script>
+<script src="charm-nest-rose-ui.js?v=20261005-rg3-opt1-sa5"></script>
 <script src="charm-nest-flow-rose.js?v=20261003-rg2"></script>
 <script src="charm-nest-export-ui.js?v=20260925-done"></script>
-<script src="charm-nest-library.js?v=20261005-egl1"></script>
-<script src="charm-nest-flow.js?v=20261005-cardinal3-setgate1-five1"></script>
+<script src="charm-nest-library.js?v=20261005-egl1-sa5"></script>
+<script src="charm-nest-flow.js?v=20261005-cardinal3-setgate1-five1-sa5"></script>
 <script src="charm-nest-library-approval-ui.js?v=20261005-so2"></script>
 <script src="charm-nest-library-fx.js?v=20261003-fx2"></script>
 <script src="charm-nest-library-dnd.js?v=20261005-so2-mm1"></script>
@@ -6839,12 +6865,13 @@ try {
 <!-- the cadence of where-is-each-piece: every surface that says "on a sheet / not on a sheet / on hold" follows the cloud within seconds (PlacementFeed) -->
 <script src="charm-nest-placement-feed.js?v=20261005-pf4"></script>
 <script src="charm-nest-search.js?v=20260929-m5-osc1-sealsh1-pf3"></script>
-<script src="charm-nest-signins.js?v=20260929-m5"></script>
-<script src="charm-nest-efficiency-charts.js?v=20261005-efc3"></script>
-<script src="charm-nest-efficiency-stations.js?v=20261006-es5-pb1"></script>
-<script src="charm-nest-efficiency.js?v=20261006-ef11-pb1"></script>
-<script src="charm-nest-efficiency-orders.js?v=20261005-eo3"></script>
-<script src="charm-nest-efficiency-person.js?v=20261005-ep6"></script>
+<script src="charm-nest-signins.js?v=20261006-m7-pb1"></script>
+<script src="charm-nest-efficiency-charts.js?v=20261006-efc4-pb1"></script>
+<script src="charm-nest-efficiency-stations.js?v=20261006-es9-in2"></script>
+<script src="charm-nest-efficiency.js?v=20261006-ef14-ws2"></script>
+<script src="charm-nest-efficiency-orders.js?v=20261006-eo6-in2"></script>
+<script src="charm-nest-efficiency-laser.js?v=20261006-ls1"></script>
+<script src="charm-nest-efficiency-person.js?v=20261006-ep11-in2"></script>
 <!-- ══ one order line: what it is, what the customer said, what the shop said, and how to settle it ══ -->
 <dialog id="orderWin" class="owin owFull" aria-labelledby="owTitle" data-no-grow>
   <div class="owBox">

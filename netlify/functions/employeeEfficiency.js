@@ -25,10 +25,14 @@
  *  ───────────────────────────────────────────────────────────────────────────── */
 "use strict";
 const EP = require("./_editPasscode");
+const AutoSignout = require("./_stationAutoSignout");
 const { CORS, parseBody, num } = require("./_charmNestAuth");
 const admin = require("./firebaseAdmin");
 const { displayStation } = require("./_activityKinds");      // ONE Sorting station: the stored keys "sorter" and "qr" are SHOWN as "sorting" (history keeps its keys; only a read folds them)
 const db = admin.firestore();
+/* The Welding station is not counted in throughput (Paul, 6 Oct 2026): KIND.readStationCounters / throughput are the one rule (see _activityKinds.js). Without the file nothing is left out. */
+let KIND = null; try { KIND = require("./_activityKinds"); } catch (_) {}
+if (!KIND) KIND = { throughput: () => true, readStationCounters: (st, v) => v, UNATTRIBUTED: "Unattributed", isMatched: () => false, echoScans: () => new Set() };
 
 const COL = { activity: "Station_Activity", rollup: "Efficiency_Daily", sessions: "Station_Sessions", seals: "Order_Timeline" };
 const STATIONS = ["sorting", "welding", "assembly", "shipping", "design", "laser", "sorter", "qr", "inbox"];   // every key a stored row may carry (history keeps "sorter" and "qr")
@@ -194,6 +198,7 @@ function readSessionsRange(ctx, fromMs, toMs) {
     const snaps = await Promise.all(ranges.map(([a, z]) => col(ctx, COL.sessions).where("startAt", ">=", a).where("startAt", "<", z).orderBy("startAt", "desc").limit(LIM.sessions + 1).get()));
     const seen = new Set(), rows = []; let truncated = false;
     for (const s of snaps) { if (s.docs.length > LIM.sessions) truncated = true; for (const d of s.docs.slice(0, LIM.sessions)) if (!seen.has(d.id)) { seen.add(d.id); rows.push(Object.assign({ id: d.id }, d.data() || {})); } }
+    await AutoSignout.settle({ db: ctx.db, prefix: ctx.prefix, now: ctx.now }, rows);       // the auto sign-out rules: a session that is idle (10 minutes without input), past 5:00 pm Toronto with no recent input, or whose page died ends at the person's last input (_stationAutoSignout.js)
     return { rows, truncated };
   });
 }
@@ -242,7 +247,7 @@ function eventRow(id, d, ctx) {
   // for a retry commits later, so a poll could pass an event whose serverAt is older than its cursor and never show it
   return { id: (scrub(d.id) || String(id)).slice(0, 100), at, k: tsMs || serverAt, tsMs: tsMs || serverAt, person, station: okStation(String(d.station || "")) ? displayStation(String(d.station)) : "", stored: okStation(String(d.station || "")) ? String(d.station) : "", device: scrub(d.device).slice(0, 40), action,
     orderId: digits(d.orderId), parts: Math.max(0, Math.floor(num(d.parts))), detail: scrub(d.detail), sincePrevMs: Math.max(0, num(d.sincePrevMs)), day: typeof d.day === "string" ? d.day : "",
-    orders: num(d.orders) >= 1 ? 1 : 0, seq: Math.max(0, num(d.seq)) };   // (orders: the action finished an order; seq: the device's counter: the issue counts replay the writer's order with them)
+    orders: num(d.orders) >= 1 ? 1 : 0, seq: Math.max(0, num(d.seq)), task: d.task === "welding" || d.task === "matching" ? d.task : "", unattributed: d.unattributed === true };   // (orders: the action finished an order; seq: the device's counter: the issue counts replay the writer's order with them; task / unattributed: the Welding station's matched scans)
 }
 const byNewest = (a, b) => b.k - a.k || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0);
 /** The newest events of everybody, kept in the instance: loaded once (newest 500), then only topped up. */
@@ -288,7 +293,7 @@ function spanOf(s, now) {
   if (!end) { if (now - last >= GONE_MS) end = last; else { end = now; live = true; } }
   end = Math.min(end, now); if (end < start) end = start;
   const station = String(s.station || "");
-  return { id: String(s.id || ""), station: okStation(station) ? displayStation(station) : "", start, end, live, last };       // (a key like "constructor" would break the per-station maps)
+  return { id: String(s.id || ""), station: okStation(station) ? displayStation(station) : "", task: station === "welding" && (s.task === "welding" || s.task === "matching") ? s.task : "", start, end, live, last };       // (a key like "constructor" would break the per-station maps)
 }
 /** [{day, s, e}] pieces of [s, e] inside from..to; a span that ends exactly at midnight puts nothing on the next day. */
 function clip(s, e, from, to) {
@@ -310,9 +315,9 @@ function covered(spans) {
 }
 
 /* ── the people: rollups + sessions + seals, per person per day ── */
-const tmpl = () => ({ scans: 0, scanParts: 0, completes: 0, parts: 0, orders: 0, prints: 0, rejects: 0, errors: 0, notes: 0, undos: 0, undoParts: 0, undoOrders: 0, activeMs: 0, idleMs: 0 });
+const tmpl = () => ({ scans: 0, scanParts: 0, completes: 0, parts: 0, orders: 0, prints: 0, rejects: 0, errors: 0, notes: 0, undos: 0, undoParts: 0, undoOrders: 0, activeMs: 0, idleMs: 0, matched: 0 });
 const KEYS = Object.keys(tmpl());
-const newPD = day => ({ day, src: "", st: {}, hours: zeros(24), hs: {}, orders: new Map(), spans: [], inFirst: 0, inLast: 0, signedMs: 0, rawMs: 0, stMs: {}, firstIn: 0, lastOut: 0, liveSpan: false });
+const newPD = day => ({ day, src: "", st: {}, hours: zeros(24), hs: {}, orders: new Map(), spans: [], inFirst: 0, inLast: 0, signedMs: 0, rawMs: 0, stMs: {}, taskMs: {}, firstIn: 0, lastOut: 0, liveSpan: false });
 const stAgg = (pd, st) => pd.st[st] || (pd.st[st] = tmpl());
 const addOrder = (pd, orderId, st) => { if (!orderId) return; let s = pd.orders.get(orderId); if (!s) pd.orders.set(orderId, s = new Set()); s.add(st); };
 const addHour = (pd, st, h, n) => { if (!(h >= 0 && h < 24) || !n) return; pd.hours[h] += n; (pd.hs[st] || (pd.hs[st] = zeros(24)))[h] += n; };
@@ -346,25 +351,32 @@ async function assemble(ctx, winFrom, toDay) {
   if (rr.ok) {
     if (rr.value.capped) info.capped.push("rollups");
     for (const x of rr.value.docs) {
+      if (x.person === KIND.UNATTRIBUTED) continue;                       // (a matched scan made with nobody in Matching: no person; the Stations board counts it)
       const person = P.get(x.person); if (!person || !validDay(x.day)) continue;
       eventDays.add(x.day);
       const pd = P.pd(person, x.day); pd.src = "events";
-      for (const [st0, v] of Object.entries(x.stations && typeof x.stations === "object" ? x.stations : {})) {
-        if (!okStation(st0) || !v || typeof v !== "object") continue;      // (a station called "constructor" is not a station)
+      for (const [st0, v0] of Object.entries(x.stations && typeof x.stations === "object" ? x.stations : {})) {
+        if (!okStation(st0) || !v0 || typeof v0 !== "object") continue;    // (a station called "constructor" is not a station)
         const st = displayStation(st0);                                    // (counters stored under "sorter" or "qr" add to Sorting)
+        const v = KIND.readStationCounters(st, v0);                          // (the Welding station keeps its scans, time and matched count, never pieces, orders or completions)
         const a = stAgg(pd, st); for (const k of KEYS) a[k] += Math.max(0, num(v[k]));
+        const ob = pd.ob || (pd.ob = {}), o = ob[st] || (ob[st] = {}); o[st0] = (o[st0] || 0) + Math.max(0, num(v.orders) - num(v.undoOrders));
         const fa = ms(v.firstAt), la = ms(v.lastAt);
         if (fa > 0 && (!pd.inFirst || fa < pd.inFirst)) pd.inFirst = fa;
         if (la > pd.inLast) pd.inLast = la;
       }
       for (const [hh, h] of Object.entries(x.hours && typeof x.hours === "object" ? x.hours : {})) {
         const hr = parseInt(hh, 10); if (!(hr >= 0 && hr < 24) || !h || typeof h !== "object") continue;
-        pd.hours[hr] += Math.max(0, num(h.parts)) - Math.max(0, num(h.undoParts));          // produced minus undone, the same net as the totals
-        for (const [st, b] of Object.entries(h.by && typeof h.by === "object" ? h.by : {})) if (okStation(st) && b && typeof b === "object") { const ds = displayStation(st); (pd.hs[ds] || (pd.hs[ds] = zeros(24)))[hr] += Math.max(0, num(b.parts)) - Math.max(0, num(b.undoParts)); }
+        const by = h.by && typeof h.by === "object" ? h.by : {};
+        let net = Math.max(0, num(h.parts)) - Math.max(0, num(h.undoParts));                 // produced minus undone, the same net as the totals
+        for (const [st, b] of Object.entries(by)) if (okStation(st) && !KIND.throughput(displayStation(st)) && b && typeof b === "object") net -= Math.max(0, num(b.parts)) - Math.max(0, num(b.undoParts));   // (not the Welding station's)
+        pd.hours[hr] += net;
+        for (const [st, b] of Object.entries(by)) if (okStation(st) && KIND.throughput(displayStation(st)) && b && typeof b === "object") { const ds = displayStation(st); (pd.hs[ds] || (pd.hs[ds] = zeros(24)))[hr] += Math.max(0, num(b.parts)) - Math.max(0, num(b.undoParts)); }
       }
       for (const [id, m] of Object.entries(x.touched && typeof x.touched === "object" ? x.touched : {})) {
         const oid = digits(id); if (!oid) continue;
-        const stations = m && typeof m === "object" ? [...new Set(Object.keys(m).filter(k => m[k] && okStation(k)).map(displayStation))] : [];
+        const stations = m && typeof m === "object" ? [...new Set(Object.keys(m).filter(k => m[k] && okStation(k) && KIND.throughput(displayStation(k))).map(displayStation))] : [];   // (an order only the Welding station touched is not an order worked)
+        if (!stations.length) continue;
         let set = pd.orders.get(oid); if (!set) pd.orders.set(oid, set = new Set()); stations.forEach(s => set.add(s));
       }
       const fa = ms(x.firstAt), la = ms(x.lastAt);
@@ -381,7 +393,7 @@ async function assemble(ctx, winFrom, toDay) {
       if (sp.live) person.live.push(sp);
       for (const c of clip(sp.start, sp.end, winFrom, toDay)) {
         const pd = P.pd(person, c.day);
-        pd.spans.push({ s: c.s, e: c.e, station: sp.station, live: sp.live, start0: sp.start });
+        pd.spans.push({ s: c.s, e: c.e, station: sp.station, task: sp.task, live: sp.live, start0: sp.start });
         if (sp.live) pd.liveSpan = true;
         if (!sessionDays.has(c.day)) sessionDays.set(c.day, new Set()); sessionDays.get(c.day).add(person.key);
       }
@@ -407,10 +419,10 @@ async function assemble(ctx, winFrom, toDay) {
       const person = P.get(row.person); if (!person) continue;
       const existing = person.days.get(day); if (existing && existing.src === "events") continue;
       const pd = P.pd(person, day); pd.src = "seals";
-      const a = stAgg(pd, row.station);
-      if (row.kind === "complete") { a.completes++; addHour(pd, row.station, nyParts(row.at).hour % 24, 1); }
+      const a = stAgg(pd, row.station), counted = KIND.throughput(row.station);   // (the Welding station's `welded` seals are history of a completion that is no longer counted: its scans and prints stay, its completions and orders do not)
+      if (row.kind === "complete") { if (counted) { a.completes++; addHour(pd, row.station, nyParts(row.at).hour % 24, 1); } }
       else if (row.kind === "print") a.prints++; else a.scans++;
-      addOrder(pd, row.orderId, row.station);
+      if (counted) addOrder(pd, row.orderId, row.station);
       if (!pd.inFirst || row.at < pd.inFirst) pd.inFirst = row.at;
       if (row.at > pd.inLast) pd.inLast = row.at;
     }
@@ -418,10 +430,15 @@ async function assemble(ctx, winFrom, toDay) {
   // 4 · per person-day: signed-in time, per station, first in, last out
   for (const person of P.people.values()) {
     for (const pd of person.days.values()) {
+      // an order finished at two pages of ONE station (the Sorter app, then a sorting page) is one order there: the larger of the pages' own counts, not their sum (the orders touched, counted by id, stay exact)
+      for (const [st, src] of Object.entries(pd.ob || {})) { const a = pd.st[st]; if (a && Object.keys(src).length > 1) { a.orders = Math.max(...Object.values(src)); a.undoOrders = 0; } }
       if (pd.spans.length) {
         pd.signedMs = covered(pd.spans.map(x => [x.s, x.e])); pd.rawMs = pd.spans.reduce((n, x) => n + (x.e - x.s), 0);
         const per = {}; for (const x of pd.spans) (per[x.station] || (per[x.station] = [])).push([x.s, x.e]);
         for (const [st, list] of Object.entries(per)) pd.stMs[st] = covered(list);
+        // the Welding station's time per task: a person in both tasks has both (so the tasks can add up to more than the station's own time); an old session without a task is "unknown"
+        const pt = {}; for (const x of pd.spans) if (x.station === "welding") (pt[x.task || "unknown"] || (pt[x.task || "unknown"] = [])).push([x.s, x.e]);
+        for (const [t, list] of Object.entries(pt)) pd.taskMs[t] = covered(list);
         pd.firstIn = Math.min(...pd.spans.map(x => x.s));
         pd.lastOut = pd.spans.some(x => x.live) ? 0 : Math.max(...pd.spans.map(x => x.e));
         if (!pd.src) pd.src = "sessions";
@@ -435,11 +452,12 @@ async function assemble(ctx, winFrom, toDay) {
 const isWork = set => { for (const x of set) if (x !== "inbox") return true; return false; };
 /** Everything about some person-days at once: stations, totals, per hour, order ids. */
 function summarize(pds) {
-  const acc = {}, ids = new Map(), hours = zeros(24), hs = {}, stMs = {}; let signed = 0, evScans = 0, hasE = false, hasS = false, hasAny = false;
+  const acc = {}, ids = new Map(), hours = zeros(24), hs = {}, stMs = {}, taskMs = { welding: 0, matching: 0, unknown: 0 }; let signed = 0, evScans = 0, hasE = false, hasS = false, hasAny = false;
   for (const pd of pds) {
     if (pd.src === "events") hasE = true; else if (pd.src === "seals") hasS = true;
     if (pd.src) hasAny = true;
     signed += pd.signedMs;
+    for (const t of Object.keys(taskMs)) taskMs[t] += (pd.taskMs && pd.taskMs[t]) || 0;
     for (const [st, a] of Object.entries(pd.st)) { const t = acc[st] || (acc[st] = tmpl()); for (const k of KEYS) t[k] += a[k]; if (pd.src === "events") evScans += a.scans; }
     for (const [st, v] of Object.entries(pd.stMs)) stMs[st] = (stMs[st] || 0) + v;
     for (let h = 0; h < 24; h++) hours[h] += pd.hours[h];
@@ -449,25 +467,31 @@ function summarize(pds) {
   const order = st => { const i = SHOWN.indexOf(st); return i < 0 ? 99 : i; };
   const stations = [...new Set(Object.keys(acc).concat(Object.keys(stMs)))].map(st => {
     const a = acc[st] || tmpl(); let touched = 0; for (const s of ids.values()) if (s.has(st)) touched++;
-    return { station: st, minutes: r1((stMs[st] > 0 ? stMs[st] : a.activeMs) / 60000), parts: Math.max(0, a.parts - a.undoParts), scanParts: a.scanParts, scans: a.scans, completes: a.completes, prints: a.prints,
+    const row = { station: st, minutes: r1((stMs[st] > 0 ? stMs[st] : a.activeMs) / 60000), parts: Math.max(0, a.parts - a.undoParts), scanParts: a.scanParts, scans: a.scans, completes: a.completes, prints: a.prints,
       orders: Math.max(touched, Math.max(0, a.orders - a.undoOrders)) };
+    if (!KIND.throughput(st)) { row.matched = a.matched; row.taskMin = { welding: r1(taskMs.welding / 60000), matching: r1(taskMs.matching / 60000), unknown: r1(taskMs.unknown / 60000) }; }   // (the Welding station: time per task and the matched count stand where pieces and orders would)
+    return row;
   }).sort((x, y) => y.parts - x.parts || y.minutes - x.minutes || order(x.station) - order(y.station));
   const sum = k => stations.reduce((n, s) => n + s[k], 0);
-  let active = 0, idle = 0, rejects = 0, errors = 0;
+  let active = 0, activeTp = 0, idle = 0, rejects = 0, errors = 0;      // (activeTp: the working time of the stations that count in throughput, the divisor of the pieces-per-hour rate)
   for (const a of Object.values(acc)) { rejects += a.rejects; errors += a.errors; }
+  // worked at the Welding station alone: nothing was logged at a station that counts in throughput (the person page's own rule: a day with none has no pieces or orders to show), yet there was Welding work (a scan, a print, a match or time signed in)
+  let tpAct = false, ntAct = false;
+  for (const [st, a] of Object.entries(acc)) { const any = a.scans + a.completes + a.prints + a.rejects + a.errors + a.undos + a.notes > 0; if (KIND.throughput(st)) { if (any) tpAct = true; } else if (any || a.matched > 0) ntAct = true; }
+  for (const [st, v] of Object.entries(stMs)) if (!KIND.throughput(st) && v > 0) ntAct = true;
   // working and quiet time: each station keeps its own gaps, so a person signed in at two computers at once (overlapping
   // sessions, counted once in signedInMin) adds the gaps of both. Active plus idle can never exceed the time signed in.
   for (const pd of pds) {
-    let a = 0, i = 0; for (const x of Object.values(pd.st)) { a += x.activeMs; i += x.idleMs; }
-    if (pd.rawMs > pd.signedMs) { a = Math.min(a, pd.signedMs); i = Math.min(i, Math.max(0, pd.signedMs - a)); }
-    active += a; idle += i;
+    let a = 0, i = 0, at = 0; for (const [st, x] of Object.entries(pd.st)) { a += x.activeMs; i += x.idleMs; if (KIND.throughput(st)) at += x.activeMs; }
+    if (pd.rawMs > pd.signedMs) { a = Math.min(a, pd.signedMs); at = Math.min(at, pd.signedMs); i = Math.min(i, Math.max(0, pd.signedMs - a)); }
+    active += a; activeTp += at; idle += i;
   }
   const parts = sum("parts"), scans = sum("scans");
   const workIds = [...ids.values()].filter(isWork).length, ordersFin = stations.reduce((n, x) => n + (x.station === "inbox" ? 0 : x.orders), 0);
   const totals = { parts, scanParts: sum("scanParts"), scans, orders: ids.size ? workIds : ordersFin, rejects, errors, activeMin: r1(active / 60000), idleMin: r1(idle / 60000), signedInMin: r1(signed / 60000),
-    rate: active >= 60000 ? r1(parts / (active / 3600000)) : 0, secPerScan: evScans > 0 && active > 0 ? r1(active / 1000 / evScans) : 0 };   // (seal scans carry no time: only logged scans divide the active time)
+    rate: activeTp >= 60000 ? r1(parts / (activeTp / 3600000)) : 0, secPerScan: evScans > 0 && active > 0 ? r1(active / 1000 / evScans) : 0 };   // (seal scans carry no time: only logged scans divide the active time)
   const source = hasE && hasS ? "mixed" : hasE ? "events" : hasS ? "seals" : hasAny || signed > 0 ? "sessions" : "none";
-  return { stations, totals, perHour: hours.map(shown), hs, ids, source, hasAny: hasAny || signed > 0 };
+  return { stations, totals, perHour: hours.map(shown), hs, ids, source, hasAny: hasAny || signed > 0, weldOnly: !tpAct && ntAct };
 }
 
 /* ── overview ── */
@@ -489,7 +513,8 @@ async function buildOverview(ctx, day, days, withTrend) {
   let events = [];
   if (!evR.ok) info.errors.push("events: " + evR.error);
   else if (day === ctx.today) events = evR.value; else { events = evR.value.rows; if (evR.value.capped) info.capped.push("events"); }
-  const inRange = events.filter(e => !e.day || (e.day >= from && e.day <= day));
+  const echo = KIND.echoScans(events);                                  // (the desk page's own scan of a phone scan the scanner app wrote as `matched`: one scan, not two)
+  const inRange = events.filter(e => !echo.has(e) && (!e.day || (e.day >= from && e.day <= day)));
   // the people of the range
   const rangeDays = dayList(from, day), people = [];
   const ordersOf = new Map();
@@ -498,7 +523,7 @@ async function buildOverview(ctx, day, days, withTrend) {
     const k = nameKeyOf(ctx, e.person); let m = ordersOf.get(k); if (!m) ordersOf.set(k, m = new Map());
     let o = m.get(e.orderId); if (!o) m.set(e.orderId, o = { orderId: e.orderId, stations: new Set(), made: 0, undone: 0, lastAt: 0 });
     if (e.station) o.stations.add(e.station);
-    if (e.action === "complete") o.made += e.parts; else if (e.action === "undo") o.undone += e.parts;      // (events arrive newest first: an undo is met before its completion)
+    if (e.action === "complete") { if (KIND.throughput(e.station)) o.made += e.parts; } else if (e.action === "undo") o.undone += e.parts;      // (events arrive newest first: an undo is met before its completion)
     o.lastAt = Math.max(o.lastAt, e.at);
   }
   const allIds = new Map(), stIds = {}, stNow = {}, perStationHours = {};
@@ -514,17 +539,17 @@ async function buildOverview(ctx, day, days, withTrend) {
     for (const [id, set] of S.ids) { let s = allIds.get(id); if (!s) allIds.set(id, s = new Set()); set.forEach(x => s.add(x)); for (const st of set) (stIds[st] || (stIds[st] = new Set())).add(id); }
     for (const [st, arr] of Object.entries(S.hs)) { const t = perStationHours[st] || (perStationHours[st] = zeros(24)); for (let h = 0; h < 24; h++) t[h] += arr[h]; }
     for (const st of nowAt) (stNow[st] || (stNow[st] = [])).push(name);
-    people.push({ name, status: live.length ? "on" : "out", firstIn: inPd ? inPd.firstIn : null, lastOut: live.length || !inPd || !inPd.lastOut ? null : inPd.lastOut,
-      onSince: live.length ? Math.min(...live.map(s => s.start)) : null, inDay: inPd ? inPd.day : null, nowAt, source: S.source, stations: S.stations, totals: S.totals, perHour: S.perHour, orders });
+    people.push(Object.assign({ name, status: live.length ? "on" : "out", firstIn: inPd ? inPd.firstIn : null, lastOut: live.length || !inPd || !inPd.lastOut ? null : inPd.lastOut,
+      onSince: live.length ? Math.min(...live.map(s => s.start)) : null, inDay: inPd ? inPd.day : null, nowAt, source: S.source, stations: S.stations, totals: S.totals, perHour: S.perHour, orders }, S.weldOnly ? { noThroughput: true } : {}));   // (noThroughput: worked at the Welding station only: no pieces or orders to count, shown as a dash with the time on task and the matched count)
   }
   people.sort((a, b) => (a.status === "on" ? 0 : 1) - (b.status === "on" ? 0 : 1) || b.totals.parts - a.totals.parts || a.name.localeCompare(b.name));
   // the business: summed over EVERYBODY, then the list is cut (the totals must not lose the people the list does not show)
   const totals = { parts: 0, scans: 0, orders: [...allIds.values()].filter(isWork).length, people: people.length };
   const perSt = {};
-  for (const p of people) { totals.parts += p.totals.parts; totals.scans += p.totals.scans; for (const s of p.stations) { const t = perSt[s.station] || (perSt[s.station] = { parts: 0, scans: 0 }); t.parts += s.parts; t.scans += s.scans; } }
+  for (const p of people) { totals.parts += p.totals.parts; totals.scans += p.totals.scans; for (const s of p.stations) { const t = perSt[s.station] || (perSt[s.station] = { parts: 0, scans: 0 }); t.parts += s.parts; t.scans += s.scans; if (s.taskMin) { t.matched = (t.matched || 0) + s.matched; const m = t.taskMin || (t.taskMin = { welding: 0, matching: 0, unknown: 0 }); for (const k of Object.keys(m)) m[k] = r1(m[k] + (s.taskMin[k] || 0)); } } }
   const order = st => { const i = SHOWN.indexOf(st); return i < 0 ? 99 : i; };
   const stationList = [...new Set(CORE.concat(Object.keys(perSt), Object.keys(stNow)))].sort((a, b) => order(a) - order(b) || (a < b ? -1 : 1))
-    .map(st => ({ station: st, parts: (perSt[st] || {}).parts || 0, scans: (perSt[st] || {}).scans || 0, orders: stIds[st] ? stIds[st].size : 0, peopleNow: (stNow[st] || []).slice().sort() }));
+    .map(st => { const row = { station: st, parts: (perSt[st] || {}).parts || 0, scans: (perSt[st] || {}).scans || 0, orders: stIds[st] ? stIds[st].size : 0, peopleNow: (stNow[st] || []).slice().sort() }; if (!KIND.throughput(st)) { row.matched = (perSt[st] || {}).matched || 0; row.taskMin = (perSt[st] || {}).taskMin || { welding: 0, matching: 0, unknown: 0 }; } return row; });
   const perHour = {}; for (const [st, arr] of Object.entries(perStationHours)) if (arr.some(v => v > 0)) perHour[st] = arr.map(shown);
   if (people.length > LIM.people) { info.capped.push("people"); people.length = LIM.people; }       // (the list only: the totals above counted everybody)
   const trend = dayList(winFrom, day).map(d => {
@@ -611,10 +636,11 @@ async function opOrders(ctx, body) {
   const steps = new Map();
   const step = (station, person, source) => { const k = station + "|" + nameKeyOf(ctx, person); let s = steps.get(k); if (!s) steps.set(k, s = { station, person, forms: new Map(), firstAt: 0, lastAt: 0, workMs: 0, scans: 0, completes: 0, prints: 0, parts: 0, source }); s.forms.set(person, (s.forms.get(person) || 0) + 1); return s; };
   const touch = (s, at) => { if (at > 0 && (!s.firstAt || at < s.firstAt)) s.firstAt = at; if (at > s.lastAt) s.lastAt = at; };
-  const evOut = [];
+  const evOut = [], echo = KIND.echoScans(act);
   for (const e of act) {
+    if (echo.has(e)) { evOut.push({ at: e.at, person: canonOf(ctx, nameKeyOf(ctx, e.person)) || niceName(e.person), station: e.station, device: e.device, action: e.action, parts: e.parts, detail: e.detail, source: "events", echo: true }); continue; }     // (listed, never counted: a phone scan is the matched event)
     const s = step(e.station, e.person, "events"); touch(s, e.at);
-    if (e.action === "scan") s.scans++; else if (e.action === "complete") { s.completes++; s.parts += e.parts; } else if (e.action === "print") s.prints++; else if (e.action === "undo") s.parts = Math.max(0, s.parts - e.parts);
+    if (e.action === "scan" || e.action === "matched") s.scans++; else if (e.action === "complete") { s.completes++; s.parts += e.parts; } else if (e.action === "print") s.prints++; else if (e.action === "undo") s.parts = Math.max(0, s.parts - e.parts);
     if (e.sincePrevMs > 0 && e.sincePrevMs <= ACTIVE_GAP_MS) s.workMs += e.sincePrevMs;
     evOut.push({ at: e.at, person: canonOf(ctx, nameKeyOf(ctx, e.person)) || niceName(e.person), station: e.station, device: e.device, action: e.action, parts: e.parts, detail: e.detail, source: "events" });
   }
@@ -644,10 +670,18 @@ async function opOrders(ctx, body) {
 }
 
 /* ── the door ── */
-const PROFILE = require("./_employeeProfile")({ COL, LIM, ms, num, r1, zeros, digits, cleanName, okName, okStation, niceName, bestForm, nameKeyOf, canonOf, scrub, validDay, addDays, nyDay, nyMidnight, clip, covered, spanOf, cached, readRollups, readEventsStart, eventRow, col, json, safe, tmpl, KEYS });   // the employee page: ops person (with range) and personOrders
+const PROFILE = require("./_employeeProfile")({ KIND, COL, LIM, ms, num, r1, zeros, digits, cleanName, okName, okStation, niceName, bestForm, nameKeyOf, canonOf, scrub, validDay, addDays, nyDay, nyMidnight, clip, covered, spanOf, cached, readRollups, readEventsStart, eventRow, col, json, safe, tmpl, KEYS });   // the employee page: ops person (with range) and personOrders
 const OPS = { overview: opOverview, person: (ctx, body) => (body.range != null || body.from || body.to ? PROFILE.opProfile(ctx, body) : opPerson(ctx, body)), orders: opOrders, personOrders: PROFILE.opOrders };
 /* op "live": the stations board (what each station is working on right now), kept in _stationLive.js */
 OPS.live = (ctx, body) => require("./_stationLive").op(ctx, body, { json, nyMidnight, cached, display: raw => canonOf(ctx, nameKeyOf(ctx, raw)) || niceName(raw) });
+/* op "laserSheets" (R7, Paul 6 Oct): one person's cut sheets and how long each took, from the Laser_Sheet_Times records the Library's laserDone wrote (kept in _laserSheetTime.js) */
+OPS.laserSheets = (ctx, body) => require("./_laserSheetTime").opSheets(ctx, body, { json, nyMidnight, nameKeyOf, cleanName, okName, display: raw => canonOf(ctx, nameKeyOf(ctx, raw)) || niceName(raw) });
+/* the inbox figures (Paul, 6 Oct 2026: replies sent per employee, orders covered, messages per customer): _employeeInbox.js gets this file's own name, day and cache rules
+   once; ops `inbox` (everybody, all windows) and `personInbox` (one person, the Employee page's Inbox section); _stationLive.js and _employeeProfile.js call it for the board's block and for personOrders station "inbox" */
+const INBOX = require("./_employeeInbox");
+INBOX.bind({ cleanName, okName, niceName, bestForm, nameKeyOf, canonOf, num, validDay, addDays, nyDay, nyMidnight, cached, safe, json, resolveRange: PROFILE.resolveRange, RANGE_DAYS: PROFILE.RANGE_DAYS, DAILY_MAX: PROFILE.DAILY_MAX });
+OPS.inbox = INBOX.opInbox;
+OPS.personInbox = INBOX.opPersonInbox;
 function senderOf(event) {
   const h = (event && event.headers) || {};
   const get = k => { for (const x in h) if (x.toLowerCase() === k) return h[x]; return ""; };

@@ -11,6 +11,8 @@
 //   7 · personOrders: the order list, search by number / date / station / customer / SKU, paging, details, issues, sandbox
 //   node tests/stations/employee-profile.cjs
 'use strict';
+require(require('path').join(__dirname, '../../netlify/functions/_activityKinds.js')).NO_THROUGHPUT.clear();   // this suite uses 'welding' as a plain fixture station for the generic arithmetic: the Welding station's own rule (not counted in throughput, R2 of stations round 2) is tested in welding-portal.cjs
+
 const path = require('path'), assert = require('assert'), Module = require('module'), fs = require('fs');
 const root = path.join(__dirname, '../..');
 const S = require('../charm-nest/employee-profile-seed.cjs');

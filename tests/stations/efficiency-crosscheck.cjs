@@ -15,6 +15,8 @@
 //   6 · the console's view model from the real answers
 //   node tests/stations/efficiency-crosscheck.cjs
 'use strict';
+require(require('path').join(__dirname, '../../netlify/functions/_activityKinds.js')).NO_THROUGHPUT.clear();   // this suite uses 'welding' as a plain fixture station for the generic arithmetic: the Welding station's own rule (not counted in throughput, R2 of stations round 2) is tested in welding-portal.cjs
+
 const path = require('path'), assert = require('assert'), Module = require('module'), vm = require('vm'), fs = require('fs');
 const root = path.join(__dirname, '../..');
 
@@ -364,7 +366,8 @@ let MAIN;
   eq(times('Quinn Quiet'), [D2(9), D2(9, 20), null, [], '2026-10-02'], 'a session left quiet closes at its last beat');
   // stations per person (parts desc), minutes = time signed in at that page
   eq(by('Tess Welder').stations, [{ station: 'welding', minutes: 270, parts: 15, scanParts: 20, scans: 5, completes: 4, prints: 0, orders: 5 }]);
-  eq(by('Sam Sorter').stations, [{ station: 'sorting', minutes: 60, parts: 30, scanParts: 30, scans: 15, completes: 15, prints: 0, orders: 15 }, { station: 'sorter', minutes: 60, parts: 15, scanParts: 15, scans: 15, completes: 15, prints: 0, orders: 15 }]);
+  // (Sorting's orders: 310..314 were finished at the Sorter app AND at sorting-1 = one order each, so 25 distinct orders, the same 25 as the person's total; the 30 completion presses stay 30)
+  eq(by('Sam Sorter').stations, [{ station: 'sorting', minutes: 90, parts: 45, scanParts: 45, scans: 30, completes: 30, prints: 0, orders: 25 }]);
   eq(by('Shane Shipper').stations, [{ station: 'shipping', minutes: 360, parts: 18, scanParts: 20, scans: 4, completes: 3, prints: 2, orders: 4 }]);
   eq(by('José Pérez').stations, [{ station: 'welding', minutes: 30, parts: 4, scanParts: 4, scans: 1, completes: 1, prints: 0, orders: 1 }, { station: 'assembly', minutes: 60, parts: 2, scanParts: 2, scans: 1, completes: 1, prints: 0, orders: 1 }]);
   eq(by('Giovanna').stations, [{ station: 'sorting', minutes: 60, parts: 7, scanParts: 10, scans: 1, completes: 1, prints: 1, orders: 2 }, { station: 'inbox', minutes: 60, parts: 0, scanParts: 0, scans: 0, completes: 1, prints: 0, orders: 0 }]);
@@ -387,12 +390,12 @@ let MAIN;
   assert.strictEqual(A.business.totals.parts, A.people.reduce((n, p) => n + p.totals.parts, 0)); assert.strictEqual(A.business.totals.scans, A.people.reduce((n, p) => n + p.totals.scans, 0));
   assert.strictEqual(A.people.reduce((n, p) => n + p.totals.orders, 0), 48, 'the people\'s rows add to 48: OX is on three of them');
   eq(A.business.stations, [
-    { station: 'sorting', parts: 37, scans: 16, orders: 17, peopleNow: [] }, { station: 'welding', parts: 35, scans: 9, orders: 9, peopleNow: [] },
+    { station: 'sorting', parts: 52, scans: 31, orders: 27, peopleNow: [] }, { station: 'welding', parts: 35, scans: 9, orders: 9, peopleNow: [] },
     { station: 'assembly', parts: 12, scans: 4, orders: 5, peopleNow: ['Ann Assembler'] }, { station: 'shipping', parts: 18, scans: 4, orders: 4, peopleNow: ['Shane Shipper'] },
     { station: 'design', parts: 6, scans: 0, orders: 2, peopleNow: [] }, { station: 'laser', parts: 12, scans: 1, orders: 1, peopleNow: [] },
-    { station: 'sorter', parts: 15, scans: 15, orders: 15, peopleNow: [] }, { station: 'inbox', parts: 0, scans: 0, orders: 0, peopleNow: [] }], 'per station, in the stations\' order');
+    { station: 'inbox', parts: 0, scans: 0, orders: 0, peopleNow: [] }], 'per station, in the stations\' order');
   assert.strictEqual(A.business.stations.reduce((n, s) => n + s.parts, 0), A.business.totals.parts, 'the stations add up to the business'); assert.strictEqual(A.business.stations.reduce((n, s) => n + s.scans, 0), A.business.totals.scans);
-  eq(A.business.perHour, { sorting: hr({ 8: 7, 9: 28, 10: 2 }), welding: hr({ 8: 10, 10: 18, 11: 3, 14: 4 }), assembly: hr({ 7: 10, 8: 2 }), shipping: hr({ 8: 3, 13: 5, 14: 10 }), design: hr({ 9: 6 }), laser: hr({ 10: 12 }), sorter: hr({ 9: 7, 10: 8 }) }, 'per station per hour; the inbox produced nothing and is not drawn');
+  eq(A.business.perHour, { sorting: hr({ 8: 7, 9: 35, 10: 10 }), welding: hr({ 8: 10, 10: 18, 11: 3, 14: 4 }), assembly: hr({ 7: 10, 8: 2 }), shipping: hr({ 8: 3, 13: 5, 14: 10 }), design: hr({ 9: 6 }), laser: hr({ 10: 12 }) }, 'per station per hour; the inbox produced nothing and is not drawn');
   const bizHours = new Array(24).fill(0); for (const arr of Object.values(A.business.perHour)) arr.forEach((v, i) => { bizHours[i] += v; });
   eq(bizHours, A.people.reduce((acc, p) => acc.map((v, i) => v + p.perHour[i]), new Array(24).fill(0)), 'the business hours are the people\'s hours'); assert.strictEqual(bizHours.reduce((a, b) => a + b, 0), 135);
   const tr = A.business.trend; assert.strictEqual(tr.length, 14);
@@ -486,7 +489,7 @@ let MAIN;
     const o = await ask({ day: '2026-10-02' });                                                         // the screen, now looking at yesterday
     assert.strictEqual(o.business.totals.scans, 51, 'the events queued at 23:58 and 23:59:50 are in 2 Oct at 00:01 (a cached read of the live day must not be kept as a finished day)');
     const nina = o.people.find(p => p.name === 'Nina Night'); assert.strictEqual(nina.totals.scanParts, 5);
-    const ann = o.people.find(p => p.name === 'Ann Assembler'); eq([ann.lastOut, ann.totals.signedInMin], [D2(24), 975], 'the sessions ended at 00:00:02 are read again too: Ann was signed in until midnight, not only to her last beat at 15:28');
+    const ann = o.people.find(p => p.name === 'Ann Assembler'); eq([ann.lastOut, ann.totals.signedInMin], [D2(15, 28), 463], 'Ann\'s page went silent after its beat at 15:28: since AD2 (6 Oct 2026) the first read after 15 quiet minutes ends the session "closed" at that beat for good (a non-Admin without a reported input keeps the old 15-minute rule), so the midnight end that comes later changes nothing');
   });
   signIn(D2(24, 5), 'N', 'Nina Night', 'sess-nina-2');
   ev(D2(24, 7), 'N', 'scan', { orderId: O(92), parts: 4 });
@@ -509,7 +512,7 @@ let MAIN;
   eq(B3.business.totals, { parts: 4, scans: 1, orders: 1, people: 1 });
   eq(B2.business.totals, { parts: 138, scans: 51, orders: 48, people: 11 }, '2 Oct after midnight: + Nina\'s 3 parts, 2 scans, 2 orders');
   const ann2 = B2.people.find(p => p.name === 'Ann Assembler'), shane2 = B2.people.find(p => p.name === 'Shane Shipper');
-  eq([ann2.status, ann2.lastOut, ann2.totals.signedInMin, ann2.nowAt, shane2.totals.signedInMin, shane2.lastOut, shane2.onSince], ['out', D2(24), 975, [], 870, D2(24), null], 'a past day shows nobody on: Ann 07:45-24:00 = 975 min, Shane 210 + 660 = 870');
+  eq([ann2.status, ann2.lastOut, ann2.totals.signedInMin, ann2.nowAt, shane2.totals.signedInMin, shane2.lastOut, shane2.onSince], ['out', D2(15, 28), 463, [], 359, D2(15, 29), null], 'a past day shows nobody on: Ann 07:45-15:28 = 463 min, Shane 210 + 149 (13:00 to his last beat at 15:29) = 359 (both pages went silent; see the 00:01 read above)');
   eq(B2.business.stations.every(s => s.peopleNow.length === 0), true);
   eq(B3.business.trend.slice(-2).map(t => [t.day, t.parts, t.orders, t.people]), [['2026-10-02', 138, 48, 11], ['2026-10-03', 4, 1, 1]]);
   for (const n of ['Tess Welder', 'Ray Welder', 'Sam Sorter', 'Dana Designer', 'Leo Laser', 'Giovanna', 'José Pérez']) eq(B2.people.find(p => p.name === n).totals, WANT[n], n + ' is the same after midnight');

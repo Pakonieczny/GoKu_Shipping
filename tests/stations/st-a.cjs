@@ -112,7 +112,7 @@ const all = (type, id) => st.events.filter(e => e.type === type && e.orderId ===
 
   // 3 · signed out, a name typed in the Employee Name field: the weld says not signed in, never Marco nor the typed name
   await page.click('#signOutBtn');
-  await page.fill('#employeeName', 'Typed Guess');
+  await page.evaluate(() => { document.getElementById('employeeName').value = 'Typed Guess'; });   // (the name field is hidden on the Welding page now: the roster chips replace it)
   await enter(NOBODY);
   await until(() => all('welded', NOBODY).length, 'the weld with nobody signed in');
   const w3 = all('welded', NOBODY)[0], s3 = all('scan', NOBODY)[0];

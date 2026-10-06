@@ -175,6 +175,9 @@ async function sorterPage(browser, srv, errors, sandbox) {
   page.on('pageerror', e => errors.push(e.message));
   await page.goto(`${srv.sorterOrigin}/charm-nest-1.html`, { waitUntil: 'load' });
   await page.waitForFunction(() => window.CN && window.Orders && window.OrderWin && window.CNAct && window.CNLive && window.StationActivity && window.StationSession && CN.S.cloud.ok === true, null, { timeout: 60000 });
+  // this section is about the Admin's sorter (station `sorter`, laser marks routed to Laser, no role): a non-Admin is asked "Laser or Design?" first
+  // (LD1, R4) and is not signed in for the stations until they answer; that step has its own test, tests/charm-nest/sorter-role-signin.cjs
+  await page.evaluate(() => window.CNRole && CNRole.setAdminLookup(async () => true));
   return { context, page, lives, reqs };
 }
 
@@ -202,6 +205,7 @@ async function main() {
       });
       await page.focus('#employeeNumberInput'); await page.keyboard.type(PIN);
       await page.click('#employeeLoginBtn');
+      await page.click('#weldTaskMatching');   // the PIN door, then "Welding or Matching?": the Matching person is the one a scan is credited to (R3)
       await page.waitForFunction(() => window.StationActivity.who(), null, { timeout: 10000 });
       await wait(300);
 
@@ -282,11 +286,12 @@ async function main() {
         await until(() => works(O.TWO).length, 'the scan');
         const w1 = works(O.TWO)[0];
         assert.equal(w1.person, WHO); assert.equal(w1.station, 'assembly'); assert.equal(w1.device, 'assembly-1'); assert.equal(w1._q, '');
-        assert.deepEqual(w1.order.pieces.map(p => p.id), [O.TWO + '_95001', O.TWO + '_95002']);
-        assert.deepEqual(w1.order.pieces.map(p => p.label), ['2 x Name Charm', 'Heart Charm']);
-        assert.deepEqual(w1.order.pieces.map(p => p.sku), ['AAA-1', 'BBB-2']);
-        assert.deepEqual(w1.order.pieces.map(p => p.listingId), ['166610010', '166610020']);
-        assert.equal(w1.order.customer, 'Test Buyer'); assert.equal(w1.order.pieceCount, 2); assert.equal(w1.order.orderNumber, O.TWO);
+        /* one piece per UNIT of every line (2 + 1 pieces are 3 cards), through the shared station-live-order.js: the board counts pieces, never lines */
+        assert.deepEqual(w1.order.pieces.map(p => p.id), ['95001-1', '95001-2', '95002-1']);
+        assert.deepEqual(w1.order.pieces.map(p => p.label), ['Name Charm', 'Name Charm', 'Heart Charm']);
+        assert.deepEqual(w1.order.pieces.map(p => p.sku), ['AAA-1', 'AAA-1', 'BBB-2']);
+        assert.deepEqual(w1.order.pieces.map(p => p.listingId), ['166610010', '166610010', '166610020']);
+        assert.equal(w1.order.customer, 'Test Buyer'); assert.equal(w1.order.pieceCount, 3); assert.equal(w1.order.orderNumber, O.TWO);
         await send('please check the chain length'); await send('wrong chain, needs rework');
         await page.evaluate(async () => {
           window.uploadViaResumable = async () => 'http://127.0.0.1/x.png';
@@ -305,7 +310,8 @@ async function main() {
         await open(O.ONE, 'phone', 'Brites_Orders/assembly-scan-1');
         await until(() => works(O.ONE).length, 'the phone scan');
         assert.equal(works(O.ONE)[0].person, WHO);
-        assert.deepEqual(works(O.ONE)[0].order.pieces.map(p => [p.label, p.sku]), [['3 x Solo Charm', 'SOLO-9']]);
+        assert.deepEqual(works(O.ONE)[0].order.pieces.map(p => [p.label, p.sku]), [['Solo Charm', 'SOLO-9'], ['Solo Charm', 'SOLO-9'], ['Solo Charm', 'SOLO-9']]);
+        assert.equal(works(O.ONE)[0].order.pieceCount, 3); assert.equal(works(O.ONE)[0].order.note, 'phone scan');
         await send('QA 2');
         await until(() => idled(O.ONE).length, 'the QA 2 stamp ends it');
         assert.deepEqual(workingNow(here()), []);

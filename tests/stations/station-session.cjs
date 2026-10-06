@@ -38,7 +38,7 @@ async function door() {
 
     let r = await post(S());
     assert.strictEqual(r.status, 200, JSON.stringify(r.body));
-    assert.deepStrictEqual(Object.keys(doc('weld-1-ABCD-k1')).sort(), ['computerId', 'computerLabel', 'device', 'employeeId', 'endAt', 'endReason', 'id', 'lastSeenAt', 'minutes', 'person', 'startAt', 'station'].sort(), 'the Station_Sessions shape');
+    assert.deepStrictEqual(Object.keys(doc('weld-1-ABCD-k1')).sort(), ['admin', 'computerId', 'computerLabel', 'device', 'employeeId', 'endAt', 'endReason', 'id', 'lastSeenAt', 'minutes', 'person', 'startAt', 'station'].sort(), 'the Station_Sessions shape (admin: whether the person is on the Admin list, kept for the auto sign-out)');
     assert.strictEqual(doc('weld-1-ABCD-k1').employeeId, '', 'a PIN (digits only) is never kept');
     assert(!JSON.stringify([...docs.values()]).includes(P1), 'the PIN is nowhere in the store');
     assert.strictEqual(doc('weld-1-ABCD-k1').startAt, now);
@@ -138,6 +138,8 @@ async function station() {
       await page.evaluate(() => { const i = document.getElementById('employeeNumberInput'); i.dataset.raw = ''; i.value = ''; });
       await page.focus('#employeeNumberInput'); await page.keyboard.type(pin);
       await page.click('#employeeLoginBtn', { force: true });
+      await until(() => page.evaluate(() => document.getElementById('userLoginModal').classList.contains('weld-task')), 'the Welding or Matching step');    // (after the number: one extra step)
+      await page.evaluate(() => document.getElementById('weldTaskMatching').click());
     };
     const until = async (fn, what) => { for (let i = 0; i < 100; i++) { const v = await fn(); if (v) return v; await page.clock.runFor(100); } throw new Error('timed out: ' + what); };
 
@@ -148,14 +150,16 @@ async function station() {
     assert.strictEqual(await page.evaluate(() => localStorage.getItem('station_signin_day')), '2026-09-28');
     await page.fill('#etsyOrderNumber', '3521000777');                                     // work on screen
 
-    await page.clock.runFor(6 * 60000);
+    const active = async ms => { for (let left = ms, n = 0; left > 0; n++) { await page.mouse.move(120 + (n % 40), 220 + (n % 7)); const step = Math.min(left, 4 * 60000); await page.clock.runFor(step); left -= step; } };   // a hand at the screen: input every 4 minutes
+    await active(6 * 60000);
     assert(sessions.some(s => s.event === 'beat' && s.id === start.id), 'a beat every 5 minutes');
-    await page.clock.runFor(15 * 60000);                                                    // past midnight
+    await active(15 * 60000);                                                               // past midnight
     const end = await until(() => sessions.find(s => s.event === 'end' && s.id === start.id), 'the midnight end');
     assert.strictEqual(end.reason, 'midnight'); assert.strictEqual(end.at, MIDNIGHT);
-    const after = await page.evaluate(() => ({ id: localStorage.getItem('employee_id'), name: localStorage.getItem('employee_name'), in: window.isEmployeeLoggedIn,
+    const after = await page.evaluate(() => ({ id: localStorage.getItem('employee_id'), name: localStorage.getItem('employee_name'), people: localStorage.getItem('weld_people'), in: window.isEmployeeLoggedIn,
       opens: window.__opens, order: document.getElementById('etsyOrderNumber').value, toast: (window.__toasts || []).join(' | ') }));
     assert.strictEqual(after.id, null); assert.strictEqual(after.name, null); assert.strictEqual(after.in, false);
+    assert.strictEqual(after.people, '[]', 'nobody is signed in at the Welding station any more');
     assert(after.opens >= 1, 'the PIN box is back'); assert.strictEqual(after.order, '3521000777', 'the order typed on screen stays');
     assert(/midnight/i.test(after.toast), after.toast);
 
@@ -169,11 +173,11 @@ async function station() {
 
     // a page loaded after the day turned: signed out before anything else, no session for yesterday's person
     const pc = start.computerId, n0 = sessions.length;
-    await page.evaluate(p => { localStorage.setItem('employee_id', p); localStorage.setItem('employee_name', 'Tess Welder'); localStorage.setItem('station_signin_day', '2026-09-28'); }, P1);
+    await page.evaluate(() => { localStorage.setItem('weld_people', JSON.stringify([{ name: 'Tess Welder', task: 'welding', at: 1 }])); localStorage.setItem('station_signin_day', '2026-09-28'); });
     await page.reload();
     await page.waitForFunction(() => window.StationSession && window.__opens >= 1, null, { timeout: 15000 });
-    const reloaded = await page.evaluate(() => ({ id: localStorage.getItem('employee_id'), in: window.isEmployeeLoggedIn, pc: localStorage.getItem('station_computer_id') }));
-    assert.strictEqual(reloaded.id, null, 'yesterday\'s login is cleared on load'); assert.notStrictEqual(reloaded.in, true);
+    const reloaded = await page.evaluate(() => ({ id: localStorage.getItem('weld_people'), in: window.isEmployeeLoggedIn, pc: localStorage.getItem('station_computer_id') }));
+    assert.strictEqual(reloaded.id, '[]', 'yesterday\'s login is cleared on load'); assert.notStrictEqual(reloaded.in, true);
     assert.strictEqual(reloaded.pc, pc, 'the computer id stays');
     await page.clock.runFor(2000);
     assert(!sessions.slice(n0).some(s => s.event === 'start'), 'no session starts for yesterday\'s login');

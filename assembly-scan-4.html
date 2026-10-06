@@ -319,34 +319,82 @@
     const sendBtn = document.getElementById("sendBtn");
     sendBtn.disabled = true; // hidden & disabled, but kept for config integrity
 
-    async function pushScannedToFirestore(codeVal) {
-      if (!codeVal) {
-        M.toast({ html: "No QR code scanned yet!" });
-        return;
-      }
+    /* A scan goes to this station's desktop (assembly-4.html) through the Firestore document 'assembly-scan-4', where the desktop
+       credits it to the person signed in there (this phone has no sign-in). One that could not be sent (no network, a busy server) is
+       KEPT and sent again, oldest first and one at a time, until the station has it: it is never lost while this page is open, and it
+       survives a reload of the page (order numbers only, in sessionStorage; one older than 30 minutes is dropped as stale). */
+    const RELAY_DOC = "assembly-scan-4";
+    const OUTBOX_KEY = "assemblyScanOutbox." + RELAY_DOC;
+    let outbox = [], relaying = false, retryTimer = 0, relayTries = 0;
+    function saveOutbox() {
+      try { if (outbox.length) sessionStorage.setItem(OUTBOX_KEY, JSON.stringify(outbox)); else sessionStorage.removeItem(OUTBOX_KEY); } catch (_) {}
+    }
+    function loadOutbox() {
       try {
-        M.toast({ html: "Sending to Firestore doc 'assembly-scan-4': " + codeVal });
-        const bodyData = {
-          orderNumber: "assembly-scan-4",
-          orderNumField: codeVal,
-          clientName: "Scanner Page",
-          britesMessages: "(Auto push from assembly-scan-4.html)",
-          shippingLabelTimestamps: new Date().toISOString(),
-          employeeName: "ScannerBot"
-        };
+        const kept = JSON.parse(sessionStorage.getItem(OUTBOX_KEY) || "[]");
+        if (Array.isArray(kept)) outbox = kept.filter(x => x && typeof x.c === "string" && x.c && Date.now() - (Number(x.at) || 0) < 30 * 60000).slice(-20);
+      } catch (_) {}
+    }
+    /** one write of one scan: "sent", "retry" (no network, 5xx, 429, 408) or "drop" (the station's door refused it for good) */
+    async function relayOnce(codeVal) {
+      const bodyData = {
+        orderNumber: RELAY_DOC,
+        orderNumField: codeVal,
+        clientName: "Scanner Page",
+        britesMessages: "(Auto push from assembly-scan-4.html)",
+        shippingLabelTimestamps: new Date().toISOString(),
+        employeeName: "ScannerBot"
+      };
+      try {
         const response = await fetch("/.netlify/functions/firebaseOrders", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(bodyData)
         });
-        const result = await response.json();
-        if (!response.ok) throw new Error(result.error || "Unknown error from firebaseOrders function");
-        M.toast({ html: "Firestore updated: doc 'assembly-scan-4' => " + codeVal });
+        let result = null; try { result = await response.json(); } catch (_) {}
+        if (response.ok) return "sent";
+        console.error("Error sending to Firestore:", response.status, result && result.error);
+        return response.status >= 500 || response.status === 429 || response.status === 408 ? "retry" : "drop";
       } catch (err) {
-        M.toast({ html: "Error: " + err.message });
         console.error("Error sending to Firestore:", err);
+        return "retry";
       }
     }
+    async function relayPump() {
+      if (relaying) return;
+      relaying = true;
+      try {
+        while (outbox.length) {
+          const code = outbox[0].c;
+          M.toast({ html: "Sending to Firestore doc '" + RELAY_DOC + "': " + code });
+          const r = await relayOnce(code);
+          if (r === "retry") {
+            relayTries++;
+            M.toast({ html: "Not sent yet, trying again: " + code });
+            clearTimeout(retryTimer);
+            retryTimer = setTimeout(relayPump, Math.min(15000, 2000 * Math.pow(2, Math.min(relayTries, 4) - 1)));   // 2, 4, 8, 15 s
+            return;
+          }
+          outbox.shift(); saveOutbox(); relayTries = 0;
+          if (r === "sent") M.toast({ html: "Firestore updated: doc '" + RELAY_DOC + "' => " + code });
+          else { M.toast({ html: "Error: the station did not accept " + code }); if (lastScanned === code) lastScanned = ""; }   // it can be scanned again
+          if (outbox.length) await new Promise(res => setTimeout(res, 800));       // the desktop reads one scan at a time
+        }
+      } finally { relaying = false; }
+    }
+    async function pushScannedToFirestore(codeVal) {
+      if (!codeVal) {
+        M.toast({ html: "No QR code scanned yet!" });
+        return;
+      }
+      outbox.push({ c: String(codeVal), at: Date.now() });
+      if (outbox.length > 20) outbox.shift();
+      saveOutbox();
+      relayPump();
+    }
+    window.addEventListener("online", () => { clearTimeout(retryTimer); relayPump(); });
+    loadOutbox();
+    if (outbox.length) setTimeout(relayPump, 500);
 
     /*************************************************************
      * 7) CONFIG SYSTEM FOR LAYOUT REPOSITIONING
