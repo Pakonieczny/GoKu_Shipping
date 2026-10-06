@@ -99,6 +99,7 @@ async function scenario(browser, base, P) {
   const signIn = async pin => {
     await page.evaluate(p => { const i = document.getElementById('employeeNumberInput'); i.dataset.raw = p; i.value = '******'; }, pin);
     await page.evaluate(() => document.getElementById('employeeLoginBtn').click());
+    if (P.file === 'weld-1.html') await page.click('#weldTaskMatching', { timeout: 10000 });         // the Welding station asks "Welding or Matching?" after the number; scans are credited to Matching
     await page.waitForFunction(() => window.isEmployeeLoggedIn === true && window.StationActivity.who(), null, { timeout: 10000 });
   };
   const signOut = async () => {

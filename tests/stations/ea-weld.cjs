@@ -129,6 +129,7 @@ const seals = (order, type = 'welded') => st.events.filter(e => e.orderId === or
   // 2 · PIN login (the fake PIN is only ever typed on the page and sent to the login door), then a typed stud order of 2 pieces
   await page.focus('#employeeNumberInput'); await page.keyboard.type(PIN);
   await page.click('#employeeLoginBtn');
+  await page.click('#weldTaskMatching', { timeout: 10000 });          // the extra step: Welding or Matching? (scans are credited to Matching)
   const start = await until(() => st.sessions.find(s => s.event === 'start' && s.person === WHO), 'the sign-in session');
   assert.strictEqual(start.employeeId, '', 'the session carries the name, never the PIN');
   await enter(STUD);

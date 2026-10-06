@@ -105,8 +105,14 @@ async function run(browser, dev, station, all, allReqs, ip) {
     await page.evaluate(() => { const i = document.getElementById('employeeNumberInput'); i.dataset.raw = ''; i.value = ''; window.__toasts.length = 0; });
     await page.focus('#employeeNumberInput'); await page.keyboard.type(pin);
     await page.click('#employeeLoginBtn', { force: true });
+    if (dev === 'weld-1') {                                                        // the Welding station asks "Welding or Matching?" after the number
+      await until(() => page.evaluate(() => document.getElementById('userLoginModal').classList.contains('weld-task')), dev + ': the Welding or Matching step');
+      await page.evaluate(() => document.getElementById('weldTaskMatching').click());
+    }
   };
-  const state = () => page.evaluate(() => ({ name: localStorage.getItem('employee_name'), idSet: !!localStorage.getItem('employee_id'), toasts: window.__toasts.join(' | '),
+  /* (weld-1 keeps who is signed in as names under tasks in weld_people, and no longer writes employee_id / employee_name) */
+  const state = () => page.evaluate(() => ({ name: (() => { const r = localStorage.getItem('weld_people'); if (r !== null) { try { const l = JSON.parse(r); return l.length ? l[0].name : null; } catch (_) {} } return localStorage.getItem('employee_name'); })(),
+    idSet: (() => { const r = localStorage.getItem('weld_people'); if (r !== null) { try { return JSON.parse(r).length > 0; } catch (_) {} } return !!localStorage.getItem('employee_id'); })(), toasts: window.__toasts.join(' | '),
     boxOpen: !!document.getElementById('userLoginModal').__m.isOpen, store: Object.entries(localStorage).filter(([k]) => k !== 'employee_id').map(([k, v]) => k + '=' + v).join('\n'),
     all: Object.entries(localStorage).map(([k, v]) => k + '=' + v).join('\n') }));
   const sessionsOf = name => stored().filter(s => s.person === name && s.device === dev);
