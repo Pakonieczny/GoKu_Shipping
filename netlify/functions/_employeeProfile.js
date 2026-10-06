@@ -70,7 +70,15 @@ const CATALOG = {
   activeShare: { label: "Working share", unit: "percent", better: "up", est: true, why: WHY_LOG, def: "Working time as a share of signed-in time (days with logged activity only)." }
 };
 
+/** The Welding station's own figures (the station is not counted in throughput: it shows time on task and the matched count instead). */
+const WCAT = {
+  weldingHours: { label: "Welding hours", unit: "hours", better: null, def: "Time signed in at the Welding station under the Welding task (welding the studs to the charm). It is signed-in time: welding has no scans, so it is never counted in pieces or orders. Two sign-ins under the same task at once count once." },
+  matchingHours: { label: "Matching hours", unit: "hours", better: null, def: "Time signed in at the Welding station under the Matching task (matching the welded earrings to their orders with the scanner app and adding the backings). Two sign-ins under the same task at once count once." },
+  matchedOrders: { label: "Orders matched", unit: "orders", better: null, est: true, why: "A phone scan is credited to the person signed in under Matching (the one with the latest input when two are), or to nobody when nobody is.", def: "Order codes scanned as Matching at the Welding station. Every scan counts, so an order scanned twice counts twice. Not a completion: the Welding station is not counted in orders finished." }
+};
+
 function make(K) {
+  const KIND = K.KIND || { throughput: () => true, readStationCounters: (st, v) => v, UNATTRIBUTED: "Unattributed" };      // (the Welding station is not counted in throughput: see _activityKinds.js)
   const { COL, LIM, ms, num, r1, zeros, digits, cleanName, okName, okStation, niceName, bestForm, nameKeyOf, canonOf, scrub, validDay, addDays,
     nyDay, nyMidnight, clip, covered, spanOf, cached, readRollups, readEventsStart, eventRow, col, json, safe, tmpl, KEYS } = K;
   const DAY = 86400000;
@@ -147,7 +155,7 @@ function make(K) {
     return { rollups, sessions: [...sessions.values()], errors, capped };
   }
 
-  const newPD = day => ({ day, hasEvents: false, events: 0, st: {}, hours: zeros(24), hourScans: zeros(24), orders: new Map(), inFirst: 0, inLast: 0, spans: [], signedMs: 0, rawMs: 0, stMs: {}, firstIn: 0, lastOut: 0, liveSpan: false, forms: new Set() });
+  const newPD = day => ({ day, hasEvents: false, events: 0, st: {}, hours: zeros(24), hourScans: zeros(24), orders: new Map(), inFirst: 0, inLast: 0, spans: [], signedMs: 0, signedTpMs: 0, rawMs: 0, stMs: {}, taskMs: {}, firstIn: 0, lastOut: 0, liveSpan: false, forms: new Set() });
 
   /** Joins the raw rows into people → days (PD). `people` is keyed by the normalized name key (aliases merged). */
   function buildPeople(ctx, raw, from, to) {
@@ -161,23 +169,29 @@ function make(K) {
     };
     const pdOf = (P, day) => { let x = P.days.get(day); if (!x) P.days.set(day, x = newPD(day)); return x; };
     for (const x of raw.rollups) {
+      if (x.person === KIND.UNATTRIBUTED) continue;                       // (a matched scan made with nobody in Matching has no person: the Stations board counts it)
       const P = get(x.person); if (!P || !validDay(x.day) || x.day < from || x.day > to) continue;
       const pd = pdOf(P, x.day); pd.hasEvents = true; pd.events += Math.max(0, num(x.events));
       const form = String(x.person); pd.forms.add(form); P.forms.add(form);              // (the exact stored name: what a Station_Activity query must match)
-      for (const [st0, v] of Object.entries(x.stations && typeof x.stations === "object" ? x.stations : {})) {
-        if (!okStation(st0) || !v || typeof v !== "object") continue;
+      for (const [st0, v0] of Object.entries(x.stations && typeof x.stations === "object" ? x.stations : {})) {
+        if (!okStation(st0) || !v0 || typeof v0 !== "object") continue;
         const st = displayStation(st0);                                // (counters stored under "sorter" or "qr" add to Sorting)
+        const v = KIND.readStationCounters(st, v0);                          // (the Welding station keeps its scans, time and matched count, never pieces, orders or completions)
         const a = pd.st[st] || (pd.st[st] = tmpl()); for (const k of KEYS) a[k] += Math.max(0, num(v[k]));
         const fa = ms(v.firstAt), la = ms(v.lastAt); if (fa > 0 && (!pd.inFirst || fa < pd.inFirst)) pd.inFirst = fa; if (la > pd.inLast) pd.inLast = la;
       }
       for (const [hh, h] of Object.entries(x.hours && typeof x.hours === "object" ? x.hours : {})) {
         const hr = parseInt(hh, 10); if (!(hr >= 0 && hr < 24) || !h || typeof h !== "object") continue;
-        pd.hours[hr] += Math.max(0, num(h.parts)) - Math.max(0, num(h.undoParts)); pd.hourScans[hr] += Math.max(0, num(h.scans));   // produced minus undone, the same net as the totals
+        let net = Math.max(0, num(h.parts)) - Math.max(0, num(h.undoParts));          // produced minus undone, the same net as the totals
+        for (const [st, b] of Object.entries(h.by && typeof h.by === "object" ? h.by : {})) if (!KIND.throughput(st) && b && typeof b === "object") net -= Math.max(0, num(b.parts)) - Math.max(0, num(b.undoParts));   // (not the Welding station's)
+        pd.hours[hr] += net; pd.hourScans[hr] += Math.max(0, num(h.scans));
       }
       for (const [id, m] of Object.entries(x.touched && typeof x.touched === "object" ? x.touched : {})) {
         const oid = digits(id); if (!oid) continue;
+        const sts = m && typeof m === "object" ? [...new Set(Object.keys(m).filter(z => m[z] && okStation(z) && KIND.throughput(displayStation(z))).map(displayStation))] : [];     // (an order only the Welding station touched is not an order worked)
+        if (!sts.length) continue;
         let set = pd.orders.get(oid); if (!set) pd.orders.set(oid, set = new Set());
-        for (const k of m && typeof m === "object" ? Object.keys(m).filter(z => m[z] && okStation(z)) : []) set.add(displayStation(k));
+        for (const k of sts) set.add(k);
       }
       const fa = ms(x.firstAt), la = ms(x.lastAt); if (fa > 0 && (!pd.inFirst || fa < pd.inFirst)) pd.inFirst = fa; if (la > pd.inLast) pd.inLast = la;
     }
@@ -185,7 +199,7 @@ function make(K) {
       const P = get(s.person), sp = spanOf(s, ctx.now); if (!P || !sp) continue;
       for (const c of clip(sp.start, sp.end, from, to)) {
         const pd = pdOf(P, c.day);
-        pd.spans.push({ s: c.s, e: c.e, station: sp.station, live: sp.live, start0: sp.start, endReason: String(s.endReason || ""), device: String(s.device || "") });
+        pd.spans.push({ s: c.s, e: c.e, station: sp.station, task: sp.task || "", live: sp.live, start0: sp.start, endReason: String(s.endReason || ""), device: String(s.device || "") });
         if (sp.live) pd.liveSpan = true;
       }
     }
@@ -196,6 +210,9 @@ function make(K) {
           pd.signedMs = covered(pd.spans.map(x => [x.s, x.e])); pd.rawMs = pd.spans.reduce((n, x) => n + (x.e - x.s), 0);
           const per = {}; for (const x of pd.spans) (per[x.station] || (per[x.station] = [])).push([x.s, x.e]);
           for (const [st, list] of Object.entries(per)) pd.stMs[st] = covered(list);
+          pd.signedTpMs = covered(pd.spans.filter(x => KIND.throughput(x.station)).map(x => [x.s, x.e]));        // (signed in at a station that counts in throughput: the divisor of pieces per signed hour)
+          const pt = {}; for (const x of pd.spans) if (x.station === "welding") (pt[x.task || "unknown"] || (pt[x.task || "unknown"] = [])).push([x.s, x.e]);   // the Welding station's time per task: a person in both tasks has both
+          for (const [t, list] of Object.entries(pt)) pd.taskMs[t] = covered(list);
           pd.firstIn = Math.min(...pd.spans.map(x => x.s));
           pd.lastOut = pd.spans.some(x => x.live) ? 0 : Math.max(...pd.spans.map(x => x.e));
         } else if (pd.inFirst) { pd.firstIn = pd.inFirst; pd.lastOut = pd.inLast; pd.noSession = true; }   // (a station that logs but signs nobody in: the first and last action stand in)
@@ -256,36 +273,38 @@ function make(K) {
   /** One person-day in plain numbers (cached on the PD). Pieces are NET of undo; active/idle never exceed the time signed in when two computers overlapped. */
   function daySum(pd) {
     if (pd._sum) return pd._sum;
-    let parts = 0, ordersFin = 0, scans = 0, scanParts = 0, completes = 0, prints = 0, rejects = 0, errors = 0, notes = 0, undos = 0, undoOrders = 0, active = 0, idle = 0;
+    let parts = 0, ordersFin = 0, scans = 0, scanParts = 0, completes = 0, prints = 0, rejects = 0, errors = 0, notes = 0, undos = 0, undoOrders = 0, active = 0, activeTp = 0, idle = 0, matched = 0, tp = false;
     const st = {};
     for (const name of new Set(Object.keys(pd.st).concat(Object.keys(pd.stMs)))) {
-      const a = pd.st[name] || tmpl(), p = Math.max(0, a.parts - a.undoParts), o = Math.max(0, a.orders - a.undoOrders);
-      parts += p; ordersFin += o; scans += a.scans; scanParts += a.scanParts; completes += a.completes; prints += a.prints; rejects += a.rejects; errors += a.errors; notes += a.notes; undos += a.undos; undoOrders += a.undoOrders; active += a.activeMs; idle += a.idleMs;
-      st[name] = { parts: p, ordersFin: o, scans: a.scans, scanParts: a.scanParts, completes: a.completes, prints: a.prints, activeMs: a.activeMs, minMs: pd.stMs[name] > 0 ? pd.stMs[name] : a.activeMs };
+      const a = pd.st[name] || tmpl(), p = Math.max(0, a.parts - a.undoParts), o = Math.max(0, a.orders - a.undoOrders), counted = KIND.throughput(name);
+      parts += p; ordersFin += o; scans += a.scans; scanParts += a.scanParts; completes += a.completes; prints += a.prints; rejects += a.rejects; errors += a.errors; notes += a.notes; undos += a.undos; undoOrders += a.undoOrders; active += a.activeMs; idle += a.idleMs; matched += a.matched;
+      if (counted) { activeTp += a.activeMs; if (a.scans + a.completes + a.prints + a.rejects + a.errors + a.undos + a.notes > 0) tp = true; }     // (tp: something was logged at a station that counts in throughput that day)
+      st[name] = { parts: p, ordersFin: o, scans: a.scans, scanParts: a.scanParts, completes: a.completes, prints: a.prints, activeMs: a.activeMs, matched: a.matched, minMs: pd.stMs[name] > 0 ? pd.stMs[name] : a.activeMs };
     }
-    if (pd.rawMs > pd.signedMs) { active = Math.min(active, pd.signedMs); idle = Math.min(idle, Math.max(0, pd.signedMs - active)); }
-    return (pd._sum = { hasEvents: pd.hasEvents, parts, orders: pd.orders.size || ordersFin, ordersFin, scans, scanParts, completes, prints, rejects, errors, notes, undos, undoOrders, events: pd.events, activeMs: active, idleMs: idle, signedMs: pd.signedMs, st });
+    if (pd.rawMs > pd.signedMs) { active = Math.min(active, pd.signedMs); activeTp = Math.min(activeTp, pd.signedMs); idle = Math.min(idle, Math.max(0, pd.signedMs - active)); }
+    return (pd._sum = { hasEvents: pd.hasEvents, tp: pd.hasEvents && tp, parts, orders: pd.orders.size || ordersFin, ordersFin, scans, scanParts, completes, prints, rejects, errors, notes, undos, undoOrders, matched, events: pd.events, activeMs: active, activeTpMs: activeTp, idleMs: idle, signedMs: pd.signedMs, signedTpMs: pd.signedTpMs, st });
   }
 
   /** Everything about the days from..to of one person (P may be null): sums over the days that have logged activity, plus the per-day list. */
   function aggregate(P, from, to) {
-    const A = { from, to, nDays: spanLen(from, to), evDays: 0, sessDays: 0, parts: 0, rids: new Set(), ordersFallback: 0, ordersFin: 0, scans: 0, scanParts: 0, completes: 0, prints: 0, rejects: 0, errors: 0, undos: 0, undoOrders: 0, events: 0,
-      activeMs: 0, idleMs: 0, signedMs: 0, signedMsEv: 0, hours: zeros(24), hourScans: zeros(24), st: new Map(), days: [] };
+    const A = { from, to, nDays: spanLen(from, to), evDays: 0, tpDays: 0, sessDays: 0, parts: 0, rids: new Set(), ordersFallback: 0, ordersFin: 0, scans: 0, scanParts: 0, completes: 0, prints: 0, rejects: 0, errors: 0, undos: 0, undoOrders: 0, events: 0, matched: 0,
+      activeMs: 0, activeTpMs: 0, idleMs: 0, signedMs: 0, signedMsEv: 0, signedTpMsEv: 0, hours: zeros(24), hourScans: zeros(24), st: new Map(), days: [] };
     for (const day of daysOf(from, to)) {
       const pd = P && P.days.get(day);
       if (!pd) { A.days.push({ day, pd: null, sum: null }); continue; }
       const s = daySum(pd); A.days.push({ day, pd, sum: s });
       if (pd.signedMs > 0) { A.sessDays++; A.signedMs += pd.signedMs; }
       if (!pd.hasEvents) continue;
-      A.evDays++; A.signedMsEv += pd.signedMs;
+      A.evDays++; A.signedMsEv += pd.signedMs; A.signedTpMsEv += pd.signedTpMs; if (s.tp) A.tpDays++;
+      A.matched += s.matched; A.activeTpMs += s.activeTpMs;
       A.parts += s.parts; A.ordersFin += s.ordersFin; A.scans += s.scans; A.scanParts += s.scanParts; A.completes += s.completes; A.prints += s.prints; A.rejects += s.rejects; A.errors += s.errors; A.undos += s.undos; A.undoOrders += s.undoOrders;
       A.events += s.events; A.activeMs += s.activeMs; A.idleMs += s.idleMs;
       const work = workRids(pd); for (const rid of work) A.rids.add(rid);
       if (!work.length) A.ordersFallback += s.ordersFin;
       for (let h = 0; h < 24; h++) { A.hours[h] += pd.hours[h]; A.hourScans[h] += pd.hourScans[h]; }
       for (const [name, x] of Object.entries(s.st)) {
-        let t = A.st.get(name); if (!t) A.st.set(name, t = { parts: 0, rids: new Set(), fallback: 0, scans: 0, completes: 0, prints: 0, activeMs: 0, minMs: 0 });
-        t.parts += x.parts; t.scans += x.scans; t.completes += x.completes; t.prints += x.prints; t.activeMs += x.activeMs; t.minMs += x.minMs;
+        let t = A.st.get(name); if (!t) A.st.set(name, t = { parts: 0, rids: new Set(), fallback: 0, scans: 0, completes: 0, prints: 0, activeMs: 0, minMs: 0, matched: 0 });
+        t.matched += x.matched; t.parts += x.parts; t.scans += x.scans; t.completes += x.completes; t.prints += x.prints; t.activeMs += x.activeMs; t.minMs += x.minMs;
         let any = false; for (const [rid, set] of pd.orders) if (set.has(name)) { t.rids.add(rid); any = true; }
         if (!any) t.fallback += x.ordersFin;
       }
@@ -306,11 +325,11 @@ function make(K) {
         if (!s) steps.set(k, s = { rid: e.orderId, station: e.station, firstAt: e.at, lastAt: e.at, day: e.day, workMs: 0, scans: 0, completes: 0, prints: 0, parts: 0, undos: 0, rejects: 0, errors: 0, notes: 0, details: [] });
         s.firstAt = Math.min(s.firstAt, e.at); s.lastAt = Math.max(s.lastAt, e.at);
         if (e.sincePrevMs > 0 && e.sincePrevMs <= ACTIVE_GAP_MS) s.workMs += e.sincePrevMs;
-        if (e.action === "scan") s.scans++; else if (e.action === "complete") { s.completes++; s.parts += e.parts; } else if (e.action === "print") s.prints++;
+        if (e.action === "scan" || e.action === "matched") s.scans++; else if (e.action === "complete") { s.completes++; s.parts += e.parts; } else if (e.action === "print") s.prints++;
         else if (e.action === "undo") { s.undos++; s.parts = Math.max(0, s.parts - e.parts); } else if (e.action === "reject") s.rejects++; else if (e.action === "error") s.errors++; else s.notes++;
         if (e.detail && s.details.length < 12) s.details.push({ at: e.at, action: e.action, detail: e.detail });
       }
-      if (e.action === "scan") { if (prevAt && e.day === prevDay && e.at > prevAt && e.at - prevAt <= ACTIVE_GAP_MS) scanGaps.push((e.at - prevAt) / 1000); prevAt = e.at; prevDay = e.day; }
+      if (e.action === "scan" || e.action === "matched") { if (prevAt && e.day === prevDay && e.at > prevAt && e.at - prevAt <= ACTIVE_GAP_MS) scanGaps.push((e.at - prevAt) / 1000); prevAt = e.at; prevDay = e.day; }
     }
     return { steps, scanGaps };
   }
@@ -319,23 +338,24 @@ function make(K) {
     const evFrom = from > addDays(to, -(EVENT_DAYS - 1)) ? from : addDays(to, -(EVENT_DAYS - 1));
     if (!prof.me || !daysOf(evFrom, to).some(d => { const pd = prof.me.days.get(d); return pd && pd.hasEvents; })) return null;
     const events = await prof.events(evFrom, to), { steps, scanGaps } = stepsOf(events);
-    const secs = [...steps.values()].filter(s => s.completes > 0 && s.workMs > 0 && s.station !== "inbox").map(s => s.workMs / 1000);   // (an inbox conversation is not an order step)
+    const secs = [...steps.values()].filter(s => s.completes > 0 && s.workMs > 0 && s.station !== "inbox" && KIND.throughput(s.station)).map(s => s.workMs / 1000);   // (an inbox conversation is not an order step)
     return { from: evFrom, to, days: spanLen(evFrom, to), events: events.length, orders: secs.length, secMedian: median(secs), secP90: pctile(secs, 90), gapMedian: median(scanGaps), gaps: scanGaps.length };
   }
 
   /** The metric numbers of a window (null = not known). */
   function valuesOf(A, E) {
-    const has = A.evDays > 0, activeH = A.activeMs / 3600000, signedH = A.signedMsEv / 3600000, per = (n, d) => (d > 0 ? n / d : null);
-    const v = { parts: has ? A.parts : null, orders: has ? A.orders : null, ordersCompleted: has ? A.ordersFin : null, scans: has ? A.scans : null, piecesScanned: has ? A.scanParts : null, prints: has ? A.prints : null,
-      partsPerDay: has ? per(A.parts, A.evDays) : null, ordersPerDay: has ? per(A.orders, A.evDays) : null,
-      partsPerActiveHour: has && A.activeMs >= 60000 ? A.parts / activeH : null, partsPerSignedHour: has && A.signedMsEv >= 60000 ? A.parts / signedH : null, ordersPerActiveHour: has && A.activeMs >= 60000 ? A.orders / activeH : null,
-      secPerOrderMean: has && A.orders > 0 && A.activeMs >= 60000 ? A.activeMs / 1000 / A.orders : null, secPerScanMean: has && A.scans > 0 && A.activeMs >= 60000 ? A.activeMs / 1000 / A.scans : null,
+    // (the Welding station is not counted in throughput: pieces, orders and the per-hour and per-day rates look at the days and the working / signed-in time of the OTHER stations only; scans, prints and time still count everywhere)
+    const has = A.evDays > 0, hasP = A.tpDays > 0, activeH = A.activeMs / 3600000, activeTpH = A.activeTpMs / 3600000, signedTpH = A.signedTpMsEv / 3600000, per = (n, d) => (d > 0 ? n / d : null);
+    const v = { parts: hasP ? A.parts : null, orders: hasP ? A.orders : null, ordersCompleted: hasP ? A.ordersFin : null, scans: has ? A.scans : null, piecesScanned: has ? A.scanParts : null, prints: has ? A.prints : null,
+      partsPerDay: hasP ? per(A.parts, A.tpDays) : null, ordersPerDay: hasP ? per(A.orders, A.tpDays) : null,
+      partsPerActiveHour: hasP && A.activeTpMs >= 60000 ? A.parts / activeTpH : null, partsPerSignedHour: hasP && A.signedTpMsEv >= 60000 ? A.parts / signedTpH : null, ordersPerActiveHour: hasP && A.activeTpMs >= 60000 ? A.orders / activeTpH : null,
+      secPerOrderMean: hasP && A.orders > 0 && A.activeTpMs >= 60000 ? A.activeTpMs / 1000 / A.orders : null, secPerScanMean: has && A.scans > 0 && A.activeMs >= 60000 ? A.activeMs / 1000 / A.scans : null,
       secPerOrderMedian: E ? E.secMedian : null, secPerOrderP90: E ? E.secP90 : null, secBetweenScansMedian: E ? E.gapMedian : null,
       signedHours: A.sessDays > 0 ? A.signedMs / 3600000 : null, activeHours: has ? activeH : null, idleHours: has ? A.idleMs / 3600000 : null,
       unloggedHours: has && A.signedMsEv > 0 ? Math.max(0, A.signedMsEv - A.activeMs - A.idleMs) / 3600000 : null, activeShare: has && A.signedMsEv >= 60000 ? Math.min(100, A.activeMs / A.signedMsEv * 100) : null };
     // best day, busiest hour, steadiness, trend
     let best = null; const ys = [];
-    for (const d of A.days) if (d.sum && d.sum.hasEvents) { if (!best || d.sum.parts > best.parts) best = { day: d.day, parts: d.sum.parts }; ys.push([epochDay(d.day) - epochDay(A.from), d.sum.parts]); }
+    for (const d of A.days) if (d.sum && d.sum.tp) { if (!best || d.sum.parts > best.parts) best = { day: d.day, parts: d.sum.parts }; ys.push([epochDay(d.day) - epochDay(A.from), d.sum.parts]); }
     v.bestDay = best ? best.parts : null; v.bestDayDay = best ? best.day : null;
     const hsum = A.hours.reduce((n, x) => n + Math.max(0, x), 0);
     v.peakHour = hsum > 0 ? A.hours.indexOf(Math.max(...A.hours)) * 60 : null;
@@ -344,9 +364,9 @@ function make(K) {
     if (ys.length >= 5) { const mx = ys.reduce((n, p) => n + p[0], 0) / ys.length, sxx = ys.reduce((n, p) => n + (p[0] - mx) ** 2, 0); v.trend = sxx > 0 ? ys.reduce((n, p) => n + (p[0] - mx) * (p[1] - mean), 0) / sxx * 7 : null; } else v.trend = null;
     return v;
   }
-  const NS = { parts: A => A.evDays, orders: A => A.evDays, partsPerDay: A => A.evDays, ordersPerDay: A => A.evDays, secPerOrderMean: A => A.orders, secPerScanMean: A => A.scans, dailyVariation: A => A.evDays, trend: A => A.evDays };
+  const NS = { parts: A => A.tpDays, orders: A => A.tpDays, partsPerDay: A => A.tpDays, ordersPerDay: A => A.tpDays, secPerOrderMean: A => A.orders, secPerScanMean: A => A.scans, dailyVariation: A => A.tpDays, trend: A => A.tpDays };
   function metric(key, cur, prev, extra) {
-    const c = CATALOG[key], x = fin(cur), p = fin(prev);
+    const c = CATALOG[key] || WCAT[key], x = fin(cur), p = fin(prev);
     const o = { label: c.label, unit: c.unit, value: x, prev: p, delta: x != null && p != null ? r1(x - p) : null, deltaPct: x != null && p != null && p !== 0 ? r1((x - p) / Math.abs(p) * 100) : null, better: c.better || null, def: c.def, estimated: !!c.est };
     if (c.why) o.why = c.why;
     if (c.window) o.window = true;
@@ -359,14 +379,14 @@ function make(K) {
     if (!weekly) for (const d of A.days) buckets.push({ day: d.day, to: d.day, items: [d] });
     else { let cur = null; for (const d of A.days) { const m = mondayOf(d.day); if (!cur || cur.mon !== m) { cur = { mon: m, day: d.day, to: d.day, items: [] }; buckets.push(cur); } cur.to = d.day; cur.items.push(d); } }
     return buckets.map(b => {
-      const ev = b.items.filter(d => d.sum && d.sum.hasEvents), sum = k => ev.reduce((n, d) => n + d.sum[k], 0), has = ev.length > 0, rids = new Set(); let fb = 0;
+      const ev = b.items.filter(d => d.sum && d.sum.hasEvents), sum = k => ev.reduce((n, d) => n + d.sum[k], 0), has = ev.length > 0, hasP = ev.some(d => d.sum.tp), rids = new Set(); let fb = 0;
       for (const d of ev) { const work = workRids(d.pd); for (const rid of work) rids.add(rid); if (!work.length) fb += d.sum.ordersFin; }
-      const active = sum("activeMs"), signedEv = ev.reduce((n, d) => n + d.sum.signedMs, 0), parts = sum("parts"), orders = rids.size + fb;
+      const active = sum("activeTpMs"), signedEv = ev.reduce((n, d) => n + d.sum.signedTpMs, 0), parts = sum("parts"), orders = rids.size + fb;
       const first = b.items.length === 1 && b.items[0].pd ? b.items[0].pd : null;
       return { day: b.day, to: b.to, days: b.items.length, workedDays: b.items.filter(d => d.pd && (d.pd.signedMs > 0 || d.pd.hasEvents)).length, hasData: has,
-        parts: has ? parts : null, orders: has ? orders : null, scans: has ? sum("scans") : null, completes: has ? sum("completes") : null, prints: has ? sum("prints") : null, rejects: has ? sum("rejects") : null, errors: has ? sum("errors") : null, undos: has ? sum("undos") : null,
-        activeMs: has ? active : null, idleMs: has ? sum("idleMs") : null, signedMs: b.items.reduce((n, d) => n + (d.pd ? d.pd.signedMs : 0), 0),
-        perActiveHour: has && active >= 60000 ? r1(parts / (active / 3600000)) : null, perSignedHour: has && signedEv >= 60000 ? r1(parts / (signedEv / 3600000)) : null, secPerOrder: has && orders > 0 && active >= 60000 ? r1(active / 1000 / orders) : null,
+        parts: hasP ? parts : null, orders: hasP ? orders : null, scans: has ? sum("scans") : null, completes: has ? sum("completes") : null, prints: has ? sum("prints") : null, rejects: has ? sum("rejects") : null, errors: has ? sum("errors") : null, undos: has ? sum("undos") : null,
+        activeMs: has ? sum("activeMs") : null, idleMs: has ? sum("idleMs") : null, signedMs: b.items.reduce((n, d) => n + (d.pd ? d.pd.signedMs : 0), 0),
+        perActiveHour: hasP && active >= 60000 ? r1(parts / (active / 3600000)) : null, perSignedHour: hasP && signedEv >= 60000 ? r1(parts / (signedEv / 3600000)) : null, secPerOrder: hasP && orders > 0 && active >= 60000 ? r1(active / 1000 / orders) : null,
         firstIn: first && first.firstIn ? first.firstIn : null, lastOut: first && first.lastOut ? first.lastOut : null, shiftMs: first && first.firstIn && first.lastOut ? first.lastOut - first.firstIn : null };
     });
   }
@@ -379,6 +399,37 @@ function make(K) {
     if (!h.f) { if (h.err) ctx.prof.errors.push(name + ": " + h.err); return null; }
     try { return await h.f(ctx, args); } catch (e) { ctx.prof.errors.push(name + ": " + String((e && e.message) || e).slice(0, 160)); return null; }
   }
+
+  /** The Welding station's time per task and matched scans over the days of one aggregate: ms per task (a person in both tasks has both), the station's own time (both tasks once), the matched count. */
+  function weldingTotals(A) {
+    const t = { welding: 0, matching: 0, unknown: 0, station: 0, matched: 0 };
+    for (const d of A.days) {
+      if (!d.pd) continue;
+      for (const k of ["welding", "matching", "unknown"]) t[k] += d.pd.taskMs[k] || 0;
+      t.station += d.pd.stMs.welding || 0;
+      if (d.sum && d.pd.hasEvents && d.sum.st.welding) t.matched += d.sum.st.welding.matched || 0;
+    }
+    return t;
+  }
+  /** The same buckets as `series` (a day each, or a week each for a long window): the Welding station's time per task and matched scans in each. */
+  function weldingSeries(A, weekly) {
+    const buckets = [];
+    if (!weekly) for (const d of A.days) buckets.push({ day: d.day, to: d.day, items: [d] });
+    else { let cur = null; for (const d of A.days) { const m = mondayOf(d.day); if (!cur || cur.mon !== m) { cur = { mon: m, day: d.day, to: d.day, items: [] }; buckets.push(cur); } cur.to = d.day; cur.items.push(d); } }
+    return buckets.map(b => {
+      const t = weldingTotals({ days: b.items }), any = b.items.some(d => d.pd && (d.pd.stMs.welding > 0 || (d.sum && d.sum.st.welding)));
+      return { day: b.day, to: b.to, days: b.items.length, weldingMs: any ? t.welding : null, matchingMs: any ? t.matching : null, unknownMs: any ? t.unknown : null, matched: any ? t.matched : null };
+    });
+  }
+  const weldingBlock = (A, AP, rg, weekly, compare) => {
+    const t = weldingTotals(A), tp = AP ? weldingTotals(AP) : null;
+    if (!(t.station > 0 || t.matched > 0 || t.welding + t.matching + t.unknown > 0)) return null;     // nothing at the Welding station in this window
+    const H = ms => (ms == null ? null : ms / 3600000);
+    return { label: "Welding station", def: "Time on task at the Welding station and the order codes matched there. The station is not counted in pieces, orders finished or per-hour rates: it shows hours per task and the matched count instead.",
+      hours: { welding: r1(H(t.welding)), matching: r1(H(t.matching)), unknown: r1(H(t.unknown)), station: r1(H(t.station)) }, matched: t.matched,
+      metrics: { weldingHours: metric("weldingHours", H(t.welding), tp ? H(tp.welding) : null), matchingHours: metric("matchingHours", H(t.matching), tp ? H(tp.matching) : null), matchedOrders: metric("matchedOrders", t.matched, tp ? tp.matched : null) },
+      series: weldingSeries(A, weekly) };
+  };
 
   /** op person WITH a range: the profile. */
   async function opProfile(ctx, body) {
@@ -427,10 +478,10 @@ function make(K) {
     }
     const hoursTotal = A.hours.map(x => Math.max(0, r1(x))), hours = hoursTotal.map((parts, hour) => ({ hour, parts, scans: Math.round(A.hourScans[hour]), perDay: A.evDays > 0 ? r1(parts / A.evDays) : null }));
     const totalMin = [...A.st.values()].reduce((n, t) => n + t.minMs, 0);
-    const stations = [...A.st.entries()].map(([station, t]) => ({ station, label: STATION_LABEL[station] || station, parts: t.parts, orders: t.rids.size + t.fallback, scans: t.scans, completes: t.completes, prints: t.prints, minutes: r1(t.minMs / 60000),
-      shareParts: A.parts > 0 ? r1(t.parts / A.parts * 100) : null, shareMinutes: totalMin > 0 ? r1(t.minMs / totalMin * 100) : null, perActiveHour: t.activeMs >= 60000 ? r1(t.parts / (t.activeMs / 3600000)) : null }))
+    const stations = [...A.st.entries()].map(([station, t]) => Object.assign({ station, label: STATION_LABEL[station] || station, parts: t.parts, orders: t.rids.size + t.fallback, scans: t.scans, completes: t.completes, prints: t.prints, minutes: r1(t.minMs / 60000),
+      shareParts: A.parts > 0 && KIND.throughput(station) ? r1(t.parts / A.parts * 100) : null, shareMinutes: totalMin > 0 ? r1(t.minMs / totalMin * 100) : null, perActiveHour: KIND.throughput(station) && t.activeMs >= 60000 ? r1(t.parts / (t.activeMs / 3600000)) : null }, KIND.throughput(station) ? {} : { matched: t.matched }))
       .sort((a, b) => b.parts - a.parts || b.minutes - a.minutes || (a.station < b.station ? -1 : 1));
-    const weekly = rg.days > DAILY_MAX, series = seriesOf(A, weekly);
+    const weekly = rg.days > DAILY_MAX, series = seriesOf(A, weekly), welding = weldingBlock(A, AP, rg, weekly, !!prev);
     const notes = [];
     if (!prof.found) notes.push(`There is no record of ${prof.name} in the days that were read.`);
     else if (!A.evDays) notes.push(A.sessDays ? "Nothing was logged at the stations in this window: only sign-in time is known." : "Nothing was logged and nobody signed in under this name in this window.");
@@ -439,7 +490,7 @@ function make(K) {
     if (prof.capped.length) notes.push("Some lists were cut at their size limit: " + [...new Set(prof.capped)].join(", ") + ".");
     const out = { ok: true, now: ctx.now, mode: prof.mode, name: prof.name, found: prof.found, spellings: prof.spellings, range: rg.range, from: rg.from, to: rg.to, days: rg.days, today: ctx.today, live: rg.to === ctx.today, prev,
       granularity: weekly ? "week" : "day", trackingStart, eventWindow: E ? { from: E.from, to: E.to, days: E.days, capped: prof.capped.includes("events") } : null, rules: RULES,
-      kpis, series, hours, stations, calendar: [], cannotTell: cannotTell(trackingStart, rg), notes };
+      kpis, series, hours, stations, welding, calendar: [], cannotTell: cannotTell(trackingStart, rg), notes };
     if (att) { const { calendar, ...rest } = att; out.attendance = rest; if (Array.isArray(calendar)) out.calendar = calendar; }     // (the calendar once, at the top level: E5 draws it from there)
     if (iss) {
       if (iss.issues) out.issues = iss.issues; if (iss.rates) out.rates = iss.rates; if (iss.contact) out.contact = iss.contact; if (iss.definitions) out.definitions = iss.definitions;
@@ -493,9 +544,9 @@ function make(K) {
     const out = [], seen = { print: new Set(), scan: new Set() };
     for (const e of events) {
       let kind = issueKind(e);
-      if (!kind && (e.action === "print" || e.action === "scan")) {
-        const k = e.stored || e.station; const again = seen[e.action].has(k); seen[e.action].add(k);        // (the STORED key: a print at the Sorter app then at a sorting page is the normal path, not a reprint)
-        if (again || /\bagain\b|reprint/i.test(e.detail)) kind = e.action === "print" ? "reprint" : "rescan";
+      if (!kind && (e.action === "print" || e.action === "scan" || e.action === "matched")) {
+        const ak = e.action === "matched" ? "scan" : e.action, k = e.stored || e.station; const again = seen[ak].has(k); seen[ak].add(k);        // (the STORED key: a print at the Sorter app then at a sorting page is the normal path, not a reprint)
+        if (again || /\bagain\b|reprint/i.test(e.detail)) kind = ak === "print" ? "reprint" : "rescan";
       }
       if (kind) out.push({ kind, label: ISSUE_LABEL[kind], at: e.at, note: e.detail });
     }
@@ -561,8 +612,14 @@ function make(K) {
     const people = buildPeople(ctx, { rollups, sessions: [] }, from, to), P = people.get(key) || null;
     const display = P ? P.display : (canonOf(ctx, key) || niceName(name));
     // every order the person touched: rid → { days, stations }, newest first
-    const uni = new Map();
-    if (P) for (const pd of P.days.values()) {
+    const uni = new Map(), matchedOnly = body.matched === true || body.matched === 1 || body.matched === "1", matchedAt = new Map();
+    if (matchedOnly && P) {
+      // only the orders the person scanned as Matching at the Welding station: their events of the days whose rollup says there were matched scans
+      const mdays = [...P.days.values()].filter(pd => pd.hasEvents && pd.st.welding && pd.st.welding.matched > 0).map(pd => pd.day).sort();
+      const evs = await Promise.all(mdays.map(day => readEvents(ctx, people, key, day, day, sink)));
+      evs.forEach((list, i) => { for (const e of list) if (e.orderId && KIND.isMatched(e)) { let u = uni.get(e.orderId); if (!u) uni.set(e.orderId, u = { rid: e.orderId, days: new Set(), stations: new Set(["welding"]), latest: "" }); u.days.add(mdays[i]); if (mdays[i] > u.latest) u.latest = mdays[i]; matchedAt.set(e.orderId, Math.max(matchedAt.get(e.orderId) || 0, e.at)); } });
+    }
+    else if (P) for (const pd of P.days.values()) {
       if (!pd.hasEvents) continue;
       for (const [rid, set] of pd.orders) { if (stationF !== "inbox" && ![...set].some(x => x !== "inbox")) continue; let e = uni.get(rid); if (!e) uni.set(rid, e = { rid, days: new Set(), stations: new Set(), latest: "" }); e.days.add(pd.day); set.forEach(x => e.stations.add(x)); if (pd.day > e.latest) e.latest = pd.day; }
     }
@@ -618,6 +675,7 @@ function make(K) {
         scans: sum("scans"), completes: sum("completes"), prints: sum("prints"), parts: sum("parts"), undone: sum("undos"), rejected: sum("rejects"), errors: sum("errors"),
         steps: list2.map(s => ({ station: s.station, firstAt: s.firstAt, lastAt: s.lastAt, durationMs: s.workMs, scans: s.scans, completes: s.completes, prints: s.prints, parts: s.parts })),
         issues: issuesOf(evs), customer: info.customer, info: info.info, thumbUrl: info.thumbUrl, qr: { text: e.rid }, pieces: info.pieces, piecesCount: info.piecesCount });
+      if (matchedOnly) { const row = rows[rows.length - 1]; row.matchedAt = matchedAt.get(e.rid) || row.at; row.matched = evs.filter(x => KIND.isMatched(x)).length; }
     });
     const order = new Map(page.map((e, i) => [e.rid, i])); rows.sort((a, b) => order.get(a.rid) - order.get(b.rid));
     const notes = [];
