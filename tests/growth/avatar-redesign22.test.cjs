@@ -63,6 +63,16 @@ test('production finish preserves the dark visor and removes the broad reflectiv
   const cover = [...materials].find(material => material.transparent && material.opacity < .05);
   assert.equal(cover.transmission, 0);
   assert.ok(cover.envMapIntensity <= .2);
+  assert.equal(cover.depthWrite, false);
+  for (const name of ['expression-eye-left', 'expression-eye-right']) {
+    const ribbon = h.renderer.scene.getObjectByName(name);
+    assert.ok(ribbon?.isMesh); assert.equal(ribbon.visible, true);
+    assert.equal(ribbon.geometry.type, 'ExtrudeGeometry');
+    assert.equal(ribbon.material.isMeshBasicMaterial, true); assert.equal(ribbon.material.toneMapped, false);
+    assert.equal('#' + ribbon.material.color.getHexString(), h.engine.snapshot().character.color, 'both graphic lights retain the current state colour');
+  }
+  assert.equal(h.renderer.scene.getObjectByName('retired-aperture-ornament').children.length, 0);
+  assert.equal(h.engine.snapshot().character.digitalEyes, 2);
   assert.ok(h.bloom.threshold > 2);
   assert.ok(h.bloom.strength < .1);
   assert.ok(h.renderer.toneMappingExposure < 1);
