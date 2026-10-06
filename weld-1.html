@@ -488,6 +488,10 @@
   }
   /* the number box: a Log In button a glove can hit (the page's own is 35 px high) */
   #employeeLoginBtn { height: 44px !important; line-height: 44px !important; margin-top: -6px !important; }
+  /* the wait for the number check: a small spinner and "Checking…" in the prompt line, Log In disabled (only a rotation moves; a still ring with reduced motion) */
+  #loginModalPrompt .weld-spin { display: inline-block; width: 14px; height: 14px; margin: -3px 9px 0 0; box-sizing: border-box; vertical-align: middle; border: 2px solid currentColor; border-top-color: transparent; border-radius: 50%; animation: weldSpin .8s linear infinite; }
+  #employeeLoginBtn[disabled] { cursor: progress; }
+  @keyframes weldSpin { to { transform: rotate(360deg); } }
   /* the number box is a fixed 400 px with its pieces placed at fixed offsets; on a window narrower than that (a phone) the pieces stack inside it
      instead, so nothing runs off an edge and the sign-in after an automatic sign-out reads whole (UX1) */
   @media (max-width: 419px) {
@@ -505,7 +509,7 @@
     #userLoginModal.modal:not(.weld-task) .station-session-pc { margin-top: 10px; text-align: center !important; }
     #userLoginModal.weld-add #weldLoginCancel { margin: 6px auto 0; justify-content: center; }
   }
-  @media (prefers-reduced-motion: reduce) { #weldRoster *, #weldTaskStep * { transition: none !important; } }
+  @media (prefers-reduced-motion: reduce) { #weldRoster *, #weldTaskStep * { transition: none !important; } #loginModalPrompt .weld-spin { animation: none; } }
   </style>
 
   <style id="ccGridNoOverlapFix">
@@ -2724,6 +2728,21 @@ function metalToBadge(label){
           setTimeout(() => { try { document.getElementById("weldTaskWelding").focus(); } catch (_) {} }, 60);
         } catch (_) {}
       }
+      /* the wait for the number check: the line above the button becomes a small spinner and "Checking…", and Log In is disabled until the answer (or the 15 s limit) */
+      function weldLoginBusy(on) {
+        try {
+          const b = document.getElementById("employeeLoginBtn"), p = document.getElementById("loginModalPrompt"); if (!b || !p) return;
+          if (on) {
+            if (p.classList.contains("weld-busy")) return;
+            p.dataset.was = p.textContent; p.classList.add("weld-busy"); p.textContent = "";
+            const s = document.createElement("span"); s.className = "weld-spin"; s.setAttribute("aria-hidden", "true"); p.appendChild(s); p.appendChild(document.createTextNode("Checking…"));
+            b.disabled = true; b.setAttribute("aria-busy", "true");
+          } else if (p.classList.contains("weld-busy")) {
+            p.classList.remove("weld-busy"); p.textContent = p.dataset.was || "Please enter your 6-digit Employee Number:"; delete p.dataset.was;
+            b.disabled = false; b.removeAttribute("aria-busy");
+          }
+        } catch (_) {}
+      }
       /* adds ONE person under a task (never ends another), and starts their session */
       function weldSignIn(name, task) {
         if (!name || !WELD_TASKS[task]) return;
@@ -2813,6 +2832,7 @@ function metalToBadge(label){
                M.toast({html: "Please enter a valid 6-digit Employee Number!"});
               return;
             }
+            weldLoginBusy(true);                         // (the check can take a few seconds: the prompt line says so and Log In cannot be pressed twice)
             /* The server checks the number and answers with that person's name only (firebaseOrders {pinLogin}); the list of
                everyone's numbers is not downloaded. Only when that check cannot be reached at all (no network, a timeout, a server
                error, a server that does not know it yet) is the old list download tried. An answer, yes or no, is final. */
@@ -2872,6 +2892,8 @@ function metalToBadge(label){
           } catch(errEN){
             console.error("Error in employee login flow:", errEN);
             M.toast({ html: "Error: " + errEN.message });
+          } finally {
+            weldLoginBusy(false);
           }
         });
       }
