@@ -486,6 +486,25 @@
     #weldTaskStep .weld-task-btns { flex-direction: column; }
     #weldTaskStep .weld-task-btn { min-height: 72px; }
   }
+  /* the number box: a Log In button a glove can hit (the page's own is 35 px high) */
+  #employeeLoginBtn { height: 44px !important; line-height: 44px !important; margin-top: -6px !important; }
+  /* the number box is a fixed 400 px with its pieces placed at fixed offsets; on a window narrower than that (a phone) the pieces stack inside it
+     instead, so nothing runs off an edge and the sign-in after an automatic sign-out reads whole (UX1) */
+  @media (max-width: 419px) {
+    #userLoginModal.modal:not(.weld-task) { width: calc(100vw - 16px) !important; height: auto !important; padding: 18px 20px 12px !important; overflow-x: hidden !important; }
+    #userLoginModal.modal:not(.weld-task) #userLoginModalContainer { padding: 0 !important; }
+    #userLoginModal.modal:not(.weld-task) #loginModalTitle, #userLoginModal.modal:not(.weld-task) #loginModalPrompt,
+    #userLoginModal.modal:not(.weld-task) #employeeNumberInput, #userLoginModal.modal:not(.weld-task) #loginModalFooter,
+    #userLoginModal.modal:not(.weld-task) #employeeLoginBtn, #userLoginModal.modal:not(.weld-task) .station-session-pc,
+    #userLoginModal.weld-add #weldLoginCancel { position: static !important; width: auto !important; max-width: none !important; }
+    #userLoginModal.modal:not(.weld-task) #loginModalTitle { height: auto !important; margin: 0 0 10px; text-align: center; }
+    #userLoginModal.modal:not(.weld-task) #loginModalPrompt { height: auto !important; margin: 0; font-size: 15px; line-height: 1.35; text-align: center; }
+    #userLoginModal.modal:not(.weld-task) #employeeNumberInput { display: block; box-sizing: border-box; width: 100% !important; height: 44px !important; margin: 8px 0 0 !important; text-align: center; }
+    #userLoginModal.modal:not(.weld-task) #loginModalFooter { height: auto !important; padding: 14px 0 0 !important; background: transparent; border: 0; }
+    #userLoginModal.modal:not(.weld-task) #employeeLoginBtn { display: block; width: 100% !important; margin: 0 !important; padding: 0; }
+    #userLoginModal.modal:not(.weld-task) .station-session-pc { margin-top: 10px; text-align: center !important; }
+    #userLoginModal.weld-add #weldLoginCancel { margin: 6px auto 0; justify-content: center; }
+  }
   @media (prefers-reduced-motion: reduce) { #weldRoster *, #weldTaskStep * { transition: none !important; } }
   </style>
 
