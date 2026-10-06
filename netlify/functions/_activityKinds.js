@@ -35,6 +35,33 @@ function storedStations(display) {
   return out;
 }
 
+/* ── The Welding station (Paul, 6 Oct 2026: "We do not track order throughput/completion using this station ... it does use a dedicated QR code scanner
+ *  app when the user is matching the welded stud earrings to the orders") ──
+ *  Two tasks: "welding" (welding the studs to the charm: time on task, no scans) and "matching" (matching the welded earrings to their orders with the
+ *  scanner app and adding the backings: every scan of an order QR is a `matched` event). A session and an activity event may carry `task`. The station is
+ *  NOT counted in order throughput or completion anywhere the portal reads: its pieces, orders and completions are left out of every total, rate, ranking and
+ *  chart (readStationCounters below is the one place that does it); it shows time on task per task and the matched count instead. What is stored is never
+ *  rewritten (the old weld scans and completions stay as written), and the `welded` seal on the order timeline is not touched. */
+const TASKS = Object.freeze(["welding", "matching"]);
+const UNATTRIBUTED = "Unattributed";                          // the stored person of a scan made while nobody was signed in under Matching (never credited to a welder)
+const NO_THROUGHPUT = new Set(["welding"]);
+/** true when this station's pieces / orders / completions count in throughput (everything but the Welding station) */
+const throughput = station => !NO_THROUGHPUT.has(station);
+/** one valid task, or "" (a task belongs to the welding station only) */
+const taskOf = (station, task) => (station === "welding" && TASKS.includes(task) ? task : "");
+/** A matched scan: the `matched` action, or a plain scan that says task "matching" at the welding station. Counts as scanned work, never as a completion. */
+const isMatched = ev => !!ev && (ev.action === "matched" || (ev.action === "scan" && ev.task === "matching" && ev.station === "welding"));
+const COUNTERS = ["completes", "parts", "orders", "undoParts", "undoOrders"];
+/** The counters of one station's rollup entry as a reader should SUM them: a station that is not counted in throughput keeps its scans, prints, time and matched
+ *  count but loses its completions, pieces and orders (a copy: the stored rollup is never changed). */
+function readStationCounters(station, v) {
+  if (throughput(station) || !v || typeof v !== "object") return v;
+  const o = Object.assign({}, v); for (const k of COUNTERS) o[k] = 0;
+  return o;
+}
+/** The orders of a rollup's `touched` map without the ones only a not-counted station touched; a station set without it. */
+const touchedStations = list => (Array.isArray(list) ? list : [...list]).filter(throughput);
+
 /** issue kind -> the rollup counter that counts it (kinds that are plain subtractions of the old counters have none:
     `undone` = undos, `refused` = rejects not in a kind below, `failed` = errors that are not a lookup failure or a failed reply) */
 const KIND_X = { cancelAlert: "x_cancel", heldOrSkipped: "x_held", unknownSku: "x_sku", qaFlag: "x_flag", lookupFailed: "x_lookup", reprint: "x_reprint", rescan: "x_rescan" };
@@ -89,7 +116,7 @@ function kindOf(ev) {
       return "refused";
     case "error": return /lookup failed|not found or not loaded/i.test(d) ? "lookupFailed" : "failed";
     case "print": return /\b(again|reprint)\b/i.test(d) ? "reprint" : "";           // shipping "reprint", sorting / sorter ", again"
-    case "scan": return /\bagain\b/i.test(d) ? "rescan" : "";                       // weld " · again"
+    case "scan": case "matched": return /\bagain\b/i.test(d) ? "rescan" : "";    // weld " · again", a matched scan " · again"
     case "note": return /^stamp again/i.test(d) ? "rescan" : "";                    // assembly "stamp again: Done"
     default: return "";
   }
@@ -120,4 +147,4 @@ function classify(ev) {
   return out;
 }
 
-module.exports = { KIND_X, INBOX_X, X_KEYS, STATION_FOLD, displayStation, storedStations, kindOf, inboxOf, classify };
+module.exports = { KIND_X, INBOX_X, X_KEYS, STATION_FOLD, displayStation, storedStations, TASKS, UNATTRIBUTED, NO_THROUGHPUT, throughput, taskOf, isMatched, readStationCounters, touchedStations, kindOf, inboxOf, classify };
