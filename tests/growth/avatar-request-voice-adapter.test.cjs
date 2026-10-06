@@ -51,6 +51,27 @@ for(const body of ['json','html'])test('401 '+body+' produces stable sign-in fai
   assert.deepEqual(f.voice.lastError,{code:'PREVIEW_SIGN_IN_REQUIRED',message:adapter.MESSAGES.signIn,recovery:'sign-in',retryable:false});
   assert.equal(f.stopped[0].reason,'failed');assert.equal(f.stopped[0].detail.error,f.voice.lastError);assert.equal(f.requests.length,1);assert.doesNotMatch(JSON.stringify(f.errors),/Private|upstream/);
 });
+test('reused voice token offers a fresh-session retry, cleans up and waits for another explicit Talk action',async t=>{
+  const f=fixture(t,{capabilities:Response.json({enabled:true,demoToken:'synthetic-first-session'})}),fetch=f.runtime.fetch;let rejected=false;
+  f.runtime.fetch=async(url,init)=>{const body=JSON.parse(init.body);if(body.action==='start'&&!rejected){rejected=true;f.requests.push(body);return Response.json({enabled:false,code:'VOICE_SESSION_REUSED',message:'Private allocation detail'},{status:401});}return fetch(url,init);};
+  assert.equal(await f.voice.start(),false);assert.equal(f.voice.state,'idle');
+  assert.deepEqual(f.voice.lastError,{code:'VOICE_SESSION_EXPIRED',message:adapter.MESSAGES.expired,recovery:'retry',retryable:true});
+  assert.equal(f.errors.length,1);assert.equal(f.stopped[0].reason,'failed');assert.equal(f.stopped[0].detail.error,f.voice.lastError);
+  assert.ok(f.tracks[0].stops>0);assert.equal(f.peer().closed,true);assert.equal(f.audioNodes[0].removed,true);assert.equal(f.contexts[0].closed,true);
+  await tick();assert.deepEqual(f.requests.map(x=>x.action),['capabilities','start']);assert.equal(f.micCalls(),1);
+  assert.doesNotMatch(JSON.stringify(f.errors),/Private|allocation detail|synthetic-first-session/);
+  f.setCapabilities(Response.json({enabled:true,demoToken:'synthetic-fresh-session'}));
+  assert.equal(await f.voice.start(),true);assert.equal(f.voice.state,'listening');assert.equal(f.voice.lastError,null);assert.equal(f.micCalls(),2);
+  assert.deepEqual(f.requests.filter(x=>x.action==='start').map(x=>x.demoToken),['synthetic-first-session','synthetic-fresh-session']);
+  assert.equal(f.errors.length,1);
+});
+for(const status of [503,401])test('known allocation guard error '+status+' stays a private retryable failure without sign-in or allocation-pause fallback',async t=>{
+  const f=fixture(t,{capabilities:Response.json({enabled:false,code:'VOICE_GUARD_UNAVAILABLE',message:'Private ledger detail',error:{status:401,credential:'private'}},{status})});
+  assert.equal(await f.voice.start(),false);assert.equal(f.voice.state,'idle');
+  assert.deepEqual(f.voice.lastError,{code:'VOICE_UNAVAILABLE',message:adapter.MESSAGES.unavailable,recovery:'retry',retryable:true});
+  assert.equal(f.micCalls(),0);assert.equal(f.peer(),undefined);assert.equal(f.audioNodes.length,0);assert.deepEqual(f.requests.map(x=>x.action),['capabilities']);
+  assert.equal(f.errors.length,1);assert.doesNotMatch(JSON.stringify(f.errors),/Private|ledger|credential|private/);
+});
 for(const code of [undefined,'VOICE_DISABLED'])test('disabled capability '+String(code)+' explains state without microphone/provider start',async t=>{
   const f=fixture(t,{capabilities:Response.json({enabled:false,...(code?{code}:{})})});assert.equal(await f.voice.start(),false);assert.equal(f.voice.lastError.code,'VOICE_DISABLED');assert.equal(f.voice.lastError.message,adapter.MESSAGES.disabled);assert.equal(f.micCalls(),0);assert.equal(f.audioNodes.length,0);assert.deepEqual(f.requests.map(x=>x.action),['capabilities']);
 });
