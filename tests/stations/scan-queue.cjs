@@ -228,7 +228,7 @@ async function main() {
         ['weld-1', 'weld-scan-1'], ['assembly-1', 'assembly-scan-1'], ['shipping-1', 'shipping-scan-1'], ['design-message', 'design-scan-11']];
       for (const [dev, relay] of copies) {
         const s = fs.readFileSync(path.join(root, dev + '.html'), 'utf8');
-        assert.equal((s.match(/<script src="station-scan-queue\.js\?v=20261003-sq1"><\/script>/g) || []).length, 1, dev + ': script tag');
+        assert.equal((s.match(/<script src="station-scan-queue\.js\?v=\d{8}-\w+"><\/script>/g) || []).length, 1, dev + ': script tag');   // (weld-1 loads the version that records the Welding station's scans as `matched`: tests/stations/weld-scan-matched.cjs)
         assert.ok(s.includes(`device: "${dev}",\n          signedIn:`), dev + ': queue device');
         assert.equal((s.match(new RegExp(`\\.doc\\("${relay}"\\)`, 'g')) || []).length, 2, dev + ': relay doc (listen + clear)');
         assert.equal((s.match(/\.doc\("(?:weld|assembly|shipping|design)-scan-\d+"\)/g) || []).length, 2, dev + ': no other relay');
