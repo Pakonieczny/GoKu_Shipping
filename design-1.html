@@ -1449,7 +1449,10 @@ const DsName = (() => {
     const v = normalize(raw), before = current();
     if (!v) return "";
     try { localStorage.setItem(LS.employee, v); } catch (_) {}
-    if (v !== before) { try { if (window.StationSession) StationSession.signedIn({ name: v, id: "" }); } catch (_) {} }
+    if (v !== before) {
+      try { if (window.StationSession) StationSession.signedIn({ name: v, id: "" }); } catch (_) {}
+      try { DsLive.sync(); } catch (_) {}   // the live board: what was picked before the name was set (or while signed out) is in hand under it now
+    }
     return v;
   }
 
@@ -1940,11 +1943,12 @@ setInterval(paintEtsyHud, 10000);
 const Passcode = (() => {
   const KEY = "designStation.passcode", GUARDED = /\/\.netlify\/functions\/(etsySandbox|designArchive)\b/;
   const framed = (() => { try { return window.self !== window.top; } catch (_) { return true; } })();
-  let pc = "", waiting = null, wake = null;
+  let pc = "", waiting = null, wake = null, lead = "";   // lead: why the box asks again (an automatic sign-out), said inside the box, where it cannot hide behind it
   try { pc = sessionStorage.getItem(KEY) || ""; } catch (_) {}
   function set(v) {
     pc = String(v || "");
     try { if (pc) sessionStorage.setItem(KEY, pc); else sessionStorage.removeItem(KEY); } catch (_) {}
+    if (pc) lead = "";
     if (pc && wake) { const w = wake; wake = null; waiting = null; waitNote(false); w(pc); }
   }
   const verify = v => fetch(`${FN}/authGate`, { method: "POST", headers: { "X-Edit-Passcode": v, "Content-Type": "application/json" }, body: JSON.stringify({ app: "design-1", passcode: v }) }).then(r => r.ok);
@@ -1953,6 +1957,7 @@ const Passcode = (() => {
     if (document.getElementById("pcGate")) return;
     const box = document.createElement("div"); box.id = "pcGate"; box.className = "pcGate";
     box.innerHTML = `<form class="box"><h2>Design Station</h2><div class="pcNote">Enter the operator passcode to open the station.</div><input type="text" name="username" value="Design Station operator" autocomplete="username" aria-label="Operator account" hidden readonly><input class="pcInput" type="password" placeholder="Passcode" autocomplete="current-password" aria-label="Passcode"><div class="err" role="alert"></div><button class="btn gold" type="submit">Sign in</button></form>`;
+    if (lead) { const n = box.querySelector(".pcNote"); if (n) n.textContent = lead + " Enter the operator passcode to open the station again."; }
     const form = box.querySelector("form"), input = box.querySelector(".pcInput"), err = box.querySelector(".err"), btn = box.querySelector("button");
     form.onsubmit = async e => {
       e.preventDefault(); const v = input.value.trim(); err.textContent = ""; if (!v) return;
@@ -2002,7 +2007,9 @@ const Passcode = (() => {
     const next = pc || await need();    // another call may have brought a new one meanwhile
     return next ? send() : res;
   };
-  return { set, gate, need };
+  /** Say, in the sign-in box, why it asks again (the next time it opens). */
+  function note(text) { lead = String(text || "").slice(0, 160); }
+  return { set, gate, need, note };
 })();
 (function wrapFetchForMeter() {
   if (window.__etsyFetchWrapped) return;
@@ -8374,7 +8381,7 @@ window.DesignStation = {
 </script>
 <!-- Sign-in time per person and computer, and the midnight sign-out (New York time) -->
 <script src="station-session.js?v=20261005-et2"></script>
-<script src="station-activity.js?v=20261005-et2"></script>
+<script src="station-activity.js?v=20261006-sa4"></script>
 <!-- The order in hand right now (the orders the person picked = working, labels printed or selection cleared = idle), for the console's live stations board (station-live-order.js). Optional: without it nothing changes. -->
 <script src="station-live-order.js?v=20261005-et2"></script>
 <script>
@@ -8385,17 +8392,26 @@ window.DesignStation = {
   function person() {
     try { const n = (localStorage.getItem("employee_name") || "").trim(); return n ? { name: n, id: "" } : null; } catch (_) { return null; }
   }
-  /* At midnight the name goes, and a station on its own also drops this tab's passcode, so its own sign-in box asks
-     again (when a passcode is set). Framed in the sorter, the passcode is the sorter's and stays. Orders, selections,
-     drafts, Etsy's connection and anything typed stay on screen. */
+  /* The person is signed out at midnight, after 10 minutes without input at this page ("idle"), or at 5:00 pm ("closing"; both
+     decided by station-session.js, never for the Admin). Whatever the reason, the name goes, and a station on its own also drops
+     this tab's passcode, so its own sign-in box asks again (when a passcode is set) and says why in the box; the name is asked
+     for again when Generate QR or Print labels needs one. Framed in the sorter, the passcode is the sorter's and stays. Orders,
+     selections, drafts, Etsy's connection and anything typed stay on screen; the board's order in hand ends with the sign-out. */
+  const WHY = {
+    midnight: "Signed out at midnight.",
+    idle: "Signed out after 10 minutes without input.",
+    closing: "Signed out at 5:00 pm."
+  };
   function signOut(reason) {
     try { localStorage.removeItem("employee_name"); } catch (_) {}
     try { BritesChat.whoChanged(); } catch (_) {}
+    const why = WHY[reason] || "";
     if (!framed) {
       try { Passcode.set(""); } catch (_) {}
-      if (document.readyState !== "loading") { try { Passcode.gate().catch(() => {}); } catch (_) {} }   // while loading, boot asks
+      try { if (why) Passcode.note(why); } catch (_) {}
+      if (document.readyState !== "loading") { try { Passcode.gate().catch(() => {}).then(() => { try { Passcode.note(""); } catch (_) {} }); } catch (_) {} }   // while loading, boot asks; the reason is said once
     }
-    try { if (reason === "midnight") toast("Signed out at midnight. Sign back in and set your name in the chat.", "", 8000); } catch (_) {}
+    try { if (why) toast(why + " Sign back in and set your name in the chat.", "", 8000); } catch (_) {}
   }
   // the sandbox flag is the page's own (the address says ?sandbox=1 or 0, and a tab keeps it): the sign-in and every event follow it,
   // so a sandbox tab opened again without the address never writes into the real station numbers
