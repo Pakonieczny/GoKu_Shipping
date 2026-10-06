@@ -78,7 +78,7 @@
   const LABEL = { sorting: "Sorting", welding: "Welding", assembly: "Assembly", shipping: "Shipping", design: "Design",
     laser: "Laser", sorter: "Sorter", qr: "QR Printer", inbox: "Inbox" };
   const K = { computer: "station_computer_id", name: "station_computer_name", day: "station_signin_day",
-    days: "station_signin_days", unsent: "station_session_unsent" };
+    days: "station_signin_days", unsent: "station_session_unsent", input: "station_person_input" };
   const ROLES = new Set(["laser", "design"]);
   const cfg = { station: "", device: "", person: null, role: null, signOut: null, labelHost: null, labelCss: "", sandbox: false,
     multi: false, people: null, creditTask: "matching" };
@@ -257,8 +257,30 @@
       the stored one for a record left by an earlier load */
   function inputOf(s) {
     if (!s) return 0;
-    const now = Date.now(), li = runsHere(s) ? Math.max(lastIn, Number(s.li) || 0) : Number(s.li) || 0, st = Number(s.startAt) || 0;
+    const now = Date.now(), li = Math.max(runsHere(s) ? Math.max(lastIn, Number(s.li) || 0) : Number(s.li) || 0, personInput(s.name)), st = Number(s.startAt) || 0;
     return li > 0 ? Math.min(now, Math.max(li, st <= now + 5000 ? st : 0)) : 0;        // (a start in the future is a clock set back: not an input)
+  }
+  /* ONE person's last input at ANY station page of this browser. The sign-in keys (employee_id / employee_name) are shared by every
+     station page of a computer (assembly-1..4, shipping-1..3, the Design pages), so a person signed in there has a session at EVERY such
+     page that is open, also at one nobody touches. Each page's own last input alone would then sign the person out of the page being
+     worked in as soon as a quiet tab's 10 minutes were up (the quiet tab clears the shared keys: the worked page keeps looking signed in
+     and records nothing). Input anywhere on the computer is the person's input. A time only, never what was typed (AS2, 6 Oct 2026). */
+  const personKey = n => String(n || "").toLowerCase();
+  function personInput(name) {
+    try {
+      const m = lsJson(K.input, {}), t = Number(m && typeof m === "object" && !Array.isArray(m) ? m[personKey(name)] : 0);
+      return t > 0 && t <= Date.now() + 5000 ? t : 0;          // (a time in the future is a clock set back: not input)
+    } catch (_) { return 0; }
+  }
+  function savePersonInput(name, t) {
+    try {
+      const k = personKey(name); if (!k || !(t > 0)) return;
+      const m = lsJson(K.input, {}), o = m && typeof m === "object" && !Array.isArray(m) ? m : {};
+      if (!(t > (Number(o[k]) || 0))) return;
+      delete o[k]; o[k] = t;
+      const keys = Object.keys(o); for (const x of keys.slice(0, Math.max(0, keys.length - 20))) delete o[x];
+      lsSet(K.input, JSON.stringify(o));
+    } catch (_) {}
   }
   function mark(t) { lastIn = Math.max(lastIn, t); stampAt = Math.max(stampAt, t); shareInput(t); }
   /* Two tabs of one computer run the same page and share one sign-in record: input in EITHER keeps the person in. The record holds the
@@ -268,8 +290,8 @@
     try {
       if (!ready || t - sharedAt < 5000) return;
       sharedAt = t;
-      if (cfg.multi) { if (many.size) { for (const s of many.values()) s.li = Math.max(Number(s.li) || 0, lastIn); savedLi = lastIn; saveRecs(); } }
-      else if (cur) { cur.li = Math.max(Number(cur.li) || 0, lastIn); savedLi = cur.li; saveShared(cur); }
+      if (cfg.multi) { if (many.size) { for (const s of many.values()) { s.li = Math.max(Number(s.li) || 0, lastIn); savePersonInput(s.name, lastIn); } savedLi = lastIn; saveRecs(); } }
+      else if (cur) { cur.li = Math.max(Number(cur.li) || 0, lastIn); savedLi = cur.li; savePersonInput(cur.name, lastIn); saveShared(cur); }
     } catch (_) {}
   }
   /** writes the page's record only while it is still this session's (a second tab that already went on to another one keeps it) */
@@ -416,7 +438,7 @@
   /* ── start · beat · end ── */
   /** a login kept while the page was closed: when its last input is 10 minutes old (and it is not an Admin's) it lapsed then: true */
   function lapsedWhileClosed(r, now) {
-    const li = Number(r && r.li) || 0;
+    const li = Math.max(Number(r && r.li) || 0, personInput(r && r.name));          // (input at another station page of this computer counts)
     if (!li || r.adm === true || now - li < IDLE_MS) return false;
     const d = dueRule(li, now) || { reason: "idle", at: li };
     lapse(r, d.reason, d.at);
@@ -429,11 +451,11 @@
       if (resume && same && r.name === p.name && r.day === today) {
         // (a reload inside the 10 minutes is input and goes on with the session; one after them finds the login lapsed)
         if (lapsedWhileClosed(r, now)) return;
-        if (now - (r.lastBeat || 0) < CLOSED_MS) { cur = r; cur.asked = false; mark(now); cur.li = lastIn; beat(); askAdmin(cur); return; }
+        if (now - (r.lastBeat || 0) < CLOSED_MS) { cur = r; cur.asked = false; mark(now); cur.li = lastIn; savePersonInput(cur.name, now); beat(); askAdmin(cur); return; }
       }
       finish(r, r.name === p.name && same ? "signOut" : "switched");
     }
-    mark(now);
+    mark(now); savePersonInput(p.name, now);
     const role = roleNow();
     cur = { id: `${cfg.device}-${shortId()}-${now.toString(36)}-${rand(4)}`.replace(/[^\w.:-]/g, "_").slice(0, 100),
       name: p.name, eid: p.id || "", day: today, startAt: now, lastBeat: now, li: now, station: role || cfg.station, role };
@@ -590,13 +612,13 @@
       if (resume && old.day === today) {
         // (a reload inside the 10 minutes is input and goes on with the session; one after them finds the login lapsed, not given a new session)
         if (lapsedWhileClosed(old, now)) return null;
-        if (now - (old.lastBeat || 0) < CLOSED_MS) { many.set(p.key, old); snap.delete(p.key); old.li = Math.max(Number(old.li) || 0, lastIn); old.asked = false; beat(old); askAdmin(old); return old; }
+        if (now - (old.lastBeat || 0) < CLOSED_MS) { many.set(p.key, old); snap.delete(p.key); old.li = Math.max(Number(old.li) || 0, lastIn); savePersonInput(old.name, now); old.asked = false; beat(old); askAdmin(old); return old; }
       }
       many.set(p.key, old); finish(old, "signOut");        // (finish says "closed" or "midnight" when that is what happened)
     }
     const s = { id: `${idPart(cfg.station, 20)}__${idPart(cfg.device, 30)}__${idPart(p.name, 24)}__${idPart(p.task || "-", 12)}__${now.toString(36)}${rand(3)}`.slice(0, 100),
       name: p.name, eid: p.id || "", task: p.task || "", key: p.key, day: today, startAt: now, lastBeat: now, touchedAt: now, addedAt: now, li: now };
-    mark(now);
+    mark(now); savePersonInput(p.name, now);
     many.set(p.key, s); saveRecs();
     post(body(s, "start"));
     askAdmin(s);
