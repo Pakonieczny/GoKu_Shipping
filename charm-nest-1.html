@@ -3221,6 +3221,9 @@ async function api(fn, body, opts = {}) {
   const ms = opts.timeoutMs || (fn === "charmNestOutput" || /^(putSheet|getSheet|listSheets|history|runPut|runArchive|restoreSheet|purgeHistory|putCharms|masterPutFile|masterPutIndex|masterGetMany|sandboxPut)$/.test(body && body.op) ? 300000 : 60000);
   try {
     const payload = Object.assign({}, body || {}); if (WORKSPACE_SANDBOX) payload.sandbox = true;   // the sandbox tags every cloud call
+    // A sheet marked completed carries how long it took this Laser person by the page's own count (charm-nest-laser-time.js); the server decides and stores the figure (R7)
+    let laserSent = null;
+    if (fn === "charmNestLibrary" && payload.op === "laserDone" && window.LaserSheetTime) { try { if (payload.done !== false) laserSent = payload.laserTime = window.LaserSheetTime.measure(payload.by); else window.LaserSheetTime.forget(payload.by); } catch (_) {} }
     const res = await fetch(`${FN}/${fn}`, { method: "POST", headers, body: JSON.stringify(payload), signal: window.AbortSignal && AbortSignal.timeout ? AbortSignal.timeout(ms) : undefined });
     const txt = await readBody(res, bar);
     let data = null, page = false; try { data = JSON.parse(txt); } catch (_) { page = true; data = { error: txt.trim() ? cloudWords(txt, res.status).slice(0, 200) : "" }; }
@@ -3231,6 +3234,7 @@ async function api(fn, body, opts = {}) {
     // returned as the result, so a sheet or a run record counted as saved when nothing was (audit, 25 Sep)
     if (page) throw Object.assign(new Error(data.error || "The cloud sent back an empty answer"), { status: res.status, data, transient: true });
     if (S.cloud.ok === false && !S.cloud.locked) cloudRecovered();   // any answer says the cloud is back
+    if (laserSent) { try { window.LaserSheetTime.noted(data, laserSent, payload.by); } catch (_) {} }   // (the accepted press is this person's previous completion from now on)
     // a write to the library can be a step of an order (a piece placed or taken off, a sheet cut, a back saved, a set
     // committed, a cancel): the order view that is open reads its timeline again now and 1.5 s later, not at its next poll
     // (Paul, 3 Oct 04:03). Reads, and writes that no order's timeline shows, do not ask.
@@ -6784,6 +6788,8 @@ boot();
      Design Station's sign-in), the same name every seal it stamps carries. -->
 <script src="station-session.js?v=20261006-ld1"></script>
 <script src="station-activity.js?v=20261006-ld1"></script>
+<!-- how long each cut sheet took the Laser person (charm-nest-laser-time.js; R7): the page's own count, sent with the completion; the server decides and stores it -->
+<script src="charm-nest-laser-time.js?v=20261006-ls1"></script>
 <script src="charm-nest-laser-act.js?v=20261006-sa5"></script>
 <!-- Laser or Design? the role of a non-Admin sign-in (charm-nest-role.js: CNRole; the question is the name bar's second step, charm-nest-bridge.js NameBar) -->
 <script src="charm-nest-role.js?v=20261006-ld1"></script>
@@ -6857,12 +6863,13 @@ try {
 <!-- the cadence of where-is-each-piece: every surface that says "on a sheet / not on a sheet / on hold" follows the cloud within seconds (PlacementFeed) -->
 <script src="charm-nest-placement-feed.js?v=20261005-pf4"></script>
 <script src="charm-nest-search.js?v=20260929-m5-osc1-sealsh1-pf3"></script>
-<script src="charm-nest-signins.js?v=20261006-m5-idle1"></script>
-<script src="charm-nest-efficiency-charts.js?v=20261005-efc3"></script>
-<script src="charm-nest-efficiency-stations.js?v=20261006-es6-ld2"></script>
-<script src="charm-nest-efficiency.js?v=20261006-ef12-ld2"></script>
-<script src="charm-nest-efficiency-orders.js?v=20261006-eo4-ld2"></script>
-<script src="charm-nest-efficiency-person.js?v=20261006-ad2"></script>
+<script src="charm-nest-signins.js?v=20261006-m7-pb1"></script>
+<script src="charm-nest-efficiency-charts.js?v=20261006-efc4-pb1"></script>
+<script src="charm-nest-efficiency-stations.js?v=20261006-es7-pb1"></script>
+<script src="charm-nest-efficiency.js?v=20261006-ef13-pb1"></script>
+<script src="charm-nest-efficiency-orders.js?v=20261006-eo5-pb1"></script>
+<script src="charm-nest-efficiency-laser.js?v=20261006-ls1"></script>
+<script src="charm-nest-efficiency-person.js?v=20261006-ep9-pb1"></script>
 <!-- ══ one order line: what it is, what the customer said, what the shop said, and how to settle it ══ -->
 <dialog id="orderWin" class="owin owFull" aria-labelledby="owTitle" data-no-grow>
   <div class="owBox">
