@@ -3,6 +3,8 @@
 [build]
   base = "growth"
   # The shared source and dependency manifest live in the parent repository.
+  # Include parent inputs in the change check so avatar-only pushes rebuild.
+  ignore = 'git diff --quiet "$CACHED_COMMIT_REF" "$COMMIT_REF" -- .. || exit 1'
   command = "npm --prefix .. install --no-audit --no-fund && node build-sandbox.cjs"
   publish = "../growth-sandbox-source/public-site"
   functions = "../growth-sandbox-source/netlify/production-functions"
