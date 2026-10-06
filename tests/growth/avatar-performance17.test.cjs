@@ -93,13 +93,20 @@ test('actual production mesh construction stays finite and adaptive tessellation
     assert.equal(highResult.validIndices, true);
     assert.equal(adaptiveResult.finiteBuffers, true);
     assert.equal(adaptiveResult.validIndices, true);
-    // The expressive face and grounded ankle/sole assemblies add twelve meshes.
-    assert.equal(highResult.meshes, 54);
-    assert.equal(adaptiveResult.meshes, 54);
-    assert.equal(highResult.triangles, 455776);
-    assert.equal(adaptiveResult.triangles, 313308);
-    assert.deepEqual(highResult.graphicFace, {brows: 2, shutters: 2, cheekFacets: 2, smileGlyph: true, signalMarkers: 3});
+    // Preserve the previous face's allocation ceilings while replacing its
+    // circular aperture and shutters with two filled expressive ribbons.
+    assert.ok(highResult.meshes <= 54);
+    assert.equal(adaptiveResult.meshes, highResult.meshes);
+    assert.ok(highResult.triangles > 100000 && highResult.triangles <= 455776);
+    assert.ok(adaptiveResult.triangles > 100000 && adaptiveResult.triangles <= 313308);
+    assert.deepEqual(highResult.graphicFace, {brows: 2, shutters: 0, cheekFacets: 2, smileGlyph: true, signalMarkers: 3});
     assert.deepEqual(adaptiveResult.graphicFace, highResult.graphicFace);
+    for (const model of [high, adaptive]) {
+      assert.equal(model.eyes.length, 2);
+      for (const eye of model.eyes) {assert.equal(eye.digital, true); assert.equal(eye.aperture.geometry.type, 'ExtrudeGeometry');}
+      assert.equal(model.head.getObjectByName('original-wide-visor').geometry.type, 'ExtrudeGeometry');
+      assert.equal(model.head.getObjectByName('retired-aperture-ornament').children.length, 0);
+    }
     assert.ok(adaptiveResult.triangles <= highResult.triangles * .7);
   } finally {
     diagnostic.dispose(high);
