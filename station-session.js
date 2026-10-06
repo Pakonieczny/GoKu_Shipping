@@ -18,6 +18,8 @@
  *  `design`, device unchanged, plus a `role` field) and every event of station-activity.js carries it; "" is the page's own
  *  station (the Admin, and every page without a role). StationSession.roleChanged() (or signedIn again) ends the session under
  *  the old role ("switched") and starts the one under the new, so both are tracked on their own. StationSession.role() says it.
+ *  A switch of the SAME person is not a new sign-in: the Admin answer already had stays, nothing is asked again (another person
+ *  taking the page over is asked fresh).
  *
  *  Pages with more than one person at once (the Welding station: one welds, one matches, same page) pass multi: true and
  *  people: () => [{ name, task }] (who is signed in, under which task) instead of person(). Then, and only then:
@@ -579,7 +581,7 @@
         if (lapsedWhileClosed(r, now)) return;
         if (now - (r.lastBeat || 0) < CLOSED_MS || !closedRuleOn(r, now)) { cur = r; cur.asked = false; mark(now); cur.li = lastIn; savePersonInput(cur.name, now); beat(); askAdmin(cur); return; }
       }
-      finish(r, r.name === p.name && same ? "signOut" : "switched");
+      finish(r, r.name === p.name && same ? "signOut" : "switched", undefined, r.name === p.name);
     }
     mark(now); savePersonInput(p.name, now);
     const role = roleNow();
@@ -615,7 +617,7 @@
   /** ends a session. With an `at` (Rule A or B) it ends at that time, the last input. Otherwise: one that went quiet for 15
       minutes ended ("closed") at the last input it knew of (an Admin's at its last beat); one from an earlier day at its
       midnight; any other now, with the reason given */
-  function finish(s, reason, at) {
+  function finish(s, reason, at, samePerson) {
     if (!s || s.ended) return;
     const now = Date.now(), quietFor = now - (s.lastBeat || s.startAt || 0);
     if (runsHere(s)) s.li = Math.max(Number(s.li) || 0, lastIn);
@@ -638,7 +640,7 @@
     if (s.key !== undefined) persist(s);
     else { const k = loadRec(); if (!(k && k.id !== s.id && !k.ended)) saveRec(s); }       // (a second tab of this computer that already started the next session keeps it as the page's record: this one's end must not wipe it, or both tabs would start one each; ST2)
     if (s === cur) cur = null;
-    admins.delete(adminKey(s.name));                           // the next sign-in asks again
+    if (!(reason === "switched" && samePerson === true)) admins.delete(adminKey(s.name));     // the next sign-in asks again (a role switch of the SAME person is not a new sign-in: the answer stays; another person taking the page over is asked fresh)
     sendEnd(body(s, "end", reason, at));
   }
   function end(reason) { if (cur) finish(cur, REASONS.has(reason) ? reason : "signOut"); }
@@ -671,7 +673,7 @@
       }
       if (cur && cur.name === p.name && stationOf(cur) !== stationNow()) {     // the role changed: the one session ends, the other starts
         seen = p.name; markDay(p.name, today);
-        finish(cur, "switched"); begin(p, true);          // (resume: another tab that switched first has already started the new one, this tab goes on with it; ST2)
+        finish(cur, "switched", undefined, true); begin(p, true);          // (resume: another tab that switched first has already started the new one, this tab goes on with it; ST2)
         return;
       }
       if (p.name !== seen) {                     // someone signed in here (or in another tab of this computer)
@@ -950,7 +952,7 @@
       const today = nyDay();
       markDay(name, today); seen = name; quiet = "";
       if (cur && cur.name === name && cur.day === today && stationOf(cur) === stationNow()) return;
-      if (cur) finish(cur, "switched");
+      if (cur) finish(cur, "switched", undefined, adminKey(cur.name) === adminKey(name));
       begin({ name, id: safeId(who && who.id) }, !!(who && who.resume));      // (resume: a page loaded with its person already there goes on with the session it kept, as init does)
     } catch (e) { warn("signedIn:", e); }
   }
