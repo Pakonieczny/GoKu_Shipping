@@ -504,6 +504,8 @@ const nyToday = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_
       const dismiss = () => page.evaluate(() => document.querySelectorAll('.mNote').forEach(n => n.close()));
       // the typed name is the person: Maya types her name here too (the same person works at sorting-1 and in the sorter)
       assert.strictEqual(await page.evaluate(() => StationActivity.who()), null, 'the sorter: nobody until a name is set');
+      // (LD1's "Laser or Design?" question, once it is on the page, is asked of everybody but the Admin: this person is the Admin, so the station stays the Sorter's)
+      await page.evaluate(() => { if (window.CNRole && typeof CNRole.setAdminLookup === 'function') CNRole.setAdminLookup(async () => true); });
       await page.evaluate(n => { B.employee = n; localStorage.setItem('cn.employee', n); }, PEOPLE.maya);
       const w = await page.evaluate(() => StationActivity.who());
       assert.deepStrictEqual([w.person, w.station, w.device], [PEOPLE.maya, 'sorter', 'charm-nest-1'], 'the typed name signs in at the sorter');
