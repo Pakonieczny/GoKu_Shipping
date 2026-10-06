@@ -468,6 +468,9 @@
     const r = answer(await cloud({ op: 'laserDone', kind: s.kind, id: s.id, done: s.done, by: by || undefined, stage: s.done ? 'laser' : undefined, device: 'charm-nest-1', via: 'Library move' }));
     await sync(r.process); return r;
   }
+  /* What the person's press kept, for the Employee efficiency console (charm-nest-laser-act.js, only on a page that has it: the
+     Sorter app): one record of the press, never of a step that was taken back, never a reason to stop or wait. */
+  function acted(list) { try { const A = root.CNLaserAct; if (A && typeof A.flow === 'function' && list && list.length) A.flow(list); } catch (_) { /* a record of the work never stops the work */ } }
   /**
    * Runs a plan's steps in order. `only` (a Set of step types) limits it to those (approve). A hold or a release is undone
    * when a later step fails, so a failed commit leaves what it found.
@@ -492,7 +495,7 @@
       if (!yes('roseSet')) throw new Error('A Rose Gold sheet is only added to a set when you press its button');
       if (typeof hooks.roseJoin !== 'function') throw new Error('A Rose Gold sheet cannot be added to a set from here: open it on the Nest tab and press Cut Sheet there');
     }
-    const warnings = [];
+    const warnings = [], kept = [];     // (kept: the steps this run did that stay; o.acts, when given, receives them for one record of the press)
     for (const s of todo) {
       let label = lineOf(s); const extra = [];
       tell(s, label, 'start');
@@ -531,7 +534,7 @@
           const all = s.with && s.with.length ? s.with : null;
           await hooks.include(s.sheetId, { setId: s.setId, newSet: s.newSet, split: all || (o.confirmed || []).includes('splitOrders') ? 'all' : null, ...(all ? { with: all } : {}) });
         }
-        applied.push(doneLine(s.key, label));
+        applied.push(doneLine(s.key, label)); kept.push(s);
         if (s.type === 'include' && s.with && s.with.length) for (const a of p.auto.filter(x => /^membership:/.test(x.key))) applied.push(doneLine(a.key, a.label));
         if ((s.type === 'include' || s.type === 'roseJoin') && p.auto.some(a => a.key === 'qrLabel')) applied.push(doneLine('qrLabel', (p.auto.find(a => a.key === 'qrLabel') || {}).label || 'QR label made'));
         for (const x of extra.splice(0)) applied.push(x);
@@ -540,9 +543,11 @@
         tell(s, label, 'error');
         const left = [], undone = new Set();
         for (const u of undo.reverse()) { try { await u.fn(); undone.add(u.key); } catch (x) { left.push(x.message); } }
+        if (o.acts) o.acts.push(...kept.filter(k => !undone.has(k.key)));
         throw Object.assign(new Error(e.message || String(e)), { quiet: e.quiet, applied: applied.filter(a => !undone.has(a.key)), left });
       }
     }
+    if (o.acts) o.acts.push(...kept);
     return Object.defineProperty(applied, 'warnings', { value: warnings });
   }
   const inflight = new Map();
@@ -568,7 +573,9 @@
           if (v.error) throw new Error(v.error);
           if (!readyNow(v)) throw new Error(`${v.label} is still not ready for Laser cutting. Refresh the Library to see what is left`);
         };
-        const applied = await run(fresh, { by: o.by, confirmed, onStep: o.onStep, verify });
+        const acts = [];
+        let applied;
+        try { applied = await run(fresh, { by: o.by, confirmed, onStep: o.onStep, verify, acts }); } finally { acted(acts); }
         return { ok: true, applied: applied.concat(fresh.auto.filter(a => a.check).map(a => ({ key: a.key, label: a.label }))), ...(applied.warnings.length ? { warnings: applied.warnings } : {}) };
       } catch (e) {
         return { ok: false, applied: e.applied || [], error: e.message || String(e), ...(e.left && e.left.length ? { notUndone: e.left } : {}) };
@@ -591,7 +598,7 @@
     p.applied = []; p.approved = false; p.mode = 'approve';
     if (p.noop) {                                    // already in Laser cutting: only the person's seal can still be missing
       const state = await readState(item), v = view(state, item.kind, item.id);
-      if (!v.error && by) { const t = sealTarget(v); if (!sealed(v, t)) { try { await flow([{ type: 'seal', ...t }], by); const line = { key: 'seal', label: `Ready seal recorded by ${by}`, detail: 'The blue seal that says it is ready for Laser cutting.', stamp: true, seal: { how: 'laserReady' }, by }; p.auto.push({ ...line, done: true }); p.applied.push(line); } catch (_) { /* the next refresh records it */ } } }
+      if (!v.error && by) { const t = sealTarget(v); if (!sealed(v, t)) { try { await flow([{ type: 'seal', ...t }], by); acted([{ type: 'seal', ...t }]); const line = { key: 'seal', label: `Ready seal recorded by ${by}`, detail: 'The blue seal that says it is ready for Laser cutting.', stamp: true, seal: { how: 'laserReady' }, by }; p.auto.push({ ...line, done: true }); p.applied.push(line); } catch (_) { /* the next refresh records it */ } } }
       p.approved = true;
       return p;
     }
@@ -600,20 +607,23 @@
     if (confirmed.includes('roseLine') && p.confirm.some(c => c.key === 'roseLine')) only.add('roseLine');
     const doneKeys = new Set();
     const noSeal = { ...p, steps: p.steps.filter(s => s.type !== 'seal') }, sealStep = p.steps.find(s => s.type === 'seal');
+    const acts = [];       // (what this press kept: one record of the press, below)
     try {
-      for (const g of await run(noSeal, { by, confirmed, only, onStep: req.onStep })) doneKeys.add(g.key);
+      for (const g of await run(noSeal, { by, confirmed, only, onStep: req.onStep, acts })) doneKeys.add(g.key);
       if (sealStep) {
         try {
           const v = view(await readState(item), item.kind, item.id);
-          if (!v.error && readyNow(v)) for (const g of await run({ ...p, steps: [sealStep] }, { by, confirmed, only, onStep: req.onStep })) doneKeys.add(g.key);
+          if (!v.error && readyNow(v)) for (const g of await run({ ...p, steps: [sealStep] }, { by, confirmed, only, onStep: req.onStep, acts })) doneKeys.add(g.key);
         } catch (e) { if (!/not ready/i.test(e.message)) throw e; }
       }
     } catch (e) {
+      acted(acts);
       p.error = e.message || String(e); p.ok = false; p.applied = e.applied || [];
       const did = new Set(p.applied.map(a => a.key));
       p.auto = p.auto.filter(a => a.check || did.has(a.key)).map(a => ({ ...a, done: true }));       // (only what was really done is drawn as done)
       return p;
     }
+    acted(acts);
     // what is true now, in the same shape: the lines that were done turn into `done`, what is left stays to do
     const after = await plan({ ...item, to: { area: 'laser' }, by });
     // (an approval plan lists only what is now done: a screen draws every line of it as done, what is left is in needs and confirm)
@@ -690,6 +700,7 @@
       if (ld && shown) return (await ld.mark(kind, id, done, { by: o && o.by, via: 'Library move' })) || { ok: true };
       const r = answer(await cloud({ op: 'laserDone', kind, id, done, by: (o && o.by) || undefined, stage: done ? 'laser' : undefined, device: 'charm-nest-1', via: 'Library move' }));
       await sync(r.process);
+      try { if (root.CNLaserAct) root.CNLaserAct.cut(done, { name: ld && ld.nameOf ? ld.nameOf(kind, id) : '', ids: r.sheetIds && r.sheetIds.length ? r.sheetIds : [id], rec: ld && ld.recordOf }); } catch (_) { /* a record of the work never stops the work */ }
       if (ld && ld.addedSeals) ld.addedSeals(r.added);
       try { if (root.CN && root.CN.loadLibrary) root.CN.loadLibrary(); } catch (_) { /* refreshed at its next read */ }
       return r;
