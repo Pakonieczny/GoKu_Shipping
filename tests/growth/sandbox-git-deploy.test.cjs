@@ -36,8 +36,8 @@ test('the actual Git build removes stale output and retains only the complete is
     fs.writeFileSync(file, 'must not be deployed');
   }
   const rootConfig = fs.readFileSync(path.join(root, 'netlify.toml'));
-  const result = spawnSync(process.execPath, ['growth/build-sandbox.cjs'], {
-    cwd: root, env, encoding: 'utf8'
+  const result = spawnSync(process.execPath, ['build-sandbox.cjs'], {
+    cwd: path.join(root, 'growth'), env, encoding: 'utf8'
   });
   assert.equal(result.status, 0, result.stderr + result.stdout);
   assert.equal(fs.existsSync(staleAsset), false);

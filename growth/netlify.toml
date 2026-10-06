@@ -1,9 +1,11 @@
-# Select Package directory "growth" in the existing sandbox project's settings.
-# Leave Base directory unset so dependencies and commands run at repository root.
+# Set Base directory "growth" in the existing sandbox project's linking wizard.
+# This selects the sandbox configuration even when Package directory is absent.
 [build]
-  command = "node growth/build-sandbox.cjs"
-  publish = "growth-sandbox-source/public-site"
-  functions = "growth-sandbox-source/netlify/production-functions"
+  base = "growth"
+  # The shared source and dependency manifest live in the parent repository.
+  command = "npm --prefix .. install --no-audit --no-fund && node build-sandbox.cjs"
+  publish = "../growth-sandbox-source/public-site"
+  functions = "../growth-sandbox-source/netlify/production-functions"
 
 # These are build settings. Preserve the project's existing Functions-scoped
 # environment variables; netlify.toml does not provision runtime credentials.
@@ -15,7 +17,7 @@
 
 [functions]
   node_bundler = "esbuild"
-  included_files = ["assets/brites-brand/**"]
+  included_files = ["../assets/brites-brand/**"]
   external_node_modules = ["@google-cloud/firestore", "firebase-admin", "sharp", "@resvg/resvg-js", "@ffmpeg-installer/ffmpeg"]
 
 [[headers]]
