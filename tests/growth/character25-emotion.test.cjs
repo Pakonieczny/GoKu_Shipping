@@ -27,7 +27,7 @@ test('appreciation smoothly enters, briefly holds, and disappears without a perp
 test('brief appreciation restores the previous quiet emotion and removes SVG heart', async t => {
   const f = await fixture(t); f.guide.setEmotion('calm'); f.guide.setEmotion('appreciated');
   assert.equal(f.guide.element.dataset.heart, 'true'); assert.equal(f.guide.snapshot().mannerism.name, 'reassure');
-  assert.ok(f.guide.element.querySelector('path.brites-avatar__heart'));
+  assert.equal(f.guide.element.querySelectorAll('.brites-avatar__heart path').length,2);
   f.advance(1500); assert.equal(f.guide.snapshot().emotion, 'calm'); assert.equal(f.guide.element.dataset.heart, 'false'); assert.equal(f.jobs.size, 0);
 });
 test('obsolete appreciation callback cannot override a newer frustration expression', async t => {
@@ -55,24 +55,24 @@ function meshFixture(t) {
   const start = source.indexOf('  const head = new THREE.Group();'), end = source.indexOf('  const decoration = mesh(', start), beginPose = source.indexOf('  const whiteColor = new THREE.Color('), endPose = source.indexOf('  function render(pose', beginPose);
   const names = ['ivory', 'gold', 'paleGold', 'face', 'lidMaterial', 'eyeMaterial', 'pupilMaterial', 'glint', 'gemMaterial', 'corneaMaterial', 'irisMaterial', 'mouthMaterial'];
   const materials = Object.fromEntries(names.map(name => [name, new THREE.MeshPhysicalMaterial()]));
-  const script = '(()=>{const geometries=new Set(),geometry=value=>{geometries.add(value);return value;},segments=(high,minimum=16)=>Math.max(minimum,Math.round(high*quality.geometryScale)),avatar=new THREE.Group();' + source.slice(start, end) + '\nconst key=new THREE.SpotLight(),eyeLight=new THREE.PointLight();let sampleTime=1,reducedMotion=false;' + source.slice(beginPose, endPose) + '\nreturn {apertureGeometry,halo,statusBars,pose:(value,time=1)=>{sampleTime=time;applyPose(value);},dispose:()=>geometries.forEach(value=>value.dispose())};})()';
+  const script = '(()=>{const geometries=new Set(),geometry=value=>{geometries.add(value);return value;},segments=(high,minimum=16)=>Math.max(minimum,Math.round(high*quality.geometryScale)),avatar=new THREE.Group();' + source.slice(start, end) + '\nconst key=new THREE.SpotLight(),eyeLight=new THREE.PointLight();let sampleTime=1,reducedMotion=false;' + source.slice(beginPose, endPose) + '\nreturn {eyes,heartGlyphs,statusBars,pose:(value,time=1)=>{sampleTime=time;applyPose(value);},dispose:()=>geometries.forEach(value=>value.dispose())};})()';
   const f = vm.runInNewContext(script, {THREE, quality: avatar.qualityFor({width: 390}), ...materials, AVATAR_SCENE_DECLARATIONS: {stateColors: {idle: '#4aa8ff', speaking: '#ffcb79', listening: '#49c9ff', thinking: '#ab87ff'}}});
   t.after(() => {f.dispose(); Object.values(materials).forEach(value => value.dispose());}); return f;
 }
-test('production aperture morph has actual heart lobes/notch and finite geometry and normals', t => {
+test('paired production appreciation glyphs have real heart lobes/notches and finite geometry', t => {
   const f = meshFixture(t); f.pose(avatar.poseFor({emotion: 'appreciated', appreciationElapsed: .4}));
-  const points = f.apertureGeometry.attributes.position.array; let centreTop = -Infinity, lobeTop = -Infinity;
-  for (let index = 0; index < points.length; index += 3) {assert.ok(Number.isFinite(points[index])); if (Math.abs(points[index]) < .025) centreTop = Math.max(centreTop, points[index + 1]); else if (Math.abs(points[index]) > .1) lobeTop = Math.max(lobeTop, points[index + 1]);}
-  assert.ok(lobeTop > centreTop + .06, 'two lobes rise above central notch');
-  assert.ok([...f.apertureGeometry.attributes.normal.array].every(Number.isFinite)); assert.equal(f.halo.visible, false);
-  f.pose(avatar.poseFor()); assert.equal(f.halo.visible, true);
+  assert.equal(f.heartGlyphs.length,2);
+  for(const heart of f.heartGlyphs){const points=heart.geometry.attributes.position.array;let centreTop=-Infinity,lobeTop=-Infinity;
+    for(let i=0;i<points.length;i+=3){assert.ok(Number.isFinite(points[i]));if(Math.abs(points[i])<.01)centreTop=Math.max(centreTop,points[i+1]);else if(Math.abs(points[i])>.045)lobeTop=Math.max(lobeTop,points[i+1]);}
+    assert.ok(lobeTop>centreTop+.01,'two lobes rise above the notch');assert.ok([...heart.geometry.attributes.normal.array].every(Number.isFinite));assert.equal(heart.visible,true);
+  }
+  assert.ok(f.eyes.every(eye=>eye.aperture.visible===false));f.pose(avatar.poseFor());assert.ok(f.eyes.every(eye=>eye.aperture.visible===true));assert.ok(f.heartGlyphs.every(heart=>heart.visible===false));
 });
-test('real aperture equalizer changes only with actual speech energy, keeping silence stable', t => {
-  const f = meshFixture(t); const silent = avatar.poseFor({state: 'speaking', time: 1, level: 0});
-  f.pose(silent, 1); const quiet = f.apertureGeometry.attributes.position.array.slice();
-  f.pose(silent, 2); assert.deepEqual(f.apertureGeometry.attributes.position.array, quiet, 'no invented audio vibration');
-  f.pose(avatar.poseFor({state: 'speaking', time: 1, level: .8}), 1); const audio = f.apertureGeometry.attributes.position.array.slice();
-  f.pose(avatar.poseFor({state: 'speaking', time: 1, level: .8}), 2); assert.deepEqual(f.apertureGeometry.attributes.position.array, audio, 'held energy cannot generate a fake pulse');
-  f.pose(avatar.poseFor({state: 'speaking', time: 2, level: .25}), 2); assert.notDeepEqual(f.apertureGeometry.attributes.position.array, audio, 'different measured output changes the aperture');
-  assert.ok(f.statusBars.every(bar => bar.visible === false), 'speaking remains inside the eye, not a separate mouth');
+test('paired eyes and speech bars change only with measured output energy, keeping silence stable', t => {
+  const f = meshFixture(t),geometry=f.eyes[0].apertureGeometry,silent=avatar.poseFor({state:'speaking',time:1,level:0});
+  f.pose(silent,1);const quiet=geometry.attributes.position.array.slice();assert.ok(f.statusBars.every(bar=>bar.visible===false));
+  f.pose(silent,2);assert.deepEqual(geometry.attributes.position.array,quiet,'no invented vibration');
+  f.pose(avatar.poseFor({state:'speaking',time:1,level:.8}),1);const audio=geometry.attributes.position.array.slice(),bars=f.statusBars.map(bar=>bar.scale.y);assert.ok(f.statusBars.every(bar=>bar.visible===true));
+  f.pose(avatar.poseFor({state:'speaking',time:1,level:.8}),2);assert.deepEqual(geometry.attributes.position.array,audio);assert.deepEqual(f.statusBars.map(bar=>bar.scale.y),bars,'held energy has held shape');
+  f.pose(avatar.poseFor({state:'speaking',time:2,level:.25}),2);assert.notDeepEqual(geometry.attributes.position.array,audio);assert.notDeepEqual(f.statusBars.map(bar=>bar.scale.y),bars);
 });
