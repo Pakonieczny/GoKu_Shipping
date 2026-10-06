@@ -779,7 +779,7 @@
       let t = "";
       if (none) {
         const last = s.lastEventAt ? `last event ${clock(s.lastEventAt)} (${ago((now() - s.lastEventAt) / 1000)})` : "";
-        t = s.state === "offline" ? `Offline · nobody is signed in${last ? " · " + last : ""}` : s.state === "working" ? `Working · no order open right now${last ? " · " + last : ""}` : `Idle · ${last || "no activity yet today"}`;
+        t = s.state === "offline" ? `Offline · nobody is signed in${last ? " · " + last : ""}` : s.state === "working" ? `Working${s.inbox ? "" : " · no order open right now"}${last ? " · " + last : ""}` : `Idle · ${last || "no activity yet today"}`;
       }
       if (!t) { if (X.idle) { X.idle.remove(); X.idle = null; } return; }
       if (!X.idle) { X.idle = h("p", "esIdle"); X.body.appendChild(X.idle); if (!still() && X.idle.animate && S.lastApply) X.idle.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 300, easing: "ease-out" }); }
