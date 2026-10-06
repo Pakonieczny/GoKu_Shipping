@@ -1,0 +1,25 @@
+# Select Package directory "growth" in the existing sandbox project's settings.
+# Leave Base directory unset so dependencies and commands run at repository root.
+[build]
+  command = "node growth/build-sandbox.cjs"
+  publish = "growth-sandbox-source/public-site"
+  functions = "growth-sandbox-source/netlify/production-functions"
+
+# These are build settings. Preserve the project's existing Functions-scoped
+# environment variables; netlify.toml does not provision runtime credentials.
+[build.environment]
+  NODE_VERSION = "22"
+  BRITES_GROWTH_SANDBOX = "1"
+  BRITES_GROWTH_NAMESPACE = "Brites_Growth_Sandbox"
+  CORS_SET = "1"
+
+[functions]
+  node_bundler = "esbuild"
+  included_files = ["assets/brites-brand/**"]
+  external_node_modules = ["@google-cloud/firestore", "firebase-admin", "sharp", "@resvg/resvg-js", "@ffmpeg-installer/ffmpeg"]
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Robots-Tag = "noindex, nofollow, noarchive"
+    Cache-Control = "max-age=0, no-cache, must-revalidate"

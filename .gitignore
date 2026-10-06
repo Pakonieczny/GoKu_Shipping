@@ -7,3 +7,5 @@ package-lock.json
 public-site/
 netlify/production-functions/
 
+# Reproducible isolated sandbox deployment output.
+growth-sandbox-source/

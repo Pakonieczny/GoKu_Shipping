@@ -4,6 +4,12 @@
 
 Work on the isolated feature branch. `scripts/build-growth-sandbox.cjs` creates the complete separate sandbox package: research and concierge endpoints plus the existing Ads UI behind the protected read-only `/api/growth-ads` bridge. It intentionally excludes unrelated application schedules, campaign mutations, conversion uploads and paid-AI dispatch. Run `node --test tests/growth/*.test.cjs`, the existing Data Manager tests and relevant advertising research tests before deployment. Test actual flows in a browser; fixture tests are not proof of live integrations.
 
+### Git deployment for the existing sandbox
+
+Link the existing sandbox project to this repository with production branch `codex/brites-growth-2026-10`. Leave Base directory blank (repository root) and set Package directory to `growth`. Netlify will select `growth/netlify.toml`, build with `node growth/build-sandbox.cjs`, publish `growth-sandbox-source/public-site`, and bundle functions from `growth-sandbox-source/netlify/production-functions`. The separate root configuration continues to serve the existing applications.
+
+The Git build regenerates the avatar bundle and removes only its fixed generated sandbox stage before copying the current source. It retains all ten sandbox functions, including the existing voice deadline/reaper and bounded growth schedule. Preserve the sandbox project's existing Functions-scoped environment variables and credentials when linking; `[build.environment]` is build-time configuration and does not provision runtime credentials. Run `node --test tests/growth/sandbox-git-deploy.test.cjs` to check branch/namespace guards, stale-output removal, complete staging, and preservation of the root configuration. A successful push is not publication evidence: verify the exact Git commit in the ready published Netlify deployment.
+
 ## Storage and access
 
 `_britesGrowth.js` uses an explicitly isolated `Brites_Growth_Sandbox` namespace by default. Products, research versions, ranked queue, transactional work leases, blockers, tests, runtime usage and checkpoints are separate collections. The public API projects only published product information and reviewed symbolic interpretations. Private sales/ranking data, competitor recommendations and operational checkpoints are never committed to this public repository or returned by public endpoints.
