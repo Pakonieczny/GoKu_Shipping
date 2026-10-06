@@ -524,6 +524,8 @@ fs.mkdirSync(SHOTS, { recursive: true });
       assert(/Inbox/.test(pv.text), 'the person page of ' + PEOPLE.inbox + ' has no Inbox section');
       eq([dig(pv.kpis['inbox.replies']), dig(pv.kpis['inbox.orders']), dig(pv.kpis['inbox.customers'])], ['3', '2', '2'], 'the Inbox figures on the page of ' + PEOPLE.inbox + ' (replies sent, orders covered, customers)');
     });
+    // the Inbox card with its replies block (it draws a moment after the first pictures were taken): its picture is taken again once the check has seen it
+    if (landed('IN2')) { try { await P.tab('stations'); await portal.waitForSelector('#efficiencyView .es .esSt[data-key="inbox"] .esIn', { timeout: 10000 }); await shot(portal.locator('#efficiencyView .es .esSt[data-key="inbox"]'), 'card-inbox-crew'); } catch (_) {} }
     await shot(portal, 'B3-board-final');
   }
 
