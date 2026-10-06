@@ -75,7 +75,9 @@ function Portal(W, cast) {
     return P.page.$$eval(`${V} .efStations .efSR`, rows => rows.map(r => {
       const t = el => (el ? el.innerText.replace(/\s+/g, ' ').trim() : '');
       const n = c => { const b = r.querySelector(`.efSV[data-c="${c}"] b`); return b ? Number(String(b.textContent).replace(/[^\d.]/g, '')) : null; };
-      return { key: r.dataset.station, on: /\bon\b/.test(r.className), name: t(r.querySelector('.efSN')), who: t(r.querySelector('.efSW')), parts: n('parts'), orders: n('orders') };
+      // (the Welding row draws "matched" and the time on task in the two columns where the others draw pieces and orders: the labels and the raw text say which)
+      return { key: r.dataset.station, on: /\bon\b/.test(r.className), name: t(r.querySelector('.efSN')), who: t(r.querySelector('.efSW')), parts: n('parts'), orders: n('orders'),
+        weld: r.dataset.weld === '1', partsLabel: t(r.querySelector('.efSV[data-c="parts"] small')), ordersLabel: t(r.querySelector('.efSV[data-c="orders"] small')), partsText: t(r.querySelector('.efSV[data-c="parts"]')), ordersText: t(r.querySelector('.efSV[data-c="orders"]')) };
     }));
   };
   /** the People tab: a card per person (the Overview's roster) with the four figures it shows */

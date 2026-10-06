@@ -387,13 +387,19 @@ fs.mkdirSync(SHOTS, { recursive: true });
         eq([task[PEOPLE.matcher], task[PEOPLE.welder]], ['matching', 'welding'], 'the task each person is in');
       }, 20000);
     });
-    await check('B-BD4', 'Welding shows two groups (Welding and Matching, one person each) and NO order throughput (no pieces, no orders on the card, none in the Overview)', ['WS2', 'WS1'], async () => {
+    await check('B-BD4', 'Welding shows two groups (Welding and Matching, one person each) and NO order throughput (no pieces, no orders on the card; the Overview row shows matched and time on task instead)', ['WS2', 'WS1'], async () => {
       const c = cardOf('welding');
       const groups = c.groups.map(g => [g.group.toLowerCase(), g.people.sort().join()]).sort();
       eq(groups, [['matching', PEOPLE.matcher], ['welding', PEOPLE.welder]], 'the two groups');
       assert(!c.countsVisible, 'the Welding card draws order throughput: "' + c.counts + '"');
       assert(!/\b\d+\s*pieces?\b/i.test(c.weld ? c.weld.text : c.text) && !/\b\d+\s*orders?\s+today\b/i.test(c.weld ? c.weld.text : c.text), 'the Welding block talks about pieces or orders: ' + (c.weld ? c.weld.text : c.text).slice(0, 200));
-      const ov = (await P.overviewStations()).find(r => r.key === 'welding'); assert(!ov || (ov.parts || 0) === 0 && (ov.orders || 0) === 0, 'the Overview counts Welding pieces/orders: ' + JSON.stringify(ov));
+      // the Overview's Welding row: the reader counts no pieces and no orders; the row draws "matched" and the time on task where the others draw pieces and orders
+      const bw = ((await W.eff({ op: 'overview', trend: false })).business.stations || []).find(x => x.station === 'welding');
+      assert(bw && !(bw.parts > 0) && !(bw.orders > 0), 'the reader counts Welding pieces or orders: ' + JSON.stringify(bw));
+      const ov = (await P.overviewStations()).find(r => r.key === 'welding'); assert(ov, 'the Overview has no Welding row');
+      assert(ov.weld && /matched/i.test(ov.partsLabel) && !/pieces?/i.test(ov.partsLabel), 'the Overview\'s Welding row counts "pieces": ' + JSON.stringify(ov));
+      assert(!/orders?/i.test(ov.ordersLabel) && /^(\d+(\.\d+)?\s*(h|m|min)\b.*|—)$/i.test(ov.ordersText), 'the Overview\'s Welding row counts orders, not time on task: ' + JSON.stringify(ov));
+      eq([ov.parts], [bw.matched || 0], 'the Overview\'s Welding "matched" vs the reader');
     });
     await check('B-BD5', 'Laser and Design are two separate cards: each person is on the card of the role they signed in under, nobody on both', ['LD2', 'LD1'], async () => {
       const L = names(cardOf('laser')), D = names(cardOf('design'));
@@ -403,6 +409,7 @@ fs.mkdirSync(SHOTS, { recursive: true });
       assert(/Sorter app \(Design\)/.test(dc) && !/Sorter app \(Laser\)/.test(dc), 'Design card does not say where Dara is: ' + dc.slice(0, 300));
       assert(/Sorter app \(Laser\)/.test(lc) && !/Sorter app \(Design\)/.test(lc), 'Laser card does not say where Lena is: ' + lc.slice(0, 300));
     });
+    await P.tab('stations');   // (the checks above read the Overview too: the cards are on screen again for the pictures)
     await shot(portal, 'B2-board-after-checks');
     for (const key of Object.keys(WHO)) { try { const el = portal.locator(`#efficiencyView .es .esSt[data-key="${key}"]`); await shot(el, 'card-' + key + '-crew'); } catch (_) {} }
 
