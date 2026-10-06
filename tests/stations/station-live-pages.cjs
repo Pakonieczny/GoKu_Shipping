@@ -202,6 +202,7 @@ async function main() {
       });
       await page.focus('#employeeNumberInput'); await page.keyboard.type(PIN);
       await page.click('#employeeLoginBtn');
+      await page.click('#weldTaskMatching');   // the PIN door, then "Welding or Matching?": the Matching person is the one a scan is credited to (R3)
       await page.waitForFunction(() => window.StationActivity.who(), null, { timeout: 10000 });
       await wait(300);
 

@@ -28137,9 +28137,14 @@ const EtsyMailAuth=(()=>{
     idle:"Signed out after 10 minutes without input. Sign in to pick up where you left off.",
     closing:"Signed out at 5:00 pm. Sign in to pick up where you left off."
   };
-  function stationSignOut(reason){
+  function stationSignOut(reason){ stationEnd(reason,false); }
+  /** fromOtherTab: another tab of this inbox already ended the shared sign-in (it ended the server session and cleared the token). */
+  function stationEnd(reason,fromOtherTab){
     try{ keepTypedText(); }catch(_){}   // the reply typed so far is kept with its conversation, for this person
-    try{ A.transport("etsyMailAuth",{body:{op:"logout"}}).catch(function(){}); }catch(_){}   // sends the token still held here
+    if(!fromOtherTab){
+      try{ localStorage.setItem("em.signoutWhy",String(reason)+"|"+Date.now()); }catch(_){}   // tells the other tabs why, before the token goes
+      try{ A.transport("etsyMailAuth",{body:{op:"logout"}}).catch(function(){}); }catch(_){}   // sends the token still held here
+    }
     try{ emClearSessionToken(); }catch(_){}
     try{ localStorage.removeItem("etsymail_session_user"); }catch(_){}
     try{ A.auth.user=null; A.auth.phase="signin"; state.currentUser=null; state.isOwner=false; applyRoleVisibility(); }catch(_){}
@@ -28154,15 +28159,39 @@ const EtsyMailAuth=(()=>{
      input counts (isTrusted): the page's own timers, the polling, the AI's words arriving and code that clicks for itself
      never do. One mark a second at most; nothing about the input (what, where, which key) is kept or sent. */
   try{
-    var lastMark=0;
+    var lastMark=0, lastShare=0;
     var markInput=function(e){
       try{
         if(e&&e.isTrusted===false) return;
         var t=Date.now(); if(t-lastMark<1000) return; lastMark=t;
         if(window.StationSession&&typeof StationSession.touch==="function") StationSession.touch(t);
+        // Two inbox tabs on one computer share one sign-in (the token is in localStorage): input in either keeps both from
+        // timing out, so a quiet tab never signs out the one somebody is working in. (Written at most every 5 s; only a time.)
+        if(t-lastShare>=5000){ lastShare=t; try{ localStorage.setItem("em.lastInput",String(t)); }catch(_){} }
       }catch(_){}
     };
     ["pointerdown","pointermove","keydown","wheel","touchstart","touchmove","input","click"].forEach(function(n){ window.addEventListener(n,markInput,{capture:true,passive:true}); });
+    window.addEventListener("storage",function(e){   // fires in the other tabs only
+      try{
+        if(e.key!=="em.lastInput"||!e.newValue) return;
+        var v=Number(e.newValue); if(!(v>0)) return;
+        if(window.StationSession&&typeof StationSession.touch==="function") StationSession.touch(v);
+      }catch(_){}
+    });
+    /* Two tabs, one sign-in: when another tab ends or replaces the shared sign-in (idle, closing, midnight, the Sign out
+       button), this tab, which still shows the inbox, goes to the sign-in screen too, with the same reason, keeping what
+       was typed. A tab-only sign-in ("Keep me signed in" off) is not shared and is left alone. */
+    window.addEventListener("storage",function(e){
+      try{
+        if(e.key!=="etsymail_session"||e.newValue===e.oldValue) return;
+        if(!document.body.classList.contains("authed")) return;
+        if(sessionStorage.getItem("etsymail_session")) return;
+        var why="signOut";
+        try{ var w=String(localStorage.getItem("em.signoutWhy")||"").split("|"); if(w[0]&&STATION_NOTICE[w[0]]&&Date.now()-Number(w[1])<20000) why=w[0]; }catch(_){}
+        try{ if(window.StationSession&&typeof StationSession.signedOut==="function") StationSession.signedOut(why); }catch(_){}
+        stationEnd(why,true);
+      }catch(_){}
+    });
   }catch(_){}
 
   /* deep-link invites (#invite=CODE) are handled by boot(); boot() itself

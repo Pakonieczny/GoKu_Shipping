@@ -233,7 +233,7 @@ const sessionDoc = (id, who, station, startAt, endAt, extra) => Object.assign({ 
 const ids = (base, n) => Array.from({ length: n }, (_, i) => String(base + i));
 
 /* ═════════════════════════ pages: jsdom + the real scripts, one storage per computer, the real doors behind a fake network ═════════════════════════ */
-const SCRIPTS = { session: read('station-session.js'), activity: read('station-activity.js'), queue: read('station-scan-queue.js') };
+const SCRIPTS = { session: process.env.ST2_SESSION_JS ? fs.readFileSync(process.env.ST2_SESSION_JS, 'utf8') : read('station-session.js'), activity: read('station-activity.js'), queue: read('station-scan-queue.js') };
 const extraScript = f => (exists(f) ? read(f) : null);
 let pcN = 0;
 /** a clean world at a chosen moment: every page gone, no timers, an empty shop, the wall clock at `start` */
@@ -428,6 +428,34 @@ async function hostile() {
       const d = EV({ station: 'assembly', device: 'assembly-1', action: 'scan', unattributed: true, person: 'Ray Welder' }); await acts([d]);
       const x = cur.get('Station_Activity', d.id); ok(x && x.person === 'Ray Welder' && x.unattributed === undefined, 'the unattributed flag at another station is ignored, the named person stays: ' + JSON.stringify(x && [x.person, x.unattributed]));
     });
+    await check('activity door: a scan stored as Unattributed is replaced by the same scan with its person (two computers hear one phone scan), the rollups follow; every other repeat changes nothing', async () => {
+      const R = (day, who) => cur.get('Efficiency_Daily', `${day}__${who}`), W = (day, who) => (R(day, who) && R(day, who).stations.welding) || {};
+      const mk = (o = {}) => EV(Object.assign({ action: 'matched', task: 'matching', orderId: '3521000777' }, o));
+      freshKeep(); const u1 = mk({ unattributed: true, person: '' }); await acts([u1]);
+      eq(W(TODAY, 'Unattributed').matched, 1, 'counted as unattributed first'); eq(R(TODAY, 'Unattributed').events, 1);
+      let r = await acts([Object.assign({}, u1, { unattributed: undefined, person: 'Ray Welder', session: 'welding__weld-1__Ray_Welder__matching__x1' })]); eq(r.status, 200);
+      let d = cur.get('Station_Activity', u1.id); eq(d.person, 'Ray Welder'); ok(d.unattributed === undefined, 'no longer unattributed'); eq(cur.all('Station_Activity').length, 1, 'still one event');
+      eq(W(TODAY, 'Ray Welder').matched, 1, 'Ray is credited'); eq(R(TODAY, 'Ray Welder').events, 1); eq(W(TODAY, 'Unattributed').matched, 0, 'given back by Unattributed'); eq(W(TODAY, 'Unattributed').scans, 0); eq(R(TODAY, 'Unattributed').events, 0);
+      const hr = R(TODAY, 'Unattributed').hours || {}; ok(Object.values(hr).every(h => !h.scans && (!h.by || !h.by.welding || !h.by.welding.scans)), 'no scans left in the hours of Unattributed: ' + JSON.stringify(hr));
+      // a different person's copy of an already credited scan, and an unattributed copy after it: nothing changes
+      const before = JSON.stringify([cur.get('Station_Activity', u1.id), R(TODAY, 'Ray Welder'), R(TODAY, 'Unattributed')]);
+      await acts([Object.assign({}, u1, { unattributed: undefined, person: 'Tess Welder' }), Object.assign({}, u1, { unattributed: true, person: '' })]);
+      eq(JSON.stringify([cur.get('Station_Activity', u1.id), R(TODAY, 'Ray Welder'), R(TODAY, 'Unattributed')]), before, 'a second person or an unattributed copy never changes a credited scan'); ok(!R(TODAY, 'Tess Welder'), 'Tess got nothing');
+      // both copies in ONE request, either order: one event, the person's
+      for (const order of [[0, 1], [1, 0]]) {
+        freshKeep(); const e = mk({ orderId: '3521000778' }), a = Object.assign({}, e, { unattributed: true, person: '' }), b = Object.assign({}, e, { person: 'Ray Welder' }); await acts(order.map(i => [a, b][i]));
+        eq(cur.all('Station_Activity').length, 1, order + ': one event'); eq(cur.all('Station_Activity')[0].person, 'Ray Welder', order + ': the person\'s copy'); eq(W(TODAY, 'Ray Welder').matched, 1); ok(!R(TODAY, 'Unattributed') || !W(TODAY, 'Unattributed').matched, order + ': nothing unattributed');
+      }
+      // only `matched` upgrades: a plain scan with the same id is not touched; and the sandbox keeps its own books
+      freshKeep(); const s1 = mk({ action: 'scan', unattributed: true, person: '', orderId: '3521000779' }); await acts([s1]); await acts([Object.assign({}, s1, { unattributed: undefined, person: 'Ray Welder' })]);
+      eq(cur.get('Station_Activity', s1.id).person, 'Unattributed', 'a plain scan with the same id is a repeat: nothing replaced');
+      freshKeep(); const sb = mk({ unattributed: true, person: '', sandbox: true, orderId: '3521000780' }); await acts([sb], { sandbox: true }); await acts([Object.assign({}, sb, { unattributed: undefined, person: 'Ray Welder' })], { sandbox: true });
+      eq(cur.get('Sandbox_Station_Activity', sb.id).person, 'Ray Welder', 'upgraded in the sandbox'); eq(cur.all('Station_Activity').length, 0, 'nothing in the real store'); eq(cur.all('Efficiency_Daily').length, 0, 'no real rollup');
+      // across midnight: the unattributed copy of 23:59 and the person's copy of 00:00 (two computers, a second apart)
+      world('2026-10-08T03:59:30Z'); const m1 = mk({ unattributed: true, person: '', orderId: '3521000781', at: wall() }); await acts([m1]); tickWall(40000);
+      await acts([Object.assign({}, m1, { unattributed: undefined, person: 'Ray Welder', at: wall() })]);
+      eq(W('2026-10-07', 'Unattributed').matched, 0, 'the old day gave it back'); eq(W('2026-10-08', 'Ray Welder').matched, 1, 'the new day counted it once'); eq(cur.all('Station_Activity').length, 1);
+    });
     await check('live door: odd stations, devices and people are refused or cleaned, a PIN in a name never reaches a document id', async () => {
       freshKeep();
       const L = o => ({ v: 1, event: 'work', station: 'welding', device: 'weld-1', person: 'Tess Welder', order: { kind: 'order', rid: '3521000777', scannedAt: wall() }, ...o });
@@ -610,6 +638,28 @@ async function welding() {
       eq(P.body.kpis.orders.value, 1, 'kpi orders: only the order touched at Assembly: ' + JSON.stringify(P.body.kpis.orders));
       eq(p.totals.orders, 1, 'overview person orders'); eq(O.body.business.totals.orders, 1, 'business orders');
       eq(Q.body.total, 1, 'the person\'s order list agrees with the number above it: ' + (Q.body.orders || []).map(o => o.rid));
+    });
+    await check('one person signed in at two stations at once (two computers, a missed sign-out): signed time is covered once, each station keeps its own hours, the board counts one person', async () => {
+      const st = world('2026-10-07T19:00:00Z');
+      st.put('Station_Sessions', 'two-1', sessionDoc('two-1', 'Two Places', 'assembly', nyAt(TODAY, 9), nyAt(TODAY, 10), { device: 'assembly-1' }));
+      st.put('Station_Sessions', 'two-2', sessionDoc('two-2', 'Two Places', 'welding', nyAt(TODAY, 9, 30), nyAt(TODAY, 10, 30), { device: 'weld-1', task: 'welding' }));
+      const O = await board({ op: 'overview', days: 1 }); const p = O.body.people.find(x => x.name === 'Two Places'); ok(p, 'the person is in the overview');
+      eq(p.totals.signedInMin, 90, 'the union of 9:00-10:00 and 9:30-10:30 is 90 minutes, not 120: ' + p.totals.signedInMin);
+      const row = k => (p.stations || []).find(x => x.station === k) || {}; const mins = r => r.signedInMin != null ? r.signedInMin : r.hoursMin != null ? r.hoursMin : r.minutes;
+      ok(mins(row('assembly')) === 60 && mins(row('welding')) === 60, 'each station keeps its own hour: ' + JSON.stringify(p.stations));
+      world('2026-10-07T14:00:00Z'); const t = wall();
+      cur.put('Station_Sessions', 'two-3', sessionDoc('two-3', 'Two Places', 'assembly', t - 40 * MIN, null, { device: 'assembly-1', lastSeenAt: t - MIN }));
+      cur.put('Station_Sessions', 'two-4', sessionDoc('two-4', 'Two Places', 'welding', t - 20 * MIN, null, { device: 'weld-1', task: 'matching', lastSeenAt: t - MIN }));
+      const L = await board({ op: 'live' }); eq(L.status, 200); eq(new Set((L.body.signedIn || []).map(x => x.name)).size, 1, 'one person on, at two stations: ' + JSON.stringify((L.body.signedIn || []).map(x => [x.name, x.stationKey])));
+    });
+    await check('two tabs of a single-person page: another person signing in on one tab is followed by the other tab with ONE new session; the first person ends "switched" once; a tab closed leaves the session going', async () => {
+      world(); const pc = computer('bench'), one = () => openTab(pc, { page: 'assembly-1.html', station: 'assembly', device: 'assembly-1' });
+      const a = one(); a.login('Ana Tester'); await advance(1000); const b = one(); await advance(1000);
+      a.login('Ben Tester'); await advance(70000);
+      eq(open_().map(d => d.person), ['Ben Tester'], dumpSessions()); eq(stationDocs().filter(d => d.person === 'Ana Tester').length, 1, 'one session for Ana'); eq(stationDocs().find(d => d.person === 'Ana Tester').endReason, 'switched');
+      eq(stationDocs().filter(d => d.person === 'Ben Tester').length, 1, 'one session for Ben, not one per tab: ' + dumpSessions());
+      a.close(); await advance(20 * MIN); eq(open_().map(d => d.person), ['Ben Tester'], 'the other tab keeps the session going after one tab is closed: ' + dumpSessions()); ok(open_()[0].lastSeenAt > wall() - 6 * MIN, 'and keeps beating it');
+      eq(a.errors.concat(b.errors), []);
     });
     await check('hostile people: a PIN, a respelled task, an odd task or a name with digits never makes a session of the wrong shape', async () => {
       world(); const pc = computer('bench'), tab = mk(pc);
@@ -1145,6 +1195,20 @@ async function scanner() {
       tab = desk(pc); await advance(MIN); await flushAct();
       const m = mdocs(); eq(m.length, 2); ok(m.every(d => d.person === T.B), 'credited to the person who scanned (the event was written when the scan arrived): ' + m.map(d => d.person));
       await advance(5 * MIN); eq(mdocs().length, 2, 'sent once');
+    });
+    await check('two computers at the Welding station receive the same phone scan: ONE matched event, credited to the Matching person whichever computer reaches the server first', async () => {
+      for (const first of ['welder', 'matcher']) {
+        world(); const w = desk(computer('benchW')), m = desk(computer('benchM'));
+        w.login(T.A, 'welding'); m.login(T.B, 'matching'); await advance(MIN);
+        const slow = first === 'welder' ? m : w; slow.hold = rec => rec.body && Array.isArray(rec.body.activity);
+        const at = wall(); w.scan('3521001101', { at, id: 'twopc1' }); m.scan('3521001101', { at, id: 'twopc1' });
+        await flushAct(); await slow.release(); await advance(2000);
+        const d = mdocs(); eq(d.length, 1, `${first} first: one event: ` + JSON.stringify(d.map(x => [x.person, x.unattributed])));
+        eq(d[0].person, T.B, `${first} first: credited to the Matching person: ${d[0].person}`); ok(!d[0].unattributed, `${first} first: not unattributed`);
+        const r = cur.get('Efficiency_Daily', `${TODAY}__${T.B}`), u = cur.get('Efficiency_Daily', `${TODAY}__Unattributed`);
+        ok(r && r.stations.welding.matched === 1, `${first} first: Ray's rollup counts it: ` + JSON.stringify(r && r.stations.welding)); ok(!u || !u.stations.welding || !u.stations.welding.matched, `${first} first: nothing counted as unattributed: ` + JSON.stringify(u && u.stations));
+        const L = await board({ op: 'live' }), ws = (L.body.stations || []).find(x => x.key === 'welding') || {}; eq(ws.today && ws.today.matched, 1, `${first} first: the board counts one matched scan`); eq(ws.today && ws.today.unattributed, 0, `${first} first: and none unattributed`);
+      }
     });
     await check('the scan is credited by who was signed in at the SCAN time when the phone sent it late (offline replay)', async () => {
       world(); const pc = computer('bench'), tab = desk(pc);
