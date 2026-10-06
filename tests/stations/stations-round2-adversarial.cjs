@@ -325,6 +325,8 @@ function openTab(pc, o = {}) {
   };
   tab.who = () => (o.multi ? JSON.parse(pc.ls('fx_people') || '[]') : (pc.ls('employee_id') && pc.ls('employee_name') ? [{ name: pc.ls('employee_name') }] : []));
   tab.input = (type = 'pointerdown') => { const E = /^key/.test(type) ? w.KeyboardEvent : /^(mouse|click|pointer|wheel)/.test(type) ? w.MouseEvent : w.Event; w.document.body.dispatchEvent(new E(type, { bubbles: true, cancelable: true })); };
+  /** a person working at the page: a tap every `every` ms (default 4 minutes) until the tab is closed; for tests that are not about idleness */
+  tab.typing = (every = 4 * 60000) => { w.setInterval(() => { try { tab.input(); } catch (_) {} }, every); return tab; };
   tab.hide = () => { tab.hidden = true; w.document.dispatchEvent(new w.Event('visibilitychange')); };
   tab.show = () => { tab.hidden = false; w.document.dispatchEvent(new w.Event('visibilitychange')); w.dispatchEvent(new w.Event('focus')); };
   tab.setOnline = on => { tab.online = on; w.dispatchEvent(new w.Event(on ? 'online' : 'offline')); };
@@ -387,6 +389,13 @@ async function hostile() {
       const dv = SESS({ device: '../../etc/passwd\u0000<b>' }); await sess(dv); ok(/^[\w .:-]*$/.test(sdoc(dv.id).device), 'device is cleaned: ' + sdoc(dv.id).device);
       for (const d of stationDocs()) { ok(!/\d{4}/.test(d.person) && /\p{L}/u.test(d.person), `stored person ${JSON.stringify(d.person)}`); ok(!d.employeeId || !/^\d+$/.test(d.employeeId), 'no digits-only employee id stored'); }
       ok(!cur.dump().includes(PIN), 'the PIN is nowhere in the store');
+    });
+    await check('login door: a stored name with markup comes back without angle brackets (nine station pages put the name into a toast as html); an all-markup name is "not on the list"', async () => {
+      const st = freshKeep(); const P3 = '135792', P4 = '246813';
+      st.put('Brites_Orders', 'Employee Numbers', { [P3]: 'Evil <img src=x onerror="alert(1)"> Name', [P4]: '<<>>' });
+      const a = await doorPost({ pinLogin: P3 }); ok(a.status === 200 && a.body.ok === true, 'a known number: ' + JSON.stringify(a.body));
+      ok(!/[<>]/.test(a.body.name) && /Evil/.test(a.body.name) && /Name/.test(a.body.name), 'the name has no angle brackets: ' + JSON.stringify(a.body.name));
+      const b = await doorPost({ pinLogin: P4 }); ok(b.status === 200 && b.body.ok === false, 'a name of only angle brackets is nobody: ' + JSON.stringify(b.body));
     });
     await check('every door: a body that is not an object is a 4xx, never a 5xx', async () => {
       freshKeep(); const bad = [];
