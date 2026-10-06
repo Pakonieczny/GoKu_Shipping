@@ -1403,6 +1403,7 @@ function metalToBadge(label){
     window.isEmployeeLoggedIn = false; // We'll use this to guard the real-time listener
         let lastScanProcessed = null;      // 🔑 remember most-recent scanned order
         let scanRelayOn = false, scanQueue = null;   // the relay listener is attached once per page load; its scans wait in scanQueue
+        const RELAY_RECOVER_MS = 10 * 60000, RELAY_SEEN_KEY = "assemblyRelaySeen.assembly-scan-4";   // recoverWaitingScan(), below
 
     /********************************************************
      * Base URL & Global Variables
@@ -3670,7 +3671,8 @@ function metalToBadge(label){
         scanQueue = StationScanQueue.create({
           device: "assembly-4",
           signedIn: () => window.isEmployeeLoggedIn === true,
-          run: processScannedOrder,
+          /* a recovered scan (below) that is more than 10 minutes old when somebody finally signs in is not loaded for them */
+          run: (order, item) => item && /^rec/.test(String(item.s || "")) && Date.now() - Number(item.at || 0) > RELAY_RECOVER_MS ? undefined : processScannedOrder(order),
           /* the red CANCELLED alert is up: the waiting scans load once Understood is clicked */
           hold: fn => !!(window.StationTimeline && StationTimeline.afterAlert && StationTimeline.afterAlert(fn))
         });
@@ -3682,8 +3684,9 @@ function metalToBadge(label){
       db.collection("Brites_Orders")
         .doc("assembly-scan-4")
         .onSnapshot(function relay(docSnap) {
-          /* ignore Firestore’s first delivery; wait for *changes* */
-          if (firstSnap){ firstSnap = false; return; }
+          /* Firestore’s first delivery is the scan that was left in the document before this page opened: not a change, so not loaded as one,
+             except the one case recoverWaitingScan() checks; then wait for *changes* */
+          if (firstSnap){ firstSnap = false; recoverWaitingScan(docSnap); return; }
 
           if (docSnap.exists){
             const data = docSnap.data();
@@ -3693,7 +3696,7 @@ function metalToBadge(label){
               if (!scanQueue && !window.isEmployeeLoggedIn) return;   // (queue script missing: as before, nobody signed in = nothing to do)
               if (orderNumber === lastScanProcessed) return;   // duplicate → ignore
               lastScanProcessed = orderNumber;                 // remember newest hit
-              if (scanQueue) scanQueue.offer(orderNumber);     // kept: loads now when signed in, else right after the next sign-in
+              if (scanQueue) { scanQueue.offer(orderNumber); relayStampSeen(data); }     // kept: loads now when signed in, else right after the next sign-in
               else processScannedOrder(orderNumber);
 
               /* one-shot: wipe the field so it can’t be reused */
@@ -3704,6 +3707,32 @@ function metalToBadge(label){
             }
           }
         });
+    }
+
+    /* A scan the phone sent while the shop said NOBODY was signed in at this desk (the scanner writes "no desk signed in" in the same write) and that
+       this computer has not met yet is not lost when this page opens within 10 minutes of it. The relay document keeps its last scan, so the
+       first delivery of the listener is either an old scan (often one this or another desk already loaded) or that one scan; it is taken only when
+         · the phone marked it "no desk signed in" (so no desk could have loaded it), and
+         · it was sent less than 10 minutes ago (never a guess about an older one), and
+         · this browser has not already handled that very scan (its time stamp is remembered in localStorage here; where the browser cannot keep it
+           the scan is NOT recovered, so a reload can never load it twice).
+       It then waits in the same queue as any scan that arrives while nobody is signed in and loads at the next sign-in, credited to the person who
+       signs in, but only if that is still within 10 minutes of the scan (see run above); a later one is dropped, not loaded for someone else. */
+    function relayStampSeen(data){ try { const st = String((data && data["Shipping Label Timestamps"]) || ""); if (st) localStorage.setItem(RELAY_SEEN_KEY, st); } catch (_) {} }
+    function recoverWaitingScan(docSnap){
+      try {
+        if (!scanQueue || !docSnap || !docSnap.exists) return;
+        const data = docSnap.data() || {}, order = String(data["Order Number"] || "").trim(), stamp = String(data["Shipping Label Timestamps"] || ""), sentAt = Date.parse(stamp);
+        if (!order || !(sentAt > 0) || !/no desk signed in/i.test(String(data["Brites Messages"] || ""))) return;
+        const age = Date.now() - sentAt;
+        if (age > RELAY_RECOVER_MS || age < -120000) return;                      // older than 10 minutes (or a phone clock far ahead): not guessed
+        let seen = null;
+        try { localStorage.setItem(RELAY_SEEN_KEY + ".probe", "1"); localStorage.removeItem(RELAY_SEEN_KEY + ".probe"); seen = localStorage.getItem(RELAY_SEEN_KEY) || ""; } catch (_) { return; }   // no usable storage: no recovery
+        if (seen === stamp || order === lastScanProcessed) return;                // this browser has handled it already
+        lastScanProcessed = order;                                                // the same code again from the phone meanwhile is this scan
+        relayStampSeen(data);
+        scanQueue.offer(order, { "Staff Note": JSON.stringify({ v: 1, id: "rec" + (sentAt % 1e9), at: sentAt, sent: Date.now() }) });   // the scan's own time; "rec…" marks it as recovered for the check in run
+      } catch (_) {}
     }
 
     /* Loads ONE phone-scanned order exactly as a typed one (the fields as the Paste button leaves them, then Enter). It resolves

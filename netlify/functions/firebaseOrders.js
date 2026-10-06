@@ -46,6 +46,25 @@ const activityFlood = { seen: new Map(), PER_MIN: 1500, allow: flood.allow };
 /* and for the live layer's keep-alives (station-activity.js working/idle): a station sends about two a minute */
 const liveFlood = { seen: new Map(), PER_MIN: 600, allow: flood.allow };
 
+/* Desk presence for the phone scanners (assembly-scan-N.html, ?deskFor=assembly-N): "is somebody signed in at this station's desk page right now?"
+   A phone scan counts only when its desk page is open AND somebody is signed in there, and the phone has no sign-in of its own, so it asks. Read
+   only: the sessions the desk page already keeps (Station_Sessions), through the same auto sign-out rules the board uses (settle with write:false:
+   nothing is written or ended here). A session counts only when its page beat in the last 8 minutes (a page beats every 5; a closed or sleeping
+   page stops). The answer is a yes or no and the time, never a name. */
+const DESK_FRESH_MS = 8 * 60000;
+const deskFlood = { seen: new Map(), PER_MIN: 120, allow: flood.allow };
+async function deskSignedIn(device) {
+  const tms = v => (v == null ? 0 : typeof v.toMillis === "function" ? v.toMillis() : v instanceof Date ? v.getTime() : Number.isFinite(+v) ? +v : 0);
+  const now = Date.now();
+  let snap;
+  try { snap = await col("Station_Sessions").where("device", "==", device).where("endAt", "==", null).limit(25).get(); }
+  catch (_) { snap = await col("Station_Sessions").where("endAt", "==", null).limit(300).get(); }   // (the same single-field query the sweep makes)
+  const rows = snap.docs.map(d => Object.assign({ id: d.id }, d.data() || {}))
+    .filter(r => r.station === "assembly" && r.device === device && !tms(r.endAt) && now - Math.max(tms(r.lastSeenAt), tms(r.startAt)) < DESK_FRESH_MS);
+  await require("./_stationAutoSignout").settle({ db, prefix: PREFIX, now, write: false }, rows);
+  return rows.some(r => !tms(r.endAt));
+}
+
 /* The stations' sign-in sessions (station-session.js): one document per session in Station_Sessions, from sign-in to
    sign-out, for one person on one computer at one station or page:
      { id, person, employeeId, station, device, computerId, computerLabel, startAt, lastSeenAt, endAt, endReason, minutes }
@@ -689,6 +708,16 @@ exports.handler = async (event) => {
             orderNumbers : snap.docs.map((d) => d.id)
           })
         };
+      }
+
+      /* ?deskFor=assembly-N → { signedIn } is somebody signed in at that Assembly desk page now (the phone scanner asks after a scan, so the
+         assembler is told when nothing will be recorded). A yes or no, never a name; reads only. */
+      if (event.queryStringParameters?.deskFor) {
+        const dev = String(event.queryStringParameters.deskFor).trim();
+        if (!/^assembly-[1-9]\d?$/.test(dev)) return { statusCode: 400, headers: CORS, body: JSON.stringify({ success: false, error: "not an Assembly desk" }) };
+        if (!deskFlood.allow(event, 1)) return { statusCode: 429, headers: CORS, body: JSON.stringify({ success: false, error: "too many questions, try again in a minute" }) };
+        const signedIn = await deskSignedIn(dev);
+        return { statusCode: 200, headers: Object.assign({ "Cache-Control": "no-store" }, CORS), body: JSON.stringify({ success: true, device: dev, signedIn, now: Date.now() }) };
       }
 
       /* Single-order fetch (legacy path) */
