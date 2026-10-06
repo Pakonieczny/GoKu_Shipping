@@ -635,6 +635,14 @@ fs.mkdirSync(SHOTS, { recursive: true });
       const pv = await P.personPage(PEOPLE.laserApp, { settle: 3500, range: 'day' }); await P.back();
       assert(/Signed out after 1 hour without input/.test(pv.text) && !/after 10 minutes without input/.test(pv.text), 'the person page of ' + PEOPLE.laserApp + ' says: "' + pv.where + '" · ' + (/Signed out[^.]{0,60}/.exec(pv.text) || ['(nothing about a sign-out)'])[0]);
     });
+    await check('C-POLICY', 'the pages carry the table of Addendum 2 and its words: Welding closes at 17:00 only, Laser one hour (30 minutes from five), the rest ten minutes', ['AD3'], async () => {
+      const r = await S.pages.laser.evaluate(() => ({ w: StationSession.policy('welding'), l: StationSession.policy('laser'), d: StationSession.policy('assembly'),
+        words: [StationSession.notice('idle', 'laser'), StationSession.notice('closing', 'laser'), StationSession.notice('closing', 'welding'), StationSession.notice('idle', 'assembly'), StationSession.notice('closing', 'assembly')] }));
+      eq(r.w, { idleMin: 0, idleMinAfter17: 0, closeAt17: 'always' }, 'the Welding row');
+      eq(r.l, { idleMin: 60, idleMinAfter17: 30, closeAt17: 'idleWindow' }, 'the Laser row');
+      eq(r.d, { idleMin: 10, idleMinAfter17: 10, closeAt17: 'idleWindow' }, 'the default row');
+      eq(r.words, ['Signed out after 1 hour without input.', 'Signed out at 5:00 pm after 30 minutes without input.', 'Signed out at 5:00 pm.', 'Signed out after 10 minutes without input.', 'Signed out at 5:00 pm.'], 'the notices');
+    });
     await check('C-WELD1', 'Welding has no idle sign-out: both people (Welding and Matching) are still signed in more than an hour after the last input, on the page and in the records', OWN, async () => {
       const bad = [];
       for (const c of keptCrew.filter(c => c.k === 'weld')) { const s = await sessionFor(c.person, c.device, c.task); if (!s || s.endAt != null) bad.push(c.person + ' (' + c.task + ') was signed out' + (s ? ' "' + s.endReason + '"' : '')); }
