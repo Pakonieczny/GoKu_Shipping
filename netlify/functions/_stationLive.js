@@ -21,6 +21,7 @@
 "use strict";
 const LIVE = "Station_Live";
 const { STATIONS } = require("./_orderTimeline");           // one list of stations for the timeline, the sessions, the activity and this
+const { displayStation } = require("./_activityKinds");     // ONE Sorting station: the stored keys "sorter" (Sorter app) and "qr" (QR Printer page) are shown as "sorting"; history keeps its keys
 
 const KEEPALIVE_MS = 30000;        // what the browser does (station-activity.js); told to the console in the answer
 const STALE_MS = 180000;           // a document with no keep-alive for this long is not shown
@@ -29,20 +30,21 @@ const MAX_BODY_CHARS = 8000, MAX_PIECES = 24, MAX_AGE_MS = 12 * 3600e3, SESSION_
 const TTL = { live: 2000, sessions: 15000, today: 20000, found: 15 * 60000, miss: 60000 };
 const LIM = { live: 200, sessions: 300, rollups: 200 };
 
-/* what the console lists, in order: key, label (as StationSession shows it), the pages that make up the station */
+/* what the console lists, in order: key, label (as StationSession shows it), the pages that make up the station.
+   Sorting is ONE station (Paul, 6 Oct 2026): its pages are the two sorting computers, the Sorter app (nesting) and the QR Printer page. There is no "Sorter" or "QR Printer" station here. */
 const CATALOG = [
-  { key: "sorting", label: "Sorting", devices: [["sorting-1", "Sorting 1"], ["sorting-2", "Sorting 2"]] },
+  { key: "sorting", label: "Sorting", devices: [["sorting-1", "Sorting 1"], ["sorting-2", "Sorting 2"], ["charm-nest-1", "Sorter (nesting)"], ["qr-printer", "QR Printer"]] },
   { key: "welding", label: "Welding", devices: [["weld-1", "Welding"]] },
   { key: "assembly", label: "Assembly", devices: [["assembly-1", "Assembly 1"], ["assembly-2", "Assembly 2"], ["assembly-3", "Assembly 3"], ["assembly-4", "Assembly 4"]] },
   { key: "shipping", label: "Shipping", devices: [["shipping-1", "Shipping 1"], ["shipping-2", "Shipping 2"], ["shipping-3", "Shipping 3"]] },
   { key: "design", label: "Design", devices: [["design", "Design"], ["design-1", "Design 1"], ["design-message", "Design messages"], ["design-message-1", "Design messages 1"]] },
   { key: "laser", label: "Laser", devices: [] },
-  { key: "sorter", label: "Sorter", devices: [["charm-nest-1", "Sorter"]] },
-  { key: "qr", label: "QR Printer", devices: [] },
   { key: "inbox", label: "Inbox", devices: [["etsy-mail-1", "Inbox"]] }
 ];
 const LABELS = Object.fromEntries(CATALOG.map(s => [s.key, s.label]));
-const DEVICE_LABEL = {}; for (const s of CATALOG) for (const [d, l] of s.devices) DEVICE_LABEL[d] = l;
+const DEVICE_LABEL = {}, STATION_DEVICE = {}; for (const s of CATALOG) for (const [d, l] of s.devices) { DEVICE_LABEL[d] = l; STATION_DEVICE[s.key + "|" + d] = l; }
+/** The words for a page at a station: the station's own name for it ("Sorter (nesting)" at Sorting); the Sorter app seen from Laser or Design is "Sorter app". */
+const deviceLabel = (station, dev) => Object.prototype.hasOwnProperty.call(STATION_DEVICE, station + "|" + dev) ? STATION_DEVICE[station + "|" + dev] : dev === "charm-nest-1" ? "Sorter app" : Object.prototype.hasOwnProperty.call(DEVICE_LABEL, dev) ? DEVICE_LABEL[dev] : dev;
 
 /* ── small helpers ── */
 const str = (v, n) => String(v == null ? "" : v).replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim().slice(0, n);
@@ -309,8 +311,9 @@ function readToday(ctx, H) {
     for (const d of snap.docs.slice(0, LIM.rollups)) {
       const v = d.data() || {};
       if (!!v.sandbox !== !!ctx.prefix) continue;                       // (a document of the other store never counts, as in every other reader)
-      for (const [st, x] of Object.entries(v.stations && typeof v.stations === "object" ? v.stations : {})) {
+      for (const [st0, x] of Object.entries(v.stations && typeof v.stations === "object" ? v.stations : {})) {
         if (!x || typeof x !== "object") continue;
+        const st = displayStation(st0);                                   // (counters stored under "sorter" or "qr" add to Sorting)
         const t = by[st] || (by[st] = { parts: 0, orders: 0, scans: 0, lastAt: 0 });
         t.parts += Math.max(0, (Number(x.parts) || 0) - (Number(x.undoParts) || 0));
         t.orders += Math.max(0, (Number(x.orders) || 0) - (Number(x.undoOrders) || 0));
@@ -318,7 +321,7 @@ function readToday(ctx, H) {
         t.lastAt = Math.max(t.lastAt, ms(x.lastAt));
       }
       // the orders the person touched today and where (a scan counts the moment it happens; "orders" above counts only the finished ones)
-      if (v.touched && typeof v.touched === "object") for (const [oid, sts] of Object.entries(v.touched)) if (sts && typeof sts === "object") for (const st of Object.keys(sts)) (touched[st] || (touched[st] = new Set())).add(oid);
+      if (v.touched && typeof v.touched === "object") for (const [oid, sts] of Object.entries(v.touched)) if (sts && typeof sts === "object") for (const st of Object.keys(sts)) (touched[displayStation(st)] || (touched[displayStation(st)] = new Set())).add(oid);
     }
     // A station's orders today = the orders worked there, as the Overview counts them (an order in hand is one the moment it is scanned), never fewer than the finished ones.
     // Counting only the finished ones made the Stations board say 9 where the Overview, the People cards and the person page said 10 while one order was in hand.
@@ -344,7 +347,8 @@ async function op(ctx, body, H) {
     if (!STATIONS.has(v.station) || now - ms(v.beatAt) > STALE_MS) continue;
     if (v.state === "working" && (v.rid || v.title)) {
       const dev = text(v.device, 40);                                    // (a stored device that is a number, or an object, or "constructor" is no device: never shown as it is)
-      cur.push({ station: v.station, person: H.display(v.person), device: dev, deviceLabel: Object.prototype.hasOwnProperty.call(DEVICE_LABEL, dev) ? DEVICE_LABEL[dev] : dev, kind: v.kind === "sheet" ? "sheet" : "order",
+      const stn = displayStation(v.station);                             // (a document of the Sorter app or the QR Printer page is Sorting's)
+      cur.push({ station: stn, person: H.display(v.person), device: dev, deviceLabel: deviceLabel(stn, dev), kind: v.kind === "sheet" ? "sheet" : "order",
         rid: idText(v.rid), orderNumber: idText(v.orderNumber) || idText(v.rid), customer: text(v.customer, 60), title: text(v.title, 80), scannedAt: ms(v.scannedAt) || ms(v.eventAt), beatAt: ms(v.beatAt), since: ms(v.sinceAt) || 0,
         pieces: (Array.isArray(v.pieces) ? v.pieces : []).slice(0, MAX_PIECES).map(p => ({ id: str(p && p.id, 40), label: str(p && p.label, 60), sku: str(p && p.sku, 60), listingId: str(p && p.listingId, 20), size: str(p && p.size, 6) })),
         pieceCount: Math.max(0, Number(v.pieceCount) || 0), note: text(v.note, 80) });
@@ -354,33 +358,37 @@ async function op(ctx, body, H) {
   const dressErrors = cur.length ? await dress(ctx, cur) : [];
   errors.push(...dressErrors);
 
-  // 2 · who is signed in (an open session, beat within 15 minutes), one row per person and page
-  const signedIn = [], open = new Map();
+  // 2 · who is signed in (an open session, beat within 15 minutes): `pages` is one row per person and page (the station cards' devices), `signedIn` one row per person and STATION
+  const pages = [], open = new Map();
   for (const s of sr.ok ? sr.value.rows : []) {
     if (!s.person || !hasLetter(s.person) || !STATIONS.has(s.station) || s.endAt) continue;
     const last = Math.max(s.startAt, s.lastSeenAt);
     if (!(s.startAt > 0) || now - last >= SESSION_GONE_MS) continue;
-    const name = H.display(s.person), k = `${s.station}|${s.device}|${name}`, had = open.get(k);
+    const stn = displayStation(s.station);                              // (a session of the Sorter app or the QR Printer page is Sorting's; one of a Laser or Design person is stored as laser or design and stays there)
+    const name = H.display(s.person), k = `${stn}|${s.device}|${name}`, had = open.get(k);
     if (had) { had.since = Math.min(had.since, s.startAt); had.lastSeenAt = Math.max(had.lastSeenAt, last); continue; }
-    const row = { name, stationKey: s.station, device: s.device, since: s.startAt, lastSeenAt: last };
-    open.set(k, row); signedIn.push(row);
+    const row = { name, stationKey: stn, device: s.device, since: s.startAt, lastSeenAt: last };
+    open.set(k, row); pages.push(row);
   }
   // a person working at a page whose session is not in today's list (the sorter's laser station has none): shown as signed in there while they work
-  for (const c of cur) { const k = `${c.station}|${c.device}|${c.person}`; if (!open.has(k)) { const r = { name: c.person, stationKey: c.station, device: c.device, since: c.since || c.scannedAt, lastSeenAt: c.beatAt }; open.set(k, r); signedIn.push(r); } }
-  signedIn.sort((a, b) => a.since - b.since || (a.name < b.name ? -1 : 1));
+  for (const c of cur) { const k = `${c.station}|${c.device}|${c.person}`; if (!open.has(k)) { const r = { name: c.person, stationKey: c.station, device: c.device, since: c.since || c.scannedAt, lastSeenAt: c.beatAt }; open.set(k, r); pages.push(r); } }
+  pages.sort((a, b) => a.since - b.since || (a.name < b.name ? -1 : 1));
+  // one person at two pages of one station (the Sorter app and a sorting computer) is ONE person signed in at that station: never listed or counted twice
+  const signedIn = [], oneAt = new Map();
+  for (const r of pages) { const k = `${r.stationKey}|${r.name}`, had = oneAt.get(k); if (had) { had.since = Math.min(had.since, r.since); had.lastSeenAt = Math.max(had.lastSeenAt, r.lastSeenAt); continue; } const row = Object.assign({}, r); oneAt.set(k, row); signedIn.push(row); }
 
   // 3 · the stations
   const today = tr.ok ? tr.value.by : {}, stations = [];
   for (const s of CATALOG) {
-    const mine = cur.filter(c => c.station === s.key), folks = signedIn.filter(p => p.stationKey === s.key);
+    const mine = cur.filter(c => c.station === s.key), folks = pages.filter(p => p.stationKey === s.key);
     const people = [...new Set(folks.map(p => p.name).concat(mine.map(c => c.person)))];
     const devs = new Map(s.devices.map(([d, l]) => [d, { device: d, label: l, state: "offline", person: "", since: 0 }]));
-    for (const p of folks) { const x = devs.get(p.device) || { device: p.device, label: DEVICE_LABEL[p.device] || p.device, state: "offline", person: "", since: 0 }; devs.set(p.device, x); x.state = "idle"; x.person = p.name; x.since = p.since; }
+    for (const p of folks) { const x = devs.get(p.device) || { device: p.device, label: deviceLabel(s.key, p.device), state: "offline", person: "", since: 0 }; devs.set(p.device, x); x.state = "idle"; x.person = p.name; x.since = p.since; }
     for (const c of mine) { const x = devs.get(c.device) || { device: c.device, label: c.deviceLabel, state: "offline", person: "", since: 0 }; devs.set(c.device, x); x.state = "working"; x.person = c.person; x.since = c.since || x.since; }
     const t = today[s.key] || (tr.ok ? { parts: 0, orders: 0, scans: 0, lastAt: 0 } : { parts: null, orders: null, scans: null, lastAt: 0 });   // (today's rollups could not be read: the counts are unknown, a dash, never a 0)
     let lastEventAt = t.lastAt;
     for (const c of mine) lastEventAt = Math.max(lastEventAt, c.scannedAt);
-    for (const v of idleLive) if (v.station === s.key) lastEventAt = Math.max(lastEventAt, ms(v.idleAt) || ms(v.eventAt));
+    for (const v of idleLive) if (displayStation(v.station) === s.key) lastEventAt = Math.max(lastEventAt, ms(v.idleAt) || ms(v.eventAt));
     stations.push({ key: s.key, label: s.label, state: mine.length ? "working" : folks.length ? "idle" : "offline", people,
       current: mine.map(c => ({ id: `${c.station}__${c.device}__${c.person}`, person: c.person, device: c.device, deviceLabel: c.deviceLabel, kind: c.kind, rid: c.rid, orderNumber: c.orderNumber, customer: c.customer, title: c.title,
         scannedAt: c.scannedAt, beatAt: c.beatAt, thumbUrl: c.thumbUrl, photoUrl: c.photoUrl, vectorUrl: c.vectorUrl, qr: c.qr, pieces: c.pieces, pieceCount: c.pieceCount, note: c.note })),

@@ -62,15 +62,16 @@ const validDay = s => typeof s === "string" && DAY_RE.test(s) && addDays(s, 0) =
 const daysBetween = (a, z) => Math.round((Date.parse(z + "T00:00:00Z") - Date.parse(a + "T00:00:00Z")) / 86400000) + 1;
 const maxDay = (a, b) => a > b ? a : b;
 const median = list => { if (!list.length) return null; const s = list.slice().sort((x, y) => x - y), m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; };
-const STATION_LABEL = { sorting: "Sorting", welding: "Welding", assembly: "Assembly", shipping: "Shipping", design: "Design", laser: "Laser", sorter: "Sorter", qr: "QR", inbox: "Inbox" };
+const { displayStation } = require("./_activityKinds");   // ONE Sorting station: the stored keys "sorter" and "qr" are shown as "sorting" (history keeps its keys)
+const STATION_LABEL = { sorting: "Sorting", welding: "Welding", assembly: "Assembly", shipping: "Shipping", design: "Design", laser: "Laser", inbox: "Inbox" };
 const stLabel = s => STATION_LABEL[s] || (s ? s.charAt(0).toUpperCase() + s.slice(1) : "a station");
 const dur = t => { const m = Math.max(0, Math.round(t / 60000)); if (m < 60) return m + " min"; const h = Math.floor(m / 60); if (h < 48) return h + " h" + (m % 60 ? " " + (m % 60) + " min" : ""); return Math.round(h / 24) + " days"; };
 /* the route of an order through the four core stations (the console's CORE list); a later scan at an EARLIER one is a "came back" */
 const ROUTE = { sorting: 1, welding: 2, assembly: 3, shipping: 4 };
 /* where the logged name is typed (not a PIN sign-in), and where a phone's scan is credited to the desktop's signed-in person */
-const TYPED = new Set(["sorter", "laser", "design", "sorting"]);
+const TYPED = new Set(["laser", "design", "sorting"]);
 const PHONE = new Set(["sorting", "welding", "assembly", "shipping", "design"]);
-const WHY_TYPED = "Some of it was done at the Sorter, Laser, Design or Sorting stations, where the name is typed, not signed in with a PIN.";
+const WHY_TYPED = "Some of it was done at the Sorting, Laser or Design stations, where the name is typed, not signed in with a PIN.";
 const WHY_PHONE = "Phone scans are credited to the desktop's signed-in person.";
 /* the sorter's Review card names, in plain words (charm-nest-bridge.js KIND_WORDS) */
 const REVIEW_WORDS = { customOrder: "custom order", needsMaterial: "metal choice", needsMapping: "options", unmatchedSku: "unknown SKU", blockedSku: "blocked SKU", missingSize: "size", oversize: "too big", fontMissing: "font", engraveWords: "engraving words", notRepresentable: "characters", flipFailed: "flip", placement: "placement", orderChanged: "order changed", heldOrder: "held order" };
@@ -237,7 +238,7 @@ function eventRow(id, d, A) {
   const person = cleanName(d.person), action = String(d.action || "");
   if (!okName(person) || !action || !!d.sandbox !== A.sandbox) return null;
   const at = ms(d.at), tsMs = ms(d.ts), serverAt = ms(d.serverAt) || tsMs || at;
-  return { id: String(d.id || id || "").slice(0, 100), at, k: tsMs || serverAt, person, station: String(d.station || ""), action, orderId: digits(d.orderId),
+  return { id: String(d.id || id || "").slice(0, 100), at, k: tsMs || serverAt, person, station: displayStation(String(d.station || "")), action, orderId: digits(d.orderId),
     orders: num(d.orders) >= 1 ? 1 : 0, parts: Math.max(0, Math.floor(num(d.parts))), detail: scrub(d.detail), seq: num(d.seq), day: validDay(d.day) ? d.day : nyDayHour(at || A.now).day };
 }
 const byCommit = (a, b) => a.k - b.k || a.seq - b.seq || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
@@ -330,7 +331,7 @@ function aggregate(A, docs, key, from, to) {
     if (d.ixv !== 1) a.ixv = false;                                  // one spelling without the marker makes the whole day "not counted"
     for (const [s, v] of Object.entries(d.stations && typeof d.stations === "object" ? d.stations : {})) {
       if (!/^[a-z][\w-]{0,19}$/.test(s) || s in Object.prototype || !v || typeof v !== "object") continue;
-      const t = a.st[s] || (a.st[s] = zero());
+      const ds = displayStation(s), t = a.st[ds] || (a.st[ds] = zero());        // (counters stored under "sorter" or "qr" add to Sorting)
       for (const k of BASE) t[k] += Math.max(0, num(v[k]));
       for (const k of K.X_KEYS) t[k] += Math.max(0, num(v[k]));
     }

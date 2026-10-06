@@ -84,6 +84,7 @@ async function sessionWrite(s) {
   const eid = str(s.employeeId, 60), employeeId = /^\d+$/.test(eid) ? "" : eid;   // a PIN is only digits: never kept
   const device = str(s.device, 40).replace(/[^\w .:-]/g, "") || station;
   const computerLabel = str(s.computerLabel, 80);
+  const task = station === "welding" && (s.task === "welding" || s.task === "matching") ? s.task : "";   // the Welding station's task (welding | matching); any other value, or another station: none, as on every old session
   const reason = SESSION_REASONS.has(s.reason) ? s.reason : "signOut";
   const clientAt = Number(s.at);
   const ref = col(SESSION_COLL).doc(id);
@@ -110,7 +111,7 @@ async function sessionWrite(s) {
     const minutes = Math.max(0, Math.round(((endAt != null ? endAt : lastSeenAt) - startAt) / 6000) / 10);
     const doc = prev
       ? { lastSeenAt, endAt, endReason, minutes }
-      : { id, person, employeeId, station, device, computerId, computerLabel, startAt, lastSeenAt, endAt, endReason, minutes };
+      : Object.assign({ id, person, employeeId, station, device, computerId, computerLabel, startAt, lastSeenAt, endAt, endReason, minutes }, task ? { task } : {});
     if (prev && computerLabel && computerLabel !== prev.computerLabel) doc.computerLabel = computerLabel;
     tx.set(ref, doc, { merge: true });
     return [200, { success: true, id, startAt, lastSeenAt, endAt, endReason, minutes, ended: endAt != null }];
