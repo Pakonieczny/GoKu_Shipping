@@ -624,7 +624,8 @@ async function main() {
       const pages = fs.readdirSync(root).filter(f => /\.html$/.test(f)).map(f => [f, fs.readFileSync(path.join(root, f), 'utf8')]).filter(([, s]) => /station-(session|activity|live-order)\.js/.test(s));
       assert(pages.length >= 16, 'pages carrying the helpers: ' + pages.length);
       const tags = { 'station-session.js': new Map(), 'station-activity.js': new Map(), 'station-live-order.js': new Map() };
-      const catalog = new Map(L.CATALOG.flatMap(s => s.devices.map(([d]) => [d, s.key])));
+      const catalog = new Map();                                                // device -> the stations that list it (the Sorter app, charm-nest-1, is Sorting's, Laser's and Design's device since round 2)
+      for (const s of L.CATALOG) for (const [d] of s.devices) catalog.set(d, (catalog.get(d) || new Set()).add(s.key));
       for (const [f, s] of pages) {
         const at = n => { const m = new RegExp('<script[^>]+src=["\']' + n.replace('.', '\\.') + '(\\?v=([^"\']+))?["\']').exec(s); return m ? { i: m.index, v: m[2] || '' } : null; };
         const ses = at('station-session.js'), act = at('station-activity.js'), ord = at('station-live-order.js');
@@ -639,7 +640,7 @@ async function main() {
         }
         const init = /StationSession\.init\(\{\s*station:\s*["'](\w+)["']\s*,\s*device:\s*["']([\w-]+)["']/.exec(s);
         assert(init, f + ': has a StationSession.init with its station and device');
-        assert.equal(catalog.get(init[2]), require(path.join(root, 'netlify/functions/_activityKinds.js')).displayStation(init[1]), f + ': ' + init[1] + '/' + init[2] + ' is a station and device the console lists');
+        assert((catalog.get(init[2]) || new Set()).has(require(path.join(root, 'netlify/functions/_activityKinds.js')).displayStation(init[1])), f + ': ' + init[1] + '/' + init[2] + ' is a station and device the console lists');
       }
       for (const [n, m] of Object.entries(tags)) {
         const set = new Set(m.values());
