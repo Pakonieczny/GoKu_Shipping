@@ -809,6 +809,7 @@ async function pageIdle(browser, spec) {
   assert.strictEqual(end.lastInputAt, li);
   assert(end.at <= startEv.at + 60000, spec.file + ': ended at the last input, not 10 minutes later');
   await spec.after(page, { li });
+  if (process.env.AD1_SHOTS) { try { await page.screenshot({ path: path.join(process.env.AD1_SHOTS, spec.file.replace(/\.html$/, '') + '-idle.png') }); } catch (_) {} }       // (a picture of the fixture page right after the sign-out, for the report)
   assert.strictEqual(await page.evaluate(() => StationSession.current()), null, spec.file + ': no session runs');
   assert.deepStrictEqual(rec.errors, [], spec.file + ': no page errors: ' + rec.errors.join('; '));
   await ctx.close();

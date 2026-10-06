@@ -55,7 +55,11 @@
  *      and kept for that sign-in, in memory (never stored beyond the sign-in's own record). Unknown, offline, 503 or any other
  *      answer is NOT Admin (fail closed). An Admin gets neither rule; the midnight (New York) sign-out stays for everybody.
  *    Every start, beat and end also carries sentAt (this page's clock when sent) so the server can undo a wrong computer clock. A beat
- *      the server answers `ended: true` with idle or closing signs the person out here the same way (serverEnded).
+ *      the server answers `ended: true` with idle, closing or closed (it ended the session on what it knew, e.g. beats that did not arrive)
+ *      is read against this page's own rules (serverEnded): when they agree the person is signed out the same way; when they do not (the
+ *      person has been working) that session is closed on the record and a new one carries on, so nobody working is thrown out.
+ *    Two tabs of one computer share one sign-in record and its last input: input in either keeps the person in. A computer clock set
+ *      back puts the last input "in the future": it is taken as now, once, so the rule is never held still for hours.
  *    Timing uses Date.now() against stored times on a 10 second tick, on every input that follows a gap, and on
  *      visibilitychange / focus / pageshow / resume (a sleeping computer or a background tab signs the person out at the
  *      right moment and with the right end time); never one long setTimeout.
