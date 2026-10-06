@@ -366,7 +366,8 @@ let MAIN;
   eq(times('Quinn Quiet'), [D2(9), D2(9, 20), null, [], '2026-10-02'], 'a session left quiet closes at its last beat');
   // stations per person (parts desc), minutes = time signed in at that page
   eq(by('Tess Welder').stations, [{ station: 'welding', minutes: 270, parts: 15, scanParts: 20, scans: 5, completes: 4, prints: 0, orders: 5 }]);
-  eq(by('Sam Sorter').stations, [{ station: 'sorting', minutes: 90, parts: 45, scanParts: 45, scans: 30, completes: 30, prints: 0, orders: 30 }]);
+  // (Sorting's orders: 310..314 were finished at the Sorter app AND at sorting-1 = one order each, so 25 distinct orders, the same 25 as the person's total; the 30 completion presses stay 30)
+  eq(by('Sam Sorter').stations, [{ station: 'sorting', minutes: 90, parts: 45, scanParts: 45, scans: 30, completes: 30, prints: 0, orders: 25 }]);
   eq(by('Shane Shipper').stations, [{ station: 'shipping', minutes: 360, parts: 18, scanParts: 20, scans: 4, completes: 3, prints: 2, orders: 4 }]);
   eq(by('José Pérez').stations, [{ station: 'welding', minutes: 30, parts: 4, scanParts: 4, scans: 1, completes: 1, prints: 0, orders: 1 }, { station: 'assembly', minutes: 60, parts: 2, scanParts: 2, scans: 1, completes: 1, prints: 0, orders: 1 }]);
   eq(by('Giovanna').stations, [{ station: 'sorting', minutes: 60, parts: 7, scanParts: 10, scans: 1, completes: 1, prints: 1, orders: 2 }, { station: 'inbox', minutes: 60, parts: 0, scanParts: 0, scans: 0, completes: 1, prints: 0, orders: 0 }]);

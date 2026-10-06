@@ -175,6 +175,9 @@ async function sorterPage(browser, srv, errors, sandbox) {
   page.on('pageerror', e => errors.push(e.message));
   await page.goto(`${srv.sorterOrigin}/charm-nest-1.html`, { waitUntil: 'load' });
   await page.waitForFunction(() => window.CN && window.Orders && window.OrderWin && window.CNAct && window.CNLive && window.StationActivity && window.StationSession && CN.S.cloud.ok === true, null, { timeout: 60000 });
+  // this section is about the Admin's sorter (station `sorter`, laser marks routed to Laser, no role): a non-Admin is asked "Laser or Design?" first
+  // (LD1, R4) and is not signed in for the stations until they answer; that step has its own test, tests/charm-nest/sorter-role-signin.cjs
+  await page.evaluate(() => window.CNRole && CNRole.setAdminLookup(async () => true));
   return { context, page, lives, reqs };
 }
 

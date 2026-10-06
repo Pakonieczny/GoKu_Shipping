@@ -60,7 +60,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
       if (u.hostname !== '127.0.0.1' && u.hostname !== 'localhost') { seen.aborted++; return route.abort(); }
       if (u.pathname.endsWith('/employeeEfficiency')) {
         let b = {}; try { b = JSON.parse(route.request().postData() || '{}'); } catch (_) {}
-        const mine = ['person', 'personOrders', 'live'].includes(b.op), r = mine ? pf.answer(b) : ef.answer(b, route.request().headers());
+        const mine = ['person', 'personOrders', 'live', 'laserSheets'].includes(b.op), r = mine ? pf.answer(b) : ef.answer(b, route.request().headers());
         const d = mine ? pf.delayFor(b) : 0; if (d) await sleep(d);
         return route.fulfill({ status: r.status, contentType: 'application/json', headers: { 'Access-Control-Allow-Origin': '*' }, body: JSON.stringify(r.json) });
       }

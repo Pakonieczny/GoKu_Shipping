@@ -318,17 +318,19 @@ function readToday(ctx, H) {
     for (const d of snap.docs.slice(0, LIM.rollups)) {
       const v = d.data() || {};
       if (!!v.sandbox !== !!ctx.prefix) continue;                       // (a document of the other store never counts, as in every other reader)
+      const fin = {};                                                    // per station of this person: the orders finished (an order finished at the Sorter app and at a sorting page is one order at Sorting: the larger of the pages' counts)
       for (const [st0, x0] of Object.entries(v.stations && typeof v.stations === "object" ? v.stations : {})) {
         if (!x0 || typeof x0 !== "object") continue;
         const st = displayStation(st0);                                   // (counters stored under "sorter" or "qr" add to Sorting)
         const x = KIND.readStationCounters(st, x0);                         // (the Welding station keeps its scans and matched count, never pieces or orders)
         const t = by[st] || (by[st] = { parts: 0, orders: 0, scans: 0, lastAt: 0, matched: 0, unattributed: 0 });
         t.parts += Math.max(0, (Number(x.parts) || 0) - (Number(x.undoParts) || 0));
-        t.orders += Math.max(0, (Number(x.orders) || 0) - (Number(x.undoOrders) || 0));
+        fin[st] = Math.max(fin[st] || 0, Math.max(0, (Number(x.orders) || 0) - (Number(x.undoOrders) || 0)));
         t.scans += Math.max(0, Number(x.scans) || 0);
         const mt = Math.max(0, Number(x.matched) || 0); t.matched += mt; if (v.person === KIND.UNATTRIBUTED) t.unattributed += mt;
         t.lastAt = Math.max(t.lastAt, ms(x.lastAt));
       }
+      for (const [st, n] of Object.entries(fin)) by[st].orders += n;
       // the orders the person touched today and where (a scan counts the moment it happens; "orders" above counts only the finished ones)
       if (v.touched && typeof v.touched === "object") for (const [oid, sts] of Object.entries(v.touched)) if (sts && typeof sts === "object") for (const st of Object.keys(sts)) if (KIND.throughput(displayStation(st))) (touched[displayStation(st)] || (touched[displayStation(st)] = new Set())).add(oid);
     }
@@ -451,6 +453,9 @@ async function op(ctx, body, H) {
     }
     stations.push(row);
   }
+  // the Laser station's sheet times (LS1, R7; _laserSheetTime.js): the last sheet's time and today's average. Its own read, kept 15 s; the card says nothing when it cannot be read.
+  const ls = await safe(require("./_laserSheetTime").liveBlock(ctx, H), "laser sheet times");
+  if (ls.ok) { const L = stations.find(x => x.key === "laser"); if (L) L.laserSheet = ls.value; } else errors.push(ls.label + ": " + ls.error);
   // the inbox card's block (IN1, _employeeInbox.js): today's sent replies, orders, customers and messages (people + unknown, never auto);
   // a read that fails only leaves the block out (the card then draws a dash), it never makes the whole board partial
   try {
