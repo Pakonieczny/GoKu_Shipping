@@ -244,6 +244,14 @@
       if (codeText === lastScanned) return;
       lastScanned = codeText;
 
+      // The same order again within a few seconds (this page reloaded while the QR was still in view, or the camera swung back):
+      // it is one scan, not two. The last accepted scan is kept on this phone, so a reload does not forget it.
+      const nowMs = Date.now(), again = String(codeText).trim();
+      if (again && lastAccepted.n === again && nowMs >= lastAccepted.at && nowMs - lastAccepted.at < DUP_MS) {
+        M.toast({ html: "Already scanned: " + again });
+        return;
+      }
+
       // If audio is unlocked, play the beep using your MP3 with adjusted parameters
       if (audioUnlocked) {
         playBeep();
@@ -264,8 +272,8 @@
       });
 
      M.toast({ html: "Scanned: " + codeText });
-     // Auto fire "Send" logic
-     pushScannedToFirestore(codeText);
+     // Auto fire "Send" logic: the scan is kept on this phone first and leaves it only when the server has it
+     queueScan(codeText);
     }
 
     /*************************************************************
@@ -319,34 +327,121 @@
     const sendBtn = document.getElementById("sendBtn");
     sendBtn.disabled = true; // hidden & disabled, but kept for config integrity
 
-    async function pushScannedToFirestore(codeVal) {
-      if (!codeVal) {
+    /* Every scan is written to the outbox on this phone (localStorage) with its own id and its real scan time, and leaves it only
+       when the server has taken it. Offline, or a server hiccup: it stays, is sent again (on reconnect, on a timer, after a
+       reload of this page), one at a time and in the order scanned, a couple of seconds apart (the relay document holds one scan
+       at a time). The desktop station credits each scan, with its real time, to the people signed in when it arrives (Matching person,
+       or "nobody in Matching"): the phone has no login and never says who. The relay document is the one the page always used:
+       "Order Number" is the plain order number; "Shipping Label Timestamps" is the scan time; "Staff Note" carries { v, id, at, sent }. */
+    const OUTBOX_KEY = "weldScanOutbox.v1";
+    const DUP_MS = 10000, SPACING_MS = 2000, RETRY_MS = [3000, 6000, 12000, 30000], OUTBOX_MAX = 300, OUTBOX_KEEP_MS = 6 * 86400000;
+    let outbox = [], lastAccepted = { n: "", at: 0 }, sending = false, retryTimer = 0, failures = 0;
+
+    function loadOutbox() {
+      try {
+        const d = JSON.parse(localStorage.getItem(OUTBOX_KEY) || "null");
+        if (!d || d.v !== 1) return;
+        const now = Date.now();
+        outbox = (Array.isArray(d.items) ? d.items : [])
+          .filter(it => it && typeof it.id === "string" && typeof it.n === "string" && it.n && Number(it.at) > 1e12 && now - Number(it.at) < OUTBOX_KEEP_MS)
+          .map(it => ({ id: it.id, n: it.n, at: Number(it.at) })).slice(-OUTBOX_MAX);
+        if (d.last && typeof d.last.n === "string" && Number(d.last.at) > 0) lastAccepted = { n: d.last.n, at: Number(d.last.at) };
+      } catch (e) { console.warn("Could not read the outbox:", e); }
+    }
+    function saveOutbox() {
+      try { localStorage.setItem(OUTBOX_KEY, JSON.stringify({ v: 1, items: outbox, last: lastAccepted })); } catch (e) { console.warn("Could not save the outbox:", e); }
+    }
+    function newScanId() { return "s" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
+    const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+    function queueScan(codeVal) {
+      const code = String(codeVal == null ? "" : codeVal).trim();
+      if (!code) {
         M.toast({ html: "No QR code scanned yet!" });
         return;
       }
+      const item = { id: newScanId(), n: code, at: Date.now() };
+      outbox.push(item);
+      if (outbox.length > OUTBOX_MAX) outbox = outbox.slice(-OUTBOX_MAX);
+      lastAccepted = { n: code, at: item.at };
+      saveOutbox();
+      if (outbox.length > 1 || navigator.onLine === false) {
+        M.toast({ html: "Saved on this phone: " + outbox.length + " waiting to send" });
+      }
+      pump();
+    }
+
+    /* one request: { ok } sent · { drop } the server will never take it · neither: keep it and try again */
+    async function sendOne(item, left) {
+      let timer = 0;
       try {
-        M.toast({ html: "Sending to Firestore doc 'weld-scan-1': " + codeVal });
+        if (!failures) M.toast({ html: "Sending to Firestore doc 'weld-scan-1': " + item.n });
         const bodyData = {
           orderNumber: "weld-scan-1",
-          orderNumField: codeVal,
+          orderNumField: item.n,
           clientName: "Scanner Page",
           britesMessages: "(Auto push from weld-scan-1.html)",
-          shippingLabelTimestamps: new Date().toISOString(),
-          employeeName: "ScannerBot"
+          shippingLabelTimestamps: new Date(item.at).toISOString(),
+          employeeName: "ScannerBot",
+          staffNote: JSON.stringify({ v: 1, id: item.id, at: item.at, sent: Date.now(), q: left })
         };
+        const ctl = typeof AbortController === "function" ? new AbortController() : null;
+        if (ctl) timer = setTimeout(() => { try { ctl.abort(); } catch (_) {} }, 15000);
         const response = await fetch("/.netlify/functions/firebaseOrders", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(bodyData)
+          body: JSON.stringify(bodyData),
+          signal: ctl ? ctl.signal : undefined
         });
-        const result = await response.json();
-        if (!response.ok) throw new Error(result.error || "Unknown error from firebaseOrders function");
-        M.toast({ html: "Firestore updated: doc 'weld-scan-1' => " + codeVal });
+        clearTimeout(timer);
+        if (response.ok) { M.toast({ html: "Firestore updated: doc 'weld-scan-1' => " + item.n }); return { ok: true }; }
+        let msg = "";
+        try { msg = (await response.json()).error || ""; } catch (_) {}
+        console.error("Error sending to Firestore:", response.status, msg);
+        if (response.status === 400 || response.status === 413 || response.status === 422) {
+          M.toast({ html: "Error: " + (msg || "Unknown error from firebaseOrders function") });
+          return { drop: true };
+        }
+        return {};
       } catch (err) {
-        M.toast({ html: "Error: " + err.message });
+        clearTimeout(timer);
         console.error("Error sending to Firestore:", err);
+        return {};
       }
     }
+
+    function scheduleRetry() {
+      clearTimeout(retryTimer);
+      retryTimer = setTimeout(pump, RETRY_MS[Math.min(Math.max(failures, 1), RETRY_MS.length) - 1]);
+    }
+    async function pump() {
+      if (sending) return;
+      sending = true;
+      try {
+        while (outbox.length) {
+          if (navigator.onLine === false) { scheduleRetry(); break; }
+          const item = outbox[0], r = await sendOne(item, outbox.length - 1);
+          if (r.ok || r.drop) {
+            failures = 0;
+            outbox = outbox.filter(it => it.id !== item.id);
+            saveOutbox();
+            if (outbox.length) await sleep(SPACING_MS);
+          } else {
+            failures++;
+            if (failures === 1) M.toast({ html: "No connection: " + outbox.length + " scan" + (outbox.length === 1 ? "" : "s") + " saved on this phone, will send when it is back" });
+            scheduleRetry();
+            break;
+          }
+        }
+      } catch (e) { console.error("Outbox error:", e); scheduleRetry(); }
+      sending = false;
+    }
+    // back online, the page shown again, a reload with scans still waiting, and a slow timer as the safety net
+    window.addEventListener("online", () => { failures = 0; clearTimeout(retryTimer); pump(); });
+    document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") pump(); });
+    window.addEventListener("pageshow", () => pump());
+    setInterval(() => { if (outbox.length) pump(); }, 20000);
+    loadOutbox();
 
     /*************************************************************
      * 7) CONFIG SYSTEM FOR LAYOUT REPOSITIONING
@@ -437,6 +532,8 @@
       // Load and apply stored positions
       loadPositionsFromStorage();
       applyPositions();
+      // Scans still waiting on this phone (offline, or the page reloaded mid-send) go on now
+      pump();
       // Start the camera scanning automatically
       startCamera();
       // Hook up "Open Config" button to show config modal

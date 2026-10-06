@@ -15,6 +15,8 @@
 //   6 · the console's view model from the real answers
 //   node tests/stations/efficiency-crosscheck.cjs
 'use strict';
+require(require('path').join(__dirname, '../../netlify/functions/_activityKinds.js')).NO_THROUGHPUT.clear();   // this suite uses 'welding' as a plain fixture station for the generic arithmetic: the Welding station's own rule (not counted in throughput, R2 of stations round 2) is tested in welding-portal.cjs
+
 const path = require('path'), assert = require('assert'), Module = require('module'), vm = require('vm'), fs = require('fs');
 const root = path.join(__dirname, '../..');
 
@@ -364,7 +366,7 @@ let MAIN;
   eq(times('Quinn Quiet'), [D2(9), D2(9, 20), null, [], '2026-10-02'], 'a session left quiet closes at its last beat');
   // stations per person (parts desc), minutes = time signed in at that page
   eq(by('Tess Welder').stations, [{ station: 'welding', minutes: 270, parts: 15, scanParts: 20, scans: 5, completes: 4, prints: 0, orders: 5 }]);
-  eq(by('Sam Sorter').stations, [{ station: 'sorting', minutes: 60, parts: 30, scanParts: 30, scans: 15, completes: 15, prints: 0, orders: 15 }, { station: 'sorter', minutes: 60, parts: 15, scanParts: 15, scans: 15, completes: 15, prints: 0, orders: 15 }]);
+  eq(by('Sam Sorter').stations, [{ station: 'sorting', minutes: 90, parts: 45, scanParts: 45, scans: 30, completes: 30, prints: 0, orders: 30 }]);
   eq(by('Shane Shipper').stations, [{ station: 'shipping', minutes: 360, parts: 18, scanParts: 20, scans: 4, completes: 3, prints: 2, orders: 4 }]);
   eq(by('José Pérez').stations, [{ station: 'welding', minutes: 30, parts: 4, scanParts: 4, scans: 1, completes: 1, prints: 0, orders: 1 }, { station: 'assembly', minutes: 60, parts: 2, scanParts: 2, scans: 1, completes: 1, prints: 0, orders: 1 }]);
   eq(by('Giovanna').stations, [{ station: 'sorting', minutes: 60, parts: 7, scanParts: 10, scans: 1, completes: 1, prints: 1, orders: 2 }, { station: 'inbox', minutes: 60, parts: 0, scanParts: 0, scans: 0, completes: 1, prints: 0, orders: 0 }]);
@@ -387,12 +389,12 @@ let MAIN;
   assert.strictEqual(A.business.totals.parts, A.people.reduce((n, p) => n + p.totals.parts, 0)); assert.strictEqual(A.business.totals.scans, A.people.reduce((n, p) => n + p.totals.scans, 0));
   assert.strictEqual(A.people.reduce((n, p) => n + p.totals.orders, 0), 48, 'the people\'s rows add to 48: OX is on three of them');
   eq(A.business.stations, [
-    { station: 'sorting', parts: 37, scans: 16, orders: 17, peopleNow: [] }, { station: 'welding', parts: 35, scans: 9, orders: 9, peopleNow: [] },
+    { station: 'sorting', parts: 52, scans: 31, orders: 27, peopleNow: [] }, { station: 'welding', parts: 35, scans: 9, orders: 9, peopleNow: [] },
     { station: 'assembly', parts: 12, scans: 4, orders: 5, peopleNow: ['Ann Assembler'] }, { station: 'shipping', parts: 18, scans: 4, orders: 4, peopleNow: ['Shane Shipper'] },
     { station: 'design', parts: 6, scans: 0, orders: 2, peopleNow: [] }, { station: 'laser', parts: 12, scans: 1, orders: 1, peopleNow: [] },
-    { station: 'sorter', parts: 15, scans: 15, orders: 15, peopleNow: [] }, { station: 'inbox', parts: 0, scans: 0, orders: 0, peopleNow: [] }], 'per station, in the stations\' order');
+    { station: 'inbox', parts: 0, scans: 0, orders: 0, peopleNow: [] }], 'per station, in the stations\' order');
   assert.strictEqual(A.business.stations.reduce((n, s) => n + s.parts, 0), A.business.totals.parts, 'the stations add up to the business'); assert.strictEqual(A.business.stations.reduce((n, s) => n + s.scans, 0), A.business.totals.scans);
-  eq(A.business.perHour, { sorting: hr({ 8: 7, 9: 28, 10: 2 }), welding: hr({ 8: 10, 10: 18, 11: 3, 14: 4 }), assembly: hr({ 7: 10, 8: 2 }), shipping: hr({ 8: 3, 13: 5, 14: 10 }), design: hr({ 9: 6 }), laser: hr({ 10: 12 }), sorter: hr({ 9: 7, 10: 8 }) }, 'per station per hour; the inbox produced nothing and is not drawn');
+  eq(A.business.perHour, { sorting: hr({ 8: 7, 9: 35, 10: 10 }), welding: hr({ 8: 10, 10: 18, 11: 3, 14: 4 }), assembly: hr({ 7: 10, 8: 2 }), shipping: hr({ 8: 3, 13: 5, 14: 10 }), design: hr({ 9: 6 }), laser: hr({ 10: 12 }) }, 'per station per hour; the inbox produced nothing and is not drawn');
   const bizHours = new Array(24).fill(0); for (const arr of Object.values(A.business.perHour)) arr.forEach((v, i) => { bizHours[i] += v; });
   eq(bizHours, A.people.reduce((acc, p) => acc.map((v, i) => v + p.perHour[i]), new Array(24).fill(0)), 'the business hours are the people\'s hours'); assert.strictEqual(bizHours.reduce((a, b) => a + b, 0), 135);
   const tr = A.business.trend; assert.strictEqual(tr.length, 14);
