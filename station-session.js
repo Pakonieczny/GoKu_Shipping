@@ -6,11 +6,18 @@
  *                          labelHost?, labelCss?, sandbox? })
  *        station: a key of STATIONS in _orderTimeline.js (sorting, welding, assembly, shipping, design, laser, sorter,
  *        qr, inbox); device: the page ("weld-1", "assembly-2", …). person(): who is signed in on this page now (null:
- *        nobody). signOut(reason): the page clears its own login keys and shows its own sign-in screen or PIN box,
+ *        nobody; { name, id, pending: true }: named but not signed in yet, e.g. the Sorter's "Laser or Design?" is not answered: no
+ *        session, but the name gets its sign-in day, so the day turning signs it out). signOut(reason): the page clears its own login keys and shows its own sign-in screen or PIN box,
  *        keeping the work on screen. labelHost (optional, element or selector): where the tiny "Computer: …" line and
  *        its one-time name field go; labelCss: extra inline CSS for that line.
  *    StationSession.signedIn({ name, id })   // call from the page's login success
  *    StationSession.signedOut(reason)        // call from the page's own sign-out ("signOut" unless said otherwise)
+ *
+ *  A ROLE (the Sorter app, Paul 6 Oct: a non-Admin person is asked "Laser or Design?" once per sign-in): init({ role: () => "laser" |
+ *  "design" | "" }). While it answers laser or design, the session's station IS that role (written under station `laser` or
+ *  `design`, device unchanged, plus a `role` field) and every event of station-activity.js carries it; "" is the page's own
+ *  station (the Admin, and every page without a role). StationSession.roleChanged() (or signedIn again) ends the session under
+ *  the old role ("switched") and starts the one under the new, so both are tracked on their own. StationSession.role() says it.
  *
  *  Pages with more than one person at once (the Welding station: one welds, one matches, same page) pass multi: true and
  *  people: () => [{ name, task }] (who is signed in, under which task) instead of person(). Then, and only then:
@@ -68,7 +75,8 @@
     laser: "Laser", sorter: "Sorter", qr: "QR Printer", inbox: "Inbox" };
   const K = { computer: "station_computer_id", name: "station_computer_name", day: "station_signin_day",
     days: "station_signin_days", unsent: "station_session_unsent" };
-  const cfg = { station: "", device: "", person: null, signOut: null, labelHost: null, labelCss: "", sandbox: false,
+  const ROLES = new Set(["laser", "design"]);
+  const cfg = { station: "", device: "", person: null, role: null, signOut: null, labelHost: null, labelCss: "", sandbox: false,
     multi: false, people: null, creditTask: "matching" };
   let ready = false, cur = null, seen = "", quiet = "", tickT = 0, midT = 0, memId = "", labelBox = null;
   const many = new Map(), manyQuiet = new Set();        // multi pages: running sessions by person and task; people the page has not dropped yet
@@ -158,9 +166,17 @@
     try {
       const p = cfg.person ? cfg.person() : null;
       const name = p && cleanName(p.name);
-      return name ? { name, id: safeId(p.id) } : null;
+      return name ? (p.pending ? { name, id: safeId(p.id), pending: true } : { name, id: safeId(p.id) }) : null;
     } catch (_) { return null; }
   }
+  /** the role the page says is in force ("laser" | "design"), else "" (the page's own station) */
+  function roleNow() {
+    try { const r = cfg.role ? String(cfg.role() || "") : ""; return ROLES.has(r) ? r : ""; } catch (_) { return ""; }
+  }
+  /** the station a session started now is written under: the role when there is one, else the page's station */
+  const stationNow = () => roleNow() || cfg.station;
+  /** the station a running session was started under (sessions kept from before roles have none: the page's) */
+  const stationOf = s => (s && s.station) || cfg.station;
   function markDay(name, day) {
     lsSet(K.day, day);
     const m = lsJson(K.days, {}); const o = m && typeof m === "object" ? m : {};
@@ -193,8 +209,8 @@
   /* ── the door ── */
   const URL_ = () => "/.netlify/functions/firebaseOrders" + (cfg.sandbox ? "?sandbox=1" : "");
   function body(s, event, reason, at) {
-    const o = { id: s.id, event, person: s.name, employeeId: s.eid || "", station: cfg.station, device: cfg.device,
-      computerId: computerId(), computerLabel: label(), at: at || Date.now(), reason: reason || undefined, task: s.task || undefined };
+    const o = { id: s.id, event, person: s.name, employeeId: s.eid || "", station: stationOf(s), device: cfg.device,
+      computerId: computerId(), computerLabel: label(), at: at || Date.now(), reason: reason || undefined, task: s.task || undefined, role: s.role || undefined };
     const li = inputOf(s); if (li) o.lastInputAt = li;          // the time of the last input (ms), never what it was
     o.sentAt = Date.now();                                      // this page's clock at the moment of sending: the server undoes a wrong computer clock with it
     return o;
@@ -366,16 +382,18 @@
   function begin(p, resume) {
     const today = nyDay(), now = Date.now(), r = loadRec();
     if (r && !r.ended) {
-      if (resume && r.name === p.name && r.day === today) {
+      const same = stationOf(r) === stationNow();             // (a session of the other role is not gone on with: it ends, "switched")
+      if (resume && same && r.name === p.name && r.day === today) {
         // (a reload inside the 10 minutes is input and goes on with the session; one after them finds the login lapsed)
         if (lapsedWhileClosed(r, now)) return;
         if (now - (r.lastBeat || 0) < CLOSED_MS) { cur = r; mark(now); cur.li = lastIn; beat(); askAdmin(cur); return; }
       }
-      finish(r, r.name === p.name ? "signOut" : "switched");
+      finish(r, r.name === p.name && same ? "signOut" : "switched");
     }
     mark(now);
+    const role = roleNow();
     cur = { id: `${cfg.device}-${shortId()}-${now.toString(36)}-${rand(4)}`.replace(/[^\w.:-]/g, "_").slice(0, 100),
-      name: p.name, eid: p.id || "", day: today, startAt: now, lastBeat: now, li: now };
+      name: p.name, eid: p.id || "", day: today, startAt: now, lastBeat: now, li: now, station: role || cfg.station, role };
     saveRec(cur); savedLi = now;
     post(body(cur, "start"));
     askAdmin(cur);
@@ -414,7 +432,8 @@
     }
     s.ended = true; s.endReason = reason; s.endAt = at;
     if (s.key !== undefined) { many.delete(s.key); snap.delete(s.key); }       // (a multi page's session: it leaves the running list before it is saved)
-    persist(s);
+    if (s.key !== undefined) persist(s);
+    else { const k = loadRec(); if (!(k && k.id !== s.id && !k.ended)) saveRec(s); }       // (a second tab of this computer that already started the next session keeps it as the page's record: this one's end must not wipe it, or both tabs would start one each; ST2)
     if (s === cur) cur = null;
     admins.delete(adminKey(s.name));                           // the next sign-in asks again
     sendEnd(body(s, "end", reason, at));
@@ -440,6 +459,18 @@
       if (cur && cur.day !== today) { midnight(); return; }
       if (!p) { if (cur) finish(cur, "signOut"); seen = ""; quiet = ""; return; }
       if (p.name === quiet) return;
+      if (p.pending) {          // named but not signed in yet (the Sorter's "Laser or Design?" is not answered): no session, but the day is kept like any sign-in, so the day turning clears the name
+        if (cur) finish(cur, "signOut");
+        if (p.name !== seen) { seen = p.name; markDay(p.name, today); }
+        const dp = dayOf(p.name);
+        if (dp && dp !== today) midnight();
+        return;
+      }
+      if (cur && cur.name === p.name && stationOf(cur) !== stationNow()) {     // the role changed: the one session ends, the other starts
+        seen = p.name; markDay(p.name, today);
+        finish(cur, "switched"); begin(p, true);          // (resume: another tab that switched first has already started the new one, this tab goes on with it; ST2)
+        return;
+      }
       if (p.name !== seen) {                     // someone signed in here (or in another tab of this computer)
         seen = p.name; markDay(p.name, today);
         if (cur && cur.name !== p.name) finish(cur, "switched");
@@ -459,7 +490,7 @@
       // the page slept or was frozen for 15 minutes: that session closed at its last beat, a new one goes on from now
       if (cur && Date.now() - (cur.lastBeat || 0) >= CLOSED_MS) {
         const p = person(); finish(cur, "closed");
-        if (p && p.name !== quiet) begin(p, false);
+        if (p && !p.pending && p.name !== quiet) begin(p, false);
       }
       if (cur && Date.now() - (cur.lastBeat || 0) >= BEAT_MS) beat();
       else if (cur && lastIn > savedLi) { cur.li = savedLi = lastIn; saveRec(cur); }     // the clock a reload goes on from
@@ -665,6 +696,7 @@
       o = o || {};
       cfg.station = clean(o.station, 20); cfg.device = clean(o.device, 40) || cfg.station;
       cfg.person = typeof o.person === "function" ? o.person : null;
+      cfg.role = typeof o.role === "function" ? o.role : null;
       cfg.signOut = typeof o.signOut === "function" ? o.signOut : null;
       cfg.labelHost = o.labelHost || null; cfg.labelCss = String(o.labelCss || "");
       cfg.sandbox = o.sandbox != null ? !!o.sandbox : /[?&]sandbox=1\b/.test(location.search);
@@ -678,7 +710,7 @@
       const today = nyDay(), p = person(), day = lsGet(K.day), d = p ? dayOf(p.name) : "";
       if (cfg.multi) mInit();
       else if ((day && day !== today) || (d && d !== today)) midnight();
-      else if (p) { if (!d) markDay(p.name, today); seen = p.name; begin(p, true); }
+      else if (p) { if (!d) markDay(p.name, today); seen = p.name; if (!p.pending) begin(p, true); }
       tickT = setInterval(tick, TICK_MS);
       rulesT = setInterval(rulesTick, RULES_TICK_MS);
       armMidnight();
@@ -703,9 +735,9 @@
       if (!name) return;
       const today = nyDay();
       markDay(name, today); seen = name; quiet = "";
-      if (cur && cur.name === name && cur.day === today) return;
+      if (cur && cur.name === name && cur.day === today && stationOf(cur) === stationNow()) return;
       if (cur) finish(cur, "switched");
-      begin({ name, id: safeId(who && who.id) }, false);
+      begin({ name, id: safeId(who && who.id) }, !!(who && who.resume));      // (resume: a page loaded with its person already there goes on with the session it kept, as init does)
     } catch (e) { warn("signedIn:", e); }
   }
   function signedOut(reason, who) {
@@ -718,15 +750,21 @@
     } catch (e) { warn("signedOut:", e); }
   }
 
+  /** the page says its role changed (the Sorter app: "Laser · switch to Design"): the session under the old one ends ("switched"), the
+      one under the new starts. Nothing happens when nobody is signed in or the role is the same. */
+  function roleChanged() { try { reconcile(); } catch (e) { warn("roleChanged:", e); } }
+
   window.StationSession = {
-    init, signedIn, signedOut,
+    init, signedIn, signedOut, roleChanged,
     // for the pages and the tests: read-only views
     computerId: () => { try { return computerId(); } catch (_) { return ""; } },
     computerLabel: () => { try { return label(); } catch (_) { return ""; } },
     current: () => {
       if (cfg.multi) { const s = pick(); return s ? { id: s.id, person: s.name, task: s.task, startAt: s.startAt, day: s.day } : null; }
-      return cur ? { id: cur.id, person: cur.name, startAt: cur.startAt, day: cur.day } : null;
+      return cur ? { id: cur.id, person: cur.name, startAt: cur.startAt, day: cur.day, station: stationOf(cur), role: cur.role || "" } : null;
     },
+    /** the role the running session was started under: "laser" | "design", or "" (no role: the page's own station) */
+    role: () => { try { return !cfg.multi && cur && ready ? (cur.role || "") : ""; } catch (_) { return ""; } },
     /** who is signed in on this page now (a multi page: everybody, one entry per person and task; any page: [] when nobody):
         [{ name, task, session, since, startAt, lastInputAt, device, station }]. Names only, never a PIN. */
     people: () => {
@@ -735,7 +773,7 @@
         const at = Math.max(lastIn, 0);
         if (!cfg.multi) {
           const p = person();
-          return cur && p && p.name === cur.name ? [{ name: cur.name, task: "", session: cur.id, since: cur.startAt, startAt: cur.startAt, lastInputAt: Math.max(at, cur.startAt), device: cfg.device, station: cfg.station }] : [];
+          return cur && p && p.name === cur.name ? [{ name: cur.name, task: "", session: cur.id, since: cur.startAt, startAt: cur.startAt, lastInputAt: Math.max(at, cur.startAt), device: cfg.device, station: stationOf(cur) }].map(x => (cur.role ? Object.assign(x, { role: cur.role }) : x)) : [];
         }
         const listed = cfg.people ? new Set(pagePeople().map(p => p.key)) : null;
         return [...many.values()].filter(s => !listed || listed.has(s.key)).sort((a, b) => a.startAt - b.startAt || (a.id < b.id ? -1 : 1))
@@ -757,12 +795,14 @@
         if (!ready || !cur) return null;
         const p = person();
         if (!p || p.name !== cur.name) return null;
-        return { person: p.name, station: cfg.station, device: cfg.device, computer: computerId(), session: cur.id, startAt: cur.startAt, sandbox: !!cfg.sandbox };
+        const w = { person: p.name, station: stationOf(cur), device: cfg.device, computer: computerId(), session: cur.id, startAt: cur.startAt, sandbox: !!cfg.sandbox };
+        if (cur.role) w.role = cur.role;
+        return w;
       } catch (_) { return null; }
     },
     /** this page (known even when nobody is signed in): { station, device, computer, sandbox }, or null before init */
     page: () => {
-      try { return ready ? { station: cfg.station, device: cfg.device, computer: computerId(), sandbox: !!cfg.sandbox } : null; } catch (_) { return null; }
+      try { return ready ? { station: stationNow(), device: cfg.device, computer: computerId(), sandbox: !!cfg.sandbox } : null; } catch (_) { return null; }
     },
     nyDay, nextMidnight,
     /** auto sign-out (see the top of this file) */

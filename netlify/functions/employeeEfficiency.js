@@ -32,7 +32,7 @@ const { displayStation } = require("./_activityKinds");      // ONE Sorting stat
 const db = admin.firestore();
 /* The Welding station is not counted in throughput (Paul, 6 Oct 2026): KIND.readStationCounters / throughput are the one rule (see _activityKinds.js). Without the file nothing is left out. */
 let KIND = null; try { KIND = require("./_activityKinds"); } catch (_) {}
-if (!KIND) KIND = { throughput: () => true, readStationCounters: (st, v) => v, UNATTRIBUTED: "Unattributed", isMatched: () => false };
+if (!KIND) KIND = { throughput: () => true, readStationCounters: (st, v) => v, UNATTRIBUTED: "Unattributed", isMatched: () => false, echoScans: () => new Set() };
 
 const COL = { activity: "Station_Activity", rollup: "Efficiency_Daily", sessions: "Station_Sessions", seals: "Order_Timeline" };
 const STATIONS = ["sorting", "welding", "assembly", "shipping", "design", "laser", "sorter", "qr", "inbox"];   // every key a stored row may carry (history keeps "sorter" and "qr")
@@ -506,7 +506,8 @@ async function buildOverview(ctx, day, days, withTrend) {
   let events = [];
   if (!evR.ok) info.errors.push("events: " + evR.error);
   else if (day === ctx.today) events = evR.value; else { events = evR.value.rows; if (evR.value.capped) info.capped.push("events"); }
-  const inRange = events.filter(e => !e.day || (e.day >= from && e.day <= day));
+  const echo = KIND.echoScans(events);                                  // (the desk page's own scan of a phone scan the scanner app wrote as `matched`: one scan, not two)
+  const inRange = events.filter(e => !echo.has(e) && (!e.day || (e.day >= from && e.day <= day)));
   // the people of the range
   const rangeDays = dayList(from, day), people = [];
   const ordersOf = new Map();
@@ -628,10 +629,11 @@ async function opOrders(ctx, body) {
   const steps = new Map();
   const step = (station, person, source) => { const k = station + "|" + nameKeyOf(ctx, person); let s = steps.get(k); if (!s) steps.set(k, s = { station, person, forms: new Map(), firstAt: 0, lastAt: 0, workMs: 0, scans: 0, completes: 0, prints: 0, parts: 0, source }); s.forms.set(person, (s.forms.get(person) || 0) + 1); return s; };
   const touch = (s, at) => { if (at > 0 && (!s.firstAt || at < s.firstAt)) s.firstAt = at; if (at > s.lastAt) s.lastAt = at; };
-  const evOut = [];
+  const evOut = [], echo = KIND.echoScans(act);
   for (const e of act) {
+    if (echo.has(e)) { evOut.push({ at: e.at, person: canonOf(ctx, nameKeyOf(ctx, e.person)) || niceName(e.person), station: e.station, device: e.device, action: e.action, parts: e.parts, detail: e.detail, source: "events", echo: true }); continue; }     // (listed, never counted: a phone scan is the matched event)
     const s = step(e.station, e.person, "events"); touch(s, e.at);
-    if (e.action === "scan") s.scans++; else if (e.action === "complete") { s.completes++; s.parts += e.parts; } else if (e.action === "print") s.prints++; else if (e.action === "undo") s.parts = Math.max(0, s.parts - e.parts);
+    if (e.action === "scan" || e.action === "matched") s.scans++; else if (e.action === "complete") { s.completes++; s.parts += e.parts; } else if (e.action === "print") s.prints++; else if (e.action === "undo") s.parts = Math.max(0, s.parts - e.parts);
     if (e.sincePrevMs > 0 && e.sincePrevMs <= ACTIVE_GAP_MS) s.workMs += e.sincePrevMs;
     evOut.push({ at: e.at, person: canonOf(ctx, nameKeyOf(ctx, e.person)) || niceName(e.person), station: e.station, device: e.device, action: e.action, parts: e.parts, detail: e.detail, source: "events" });
   }
@@ -665,6 +667,14 @@ const PROFILE = require("./_employeeProfile")({ KIND, COL, LIM, ms, num, r1, zer
 const OPS = { overview: opOverview, person: (ctx, body) => (body.range != null || body.from || body.to ? PROFILE.opProfile(ctx, body) : opPerson(ctx, body)), orders: opOrders, personOrders: PROFILE.opOrders };
 /* op "live": the stations board (what each station is working on right now), kept in _stationLive.js */
 OPS.live = (ctx, body) => require("./_stationLive").op(ctx, body, { json, nyMidnight, cached, display: raw => canonOf(ctx, nameKeyOf(ctx, raw)) || niceName(raw) });
+/* op "laserSheets" (R7, Paul 6 Oct): one person's cut sheets and how long each took, from the Laser_Sheet_Times records the Library's laserDone wrote (kept in _laserSheetTime.js) */
+OPS.laserSheets = (ctx, body) => require("./_laserSheetTime").opSheets(ctx, body, { json, nyMidnight, nameKeyOf, cleanName, okName, display: raw => canonOf(ctx, nameKeyOf(ctx, raw)) || niceName(raw) });
+/* the inbox figures (Paul, 6 Oct 2026: replies sent per employee, orders covered, messages per customer): _employeeInbox.js gets this file's own name, day and cache rules
+   once; ops `inbox` (everybody, all windows) and `personInbox` (one person, the Employee page's Inbox section); _stationLive.js and _employeeProfile.js call it for the board's block and for personOrders station "inbox" */
+const INBOX = require("./_employeeInbox");
+INBOX.bind({ cleanName, okName, niceName, bestForm, nameKeyOf, canonOf, num, validDay, addDays, nyDay, nyMidnight, cached, safe, json, resolveRange: PROFILE.resolveRange, RANGE_DAYS: PROFILE.RANGE_DAYS, DAILY_MAX: PROFILE.DAILY_MAX });
+OPS.inbox = INBOX.opInbox;
+OPS.personInbox = INBOX.opPersonInbox;
 function senderOf(event) {
   const h = (event && event.headers) || {};
   const get = k => { for (const x in h) if (x.toLowerCase() === k) return h[x]; return ""; };

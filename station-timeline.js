@@ -44,6 +44,7 @@
   const warn = (...a) => { try { console.warn("[StationTimeline]", ...a); } catch (_) {} };
   function who() {
     try { const n = cfg.getEmployee ? cfg.getEmployee() : ""; if (n) return String(n).trim().slice(0, 80); } catch (_) {}
+    if (cfg.exact && cfg.getEmployee) return "";   // init({ exact: true }): the page's own answer is the whole truth (Welding keeps its people in weld_people, never in the shared employee_name)
     try { return String(localStorage.getItem("employee_name") || "").trim().slice(0, 80); } catch (_) { return ""; }
   }
   function ot() {
@@ -415,6 +416,7 @@
       cfg.station = String(o.station || cfg.station || "").slice(0, 20);
       cfg.device = String(o.device || cfg.device || "").slice(0, 40);
       if (typeof o.getEmployee === "function") cfg.getEmployee = o.getEmployee;
+      if (o.exact !== undefined) cfg.exact = !!o.exact;
       if (o.sandbox !== undefined) cfg.sandbox = !!o.sandbox;
       configured = false; ot();
       if (!keysOn) {

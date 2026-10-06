@@ -90,6 +90,7 @@ async function sessionWrite(s) {
   const device = str(s.device, 40).replace(/[^\w .:-]/g, "") || station;
   const computerLabel = str(s.computerLabel, 80);
   const task = station === "welding" && (s.task === "welding" || s.task === "matching") ? s.task : "";   // the Welding station's task (welding | matching); any other value, or another station: none, as on every old session
+  const role = (station === "laser" || station === "design") && s.role === station ? s.role : "";   // the Sorter app's Laser or Design person (LD1): the role IS the station there; any other value, or another station: none, as on every old session
   const reason = SESSION_REASONS.has(s.reason) ? s.reason : "signOut";
   const clientAt = Number(s.at);
   const ref = col(SESSION_COLL).doc(id);
@@ -101,7 +102,16 @@ async function sessionWrite(s) {
     const snap = await tx.get(ref), prev = snap.exists ? (snap.data() || {}) : null;
     if (prev && prev.computerId && prev.computerId !== computerId) return [409, { error: "not this computer's session" }];
     if (prev && prev.endAt != null) return [200, { success: true, id, ended: true, endReason: prev.endReason || null }];
-    if (!prev && ev === "end") return [200, { success: true, id, missing: true }];
+    if (!prev && ev === "end") {
+      // (ST2: an end can overtake its own start, two requests a moment apart arrive in either order, and a start sent offline never arrives:
+      //  the end used to be dropped as "missing" and the session then stayed open until its page went quiet. A person who is named is recorded
+      //  as a session of no length that ended at the end; the start that follows finds it ended and never reopens it. No name, nothing stored.)
+      if (!/\p{L}/u.test(person)) return [200, { success: true, id, missing: true }];
+      const at = AS.pageTime(clientAt, AS.skewOf(s.sentAt != null ? s.sentAt : null, now), now), t = Math.min(now, at || now);
+      const doc = Object.assign({ id, person, employeeId, station, device, computerId, computerLabel, startAt: t, lastSeenAt: t, endAt: t, endReason: reason, minutes: 0 }, task ? { task } : {}, role ? { role } : {});
+      tx.set(ref, doc, { merge: true });
+      return [200, { success: true, id, startAt: t, lastSeenAt: t, endAt: t, endReason: reason, minutes: 0, ended: true, recorded: true }];
+    }
     const startAt = prev ? (Number(prev.startAt) || now) : now;
     const lastSeen = prev ? (Number(prev.lastSeenAt) || startAt) : now;
     const cap = nyMidnightAfter(startAt);
@@ -136,7 +146,7 @@ async function sessionWrite(s) {
     const minutes = Math.max(0, Math.round(((endAt != null ? endAt : lastSeenAt) - startAt) / 6000) / 10);
     const doc = prev
       ? { lastSeenAt, endAt, endReason, minutes }
-      : Object.assign({ id, person, employeeId, station, device, computerId, computerLabel, startAt, lastSeenAt, endAt, endReason, minutes }, task ? { task } : {}, list && list.ok ? { admin: list.keys.has(Admins.keyOf(person)) } : {});
+      : Object.assign({ id, person, employeeId, station, device, computerId, computerLabel, startAt, lastSeenAt, endAt, endReason, minutes }, task ? { task } : {}, role ? { role } : {}, list && list.ok ? { admin: list.keys.has(Admins.keyOf(person)) } : {});
     if (lastInput > 0) doc.lastInputAt = lastInput;
     if (prev && computerLabel && computerLabel !== prev.computerLabel) doc.computerLabel = computerLabel;
     tx.set(ref, doc, { merge: true });

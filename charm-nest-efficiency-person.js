@@ -583,6 +583,7 @@
     const root0 = el("div", "efp in"); root0.setAttribute("aria-label", `${S.name}, employee page`);
     host.textContent = ""; host.appendChild(root0);
     const E = {}; let charts = {}, mini = {}, io = null, unsubLive = null, ordersH = null;
+    let laserH = null;
     /** One chart of E7's EfficiencyCharts in `host` (null, with a quiet line, when the library is not in the page). */
     function chart(kind, host, opts) {
       const lib = root.EfficiencyCharts; host.textContent = "";
@@ -652,6 +653,7 @@
     <section aria-label="Issues"><div class="efpLabel">Issues <b class="efpIN"></b></div><div class="efpCard efpIs"></div></section>
     <section aria-label="Success and contact rates"><div class="efpLabel">Success and contact</div><div class="efpCard efpRates"></div></section>
   </div>
+  <section class="efpLaserS hidden" aria-label="Laser sheets"></section>
   <section aria-label="Orders"><div class="efpLabel">Orders <b class="efpON"></b><span class="efpLr"></span><button type="button" class="efpLink" data-orders-all>Show all time</button></div>
     <div class="efpCard efpOrdersHost"><div class="efpOrdersOwn"><div class="efpFind"><label class="efpSearch">${SEARCH}<input type="text" name="q" inputmode="search" autocomplete="off" spellcheck="false" placeholder="Search orders: number, customer or station" aria-label="Search this person's orders"><button type="button" class="efpIcon hidden" data-clear aria-label="Clear the search">✕</button></label><span class="efpSt" role="status"></span></div>
       <div class="efpOl"></div><div class="efpMore"></div></div></div></section>
@@ -971,6 +973,7 @@
       if (M.lastSeen && M.to >= today()) S.seenAt = Math.max(S.seenAt || 0, M.lastSeen);       // "last seen" survives a switch to a day that has none (only windows that reach today say anything about now)
       S.M = M; S.at = at || Date.now(); E.wait.classList.add("hidden"); E.body.classList.remove("hidden"); E.body.classList.remove("dim"); if (!S.locked) E.msg.classList.add("hidden");
       render(M, first);
+      if (laserH) laserH.repaint();
     }
     async function fetchRange(gen, poll) {
       clearTimeout(T.range); T.range = 0; if (S.dead || S.locked) return; if (poll && (!visible() || S.busy)) return;
@@ -1007,6 +1010,7 @@
       S.following = period().to >= today() && S.anchor >= today(); store.set(RANGE_STORE, S.range === "custom" ? "" : S.range);
       S.gen++; if (S.ctl) { try { S.ctl.abort(); } catch (_) {} } S.busy = false; S.fails = 0; S.err = ""; paintBar(); syncOrders(); hideHC(); S.calx = S.calx && S.M && S.calx.to === period().to ? S.calx : null;
       try { o.onState && o.onState({ range: S.range, day: S.anchor, from: period().from, to: period().to }); } catch (_) {}
+      syncLaser();
       const key = reqKey(), hit = S.cache.get(key);
       if (hit) accept(hit.r, true, hit.at); else E.body.classList.add("dim");
       clearTimeout(T.cal); T.cal = 0; if (S.M) schedule("cal", hit ? 200 : 900);
@@ -1090,6 +1094,14 @@
       if (root.IntersectionObserver) { io = new IntersectionObserver(es => { if (es.some(x => x.isIntersecting)) loadOrders(false); }, { rootMargin: "400px 0px" }); io.observe(E.more); }
       loadOrders(true); schedule("orders", options.ordersMs);
     }
+    /* ── the laser sheets (LS1: charm-nest-efficiency-laser.js draws its own section, which stays hidden for somebody with no sheet in the range; it follows the date chips) ── */
+    const laserRange = () => { const p = period(); return { from: p.from, to: p.to }; };
+    function syncLaser() { if (!laserH) return; try { laserH.setRange(laserRange()); } catch (e) { console.warn("[efficiency person] laser sheets range:", e && e.message); } }
+    function mountLaser() {
+      const EL = root.EfficiencyLaser, host1 = root0.querySelector(".efpLaserS"); if (!EL || typeof EL.mount !== "function" || !host1) return;
+      try { laserH = EL.mount(host1, { name: S.name, range: laserRange(), call: (b, sig) => call(b, sig), now, expected: () => !!(S.M && S.M.stations.some(s => s.station === "laser")), onError: e => { if (isAuth(e)) lockOut(e); } }) || null; }
+      catch (e) { console.warn("[efficiency person] laser sheets:", e && e.message); laserH = null; }
+    }
 
     /* ── clicks ── */
     function onClick(e) {
@@ -1136,10 +1148,11 @@
       if (S.dead) return; S.dead = true; for (const k of Object.keys(T)) { clearTimeout(T[k]); clearInterval(T[k]); T[k] = 0; }
       if (S.ctl) { try { S.ctl.abort(); } catch (_) {} } if (io) io.disconnect(); Object.values(charts).forEach(c => c && c.destroy && c.destroy()); for (const k of Object.keys(E.k || {})) if (E.k[k].sp) E.k[k].sp.destroy();
       if (typeof unsubLive === "function") { try { unsubLive(); } catch (_) {} } if (ordersH) { try { (ordersH.unmount || ordersH.destroy || ordersH).call(ordersH); } catch (_) {} }
+      if (laserH) { try { laserH.unmount(); } catch (_) {} laserH = null; }
       doc.removeEventListener("visibilitychange", onVisible); try { if (root.Seal && root.Seal.zoom && root.Seal.zoom.away) root.Seal.zoom.away(); } catch (_) {}
       if (root0.parentNode) root0.remove(); instances.delete(api);
     }
-    function refresh() { if (S.dead) return; S.cache.clear(); S.gen++; S.fails = 0; fetchRange(S.gen, false); pollLive(); pollCal(); if (ordersH && typeof ordersH.refresh === "function") ordersH.refresh(); else loadOrders(true); }
+    function refresh() { if (S.dead) return; if (laserH) laserH.refresh(); S.cache.clear(); S.gen++; S.fails = 0; fetchRange(S.gen, false); pollLive(); pollCal(); if (ordersH && typeof ordersH.refresh === "function") ordersH.refresh(); else loadOrders(true); }
 
     build(); paintBar(); setText(E.waitT, `Reading ${S.name}'s history…`);
     if (!o.onBack) E.back.classList.add("hidden");
@@ -1150,6 +1163,7 @@
     const subscribe = typeof o.onLive === "function" ? o.onLive : EA() && typeof EA().onLive === "function" ? EA().onLive : null;
     if (subscribe) { try { unsubLive = subscribe(applyLive) || true; } catch (_) { unsubLive = null; } const cur = typeof o.live === "function" ? o.live() : EA() && typeof EA().live === "function" ? EA().live() : null; if (cur) applyLive(cur); }
     go({}); if (!unsubLive) pollLive(); mountOrders();
+    mountLaser();
     return api;
   }
   const instances = new Set();

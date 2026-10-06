@@ -488,7 +488,7 @@ let MAIN;
     const o = await ask({ day: '2026-10-02' });                                                         // the screen, now looking at yesterday
     assert.strictEqual(o.business.totals.scans, 51, 'the events queued at 23:58 and 23:59:50 are in 2 Oct at 00:01 (a cached read of the live day must not be kept as a finished day)');
     const nina = o.people.find(p => p.name === 'Nina Night'); assert.strictEqual(nina.totals.scanParts, 5);
-    const ann = o.people.find(p => p.name === 'Ann Assembler'); eq([ann.lastOut, ann.totals.signedInMin], [D2(24), 975], 'the sessions ended at 00:00:02 are read again too: Ann was signed in until midnight, not only to her last beat at 15:28');
+    const ann = o.people.find(p => p.name === 'Ann Assembler'); eq([ann.lastOut, ann.totals.signedInMin], [D2(15, 28), 463], 'Ann\'s page went silent after its beat at 15:28: since AD2 (6 Oct 2026) the first read after 15 quiet minutes ends the session "closed" at that beat for good (a non-Admin without a reported input keeps the old 15-minute rule), so the midnight end that comes later changes nothing');
   });
   signIn(D2(24, 5), 'N', 'Nina Night', 'sess-nina-2');
   ev(D2(24, 7), 'N', 'scan', { orderId: O(92), parts: 4 });
@@ -511,7 +511,7 @@ let MAIN;
   eq(B3.business.totals, { parts: 4, scans: 1, orders: 1, people: 1 });
   eq(B2.business.totals, { parts: 138, scans: 51, orders: 48, people: 11 }, '2 Oct after midnight: + Nina\'s 3 parts, 2 scans, 2 orders');
   const ann2 = B2.people.find(p => p.name === 'Ann Assembler'), shane2 = B2.people.find(p => p.name === 'Shane Shipper');
-  eq([ann2.status, ann2.lastOut, ann2.totals.signedInMin, ann2.nowAt, shane2.totals.signedInMin, shane2.lastOut, shane2.onSince], ['out', D2(24), 975, [], 870, D2(24), null], 'a past day shows nobody on: Ann 07:45-24:00 = 975 min, Shane 210 + 660 = 870');
+  eq([ann2.status, ann2.lastOut, ann2.totals.signedInMin, ann2.nowAt, shane2.totals.signedInMin, shane2.lastOut, shane2.onSince], ['out', D2(15, 28), 463, [], 359, D2(15, 29), null], 'a past day shows nobody on: Ann 07:45-15:28 = 463 min, Shane 210 + 149 (13:00 to his last beat at 15:29) = 359 (both pages went silent; see the 00:01 read above)');
   eq(B2.business.stations.every(s => s.peopleNow.length === 0), true);
   eq(B3.business.trend.slice(-2).map(t => [t.day, t.parts, t.orders, t.people]), [['2026-10-02', 138, 48, 11], ['2026-10-03', 4, 1, 1]]);
   for (const n of ['Tess Welder', 'Ray Welder', 'Sam Sorter', 'Dana Designer', 'Leo Laser', 'Giovanna', 'José Pérez']) eq(B2.people.find(p => p.name === n).totals, WANT[n], n + ' is the same after midnight');

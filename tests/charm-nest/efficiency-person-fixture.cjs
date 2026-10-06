@@ -237,6 +237,8 @@ function make(opts = {}) {
     if (st.fail > 0) { st.fail--; return { status: 503, json: { ok: false, error: 'both reads failed' } }; }
     if (body.op === 'person') return { status: 200, json: person(body) };
     if (body.op === 'live') return { status: 200, json: live() };
+    // LS1: the person page's Laser section asks `laserSheets`; these invented people have cut no sheet (the section stays hidden)
+    if (body.op === 'laserSheets') return { status: 200, json: { ok: true, now: now(), name: body.name, found: false, sheets: [], totals: { sheets: 0, timed: 0, unknown: 0, avgSec: null, fastestSec: null, slowestSec: null, pieces: 0, orders: 0 }, series: [], notes: [] } };
     if (body.op === 'personOrders') { if (PEOPLE[String(body.name || '').toLowerCase()]) orders.state.person = PEOPLE[String(body.name).toLowerCase()].name; return orders.answer(body); }   // (E8's fixture knows one person: every invented person here shares its list)
     return { status: 400, json: { ok: false, error: 'bad op' } };
   }

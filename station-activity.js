@@ -98,6 +98,7 @@
         at: now, seq, sincePrevMs: int(now - base, 0, GAP_CAP)
       };
       if (w.sandbox) ev.sandbox = true;
+      if (w.role === "laser" || w.role === "design") ev.role = w.role;          // (the Sorter app: the role the person chose at sign-in; the station above is that role too)
       // the server takes at most 600 bytes an event: the optional text goes first
       for (const k of ["detail", "sku", "line"]) {
         while (bytes(JSON.stringify(ev)) > EVENT_BYTES && ev[k]) ev[k] = ev[k].length > 20 ? ev[k].slice(0, ev[k].length - 20) : "";
@@ -459,7 +460,7 @@
   window.StationActivity = {
     log, matched, matcher, flush: () => flush(true), pending: () => queue.length, discard, working, idle, touch,
     current: () => [...slots.values()].map(s => ({ station: s.station, device: s.device, rid: s.order.rid, orderNumber: s.order.orderNumber, kind: s.order.kind, scannedAt: s.order.scannedAt, pieces: s.order.pieces.length, sent: s.sentFp === liveFp(s) })),
-    who: () => { const w = whoNow(); return w ? { person: w.person, station: w.station, device: w.device, computer: w.computer, session: w.session } : null; }
+    who: () => { const w = whoNow(); return w ? Object.assign({ person: w.person, station: w.station, device: w.device, computer: w.computer, session: w.session }, w.role ? { role: w.role } : {}) : null; }
   };
   // events left from an earlier page load (offline, closed too fast) go out soon after the station has set itself up
   try { start(); setTimeout(() => { try { flush(); } catch (_) {} }, 4000); } catch (_) {}
