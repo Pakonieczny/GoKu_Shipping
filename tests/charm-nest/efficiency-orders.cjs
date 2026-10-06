@@ -394,8 +394,9 @@ const F = require('./efficiency-orders-fixture.cjs');
         real = { name: WHO, ask: b => { log.push(b); return post(b); } };
         const direct = async b => JSON.parse((await post(Object.assign({ key: F.KEY, op: 'personOrders', name: WHO, limit: 25 }, b))).text);
         await wire(rctx); const rp = await rctx.newPage(), errs3 = track(rp); await boot(rp, 1440); const off0 = seen.urls.length;
+        // (stations round 2, R2: the Welding station is not order throughput, so the ordinary list holds only the orders she worked at throughput stations, her Assembly orders: 429 in this shop where it held 1304 with her Welding orders; the matched ones have their own list, `matched: true`)
         const D0 = await direct({});
-        assert(D0.ok && D0.found && D0.orders.length === 25 && D0.next === 'o25' && D0.total > 1000, 'the real handler answers a first page: ' + JSON.stringify([D0.ok, D0.found, D0.orders.length, D0.next, D0.total]));
+        assert(D0.ok && D0.found && D0.orders.length === 25 && D0.next === 'o25' && D0.total > 400, 'the real handler answers a first page: ' + JSON.stringify([D0.ok, D0.found, D0.orders.length, D0.next, D0.total]));
         await mount(rp, { name: WHO, pollMs: 0 }); await rp.waitForSelector('.efoRow');
         assert.deepEqual(await rids(rp), D0.orders.map(o => o.rid), "the server's order, as sent"); assert.equal(log[0].name, WHO); assert.equal(log[0].q, ''); assert.equal(log[0].sort, undefined, 'no sort is asked while it is newest');
         assert.equal(+(await rp.locator('.efoCount').innerText()).replace(/\D/g, ''), D0.total, 'the total the server counted');
