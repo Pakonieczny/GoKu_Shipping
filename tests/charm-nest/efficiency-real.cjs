@@ -75,8 +75,13 @@ seed();
   const paul = M.people.find(p => p.name === 'Paul K.');
   assert.equal(paul.t.parts, 20); assert.equal(paul.t.signedInMin, 90, 'two spellings, 60 + 60 minutes with 30 overlapping'); assert.deepEqual(paul.stations.map(s => s.station).sort(), ['inbox', 'shipping']); assert.equal(paul.on, false);
   const gio = M.people.find(p => p.name === 'Giovanna');
-  assert.equal(gio.on, true); assert.equal(gio.t.parts, 178); assert.equal(gio.t.scans, 186); assert.equal(gio.t.orders, 37); assert.equal(gio.source, 'events');
-  assert(gio.t.rate > 0 && gio.t.secPerScan > 0 && gio.stations[0].station === 'welding' && gio.stations[0].minutes > 300, 'rate, seconds per scan, station minutes: ' + JSON.stringify(gio.t));
+  // stations round 2 (R2): the Welding station is not counted in order throughput: Giovanna's welding day (178 pieces and 37 orders in the seed) adds no pieces, orders or
+  // pieces-per-hour rate; her scans, her working time and her time signed in at Welding still count. Anna (Assembly) is the person whose pieces, orders and rate are read.
+  assert.equal(gio.on, true); assert.equal(gio.t.parts, 0); assert.equal(gio.t.scans, 186); assert.equal(gio.t.orders, 0); assert.equal(gio.source, 'events'); assert.equal(gio.t.rate, 0, 'no pieces per hour at Welding');
+  assert(gio.t.secPerScan > 0 && gio.stations[0].station === 'welding' && gio.stations[0].minutes > 300 && gio.stations[0].parts === 0 && gio.stations[0].orders === 0, 'seconds per scan and station minutes stay, pieces and orders do not: ' + JSON.stringify(gio.stations));
+  const ana = M.people.find(p => p.name === 'Anna');
+  assert.equal(ana.t.parts, 121); assert.equal(ana.t.scans, 143); assert.equal(ana.t.orders, 29); assert.equal(ana.source, 'events');
+  assert(ana.t.rate > 0 && ana.t.secPerScan > 0 && ana.stations[0].station === 'assembly' && ana.stations[0].minutes > 300, 'rate, seconds per scan, station minutes: ' + JSON.stringify(ana.t));
   assert.equal(M.people.find(p => p.name === 'Ivy').on, false); assert(M.people.find(p => p.name === 'Ivy').lastOut > 0, 'a lock-out');
   assert.equal(M.biz.parts, M.people.reduce((n, p) => n + p.t.parts, 0)); assert.equal(M.biz.on, 3); assert(M.biz.hours.some(v => v > 0));
   assert.equal(M.biz.trend.length, 14); assert(M.feed.length > 0 && M.feed.length <= 40); assert.equal(M.sources.events, true);
