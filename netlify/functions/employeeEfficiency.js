@@ -27,13 +27,15 @@
 const EP = require("./_editPasscode");
 const { CORS, parseBody, num } = require("./_charmNestAuth");
 const admin = require("./firebaseAdmin");
+const { displayStation } = require("./_activityKinds");      // ONE Sorting station: the stored keys "sorter" and "qr" are SHOWN as "sorting" (history keeps its keys; only a read folds them)
 const db = admin.firestore();
 /* The Welding station is not counted in throughput (Paul, 6 Oct 2026): KIND.readStationCounters / throughput are the one rule (see _activityKinds.js). Without the file nothing is left out. */
 let KIND = null; try { KIND = require("./_activityKinds"); } catch (_) {}
 if (!KIND) KIND = { throughput: () => true, readStationCounters: (st, v) => v, UNATTRIBUTED: "Unattributed", isMatched: () => false };
 
 const COL = { activity: "Station_Activity", rollup: "Efficiency_Daily", sessions: "Station_Sessions", seals: "Order_Timeline" };
-const STATIONS = ["sorting", "welding", "assembly", "shipping", "design", "laser", "sorter", "qr", "inbox"];
+const STATIONS = ["sorting", "welding", "assembly", "shipping", "design", "laser", "sorter", "qr", "inbox"];   // every key a stored row may carry (history keeps "sorter" and "qr")
+const SHOWN = STATIONS.filter(k => displayStation(k) === k);       // the stations the portal shows: sorter and qr are part of sorting
 const CORE = ["sorting", "welding", "assembly", "shipping"];
 const DAY_MS = 86400000, GONE_MS = 15 * 60000, ACTIVE_GAP_MS = 5 * 60000;
 const TTL_LIVE = 5000, TTL_PAST = 10 * 60000, TTL_SEALS_LIVE = 120000;
@@ -223,7 +225,7 @@ function sealRow(d) {
   const at = ms(d.at), station = String(d.station || ""), person = cleanName(d.by), type = String(d.type || "");
   if (!(at > 0) || !STATION_SET.has(station) || !okName(person) || GENERIC_BY.test(person) || /^(etsy|system)$/.test(String(d.source || ""))) return null;
   const kind = type === "scan" ? "scan" : SEAL_PRINT.has(type) ? "print" : d.milestone === true ? "complete" : "";
-  return kind ? { at, person, station, type, kind, orderId: digits(d.orderId) } : null;
+  return kind ? { at, person, station: displayStation(station), type, kind, orderId: digits(d.orderId) } : null;
 }
 /** The seals of one New York day (cached; today 2 min, a past day 10 min). */
 function readSealDay(ctx, day) {
@@ -241,7 +243,7 @@ function eventRow(id, d, ctx) {
   const at = ms(d.at), tsMs = ms(d.ts), serverAt = ms(d.serverAt) || tsMs || at;
   // the feed's order and cursor follow the COMMIT time (ts): serverAt is read before the write, and a transaction that waits
   // for a retry commits later, so a poll could pass an event whose serverAt is older than its cursor and never show it
-  return { id: (scrub(d.id) || String(id)).slice(0, 100), at, k: tsMs || serverAt, tsMs: tsMs || serverAt, person, station: okStation(String(d.station || "")) ? String(d.station) : "", device: scrub(d.device).slice(0, 40), action,
+  return { id: (scrub(d.id) || String(id)).slice(0, 100), at, k: tsMs || serverAt, tsMs: tsMs || serverAt, person, station: okStation(String(d.station || "")) ? displayStation(String(d.station)) : "", stored: okStation(String(d.station || "")) ? String(d.station) : "", device: scrub(d.device).slice(0, 40), action,
     orderId: digits(d.orderId), parts: Math.max(0, Math.floor(num(d.parts))), detail: scrub(d.detail), sincePrevMs: Math.max(0, num(d.sincePrevMs)), day: typeof d.day === "string" ? d.day : "",
     orders: num(d.orders) >= 1 ? 1 : 0, seq: Math.max(0, num(d.seq)), task: d.task === "welding" || d.task === "matching" ? d.task : "", unattributed: d.unattributed === true };   // (orders: the action finished an order; seq: the device's counter: the issue counts replay the writer's order with them; task / unattributed: the Welding station's matched scans)
 }
@@ -289,7 +291,7 @@ function spanOf(s, now) {
   if (!end) { if (now - last >= GONE_MS) end = last; else { end = now; live = true; } }
   end = Math.min(end, now); if (end < start) end = start;
   const station = String(s.station || "");
-  return { id: String(s.id || ""), station: okStation(station) ? station : "", task: station === "welding" && (s.task === "welding" || s.task === "matching") ? s.task : "", start, end, live, last };       // (a key like "constructor" would break the per-station maps)
+  return { id: String(s.id || ""), station: okStation(station) ? displayStation(station) : "", task: station === "welding" && (s.task === "welding" || s.task === "matching") ? s.task : "", start, end, live, last };       // (a key like "constructor" would break the per-station maps)
 }
 /** [{day, s, e}] pieces of [s, e] inside from..to; a span that ends exactly at midnight puts nothing on the next day. */
 function clip(s, e, from, to) {
@@ -351,8 +353,9 @@ async function assemble(ctx, winFrom, toDay) {
       const person = P.get(x.person); if (!person || !validDay(x.day)) continue;
       eventDays.add(x.day);
       const pd = P.pd(person, x.day); pd.src = "events";
-      for (const [st, v0] of Object.entries(x.stations && typeof x.stations === "object" ? x.stations : {})) {
-        if (!okStation(st) || !v0 || typeof v0 !== "object") continue;      // (a station called "constructor" is not a station)
+      for (const [st0, v0] of Object.entries(x.stations && typeof x.stations === "object" ? x.stations : {})) {
+        if (!okStation(st0) || !v0 || typeof v0 !== "object") continue;    // (a station called "constructor" is not a station)
+        const st = displayStation(st0);                                    // (counters stored under "sorter" or "qr" add to Sorting)
         const v = KIND.readStationCounters(st, v0);                          // (the Welding station keeps its scans, time and matched count, never pieces, orders or completions)
         const a = stAgg(pd, st); for (const k of KEYS) a[k] += Math.max(0, num(v[k]));
         const fa = ms(v.firstAt), la = ms(v.lastAt);
@@ -363,13 +366,13 @@ async function assemble(ctx, winFrom, toDay) {
         const hr = parseInt(hh, 10); if (!(hr >= 0 && hr < 24) || !h || typeof h !== "object") continue;
         const by = h.by && typeof h.by === "object" ? h.by : {};
         let net = Math.max(0, num(h.parts)) - Math.max(0, num(h.undoParts));                 // produced minus undone, the same net as the totals
-        for (const [st, b] of Object.entries(by)) if (!KIND.throughput(st) && b && typeof b === "object") net -= Math.max(0, num(b.parts)) - Math.max(0, num(b.undoParts));   // (not the Welding station's)
+        for (const [st, b] of Object.entries(by)) if (okStation(st) && !KIND.throughput(displayStation(st)) && b && typeof b === "object") net -= Math.max(0, num(b.parts)) - Math.max(0, num(b.undoParts));   // (not the Welding station's)
         pd.hours[hr] += net;
-        for (const [st, b] of Object.entries(by)) if (okStation(st) && KIND.throughput(st) && b && typeof b === "object") (pd.hs[st] || (pd.hs[st] = zeros(24)))[hr] += Math.max(0, num(b.parts)) - Math.max(0, num(b.undoParts));
+        for (const [st, b] of Object.entries(by)) if (okStation(st) && KIND.throughput(displayStation(st)) && b && typeof b === "object") { const ds = displayStation(st); (pd.hs[ds] || (pd.hs[ds] = zeros(24)))[hr] += Math.max(0, num(b.parts)) - Math.max(0, num(b.undoParts)); }
       }
       for (const [id, m] of Object.entries(x.touched && typeof x.touched === "object" ? x.touched : {})) {
         const oid = digits(id); if (!oid) continue;
-        const stations = m && typeof m === "object" ? Object.keys(m).filter(k => m[k] && okStation(k) && KIND.throughput(k)) : [];   // (an order only the Welding station touched is not an order worked)
+        const stations = m && typeof m === "object" ? [...new Set(Object.keys(m).filter(k => m[k] && okStation(k) && KIND.throughput(displayStation(k))).map(displayStation))] : [];   // (an order only the Welding station touched is not an order worked)
         if (!stations.length) continue;
         let set = pd.orders.get(oid); if (!set) pd.orders.set(oid, set = new Set()); stations.forEach(s => set.add(s));
       }
@@ -456,7 +459,7 @@ function summarize(pds) {
     for (const [st, arr] of Object.entries(pd.hs)) { const t = hs[st] || (hs[st] = zeros(24)); for (let h = 0; h < 24; h++) t[h] += arr[h]; }
     for (const [id, set] of pd.orders) { let s = ids.get(id); if (!s) ids.set(id, s = new Set()); for (const st of set) s.add(st); }
   }
-  const order = st => { const i = STATIONS.indexOf(st); return i < 0 ? 99 : i; };
+  const order = st => { const i = SHOWN.indexOf(st); return i < 0 ? 99 : i; };
   const stations = [...new Set(Object.keys(acc).concat(Object.keys(stMs)))].map(st => {
     const a = acc[st] || tmpl(); let touched = 0; for (const s of ids.values()) if (s.has(st)) touched++;
     const row = { station: st, minutes: r1((stMs[st] > 0 ? stMs[st] : a.activeMs) / 60000), parts: Math.max(0, a.parts - a.undoParts), scanParts: a.scanParts, scans: a.scans, completes: a.completes, prints: a.prints,
@@ -534,7 +537,7 @@ async function buildOverview(ctx, day, days, withTrend) {
   const totals = { parts: 0, scans: 0, orders: [...allIds.values()].filter(isWork).length, people: people.length };
   const perSt = {};
   for (const p of people) { totals.parts += p.totals.parts; totals.scans += p.totals.scans; for (const s of p.stations) { const t = perSt[s.station] || (perSt[s.station] = { parts: 0, scans: 0 }); t.parts += s.parts; t.scans += s.scans; if (s.taskMin) { t.matched = (t.matched || 0) + s.matched; const m = t.taskMin || (t.taskMin = { welding: 0, matching: 0, unknown: 0 }); for (const k of Object.keys(m)) m[k] = r1(m[k] + (s.taskMin[k] || 0)); } } }
-  const order = st => { const i = STATIONS.indexOf(st); return i < 0 ? 99 : i; };
+  const order = st => { const i = SHOWN.indexOf(st); return i < 0 ? 99 : i; };
   const stationList = [...new Set(CORE.concat(Object.keys(perSt), Object.keys(stNow)))].sort((a, b) => order(a) - order(b) || (a < b ? -1 : 1))
     .map(st => { const row = { station: st, parts: (perSt[st] || {}).parts || 0, scans: (perSt[st] || {}).scans || 0, orders: stIds[st] ? stIds[st].size : 0, peopleNow: (stNow[st] || []).slice().sort() }; if (!KIND.throughput(st)) { row.matched = (perSt[st] || {}).matched || 0; row.taskMin = (perSt[st] || {}).taskMin || { welding: 0, matching: 0, unknown: 0 }; } return row; });
   const perHour = {}; for (const [st, arr] of Object.entries(perStationHours)) if (arr.some(v => v > 0)) perHour[st] = arr.map(shown);

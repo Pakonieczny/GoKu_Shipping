@@ -124,7 +124,7 @@ const B = (o = {}) => Object.assign({ v: 1, event: 'beat', station: 'welding', d
     const a = await ask();
     assert.strictEqual(a.status, 200); assert.strictEqual(a.body.ok, true); assert.strictEqual(a.body.mode, 'real'); assert.strictEqual(a.body.at, NOW);
     assert.strictEqual(a.headers['Cache-Control'], 'no-store');
-    assert.deepStrictEqual(a.body.stations.map(x => x.key), ['sorting', 'welding', 'assembly', 'shipping', 'design', 'laser', 'sorter', 'qr', 'inbox'], 'every station is listed, working or not');
+    assert.deepStrictEqual(a.body.stations.map(x => x.key), ['sorting', 'welding', 'assembly', 'shipping', 'design', 'laser', 'inbox'], 'every station is listed, working or not (the Sorter app and the QR Printer are pages of Sorting, not stations of their own)');
     const wd = station(a, 'welding');
     assert.strictEqual(wd.label, 'Welding'); assert.strictEqual(wd.state, 'working'); assert.deepStrictEqual(wd.names, ['Tess Welder']);
     assert.strictEqual(wd.current.length, 1);
@@ -226,7 +226,7 @@ const B = (o = {}) => Object.assign({ v: 1, event: 'beat', station: 'welding', d
     await post(W({ station: 'sorter', device: 'charm-nest-1', person: 'Tess Welder', order: { kind: 'order', rid: '3521000003', scannedAt: NOW } }));
     await post(W({ station: 'laser', device: 'charm-nest-1', person: 'Tess Welder', order: { kind: 'sheet', title: 'GF Sheet 2', scannedAt: NOW } }));
     tick(3000); const b = await ask();
-    assert.strictEqual(station(b, 'sorter').current[0].rid, '3521000003'); const lz = station(b, 'laser');
+    assert.strictEqual(station(b, 'sorting').current[0].rid, '3521000003', 'the Sorter app is a page of Sorting'); assert.strictEqual(station(b, 'sorting').current[0].deviceLabel, 'Sorter (nesting)'); assert(!b.body.stations.some(x => x.key === 'sorter' || x.key === 'qr'), 'no Sorter or QR Printer station'); const lz = station(b, 'laser');
     assert.strictEqual(lz.state, 'working'); assert.strictEqual(lz.current[0].kind, 'sheet'); assert.strictEqual(lz.current[0].title, 'GF Sheet 2'); assert.strictEqual(lz.current[0].qr, null, 'a sheet has no order QR');
     assert.strictEqual(s.count('Station_Live'), 4);
     // the same name spelled two ways is one person on the board
