@@ -15,6 +15,8 @@
 //   8 · fuzz: garbage documents in every collection, fixed seeds, never a 5xx
 //   node tests/stations/employee-adversarial.cjs
 'use strict';
+require(require('path').join(__dirname, '../../netlify/functions/_activityKinds.js')).NO_THROUGHPUT.clear();   // this suite uses 'welding' as a plain fixture station for the generic arithmetic: the Welding station's own rule (not counted in throughput, R2 of stations round 2) is tested in welding-portal.cjs
+
 const path = require('path'), assert = require('assert'), Module = require('module');
 const root = path.join(__dirname, '../..');
 const S = require('../charm-nest/employee-profile-seed.cjs');
@@ -264,7 +266,7 @@ const protoClean = () => { assert.strictEqual(Object.keys(Object.prototype).leng
     const nowWork = { v: 1, event: 'work', station: 'welding', device: 'weld-1', person: `Paul ${PIN}`, order: { kind: 'order', rid: '3521000777', scannedAt: NOW, note: `pin ${PIN} and 48 29 15`, customer: `Sam ${PIN}`, pieces: [{ id: 'abc_1', label: `x ${PIN}`, sku: 'AB-12' }] } };
     const lw = await post(st, { live: nowWork }); ok(lw.status === 200);
     const lv = await call(st, { op: 'live' });
-    ok(lv.status === 200 && !lv.raw.includes(PIN) && !/\d{4}[^"]*"/.test(JSON.stringify(lv.body.stations.map(s => s.people))), 'the live board never shows a PIN: ' + JSON.stringify(lv.body.stations.filter(s => s.people.length).map(s => s.people)));
+    ok(lv.status === 200 && !lv.raw.includes(PIN) && !/\d{4}[^"]*"/.test(JSON.stringify(lv.body.stations.map(s => s.names))), 'the live board never shows a PIN: ' + JSON.stringify(lv.body.stations.filter(s => s.names.length).map(s => s.names)));
     const dtl = await post(st, { activity: [ev('Tess Welder', { detail: `typed ${PIN} then ok`, sku: PIN, line: PIN })] });
     ok(st.all('Station_Activity').filter(d => d.person === 'Tess Welder').every(d => !JSON.stringify(d).includes(PIN)), 'a digits-only sku or line is blanked, a 6-digit number in a detail becomes [#]: ' + JSON.stringify(st.all('Station_Activity').filter(d => d.person === 'Tess Welder')));
     // old documents written BEFORE the doors dropped digits still answer without them
@@ -576,7 +578,7 @@ const protoClean = () => { assert.strictEqual(Object.keys(Object.prototype).leng
     // the live board and the overview of the day count the same things
     const live = (await call(st, { op: 'live' })).body, ov = (await call(st, { op: 'overview', days: 1 })).body;
     for (const s of live.stations) { const o = ov.business.stations.find(x => x.station === s.key); if (!o) { ok(s.counts.partsToday === 0 && s.counts.ordersToday === 0 && s.counts.scansToday === 0, s.key + ' (not in the overview) counts nothing'); continue; }
-      ok(s.counts.partsToday === o.parts && s.counts.ordersToday === o.orders && s.counts.scansToday === o.scans && JSON.stringify(s.people.slice().sort()) === JSON.stringify(o.peopleNow.slice().sort()), `${s.key}: live ${JSON.stringify(s.counts)} people ${s.people} vs overview ${o.parts}/${o.orders}/${o.scans} ${o.peopleNow}`); }
+      ok(s.counts.partsToday === o.parts && s.counts.ordersToday === o.orders && s.counts.scansToday === o.scans && JSON.stringify(s.names.slice().sort()) === JSON.stringify(o.peopleNow.slice().sort()), `${s.key}: live ${JSON.stringify(s.counts)} people ${s.names} vs overview ${o.parts}/${o.orders}/${o.scans} ${o.peopleNow}`); }
     ok(JSON.stringify(live.signedIn.map(x => x.name).sort()) === JSON.stringify(ov.people.filter(x => x.status === 'on').map(x => x.name).sort()), 'signed in now: the live board and the overview name the same people');
     say(`  ${checked} person x window combinations: person = series = order list = overview = stations; live = overview: ok`);
   }
