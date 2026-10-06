@@ -561,8 +561,15 @@ function make(K) {
     const people = buildPeople(ctx, { rollups, sessions: [] }, from, to), P = people.get(key) || null;
     const display = P ? P.display : (canonOf(ctx, key) || niceName(name));
     // every order the person touched: rid → { days, stations }, newest first
+    // (station "inbox": the orders the person SENT a reply on, from the inbox's own sent-reply records, _employeeInbox.js; not every conversation they opened)
+    let inbox = null;
+    if (stationF === "inbox") {
+      try { inbox = await require("./_employeeInbox").ordersOf(ctx, { key, from, to }); if (inbox && !inbox.knownFrom) inbox = null; }       // (no sent-reply record exists at all yet: the list is what the person's inbox activity touched, as before)
+      catch (e) { sink.errors.push("inbox: " + String((e && e.message) || e).slice(0, 80)); }
+    }
     const uni = new Map();
-    if (P) for (const pd of P.days.values()) {
+    if (inbox) for (const o of inbox.orders) uni.set(o.rid, { rid: o.rid, days: o.days, stations: new Set(["inbox"]), latest: o.latest });
+    else if (P) for (const pd of P.days.values()) {
       if (!pd.hasEvents) continue;
       for (const [rid, set] of pd.orders) { if (stationF !== "inbox" && ![...set].some(x => x !== "inbox")) continue; let e = uni.get(rid); if (!e) uni.set(rid, e = { rid, days: new Set(), stations: new Set(), latest: "" }); e.days.add(pd.day); set.forEach(x => e.stations.add(x)); if (pd.day > e.latest) e.latest = pd.day; }
     }
@@ -620,13 +627,15 @@ function make(K) {
         issues: issuesOf(evs), customer: info.customer, info: info.info, thumbUrl: info.thumbUrl, qr: { text: e.rid }, pieces: info.pieces, piecesCount: info.piecesCount });
     });
     const order = new Map(page.map((e, i) => [e.rid, i])); rows.sort((a, b) => order.get(a.rid) - order.get(b.rid));
+    if (inbox) for (const r of rows) { const x = inbox.byRid.get(r.rid); if (x) { r.replies = x.replies; r.messages = x.messages; r.lastReplyAt = x.lastAt; if (r.at == null) r.at = x.lastAt; } }
     const notes = [];
     if (needInfo && withDetails < Math.min(list.length, CAP.infoSearch) && !ctx.prefix) notes.push(`Customer and SKU text was found for ${withDetails} of the newest ${Math.min(list.length, CAP.infoSearch)} orders.`);
     if (needInfo && list.length > CAP.infoSearch) notes.push(`Customer name and SKU search covers the newest ${CAP.infoSearch} orders; order number, station and date cover all ${list.length}.`);
     if (ctx.prefix) notes.push("The Sandbox keeps no receipts: customer, pictures and pieces are not available here.");
-    if (!P) notes.push(`There is no record of ${display} in this window.`);
+    const hasInbox = !!(inbox && inbox.orders.length);
+    if (!P && !hasInbox) notes.push(`There is no record of ${display} in this window.`);
     if (sink.capped.length) notes.push("Some lists were cut at their size limit: " + [...new Set(sink.capped)].join(", ") + ".");
-    const out = { ok: true, now: ctx.now, mode: ctx.prefix ? "sandbox" : "real", name: display, found: !!P, from, to, total, scanned, searched: { orders: list.length, withDetails }, orders: rows, next: offset + limit < total ? "o" + (offset + limit) : null, notes };
+    const out = { ok: true, now: ctx.now, mode: ctx.prefix ? "sandbox" : "real", name: display, found: !!P || hasInbox, from, to, total, scanned, searched: { orders: list.length, withDetails }, orders: rows, next: offset + limit < total ? "o" + (offset + limit) : null, notes };
     if (sink.errors.length || sink.capped.length) { out.partial = true; if (sink.errors.length) out.errors = [...new Set(sink.errors)].slice(0, 8); }
     return json(200, out);
   }

@@ -187,6 +187,7 @@
     "_employeeAttendance.js",
     "_employeeProfile.js",
     "_employeeIssues.js",
+    "_employeeInbox.js",
     "_activityKinds.js",
     "_stationActivity.js",
     "_stationLive.js",
