@@ -5,9 +5,9 @@
 // personalised piece, up to the Engraving card, then the card is driven the way a person drives it:
 //   · the Emoji button in the Words on the back box; the picker opens inside the window (not full screen), says "Loading emoji…" while the
 //     engraving font is not there yet, draws every cell as it will be engraved (SVG path from the engraving font), lists the count;
-//   · picks: a toned hand, a flag, a family (ZWJ), a keycap, in the middle of the words; text and caret exactly right, the `input` event
+//   · picks: a hand, a flag, a family (ZWJ), a keycap, and one of the six emoji whose tones engrave differently, in the middle of the words; text and caret exactly right, the `input` event
 //     fired, the card's preview refit (job.lines, job.fit.ok) with the picker staying open through the card's rebuild, one more pick after it;
-//   · Recent updates (and survives in localStorage), search "heart", every tab jumps, the tone chooser, keyboard (arrows, Enter, Esc with focus
+//   · Recent updates (and survives in localStorage), search "heart", every tab jumps, no tone chooser but a strip for the six, the folded cells' footer, keyboard (arrows, Enter, Esc with focus
 //     back at the same caret), the button again and an outside tap close it;
 //   · the typed-emoji path: what was picked passes glyphCoverage with the real fonts, the fit succeeds (no "Unsupported engraving characters"),
 //     and EVERY emoji on offer is engravable (glyphCoverage ok and a path in the engraving font);
@@ -26,27 +26,11 @@ const RID = '3521200001', KEY = RID + '_' + RID + '1';
 const receipts = [receipt(RID, [tx(RID, 1, 'BR-TST-04', pers('CARLA'))])];
 const agentResults = { engraveIntent: o => { const txt = String(o.messages[0].content[0].text), m = /Personalisation field: (\[.*?\])/.exec(txt); let p = []; try { p = JSON.parse(m ? m[1] : '[]'); } catch (_) {} const req = { side: 'back', font: null, handwriting: false, image: false }; return { engrave: p.length > 0, text: p.join('\n'), source: 'personalization', sourceQuote: p[0] || '', requests: req, questions: [], confidence: 0.97 }; } };
 
-// until EM1's charm-nest-emoji-data.js is in the repo the picker is tried against a small stand-in of the same shape
-const STUB_SRC = `(() => { const S = require_map; })`;
-const stubData = () => {
-  const map = require('../../vendor/fonts/emoji-sequences.json').sequences;
-  const mk = (c, n, k, t) => { if (!map[c]) throw new Error('stub emoji not in the shape map: ' + c); return { c, n, k, t: t ? 1 : 0 }; };
-  const groups = [
-    { id: 'smileys', name: 'Smileys', icon: '😀', items: [mk('😀', 'grinning face', 'smile happy'), mk('😍', 'smiling face with heart-eyes', 'love heart'), mk('🥰', 'smiling face with hearts', 'love')] },
-    { id: 'people', name: 'People', icon: '👋', items: [mk('👋', 'waving hand', 'hello wave', 1), mk('👍', 'thumbs up', 'yes like', 1), mk('👨‍👩‍👧‍👦', 'family: man, woman, girl, boy', 'family')] },
-    { id: 'symbols', name: 'Symbols', icon: '❤️', items: [mk('❤️', 'red heart', 'love heart'), mk('1️⃣', 'keycap: 1', 'one number'), mk('🔥', 'fire', 'hot')] },
-    { id: 'flags', name: 'Flags', icon: '🏁', items: [mk('🇨🇦', 'flag: Canada', 'canada flag')] }
-  ];
-  const tones = [{ id: '', name: 'Default', c: '✋' }].concat(['🏻', '🏼', '🏽', '🏾', '🏿'].map((t, i) => ({ id: t, name: ['Light', 'Medium-light', 'Medium', 'Medium-dark', 'Dark'][i], c: '✋' + t })));
-  const toned = {}; for (const b of ['👋', '👍']) { toned[b] = {}; for (const t of ['🏻', '🏼', '🏽', '🏾', '🏿']) toned[b][t] = b + t; }
-  return { version: 'stub', count: groups.reduce((n, g) => n + g.items.length, 0), groups, tones, toned };
-};
-
 (async () => {
   const pwDir = process.env.PW_DIR || path.join(root, 'node_modules');
   let chromium; try { ({ chromium } = require(path.join(pwDir, 'playwright-core'))); } catch (_) { try { ({ chromium } = require('/opt/node22/lib/node_modules/playwright/node_modules/playwright-core')); } catch (__) { console.log('  – no playwright-core: not run'); return; } }
   const shots = process.env.SHOTS || ''; if (shots) fs.mkdirSync(shots, { recursive: true });
-  const REAL = fs.existsSync(path.join(root, 'charm-nest-emoji-data.js')) && /charm-nest-emoji-data\.js/.test(fs.readFileSync(path.join(root, 'charm-nest-1.html'), 'utf8'));
+  if (!fs.existsSync(path.join(root, 'charm-nest-emoji-data.js')) || !/charm-nest-emoji-data\.js/.test(fs.readFileSync(path.join(root, 'charm-nest-1.html'), 'utf8'))) { console.log('  – charm-nest-emoji-data.js is not loaded by charm-nest-1.html: not run'); return; }
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cn-emoji-')), masterPath = path.join(tmp, 'BRITES-master.ai');
   await buildMaster(masterPath, { count: 4, edge: false });
   const srv = await start({ receipts, agentResults });
@@ -54,7 +38,7 @@ const stubData = () => {
   const browser = await chromium.launch({ executablePath: process.env.CHROMIUM || '/opt/pw-browsers/chromium-1194/chrome-linux/chrome', args: ['--no-sandbox'] });
   const fails = [], errors = [];
   const check = (ok, msg) => { if (!ok) fails.push(msg); console.log((ok ? '  ✓ ' : '  ✗ ') + msg); };
-  console.log(REAL ? 'emoji data: the real charm-nest-emoji-data.js' : process.env.EMOJI_DATA ? 'emoji data: ' + process.env.EMOJI_DATA : 'emoji data: STAND-IN (the real file is not in the repo yet)');
+  console.log('emoji data: the real charm-nest-emoji-data.js (' + 'loaded by the page' + ')');
   try {
     const ctx = await browser.newContext({ viewport: { width: 1500, height: 1000 }, deviceScaleFactor: 2 });
     const fbStub = "const nope = () => { throw new Error('firebase stub'); }; export const initializeApp = nope, getApp = nope, getStorage = nope, ref = nope, uploadBytesResumable = nope, getDownloadURL = nope, getAuth = nope, signInAnonymously = nope;";
@@ -67,11 +51,6 @@ const stubData = () => {
       if (location.origin === sorter) { localStorage.setItem('cn.employee', 'Test Operator'); localStorage.setItem('cn.tour.seen', '1'); }
       window.confirm = () => true; window.alert = () => {};
     }, { station: stationOrigin, sorter: sorterOrigin });
-    if (!REAL && process.env.EMOJI_DATA) await ctx.addInitScript({ content: fs.readFileSync(process.env.EMOJI_DATA, 'utf8') });   // (a copy of the data file that is not in the repo yet)
-    else if (!REAL) {
-      const data = stubData();
-      await ctx.addInitScript(d => { window.CNEmojiData = Object.assign({}, d, { search(q) { q = String(q).toLowerCase().trim(); const out = []; for (const g of d.groups) for (const it of g.items) if ((it.n + ' ' + it.k).toLowerCase().includes(q)) out.push(it); return out; } }); }, data);
-    }
     const page = await ctx.newPage();
     page.setDefaultTimeout(30000);
     page.on('pageerror', e => { errors.push(e.message); console.error('page error:', String(e.stack || e.message).split('\n').slice(0, 4).join(' | ')); });
@@ -103,7 +82,7 @@ const stubData = () => {
       throw new Error('the words box is gone');
     };
     const ui = () => page.evaluate(() => { const p = document.querySelector('.emPop'); return { open: !!p && !p.hidden, state: window.CNEmojiPicker.state() }; });
-    const itemsOf = () => page.evaluate(() => CNEmojiData.groups.flatMap(g => g.items.map(i => ({ c: i.c, n: i.n, g: g.id, t: i.t }))));
+    const itemsOf = () => page.evaluate(() => CNEmojiData.groups.flatMap(g => g.items.map(i => ({ c: i.c, n: i.n, g: g.id, t: i.t, ts: i.ts, s: i.s }))));
     const all = await itemsOf();
 
     // ── the button ──
@@ -139,21 +118,18 @@ const stubData = () => {
       await page.evaluate(n => { [...document.querySelectorAll('.emCell')].find(c => c.getAttribute('aria-label').startsWith(n)).click(); }, item.n);
     };
     const hand = by('👋'), flag = by('🇨🇦'), fam = by('👨‍👩‍👧‍👦'), key1 = by('1️⃣');
-    let inputs = 0; await page.evaluate(sel => { window.__inputs = 0; document.querySelector(sel).addEventListener('input', e => { window.__inputs++; window.__lastInput = e.inputType; }); }, ta);
-    // the tone: Medium, through the chooser
-    await page.click('.emToneBtn'); await page.click('.emTone[data-t="🏽"]');
-    check(await page.evaluate(() => CNEmojiPicker.state().tone) === '🏽', 'the tone chooser sets the tone for every person/hand emoji');
+    await page.evaluate(sel => { window.__inputs = 0; document.querySelector(sel).addEventListener('input', e => { window.__inputs++; window.__lastInput = e.inputType; }); }, ta);
+    check(await page.evaluate(() => !document.querySelector('.emToneBtn, .emTones, .emTone')), 'there is no tone chooser: the laser cuts one outline for almost every tone');
     await pick(hand); let w = await words();
-    check(w.v === 'CAR👋🏽LA' && w.s === 'CAR👋🏽'.length && w.focus === false, 'a toned hand goes in at the caret: "' + w.v + '" caret ' + w.s);
+    check(w.v === 'CAR👋LA' && w.s === 'CAR👋'.length && w.focus === false, 'a hand goes in as the plain hand at the caret: "' + w.v + '" caret ' + w.s);
     check((await page.evaluate(() => [window.__inputs, window.__lastInput])).join() === '1,insertText', 'the textarea heard the same input event typing gives');
-    await page.click('.emToneBtn'); await page.click('.emTone[data-t=""]');
     await pick(flag); await pick(fam); await pick(key1);
     w = await words();
-    const expect = 'CAR👋🏽🇨🇦👨‍👩‍👧‍👦1️⃣LA';
-    check(w.v === expect && w.s === 'CAR👋🏽🇨🇦👨‍👩‍👧‍👦1️⃣'.length, 'a flag, a family and a keycap follow it, caret after them: ' + JSON.stringify(w.v) + ' caret ' + w.s);
+    const expect = 'CAR👋🇨🇦👨‍👩‍👧‍👦1️⃣LA';
+    check(w.v === expect && w.s === 'CAR👋🇨🇦👨‍👩‍👧‍👦1️⃣'.length, 'a flag, a family and a keycap follow it, caret after them: ' + JSON.stringify(w.v) + ' caret ' + w.s);
     check((await ui()).open, 'the picker is still open after several picks');
     // the preview refits (350 ms after the last pick); the card is rebuilt behind the open picker and the picker follows
-    await page.waitForFunction(k => { const j = Engrave.items().get(k); return j && j.lines.join('\n') === 'CAR👋🏽🇨🇦👨‍👩‍👧‍👦1️⃣LA' && j.fit && j.fit.ok !== false; }, KEY, { timeout: 30000 });
+    await page.waitForFunction(k => { const j = Engrave.items().get(k); return j && j.lines.join('\n') === 'CAR👋🇨🇦👨‍👩‍👧‍👦1️⃣LA' && j.fit && j.fit.ok !== false; }, KEY, { timeout: 30000 });
     const job = await page.evaluate(k => { const j = Engrave.items().get(k); return { lines: j.lines, state: j.state, ok: !!j.fit, reason: j.reason || '', size: j.fit && j.fit.capMm }; }, KEY);
     check(job.lines.join('\n') === expect && job.ok && !/Unsupported/.test(job.reason), 'the preview refit with the picked emoji: job.lines updated, the engraving fits (cap ' + (job.size && job.size.toFixed(2)) + ' mm), no "Unsupported engraving characters"');
     await sleep(500);
@@ -161,9 +137,36 @@ const stubData = () => {
     check(follow.open && follow.expanded === 'true' && follow.on, 'the card was rebuilt behind the picker; it stayed open on the new button: ' + JSON.stringify(follow));
     await pick(by('❤️'));
     w = await words();
-    check(w.v === 'CAR👋🏽🇨🇦👨‍👩‍👧‍👦1️⃣❤️LA', 'one more pick after the rebuild lands at the caret too: ' + JSON.stringify(w.v));
+    check(w.v === 'CAR👋🇨🇦👨‍👩‍👧‍👦1️⃣❤️LA', 'one more pick after the rebuild lands at the caret too: ' + JSON.stringify(w.v));
     await page.waitForFunction(k => Engrave.items().get(k).lines.join('\n').includes('❤️'), KEY, { timeout: 30000 });
     check(await page.waitForFunction(k => { const j = Engrave.items().get(k); return !!j.fit && j.state === 'review' && !j.reason; }, KEY, { timeout: 30000 }).then(() => true, async () => { console.log('    ' + JSON.stringify(await page.evaluate(k => { const j = Engrave.items().get(k); return { state: j.state, reason: j.reason, fit: !!j.fit }; }, KEY))); return false; }), 'and the placement is still a placement to approve (state review, no reason line)');
+
+    // ── tones: only the six emoji whose outline changes with the tone offer a strip; a folded cell names its other spellings ──
+    const tsItem = all.find(x => x.ts), foldItem = all.find(x => x.n === 'health worker' && x.s) || all.find(x => x.s);
+    check(all.filter(x => x.ts).length === 6, 'the data marks six emoji whose tones engrave differently (' + all.filter(x => x.ts).map(x => x.c).join(' ') + ')');
+    const cellOf = n => page.locator('.emCell[aria-label="' + n.replace(/"/g, '\\"') + '"]').first();
+    await page.fill('.emQ', tsItem.n); await cellOf(tsItem.n).waitFor();
+    await cellOf(tsItem.n).hover();
+    const strip = await page.evaluate(() => { const st = document.querySelector('.emStrip'), b = [...st.querySelectorAll('.emSt')]; return { shown: !st.hidden, n: b.length, svg: b.filter(x => x.querySelector('svg path')).length, ds: b.map(x => x.querySelector('path') && x.querySelector('path').getAttribute('d')), inside: b.every(x => { const r = x.getBoundingClientRect(), p = document.querySelector('.emPop').getBoundingClientRect(); return r.left >= p.left && r.right <= p.right && r.width >= 24; }), ct: document.querySelector('.emCt').hidden }; });
+    check(strip.shown && strip.n === 6 && strip.svg === 6 && strip.inside && strip.ct, 'hovering ' + tsItem.n + ' shows a strip of its six variants, drawn as engraved, inside the panel');
+    check(new Set(strip.ds).size > 1, 'and the variants really are different cuts (' + new Set(strip.ds).size + ' different outlines of 6)');
+    const tsSeq = await page.evaluate(c => CNEmojiData.toned[c]['🏽'], tsItem.c);
+    await page.locator('.emSt[data-seq="' + tsSeq + '"]').hover();
+    check(/Medium skin tone/.test(await page.evaluate(() => document.querySelector('.emNm').textContent)), 'the footer line names the tone under the pointer');
+    if (shots) await page.locator('.emPop').screenshot({ path: path.join(shots, 'strip.png') });
+    const before1 = (await words()).v; await page.locator('.emSt[data-seq="' + tsSeq + '"]').click();
+    w = await words();
+    check(w.v === before1.slice(0, w.s - tsSeq.length) + tsSeq + before1.slice(w.s - tsSeq.length) && w.v.length === before1.length + tsSeq.length && w.v.includes('❤️' + tsSeq), 'picking the Medium variant inserts it at the caret: ' + JSON.stringify(w.v));
+    check((await ui()).open, 'the picker stays open after a toned pick');
+    await page.fill('.emQ', 'waving hand'); await cellOf('waving hand').waitFor(); await cellOf('waving hand').hover(); await sleep(1900);
+    check(await page.evaluate(() => document.querySelector('.emStrip').hidden), 'an emoji whose tones cut the same (waving hand) has no strip: its pick is the plain hand');
+    check(await page.evaluate(() => { const f = CNEmojiData.find('👋🏽'); return !!f && f.c === '👋'; }), 'a toned emoji typed or pasted still resolves (find)');
+    await page.fill('.emQ', foldItem.n); await cellOf(foldItem.n).waitFor(); await cellOf(foldItem.n).hover();
+    const also = await page.evaluate(() => ({ t: document.querySelector('.emCt').textContent, hidden: document.querySelector('.emCt').hidden }));
+    check(!also.hidden && /^Also: /.test(also.t) && (foldItem.n !== 'health worker' || (/man health worker/.test(also.t) && /woman health worker/.test(also.t))), 'a folded cell says what else it stands for: "' + also.t + '"');
+    if (shots) await page.locator('.emPop').screenshot({ path: path.join(shots, 'folded.png') });
+    await page.fill('.emQ', '');
+    await page.waitForFunction(k => Engrave.items().get(k).lines.join('\n').includes('🏽'), KEY, { timeout: 30000 });
 
     // ── the typed-emoji path: coverage with the real fonts, for what was picked and for everything on offer ──
     const cov = await page.evaluate(sel => { const F = Engrave.fonts.Regular, G = window.CharmNestGeom, t = document.querySelector(sel).value; const c = G.glyphCoverage(F, t); return { ok: c.ok, missing: c.missing || [], emoji: Engrave.fonts.emoji }; }, ta);
@@ -175,8 +178,8 @@ const stubData = () => {
     // ── Recent, search, tabs ──
     await page.click('.emTab[data-g=recent]');
     const rec = await page.evaluate(() => ({ labels: [...document.querySelectorAll('.emCell')].slice(0, 6).map(c => c.getAttribute('aria-label')), top: document.querySelector('.emGrid').scrollTop, stored: JSON.parse(localStorage.getItem('cn.emoji.recent') || '[]') }));
-    check(rec.stored[0] === '❤️' && rec.stored.includes('1️⃣') && rec.stored.includes('👋🏽') && rec.stored.length <= 24, 'Recent is kept (' + rec.stored.join(' ') + ')');
-    check(/red heart|heart/i.test(rec.labels[0]) && rec.labels.length >= 5, 'the Recent tab shows the latest first: ' + rec.labels.join(' | '));
+    check(rec.stored[0] === tsSeq && rec.stored.includes('1️⃣') && rec.stored.includes('👋') && rec.stored.includes('❤️') && rec.stored.length <= 24, 'Recent is kept (' + rec.stored.join(' ') + ')');
+    check(rec.labels[0].startsWith(tsItem.n) && rec.labels.length >= 5, 'the Recent tab shows the latest first: ' + rec.labels.join(' | '));
     await page.fill('.emQ', 'heart');
     const hs = await page.evaluate(() => ({ head: document.querySelector('.emHead').textContent, labels: [...document.querySelectorAll('.emCell')].map(c => c.getAttribute('aria-label')) }));
     check(hs.labels.length >= 2 && hs.labels.every(l => /heart|love/i.test(l) || true) && /found/.test(hs.head), 'search "heart": ' + hs.head + ' · ' + hs.labels.slice(0, 5).join(' | '));
@@ -191,8 +194,6 @@ const stubData = () => {
       if (r.head && r.atTop && r.on === id) jumped++; else console.log('    tab', id, JSON.stringify(r));
     }
     check(jumped === groupsIds.length, 'every category tab jumps its section to the top of the grid (' + jumped + '/' + groupsIds.length + ')');
-    const tone2 = await page.evaluate(() => ({ people: [...document.querySelectorAll('.emCell')].filter(c => /waving hand|thumbs up/.test(c.getAttribute('aria-label'))).map(c => c.getAttribute('aria-label')) }));
-    void tone2;
 
     // ── keys ──
     await page.click('.emTab[data-g=recent]'); await page.focus('.emGrid');
