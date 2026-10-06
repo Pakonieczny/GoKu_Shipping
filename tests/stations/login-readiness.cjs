@@ -105,7 +105,7 @@ async function run(browser, dev, station, all, allReqs, ip) {
     await page.evaluate(() => { const i = document.getElementById('employeeNumberInput'); i.dataset.raw = ''; i.value = ''; window.__toasts.length = 0; });
     await page.focus('#employeeNumberInput'); await page.keyboard.type(pin);
     await page.click('#employeeLoginBtn', { force: true });
-    if (dev === 'weld-1') {                                                        // the Welding station asks "Welding or Matching?" after the number
+    if (dev === 'weld-1' && [...pins.values()].includes(pin)) {                    // the Welding station asks "Welding or Matching?" after a number it knows
       await until(() => page.evaluate(() => document.getElementById('userLoginModal').classList.contains('weld-task')), dev + ': the Welding or Matching step');
       await page.evaluate(() => document.getElementById('weldTaskMatching').click());
     }

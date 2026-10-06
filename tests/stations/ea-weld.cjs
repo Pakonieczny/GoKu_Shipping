@@ -2,7 +2,7 @@
 // headless Chromium with Firebase, Materialize and every function stubbed here: no request leaves the machine.
 //   · nobody signed in: a scan records no activity at all
 //   · PIN login (a fake PIN), then a typed stud order: `scan` (stud pieces) and `complete` (orders 1, parts) once each
-//   · the phone scanner relay (weld-scan-1) with a mixed order: `scan` "phone scan" and ONE `complete` for the order
+//   · the phone scanner relay (weld-scan-1) with a mixed order: ONE `matched` "phone scan" (the scan queue) and ONE `complete` for the order, no plain `scan`
 //   · the same order again: a `scan` ("again"), no second `complete`
 //   · rejects: an unknown order, an order with no studs, a cancelled order: `scan` + `reject`, never `complete`
 //   · the order timeline agrees with the activity (Paul, 3 Oct 2026: "only stud earrings get welded"): a stud order is sealed
@@ -151,8 +151,10 @@ const seals = (order, type = 'welded') => st.events.filter(e => e.orderId === or
   // 3 · the phone relay with studs (1 + 2 pieces) and a necklace: one scan, one complete for the order
   await phone(MIXED);
   await outcome(MIXED, 'complete');
-  assert.deepStrictEqual(acts(MIXED).map(e => e.action), ['scan', 'complete'], 'one scan and ONE complete for a two-stud-line order: ' + JSON.stringify(acts(MIXED)));
-  assert.strictEqual(acts(MIXED, 'scan')[0].detail, 'phone scan'); assert.strictEqual(acts(MIXED, 'scan')[0].parts, 3);
+  // (stations round 2: a phone scan at the Welding station is ONE `matched` event, written by the scan queue and credited to the Matching person
+  //  here; the page logs no plain `scan` of its own for it. tests/stations/weld-scan-matched.cjs)
+  assert.deepStrictEqual(acts(MIXED).filter(e => e.action !== 'matched').map(e => e.action), ['complete'], 'ONE complete for a two-stud-line order, and no plain scan for a phone scan: ' + JSON.stringify(acts(MIXED)));
+  assert.deepStrictEqual(acts(MIXED, 'matched').map(e => [e.person, e.task, e.orders, e.parts, e.detail]), [[WHO, 'matching', 0, 0, 'phone scan']], 'and one matched, never a completion');
   assert.strictEqual(acts(MIXED, 'complete')[0].parts, 3); assert.strictEqual(acts(MIXED, 'complete')[0].orders, 1);
   await tl();                                                        // the timeline: one welded per stud line, none for the necklace
   assert.deepStrictEqual(seals(MIXED).map(e => String(e.transactionId)).sort(), ['94201', '94203'], 'a mixed order seals its two stud lines only: ' + JSON.stringify(seals(MIXED)));

@@ -339,6 +339,8 @@ async function weld(browser, base) {
   await wait2(async () => { await page.evaluate(() => window.StationActivity.flush()); return st.events.some(e => e.orderId === '3522000011') && st.timeline.some(e => e.type === 'welded' && e.orderId === '3522000011'); }, 'the scan\'s events and its welded seal', 20000);
   const scanEvents = st.events.filter(e => e.orderId === '3522000011');
   assert(scanEvents.length > 0 && scanEvents.every(e => e.person === 'Ray Matcher'), 'the scan is credited to the Matching person: ' + JSON.stringify(scanEvents.map(e => e.action + ':' + e.person)));
+  assert.strictEqual(scanEvents.filter(e => e.action === 'matched').length, 1, 'one matched event for a phone scan (the scan queue writes it)');
+  assert.strictEqual(scanEvents.filter(e => e.action === 'scan').length, 0, 'the page logs no plain scan of its own for a phone scan');
   assert(st.timeline.filter(e => e.type === 'welded' && e.orderId === '3522000011').every(e => e.by === 'Tess Welder'), 'the welded seal names the Welding person');
 
   // a double tap must not sign out the chip that moved under the finger

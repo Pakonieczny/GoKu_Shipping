@@ -1065,9 +1065,9 @@
        the session carries the name only. At midnight (New York) the PIN box comes back; the order, the fields and the chat
        stay on screen. -->
   <script src="station-session.js?v=20261006-ws1"></script>
-  <script src="station-activity.js?v=20261005-et2"></script>
+  <script src="station-activity.js?v=20261006-ws3"></script>
   <!-- Phone scans that arrive while nobody is signed in wait here and load, in order, right after the next sign-in (station-scan-queue.js). -->
-  <script src="station-scan-queue.js?v=20261003-sq1"></script>
+  <script src="station-scan-queue.js?v=20261006-ws3"></script>
   <script>
     /* Who is signed in here: several people at once (Paul, 6 Oct 2026: one welds while another matches, same page), each under
        a task, "welding" or "matching". The page keeps them in localStorage.weld_people = [{ name, task, at }] (names and tasks
@@ -1151,7 +1151,7 @@
 
   <!-- Order timeline: every scan here is recorded (who, when) and a cancelled order raises the full-screen alert -->
   <script src="order-timeline.js?v=20260929-cx-a"></script>
-  <script src="station-timeline.js?v=20260928-fxS"></script>
+  <script src="station-timeline.js?v=20261006-ws1"></script>
   <script>
     /* Who welds: the person signed in with this station's 6-digit PIN login (Brites_Orders/"Employee Numbers"), by the
        name the login stored. Never the typed "Employee Name" field (a guess) and never an earlier person: the timeline
@@ -1279,7 +1279,10 @@
       try {
         const id = weldId(orderNumber), p = weldPieces(orderData);
         if (!id) return weldAct("error", { detail: "typed text is not an order number" });   // no digits: nothing to weld, and the timeline has no order to seal
-        weldAct("scan", { orderId: id, parts: p.parts, detail: (how === "scan" ? "phone scan" : String(how || "typed")) + (weldCounted.has(id) ? " · again" : "") });
+        /* a scan from the phone scanner app is recorded by the scan queue as ONE `matched` event (credited by StationSession.who(): the
+           Matching person, or nobody); this page does not also log its own plain `scan` for it, and never a `matched` itself. A number
+           typed or pasted at the desk is still a plain `scan`. */
+        if (how !== "scan") weldAct("scan", { orderId: id, parts: p.parts, detail: String(how || "typed") + (weldCounted.has(id) ? " · again" : "") });
         weldLive(id, orderData, "");
       } catch (_) {}
     }
@@ -1301,7 +1304,7 @@
       } catch (_) {}
     }
     try {
-      StationTimeline.init({ station: "welding", device: "weld-1", getEmployee: weldSignedIn });
+      StationTimeline.init({ station: "welding", device: "weld-1", getEmployee: weldSignedIn, exact: true });
     } catch (_) {}
   </script>
 
@@ -3885,7 +3888,7 @@ function metalToBadge(label){
               if (!scanQueue && !window.isEmployeeLoggedIn) return;   // (queue script missing: as before, nobody signed in = nothing to do)
               if (orderNumber === lastScanProcessed) return;   // duplicate → ignore
               lastScanProcessed = orderNumber;                 // remember newest hit
-              if (scanQueue) scanQueue.offer(orderNumber);     // kept: loads now when signed in, else right after the next sign-in
+              if (scanQueue) scanQueue.offer(orderNumber, data);   // kept: loads now when signed in, else right after the next sign-in; the relay data carries the scan's real time and id (every scan is also one `matched` event, station-scan-queue.js)
               else processScannedOrder(orderNumber);
 
               /* one-shot: wipe the field so it can’t be reused */
