@@ -453,6 +453,9 @@ async function op(ctx, body, H) {
     }
     stations.push(row);
   }
+  // the Laser station's sheet times (LS1, R7; _laserSheetTime.js): the last sheet's time and today's average. Its own read, kept 15 s; the card says nothing when it cannot be read.
+  const ls = await safe(require("./_laserSheetTime").liveBlock(ctx, H), "laser sheet times");
+  if (ls.ok) { const L = stations.find(x => x.key === "laser"); if (L) L.laserSheet = ls.value; } else errors.push(ls.label + ": " + ls.error);
   // the inbox card's block (IN1, _employeeInbox.js): today's sent replies, orders, customers and messages (people + unknown, never auto);
   // a read that fails only leaves the block out (the card then draws a dash), it never makes the whole board partial
   try {

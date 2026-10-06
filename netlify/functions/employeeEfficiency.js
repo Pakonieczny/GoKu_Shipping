@@ -670,6 +670,8 @@ const PROFILE = require("./_employeeProfile")({ KIND, COL, LIM, ms, num, r1, zer
 const OPS = { overview: opOverview, person: (ctx, body) => (body.range != null || body.from || body.to ? PROFILE.opProfile(ctx, body) : opPerson(ctx, body)), orders: opOrders, personOrders: PROFILE.opOrders };
 /* op "live": the stations board (what each station is working on right now), kept in _stationLive.js */
 OPS.live = (ctx, body) => require("./_stationLive").op(ctx, body, { json, nyMidnight, cached, display: raw => canonOf(ctx, nameKeyOf(ctx, raw)) || niceName(raw) });
+/* op "laserSheets" (R7, Paul 6 Oct): one person's cut sheets and how long each took, from the Laser_Sheet_Times records the Library's laserDone wrote (kept in _laserSheetTime.js) */
+OPS.laserSheets = (ctx, body) => require("./_laserSheetTime").opSheets(ctx, body, { json, nyMidnight, nameKeyOf, cleanName, okName, display: raw => canonOf(ctx, nameKeyOf(ctx, raw)) || niceName(raw) });
 /* the inbox figures (Paul, 6 Oct 2026: replies sent per employee, orders covered, messages per customer): _employeeInbox.js gets this file's own name, day and cache rules
    once; ops `inbox` (everybody, all windows) and `personInbox` (one person, the Employee page's Inbox section); _stationLive.js and _employeeProfile.js call it for the board's block and for personOrders station "inbox" */
 const INBOX = require("./_employeeInbox");

@@ -144,7 +144,15 @@
       const state = ["working", "idle", "offline"].includes(s.state) ? s.state : current.length ? "working" : people.length ? "idle" : "offline";
       return { key, label, state, people, current, lastEventAt: T(s.lastEventAt), counts: { parts: cnt(k.partsToday != null ? k.partsToday : k.parts), orders: cnt(k.ordersToday != null ? k.ordersToday : k.orders), scans: cnt(k.scansToday != null ? k.scansToday : k.scans) }, devices, spark: sparkOf(s) };
     });
+    // LS1: the Laser station's sheet times ({ today, last }) ride along on its entry (op live, netlify/functions/_stationLive.js)
+    for (const st of stations) { const raw = (Array.isArray(r.stations) ? r.stations : []).find(x => x && String(x.key || low(x.label)) === st.key); if (raw && raw.laserSheet) st.laserSheet = laserOf(raw.laserSheet); }
     return { at: T(r.at), mode: r.mode === "sandbox" ? "sandbox" : "real", stations, signedIn };
+  }
+  /** { today: { sheets, timed, avgSec }, last: { at, person, sheet, seconds, startedFrom } | null } of the Laser station, or null when the answer has none. A time the data does not know is null: never a zero. */
+  function laserOf(b) {
+    if (!b || typeof b !== "object") return null; const t = b.today && typeof b.today === "object" ? b.today : {}, l = b.last && typeof b.last === "object" && T(b.last.at) ? b.last : null;
+    return { today: { sheets: N(t.sheets), timed: N(t.timed), avgSec: has(t.avgSec) ? N(t.avgSec) : null },
+      last: l ? { at: T(l.at), person: str(l.person), sheet: str(l.sheet), seconds: has(l.seconds) ? N(l.seconds) : null, startedFrom: str(l.startedFrom) } : null };
   }
 
   /* ── the QR code of an order: the app's own generator (lib/qrcode.min.js, the one the QR labels use), drawn once per text with a quiet zone ── */
@@ -742,7 +750,19 @@
         X.body.appendChild(card); enterCard(X, card, ctx.quiet);
       }
       for (const [id, card] of X.cards) if (!seen.has(id)) { X.cards.delete(id); finishCard(X, card, card.data(), ctx); }
+      laserLine(X, s);
       idleLine(X);
+    }
+    /** LS1: on the Laser card one quiet line: the last sheet's time and today's average (the data is the stored per-sheet times; a sheet marked completed with no Laser sign-in has none). */
+    function laserLine(X, s) {
+      const L = s.laserSheet, has0 = L && (L.last || L.today.sheets > 0), sig = has0 ? JSON.stringify(L) : "";
+      if (sig === (X.lsSig || "")) return; X.lsSig = sig;
+      if (!has0) { if (X.ls) { X.ls.remove(); X.ls = null; } return; }
+      if (!X.ls) { X.ls = h("p", "esLs"); X.el.insertBefore(X.ls, X.body); }
+      const p = X.ls, add = (label, value, note) => { const i = h("span", "esLsI"); i.appendChild(h("span", "esLsL", label)); i.appendChild(h("b", "", value)); if (note) i.appendChild(h("span", "esLsN", note)); p.appendChild(i); };
+      p.textContent = "";
+      if (L.last) add("Last sheet", L.last.seconds != null ? words(L.last.seconds * 1000) : "no time", `${L.last.person ? L.last.person + " · " : ""}${clock(L.last.at)}${L.last.seconds == null ? " · not signed in as Laser" : ""}`);
+      add("Today's average", L.today.avgSec != null ? words(L.today.avgSec * 1000) : "no time yet", `${nf(L.today.sheets)} ${L.today.sheets === 1 ? "sheet" : "sheets"}${L.today.timed < L.today.sheets ? `, ${nf(L.today.timed)} timed` : ""}`);
     }
     function setNum(n, to, quiet) {
       to = N(to); if (n._v === to) return; const was = n._v == null ? to : (n._cur != null ? n._cur : n._v);
@@ -858,6 +878,8 @@
 .esSpark{display:block;overflow:visible}.esSL{fill:none;stroke:#6f6a62;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}.esSA{fill:rgba(93,90,82,.08);stroke:none}.esSD{fill:var(--gold,#a9823f);stroke:var(--card,#fffefb);stroke-width:1.5}
 .esStBody{padding:0 16px 14px;display:grid;gap:10px;grid-template-columns:repeat(auto-fill,minmax(min(100%,380px),1fr));align-items:start;min-width:0}
 .esStBody:empty{display:none}
+.esLs{display:flex;flex-wrap:wrap;gap:2px 22px;margin:-4px 0 0;padding:0 16px 10px;font-size:12px;color:var(--ink45,#938c80)}
+.esLsI{display:inline-flex;align-items:baseline;gap:6px;min-width:0}.esLsI b{color:var(--ink,#1c1a17);font-weight:650;font-variant-numeric:tabular-nums}.esLsL{text-transform:uppercase;letter-spacing:.08em;font-size:9.5px;font-weight:700}.esLsN{font-size:11px}
 .esRoster{grid-column:1/-1;display:flex;flex-direction:column;gap:3px;margin:-2px 0 0;font-size:12px;color:var(--ink45,#938c80);font-variant-numeric:tabular-nums;min-width:0}
 .esRo{display:block;min-width:0;overflow-wrap:anywhere}.esRo[hidden]{display:none}.esRo i{font-style:normal}.esRo i[hidden]{display:none}
 .esRoN{font-weight:650;color:var(--ink70,#5b554c)}
