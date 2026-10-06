@@ -8,7 +8,9 @@
  *
  *  What it does, every 5 minutes: per store (real, Sandbox_) one query for the sessions that are not ended (single-field equality: no index
  *  to build), at most 300 read and 100 ended per run; every end is one transaction that re-checks the fresh document, so a beat that arrived
- *  meanwhile wins. Admins are exempt from the idle and 5 pm rules. It never deletes anything, never rewrites an ended session, never calls
+ *  meanwhile wins. Admins are exempt from the idle and 5 pm rules. Each station follows its own row of the one policy table
+ *  (_stationSignoutPolicy.js; Addendum 2): Welding is ended only at 17:00 Toronto (17:00 sharp, "closing"), Laser after 60 minutes without input
+ *  (30 from 17:00), and a quiet page does not end either of them early. It never deletes anything, never rewrites an ended session, never calls
  *  Etsy and never touches another collection.
  *
  *  The schedule is declared in this file (in-file config, kept literal by scripts/build-netlify.cjs); netlify.toml is not changed.

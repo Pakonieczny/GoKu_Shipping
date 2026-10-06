@@ -8,9 +8,8 @@
 //   1  · one person in Matching: that person, task matching, the scan's real time; scanned work (scans, matched), never an order completion
 //   2  · two in Matching: the one with the latest input; a welder signed in last is never credited; a sign-out hands it to the other
 //   3  · nobody in Matching (only a welder signed in): `unattributed`, filed under "Unattributed", never credited to the welder
-//   4  · offline replay: scans that arrive while nobody is signed in wait (with their real times) and are credited at the replay by the
-//        people signed in THEN (a Matching person, or unattributed when only a welder is in); a scan of an earlier day is never credited
-//        to whoever signs in later
+//   4  · offline replay: a scan that waited (the phone was offline, or nobody was in when it arrived) is credited by who was in Matching at the
+//        scan's REAL time (StationSession.whoAt), never by who signs in afterwards; nobody then (or only a welder) = unattributed; a scan of an earlier day too
 //   5  · duplicates: the same order within seconds is one event (two scan ids, or the same scan id told twice); a repeat later is its own
 //        event ("again"); the event id is made from the scan, so the same scan written twice is stored once and counted once
 //   6  · the phone page: offline scans are kept on the phone with their real times, survive a reload mid-queue, go out once each in
@@ -203,7 +202,7 @@ async function main() {
     await check('1 one person in Matching: credited, task matching, the real scan time; scanned work, never an order completion', async () => {
       await signIn(A, 'matching');
       await wait(1150);                                             // (input is stamped one a second at most)
-      const o = oid(1, 1), t0 = Date.now(), at = t0 - 40000;
+      const o = oid(1, 1), t0 = Date.now(), at = t0 - 500;            // (scanned half a second ago: Ana has been in for a second, so she was in when it was scanned)
       const li0 = await desk.evaluate(() => StationSession.lastInput());
       await relay(payload(o, { at, sent: t0 }));
       await until(async () => { await flush(); return matchedOf(o).length >= 1; }, 'the matched event');
@@ -213,7 +212,7 @@ async function main() {
       assert.equal(ev[0].person, A); assert.equal(ev[0].task, 'matching'); assert.equal(ev[0].station, 'welding'); assert.equal(ev[0].device, 'weld-1');
       assert.equal(ev[0].action, 'matched'); assert.equal(ev[0].orderId, o); assert.equal(ev[0].parts, 0); assert.equal(ev[0].orders, 0);
       assert.ok(!('unattributed' in ev[0]), 'credited: not unattributed');
-      assert.ok(Math.abs(ev[0].at - at) < 3000, `the real scan time, not the arrival time (${ev[0].at - at} ms off)`);
+      assert.ok(Math.abs(ev[0].at - at) < 250, `the real scan time, not the arrival time (${ev[0].at - at} ms off)`);
       assert.match(ev[0].session, /^welding__weld-1__Ana_M\.__matching__/, 'the credited person\'s own session');
       assert.match(ev[0].id, /^mt_weld-1_3501000001_/, 'the event id is made from the scan');
       const r = rollupOf(A);
@@ -268,7 +267,7 @@ async function main() {
     });
 
     /* ── 4 ── */
-    await check('4 offline replay: scans that arrive with nobody signed in wait with their real times and are credited at the replay', async () => {
+    await check('4 offline replay: a scan that waited is credited by who was signed in when it was SCANNED, never by who signs in afterwards', async () => {
       await signAllOut();
       const o1 = oid(4, 1), o2 = oid(4, 2), t0 = Date.now();
       await relay(payload(o1, { at: t0 - 150000, sent: t0 }));
@@ -283,10 +282,39 @@ async function main() {
       for (const [o, at] of [[o1, t0 - 150000], [o2, t0 - 90000]]) {
         const ev = matchedOf(o);
         assert.equal(ev.length, 1, 'one event for ' + o);
-        assert.equal(ev[0].person, B, 'credited at the replay to the person signed in then');
+        assert.equal(ev[0].unattributed, true, 'nobody was in Matching when it was scanned: unattributed, not the person who signed in since');
+        assert.equal(ev[0].person, 'Unattributed'); assert.equal(ev[0].session, '');
         assert.ok(Math.abs(ev[0].at - at) < 3000, `with its real scan time (${ev[0].at - at} ms off)`);
       }
       assert.equal(await note(), null);
+      assert.deepEqual((await ran()).filter(x => x.n === o1 || x.n === o2).map(x => x.m), [1, 1], 'the orders still load');
+      // the phone was offline: Ana was in Matching when the earring was scanned, signed out, Bea signed in, and then the phone sent the scan
+      await signAllOut(); await signIn(A, 'matching'); await wait(900);
+      const oL = oid(4, 5), scannedAt = Date.now();
+      await wait(300); await signOut(A, 'matching'); await wait(300);
+      const gapAt = Date.now();                                                   // nobody in Matching from here
+      await wait(300); await signIn(B, 'matching'); await wait(1100);
+      await relay(payload(oL, { at: scannedAt, sent: Date.now() }));
+      await until(async () => { await flush(); return matchedOf(oL).length >= 1; }, 'the late scan');
+      assert.equal(matchedOf(oL)[0].person, A, 'credited to Ana, who was in Matching when it was scanned; Bea was not yet');
+      assert.match(matchedOf(oL)[0].session, /^welding__weld-1__Ana_M\.__matching__/);
+      assert.ok(!('unattributed' in matchedOf(oL)[0]));
+      // a scan made in the gap between them (nobody in Matching) is unattributed, also when it arrives while Bea is in
+      const oG = oid(4, 6);
+      await relay(payload(oG, { at: gapAt + 100, sent: Date.now() }));
+      await until(async () => { await flush(); return matchedOf(oG).length >= 1; }, 'the gap scan');
+      assert.equal(matchedOf(oG)[0].unattributed, true, 'nobody was in Matching then');
+      // and one made while Bea was in is Bea's
+      const oB = oid(4, 7);
+      await relay(payload(oB, { at: Date.now() - 200, sent: Date.now() }));
+      await until(async () => { await flush(); return matchedOf(oB).length >= 1; }, 'the scan under Bea');
+      assert.equal(matchedOf(oB)[0].person, B);
+      // a welder is never the answer for a moment when only a welder was in: a late scan in that gap is unattributed
+      await signAllOut(); await signIn(W, 'welding'); await wait(900);
+      const oW = oid(4, 8), wAt = Date.now() - 300;
+      await relay(payload(oW, { at: wAt, sent: Date.now() }));
+      await until(async () => { await flush(); return matchedOf(oW).length >= 1; }, 'the scan with only a welder');
+      assert.equal(matchedOf(oW)[0].unattributed, true, 'never the welder');
       // only a welder signs in after a scan made with nobody there: unattributed at the replay
       await signAllOut();
       const o3 = oid(4, 3);
@@ -469,7 +497,7 @@ async function main() {
       const html = fs.readFileSync(path.join(root, 'weld-1.html'), 'utf8');
       assert.ok(/scanQueue\.offer\(orderNumber, data\)/.test(html), 'the relay listener passes the relay data');
       assert.ok(/station-scan-queue\.js\?v=\d{8}-\w+/.test(html) && !/station-scan-queue\.js\?v=20261003-sq1/.test(html), 'the queue script tag is bumped');
-      const o1 = oid(9, 1), o2 = oid(9, 2), at = Date.now() - 30000;
+      const o1 = oid(9, 1), o2 = oid(9, 2), at = Date.now() - 250;       // (the page has been up for half a second at least: she was signed in when it was scanned)
       const deliver = d => page.evaluate(x => { const cbs = window.__fbSnaps['Brites_Orders/weld-scan-1']; cbs[cbs.length - 1]({ exists: true, data: () => x }); }, d);
       await deliver(payload(o1, { at, sent: Date.now() }));
       await page.waitForTimeout(300);

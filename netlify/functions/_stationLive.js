@@ -400,7 +400,7 @@ async function op(ctx, body, H) {
   for (const s of sr.ok ? sr.value.rows : []) {
     if (!s.person || !hasLetter(s.person) || !STATIONS.has(s.station) || s.endAt) continue;
     const last = Math.max(s.startAt, s.lastSeenAt);
-    if (!(s.startAt > 0) || now - last >= SESSION_GONE_MS) continue;
+    if (!(s.startAt > 0) || (now - last >= SESSION_GONE_MS && !AutoSignout.keptOpen(s, now))) continue;      // (a quiet page of Laser inside its limit, or of Welding before 17:00, is still signed in)
     const stn = displayStation(s.station);                              // (a session of the Sorter app or the QR Printer page is Sorting's; one of a Laser or Design person is stored as laser or design and stays there)
     const name = H.display(s.person), k = `${stn}|${s.device}|${name}|${s.task}|${s.role}`, had = open.get(k);   // (one row per page, person and task: two people at the Welding station, or one person in both tasks, are separate rows)
     if (had) { had.since = Math.min(had.since, s.startAt); had.lastSeenAt = Math.max(had.lastSeenAt, last); if (s.lastInputAt) had.lastInputAt = Math.max(had.lastInputAt || 0, s.lastInputAt); continue; }
@@ -425,7 +425,7 @@ async function op(ctx, body, H) {
   if (matched.length) { try { errors.push(...await dress(ctx, matched)); } catch (e) { errors.push("matched: " + String((e && e.message) || e).slice(0, 120)); } }
   const lastScan = new Map(); for (const m of matchedRows) if (!m.unattributed) { const n = H.display(m.person); lastScan.set(n, Math.max(lastScan.get(n) || 0, m.at)); }
   const weldRows = (sr.ok ? sr.value.rows : []).filter(r => r.station === "welding" && r.startAt > 0 && r.person && hasLetter(r.person));
-  const spanOf = r => [Math.max(r.startAt, todayStart), r.endAt || (now - Math.max(r.startAt, r.lastSeenAt) < SESSION_GONE_MS ? now : Math.max(r.startAt, r.lastSeenAt))];
+  const spanOf = r => [Math.max(r.startAt, todayStart), r.endAt || (now - Math.max(r.startAt, r.lastSeenAt) < SESSION_GONE_MS || AutoSignout.keptOpen(r, now) ? now : Math.max(r.startAt, r.lastSeenAt))];
   const taskMsOf = (match, who) => covered(weldRows.filter(r => (r.task || "unknown") === match && (!who || H.display(r.person) === who)).map(spanOf).filter(x => x[1] > x[0]));
   for (const s of CATALOG) {
     const mine = cur.filter(c => c.station === s.key), folks = signedIn.filter(p => p.stationKey === s.key), onPages = pages.filter(p => p.stationKey === s.key);

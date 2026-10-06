@@ -50,6 +50,17 @@
       return w;
     } catch (_) { return null; }
   }
+  /** who was signed in on this page at time ts (ms): StationSession.whoAt(ts), or null. An older station-session.js with no whoAt: who() now. */
+  function whoThen(ts) {
+    try {
+      const S = window.StationSession;
+      if (!S || typeof S.whoAt !== "function") return whoNow();
+      const w = S.whoAt(ts);
+      if (!w || !w.person || !w.station || !w.device) return null;
+      if (!/\p{L}/u.test(String(w.person))) return null;
+      return w;
+    } catch (_) { return null; }
+  }
   /** this page (known with nobody signed in): { station, device, computer, sandbox } */
   function pageNow() {
     try { const S = window.StationSession; const p = S && typeof S.page === "function" ? S.page() : null; if (p && p.device) return p; } catch (_) {}
@@ -116,11 +127,12 @@
   /* ── matched: one order QR scanned with the Welding station's scanner app (stations round 2; plans/stations-round2/api.md) ──
      matched({ orderId, at?, scanId?, detail? })   (log("matched", …) is the same call)   → true when queued; false when not: no page, not the
      Welding station, no usable order number, the same scan told twice, or the same order again within seconds.
-     The scanner app has no login: the desktop page that receives its relayed scan says who is credited, by rule R3, which StationSession.who()
-     keeps: the Matching person; two of them: the one with the latest input; nobody in Matching (a welder is never credited): the event is stored
-     `unattributed: true` with no person (the server files it under "Unattributed": "scanned with nobody in Matching"). The credit is decided
-     when this is called (station-scan-queue.js calls it when a scan arrives while somebody is signed in, otherwise at the replay right after
-     the next sign-in); `at` is the real scan time. A scan from an earlier shop day is never credited to whoever signs in later (unattributed).
+     The scanner app has no login: the desktop page that receives its relayed scan says who is credited, by rule R3, which StationSession keeps:
+     the Matching person who was signed in AT THE SCAN'S REAL TIME (StationSession.whoAt(at); an older station-session.js without it: who() now);
+     two of them: the one with the latest input; nobody in Matching then (a welder is never credited): the event is stored `unattributed: true`
+     with no person (the server files it under "Unattributed": "scanned with nobody in Matching"). A scan that waited (the phone was offline, or
+     nobody was signed in when it arrived and it is recorded at the replay after the next sign-in) is credited by who was in at the SCAN time, never
+     to whoever signed in afterwards (ST2, 6 Oct 2026). `at` is the real scan time. A scan from an earlier shop day is unattributed.
      The same order again within 10 s, or the same scanId, is ONE event. The event id is made from the scan, so a retry, a reload or a second
      tab writes it once and the rollup counts it once. A repeat after those 10 s is its own event whose detail ends " · again" (for 12 h).
      Matched work is scanned work, never an order completion (parts 0, orders 0). Nothing here touches the network (the queue sends it). */
@@ -153,8 +165,9 @@
       if (seen.ids[id] != null || queue.some(e => e.id === id)) return false;          // this very scan, told again
       const prev = Number(seen.orders[orderId]) || 0;
       if (prev && Math.abs(at - prev) < MATCH.dupMs) return false;                     // the same order within seconds: one scan
-      // the credit (R3): StationSession.who() = the Matching person (latest input if two), or nobody. A welder is never credited.
-      let w = whoNow();
+      // the credit (R3): the Matching person who was signed in AT THE SCAN'S REAL TIME (latest input if two), or nobody. A welder is never credited,
+      // and a scan that waited (the phone was offline, or nobody was signed in yet) is never credited to whoever signed in afterwards.
+      let w = whoThen(at);
       if (w && w.task && w.task !== "matching") w = null;
       try {
         const S = window.StationSession, day = t => (S && typeof S.nyDay === "function" ? S.nyDay(t) : new Date(t).toDateString());

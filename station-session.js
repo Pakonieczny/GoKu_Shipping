@@ -64,9 +64,15 @@
  *      visibilitychange / focus / pageshow / resume (a sleeping computer or a background tab signs the person out at the
  *      right moment and with the right end time); never one long setTimeout.
  *    StationSession.isAdmin(name)          Promise: true | false | null (null: not known, treated as not Admin)
- *    StationSession.notice(reason, tail?)  the one-line wording for the page's own notice ("" for any other reason)
+ *    StationSession.notice(reason, station?)  the one-line wording for the page's own notice ("" for any other reason)
  *    The page's signOut(reason, who) also receives "idle" and "closing" (the work on screen stays, the page shows its own
- *    sign-in, and its notice uses StationSession.notice(reason) for these two). */
+ *    sign-in, and its notice uses StationSession.notice(reason, who.station) for these two).
+ *
+ *  PER-STATION LIMITS (Paul, 6 Oct 2026, Addendum 2): the table POLICY below says, for each station, how long a non-Admin person may
+ *    be without input (before 17:00 Toronto, and from 17:00) and what 17:00 does. Welding: NO idle rule; everybody is signed out at 17:00
+ *    sharp (end time 17:00). Laser (the Sorter app's Laser role): 60 minutes without input, 30 minutes from 17:00. Every other station:
+ *    the rules above. StationSession.policy(station) reads the table; the server (_stationAutoSignout.js) carries the same one.
+ *    Doc: plans/stations-round2/api.md, section AD3. */
 (function () {
   "use strict";
   if (window.StationSession) return;
@@ -74,11 +80,28 @@
   const BEAT_MS = 5 * 60000, CLOSED_MS = 15 * 60000, TICK_MS = 30000;
   const IDLE_MS = 10 * 60000, RULES_TICK_MS = 10000, CLOSING_HOUR = 17;
   const REASONS = new Set(["signOut", "midnight", "switched", "closed", "idle", "closing"]);
-  const NOTICES = { idle: "Signed out after 10 minutes without input.", closing: "Signed out at 5:00 pm." };
+  /* THE POLICY TABLE (Paul, 6 Oct 2026, Addendum 2): per station, in minutes. idleMin: without input before 17:00 Toronto (0: no idle rule);
+     idleMinAfter17: the same from 17:00 on (0: none); closeAt17: "idleWindow" = at 17:00 a person with no input in the last idleMinAfter17
+     minutes is signed out at their last input; "always" = everybody is signed out at 17:00 SHARP, whatever their input. A station with no row
+     of its own (and a page with no station) is `default`. The server's _stationAutoSignout.js carries the very same table (a test compares). */
+  const POLICY = {
+    default: { idleMin: 10, idleMinAfter17: 10, closeAt17: "idleWindow" },      // Sorting, Assembly, Shipping, Design apps, Inbox, the Sorter app with no role or the Design role
+    welding: { idleMin: 0, idleMinAfter17: 0, closeAt17: "always" },            // the Welding station (weld-1): every task, every person
+    laser: { idleMin: 60, idleMinAfter17: 30, closeAt17: "idleWindow" }         // the Laser role in the Sorter app
+  };
+  const policyOf = st => (typeof st === "string" && st !== "default" && Object.prototype.hasOwnProperty.call(POLICY, st) ? POLICY[st] : POLICY.default);
+  const spanWords = m => (m % 60 === 0 ? (m / 60 === 1 ? "1 hour" : m / 60 + " hours") : m + (m === 1 ? " minute" : " minutes"));
+  /** the one-line wording of an automatic sign-out for a station: "" for any other reason (and for an idle sign-out at a station that has no idle rule) */
+  function noticeOf(reason, station) {
+    const p = policyOf(clean(station, 20));
+    if (reason === "idle") return p.idleMin > 0 ? `Signed out after ${spanWords(p.idleMin)} without input.` : "";
+    if (reason === "closing") return p.closeAt17 === "idleWindow" && p.idleMinAfter17 > 0 && p.idleMinAfter17 !== p.idleMin ? `Signed out at 5:00 pm after ${spanWords(p.idleMinAfter17)} without input.` : "Signed out at 5:00 pm.";
+    return "";
+  }
   const LABEL = { sorting: "Sorting", welding: "Welding", assembly: "Assembly", shipping: "Shipping", design: "Design",
     laser: "Laser", sorter: "Sorter", qr: "QR Printer", inbox: "Inbox" };
   const K = { computer: "station_computer_id", name: "station_computer_name", day: "station_signin_day",
-    days: "station_signin_days", unsent: "station_session_unsent" };
+    days: "station_signin_days", unsent: "station_session_unsent", input: "station_person_input" };
   const ROLES = new Set(["laser", "design"]);
   const cfg = { station: "", device: "", person: null, role: null, signOut: null, labelHost: null, labelCss: "", sandbox: false,
     multi: false, people: null, creditTask: "matching" };
@@ -146,6 +169,8 @@
     if (u > t) u = wallAt(TZ_CLOSING, p.y, p.m, p.d - 1, CLOSING_HOUR, 0, t - 86400e3);
     return u;
   }
+  /** 17:00 in Toronto of the Toronto day that t (ms) falls in: later than t in the morning, at or before it from 17:00 on */
+  function closeOf(t) { const p = zoneParts(t, TZ_CLOSING); return wallAt(TZ_CLOSING, p.y, p.m, p.d, CLOSING_HOUR, 0, t); }
 
   /* ── the computer ── */
   const ALPHA = "23456789ABCDEFGHJKMNPQRSTUVWXYZ";
@@ -211,6 +236,77 @@
     } catch (_) {}
   }
   const persist = s => { if (s && s.key !== undefined) saveRecs(); else saveRec(s); };
+  /* A multi page also keeps WHO WAS IN WHICH TASK WHEN (names and times, a week, 120 sessions: station_session.<station>.<device>.hist) so a phone
+     scan that reaches the page late (the phone was offline) is credited to the person who was signed in at the SCAN's real time, never to
+     whoever signed in afterwards (rule R3; StationSession.whoAt). The key starts "station_session." so a write to it does not wake a tick. */
+  const histKey = () => "station_session." + cfg.station + "." + cfg.device + ".hist";
+  const HIST_MAX = 120, HIST_MS = 7 * 86400e3;
+  function loadHist() {
+    const l = lsJson(histKey(), []);
+    if (!Array.isArray(l)) return [];
+    const out = [];
+    for (const h of l) {                                                    // (whatever else is in storage is not a session: only well-formed spans count, and a name is cleaned like any other)
+      if (!h || typeof h !== "object" || typeof h.i !== "string" || typeof h.n !== "string" || typeof h.t !== "string") continue;
+      const f = Number(h.f), e = Number(h.e), n = cleanName(h.n);
+      if (n && Number.isFinite(f) && Number.isFinite(e) && f > 0 && e >= f) out.push({ i: h.i, n, t: h.t, f, e, u: Number(h.u) || 0 });
+    }
+    return out;
+  }
+  function addHist(s) {
+    try {
+      if (!s || s.key === undefined) return;
+      const now = Date.now(), f = Number(s.startAt) || 0, e = Number(s.endAt) || 0;
+      if (!(f > 0) || !(e >= f)) return;                                // (a start in the future, a clock set back: no span to remember)
+      const u = Math.min(e, Math.max(f, Number(s.touchedAt) || 0));
+      const l = loadHist().filter(h => h.i !== s.id && now - Number(h.e) < HIST_MS);
+      l.push({ i: s.id, n: s.name, t: s.task || "", f, e, u });
+      lsSet(histKey(), JSON.stringify(l.slice(-HIST_MAX)));
+    } catch (_) {}
+  }
+  function who(task) {
+    try {
+      if (cfg.multi) {                                // the Matching person (latest input if two; nobody: null), or the one of `task`
+        const s = ready ? pick(task) : null;
+        return s ? { person: s.name, station: cfg.station, device: cfg.device, computer: computerId(), session: s.id, startAt: s.startAt, sandbox: !!cfg.sandbox, task: s.task } : null;
+      }
+      if (!ready || !cur) return null;
+      const p = person();
+      if (!p || p.name !== cur.name) return null;
+      const w = { person: p.name, station: stationOf(cur), device: cfg.device, computer: computerId(), session: cur.id, startAt: cur.startAt, sandbox: !!cfg.sandbox };
+      if (cur.role) w.role = cur.role;
+      return w;
+    } catch (_) { return null; }
+  }
+  /** who was signed in under `task` (default: the credit task, "matching") at time ts (ms): the same answer as who(task), for a moment
+      in the past. Two in the task then: the one with the latest input at that moment (a sign-in is an input). Nobody: null (the caller
+      stores the scan as unattributed). A welder is never returned for the Matching question. A page that is not multi: who() when the
+      session had started by then, else null. */
+  function whoAt(ts, task) {
+    try {
+      if (!ready) return null;
+      ts = Number(ts);
+      if (!(ts > 0)) return cfg.multi ? who(task) : who();
+      const now = Date.now(); ts = Math.min(ts, now);
+      if (!cfg.multi) { const w = who(); return w && Number(w.startAt) <= ts ? w : null; }
+      task = task === undefined ? cfg.creditTask : cleanTask(task);
+      const ids = new Set(), c = [];
+      for (const h of loadHist()) {                                         // ended (first: another tab may have ended a session this tab still holds)
+        ids.add(h.i);
+        if (task && h.t !== task) continue;
+        if (Number(h.f) <= ts && ts <= Number(h.e)) c.push({ i: h.i, n: h.n, t: h.t, f: Number(h.f), r: Number(h.u) > 0 && Number(h.u) <= ts ? Math.max(Number(h.f), Number(h.u)) : Number(h.f) });
+      }
+      for (const s of [...many.values(), ...loadRecs()]) {                  // running now (this tab's, then the other tabs' records)
+        if (!s || s.ended || ids.has(s.id)) continue;
+        ids.add(s.id);
+        if (task && s.task !== task) continue;
+        const f = Number(s.startAt) || 0, u = Number(s.touchedAt) || 0;
+        if (f > 0 && f <= ts) c.push({ i: s.id, n: s.name, t: s.task, f, r: u > 0 && u <= ts ? Math.max(f, u) : f });
+      }
+      let best = null;
+      for (const x of c) if (!best || x.r > best.r || (x.r === best.r && (x.f > best.f || (x.f === best.f && x.i > best.i)))) best = x;
+      return best ? { person: best.n, station: cfg.station, device: cfg.device, computer: computerId(), session: best.i, startAt: best.f, sandbox: !!cfg.sandbox, task: best.t } : null;
+    } catch (_) { return null; }
+  }
 
   /* ── the door ── */
   const URL_ = () => "/.netlify/functions/firebaseOrders" + (cfg.sandbox ? "?sandbox=1" : "");
@@ -257,8 +353,30 @@
       the stored one for a record left by an earlier load */
   function inputOf(s) {
     if (!s) return 0;
-    const now = Date.now(), li = runsHere(s) ? Math.max(lastIn, Number(s.li) || 0) : Number(s.li) || 0, st = Number(s.startAt) || 0;
+    const now = Date.now(), li = Math.max(runsHere(s) ? Math.max(lastIn, Number(s.li) || 0) : Number(s.li) || 0, personInput(s.name)), st = Number(s.startAt) || 0;
     return li > 0 ? Math.min(now, Math.max(li, st <= now + 5000 ? st : 0)) : 0;        // (a start in the future is a clock set back: not an input)
+  }
+  /* ONE person's last input at ANY station page of this browser. The sign-in keys (employee_id / employee_name) are shared by every
+     station page of a computer (assembly-1..4, shipping-1..3, the Design pages), so a person signed in there has a session at EVERY such
+     page that is open, also at one nobody touches. Each page's own last input alone would then sign the person out of the page being
+     worked in as soon as a quiet tab's 10 minutes were up (the quiet tab clears the shared keys: the worked page keeps looking signed in
+     and records nothing). Input anywhere on the computer is the person's input. A time only, never what was typed (AS2, 6 Oct 2026). */
+  const personKey = n => String(n || "").toLowerCase();
+  function personInput(name) {
+    try {
+      const m = lsJson(K.input, {}), t = Number(m && typeof m === "object" && !Array.isArray(m) ? m[personKey(name)] : 0);
+      return t > 0 && t <= Date.now() + 5000 ? t : 0;          // (a time in the future is a clock set back: not input)
+    } catch (_) { return 0; }
+  }
+  function savePersonInput(name, t) {
+    try {
+      const k = personKey(name); if (!k || !(t > 0)) return;
+      const m = lsJson(K.input, {}), o = m && typeof m === "object" && !Array.isArray(m) ? m : {};
+      if (!(t > (Number(o[k]) || 0))) return;
+      delete o[k]; o[k] = t;
+      const keys = Object.keys(o); for (const x of keys.slice(0, Math.max(0, keys.length - 20))) delete o[x];
+      lsSet(K.input, JSON.stringify(o));
+    } catch (_) {}
   }
   function mark(t) { lastIn = Math.max(lastIn, t); stampAt = Math.max(stampAt, t); shareInput(t); }
   /* Two tabs of one computer run the same page and share one sign-in record: input in EITHER keeps the person in. The record holds the
@@ -268,8 +386,8 @@
     try {
       if (!ready || t - sharedAt < 5000) return;
       sharedAt = t;
-      if (cfg.multi) { if (many.size) { for (const s of many.values()) s.li = Math.max(Number(s.li) || 0, lastIn); savedLi = lastIn; saveRecs(); } }
-      else if (cur) { cur.li = Math.max(Number(cur.li) || 0, lastIn); savedLi = cur.li; saveShared(cur); }
+      if (cfg.multi) { if (many.size) { for (const s of many.values()) { s.li = Math.max(Number(s.li) || 0, lastIn); savePersonInput(s.name, lastIn); } savedLi = lastIn; saveRecs(); } }
+      else if (cur) { cur.li = Math.max(Number(cur.li) || 0, lastIn); savedLi = cur.li; savePersonInput(cur.name, lastIn); saveShared(cur); }
     } catch (_) {}
   }
   /** writes the page's record only while it is still this session's (a second tab that already went on to another one keeps it) */
@@ -290,7 +408,7 @@
   function stamp(t, remote) {
     const now = Date.now(); t = t > 0 ? Math.min(t, now) : now;
     if (lastIn && t - stampAt < 1000) return;
-    if (ready && lastIn && now - lastIn >= IDLE_MS) { try { checkRules(now); } catch (e) { warn("rules:", e); } }
+    if (ready && lastIn && (now - lastIn >= IDLE_MS || (closeOf(now) <= now && closeOf(now) > lastIn))) { try { checkRules(now); } catch (e) { warn("rules:", e); } }       // (a gap of 10 minutes, or 17:00 went by since the last input: the station's own rule decides)
     mark(t);
     if (!remote) relay(t);
   }
@@ -368,13 +486,41 @@
 
   /** the sessions this page runs now: one (a single-person page), or one per person and task (a page in multi mode) */
   function liveSessions() { return cfg.multi ? [...many.values()] : (cur ? [cur] : []); }
-  /** which rule, if any, a person whose last input was at L is under at `now`: Rule B (17:00 Toronto, no input in the 10 minutes before
-      it) before Rule A (10 minutes of nothing). Either way the session ends AT THE LAST INPUT. */
-  function dueRule(L, now) {
+  /** the policy a session runs under: its own station's (the Sorter's Laser role is station laser, its Design role station design) */
+  const policyFor = s => policyOf(stationOf(s));
+  /** the 17:00 (ms) at which a station that signs everybody out at 17:00 SHARP ends this session: the 17:00 of the day it started, when it
+      started before it; null for any other station, and for a session that started after 17:00 (its 17:00 had passed, the midnight is next) */
+  function closeAlwaysAt(s) {
+    if (policyFor(s).closeAt17 !== "always") return null;
+    const st = Number(s.startAt) || 0, c = closeOf(st);
+    return st < c ? c : null;
+  }
+  /** the limit (ms) of a station's idle rule at `now`: 0 = none */
+  const limitMs = (s, now) => { const p = policyFor(s); return (now >= closeOf(now) ? p.idleMinAfter17 : p.idleMin) * 60000; };
+  /** which rule, if any, a person whose last input was at L is under at `now`, by the station's own policy (the POLICY table; api.md, AD3).
+      An "always" station: at 17:00 sharp, reason closing, ended AT 17:00 whatever the input. Otherwise the idle limit of the moment (before
+      17:00 idleMin, from 17:00 idleMinAfter17; 0 = none), and the session ends AT THE LAST INPUT. The reason: before 17:00 idle. From 17:00,
+      when the limit from 17:00 is a limit of its own (Laser) it is idle for a person who had already been quiet for the whole idleMin before
+      17:00 (L + idleMin before 17:00: they went idle then, the page just found out later) and closing for everybody else (a person whose
+      quiet reached its limit at or after 17:00); when it is the same limit (the default) it is closing for a person with no input in
+      those minutes before 17:00 (Rule B) and idle otherwise. Same moment and same reason as the server's `decide` (AD4). */
+  function dueRule(s, L, now) {
+    const p = policyFor(s), C = closeOf(now), c = closeAlwaysAt(s);
+    if (c != null && c <= now) return { reason: "closing", at: c };
+    const after = now >= C, W = (after ? p.idleMinAfter17 : p.idleMin) * 60000;
+    if (!(W > 0) || !(L > 0)) return null;
     L = Math.min(L, now);
-    if (L <= closingAt(now) - IDLE_MS) return { reason: "closing", at: L };
-    if (now - L >= IDLE_MS) return { reason: "idle", at: L };
-    return null;
+    if (now - L < W) return null;
+    const own = p.idleMinAfter17 !== p.idleMin;
+    return { reason: after && (own ? !(p.idleMin > 0 && L + p.idleMin * 60000 < C) : L <= C - W) ? "closing" : "idle", at: L };
+  }
+  /** the 15-minute "closed" rule (a page that went quiet: a sleeping computer, a closed tab) is not an automatic sign-out for Welding or Laser
+      (Paul, Addendum 2): it stays for an Admin and for a station whose own limit is under 15 minutes (the default's 10). A dead page of
+      Welding or Laser is the server's to end, at the station's own limit. */
+  function closedRuleOn(s, now) {
+    if (knownAdmin(s) === true) return true;
+    const w = limitMs(s, now);
+    return w > 0 && w < CLOSED_MS;
   }
   /** the computer's clock was set back: an input that is "in the future" would hold the idle clock still until the clock caught up
       (hours). It is taken as happening now, once, so the person is signed out 10 minutes after the change at the latest. */
@@ -393,7 +539,7 @@
     const today = nyDay(now);
     for (const s of liveSessions().slice()) {
       if (!s || s.ended || s.day !== today || knownAdmin(s) === true) continue;
-      const d = dueRule(inputOf(s), now);
+      const d = dueRule(s, inputOf(s), now);
       if (d) lapse(s, d.reason, d.at);
     }
   }
@@ -404,7 +550,7 @@
     finish(s, reason, at);
     if (s === cur) cur = null;
     if (!cfg.multi) { quiet = p && p.name === s.name ? p.name : quiet; seen = ""; }     // a page that could not clear its login does not start them again
-    try { if (cfg.signOut) cfg.signOut(reason, { name: s.name, task: s.task }); } catch (e) { warn("signOut failed:", e); }
+    try { if (cfg.signOut) cfg.signOut(reason, { name: s.name, task: s.task, station: stationOf(s) }); } catch (e) { warn("signOut failed:", e); }
   }
   function rulesTick() {
     try {
@@ -414,11 +560,13 @@
   }
 
   /* ── start · beat · end ── */
-  /** a login kept while the page was closed: when its last input is 10 minutes old (and it is not an Admin's) it lapsed then: true */
+  /** a login kept while the page was closed, judged by its station's own rule (the Welding station's 17:00 sharp; a Laser login's 60 or 30
+      minutes; the default's 10): when it has lapsed, it ends there (at 17:00, or at its last input) and the page signs the person out: true */
   function lapsedWhileClosed(r, now) {
-    const li = Number(r && r.li) || 0;
-    if (!li || r.adm === true || now - li < IDLE_MS) return false;
-    const d = dueRule(li, now) || { reason: "idle", at: li };
+    if (r.adm === true) return false;
+    const li = Math.max(Number(r && r.li) || 0, personInput(r && r.name));          // (input at another station page of this computer counts)
+    const d = dueRule(r, li, now);                           // (no input known: only the 17:00 of an "always" station can judge)
+    if (!d) return false;
     lapse(r, d.reason, d.at);
     return true;
   }
@@ -429,11 +577,11 @@
       if (resume && same && r.name === p.name && r.day === today) {
         // (a reload inside the 10 minutes is input and goes on with the session; one after them finds the login lapsed)
         if (lapsedWhileClosed(r, now)) return;
-        if (now - (r.lastBeat || 0) < CLOSED_MS) { cur = r; cur.asked = false; mark(now); cur.li = lastIn; beat(); askAdmin(cur); return; }
+        if (now - (r.lastBeat || 0) < CLOSED_MS || !closedRuleOn(r, now)) { cur = r; cur.asked = false; mark(now); cur.li = lastIn; savePersonInput(cur.name, now); beat(); askAdmin(cur); return; }
       }
       finish(r, r.name === p.name && same ? "signOut" : "switched");
     }
-    mark(now);
+    mark(now); savePersonInput(p.name, now);
     const role = roleNow();
     cur = { id: `${cfg.device}-${shortId()}-${now.toString(36)}-${rand(4)}`.replace(/[^\w.:-]/g, "_").slice(0, 100),
       name: p.name, eid: p.id || "", day: today, startAt: now, lastBeat: now, li: now, station: role || cfg.station, role };
@@ -456,7 +604,7 @@
   function serverEnded(s, reason) {
     try {
       if ((reason !== "idle" && reason !== "closing" && reason !== "closed") || !s || s.ended || !runsHere(s)) return;
-      const now = Date.now(), L = inputOf(s), due = knownAdmin(s) === true || s.day !== nyDay(now) ? null : dueRule(L, now);
+      const now = Date.now(), L = inputOf(s), due = knownAdmin(s) === true || s.day !== nyDay(now) ? null : dueRule(s, L, now);
       if (due) { lapse(s, due.reason, due.at); return; }
       const key = s.key, name = s.name, at = Math.min(now, Math.max(Number(s.startAt) || 0, Number(s.lastBeat) || 0));
       finish(s, "closed", at);                                // (the server already has its end: this one is only kept for the record and is ignored there)
@@ -474,15 +622,18 @@
     if (at != null && Number.isFinite(at)) { const st = Number(s.startAt) || 0; at = Math.max(st <= now + 5000 ? st : 0, Math.min(now, at)); }       // (a start in the future is a clock set back)
     else {
       at = now;
-      if (quietFor >= CLOSED_MS) {
+      const dayTurned = s.day !== nyDay(now), c17 = knownAdmin(s) === true ? null : closeAlwaysAt(s);     // (c17: the Welding station's 17:00 of this session's day, null for any other station)
+      if (c17 != null && c17 <= now && (quietFor >= CLOSED_MS || dayTurned)) { reason = "closing"; at = c17; }   // a Welding login left over its 17:00 (page closed or asleep, or the day turned) ended AT 17:00, not at the last beat or at midnight
+      else if (quietFor >= CLOSED_MS) {
         reason = "closed"; at = s.lastBeat || s.startAt || now;
         const li = Number(s.li) || 0;                            // a page that died ended at the last input it knew of (not an Admin's)
         if (knownAdmin(s) !== true && li > (Number(s.startAt) || 0) && li < at) at = li;
       }
-      else if (s.day !== nyDay(now)) { reason = "midnight"; at = Math.min(now, nextMidnight(s.startAt || now)); }
+      else if (dayTurned) { reason = "midnight"; at = Math.min(now, nextMidnight(s.startAt || now)); }
       else if ((reason === "idle" || reason === "closing") && inputOf(s)) at = Math.min(now, inputOf(s));
     }
     s.ended = true; s.endReason = reason; s.endAt = at;
+    addHist(s);                                                // (a multi page remembers who was in which task when: a scan that waited is credited by it)
     if (s.key !== undefined) { many.delete(s.key); snap.delete(s.key); }       // (a multi page's session: it leaves the running list before it is saved)
     if (s.key !== undefined) persist(s);
     else { const k = loadRec(); if (!(k && k.id !== s.id && !k.ended)) saveRec(s); }       // (a second tab of this computer that already started the next session keeps it as the page's record: this one's end must not wipe it, or both tabs would start one each; ST2)
@@ -540,7 +691,7 @@
       reconcile();
       checkRules(Date.now());                    // (a page that slept: the person whose last input is 10 minutes old signs out here, at that input)
       // the page slept or was frozen for 15 minutes: that session closed at its last beat, a new one goes on from now
-      if (cur && Date.now() - (cur.lastBeat || 0) >= CLOSED_MS) {
+      if (cur && Date.now() - (cur.lastBeat || 0) >= CLOSED_MS && closedRuleOn(cur, Date.now())) {
         const p = person(); finish(cur, "closed");
         if (p && !p.pending && p.name !== quiet) begin(p, false);
       }
@@ -590,13 +741,13 @@
       if (resume && old.day === today) {
         // (a reload inside the 10 minutes is input and goes on with the session; one after them finds the login lapsed, not given a new session)
         if (lapsedWhileClosed(old, now)) return null;
-        if (now - (old.lastBeat || 0) < CLOSED_MS) { many.set(p.key, old); snap.delete(p.key); old.li = Math.max(Number(old.li) || 0, lastIn); old.asked = false; beat(old); askAdmin(old); return old; }
+        if (now - (old.lastBeat || 0) < CLOSED_MS || !closedRuleOn(old, now)) { many.set(p.key, old); snap.delete(p.key); old.li = Math.max(Number(old.li) || 0, lastIn); savePersonInput(old.name, now); old.asked = false; beat(old); askAdmin(old); return old; }
       }
       many.set(p.key, old); finish(old, "signOut");        // (finish says "closed" or "midnight" when that is what happened)
     }
     const s = { id: `${idPart(cfg.station, 20)}__${idPart(cfg.device, 30)}__${idPart(p.name, 24)}__${idPart(p.task || "-", 12)}__${now.toString(36)}${rand(3)}`.slice(0, 100),
       name: p.name, eid: p.id || "", task: p.task || "", key: p.key, day: today, startAt: now, lastBeat: now, touchedAt: now, addedAt: now, li: now };
-    mark(now);
+    mark(now); savePersonInput(p.name, now);
     many.set(p.key, s); saveRecs();
     post(body(s, "start"));
     askAdmin(s);
@@ -609,7 +760,7 @@
     for (const r of [...many.values(), ...loadRecs().filter(r => !many.has(r.key))]) { many.set(r.key, r); finish(r, reason); }
     snap = new Map();
     for (const p of listed) manyQuiet.add(p.key);        // a page that could not clear its login does not start them again
-    for (const p of listed) { try { if (cfg.signOut) cfg.signOut(reason, { name: p.name, task: p.task }); } catch (e) { warn("signOut failed:", e); } }
+    for (const p of listed) { try { if (cfg.signOut) cfg.signOut(reason, { name: p.name, task: p.task, station: cfg.station }); } catch (e) { warn("signOut failed:", e); } }
   }
   function mMidnight() { clearStaleDays(nyDay()); mEndAll("midnight"); }
   function mReconcile() {
@@ -646,7 +797,7 @@
     checkRules(now);                                     // (each person whose page's last input is 10 minutes old, or past 17:00, signs out here, at that input; an Admin does not)
     // the page slept or was frozen for 15 minutes: that session closed at its last beat, a new one goes on from now
     for (const s of [...many.values()]) {
-      if (now - (s.lastBeat || 0) < CLOSED_MS) continue;
+      if (now - (s.lastBeat || 0) < CLOSED_MS || !closedRuleOn(s, now)) continue;
       finish(s, "closed");
       const p = pagePeople().find(x => x.key === s.key);
       if (p && !manyQuiet.has(p.key)) mBegin(p, false);
@@ -849,20 +1000,9 @@
     lastInput: () => lastIn,
     /** who is working now, for station-activity.js: { person, station, device, computer, session, startAt, sandbox }, or null
         when nobody is signed in (or this page's session is not running). The name only, never a PIN. */
-    who: task => {
-      try {
-        if (cfg.multi) {                                // the Matching person (latest input if two; nobody: null), or the one of `task`
-          const s = ready ? pick(task) : null;
-          return s ? { person: s.name, station: cfg.station, device: cfg.device, computer: computerId(), session: s.id, startAt: s.startAt, sandbox: !!cfg.sandbox, task: s.task } : null;
-        }
-        if (!ready || !cur) return null;
-        const p = person();
-        if (!p || p.name !== cur.name) return null;
-        const w = { person: p.name, station: stationOf(cur), device: cfg.device, computer: computerId(), session: cur.id, startAt: cur.startAt, sandbox: !!cfg.sandbox };
-        if (cur.role) w.role = cur.role;
-        return w;
-      } catch (_) { return null; }
-    },
+    who,
+    /** who was working at time ts (ms), the same answer for a moment in the past (see whoAt above): a scan that waited is credited by it */
+    whoAt,
     /** this page (known even when nobody is signed in): { station, device, computer, sandbox }, or null before init */
     page: () => {
       try { return ready ? { station: stationNow(), device: cfg.device, computer: computerId(), sandbox: !!cfg.sandbox } : null; } catch (_) { return null; }
@@ -870,7 +1010,8 @@
     nyDay, nextMidnight,
     /** auto sign-out (see the top of this file) */
     isAdmin,                                                            // Promise: true | false | null (not known: treated as not Admin)
-    notice: (reason, tail) => { const t = NOTICES[reason]; return t ? (tail ? t + " " + String(tail) : t) : ""; },
+    notice: (reason, station) => { try { return noticeOf(reason, station); } catch (_) { return ""; } },          // the wording for a reason and a station ("laser", "welding", else the default)
+    policy: station => Object.assign({}, policyOf(clean(station, 20))),                                          // the station's row of the POLICY table: { idleMin, idleMinAfter17, closeAt17 }
     idleMs: IDLE_MS, closingAt                                         // the 10 minutes; the latest 17:00 in Toronto at or before a time
   };
 })();
