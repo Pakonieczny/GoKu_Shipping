@@ -667,6 +667,12 @@ const PROFILE = require("./_employeeProfile")({ KIND, COL, LIM, ms, num, r1, zer
 const OPS = { overview: opOverview, person: (ctx, body) => (body.range != null || body.from || body.to ? PROFILE.opProfile(ctx, body) : opPerson(ctx, body)), orders: opOrders, personOrders: PROFILE.opOrders };
 /* op "live": the stations board (what each station is working on right now), kept in _stationLive.js */
 OPS.live = (ctx, body) => require("./_stationLive").op(ctx, body, { json, nyMidnight, cached, display: raw => canonOf(ctx, nameKeyOf(ctx, raw)) || niceName(raw) });
+/* the inbox figures (Paul, 6 Oct 2026: replies sent per employee, orders covered, messages per customer): _employeeInbox.js gets this file's own name, day and cache rules
+   once; ops `inbox` (everybody, all windows) and `personInbox` (one person, the Employee page's Inbox section); _stationLive.js and _employeeProfile.js call it for the board's block and for personOrders station "inbox" */
+const INBOX = require("./_employeeInbox");
+INBOX.bind({ cleanName, okName, niceName, bestForm, nameKeyOf, canonOf, num, validDay, addDays, nyDay, nyMidnight, cached, safe, json, resolveRange: PROFILE.resolveRange, RANGE_DAYS: PROFILE.RANGE_DAYS, DAILY_MAX: PROFILE.DAILY_MAX });
+OPS.inbox = INBOX.opInbox;
+OPS.personInbox = INBOX.opPersonInbox;
 function senderOf(event) {
   const h = (event && event.headers) || {};
   const get = k => { for (const x in h) if (x.toLowerCase() === k) return h[x]; return ""; };
