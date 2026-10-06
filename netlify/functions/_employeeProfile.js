@@ -25,7 +25,8 @@ const MAX_DAYS = 731, EVENT_DAYS = 14, DAILY_MAX = 92;     // EVENT_DAYS: how ma
 const TTL = { resp: 30000, respLive: 2000, ev: 600000, evLive: 60000, info: 1800000, sessLive: 5000, sessPast: 600000 };
 const CAP = { eventsPerDay: 2500, items: 200, orderPage: 100, infoSearch: 250 };
 const RULES = { teamMinPeople: 2, minSignedMin: 15, shortFraction: 0.5, lateAfterMin: 30, activeGapMin: 5 };
-const STATION_LABEL = { sorting: "Sorting", welding: "Welding", assembly: "Assembly", shipping: "Shipping", design: "Design", laser: "Laser", sorter: "Sorter", qr: "QR labels", inbox: "Inbox" };
+const { displayStation } = require("./_activityKinds");   // ONE Sorting station: the stored keys "sorter" and "qr" are shown as "sorting" (history keeps its keys)
+const STATION_LABEL = { sorting: "Sorting", welding: "Welding", assembly: "Assembly", shipping: "Shipping", design: "Design", laser: "Laser", inbox: "Inbox" };
 
 /* (literal requires inside try blocks: the bundler follows them when the file exists and skips them when it does not yet)  */
 const notFound = e => e && e.code === "MODULE_NOT_FOUND";
@@ -163,8 +164,9 @@ function make(K) {
       const P = get(x.person); if (!P || !validDay(x.day) || x.day < from || x.day > to) continue;
       const pd = pdOf(P, x.day); pd.hasEvents = true; pd.events += Math.max(0, num(x.events));
       const form = String(x.person); pd.forms.add(form); P.forms.add(form);              // (the exact stored name: what a Station_Activity query must match)
-      for (const [st, v] of Object.entries(x.stations && typeof x.stations === "object" ? x.stations : {})) {
-        if (!okStation(st) || !v || typeof v !== "object") continue;
+      for (const [st0, v] of Object.entries(x.stations && typeof x.stations === "object" ? x.stations : {})) {
+        if (!okStation(st0) || !v || typeof v !== "object") continue;
+        const st = displayStation(st0);                                // (counters stored under "sorter" or "qr" add to Sorting)
         const a = pd.st[st] || (pd.st[st] = tmpl()); for (const k of KEYS) a[k] += Math.max(0, num(v[k]));
         const fa = ms(v.firstAt), la = ms(v.lastAt); if (fa > 0 && (!pd.inFirst || fa < pd.inFirst)) pd.inFirst = fa; if (la > pd.inLast) pd.inLast = la;
       }
@@ -175,7 +177,7 @@ function make(K) {
       for (const [id, m] of Object.entries(x.touched && typeof x.touched === "object" ? x.touched : {})) {
         const oid = digits(id); if (!oid) continue;
         let set = pd.orders.get(oid); if (!set) pd.orders.set(oid, set = new Set());
-        for (const k of m && typeof m === "object" ? Object.keys(m).filter(z => m[z] && okStation(z)) : []) set.add(k);
+        for (const k of m && typeof m === "object" ? Object.keys(m).filter(z => m[z] && okStation(z)) : []) set.add(displayStation(k));
       }
       const fa = ms(x.firstAt), la = ms(x.lastAt); if (fa > 0 && (!pd.inFirst || fa < pd.inFirst)) pd.inFirst = fa; if (la > pd.inLast) pd.inLast = la;
     }
@@ -460,7 +462,7 @@ function make(K) {
   /* ── op personOrders: every order a person handled, newest first, with real-time search ───────────────────────────────── */
   const MONTHS = ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"];
   const WEEKDAYS = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
-  const WORDS = new Set([...MONTHS, ...MONTHS.map(m => m.slice(0, 3)), ...WEEKDAYS, ...WEEKDAYS.map(m => m.slice(0, 3)), ...Object.keys(STATION_LABEL), ...Object.values(STATION_LABEL).map(x => x.toLowerCase()), "qr", "labels"]);
+  const WORDS = new Set([...MONTHS, ...MONTHS.map(m => m.slice(0, 3)), ...WEEKDAYS, ...WEEKDAYS.map(m => m.slice(0, 3)), ...Object.keys(STATION_LABEL), ...Object.values(STATION_LABEL).map(x => x.toLowerCase()), "sorter", "qr", "printer", "labels"]);        // (the Sorter app and the QR Printer are pages of Sorting: those words still find its orders)
   const isWordPrefix = t => { for (const w of WORDS) if (w.startsWith(t)) return true; return false; };
   const MONTH_WORDS = new Set([...MONTHS, ...MONTHS.map(m => m.slice(0, 3))]);
   /** The search words: "oct 3" and "3 oct" are ONE word (a date), not "oct" and "3"; so are 2026-10-03 and 10/3 (matched whole, so 10/3 is not 10/30). */
@@ -492,7 +494,7 @@ function make(K) {
     for (const e of events) {
       let kind = issueKind(e);
       if (!kind && (e.action === "print" || e.action === "scan")) {
-        const k = e.station; const again = seen[e.action].has(k); seen[e.action].add(k);
+        const k = e.stored || e.station; const again = seen[e.action].has(k); seen[e.action].add(k);        // (the STORED key: a print at the Sorter app then at a sorting page is the normal path, not a reprint)
         if (again || /\bagain\b|reprint/i.test(e.detail)) kind = e.action === "print" ? "reprint" : "rescan";
       }
       if (kind) out.push({ kind, label: ISSUE_LABEL[kind], at: e.at, note: e.detail });
@@ -542,7 +544,7 @@ function make(K) {
     const q = String(body.q == null ? "" : body.q).replace(/[\u0000-\u001f]/g, " ").slice(0, 120).trim();
     const tokens = searchTokens(q);
     const cm = /^o(\d{1,6})$/.exec(String(body.cursor || "")), offset = cm ? +cm[1] : 0;
-    const stationF = typeof body.station === "string" && Object.prototype.hasOwnProperty.call(STATION_LABEL, body.station) ? body.station : "";
+    const stationF = typeof body.station === "string" && Object.prototype.hasOwnProperty.call(STATION_LABEL, displayStation(body.station)) ? displayStation(body.station) : "";    // (an old filter "sorter" or "qr" is Sorting)
     let to = body.to && validDay(String(body.to)) ? String(body.to) : ctx.today; if (to > ctx.today) to = ctx.today;
     const floor = addDays(to, -(MAX_DAYS - 1));
     let from = body.from && validDay(String(body.from)) ? String(body.from) : "";
@@ -579,7 +581,7 @@ function make(K) {
     let matches = list;
     if (tokens.length) {
       matches = list.filter(e => {
-        const info = infos.get(e.rid), dates = ` ${[...e.days].map(dateWords).join(" ")} `, hay = `${e.rid} ${[...e.stations].map(s => s + " " + (STATION_LABEL[s] || s).toLowerCase()).join(" ")} ${dates} ${info ? info.text : ""}`.toLowerCase();
+        const info = infos.get(e.rid), dates = ` ${[...e.days].map(dateWords).join(" ")} `, hay = `${e.rid} ${[...e.stations].map(s => s + " " + (STATION_LABEL[s] || s).toLowerCase() + (s === "sorting" ? " sorter qr printer labels" : "")).join(" ")} ${dates} ${info ? info.text : ""}`.toLowerCase();
         return tokens.every(x => (x.date ? dates.includes(" " + x.t + " ") : hay.includes(x.t)));
       });
     }

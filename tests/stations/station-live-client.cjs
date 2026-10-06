@@ -204,9 +204,9 @@ exports.run = async function run(X) {
     await h.zero();
     assert.deepStrictEqual(h.live().map(c => c.body.live.station).sort(), ['laser', 'sorter'], 'the page\'s own station and the laser override, two documents');
     assert.strictEqual(h.live().find(c => c.body.live.station === 'laser').body.live.order.kind, 'sheet');
-    let a = await ask(); assert.strictEqual(rows(a.body, 'sorter').current[0].rid, '3521000003'); assert.strictEqual(rows(a.body, 'laser').current[0].title, 'GF Sheet 2 · Set 4');
+    let a = await ask(); assert.strictEqual(rows(a.body, 'sorting').current[0].rid, '3521000003'); assert.strictEqual(rows(a.body, 'laser').current[0].title, 'GF Sheet 2 · Set 4');
     assert.strictEqual(h.A.idle({ station: 'laser' }), true); await h.zero(); eq(h.A.current().map(c => c.station), ['sorter'], 'only the laser slot ended');
-    tick(2500); a = await ask(); assert.strictEqual(rows(a.body, 'laser').current.length, 0); assert.strictEqual(rows(a.body, 'sorter').current.length, 1);
+    tick(2500); a = await ask(); assert.strictEqual(rows(a.body, 'laser').current.length, 0); assert.strictEqual(rows(a.body, 'sorting').current.length, 1);
     h.A.idle(); await h.zero();
     // sandbox: its own door, its own collection, its own reader; the real board never sees it
     h = page({ sandbox: true, who: { person: 'Paul K.', station: 'sorter', device: 'charm-nest-1', computer: 'pc-ABCDEFGHJKMN', session: 'sorter-ABCD-k9-SSSS', startAt: getNow() - 30000, sandbox: true } });
@@ -214,7 +214,7 @@ exports.run = async function run(X) {
     assert.strictEqual(h.live()[0].url, '/.netlify/functions/firebaseOrders?sandbox=1'); assert.strictEqual(h.live()[0].body.live.sandbox, true);
     assert.strictEqual(getCur().count('Station_Live'), 2, 'the real collection holds only the earlier two (the laser and sorter documents, now idle)'); assert.strictEqual(getCur().get(SB + 'Station_Live', 'sorter__charm-nest-1__Paul K.').rid, '3521000066');
     tick(2500); const real = await ask(), sand = await ask({ sandbox: true });
-    assert.deepStrictEqual(rows(real.body, 'sorter').current.map(c => c.rid), []); assert.deepStrictEqual(rows(sand.body, 'sorter').current.map(c => c.rid), ['3521000066']);
+    assert.deepStrictEqual(rows(real.body, 'sorting').current.map(c => c.rid), []); assert.deepStrictEqual(rows(sand.body, 'sorting').current.map(c => c.rid), ['3521000066']);
     h.A.idle(); await h.zero(); assert.strictEqual(h.live().pop().url, '/.netlify/functions/firebaseOrders?sandbox=1');
     // an order of several pieces: every piece is listed (up to 24), the count is kept, a PIN-looking value never leaves the page
     h = page(); const many = Array.from({ length: 30 }, (_, i) => ({ id: `3521000555_1_${i + 1}`, label: i === 0 ? 'badge ' + PIN : 'Piece ' + (i + 1), sku: 'GF-12' }));
