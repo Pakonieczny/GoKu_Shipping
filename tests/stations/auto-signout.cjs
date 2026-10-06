@@ -9,6 +9,7 @@
 //   5  reload mid-idle (a reload is input) and a login left while the page was closed
 //   6  a scan counts as input (StationSession.touch and the scan queue); frames pass the time to each other
 //   7  the first input after a long gap signs the person out first; beats and the end carry lastInputAt; the end is the last input
+//   7b two people at one page (multi mode): input at the page counts for both, an Admin stays, 17:00, reload, midnight
 //   8  every page that calls StationSession.init has a signOut that takes the reason and words idle / closing
 //   9  the real pages (weld-1, assembly-1, shipping-1, design-message-1, design, design-1, etsy-mail-1, sorting, sorting-2) with Playwright's clock:
 //      10 minutes without input signs out through the page's own callback with the reason in its notice; an Admin stays
@@ -26,7 +27,7 @@ const hhmm = t => new Intl.DateTimeFormat('en-GB', { timeZone: 'America/Toronto'
 function makeEnv(startIso) {
   const clock = { t: Z(startIso), timers: [], seq: 1 };
   const env = {
-    clock, posts: [], gets: [], storage: new Map(), admin: {}, door: 'ok',           // door: ok | offline | confused | slow
+    clock, posts: [], gets: [], asks: [], endBeats: null, sessionStatus: 0, storage: new Map(), admin: {}, door: 'ok',           // door: ok | offline | confused | noOk | 503 | busy | refused
     set(t) { clock.t = t; },
     /** the clock moves and the timers run in order (an open page) */
     advance(ms) {
@@ -51,7 +52,7 @@ function makeEnv(startIso) {
     ends: () => env.sessionPosts().filter(s => s.event === 'end'),
     starts: () => env.sessionPosts().filter(s => s.event === 'start'),
     beats: () => env.sessionPosts().filter(s => s.event === 'beat'),
-    adminGets: () => env.gets.filter(u => /[?&]isAdmin=/.test(u)).length,
+    adminGets: () => env.asks.length,
   };
   return env;
 }
@@ -94,16 +95,25 @@ function openPage(env, o = {}) {
   const fetchFake = (url, init = {}) => {
     const method = (init.method || 'GET').toUpperCase();
     if (method === 'POST') {
-      const b = JSON.parse(init.body || '{}'); env.posts.push(b);
-      return Promise.resolve({ status: 200, ok: true, json: async () => ({ success: true }) });
+      const b = JSON.parse(init.body || '{}');
+      if (b.stationAdmin !== undefined) {                       // AD2's door: POST { stationAdmin: name } -> { ok: true, admin }
+        env.asks.push({ url, body: b, method });
+        if (env.door === 'offline') return Promise.reject(new Error('offline'));
+        if (env.door === 'confused') return Promise.resolve({ status: 200, ok: true, json: async () => ({ success: true, data: {} }) });     // 200 but not { ok: true, admin }
+        if (env.door === 'noOk') return Promise.resolve({ status: 200, ok: true, json: async () => ({ admin: true }) });                      // a body without ok: true is not an answer
+        if (env.door === '503') return Promise.resolve({ status: 503, ok: false, json: async () => ({ error: 'the list cannot be read' }) });
+        if (env.door === 'busy') return Promise.resolve({ status: 429, ok: false, json: async () => ({ ok: false, tooMany: true }) });
+        if (env.door === 'refused') return Promise.resolve({ status: 400, ok: false, json: async () => ({ ok: false, error: 'bad name' }) });
+        const name = String(b.stationAdmin).toLowerCase();
+        return Promise.resolve({ status: 200, ok: true, json: async () => ({ ok: true, admin: !!env.admin[name] }) });
+      }
+      env.posts.push(b);
+      if (env.sessionStatus) return Promise.resolve({ status: env.sessionStatus, ok: false, json: async () => ({ error: 'down' }) });
+      // a beat the server already ended (idle / closing) is answered { success, ended, endReason } (AD2)
+      const s = b.session, ended = s && s.event === 'beat' && env.endBeats && env.endBeats[s.id];
+      return Promise.resolve({ status: 200, ok: true, json: async () => (ended ? { success: true, ended: true, endReason: ended } : { success: true }) });
     }
     env.gets.push(url);
-    if (/[?&]isAdmin=/.test(url)) {
-      if (env.door === 'offline') return Promise.reject(new Error('offline'));
-      if (env.door === 'confused') return Promise.resolve({ status: 200, ok: true, json: async () => ({ success: true, data: {} }) });
-      const name = decodeURIComponent((/[?&]isAdmin=([^&]*)/.exec(url) || [])[1] || '').toLowerCase();
-      return Promise.resolve({ status: 200, ok: true, json: async () => ({ admin: !!env.admin[name] }) });
-    }
     return Promise.resolve({ status: 404, ok: false, json: async () => ({}) });
   };
   const timers = clock.timers;
@@ -191,6 +201,12 @@ async function ruleA() {
   assert.strictEqual(k, T0 + 5 * MIN, 'a key is input');
   env.advance(4 * MIN + 59 * SEC); pg.win.fire('click', false);                 // a script's own click (isTrusted false)
   assert.strictEqual(pg.ss.lastInput(), k, 'an event a script made is not input');
+  // TRUSTED ONLY: no kind of event counts unless the browser says a person made it (isTrusted true): not false, not missing, not a lookalike
+  for (const type of ['pointerdown', 'pointermove', 'mousedown', 'mousemove', 'touchstart', 'touchmove', 'keydown', 'wheel', 'click', 'input', 'paste']) {
+    for (const flag of [false, null, 'true', 1]) { pg.win.fire(type, flag); assert.strictEqual(pg.ss.lastInput(), k, type + ' with isTrusted ' + JSON.stringify(flag) + ' is not input'); }
+    for (const e of [undefined, null]) for (const f of pg.listeners[type] || []) f(e);
+    assert.strictEqual(pg.ss.lastInput(), k, type + ': no event object, no input');
+  }
   env.advance(1 * SEC); env.set(T0 + 15 * MIN - 1); pg.wake(); assert.strictEqual(pg.signOuts.length, 0, 'the key moved the deadline to 15:00');
   env.set(T0 + 15 * MIN); pg.wake();
   assert.strictEqual(pg.signOuts.length, 1); assert.strictEqual(env.ends()[0].at, T0 + 5 * MIN);
@@ -219,7 +235,7 @@ async function ruleA() {
   env.advance(6 * MIN); await settle();
   const everything = JSON.stringify(env.posts) + JSON.stringify([...env.storage.entries()]);
   assert(!/secret|KeyS|typed/i.test(everything), 'no keystroke, no text in any request or in storage');
-  for (const s of env.sessionPosts()) assert(Object.keys(s).every(x => ['id', 'event', 'person', 'employeeId', 'station', 'device', 'computerId', 'computerLabel', 'at', 'reason', 'lastInputAt'].includes(x)), 'the session body keeps its shape: ' + Object.keys(s));
+  for (const s of env.sessionPosts()) assert(Object.keys(s).every(x => ['id', 'event', 'person', 'employeeId', 'station', 'device', 'computerId', 'computerLabel', 'at', 'reason', 'lastInputAt', 'sentAt'].includes(x)), 'the session body keeps its shape: ' + Object.keys(s));
   const stored = [...env.storage.keys()].filter(x => /^station_|employee/.test(x)).sort();
   assert.deepStrictEqual(stored, ['employee_id', 'employee_name', 'station_computer_id', 'station_session.welding.weld-1', 'station_signin_day', 'station_signin_days'].sort(), 'nothing new is stored: ' + stored);
   console.log('A: idle at exactly 10:00 (not 9:59), input resets, a script\'s own events are not input, one stamp a second, no content kept');
@@ -233,7 +249,8 @@ async function admin() {
   env.advance(3 * HOUR); await settle();
   assert.strictEqual(pg.signOuts.length, 0, 'an Admin stays signed in after 3 hours without input');
   assert.strictEqual(env.adminGets(), 1, 'asked once for the sign-in');
-  assert(env.gets.every(u => !/Paul K|paul%20k/i.test(decodeURIComponent(u)) || /isAdmin=Paul%20K/.test(u)), 'the name only');
+  assert(env.asks.every(a => a.method === 'POST' && Object.keys(a.body).join() === 'stationAdmin' && a.body.stationAdmin === 'Paul K'), 'a POST with the name in the body and nothing else');
+  assert(env.asks.every(a => !/Paul|%20/i.test(a.url)) && env.gets.length === 0, 'the name is never in a URL');
   assert(env.beats().length >= 30, 'his beats go on'); assert(env.beats().every(b => b.person === 'Paul K'));
   assert.strictEqual(pg.ss.lastInput() <= T0 + 1000, true, 'no input was made');
   // midnight (New York) stays for everybody: 14:00Z + 14h = 04:00Z the next day = 00:00 EDT
@@ -241,25 +258,28 @@ async function admin() {
   env.advanceTo(mid + 40 * SEC); await settle();
   assert.strictEqual(pg.signOuts.length, 1, 'midnight signs the Admin out'); assert.strictEqual(pg.signOuts[0].reason, 'midnight');
   // the other answers are not Admin: false, offline, and an answer the door does not give
-  for (const door of ['false', 'offline', 'confused']) {
-    env = makeEnv(today); env.admin = {}; env.door = door === 'false' ? 'ok' : door;
+  for (const door of ['false', 'offline', 'confused', 'noOk', '503', 'busy', 'refused']) {
+    // (even a door that would call the person an Admin is not believed when the answer is not exactly { ok: true, admin })
+    env = makeEnv(today); env.admin = door === 'noOk' ? { 'tess welder': true } : {}; env.door = door === 'false' ? 'ok' : door;
     pg = openPage(env).init(); pg.signIn('Tess Welder'); await settle();
     env.advance(10 * MIN + 10 * SEC); await settle();
     assert.strictEqual(pg.signOuts.length, 1, door + ': not Admin, signed out at 10 minutes');
     assert.strictEqual(pg.signOuts[0].reason, 'idle');
     assert(env.adminGets() <= 6, door + ': a few tries a sign-in, not a flood (' + env.adminGets() + ')');
     if (door === 'false') assert.strictEqual(env.adminGets(), 1, 'a clear answer is asked once');
-    if (door === 'confused') assert.strictEqual(env.adminGets(), 1, 'a door that does not answer this is not asked again');
+    if (door === 'confused' || door === 'noOk' || door === 'refused') assert.strictEqual(env.adminGets(), 1, door + ': a door that does not answer this is not asked again');
   }
   // offline at the sign-in, back before the deadline: the answer arrives on a retry and the Admin stays
-  env = makeEnv(today); env.admin = { 'paul k': true }; env.door = 'offline';
-  pg = openPage(env).init(); pg.signIn('Paul K'); await settle();
-  env.advance(2 * MIN); await settle(); env.door = 'ok'; env.advance(2 * MIN); await settle();
-  env.advance(30 * MIN); await settle();
-  assert.strictEqual(pg.signOuts.length, 0, 'a retry after the network came back found the Admin');
+  for (const down of ['offline', '503']) {
+    env = makeEnv(today); env.admin = { 'paul k': true }; env.door = down;
+    pg = openPage(env).init(); pg.signIn('Paul K'); await settle();
+    env.advance(2 * MIN); await settle(); env.door = 'ok'; env.advance(2 * MIN); await settle();
+    env.advance(30 * MIN); await settle();
+    assert.strictEqual(pg.signOuts.length, 0, 'a retry after the door came back (' + down + ') found the Admin');
+  }
   // a name is compared as the server compares it: this client sends the cleaned name, never digits (a PIN)
   env = makeEnv(today); env.admin = { 'paul k': true }; pg = openPage(env).init(); pg.signIn('Paul K 482915'); await settle();
-  assert(env.gets.every(u => !/482915/.test(u)), 'no digits of a PIN leave in the question');
+  assert(env.asks.length === 1 && env.asks[0].body.stationAdmin === 'Paul K' && !/482915/.test(JSON.stringify(env.asks)), 'no digits of a PIN leave in the question');
   // the answer is asked again at the next sign-in (a new person, or the same one again)
   env = makeEnv(today); env.admin = { 'paul k': true }; pg = openPage(env).init(); pg.signIn('Paul K'); await settle();
   pg.ss.signedOut('signOut'); env.storage.delete('employee_id'); env.storage.delete('employee_name');
@@ -430,8 +450,8 @@ async function scansAndFrames() {
   // touch(ts): never in the future, never older than the last input
   env.advance(1 * MIN); pg.ss.touch(env.clock.t + 3 * HOUR); assert.strictEqual(pg.ss.lastInput(), env.clock.t, 'a time in the future is now');
   const was = pg.ss.lastInput(); env.advance(5 * SEC); pg.ss.touch(was - 5 * MIN); assert.strictEqual(pg.ss.lastInput(), was, 'an older time changes nothing');
-  // before init, touch() does nothing and does not throw
-  const bare = openPage(makeEnv(today)); bare.ss.touch(); assert.strictEqual(bare.ss.lastInput(), 0);
+  // before init, touch() does not throw (the input is simply the page's, from then on)
+  const bare = openPage(makeEnv(today)); bare.ss.touch(); assert.strictEqual(bare.ss.lastInput(), T0);
   // two pages (frames): the Design Station frame inside the sorter. Input in either counts for both; a stranger's message does not
   env = makeEnv(today);
   const parent = openPage(env, { station: 'sorter', device: 'charm-nest-1' }); parent.init();
@@ -494,7 +514,138 @@ async function gapsAndPayloads() {
   env = makeEnv(today); pg = openPage(env).init(); pg.signIn('Tess Welder'); await settle();
   pg.doc.visibilityState = 'hidden'; for (const x of env.clock.timers) if (x.every) x.every = 60000;
   env.advance(11 * MIN); await settle(); assert.strictEqual(pg.signOuts.length, 1); assert.strictEqual(env.ends()[0].at, T0);
-  console.log('payloads: beats and the end carry lastInputAt; the first input after a gap signs out first; an asleep or frozen page ends at the last input; midnight unchanged');
+  // AD2's contract: every start, beat and end carries lastInputAt AND sentAt (this page's clock when it was sent); an idle end's `at` is the last input
+  env = makeEnv(today); pg = openPage(env).init(); pg.signIn('Tess Welder'); await settle();
+  for (let i = 0; i < 3; i++) { env.advance(4 * MIN); pg.win.fire('keydown'); }
+  const lastTouch = env.clock.t; env.advance(10 * MIN + 10 * SEC); await settle();
+  const all = env.sessionPosts();
+  assert(all.length >= 5 && all.every(x => x.sentAt > 0 && x.lastInputAt > 0), 'start, beats and end all carry sentAt and lastInputAt');
+  assert(all.filter(x => x.event !== 'end').every(x => x.sentAt === x.at), 'a start or a beat: sentAt is the moment of sending');
+  const idleEnd = env.ends()[0];
+  assert.strictEqual(idleEnd.reason, 'idle'); assert.strictEqual(idleEnd.at, lastTouch, 'an idle end\'s at is the last input, not the time of the notice');
+  assert.strictEqual(idleEnd.lastInputAt, lastTouch); assert(idleEnd.sentAt >= lastTouch + 10 * MIN, 'sentAt is the time it was sent, which is later than the end it records');
+  // a beat the server answers `ended: true` with idle or closing: the page signs the person out the same way; other end reasons are the page's own business
+  for (const [answer, signs] of [['idle', true], ['closing', true], ['midnight', false], ['closed', false]]) {
+    env = makeEnv(today); pg = openPage(env).init(); pg.signIn('Tess Welder'); await settle();
+    env.endBeats = { [env.starts()[0].id]: answer };
+    env.advance(2 * MIN); pg.win.fire('keydown'); const L2 = env.clock.t; env.advance(3 * MIN + 5 * SEC); await settle();
+    assert.strictEqual(pg.signOuts.length, signs ? 1 : 0, 'a beat answered ended/' + answer + (signs ? ' signs the person out here' : ' is left to the page\'s own rules'));
+    if (signs) { assert.strictEqual(pg.signOuts[0].reason, answer); assert.strictEqual(env.ends()[0].reason, answer); assert.strictEqual(env.ends()[0].at, L2, 'at the last input'); }
+  }
+  // an end that could not be sent is sent again later with a fresh sentAt (the server undoes the clock with it) and the SAME end time
+  env = makeEnv(today); env.sessionStatus = 503; pg = openPage(env).init(); pg.signIn('Tess Welder'); await settle();
+  env.advance(11 * MIN); await settle(); assert.strictEqual(pg.signOuts.length, 1);
+  const firstEnd = env.ends()[0], firstSent = firstEnd.sentAt; env.sessionStatus = 0;
+  env.advance(2 * MIN); await settle();
+  const again = env.ends().filter(x => x.id === firstEnd.id);
+  assert(again.length >= 2, 'the end was sent again once the door answered'); assert.strictEqual(again.at(-1).at, firstEnd.at); assert(again.at(-1).sentAt > firstSent, 'with a fresh sentAt');
+  console.log('payloads: start, beats and the end carry lastInputAt and sentAt; the first input after a gap signs out first; an asleep or frozen page ends at the last input; a beat answered ended/idle signs out; midnight unchanged');
+}
+
+/* ── 7b · two people at one page (the Welding station's multi mode) ── */
+async function multi() {
+  /** a multi page: `list` is the page's own list of who is signed in; its signOut drops the person it is told about, as weld-1 does */
+  const mk = (env, preset = []) => {
+    const list = preset.map(p => Object.assign({}, p)), pg = openPage(env);
+    pg.list = list;
+    pg.init({
+      multi: true, people: () => list.map(p => Object.assign({}, p)),
+      signOut: (reason, who) => {
+        pg.win.__signOuts.push({ reason, who, at: env.clock.t });
+        const i = list.findIndex(p => p.name === who.name && (!who.task || p.task === who.task)); if (i >= 0) list.splice(i, 1);
+      },
+    });
+    pg.add = (name, task) => { list.push({ name, id: null, task }); pg.ss.signedIn({ name, id: null, task }); };
+    return pg;
+  };
+  const ppl = pg => pg.ss.people().map(p => p.name + '/' + p.task).sort().join(',');
+  const who = pg => pg.signOuts.map(x => x.who.name + '/' + x.who.task).sort();
+  const both = pg => { pg.add('Tess Welder', 'welding'); pg.add('Ray Matcher', 'matching'); };
+
+  // both idle: the page's last input is the later sign-in (a sign-in is input at the page); both go 10:00 after it, each ended at it
+  let env = makeEnv(today), pg = mk(env);
+  pg.add('Tess Welder', 'welding'); env.advance(2 * MIN); pg.add('Ray Matcher', 'matching'); await settle();
+  const sin = env.clock.t; assert.strictEqual(pg.ss.lastInput(), sin);
+  env.advance(10 * MIN - 5 * SEC); await settle();
+  assert.strictEqual(pg.signOuts.length, 0, 'nobody before 10 minutes without input at the page'); assert.strictEqual(ppl(pg), 'Ray Matcher/matching,Tess Welder/welding');
+  env.advance(15 * SEC); await settle();
+  assert.deepStrictEqual(who(pg), ['Ray Matcher/matching', 'Tess Welder/welding']); assert(pg.signOuts.every(x => x.reason === 'idle'));
+  assert.deepStrictEqual(env.ends().map(e => e.at), [sin, sin]); assert(env.ends().every(e => e.reason === 'idle' && e.lastInputAt === sin && e.sentAt >= sin));
+  assert.strictEqual(env.starts().length, 2); assert.strictEqual(ppl(pg), ''); assert.strictEqual(env.errors.length, 0);
+
+  // a tap at the page keeps both; the idle clock then runs from the tap
+  env = makeEnv(today); pg = mk(env); both(pg); await settle();
+  env.advance(9 * MIN); pg.win.fire('mousemove'); const tap = env.clock.t;
+  env.advance(9 * MIN + 30 * SEC); await settle();
+  assert.strictEqual(pg.signOuts.length, 0, 'a tap at the page keeps both signed in');
+  env.advance(1 * MIN); await settle();
+  assert.strictEqual(pg.signOuts.length, 2); assert(env.ends().every(e => e.at === tap && e.reason === 'idle'), 'both end at that tap');
+
+  // a scan credited to one person is input at the page: it keeps both
+  env = makeEnv(today); pg = mk(env); both(pg); await settle();
+  env.advance(9 * MIN); pg.ss.touch(env.clock.t, { name: 'Ray Matcher', task: 'matching' }); const scan = env.clock.t;
+  env.advance(9 * MIN + 30 * SEC); await settle();
+  assert.strictEqual(pg.signOuts.length, 0, 'a scan credited to one keeps both');
+  env.advance(1 * MIN); await settle();
+  assert.strictEqual(pg.signOuts.length, 2); assert(env.ends().every(e => e.at === scan));
+
+  // an Admin in one task stays; the same non-Admin person in two tasks goes from both; one question a name
+  env = makeEnv(today); env.admin = { 'paul k': true }; pg = mk(env);
+  pg.add('Paul K', 'welding'); pg.add('Tess Welder', 'welding'); pg.add('Tess Welder', 'matching'); await settle();
+  env.advance(10 * MIN + 10 * SEC); await settle();
+  assert.deepStrictEqual(who(pg), ['Tess Welder/matching', 'Tess Welder/welding']); assert.strictEqual(ppl(pg), 'Paul K/welding', 'the Admin stays');
+  assert.strictEqual(env.adminGets(), 2, 'one question a name, not a session');
+  env.advance(3 * HOUR); await settle();
+  assert.strictEqual(ppl(pg), 'Paul K/welding', 'still there 3 hours later'); assert.strictEqual(env.ends().length, 2); assert(env.beats().filter(b => b.person === 'Paul K').length >= 30);
+
+  // one signs out by hand (a click is input): the other carries on and has the page's idle clock from that click
+  env = makeEnv(today); pg = mk(env); both(pg); await settle();
+  env.advance(4 * MIN); pg.win.fire('click'); const click = env.clock.t; pg.list.shift(); pg.ss.signedOut('signOut', { name: 'Tess Welder', task: 'welding' }); await settle();
+  assert.strictEqual(env.ends().length, 1); assert.strictEqual(env.ends()[0].reason, 'signOut'); assert.strictEqual(ppl(pg), 'Ray Matcher/matching');
+  env.advance(10 * MIN + 10 * SEC); await settle();
+  assert.deepStrictEqual(who(pg), ['Ray Matcher/matching']); assert.strictEqual(env.ends().length, 2); assert.strictEqual(env.ends()[1].at, click);
+
+  // 17:00 with a frozen page: everybody but the Admin is signed out "closing" at the last input; midnight is untouched
+  env = makeEnv('2026-10-06T20:40:00Z'); env.admin = { 'paul k': true }; pg = mk(env);
+  pg.add('Paul K', 'welding'); pg.add('Tess Welder', 'welding'); pg.add('Ray Matcher', 'matching'); await settle();
+  const L0 = env.clock.t; env.sleep(25 * MIN); pg.wake();                             // found at 21:05, after 17:00 (21:00Z)
+  assert.deepStrictEqual(who(pg), ['Ray Matcher/matching', 'Tess Welder/welding']); assert(pg.signOuts.every(x => x.reason === 'closing'));
+  const nonAdminEnds = env.ends().filter(e => e.person !== 'Paul K'); assert(nonAdminEnds.length === 2 && nonAdminEnds.every(e => e.reason === 'closing' && e.at === L0), 'ended at the last input');
+  assert(env.ends().filter(e => e.person === 'Paul K').every(e => e.reason === 'closed'), 'the Admin\'s page slept: the old closed rule, never closing'); assert.strictEqual(ppl(pg), 'Paul K/welding', 'the Admin is still signed in');
+  // input inside the 10 minutes before 17:00: everybody stays, and Rule A runs from the last input
+  env = makeEnv('2026-10-06T20:40:00Z'); pg = mk(env); both(pg); await settle();
+  for (let i = 0; i < 4; i++) { env.advance(4 * MIN); pg.win.fire('keydown'); }       // the last at 20:56
+  const last = env.clock.t; assert.strictEqual(hhmm(last), '16:56:00');
+  env.advanceTo(Z('2026-10-06T21:00:30Z')); await settle();
+  assert.strictEqual(pg.signOuts.length, 0, 'input inside the window: everybody stays at 17:00');
+  env.advanceTo(Z('2026-10-06T21:06:20Z')); await settle();
+  assert.strictEqual(pg.signOuts.length, 2); assert(pg.signOuts.every(x => x.reason === 'idle')); assert(env.ends().every(e => e.at === last));
+
+  // a reload inside the 10 minutes: the same sessions go on (no new starts) and the load is input; one past 10 minutes lapses both while loading
+  env = makeEnv(today); pg = mk(env); both(pg); await settle();
+  const ids = env.starts().map(s => s.id).sort();
+  env.advance(6 * MIN); pg.close(); await settle();
+  let pg2 = mk(env, pg.list); await settle();
+  assert.strictEqual(env.starts().length, 2, 'no new sessions'); assert.strictEqual(JSON.stringify(pg2.ss.people().map(p => p.session).sort()), JSON.stringify(ids), 'the same sessions');
+  assert.strictEqual(pg2.ss.lastInput(), T0 + 6 * MIN, 'a reload is input');
+  env.set(T0 + 15 * MIN + 59 * SEC); pg2.wake(); assert.strictEqual(pg2.signOuts.length, 0, 'not 9:59 after the reload');
+  env.set(T0 + 16 * MIN + 1 * SEC); pg2.wake();
+  assert.strictEqual(pg2.signOuts.length, 2); assert(env.ends().length === 2 && env.ends().every(e => e.at === T0 + 6 * MIN && e.reason === 'idle' && ids.includes(e.id)));
+  env = makeEnv(today); pg = mk(env); both(pg); await settle();
+  env.advance(3 * MIN); pg.win.fire('keydown'); env.advance(1 * MIN); pg.close(); env.sleep(11 * MIN);          // reopened 12 minutes after the last input
+  pg2 = mk(env, pg.list); await settle();
+  assert.strictEqual(pg2.signOuts.length, 2, 'both lapse while the page loads'); assert(pg2.signOuts.every(x => x.reason === 'idle'));
+  assert.strictEqual(env.starts().length, 2, 'no session starts for a login that had lapsed'); assert(env.ends().length === 2 && env.ends().every(e => e.at === T0 + 3 * MIN));
+  assert.strictEqual(ppl(pg2), '');
+
+  // midnight (New York) signs everybody out, an Admin too, as "midnight" (input up to 23:58 does not matter)
+  env = makeEnv('2026-10-07T03:50:00Z'); env.admin = { 'paul k': true }; pg = mk(env);
+  pg.add('Paul K', 'welding'); pg.add('Tess Welder', 'welding'); await settle();
+  for (let i = 0; i < 2; i++) { env.advance(4 * MIN); pg.win.fire('keydown'); }
+  env.advanceTo(Z('2026-10-07T04:00:40Z')); await settle();
+  assert.deepStrictEqual(who(pg), ['Paul K/welding', 'Tess Welder/welding']); assert(pg.signOuts.every(x => x.reason === 'midnight'));
+  assert(env.ends().length === 2 && env.ends().every(e => e.reason === 'midnight' && e.at === Z('2026-10-07T04:00:00Z')));
+  console.log('multi: input at the page counts for both people; each ends at the page\'s last input; an Admin stays; a hand sign-out leaves the other; 17:00; reload; midnight');
 }
 
 /* ── 8 · every page ── */
@@ -513,7 +664,8 @@ function pages() {
     } else assert(/signOut:\s*\(?\s*reason\b/.test(init.slice(0, 1500)), f + ': signOut: reason => …');
     // and it words idle / closing from StationSession.notice (midnight keeps the page's own wording)
     const region = html.slice(Math.max(0, html.indexOf('StationSession.init(') - 4500), html.indexOf('StationSession.init(') + 2500);
-    assert(/StationSession\s*&&\s*StationSession\.notice|StationSession\.notice\(/.test(region), f + ': its sign-out notice uses StationSession.notice(reason)');
+    assert(/StationSession\s*&&\s*StationSession\.notice|StationSession\.notice\(/.test(region) || (/reason\s*===\s*["']idle["']/.test(region) && /reason\s*===\s*["']closing["']/.test(region) && /Signed out after 10 minutes without input/.test(region)),
+      f + ': its sign-out notice uses StationSession.notice(reason), or words idle and closing itself');
     assert(!/\bif\s*\(\s*reason\s*===\s*["']midnight["']\s*\)\s*\{?\s*(?:try\s*\{)?\s*(?:ui\.banner|toast|M\.toast)/.test(region), f + ': the notice is not limited to midnight');
   }
   console.log('pages: ' + files.length + ' pages call StationSession.init; each signOut takes the reason and words idle / closing');
@@ -560,7 +712,7 @@ async function openReal(browser, spec, rec) {
       const fn = u.pathname.split('/').pop(), text = r.request().postData() || '';
       let b = {}; try { b = JSON.parse(text || '{}'); } catch (_) {}
       if (fn === 'firebaseOrders' && m === 'POST' && b.session) { rec.sessions.push(b.session); return json({ success: true }); }
-      if (fn === 'firebaseOrders' && m === 'GET' && u.searchParams.get('isAdmin')) { rec.gets.push(u.search); return json({ admin: spec.admin === true }); }
+      if (fn === 'firebaseOrders' && m === 'POST' && b.stationAdmin !== undefined) { rec.gets.push(text); return json({ ok: true, admin: spec.admin === true }); }
       if (fn === 'authGate') return m === 'GET' ? json({ locked: true }) : (r.request().headers()['x-edit-passcode'] === 'pc-1' ? json({ ok: true }) : json({ ok: false }, 401));
       if (fn === 'etsyMailAuth') {
         rec.posts.push(b.op);
@@ -650,6 +802,36 @@ async function browserPages() {
       await ctx.close();
       console.log('browser: weld-1.html an Admin (the door says so) is still signed in after 2 hours without input, asked once');
     }
+    // only a person's own input counts: every kind of event a script dispatches (dispatchEvent, el.click(), a remote cursor) is not input; a real click is
+    {
+      const rec = { sessions: [], errors: [], gets: [], posts: [] };
+      const { ctx, page } = await openReal(browser, pinPage('weld-1.html'), rec);
+      const li0 = await page.evaluate(() => StationSession.lastInput());
+      await page.clock.runFor(9 * 60000 + 20000);
+      await page.evaluate(() => {
+        for (const t of ['pointerdown', 'pointermove', 'mousedown', 'mousemove', 'keydown', 'wheel', 'touchstart', 'input', 'click', 'paste']) {
+          document.dispatchEvent(new Event(t, { bubbles: true })); window.dispatchEvent(new Event(t)); document.body.dispatchEvent(new Event(t, { bubbles: true }));
+        }
+        document.body.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: 5, clientY: 5 }));
+        document.body.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: 'a' }));
+        document.body.click();
+      });
+      assert.strictEqual(await page.evaluate(() => StationSession.lastInput()), li0, 'events a script dispatched are not input');
+      for (let i = 0; i < 90 && !rec.sessions.some(x => x.event === 'end'); i++) { await page.clock.runFor(1000); await wait(25); }
+      const end = await until(() => rec.sessions.find(x => x.event === 'end'), 'the idle end');
+      assert.strictEqual(end.reason, 'idle'); assert.strictEqual(end.at, li0, 'the scripted events did not move the deadline: ended at the last real input');
+      await ctx.close();
+      const rec2 = { sessions: [], errors: [], gets: [], posts: [] };
+      const r2 = await openReal(browser, pinPage('weld-1.html'), rec2);
+      await r2.page.clock.runFor(9 * 60000 + 20000);
+      await r2.page.mouse.click(30, 30);                                           // a real click (the browser's own, isTrusted true)
+      const lc = await r2.page.evaluate(() => StationSession.lastInput());
+      assert(lc >= end.at + 9 * 60000, 'a real click is input: ' + lc);
+      await r2.page.clock.runFor(60000);
+      assert.strictEqual(rec2.sessions.filter(x => x.event === 'end').length, 0, 'a real click at 9:20 keeps the person signed in past 10:00');
+      await r2.ctx.close();
+      console.log('browser: weld-1.html only trusted events are input: scripted events (dispatchEvent, click(), keydown, mousemove) never keep anybody awake, a real click does');
+    }
     // the Design Station: the name and this tab's passcode go and its own sign-in box asks again; the notice says why
     for (const file of ['design.html', 'design-1.html']) {
       await pageIdle(browser, { file, session: { 'designStation.passcode': 'pc-1' }, local: { employee_name: 'Dana Design' },
@@ -728,7 +910,7 @@ async function browserPages() {
 
 (async () => {
   const only = process.argv[2];
-  const parts = { ruleA, admin, ruleB, dst, reload, scansAndFrames, gapsAndPayloads, pages, browserPages };
+  const parts = { ruleA, admin, ruleB, dst, reload, scansAndFrames, gapsAndPayloads, multi, pages, browserPages };
   for (const [name, fn] of Object.entries(parts)) { if (only && only !== name) continue; await fn(); }
   console.log('auto-signout: all passed');
 })().catch(e => { console.error(e); process.exit(1); });

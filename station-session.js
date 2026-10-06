@@ -38,15 +38,17 @@
  *      (signOut("closing")); anybody with input inside those 10 minutes stays and Rule A takes over from that input.
  *    Input = the time of the last pointer, touch, key, wheel, click, input or paste event at this page, or StationSession.touch()
  *      (the station's scanner relay). It is ONE number in memory, stamped at most once a second: never what was typed or
- *      pressed, never a log. Events a script made itself (isTrusted false) are not input. A reload is input. Input in a frame
+ *      pressed, never a log. ONLY events a person made (event.isTrusted true) are input: events a script dispatches, or a remote cursor draws, are not. A reload is input. Input in a frame
  *      inside the page, or in the page that holds this frame, counts too (only the time is passed on, by postMessage). On a
  *      multi page input at the page counts for every person signed in there.
  *    The session's end time is the LAST INPUT, not the moment the sign-out was noticed, so hours stay honest. Heartbeats and the
  *      end carry lastInputAt. What keeps the clock across a reload is the last input time inside the session's own record
  *      (localStorage station_session.<station>.<device>), kept to the latest few seconds.
- *    Admin: the name is asked of the server once per sign-in (GET firebaseOrders?isAdmin=<name>, answer { admin: boolean }) and
- *      kept for that sign-in. Unknown, offline or any other answer is NOT Admin (fail closed). An Admin gets neither rule; the
- *      midnight (New York) sign-out stays for everybody.
+ *    Admin: the name is asked of the server once per sign-in (POST firebaseOrders { stationAdmin: name }, answer { ok: true, admin })
+ *      and kept for that sign-in, in memory (never stored beyond the sign-in's own record). Unknown, offline, 503 or any other
+ *      answer is NOT Admin (fail closed). An Admin gets neither rule; the midnight (New York) sign-out stays for everybody.
+ *    Every start, beat and end also carries sentAt (this page's clock when sent) so the server can undo a wrong computer clock. A beat
+ *      the server answers `ended: true` with idle or closing signs the person out here the same way (serverEnded).
  *    Timing uses Date.now() against stored times on a 10 second tick, on every input that follows a gap, and on
  *      visibilitychange / focus / pageshow / resume (a sleeping computer or a background tab signs the person out at the
  *      right moment and with the right end time); never one long setTimeout.
@@ -194,6 +196,7 @@
     const o = { id: s.id, event, person: s.name, employeeId: s.eid || "", station: cfg.station, device: cfg.device,
       computerId: computerId(), computerLabel: label(), at: at || Date.now(), reason: reason || undefined, task: s.task || undefined };
     const li = inputOf(s); if (li) o.lastInputAt = li;          // the time of the last input (ms), never what it was
+    o.sentAt = Date.now();                                      // this page's clock at the moment of sending: the server undoes a wrong computer clock with it
     return o;
   }
   function post(session) {
@@ -201,7 +204,11 @@
       const text = JSON.stringify({ session });
       if (typeof fetch !== "function") { if (navigator.sendBeacon) navigator.sendBeacon(URL_(), new Blob([text], { type: "application/json" })); return Promise.resolve(null); }
       return fetch(URL_(), { method: "POST", headers: { "Content-Type": "application/json" }, body: text, keepalive: true })
-        .then(r => ({ status: r.status }), () => null).catch(() => null);
+        .then(r => {
+          const o = { status: r.status };
+          if (!(r.status >= 200 && r.status < 300) || typeof r.json !== "function") return o;
+          return r.json().then(j => { o.j = j && typeof j === "object" ? j : null; return o; }, () => o);        // (the answer of a beat says whether the server already ended the session)
+        }, () => null).catch(() => null);
     } catch (_) { return Promise.resolve(null); }
   }
   // an end that could not be sent (offline) is sent again later; the server keeps it within the times it stamped
@@ -214,7 +221,7 @@
     const q = lsJson(K.unsent, []);
     if (flushing || !Array.isArray(q) || !q.length || navigator.onLine === false) return;
     flushing = true; lsDel(K.unsent);
-    Promise.all(q.map(b => post(b).then(r => { if ((!r || r.status >= 500 || r.status === 429) && Date.now() - (b.at || 0) < 7 * 86400e3) keep(b); })))
+    Promise.all(q.map(b => post(Object.assign({}, b, { sentAt: Date.now() })).then(r => { if ((!r || r.status >= 500 || r.status === 429) && Date.now() - (b.at || 0) < 7 * 86400e3) keep(b); })))
       .then(() => { flushing = false; }, () => { flushing = false; });
   }
 
@@ -241,7 +248,7 @@
     mark(t);
     if (!remote) relay(t);
   }
-  function onInput(e) { if (e && e.isTrusted === false) return; const now = Date.now(); if (lastIn && now - stampAt < 1000) return; stamp(now, false); }
+  function onInput(e) { if (!e || e.isTrusted !== true) return; const now = Date.now(); if (lastIn && now - stampAt < 1000) return; stamp(now, false); }
   /* A frame inside this page, or the page that holds this one, is told the TIME of an input (never more): a person working in the
      Design Station frame of the sorter is at the sorter, and the other way round. */
   function relay(t) {
@@ -264,15 +271,21 @@
   /* ── Admin: asked of the server once per sign-in, kept for it; anything but a clear answer is "not Admin" ── */
   const admins = new Map();            // lower-case name → { v: true | false | null, day, p: pending promise, tries, at }
   const adminKey = n => String(n || "").toLowerCase();
-  function adminDoor(name) {          // → true | false | null (try again later) | undefined (the door does not answer this: stop asking)
+  /** AD2's door (read-only, one name, in the body only): POST firebaseOrders { stationAdmin: name } answers { ok: true, admin: boolean }.
+      → true | false | null (no answer now: 503, offline, too many, a timeout; try again later) | undefined (a refusal or a bad answer: stop asking) */
+  function adminDoor(name) {
     try {
       if (typeof fetch !== "function") return Promise.resolve(undefined);
       let ac = null, to = 0;
       try { if (typeof AbortController === "function") { ac = new AbortController(); to = setTimeout(() => { try { ac.abort(); } catch (_) {} }, 8000); } } catch (_) {}
-      const url = URL_() + (cfg.sandbox ? "&" : "?") + "isAdmin=" + encodeURIComponent(name);
-      return fetch(url, { method: "GET", cache: "no-store", headers: { Accept: "application/json" }, signal: ac ? ac.signal : undefined })
+      return fetch(URL_(), { method: "POST", cache: "no-store", headers: { "Content-Type": "application/json", Accept: "application/json" },
+          body: JSON.stringify({ stationAdmin: name }), signal: ac ? ac.signal : undefined })
         .then(r => r.json().then(j => ({ s: r.status, j }), () => ({ s: r.status, j: null })))
-        .then(o => { clearTimeout(to); if (o.s === 200 && o.j && typeof o.j.admin === "boolean") return o.j.admin; return o.s >= 500 || o.s === 429 ? null : undefined; })
+        .then(o => {
+          clearTimeout(to);
+          if (o.s === 200 && o.j && o.j.ok === true && typeof o.j.admin === "boolean") return o.j.admin;
+          return o.s >= 500 || o.s === 429 ? null : undefined;
+        })
         .catch(() => { clearTimeout(to); return null; });
     } catch (_) { return Promise.resolve(null); }
   }
@@ -371,7 +384,15 @@
     s = s || cur;
     if (!s) return;
     s.lastBeat = Date.now(); s.li = Math.max(Number(s.li) || 0, lastIn); if (s === cur) savedLi = s.li; persist(s);
-    post(body(s, "beat"));
+    post(body(s, "beat")).then(r => { if (r && r.j && r.j.ended === true) serverEnded(s, r.j.endReason); });
+  }
+  /** a beat that was answered `ended: true` with idle or closing: the server (AD2) already ended this session at its last input, so the
+      page signs the person out the same way and does not carry on unrecorded. Any other end reason is left to the page's own rules. */
+  function serverEnded(s, reason) {
+    try {
+      if ((reason !== "idle" && reason !== "closing") || !s || s.ended || !runsHere(s)) return;
+      lapse(s, reason, inputOf(s) || undefined);
+    } catch (e) { warn("serverEnded:", e); }
   }
   /** ends a session. With an `at` (Rule A or B) it ends at that time, the last input. Otherwise: one that went quiet for 15
       minutes ended ("closed") at the last input it knew of (an Admin's at its last beat); one from an earlier day at its

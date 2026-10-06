@@ -475,16 +475,17 @@ async function main() {
     /* ───────── NIGHT ───────── */
     await check('night: the New York midnight signs everyone out and the order leaves the board; a page left open lets go after its hold', async () => {
       fresh();
-      const target = Date.parse('2026-10-06T03:55:00Z');                      // 23:55 in New York (EDT)
+      let target = Date.parse('2026-10-06T03:55:00Z');                        // 23:55 in New York (EDT)
+      while (target < realNow() + 60000) target += 86400000;                  // (the next such night: the page's clock cannot be set into the past; right until the clocks change on 1 Nov)
       clock.off = target - realNow();
       const c = await site(browser);
       await c.ctx.clock.install({ time: target });
       const page = await lab(c);
-      await page.evaluate(() => signIn('Tess Welder'));
       await page.clock.pauseAt(target + 3000);
+      await page.evaluate(() => signIn('Tess Welder'));                         // (after the jump to 23:55: hours without input would sign the person out, Rule A)
       await page.evaluate(t => StationLiveOrder.start('3812300001', t, {}), TX);
       await step(page, 100, 50, 150);
-      for (let m = 0; m < 2; m++) { await step(page, 100000, 5000, 15); await page.evaluate(() => document.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))); }
+      for (let m = 0; m < 2; m++) { await step(page, 100000, 5000, 15); await page.mouse.click(40 + m, 40); }          // (a real click: a script's own event is not input)
       assert.equal(live()[0].state, 'working', '23:58 and still working');
       assert(await page.evaluate(() => !!StationActivity.who()), 'still signed in');
       await step(page, 300000, 5000, 15);                                      // 00:03
@@ -507,15 +508,16 @@ async function main() {
       await p2.clock.pauseAt(t1 + 3000);
       await p2.evaluate(t => StationLiveOrder.start('3812300001', t, {}), TX);
       await step(p2, 100, 50, 150);
-      await step(p2, 14 * 60000, 5000, 10);
-      assert.equal(live()[0].state, 'working', '14 minutes quiet: still held');
+      await step(p2, 9 * 60000, 5000, 10);
+      assert.equal(live()[0].state, 'working', '9 minutes quiet: still held');
       await step(p2, 2 * 60000, 5000, 10);
-      assert.equal(live()[0].state, 'idle', '16 minutes quiet: let go');
+      assert.equal(live()[0].state, 'idle', '11 minutes quiet: the person is signed out (10 minutes without input) and the order leaves the board');
       assert.equal(await p2.evaluate(() => StationActivity.current().length), 0);
       // a key now and then (a cat on the keyboard) keeps it, at the cost of working, never more
+      await p2.evaluate(() => signIn('Tess Welder'));                          // (signed out above by the 10 minute rule)
       await p2.evaluate(t => StationLiveOrder.start('3812300002', t, {}), TX); await step(p2, 100, 50, 150);
       cur.reset();
-      for (let i = 0; i < 12; i++) { await step(p2, 600000, 5000, 5); await p2.evaluate(() => document.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: 'a' }))); }
+      for (let i = 0; i < 24; i++) { await step(p2, 300000, 5000, 4); await p2.keyboard.press('a'); }      // (a real key every 5 minutes, 2 hours)
       assert.equal(live()[0].state, 'working');
       const per = cur.writesOf('Station_Live').length / 2;
       assert(per <= 130, 'live writes per hour while a key is pressed now and then: ' + per);
@@ -537,9 +539,10 @@ async function main() {
       assert(cur.writesOf('Station_Sessions').length <= 14, 'idle: session writes ' + cur.writesOf('Station_Sessions').length);
       assert.equal(cur.writesOf('Station_Activity').length, 0);
       c.net.log.length = 0; cur.reset();
+      await page.evaluate(() => signIn('Tess Welder'));                        // (an hour without input signed the person out: this is a new sign-in)
       await page.evaluate(t => StationLiveOrder.start('3812300001', t, {}), TX);
       await step(page, 100, 50, 150);
-      for (let i = 0; i < 12; i++) { await step(page, 300000, 5000, 4); await page.evaluate(() => document.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))); }
+      for (let i = 0; i < 12; i++) { await step(page, 300000, 5000, 4); await page.mouse.click(40 + i, 40); }
       const lw = cur.writesOf('Station_Live').length, sw = cur.writesOf('Station_Sessions').length;
       assert(lw >= 100 && lw <= 125, 'working: live writes in an hour ' + lw);
       assert(sw <= 14, 'working: session writes ' + sw);
