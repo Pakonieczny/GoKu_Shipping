@@ -142,8 +142,9 @@ exports.handler = async (event) => {
       catch (e) {
         // a body that is not JSON and mentions a login never reaches the log: the parser's own message can quote it
         if (/pinLogin/.test(String(event.body || ""))) return { statusCode: 400, headers: Object.assign({ "Cache-Control": "no-store" }, CORS), body: JSON.stringify({ ok: false, error: "an Employee Number is 6 digits" }) };
-        throw e;
+        return { statusCode: 400, headers: CORS, body: JSON.stringify({ error: "not JSON" }) };   // (ST2: a body that is not JSON is the sender's mistake, a 4xx; the parser's own message can quote the body, so it is never shown or logged)
       }
+      if (body === null) return { statusCode: 400, headers: CORS, body: JSON.stringify({ error: "not an object" }) };   // (ST2: "null" is valid JSON and not a request)
       /* the stations' Employee Number login (_stationPinLogin.js): the page sends the number typed and gets back that person's
          name, or no. The roster document itself is never returned. The number is read from the body only, never from a URL,
          is never logged, and a guesser is slowed and locked out for a minute. An answer carries `ok`; anything else is a failure. */

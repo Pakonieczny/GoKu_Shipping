@@ -229,6 +229,114 @@ const sessionDoc = (id, who, station, startAt, endAt, extra) => Object.assign({ 
   startAt, lastSeenAt: endAt || wall() - 60000, endAt: endAt || null, endReason: endAt ? 'signOut' : null, minutes: 0 }, extra || {});
 const ids = (base, n) => Array.from({ length: n }, (_, i) => String(base + i));
 
+/* ═════════════════════════ pages: jsdom + the real scripts, one storage per computer, the real doors behind a fake network ═════════════════════════ */
+const SCRIPTS = { session: read('station-session.js'), activity: read('station-activity.js'), queue: read('station-scan-queue.js') };
+const extraScript = f => (exists(f) ? read(f) : null);
+let pcN = 0;
+/** a clean world at a chosen moment: every page gone, no timers, an empty shop, the wall clock at `start` */
+function world(start = '2026-10-07T13:00:00Z') {
+  for (const t of [...clock.tabs]) t.kill();
+  clock.timers = []; clock.off = Date.parse(start) - clock.mono;
+  return freshKeep();
+}
+/** a computer: one browser profile (localStorage shared by its tabs), one address on the network */
+function computer(label) {
+  const mem = new Map(), tabs = new Set();
+  const pc = { label, mem, tabs, ip: '10.' + ((++pcN >> 8) & 255) + '.' + (pcN & 255) + '.7', ls: k => (mem.has(k) ? mem.get(k) : null), set: (k, v) => mem.set(k, String(v)), del: k => mem.delete(k) };
+  pc.storage = tab => ({
+    getItem: k => (mem.has(String(k)) ? mem.get(String(k)) : null),
+    setItem(k, v) { k = String(k); const old = mem.has(k) ? mem.get(k) : null; mem.set(k, String(v)); pc.fire(tab, k, old, String(v)); },
+    removeItem(k) { k = String(k); const old = mem.has(k) ? mem.get(k) : null; if (mem.delete(k)) pc.fire(tab, k, old, null); },
+    clear() { mem.clear(); }, key: i => [...mem.keys()][i], get length() { return mem.size; } });
+  pc.fire = (src, key, oldValue, newValue) => {            // a storage event reaches the OTHER tabs of the computer, a moment later
+    for (const t of tabs) if (t !== src && !t.dead) Promise.resolve().then(() => { try { t.w.dispatchEvent(new t.w.StorageEvent('storage', { key, oldValue, newValue, url: t.w.location.href })); } catch (_) {} });
+  };
+  return pc;
+}
+const FAIL_FETCH = () => Object.assign(new TypeError('Failed to fetch'), {});
+/** opens a page on a computer. o: { page, station, device, multi, people, person, signOut, sandbox, scripts, init(w, tab) } */
+function openTab(pc, o = {}) {
+  const page = o.page || 'weld-1.html';
+  const dom = new JSDOM('<!doctype html><html><head><meta charset="utf-8"></head><body><div id="host"></div></body></html>', { url: 'https://goldenspike.app/' + page + (o.sandbox ? '?sandbox=1' : ''), pretendToBeVisual: true, runScripts: 'outside-only' });
+  const w = dom.window;
+  const tab = { pc, w, dom, hidden: false, throttle: o.throttle !== false, skew: o.skew || 0, dead: false, online: true, forceStatus: null, hold: null, parked: [], signOuts: [], reqs: [], sessions: [], acts: [], errors: [], ip: o.ip || pc.ip, page };
+  pc.tabs.add(tab); clock.tabs.add(tab);
+  Object.defineProperty(w, 'localStorage', { value: pc.storage(tab), configurable: true });
+  Object.defineProperty(w.document, 'visibilityState', { get: () => (tab.hidden ? 'hidden' : 'visible'), configurable: true });
+  Object.defineProperty(w.document, 'hidden', { get: () => tab.hidden, configurable: true });
+  Object.defineProperty(w.navigator, 'onLine', { get: () => tab.online, configurable: true });
+  const D = w.Date;
+  class FD extends D { constructor(...a) { if (a.length === 0) super(wall() + tab.skew); else super(...a); } static now() { return wall() + tab.skew; } }
+  w.Date = FD;
+  w.performance = { now: () => clock.mono, timeOrigin: 0 };           // (the monotonic clock: a page can tell a clock that was set from time that passed)
+  const addTimer = (fn, ms, every, args) => { const t = { id: ++clock.seq, tab, fn: () => fn(...args), due: clock.mono + Math.max(0, Number(ms) || 0), every }; clock.timers.push(t); return t.id; };
+  w.setTimeout = (fn, ms, ...a) => addTimer(typeof fn === 'function' ? fn : () => {}, ms, null, a);
+  w.setInterval = (fn, ms, ...a) => addTimer(typeof fn === 'function' ? fn : () => {}, Math.max(1, Number(ms) || 1), Math.max(1, Number(ms) || 1), a);
+  w.clearTimeout = w.clearInterval = id => { for (const t of clock.timers) if (t.id === id) t.dead = true; };
+  w.TextEncoder = TextEncoder; w.Blob = function (parts) { this.parts = parts; };
+  w.fetch = async (url, init) => {
+    const u = new URL(String(url), w.location.href), text = init && init.body ? String(init.body) : '';
+    let body = null; try { body = text ? JSON.parse(text) : null; } catch (_) {}
+    const rec = { url: u.pathname + u.search, method: (init && init.method) || 'GET', body, at: wall(), pageAt: wall() + tab.skew, status: null };
+    tab.reqs.push(rec);
+    if (body && body.session) tab.sessions.push(body.session);
+    if (body && Array.isArray(body.activity)) tab.acts.push(...body.activity);
+    if (!tab.online) { rec.status = 'offline'; throw FAIL_FETCH(); }
+    const deliver = async () => {
+      if (tab.forceStatus) { rec.status = tab.forceStatus; return { status: tab.forceStatus, ok: false, json: async () => ({}), text: async () => '{}' }; }
+      if (u.pathname === '/.netlify/functions/firebaseOrders') {
+        const r = await door.handler({ httpMethod: rec.method, headers: { 'x-nf-client-connection-ip': tab.ip }, queryStringParameters: Object.fromEntries(u.searchParams), body: text || undefined });
+        rec.status = r.statusCode; rec.reply = r.body;
+        return { status: r.statusCode, ok: r.statusCode < 400, json: async () => JSON.parse(r.body || '{}'), text: async () => r.body || '' };
+      }
+      const custom = o.route && await o.route(u, rec, tab);
+      if (custom) { rec.status = custom.status; return { status: custom.status, ok: custom.status < 400, json: async () => custom.body, text: async () => JSON.stringify(custom.body) }; }
+      rec.status = 404; return { status: 404, ok: false, json: async () => ({}), text: async () => '{}' };
+    };
+    if (tab.hold && tab.hold(rec)) return new Promise(res => tab.parked.push({ rec, go: () => deliver().then(res) }));
+    return deliver();
+  };
+  tab.release = async (order) => { const list = tab.parked.splice(0); const seq = order ? order.map(i => list[i]) : list; for (const p of seq) { await p.go(); await settle(2); } };
+  w.addEventListener('error', e => tab.errors.push(String(e && e.message)));
+  for (const f of o.scripts || ['session', 'activity']) w.eval(SCRIPTS[f] || read(f));
+  tab.SS = w.StationSession;
+  const page_ = {
+    station: o.station || 'welding', device: o.device || 'weld-1',
+    ...(o.multi ? { multi: true, people: o.people || (() => { try { return JSON.parse(pc.ls('fx_people') || '[]'); } catch (_) { return []; } }),
+      signOut: (reason, who) => { tab.signOuts.push([reason, who]); const l = JSON.parse(pc.ls('fx_people') || '[]'); tab.storage().setItem('fx_people', JSON.stringify(l.filter(p => !(who && p.name === who.name && (p.task || '') === (who.task || ''))))); if (o.signOut) o.signOut(reason, who, tab); } }
+      : { person: o.person || (() => { const n = pc.ls('employee_name'); return pc.ls('employee_id') && n ? { name: n, id: null } : null; }),
+          signOut: reason => { tab.signOuts.push(reason); tab.storage().removeItem('employee_id'); tab.storage().removeItem('employee_name'); if (o.signOut) o.signOut(reason, null, tab); } }),
+    sandbox: !!o.sandbox };
+  tab.storage = () => w.localStorage;
+  tab.init = extra => { try { w.StationSession.init(Object.assign({}, page_, o.initExtra || {}, extra || {})); } catch (e) { tab.errors.push('init: ' + e.message); } };
+  if (o.init !== false) tab.init();
+  /* what a person does on the page */
+  tab.login = (name, task) => {                              // the page's own sign-in (its keys), then StationSession.signedIn
+    if (o.multi) { const l = JSON.parse(pc.ls('fx_people') || '[]'); l.push({ name, task: task || '' }); tab.storage().setItem('fx_people', JSON.stringify(l)); w.StationSession.signedIn({ name, id: null, task: task || '' }); }
+    else { tab.storage().setItem('employee_id', 'x-' + name.length); tab.storage().setItem('employee_name', name); w.StationSession.signedIn({ name, id: null }); }
+  };
+  tab.logout = (name, task) => {
+    if (o.multi) { const l = JSON.parse(pc.ls('fx_people') || '[]'); tab.storage().setItem('fx_people', JSON.stringify(l.filter(p => !(p.name === name && (p.task || '') === (task || ''))))); w.StationSession.signedOut('signOut', { name, task: task || '' }); }
+    else { tab.storage().removeItem('employee_id'); tab.storage().removeItem('employee_name'); w.StationSession.signedOut('signOut'); }
+  };
+  tab.who = () => (o.multi ? JSON.parse(pc.ls('fx_people') || '[]') : (pc.ls('employee_id') && pc.ls('employee_name') ? [{ name: pc.ls('employee_name') }] : []));
+  tab.input = (type = 'pointerdown') => { const E = /^key/.test(type) ? w.KeyboardEvent : /^(mouse|click|pointer|wheel)/.test(type) ? w.MouseEvent : w.Event; w.document.body.dispatchEvent(new E(type, { bubbles: true, cancelable: true })); };
+  tab.hide = () => { tab.hidden = true; w.document.dispatchEvent(new w.Event('visibilitychange')); };
+  tab.show = () => { tab.hidden = false; w.document.dispatchEvent(new w.Event('visibilitychange')); w.dispatchEvent(new w.Event('focus')); };
+  tab.setOnline = on => { tab.online = on; w.dispatchEvent(new w.Event(on ? 'online' : 'offline')); };
+  /** the page is closed or navigated away: pagehide, then its timers are gone */
+  tab.close = () => { try { w.dispatchEvent(new w.Event('pagehide')); } catch (_) {} tab.kill(); };
+  /** the page crashes or the computer loses power: nothing is sent, nothing runs again */
+  tab.kill = () => { tab.dead = true; for (const t of clock.timers) if (t.tab === tab) t.dead = true; clock.timers = clock.timers.filter(t => !t.dead); pc.tabs.delete(tab); clock.tabs.delete(tab); };
+  /** the session bodies of one kind (start | beat | end) of this page, newest last */
+  tab.kind = k => tab.sessions.filter(s => s.event === k);
+  return tab;
+}
+/** the sessions of the store, one line each: person, station, task, role, start, end, reason (a quick read for a failing check) */
+const dumpSessions = () => stationDocs().map(d => `${d.person}@${d.station}/${d.device}${d.task ? ':' + d.task : ''}${d.role ? '[' + d.role + ']' : ''} ${iso(d.startAt).slice(11, 19)}-${d.endAt ? iso(d.endAt).slice(11, 19) : 'open'} ${d.endReason || ''}`).join(' | ');
+const open_ = () => stationDocs().filter(d => d.endAt == null);
+const endedAt = (name, t0) => stationDocs().filter(d => d.person === name && d.endAt != null && (t0 == null || d.startAt >= t0));
+
 /* ═════════════════════════ 4 · hostile input at the station doors ═════════════════════════ */
 async function hostile() {
   const REASONS_OK = new Set(['signOut', 'midnight', 'switched', 'closed', 'idle', 'closing']);
@@ -354,10 +462,223 @@ async function hostile() {
 /* the server's wall clock and every page's, forward together (no timers: the doors do not run any) */
 function tickWall(ms) { clock.mono += ms; }
 
+/* ═════════════════════════ 2 · two-person welding ═════════════════════════ */
+async function welding() {
+  const A = { name: 'Tess Welder', task: 'welding' }, B = { name: 'Ray Welder', task: 'matching' }, C = { name: 'Ivy Third', task: 'matching' };
+  const mk = (pc, extra) => openTab(pc, Object.assign({ multi: true, station: 'welding', device: 'weld-1' }, extra || {}));
+  const key = x => x.name + '|' + (x.task || '');
+  const docsOf = (p, t) => stationDocs().filter(d => d.person === p.name && (d.task || '') === (t || p.task || ''));
+  const peopleOf = tab => Array.from(tab.SS.people()).map(p => key(p)).sort();
+  await section('2 · two-person welding', async () => {
+    await check('every order of signing in and out: each person has a session of their own and nobody else is touched', async () => {
+      const plans = [['+A', '+B', '-A', '-B'], ['+A', '+B', '-B', '-A'], ['+A', '-A', '+B', '-B'], ['+B', '+A', '-B', '-A'], ['+A', '+B', '-A', '+A', '-B', '-A'], ['+A', '+B', '+B', '+A', '-A', '-A', '-B', '-B'], ['+B', '-B', '+B', '-B', '+A', '-A']];
+      for (const plan of plans) {
+        world(); const pc = computer('bench'), tab = mk(pc);
+        const model = new Map(); const started = []; let ended = 0;
+        for (const step of plan) {
+          const who = step[1] === 'A' ? A : B, k = key(who);
+          await advance(7 * MIN);                                          // beats happen between the steps
+          if (step[0] === '+') { if (!model.has(k)) { model.set(k, true); started.push(k); } tab.login(who.name, who.task); }
+          else { if (model.has(k)) { model.delete(k); ended++; } tab.logout(who.name, who.task); }
+          await advance(1000);
+          eq(peopleOf(tab), [...model.keys()].sort(), `people after ${plan.join(' ')} at ${step}`);
+          const open = open_().map(d => d.person + '|' + d.task).sort();
+          eq(open, [...model.keys()].sort(), `open sessions after ${step} of ${plan.join(' ')}: ${dumpSessions()}`);
+          eq(stationDocs().filter(d => d.endAt != null).length, ended, `ended sessions after ${step} of ${plan.join(' ')}`);
+        }
+        ok(stationDocs().length === started.length, `one document per sign-in: ${stationDocs().length} vs ${started.length}`);
+        for (const d of stationDocs()) { ok(d.endReason === 'signOut' && d.endAt >= d.startAt, `ended cleanly: ${dumpSessions()}`); ok(/^welding__weld-1__\w+__(welding|matching)__/.test(d._id), 'session id: ' + d._id); }
+        ok(!tab.sessions.some(s => s.event === 'end' && s.reason === 'switched'), 'a second sign-in never ends the first as "switched"');
+        eq(tab.errors, [], 'no page errors');
+      }
+    });
+    await check('the same person in both tasks is two sessions; leaving one leaves the other; leaving with no task leaves both', async () => {
+      world(); const pc = computer('bench'), tab = mk(pc);
+      tab.login(A.name, 'welding'); await advance(MIN); tab.login(A.name, 'matching'); await advance(MIN);
+      eq(open_().length, 2); eq(new Set(stationDocs().map(d => d._id)).size, 2);
+      tab.logout(A.name, 'welding'); await advance(1000);
+      eq(open_().map(d => d.task), ['matching'], dumpSessions());
+      tab.login(A.name, 'welding'); await advance(1000); eq(open_().length, 2);
+      tab.SS.signedOut('signOut', { name: A.name });                                           // no task: every task of that name
+      await advance(1000); eq(open_().length, 0, dumpSessions());
+      ok(stationDocs().length === 3, 'three sign-ins, three documents: ' + stationDocs().length);
+      // spelled another way it is still the same person and task: no second session
+      world(); const pc2 = computer('bench'), t2 = mk(pc2);
+      t2.login('Tess Welder', 'matching'); await advance(1000);
+      for (const v of ['tess welder', 'TESS  WELDER', ' Tess Welder ']) { t2.SS.signedIn({ name: v, task: 'matching' }); await advance(500); }
+      eq(stationDocs().length, 1, 'a respelling is the same person: ' + dumpSessions());
+    });
+    await check('a double tap on the sign-in or the sign-out never writes twice or ends somebody else', async () => {
+      world(); const pc = computer('bench'), tab = mk(pc);
+      tab.login(A.name, A.task); tab.login(B.name, B.task); await advance(1000);
+      tab.SS.signedIn({ name: A.name, task: A.task }); tab.SS.signedIn({ name: A.name, task: A.task }); await advance(1000);
+      eq(stationDocs().length, 2, 'two sign-ins, two documents: ' + dumpSessions());
+      tab.logout(A.name, A.task); tab.SS.signedOut('signOut', { name: A.name, task: A.task }); tab.SS.signedOut('signOut', { name: A.name, task: A.task }); await advance(1000);
+      eq(open_().map(d => d.person), [B.name], 'only Tess is out: ' + dumpSessions());
+      eq(tab.kind('end').length, 1, 'one end sent for one person');
+      eq(peopleOf(tab), [key(B)]);
+    });
+    await check('a reload with two sessions goes on with both: no second start, same ids, beats go on', async () => {
+      world(); const pc = computer('bench'); let tab = mk(pc);
+      tab.login(A.name, A.task); tab.login(B.name, B.task); await advance(6 * MIN);
+      const before = stationDocs().map(d => d._id).sort();
+      tab.close(); await advance(20000);
+      tab = mk(pc); await advance(2000);
+      eq(stationDocs().map(d => d._id).sort(), before, 'the same two sessions, none new: ' + dumpSessions());
+      eq(open_().length, 2); eq(peopleOf(tab), [key(A), key(B)].sort());
+      eq(tab.kind('start').length, 0, 'the reloaded page starts nothing');
+      await advance(6 * MIN); ok(tab.kind('beat').length >= 2, 'both sessions beat again after the reload');
+      tab.close();
+    });
+    await check('a page that crashes with two people signed in: both are closed at their last beat, never later', async () => {
+      world(); const pc = computer('bench'); let tab = mk(pc);
+      tab.login(A.name, A.task); tab.login(B.name, B.task); await advance(12 * MIN);
+      const killed = wall(); tab.kill();
+      await advance(40 * MIN);
+      tab = mk(pc); await advance(2000);
+      const old = stationDocs().filter(d => d.startAt < killed);
+      eq(old.length, 2); for (const d of old) { ok(d.endAt != null && d.endAt <= killed + 1000 && d.endAt >= killed - 5.5 * MIN, `ended near the crash: ${dumpSessions()} (crash ${iso(killed).slice(11, 19)})`); ok(['closed', 'signOut', 'idle'].includes(d.endReason), 'reason ' + d.endReason); }
+      tab.close();
+    });
+    await check('midnight ends everybody once, calls the page once per person, and the next morning signs in fresh', async () => {
+      world('2026-10-08T03:50:00Z');                                         // 23:50 EDT
+      const pc = computer('bench'), tab = mk(pc);
+      tab.login(A.name, A.task); tab.login(B.name, B.task); tab.login(A.name, 'matching'); await goTo(Z('2026-10-08T04:05:00Z'));
+      eq(open_().length, 0, dumpSessions());
+      for (const d of stationDocs()) { eq(d.endReason, 'midnight'); eq(d.endAt, Z('2026-10-08T04:00:00Z'), 'ends at midnight'); }
+      eq(tab.signOuts.filter(x => x[0] === 'midnight').length, 3, 'once per person and task: ' + JSON.stringify(tab.signOuts));
+      eq(peopleOf(tab), []);
+      tab.login(A.name, A.task); await advance(1000); eq(open_().length, 1);
+    });
+    await check('hostile people: a PIN, a respelled task, an odd task or a name with digits never makes a session of the wrong shape', async () => {
+      world(); const pc = computer('bench'), tab = mk(pc);
+      for (const who of [{ name: PIN, task: 'matching' }, { name: '   ', task: 'matching' }, { name: '', task: 'welding' }, null, undefined, 5, { task: 'welding' }]) tab.SS.signedIn(who);
+      await advance(1000); eq(stationDocs().length, 0, 'nobody signed in by a number or an empty name');
+      tab.SS.signedIn({ name: `Tess ${PIN}`, task: 'Matching ' }); tab.SS.signedIn({ name: 'Odd Task', task: '__proto__' }); tab.SS.signedIn({ name: 'Long Task', task: 'x'.repeat(40) });
+      await advance(1000);
+      for (const d of stationDocs()) { ok(!/\d{4}/.test(d.person), 'no digits in ' + d.person); ok(d.task === undefined || d.task === 'welding' || d.task === 'matching', `task stored as ${d.task}`); }
+      const tess = stationDocs().find(d => d.person === 'Tess'); ok(tess && tess.task === 'matching', 'a respelled task ("Matching ") is Matching: ' + dumpSessions());
+      ok(!tab.reqs.some(r => JSON.stringify(r.body || {}).includes(PIN)), 'the PIN was never sent');
+      eq(tab.errors, []);
+    });
+    // the scanner credit rule: one in Matching, two, none; welders never
+    await check('credit: the Matching person, the latest of two, nobody when only welders are in; never a welder', async () => {
+      world(); const pc = computer('bench'), tab = mk(pc);
+      eq(tab.SS.who(), null, 'nobody in');
+      tab.login(A.name, 'welding'); await advance(1000); eq(tab.SS.who(), null, 'a welder alone is nobody to credit');
+      tab.login(B.name, 'matching'); await advance(1000); eq(tab.SS.who().person, B.name, 'one matcher: that person');
+      tab.login(C.name, 'matching'); await advance(1000); eq(tab.SS.who().person, C.name, 'two matchers: the one who signed in last');
+      tab.SS.touch(wall(), { name: B.name, task: 'matching' }); eq(tab.SS.who().person, B.name, 'input from the other makes it theirs');
+      await advance(2000); tab.SS.touch(wall()); eq(tab.SS.who().person, B.name, 'a plain input does not move credit');
+      await advance(2000); tab.SS.touch(wall(), { name: A.name, task: 'welding' }); eq(tab.SS.who().person, B.name, 'a welder\'s input never takes the credit');
+      tab.logout(B.name, 'matching'); await advance(1000); eq(tab.SS.who().person, C.name, 'the other matcher when one leaves');
+      tab.logout(C.name, 'matching'); await advance(1000); eq(tab.SS.who(), null, 'none in Matching: nobody (a welder is never credited)');
+      eq(tab.SS.who('welding').person, A.name, 'who("welding") is the welder');
+      // the same person in both tasks: credited as the Matching one
+      tab.login(A.name, 'matching'); await advance(1000); eq(tab.SS.who().person, A.name); eq(tab.SS.who().task, 'matching');
+    });
+    await check('touch: a time from the future, a bad value or an old relayed scan never makes input from nothing', async () => {
+      world(); const pc = computer('bench'), tab = mk(pc);
+      tab.login(B.name, B.task); await advance(20 * MIN);
+      const before = tab.SS.lastInput();
+      for (const v of [NaN, 'x', {}, [], -5, 0, Infinity, -Infinity, null, undefined, 1e15, wall() + 3 * HOUR, wall() + 61000]) { tab.SS.touch(v); ok(tab.SS.lastInput() <= wall() + 1, `touch(${String(v)}) put last input in the future: ${tab.SS.lastInput() - wall()} ms`); }
+      ok(tab.SS.lastInput() >= before, 'last input never goes backwards');
+      const t = tab.SS.lastInput(); tab.SS.touch(wall() - 3 * HOUR); ok(tab.SS.lastInput() === t || tab.SS.lastInput() >= t, 'an old relayed scan does not move last input back: ' + (tab.SS.lastInput() - t));
+    });
+  });
+}
+
+/* ═════════════════════════ 5 · the Sorting fold ═════════════════════════ */
+async function fold() {
+  const DBG = process.env.ST2_DEBUG ? (...a) => realConsole.log('[dbg]', ...a.map(x => typeof x === 'string' ? x : JSON.stringify(x))) : () => {};
+  await section('5 · the Sorting fold', async () => {
+    const day = '2026-10-07', at = (h, m = 0) => nyAt(day, h, m);
+    const seedOld = st => {
+      st.put('Efficiency_Daily', `${day}__Fold Tester`, rollDoc(day, 'Fold Tester', {
+        sorting: statOf({ scans: 3, scanParts: 3, completes: 2, parts: 10, orders: 2, activeMs: 600000, firstAt: at(9, 5), lastAt: at(11, 40) }),
+        sorter: statOf({ scans: 2, scanParts: 2, completes: 1, parts: 5, orders: 1, activeMs: 300000, firstAt: at(10, 5), lastAt: at(10, 50) }),
+        qr: statOf({ prints: 4, activeMs: 120000, firstAt: at(10, 30), lastAt: at(10, 44) }) }, [], { touched: { 3521000001: { sorting: true, sorter: true }, 3521000002: { sorting: true }, 3521000003: { sorter: true, qr: true } } }));
+      st.put('Efficiency_Daily', `${day}__Sort Only`, rollDoc(day, 'Sort Only', { sorting: statOf({ scans: 1, completes: 1, parts: 4, orders: 1, activeMs: 60000, firstAt: at(9, 10), lastAt: at(9, 40) }) }, ['3521000009']));
+      st.put('Station_Sessions', 's-sorting', sessionDoc('s-sorting', 'Fold Tester', 'sorting', at(9), at(12), { device: 'sorting-1', lastSeenAt: at(12), minutes: 180 }));
+      st.put('Station_Sessions', 's-sorter', sessionDoc('s-sorter', 'Fold Tester', 'sorter', at(10), at(11), { device: 'charm-nest-1', lastSeenAt: at(11), minutes: 60 }));
+      st.put('Station_Sessions', 's-qr', sessionDoc('s-qr', 'Fold Tester', 'qr', at(10, 30), at(10, 45), { device: 'qr-printer', lastSeenAt: at(10, 45), minutes: 15 }));
+    };
+    await check('the overview shows no Sorter or QR Printer station, adds their counters to Sorting, and counts the time once', async () => {
+      const st = world('2026-10-07T19:00:00Z'); seedOld(st);
+      const o = await board({ op: 'overview', days: 1 }); ok(o.status === 200, 'overview ' + o.status + ' ' + o.raw.slice(0, 200));
+      DBG('overview people', o.body.people.map(p => [p.name, p.totals, p.stations]));
+      const p = o.body.people.find(x => x.name === 'Fold Tester'); ok(p, 'the person');
+      const keys = p.stations.map(s => s.station);
+      ok(!keys.includes('sorter') && !keys.includes('qr'), 'person stations: ' + keys);
+      const so = p.stations.find(s => s.station === 'sorting'); ok(so && so.parts === 15 && so.prints === 4 && so.scans === 5, 'Sorting carries all three: ' + JSON.stringify(so));
+      eq(p.totals.parts, 15, 'the person\'s parts are counted once');
+      const bs = o.body.business.stations.map(s => s.station); ok(!bs.includes('sorter') && !bs.includes('qr'), 'business stations: ' + bs);
+      eq(o.body.business.totals.parts, 19, 'the shop total is 15 + 4, not doubled');
+      const bso = o.body.business.stations.find(s => s.station === 'sorting'); eq(bso.orders, 4, 'orders touched at Sorting: 3521000001, 2, 3 and 9, each once');
+      ok(!JSON.stringify(o.body).match(/"station":"(sorter|qr)"/), 'no row of the overview carries the old keys');
+    });
+    await check('the person page: one Sorting row, time covered once (the Sorter app inside a Sorting session is not extra time)', async () => {
+      const st = world('2026-10-07T19:00:00Z'); seedOld(st);
+      const r = await board({ op: 'person', name: 'Fold Tester', range: 'day' }); ok(r.status === 200, 'person ' + r.status + ' ' + r.raw.slice(0, 200));
+      DBG('person', Object.keys(r.body), r.body.stations, r.body.series && r.body.series[0], r.body.hours && r.body.hours.station);
+      const keys = r.body.stations.map(s => s.station); ok(!keys.includes('sorter') && !keys.includes('qr'), 'stations: ' + keys);
+      eq(r.body.kpis.parts.value, 15);
+      const sg = r.body.series[r.body.series.length - 1]; eq(sg.day, day);
+      eq(sg.signedMs, 180 * MIN, 'signed in 09:00 to 12:00 once, though the Sorter app and the QR Printer ran inside it: ' + sg.signedMs / MIN + ' min');
+    });
+    await check('the live board: Sorting is the only card, the Sorter app is one of its pages, a Laser person in the Sorter app is on Laser', async () => {
+      const st = world('2026-10-07T19:00:00Z'); seedOld(st);
+      await doorPost({ session: SESS({ station: 'sorter', device: 'charm-nest-1', person: 'Fold Tester', computerId: 'pc-FOLDPC000001' }) });
+      await doorPost({ session: SESS({ station: 'laser', device: 'charm-nest-1', person: 'Laser Lena', computerId: 'pc-FOLDPC000002' }) });
+      await doorPost({ session: SESS({ station: 'qr', device: 'qr-printer', person: 'Print Pat', computerId: 'pc-FOLDPC000003' }) });
+      await doorPost({ live: { v: 1, event: 'work', station: 'sorter', device: 'charm-nest-1', person: 'Fold Tester', order: { kind: 'order', rid: '3521000042', scannedAt: wall() - 20000 } } });
+      const r = await board({ op: 'live' }); ok(r.status === 200, 'live ' + r.status + ' ' + r.raw.slice(0, 200));
+      const keys = r.body.stations.map(s => s.key); eq(keys.filter(k => k === 'sorter' || k === 'qr').length, 0, 'no Sorter or QR card: ' + keys);
+      const sorting = r.body.stations.find(s => s.key === 'sorting'), laser = r.body.stations.find(s => s.key === 'laser');
+      ok(sorting.people.concat(sorting.names || []).some(p => (p.name || p) === 'Fold Tester'), 'Fold Tester is on Sorting: ' + JSON.stringify(sorting.people));
+      ok(sorting.people.concat(sorting.names || []).some(p => (p.name || p) === 'Print Pat'), 'the QR Printer person is on Sorting');
+      ok(!JSON.stringify(sorting.people).includes('Laser Lena'), 'a Laser person at the Sorter app is not on Sorting');
+      ok(JSON.stringify(laser.people).includes('Laser Lena'), 'Laser Lena is on Laser: ' + JSON.stringify(laser.people));
+      eq(sorting.current.length, 1, 'the order in hand at the Sorter app is on the Sorting card');
+      eq(r.body.signedIn.filter(p => p.name === 'Fold Tester').length, 1, 'one person at two pages of Sorting is signed in once');
+    });
+    await check('orders: a filter on Sorting finds orders worked at the old Sorter and QR keys, an old filter on those keys never crashes, one order is one row', async () => {
+      const st = world('2026-10-07T19:00:00Z'); seedOld(st);
+      for (const [id, who] of [['3521000001', 'Fold Tester'], ['3521000003', 'Fold Tester']]) {
+        st.put('Station_Activity', 'ev-' + id, { id: 'ev-' + id, station: id === '3521000001' ? 'sorter' : 'qr', device: id === '3521000001' ? 'charm-nest-1' : 'qr-printer', person: who, action: 'complete', orderId: id, parts: 1, orders: 1, detail: '', at: at(10, 20), seq: 1, sincePrevMs: 1000, ts: at(10, 20), serverAt: at(10, 20), day, hour: '10', v: 1 });
+      }
+      const all = await board({ op: 'personOrders', name: 'Fold Tester', range: 'day', limit: 50 }); ok(all.status === 200, 'personOrders ' + all.status + ' ' + all.raw.slice(0, 160));
+      DBG('personOrders', all.body.total, (all.body.orders || []).map(o => Object.keys(o)));
+      const sorting = await board({ op: 'personOrders', name: 'Fold Tester', range: 'day', station: 'sorting', limit: 50 });
+      eq(sorting.body.total, all.body.total, 'Sorting filter = all of this person\'s orders (they were all worked at Sorting\'s three keys): ' + sorting.body.total + ' vs ' + all.body.total);
+      for (const old of ['sorter', 'qr']) { const r = await board({ op: 'personOrders', name: 'Fold Tester', range: 'day', station: old, limit: 50 }); ok(r.status === 200, `an old ${old} filter: ${r.status}`); }
+      const ids = (all.body.orders || []).map(o => String(o.orderId || o.id || o.rid)); eq(new Set(ids).size, ids.length, 'no order twice: ' + ids);
+      const one = await board({ op: 'orders', orderId: '3521000001' }); ok(one.status === 200, 'orders ' + one.status);
+      DBG('orders', Object.keys(one.body), (one.body.steps || []).map(x => [x.station, x.person]));
+      ok((one.body.steps || []).every(x => x.station !== 'sorter' && x.station !== 'qr'), 'an order\'s steps show Sorting: ' + JSON.stringify((one.body.steps || []).map(x => x.station)));
+    });
+    await check('a new event written under the old key counts once in the rollup and shows as Sorting', async () => {
+      const st = world('2026-10-07T19:00:00Z');
+      const e1 = EV({ station: 'sorter', device: 'charm-nest-1', person: 'Fold Tester', action: 'complete', parts: 3, orders: 1, orderId: '3521000555' });
+      const e2 = EV({ station: 'sorting', device: 'sorting-1', person: 'Fold Tester', action: 'complete', parts: 2, orders: 1, orderId: '3521000555' });
+      const e3 = EV({ station: 'qr', device: 'qr-printer', person: 'Fold Tester', action: 'print', orderId: '3521000555' });
+      await acts([e1, e2, e3, e1, e2]);                                        // (a replay of two of them)
+      eq(cur.count('Station_Activity'), 3, 'each event stored once');
+      const o = await board({ op: 'overview', days: 1 }); const p = o.body.people.find(x => x.name === 'Fold Tester');
+      eq(p.totals.parts, 5); eq(o.body.business.totals.parts, 5);
+      const so = p.stations.find(s => s.station === 'sorting'); ok(so && !p.stations.some(s => s.station === 'sorter' || s.station === 'qr'), JSON.stringify(p.stations));
+      const pr = await board({ op: 'person', name: 'Fold Tester', range: 'day' }); eq(pr.body.kpis.orders.value, 1, 'the order touched at three keys is one order: ' + JSON.stringify(pr.body.kpis.orders));
+      const feed = (o.body.feed || []).map(f => f.station); ok(!feed.includes('sorter') && !feed.includes('qr'), 'the feed shows Sorting: ' + feed);
+    });
+  });
+}
+
 /* ═════════════════════════ runner ═════════════════════════ */
 (async () => {
   const t0 = REAL_NOW();
   await hostile();
+  await welding();
+  await fold();
   // the PIN canary: nothing stored, logged or sent anywhere in the run carries a synthetic Employee Number
   await section('0 · the PIN canary', async () => {
     await check('no synthetic PIN in any store or log of the run', async () => {
