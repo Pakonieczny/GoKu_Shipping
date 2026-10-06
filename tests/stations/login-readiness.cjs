@@ -101,6 +101,8 @@ async function run(browser, dev, station, all, allReqs, ip) {
   await page.waitForFunction(() => window.StationSession && (document.querySelector('#userLoginModal .station-session-pc') || /design-message/.test(location.pathname)) && document.getElementById('userLoginModal').__m && document.getElementById('userLoginModal').__m.isOpen, null, { timeout: 15000 });
 
   const until = async (fn, what) => { for (let i = 0; i < 100; i++) { const v = await fn(); if (v) return v; await page.clock.runFor(100); } throw new Error('timed out: ' + what); };
+  /** the clock runs and a hand moves the mouse every 4 minutes (input), so the auto sign-out after 10 minutes without input does not take the person before midnight */
+  const active = async ms => { for (let left = ms, n = 0; left > 0; n++) { await page.mouse.move(120 + (n % 40), 220 + (n % 7)); const step = Math.min(left, 4 * 60000); await page.clock.runFor(step); left -= step; } };
   const login = async pin => {
     await page.evaluate(() => { const i = document.getElementById('employeeNumberInput'); i.dataset.raw = ''; i.value = ''; window.__toasts.length = 0; });
     await page.focus('#employeeNumberInput'); await page.keyboard.type(pin);
@@ -151,7 +153,7 @@ async function run(browser, dev, station, all, allReqs, ip) {
   const name = 'Michael_V', n0 = events().length;
   await login(pins.get(name));
   const s1 = await until(async () => events().slice(n0).find(e => e.event === 'start' && e.person === name), dev + ': midnight session starts');
-  await page.clock.runFor(30 * 60000);                                           // past midnight
+  await active(30 * 60000);                                                      // past midnight (a person at the screen: the 10 minute auto sign-out would take the quiet ones earlier)
   const end = await until(async () => events().find(e => e.event === 'end' && e.id === s1.id), dev + ': the midnight end');
   st = await state();
   ok(end.reason === 'midnight' && end.at === MIDNIGHT, dev + ': the session ends at midnight');

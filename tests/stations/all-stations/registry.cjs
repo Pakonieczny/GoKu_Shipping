@@ -32,7 +32,10 @@ const PROBES = {
   IN3: () => has('etsy-mail-1.html', 'emClaimFor'),
   SA1: () => inApi('SA1'), SA2: () => inApi('SA2'), SA3: () => inApi('SA3'), SA4: () => inApi('SA4') || exists('design-scan.html'), SA5: () => exists('charm-nest-laser-act.js') || inApi('SA5')
 };
-const landed = id => { try { return !!(PROBES[id] ? (PROBES[id]() || inApi(id)) : inApi(id)); } catch (_) { return false; } };
+// (WS2's api.md section describes the server half; the board's Welding card is its other half, so its probe alone decides; IN2's section was written first as the shape it expects, the client is its other half)
+// (AD1's api.md section is written before its code reaches main: the client timers are what the checks need, so its probe alone decides too)
+const PROBE_ONLY = new Set(['WS2', 'IN2', 'AD1']);
+const landed = id => { try { return !!(PROBES[id] ? (PROBES[id]() || (!PROBE_ONLY.has(id) && inApi(id))) : inApi(id)); } catch (_) { return false; } };
 
 const results = [];
 const only = (process.env.ONLY_CHECKS || '').split(',').map(s => s.trim()).filter(Boolean);

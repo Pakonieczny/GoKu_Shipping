@@ -43,11 +43,18 @@ function Portal(W, cast) {
     await P.page.waitForSelector(`${V} .es .esSt`, { timeout: 30000 });
     return P.page.$$eval(`${V} .es .esSt`, rows => rows.map(r => {
       const txt = el => (el ? el.innerText.replace(/\s+/g, ' ').trim() : '');
+      const shown = el => !!el && !el.hidden && el.offsetParent !== null;
+      // people: the chips of the station, plus (the Welding card) the people of its two task groups; one entry per name, with the task when a group says it
+      const people = [...r.querySelectorAll('.esPeople .esPer')].map(c => ({ name: c.dataset.name || txt(c.querySelector('.esPn')), text: txt(c), task: c.dataset.task || '', role: c.dataset.role || '' }));
+      for (const c of r.querySelectorAll('.esWeld .esWp')) { const nm = c.dataset.name; const had = people.find(p => p.name === nm); if (had) { had.task = had.task || c.dataset.task || ''; } else people.push({ name: nm, text: txt(c), task: c.dataset.task || '', role: '' }); }
+      // the Welding card's groups (WS2: .esGrp[data-task=welding|matching]); an older draft used [data-group]
+      const groups = [...r.querySelectorAll('.esGrp[data-task], [data-group]')].map(g => ({ group: g.dataset.task || g.dataset.group, text: txt(g), people: [...g.querySelectorAll('.esWp, .esPer')].map(c => c.dataset.name || txt(c.querySelector('.esPn'))).filter((n, i, a) => n && a.indexOf(n) === i) }));
+      const wl = r.querySelector('.esWeld');
       return {
         key: r.dataset.key, state: r.dataset.state, name: txt(r.querySelector('.esStName')), stateWord: txt(r.querySelector('.esStState')),
-        people: [...r.querySelectorAll('.esPeople .esPer')].map(c => ({ name: c.dataset.name || txt(c.querySelector('.esPn')), text: txt(c), task: c.dataset.task || '', role: c.dataset.role || '' })),
-        groups: [...r.querySelectorAll('[data-group]')].map(g => ({ group: g.dataset.group, text: txt(g), people: [...g.querySelectorAll('.esPer')].map(c => c.dataset.name || txt(c.querySelector('.esPn'))) })),
-        counts: txt(r.querySelector('.esCnt')), countsVisible: !!(r.querySelector('.esCnt') && !r.querySelector('.esCnt').hidden),
+        people, groups,
+        weld: wl ? { visible: shown(wl), text: txt(wl), matchedHead: txt(r.querySelector('.esMtN')), matchedToday: txt(r.querySelector('.esCntW')), rows: [...r.querySelectorAll('.esMr')].map(m => ({ order: txt(m.querySelector('.esMrId')), who: txt(m.querySelector('.esMrW')), text: txt(m) })) } : null,
+        counts: txt(r.querySelector('.esCnt')), countsVisible: shown(r.querySelector('.esCnt')),
         cards: [...r.querySelectorAll('.esCard')].map(c => ({ rid: c.dataset.rid, who: txt(c.querySelector('.esWho')), text: txt(c) })),
         idle: txt(r.querySelector('.esIdle')), text: txt(r)
       };
@@ -68,7 +75,9 @@ function Portal(W, cast) {
     return P.page.$$eval(`${V} .efStations .efSR`, rows => rows.map(r => {
       const t = el => (el ? el.innerText.replace(/\s+/g, ' ').trim() : '');
       const n = c => { const b = r.querySelector(`.efSV[data-c="${c}"] b`); return b ? Number(String(b.textContent).replace(/[^\d.]/g, '')) : null; };
-      return { key: r.dataset.station, on: /\bon\b/.test(r.className), name: t(r.querySelector('.efSN')), who: t(r.querySelector('.efSW')), parts: n('parts'), orders: n('orders') };
+      // (the Welding row draws "matched" and the time on task in the two columns where the others draw pieces and orders: the labels and the raw text say which)
+      return { key: r.dataset.station, on: /\bon\b/.test(r.className), name: t(r.querySelector('.efSN')), who: t(r.querySelector('.efSW')), parts: n('parts'), orders: n('orders'),
+        weld: r.dataset.weld === '1', partsLabel: t(r.querySelector('.efSV[data-c="parts"] small')), ordersLabel: t(r.querySelector('.efSV[data-c="orders"] small')), partsText: t(r.querySelector('.efSV[data-c="parts"]')), ordersText: t(r.querySelector('.efSV[data-c="orders"]')) };
     }));
   };
   /** the People tab: a card per person (the Overview's roster) with the four figures it shows */
