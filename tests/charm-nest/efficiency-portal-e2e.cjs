@@ -279,7 +279,7 @@ function backend(env) {
       if (st.anchor && st.anchor < td) { await page.click(`${P} .efpToday`); await ploaded(page, r); }
     };
     const pk = (page, k) => page.locator(`${P} .efpK[data-k="${k}"] .efpKV`).innerText().then(s => s.replace(/,/g, '').trim());
-    const orderRows = page => page.$$eval(`${P} .efoRow`, rs => rs.map(r => ({ rid: r.dataset.rid, text: r.innerText.replace(/\s+/g, ' ') })));
+    const orderRows = page => page.$$eval(`${P} .efpOrdersHost:not(.efpWOrders) .efoRow`, rs => rs.map(r => ({ rid: r.dataset.rid, text: r.innerText.replace(/\s+/g, ' ') })));
     const pAsk = (name, range, day, extra) => B.ask(Object.assign({ op: 'person', name, range, compare: true }, day ? { day } : {}, extra || {}));
     const allOrders = async (name, from, to, q) => { const out = []; let cursor = ''; for (let i = 0; i < 80; i++) { const r = await B.ask({ op: 'personOrders', name, from, to, q: q || '', limit: 100, cursor }); out.push(...r.orders); if (!r.next) return { orders: out, total: r.total, scanned: r.scanned }; cursor = r.next; } throw new Error('too many pages'); };
     await section('C', 'a person: click a name, the full page, every range, hover, a calendar day, search an order, open it, the numbers agree', async () => {
@@ -337,12 +337,12 @@ function backend(env) {
       // search the orders in real time: by number (the last digits), by date, by customer; every count is the server's own
       const ST = await pstate(page), mine = await allOrders('Ana M.', ST.from, ST.to);
       assert(mine.orders.length >= 20, 'Ana has orders in the month: ' + mine.orders.length);
-      await page.locator(`${P} .efoSearch input`).evaluate(e => e.scrollIntoView({ block: 'center' })); await page.waitForSelector(`${P} .efoRow`, { timeout: 30000 });
-      await waitFor(page, n => { const c = document.querySelector('#efficiencyView .efp .efoCount'); return !!c && /^[\d,]+( of [\d,]+)? orders?$/.test(c.textContent.trim()) && +c.textContent.trim().split(' ')[0].replace(/,/g, '') === n; }, mine.total, 20000)
-        .catch(async () => { throw new Error(`the order list says "${await text(page, `${P} .efoCount`)}" for the month ${ST.from}..${ST.to}; the server counts ${mine.total}`); });
+      await page.locator(`${P} .efpOrdersHost:not(.efpWOrders) .efoSearch input`).evaluate(e => e.scrollIntoView({ block: 'center' })); await page.waitForSelector(`${P} .efpOrdersHost:not(.efpWOrders) .efoRow`, { timeout: 30000 });
+      await waitFor(page, n => { const c = document.querySelector('#efficiencyView .efp .efpOrdersHost:not(.efpWOrders) .efoCount'); return !!c && /^[\d,]+( of [\d,]+)? orders?$/.test(c.textContent.trim()) && +c.textContent.trim().split(' ')[0].replace(/,/g, '') === n; }, mine.total, 20000)
+        .catch(async () => { throw new Error(`the order list says "${await text(page, `${P} .efpOrdersHost:not(.efpWOrders) .efoCount`)}" for the month ${ST.from}..${ST.to}; the server counts ${mine.total}`); });
       const withCust = mine.orders.find(o => o.customer), pick = mine.orders[7];
-      const searchFor = async q => { await page.locator(`${P} .efoSearch input`).fill(q); await sleep(200); await waitFor(page, () => !document.querySelector('#efficiencyView .efp .efoWait:not([hidden])') && !(document.querySelector('#efficiencyView .efp .efoLive') || {}).dataset?.busy, null, 20000).catch(() => {}); };
-      const settleList = async total => waitFor(page, n => { const c = document.querySelector('#efficiencyView .efp .efoCount'); return !!c && /^[\d,]+( of [\d,]+)? orders?$/.test(c.textContent.trim()) && +c.textContent.trim().split(' ')[0].replace(/,/g, '') === n; }, total, 25000);
+      const searchFor = async q => { await page.locator(`${P} .efpOrdersHost:not(.efpWOrders) .efoSearch input`).fill(q); await sleep(200); await waitFor(page, () => !document.querySelector('#efficiencyView .efp .efoWait:not([hidden])') && !(document.querySelector('#efficiencyView .efp .efoLive') || {}).dataset?.busy, null, 20000).catch(() => {}); };
+      const settleList = async total => waitFor(page, n => { const c = document.querySelector('#efficiencyView .efp .efpOrdersHost:not(.efpWOrders) .efoCount'); return !!c && /^[\d,]+( of [\d,]+)? orders?$/.test(c.textContent.trim()) && +c.textContent.trim().split(' ')[0].replace(/,/g, '') === n; }, total, 25000);
       const last4 = pick.number.slice(-4); let srv = await allOrders('Ana M.', ST.from, ST.to, last4);
       await searchFor(last4); await settleList(srv.total);
       let rows = await orderRows(page); assert(rows.length === Math.min(srv.total, rows.length) && rows.some(r => r.rid === pick.rid), `searching "${last4}" finds the order ${pick.rid}: ${rows.length} rows`);
@@ -358,7 +358,7 @@ function backend(env) {
       await page.locator(`${P} .efoClear`).first().click().catch(() => {}); await searchFor(''); await settleList(mine.total);
       // an order opens the sorter's order window (zooming from the row)
       rows = await orderRows(page); const target = rows[1].rid;
-      await page.locator(`${P} .efoRow[data-rid="${target}"] .efoOpen`).click();
+      await page.locator(`${P} .efpOrdersHost:not(.efpWOrders) .efoRow[data-rid="${target}"] .efoOpen`).click();
       await page.waitForSelector('#orderWin[open]', { timeout: 15000 });
       assert(new RegExp(target).test(await page.locator('#owTitle').innerText().catch(() => '') + await page.locator('#owSub').innerText().catch(() => '') + await page.locator('#orderWin').innerText()), 'the order window is for order ' + target);
       await shot(page, 'c5-order-window-1440');
@@ -634,7 +634,12 @@ function backend(env) {
       let cardParts = 0; const card = {}, noneCard = {};
       for (const p of ov.people) {
         const sel = `${V} .efRoster .efRc[data-name="${p.name}"]`; await page.waitForSelector(sel, { timeout: 20000 });
-        if (p.totals.parts === 0 && p.totals.orders === 0) { const t = await page.locator(`${sel} [data-f="parts"]`).innerText(); assert(/^(—|0)$/.test(t.trim()), `${p.name} logged nothing: the card says a dash or 0, not "${t}"`); noneCard[p.name] = [t.trim(), (await page.locator(`${sel} [data-f="orders"]`).innerText()).trim()]; }
+        if (p.totals.parts === 0 && p.totals.orders === 0) {
+          const t = await page.locator(`${sel} [data-f="parts"]`).innerText(); noneCard[p.name] = [t.trim(), (await page.locator(`${sel} [data-f="orders"]`).innerText()).trim()];
+          // stations round 2 (R2): somebody who worked at the Welding station alone has no pieces or orders to count: the card says a dash for both (as the person's page does) and shows the time on task and the matched count instead
+          if (p.noThroughput === true) { assert.deepEqual(noneCard[p.name], ['—', '—'], `${p.name} worked at Welding only: the card says a dash for pieces and orders, not "${noneCard[p.name]}"`); const wl = await page.locator(`${sel} .efRcW`); assert(await wl.isVisible() && /(Welding|Matching) \d|\d+ matched/.test(await wl.innerText()), `${p.name} worked at Welding only: the card shows the time on task and the matched count`); }
+          else assert(/^(—|0)$/.test(t.trim()), `${p.name} logged nothing: the card says a dash or 0, not "${t}"`);
+        }
         else { await same(`${sel} [data-f="parts"]`, p.totals.parts, `${p.name}'s card: pieces`); await same(`${sel} [data-f="orders"]`, p.totals.orders, `${p.name}'s card: orders`); }
         card[p.name] = { parts: p.totals.parts, orders: p.totals.orders, on: p.status === 'on', live: await page.locator(`${sel}`).evaluate(e => e.classList.contains('on')) };
         cardParts += p.totals.parts;
@@ -647,19 +652,21 @@ function backend(env) {
         if ((await pstate(page)).range !== 'day') await page.click(`${P} .efpSeg button[data-range="day"]`); await ploaded(page, 'day');
         const none = p.totals.parts === 0 && p.totals.orders === 0;
         if (none) {
-          const pg = [await pk(page, 'kpis.parts'), await pk(page, 'kpis.orders')]; rowsInfo.push(`${p.name}: card ${noneCard[p.name].join('/')}, page ${pg.join('/')}`);
-          // stations round 2 (R2): the Welding station shows time on task and matched scans, not pieces and orders. Somebody who worked at Welding alone has no pieces to count:
-          // the Overview adds nothing for them (their People card says 0) and their page says a dash (nothing is measured), where everybody else's card and page say the same
-          const act = x => x.parts > 0 || x.orders > 0 || x.scans > 0 || x.matched > 0, sts = Array.isArray(p.stations) ? p.stations : [];   // (signed in at Assembly with nothing logged there is not work at Assembly)
-          const weldOnly = sts.some(x => x.station === 'welding' && act(x)) && !sts.some(x => x.station !== 'welding' && act(x));
-          if (weldOnly) assert(/^(\u2014|0)$/.test(noneCard[p.name][0]) && pg[0] === '\u2014', `${p.name} worked at Welding only: the card says a dash or 0 and the page a dash for pieces (card "${noneCard[p.name][0]}", page "${pg[0]}")`);
+          const pg = [await pk(page, 'kpis.parts'), await pk(page, 'kpis.orders')]; rowsInfo.push(`${p.name}: card ${noneCard[p.name].join('/')}, page ${pg.join("/")}${p.noThroughput === true ? " (Welding only: time on task and matched shown instead)" : ""}`);
+          // stations round 2 (R2): the Welding station shows time on task and matched scans, not pieces and orders. Somebody who worked at Welding alone (the server says `noThroughput`) has no pieces
+          // or orders to count: their People card and their page agree, a dash for pieces and for orders; everybody else's card and page say the same as before
+          if (p.noThroughput === true) {
+            const po = await pk(page, 'kpis.orders');
+            assert.deepEqual([noneCard[p.name][0], noneCard[p.name][1], pg[0], po], ['\u2014', '\u2014', '\u2014', '\u2014'], `${p.name} worked at Welding only: card and page both say a dash for pieces and orders (card "${noneCard[p.name]}", page "${pg[0]}" / "${po}")`);
+            assert(await page.locator(`${P} .efpK[data-k="welding.weldingHours"]`).isVisible() && await page.locator(`${P} .efpK[data-k="welding.matchedOrders"]`).isVisible(), `${p.name} worked at Welding only: the page shows the Welding hours and the orders matched instead`);
+          }
           else assert.equal(pg[0], noneCard[p.name][0], `${p.name}: the card and the page say the same about a person who logged no pieces (card "${noneCard[p.name][0]}", page "${pg[0]}")`);
         }
         else {
           await same(`${P} .efpK[data-k="kpis.parts"] .efpKV`, p.totals.parts, `${p.name}'s page (Day): pieces`); await same(`${P} .efpK[data-k="kpis.orders"] .efpKV`, p.totals.orders, `${p.name}'s page (Day): orders`);
-          await page.locator(`${P} .efoSearch input`).evaluate(e => e.scrollIntoView({ block: 'center' }));
-          await waitFor(page, n => { const c = document.querySelector('#efficiencyView .efp .efoCount'); return !!c && +c.textContent.trim().split(' ')[0].replace(/,/g, '') === n; }, p.totals.orders, 25000).catch(async () => { throw new Error(`${p.name}: the order list says "${await text(page, `${P} .efoCount`)}" for the day; the card says ${p.totals.orders} orders`); });
-          await waitFor(page, n => document.querySelectorAll('#efficiencyView .efp .efoRow').length >= n, p.totals.orders, 25000);
+          await page.locator(`${P} .efpOrdersHost:not(.efpWOrders) .efoSearch input`).evaluate(e => e.scrollIntoView({ block: 'center' }));
+          await waitFor(page, n => { const c = document.querySelector('#efficiencyView .efp .efpOrdersHost:not(.efpWOrders) .efoCount'); return !!c && +c.textContent.trim().split(' ')[0].replace(/,/g, '') === n; }, p.totals.orders, 25000).catch(async () => { throw new Error(`${p.name}: the order list says "${await text(page, `${P} .efpOrdersHost:not(.efpWOrders) .efoCount`)}" for the day; the card says ${p.totals.orders} orders`); });
+          await waitFor(page, n => document.querySelectorAll('#efficiencyView .efp .efpOrdersHost:not(.efpWOrders) .efoRow').length >= n, p.totals.orders, 25000);
           const rows = await orderRows(page); assert.equal(rows.length, p.totals.orders, `${p.name}: one row per order of the day`);
           if (process.env.DEBUGI) console.log('DEBUGI', JSON.stringify(rows.slice(0, 2)));
           const srvList = await allOrders(p.name, ov.day, ov.day); assert.equal(srvList.orders.reduce((a, o) => a + o.parts, 0), p.totals.parts, `${p.name}: the pieces of the day's orders add up to the card`);

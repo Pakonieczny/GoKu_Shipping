@@ -60,11 +60,17 @@
   function since(ms) { const s = Math.max(0, Math.floor(N(ms) / 1000)); if (s < 3600) return `${pad(Math.floor(s / 60))}:${pad(s % 60)}`; const m = Math.floor(s / 60); return `${Math.floor(m / 60)} h ${m % 60} m`; }
   /** Plain words: 42 s, 4 m 12 s, 1 h 12 m. */
   function words(ms) { const s = Math.max(0, Math.round(N(ms) / 1000)); if (s < 60) return `${s} s`; if (s < 3600) { const m = Math.floor(s / 60), r = s % 60; return r ? `${m} m ${r} s` : `${m} m`; } const m = Math.floor(s / 60), hh = Math.floor(m / 60); return m % 60 ? `${hh} h ${m % 60} m` : `${hh} h`; }
+  /** Time on task at minute grain: "< 1 m", "42 m", "3 h 10 m". */
+  const hm = ms => { const m = Math.round(N(ms) / 60000); return m < 1 ? "< 1 m" : words(m * 60000); };
   const ago = s => (s < 2 ? "just now" : s < 60 ? `${Math.floor(s)}s ago` : s < 3600 ? `${Math.floor(s / 60)} m ago` : `${Math.floor(s / 3600)} h ago`);
   const nf = n => Math.round(N(n)).toLocaleString("en-US");
   const initials = name => { const w = String(name || "").trim().split(/[\s._-]+/).filter(Boolean); return w.length ? (w[0].charAt(0) + (w[1] ? w[1].charAt(0) : "")).toUpperCase() : "?"; };
   const tone = name => { let x = 0; for (const c of low(name)) x = (x * 31 + c.charCodeAt(0)) >>> 0; return x % 6; };
   const cap = s => (s ? s.charAt(0).toUpperCase() + s.slice(1) : "Station");
+  /** The Welding station has two tasks (stations round 2): welding the studs to the charm, and matching the welded earrings to their orders. A session with no task is an old one: it is read as Welding. */
+  const TASK_NAME = { welding: "Welding", matching: "Matching" }, UNATTRIBUTED_NOTE = "Scanned with nobody in Matching", GONE_MS = 15 * 60000, SHOW_MATCHED = 6;
+  const taskOf = v => (v === "welding" || v === "matching" ? v : "");
+  const groupOf = p => (p && p.task === "matching" ? "matching" : "welding");
   /** ONE Sorting station (Paul, 6 Oct 2026): the stored station keys "sorter" (the Sorter app) and "qr" (the QR Printer page) are shown as "sorting"; every other key is
    *  returned as it is. Mirror of displayStation in netlify/functions/_activityKinds.js: history keeps its old keys, only what is SHOWN folds. A Sorter-app session of a
    *  Laser or Design person is stored under "laser" or "design" and does not fold. */
@@ -93,11 +99,19 @@
   };
   function normPerson(p, sign) {
     const o = typeof p === "string" ? { name: p } : (p || {});
-    const name = String(o.name || ""), g = sign.get(low(name)) || {};
+    const name = String(o.name || ""), task = taskOf(o.task), g = sign.get(low(name) + "|" + task) || sign.get(low(name)) || {};
     const pick = (...ks) => { for (const k of ks) if (has(o[k])) return N(o[k]); return null; };
-    return { name, since: T(o.since != null ? o.since : g.since), lastSeenAt: T(o.lastSeenAt != null ? o.lastSeenAt : g.lastSeenAt),
-      lastInputAt: T(o.lastInputAt != null ? o.lastInputAt : g.lastInputAt), role: low(o.role || g.role), device: str(o.device || g.device), deviceLabel: str(o.deviceLabel || g.deviceLabel),
+    return { name, task, since: T(o.since != null ? o.since : g.since), lastSeenAt: T(o.lastSeenAt != null ? o.lastSeenAt : g.lastSeenAt),
+      lastInputAt: T(o.lastInputAt != null ? o.lastInputAt : g.lastInputAt), todayMs: has(o.todayMs) ? Math.max(0, N(o.todayMs)) : null,
+      role: low(o.role || g.role), device: str(o.device || g.device), deviceLabel: str(o.deviceLabel || g.deviceLabel),
       parts: pick("partsToday", "parts"), orders: pick("ordersToday", "orders"), medianMs: pick("medianOrderMs", "medianMs", "medianPerOrderMs"), longestIdleMs: pick("longestIdleMs", "maxIdleMs") };
+  }
+  /** One matched scan of the Welding station today (an order code scanned as Matching). `person` is "" for a scan made with nobody in Matching. */
+  function normMatched(m) {
+    m = m || {}; const rid = str(m.rid != null && m.rid !== "" ? m.rid : m.orderNumber), un = m.unattributed === true;
+    const pieces = (Array.isArray(m.pieces) ? m.pieces : []).filter(Boolean).slice(0, 1).map((p, i) => ({ id: str(p.id), label: str(p.label), sku: str(p.sku), thumbUrl: str(p.thumbUrl), vectorUrl: str(p.vectorUrl), photoUrl: str(p.photoUrl), n: i + 1 }));
+    return { rid, orderNumber: str(m.orderNumber || rid), at: T(m.at), person: un ? "" : str(m.person), unattributed: un, note: un ? str(m.note) || UNATTRIBUTED_NOTE : "", customer: str(m.customer),
+      thumbUrl: str(m.thumbUrl), vectorUrl: str(m.vectorUrl), photoUrl: str(m.photoUrl), pieces };
   }
   /** The raw station list of an answer with every row that folds into one station (stored "sorter" and "qr" rows are Sorting's) joined into the first: its orders in hand, people, pages and counts are added. */
   function foldStations(list) {
@@ -114,7 +128,8 @@
         at.set(k, c); out.push(c); continue;
       }
       for (const x of Array.isArray(s.current) ? s.current : []) had.current.push(mark(x, k));
-      for (const p of Array.isArray(s.people) ? s.people : []) { const nm = low(typeof p === "string" ? p : p && p.name); if (nm && !had.people.some(q => low(typeof q === "string" ? q : q && q.name) === nm)) had.people.push(p); }
+      const pk = p => { const nm = typeof p === "string" ? p : p && p.name; return nm ? low(nm) + "|" + (p && typeof p === "object" ? taskOf(p.task) : "") : ""; };   // (a person in both Welding tasks is two people here, as in the answer)
+      for (const p of Array.isArray(s.people) ? s.people : []) { const nm = pk(p); if (nm && !had.people.some(q => pk(q) === nm)) had.people.push(p); }
       for (const d of Array.isArray(s.devices) ? s.devices : []) { const dv = had.devices.find(q => q && d && q.device === d.device); if (!dv) had.devices.push(d); else if (rank[d.state] > rank[dv.state]) Object.assign(dv, d); }
       const hc = had.counts, sc = s.counts || {};
       for (const f of ["partsToday", "ordersToday", "scansToday", "parts", "orders", "scans"]) if (has(sc[f])) hc[f] = (has(hc[f]) ? N(hc[f]) : 0) + N(sc[f]);
@@ -125,13 +140,14 @@
   }
   function norm(r) {
     r = r || {};
-    const signedIn = [];                                                   // one row per person, station and role: signed in at the Sorter app and at a sorting page is ONE row (Sorting), never two
+    const signedIn = [];                                                   // one row per person, station, role and task: signed in at the Sorter app and at a sorting page is ONE row (Sorting), never two; a person in both Welding tasks is two rows
     for (const x of (Array.isArray(r.signedIn) ? r.signedIn : []).filter(x => x && x.name).map(x => ({ name: String(x.name), stationKey: displayStation(String(x.stationKey || "")), since: T(x.since), lastSeenAt: T(x.lastSeenAt),
-      lastInputAt: T(x.lastInputAt), role: low(x.role), device: str(x.device) }))) {
-      const had = signedIn.find(y => low(y.name) === low(x.name) && y.stationKey === x.stationKey && y.role === x.role);
+      lastInputAt: T(x.lastInputAt), role: low(x.role), device: str(x.device), task: taskOf(x.task) }))) {
+      const had = signedIn.find(y => low(y.name) === low(x.name) && y.stationKey === x.stationKey && y.role === x.role && y.task === x.task);
       if (had) { had.since = had.since && x.since ? Math.min(had.since, x.since) : had.since || x.since; had.lastSeenAt = Math.max(had.lastSeenAt || 0, x.lastSeenAt || 0) || null; had.lastInputAt = Math.max(had.lastInputAt || 0, x.lastInputAt || 0) || null; had.device = had.device || x.device; } else signedIn.push(x);
     }
-    const signAny = new Map(signedIn.map(x => [low(x.name), x])), signAt = new Map(signedIn.map(x => [`${x.stationKey}|${low(x.name)}`, x]));
+    const signAny = new Map(), signAt = new Map();                         // by name, and by "name|task" (the row of the person's own task first)
+    for (const x of signedIn) { if (!signAny.has(low(x.name))) signAny.set(low(x.name), x); signAny.set(low(x.name) + "|" + x.task, x); if (!signAt.has(`${x.stationKey}|${low(x.name)}`)) signAt.set(`${x.stationKey}|${low(x.name)}`, x); signAt.set(`${x.stationKey}|${low(x.name)}|${x.task}`, x); }
     const stations = foldStations(Array.isArray(r.stations) ? r.stations : []).filter(s => s && (s.key || s.label)).map(s => {
       const key = String(s.key || low(s.label)), label = String(s.label || cap(key));
       const current = (Array.isArray(s.current) ? s.current : []).filter(c => c && (c.rid || c.orderNumber || (c.kind === "sheet" && c.title))).map(c => normCurrent(c, { key, label }));
@@ -142,7 +158,14 @@
       const devices = (Array.isArray(s.devices) ? s.devices : []).filter(d => d && (d.device || d.label)).map(d => ({ device: str(d.device), label: str(d.label || d.device), state: ["working", "idle", "offline"].includes(d.state) ? d.state : "offline", person: str(d.person), since: T(d.since) }));
       for (const p of people) if (!p.deviceLabel) { const d = devices.find(x => x.state !== "offline" && x.person && low(x.person) === low(p.name)); if (d) { p.device = p.device || d.device; p.deviceLabel = d.label; } }   // (no page named for the person: the station's own page list says where they are)
       const state = ["working", "idle", "offline"].includes(s.state) ? s.state : current.length ? "working" : people.length ? "idle" : "offline";
-      return { key, label, state, people, current, lastEventAt: T(s.lastEventAt), counts: { parts: cnt(k.partsToday != null ? k.partsToday : k.parts), orders: cnt(k.ordersToday != null ? k.ordersToday : k.orders), scans: cnt(k.scansToday != null ? k.scansToday : k.scans) }, devices, spark: sparkOf(s) };
+      const out = { key, label, state, people, current, lastEventAt: T(s.lastEventAt), counts: { parts: cnt(k.partsToday != null ? k.partsToday : k.parts), orders: cnt(k.ordersToday != null ? k.ordersToday : k.orders), scans: cnt(k.scansToday != null ? k.scansToday : k.scans) }, devices, spark: sparkOf(s), noThroughput: s.noThroughput === true, today: null, matched: [] };
+      if (out.noThroughput) {   // the Welding station: never pieces or orders; the matched scans, the time on task per task, and today's matched list
+        const t = s.today && typeof s.today === "object" ? s.today : {}, m = t.taskMs && typeof t.taskMs === "object" ? t.taskMs : null;
+        out.counts.parts = null; out.counts.orders = null;
+        out.today = { matched: cnt(t.matched != null ? t.matched : k.scansToday), unattributed: cnt(t.unattributed), taskMs: m ? { welding: N(m.welding), matching: N(m.matching), unknown: N(m.unknown) } : null };
+        out.matched = (Array.isArray(s.matched) ? s.matched : []).filter(x => x && (x.rid || x.orderNumber)).map(normMatched);
+      }
+      return out;
     });
     // LS1: the Laser station's sheet times ({ today, last }) ride along on its entry (op live, netlify/functions/_stationLive.js)
     for (const st of stations) { const raw = (Array.isArray(r.stations) ? r.stations : []).find(x => x && String(x.key || low(x.label)) === st.key); if (raw && raw.laserSheet) st.laserSheet = laserOf(raw.laserSheet); }
@@ -547,19 +570,30 @@
     }
     return rows;
   }
+  /** What the person did at the Welding station today (op person's `welding` block): time per task and orders matched, never pieces or orders. */
+  function pfWrows(j) {
+    const W = j && j.welding, M = W && W.metrics, rows = [];
+    if (!M) return rows;
+    for (const k of ["weldingHours", "matchingHours", "matchedOrders"]) {
+      const m = M[k]; if (!m || m.value == null || m.value === "" || !Number.isFinite(+m.value)) continue;
+      rows.push({ k: str(m.label || k), v: pfValue(m), d: str(m.def).split(". ")[0].slice(0, 140) + (m.estimated ? " (estimated)" : "") });
+    }
+    const u = W.hours && +W.hours.unknown; if (u > 0) rows.push({ k: "Welding (task not recorded)", v: words(u * 3600000), d: "Older sign-ins did not say which task" });
+    return rows;
+  }
   function pfLoad(mode, name, ask) {
     const got = pfGet(mode, name); if (got) return got.pending || Promise.resolve(got);
-    const ent = { at: Date.now(), pending: null, err: null, rows: null, found: true };
+    const ent = { at: Date.now(), pending: null, err: null, rows: null, wrows: null, found: true };
     PF.set(mode + "|" + low(name), ent);
-    ent.pending = Promise.resolve().then(() => ask({ op: "person", name, range: "day", compare: false })).then(j => { ent.rows = pfRows(j); ent.found = !(j && j.found === false); ent.known = !!(j && j.kpis); }, e => { ent.err = e || true; }).then(() => { ent.pending = null; ent.at = Date.now(); if (PF.size > 120) PF.delete(PF.keys().next().value); return ent; });
+    ent.pending = Promise.resolve().then(() => ask({ op: "person", name, range: "day", compare: false })).then(j => { ent.rows = pfRows(j); ent.wrows = pfWrows(j); ent.found = !(j && j.found === false); ent.known = !!(j && j.kpis); }, e => { ent.err = e || true; }).then(() => { ent.pending = null; ent.at = Date.now(); if (PF.size > 120) PF.delete(PF.keys().next().value); return ent; });
     return ent.pending;
   }
   /** Adds the day's numbers to a person's hover card: the rows when they are in, a labelled wait line while they are on their way, a quiet note when they cannot be had. */
-  function addFacts(spec, head, live, name, mode, ask) {
+  function addFacts(spec, head, live, name, mode, ask, kind) {
     spec.rows = head.concat(live);
     if (!ask) return spec;
-    const e = pfGet(mode, name);
-    if (e && !e.pending && e.rows && e.rows.length) spec.rows = head.concat(e.rows, live.filter(r => r.k === "Longest idle"));
+    const e = pfGet(mode, name), got = e && !e.pending ? (kind === "welding" ? e.wrows : e.rows) : null;   // (at the Welding station: its own numbers, never the day's pieces and orders)
+    if (got && got.length) spec.rows = head.concat(got, live.filter(r => r.k === "Longest idle"));
     else if (!e || e.pending) { spec.wait = "Reading today's numbers…"; spec.lazy = () => pfLoad(mode, name, ask); }
     else if (e.err) spec.note = "Today's numbers could not be read just now.";
     else if (!e.found) spec.note = "Nothing is logged for this person today yet.";
@@ -639,14 +673,23 @@
 
     function stationRow(s) {
       const e = h("section", "esSt"); e.dataset.key = s.key;
-      e.innerHTML = `<div class="esStHead"><span class="esStId" tabindex="0" data-es-tip><i class="esLight"></i><h3 class="esStName"></h3><span class="esStState"></span></span><span class="esPeople"></span><span class="esGrow"></span><span class="esCnt"><span class="esCntL">Today</span><span><b data-n="parts">0</b> pieces</span><span><b data-n="orders">0</b> orders</span></span><span class="esSparkW"></span></div><div class="esStBody"></div>`;
-      const X = { key: s.key, el: e, id: e.querySelector(".esStId"), light: e.querySelector(".esLight"), name: e.querySelector(".esStName"), state: e.querySelector(".esStState"), people: e.querySelector(".esPeople"), cnt: e.querySelector(".esCnt"),
+      e.innerHTML = `<div class="esStHead"><span class="esStId" tabindex="0" data-es-tip><i class="esLight"></i><h3 class="esStName"></h3><span class="esStState"></span></span><span class="esPeople"></span><span class="esGrow"></span><span class="esCnt"><span class="esCntL">Today</span><span><b data-n="parts">0</b> pieces</span><span><b data-n="orders">0</b> orders</span></span><span class="esCntW" hidden><span class="esCntL">Today</span><span><b data-n="matched">0</b> matched</span></span><span class="esSparkW"></span></div><div class="esWeld" hidden></div><div class="esStBody"></div>`;
+      const X = { key: s.key, el: e, id: e.querySelector(".esStId"), light: e.querySelector(".esLight"), name: e.querySelector(".esStName"), state: e.querySelector(".esStState"), people: e.querySelector(".esPeople"), cnt: e.querySelector(".esCnt"), cntW: e.querySelector(".esCntW"), matchedN: e.querySelector('[data-n="matched"]'), weld: e.querySelector(".esWeld"), groups: null, wrows: new Map(), mrows: new Map(), mAll: false,
         parts: e.querySelector('[data-n="parts"]'), orders: e.querySelector('[data-n="orders"]'), sparkW: e.querySelector(".esSparkW"), body: e.querySelector(".esStBody"), chips: new Map(), cards: new Map(), leaving: 0, idle: null, data: s, sparkSig: "", roster: null, roRows: new Map() };
       X.id._esTip = () => stationTip(X);
       return X;
     }
     function stationTip(X) {
       const s = X.data, rows = [];
+      if (s.noThroughput) {   // the Welding station: the matched scans and the time on task, never pieces or orders
+        const t = s.today || {}, m = t.taskMs;
+        if (t.matched != null) rows.push({ k: "Matched today", v: nf(t.matched), d: "Order codes scanned as Matching. A scan is not a completion" });
+        if (t.unattributed) rows.push({ k: UNATTRIBUTED_NOTE, v: nf(t.unattributed), d: "Matched scans made while nobody was signed in under Matching: counted here, credited to nobody" });
+        if (m) { rows.push({ k: "Welding time today", v: hm(m.welding + m.unknown), d: m.unknown > 0 ? `Includes ${hm(m.unknown)} from older sign-ins with no task recorded` : "Time signed in under the Welding task" }); rows.push({ k: "Matching time today", v: hm(m.matching), d: "Time signed in under the Matching task" }); }
+        if (s.lastEventAt) rows.push({ k: "Last event", v: `${clock(s.lastEventAt)} · ${ago((now() - s.lastEventAt) / 1000)}`, d: "The last scan or action logged at this station" });
+        const who = [...new Set(s.people.map(p => p.name))]; if (who.length) rows.push({ k: who.length === 1 ? "Person" : "People", v: who.join(", ") });
+        return { state: s.state, title: s.label, sub: `${stateWord[s.state]}${who.length > 1 ? ` · ${who.length} people` : ""}`, rows, foot: "Logged activity only. Welding is not counted in pieces or orders." };
+      }
       if (s.counts.parts != null) rows.push({ k: "Pieces today", v: nf(s.counts.parts), d: "Pieces scanned or completed here today" });
       if (s.counts.orders != null) rows.push({ k: "Orders today", v: nf(s.counts.orders), d: "Different orders handled here today" });
       if (s.counts.scans != null) rows.push({ k: "Scans today", v: nf(s.counts.scans), d: "Scans logged at this station today" });
@@ -663,17 +706,21 @@
     const ask = body => (shared ? shared.call(body) : askOwn(sub, body));
     const modeKey = () => { if (shared) { let v = ""; try { v = shared.view(); } catch (_) {} return String(v || "real"); } return viewParams(opts).sandbox ? "sandbox" : "real"; };
     function personTip(X, p) {
-      const s = X.data, cur = s.current.find(c => low(c.person) === low(p.name)), head = [], live = [];
+      const s = X.data, wd = s.noThroughput === true, cur = s.current.find(c => low(c.person) === low(p.name)), head = [], live = [];
+      if (wd) {
+        head.push({ k: "Task", v: p.task ? TASK_NAME[p.task] : "Welding (task not recorded)", d: p.task ? "What this person signed in to do at the Welding station" : "An older sign-in that did not say which task" });
+        if (p.todayMs != null) head.push({ k: "Time on task today", v: hm(p.todayMs), d: "Time signed in under this task today" });
+      }
       if (p.deviceLabel && (p.role || ROSTER.has(displayStation(s.key)))) head.push({ k: "Signed in at", v: p.deviceLabel, d: "The page this person signed in on" });
       if (p.since) head.push({ k: "Signed in since", v: `${clock(p.since)} · ${words(now() - p.since)}`, d: "When this person signed in at a station today" });
       if (p.lastInputAt) head.push({ k: "Last input", v: ago((now() - p.lastInputAt) / 1000), d: "The last time this person touched the station page (a tap, a key, a scan)" });
       if (p.lastSeenAt) head.push({ k: "Last seen", v: ago((now() - p.lastSeenAt) / 1000), d: "The last sign of life from the station" });
-      if (p.parts != null) live.push({ k: "Pieces today", v: nf(p.parts), d: "Pieces scanned or completed today" });
-      if (p.orders != null) live.push({ k: "Orders today", v: nf(p.orders), d: "Different orders handled today" });
-      if (p.medianMs != null) live.push({ k: "Median per order", v: words(p.medianMs), d: "The middle time from scan to done" });
-      if (p.longestIdleMs != null) live.push({ k: "Longest idle", v: words(p.longestIdleMs), d: "The longest gap with nothing logged today" });
-      const spec = { avatar: p.name, title: p.name, sub: `${s.label}${cur ? ` · ${cur.kind === "sheet" ? "on sheet " + cur.title : "on order " + cur.orderNumber}` : s.state === "working" ? " · between orders" : ""}`, foot: "Logged activity, not effort: a phone scan counts for the desktop's signed-in person." };
-      return addFacts(spec, head, live, p.name, modeKey(), p.name ? ask : null);
+      if (!wd && p.parts != null) live.push({ k: "Pieces today", v: nf(p.parts), d: "Pieces scanned or completed today" });
+      if (!wd && p.orders != null) live.push({ k: "Orders today", v: nf(p.orders), d: "Different orders handled today" });
+      if (!wd && p.medianMs != null) live.push({ k: "Median per order", v: words(p.medianMs), d: "The middle time from scan to done" });
+      if (!wd && p.longestIdleMs != null) live.push({ k: "Longest idle", v: words(p.longestIdleMs), d: "The longest gap with nothing logged today" });
+      const spec = { avatar: p.name, title: p.name, sub: `${s.label}${wd ? ` · ${p.task ? TASK_NAME[p.task] : "Welding (task not recorded)"}` : ""}${cur ? ` · ${cur.kind === "sheet" ? "on sheet " + cur.title : "on order " + cur.orderNumber}` : !wd && s.state === "working" ? " · between orders" : ""}`, foot: wd ? "Logged activity, not effort. Welding is not counted in pieces or orders." : "Logged activity, not effort: a phone scan counts for the desktop's signed-in person." };
+      return addFacts(spec, head, live, p.name, modeKey(), p.name ? ask : null, wd ? "welding" : "");
     }
     function chip(X, p) {
       const c = h("span", "esPer"); c.dataset.name = p.name; c.setAttribute("tabindex", "0"); c.dataset.esTip = "";
@@ -724,17 +771,100 @@
     // and the roster's "last input 3 m ago" (Laser and Design)
     const stopRoster = track(R, t => { for (const X of S.rows.values()) rosterTick(X, t); });
 
+    /* ── the Welding card: two groups (Welding | Matching), who is in each with time on task and time since last input, today's matched orders; no pieces, no orders ── */
+    const inputText = (p, t) => {
+      if (p.lastInputAt) return `last input ${ago(Math.max(0, (t - p.lastInputAt) / 1000))}`;
+      if (p.lastSeenAt) return `seen ${ago(Math.max(0, (t - p.lastSeenAt) / 1000))}`;   // (no input reported yet: the last sign of life from the page)
+      return "";
+    };
+    function weldBuild(X) {
+      const mk = (task, title) => `<section class="esGrp" data-task="${task}"><header class="esGrpH"><b>${title}</b><span class="esGrpN"></span><span class="esGrpT"></span></header><div class="esGrpP"></div><p class="esGrpE"></p>${task === "matching" ? '<div class="esMt"><div class="esMtH"><span class="esMtT">Matched today</span><span class="esMtN"></span><span class="esMtU" hidden></span></div><p class="esMtE" hidden>No orders matched yet today</p><ol class="esMtL"></ol><button type="button" class="esMtMore" hidden></button></div>' : ""}</section>`;
+      X.weld.innerHTML = mk("welding", "Welding") + mk("matching", "Matching");
+      X.groups = {}; for (const g of ["welding", "matching"]) { const el = X.weld.querySelector(`[data-task="${g}"]`); X.groups[g] = { el, n: el.querySelector(".esGrpN"), t: el.querySelector(".esGrpT"), list: el.querySelector(".esGrpP"), empty: el.querySelector(".esGrpE"), mt: el.querySelector(".esMt"), mn: el.querySelector(".esMtN"), mu: el.querySelector(".esMtU"), me: el.querySelector(".esMtE"), ml: el.querySelector(".esMtL"), more: el.querySelector(".esMtMore") }; }
+      X.groups.matching.more.addEventListener("click", () => { X.mAll = !X.mAll; paintMatched(X, X.data, { quiet: true }); });
+    }
+    function weldPerson(X, p) {
+      const el = h("div", "esWp"); el.dataset.name = p.name; el.dataset.task = p.task;
+      const c = chip(X, p), tm = h("span", "esWm"), tag = h("span", "esTag", "task not recorded"), inp = h("span", "esWi");
+      tag.title = "An older sign-in that did not say which task: read as Welding time";
+      el.append(c, tm, tag, inp);
+      return { el, chip: c, tm, tag, inp, p };
+    }
+    function paintWeld(X, s, ctx) {
+      if (!X.groups) weldBuild(X);
+      const td = s.today && s.today.taskMs, t = now();
+      for (const g of ["welding", "matching"]) {
+        const G = X.groups[g], ps = s.people.filter(p => groupOf(p) === g), who = new Set(ps.map(p => low(p.name))).size;
+        setText(G.n, who ? `${who} in` : "Nobody in");
+        const ms = td ? (g === "welding" ? td.welding + td.unknown : td.matching) : null;
+        setText(G.t, ms == null ? "" : `${hm(ms)} today`); G.t.title = ms == null ? "" : g === "welding" && td.unknown > 0 ? `Time on task today. ${hm(td.unknown)} of it is from older sign-ins with no task recorded.` : "Time signed in under this task today";
+        G.empty.hidden = who > 0; setText(G.empty, g === "matching" ? "Nobody is signed in to Matching" : "Nobody is signed in to Welding");
+        G.el.dataset.on = who ? "1" : "";
+        const keep = new Set();
+        for (const p of ps) {
+          const k = p.task + "|" + low(p.name); keep.add(k); let r = X.wrows.get(k);
+          if (!r) { r = weldPerson(X, p); r.g = g; X.wrows.set(k, r); G.list.appendChild(r.el); if (!ctx.quiet) fade(r.el, { opacity: 0, transform: "scale(.96)" }, { opacity: 1, transform: "none" }, 300); }
+          r.p = p; r.chip._p = p; setText(r.tm, p.todayMs != null ? `${hm(p.todayMs)} on task` : ""); r.tm.hidden = p.todayMs == null; r.tag.hidden = !!p.task;
+          const it = inputText(p, t); setText(r.inp, it); r.inp.hidden = !it; r.inp.title = p.lastInputAt ? `Last input at ${clock(p.lastInputAt)}` : p.lastSeenAt ? "No input has been reported yet: this is the last sign of life from the page" : "";
+          r.inp.dataset.cold = p.lastInputAt && t - p.lastInputAt >= 600000 ? "1" : "";
+        }
+        for (const [k, r] of X.wrows) if (r.g === g && !keep.has(k)) { X.wrows.delete(k); const a = ctx.quiet ? null : fade(r.el, { opacity: 1 }, { opacity: 0 }, 240, "forwards"); if (a) a.finished.then(() => r.el.remove(), () => r.el.remove()); else r.el.remove(); }
+      }
+      paintMatched(X, s, ctx);
+    }
+    /** Today's matched scans, newest first; an order scanned again is one row with ×N (the newest scan says who and when). */
+    function matchedRow(X, m) {
+      const el = h("li", "esMr"), th = pictureBox("esMrTh", 132), main = h("div", "esMrM"), l1 = h("div", "esMrL"), oid = h("button", "esMrId"), nx = h("span", "esMrX"), who = h("span", "esMrW"), tm = h("time", "esMrT");
+      th.dataset.kind = "matched"; oid.type = "button"; l1.append(oid, nx); main.append(l1, who); el.append(th, main, tm); zoomBind(th);
+      const r = { el, th, oid, nx, who, tm, m };
+      el.addEventListener("click", ev => { const w = ev.target.closest && ev.target.closest(".esMrW[data-link]"); if (w && goPerson && r.m.person) { ev.preventDefault(); goPerson(r.m.person); return; } openOrder(el, r.m); });
+      return r;
+    }
+    function paintMatched(X, s, ctx) {
+      const G = X.groups && X.groups.matching; if (!G) return;
+      const list = s.matched, tot = s.today && s.today.matched != null ? s.today.matched : null, un = s.today && s.today.unattributed ? s.today.unattributed : 0;
+      const by = new Map();
+      for (const m of list) { let e = by.get(m.rid); if (!e) { e = Object.assign({}, m, { n: 0, who: [] }); by.set(m.rid, e); } e.n++; const w = m.unattributed ? UNATTRIBUTED_NOTE : m.person; if (w && !e.who.includes(w)) e.who.push(w); }
+      const rows = [...by.values()], capped = tot != null && tot > list.length, scans = tot != null ? tot : list.length;
+      setText(G.mn, tot == null && !list.length ? "" : capped ? `${nf(tot)} scans · the latest ${nf(list.length)} are listed` : `${nf(scans)} ${scans === 1 ? "scan" : "scans"} · ${nf(rows.length)} ${rows.length === 1 ? "order" : "orders"}`);
+      G.mu.hidden = !un; setText(G.mu, un ? `${nf(un)} ${UNATTRIBUTED_NOTE.charAt(0).toLowerCase()}${UNATTRIBUTED_NOTE.slice(1)}` : ""); G.mu.title = "Matched scans made while nobody was signed in under Matching: counted, credited to nobody";
+      G.me.hidden = !!rows.length || tot == null || tot > 0;
+      const shownRows = X.mAll ? rows : rows.slice(0, SHOW_MATCHED), keep = new Set(); let prev = null;
+      for (const m of shownRows) {
+        keep.add(m.rid); let r = X.mrows.get(m.rid), fresh = !r;
+        if (!r) { r = matchedRow(X, m); X.mrows.set(m.rid, r); }
+        r.m = m; const name = m.orderNumber || m.rid;
+        setText(r.oid, name); r.oid.setAttribute("aria-label", `Open order ${name}`); r.oid.title = "Open this order";
+        r.nx.hidden = m.n < 2; setText(r.nx, `×${m.n}`); r.nx.title = `${m.n} scans of this order today`;
+        const un1 = m.unattributed; r.el.dataset.un = un1 ? "1" : ""; setText(r.who, un1 ? m.note : m.person); r.who.title = m.who.length > 1 ? `Scanned by ${m.who.join(", ")}` : ""; r.who.toggleAttribute("data-link", !!(goPerson && m.person && !un1));
+        setText(r.tm, m.at ? clock(m.at) : ""); r.tm.title = m.at ? `${m.n > 1 ? "Last scanned" : "Scanned"} at ${clock(m.at)}` : "";
+        const pc = m.pieces[0]; let urls = urlsOf(m, false); if (!urls.length && pc) urls = urlsOf(pc, true);
+        r.th.set({ urls, rid: m.rid, pool: pc && pc.id, label: `Picture of order ${name}` });
+        r.el.setAttribute("aria-label", `Order ${name}${m.n > 1 ? `, scanned ${m.n} times` : ""}, ${un1 ? m.note.toLowerCase() : m.person ? "matched by " + m.person : ""}`);
+        const at = prev ? prev.nextSibling : G.ml.firstChild; if (r.el !== at) G.ml.insertBefore(r.el, at); prev = r.el;
+        if (fresh && !ctx.quiet) fade(r.el, { opacity: 0, transform: "translateY(-4px)" }, { opacity: 1, transform: "none" }, 300);
+      }
+      for (const [k, r] of X.mrows) if (!keep.has(k)) { X.mrows.delete(k); r.el.remove(); }
+      G.more.hidden = rows.length <= SHOW_MATCHED; setText(G.more, X.mAll ? "Show fewer" : `Show ${rows.length - SHOW_MATCHED} more`); G.more.setAttribute("aria-expanded", X.mAll ? "true" : "false");
+    }
+    // "last input 12 s ago" follows the clock
+    const stopWeld = track(R, () => { const t = now(); for (const X of S.rows.values()) for (const r of X.wrows.values()) { const it = inputText(r.p, t); if (r.inp.textContent !== it) setText(r.inp, it); } });
+
     function update(X, s, ctx) {
       X.data = s; const e = X.el, was = e.dataset.state;
       if (was !== s.state) { e.dataset.state = s.state; if (was && !ctx.quiet && !still() && X.light.animate) X.light.animate([{ transform: "scale(1)" }, { transform: "scale(1.5)", offset: .4 }, { transform: "scale(1)" }], { duration: 520, easing: EASE }); }
-      setText(X.name, s.label); setText(X.state, stateWord[s.state] + (s.state === "working" && new Set(s.people.map(p => low(p.name))).size > 1 ? ` · ${new Set(s.people.map(p => low(p.name))).size} people` : ""));
+      const wd = s.noThroughput === true, folks = new Set(s.people.map(p => low(p.name))).size;
+      e.dataset.weld = wd ? "1" : "";
+      setText(X.name, s.label); setText(X.state, stateWord[s.state] + (s.state === "working" && folks > 1 ? ` · ${folks} people` : ""));
       X.id.setAttribute("aria-label", `${s.label}, ${stateWord[s.state].toLowerCase()}`);
-      X.cnt.hidden = s.counts.parts == null && s.counts.orders == null;
+      X.cnt.hidden = wd || (s.counts.parts == null && s.counts.orders == null);
+      X.cntW.hidden = !wd || !s.today || s.today.matched == null; X.weld.hidden = !wd; if (wd && s.today && s.today.matched != null) setNum(X.matchedN, s.today.matched, ctx.quiet);
       for (const [k, n] of [["parts", X.parts], ["orders", X.orders]]) { const v = s.counts[k]; n.parentNode.hidden = v == null; if (v != null) setNum(n, v, ctx.quiet); }
       const sig = s.spark ? s.spark.join() : ""; if (sig !== X.sparkSig) { X.sparkSig = sig; X.sparkW.textContent = ""; if (s.spark) { X.sparkW.appendChild(sparkSvg(s.spark, 84, 22)); X.sparkW.title = "Pieces in the last hour"; } }
       // people: arrive and leave softly
       const keep = new Set();
-      for (const p of s.people) {
+      if (wd) paintWeld(X, s, ctx);
+      for (const p of wd ? [] : s.people) {
         const k = low(p.name); keep.add(k); let c = X.chips.get(k);
         if (!c) { c = chip(X, p); X.chips.set(k, c); X.people.appendChild(c); if (!ctx.quiet) fade(c, { opacity: 0, transform: "scale(.86)" }, { opacity: 1, transform: "none" }, 300); } else c._p = p;
       }
@@ -789,7 +919,7 @@
         prev = X.el; i++;
       }
       for (const [k, X] of S.rows) if (!want.has(k)) { S.rows.delete(k); const a = quiet ? null : fade(X.el, { opacity: 1 }, { opacity: 0 }, 260, "forwards"); if (a) a.finished.then(() => X.el.remove(), () => X.el.remove()); else X.el.remove(); }
-      const working = M.stations.filter(s => s.state === "working").length, on = names.size, orders = M.stations.reduce((n, s) => n + s.current.length, 0);
+      const working = M.stations.filter(s => s.state === "working").length, on = names.size, orders = M.stations.reduce((n, s) => n + s.current.length, 0);   // (a person once, however many stations or tasks they are signed in to)
       setText(E.sum, M.stations.length ? `${working} of ${M.stations.length} ${M.stations.length === 1 ? "station" : "stations"} working · ${on} ${on === 1 ? "person" : "people"} on` : "No stations reported yet");
       E.none.hidden = !(M.stations.length && !orders);
       R.dataset.mode = M.mode; R.dataset.orders = String(orders);
@@ -816,7 +946,7 @@
       refresh() { return E1 ? E1.call({ op: "live" }).then(r => { if (!S.dead) apply(r, Date.now()); }, () => {}) : Feed.now(); },
       destroy() { this.unmount(); },
       unmount() {
-        if (S.dead) return; S.dead = true; if (E1) { if (off) off(); } else Feed.remove(sub); if (io) io.disconnect(); stopLive(); stopIdle(); stopRoster();
+        if (S.dead) return; S.dead = true; if (E1) { if (off) off(); } else Feed.remove(sub); if (io) io.disconnect(); stopLive(); stopIdle(); stopWeld(); stopRoster();
         for (const t of S.timers) clearTimeout(t); S.timers.clear();
         if (Z.node && R.contains(Z.node)) zoomOut(Z.node, true); if (Tp.node && R.contains(Tp.node)) tipHide();
         R.remove();
@@ -871,9 +1001,9 @@
 .esAv[data-t="1"]{background:var(--goldSoft,#f0e6cd);color:#7a5a1d}.esAv[data-t="2"]{background:var(--claySoft,#f4e3dc);color:#8a3a26}.esAv[data-t="3"]{background:var(--slateSoft,#e1ebee);color:#35525e}.esAv[data-t="4"]{background:#ece6f0;color:#5a4a68}.esAv[data-t="5"]{background:var(--paper2,#ebe5d9);color:var(--ink70,#5b554c)}
 .esAv.big{width:30px;height:30px;flex-basis:30px;font-size:11.5px}
 .esGrow{flex:1 1 0}
-.esCnt{display:inline-flex;align-items:baseline;gap:4px 14px;font-size:11px;color:var(--ink45,#938c80);font-variant-numeric:tabular-nums;white-space:nowrap}
-.esCnt b{color:var(--ink,#1c1a17);font-weight:650;font-size:14px;margin-right:2px}.esCntL{text-transform:uppercase;letter-spacing:.08em;font-size:9.5px;font-weight:700}
-.esSt[data-state=offline] .esCnt b{color:var(--ink45,#938c80);font-weight:500}
+.esCnt,.esCntW{display:inline-flex;align-items:baseline;gap:4px 14px;font-size:11px;color:var(--ink45,#938c80);font-variant-numeric:tabular-nums;white-space:nowrap}
+.esCnt b,.esCntW b{color:var(--ink,#1c1a17);font-weight:650;font-size:14px;margin-right:2px}.esCntL{text-transform:uppercase;letter-spacing:.08em;font-size:9.5px;font-weight:700}
+.esSt[data-state=offline] .esCnt b,.esSt[data-state=offline] .esCntW b{color:var(--ink45,#938c80);font-weight:500}
 .esSparkW{display:inline-flex;align-items:center;min-width:0}.esSparkW:empty{display:none}
 .esSpark{display:block;overflow:visible}.esSL{fill:none;stroke:#6f6a62;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}.esSA{fill:rgba(93,90,82,.08);stroke:none}.esSD{fill:var(--gold,#a9823f);stroke:var(--card,#fffefb);stroke-width:1.5}
 .esStBody{padding:0 16px 14px;display:grid;gap:10px;grid-template-columns:repeat(auto-fill,minmax(min(100%,380px),1fr));align-items:start;min-width:0}
@@ -893,14 +1023,14 @@
 .esOid:disabled{cursor:default;color:var(--ink,#1c1a17);opacity:1}.esOid:disabled:hover{background:transparent;text-decoration:none}
 .esCard.done{cursor:default}.esCard.done:hover{transform:none;border-color:var(--line,#e4ddd0)}
 .esCard.done .esTh,.esCard.done .esQr,.esCard.done .esPieces,.esCard.done .esL1,.esCard.done .esWho{opacity:.55}
-.esTh,.esQr,.esPcTh{position:relative;display:grid;place-items:center;border-radius:9px;background:#fff;border:1px solid var(--line2,#efe9dd);isolation:isolate;outline-offset:2px;cursor:pointer;flex:none}
+.esTh,.esQr,.esPcTh,.esMrTh{position:relative;display:grid;place-items:center;border-radius:9px;background:#fff;border:1px solid var(--line2,#efe9dd);isolation:isolate;outline-offset:2px;cursor:pointer;flex:none}
 .esTh,.esQr{width:72px;height:72px}
-.esTh:after,.esQr:after,.esPcTh:after{content:"";position:absolute;inset:-1px;border-radius:inherit;box-shadow:0 12px 30px rgba(30,26,20,.3),0 2px 6px rgba(30,26,20,.14);opacity:0;transition:opacity .25s;pointer-events:none;z-index:-1}
+.esTh:after,.esQr:after,.esPcTh:after,.esMrTh:after{content:"";position:absolute;inset:-1px;border-radius:inherit;box-shadow:0 12px 30px rgba(30,26,20,.3),0 2px 6px rgba(30,26,20,.14);opacity:0;transition:opacity .25s;pointer-events:none;z-index:-1}
 .esLit:after{opacity:1}.esUp{z-index:60}
-.esTh:hover,.esQr:hover,.esPcTh:hover{border-color:var(--goldLine,#e3d3a6)}
+.esTh:hover,.esQr:hover,.esPcTh:hover,.esMrTh:hover{border-color:var(--goldLine,#e3d3a6)}
 .esImg{display:block;width:100%;height:100%;border-radius:inherit;opacity:0;transition:opacity .3s}.esImg.on{opacity:1}.esImg.cover{object-fit:cover}.esImg.contain{object-fit:contain}
 .esQr .esImg{image-rendering:auto}
-.esTh[data-state=wait],.esQr[data-state=wait],.esPcTh[data-state=wait]{background:var(--paper2,#ebe5d9)}
+.esTh[data-state=wait],.esQr[data-state=wait],.esPcTh[data-state=wait],.esMrTh[data-state=wait]{background:var(--paper2,#ebe5d9)}
 .esPh{display:grid;place-items:center;width:100%;height:100%;border-radius:inherit;color:var(--ink25,#c4bdb0);background:var(--paper2,#ebe5d9)}
 .esMain{display:grid;gap:5px;min-width:0;align-content:center}
 .esL1{display:flex;align-items:baseline;gap:4px 10px;min-width:0;flex-wrap:wrap}
@@ -921,6 +1051,42 @@
 .esPcTh{width:44px;height:44px;border-radius:8px}
 .esMore{display:grid;place-items:center;width:44px;height:44px;border-radius:8px;border:1px dashed var(--line,#e4ddd0);color:var(--ink45,#938c80);font:650 12px var(--sans,system-ui,sans-serif);font-variant-numeric:tabular-nums}
 .esPcNone{align-self:center;font-size:11.5px;color:var(--ink45,#938c80)}
+/* the Welding card: two groups, who is in each, today's matched orders */
+.esPeople:empty{display:none}
+.esWeld{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;padding:0 16px 12px;align-items:start;min-width:0}
+.esGrp{display:grid;gap:8px;align-content:start;background:var(--card2,#faf7f1);border:1px solid var(--line,#e4ddd0);border-radius:12px;padding:10px 12px 11px;min-width:0}
+.esGrp[data-on="1"]{border-color:#d2dac8}
+.esGrpH{display:flex;align-items:baseline;gap:2px 10px;flex-wrap:wrap;min-width:0}
+.esGrpH b{font-size:12.5px;color:var(--ink,#1c1a17);letter-spacing:.01em}
+.esGrpN{font-size:11.5px;color:var(--ink45,#938c80)}
+.esGrpT{margin-left:auto;font:650 12.5px var(--mono,ui-monospace,monospace);font-variant-numeric:tabular-nums;color:var(--ink,#1c1a17);white-space:nowrap}.esGrpT:empty{display:none}
+.esGrpP{display:grid;gap:6px;min-width:0}.esGrpP:empty{display:none}
+.esWp{display:flex;align-items:center;gap:4px 10px;flex-wrap:wrap;min-width:0}
+.esWp .esPer{flex:0 1 auto}
+.esWm{font-size:11.5px;color:var(--ink70,#5b554c);font-variant-numeric:tabular-nums;white-space:nowrap}
+.esWi{font-size:11.5px;color:var(--ink45,#938c80);font-variant-numeric:tabular-nums;white-space:nowrap}.esWi[data-cold="1"]{color:#9a6a1c}
+.esTag{font-size:10px;letter-spacing:.04em;text-transform:uppercase;font-weight:700;color:var(--ink45,#938c80);border:1px dashed var(--line,#e4ddd0);border-radius:999px;padding:1px 7px;white-space:nowrap}
+.esGrpE{margin:0;font-size:11.5px;color:var(--ink45,#938c80)}.esGrpE[hidden]{display:none}
+.esMt{display:grid;gap:7px;border-top:1px solid var(--line2,#efe9dd);padding-top:9px;min-width:0}
+.esMtH{display:flex;align-items:baseline;gap:3px 10px;flex-wrap:wrap}
+.esMtT{font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink45,#938c80);font-weight:700;white-space:nowrap}
+.esMtN{font-size:11.5px;color:var(--ink70,#5b554c);font-variant-numeric:tabular-nums}.esMtN:empty{display:none}
+.esMtU{font-size:11px;color:#9a6a1c;background:#f7edd6;border-radius:999px;padding:1px 8px;white-space:nowrap}
+.esMtE{margin:0;font-size:11.5px;color:var(--ink45,#938c80)}
+.esMtL{list-style:none;margin:0;padding:0;display:grid;gap:6px;min-width:0}
+.esMr{display:grid;grid-template-columns:40px minmax(0,1fr) auto;gap:0 10px;align-items:center;min-width:0;padding:4px 6px 4px 4px;margin:0 -4px;border-radius:10px;cursor:pointer;transition:background .2s}
+.esMr:hover{background:var(--card,#fffefb)}
+.esMrTh{width:40px;height:40px;border-radius:8px}
+.esMrM{display:grid;gap:1px;min-width:0}
+.esMrL{display:flex;align-items:baseline;gap:6px;min-width:0}
+.esMrId{border:0;background:transparent;padding:1px 6px;margin:-1px -6px;border-radius:6px;font:650 12px var(--mono,ui-monospace,monospace);color:var(--ink,#1c1a17);white-space:nowrap}
+.esMrId:hover{background:var(--goldSoft,#f0e6cd);text-decoration:underline;text-decoration-color:var(--gold2,#caa861);text-underline-offset:3px}
+.esMrX{font-size:11px;font-weight:700;color:var(--ink70,#5b554c);background:var(--paper2,#ebe5d9);border-radius:999px;padding:0 7px;font-variant-numeric:tabular-nums}
+.esMrW{font-size:11.5px;color:var(--ink70,#5b554c);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.esMrW[data-link]{cursor:pointer}.esMrW[data-link]:hover{text-decoration:underline;text-decoration-color:var(--gold2,#caa861);text-underline-offset:3px}
+.esMr[data-un="1"] .esMrW{color:#9a6a1c;font-weight:600;white-space:normal}
+.esMrT{font-size:11.5px;color:var(--ink45,#938c80);font-variant-numeric:tabular-nums;white-space:nowrap}
+.esMtMore{justify-self:start;border:1px solid var(--line,#e4ddd0);background:var(--card,#fffefb);border-radius:999px;padding:3px 12px;font-size:11.5px;font-weight:650;color:var(--ink70,#5b554c)}.esMtMore:hover{background:var(--paper2,#ebe5d9);color:var(--ink,#1c1a17)}
 /* the hover card */
 .esTip{position:fixed;z-index:2147483200;left:0;top:0;width:max-content;max-width:min(300px,calc(100vw - 16px));padding:12px 14px 11px;border-radius:12px;background:var(--card,#fffefb);color:var(--ink70,#5b554c);border:1px solid var(--line,#e4ddd0);box-shadow:0 12px 34px rgba(30,26,20,.18),0 2px 6px rgba(30,26,20,.08);visibility:hidden;opacity:0;pointer-events:none;font-size:12px;line-height:1.35;display:grid;gap:9px}
 .esTip[data-on]{visibility:visible;opacity:1}
@@ -935,8 +1101,11 @@
 .esTipN{margin:0;font-size:11.5px;color:var(--ink45,#938c80)}
 .esTipS{display:grid;gap:2px}.esTipS small{color:var(--ink45,#938c80);font-size:10.5px}
 .esTipF{margin:0;padding-top:8px;border-top:1px solid var(--line2,#efe9dd);font-size:10.5px;color:var(--ink45,#938c80)}
+@container (max-width:720px){
+ .esWeld{grid-template-columns:minmax(0,1fr);padding:0 12px 12px}
+}
 @container (max-width:560px){
- .esStHead{padding:10px 14px}.esStBody{padding:0 12px 12px}.esCntL{display:none}.esCnt{gap:4px 12px}.esSparkW{display:none}.esGrow{display:none}.esPeople{flex:1 1 100%;order:3}.esCnt{margin-left:auto}
+ .esStHead{padding:10px 14px}.esStBody{padding:0 12px 12px}.esCntL{display:none}.esCnt,.esCntW{gap:4px 12px}.esSparkW{display:none}.esGrow{display:none}.esPeople{flex:1 1 100%;order:3}.esCnt,.esCntW{margin-left:auto}
  .esLive .esLiveT{max-width:100%}
 }
 @container (max-width:420px){
