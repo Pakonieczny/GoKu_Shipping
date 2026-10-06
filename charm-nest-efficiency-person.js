@@ -266,7 +266,7 @@
 .efpKpis{gap:8px}.efpKL{font-size:9.5px;letter-spacing:.04em;min-height:2.6em;align-items:flex-end}.efpK{padding:11px 12px 9px}.efpKV{font-size:25px}.efpKsp{flex-basis:48px}.efpChart{padding:11px 12px 12px}.efpNowCard{grid-template-columns:auto minmax(0,1fr);padding:11px 12px}.efpNowCard>.efpQr{display:none}
 .efpO{grid-template-columns:70px minmax(0,1fr) 44px;grid-template-areas:"t n q" "s s s" "p p p"}.efpO>.efpOs{grid-area:s;display:flex;gap:10px;align-items:baseline}.efpIr{grid-template-columns:100px minmax(0,1fr);grid-template-areas:"t n" "r r"}.efpIr>time{grid-area:t}.efpIr>.efpOid{grid-area:n}.efpIr>span{grid-area:r}.efpIgh,.efpIgl,.efpRates{padding-left:12px;padding-right:12px}.efpPad,.efpIs>.efpHow,.efpNone,.efpSum{padding-left:12px;padding-right:12px}.efpFind{padding:10px 12px 6px}.efpOl{padding:0 2px 4px}
 }
-@container efp (max-width:330px){.efpKsp{display:none}.efpKV{font-size:22px}.efpKD span{white-space:normal}}
+@container efp (max-width:330px){.efpKsp{display:none}.efpKV{font-size:22px}.efpKD span{white-space:normal}.efpTog{max-width:100%}.efpTog button{padding:2px 5px}.efp .efpTRm{white-space:normal}}
 @media (prefers-reduced-motion:reduce){.efp *,.efp *:before,.efp *:after{transition:none!important;animation:none!important}}`;
     doc.head.appendChild(s);
   }
