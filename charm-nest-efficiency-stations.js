@@ -107,6 +107,7 @@
       for (const c of current) if (c.person && !people.some(p => low(p.name) === low(c.person))) people.push(normPerson(c.person, sign));
       const k = s.counts || {}, cnt = v => (has(v) ? N(v) : null);
       const devices = (Array.isArray(s.devices) ? s.devices : []).filter(d => d && (d.device || d.label)).map(d => ({ device: str(d.device), label: str(d.label || d.device), state: ["working", "idle", "offline"].includes(d.state) ? d.state : "offline", person: str(d.person), since: T(d.since) }));
+      for (const p of people) if (!p.deviceLabel) { const d = devices.find(x => x.state !== "offline" && x.person && low(x.person) === low(p.name)); if (d) { p.device = p.device || d.device; p.deviceLabel = d.label; } }   // (no page named for the person: the station's own page list says where they are)
       const state = ["working", "idle", "offline"].includes(s.state) ? s.state : current.length ? "working" : people.length ? "idle" : "offline";
       return { key, label, state, people, current, lastEventAt: T(s.lastEventAt), counts: { parts: cnt(k.partsToday != null ? k.partsToday : k.parts), orders: cnt(k.ordersToday != null ? k.ordersToday : k.orders), scans: cnt(k.scansToday != null ? k.scansToday : k.scans) }, devices, spark: sparkOf(s) };
     });
@@ -550,14 +551,14 @@
       r._p = p;
       setText(r.children[0], p.name);
       const dev = r.children[1], sin = r.children[2];
-      setText(dev, p.deviceLabel ? `· ${p.deviceLabel}` : ""); dev.hidden = !p.deviceLabel;
-      setText(sin, p.since ? `· since ${clock(p.since)}` : ""); sin.hidden = !p.since;
+      setText(dev, p.deviceLabel ? ` · ${p.deviceLabel}` : ""); dev.hidden = !p.deviceLabel;
+      setText(sin, p.since ? ` · since ${clock(p.since)}` : ""); sin.hidden = !p.since;
       rosterTime(r, t);
       if (X.roster.children[list.indexOf(p)] !== r) X.roster.insertBefore(r, X.roster.children[list.indexOf(p)] || null);
     }
     for (const [k, r] of X.roRows) if (!keep.has(k)) { X.roRows.delete(k); r.remove(); }
   }
-  function rosterTime(r, t) { const el = r.children[3], w = inputWord(r._p, t); setText(el, w ? `· ${w}` : ""); el.hidden = !w; }
+  function rosterTime(r, t) { const el = r.children[3], w = inputWord(r._p, t); setText(el, w ? ` · ${w}` : ""); el.hidden = !w; }
   function rosterTick(X, t) { if (X.roster) for (const r of X.roRows.values()) rosterTime(r, t); }
   function mount(el, opts) {
     opts = opts || {}; css(); wire();
@@ -825,7 +826,7 @@
 .esStBody{padding:0 16px 14px;display:grid;gap:10px;grid-template-columns:repeat(auto-fill,minmax(min(100%,380px),1fr));align-items:start;min-width:0}
 .esStBody:empty{display:none}
 .esRoster{grid-column:1/-1;display:flex;flex-direction:column;gap:3px;margin:-2px 0 0;font-size:12px;color:var(--ink45,#938c80);font-variant-numeric:tabular-nums;min-width:0}
-.esRo{display:block;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.esRo[hidden]{display:none}.esRo i{font-style:normal;margin-left:6px}.esRo i[hidden]{display:none}
+.esRo{display:block;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.esRo[hidden]{display:none}.esRo i{font-style:normal}.esRo i[hidden]{display:none}
 .esRoN{font-weight:650;color:var(--ink70,#5b554c)}
 .esIdle{grid-column:1/-1;margin:-2px 0 0;font-size:12px;color:var(--ink45,#938c80)}.esIdle:before{content:"";display:inline-block;width:5px;height:5px;border-radius:50%;background:var(--gold2,#caa861);margin-right:8px;vertical-align:1px;opacity:.8}
 .esIdle[data-state=offline]:before{background:var(--ink25,#c4bdb0)}.esIdle[data-state=working]:before{background:var(--sage,#5f7a5b)}
