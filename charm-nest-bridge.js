@@ -515,6 +515,34 @@ humanAct.release = () => {
 };
 humanAct.drop = () => { held.length = 0; };       // (the midnight sign-out: yesterday's presses are never put under tomorrow's name)
 humanAct.held = () => held.length;
+/* A set committed into the framed Design Station (complete.commit: its orders are marked design-complete there) or its completion
+   undone (Undo set). The framed page has no person of its own when the Sorter drives it, so it records nothing; the person at the
+   Sorter is the one who did it, and it is recorded here, one event for each order (order id, the order's pieces), under the
+   signed-in NAME and, for a Laser or Design person, their role (LD1: everything in the app is the role's). A DESIGN person's commit
+   is `complete` with the order (the Design Station's own completion, orders 1) and its undo is `undo`, but only for an order this
+   person's commit was recorded for (the framed page does the same: it never takes back what another person completed); anyone
+   else's (the Admin, a Laser person) is a `note`, with no counts. It runs when a run commits by itself as well (the person at the
+   Sorter runs it), but never asks for a name or a role from there: nobody signed in for the stations = nothing, nothing held. */
+const setCredited = new Map();          // order id -> the person whose commit was recorded as a design completion (this tab only)
+humanAct.set = (undone, ids, name) => {
+  try {
+    ids = [...new Set((ids || []).map(x => String(x == null ? "" : x).replace(/\D/g, "")).filter(Boolean))];
+    const w = sessionWho();
+    if (!ids.length || !w || !window.StationActivity) return false;
+    const design = w.role === "design", rows = (window.Orders && typeof Orders.rows === "function" && Orders.rows()) || [];
+    const parts = id => piecesOfRows(rows.filter(r => r && r.order && String(r.order.receiptId) === id));
+    const label = String(name || "Set").replace(/\s+/g, " ").trim().slice(0, 40) || "Set";
+    const phrase = `${label} ${undone ? "completion undone" : "committed"} (Design Station)`;
+    const mine = id => setCredited.get(id) === w.person;
+    const used = undone ? ids.filter(mine) : ids, others = undone ? ids.filter(id => !mine(id)) : [];
+    let logged = false;
+    if (design && used.length) logged = humanAct(undone ? "undo" : "complete", { orders: 1, detail: phrase, each: used.slice(0, 200).map(id => ({ orderId: id, parts: parts(id) })) }) || logged;
+    const notes = design ? others : ids;
+    if (notes.length) logged = humanAct("note", { detail: phrase, each: notes.slice(0, 200).map(id => ({ orderId: id })) }) || logged;
+    if (design) for (const id of used) { if (undone) setCredited.delete(id); else setCredited.set(id, w.person); }
+    return logged;
+  } catch (_) { return false; }
+};
 /* The live stations board (station-activity.js working() / idle(); plans/employee-hr/api.md): what this page has open RIGHT NOW.
    Sorter: the order whose window is open, with a piece for each of its lines. Laser: the sheet window while its sheet says "Ready
    for laser". It shows at once, ends when the window closes (or the order or the sheet is completed), a press keeps it alive and
@@ -6778,6 +6806,7 @@ const Sets = window.Sets = (() => {
     await Pool.update([...B.pool.rows.keys()].filter(id => r.completed.includes(B.pool.rows.get(id).orderId)), { state: "committed", committedAt: Date.now() }, stampWho());   // (the set committed: who)
     await save(set);
     for (const id of set.sheetIds || []) window.Session?.dropBest?.(id);
+    try { humanAct.set(false, r.completed, set.name); } catch (_) {}      // (the efficiency record: the person at the Sorter did this; the framed page records nothing)
     agent({ run: run.runId }, "DS", `${set.name} committed: ${r.completed.length} order(s) marked design-complete and sent DESIGNED :) internally · ${set.refused.length} refused · ${Object.keys(ev.held).length} held`);
     return { completed: r.completed, refused: set.refused, held: ev.held };
   }
@@ -6786,6 +6815,7 @@ const Sets = window.Sets = (() => {
     const reopened = (set.committed || []).map(String);
     if (reopened.length) { await DesignLink.ensure(); await DesignLink.call("complete.undo", { receiptIds: reopened }, { timeoutMs: 180000 }); }
     set.status = "awaiting review"; set.committed = []; set.committedAt = null; set.completedAt = null; set.completionDay = null; await save(set);
+    try { humanAct.set(true, reopened, set.name); } catch (_) {}
     window.SheetEvents?.undone(set, reopened);   // a note on each reopened order (idle time)
     await Pool.update([...B.pool.rows.keys()].filter(id => (B.pool.rows.get(id) || {}).setId === set.setId), { state: "written" });
     for (const row of Orders.rows()) if (row.state === "committed" && reopened.includes(String(row.order.receiptId))) row.state = "written";
