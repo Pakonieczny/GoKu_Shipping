@@ -83,9 +83,12 @@ async function inboxAnswer(name, method, q, b, headers, ctx) {
   }
   if (name === 'etsyMailDraftSend') return reply({ ok: true, draft: { status: 'queued' } });
   if (name === 'etsyMailThreads') return reply({ ok: true });
+  // the inbox page asks the AI (Haiku summarizeThread, detectLanguage, translate) when a conversation opens: in this shop the AI is OFF, the answer is a plain "no"
+  // and the page goes on without it. The backend counts the attempt (stats.paidTried) but nothing is ever bought.
+  if (name === 'etsyMailDraftReply') return reply({ ok: false, error: 'AI is off in this test' });
   return undefined;
 }
-const INBOX_FNS = new Set(['firestoreProxy', 'etsyMailAuth', 'etsyMailGmailConfig', 'etsyMailDraftSend', 'etsyMailThreads']);
+const INBOX_FNS = new Set(['firestoreProxy', 'etsyMailAuth', 'etsyMailGmailConfig', 'etsyMailDraftSend', 'etsyMailThreads', 'etsyMailDraftReply']);
 
 function answer(name, method, q, b, st, ctx, headers) {
   if (INBOX_FNS.has(name)) return inboxAnswer(name, method, q, b, headers || {}, ctx);
