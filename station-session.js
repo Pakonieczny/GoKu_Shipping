@@ -6,7 +6,8 @@
  *                          labelHost?, labelCss?, sandbox? })
  *        station: a key of STATIONS in _orderTimeline.js (sorting, welding, assembly, shipping, design, laser, sorter,
  *        qr, inbox); device: the page ("weld-1", "assembly-2", …). person(): who is signed in on this page now (null:
- *        nobody). signOut(reason): the page clears its own login keys and shows its own sign-in screen or PIN box,
+ *        nobody; { name, id, pending: true }: named but not signed in yet, e.g. the Sorter's "Laser or Design?" is not answered: no
+ *        session, but the name gets its sign-in day, so the day turning signs it out). signOut(reason): the page clears its own login keys and shows its own sign-in screen or PIN box,
  *        keeping the work on screen. labelHost (optional, element or selector): where the tiny "Computer: …" line and
  *        its one-time name field go; labelCss: extra inline CSS for that line.
  *    StationSession.signedIn({ name, id })   // call from the page's login success
@@ -115,7 +116,7 @@
     try {
       const p = cfg.person ? cfg.person() : null;
       const name = p && cleanName(p.name);
-      return name ? { name, id: safeId(p.id) } : null;
+      return name ? (p.pending ? { name, id: safeId(p.id), pending: true } : { name, id: safeId(p.id) }) : null;
     } catch (_) { return null; }
   }
   /** the role the page says is in force ("laser" | "design"), else "" (the page's own station) */
@@ -238,6 +239,13 @@
       if (cur && cur.day !== today) { midnight(); return; }
       if (!p) { if (cur) finish(cur, "signOut"); seen = ""; quiet = ""; return; }
       if (p.name === quiet) return;
+      if (p.pending) {          // named but not signed in yet (the Sorter's "Laser or Design?" is not answered): no session, but the day is kept like any sign-in, so the day turning clears the name
+        if (cur) finish(cur, "signOut");
+        if (p.name !== seen) { seen = p.name; markDay(p.name, today); }
+        const dp = dayOf(p.name);
+        if (dp && dp !== today) midnight();
+        return;
+      }
       if (cur && cur.name === p.name && stationOf(cur) !== stationNow()) {     // the role changed: the one session ends, the other starts
         seen = p.name; markDay(p.name, today);
         finish(cur, "switched"); begin(p, false);
@@ -261,7 +269,7 @@
       // the page slept or was frozen for 15 minutes: that session closed at its last beat, a new one goes on from now
       if (cur && Date.now() - (cur.lastBeat || 0) >= CLOSED_MS) {
         const p = person(); finish(cur, "closed");
-        if (p && p.name !== quiet) begin(p, false);
+        if (p && !p.pending && p.name !== quiet) begin(p, false);
       }
       if (cur && Date.now() - (cur.lastBeat || 0) >= BEAT_MS) beat();
       flush();
@@ -472,7 +480,7 @@
       const today = nyDay(), p = person(), day = lsGet(K.day), d = p ? dayOf(p.name) : "";
       if (cfg.multi) mInit();
       else if ((day && day !== today) || (d && d !== today)) midnight();
-      else if (p) { if (!d) markDay(p.name, today); seen = p.name; begin(p, true); }
+      else if (p) { if (!d) markDay(p.name, today); seen = p.name; if (!p.pending) begin(p, true); }
       tickT = setInterval(tick, TICK_MS);
       armMidnight();
       document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") wake(); });
@@ -495,7 +503,7 @@
       markDay(name, today); seen = name; quiet = "";
       if (cur && cur.name === name && cur.day === today && stationOf(cur) === stationNow()) return;
       if (cur) finish(cur, "switched");
-      begin({ name, id: safeId(who && who.id) }, false);
+      begin({ name, id: safeId(who && who.id) }, !!(who && who.resume));      // (resume: a page loaded with its person already there goes on with the session it kept, as init does)
     } catch (e) { warn("signedIn:", e); }
   }
   function signedOut(reason, who) {

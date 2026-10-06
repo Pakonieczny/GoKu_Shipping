@@ -6800,7 +6800,7 @@ try {
   const roleOn = () => !!(window.CNRole && window.CNEmployee && typeof CNEmployee.roleBar === "function");
   StationSession.init({
     station: "sorter", device: "charm-nest-1", sandbox: sandboxNow(),
-    person: () => { const n = nameNow(); return n && (!roleOn() || CNRole.ready()) ? { name: n, id: null } : null; },
+    person: () => { const n = nameNow(); return n ? (!roleOn() || CNRole.ready() ? { name: n, id: null } : { name: n, id: null, pending: true }) : null; },
     role: () => (roleOn() ? CNRole.role() : ""),
     // midnight (New York): the name is cleared, so the next approval, label or decision asks who is working; what is on
     // screen and the run are left as they are. What was pressed before a name was set is not put under tomorrow's name.

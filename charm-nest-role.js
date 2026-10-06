@@ -25,14 +25,18 @@
  *    CNRole.nameSet(name)  charm-nest-1.html calls it whenever a name is set (B.employee); "" = signed out
  *    CNRole.clear()        sign-out (midnight, idle, closing, a cleared name): the role goes with the name, so the next sign-in asks
  *    CNRole.setAdminLookup(fn)   fn(name) → Promise<true | false | null> (null = could not be told); the one place that asks the server
- *  The remembered answer is localStorage `cn.role` = { v:1, name, admin, role }; it counts only for the name that is signed in.
+ *  What is remembered: the role a person chose, in localStorage `cn.role` = { v:1, name, admin:false, role } (it counts only for the name that is
+ *  signed in; "not the Admin" is the safe side to keep). That someone IS the Admin is kept in memory for this page and sign-in only, never in
+ *  storage (AD2's rule: the question is asked once per sign-in, and a reload asks it once more, quietly).
+ *  The server's answer: POST firebaseOrders { stationAdmin: "<name>" } -> { ok:true, admin:true|false } (plans/stations-round2/api.md, AD2);
+ *  anything else (offline, 4xx, 5xx, a bad body, a timeout) is "not told": not the Admin, so the person is asked.
  *  Never a PIN: the name only, as everywhere in the sorter. Nothing here throws into the page. */
 (function () {
   "use strict";
   if (window.CNRole) return;
   const KEY = "cn.role", ROLES = { laser: "Laser", design: "Design" }, OTHER = { laser: "design", design: "laser" };
   const LOOKUP_MS = 6000;
-  let checking = "", unknownFor = "", seq = 0, lookup = null, listeners = [];
+  let checking = "", unknownFor = "", adm = "", seq = 0, lookup = null, listeners = [];
 
   const warn = (...a) => { try { console.warn("[CNRole]", ...a); } catch (_) {} };
   const nameNow = () => { try { const n = String((window.CNEmployee && CNEmployee.name()) || "").trim(); return /^\d+$/.test(n) ? "" : n; } catch (_) { return ""; } };
@@ -55,8 +59,8 @@
     lsSet(KEY, JSON.stringify(rec));
   }
   function drop() { mem = null; lsDel(KEY); }
-  const admin = () => { const r = read(); return !!(r && r.admin === true); };
-  const role = () => { const r = read(); return r && r.admin !== true && ROLES[r.role] ? r.role : ""; };
+  const admin = () => !!adm && adm === nameNow();                    // (this page's memory only)
+  const role = () => { if (admin()) return ""; const r = read(); return r && r.admin !== true && ROLES[r.role] ? r.role : ""; };
   const ready = () => admin() || !!role();
   const state = () => {
     if (!nameNow()) return "none";
@@ -83,11 +87,11 @@
 
   /* ── the page: who is signed in, and what that means for the stations ── */
   /** the person is signed in for the stations' sake (a session runs, events are recorded): the Admin, or a role is chosen */
-  function commit() {
+  function commit(resume) {
     try {
       const name = nameNow(); if (!name || !ready()) return;
       const SS = window.StationSession;
-      if (SS && typeof SS.signedIn === "function") SS.signedIn({ name, id: null });        // (a role that changed ends the one session and starts the other)
+      if (SS && typeof SS.signedIn === "function") SS.signedIn({ name, id: null, resume: !!resume });        // (a role that changed ends the one session and starts the other; resume: a reload goes on with its session)
       try { if (window.CNAct && typeof CNAct.release === "function") CNAct.release(); } catch (_) {}   // (what was pressed meanwhile is recorded under it)
     } catch (e) { warn("commit:", e); }
   }
@@ -97,37 +101,48 @@
     try { const L = window.CNLive; if (L && typeof L.close === "function") { L.close("sorter"); L.close("laser"); } } catch (_) {}
   }
 
+  /** The server's answer for one name (AD2's read-only door): true | false | null. Exactly { ok:true, admin:true|false } is an answer; the
+      name goes in the body, never in a URL; nothing else is sent, nothing is kept. */
+  async function serverSaysAdmin(name) {
+    let ctl = null, timer = 0;
+    try {
+      if (typeof fetch !== "function") return null;
+      try { if (typeof AbortController === "function") { ctl = new AbortController(); timer = setTimeout(() => { try { ctl.abort(); } catch (_) {} }, LOOKUP_MS - 500); } } catch (_) {}
+      const r = await fetch("/.netlify/functions/firebaseOrders", { method: "POST", headers: { "Content-Type": "application/json" }, cache: "no-store", body: JSON.stringify({ stationAdmin: String(name).slice(0, 200) }), signal: ctl ? ctl.signal : undefined });
+      const j = r && r.ok ? await r.json().catch(() => null) : null;
+      return j && j.ok === true && (j.admin === true || j.admin === false) ? j.admin : null;
+    } catch (_) { return null; }
+    finally { clearTimeout(timer); }
+  }
   /** is this name the Admin? Resolves true | false | null (null: could not be told: not Admin, asked again later). */
   async function askAdmin(name) {
     try {
-      if (typeof lookup === "function") {
-        const timer = new Promise(res => setTimeout(() => res(null), LOOKUP_MS));
-        const a = await Promise.race([Promise.resolve().then(() => lookup(name)), timer]);
-        return a === true ? true : a === false ? false : null;
-      }
-    } catch (e) { warn("admin lookup:", e); }
-    return false;                                   // (until the server answers, nobody is the Admin)
+      const timer = new Promise(res => setTimeout(() => res(null), LOOKUP_MS));
+      const a = await Promise.race([Promise.resolve().then(() => (typeof lookup === "function" ? lookup(name) : serverSaysAdmin(name))), timer]);
+      return a === true ? true : a === false ? false : null;
+    } catch (e) { warn("admin lookup:", e); return null; }
   }
 
   /** the Admin answer for the name that was just set; then either the sign-in is complete (Admin) or the question opens */
   function check(name, quiet) {
     const my = ++seq;
     checking = name;
-    if (!quiet) bar({ state: "checking" });
+    // (a fast answer shows nothing: the bar the name was typed in goes, and the question or nothing follows; a slow one shows a small labelled spinner)
+    const wait = quiet ? 0 : setTimeout(() => { if (my === seq && checking === name) bar({ state: "checking" }); }, 250);
     askAdmin(name).then(ans => {
+      clearTimeout(wait);
       if (my !== seq || nameNow() !== name) return;       // a newer name, or signed out meanwhile
       checking = "";
       if (ans === true) {
-        unknownFor = "";
-        write({ v: 1, name, admin: true, role: "" });
-        bar({ state: "off" }); commit(); changed();
+        unknownFor = ""; adm = name; drop();                   // (the Admin: no role, nothing kept in storage)
+        reset(); bar({ state: "off" }); commit(!!quiet); changed();
       } else {
-        unknownFor = ans === null ? name : "";
         const had = read();
-        if (!had) write({ v: 1, name, admin: false, role: "" });
+        if (ans === false) { unknownFor = ""; write({ v: 1, name, admin: false, role: had && ROLES[had.role] ? had.role : "" }); }    // (told: not the Admin: kept)
+        else unknownFor = name;                                                                                                    // (not told: not the Admin for now, not kept as an answer, asked again)
         if (!quiet) ask({ hint: false }); else changed();
       }
-    }).catch(e => { checking = ""; warn("check:", e); });
+    }).catch(e => { clearTimeout(wait); checking = ""; warn("check:", e); });
   }
 
   /** shows the question (when it is still needed) */
@@ -143,7 +158,7 @@
       if (!ROLES[r]) return false;
       const name = nameNow(); if (!name || admin()) return false;
       const was = role();
-      write({ v: 1, name, admin: false, role: r });
+      write(Object.assign({ v: 1, name, admin: false, role: r }, unknownFor === name ? { unk: true } : {}));     // (unk: the Admin answer was not had: asked again at the next load)
       bar({ state: "off" });
       if (was !== r) reset();
       commit(); changed();
@@ -165,25 +180,28 @@
       const SS = window.StationSession;
       if (!name) { clear(); return; }
       if (!window.CNEmployee || typeof CNEmployee.roleBar !== "function") { if (SS) SS.signedIn({ name, id: null }); return; }   // (without the bar there is nobody to ask: as before)
+      if (adm && adm !== name) adm = "";
       const r = read();
-      if (r && (r.admin === true || ROLES[r.role])) { commit(); changed(); return; }            // already known for this name: nothing is asked
+      if (admin() || (r && ROLES[r.role])) { commit(); changed(); return; }                       // already known for this name: nothing is asked
       if (checking === name) return;
       if (r && r.name === name) { ask({ hint: false }); return; }                                // known not to be the Admin, no role yet
       drop(); check(name, false);                                                                 // a new person: the Admin answer first
     } catch (e) { warn("nameSet:", e); }
   }
-  /** the person is working with a name kept from before (a reload, the first load of this version): the Admin answer is had quietly, nothing is shown */
+  /** the person is working with a name kept from before (a reload, the first load of this version): the Admin answer is had quietly, nothing is shown
+      (a person whose role is kept is not asked: "not the Admin" was the answer at their sign-in) */
   function start() {
     try {
-      const name = nameNow(); if (!name || read() || checking) return;
+      const name = nameNow(), r = read(); if (!name || checking || (r && !r.unk)) return;
       if (!window.CNEmployee || typeof CNEmployee.roleBar !== "function") return;
+      if (r && r.unk) unknownFor = name;
       check(name, true);
     } catch (e) { warn("start:", e); }
   }
   function clear() {
     try {
       const had = state() !== "none" || !!lsGet(KEY);
-      seq++; checking = ""; unknownFor = "";
+      seq++; checking = ""; unknownFor = ""; adm = "";
       drop(); bar({ state: "off" }); reset();
       if (had) changed();
     } catch (_) {}
@@ -218,8 +236,8 @@
       askAdmin(name).then(ans => {
         if (my !== seq || nameNow() !== name) return;
         checking = "";
-        if (ans === true) { unknownFor = ""; write({ v: 1, name, admin: true, role: "" }); bar({ state: "off" }); reset(); commit(); changed(); }
-        else if (ans === false) unknownFor = "";
+        if (ans === true) { unknownFor = ""; adm = name; drop(); bar({ state: "off" }); reset(); commit(); changed(); }
+        else if (ans === false) { unknownFor = ""; const r = read(); if (r && r.unk) write({ v: 1, name, admin: false, role: r.role || "" }); }
       }).catch(() => { checking = ""; });
     } catch (_) {}
   });
