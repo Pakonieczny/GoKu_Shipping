@@ -70,6 +70,7 @@ function weldingFor(j, o = {}) {
           r = { status: 200, json: JSON.parse(JSON.stringify(r.json)) };
           const bs = r.json.business.stations.find(x => x.station === 'welding'); if (bs) Object.assign(bs, { parts: 0, orders: 0, matched: 12, taskMin: { welding: 180, matching: 240, unknown: 60 } });
           for (const p of r.json.people) for (const x of p.stations) if (x.station === 'welding') Object.assign(x, { parts: 0, orders: 0, completes: 0, matched: 12, taskMin: { welding: 180, matching: 240, unknown: 60 } });
+          const gio = r.json.people.find(p => p.name === 'Giovanna'); if (gio) { Object.assign(gio.totals, { parts: 0, orders: 0, rate: 0 }); gio.noThroughput = true; }   // (worked at the Welding station alone: the server says so)
         }
         if (mine && r.status === 200) {
           const ana = String(b.name || '').toLowerCase() === 'ana m.';
@@ -177,7 +178,15 @@ function weldingFor(j, o = {}) {
     await page.locator(`${V} .efP[data-name="Giovanna"] .efOrd`).click(); await page.waitForSelector(`${V} .efP[data-name="Giovanna"] .efMini`, { timeout: 8000 });
     const wr = page.locator(`${V} .efP[data-name="Giovanna"] .efMini tbody tr`, { hasText: 'Welding' }); const cells = (await wr.locator('td').allInnerTexts()).map(x => x.replace(/\s+/g, ' ').trim());
     assert.deepEqual([cells[1], cells[3]], ['—', '—'], 'the Welding row of the by-station table has no pieces and no orders: ' + cells.join('|')); assert(/12 matched/.test(cells[0]), 'it says matched: ' + cells[0]);
-    console.log('  ✓ the Overview: the Welding row says matched and time on task (with their cards), the by-station table has no pieces or orders for it, other stations unchanged');
+    // the People card of somebody who worked at Welding alone: a dash for pieces and orders (as the person's page says), the time on task and the matched count instead; everybody else's card is as before
+    await page.evaluate(() => { Efficiency.go('people'); });
+    const gcard = page.locator(`${V} .efRoster .efRc[data-name="Giovanna"]`); await gcard.waitFor({ timeout: 10000 });
+    assert.deepEqual([await txt(gcard.locator('[data-f="parts"]')), await txt(gcard.locator('[data-f="orders"]')), await txt(gcard.locator('[data-f="rate"]'))], ['—', '—', '—'], 'Welding alone: a dash for pieces, orders and per hour on the People card');
+    const wline = await txt(gcard.locator('.efRcW')); assert.equal(wline, 'Welding 4 h · Matching 4 h · 12 matched', 'the time on task per task and the matched count stand in: ' + wline);
+    await shot(page, 'people-welding-1440.png', `${V} .efRoster`);
+    const others = await page.$$eval(`${V} .efRoster .efRc`, cs => cs.filter(c => c.dataset.name !== 'Giovanna').map(c => c.querySelector('[data-f="parts"]').innerText.trim()));
+    assert(others.length > 0 && others.some(t => /^\d/.test(t)), 'everybody else still has pieces on the card: ' + others.join(','));
+    console.log('  ✓ the Overview: the Welding row says matched and time on task (with their cards), the by-station table has no pieces or orders for it, other stations unchanged; the People card of a Welding-only person says a dash and the time on task and matched instead');
     assert.deepEqual(errs, [], 'no page errors: ' + errs.join(' | '));
     assert(seen.aborted >= 0);
     await ctx.close();

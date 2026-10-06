@@ -338,6 +338,8 @@ const tp = (p, t) => p.find(x => x.task === t);
     eq([P('Tess Welder').totals.parts, P('Tess Welder').totals.orders, P('Tess Welder').totals.scans], [0, 0, 2]); eq([P('Max Mixed').totals.parts, P('Max Mixed').totals.orders, P('Max Mixed').totals.scans], [6, 1, 2]);
     eq(P('Tess Welder').stations[0].taskMin, { welding: 180, matching: 60, unknown: 0 }); eq(P('Ray Matcher').stations[0].taskMin, { welding: 0, matching: 120, unknown: 0 }); eq(P('Legacy Lou').stations[0].taskMin, { welding: 0, matching: 0, unknown: 60 });
     is(P('Ray Matcher').stations[0].matched, 4); assert(!o.body.people.some(p => p.name === 'Unattributed'), 'a scan made with nobody in Matching is nobody\'s: the board counts it, no person has it');
+    // somebody who worked at Welding alone has no pieces or orders to count: the answer says so (the console shows a dash on the People card, as the person page does, with time on task and matched instead); a mixed day does not
+    eq(['Tess Welder', 'Ray Matcher', 'Legacy Lou', 'Ann Assembler', 'Max Mixed'].map(n => [n, P(n).noThroughput === true]), [['Tess Welder', true], ['Ray Matcher', true], ['Legacy Lou', true], ['Ann Assembler', false], ['Max Mixed', false]], 'noThroughput: Welding alone, never a mixed day or an Assembly person');
     eq(B.trend.slice(-4).map(d => [d.day, d.parts, d.orders, d.people, d.source]), [['2026-10-02', 0, 0, 1, 'sessions'], ['2026-10-03', 0, 0, 1, 'events'], ['2026-10-04', 0, 0, 1, 'events'], ['2026-10-05', 11, 2, 5, 'events']],
       'the old welding day (20 pieces, 5 orders written then) reads as 0 now; the stored rollup is unchanged');
     // the feed: the typed scan is there; the desk page's scan of the phone scan is not (the matched event is that scan)

@@ -114,6 +114,12 @@
   const sum24 = list => { const o = new Array(24).fill(0); for (const a of list) for (let i = 0; i < 24; i++) o[i] += a[i]; return o; };
   /** The Welding station's minutes signed in per task (welding | matching | unknown = an old sign-in with no task), or null for a station that counts pieces. */
   const taskMin = m => (m && typeof m === "object" ? { welding: N(m.welding), matching: N(m.matching), unknown: N(m.unknown) } : null);
+  /** Somebody who worked at the Welding station alone has no pieces or orders to count: the card and the person's page both show a dash and read the time on task and the matched count instead. The server says so (`noThroughput`); an answer without the flag is read from the station rows. */
+  const weldOnly = (p, stations) => {
+    if (p && p.noThroughput != null) return p.noThroughput === true;
+    const act = s => s.parts > 0 || s.orders > 0 || s.scans > 0 || s.completes > 0 || s.prints > 0 || N(s.matched) > 0;
+    return stations.some(s => s.taskMin && (act(s) || s.minutes > 0)) && !stations.some(s => !s.taskMin && act(s));
+  };
   function norm(r) {
     r = r || {};
     const people = (Array.isArray(r.people) ? r.people : []).filter(p => p && p.name).map(p => {
@@ -127,7 +133,7 @@
       const x = { parts: N(t.parts), scanParts: N(t.scanParts), scans: N(t.scans), rejects: N(t.rejects), errors: N(t.errors), orders: t.orders == null ? orders.length : N(t.orders), activeMin: N(t.activeMin), idleMin: N(t.idleMin), signedInMin: N(t.signedInMin), rate: N(t.rate), secPerScan: N(t.secPerScan) };
       if (!x.rate && x.activeMin >= 1 && x.parts) x.rate = x.parts / (x.activeMin / 60);
       if (!x.secPerScan && x.activeMin >= 1 && x.scans) x.secPerScan = x.activeMin * 60 / x.scans;
-      return { name: String(p.name), on: p.status === "on", inDay: p.inDay ? String(p.inDay) : "", firstIn: T(p.firstIn), lastOut: T(p.lastOut), onSince: T(p.onSince), nowAt: foldKeys(p.nowAt), source: String(p.source || ""), stations, t: x, perHour: hours24(p.perHour), orders };
+      return { name: String(p.name), on: p.status === "on", inDay: p.inDay ? String(p.inDay) : "", firstIn: T(p.firstIn), lastOut: T(p.lastOut), onSince: T(p.onSince), nowAt: foldKeys(p.nowAt), source: String(p.source || ""), stations, t: x, perHour: hours24(p.perHour), orders, noThroughput: weldOnly(p, stations) };
     });
     const b = r.business || {}, bt = b.totals || {};
     const stRows = new Map();
@@ -506,6 +512,7 @@
 .efRcFig{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px}
 .efRcFig div{display:grid;gap:1px}.efRcFig b{font:650 15px var(--sans);font-variant-numeric:tabular-nums}.efRcFig span{font-size:10px;letter-spacing:.07em;text-transform:uppercase;color:var(--ink45);font-weight:700}
 .efRcSp{display:flex;align-items:center;gap:10px}.efRcSp .efSpark{flex:1;max-width:none;height:22px}
+.efRcW{font-size:11.5px;color:var(--ink70);font-weight:600;line-height:1.35;overflow-wrap:anywhere}.efRcW[hidden]{display:none}
 .efRcChips{display:flex;flex-wrap:wrap;gap:4px 5px}
 .efRcLive{display:inline-flex;align-items:center;gap:6px;font-size:11px;color:#3c5a39;font-weight:650}.efRcLive:before{content:"";width:6px;height:6px;border-radius:50%;background:var(--sage)}
 .efRcOff{font-size:11px;color:var(--ink45);font-weight:600}
@@ -1330,10 +1337,17 @@
     const e = el("button", "efRc"); e.type = "button"; e.dataset.name = name;
     e.innerHTML = `<div class="efRcTop"><span class="efAv" aria-hidden="true"></span><span class="efRcName"></span><span class="efRcGo" aria-hidden="true">›</span><span class="efRcWhen"></span></div>
 <div class="efRcFig"><div><b data-f="parts">0</b><span>Pieces</span></div><div><b data-f="orders">0</b><span>Orders</span></div><div><b data-f="rate">—</b><span>Per hr</span></div><div><b data-f="act">—</b><span>Active</span></div></div>
+<div class="efRcW" hidden></div>
 <div class="efRcSp"><div class="efRcSpk" style="flex:1;min-width:0"></div><span class="efRcState"></span></div>`;
-    const r = { e, name, av: e.querySelector(".efAv"), nm: e.querySelector(".efRcName"), when: e.querySelector(".efRcWhen"), state: e.querySelector(".efRcState"), f: Object.fromEntries([...e.querySelectorAll("[data-f]")].map(x => [x.dataset.f, x])), spEl: e.querySelector(".efRcSpk") };
+    const r = { e, name, av: e.querySelector(".efAv"), nm: e.querySelector(".efRcName"), when: e.querySelector(".efRcWhen"), state: e.querySelector(".efRcState"), f: Object.fromEntries([...e.querySelectorAll("[data-f]")].map(x => [x.dataset.f, x])), spEl: e.querySelector(".efRcSpk"), wl: e.querySelector(".efRcW") };
     r.sp = spark(r.spEl, { w: 150, h: 22 }); setText(r.nm, name); setText(r.av, initials(name)); e.setAttribute("aria-label", `Open ${name}'s page`); e.title = `Open ${name}'s page`;
     return r;
+  }
+  /** The Welding station on a person's card: the minutes signed in under each task and the orders matched, where pieces and orders would be ("Welding 4 h 40 m · Matching 4 h 5 m · 9 matched"). */
+  function weldLine(p) {
+    const w = p.stations.find(x => x.taskMin); if (!w) return null;
+    const m = w.taskMin, bits = []; if (m.welding + m.unknown > 0) bits.push(`Welding ${dur(m.welding + m.unknown)}`); if (m.matching > 0) bits.push(`Matching ${dur(m.matching)}`); if (w.matched > 0) bits.push(`${nf(w.matched)} matched`);
+    return bits.length ? { text: bits.join(" · "), title: "Time signed in under each Welding task, and orders matched. The Welding station is not counted in pieces or orders." } : null;
   }
   function renderRoster(M) {
     if (!E.roster || host.dataset.route !== "people") return;
@@ -1351,7 +1365,9 @@
       r.e.classList.toggle("on", on);
       const when = on ? `On now · ${stName(p.nowAt[0] || (p.stations[0] && p.stations[0].station) || "")}${p.onSince ? ` · since ${clock(p.onSince)}` : ""}` : p.lastOut ? `Out ${clock(p.lastOut)}` : p.inDay && p.inDay !== M.day ? `Last in ${mdFmt.format(dayDate(p.inDay))}` : p.firstIn ? `In ${clock(p.firstIn)}` : "No sign-in recorded";
       setText(r.when, when); r.when.title = when; setText(r.state, "");
-      fig(r.f.parts, t.parts, ev && kParts, nf, fresh); fig(r.f.orders, t.orders, ev && kOther || !!M.sources.seals, nf, fresh); fig(r.f.rate, t.rate, ev && kParts && t.rate > 0, rateTxt, fresh);
+      const nt = p.noThroughput;   // (Welding alone: no pieces or orders to count, a dash as on the person's page; the time on task and the matched count stand in below)
+      fig(r.f.parts, t.parts, ev && kParts && !nt, nf, fresh); fig(r.f.orders, t.orders, (ev && kOther || !!M.sources.seals) && !nt, nf, fresh); fig(r.f.rate, t.rate, ev && kParts && t.rate > 0 && !nt, rateTxt, fresh);
+      const wl = weldLine(p); r.wl.hidden = !wl; setText(r.wl, wl ? wl.text : ""); r.wl.title = wl ? wl.title : "";
       const tot = t.activeMin + t.idleMin, pc = tot >= 1 ? Math.round(t.activeMin / tot * 100) : null; setText(r.f.act, pc == null ? "—" : pc + "%");
       r.f.act.title = pc == null ? "No activity timing yet" : `Active ${dur(t.activeMin)} · idle ${dur(t.idleMin)}`;
       const w = st.win, vals = []; for (let h = w.lo; h <= w.hi; h++) vals.push(p.perHour[h] || 0);

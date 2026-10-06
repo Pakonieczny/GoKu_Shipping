@@ -34,7 +34,6 @@ const db = { collection: name => Object.assign(query(name, [], null, null), { do
 const fakeAdmin = { firestore: Object.assign(() => ({}), { Timestamp: Ts, FieldValue: { serverTimestamp: () => 'ts' } }) };
 const realLoad = Module._load;
 Module._load = function (req, ...rest) { if (/[\/]firebaseAdmin(\.js)?$/.test(req)) return fakeAdmin; return realLoad.call(this, req, ...rest); };
-require(path.join(root, 'netlify/functions/_activityKinds.js')).NO_THROUGHPUT.clear();   // this fixture shop uses 'welding' as a plain station for the console's generic arithmetic: the Welding station's own rules (matched scans and time on task, no pieces or orders) are tested in tests/stations/welding-portal.cjs and efficiency-welding*.cjs
 const mod = require(path.join(root, 'netlify/functions/employeeEfficiency.js'));
 Module._load = realLoad;
 const T = mod._t, PASS = 'synthetic-pass-ef-default';
@@ -65,9 +64,9 @@ seed();
   assert.deepEqual(names(real), ['Anna', 'Giovanna'], 'no flag: the real crew, and not Paul of the Sandbox');
   assert.deepEqual(names(sand), ['Paul'], 'sandbox:true: the Sandbox copies only');
   assert.equal(sand.body.business.totals.parts, 29); assert.equal(sand.body.business.totals.orders, 25); assert.equal(sand.body.business.totals.people, 1);
-  assert.equal(real.body.business.totals.parts, 240); assert(real.body.business.totals.orders >= 50, 'the real orders: ' + real.body.business.totals.orders); assert.equal(real.body.business.totals.people, 2);
+  assert.equal(real.body.business.totals.parts, 90, 'R2: the Welding station adds no pieces (Giovanna is seeded there); the crew total is the pieces of the throughput stations'); assert(real.body.business.totals.orders >= 20, 'the real orders (Assembly only): ' + real.body.business.totals.orders); assert.equal(real.body.business.totals.people, 2);
   assert(!JSON.stringify(real.body).includes('Paul') && !JSON.stringify(sand.body).includes('Giovanna'), 'neither store leaks into the other');
-  console.log('  ✓ the real function: no flag = the crew (240 parts, 2 people), sandbox:true = Paul alone (29 parts, 25 orders, 1 person), nothing crosses');
+  console.log('  ✓ the real function: no flag = the crew (90 parts, Welding adds none, 2 people), sandbox:true = Paul alone (29 parts, 25 orders, 1 person), nothing crosses');
 
   const pwDir = process.env.PW_DIR || path.join(root, 'node_modules');
   let chromium; try { ({ chromium } = require(path.join(pwDir, 'playwright-core'))); } catch (_) { console.log('  – no playwright-core: the browser checks were not run'); return; }

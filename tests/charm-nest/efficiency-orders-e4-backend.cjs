@@ -51,7 +51,6 @@ Date.now = () => S.NOW;
 
 const realLoad = Module._load, fakeAdmin = { firestore: Object.assign(() => ({}), { Timestamp: Ts, FieldValue: { serverTimestamp: () => 'ts' } }) };
 Module._load = function (req, ...rest) { if (/[\/]firebaseAdmin(\.js)?$/.test(req)) return fakeAdmin; return realLoad.call(this, req, ...rest); };
-require(path.join(root, 'netlify/functions/_activityKinds.js')).NO_THROUGHPUT.clear();   // this fixture shop uses 'welding' as a plain station for the console's generic arithmetic: the Welding station's own rules (matched scans and time on task, no pieces or orders) are tested in tests/stations/welding-portal.cjs and efficiency-welding*.cjs
 const fn = require(path.join(root, 'netlify/functions/employeeEfficiency.js'));
 Module._load = realLoad;
 require(path.join(root, 'netlify/functions/_editPasscode.js')).resetCache();
