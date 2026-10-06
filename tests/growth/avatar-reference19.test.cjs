@@ -26,27 +26,35 @@ test('rare irregular blinks close softly and do not become a looping attention d
   assert.equal(avatar.blinkFor(NaN), 0);
 });
 
-test('conversation modes remain instantly legible through colour, shape and restrained energy', () => {
+test('conversation modes retain distinct graphic expression controls and restrained output energy', () => {
   const listening = avatar.poseFor({state: 'listening', time: 5, mannerism: 'acknowledge', mannerismElapsed: .42});
   const thinking = avatar.poseFor({state: 'thinking', time: 5, mannerism: 'focus', mannerismElapsed: .42});
   const speaking = avatar.poseFor({state: 'speaking', time: 5, level: 1, mannerism: 'explain', mannerismElapsed: .42});
   assert.equal(listening.eyeColor, '#49c9ff');
   assert.equal(thinking.eyeColor, '#ab87ff');
   assert.equal(speaking.eyeColor, '#ffcb79');
-  assert.ok(thinking.ringRipple > listening.ringRipple);
-  assert.ok(speaking.ringRipple > thinking.ringRipple);
+  assert.equal(listening.faceExpression, 'attentive');
+  assert.equal(thinking.faceExpression, 'curious');
+  assert.equal(speaking.faceExpression, 'explaining');
+  assert.ok(listening.faceBrowLift > thinking.faceBrowLift);
+  assert.notEqual(thinking.faceBrowTilt, speaking.faceBrowTilt);
+  assert.ok(speaking.eyeSmile > thinking.eyeSmile);
+  assert.equal(listening.speechEnergy, 0); assert.equal(thinking.speechEnergy, 0); assert.equal(speaking.speechEnergy, 1);
   assert.ok(Math.abs(listening.gazeX) < .02);
   assert.ok(Math.abs(thinking.gazeX) < .06);
 });
 
-test('state transition easing and aperture ripples stay original and bounded', () => {
+test('state transition easing and filled ribbon identity stay original and bounded', () => {
   assert.match(scene, /authorship: 'original authored choreography'/);
   assert.match(scene, /transitionMs: 320/);
   assert.match(scene, /colorEase = colorProgress \* colorProgress \* \(3 - 2 \* colorProgress\)/);
-  assert.match(scene, /ringBreath = reducedMotion \? 0/);
-  assert.match(scene, /identity: 'original single-eye pebble robot'/);
+  assert.match(scene, /speechShape = reducedMotion \? 0/);
+  assert.match(scene, /identity: 'original twin-ribbon pebble robot'/);
+  assert.match(scene, /two deformable geometric light ribbons/);
+  assert.doesNotMatch(scene, /const halo =|const innerHalo =/);
   assert.match(scene, /no human iris or mouth/);
   assert.match(bundledScene, /original authored choreography/);
+  assert.match(bundledScene, /original twin-ribbon pebble robot/);
   assert.match(bundledScene, /rare irregular 0\.19-0\.21 second closure/);
   assert.doesNotMatch((scene + controller).toLowerCase(), /wall[- ]?e|disney/);
 });
