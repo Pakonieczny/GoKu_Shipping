@@ -826,7 +826,7 @@
 .esStBody{padding:0 16px 14px;display:grid;gap:10px;grid-template-columns:repeat(auto-fill,minmax(min(100%,380px),1fr));align-items:start;min-width:0}
 .esStBody:empty{display:none}
 .esRoster{grid-column:1/-1;display:flex;flex-direction:column;gap:3px;margin:-2px 0 0;font-size:12px;color:var(--ink45,#938c80);font-variant-numeric:tabular-nums;min-width:0}
-.esRo{display:block;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.esRo[hidden]{display:none}.esRo i{font-style:normal}.esRo i[hidden]{display:none}
+.esRo{display:block;min-width:0;overflow-wrap:anywhere}.esRo[hidden]{display:none}.esRo i{font-style:normal}.esRo i[hidden]{display:none}
 .esRoN{font-weight:650;color:var(--ink70,#5b554c)}
 .esIdle{grid-column:1/-1;margin:-2px 0 0;font-size:12px;color:var(--ink45,#938c80)}.esIdle:before{content:"";display:inline-block;width:5px;height:5px;border-radius:50%;background:var(--gold2,#caa861);margin-right:8px;vertical-align:1px;opacity:.8}
 .esIdle[data-state=offline]:before{background:var(--ink25,#c4bdb0)}.esIdle[data-state=working]:before{background:var(--sage,#5f7a5b)}
