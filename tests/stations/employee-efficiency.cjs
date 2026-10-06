@@ -9,6 +9,8 @@
 //   6 · sandbox separation, the person op, the orders op, response shapes, read sizes
 //   node tests/stations/employee-efficiency.cjs
 'use strict';
+require(require('path').join(__dirname, '../../netlify/functions/_activityKinds.js')).NO_THROUGHPUT.clear();   // this suite uses 'welding' as a plain fixture station for the generic arithmetic: the Welding station's own rule (not counted in throughput, R2 of stations round 2) is tested in welding-portal.cjs
+
 const path = require('path'), assert = require('assert'), Module = require('module');
 const root = path.join(__dirname, '../..');
 const clone = x => x == null ? x : JSON.parse(JSON.stringify(x));
