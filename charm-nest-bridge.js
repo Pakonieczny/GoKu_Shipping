@@ -337,12 +337,19 @@ function askEmployee() {
    station panel), and it is what appears, calmly, when something a person did could not be put under a name. */
 const NameBar = (() => {
   let bar = null, finish = null, pr = null, quietUntil = 0;   // (a hint put away with ✕ or Esc does not come back for 90 s: calm, not nagging)
+  let rbar = null, rspec = null, rquiet = 0, rtimer = 0;      // the role step: the same bar in its other state (below)
   const CSS = ".cnNameBar{position:fixed;right:18px;top:var(--chromeH,96px);z-index:2147483000;display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;box-sizing:border-box;max-width:min(540px,calc(100vw - 24px));padding:8px 10px;background:var(--card,#fff);border:1px solid var(--line,#ddd);border-radius:12px;box-shadow:0 10px 28px rgba(0,0,0,.14);font:12px var(--sans,system-ui,sans-serif);color:var(--ink70,#555)}"
     + ".cnNameBar label{display:flex;flex-direction:column;line-height:1.3;min-width:0;flex:1 1 210px}.cnNameBar label b{font-weight:600;color:var(--ink,#222)}.cnNameBar .cnNbWhy{font-size:11px;color:var(--ink45,#777)}"
     + ".cnNameBar input{flex:0 1 160px;min-width:120px;border:1px solid var(--line,#ddd);border-radius:8px;padding:5px 8px;font:13px var(--sans,system-ui,sans-serif);background:var(--card2,#fafafa);color:var(--ink,#222)}"
     + ".cnNameBar input:focus{outline:2px solid rgba(74,107,120,.35);border-color:var(--slate,#4a6b78);background:var(--card,#fff)}"
     + ".cnNameBar .cnNbX{border:0;background:transparent;color:var(--ink45,#777);cursor:pointer;font-size:14px;line-height:1;padding:4px 6px;border-radius:6px}.cnNameBar .cnNbX:hover{background:var(--paper2,#eee)}"
-    + ".cnNameBar .cnNbErr{flex:1 0 100%;font-size:11px;color:var(--ink70,#555)}.cnNameBar [hidden]{display:none}";
+    + ".cnNameBar .cnNbErr{flex:1 0 100%;font-size:11px;color:var(--ink70,#555)}.cnNameBar [hidden]{display:none}"
+    // the role step (Laser or Design?), the wait before it, and the quiet switch: the same bar, the same type
+    + ".cnNameBar .cnNbLbl{display:flex;flex-direction:column;line-height:1.3;min-width:0;flex:1 1 210px}.cnNameBar .cnNbLbl b{font-weight:600;color:var(--ink,#222)}.cnNameBar .cnNbLbl:focus{outline:none}"
+    + ".cnNameBar .cnNbRoles{display:flex;gap:6px;flex:0 0 auto}.cnNameBar .cnNbRoles .btn{min-width:68px;padding:6px 12px;font-size:12px}"
+    + ".cnNameBar .cnNbWait{flex-direction:row;align-items:center;gap:8px}.cnNameBar .cnNbWait .spin{width:11px;height:11px;border:2px solid rgba(0,0,0,.15);border-top-color:currentColor;border-radius:50%;animation:spin .7s linear infinite;display:inline-block;flex:0 0 11px}"
+    + ".cnNameBar .cnNbSwitch{flex:1 0 100%;text-align:left;border:0;background:transparent;padding:2px 0 0;font:11px var(--sans,system-ui,sans-serif);color:var(--ink45,#777);cursor:pointer;text-decoration:underline;text-underline-offset:2px}.cnNameBar .cnNbSwitch:hover{color:var(--ink,#222)}"
+    + "@media (prefers-reduced-motion:reduce){.cnNameBar .cnNbWait .spin{animation-duration:1.6s}}";
   const css = () => { if (document.getElementById("cnNameBarCss")) return; const s = document.createElement("style"); s.id = "cnNameBarCss"; s.textContent = CSS; document.head.appendChild(s); };
   // inside the window that is open (a modal window makes the rest of the page unreachable), else on the page
   const host = () => { try { const open = [...document.querySelectorAll("dialog[open]")].filter(d => { try { return d.matches(":modal"); } catch (_) { return true; } }); return open[open.length - 1] || document.body; } catch (_) { return document.body; } };
@@ -355,19 +362,23 @@ const NameBar = (() => {
       css();
       const hint = o.kind === "hint", why = o.why || (hint ? "Add it and the work you just did is counted under it." : "Kept with your work on this computer today.");
       if (hint && !bar && Date.now() < quietUntil) return Promise.resolve("");
+      if (rbar) roleOff();        // (one bar in this spot: the name field takes the place of the role step; the question comes back at the next press)
       if (bar && !bar.isConnected) { bar = null; finish = null; pr = null; }
       if (bar) {
         if (hint && bar.dataset.kind === "edit") return pr;       // (someone is already typing a name: nothing to add)
         if (!hint) bar.dataset.kind = "edit";
         bar.querySelector(".cnNbWhy").textContent = why; if (bar.parentNode !== host()) host().appendChild(bar);
+        paintSwitch(bar);
         if (!hint) { const i = bar.querySelector("input"); i.focus(); i.select(); }
         return pr;
       }
       pr = new Promise(res => { finish = res; });
       const id = "cnNb" + Math.random().toString(36).slice(2, 7);
       bar = document.createElement("form"); bar.className = "cnNameBar"; bar.dataset.kind = hint ? "hint" : "edit"; bar.setAttribute("role", "group"); bar.setAttribute("aria-label", "Your name"); bar.noValidate = true;
-      bar.innerHTML = `<label for="${id}"><b>Your name</b><span class="cnNbWhy" aria-live="polite"></span></label><input id="${id}" type="text" maxlength="40" autocomplete="name" spellcheck="false" placeholder="e.g. Tess Welder"><button type="submit" class="btn sage xs">Save</button><button type="button" class="cnNbX" title="Not now" aria-label="Not now">✕</button><span class="cnNbErr" role="alert" hidden></span>`;
+      bar.innerHTML = `<label for="${id}"><b>Your name</b><span class="cnNbWhy" aria-live="polite"></span></label><input id="${id}" type="text" maxlength="40" autocomplete="name" spellcheck="false" placeholder="e.g. Tess Welder"><button type="submit" class="btn sage xs">Save</button><button type="button" class="cnNbX" title="Not now" aria-label="Not now">✕</button><span class="cnNbErr" role="alert" hidden></span><button type="button" class="cnNbSwitch" hidden></button>`;
       const input = bar.querySelector("input"), err = bar.querySelector(".cnNbErr");
+      paintSwitch(bar);
+      bar.querySelector(".cnNbSwitch").onclick = e => { e.preventDefault(); e.stopPropagation(); try { const R = window.CNRole, r = R && R.role(); if (r) R.switchTo(R.other(r)); } catch (_) {} paintSwitch(me); };
       bar.querySelector(".cnNbWhy").textContent = why;
       input.value = hint ? "" : employeeName();
       const me = bar;
@@ -391,9 +402,59 @@ const NameBar = (() => {
   }
   /** A name was set somewhere else: a field that only offered to take one is no longer needed. */
   const settled = () => { if (bar && bar.dataset.kind === "hint") close(employeeName()); };
-  return { open, close: () => close(""), settled, isOpen: () => !!(bar && bar.isConnected) };
+  /* ── the role step (charm-nest-role.js decides when; Paul, 6 Oct 2026): the same small bar, right after the name is set, asking
+     "Laser or Design?" with two buttons, or (only if the Admin answer is slow) a small labelled spinner. Never a pop-up and never on top
+     of one: it sits inside the window that is open, like the name field, and follows it when windows open and close. Nothing behind it is
+     blocked; ✕ or Esc puts it away (a hint comes back at the next press after 90 s). */
+  const roleOff = () => { clearInterval(rtimer); rtimer = 0; const b = rbar; rbar = null; rspec = null; try { if (b) b.remove(); } catch (_) {} };
+  const roleHostFix = () => { try { if (rbar && (!rbar.isConnected || rbar.parentNode !== host())) host().appendChild(rbar); } catch (_) {} };
+  function roleBar(o) {
+    o = o || {};
+    try {
+      if (o.state === "off") { roleOff(); return true; }
+      if (o.state !== "ask" && o.state !== "checking") return false;
+      css();
+      const asking = o.state === "ask", hint = !!o.hint;
+      if (asking && hint && ((!rbar && Date.now() < rquiet) || (bar && bar.isConnected))) return false;   // (put away a minute ago, or the name field is open)
+      if (!rbar) {
+        rbar = document.createElement("form"); rbar.className = "cnNameBar"; rbar.setAttribute("role", "group"); rbar.noValidate = true;
+        rbar.onsubmit = e => { e.preventDefault(); e.stopPropagation(); };
+        rbar.onclick = e => e.stopPropagation();
+        // (the page's own keys never see what is pressed here, and Esc puts only this bar away, not the window under it)
+        rbar.onkeydown = e => { e.stopPropagation(); if (e.key === "Escape" && rbar && rbar.dataset.kind === "role") { e.preventDefault(); rquiet = Date.now() + 90000; roleOff(); } };
+        host().appendChild(rbar);
+        rtimer = setInterval(roleHostFix, 400);
+      }
+      const f = rbar; rspec = o;
+      if (!asking) {
+        f.dataset.kind = "wait"; f.dataset.hint = ""; f.setAttribute("aria-label", "Checking your sign-in");
+        f.innerHTML = `<div class="cnNbLbl cnNbWait" role="status"><i class="spin" aria-hidden="true"></i><span>Checking your sign-in…</span></div>`;
+        return true;
+      }
+      const had = f.dataset.kind === "role";
+      f.dataset.kind = "role"; f.dataset.hint = hint ? "1" : ""; f.setAttribute("aria-label", "Laser or Design");
+      if (!had) {
+        f.innerHTML = `<div class="cnNbLbl" id="cnNbRoleQ" tabindex="-1"><b>Laser or Design?</b><span class="cnNbWhy">Your work is counted under it until you sign out.</span></div><span class="cnNbRoles" role="group" aria-labelledby="cnNbRoleQ"><button type="button" class="btn sage xs" data-role="laser">Laser</button><button type="button" class="btn sage xs" data-role="design">Design</button></span><button type="button" class="cnNbX" title="Not now" aria-label="Not now">✕</button>`;
+        f.querySelectorAll("[data-role]").forEach(b => { b.onclick = e => { e.preventDefault(); const pick = rspec && rspec.onPick; try { if (typeof pick === "function") pick(b.dataset.role); } catch (_) {} }; });
+        f.querySelector(".cnNbX").onclick = e => { e.preventDefault(); rquiet = Date.now() + 90000; roleOff(); };
+      }
+      // typed the name a moment ago (or nothing else is being typed in): the question itself has the focus (read out; Tab reaches Laser, then Design: no answer is ever a stray Enter away); a hint takes no focus
+      if (!hint) requestAnimationFrame(() => { try { const a = document.activeElement; if (rbar === f && f.isConnected && (!a || a === document.body || a === document.documentElement || f.contains(a))) f.querySelector(".cnNbLbl").focus(); } catch (_) {} });
+      return true;
+    } catch (_) { return false; }
+  }
+  /** "Laser · switch to Design": one quiet line in the name field, only while a role is chosen */
+  function paintSwitch(b) {
+    try {
+      const sw = b && b.querySelector(".cnNbSwitch"); if (!sw) return;
+      const R = window.CNRole, r = R && typeof R.role === "function" ? R.role() : "";
+      sw.hidden = !r;
+      if (r) sw.textContent = `${R.label(r)} · switch to ${R.label(R.other(r))}`;
+    } catch (_) {}
+  }
+  return { open, close: () => close(""), settled, isOpen: () => !!(bar && bar.isConnected), role: roleBar, roleOpen: () => !!(rbar && rbar.isConnected) };
 })();
-window.CNEmployee = { name: employeeName, ask: askEmployee, normalize: normName, edit: NameBar.open };   // (the Library's Completed marks record who, charm-nest-library.js)
+window.CNEmployee = { name: employeeName, ask: askEmployee, normalize: normName, edit: NameBar.open, roleBar: NameBar.role };   // (the Library's Completed marks record who, charm-nest-library.js)
 /* What a person did here, for the Employee efficiency console (station-activity.js, loaded before this file; the person is
    the name above, as charm-nest-1.html hands it to StationSession). Called only where a person pressed something that
    finished or undid work (print, complete, undo, engraving approved, sent to a sheet, laser/cut marked) and when a held-back
@@ -425,11 +486,15 @@ const humanAct = window.CNAct = (action, o) => {
     const w = sessionWho();
     if (!w) {
       held.push({ action, opts, station, at: Date.now() }); if (held.length > HELD_MAX) held.shift();
-      NameBar.open({ kind: "hint", why: "Add it and the work you just did is counted under it." });
+      // a name is set but "Laser or Design?" is not answered (Paul, 6 Oct): the same small bar asks that, not the name again; the Admin answer on its way: nothing yet
+      const R = window.CNRole, st = R && typeof R.state === "function" ? R.state() : "none";
+      if (st === "ask") R.ask({ hint: true });
+      else if (st === "none") NameBar.open({ kind: "hint", why: "Add it and the work you just did is counted under it." });
       return false;
     }
     if (WORKSPACE_SANDBOX && !w.sandbox) return false;
-    const logged = logAs(action, opts, station);
+    // everything a Laser or Design person does in the app is that role's (R4); the Admin's keeps its own station (the sorter, or the laser for a laser mark)
+    const logged = logAs(action, opts, w.role || station);
     try { if (window.CNLive) CNLive.pressed(action, opts, station); } catch (_) {}      // (the live board: a press keeps the open order alive, a completion ends it)
     return logged;
   } catch (_) { return false; }
@@ -453,6 +518,8 @@ humanAct.held = () => held.length;
 const CNLive = window.CNLive = (() => {
   const HOLD = 20 * 60e3, seen = { sorter: "", laser: "" }, since = { sorter: null };
   const A = () => { const a = window.StationActivity; return a && typeof a.working === "function" ? a : null; };
+  // a Laser or Design person's open order and sheet are that role's live card (Paul, 6 Oct); the Admin's stay the sorter's and the laser's
+  const at = st => { try { const w = sessionWho(); return (w && w.role) || st; } catch (_) { return st; } };
   const who = () => { try { if (!A() || !sessionUp()) return null; const w = sessionWho(); return w && !(WORKSPACE_SANDBOX && !w.sandbox) ? w : null; } catch (_) { return null; } };
   /** the order of the open window: rows are its lines (the pull's, or those read from the records) */
   function order(rid, rows) {
@@ -470,7 +537,7 @@ const CNLive = window.CNLive = (() => {
       if (seen.sorter === fp) return true;
       seen.sorter = fp;
       if (!since.sorter || since.sorter.rid !== rid) since.sorter = { rid, at: Date.now() };       // (one scan time for the whole opening, however often the lines are read again)
-      return A().working({ station: "sorter", rid, orderNumber: rid, customer, pieces, pieceCount: use.length, holdMs: HOLD, scannedAt: since.sorter.at });
+      return A().working({ station: at("sorter"), rid, orderNumber: rid, customer, pieces, pieceCount: use.length, holdMs: HOLD, scannedAt: since.sorter.at });
     } catch (_) { return false; }
   }
   /** the laser sheet of the open sheet window (title: "GF Sheet 2 · Set 4") */
@@ -481,19 +548,19 @@ const CNLive = window.CNLive = (() => {
       const fp = JSON.stringify([w.person, w.device, title]);
       if (seen.laser === fp) return true;
       seen.laser = fp;
-      return A().working({ kind: "sheet", station: "laser", title, holdMs: HOLD });
+      return A().working({ kind: "sheet", station: at("laser"), title, holdMs: HOLD });
     } catch (_) { return false; }
   }
   /** the window of that station closed (or its sheet is not for the laser): the slot is empty, and the next opening shows again */
   function close(station) {
-    try { seen[station] = ""; if (station === "sorter") since.sorter = null; const a = window.StationActivity; return !!(a && typeof a.idle === "function" && a.idle({ station })); } catch (_) { return false; }
+    try { seen[station] = ""; if (station === "sorter") since.sorter = null; const a = window.StationActivity; return !!(a && typeof a.idle === "function" && a.idle({ station: at(station) })); } catch (_) { return false; }
   }
   /** a press here: it keeps what is open alive; completing the open order (or a sheet at the laser) ends it, the window staying as it is */
   function pressed(action, opts, station) {
     try {
       const a = window.StationActivity; if (!a) return;
-      if (action === "complete" && station === "laser") a.idle({ station: "laser" });
-      else if (action === "complete" && opts && opts.orders === 1 && opts.orderId) a.idle({ station: "sorter", rid: String(opts.orderId) });
+      if (action === "complete" && station === "laser") a.idle({ station: at("laser") });
+      else if (action === "complete" && opts && opts.orders === 1 && opts.orderId) a.idle({ station: at("sorter"), rid: String(opts.orderId) });
       else if (typeof a.touch === "function") a.touch();
     } catch (_) {}
   }

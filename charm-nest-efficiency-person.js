@@ -376,7 +376,7 @@
       const key = dispSt(String(s.station).toLowerCase()), x = { station: key, label: String(key !== String(s.station).toLowerCase() ? stName(key) : (s.label || stName(key))), parts: num(s.parts), orders: num(s.orders), scans: num(s.scans), completes: num(s.completes), prints: num(s.prints), minutes: num(s.minutes), shareParts: num(s.shareParts), shareMinutes: num(s.shareMinutes), perActiveHour: num(s.perActiveHour) }, had = stations.find(y => y.station === key);
       if (had) for (const k of ["parts", "orders", "scans", "completes", "prints", "minutes", "shareParts", "shareMinutes"]) had[k] += x[k]; else stations.push(x);
     }
-    const cal = A(r.calendar).filter(c => c && c.day).map(c => ({ day: String(c.day), state: CAL[c.state] ? String(c.state) : "before", signedMs: num(c.signedMs), activeMs: num(c.activeMs), firstIn: num(c.firstIn), lastOut: num(c.lastOut), parts: num(c.parts), orders: num(c.orders), late: !!c.late, short: !!c.short, extra: !!c.extra, est: !!c.estimated, lengthKnown: c.lengthKnown !== false, note: c.note ? String(c.note) : "", weekend: !!c.weekend, others: num(c.others) })).sort((a, b) => (a.day < b.day ? -1 : 1));
+    const cal = A(r.calendar).filter(c => c && c.day).map(c => ({ day: String(c.day), state: CAL[c.state] ? String(c.state) : "before", signedMs: num(c.signedMs), activeMs: num(c.activeMs), firstIn: num(c.firstIn), lastOut: num(c.lastOut), parts: num(c.parts), orders: num(c.orders), late: !!c.late, short: !!c.short, extra: !!c.extra, est: !!c.estimated, lengthKnown: c.lengthKnown !== false, note: c.note ? String(c.note) : "", weekend: !!c.weekend, others: num(c.others), ended: c.endedBy === "idle" || c.endedBy === "closing" ? c.endedBy : "" })).sort((a, b) => (a.day < b.day ? -1 : 1));
     const src = { kpis: {}, att: {}, rates: {}, contact: {}, issues: {} };
     for (const k of Object.keys(r.kpis || {})) src.kpis[k] = metric(k, r.kpis[k]);
     // attendance (E9): attendance.metrics = METRICs (workingDays daysWorked daysOff extraDays shortDays lateDays attendanceRate avgShiftHours medianStart medianEnd currentStreak longestStreak)
@@ -830,6 +830,8 @@
       if (charts.tm) charts.tm.update({ x: xs, series: [{ key: "signed", label: "Signed in", values: sg, color: "ink25" }, { key: "active", label: "Active", values: ac, color: "ink70" }], meta: rows }, { unit: "hours", better: null, xKind, fmt: v => durMs(v * HOUR_MS), def: adef && adef.def || "", emptyText: "No sign-in time in this range", onPoint,
         tipRows: p => { const x = p.meta; if (!x || x.signedMs == null && x.activeMs == null) return []; return [["Active share", x.signedMs > 0 && x.activeMs != null ? pctTxt(Math.min(1, x.activeMs / x.signedMs)) : "—"], row("Pieces", x.parts)].concat(click(x)); } });
     }
+    /* how a day ended when the station signed the person out by itself (the auto sign-out: both are normal sign-outs, hours end at the last input) */
+    const ENDED_WORDS = { idle: "Signed out after 10 minutes without input", closing: "Signed out at 5:00 pm" };
     /* the Day view: one shift, in, out, and what the signed-in time was made of */
     function renderShift(M) {
       const c = M.cal[0] || {}, p = M.series[0] || {}, td = today(), host0 = E.shiftH, tipEl = host0.querySelector(".efpTip");
@@ -839,7 +841,7 @@
       if (!(sg > 0)) { const why = { off: "A day off: a team working day on which this person never signed in.", closed: "The team did not work this day.", before: "Before this person's first record.", future: "Not yet.", pending: "Not signed in yet today." }[c.state] || "Not signed in this day."; box.innerHTML = `<div class="efpEmptyBox" style="padding:12px 0">${esc(why)}</div>`; setText(E.shiftP, ""); host0.insertBefore(box, tipEl); return; }
       setText(E.shiftP, c.late ? "late start" : c.short ? "short day" : "");
       const pc = v => (v > 0 && sg > 0 ? Math.max(0, Math.min(100, v / sg * 100)) : 0);
-      box.innerHTML = `<div class="efpShiftT"><span>In <b>${c.firstIn ? esc(clock(c.firstIn)) : "—"}</b></span><span>Out <b>${c.lastOut ? esc(clock(c.lastOut)) : M.from === td ? "still in" : "—"}</b></span><span>Signed in <b>${esc(durMs(sg))}</b></span>${ac != null ? `<span>Active <b>${esc(durMs(ac))}</b>${sg > 0 ? ` (${pctTxt(Math.min(1, ac / sg))})` : ""}</span>` : ""}</div>
+      box.innerHTML = `<div class="efpShiftT"><span>In <b>${c.firstIn ? esc(clock(c.firstIn)) : "—"}</b></span><span>Out <b>${c.lastOut ? esc(clock(c.lastOut)) : M.from === td ? "still in" : "—"}</b></span>${ENDED_WORDS[c.ended] ? `<span>${esc(ENDED_WORDS[c.ended])}</span>` : ""}<span>Signed in <b>${esc(durMs(sg))}</b></span>${ac != null ? `<span>Active <b>${esc(durMs(ac))}</b>${sg > 0 ? ` (${pctTxt(Math.min(1, ac / sg))})` : ""}</span>` : ""}</div>
 <div class="efpSB"><i class="a" data-w="${pc(ac).toFixed(1)}"></i><i class="i" data-w="${pc(id).toFixed(1)}"></i><i class="u" data-w="${pc(ul).toFixed(1)}"></i></div>
 <div class="efpSLeg"><span><i style="background:#6f6a62"></i>Active</span><span><i style="background:var(--gold2)"></i>Idle (gaps over 5 minutes)</span><span><i style="background:var(--line)"></i>No action logged</span></div>`;
       host0.insertBefore(box, tipEl);

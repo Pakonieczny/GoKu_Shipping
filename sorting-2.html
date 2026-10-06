@@ -365,7 +365,8 @@
     const toast = html => { try { window.M && M.toast && M.toast({ html }); } catch (_) {} };
     // (a number alone is never a name)
     const getEmployee = () => { const v = lsGet(EMP_KEY).trim(); return /^\d{4,}$/.test(v) ? "" : v; };
-    const sessionIn = name => { try { window.StationSession && StationSession.signedIn({ name, id: null }); } catch (_) {} };
+    const kept = [];                         // phone batches that loaded while nobody was signed in (see scanned() below)
+    const sessionIn = name => { try { window.StationSession && StationSession.signedIn({ name, id: null }); } catch (_) {} release(); };
 
     function renderChip() {
       const btn = document.querySelector("#sortingAsChip .st-as-name");
@@ -436,11 +437,18 @@
       StationSession.init({
         station: "sorting", device: "sorting-2",
         person: () => { const n = getEmployee(); return n ? { name: n, id: null } : null; },
-        signOut: () => {
+        // The sign-in ended by itself (midnight, 10 minutes without input, 5:00 pm): this page clears ITS login and any phone scan kept
+        // for the next sign-in, shows its own sign-in again, one calm line, no pop-up; the batch on screen stays as it is.
+        signOut: reason => {
           let was = "";
           try { was = localStorage.getItem(EMP_KEY) || ""; localStorage.removeItem(EMP_KEY); localStorage.removeItem(VIA_KEY); } catch (_) {}
+          kept.length = 0;
           renderChip();
-          if (was) toast("Signed out at midnight. Click “Set your name” to sign in for the new day.");
+          const why = reason === "idle" ? "Signed out after 10 minutes without input. Click “Set your name” to sign in again."
+            : reason === "closing" ? "Signed out at 5:00 pm. Click “Set your name” to sign in again."
+            : reason === "midnight" || !reason ? "Signed out at midnight. Click “Set your name” to sign in for the new day."
+            : "Signed out. Click “Set your name” to sign in again.";
+          if (was) toast(why);
         }
       });
     } catch (_) {}
@@ -478,21 +486,46 @@
         if (n >= all) { liveBatch = null; live("end"); } else live("note", n + " of " + all + " orders done");
       } catch (_) {}
     }
+    // one scan per order of the batch, with the pieces it holds; an order that did not load is an error (not found)
+    function recordBatch(how, recs) {
+      for (const r of recs) {
+        if (r.parts) act("scan", { orderId: r.id, parts: r.parts, detail: how });
+        else act("error", { orderId: r.id, detail: "order not found or not loaded (" + how + ")" });
+      }
+    }
+    // the batch is now in hand: every order that loaded, with all its pieces
+    function batchInHand(how, recs) {
+      const okIds = recs.filter(r => r.parts > 0).map(r => r.id);
+      if (okIds.length) {
+        const items = (window.cachedOrderItems || []).filter(it => idsOfItem(it).some(x => okIds.includes(x)));
+        liveBatch = { ids: okIds, done: new Set() };
+        live("batch", okIds, items, { note: how === "typed" ? "" : String(how).slice(0, 40) });
+      } else { liveBatch = null; live("end"); }
+    }
+    const signedNow = () => { try { return !!(window.StationActivity && typeof StationActivity.who === "function" && StationActivity.who()); } catch (_) { return false; } };
+    const KEEP_MS = 20 * 60 * 1000, KEEP_MAX = 25;
+    /** a name is set: the phone batches kept while nobody was signed in (last 20 minutes) are this person's scans, and the newest is in hand */
+    function release() {
+      try {
+        if (!kept.length || !signedNow()) return;
+        const now = Date.now(), fresh = kept.splice(0).filter(k => now - k.at <= KEEP_MS);
+        for (const k of fresh) recordBatch(k.how, k.recs);
+        const last = fresh[fresh.length - 1];
+        const onScreen = last ? last.recs.filter(r => (window.cachedOrderItems || []).some(it => idsOfItem(it).includes(r.id))) : [];
+        if (onScreen.length) batchInHand(last.how, onScreen);       // (a batch no longer on screen is not put in hand)
+      } catch (_) {}
+    }
     return {
       getEmployee,
+      kept: () => kept.length,
       scanned(orderIds, how) {
         try {
-          const okIds = [];
-          for (const id of [...new Set((orderIds || []).map(x => String(x).trim()).filter(Boolean))]) {
-            const parts = piecesOf(id);
-            if (parts) { act("scan", { orderId: id, parts, detail: how || "typed" }); okIds.push(id); }
-            else act("error", { orderId: id, detail: "order not found or not loaded (" + (how || "typed") + ")" });
-          }
-          if (okIds.length) {
-            const items = (window.cachedOrderItems || []).filter(it => idsOfItem(it).some(x => okIds.includes(x)));
-            liveBatch = { ids: okIds, done: new Set() };
-            live("batch", okIds, items, { note: (how || "typed") === "typed" ? "" : String(how).slice(0, 40) });
-          } else { liveBatch = null; live("end"); }
+          how = how || "typed";
+          const recs = [...new Set((orderIds || []).map(x => String(x).trim()).filter(Boolean))].map(id => ({ id, parts: piecesOf(id) }));
+          // A phone batch that loads while nobody is signed in is not lost to nobody: it loads on screen as ever (nothing is
+          // blocked) and is kept for 20 minutes in this tab; the person who signs in next has it recorded and in hand (release).
+          if (how !== "typed" && !signedNow()) { kept.push({ at: Date.now(), how, recs }); if (kept.length > KEEP_MAX) kept.shift(); return; }
+          recordBatch(how, recs); batchInHand(how, recs);
         } catch (_) {}
       },
       sorted(orderId) {
@@ -944,7 +977,17 @@ function enableSendMatch() {
 async function startScannedSortingListener() {
   try {
     const docRef = db.collection("Brites_Orders").doc("ScannedSortingOrder");
+    // The relay doc keeps the last batch the phone sent (nothing clears it) and Firestore hands it over again the moment this
+    // listener attaches, so every open or reload of this page loaded that old batch once more (one Etsy call per order, and a
+    // second scan recorded for each under whoever was signed in: sorting.html fixed it the same way). A batch is loaded once: the
+    // first snapshot is taken only when it was sent in the last few minutes and never loaded here, and a snapshot that repeats
+    // the batch already loaded (another field of the doc changed) is ignored.
+    const LAST_KEY = "sorting-2.lastRelayBatch";
+    let firstSnap = true, lastKey = "";
+    try { lastKey = localStorage.getItem(LAST_KEY) || ""; } catch (_) {}
     docRef.onSnapshot((docSnap) => {
+      const isFirst = firstSnap;
+      firstSnap = false;
       if (!docSnap.exists) {
         console.log("No 'ScannedSortingOrder' doc in Firestore yet.");
         return;
@@ -955,11 +998,37 @@ async function startScannedSortingListener() {
         return;
       }
       const scannedVal = docData["Order Number"];
+      const sentAt = String(docData["Shipping Label Timestamps"] || "");
+      const key = sentAt + "|" + scannedVal;
+      // on open, the last batch's numbers still wait in the field (as before), loaded only if Enter is pressed
+      const leaveInField = () => {
+        const el = document.getElementById("etsyOrderNumber");
+        if (isFirst && el && !el.value.trim()) el.value = scannedVal;
+      };
+      if (key === lastKey) {
+        console.log("Scanned batch already loaded here; not loading it again.");
+        leaveInField();
+        return;
+      }
+      lastKey = key;
+      try { localStorage.setItem(LAST_KEY, key); } catch (_) {}
+      if (isFirst) {
+        const t = Date.parse(sentAt);
+        if (!(t > 0 && Math.abs(Date.now() - t) < 10 * 60 * 1000)) {
+          console.log("Last scanned batch was sent earlier; not reloading it on open.");
+          leaveInField();
+          return;
+        }
+      }
       console.log("Scanned Sorting code =>", scannedVal);
 
       const input = document.getElementById("etsyOrderNumber");
       if (!input) return;
       input.value = scannedVal;
+
+      // A new phone scan is input at this station: it keeps the signed-in person's sign-in alive (the 10-minute rule counts
+      // the scanner as input; station-session.js). Guarded: without the call nothing changes.
+      try { window.StationSession && typeof StationSession.touch === "function" && StationSession.touch(); } catch (_) {}
 
       // [NEW: reset states as if app just opened]
       disableSendMatch();

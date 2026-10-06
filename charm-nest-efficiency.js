@@ -186,13 +186,13 @@
         scannedAt: T(c.scannedAt), thumbUrl: String(c.thumbUrl || ""), qr: c.qr && c.qr.text ? { text: String(c.qr.text) } : null, note: c.note ? String(c.note) : "",
         pieces: arr(c.pieces).filter(p => p && (p.id != null || p.label || p.thumbUrl)).map(p => ({ id: String(p.id == null ? "" : p.id), label: String(p.label || ""), thumbUrl: String(p.thumbUrl || "") })),
         station: key, stationLabel: label, raw: c }));   // (raw: the server's own entry; the shared order card reads what this model leaves out: kind, title, device, vectorUrl, photoUrl, pieceCount)
-      return { key, label, state: ["working", "idle", "offline"].includes(s.state) ? s.state : (current.length ? "working" : "idle"), people: arr(s.people).map(String), current,
+      return { key, label, state: ["working", "idle", "offline"].includes(s.state) ? s.state : (current.length ? "working" : "idle"), people: arr(s.people).map(x => String(x && typeof x === "object" ? x.name || "" : x)).filter(Boolean), current,
         lastEventAt: T(s.lastEventAt), counts: { partsToday: N(s.counts && s.counts.partsToday), ordersToday: N(s.counts && s.counts.ordersToday) } };
     });
-    const signedIn = [];                                                     // one row per person: at the Sorter app and at a sorting page is ONE person on, never two
-    for (const p of arr(r.signedIn).filter(p => p && p.name).map(p => ({ name: String(p.name), stationKey: displayStation(String(p.stationKey || p.station || "")), since: T(p.since), lastSeenAt: T(p.lastSeenAt) }))) {
-      const had = signedIn.find(x => x.name.toLowerCase() === p.name.toLowerCase());
-      if (had) { had.since = had.since && p.since ? Math.min(had.since, p.since) : had.since || p.since; had.lastSeenAt = Math.max(had.lastSeenAt || 0, p.lastSeenAt || 0) || null; } else signedIn.push(p);
+    const signedIn = [];                                                     // one row per person, station and task: at the Sorter app and at a sorting page is ONE row (Sorting), never two; two tasks at Welding stay two
+    for (const p of arr(r.signedIn).filter(p => p && p.name).map(p => ({ name: String(p.name), stationKey: displayStation(String(p.stationKey || p.station || "")), since: T(p.since), lastSeenAt: T(p.lastSeenAt), task: p.task === "welding" || p.task === "matching" ? p.task : "", lastInputAt: T(p.lastInputAt) }))) {
+      const had = signedIn.find(x => x.name.toLowerCase() === p.name.toLowerCase() && x.stationKey === p.stationKey && x.task === p.task);
+      if (had) { had.since = had.since && p.since ? Math.min(had.since, p.since) : had.since || p.since; had.lastSeenAt = Math.max(had.lastSeenAt || 0, p.lastSeenAt || 0) || null; had.lastInputAt = Math.max(had.lastInputAt || 0, p.lastInputAt || 0) || null; } else signedIn.push(p);
     }
     signedIn.sort((a, b) => (a.since || 0) - (b.since || 0) || a.name.localeCompare(b.name));
     const current = []; for (const s of stations) for (const c of s.current) current.push(c);

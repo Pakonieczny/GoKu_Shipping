@@ -233,7 +233,7 @@ async function reads() {
   assert.deepStrictEqual(lv.stations.map(s => s.key), ['sorting', 'welding', 'assembly', 'shipping', 'design', 'laser', 'inbox'], 'the board: no Sorter card, no QR Printer card; Inbox stays');
   const sorting = lv.stations.find(s => s.key === 'sorting'), laser = lv.stations.find(s => s.key === 'laser');
   assert.strictEqual(sorting.label, 'Sorting'); assert.strictEqual(sorting.state, 'working');
-  assert.deepStrictEqual(sorting.people.slice().sort(), ['Ana M.', 'Ben R.'], 'each person once');
+  assert.deepStrictEqual(sorting.names.slice().sort(), ['Ana M.', 'Ben R.'], 'each person once'); assert.strictEqual(sorting.people.length, 2, 'one entry per person at Sorting, though Ana is at two of its pages');
   assert.deepStrictEqual(sorting.devices.map(d => [d.device, d.label, d.state, d.person]), [['sorting-1', 'Sorting 1', 'idle', 'Ana M.'], ['sorting-2', 'Sorting 2', 'idle', 'Ben R.'], ['charm-nest-1', 'Sorter (nesting)', 'working', 'Ana M.'], ['qr-printer', 'QR Printer', 'offline', '']],
     'Sorting\'s pages: two sorting computers, the Sorter app (nesting) and the QR Printer page');
   assert.strictEqual(sorting.current.length, 1); assert.strictEqual(sorting.current[0].person, 'Ana M.'); assert.strictEqual(sorting.current[0].rid, O(1));
@@ -241,9 +241,9 @@ async function reads() {
   assert.deepStrictEqual(sorting.counts, { partsToday: 20, ordersToday: 8, scansToday: 13 }, 'today at Sorting: the sum of the Sorter app, the QR Printer and the sorting pages; an order is counted once');
   assert.deepStrictEqual(lv.signedIn.map(p => [p.name, p.stationKey]), [['Ben R.', 'sorting'], ['Ana M.', 'sorting'], ['Cy L.', 'laser']], 'Signed in now: Ana at the Sorter app and at a sorting page is ONE row');
   assert.strictEqual(lv.signedIn.length, 3, 'the count of people on');
-  assert.strictEqual(laser.state, 'working'); assert.deepStrictEqual(laser.people, ['Cy L.']); assert.strictEqual(laser.current.length, 1); assert.strictEqual(laser.current[0].title, 'GF Sheet 1');
+  assert.strictEqual(laser.state, 'working'); assert.deepStrictEqual(laser.names, ['Cy L.']); assert.strictEqual(laser.current.length, 1); assert.strictEqual(laser.current[0].title, 'GF Sheet 1');
   assert.deepStrictEqual(laser.devices.map(d => [d.device, d.label, d.state, d.person]), [['charm-nest-1', 'Sorter app', 'working', 'Cy L.']], 'a Laser person at the Sorter app is at Laser (page: Sorter app), not at Sorting');
-  assert(!sorting.people.includes('Cy L.'), 'and not a person of Sorting');
+  assert(!sorting.names.includes('Cy L.'), 'and not a person of Sorting');
   noSorterOrQr(lv, 'the live board');
   say('2 server reads: Overview (day, week), person (both forms), order list (+ old filter and word), one order, live board: Sorting only; totals = sum; one person once; time and orders counted once');
 
@@ -262,8 +262,8 @@ async function reads() {
   dst.put('Efficiency_Daily', `${DAY}__Di D.`, { day: DAY, person: 'Di D.', v: 1, events: 4, firstAt: Z('2026-10-05T14:00:00Z'), lastAt: Z('2026-10-05T14:50:00Z'), stations: { design: stat({ completes: 2, parts: 3, orders: 2, activeMs: 120000 }), sorter: stat({ completes: 1, parts: 1, orders: 1, activeMs: 60000 }) }, hours: {}, touched: { [O(31)]: { design: true }, [O(32)]: { design: true }, [O(33)]: { sorter: true } } });
   const dlv = await ask(dst, { op: 'live' });
   const dd = dlv.stations.find(s => s.key === 'design'), ds = dlv.stations.find(s => s.key === 'sorting');
-  assert.deepStrictEqual(dd.people, ['Di D.']); assert.deepStrictEqual(dd.devices.map(d => [d.device, d.label, d.state]).filter(x => x[0] === 'charm-nest-1'), [['charm-nest-1', 'Sorter app', 'idle']], 'a Design person at the Sorter app is at Design');
-  assert.deepStrictEqual(ds.people, [], 'nobody at Sorting: a session stored as design is never Sorting\'s'); assert.deepStrictEqual(dlv.signedIn.map(p => [p.name, p.stationKey]), [['Di D.', 'design']]);
+  assert.deepStrictEqual(dd.names, ['Di D.']); assert.deepStrictEqual(dd.devices.map(d => [d.device, d.label, d.state]).filter(x => x[0] === 'charm-nest-1'), [['charm-nest-1', 'Sorter app', 'idle']], 'a Design person at the Sorter app is at Design');
+  assert.deepStrictEqual(ds.names, [], 'nobody at Sorting: a session stored as design is never Sorting\'s'); assert.deepStrictEqual(dlv.signedIn.map(p => [p.name, p.stationKey]), [['Di D.', 'design']]);
   assert.deepStrictEqual(ds.counts, { partsToday: 1, ordersToday: 1, scansToday: 0 }, 'and only what was stored under sorter counts for Sorting');
   assert.deepStrictEqual(dd.counts, { partsToday: 3, ordersToday: 2, scansToday: 0 });
   const dov = await ask(dst, { op: 'overview', day: DAY, days: 1, trend: false });

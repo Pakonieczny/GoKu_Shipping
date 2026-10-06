@@ -16,7 +16,8 @@
   const STATION = { sorting: "Sorting", welding: "Weld", assembly: "Assembly", shipping: "Shipping", design: "Design Station", laser: "Laser", inbox: "Inbox" };
   /* ONE Sorting station: a session stored under "sorter" (the Sorter app) or "qr" (the QR Printer page) is shown as Sorting; the stored session is never changed (EfficiencyStations.displayStation, the server's rule) */
   const dispSt = k => { const f = root.EfficiencyStations && root.EfficiencyStations.displayStation; return typeof f === "function" ? f(k) : (k === "sorter" || k === "qr" ? "sorting" : k); };
-  const ENDS = { signOut: ["Signed out", "neutral"], midnight: ["Midnight", "neutral"], switched: ["Switched person", "info"], closed: ["Closed · no heartbeat", "warn"] };
+  const ENDS = { signOut: ["Signed out", "neutral"], midnight: ["Midnight", "neutral"], switched: ["Switched person", "info"], closed: ["Closed · no heartbeat", "warn"],
+    idle: ["10 min without input", "neutral"], closing: ["5:00 pm", "neutral"] };
   const RANGES = [[1, "Today"], [7, "7 days"], [30, "30 days"]];
   const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
