@@ -26,6 +26,8 @@ const assets = [
   "design-message.html",
   "design-print-1.html",
   "design-print.html",
+  "design-scan-1.html",
+  "design-scan.html",
   "design.html",
   "etsy-mail-1.html",
   "etsy-pricing.html",

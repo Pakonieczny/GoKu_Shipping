@@ -34,8 +34,9 @@
 (function () {
   "use strict";
   if (window.CNRole) return;
-  const KEY = "cn.role", ROLES = { laser: "Laser", design: "Design" }, OTHER = { laser: "design", design: "laser" };
+  const KEY = "cn.role", ROLES = Object.assign(Object.create(null), { laser: "Laser", design: "Design" }), OTHER = Object.assign(Object.create(null), { laser: "design", design: "laser" });   // (no prototype: a stored or pressed "constructor" or "__proto__" is not a role; ST2)
   const LOOKUP_MS = 6000;
+  const known = v => typeof v === "string" && !!ROLES[v];          // (exactly "laser" or "design": not an array that reads as one, not a prototype name; ST2)
   let checking = "", unknownFor = "", adm = "", seq = 0, lookup = null, listeners = [];
 
   const warn = (...a) => { try { console.warn("[CNRole]", ...a); } catch (_) {} };
@@ -60,7 +61,7 @@
   }
   function drop() { mem = null; lsDel(KEY); }
   const admin = () => !!adm && adm === nameNow();                    // (this page's memory only)
-  const role = () => { if (admin()) return ""; const r = read(); return r && r.admin !== true && ROLES[r.role] ? r.role : ""; };
+  const role = () => { if (admin()) return ""; const r = read(); return r && r.admin !== true && known(r.role) ? r.role : ""; };
   const ready = () => admin() || !!role();
   const state = () => {
     if (!nameNow()) return "none";
@@ -138,7 +139,7 @@
         reset(); bar({ state: "off" }); commit(!!quiet); changed();
       } else {
         const had = read();
-        if (ans === false) { unknownFor = ""; write({ v: 1, name, admin: false, role: had && ROLES[had.role] ? had.role : "" }); }    // (told: not the Admin: kept)
+        if (ans === false) { unknownFor = ""; write({ v: 1, name, admin: false, role: had && known(had.role) ? had.role : "" }); }    // (told: not the Admin: kept)
         else unknownFor = name;                                                                                                    // (not told: not the Admin for now, not kept as an answer, asked again)
         if (!quiet) ask({ hint: false }); else changed();
       }
@@ -155,7 +156,7 @@
 
   function choose(r) {
     try {
-      if (!ROLES[r]) return false;
+      if (!known(r)) return false;
       const name = nameNow(); if (!name || admin()) return false;
       const was = role();
       write(Object.assign({ v: 1, name, admin: false, role: r }, unknownFor === name ? { unk: true } : {}));     // (unk: the Admin answer was not had: asked again at the next load)
@@ -168,7 +169,7 @@
   function switchTo(r) {
     try {
       const was = role();
-      if (!was || !ROLES[r] || r === was) return false;
+      if (!was || !known(r) || r === was) return false;
       return choose(r);
     } catch (_) { return false; }
   }
@@ -182,7 +183,7 @@
       if (!window.CNEmployee || typeof CNEmployee.roleBar !== "function") { if (SS) SS.signedIn({ name, id: null }); return; }   // (without the bar there is nobody to ask: as before)
       if (adm && adm !== name) adm = "";
       const r = read();
-      if (admin() || (r && ROLES[r.role])) { commit(); changed(); return; }                       // already known for this name: nothing is asked
+      if (admin() || (r && known(r.role))) { commit(); changed(); return; }                       // already known for this name: nothing is asked
       if (checking === name) return;
       if (r && r.name === name) { ask({ hint: false }); return; }                                // known not to be the Admin, no role yet
       drop(); check(name, false);                                                                 // a new person: the Admin answer first

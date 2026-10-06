@@ -282,11 +282,12 @@ async function main() {
         await until(() => works(O.TWO).length, 'the scan');
         const w1 = works(O.TWO)[0];
         assert.equal(w1.person, WHO); assert.equal(w1.station, 'assembly'); assert.equal(w1.device, 'assembly-1'); assert.equal(w1._q, '');
-        assert.deepEqual(w1.order.pieces.map(p => p.id), [O.TWO + '_95001', O.TWO + '_95002']);
-        assert.deepEqual(w1.order.pieces.map(p => p.label), ['2 x Name Charm', 'Heart Charm']);
-        assert.deepEqual(w1.order.pieces.map(p => p.sku), ['AAA-1', 'BBB-2']);
-        assert.deepEqual(w1.order.pieces.map(p => p.listingId), ['166610010', '166610020']);
-        assert.equal(w1.order.customer, 'Test Buyer'); assert.equal(w1.order.pieceCount, 2); assert.equal(w1.order.orderNumber, O.TWO);
+        /* one piece per UNIT of every line (2 + 1 pieces are 3 cards), through the shared station-live-order.js: the board counts pieces, never lines */
+        assert.deepEqual(w1.order.pieces.map(p => p.id), ['95001-1', '95001-2', '95002-1']);
+        assert.deepEqual(w1.order.pieces.map(p => p.label), ['Name Charm', 'Name Charm', 'Heart Charm']);
+        assert.deepEqual(w1.order.pieces.map(p => p.sku), ['AAA-1', 'AAA-1', 'BBB-2']);
+        assert.deepEqual(w1.order.pieces.map(p => p.listingId), ['166610010', '166610010', '166610020']);
+        assert.equal(w1.order.customer, 'Test Buyer'); assert.equal(w1.order.pieceCount, 3); assert.equal(w1.order.orderNumber, O.TWO);
         await send('please check the chain length'); await send('wrong chain, needs rework');
         await page.evaluate(async () => {
           window.uploadViaResumable = async () => 'http://127.0.0.1/x.png';
@@ -305,7 +306,8 @@ async function main() {
         await open(O.ONE, 'phone', 'Brites_Orders/assembly-scan-1');
         await until(() => works(O.ONE).length, 'the phone scan');
         assert.equal(works(O.ONE)[0].person, WHO);
-        assert.deepEqual(works(O.ONE)[0].order.pieces.map(p => [p.label, p.sku]), [['3 x Solo Charm', 'SOLO-9']]);
+        assert.deepEqual(works(O.ONE)[0].order.pieces.map(p => [p.label, p.sku]), [['Solo Charm', 'SOLO-9'], ['Solo Charm', 'SOLO-9'], ['Solo Charm', 'SOLO-9']]);
+        assert.equal(works(O.ONE)[0].order.pieceCount, 3); assert.equal(works(O.ONE)[0].order.note, 'phone scan');
         await send('QA 2');
         await until(() => idled(O.ONE).length, 'the QA 2 stamp ends it');
         assert.deepEqual(workingNow(here()), []);
