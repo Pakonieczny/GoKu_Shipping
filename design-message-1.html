@@ -2419,6 +2419,12 @@ function metalToBadge(label){
               startScannedOrderListener();
               /* sign-in time: the name only; employee_id is the PIN itself and is never sent */
               try { if (window.StationSession) StationSession.signedIn({ name: nameFound, id: "" }); } catch (_) {}
+              /* the live board: the order that stayed on screen through an automatic sign-out (10 quiet minutes, 5:00 pm) is in hand again
+                 under the name that signed back in, when it is the same person (so the scan time stays the original one) */
+              try {
+                const held = window.__designMessageLive;
+                if (held && held.carry && held.carry === nameFound && window.StationLiveOrder) { held.carry = ""; StationLiveOrder.start(held.rid, held.txs, { note: "", holdMs: 600000, sync: true, keepTime: true }); }
+              } catch (_) {}
             } else {
               /* never the digits typed (the box masks them): say what to do, and clear the box for the next try */
               M.toast({ html: "That Employee Number is not on the list. Check the 6 digits and try again." });
@@ -2584,7 +2590,10 @@ function metalToBadge(label){
                (nothing here completes an order). Best effort through station-live-order.js; never throws or waits. */
             try {
               const L = window.StationLiveOrder;
-              if (L) { if (orderData && !orderData.error) L.start(orderNumber, txs, { note: e.stationHow === "scan" ? "phone scan" : "", holdMs: 600000 }); else L.end(); }
+              if (L) {
+                if (orderData && !orderData.error) { L.start(orderNumber, txs, { note: e.stationHow === "scan" ? "phone scan" : "", holdMs: 600000 }); window.__designMessageLive = { rid: orderNumber, txs, carry: "" }; }
+                else { L.end(); window.__designMessageLive = null; }
+              }
             } catch (_) {}
           }
         } catch (_) {}
@@ -7178,15 +7187,24 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
         return { name: localStorage.getItem("employee_name") || "", id: "" };
       } catch (_) { return null; }
     }
-    /* At midnight the login's own keys go and the PIN box opens again. The order on screen, the chat and
-       anything typed stay; scans wait for the PIN (isEmployeeLoggedIn), as after the Sign Out button. */
+    /* The person is signed out at midnight, after 10 minutes without input at this page ("idle") or at 5:00 pm ("closing"); the
+       Admin never is. Whatever the reason, the login's own keys go and the PIN box opens again with one calm line saying why.
+       The order on screen, the chat and anything typed stay; scans wait for the PIN (isEmployeeLoggedIn), as after the Sign Out
+       button. An order that was in hand on the board at an idle or closing sign-out is told again when the PIN signs back in. */
+    var WHY = {
+      midnight: "Signed out at midnight.",
+      idle: "Signed out after 10 minutes without input.",
+      closing: "Signed out at 5:00 pm."
+    };
     function signOut(reason) {
+      var was = ""; try { was = localStorage.getItem("employee_name") || ""; } catch (_) {}
       try { localStorage.removeItem("employee_id"); localStorage.removeItem("employee_name"); } catch (_) {}
       window.isEmployeeLoggedIn = false;
+      try { var h = window.__designMessageLive; if (h) h.carry = (reason === "idle" || reason === "closing") ? was : ""; } catch (_) {}   // (only the same person gets the order back)
       try { var f = document.getElementById("employeeName"); if (f) f.value = ""; } catch (_) {}
       try { var p = document.getElementById("employeeNumberInput"); if (p) { p.value = ""; p.dataset.raw = ""; } } catch (_) {}
       try { var m = window.M && M.Modal.getInstance(document.getElementById("userLoginModal")); if (m && !m.isOpen) m.open(); } catch (_) {}
-      try { if (reason === "midnight" && window.M && M.toast) M.toast({ html: "Signed out at midnight. Enter your Employee Number to sign back in." }); } catch (_) {}
+      try { if (WHY[reason] && window.M && M.toast) M.toast({ html: WHY[reason] + " Enter your Employee Number to sign back in." }); } catch (_) {}
     }
     try { if (window.StationSession) StationSession.init({ station: "design", device: "design-message-1", person: person, signOut: signOut }); } catch (_) {}
   })();
