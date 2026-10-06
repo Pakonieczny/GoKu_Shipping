@@ -127,8 +127,8 @@ const F = require('./efficiency-fixture.cjs');
     await page.keyboard.press('Escape'); assert.equal(await page.locator(`${V} .efChart .efTip`).isVisible(), false);
     // the stations strip
     const stations = await page.$$eval(`${V} .efSR`, rs => rs.map(r => r.innerText.replace(/\s+/g, ' ')));
-    assert.equal(stations.length, 5, 'the five stations: ' + stations.join(' | '));
-    assert(/^Shipping Michael/.test(stations[0]) && /^Welding Giovanna/.test(stations[2]) && /^Design —/.test(stations[4]), 'who is on each: ' + stations.join(' | '));
+    assert.equal(stations.length, 6, 'the six stations (Laser and Design are two of them): ' + stations.join(' | '));
+    assert(/^Shipping Michael/.test(stations[0]) && /^Welding Giovanna/.test(stations[2]) && /^Design —/.test(stations[4]) && /^Laser —/.test(stations[5]), 'who is on each: ' + stations.join(' | '));
     // the people: most active first, status, times, chips, figures
     const names = await page.$$eval(`${V} .efP .efName`, ns => ns.map(n => n.textContent));
     assert.deepEqual(names, ['Giovanna', 'Anna', 'Michael', 'Ivy'], 'most parts first');

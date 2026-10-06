@@ -990,25 +990,36 @@
        the person signed in, this station and the time (station-activity.js). Never a PIN. -->
   <script src="station-activity.js?v=20261005-et2"></script>
   <!-- Phone scans that arrive while nobody is signed in wait here and load, in order, right after the next sign-in (station-scan-queue.js). -->
-  <script src="station-scan-queue.js?v=20261003-sq1"></script>
+  <script src="station-scan-queue.js?v=20261006-ws3"></script>
   <script>
     try {
       StationSession.init({
         station: "assembly", device: "assembly-1",
         person: () => { try { const n = localStorage.getItem("employee_name"); return localStorage.getItem("employee_id") && n ? { name: n, id: null } : null; } catch (_) { return null; } },
-        signOut: () => {
+        /* The library calls this once it has ended the session: "midnight" (the day turned), "idle" (10 minutes without input at this
+           page) or "closing" (5:00 pm Toronto). It clears THIS page's own login, brings back its own PIN box and says why in one calm
+           line; the order, the fields and the chat stay on screen. (It also gets a second argument, who; this page has one person.) */
+        signOut: reason => {
           try { localStorage.removeItem("employee_id"); localStorage.removeItem("employee_name"); } catch (_) {}
           if (window.isEmployeeLoggedIn !== true) return;          // still loading: the page shows the PIN box itself
           window.isEmployeeLoggedIn = false;
           try { const pin = document.getElementById("employeeNumberInput"); if (pin) { pin.dataset.raw = ""; pin.value = ""; } } catch (_) {}
           try { const nm = document.getElementById("employeeName"); if (nm) nm.value = ""; } catch (_) {}
           try { M.Modal.getInstance(document.getElementById("userLoginModal")).open(); } catch (_) {}
-          try { M.toast({ html: "Signed out at midnight. Please sign in with your Employee Number for the new day." }); } catch (_) {}
+          const said = reason === "idle" ? "Signed out after 10 minutes without input. Please sign in with your Employee Number to carry on."
+            : reason === "closing" ? "Signed out at 5:00 pm. Please sign in with your Employee Number to carry on."
+            : reason === undefined || reason === "midnight" ? "Signed out at midnight. Please sign in with your Employee Number for the new day."
+            : "Signed out. Please sign in with your Employee Number.";
+          try { M.toast({ html: said }); } catch (_) {}
         },
         labelHost: "#userLoginModal", labelCss: "position:absolute;right:10px;bottom:6px;max-width:150px;text-align:right;"
       });
     } catch (_) {}
   </script>
+
+  <!-- The order in hand right now: the scan shows it on the console's live stations board with one piece per unit (and its size), so the card
+       counts pieces and finds each design's picture; the first Team stamp ends it (station-live-order.js). Optional: without it the page tells the board itself. -->
+  <script src="station-live-order.js?v=20261005-et2"></script>
 
   <!-- jQuery & Materialize -->
   <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
@@ -2356,25 +2367,33 @@ function metalToBadge(label){
         const ACT_FLAG = /\b(rework|re-?do|re-?make|reject(?:ed)?|defect(?:ive)?|broken|damaged|wrong|flag(?:ged)?|hold)\b/i;
         const actWho = () => { try { return String(localStorage.getItem("employee_name") || "").trim(); } catch (_) { return ""; } };
         /* The live stations board (StationActivity.working / idle; plans/employee-hr/api.md): the scan shows this order, one piece
-           per line of the receipt, as this person's current order AT ONCE; the Team's first stamp (QA1, QA 2, Done, Assembled), a
+           per unit of every line of the receipt (StationLiveOrder), as this person's current order AT ONCE; the Team's first stamp (QA1, QA 2, Done, Assembled), a
            cancelled order or a new scan ends it, and a message or picture to the Team keeps it alive. After 12 quiet minutes the
            station shows idle again. Best effort: nothing here throws, waits or touches the network, and the page works exactly as
            before when the live layer is missing or down (nothing shows with nobody signed in). */
         const ACT_LIVE_HOLD = 12 * 60e3;
-        function actLive(orderId, data) {
+        function actLive(orderId, data, how) {
           try {
             const S = window.StationActivity;
             if (!S || typeof S.working !== "function") return;
+            const note = how === "scan" ? "phone scan" : "";
+            /* one piece per UNIT of every line (2 + 1 pieces are 3 cards, with the line's size), the true count, "phone scan" as the note */
+            const L = window.StationLiveOrder;
+            if (L && typeof L.start === "function") {
+              L.start(orderId, data && Array.isArray(data.transactions) ? data.transactions : [], { customer: String((data && data.name) || ""), note, holdMs: ACT_LIVE_HOLD });
+              return;
+            }
             const list = data && Array.isArray(data.transactions) ? data.transactions.slice(0, 24) : [];
             const pieces = list.map((it, i) => {
               const q = Math.floor(Number(it && (it.quantity ?? it.qty))) || 1, title = String((it && it.title) || "").replace(/\s+/g, " ").trim().slice(0, 50) || "Piece " + (i + 1);
               let sku = ""; try { sku = String((it && it.sku) || (typeof extractSkuFromEtsy === "function" ? extractSkuFromEtsy(it) : "") || ""); } catch (_) {}
               return { id: orderId + "_" + (String((it && it.transaction_id) || "").replace(/\D/g, "").slice(0, 20) || i + 1), label: (q > 1 ? q + " x " : "") + title, sku, listingId: it && it.listing_id };
             });
-            S.working({ rid: orderId, orderNumber: orderId, customer: String((data && data.name) || ""), pieces, pieceCount: list.length, holdMs: ACT_LIVE_HOLD });
+            let units = 0; for (const it of (data && Array.isArray(data.transactions) ? data.transactions : [])) { const q = Math.floor(Number(it && (it.quantity ?? it.qty))); units += q > 0 ? q : 1; }
+            S.working({ rid: orderId, orderNumber: orderId, customer: String((data && data.name) || ""), pieces, pieceCount: units, note, holdMs: ACT_LIVE_HOLD });
           } catch (_) {}
         }
-        function actLiveEnd(orderId) { try { if (window.StationActivity && StationActivity.idle) StationActivity.idle(orderId); } catch (_) {} }
+        function actLiveEnd(orderId) { try { if (window.StationLiveOrder && StationLiveOrder.end) StationLiveOrder.end(orderId); else if (window.StationActivity && StationActivity.idle) StationActivity.idle(orderId); } catch (_) {} }
         function actLiveTouch() { try { if (window.StationActivity && StationActivity.touch) StationActivity.touch(); } catch (_) {} }
         function actScan(orderId, data, how) {
           try {
@@ -2387,7 +2406,7 @@ function metalToBadge(label){
             Object.assign(actLoaded, { id: data && !data.error ? orderId : "", parts, sku });   // not loaded when the lookup failed: its pieces stay unknown
             actLog("scan", { orderId, sku, parts, detail: how === "scan" ? "phone scan" : how === "paste" ? "pasted" : "typed" });
             if (!data || data.error) actLog("error", { orderId, detail: "order lookup failed" });
-            actLive(orderId, data);                 // the live board: this is now the person's current order
+            actLive(orderId, data, how);            // the live board: this is now the person's current order
           } catch (_) {}
         }
         /* the QA number a stamp names: "QA1" is 1, "QA 2" is 2, "qa2 ok" is 2; 0 when it names none ("Done", "Assembled") */
@@ -2544,7 +2563,7 @@ function metalToBadge(label){
               M.toast({ html: "Welcome, " + nameFound + "!" });
 
               /* remember the current employee for future reloads */
-              localStorage.setItem("employee_id",  empNumber);
+              localStorage.setItem("employee_id", "signed-in");        // a marker only (the page and the session library test that it is set): the PIN itself is never kept in the browser
               localStorage.setItem("employee_name", nameFound);
               try { window.StationSession && StationSession.signedIn({ name: nameFound, id: null }); } catch (_) {}   // the name only, never the PIN
 
@@ -3643,6 +3662,7 @@ function metalToBadge(label){
           if (docSnap.exists){
             const data = docSnap.data();
             if (data && data["Order Number"]){
+              try { window.StationSession && StationSession.touch && StationSession.touch(); } catch (_) {}   // a scan from this station's phone is input at the station
               const orderNumber   = data["Order Number"];
               if (!scanQueue && !window.isEmployeeLoggedIn) return;   // (queue script missing: as before, nobody signed in = nothing to do)
               if (orderNumber === lastScanProcessed) return;   // duplicate → ignore
