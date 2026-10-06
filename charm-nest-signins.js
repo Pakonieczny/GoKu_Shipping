@@ -14,7 +14,8 @@
   const doc = root.document, TZ = "America/New_York", DAY_MS = 86400000;
   const options = { pollMs: 30000, tickMs: 15000 };
   const STATION = { sorting: "Sorting", welding: "Weld", assembly: "Assembly", shipping: "Shipping", design: "Design Station", laser: "Laser", sorter: "Sorter", qr: "QR Printer", inbox: "Inbox" };
-  const ENDS = { signOut: ["Signed out", "neutral"], midnight: ["Midnight", "neutral"], switched: ["Switched person", "info"], closed: ["Closed · no heartbeat", "warn"] };
+  const ENDS = { signOut: ["Signed out", "neutral"], midnight: ["Midnight", "neutral"], switched: ["Switched person", "info"], closed: ["Closed · no heartbeat", "warn"],
+    idle: ["10 min without input", "neutral"], closing: ["5:00 pm", "neutral"] };
   const RANGES = [[1, "Today"], [7, "7 days"], [30, "30 days"]];
   const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 

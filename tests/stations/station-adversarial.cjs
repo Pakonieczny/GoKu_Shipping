@@ -636,7 +636,7 @@ async function main() {
         }
         const init = /StationSession\.init\(\{\s*station:\s*["'](\w+)["']\s*,\s*device:\s*["']([\w-]+)["']/.exec(s);
         assert(init, f + ': has a StationSession.init with its station and device');
-        assert.equal(catalog.get(init[2]), init[1], f + ': ' + init[1] + '/' + init[2] + ' is a station and device the console lists');
+        assert.equal(catalog.get(init[2]), require(path.join(root, 'netlify/functions/_activityKinds.js')).displayStation(init[1]), f + ': ' + init[1] + '/' + init[2] + ' is a station and device the console lists');
       }
       for (const [n, m] of Object.entries(tags)) {
         const set = new Set(m.values());
