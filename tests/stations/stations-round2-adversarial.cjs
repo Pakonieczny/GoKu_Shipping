@@ -611,6 +611,19 @@ async function welding() {
       eq(p.totals.orders, 1, 'overview person orders'); eq(O.body.business.totals.orders, 1, 'business orders');
       eq(Q.body.total, 1, 'the person\'s order list agrees with the number above it: ' + (Q.body.orders || []).map(o => o.rid));
     });
+    await check('one person signed in at two stations at once (two computers, a missed sign-out): signed time is covered once, each station keeps its own hours, the board counts one person', async () => {
+      const st = world('2026-10-07T19:00:00Z');
+      st.put('Station_Sessions', 'two-1', sessionDoc('two-1', 'Two Places', 'assembly', nyAt(TODAY, 9), nyAt(TODAY, 10), { device: 'assembly-1' }));
+      st.put('Station_Sessions', 'two-2', sessionDoc('two-2', 'Two Places', 'welding', nyAt(TODAY, 9, 30), nyAt(TODAY, 10, 30), { device: 'weld-1', task: 'welding' }));
+      const O = await board({ op: 'overview', days: 1 }); const p = O.body.people.find(x => x.name === 'Two Places'); ok(p, 'the person is in the overview');
+      eq(p.totals.signedInMin, 90, 'the union of 9:00-10:00 and 9:30-10:30 is 90 minutes, not 120: ' + p.totals.signedInMin);
+      const row = k => (p.stations || []).find(x => x.station === k) || {}; const mins = r => r.signedInMin != null ? r.signedInMin : r.hoursMin != null ? r.hoursMin : r.minutes;
+      ok(mins(row('assembly')) === 60 && mins(row('welding')) === 60, 'each station keeps its own hour: ' + JSON.stringify(p.stations));
+      world('2026-10-07T14:00:00Z'); const t = wall();
+      cur.put('Station_Sessions', 'two-3', sessionDoc('two-3', 'Two Places', 'assembly', t - 40 * MIN, null, { device: 'assembly-1', lastSeenAt: t - MIN }));
+      cur.put('Station_Sessions', 'two-4', sessionDoc('two-4', 'Two Places', 'welding', t - 20 * MIN, null, { device: 'weld-1', task: 'matching', lastSeenAt: t - MIN }));
+      const L = await board({ op: 'live' }); eq(L.status, 200); eq(new Set((L.body.signedIn || []).map(x => x.name)).size, 1, 'one person on, at two stations: ' + JSON.stringify((L.body.signedIn || []).map(x => [x.name, x.stationKey])));
+    });
     await check('hostile people: a PIN, a respelled task, an odd task or a name with digits never makes a session of the wrong shape', async () => {
       world(); const pc = computer('bench'), tab = mk(pc);
       for (const who of [{ name: PIN, task: 'matching' }, { name: '   ', task: 'matching' }, { name: '', task: 'welding' }, null, undefined, 5, { task: 'welding' }]) tab.SS.signedIn(who);
