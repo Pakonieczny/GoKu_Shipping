@@ -30,7 +30,7 @@ test('guest token expires, cannot be forged or reused, and provider failures kee
   const f=fixture({fetch:async()=>Response.json({error:{code:'insufficient_quota',message:'private provider detail'}},{status:429})});const first=await token(f);
   assert.equal((await f.handler(request({action:'start',sdp:SDP,demoToken:first+'x'}))).status,401);assert.equal(f.rows.size,0);
   const failed=await f.handler(request({action:'start',sdp:SDP,demoToken:first}));assert.equal(failed.status,503);assert.doesNotMatch(await failed.text(),/quota|private provider detail|fixture-only/);assert.equal(f.rows.get('VoiceUsage/preview-budget').reservedCents,100);
-  assert.equal((await f.handler(request({action:'start',sdp:SDP,demoToken:first}))).status,429);assert.equal(f.rows.get('VoiceUsage/preview-budget').reservedCents,100);
+  const reused=await f.handler(request({action:'start',sdp:SDP,demoToken:first}));assert.equal(reused.status,401);assert.equal((await reused.json()).code,'VOICE_SESSION_REUSED');assert.equal(f.rows.get('VoiceUsage/preview-budget').reservedCents,100);
   const second=await token(f);f.advance(600001);assert.equal((await f.handler(request({action:'start',sdp:SDP,demoToken:second}))).status,401);assert.equal(f.rows.get('VoiceUsage/preview-budget').calls,1);
   assert.deepEqual(f.rows.get('VoiceDiagnostics/last-start'),{at:1000000,stage:'provider',providerStatus:429,code:'insufficient_quota'});
 });
