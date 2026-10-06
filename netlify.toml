@@ -194,6 +194,15 @@
 [functions."investorKick"]
   schedule = "* * * * *"
 
+# ─── Stations: auto sign-out sweep (Paul, 6 Oct 2026) ───────────────────────
+# Every 5 minutes it ends the stations' open sign-in sessions whose page died or
+# never said so, at the person's LAST INPUT (10 minutes idle, 5:00 pm Toronto;
+# Admins exempt). Declared here as well as in the function file: Netlify did not
+# register the file's own CommonJS `exports.config` schedule (deploy
+# function_schedules had no entry for it), as with every other cron above.
+[functions."stationSessionsSweepCron"]
+  schedule = "*/5 * * * *"
+
 [[headers]]
   for = "/*"
   [headers.values]
