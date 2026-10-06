@@ -1097,7 +1097,7 @@
   <!-- Sign-in time per person and computer, and the midnight sign-out (station-session.js). The PIN is never kept or sent:
        the session carries the name only. At midnight (New York) the PIN box comes back; the order, the fields and the chat
        stay on screen. -->
-  <script src="station-session.js?v=20261006-st2"></script>
+  <script src="station-session.js?v=20261006-ad3"></script>
   <script src="station-activity.js?v=20261006-st2"></script>
   <!-- Phone scans that arrive while nobody is signed in wait here and load, in order, right after the next sign-in (station-scan-queue.js). -->
   <script src="station-scan-queue.js?v=20261006-int1"></script>
@@ -1150,7 +1150,7 @@
       StationSession.init({
         station: "welding", device: "weld-1", multi: true,
         people: () => weldRoster().map(p => ({ name: p.name, task: p.task })),
-        signOut: (reason, who) => {                              // the day turned (or an idle / closing rule): once per person
+        signOut: (reason, who) => {                              // the day turned (or the 17:00 closing rule): once per person
           try { weldSave(weldRoster().filter(p => !(who && weldNameKey(p.name) === weldNameKey(who.name) && p.task === who.task))); } catch (_) {}
           try { if (window.weldAfterChange) window.weldAfterChange(reason, who, false); } catch (_) {}   // (not yet defined while the page loads: it shows the PIN box itself)
         },
@@ -2762,8 +2762,9 @@ function metalToBadge(label){
         try { window.StationSession && StationSession.signedOut(reason || "signOut", { name, task }); } catch (_) {}
         weldAfterChange(reason || "signOut", { name, task }, true);
       }
-      const WELD_OUT = { midnight: "Signed out at midnight. Please sign in with your Employee Number for the new day.",
-        idle: "Signed out after 10 minutes without input. Please sign in again.", closing: "Signed out at 5:00 pm. Please sign in again tomorrow." };
+      /* the Welding station signs people out at 17:00 Toronto time and at midnight, never for being idle (Paul, 6 Oct 2026): StationSession words 17:00 */
+      const WELD_OUT = { midnight: "Signed out at midnight. Please sign in with your Employee Number for the new day.", closing: "Signed out at 5:00 pm. Please sign in again." };
+      const weldSaid = reason => { try { const n = window.StationSession && StationSession.notice(reason, "welding"); return n ? n + " Please sign in again." : ""; } catch (_) { return ""; } };
       /* after anybody left the roster (a tap, midnight, idle, closing): the page follows the roster */
       function weldAfterChange(reason, who, announce) {
         try {
@@ -2778,7 +2779,7 @@ function metalToBadge(label){
           window.isEmployeeLoggedIn = false;
           if (chatUnsub) chatUnsub();                  // stop Brites listener
           weldOpenLogin(false);
-          weldToast(WELD_OUT[reason] || (reason === "signOut" ? "Signed out." : "Signed out. Please sign in again."));
+          weldToast(weldSaid(reason) || WELD_OUT[reason] || (reason === "signOut" ? "Signed out." : "Signed out. Please sign in again."));
         } catch (_) {}
       }
       window.weldAfterChange = weldAfterChange;
