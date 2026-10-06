@@ -17,7 +17,7 @@ test('conversation transitions have explicit original-robot behavior cues', () =
     greet: 'anticipation', acknowledge: 'listening', focus: 'thinking',
     explain: 'speaking', confirm: 'celebrate', reassure: 'reassure'
   });
-  assert.match(sceneSource, /identity: 'original single-eye pebble robot'/);
+  assert.match(sceneSource, /identity: 'original twin-ribbon pebble robot'/);
   assert.match(sceneSource, /no human iris or mouth/);
 });
 
@@ -140,8 +140,8 @@ function meshFixture() {
   const poseEnd = sceneSource.indexOf('  function render(pose', poseStart);
   assert.ok(start > 0 && end > start && poseStart > end && poseEnd > poseStart);
   const materialNames = ['ivory','gold','paleGold','face','lidMaterial','eyeMaterial','pupilMaterial','glint','gemMaterial','corneaMaterial','irisMaterial','mouthMaterial'];
-  const materials = Object.fromEntries(materialNames.map(name => [name, new THREE.MeshPhysicalMaterial()]));
-  const script = '(()=>{const geometries=new Set(),geometry=value=>{geometries.add(value);return value;},segments=(high,minimum=16)=>Math.max(minimum,Math.round(high*quality.geometryScale)),avatar=new THREE.Group();' + sceneSource.slice(start, end) + '\nconst key=new THREE.SpotLight(),eyeLight=new THREE.PointLight();let sampleTime=.42,reducedMotion=false;' + sceneSource.slice(poseStart, poseEnd) + '\nreturn {avatar,arms,statusBars,orbit,pose:value=>applyPose(value),dispose:()=>geometries.forEach(value=>value.dispose())};})()';
+  const materials = Object.fromEntries(materialNames.map(name => [name, ['irisMaterial', 'mouthMaterial', 'glint'].includes(name) ? new THREE.MeshBasicMaterial({toneMapped: false}) : new THREE.MeshPhysicalMaterial()]));
+  const script = '(()=>{const geometries=new Set(),geometry=value=>{geometries.add(value);return value;},segments=(high,minimum=16)=>Math.max(minimum,Math.round(high*quality.geometryScale)),avatar=new THREE.Group();' + sceneSource.slice(start, end) + '\nconst key=new THREE.SpotLight(),eyeLight=new THREE.PointLight();let sampleTime=.42,reducedMotion=false;' + sceneSource.slice(poseStart, poseEnd) + '\nreturn {avatar,arms,eyes,statusBars,orbit,geometries,pose:value=>applyPose(value),dispose:()=>geometries.forEach(value=>value.dispose())};})()';
   const model = vm.runInNewContext(script, {THREE, quality: avatar.qualityFor({width: 390}), ...materials, AVATAR_SCENE_DECLARATIONS: {stateColors: {idle:'#4aa8ff',listening:'#49c9ff',thinking:'#ab87ff',speaking:'#ffcb79',success:'#72ddd1',error:'#ffc28e'}}});
   return {...model, destroy() {model.dispose(); Object.values(materials).forEach(value => value.dispose());}};
 }
@@ -150,14 +150,22 @@ test('production mesh consumes cue accents without adding geometry or unsafe val
   const f = meshFixture();
   try {
     f.pose(avatar.poseFor({state: 'idle', time: .42}));
-    const neutralBars = f.statusBars.map(bar => bar.scale.y);
+    const neutralBars = f.statusBars.map(bar => bar.scale.y), neutralEyes = f.eyes.map(eye => eye.apertureGeometry.attributes.position.array.slice()), geometryCount = f.geometries.size;
     f.pose(avatar.poseFor({state: 'listening', time: .42, mannerism: 'acknowledge', mannerismElapsed: .42}));
-    assert.notDeepEqual(f.statusBars.map(bar => bar.scale.y), neutralBars);
+    assert.equal(f.eyes.length, 2);
+    f.eyes.forEach((eye, index) => assert.notDeepEqual(eye.apertureGeometry.attributes.position.array, neutralEyes[index], 'listening changes each ribbon silhouette'));
+    assert.deepEqual(f.statusBars.map(bar => bar.scale.y), neutralBars, 'listening does not invent a speech waveform');
+    assert.ok(f.statusBars.every(bar => !bar.visible));
     const left = f.arms.find(item => item.side === -1).group, right = f.arms.find(item => item.side === 1).group;
     assert.ok(Math.abs(right.rotation.z) > Math.abs(left.rotation.z));
     f.pose(avatar.poseFor({state: 'success', emotion: 'celebrate', time: .42, elapsed: .42, mannerism: 'confirm', mannerismElapsed: .42}));
     assert.ok(Math.abs(right.rotation.z) > Math.abs(left.rotation.z));
-    assert.ok(Number.isFinite(f.orbit.rotation.z));
+    assert.equal(f.orbit.visible, false); assert.equal(f.orbit.children.length, 0);
+    assert.equal(f.geometries.size, geometryCount, 'state cues reuse geometry');
+    for (const geometry of f.geometries) {
+      for (const attribute of Object.values(geometry.attributes)) assert.ok([...attribute.array].every(Number.isFinite));
+      if (geometry.index) assert.ok([...geometry.index.array].every(index => Number.isInteger(index) && index >= 0 && index < geometry.attributes.position.count));
+    }
     f.avatar.traverse(object => {
       if (!object.isObject3D) return;
       for (const vector of [object.position, object.rotation, object.scale]) for (const key of ['x', 'y', 'z']) assert.ok(Number.isFinite(vector[key]));
