@@ -203,6 +203,7 @@ async function main() {
     }
     const deliver = async (desk, body) => desk.page.evaluate(n => { const cbs = window.__fbSnaps['Brites_Orders/assembly-scan-' + n.n]; cbs[cbs.length - 1]({ exists: true, data: () => ({ 'Order Number': n.code }) }); }, { n: desk.n, code: body.orderNumField });
 
+    const namesOf = st => (st.people || []).map(p => (typeof p === 'string' ? p : p && p.name));     // the board's people: names, or (C4) objects with the name in them
     const sessionsOf = async (name, dev) => (await B.list('Station_Sessions')).filter(s => s.person === name && s.device === dev);
     const eventsOf = async dev => (await B.list('Station_Activity')).filter(e => e.device === dev).sort((a, b) => a.at - b.at || a.seq - b.seq);
     const liveDoc = async (dev, name) => B.doc('Station_Live', `assembly__${dev}__${name}`);
@@ -286,7 +287,7 @@ async function main() {
         const lv = await B.ask({ op: 'live' }); lastLive = Date.now();
         assert.equal(lv.ok, true, JSON.stringify(lv).slice(0, 200));
         const st = lv.stations.find(s => s.key === 'assembly'); assert(st, 'no assembly station');
-        assert(st.people.includes(A), 'people: ' + JSON.stringify(st.people));
+        assert(namesOf(st).includes(A), 'people: ' + JSON.stringify(st.people));
         const cur = st.current.find(c => c.device === dev && c.person === A); assert(cur, 'no live order for ' + dev + ': ' + JSON.stringify(st.current.map(c => [c.device, c.person])));
         assert.equal(cur.rid, O.TWO); assert.equal(cur.deviceLabel, 'Assembly ' + n); assert.deepEqual(cur.qr, { text: O.TWO });
         assert.equal(cur.pieceCount, UNITS(O.TWO)); assert.equal(cur.pieces.length, UNITS(O.TWO));
@@ -380,7 +381,7 @@ async function main() {
       assert.equal(st.counts.partsToday, sum('parts'), 'board pieces'); assert.equal(biz.parts, sum('parts'), 'Overview pieces');
       assert.equal(st.counts.scansToday, sum('scans'), 'board scans'); assert.equal(biz.scans, sum('scans'), 'Overview scans');
       assert.equal(st.counts.ordersToday, biz.orders, 'board orders = Overview orders'); assert.equal(biz.orders, sum('touched'), 'orders worked');
-      for (const n of stations) assert(st.people.includes(PEOPLE[n][0]), PEOPLE[n][0] + ' is not on the board');
+      for (const n of stations) assert(namesOf(st).includes(PEOPLE[n][0]), PEOPLE[n][0] + ' is not on the board');
     });
 
     /* 7 · the page's own signOut copes with the new end reasons, then the next person signs in */

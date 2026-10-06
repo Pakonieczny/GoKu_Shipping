@@ -990,7 +990,7 @@
        the person signed in, this station and the time (station-activity.js). Never a PIN. -->
   <script src="station-activity.js?v=20261005-et2"></script>
   <!-- Phone scans that arrive while nobody is signed in wait here and load, in order, right after the next sign-in (station-scan-queue.js). -->
-  <script src="station-scan-queue.js?v=20261003-sq1"></script>
+  <script src="station-scan-queue.js?v=20261006-ws3"></script>
   <script>
     try {
       StationSession.init({
@@ -2367,7 +2367,7 @@ function metalToBadge(label){
         const ACT_FLAG = /\b(rework|re-?do|re-?make|reject(?:ed)?|defect(?:ive)?|broken|damaged|wrong|flag(?:ged)?|hold)\b/i;
         const actWho = () => { try { return String(localStorage.getItem("employee_name") || "").trim(); } catch (_) { return ""; } };
         /* The live stations board (StationActivity.working / idle; plans/employee-hr/api.md): the scan shows this order, one piece
-           per line of the receipt, as this person's current order AT ONCE; the Team's first stamp (QA1, QA 2, Done, Assembled), a
+           per unit of every line of the receipt (StationLiveOrder), as this person's current order AT ONCE; the Team's first stamp (QA1, QA 2, Done, Assembled), a
            cancelled order or a new scan ends it, and a message or picture to the Team keeps it alive. After 12 quiet minutes the
            station shows idle again. Best effort: nothing here throws, waits or touches the network, and the page works exactly as
            before when the live layer is missing or down (nothing shows with nobody signed in). */
