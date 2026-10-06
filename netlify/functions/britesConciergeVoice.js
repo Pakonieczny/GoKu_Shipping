@@ -6,7 +6,11 @@ export default async(req)=>{
   env.OPENAI_API_KEY=env.BRITES_CONCIERGE_OPENAI_API_KEY||env.OPENAI_API_KEY;
   env.BRITES_GROWTH_SANDBOX=core.namespace(env)==='Brites_Growth_Sandbox'?'1':'0';
   // A disabled preview needs neither storage nor a provider connection.
-  if(env.BRITES_CONCIERGE_REALTIME_ENABLED!=='1')return voice.createHandler({env})(req);
+  if(env.BRITES_CONCIERGE_REALTIME_ENABLED!=='1'){
+    let body;try{const raw=await req.clone().text();if(raw.length>66000)return new Response(JSON.stringify({error:'Request too large.'}),{status:413,headers:{'Content-Type':'application/json','Cache-Control':'no-store'}});body=JSON.parse(raw);}catch{}
+    if(body?.action!=='allocation')return voice.createHandler({env})(req);
+    if(!body||Array.isArray(body)||Object.keys(body).some(key=>key!=='action'))return new Response(JSON.stringify({error:'Allocation inspection accepts only its fixed read action.'}),{status:400,headers:{'Content-Type':'application/json','Cache-Control':'no-store'}});
+  }
   try{
     const db=core.makeDb(env),service=core.createGrowthService({db,env});
     async function authorize(request){const supplied=request.headers.get('X-Growth-Key')||request.headers.get('X-Edit-Passcode');if(!supplied)return false;if(core.sameSecret(supplied,env.BRITES_GROWTH_ADMIN_KEY))return true;const saved=await db.collection('config').doc('editPasscode').get();return saved.exists&&core.sameSecret(supplied,saved.data().passcode);}
