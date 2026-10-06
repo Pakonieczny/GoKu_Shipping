@@ -79,6 +79,39 @@ const nonnegativeInteger=value=>Number.isSafeInteger(value)&&value>=0;
 const positiveInteger=value=>Number.isSafeInteger(value)&&value>0;
 const validCallId=value=>typeof value==='string'&&/^rtc_[A-Za-z0-9_-]{1,180}$/.test(value);
 const validRequestId=value=>typeof value==='string'&&/^req_[A-Za-z0-9_-]{1,180}$/.test(value);
+const validGrantId=value=>typeof value==='string'&&/^continuation-[a-f0-9]{64}$/.test(value);
+const NATIVE_GRANT_WINDOW_MS=45*60000;
+function grantValues(value,id){
+  if(!recordObject(value)||!validGrantId(id)||value.id!==id||value.schema!==1||value.kind!=='realtime_voice'||value.provider!=='openai'||!positiveInteger(value.allocatedCents)||value.allocatedCents>1000||!positiveInteger(value.issuedAt)||!positiveInteger(value.expiresAt)||value.expiresAt<=value.issuedAt||value.expiresAt-value.issuedAt>NATIVE_GRANT_WINDOW_MS||!['available','consumed'].includes(value.state))return null;
+  if(value.state==='available'&&(value.reservedCents!==0||value.spentCents!==0||value.consumedAt!=null)||value.state==='consumed'&&(value.reservedCents!==value.allocatedCents||value.spentCents!==0||!positiveInteger(value.consumedAt)||value.consumedAt<value.issuedAt||value.consumedAt>=value.expiresAt))return null;
+  return {id,state:value.state,allocatedCents:value.allocatedCents,reservedCents:value.reservedCents,spentCents:0,issuedAt:value.issuedAt,expiresAt:value.expiresAt,consumedAt:value.consumedAt??null};
+}
+async function activeContinuation(service,cents,at){
+  const collection=service.col('VoiceContinuations'),active=await collection.doc('active').get();if(!active.exists)return null;
+  const id=active.data()?.grantId;if(!validGrantId(id))throw Error('Invalid continuation pointer.');
+  const saved=await collection.doc(id).get(),grant=saved.exists?grantValues(saved.data(),id):null;if(!grant)throw Error('Invalid continuation authorization.');
+  return grant.state==='available'&&grant.allocatedCents===cents&&grant.issuedAt<=at&&grant.expiresAt>at?grant:null;
+}
+async function authorizeContinuation(service,env,body,now){
+  const core=require('./_britesGrowth'),cents=Math.ceil(Number(env.BRITES_CONCIERGE_REALTIME_RESERVE_USD)*100),control=await service.setup();
+  if(control.enabled===false||!positiveInteger(cents)||cents>1000||!demoCap(env)||cents>Math.floor(demoCap(env)*100))return {error:'Voice authorization is unavailable.',code:'VOICE_GUARD_UNAVAILABLE',status:503};
+  const stopAt=Math.min(Number(control.stopAt)||core.STOP_AT,core.STOP_AT);
+  const state=service.col('State'),collection=service.col('VoiceContinuations');
+  return collection.firestore.runTransaction(async tx=>{
+    const [controller,checkpoint,budget,active]=await Promise.all([tx.get(state.doc('controller')),tx.get(state.doc('checkpoint')),tx.get(service.col('VoiceUsage').doc('preview-budget')),tx.get(collection.doc('active'))]);
+    const lease=controller.exists?controller.data():null,current=checkpoint.exists?checkpoint.data():{},legacy=current.lease;
+    const at=now();if(at>=stopAt)return {error:'Sandbox testing has ended.',status:409};
+    if(!recordObject(lease)||lease.owner!==body.owner||!positiveInteger(lease.leaseUntil)||lease.leaseUntil<=at||!core.sameSecret(core.hash(body.token),lease.tokenHash))return {error:'An active owned repair lease is required.',status:409};
+    if(current.activeWriter&&Number(current.leaseUntil)>at||legacy&&(Number(legacy.leaseUntil||legacy.expiresAt)||0)>at)return {error:'Preserve the active legacy writer.',status:409};
+    const revision=current.updatedAt??0;if(!nonnegativeInteger(revision)||revision!==body.expectedUpdatedAt)return {error:'Checkpoint changed; reread before authorizing voice.',status:409};
+    if(!ledgerValues(budget.exists?budget.data():{}).valid)return {error:'Voice allocation could not be checked.',code:'VOICE_GUARD_UNAVAILABLE',status:503};
+    const id='continuation-'+crypto.createHash('sha256').update('native-test:'+lease.tokenHash).digest('hex'),ref=collection.doc(id),existing=await tx.get(ref);
+    if(existing.exists){const value=grantValues(existing.data(),id);return value?{ok:true,reused:true,grant:value,providerCalls:0,refunds:0,legacyAllocationChanged:false}:{error:'Invalid prior authorization.',code:'VOICE_GUARD_UNAVAILABLE',status:503};}
+    if(active.exists){const activeId=active.data()?.grantId;if(!validGrantId(activeId))return {error:'Invalid authorization pointer.',code:'VOICE_GUARD_UNAVAILABLE',status:503};const prior=await tx.get(collection.doc(activeId)),value=prior.exists?grantValues(prior.data(),activeId):null;if(!value)return {error:'Invalid prior authorization.',code:'VOICE_GUARD_UNAVAILABLE',status:503};if(value.state==='available'&&value.expiresAt>at)return {error:'A voice test is already available.',status:409};}
+    const expiresAt=Math.min(at+NATIVE_GRANT_WINDOW_MS,stopAt),record={schema:1,id,kind:'realtime_voice',provider:'openai',allocatedCents:cents,reservedCents:0,spentCents:0,state:'available',issuedAt:at,expiresAt,consumedAt:null,authorizedBy:body.owner,checkpointUpdatedAt:body.expectedUpdatedAt};
+    tx.set(ref,record);tx.set(collection.doc('active'),{grantId:id,at});return {ok:true,reused:false,grant:grantValues(record,id),providerCalls:0,refunds:0,legacyAllocationChanged:false};
+  });
+}
 function ledgerValues(value){
   const issues=[],data=recordObject(value)?value:{};if(!recordObject(value))issues.push('INVALID_RECORD');
   function field(name){if(!Object.prototype.hasOwnProperty.call(data,name))return 0;const value=data[name];if(!nonnegativeInteger(value)){issues.push('INVALID_'+name.toUpperCase());return null;}return value;}
@@ -104,20 +137,31 @@ function attemptPatch(value){
 // The result interface distinguishes a consumed one-start token from a full or
 // malformed ledger. The original null-or-grant API remains below for existing
 // typed-conversation consumers; a denial object must never count as a grant.
-function createDemoBudgetReservationResult(service,{capUsd,now=Date.now,provenance=false}={}){
+function createDemoBudgetReservationResult(service,{capUsd,now=Date.now,provenance=false,allowContinuation=false}={}){
   const limitCents=Math.floor(Number(capUsd)*100);
   return async function reserveResult(usd,sessionId){
     const cents=Math.ceil(Number(usd)*100),ctrl=await service.setup();
     if(ctrl.enabled===false)return {granted:false,reason:'RUNTIME_DISABLED'};
     if(typeof usd!=='number'||!Number.isFinite(usd)||!Number.isSafeInteger(limitCents)||limitCents<=0||!Number.isSafeInteger(cents)||cents<=0||cents>limitCents||!/^[a-zA-Z0-9-]{16,100}$/.test(sessionId||''))return {granted:false,reason:'INVALID_RESERVATION'};
     const collection=service.col('VoiceUsage'),ref=collection.doc('preview-budget'),session=collection.doc('session-'+crypto.createHash('sha256').update(sessionId).digest('hex'));
+    let funding=null;
     const reason=await collection.firestore.runTransaction(async tx=>{
+      funding=null;
       const [snapshot,used]=await Promise.all([tx.get(ref),tx.get(session)]),data=snapshot.exists?snapshot.data():{reservedCents:0,spentCents:0,calls:0};
       if(used.exists)return 'SESSION_ALREADY_USED';
       const ledger=ledgerValues(data);if(!ledger.valid)return 'INVALID_LEDGER';
       const held=ledger.reservedCents,spent=ledger.spentCents;
       if(!Number.isSafeInteger(held+spent+cents))return 'INVALID_LEDGER';
-      if(held+spent+cents>limitCents)return 'ALLOCATION_EXHAUSTED';
+      if(held+spent+cents>limitCents){
+        if(!allowContinuation||provenance!==true||service.namespace!=='Brites_Growth_Sandbox')return 'ALLOCATION_EXHAUSTED';
+        const grants=service.col('VoiceContinuations'),active=await tx.get(grants.doc('active'));if(!active.exists)return 'ALLOCATION_EXHAUSTED';
+        const id=active.data()?.grantId;if(!validGrantId(id))return 'INVALID_LEDGER';const ref=grants.doc(id),saved=await tx.get(ref),grant=saved.exists?grantValues(saved.data(),id):null;if(!grant)return 'INVALID_LEDGER';
+        const at=now(),stopAt=Math.min(Number(ctrl.stopAt)||require('./_britesGrowth').STOP_AT,require('./_britesGrowth').STOP_AT);if(at>=stopAt||grant.state!=='available'||grant.allocatedCents!==cents||grant.issuedAt>at||grant.expiresAt<=at)return 'ALLOCATION_EXHAUSTED';
+        funding={fundingSource:'native_continuation',grantId:id};
+        tx.set(ref,{...saved.data(),state:'consumed',reservedCents:cents,consumedAt:at,sessionRecord:session.id||'session-'+crypto.createHash('sha256').update(sessionId).digest('hex')});
+        tx.set(session,{allocatedCents:cents,startedAt:at,reconcile:'provider_evidence_required',schema:2,kind:'realtime_voice',provider:'openai',stage:'reserved',...funding});return null;
+      }
+      funding=null;
       tx.set(ref,{...data,reservedCents:held+cents,calls:ledger.calls+1,allocationCapCents:limitCents,at:now()});
       tx.set(session,{allocatedCents:cents,startedAt:now(),reconcile:'provider_evidence_required',...(provenance===true?{schema:2,kind:'realtime_voice',provider:'openai',stage:'reserved'}:{})});return null;
     });
@@ -132,7 +176,7 @@ function createDemoBudgetReservationResult(service,{capUsd,now=Date.now,provenan
     // are not a provider-certified dollar ceiling or measured provider spend.
     // Provenance records only server-observed outcomes. Even a rejection or a
     // confirmed hangup retains the full allocation; neither proves billed usage.
-    return {granted:true,allocation:{allocatedUsd:cents/100,reconcile:'provider_evidence_required'},recordOutcome};
+    return {granted:true,allocation:{allocatedUsd:cents/100,reconcile:'provider_evidence_required',...(funding||{})},recordOutcome};
   };
 }
 function createDemoBudgetReservation(service,options={}){
@@ -141,7 +185,7 @@ function createDemoBudgetReservation(service,options={}){
 }
 async function allocationProjection(service,env,{now=Date.now,lastStart=null}={}){
   const recordLimit=50,deadlineLimit=20,collection=service.col('VoiceUsage');
-  const [snapshot,sessions,deadlines]=await Promise.all([collection.doc('preview-budget').get(),collection.orderBy('startedAt','desc').limit(recordLimit).get(),service.col('VoiceDeadlines').orderBy('at','desc').limit(deadlineLimit).get()]);
+  const [snapshot,sessions,deadlines,continuations]=await Promise.all([collection.doc('preview-budget').get(),collection.orderBy('startedAt','desc').limit(recordLimit).get(),service.col('VoiceDeadlines').orderBy('at','desc').limit(deadlineLimit).get(),service.col('VoiceContinuations').orderBy('issuedAt','desc').limit(recordLimit).get()]);
   const data=snapshot.exists?snapshot.data():{},ledger=ledgerValues(data),limitCents=demoCap(env)?Math.floor(demoCap(env)*100):null,reserveUsd=Number(env.BRITES_CONCIERGE_REALTIME_RESERVE_USD),reservationCents=Number.isFinite(reserveUsd)&&reserveUsd>0&&reserveUsd<=10?Math.ceil(reserveUsd*100):null;
   let invalidRecords=0,unattributedRecords=0,providerOutcomeRecords=0,heldCentsInReadWindow=0;
   const records=(Array.isArray(sessions?.docs)?sessions.docs:[]).slice(0,recordLimit).flatMap(doc=>{
@@ -149,8 +193,8 @@ async function allocationProjection(service,env,{now=Date.now,lastStart=null}={}
     const valid=positiveInteger(row.allocatedCents)&&positiveInteger(row.startedAt);if(!valid)invalidRecords++;
     const linked=row.kind==='realtime_voice'&&row.provider==='openai';if(!linked)unattributedRecords++;
     const patch=attemptPatch(row);if(linked&&patch&&['provider_rejected','call_unverified','deadline_failed','call_verified'].includes(patch.stage))providerOutcomeRecords++;
-    if(valid&&row.reconcile==='provider_evidence_required'&&Number.isSafeInteger(heldCentsInReadWindow+row.allocatedCents))heldCentsInReadWindow+=row.allocatedCents;
-    return [{id:doc.id,valid,allocatedCents:positiveInteger(row.allocatedCents)?row.allocatedCents:null,startedAt:positiveInteger(row.startedAt)?row.startedAt:null,reconcile:row.reconcile==='provider_evidence_required'?'provider_evidence_required':'unverified',kind:linked?'realtime_voice':'unattributed',provider:linked?'openai':'unattributed',...(linked&&patch?patch:{}),outcomeAt:linked&&positiveInteger(row.outcomeAt)?row.outcomeAt:null}];
+    if(valid&&row.reconcile==='provider_evidence_required'&&row.fundingSource!=='native_continuation'&&Number.isSafeInteger(heldCentsInReadWindow+row.allocatedCents))heldCentsInReadWindow+=row.allocatedCents;
+    return [{id:doc.id,valid,allocatedCents:positiveInteger(row.allocatedCents)?row.allocatedCents:null,startedAt:positiveInteger(row.startedAt)?row.startedAt:null,reconcile:row.reconcile==='provider_evidence_required'?'provider_evidence_required':'unverified',kind:linked?'realtime_voice':'unattributed',provider:linked?'openai':'unattributed',...(linked&&row.fundingSource==='native_continuation'&&validGrantId(row.grantId)?{fundingSource:'native_continuation',grantId:row.grantId}:{}),...(linked&&patch?patch:{}),outcomeAt:linked&&positiveInteger(row.outcomeAt)?row.outcomeAt:null}];
   });
   let invalidDeadlines=0;
   const deadlineRecords=(Array.isArray(deadlines?.docs)?deadlines.docs:[]).slice(0,deadlineLimit).flatMap(doc=>{
@@ -159,7 +203,8 @@ async function allocationProjection(service,env,{now=Date.now,lastStart=null}={}
     return [{callId:doc.id,valid,state:['pending','closed'].includes(row.state)?row.state:null,at:positiveInteger(row.at)?row.at:null,expiresAt:positiveInteger(row.expiresAt)?row.expiresAt:null,closedAt:positiveInteger(row.closedAt)?row.closedAt:null,lastAttemptAt:positiveInteger(row.lastAttemptAt)?row.lastAttemptAt:null,lastStatus:Number.isInteger(row.lastStatus)&&row.lastStatus>=100&&row.lastStatus<=599?row.lastStatus:null}];
   });
   const total=ledger.valid?ledger.reservedCents+ledger.spentCents:null,configurationValid=positiveInteger(limitCents)&&positiveInteger(reservationCents)&&reservationCents<=limitCents;
-  return {schema:1,namespace:'Brites_Growth_Sandbox',checkedAt:now(),readOnly:true,providerCalls:0,financialWrites:0,refunds:0,evidenceComplete:false,budget:{exists:snapshot.exists,valid:ledger.valid,issues:ledger.issues,reservedCents:ledger.reservedCents,spentCents:ledger.spentCents,attempts:ledger.calls,recordedLimitCents:recordObject(data)&&positiveInteger(data.allocationCapCents)?data.allocationCapCents:null,configuredLimitCents:limitCents,configuredReservationCents:reservationCents,configurationValid,availableCents:ledger.valid&&configurationValid?Math.max(0,limitCents-total):null,nextReservationFits:ledger.valid&&configurationValid?Number.isSafeInteger(total+reservationCents)&&total+reservationCents<=limitCents:null},records,recordWindow:{limit:recordLimit,truncated:(sessions?.size??sessions?.docs?.length??0)>=recordLimit,shown:records.length,invalid:invalidRecords,unattributed:unattributedRecords,withProviderOutcome:providerOutcomeRecords,heldCents:heldCentsInReadWindow},deadlineRecords,deadlineWindow:{limit:deadlineLimit,truncated:(deadlines?.size??deadlines?.docs?.length??0)>=deadlineLimit,shown:deadlineRecords.length,invalid:invalidDeadlines},lastStart};
+  const continuationRecords=(continuations?.docs||[]).flatMap(doc=>{const value=grantValues(doc.data(),doc.id);return value?[value]:[]}),continuationHeldCents=continuationRecords.reduce((sum,row)=>sum+row.reservedCents,0),continuationTruncated=(continuations?.size??continuations?.docs?.length??0)>=recordLimit;
+  return {schema:1,namespace:'Brites_Growth_Sandbox',checkedAt:now(),readOnly:true,providerCalls:0,financialWrites:0,refunds:0,evidenceComplete:false,budget:{exists:snapshot.exists,valid:ledger.valid,issues:ledger.issues,reservedCents:ledger.reservedCents,spentCents:ledger.spentCents,attempts:ledger.calls,recordedLimitCents:recordObject(data)&&positiveInteger(data.allocationCapCents)?data.allocationCapCents:null,configuredLimitCents:limitCents,configuredReservationCents:reservationCents,configurationValid,availableCents:ledger.valid&&configurationValid?Math.max(0,limitCents-total):null,nextReservationFits:ledger.valid&&configurationValid?Number.isSafeInteger(total+reservationCents)&&total+reservationCents<=limitCents:null},nativeContinuations:{records:continuationRecords,heldCentsInReadWindow:continuationHeldCents,invalid:(continuations?.docs?.length||0)-continuationRecords.length,truncated:continuationTruncated,limit:recordLimit,legacyAllocationChanged:false,refunds:0},records,recordWindow:{limit:recordLimit,truncated:(sessions?.size??sessions?.docs?.length??0)>=recordLimit,shown:records.length,invalid:invalidRecords,unattributed:unattributedRecords,withProviderOutcome:providerOutcomeRecords,heldCents:heldCentsInReadWindow},deadlineRecords,deadlineWindow:{limit:deadlineLimit,truncated:(deadlines?.size??deadlines?.docs?.length??0)>=deadlineLimit,shown:deadlineRecords.length,invalid:invalidDeadlines},lastStart};
 }
 function createBudgetReservation(service,{now=Date.now}={}){
   return async function reserve(usd){
@@ -182,7 +227,14 @@ function createHandler({env={},authorize=async()=>false,service,fetch:fetcher=gl
     if(origin&&origin!==own)return json({error:'Use the isolated preview for voice.'},403);
     if(req.method!=='POST')return json({error:'Use POST.'},405);
     let body;try{const raw=await req.text();if(raw.length>66000)return json({error:'Request too large.'},413);body=JSON.parse(raw);}catch{return json({error:'Send a valid voice request.'},400);}
-    if(!body||typeof body!=='object'||Array.isArray(body)||!['capabilities','start','stop','readiness','allocation'].includes(body.action))return json({error:'Unknown voice action.'},400);
+    if(!body||typeof body!=='object'||Array.isArray(body)||!['capabilities','start','stop','readiness','allocation','authorize-test'].includes(body.action))return json({error:'Unknown voice action.'},400);
+    if(body.action==='authorize-test'){
+      if(!await authorize(req))return json({error:'Operator sign-in required.'},401);
+      if(Object.keys(body).some(key=>!['action','owner','token','expectedUpdatedAt'].includes(key))||typeof body.owner!=='string'||!/^[a-zA-Z0-9:_-]{1,100}$/.test(body.owner)||typeof body.token!=='string'||!/^[a-f0-9]{64}$/.test(body.token)||!nonnegativeInteger(body.expectedUpdatedAt))return json({error:'An owned lease and current checkpoint revision are required.'},400);
+      if(env.BRITES_GROWTH_SANDBOX!=='1'||env.BRITES_GROWTH_NAMESPACE!=='Brites_Growth_Sandbox'||service?.namespace!=='Brites_Growth_Sandbox')return json({error:'Use the exact isolated sandbox for voice authorization.'},403);
+      if(env.BRITES_CONCIERGE_REALTIME_ENABLED!=='1'||env.BRITES_CONCIERGE_REALTIME_PUBLIC_DEMO!=='1'||!env.OPENAI_API_KEY)return json({error:'The native voice preview is not configured.',code:'VOICE_GUARD_UNAVAILABLE'},503);
+      try{const result=await authorizeContinuation(service,env,body,now);return json(result,result.status||200);}catch{return json({error:'Voice authorization could not be recorded.',code:'VOICE_GUARD_UNAVAILABLE'},503);}
+    }
     if(body.action==='allocation'){
       if(!await authorize(req))return json({error:'Operator sign-in required.'},401);
       if(Object.keys(body).some(key=>key!=='action'))return json({error:'Allocation inspection accepts only its fixed read action.'},400);
@@ -210,12 +262,13 @@ function createHandler({env={},authorize=async()=>false,service,fetch:fetcher=gl
     const reserveUsd=Number(env.BRITES_CONCIERGE_REALTIME_RESERVE_USD);
     if(!service||typeof scheduleHangup!=='function'||!Number.isFinite(reserveUsd)||reserveUsd<=0||reserveUsd>10||publicDemo&&(!demoCap(env)||reserveUsd>demoCap(env)))return json({enabled:false,code:'VOICE_GUARD_UNAVAILABLE',message:'OpenAI voice needs an approved preview allocation and session deadline. You can still type.'},503);
     const ctrl=await service.setup();if(ctrl.enabled===false||(!publicDemo&&(!ctrl.aiEnabled||Number(ctrl.aiDailyUsdCap)<=0)))return json({enabled:false,code:'VOICE_RUNTIME_DISABLED',message:'OpenAI voice is paused in this preview. You can still type.'},503);
+    if(now()>=Math.min(Number(ctrl.stopAt)||require('./_britesGrowth').STOP_AT,require('./_britesGrowth').STOP_AT))return json({enabled:false,code:'VOICE_RUNTIME_DISABLED',message:'Sandbox voice testing has ended. You can still type.'},503);
     if(body.action==='capabilities'){
       if(Object.keys(body).some(k=>k!=='action'))return json({error:'Invalid capability request.'},400);
       if(publicDemo){
         // Availability is checked before a browser requests microphone access.
         // The later atomic reservation still protects simultaneous starts.
-        try{const snapshot=await service.col('VoiceUsage').doc('preview-budget').get(),ledger=ledgerValues(snapshot.exists?snapshot.data():{}),next=ledger.valid?ledger.reservedCents+ledger.spentCents+Math.ceil(reserveUsd*100):null;if(!ledger.valid||!Number.isSafeInteger(next))return json({enabled:false,code:'VOICE_GUARD_UNAVAILABLE',message:'OpenAI voice allocation could not be checked. You can still type.'},503);if(next>Math.floor(demoCap(env)*100))return json({enabled:false,code:'VOICE_ALLOCATION_UNAVAILABLE',message:'This preview\u2019s voice allocation is paused. You can still type.'},429);}catch{return json({enabled:false,code:'VOICE_GUARD_UNAVAILABLE',message:'OpenAI voice allocation could not be checked. You can still type.'},503);}
+        try{const snapshot=await service.col('VoiceUsage').doc('preview-budget').get(),ledger=ledgerValues(snapshot.exists?snapshot.data():{}),next=ledger.valid?ledger.reservedCents+ledger.spentCents+Math.ceil(reserveUsd*100):null;if(!ledger.valid||!Number.isSafeInteger(next))return json({enabled:false,code:'VOICE_GUARD_UNAVAILABLE',message:'OpenAI voice allocation could not be checked. You can still type.'},503);if(next>Math.floor(demoCap(env)*100)&&!await activeContinuation(service,Math.ceil(reserveUsd*100),now()))return json({enabled:false,code:'VOICE_ALLOCATION_UNAVAILABLE',message:'This preview\u2019s voice allocation is paused. You can still type.'},429);}catch{return json({enabled:false,code:'VOICE_GUARD_UNAVAILABLE',message:'OpenAI voice allocation could not be checked. You can still type.'},503);}
       }
       return json({enabled:true,optIn:true,maxDurationMs:MAX_DURATION_MS,provider:'OpenAI',speech:'native_speech_to_speech',providerReadiness:'verified_on_connection',usage:'allocation_reserved_until_provider_reconciliation',...(publicDemo?{demoToken:demoToken(env.OPENAI_API_KEY,now())}:{})});
     }
@@ -231,7 +284,7 @@ function createHandler({env={},authorize=async()=>false,service,fetch:fetcher=gl
       const fd=new FormData();fd.set('sdp',body.sdp);fd.set('session',JSON.stringify(config));
       if(service.rateLimit){const ip=req.headers.get('x-nf-client-connection-ip')||'unknown',caller=signature('voice-ip:'+ip,env.OPENAI_API_KEY);if(!await service.rateLimit('realtime-preview-start',3)||publicDemo&&!await service.rateLimit('realtime-preview-caller-'+caller,2))return json({error:'Please wait before starting another voice session.'},429);}
       if(publicDemo&&!reserveBudget){
-        reservationOutcome=await createDemoBudgetReservationResult(service,{capUsd:demoCap(env),now,provenance:true})(reserveUsd,demo.sessionId);
+        reservationOutcome=await createDemoBudgetReservationResult(service,{capUsd:demoCap(env),now,provenance:true,allowContinuation:true})(reserveUsd,demo.sessionId);
         if(!reservationOutcome.granted){
           if(reservationOutcome.reason==='SESSION_ALREADY_USED')return json({enabled:false,code:'VOICE_SESSION_REUSED',message:'Select Talk to me again to start a fresh voice session.'},401);
           if(reservationOutcome.reason==='ALLOCATION_EXHAUSTED')return json({enabled:false,code:'VOICE_ALLOCATION_UNAVAILABLE',message:'This preview\u2019s voice allocation is paused. You can still type.'},429);
