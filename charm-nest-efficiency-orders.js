@@ -66,7 +66,7 @@
   const options = { pollMs: 5000, debounceMs: 200, pageSize: 25, capThumbs: 3, hoverMs: 260, maxBackoffMs: 60000, freshMs: 2400, orphanMs: 20000, zoom: 1.9, vectorConc: 2, vectorCap: 240, qrCap: 600, awayPx: 48 };
   const KEY_STORE = "cn.eff.key";
   const NAMES = { shipping: "Shipping", assembly: "Assembly", welding: "Welding", sorting: "Sorting", design: "Design", laser: "Laser", sorter: "Sorter", qr: "QR printer", inbox: "Inbox" };
-  const CORE = ["sorting", "welding", "assembly", "shipping", "design"];
+  const CORE = ["sorting", "welding", "assembly", "shipping", "design", "laser"];   // (Laser and Design are two stations of their own)
   const SORTS = [["newest", "Newest"], ["slowest", "Slowest"], ["fastest", "Fastest"]];
   const ACTIVE_MS = 120000, TILES = 24;   // (the server lists at most 12 pieces of an order and says the true count; tiles are drawn for up to 24)
   const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));

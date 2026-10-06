@@ -38,7 +38,7 @@ async function door() {
 
     let r = await post(S());
     assert.strictEqual(r.status, 200, JSON.stringify(r.body));
-    assert.deepStrictEqual(Object.keys(doc('weld-1-ABCD-k1')).sort(), ['computerId', 'computerLabel', 'device', 'employeeId', 'endAt', 'endReason', 'id', 'lastSeenAt', 'minutes', 'person', 'startAt', 'station'].sort(), 'the Station_Sessions shape');
+    assert.deepStrictEqual(Object.keys(doc('weld-1-ABCD-k1')).sort(), ['admin', 'computerId', 'computerLabel', 'device', 'employeeId', 'endAt', 'endReason', 'id', 'lastSeenAt', 'minutes', 'person', 'startAt', 'station'].sort(), 'the Station_Sessions shape (admin: whether the person is on the Admin list, kept for the auto sign-out)');
     assert.strictEqual(doc('weld-1-ABCD-k1').employeeId, '', 'a PIN (digits only) is never kept');
     assert(!JSON.stringify([...docs.values()]).includes(P1), 'the PIN is nowhere in the store');
     assert.strictEqual(doc('weld-1-ABCD-k1').startAt, now);
