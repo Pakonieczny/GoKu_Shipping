@@ -449,6 +449,12 @@ async function op(ctx, body, H) {
     }
     stations.push(row);
   }
+  // the inbox card's block (IN1, _employeeInbox.js): today's sent replies, orders, customers and messages (people + unknown, never auto);
+  // a read that fails only leaves the block out (the card then draws a dash), it never makes the whole board partial
+  try {
+    const ibs = stations.find(s => s.key === "inbox");
+    if (ibs && !ctx.prefix) { const blk = await require("./_employeeInbox").today(ctx); if (blk) ibs.inbox = blk; }
+  } catch (e) { console.warn("[live] inbox block skipped: " + String((e && e.message) || e).slice(0, 120)); }
   const out = { ok: true, at: now, mode: ctx.prefix ? "sandbox" : "real", day: ctx.today, keepAliveMs: KEEPALIVE_MS, staleMs: STALE_MS, stations, signedIn };
   if (errors.length) { out.partial = true; out.errors = errors; }
   else if (capped) out.partial = true;
