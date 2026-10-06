@@ -53,10 +53,14 @@ const taskOf = (station, task) => (station === "welding" && TASKS.includes(task)
 const isMatched = ev => !!ev && (ev.action === "matched" || (ev.action === "scan" && ev.task === "matching" && ev.station === "welding"));
 const COUNTERS = ["completes", "parts", "orders", "undoParts", "undoOrders"];
 /** The counters of one station's rollup entry as a reader should SUM them: a station that is not counted in throughput keeps its scans, prints, time and matched
- *  count but loses its completions, pieces and orders (a copy: the stored rollup is never changed). */
+ *  count but loses its completions, pieces and orders (a copy: the stored rollup is never changed). A phone scan counts ONCE there: the scanner app writes it as
+ *  `matched`, and a desk page that still wrote its own plain scan for the same phone scan ("phone scan", counted in x_phone) is taken off the scans, as many as there
+ *  are matched scans to pair it with. A rollup written before there were matched scans has no x_phone or matched: it reads exactly as it was written. */
 function readStationCounters(station, v) {
   if (throughput(station) || !v || typeof v !== "object") return v;
   const o = Object.assign({}, v); for (const k of COUNTERS) o[k] = 0;
+  const echo = Math.min(Math.max(0, Number(v.matched) || 0), Math.max(0, Number(v.x_phone) || 0));
+  if (echo > 0) o.scans = Math.max(0, (Number(v.scans) || 0) - echo);
   return o;
 }
 /** The orders of a rollup's `touched` map without the ones only a not-counted station touched; a station set without it. */
@@ -67,9 +71,24 @@ const touchedStations = list => (Array.isArray(list) ? list : [...list]).filter(
 const KIND_X = { cancelAlert: "x_cancel", heldOrSkipped: "x_held", unknownSku: "x_sku", qaFlag: "x_flag", lookupFailed: "x_lookup", reprint: "x_reprint", rescan: "x_rescan" };
 /** the inbox counters (E3's phrases): replies drafted / sent / delivered / unconfirmed / failed / refused, edited AI drafts, first-reply minutes */
 const INBOX_X = ["x_draft", "x_sent", "x_deliv", "x_unconf", "x_fail", "x_refuse", "x_edit", "x_aiok", "x_first", "x_firstMin", "x_wait", "x_waitMin"];
-const X_KEYS = Object.values(KIND_X).concat(INBOX_X);
+const X_KEYS = Object.values(KIND_X).concat(INBOX_X, ["x_phone"]);
 
 const detailOf = ev => String((ev && ev.detail) == null ? "" : ev.detail);
+/** The desk page's own plain scan of a phone scan at the Welding station: the page writes "phone scan" in its detail (typed orders say "typed"). The scanner app writes the
+ *  same physical scan as `matched`; a rollup counts the plain one in x_phone so a reader can count the phone scan once (see readStationCounters). */
+const isPhonePlainScan = ev => !!ev && ev.station === "welding" && ev.action === "scan" && !ev.task && /^phone scan\b/i.test(detailOf(ev).trim());
+const ECHO_MS = 15000;
+/** The plain scans of a list of events (any order) that are the echo of a matched scan: a plain `scan` at the Welding station with a `matched` event for the SAME order
+ *  within 15 seconds. A physical phone scan is the matched event; its echo is not a second scan (a desk-typed scan with no matched event beside it, and every old scan, stay).
+ *  Returns a Set of the event objects; nothing is changed, nothing is deleted (history is read, never rewritten). */
+function echoScans(events) {
+  const out = new Set(), at = new Map();
+  const list = Array.isArray(events) ? events : [];
+  for (const e of list) if (e && e.station === "welding" && e.action === "matched" && e.orderId) { const a = at.get(e.orderId); if (a) a.push(Number(e.at) || 0); else at.set(e.orderId, [Number(e.at) || 0]); }
+  if (!at.size) return out;
+  for (const e of list) if (e && e.station === "welding" && e.action === "scan" && !e.task && e.orderId) { const a = at.get(e.orderId); if (a && a.some(t => Math.abs(t - (Number(e.at) || 0)) <= ECHO_MS)) out.add(e); }
+  return out;
+}
 const minutes = tok => { const m = /^(?:first reply|waited) (\d{1,5})m$/.exec(tok); return m ? Math.min(99999, +m[1]) : null; };
 
 /** The inbox event, read: { reply: drafted|sent|delivered|unconfirmed|failed|refused|"", edited, aiUnchanged, firstMin, waitMin }, or null (not an inbox reply event). */
@@ -128,6 +147,7 @@ function classify(ev) {
   try {
     out.kind = kindOf(ev);
     if (KIND_X[out.kind]) out.x[KIND_X[out.kind]] = 1;
+    if (isPhonePlainScan(ev)) out.x.x_phone = 1;
     const ib = inboxOf(ev);
     if (ib) {
       const r = ib.reply;
@@ -147,4 +167,4 @@ function classify(ev) {
   return out;
 }
 
-module.exports = { KIND_X, INBOX_X, X_KEYS, STATION_FOLD, displayStation, storedStations, TASKS, UNATTRIBUTED, NO_THROUGHPUT, throughput, taskOf, isMatched, readStationCounters, touchedStations, kindOf, inboxOf, classify };
+module.exports = { KIND_X, INBOX_X, X_KEYS, STATION_FOLD, displayStation, storedStations, TASKS, UNATTRIBUTED, NO_THROUGHPUT, throughput, taskOf, isMatched, readStationCounters, touchedStations, isPhonePlainScan, echoScans, ECHO_MS, kindOf, inboxOf, classify };
