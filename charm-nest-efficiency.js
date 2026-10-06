@@ -558,6 +558,9 @@
  .efHint{display:none}.efView{order:3}.efRcFig{grid-template-columns:repeat(4,minmax(0,1fr))}.efRoster{grid-template-columns:1fr}.efRTools .efQ{margin-left:0}
  .efOcImg{width:46px;height:46px;flex-basis:46px}.efWk{padding:5px}.efSiGrid{padding:10px}
 }
+@container ef (max-width:640px){.efSW{white-space:normal;overflow:visible}.efWhen{white-space:normal}}
+@container ef (max-width:860px){.efKL .l{display:none}.efKL .s{display:inline}}
+@container ef (max-width:340px){.efKpi{padding:14px 10px 8px}.efKL{font-size:10px;letter-spacing:.05em}}
 @media (prefers-reduced-motion:reduce){.ef *{transition:none!important;animation:none!important}}`;
     doc.head.appendChild(s);
   }
@@ -1254,24 +1257,26 @@
     const e = el("button", "efSi"); e.type = "button"; e.dataset.name = p.name;
     e.innerHTML = `<span class="efAv" aria-hidden="true"></span><span class="efSiN"><span class="efSiNm"></span><em></em></span><span class="efSiW"></span>`;
     const r = { e, av: e.querySelector(".efAv"), nm: e.querySelector(".efSiNm"), stn: e.querySelector("em"), w: e.querySelector(".efSiW"), p };
-    hc(e, () => { const q = r.p || p, ls = q.lastSeenAt ? Math.max(0, (now() - q.lastSeenAt) / 1000) : null; return { avatar: q.name, title: q.name, sub: `Signed in at ${stationOf(r.L, q.stationKey)}`, rows: [{ k: "Since", v: q.since ? clock(q.since) : "—", d: "When this person signed in at this station" }, { k: "Last seen", v: ls == null ? "—" : ago(ls), d: "The last sign of life from the station" }], note: "Press to open their page." }; });
+    hc(e, () => { const q = r.p || p, ls = q.lastSeenAt ? Math.max(0, (now() - q.lastSeenAt) / 1000) : null; return { avatar: q.name, title: q.name, sub: `Signed in at ${stationOf(r.L, q.stationKey)}${q.task ? ` · Task: ${q.task === "matching" ? "Matching" : "Welding"}` : ""}`, rows: [{ k: "Since", v: q.since ? clock(q.since) : "—", d: "When this person signed in at this station" }, { k: "Last seen", v: ls == null ? "—" : ago(ls), d: "The last sign of life from the station" }], note: "Press to open their page." }; });
     return r;
   }
   function renderSignedIn(L, first) {
     const list = L ? L.signedIn : [], seen = new Set();
     setText(E.siC, list.length ? String(list.length) : "");
+    // one chip per row of the list (person, station, task), as the count says: a person at the Inbox and at Assembly, or at Welding and at Matching, has two chips (UX1: it was keyed by name alone, so "Signed in now 12" showed nine chips)
+    const key = p => `${p.name}\n${p.stationKey}\n${p.task || ""}`;
     for (const p of list) {
-      seen.add(p.name); let r = st.si.get(p.name), fresh = !r;
-      if (!r) { r = siRow(p); st.si.set(p.name, r); }
-      r.p = p; setText(r.av, initials(p.name)); setText(r.nm, p.name); setText(r.stn, stationOf(L, p.stationKey)); setText(r.w, siText(p));
+      seen.add(key(p)); let r = st.si.get(key(p)), fresh = !r;
+      if (!r) { r = siRow(p); st.si.set(key(p), r); }
+      r.p = p; setText(r.av, initials(p.name)); setText(r.nm, p.name); setText(r.stn, p.task === "matching" ? "Matching" : stationOf(L, p.stationKey)); setText(r.w, siText(p));
       const seenAgo = p.lastSeenAt ? now() - p.lastSeenAt : 0, ok = !p.lastSeenAt || seenAgo < 6 * 60000;
       r.e.classList.toggle("fresh", ok);
       r.p = p; r.L = L; if (!hcOn()) r.e.title = `${p.name} · signed in at ${stationOf(L, p.stationKey)}${p.since ? ` since ${clock(p.since)}` : ""}${p.lastSeenAt ? ` · last seen ${clock(p.lastSeenAt)}` : ""} · open ${p.name}'s page`;
-      r.e.setAttribute("aria-label", `${p.name}, ${stationOf(L, p.stationKey)}, ${siText(p)}. Open their page`);
+      r.e.setAttribute("aria-label", `${p.name}, ${p.task === "matching" ? "Matching" : stationOf(L, p.stationKey)}, ${siText(p)}. Open their page`);
       if (fresh) { E.siGrid.appendChild(r.e); enter(r.e, first); }
     }
-    for (const [name, r] of st.si) if (!seen.has(name)) { st.si.delete(name); leave(r.e); }
-    const want = list.map(p => st.si.get(p.name).e); want.forEach((e, i) => { const cur = [...E.siGrid.children].filter(c => c.classList.contains("efSi") && !c.dataset.leaving)[i]; if (cur !== e) E.siGrid.insertBefore(e, cur || E.siGrid._msg || null); });
+    for (const [k, r] of st.si) if (!seen.has(k)) { st.si.delete(k); leave(r.e); }
+    const want = list.map(p => st.si.get(key(p)).e); want.forEach((e, i) => { const cur = [...E.siGrid.children].filter(c => c.classList.contains("efSi") && !c.dataset.leaving)[i]; if (cur !== e) E.siGrid.insertBefore(e, cur || E.siGrid._msg || null); });
     note(E.siGrid, !L ? "Reading who is signed in…" : list.length ? "" : "No one is signed in right now", !L);
     E.siGrid.classList.toggle("empty", !list.length);
   }
