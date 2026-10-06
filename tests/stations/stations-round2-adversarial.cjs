@@ -804,6 +804,98 @@ async function autoServer() {
   });
 }
 
+/* ═════════════════════════ 2b · the Welding scanner: who a scan is credited to ═════════════════════════ */
+async function scanner() {
+  const T = { A: 'Tess Welder', B: 'Ray Welder', C: 'Ivy Third' };
+  let scanN = 0;
+  const desk = (pc, extra) => {
+    const tab = openTab(pc, Object.assign({ multi: true, station: 'welding', device: 'weld-1', scripts: ['session', 'activity', 'queue'] }, extra || {}));
+    tab.q = tab.w.StationScanQueue.create({ device: 'weld-1', signedIn: () => tab.who().length > 0, run: async () => {} });
+    const login0 = tab.login; tab.login = (...a) => { const r = login0(...a); tab.q.drain(); return r; };   // the page runs the waiting scans after every sign-in (weld-1.html: scanQueue.drain())
+    /** a phone scan as the relay document carries it: the real scan time, the scan id, and the moment the phone pushed it */
+    tab.scan = (order, o = {}) => { const at = o.at != null ? o.at : wall(), id = o.id || ('s' + (++scanN) + 'x' + (Math.random() * 1e6 | 0)), sent = o.sent != null ? o.sent : wall(); return tab.q.offer(order, { 'Order Number': order, 'Shipping Label Timestamps': iso(at), 'Staff Note': JSON.stringify({ v: 1, id, at, sent, q: 0 }) }); };
+    return tab;
+  };
+  const mdocs = () => cur.all('Station_Activity').filter(d => d.action === 'matched').sort((a, b) => a.at - b.at);
+  const flushAct = async () => { await advance(31000); };
+  await section('2b · the Welding scanner: who a scan is credited to', async () => {
+    if (!HAVE.ws3) { pending('the matched event', 'WS3 is not on main yet'); return; }
+    await check('one matcher is credited, two: the one with the latest input, none: Unattributed; a welder never', async () => {
+      world(); const pc = computer('bench'), tab = desk(pc);
+      tab.login(T.A, 'welding'); await advance(MIN);
+      tab.scan('3521000401'); await flushAct();
+      let m = mdocs(); eq(m.length, 1); eq(m[0].person, 'Unattributed', 'only a welder is in: nobody in Matching'); eq(m[0].unattributed, true); eq(m[0].task, 'matching'); eq(m[0].session, '');
+      tab.login(T.B, 'matching'); await advance(MIN); tab.scan('3521000402'); await flushAct();
+      m = mdocs(); eq(m[1].person, T.B, 'one matcher'); eq(m[1].unattributed, undefined); ok(m[1].session.startsWith('welding__weld-1__Ray_Welder__matching__'), 'the credited person\'s session: ' + m[1].session);
+      tab.login(T.C, 'matching'); await advance(MIN); tab.scan('3521000403'); await flushAct();
+      m = mdocs(); eq(m[2].person, T.C, 'two matchers: the one who signed in last');
+      await advance(MIN); tab.SS.touch(wall(), { name: T.B, task: 'matching' }); tab.scan('3521000404'); await flushAct();
+      eq(mdocs()[3].person, T.B, 'input from Ray makes him the latest');
+      tab.logout(T.B, 'matching'); tab.logout(T.C, 'matching'); await advance(MIN); tab.scan('3521000405'); await flushAct();
+      eq(mdocs()[4].person, 'Unattributed', 'everybody left Matching: unattributed');
+      for (const d of mdocs()) { eq(d.action, 'matched'); eq(d.orders, 0); eq(d.parts, 0); ok(d.person !== T.A, 'a welder is never credited: ' + d.person); }
+      eq(tab.errors, [], 'no page errors');
+    });
+    await check('the same order within 10 s, the same scan id told twice, and a reload mid-queue are ONE scan; a later repeat is its own scan marked again', async () => {
+      world(); const pc = computer('bench'); let tab = desk(pc);
+      tab.login(T.B, 'matching'); await advance(MIN);
+      eq(tab.scan('3521000501', { id: 'dup1' }), true); eq(tab.scan('3521000501', { id: 'dup1' }), false, 'the same scan id'); await advance(3000); eq(tab.scan('3521000501', { id: 'dup2' }), false, 'the same order 3 s later');
+      await flushAct(); eq(mdocs().length, 1);
+      await advance(11000); eq(tab.scan('3521000501', { id: 'dup3' }), true, 'a repeat after 10 s'); await flushAct(); const m = mdocs(); eq(m.length, 2); ok(/again/.test(m[1].detail), 'marked again: ' + m[1].detail);
+      tab.close(); tab = desk(pc); await advance(MIN); tab.scan('3521000501', { id: 'dup3' }); await flushAct(); eq(mdocs().length, 2, 'a reload and the same scan id told again: still two documents (the matched event remembers the scan id)');
+      const r = cur.get('Efficiency_Daily', `${TODAY}__${T.B}`); ok(r && r.stations.welding.matched === 2, 'the rollup counted two: ' + JSON.stringify(r && r.stations.welding));
+    });
+    await check('hostile relay data: a time in the future, an id with a path, a PIN as an order, a 70-digit order, NaN and objects never break the page or store the wrong thing', async () => {
+      world(); const pc = computer('bench'), tab = desk(pc);
+      tab.login(T.B, 'matching'); await advance(MIN);
+      const q = tab.q;
+      for (const relay of [null, undefined, 5, 'x', [], {}, { 'Staff Note': '{not json' }, { 'Staff Note': JSON.stringify({ at: 1e18, sent: 1e18, id: '../../x' }) }, { 'Staff Note': JSON.stringify({ at: -5, sent: NaN, id: { a: 1 } }) }, { 'Shipping Label Timestamps': '9999-12-31T00:00:00Z' }, { 'Staff Note': JSON.stringify({ at: wall() + 5 * HOUR, sent: wall() + 5 * HOUR, id: 'future' }) }]) {
+        try { q.offer('3521000' + (600 + (scanN++ % 300)), relay); } catch (e) { throw new Error('offer threw for ' + JSON.stringify(relay) + ': ' + e.message); }
+      }
+      for (const order of [PIN, '4829', '12345678', '9'.repeat(70), '', '   ', 'abc', '35210006\u0000', { a: 1 }, ['3521000999'], null, undefined]) { try { q.offer(order); } catch (e) { throw new Error('offer threw for ' + String(order) + ': ' + e.message); } }
+      await flushAct();
+      const m = mdocs(); ok(m.length >= 5, 'the usable scans were stored: ' + m.length);
+      for (const d of m) { ok(d.at <= wall() && d.at > wall() - 8 * 86400000, 'the scan time is never in the future or older than a week: ' + iso(d.at)); ok(!/^\d{4,8}$/.test(d.orderId) || d.orderId.length === 10, 'no PIN-like order: ' + d.orderId); ok(d.orderId.length <= 30, 'order id length'); ok(/^[\w.:-]{8,100}$/.test(d.id), 'id ' + d.id); }
+      ok(!cur.dump().includes(PIN), 'the PIN-like order was not stored');
+      eq(tab.errors, []);
+    });
+    await check('a scan when nobody is signed in waits, shows its note, and after the next sign-in is recorded once with its real time', async () => {
+      world(); const pc = computer('bench'), tab = desk(pc);
+      const t0 = wall(); tab.scan('3521000701'); await advance(5000); tab.scan('3521000702'); await advance(MIN);
+      eq(tab.q.count(), 2); eq(mdocs().length, 0, 'nothing is recorded while nobody is in (the page has no identity to write under)');
+      ok(/waiting for a sign-in/.test(tab.w.document.getElementById('stationScanQueueNote').textContent), 'the note says so');
+      tab.login(T.B, 'matching'); await advance(2 * MIN); await flushAct();
+      const m = mdocs(); eq(m.length, 2, JSON.stringify(m.map(d => [d.orderId, d.person]))); ok(m[0].at >= t0 - 1000 && m[0].at <= t0 + 2000, 'the real scan time: ' + iso(m[0].at) + ' vs ' + iso(t0));
+      eq(new Set(m.map(d => d.id)).size, 2);
+    });
+    await check('a scan from before midnight is never credited to whoever signs in after it', async () => {
+      world('2026-10-08T03:55:00Z');                                         // 23:55 New York
+      const pc = computer('bench'), tab = desk(pc);
+      tab.scan('3521000801'); await goTo(Z('2026-10-08T04:30:00Z'));         // it waits through midnight
+      tab.login(T.B, 'matching'); await advance(2 * MIN); await flushAct();
+      const m = mdocs(); eq(m.length, 1); eq(m[0].person, 'Unattributed', 'yesterday\'s scan is not Ray\'s: ' + m[0].person); eq(m[0].day, '2026-10-07', 'it belongs to the day it was scanned');
+    });
+    await check('a page that crashes with scans recorded but not sent: the next page load sends them, once, under the person who scanned', async () => {
+      world(); const pc = computer('bench'); let tab = desk(pc);
+      tab.login(T.B, 'matching'); await advance(MIN); tab.scan('3521000901'); tab.scan('3521000902'); await advance(1000);
+      ok(JSON.parse(pc.ls('station_activity_q.weld-1') || '[]').length === 2, 'two events wait in storage');
+      tab.kill(); await advance(20 * MIN);
+      tab = desk(pc); await advance(MIN); await flushAct();
+      const m = mdocs(); eq(m.length, 2); ok(m.every(d => d.person === T.B), 'credited to the person who scanned (the event was written when the scan arrived): ' + m.map(d => d.person));
+      await advance(5 * MIN); eq(mdocs().length, 2, 'sent once');
+    });
+    await check('the scan is credited by who was signed in at the SCAN time when the phone sent it late (offline replay)', async () => {
+      world(); const pc = computer('bench'), tab = desk(pc);
+      tab.login(T.A, 'matching'); await advance(MIN);
+      const scanAt = wall(); await advance(4 * MIN);                           // Tess scanned an earring; the phone had no signal
+      tab.logout(T.A, 'matching'); await advance(MIN); tab.login(T.B, 'matching'); await advance(2 * MIN);
+      tab.scan('3521001001', { at: scanAt, sent: wall(), id: 'late1' });       // the phone is back: it pushes the old scan now
+      await flushAct();
+      const m = mdocs(); eq(m.length, 1); eq(m[0].person, T.A, 'Tess was in Matching when the earring was scanned; Ray signed in afterwards: ' + m[0].person);
+    }, { known: 'D1' });
+  });
+}
+
 /* ═════════════════════════ 5 · the Sorting fold ═════════════════════════ */
 async function fold() {
   await section('5 · the Sorting fold', async () => {
@@ -893,6 +985,7 @@ async function fold() {
   const t0 = REAL_NOW();
   await hostile();
   await welding();
+  await scanner();
   await autoServer();
   await fold();
   // the PIN canary: nothing stored, logged or sent anywhere in the run carries a synthetic Employee Number
