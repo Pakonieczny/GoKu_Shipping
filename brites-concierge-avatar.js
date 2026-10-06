@@ -89,7 +89,7 @@
   }
   let instanceCount = 0;
   function declaredScene(raw, textureSize) {
-    if (!raw || ![1, 2].includes(raw.schema) || !Array.isArray(raw.textures) || raw.textures.length < 1 || raw.textures.length > 16) return null;
+    if (!raw || ![1, 2, 3, 4].includes(raw.schema) || !Array.isArray(raw.textures) || raw.textures.length < 1 || raw.textures.length > 16) return null;
     const textures = raw.textures.map(value => ({name: typeof value?.name === 'string' ? value.name.slice(0, 80) : '', kind: typeof value?.kind === 'string' ? value.kind.slice(0, 32) : '', width: textureSize, height: textureSize}));
     if (textures.some(value => !value.name || !value.kind)) return null;
     return {schema: raw.schema, source: 'loaded_scene_module', textures};
@@ -176,19 +176,18 @@
         <g class="brites-avatar__antenna"><path d="M160 63V40" stroke="url(#${id}Gold)" stroke-width="5" stroke-linecap="round"/><circle cx="160" cy="36" r="5" class="brites-avatar__signal"/></g>
         <ellipse cx="160" cy="197" rx="34" ry="38" fill="url(#${id}Ivory)" stroke="#ccd5dc"/><path d="M131 214Q160 226 189 214" fill="none" stroke="url(#${id}Gold)" stroke-width="4"/><path d="M154 188l6-7 6 7-6 8z" fill="url(#${id}Gold)"/>
         <g class="brites-avatar__arm brites-avatar__arm--left"><rect x="107" y="180" width="14" height="31" rx="7" fill="url(#${id}Ivory)" stroke="#ccd5dc"/></g><g class="brites-avatar__arm brites-avatar__arm--right"><rect x="199" y="180" width="14" height="31" rx="7" fill="url(#${id}Ivory)" stroke="#ccd5dc"/></g>
-        <g class="brites-avatar__head"><circle cx="160" cy="118" r="66" fill="url(#${id}Ivory)" stroke="#ccd5dc"/><circle cx="160" cy="118" r="55" fill="url(#${id}Gold)"/><circle cx="160" cy="118" r="51" fill="url(#${id}Glass)"/>
-          <circle class="brites-avatar__halo" cx="160" cy="118" r="40" fill="none" stroke-width="1.4" stroke-dasharray="185 66" opacity=".35"/>
-          <g class="brites-avatar__eye-gaze"><g class="brites-avatar__eye"><circle cx="160" cy="118" r="26" fill="none" stroke-width="8"/><circle cx="160" cy="118" r="14" fill="none" stroke-width="1.4" opacity=".36"/><circle cx="174" cy="103" r="2.5" fill="#eefaff" opacity=".9"/></g><path class="brites-avatar__heart" d="M160 138C154 132 135 121 135 109C135 95 152 92 160 104C168 92 185 95 185 109C185 121 166 132 160 138Z"/></g>
+        <g class="brites-avatar__head"><rect x="76" y="61" width="168" height="125" rx="45" fill="url(#${id}Ivory)" stroke="#ccd5dc"/><rect x="89" y="73" width="142" height="101" rx="34" fill="url(#${id}Gold)"/><rect x="92" y="76" width="136" height="95" rx="31" fill="url(#${id}Glass)"/>
+          <g class="brites-avatar__eye-gaze"><g class="brites-avatar__eye"><path class="brites-avatar__ribbon--left" d="M113 115Q113 108 120 108H141Q148 108 148 115Q148 122 141 122H120Q113 122 113 115Z"/><path class="brites-avatar__ribbon--right" d="M172 115Q172 108 179 108H200Q207 108 207 115Q207 122 200 122H179Q172 122 172 115Z"/></g><g class="brites-avatar__heart"><path d="M130 127C124 122 114 115 114 108C114 100 125 97 130 104C135 97 146 100 146 108C146 115 136 122 130 127Z"/><path d="M190 127C184 122 174 115 174 108C174 100 185 97 190 104C195 97 206 100 206 108C206 115 196 122 190 127Z"/></g></g>
           <g class="brites-avatar__face-design" fill="none" stroke="#9de7ff" stroke-linecap="round" stroke-linejoin="round">
-            <path class="brites-avatar__brow--left" d="M140 83Q148 78 156 83" stroke-width="2.5"/><path class="brites-avatar__brow--right" d="M164 83Q172 78 180 83" stroke-width="2.5"/>
-            <path class="brites-avatar__cheek--left" d="M122 135l4-4 4 4-4 4Z" fill="#e3b28c" stroke-width="1"/><path class="brites-avatar__cheek--right" d="M190 135l4-4 4 4-4 4Z" fill="#e3b28c" stroke-width="1"/>
-            <path class="brites-avatar__smile-signal" d="M147 154Q160 162 173 154" stroke-width="2.5"/>
-            <path class="brites-avatar__eye-smile" d="M146 132Q160 140 174 132" stroke-width="2"/>
-            <g class="brites-avatar__face-signal"><circle cx="198" cy="105" r="1.6" fill="#9de7ff"/><circle cx="202" cy="114" r="1.6" fill="#9de7ff"/><circle cx="203" cy="123" r="1.6" fill="#9de7ff"/></g>
+            <path class="brites-avatar__brow--left" d="M115 94Q130 87 145 94" stroke-width="2.5"/><path class="brites-avatar__brow--right" d="M175 94Q190 87 205 94" stroke-width="2.5"/>
+            <path class="brites-avatar__cheek--left" d="M103 138l4-4 4 4-4 4Z" fill="#e3b28c" stroke-width="1"/><path class="brites-avatar__cheek--right" d="M209 138l4-4 4 4-4 4Z" fill="#e3b28c" stroke-width="1"/>
+            <path class="brites-avatar__smile-signal" d="M147 145Q160 151 173 145" stroke-width="2.5"/>
+            <path class="brites-avatar__eye-smile" d="M115 121Q130 110 145 121M175 121Q190 110 205 121" stroke-width="2"/>
+            <g class="brites-avatar__face-signal"><path d="M150 156v-2M155 158v-6M160 159v-8M165 158v-6M170 156v-2" stroke-width="2"/></g>
           </g><path d="M125 95Q130 89 134 87" fill="none" stroke="#fff" opacity=".16" stroke-width="3" stroke-linecap="round"/>
         </g>
       </g></svg>`;
-    const faceNodes = Object.fromEntries(['brow--left', 'brow--right', 'cheek--left', 'cheek--right', 'smile-signal', 'eye-smile', 'face-signal'].map(name => [name, fallback.querySelector('.brites-avatar__' + name)]));
+    const faceNodes = Object.fromEntries(['brow--left', 'brow--right', 'cheek--left', 'cheek--right', 'smile-signal', 'eye-smile', 'face-signal', 'ribbon--left', 'ribbon--right'].map(name => [name, fallback.querySelector('.brites-avatar__' + name)]));
     const caption = doc.createElement('div'); caption.className = 'brites-avatar__caption';
     caption.setAttribute('aria-hidden', 'true');
     caption.textContent = MOODS[validState(options.initialState)].label;
@@ -280,14 +279,18 @@
       frame.dataset.performanceMuted = String(performance?.intensity === 0);
       frame.dataset.heart = String(emotion === 'appreciated');
       frame.dataset.faceExpression = pose.faceExpression;
-      const browY = 83 - pose.faceBrowLift * 5, browArc = browY - 3 - pose.faceBrowLift * 3, browTilt = pose.faceBrowTilt * 5;
-      faceNodes['brow--left'].setAttribute('d', `M140 ${(browY + browTilt * 1.2).toFixed(2)}Q148 ${(browArc + browTilt * .8).toFixed(2)} 156 ${(browY + browTilt * .4).toFixed(2)}`);
-      faceNodes['brow--right'].setAttribute('d', `M164 ${(browY - browTilt * .4).toFixed(2)}Q172 ${(browArc - browTilt * .8).toFixed(2)} 180 ${(browY - browTilt * 1.2).toFixed(2)}`);
-      faceNodes['smile-signal'].setAttribute('d', `M147 154Q160 ${(155 + pose.smileCurve * 10).toFixed(2)} 173 154`);
-      faceNodes['eye-smile'].setAttribute('opacity', String(pose.eyeSmile));
+      const browY = 94 - pose.faceBrowLift * 5, browArc = browY - 3 - pose.faceBrowLift * 3, browTilt = pose.faceBrowTilt * 5;
+      faceNodes['brow--left'].setAttribute('d', `M115 ${(browY + browTilt * 1.2).toFixed(2)}Q130 ${(browArc + browTilt * .8).toFixed(2)} 145 ${(browY + browTilt * .4).toFixed(2)}`);
+      faceNodes['brow--right'].setAttribute('d', `M175 ${(browY - browTilt * .4).toFixed(2)}Q190 ${(browArc - browTilt * .8).toFixed(2)} 205 ${(browY - browTilt * 1.2).toFixed(2)}`);
+      faceNodes['smile-signal'].setAttribute('d', `M147 145Q160 ${(145 + pose.smileCurve * 10).toFixed(2)} 173 145`);
+      for (const [side, center, sign] of [['left',130,-1],['right',190,1]]) {
+        const curve=pose.eyeSmile*10, tilt=pose.faceBrowTilt*sign*3, half=Math.max(1.1,7*(1-pose.lidClosure));
+        faceNodes['ribbon--'+side].setAttribute('d', `M${center-17} ${115-half+tilt}Q${center} ${115-half-curve} ${center+17} ${115-half-tilt}Q${center+22} 115 ${center+17} ${115+half-tilt}Q${center} ${115+half-curve} ${center-17} ${115+half+tilt}Q${center-22} 115 ${center-17} ${115-half+tilt}Z`);
+      }
+      faceNodes['eye-smile'].setAttribute('opacity', '0');
       faceNodes['cheek--left'].setAttribute('opacity', String(.2 + pose.cheekGlow * .75));
       faceNodes['cheek--right'].setAttribute('opacity', String(.2 + pose.cheekGlow * .75));
-      faceNodes['face-signal'].setAttribute('opacity', String(.15 + pose.faceSignal * .85));
+      faceNodes['face-signal'].setAttribute('opacity', String(pose.state==='speaking'?pose.speechEnergy*.85:0));
       frame.dataset.cue = pose.mannerismCue || '';
       frame.dataset.cuePhase = pose.mannerismPhase || '';
       frame.dataset.motion = canDisplay() && !paused && !reducedMotion ? 'running' : reducedMotion ? 'reduced' : 'paused';
