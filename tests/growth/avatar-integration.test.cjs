@@ -202,12 +202,15 @@ test('avatar layers stay exclusive while styles are missing and across context r
   const staleStyle = h.document.createElement('style');
   staleStyle.textContent = '.brites-avatar__fallback{display:grid}'; h.document.head.appendChild(staleStyle);
   assert.equal(surface.style.visibility, 'hidden');
-  assert.equal(fallback.hidden, false);
-  assert.notEqual(h.window.getComputedStyle(fallback).display, 'none');
+  assert.equal(fallback.hidden, true);
+  assert.equal(h.window.getComputedStyle(fallback).display, 'none');
+  assert.equal(h.api.snapshot().fallback.active, false);
+  assert.equal(h.api.element.querySelector('.brites-avatar__loading').hidden, false);
   loading.resolve(module); await h.api.ready;
   assert.equal(surface.style.visibility, 'visible');
   assert.equal(fallback.hidden, true);
   assert.equal(h.window.getComputedStyle(fallback).display, 'none');
+  assert.equal(h.api.element.querySelector('.brites-avatar__loading').hidden, true);
   h.sceneOptions.onContext(true);
   assert.equal(surface.style.visibility, 'hidden');
   assert.equal(fallback.hidden, false);
@@ -263,7 +266,7 @@ test('a failed first draw resolves fallback without announcing 3-D readiness', a
   assert.equal(h.api.element.querySelector('.brites-avatar__fallback').hidden, false);
 });
 
-test('pausing during import keeps the fallback until a successful first draw on resume', async t => {
+test('pausing during first import never flashes a different character before the first draw', async t => {
   const loading = deferred(); let module, readyResolved = false;
   const h = makeAvatar(t, {visible: true, loader: value => {module = value; return loading.promise;}});
   const events = []; h.api.element.addEventListener('brites-avatar:ready', () => events.push('ready'));
@@ -273,14 +276,39 @@ test('pausing during import keeps the fallback until a successful first draw on 
   const fallback = h.api.element.querySelector('.brites-avatar__fallback');
   assert.equal(h.calls.render.length, 0);
   assert.equal(h.api.snapshot().mode, 'pending');
-  assert.equal(h.api.snapshot().fallback.active, true);
+  assert.equal(h.api.snapshot().fallback.active, false);
   assert.equal(surface.style.visibility, 'hidden');
-  assert.equal(fallback.hidden, false);
+  assert.equal(fallback.hidden, true);
+  assert.match(h.api.element.querySelector('.brites-avatar__loading').textContent, /animation resumes/);
   assert.equal(readyResolved, false); assert.deepEqual(events, []);
   h.api.setPaused(false);
   assert.equal((await h.api.ready).mode, 'webgl');
   assert.equal(surface.style.visibility, 'visible');
   assert.equal(fallback.hidden, true); assert.deepEqual(events, ['ready']);
+});
+
+test('recovery keeps the failure companion until the next successful draw without a loading flash', async t => {
+  const loading = deferred(); let attempts = 0, module;
+  const h = makeAvatar(t, {visible: true, loader: value => {module = value; return ++attempts === 1 ? Promise.reject(Error('Synthetic import failure')) : loading.promise;}});
+  await h.api.ready;
+  const fallback = h.api.element.querySelector('.brites-avatar__fallback'), notice = h.api.element.querySelector('.brites-avatar__loading');
+  assert.equal(fallback.hidden, false); assert.equal(notice.hidden, true);
+  assert.equal(h.api.retry(), true); assert.equal(fallback.hidden, false); assert.equal(notice.hidden, true);
+  loading.resolve(module); await settle();
+  assert.equal(h.api.snapshot().mode, 'webgl'); assert.equal(fallback.hidden, true); assert.equal(notice.hidden, true);
+});
+
+test('failed controller setup removes its attached frame and listeners before an explicit retry', async t => {
+  const env = makeDom(), visibility = mediaAndVisibility(env.window), container = env.document.createElement('div'); env.document.body.appendChild(container);
+  const Observer = env.window.IntersectionObserver;
+  env.window.IntersectionObserver = class extends Observer {observe(element) {super.observe(element); throw Error('Synthetic observer setup failure');}};
+  assert.throws(() => avatarFactory.create({container, visible: true}), /observer setup failure/);
+  assert.equal(container.querySelectorAll('.brites-avatar').length, 0);
+  assert.equal(visibility.listeners.size, 0); assert.equal(visibility.observers[0].disconnected, true);
+  env.window.IntersectionObserver = Observer;
+  const api = avatarFactory.create({container, visible: false});
+  assert.equal(container.querySelectorAll('.brites-avatar').length, 1);
+  t.after(() => {api.destroy(); env.window.close();});
 });
 
 test('restoration while paused keeps fallback visible until a successful recovery draw', async t => {
