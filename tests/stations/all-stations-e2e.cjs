@@ -377,14 +377,22 @@ fs.mkdirSync(SHOTS, { recursive: true });
     await check('B-BD3-laser', 'laser card: the sheet in hand of the Laser person', ['SA5', 'LD2'], async () => {
       await boardUntil('laser', () => { const c = cardOf('laser'); assert(c.cards.some(x => /GF Sheet 3/.test(x.text) && x.text.includes(PEOPLE.laserApp)), 'no sheet card for ' + PEOPLE.laserApp + ': ' + JSON.stringify(c.cards)); });
     });
-    await check('B-BD3-weld', 'welding card: the people, the task each is in, and the orders matched', ['WS2', 'WS1'], async () => {
-      const c = cardOf('welding'); assert(hasCard(c, R.weldA) || /matched/i.test(c.text), 'the Welding card shows no matched order: ' + c.text.slice(0, 200));
+    await check('B-BD3-weld', 'welding card: the people, the task each is in, and the orders matched (credited to the person in Matching, never to the welder)', ['WS2', 'WS1'], async () => {
+      await boardUntil('welding', () => {
+        const c = cardOf('welding'); assert(c.weld && c.weld.visible, 'the Welding card has no Welding block (the two groups and the matched list): ' + c.text.slice(0, 160));
+        const row = c.weld.rows.find(m => m.text.includes(R.weldA)); assert(row, 'no matched row for ' + R.weldA + ': ' + JSON.stringify(c.weld.rows.map(m => m.text)));
+        assert(row.text.includes(PEOPLE.matcher), 'the matched row does not say ' + PEOPLE.matcher + ': ' + row.text);
+        assert(!c.weld.rows.some(m => m.text.includes(PEOPLE.welder)), 'a matched order is credited to the welder: ' + JSON.stringify(c.weld.rows.map(m => m.text)));
+        const task = Object.fromEntries(c.people.map(p => [p.name, p.task]));
+        eq([task[PEOPLE.matcher], task[PEOPLE.welder]], ['matching', 'welding'], 'the task each person is in');
+      }, 20000);
     });
-    await check('B-BD4', 'Welding shows two groups (Welding and Matching, one person each) and NO order throughput', ['WS2', 'WS1'], async () => {
+    await check('B-BD4', 'Welding shows two groups (Welding and Matching, one person each) and NO order throughput (no pieces, no orders on the card, none in the Overview)', ['WS2', 'WS1'], async () => {
       const c = cardOf('welding');
       const groups = c.groups.map(g => [g.group.toLowerCase(), g.people.sort().join()]).sort();
       eq(groups, [['matching', PEOPLE.matcher], ['welding', PEOPLE.welder]], 'the two groups');
-      assert(!/pieces\b.*\borders\b/i.test(c.counts) || !c.countsVisible, 'the Welding card draws order throughput: "' + c.counts + '"');
+      assert(!c.countsVisible, 'the Welding card draws order throughput: "' + c.counts + '"');
+      assert(!/\b\d+\s*pieces?\b/i.test(c.weld ? c.weld.text : c.text) && !/\b\d+\s*orders?\s+today\b/i.test(c.weld ? c.weld.text : c.text), 'the Welding block talks about pieces or orders: ' + (c.weld ? c.weld.text : c.text).slice(0, 200));
       const ov = (await P.overviewStations()).find(r => r.key === 'welding'); assert(!ov || (ov.parts || 0) === 0 && (ov.orders || 0) === 0, 'the Overview counts Welding pieces/orders: ' + JSON.stringify(ov));
     });
     await check('B-BD5', 'Laser and Design are two separate cards: each person is on the card of the role they signed in under, nobody on both', ['LD2', 'LD1'], async () => {
@@ -473,8 +481,16 @@ fs.mkdirSync(SHOTS, { recursive: true });
       assert(m.welding.matched >= 1, 'no matched scans for ' + PEOPLE.matcher);
       const w = await W.eff({ op: 'person', name: PEOPLE.welder, range: 'day' });
       assert(w.welding && w.welding.hours.welding > 0 && !(w.welding.hours.matching > 0), 'the welder has Matching time or none at Welding: ' + JSON.stringify(w.welding && w.welding.hours));
-      const pv = await P.personPage(PEOPLE.matcher, { settle: 3000 }); await P.back();
+      // on screen (WS2's "Welding station" figures): Matching hours and Orders matched equal the reader's, Welding hours are the welder's
+      const dig = s => String(s).replace(/[^\d.]/g, ''), mins = t => { const s = String(t), h = /(\d+(?:\.\d+)?)\s*h/i.exec(s), mm = /(\d+(?:\.\d+)?)\s*m(?:in)?\b/i.exec(s); return h || mm ? (h ? parseFloat(h[1]) * 60 : 0) + (mm ? parseFloat(mm[1]) : 0) : null; };
+      const pv = await P.personPage(PEOPLE.matcher, { settle: 3000, range: 'day' }); await P.back();
       assert(/matching/i.test(pv.text) && /matched/i.test(pv.text), 'the page of ' + PEOPLE.matcher + ' does not show Matching hours or the matched count');
+      assert(pv.kpis['welding.matchedOrders'] != null && pv.kpis['welding.matchingHours'] != null, 'no "Orders matched" / "Matching hours" figure on the page of ' + PEOPLE.matcher + ' (figures: ' + Object.keys(pv.kpis).join(',') + ')');
+      eq(dig(pv.kpis['welding.matchedOrders']), String(m.welding.matched), 'Orders matched on the page of ' + PEOPLE.matcher);
+      const shownMin = mins(pv.kpis['welding.matchingHours']); assert(shownMin != null && Math.abs(shownMin - m.welding.hours.matching * 60) <= 1.5, 'Matching hours on the page "' + pv.kpis['welding.matchingHours'] + '" vs the reader ' + (m.welding.hours.matching * 60).toFixed(1) + ' min');
+      const pw = await P.personPage(PEOPLE.welder, { settle: 3000, range: 'day' }); await P.back();
+      const wMin = mins(pw.kpis['welding.weldingHours']); assert(wMin != null && Math.abs(wMin - w.welding.hours.welding * 60) <= 1.5, 'Welding hours on the page of ' + PEOPLE.welder + ' "' + pw.kpis['welding.weldingHours'] + '" vs the reader ' + (w.welding.hours.welding * 60).toFixed(1) + ' min');
+      assert(!(mins(pw.kpis['welding.matchingHours']) > 0), PEOPLE.welder + ' shows Matching hours: "' + pw.kpis['welding.matchingHours'] + '"');
       const n = await W.eff({ op: 'person', name: PEOPLE.multi, range: 'day' });
       eq(n.stations.map(s => s.station).sort(), ['assembly', 'design', 'laser'], 'the stations in Nico\'s page (Design and Laser are separate)');
     });
@@ -490,9 +506,16 @@ fs.mkdirSync(SHOTS, { recursive: true });
       const bp = live.inbox.byPerson.find(p => p.name === PEOPLE.inbox); assert(bp && bp.replies === 3, 'byPerson has no Ines with 3 replies: ' + JSON.stringify(live.inbox.byPerson));
     });
     await check('B-IN2', 'Inbox (screen): the board\'s Inbox card and the person page\'s Inbox section show 3 replies, 2 orders, 2 customers', ['IN2', 'IN1'], async () => {
-      await boardUntil('inbox', () => { const c = cardOf('inbox'); assert(/\b3\b[^.]*repl/i.test(c.text) && /\b2\b[^.]*order/i.test(c.text), 'the Inbox card says: ' + c.text.slice(0, 200)); }, 15000);
-      const pv = await P.personPage(PEOPLE.inbox, { settle: 3500 }); await P.back();
-      assert(/Inbox/.test(pv.text) && /replies sent\s*3/i.test(pv.text) && /orders[^.]{0,20}\b2\b/i.test(pv.text) && /customers?\s*2/i.test(pv.text), 'the person page of ' + PEOPLE.inbox + ' has no Inbox section with 3 / 2 / 2');
+      await boardUntil('inbox', () => {
+        const c = cardOf('inbox');
+        assert(/\b3\s*repl/i.test(c.text) && /\b2\s*orders?\b/i.test(c.text), 'the Inbox card does not say 3 replies and 2 orders: ' + c.text.slice(0, 220));
+        assert(/\b2\s*customers?\b/i.test(c.text) && /\b3\s*messages?\b/i.test(c.text), 'the Inbox card does not say 2 customers and 3 messages: ' + c.text.slice(0, 220));
+        assert(c.people.some(p => p.name === PEOPLE.inbox), 'the Inbox card does not name ' + PEOPLE.inbox);
+      }, 20000);
+      const pv = await P.personPage(PEOPLE.inbox, { settle: 3500, range: 'day' }); await P.back();
+      const dig = s => String(s == null ? '' : s).replace(/[^\d.]/g, '');
+      assert(/Inbox/.test(pv.text), 'the person page of ' + PEOPLE.inbox + ' has no Inbox section');
+      eq([dig(pv.kpis['inbox.replies']), dig(pv.kpis['inbox.orders']), dig(pv.kpis['inbox.customers'])], ['3', '2', '2'], 'the Inbox figures on the page of ' + PEOPLE.inbox + ' (replies sent, orders covered, customers)');
     });
     await shot(portal, 'B3-board-final');
   }
