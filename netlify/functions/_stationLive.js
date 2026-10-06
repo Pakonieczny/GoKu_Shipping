@@ -22,6 +22,7 @@
 const LIVE = "Station_Live";
 const { STATIONS } = require("./_orderTimeline");           // one list of stations for the timeline, the sessions, the activity and this
 const { displayStation } = require("./_activityKinds");     // ONE Sorting station: the stored keys "sorter" (Sorter app) and "qr" (QR Printer page) are shown as "sorting"; history keeps its keys
+const AutoSignout = require("./_stationAutoSignout");       // the auto sign-out rules (idle after 10 minutes without input, 5:00 pm Toronto): a session they end is not "signed in" any more
 /* The Welding station (Paul, 6 Oct 2026): two tasks (welding | matching), two people at once, never counted in throughput; see _activityKinds.js */
 let KIND = null; try { KIND = require("./_activityKinds"); } catch (_) {}
 if (!KIND) KIND = { throughput: () => true, readStationCounters: (st, v) => v, UNATTRIBUTED: "Unattributed", isMatched: () => false };
@@ -31,6 +32,7 @@ const STALE_MS = 180000;           // a document with no keep-alive for this lon
 const COALESCE_MS = 15000;         // a repeat of the same write inside this is not written again
 const MAX_BODY_CHARS = 8000, MAX_PIECES = 24, MAX_AGE_MS = 12 * 3600e3, SESSION_GONE_MS = 15 * 60000;
 const TTL = { live: 2000, sessions: 15000, today: 20000, found: 15 * 60000, miss: 60000 };
+const UNATTRIBUTED_NOTE = "Scanned with nobody in Matching";     // what the board says of a matched scan made while nobody was signed in under Matching (R3 of stations round 2)
 const LIM = { live: 200, sessions: 300, rollups: 200, matched: 400, matchedShown: 30 };
 
 /* what the console lists, in order: key, label (as StationSession shows it), the pages that make up the station.
@@ -301,7 +303,8 @@ function readLive(ctx, H) {
 /** today's sessions that are still open: who is signed in where (15 s) */
 function readSessions(ctx, H) {
   return H.cached(ctx, `lsess|${ctx.prefix}`, TTL.sessions, async () => {
-    const snap = await col(ctx, "Station_Sessions").where("startAt", ">=", H.nyMidnight(ctx.today)).orderBy("startAt", "desc").limit(LIM.sessions + 1).get();
+    // (a session the auto sign-out rules end, `idle` or `closing` at the person's last input, a page that died, is ended here and leaves the board: _stationAutoSignout.js)
+    const snap = await AutoSignout.settledSnap({ db: ctx.db, prefix: ctx.prefix, now: ctx.now }, await col(ctx, "Station_Sessions").where("startAt", ">=", H.nyMidnight(ctx.today)).orderBy("startAt", "desc").limit(LIM.sessions + 1).get());
     const rows = []; for (const d of snap.docs.slice(0, LIM.sessions)) { const v = d.data() || {}; const station = str(v.station, 20); rows.push({ person: str(v.person, 80), station, device: text(v.device, 40), startAt: ms(v.startAt), lastSeenAt: ms(v.lastSeenAt), endAt: ms(v.endAt), task: station === "welding" && (v.task === "welding" || v.task === "matching") ? v.task : "", role: v.role === "laser" || v.role === "design" ? v.role : "", lastInputAt: ms(v.lastInputAt) }); }
     return { rows, capped: snap.docs.length > LIM.sessions };
   });
@@ -416,7 +419,7 @@ async function op(ctx, body, H) {
   const today = tr.ok ? tr.value.by : {}, stations = [];
   // the Welding station: today's matched scans (newest first, dressed with the order's thumbnail like a current order) and the time signed in per task today
   const todayStart = H.nyMidnight(ctx.today), matchedRows = mr.ok ? mr.value.rows : [];
-  const matched = matchedRows.slice(0, LIM.matchedShown).map(m => ({ kind: "order", rid: m.rid, orderNumber: m.rid, at: m.at, person: m.unattributed ? "" : H.display(m.person), task: "matching", unattributed: m.unattributed, customer: "", pieces: [], pieceCount: 0, note: "" }));
+  const matched = matchedRows.slice(0, LIM.matchedShown).map(m => ({ kind: "order", rid: m.rid, orderNumber: m.rid, at: m.at, person: m.unattributed ? "" : H.display(m.person), task: "matching", unattributed: m.unattributed, customer: "", pieces: [], pieceCount: 0, note: m.unattributed ? UNATTRIBUTED_NOTE : "" }));
   if (matched.length) { try { errors.push(...await dress(ctx, matched)); } catch (e) { errors.push("matched: " + String((e && e.message) || e).slice(0, 120)); } }
   const lastScan = new Map(); for (const m of matchedRows) if (!m.unattributed) { const n = H.display(m.person); lastScan.set(n, Math.max(lastScan.get(n) || 0, m.at)); }
   const weldRows = (sr.ok ? sr.value.rows : []).filter(r => r.station === "welding" && r.startAt > 0 && r.person && hasLetter(r.person));
@@ -428,7 +431,7 @@ async function op(ctx, body, H) {
     for (const c of mine) if (!people.some(p => p.name === c.person)) people.push({ name: c.person, since: c.since || c.scannedAt, lastSeenAt: c.beatAt, lastInputAt: null, device: c.device, deviceLabel: c.deviceLabel });
     const names = [...new Set(people.map(p => p.name))];
     const devs = new Map(s.devices.map(([d, l]) => [d, { device: d, label: l, state: "offline", person: "", since: 0 }]));
-    for (const p of onPages) { const x = devs.get(p.device) || { device: p.device, label: deviceLabel(s.key, p.device), state: "offline", person: "", since: 0 }; devs.set(p.device, x); x.state = "idle"; x.person = x.person && x.person !== p.name && !x.person.split(", ").includes(p.name) ? x.person + ", " + p.name : p.name; x.since = x.since ? Math.min(x.since, p.since) : p.since; }
+    for (const p of onPages) { const x = devs.get(p.device) || { device: p.device, label: deviceLabel(s.key, p.device), state: "offline", person: "", since: 0 }; devs.set(p.device, x); x.state = "idle"; x.person = !x.person ? p.name : x.person.split(", ").includes(p.name) ? x.person : x.person + ", " + p.name; x.since = x.since ? Math.min(x.since, p.since) : p.since; }
     for (const c of mine) { const x = devs.get(c.device) || { device: c.device, label: c.deviceLabel, state: "offline", person: "", since: 0 }; devs.set(c.device, x); x.state = "working"; if (!x.person) x.person = c.person; x.since = c.since || x.since; }
     const t = today[s.key] || (tr.ok ? { parts: 0, orders: 0, scans: 0, lastAt: 0, matched: 0, unattributed: 0 } : { parts: null, orders: null, scans: null, lastAt: 0, matched: null, unattributed: null });   // (today's rollups could not be read: the counts are unknown, a dash, never a 0)
     let lastEventAt = t.lastAt;
@@ -444,10 +447,16 @@ async function op(ctx, body, H) {
       row.noThroughput = true;
       row.counts = { partsToday: null, ordersToday: null, scansToday: tr.ok ? t.matched : null };
       row.today = { day: ctx.today, matched: tr.ok ? t.matched : null, unattributed: tr.ok ? t.unattributed : null, taskMs: { welding: taskMsOf("welding"), matching: taskMsOf("matching"), unknown: taskMsOf("unknown") } };
-      row.matched = matched.map(m => ({ rid: m.rid, orderNumber: m.orderNumber, at: m.at, person: m.person, task: m.task, unattributed: m.unattributed, customer: m.customer, thumbUrl: m.thumbUrl || "", vectorUrl: m.vectorUrl || "", photoUrl: m.photoUrl || "", pieceCount: m.pieceCount, pieces: m.pieces }));
+      row.matched = matched.map(m => ({ rid: m.rid, orderNumber: m.orderNumber, at: m.at, person: m.person, task: m.task, unattributed: m.unattributed, note: m.note, customer: m.customer, thumbUrl: m.thumbUrl || "", vectorUrl: m.vectorUrl || "", photoUrl: m.photoUrl || "", pieceCount: m.pieceCount, pieces: m.pieces }));
     }
     stations.push(row);
   }
+  // the inbox card's block (IN1, _employeeInbox.js): today's sent replies, orders, customers and messages (people + unknown, never auto);
+  // a read that fails only leaves the block out (the card then draws a dash), it never makes the whole board partial
+  try {
+    const ibs = stations.find(s => s.key === "inbox");
+    if (ibs && !ctx.prefix) { const blk = await require("./_employeeInbox").today(ctx); if (blk) ibs.inbox = blk; }
+  } catch (e) { console.warn("[live] inbox block skipped: " + String((e && e.message) || e).slice(0, 120)); }
   const out = { ok: true, at: now, mode: ctx.prefix ? "sandbox" : "real", day: ctx.today, keepAliveMs: KEEPALIVE_MS, staleMs: STALE_MS, stations, signedIn };
   if (errors.length) { out.partial = true; out.errors = errors; }
   else if (capped) out.partial = true;
