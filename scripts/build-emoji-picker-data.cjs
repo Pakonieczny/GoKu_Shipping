@@ -20,6 +20,9 @@
  * Skin tones: a person/hand emoji carries one template string (\u0001 stands for the tone) that expands to the five tone
  * variants of the map; the tone variants are never cells of their own. Couples and hand-holders also carry a two-slot
  * template (\u0001 and \u0002) for the mixed-tone pairs the map holds (CNEmojiData.pair).
+ * One cell per outline: the monochrome font draws man/woman/person variants, hair colours, jobs and family compositions with
+ * exactly the same ink, so cells with an identical outline fold into the neutral one (the folded keys stay in `s`, their names
+ * become search words). Flags are never folded. The build proves nothing the laser can cut is lost (report.uncovered is empty).
  * Names: Python unicodedata (Unicode 14) plus Perl charnames (Unicode 15.0) for single code points, Intl.DisplayNames for
  * flags, composed from parts for ZWJ sequences, and the CURATED table below (everyday names and search words). Nothing in
  * the output depends on the date or machine: the same inputs give byte-identical output. */
@@ -1126,7 +1129,7 @@ function build(options = {}) {
   const groupOf = i => { let g = anchors[0][0]; for (const [id, start] of anchors) if (i >= start) g = id; return g; };
   const fq = [];
   keys.forEach((k, i) => { if (RGI.test(k) && !unsupported.has(k)) fq.push({ k, g: groupOf(i) }); });
-  const byStripped = new Map(), isCandidate = new Set(fq.map(x => x.k));
+  const byStripped = new Map();
   for (const x of fq) if (!hasTone(x.k)) byStripped.set(strip(x.k), x.k);
 
   // cells and tone templates

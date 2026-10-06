@@ -96,6 +96,7 @@ const door = require(path.join(root, 'netlify/functions/firebaseOrders.js'));
 const reader = require(path.join(root, 'netlify/functions/employeeEfficiency.js'));
 const EP = require(path.join(root, 'netlify/functions/_editPasscode.js'));
 const ACT = require(path.join(root, 'netlify/functions/_stationActivity.js'));
+const AK = require(path.join(root, 'netlify/functions/_activityKinds.js'));
 Module._load = realLoad;
 const T = reader._t;
 const PASS = 'synthetic-names-pass-5k2x';
@@ -284,18 +285,20 @@ let MAIN;
   dropCaches();
   const A = await ask({ day: '2026-10-02' });
   const EXPECT = {                      // hand-computed (see the cast above): parts, scans, scanParts, orders, active min, idle min, signed-in min, rate, sec per scan
-    'Michael V.': { t: [12, 4, 13, 5, 13, 77, 90, 55.4, 195], hours: { 8: 10, 9: 2 }, st: { welding: 7, design: 3, sorting: 2 } },
+    'Michael V.': { t: [5, 4, 13, 4, 13, 77, 90, 42.9, 195], hours: { 8: 3, 9: 2 }, st: { welding: 0, design: 3, sorting: 2 } },
     'Giovanna': { t: [10, 2, 10, 2, 14, 0, 240, 42.9, 420], hours: { 8: 10 }, st: { assembly: 10, inbox: 0 } },
     'Ana M.': { t: [8, 2, 8, 2, 9, 0, 180, 53.3, 270], hours: { 8: 6, 10: 2 }, st: { assembly: 6, sorting: 2 } },
-    'Ivy Y.': { t: [8, 1, 8, 1, 5, 0, 120, 96, 300], hours: { 9: 8 }, st: { welding: 8 } },
+    'Ivy Y.': { t: [0, 1, 8, 0, 5, 0, 120, 0, 300], hours: {}, st: { welding: 0 } },
     'Empress D.': { t: [5, 0, 0, 2, 6, 0, 120, 50, 0], hours: { 9: 5 }, st: { design: 5 } },
     'Michelle R.': { t: [5, 1, 5, 1, 4, 0, 120, 75, 240], hours: { 8: 5 }, st: { shipping: 5 } },
     'Paul K.': { t: [3, 1, 3, 1, 4, 10, 90, 45, 240], hours: { 8: 3 }, st: { shipping: 3, inbox: 0 } },
-    'Michael T.': { t: [2, 1, 2, 1, 4, 0, 60, 30, 240], hours: { 8: 2 }, st: { welding: 2 } },
+    'Michael T.': { t: [0, 1, 2, 0, 4, 0, 60, 0, 240], hours: {}, st: { welding: 0 } },
     'Michael': { t: [0, 0, 0, 0, 1, 10, 30, 0, 0], hours: {}, st: { inbox: 0 } }
   };
   const SHOWN = Object.keys(EXPECT);
-  eq(A.people.map(p => p.name), ['Michael V.', 'Giovanna', 'Ana M.', 'Ivy Y.', 'Empress D.', 'Michelle R.', 'Paul K.', 'Michael T.', 'Michael'],
+  // (RG2: ranked by the pieces that COUNT, and the Welding station does not count since 6 Oct (plans/stations-round2 R2 / WS2: time on task and matched scans there, no completions): so the
+  //  three people whose work was welding (Michael V. 5 of 12, Ivy Y., Michael T.) drop in the order; ties by name)
+  eq(A.people.map(p => p.name), ['Giovanna', 'Ana M.', 'Empress D.', 'Michael V.', 'Michelle R.', 'Paul K.', 'Ivy Y.', 'Michael', 'Michael T.'],
     'nine people, each once: the seven names with nice display names (Michael V., Ana M., Paul K., Michelle R., Ivy Y.), Giovanna C. + Giovanna one person under the alias spelling, the other two Michaels apart');
   assert(!A.people.some(p => /_/.test(p.name)), 'no underscore on the screen');
   for (const p of A.people) {
@@ -308,15 +311,15 @@ let MAIN;
   }
   const mv = A.people.find(p => p.name === 'Michael V.');
   eq([mv.firstIn, mv.lastOut], [D2(8), D2(9, 30)], 'Michael V.: first in 08:00 on the first computer, out 09:30 on the last (one person, three spellings)');
-  eq(mv.stations.map(s => [s.station, s.minutes]), [['welding', 60], ['design', 60], ['sorting', 60]], 'minutes per station stay per station; the 90 signed-in minutes count the overlap once');
+  eq(mv.stations.map(s => [s.station, s.minutes]), [['design', 60], ['sorting', 60], ['welding', 60]], 'minutes per station stay per station (Welding, with no counted pieces, is listed last); the 90 signed-in minutes count the overlap once');
   eq(mv.orders.map(o => o.orderId).sort(), [O(10), O(11), O(12), O(13), O(14)], 'five distinct orders (order 10 was worked at two stations and counts once)');
   // the business
-  eq(A.business.totals, { parts: 53, scans: 12, orders: 15, people: 9 }, 'the business adds up the nine people');
-  eq(A.people.reduce((n, p) => n + p.totals.parts, 0), 53); eq(A.people.reduce((n, p) => n + p.totals.scans, 0), 12);
-  eq(Object.fromEntries(A.business.stations.filter(s => s.parts > 0).map(s => [s.station, s.parts])), { sorting: 4, welding: 17, assembly: 16, shipping: 8, design: 8 }, 'parts per station');
-  eq(A.business.perHour, { welding: hourArr({ 8: 9, 9: 8 }), assembly: hourArr({ 8: 16 }), sorting: hourArr({ 9: 2, 10: 2 }), shipping: hourArr({ 8: 8 }), design: hourArr({ 8: 3, 9: 5 }) }, 'hours per station');
+  eq(A.business.totals, { parts: 36, scans: 12, orders: 12, people: 9 }, 'the business adds up the nine people (the 17 pieces and 3 orders that only the Welding station touched are not throughput)');
+  eq(A.people.reduce((n, p) => n + p.totals.parts, 0), 36); eq(A.people.reduce((n, p) => n + p.totals.scans, 0), 12);
+  eq(Object.fromEntries(A.business.stations.filter(s => s.parts > 0).map(s => [s.station, s.parts])), { sorting: 4, assembly: 16, shipping: 8, design: 8 }, 'parts per station (Welding counts none)');
+  eq(A.business.perHour, { assembly: hourArr({ 8: 16 }), sorting: hourArr({ 9: 2, 10: 2 }), shipping: hourArr({ 8: 8 }), design: hourArr({ 8: 3, 9: 5 }) }, 'hours per station (no Welding: it adds nothing to the pieces per hour)');
   function hourArr(o) { const a = new Array(24).fill(0); for (const [h, v] of Object.entries(o)) a[+h] = v; return a; }
-  eq(A.people.reduce((a, p) => a.map((v, h) => v + p.perHour[h]), new Array(24).fill(0)).reduce((n, v) => n + v, 0), 53, 'the hours add up to the parts');
+  eq(A.people.reduce((a, p) => a.map((v, h) => v + p.perHour[h]), new Array(24).fill(0)).reduce((n, v) => n + v, 0), 36, 'the hours add up to the parts');
   // the live feed: every line carries the one display name
   eq(A.feed.length, 35);
   const feedBy = {}; for (const f of A.feed) feedBy[f.person] = (feedBy[f.person] || 0) + 1;
@@ -325,13 +328,13 @@ let MAIN;
   /* ═══════════ 3 · any spelling asks for the same person ═══════════ */
   const personOf = async name => (await ask({ op: 'person', name, day: '2026-10-02', days: 3 }));
   const base = await personOf('Michael V.');
-  eq(base.name, 'Michael V.'); eq(base.totals.parts, 12);
-  eq(base.days.map(d => [d.day, d.parts, d.scans, d.orders, d.signedInMin, d.activeMin, d.idleMin]), [['2026-09-30', 0, 0, 0, 0, 0, 0], ['2026-10-01', 0, 0, 0, 0, 0, 0], ['2026-10-02', 12, 4, 5, 90, 13, 77]], 'the person op shows the same day');
+  eq(base.name, 'Michael V.'); eq(base.totals.parts, 5);
+  eq(base.days.map(d => [d.day, d.parts, d.scans, d.orders, d.signedInMin, d.activeMin, d.idleMin]), [['2026-09-30', 0, 0, 0, 0, 0, 0], ['2026-10-01', 0, 0, 0, 0, 0, 0], ['2026-10-02', 5, 4, 4, 90, 13, 77]], 'the person op shows the same day (the 7 pieces at the Welding station are not counted)');
   for (const spelling of ['Michael_V', 'michael v.', 'MICHAEL  V', 'Michael V', ' michael_v. ', 'MICHAEL_V']) {
     const o = await personOf(spelling);
     eq([o.name, o.totals, o.days], [base.name, base.totals, base.days], 'asking for "' + spelling + '" gives the same person');
   }
-  eq((await personOf('Michael T.')).totals.parts, 2, 'Michael T. is another person'); eq((await personOf('Michael')).totals.parts, 0, 'so is a bare Michael');
+  eq((await personOf('Michael T.')).totals.parts, 0, 'Michael T. is another person (his only work was at the Welding station: no counted pieces)'); eq((await personOf('Michael')).totals.parts, 0, 'so is a bare Michael');
   eq((await personOf('Ana_M')).name, 'Ana M.'); eq((await personOf('paul k')).name, 'Paul K.'); eq((await personOf('Giovanna C.')).name, 'Giovanna');
   // the order trace
   const ox = await ask({ op: 'orders', orderId: O(10) });
@@ -344,7 +347,8 @@ let MAIN;
     const groups = new Map();
     for (const d of docsOf('Efficiency_Daily')) {
       const g = groups.get(key(d.person)) || { parts: 0, scans: 0, scanParts: 0, docs: 0 };
-      for (const s of Object.values(d.stations)) { g.parts += (s.parts || 0) - (s.undoParts || 0); g.scans += s.scans || 0; g.scanParts += s.scanParts || 0; }
+      // (RG2: the stored rollups still hold the Welding station's pieces, as written; readers sum them through readStationCounters, which leaves Welding's completions out)
+      for (const [st, v] of Object.entries(d.stations)) { const s = AK.readStationCounters(st, v); g.parts += (s.parts || 0) - (s.undoParts || 0); g.scans += s.scans || 0; g.scanParts += s.scanParts || 0; }
       g.docs++; groups.set(key(d.person), g);
     }
     eq(groups.size, 9, 'the fourteen rollup documents are nine people');
@@ -356,7 +360,7 @@ let MAIN;
   col('config').set('employeeAliases', { 'Mike V.': ['Michael_V'], 'Shelly_R': ['Michelle R.'] });
   dropCaches();
   const B = await ask({ day: '2026-10-02' });
-  eq(B.people.map(p => p.name), ['Mike V.', 'Giovanna', 'Ana M.', 'Ivy Y.', 'Empress D.', 'Shelly_R', 'Paul K.', 'Michael T.', 'Michael'], 'the alias doc\'s own spelling wins and is shown as written (Shelly_R keeps its underscore); its aliases fold like names (alias "Michelle R." caught "Michelle_R")');
+  eq(B.people.map(p => p.name), ['Giovanna', 'Ana M.', 'Empress D.', 'Mike V.', 'Shelly_R', 'Paul K.', 'Ivy Y.', 'Michael', 'Michael T.'], 'the alias doc\'s own spelling wins and is shown as written (Shelly_R keeps its underscore); its aliases fold like names (alias "Michelle R." caught "Michelle_R")');
   eq(B.people.map(p => p.totals.parts), A.people.map(p => p.totals.parts), 'the same figures under the new names');
   eq(B.business.totals, A.business.totals, 'the same business');
   assert(B.feed.every(f => ['Mike V.', 'Giovanna', 'Ana M.', 'Ivy Y.', 'Empress D.', 'Shelly_R', 'Paul K.', 'Michael T.', 'Michael'].includes(f.person)), 'the feed follows');
@@ -381,11 +385,11 @@ let MAIN;
     eq(M.people.map(p => p.name), A.people.map(p => p.name), 'the screen shows the same nine people, spelled as the reader spelled them');
     assert.strictEqual(new Set(M.people.map(p => p.name)).size, 9, 'each once'); assert(!M.people.some(p => /_/.test(p.name)));
     for (const p of A.people) { const q = M.people.find(x => x.name === p.name); eq([q.t.parts, q.t.scans, q.t.orders, q.t.activeMin, q.t.idleMin, q.t.signedInMin, q.perHour], [p.totals.parts, p.totals.scans, p.totals.orders, p.totals.activeMin, p.totals.idleMin, p.totals.signedInMin, p.perHour], p.name + ': the card shows the reader\'s numbers'); }
-    assert.strictEqual(M.biz.people, 9); assert.strictEqual(M.biz.parts, 53); assert.strictEqual(M.biz.scans, 12); assert.strictEqual(M.biz.orders, 15);
-    assert.strictEqual(M.biz.hours.reduce((a, b) => a + b, 0), 53, 'the hourly graph adds to the parts');
+    assert.strictEqual(M.biz.people, 9); assert.strictEqual(M.biz.parts, 36); assert.strictEqual(M.biz.scans, 12); assert.strictEqual(M.biz.orders, 12);   // (RG2: Welding is not throughput)
+    assert.strictEqual(M.biz.hours.reduce((a, b) => a + b, 0), 36, 'the hourly graph adds to the parts');
     eq(M.feed.map(f => f.person).filter((v, i, a) => a.indexOf(v) === i).sort(), SHOWN.slice().sort(), 'the live feed shows the same nine names');
     const H = j(Eff.normHist(base));
-    assert.strictEqual(H.parts, 12); assert.strictEqual(H.signedInMin, 90); assert.strictEqual(H.days[H.days.length - 1].parts, 12);
+    assert.strictEqual(H.parts, 5); assert.strictEqual(H.signedInMin, 90); assert.strictEqual(H.days[H.days.length - 1].parts, 5);
     const Od = j(Eff.normOrder(ox)); eq(Od.steps.map(s => s.person), ['Michael V.', 'Michael V.']);
     say('6 the console view model: nine people, nice names, the same totals, hours add to the parts, a person\'s days, an order trace');
   }
