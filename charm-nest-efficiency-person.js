@@ -119,7 +119,7 @@
     if (doc.getElementById("efpStyle")) return;
     const s = doc.createElement("style"); s.id = "efpStyle";
     s.textContent = `
-.efp{container-type:inline-size;container-name:efp;position:relative;display:grid;gap:12px;min-width:0;color:var(--ink);font-size:12.5px;padding-bottom:8px;align-content:start}
+.efp{container-type:inline-size;container-name:efp;position:relative;display:grid;grid-template-columns:minmax(0,1fr);gap:12px;min-width:0;color:var(--ink);font-size:12.5px;padding-bottom:8px;align-content:start}
 .efp,.efp *{box-sizing:border-box}.efp .hidden{display:none!important}
 .efp button{font-family:inherit}
 .efp .spin{width:11px;height:11px;border:2px solid var(--line);border-top-color:var(--ink70);border-radius:50%;animation:spin .7s linear infinite;flex:0 0 11px;display:inline-block}
@@ -261,11 +261,12 @@
 .efpFound{display:flex;align-items:center;gap:9px;padding:9px 14px;border:1px solid var(--line);background:var(--card2);border-radius:10px;color:var(--ink70);font-size:12px}
 @container efp (max-width:1180px){.efpKpis{grid-template-columns:repeat(4,minmax(0,1fr))}.efpO{grid-template-columns:88px minmax(130px,1fr) 104px minmax(0,1.6fr) 48px}.efpDay{min-width:132px}}
 @container efp (max-width:900px){.efpGrid.g2,.efpGrid.g75,.efpGrid.g57{grid-template-columns:minmax(0,1fr)}.efpKpis{grid-template-columns:repeat(2,minmax(0,1fr))}.efpO{grid-template-columns:78px minmax(0,1fr) 92px 44px;grid-template-areas:"t n s q" "p p p p";gap:6px 10px}.efpO>.efpOt{grid-area:t}.efpO>.efpOn{grid-area:n}.efpO>.efpOs{grid-area:s}.efpO>.efpOp{grid-area:p}.efpO>.efpQr{grid-area:q;width:44px;height:44px}}
-@container efp (max-width:640px){.efpAv{width:42px;height:42px;flex-basis:42px;font-size:14px}.efpName{font-size:18px;white-space:normal;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;line-clamp:2;overflow-wrap:anywhere}.efpChips{flex:1 1 100%}.efpBar{gap:6px 8px;padding:6px 8px}.efpSeg{order:1;max-width:100%;overflow-x:auto;scrollbar-width:none}.efpSeg button{padding:4px 9px;flex:0 0 auto}.efpNav{order:2;flex:1 1 100%}.efpDay{flex:1;min-width:0}.efpBusy{order:3}
+@container efp (max-width:640px){.efpWhere{white-space:normal}.efpAv{width:42px;height:42px;flex-basis:42px;font-size:14px}.efpName{font-size:18px;white-space:normal;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;line-clamp:2;overflow-wrap:anywhere}.efpChips{flex:1 1 100%}.efpBar{gap:6px 8px;padding:6px 8px}.efpSeg{order:1;max-width:100%;overflow-x:auto;scrollbar-width:none}.efpSeg button{padding:4px 9px;flex:0 0 auto}.efpNav{order:2;flex:1 1 100%}.efpDay{flex:1;min-width:0}.efpBusy{order:3}
 .efpRtH b{flex:1 1 100%;order:-2}.efpRtH span{order:-1;margin-left:0;color:var(--ink);font-weight:700}
 .efpKpis{gap:8px}.efpKL{font-size:9.5px;letter-spacing:.04em;min-height:2.6em;align-items:flex-end}.efpK{padding:11px 12px 9px}.efpKV{font-size:25px}.efpKsp{flex-basis:48px}.efpChart{padding:11px 12px 12px}.efpNowCard{grid-template-columns:auto minmax(0,1fr);padding:11px 12px}.efpNowCard>.efpQr{display:none}
 .efpO{grid-template-columns:70px minmax(0,1fr) 44px;grid-template-areas:"t n q" "s s s" "p p p"}.efpO>.efpOs{grid-area:s;display:flex;gap:10px;align-items:baseline}.efpIr{grid-template-columns:100px minmax(0,1fr);grid-template-areas:"t n" "r r"}.efpIr>time{grid-area:t}.efpIr>.efpOid{grid-area:n}.efpIr>span{grid-area:r}.efpIgh,.efpIgl,.efpRates{padding-left:12px;padding-right:12px}.efpPad,.efpIs>.efpHow,.efpNone,.efpSum{padding-left:12px;padding-right:12px}.efpFind{padding:10px 12px 6px}.efpOl{padding:0 2px 4px}
 }
+@container efp (max-width:330px){.efpKsp{display:none}.efpKV{font-size:22px}.efpKD span{white-space:normal}}
 @media (prefers-reduced-motion:reduce){.efp *,.efp *:before,.efp *:after{transition:none!important;animation:none!important}}`;
     doc.head.appendChild(s);
   }
@@ -763,7 +764,7 @@
       const M = S.M, L = S.live, w = L && L.where, td = today(), seen = (M && M.to >= td && M.lastSeen) || S.seenAt || null;
       E.av.toggleAttribute("data-on", !!w);
       let txt;
-      if (w) txt = `Signed in${w.stationKey ? ` at <b>${esc(stName(w.stationKey))}</b>` : ""}${w.tasks && w.tasks.length ? ` as ${esc(w.tasks.map(t => t.charAt(0).toUpperCase() + t.slice(1)).join(" and "))}` : ""}${w.since ? ` · since ${esc(stamp(w.since, td))}` : ""}`;
+      if (w) txt = `Signed in${w.stationKey ? ` at <b>${esc(stName(w.stationKey))}</b>` : ""}${w.tasks && w.tasks.length ? ` · ${w.tasks.length > 1 ? "Tasks" : "Task"}: ${esc(w.tasks.map(t => t.charAt(0).toUpperCase() + t.slice(1)).join(" and "))}` : ""}${w.since ? ` · since ${esc(stamp(w.since, td))}` : ""}`;
       else if (seen) txt = `${L ? "Not signed in · last" : "Last"} seen <b>${esc(stamp(seen, td))}</b>`;
       else txt = L || M ? "Not signed in now" : "";
       if (E.where._h !== txt) { E.where._h = txt; E.where.innerHTML = txt; }
@@ -832,7 +833,7 @@
         const rd = diffDays(M.from, M.to) + 1, tag = m && m.est ? "est." : m && m.daysCounted != null && m.daysCounted < rd && m.v != null ? `${nf(m.daysCounted)} of ${nf(rd)} days` : m && m.window && evs ? "recent" : m && m.derived ? "sum" : ""; setText(k.tag, tag);
         // a small trend line joins the days that have a figure (a day off or a future day would cut it into stubs); the charts below keep every gap
         const sp = m ? sparkFor(full, B, M).filter(x => x != null) : [], known = sp.length, on = known >= 3 && !k.card.classList.contains("hidden") && root.EfficiencyCharts;
-        if (on) { if (!k.sp) k.sp = chart("sparkline", k.spH, { height: 26, hover: false, fill: false, name: `${nameOf(m, d)} across the range` }); if (k.sp) k.sp.update({ values: sp }); k.spH.style.visibility = ""; }
+        if (on) { if (!k.sp) k.sp = chart("sparkline", k.spH, { height: 26, hover: false, fill: false, emptyText: "", name: `${nameOf(m, d)} across the range` }); if (k.sp) k.sp.update({ values: sp }); k.spH.style.visibility = ""; }
         else { if (k.sp) { k.sp.destroy(); k.sp = null; } k.spH.style.visibility = "hidden"; }
         k.card.setAttribute("aria-label", `${nameOf(m, d)}: ${m && m.v != null ? fmt(m.v) : "no data"}. ${(m && m.def) || d.def}`);
       }
