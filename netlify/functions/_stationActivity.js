@@ -12,7 +12,9 @@
 const ACT = "Station_Activity", DAILY = "Efficiency_Daily";
 const { STATIONS } = require("./_orderTimeline");           // one list of stations for the timeline, the sessions and this
 let issueKinds = null; try { issueKinds = require("./_activityKinds"); } catch (_) {}   // (the issue counters are an extra: without the file the rollup is as before)
-const ACTIONS = new Set(["scan", "reject", "complete", "print", "undo", "error", "note"]);
+const ACTIONS = new Set(["scan", "reject", "complete", "print", "undo", "error", "note", "matched"]);   // matched: one scan of an order at the Welding station's Matching task (never a completion)
+const UNATTRIBUTED = (issueKinds && issueKinds.UNATTRIBUTED) || "Unattributed", TASKS = (issueKinds && issueKinds.TASKS) || ["welding", "matching"];
+const ROLES = ["laser", "design"];
 const MAX_BATCH = 50, MAX_EVENT_BYTES = 600, MAX_BODY_CHARS = 40000;
 const ACTIVE_GAP_MS = 5 * 60000, GAP_CAP_MS = 3600000, MAX_AGE_MS = 7 * 86400000, MAX_PARTS = 100000, MAX_TOUCHED = 3000;
 const TZ = "America/New_York";
@@ -46,7 +48,9 @@ function clean(e, now, prefix) {
   const id = typeof e.id === "string" && /^[\w.:-]{8,100}$/.test(e.id) && !/^__.*__$/.test(e.id) && !/^\.+$/.test(e.id) ? e.id : "";
   const station = typeof e.station === "string" && STATIONS.has(e.station) ? e.station : "";
   const action = typeof e.action === "string" && ACTIONS.has(e.action) ? e.action : "";
-  const person = noPin(str(e.person, 200)).slice(0, 80);
+  // a scan made while nobody was signed in under Matching (Welding only): stored under the one name "Unattributed", never credited to a welder
+  const unattributed = e.unattributed === true && station === "welding";
+  const person = unattributed ? UNATTRIBUTED : noPin(str(e.person, 200)).slice(0, 80);
   if (!id || !station || !action || !person || !/\p{L}/u.test(person)) return { refused: true };   // no letter (digits, "123 456", "12-34-56") = a PIN, never a name
   const at0 = Number(e.at);
   let at = Number.isFinite(at0) && at0 > 1e12 ? Math.round(at0) : now;
@@ -68,6 +72,11 @@ function clean(e, now, prefix) {
     at, seq: int(e.seq, 0, 1e9), sincePrevMs: int(e.sincePrevMs, 0, GAP_CAP_MS),
     serverAt: now, day, hour, v: 1
   };
+  // the optional work context (never an error when it is not valid: it is simply left out): the Welding station's task, a Laser or Design role, an unattributed scan
+  const task = station === "welding" && TASKS.includes(e.task) ? e.task : "", role = ROLES.includes(e.role) ? e.role : "";
+  if (task) doc.task = task;
+  if (role) doc.role = role;
+  if (unattributed) { doc.unattributed = true; if (!task) doc.task = "matching"; }
   if (prefix) doc.sandbox = true;
   return { doc, scrubbed };
 }
@@ -76,7 +85,8 @@ function clean(e, now, prefix) {
 function bump(o, k, v) { if (v) o[k] = (o[k] || 0) + v; }
 function tally(st, ev) {
   switch (ev.action) {
-    case "scan": bump(st, "scans", 1); bump(st, "scanParts", ev.parts); break;
+    case "scan": bump(st, "scans", 1); bump(st, "scanParts", ev.parts); if (ev.station === "welding" && ev.task === "matching") bump(st, "matched", 1); break;
+    case "matched": bump(st, "scans", 1); bump(st, "scanParts", ev.parts); bump(st, "matched", 1); break;      // scanned work at the Welding station: a scan, never a completion
     case "complete": bump(st, "completes", 1); bump(st, "parts", ev.parts); bump(st, "orders", ev.orders); break;
     case "print": bump(st, "prints", 1); break;
     case "reject": bump(st, "rejects", 1); break;
@@ -106,7 +116,7 @@ function rollupPatch(FV, prev, day, person, evs, prefix) {
     } catch (_) {}
     const sp = span[ev.station] || (span[ev.station] = { first: Infinity, last: 0 });
     sp.first = Math.min(sp.first, ev.at); sp.last = Math.max(sp.last, ev.at);
-    const sc = ev.action === "scan" ? 1 : 0, pr = ev.action === "complete" ? ev.parts : 0, un = ev.action === "undo" ? ev.parts : 0;
+    const sc = ev.action === "scan" || ev.action === "matched" ? 1 : 0, pr = ev.action === "complete" ? ev.parts : 0, un = ev.action === "undo" ? ev.parts : 0;
     if (sc || pr || un) {
       const h = hours[ev.hour] || (hours[ev.hour] = { tot: {}, by: {} });
       bump(h.tot, "scans", sc); bump(h.tot, "parts", pr); bump(h.tot, "undoParts", un);
