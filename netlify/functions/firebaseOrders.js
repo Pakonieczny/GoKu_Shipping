@@ -52,9 +52,14 @@ const liveFlood = { seen: new Map(), PER_MIN: 600, allow: flood.allow };
    Times are ms. The server stamps them: a start and a beat are "now"; an end may say an earlier moment (an end sent late,
    from a browser that was offline) but never before the last beat the server saw, never after now, and never past the
    New York midnight after the start (everybody is signed out at midnight). A beat after 15 quiet minutes does not bring
-   a session back: it ended "closed" at its last beat, and the page starts a new one. A PIN is never kept. */
+   a session back: it ended "closed" at its last beat, and the page starts a new one. A PIN is never kept.
+   Auto sign-out (_stationAutoSignout.js, plans/stations-round2/api.md "AD2"): a start, beat or end may carry `lastInputAt` (the page's
+   last user input) and `sentAt` (the page's clock, to undo a wrong computer clock); the document keeps `lastInputAt` (server clock,
+   never backwards) and `admin` (set when it starts). A non-Admin session whose page reports 10+ minutes without input, or whose page
+   went silent for 15 minutes, ends "idle" (or "closing" after 17:00 Toronto) at its LAST INPUT, never when the server noticed; an
+   end the page sends with `idle` or `closing` keeps the last input it names (every other reason is raised to the last beat). */
 const SESSION_COLL = "Station_Sessions";
-const SESSION_REASONS = new Set(["signOut", "midnight", "switched", "closed"]);
+const SESSION_REASONS = new Set(["signOut", "midnight", "switched", "closed", "idle", "closing"]);
 const SESSION_CLOSED_MS = 15 * 60000;
 let nyFmt = null;
 try { nyFmt = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hourCycle: "h23", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" }); } catch (_) {}
@@ -89,6 +94,9 @@ async function sessionWrite(s) {
   const reason = SESSION_REASONS.has(s.reason) ? s.reason : "signOut";
   const clientAt = Number(s.at);
   const ref = col(SESSION_COLL).doc(id);
+  const AS = require("./_stationAutoSignout"), Admins = require("./_stationAdmins");
+  // who is an Admin (config/stationAdmins, kept 60 s; never throws): read before the transaction, only for a start or a beat
+  const list = ev === "end" ? null : await Admins.load(db);
   return db.runTransaction(async tx => {
     const now = Date.now();
     const snap = await tx.get(ref), prev = snap.exists ? (snap.data() || {}) : null;
@@ -98,21 +106,39 @@ async function sessionWrite(s) {
     const startAt = prev ? (Number(prev.startAt) || now) : now;
     const lastSeen = prev ? (Number(prev.lastSeenAt) || startAt) : now;
     const cap = nyMidnightAfter(startAt);
+    // the page's last input, on the server's clock (undoing a wrong computer clock), never backwards, between the start and now
+    const skew = AS.skewOf(s.sentAt != null ? s.sentAt : ev === "end" ? null : s.at, now);   // (a start or a beat's `at` is the moment it was sent; an end's `at` is the end)
+    const reported = AS.pageTime(s.lastInputAt, skew, now), prevInput = prev ? (Number(prev.lastInputAt) || 0) : 0;
+    const lastInput = Math.max(reported, prevInput) > 0 ? Math.min(Math.max(reported, prevInput, startAt), now) : 0;
+    const adm = AS.adminState({ admin: prev ? prev.admin : undefined, person: prev && prev.person ? prev.person : person }, list);   // true | false | null (unknown)
     let endAt = null, endReason = null, lastSeenAt = now;
     if (ev === "end") {
-      const want = Number.isFinite(clientAt) && clientAt > 0 ? Math.max(lastSeen, clientAt) : now;
-      endAt = Math.min(now, want); endReason = reason;
+      if (reason === "idle" || reason === "closing") {          // the page names its LAST INPUT as the end: it may be before the last beat, never before an input already known
+        const at = AS.pageTime(clientAt, skew, now);
+        endAt = Math.min(now, Math.max(startAt, lastInput || 0, at || lastInput || lastSeen)); endReason = reason;
+      } else {
+        const want = Number.isFinite(clientAt) && clientAt > 0 ? Math.max(lastSeen, clientAt) : now;
+        endAt = Math.min(now, want); endReason = reason;
+      }
       if (endAt > cap) { endAt = cap; endReason = "midnight"; }
       lastSeenAt = Math.max(lastSeen, endAt);
     } else if (prev && now - lastSeen >= SESSION_CLOSED_MS) {
-      endAt = Math.min(lastSeen, cap); endReason = lastSeen > cap ? "midnight" : "closed"; lastSeenAt = lastSeen;
+      // a page silent for 15 minutes does not come back: a non-Admin with a known last input ends "idle" at it, the rest "closed" at the last beat (the old rule)
+      const d = AS.decide({ startAt, lastSeenAt: lastSeen, lastInputAt: prev.lastInputAt }, now, adm === null ? true : adm);
+      if (d) { endAt = d.endAt; endReason = d.endReason; } else { endAt = Math.min(lastSeen, cap); endReason = lastSeen > cap ? "midnight" : "closed"; }
+      lastSeenAt = lastSeen;
     } else if (now > cap) {
       endAt = cap; endReason = "midnight"; lastSeenAt = Math.max(lastSeen, cap);
+    } else if (prev && reported > 0 && adm !== null) {
+      // a live beat that says the person has had no input for 10 minutes: the page should have signed out; the end is the last input
+      const d = AS.decide({ startAt, lastSeenAt: now, lastInputAt: lastInput }, now, adm);
+      if (d) { endAt = d.endAt; endReason = d.endReason; }
     }
     const minutes = Math.max(0, Math.round(((endAt != null ? endAt : lastSeenAt) - startAt) / 6000) / 10);
     const doc = prev
       ? { lastSeenAt, endAt, endReason, minutes }
-      : Object.assign({ id, person, employeeId, station, device, computerId, computerLabel, startAt, lastSeenAt, endAt, endReason, minutes }, task ? { task } : {}, role ? { role } : {});
+      : Object.assign({ id, person, employeeId, station, device, computerId, computerLabel, startAt, lastSeenAt, endAt, endReason, minutes }, task ? { task } : {}, role ? { role } : {}, list && list.ok ? { admin: list.keys.has(Admins.keyOf(person)) } : {});
+    if (lastInput > 0) doc.lastInputAt = lastInput;
     if (prev && computerLabel && computerLabel !== prev.computerLabel) doc.computerLabel = computerLabel;
     tx.set(ref, doc, { merge: true });
     return [200, { success: true, id, startAt, lastSeenAt, endAt, endReason, minutes, ended: endAt != null }];
@@ -150,6 +176,13 @@ exports.handler = async (event) => {
          is never logged, and a guesser is slowed and locked out for a minute. An answer carries `ok`; anything else is a failure. */
       if (body && typeof body === "object" && body.pinLogin !== undefined) {
         const out = await require("./_stationPinLogin").pinLogin(db, event, body.pinLogin);
+        return { statusCode: out.statusCode, headers: Object.assign({}, CORS, out.headers), body: JSON.stringify(out.body) };
+      }
+      /* "is this name an Admin?" (_stationAdmins.js): a page asks about ONE name once per sign-in and gets { ok, admin } and nothing
+         else (never the list, never a PIN). Read-only; rate limited like the PIN door with counters of its own. Admins are exempt from
+         the auto sign-out after 10 minutes without input and at 5:00 pm Toronto time; midnight still ends everybody. */
+      if (body && typeof body === "object" && body.stationAdmin !== undefined) {
+        const out = await require("./_stationAdmins").door(db, event, body.stationAdmin);
         return { statusCode: out.statusCode, headers: Object.assign({}, CORS, out.headers), body: JSON.stringify(out.body) };
       }
       /* the production stations' own events on an order's timeline (_orderTimeline.js): scans and what was done with
