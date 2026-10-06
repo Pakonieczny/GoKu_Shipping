@@ -3055,6 +3055,7 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-readiness.js?v=20261005-issues-truth4-setgate1-hand1-sameset1-nowait1-noset1-st1-five1"></script>
 <script src="charm-nest-export.js"></script>
 <script src="charm-nest-text.js"></script>
+<script src="charm-nest-emoji-data.js?v=20261006-em1"></script>
 <script src="charm-nest-orders.js?v=20261005-pieces-hand1-rel1"></script>
 <script src="charm-nest-order-pieces.js?v=20261005-op2-hand1-pf2"></script>
 <script src="charm-nest-piece-placement.js?v=20261005-pp1-pf2"></script>
@@ -6843,7 +6844,7 @@ boot();
 <!-- How long each person is signed in here, and what they did (station-session.js, station-activity.js). The sorter has no
      personal login: the person is the name it keeps (cn.employee: typed at the first approval, label or decision, or the
      Design Station's sign-in), the same name every seal it stamps carries. -->
-<script src="station-session.js?v=20261006-st2"></script>
+<script src="station-session.js?v=20261006-ad3"></script>
 <script src="station-activity.js?v=20261006-st2"></script>
 <!-- how long each cut sheet took the Laser person (charm-nest-laser-time.js; R7): the page's own count, sent with the completion; the server decides and stores it -->
 <script src="charm-nest-laser-time.js?v=20261006-ls1"></script>
@@ -6869,17 +6870,19 @@ try {
     role: () => (roleOn() ? CNRole.role() : ""),
     // midnight (New York): the name is cleared, so the next approval, label or decision asks who is working; what is on
     // screen and the run are left as they are. What was pressed before a name was set is not put under tomorrow's name.
-    // (the same for the other ways the sign-in ends by itself: 10 minutes without input and 5:00 pm. One calm line, no pop-up; the
-    // sheets, the run and every open window stay as they are.)
-    signOut: reason => {
+    // (the same for the other ways the sign-in ends by itself: no input for a while (10 minutes; 1 hour for a Laser person) and 5:00 pm
+    // (a Laser person: after 30 minutes without input). One calm line, no pop-up; the sheets, the run and every open window stay as they are.)
+    signOut: (reason, who) => {
       const was = nameNow();
       try { localStorage.removeItem("cn.employee"); } catch (_) {}
       try { if (window.B) B.employee = ""; } catch (_) {}
       try { window.CNAct && CNAct.drop && CNAct.drop(); } catch (_) {}
       try { window.CNRole && CNRole.clear(); } catch (_) {}        // (the role goes with the name: the next sign-in is asked again; true for every reason: midnight, idle, closing)
-      const why = reason === "idle" ? "Signed out after 10 minutes without input."
+      // (the wording is the station's: Laser says "1 hour", Design and the Admin's sorter "10 minutes"; StationSession.notice knows)
+      const auto = (reason === "idle" || reason === "closing") && window.StationSession ? StationSession.notice(reason, who && who.station) : "";
+      const why = auto || (reason === "idle" ? "Signed out after 10 minutes without input."
         : reason === "closing" ? "Signed out at 5:00 pm."
-        : reason === "midnight" || !reason ? "Signed out at midnight." : "Signed out.";
+        : reason === "midnight" || !reason ? "Signed out at midnight." : "Signed out.");
       if (was) { try { window.CN && CN.toast(why + " Your name is asked again at your next approval, label or decision.", "", 7000); } catch (_) {} }
     }
   });

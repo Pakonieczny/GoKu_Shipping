@@ -28,7 +28,8 @@ const PIN = { tess: fakePin(), ray: fakePin(), ivy: fakePin(), xss: fakePin(), q
 const ADMINS = require(path.join(root, 'netlify/functions/_stationAdmins.js'));        // (the real name comparison: the stub door answers the way the real one does for the default list)
 const SESSION_JS = process.env.ST2_SESSION_JS || '';                                    // optional: another station-session.js to serve instead of the repository's
 const AD1 = /stationAdmin/.test(fs.readFileSync(SESSION_JS || path.join(root, 'station-session.js'), 'utf8')) || !!process.env.FORCE_AD1;
-const NUMBER = '987654';                                   // inside a name: the kind of number a PIN is
+const AD3 = /closeAt17/.test(fs.readFileSync(SESSION_JS || path.join(root, 'station-session.js'), 'utf8')) || !!process.env.FORCE_AD3;      // Addendum 2 on the page: Welding has no idle rule, 17:00 Toronto only
+const NUMBER = '987654';                                 // inside a name: the kind of number a PIN is
 const NAMES = {
   [PIN.tess]: 'Tess Welder', [PIN.ray]: 'Ray Matcher', [PIN.ivy]: 'Ivy Third',
   [PIN.xss]: '<img src=x onerror="window.__xss=(window.__xss||0)+1"> Evil', [PIN.quote]: 'Mary "Q" O\'Brien </button><b id="bad">x</b>',
@@ -278,8 +279,51 @@ async function e_twoTabs(browser, base) {
 
 /* AD1 on the real page: ten quiet minutes sign out every non-Admin through the per-person callback, the Admin stays, real input resets the clock,
    a reload after the lapse finds the login gone (the events here are real browser events, so they count as input) */
+/* Addendum 2 (Paul, 6 Oct 2026): the Welding page has NO idle sign-out; every non-Admin there is signed out at 17:00 Toronto SHARP (closing, end 17:00); a page found after 17:00 signs out at load,
+   ended at that 17:00; the Admin is exempt from all of it */
+async function h_welding17(browser, base) {
+  const START = Date.parse('2026-10-07T15:00:00Z'), FIVE = Date.parse('2026-10-07T21:00:00Z');   // 11:00 and 17:00 in Toronto
+  let { ctx, st, page } = await context(browser, base, { time: START });
+  const starts = () => st.sessions.filter(x => x.event === 'start').length;
+  await signIn(page, PIN.tess, 'welding'); await signIn(page, PIN.ray, 'matching'); await signIn(page, PIN.paul, 'matching');
+  await until(() => starts() === 3, 'three starts');
+  await page.clock.runFor(11 * 60000); await wait(200);
+  assert.strictEqual(sess(st, 'end').length, 0, 'eleven quiet minutes at the Welding page: nobody is out (there is no idle rule here)');
+  await page.clock.runFor(5 * 3600000); await wait(300);
+  assert.strictEqual(sess(st, 'end').length, 0, 'five more quiet hours (16:11): still nobody');
+  assert.deepStrictEqual([await chips(page, 'welding'), await chips(page, 'matching')].map(a => a.length), [1, 2], 'all three are on the chips');
+  await page.clock.runFor(FIVE - START - 11 * 60000 - 5 * 3600000 - 5000); await wait(200);
+  assert.strictEqual(sess(st, 'end').length, 0, 'at 16:59:55 nobody is out');
+  await page.clock.runFor(40000); await wait(500);                                             // 17:00:35
+  const ends = sess(st, 'end');
+  assert.deepStrictEqual(ends.map(e => e.person + ':' + e.reason).sort(), ['Ray Matcher:closing', 'Tess Welder:closing'], 'at 17:00 the two non-Admins are out: ' + JSON.stringify(ends.map(e => [e.person, e.reason])));
+  for (const e of ends) assert.strictEqual(e.at, FIVE, '17:00 sharp, not the moment it was noticed: ' + (e.at - FIVE) + ' ms');
+  assert.deepStrictEqual([await chips(page, 'welding'), await chips(page, 'matching')], [[], ['Paul K.']], 'only the Admin is left');
+  let s = await state(page); assert(s.loggedIn && !s.modalOpen, 'the page is not locked while the Admin is in: ' + JSON.stringify(s));
+  await page.clock.runFor(3 * 3600000); await wait(200);
+  assert.strictEqual(sess(st, 'end', 'Paul K.').length, 0, 'the Admin is still in three hours later');
+  await tap(page, 'Paul K.', 'matching'); await until(() => sess(st, 'end', 'Paul K.').length === 1, 'Paul out'); s = await state(page); assert(!s.loggedIn && s.modalOpen, 'the number box is back');
+  await noNumbers(st, page); noErrors(st); await ctx.close();
+  // a page closed for 12 quiet minutes and opened again: nobody has lapsed; one closed over 17:00 signs everybody out at load, ended at that 17:00
+  ({ ctx, st, page } = await context(browser, base, { time: START }));
+  await signIn(page, PIN.tess, 'welding'); await signIn(page, PIN.ray, 'matching'); await until(() => starts() === 2, 'two starts');
+  const ids = st.sessions.filter(x => x.event === 'start').map(x => x.id).sort();
+  await page.close(); await ctx.clock.runFor(12 * 60000);
+  const open = async () => { const p = await ctx.newPage(); p.on('pageerror', e => { if (!/gstatic\.com\/firebasejs|getApp/.test(String(e))) st.errors.push(String(e && e.message || e)); }); await p.goto(base + '/weld-1.html'); await p.waitForFunction(() => window.StationSession && window.weldAfterChange, null, { timeout: 20000 }); await wait(600); return p; };
+  page = await open();
+  assert.strictEqual(sess(st, 'end').length, 0, 'a Welding page opened after 12 quiet minutes: nobody lapsed');
+  assert.deepStrictEqual(await page.evaluate(() => StationSession.people().map(p => p.session).sort()), ids, 'the same two sessions'); assert.strictEqual(starts(), 2, 'nothing started again');
+  await page.close(); await ctx.clock.runFor(FIVE - START - 12 * 60000 + 30 * 60000);                // 17:30
+  page = await open();
+  assert.deepStrictEqual(sess(st, 'end').map(e => e.person + ':' + e.reason).sort(), ['Ray Matcher:closing', 'Tess Welder:closing'], 'both signed out at load: ' + JSON.stringify(sess(st, 'end').map(e => [e.person, e.reason])));
+  for (const e of sess(st, 'end')) assert.strictEqual(e.at, FIVE, 'ended at 17:00, not at the load: ' + (e.at - FIVE) + ' ms');
+  assert.strictEqual(starts(), 2, 'nobody was started again'); s = await state(page); assert(!s.loggedIn && s.modalOpen && !s.on, 'the number box: ' + JSON.stringify(s));
+  noErrors(st); await ctx.close();
+}
+
 async function h_idle(browser, base) {
   if (!AD1) { console.log('  (skipped: station-session.js has no idle rule yet)'); return; }
+  if (AD3) return h_welding17(browser, base);
   const START = Date.parse('2026-10-07T15:00:00Z');                        // 11:00 in New York and in Toronto: nowhere near 17:00
   let { ctx, st, page } = await context(browser, base, { time: START });
   const starts = () => st.sessions.filter(x => x.event === 'start').length;
