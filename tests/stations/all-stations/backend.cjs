@@ -75,7 +75,7 @@ const FX = require('./fixtures.cjs');
 
   const admin = deep.admin, db = deep.db, FV = admin.firestore.FieldValue;
   const pins = new Set();
-  const secretIn = text => { for (const p of pins) if (text.includes(p)) return true; return false; };
+  const secretIn = text => { for (const p of pins) if (new RegExp('(^|\\D)' + p + '(\\D|$)').test(text)) return true; return false; };      // (six digits standing alone; the same digits inside a longer number such as a millisecond time are not a PIN, and a polled response repeats them every second)
 
   /* the doors: the real station door and the real efficiency reader */
   async function realDoor(name, req, res, bodyBuf, q) {

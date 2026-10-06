@@ -24,7 +24,7 @@ const PDFMAKE_STUB = `window.__pdfMade = []; window.pdfMake = { vfs: {}, fonts: 
 const JQUERY_STUB = 'window.$=window.jQuery=function(){var o={on:function(){return o},ready:function(f){try{f()}catch(e){}return o},off:function(){return o},each:function(){return o},css:function(){return o},hide:function(){return o},show:function(){return o}};return o};';
 
 class World {
-  constructor() { this.child = null; this.ctl = ''; this.sorterOrigin = ''; this.stationOrigin = ''; this.pass = ''; this.pages = []; this.ctxs = []; this.outside = []; this.stubbed = []; this.errors = []; this.clockFailures = []; this.browser = null; }
+  constructor() { this.child = null; this.ctl = ''; this.sorterOrigin = ''; this.stationOrigin = ''; this.pass = ''; this.pages = []; this.ctxs = []; this.outside = []; this.stubbed = []; this.errors = []; this.clockFailures = []; this.maxLag = { ms: 0 }; this.lagFixed = 0; this.browser = null; }
 
   static async start(o) {
     const W = new World(); W.browser = o.browser;
@@ -96,9 +96,22 @@ class World {
     o = o || {};
     await this.skew(ms);
     for (const c of this.ctxs) { if (o.except && o.except.includes(c)) continue; await this.tick(c, 'fastForward', ms); }
+    await this.syncLag(o.except);
   }
   /** a clock operation on one computer; a failure (a slow machine, a closed page) is written down: a computer whose clock was left behind looks like a product defect */
   async tick(c, op, ms) { try { await c.clock[op](ms); } catch (e) { this.clockFailures.push({ ctx: c.__label || '?', op, ms, why: String(e && e.message || e).slice(0, 100) }); } }
+  /** how far each computer's clock is behind the shop's after a long step; the widest is kept and printed at the end (it is only looked at, no clock is moved here: moving a page's clock
+      forward by a few seconds in the middle of a run was tried and made the idle checks worse). The shop's clock and the computers' move one after the other, a page that is 10 s or more
+      behind has the input times it reports shifted by the door, and on a busy machine that is what the intermittent idle / Laser failures look like. Computers in `except` are asleep on purpose. */
+  async syncLag(except) {
+    for (const c of this.ctxs) {
+      if (except && except.includes(c)) continue;
+      const pg = c.pages().find(p => !p.isClosed()); if (!pg) continue;
+      let pt; try { pt = await pg.evaluate(() => Date.now()); } catch (_) { continue; }
+      const lag = (await this.now()) - pt;
+      if (lag > this.maxLag.ms) this.maxLag = { ms: lag, ctx: c.__label || '?' };
+    }
+  }
   /** one computer asleep through a stretch of time: its clock jumps (its timers fire once, on waking), the shop's clock is not touched here */
   async wake(ctx, ms) { try { await ctx.clock.fastForward(ms); } catch (_) {} }
   /** a computer that slept wakes at the shop's time: its clock jumps to it (its timers fire once, as when a lid opens), so what it then sends carries a true time */
@@ -126,6 +139,7 @@ class World {
       if (o.between) await o.between(d);
       await sleep(o.settle || 120);
     }
+    if (ms >= 60000) await this.syncLag(o.except);
   }
 
   /** a page of the shop on the station origin (localhost) or the sorter origin (127.0.0.1) */

@@ -11,7 +11,7 @@ function Portal(W, cast) {
 
   P.open = async function (o) {
     o = o || {};
-    const ctx = P.ctx = await W.context({ label: 'portal', ctx: { viewport: { width: 1440, height: 1000 } } });
+    const ctx = P.ctx = await W.context({ label: 'portal', ctx: { viewport: o.viewport || { width: 1440, height: 1000 } } });      // (o.viewport: a window of another size, loaded at that size, the way a phone loads it)
     await ctx.addInitScript(([pass, who]) => {
       try { if (location.hostname === '127.0.0.1') {
         localStorage.setItem('cn.settings', JSON.stringify({ v: 26, dsOrigin: 'http://127.0.0.1:9', runMode: 'manual', sound: 'off', notify: 'off', review: 'on', sandbox: 'off', sandboxStream: 'off' }));
@@ -24,7 +24,7 @@ function Portal(W, cast) {
     await page.waitForFunction(() => window.Efficiency && window.EfficiencyStations && window.EfficiencyEmployee && window.CN && window.OrderWin && document.readyState === 'complete', null, { timeout: 90000 });
     // the console polls faster than its shipped timings (the test is short); nothing else about it changes
     await page.evaluate(() => { try { Object.assign(Efficiency.options, { pollMs: 2500, liveMs: 800, growMs: 0, nudgeMs: 1000 }); Object.assign(EfficiencyEmployee.options, { liveMs: 800, rangeMs: 1500, calMs: 1500, ordersMs: 1500, tickMs: 500 }); } catch (_) {} });
-    await page.evaluate(() => { Efficiency.open(); });
+    await page.evaluate(m => { if (m === 'efficiency') CN.setMode('efficiency'); else Efficiency.open(); }, o.mode || '');      // (o.mode 'efficiency': the full-window console a phone-sized window uses, with no side rail)
     await page.waitForSelector(`${V}:not(.hidden)`, { timeout: 30000 });
     await page.waitForSelector(`${V} .efTabBtn`, { timeout: 30000 });
     return page;

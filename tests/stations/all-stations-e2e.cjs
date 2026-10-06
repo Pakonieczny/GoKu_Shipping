@@ -74,7 +74,7 @@ fs.mkdirSync(SHOTS, { recursive: true });
     }
   }
   const count = async f => (await events(f)).length;
-  const hasPin = text => Object.values(cast.pins).some(p => text.includes(p));
+  const hasPin = text => Object.values(cast.pins).some(p => new RegExp('(^|\\D)' + p + '(\\D|$)').test(text));      // (a PIN is six digits standing alone: the same six digits inside a longer number, a time or an id, are not a PIN)
   const endedAs = async (person, device, task, ms) => {
     const t0 = Date.now();
     for (;;) { const s = await sessionFor(person, device, task); if (s && s.endAt != null) return s; if (Date.now() - t0 > (ms || 15000)) throw new Error('the session of ' + person + ' at ' + device + ' did not end' + (s ? '' : ' (and there is none)')); await sleep(250); }
@@ -590,7 +590,7 @@ fs.mkdirSync(SHOTS, { recursive: true });
         const rows = await portal.$$eval('#dlgSignins .siGroup', gs => gs.map(g => ({ who: ((g.querySelector('.siGHead b') || {}).textContent || '').trim(), rows: [...g.querySelectorAll('tbody tr')].map(tr => ({ where: tr.children[0].innerText.replace(/\s+/g, ' ').trim(), pill: ((tr.querySelector('.pill') || {}).textContent || '').trim() })) })));
         for (const [w, h] of SIZES) {         // (pictured scrolled to the person's group, where the Ended pills are)
           await portal.setViewportSize({ width: w, height: h }).catch(() => {}); await sleep(900);
-          await portal.evaluate(f => { const g = [...document.querySelectorAll('#dlgSignins .siGroup')].find(x => ((x.querySelector('.siGHead b') || {}).textContent || '').trim() === f); if (g) g.scrollIntoView({ block: 'center' }); }, focus || '').catch(() => {}); await sleep(500);
+          await portal.evaluate(f => { const g = [...document.querySelectorAll('#dlgSignins .siGroup')].find(x => ((x.querySelector('.siGHead b') || {}).textContent || '').trim() === f); if (g) { g.scrollIntoView({ block: 'center' }); g.scrollLeft = g.scrollWidth; } }, focus || '').catch(() => {}); await sleep(500);
           await shot(portal.locator('#dlgSignins'), tag + '-signins-' + w);
         }
         await portal.setViewportSize({ width: 1440, height: 1000 }).catch(() => {}); await sleep(500);
@@ -794,7 +794,7 @@ fs.mkdirSync(SHOTS, { recursive: true });
         const adm = await sessionFor('Paul K.', 'charm-nest-1'); assert(adm && adm.endAt == null || (await portal.evaluate(() => !!StationActivity.who())), 'the Admin was signed out');
       });
       await check('C-LASER4', 'Laser after five: input at 16:45 keeps her in at 17:00 (the limit is 30 minutes from five), thirty minutes after that input she is signed out ("closing"), the hours end at the input; the portal says "Signed out at 5:00 pm"', OWN, async () => {
-        assert(at500.lena && at500.lena.endAt == null, PEOPLE.laserApp + ' was signed out at 17:00 with input fifteen minutes earlier: ' + JSON.stringify([at500.lena && at500.lena.endReason]) + ' · session ' + JSON.stringify(at500.lena && { start: hhmm(at500.lena.startAt), end: at500.lena.endAt && hhmm(at500.lena.endAt), lastSeen: at500.lena.lastSeenAt && hhmm(at500.lena.lastSeenAt), li: at500.lena.lastInputAt && hhmm(at500.lena.lastInputAt), station: at500.lena.station }) + ' · the page\'s last input ' + (S.last.lenaInput ? hhmm(S.last.lenaInput) : 'none') + ' (sign-in again was at ' + (lenaIn2 ? hhmm(lenaIn2) : '?') + ')');
+        assert(at500.lena && at500.lena.endAt == null, PEOPLE.laserApp + ' was signed out at 17:00 with input fifteen minutes earlier: ' + JSON.stringify([at500.lena && at500.lena.endReason]) + ' · session ' + JSON.stringify(at500.lena && { start: hhmm(at500.lena.startAt), end: at500.lena.endAt && hhmm(at500.lena.endAt), lastSeen: at500.lena.lastSeenAt && hhmm(at500.lena.lastSeenAt), li: at500.lena.lastInputAt && hhmm(at500.lena.lastInputAt), station: at500.lena.station }) + ' · the page\'s last input ' + (S.last.lenaInput ? hhmm(S.last.lenaInput) : 'none') + ' (sign-in again was at ' + (lenaIn2 ? hhmm(lenaIn2) : '?') + ') · the page: ' + JSON.stringify(await S.pages.laser.evaluate(() => { const o = { now: Date.now(), li: StationSession.lastInput() }; try { for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); if (/^station_session\./.test(k)) { const r = JSON.parse(localStorage.getItem(k)); o.rec = { startAt: r.startAt, lastBeat: r.lastBeat, li: r.li, station: r.station, ended: r.ended }; } } } catch (_) {} return o; }).then(o => ({ now: hhmm(o.now) + ':' + String(Math.round((o.now / 1000) % 60)).padStart(2, '0'), li: o.li && hhmm(o.li), rec: o.rec && { start: hhmm(o.rec.startAt), lastBeat: o.rec.lastBeat && hhmm(o.rec.lastBeat) + ':' + String(Math.round((o.rec.lastBeat / 1000) % 60)).padStart(2, '0'), li: o.rec.li && hhmm(o.rec.li), station: o.rec.station, ended: o.rec.ended } })).catch(e => 'page not readable: ' + e.message)));
         const s = await endedAs(PEOPLE.laserApp, 'charm-nest-1', undefined, 25000);
         eq(s.endReason, 'closing', PEOPLE.laserApp + ' ended');
         assert(S.last.lenaInput > 0 && Math.abs(s.endAt - S.last.lenaInput) < 20000, PEOPLE.laserApp + '\'s hours end at ' + hhmm(s.endAt) + ', her last input was ' + (S.last.lenaInput ? hhmm(S.last.lenaInput) : 'unknown'));
@@ -807,6 +807,32 @@ fs.mkdirSync(SHOTS, { recursive: true });
         assert(/Signed out at 5:00 pm after 30 minutes without input/.test(out), PEOPLE.laserApp + '\'s Out row says: "' + out + '"');
         const rows = await signinsPills('C-words3', PEOPLE.laserApp);
         eq(pillsOf(rows, PEOPLE.laserApp, /Laser/i), ['1 hour without input', '5:00 pm · 30 min without input'], PEOPLE.laserApp + '\'s Laser pills');
+      });
+      await check('C-WORDS4', 'at 390 px (a window loaded at that size): the person page\'s Out row says it in full inside the window (Laser "Signed out at 5:00 pm after 30 minutes without input", Welding "Signed out at 5:00 pm") and the Sign-ins window\'s Ended pill can be reached (the table scrolls sideways) and reads the same as at 1280', ['AD3', 'AD4'], async () => {
+        const PP = Portal(W, cast), pg = await PP.open({ who: 'Paul K', viewport: { width: 390, height: 844 }, mode: 'efficiency' });
+        try {
+          await pg.click('#btnRail').catch(() => {}); await sleep(600);          // (a person on a phone folds the side rail, as the person page is meant to be read there)
+          const inside = async sel => pg.evaluate(q => { const e = document.querySelector(q); if (!e) return null; const r = e.getBoundingClientRect(); return { l: Math.round(r.left), r: Math.round(r.right), w: window.innerWidth, h: Math.round(r.height) }; }, sel);
+          for (const [name, tag, re] of [[PEOPLE.laserApp, 'lena', /Signed out at 5:00 pm after 30 minutes without input/], [PEOPLE.matcher, 'tess', /Signed out at 5:00 pm/]]) {
+            await PP.personPage(name, { settle: 3500, range: 'day' });
+            const out = await pg.evaluate(sel => { const e = document.querySelector(sel + ' .efpShiftT'); return e ? e.innerText.replace(/\s+/g, ' ').trim() : ''; }, PP.V);
+            await pg.evaluate(sel => { const e = document.querySelector(sel + ' .efpShift'); if (e) e.scrollIntoView({ block: 'center' }); }, PP.V); await sleep(500);
+            await shot(pg, 'C-words4-390-person-' + tag);
+            assert(re.test(out), name + '\'s Out row at 390 px says: "' + out + '"');
+            const box = await inside(PP.V + ' .efpShiftT'); assert(box && box.l >= 0 && box.r <= box.w + 1, name + '\'s Out row is cut off at 390 px: ' + JSON.stringify(box));
+            await PP.back();
+          }
+          await pg.route(/charmNestLibrary/, route => { const rq = route.request(); (/"sessionsList"/.test(rq.postData() || '') ? route.continue({ headers: Object.assign({}, rq.headers(), { 'x-edit-passcode': W.pass }) }) : route.continue()).catch(() => {}); });
+          await pg.evaluate(() => SignIns.open());
+          try {
+            await pg.waitForSelector('#dlgSignins .siGroup', { timeout: 30000 }); await sleep(1500);
+            const r = await pg.evaluate(f => { const g = [...document.querySelectorAll('#dlgSignins .siGroup')].find(x => ((x.querySelector('.siGHead b') || {}).textContent || '').trim() === f); if (!g) return null; g.scrollIntoView({ block: 'center' }); const room = g.scrollWidth - g.clientWidth; g.scrollLeft = g.scrollWidth; const pills = [...g.querySelectorAll('tbody tr .pill')].map(p => { const b = p.getBoundingClientRect(), gb = g.getBoundingClientRect(); return { t: p.textContent.trim(), inView: b.left >= gb.left - 1 && b.right <= gb.right + 1 }; }); return { room, pills }; }, PEOPLE.laserApp);
+            await sleep(400); await shot(pg.locator('#dlgSignins'), 'C-words4-390-signins-lena');
+            assert(r && r.pills.length === 2, 'no Laser sign-ins for ' + PEOPLE.laserApp + ' in the window at 390 px');
+            eq(r.pills.map(x => x.t), ['1 hour without input', '5:00 pm · 30 min without input'], 'the Ended pills at 390 px');
+            assert(r.pills.every(x => x.inView), 'an Ended pill is out of reach at 390 px (scroll room ' + r.room + ' px): ' + JSON.stringify(r.pills));
+          } finally { await pg.evaluate(() => SignIns.close()).catch(() => {}); }
+        } finally { await W.closeContext(PP.ctx); }
       });
     }
   }
@@ -901,6 +927,7 @@ fs.mkdirSync(SHOTS, { recursive: true });
     });
   }
   say(table());
+  say('the widest a browser\'s clock was behind the shop\'s after a step (measured after every step of a minute or more; nothing is moved): ' + JSON.stringify(W.maxLag));
   say('clock operations on a browser that failed (a failed one leaves that computer\'s clock behind and looks like a product defect): ' + W.clockFailures.length + (W.clockFailures.length ? ' · ' + JSON.stringify(W.clockFailures.slice(0, 5)) : ''));
   fs.writeFileSync(path.join(SHOTS, 'st1-results.json'), JSON.stringify({ at: new Date().toISOString(), seconds: Math.round((Date.now() - t00) / 1000), landed: landedAll(), results }, null, 1));
   const failed = results.filter(r => r.status === 'FAILED').length, pend = results.filter(r => r.status === 'PENDING').length;

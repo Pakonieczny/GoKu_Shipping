@@ -118,7 +118,7 @@ table.siT{width:100%;border-collapse:collapse;font-size:12.5px}
 .siT .n{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
 .siT td.n.none{color:var(--ink25)}
 .siT .live{color:#3c5a39}
-.siGroup{border:1px solid var(--line);border-radius:10px;margin:0 0 8px;overflow:hidden}
+.siGroup{border:1px solid var(--line);border-radius:10px;margin:0 0 8px;overflow-x:auto;overflow-y:hidden}      /* (a phone: the table scrolls sideways so Duration and Ended stay reachable; it was cut off at the right edge) */
 .siGHead{display:flex;align-items:center;gap:10px;padding:8px 12px;background:var(--card2);border-bottom:1px solid var(--line);font-size:12.5px;min-width:0}
 .siGHead .siMuted{font-size:11.5px}
 .siGHead .siDur{margin-left:auto}
