@@ -1894,7 +1894,7 @@ dialog.setsWin.closing::backdrop{animation:hsFadeOut .17s ease both}
 .emTab{flex:1 1 0;min-width:0;height:34px;display:flex;align-items:center;justify-content:center;border:0;border-bottom:2px solid transparent;background:transparent;color:var(--ink45);border-radius:8px 8px 0 0;cursor:pointer;padding:0}
 .emTab:hover{background:var(--card2);color:var(--ink)}
 .emTab.on{color:var(--ink);border-bottom-color:var(--gold)}
-.emTab:focus-visible,.emToneBtn:focus-visible,.emTone:focus-visible,.emGrid:focus-visible,.emQ:focus-visible{outline:2px solid var(--gold);outline-offset:-2px}
+.emTab:focus-visible,.emGrid:focus-visible,.emQ:focus-visible{outline:2px solid var(--gold);outline-offset:-2px}
 .emTab svg{width:19px;height:19px;display:block}
 .emTI{display:flex;width:21px;height:21px;align-items:center;justify-content:center}
 .emTI .emG,.emTI .emTx{width:20px;height:20px}
@@ -1905,14 +1905,6 @@ dialog.setsWin.closing::backdrop{animation:hsFadeOut .17s ease both}
 .emQ{flex:1 1 auto;min-width:0;border:0;outline:0;background:transparent;color:var(--ink);font:13px var(--sans);padding:0;-webkit-appearance:none;appearance:none}
 .emQ:focus-visible{outline:0}
 .emQ::-webkit-search-cancel-button{-webkit-appearance:none}
-.emToneBtn{flex:0 0 auto;width:34px;height:34px;display:flex;align-items:center;justify-content:center;border:1px solid var(--line);border-radius:9px;background:var(--paper);cursor:pointer;padding:0}
-.emToneBtn:hover,.emToneBtn[aria-expanded=true]{background:var(--goldSoft);border-color:var(--goldLine)}
-.emToneBtn i,.emTone i{display:block;width:18px;height:18px;border-radius:50%;box-shadow:inset 0 0 0 1px rgba(28,26,23,.22)}
-.emTones{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:0 10px 8px;flex:0 0 auto}
-.emTone{width:30px;height:30px;display:flex;align-items:center;justify-content:center;border:1px solid transparent;border-radius:50%;background:transparent;cursor:pointer;padding:0}
-.emTone:hover{background:var(--paper2)}
-.emTone.on{border-color:var(--gold);background:var(--goldSoft)}
-.emToneNote{flex:1 1 100%;font-size:11px;color:var(--ink45)}
 .emBody{position:relative;flex:1 1 auto;min-height:0;display:flex;border-top:1px solid var(--line2)}
 .emGrid{position:relative;flex:1 1 auto;min-width:0;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;padding:0 4px;--emCols:6;--emCell:40px;-webkit-overflow-scrolling:touch}
 .emSpacer{position:relative;width:100%}
@@ -1929,14 +1921,20 @@ dialog.setsWin.closing::backdrop{animation:hsFadeOut .17s ease both}
 .emGhost{display:block;width:20px;height:20px;border-radius:6px;background:var(--paper2);opacity:.7}
 .emLoad{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;gap:9px;background:rgba(255,254,251,.88);color:var(--ink70);font-size:12.5px}
 .emSpin{width:16px;height:16px;border:2px solid var(--line);border-top-color:var(--gold);border-radius:50%;animation:spin .7s linear infinite}
-.emFoot{display:grid;grid-template-columns:auto minmax(0,1fr);grid-template-areas:"pv nm" "pv ct";column-gap:0;align-items:center;padding:7px 12px 8px;border-top:1px solid var(--line2);background:var(--card2);flex:0 0 auto;min-height:48px}
+.emFoot{display:grid;grid-template-columns:auto minmax(0,1fr);grid-template-areas:"pv nm" "pv ct";column-gap:0;align-items:center;padding:7px 12px 8px;border-top:1px solid var(--line2);background:var(--card2);flex:0 0 auto;min-height:64px}
 .emPv:empty{display:none}
 .emPv{grid-area:pv;margin-right:10px;width:30px;height:30px;display:flex;align-items:center;justify-content:center;border-radius:8px;color:var(--ink)}
 .emPv .emG{width:26px;height:26px}
 .emNm{grid-area:nm;font:600 12.5px var(--sans);color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
 .emCt{grid-area:ct;font:10.5px var(--mono);color:var(--ink45);letter-spacing:.02em}
+.emCt.also{font:11.5px var(--sans);letter-spacing:0;color:var(--ink70);display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden}
+.emStrip{grid-area:ct;display:flex;gap:3px;align-items:center;min-width:0}
+.emSt{flex:1 1 0;min-width:0;max-width:44px;height:30px;display:flex;align-items:center;justify-content:center;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);cursor:pointer;padding:0}
+.emSt:hover{background:var(--goldSoft);border-color:var(--goldLine)}
+.emSt:focus-visible{outline:2px solid var(--gold);outline-offset:-2px}
+.emSt .emG{width:20px;height:20px}
 @media (prefers-reduced-motion:reduce){.emPop{animation:none}.emSpin{animation:none;border-top-color:var(--line);border-right-color:var(--gold)}.emCell:active{transform:none}}
-@media (pointer:coarse){.emTab{height:40px}.emSearch,.emToneBtn{height:40px}.emToneBtn{width:40px}.emTone{width:36px;height:36px}.emQ{font-size:16px}}
+@media (pointer:coarse){.emTab{height:40px}.emSearch{height:40px}.emSt{width:40px;height:36px}.emQ{font-size:16px}}
 .pvWords .wordsActs .btn{font-family:var(--sans)}   /* the words box is set in the serif; its buttons are buttons like the rest of the card */
 .placeView .ctl .lineControl{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;color:var(--ink45)}
 .placeView .ctl .lineControl select{border:1px solid var(--line);border-radius:7px;padding:3px 6px;font:12px var(--sans);color:var(--ink);background:var(--card)}
@@ -6851,7 +6849,7 @@ boot();
 <script src="charm-nest-laser-act.js?v=20261006-sa5"></script>
 <!-- Laser or Design? the role of a non-Admin sign-in (charm-nest-role.js: CNRole; the question is the name bar's second step, charm-nest-bridge.js NameBar) -->
 <script src="charm-nest-role.js?v=20261006-int1"></script>
-<script src="charm-nest-emoji-picker.js?v=20261006-em2"></script>
+<script src="charm-nest-emoji-picker.js?v=20261006-em2-tone"></script>
 <script src="charm-nest-bridge.js?v=20261005-lis2-cardinal4-zoom-psb1-egl1-osc1-r3f-setgate1-hand1-sameset1-rl1-nowait1-opt1-rt1-pcr1-one1-st1-five1-pd1-zp1-rel2-cx1-hold2-sl2-sealsh1-sealpc2-live1-pst1-nofix1-pcsel1-pst2-sk1-nonote1-pdot3-pr1-lvx1-rvx1-pl1-en2-pf5-en3-ld1-sa5b-em2"></script>
 <script src="charm-nest-review-live.js?v=20261005-rl1-pf1-pf2"></script>
 <script src="charm-nest-hold-ui.js?v=20261005-hold3-pf1"></script>

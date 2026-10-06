@@ -14,35 +14,37 @@
  * Behaviour (plan: /plans/emoji-picker/plan.md):
  *   · a popover under (or over) the button, fixed to the window with the page's own popover conventions (like the mail menu), kept
  *     inside the window, a panel as wide as the window on a phone; never a modal, never full screen;
- *   · category tabs (one icon each) and Recent, a search box, a tone chooser, big cells in a virtualised grid (only the rows in view
+ *   · category tabs (one icon each) and Recent, a search box, big cells in a virtualised grid (only the rows in view
  *     exist), the name of the emoji under the pointer or the keys in the footer line, the count of what the laser can engrave;
  *   · a pick goes into the textarea at the caret (or over the selection) through the browser's own text insertion, so the textarea sees
  *     the same `input` event typing gives it, the undo stack and the line breaks stay, and nothing is submitted; the picker stays
  *     open for several picks. Esc, a tap outside, or the button again closes it and the caret is back where it was;
  *   · the card behind the picker is rebuilt now and then (the fit after a pick redraws it): the picker is not part of the card, it
  *     just follows the new textarea and button, so it does not flicker or lose its place;
- *   · the last 24 picks and the tone are kept in localStorage (inside try/catch; the picker works without it).
+ *   · skin tones: the laser cuts one outline for almost every tone of a person or hand, so there is no tone chooser; the six emoji
+ *     whose outline does change with the tone (ts) show a strip of their six variants, drawn as engraved, for the cell under the pointer
+ *     or the keys; any other pick puts in the plain emoji (typed or pasted toned ones still engrave and still resolve here);
+ *   · a cell that stands for other spellings with exactly the same outline (s: man/woman health worker ...) says so in the footer;
+ *   · the last 24 picks are kept in localStorage (inside try/catch; the picker works without it).
  */
 (function (root) {
   'use strict';
-  const RECENT_KEY = 'cn.emoji.recent', TONE_KEY = 'cn.emoji.tone', RECENT_MAX = 24;
+  const RECENT_KEY = 'cn.emoji.recent', RECENT_MAX = 24;
   const tryDo = (f, d) => { try { return f(); } catch (_) { return d; } };
   const store = { get: k => tryDo(() => root.localStorage.getItem(k), null), set: (k, v) => tryDo(() => { root.localStorage.setItem(k, v); }) };
   const esc = v => String(v == null ? '' : v).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const D = () => root.CNEmojiData || null;
   const doc = () => root.document;
   const coarse = () => !!tryDo(() => root.matchMedia('(pointer:coarse)').matches, false);
-  const TONE_DOT = { '': '#e8c25a', '\u{1F3FB}': '#f7dcc0', '\u{1F3FC}': '#e2bb94', '\u{1F3FD}': '#bf8f68', '\u{1F3FE}': '#97633c', '\u{1F3FF}': '#5a4538' };
   const CLOCK = '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 7.2V12l3.2 2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>';
   const MAGNIFIER = '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M15 15l5 5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>';
 
   const S = {
     open: false, key: null, ta: null, btn: null, sel: { s: 0, e: 0 },
-    q: '', tone: store.get(TONE_KEY) || '', recent: [], act: -1, dirtyRecent: false,
+    q: '', recent: [], act: -1, dirtyRecent: false, stripItem: null, stripFor: '', stripFont: '', stripTimer: 0,
     font: null, fontState: 'idle', fontP: null, gcache: new Map(), idx: null,
     pop: null, el: {}, rows: [], tops: [], flat: [], secs: [], cols: 6, cell: 40, gone: 0, raf: 0, painted: new Map(), watch: null
   };
-  try { const t = D() && D().tones; if (S.tone && t && !t.some(x => x.id === S.tone)) S.tone = ''; } catch (_) { S.tone = ''; }
 
   /* ── the engraving font: the very one Engrave cuts with ── */
   async function defaultFont() {
@@ -90,18 +92,22 @@
     for (const [base, m] of Object.entries(d.toned || {})) for (const [tid, full] of Object.entries(m || {})) rev.set(full, { base, tid });
     return (S.idx = { by, rev });
   }
-  const toneName = id => { const t = ((D() || {}).tones || []).find(x => x.id === id); return t ? t.name : ''; };
-  function show(it) {
-    const d = D(); let seq = it.c, name = it.n;
-    if (S.tone && it.t && d.toned && d.toned[it.c] && d.toned[it.c][S.tone]) { seq = d.toned[it.c][S.tone]; name = it.n + ' · ' + toneName(S.tone).toLowerCase() + ' skin'; }
-    return { seq, name };
+  const show = it => ({ seq: it.c, name: it.n, item: it });
+  // the names of the spellings that engrave exactly like a cell (the data lists their sequences, not their names)
+  const MAN = /\u{1F468}|\u2642/u, WOMAN = /\u{1F469}|\u2640/u;
+  function alsoName(seq, it) {
+    const g = MAN.test(seq) ? 'man' : WOMAN.test(seq) ? 'woman' : '';
+    if (!g) return seq;
+    return (g + ' ' + String(it.n).replace(/^person\b\s*/, '')).replace(/\s+:/, ':').trim();
   }
   function resolve(seq) {
-    const ix = index(), it = ix.by.get(seq);
-    if (it) return { seq, name: it.n };
+    const ix = index(), d = D();
+    let it = ix.by.get(seq);
+    if (it) return { seq, name: it.n, item: it };
     const r = ix.rev.get(seq);
-    if (r) { const b = ix.by.get(r.base); if (b) return { seq, name: b.n + ' · ' + toneName(r.tid).toLowerCase() + ' skin' }; }
-    return null;
+    if (r) { const b = ix.by.get(r.base); if (b) { const t = (d.tones || []).find(x => x.id === r.tid); return { seq, name: b.n + (t ? ' · ' + t.name.toLowerCase() + ' skin' : ''), item: b }; } }
+    it = d.find ? d.find(seq) : null;
+    return it ? { seq, name: it.n, item: it } : null;
   }
   const loadRecent = () => { const a = tryDo(() => JSON.parse(store.get(RECENT_KEY) || '[]'), []); return (Array.isArray(a) ? a : []).filter(x => typeof x === 'string').slice(0, RECENT_MAX); };
   function pushRecent(seq) {
@@ -180,18 +186,34 @@
   const paintTabs = () => { if (!S.el.tabs) return; S.el.tabs.querySelectorAll('.emTab[data-g]').forEach(b => { if (b.dataset.g === 'recent') return; const g = (D().groups || []).find(x => x.id === b.dataset.g); b.querySelector('.emTI').innerHTML = g ? glyphHTML(g.icon) : ''; }); foot(); };
 
   /* ── the line at the foot: the name of what is under the pointer or the keys, and what the laser can engrave ── */
+  function buildStrip(it) {
+    const d = D(), m = d.toned[it.c] || {};
+    return (d.tones || []).map(t => { const seq = t.id ? m[t.id] : it.c; return seq ? `<button type="button" class="emSt" data-seq="${esc(seq)}" data-nm="${esc(it.n + ' · ' + (t.id ? t.name + ' skin tone' : 'no skin tone'))}" aria-label="${esc(it.n + ', ' + (t.id ? t.name + ' skin tone' : 'no skin tone'))}">${glyphHTML(seq)}</button>` : ''; }).join('');
+  }
   function foot(hint) {
     if (!S.el.nm) return;
-    const it = S.act >= 0 ? S.flat[S.act] : null, d = D();
-    S.el.pv.innerHTML = it ? glyphHTML(it.seq) : '';
-    S.el.nm.textContent = hint || (it ? it.name : S.fontState === 'failed' ? 'The laser outline could not load; emoji still go into the words.' : 'Pick one: it goes in at the caret.');
-    S.el.ct.textContent = `${Number(d.count || 0).toLocaleString('en-US')} emojis the laser can engrave`;
+    const cell = S.act >= 0 ? S.flat[S.act] : null, it = cell && cell.item, d = D(), sit = S.stripItem;
+    S.el.pv.innerHTML = cell ? glyphHTML(cell.seq) : '';
+    S.el.nm.textContent = hint || (cell ? cell.name : S.fontState === 'failed' ? 'The laser outline could not load; emoji still go into the words.' : 'Pick one: it goes in at the caret.');
+    const want = sit && d.toned && d.toned[sit.c] ? sit.c : '';
+    if (want !== S.stripFor || S.stripFont !== S.fontState) { S.stripFor = want; S.stripFont = S.fontState; S.el.strip.innerHTML = want ? buildStrip(sit) : ''; }
+    S.el.strip.hidden = !want; S.el.ct.hidden = !!want;
+    const also = it && it.s && it.s.length ? 'Also: ' + it.s.map(x => alsoName(x, it)).join(', ') : '';
+    S.el.ct.textContent = also || `${Number(d.count || 0).toLocaleString('en-US')} emojis the laser can engrave`;
+    S.el.ct.classList.toggle('also', !!also);
   }
   function loading(on) { if (S.el.load) S.el.load.hidden = !on; if (S.el.grid) S.el.grid.setAttribute('aria-busy', on ? 'true' : 'false'); }
 
   /* ── the choice of the keys and the pointer ── */
+  function strip(i, key) {   // the tone strip belongs to the last emoji whose tones engrave differently; keys drop it at once, a pointer on its way to it gets a moment
+    const it = i >= 0 && S.flat[i] ? S.flat[i].item : null;
+    clearTimeout(S.stripTimer);
+    if (it && it.ts) S.stripItem = it;
+    else if (S.stripItem) { if (key) S.stripItem = null; else S.stripTimer = setTimeout(() => { if (S.open && S.el.strip.matches(':hover, :focus-within')) return; S.stripItem = null; foot(); }, 1600); }
+  }
   function setAct(i, scroll) {
-    if (S.act === i) return;
+    strip(i, scroll);
+    if (S.act === i) return foot();
     const old = S.el.spacer.querySelector('.emCell.act'); if (old) { old.classList.remove('act'); old.setAttribute('aria-selected', 'false'); }
     S.act = i;
     if (i >= 0) {
@@ -270,13 +292,12 @@
     pop.className = 'emPop'; pop.hidden = true; pop.setAttribute('role', 'dialog'); pop.setAttribute('aria-label', 'Emoji');
     const groups = (D().groups || []);
     pop.innerHTML = `<div class="emTabs" role="tablist" aria-label="Emoji categories"><button type="button" class="emTab" role="tab" data-g="recent" aria-label="Recent" data-nm="Recent">${CLOCK}</button>${groups.map(g => `<button type="button" class="emTab" role="tab" data-g="${esc(g.id)}" aria-label="${esc(g.name)}" data-nm="${esc(g.name)}"><span class="emTI"></span></button>`).join('')}</div>
-      <div class="emBar"><label class="emSearch">${MAGNIFIER}<input type="search" class="emQ" placeholder="Search emoji" aria-label="Search emoji" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="search"></label><button type="button" class="emToneBtn" aria-label="Skin tone" aria-expanded="false" aria-haspopup="true"><i></i></button></div>
-      <div class="emTones" role="radiogroup" aria-label="Skin tone" hidden>${((D().tones) || []).map(t => `<button type="button" class="emTone" role="radio" data-t="${esc(t.id)}" data-nm="${esc(t.name + (t.id ? ' skin tone' : ' (no skin tone)'))}" aria-label="${esc(t.name)}"><i style="background:${TONE_DOT[t.id] || '#ccc'}"></i></button>`).join('')}<span class="emToneNote">Tones stay in the words; the laser draws people and hands as one outline.</span></div>
+      <div class="emBar"><label class="emSearch">${MAGNIFIER}<input type="search" class="emQ" placeholder="Search emoji" aria-label="Search emoji" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="search"></label></div>
       <div class="emBody"><div class="emGrid" role="listbox" tabindex="0" aria-label="Emoji"><div class="emSpacer"></div></div><div class="emLoad" role="status" hidden><span class="emSpin" aria-hidden="true"></span><span>Loading emoji…</span></div></div>
-      <div class="emFoot"><span class="emPv" aria-hidden="true"></span><span class="emNm" aria-live="polite"></span><span class="emCt"></span></div>`;
+      <div class="emFoot"><span class="emPv" aria-hidden="true"></span><span class="emNm" aria-live="polite"></span><span class="emCt"></span><div class="emStrip" role="group" aria-label="Skin tones of this emoji" hidden></div></div>`;
     d.body.appendChild(pop);
     S.pop = pop;
-    S.el = { tabs: pop.querySelector('.emTabs'), input: pop.querySelector('.emQ'), toneBtn: pop.querySelector('.emToneBtn'), tones: pop.querySelector('.emTones'), grid: pop.querySelector('.emGrid'), spacer: pop.querySelector('.emSpacer'), load: pop.querySelector('.emLoad'), pv: pop.querySelector('.emPv'), nm: pop.querySelector('.emNm'), ct: pop.querySelector('.emCt') };
+    S.el = { tabs: pop.querySelector('.emTabs'), input: pop.querySelector('.emQ'), grid: pop.querySelector('.emGrid'), spacer: pop.querySelector('.emSpacer'), load: pop.querySelector('.emLoad'), pv: pop.querySelector('.emPv'), nm: pop.querySelector('.emNm'), ct: pop.querySelector('.emCt'), strip: pop.querySelector('.emStrip') };
     const el = S.el;
     el.grid.addEventListener('scroll', () => { if (S.raf2) return; S.raf2 = root.requestAnimationFrame(() => { S.raf2 = 0; paint(); tabsOn(); }); }, { passive: true });
     el.grid.addEventListener('click', e => { const c = e.target.closest('.emCell'); if (c) { setAct(+c.dataset.i, false); insert(S.flat[+c.dataset.i].seq); } });
@@ -285,29 +306,16 @@
     el.tabs.addEventListener('mouseover', e => { const b = e.target.closest('.emTab'); if (b) foot(b.dataset.nm); });
     el.tabs.addEventListener('focusin', e => { const b = e.target.closest('.emTab'); if (b) foot(b.dataset.nm); });
     el.tabs.addEventListener('mouseleave', () => foot());
-    el.tones.addEventListener('mouseover', e => { const b = e.target.closest('.emTone'); if (b) foot(b.dataset.nm); });
-    el.tones.addEventListener('focusin', e => { const b = e.target.closest('.emTone'); if (b) foot(b.dataset.nm); });
-    el.tones.addEventListener('mouseleave', () => foot());
-    el.tones.addEventListener('click', e => {   // one choice, then the tray goes and the button shows it
-      const b = e.target.closest('.emTone'); if (!b) return;
-      setTone(b.dataset.t, false); el.tones.hidden = true; el.toneBtn.setAttribute('aria-expanded', 'false'); el.toneBtn.focus({ preventScroll: true }); measure(); queuePlace();
-    });
-    el.toneBtn.addEventListener('click', () => { const on = el.tones.hidden; el.tones.hidden = !on; el.toneBtn.setAttribute('aria-expanded', on); if (on) { const cur = el.tones.querySelector('.emTone.on'); if (cur) cur.focus({ preventScroll: true }); } measure(); queuePlace(); });
+    el.strip.addEventListener('mouseover', e => { const b = e.target.closest('.emSt'); if (b) foot(b.dataset.nm); });
+    el.strip.addEventListener('focusin', e => { const b = e.target.closest('.emSt'); if (b) foot(b.dataset.nm); });
+    el.strip.addEventListener('mouseleave', () => foot());
+    el.strip.addEventListener('click', e => { const b = e.target.closest('.emSt'); if (b) insert(b.dataset.seq); });
     el.input.addEventListener('input', () => {
       S.q = el.input.value.trim(); S.act = -1; layout(); el.grid.scrollTop = 0; paint(); tabsOn(); setAct(S.flat.length && S.q ? 0 : -1, false); foot();
     });
     pop.addEventListener('keydown', onKey);
     ['keyup', 'keypress'].forEach(t => pop.addEventListener(t, e => e.stopPropagation()));
     pop.addEventListener('focusin', () => { S.gone = 0; });
-    paintTabsState();
-  }
-  function paintTabsState() { S.el.toneBtn.querySelector('i').style.background = TONE_DOT[S.tone] || '#ccc'; S.el.toneBtn.setAttribute('aria-label', 'Skin tone: ' + (toneName(S.tone) || 'Default')); S.el.tones.querySelectorAll('.emTone').forEach(b => { const on = b.dataset.t === S.tone; b.classList.toggle('on', on); b.setAttribute('aria-checked', on); b.tabIndex = on ? 0 : -1; }); }
-  function setTone(id, fromTray) {
-    S.tone = id || ''; store.set(TONE_KEY, S.tone); paintTabsState();
-    const keep = S.act >= 0 ? S.flat[S.act].seq : null, k0 = S.act;
-    layout(); S.act = k0 >= S.flat.length ? -1 : k0; paint(); foot();
-    if (fromTray) S.el.tones.querySelector('.emTone.on')?.focus({ preventScroll: true });
-    void keep;
   }
   function onKey(e) {
     const t = e.target, k = e.key;
@@ -324,10 +332,9 @@
       else if (k === 'Enter') { e.preventDefault(); if (S.act < 0 && S.flat.length) setAct(0, true); if (S.act >= 0) insert(S.flat[S.act].seq); }
       return;
     }
-    if (t.classList && (t.classList.contains('emTab') || t.classList.contains('emTone')) && (k === 'ArrowLeft' || k === 'ArrowRight')) {
-      const list = [...t.parentElement.querySelectorAll(t.classList.contains('emTab') ? '.emTab' : '.emTone')], i = list.indexOf(t), n = list[(i + (k === 'ArrowRight' ? 1 : list.length - 1)) % list.length];
+    if (t.classList && (t.classList.contains('emTab') || t.classList.contains('emSt')) && (k === 'ArrowLeft' || k === 'ArrowRight')) {
+      const list = [...t.parentElement.querySelectorAll(t.classList.contains('emTab') ? '.emTab' : '.emSt')], i = list.indexOf(t), n = list[(i + (k === 'ArrowRight' ? 1 : list.length - 1)) % list.length];
       e.preventDefault(); n.tabIndex = 0; n.focus({ preventScroll: true });
-      if (t.classList.contains('emTone')) setTone(n.dataset.t, false);
     }
   }
   function watch(on) {
@@ -351,7 +358,7 @@
     S.open = true; S.pop.hidden = false;
     if (S.fontState === 'failed') S.fontState = 'idle';   // (a font that did not load is asked for again each time the picker opens)
     btn.setAttribute('aria-expanded', 'true'); btn.classList.add('on');
-    paintTabsState(); S.el.tones.hidden = true; S.el.toneBtn.setAttribute('aria-expanded', 'false');
+    S.stripItem = null; S.stripFor = ''; clearTimeout(S.stripTimer);
     place(); measure(); layout(); S.el.grid.scrollTop = 0; paint(); tabsOn(); paintTabs(); foot();
     loading(S.fontState === 'loading');
     watch(true);
@@ -388,5 +395,5 @@
     return true;
   }
 
-  root.CNEmojiPicker = { attach, close: refocus => close(!!refocus), isOpen: () => S.open, insert, setFonts: f => { S.provider = f; }, state: () => ({ open: S.open, q: S.q, tone: S.tone, font: S.fontState, cells: S.flat.length, recent: S.recent.slice(), cols: S.cols }) };
+  root.CNEmojiPicker = { attach, close: refocus => close(!!refocus), isOpen: () => S.open, insert, setFonts: f => { S.provider = f; }, state: () => ({ open: S.open, q: S.q, font: S.fontState, cells: S.flat.length, recent: S.recent.slice(), cols: S.cols }) };
 })(typeof window !== 'undefined' ? window : this);
