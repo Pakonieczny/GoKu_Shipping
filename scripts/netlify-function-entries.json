@@ -175,6 +175,7 @@
     "_beadyCharmCap.js",
     "_beadyCharmCapFlat.js",
     "_editPasscode.js",
+    "_etag.js",
     "_charmNestAgent.js",
     "_charmNestAsset.js",
     "_charmNestAuth.js",

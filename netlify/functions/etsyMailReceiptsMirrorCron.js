@@ -316,12 +316,19 @@ function isMissingFirestoreIndexError(err) {
   return /FAILED_PRECONDITION/i.test(msg) && /requires an index/i.test(msg);
 }
 
+// Cost: each mirrored receipt carries the whole Etsy receipt (`raw`, several KB);
+// the customer rebuild only needs the ten summary fields, and reads every receipt
+// of every buyer whose receipt changed in the window.
+const SUMMARY_FIELDS = ["receipt_id", "created_timestamp", "updated_timestamp", "grandtotal_amount", "grandtotal_currency",
+  "status", "is_paid", "is_shipped", "buyer_user_id", "buyer_name"];
+
 async function queryBuyerMirrorReceipts(buyerUserId) {
   const buyerId = String(buyerUserId);
   try {
     const snap = await db.collection("EtsyMail_Receipts")
       .where("buyer_user_id", "==", buyerId)
       .orderBy("created_timestamp", "desc")
+      .select(...SUMMARY_FIELDS)
       .limit(1000)
       .get();
     return {
@@ -335,6 +342,7 @@ async function queryBuyerMirrorReceipts(buyerUserId) {
 
     const fallbackSnap = await db.collection("EtsyMail_Receipts")
       .where("buyer_user_id", "==", buyerId)
+      .select(...SUMMARY_FIELDS)
       .limit(1000)
       .get();
 
@@ -455,26 +463,12 @@ exports.handler = meter.wrapHandler(async () => {
   const invocationStartMs = Date.now();
   const invocationId = `mirror_${invocationStartMs}_${Math.random().toString(36).slice(2, 9)}`;
 
-  // Diagnostic: record invocation start
-  await writeDiagLog(invocationId, {
-    invocationId,
-    function     : "etsyMailReceiptsMirrorCron",
-    phase        : "start",
-    // Audit fix F16 — one row per 3-min tick (~480/day); lets a Firestore TTL
-    // policy on EtsyMail_DiagnosticLog.expireAt remove them after 14 days.
-    expireAt     : admin.firestore.Timestamp.fromMillis(invocationStartMs + 14 * 24 * 60 * 60 * 1000),
-    createdAt    : FV.serverTimestamp(),
-    invocationStartMs
-  });
-
-  // Env check
-  if (!SHOP_ID || !CLIENT_ID || !CLIENT_SECRET) {
-    console.error("[mirror-cron] Missing env vars SHOP_ID/CLIENT_ID/CLIENT_SECRET");
-    await writeDiagLog(invocationId, { phase: "end", outcome: "error", errorMsg: "missing env vars" });
-    return { statusCode: 500, body: "Missing env vars" };
-  }
-
   // ─── Gate 1: kill-switch ──────────────────────────────────────────
+  // Cost: the state document is read FIRST, and a tick that is only going to
+  // skip (switched off, or inside the 7-10 minute window: two ticks in three)
+  // leaves no diagnostic rows. It used to write a start row and an end row on
+  // every tick, ~620 writes and ~310 later TTL deletes a day recording nothing
+  // but "skipped"; the console line below still says so.
   let mirrorCfg = null;
   try {
     const snap = await db.doc(MIRROR_STATE_PATH).get();
@@ -487,7 +481,6 @@ exports.handler = meter.wrapHandler(async () => {
   const enabled = mirrorCfg ? mirrorCfg.enabled !== false : true;
   if (!enabled) {
     console.log("[mirror-cron] disabled via receiptsMirrorState.enabled=false — skipping");
-    await writeDiagLog(invocationId, { phase: "end", outcome: "skipped", reason: "disabled" });
     return { statusCode: 200, body: JSON.stringify({ skipped: true, reason: "disabled" }) };
   }
 
@@ -512,8 +505,26 @@ exports.handler = meter.wrapHandler(async () => {
     const waitMs = nextEligibleAtMs - Date.now();
     const waitSec = Math.ceil(waitMs / 1000);
     console.log(`[mirror-cron] inside randomized interval window — ${waitSec}s remaining, skipping`);
-    await writeDiagLog(invocationId, { phase: "end", outcome: "skipped", reason: "inside_jitter_window", waitSec });
     return { statusCode: 200, body: JSON.stringify({ skipped: true, reason: "inside_jitter_window", waitSec }) };
+  }
+
+  // Diagnostic: record invocation start (only for a tick that goes on to work)
+  await writeDiagLog(invocationId, {
+    invocationId,
+    function     : "etsyMailReceiptsMirrorCron",
+    phase        : "start",
+    // Audit fix F16 — one row per working tick; lets a Firestore TTL
+    // policy on EtsyMail_DiagnosticLog.expireAt remove them after 14 days.
+    expireAt     : admin.firestore.Timestamp.fromMillis(invocationStartMs + 14 * 24 * 60 * 60 * 1000),
+    createdAt    : FV.serverTimestamp(),
+    invocationStartMs
+  });
+
+  // Env check
+  if (!SHOP_ID || !CLIENT_ID || !CLIENT_SECRET) {
+    console.error("[mirror-cron] Missing env vars SHOP_ID/CLIENT_ID/CLIENT_SECRET");
+    await writeDiagLog(invocationId, { phase: "end", outcome: "error", errorMsg: "missing env vars" });
+    return { statusCode: 500, body: "Missing env vars" };
   }
 
   // ─── Gate 2: daily rate-limit short-circuit ───────────────────────
