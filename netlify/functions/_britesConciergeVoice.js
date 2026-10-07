@@ -104,23 +104,34 @@ const validRequestId=value=>typeof value==='string'&&/^req_[A-Za-z0-9_-]{1,180}$
 const validGrantId=value=>typeof value==='string'&&/^continuation-[a-f0-9]{64}$/.test(value);
 const NATIVE_GRANT_WINDOW_MS=45*60000;
 const NATIVE_ALLOWANCE_ID='native-sandbox',NATIVE_ALLOWANCE_CENTS=500;
+const NATIVE_CONTINUATION_CEILING_CENTS=1000,NATIVE_CONTINUATION_POLICY='configured-preview-ceiling-once-v1';
 function nativeStopAt(control){return Math.min(Number(control?.stopAt)||require('./_britesGrowth').STOP_AT,require('./_britesGrowth').STOP_AT);}
 function allowanceValues(value){
-  // One fixed document is the cumulative ceiling. Reauthorizing, changing the
-  // repair owner or renewing a controller lease cannot create more capacity.
-  if(!recordObject(value)||value.schema!==1||value.id!==NATIVE_ALLOWANCE_ID||value.kind!=='realtime_voice'||value.provider!=='openai'||value.allocatedCents!==NATIVE_ALLOWANCE_CENTS||!positiveInteger(value.reservationCents)||value.reservationCents>NATIVE_ALLOWANCE_CENTS||!nonnegativeInteger(value.reservedCents)||value.spentCents!==0||!nonnegativeInteger(value.calls)||value.calls*value.reservationCents!==value.reservedCents||value.reservedCents>NATIVE_ALLOWANCE_CENTS||!positiveInteger(value.issuedAt)||!positiveInteger(value.expiresAt)||value.expiresAt<=value.issuedAt||value.expiresAt>require('./_britesGrowth').STOP_AT)return null;
+  // The original allocation and every unresolved hold stay intact. Schema 2
+  // records one explicit owner continuation, not a refill on lease renewal.
+  // This policy version has no settlement writer: nonzero accounting requires
+  // a later evidence-validated version, never an unproved aggregate charge.
+  if(!recordObject(value)||![1,2].includes(value.schema)||value.id!==NATIVE_ALLOWANCE_ID||value.kind!=='realtime_voice'||value.provider!=='openai'||value.allocatedCents!==NATIVE_ALLOWANCE_CENTS||!positiveInteger(value.reservationCents)||value.reservationCents>NATIVE_ALLOWANCE_CENTS||!nonnegativeInteger(value.reservedCents)||value.spentCents!==0||!nonnegativeInteger(value.calls)||!Number.isSafeInteger(value.calls*value.reservationCents)||value.calls*value.reservationCents!==value.reservedCents||!positiveInteger(value.issuedAt)||!positiveInteger(value.expiresAt)||value.expiresAt<=value.issuedAt||value.expiresAt>require('./_britesGrowth').STOP_AT)return null;
+  let limitCents=NATIVE_ALLOWANCE_CENTS;
+  if(value.schema===1){
+    if(['limitCents','continuationCents','continuationCount','continuationPolicy','continuedAt','continuationAuthorizedBy','continuationCheckpointUpdatedAt','accountingVersion','accountedCalls','accountedAllocationCents'].some(key=>Object.hasOwn(value,key)))return null;
+  }else{
+    if(!positiveInteger(value.limitCents)||value.limitCents<=NATIVE_ALLOWANCE_CENTS||value.limitCents>NATIVE_CONTINUATION_CEILING_CENTS||value.continuationCents!==value.limitCents-NATIVE_ALLOWANCE_CENTS||value.continuationCount!==1||value.continuationPolicy!==NATIVE_CONTINUATION_POLICY||!positiveInteger(value.continuedAt)||value.continuedAt<value.issuedAt||value.continuedAt>=value.expiresAt||typeof value.continuationAuthorizedBy!=='string'||!/^[a-zA-Z0-9:_-]{1,100}$/.test(value.continuationAuthorizedBy)||!nonnegativeInteger(value.continuationCheckpointUpdatedAt)||value.accountingVersion!==1||value.accountedCalls!==0||value.accountedAllocationCents!==0)return null;
+    limitCents=value.limitCents;
+  }
+  if(value.reservedCents>limitCents)return null;
   if(value.calls===0?value.lastStartedAt!==null:!positiveInteger(value.lastStartedAt)||value.lastStartedAt<value.issuedAt||value.lastStartedAt>=value.expiresAt)return null;
-  return {id:NATIVE_ALLOWANCE_ID,kind:'realtime_voice',provider:'openai',allocatedCents:NATIVE_ALLOWANCE_CENTS,reservationCents:value.reservationCents,reservedCents:value.reservedCents,spentCents:0,calls:value.calls,issuedAt:value.issuedAt,expiresAt:value.expiresAt,lastStartedAt:value.lastStartedAt};
+  return {schema:value.schema,id:NATIVE_ALLOWANCE_ID,kind:'realtime_voice',provider:'openai',allocatedCents:NATIVE_ALLOWANCE_CENTS,limitCents,reservationCents:value.reservationCents,reservedCents:value.reservedCents,spentCents:0,calls:value.calls,issuedAt:value.issuedAt,expiresAt:value.expiresAt,lastStartedAt:value.lastStartedAt,...(value.schema===2?{continuationCents:value.continuationCents,continuationCount:1,continuationPolicy:NATIVE_CONTINUATION_POLICY,continuedAt:value.continuedAt,accountingVersion:1,accountedCalls:0,accountedAllocationCents:0,usageSettled:false}:{})};
 }
-function allowanceProjection(value,cents,at,control){
-  const effectiveExpiresAt=Math.min(value.expiresAt,nativeStopAt(control)),availableCents=NATIVE_ALLOWANCE_CENTS-value.reservedCents,configurationValid=value.reservationCents===cents,nextReservationFits=configurationValid&&availableCents>=cents,state=at>=effectiveExpiresAt?'expired':control?.enabled===false?'paused':nextReservationFits?'available':'exhausted';
-  return {...value,effectiveExpiresAt,availableCents,configurationValid,nextReservationFits,state};
+function allowanceProjection(value,cents,at,control,configuredLimitCents=null){
+  const effectiveExpiresAt=Math.min(value.expiresAt,nativeStopAt(control)),availableCents=value.limitCents-value.reservedCents-value.spentCents,configurationValid=value.reservationCents===cents&&(value.schema===1||value.limitCents===configuredLimitCents),effective=value.issuedAt<=at&&(value.schema===1||value.continuedAt<=at),nextReservationFits=configurationValid&&effective&&availableCents>=cents,state=at>=effectiveExpiresAt?'expired':control?.enabled===false?'paused':!effective?'pending':nextReservationFits?'available':'exhausted';
+  return {...value,effectiveExpiresAt,availableCents,configurationValid,effective,nextReservationFits,state};
 }
-async function nativeAvailability(service,cents,at,control){
+async function nativeAvailability(service,cents,at,control,configuredLimitCents){
   const saved=await service.col('VoiceAllowances').doc(NATIVE_ALLOWANCE_ID).get();
   if(!saved.exists)return Boolean(await activeContinuation(service,cents,at));
   const value=allowanceValues(saved.data());if(!value||service.namespace!=='Brites_Growth_Sandbox')throw Error('Invalid native allowance.');
-  const projection=allowanceProjection(value,cents,at,control);if(!projection.configurationValid)throw Error('Native reservation changed.');
+  const projection=allowanceProjection(value,cents,at,control,configuredLimitCents);if(!projection.configurationValid)throw Error('Native reservation or configured ceiling changed.');
   return value.issuedAt<=at&&projection.state==='available';
 }
 async function authorizeNativeAllowance(service,env,body,now){
@@ -135,7 +146,21 @@ async function authorizeNativeAllowance(service,env,body,now){
     if(current.activeWriter&&Number(current.leaseUntil)>at||legacy&&(Number(legacy.leaseUntil||legacy.expiresAt)||0)>at)return {error:'Preserve the active legacy writer.',status:409};
     const revision=current.updatedAt??0;if(!nonnegativeInteger(revision)||revision!==body.expectedUpdatedAt)return {error:'Checkpoint changed; reread before authorizing voice.',status:409};
     if(!ledgerValues(budget.exists?budget.data():{}).valid)return {error:'Voice allocation could not be checked.',code:'VOICE_GUARD_UNAVAILABLE',status:503};
-    if(saved.exists){const value=allowanceValues(saved.data());if(!value||value.reservationCents!==cents)return {error:'The existing native allowance could not be checked.',code:'VOICE_GUARD_UNAVAILABLE',status:503};return {ok:true,reused:true,allowance:allowanceProjection(value,cents,at,liveControl),providerCalls:0,refunds:0,legacyAllocationChanged:false};}
+    if(saved.exists){
+      const value=allowanceValues(saved.data()),configuredLimitCents=Math.floor(demoCap(env)*100);
+      if(!value||value.reservationCents!==cents||value.schema===2&&value.limitCents!==configuredLimitCents)return {error:'The existing native allowance could not be checked.',code:'VOICE_GUARD_UNAVAILABLE',status:503};
+      if(value.schema===2&&value.continuedAt>at)return {error:'The native continuation is not yet effective.',status:409};
+      const projection=allowanceProjection(value,cents,at,liveControl,configuredLimitCents);
+      if(body.continueToConfiguredCeiling===true&&value.schema===1){
+        if(!positiveInteger(configuredLimitCents)||configuredLimitCents<=NATIVE_ALLOWANCE_CENTS||configuredLimitCents>NATIVE_CONTINUATION_CEILING_CENTS)return {error:'The configured preview ceiling does not support this continuation.',code:'VOICE_GUARD_UNAVAILABLE',status:503};
+        if(projection.state!=='exhausted'||at>=value.expiresAt)return {error:'Continue only an exhausted, unexpired native allowance.',status:409};
+        const record={...saved.data(),schema:2,limitCents:configuredLimitCents,continuationCents:configuredLimitCents-NATIVE_ALLOWANCE_CENTS,continuationCount:1,continuationPolicy:NATIVE_CONTINUATION_POLICY,continuedAt:at,continuationAuthorizedBy:body.owner,continuationCheckpointUpdatedAt:body.expectedUpdatedAt,accountingVersion:1,accountedCalls:0,accountedAllocationCents:0};
+        const continued=allowanceValues(record);if(!continued)return {error:'The native continuation could not be checked.',code:'VOICE_GUARD_UNAVAILABLE',status:503};
+        tx.set(ref,record);return {ok:true,reused:false,continuationApplied:true,allowance:allowanceProjection(continued,cents,at,liveControl,configuredLimitCents),providerCalls:0,refunds:0,legacyAllocationChanged:false,usageSettled:false};
+      }
+      return {ok:true,reused:true,...(body.continueToConfiguredCeiling===true?{continuationApplied:false}:{}),allowance:projection,providerCalls:0,refunds:0,legacyAllocationChanged:false,...(value.schema===2?{usageSettled:false}:{})};
+    }
+    if(body.continueToConfiguredCeiling===true)return {error:'An existing exhausted native allowance is required.',status:409};
     const record={schema:1,id:NATIVE_ALLOWANCE_ID,kind:'realtime_voice',provider:'openai',allocatedCents:NATIVE_ALLOWANCE_CENTS,reservationCents:cents,reservedCents:0,spentCents:0,calls:0,issuedAt:at,expiresAt:stopAt,lastStartedAt:null,authorizedBy:body.owner,checkpointUpdatedAt:body.expectedUpdatedAt};
     tx.set(ref,record);return {ok:true,reused:false,allowance:allowanceProjection(allowanceValues(record),cents,at,liveControl),providerCalls:0,refunds:0,legacyAllocationChanged:false};
   });
@@ -217,7 +242,8 @@ function createDemoBudgetReservationResult(service,{capUsd,now=Date.now,provenan
         const allowances=service.col('VoiceAllowances'),allowanceRef=allowances.doc(NATIVE_ALLOWANCE_ID),[allowanceSaved,controlSaved]=await Promise.all([tx.get(allowanceRef),tx.get(service.col('State').doc('control'))]);
         if(allowanceSaved.exists){
           const value=allowanceValues(allowanceSaved.data());if(!value||value.reservationCents!==cents)return 'INVALID_LEDGER';
-          const liveControl=controlSaved.exists?controlSaved.data():ctrl,at=now(),projection=allowanceProjection(value,cents,at,liveControl);
+          const liveControl=controlSaved.exists?controlSaved.data():ctrl,at=now(),projection=allowanceProjection(value,cents,at,liveControl,limitCents);
+          if(!projection.configurationValid)return 'INVALID_LEDGER';
           if(liveControl?.enabled===false||at>=nativeStopAt(ctrl)||value.issuedAt>at||projection.state!=='available')return 'ALLOCATION_EXHAUSTED';
           funding={fundingSource:'native_allowance',allowanceId:NATIVE_ALLOWANCE_ID};fundingExpiresAt=value.expiresAt;
           tx.set(allowanceRef,{...allowanceSaved.data(),reservedCents:value.reservedCents+cents,calls:value.calls+1,lastStartedAt:at});
@@ -273,7 +299,7 @@ async function allocationProjection(service,env,{now=Date.now,lastStart=null}={}
   });
   const total=ledger.valid?ledger.reservedCents+ledger.spentCents:null,configurationValid=positiveInteger(limitCents)&&positiveInteger(reservationCents)&&reservationCents<=limitCents;
   const continuationRecords=(continuations?.docs||[]).flatMap(doc=>{const value=grantValues(doc.data(),doc.id);return value?[value]:[]}),continuationHeldCents=continuationRecords.reduce((sum,row)=>sum+row.reservedCents,0),continuationTruncated=(continuations?.size??continuations?.docs?.length??0)>=recordLimit;
-  const allowance=allowanceSaved.exists?allowanceValues(allowanceSaved.data()):null,nativeAllowance={exists:allowanceSaved.exists,valid:!allowanceSaved.exists||Boolean(allowance),limitCents:NATIVE_ALLOWANCE_CENTS,...(allowance?allowanceProjection(allowance,reservationCents,now(),controlSaved.exists?controlSaved.data():null):{}),legacyAllocationChanged:false,refunds:0};
+  const allowance=allowanceSaved.exists?allowanceValues(allowanceSaved.data()):null,nativeAllowance={exists:allowanceSaved.exists,valid:!allowanceSaved.exists||Boolean(allowance),limitCents:NATIVE_ALLOWANCE_CENTS,...(allowance?allowanceProjection(allowance,reservationCents,now(),controlSaved.exists?controlSaved.data():null,limitCents):{}),legacyAllocationChanged:false,refunds:0};
   return {schema:1,namespace:'Brites_Growth_Sandbox',checkedAt:now(),readOnly:true,providerCalls:0,financialWrites:0,refunds:0,evidenceComplete:false,budget:{exists:snapshot.exists,valid:ledger.valid,issues:ledger.issues,reservedCents:ledger.reservedCents,spentCents:ledger.spentCents,attempts:ledger.calls,recordedLimitCents:recordObject(data)&&positiveInteger(data.allocationCapCents)?data.allocationCapCents:null,configuredLimitCents:limitCents,configuredReservationCents:reservationCents,configurationValid,availableCents:ledger.valid&&configurationValid?Math.max(0,limitCents-total):null,nextReservationFits:ledger.valid&&configurationValid?Number.isSafeInteger(total+reservationCents)&&total+reservationCents<=limitCents:null},nativeAllowance,nativeContinuations:{records:continuationRecords,heldCentsInReadWindow:continuationHeldCents,invalid:(continuations?.docs?.length||0)-continuationRecords.length,truncated:continuationTruncated,limit:recordLimit,legacyAllocationChanged:false,refunds:0},records,recordWindow:{limit:recordLimit,truncated:(sessions?.size??sessions?.docs?.length??0)>=recordLimit,shown:records.length,invalid:invalidRecords,unattributed:unattributedRecords,withProviderOutcome:providerOutcomeRecords,heldCents:heldCentsInReadWindow},deadlineRecords,deadlineWindow:{limit:deadlineLimit,truncated:(deadlines?.size??deadlines?.docs?.length??0)>=deadlineLimit,shown:deadlineRecords.length,invalid:invalidDeadlines},lastStart};
 }
 function createBudgetReservation(service,{now=Date.now}={}){
@@ -300,7 +326,7 @@ function createHandler({env={},authorize=async()=>false,service,fetch:fetcher=gl
     if(!body||typeof body!=='object'||Array.isArray(body)||!['capabilities','start','stop','readiness','allocation','authorize-test','authorize-voice'].includes(body.action))return json({error:'Unknown voice action.'},400);
     if(['authorize-test','authorize-voice'].includes(body.action)){
       if(!await authorize(req))return json({error:'Operator sign-in required.'},401);
-      if(Object.keys(body).some(key=>!['action','owner','token','expectedUpdatedAt'].includes(key))||typeof body.owner!=='string'||!/^[a-zA-Z0-9:_-]{1,100}$/.test(body.owner)||typeof body.token!=='string'||!/^[a-f0-9]{64}$/.test(body.token)||!nonnegativeInteger(body.expectedUpdatedAt))return json({error:'An owned lease and current checkpoint revision are required.'},400);
+      if(Object.keys(body).some(key=>!['action','owner','token','expectedUpdatedAt',...(body.action==='authorize-voice'?['continueToConfiguredCeiling']:[])].includes(key))||Object.hasOwn(body,'continueToConfiguredCeiling')&&body.continueToConfiguredCeiling!==true||typeof body.owner!=='string'||!/^[a-zA-Z0-9:_-]{1,100}$/.test(body.owner)||typeof body.token!=='string'||!/^[a-f0-9]{64}$/.test(body.token)||!nonnegativeInteger(body.expectedUpdatedAt))return json({error:'An owned lease and current checkpoint revision are required.'},400);
       if(env.BRITES_GROWTH_SANDBOX!=='1'||env.BRITES_GROWTH_NAMESPACE!=='Brites_Growth_Sandbox'||service?.namespace!=='Brites_Growth_Sandbox')return json({error:'Use the exact isolated sandbox for voice authorization.'},403);
       if(env.BRITES_CONCIERGE_REALTIME_ENABLED!=='1'||env.BRITES_CONCIERGE_REALTIME_PUBLIC_DEMO!=='1'||!env.OPENAI_API_KEY)return json({error:'The native voice preview is not configured.',code:'VOICE_GUARD_UNAVAILABLE'},503);
       try{const result=await (body.action==='authorize-voice'?authorizeNativeAllowance:authorizeContinuation)(service,env,body,now);return json(result,result.status||200);}catch{return json({error:'Voice authorization could not be recorded.',code:'VOICE_GUARD_UNAVAILABLE'},503);}
@@ -348,7 +374,7 @@ function createHandler({env={},authorize=async()=>false,service,fetch:fetcher=gl
       if(publicDemo){
         // Availability is checked before a browser requests microphone access.
         // The later atomic reservation still protects simultaneous starts.
-        try{const snapshot=await service.col('VoiceUsage').doc('preview-budget').get(),ledger=ledgerValues(snapshot.exists?snapshot.data():{}),next=ledger.valid?ledger.reservedCents+ledger.spentCents+Math.ceil(reserveUsd*100):null;if(!ledger.valid||!Number.isSafeInteger(next))return json({enabled:false,code:'VOICE_GUARD_UNAVAILABLE',message:'OpenAI voice allocation could not be checked. You can still type.'},503);if(next>Math.floor(demoCap(env)*100)&&!await nativeAvailability(service,Math.ceil(reserveUsd*100),now(),ctrl))return json({enabled:false,code:'VOICE_ALLOCATION_UNAVAILABLE',message:'This preview\u2019s voice allocation is paused. You can still type.'},429);}catch{return json({enabled:false,code:'VOICE_GUARD_UNAVAILABLE',message:'OpenAI voice allocation could not be checked. You can still type.'},503);}
+        try{const snapshot=await service.col('VoiceUsage').doc('preview-budget').get(),ledger=ledgerValues(snapshot.exists?snapshot.data():{}),next=ledger.valid?ledger.reservedCents+ledger.spentCents+Math.ceil(reserveUsd*100):null;if(!ledger.valid||!Number.isSafeInteger(next))return json({enabled:false,code:'VOICE_GUARD_UNAVAILABLE',message:'OpenAI voice allocation could not be checked. You can still type.'},503);if(next>Math.floor(demoCap(env)*100)&&!await nativeAvailability(service,Math.ceil(reserveUsd*100),now(),ctrl,Math.floor(demoCap(env)*100)))return json({enabled:false,code:'VOICE_ALLOCATION_UNAVAILABLE',message:'This preview\u2019s voice allocation is paused. You can still type.'},429);}catch{return json({enabled:false,code:'VOICE_GUARD_UNAVAILABLE',message:'OpenAI voice allocation could not be checked. You can still type.'},503);}
       }
       return json({enabled:true,optIn:true,maxDurationMs:MAX_DURATION_MS,provider:'OpenAI',speech:'native_speech_to_speech',providerReadiness:'verified_on_connection',usage:'allocation_reserved_until_provider_reconciliation',...(publicDemo?{demoToken:demoToken(env.OPENAI_API_KEY,now())}:{})});
     }

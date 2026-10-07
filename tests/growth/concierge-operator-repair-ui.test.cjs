@@ -33,3 +33,14 @@ test('enable sandbox voice uses an owned repair and current checkpoint revision 
 test('busy or legacy writer cannot claim an allowance through the enable control',async()=>{
   for(const options of [{busy:true},{legacy:true}]){const f=await fixture(options);await f.button('Start sandbox repair').onclick();await f.button('Enable sandbox voice').onclick();assert.equal(f.calls.some(x=>x.action==='authorize-voice'),false);assert.equal(f.calls.some(x=>x.payload?.action==='claim'),false);f.dom.window.close();}
 });
+test('native continuation is a separate explicit owner action with a fresh revision and no caller amount or audio start',async()=>{
+  const f=await fixture();await f.button('Continue sandbox voice').onclick();assert.equal(f.calls.some(x=>x.action==='authorize-voice'),false);
+  await f.button('Start sandbox repair').onclick();await f.button('Enable sandbox voice').onclick();const initial=f.calls.find(x=>x.action==='authorize-voice');assert.equal(Object.hasOwn(initial,'continueToConfiguredCeiling'),false);
+  f.getCheckpoint().updatedAt=240;await f.button('Continue sandbox voice').onclick();const continued=f.calls.filter(x=>x.action==='authorize-voice').at(-1),claim=f.calls.find(x=>x.payload?.action==='claim');
+  assert.deepEqual(Object.keys(continued).sort(),['action','continueToConfiguredCeiling','expectedUpdatedAt','owner','token']);assert.equal(continued.continueToConfiguredCeiling,true);assert.equal(continued.owner,claim.payload.owner);assert.equal(continued.expectedUpdatedAt,240);assert.equal(continued.token,'PRIVATE_TOKEN_123456789012345678901234567890');
+  const index=f.calls.indexOf(continued);assert.deepEqual(f.calls.slice(index-2,index).map(x=>x.op),['controller','checkpoint-read']);assert.equal(f.calls.some(x=>x.action==='start'),false);assert.equal(f.getCheckpoint().savedResearch,'preserve');assert.doesNotMatch(f.root.textContent,/PRIVATE_TOKEN|PRIVATE_SECRET/);
+  await f.button('Finish sandbox repair').onclick();await f.button('Continue sandbox voice').onclick();assert.equal(f.calls.filter(x=>x.action==='authorize-voice').length,2);f.dom.window.close();
+});
+test('busy and active legacy writers cannot use the native continuation control',async()=>{
+  for(const options of [{busy:true},{legacy:true}]){const f=await fixture(options);await f.button('Start sandbox repair').onclick();await f.button('Continue sandbox voice').onclick();assert.equal(f.calls.some(x=>x.action==='authorize-voice'),false);assert.equal(f.calls.some(x=>x.payload?.action==='claim'),false);f.dom.window.close();}
+});

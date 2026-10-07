@@ -225,22 +225,22 @@
     const cursor=state.pageInfo.endCursor,record=begin();status('Opening the next collection page…');
     try{const data=await get('/api/growth/catalogue?browse=1&cursor='+encodeURIComponent(cursor),record.controller.signal);if(!current(record))return;const pageInfo=checkedPageInfo(data,cursor),additional=checkedProducts(data);const ids=new Set(state.browse.map(p=>p.id));state.browse=state.browse.concat(additional.filter(p=>!ids.has(p.id))).slice(0,MAX_PIECES);state.products=state.browse.slice();state.collectionSource='browse';state.checkedSearch='';state.limit=Math.min(MAX_PIECES,state.limit+PAGE_SIZE);state.pageInfo=pageInfo;state.browsePageInfo={...pageInfo};state.loading=false;state.verifiedAt=Date.now();state.browseVerifiedAt=state.verifiedAt;drawGrid();publish();status(additional.length?'More live pieces are ready.':pageInfo.hasNextPage?'This page has no additional matching pieces. Continue to the next public collection page.':'You have reached the end of the checked public collection.');}catch{if(current(record)){state.loading=false;publish();status('That collection page could not be checked. Try Explore more pieces again.');}}
   }
-  async function openProduct(handle,{push=true,signal,section,focusFrom=null,revealFrom=null}={}){
+  async function openProduct(handle,{push=true,signal,section,focusFrom=null,revealFrom=null,revealRequested=false}={}){
     if(!validHandle(handle))return false;
-    const initialFocus=focusedElement();let focusIntent=!!focusFrom&&focusFrom.isConnected&&document.activeElement===focusFrom,revealIntent=!!revealFrom&&revealFrom.isConnected&&main.contains(revealFrom);
-    const movedFocus=event=>{if(event.target!==focusFrom)focusIntent=false;const active=focusedElement();if(active!==initialFocus&&!(active===document.body&&!revealFrom?.isConnected))revealIntent=false;};if(focusIntent||revealIntent)document.addEventListener('focusin',movedFocus);
+    const initialFocus=focusedElement(),focusRoot=initialFocus?.getRootNode();let focusIntent=!!focusFrom&&focusFrom.isConnected&&document.activeElement===focusFrom,revealIntent=revealRequested===true||!!revealFrom&&revealFrom.isConnected&&main.contains(revealFrom);
+    const movedFocus=event=>{if(event.target!==focusFrom)focusIntent=false;const active=focusedElement();if(active!==initialFocus&&!(active===document.body&&!initialFocus?.isConnected))revealIntent=false;};if(focusIntent||revealIntent){document.addEventListener('focusin',movedFocus);if(focusRoot!==document){focusRoot?.addEventListener('focusin',movedFocus);focusRoot?.addEventListener('focusout',movedFocus);}}
     const record=begin({signal});status('Opening the checked product details…');
     try{
       const data=await get('/api/growth/product?handle='+encodeURIComponent(handle),record.controller.signal),p=data.product;
       if(!current(record)||data.live===false||!validProduct(p,handle)){if(current(record)){state.loading=false;publish();}return false;}
-      const focusHeading=focusIntent&&!document.hidden&&document.activeElement===focusFrom,revealProduct=revealIntent&&!section&&!document.hidden&&revealFrom.isConnected&&focusedElement()===initialFocus;remember(p);state.current=p;state.selectedImage=0;state.verifiedAt=Date.now();state.activeSection=section||'details';renderProduct(p);commitPage('product',handle,push);if(section)focusSection(section);
+      const focusHeading=focusIntent&&!document.hidden&&document.activeElement===focusFrom,revealProduct=revealIntent&&!section&&!document.hidden&&(revealRequested===true||revealFrom?.isConnected)&&focusedElement()===initialFocus;remember(p);state.current=p;state.selectedImage=0;state.verifiedAt=Date.now();state.activeSection=section||'details';renderProduct(p);commitPage('product',handle,push);if(section)focusSection(section);
       if(focusHeading){const heading=main.querySelector('.product-copy h1');if(heading){heading.tabIndex=-1;heading.focus({preventScroll:true});try{heading.scrollIntoView?.({behavior:reduced()?'auto':'smooth',block:'start'});}catch{}}}
-      // A pointer-opened piece starts at its checked image and title. Reveal
+      // A pointer or explicitly requested piece starts at its checked image and title. Reveal
       // the layout without giving it keyboard focus or overriding a section.
       if(revealProduct&&revealIntent&&!document.hidden&&current(record)&&state.pageKind==='product'&&state.currentHandle===handle&&state.current?.id===p.id&&[initialFocus,document.body].includes(focusedElement())){const layout=main.querySelector('.product-layout');try{layout?.scrollIntoView?.({behavior:reduced()?'auto':'smooth',block:'start'});}catch{}}
       status('Live options checked. Your guide stays with you.');return true;
     }catch{if(current(record)){state.loading=false;publish();status('This piece could not be checked. Your current page is preserved.');}return false;}
-    finally{document.removeEventListener('focusin',movedFocus);}
+    finally{document.removeEventListener('focusin',movedFocus);if(focusRoot!==document){focusRoot?.removeEventListener('focusin',movedFocus);focusRoot?.removeEventListener('focusout',movedFocus);}}
   }
   function productImages(p){
     const images=(Array.isArray(p.images)?p.images:[]).slice(0,15).flatMap(i=>{const image=typeof i==='string'?i:i?.url,src=safeImage(image);return src?[{image:src,imageAlt:clean(typeof i==='object'?i.altText||p.title:p.title,300)}]:[];});
@@ -391,7 +391,7 @@
       const pieces=filtered().slice(0,state.limit),message=type==='sort'?'The loaded collection is sorted.':pieces.length?'The '+(value==='all'?'full loaded collection':value)+' is ready.':state.pageInfo.hasNextPage?'No '+(value==='all'?'pieces':value)+' on these loaded pages yet. Explore more pieces to continue.':'No checked '+(value==='all'?'pieces':value)+' in this loaded collection. Try a new live search.';
       focusSection('catalogue',false);status(message);return {ok:true,action:type,live:state.verifiedAt>0,checkedAt:state.verifiedAt,products:pieces.map(projection),snapshot:snapshot(),message};
     }
-    if(type==='open'){const opened=await openProduct(action.handle,{signal:options.signal,section:SECTIONS.has(action.section)?action.section:undefined}),ok=opened&&state.current?.handle===action.handle;return {ok,action:type,...(ok?{live:true,checkedAt:state.verifiedAt,products:[projection(state.current)],snapshot:snapshot()}:{}),message:ok?'The checked product details are open.':'That piece could not be checked.'};}
+    if(type==='open'){const opened=await openProduct(action.handle,{signal:options.signal,section:SECTIONS.has(action.section)?action.section:undefined,revealRequested:true}),ok=opened&&state.current?.handle===action.handle;return {ok,action:type,...(ok?{live:true,checkedAt:state.verifiedAt,products:[projection(state.current)],snapshot:snapshot()}:{}),message:ok?'The checked product details are open.':'That piece could not be checked.'};}
     if(type==='highlight'||type==='scroll'||type==='zoom'){
       const section=type==='zoom'?'image':action.section;if(!SECTIONS.has(section))return {ok:false,action:type,message:'That page section is unavailable.'};
       if(action.handle&&(action.handle!==state.currentHandle||!state.current)){if(!await openProduct(action.handle,{signal:options.signal}))return {ok:false,action:type,message:'That piece could not be checked.'};}
@@ -412,7 +412,7 @@
     return {ok:true,action:'present',live:true,checkedAt:state.verifiedAt,products:checked.map(projection),snapshot:snapshot(),message:'The checked selection is displayed in the boutique.'};
   }
   window.BritesSandboxStorefront=Object.freeze({snapshot,execute,presentProducts});
-  window.BritesSandboxNavigate=handle=>openProduct(handle);
+  window.BritesSandboxNavigate=handle=>openProduct(handle,{revealRequested:true});
   document.addEventListener('click',event=>{
     const control=event.target.closest?.('[data-store-action]');if(control&&!event.defaultPrevented){const type=control.dataset.storeAction;event.preventDefault();if(type==='bag')void execute({type:'bag'});else if(type==='gifts')void execute({type:'gift'});else if(type==='customize')void execute({type:'customize'});else if(type==='browse')focusSection('catalogue',false);else if(type==='collection')void execute({type:'search',query:''});return;}
     const anchor=event.target.closest?.('a[href]');if(!anchor||event.defaultPrevented||event.button!==0||event.ctrlKey||event.metaKey||event.shiftKey||event.altKey||anchor.target==='_blank')return;

@@ -84,7 +84,7 @@ test('keyboard Back focuses the explicit restored collection heading after the c
 });
 
 for(const location of ['input','sort','outside'])test('keyboard Back respects the new '+location+' focus while its reset is pending',async t=>{
-  const h=fixture(t);await h.ready();await h.store.execute({type:'open',handle:initial[0].handle});const gate=deferred();h.gates.set(null,gate);activateBack(h);const selected=location==='input'?h.input():location==='sort'?h.sort():h.outside();selected.focus();gate.resolve(h.response(initial));await settle();assert.equal(h.d.activeElement,selected);assert.equal(h.scrolls.some(s=>s.node===h.d.querySelector('.collection-heading h2')),false);assert.equal(h.scrolls.length,0,'pending Back completion must preserve the newer focused control viewport');assert.equal(h.store.snapshot().loading,false);
+  const h=fixture(t);await h.ready();await h.store.execute({type:'open',handle:initial[0].handle});h.scrolls.length=0;const gate=deferred();h.gates.set(null,gate);activateBack(h);const selected=location==='input'?h.input():location==='sort'?h.sort():h.outside();selected.focus();gate.resolve(h.response(initial));await settle();assert.equal(h.d.activeElement,selected);assert.equal(h.scrolls.some(s=>s.node===h.d.querySelector('.collection-heading h2')),false);assert.equal(h.scrolls.length,0,'pending Back completion must preserve the newer focused control viewport');assert.equal(h.store.snapshot().loading,false);
 });
 
 test('keyboard Back cannot reclaim collection focus when the pending reset completes in a hidden page',async t=>{
@@ -145,4 +145,30 @@ test('an explicit product section keeps its own reveal target instead of a defau
 
 test('ordinary mouse product reveal respects reduced motion without enabling a keyboard focus transfer',async t=>{
   const h=fixture(t);await h.ready();h.w.matchMedia=()=>({matches:true});h.activateLink({mouse:true});await settle();const layout=h.d.querySelector('.product-layout');assert.equal(h.scrolls.some(s=>s.node===layout&&s.value.block==='start'&&s.value.behavior==='auto'),true);assert.equal(h.d.activeElement===h.d.querySelector('.product-copy h1'),false);
+});
+
+function guideControls(h){const host=h.d.body.appendChild(h.d.createElement('brites-concierge')),shadow=host.attachShadow({mode:'open'}),view=h.d.createElement('a'),newer=h.d.createElement('button');view.href='/concierge-sandbox.html?product='+initial[0].handle;view.textContent='View this piece';newer.textContent='A newer guide focus choice';shadow.append(view,newer);view.focus();return {host,shadow,view,newer};}
+
+test('requested guide product navigation reveals the checked layout while retaining its deep link focus',async t=>{
+  const h=fixture(t);await h.ready();const guide=guideControls(h);let pending;guide.view.onclick=e=>{e.preventDefault();pending=h.w.BritesSandboxNavigate(initial[0].handle);};guide.view.dispatchEvent(new h.w.MouseEvent('click',{bubbles:true,cancelable:true,detail:1}));assert.equal(await pending,true);const layout=h.d.querySelector('.product-layout');assert.equal(h.store.snapshot().currentHandle,initial[0].handle);assert.equal(guide.shadow.activeElement,guide.view);assert.equal(h.d.activeElement,guide.host);assert.ok(h.scrolls.some(s=>s.node===layout&&s.value.block==='start'),'the requested guide piece begins at the exact image/title layout');assert.equal(h.d.activeElement===h.d.querySelector('.product-copy h1'),false);
+});
+
+test('checked storefront open reveals its exact product without transferring the guide composer focus',async t=>{
+  const h=fixture(t);await h.ready();const guide=guideControls(h),result=await h.store.execute({type:'open',handle:initial[1].handle});assert.equal(result.ok,true);assert.equal(result.snapshot.currentHandle,initial[1].handle);assert.equal(guide.shadow.activeElement,guide.view);assert.ok(h.scrolls.some(s=>s.node===h.d.querySelector('.product-layout')&&s.value.block==='start'));
+});
+
+for(const entry of ['guide','checked'])test('a newer deep guide focus permanently cancels the '+entry+' requested product reveal',async t=>{
+  const h=fixture(t);await h.ready();const guide=guideControls(h),gate=deferred();h.lookup(gate);const pending=entry==='guide'?h.w.BritesSandboxNavigate(initial[0].handle):h.store.execute({type:'open',handle:initial[0].handle});guide.newer.focus();guide.view.focus();gate.resolve({ok:true,json:async()=>({live:true,product:clone(initial[0])})});await pending;assert.equal(h.store.snapshot().currentHandle,initial[0].handle);assert.equal(guide.shadow.activeElement,guide.view);assert.equal(h.scrolls.length,0,'returning to the original guide control must not reinstate withdrawn reveal intent');
+});
+
+test('a requested checked product cannot reveal after the page becomes hidden',async t=>{
+  const h=fixture(t);await h.ready();const guide=guideControls(h),gate=deferred();let hidden=false;Object.defineProperty(h.d,'hidden',{get:()=>hidden});h.lookup(gate);const pending=h.store.execute({type:'open',handle:initial[0].handle});hidden=true;gate.resolve({ok:true,json:async()=>({live:true,product:clone(initial[0])})});assert.equal((await pending).ok,true);assert.equal(guide.shadow.activeElement,guide.view);assert.equal(h.scrolls.length,0);
+});
+
+test('a superseded requested guide product response cannot reveal over a newer checked collection',async t=>{
+  const h=fixture(t);await h.ready();guideControls(h);const gate=deferred();h.lookup(gate);const pending=h.w.BritesSandboxNavigate(initial[0].handle);await h.store.execute({type:'filter',filter:'earrings'});const view=h.store.snapshot(),scrolls=h.scrolls.length;gate.resolve({ok:true,json:async()=>({live:true,product:clone(initial[0])})});assert.equal(await pending,false);assert.equal(h.store.snapshot().pageKind,'collection');assert.equal(h.store.snapshot().discoveryRevision,view.discoveryRevision);assert.equal(h.scrolls.length,scrolls);assert.equal(h.d.querySelector('.product-layout'),null);
+});
+
+test('an unverified requested guide read cannot create or reveal product details',async t=>{
+  const h=fixture(t);await h.ready();guideControls(h);const gate=deferred();h.lookup(gate);const pending=h.w.BritesSandboxNavigate(initial[0].handle);gate.resolve({ok:true,json:async()=>({live:false,product:clone(initial[0])})});assert.equal(await pending,false);assert.equal(h.store.snapshot().pageKind,'collection');assert.equal(h.d.querySelector('.product-layout'),null);assert.equal(h.scrolls.length,0);
 });
