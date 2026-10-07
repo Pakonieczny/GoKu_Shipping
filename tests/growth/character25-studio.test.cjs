@@ -40,7 +40,13 @@ test('hidden continuous studio sweep stays out of the pale frame while a separat
   assert.ok(new Set(Array.from(position.array).filter((_, index) => index % 3 === 1)).size > 3, 'retained curved sweep has finite construction');
   let receiver; f.scene.traverse(object => {if (object.isMesh && object.material.isShadowMaterial) receiver = object;});
   assert.ok(receiver); assert.equal(receiver.receiveShadow, true); assert.equal(receiver.visible, true); assert.ok(receiver.material.opacity <= .15);
-  assert.equal(f.scene.background.getHexString(), 'faf8f2');
+  assert.equal(f.scene.background.isColor,true,'the constant backdrop is separate from PBR lighting');
+  // Authored linear RGB separation only; actual WebGL appearance is unverified.
+  const luminance=color=>.2126*color.r+.7152*color.g+.0722*color.b;
+  const backdrop=f.scene.background,body=f.scene.getObjectByName('original-pebble-shell').material.color;
+  assert.ok(luminance(backdrop)>.45 && luminance(backdrop)<.75,'the stage is bright while visibly separated from white ceramic');
+  assert.ok((luminance(body)+.05)/(luminance(backdrop)+.05)>=1.5,'authored whole-character contrast survives future palette adjustments');
+  assert.ok(backdrop.b>=backdrop.g && backdrop.g>backdrop.r,'the restrained cool backdrop separates warm body materials');
 });
 test('satin gold and low normal strength avoid concentrated glitter while retaining PBR textures', t => {
   const f = fixture(t), materials = new Set(); f.scene.traverse(object => {if (object.isMesh) materials.add(object.material);});

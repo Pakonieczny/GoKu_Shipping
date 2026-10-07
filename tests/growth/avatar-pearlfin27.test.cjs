@@ -86,8 +86,16 @@ test('body contact and full silhouette remain within the camera across mobile an
   }
 });
 
-test('studio uses a constant pale backdrop and a separate actual shadow receiver', t => {
-  const h=harness(t); assert.equal(h.scene.background.isColor,true); assert.equal(h.scene.background.getHexString(),'faf8f2');
+test('studio keeps a readable white silhouette against a constant cool backdrop and a separate shadow receiver', t => {
+  const h=harness(t); assert.equal(h.scene.background.isColor,true);
+  // This verifies authored sRGB colours only. Lighting, tone mapping and real
+  // WebGL pixels need a physical-browser check; this is not a rendered ratio.
+  const luminance=color=>{const rgb=color.getHexString().match(/../g).map(channel=>parseInt(channel,16)/255).map(channel=>channel<=.04045?channel/12.92:Math.pow((channel+.055)/1.055,2.4));return .2126*rgb[0]+.7152*rgb[1]+.0722*rgb[2];};
+  const backdrop=h.scene.background,body=h.get('original-pebble-shell').material.color;
+  assert.ok(luminance(backdrop)>.45 && luminance(backdrop)<.75,'the studio remains bright without disappearing into white ceramic');
+  assert.ok((luminance(body)+.05)/(luminance(backdrop)+.05)>=1.5,'authored silhouette/background separation survives a palette change');
+  const [r,g,b]=backdrop.getHexString().match(/../g).map(channel=>parseInt(channel,16));
+  assert.ok(b>=g && g>r,'a restrained cool backdrop separates the warm ceramic and gold');
   assert.equal(h.get('continuous-studio-sweep').visible,false,'the huge PBR sweep cannot darken the entire background');
   const floor=h.scene.children.find(p=>p.isMesh&&p.material.isShadowMaterial); assert.ok(floor?.receiveShadow); assert.ok(floor.material.opacity<=.15);
   const lights=h.scene.children.filter(p=>p.isLight); assert.ok(lights.some(p=>p.isHemisphereLight && p.intensity>=1)); assert.ok(lights.some(p=>p.isDirectionalLight && p.intensity>=1));

@@ -8,7 +8,7 @@
   const FILTERS=new Set(['all','necklaces','earrings','bracelets','rings','charms','available']);
   const SECTIONS=new Set(['price','details','options','story','shipping','gifts','customize','catalogue','image','bag','checkout','offers']);
   const PAGE_SIZE=24,MAX_PIECES=1200;
-  const state={pageKind:'catalogue',currentHandle:'',focusedHandle:'',search:'',sort:'featured',filter:'all',contextRevision:0,activeSection:'catalogue',loading:false,products:[],browse:[],limit:PAGE_SIZE,pageInfo:{hasNextPage:false,endCursor:null},current:null,services:null,servicesPending:null,selectedImage:0,verifiedAt:0};
+  const state={pageKind:'catalogue',currentHandle:'',focusedHandle:'',search:'',checkedSearch:'',collectionSource:'browse',sort:'featured',filter:'all',contextRevision:0,discoveryRevision:0,activeSection:'catalogue',loading:false,products:[],browse:[],browsePageInfo:{hasNextPage:false,endCursor:null},browseVerifiedAt:0,limit:PAGE_SIZE,pageInfo:{hasNextPage:false,endCursor:null},current:null,services:null,servicesPending:null,selectedImage:0,verifiedAt:0};
   let navigationVersion=0,request=null,noticeTimer=0,highlightTimer=0,focusTimer=0,storyVersion=0;
   const known=new Map(),identities=new Map();
   const notice=document.querySelector('#storefront-status')||document.body.appendChild(node('aside','','storefront-notice'));
@@ -49,7 +49,10 @@
   function filtered(){
     let pieces=state.products.filter(p=>{
       const text=(p.title+' '+(p.type||'')+' '+p.description).toLowerCase(),words=state.search.toLowerCase().match(/[\p{L}\p{N}-]+/gu)||[];
-      if(words.length&&!words.every(word=>text.includes(word)))return false;
+      // A checked live query may contain category plurals, price language or
+      // synonyms that are not verbatim in a title. Do not narrow its returned
+      // rows a second time. Local filtering remains useful while editing.
+      if(state.search!==state.checkedSearch&&words.length&&!words.every(word=>text.includes(word)))return false;
       if(state.filter==='available')return p.variants.some(v=>v.available);
       if(state.filter==='all')return true;
       const names={necklaces:/necklace|pendant/i,earrings:/earrings?|stud|huggie/i,bracelets:/bracelet/i,rings:/\bring\b/i,charms:/\bcharm\b/i};
@@ -69,8 +72,11 @@
     const chosen=(inView.size?actual.filter(p=>inView.has(p.handle)):actual).slice(0,24);
     [currentHandle,focusedHandle].filter(Boolean).forEach(handle=>{const p=actual.find(p=>p.handle===handle);if(p&&!chosen.some(v=>v.handle===handle)){if(chosen.length>=24)chosen.pop();chosen.push(p);}});
     const visiblePieces=chosen.map(p=>({id:p.id,handle:p.handle,title:clean(p.title,300)}));
-    return {pageKind:state.pageKind==='catalogue'?'collection':state.pageKind,currentHandle,focusedHandle,visiblePieces,search:state.search,sort:state.sort,filter:state.filter,contextRevision:state.contextRevision,activeSection:state.activeSection,loading:state.loading};
+    return {pageKind:state.pageKind==='catalogue'?'collection':state.pageKind,currentHandle,focusedHandle,visiblePieces,search:state.search,sort:state.sort,filter:state.filter,contextRevision:state.contextRevision,discoveryRevision:state.discoveryRevision,activeSection:state.activeSection,loading:state.loading};
   }
+  // Subject changes are separate from gaze, scrolling and other page context.
+  // Commit only completed views so canceled reads cannot revive an old subject.
+  function reviseDiscovery(){if(state.discoveryRevision<Number.MAX_SAFE_INTEGER)state.discoveryRevision++;}
   function publish(){state.contextRevision++;document.dispatchEvent(new CustomEvent('brites-storefront:context',{detail:snapshot()}));}
   function status(message){notice.textContent=clean(message,300);notice.dataset.visible=message?'true':'false';clearTimeout(noticeTimer);if(message)noticeTimer=setTimeout(()=>{notice.dataset.visible='false';},3600);}
   function reduced(){return typeof matchMedia==='function'&&matchMedia('(prefers-reduced-motion: reduce)').matches;}
@@ -112,7 +118,7 @@
     box.replaceChildren();const form=node('form',null,'collection-tools'),wrap=node('div',null,'search-wrap');
     wrap.innerHTML='<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="m15.5 15.5 5 5" fill="none" stroke="currentColor" stroke-width="1.3"/></svg>';
     const input=document.createElement('input');input.id='store-search';input.type='search';input.maxLength=250;input.placeholder='Search a symbol, piece or material…';input.setAttribute('aria-label','Search the live jewelry collection');input.value=state.search;
-    input.addEventListener('input',()=>{cancelPending();state.search=clean(input.value,250);state.limit=PAGE_SIZE;drawGrid();publish();});
+    input.addEventListener('input',()=>{const resetScope=state.search!==''||state.filter!=='all'||state.collectionSource!=='browse';cancelPending();state.search=clean(input.value,250);if(!state.search){state.filter='all';if(state.browseVerifiedAt){restoreBrowse();if(resetScope)reviseDiscovery();}}state.limit=PAGE_SIZE;drawGrid();publish();});
     const submit=button('Search');submit.type='submit';wrap.append(input,submit);form.append(wrap);
     const sortLabel=node('label','Sort','tool-select tool-sort'),sort=document.createElement('select');sort.id='store-sort';sort.setAttribute('aria-label','Sort jewelry');
     [['featured','Shop order'],['price-asc','Price: low to high'],['price-desc','Price: high to low'],['title-asc','Name: A–Z'],['title-desc','Name: Z–A']].forEach(([value,label])=>{const o=node('option',label);o.value=value;sort.append(o);});sort.value=state.sort;sort.addEventListener('change',()=>void execute({type:'sort',sort:sort.value}));sortLabel.append(sort);form.append(sortLabel);box.append(form);
@@ -142,15 +148,18 @@
     if(state.pageKind!=='catalogue'||!main.querySelector('#demo-products'))main.replaceChildren(...[...home.childNodes].map(n=>n.cloneNode(true)));
     state.pageKind='catalogue';state.currentHandle='';state.focusedHandle='';state.current=null;state.activeSection='catalogue';controls();drawGrid();if(full)renderServiceStrip();
   }
-  async function searchCatalogue(query,options={},action={}){
+  function restoreBrowse(){
+    state.products=state.browse.slice();state.search='';state.checkedSearch='';state.collectionSource='browse';state.pageInfo={...state.browsePageInfo};state.verifiedAt=state.browseVerifiedAt;
+  }
+  async function searchCatalogue(query,options={},action={},newDiscovery=true){
     if(typeof query!=='string'||query.length>250)return {ok:false,action:'search',message:'Please use a shorter jewelry search.'};
     if(action.sort&&!SORTS.has(action.sort)||action.filter&&!FILTERS.has(action.filter))return {ok:false,action:'search',message:'Those collection controls are not available.'};
-    const leavingPage=state.pageKind!=='catalogue',record=begin(options);state.search=clean(query,250);if(action.sort)state.sort=action.sort;if(action.filter)state.filter=action.filter;state.limit=PAGE_SIZE;restoreCollection();if(leavingPage)commitPage('catalogue','',options.push!==false,{preserveLoading:true});else publish();status(state.search?'Finding “'+state.search+'” in the live shop…':'Opening the wider live collection…');
+    const leavingPage=state.pageKind!=='catalogue',record=begin(options),nextSearch=clean(query,250);state.search=nextSearch;state.checkedSearch=null;state.collectionSource=nextSearch?'search':'browse';if(action.sort)state.sort=action.sort;state.filter=action.filter||'all';state.limit=PAGE_SIZE;restoreCollection();if(leavingPage)commitPage('catalogue','',options.push!==false,{preserveLoading:true});else publish();status(state.search?'Finding “'+state.search+'” in the live shop…':'Opening the wider live collection…');
     try{
-      const data=await get('/api/growth/catalogue'+(state.search?'?q='+encodeURIComponent(state.search):'?browse=1'),record.controller.signal);
+      const data=await get('/api/growth/catalogue'+(nextSearch?'?q='+encodeURIComponent(nextSearch):'?browse=1'),record.controller.signal);
       if(!current(record))return {ok:false,action:'search',message:'The earlier search was cancelled.'};
-      const pageInfo=checkedPageInfo(data);state.products=checkedProducts(data);state.pageInfo=pageInfo;
-      if(!state.search)state.browse=state.products.slice();state.verifiedAt=Date.now();state.loading=false;drawGrid();publish();focusSection('catalogue',false);status(filtered().length?'Your checked pieces are ready.':'No checked matches yet. Try another symbol or style.');
+      const pageInfo=checkedPageInfo(data);state.products=checkedProducts(data);state.pageInfo=pageInfo;state.checkedSearch=nextSearch;state.verifiedAt=Date.now();
+      if(!nextSearch){state.browse=state.products.slice();state.browsePageInfo={...pageInfo};state.browseVerifiedAt=state.verifiedAt;}if(newDiscovery)reviseDiscovery();state.loading=false;drawGrid();publish();focusSection('catalogue',false);status(filtered().length?'Your checked pieces are ready.':'No checked matches yet. Try another symbol or style.');
       return {ok:true,action:'search',live:data.live!==false,checkedAt:state.verifiedAt,products:filtered().slice(0,state.limit).map(projection),snapshot:snapshot(),message:filtered().length?'Your checked matches are ready on the page.':'I couldn’t find a checked match for that search. Try a different symbol or style.'};
     }catch{if(current(record)){state.loading=false;drawGrid();publish();status('The live selection is temporarily unavailable. Your existing view is preserved.');}return {ok:false,action:'search',message:'The live selection could not be checked. Please try again.'};}
   }
@@ -158,7 +167,7 @@
     const available=filtered();if(available.length>state.limit){state.limit=Math.min(MAX_PIECES,state.limit+PAGE_SIZE);drawGrid();publish();return;}
     if(!state.pageInfo.hasNextPage||!state.pageInfo.endCursor||state.search||state.browse.length>=MAX_PIECES)return;
     const cursor=state.pageInfo.endCursor,record=begin();status('Opening the next collection page…');
-    try{const data=await get('/api/growth/catalogue?browse=1&cursor='+encodeURIComponent(cursor),record.controller.signal);if(!current(record))return;const pageInfo=checkedPageInfo(data,cursor),additional=checkedProducts(data);const ids=new Set(state.browse.map(p=>p.id));state.browse=state.browse.concat(additional.filter(p=>!ids.has(p.id))).slice(0,MAX_PIECES);state.products=state.browse.slice();state.limit=Math.min(MAX_PIECES,state.limit+PAGE_SIZE);state.pageInfo=pageInfo;state.loading=false;state.verifiedAt=Date.now();drawGrid();publish();status(additional.length?'More live pieces are ready.':pageInfo.hasNextPage?'This page has no additional matching pieces. Continue to the next public collection page.':'You have reached the end of the checked public collection.');}catch{if(current(record)){state.loading=false;publish();status('That collection page could not be checked. Try Explore more pieces again.');}}
+    try{const data=await get('/api/growth/catalogue?browse=1&cursor='+encodeURIComponent(cursor),record.controller.signal);if(!current(record))return;const pageInfo=checkedPageInfo(data,cursor),additional=checkedProducts(data);const ids=new Set(state.browse.map(p=>p.id));state.browse=state.browse.concat(additional.filter(p=>!ids.has(p.id))).slice(0,MAX_PIECES);state.products=state.browse.slice();state.collectionSource='browse';state.checkedSearch='';state.limit=Math.min(MAX_PIECES,state.limit+PAGE_SIZE);state.pageInfo=pageInfo;state.browsePageInfo={...pageInfo};state.loading=false;state.verifiedAt=Date.now();state.browseVerifiedAt=state.verifiedAt;drawGrid();publish();status(additional.length?'More live pieces are ready.':pageInfo.hasNextPage?'This page has no additional matching pieces. Continue to the next public collection page.':'You have reached the end of the checked public collection.');}catch{if(current(record)){state.loading=false;publish();status('That collection page could not be checked. Try Explore more pieces again.');}}
   }
   async function openProduct(handle,{push=true,signal,section}={}){
     if(!validHandle(handle))return false;
@@ -301,9 +310,11 @@
     if(type==='search')return searchCatalogue(action.query,options,action);
     if(type==='sort'||type==='filter'){
       const value=type==='sort'?action.sort:action.filter;if(!(type==='sort'?SORTS:FILTERS).has(value))return {ok:false,action:type,message:'That collection control is unavailable.'};
-      if(state.pageKind!=='catalogue'&&!state.browse.length)return searchCatalogue('',options,{sort:type==='sort'?value:state.sort,filter:type==='filter'?value:state.filter});
-      cancelPending();state[type==='sort'?'sort':'filter']=value;state.limit=PAGE_SIZE;if(state.pageKind!=='catalogue'){state.products=state.browse.slice();state.search='';restoreCollection();commitPage('catalogue','');}else{controls();drawGrid();publish();}
-      focusSection('catalogue',false);status(type==='sort'?'The loaded collection is smoothly sorted.':'Your collection filter is applied.');return {ok:true,action:type,live:state.verifiedAt>0,checkedAt:state.verifiedAt,products:filtered().slice(0,state.limit).map(projection),snapshot:snapshot(),message:'The loaded collection has been '+(type==='sort'?'sorted.':'filtered.')};
+      const leavingPage=state.pageKind!=='catalogue',resetScope=leavingPage||type==='filter'&&value!=='available'&&(state.search!==''||state.collectionSource!=='browse');
+      if(!state.browseVerifiedAt&&(resetScope||state.collectionSource==='browse'&&state.search===''))return searchCatalogue('',options,{sort:type==='sort'?value:state.sort,filter:type==='filter'?value:'all'},type==='filter');
+      cancelPending();if(resetScope)restoreBrowse();state[type==='sort'?'sort':'filter']=value;state.limit=PAGE_SIZE;if(type==='filter')reviseDiscovery();if(leavingPage){restoreCollection();commitPage('catalogue','',options.push!==false);}else{restoreCollection();publish();}
+      const pieces=filtered().slice(0,state.limit),message=type==='sort'?'The loaded collection is sorted.':pieces.length?'The '+(value==='all'?'full loaded collection':value)+' is ready.':state.pageInfo.hasNextPage?'No '+(value==='all'?'pieces':value)+' on these loaded pages yet. Explore more pieces to continue.':'No checked '+(value==='all'?'pieces':value)+' in this loaded collection. Try a new live search.';
+      focusSection('catalogue',false);status(message);return {ok:true,action:type,live:state.verifiedAt>0,checkedAt:state.verifiedAt,products:pieces.map(projection),snapshot:snapshot(),message};
     }
     if(type==='open'){const opened=await openProduct(action.handle,{signal:options.signal,section:SECTIONS.has(action.section)?action.section:undefined}),ok=opened&&state.current?.handle===action.handle;return {ok,action:type,...(ok?{live:true,checkedAt:state.verifiedAt,products:[projection(state.current)],snapshot:snapshot()}:{}),message:ok?'The checked product details are open.':'That piece could not be checked.'};}
     if(type==='highlight'||type==='scroll'||type==='zoom'){
@@ -320,9 +331,9 @@
   }
   function presentProducts(products,options={}){
     if(!Array.isArray(products)||products.length>24||products.some(p=>!validProduct(p,p?.handle)))return {ok:false,action:'present',message:'The checked product selection could not be displayed.'};
-    const checked=products.map(remember);cancelPending();state.verifiedAt=Date.now();
+    const checked=products.map(remember);cancelPending();state.verifiedAt=Date.now();reviseDiscovery();
     if(state.pageKind==='product'&&checked.length===1&&checked[0].handle===state.currentHandle){state.current=checked[0];publish();return {ok:true,action:'present',live:true,checkedAt:state.verifiedAt,products:checked.map(projection),snapshot:snapshot(),message:'The current checked piece is in view.'};}
-    state.products=checked;state.search='';state.filter='all';state.limit=PAGE_SIZE;state.pageInfo={hasNextPage:false,endCursor:null};restoreCollection();history.replaceState({},'','/concierge-sandbox.html');publish();document.dispatchEvent(new CustomEvent('brites-concierge:page'));
+    state.products=checked;state.search='';state.checkedSearch='';state.collectionSource='presented';state.filter='all';state.limit=PAGE_SIZE;state.pageInfo={hasNextPage:false,endCursor:null};restoreCollection();history.replaceState({},'','/concierge-sandbox.html');publish();document.dispatchEvent(new CustomEvent('brites-concierge:page'));
     return {ok:true,action:'present',live:true,checkedAt:state.verifiedAt,products:checked.map(projection),snapshot:snapshot(),message:'The checked selection is displayed in the boutique.'};
   }
   window.BritesSandboxStorefront=Object.freeze({snapshot,execute,presentProducts});
@@ -341,7 +352,7 @@
   document.addEventListener('focusout',event=>{if(!main.contains(event.target))return;const next=attended(event.relatedTarget);focus(next);});
   document.addEventListener('brites:cart-updated',event=>{if(event.detail?.sandbox!==true)return;updateBag();if(state.pageKind==='bag')renderBag({push:false});});
   let visibleWindow='';addEventListener('scroll',()=>{if(state.pageKind!=='catalogue')return;const next=snapshot().visiblePieces.map(p=>p.id).join(',');if(next!==visibleWindow){visibleWindow=next;publish();}},{passive:true});
-  addEventListener('popstate',()=>{cancelPending();const p=new URLSearchParams(location.search);if(p.get('product'))void openProduct(p.get('product'),{push:false});else if(p.has('cart'))renderBag({push:false});else if(p.has('checkout'))void renderCheckout({push:false});else{state.products=state.browse.slice();state.search='';restoreCollection();commitPage('catalogue','',false);}});
+  addEventListener('popstate',()=>{cancelPending();const p=new URLSearchParams(location.search);if(p.get('product'))void openProduct(p.get('product'),{push:false});else if(p.has('cart'))renderBag({push:false});else if(p.has('checkout'))void renderCheckout({push:false});else{state.filter='all';if(!state.browseVerifiedAt){void searchCatalogue('',{push:false},{filter:'all'});return;}restoreBrowse();reviseDiscovery();restoreCollection();commitPage('catalogue','',false);}});
   updateBag();const params=new URLSearchParams(location.search);
   if(params.has('cart')){renderBag({push:false});return;}
   if(params.has('checkout')){await renderCheckout({push:false});return;}
@@ -350,6 +361,6 @@
   const initialVersion=navigationVersion;
   try{
     const data=await get('/api/growth/catalogue?browse=1');if(state.pageKind!=='catalogue'||navigationVersion!==initialVersion)return;
-    const pageInfo=checkedPageInfo(data);state.products=checkedProducts(data);state.browse=state.products.slice();state.pageInfo=pageInfo;state.verifiedAt=Date.now();drawGrid();publish();if(full){renderServiceStrip();void loadServices();}
+    const pageInfo=checkedPageInfo(data);state.products=checkedProducts(data);state.browse=state.products.slice();state.pageInfo=pageInfo;state.browsePageInfo={...pageInfo};state.verifiedAt=Date.now();state.browseVerifiedAt=state.verifiedAt;drawGrid();publish();if(full){renderServiceStrip();void loadServices();}
   }catch{const summary=main.querySelector('#result-summary');if(summary)summary.textContent='The live selection is temporarily unavailable. Try Search again.';else main.append(node('p','The live selection is temporarily unavailable. You can still explore the shop.'));}
 })();

@@ -5,7 +5,11 @@ async function finish({env,service,callId,fetch:fetcher=globalThis.fetch,now=Dat
   if(!enabled(env)||!/^rtc_[A-Za-z0-9_-]{1,180}$/.test(callId||''))return false;
   const ref=service.col('VoiceDeadlines').doc(callId),s=await ref.get();if(!s.exists)return false;const row=s.data();if(row.state==='closed')return true;
   if(row.callId!==callId||!Number.isSafeInteger(row.expiresAt)||row.expiresAt>now())return false;
-  const r=await fetcher('https://api.openai.com/v1/realtime/calls/'+encodeURIComponent(callId)+'/hangup',{method:'POST',headers:{Authorization:'Bearer '+env.OPENAI_API_KEY},signal:AbortSignal.timeout(5000)});
+  let r;try{r=await fetcher('https://api.openai.com/v1/realtime/calls/'+encodeURIComponent(callId)+'/hangup',{method:'POST',headers:{Authorization:'Bearer '+env.OPENAI_API_KEY},signal:AbortSignal.timeout(5000)});}catch{
+    // A timeout/transport failure is not proof of closure. Record the attempt
+    // so the bounded reaper can still give other due calls their turn.
+    await ref.set({lastAttemptAt:now(),lastStatus:null},{merge:true});return false;
+  }
   // 404 means the provider no longer has an active call. Unknown failures stay
   // pending for the independent reaper; no usage allocation is released here.
   if(!r.ok&&r.status!==404){await ref.set({lastAttemptAt:now(),lastStatus:r.status},{merge:true});return false;}
@@ -20,7 +24,9 @@ async function background({env,service,token,fetch,now=Date.now,wait=ms=>new Pro
 async function reap({env,service,fetch,now=Date.now}){
   if(!enabled(env))return {closed:0};
   const rows=await service.col('VoiceDeadlines').where('state','==','pending').limit(20).get();let closed=0;
-  const due=rows.docs.filter(row=>Number.isSafeInteger(row.data().expiresAt)&&row.data().expiresAt<=now()).slice(0,4);
+  // Persistent provider failures must not monopolize all four bounded attempts
+  // and starve another expired call. Rotate by the oldest recorded attempt.
+  const due=rows.docs.filter(row=>Number.isSafeInteger(row.data().expiresAt)&&row.data().expiresAt<=now()).sort((a,b)=>(Number(a.data().lastAttemptAt)||0)-(Number(b.data().lastAttemptAt)||0)).slice(0,4);
   const results=await Promise.all(due.map(row=>finish({env,service,callId:row.id,fetch,now}).catch(()=>false)));closed=results.filter(Boolean).length;
   return {closed};
 }

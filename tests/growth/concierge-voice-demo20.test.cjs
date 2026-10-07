@@ -31,7 +31,7 @@ test('invalid or oversized data and rate limits fail before inference',async()=>
 test('provider failure is a marked deterministic fallback and never invents a product',async()=>{
   const handler=server.createHandler({env,completeTone:async()=>{throw Error('provider secret');}});
   const result=await (await handler(req({action:'turn',message:'surprise me',catalogue:{products:[],question:'Necklace or earrings?'}}))).json();
-  assert.equal(result.aiUsed,false);assert.equal(result.tone,'warm');assert.equal(result.speech,'Of course. Necklace or earrings?');assert.doesNotMatch(JSON.stringify(result),/secret|product/i);
+  assert.equal(result.aiUsed,false);assert.equal(result.tone,'warm');assert.equal(result.speech,'Necklace or earrings?');assert.doesNotMatch(JSON.stringify(result),/secret|product/i);
 });
 
 test('missing provider still leaves the bounded browser voice demo usable and marked non-AI',async()=>{

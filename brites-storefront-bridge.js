@@ -16,7 +16,7 @@
   function snapshot(value){
     value=value&&typeof value==='object'?value:{};var seen=new Set(),pieces=[];
     if(Array.isArray(value.visiblePieces))value.visiblePieces.slice(0,200).forEach(function(p){var h=handle(p&&p.handle),title=plain(p&&p.title,300);if(!h||!title||seen.has(h))return;seen.add(h);var out={handle:h,title:title};if(PRODUCT.test(p.id||''))out.id=p.id;pieces.push(out);});
-    return {contextRevision:revision(value.contextRevision),pageKind:plain(value.pageKind||value.page,40)||'unknown',currentHandle:handle(value.currentHandle),focusedHandle:handle(value.focusedHandle),visiblePieces:pieces,search:plain(value.search===undefined?value.query:value.search,180),sort:SORTS.includes(value.sort)?value.sort:'featured',filter:FILTERS.includes(value.filter)?value.filter:'all',loading:value.loading===true,activeSection:SECTIONS.includes(value.activeSection)?value.activeSection:''};
+    return {contextRevision:revision(value.contextRevision),discoveryRevision:Number.isSafeInteger(value.discoveryRevision)&&value.discoveryRevision>=0?value.discoveryRevision:0,pageKind:plain(value.pageKind||value.page,40)||'unknown',currentHandle:handle(value.currentHandle),focusedHandle:handle(value.focusedHandle),visiblePieces:pieces,search:plain(value.search===undefined?value.query:value.search,180),sort:SORTS.includes(value.sort)?value.sort:'featured',filter:FILTERS.includes(value.filter)?value.filter:'all',loading:value.loading===true,activeSection:SECTIONS.includes(value.activeSection)?value.activeSection:''};
   }
   function failed(reason,recognized){return {ok:false,handled:recognized===true,recognized:recognized===true,reason:reason};}
   function success(action,context){return {ok:true,handled:true,recognized:true,action:Object.freeze(action),contextRevision:context.contextRevision};}
@@ -58,6 +58,22 @@
     return {reason:'Choose a listing or give its exact title so I can use the correct piece.'};
   }
   function category(message){var cats=[];[['necklaces',/\bnecklaces?\b/],['earrings',/\bearrings?\b/],['bracelets',/\bbracelets?\b/],['rings',/\brings?\b/],['charms',/\bcharms?\b/]].forEach(function(pair){if(pair[1].test(message))cats.push(pair[0]);});return cats.length===1?cats[0]:'';}
+  function collectionReset(message){
+    var command=message.replace(/^(?:(?:please|could you|would you|can you|will you|i want (?:you )?to|i would like (?:you )?to|id like (?:you )?to)\s+)*/,'').replace(/\s+(?:please|again)$/,'');
+    var collection='(?:the )?(?:(?:previous|full|whole|entire|complete|original|unfiltered|main|all) )?(?:list|catalogue|catalog|collection|collections|shop|results|pieces|jewelry|jewellery)';
+    return new RegExp('^(?:(?:go|take me) back(?: to '+collection+')?|return(?: me)? to '+collection+'|(?:show(?: me)?|open|view|display|pull up|let me see) '+collection+')$').test(command)||/^(?:show(?: me)? all|show(?: me)? everything|start (?:over|fresh)|reset(?: the)? (?:search|collection|catalogue|catalog)|clear(?: the)? search(?: results)?)$/.test(command);
+  }
+  function categoryBrowse(message){
+    var command=message.replace(/^(?:(?:please|could you|would you|can you|will you|i want (?:you )?to|i would like (?:you )?to|id like (?:you )?to)\s+)*/,'').replace(/\s+(?:please|again)$/,'');
+    var noun='(?:necklaces?|earrings?|bracelets?|rings?|charms?)';
+    // A bare category is a collection request, not an exact listing identity.
+    // Keep this grammar narrow so names, ordinals, meanings and advice retain
+    // their existing target/model routes and cannot acquire browse authority.
+    if(new RegExp('^(?:open|view) (?:all (?:your |the )?|your |the |some |a |an )?'+noun+'$').test(command)||
+       new RegExp('^(?:what|which) (?:kinds? of |types? of )?'+noun+' do you (?:have|offer)$').test(command)||
+       new RegExp('^(?:do you (?:have|offer)|can i (?:see|browse|view)) (?:any |some |the |your )?'+noun+'$').test(command))return category(command);
+    return '';
+  }
   function sortFor(message){if(/\b(?:highest|expensive|priciest|descending|high to low|most expensive)\b/.test(message))return 'price-desc';if(/\b(?:cheapest|lowest|least expensive|low to high|affordable first|ascending price)\b/.test(message))return 'price-asc';if(/\b(?:z to a|reverse alphabetical|reverse alphabetically)\b/.test(message))return 'title-desc';if(/\b(?:alphabetic|alphabetical|alphabetically|a to z|by (?:name|title))\b/.test(message))return 'title-asc';if(/\b(?:featured|recommended order|default order|reset sort)\b/.test(message))return 'featured';return '';}
   function sectionFor(message){if(/\b(?:shipping|delivery|production|processing|dispatch)\b/.test(message))return 'shipping';if(/\b(?:gift wrapping|gift wrap|gift packaging|gift package|gift packages|gift note|gift notes|gift message)\b/.test(message))return 'gifts';if(/\b(?:discount|discounts|coupon|coupons|promo|promotions|offer|offers|sale|codes?)\b/.test(message))return 'offers';if(/\b(?:meaning|mean|means|symbol|symbolism|story|stories|represents)\b/.test(message))return 'story';if(/\b(?:material|materials|made of|made from|metal|metals|details|process|finish|finishes)\b/.test(message))return 'details';if(/\b(?:price|prices|cost|costs|how much)\b/.test(message))return 'price';if(/\b(?:options|variants|sizes|size|length|lengths|chain length|available choices)\b/.test(message))return 'options';if(/\b(?:image|photo|picture)\b/.test(message))return 'image';if(/\b(?:catalogue|catalog|collection|collections|results)\b/.test(message))return 'catalogue';return '';}
   function resolveIntent(value,rawContext){
@@ -71,6 +87,8 @@
     if(/\b(?:place|submit|pay for|purchase|complete)\b.{0,50}\b(?:order|payment|purchase)\b|\breal checkout\b/.test(message))return failed('This test storefront can demonstrate checkout; it cannot place or pay for a real order.',true);
     if(/\b(?:then|and)\s+(?:(?:please|can you)\s+)?(?:open|highlight|zoom|enlarge|checkout|check out|add|place|pay|scroll)\b/.test(message))return failed('Ask for one website action at a time so the target remains clear.',true);
     if(/\b(?:add|put|remove|delete|empty|clear)\b.{0,100}\b(?:cart|bag|basket)\b/.test(message))return Object.assign(failed('Exact options need the existing review and Confirm flow.',false),{delegated:'review'});
+    if(collectionReset(message))return success({type:'filter',filter:'all'},context);
+    var browseCategory=categoryBrowse(message);if(browseCategory)return success({type:'filter',filter:browseCategory},context);
     var direct=/^(?:(?:please|could you|would you|can you|will you|i want (?:you )?to|i would like (?:you )?to|id like (?:you )?to)\s+)*(?:search|find|look for|look up|browse|show|pull up|display|open|take me|go|view|sort|order|arrange|filter|reset|clear|highlight|scroll|zoom|enlarge|make|check|help|let me see)\b/.test(message);
     var sort=sortFor(message),cat=category(message),section=sectionFor(message),match;
     if(direct&&/\b(?:check out|checkout)\b/.test(message)||/^(?:i want to|id like to|i would like to|can i) check out\b/.test(message))return success({type:'checkout'},context);
@@ -85,7 +103,7 @@
     if(section&&['shipping','gifts','offers'].includes(section)&&(direct||question)){return success(section==='gifts'?{type:'gift',section:'gifts'}:{type:/\bscroll\b/.test(message)?'scroll':'highlight',section:section},context);}
     if(section&&PRODUCT_SECTIONS.includes(section)&&(direct||question)&&!/^\b(?:find|search|look for|browse)\b/.test(message)&&!/\b(?:recommend|should i|would you recommend|all (?:pieces|products)|your (?:pieces|products|jewelry|jewellery)|a gift for)\b/.test(message)){
       var specific=target(message,context,true);if(specific.handle)return success({type:section==='image'&&/\b(?:larger|bigger|zoom|enlarge)\b/.test(message)?'zoom':'highlight',handle:specific.handle,...(section==='image'&&/\b(?:larger|bigger|zoom|enlarge)\b/.test(message)?{}:{section:section})},context);
-      if(/\b(?:this|that|it|the|current|selected|how much|price|cost)\b/.test(message))return failed(specific.reason,true);
+      if(direct&&/\b(?:open|scroll|highlight|zoom|enlarge)\b/.test(message)||/\b(?:this|that|it|the|current|selected|how much|price|cost)\b/.test(message))return failed(specific.reason,true);
     }
     if(direct&&/\bscroll\b/.test(message)){if(section)return success({type:'scroll',section:section},context);if(/\b(?:top|start)\b/.test(message))return success({type:'scroll',section:'catalogue'},context);return failed('Name the part to show, such as the catalogue, price, shipping or gift options.',true);}
     if(direct){

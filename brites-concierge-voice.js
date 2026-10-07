@@ -10,7 +10,7 @@
     try{
       // No previous FFT frame, invented tone, pitch or emotion is substituted.
       // The analyser returns dB magnitudes; squared linear magnitude gives
-      // energy. Six broad bands share the measured outgoing waveform RMS.
+      // energy. Six broad bands share the measured input or output waveform RMS.
       frequencies.fill(NaN);value.analyser.getFloatFrequencyData(frequencies);
       const energies=[0,0,0,0,0,0],edges=[250,500,1000,2000,4000],nyquist=sampleRate/2;let total=0,weighted=0;
       for(let i=0;i<frequencies.length;i++){
@@ -29,6 +29,7 @@
     // measurement; neither turns transcript words into invented audio.
     try{if(!waveformSamples||waveformSamples.length!==analyser?.fftSize)return noOutputSignal();return measuredSpectrum({analyser,frequencies:frequencyBuffer},rms(waveformSamples),sampleRate);}catch{return noOutputSignal();}
   }
+  function noInputFrame(){return {level:0,signal:noOutputSignal(),speaking:false,itemId:'',turnVersion:null,currentTurn:false};}
   function hasVoiceNetworkRoute(sdp){
     if(typeof sdp!=='string')return false;
     // This single-offer WebRTC path requires an actual gathered candidate
@@ -201,7 +202,11 @@
     }
     function listeningTranscript(event,final){
       const itemId=eventId(event.item_id),version=speechTurns.get(itemId);
-      if(!itemId||itemId!==activeInputItemId||version!==turnVersion||!activeInputCommitted||inputSpeaking||doc?.hidden)return;
+      if(!itemId||itemId!==activeInputItemId||version!==turnVersion||doc?.hidden)return;
+      // A native current-item partial is a presentation hint while the shopper
+      // is speaking, never final transcript/action authority. Completion still
+      // requires the committed stopped turn, as does onTranscript below.
+      if(final?(!activeInputCommitted||inputSpeaking):(!inputSpeaking&&!activeInputCommitted))return;
       const value=final?event.transcript:event.delta;if(typeof value!=='string'||!value.trim())return;
       const id=eventId(event.event_id),key=id?event.type+':'+id:'';if(key&&listeningEvents.has(key))return;if(key)remember(listeningEvents,key,true);
       // Partial ASR is presentation only. The existing final onTranscript path
@@ -256,9 +261,9 @@
       if(ctx){ctx.onstatechange=null;try{Promise.resolve(ctx.close()).catch(()=>{});}catch{}ctx=null;}
       if(dc){dc.onopen=dc.onmessage=dc.onerror=dc.onclose=null;dc.close();dc=null;}
       if(pc){pc.ontrack=pc.onconnectionstatechange=null;pc.close();pc=null;}
-      continuation=null;continuationUsed=false;contextSnapshot='';inputMeter=outputMeter=localMediaClock=null;outputMeterState='waiting';outputPlaying=inputSpeaking=responsePending=playbackBlocked=false;activeInputItemId='';activeInputCommitted=false;turnTools=0;turnChainClosed=false;activePerformanceResponseId=activePlaybackResponseId=playbackNotice='';turnPerformanceUsed=performanceContinuationUsed=false;toolCalls.clear();speechTurns.clear();responseTurns.clear();issuedResponses.clear();performanceResponses.clear();performanceCalls.clear();responseOutputItems.clear();listeningEvents.clear();drainedOutputs.clear();notify('onLevel',noOutputLevels());
+      continuation=null;continuationUsed=false;contextSnapshot='';inputMeter=outputMeter=localMediaClock=null;outputMeterState='waiting';outputPlaying=inputSpeaking=responsePending=playbackBlocked=false;activeInputItemId='';activeInputCommitted=false;turnTools=0;turnChainClosed=false;activePerformanceResponseId=activePlaybackResponseId=playbackNotice='';turnPerformanceUsed=performanceContinuationUsed=false;toolCalls.clear();speechTurns.clear();responseTurns.clear();issuedResponses.clear();performanceResponses.clear();performanceCalls.clear();responseOutputItems.clear();listeningEvents.clear();drainedOutputs.clear();notify('onLevel',noOutputLevels());notify('onInputSignal',noInputFrame());
     }
-    function meter(stream,channel){if(!ctx)return null;try{const source=ctx.createMediaStreamSource(stream),analyser=ctx.createAnalyser();analyser.fftSize=512;if(channel==='output')analyser.smoothingTimeConstant=0;source.connect(analyser);sources.push(source,analyser);const count=analyser.frequencyBinCount;return {channel,stream,analyser,samples:new Float32Array(analyser.fftSize),frequencies:channel==='output'&&typeof analyser.getFloatFrequencyData==='function'&&Number.isInteger(count)&&count===analyser.fftSize/2?new Float32Array(count):null};}catch{return null;}}
+    function meter(stream,channel){if(!ctx)return null;try{const source=ctx.createMediaStreamSource(stream),analyser=ctx.createAnalyser();analyser.fftSize=512;if(channel==='output')analyser.smoothingTimeConstant=0;source.connect(analyser);sources.push(source,analyser);const count=analyser.frequencyBinCount;return {channel,stream,analyser,samples:new Float32Array(analyser.fftSize),frequencies:typeof analyser.getFloatFrequencyData==='function'&&Number.isInteger(count)&&count===analyser.fftSize/2?new Float32Array(count):null};}catch{return null;}}
     function blockPlayback(current,playbackAudio,stream){
       if(current!==epoch||disposed||state==='closing'||state==='idle'||audio!==playbackAudio||playbackAudio.srcObject!==stream)return;
       playbackBlocked=true;localMediaClock=null;notify('onLevel',noOutputLevels());lastError=publicFailure(Error(MESSAGES.playback));
@@ -285,7 +290,12 @@
       return {playing:true,responseId,itemId:responseOutputItems.get(responseId)||'',inputItemId:bound.inputItemId,turnVersion:bound.turnVersion,currentTurn:true};
     }
     function usableOutputMedia(){
-      try{const binding=nativeOutput();return binding&&!playbackBlocked&&audio?.srcObject&&audio.paused===false&&audio.ended!==true?binding:null;}catch{return null;}
+      try{const binding=nativeOutput();return binding&&!playbackBlocked&&audio?.srcObject&&audio.paused===false&&audio.ended!==true&&audio.muted!==true&&audio.volume!==0?binding:null;}catch{return null;}
+    }
+    function nativeInput(){
+      if(disposed||state==='idle'||state==='closing'||!inputSpeaking||!activeInputItemId||speechTurns.get(activeInputItemId)!==turnVersion||doc?.hidden||!pc||['disconnected','failed','closed'].includes(pc.connectionState))return null;
+      try{const tracks=mic?.getAudioTracks?.();if(!tracks?.length||tracks.some(track=>track.readyState==='ended'||track.enabled===false||track.muted===true))return null;}catch{return null;}
+      return {speaking:true,itemId:activeInputItemId,turnVersion,currentTurn:true};
     }
     function measuredOutputClock(binding=usableOutputMedia()){
       const responseId=binding?.responseId;
@@ -304,17 +314,21 @@
       }catch{return null;}
     }
     function sample(){
-      if(disposed||!ctx)return;const levels=noOutputLevels(),binding=usableOutputMedia();
+      if(disposed||!ctx)return;const levels=noOutputLevels(),binding=usableOutputMedia(),inputBinding=nativeInput(),inputFrame=noInputFrame();
+      // An active turn with a suspended/unavailable analyser must carry a
+      // qualified zero, so the host can clear its meter without admitting an
+      // unbound late zero from a different input/session.
+      if(inputBinding)Object.assign(inputFrame,inputBinding);
       if(!['suspended','interrupted','closed'].includes(ctx.state))for(const value of [inputMeter,outputMeter])if(value){
         if(value.channel==='output'&&(!binding||value.stream!==audio?.srcObject))continue;
-        try{value.samples.fill(NaN);value.analyser.getFloatTimeDomainData(value.samples);levels[value.channel]=rms(value.samples);if(value.channel==='output')levels.outputSignal=measureOutputSignal(value.analyser,value.samples,value.frequencies,ctx.sampleRate);}
+        try{value.samples.fill(NaN);value.analyser.getFloatTimeDomainData(value.samples);levels[value.channel]=rms(value.samples);if(value.channel==='output')levels.outputSignal=measureOutputSignal(value.analyser,value.samples,value.frequencies,ctx.sampleRate);else if(inputBinding&&value.stream===mic)Object.assign(inputFrame,inputBinding,{level:levels.input,signal:measureOutputSignal(value.analyser,value.samples,value.frequencies,ctx.sampleRate)});}
         catch{if(value.channel==='output'){outputMeter=null;reportOutputMeterState();}else inputMeter=null;}
       }
       // A failed visual analyser cannot interrupt native playback or replace
       // missing samples with fabricated speech motion.
       if(binding)Object.assign(levels,{responseId:binding.responseId,itemId:binding.itemId,inputItemId:binding.inputItemId,turnVersion:binding.turnVersion,currentTurn:true});
       const clock=measuredOutputClock(binding);if(clock)Object.assign(levels,clock);
-      notify('onLevel',levels);const current=epoch,context=ctx;try{raf=rt.requestAnimationFrame?.(()=>{if(current===epoch&&ctx===context)sample();});}catch{raf=null;}
+      notify('onLevel',levels);notify('onInputSignal',inputFrame);const current=epoch,context=ctx;try{raf=rt.requestAnimationFrame?.(()=>{if(current===epoch&&ctx===context)sample();});}catch{raf=null;}
     }
     function settleState(){if(state==='idle'||state==='closing')return;if(outputPlaying)setState('speaking');else if(inputSpeaking)setState('listening');else if(toolControllers.size||responsePending)setState('thinking');else setState('listening');}
     function executePerformance(event){
@@ -388,7 +402,7 @@
       let event;try{if(typeof raw!=='string'||raw.length>65000)return;event=JSON.parse(raw);}catch{return;}
       if(!event||typeof event.type!=='string'||current!==epoch||state==='closing'||state==='idle')return;
       if(event.type==='input_audio_buffer.speech_started'){inputSpeaking=true;interrupt('speech',eventId(event.item_id));setState('listening');}
-      else if(event.type==='input_audio_buffer.speech_stopped'){const itemId=eventId(event.item_id);if(itemId&&activeInputItemId&&itemId!==activeInputItemId)return;inputSpeaking=false;responsePending=true;setState('thinking');}
+      else if(event.type==='input_audio_buffer.speech_stopped'){const itemId=eventId(event.item_id);if(itemId&&activeInputItemId&&itemId!==activeInputItemId)return;inputSpeaking=false;notify('onInputSignal',noInputFrame());responsePending=true;setState('thinking');}
       else if(event.type==='input_audio_buffer.committed'){
         const itemId=eventId(event.item_id);
         if(!inputSpeaking&&!activeInputCommitted&&itemId&&itemId===activeInputItemId&&speechTurns.get(itemId)===turnVersion){activeInputCommitted=true;requestResponse({tool_choice:'auto'},turnVersion,itemId);settleState();}
@@ -437,7 +451,7 @@
       turnVersion=nextVersion;activeInputItemId=reason==='speech'?eventId(itemId):'';activeInputCommitted=false;
       if(reason==='speech'){turnTools=0;turnChainClosed=false;}
       remember(speechTurns,activeInputItemId,turnVersion);
-      for(const controller of toolControllers)controller.abort();toolControllers.clear();send({type:'response.cancel'});send({type:'output_audio_buffer.clear'});outputPlaying=false;responsePending=false;notify('onLevel',noOutputLevels());if(state!=='closing'&&state!=='idle')setState('listening');
+      for(const controller of toolControllers)controller.abort();toolControllers.clear();send({type:'response.cancel'});send({type:'output_audio_buffer.clear'});outputPlaying=false;responsePending=false;notify('onLevel',noOutputLevels());notify('onInputSignal',noInputFrame());if(state!=='closing'&&state!=='idle')setState('listening');
     }
     async function stopLateAnswer(answer){
       if(typeof answer?.stopToken!=='string'||answer.stopToken.length>1200)return;
@@ -470,7 +484,7 @@
         connection.onconnectionstatechange=()=>{
           if(current!==epoch||disposed||pc!==connection||state==='closing'||state==='idle')return;
           if(connection.connectionState==='disconnected'){
-            localMediaClock=null;notify('onLevel',noOutputLevels());
+            localMediaClock=null;notify('onLevel',noOutputLevels());notify('onInputSignal',noInputFrame());
             // Brief interruptions may recover this same peer. Keep the
             // deadline tied to its first interruption rather than extending
             // it on duplicate events; never open a replacement paid session.
@@ -493,7 +507,7 @@
         const duration=Math.min(120000,Math.max(1000,Number(answer.maxDurationMs)||120000),Number.isFinite(answer.expiresAt)?Math.max(0,answer.expiresAt-Date.now()):120000);
         deadline=timeout(duration,()=>void stop('limit'));setState('listening');notify('onConnectionPhase','connected');
         try{if(typeof options.getContext==='function')updateContext(options.getContext());}catch{}
-        if(options.greeting!==false){requestResponse({instructions:'Greet the shopper warmly in one short sentence, then ask whether this is a piece for them or a gift. Do not name products or promise any shop facts yet. Speak as the Brites AI concierge, with a relaxed natural voice.',tool_choice:'none',max_output_tokens:300},turnVersion,'');settleState();}
+        if(options.greeting!==false){requestResponse({instructions:'Greet the shopper warmly with only one brief friendly invitation: "Hi, what would you like to see?" No introduction, product facts, follow-up chatter or second question. Speak as the Brites AI concierge with a relaxed natural voice.',tool_choice:'none',max_output_tokens:160},turnVersion,'');settleState();}
         return true;
       }catch(error){if(current===epoch){reportFailure(error);await stop('failed');}return false;}
     }
@@ -507,7 +521,7 @@
     const onHidden=()=>{if(doc?.hidden)void stop('hidden');},onPageHide=()=>void stop('pagehide');
     doc?.addEventListener('visibilitychange',onHidden);rt.addEventListener?.('pagehide',onPageHide);
     async function dispose(){disposed=true;doc?.removeEventListener('visibilitychange',onHidden);rt.removeEventListener?.('pagehide',onPageHide);await stop('disposed');}
-    return {start,stop,cancel:stop,interrupt,dispose,updateContext,resumeAudio,get currentOutput(){return nativeOutput();},get state(){return state;},get lastError(){return lastError;},get playbackBlocked(){return playbackBlocked;},get outputMeterState(){return outputMeterState;}};
+    return {start,stop,cancel:stop,interrupt,dispose,updateContext,resumeAudio,get currentOutput(){return nativeOutput();},get currentInput(){return nativeInput();},get state(){return state;},get lastError(){return lastError;},get playbackBlocked(){return playbackBlocked;},get outputMeterState(){return outputMeterState;}};
   }
   return {create,rms,measureOutputSignal,hasVoiceNetworkRoute,validateToolArguments,publicContext,serviceGuidanceResult,MESSAGES,publicFailure};
 });

@@ -67,7 +67,11 @@ test('failed and timed-out texture requests dispose allocations and never silent
   const timeout = f.engine.showProduct(product); f.advance(6100); assert.equal(await timeout, false); assert.equal(f.pending[1].disposed, 1); assert.equal(f.engine.snapshot().showcase, null); f.pending[1].success(f.pending[1].texture); assert.equal(f.pending[1].disposed, 1);
 });
 test('floating scene is transparent and restores studio ground without rebuilding geometry', t => {
-  const f = scene(t), before = f.engine.snapshot().geometry.model.triangles;
+  const f = scene(t), before = f.engine.snapshot().geometry.model.triangles, studioColor=f.renderer.scene.background.getHexString();
   f.engine.setFloating(true); assert.equal(f.renderer.alpha, 0); assert.equal(f.renderer.scene.background, null); assert.equal(f.renderer.scene.getObjectByName('continuous-studio-sweep').visible, false);
-  f.engine.setFloating(false); assert.equal(f.renderer.alpha, 1); assert.ok(f.renderer.scene.background.isColor); assert.equal(f.renderer.scene.background.getHexString(),'faf8f2'); assert.equal(f.renderer.scene.getObjectByName('continuous-studio-sweep').visible, false); assert.equal(f.renderer.scene.getObjectByName('grounding-platform').visible, true); assert.equal(f.engine.snapshot().geometry.model.triangles, before);
+  f.engine.setFloating(false); assert.equal(f.renderer.alpha, 1); assert.ok(f.renderer.scene.background.isColor); assert.equal(f.renderer.scene.background.getHexString(),studioColor,'docking restores the original authored studio colour'); assert.equal(f.renderer.scene.getObjectByName('continuous-studio-sweep').visible, false); assert.equal(f.renderer.scene.getObjectByName('grounding-platform').visible, true); assert.equal(f.engine.snapshot().geometry.model.triangles, before);
+  // Three stores authored colours in linear RGB; this is not a GPU pixel ratio.
+  const luminance=color=>.2126*color.r+.7152*color.g+.0722*color.b;
+  const body=f.renderer.scene.getObjectByName('original-pebble-shell').material.color;
+  assert.ok((luminance(body)+.05)/(luminance(f.renderer.scene.background)+.05)>=1.5,'the restored studio separates its light ceramic silhouette');
 });

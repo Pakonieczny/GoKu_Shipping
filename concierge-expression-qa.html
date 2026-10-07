@@ -42,7 +42,7 @@
           <button id="continue-inspection" type="button" class="btn">Continue from held source</button>
           <button id="observe-inspection" type="button" class="btn">Capture current rig pose</button>
         </div>
-        <p class="sub">A held phase replays authored events to one source timestamp and keeps that sample visible. It creates no intervening rendered frames and is separate from Pause sequence, which cancels pending expressions.</p>
+        <p class="sub">A held phase replays authored events to one source timestamp and keeps that sample visible. That replay provides no intervening rendered frames; only observed current poses are evidence. It is separate from Pause sequence, which cancels pending expressions. The explicitly held synthetic incoming-energy phase reapplies the same authored sample and repaints the current pose for visual inspection; this is not microphone audio or additional source packets.</p>
       </details>
       <div class="controls" aria-label="Synthetic product actions">
         <button id="focus-sample" type="button" class="btn">Focus sample A</button>

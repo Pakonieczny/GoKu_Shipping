@@ -14,24 +14,24 @@
     var affirmed=withoutNegatedLoss(t);
     if(/\b(?:died|passed away|grieving|grief|bereavement|memorial|remembrance|loss of (?:my |her |his |a )?(?:mother|father|sister|brother|friend|partner|child|loved one)|lost (?:my |her |his )?(?:mother|father|mom|dad|sister|brother|friend|partner|child)|in memory of)\b/.test(affirmed))return 'support';
     var repaired=/\b(?:fixed it|working now|not broken anymore|no longer broken|all resolved)\b/.test(t);
-    if(!repaired&&/\b(?:frustrat\w*|not working|doesn't work|doesn’t work|confus\w*|overwhelmed|wrong|broken|annoy\w*)\b/.test(withoutNegatedRepair(t)))return 'repair';
+    if(!repaired&&/\b(?:frustrat\w*|not working|doesn't work|doesn’t work|does not work|confus\w*|overwhelmed|wrong|broken|annoy\w*)\b/.test(withoutNegatedRepair(t)))return 'repair';
     if(deniedQuiet||repaired||/\b(?:switch topics|different topic|moving on|another gift)\b/.test(t))return 'ordinary';
     return prior==='support'||prior==='repair'?prior:'ordinary';
   }
   function intent(text,context,role){
-    var t=withoutNegatedLoss(text.toLowerCase()),kind='explain',intensity=.55;
+    var t=withoutNegatedLoss(text.toLowerCase()),kind='explain',intensity=.66;
     var celebration=/\b(?:congratulations|congrats|happy birthday|celebrat\w*|wonderful news|excited|graduat\w*|anniversary)\b/.test(t);
     var negated=/\b(?:not|isn't|isn’t|wasn't|wasn’t|don't|don’t|do not|never|hate|terrible|awful|unhappy)\b/.test(t);
     if(/\b(?:died|passed away|grieving|grief|bereavement|memorial|remembrance|loss of (?:my |her |his |a )?(?:mother|father|sister|brother|friend|partner|child|loved one)|lost (?:my |her |his )?(?:mother|father|mom|dad|sister|brother|friend|partner|child)|in memory of)\b/.test(t)){kind='support';intensity=.38;}
     else if(/\b(?:thank you for nothing|yeah right|as if|are you kidding|seriously wrong)\b/.test(t)){kind='support';intensity=.35;}
-    else if(/\?$/.test(t)||/^(?:what|which|how|would you|do you|could you|shall we|tell me)\b/.test(t)){kind='inquiry';intensity=.64;}
-    else if(/\b(?:not sure|uncertain|might|may suggest|may feel|may be|could mean|perhaps|cannot confirm|can't confirm|can’t confirm|cannot say|can't say|can’t say|don't know|do not know|depends|interpretation|personally|too expensive|too high|over budget|for you)\b/.test(t)||negated&&celebration){kind='reflect';intensity=.5;}
-    else if(/\b(?:thanks|thank you|appreciate|grateful)\b/.test(t)){kind='appreciate';intensity=.62;}
-    else if(/\b(?:fixed it|working now|all resolved|confirmed|that is correct|that's right|that’s right|we can|here is|here's|here’s)\b/.test(t)){kind='resolve';intensity=.5;}
+    else if(/\?$/.test(t)||/^(?:what|which|how|would you|do you|could you|can you|shall we|tell me)\b/.test(t)){kind='inquiry';intensity=.78;}
+    else if(/\b(?:not sure|uncertain|might|may suggest|may feel|may be|could mean|perhaps|cannot confirm|can't confirm|can’t confirm|cannot say|can't say|can’t say|don't know|do not know|depends|interpretation|personally|too expensive|too high|over budget|for you|not available|unavailable|no matches|no matching|didn't find|didn’t find|couldn't find|couldn’t find|cannot find|can't find|can’t find|not what|don't like|don’t like|do not like|not right|doesn't work|doesn’t work|does not work|not a match)\b/.test(t)||role==='user'&&/^(?:no[,;.!]|not (?:this|that|these|those)\b)/.test(t)||negated&&celebration){kind='reflect';intensity=.62;}
+    else if(/\b(?:thanks|thank you|appreciate|grateful|love (?:this|these|that|those|it)|looks? (?:lovely|beautiful)|(?:this|that|these|those) (?:is|are) perfect)\b/.test(t)&&!negated){kind='appreciate';intensity=.76;}
+    else if(/\b(?:fixed it|working now|all resolved|confirmed|that is correct|that's right|that’s right|we can|here is|here are|here's|here’s|found (?:\d+|some|a|the)|showing (?:\d+|some|the)|let's try|let’s try|let us try)\b/.test(t)){kind='resolve';intensity=.65;}
     else if(/\b(?:sorry|missed what|misunderstood|got that wrong|let me check|try again|fix|clarify|check that|one step at a time)\b/.test(t)){kind='support';intensity=.45;}
-    else if(celebration){kind='celebrate';intensity=.72;}
-    else if(/\b(?:important|especially|remember|notice|the key|take a look|for example)\b/.test(t)){kind='emphasize';intensity=.63;}
-    else if(role==='user'){kind='attentive';intensity=.4;}
+    else if(celebration){kind='celebrate';intensity=.86;}
+    else if(/\b(?:important|especially|remember|notice|the key|take a look|for example)\b/.test(t)){kind='emphasize';intensity=.75;}
+    else if(role==='user'){kind='attentive';intensity=.46;}
     // Quiet context constrains amplitude without replacing every speech act.
     if(context==='support'||context==='repair'){if(kind==='celebrate'||kind==='attentive')kind='support';intensity=Math.min(intensity,context==='support'?.38:.45);}
     return {kind:kind,intensity:intensity};
@@ -58,21 +58,24 @@
   function create(options){
     options=options||{};var now=typeof options.now==='function'?options.now:function(){return Date.now();};
     var onExpression=typeof options.onExpression==='function'?options.onExpression:function(){},onEvent=typeof options.onEvent==='function'?options.onEvent:function(){};
-    var active=false,paused=false,reduced=false,destroyed=false,listening=false,playing=false,playbackHeld=false,awaitingRecoveryOutput=false,turnId='',turnVersion=null,responseId='',itemId='',context='ordinary',assistantText='',userText='',phrases=[],clock=0,lastTick=now(),lastOutputAt=-Infinity,lastInputAt=-Infinity,inputRunAt=null,lastBackchannel=-Infinity,inputObservedMs=0,lastLevelAt=now(),listenCueAt=null,listenKind='attentive',output=0,input=0,index=-1,current=null,transitions=0,mediaAt=null,mediaPositive=false,mediaDriven=false,closedResponses=new Set();
+    var active=false,paused=false,reduced=false,destroyed=false,listening=false,playing=false,playbackHeld=false,awaitingRecoveryOutput=false,turnId='',turnVersion=null,responseId='',itemId='',context='ordinary',assistantText='',userText='',phrases=[],clock=0,lastTick=now(),lastOutputAt=-Infinity,lastInputAt=-Infinity,inputRunAt=null,lastBackchannel=-Infinity,inputObservedMs=0,lastLevelAt=now(),listenCueAt=null,listenKind='attentive',semanticUpdatedAt=null,semanticIntensity=0,output=0,input=0,index=-1,current=null,transitions=0,mediaAt=null,mediaPositive=false,mediaDriven=false,closedResponses=new Set();
     function retire(id){if(!id)return;closedResponses.add(id);if(closedResponses.size>24)closedResponses.delete(closedResponses.values().next().value);}
     function emit(kind,intensity){var value=kind?{kind:kind,intensity:clamp(intensity,0,1)}:null;if(current?.kind===value?.kind&&Math.abs((current?.intensity||0)-(value?.intensity||0))<.002)return;current=value;try{onExpression(value);}catch(e){}}
-    function clear(){playing=false;listening=false;playbackHeld=awaitingRecoveryOutput=false;assistantText=userText='';phrases=[];clock=0;output=input=0;mediaAt=null;mediaPositive=mediaDriven=false;inputRunAt=null;inputObservedMs=0;lastLevelAt=now();listenCueAt=null;index=-1;lastOutputAt=lastInputAt=-Infinity;lastTick=now();emit(null,0);}
+    function clear(){playing=false;listening=false;playbackHeld=awaitingRecoveryOutput=false;assistantText=userText='';phrases=[];clock=0;output=input=0;mediaAt=null;mediaPositive=mediaDriven=false;inputRunAt=null;inputObservedMs=0;lastLevelAt=now();listenCueAt=semanticUpdatedAt=null;semanticIntensity=0;listenKind='attentive';index=-1;lastOutputAt=lastInputAt=-Infinity;lastTick=now();emit(null,0);}
     function beginTurn(value){if(destroyed||paused||reduced)return false;value=value||{};if(responseId)retire(responseId);clear();active=true;turnId=clean(String(value.id||'')).slice(0,200);turnVersion=Number.isInteger(value.turnVersion)?value.turnVersion:null;responseId=itemId='';context=['ordinary','support','repair'].includes(value.context)?value.context:contextFor(value.context||'',null);lastBackchannel=-Infinity;return true;}
     function qualified(value){return !!value&&value.currentTurn!==false&&!(value.inputItemId&&turnId&&value.inputItemId!==turnId)&&!(Number.isInteger(value.turnVersion)&&Number.isInteger(turnVersion)&&value.turnVersion!==turnVersion);}
     function transcript(value){
       if(!active||paused||reduced||destroyed||!qualified(value))return false;
       if(value.role==='user'){
         if(value.itemId&&turnId&&value.itemId!==turnId)return false;
-        userText=typeof value.text==='string'?clean(value.text):clean(userText+clean(value.delta));context=contextFor(userText,context);
+        var priorText=userText;userText=typeof value.text==='string'?clean(value.text):clean(userText+clean(value.delta));context=contextFor(userText,context);
         var signal=intent(userText,context,'user');listenKind=signal.kind;
         // Transcript may arrive only after a committed turn. Never pretend it was
         // understood earlier. No assent nod or automatic spoken backchannel.
-        if(listening&&!playbackHeld&&userText.trim()){listenCueAt=now();emit(listenKind,Math.min(.5,signal.intensity));}return true;
+        // ASR may complete after speech_stopped. Give that current text a finite
+        // thoughtful reaction while waiting, never a replay or a speaking clock.
+        // Repeated callbacks/deltas for the same act do not restart its onset.
+        if(!playing&&!playbackHeld&&userText.trim()&&userText!==priorText){semanticUpdatedAt=now();semanticIntensity=Math.min(.5,signal.intensity);emit(listenKind,semanticIntensity);}return true;
       }
       if(value.role!=='assistant')return false;
       var nextId=clean(value.responseId||value.itemId||'').slice(0,200);
@@ -90,7 +93,7 @@
       if(id&&closedResponses.has(id))return false;
       if(id&&responseId&&id!==responseId){if(playing)return false;assistantText='';phrases=[];clock=0;index=-1;itemId='';}if(id)responseId=id;
       if(value.cleared){cancel();return true;}
-      var starting=!playing&&value.playing===true;playing=value.playing===true;if(starting){mediaAt=null;mediaPositive=mediaDriven=false;if(Number.isInteger(value.startOffsetMs)&&value.startOffsetMs>=0&&value.startOffsetMs<=60000)clock=value.startOffsetMs;}lastTick=now();if(playing){listening=false;listenCueAt=null;}else{if(responseId){retire(responseId);}output=0;mediaAt=null;mediaPositive=mediaDriven=false;emit(null,0);}return true;
+      var starting=!playing&&value.playing===true;playing=value.playing===true;if(starting){mediaAt=null;mediaPositive=mediaDriven=false;if(Number.isInteger(value.startOffsetMs)&&value.startOffsetMs>=0&&value.startOffsetMs<=60000)clock=value.startOffsetMs;}lastTick=now();if(playing){listening=false;listenCueAt=semanticUpdatedAt=null;semanticIntensity=0;}else{if(responseId){retire(responseId);}output=0;mediaAt=null;mediaPositive=mediaDriven=false;emit(null,0);}return true;
     }
     function level(value){if(!active||paused||reduced||destroyed)return;value=value||{};if(!qualified(value)||value.responseId&&(closedResponses.has(value.responseId)||responseId&&value.responseId!==responseId))return false;if(playbackHeld)return false;var time=now();output=clamp(value.output,0,1);input=clamp(value.input,0,1);
       // A local media clock avoids stretching speech when rendering callbacks
@@ -99,8 +102,8 @@
       var media=typeof value.outputTimeMs==='number'&&Number.isFinite(value.outputTimeMs)&&value.outputTimeMs>=0&&value.outputTimeMs<=86400000?value.outputTimeMs:null;
       if(playing&&media!==null){var delta=mediaAt===null?0:media-mediaAt;if(mediaAt!==null&&mediaPositive&&output>.015&&delta>=0&&delta<=2000)clock+=delta;mediaAt=media;mediaPositive=output>.015;mediaDriven=true;}else{mediaAt=null;mediaPositive=false;if(playing&&Object.prototype.hasOwnProperty.call(value,'outputTimeMs'))mediaDriven=true;}
       if(playing&&output>.015){lastOutputAt=time;awaitingRecoveryOutput=false;}if(listening&&input>.025){lastInputAt=time;if(inputRunAt===null)inputRunAt=time;inputObservedMs+=clamp(time-lastLevelAt,0,100);}lastLevelAt=time;tick();}
-    function setListening(value){if(!active||paused||reduced||destroyed||listening===(value===true))return;listening=value===true;if(listening){playing=false;output=0;lastTick=now();if(!playbackHeld)emit(context==='support'||context==='repair'?'support':'attentive',context==='ordinary'?.28:.25);}else if(!playing)emit(null,0);}
-    function resetActivity(){output=input=0;mediaAt=null;mediaPositive=false;lastOutputAt=lastInputAt=-Infinity;inputRunAt=null;inputObservedMs=0;listenCueAt=null;lastTick=lastLevelAt=now();}
+    function setListening(value){if(!active||paused||reduced||destroyed||listening===(value===true))return;listening=value===true;if(listening){playing=false;output=0;lastTick=now();if(!playbackHeld)emit(context==='support'||context==='repair'?'support':'attentive',context==='ordinary'?.28:.25);}else if(!playing){if(semanticUpdatedAt!==null&&now()-semanticUpdatedAt<2400)tick();else emit(null,0);}}
+    function resetActivity(){output=input=0;mediaAt=null;mediaPositive=false;lastOutputAt=lastInputAt=-Infinity;inputRunAt=null;inputObservedMs=0;listenCueAt=semanticUpdatedAt=null;semanticIntensity=0;lastTick=lastLevelAt=now();}
     function qualifiedRecovery(value){return qualified(value)&&value.currentTurn===true&&(!Number.isInteger(turnVersion)||Number.isInteger(value.turnVersion))&&(!value.itemId||!itemId||value.itemId===itemId)&&(!Object.prototype.hasOwnProperty.call(value,'responseId')||typeof value.responseId==='string');}
     function holdPlayback(value){
       if(!active||paused||reduced||destroyed||!qualifiedRecovery(value))return false;
@@ -127,11 +130,17 @@
         if(!cue){emit(null,0);index=-1;return snapshot();}
         if(index!==cue.index){index=cue.index;transitions++;try{onEvent({type:'phrase',index:index,kind:cue.kind,timing:'estimated-audio-activity'});}catch(e){}}
         var shape=envelope(clock-cue.startMs,cue),audible=time-lastOutputAt<220,accent=audible?Math.min(.1,output*.12):0;
-        emit(cue.kind,audible?cue.intensity*(.18+.82*shape)+accent:cue.intensity*.12);
-      }else if(listening){
-        if(inputRunAt!==null&&time-lastInputAt>380){if(inputObservedMs>=800&&time-lastBackchannel>3200){listenCueAt=time;lastBackchannel=time;listenKind=context==='ordinary'?'attentive':'support';}inputRunAt=null;inputObservedMs=0;}
+        emit(cue.kind,audible?cue.intensity*(.42+.58*shape)+accent:cue.intensity*.12);
+      }else if(listening||semanticUpdatedAt!==null){
+        if(inputRunAt!==null&&time-lastInputAt>380){if(listening&&inputObservedMs>=800&&time-lastBackchannel>3200){listenCueAt=time;lastBackchannel=time;}inputRunAt=null;inputObservedMs=0;}
         var age=listenCueAt===null?Infinity:time-listenCueAt;var pulse=envelope(age,{durationMs:1100});
-        emit(age<1100?listenKind:context==='ordinary'?'attentive':'support',(context==='ordinary'?.26:.22)+pulse*.18);
+        var baseKind=context==='ordinary'?'attentive':'support',base=context==='ordinary'?.26:.22,limit=context==='support'?.38:context==='repair'?.45:.5;
+        // Measured input changes attention only. A short blip is not a turn and
+        // microphone volume is never interpreted as happiness, grief or anger.
+        var attention=listening&&inputObservedMs>=120&&time-lastInputAt<180?Math.sqrt(input)*.14:0;
+        var semanticAge=semanticUpdatedAt===null?Infinity:time-semanticUpdatedAt;
+        if(semanticAge<2400){var fade=semanticAge<1700?1:1-(semanticAge-1700)/700;emit(listenKind,Math.min(limit,base+(semanticIntensity-base)*fade+attention));}
+        else{semanticUpdatedAt=null;semanticIntensity=0;if(listening)emit(baseKind,Math.min(limit,base+pulse*.18+attention));else emit(null,0);}
       }return snapshot();
     }
     function cancel(){if(responseId)retire(responseId);active=false;clear();responseId=itemId='';turnVersion=null;}

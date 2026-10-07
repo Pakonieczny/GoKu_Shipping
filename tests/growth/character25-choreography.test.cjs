@@ -54,7 +54,8 @@ test('speech phrase beat starts on measured energy after a rest and settles unde
   const f = await fixture(t); f.guide.setState('speaking'); f.advance(1200);
   f.guide.setLevel(.7); f.advance(280); assert.ok(f.pose().phraseGesture > .5);
   f.advance(900); f.guide.setLevel(.7); assert.equal(f.pose().phraseGesture, 0, 'held noise is not a recurring wave');
-  f.guide.setLevel(.01); f.advance(200); f.guide.setLevel(.8); f.advance(280); assert.ok(f.pose().phraseGesture > .6);
+  f.guide.setLevel(.01); f.advance(200); f.guide.setLevel(.8); f.advance(280); assert.equal(f.pose().phraseGesture,0,'an energy gap inside the 2.5-second refractory cannot trigger another gesture');
+  f.guide.setLevel(.01);f.advance(1300);f.guide.setLevel(.8);f.advance(280);assert.ok(f.pose().phraseGesture>.6,'a genuinely separated new source onset still produces a finite phrase gesture');
   f.guide.setLevel(0); assert.equal(f.pose().phraseGesture, 0);
 });
 
@@ -91,12 +92,14 @@ test('measured closed-curve fallback responds to current sound with one bounded 
   const f=await fixture(t,{fallback:true});f.guide.setState('speaking');f.advance(1200);f.guide.setLevel(0);
   const quiet=f.guide.element.style.getPropertyValue('--brites-speech-scale'),mouth=f.guide.element.querySelector('.brites-avatar__speech-mouth'),base=f.guide.element.querySelector('.brites-avatar__smile-signal');
   const quietBands=[...f.guide.element.querySelectorAll('.brites-avatar__speech-band')].map(node=>node.getAttribute('d'));
+  const semanticAtRest=base.getAttribute('d');
   const current={amplitude:.9,bands:[.02,.07,.18,.6,.15,.05],brightness:.45,valid:true};f.guide.setSpeechSignal(current);
   assert.equal(f.guide.snapshot().speechVisual.amplitude,0,'same-clock sample cannot bypass the authored attack');
   f.advance(40);f.guide.setSpeechSignal(current);
   const shown=f.guide.snapshot().speechVisual;assert.ok(shown.amplitude>.55&&shown.amplitude<.59);assert.equal(shown.curveClosed,true);assert.equal(shown.rippleActive,true);
   assert.notEqual(f.guide.element.style.getPropertyValue('--brites-speech-scale'),quiet);assert.ok(Number(mouth.getAttribute('opacity'))>0);
-  assert.equal(f.guide.snapshot().facePose.mouthOpen,0);assert.equal(mouth.getAttribute('fill'),'none');assert.equal(mouth.getAttribute('d'),base.getAttribute('d'),'emission overlays the same closed-lip expression curve');
+  assert.equal(f.guide.snapshot().facePose.mouthOpen,0);assert.equal(mouth.getAttribute('fill'),'none');assert.equal(base.getAttribute('d'),semanticAtRest,'measured output does not change the semantic smile or frown');assert.notEqual(mouth.getAttribute('d'),base.getAttribute('d'),'actual measured spectrum adds a narrow crest on the closed-lip curve');
+  const coordinates=value=>value.match(/-?\d+(?:\.\d+)?/g).map(Number),shownPoints=coordinates(mouth.getAttribute('d')),basePoints=coordinates(base.getAttribute('d'));assert.deepEqual(shownPoints.slice(0,2),basePoints.slice(0,2));assert.deepEqual(shownPoints.slice(-2),basePoints.slice(-2),'measured vibration tapers to the same closed mouth corners');assert.ok(shownPoints.every(Number.isFinite));
   const bands=[...f.guide.element.querySelectorAll('.brites-avatar__speech-band')];assert.equal(bands.length,6);assert.notEqual(bands[3].getAttribute('d'),quietBands[3],'the current measured band changes its own curved segment');assert.ok(Number(bands[3].getAttribute('opacity'))>0);
   assert.deepEqual(f.guide.snapshot().speechSignal.bands,current.bands,'six-band target comes from the caller rather than a wall clock');
   f.guide.setSpeechSignal(null);assert.equal(f.guide.snapshot().speechVisual.amplitude,0);assert.equal(mouth.getAttribute('opacity'),'0');assert.ok(bands.every(node=>node.getAttribute('opacity')==='0'));

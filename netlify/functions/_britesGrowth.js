@@ -435,6 +435,29 @@ function fieldMentions(text,pattern,canonical) {
   return [...text.matchAll(new RegExp('\\b(?:'+pattern+')\\b','g'))].map(m=>({value:canonical?canonical(m[0]):m[0],raw:m[0],index:m.index,negative:negatedAt(text,m.index)}));
 }
 
+function freshCatalogueRequest(message,before={}){
+  const text=clean(message,2000).toLowerCase().replace(/[’‘]/g,"'");
+  // Explicit identities, ordinals and "same" references still resolve against
+  // the checked current selection. A category name alone is a fresh browse,
+  // never permission to open a newly discovered product or prepare a cart.
+  if(/https?:|www\.|\/products\/|\b(?:this|that|these|those|same|exact|current|first|second|third|fourth|fifth|sixth|[1-6](?:st|nd|rd|th)?)\b/.test(text))return null;
+  const reset='(?:reset|clear|remove) (?:the |my |all )?(?:search|filters?|category filters?)|(?:show|browse|view|open|restore|return to|go back to|back to|take me back to) (?:me )?(?:the )?(?:previous )?(?:(?:full|whole|entire|complete|unfiltered|original) (?:catalogue|catalog|collection|list|selection)|all (?:jewellery|jewelry|pieces|products|items|categories))|start (?:fresh|over|again)';
+  if(fieldMentions(text,reset).some(hit=>!hit.negative)||/^(?:please )?(?:show (?:me )?all|browse all|view all|go back|reset(?: all)?|clear all)(?: please)?[.!?]*$/.test(text))return {mode:'reset',type:null};
+  const types=fieldMentions(text,'necklaces?|earrings?|bracelets?|pendants?|huggies?|studs?|rings?|charms?',v=>v.startsWith('stud')?'studs':v.startsWith('earring')?'earrings':v.replace(/s$/,''));
+  const positive=[...new Set(types.filter(hit=>!hit.negative).map(hit=>hit.value))];
+  if(positive.length!==1||MOTIFS.some(([,pattern])=>fieldMentions(text,pattern).some(hit=>!hit.negative)))return null;
+  const allowed=new Set([...GENERIC,'all','full','catalogue','catalog','collection','collections','list','listings','listing','stock','available','see','browse','search','switch','switching','move','on','offer','offers','offering','got','pair','pairs','take','view','yes']);
+  const residual=(text.match(/[a-z][a-z-]*/g)||[]).filter(word=>!allowed.has(word)&&!types.some(hit=>hit.raw===word||hit.value===word||hit.value===word.replace(/s$/,''))&&!['silver','sterling','gold','rose','filled','plated'].includes(word));
+  if(residual.length)return null;
+  // A bare type answer can fill the existing gift question, and a deliberate
+  // type/metal correction can keep its motif. A fresh browse verb or a simple
+  // change from one selected category to another starts a new query instead.
+  const browsing=fieldMentions(text,'show|find|browse|see|search|open|view|switch|list|what|which').some(hit=>!hit.negative);
+  const correcting=types.some(hit=>hit.negative);
+  const prior=shopperPreferences(before);
+  return {mode:'category',type:positive[0],replaceQuery:browsing||!correcting&&!!prior.type&&prior.type!==positive[0]};
+}
+
 // Semantic follow-ups share one route through preference preservation,
 // displayed-card recall and response presentation. Bare “mean” is only an
 // inquiry in a what-does/do question; “I mean silver instead” is a correction.
@@ -498,6 +521,8 @@ function applyPreferenceMessage(before,message) {
   let p=shopperPreferences(before);
   if(conversationReply(message))return p;
   if(/\b(?:start (?:fresh|over|again)|reset (?:everything|preferences)|forget (?:everything|the previous|all that)|new gift|different gift|different person)\b/.test(text))p=shopperPreferences();
+  const freshBrowse=freshCatalogueRequest(text,p);
+  if(freshBrowse&&(freshBrowse.mode==='reset'||freshBrowse.replaceQuery)){p.query='';p.interests=[];p.excludedInterests=[];if(freshBrowse.mode==='reset'){p.type=null;p.excludedTypes=[];}}
   const mentions={
     type:fieldMentions(text,'necklaces?|earrings?|bracelets?|pendants?|huggies?|studs?|rings?|charms?',v=>v.startsWith('stud')?'studs':v.startsWith('earring')?'earrings':v.replace(/s$/,'')),
     metal:fieldMentions(text,'rose gold|sterling silver|silver|gold(?: filled| plated)?',v=>v.startsWith('rose')?'rose gold':v.includes('silver')?'silver':'gold'),
@@ -545,7 +570,7 @@ function applyPreferenceMessage(before,message) {
   else if(negative.length)p.query=p.interests.join(' ');
   for(const hit of fieldMentions(text,'handwriting|handwritten|my (?:own )?writing|engraving|engrave[ds]?|personali[sz](?:ed|ation|e)',v=>/handwrit|writing/.test(v)?'handwriting':'engraving'))p.personalization=hit.negative?null:hit.value;
   const nonShopping=semanticInquiry(text)||/\b(?:shipping|deliver|arrive|return|refund|compare|comparison|nickel|hypoallergenic|second|third|first|fourth|fifth|sixth|open|cart|bag|cheaper|expensive|more options|what else|tell me more|skip|pass on|prefer not|gift details?|secrets?|api keys?|credentials?|repository|system prompt|owner data|private records)\b/.test(text);
-  if(!positive.length&&!negative.length&&!nonShopping){
+  if(!freshBrowse&&!positive.length&&!negative.length&&!nonShopping){
     const controlled=new Set([...mentions.type,...mentions.metal,...mentions.recipient,...mentions.occasion].flatMap(x=>x.value.split(' ')));
     const words=(queryText.replace(/\b(?:i|we) mean\b/g,' ').match(/[a-z][a-z-]{2,}/g)||[]).filter(t=>!GENERIC.has(t)&&!controlled.has(t)&&!controlled.has(t.replace(/s$/,''))&&!['sterling','filled','plated','handwritten','engraving','personalized','personalised'].includes(t));
     const messageMilestone=milestoneDiscovery.parseMilestone(text,p.milestone,negatedAt);
@@ -791,15 +816,16 @@ async function concierge({service,shopify,message,history=[],preferences={},cont
   // do not authorize navigation or cart actions. Ignore URL path words when
   // checking inquiry language, negation and references to other cards.
   const destinationPlain=destination.plain.toLowerCase().replace(/[’‘]/g,"'");
-  const command=shopperCommand(destinationPlain),negatedCommand=/\b(?:do not|don'?t|not|never)\s+(?:open|take|go|view|show|add|put)\b/.test(destinationPlain);
+  const freshBrowse=!destination.handles.length&&!destination.unsafe?freshCatalogueRequest(destinationPlain,basePreferences):null;
+  const command=freshBrowse?null:shopperCommand(destinationPlain),negatedCommand=/\b(?:do not|don'?t|not|never)\s+(?:open|take|go|view|show|add|put)\b/.test(destinationPlain);
   const destinationInquiry=!/\b(?:compare|comparison|versus|first|second|third|fourth|fifth|sixth|[1-6](?:st|nd|rd|th)?)\b/.test(destinationPlain)&&(semanticInquiry(destinationPlain)||fieldMentions(destinationPlain,'tell me(?: more)? about|describe|explain|details? (?:about|for|on)|what (?:is|are|does)').some(hit=>!hit.negative));
   const destinationHandle=((command&&!negatedCommand)||destinationInquiry)&&!destination.unsafe&&destination.handles.length===1?destination.handles[0]:'';
   const exactProductContext=exactCurrentContext||!!destinationHandle;
   const displayedReference=fieldMentions(text.toLowerCase().replace(/[’‘]/g,"'"),'this piece|that piece|this one|that one').some(hit=>!hit.negative);
-  const useContext=exactProductContext||displayedReference||semanticInquiry(text)||/\b(?:compare|comparison|first|second|third|fourth|fifth|sixth|open|cart|bag)\b/i.test(text);
+  const useContext=!freshBrowse&&(exactProductContext||displayedReference||semanticInquiry(text)||/\b(?:compare|comparison|first|second|third|fourth|fifth|sixth|open|cart|bag)\b/i.test(text));
   const handles=destinationHandle?[destinationHandle]:exactCurrentContext?[currentHandle]:plainList(context.productHandles,6).filter(h=>/^[a-z0-9_-]{1,180}$/.test(h));
   if(!handles.length&&currentHandle)handles.push(currentHandle);
-  const milestonePlan=!command&&!(useContext&&handles.length)?milestoneDiscovery.discoveryIntent(intent):null;
+  const milestonePlan=!freshBrowse&&!command&&!(useContext&&handles.length)?milestoneDiscovery.discoveryIntent(intent):null;
   const searchedMilestone=!!milestonePlan?.motifs.length;
   let milestoneHints=[],recalledVersions=new Map();
   let queried;
@@ -823,7 +849,7 @@ async function concierge({service,shopify,message,history=[],preferences={},cont
     for(let i=0;i<attempts.length;i++){const attempt=attempts[i],hint=milestoneHints[i];if(attempt.status!=='fulfilled'||!attempt.value)continue;if(attempt.value.handle!==hint.handle||(hint.productId&&attempt.value.id!==hint.productId))continue;recalled.push(attempt.value);if(hint.dossierVersion)recalledVersions.set(attempt.value.id,{dossierVersion:hint.dossierVersion,supplementVersion:hint.supplementVersion});}
     if(milestoneHints.length&&!searched.length&&!recalled.length&&attempts.some(x=>x.status==='rejected'))throw Error('The matching published pieces could not be checked.');
     queried={products:[...new Map([...searched,...recalled].map(product=>[product.id,product])).values()].slice(0,30+bounds.liveHandles)};
-  } else queried=milestonePlan?{products:[]}:await shopify.search(intent.query||intent.type||'necklace');
+  } else queried=freshBrowse?.mode==='reset'&&!intent.query&&!intent.type?await shopify.products(''):milestonePlan?{products:[]}:await shopify.search(intent.query||intent.type||'necklace');
   let checkedProducts=queried.products;
   // An ordinal or unique exact title among the already displayed, freshly
   // re-read cards is a selection command, not new discovery text. Resolve it
@@ -901,7 +927,7 @@ async function concierge({service,shopify,message,history=[],preferences={},cont
   let reply=products.length?'These available pieces connect with '+(intent.query||'the preferences you’ve shared')+giftContext(intent)+'.':'I couldn’t confirm an available match for those preferences. We can adjust the selection together.';
   let question=!products.length?(recovery?.question||'Would you like to try a different symbol or jewelry type?'):!intent.query?'What does the person enjoy—an animal, hobby, profession or symbol?':!intent.type?'Would they enjoy a necklace, earrings or another jewelry style?':intent.budget==null&&!intent.unlimitedBudget?'Is there an item budget you’d like me to stay within?':!intent.metal?'Do you have a metal preference, or would you like to see both?':intent.giftDiscovery&&!intent.recipient&&!intent.recipientSkipped?'Who is the gift for?':intent.giftDiscovery&&!intent.occasion&&!intent.occasionSkipped?'Is there an occasion for the gift?':null;
   const result={schema:1,reply,question,preferences:intent,products,meanings,actions:products.map(p=>({type:'navigate',productId:p.id,url:p.url,label:'View '+p.title})),checkedAt:at,live:true,aiUsed:false};
-  if(intent.milestone&&!(useContext&&handles.length)&&!command){
+  if(!freshBrowse&&intent.milestone&&!(useContext&&handles.length)&&!command){
     const presentation=milestoneDiscovery.presentation(intent.milestone);
     result.reply=presentation.intro+(products.length?(milestonePlan?' These available pieces have reviewed interpretations you might personally connect with '+presentation.label+'. Meanings vary; choose what feels right to you.':' These available pieces match the motif and preferences you shared.'):' I couldn’t confirm a reviewed, available connection with those preferences.');
     if(milestonePlan){result.milestoneDiscovery={milestone:intent.milestone,method:'reviewed_interpretations',requiresPersonalFit:true};result.question=products.length?'Does one of these interpretations feel right, or would you prefer a different personal symbol?':presentation.question;}
@@ -918,7 +944,7 @@ async function concierge({service,shopify,message,history=[],preferences={},cont
   if(policyTopics.includes('shipping')||policyTopics.includes('refund')){result.reply='Shipping timing and returns depend on the order and destination. The current shop policies and checkout show the applicable details.';result.policyLinks=[{label:'Shipping policy',url:'https://britesjewelry.com/policies/shipping-policy'},{label:'Refund policy',url:'https://britesjewelry.com/policies/refund-policy'}];result.question=policyTopics.includes('shipping')?'Which country is the gift going to, and when is it needed?':null;}
   else if(intent.personalization&&/\b(?:engrave[ds]?|engraving|personali[sz](?:ed|ation|e)|handwriting|handwritten)\b/i.test(text)){result.reply='I can help find a piece with personalization options. The product page confirms the exact engraving limits and any design upload before adding it to your bag.';result.question=intent.personalization==='handwriting'?'Would you like to explore a handwriting piece or the custom design studio?':/\b(?:name|initials?|message)\b/i.test(text)?null:'Are you thinking of a name, initials, a short message or handwriting?';}
   if(/\b(?:hypoallergenic|nickel|allerg(?:y|ies|ic)|solid gold|waterproof|tarnish)\b/i.test(text)){result.reply='Materials and care requirements vary by piece. Please check the exact product description; I can’t infer allergy safety or material guarantees from its appearance.';result.question=null;}
-  const requestedAction=shopperAction(text,products,useContext?handles:[]);
+  const requestedAction=freshBrowse?null:shopperAction(text,products,useContext?handles:[]);
   if(requestedAction){result.requestedAction=requestedAction;result.question=null;result.reply=requestedAction.type==='navigate'?'Opening the piece you selected.':'Choose the exact available option below, then confirm before it is added to your bag.';}
   // The current broad gold preference is not an exact material-form filter.
   // Disclose mixed/unclear forms rather than calling solid gold gold-filled.
@@ -935,4 +961,4 @@ async function concierge({service,shopify,message,history=[],preferences={},cont
   if(ai&&!milestonePlan){try{const chosen=await ai({message:text,history:history.slice(-6).map(r=>({role:r.role,content:clean(r.content,1500)})),preferences:intent,products:products.map(p=>({id:p.id,title:p.title})),question:result.question});if(chosen&&['gift','self','comparison','meaning','shipping','engraving','discovery'].includes(chosen.intent)){result.intent=chosen.intent;result.aiUsed=true;const refined=result.question&&safeQuestionRefinement(result.question,chosen.question);if(refined&&!(intent.unlimitedBudget&&/\b(?:budget|spend(?:ing)?|price|cost|afford(?:able)?|how much)\b/i.test(refined)))result.question=refined;}}catch{result.aiUsed=false;result.providerUnavailable=true;}}
   return result;
 }
-module.exports={CATALOG_QUERY,STOP_AT,clean,hash,textOf,publicUrl,sameSecret,namespace,makeDb,normalizeProduct,productProjection,validateDossier,validateStorySupplement,createShopify,createGrowthService,productIssueHolds,applyProductIssues,shopperPreferences,negatedAt,conversationReply,intentFrom,rankProducts,publicMeaningText,mergeStorySupplements,publicMeanings,shopperAction,concierge,catalogueImageUrl,catalogueImages,isStorefrontDiscoveryProduct,merchantGuidance:storefront.merchantGuidance,readStorefrontServices:storefront.readServices,createStorefrontGuide:storefront.createStorefrontGuide};
+module.exports={CATALOG_QUERY,STOP_AT,clean,hash,textOf,publicUrl,sameSecret,namespace,makeDb,normalizeProduct,productProjection,validateDossier,validateStorySupplement,createShopify,createGrowthService,productIssueHolds,applyProductIssues,shopperPreferences,negatedAt,conversationReply,intentFrom,freshCatalogueRequest,rankProducts,publicMeaningText,mergeStorySupplements,publicMeanings,shopperAction,concierge,catalogueImageUrl,catalogueImages,isStorefrontDiscoveryProduct,merchantGuidance:storefront.merchantGuidance,readStorefrontServices:storefront.readServices,createStorefrontGuide:storefront.createStorefrontGuide};

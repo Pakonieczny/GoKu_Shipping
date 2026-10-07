@@ -60,10 +60,11 @@ test('late item identity cannot turn a duplicate native start into a new playbac
   assert.equal(f.playback.length,1);assert.equal(f.transcripts.at(-1).itemId,'assistant-later');assert.equal(f.voice.state,'speaking');
 });
 
-test('input ASR presentation requires the committed current item and does not call shopping tools',async t=>{
+test('input ASR presentation can follow the live current item without granting uncommitted action authority',async t=>{
   const f=fixture(t);await f.voice.start();f.emit({type:'input_audio_buffer.speech_started',item_id:'current-input'});
   const delta={type:'conversation.item.input_audio_transcription.delta',item_id:'current-input',event_id:'delta-one',delta:'I am unsure'};
-  f.emit(delta);f.emit({type:'input_audio_buffer.speech_stopped',item_id:'current-input'});f.emit(delta);assert.equal(f.listening.length,0);
+  f.emit(delta);assert.equal(f.listening.length,1);assert.equal(f.transcripts.length,0);assert.equal(f.calls.length,0);assert.equal(f.responses().length,0);
+  f.emit({type:'input_audio_buffer.speech_stopped',item_id:'current-input'});f.emit(delta);assert.equal(f.listening.length,1);
   f.emit({type:'input_audio_buffer.committed',item_id:'current-input'});f.emit(delta);f.emit(delta);
   assert.deepEqual(f.listening,[{delta:'I am unsure',final:false,itemId:'current-input',turnVersion:f.speech.at(-1).turnVersion,currentTurn:true}]);assert.equal(f.transcripts.length,0);
   const final={type:'conversation.item.input_audio_transcription.completed',item_id:'current-input',event_id:'final-one',transcript:'I am unsure about the length.'};f.emit(final);f.emit(final);

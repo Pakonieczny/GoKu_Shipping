@@ -41,6 +41,7 @@
     {id:'hidden',label:'During hidden guide',scenarioId:'hidden',at:4100},
     {id:'shown',label:'After guide returns',scenarioId:'hidden',at:7200},
     {id:'listening',label:'Listening before words',scenarioId:'listen',at:1200},
+    {id:'listening-input',label:'Listening · held synthetic incoming energy',scenarioId:'listen',at:1800},
     {id:'listening-support',label:'Listening after supportive words',scenarioId:'listen-support',at:4000},
     {id:'inquiry',label:'Final spoken question'}
   ].map(value=>Object.freeze(value)));
@@ -90,9 +91,9 @@
     const attr=(name,key)=>frame?.querySelector('.brites-avatar__'+name)?.getAttribute(key)||'';
     const css=name=>frame?.style?.getPropertyValue(name)||'';
     const features={brows:[raw.faceBrowLift,raw.faceBrowTilt].filter(Number.isFinite).map(round).join(',')||attr('brow--left','d'),eyes:[raw.eyeScaleX,raw.eyeScaleY,raw.eyeSmile,raw.eyeOpen].filter(Number.isFinite).map(round).join(',')||attr('ribbon--left','d'),cheeks:Number.isFinite(raw.cheekGlow)?String(round(raw.cheekGlow)):attr('cheek--left','opacity'),smile:Number.isFinite(raw.smileCurve)?String(round(raw.smileCurve)):attr('smile-signal','d')};
-    const energy=finite(raw.speechEnergy)??finite(Number(css('--brites-speech-level')))??0,signal=state.speechSignal,visual=state.speechVisual;
+    const energy=finite(raw.speechEnergy)??finite(Number(css('--brites-speech-level')))??0,signal=state.speechSignal,visual=state.speechVisual,incoming=state.inputSignal;
     const paths=selector=>[...(frame?.querySelectorAll(selector)||[])].map(node=>({d:node.getAttribute('d')||'',opacity:node.getAttribute('opacity')||'',stroke:node.getAttribute('stroke')||''}));
-    return {mode:state.mode,state:state.state,paused:state.paused===true,visible:state.visible===true,reducedMotion:state.reducedMotion===true,expression:state.expression?{kind:state.expression.kind,intensity:round(state.expression.intensity)}:null,emotion:state.emotion||null,features,mouthEnergy:round(energy),speechEnergy:round(energy),curveClosed:visual?.curveClosed===true,openingEllipsePresent:!!frame?.querySelector('ellipse.brites-avatar__speech-mouth'),curvePath:attr('smile-signal','d'),curveTag:frame?.querySelector('.brites-avatar__smile-signal')?.localName||null,speechSignal:signal?{amplitude:round(signal.amplitude),bands:Array.isArray(signal.bands)?signal.bands.map(round):null,brightness:round(signal.brightness),valid:signal.valid===true}:null,speechVisual:visual?{curveClosed:visual.curveClosed===true,rippleActive:visual.rippleActive===true,amplitude:round(visual.amplitude),bands:Array.isArray(visual.bands)?visual.bands.map(round):null,brightness:round(visual.brightness)}:null,ripplePaths:paths('.brites-avatar__speech-ripple'),bandPaths:paths('.brites-avatar__speech-band'),productFocus:state.productFocus?{x:round(state.productFocus.x),y:round(state.productFocus.y)}:null,facePose:Object.fromEntries(Object.entries(raw).filter(([key,value])=>/^(?:faceBrow|eye|cheekGlow|smileCurve|head|speechEnergy|mouthOpen|mouthCurve)/.test(key)&&Number.isFinite(value)).map(([key,value])=>[key,round(value)]))};
+    return {mode:state.mode,state:state.state,paused:state.paused===true,visible:state.visible===true,reducedMotion:state.reducedMotion===true,expression:state.expression?{kind:state.expression.kind,intensity:round(state.expression.intensity)}:null,emotion:state.emotion||null,features,mouthEnergy:round(energy),speechEnergy:round(energy),inputEnergy:round(raw.inputEnergy)||0,inputSignal:incoming?{amplitude:round(incoming.amplitude),bands:Array.isArray(incoming.bands)?incoming.bands.map(round):null,brightness:round(incoming.brightness),valid:incoming.valid===true}:null,curveClosed:visual?.curveClosed===true,openingEllipsePresent:!!frame?.querySelector('ellipse.brites-avatar__speech-mouth'),curvePath:attr('smile-signal','d'),curveTag:frame?.querySelector('.brites-avatar__smile-signal')?.localName||null,speechSignal:signal?{amplitude:round(signal.amplitude),bands:Array.isArray(signal.bands)?signal.bands.map(round):null,brightness:round(signal.brightness),valid:signal.valid===true}:null,speechVisual:visual?{curveClosed:visual.curveClosed===true,rippleActive:visual.rippleActive===true,amplitude:round(visual.amplitude),bands:Array.isArray(visual.bands)?visual.bands.map(round):null,brightness:round(visual.brightness)}:null,ripplePaths:paths('.brites-avatar__speech-ripple'),bandPaths:paths('.brites-avatar__speech-band'),productFocus:state.productFocus?{x:round(state.productFocus.x),y:round(state.productFocus.y)}:null,facePose:Object.fromEntries(Object.entries(raw).filter(([key,value])=>/^(?:faceBrow|eye|cheekGlow|smileCurve|head|speechEnergy|inputEnergy|mouthOpen|mouthCurve)/.test(key)&&Number.isFinite(value)).map(([key,value])=>[key,round(value)]))};
   }
   function safeEvent(value){
     if(typeof value==='string')return {type:clean(value)};
@@ -100,13 +101,13 @@
     const result={};for(const key of ['type','kind','intensity','index','phase','reason','timing','responseId','itemId','currentPhrase','cueIndex','queueLength','accepted','rejected'])if(['string','number','boolean'].includes(typeof value[key]))result[key]=typeof value[key]==='string'?clean(value[key]):value[key];
     if(value.cue?.kind)result.kind=clean(value.cue.kind);return result;
   }
-  function createRunner({expressionFactory,avatar,onUpdate=()=>{},onComplete=()=>{},now=()=>0}={}){
+  function createRunner({expressionFactory,avatar,onUpdate=()=>{},onComplete=()=>{},now=()=>0,setTimer=(callback,delay)=>scope.setTimeout(callback,delay),clearTimer=id=>scope.clearTimeout(id)}={}){
     if(!expressionFactory?.create||!avatar?.setExpression)throw Error('The production expression planner and face rig are required.');
     // The authored source clock is separate from renderer updates. A sparse
     // browser update drains at most 50ms of source audio per planner tick, but
     // only its final pose is sent to the real rig and captured once.
     const SOURCE_STEP_MS=50,MAX_SOURCE_DRAINS=400;
-    let clock=0,serial=0,controller=null,scenario=null,tape=[],next=0,nextSourceAt=0,running=false,manualPause=false,inspectionHeld=false,inspectionUsed=false,heldPhase=null,startAt=0,heldAt=0,playing=false,listening=false,interrupted=false,hidden=false,reduced=false,quiet=false,scriptedPaused=false,everPaused=false,everHidden=false,rigState='idle',pendingExpression=null,output=0,input=0,outputSignal=authoredSignal(0,0),sourceFocusChoice=null,selectedChoice=null,appliedFocusChoice=null,lastSampleAt=-Infinity,sourceSampleCount=0,sourcePlaybackSamples=0,observedUpdateCount=0,sourceBeforePlayback=[],sourceInterruptionChecks=[],sourceEventCoverage=[],sourcePhraseIndices=new Set(),sourceCueKinds=new Set(),finalInquiryReached=false,expectedFinalPhraseIndex=-1,samples=[],log=[],cues=[];
+    let clock=0,serial=0,controller=null,scenario=null,tape=[],next=0,nextSourceAt=0,running=false,manualPause=false,inspectionHeld=false,inspectionUsed=false,heldPhase=null,startAt=0,heldAt=0,playing=false,listening=false,interrupted=false,hidden=false,reduced=false,quiet=false,scriptedPaused=false,everPaused=false,everHidden=false,rigState='idle',pendingExpression=null,output=0,input=0,outputSignal=authoredSignal(0,0),inputSignal=authoredSignal(0,0),heldInputTimer=null,heldInputApplications=0,sourceFocusChoice=null,selectedChoice=null,appliedFocusChoice=null,lastSampleAt=-Infinity,sourceSampleCount=0,sourcePlaybackSamples=0,observedUpdateCount=0,sourceBeforePlayback=[],sourceInterruptionChecks=[],sourceEventCoverage=[],sourcePhraseIndices=new Set(),sourceCueKinds=new Set(),finalInquiryReached=false,expectedFinalPhraseIndex=-1,samples=[],log=[],cues=[];
     function record(value){log.push({at:Math.round(clock),...safeEvent(value)});if(log.length>MAX_LOG)log.shift();}
     function applyExpression(cue){
       const value=cue&&typeof cue==='object'?{kind:cue.kind,intensity:cue.intensity}:null;
@@ -117,9 +118,19 @@
       if(cues.length>MAX_LOG)cues.shift();pendingExpression=value;
       record({type:'source-face-target',kind:value?.kind||'neutral',intensity:round(value?.intensity)});
     }
+    function stopHeldInput(){if(heldInputTimer!==null)clearTimer(heldInputTimer);heldInputTimer=null;}
+    function heldInputActive(){return running&&inspectionHeld&&['listening-input','listening-support'].includes(heldPhase)&&listening&&rigState==='listening'&&inputSignal.valid&&!manualPause&&!scriptedPaused&&!hidden&&!reduced;}
+    function armHeldInput(){
+      stopHeldInput();if(!heldInputActive())return;
+      // Explicit visual inspection reapplies the SAME labeled synthetic sample.
+      // It advances neither source time, source packets, controller phrases nor
+      // recorded frame observations. Native source expiry stays unchanged.
+      heldInputTimer=setTimer(()=>{heldInputTimer=null;if(!heldInputActive())return;avatar.setInputSignal?.(inputSignal);heldInputApplications++;armHeldInput();},100);
+    }
     function render(){
       avatar.setPaused(manualPause||scriptedPaused);avatar.setVisible(!hidden);avatar.setState(rigState);avatar.setExpression(pendingExpression);
       if(avatar.setSpeechSignal)avatar.setSpeechSignal(outputSignal);else avatar.setLevel(output);
+      avatar.setInputSignal?.(rigState==='listening'?inputSignal:authoredSignal(clock,0));
       applyProductFocus();
     }
     function applyProductFocus(){
@@ -128,7 +139,7 @@
       appliedFocusChoice=sourceFocusChoice;
     }
     function reset(){
-      controller?.destroy();controller=null;running=false;manualPause=inspectionHeld=inspectionUsed=false;heldPhase=null;playing=listening=interrupted=hidden=quiet=scriptedPaused=everPaused=everHidden=false;input=output=0;outputSignal=authoredSignal(0,0);sourceFocusChoice=selectedChoice=appliedFocusChoice=null;rigState='idle';pendingExpression=null;avatar.setPaused(false);avatar.setVisible(true);if(avatar.setSpeechSignal)avatar.setSpeechSignal(outputSignal);else avatar.setLevel(0);avatar.clearFocus?.();avatar.setExpression(null);avatar.setState('idle');clock=0;nextSourceAt=0;lastSampleAt=-Infinity;sourceSampleCount=sourcePlaybackSamples=observedUpdateCount=0;samples=[];log=[];cues=[];sourceBeforePlayback=[];sourceInterruptionChecks=[];sourceEventCoverage=[];sourcePhraseIndices=new Set();sourceCueKinds=new Set();finalInquiryReached=false;expectedFinalPhraseIndex=-1;scenario=null;tape=[];next=0;
+      stopHeldInput();controller?.destroy();controller=null;running=false;manualPause=inspectionHeld=inspectionUsed=false;heldPhase=null;playing=listening=interrupted=hidden=quiet=scriptedPaused=everPaused=everHidden=false;input=output=0;outputSignal=inputSignal=authoredSignal(0,0);heldInputApplications=0;avatar.setInputSignal?.(inputSignal);sourceFocusChoice=selectedChoice=appliedFocusChoice=null;rigState='idle';pendingExpression=null;avatar.setPaused(false);avatar.setVisible(true);if(avatar.setSpeechSignal)avatar.setSpeechSignal(outputSignal);else avatar.setLevel(0);avatar.clearFocus?.();avatar.setExpression(null);avatar.setState('idle');clock=0;nextSourceAt=0;lastSampleAt=-Infinity;sourceSampleCount=sourcePlaybackSamples=observedUpdateCount=0;samples=[];log=[];cues=[];sourceBeforePlayback=[];sourceInterruptionChecks=[];sourceEventCoverage=[];sourcePhraseIndices=new Set();sourceCueKinds=new Set();finalInquiryReached=false;expectedFinalPhraseIndex=-1;scenario=null;tape=[];next=0;
     }
     function start(value,{reducedMotion=false}={}){
       reset();scenario=value;tape=tapeFor(value);serial++;reduced=reducedMotion||value.reduced===true;startAt=now();clock=0;running=true;
@@ -169,7 +180,8 @@
       const paused=scriptedPaused||hidden||manualPause;
       output=playing&&!interrupted&&!paused&&!quiet&&!scenario.analysisUnavailable&&!reduced?(Math.floor(clock/180)%7===0?0:[.12,.42,.25,.68,.18,.5][Math.floor(clock/100)%6]):0;
       outputSignal=authoredSignal(clock,output);
-      input=listening&&!scenario.silence&&!paused?([0,.18,.43,.11,.3][Math.floor(clock/240)%5]):0;
+      input=listening&&!scenario.silence&&!paused&&!reduced&&!scenario.analysisUnavailable?([0,.18,.43,.11,.3][Math.floor(clock/240)%5]):0;
+      inputSignal=authoredSignal(clock,input);
       sourceSampleCount++;if(playing)sourcePlaybackSamples++;
       controller?.level({input,output});controller?.tick?.();
       const state=controller?.snapshot()||{},kind=state.cue?.kind||null;
@@ -183,7 +195,7 @@
       // source targets. Their sparse gaps remain visible in the final report.
       if(!force&&clock-lastSampleAt<100&&clock<scenario.duration)return null;lastSampleAt=clock;
       const face=faceSample(avatar),state=controller?.snapshot()||{};
-      const entry={at:Math.round(clock),observedAtMs:round(now()),inspectionHeld,phase:clean(state.phase)||(!playing&&clock<900?'before-output':playing?'speaking':listening?'listening':'settling'),cueKind:state.cue?.kind||state.expression?.kind||null,currentPhrase:typeof state.currentPhrase==='number'?state.currentPhrase:null,input:round(input),output:round(output),outputSignal:{...outputSignal,bands:[...outputSignal.bands]},selectedChoice,focusChoice:sourceFocusChoice,face};
+      const entry={at:Math.round(clock),observedAtMs:round(now()),inspectionHeld,phase:clean(state.phase)||(!playing&&clock<900?'before-output':playing?'speaking':listening?'listening':'settling'),cueKind:state.cue?.kind||state.expression?.kind||null,currentPhrase:typeof state.currentPhrase==='number'?state.currentPhrase:null,input:round(input),output:round(output),outputSignal:{...outputSignal,bands:[...outputSignal.bands]},inputSignal:{...inputSignal,bands:[...inputSignal.bands]},selectedChoice,focusChoice:sourceFocusChoice,face};
       samples.push(entry);if(samples.length>MAX_SAMPLES)samples.shift();onUpdate(snapshot());return entry;
     }
     function update(elapsed){
@@ -206,9 +218,9 @@
     function step(){if(!running||manualPause||inspectionHeld)return snapshot();return update(now()-startAt);}
     function inspectAt(elapsed,phaseId='authored-timestamp'){
       if(!running||manualPause||!Number.isFinite(elapsed)||elapsed<clock||elapsed>=scenario.duration)return false;
-      inspectionUsed=true;inspectionHeld=false;update(elapsed);inspectionHeld=true;heldPhase=clean(phaseId);heldAt=now();onUpdate(snapshot());return snapshot();
+      inspectionUsed=true;inspectionHeld=false;update(elapsed);inspectionHeld=true;heldPhase=clean(phaseId);heldAt=now();armHeldInput();onUpdate(snapshot());return snapshot();
     }
-    function continueInspection(){if(!running||!inspectionHeld)return false;inspectionHeld=false;heldPhase=null;startAt=now()-clock;onUpdate(snapshot());return snapshot();}
+    function continueInspection(){if(!running||!inspectionHeld)return false;stopHeldInput();avatar.setInputSignal?.(authoredSignal(clock,0));inspectionHeld=false;heldPhase=null;startAt=now()-clock;onUpdate(snapshot());return snapshot();}
     function observe(){if(!scenario)return false;capture(true);return snapshot();}
     function productAction(type,choice){
       if(!running||!['focus','selection'].includes(type)||![null,'a','b'].includes(choice))return false;
@@ -219,16 +231,16 @@
     }
     function pause(value){
       if(!running)return;manualPause=value===true;everPaused=everPaused||manualPause;controller.setPaused(manualPause);
-      if(manualPause){heldAt=now();output=0;outputSignal=authoredSignal(clock,0);}else startAt+=Math.max(0,now()-heldAt);
+      if(manualPause){stopHeldInput();heldAt=now();input=output=0;inputSignal=outputSignal=authoredSignal(clock,0);}else startAt+=Math.max(0,now()-heldAt);
       render();onUpdate(snapshot());
     }
     function interrupt(paint=true){
-      if(!running)return;interrupted=true;playing=false;listening=true;output=0;outputSignal=authoredSignal(clock,0);controller.cancel();controller.beginTurn({id:'fixture-interrupt-'+serial,role:'user',context:scenario.context||''});controller.setListening(true);rigState='listening';record({type:'fixture-interrupted'});if(paint)render();
+      if(!running)return;stopHeldInput();interrupted=true;playing=false;listening=true;input=output=0;inputSignal=outputSignal=authoredSignal(clock,0);controller.cancel();controller.beginTurn({id:'fixture-interrupt-'+serial,role:'user',context:scenario.context||''});controller.setListening(true);rigState='listening';record({type:'fixture-interrupted'});if(paint)render();
     }
     function finish(){
-      if(!running)return;playing=listening=false;input=output=0;outputSignal=authoredSignal(clock,0);controller.playback({playing:false,cleared:true,responseId:'fixture-response-'+serial});controller.cancel();scriptedPaused=hidden=false;rigState='listening';controller.tick?.();running=false;
+      if(!running)return;stopHeldInput();playing=listening=false;input=output=0;inputSignal=outputSignal=authoredSignal(clock,0);controller.playback({playing:false,cleared:true,responseId:'fixture-response-'+serial});controller.cancel();scriptedPaused=hidden=false;rigState='listening';controller.tick?.();running=false;
     }
-    function snapshot(){const state=controller?.snapshot()||{};return {scenario:scenario?.id||null,label:scenario?.label||null,running,manualPause,inspectionHeld,inspectionUsed,heldPhase,clockMs:Math.round(clock),durationMs:scenario?.duration||0,alignment:'authored-source-clock; synthetic amplitude/spectrum; production rig snapshots',nativeAudioTested:false,microphoneRequests:0,providerCalls:0,cartWrites:0,navigationChanges:0,inputRms:round(input),outputRms:round(output),authoredOutputSignal:{...outputSignal,bands:[...outputSignal.bands]},product:{focusChoice:sourceFocusChoice,selectedChoice},interrupted,reducedFixture:reduced,sourceSampleCount,sourcePlaybackSamples,actualRenderedFrameSampleCount:samples.length,controller:{phase:state.phase||null,currentPhrase:state.currentPhrase??null,clockMs:round(state.clockMs),timing:state.timing||'estimated-audio-activity',cue:state.cue?{kind:state.cue.kind,intensity:round(state.cue.intensity)}:null},face:faceSample(avatar),cues:cues.slice(-20),log:log.slice(-MAX_LOG)};}
+    function snapshot(){const state=controller?.snapshot()||{};return {scenario:scenario?.id||null,label:scenario?.label||null,running,manualPause,inspectionHeld,inspectionUsed,heldPhase,clockMs:Math.round(clock),durationMs:scenario?.duration||0,alignment:'authored-source-clock; synthetic amplitude/spectrum; production rig snapshots',nativeAudioTested:false,microphoneRequests:0,providerCalls:0,cartWrites:0,navigationChanges:0,inputRms:round(input),outputRms:round(output),authoredOutputSignal:{...outputSignal,bands:[...outputSignal.bands]},authoredInputSignal:{...inputSignal,bands:[...inputSignal.bands]},heldSyntheticInput:{active:heldInputActive(),applicationsAfterSourceSample:heldInputApplications,meaning:'Same explicitly held synthetic incoming sample reapplied to paint the current rig; no additional source packets, phrase time or recorded frame observations.'},product:{focusChoice:sourceFocusChoice,selectedChoice},interrupted,reducedFixture:reduced,sourceSampleCount,sourcePlaybackSamples,actualRenderedFrameSampleCount:samples.length,controller:{phase:state.phase||null,currentPhrase:state.currentPhrase??null,clockMs:round(state.clockMs),timing:state.timing||'estimated-audio-activity',cue:state.cue?{kind:state.cue.kind,intensity:round(state.cue.intensity)}:null},face:faceSample(avatar),cues:cues.slice(-20),log:log.slice(-MAX_LOG)};}
     function result(){
       const changed={},names=['brows','eyes','cheeks','smile'];for(const name of names)changed[name]=new Set(samples.map(value=>value.face.features[name]).filter(Boolean)).size;
       const channels=names.filter(name=>changed[name]>1),kinds=[...sourceCueKinds],observedKinds=[...new Set(samples.map(value=>value.cueKind).filter(Boolean))],mouthValues=[...new Set(samples.map(value=>value.face.mouthEnergy))],before=scenario?.role==='user'||sourceBeforePlayback.every(value=>value.output===0&&!value.kind)&&samples.filter(value=>value.at<900).every(value=>value.output===0&&!value.cueKind&&!value.face.expression),late=sourceInterruptionChecks.every(value=>value.output===0&&value.state!=='speaking')&&samples.filter(value=>value.at>=sourceInterruptionChecks[0]?.at).every(value=>value.face.mouthEnergy===0&&value.face.state!=='speaking');
@@ -245,7 +257,7 @@
       const observedFaceKinds=[...new Set(samples.map(value=>value.face.expression?.kind).filter(Boolean))],spectra=new Set(samples.filter(value=>value.face.speechSignal?.valid).map(value=>JSON.stringify(value.face.speechSignal.bands))),displayedSpectra=new Set(samples.filter(value=>value.face.speechVisual?.rippleActive).map(value=>JSON.stringify(value.face.speechVisual.bands))),ripplePaths=new Set(samples.map(value=>JSON.stringify(value.face.ripplePaths)+JSON.stringify(value.face.bandPaths))),observationGap=samples.reduce((gap,value,index)=>index?Math.max(gap,value.observedAtMs-samples[index-1].observedAtMs):gap,0);
       return {scenario:scenario?.id,label:scenario?.label,fixture:'explicit-synthetic-expression-and-spectrum-events',result:failed.length||!multi?'needs-review':visibleIncomplete?'source-check-passed-visible-coverage-incomplete':'behavior-check-passed',failedInvariants:failed,multipleCueCheck:scenario?.check==='multiple-cues'?multi:null,distinctCueKinds:kinds,observedCueKinds:observedKinds,observedControllerCueKinds:observedKinds,observedActualFaceExpressionKinds:observedFaceKinds,rigExpressionMeaning:'expression targets on the actual rig; eased displayed geometry is reported in changedFaceChannels and facePose',distinctObservedSpectra:spectra.size,distinctObservedSignalTargets:spectra.size,distinctObservedDisplayedSpectra:displayedSpectra.size,distinctObservedRipplePaths:ripplePaths.size,selectionSourcePositiveSamples:selectionSamples.length,selectionObservedRippleSamples:selectionSamples.filter(value=>value.face.speechVisual?.rippleActive===true).length,sourcePhraseIndices:[...sourcePhraseIndices],sourceEventCoverage,sourceSampleCount,sourcePlaybackSamples,sourceStepMs:SOURCE_STEP_MS,actualRenderedFrameSampleCount:samples.length,actualRenderedFrameSampleMeaning:'real rig snapshots, once per source update or explicit observe/product action; not a GPU frame count',observedUpdateCount,maxObservedFrameGapMs:maxGapMs,maxObservedSourceTimeGapMs:maxGapMs,maxObservationTimeGapMs:observationGap,visibleTrajectoryCoverage:inspectionUsed?'authored-phase-inspection-no-natural-cadence-claim':visibleIncomplete?'incomplete-sparse-observations':'sampled-at-most-10Hz',changedFaceChannels:channels,distinctFeatureSamples:changed,distinctMouthEnergySamples:mouthValues.length,sampleCount:samples.length,invariants,rendererMode:avatar.snapshot().mode,providerCalls:0,microphoneRequests:0,gpuAppearance:'unverified',nativeSpokenTiming:'unverified',trustImprovement:'not-measured'};
     }
-    return {start,update,step,pause,inspectAt,continueInspection,observe,productAction,interrupt,reset,snapshot,result,destroy(){controller?.destroy();controller=null;running=false;}};
+    return {start,update,step,pause,inspectAt,continueInspection,observe,productAction,interrupt,reset,snapshot,result,destroy(){stopHeldInput();input=output=0;inputSignal=outputSignal=authoredSignal(clock,0);avatar.setInputSignal?.(inputSignal);if(avatar.setSpeechSignal)avatar.setSpeechSignal(outputSignal);else avatar.setLevel(0);controller?.destroy();controller=null;running=playing=listening=false;}};
   }
   const api={SCENARIOS,INSPECTION_PHASES,authoredSignal,inspectionTarget,tapeFor,faceSample,createRunner};
   if(typeof module==='object'&&module.exports)module.exports=api;
@@ -259,7 +271,7 @@
   const results=[];let runner=null,avatar=null,reduced=false,suite=false,suiteIndex=0,frame=null,lastPaint=0;
   function show(snapshot){
     if(!snapshot)return;phase.textContent='Phase: '+(snapshot.controller.phase||snapshot.face.state)+' · '+(snapshot.clockMs/1000).toFixed(1)+' / '+(snapshot.durationMs/1000).toFixed(1)+' seconds · controller '+(snapshot.controller.cue?.kind||'neutral')+' · rig target '+(snapshot.face.expression?.kind||'neutral')+(snapshot.inspectionHeld?' · HELD authored sample':'');
-    pose.textContent=JSON.stringify({fixture:snapshot.alignment,inspectionHeld:snapshot.inspectionHeld,inspectionUsed:snapshot.inspectionUsed,heldPhase:snapshot.heldPhase,sourceClockMs:snapshot.clockMs,sourcePlaybackSamples:snapshot.sourcePlaybackSamples,actualRenderedFrameSampleCount:snapshot.actualRenderedFrameSampleCount,frameSampleMeaning:'Observed rig snapshots only; intermediate authored cues are not rendered evidence.',phase:snapshot.controller.phase,currentPhrase:snapshot.controller.currentPhrase,controllerCue:snapshot.controller.cue,authoredOutputSignal:snapshot.authoredOutputSignal,inputRms:snapshot.inputRms,outputRms:snapshot.outputRms,product:snapshot.product,actualFace:snapshot.face,providerCalls:0,microphoneRequests:0},null,2);
+    pose.textContent=JSON.stringify({fixture:snapshot.alignment,inspectionHeld:snapshot.inspectionHeld,inspectionUsed:snapshot.inspectionUsed,heldPhase:snapshot.heldPhase,sourceClockMs:snapshot.clockMs,sourcePlaybackSamples:snapshot.sourcePlaybackSamples,actualRenderedFrameSampleCount:snapshot.actualRenderedFrameSampleCount,frameSampleMeaning:'Observed rig snapshots only; intermediate authored cues are not rendered evidence.',phase:snapshot.controller.phase,currentPhrase:snapshot.controller.currentPhrase,controllerCue:snapshot.controller.cue,authoredOutputSignal:snapshot.authoredOutputSignal,authoredInputSignal:snapshot.authoredInputSignal,heldSyntheticInput:snapshot.heldSyntheticInput,inputRms:snapshot.inputRms,outputRms:snapshot.outputRms,product:snapshot.product,actualFace:snapshot.face,providerCalls:0,microphoneRequests:0},null,2);
     doc.getElementById('continue-inspection').disabled=!snapshot.inspectionHeld;doc.getElementById('pause-sequence').disabled=snapshot.inspectionHeld;
     doc.getElementById('fixture-selection').textContent=snapshot.product.selectedChoice?'Synthetic selection '+snapshot.product.selectedChoice.toUpperCase()+'.':snapshot.product.focusChoice?'Synthetic focus '+snapshot.product.focusChoice.toUpperCase()+'.':'No synthetic selection.';
     transitions.textContent=JSON.stringify(snapshot.log,null,2);const mode=snapshot.face.mode;renderer.textContent=mode==='webgl'?'WebGL scene is active. GPU appearance and shadows still require visual review.':mode==='fallback'?'Actual animated 2-D fallback is active. GPU, shadows and FPS remain unverified.':'The production renderer is preparing.';
@@ -278,7 +290,7 @@
     suite=false;const selected=INSPECTION_PHASES.find(value=>value.id===inspection.value),item=selected?.scenarioId?SCENARIOS.find(value=>value.id===selected.scenarioId):SCENARIOS.find(value=>value.id===select.value);
     const at=inspectionTarget(item,selected?.id,scope.BritesConciergeExpression);
     if(at===null){status.textContent='That phase does not apply to this scenario. Choose a complete speaking scenario for the question inspector.';return;}
-    start(item);runner.inspectAt(at,selected.id);show(runner.snapshot());status.textContent='Held '+selected.label+' at '+(at/1000).toFixed(2)+' source seconds. Authored replay; no live audio or intervening rendered frames.';
+    start(item);runner.inspectAt(at,selected.id);show(runner.snapshot());status.textContent='Held '+selected.label+' at '+(at/1000).toFixed(2)+' source seconds. Authored replay; no live audio. Intermediate source poses were not rendered.';
   };
   doc.getElementById('continue-inspection').onclick=()=>{if(runner?.continueInspection())status.textContent='Authored source continues from the held timestamp. This is separate from canceling Pause sequence.';};
   doc.getElementById('observe-inspection').onclick=()=>{if(runner?.observe())status.textContent='Current actual rig pose captured once. Source time and events were not advanced.';};

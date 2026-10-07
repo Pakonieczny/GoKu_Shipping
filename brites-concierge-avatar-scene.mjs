@@ -39,7 +39,7 @@ export function createAvatarScene({container, quality, onFrame, onContext, onErr
   renderer.domElement.setAttribute('aria-hidden', 'true');
   container.appendChild(renderer.domElement);
   const scene = new THREE.Scene();
-  scene.background = new THREE.Color('#f4eee4');
+  scene.background = new THREE.Color('#bccdd6');
   const camera = new THREE.PerspectiveCamera(34, 1, .1, 35);
   camera.position.set(.26, .65, 6.2); camera.lookAt(0, .03, 0);
   const materials = new Set(), textures = new Set(), geometries = new Set();
@@ -91,8 +91,8 @@ export function createAvatarScene({container, quality, onFrame, onContext, onErr
   const corneaMaterial = material({color: '#16384e', roughness: .56, transmission: 0, metalness: 0, clearcoat: .08, clearcoatRoughness: .62, envMapIntensity: .16, opacity: .035, transparent: true, depthWrite: false, bumpMap: glassMap, bumpScale: .0001});
   const glint = basic({color: '#bfeaff', toneMapped: false});
   const gemMaterial = material({color: '#3b72d7', roughness: .66, metalness: 0, transmission: 0, thickness: .45, ior: 1.77, dispersion: 0, clearcoat: 0, attenuationColor: new THREE.Color('#acd9ff'), attenuationDistance: .85});
-  const stageMaterial = material({color: '#e5ded1', roughness: .78, metalness: .02, clearcoat: .02, bumpMap: porcelainMap, bumpScale: .005});
-  const floorMaterial = new THREE.ShadowMaterial({color: '#52636b', opacity: .12, depthWrite: false}); materials.add(floorMaterial);
+  const stageMaterial = material({color: '#bdcbd1', roughness: .78, metalness: .02, clearcoat: .02, bumpMap: porcelainMap, bumpScale: .005});
+  const floorMaterial = new THREE.ShadowMaterial({color: '#52636b', opacity: .15, depthWrite: false}); materials.add(floorMaterial);
   const avatar = new THREE.Group(); scene.add(avatar);
   const irisMaterial = basic({color: '#78d7ff', toneMapped: false});
   const head = new THREE.Group(); head.name = 'articulated-expression-head'; head.position.set(0, .87, .01); avatar.add(head);
@@ -134,7 +134,7 @@ export function createAvatarScene({container, quality, onFrame, onContext, onErr
   const faceBrows = [];
   for (const side of [-1, 1]) {
     const browCurve = new THREE.QuadraticBezierCurve3(new THREE.Vector3(-.19, 0, 0), new THREE.Vector3(0, .054, 0), new THREE.Vector3(.19, 0, 0));
-    const brow = mesh(geometry(new THREE.TubeGeometry(browCurve, segments(48, 28), .017, 12, false)), mouthMaterial, head, side * .315, .355, .713); brow.castShadow = false; brow.receiveShadow = false; brow.name = side < 0 ? 'expression-brow-left' : 'expression-brow-right'; faceBrows.push({mesh: brow, side});
+    const brow = mesh(geometry(new THREE.TubeGeometry(browCurve, segments(48, 28), .019, 12, false)), mouthMaterial, head, side * .315, .355, .713); brow.castShadow = false; brow.receiveShadow = false; brow.name = side < 0 ? 'expression-brow-left' : 'expression-brow-right'; faceBrows.push({mesh: brow, side, rest: brow.geometry.attributes.position.array.slice()});
   }
   // Blink and smile now deform the light ribbons themselves. Foreground
   // shutters would obscure the new design and are intentionally absent.
@@ -148,7 +148,7 @@ export function createAvatarScene({container, quality, onFrame, onContext, onErr
   // Sound changes emission and adjacent restrained contours. The expressive
   // mouth remains a single closed-lip curve; energy never opens an area.
   const voiceMaterial = basic({color:'#b0f3ff',toneMapped:false,transparent:true,opacity:0,depthWrite:false});
-  const speechMouth = mesh(closedCurve(.23,.014,64), voiceMaterial, head, 0, -.235, .722); speechMouth.castShadow = false; speechMouth.receiveShadow = false; speechMouth.visible = false; speechMouth.name = 'expression-speech-mouth';
+  const speechMouth = mesh(closedCurve(.23,.019,64), voiceMaterial, head, 0, -.235, .722); speechMouth.castShadow = false; speechMouth.receiveShadow = false; speechMouth.visible = false; speechMouth.name = 'expression-speech-mouth';
   const mouthCurves = [smileGlyph,speechMouth].map(value => ({mesh:value,rest:value.geometry.attributes.position.array.slice()}));
   const speechRipples = [];
   for (let index=0; index<2; index++) {const material=basic({color:'#86e8fa',toneMapped:false,transparent:true,opacity:0,depthWrite:false}), ripple=mesh(closedCurve(.25+index*.02,.006),material,head,0,-.27-index*.025,.721); ripple.castShadow=false;ripple.receiveShadow=false;ripple.visible=false;ripple.name='expression-speech-ripple-'+index;speechRipples.push({mesh:ripple,rest:ripple.geometry.attributes.position.array.slice()});}
@@ -161,7 +161,7 @@ export function createAvatarScene({container, quality, onFrame, onContext, onErr
   const orbit = new THREE.Group(); orbit.visible = false; orbit.name = 'retired-aperture-ornament'; eye.add(orbit);
   const statusBars = [];
   for (let i = 0; i < 6; i++) {
-    const material=basic({color:'#8de6f7',toneMapped:false,transparent:true,opacity:0,depthWrite:false}), bar=mesh(closedCurve(.023,.0065,40),material,head,(i-2.5)*.075,-.365,.718); bar.castShadow=false;bar.receiveShadow=false;bar.visible=false;bar.name='expression-speech-bar-'+i;bar.userData.spectralBand=i;statusBars.push({mesh:bar,rest:bar.geometry.attributes.position.array.slice()});
+    const material=basic({color:'#8de6f7',toneMapped:false,transparent:true,opacity:0,depthWrite:false}), bar=mesh(closedCurve(.034,.0085,40),material,head,(i-2.5)*.075,-.235,.724); bar.castShadow=false;bar.receiveShadow=false;bar.visible=false;bar.name='expression-speech-bar-'+i;bar.userData.spectralBand=i;statusBars.push({mesh:bar,rest:bar.geometry.attributes.position.array.slice()});
   }
   // The sculpted body replaces the sphere, brass neck, ball joints, mittens
   // and separate boots. Its flat contact edge stays fixed under every gesture.
@@ -257,7 +257,7 @@ export function createAvatarScene({container, quality, onFrame, onContext, onErr
   }
   const hdrEnvironment = new THREE.DataTexture(hdrPixels, hdrWidth, hdrHeight, THREE.RGBAFormat, THREE.FloatType); hdrEnvironment.mapping = THREE.EquirectangularReflectionMapping; hdrEnvironment.colorSpace = THREE.LinearSRGBColorSpace; hdrEnvironment.needsUpdate = true; textures.add(hdrEnvironment);
   const pmrem = new THREE.PMREMGenerator(renderer), environmentTarget = pmrem.fromEquirectangular(hdrEnvironment);
-  const studioBackground = new THREE.Color('#faf8f2'); scene.background = studioBackground; scene.environment = environmentTarget.texture; scene.environmentIntensity = 1.05; pmrem.dispose();
+  const studioBackground = new THREE.Color('#bccdd6'); scene.background = studioBackground; scene.environment = environmentTarget.texture; scene.environmentIntensity = 1.05; pmrem.dispose();
   let composer = null, bloom = null;
   if (quality.bloom) {
     const target = new THREE.WebGLRenderTarget(1, 1, {type: THREE.HalfFloatType, samples: quality.name === 'high' ? 4 : 0});
@@ -288,32 +288,36 @@ export function createAvatarScene({container, quality, onFrame, onContext, onErr
     // The shared controller has already smoothed gaze, emotional roll and
     // gesture offsets. Do not introduce an independent emotion tilt here.
     head.rotation.set(finiteCue(pose.headPitch, 0, -.09, .09), finiteCue(pose.headYaw, 0, -.1, .1), finiteCue(finiteCue(pose.headRoll, 0, -.09, .09) + finiteCue(pose.expressionHeadRoll, 0, -.025, .025), 0, -.09, .09));
-    const eyeOpen = finiteCue(pose.eyeOpen, 1, .035, 1.08), eyeScaleX = finiteCue(pose.eyeScaleX, 1, .8, 1.2), eyeScaleY = finiteCue(pose.eyeScaleY, 1, .6, 1.2), deformation = finiteCue(pose.eyeDeformation, 0, -.3, .3);
+    const eyeOpen = finiteCue(pose.eyeOpen, 1, .035, 1.12), eyeScaleX = finiteCue(pose.eyeScaleX, 1, .8, 1.2), eyeScaleY = finiteCue(pose.eyeScaleY, 1, .6, 1.2), deformation = finiteCue(pose.eyeDeformation, 0, -.3, .3), eyeRoundness = finiteCue(pose.eyeRoundness,1,.86,1.2), eyeAsymmetry = finiteCue(pose.eyeAsymmetry,0,-.18,.18);
     eye.position.x = finiteCue(pose.gazeX, 0, -.12, .12); eye.position.y = .022 + finiteCue(pose.gazeY, 0, -.08, .08);
-    const browLift = finiteCue(pose.faceBrowLift ?? pose.browLift, 0, -1, 1), browTilt = finiteCue(pose.faceBrowTilt ?? pose.browAngle, 0, -1, 1), eyeSmile = finiteCue(pose.eyeSmile), cheekGlow = finiteCue(pose.cheekGlow), smileCurve = finiteCue(pose.smileCurve), signalLevel = finiteCue(pose.faceSignal);
-    faceBrows.forEach(({mesh: brow, side}) => {brow.position.y = .355 + browLift * .057 + side * browTilt * .038; brow.rotation.z = side * -.08 + browTilt * .18;});
+    const browLift = finiteCue(pose.faceBrowLift ?? pose.browLift, 0, -1, 1), browTilt = finiteCue(pose.faceBrowTilt ?? pose.browAngle, 0, -1, 1), eyeSmile = finiteCue(pose.eyeSmile), cheekGlow = finiteCue(pose.cheekGlow), smileCurve = finiteCue(pose.smileCurve), signalLevel = finiteCue(pose.faceSignal), browConcern = finiteCue(pose.browConcern), browArch = finiteCue(pose.browArch,.28), mouthSkew = finiteCue(pose.mouthSkew,0,-1,1), mouthTension = finiteCue(pose.mouthTension);
+    faceBrows.forEach(({mesh: brow, side, rest}) => {brow.position.y = .355 + browLift * .082 + side * browTilt * .052; brow.rotation.z = side * -.04 + browTilt * .22 - side * browConcern * .14; const attribute = brow.geometry.attributes.position; for (let i=0;i<attribute.count;i++){const at=i*3,x=rest[at],h=THREE.MathUtils.clamp(x/.19,-1,1); attribute.setXYZ(i,x,rest[at+1]+(1-h*h)*(browArch-.28)*.084-side*h*browConcern*.028,rest[at+2]);} attribute.needsUpdate=true; brow.geometry.computeBoundingSphere();});
     const smileClosure = finiteCue(pose.lidClosure, eyeSmile * .08), speechEnergy = speaking && !reducedMotion && pose.reducedMotion !== true && pose.speechSignalValid !== false ? finiteCue(pose.speechEnergy) : 0, warmth = speaking ? 0 : finiteCue(pose.heart);
     const speechActive = speaking && speechEnergy > .015, speechBrightness=finiteCue(pose.speechBrightness), speechBands=Array.from({length:6},(_,index) => speechActive && Array.isArray(pose.speechBands) ? finiteCue(pose.speechBands[index]) : 0), mouthCurve=finiteCue(pose.mouthCurve,(smileCurve-.28)*.11,-.031,.08);
     cheekLights.forEach(cheek => {const scale = .62 + cheekGlow * .48 + speechEnergy * .12; cheek.scale.set(scale, scale, .22);});
-    smileGlyph.scale.set(.92+smileCurve*.24,1,1);speechMouth.scale.copy(smileGlyph.scale);smileGlyph.visible=true;speechMouth.visible=speechActive;
+    const mouthWidth = .94+smileCurve*.24-mouthTension*.13;
+    const semanticY = h => -(1-h*h)*mouthCurve + h*(1-h*h)*mouthSkew*.032;
+    const spectralPeak = Math.max(...speechBands);
+    const spectrumY = h => {if (!speechActive || spectralPeak === 0) return 0; const a=THREE.MathUtils.clamp(h,-1,1); return THREE.MathUtils.clamp((1-a*a)*Math.sqrt(speechEnergy)*speechBands.reduce((sum,band,index)=>sum+band/spectralPeak*Math.sin((a+1)*Math.PI*(index+1)),0)/2,-.35,.35)*.065;};
+    smileGlyph.scale.set(mouthWidth,1,1);speechMouth.scale.copy(smileGlyph.scale);smileGlyph.visible=true;speechMouth.visible=speechActive;
     voiceMaterial.opacity=speechActive ? .18+speechEnergy*.52 : 0;
-    const mouthShape = mouthCurve.toFixed(4);
+    const mouthShape = [mouthCurve,mouthSkew,mouthTension,speechActive,speechEnergy,...speechBands].join(',');
     if (mouthShape !== speechMouthShape) {
       speechMouthShape=mouthShape;
-      for (const {mesh:value,rest} of mouthCurves) {const attribute=value.geometry.attributes.position;for(let i=0;i<attribute.count;i++){const offset=i*3,x=rest[offset],horizontal=THREE.MathUtils.clamp(x/.23,-1,1);attribute.setXYZ(i,x,rest[offset+1]-(1-horizontal*horizontal)*mouthCurve,rest[offset+2]);}attribute.needsUpdate=true;value.geometry.computeVertexNormals();value.geometry.computeBoundingBox();value.geometry.computeBoundingSphere();}
+      for (const {mesh:value,rest} of mouthCurves) {const attribute=value.geometry.attributes.position;for(let i=0;i<attribute.count;i++){const offset=i*3,x=rest[offset],horizontal=THREE.MathUtils.clamp(x/.23,-1,1);attribute.setXYZ(i,x,rest[offset+1]+semanticY(horizontal)+(value===speechMouth?spectrumY(horizontal):0),rest[offset+2]);}attribute.needsUpdate=true;value.geometry.computeBoundingBox();value.geometry.computeBoundingSphere();}
     }
     faceSignals.forEach(signal => {signal.visible=false;});
-    for (const [index,{mesh:ripple,rest}] of speechRipples.entries()) {ripple.visible=speechActive;ripple.material.opacity=speechActive ? speechEnergy*(index ? .1 : .22) : 0;ripple.position.y=-.27-index*.025-speechEnergy*(.012+index*.006);ripple.scale.x=1+speechEnergy*.04;const attribute=ripple.geometry.attributes.position;for(let i=0;i<attribute.count;i++){const offset=i*3,x=rest[offset],h=THREE.MathUtils.clamp(x/(.25+index*.02),-1,1);attribute.setXYZ(i,x,rest[offset+1]-(1-h*h)*mouthCurve,rest[offset+2]);}attribute.needsUpdate=true;ripple.geometry.computeBoundingSphere();}
-    const shapeSignature = [eyeOpen, eyeScaleX, eyeScaleY, deformation, eyeSmile, browTilt, smileClosure].join(','), shapeChanged = shapeSignature !== eyeShapeSignature; eyeShapeSignature = shapeSignature;
+    for (const [index,{mesh:ripple,rest}] of speechRipples.entries()) {ripple.visible=speechActive;ripple.material.opacity=speechActive ? speechEnergy*(index ? .2 : .32) : 0;ripple.position.y=-.235+(index?1:-1)*(.026+speechEnergy*.018);ripple.scale.x=mouthWidth;const attribute=ripple.geometry.attributes.position;for(let i=0;i<attribute.count;i++){const offset=i*3,x=rest[offset],h=THREE.MathUtils.clamp(x/(.25+index*.02),-1,1);attribute.setXYZ(i,x,rest[offset+1]+semanticY(h)+spectrumY(h),rest[offset+2]);}attribute.needsUpdate=true;ripple.geometry.computeBoundingSphere();}
+    const shapeSignature = [eyeOpen, eyeScaleX, eyeScaleY, deformation, eyeSmile, browTilt, smileClosure, eyeRoundness, eyeAsymmetry, browConcern].join(','), shapeChanged = shapeSignature !== eyeShapeSignature; eyeShapeSignature = shapeSignature;
     for (const {aperture: ribbon, apertureGeometry, apertureRest, side} of eyes) {
       if (shapeChanged) {
-        const attribute = apertureGeometry.attributes.position, openness = eyeScaleY * (1 - smileClosure * .12) * (1 - eyeSmile * .12), asymmetry = 1 + side * browTilt * .1;
+        const attribute = apertureGeometry.attributes.position, openness = eyeScaleY * eyeRoundness * (1 - smileClosure * .12) * (1 - eyeSmile * .05), asymmetry = 1 + side * browTilt * .1 + side * eyeAsymmetry;
         for (let i = 0; i < attribute.count; i++) {
           const offset = i * 3, x = apertureRest[offset], y = apertureRest[offset + 1], z = apertureRest[offset + 2], horizontal = x / .224;
           // Blink and semantic expression alter the actual silhouette.
           // Gaze translates the pair; there is no idle geometric wave.
-          const arch = (horizontal * horizontal - .35) * eyeSmile * .052, inquisitiveSlope = horizontal * side * browTilt * .018;
-          attribute.setXYZ(i, x * eyeScaleX * (1 + (1 - eyeOpen) * .035), (y * openness * asymmetry + arch + inquisitiveSlope + Math.abs(x) * deformation * .14) * eyeOpen, z);
+          const arch = (horizontal * horizontal - .35) * eyeSmile * .105, inquisitiveSlope = horizontal * side * browTilt * .025, concernedInner = -side*horizontal*browConcern*.012;
+          attribute.setXYZ(i, x * eyeScaleX * (1 + (1 - eyeOpen) * .035), (y * openness * asymmetry + arch + inquisitiveSlope + concernedInner + Math.abs(x) * deformation * .14) * eyeOpen + eyeSmile*.016*eyeOpen, z);
         }
         attribute.needsUpdate = true; apertureGeometry.computeVertexNormals(); apertureGeometry.computeBoundingBox(); apertureGeometry.computeBoundingSphere();
       }
@@ -328,7 +332,7 @@ export function createAvatarScene({container, quality, onFrame, onContext, onErr
     // Six actual spectral bands drive restrained curved light segments. An
     // amplitude-only legacy caller gets no fabricated spectrum. A held signal
     // has a held shape: there is no wall-clock oscillator or phoneme mapping.
-    statusBars.forEach(({mesh:bar,rest},index) => {const band=speechBands[index];bar.visible=speechActive && band>.002;bar.material.opacity=bar.visible ? .18+Math.min(.5,band*.45+speechEnergy*.12) : 0;bar.material.color.copy(voiceColor).lerp(whiteColor,band*.12);const attribute=bar.geometry.attributes.position;for(let i=0;i<attribute.count;i++){const offset=i*3,x=rest[offset],h=THREE.MathUtils.clamp(x/.023,-1,1);attribute.setXYZ(i,x,rest[offset+1]+(1-h*h)*band*speechEnergy*.045,rest[offset+2]);}attribute.needsUpdate=true;bar.geometry.computeBoundingSphere();});
+    statusBars.forEach(({mesh:bar,rest},index) => {const band=speechBands[index],center=(index-2.5)*.075,wasVisible=bar.visible;bar.visible=speechActive && band>.002;bar.material.opacity=bar.visible ? .18+Math.min(.5,band*.45+speechEnergy*.12) : 0;const attribute=bar.geometry.attributes.position;if(!bar.visible){if(wasVisible){attribute.array.set(rest);attribute.needsUpdate=true;bar.position.x=center;bar.scale.set(1,1,1);bar.geometry.computeBoundingSphere();}return;}bar.material.color.copy(voiceColor).lerp(whiteColor,band*.12);bar.position.x=center*mouthWidth;bar.scale.set(mouthWidth,1+band*speechEnergy*.65,1);for(let i=0;i<attribute.count;i++){const offset=i*3,x=rest[offset],h=THREE.MathUtils.clamp((center+x)/.23,-1,1);attribute.setXYZ(i,x,rest[offset+1]+semanticY(h)+spectrumY(h),rest[offset+2]);}attribute.needsUpdate=true;bar.geometry.computeBoundingSphere();});
     arms.forEach(({group, side, palm}) => {const invitation = state === 'listening' ? .035 : reassuring ? .015 : 0, pointsThisSide = pose.productFocused && Math.sign(pose.targetX || 1) === side, offer = (pointsThisSide || !pose.productFocused && side === 1) && Number.isFinite(pose.offer) ? THREE.MathUtils.clamp(pose.offer, 0, 1) : 0, wave = side === 1 && Number.isFinite(pose.helloWave) ? THREE.MathUtils.clamp(pose.helloWave, -1, 1) : 0, armLift = finiteCue(side === -1 ? pose.armLiftLeft ?? pose.armLift : pose.armLiftRight ?? pose.armLift, 0, 0, .22); group.rotation.z = -side * THREE.MathUtils.clamp(armLift + invitation + offer * .24 + wave * .075, -.09, .32); group.rotation.x = -armLift * .22 - offer * .06; group.rotation.y = side * offer * .09; group.position.z = -.005 + (pointsThisSide ? finiteCue(pose.armReach, 0, 0, .11) : 0); palm.rotation.z = wave * .06;});
     // The studio softbox stays fixed: articulation moves, specular lighting does not.
     key.position.x = 3.2;
