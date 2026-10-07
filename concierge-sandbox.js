@@ -90,8 +90,8 @@
     state.loading=!record.controller.signal.aborted;publish();return record;
   }
   function current(record){return record.version===navigationVersion&&!record.controller.signal.aborted;}
-  function commitPage(kind,handle,push=true){
-    state.pageKind=kind;state.currentHandle=kind==='product'?handle:'';state.focusedHandle='';state.loading=false;
+  function commitPage(kind,handle,push=true,{preserveLoading=false}={}){
+    state.pageKind=kind;state.currentHandle=kind==='product'?handle:'';state.focusedHandle='';if(!preserveLoading)state.loading=false;
     if(push){const query=kind==='product'?'?product='+encodeURIComponent(handle):kind==='bag'?'?cart=1':kind==='checkout'?'?checkout=1':'';history.pushState({},'','/concierge-sandbox.html'+query);}
     publish();document.dispatchEvent(new CustomEvent('brites-concierge:page'));
   }
@@ -145,7 +145,7 @@
   async function searchCatalogue(query,options={},action={}){
     if(typeof query!=='string'||query.length>250)return {ok:false,action:'search',message:'Please use a shorter jewelry search.'};
     if(action.sort&&!SORTS.has(action.sort)||action.filter&&!FILTERS.has(action.filter))return {ok:false,action:'search',message:'Those collection controls are not available.'};
-    const record=begin(options);state.search=clean(query,250);if(action.sort)state.sort=action.sort;if(action.filter)state.filter=action.filter;state.limit=PAGE_SIZE;restoreCollection();publish();status(state.search?'Finding “'+state.search+'” in the live shop…':'Opening the wider live collection…');
+    const leavingPage=state.pageKind!=='catalogue',record=begin(options);state.search=clean(query,250);if(action.sort)state.sort=action.sort;if(action.filter)state.filter=action.filter;state.limit=PAGE_SIZE;restoreCollection();if(leavingPage)commitPage('catalogue','',options.push!==false,{preserveLoading:true});else publish();status(state.search?'Finding “'+state.search+'” in the live shop…':'Opening the wider live collection…');
     try{
       const data=await get('/api/growth/catalogue'+(state.search?'?q='+encodeURIComponent(state.search):'?browse=1'),record.controller.signal);
       if(!current(record))return {ok:false,action:'search',message:'The earlier search was cancelled.'};
