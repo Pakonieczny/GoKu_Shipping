@@ -77,7 +77,7 @@ async function main() {
     const look = m => pg.evaluate(m => {
       const c = document.querySelector(`.sheetCard[data-m="${m}"]`); c.scrollIntoView({ block: 'center' });
       const head = c.querySelector('.shHead'), row = c.querySelector('.shControls'), name = head.querySelector('.name'), prov = head.querySelector('.prov'), pillS = head.querySelector('.pill');
-      const opt = c.querySelector('.sheetOptions > summary'), box = e => { const r = e.getBoundingClientRect(); return { l: r.left, t: r.top, r: r.right, b: r.bottom, w: r.width, h: r.height, cy: r.top + r.height / 2 }; };
+      const opt = c.querySelector('.sheetOptions > .sheetOptionsBtn'), box = e => { const r = e.getBoundingClientRect(); return { l: r.left, t: r.top, r: r.right, b: r.bottom, w: r.width, h: r.height, cy: r.top + r.height / 2 }; };
       const shown = e => e && !e.hidden && e.getClientRects().length > 0 && !e.classList.contains('hidden') && getComputedStyle(e).visibility !== 'hidden';
       const hits = e => { const r = e.getBoundingClientRect(), y = r.top + r.height / 2; return [r.left + 2, r.right - 2].every(x => { const at = document.elementFromPoint(x, y); return !!at && (e === at || e.contains(at)); }); };
       const kids = [...row.children].filter(shown), cardB = box(c), rowB = box(row);
@@ -189,35 +189,35 @@ async function main() {
     await pg.evaluate(() => { const sh = S.sheets.gold14k.pages[0]; delete sh.seq; delete sh.topup; sh.status = 'complete'; sh.charms.forEach(c => { delete c.custom; }); delete sh.solidPick; renderCard(sh); });
     await tick(200);
 
-    // ── 4 · the panel: opens under the title line, inside the card, at the card's right edge; keeps its state across a redraw
-    const panel = m => pg.evaluate(m => {
-      const c = document.querySelector(`.sheetCard[data-m="${m}"]`), d = c.querySelector('.sheetOptions'), p = c.querySelector('.solidOptions'), r = p.getBoundingClientRect(), cr = c.getBoundingClientRect(), hr = c.querySelector('.shHead').getBoundingClientRect(), o = c.querySelector('.sheetOptions>summary').getBoundingClientRect();
-      const name = c.querySelector('.name').getBoundingClientRect(), shown = r.width > 0 && r.height > 0 && getComputedStyle(p).display !== 'none';
-      const at = document.elementFromPoint(r.left + r.width / 2, r.top + 20);
-      return { open: d.open, shown, l: r.left, r: r.right, t: r.top, b: r.bottom, card: [cr.left, cr.right], headB: hr.bottom, optB: o.bottom, nameR: name.right, state: !!Gate.state().optionsOpen?.[m], z: getComputedStyle(c).zIndex, onTop: !!at && p.contains(at), node: (window.__optNode ||= {})[m] ? window.__optNode[m] === d : (window.__optNode[m] = d, true), toasts: getComputedStyle(document.querySelector('.toasts')).visibility };
-    }, m);
+    // ── 4 · the window: Options opens ONE large window (OptionsStudio: about 92vw x 90vh, 1400px at most, a full screen on a phone) holding the card's own
+    //        controls and its four cards; kept across a redraw (the same window, the same controls); Esc and × close it and the focus goes back to Options
+    const win = () => pg.evaluate(() => {
+      const d = document.querySelector('dialog.osDlg'); if (!d) return null; const r = d.getBoundingClientRect(), box = d.querySelector('.solidOptions');
+      return { open: d.open, shown: r.width > 0 && getComputedStyle(d).display !== 'none', w: r.width, h: r.height, vw: innerWidth, vh: innerHeight, cards: box ? [...box.children].map(c => c.dataset.card) : [], same: window.__optDlg ? window.__optDlg === d : (window.__optDlg = d, true), inside: d.contains(document.activeElement), onBtn: false };
+    });
+    const onButton = m => pg.evaluate(m => document.activeElement === document.querySelector(`.sheetCard[data-m="${m}"] .sheetOptionsBtn`), m);
     for (const w of [1440, 390]) {
       await fit(w);
       for (const m of ['rose', 'gold10k', 'gold14k']) {
-        const tag = `${m} @${w}px`; await pg.evaluate(m => document.querySelector(`.sheetCard[data-m="${m}"]`).scrollIntoView({ block: 'start' }), m); await tick(120);
-        await pg.click(`${card(m)} .sheetOptions > summary`); await tick(150);
-        let p = await panel(m);
-        assert.equal(p.open && p.shown && p.state, true, `${tag}: a press on Options opens its panel (and keeps the state)`);
-        assert(p.l >= p.card[0] && p.r <= p.card[1], `${tag}: the panel is inside the card (${p.l}-${p.r} in ${p.card})`);
-        assert(Math.abs(p.card[1] - 15 - p.r) <= 1.5, `${tag}: it hangs from the card's right edge (${p.r} / ${p.card[1] - 15})`);
-        assert(p.t >= p.headB - .5 && p.t >= p.optB, `${tag}: it opens under the title line, so it covers neither the title nor Options (${p.t} >= ${p.headB})`);
-        assert.equal(p.onTop, true, `${tag}: the panel is on top of the controls it covers`); assert.equal(p.toasts, 'hidden', `${tag}: toasts step aside for it, as before`);
-        // a redraw of the card and of every card keeps the same panel, open
+        const tag = `${m} @${w}px`; await pg.evaluate(m => { window.__optDlg = null; document.querySelector(`.sheetCard[data-m="${m}"]`).scrollIntoView({ block: 'start' }); }, m); await tick(120);
+        await pg.click(`${card(m)} .sheetOptionsBtn`); await tick(500);
+        let p = await win();
+        assert(p && p.open && p.shown, `${tag}: a press on Options opens the window`);
+        if (w >= 1000) { assert(Math.abs(p.w - Math.min(1400, p.vw * .92)) <= 2 && Math.abs(p.h - Math.min(1000, p.vh * .9)) <= 2, `${tag}: about 92vw x 90vh, 1400px at most (${p.w} x ${p.h} in ${p.vw} x ${p.vh})`); }
+        else assert(p.w >= p.vw - 2, `${tag}: a full screen on a phone (${p.w} in ${p.vw})`);
+        assert.deepEqual(p.cards.slice(0, 1), ['sheet'], `${tag}: This sheet leads`); assert(p.cards.includes('history') && p.cards.includes('all'), `${tag}: the history and the search are on the same page (${p.cards})`);
+        assert.equal(p.inside, true, `${tag}: the focus is inside the window`);
+        // a redraw of the card and of every card keeps the same window open
         await pg.evaluate(m => { const sh = S.sheets[m].pages[0]; renderCard(sh); refreshAllCards(); Gate.refreshMembership(); Gate.renderCard(sh); }, m); await tick(120);
-        p = await panel(m); assert.equal(p.open && p.shown && p.state && p.node, true, `${tag}: still open, the same node, after a redraw`);
-        await pg.keyboard.press('Escape'); await tick(100); p = await panel(m); assert.equal(p.open || p.state, false, `${tag}: Esc closes it (and the state)`);
-        await pg.click(`${card(m)} .sheetOptions > summary`); await tick(100); assert.equal((await panel(m)).open, true);
-        await pg.click(`${card(m)} .sheetOptionsClose`); await tick(100); p = await panel(m); assert.equal(p.open || p.state, false, `${tag}: × closes it`);
+        p = await win(); assert(p && p.open && p.same, `${tag}: still open, the same window, after a redraw`);
+        await pg.keyboard.press('Escape'); await tick(400); assert.equal(await win(), null, `${tag}: Esc closes it`); assert.equal(await onButton(m), true, `${tag}: and the focus is back on Options`);
+        await pg.click(`${card(m)} .sheetOptionsBtn`); await tick(400); assert((await win()).open);
+        await pg.click('dialog.osDlg [data-os="close"]'); await tick(400); assert.equal(await win(), null, `${tag}: × closes it`);
         // closed it stays closed across a redraw
-        await pg.evaluate(m => { renderCard(S.sheets[m].pages[0]); refreshAllCards(); }, m); await tick(80); assert.equal((await panel(m)).open, false);
+        await pg.evaluate(m => { renderCard(S.sheets[m].pages[0]); refreshAllCards(); }, m); await tick(80); assert.equal(await win(), null);
       }
     }
-    console.log('  ✓ the panel opens under the title line, inside the card, hung from its right edge, on top; kept across a redraw (the same node); Esc and × close it; at 1440 and 390px');
+    console.log('  ✓ the Options window: about 92vw x 90vh, kept across a redraw (the same window); Esc and × close it, the focus goes back to Options; at 1440 and 390px');
 
     // ── 5 · the old waiting line of a run of the earlier release rule is wider than a title line: it stands in the controls row, and Options returns to the title line after
     await fit(1440);
@@ -226,7 +226,7 @@ async function main() {
         const sh = S.sheets.gold10k.pages[0], c = sh.cardEl, g = c.querySelector('[data-r="gate"]'), where = () => ({ inRow: g.parentElement === c.querySelector('.shControls'), inHead: g.parentElement === c.querySelector('.shHead'), hidden: g.classList.contains('hidden'), text: g.textContent.trim().slice(0, 60), opt: !!c.querySelector('.sheetOptions') });
         const saved = B.run; B.run = { runId: 'run-old', status: 'running', releasePolicy: 1, step: 'nest' }; Gate.state().lastReleased.gold10k = new Date().toISOString().slice(0, 10);
         let legacy, modern; try { Gate.renderCard(sh); legacy = where(); } finally { B.run = saved; delete Gate.state().lastReleased.gold10k; }
-        Gate.renderCard(sh); modern = where(); modern.summary = !!c.querySelector('.shHead .sheetOptions > summary');
+        Gate.renderCard(sh); modern = where(); modern.summary = !!c.querySelector('.shHead .sheetOptions > .sheetOptionsBtn');
         return { legacy, modern };
       });
       assert.deepEqual([both.legacy.inRow, both.legacy.inHead, both.legacy.hidden, both.legacy.opt], [true, false, false, false], `the earlier rule's waiting line stands in the controls row (${both.legacy.text})`);
@@ -239,12 +239,12 @@ async function main() {
       for (const w of [1440, 390]) {
         await fit(w);
         for (const [m, n] of [['rose', 'rg'], ['gold14k', '14k'], ['gold10k', '10k'], ['gold', 'gf']]) { await pg.evaluate(m => document.querySelector(`.sheetCard[data-m="${m}"]`).scrollIntoView({ block: 'center' }), m); await tick(120); await (await pg.$(card(m))).screenshot({ path: path.join(shots, `options-title-${n}-${w}.png`) }); }
-        // the panel open, under the title line
+        // the Options window open
         await pg.evaluate(() => document.querySelector('.sheetCard[data-m="rose"]').scrollIntoView({ block: 'start' })); await tick(120);
-        await pg.click(`${card('rose')} .sheetOptions > summary`); await tick(250);
+        await pg.click(`${card('rose')} .sheetOptions > .sheetOptionsBtn`); await tick(250);
         const r = await pg.evaluate(() => { const b = document.querySelector('.sheetCard[data-m="rose"]').getBoundingClientRect(); return { x: Math.max(0, b.left - 6), y: Math.max(0, b.top - 6), w: Math.min(innerWidth, b.width + 12), h: Math.min(innerHeight - Math.max(0, b.top - 6), 640) }; });
         await pg.screenshot({ path: path.join(shots, `options-title-rg-panel-${w}.png`), clip: { x: r.x, y: r.y, width: r.w, height: r.h } });
-        await pg.click(`${card('rose')} .sheetOptions > summary`); await tick(150);
+        await pg.keyboard.press('Escape'); await tick(250);
       }
     }
 

@@ -7203,7 +7203,7 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
 <!-- The order in hand right now (opened here = working), for the console's live stations board (station-live-order.js). Optional: without it nothing changes. -->
 <script src="station-live-order.js?v=20261005-et2"></script>
 <!-- Phone scans that arrive while nobody is signed in wait here and load, in order, right after the next sign-in (station-scan-queue.js). -->
-<script src="station-scan-queue.js?v=20261006-int1"></script>
+<script src="station-scan-queue.js?v=20261007-fr1"></script>
 <script>
   (function () {
     /* The PIN login keeps employee_id (the PIN itself) and employee_name. A session carries the name only. */
@@ -7235,5 +7235,6 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
     try { if (window.StationSession) StationSession.init({ station: "design", device: "design-message", person: person, signOut: signOut }); } catch (_) {}
   })();
 </script>
+<script src="station-fresh.js?v=20261007-fr1"></script><!-- station-fresh.js: one quiet reload to the newest deploy after somebody uses the station (Paul, 7 Oct 2026) -->
 </body>
 </html>

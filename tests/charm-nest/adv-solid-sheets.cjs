@@ -80,7 +80,7 @@ const { start } = require('./bridge-server.cjs');
       showPage('gold14k', 0);
       document.querySelector('.sheetCard[data-m="gold14k"]').scrollIntoView({ block: 'start' });
     });
-    const card = '.sheetCard[data-m="gold14k"]', opts = async () => { if (!(await page.locator(`${card} .sheetOptions[open]:visible`).count())) await page.click(`${card} .sheetOptions > summary:visible`); };
+    const card = '.sheetCard[data-m="gold14k"]', opts = async () => { if (!(await page.locator(`dialog.osDlg[open]`).count())) await page.click(`${card} .sheetOptionsBtn:visible`); };
 
     /* ── 1 · the merge, as it is seen ── */
     {
@@ -99,8 +99,8 @@ const { start } = require('./bridge-server.cjs');
         } }).observe(document.body, { childList: true, subtree: true });
       });
       await opts();
-      await page.click(`${card} [data-solid="merge-move"]:visible`);
-      await page.click(`${card} [data-solid="merge-go"]:visible`);
+      await page.click(`dialog.osDlg [data-solid="merge-move"]:visible`);
+      await page.click(`dialog.osDlg [data-solid="merge-go"]:visible`);
       await page.waitForFunction(() => __fx.add && performance.now() - __fx.add > 700 && document.querySelector('.sheetCard[data-m="gold14k"] .mergeFx .mergeFxPiece'), null, { timeout: 8000 });
       const pose = () => page.evaluate(() => [...document.querySelectorAll('.mergeFx .mergeFxPiece')].map(n => getComputedStyle(n).transform).join('|'));
       const mid = await pose(); await page.waitForTimeout(120);
@@ -124,8 +124,8 @@ const { start } = require('./bridge-server.cjs');
     {
       await page.evaluate(() => { Object.assign(window.__fx, { add: 0, gone: 0, lateGone: 0, glow: false, plus: false, plusAt: 0, back: [], tags: null, frames: [], long: [] }); window.__room = 1; window.__late = 4200; window.__asked = performance.now(); });
       await opts();
-      await page.click(`${card} [data-solid="merge-move"]:visible`);
-      await page.click(`${card} [data-solid="merge-go"]:visible`);
+      await page.click(`dialog.osDlg [data-solid="merge-move"]:visible`);
+      await page.click(`dialog.osDlg [data-solid="merge-go"]:visible`);
       await page.waitForFunction(() => __fx.gone, null, { timeout: 15000 });
       const during = await page.evaluate(() => ({ plus: __fx.plus, back: __fx.back.length, tags: __fx.tags }));
       assert.equal(during.plus, false, 'no count while the nest has not said which fit: ' + JSON.stringify(during));
@@ -148,20 +148,20 @@ const { start } = require('./bridge-server.cjs');
         for (const p of [p1, p2]) delete p.solidPick; CN.showPage('gold14k', 0);
       });
       const picks = () => page.evaluate(() => CN.pagesOf('gold14k').map(p => Gate.solidSelected('gold14k', p)));
-      const tick = async () => { await opts(); await page.click(`${card} [data-solid="include"]:visible`); await page.waitForSelector('dialog.splitDlg[open]', { timeout: 3000 }); };
+      const tick = async () => { await opts(); await page.click(`dialog.osDlg [data-solid="include"]:visible`); await page.waitForSelector('dialog.splitDlg[open]', { timeout: 3000 }); };
       await tick();
-      const ask = await page.evaluate(() => { const d = document.querySelector('dialog.splitDlg'); return { text: d.textContent, keys: [...d.querySelectorAll('[data-k]')].map(b => b.dataset.k + ':' + b.textContent), panel: !!document.querySelector('.sheetCard[data-m="gold14k"] .sheetOptions[open]') }; });
+      const ask = await page.evaluate(() => { const d = document.querySelector('dialog.splitDlg'); return { text: d.textContent, keys: [...d.querySelectorAll('[data-k]')].map(b => b.dataset.k + ':' + b.textContent), panel: !!document.querySelector('dialog.osDlg[open]') }; });
       assert.match(ask.text, /14K Gold Sheet 2/); assert.match(ask.text, /4170000100/);
       assert.deepEqual(ask.keys, ['cancel:Cancel', 'all:Include both sheets']);
       assert.equal(ask.panel, false, 'the Options panel closed first (never a pop-up over a pop-up)');
       await page.click('dialog.splitDlg [data-k="cancel"]');
       assert.deepEqual(await picks(), [false, false], 'Cancel: left as it was');
-      await opts(); assert.equal(await page.isChecked(`${card} [data-solid="include"]:visible`), false, 'the box is unticked again');
-      await page.click(`${card} [data-solid="include"]:visible`); await page.waitForSelector('dialog.splitDlg[open]', { timeout: 3000 });
+      await opts(); assert.equal(await page.isChecked(`dialog.osDlg [data-solid="include"]:visible`), false, 'the box is unticked again');
+      await page.click(`dialog.osDlg [data-solid="include"]:visible`); await page.waitForSelector('dialog.splitDlg[open]', { timeout: 3000 });
       assert.equal(await page.locator('dialog.splitDlg [data-k="one"]').count(), 0, 'no "only this sheet": sheets that share an order go in together');
       await page.click('dialog.splitDlg [data-k="all"]');
       assert.deepEqual(await picks(), [true, true], 'Include both');
-      await opts(); await page.click(`${card} [data-solid="include"]:visible`); await page.waitForSelector('dialog.splitDlg[open]', { timeout: 3000 });   // taken out: Sheet 2 is in too, so it asks, and takes both out
+      await opts(); await page.click(`dialog.osDlg [data-solid="include"]:visible`); await page.waitForSelector('dialog.splitDlg[open]', { timeout: 3000 });   // taken out: Sheet 2 is in too, so it asks, and takes both out
       await page.click('dialog.splitDlg [data-k="all"]');
       assert.deepEqual(await picks(), [false, false], 'Take out both');
       await tick(); await page.click('dialog.splitDlg [data-k="all"]');
@@ -175,8 +175,8 @@ const { start } = require('./bridge-server.cjs');
       const mm = pt => Math.round(pt * 25.4 / 72 * 100) / 100;
       const before = await page.evaluate(() => { const p2 = CN.pagesOf('gold14k')[1]; p2.laserDoneAt = Date.now() - 60000; return JSON.stringify(p2.placements); });
       await opts();
-      await page.fill(`${card} [data-solid="w"]:visible`, '120');
-      await page.click(`${card} [data-solid="size"]:visible`);
+      await page.fill(`dialog.osDlg [data-solid="w"]:visible`, '120');
+      await page.click(`dialog.osDlg [data-solid="size"]:visible`);
       await page.waitForFunction(() => Math.abs(CN.S.settings.stock.gold14k[0] * 25.4 - 120) < 1e-6, null, { timeout: 5000 });
       await page.waitForTimeout(800);
       const after = await page.evaluate(() => { const [p1, p2] = CN.pagesOf('gold14k'); return { p1: CN.stockFor('gold14k', p1).wPt, p2: CN.stockFor('gold14k', p2).wPt, p2h: CN.stockFor('gold14k', p2).hPt, placements: JSON.stringify(p2.placements) }; });

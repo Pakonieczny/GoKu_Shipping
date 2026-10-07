@@ -1100,7 +1100,7 @@
   <script src="station-session.js?v=20261006-st3"></script>
   <script src="station-activity.js?v=20261006-st2"></script>
   <!-- Phone scans that arrive while nobody is signed in wait here and load, in order, right after the next sign-in (station-scan-queue.js). -->
-  <script src="station-scan-queue.js?v=20261006-int1"></script>
+  <script src="station-scan-queue.js?v=20261007-fr1"></script>
   <script>
     /* Who is signed in here: several people at once (Paul, 6 Oct 2026: one welds while another matches, same page), each under
        a task, "welding" or "matching". The page keeps them in localStorage.weld_people = [{ name, task, at }] (names and tasks
@@ -7647,5 +7647,6 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
 <script src="https://cdn.jsdelivr.net/npm/qz-tray@2.2.5/qz-tray.js"></script>
 
 
+<script src="station-fresh.js?v=20261007-fr1"></script><!-- station-fresh.js: one quiet reload to the newest deploy after somebody uses the station (Paul, 7 Oct 2026) -->
 </body>
 </html>
