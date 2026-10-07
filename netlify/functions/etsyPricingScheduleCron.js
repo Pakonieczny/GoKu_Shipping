@@ -44,7 +44,8 @@ exports.handler = async () => {
   // Auto-resume a run that paused on budget exhaustion, once the Toronto day
   // rolled over and budget is available again.
   try {
-    const pausedQ = await db.collection("EtsyPricing_Runs").where("status", "==", "paused").limit(3).get();
+    // COST: only budget_paused is looked at (a run document also carries every queued listing id).
+    const pausedQ = await db.collection("EtsyPricing_Runs").where("status", "==", "paused").limit(3).select("budget_paused").get();
     for (const doc of pausedQ.docs) {
       const r = doc.data();
       if (!r.budget_paused) continue;
@@ -71,7 +72,8 @@ exports.handler = async () => {
   // Build the queue: prepared (both toggles set by the user) and not yet
   // batched — which by design includes listings that FAILED in a previous
   // run, so they get re-processed automatically.
-  const all = await db.collection("EtsyPricing_Listings").get();
+  // COST: only these three flags are looked at below, so only they are read (a listing document also carries its whole inventory snapshot).
+  const all = await db.collection("EtsyPricing_Listings").select("chain_set", "engrave_set", "batched").get();
   const ids = [];
   all.forEach(d => { const x = d.data(); if (x.chain_set && x.engrave_set && !x.batched) ids.push(d.id); });
 

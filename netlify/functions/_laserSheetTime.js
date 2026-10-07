@@ -29,6 +29,7 @@ const COLL = "Laser_Sheet_Times", SESSIONS = "Station_Sessions";
 const DONE = "laserSheetDone", UNDONE = "laserSheetUndone";
 const SESSION_GONE_MS = 15 * 60000;            // a page with no beat for this long is "quiet": most stations close it, the Laser station keeps it until its own limit (stillOpen)
 const LOOKBACK_MS = 26 * 3600e3;               // a Laser sign-in older than this cannot cover a completion: everybody is signed out at midnight (26 h covers the longest day)
+const LAST_NEAR_MS = 3 * 3600e3;               // lastFor looks this far back first
 const TOLERANCE_ABS_S = 10, TOLERANCE_REL = 0.05;   // the page's figure and the server's agree within 10 s or 5 %
 const MAX_SECONDS = 24 * 3600;
 const LIMIT = { sessions: 1500, prior: 800, range: 4000, rows: 400 };
@@ -231,8 +232,15 @@ async function recordUndone(db, FV, prefix, o) {
 /** A person's newest standing completion of the last 26 hours, for the page (the previous sheet after a reload or on another computer). */
 async function lastFor(db, prefix, by, now) {
   const key = personKey(by); if (!key) return null;
-  const rows = standing(await readSince(db, prefix, now - LOOKBACK_MS)).filter(d => d.personKey === key);
-  const d = rows[0]; if (!d) return null;
+  // The newest standing completion is nearly always within the last few hours: look there first (a few dozen records) and read the whole 26 hours only when
+  // that finds none. The answer is the same (a completion and the undo that cancels it are both inside any window that reaches back to the completion); the page
+  // asks this every 5 minutes for as long as a Laser person is signed in (Firebase cost, FC6).
+  let d = null;
+  for (const span of [LAST_NEAR_MS, LOOKBACK_MS]) {
+    d = standing(await readSince(db, prefix, now - span)).filter(x => x.personKey === key)[0];
+    if (d) break;
+  }
+  if (!d) return null;
   return { at: ms(d.at), sheetId: d.sheetId, sheet: d.sheet || "", seconds: d.seconds == null ? null : d.seconds, startedFrom: d.startedFrom || "unknown" };
 }
 

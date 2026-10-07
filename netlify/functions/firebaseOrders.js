@@ -3,6 +3,7 @@ const admin = require("./firebaseAdmin");
 const db    = admin.firestore();
 
 const COMPLETED_COLL = "Design_Completed Orders";
+const DC = { stage: (...a) => require("./_designCompleted").stage(...a), list: (...a) => require("./_designCompleted").list(...a) };   // the completion ledger's index (production only; loaded when a completion is written or the ledger is read, as the other helpers are)
 const REALTIME_COLL  = "Design_RealTime_Selected_Orders";
 /* sandbox: ?sandbox=1 keeps every read and write in Sandbox_-prefixed copies of these collections (and of Brites_Orders),
    so a sorter run against the emulated Etsy never touches a real lock, claim, ledger entry or note */
@@ -175,7 +176,7 @@ async function sessionWrite(s) {
     if (lastInput > 0) doc.lastInputAt = lastInput;
     if (prev && computerLabel && computerLabel !== prev.computerLabel) doc.computerLabel = computerLabel;
     tx.set(ref, doc, { merge: true });
-    return [200, { success: true, id, startAt, lastSeenAt, endAt, endReason, minutes, ended: endAt != null }];
+    return [200, { success: true, id, startAt, lastSeenAt, endAt, endReason, minutes, ended: endAt != null }, { created: !prev }];   // (the third part is for the door only, never sent: a beat that makes the document is a sign-in the console must hear of, RV1)
   });
 }
 
@@ -235,7 +236,9 @@ exports.handler = async (event) => {
       if (body.session && typeof body.session === "object" && !Array.isArray(body.session)) {
         if (String(event.body || "").length > 4096) return { statusCode: 413, headers: CORS, body: JSON.stringify({ error: "session event too large" }) };
         if (!flood.allow(event, 1)) return { statusCode: 429, headers: CORS, body: JSON.stringify({ error: "too many requests, try again in a minute" }) };
-        const [statusCode, out] = await sessionWrite(body.session);
+        const [statusCode, out, made] = await sessionWrite(body.session);
+        // a start, an end, or a beat that ended the session is a change the console's readers look for (a plain beat only moves lastSeenAt: not counted; FC5, _employeeRev.js; production only, never throws)
+        if (statusCode === 200 && out && (body.session.event !== "beat" || (out.ended && out.startAt != null) || (made && made.created))) await require("./_employeeRev").afterWrite(db, PREFIX, ["ses"], admin.firestore.FieldValue);
         return { statusCode, headers: CORS, body: JSON.stringify(out) };
       }
       /* what a person did at a station (station-activity.js): a batch of small events, each created once, with the person's
@@ -360,22 +363,25 @@ exports.handler = async (event) => {
         };
       }
 
-      /* 0) Bulk set completed → Design_Completed Orders */
+      /* 0) Bulk set completed → Design_Completed Orders (and, in production, its index: the same batch, see _designCompleted.js) */
       if (Array.isArray(completedIds) && completedIds.length) {
-        const batch = db.batch();
-        completedIds.forEach((id) => {
-          const ref = col(COMPLETED_COLL).doc(String(id));
-          batch.set(
-            ref,
-            {
-              orderId     : String(id),
-              completed   : true,
-              completedAt : admin.firestore.FieldValue.serverTimestamp()
-            },
-            { merge: true }
-          );
-        });
-        await batch.commit();
+        for (let i = 0; i < completedIds.length; i += 200) {
+          const part = completedIds.slice(i, i + 200), batch = db.batch();
+          part.forEach((id) => {
+            const ref = col(COMPLETED_COLL).doc(String(id));
+            batch.set(
+              ref,
+              {
+                orderId     : String(id),
+                completed   : true,
+                completedAt : admin.firestore.FieldValue.serverTimestamp()
+              },
+              { merge: true }
+            );
+          });
+          if (!PREFIX) DC.stage(batch, db, admin.firestore.FieldValue, part, true);
+          await batch.commit();
+        }
         return {
           statusCode: 200,
           headers: CORS,
@@ -389,12 +395,15 @@ exports.handler = async (event) => {
 
       /* 0b) Bulk UN-set completed → delete from Design_Completed Orders */
       if (Array.isArray(uncompleteIds) && uncompleteIds.length) {
-        const batch = db.batch();
-        uncompleteIds.forEach((id) => {
-          const ref = col(COMPLETED_COLL).doc(String(id));
-          batch.delete(ref);
-        });
-        await batch.commit();
+        for (let i = 0; i < uncompleteIds.length; i += 200) {
+          const part = uncompleteIds.slice(i, i + 200), batch = db.batch();
+          part.forEach((id) => {
+            const ref = col(COMPLETED_COLL).doc(String(id));
+            batch.delete(ref);
+          });
+          if (!PREFIX) DC.stage(batch, db, admin.firestore.FieldValue, part, false);
+          await batch.commit();
+        }
         return {
           statusCode: 200,
           headers: CORS,
@@ -688,13 +697,17 @@ exports.handler = async (event) => {
 
       /* ?designCompleted=1 → list of completed receipt IDs from Design_Completed Orders */
       if (event.queryStringParameters?.designCompleted === "1") {
-        const snap = await col(COMPLETED_COLL).select().get();
+        /* FC3b (cost): the ledger holds every order ever completed (37 k documents, one billed read each). Production answers from its index
+           (32 small documents, _designCompleted.js: written in the same batch as every ledger write, counted against the ledger every 15
+           minutes, reconciled against the whole ledger once a week, and the ledger itself is read whenever the index is missing or doubtful); the sandbox reads its small
+           ledger as before. The answer is the same ids in the same order. */
+        const out = await DC.list(db, admin.firestore.FieldValue, { prefix: PREFIX });
         return {
           statusCode: 200,
           headers: CORS,
           body: JSON.stringify({
             success      : true,
-            orderNumbers : snap.docs.map((d) => d.id)
+            orderNumbers : out.ids
           })
         };
       }

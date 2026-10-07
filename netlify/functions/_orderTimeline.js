@@ -110,8 +110,72 @@ async function recordedOf(c, id) {
 }
 // what a cut-short read left out, for the page to say plainly: { types (each cut at `kept`), kept, capped }; null: nothing
 const leftOutOf = r => (r.truncated ? { types: r.skipped.slice(0, 20), kept: PER_TYPE, capped: !!r.capped } : null);
+/* ── the change probe (Firebase cost, 7 Oct 2026) ──────────────────────────────────────────────────────────────────────────
+   An open order window asked for the whole timeline every 2.5 s: the recorded events (every document, up to 2000), the cancel record,
+   and the derivation's ten queries and reads, so every poll read dozens of documents (a busy order: over a hundred) and carried
+   their bytes, for an answer that had not changed. probeRev() answers ONE short digest of the update times of the very documents
+   get() reads (their update time changes with every write, whoever made it), with no field of them read back (a mask of a field no
+   document has: about 0 bytes) and the two lists that can be long counted instead of read: the recorded events and the Team's
+   messages (count(): one read per 1,000). A page that holds the digest of its last answer sends it back (ifRev) and gets
+   { unchanged: true } when it has not moved, which is almost always; a page that wants one to keep asks wantRev.
+   What it cannot see: a recorded event or message rewritten in place with the same key and a different content (count stays).
+   The page reads the whole answer again at least once a minute, which bounds that. The digest is taken BEFORE the data is read, so a
+   write in between can only cost one more read, never hide a change. A failure of any part answers null (no digest: read in full).
+   Keep the sources alike with deriveEvents (round 1 and round 2 below). */
+const NONE = ["_r"];   // a field no document has: update time and (almost) no bytes
+async function probeRev(db, id, opts = {}) {
+  const P = opts.prefix || "", sandbox = !!P, SB = opts.sandboxed instanceof Set ? opts.sandboxed : SANDBOXED_DEFAULT;
+  const col = name => db.collection((SB.has(name) || STATION_SANDBOXED.has(name) ? P : "") + name);
+  const forms = [id].concat(Number.isSafeInteger(+id) ? [+id] : []);
+  const one = (ref, mask) => db.getAll(ref, { fieldMask: mask || NONE }).then(r => r[0]);
+  const none = q => q.select(...NONE);
+  // (RV2, 7 Oct 2026: a cancel's step on a sheet is rewritten IN PLACE under the same key as it goes from "still on" to "set aside" to "removed" (cancelSteps,
+  //  charmNestLibrary), so the count of the order's events stays and the digest was blind to it. The cancel record is written just BEFORE its steps: a poll between
+  //  the two writes held a whole read with the old step, and nothing moved the digest again until the page's minute-long full read. The steps are therefore read here
+  //  for their update times: an equality on two fields (no composite index, the shape designSent's query in charmNestLibrary already uses), one read when the order
+  //  has none, one each otherwise. Other in-place rewrites (backPut's stamp adding the sheet to an approval's event) stay with the page's full read.)
+  const [can, arr, pools, sheets, customs, reads, evN, msgN, done, arch, rc, steps] = await Promise.all([
+    one(db.collection(P + CANCELLED).doc(id)),
+    one(col("Charm_Nest_Arrivals").doc(id)),
+    col("Charm_Pool").where("orderId", "in", forms).limit(CAP.pools).select("poolId", "setId", "lineKey", "transactionId").get(),
+    col("Charm_Nest_Sheets").where("orders", "array-contains-any", forms).limit(CAP.sheets).select("setId", "metal", "rosePlanHash", "roseCutAt", "roseStockId").get(),
+    col("Charm_Custom_Orders").where("receiptId", "in", forms).limit(CAP.custom).select("key").get(),
+    none(db.collection("Charm_Nest_CustomRead").where("order", "==", id).limit(CAP.reads)).get(),
+    colOf(db, P).where("orderId", "==", id).count().get(),
+    col("Brites_Orders").doc(id).collection("messages").count().get(),
+    one(col("Design_Completed Orders").doc(id)),
+    one(col("Design_Order_Archive").doc(id), ["setId"]),
+    sandbox ? null : one(db.collection("EtsyMail_Receipts").doc(id)),
+    none(colOf(db, P).where("orderId", "==", id).where("type", "==", "cancelStep").limit(CAP.steps)).get()
+  ]);
+  const parts = [`e:${evN.data().count}`, `m:${msgN.data().count}`, `x:${Placement.revOf(can)}`, `a:${Placement.revOf(arr)}`, `d:${Placement.revOf(done)}`, `v:${Placement.revOf(arch)}`, `r:${rc ? Placement.revOf(rc) : "-"}`];
+  const put = (kind, d) => parts.push(`${kind}:${d.id}:${Placement.revOf(d)}`);
+  steps.docs.forEach(d => put("k", d)); pools.docs.forEach(d => put("p", d)); sheets.docs.forEach(d => put("s", d)); customs.docs.forEach(d => put("c", d)); reads.docs.forEach(d => put("g", d));
+  // round 2: what those name (as deriveEvents does: the backs of its pieces, its sets, the cuts of its Rose Gold sheets, the readings of lines the first query missed)
+  const poolDocs = pools.docs.map(d => ({ id: d.id, ...d.data() })), sheetDocs = sheets.docs.map(d => ({ id: d.id, ...d.data() })), customDocs = customs.docs.map(d => ({ id: d.id, ...d.data() }));
+  const poolIds = [...new Set(poolDocs.map(p => String(p.poolId || p.id).slice(0, 120)))].filter(Boolean).slice(0, CAP.backs);
+  const archSet = arch && arch.exists ? arch.get("setId") : null;
+  const setIds = [...new Set([...sheetDocs.map(d => d.setId), ...poolDocs.map(p => p.setId), archSet].filter(v => v && typeof v === "string"))].slice(0, CAP.sets * 2);
+  const cuts = sheetDocs.filter(d => d.metal === "rose" && (d.rosePlanHash || d.roseCutAt) && d.roseCutAt && d.roseStockId && typeof d.roseStockId === "string").slice(0, CAP.rose);
+  const readKeys = new Set(reads.docs.map(d => d.id));
+  const lineKeys = [...new Set([...poolDocs.map(p => p.lineKey || (p.transactionId ? `${id}_${p.transactionId}` : "")), ...customDocs.map(c => c.key || c.id)].filter(k => k && /^[\w-]{3,120}$/.test(k) && !readKeys.has(k)))].slice(0, 20);
+  const get = (refs, kind) => (refs.length ? db.getAll(...refs, { fieldMask: NONE }).then(r => r.forEach(d => put(kind, d))) : null);
+  await Promise.all([
+    get(poolIds.map(p => col("Charm_Pool_Back").doc(p)), "b"),
+    get(setIds.map(x => col("Charm_Nest_Sets").doc(x)), "t"),
+    get(cuts.map(d => col("Charm_Nest_Rose_Stock").doc(d.roseStockId).collection("cuts").doc(d.id)), "u"),
+    get(lineKeys.map(k => db.collection("Charm_Nest_CustomRead").doc(k)), "g")
+  ]);
+  return Placement.digest(parts);
+}
 async function get(db, orderId, opts = {}) {
   const id = orderIdOf(orderId); if (!id) return { error: "orderId required" };
+  // (the digest first, then the data: see probeRev. Asked only by a page that follows the order; any failure leaves it out and the answer is read in full)
+  let rev = null;
+  if ((opts.ifRev || opts.wantRev) && opts.derive !== false) {
+    rev = await probeRev(db, id, opts).catch(() => null);
+    if (rev && opts.ifRev && String(opts.ifRev) === rev) return { orderId: id, unchanged: true, rev, now: Date.now() };
+  }
   const [snap, can, derived] = await Promise.all([
     recordedOf(colOf(db, opts.prefix), id),
     db.collection((opts.prefix || "") + CANCELLED).doc(id).get(),
@@ -129,6 +193,7 @@ async function get(db, orderId, opts = {}) {
   if (errors && errors.length) out.derived.errors = errors.slice(0, 12);
   if (timedOut) out.derived.timedOut = true;
   if (placementRev) { out.placementRev = placementRev; if (placement) out.placement = placement; }
+  if (rev && !timedOut && !(errors && errors.length)) out.rev = rev;   // (an answer with a part missing is no baseline: the page reads in full again)
   return out;
 }
 /** Which of these orders are cancelled, with who/when/why: what a station asks right after a scan. */
@@ -173,7 +238,7 @@ const DERIVE_MS = 2500, DEDUPE_MS = 3 * 60 * 1000;
 // charmNestLibrary's SANDBOXED (with Charm_Custom_Orders, which it adds), for a caller that does not pass its own
 const SANDBOXED_DEFAULT = new Set(["Charm_Nest_Rose_Stock", "Charm_Nest_Sheets", "Charm_Pool", "Charm_Pool_Back", "Charm_Nest_Sets", "Charm_Nest_Counters", "Charm_Nest_Runs", "Charm_Nest_Run_Lines", "Charm_Nest_Run_Live", "Charm_Nest_Release", "Charm_Nest_Arrivals", "Charm_Nest_Cancelled", "Design_Bridge", "Charm_Custom_Orders"]);
 const STATION_SANDBOXED = new Set(["Brites_Orders", "Design_Completed Orders", "Design_Order_Archive"]);
-const CAP = { pools: 200, sheets: 40, custom: 40, reads: 40, messages: 120, backs: 100, sets: 20, rose: 6 };
+const CAP = { pools: 200, sheets: 40, custom: 40, reads: 40, messages: 120, backs: 100, sets: 20, rose: 6, steps: 60 };
 const SHEET_FIELDS = ["id", "metal", "metalLabel", "sheetIndex", "page", "setId", "setSeq", "fileBase", "stock", "poolIds", "orders", "label", "archived", "draft", "laserDoneAt", "laserDoneBy", "roseCutAt", "roseStockId", "rosePlanHash", "createdAt", "cardStartedAt", "updatedAt", "runId"];
 const POOL_FIELDS = ["poolId", "orderId", "transactionId", "lineKey", "runId", "setId", "sheetId", "sheetName", "sku", "material", "copy", "state", "orderDate", "createdAt", "updatedAt", "removedAt", "removedBy", "removedReason", "movedAt", "movedBy", "movedFrom", "movedTo", "engraveApprovedBy", "committedAt", "heldAt", "heldBy", "heldReason", "repooledAt"];
 const CUSTOM_FIELDS = ["key", "receiptId", "transactionId", "sku", "title", "kind", "completedAt", "completedBy", "how", "printedAt", "printedBy", "lastPrintedAt", "lastPrintedBy", "prints", "stamps"];
@@ -637,4 +702,4 @@ function whereOf(events, cancelled, hint = {}) {
   if (by) bits.push(`by ${by}`);
   return { stage, label, text: s(bits.join(" · "), 200), sheet, sheetId, setId, station, device, by, at, since, cut, designed, cancelled: isCancelled, step, rail: RAIL };
 }
-module.exports = { RAIL, RAIL_KEYS, labelStepOf, cancelStepOf, stepId, COL, TYPES, MILESTONES, STATION_TYPES, STATIONS, orderIdOf, clean, add, get, cancelCheck, deriveEvents, dedupe, sameEvent, chronology, byTime, whereOf, msOf, SANDBOXED_DEFAULT, STATION_SANDBOXED };
+module.exports = { RAIL, RAIL_KEYS, labelStepOf, cancelStepOf, stepId, COL, TYPES, MILESTONES, STATION_TYPES, STATIONS, orderIdOf, clean, add, get, probeRev, cancelCheck, deriveEvents, dedupe, sameEvent, chronology, byTime, whereOf, msOf, SANDBOXED_DEFAULT, STATION_SANDBOXED };

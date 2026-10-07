@@ -35,7 +35,8 @@ async function putIndex(db, FV, body) {
   const skus = [...bySku.keys()], existing = new Map();
   for (let i = 0; i < skus.length; i += 200) {
     const part = skus.slice(i, i + 200);
-    const snaps = await db.getAll(...part.map(s => db.collection(INDEX).doc(s)));
+    // (only what the rules below look at of an entry already there: its master, its size, its operator overrides)
+    const snaps = await db.getAll(...part.map(s => db.collection(INDEX).doc(s)), { fieldMask: ["masterHash", "masterName", "widthPt", "heightPt", "engravableBy", "upSource", "sizes"] });
     snaps.forEach((sn, j) => { if (sn.exists) existing.set(part[j], sn.data()); });
   }
   let batch = db.batch(), pending = 0;

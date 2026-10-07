@@ -23,7 +23,9 @@ const bridge=fs.readFileSync('charm-nest-bridge.js','utf8'),station=fs.readFileS
  // Only visible production cards can poll; quiet/hidden tabs make zero reads.
  const visible={_laserSheets:['visible'],_laserSet:{setId:'set'},getBoundingClientRect:()=>({top:10,bottom:200,width:100,height:190}),querySelectorAll:()=>[]};const offscreen={...visible,_laserSheets:['offscreen'],getBoundingClientRect:()=>({top:2000,bottom:2200,width:100,height:200})};
  const p={window:{},polling:false,lastPoll:0,Date:{now:()=>1000000},S:{mode:'library',cloud:{ok:true}},document:{hidden:false,querySelectorAll:()=>[visible,offscreen]},innerHeight:800,Set,records:new Map(),changed:()=>{},console};let polls=[];p.api=async(_,b)=>{polls.push(b);return {sheets:[],sets:[]}};
- const start=bridge.indexOf('  async function poll(force=false)');vm.runInNewContext(bridge.slice(start,bridge.indexOf('  function saved(sh)',start))+';this.poll=poll;',p);
+ // (the live read's poll takes (force, now) and the cards in view come from shown(), both in the bridge now: the stand-in loads them with the live-state stubs poll touches)
+ p.live={seq:0,applied:0};p.applyStatus=()=>{};p.nudge=()=>{};
+ const shownAt=bridge.indexOf('  function shown(){'),start=bridge.indexOf('  async function poll(force=false,now=false)');vm.runInNewContext(bridge.slice(shownAt,bridge.indexOf('  /** An answer, taken in',shownAt))+bridge.slice(start,bridge.indexOf('  function saved(sh)',start))+';this.poll=poll;',p);
  await p.poll();await p.poll();assert.equal(polls.length,1);assert.deepEqual(Array.from(polls[0].sheetIds),['visible']);p.document.hidden=true;await p.poll(true);assert.equal(polls.length,1);
  // Known arrivals are not re-read on later checks.
  const a={Date,Object,Set,state:{seen:{}},S:{cloud:{ok:true}},at:id=>a.state.seen[id],interval:()=>600000,save:()=>{},paint:()=>{}};let sent=[];a.api=async(_,b)=>{sent.push(b.orders);return {firstSeen:Object.fromEntries(b.orders.map(o=>[o.id,123])),count24:2,count1:2}};
@@ -50,7 +52,8 @@ const bridge=fs.readFileSync('charm-nest-bridge.js','utf8'),station=fs.readFileS
  const ctx={CORS:{},COMPLETED_COLL:'completed',parseIds:s=>s.split(','),admin:{firestore:{FieldPath:{documentId:()=> '__name__'}}}};
  ctx.col=()=>({where:(field,op,ids)=>{
    assert.equal(field,'__name__');assert.equal(op,'in');assert(ids.length<=10);
-   return {get:async()=>{queries++;return {docs:ids.filter(id=>['3','14'].includes(id)).map(id=>({id}))};}};
+   const q={get:async()=>{queries++;return {docs:ids.filter(id=>['3','14'].includes(id)).map(id=>({id}))};},select:()=>q};   // (select: the lookup asks for ids only, FC6)
+   return q;
  }});
 
  vm.runInNewContext('this.lookup=async function(event){'+source.slice(start,end)+'};',ctx);

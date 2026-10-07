@@ -151,7 +151,7 @@ function slim(d) {
     outputs: d.outputs ? Object.fromEntries(["ai", "pdf", "labelled", "report"].filter(k => d.outputs[k] && d.outputs[k].url).map(k => [k, d.outputs[k].url])) : {},
     stock: d.stock || null, poolIds: d.poolIds || [], engraving:d.engraving || {}, orderReadiness:d.orderReadiness || {}, laser:d.laser || null,
     backs: (d.backPool || []).map(bk => ({ poolId: bk.poolId || null, previewWPt:bk.previewWPt || null, previewHPt:bk.previewHPt || null, pageWPt:bk.pageWPt || null, pageHPt:bk.pageHPt || null, sheetId:bk.sheetId || d.id, invalidated:!!bk.invalidated, copy:bk.copy || null, approvedAt:bk.approvedAt || null, engravingSeals:EngravingSeals.merge(bk), order: bk.order || null, sku: bk.sku || null, text: bk.text || null, lines: bk.lines || null, approvedBy: bk.approvedBy || null, verified:bk.verified || null, outputs:bk.outputs || null, capMm: bk.capMm || null, png: bk.outputs && bk.outputs.png ? bk.outputs.png.url : null, ai: bk.outputs && bk.outputs.ai ? bk.outputs.ai.url : null })),
-    names: str(d.names, 2000), sources: (d.sources || []).map(s => ({ name: s.name, hash: s.hash || null })), runId: d.runId || null, page: num(d.page) || 1,
+    names: str(d.names, 2000), sources: (d.sourcesLite || d.sources || []).map(s => ({ name: s.name, hash: s.hash || null })), runId: d.runId || null, page: num(d.page) || 1,
     setId: d.setId || null, setSeq: num(d.setSeq) || null, sheetIndex: num(d.sheetIndex) || null, orders: (d.orders || []).slice(0, 500), backCount: (d.backPool || []).length, label: d.label ? { files: (d.label.files || []).map(f => ({ path: f.path, url: f.url, payload:f.payload || null, orders:f.orders || [], part:f.part || 1 })) } : null,
     // cut on the laser and marked so (op_laserDone), and the listings its pieces were bought from (the Library's search)
     laserDoneAt: num(d.laserDoneAt) || null, laserDoneBy: d.laserDoneBy || null, processSeals: Readiness.processStamps(d), processReady: !!d.processReady, stepStamps: Readiness.stepStamps(d), stepState: d.stepState && typeof d.stepState === "object" ? d.stepState : null, laserSetPending: !!d.laserSetPending, laserHold: d.laserHold && num(d.laserHold.at) > 0 ? { at: num(d.laserHold.at), by: str(d.laserHold.by, 80), note: str(d.laserHold.note, 200) } : null, listings: (d.listings || []).slice(0, 500),
@@ -166,7 +166,15 @@ function slim(d) {
    its up to 900 KB, and a list of 500 sheets used to read all of it to send none of it. */
 const SLIM_SHEET = ["id", "sheetId", "roseStockId", "roseCutAt", "rosePlanHash", "solidIncluded", "draft", "releaseFull", "folder", "fileBase", "saving", "dirty", "metal", "metalLabel", "day", "status", "endedBy", "charmCount", "placedCount", "rejectCount", "density", "freePt2", "verification", "preview", "previewAt", "outputs", "stock", "poolIds", "backPool", "backs", "names", "sources", "runId", "page", "setId", "setSeq", "sheetIndex", "orders", "label", "archived", "laserDoneAt", "laserDoneBy", "listings", "cardStartedAt", "cleanup", "createdAt", "updatedAt", "processSeals", "processReady", "stepStamps", "stepState", "archivedLaserDoneAt", "archivedLaserDoneBy", "activityAt", "laserHold"];
 /** What the Library's live read (op_laserStatus) reads of a sheet: SLIM_SHEET, and the sheet's own number (readiness labels a sheet that is in no set by it). */
-const LASER_SHEET = SLIM_SHEET.concat(["seq"]);
+const LASER_SHEET = SLIM_SHEET.filter(f => f !== "sources").concat(["seq", "sourcesLite"]);
+/** What decides whether a sheet is on the Library's Current list (op_listSheets with excludeDone): archived, completed, its set (filingRecords), the filters and the order. */
+const FILTER_SHEET = ["archived", "laserDoneAt", "setId", "draft", "solidIncluded", "metal", "runId", "updatedAt"];
+/** A sheet's sources are, with each one's download links, the largest field its entry reads (and its entry keeps a name and a hash of each): putSheet keeps that short
+    list beside them (sourcesLite) and the live read takes it instead. A record saved before that has no short list, so its sources are read, as they always were. */
+async function withSources(records) {
+  const want = records.filter(r => !Array.isArray(r.sourcesLite)), byId = new Map(want.map(r => [r.id, r]));
+  for (let i = 0; i < want.length; i += 100) for (const s of await db.getAll(...want.slice(i, i + 100).map(r => col(SHEETS).doc(r.id)), { fieldMask: ["sources"] })) { const x = s.exists && s.data().sources; if (x && byId.has(s.id)) byId.get(s.id).sources = x; }
+}
 /** Readiness counts a record's placements where it has no placedCount (Readiness.sheet): read for those alone. */
 async function withPlacements(rows) {
   const want = rows.filter(([, d]) => !(+d.placedCount)), byId = new Map(want);
@@ -182,7 +190,7 @@ async function sheetEntries(rows, budget) {
     let chunk = rows.slice(i, i + 100);
     const unread = chunk.filter(r => r.length === 1);
     if (unread.length) {
-      const read = new Map((await db.getAll(...unread.map(r => col(SHEETS).doc(r[0])), { fieldMask: SLIM_SHEET })).filter(s => s.exists).map(s => [s.id, s.data()]));
+      const read = new Map((await db.getAll(...unread.map(r => col(SHEETS).doc(r[0])), { fieldMask: SLIM_SHEET })).filter(s => s.exists).map(s => [s.id, { ...s.data(), id: s.id }]));
       chunk = chunk.map(r => (r.length === 1 ? [r[0], read.get(r[0])] : r)).filter(r => r[1] && !r[1].archived);
     }
     await withPlacements(chunk);
@@ -546,7 +554,7 @@ async function op_laserStatus(b) {
   // siblings too, so it follows the same complete-set gate as the Sets view.
   const have=new Set(records.map(s=>s.id)),missing=[...new Set(sets.flatMap(s=>s.sheetIds))].filter(id=>isId(id)&&!have.has(id)).slice(0,Math.max(0,500-records.length));
   for(let i=0;i<missing.length;i+=100){const docs=await db.getAll(...missing.slice(i,i+100).map(id=>col(SHEETS).doc(id)),{fieldMask:LASER_SHEET});for(const d of docs){if(revs)revs['s:'+d.id]=revOf(d);if(d.exists&&!d.data().archived)records.push({...d.data(),id:d.id});}}
-  await withPlacements(records.map(r=>[r.id,r]));
+  await withPlacements(records.map(r=>[r.id,r]));await withSources(records);
   const added=[];
   let wrote=false;
   // Only the active production view asks to record transitions. Ordinary status reads stay read-only.
@@ -639,14 +647,23 @@ async function op_listingPhotos(b) {
   return {images,states,retryAts,etsyCalls,retryAt};
 }
 
+/* The newest 200 calibration rows, as the Sorter reads them once when it opens (and again at each cloud-probe retry): 200 reads and
+   the rows' bytes each time. A row is written as a sheet is nested (op_putCalibration) and only steers the saturation estimate of the
+   next sheet, so an instance keeps what it read for CAL_KEEP_MS (and drops it when it writes one itself). Production's own copy:
+   the calibration collection is shared by the sandbox, which does not write it. */
+const CAL_KEEP_MS = 10 * 60000;
+let calKept = null;
+async function calibrationRows() {
+  if (calKept && Date.now() - calKept.at >= 0 && Date.now() - calKept.at < CAL_KEEP_MS) return calKept.rows;
+  const cal=await db.collection(CAL).orderBy("createdAt","desc").limit(200).get();
+  const rows=cal.docs.map(d=>{const r=d.data();return {sheetId:r.sheetId,metal:r.metal,count:num(r.count),cv:num(r.cv),largestFrac:num(r.largestFrac),density:num(r.density),placedAll:!!r.placedAll};});
+  calKept = { at: Date.now(), rows };
+  return rows;
+}
 async function op_ping(b={}) {
   // Count index entries instead of downloading whole collections on every save.
   const [s,c]=await Promise.all([col(SHEETS).where("archived","==",false).count().get(),db.collection(LIB).count().get()]);
-  let calibration;
-  if(b.calibration!==false){
-    const cal=await db.collection(CAL).orderBy("createdAt","desc").limit(200).get();
-    calibration=cal.docs.map(d=>{const r=d.data();return {sheetId:r.sheetId,metal:r.metal,count:num(r.count),cv:num(r.cv),largestFrac:num(r.largestFrac),density:num(r.density),placedAll:!!r.placedAll};});
-  }
+  const calibration=b.calibration!==false?await calibrationRows():undefined;
   return {ok:true,sheets:s.data().count,charms:c.data().count,...(calibration?{calibration}:{})};
 }
 async function op_lookupCharms(b) {
@@ -664,12 +681,14 @@ async function op_putCharms(b) {
   if (PREFIX) return { ok: true, count: 0, skipped: "the sandbox reads the shared charm library and does not write to it" };
   const rows = (b.charms || []).filter(c => c && isHash(c.hash)).slice(0, MAX_PUT);
   let batch = db.batch(), n = 0, count = 0;
+  // (the charms' rank of name read together and with that one field, where each was read whole, one after another)
+  const known = new Map();
+  for (let i = 0; i < rows.length; i += 100) for (const sn of await db.getAll(...rows.slice(i, i + 100).map(c => db.collection(LIB).doc(c.hash)), { fieldMask: ["namedBy"] })) known.set(sn.id, sn.exists ? sn.data() : null);
   for (const c of rows) {
     const ref = db.collection(LIB).doc(c.hash);
     const doc = { hash: c.hash, updatedAt: FV.serverTimestamp(), lastUsed: FV.serverTimestamp(), timesUsed: FV.increment(1) };
     // never overwrite an operator's name with a model's or a fallback's
-    const existing = await ref.get();
-    const ex = existing.exists ? existing.data() : null;
+    const ex = known.get(c.hash) || null;
     const incomingRank = { operator: 3, claude: 2, library: 1, fallback: 0 }[c.namedBy] ?? 0;
     const existingRank = ex ? ({ operator: 3, claude: 2, library: 1, fallback: 0 }[ex.namedBy] ?? 0) : -1;
     if (c.name && incomingRank >= existingRank) { doc.name = str(c.name, 80); doc.slug = str(c.slug || c.name, 80); doc.label = str(c.label, 200); doc.confidence = num(c.confidence) || null; doc.namedBy = str(c.namedBy, 20); }
@@ -742,6 +761,8 @@ async function op_putSheet(b) {
   delete doc.laserHold; delete doc.flowHistory;
   // the time the picture was saved is the server's: a record that carries a picture (the save after its upload) stamps it, nothing else does
   delete doc.previewAt; if (s.outputs && s.outputs.preview && s.outputs.preview.url) doc.previewAt = Date.now();
+  // the short list of the sheet's sources that its Library entry reads (see withSources); the sources themselves stay as they were
+  delete doc.sourcesLite; if (Array.isArray(s.sources)) doc.sourcesLite = s.sources.slice(0, 500).filter(x => x && typeof x === "object").map(x => ({ ...(x.name == null ? {} : { name: String(x.name).slice(0, 300) }), hash: x.hash ? String(x.hash).slice(0, 80) : null }));
   // the listings its pieces were bought from, as the Library's listing search reads them (array-contains)
   if (Object.prototype.hasOwnProperty.call(s, "listings")) doc.listings = [...new Set((Array.isArray(s.listings) ? s.listings : []).map(v => String(v)).filter(v => /^\d{1,24}$/.test(v)))].slice(0, 500);
   // Physical stock and immutable cuts are only changed through transactional stock operations.
@@ -782,13 +803,22 @@ async function op_putSheet(b) {
       const prev = backs.get(bk.poolId);
       if (!prev || (+bk.approvedAt || 0) >= (+prev.approvedAt || 0)) backs.set(bk.poolId, bk);
     }
-    for (const [id,bk] of backs) {
-      const saved = await tx.get(col(BACK).doc(id));
-      if (saved.exists && ((saved.data().invalidated && (+saved.data().approvedAt || 0) >= (+bk.approvedAt || 0)) || (+saved.data().invalidatedAt || 0) >= (+bk.approvedAt || 0))) backs.delete(id);
+    /* An approval this record already holds as it stands needs no look: a back is invalidated, and its sheet's record changed, in
+       one commit (op_backInvalidate, putBacks, poolTakeOff), so the record that lists it says it is live. Only a back the
+       record does not hold (a page's newer approval, or one a stale page would put back) is read, all together and with the
+       three fields that decide it, where each was read whole, one after another, at every save of the sheet. */
+    const held = new Map((Array.isArray(old.backPool) ? old.backPool : []).map(bk => [bk && bk.poolId, +(bk && bk.approvedAt) || 0]));
+    const look = [...backs].filter(([id, bk]) => !(held.has(id) && held.get(id) === (+bk.approvedAt || 0)));
+    for (let i = 0; i < look.length; i += 100) {
+      const part = look.slice(i, i + 100), saved = await txGetAll(tx, part.map(([id]) => col(BACK).doc(id)), ["invalidated", "approvedAt", "invalidatedAt"]);
+      saved.forEach((sv, j) => { const [id, bk] = part[j]; if (sv.exists && ((sv.data().invalidated && (+sv.data().approvedAt || 0) >= (+bk.approvedAt || 0)) || (+sv.data().invalidatedAt || 0) >= (+bk.approvedAt || 0))) backs.delete(id); });
     }
     doc.backPool = [...backs.values()].map(sheetBack);
     const bytes = Buffer.byteLength(JSON.stringify(Object.assign({}, old, doc)));
     if (bytes > SHEET_DOC_BYTES) return { error: `Sheet ${s.id} was not saved: its record would be ${Math.round(bytes / 1024).toLocaleString("en-US")} KB, over the ${SHEET_DOC_BYTES / 1000} KB one sheet record may hold (Firestore keeps at most 1 MiB in one document). Move some of its charms to another sheet and save again.`, status: 413 };
+    // a completed sheet whose set, draft or archive state this save changes changes the Completed count (doneCounts)
+    const decides = d => [d.setId || "", !!d.draft, d.solidIncluded === false, !!d.archived].join("|");
+    if (num(old.laserDoneAt) > 0 && decides(Object.assign({}, old, doc)) !== decides(old)) DONE_TOUCH = true;
     tx.set(ref, doc, {merge:true});
     return null;
   });
@@ -804,7 +834,11 @@ async function op_listSheets(b) {
     let q = b.runId ? col(SHEETS).where("runId", "==", b.runId) : b.setId ? col(SHEETS).where("setId", "==", b.setId) : col(SHEETS).orderBy("day", "desc");
     if (b.from && /^\d{4}-\d{2}-\d{2}$/.test(b.from)) q = q.where("day", ">=", b.from);
     if (b.to && /^\d{4}-\d{2}-\d{2}$/.test(b.to)) q = q.where("day", "<=", b.to);
-    const snap = await q.limit(limit).select(...SLIM_SHEET).get();
+    // The Current tab (excludeDone) reads the newest `limit` sheets by day to leave out the ones the laser has cut, which are most of them:
+    // those are read for the few fields that decide it (FILTER_SHEET), and only the sheets that are listed are read for their entries
+    // (sheetEntries reads a row given as [id] itself), not all `limit` of them whole to throw most away (Firebase cost, FC2).
+    const slimOnly = !!b.excludeDone;
+    const snap = await q.limit(limit).select(...(slimOnly ? FILTER_SHEET : SLIM_SHEET)).get();
     // (excludeDone: the Library's Current tab, which leaves out what the laser has cut, and its readiness is not worked out)
     const records=await filingRecords(snap.docs.map(d=>({...d.data(),id:d.id})));
     rows = records.filter(d=>!d.archived && !(b.excludeDone && Readiness.filed(d))).map(d=>[d.id,d]);
@@ -812,6 +846,7 @@ async function op_listSheets(b) {
     if (b.setId) rows = rows.filter(([, d]) => d.setId === b.setId);
     if (b.runId) rows = rows.filter(([, d]) => d.runId === b.runId);
     rows.sort(([, x], [, y]) => (ms(y.updatedAt) || 0) - (ms(x.updatedAt) || 0));
+    if (slimOnly) rows = rows.map(([id]) => [id]);
   }
   const { sheets, rest } = await sheetEntries(rows, answerBudget());
   return { sheets, next: rest.length ? { sheets: rest } : null, truncated: rest.length > 0 };
@@ -972,6 +1007,7 @@ async function op_putCalibration(b) {
   const row = { sheetId: str(r.sheetId, 80), metal: str(r.metal, 12), count: num(r.count), cv: num(r.cv), largestFrac: num(r.largestFrac), density: num(r.density), placedAll: !!r.placedAll, clearancePt: num(r.clearancePt), createdAt: FV.serverTimestamp() };
   if (/^[\w.\-]{1,80}$/.test(row.sheetId)) await db.collection(CAL).doc(row.sheetId).set(row);
   else await db.collection(CAL).add(row);
+  calKept = null;
   return { ok: true };
 }
 async function op_getCalibration(b) {
@@ -1072,6 +1108,10 @@ const POOL = "Charm_Pool", BACK = "Charm_Pool_Back", SETS = "Charm_Nest_Sets", C
 const SANDBOX_MAPS = [ALIASES, NODESIGN, OPTMAP];
 const isDay = d => /^\d{4}-\d{2}-\d{2}$/.test(String(d || ""));
 const isPoolId = s => /^\d{5,20}_\d{5,20}_\d{1,3}$/.test(String(s || ""));
+/* The fields of a pool row that the writes below look at before they change it (what a row says of its run, its state, its sheet and its
+   take-off marks; and what the order's timeline names of the sheet a piece leaves): read with only these, never the whole row. */
+const POOL_PUT_FIELDS = ["runId", "state", "sheetId", "setId", "sheetName", "updatedAt", "repooledAt", "heldAt", "removedAt", "heldBy", "removedBy"];
+const POOL_EVENT_FIELDS = ["state", "sheetId", "sheetName", "setId", "material", "metal", "orderId", "lineKey", "transactionId", "removedAt", "movedAt", "committedAt"];
 const tokenUrl = async (path) => { if (!path) return null; try { const bucket = admin.storage().bucket(); const [meta] = await bucket.file(path).getMetadata(); let t = meta.metadata && meta.metadata.firebaseStorageDownloadTokens; if (!t) return null; t = String(t).split(",")[0]; return "https://firebasestorage.googleapis.com/v0/b/" + encodeURIComponent(bucket.name) + "/o/" + encodeURIComponent(path) + "?alt=media&token=" + encodeURIComponent(t); } catch (_) { return null; } };
 async function withLinks(e) { if (!e) return e; const jobs = []; if (e.aiPath) jobs.push(tokenUrl(e.aiPath).then(u => { if (u) e.aiUrl = u; })); if (e.thumbPath) jobs.push(tokenUrl(e.thumbPath).then(u => { if (u) e.thumbUrl = u; })); for (const s of Object.values(e.sizes || {})) { if (s.aiPath) jobs.push(tokenUrl(s.aiPath).then(u => { if (u) s.aiUrl = u; })); if (s.thumbPath) jobs.push(tokenUrl(s.thumbPath).then(u => { if (u) s.thumbUrl = u; })); } await Promise.all(jobs); return e; }
 
@@ -1139,11 +1179,16 @@ async function op_masterPatch(b) {
 async function op_masterPutFile(b) { return Master.putFile(db, FV, b); }
 /** The 200 master files indexed last, newest first (it took the first 200 Firestore handed out and sorted those), as many
     as fit in one answer (a file's record keeps lists of up to 2,000 SKUs); and the index's signature (masterIndexSig). */
-async function op_masterListFiles() {
+async function op_masterListFiles(b = {}) {
+  /* A page that holds the files sends the signature they came with (ifFilesSig: how many records, the newest one's stamp;
+     every write of a file record stamps indexedAt, a removal changes the count): unchanged, they are not read or sent again
+     (the background reload asked for every file record, with the lists of up to 2,000 SKUs each, at every orders check). */
+  const filesSig = await collSig(Master.FILES, "indexedAt");
+  if (filesSig && b.ifFilesSig === filesSig) return { unchanged: true, filesSig, index: await masterIndexSig() };
   const [snap, index] = await Promise.all([db.collection(Master.FILES).orderBy("indexedAt", "desc").limit(200).get(), masterIndexSig()]);
   const rows = snap.docs.map(d => { const r = d.data(); r.indexedAt = ms(r.indexedAt); return r; }), budget = answerBudget();
   let n = 0; while (n < rows.length && budget.fits(rows[n])) n++;
-  return { files: rows.slice(0, n), index, truncated: n < rows.length };
+  return Object.assign({ files: rows.slice(0, n), index, truncated: n < rows.length }, filesSig ? { filesSig } : {});
 }
 /** Remove one SKU from the index (a stray record, a SKU that should never have been read). */
 async function op_masterRemoveSku(b) {
@@ -1264,7 +1309,7 @@ async function op_poolPut(b) {
      Timeout" page came back as the reason the orders were held (25 Sep). A row sent twice is written once, merged. */
   const byId = new Map(); for (const p of rows) byId.set(p.poolId, Object.assign(byId.get(p.poolId) || {}, p));
   const list = [...byId.values()], found = [];
-  for (let i = 0; i < list.length; i += 100) found.push(...await db.getAll(...list.slice(i, i + 100).map(p => col(POOL).doc(p.poolId))));
+  for (let i = 0; i < list.length; i += 100) found.push(...await db.getAll(...list.slice(i, i + 100).map(p => col(POOL).doc(p.poolId)), { fieldMask: POOL_PUT_FIELDS }));
   /* A line already on a saved sheet is never placed again (Paul, 29 Sep: an order's design went on its sheet twice): a
      row whose record puts it on a sheet (not taken off since: abandoned or superseded), and whose sheet's saved record
      still lists it, is not written over by a fresh placement (no sheet id). It is answered as placed, with where it is. */
@@ -1304,7 +1349,7 @@ async function poolTakeOff(ids, patch, told) {
     const part = ids.slice(i, i + 200), want = new Set(part);
     const made = await db.runTransaction(async tx => {
       // (every read first: a transaction writes after it has read)
-      const rows = told ? await txGetAll(tx, part.map(id => col(POOL).doc(id))) : [], sheets = new Map();
+      const rows = told ? await txGetAll(tx, part.map(id => col(POOL).doc(id)), POOL_EVENT_FIELDS) : [], sheets = new Map();
       for (let j = 0; j < part.length; j += 30) for (const d of (await tx.get(col(SHEETS).where("poolIds", "array-contains-any", part.slice(j, j + 30)).select(...TAKE_OFF_SHEET_FIELDS))).docs) sheets.set(d.id, Object.assign(d.data(), { id: d.id }));
       const at = FV.serverTimestamp(), where = new Map(), seen = new Map(), touched = [];
       for (const s of sheets.values()) for (const id of s.poolIds || []) if (want.has(String(id)) && !where.has(String(id))) where.set(String(id), s);
@@ -1331,7 +1376,7 @@ async function op_poolUpdate(b) {
     return { ok: true, count: ids.length, sheets: done.edited };
   }
   let before = null;
-  if (told) try { before = new Map(); for (let i = 0; i < ids.length; i += 100) (await db.getAll(...ids.slice(i, i + 100).map(id => col(POOL).doc(id)))).forEach((s, j) => before.set(ids[i + j], s.exists ? s.data() : null)); }
+  if (told) try { before = new Map(); for (let i = 0; i < ids.length; i += 100) (await db.getAll(...ids.slice(i, i + 100).map(id => col(POOL).doc(id)), { fieldMask: POOL_EVENT_FIELDS })).forEach((s, j) => before.set(ids[i + j], s.exists ? s.data() : null)); }
   catch (e) { before = null; console.warn("[charmNestLibrary] pool rows not read for the timeline:", e.message || e); }
   let batch = db.batch(), n = 0;
   for (const id of ids) { batch.set(col(POOL).doc(id), Object.assign({}, b.patch || {}, { updatedAt: FV.serverTimestamp() }), { merge: true }); if (++n >= 400) { await batch.commit(); batch = db.batch(); n = 0; } }
@@ -1416,7 +1461,8 @@ const REV_COLL = "Charm_Nest_Rev";
 const NO_GEN_BUMP = new Set(["ping", "laserStatus", "flowState", "getOrderPieces", "getSheet", "listSheets", "getCalibration", "getJob", "jobList", "getAgent", "customReadGet", "masterGet", "masterGetMany", "masterList", "masterListFiles",
   "poolList", "poolGet", "backList", "sandboxStatus", "setGet", "setList", "runGet", "runList", "history", "releaseGet", "bridgeLog", "cancelList", "cancelCheck", "timelineAdd", "timelineGet", "aliasGet", "noDesignGet", "optionMapGet",
   "customSheetGet", "customGet", "sessionsList", "laserSheetLast", "sharedOrders", "laserDoneList", "findSheets", "listingPhotos", "getShapeGuidance", "roseGet", "roseList", "lookupCharms", "listCharms", "backPreview", "sheetPdf",
-  "runPut", "runArchive", "releasePut", "arrivalRecord"]);
+  "runPut", "runArchive", "releasePut", "arrivalRecord", "putCharms", "renameCharm", "putShapeGuidance", "putCalibration", "aliasPut", "noDesignPut", "noDesignDelete", "optionMapPut",
+  "sandboxCancel", "sandboxPut", "sandboxReset", "sandboxStream"]);   // (FC3b: the four sandbox ops write only Sandbox_ records and the sandbox's own meta, whatever the request says, so they never touch what a production placement answer is made from)
 async function placementGen() {
   if (PREFIX) return null;
   try { const s = await db.collection(REV_COLL).doc("placement").get(); return s.exists ? Number((s.data() || {}).n) || 0 : 0; }
@@ -1424,8 +1470,11 @@ async function placementGen() {
 }
 async function bumpPlacementGen(op) {
   if (PREFIX || NO_GEN_BUMP.has(op)) return;
-  try { await db.collection(REV_COLL).doc("placement").set({ n: FV.increment(1), at: FV.serverTimestamp(), op: String(op || "").slice(0, 40) }, { merge: true }); }
-  catch (e) { console.warn("[charmNestLibrary] placement gen not raised:", (e && e.message) || e); }
+  // (a second try after a short wait: a counter that is not raised leaves readers on `unchanged` until their once-a-minute full read)
+  for (let tries = 0; tries < 2; tries++) {
+    try { await db.collection(REV_COLL).doc("placement").set({ n: FV.increment(1), at: FV.serverTimestamp(), op: String(op || "").slice(0, 40) }, { merge: true }); return; }
+    catch (e) { console.warn("[charmNestLibrary] placement gen not raised:", (e && e.message) || e); if (!tries) await new Promise(r => setTimeout(r, 120)); }
+  }
 }
 const msRow = r => { r.updatedAt = ms(r.updatedAt); r.createdAt = ms(r.createdAt); if (r[Placement.REPOOLED]) r[Placement.REPOOLED] = ms(r[Placement.REPOOLED]) || 1; return r; };
 async function readOrderPieces(rd, ids, sheetIds) {
@@ -1486,10 +1535,12 @@ async function op_sandboxPut(b) {
   await db.collection(SANDBOX).doc("current").set(doc);
   return { ok: true, snapshot: doc };
 }
-async function op_sandboxStatus() {
+async function op_sandboxStatus(b) {
   const doc = await db.collection(SANDBOX).doc("current").get();
-  const counts = {};
-  for (const name of [...SANDBOXED, ...SANDBOX_MAPS]) { const s = await db.collection("Sandbox_" + name).count().get(); counts[name] = s.data().count; }
+  // light: the snapshot alone (a production page that is not in the sandbox only needs to know one was taken): one read, no counts
+  if (b && b.light === true) return { ok: true, light: true, snapshot: doc.exists ? doc.data() : null, records: {} };
+  const counts = {}, names = [...SANDBOXED, ...SANDBOX_MAPS];
+  (await Promise.all(names.map(name => db.collection("Sandbox_" + name).count().get()))).forEach((s, i) => { counts[names[i]] = s.data().count; });   // (one aggregation read per 1,000 records of each, asked all at once)
   return { ok: true, snapshot: doc.exists ? doc.data() : null, records: counts };
 }
 /* The reset works against a clock: a sandbox that streamed for days holds more than one call can delete. A call deletes
@@ -1517,9 +1568,10 @@ async function sandboxWipe(budgetMs) {
   const names = ["Brites_Orders", "Design_Completed Orders", "Design_RealTime_Selected_Orders", "Design_Order_Archive", ...SANDBOXED, ...SANDBOX_MAPS, "Order_Timeline", "Charm_Nest_Rose_Rehearsals", SHAPE_CACHE, AGENT, "Station_Sessions", "Station_Activity", "Efficiency_Daily"];   // (the play's timeline events go with the records they tell of)
   const SUBS = { Design_Bridge: ["log"], Brites_Orders: ["messages"], Charm_Nest_Rose_Stock: ["cuts"] };   // deleting a document never deletes its subcollections
   // an order's messages can sit under a Brites_Orders document that was never written (a message posted on its own),
-  // which no query of that collection returns: they go with the order's other records, which name it, and last of all
-  // with the collection's list of such parents (listDocuments names a document that only holds a subcollection too)
-  const KIN = new Set(["Design_Completed Orders", "Design_RealTime_Selected_Orders", "Design_Order_Archive", "Charm_Nest_Arrivals"]), kinDone = new Set();
+  // which no query of that collection returns: they go with the collection's list of such parents, last of all
+  // (listDocuments names a document that only holds a subcollection too). They used to be looked for once more under every
+  // document of four order families first (one query each, a read each, thousands in a long replay) for the same orders.
+  const KIN = new Set(), kinDone = new Set();
   const wipe = async q => { for (;;) { if (late()) return false; const s = await q.select().limit(300).get(); if (s.empty) return true; const batch = db.batch(); s.docs.forEach(d => batch.delete(d.ref)); await batch.commit(); deleted += s.size; if (s.size < 300) return true; } };
   const more = () => ({ ok: true, more: true, deleted, files });
   // which collections still hold anything, asked all at once: a call that follows another goes straight to the work left
@@ -1671,7 +1723,7 @@ async function op_purgeHistory(b) {
   }
   const names = [RUNS, RUN_LINES, RUN_LIVE, SHEETS, SETS, POOL, BACK, COUNTERS, RELEASE, BRIDGE];
   const SUBS = { [BRIDGE]: ["log"] };
-  const wipe = async q => { let n = 0; for (;;) { const s = await q.limit(300).get(); if (s.empty) break; const batch = db.batch(); s.docs.forEach(d => batch.delete(d.ref)); await batch.commit(); n += s.size; if (s.size < 300) break; } return n; };
+  const wipe = async q => { let n = 0; for (;;) { const s = await q.select().limit(300).get(); if (s.empty) break; const batch = db.batch(); s.docs.forEach(d => batch.delete(d.ref)); await batch.commit(); n += s.size; if (s.size < 300) break; } return n; };
   const docs = {};
   // production's own part, exactly as it was: its history families only (never its seals, custom orders or cancel records)
   for (const name of names) {
@@ -1705,7 +1757,7 @@ async function op_restoreSheet(b) {
   const doc = { id, metal: rep.metal, metalLabel: rep.metalLabel || null, day, folder: name, fileBase: name, seq, runId, setId, setSeq: seq, sheetIndex: +((/_Sheet-(\d+)$/.exec(name) || [])[1]) || null,
     status: "complete", endedBy: rep.endedBy || null, trials: rep.trials || 0, elapsedMs: rep.elapsedMs || 0, stock: rep.stock || null, params: rep.params || null, density: rep.density || 0, freePt2: Math.round(rep.freePt2 || 0), usablePt2: Math.round(rep.usablePt2 || 0), pocket: rep.pocket || null,
     charmCount: charms.length || placements.length, placedCount: placements.length, rejectCount: (rep.rejects || []).length, page: 1, verification: rep.verification ? { ok: !!rep.verification.ok, minGapPt: rep.verification.minGapPt, minEdgePt: rep.verification.minEdgePt } : null,
-    outputs: out, sources: [], orders, poolIds: charms.map(c => c.poolId).filter(Boolean), backPool: [], backOutputs: null, label: null, charms, placements, rejects: rep.rejects || [], names: charms.map(c => c.name).filter(Boolean).join(" "), restored: true, archived: false, updatedAt: FV.serverTimestamp(), ...(out.preview ? { previewAt: Date.now() } : {}) };
+    outputs: out, sources: [], orders, poolIds: charms.map(c => c.poolId).filter(Boolean), backPool: [], backOutputs: null, label: null, charms, placements, rejects: rep.rejects || [], names: charms.map(c => c.name).filter(Boolean).join(" "), restored: true, archived: false, sourcesLite: [], updatedAt: FV.serverTimestamp(), ...(out.preview ? { previewAt: Date.now() } : {}) };
   const ref = col(SHEETS).doc(id); const ex = await ref.get(); if (!ex.exists) doc.createdAt = FV.serverTimestamp();
   await ref.set(doc, { merge: true });
   if (setId) { const st = col(SETS).doc(setId); const sd = await st.get(); if (sd.exists) { const ids = new Set(sd.data().sheetIds || []); ids.add(id); await st.set({ sheetIds: [...ids] }, { merge: true }); } }
@@ -1896,6 +1948,8 @@ function withoutCleared(set, patch) {
   return Object.assign({}, patch, { orders });
 }
 async function op_setGet(b) { const id = str(b.setId, 80); if (!isId(id)) return { error: "bad set id" }; const s = await col(SETS).doc(id).get(); if (!s.exists) return { set: null }; const d = s.data(); d.updatedAt = ms(d.updatedAt); d.createdAt = ms(d.createdAt); d.committedAt = ms(d.committedAt) || d.committedAt || null; return { set: d }; }
+/** What chooses the sets op_setList answers with: its filters (status, laserDoneAt, the completion day and time) and its order (seq). */
+const FILTER_SET = ["setId", "seq", "day", "status", "completionDay", "completedAt", "committedAt", "laserDoneAt", "updatedAt"];
 async function op_setList(b) {
   // Completion can occur days after allocation. Filter and sort before limiting;
   // legacy sets keep their original saved day until an actual completion exists.
@@ -1916,9 +1970,14 @@ async function op_setList(b) {
     const limit = Math.min(500, num(b.limit) || 200);
     let q = col(SETS).orderBy("updatedAt", "desc");
     if (isDay(b.from) && !PREFIX) q = q.where("updatedAt", ">=", new Date(Date.parse(b.from + "T00:00:00Z") - 7 * 86400000));
-    const snap = await q.limit(Math.min(1000, 3 * limit)).get();
+    // (the up to 3 x limit sets are read for the fields that choose among them, FILTER_SET; the `limit` chosen are then read whole: a set
+    // record holds its orders with their lines and copies, and most of the sets read were left out again — Firebase cost, FC2)
+    const snap = await q.limit(Math.min(1000, 3 * limit)).select(...FILTER_SET).get();
     rows = snap.docs.map(setRow);
     rows=rows.filter(([,r])=>(!isDay(b.from) || OrderRules.completionDay(r)>=b.from)&&(!isDay(b.to) || OrderRules.completionDay(r)<=b.to)&&(!b.status || r.status===b.status)&&!(b.excludeDone && num(r.laserDoneAt)>0)).sort(([,x],[,y])=>OrderRules.compareCompleted(x,y)).slice(0,limit);
+    const whole = new Map();
+    for (let i = 0; i < rows.length; i += 100) for (const d of await db.getAll(...rows.slice(i, i + 100).map(([id]) => col(SETS).doc(id)))) if (d.exists) whole.set(d.id, setRow(d)[1]);
+    rows = rows.filter(([id]) => whole.has(id)).map(([id]) => [id, whole.get(id)]);
     if (b.includeSheets) sheetIds = [...new Set(rows.flatMap(([,r])=>r.sheetIds || []))].filter(isId);
   }
   let n = 0; while (n < rows.length && budget.fits(rows[n][1])) n++;
@@ -2068,7 +2127,8 @@ async function op_runGet(b) {
   return { run: d };
 }
 async function op_runList(b) {
-  const snap = await col(RUNS).orderBy("updatedAt", "desc").limit(Math.min(200, num(b.limit) || 50)).get();
+  // (only the fields a row is made of: a run record is a big document, and a list of 10 to 50 of them read whole to count their lines — FC2)
+  const snap = await col(RUNS).orderBy("updatedAt", "desc").limit(Math.min(200, num(b.limit) || 50)).select("runId", "setId", "day", "step", "status", "mode", "lines", "holds", "errors", "liveLines", "lineArchive", "updatedAt", "createdAt", "stoppedBy").get();
   // counts include what the record left out for its line archive
   let rows = snap.docs.map(d => { const r = d.data(), out = r.lineArchive || {}; return { runId: r.runId, setId: r.setId || null, day: r.day, step: r.step, status: r.status, mode: r.mode || null, lines: (r.lines ? Object.keys(r.lines).length : num((r.liveLines || {}).lines)) + num(out.lines), holds: (r.holds ? Object.keys(r.holds).length : 0) + num(out.held), errors: (r.errors || []).length, updatedAt: ms(r.updatedAt), createdAt: ms(r.createdAt), stoppedBy: r.stoppedBy || null }; });
   if (b.status) rows = rows.filter(r => r.status === b.status);
@@ -2276,11 +2336,43 @@ async function doneMembers(sets, fields) {
 /* What the tab counts is what Completed lists: sheets not archived. A sheet is never marked while archived (op_laserDone)
    and one archived with a mark keeps it as archivedLaserDoneAt/By (op_archiveEmptySheet; laserDoneList moves one marked
    before that as it reads it), so the one-field count below holds no archived sheet, with no composite index. */
-async function doneCounts() {
+async function countDone() {
   const [s,t]=await Promise.all([col(SHEETS).where("laserDoneAt",">",0).select("setId","draft","solidIncluded","laserDoneAt","archived").get(),col(SETS).where("laserDoneAt",">",0).count().get()]);
   const records=await filingRecords(s.docs.map(d=>d.data()));
   return {sheets:records.filter(d=>!d.archived && Readiness.filed(d)).length,sets:t.data().count};
 }
+/* That count reads every sheet ever completed (and their sets), each time the Completed list opens and each minute an open
+   Library asks for its tab's number, and it only grows (seals are permanent). It is the same number until something that
+   decides it is written, so the answer is kept in ONE document, Charm_Nest_Rev/done { n, forN, sheets, sets, at }: `n` is a
+   counter raised by the writes that can change the count (laserDone, a sheet deleted, archived or restored, a purge, and a
+   saved sheet that was completed and changed its set, draft or archive state: bumpDoneRev), `forN` the counter the kept
+   numbers were counted at. A reader that finds forN equal to n and the numbers younger than DONE_COUNTS_TTL answers them for
+   one document read; otherwise it counts as before and keeps the result (a counter raised while it counted leaves forN
+   behind, so the next reader counts again). The time limit covers a record written by hand, which nothing here raised the
+   counter for. Production only: the sandbox counts every time (it keeps no counter: a reset would leave it behind). */
+const DONE_COUNTS_TTL = 20 * 60000;
+async function doneCounts(o = {}) {
+  if (PREFIX) return countDone();
+  let rev = null;
+  if (!o.fresh) { try { const s = await db.collection(REV_COLL).doc("done").get(); rev = s.exists ? (s.data() || {}) : {}; } catch (e) { console.warn("[charmNestLibrary] done counts not read:", (e && e.message) || e); } }
+  const age = Date.now() - num(rev && rev.at);
+  if (rev && Number.isFinite(rev.sheets) && Number.isFinite(rev.sets) && num(rev.forN) === num(rev.n) && num(rev.at) > 0 && age >= 0 && age < DONE_COUNTS_TTL) return { sheets: rev.sheets, sets: rev.sets };
+  const counts = await countDone();
+  if (rev) { try { await db.collection(REV_COLL).doc("done").set({ sheets: counts.sheets, sets: counts.sets, forN: num(rev.n), at: Date.now() }, { merge: true }); } catch (e) { console.warn("[charmNestLibrary] done counts not kept:", (e && e.message) || e); } }
+  return counts;
+}
+/** Raises the done revision (see doneCounts): true when it was raised. Production only; tried twice, as the placement counter is. */
+async function bumpDoneRev(op) {
+  if (PREFIX) return false;
+  for (let tries = 0; tries < 2; tries++) {
+    try { await db.collection(REV_COLL).doc("done").set({ n: FV.increment(1), op: String(op || "").slice(0, 40), nAt: FV.serverTimestamp() }, { merge: true }); return true; }
+    catch (e) { console.warn("[charmNestLibrary] done revision not raised:", (e && e.message) || e); if (!tries) await new Promise(r => setTimeout(r, 120)); }
+  }
+  return false;
+}
+// the ops whose writes can change the Completed count (laserDone raises it itself, before it counts; putSheet sets DONE_TOUCH when a completed sheet changes what decides it)
+const DONE_BUMP_OPS = new Set(["deleteSheet", "archiveEmptySheet", "restoreSheet", "purgeHistory"]);
+let DONE_TOUCH = false;
 /** Marks a sheet or a set cut on the laser (done), or takes the mark back (done:false), in one transaction. A set marks
     each of its sheets; a sheet marked earlier keeps its own time and name. The set of a sheet is completed with its last
     sheet and taken back with any of them. */
@@ -2347,6 +2439,12 @@ async function op_laserDone(b) {
     return { ok: true, kind, id, done, at: done ? at : null, by: done ? by : null, sheetIds: touched, setId: setRef ? setRef.id : null, setDone, setChanged, marks, process, added };
   });
   if (res.error) return res;
+  /* RV1: the sheets are marked (or taken back) as of this line. Everything below (laser time, timeline notes, the Completed recount: every completed sheet
+     ever) takes seconds, and the handler raises the placement counter only after laserDone has returned, so another computer's order window, which asks
+     getOrderPieces by that counter, would learn of the mark that much later. Raised here, at once; the handler's own raise after the op stays.
+     The Completed memo's counter likewise: a tab that refreshed its count between the commit and a late raise kept the old number for its minute. */
+  await bumpPlacementGen("laserDone");
+  const raised = await bumpDoneRev("laserDone");   // (raised before the count below: it is then made again, not read from what it was)
   const marks = res.marks || []; delete res.marks;
   /* How long each sheet marked here took (Paul, 6 Oct: "elapsed time since most recent login or, if login is continuous, since the last sheet was marked completed";
      _laserSheetTime.js): decided once, on the server's own clock, from the person's Laser sign-in (Station_Sessions) and their earlier completions, and written once to
@@ -2371,7 +2469,7 @@ async function op_laserDone(b) {
       ? { orderId, type: "laserDone", at, by, station: "laser", device, sheetId: m.sheetId, sheet, setId: res.setId || "", text: sheet, data: Object.assign({ signedIn: true, marked: kind, via: via || undefined }, tm && tm.seconds != null ? { sheetSeconds: tm.seconds, startedFrom: tm.startedFrom } : {}), id: `${m.sheetId}-${at}` }
       : { orderId, type: "note", at, by, station: "laser", device, sheetId: m.sheetId, sheet, setId: res.setId || "", text: `laser cut undone · ${sheet}`, data: { undone: "laserDone", laserDoneAt: m.was, laserDoneBy: m.wasBy, signedIn: !!by, via: via || undefined }, id: `laserUndone-${m.sheetId}-${m.was}` });
   }), "laser done");
-  return Object.assign(res, { counts: await doneCounts() });
+  return Object.assign(res, { counts: await doneCounts({ fresh: !raised }) });
 }
 /** A page of what the laser has done, newest first: sheets, or sets with a summary of their sheets (kind: "sets"). A
     cursor ({ at, skip }) is where the last page stopped: the records completed at or before `at`, past the first `skip`
@@ -2628,12 +2726,33 @@ async function noDesignRows(get) {
   const hidden = new Set(own.filter(r => r.tombstone).map(r => r.tombstone));
   return shared.filter(r => !hidden.has(r.id)).concat(own.filter(r => !r.tombstone));
 }
-async function op_aliasGet() {
+/* A learned map's signature (cost, 7 Oct 2026): how many documents a collection holds and the stamp of the newest write to
+   one, read as an aggregation and one masked document instead of every document. A page that holds the map sends the
+   signature it came with (ifSig) and is answered `unchanged` with nothing read but those; a map is written only by the
+   ops below, each of which stamps its document (updatedAt; a no-design row createdAt, and a removal changes the count), so a
+   change always changes the signature. The signature is taken BEFORE the documents are read: a write that lands meanwhile
+   shows as a change the next time. In the sandbox the signature covers the shared collection and the sandbox's own copy. */
+const MAP_STAMP = { [ALIASES]: "updatedAt", [OPTMAP]: "updatedAt", [NODESIGN]: "createdAt" };
+const stampOf = t => (t && t.seconds != null ? `${t.seconds}.${t.nanoseconds}` : String(ms(t) || 0));
+/* (a signature that cannot be taken, for whatever reason, is null: the page is then answered with the whole map, as before) */
+async function collSig(name, stamp) {
+  try {
+    const c = db.collection(name);
+    const [n, top] = await Promise.all([c.count().get(), c.orderBy(stamp, "desc").limit(1).select(stamp).get()]);
+    return `${n.data().count}:${top.docs.length ? stampOf(top.docs[0].data()[stamp]) : "0"}`;
+  } catch (e) { console.warn(`[charmNestLibrary] signature of ${name} not taken:`, (e && e.message) || e); return null; }
+}
+async function mapSig(name) {
+  const shared = await collSig(name, MAP_STAMP[name]); if (!shared || !PREFIX) return shared;
+  const own = await collSig(PREFIX + name, MAP_STAMP[name]); return own ? `${shared}~${own}` : null;
+}
+async function op_aliasGet(b = {}) {
+  const sig = await mapSig(ALIASES); if (sig && b.ifSig === sig) return { unchanged: true, sig };
   const { docs, own = [], truncated } = await mapDocs(ALIASES), out = {};
   docs.forEach(d => { out[d.id] = d.data(); });
   // the sandbox's own answer for a listing stands over the shared one's, field by field (its per-SKU answers join the shared ones)
   own.forEach(d => { const mine = d.data(), was = out[d.id]; out[d.id] = was ? Object.assign({}, was, mine, was.bySku || mine.bySku ? { bySku: Object.assign({}, was.bySku, mine.bySku) } : {}) : mine; });
-  return { aliases: out, truncated };
+  return Object.assign({ aliases: out, truncated }, sig ? { sig } : {});
 }
 /* "Use this charm": for the listing and the SKU the line came with (fromSku, kept under bySku), so on a listing whose
    variations each have a SKU one variation's answer is never another's; a line with no SKU answers for the listing (sku).
@@ -2647,11 +2766,12 @@ async function op_aliasPut(b) {
   if (from) doc.bySku = { [from]: sku }; else if (b.huggie === true) doc.huggie = sku; else { doc.sku = sku; doc.v = 2; }
   await db.collection(PREFIX + ALIASES).doc(lid).set(doc, { merge: true }); return { ok: true };   // (a sandbox answer is the sandbox's own copy only)
 }
-async function op_noDesignGet() {
+async function op_noDesignGet(b = {}) {
+  const sig = await mapSig(NODESIGN); if (sig && b.ifSig === sig) return { unchanged: true, sig };
   const { docs, own = [], truncated } = await mapDocs(NODESIGN);
   const hidden = new Set(own.map(d => d.data()).filter(r => r.tombstone).map(r => r.tombstone));
   const rows = docs.filter(d => !hidden.has(d.id)).concat(own.filter(d => !d.data().tombstone)).map(d => Object.assign({ id: d.id }, d.data()));
-  return { list: { patterns: rows.filter(r => r.pattern).map(r => r.pattern), skus: rows.filter(r => r.sku).map(r => r.sku), rows }, truncated };
+  return Object.assign({ list: { patterns: rows.filter(r => r.pattern).map(r => r.pattern), skus: rows.filter(r => r.sku).map(r => r.sku), rows }, truncated }, sig ? { sig } : {});
 }
 async function op_noDesignPut(b) { const doc = { by: str(b.by || "operator", 80), note: str(b.note, 200), createdAt: FV.serverTimestamp() }; if (b.pattern) { try { new RegExp(String(b.pattern)); } catch (_) { return { error: "bad pattern" }; } doc.pattern = str(b.pattern, 120); } else if (b.sku) doc.sku = String(b.sku).trim().toUpperCase().slice(0, 40); else return { error: "pattern or sku required" }; const ref = await db.collection(PREFIX + NODESIGN).add(doc); return { ok: true, id: ref.id }; }
 /* In the sandbox only the sandbox's own row is deleted. A shared row (production's) is never touched from there: the
@@ -2664,12 +2784,13 @@ async function op_noDesignDelete(b) {
   await db.collection(PREFIX + NODESIGN).doc("del_" + b.id).set({ tombstone: b.id, by: str(b.by || "operator", 80), createdAt: FV.serverTimestamp() });
   return { ok: true };
 }
-async function op_optionMapGet() {
+async function op_optionMapGet(b = {}) {
+  const sig = await mapSig(OPTMAP); if (sig && b.ifSig === sig) return { unchanged: true, sig };
   const { docs, own = [], truncated } = await mapDocs(OPTMAP), out = {};
   docs.forEach(d => { out[d.id] = d.data().map || {}; });
   // the sandbox's own answer for an option value stands over the shared one's (the listing's other answers are kept)
   own.forEach(d => { const mine = d.data().map || {}, was = out[d.id] || {}, next = {}; for (const n of new Set([...Object.keys(was), ...Object.keys(mine)])) next[n] = Object.assign({}, was[n], mine[n]); out[d.id] = next; });
-  return { maps: out, truncated };
+  return Object.assign({ maps: out, truncated }, sig ? { sig } : {});
 }
 async function op_optionMapPut(b) {
   const lid = b.listingId === "*" ? "*" : str(b.listingId, 30).replace(/\D/g, ""); const name = str(b.optionName, 80).toLowerCase().trim(), value = str(b.optionValue, 200).toLowerCase().replace(/\s+/g, " ").trim();
@@ -3011,13 +3132,21 @@ const countOf = () => col(CANCELLED).count().get().then(s => s.data().count);
 async function op_cancelList(b) {
   const n = Math.max(1, Math.min(500, Math.round(num(b.limit)) || 200));
   const tidyRec = d => { const x = d.data(); delete x.createdAt; if (!x.source) x.source = x.by === "Etsy" ? "etsy" : "sorter"; return x; };
+  /* FC3b (cost): the placement feed asked this (idsOnly, after) every 2.5 s per open tab: a query and a count() (4 to 7 reads) to learn
+     that nothing was written. Every writer of a cancel record raises Charm_Nest_Rev/cancel in its own transaction or batch
+     (_orderCancel.bump); a page that sends the counter it saw (ifGen) is answered `unchanged` for ONE read when it has not moved. The
+     counter is read BEFORE the records, so a record written in between only makes the next ask read again. `wantGen` asks for it with
+     the answer (no ifGen yet). Production only (the sandbox answers in full, as before); a counter that cannot be read is no gen. */
+  const gen = b.idsOnly && (b.ifGen != null || b.wantGen) && !PREFIX ? await OrderCancel.gen(db, PREFIX) : null;
   if (b.after !== undefined) {
     const a = b.after && typeof b.after === "object" ? b.after : {}, s0 = Math.round(num(a.s)), n0 = Math.round(num(a.n)), id0 = orderIdOf(a.id);
     if (!(s0 > 0) || !(n0 >= 0 && n0 < 1e9) || !id0) return { error: "bad cursor" };
+    if (gen != null && b.ifGen != null && Number(b.ifGen) === gen) return { cursor: { s: s0, n: n0, id: id0 }, more: false, ids: [], unchanged: true, gen };
     let q = col(CANCELLED).orderBy("createdAt").orderBy(docOrder()).startAfter(new admin.firestore.Timestamp(s0, n0), id0).limit(n);
     if (b.idsOnly) q = q.select("orderId", "createdAt");
     const [s, total] = await Promise.all([q.get(), b.idsOnly ? countOf() : null]);
     const out = { cursor: (s.size && cursorOf(s.docs[s.size - 1])) || { s: s0, n: n0, id: id0 }, more: s.size >= n };
+    if (gen != null) out.gen = gen;
     return b.idsOnly ? Object.assign(out, { ids: s.docs.map(d => d.id), total }) : Object.assign(out, { list: s.docs.map(tidyRec) });
   }
   const top = b.track ? await col(CANCELLED).orderBy("createdAt", "desc").orderBy(docOrder(), "desc").select("createdAt").limit(1).get() : null;
@@ -3026,7 +3155,7 @@ async function op_cancelList(b) {
   //  the order a person cancelled today, which the orders check must keep out of the pull)
   if (b.idsOnly) {
     const [s, total] = await Promise.all([col(CANCELLED).orderBy("at", "desc").select("orderId").limit(5000).get(), top ? countOf() : null]);
-    return Object.assign({ ids: s.docs.map(d => d.id), truncated: s.size >= 5000 }, top ? Object.assign(track, { total }) : {});
+    return Object.assign({ ids: s.docs.map(d => d.id), truncated: s.size >= 5000 }, top ? Object.assign(track, { total }) : {}, gen != null ? { gen } : {});
   }
   let cq=col(CANCELLED).orderBy("at",b.direction==='asc'?'asc':'desc');
   const dates=Activity.bounds(b.range);
@@ -3091,7 +3220,7 @@ async function cancelSteps(b) {
 /* ── the order timeline (_orderTimeline.js): the sorter's own events, and the whole timeline of one order ── */
 const Timeline = require("./_orderTimeline");
 async function op_timelineAdd(b) { return Timeline.add(db, FV, b.events, { prefix: PREFIX, source: "sorter" }); }
-async function op_timelineGet(b) { return Timeline.get(db, b.orderId, { prefix: PREFIX, sandboxed: SANDBOXED, derive: b.derive !== false }); }   // recorded + derived from the records already kept
+async function op_timelineGet(b) { return Timeline.get(db, b.orderId, { prefix: PREFIX, sandboxed: SANDBOXED, derive: b.derive !== false, ifRev: typeof b.ifRev === "string" && /^[0-9a-f]{12}$/.test(b.ifRev) ? b.ifRev : "", wantRev: b.wantRev === true }); }   // recorded + derived from the records already kept
 // (full: each whole record, its lines, fates and removals, for an order read long after it left the pull)
 async function op_cancelCheck(b) { return Timeline.cancelCheck(db, b.orderIds || b.orderId, { prefix: PREFIX, full: b.full === true }); }
 /* Restoring a cancelled order deletes its cancel record; the timeline keeps it first: the cancelRestored event carries the
@@ -3107,7 +3236,8 @@ async function op_cancelRestore(b) {
     text: `Was cancelled${c.by ? " by " + c.by : ""}${c.why ? ": " + c.why : ""}`, data: { cancelled: c }, id: String(num(c.at) || "record") }; }, "cancel restored");
   const batch = db.batch();
   if (rec) batch.set(col(CANCEL_HISTORY).doc(`${id}~${Math.round(num(rec.at)) || Date.now()}`), Object.assign({}, rec, { restoredAt: Date.now(), restoredBy: str(b.by, 80) || "operator" }));
-  batch.delete(ref); await batch.commit(); return { ok: true };
+  batch.delete(ref); OrderCancel.bump(batch, db, FV, PREFIX);   // (FC3b: the cancel counter moves with the delete, in this batch: readers of the cancelled list ask after it, see cancelList)
+  await batch.commit(); return { ok: true };
 }
 /** A cancel record small enough for an event's data (≤ 2 KB): long titles are shortened, then dropped, then lines left out. */
 function cancelCopy(r) {
@@ -3154,20 +3284,45 @@ function sessionRow(id, d, now) {
   if (endAt && (endReason === "idle" || endReason === "closing")) row.endPill = require("./_stationAutoSignout").endPill(row.station, endReason);
   return row;
 }
+/* FC5 (cost): the Sign-ins window asks every 30 s for up to 1,000 sessions of up to 62 days. What began before yesterday's New York midnight is final and is kept
+   10 minutes in the instance; what began yesterday or today is kept while the employee data revision says no session started or ended (one tiny document,
+   _employeeRev.js; a plain beat is not a change, so at most 2 minutes), and the auto sign-out rules are applied again to the kept rows on every call. */
+const SESS_MEMO = new Map(), SESS_PAST_MS = 10 * 60000, SESS_REV_MAX_MS = 60000;
+async function sessionSeg(key, a, z, limit, ttlOnly, rev) {
+  const hit = SESS_MEMO.get(key), t = Date.now();
+  if (hit && (t - hit.at < ttlOnly || (rev && hit.rev === rev && t - hit.at < SESS_REV_MAX_MS))) return hit.p;
+  // the server's times are kept as milliseconds or as Firestore times, and one range never matches the other kind: both are read
+  const TS = admin.firestore.Timestamp, ranges = [[a, z]];
+  if (TS && typeof TS.fromMillis === "function") ranges.push([TS.fromMillis(a), TS.fromMillis(z)]);
+  const entry = { at: t, rev: rev || "", p: Promise.all(ranges.map(([x, y]) => db.collection(SESSIONS).where("startAt", ">=", x).where("startAt", "<", y).orderBy("startAt", "desc").limit(limit + 1).get())).then(raw => {
+    const seen = new Set(), rows = [];
+    for (const snap of raw) for (const d of snap.docs) if (!seen.has(d.id)) { seen.add(d.id); rows.push(Object.assign({ id: d.id }, d.data() || {})); }
+    return rows;
+  }) };
+  SESS_MEMO.set(key, entry);
+  entry.p.catch(() => { if (SESS_MEMO.get(key) === entry) SESS_MEMO.delete(key); });
+  if (SESS_MEMO.size > 40) for (const [k, e] of SESS_MEMO) if (t - e.at > SESS_PAST_MS) SESS_MEMO.delete(k);
+  return entry.p;
+}
 async function op_sessionsList(b) {
   const now = Date.now();
   const until = Math.min(num(b.until) > 0 ? num(b.until) : now + 60000, now + 86400000);
   const since = Math.max(num(b.since) > 0 ? num(b.since) : until - 7 * 86400000, until - SESSION_SPAN_MS);
   if (!(since < until)) return { error: "since must be before until" };
   const limit = Math.max(1, Math.min(1000, Math.floor(num(b.limit)) || 500));
-  // the server's times are kept as milliseconds or as Firestore times, and one range never matches the other kind: both are read
-  const TS = admin.firestore.Timestamp, ranges = [[since, until]];
-  if (TS && typeof TS.fromMillis === "function") ranges.push([TS.fromMillis(since), TS.fromMillis(until)]);
-  const raw = await Promise.all(ranges.map(([a, z]) => db.collection(SESSIONS).where("startAt", ">=", a).where("startAt", "<", z).orderBy("startAt", "desc").limit(limit + 1).get()));
-  // the auto sign-out rules (_stationAutoSignout.js): a session idle for 10 minutes, past 5:00 pm Toronto with no recent input, or whose page died is ended at the person's last input (reason idle or closing)
-  const snaps = await Promise.all(raw.map(r => require("./_stationAutoSignout").settledSnap({ db, prefix: "", now }, r)));
+  const AS = require("./_stationAutoSignout");
+  const split = AS.nyMidnightAfter(now - 47 * 3600e3);                 // about yesterday's New York midnight: what began before it is final
+  const R = await require("./_employeeRev").read(db, now), rev = R && R.ok ? String(R.ses) : "";
+  const segs = [];
+  if (since < split) segs.push(sessionSeg(`past|${since}|${Math.min(until, split)}|${limit}`, since, Math.min(until, split), limit, SESS_PAST_MS, ""));
+  if (until > split) segs.push(sessionSeg(`live|${Math.max(since, split)}|${limit}`, Math.max(since, split), until, limit, rev ? 0 : 0, rev));
+  const lists = await Promise.all(segs);
+  // the auto sign-out rules (_stationAutoSignout.js): a session idle for 10 minutes, past 5:00 pm Toronto with no recent input, or whose page died is ended at the person's last input (reason idle or closing).
+  // They run on the clock: applied again, on a copy, to the rows kept, on every call (no read; a write only when a session now ends)
+  const copies = lists.map(l => l.map(x => Object.assign({}, x)));
+  for (const c of copies) await AS.settle({ db, prefix: "", now }, c);
   const seen = new Set(), rows = [];
-  for (const s of snaps) for (const d of s.docs) if (!seen.has(d.id)) { seen.add(d.id); const r = sessionRow(d.id, d.data() || {}, now); if (r) rows.push(r); }
+  for (const c of copies) for (const d of c) if (!seen.has(d.id)) { seen.add(d.id); const r = sessionRow(d.id, d, now); if (r) rows.push(r); }
   rows.sort((x, y) => y.startAt - x.startAt || (x.id < y.id ? -1 : x.id > y.id ? 1 : 0));
   return { sessions: rows.slice(0, limit), truncated: rows.length > limit, since, until, now, goneAfterMs: SESSION_GONE_MS };
 }
@@ -3217,7 +3372,8 @@ async function op_flowState(b) {
     docs.push({ setId: d.id, seq: num(x.seq) || null, day: x.day || null, name: x.name || null, runId: x.runId || null, status: x.status || null, committedAt: ms(x.committedAt) || num(x.committedAt) || null, sheetIds: x.sheetIds || [], materials: x.materials || [], laserDoneAt: num(x.laserDoneAt) || null, laserDoneBy: x.laserDoneBy || null, processReady: !!x.processReady, processSeals: Readiness.processStamps(x) });
   }
   const runIds = [...new Set((status.sheets || []).map(x => x.runId).concat(docs.map(x => x.runId)).filter(isId))].slice(0, 100), runs = {};
-  for (const id of runIds) { const r = await col(RUNS).doc(id).get(); runs[id] = { exists: r.exists, open: r.exists && !["complete", "abandoned"].includes(String((r.data() || {}).status || "")) }; }
+  // one batch asking only for `status` (a run record is a big document; the page asks every few seconds): same answer, one round trip
+  if (runIds.length) for (const r of await db.getAll(...runIds.map(id => col(RUNS).doc(id)), { fieldMask: ["status"] })) runs[r.id] = { exists: r.exists, open: r.exists && !["complete", "abandoned"].includes(String((r.data() || {}).status || "")) };
   // the cardinal rule of a Set of Sheets (below): for a move into a set, the orders it would split, read from the records
   const mv = b.move && typeof b.move === "object" ? b.move : null;
   const shared = mv && mv.to && (mv.to.set || mv.to.newSet) ? await sharedAnswer(mv) : null;
@@ -3388,16 +3544,19 @@ exports.handler = async (event) => {
   const body = event.httpMethod === "GET" ? Object.assign({}, event.queryStringParameters || {}) : parseBody(event);
   const denied = gate(event, body); if (denied) return denied;
   PREFIX = body.sandbox === true || body.sandbox === 1 || body.sandbox === "1" ? "Sandbox_" : "";
+  DONE_TOUCH = false;
   const fn = OPS[body.op];
   if (!fn) return json(400, { error: "unknown op", ops: Object.keys(OPS) });
   try {
     const out = await fn(body);
     await bumpPlacementGen(body.op);   // (after the op's writes have landed, before the answer: whoever sees the answer then reads the new gen)
+    if (DONE_TOUCH || DONE_BUMP_OPS.has(body.op)) await bumpDoneRev(body.op);
     // the Library's revision moves after a write it reads (see readRev: the readers' one-document question); after an error too, a write may have landed before it
     if (REV_OPS.has(body.op)) await bumpRev();
     return json(out && out.error ? (out.status || 400) : 200, out);
   } catch (e) {
     await bumpPlacementGen(body.op);   // (a failed op may have written some of what it meant to)
+    if (DONE_TOUCH || DONE_BUMP_OPS.has(body.op)) await bumpDoneRev(body.op);
     console.error("[charmNestLibrary]", body.op, e);
     if (REV_OPS.has(body.op)) await bumpRev();
     return json(500, { error: e.message || String(e) });

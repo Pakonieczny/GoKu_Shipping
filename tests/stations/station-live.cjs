@@ -39,7 +39,7 @@ const store = () => {
   }
   const ref = (name, id) => ({ id, name,
     get: async () => { reads.push({ name, doc: id }); const d = data(name).get(id); return { exists: !!d, id, data: () => clone(d) }; },
-    set: async (v, o) => { writes.push([name, id, 'set']); data(name).set(id, o && o.merge ? Object.assign({}, data(name).get(id) || {}, clone(v)) : clone(v)); },
+    set: async (v, o) => { if (name !== 'Station_Rev') writes.push([name, id, 'set']); const prev = data(name).get(id) || {}, nv = clone(v); for (const k of Object.keys(nv)) if (nv[k] && typeof nv[k] === 'object' && '__inc' in nv[k]) nv[k] = (typeof prev[k] === 'number' ? prev[k] : 0) + nv[k].__inc; data(name).set(id, o && o.merge ? Object.assign({}, prev, nv) : nv); },   // (a top-level increment adds, as Firestore does: the revision counters, FC5)
     update: async v => { writes.push([name, id, 'update']); if (!data(name).has(id)) throw notFound(); data(name).set(id, Object.assign({}, data(name).get(id), clone(v))); } });
   const db = {
     collection: name => Object.assign(query(name, [], null, null, null), { doc: id => ref(name, id) }),
@@ -205,7 +205,8 @@ const B = (o = {}) => Object.assign({ v: 1, event: 'beat', station: 'welding', d
     const r = await post(B({ person: 'Nobody Here' })); assert.deepStrictEqual(r.body, { success: true, resend: true });
     assert.strictEqual(s.count('Station_Live'), 1, 'a beat never creates a document');
     // the same tab woke up (a throttled timer): its beat brings the order back
-    tick(20000); await post(B()); a = await ask(); assert.strictEqual(station(a, 'welding').state, 'working');
+    tick(46000); await post(B()); a = await ask();   // (a keep-alive is not a counted change: the board looks at the live documents again within 45 s, FC5)
+     assert.strictEqual(station(a, 'welding').state, 'working');
     say('4 a closed tab expires after 3 minutes; beats keep it alive; a beat for a missing document asks for a resend');
   }
 
@@ -322,15 +323,20 @@ const B = (o = {}) => Object.assign({ v: 1, event: 'beat', station: 'welding', d
     await ask(); const first = s.reads.slice();
     assert.strictEqual(s.readsOf('Station_Live').length, 1, 'one small query for the live documents'); assert.deepStrictEqual(s.readsOf('Station_Live')[0].filters, ['beatAt>='], 'a single range: no index to create');
     assert.strictEqual(s.readsOf('Station_Sessions').length, 1); assert.strictEqual(s.readsOf('Efficiency_Daily').length, 1); assert.deepStrictEqual(s.readsOf('Efficiency_Daily')[0].select, ['day', 'person', 'stations', 'sandbox', 'touched'], 'only the fields the board shows (the store flag, and the orders touched, so an order in hand counts; and the store flag, so a document of the other store never counts)');
-    s.reset(); tick(1000); await ask(); assert.strictEqual(s.reads.length, 0, 'a second poll inside 2 s reads nothing');
+    s.reset(); tick(1000); await ask(); assert.strictEqual(s.reads.filter(r => r.name !== 'Station_Rev').length, 0, 'a second poll inside 2 s reads nothing (but the revision probe, FC5)');
+    // FC5: nothing was written (the revision has not moved), so nothing is read again: the live documents are kept 45 s, sessions 1 minute, today numbers 2 minutes (a keep-alive beat is not a change)
     tick(1500); s.reset(); await ask();
-    assert.strictEqual(s.readsOf('Station_Live').length, 1, 'after 2 s the live documents are read again'); assert.strictEqual(s.readsOf('Station_Sessions').length, 0, 'sessions are kept 15 s'); assert.strictEqual(s.readsOf('Efficiency_Daily').length, 0, 'today\'s numbers are kept 20 s');
-    tick(20000); s.reset(); await ask(); assert.strictEqual(s.readsOf('Station_Sessions').length, 1); assert.strictEqual(s.readsOf('Efficiency_Daily').length, 1);
+    assert.strictEqual(s.readsOf('Station_Live').length, 0, 'an unmoved revision: the live documents are kept'); assert.strictEqual(s.readsOf('Station_Sessions').length, 0, 'sessions are kept'); assert.strictEqual(s.readsOf('Efficiency_Daily').length, 0, 'today\'s numbers are kept');
+    // a change (an order started) is read at once, and only what it can change
+    await post(W({ order: { kind: 'order', rid: '3521000222', scannedAt: NOW } })); s.reset(); tick(3000); await ask();
+    assert.strictEqual(s.readsOf('Station_Live').length, 1, 'a new order: the live documents are read again at once'); assert.strictEqual(s.readsOf('Station_Sessions').length, 0, 'sessions did not change'); assert.strictEqual(s.readsOf('Efficiency_Daily').length, 0, 'no event was counted');
+    tick(45000); s.reset(); await ask(); assert.strictEqual(s.readsOf('Station_Live').length, 1, 'the live documents are looked at again after 45 s whatever the revision says (beats are not counted)'); assert.strictEqual(s.readsOf('Station_Sessions').length, 0);
+    tick(100000); await post(B()); s.reset(); await ask(); assert.strictEqual(s.readsOf('Station_Sessions').length, 1, 'sessions: again after a minute at the latest'); assert.strictEqual(s.readsOf('Efficiency_Daily').length, 1, 'today\'s numbers: again after 2 minutes at the latest');
     // a failing piece does not blank the board
     s.db.collection = (orig => name => name === 'Efficiency_Daily' ? { where: () => ({ limit: () => ({ select: () => ({ get: async () => { throw new Error('14 UNAVAILABLE: synthetic'); } }), get: async () => { throw new Error('14 UNAVAILABLE: synthetic'); } }) }) } : orig(name))(s.db.collection);
-    tick(30000); const part = await ask(); assert.strictEqual(part.status, 200); assert.strictEqual(part.body.partial, true); assert(part.body.errors.some(e => /^today:/.test(e)));
+    tick(130000); await post(B()); const part = await ask(); assert.strictEqual(part.status, 200); assert.strictEqual(part.body.partial, true); assert(part.body.errors.some(e => /^today:/.test(e)));
     assert.strictEqual(station(part, 'welding').current.length, 1, 'the order is still shown'); assert.deepStrictEqual(station(part, 'welding').counts, { partsToday: null, ordersToday: null, scansToday: null }, 'today\'s numbers are unknown: null (a dash on the board), never a 0');
-    say('9 gate (401 without the key), one query a poll, ~2 s / 15 s / 20 s caches, a failed read leaves the rest');
+    say('9 gate (401 without the key), one query a poll, kept while the revision is unmoved (live 45 s, sessions 1 min, numbers 2 min), a failed read leaves the rest');
   }
 
   /* 9b · an order in hand counts the moment it is scanned, as the Overview counts it (the board used to count only the finished ones and said 9 where the Overview said 10) */
