@@ -983,7 +983,7 @@
   <!-- The order in hand right now (scan = working, Complete / cancelled = idle), for the console's live stations board (station-live-order.js). Optional: without it nothing changes. -->
   <script src="station-live-order.js?v=20261005-et2"></script>
   <!-- Phone scans that arrive while nobody is signed in wait here and load, in order, right after the next sign-in (station-scan-queue.js). -->
-  <script src="station-scan-queue.js?v=20261006-int1"></script>
+  <script src="station-scan-queue.js?v=20261007-fr1"></script>
   <script>
     try {
       StationSession.init({
@@ -5308,7 +5308,13 @@ function metalToBadge(label){
       }
 
       /* Main flow: buy → poll → print (no new tab) */      
-      async function buyCcThenPrint() {
+      async function buyCcThenPrint() {      // station-fresh.js: no reload while a label is being bought and printed
+        let freshRelease = null;
+        try { freshRelease = window.StationFresh ? window.StationFresh.hold("label") : null; } catch (_) {}
+        try { return await buyCcThenPrintRun.apply(this, arguments); }
+        finally { try { if (freshRelease) freshRelease(); } catch (_) {} }
+      }
+      async function buyCcThenPrintRun() {
         /* Cancelled order: no label without the station's explicit second confirmation */
         const stOrder = (document.getElementById("etsyOrderNumber")?.value || "").trim();
         if (window.shipTimeline && !(await window.shipTimeline.guard(stOrder))) {
@@ -7559,5 +7565,6 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
 <script src="https://cdn.jsdelivr.net/npm/qz-tray@2.2.5/qz-tray.js"></script>
 
 
+<script src="station-fresh.js?v=20261007-fr1"></script><!-- station-fresh.js: one quiet reload to the newest deploy after somebody uses the station (Paul, 7 Oct 2026) -->
 </body>
 </html>

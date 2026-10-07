@@ -285,7 +285,7 @@
     #sortingAsChip .st-as-name:focus { background:transparent; outline:none; }
     #sortingAsChip .st-as-name:hover,
     #sortingAsChip .st-as-name:focus-visible { background:#f3f4f6; }
-    #sortingAsChip .st-as-name.st-unset { font-weight:500; color:#b45309; }
+    #sortingAsChip .st-as-name.st-unset { font-weight:600; color:#92400e; background:#fef3c7; box-shadow:inset 0 0 0 1px #f59e0b; }
     #sortingAsChip .st-as-input {
       width:150px; height:24px; margin:0; padding:0 6px; box-sizing:border-box;
       border:1px solid #d1d5db; border-radius:6px; outline:none; background:#fff;
@@ -1602,6 +1602,7 @@ window.SortTL = (function () {
       else if (save && v) toast("An employee number has 6 digits");
       inp.hidden = true; btn.hidden = false;
       renderChip();
+      if (held && !signingIn && !getEmployee()) dropHeld(save ? "" : "Not printed: sign in first to print stickers.");   // (a number being checked still holds it)
     };
     inp.addEventListener("input", () => { inp.style.webkitTextSecurity = /^\d+$/.test(inp.value.trim()) ? "disc" : ""; });
     btn.addEventListener("click", () => {
@@ -1621,7 +1622,41 @@ window.SortTL = (function () {
   // The 6-digit employee number of the stations' existing login (Brites_Orders/"Employee Numbers", checked by the server
   // as weld, assembly and shipping check it): the chip keeps the name it knows. The number itself is never kept or recorded.
   // the sign-in time on this computer (station-session.js): the name only, never the number
-  function sessionIn(name) { try { window.StationSession && StationSession.signedIn({ name, id: null }); } catch (_) {} release(); }
+  function sessionIn(name) { try { window.StationSession && StationSession.signedIn({ name, id: null }); } catch (_) {} release(); resume(); }
+
+  /* ---- a sticker is printed only with a person signed in (Paul, 7 Oct 2026: "this station must be fully tracked") ----
+     The chip above was the only sign-in here and nothing asked for it: stickers printed with nobody signed in recorded no sign-in
+     session and no activity event (the console's Sorting row stayed empty), and the order's seals said "not signed in". Now a Print or
+     Print Row press with nobody named opens the chip's own field (no pop-up) and the print waits for a name or an employee number;
+     it goes on by itself the moment one is set (within 2 minutes). Never blocks when this page has no sign-in module (nothing to ask). */
+  const HOLD_MS = 2 * 60 * 1000;
+  let held = null;                                   // { go, at }: the print waiting for a name (the newest press only)
+  let heldRel = null;                                // the page-refresh hold (station-fresh.js) while a press waits: a reload must not lose it
+  const freeHold = () => { try { heldRel && heldRel(); } catch (_) {} heldRel = null; };
+  function nameNeeded() {
+    try { return !getEmployee() && !!document.getElementById("sortingAsChip") && !!(window.StationSession && typeof StationSession.page === "function" && StationSession.page()); }
+    catch (_) { return false; }
+  }
+  /** true: a person is signed in (or there is nothing to ask), go on now. false: the name is asked for and `go` runs once it is set. */
+  function nameFirst(go) {
+    if (!nameNeeded()) return true;
+    held = { go, at: Date.now() };
+    freeHold(); try { heldRel = window.StationFresh && StationFresh.hold ? StationFresh.hold("name") : null; } catch (_) {}
+    try {
+      const chip = document.getElementById("sortingAsChip"), btn = chip.querySelector(".st-as-name"), inp = chip.querySelector(".st-as-input");
+      if (inp.hidden) { inp.value = ""; btn.hidden = true; inp.hidden = false; }
+      inp.focus();
+    } catch (_) {}
+    busy("ask", "Type your name or employee number, then Enter: the sticker prints right after");
+    return false;
+  }
+  function dropHeld(msg) { held = null; freeHold(); idle("ask"); if (msg) toast(msg); }
+  function resume() {
+    const h = held; held = null; freeHold(); idle("ask");
+    if (!h) return;
+    if (Date.now() - h.at > HOLD_MS) { toast("That sticker was not printed (it waited too long). Press Print again."); return; }
+    try { h.go(); } catch (e) { console.warn("Held print failed:", e); }
+  }
   let signingIn = false;
   async function signIn(num) {
     if (signingIn) return;
@@ -1653,7 +1688,7 @@ window.SortTL = (function () {
       else if (!name || /^\d+$/.test(name)) toast("That employee number is not on the list");
       else { lsSet(EMP_KEY, name); lsSet(VIA_KEY, "employee number"); sessionIn(name); renderChip(); toast("Sorting as " + esc(name)); }
     } catch (_) { toast("Could not check the employee number — try again"); }
-    finally { signingIn = false; idle("signin"); }
+    finally { signingIn = false; idle("signin"); if (held && !getEmployee()) dropHeld(""); }
   }
 
   /* ---- what this station did with an order, with who did it (the chip's name only, never a guess) ---- */
@@ -1782,7 +1817,7 @@ window.SortTL = (function () {
       if (onScreen.length) batchInHand(last.how, onScreen);       // (a batch no longer on screen is not put in hand)
     } catch (_) {}
   }
-  const dropKept = () => { kept.length = 0; };       // (a sign-out ended: what was kept before it is never put under the next name)
+  const dropKept = () => { kept.length = 0; held = null; freeHold(); };       // (a sign-out ended: what was kept before it is never put under the next name, nor a print that waited for one)
   function batchLoaded(sc) {
     sc = sc || scanned;
     if (sc && !sc.done) {
@@ -1790,7 +1825,9 @@ window.SortTL = (function () {
       const recs = sc.ids.map(id => ({ id, parts: piecesOf(id) }));
       // A phone batch that loads while nobody is signed in is not lost to nobody: it loads on screen as ever (nothing is blocked)
       // and is kept for 20 minutes in this tab; the person who signs in next has it recorded as their scan and in hand (release).
-      if (sc.relay && !signedNow()) { keepBatch(sc, recs); }
+      // A typed batch is kept the same way while nobody is named (a sticker's Print asks for a name, 7 Oct 2026): the person who
+      // then signs in at that Print has the batch they were working on recorded and in hand.
+      if ((sc.relay || nameNeeded()) && !signedNow()) { keepBatch(sc, recs); }
       else { recordBatch(sc.how, recs); batchInHand(sc.how, recs); }
     }
     const me = cur;
@@ -1893,6 +1930,7 @@ window.SortTL = (function () {
   // One sticker: printed right away with no StationTimeline (as before), else once the guard lets it through.
   function printOne(orderId, go) {
     const id = String(orderId || "");
+    if (!nameFirst(() => printOne(orderId, go))) return;     // nobody signed in: asked first, this sticker prints once a name is set
     if (!id || !tl()) return go();
     if (printing.has(id)) return;
     printing.add(id);
@@ -1926,7 +1964,7 @@ window.SortTL = (function () {
 
   return Object.assign(api, {
     active: () => !!window.StationTimeline,
-    getEmployee, batchStart, etsyReceipt, batchLoaded, markTiles, allowPrint, printOne, sorted, isKnownCancelled, dropKept, kept: () => kept.length
+    nameFirst, getEmployee, batchStart, etsyReceipt, batchLoaded, markTiles, allowPrint, printOne, sorted, isKnownCancelled, dropKept, kept: () => kept.length
   });
 })();
 
@@ -2587,6 +2625,8 @@ function showRowPrintCompletedModal() {
 /** Kick off printing for the next visible row of up to 9 Etsy Order Items. */
 async function handlePrintRowClick() {
   try {
+    // nobody signed in: the name is asked for first and the row prints once it is set (SortTL.nameFirst)
+    if (window.SortTL && typeof window.SortTL.nameFirst === "function" && !window.SortTL.nameFirst(() => handlePrintRowClick())) return;
     const visible = getVisibleCellIndices();
     if (!visible.length) {
       if (window.M?.toast) M.toast({ html: "No visible Etsy items to print." });
@@ -6071,5 +6111,6 @@ function createUnmatchedUserImagesPreview() {
 })();
 
   </script>
+<script src="station-fresh.js?v=20261007-fr1"></script><!-- station-fresh.js: one quiet reload to the newest deploy after somebody uses the station (Paul, 7 Oct 2026) -->
 </body>
 </html>

@@ -243,6 +243,7 @@
     function handleScannedCode(codeText) {
       if (codeText === lastScanned) return;
       lastScanned = codeText;
+      try { if (window.StationFresh) window.StationFresh.touch(); } catch (_) {}   // station-fresh.js: a scan is somebody using the station
 
       // The same order again within a few seconds (this page reloaded while the QR was still in view, or the camera swung back):
       // it is one scan, not two. The last accepted scan is kept on this phone, so a reload does not forget it.
@@ -547,5 +548,6 @@
       document.getElementById("saveConfigBtnScanner").addEventListener("click", scannerSaveConfiguration);
     });
   </script>
+<script src="station-fresh.js?v=20261007-fr1" data-quiet-ms="4000"></script><!-- station-fresh.js: one quiet reload to the newest deploy after somebody uses the station (Paul, 7 Oct 2026) -->
 </body>
 </html>

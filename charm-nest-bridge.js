@@ -3366,6 +3366,14 @@ const Gate = window.Gate = (() => {
     const to = sh.el && sh.el.querySelector(where === "row" ? ".shControls" : ".shHead"); if (!to || node.parentNode === to) return;
     if (where === "row") to.insertBefore(node, to.querySelector(".engTogHost")); else to.appendChild(node);
   }
+  /** The window's title: "RG 14/20 · Set 1 · Sheet 1" (a sheet outside any set has no set in it). */
+  const optionsTitle = sh => `${labelOf(sh.metal)}${sh.setId && !sh.draft && sh.seq != null ? ` · Set ${sh.seq}` : ""} · Sheet ${sh.page || 1}`;
+  /** The Options button: the one large window, with this card's own controls mounted in it (OptionsStudio, charm-nest-options-modal.js). */
+  function openOptions(sh, node) {
+    if (!window.OptionsStudio || !node._optBox) return;
+    (R.optionsOpen ||= {})[sh.metal] = true;
+    OptionsStudio.open({ sh, node, box: node._optBox, opener: node.querySelector(".sheetOptionsBtn"), title: optionsTitle(sh) });
+  }
   function renderRelease(sh, node) {
     const m = sh.metal, st = stockFor(m,sh), seq = Sets.ofRun(B.run?.runId).find(s => s.group === "dispatch" && !s.committedAt)?.seq;
     seat(sh, node, "head");
@@ -3382,9 +3390,15 @@ const Gate = window.Gate = (() => {
     // Keep the controls mounted: solver ticks, cloud replies and membership saves
     // must not replace a focused input, its draft value, or an open popup.
     if(node._sheetOptionsOwner!==sh){
+      // (the node is drawn anew for another sheet: a window still showing the old controls is put away, nothing in it was unsaved)
+      if(node._optBox&&window.OptionsStudio)try{OptionsStudio.release(node._optBox);}catch(_){}
       node._sheetOptionsOwner=sh;
-      node.innerHTML = `<details class="sheetOptions" ${R.optionsOpen?.[m] ? "open" : ""}><summary>Options</summary><div class="solidOptions" role="group" aria-label="${esc(labelOf(m))} sheet options">
-        <div class="sheetOptionsHead"><strong>${esc(labelOf(m))} options</strong><button type="button" class="sheetOptionsClose" aria-label="Close sheet options">×</button></div>
+      // Options (Paul, 7 Oct 2026): one large window (charm-nest-options-modal.js, OptionsStudio) instead of two popovers. This
+      // node keeps the pill button and the controls' own element (the box): they are drawn here exactly as before, and the
+      // window mounts the same box while it is open, so a repaint never replaces a focused field or a typed value.
+      node.innerHTML = `<div class="sheetOptions"><button type="button" class="sheetOptionsBtn" aria-haspopup="dialog">Options</button><div class="solidOptions" role="group" aria-label="${esc(labelOf(m))} sheet options" hidden>
+        <section class="osCard osSheet" data-card="sheet" aria-labelledby="osSheet-${esc(m)}"><header class="osCardHead"><h3 class="osCardTitle" id="osSheet-${esc(m)}">This sheet</h3><p class="osLead">In the set, its size${m==='rose'?', the cut contour':''}${solid(m)?' and merging':''}.</p></header>
+        <div class="osSheetGrid">
         <section class="sheetOptionSection"><label class="sheetInclude"><input type="checkbox" data-solid="include" aria-label="Include ${esc(labelOf(m))} sheet ${sh.page} in current set"> Include Sheet ${sh.page} in current set</label><span class="help sheetOptionStatus" role="status" data-solid="status"></span><button type="button" class="btn ghost xs" data-solid="retry" hidden>Retry selection</button></section>
         <section class="sheetOptionSection"><h4>Sheet dimensions</h4><div class="solidSize">
           <label>Width <span>mm</span><input type="number" min="5" max="500" step="0.1" data-solid="w" value="${+(st.wIn*25.4).toFixed(2)}"></label>
@@ -3394,28 +3408,27 @@ const Gate = window.Gate = (() => {
           <div class="sheetMergeActions" data-solid="merge-actions"><button type="button" class="btn ghost xs" data-solid="merge-move">Move all onto Sheet 1</button><button type="button" class="btn ghost xs" data-solid="merge-renest">Re-nest both sheets</button></div>
           <div class="sheetMergeAsk" data-solid="merge-ask" role="group" aria-label="Confirm merge" hidden><span class="help" data-solid="merge-ask-text"></span><span class="sheetMergeAskBtns"><button type="button" class="btn ghost xs" data-solid="merge-cancel">Cancel</button><button type="button" class="btn sage xs" data-solid="merge-go">Merge</button></span></div>
           <div class="sheetMergeBusy" data-solid="merge-busy" role="status" hidden><span class="spin" aria-hidden="true"></span><span data-solid="merge-busy-text"></span></div></section>` : ""}
-      </div></details>`;
-      const details=node.querySelector('.sheetOptions');
-      details.ontoggle=()=>{(R.optionsOpen ||= {})[m]=details.open;};
-      const close=()=>{details.open=false;(R.optionsOpen ||= {})[m]=false;node.querySelector('.sheetOptions>summary').focus();};
-      node.querySelector('.sheetOptionsClose').onclick=close;
-      details.onkeydown=e=>{if(e.key==='Escape'){e.preventDefault();e.stopPropagation();close();}};
-      for(const axis of ['w','h'])node.querySelector('[data-solid="'+axis+'"]').oninput=e=>{e.target._draft=true;};
+        </div></section>
+      </div></div>`;
+      node._optBox=node.querySelector('.solidOptions');
+      node.querySelector('.sheetOptionsBtn').onclick=()=>openOptions(sh,node);
+      for(const axis of ['w','h'])node._optBox.querySelector('[data-solid="'+axis+'"]').oninput=e=>{e.target._draft=true;};
     }
-    node.querySelector('.sheetOptions>summary').textContent='Options'+(included?' ✓':'');
-    const include=node.querySelector('[data-solid="include"]');include.checked=!!included;include.disabled=!membershipEditable(sh)||!!sh.roseCutAt;
+    const box=node._optBox;
+    node.querySelector('.sheetOptionsBtn').textContent='Options'+(included?' ✓':'');
+    const include=box.querySelector('[data-solid="include"]');include.checked=!!included;include.disabled=!membershipEditable(sh)||!!sh.roseCutAt;
     // a locked checkbox says why, as the size control below it does
     const runNow=B.run,locked=!include.disabled?'':sh.roseCutAt?'Cut · it stays in its set':sh.recalled?'A saved sheet · its set is fixed':runNow&&['complete','abandoned'].includes(runNow.status)?'The run is finished':committing(runNow)?'The set is being committed':'This sheet is in a committed set · it stays there';
-    node.querySelector('[data-solid="status"]').textContent=R.membershipError?'Selection not saved':R.membershipPending?'Saving selection…':locked||sh.cardinalHold||sh.cardinalPull||sh.cardinalNote||'';
+    box.querySelector('[data-solid="status"]').textContent=R.membershipError?'Selection not saved':R.membershipPending?'Saving selection…':locked||sh.cardinalHold||sh.cardinalPull||sh.cardinalNote||'';
     if(sh.el)sh.el.querySelector(".shHead").title=policy(sh,seq).reason;   // the same hover answer the Gold and Silver cards give
-    const retry=node.querySelector('[data-solid="retry"]');retry.hidden=!R.membershipError;
+    const retry=box.querySelector('[data-solid="retry"]');retry.hidden=!R.membershipError;
     retry.onclick=()=>changeMembership(m,m==='rose'?!!selected()[m]:picked(sh),sh).catch(()=>{});
     include.onchange=async e=>{
       if(!membershipEditable(sh))return renderRelease(sh,node);
       const want=e.target.checked,rule=solid(m)?cardinalFor(sh,want):{list:[sh],blocked:''};let list=[sh];
       // the cardinal rule: sheets that share a multi-piece order change set together; one that cannot follow stops the change, and says why
       if(rule.blocked){
-        const details=node.querySelector('.sheetOptions');if(details){details.open=false;(R.optionsOpen ||= {})[m]=false;}
+        closeOptions(m,{focus:false});
         renderRelease(sh,node);
         if(window.SharedOrdersModal&&SharedOrdersModal.open)try{SharedOrdersModal.open({sheetId:sh.sheetId,targetSetId:null,reason:rule.blocked});return;}catch(_){/* the toast says it */}
         return toast(rule.blocked,'bad',12000);
@@ -3423,7 +3436,7 @@ const Gate = window.Gate = (() => {
       let split=rule.list.length>1?rule.list.filter(p=>p!==sh).map(p=>({sheet:p,orders:[...ordersOn(p)].filter(id=>ordersOn(sh).has(id))})):[];
       if(!split.length&&solid(m))split=splitWith(sh,want);   // (a page whose charms carry no pool ids, so the rule cannot see its orders: the order test of the page still asks, as it always did)
       if(split.length){
-        const details=node.querySelector('.sheetOptions');if(details){details.open=false;(R.optionsOpen ||= {})[m]=false;}
+        closeOptions(m,{focus:false});
         list=await askSplit(sh,want,split);
         if(!list || !membershipEditable(sh))return renderRelease(sh,node);   // left as it was
         list=list.filter(membershipEditable);
@@ -3431,19 +3444,19 @@ const Gate = window.Gate = (() => {
       changeMembership(m,want,list).catch(()=>{});
     };
     for(const [axis,value] of [['w',st.wIn],['h',st.hIn]]){
-      const input=node.querySelector('[data-solid="'+axis+'"]');
+      const input=box.querySelector('[data-solid="'+axis+'"]');
       input.disabled=sizeLocked;
       if(!input._draft && input!==document.activeElement)input.value=+(value*25.4).toFixed(2);
     }
     // (a merge of this metal's sheets under way: the size waits for it, and says so plainly)
     const merging=!!MERGE[m]?.busy;
-    const apply=node.querySelector('[data-solid="size"]');apply.disabled=sizeLocked||!editable(sh)||!!node._sizeApplying||merging;
+    const apply=box.querySelector('[data-solid="size"]');apply.disabled=sizeLocked||!editable(sh)||!!node._sizeApplying||merging;
     apply.textContent=node._sizeApplying?'Applying size…':'Apply size';
     apply.setAttribute('aria-busy',String(!!node._sizeApplying));
     const kept=R.sizeKept?.[m],keptNow=kept&&Date.now()-kept.at<60000?kept.text:'';   // (the last Apply size left a cut sheet as it was)
-    node.querySelector('[data-solid="size-help"]').textContent=sizeLocked?'Dimensions belong to this saved sheet.':node._sizeApplying?'Your size change is queued for saving.':keptNow?keptNow:merging?'Wait until the merge finishes.':!editable(sh)?'This material is in use or its set is locked.':'5–500 mm per side';
+    box.querySelector('[data-solid="size-help"]').textContent=sizeLocked?'Dimensions belong to this saved sheet.':node._sizeApplying?'Your size change is queued for saving.':keptNow?keptNow:merging?'Wait until the merge finishes.':!editable(sh)?'This material is in use or its set is locked.':'5–500 mm per side';
     apply.onclick=async()=>{
-      const width=node.querySelector('[data-solid="w"]'),height=node.querySelector('[data-solid="h"]'),w=+width.value,h=+height.value;
+      const width=box.querySelector('[data-solid="w"]'),height=box.querySelector('[data-solid="h"]'),w=+width.value,h=+height.value;
       if(![w,h].every(n=>Number.isFinite(n)&&n>=5&&n<=500))return toast('Use a width and height between 5 and 500 mm','bad');
       if(node._sizeApplying||sizeLocked||!editable(sh)||MERGE[m]?.busy)return;
       const run=B.run;
@@ -3475,7 +3488,8 @@ const Gate = window.Gate = (() => {
       finally {node._sizeApplying=false;renderRelease(sh,node);}
     };
     if(solid(m))paintMerge(sh,node);
-    if(window.PartialSheetsUI)try{PartialSheetsUI.paint(sh,node);}catch(e){console.warn('partial sheets',e);}   // the Partial Sheet button and panel (charm-nest-partial-ui.js: its section and second view inside this same Options panel)
+    if(window.PartialSheetsUI)try{PartialSheetsUI.paint(sh,node);}catch(e){console.warn('partial sheets',e);}   // the partial sheets card of the window (charm-nest-partial-ui.js: it adds its own card to the box)
+    if(window.OptionsStudio)try{OptionsStudio.sync(sh,node,optionsTitle(sh));}catch(e){console.warn('options window',e);}   // (the window's own title and its sheet history follow the sheet)
   }
 
   /* ── Merge sheets (Paul, 28 Sep 17:07: "add a new button that allows two sheets to be merged into one, especially when
@@ -3535,10 +3549,9 @@ const Gate = window.Gate = (() => {
     const a = activePage(m); if (a?.el && typeof renderProgress === "function") renderProgress(a);
   }
   /** The panel closes before the merge, so its sheet is in full view (never a panel over what it does). */
-  function closeOptions(m) {
+  function closeOptions(m, o = {}) {
     (R.optionsOpen ||= {})[m] = false;
-    const d = S.sheets[m]?.cardEl?.querySelector?.(".sheetOptions"); if (!d || !d.open) return;
-    d.open = false; try { d.querySelector(":scope > summary")?.focus({ preventScroll: true }); } catch (_) {}
+    if (window.OptionsStudio) try { return OptionsStudio.close(m, o); } catch (_) {}   // (a promise: the window is gone when it settles)
   }
   /** "Done", said once where the merge showed its progress: a note under the card's status line (a toast when the card
    *  is out of sight). */
@@ -3642,7 +3655,7 @@ const Gate = window.Gate = (() => {
   }
   /** The panel's Merge sheets section: shown while the metal has two sheets or more that can change, or a merge runs. */
   function paintMerge(sh, node) {
-    const m = sh.metal, sec = node.querySelector('[data-solid="merge"]'); if (!sec) return;
+    const m = sh.metal, sec = (node._optBox || node).querySelector('[data-solid="merge"]'); if (!sec) return;
     const st = MERGE[m] || (MERGE[m] = {}), q = k => sec.querySelector(`[data-solid="merge-${k}"]`);
     const plan = st.busy ? null : mergePlan(m), done = st.done && Date.now() - st.done.at < 12000 ? st.done : null;
     sec.hidden = !st.busy && !plan && !done;

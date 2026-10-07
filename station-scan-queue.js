@@ -105,6 +105,7 @@
         var S = window.StationSession;
         if (S && typeof S.touch === "function") S.touch();
       } catch (_) {}
+      try { if (window.StationFresh) window.StationFresh.touch(); } catch (_) {}   // station-fresh.js: somebody is using the station (a quiet reload may follow)
     }
     function isDuplicate(n, at, id) {
       if (id && seenIds[id]) return true;
@@ -198,6 +199,8 @@
       } catch (_) { running = false; return current; }
     }
     async function loop() {
+      var release = null;
+      try { if (window.StationFresh) release = window.StationFresh.hold("scan"); } catch (_) {}   // station-fresh.js: no reload while a scan is being loaded
       try {
         while (list.length && signedIn()) {
           if (hold) { var held = false; try { held = !!hold(drain); } catch (_) {} if (held) break; }
@@ -207,6 +210,7 @@
         }
       } catch (_) {}
       running = false; render();                     // same turn as the last check above: a scan cannot slip in between
+      try { if (release) release(); } catch (_) {}
     }
 
     restore();
