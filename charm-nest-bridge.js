@@ -10356,11 +10356,6 @@ const Review = window.Review = (() => {
     {const sc=v.querySelector('.egPane.scroll');if(sc.scrollTop!==oldScroll)sc.scrollTop=oldScroll;}
     if(back){const n=desired.find(x=>x.it===back)?.node;if(n?.isConnected)bringBack(n,back.key);}
     if(active?.isConnected)active.focus({preventScroll:true});
-    const notices = doneMode ? [] : items().filter(it=>isNotice(it) && O.orderMatches(it.rid,orderQ));
-    if (notices.length) {
-      host.insertAdjacentHTML("beforeend", `<div class="rvNotices"><div class="nHead">Left open on the station — no decision needed here</div>${notices.map(n => `<div class="nRow"><b class="mono">${esc(n.rid)}</b><span class="w">${esc(n.note || String(n.why || "").replace(n.rid + " held — ", ""))}</span><button class="btn ghost xs" data-open="${esc(n.line || "")}" title="open this order on the cards">Open order ↗</button></div>`).join("")}</div>`);
-      host.querySelectorAll("[data-open]").forEach(b => b.onclick = () => { if (b.dataset.open) OrderWin.open(b.dataset.open); });
-    }
   }
   /** What another tab's card's custom buttons act on for a line (actOf), or null: the order window shows them, with their
    *  kept seals, for a line completed by hand and reopened. */
