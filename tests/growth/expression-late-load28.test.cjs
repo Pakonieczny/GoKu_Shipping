@@ -17,10 +17,10 @@ function fixture(t,{moduleAvailable=true}={}){
   const dom=new JSDOM('<!doctype html><body></body>',{url:'https://preview.example/concierge-sandbox.html',pretendToBeVisual:true,runScripts:'outside-only',virtualConsole:vc}),w=dom.window,d=w.document;
   const script=d.createElement('script');script.src='/brites-concierge.js';script.dataset.sandbox='true';Object.defineProperty(d,'currentScript',{get:()=>script});
   let hidden=false,clock=1791340000000,serial=0,controller=null;Object.defineProperty(d,'hidden',{get:()=>hidden});w.Date.now=()=>clock;
-  const timers=new Map(),calls={expressions:[],emotions:[],levels:[],states:[],performances:[],requests:[],starts:0,stops:0,interrupts:0};
+  const timers=new Map(),calls={expressions:[],expressionLevels:[],expressionPlaybacks:[],emotions:[],levels:[],states:[],performances:[],requests:[],starts:0,stops:0,interrupts:0};
   w.setTimeout=(fn,ms)=>{const id=++serial;timers.set(id,{fn,at:clock+Number(ms||0)});return id;};w.clearTimeout=id=>timers.delete(id);
   w.HTMLElement.prototype.scrollIntoView=function(){};
-  function installModule(){w.BritesConciergeExpression={...expressionApi,create(options){controller=expressionApi.create({...options,now:()=>clock});return controller;}};}
+  function installModule(){w.BritesConciergeExpression={...expressionApi,create(options){controller=expressionApi.create({...options,now:()=>clock});const level=controller.level,playback=controller.playback;controller.level=value=>{calls.expressionLevels.push({...value});return level(value);};controller.playback=value=>{calls.expressionPlaybacks.push({...value});return playback(value);};return controller;}};}
   if(moduleAvailable)installModule();
   w.BritesConciergeAvatar={create:()=>({setExpression:value=>calls.expressions.push(value?{...value}:null),setEmotion:value=>calls.emotions.push(value),setLevel:value=>calls.levels.push(value),setState:value=>calls.states.push(value),setPaused(){},setVisible(){},setFloating(){},triggerGreeting(){},cancelPerformance(){},perform:value=>{calls.performances.push({...value});return true;},retry(){},destroy(){}})};
   let config;const client={state:'listening',outputMeterState:'ready',playbackBlocked:false,start:async()=>{calls.starts++;return true;},stop:async()=>{calls.stops++;},interrupt(){calls.interrupts++;},dispose:async()=>{}};
@@ -94,6 +94,114 @@ for(const moduleAvailable of [true,false])for(const text of [
   const fresh=h.speech('input-2',2);h.userTranscript(text,fresh);assert.equal(h.calls.emotions.at(-1),'celebrate');
   h.state('thinking');h.config.onAvatarPerformance({mood:'celebrate',gesture:'confirm',intensity:.45,durationMs:1000},fresh);h.playback(fresh,{responseId:'reply-2',itemId:'output-2'});h.state('speaking');assert.equal(h.calls.performances.at(-1)?.mood,'celebrate');assert.equal(h.calls.performances.at(-1)?.gesture,'confirm');
   if(!moduleAvailable)await h.loadModule();assert.equal(h.calls.starts,1);assert.equal(h.errors.length,0);
+});
+
+// The clock below is local media time, independent of generation and host wall
+// time. It is delivered through the real widget callback into the production
+// planner; the fixture records boundary arguments without replacing behavior.
+function outputSample(h,turn,outputTimeMs,{wallMs=1000,output=.4,missingTime=false,...metadata}={}){
+  h.advance(wallMs);
+  const value={input:0,output,outputClock:'local-media-currentTime',responseId:'reply-1',...turn,...metadata};
+  if(!missingTime)value.outputTimeMs=outputTimeMs;
+  h.config.onLevel(value);
+  return value;
+}
+function playingReply(h){const turn=beginReply(h);h.playback(turn);h.state('speaking');h.config.onOutputMeterState('ready');return turn;}
+
+test('widget forwards response-qualified local media evidence without converting it to a wall frame',async t=>{
+  const h=fixture(t);await h.start();const turn=playingReply(h);
+  const first=outputSample(h,turn,25000,{wallMs:1000});
+  assert.equal(h.controller.snapshot().clockMs,0,'the first measured sample anchors even at a nonzero media position');
+  const second=outputSample(h,turn,25150,{wallMs:1200});
+  assert.equal(h.controller.snapshot().clockMs,150,'sparse widget callbacks preserve the measured interval rather than the longer host delay');
+  for(const [actual,expected] of h.calls.expressionLevels.slice(-2).map((value,index)=>[value,[first,second][index]])){
+    for(const key of ['input','output','outputTimeMs','outputClock','responseId','inputItemId','turnVersion','currentTurn'])assert.equal(actual[key],expected[key],key+' survives the widget boundary');
+  }
+  assert.equal(h.calls.starts,1);assert.equal(h.calls.stops,0);
+});
+
+test('late planner hydration preserves measured speech offset and seeds the last admitted media observation',async t=>{
+  const h=fixture(t,{moduleAvailable:false});await h.start();const turn=beginReply(h);
+  h.advance(1200); // Generated text existed before native output began.
+  h.playback(turn);h.state('speaking');h.config.onOutputMeterState('ready');
+  outputSample(h,turn,25000,{wallMs:1000});
+  outputSample(h,turn,25900,{wallMs:1000});
+  await h.loadModule();
+  assert.equal(h.controller.snapshot().clockMs,900,'pending hydration uses adjacent positive media observations, excluding generation delay');
+  assert.equal(h.calls.expressionPlaybacks.at(-1).startOffsetMs,900);
+  assert.equal(h.calls.expressionLevels.at(-1).outputTimeMs,25900,'hydrate the last admitted sample after playback sets the offset');
+  assert.equal(h.calls.expressionLevels.at(-1).responseId,'reply-1');
+  outputSample(h,turn,26550,{wallMs:650});
+  assert.equal(h.controller.snapshot().clockMs,1550,'the first post-load sample continues the seeded interval instead of losing 650ms');
+  assert.equal(h.calls.starts,1);assert.equal(h.calls.stops,0);
+});
+
+test('already loaded and late planners agree after a sparse response-qualified measured series',async t=>{
+  const ready=fixture(t),late=fixture(t,{moduleAvailable:false});await ready.start();await late.start();
+  const turns=[playingReply(ready),playingReply(late)];
+  for(const [index,h] of [ready,late].entries())for(const timestamp of [50000,50500,51500,51650])outputSample(h,turns[index],timestamp,{wallMs:750});
+  await late.loadModule();
+  assert.equal(ready.controller.snapshot().clockMs,1650);assert.equal(late.controller.snapshot().clockMs,1650);
+  for(const [index,h] of [ready,late].entries())outputSample(h,turns[index],52050,{wallMs:1000});
+  assert.equal(ready.controller.snapshot().clockMs,2050);assert.equal(late.controller.snapshot().clockMs,2050);
+});
+
+test('pending silence breaks an adjacent positive interval without counting the silent gap as speech',async t=>{
+  const h=fixture(t,{moduleAvailable:false});await h.start();const turn=playingReply(h);
+  outputSample(h,turn,1000,{wallMs:100});outputSample(h,turn,1250,{wallMs:250});
+  outputSample(h,turn,1750,{wallMs:500,output:0});
+  outputSample(h,turn,2250,{wallMs:500});outputSample(h,turn,2500,{wallMs:250});
+  await h.loadModule();assert.equal(h.controller.snapshot().clockMs,500,'only the two separate positive intervals belong to observed speech');
+  outputSample(h,turn,2650,{wallMs:150});assert.equal(h.controller.snapshot().clockMs,650);
+});
+
+for(const [gap,expected] of [[2000,2000],[2001,0]])test('late-load pending clock '+(gap===2000?'admits':'rejects')+' an adjacent '+gap+'ms media interval',async t=>{
+  const h=fixture(t,{moduleAvailable:false});await h.start();const turn=playingReply(h);
+  outputSample(h,turn,10000,{wallMs:100});outputSample(h,turn,10000+gap,{wallMs:100});
+  await h.loadModule();assert.equal(h.controller.snapshot().clockMs,expected);
+  outputSample(h,turn,10150+gap,{wallMs:150});assert.equal(h.controller.snapshot().clockMs,expected+150,'a discontinuity re-anchors, then valid adjacent playback can continue');
+});
+
+for(const moduleAvailable of [true,false])for(const invalid of ['missing',NaN,Infinity,-1,'1500'])test('widget cannot fabricate wall progress after measured playback loses its '+String(invalid)+' timestamp'+(moduleAvailable?' with planner':' before planner loads'),async t=>{
+  const h=fixture(t,{moduleAvailable});await h.start();const turn=playingReply(h);
+  outputSample(h,turn,1000,{wallMs:100});outputSample(h,turn,1150,{wallMs:150});
+  outputSample(h,turn,invalid,{wallMs:1000,missingTime:invalid==='missing'});
+  h.advance(400);
+  if(!moduleAvailable)await h.loadModule();
+  assert.equal(h.controller.snapshot().clockMs,150,'clock failure preserves prior measured progress, even while positive RMS remains available');
+  outputSample(h,turn,2500,{wallMs:250});assert.equal(h.controller.snapshot().clockMs,150,'the first valid returned timestamp re-anchors after missing or invalid evidence');
+  outputSample(h,turn,2700,{wallMs:200});assert.equal(h.controller.snapshot().clockMs,350);
+});
+
+for(const moduleAvailable of [true,false])for(const stale of [
+  {name:'another response',responseId:'reply-old'},
+  {name:'another input',inputItemId:'input-old'},
+  {name:'another turn version',turnVersion:0},
+  {name:'explicit old-turn classification',currentTurn:false}
+])test('widget rejects '+stale.name+' audio before it changes '+(moduleAvailable?'the active':'the pending')+' expression clock',async t=>{
+  const h=fixture(t,{moduleAvailable});await h.start();const turn=playingReply(h);
+  outputSample(h,turn,1000,{wallMs:100});outputSample(h,turn,1200,{wallMs:200});
+  const before=h.calls.expressionLevels.length,mouthBefore=h.calls.levels.length;
+  const {name,...metadata}=stale;outputSample(h,turn,1300,{wallMs:100,output:.9,...metadata});
+  if(moduleAvailable){assert.equal(h.controller.snapshot().clockMs,200);assert.equal(h.calls.expressionLevels.length,before,'stale level is rejected at the widget boundary');}
+  assert.equal(h.calls.levels.length,mouthBefore,'stale RMS does not animate the actual avatar mouth sink');
+  outputSample(h,turn,1350,{wallMs:50});
+  if(!moduleAvailable)await h.loadModule();
+  assert.equal(h.controller.snapshot().clockMs,350,'stale media never replaces the last admitted timestamp or gains pending activity');
+  outputSample(h,turn,1500,{wallMs:150});assert.equal(h.controller.snapshot().clockMs,500);
+});
+
+test('a legacy missing-clock pending series retains its bounded fallback only until measured evidence arrives',async t=>{
+  const h=fixture(t,{moduleAvailable:false});await h.start();const turn=playingReply(h);
+  outputSample(h,turn,undefined,{wallMs:2000,missingTime:true});
+  outputSample(h,turn,undefined,{wallMs:1500,missingTime:true});
+  await h.loadModule();assert.equal(h.controller.snapshot().clockMs,200,'each legacy pending sample admits at most 100ms despite sparse host callbacks');
+  h.advance(100);const beforeMeasured=h.controller.snapshot().clockMs;
+  assert.ok(beforeMeasured>=200&&beforeMeasured<=300,'before any measured clock, the existing fallback may follow its just-observed output for at most this 100ms wall interval');
+  outputSample(h,turn,50000,{wallMs:0});assert.equal(h.controller.snapshot().clockMs,beforeMeasured,'the first measured sample does not add its absolute media position');
+  outputSample(h,turn,50200,{wallMs:200});assert.equal(h.controller.snapshot().clockMs,beforeMeasured+200);
+  outputSample(h,turn,undefined,{wallMs:1000,missingTime:true});h.advance(300);
+  assert.equal(h.controller.snapshot().clockMs,beforeMeasured+200,'a measured response never reverts to fabricated wall progress when its optional clock disappears');
 });
 
 test('negating a memorial label does not suppress explicitly stated bereavement in the actual widget',async t=>{

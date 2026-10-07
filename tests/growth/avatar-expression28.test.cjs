@@ -69,6 +69,24 @@ test('listening preserves attention and quietly supports known context without s
   assert.equal(restricted.expressionKind, 'support'); assert.ok(restricted.eyeSmile <= .22); assert.equal(restricted.bob, 0);
 });
 
+test('restrained repair expressions remain visibly differentiated and leave measured mouth aperture independent', t => {
+  const g = scene(t);
+  for (const intensity of [.35, .38]) {
+    const faceShapes = [], browShapes = [], heights = [];
+    for (const kind of ['support', 'reflect', 'explain', 'inquiry']) {
+      const pose = avatar.poseFor({state: 'speaking', emotion: 'reassuring', expression: {kind, intensity}, level: .7, time: 4});
+      g.pose(pose); const eye = g.get('expression-eye-left'), brow = g.get('expression-brow-left'), mouth = g.get('expression-speech-mouth');
+      faceShapes.push(Array.from(eye.geometry.attributes.position.array).join(',')); browShapes.push([brow.position.y, brow.rotation.z].join(',')); heights.push(mouth.scale.y);
+      assert.equal(mouth.visible, true); assert.ok(Math.abs(pose.expressionHeadRoll) < .01); assert.ok(pose.eyeSmile < .25, 'quiet context never opens celebratory eye smiles');
+      assert.ok([...eye.geometry.attributes.position.array, ...mouth.geometry.attributes.position.array].every(Number.isFinite));
+      g.pose({...pose, speechEnergy: 0}); assert.equal(mouth.visible, false); assert.equal(g.get('expression-speech-bar-2').visible, false, 'the conversational act cannot manufacture speaking movement');
+    }
+    assert.equal(new Set(faceShapes).size, 4, 'support, reflection, explanation and question deform the actual ribbon differently even at low gain');
+    assert.equal(new Set(browShapes).size, 4, 'restrained brow geometry preserves the conversational distinction');
+    assert.equal(new Set(heights).size, 1, 'same measured output energy produces the same mouth opening for every conversational act');
+  }
+});
+
 test('gratitude keeps measured speaking movement visible in fallback and real CPU geometry', async t => {
   const h = await fallback(t), {guide} = h; guide.setEmotion('appreciated'); assert.equal(guide.element.dataset.heart, 'true', 'idle acknowledgement begins immediately'); guide.setState('speaking'); assert.equal(guide.element.dataset.heart, 'false', 'speaking suppresses the decorative overlay immediately'); guide.setExpression({kind: 'appreciate', intensity: .8}); guide.setLevel(.8); h.advance(300);
   assert.equal(guide.element.dataset.heart, 'false'); assert.equal(guide.element.querySelector('.brites-avatar__speech-mouth').getAttribute('opacity'), '1');

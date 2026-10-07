@@ -42,6 +42,41 @@ function fixture({ id = 'input-current', context = 'ordinary' } = {}) {
 
 const kinds = text => Expression.plan(text).map(cue => cue.kind);
 
+test('qualified product meaning changes from reflection to an actual invitation for the shopper', () => {
+  // Exact public QA sentence fixture; no assertion of a universal symbolic meaning.
+  const text = 'I cannot say it has one universal meaning. You might choose a personal reminder. What would you like it to represent?';
+  const expected = ['reflect', 'reflect', 'inquiry'];
+  assert.deepEqual(kinds(text), expected);
+  const h = fixture();
+  h.text(text);
+  h.playback(true);
+  const duration = Expression.plan(text).reduce((sum, cue) => sum + cue.durationMs, 0);
+  h.advance(duration + 200, .3);
+  assert.deepEqual(h.events.map(({ event }) => event.kind), expected, 'qualified phrases and the final question must all reach the real driver');
+  assert.equal(h.state.cue, null);
+});
+
+test('explicit possibility and inability to verify retain reflection instead of confident explanation', () => {
+  for (const text of [
+    'I cannot say this has one universal meaning.',
+    "I can't say this has one universal meaning.",
+    'I can’t say this has one universal meaning.',
+    'A familiar symbol may feel comforting.',
+    'A small symbol may be a personal reminder.'
+  ]) assert.deepEqual(kinds(text), ['reflect'], text);
+  assert.deepEqual(kinds('The finish changes the look of a piece. A small symbol may be a personal reminder. Which style feels right?'), ['explain', 'reflect', 'inquiry']);
+});
+
+test('an explicit information request remains a question when its subject contains possible meaning', () => {
+  for (const text of [
+    'What could this symbol mean to your friend?',
+    'Could it mean a personal reminder for her?',
+    'Would you like a symbol that may feel comforting?',
+    'What might it represent for you?'
+  ]) assert.deepEqual(kinds(text), ['inquiry'], text);
+  assert.deepEqual(kinds('It could mean a personal reminder.'), ['reflect'], 'a qualified statement remains reflective rather than becoming a question');
+});
+
 test('different communicative clauses produce a bounded speech trajectory rather than one reply-wide emotion', () => {
   const text = "I'm sorry that was frustrating. I cannot confirm the fit from that detail. Here is the shorter option. Which would you prefer? Thank you for explaining.";
   assert.deepEqual(kinds(text), ['support', 'reflect', 'resolve', 'inquiry', 'appreciate']);

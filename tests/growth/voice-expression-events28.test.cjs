@@ -4,27 +4,35 @@
 const test=require('node:test'),assert=require('node:assert/strict');
 const voiceApi=require('../../brites-concierge-voice.js');
 const SDP='v=0\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=candidate:1 1 UDP 2122260223 192.0.2.10 50000 typ host\r\n';
-function fixture(t){
-  let channel,serial=0;const sent=[],requests=[],transcripts=[],listening=[],playback=[],speech=[],calls=[],timers=new Map(),listeners=new Map();
+function fixture(t,{mediaClock=false}={}){
+  let channel,peer,serial=0,frameSerial=0;const sent=[],requests=[],transcripts=[],listening=[],playback=[],speech=[],calls=[],levels=[],audios=[],timers=new Map(),listeners=new Map(),frames=new Map();
   const track={kind:'audio',readyState:'live',stop(){}},stream={getAudioTracks:()=>[track],getTracks:()=>[track]};
-  const document={hidden:false,body:{appendChild(){}},createElement:()=>({setAttribute(){},play:async()=>{},pause(){},remove(){}}),addEventListener:(key,fn)=>listeners.set(key,fn),removeEventListener:key=>listeners.delete(key)};
+  const document={hidden:false,body:{appendChild(){}},createElement(){const value={currentTime:0,paused:true,ended:false,setAttribute(){},play(){this.paused=false;return Promise.resolve();},pause(){this.paused=true;},remove(){}};audios.push(value);return value;},addEventListener:(key,fn)=>listeners.set(key,fn),removeEventListener:key=>listeners.delete(key)};
   class Peer{
-    constructor(){this.iceGatheringState='complete';}addTrack(){}close(){}
+    constructor(){peer=this;this.connectionState='new';this.iceGatheringState='complete';}addTrack(){}close(){this.connectionState='closed';}
     createDataChannel(){channel={readyState:'connecting',send:value=>sent.push(JSON.parse(value)),close(){this.readyState='closed';}};return channel;}
-    async createOffer(){return {type:'offer',sdp:SDP};}async setLocalDescription(value){this.localDescription=value;}async setRemoteDescription(){channel.readyState='open';channel.onopen();}
+    async createOffer(){return {type:'offer',sdp:SDP};}async setLocalDescription(value){this.localDescription=value;}async setRemoteDescription(){this.connectionState='connected';channel.readyState='open';channel.onopen();}
+  }
+  class MeterContext{
+    constructor(){this.state='running';}resume(){return Promise.resolve();}close(){this.state='closed';return Promise.resolve();}
+    createMediaStreamSource(stream){return {connect(analyser){analyser.stream=stream;},disconnect(){}};}
+    createAnalyser(){return {fftSize:512,getFloatTimeDomainData(samples){samples.fill(this.stream?.amplitude??.06);},disconnect(){}};}
   }
   const runtime={document,navigator:{mediaDevices:{getUserMedia:async()=>stream}},location:{origin:'https://preview.test'},RTCPeerConnection:Peer,AbortController,
     setTimeout(fn,ms){const id=++serial;timers.set(id,{fn,ms});return id;},clearTimeout:id=>timers.delete(id),addEventListener:(key,fn)=>listeners.set(key,fn),removeEventListener:key=>listeners.delete(key),
     fetch:async(url,init)=>{const request=JSON.parse(init.body);requests.push(request);return Response.json(request.action==='start'?{sdp:SDP,stopToken:'synthetic-stop-token',maxDurationMs:120000}:request.action==='capabilities'?{enabled:true}:{stopped:true});}};
-  const voice=voiceApi.create({runtime,greeting:false,onTranscript:value=>transcripts.push(value),onListeningTranscript:value=>listening.push(value),onPlaybackState:value=>playback.push(value),onSpeechStarted:value=>speech.push(value),onTool:async(args,context)=>{calls.push({args,context});return {verified:true};}});
-  t.after(async()=>{await voice.dispose();assert.equal(timers.size,0);});
+  if(mediaClock)Object.assign(runtime,{AudioContext:MeterContext,requestAnimationFrame(fn){const id=++frameSerial;frames.set(id,fn);return id;},cancelAnimationFrame:id=>frames.delete(id)});
+  const voice=voiceApi.create({runtime,greeting:false,onLevel:value=>levels.push(value),...(mediaClock?{onPlaybackBlocked(){}}:{}),onTranscript:value=>transcripts.push(value),onListeningTranscript:value=>listening.push(value),onPlaybackState:value=>playback.push(value),onSpeechStarted:value=>speech.push(value),onTool:async(args,context)=>{calls.push({args,context});return {verified:true};}});
+  t.after(async()=>{await voice.dispose();assert.equal(timers.size,0);assert.equal(frames.size,0);});
   const emit=event=>channel?.onmessage?.({data:JSON.stringify(event)}),responses=()=>sent.filter(value=>value.type==='response.create');
   function begin(itemId='input-current'){
     emit({type:'input_audio_buffer.speech_started',item_id:itemId});emit({type:'input_audio_buffer.speech_stopped',item_id:itemId});emit({type:'input_audio_buffer.committed',item_id:itemId});
     return {itemId,turnVersion:speech.at(-1).turnVersion};
   }
   function bind(responseId='response-current',request=responses().at(-1)){emit({type:'response.created',response:{id:responseId,metadata:request?.response.metadata}});return responseId;}
-  return {voice,runtime,document,channel:()=>channel,sent,requests,transcripts,listening,playback,speech,calls,emit,begin,bind,responses};
+  function frame(){const entry=frames.entries().next().value;assert.ok(entry,'a native analyser frame is scheduled');frames.delete(entry[0]);entry[1]();return levels.at(-1);}
+  function attachRemote(amplitude=.1){const remote={amplitude,getAudioTracks:()=>[track],getTracks:()=>[track]};peer.ontrack({streams:[remote]});return remote;}
+  return {voice,runtime,document,channel:()=>channel,peer:()=>peer,audio:()=>audios.at(-1),frames,levels,frame,attachRemote,sent,requests,transcripts,listening,playback,speech,calls,emit,begin,bind,responses};
 }
 
 test('generated text retains part identity and never pretends to be a playback event',async t=>{
@@ -98,4 +106,57 @@ test('callbacks captured by an old peer cannot contaminate an explicit replaceme
   const f=fixture(t);await f.voice.start();f.begin('old-input');f.bind('old-response');const handler=f.channel().onmessage;await f.voice.stop();await f.voice.start();f.begin('new-input');f.bind('new-response');const before={playback:f.playback.length,listening:f.listening.length,transcripts:f.transcripts.length};
   for(const event of [{type:'output_audio_buffer.started',response_id:'old-response'},{type:'conversation.item.input_audio_transcription.delta',item_id:'old-input',delta:'old listening'},{type:'response.output_audio_transcript.done',response_id:'old-response',item_id:'old-output',transcript:'old answer'}])handler({data:JSON.stringify(event)});
   assert.deepEqual({playback:f.playback.length,listening:f.listening.length,transcripts:f.transcripts.length},before);assert.equal(f.voice.state,'thinking');assert.equal(f.requests.filter(value=>value.action==='start').length,2);
+});
+
+test('native level metadata carries actual local media time only for bound output',async t=>{
+  const f=fixture(t,{mediaClock:true});await f.voice.start();f.attachRemote();f.audio().currentTime=.75;
+  assert.equal(Object.hasOwn(f.frame(),'outputTimeMs'),false,'a remote stream alone is not a response playback clock');
+  const turn=f.begin();f.bind();f.emit({type:'output_audio_buffer.started',response_id:'response-current'});
+  f.audio().currentTime=1.234;const first=f.frame();
+  assert.equal(first.outputTimeMs,1234);assert.equal(first.outputClock,'local-media-currentTime');assert.equal(first.responseId,'response-current');assert.equal(first.turnVersion,turn.turnVersion);assert.equal(first.currentTurn,true);
+  assert.ok(Math.abs(first.input-.24)<.000001);assert.ok(Math.abs(first.output-.4)<.000001);
+  assert.equal(Object.hasOwn(first,'audioStartMs'),false);assert.equal(Object.hasOwn(first,'wordTimeMs'),false);
+  f.audio().currentTime=1.584;assert.equal(f.frame().outputTimeMs,1584,'the actual 350ms media advance is preserved, not replaced with one RAF duration');
+  assert.equal(f.frame().outputTimeMs,1584,'a coarse repeated media clock is truthful and never fabricated as advancement');
+  assert.equal(f.requests.filter(value=>value.action==='start').length,1);assert.equal(f.calls.length,0);
+});
+
+test('invalid, throwing, backward and huge native clocks are omitted without poisoning the measured watermark',async t=>{
+  const f=fixture(t,{mediaClock:true});await f.voice.start();f.attachRemote();f.begin();f.bind();f.emit({type:'output_audio_buffer.started',response_id:'response-current'});
+  const audio=f.audio();audio.currentTime=.6;assert.equal(f.frame().outputTimeMs,600);
+  for(const value of [NaN,Infinity,-Infinity,-1,Number.MAX_VALUE,601,'1',null,undefined,.5,.59]){
+    audio.currentTime=value;const sample=f.frame();assert.equal(Object.hasOwn(sample,'outputTimeMs'),false,String(value));assert.equal(Object.hasOwn(sample,'outputClock'),false);assert.ok(sample.output>.39,'clock failure does not break measured RMS or native playback');
+  }
+  Object.defineProperty(audio,'currentTime',{configurable:true,get(){throw Error('synthetic private media failure');}});assert.equal(Object.hasOwn(f.frame(),'outputTimeMs'),false);
+  Object.defineProperty(audio,'currentTime',{configurable:true,writable:true,value:.7});assert.equal(f.frame().outputTimeMs,700,'a valid clock resumes from its last measured watermark');assert.equal(f.voice.state,'speaking');
+});
+
+for(const boundary of ['paused','ended','hidden','disconnected','blocked'])test('native '+boundary+' media never leaks an output clock',async t=>{
+  const f=fixture(t,{mediaClock:true});await f.voice.start();f.attachRemote();f.begin();f.bind();f.emit({type:'output_audio_buffer.started',response_id:'response-current'});f.audio().currentTime=1;assert.equal(f.frame().outputTimeMs,1000);
+  if(boundary==='paused')f.audio().paused=true;
+  else if(boundary==='ended')f.audio().ended=true;
+  else if(boundary==='hidden')f.document.hidden=true;
+  else if(boundary==='disconnected'){f.peer().connectionState='disconnected';f.peer().onconnectionstatechange();}
+  else {f.audio().play=()=>Promise.reject(Error('synthetic autoplay refusal'));assert.equal(await f.voice.resumeAudio(),false);assert.equal(f.voice.playbackBlocked,true);}
+  f.audio().currentTime=1.3;const sample=f.frame();assert.equal(Object.hasOwn(sample,'outputTimeMs'),false);assert.equal(Object.hasOwn(sample,'responseId'),false);
+  if(boundary==='paused')f.audio().paused=false;
+  else if(boundary==='ended')f.audio().ended=false;
+  else if(boundary==='hidden')f.document.hidden=false;
+  else if(boundary==='disconnected'){f.peer().connectionState='connected';f.peer().onconnectionstatechange();}
+  else {f.audio().play=function(){this.paused=false;return Promise.resolve();};assert.equal(await f.voice.resumeAudio(),true);}
+  f.audio().currentTime=1.4;assert.equal(f.frame().outputTimeMs,1400);assert.equal(f.requests.filter(value=>value.action==='start').length,1,'clock recovery never opens another provider session');
+});
+
+test('native clear, turn replacement and disconnect remove old clock identity',async t=>{
+  const f=fixture(t,{mediaClock:true});await f.voice.start();f.attachRemote();f.begin('input-old');f.bind('response-old');f.emit({type:'output_audio_buffer.started',response_id:'response-old'});f.audio().currentTime=1.7;assert.equal(f.frame().responseId,'response-old');
+  f.emit({type:'output_audio_buffer.cleared',response_id:'response-old'});assert.equal(Object.hasOwn(f.frame(),'outputTimeMs'),false);
+  f.begin('input-new');f.bind('response-new');f.emit({type:'output_audio_buffer.started',response_id:'response-new'});f.audio().currentTime=.2;const current=f.frame();assert.equal(current.responseId,'response-new');assert.equal(current.outputTimeMs,200,'a new response gets an independent observed media baseline');
+  f.emit({type:'output_audio_buffer.started',response_id:'response-old'});assert.equal(f.frame().responseId,'response-new','late old response cannot claim the current media clock');
+  f.voice.interrupt();assert.equal(Object.hasOwn(f.levels.at(-1),'outputTimeMs'),false);assert.equal(Object.hasOwn(f.frame(),'outputTimeMs'),false);
+  const staleFrame=f.frames.values().next().value;await f.voice.stop();assert.deepEqual(f.levels.at(-1),{input:0,output:0});const count=f.levels.length;staleFrame();assert.equal(f.levels.length,count,'a frame captured before cleanup cannot publish a disconnected clock');assert.equal(f.frames.size,0);
+});
+
+test('remote stream replacement accepts its actual new local clock without retaining a previous stream watermark',async t=>{
+  const f=fixture(t,{mediaClock:true});await f.voice.start();f.attachRemote();f.begin();f.bind();f.emit({type:'output_audio_buffer.started',response_id:'response-current'});f.audio().currentTime=2;assert.equal(f.frame().outputTimeMs,2000);
+  f.attachRemote(.08);f.audio().currentTime=.03;const sample=f.frame();assert.equal(sample.outputTimeMs,30);assert.equal(sample.responseId,'response-current');assert.ok(Math.abs(sample.output-.32)<.000001);assert.equal(f.requests.filter(value=>value.action==='start').length,1);
 });

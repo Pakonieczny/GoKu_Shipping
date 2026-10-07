@@ -60,66 +60,118 @@
   }
   function createRunner({expressionFactory,avatar,onUpdate=()=>{},onComplete=()=>{},now=()=>0}={}){
     if(!expressionFactory?.create||!avatar?.setExpression)throw Error('The production expression planner and face rig are required.');
-    let clock=0,serial=0,controller=null,scenario=null,tape=[],next=0,running=false,manualPause=false,startAt=0,heldAt=0,playing=false,listening=false,interrupted=false,hidden=false,reduced=false,output=0,input=0,lastSampleAt=-Infinity,samples=[],log=[],cues=[],beforePlayback=[],interruptionChecks=[];
+    // The authored source clock is separate from renderer updates. A sparse
+    // browser update drains at most 50ms of source audio per planner tick, but
+    // only its final pose is sent to the real rig and captured once.
+    const SOURCE_STEP_MS=50,MAX_SOURCE_DRAINS=400;
+    let clock=0,serial=0,controller=null,scenario=null,tape=[],next=0,nextSourceAt=0,running=false,manualPause=false,startAt=0,heldAt=0,playing=false,listening=false,interrupted=false,hidden=false,reduced=false,scriptedPaused=false,everPaused=false,everHidden=false,rigState='idle',pendingExpression=null,output=0,input=0,lastSampleAt=-Infinity,sourceSampleCount=0,sourcePlaybackSamples=0,observedUpdateCount=0,sourceBeforePlayback=[],sourceInterruptionChecks=[],sourceEventCoverage=[],sourcePhraseIndices=new Set(),sourceCueKinds=new Set(),finalInquiryReached=false,expectedFinalPhraseIndex=-1,samples=[],log=[],cues=[];
     function record(value){log.push({at:Math.round(clock),...safeEvent(value)});if(log.length>MAX_LOG)log.shift();}
     function applyExpression(cue){
       const value=cue&&typeof cue==='object'?{kind:cue.kind,intensity:cue.intensity}:null;
-      if(value?.kind&&value.kind!=='neutral')cues.push({at:Math.round(clock),kind:clean(value.kind),intensity:round(value.intensity)});
-      if(cues.length>MAX_LOG)cues.shift();avatar.setExpression(value);record({type:'face-target',kind:value?.kind||'neutral',intensity:round(value?.intensity)});
+      if(value?.kind&&value.kind!=='neutral'){
+        sourceCueKinds.add(value.kind);
+        if(cues.at(-1)?.kind!==value.kind)cues.push({at:Math.round(clock),kind:clean(value.kind),intensity:round(value.intensity),evidence:'authored-source-target'});
+      }
+      if(cues.length>MAX_LOG)cues.shift();pendingExpression=value;
+      record({type:'source-face-target',kind:value?.kind||'neutral',intensity:round(value?.intensity)});
     }
-    function reset(){controller?.destroy();controller=null;running=false;manualPause=false;playing=listening=interrupted=hidden=false;input=output=0;avatar.setPaused(false);avatar.setVisible(true);avatar.setLevel(0);avatar.setExpression(null);avatar.setState('idle');clock=0;lastSampleAt=-Infinity;samples=[];log=[];cues=[];beforePlayback=[];interruptionChecks=[];scenario=null;tape=[];next=0;}
+    function render(){
+      avatar.setPaused(manualPause||scriptedPaused);avatar.setVisible(!hidden);avatar.setState(rigState);avatar.setExpression(pendingExpression);avatar.setLevel(output);
+    }
+    function reset(){
+      controller?.destroy();controller=null;running=false;manualPause=false;playing=listening=interrupted=hidden=scriptedPaused=everPaused=everHidden=false;input=output=0;rigState='idle';pendingExpression=null;avatar.setPaused(false);avatar.setVisible(true);avatar.setLevel(0);avatar.setExpression(null);avatar.setState('idle');clock=0;nextSourceAt=0;lastSampleAt=-Infinity;sourceSampleCount=sourcePlaybackSamples=observedUpdateCount=0;samples=[];log=[];cues=[];sourceBeforePlayback=[];sourceInterruptionChecks=[];sourceEventCoverage=[];sourcePhraseIndices=new Set();sourceCueKinds=new Set();finalInquiryReached=false;expectedFinalPhraseIndex=-1;scenario=null;tape=[];next=0;
+    }
     function start(value,{reducedMotion=false}={}){
       reset();scenario=value;tape=tapeFor(value);serial++;reduced=reducedMotion||value.reduced===true;startAt=now();clock=0;running=true;
       avatar.setReducedMotion?.(reduced);controller=expressionFactory.create({now:()=>clock,onExpression:applyExpression,onEvent:record});controller.setReducedMotion?.(reduced);update(0);return snapshot();
     }
     function handle(event){
       const id='fixture-turn-'+serial,responseId='fixture-response-'+serial;
+      sourceEventCoverage.push({at:event.at,type:event.type});
       record({type:'fixture-'+event.type,kind:event.role||'',reason:event.value===undefined?'':String(event.value)});
-      if(event.type==='begin'){controller.beginTurn({id,role:event.role,context:scenario.context||''});avatar.setState(event.role==='user'?'listening':'thinking');}
-      else if(event.type==='transcript'){controller.transcript({role:event.role,text:event.text,final:event.final,itemId:id,responseId,currentTurn:true});}
-      else if(event.type==='playback'){
-        if(interrupted&&event.playing)return;playing=event.playing===true;controller.playback({playing,cleared:false,responseId});if(!hidden)avatar.setState(playing?'speaking':'listening');if(!playing){output=0;avatar.setLevel(0);}
+      if(event.type==='begin'){controller.beginTurn({id,role:event.role,context:scenario.context||''});rigState=event.role==='user'?'listening':'thinking';}
+      else if(event.type==='transcript'){
+        controller.transcript({role:event.role,text:event.text,final:event.final,itemId:id,responseId,currentTurn:true});
+        if(event.role==='assistant')expectedFinalPhraseIndex=controller.snapshot().phraseCount-1;
       }
-      else if(event.type==='listen'){listening=event.value;controller.setListening(listening);avatar.setState('listening');}
-      else if(event.type==='interrupt')interrupt();
-      else if(event.type==='pause'){controller.setPaused(event.value);avatar.setPaused(event.value);if(event.value){output=0;avatar.setLevel(0);}}
-      else if(event.type==='hidden'){hidden=event.value;controller.setPaused(hidden);avatar.setVisible(!hidden);if(hidden){output=0;avatar.setLevel(0);}}
+      else if(event.type==='playback'){
+        if(interrupted&&event.playing)return;playing=event.playing===true;controller.playback({playing,cleared:false,responseId});rigState=playing?'speaking':'listening';if(!playing)output=0;
+      }
+      else if(event.type==='listen'){listening=event.value;controller.setListening(listening);rigState='listening';}
+      else if(event.type==='interrupt')interrupt(false);
+      else if(event.type==='pause'){
+        scriptedPaused=event.value===true;everPaused=everPaused||scriptedPaused;controller.setPaused(scriptedPaused);
+        // Match production's animation-only pause: native source audio can
+        // continue, while the rig and semantic planner remain canceled. Resume
+        // admits current source RMS, never reconstructed old phrase cues.
+        if(scriptedPaused)output=0;
+      }
+      else if(event.type==='hidden'){
+        hidden=event.value===true;everHidden=everHidden||hidden;controller.setPaused(hidden);
+        if(hidden){playing=false;output=0;rigState='listening';}
+      }
       else if(event.type==='late'){controller.transcript({role:'assistant',text:scenario.text,final:true,itemId:id,responseId,currentTurn:false});controller.playback({playing:true,responseId});record({type:'fixture-late-old-response'});}
       else if(event.type==='finish')finish();
     }
     function levels(){
-      const paused=avatar.snapshot().paused===true||hidden||manualPause;
+      const paused=scriptedPaused||hidden||manualPause;
       output=playing&&!interrupted&&!paused&&!scenario.analysisUnavailable&&!reduced?(Math.floor(clock/180)%7===0?0:[.12,.42,.25,.68,.18,.5][Math.floor(clock/100)%6]):0;
       input=listening&&!scenario.silence&&!paused?([0,.18,.43,.11,.3][Math.floor(clock/240)%5]):0;
-      controller?.level({input,output});controller?.tick?.();avatar.setLevel(output);
+      sourceSampleCount++;if(playing)sourcePlaybackSamples++;
+      controller?.level({input,output});controller?.tick?.();
+      const state=controller?.snapshot()||{},kind=state.cue?.kind||null;
+      if(state.currentPhrase>=0)sourcePhraseIndices.add(state.currentPhrase);
+      if(state.currentPhrase===expectedFinalPhraseIndex&&kind==='inquiry')finalInquiryReached=true;
+      if(clock<900&&scenario.role!=='user')sourceBeforePlayback.push({at:clock,output,kind});
+      if(interrupted)sourceInterruptionChecks.push({at:clock,output,state:rigState,kind});
     }
-    function capture(){
-      // Keep visible telemetry to 10Hz while the actual rig remains live. This
-      // retains complete scenario coverage and avoids a per-frame DOM/log flood.
-      if(clock-lastSampleAt<100&&clock<scenario.duration)return null;lastSampleAt=clock;
+    function capture(force=false){
+      // These are real observed rig snapshots, never the intermediate drained
+      // source targets. Their sparse gaps remain visible in the final report.
+      if(!force&&clock-lastSampleAt<100&&clock<scenario.duration)return null;lastSampleAt=clock;
       const face=faceSample(avatar),state=controller?.snapshot()||{};
       const entry={at:Math.round(clock),phase:clean(state.phase)||(!playing&&clock<900?'before-output':playing?'speaking':listening?'listening':'settling'),cueKind:state.cue?.kind||state.expression?.kind||null,currentPhrase:typeof state.currentPhrase==='number'?state.currentPhrase:null,input:round(input),output:round(output),face};
-      samples.push(entry);if(samples.length>MAX_SAMPLES)samples.shift();if(clock<900&&scenario.role!=='user')beforePlayback.push({at:entry.at,output:entry.output,kind:entry.cueKind});if(interrupted)interruptionChecks.push({at:entry.at,output:entry.output,state:face.state,kind:entry.cueKind});
-      onUpdate(snapshot());return entry;
+      samples.push(entry);if(samples.length>MAX_SAMPLES)samples.shift();onUpdate(snapshot());return entry;
     }
     function update(elapsed){
-      if(!running||manualPause)return snapshot();clock=Math.max(clock,Math.min(scenario.duration,elapsed));
-      while(running&&next<tape.length&&tape[next].at<=clock)handle(tape[next++]);
-      if(running){levels();capture();}return snapshot();
+      if(!running||manualPause||!Number.isFinite(elapsed))return snapshot();
+      const target=Math.max(clock,Math.min(scenario.duration,elapsed));let drains=0;observedUpdateCount++;
+      while(running){
+        const eventAt=next<tape.length?tape[next].at:Infinity,at=Math.min(nextSourceAt,eventAt);
+        if(at>target)break;
+        if(++drains>MAX_SOURCE_DRAINS)throw Error('Authored source drain exceeded its bounded tape.');
+        clock=at;
+        while(running&&next<tape.length&&tape[next].at===at)handle(tape[next++]);
+        if(running)levels();
+        if(nextSourceAt===at)nextSourceAt+=SOURCE_STEP_MS;
+      }
+      // Renderer time is an observation timestamp, not extra synthetic audio.
+      clock=target;render();capture(!running);
+      if(!running){const completed=result();onComplete(completed);onUpdate(snapshot());}
+      return snapshot();
     }
     function step(){if(!running||manualPause)return snapshot();return update(now()-startAt);}
-    function pause(value){if(!running)return;manualPause=value===true;controller.setPaused(manualPause);avatar.setPaused(manualPause);if(manualPause){heldAt=now();output=0;avatar.setLevel(0);}else startAt+=Math.max(0,now()-heldAt);onUpdate(snapshot());}
-    function interrupt(){if(!running)return;interrupted=true;playing=false;listening=true;output=0;controller.cancel();controller.beginTurn({id:'fixture-interrupt-'+serial,role:'user',context:scenario.context||''});controller.setListening(true);avatar.setLevel(0);avatar.setState('listening');record({type:'fixture-interrupted'});}
-    function finish(){
-      if(!running)return;playing=listening=false;input=output=0;controller.playback({playing:false,cleared:true,responseId:'fixture-response-'+serial});controller.cancel();avatar.setPaused(false);avatar.setVisible(true);avatar.setLevel(0);avatar.setState('listening');controller.tick?.();capture();running=false;onComplete(result());onUpdate(snapshot());
+    function pause(value){
+      if(!running)return;manualPause=value===true;everPaused=everPaused||manualPause;controller.setPaused(manualPause);
+      if(manualPause){heldAt=now();output=0;}else startAt+=Math.max(0,now()-heldAt);
+      render();onUpdate(snapshot());
     }
-    function snapshot(){const state=controller?.snapshot()||{};return {scenario:scenario?.id||null,label:scenario?.label||null,running,manualPause,clockMs:Math.round(clock),durationMs:scenario?.duration||0,alignment:'synthetic-media-events; production estimated playback cues',nativeAudioTested:false,microphoneRequests:0,providerCalls:0,cartWrites:0,navigationChanges:0,inputRms:round(input),outputRms:round(output),interrupted,reducedFixture:reduced,controller:{phase:state.phase||null,currentPhrase:state.currentPhrase??null,clockMs:round(state.clockMs),timing:state.timing||'estimated-audio-activity',cue:state.cue?{kind:state.cue.kind,intensity:round(state.cue.intensity)}:null},face:faceSample(avatar),cues:cues.slice(-20),log:log.slice(-MAX_LOG)};}
+    function interrupt(paint=true){
+      if(!running)return;interrupted=true;playing=false;listening=true;output=0;controller.cancel();controller.beginTurn({id:'fixture-interrupt-'+serial,role:'user',context:scenario.context||''});controller.setListening(true);rigState='listening';record({type:'fixture-interrupted'});if(paint)render();
+    }
+    function finish(){
+      if(!running)return;playing=listening=false;input=output=0;controller.playback({playing:false,cleared:true,responseId:'fixture-response-'+serial});controller.cancel();scriptedPaused=hidden=false;rigState='listening';controller.tick?.();running=false;
+    }
+    function snapshot(){const state=controller?.snapshot()||{};return {scenario:scenario?.id||null,label:scenario?.label||null,running,manualPause,clockMs:Math.round(clock),durationMs:scenario?.duration||0,alignment:'authored-source-clock; production estimated playback cues; observed rig snapshots',nativeAudioTested:false,microphoneRequests:0,providerCalls:0,cartWrites:0,navigationChanges:0,inputRms:round(input),outputRms:round(output),interrupted,reducedFixture:reduced,sourceSampleCount,sourcePlaybackSamples,actualRenderedFrameSampleCount:samples.length,controller:{phase:state.phase||null,currentPhrase:state.currentPhrase??null,clockMs:round(state.clockMs),timing:state.timing||'estimated-audio-activity',cue:state.cue?{kind:state.cue.kind,intensity:round(state.cue.intensity)}:null},face:faceSample(avatar),cues:cues.slice(-20),log:log.slice(-MAX_LOG)};}
     function result(){
       const changed={},names=['brows','eyes','cheeks','smile'];for(const name of names)changed[name]=new Set(samples.map(value=>value.face.features[name]).filter(Boolean)).size;
-      const channels=names.filter(name=>changed[name]>1),kinds=[...new Set(cues.map(value=>value.kind))],mouthValues=[...new Set(samples.map(value=>value.face.mouthEnergy))],before=beforePlayback.every(value=>value.output===0&&!value.kind),late=interruptionChecks.every(value=>value.output===0&&value.state!=='speaking');
-      const invariants={beforePlaybackNoSpeechCue:before,noSyntheticPaidCalls:true,interruptionStopsMouth:interruptionChecks.length?late:null,listeningMouthClosed:scenario?.role==='user'?samples.every(value=>value.face.mouthEnergy===0):null,analysisUnavailableNoFakeMouth:scenario?.analysisUnavailable?samples.every(value=>value.face.mouthEnergy===0):null,reducedNoMovingMouth:reduced?samples.every(value=>value.face.mouthEnergy===0):null,finalOutputRmsZero:output===0};
+      const channels=names.filter(name=>changed[name]>1),kinds=[...sourceCueKinds],observedKinds=[...new Set(samples.map(value=>value.cueKind).filter(Boolean))],mouthValues=[...new Set(samples.map(value=>value.face.mouthEnergy))],before=scenario?.role==='user'||sourceBeforePlayback.every(value=>value.output===0&&!value.kind)&&samples.filter(value=>value.at<900).every(value=>value.output===0&&!value.cueKind&&!value.face.expression),late=sourceInterruptionChecks.every(value=>value.output===0&&value.state!=='speaking')&&samples.filter(value=>value.at>=sourceInterruptionChecks[0]?.at).every(value=>value.face.mouthEnergy===0&&value.face.state!=='speaking');
+      const normalSpeech=scenario?.role!=='user'&&!interrupted&&!everPaused&&!everHidden&&!reduced&&!scenario?.analysisUnavailable;
+      const inquiryRequired=normalSpeech&&/\?\s*$/.test(scenario?.text||'');
+      const invariants={beforePlaybackNoSpeechCue:before,noSyntheticPaidCalls:true,interruptionStopsMouth:sourceInterruptionChecks.length?late:null,listeningMouthClosed:scenario?.role==='user'?samples.every(value=>value.face.mouthEnergy===0):null,analysisUnavailableNoFakeMouth:scenario?.analysisUnavailable?samples.every(value=>value.face.mouthEnergy===0):null,reducedNoMovingMouth:reduced?samples.every(value=>value.face.mouthEnergy===0):null,finalInquiryCueReached:inquiryRequired?finalInquiryReached:null,finalOutputRmsZero:output===0};
+      const maxGapMs=samples.reduce((gap,value,index)=>index?Math.max(gap,value.at-samples[index-1].at):gap,0),visibleIncomplete=maxGapMs>250;
       const failed=Object.entries(invariants).filter(([,value])=>value===false).map(([name])=>name),multi=!(scenario?.check==='multiple-cues')||kinds.length>1&&channels.length>=2;
-      return {scenario:scenario?.id,label:scenario?.label,fixture:'explicit-synthetic-expression-events',result:failed.length||!multi?'needs-review':'behavior-check-passed',failedInvariants:failed,multipleCueCheck:scenario?.check==='multiple-cues'?multi:null,distinctCueKinds:kinds,changedFaceChannels:channels,distinctFeatureSamples:changed,distinctMouthEnergySamples:mouthValues.length,sampleCount:samples.length,invariants,rendererMode:avatar.snapshot().mode,providerCalls:0,microphoneRequests:0,gpuAppearance:'unverified',nativeSpokenTiming:'unverified',trustImprovement:'not-measured'};
+      return {scenario:scenario?.id,label:scenario?.label,fixture:'explicit-synthetic-expression-events',result:failed.length||!multi?'needs-review':visibleIncomplete?'source-check-passed-visible-coverage-incomplete':'behavior-check-passed',failedInvariants:failed,multipleCueCheck:scenario?.check==='multiple-cues'?multi:null,distinctCueKinds:kinds,observedCueKinds:observedKinds,sourcePhraseIndices:[...sourcePhraseIndices],sourceEventCoverage,sourceSampleCount,sourcePlaybackSamples,sourceStepMs:SOURCE_STEP_MS,actualRenderedFrameSampleCount:samples.length,actualRenderedFrameSampleMeaning:'observed rig snapshots, at most one per browser update; not a GPU frame count',observedUpdateCount,maxObservedFrameGapMs:maxGapMs,visibleTrajectoryCoverage:visibleIncomplete?'incomplete-sparse-observations':'sampled-at-most-10Hz',changedFaceChannels:channels,distinctFeatureSamples:changed,distinctMouthEnergySamples:mouthValues.length,sampleCount:samples.length,invariants,rendererMode:avatar.snapshot().mode,providerCalls:0,microphoneRequests:0,gpuAppearance:'unverified',nativeSpokenTiming:'unverified',trustImprovement:'not-measured'};
     }
     return {start,update,step,pause,interrupt,reset,snapshot,result,destroy(){controller?.destroy();controller=null;running=false;}};
   }
@@ -133,7 +185,7 @@
   const results=[];let runner=null,avatar=null,reduced=false,suite=false,suiteIndex=0,frame=null,lastPaint=0;
   function show(snapshot){
     if(!snapshot)return;phase.textContent='Phase: '+(snapshot.controller.phase||snapshot.face.state)+' · '+(snapshot.clockMs/1000).toFixed(1)+' / '+(snapshot.durationMs/1000).toFixed(1)+' seconds · face '+(snapshot.controller.cue?.kind||snapshot.face.expression?.kind||'neutral');
-    pose.textContent=JSON.stringify({fixture:snapshot.alignment,phase:snapshot.controller.phase,currentPhrase:snapshot.controller.currentPhrase,cue:snapshot.controller.cue,inputRms:snapshot.inputRms,outputRms:snapshot.outputRms,actualFace:snapshot.face,providerCalls:0,microphoneRequests:0},null,2);
+    pose.textContent=JSON.stringify({fixture:snapshot.alignment,sourcePlaybackSamples:snapshot.sourcePlaybackSamples,actualRenderedFrameSampleCount:snapshot.actualRenderedFrameSampleCount,frameSampleMeaning:'Observed rig snapshots only; intermediate authored cues are not rendered evidence.',phase:snapshot.controller.phase,currentPhrase:snapshot.controller.currentPhrase,cue:snapshot.controller.cue,inputRms:snapshot.inputRms,outputRms:snapshot.outputRms,actualFace:snapshot.face,providerCalls:0,microphoneRequests:0},null,2);
     transitions.textContent=JSON.stringify(snapshot.log,null,2);const mode=snapshot.face.mode;renderer.textContent=mode==='webgl'?'WebGL scene is active. GPU appearance and shadows still require visual review.':mode==='fallback'?'Actual animated 2-D fallback is active. GPU, shadows and FPS remain unverified.':'The production renderer is preparing.';
   }
   function complete(value){results.push(value);if(results.length>MAX_RESULTS)results.shift();output.textContent=JSON.stringify({fixture:'synthetic-events-actual-face-rig',completed:results.length,results},null,2);status.textContent=value.label+': '+value.result.replaceAll('-',' ')+'. Native spoken timing and GPU quality remain unverified.';if(suite){suiteIndex++;if(suiteIndex<SCENARIOS.length){start(SCENARIOS[suiteIndex]);}else{suite=false;status.textContent='All '+SCENARIOS.length+' authored scenarios completed. Inspect results and visual transitions; hardware acceptance remains separate.';}}}

@@ -67,7 +67,7 @@
     if(new URL(endpoint,ownOrigin).origin!==ownOrigin)throw Error('Voice endpoint must be on this website.');
     const notify=(key,...args)=>{try{if(typeof options[key]==='function')options[key](...args);}catch{}};
     let epoch=0,turnVersion=0,state='idle',disposed=false,pc=null,dc=null,mic=null,audio=null,ctx=null,raf=null,deadline=null,disconnectDeadline=null,abort=null,stopCredential=null,closing=null,outputPlaying=false,inputSpeaking=false,responsePending=false,lastError=null,playbackBlocked=false,outputMeterState='waiting';
-    let continuation=null,continuationUsed=false,contextSnapshot='',inputMeter=null,outputMeter=null,activeInputItemId='',activeInputCommitted=false,responseRequest=0,turnTools=0,turnChainClosed=false,activePerformanceResponseId='',activePlaybackResponseId='',playbackNotice='',turnPerformanceUsed=false,performanceContinuationUsed=false;const sources=[],microphoneListeners=[],timers=new Set(),pending=new Set(),toolCalls=new Set(),toolControllers=new Set(),speechTurns=new Map(),responseTurns=new Map(),issuedResponses=new Map(),performanceResponses=new Map(),performanceCalls=new Set(),responseOutputItems=new Map(),listeningEvents=new Map();
+    let continuation=null,continuationUsed=false,contextSnapshot='',inputMeter=null,outputMeter=null,localMediaClock=null,activeInputItemId='',activeInputCommitted=false,responseRequest=0,turnTools=0,turnChainClosed=false,activePerformanceResponseId='',activePlaybackResponseId='',playbackNotice='',turnPerformanceUsed=false,performanceContinuationUsed=false;const sources=[],microphoneListeners=[],timers=new Set(),pending=new Set(),toolCalls=new Set(),toolControllers=new Set(),speechTurns=new Map(),responseTurns=new Map(),issuedResponses=new Map(),performanceResponses=new Map(),performanceCalls=new Set(),responseOutputItems=new Map(),listeningEvents=new Map();
     const eventId=value=>typeof value==='string'&&value.length>0&&value.length<=200&&!/[\u0000-\u001f\u007f]/.test(value)?value:'';
     function remember(map,key,value){if(!key||map.has(key))return;map.set(key,value);if(map.size>100)map.delete(map.keys().next().value);}
     function timeout(ms,fn){const id=rt.setTimeout(()=>{timers.delete(id);fn();},ms);timers.add(id);return id;}
@@ -196,7 +196,7 @@
       if(ctx){ctx.onstatechange=null;try{Promise.resolve(ctx.close()).catch(()=>{});}catch{}ctx=null;}
       if(dc){dc.onopen=dc.onmessage=dc.onerror=dc.onclose=null;dc.close();dc=null;}
       if(pc){pc.ontrack=pc.onconnectionstatechange=null;pc.close();pc=null;}
-      continuation=null;continuationUsed=false;contextSnapshot='';inputMeter=outputMeter=null;outputMeterState='waiting';outputPlaying=inputSpeaking=responsePending=playbackBlocked=false;activeInputItemId='';activeInputCommitted=false;turnTools=0;turnChainClosed=false;activePerformanceResponseId=activePlaybackResponseId=playbackNotice='';turnPerformanceUsed=performanceContinuationUsed=false;toolCalls.clear();speechTurns.clear();responseTurns.clear();issuedResponses.clear();performanceResponses.clear();performanceCalls.clear();responseOutputItems.clear();listeningEvents.clear();notify('onLevel',{input:0,output:0});
+      continuation=null;continuationUsed=false;contextSnapshot='';inputMeter=outputMeter=localMediaClock=null;outputMeterState='waiting';outputPlaying=inputSpeaking=responsePending=playbackBlocked=false;activeInputItemId='';activeInputCommitted=false;turnTools=0;turnChainClosed=false;activePerformanceResponseId=activePlaybackResponseId=playbackNotice='';turnPerformanceUsed=performanceContinuationUsed=false;toolCalls.clear();speechTurns.clear();responseTurns.clear();issuedResponses.clear();performanceResponses.clear();performanceCalls.clear();responseOutputItems.clear();listeningEvents.clear();notify('onLevel',{input:0,output:0});
     }
     function meter(stream,channel){if(!ctx)return null;try{const source=ctx.createMediaStreamSource(stream),analyser=ctx.createAnalyser();analyser.fftSize=512;source.connect(analyser);sources.push(source,analyser);return {channel,analyser,samples:new Float32Array(analyser.fftSize)};}catch{return null;}}
     function blockPlayback(current,playbackAudio,stream){
@@ -219,6 +219,22 @@
         playbackBlocked=false;if(lastError?.code==='AUDIO_PLAYBACK_BLOCKED')lastError=null;notify('onPlaybackResumed');settleState();return true;
       }catch{blockPlayback(current,playbackAudio,stream);return false;}
     }
+    function measuredOutputClock(){
+      const responseId=activePlaybackResponseId,bound=currentResponse(responseId);
+      try{
+        if(disposed||state==='idle'||state==='closing'||!outputPlaying||!bound||doc?.hidden||playbackBlocked||!audio?.srcObject||audio.paused!==false||audio.ended===true||!pc||['disconnected','failed','closed'].includes(pc.connectionState)){localMediaClock=null;return null;}
+        const seconds=audio.currentTime;
+        // This is the actual local HTMLMediaElement clock, never a provider
+        // word/phoneme timestamp or proof of sound reaching the shopper.
+        // Sessions are bounded to two minutes; this wider protective limit
+        // rejects corrupt clock values without inventing a replacement.
+        if(typeof seconds!=='number'||!Number.isFinite(seconds)||seconds<0||seconds>600)return null;
+        const outputTimeMs=seconds*1000,stream=audio.srcObject;
+        if(localMediaClock&&localMediaClock.audio===audio&&localMediaClock.stream===stream&&localMediaClock.epoch===epoch&&localMediaClock.responseId===responseId&&localMediaClock.turnVersion===turnVersion&&outputTimeMs<localMediaClock.timeMs)return null;
+        localMediaClock={audio,stream,epoch,responseId,turnVersion,timeMs:outputTimeMs};
+        return {outputTimeMs,outputClock:'local-media-currentTime',responseId,turnVersion:bound.turnVersion,currentTurn:true};
+      }catch{return null;}
+    }
     function sample(){
       if(disposed||!ctx)return;const levels={input:0,output:0};
       if(!['suspended','interrupted','closed'].includes(ctx.state))for(const value of [inputMeter,outputMeter])if(value){
@@ -227,6 +243,7 @@
       }
       // A failed visual analyser cannot interrupt native playback or replace
       // missing samples with fabricated speech motion.
+      const clock=measuredOutputClock();if(clock)Object.assign(levels,clock);
       notify('onLevel',levels);try{raf=rt.requestAnimationFrame?.(sample);}catch{raf=null;}
     }
     function settleState(){if(state==='idle'||state==='closing')return;if(outputPlaying)setState('speaking');else if(inputSpeaking)setState('listening');else if(toolControllers.size||responsePending)setState('thinking');else setState('listening');}
@@ -309,8 +326,8 @@
       else if(event.type==='response.output_item.added'){
         if(staleResponse(event))return;const responseId=eventId(event.response_id),itemId=eventId(event.item?.id);if(currentResponse(responseId)&&itemId&&event.item?.type==='message'&&event.item?.role==='assistant')remember(responseOutputItems,responseId,itemId);
       }
-      else if(event.type==='output_audio_buffer.started'){if(staleResponse(event))return;const responseId=eventId(event.response_id),performance=performanceResponses.get(responseId);if(performance)performance.hadContent=true;if(currentResponse(responseId))activePlaybackResponseId=responseId;outputPlaying=true;reportPlayback(responseId,true);setState('speaking');}
-      else if(event.type==='output_audio_buffer.stopped'||event.type==='output_audio_buffer.cleared'){if(staleResponse(event))return;const responseId=eventId(event.response_id),cleared=event.type==='output_audio_buffer.cleared';if(activePlaybackResponseId&&responseId&&responseId!==activePlaybackResponseId)return;outputPlaying=false;reportPlayback(responseId,false,cleared);if(activePlaybackResponseId===responseId)activePlaybackResponseId='';if(!cleared)continueAudioTail();else continuation=null;settleState();}
+      else if(event.type==='output_audio_buffer.started'){if(staleResponse(event))return;const responseId=eventId(event.response_id),performance=performanceResponses.get(responseId);if(performance)performance.hadContent=true;if(currentResponse(responseId)){if(activePlaybackResponseId!==responseId)localMediaClock=null;activePlaybackResponseId=responseId;}outputPlaying=true;reportPlayback(responseId,true);setState('speaking');}
+      else if(event.type==='output_audio_buffer.stopped'||event.type==='output_audio_buffer.cleared'){if(staleResponse(event))return;const responseId=eventId(event.response_id),cleared=event.type==='output_audio_buffer.cleared';if(activePlaybackResponseId&&responseId&&responseId!==activePlaybackResponseId)return;outputPlaying=false;localMediaClock=null;reportPlayback(responseId,false,cleared);if(activePlaybackResponseId===responseId)activePlaybackResponseId='';if(!cleared)continueAudioTail();else continuation=null;settleState();}
       else if(event.type==='response.done'){
         if(staleResponse(event))return;
         responsePending=false;
@@ -336,7 +353,7 @@
       }
     }
     function interrupt(reason='interrupt',itemId=''){
-      reportPlayback(activePlaybackResponseId||activePerformanceResponseId,false,true);activePlaybackResponseId='';
+      reportPlayback(activePlaybackResponseId||activePerformanceResponseId,false,true);activePlaybackResponseId='';localMediaClock=null;
       continuation=null;continuationUsed=false;activePerformanceResponseId='';turnPerformanceUsed=performanceContinuationUsed=false;const nextVersion=turnVersion+1;
       notify('onAvatarPerformanceCancelled',{reason:['speech','stop','interrupt'].includes(reason)?reason:'interrupt',turnVersion:nextVersion});
       notify('onSpeechStarted',{itemId:reason==='speech'?eventId(itemId):'',turnVersion:nextVersion,reason});
@@ -376,6 +393,7 @@
         connection.onconnectionstatechange=()=>{
           if(current!==epoch||disposed||pc!==connection||state==='closing'||state==='idle')return;
           if(connection.connectionState==='disconnected'){
+            localMediaClock=null;
             // Brief interruptions may recover this same peer. Keep the
             // deadline tied to its first interruption rather than extending
             // it on duplicate events; never open a replacement paid session.

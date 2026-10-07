@@ -30,7 +30,42 @@ test('buffered final text cannot select the future question face before playback
 
 test('every authored scenario reaches its terminal result through the production planner and actual rig',async t=>{
   const h=await fixture(t);
-  for(const scenario of qa.SCENARIOS){const result=h.run(scenario);assert.equal(result.scenario,scenario.id);assert.equal(result.providerCalls,0);assert.equal(result.microphoneRequests,0);assert.equal(result.invariants.finalOutputRmsZero,true);assert.deepEqual(result.failedInvariants,[],scenario.id+' failed a lifecycle/media invariant');if(scenario.check==='multiple-cues')assert.equal(result.multipleCueCheck,true,scenario.id+' did not visibly exercise multiple communicative face targets');if(scenario.role==='user')assert.equal(result.invariants.listeningMouthClosed,true);if(scenario.analysisUnavailable)assert.equal(result.invariants.analysisUnavailableNoFakeMouth,true);}
+  for(const scenario of qa.SCENARIOS){const result=h.run(scenario);assert.equal(result.scenario,scenario.id);assert.equal(result.providerCalls,0);assert.equal(result.microphoneRequests,0);assert.equal(result.invariants.finalOutputRmsZero,true);assert.deepEqual(result.failedInvariants,[],scenario.id+' failed a lifecycle/media invariant');if(scenario.check==='multiple-cues')assert.equal(result.multipleCueCheck,true,scenario.id+' did not exercise multiple source cues and observed face channels');if(scenario.role==='user')assert.equal(result.invariants.listeningMouthClosed,true);if(scenario.analysisUnavailable)assert.equal(result.invariants.analysisUnavailableNoFakeMouth,true);if(['phrases','support','repair','mixed','uncertain','negation','generation'].includes(scenario.id))assert.equal(result.invariants.finalInquiryCueReached,true,scenario.id+' did not reach its final question cue');}
+});
+
+test('sparse browser updates preserve authored audio and final question coverage without inventing face frames',async t=>{
+  const dense=await fixture(t),sparse=await fixture(t);
+  for(const id of ['phrases','support','uncertain','generation']){
+    const scenario=qa.SCENARIOS.find(value=>value.id===id),normal=dense.run(scenario);
+    sparse.runner.start(scenario);
+    for(let at=1000;at<scenario.duration;at+=1000)sparse.advance(at);
+    sparse.advance(scenario.duration);
+    const slow=sparse.completed.at(-1);
+    assert.deepEqual(slow.distinctCueKinds,normal.distinctCueKinds,id+' source cue sequence depends on renderer cadence');
+    assert.deepEqual(slow.sourcePhraseIndices,normal.sourcePhraseIndices,id+' source phrase coverage depends on renderer cadence');
+    assert.deepEqual(slow.sourceEventCoverage,qa.tapeFor(scenario).map(event=>({at:event.at,type:event.type})),id+' event must occur at its authored timestamp');
+    assert.equal(slow.sourceSampleCount,normal.sourceSampleCount);
+    assert.equal(slow.sourcePlaybackSamples,normal.sourcePlaybackSamples);
+    assert.equal(slow.invariants.finalInquiryCueReached,true);
+    assert.ok(slow.actualRenderedFrameSampleCount<=Math.ceil(scenario.duration/1000)+1);
+    assert.ok(slow.actualRenderedFrameSampleCount<normal.actualRenderedFrameSampleCount/5);
+    assert.ok(slow.sourcePlaybackSamples>slow.actualRenderedFrameSampleCount*10);
+    assert.equal(slow.maxObservedFrameGapMs,1000);
+    assert.equal(slow.visibleTrajectoryCoverage,'incomplete-sparse-observations');
+    assert.equal(slow.result,'source-check-passed-visible-coverage-incomplete');
+    assert.equal(slow.gpuAppearance,'unverified');
+  }
+});
+
+test('one terminal browser update drains only a bounded tape and reports two actual pose observations',async t=>{
+  const h=await fixture(t),scenario=qa.SCENARIOS.find(value=>value.id==='support');h.runner.start(scenario);h.advance(1000000);
+  const result=h.completed.at(-1);
+  assert.ok(result.sourceSampleCount<400);
+  assert.equal(result.actualRenderedFrameSampleCount,2);
+  assert.equal(result.maxObservedFrameGapMs,scenario.duration);
+  assert.equal(result.invariants.finalInquiryCueReached,true);
+  assert.equal(result.visibleTrajectoryCoverage,'incomplete-sparse-observations');
+  assert.equal(result.nativeSpokenTiming,'unverified');
 });
 
 test('interruption and late old response do not resurrect a speaking face or energy',async t=>{
@@ -49,6 +84,21 @@ test('unavailable analysis and reduced motion keep all synthetic output energy a
 
 test('pause/reset clear active expression and cannot continue an old fixture run',async t=>{
   const h=await fixture(t),scenario=qa.SCENARIOS[0];h.runner.start(scenario);for(let at=0;at<1600;at+=50)h.advance(at);assert.ok(h.runner.snapshot().controller.cue);h.runner.pause(true);assert.equal(h.runner.snapshot().face.paused,true);assert.equal(h.runner.snapshot().face.expression,null);assert.equal(h.runner.snapshot().face.mouthEnergy,0);h.advance(8000);assert.equal(h.runner.snapshot().clockMs,1550);h.runner.reset();h.advance(11000);assert.equal(h.runner.snapshot().running,false);assert.equal(h.runner.snapshot().controller.cue,null);assert.equal(h.runner.snapshot().face.expression,null);
+});
+
+test('animation-only pause preserves ongoing source audio but clears old semantic cues on resume',async t=>{
+  const h=await fixture(t),scenario=qa.SCENARIOS.find(value=>value.id==='pause');h.runner.start(scenario);
+  for(let at=50;at<scenario.pauseAt;at+=50)h.advance(at);
+  const before=h.runner.snapshot();assert.equal(before.face.state,'speaking');assert.ok(before.controller.cue);
+  h.advance(scenario.pauseAt);
+  const paused=h.runner.snapshot();assert.equal(paused.face.state,'speaking');assert.equal(paused.face.paused,true);assert.equal(paused.outputRms,0);assert.equal(paused.face.mouthEnergy,0);assert.equal(paused.controller.cue,null);assert.equal(paused.face.expression,null);
+  h.advance(scenario.resumeAt-50);
+  const during=h.runner.snapshot();assert.equal(during.face.paused,true);assert.equal(during.face.mouthEnergy,0);assert.ok(during.sourcePlaybackSamples>paused.sourcePlaybackSamples,'native source timeline must continue while only the animation is paused');
+  h.advance(scenario.resumeAt);
+  const resumed=h.runner.snapshot();assert.equal(resumed.face.paused,false);assert.equal(resumed.face.state,'speaking');assert.ok(resumed.outputRms>0);assert.ok(resumed.face.mouthEnergy>0);assert.equal(resumed.controller.cue,null);assert.equal(resumed.face.expression,null);assert.equal(resumed.controller.currentPhrase,-1);
+  h.advance(scenario.resumeAt+1000);
+  assert.equal(h.runner.snapshot().controller.cue,null,'resume must not reconstruct semantic cues from the canceled answer');
+  h.advance(scenario.duration);assert.equal(h.completed.at(-1).invariants.finalInquiryCueReached,null);
 });
 
 test('the explicit QA script stays inert on the ordinary shopper route',t=>{
