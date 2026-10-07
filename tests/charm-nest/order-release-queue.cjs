@@ -91,7 +91,7 @@ const SEC = 1790000000;            // an order date, s
 
 // 5 · keeping orders whole: a released order that missed is the oldest waiting order; younger orders are lifted for it, never the other way round
   {
-    const kw = slice(html, 'function keepOrdersWhole(sh, byId) {', 'function orderSummary(charms)');
+    const kw = slice(html, 'function keepOrdersWhole(sh, byId', 'function orderSummary(charms)');
     const logs = [];
     const c = { orderRank: fctx.orderRank, agent: (...a) => logs.push(a) };
     vm.createContext(c); vm.runInContext(kw + ';this.keepOrdersWhole = keepOrdersWhole;', c);

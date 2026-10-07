@@ -308,7 +308,7 @@
     if (!layout) return layout;
     const { grids, rec, ...out } = layout;
     out.placements = (layout.placements || []).map(p => ({ ...p }));
-    for (const key of ["rejects", "capped", "liftedForOrders"]) if (Array.isArray(layout[key])) out[key] = layout[key].slice();
+    for (const key of ["rejects", "capped", "liftedForOrders", "pocketFilled"]) if (Array.isArray(layout[key])) out[key] = layout[key].slice();
     if (layout.pocket) out.pocket = { ...layout.pocket };
     if (layout.params) out.params = { ...layout.params, ...(layout.params.angles ? { angles: layout.params.angles.slice() } : {}), ...(layout.params.pieceOrder ? { pieceOrder: layout.params.pieceOrder.slice() } : {}) };
     return out;
@@ -417,7 +417,8 @@
     const stallMs = job.fullBudget ? 0 : +job.stallMs || 0; let lastBetterAt = now(), stalled = false; let best = null;
     // placing one charm at a time, the charms are prepared and placed under a ceiling that grows with them (CAREFUL_MS)
     let ceiling = job.careful ? Math.max(budget, (job.pieces || []).length * CAREFUL_MS) : budget;
-    const stopped = () => (cb.shouldStop && cb.shouldStop()) || (now() - t0) > ceiling || (stalled = !!(stallMs && !job.packingPending && best && (!best.rejects.length || best.rejects.every(id => best.capped?.includes(id))) && (now() - lastBetterAt) > stallMs));
+    let softUntil = Infinity;   // a bounded step of the careful pass (the pocket pass) ends here, as a time-out of that step only
+    const stopped = () => (cb.shouldStop && cb.shouldStop()) || (now() - t0) > ceiling || now() > softUntil || (stalled = !!(stallMs && !job.packingPending && best && (!best.rejects.length || best.rejects.every(id => best.capped?.includes(id))) && (now() - lastBetterAt) > stallMs));
 
     /* sheet grids at both levels; the inset band is pre-filled as wall */
     const FW = Math.round(job.sheet.wPt * fineRes), FH = Math.round(job.sheet.hPt * fineRes);
@@ -1262,10 +1263,14 @@
         try { return p.careful.some(v => { const m = legalMap(v); if (!m) return false; for (let i = 0; i < m.n; i++) if (m.L[i]) return true; return false; }); }
         finally { fine = keep; }
       };
-      async function pass(first) {
-        for (const r of rec) probe(r.p, r.v, r.x, r.y, "lift", true);
-        fine = baseFine.clone(); coarse = baseCoarse.clone(); rec = []; cells = 0;
-        const left = admitted.slice(), noRoom = [], over = [], stranded = [], liftedOrders = new Set();
+      /* A pocket pass (refill = { rec, pool }) goes on from the layout it is given instead of starting from the saved sheet:
+         the charms already seated stay where they are, and the pool, the orders the passes before turned away, is tried
+         against what is left, the oldest order first (see POCKET_MS). */
+      async function pass(first, refill) {
+        if (!refill) for (const r of rec) probe(r.p, r.v, r.x, r.y, "lift", true);
+        if (refill) { rec = refill.rec.slice(); ({ fine, coarse } = rebuildGrids(rec)); cells = rec.reduce((n, r) => n + r.v.cells, 0); }
+        else { fine = baseFine.clone(); coarse = baseCoarse.clone(); rec = []; cells = 0; }
+        const left = refill ? refill.pool.slice() : admitted.slice(), noRoom = [], over = [], stranded = [], liftedOrders = new Set();
         // p and the rest of its order leave; true when charms already placed were lifted, so the sheet changed. The room
         // they leave may now seat a charm set aside before, so those wait again, except the charms of an order lifted
         // once: an order is never lifted twice, so this ends.
@@ -1319,13 +1324,14 @@
           // best fit first over every waiting charm: each finds its best spot on the sheet as it is
           const firsts = left.filter(p => first.has(p)), moves = [];
           let lifted = false;
-          for (const p of firsts.length ? firsts : left.slice(0, WINDOW)) {
+          // a pocket pass takes the oldest waiting order, every piece of it, before any younger one
+          for (const p of firsts.length ? firsts : refill ? left.filter(q => q.order === left[0].order) : left.slice(0, WINDOW)) {
             if (!left.includes(p)) continue;
             const spots = await current(p, front);
             if (!spots || stopped()) { if (userStop()) return null; timedOut = true; break; }
             const s = bestOf(p, spots, front);
             if (s) { hadRoom.add(p); moves.push({ p, ...s }); continue; }
-            if (rec.length && (hadRoom.has(p) || fitsOn(p, baseFine))) stranded.push(p);
+            if (!refill && rec.length && (hadRoom.has(p) || fitsOn(p, baseFine))) stranded.push(p);
             cache.delete(p);
             // lifted charms free their space: every charm's spots are graded afresh
             if (setAside(p, noRoom)) { lifted = true; break; }
@@ -1369,8 +1375,9 @@
            since the oldest order had not had its turn). */
         const shown = noRoom.concat(over), waiting = shown.concat(timedOut ? left : []);
         if (waiting.length) {
-          const whole = new Set(waiting.map(q => q.order)), cutoff = fifo && shown.length ? Math.min(...shown.map(q => rank.get(q.order))) : Infinity;
-          const off = rec.filter(r => whole.has(r.p.order) || rank.get(r.p.order) > cutoff);
+          // (a pocket pass lifts only whole orders: a younger order that fits a pocket the older ones did not is its to keep)
+          const whole = new Set(waiting.map(q => q.order)), cutoff = fifo && shown.length && !refill ? Math.min(...shown.map(q => rank.get(q.order))) : Infinity;
+          const seated = refill ? new Set(refill.rec) : null, off = rec.filter(r => !(seated && seated.has(r)) && (whole.has(r.p.order) || rank.get(r.p.order) > cutoff));
           if (off.length) {
             rec = rec.filter(r => !off.includes(r)); cells = rec.reduce((n, r) => n + r.v.cells, 0);
             ({ fine, coarse } = rebuildGrids(rec));
@@ -1391,6 +1398,59 @@
       }
       if (!out) return null;
       ({ rec, fine, coarse, cells } = out);
+      /* Pocket pass (Paul, 7 Oct 2026: "The nesting process did not do a good job of filling this sheet before it moved onto
+         the next sheet. It needs to be more methodical to fit in the small charms into tight spaces."). A sheet is judged
+         full by the orders it turned away, but the passes above turn an order away, and lift every younger one with it,
+         while their own spots were still open: the oldest order that misses takes every younger order that fitted off the
+         sheet (a sheet holds no order younger than one it leaves out), a small one that fitted a pocket included, and the
+         sheet closes with the pocket open. So once the passes are done, every order turned away or lifted is tried once
+         more against the layout that stands, oldest first, whole orders only: each charm at every angle, every position of
+         the sheet (spotsFor), graded like any other; the first pass at the angles of the search, a second at the half steps
+         between them for the orders that still fit nowhere, since a tight pocket can take a charm at an angle the 2° steps
+         skip. Nothing seated moves. The orders it seats are job-wide facts, reported as pocketFilled: the page keeps them
+         on the sheet as it keeps any order seated by the search. It runs only when an order was turned away, at most
+         POCKET_MS, and never past the fill ceiling.                                                                  */
+      const pocketFilled = [], pocketStages = []; let pocketMs = 0, pocketTried = 0;
+      if (job.pocketFill !== false && !out.timedOut && !userStop() && prepared.some(p => !out.rec.some(r => r.p === p))) {
+        const t1 = now(), half = angles.length > 1 ? 180 / angles.length : 0;
+        softUntil = t1 + (+job.pocketMs || POCKET_MS);
+        try {
+          // (undated orders, a sheet filling its gaps, are never lifted for a younger one, so the first pass has nothing to add there)
+          for (const shift of half ? (fifo ? [0, half] : [half]) : [0]) {
+            const placedNow = new Set(out.rec.map(r => r.p.id));
+            // an order that cannot be seated whole under the fill ceiling, or in the free space left, is not tried
+            const free = out.fine.freeCells(), waiting = new Map();
+            for (const p of prepared) if (!p.pinned && !placedNow.has(p.id)) waiting.set(p.order, (waiting.get(p.order) || []).concat(p));
+            const pool = [];
+            for (const group of waiting.values()) {
+              const need = group.reduce((n, p) => n + p.footprintCells, 0);
+              if (need > free || (out.cells + need) / usableCellsFine > maxFill + 1e-9) continue;
+              pool.push(...group);
+            }
+            if (!pool.length) break;
+            pool.sort(fifo ? byAge : (a, b) => a.idx - b.idx);
+            for (const p of pool) if (!p.careful) p.careful = variantsFor(p, angles.map(a => (a + turn) % 360));
+            const kept = pool.map(p => p.careful);
+            if (shift) pool.forEach(p => { p.careful = variantsFor(p, angles.map(a => (a + turn + shift) % 360)); });
+            let again; const ts = now(), stage = { step: shift || 0, orders: new Set(pool.map(p => p.order)).size, added: 0, ms: 0 };
+            try { again = await pass(new Set(), { rec: out.rec, pool }); } finally { pool.forEach((p, i) => { p.careful = kept[i]; }); }
+            pocketTried += new Set(pool.map(p => p.order)).size;
+            pocketStages.push(stage);
+            if (again) {
+              const had = new Set(out.rec.map(r => r.p.id)), added = again.rec.filter(r => !had.has(r.p.id));
+              if (added.length) {
+                const placed = new Set(again.rec.map(r => r.p.id));
+                out = { ...out, rec: again.rec, fine: again.fine, coarse: again.coarse, cells: again.cells, fit: out.fit + added.reduce((n, r) => n + r.fit, 0), noRoom: out.noRoom.filter(q => !placed.has(q.id)), over: out.over.filter(q => !placed.has(q.id)) };
+                for (const r of added) pocketFilled.push(r.p.id);
+                stage.added = added.length;
+              }
+            }
+            ({ rec, fine, coarse, cells } = out);
+            stage.ms = Math.round(now() - ts);
+            if (!again || again.timedOut) break;
+          }
+        } finally { softUntil = Infinity; pocketMs = now() - t1; }
+      }
       /* Room for later orders (Paul, 24 Sep): a nearly full Gold or Silver sheet lets the next 35 orders try its gaps
          before it is released, unless not even one of the shop's smallest charms (see SMALL_PROBES) fits it. Each is
          tried at 15° steps over the whole sheet, 4×4 positions at a time as in legalMap. */
@@ -1409,11 +1469,11 @@
         return false;
       })();
       const placements = rec.map(r => ({ id: r.p.id, angle: r.v.angle, cxPt: (r.x + r.v.solid.cx) / fineRes, cyPt: (r.y + r.v.solid.cy) / fineRes, xPt: (r.x + (r.v.fine.w - r.v.solid.w) / 2) / fineRes, yPt: (r.y + (r.v.fine.h - r.v.solid.h) / 2) / fineRes, wPt: r.v.solid.w / fineRes, hPt: r.v.solid.h / fineRes }));
-      const ids = new Set(placements.map(p => p.id)), capped = (fifo ? prepared.filter(p => rank.get(p.order) >= capOrders).map(p => p.id) : []).concat(out.over.map(p => p.id));
+      const ids = new Set(placements.map(p => p.id)), capped = (fifo ? prepared.filter(p => rank.get(p.order) >= capOrders).map(p => p.id) : []).concat(out.over.map(p => p.id)).filter(id => !ids.has(id));
       metrics.layouts++; reportMetrics(true);
       return { placements, rejects: prepared.filter(p => !ids.has(p.id)).map(p => p.id), capped, noRoom: out.noRoom.map(p => p.id), density: cells / usableCellsFine, contactQuality: qualityOf(rec, fine), trial: 0, stripPacked: false,
         usablePt2: usableCellsFine / (fineRes * fineRes), freePt2: fine.freeCells() / (fineRes * fineRes), placedPt2: cells / (fineRes * fineRes), placedCells: cells, pocket: pocketPt(coarse, coarseRes),
-        grids: { fine, coarse }, rec, fitScore: out.fit, wastePt2: rec.reduce((n, r) => n + r.waste, 0) * MM_PX * MM_PX / (fineRes * fineRes), timedOut: out.timedOut, smallRoom, careful: { graded, exact: exactN, angles: angles.length, turn, passes, ahead: aheadStats } };
+        grids: { fine, coarse }, rec, fitScore: out.fit, wastePt2: rec.reduce((n, r) => n + r.waste, 0) * MM_PX * MM_PX / (fineRes * fineRes), timedOut: out.timedOut, smallRoom, pocketFilled, careful: { graded, exact: exactN, angles: angles.length, turn, passes, ahead: aheadStats, pocket: { filled: pocketFilled.length, orders: pocketTried, ms: Math.round(pocketMs), stages: pocketStages } } };
     }
     let carefulDone = false;
     if (carefulOn && !best) {
@@ -1837,6 +1897,9 @@
      guard, so it grows with the charms waiting: a big first batch at 2° on an empty sheet ran past the 60 s and 12 s
      ceilings of two tests on a busy machine and was cut short (24 Sep). A charm takes a few seconds; this allows 30. */
   const CAREFUL_MS = 30000;
+  /* The pocket pass (see carefulAppend) is given this long, at most, on a sheet that turned an order away: a few seconds
+     in practice (one scan of the sheet per order it tries), a ceiling for a busy machine and a long waiting list.     */
+  const POCKET_MS = 15000;
   /** The library's smallest charms (see SMALL_PROBES) as variants on a grid of `fineRes` px/pt, grown or shrunk like
       the pieces, at 15° steps: { angle, fine: { bits, w, h, pm } } like a piece's. */
   function smallProbeVariants(fineRes, erodeFine, halfGapFine) {

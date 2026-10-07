@@ -3185,7 +3185,7 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-operations.js"></script>
 <script src="charm-nest-rose.js?v=20261007-edges-gc1-gf1"></script>
 <script src="charm-nest-partial.js?v=20261007-ps4-fit75"></script>
-<script src="charm-nest-solver.js?v=20260925-fill-holes"></script>
+<script src="charm-nest-solver.js?v=20261007-pocket-fill"></script>
 <script src="vendor/clipper-6.4.2.js"></script>
 <script src="charm-nest-vector.js"></script>
 <script src="charm-nest-pdf.js?v=20260924-followup"></script>
@@ -4150,7 +4150,7 @@ function removePage(pg) {
 }
 /** Whatever did not fit moves on to the next sheet of the same metal, which then nests on its own. */
 /** A multi-piece order is never split across sheets: if any of its pieces was held back, the whole order goes to the next sheet. */
-function keepOrdersWhole(sh, byId) {
+function keepOrdersWhole(sh, byId, pocket) {
   const orderOf = id => { const c = byId.get(id); return c ? (c.order || c.id) : id; };
   const rank = typeof orderRank === "function" ? orderRank : c => +(c && c.orderDate) || 0;   // (the date the nest ranks an order by; one released from hold is ahead of every date)
   const bad = new Set(sh.rejects.map(orderOf));
@@ -4158,7 +4158,8 @@ function keepOrdersWhole(sh, byId) {
   const dated = !(sh.topup && !sh.topup.closedAt) && [...byId.values()].some(c => rank(c) > 0);
   const cutoff = dated && sh.rejects.length ? Math.min(...sh.rejects.map(id => rank(byId.get(id)))) : Infinity;
   const locked=new Set([...(sh.roseProtected?.placements||[]),...(sh.appendOnly?sh.nestInitial||[]:[])].map(p=>p.id));
-  const lifted = sh.placements.filter(p => !locked.has(p.id)&&(bad.has(orderOf(p.id)) || (dated && rank(byId.get(p.id)) > cutoff)));
+  // (an order the search seated in a pocket that every older order that missed does not fit is not lifted for being younger: result.pocketFilled, the solver's pocket pass)
+  const lifted = sh.placements.filter(p => !locked.has(p.id)&&(bad.has(orderOf(p.id)) || (dated && !(pocket && pocket.has(p.id)) && rank(byId.get(p.id)) > cutoff)));
   if (!lifted.length) return;
   sh.placements = sh.placements.filter(p => !lifted.includes(p));
   sh.rejects.push(...lifted.map(p => p.id));
@@ -4422,7 +4423,7 @@ function ensureWorkers(sh, n) {
   for (const w of sh.workers.splice(n)) w.terminate();
   while (sh.workers.length < n) {
     const idx = sh.workers.length;
-    const w = new Worker("charm-nest-worker.js?v=20260925-fill-holes");
+    const w = new Worker("charm-nest-worker.js?v=20261007-pocket-fill");
     w.onmessage = e => onWorkerMessage(sh, e.data, idx);
     w.onerror = e => onWorkerMessage(sh, { type: "error", jobId: sh.jobId + ":" + idx, message: e.message }, idx);
     sh.workers.push(w);
@@ -4997,7 +4998,7 @@ async function finishNest(sh, { result, error }) {
   // place stays free and the sheet is marked to be arranged again, which the run does once this search stands.
   { const gone = sh.placements.filter(p => !byId.has(p.id)).length + sh.rejects.filter(id => !byId.has(id)).length;
     if (gone) { sh.placements = sh.placements.filter(p => byId.has(p.id)); sh.rejects = sh.rejects.filter(id => byId.has(id)); sh.dirty = true; log(sh, `${gone === 1 ? "A piece" : gone + " pieces"} left the sheet while it was searched; the sheet is arranged again next`); } }
-  keepOrdersWhole(sh, byId);
+  keepOrdersWhole(sh, byId, new Set(result.pocketFilled || []));
   if (sh.evSearch && sh.evSearch.live) agentUpdate(sh.evSearch, { live: false, elapsed: 0, html: null, text: `Search ended after ${result.trials} trial(s): ${endedText(result.endedBy)}` });
   if (sh.evNest) agentUpdate(sh.evNest, { live: false, elapsed: 0, text: `Nest ended by ${endedText(result.endedBy)} after ${result.trials} trial(s), ${fmt.s(result.elapsedMs)}: ${result.placements.length}/${items.length} placed at ${fmt.pct(result.density)}${result.rejects.length ? ` · ${sh.resumeWait ? "waiting for Resume" : "did not fit"}: ${result.rejects.map(id => byId.get(id)?.name || id).join(", ")}` : ""}` });
   sh.liveInfo = { freePt2: result.freePt2, usablePt2: result.usablePt2, placedPt2: result.placedPt2, pocket: result.pocket, placed: result.placements.length, total: items.length };
@@ -6863,7 +6864,7 @@ function compareGPUSpeed() {
   const sh=allSheets().filter(sh=>activeCharms(sh).length).sort((a,b)=>activeCharms(b).length-activeCharms(a).length)[0];
   const job=sh?buildJob(sh):null,id=uid();
   let worker;
-  try{worker=new Worker('charm-nest-worker.js?v=20260925-fill-holes');}catch(e){output.textContent="Comparison unavailable: "+e.message;return;}
+  try{worker=new Worker('charm-nest-worker.js?v=20261007-pocket-fill');}catch(e){output.textContent="Comparison unavailable: "+e.message;return;}
   gpuComparison=worker;button.textContent="Cancel comparison";output.textContent="Checking GPU availability…";
   const finish=text=>{if(gpuComparison!==worker)return;output.textContent=text;button.textContent="Compare speed";worker.terminate();gpuComparison=null;};
   worker.onmessage=({data:m})=>{
@@ -6995,7 +6996,7 @@ async function boot() {
   window.CN = { S, AG, DEFAULTS, METALS, showPage, startNest, intake, flushManualIntake, api, agent, agentUpdate, agentCall, uploadBytes, buildJob, setMode, renderLibrary, loadLibrary, applyGroupingReview, reviewGrouping, renderOverview, aiRenderSheet, aiPockets, reviewLayout: m => reviewLayout(S.sheets[m], activeCharms(S.sheets[m])), setAgent: fn => { agentCallImpl = fn; },
     activePage, allSheets, pagesOf, addPage, sheetDirty, activeCharms, renderCard, inflatedArea, usableArea, renderRail, updateTopSub, refreshAllCards, toast, openDlg, closeDlg, download, openLibrarySheet, dataUrlToBytes, toBase64, sha256, labelOf, stockFor, cutLinesOf, ensurePdfJs, sourceOf, openReport, openCharm, drawPreview, paintPreview, saveSettings, openSettings, today, sheetFileBase, cloudProbe, persistSheet, computeSaturation, esc, uid, fmt, MM_PER_PT, METAL_TAG, autoNest, startNest, stopNest, log,
     RESUME_STAGE, heldForResume, resumeQueueChanged, dropResumeQueue, topupRoom, settleTopups,
-    solverWorker: () => new Worker("charm-nest-worker.js?v=20260925-fill-holes") };   // a one-off solver worker (the partial sheet trial pack, charm-nest-partial-nest.js)   // for tests, the console and charm-nest-bridge.js
+    solverWorker: () => new Worker("charm-nest-worker.js?v=20261007-pocket-fill") };   // a one-off solver worker (the partial sheet trial pack, charm-nest-partial-nest.js)   // for tests, the console and charm-nest-bridge.js
   window.CharmNestOperations?.subscribe(()=>flushManualIntake());
 }
 boot();
@@ -7069,7 +7070,7 @@ try {
 <!-- the cinematic Hold and Release: the order seen moving sheet to sheet (OrderHoldFx.playHold, playRelease, returnToOnHold), driven by the engine's own steps -->
 <script src="charm-nest-hold-fx.js?v=20261005-hfx3"></script>
 <script src="charm-nest-mail.js?v=20261005-pv-seal-zp1"></script>
-<script src="charm-nest-rose-ui.js?v=20261005-rg3-opt1-sa5-gc3a-gc1-ps1-ps2-os1-pso1-psc1-cs1"></script>
+<script src="charm-nest-rose-ui.js?v=20261005-rg3-opt1-sa5-gc3a-gc1-ps1-ps2-os1-pso1-psc1-cs1-pf1"></script>
 <script src="charm-nest-partial-data.js?v=20261007-opt1-sheets"></script>
 <script src="charm-nest-partial-nest.js?v=20261007-ps2c-fit75-pso1-psc1"></script>
 <script src="charm-nest-flow-rose.js?v=20261003-rg2-gc1-gf1"></script>
