@@ -1432,7 +1432,7 @@
       const my = ++seq, api = root.OrderTimeline;
       F.began = Date.now();
       // the cheap question: only for a poll, with a revision in hand, an answer drawn, nothing of this page's own waiting for the server's copy, and a whole read not due
-      const ask = r && r.probe && !F.fullNext && F.rev && F.answer && !local.size && F.began - F.fullAt < fullEvery() ? { ifRev: F.rev } : { wantRev: true };
+      const ask = r && r.probe && !F.fullNext && F.rev && F.answer && !local.size && F.began - F.fullAt < fullEvery() * Math.min(4, slow || 1) ? { ifRev: F.rev } : { wantRev: true };
       F.fullNext = false;
       // (deferred: a throw before the read still reaches the subscribers after "wait", never before it)
       const p = F.loading = Promise.resolve().then(() => {
