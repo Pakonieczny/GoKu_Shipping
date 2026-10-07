@@ -25,7 +25,7 @@ const retryBranch = cut(server, '    if (kind === "batch_retry_missing") {', '  
 const sweepBranch = cut(server, '  if (kind === "batch_sweep") {', '  if (kind === "job_status") {');
 const render = cut(page, "    function _renderSessionBlock(session) {", "    async function _cancelSession(sessionId) {");
 const _awaitingStallRestart = vm.runInNewContext(`${cut(page, "    function _awaitingStallRestart(b) {", "    function _formatDuration(ms) {")}; _awaitingStallRestart`, {});
-const poll = cut(page, "    function _startBatchAutoPoll() {", '    document.getElementById("batchJobsRefreshBtn")');
+const poll = cut(page, "    const _BATCH_QUIET_STEPS = ", '    document.getElementById("batchJobsRefreshBtn")');
 const REFUSED = "Enqueued token limit reached for gpt-image in organization org-x. Limit: 1,000,000 enqueued tokens.";
 const EXPIRED = "Batch expired before all requests completed.";
 

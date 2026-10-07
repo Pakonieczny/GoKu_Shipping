@@ -11674,7 +11674,10 @@ function _motionEngine(){
  const provider=require('./googleAdsGeminiVideo').createGeminiVideo({apiKey:ENV.GEMINI_API_KEY,fetch});
  const valid=a=>a&&/^Brites_GAds_Motion\/[a-zA-Z0-9_-]+\/[a-zA-Z0-9_-]+\.(mp4|jpg)$/.test(a.path);
  _adMotionEngine=require('./googleAdsAdMotion').createMotionService({fb,
-  context:async workspaceId=>{const ref=_adDesignWorkspaceRef(workspaceId),snap=await ref.get();if(!snap.exists)throw Error('Design workspace was not found.');const w=snap.data(),rows=await ref.collection('sourceSets').doc(w.sourceSetId).collection('products').get(),products=rows.docs.map(d=>d.data());return {ref,w,products,product:products.find(p=>String(p.id)===String(w.settings.productId)),group:(w.context.groups||[]).find(g=>g.ref===w.settings.groupRef)};},
+  context:async (workspaceId,opts)=>{const ref=_adDesignWorkspaceRef(workspaceId),snap=await ref.get();if(!snap.exists)throw Error('Design workspace was not found.');const w=snap.data();
+   // COST: a status poll (every 3 s while a film runs) needs the workspace only; with {products:false} it does not read every product of the source set each time.
+   if(opts&&opts.products===false)return {ref,w,products:[],product:undefined,group:(w.context.groups||[]).find(g=>g.ref===w.settings.groupRef)};
+   const rows=await ref.collection('sourceSets').doc(w.sourceSetId).collection('products').get(),products=rows.docs.map(d=>d.data());return {ref,w,products,product:products.find(p=>String(p.id)===String(w.settings.productId)),group:(w.context.groups||[]).find(g=>g.ref===w.settings.groupRef)};},
   relatedContexts:async(w,workspaceId)=>{const ids=await _findLegacyEditorWorkspaces({campaignId:String(w.context.campaignId),groupRef:w.settings.groupRef,workspaceId});const rows=await Promise.all(ids.map(id=>_adDesignWorkspaceRef(id).get()));return rows.filter(s=>s.exists).map(s=>({ref:s.ref,w:s.data()}));},
   loadAsset:_loadCreativeAsset,reviewImages:_designEngineAdapters().reviewImages,planMotion:_designEngineAdapters().responses,
   // A film re-reads the operator's framing from the saved canvas before it generates.

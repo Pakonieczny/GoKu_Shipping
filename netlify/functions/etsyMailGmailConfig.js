@@ -112,13 +112,31 @@ async function readWatcherConfig() {
   };
 }
 
-async function readSyncSnapshot() {
-  const [stateSnap, oauthSnap] = await Promise.all([
+// FC13 (7 Oct 2026, Firebase cost): every open inbox tab asks ?op=get once a minute, and each answer read three
+// documents (watcher switch, sync state, OAuth). The sync state moves once a minute (the cron), so:
+//   - the whole answer is remembered 45 s in this instance (one set of reads for all tabs);
+//     ?fresh=1 skips it (the pill after a click, the settings modal) and every write below drops it;
+//   - the OAuth document is read only to tell whether it is seeded (and its email address): once it is seen it is
+//     remembered ten minutes. A "not seeded" answer is never remembered, so seeding shows at the next look.
+const GET_MEMO_MS = 45 * 1000, OAUTH_MEMO_MS = 10 * 60 * 1000;
+let _getMemo = { at: 0, value: null };
+let _oauthMemo = { at: 0, oauth: null };
+function dropGetMemo() { _getMemo = { at: 0, value: null }; }
+
+async function readOauthDoc(fresh) {
+  if (!fresh && _oauthMemo.oauth && Date.now() - _oauthMemo.at < OAUTH_MEMO_MS) return _oauthMemo.oauth;
+  const snap = await db.doc(OAUTH_DOC_PATH).get();
+  const oauth = snap.exists ? snap.data() : null;
+  _oauthMemo = oauth ? { at: Date.now(), oauth: { emailAddress: oauth.emailAddress || null } } : { at: 0, oauth: null };
+  return oauth;
+}
+
+async function readSyncSnapshot(fresh) {
+  const [stateSnap, oauth] = await Promise.all([
     db.doc(SYNC_STATE_DOC).get(),
-    db.doc(OAUTH_DOC_PATH).get()
+    readOauthDoc(fresh)
   ]);
   const state = stateSnap.exists ? stateSnap.data() : null;
-  const oauth = oauthSnap.exists ? oauthSnap.data() : null;
   return {
     oauthSeeded         : !!oauth,
     oauthEmailAddress   : oauth ? (oauth.emailAddress || null) : null,
@@ -146,8 +164,12 @@ exports.handler = async (event) => {
 
   try {
     if (op === "get") {
-      const [cfg, sync] = await Promise.all([readWatcherConfig(), readSyncSnapshot()]);
-      return json(200, { ok: true, ...cfg, syncState: sync });
+      const fresh = qs.fresh === "1";
+      if (!fresh && _getMemo.value && Date.now() - _getMemo.at < GET_MEMO_MS) return json(200, _getMemo.value);
+      const [cfg, sync] = await Promise.all([readWatcherConfig(), readSyncSnapshot(fresh)]);
+      const value = { ok: true, ...cfg, syncState: sync };
+      _getMemo = { at: Date.now(), value };
+      return json(200, value);
     }
 
     if (op === "set") {
@@ -202,6 +224,7 @@ exports.handler = async (event) => {
         cfgPatch.pullFromMs = FV.delete();
       }
       await db.doc(WATCHER_CFG_DOC).set(cfgPatch, { merge: true });
+      dropGetMemo();
 
       // Watermark seed on off→on transition. We write to gmailSyncState
       // so the next cron tick's buildQuery() picks it up via the
@@ -289,6 +312,7 @@ exports.handler = async (event) => {
         updatedAt : FV.serverTimestamp(),
         updatedBy : actor
       }, { merge: true });
+      dropGetMemo();
 
       await db.collection(AUDIT_COLL).add({
         threadId : null,

@@ -167,6 +167,8 @@
   function makePage(root) {
     const learned = new Map();      // orderId -> { at, pools, sheets, rows, ok, failed, task }
     const revs = new Map();         // the orders of one read (joined) -> the digest of the answer the cloud made (getOrderPieces `rev`), sent back as ifRev on the next forced read
+    const gens = new Map();         // the same key -> { gen, at }: the cloud's placement counter when that answer was made (FC3: sent back as ifGen, so a counter that has not moved is `unchanged` for one small read, not a re-read of every sheet and pool row), and when the page last had a full answer
+    const GEN_DEEP = 60000;         // a forced read asks in full (no ifGen) at least this often: a write nothing raised the counter for shows within a minute
     const fullSheets = new Map();   // sheetId -> the sheet's record with ALL its poolIds (loadSheet)
     const subs = new Set();
     let version = 0, lib = null;
@@ -292,10 +294,10 @@
           try {
             // (a forced re-read of orders already read sends the digest of the last answer: the cloud says `unchanged` without the payload when nothing it was made from moved: C3's ifRev)
             const key = part.join(','), ask = { op: 'getOrderPieces', orderIds: part }, last = opts.force && part.every(r => learned.get(r) && learned.get(r).ok) ? revs.get(key) : null;
-            if (last) ask.ifRev = last;
+            if (last) { ask.ifRev = last; const g = gens.get(key); if (g && g.gen != null && Date.now() - g.at < GEN_DEEP) ask.ifGen = g.gen; }
             const res = await api('charmNestLibrary', ask, { quiet: true, timeoutMs: 15000 });
-            if (res && res.unchanged && last) { for (const r of part) { const e = entry(r); e.at = Date.now(); } continue; }
-            if (res && res.rev) { revs.set(key, res.rev); if (revs.size > 40) revs.delete(revs.keys().next().value); } else revs.delete(key);
+            if (res && res.unchanged && last) { const g = gens.get(key); if (res.gen != null) gens.set(key, { gen: res.gen, at: ask.ifGen != null && res.gen === ask.ifGen && g ? g.at : Date.now() }); for (const r of part) { const e = entry(r); e.at = Date.now(); } continue; }
+            if (res && res.rev) { revs.set(key, res.rev); if (res.gen != null) gens.set(key, { gen: res.gen, at: Date.now() }); else gens.delete(key); if (revs.size > 40) { const old = revs.keys().next().value; revs.delete(old); gens.delete(old); } } else { revs.delete(key); gens.delete(key); }
             for (const r of part) { const x = (res.orders || {})[r] || {}, e = entry(r), was = readSig(e); e.pools = x.pools || []; e.sheets = x.sheets || []; e.at = Date.now(); e.ok = true; e.failed = null; if (was !== readSig(e)) changed = true; }
           } catch (err) { for (const r of part) { const e = entry(r), was = readSig(e); e.failed = err; e.at = Date.now(); if (was !== readSig(e)) changed = true; } console.warn('OrderPieces: sheet records not read', err && err.message); }
         }

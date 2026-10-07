@@ -7045,9 +7045,16 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
     function isTabVisible() {
       return typeof document === "undefined" || document.visibilityState !== "hidden";
     }
+    // FC13 (Firebase cost): a tab left on the sign-in screen (every non-Admin sign-in ends after 10 minutes without
+    // input and at 5:00 pm, so that is every night and weekend) kept every poll below running for nobody. The
+    // body has the class "authed" exactly while someone is signed in; with it off the timers stay quiet, and the
+    // sign-in hook below refreshes the pills at once when somebody signs in.
+    function isSignedInShown() {
+      try { return !document.body || document.body.classList.contains("authed"); } catch (_) { return true; }
+    }
     function visibleInterval(fn, ms) {
       return setInterval(() => {
-        if (!isTabVisible()) return;
+        if (!isTabVisible() || !isSignedInShown()) return;
         try { fn(); } catch (e) { console.warn("poll callback threw:", e && e.message); }
       }, ms);
     }
@@ -7063,6 +7070,26 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
           }
         }
       });
+    }
+
+    // FC13 (7 Oct 2026, Firebase cost) — ONE request per computer for the polls every Inbox tab makes on the same
+    // shared documents (Etsy meter, scrape alarm, kill switch, Gmail pill). The answer and its time are kept in
+    // localStorage, which this computer's tabs share: a tab whose copy is younger than maxAgeMs uses it and asks
+    // nothing; an older one asks the server and publishes the answer for the others. Two tabs whose timers fire in the
+    // same instant may both ask (never more). Storage blocked → each tab asks, as before. `force` always asks.
+    // Nothing here changes what is shown; it only stops N tabs reading the same document N times.
+    async function emShared(key, maxAgeMs, fetcher, force) {
+      const lk = "etsymail_shared_" + key;
+      if (!force) {
+        try {
+          const c = JSON.parse(localStorage.getItem(lk) || "null");
+          const age = c ? Date.now() - c.at : Infinity;
+          if (c && age < maxAgeMs && age > -2000) return c.v;
+        } catch (_) {}
+      }
+      const v = await fetcher();
+      try { localStorage.setItem(lk, JSON.stringify({ at: Date.now(), v })); } catch (_) {}
+      return v;
     }
 
     const THREADS_COLL = "EtsyMail_Threads";
@@ -7931,9 +7958,24 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
      *
      *  We still hide the card immediately if no SalesContext exists,
      *  but only AFTER the fetch confirms that — not before. */
+    // FC13 (Firebase cost) — the card was redrawn by every 10-second message poll, twice, and each redraw read the
+    // sales context, the salesHistory subcollection and, for a thread without a salesRound, the whole thread
+    // document (searchableText and all): about 2,600 reads and 11 MB an hour per open conversation. The poll path now
+    // goes through salesCardPoll: a redraw at once on a full load or new messages, then every 10 s for two minutes
+    // (the sales agent answers a new message within that), otherwise once a minute. Nothing else changes.
+    const _salesCardAt = new Map();           // threadId → ms of the card's last redraw
+    const _salesCardBoostUntil = new Map();   // threadId → ms until which the card is checked every 10 s
+    function salesCardBoost(threadId) { _salesCardBoostUntil.set(threadId, Date.now() + 120000); }
+    function salesCardPoll(threadId, force) {
+      const now = Date.now();
+      const quick = now < (_salesCardBoostUntil.get(threadId) || 0);
+      if (!force && now - (_salesCardAt.get(threadId) || 0) < (quick ? 9000 : 59000)) return Promise.resolve();
+      return renderSalesCardForThread(threadId).catch(() => {});
+    }
     async function renderSalesCardForThread(threadId) {
       const mount = $("emSalesCardMount");
       if (!mount) return;
+      _salesCardAt.set(threadId, Date.now());
 
       // Quick gate: if salesModeEnabled is OFF, don't render — the
       // SalesContext doc may exist but the system isn't active. We
@@ -7965,7 +8007,9 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
       let threadSalesRound = 1;
       try {
         const threadFromState = state.threads && state.threads.find(t => t && t.id === threadId);
-        if (threadFromState && threadFromState.salesRound) {
+        // FC13: a thread the list already holds and that has no salesRound IS round 1 (the list carries whole thread
+        // documents); only a thread the list does not hold (a deep link) is read, once, not on every poll.
+        if (threadFromState) {
           threadSalesRound = Number(threadFromState.salesRound) || 1;
         } else {
           // Fallback if state.threads doesn't have it (e.g., direct deep-link
@@ -10665,7 +10709,7 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
       meta.textContent = "Loading current cursor…";
 
       try {
-        const res  = await _emGmailApi("etsyMailGmailConfig?op=get");
+        const res  = await _emGmailApi("etsyMailGmailConfig?op=get&fresh=1");
         const data = await res.json();
         if (!res.ok || !data.ok) throw new Error(data.error || `HTTP ${res.status}`);
 
@@ -10721,7 +10765,7 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
         // Re-render the meta line + topbar pill from server truth.
         await loadGmailPullFromInModal();
         if (typeof _emRefreshGmailPanel === "function") {
-          _emRefreshGmailPanel().catch(() => {});
+          _emRefreshGmailPanel(true).catch(() => {});
         }
         return true;
       } catch (e) {
@@ -11937,12 +11981,13 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
 
     /** Poll the kill-switch state every 30s. Show/hide banner accordingly. */
     let _killSwitchPoller = null;
-    async function pollKillSwitch() {
+    async function pollKillSwitch(force) {
       try {
-        const res = await api("etsyMailDraftSend", {
+        // FC13: one read per computer per ~30 s however many tabs are open (emShared); the banner's own flip always asks.
+        const res = await emShared("killswitch", 25000, () => api("etsyMailDraftSend", {
           method: "GET",
           query: { op: "killswitch_status" }
-        });
+        }), force === true);
         const ks = res && res.killSwitch;
         const banner = $("emKillSwitchBanner");
         const reasonEl = $("emKillSwitchReason");
@@ -12044,7 +12089,7 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
           }
         });
         toast(disabled ? "Send pipeline disabled" : "Send pipeline re-enabled");
-        pollKillSwitch();
+        pollKillSwitch(true);
       } catch (e) {
         toast("Kill-switch update failed: " + e.message);
       }
@@ -12166,10 +12211,11 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
       }
       async function poll() {
         try {
-          const res = await api("firestoreProxy", {
+          // FC13: one read per computer a minute however many tabs are open (emShared).
+          const res = await emShared("scrapeHealth", 50000, () => api("firestoreProxy", {
             method: "GET",
             query : { op: "get", coll: "EtsyMail_Config", id: "scrapeHealth" }
-          });
+          }));
           render(res && res.exists ? res.doc : null);
         } catch (e) { /* keep the last state; the backend dot shows outages */ }
       }
@@ -12201,10 +12247,14 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
       // Operational visibility (mirror status, backfill controls) now
       // lives in the Settings modal's "Receipts mirror" section. This
       // row is purely a quota-burn safety indicator.
-      const POLL_INTERVAL_MS = 3000;
+      // FC13 (7 Oct 2026, Firebase cost): this gauge read its document every 3 s per tab, shown or hidden (1,200 reads an
+      // hour per open tab, all day). Now: every 10 s while the tab is shown, nothing while it is hidden, one read per
+      // computer however many Inbox tabs are open (emShared), and a fresh read the moment the tab comes back. The
+      // "firing" glow lasts one poll longer to match.
+      const POLL_INTERVAL_MS = 10000;
       const COUNTERS_COLL    = "EtsyMail_Config";
       const COUNTERS_DOC_ID  = "etsyApiCounters";
-      const FIRING_WINDOW_MS = 5000;
+      const FIRING_WINDOW_MS = 12000;
       // The three siteIds that all represent receipts-page calls. We
       // sum their counters into one row so the operator sees the true
       // "receipts pages fetched today" total no matter which subsystem
@@ -12223,6 +12273,17 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
 
       let _consecutiveErrors = 0;
       let _lastSuccessAt = 0;
+      // FC14 (Firebase cost): this panel used to read the counters document every 3 s for as long as the tab was open, hidden or
+      // signed out (1,200 reads and function calls an hour per tab, a 5 to 7 KB document each time). Now: nothing while the tab is
+      // hidden (it reads at once when it is shown again), 10 s while the counters are moving or somebody is at the page (FC13:
+      // the Etsy mirror cron moves the counters every 3 minutes, so at 3 s this stayed near 900 reads an hour), 30 s when the
+      // meter has been quiet and untouched for 2 minutes, and a failing read (signed out, 401, 5xx) backs off to a minute.
+      // FC13 adds: one read per computer however many Inbox tabs are open (emShared) and nothing while the sign-in screen shows.
+      let _lastSig = "", _lastMoveAt = Date.now(), _lastInputAt = Date.now(), _meterTimer = 0, _meterStopped = false;
+      const QUIET_AFTER_MS = 120000, QUIET_POLL_MS = 30000, ERR_MAX_MS = 60000;
+      ["pointerdown", "keydown", "wheel", "touchstart"].forEach(ev => {
+        try { document.addEventListener(ev, () => { _lastInputAt = Date.now(); }, { passive: true, capture: true }); } catch (_) {}
+      });
 
       function tsToMillis(ts) {
         if (!ts) return 0;
@@ -12404,13 +12465,18 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
 
       async function pollOnce() {
         try {
-          const res = await api("firestoreProxy", {
+          const res = await emShared("etsyApiCounters", POLL_INTERVAL_MS - 1500, () => api("firestoreProxy", {
             method: "GET",
             query : { op: "get", coll: COUNTERS_COLL, id: COUNTERS_DOC_ID }
-          });
+          }));
           _lastSuccessAt = Date.now();
           _consecutiveErrors = 0;
           ensureBanner(null);
+          // FC14: remember when the counters last moved, so a quiet meter can be read less often (see nextDelay).
+          try {
+            const sig = res && res.doc ? String(res.doc.grandTotal) + "|" + JSON.stringify(res.doc.updatedAt || "") : "none";
+            if (sig !== _lastSig) { _lastSig = sig; _lastMoveAt = Date.now(); }
+          } catch (_) {}
           if (res && res.exists && res.doc) {
             render(res.doc);
           } else {
@@ -12428,13 +12494,29 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
         }
       }
 
-      pollOnce();
-      const pollTimer = setInterval(pollOnce, POLL_INTERVAL_MS);
-      window.addEventListener("focus", () => { pollOnce(); });
+      function nextDelay() {
+        if (_consecutiveErrors > 0) return Math.min(ERR_MAX_MS, POLL_INTERVAL_MS * Math.pow(2, Math.min(_consecutiveErrors, 5)));
+        const now = Date.now();
+        return (now - _lastMoveAt > QUIET_AFTER_MS && now - _lastInputAt > QUIET_AFTER_MS) ? QUIET_POLL_MS : POLL_INTERVAL_MS;
+      }
+      function armMeter() {
+        clearTimeout(_meterTimer); _meterTimer = 0;
+        if (_meterStopped || document.visibilityState === "hidden") return;
+        // FC13: nothing is read while the sign-in screen shows (the timer keeps its beat, the poll is skipped).
+        _meterTimer = setTimeout(async () => { _meterTimer = 0; if (isSignedInShown()) await pollOnce(); armMeter(); }, nextDelay());
+      }
+      async function refreshNow() { await pollOnce(); armMeter(); }
+
+      refreshNow();
+      window.addEventListener("focus", () => { _lastInputAt = Date.now(); refreshNow(); });
+      document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState === "hidden") { clearTimeout(_meterTimer); _meterTimer = 0; }
+        else { _lastInputAt = Date.now(); refreshNow(); }
+      });
 
       window.emApiMeter = {
-        refresh: pollOnce,
-        stop   : () => clearInterval(pollTimer)
+        refresh: refreshNow,
+        stop   : () => { _meterStopped = true; clearTimeout(_meterTimer); _meterTimer = 0; }
       };
     })();
 
@@ -12744,7 +12826,8 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
         _running = true;
         pollOnce();
         if (pollTimer) clearInterval(pollTimer);
-        pollTimer = setInterval(pollOnce, POLL_INTERVAL_MS);
+        // FC14: a hidden tab does not read the mirror state every 2 s (the settings modal may stay open behind other windows)
+        pollTimer = setInterval(() => { if (document.visibilityState !== "hidden") pollOnce(); }, POLL_INTERVAL_MS);
       }
 
       function stop() {
@@ -13070,7 +13153,10 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
     const SMART_LABEL_KEYS = ["_orderLinkOpen", "production_rush", "_refundFlagged", "sales_active", "sales_discovery", "sales_spec",
                               "sales_quote", "sales_revision", "sales_pending_close_approval", "_completedSales"];
     const SMART_LABELS_LS_KEY = "etsymail_smart_labels_open";
-    const SMART_ATTENTION_REFRESH_MS = 2 * 3600e3;
+    // FC13: the "needs an answer" set (up to ~1,300 whole thread documents) is read in full at load and re-read as a
+    // safety net while a tab stays open; every change reaches the tab through the 60-second delta anyway, so the
+    // safety net is every 6 hours, not 2.
+    const SMART_ATTENTION_REFRESH_MS = 6 * 3600e3;
     const SMART_HIDDEN_REFRESH_MS = 30 * 60e3;
     const SMART_KEY_COUNTS_MS = 15 * 60e3;
 
@@ -16119,7 +16205,11 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
         // available and bails early. The summary card's own cache
         // (keyed by threadId+lastMessageMs) prevents redundant Haiku
         // calls on the 4s message poll.
-        renderSalesCardForThread(threadId).catch(() => {});
+        // FC13: a full load or new messages redraw the card at once (and keep it quick for two minutes, the sales agent
+        // answers a new message within that); a quiet poll only checks it once a minute (salesCardPoll).
+        const _cardNews = wantFull || docs.length > 0;
+        if (_cardNews) salesCardBoost(threadId);
+        salesCardPoll(threadId, _cardNews);
       } catch (e) {
         console.warn("messages fetch failed:", e.message);
       } finally {
@@ -16161,12 +16251,18 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
         fetchMessagesNow(threadId, { source: "poll" });
         // v2.0 Step 2: keep sales card in sync. Cheap: skipped silently
         // if no SalesContext exists for this thread.
-        renderSalesCardForThread(threadId).catch(() => {});
+        // FC13: this tick used to redraw the card on top of the redraw fetchMessagesNow already makes (6 reads and 3
+        // whole thread documents per tick). Now one throttled check: every 10 s for two minutes after news, else 60 s.
+        salesCardPoll(threadId, false);
 
         pollTickCount++;
-        // Only run the listing-status check every 3rd tick (~12s).
-        // Counts poll (15s) is the backstop — this is just earlier UX.
-        if (pollTickCount % 3 !== 0) return;
+        // FC13: the thread-document check (a whole thread document, searchableText and all) ran every 3rd tick
+        // (~30 s) on every open thread. It exists to notice the custom-listing pipeline moving, so it keeps that
+        // pace only while the listing is queued or being made; any other open thread is checked once a minute
+        // (the 60-second list poll also brings the change).
+        const _listing = lastListingStatus;
+        const _hot = _listing === "queued" || _listing === "creating";
+        if (pollTickCount % (_hot ? 3 : 6) !== 0) return;
 
         // v4.3.2 — Detect listing-pipeline state transitions on the
         // selected thread and force a counts refresh + thread-list
@@ -23291,7 +23387,9 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
       // Refreshes its own state every 30s. The cron runs every 1 min, so
       // a 30s panel refresh means new sync results show within ≤30s of
       // the cron completing.
-      const GMAIL_PANEL_REFRESH_MS = 30 * 1000;
+      // FC13: 30 s -> 60 s. The cron it reports on runs once a minute, so the pill cannot be newer than that anyway;
+      // the refresh after a click (toggle, Pull now, cursor) is fresh and unchanged.
+      const GMAIL_PANEL_REFRESH_MS = 60 * 1000;
 
       // Helper: small wrapper around fetch that inherits the secret/base
       // from the existing api() conventions used elsewhere in this file.
@@ -23332,7 +23430,7 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
         return `${d}d ago`;
       }
 
-      async function refreshGmailPanel() {
+      async function refreshGmailPanel(force) {
         const pill   = $("emGmailPill");
         const label  = $("emGmailLabel");
         const meta   = $("emGmailMeta");
@@ -23342,9 +23440,15 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
         if (!pill || !toggle) return;
 
         try {
-          const res  = await gmailApi("etsyMailGmailConfig?op=get");
-          const data = await res.json();
-          if (!res.ok || !data.ok) throw new Error(data.error || `HTTP ${res.status}`);
+          // FC13: the timed refresh shares one answer per computer (emShared) and the server keeps it ~45 s; every
+          // refresh that follows something the person just did (toggle, Pull now, saving the cursor) asks fresh.
+          const f = force === true;
+          const data = await emShared("gmailPanel", 55000, async () => {
+            const res = await gmailApi("etsyMailGmailConfig?op=get" + (f ? "&fresh=1" : ""));
+            const d = await res.json();
+            if (!res.ok || !d.ok) throw new Error(d.error || `HTTP ${res.status}`);
+            return d;
+          }, f);
 
           const enabled  = !!data.enabled;
           const sync     = data.syncState || {};
@@ -23457,7 +23561,7 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
         let pullFromMs = null;
         if (turningOn) {
           try {
-            const res = await gmailApi("etsyMailGmailConfig?op=get");
+            const res = await gmailApi("etsyMailGmailConfig?op=get&fresh=1");
             const data = await res.json();
             if (res.ok && data.ok && data.pullFromMs) {
               pullFromMs = data.pullFromMs;
@@ -23492,10 +23596,10 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
             toast("Watcher enabled — sync will resume from "
                 + new Date(data.seededWatermarkMs).toLocaleString());
           }
-          await refreshGmailPanel();
+          await refreshGmailPanel(true);
         } catch (err) {
           alert("Toggle failed: " + err.message);
-          await refreshGmailPanel();   // re-sync UI from server truth
+          await refreshGmailPanel(true);   // re-sync UI from server truth
         }
       });
 
@@ -23522,7 +23626,7 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
           // 30s auto-refresh.
           for (let i = 0; i < 10; i++) {
             await new Promise(r => setTimeout(r, 2000));
-            await refreshGmailPanel();
+            await refreshGmailPanel(true);
             const meta = $("emGmailMeta");
             // Stop once it's no longer "syncing now…"
             if (meta && !/syncing now/.test(meta.textContent)) break;
@@ -23531,7 +23635,7 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
           alert("Manual pull failed: " + err.message);
         } finally {
           pull.classList.remove("spinning");
-          await refreshGmailPanel();
+          await refreshGmailPanel(true);
         }
       });
 
@@ -28093,6 +28197,9 @@ const EtsyMailAuth=(()=>{
     try{ startListPolling(); }catch(_){}
     try{ startCountsPolling(); }catch(_){}
     try{ startKillSwitchPolling(); }catch(_){}
+    // FC13: the timed pills sleep while the sign-in screen shows (visibleInterval); they refresh the moment somebody signs in.
+    try{ window.emApiMeter && window.emApiMeter.refresh(); }catch(_){}
+    try{ if(typeof _emRefreshGmailPanel==="function") _emRefreshGmailPanel().catch(function(){}); }catch(_){}
     try{ if(typeof fetchThreadListNow==="function") fetchThreadListNow({source:"user"}); }catch(_){}
     try{ if(typeof fetchCountsNow==="function") fetchCountsNow(); }catch(_){}
     try{ handleOrderLinkHash(); }catch(_){}
