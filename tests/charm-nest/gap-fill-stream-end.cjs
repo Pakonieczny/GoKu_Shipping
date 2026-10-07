@@ -26,14 +26,16 @@ const turn = () => new Promise(r => setImmediate(r));
       const window = { addEventListener() {}, CN: { settleTopups: () => __settled.push({ at: __clock, checking: /Checking/.test(Arrivals.text()) }) } };
       const document = { hidden: false, getElementById: () => null, querySelector: () => null, querySelectorAll: () => [] };
       const storage = new Map(), localStorage = { getItem: k => storage.get(k), setItem: (k, v) => storage.set(k, v) }, navigator = {};
-      const S = { settings: { sandboxStream: 'on', sandboxSpeed: 1000, runMode: 'auto', pollMinutes: 10 }, cloud: { ok: false }, mode: 'orders' }, WORKSPACE_SANDBOX = true;
+      const S = { settings: { sandboxStream: 'on', sandboxSpeed: 1000, runMode: 'manual', pollMinutes: 10 }, cloud: { ok: false }, mode: 'orders' }, WORKSPACE_SANDBOX = true;
       const B = { run: { runId: 'run-1', status: 'processed', step: 'complete' }, orders: { rows: [], byKey: new Map() } }, allSheets = () => [];
       const Orders = { rows: () => B.orders.rows, render() {}, interpretAll() {}, claim: async () => {}, applyPullRule: x => x, loadMaps: async () => {} };
       const Recall = { on: () => false }, Engrave = { render() {}, background() {} }, Review = { render() {} }, Session = { schedule() {} }, ListMedia = { prepare() {} }, Master = { load: async () => {} };
       const RunCtl = { renderBanner() {}, save: async () => {}, poke() {}, stop() {}, start: async () => {} };
       const O = { lineKey: (o, l) => o.receiptId + '/' + l.transactionId };
-      // every order of the stream is in: the steps stop, and the checks go on every simulated ten minutes (600 ms at 1000x)
-      const Sandbox = { on: () => true, streaming: () => true, done: () => true, speed: () => 1000, advance: async () => ({ done: true }), render() {}, label: () => 'Sandbox 1000x · all orders in' };
+      // the stream still has orders to bring (Manual: a step every simulated ten minutes, 600 ms at 1000x); once every order is in
+      // (__done) nothing more can arrive and the check looks once a minute (FC9, the Firebase cost: it used to go on every 600 ms for hours)
+      let __done = false;
+      const Sandbox = { on: () => true, streaming: () => true, done: () => __done, speed: () => 1000, advance: async () => ({ done: true }), render() {}, label: () => 'Sandbox 1000x · all orders in' };
       const SimClock = { now: () => __clock };
       const toast = () => {}, notifyPerson = () => {}, refreshAllCards = () => {}, agent = () => {};
       // the station's sweep answers when the test says: 700 ms after it was asked
@@ -59,6 +61,16 @@ const turn = () => new Promise(r => setImmediate(r));
     // a check that is out: the tick asks nothing, as before
     const before = c.__settled.length; run('__clock += 250'); tick(); await turn();
     assert(run('!!__answer') && c.__settled.length === before, 'nothing asked while the check is out');
+    // every order has come: the check that is out ends, and the next one is a minute after it began, not 600 ms (the gap fills are
+    // still asked to settle at every tick, with no check due: that was the point of asking between the checks)
+    run('__done = true; __answer({ total: 0, hydrated: 0, orders: [], openIds: [] }); __answer = null'); for (let i = 0; i < 20; i++) await turn();
+    assert.equal(run('Arrivals.state().nextCheck') - c.__calls.at(-1), 60000, 'once every order is in, a check a minute after the last began');
+    const n0 = c.__calls.length, s0 = c.__settled.length;
+    for (let step = 0; step < 48; step++) { run('__clock += 250'); tick(); for (let i = 0; i < 20; i++) await turn(); }
+    assert.equal(c.__calls.length, n0, 'twelve seconds with every order in: no check');
+    assert(c.__settled.length - s0 >= 40, `the gap fills were asked to settle at every tick all the same (${c.__settled.length - s0} times in twelve seconds)`);
+    for (let step = 0; step < 4 * 60; step++) { run('__clock += 250'); tick(); for (let i = 0; i < 4; i++) await turn(); if (run('!!__answer')) { run('__answer({ total: 0, hydrated: 0, orders: [], openIds: [] }); __answer = null'); for (let i = 0; i < 20; i++) await turn(); } }
+    assert(c.__calls.length - n0 >= 1 && c.__calls.length - n0 <= 2, `a minute later the check looks again, once (${c.__calls.length - n0})`);
   }
 
   /* ── 2 · settleTopups: released once the stream is over and everything is taken in ── */
