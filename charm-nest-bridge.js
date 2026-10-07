@@ -14083,8 +14083,10 @@ const RunHistory = window.RunHistory = (() => {
   }
   // every step of a run asks for a refresh; while the list is open it is read again at most once a minute (and not while
   // its Download menu is open or one of its cards is at work: that waits until they are done)
-  let refreshTimer = 0;
-  const refreshIfOpen = () => { if (H.dlg?.open && !refreshTimer) refreshTimer = setTimeout(() => { refreshTimer = 0; if (!H.dlg?.open) return; if (H.menu || H.busy.size) refreshIfOpen(); else load(); }, Math.max(700, (H.readAt || 0) + 60000 - Date.now())); };
+  // (FC2) A list open in a tab nobody is looking at is not read again: the read is made when the tab is shown, and only if a run asked for it meanwhile.
+  let refreshTimer = 0, refreshOwed = false;
+  const refreshIfOpen = () => { if (H.dlg?.open && !refreshTimer) refreshTimer = setTimeout(() => { refreshTimer = 0; if (!H.dlg?.open) return; if (document.hidden) { refreshOwed = true; return; } if (H.menu || H.busy.size) refreshIfOpen(); else load(); }, Math.max(700, (H.readAt || 0) + 60000 - Date.now())); };
+  document.addEventListener("visibilitychange", () => { if (refreshOwed && !document.hidden) { refreshOwed = false; refreshIfOpen(); } });
   return { show, load, close, refreshIfOpen, runs: () => H.runs };
 })();
 
