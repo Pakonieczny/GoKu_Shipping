@@ -262,7 +262,7 @@
       sh._partialBusy=false;
       seen.delete(sigOf(sh,asked));
       const pv=shown;
-      return {ok:true,started:true,sheets:[sh],links:pv?pv.links:[],moved:pieces.length,continues:pv?pv.continues.n:null};
+      return {ok:true,started:true,sheets:[sh],links:pv?pv.links:[],moved:pv?Math.max(0,pieces.length-pv.continues.n):pieces.length,continues:pv?pv.continues.n:null};   // (moved = what the previewed partials hold; the panel says the rest continue)
     }catch(e){return fail('failed',e&&e.message||String(e));}
   }
   const useOn=(sh,id,o)=>seat(sh,[id],o);
