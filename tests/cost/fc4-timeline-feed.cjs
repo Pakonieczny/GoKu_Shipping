@@ -1,7 +1,7 @@
 // FC4 (Firebase cost): the order view's timeline feed (charm-nest-timeline-ui.js, feed()). The real file in a vm with a fake clock and a stub of
 // OrderTimeline.get; no network. Checks: the poll asks the cheap question (ifRev) and redraws nothing while it answers { unchanged }; a whole
 // read at least every minute; a change redraws at once; a change made on this page reads in full (now and 1.5 s later, as before); events this page
-// holds for the server read in full; the pace follows use (2.5 s in use, slower unused, back at once on a touch); nothing in a hidden tab.
+// holds for the server read in full; the pace follows use (2.5 s in use and for 10 minutes after, slower unused, back at once on a touch); nothing in a hidden tab.
 //   node tests/cost/fc4-timeline-feed.cjs
 "use strict";
 const fs = require("fs"), path = require("path"), vm = require("vm"), assert = require("assert/strict");
@@ -66,18 +66,18 @@ const touch = () => { for (const f of listeners.pointermove || []) f({}); };
   calls = []; await advance(8000);
   assert(calls.length >= 3 && calls.every(c => !c.ifRev), "while an event of this page is unconfirmed every read is whole: " + ids());
 
-  // 6. the pace follows use: touched or moved lately 2.5 s; 3 minutes unused 5 s; 10 minutes 10 s; an hour 30 s; a touch brings it back at once
+  // 6. the pace follows use: touched or moved in the last 10 minutes 2.5 s; unused for 10 minutes 5 s; an hour 10 s; a touch brings it back at once
   const f2 = UI.feed("4200000002"); f2.subscribe(() => {}); await f2.refresh(); await advance(0);
   win.OrderTimeline.get = async (id, o) => { calls.push(Object.assign({ at: t, id }, o)); return o && o.ifRev ? { orderId: id, unchanged: true, rev: "cccccccccccc" } : { orderId: id, events: [], cancelled: null, where: {}, rev: "cccccccccccc" }; };
   f.destroy();
-  const gaps = async ms => { calls = []; const t0 = t; await advance(ms); const at = calls.filter(c => c.id === "4200000002").map(c => c.at); return at.slice(1).map((x, i) => x - at[i]); };
+  const gaps = async ms => { calls = []; await advance(ms); const at = calls.filter(c => c.id === "4200000002").map(c => c.at); return at.slice(1).map((x, i) => x - at[i]); };
   await f2.refresh({ force: true }); await advance(0);
-  await advance(4 * 60000);   // (4 minutes with no touch)
-  let g = await gaps(60000); assert(g.length && g.every(x => x >= 4900 && x <= 5300), "after 3 unused minutes the beat is 5 s: " + g);
-  await advance(8 * 60000);
-  g = await gaps(120000); assert(g.length && g.every(x => x >= 9900 && x <= 10300), "after 10 unused minutes 10 s: " + g);
-  await advance(70 * 60000);
-  g = await gaps(300000); assert(g.length && g.every(x => x >= 29500 && x <= 30500), "after an hour 30 s: " + g);
+  await advance(5 * 60000);   // (5 minutes with no touch: still the normal beat)
+  let g = await gaps(60000); assert(g.length && g.every(x => x >= 2400 && x <= 2700), "unused for 5 minutes the beat is still 2.5 s: " + g);
+  await advance(5 * 60000);
+  g = await gaps(120000); assert(g.length && g.every(x => x >= 4900 && x <= 5300), "after 10 unused minutes the beat is 5 s: " + g);
+  await advance(60 * 60000);
+  g = await gaps(300000); assert(g.length && g.every(x => x >= 9900 && x <= 10300), "after an hour 10 s: " + g);
   calls = []; touch(); await advance(2700);
   assert(calls.length >= 1, "a touch of the page reads within the normal beat, not at the slow one (a whole read when one is due, else the cheap question): " + JSON.stringify(calls.map(c => c.at)));
   g = await gaps(20000); assert(g.length && g.every(x => x >= 2400 && x <= 2700), "and the beat is 2.5 s again: " + g);
