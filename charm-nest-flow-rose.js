@@ -83,7 +83,7 @@
   function verdictLive(sh) {
     const placed = (sh.placements || []).length;
     const base = { sheetId: idOf(sh), label: labelOf(sh), metal: sh.metal, cutLine: hasLine(sh.metal), rose: sh.metal === 'rose', needsLine: false, why: '', charms: placed, needs: 0, held: !!(sh.draft || !sh.setId), source: 'live' };
-    if (!hasLine(sh.metal)) return noPlan(base, 'This metal has no green dash line');
+    if (!hasLine(sh.metal)) return noPlan(base, 'Not a Rose Gold sheet · this metal has no green dash line');
     if (cutOf(sh)) return noPlan(base, 'Already cut: its green dash line is recorded');
     if (!placed) return noPlan(base, 'No charms are on this sheet yet');
     const RS = rs();
@@ -103,7 +103,7 @@
   function verdictRecord(r, how) {
     const placed = +r.placedCount || (r.placements || []).length || (r.poolIds || []).length || 0;
     const base = { sheetId: idOf(r), label: labelOf(r), metal: r.metal, cutLine: hasLine(r.metal), rose: r.metal === 'rose', needsLine: false, why: '', charms: placed, needs: 0, held: !!(r.draft || !r.setId), source: how || 'record' };
-    if (!hasLine(r.metal)) return noPlan(base, 'This metal has no green dash line');
+    if (!hasLine(r.metal)) return noPlan(base, 'Not a Rose Gold sheet · this metal has no green dash line');
     if (cutOf(r)) return noPlan(base, 'Already cut: its green dash line is recorded');
     if (!placed && !+r.charmCount) return noPlan(base, 'No charms are on this sheet yet');
     const plan = parse(r.rosePlanJson), guard = parse(r.roseProtectedJson);

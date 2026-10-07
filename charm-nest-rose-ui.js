@@ -1,4 +1,4 @@
-/* Cut Sheet for the metals that have a green line (charm-nest-rose.js cuts(): Rose Gold, 10K Gold, 14K Gold): physical stock,
+/* Cut Sheet for the metals that have a green line (charm-nest-rose.js CharmNestRose.cuts(): Rose Gold, 10K Gold, 14K Gold): physical stock,
    vector-derived cut plans and immutable cut history. The three metals share every rule here; only these differ:
    - Rose Gold takes a physical sheet at the start of every nest and joins a set only by its own Cut Sheet press;
    - 10K and 14K take one only when a leftover of their metal and size fits at nest (nestClaim), or when the sheet is in the set and still
@@ -8,7 +8,7 @@
   'use strict';
   if(!window.CN){setTimeout(init,150);return;}
   const R=window.CharmNestRose,C=window.CN,S=C.S,esc=C.esc;
-  const cuts=sh=>!!sh&&R.cuts(sh.metal),word=sh=>R.cutWord(sh&&sh.metal),isRose=sh=>!!sh&&sh.metal==='rose';
+  const hasLine=sh=>!!sh&&R.cuts(sh.metal),word=sh=>R.cutWord(sh&&sh.metal),isRose=sh=>!!sh&&sh.metal==='rose';
   const api=(op,data={})=>C.api('charmNestLibrary',{op,...data},{label:R.cutWord(data.metal||'rose')+' stock'});
   const fingerprint=s=>JSON.stringify((s.placements||[]).map(p=>[p.id,+p.cxPt.toFixed(3),+p.cyPt.toFixed(3),p.angle,p.scale||1,p.hash||s.charms?.find(c=>c.id===p.id)?.hash||null]));
   const refresh=sh=>{window.Session?.schedule();if(sh.el){C.renderCard(sh);C.drawPreview(sh);}};
@@ -34,7 +34,7 @@
     sh.roseStock=result.stock;sh.roseHistory=decode(result.cuts);sh.roseMore=result.more;sh.roseCutAt=rec.roseCutAt||null;sh.roseRevision=rec.roseRevision;sh.rosePlan=parse(rec.rosePlanJson);sh.rosePlanHash=rec.rosePlanHash;sh.roseProtected=parse(rec.roseProtectedJson);sh._roseLoaded=true;
   }
   function protect(sh){
-    if(!cuts(sh)||sh.roseCutAt)return;
+    if(!hasLine(sh)||sh.roseCutAt)return;
     if(sh.roseProtected)for(const p of sh.roseProtected.placements||[]){
       const rows=sh.placements.filter(x=>x.id===p.id),q=rows[0];
       if(rows.length!==1||!sh.charms.some(c=>c.id===p.id)||['cxPt','cyPt','angle'].some(k=>!Number.isFinite(q[k])||Math.abs(q[k]-p[k])>.001)||Math.abs((q.scale||1)-(p.scale||1))>.00001)throw new Error(`Reload the saved ${word(sh)} layout before adding charms`);
@@ -54,7 +54,7 @@
      or null when the sheet has no saved record or is cut; rejects when the cloud could not be asked (nothing is changed then).
      o: by, at (when), cancel (it is a cancel's). */
   async function takeOff(sh,ids,o={}){
-    if(!cuts(sh)||sh.roseCutAt||!sh.sheetId||!ids||!ids.length)return null;
+    if(!hasLine(sh)||sh.roseCutAt||!sh.sheetId||!ids||!ids.length)return null;
     if(!S.cloud.ok)throw new Error(`Reconnect to take the pieces off the ${word(sh)} sheet`);
     const r=await C.api('charmNestLibrary',{op:'roseTakeOff',sheetId:sh.sheetId,ids:[...ids],by:o.by||undefined,at:o.at||undefined,cancel:!!o.cancel,allowanceMm:sh.roseAllowanceMm||undefined},{quiet:true});
     if(r&&r.changed){
@@ -65,7 +65,7 @@
     return r||null;
   }
   async function prepare(sh,opts={}){
-    if(!cuts(sh))return;
+    if(!hasLine(sh))return;
     if(sh.roseCutAt)throw new Error('This layout has already been cut');
     if(!S.cloud.ok)throw new Error(`Reconnect to load the physical ${word(sh)} sheet before nesting`);
     sh.sheetId ||= (isRose(sh)?'rose':sh.metal)+'-'+Date.now().toString(36)+'-'+C.uid();
@@ -86,7 +86,7 @@
   // size fits (it was cut before: the layout must go around what is gone) or when the sheet already holds one; otherwise nothing is
   // claimed or written, and the size stays the person's to change.
   async function nestClaim(sh){
-    if(!cuts(sh)||sh.roseCutAt)return;
+    if(!hasLine(sh)||sh.roseCutAt)return;
     if(isRose(sh)||sh.roseStock||sh.roseChoice||sh.roseProtected||sh.rosePlan)return prepare(sh,{nesting:true});
     return prepare(sh,{nesting:true,onlyRemnant:true});
   }
@@ -94,7 +94,7 @@
   // waits for its Cut Sheet exactly as a Rose Gold set does (the saved record then names its stock: CharmNestReadiness). A full sheet
   // takes the rest of the metal whole and claims nothing. Never adds a line.
   async function claimLate(sh){
-    if(isRose(sh)||!cuts(sh)||sh.roseStock||sh.roseCutAt||sh.recalled||!inSet(sh)||sh._roseClaiming||!sh.sheetId||!sh.persistedDone||!sh.verification?.ok||sh.dirty||!sh.placements.length||['nesting','finishing','queued'].includes(sh.status)||!S.cloud.ok)return;
+    if(isRose(sh)||!hasLine(sh)||sh.roseStock||sh.roseCutAt||sh.recalled||!inSet(sh)||sh._roseClaiming||!sh.sheetId||!sh.persistedDone||!sh.verification?.ok||sh.dirty||!sh.placements.length||['nesting','finishing','queued'].includes(sh.status)||!S.cloud.ok)return;
     sh._roseClaiming=true;sh._roseStep='claim';sh._roseError=null;refresh(sh);
     try{await prepare(sh,{fresh:true});}catch(e){sh._roseError=e.message;}
     finally{sh._roseClaiming=false;sh._roseStep=null;refresh(sh);}
@@ -102,7 +102,7 @@
   // Taken out of the set before any line was drawn: a 10K or 14K sheet nobody cut lets go of its fresh physical sheet (the server deletes
   // a stock with no cut), so its size can be changed again. A leftover it was nested on, a planned or protected sheet and a cut one stay.
   async function letGo(sh){
-    if(isRose(sh)||!cuts(sh)||!sh.roseStock?.id||sh.roseCutAt||sh.recalled||sh.rosePlan||sh.roseProtected||sh.roseStock.revision||sh.roseStock.profileJson||!sh.sheetId||inSet(sh)||sh._roseAction||sh._rosePlanning||!S.cloud.ok)return false;
+    if(isRose(sh)||!hasLine(sh)||!sh.roseStock?.id||sh.roseCutAt||sh.recalled||sh.rosePlan||sh.roseProtected||sh.roseStock.revision||sh.roseStock.profileJson||!sh.sheetId||inSet(sh)||sh._roseAction||sh._rosePlanning||!S.cloud.ok)return false;
     try{await api('roseRelease',{stockId:sh.roseStock.id,sheetId:sh.sheetId,metal:sh.metal});}catch(_){return false;}
     delete sh.roseStock;delete sh.roseRevision;delete sh.roseChoice;delete sh.rosePlanHash;delete sh.rosePlanKey;sh.roseHistory=[];sh._roseLoaded=false;sh._roseFullKey=null;
     window.Session?.schedule();refresh(sh);return true;
@@ -160,7 +160,7 @@
   const observed=new WeakMap();
   const observer=window.IntersectionObserver?new IntersectionObserver(entries=>{for(const e of entries)if(e.isIntersecting){observer.unobserve(e.target);const sh=observed.get(e.target);if(sh&&!sh._roseLoaded&&!sh._roseLoading){sh._roseLoading=true;load(sh).catch(error=>{sh._roseError=error.message;}).finally(()=>{sh._roseLoading=false;refresh(sh);});}}},{rootMargin:'120px'}):null;
   function render(sh){
-    if(!cuts(sh)||!sh.el)return;
+    if(!hasLine(sh)||!sh.el)return;
     let host=sh.el.querySelector('.roseHistory');if(!host){host=document.createElement('div');host.className='roseHistory';sh.el.querySelector('.shPreviewWrap').before(host);}
     const stock=sh.roseStock,history=(sh.roseHistory||[]).slice().sort((a,b)=>a.revision-b.revision),busy=!!(sh._rosePlanning||sh._roseLoading||sh._roseAction);
     const stockId=stock?.id||sh.recalled?.roseStockId;
@@ -253,7 +253,7 @@
   // CharmNestReadiness reads it), and says so by name; it read only "…layout checks…". How many charms wait; 0 while it
   // nests, or when it is full and plans by itself.
   function waiting(sh){
-    if(!cuts(sh)||!inSet(sh)||sh.roseCutAt||sh.recalled||!sh.roseStock?.id||sh.rosePlanHash||!sh.persistedDone||!sh.verification?.ok||sh.dirty||['nesting','finishing','queued'].includes(sh.status)||!addsLine(sh))return 0;
+    if(!hasLine(sh)||!inSet(sh)||sh.roseCutAt||sh.recalled||!sh.roseStock?.id||sh.rosePlanHash||!sh.persistedDone||!sh.verification?.ok||sh.dirty||['nesting','finishing','queued'].includes(sh.status)||!addsLine(sh))return 0;
     return unlined(sh).length;
   }
   const waitWords=sh=>{const n=waiting(sh);return n?`${word(sh)} Sheet ${sh.page||1} has ${n} charm${n===1?'':'s'} not cut yet: press Cut Sheet`:'';};
@@ -315,7 +315,7 @@
   function badge(ctx,x,y,text,fill,ink){const d=window.devicePixelRatio||1;ctx.fillStyle=fill;ctx.beginPath();ctx.arc(x,y,7*d,0,Math.PI*2);ctx.fill();ctx.fillStyle=ink;ctx.font=`${10*d}px sans-serif`;ctx.textAlign='center';ctx.fillText(text,x,y+3*d);}
   function stroke(ctx,paths,k,color,width,dashed=false){ctx.strokeStyle=color;ctx.lineWidth=width;ctx.setLineDash(dashed?[4,3]:[]);for(const path of paths||[]){ctx.beginPath();path.forEach(([x,y],i)=>i?ctx.lineTo(x*k,y*k):ctx.moveTo(x*k,y*k));ctx.stroke();}ctx.setLineDash([]);}
   function paint(ctx,sh,k,phase){
-    if(!cuts(sh))return;
+    if(!hasLine(sh))return;
     ctx.save();const cuts=sh.roseHistory||[];
     if(phase==='history'){
       const p=parse(sh.roseStock?.profileJson);

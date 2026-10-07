@@ -19,10 +19,6 @@
 const O = CharmNestOrders, G = CharmNestGeom, P = CharmNestPDF;
 const WORKSPACE_SANDBOX = S.settings.sandbox === "on";
 const MM = 25.4 / 72, PT = 72 / 25.4;
-/* A sheet of these metals can carry a green cut line (Cut Sheet): Rose Gold, 10K, 14K. The list is CharmNestRose.cuts (charm-nest-rose.js); Rose Gold is
-   always one, whatever has loaded. */
-const cutsMetal = m => m === "rose" || !!(window.CharmNestRose && window.CharmNestRose.cuts && window.CharmNestRose.cuts(m));
-const cutWord = m => (window.CharmNestRose && window.CharmNestRose.cutWord && window.CharmNestRose.cutWord(m)) || "Rose Gold";   // ("Rose Gold", "10K Gold", "14K Gold")
 const B = window.B = { link: null, orders: { rows: [], byKey: new Map(), pulledAt: 0, stale: false, snapshot: null, filtered: 0 }, master: { entries: new Map(), files: [], index: null, loadedAt: 0, loading: null, error: null, jobs: new Map() }, maps: { optionMaps: {}, aliases: {}, noDesign: { patterns: [], skus: [], rows: [] }, loadedAt: 0 }, pool: { rows: new Map(), sources: new Map() }, engrave: { items: new Map(), fonts: { ok: false, Regular: null, Semibold: null, error: null, loading: null } }, review: { items: [] }, openRuns: null, run: null, sets: new Map(), employee: (localStorage.getItem("cn.employee") || "").trim() };
 const SOURCE_LABEL = { personalization: "the personalisation box", personalisation: "the personalisation box", buyerMessage: "the buyer's message", staffNote: "the staff note", messages: "the staff messages", none: "", "": "" };
 const el = (tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; };
@@ -1529,7 +1525,7 @@ const Orders = window.Orders = (() => {
      arrangement loses room (Paul, 24 Sep), and the space it frees goes to the next charms placed one by one. A sheet
      with nothing left on it starts over; a Rose Gold sheet behind a saved green line keeps that line (sheetDirty). */
   function keepRest(sh) {
-    if (!sh.placements.length || (cutsMetal(sh.metal) && (sh.rosePlan || sh.roseProtected))) { sheetDirty(sh); return; }
+    if (!sh.placements.length || ((sh.metal === "rose" || (typeof CharmNestRose !== "undefined" && CharmNestRose.cuts(sh.metal))) && (sh.rosePlan || sh.roseProtected))) { sheetDirty(sh); return; }
     sh.intakeAppend = true; sh.appendOnly = true; sh.dirty = true;
     if (!["nesting", "finishing", "queued"].includes(sh.status)) sh.status = "ready";
     renderCard(sh);
@@ -1563,7 +1559,7 @@ const Orders = window.Orders = (() => {
       // a Rose Gold page's saved green lines give up the pieces first (the server edits them; putSheet would refuse the
       // sheet otherwise). When that fails the page is left as it is, its pieces on it: told, and taken off at the next check
       for (const sh of pages) {
-        if (!cutsMetal(sh.metal) || !filling(sh) || !(window.RoseStock && RoseStock.takeOff)) continue;
+        if (!(sh.metal === "rose" || (typeof CharmNestRose !== "undefined" && CharmNestRose.cuts(sh.metal))) || !filling(sh) || !(window.RoseStock && RoseStock.takeOff)) continue;
         try {
           const r = await RoseStock.takeOff(sh, sh.charms.filter(c => ids.has(c.poolId)).map(c => c.id), { by: opt.by, at: opt.at, cancel: !!opt.cancel });
           if (r && r.changed) lines.set(sh, r.removedLines || []);
@@ -2578,7 +2574,7 @@ const Pool = window.Pool = (() => {
     const bySource=new Map(sources.map(src=>[src.id,src]));
     const pages=(d.sheets || []).flatMap(g=>g.pages || []);
     const charms=new Set([...sources.flatMap(src=>src.charms || []),...(d.unassigned || []),...pages.flatMap(p=>p.charms || [])]);
-    const protectedIds=new Set(pages.filter(p=>cutsMetal(p.metal) && !p.roseCutAt && (p.rosePlan||p.roseProtected)).flatMap(p=>(p.placements||[]).map(pl=>pl.id)));
+    const protectedIds=new Set(pages.filter(p=>(p.metal === "rose" || (typeof CharmNestRose !== "undefined" && CharmNestRose.cuts(p.metal))) && !p.roseCutAt && (p.rosePlan||p.roseProtected)).flatMap(p=>(p.placements||[]).map(pl=>pl.id)));
     const repaired=new Set(),poolIds=new Set();
     for(const c of charms) {
       if(!c.outline)continue;
@@ -2605,12 +2601,12 @@ const Pool = window.Pool = (() => {
       c.pinned=null;repaired.add(c);if(c.poolId)poolIds.add(c.poolId);
     }
     for(const pg of pages)if(pg.charms?.some(c=>repaired.has(c))) {
-      if(cutsMetal(pg.metal) && !pg.roseCutAt && (pg.rosePlan||pg.roseProtected)){
+      if((pg.metal === "rose" || (typeof CharmNestRose !== "undefined" && CharmNestRose.cuts(pg.metal))) && !pg.roseCutAt && (pg.rosePlan||pg.roseProtected)){
         // New, unplaced artwork may need a geometry migration. Re-search its
         // remainder without ever dropping the saved cut or old placements.
         pg.dirty=true;pg.status='ready';pg.intakeAppend=pg.placements.length>0;pg.appendOnly=pg.intakeAppend;
         pg.best=null;pg.bestResult=null;pg.bestInfo=null;pg.bestKey=null;
-        pg.stage=`New cut geometry updated — old ${window.CharmNestRose?.cutWord?.(pg.metal) || "Rose Gold"} contour and placements kept`;
+        pg.stage=`New cut geometry updated — old ${(typeof CharmNestRose !== "undefined" ? CharmNestRose.cutWord(pg.metal) : "Rose Gold")} contour and placements kept`;
         continue;
       }
       Object.assign(pg,{dirty:true,status:'ready',placements:[],rejects:[],layout:null,outputs:null,verification:null,liveInfo:null,best:null,bestResult:null,bestInfo:null,bestKey:null,releaseFull:false,backOutputs:null});
@@ -2995,7 +2991,7 @@ const SheetEvents = window.SheetEvents = (() => {
         const at = Number.isFinite(+s.at) && +s.at > 1e12 ? +s.at : 0;
         if (!w.sheetId || !once(`r~${w.sheetId}~${s.n}~${at}`)) continue;
         const mine = new Map(); for (const id of s.ids || []) { const rid = ridOf(byId.get(id)); if (rid) mine.set(rid, (mine.get(rid) || 0) + 1); }
-        for (const [rid, n] of mine) out.push(ev("roseLine", rid, { pieces: n }, w, Object.assign({ id: `${w.sheetId}-L${s.n}-${at}`, text: `${window.CharmNestRose?.cutCode?.(sh.metal) || "RG"} green line ${s.n} on ${w.sheet}`, data: { line: s.n, stockId: sh.roseStock?.id || undefined } }, at ? { at } : {})));
+        for (const [rid, n] of mine) out.push(ev("roseLine", rid, { pieces: n }, w, Object.assign({ id: `${w.sheetId}-L${s.n}-${at}`, text: `${(typeof CharmNestRose !== "undefined" && CharmNestRose.cutCode(sh.metal)) || "RG"} green line ${s.n} on ${w.sheet}`, data: { line: s.n, stockId: sh.roseStock?.id || undefined } }, at ? { at } : {})));
       }
       send(out);
     } catch (e) { console.warn("[SheetEvents] rose line", e); }
@@ -3038,7 +3034,6 @@ const Gate = window.Gate = (() => {
   const modern = runId => (!B.run && !runId) || (!!B.run && B.run.releasePolicy === 2 && (!runId || runId === B.run.runId));
   const selected = () => B.run?.solidIncluded || R.solidIncluded || {};
   const solid = m => ["gold10k", "gold14k"].includes(m);
-  const cutsMetal = m => m === "rose" || !!(window.CharmNestRose && window.CharmNestRose.cuts && window.CharmNestRose.cuts(m));   // (a metal with a green line: Rose Gold, 10K, 14K)
   /* 10K and 14K go into the set a sheet at a time, each by its own "Include in current set" (Paul, 28 Sep: "The system
      incorrectly takes all sheets even the ones that are partial ... each sheet should have to be toggled independently").
      The switch was the metal's: ticked on Sheet 1, it took the partial Sheet 2 with it. A sheet ticked before, when the
@@ -3095,8 +3090,8 @@ const Gate = window.Gate = (() => {
     if (!run || run.releasePolicy === 2) return;
     const prior = Sets.ofRun(run.runId);
     if (prior.some(s => s.committedAt)) return; // A partially released legacy run finishes under its recorded rules; new runs use policy 2.
-    const lined=allSheets().find(p=>p.runId===run.runId && cutsMetal(p.metal) && !p.roseCutAt && (p.rosePlan||p.roseProtected));
-    if(lined)throw new Error(`The saved ${cutWord(lined.metal)} contour must be cut before this older run can change its set rules. Its sheet and stock have been kept.`);
+    const lined=allSheets().find(p=>p.runId===run.runId && (p.metal === "rose" || (typeof CharmNestRose !== "undefined" && CharmNestRose.cuts(p.metal))) && !p.roseCutAt && (p.rosePlan||p.roseProtected));
+    if(lined)throw new Error(`The saved ${(typeof CharmNestRose !== "undefined" ? CharmNestRose.cutWord(lined.metal) : "Rose Gold")} contour must be cut before this older run can change its set rules. Its sheet and stock have been kept.`);
     if (!S.cloud.ok) throw new Error("Reconnect before updating this older run's set rules");
     run.intakeRecovery ||= { retire:[], backs:[] };
     for (const set of prior) { set.status = "superseded"; await Sets.save(set); for (const [key, value] of B.sets) if (value === set) B.sets.delete(key); }
@@ -3355,7 +3350,7 @@ const Gate = window.Gate = (() => {
       catch(e){run.membershipDirty=true;if(failed){R.membershipError=e.message;refreshMembership();throw new Error('Set selection not saved: '+e.message);}throw e;}
       if(failed){R.membershipError=null;refreshMembership();}
     }
-    if(window.RoseStock)for(const sh of allSheets().filter(p=>p.runId===run?.runId && cutsMetal(p.metal) && p.setId && !p.draft && !p.roseCutAt))await RoseStock.ensurePlan(sh);
+    if(window.RoseStock)for(const sh of allSheets().filter(p=>p.runId===run?.runId && (p.metal === "rose" || (typeof CharmNestRose !== "undefined" && CharmNestRose.cuts(p.metal))) && p.setId && !p.draft && !p.roseCutAt))await RoseStock.ensurePlan(sh);
   }
   function changed() {
     Session.schedule();
@@ -7597,7 +7592,7 @@ const RunCtl = window.RunCtl = (() => {
         const was = d.stock || {}, now = stockFor(d.metal), wPt = +was.wPt || +was.wIn * 72, hPt = +was.hPt || +was.hIn * 72;
         if (wPt > 0 && hPt > 0 && (Math.abs(wPt - now.wPt) > 0.01 || Math.abs(hPt - now.hPt) > 0.01)) pg.keptStock = { wPt, hPt };
       }
-      if(cutsMetal(d.metal) && d.roseStockId && window.RoseStock)await RoseStock.restore(pg,d);
+      if((d.metal === "rose" || (typeof CharmNestRose !== "undefined" && CharmNestRose.cuts(d.metal))) && d.roseStockId && window.RoseStock)await RoseStock.restore(pg,d);
       // the pieces: each placement's pool charm from the master copy, pinned at its cut position
       for (const p of d.placements || []) {
         const rc = (d.charms || []).find(c => c.id === p.id); if (!rc || !rc.poolId) continue;
@@ -7646,10 +7641,10 @@ const RunCtl = window.RunCtl = (() => {
       filled again: the next run opened sheet 2 beside it, one charm left on sheet 1 for good (23 Sep). */
   function clearRunState(beforeClear, { drop = null } = {}) {
     // (a sheet waiting for the stopped run's Resume is not at work: it does not keep the run from being put down)
-    const busyLined=allSheets().find(p=>cutsMetal(p.metal) && !p.roseCutAt && (p.rosePlan||p.roseProtected) &&
+    const busyLined=allSheets().find(p=>(p.metal === "rose" || (typeof CharmNestRose !== "undefined" && CharmNestRose.cuts(p.metal))) && !p.roseCutAt && (p.rosePlan||p.roseProtected) &&
       (['nesting','finishing','queued'].includes(p.status) && !window.CN?.heldForResume?.(p) || p.persisted&&!p.persistedDone || p._rosePlanning || p._roseAction || p._operationStarting));
     if(busyLined){
-      toast(`The protected ${cutWord(busyLined.metal)} sheet is still being nested or saved. Wait until it finishes before clearing this run.`,'bad');
+      toast(`The protected ${(typeof CharmNestRose !== "undefined" ? CharmNestRose.cutWord(busyLined.metal) : "Rose Gold")} sheet is still being nested or saved. Wait until it finishes before clearing this run.`,'bad');
       return false;
     }
     window.CN?.dropResumeQueue?.();
@@ -7665,7 +7660,7 @@ const RunCtl = window.RunCtl = (() => {
       // contour, its reservation and original orders together, even if its
       // set has already been committed. Keep other unfinished partial sheets.
       const retained=drop==='all'?[]:prim.pages.filter(p=>p.status!=='nesting' && !p.roseCutAt &&
-        ((cutsMetal(p.metal) && (p.rosePlan || p.roseProtected)) ||
+        (((p.metal === "rose" || (typeof CharmNestRose !== "undefined" && CharmNestRose.cuts(p.metal))) && (p.rosePlan || p.roseProtected)) ||
           (!drop && p.placements.length && !p.releaseFull && !p.laserDoneAt && !p.recalled && !Sets.ofRun(p.runId).some(set=>set.committedAt && set.sheetIds.includes(p.sheetId)))));
       for(const pg of prim.pages.slice())if(!retained.includes(pg)){
         window.Session?.dropBest?.(pg.sheetId);   // put down with the run: its best-layout record is not needed again
@@ -12872,7 +12867,7 @@ const OrderWin = window.OrderWin = (() => {
     let ship = ""; try { const s = Orders.shipTxt(r); ship = s && s !== "—" ? "ship by " + s : ""; } catch (_) {}
     const rec = inf && inf.rec, cut = rec && (rec.laserDoneAt || rec.roseCutAt);
     // (a Rose Gold sheet behind its saved green line keeps its pieces until it is cut: nothing comes off it)
-    const lined = rec && !cut && cutsMetal(rec.metal) && !!(rec.roseLine || rec.rosePlan || rec.roseProtected || rec.rosePlanHash || rec.rosePlanJson || rec.roseProtectedJson);
+    const lined = rec && !cut && (rec.metal === "rose" || (typeof CharmNestRose !== "undefined" && CharmNestRose.cuts(rec.metal))) && !!(rec.roseLine || rec.rosePlan || rec.roseProtected || rec.rosePlanHash || rec.rosePlanJson || rec.roseProtectedJson);
     const facts = rec ? [sheetName(list[SV.at] || { metal: rec.metal, n: inf.sheet.n }), inf.stock ? `${Math.round(inf.stock.wPt * 25.4 / 72)} × ${Math.round(inf.stock.hPt * 25.4 / 72)} mm` : "", rec.setSeq ? "Set-" + rec.setSeq : "", cut ? "cut " + new Date(+cut).toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" }) : rec.status || ""].filter(Boolean).join(" · ") : "";
     // (the charm shown when none was picked on the sheet: the piece this window is on (the Overview's switcher), so the Overview's back
     // engraving card and this tab's are always about the same piece; only then the first charm of the order on the sheet)
@@ -13593,8 +13588,8 @@ const RunHistory = window.RunHistory = (() => {
   /** Why the cards cannot take another set just now (Recall.open's own guards, asked before it is pressed). */
   function blockedWhy() {
     if (B.run && !["complete", "abandoned"].includes(B.run.status)) return "A run is open on the cards. Finish it or put it down before opening another set; its work stays as it is. The sheets and downloads here work meanwhile.";
-    const unCut = allSheets().find(p => cutsMetal(p.metal) && !p.roseCutAt && (p.rosePlan || p.roseProtected));
-    if (unCut) return `The uncut ${cutWord(unCut.metal)} contour is on the cards. Record its cut before another set takes the cards.`;
+    const unCut = allSheets().find(p => (p.metal === "rose" || (typeof CharmNestRose !== "undefined" && CharmNestRose.cuts(p.metal))) && !p.roseCutAt && (p.rosePlan || p.roseProtected));
+    if (unCut) return `The uncut ${(typeof CharmNestRose !== "undefined" ? CharmNestRose.cutWord(unCut.metal) : "Rose Gold")} contour is on the cards. Record its cut before another set takes the cards.`;
     return "";
   }
   function ctxOf(g, hits) {
@@ -14206,9 +14201,9 @@ const Recall = window.Recall = (() => {
   async function open(sel) { if (opening) await opening.catch(() => {}); opening = openNow(sel); try { return await opening; } finally { opening = null; } }
   async function openNow(sel) {
     const from = S.mode;
-    const unCutPage=allSheets().find(p=>cutsMetal(p.metal) && !p.roseCutAt && (p.rosePlan||p.roseProtected));
+    const unCutPage=allSheets().find(p=>(p.metal === "rose" || (typeof CharmNestRose !== "undefined" && CharmNestRose.cuts(p.metal))) && !p.roseCutAt && (p.rosePlan||p.roseProtected));
     if(unCutPage){
-      toast(`The uncut ${cutWord(unCutPage.metal)} contour is on the cards. Record its cut before replacing the cards with another set.`,'bad');
+      toast(`The uncut ${(typeof CharmNestRose !== "undefined" ? CharmNestRose.cutWord(unCutPage.metal) : "Rose Gold")} contour is on the cards. Record its cut before replacing the cards with another set.`,'bad');
       return;
     }
     const q = sel.setId ? { setId: sel.setId } : { runId: sel.runId };
@@ -14805,7 +14800,7 @@ const Cleanups = window.Cleanups = (() => {
       try { CustomSheet.dropPieces([...poolIds], c.id); } catch (e) { console.warn("[Cleanups] custom designs", e); }
     }
     // 3 · the green lines as the record has them: the line taken off goes, line 1 (roseProtectedJson) as saved
-    if (cutsMetal(sh.metal) && !sh.roseCutAt) {
+    if ((sh.metal === "rose" || (typeof CharmNestRose !== "undefined" && CharmNestRose.cuts(sh.metal))) && !sh.roseCutAt) {
       const parse = s => { try { return s ? JSON.parse(s) : null; } catch (_) { return null; } };
       const plan = parse(rec.rosePlanJson), guard = parse(rec.roseProtectedJson);
       if (plan) { sh.rosePlan = plan; sh.rosePlanHash = rec.rosePlanHash || null; } else { delete sh.rosePlan; delete sh.rosePlanHash; }
@@ -15061,7 +15056,7 @@ const LiveNest = window.LiveNest = (() => {
     return plan;
   }
   // the page's own marks first; the sets of its run are looked at only when none says so
-  const closed = p => !!p.roseCutAt || !!p.recalled || !!p.releaseFull || !!p.cardinalPull || !!window.Gate?.holding?.(p) || !!p.laserDoneAt || (!(cutsMetal(p.metal)&&(p.rosePlan||p.roseProtected)) && (!!p.runHold || !!p.intakeFinalized)) ||
+  const closed = p => !!p.roseCutAt || !!p.recalled || !!p.releaseFull || !!p.cardinalPull || !!window.Gate?.holding?.(p) || !!p.laserDoneAt || (!((p.metal === "rose" || (typeof CharmNestRose !== "undefined" && CharmNestRose.cuts(p.metal)))&&(p.rosePlan||p.roseProtected)) && (!!p.runHold || !!p.intakeFinalized)) ||
     Sets.ofRun(p.runId).some(set=>set.committedAt && set.sheetIds.includes(p.sheetId));
   /* Gold and Silver arrivals go to the run's earliest open sheet first (the pool puts them on the same one). An order
      that misses its gaps moves on to the next sheet, and the earlier sheet stays first in line: once a newer page existed
@@ -15094,8 +15089,8 @@ const LiveNest = window.LiveNest = (() => {
     // already touched them. Refuse an unsafe regroup before claiming orders.
     if(!Gate.modern(run.runId))for(const group of new Set(Object.values(potential))){
       const old=Sets.ofRun(run.runId).filter(set=>set.group!==group && set.materials.some(m=>group.split('+').includes(m)));
-      const keptLine=old.map(set=>allSheets().find(p=>p.setId===set.setId && cutsMetal(p.metal) && (p.rosePlan||p.roseProtected) && !p.roseCutAt)).find(Boolean);
-      if(keptLine)throw new Error(`The protected ${cutWord(keptLine.metal)} contour belongs to an existing set. Finish that set before regrouping its sheets.`);
+      const keptLine=old.map(set=>allSheets().find(p=>p.setId===set.setId && (p.metal === "rose" || (typeof CharmNestRose !== "undefined" && CharmNestRose.cuts(p.metal))) && (p.rosePlan||p.roseProtected) && !p.roseCutAt)).find(Boolean);
+      if(keptLine)throw new Error(`The protected ${(typeof CharmNestRose !== "undefined" ? CharmNestRose.cutWord(keptLine.metal) : "Rose Gold")} contour belongs to an existing set. Finish that set before regrouping its sheets.`);
     }
     async function reconcileGroups() {
     if (Gate.modern(run.runId)) return;
@@ -15103,8 +15098,8 @@ const LiveNest = window.LiveNest = (() => {
       const old = Sets.ofRun(run.runId).filter(s => s.materials.some(m => group.split("+").includes(m)) && s.group !== group);
       if (!old.length) continue;
       if (old.some(s => s.committedAt)) throw new Error("A related material set was already committed; finish this run before adding the new order");
-      const keptLine=old.map(set=>allSheets().find(p=>p.setId===set.setId && cutsMetal(p.metal) && (p.rosePlan||p.roseProtected) && !p.roseCutAt)).find(Boolean);
-      if(keptLine)throw new Error(`The protected ${cutWord(keptLine.metal)} contour belongs to an existing set. Finish that set before regrouping its sheets.`);
+      const keptLine=old.map(set=>allSheets().find(p=>p.setId===set.setId && (p.metal === "rose" || (typeof CharmNestRose !== "undefined" && CharmNestRose.cuts(p.metal))) && (p.rosePlan||p.roseProtected) && !p.roseCutAt)).find(Boolean);
+      if(keptLine)throw new Error(`The protected ${(typeof CharmNestRose !== "undefined" ? CharmNestRose.cutWord(keptLine.metal) : "Rose Gold")} contour belongs to an existing set. Finish that set before regrouping its sheets.`);
       await Sets.ensure(run.runId, group);
       for (const set of old) {
         set.status = "superseded"; await Sets.save(set);
@@ -15318,7 +15313,7 @@ const Upkeep = window.Upkeep = (() => {
   // the sandbox stream's simulated day, like the arrival stamps: a day of played orders is put away as a real day is
   const now = () => (window.Sandbox?.streaming?.() && window.SimClock ? SimClock.now() : Date.now());
   let timer = 0, running = false, last = null;
-  const roseKept = p => cutsMetal(p.metal) && !p.roseCutAt && !!(p.rosePlan || p.roseProtected);
+  const roseKept = p => (p.metal === "rose" || (typeof CharmNestRose !== "undefined" && CharmNestRose.cuts(p.metal))) && !p.roseCutAt && !!(p.rosePlan || p.roseProtected);
   const setOf = p => p.sheetId ? Sets.ofRun(p.runId).find(set => set.committedAt && (set.sheetIds || []).includes(p.sheetId)) || null : null;
   /** A sheet a day past its set's commit, saved and settled. The day counts from the first pass that finds the sheet's
       set committed (plan), on the clock the orders' days use (finished): the set's own stamp is real time, and the
