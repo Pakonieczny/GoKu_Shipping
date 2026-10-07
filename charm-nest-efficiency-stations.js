@@ -81,6 +81,7 @@
   const NUMBERED = { assembly: "Assembly", shipping: "Shipping" }, DESK_RE = /^(assembly|shipping)-0*([1-9]\d?)$/;
   const deskKey = (station, device) => { const m = DESK_RE.exec(String(device == null ? "" : device).trim().toLowerCase()); return m && m[1] === station ? `${m[1]}-${+m[2]}` : ""; };
   const deskLabel = key => { const m = DESK_RE.exec(String(key || "")); return m ? `${NUMBERED[m[1]]} ${+m[2]}` : ""; };
+  const REST_TAG = " (desk not recorded)";   // the quiet card of a numbered station for work no desk claims: "Assembly (desk not recorded)"
 
   /* ── the answer, normalised (a missing field is empty, never a crash, never a guess) ── */
   const str = v => (v == null ? "" : String(v));
@@ -139,7 +140,7 @@
       const num = k => parseInt(k.split("-")[1], 10);
       keys.sort((a, b) => num(a) - num(b));
       const mine = (x, k) => x && typeof x === "object" && deskKey(kind, x.device) === k, noDesk = x => !(x && typeof x === "object" && deskKey(kind, x.device));
-      const people = Array.isArray(s.people) ? s.people : [], current = Array.isArray(s.current) ? s.current : [];
+      const people = Array.isArray(s.people) ? s.people : [], current = Array.isArray(s.current) ? s.current : [], from = out.length;
       for (const k of keys) {
         const dv = pagesOf.find(d => deskKey(kind, d.device) === k) || { device: k, label: deskLabel(k), state: "offline", person: "", since: 0 };
         const cur = current.filter(c => mine(c, k)), ppl = people.filter(p => mine(p, k));
@@ -148,7 +149,11 @@
       }
       const rp = people.filter(noDesk), rc = current.filter(noDesk), rd = pagesOf.filter(d => !deskKey(kind, d.device) && d.state !== "offline"), u = s.unassigned && typeof s.unassigned === "object" ? s.unassigned : null;
       if (rp.length || rc.length || rd.length || (u && (N(u.partsToday) > 0 || N(u.ordersToday) > 0 || N(u.scansToday) > 0)))
-        out.push({ key: kind, label: s.label, group: kind, groupLabel: s.label, groupCounts: s.counts, state: rc.length ? "working" : rp.length || rd.length ? "idle" : "offline", people: rp, current: rc, devices: rd, counts: u || quiet, lastEventAt: s.lastEventAt || null, restOf: true });
+        out.push({ key: kind, label: `${s.label}${REST_TAG}`, group: kind, groupLabel: s.label, groupCounts: s.counts, state: rc.length ? "working" : rp.length || rd.length ? "idle" : "offline", people: rp, current: rc, devices: rd, counts: u || quiet, lastEventAt: s.lastEventAt || null, restOf: true });   // (the quiet card for what no desk claims: "Assembly (desk not recorded)")
+      // the group's caption is the sum of its cards (the kind's own totals whenever every desk is told apart), so a group always adds up; a count that could not be read stays unknown
+      const gc = { partsToday: 0, ordersToday: 0, scansToday: 0 }, rows = out.slice(from);
+      for (const f of Object.keys(gc)) { const known = rows.every(x => x.counts && x.counts[f] != null); gc[f] = known ? rows.reduce((n, x) => n + N(x.counts[f]), 0) : null; }
+      for (const x of rows) x.groupCounts = gc;
     }
     return out;
   }

@@ -28,6 +28,7 @@
   const options = { pollMs: 10000, liveMs: 3000, tickMs: 1000, maxBackoffMs: 60000, holdMs: 60000, growMs: 480, timeoutMs: 9000, staleMs: 13000, nudgeMs: 4000, mountRetryMs: 400, mountGiveUpMs: 20000, tabMs: 260 };
   const KEY_STORE = "cn.eff.key", DAYS_STORE = "cn.eff.days", VIEW_STORE = "cn.eff.view";
   const NAMES = { shipping: "Shipping", assembly: "Assembly", welding: "Welding", sorting: "Sorting", design: "Design", laser: "Laser", inbox: "Inbox" };
+  const REST_TAG = " (desk not recorded)";   // the quiet row of a numbered station for work with no desk: "Assembly (desk not recorded)"
   const CORE = ["shipping", "assembly", "welding", "sorting", "design", "laser"], EXTRA = ["inbox"];   // (Laser and Design are two stations of their own: both always have a row, as on the Stations board; the Sorter app and the QR Printer are Sorting's pages, no row of their own)
   /* ONE Sorting station (Paul, 6 Oct 2026): the stored keys "sorter" (the Sorter app) and "qr" (the QR Printer page) are SHOWN as "sorting". Same rule as displayStation in
      netlify/functions/_activityKinds.js and EfficiencyStations.displayStation; history keeps its old keys, only what is read folds. Laser and Design are stored under their own keys. */
@@ -165,6 +166,7 @@
     const feed = (Array.isArray(r.feed) ? r.feed : []).filter(f => f && N(f.at) > 0 && !marker(f)).map(f => ({ id: String(f.id || `${f.at}|${f.person}|${f.action}|${f.orderId}`), at: N(f.at), person: String(f.person || ""), station: displayStation(String(f.station || "")), device: deskKey(displayStation(String(f.station || "")), f.device), action: String(f.action || ""), orderId: f.orderId ? String(f.orderId) : "", parts: N(f.parts) }));
     return {
       day: String(r.day || ""), days: N(r.days) || 1, now: N(r.now), cursor: r.cursor == null ? "" : String(r.cursor), delta: !!r.delta, people,
+      deskPending: (Array.isArray(r.deskPending) ? r.deskPending : []).map(String).filter(d => /^\d{4}-\d{2}-\d{2}$/.test(d)).slice(0, 31),   // (days in view whose rollups still lack their desk numbers: asked for once each, see deskFix)
       biz: { parts, scans: bt.scans == null ? sumP("scans") : N(bt.scans), orders: bt.orders == null ? sumP("orders") : N(bt.orders), people: bt.people == null ? people.length : N(bt.people), on: people.filter(p => p.on).length, rate: activeMin >= 1 ? parts / (activeMin / 60) : 0, hours: hoursAll, stations: stRows,
         trend: (Array.isArray(b.trend) ? b.trend : []).filter(d => d && d.day).map(d => ({ day: String(d.day), parts: N(d.parts), orders: N(d.orders), people: N(d.people), source: String(d.source || "") })) },
       feed, sources: r.sources || {}, notes: (Array.isArray(r.notes) ? r.notes : []).map(String).filter(Boolean), partial: !!r.partial, errors: Array.isArray(r.errors) ? r.errors : []
@@ -328,7 +330,8 @@
     // which data (real by default, whatever the sorter's own mode), the tab and route, the live read
     view: store.get(VIEW_STORE) === "sandbox" ? "sandbox" : "real", tab: "overview", person: "", locked: false,
     live: null, liveAt: 0, liveErr: "", liveShort: "", liveFails: 0, liveBusy: false, liveGen: 0, liveTimer: 0, liveCtl: null, liveSupported: true, liveRetryAt: 0, liveSig: "", resuming: false, hiddenAt: 0, renderErr: "",
-    wk: new Map(), si: new Map(), roster: new Map(), q: "", sort: "now", mounts: {}, subs: { live: new Set(), view: new Set() } };
+    wk: new Map(), si: new Map(), roster: new Map(), q: "", sort: "now", mounts: {}, subs: { live: new Set(), view: new Set() },
+    desk: { asked: new Set(), busy: false, calls: 0 } };   // (desk numbers of older days: the days asked for this page load, see deskFix)
   if (![1, 7, 30].includes(st.days)) st.days = 1;
   const now = () => Date.now() + st.off;
   let host = null, E = {};
@@ -403,6 +406,7 @@
 .efSGN{font-size:10px;letter-spacing:.1em;text-transform:uppercase;font-weight:750;color:var(--ink45);white-space:nowrap}.efSGT{margin-left:auto;font-size:11px;color:var(--ink45);font-variant-numeric:tabular-nums;white-space:nowrap}.efSGT:empty{display:none}
 .ef[data-nofig] .efSGT{display:none}
 .efSN{font-weight:700;font-size:12.5px;white-space:nowrap}.efSN:before{content:"";display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--ink25);margin-right:8px;vertical-align:1px;transition:background .3s}
+.efSNs{display:block;white-space:normal;font-size:9.5px;font-weight:500;color:var(--ink45);letter-spacing:0;line-height:1.15;margin-top:1px}.efSR[data-kind=rest] .efSN{font-weight:600;color:var(--ink70);line-height:1.15}.efSR[data-kind=rest] .efSV{color:var(--ink70)}
 .efSR.on .efSN:before{background:var(--sage)}.efSR.idle .efSN,.efSR.idle .efSV{color:var(--ink45)}.efSR.idle .efSV b{font-weight:500}
 .efSW{color:var(--ink70);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.efSW.none{color:var(--ink25)}.efQuiet{font-style:normal;color:var(--ink45);font-size:11px;margin-left:10px}.efQuiet:before{content:"";display:inline-block;width:5px;height:5px;border-radius:50%;background:var(--gold2);margin-right:6px;vertical-align:1px}
 .efSV{text-align:right;font-variant-numeric:tabular-nums;font-weight:650;white-space:nowrap}.efSV small{font-weight:500;color:var(--ink45);margin-left:4px;font-size:10.5px}
@@ -902,6 +906,30 @@
       if (!st.data) { setText(E.waitT, `${st.err} Trying again.`); E.wait.querySelector(".spin").style.visibility = "hidden"; } paintLive();
     } finally { if (gen === st.gen) { st.busy = false; st.loadingDay = false; st.reset = false; E.body.classList.remove("dim"); paintLive(); schedule(st.err ? Math.max(backoff(), st.hold || 0) : (live() ? options.pollMs : Math.max(options.pollMs * 3, 30000))); } }
   }
+  /** Desk numbers for days recorded before desks were told apart (Assembly 1..4, Shipping 1..3). The answer lists the days in view whose rollups still lack them (`deskPending`);
+   *  each such day is asked for ONCE per page load (op deskBackfill: the server reads that day's events once, a few hundred at a time, and writes the desk counters; a day it has
+   *  done is never listed again). Not on a timer and not on every refresh: this runs from a fresh answer only, one day at a time, and ends with ONE repaint of the same read the
+   *  next refresh would make. The real store only; any failure is left alone until the page is opened again. */
+  async function deskFix(M) {
+    const D = st.desk;
+    if (D.busy || !M || !M.deskPending || !M.deskPending.length || !st.key || isSandbox() || D.calls >= 40) return;
+    const day = M.deskPending.find(d => !D.asked.has(d)); if (!day) return;
+    D.asked.add(day); D.busy = true;
+    const gen = st.gen; let wrote = 0, finished = false;
+    try {
+      for (let i = 0; i < 12; i++) {
+        D.calls++;
+        const r = await call({ op: "deskBackfill", day });
+        wrote += N(r.written) + N(r.skipped);
+        if (!r.more) { finished = true; break; }
+        if (gen !== st.gen) break;
+      }
+    } catch (e) { if (e && (e.auth || e.locked)) { D.busy = false; authFail(e); return; } finished = true; }
+    D.busy = false;
+    if (!finished) D.asked.delete(day);                 // (the person moved to another day or range before it was done: it is asked for again when that day is shown)
+    if (gen !== st.gen) return;
+    if (wrote > 0 && active() && !st.busy) poll(); else if (st.M) deskFix(st.M);
+  }
   /** A fresh answer: its numbers into the page in place. With a feed delta (`after`), the new lines join the old by id. */
   function accept(r, first) {
     const M = norm(r); first = first || !st.data;
@@ -911,6 +939,7 @@
     // a drawing fault is its own message: it is never reported as a lost connection
     try { render(M, first); st.renderErr = ""; } catch (e) { st.renderErr = String((e && e.message) || e).slice(0, 120); console.warn("[efficiency] drawing failed:", e); E.note.textContent = ""; E.note.appendChild(el("span")).textContent = "Some figures could not be drawn just now."; E.note.classList.remove("hidden"); E.note._sig = ""; }
     try { renderNow(); renderRoster(M); refreshOrders(); } catch (e) { console.warn("[efficiency] drawing failed:", e); }
+    try { deskFix(M); } catch (_) {}
   }
 
   /* ── the live read: who is signed in, and the order each station has now (op live), about every 3 s while in sight ── */
@@ -1014,22 +1043,25 @@
     return out;
   }
   /** The Overview's rows, in order. A numbered station (Assembly 1..4, Shipping 1..3) is a small group: a caption row carrying the kind's own day totals, then one row per desk (all of
-   *  the shop's desks, idle ones too), then, only when there is something to show, ONE row of the kind alone for what no desk claims (people on a page with no number, work logged
-   *  before desks were told apart). A service that does not tell desks apart leaves the kind as the one row it was. Every other station is one row, as before. Pure (checked by a test). */
+   *  the shop's desks, idle ones too), then, only when there is something to show, ONE quiet row "Assembly (desk not recorded)" for what no desk claims (people on a page with no number, work whose events
+   *  carry no desk; the days recorded before desks were told apart are recovered once by deskFix). The caption's totals are the sum of its rows. A service that does not tell desks apart leaves the kind as the one row it was. Every other station is one row, as before. Pure (checked by a test). */
   function stationRowsOf(M) {
     const out = [];
     for (const k of stationList(M)) {
       const s = M.biz.stations.get(k) || { parts: 0, scans: 0, orders: 0, now: [], hours: null };
       if (!NUMBERED[k] || !s.desks) { out.push({ key: k, s }); continue; }
-      out.push({ head: k, s });
-      const desks = new Map(s.desks.map(d => [d.device, d])), all = [];
+      const rows = [], desks = new Map(s.desks.map(d => [d.device, d])), all = [];
       for (let n = 1; n <= NUMBERED[k]; n++) all.push(`${k}-${n}`);
       for (const d of desks.keys()) if (!all.includes(d)) all.push(d);
       all.sort((a, b) => parseInt(a.split("-")[1], 10) - parseInt(b.split("-")[1], 10));
       const atDesk = new Set();
-      for (const dk of all) { const d = desks.get(dk) || { parts: 0, scans: 0, orders: 0, now: [] }; d.now.forEach(n => atDesk.add(n)); out.push({ key: dk, desk: true, s: { station: dk, parts: d.parts, scans: d.scans, orders: d.orders, matched: 0, taskMin: null, now: d.now, hours: null } }); }
+      for (const dk of all) { const d = desks.get(dk) || { parts: 0, scans: 0, orders: 0, now: [] }; d.now.forEach(n => atDesk.add(n)); rows.push({ key: dk, desk: true, s: { station: dk, parts: d.parts, scans: d.scans, orders: d.orders, matched: 0, taskMin: null, now: d.now, hours: null } }); }
       const r = s.rest || { parts: 0, scans: 0, orders: 0 }, now = s.now.filter(n => !atDesk.has(n));
-      if (r.parts > 0 || r.orders > 0 || r.scans > 0 || now.length) out.push({ key: k, rest: true, s: { station: k, parts: r.parts, scans: r.scans, orders: r.orders, matched: 0, taskMin: null, now, hours: null } });
+      if (r.parts > 0 || r.orders > 0 || r.scans > 0 || now.length) rows.push({ key: k, rest: true, s: { station: k, parts: r.parts, scans: r.scans, orders: r.orders, matched: 0, taskMin: null, now, hours: null } });   // (work whose desk is not recorded: older records the desk recovery could not place)
+      // the caption's totals are the sum of the rows beneath it, so a group always adds up (they are the kind's own totals whenever every desk is told apart)
+      const sum = f => rows.reduce((n, x) => n + x.s[f], 0);
+      out.push({ head: k, s: Object.assign({}, s, { parts: sum("parts"), scans: sum("scans"), orders: sum("orders") }) });
+      for (const x of rows) out.push(x);
     }
     return out;
   }
@@ -1059,8 +1091,9 @@
         hc(r.spEl, () => (r.spEl.style.visibility === "hidden" ? null : { title: HC.byhour[0], sub: sn(), note: HC.byhour[1] }));
       }
       r.e.dataset.kind = x.desk ? "desk" : x.rest ? "rest" : "";
-      setText(r.e.querySelector(".efSN"), x.rest ? NAMES[k] : stName(k));   // (the kind alone: "Assembly" beside "Assembly 1 to 4": what no desk claims)
-      r.e.title = x.rest ? "Work and sign-ins with no station number (older records)" : "";
+      { const n = r.e.querySelector(".efSN"), want = x.rest ? NAMES[k] + REST_TAG : stName(k);   // (what no desk claims reads "Assembly (desk not recorded)", the tag on a line of its own)
+        if (n.textContent !== want) { n.textContent = x.rest ? NAMES[k] : want; if (x.rest) n.appendChild(el("small", "efSNs")).textContent = REST_TAG; } }
+      r.e.title = x.rest ? "Work and sign-ins whose station number was not recorded (older records)" : "";
       const s = x.s;
       const now = M.past ? [] : s.now, hrs = s.hours || [];
       r.e.classList.toggle("on", now.length > 0);
