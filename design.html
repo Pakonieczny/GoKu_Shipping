@@ -2398,12 +2398,18 @@ async function fetchAllLocksOnce() {
   } catch (e) { console.warn("hydrate locks failed", e); }
 }
 
-function nextRtDelay() { return RT_STEPS[Math.min(__rtIdleHits, RT_STEPS.length - 1)]; }
+/* FC14 (Firebase cost): a tab nobody can see does not ask for lock changes every 6 s; it asks once a minute (a keep-alive that
+   costs one small read) and asks again at once when it is shown, so what is on screen is never stale. The locks that matter
+   are the ones on screen. design-1.html already does the same. */
+const lockPollHidden = () => document.hidden;
+function nextRtDelay() { if (lockPollHidden()) return 60000; return RT_STEPS[Math.min(__rtIdleHits, RT_STEPS.length - 1)]; }
 function scheduleRtPoll() {
   clearTimeout(RT_POLL.t);
   RT_POLL.t = setTimeout(fetchLocksOnce, nextRtDelay());
 }
+document.addEventListener("visibilitychange", () => { if (!document.hidden && RT_POLL.t) { clearTimeout(RT_POLL.t); fetchLocksOnce(); } });
 function fetchLocksOnce() {
+  if (lockPollHidden()) { scheduleRtPoll(); return Promise.resolve(); }
   if (__rtInflight) return __rtInflight;
   __rtInflight = fetch(`${FN}/firebaseOrders?rtSince=${__rtSince}`)
     .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
@@ -5204,6 +5210,7 @@ const BritesChat = (() => {
         .onSnapshot(snap => {
           if (mySeq !== S.seq) return;                     // stale listener
           el.live?.classList.add("on");
+          S.retries = 0;
           S.docs = snap.docs.map(d => Object.assign({ __docId:d.id }, d.data()));
 
           /* The order being read is the one case where we have live truth,
@@ -5233,8 +5240,12 @@ const BritesChat = (() => {
           if (mySeq !== S.seq) return;
           el.live?.classList.remove("on");
           console.warn("Brites chat listener error:", err);
-          toast("Chat offline — retrying", "bad");
-          setTimeout(() => { if (mySeq === S.seq) subscribe(); }, 4000);
+          // FC14: one toast per outage and a growing wait (4 s, 8 s, 16 s, 32 s, then once a minute) instead of a new listener
+          // every 4 s for as long as the error lasts (design-1.html has done the same since the Sorter work)
+          if (!S.retries) toast("Chat offline — retrying", "bad");
+          const wait = Math.min(60000, 4000 * 2 ** Math.min(S.retries || 0, 4));
+          S.retries = (S.retries || 0) + 1;
+          setTimeout(() => { if (mySeq === S.seq) subscribe(); }, wait);
         });
     } catch (e) { console.error("chat subscribe failed", e); }
   }
