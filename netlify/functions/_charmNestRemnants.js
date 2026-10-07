@@ -14,14 +14,28 @@
      with auto:true and a reason), marked:true when a person set the status, createdAt.
    Reading is ONE op, remnantList (a list with a limit and a field mask, answered { unchanged } from one tiny document when the
    counter Charm_Nest_Rev/remnants has not moved: no polling, no per-card reads); a person's press on a card is remnantMark.
-   The counter moves in the transaction of every write (production only, as the Library's own counter: the sandbox keeps none). */
+   The counter moves in the transaction of every write (production only, as the Library's own counter: the sandbox keeps none).
+
+   PARTIAL SHEETS (PS3, Paul 7 Oct: "each sheet needs its own individual Partial Sheet repo"): a partial = one of these records. It also carries
+   lastUsedAt / lastUsedBy / lastUsedSheet (= the cut until a sheet is nested on it or cut from it) and the status 'inUse' (a sheet holds it:
+   inUseBySheetId / Name / At / By) beside available / used / discarded. ONE source of truth for who holds it: the Rose stock document
+   (Charm_Nest_Rose_Stock/{stockId}.owner, written by roseClaim / roseRelease); the record's inUse fields are kept in step INSIDE those
+   transactions (`sync`, handed to _charmNestRoseStock.js), so a partial can never be held by two sheets and the list can never disagree
+   with the nester. Ops (see plans/partial-sheets/contract.md): partialList (one cheap read per metal: field mask, revision probe, no
+   polling), partialPolicyGet / partialPolicySet (the setting per metal), partialClaim / partialRelease / partialUse, partialPlan.
+   Nothing is ever deleted. */
 const Rose = require('../../charm-nest-rose');
+const Partial = require('../../charm-nest-partial');
 const COLL = 'Charm_Nest_Remnants';
 const MM = Rose.MM;
 const CODES = { rose: 'RG', gold10k: '10K', gold14k: '14K', gold: 'GF', silver: 'SS' };
 const FIELDS = ['v', 'metal', 'code', 'sheetId', 'sheetName', 'setId', 'setName', 'fileBase', 'stockId', 'revision', 'via', 'cutAt', 'by', 'sheetWMm', 'sheetHMm', 'rings', 'areaMm2', 'bboxMm',
-  'status', 'statusAt', 'statusBy', 'marked', 'auto', 'reason', 'usedBySheetId', 'usedBySheetName', 'usedAt', 'usedBy', 'createdAt'];
-const STATUSES = ['available', 'used', 'discarded'];
+  'status', 'statusAt', 'statusBy', 'marked', 'auto', 'reason', 'usedBySheetId', 'usedBySheetName', 'usedAt', 'usedBy', 'createdAt',
+  'lastUsedAt', 'lastUsedBy', 'lastUsedSheet', 'lastUsedSheetId', 'inUseBySheetId', 'inUseBySheetName', 'inUseAt', 'inUseBy'];
+const STATUSES = ['available', 'used', 'discarded'];   // what a person can mark; 'inUse' is only ever set by a claim (roseClaim / partialClaim) and cleared by a release or the next cut
+const PARTIAL_METALS = ['rose', 'gold10k', 'gold14k'];
+const STOCKS = 'Charm_Nest_Rose_Stock', POLICY_DEFAULT = { mode: 'auto', wMm: 100, hMm: 50 }, SIZE_MM = [5, 500];
+const NOT_HELD = { inUseBySheetId: null, inUseBySheetName: null, inUseAt: null, inUseBy: null };   // what a record says when no sheet holds it
 const okId = s => typeof s === 'string' && /^[\w-]{4,100}$/.test(s);
 const person = s => { const t = String(s == null ? '' : s).trim().slice(0, 80); return /^operator$/i.test(t) ? '' : t; };
 
@@ -62,13 +76,30 @@ function leftover(p) {
 
 /* deps: { col, FV, db, sheetLabel(sheetDoc), setLabel(setId), revDoc() -> the counter's ref, or null (the sandbox) }.
    Returns { recordRemnant (NOT an op: only the cut's transaction calls it), ops: { remnantList, remnantMark } }. */
-module.exports = function ({ db, col, FV, sheetLabel, setLabel, revDoc }) {
-  const coll = () => col(COLL);
+module.exports = function ({ db, col, FV, sheetLabel, setLabel, revDoc, configRef, statsRef, statsWrite }) {
+  /* configRef() -> the setting document (config/charmNestPartials; the sandbox has its own), statsRef() -> the small document of per-metal running sums of
+     the pieces cuts have placed (Charm_Nest_Rev/partialStats; read by both workspaces), statsWrite() -> whether this workspace adds to it (production only). */
+  const coll = () => col(COLL), stocks = () => col(STOCKS);
+  let stockApi = null;   // the Rose stock operations (roseClaim / roseRelease), bound by the library once both factories exist (bind below)
   const bump = tx => { const ref = revDoc && revDoc(); if (ref && FV.increment) tx.set(ref, { n: FV.increment(1), at: Date.now() }, { merge: true }); };
   // the counter's value, and whether the earlier cuts' leftovers were saved (remnantBackfill); null = the sandbox, which keeps no counter
   const revState = async () => { const ref = revDoc && revDoc(); if (!ref) return null; const s = await ref.get(), d = s.exists ? s.data() || {} : {}; return { rev: String(Number(d.n) || 0), backfilled: !!d.backfilledAt }; };
   const ms = t => (t && typeof t.toMillis === 'function' ? t.toMillis() : typeof t === 'number' ? t : null);
   const clean = (id, d) => { const o = { id }; for (const k of FIELDS) if (d[k] !== undefined) o[k] = d[k]; o.createdAt = ms(d.createdAt); return o; };
+
+  /* What a cut teaches about the metal's regular piece, from the sheet it was made on (already in the cut's transaction: no read): for every placed piece its
+     footprint (silhouette, grown by half a POSITIVE clearance on every side: the page's inflatedArea) and the shorter / longer side of its box, in mm. Added
+     to the metal's running sums with increments (no read), so the typical piece costs one tiny document read and never a scan. */
+  function pieceStats(sheet) {
+    const byId = new Map((sheet.charms || []).map(c => [c.id, c])), out = { n: 0, areaMm2: 0, minMm: 0, maxMm: 0 }, g = Math.max(0, +(sheet.params && sheet.params.clearancePt) || 0) / 2;
+    for (const p of sheet.placements || []) {
+      const c = byId.get(p.id); if (!c || !(+c.areaPt2 > 0) || !(+c.widthPt > 0) || !(+c.heightPt > 0)) continue;
+      const sc = +p.scale > 0 ? +p.scale : 1, w = c.widthPt * sc, h = c.heightPt * sc;
+      out.n++; out.areaMm2 += (c.areaPt2 * sc * sc + g * 2 * (w + h) + Math.PI * g * g) * MM * MM; out.minMm += Math.min(w, h) * MM; out.maxMm += Math.max(w, h) * MM;
+    }
+    return out;
+  }
+  const r2 = x => Math.round(x * 100) / 100;
 
   /* recordRemnant(tx, { stock, cut, sheet, plan, metal, device, via }): call it inside the cut's transaction, after that transaction's
      reads and BEFORE its first write (it reads the stock's previous leftover, then writes). stock = the stock as the cut writes it
@@ -86,14 +117,22 @@ module.exports = function ({ db, col, FV, sheetLabel, setLabel, revDoc }) {
       v: 1, metal: metalKey, code: CODES[metalKey] || '', sheetId, sheetName, setId: sheet.setId || null, setName, fileBase: String(sheet.fileBase || sheet.folder || sheetId).slice(0, 120),
       stockId: stock.id, revision, via: via === 'library' ? 'library' : 'nest', cutAt: at, by,
       sheetWMm: g.sheetWMm, sheetHMm: g.sheetHMm, rings: g.rings, areaMm2: g.areaMm2, bboxMm: g.bboxMm,
-      status: usable ? 'available' : 'discarded', statusAt: at, statusBy: '', createdAt: FV.serverTimestamp()
+      status: usable ? 'available' : 'discarded', statusAt: at, statusBy: '', createdAt: FV.serverTimestamp(),
+      lastUsedAt: at, lastUsedBy: by, lastUsedSheet: sheetName, lastUsedSheetId: sheetId, ...NOT_HELD   // (the last use of a new leftover is the cut that made it)
     };
     if (!usable) Object.assign(rec, { auto: true, reason: g.areaMm2 > 0 ? 'Too small to reuse' : 'No metal left' });
-    if (prev && prev.exists && (prev.data() || {}).status === 'available') {
-      tx.update(prevRef, { status: 'used', statusAt: at, statusBy: by, usedBySheetId: sheetId, usedBySheetName: sheetName, usedAt: at, usedBy: by, marked: false });
+    const was = prev && prev.exists ? prev.data() || {} : null;
+    // the leftover this cut was made on: available or held by this very sheet -> used; used by this sheet (partialUse) keeps that and only dates the use
+    if (was && (was.status === 'available' || was.status === 'inUse')) {
+      tx.update(prevRef, { status: 'used', statusAt: at, statusBy: by, usedBySheetId: sheetId, usedBySheetName: sheetName, usedAt: at, usedBy: by, marked: false, ...NOT_HELD, lastUsedAt: at, lastUsedBy: by, lastUsedSheet: sheetName, lastUsedSheetId: sheetId });
+    } else if (was && was.status === 'used' && was.usedBySheetId === sheetId) {
+      tx.update(prevRef, { lastUsedAt: at, lastUsedBy: by, lastUsedSheet: sheetName, lastUsedSheetId: sheetId });
     }
     tx.set(coll().doc(id), rec);
     bump(tx);
+    // the metal's regular piece (production only; one small merge, increments only)
+    const sr = statsRef && statsWrite && statsWrite() ? statsRef() : null, ps = sr ? pieceStats(sheet) : null;
+    if (ps && ps.n > 0) tx.set(sr, { [`${metalKey}_n`]: FV.increment(ps.n), [`${metalKey}_areaMm2`]: FV.increment(r2(ps.areaMm2)), [`${metalKey}_minMm`]: FV.increment(r2(ps.minMm)), [`${metalKey}_maxMm`]: FV.increment(r2(ps.maxMm)), at: Date.now() }, { merge: true });
     return { ...rec, id, createdAt: null };
   }
 
@@ -126,10 +165,14 @@ module.exports = function ({ db, col, FV, sheetLabel, setLabel, revDoc }) {
       if (!d.exists) throw new Error('Leftover sheet not found');
       const r = d.data();
       if (r.status === status) return { ok: true, same: true, item: clean(id, r) };
+      if (r.status === 'inUse') throw new Error(`A sheet holds this leftover now${r.inUseBySheetName ? ' (' + r.inUseBySheetName + ')' : ''}: give it back first`);
       if (r.usedBySheetId && !r.marked) throw new Error('A later sheet was cut from this leftover, so it stays used');
       if (r.auto) throw new Error('This leftover is too small to reuse, so it stays discarded');
+      // the physical sheet it sits on (read before the first write): its `available` flag is what the Rose Gold nester reads, so it follows the mark
+      const stockRef = okId(r.stockId) ? stocks().doc(r.stockId) : null, st = stockRef ? await tx.get(stockRef) : null, sd = st && st.exists ? st.data() : null;
       const patch = { status, statusAt: Date.now(), statusBy: by, marked: true };
       tx.update(ref, patch);
+      if (sd && sd.revision === r.revision && !sd.owner) tx.update(stockRef, { available: status === 'available' });
       bump(tx);
       return { ok: true, item: clean(id, { ...r, ...patch }) };
     });
@@ -158,8 +201,11 @@ module.exports = function ({ db, col, FV, sheetLabel, setLabel, revDoc }) {
         v: 1, backfilled: true, metal: metalKey, code: CODES[metalKey] || '', sheetId, sheetName: String((sheetLabel && sheetLabel(sd.id || sd.metal ? sd : null, c.fileBase)) || c.fileBase || x.lastCutLabel || sheetId).slice(0, 80),
         setId: sd.setId || null, setName: sd.setId ? String((setLabel && setLabel(sd.setId)) || (sd.setSeq ? 'Set ' + sd.setSeq : '')).slice(0, 40) : '', fileBase: String(c.fileBase || sd.fileBase || sheetId).slice(0, 120),
         stockId: x.id, revision: +x.revision, via: '', cutAt: at, by: person(c.by || x.lastCutBy), sheetWMm: g.sheetWMm, sheetHMm: g.sheetHMm, rings: g.rings, areaMm2: g.areaMm2, bboxMm: g.bboxMm,
-        status: usable ? 'available' : 'discarded', statusAt: at, statusBy: '', createdAt: FV.serverTimestamp()
+        status: !usable ? 'discarded' : x.owner ? 'inUse' : 'available', statusAt: at, statusBy: '', createdAt: FV.serverTimestamp(),
+        lastUsedAt: at, lastUsedBy: person(c.by || x.lastCutBy), lastUsedSheet: '', lastUsedSheetId: sheetId, ...NOT_HELD
       };
+      rec.lastUsedSheet = rec.sheetName;
+      if (usable && x.owner) Object.assign(rec, { inUseBySheetId: String(x.owner), inUseBySheetName: '', inUseAt: +x.updatedMs || at, inUseBy: '' });   // (a sheet holds its physical sheet right now: one source of truth is the stock's owner)
       if (!usable) Object.assign(rec, { auto: true, reason: g.areaMm2 > 0 ? 'Too small to reuse' : 'No metal left' });
       await db.runTransaction(async tx => { const ref = coll().doc(id); if ((await tx.get(ref)).exists) return; tx.set(ref, rec); created++; });
     }
@@ -168,7 +214,180 @@ module.exports = function ({ db, col, FV, sheetLabel, setLabel, revDoc }) {
     return { ok: true, created };
   }
 
-  return { recordRemnant, ops: { remnantList, remnantMark, remnantBackfill } };
+  /* ══ PARTIAL SHEETS (PS3) ══ */
+  const word = m => Rose.cutWord(m);
+  const asMetal = m => { const k = String(m == null ? '' : m); if (!PARTIAL_METALS.includes(k)) throw new Error('Choose Rose Gold, 10K Gold or 14K Gold'); return k; };
+  const whoIsIn = r => (r && r.inUseBySheetName) || 'another sheet';
+
+  /* Hooks the Rose stock calls INSIDE its own transactions (roseClaim / roseRelease), so the record's status can never disagree with the stock's owner:
+       await sync.read(tx, stockId, revision, partialId?)   -> { ref, id, exists, data } | null    (a read: before the transaction's first write)
+       sync.check(rem, { metal, sheetId, stockId, revision })                                       (throws in words: an explicit claim of a partial a sheet holds, a used one ...)
+       sync.claimed(tx, rem, { sheetId, sheetName, by, at })  -> the fields it set | null           (available -> inUse, lastUsed* = now)
+       sync.released(tx, rem, { sheetId, at })                -> the fields it set | null           (inUse by this sheet -> available again; lastUsedAt is kept) */
+  const sync = {
+    async read(tx, stockId, revision, partialId) {
+      const id = partialId || (+revision >= 1 ? `${stockId}-${+revision}` : null);
+      if (!id || !okId(id)) return null;
+      const ref = coll().doc(id), snap = await tx.get(ref);
+      return { ref, id, exists: snap.exists, data: snap.exists ? snap.data() || {} : null };
+    },
+    check(rem, { metal, sheetId, stockId, revision }) {
+      if (!rem || !rem.exists) throw new Error('Partial sheet not found');
+      const r = rem.data;
+      if ((r.metal || 'rose') !== metal) throw new Error(`This partial sheet is ${word(r.metal || 'rose')}, not ${word(metal)}`);
+      if (r.stockId !== stockId || +r.revision !== +revision) throw new Error('This partial sheet changed. Refresh the list');
+      if (r.status === 'inUse' && r.inUseBySheetId !== sheetId) throw new Error(`This partial sheet is in use by ${whoIsIn(r)}`);
+      if (r.status === 'used') throw new Error('This partial sheet was already used');
+      if (r.status === 'discarded') throw new Error('This partial sheet was discarded');
+    },
+    claimed(tx, rem, { sheetId, sheetName, by, at }) {
+      if (!rem || !rem.exists || rem.data.status !== 'available') return null;   // (held by this sheet already, or not on the list: nothing to change)
+      const name = String(sheetName || sheetId).slice(0, 80), who = person(by), patch = { status: 'inUse', inUseBySheetId: sheetId, inUseBySheetName: name, inUseAt: at, inUseBy: who, lastUsedAt: at, lastUsedBy: who, lastUsedSheet: name, lastUsedSheetId: sheetId, statusAt: at };
+      tx.update(rem.ref, patch); bump(tx);
+      return patch;
+    },
+    released(tx, rem, { sheetId, at }) {
+      if (!rem || !rem.exists) return null;
+      const r = rem.data, own = r.status === 'inUse' && r.inUseBySheetId === sheetId, undone = r.status === 'used' && r.usedBySheetId === sheetId && !r.marked;   // (used through partialUse, never cut: giving the sheet back undoes it)
+      if (!own && !undone) return null;
+      const patch = { status: 'available', statusAt: at, statusBy: '', ...NOT_HELD, ...(undone ? { usedBySheetId: null, usedBySheetName: null, usedAt: null, usedBy: null } : {}) };
+      tx.update(rem.ref, patch); bump(tx);
+      return patch;
+    }
+  };
+
+  /* ── the setting (Paul item 6): per metal, reuse partial sheets automatically OR offer a brand new sheet of a size the person sets. One small document,
+     config/charmNestPartials { v, n, policies: { rose|gold10k|gold14k: { mode: 'auto'|'new', wMm, hMm, by, at } }, updatedAt }. No document = every metal on 'auto'
+     (Rose Gold as it behaves today; 10K and 14K as the cut-line work built them: nest on a leftover of the sheet's own size when one fits, else a fresh sheet). ── */
+  const sizeOr = (v, d) => (Number.isFinite(+v) && +v >= SIZE_MM[0] && +v <= SIZE_MM[1] ? Math.round(+v * 10) / 10 : d);
+  const policiesOf = d => {
+    const out = {};
+    for (const m of PARTIAL_METALS) { const p = (d && d.policies && d.policies[m]) || {}; out[m] = { mode: p.mode === 'new' ? 'new' : 'auto', wMm: sizeOr(p.wMm, POLICY_DEFAULT.wMm), hMm: sizeOr(p.hMm, POLICY_DEFAULT.hMm), by: p.by ? String(p.by) : '', at: Number.isFinite(+p.at) ? +p.at : null }; }
+    return out;
+  };
+  const readPolicies = async () => { const ref = configRef && configRef(); if (!ref) return { policies: policiesOf(null), n: 0 }; const s = await ref.get(), d = s.exists ? s.data() || {} : null; return { policies: policiesOf(d), n: d ? +d.n || 0 : 0 }; };
+  async function partialPolicyGet() { const r = await readPolicies(); return { policies: r.policies, rev: String(r.n) }; }
+  /* partialPolicySet { metal, mode: 'auto' | 'new', wMm, hMm, by }: mode 'new' needs a size (5 to 500 mm each way; the metal's saved one, else 100 x 50, when none is sent);
+     going back to 'auto' keeps the size for next time. The page sends the signed-in name. Moves the counter, so the panel's next read finds it. */
+  async function partialPolicySet(b = {}) {
+    const metal = asMetal(b.metal), mode = b.mode === 'new' ? 'new' : b.mode === 'auto' ? 'auto' : null;
+    if (!mode) throw new Error('Choose to reuse partial sheets automatically or to offer a brand new sheet');
+    const given = b.wMm != null || b.hMm != null;
+    if (given && !(Number.isFinite(+b.wMm) && Number.isFinite(+b.hMm) && +b.wMm >= SIZE_MM[0] && +b.wMm <= SIZE_MM[1] && +b.hMm >= SIZE_MM[0] && +b.hMm <= SIZE_MM[1])) throw new Error(`The new sheet's width and height can each be ${SIZE_MM[0]} to ${SIZE_MM[1]} mm`);
+    const ref = configRef && configRef(); if (!ref) throw new Error('The setting cannot be saved here');
+    return db.runTransaction(async tx => {
+      const s = await tx.get(ref), d = s.exists ? s.data() || {} : null, cur = policiesOf(d);
+      const next = { mode, wMm: given ? sizeOr(b.wMm, cur[metal].wMm) : cur[metal].wMm, hMm: given ? sizeOr(b.hMm, cur[metal].hMm) : cur[metal].hMm, by: person(b.by), at: Date.now() };
+      const policies = { ...cur, [metal]: next };
+      tx.set(ref, { v: 1, n: (d ? +d.n || 0 : 0) + 1, policies, updatedAt: Date.now() });
+      bump(tx);
+      return { ok: true, policy: next, policies };
+    });
+  }
+
+  /* ── the list (Paul items 2 and 3): one query per status asked, on metal + status equality (no composite index), field mask, newest USED first ── */
+  const typicalOfMetal = (stats, metal) => Partial.typicalFromSums(stats ? { n: stats[`${metal}_n`], areaMm2: stats[`${metal}_areaMm2`], minMm: stats[`${metal}_minMm`], maxMm: stats[`${metal}_maxMm`] } : null);
+  const readStats = async () => { const ref = statsRef && statsRef(); if (!ref) return null; const s = await ref.get(); return s.exists ? s.data() || {} : null; };
+  function card(id, d, typical) {
+    const bb = d.bboxMm || { x: 0, y: 0, w: 0, h: 0 }, usedAt = d.lastUsedAt != null ? +d.lastUsedAt : (+d.cutAt || null);
+    const out = {
+      id, metal: d.metal || 'rose', code: d.code || '', status: d.status || 'available', outline: d.rings || [], sheetWMm: d.sheetWMm, sheetHMm: d.sheetHMm, bboxMm: bb, wMm: bb.w, hMm: bb.h, areaMm2: d.areaMm2,
+      sourceSheet: d.sheetName || '', sourceSet: d.setName || '', sourceSheetId: d.sheetId || '', cutAt: +d.cutAt || null, cutBy: d.by || '',
+      lastUsedAt: usedAt, lastUsedBy: d.lastUsedBy != null ? d.lastUsedBy : (d.by || ''), lastUsedSheet: d.lastUsedSheet != null ? d.lastUsedSheet : (d.sheetName || ''), lastUsedSheetId: d.lastUsedSheetId != null ? d.lastUsedSheetId : (d.sheetId || ''),
+      stockId: d.stockId, revision: d.revision, estimate: null
+    };
+    if (d.status === 'inUse') Object.assign(out, { inUseBySheetId: d.inUseBySheetId || '', inUseBySheetName: d.inUseBySheetName || '', inUseAt: d.inUseAt != null ? +d.inUseAt : null });
+    if (d.status === 'used') Object.assign(out, { usedBySheetId: d.usedBySheetId || '', usedBySheetName: d.usedBySheetName || '', usedAt: d.usedAt != null ? +d.usedAt : null });
+    if (d.reason) out.reason = d.reason;
+    if (typical && (out.status === 'available' || out.status === 'inUse') && out.outline.length) { const e = Partial.estimateFit(out.outline, typical, { sheetWMm: d.sheetWMm, sheetHMm: d.sheetHMm }); out.estimate = { pieces: e.pieces, low: e.low, high: e.high, packedPct: e.packedPct }; }
+    return out;
+  }
+  async function readCards(metal, { inUse = false, used = false, limit = 60 } = {}, typical) {
+    const statuses = ['available', ...(inUse ? ['inUse'] : []), ...(used ? ['used', 'discarded'] : [])];
+    const per = Math.min(100, Math.max(1, Math.floor(+limit) || 60)), items = []; let more = false;
+    for (const status of statuses) {
+      let q = coll().where('metal', '==', metal).where('status', '==', status).limit(per + 1);
+      if (typeof q.select === 'function') q = q.select(...FIELDS);
+      const snap = await q.get();
+      if (snap.docs.length > per) more = true;
+      for (const d of snap.docs.slice(0, per)) items.push(card(d.id, d.data(), typical));
+    }
+    items.sort((a, c) => (c.lastUsedAt || 0) - (a.lastUsedAt || 0) || (c.cutAt || 0) - (a.cutAt || 0) || (c.revision || 0) - (a.revision || 0));
+    return { items, more };
+  }
+  /* partialList { metal, inUse, used, limit, ifRev, verify, backfill }: the metal's available partials (newest used first); inUse / used add those. Answer
+     { items:[card], rev, policies, typical, more } or { unchanged: true, rev } after ONE tiny read of the counter when nothing moved. A full answer costs one read per
+     partial listed + the setting + the metal's piece sums. The first call ever also saves the earlier cuts' leftovers (once, create-only: remnantBackfill; `backfill:false` skips). */
+  async function partialList(b = {}) {
+    const metal = asMetal(b.metal);
+    let state = await revState(), rev = state ? state.rev : null;
+    const ifRev = typeof b.ifRev === 'string' && /^[\w.-]{1,40}$/.test(b.ifRev) ? b.ifRev : null;
+    if (rev !== null && ifRev !== null && ifRev === rev && b.verify !== true) return { unchanged: true, rev };
+    let backfilled = null, backfillError = null;
+    if (state && !state.backfilled && b.backfill !== false) {
+      try { const r = await remnantBackfill(); backfilled = r.created || 0; } catch (e) { backfillError = (e && e.message) || String(e); }
+      state = await revState() || state; rev = state.rev;
+    }
+    const [{ items, more }, pol, stats] = await Promise.all([readCards(metal, b, null), readPolicies(), readStats()]);
+    const typical = typicalOfMetal(stats, metal);
+    for (const c of items) if (c.status === 'available' || c.status === 'inUse') { const e = c.outline.length ? Partial.estimateFit(c.outline, typical, { sheetWMm: c.sheetWMm, sheetHMm: c.sheetHMm }) : null; if (e) c.estimate = { pieces: e.pieces, low: e.low, high: e.high, packedPct: e.packedPct }; }
+    return { items, rev, policies: pol.policies, typical, more, ...(backfilled !== null ? { backfilled } : {}), ...(backfillError ? { backfillError } : {}) };
+  }
+
+  /* partialPlan { metal, pieces: [{areaMm2, wMm?, hMm?}] | {areaMm2, count}, order }: which available partials these pieces would take, filled one after the other, and
+     whether they all fit. An ESTIMATE (the real fit is the nester's, partial by partial). One query + the piece sums. */
+  async function partialPlan(b = {}) {
+    const metal = asMetal(b.metal), stats = await readStats(), typical = typicalOfMetal(stats, metal), { items } = await readCards(metal, { limit: 100 }, null);
+    const plan = Partial.planFor(items, b.pieces, { order: b.order, typical });
+    return { ...plan, metal, available: items.length };
+  }
+
+  /* ── claim / release / use (Paul items 4 and 5). ONE source of truth for who holds a partial: the Rose stock's owner. Claim and release go through
+     roseClaim / roseRelease (their transactions keep the record in step: `sync`); use is its own transaction on the record and the stock. ── */
+  async function partialClaim(b = {}) {
+    if (!stockApi) throw new Error('Partial sheets are not ready');
+    const metal = asMetal(b.metal), id = String(b.id || ''), sheetId = String(b.sheetId || '');
+    if (!okId(id) || !okId(sheetId)) throw new Error('Choose a partial sheet and a sheet to nest on it');
+    const snap = await coll().doc(id).get();   // (one read to learn its physical sheet; the claim's own transaction checks everything again)
+    sync.check({ exists: snap.exists, data: snap.exists ? snap.data() || {} : null }, { metal, sheetId, stockId: snap.exists ? (snap.data() || {}).stockId : '', revision: snap.exists ? (snap.data() || {}).revision : 0 });
+    const r = snap.data();
+    const out = await stockApi.roseClaim({ sheetId, metal, stockId: r.stockId, revision: r.revision, wPt: r.sheetWMm / MM, hPt: r.sheetHMm / MM, exact: true, partialId: id, nesting: b.nesting !== false, by: person(b.by), sheetName: b.sheetName });
+    return { ...out, partial: { id, status: 'inUse', ...(out.partial || {}), inUseBySheetId: sheetId } };
+  }
+  async function partialRelease(b = {}) {
+    if (!stockApi) throw new Error('Partial sheets are not ready');
+    const sheetId = String(b.sheetId || '');
+    if (!okId(sheetId)) throw new Error('Choose a sheet');
+    const held = await stocks().where('owner', '==', sheetId).limit(1).get(), d = held.docs[0];
+    if (!d) return { ok: true, released: false, partialId: null };
+    const stock = d.data() || {}, partialId = +stock.revision >= 1 ? `${d.id}-${+stock.revision}` : null;
+    await stockApi.roseRelease({ stockId: d.id, sheetId, by: person(b.by) });
+    return { ok: true, released: true, stockId: d.id, partialId };
+  }
+  async function partialUse(b = {}) {
+    const id = String(b.id || ''), sheetId = String(b.sheetId || ''), by = person(b.by);
+    if (!okId(id) || !okId(sheetId)) throw new Error('Choose a partial sheet and the sheet that used it');
+    return db.runTransaction(async tx => {
+      const ref = coll().doc(id), d = await tx.get(ref);
+      if (!d.exists) throw new Error('Partial sheet not found');
+      const r = d.data() || {}, stockRef = okId(r.stockId) ? stocks().doc(r.stockId) : null, st = stockRef ? await tx.get(stockRef) : null, stock = st && st.exists ? st.data() : null;
+      if (r.status === 'used' && r.usedBySheetId === sheetId) return { ok: true, same: true, partial: card(id, r, null) };
+      if (r.status === 'inUse' && r.inUseBySheetId !== sheetId) throw new Error(`This partial sheet is in use by ${whoIsIn(r)}`);
+      if (r.status === 'used') throw new Error('This partial sheet was already used');
+      if (r.status === 'discarded') throw new Error('This partial sheet was discarded');
+      if (stock && (stock.revision !== r.revision || (stock.owner && stock.owner !== sheetId))) throw new Error(stock.owner && stock.owner !== sheetId ? 'This partial sheet is in use by another sheet' : 'This partial sheet changed. Refresh the list');
+      const at = Date.now(), name = String(b.sheetName || (r.status === 'inUse' && r.inUseBySheetName) || sheetId).slice(0, 80);
+      const patch = { status: 'used', statusAt: at, statusBy: by, usedBySheetId: sheetId, usedBySheetName: name, usedAt: at, usedBy: by, marked: false, ...NOT_HELD, lastUsedAt: at, lastUsedBy: by, lastUsedSheet: name, lastUsedSheetId: sheetId };
+      tx.update(ref, patch);
+      if (stock && stock.available) tx.update(stockRef, { available: false });   // (a sheet that holds it keeps its claim until its cut or its release: the owner stays)
+      bump(tx);
+      return { ok: true, partial: card(id, { ...r, ...patch }, null) };
+    });
+  }
+  const bind = s => { stockApi = s; };
+
+  return { recordRemnant, sync, bind, ops: { remnantList, remnantMark, remnantBackfill, partialList, partialPolicyGet, partialPolicySet, partialClaim, partialRelease, partialUse, partialPlan, partialBackfill: remnantBackfill } };
 };
 module.exports.leftover = leftover;
 module.exports.FIELDS = FIELDS;
+module.exports.PARTIAL_METALS = PARTIAL_METALS;
