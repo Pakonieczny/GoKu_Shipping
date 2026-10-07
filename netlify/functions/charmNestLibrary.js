@@ -58,7 +58,7 @@ const DECISIONS_VERSION = require("crypto").createHash("sha256").update(String(R
    two, the sandbox's own answer first; Reset deletes the copy. Set per request; a function instance handles one request
    at a time. ── */
 let PREFIX = "";
-const SANDBOXED = new Set(["Charm_Nest_Rose_Stock", "Charm_Nest_Sheets", "Charm_Pool", "Charm_Pool_Back", "Charm_Nest_Sets", "Charm_Nest_Counters", "Charm_Nest_Runs", "Charm_Nest_Run_Lines", "Charm_Nest_Run_Live", "Charm_Nest_Release", "Charm_Nest_Arrivals", "Charm_Nest_Cancelled", "Charm_Nest_Cancelled_History", "Design_Bridge"]);
+const SANDBOXED = new Set(["Charm_Nest_Rose_Stock", "Charm_Nest_Remnants", "Charm_Nest_Sheets", "Charm_Pool", "Charm_Pool_Back", "Charm_Nest_Sets", "Charm_Nest_Counters", "Charm_Nest_Runs", "Charm_Nest_Run_Lines", "Charm_Nest_Run_Live", "Charm_Nest_Release", "Charm_Nest_Arrivals", "Charm_Nest_Cancelled", "Charm_Nest_Cancelled_History", "Design_Bridge"]);
 const col = name => db.collection(SANDBOXED.has(name) ? PREFIX + name : name);
 const FV = admin.firestore.FieldValue;
 
@@ -1472,7 +1472,7 @@ async function op_getOrderPieces(b) {
 const REV_COLL = "Charm_Nest_Rev";
 const NO_GEN_BUMP = new Set(["ping", "laserStatus", "flowState", "getOrderPieces", "getSheet", "listSheets", "getCalibration", "getJob", "jobList", "getAgent", "customReadGet", "masterGet", "masterGetMany", "masterList", "masterListFiles",
   "poolList", "poolGet", "backList", "sandboxStatus", "setGet", "setList", "runGet", "runList", "history", "releaseGet", "bridgeLog", "cancelList", "cancelCheck", "timelineAdd", "timelineGet", "aliasGet", "noDesignGet", "optionMapGet",
-  "customSheetGet", "customGet", "sessionsList", "laserSheetLast", "sharedOrders", "laserDoneList", "findSheets", "listingPhotos", "getShapeGuidance", "roseGet", "roseList", "lookupCharms", "listCharms", "backPreview", "sheetPdf",
+  "customSheetGet", "customGet", "sessionsList", "laserSheetLast", "sharedOrders", "laserDoneList", "findSheets", "listingPhotos", "getShapeGuidance", "roseGet", "roseList", "remnantList", "remnantMark", "lookupCharms", "listCharms", "backPreview", "sheetPdf",
   "runPut", "runArchive", "releasePut", "arrivalRecord", "putCharms", "renameCharm", "putShapeGuidance", "putCalibration", "aliasPut", "noDesignPut", "noDesignDelete", "optionMapPut",
   "sandboxCancel", "sandboxPut", "sandboxReset", "sandboxStream"]);   // (FC3b: the four sandbox ops write only Sandbox_ records and the sandbox's own meta, whatever the request says, so they never touch what a production placement answer is made from)
 async function placementGen() {
@@ -3123,7 +3123,9 @@ async function op_customReopen(b) {
 async function op_customReadGet(b) { return require("./_charmNestCustomRead").lookup(db, b.items, !!PREFIX); }
 async function op_customDecide(b) { return require("./_charmNestCustomRead").decide(db, FV, b, !!PREFIX); }
 
-const RoseStock = require("./_charmNestRoseStock")({db,col,FV,Readiness,decisionsOfRun,productionReadiness,stamp,sheetLabel});
+// the leftover sheets (GC3): recordRemnant is the cut's own writer (inside roseRecordCut's transaction, not an op); remnantList / remnantMark are the repository's two ops
+const Remnants = require("./_charmNestRemnants")({db,col,FV,sheetLabel,setLabel,revDoc:()=>PREFIX?null:db.collection("Charm_Nest_Rev").doc("remnants")});
+const RoseStock = require("./_charmNestRoseStock")({db,col,FV,Readiness,decisionsOfRun,productionReadiness,stamp,sheetLabel,recordRemnant:Remnants.recordRemnant});
 /* ── cancelled orders (Paul, 25 Sep 19:05): an order the operator cancels leaves every screen of the sorter, and one
    record of it is kept here as history. The sorter reads the ids to keep such an order out of every later pull.
    Since 28 Sep (A1 · A6) Etsy's own cancels land in the same record (by "Etsy", source "etsy", etsyStatus), written by
@@ -3280,7 +3282,7 @@ function cancelCopy(r) {
   if (!fits()) for (const k of Object.keys(x)) if (!["orderId", "by", "why", "at", "source", "etsyStatus", "etsyAt"].includes(k)) delete x[k];
   return x;
 }
-const OPS = { ...RoseStock, laserDone: op_laserDone, laserDoneList: op_laserDoneList, findSheets: op_findSheets, listingPhotos:op_listingPhotos, getShapeGuidance:op_getShapeGuidance, putShapeGuidance:op_putShapeGuidance, laserStatus:op_laserStatus, archiveEmptySheet: op_archiveEmptySheet, sheetPdf: op_sheetPdf, arrivalRecord: op_arrivalRecord, startAgent: op_startAgent, getAgent: op_getAgent, customReadGet: op_customReadGet, customDecide: op_customDecide, ping: op_ping, lookupCharms: op_lookupCharms, putCharms: op_putCharms, renameCharm: op_renameCharm, listCharms: op_listCharms, putSheet: op_putSheet, listSheets: op_listSheets, getSheet: op_getSheet, backPreview: op_backPreview, deleteSheet: op_deleteSheet, purgeHistory: op_purgeHistory, restoreSheet: op_restoreSheet, putCalibration: op_putCalibration, getCalibration: op_getCalibration, startJob: op_startJob, getJob: op_getJob, stopJob: op_stopJob,
+const OPS = { ...RoseStock, ...Remnants.ops, laserDone: op_laserDone, laserDoneList: op_laserDoneList, findSheets: op_findSheets, listingPhotos:op_listingPhotos, getShapeGuidance:op_getShapeGuidance, putShapeGuidance:op_putShapeGuidance, laserStatus:op_laserStatus, archiveEmptySheet: op_archiveEmptySheet, sheetPdf: op_sheetPdf, arrivalRecord: op_arrivalRecord, startAgent: op_startAgent, getAgent: op_getAgent, customReadGet: op_customReadGet, customDecide: op_customDecide, ping: op_ping, lookupCharms: op_lookupCharms, putCharms: op_putCharms, renameCharm: op_renameCharm, listCharms: op_listCharms, putSheet: op_putSheet, listSheets: op_listSheets, getSheet: op_getSheet, backPreview: op_backPreview, deleteSheet: op_deleteSheet, purgeHistory: op_purgeHistory, restoreSheet: op_restoreSheet, putCalibration: op_putCalibration, getCalibration: op_getCalibration, startJob: op_startJob, getJob: op_getJob, stopJob: op_stopJob,
   masterPutIndex: op_masterPutIndex, masterGet: op_masterGet, masterGetMany: op_masterGetMany, masterList: op_masterList, masterPatch: op_masterPatch, masterPutFile: op_masterPutFile, masterListFiles: op_masterListFiles, masterRemoveFile: op_masterRemoveFile, masterRemoveSku: op_masterRemoveSku, startMaster: op_startMaster,
   jobList: op_jobList, poolPut: op_poolPut, poolUpdate: op_poolUpdate, poolList: op_poolList, poolGet: op_poolGet, backPut: op_backPut, backInvalidate: op_backInvalidate, backList: op_backList, sandboxPut: op_sandboxPut, sandboxStatus: op_sandboxStatus, sandboxReset: op_sandboxReset, sandboxStream: op_sandboxStream,
   setAllocate: op_setAllocate, setUpdate: op_setUpdate, setGet: op_setGet, setList: op_setList, runPut: op_runPut, runArchive: op_runArchive, runGet: op_runGet, runList: op_runList, history: op_history, releaseGet: op_releaseGet, releasePut: op_releasePut, bridgeLog: op_bridgeLog,

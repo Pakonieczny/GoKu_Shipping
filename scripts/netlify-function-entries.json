@@ -185,6 +185,7 @@
     "_charmNestPlacement.js",
     "_charmNestSolver.js",
     "_charmNestRoseStock.js",
+    "_charmNestRemnants.js",
     "_orderTimeline.js",
     "_employeeAttendance.js",
     "_employeeProfile.js",

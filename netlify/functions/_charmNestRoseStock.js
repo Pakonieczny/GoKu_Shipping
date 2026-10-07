@@ -86,7 +86,7 @@ function withoutPieces(guard, gone, ctx = {}) {
   for (const i of keepIdx) { const own = slice(i); list.push({ ...trimmed[i], n: list.length + 1, lines: [lines.length, lines.length + own.length] }); lines.push(...own); }
   return { guard: build(guard.profile, lines, list), removed, kept: keepIdx.map(i => summary(i, stages)), exact: false, changed: true };
 }
-module.exports=function({db,col,FV,Readiness,decisionsOfRun,productionReadiness,stamp,sheetLabel}){
+module.exports=function({db,col,FV,Readiness,decisionsOfRun,productionReadiness,stamp,sheetLabel,recordRemnant}){
   const stocks=()=>col('Charm_Nest_Rose_Stock'),sheets=()=>col('Charm_Nest_Sheets');
   async function roseGet(b){
     if(!id(b.stockId))throw new Error('Choose a Rose Gold sheet');
@@ -196,6 +196,9 @@ module.exports=function({db,col,FV,Readiness,decisionsOfRun,productionReadiness,
       const at=Date.now(),revision=stock.revision+1;
       const cut={sheetId:b.sheetId,stockId:stock.id,revision,at,planHash:b.planHash,planJson:sheet.rosePlanJson,fileBase:sheet.fileBase||b.sheetId,by:String(b.by||'operator').slice(0,80),createdAt:FV.serverTimestamp()};
       const next={...stock,revision,profileJson:JSON.stringify(plan.profile),owner:null,available:plan.remainingPt2>14*14,lastCutAt:at,updatedAt:FV.serverTimestamp()};
+      // GC3: the leftover sheet this cut makes (its exact outline, real size, who, when) is saved in THIS transaction: a cut never exists without it.
+      // It reads (the stock's previous leftover) before it writes, so it comes before the first write below.
+      if(recordRemnant)await recordRemnant(tx,{stock:next,cut,sheet,plan,metal:sheet.metal,device:b.device,via:b.via});
       tx.set(er,cut);tx.set(ref,next);tx.update(sr,{roseCutAt:at,roseCutRevision:revision,updatedAt:FV.serverTimestamp()});
       return {ok:true,cut:{...cut,createdAt:null},stock:{...next,updatedAt:null},cutSheet:sheet};
     });
