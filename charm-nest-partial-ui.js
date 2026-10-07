@@ -38,7 +38,7 @@
   const plural = (n, one, many) => `${n} ${n === 1 ? one : many || one + 's'}`;
   const wordOf = m => (METAL[m] && METAL[m].word) || (root.CN && root.CN.labelOf ? root.CN.labelOf(m) : String(m || ''));
   const PS = () => root.PartialSheets || null;                                         // data and settings (PS3)
-  const ENG = () => root.PartialEngine || (root.Gate && root.Gate.partial) || null;    // the work (PS2)
+  const ENG = () => root.PartialNest || root.PartialEngine || (root.Gate && root.Gate.partial) || null;   // the work (PS2: PartialNest.canSeat / preview / seat / chain / on)
   const reduced = () => { try { return !!(root.Motion && root.Motion.reduced()); } catch (_) { return false; } };
   const sleep = ms => new Promise(r => setTimeout(r, ms));
 
@@ -105,8 +105,9 @@
 
   /* ── state: one per metal (each metal has its own repository) ── */
   const ST = {};
-  const stOf = m => ST[m] || (ST[m] = { open: false, items: null, loading: null, error: '', pick: null, ask: null, seq: 0, polBusy: false, polDraft: null, polMsg: '', sh: null, node: null, entered: 0 });
-  const availableOf = items => (items || []).filter(c => !c.status || c.status === 'available').slice().sort((a, b) => (+b.lastUsedAt || 0) - (+a.lastUsedAt || 0));
+  const stOf = m => ST[m] || (ST[m] = { open: false, items: null, loading: null, error: '', chain: [], adding: false, ask: null, seq: 0, polBusy: false, polDraft: null, polMsg: '', sh: null, node: null, entered: 0 });
+  // the metal's own available partial sheets, newest used first (a card of another metal never shows here, whatever the cache holds)
+  const availableOf = (items, m) => (items || []).filter(c => (!c.status || c.status === 'available') && (!m || !c.metal || c.metal === m)).slice().sort((a, b) => (+b.lastUsedAt || 0) - (+a.lastUsedAt || 0));
   const policyOf = m => { try { const p = PS() && PS().policy ? PS().policy(m) : null; return p ? { mode: p.mode === 'new' ? 'new' : 'auto', wMm: +p.wMm || 100, hMm: +p.hMm || 50 } : { mode: 'auto', wMm: 100, hMm: 50 }; } catch (_) { return { mode: 'auto', wMm: 100, hMm: 50 }; } };
   const piecesOn = sh => ((sh && sh.placements && sh.placements.length) || (sh && sh.charms && sh.charms.length) || 0);
   const sheetWord = sh => (root.CN && sh && sh.page ? `Sheet ${sh.page}` : 'this sheet');
@@ -114,8 +115,12 @@
   /* ── styles (the app's own tokens; the card is the Library card's look) ── */
   const css = doc.createElement('style');
   css.textContent = `
+.psSum,.psView,.sheetOptionSection[data-solid=partial]{white-space:normal}
 .psSum{margin:0;font-size:11px;line-height:1.5;color:var(--ink70)}
 .psSum b{font-weight:600;color:var(--ink)}
+.psLink{border:0;background:none;padding:0;font:inherit;font-weight:600;color:var(--ink);text-decoration:underline;text-underline-offset:2px;cursor:pointer}
+.psLink:hover{color:var(--gold)}
+.psLink:focus-visible{outline:2px solid var(--gold);outline-offset:2px;border-radius:3px}
 .psOpenRow{display:flex;align-items:center;justify-content:space-between;gap:12px}
 .psOpenRow .help{flex:1;font-size:11px;line-height:1.5}
 .psOpenRow .btn{flex:none;margin-left:0}
@@ -127,19 +132,21 @@
 .psHead strong{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .psBack{border:1px solid var(--line);background:transparent;color:var(--ink70);border-radius:999px;padding:3px 10px;font-size:11px;font-weight:650;white-space:nowrap}
 .psBack:hover{background:var(--card2);color:var(--ink)}
-.psBody{padding:14px 18px 6px;display:grid;gap:12px}
+.psBody{padding:14px 18px 6px;display:grid;grid-template-columns:minmax(0,1fr);gap:12px}
 .psLead{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin:0;font-size:11px;line-height:1.5;color:var(--ink70)}
 .psLead .btn{flex:none;margin-left:0}
-.psList{display:grid;grid-template-columns:repeat(auto-fill,minmax(236px,1fr));gap:12px}
+.psList{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px}
 .psCard{background:var(--card);border:1px solid var(--line);border-left:5px solid var(--accent);border-radius:12px;box-shadow:var(--sh);padding:10px 12px;display:flex;flex-direction:column;gap:7px;min-width:0;cursor:pointer;text-align:left;font:inherit;color:inherit;--accent:var(--ink25)}
 .psCard[data-m=rose]{--accent:var(--m-rose)}.psCard[data-m=gold10k]{--accent:var(--m-gold10k)}.psCard[data-m=gold14k]{--accent:var(--m-gold14k)}
 .psCard:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
 .psCard.on{border-color:var(--ink);box-shadow:0 0 0 2px var(--goldLine),var(--sh)}
 .psCard[aria-disabled=true]{cursor:default;opacity:.7}
-.psPvBox{overflow:hidden;border-radius:8px;border:1px solid var(--line2);background:var(--card2);line-height:0}
+.psPvBox{position:relative;overflow:hidden;border-radius:8px;border:1px solid var(--line2);background:var(--card2);line-height:0}
 .psSvg{display:block;width:100%;height:auto}
 .psPvBox .psSvg{transition:transform .22s cubic-bezier(.3,.1,.2,1);transform-origin:50% 50%}
 .psCard:hover .psPvBox .psSvg,.psCard:focus-visible .psPvBox .psSvg,.psCard.on .psPvBox .psSvg{transform:scale(1.035)}
+.psBadge{position:absolute;left:6px;top:6px;width:20px;height:20px;border-radius:50%;background:var(--ink);color:#fff;font:600 10.5px var(--mono);display:flex;align-items:center;justify-content:center;line-height:1;box-shadow:0 1px 3px rgba(0,0,0,.25);animation:psBadgeIn .24s cubic-bezier(.3,.1,.2,1)}
+@keyframes psBadgeIn{from{transform:scale(.4);opacity:0}to{transform:none;opacity:1}}
 .psSize{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;font-size:11px;color:var(--ink70)}
 .psSize b{font:700 13px var(--mono);color:var(--ink)}
 .psFit{display:flex;align-items:baseline;gap:6px;flex-wrap:wrap;font-size:12px;color:var(--ink)}
@@ -176,21 +183,21 @@
 .psChain{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:0 14px 10px;font-size:11px;color:var(--ink70)}
 .psChain[hidden]{display:none}
 .psChain .lbl{font-size:10px;letter-spacing:.11em;text-transform:uppercase;font-weight:600;color:var(--ink45);margin-right:2px}
-.psChip{display:inline-flex;align-items:center;gap:7px;border:1px solid var(--line);background:var(--card2);color:var(--ink70);border-radius:999px;padding:3px 10px 3px 4px;font:inherit;font-size:11px;font-weight:600;max-width:100%;transition:border-color .13s,background-color .13s}
+.psChip{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);background:var(--card2);color:var(--ink70);border-radius:999px;padding:3px 10px 3px 4px;font:inherit;font-size:11px;font-weight:600;max-width:100%;transition:border-color .13s,background-color .13s}
 .psChip:hover{border-color:var(--ink45);background:var(--card)}
 .psChip:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
 .psChip .n{display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:50%;background:var(--ink);color:#fff;font:600 10px var(--mono)}
-.psChip .nm{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:15ch}
-.psChip .meter{display:inline-block;width:30px;height:4px;border-radius:2px;background:var(--line);overflow:hidden}
-.psChip .meter u{display:block;height:100%;background:var(--sage);border-radius:2px;text-decoration:none}
-.psChip.full .meter u{background:var(--gold)}
+.psChip .nm{display:none;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:15ch}
+.psChain.few .psChip .nm{display:inline}
+.psChip .dot{width:7px;height:7px;border-radius:50%;background:var(--sage);flex:none}
+.psChip.full .dot{background:var(--gold)}.psChip.cut .dot{background:var(--ink)}
 .psChain .arr{color:var(--ink25)}
 .psFx>.psFxTag{font:600 10.5px var(--sans);letter-spacing:.02em;line-height:1;padding:4px 10px;border-radius:999px;border:1px solid var(--line);background:var(--card);color:var(--ink70);white-space:nowrap;box-shadow:0 2px 6px rgba(30,24,16,.08)}
 .psFx>.psFxTag.on{background:var(--ink);color:#fff;border-color:var(--ink)}
 .psFx>.psFxTag b{display:inline-block;margin-left:6px;font-weight:500;opacity:.7;font-variant-numeric:tabular-nums}
 .psFx>.psFxSlot{background:#fffefb;box-shadow:0 1px 2px rgba(30,24,16,.1),0 10px 26px rgba(30,24,16,.13)}
 .psFx>.psFxSlot .psSvg{width:100%;height:100%}
-@media (prefers-reduced-motion:reduce){.psSpin{animation-duration:1.6s}.psPvBox .psSvg{transition:none}.psCard:hover .psPvBox .psSvg,.psCard.on .psPvBox .psSvg{transform:none}}
+@media (prefers-reduced-motion:reduce){.psBadge{animation:none}.psSpin{animation-duration:1.6s}.psPvBox .psSvg{transition:none}.psCard:hover .psPvBox .psSvg,.psCard.on .psPvBox .psSvg{transform:none}}
 `;
   doc.head.appendChild(css);
 
@@ -205,10 +212,10 @@
     return sec;
   }
   function paintSection(sec, m) {
-    const p = policyOf(m), cached = PS() && PS().cached ? PS().cached(m) : null, n = cached ? availableOf(cached.items).length : null, chain = chainOf(m);
+    const p = policyOf(m), cached = PS() && PS().cached ? PS().cached(m) : null, n = cached ? availableOf(cached.items, m).length : null, chain = chainOf(m);
     const rule = p.mode === 'new' ? `A <b>brand new sheet</b> is offered, ${mmWord(p.wMm, p.hMm)}` : 'Partial sheets are <b>reused automatically</b>';
     const sum = rule + (n != null ? ` · ${n} available` : '') + (chain.length ? ` · ${plural(chain.length, 'partial sheet')} in use` : '');
-    const el = sec.querySelector('[data-ps="sum"]'); if (el._h !== sum) { el._h = sum; el.innerHTML = sum; }
+    const el = sec.querySelector('[data-ps="sum"]'); if (el._h !== sum) { el._h = sum; el.innerHTML = sum + ' · <button type="button" class="psLink" data-ps="rule" title="Choose how partial sheets are reused">Change</button>'; }
   }
 
   /* ── the panel's view ── */
@@ -230,37 +237,57 @@
   const q = (view, k) => view.querySelector(`[data-ps="${k}"]`);
 
   function cardHtml(m, c, s, locked, i) {
-    const f = fitWords(c), use = lastUseWords(c), on = s.pick === c.id;
-    return `<button type="button" class="psCard hoverItem${on ? ' on' : ''}" data-m="${esc(m)}" data-id="${esc(c.id)}" data-i="${i}" aria-pressed="${on}"${locked ? ' aria-disabled="true"' : ''} aria-label="${esc(cardLabel(m, c))}">`
-      + `<span class="psPvBox">${sheetSvg(c)}</span>`
+    const f = fitWords(c), use = lastUseWords(c), at = s.chain.indexOf(c.id), on = at >= 0;
+    return `<button type="button" class="psCard hoverItem${on ? ' on' : ''}" data-m="${esc(m)}" data-id="${esc(c.id)}" data-i="${i}" aria-pressed="${on}"${locked ? ' aria-disabled="true"' : ''} aria-label="${esc(cardLabel(m, c) + (on ? `, number ${at + 1} in the chain` : ''))}">`
+      + `<span class="psPvBox">${sheetSvg(c)}${on ? `<span class="psBadge" aria-hidden="true">${at + 1}</span>` : ''}</span>`
       + `<span class="psSize"><b>${esc(mmWord(c.wMm, c.hMm))}</b><span>${Math.round(+c.areaMm2 || 0).toLocaleString()} mm²</span></span>`
       + `<span class="psFit"><b>${esc(f.main)}</b>${f.sub ? `<small>${esc(f.sub)}</small>` : ''}</span>`
       + `<span class="psUse"><span>Last used <b title="${esc(fullDate(+c.lastUsedAt))}">${esc(friendly(+c.lastUsedAt))}</b></span>${use ? `<small>${esc(use)}</small>` : ''}</span></button>`;
   }
+  // (a name that tells one partial sheet from another: the sheet it was cut from, and when; two leftovers of one sheet differ by their date)
+  const cardName = c => c ? [[c.sourceSheet, c.sourceSet].filter(Boolean).join(' · ') || 'Partial sheet', Number.isFinite(+c.cutAt) ? 'cut ' + new Date(+c.cutAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : ''].filter(Boolean).join(' · ') : 'Partial sheet';
+  /** PS2's preview as the panel draws it (PartialNest.preview: links = the listed partial sheets that take pieces, continues = the rest). */
+  function normalize(ans) {
+    if (!ans || ans.ok === false) return { ok: false, reason: (ans && (ans.why || ans.reason)) || 'This partial sheet cannot be used now.' };
+    const cont = ans.continues || {};
+    return { ok: true, pieces: Math.max(0, +ans.pieces || 0), fitsAll: !!ans.fitsAll, words: ans.words || '',
+      links: (ans.links || []).map(l => ({ partialId: l.partialId, label: l.label || '', wMm: l.wMm, hMm: l.hMm, areaMm2: l.areaMm2, placed: Math.max(0, +l.placed || 0), densityPct: l.densityPct })),
+      rest: Math.max(0, +cont.n || 0), next: cont.next || 'none', nextPartialId: cont.nextPartialId || null, contWords: cont.words || '' };
+  }
   function askHtml(m, sh, s) {
     const a = s.ask; if (!a) return '';
-    const pol = policyOf(m);
-    if (a.phase === 'checking') return `<div class="psAsk" data-ps="ask"><div class="psBusy" role="status"><span class="psSpin" aria-hidden="true"></span>Checking how ${esc(plural(piecesOn(sh), 'piece'))} fit on this partial sheet…</div></div>`;
+    const pol = policyOf(m), cards = new Map(availableOf(s.items, m).map(c => [c.id, c]));
+    if (a.phase === 'checking') return `<div class="psAsk" data-ps="ask"><div class="psBusy" role="status"><span class="psSpin" aria-hidden="true"></span>${esc(a.text || `Checking how ${plural(piecesOn(sh), 'piece')} fit on ${s.chain.length > 1 ? 'these partial sheets' : 'this partial sheet'}…`)}</div></div>`;
     if (a.phase === 'bad') return `<div class="psAsk" data-ps="ask"><p class="psWords bad" role="alert">${esc(a.text)}</p><div class="psAskBtns"><button type="button" class="btn ghost xs" data-ps="cancel">Close</button></div></div>`;
-    const ans = a.answer, n = +ans.pieces || 0, fits = Math.max(0, +ans.fits || 0), rest = Math.max(0, +ans.rest || 0), chain = Array.isArray(ans.chain) ? ans.chain : [];
-    let lead, sub = '';
-    if (!n) lead = `No pieces are nested on ${sheetWord(sh)} yet. It will nest on this partial sheet from the start.`;
-    else if (ans.fitsAll) lead = `All ${plural(n, 'piece')} on ${sheetWord(sh)} fit on this partial sheet. They will be nested again onto it.`;
-    else if (!fits) lead = 'No piece of this sheet fits on this partial sheet. Pick another one.';
-    else lead = `${fits} of the ${plural(n, 'piece')} on ${sheetWord(sh)} fit on this partial sheet. The other ${rest} continue on the next partial sheet${chain.length > 2 ? 's' : ''}, each filled in turn:`;
-    if (!ans.fitsAll && fits && ans.then === 'new') sub = pol.mode === 'new' ? `If pieces are still left after the last partial sheet, a brand new sheet of ${mmWord(pol.wMm, pol.hMm)} takes them.` : 'If pieces are still left after the last partial sheet, a brand new sheet takes them.';
-    else if (!ans.fitsAll && fits && ans.then === 'wait') sub = 'If pieces are still left after the last partial sheet, they wait for the next sheet.';
-    const list = !ans.fitsAll && fits && chain.length ? `<ol class="psChainList">${chain.map((p, i) => `<li><span class="n">${i + 1}</span><span class="nm" title="${esc(p.name || '')}">${esc(p.name || 'Partial sheet')}</span><span class="sz">${esc(mmWord(p.wMm, p.hMm))}</span><span class="ft">${esc(plural(+p.fits || 0, 'piece'))}</span></li>`).join('')}</ol>` : '';
-    const busy = a.phase === 'seating', can = (!n || fits > 0) && !a.noEngine;
-    return `<div class="psAsk" data-ps="ask" role="group" aria-label="What using this partial sheet does"><p class="psWords">${esc(lead)}</p>${ans.note ? `<p class="psSub">${esc(ans.note)}</p>` : ''}${list}${sub ? `<p class="psSub">${esc(sub)}</p>` : ''}${a.noEngine ? '<p class="psSub">Seating pieces on a partial sheet is not ready on this page yet.</p>' : ''}`
-      + (busy ? `<div class="psBusy" role="status"><span class="psSpin" aria-hidden="true"></span>Seating ${esc(plural(n, 'piece'))} on the partial sheet…</div>` : '')
-      + `<div class="psAskBtns"><button type="button" class="btn ghost xs" data-ps="cancel"${busy ? ' disabled' : ''}>Cancel</button><button type="button" class="btn sage xs" data-ps="use"${busy || !can ? ' disabled' : ''}>Use this one</button></div></div>`;
+    const ans = a.answer, n = ans.pieces, placed = ans.links.reduce((t, l) => t + l.placed, 0), rest = ans.rest, many = ans.links.length > 1, busy = a.phase === 'seating';
+    let lead;
+    if (!n) lead = `No pieces are nested on ${sheetWord(sh)} yet. It will nest on ${many ? 'these partial sheets' : 'this partial sheet'} from the start.`;
+    else if (ans.fitsAll) lead = `All ${plural(n, 'piece')} on ${sheetWord(sh)} fit on ${many ? `these ${ans.links.length} partial sheets, filled in this order` : 'this partial sheet'}. They will be nested again onto ${many ? 'them' : 'it'}.`;
+    else if (!placed) lead = `No piece of ${sheetWord(sh)} fits on ${s.chain.length > 1 ? 'these partial sheets' : 'this partial sheet'}. Pick another one.`;
+    else lead = `${placed} of the ${plural(n, 'piece')} on ${sheetWord(sh)} fit on ${many ? `the ${ans.links.length} partial sheets, filled in this order` : 'this partial sheet'}${rest ? ` (${rest} do not)` : ''}.`;
+    // what takes the rest, in PS2's own words (and the sheet it names, when it names one)
+    let sub = ''; const next = ans.nextPartialId && cards.get(ans.nextPartialId);
+    if (!ans.fitsAll && placed && rest) {
+      sub = ans.contWords || (ans.next === 'partial' ? `The other ${rest} continue on the next partial sheet.` : ans.next === 'new' ? `The other ${rest} go on a brand new sheet.` : `The other ${rest} wait: no sheet takes them yet.`);
+      if (next) sub += ` Next in line: ${cardName(next)}, ${mmWord(next.wMm, next.hMm)}.`;
+      else if (ans.next === 'new' && pol.mode === 'new') sub += ` Its size is ${mmWord(pol.wMm, pol.hMm)}, as you set it.`;
+    }
+    const list = ans.links.length && (!ans.fitsAll || many) ? `<ol class="psChainList">${ans.links.map((l, i) => { const c = cards.get(l.partialId); return `<li><span class="n">${i + 1}</span><span class="nm" title="${esc(cardName(c))}">${esc(cardName(c))}</span><span class="sz">${esc(mmWord(l.wMm || (c && c.wMm), l.hMm || (c && c.hMm)))}</span><span class="ft" title="${l.densityPct != null ? esc(l.densityPct + '% of this partial sheet filled') : ''}">${esc(plural(l.placed, 'piece'))}</span></li>`; }).join('')}</ol>` : '';
+    const can = !a.noEngine && (!n || placed > 0), more = !a.noEngine && !ans.fitsAll && placed > 0 && availableOf(s.items, m).some(c => !s.chain.includes(c.id));
+    if (s.adding && !busy) return `<div class="psAsk" data-ps="ask" role="group"><p class="psWords">${esc(lead)}</p>${list}<p class="psSub">Pick the partial sheet that takes the rest. It is filled after the ones above.</p><div class="psAskBtns"><button type="button" class="btn ghost xs" data-ps="back-ask">Back</button></div></div>`;
+    return `<div class="psAsk" data-ps="ask" role="group" aria-label="What using ${many ? 'these partial sheets' : 'this partial sheet'} does"><p class="psWords">${esc(lead)}</p>${list}${sub ? `<p class="psSub">${esc(sub)}</p>` : ''}${ans.words && /trial/i.test(ans.words) ? '<p class="psSub">A quick trial pack: the real nest can place a few more or fewer.</p>' : ''}${a.noEngine ? '<p class="psSub">Seating pieces on a partial sheet is not ready on this page yet.</p>' : ''}`
+      + (busy ? `<div class="psBusy" role="status"><span class="psSpin" aria-hidden="true"></span>${esc(a.text || `Seating ${plural(n, 'piece')}…`)}</div>` : '')
+      + `<div class="psAskBtns"><button type="button" class="btn ghost xs" data-ps="cancel"${busy ? ' disabled' : ''}>Cancel</button>${more ? `<button type="button" class="btn ghost xs" data-ps="add"${busy ? ' disabled' : ''}>Add another partial sheet</button>` : ''}<button type="button" class="btn sage xs" data-ps="use"${busy || !can ? ' disabled' : ''}>${many ? `Use these ${ans.links.length}` : 'Use this one'}</button></div></div>`;
   }
-  const lockedWhy = sh => sh && (sh.recalled || sh.roseCutAt) ? `${sheetWord(sh)} is already cut, so it stays on the sheet it was cut from.` : '';
+  const lockedWhy = sh => {
+    if (!sh) return '';
+    try { const E = ENG(), r = E && E.canSeat ? E.canSeat(sh) : null; if (r) return r.ok === false ? (r.why || 'This sheet cannot use a partial sheet now.') : ''; } catch (_) {}
+    return sh.recalled || sh.roseCutAt ? `${sheetWord(sh)} is already cut, so it stays on the sheet it was cut from.` : '';
+  };
 
   function paintList(view, m, sh, s) {
-    const list = q(view, 'list'), items = availableOf(s.items), lock = lockedWhy(sh);
-    const sig = JSON.stringify([s.items && items.map(c => [c.id, c.lastUsedAt, c.estimate && c.estimate.pieces, c.areaMm2]), s.loading ? 1 : 0, s.error, s.pick, s.ask && [s.ask.phase, s.ask.text, s.ask.answer && s.ask.answer.fits, s.ask.noEngine], lock, piecesOn(sh), policyOf(m).mode === 'new' ? [policyOf(m).wMm, policyOf(m).hMm] : 0]);
+    const list = q(view, 'list'), items = availableOf(s.items, m), lock = lockedWhy(sh);
+    const sig = JSON.stringify([s.items && items.map(c => [c.id, c.lastUsedAt, c.estimate && c.estimate.pieces, c.areaMm2]), s.loading ? 1 : 0, s.error, s.chain, s.adding, s.ask && [s.ask.phase, s.ask.text, s.ask.answer && [s.ask.answer.rest, s.ask.answer.fitsAll, s.ask.answer.links.length], s.ask.noEngine], lock, piecesOn(sh), policyOf(m).mode === 'new' ? [policyOf(m).wMm, policyOf(m).hMm] : 0]);
     if (list._sig === sig) return; list._sig = sig;
     const focusId = doc.activeElement && view.contains(doc.activeElement) ? doc.activeElement.dataset && doc.activeElement.dataset.id : null;
     if (!s.items) {
@@ -275,8 +302,15 @@
       return;
     }
     let html = (s.error ? `<p class="psSub psErr" style="grid-column:1/-1;margin:0">Could not refresh: ${esc(s.error)}</p>` : '') + (lock ? `<p class="psSub" style="grid-column:1/-1;margin:0">${esc(lock)}</p>` : '');
-    items.forEach((c, i) => { html += cardHtml(m, c, s, !!lock, i); if (s.pick === c.id && s.ask) html += askHtml(m, sh, s); });
+    items.forEach((c, i) => { html += cardHtml(m, c, s, !!lock, i); if (s.ask && s.chain[s.chain.length - 1] === c.id) html += askHtml(m, sh, s); });
     list.innerHTML = html;
+    // the answer sits under the row of the card picked (it spans every column), so the cards beside it stay in their row
+    const answer = list.querySelector('[data-ps="ask"]');
+    if (answer) {
+      const cards = [...list.querySelectorAll('.psCard')], at = cards.findIndex(x => x.dataset.id === s.chain[s.chain.length - 1]);
+      let cols = 1; try { cols = Math.max(1, getComputedStyle(list).gridTemplateColumns.split(' ').filter(Boolean).length); } catch (_) {}
+      if (at >= 0) cards[Math.min(cards.length - 1, (Math.floor(at / cols) + 1) * cols - 1)].after(answer);
+    }
     if (focusId) { const f = [...list.querySelectorAll('.psCard')].find(x => x.dataset.id === focusId); if (f) f.focus({ preventScroll: true }); }
     if (!reduced() && s.entered !== s.enteredFor) { s.enteredFor = s.entered; [...list.querySelectorAll('.psCard')].slice(0, 12).forEach((n, i) => { try { n.animate([{ opacity: 0, transform: 'translateY(8px)' }, { opacity: 1, transform: 'none' }], { duration: 300, delay: i * 45, easing: 'cubic-bezier(.3,.1,.2,1)', fill: 'backwards' }); } catch (_) {} }); }
     const ask = list.querySelector('[data-ps="ask"]'); if (ask && ask._sigPhase !== (s.ask && s.ask.phase)) { ask._sigPhase = s.ask && s.ask.phase; if (!reduced()) try { ask.animate([{ opacity: 0, transform: 'translateY(-4px)' }, { opacity: 1, transform: 'none' }], { duration: 200, easing: 'ease-out' }); } catch (_) {} }
@@ -304,12 +338,13 @@
     const menu = node && node.querySelector('.solidOptions'), view = menu && menu.querySelector(':scope>.psView'); if (!menu || !view) return;
     menu.classList.toggle('psOn', !!on); view.hidden = !on;
     if (on) {
-      s.pick = null; s.ask = null; s.entered++; s.polDraft = null; s.polMsg = '';
-      menu.scrollTop = 0; paintView(m); load(m);
+      s.chain = []; s.adding = false; s.ask = null; s.entered++; s.polDraft = null; s.polMsg = ''; s.items = null;
+      menu.scrollTop = 0; load(m); paintView(m);
       if (!reduced()) try { view.animate([{ opacity: 0, transform: 'translateX(10px)' }, { opacity: 1, transform: 'none' }], { duration: 240, easing: 'cubic-bezier(.3,.1,.2,1)' }); } catch (_) {}
-      const first = view.querySelector('.psCard') || q(view, 'back'); if (first) first.focus({ preventScroll: true });
+      if (opt.rule) { const pol = view.querySelector('[data-ps="policy"]'), r = pol && pol.querySelector('.psRadio.on input, input'); if (pol) menu.scrollTop = Math.max(0, pol.offsetTop - 70); if (r) r.focus({ preventScroll: true }); }
+      else { const first = view.querySelector('.psCard') || q(view, 'back'); if (first) first.focus({ preventScroll: true }); }
     } else {
-      s.pick = null; s.ask = null;
+      s.chain = []; s.adding = false; s.ask = null; s.seq++;
       const opener = menu.querySelector('[data-solid="partial"] [data-ps="open"]'); if (opener && opt.focus !== false) opener.focus({ preventScroll: true });
     }
   }
@@ -318,7 +353,7 @@
   function load(m, o = {}) {
     const s = stOf(m), P = PS(); if (!P || !P.list) return null;
     if (s.loading) return s.loading;
-    const had = P.cached ? P.cached(m) : null; if (had && !s.items) s.items = had.items || [];
+    const had = P.cached ? P.cached(m) : null; if (had && had.at > 0 && !s.items) s.items = had.items || [];   // (a list this page has changed since (at 0) is not shown: the spinner is, and one call reads it again)
     s.error = '';
     s.loading = (async () => {
       try { const r = await P.list(m, { force: !!o.force }); s.items = (r && r.items) || []; s.error = ''; }
@@ -334,35 +369,42 @@
   }
 
   /* ── a pick: the answer in words first, then Use this one or Cancel ── */
-  async function fallbackPreview(sh, id) {
+  async function fallbackPreview(sh, ids) {   // (the engine is not on the page: PartialSheets.plan's estimate, so the panel is never empty; nothing can be used then)
     const P = PS(), m = sh.metal, C = root.CN;
     if (!P || !P.plan) return { ok: false, reason: 'Partial sheets cannot be checked on this page yet.' };
-    const items = availableOf(stOf(m).items), pick = items.find(c => c.id === id); if (!pick) return { ok: false, reason: 'This partial sheet is not available any more. Press Refresh.' };
+    const items = availableOf(stOf(m).items, m), picked = ids.map(id => items.find(c => c.id === id)).filter(Boolean); if (!picked.length) return { ok: false, reason: 'This partial sheet is not available any more. Press Refresh.' };
     const pieces = (sh.charms || []).map(c => ({ areaMm2: Math.max(1, (C && C.inflatedArea ? C.inflatedArea(c) : 0) * MM_PER_PT * MM_PER_PT) }));
-    const r = await P.plan(m, pieces, {});
-    const n = pieces.length, cap = Math.round((r && r.partials && r.partials.find(p => p.id === id) || {}).pieces || (pick.estimate && pick.estimate.pieces) || 0), fits = Math.min(n, cap);
-    return { ok: true, pieces: n, fitsAll: n > 0 && fits >= n, fits, rest: n - fits, chain: [{ partialId: id, name: [pick.sourceSheet, pick.sourceSet].filter(Boolean).join(' · ') || 'Partial sheet', wMm: pick.wMm, hMm: pick.hMm, areaMm2: pick.areaMm2, fits }], then: n - fits > 0 ? 'new' : null, note: '', estimated: true };
+    await P.plan(m, pieces, {});
+    let left = pieces.length; const links = [];
+    for (const c of picked) { const cap = Math.round((c.estimate && c.estimate.pieces) || 0), put = Math.min(left, cap); left -= put; if (put) links.push({ partialId: c.id, wMm: c.wMm, hMm: c.hMm, areaMm2: c.areaMm2, placed: put }); }
+    return { ok: true, noEngine: true, pieces: pieces.length, fitsAll: pieces.length > 0 && left === 0, links, rest: left, next: left ? 'new' : 'none', contWords: '', words: '' };
   }
-  async function pick(m, id) {
-    const s = stOf(m), sh = s.sh; if (!sh) return;
-    if (s.ask && s.ask.phase === 'seating') return;
-    if (s.pick === id && s.ask && s.ask.phase !== 'bad') return;
-    const why = lockedWhy(sh); if (why) { root.CN && root.CN.toast && root.CN.toast(why, 'bad'); return; }
-    const seq = ++s.seq; s.pick = id; s.ask = { id, phase: 'checking', seq }; paintView(m);
+  async function runPreview(m) {
+    const s = stOf(m), sh = s.sh; if (!sh || !s.chain.length) return;
+    const seq = ++s.seq, ids = s.chain.slice(); s.ask = { phase: 'checking', seq, text: '' }; paintView(m);
     let ans;
     try {
       const E = ENG();
-      ans = E && E.preview ? await E.preview(sh, id) : await fallbackPreview(sh, id);
-      if (ans && ans.ok && !E) ans.noEngine = true;
+      ans = E && E.preview ? normalize(await E.preview(sh, ids, { onStep: st => { const t = st && st.text; if (t && s.seq === seq && s.ask && s.ask.phase === 'checking' && s.ask.text !== t) { s.ask.text = t; paintView(m); } } })) : await fallbackPreview(sh, ids);
     } catch (e) { ans = { ok: false, reason: e && e.message ? e.message : String(e) }; }
-    if (s.seq !== seq || !s.ask || s.ask.id !== id) return;   // another pick or Cancel came meanwhile
-    s.ask = ans && ans.ok ? { id, phase: 'answer', seq, answer: ans, noEngine: !!ans.noEngine } : { id, phase: 'bad', seq, text: (ans && ans.reason) || 'This partial sheet cannot be used now.' };
+    if (s.seq !== seq || !s.ask) return;   // another pick or Cancel came meanwhile
+    s.ask = ans && ans.ok ? { phase: 'answer', seq, answer: ans, noEngine: !!ans.noEngine } : { phase: 'bad', seq, text: (ans && ans.reason) || 'This partial sheet cannot be used now.' };
     paintView(m);
-    const go = s.node && s.node.querySelector('.psView [data-ps="use"]:not([disabled])'); if (go) go.focus({ preventScroll: true }); else { const c = s.node && s.node.querySelector('.psView [data-ps="cancel"]'); if (c) c.focus({ preventScroll: true }); }
+    const go = s.node && s.node.querySelector('.psView [data-ps="use"]:not([disabled])'); if (go) go.focus({ preventScroll: true }); else { const c = s.node && s.node.querySelector('.psView [data-ps="cancel"],.psView [data-ps="back-ask"]'); if (c) c.focus({ preventScroll: true }); }
   }
-  function cancelAsk(m) {
-    const s = stOf(m); if (!s.ask || s.ask.phase === 'seating') return false;
-    const id = s.pick; s.seq++; s.ask = null; s.pick = null; paintView(m);
+  /** A press on a card: it is the chain's first (the answer comes first, nothing is claimed); while "Add another partial sheet" waits it is the next one. */
+  function pick(m, id) {
+    const s = stOf(m), sh = s.sh; if (!sh) return;
+    if (s.ask && s.ask.phase === 'seating') return;
+    const why = lockedWhy(sh); if (why) { root.CN && root.CN.toast && root.CN.toast(why, 'bad'); return; }
+    if (s.adding) { if (s.chain.includes(id)) return; s.chain = s.chain.concat(id); s.adding = false; }
+    else { if (s.chain.length === 1 && s.chain[0] === id && s.ask && s.ask.phase !== 'bad') return; s.chain = [id]; }
+    runPreview(m);
+  }
+  function cancelAsk(m) {   // Cancel changes nothing: nothing was claimed, nothing moved
+    const s = stOf(m); if (!s.ask && !s.chain.length) return false; if (s.ask && s.ask.phase === 'seating') return false;
+    if (s.adding) { s.adding = false; paintView(m); return true; }
+    const id = s.chain[0]; s.seq++; s.ask = null; s.chain = []; paintView(m);
     const c = s.node && [...s.node.querySelectorAll('.psView .psCard')].find(x => x.dataset.id === id); if (c) c.focus({ preventScroll: true });
     return true;
   }
@@ -370,25 +412,33 @@
     const s = stOf(m), R = root.Gate && root.Gate.state ? root.Gate.state() : null; if (R) (R.optionsOpen || (R.optionsOpen = {}))[m] = false;
     const d = s.node && s.node.querySelector('.sheetOptions'); if (d && d.open) { d.open = false; try { d.querySelector(':scope > summary').focus({ preventScroll: true }); } catch (_) {} }
   }
+  const STEP_WORDS = { check: 'Checking the sheet…', release: "Giving the sheet's old metal back…", claim: 'Reserving the partial sheet…', nest: 'Nesting the pieces on the partial sheet…', continue: 'Moving the rest to the next partial sheet…', save: 'Saving the layout…' };
   async function commit(m) {
     const s = stOf(m), a = s.ask, sh = s.sh, E = ENG(); if (!a || a.phase !== 'answer' || !sh) return;
-    if (!E || !E.useOn) { a.noEngine = true; paintView(m); return; }
-    a.phase = 'seating'; paintView(m);
-    let cap = null; try { cap = capture(sh, a.answer); } catch (e) { cap = null; }
-    const id = a.id, answer = a.answer;
+    if (!E || !E.seat) { a.noEngine = true; paintView(m); return; }
+    const ids = s.chain.slice(), answer = a.answer; a.phase = 'seating'; a.text = STEP_WORDS.check; paintView(m);
+    let cap = null; try { cap = capture(sh, answer); } catch (e) { cap = null; }   // (the card as it is now: the scene is made of it, and plays at once, whatever the work then takes)
+    let started = false;
+    // the work has begun on the sheet: the panel closes (as Merge sheets does) so the sheet is in full view, and the re-seat plays
+    const go = () => { if (started) return; started = true; closeOptions(m); setOpen(m, false, { focus: false }); if (cap) playScene(cap, answer); };
+    const onStep = st => {
+      const k = st && st.key; if (!k) return;
+      if (s.ask === a) { a.text = (st && st.text) || STEP_WORDS[k] || a.text; paintView(m); }
+      if (k === 'nest' || k === 'continue') go();
+    };
     try {
-      const r = await E.useOn(sh, id, { onStep: () => {} });
-      if (r && r.ok === false) throw new Error(r.error || 'The partial sheet was not used');
+      const r = await E.seat(sh, ids, { onStep, confirmed: true });
+      if (!r || r.ok === false) throw new Error((r && (r.why || r.error)) || 'The partial sheet was not used');
       try { PS() && PS().changed && PS().changed(); } catch (_) {}
-      s.items = s.items ? s.items.filter(c => c.id !== id) : s.items;
-      s.pick = null; s.ask = null; closeOptions(m); setOpen(m, false, { focus: false });
-      const done = (r && r.placed != null ? r.placed : answer.fits) | 0;
-      root.CN && root.CN.toast && root.CN.toast(answer.fitsAll || !answer.rest ? `${plural(done || answer.pieces || 0, 'piece')} seated on the partial sheet` : `${plural(done, 'piece')} seated on the partial sheet; ${answer.rest} continue on the next one`, 'ok');
-      if (cap) playScene(cap, answer, r);
+      go();   // (an engine that never said it was nesting: the panel closes and the scene plays now)
+      const moved = r.moved != null ? r.moved | 0 : answer.links.reduce((t, l) => t + l.placed, 0), left = r.continues != null ? r.continues | 0 : answer.rest;
+      root.CN && root.CN.toast && root.CN.toast(left ? `${plural(moved, 'piece')} seated on the partial sheet; ${left} continue on the next one` : `${plural(moved || answer.pieces, 'piece')} seated on the partial sheet`, 'ok');
       refreshSections(m); paintChain(m);   // (the list is read again the next time the panel opens: one call then, none now)
     } catch (e) {
-      s.ask = { id, phase: 'bad', seq: s.seq, text: e && e.message ? e.message : String(e) }; paintView(m);
-      root.CN && root.CN.toast && root.CN.toast('Partial sheet not used: ' + (s.ask.text), 'bad');
+      const text = e && e.message ? e.message : String(e);
+      if (s.ask === a) { s.ask = { phase: 'bad', seq: s.seq, text }; paintView(m); }
+      root.CN && root.CN.toast && root.CN.toast('Partial sheet not used: ' + text, 'bad');
+      refreshSections(m); paintChain(m);
     }
   }
 
@@ -414,7 +464,9 @@
       if (t.closest('[data-ps="back"]')) { setOpen(m, false); return; }
       if (t.closest('[data-ps="close"]')) { const real = s.node && s.node.querySelector('.sheetOptionsClose'); if (real) real.click(); return; }
       if (t.closest('[data-ps="refresh"]')) { load(m, { force: true }); return; }
-      if (t.closest('[data-ps="cancel"]')) { if (s.ask && s.ask.phase === 'bad') { const had = s.pick; s.ask = null; s.pick = null; paintView(m); const c = [...view.querySelectorAll('.psCard')].find(x => x.dataset.id === had); if (c) c.focus({ preventScroll: true }); } else cancelAsk(m); return; }
+      if (t.closest('[data-ps="cancel"]')) { cancelAsk(m); return; }   // (Close on a refusal and Cancel on an answer: nothing was claimed, nothing moved)
+      if (t.closest('[data-ps="back-ask"]')) { s.adding = false; paintView(m); return; }
+      if (t.closest('[data-ps="add"]')) { s.adding = true; paintView(m); const c = view.querySelector('.psCard:not(.on)'); if (c) c.focus({ preventScroll: true }); return; }
       if (t.closest('[data-ps="use"]')) { commit(m); return; }
       if (t.closest('[data-ps="polsave"]')) {
         const v = sizeValues(view); if (!v) { s.polMsg = 'Use a width and height between 5 and 500 mm'; paintView(m); root.CN && root.CN.toast && root.CN.toast(s.polMsg, 'bad'); return; }
@@ -429,9 +481,9 @@
       const v = r.value === 'new' ? sizeValues(view) || { w: p.wMm, h: p.hMm } : { w: p.wMm, h: p.hMm };
       savePolicy(m, r.value, v.w, v.h);
     });
-    view.addEventListener('input', e => { const i = e.target; if (i && i.matches && i.matches('[data-ps="w"],[data-ps="h"]')) { i._draft = true; s.polMsg = ''; } });
+    view.addEventListener('input', e => { const i = e.target; if (i && i.matches && i.matches('[data-ps="w"],[data-ps="h"]')) { i._draft = true; if (s.polMsg) { s.polMsg = ''; paintView(m); } } });
     view.addEventListener('keydown', e => {
-      if (e.key === 'Escape') { if (s.ask && s.ask.phase !== 'seating' && cancelAsk(m)) { e.preventDefault(); e.stopPropagation(); } else if (s.ask && s.ask.phase === 'seating') { e.preventDefault(); e.stopPropagation(); } return; }   // (a second Esc closes the Options panel as ever)
+      if (e.key === 'Escape') { if ((s.ask && s.ask.phase === 'seating') || cancelAsk(m)) { e.preventDefault(); e.stopPropagation(); } return; }   // (an answer, or the choosing of another partial sheet, is cancelled first; with none, Esc closes the Options panel as ever)
       if (e.key === 'Enter' && e.target.matches && e.target.matches('[data-ps="w"],[data-ps="h"]')) { e.preventDefault(); const sv = q(view, 'polsave'); if (sv && !sv.hidden) sv.click(); return; }
       const card = e.target.closest && e.target.closest('.psCard');
       if (card && ['ArrowRight', 'ArrowLeft', 'ArrowDown', 'ArrowUp'].includes(e.key)) {
@@ -441,27 +493,47 @@
     });
   }
 
-  /* ── the sheet card's chain strip: the partial sheets in use, 1, 2, 3 ... (PartialEngine.chain) ── */
-  function chainOf(m) { try { const E = ENG(); return E && E.chain ? (E.chain(m) || []) : []; } catch (_) { return []; } }
+  /* ── the sheet card's chain strip: the sheets of the metal that sit on a partial sheet, in order, 1, 2, 3 ... (PartialNest.chain) ── */
+  function chainOf(m) {
+    try {
+      const E = ENG(), C = root.CN, s = stOf(m), pages = C && C.pagesOf ? C.pagesOf(m) : [], sh = s.sh || pages[0];
+      return E && E.chain && sh ? (E.chain(sh) || []) : [];
+    } catch (_) { return []; }
+  }
   function paintChain(m) {
     const C = root.CN, card = C && C.S && C.S.sheets && C.S.sheets[m] && C.S.sheets[m].cardEl; if (!card) return;
     const chain = chainOf(m); let host = card.querySelector(':scope .psChain');
-    const sig = JSON.stringify(chain.map(c => [c.n, c.partialId, c.pieces, c.full, c.sheetPage, c.wMm, c.hMm]));
+    const sig = JSON.stringify(chain.map(c => [c.sheetId, c.label, c.partialId, c.placed, c.waiting, c.state, c.page, c.wMm, c.hMm]));
     if (!chain.length) { if (host) host.hidden = true; return; }
     if (!host) { host = doc.createElement('div'); host.className = 'psChain'; host.setAttribute('role', 'group'); const before = card.querySelector('.roseHistory') || card.querySelector('.shPreviewWrap'); if (!before) return; before.before(host); }
-    host.hidden = false; if (host._sig === sig) return; host._sig = sig;
-    host.setAttribute('aria-label', `Partial sheets in use: ${chain.map(c => c.name).join(', then ')}`);
+    const wasHidden = host.hidden; host.hidden = false; if (host._sig === sig) return; host._sig = sig;
+    host.classList.toggle('few', chain.length <= 4);   // (up to four show their sheet's name; a longer chain, which has no limit, shows 1, 2, 3 ... and the name in its tooltip)
+    host.setAttribute('aria-label', `Sheets on partial sheets: ${chain.map(c => c.label).join(', then ')}`);
+    const stateWord = { open: 'taking pieces', full: 'full', cut: 'cut' };
     host.innerHTML = '<span class="lbl">Partial sheets</span>' + chain.map((c, i) => {
-      const pct = Math.max(0, Math.min(100, Math.round((+c.usedPct != null && Number.isFinite(+c.usedPct) ? +c.usedPct : (c.full ? 100 : 0)))));
-      return (i ? '<span class="arr" aria-hidden="true">›</span>' : '') + `<button type="button" class="psChip${c.full ? ' full' : ''}" data-n="${i + 1}" data-page="${esc(c.sheetPage == null ? '' : c.sheetPage)}" title="${esc(`${c.name} · ${mmWord(c.wMm, c.hMm)} · ${plural(+c.pieces || 0, 'piece')}${c.full ? ' · full' : ''}`)}"><span class="n">${i + 1}</span><span class="nm">${esc(c.name || 'Partial sheet')}</span><span class="meter" aria-hidden="true"><u style="width:${pct}%"></u></span></button>`;
+      const st = stateWord[c.state] ? c.state : 'open', size = Number.isFinite(+c.wMm) && Number.isFinite(+c.hMm) ? mmWord(c.wMm, c.hMm) : '';
+      return (i ? '<span class="arr" aria-hidden="true">›</span>' : '') + `<button type="button" class="psChip ${st}" data-n="${i + 1}" data-page="${esc(c.page == null ? '' : c.page)}" title="${esc(`${c.label || 'Sheet'} · on a ${size} partial sheet · ${plural(+c.placed || 0, 'piece')} placed${c.waiting ? `, ${c.waiting} waiting` : ''} · ${stateWord[st]}`)}"><span class="n">${i + 1}</span><span class="nm">${esc(c.label || 'Partial sheet')}</span><i class="dot" aria-hidden="true"></i></button>`;
     }).join('');
+    if (!reduced() && (wasHidden || !host._shown)) { host._shown = true; try { host.animate([{ opacity: 0, transform: 'translateY(-4px)' }, { opacity: 1, transform: 'none' }], { duration: 260, easing: 'ease-out' }); } catch (_) {} }
     if (!host._wired) { host._wired = true; host.addEventListener('click', e => { const b = e.target.closest('.psChip'); if (!b || b.dataset.page === '') return; try { C.showPage(m, Math.max(0, +b.dataset.page - 1)); } catch (_) {} }); }
   }
   // (the data layer and the engine may arrive after this file: each is subscribed to once, the first time the panel is drawn with it)
   const subs = { ps: false, eng: false };
   function subscribe() {
-    try { const P = PS(); if (P && P.on && !subs.ps) { subs.ps = true; P.on(ev => { const m = ev && ev.metal; if (!m) return; const s = stOf(m); if (P.cached) { const c = P.cached(m); if (c) s.items = c.items || s.items; } paintView(m); refreshSections(m); }); } } catch (_) {}
-    try { const E = ENG(); if (E && E.on && !subs.eng) { subs.eng = true; E.on(ev => { if (ev && ev.metal) paintChain(ev.metal); }); } } catch (_) {}
+    try {
+      const P = PS();
+      if (P && P.on && !subs.ps) {
+        subs.ps = true;
+        P.on(ev => {   // (PartialSheets says '*' for every metal: something this page changed, or the tab looked at again after a minute)
+          for (const m of ev && ev.metal === '*' ? Object.keys(ST) : ev && ev.metal ? [ev.metal] : []) {
+            const s = stOf(m), c = P.cached ? P.cached(m) : null; if (c && c.at > 0 && c.items) s.items = c.items;
+            paintView(m); refreshSections(m);
+            if (ev.reason === 'visible' && s.open) load(m);
+          }
+        });
+      }
+    } catch (_) {}
+    try { const E = ENG(); if (E && E.on && !subs.eng) { subs.eng = true; E.on(ev => { if (ev && ev.metal) { paintChain(ev.metal); refreshSections(ev.metal); } }); } } catch (_) {}
   }
 
   /* ── what renderRelease calls on every draw of the Options panel ── */
@@ -472,7 +544,7 @@
     subscribe();
     const s = stOf(m); s.sh = sh; s.node = node;
     const sec = ensureSection(menu); sec.hidden = false; const view = ensureView(menu, m);
-    if (!sec._wired) { sec._wired = true; sec.querySelector('[data-ps="open"]').addEventListener('click', () => { setOpen(m, true); }); }
+    if (!sec._wired) { sec._wired = true; sec.addEventListener('click', e => { if (e.target.closest('[data-ps="open"]')) setOpen(m, true); else if (e.target.closest('[data-ps="rule"]')) setOpen(m, true, { rule: true }); }); }
     wire(view, m);
     const details = node.querySelector('.sheetOptions');
     if (details && !details._psToggle) { details._psToggle = true; details.addEventListener('toggle', () => { if (!details.open) { const st = stOf(m); if (st.open) setOpen(m, false, { focus: false }); st.pick = null; st.ask = null; } }); }
@@ -509,7 +581,7 @@
     const ground = doc.createElement('canvas'); ground.width = Math.round(W); ground.height = Math.round(H);
     // (more pieces than fly: the card's own picture, all of them on it, is the ground, so the first frame is the card as it was)
     ground.getContext('2d').drawImage(pieces.length > 90 ? cv : full, v.R, v.R, W, H, 0, 0, ground.width, ground.height);
-    return { sh, m: sh.metal, card, wrap, cv, v, W, H, cvW: cv.width, cvH: cv.height, pieces: pieces.slice(0, 90), ground, answer };
+    return { sh, m: sh.metal, card, wrap, cv, v, W, H, cvW: cv.width, cvH: cv.height, pieces: pieces.slice(0, 90), ground, answer, cards: new Map(availableOf(stOf(sh.metal).items, sh.metal).map(c => [c.id, c])) };   // (the cards as the list showed them: the one taken leaves the list when the work is handed over)
   }
   /** One piece alone, drawn as the card draws a placed piece, on a clear ground: its canvas and where it lies on the sheet (canvas pixels). */
   function piece(c, pl, k, pad) {
@@ -538,10 +610,9 @@
     const local = r => ({ x: r.left - ox, y: r.top - oy, w: r.width, h: r.height });
     const wr = local(wrap.getBoundingClientRect()), cvr = local(cv.getBoundingClientRect()), sx = cvr.w / cap.cvW;
     const home = { x: cvr.x + v.R * sx, y: cvr.y + v.R * sx, w: cap.W * sx, h: cap.H * sx }, kpx = v.k * sx;   // css pixels per point, on the card
-    // what each partial sheet takes (the answer's chain; the chosen one first), at most three are drawn
-    const items = availableOf(stOf(m).items), byId = new Map(items.map(c => [c.id, c]));
-    const chain = (Array.isArray(answer.chain) && answer.chain.length ? answer.chain : [{ partialId: null, fits: answer.fits }]).slice(0, 3);
-    const lots = chain.map(e => ({ e, c: byId.get(e.partialId) || null })).filter(x => x.c);
+    // what each partial sheet takes (the answer's links, in fill order), at most three are drawn
+    const byId = cap.cards;
+    const lots = (answer.links || []).slice(0, 3).map(l => ({ e: { partialId: l.partialId, fits: l.placed, name: cardName(byId.get(l.partialId)) }, c: byId.get(l.partialId) || null })).filter(x => x.c);
     if (!lots.length) return;
     const list = [{ old: true, w: home.w, h: home.h }, ...lots.map(x => ({ x, w: (+x.c.sheetWMm || REF.w) / MM_PER_PT * kpx, h: (+x.c.sheetHMm || REF.h) / MM_PER_PT * kpx }))], n = list.length;
     const tagH = 26, pad = 14, gap = Math.max(16, Math.round(wr.w * .04)), aw = wr.w - 2 * pad, ah = wr.h - 2 * pad - tagH;
@@ -551,7 +622,7 @@
     const q0 = slots[0].w / cap.W;   // one canvas pixel of the card, in the scene
     const fx = doc.createElement('div'); fx.className = 'mergeFx psFx'; fx.setAttribute('aria-hidden', 'true'); card.appendChild(fx);
     const put = (node, b, cls, z) => { node.className = cls; Object.assign(node.style, { left: b.x + 'px', top: b.y + 'px', width: b.w + 'px', height: b.h + 'px', zIndex: String(z) }); fx.appendChild(node); return node; };
-    const anims = []; let live = true, timer = 0;
+    const anims = []; let live = true, timer = 0, raf = 0;
     const play = (node, frames, opt) => { const a = node.animate(frames, opt); anims.push(a); return a; };
     const cue = (ms, fn) => { const a = new Animation(new KeyframeEffect(null, [], { duration: Math.max(0, ms) }), doc.timeline); anims.push(a); a.onfinish = () => { if (!live) return; try { fn(); } catch (e) { console.warn('partial sheets: motion', e); stop(true); } }; a.play(); return a; };
     const from = (b, h) => `translate(${(h.x - b.x).toFixed(2)}px,${(h.y - b.y).toFixed(2)}px) scale(${(h.w / b.w).toFixed(4)})`;
@@ -560,14 +631,23 @@
     const onVis = () => { if (doc.hidden) stop(false); }, onResize = () => stop(true);
     const scn = { card, stop: (soft = false) => stop(soft) };
     function stop(soft) {
-      if (!live) return; live = false; FX.delete(scn); clearTimeout(timer);
+      if (!live) return; live = false; FX.delete(scn); clearTimeout(timer); if (raf) cancelAnimationFrame(raf);
       doc.removeEventListener('visibilitychange', onVis); root.removeEventListener('resize', onResize);
       const gone = () => { for (const a of anims) try { a.cancel(); } catch (_) {} fx.remove(); };
       if (soft && fx.isConnected && !doc.hidden) fx.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 160, easing: 'ease-out', fill: 'forwards' }).finished.then(gone, gone); else gone();
     }
-    // the card laid out anew under it (a row above the picture appeared, another sheet shown): it ends
+    // the card laid out anew under it: a row that appears above the picture (the chain strip, the nest's status line) moves the scene
+    // with the picture; the picture itself changing its width, or another sheet being shown, ends it
     const w0 = wrap.offsetWidth, wc = { x: wr.x + wr.w / 2, y: wr.y + wr.h / 2 };
-    const inPlace = () => { if (!card.isConnected || !wrap.isConnected) return false; const r = local(wrap.getBoundingClientRect()); return Math.abs(r.x + r.w / 2 - wc.x) < 3 && Math.abs(r.y + r.h / 2 - wc.y) < 3 && Math.abs(wrap.offsetWidth - w0) < 3; };
+    const follow = () => {
+      raf = 0; if (!live) return;
+      if (!card.isConnected || !wrap.isConnected || Math.abs(wrap.offsetWidth - w0) >= 3) return stop(true);
+      const o2 = card.getBoundingClientRect(), r = wrap.getBoundingClientRect(), dx = r.left + r.width / 2 - (o2.left + card.clientLeft) - wc.x, dy = r.top + r.height / 2 - (o2.top + card.clientTop) - wc.y;
+      if (Math.abs(dx) > 120 || Math.abs(dy) > 160) return stop(true);
+      const t = Math.abs(dx) < .5 && Math.abs(dy) < .5 ? '' : `translate(${dx.toFixed(1)}px,${dy.toFixed(1)}px)`; if (fx.style.transform !== t) fx.style.transform = t;
+      raf = requestAnimationFrame(follow);
+    };
+    raf = requestAnimationFrame(follow);
 
     /* the pictures: the empty sheet, each partial sheet as the card shows one, the pieces each a canvas of their own */
     const veil = put(doc.createElement('div'), wr, 'mergeFxVeil', 1);
@@ -602,7 +682,7 @@
       let cell = Math.max(4, dia * 1.12); const bw = bb.w * pxMm, bh = bb.h * pxMm;
       while (cell > 4 && Math.floor(bw / cell) * Math.floor(bh / cell) < mine.length) cell *= .93;
       const cols = Math.max(1, Math.floor(bw / cell));
-      mine.forEach((p, j) => { p.to = i; p.spot = { x: sl.x + bb.x * pxMm + cell / 2 + (j % cols) * cell, y: sl.y + bb.y * pxMm + cell / 2 + Math.floor(j / cols) * cell }; p.g = Math.min(1, cell * .9 / Math.max(1, dia || cell)); });
+      mine.forEach((p, j) => { p.to = i; p.spot = { x: sl.x + bb.x * pxMm + cell / 2 + 2 + (j % cols) * cell, y: sl.y + bb.y * pxMm + cell / 2 + 2 + Math.floor(j / cols) * cell }; p.g = Math.min(1, cell * .9 / Math.max(1, dia || cell)); });
       return { sl, mine };
     });
     for (const p of flyers) if (p.to == null) p.stay = true;
@@ -642,7 +722,6 @@
     // 3 · the card is there with the nest's own layout: the scene fades, and what it added goes
     const done = new Animation(new KeyframeEffect(null, [], { duration: END }), doc.timeline); anims.push(done);
     done.onfinish = () => { if (live) stop(true); }; done.play();
-    const guard = setInterval(() => { if (!live) return clearInterval(guard); if (!inPlace()) { clearInterval(guard); stop(true); } }, 120);
   }
 
   root.PartialSheetsUI = { paint, changed, open: m => setOpen(m, true), close: m => setOpen(m, false), sheetSvg, edgesOf, friendly, fitWords, lastUseWords, fx: () => ({ live: FX.size }), state: ST, _scene: capture };
