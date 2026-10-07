@@ -507,11 +507,45 @@ async function laserUnchanged(sheetIds, setIds, revs) {
   for (let i = 0; i < parts.length; i++) for (let j = 0; j < parts[i].length; j++) if (revOf(answers[i][j]) !== String(revs[parts[i][j]])) return 0;
   return keys.length;
 }
+/* ── The Library's revision (Paul, 7 Oct: the Google Cloud bill, and "real time" for a Complete Order or a Print QR Label). What a
+   reader costs must follow what CHANGES, not the clock. One tiny document, Charm_Nest_Rev/library, is written (n + 1) after every
+   write that changes what laserStatus is made from (REV_OPS: the Library's sheet, set, run and custom-order writes, the page's own nudge list less the pool rows, which no
+   laserStatus answer reads and which a nesting run writes by the hundred; and a seal
+   pass that wrote); its update time is the revision. A reader that sends the revision of its last answer (ifRev) is answered
+   { unchanged: true } from ONE document read when the revision has not moved. When it moved, the documents the answer was made
+   from are probed as before (ifRevs: their update times) and only a change in THOSE costs a full answer; the probe says so
+   (via: 'docs') so a reader in a shop where the revision always moves for someone else's work can stop asking it (the page's guard).
+   The revision is read BEFORE anything it stands for: a write that lands during the answer moves it past the answer's, and the
+   next read finds out (never stale, at worst one read too many). A reader sets `verify` now and then to skip the shortcut and probe
+   the documents themselves: the safety net for a write that did not move the revision. The slow check that records seals asks the
+   same way (ifRev of its own last pass, for the same cards), because a pass that finds nothing new reads and writes nothing. ── */
+const REV = "Charm_Nest_Rev", REV_DOC = "library";   // (beside the placement counter, Charm_Nest_Rev/placement; production only, as that one is: the sandbox keeps no counter, a leftover of every reset, and its readers ask in full)
+const REV_OPS = new Set(["backPut", "backInvalidate", "setAllocate", "setUpdate", "runPut", "runArchive", "laserDone", "putSheet", "deleteSheet", "restoreSheet", "archiveEmptySheet", "roseRecordCut", "roseTakeOff", "roseClaim", "roseRelease", "flowApply", "customDecide", "customPut", "customReopen", "customDelete", "customSheetPut", "cancelPut", "cancelRestore", "noDesignPut", "noDesignDelete", "sheetPdf", "cancelSweep", "sandboxCancel", "sandboxPut", "sandboxReset", "purgeHistory"]);
+/** The Library's revision now (its update time), "0" before the first write, null when it cannot be read (the reader then asks in full). */
+async function readRev() {
+  if (PREFIX) return null;
+  try { const [s] = await db.getAll(db.collection(REV).doc(REV_DOC), { fieldMask: ["n"] }); return revOf(s); } catch (e) { console.warn("[charmNestLibrary] revision not read:", e && e.message); return null; }
+}
+/** Something the Library reads was written: move the revision (one small write; a failure leaves the readers' own probe of the documents as the net). */
+async function bumpRev() {
+  if (PREFIX) return;
+  try { await db.collection(REV).doc(REV_DOC).set({ n: FV.increment(1), at: Date.now() }, { merge: true }); } catch (e) { console.warn("[charmNestLibrary] revision not written:", e && e.message); }
+}
+const REV_FORM = /^[\w.\-]{1,40}$/;
 async function op_laserStatus(b) {
-  const ids=[...new Set((b.sheetIds || []).filter(isId))].slice(0,500), records=[];
-  if(b.recordSeals!==true && b.ifRevs && typeof b.ifRevs==='object'){const probed=await laserUnchanged(ids,b.setIds,b.ifRevs);if(probed)return {unchanged:true,probed,checkedAt:Date.now()};}
-  const revs=b.wantRevs===true && b.recordSeals!==true?{}:null;
-  // a sheet is read for the fields its entry and its readiness are made of (SLIM_SHEET, as the list reads it), not whole: the rest of a record
+  const ids=[...new Set((b.sheetIds || []).filter(isId))].slice(0,500), records=[], sealing=b.recordSeals===true;
+  // the revision, read first (only for a reader that knows revisions: one that sends ifRev, or asks for the answer's: wantRevs / wantRev)
+  const ifRev=typeof b.ifRev==='string' && REV_FORM.test(b.ifRev)?b.ifRev:null;
+  let rev=ifRev!==null?await readRev():null;
+  if(rev!==null && ifRev!==null && rev===ifRev && b.verify!==true){
+    // (a fast read must hold the revisions of the documents its answer was made from; the slow check, only the cards it ran for: the page sends the revision of its own last pass)
+    const known=sealing || (b.ifRevs && typeof b.ifRevs==='object' && [...ids.map(id=>'s:'+id),...[].concat(b.setIds || []).filter(isId).map(id=>'t:'+id)].every(k=>Object.prototype.hasOwnProperty.call(b.ifRevs,k)));
+    if(known && (sealing || ids.length))return {unchanged:true,probed:1,rev,checkedAt:Date.now(),...(sealing?{added:[]}:{})};
+  }
+  if(!sealing && b.ifRevs && typeof b.ifRevs==='object'){const probed=await laserUnchanged(ids,b.setIds,b.ifRevs);if(probed)return {unchanged:true,probed:probed+(rev!==null?1:0),...(rev!==null?{rev,...(rev!==ifRev?{via:'docs'}:{})}:{}),checkedAt:Date.now()};}
+  if(rev===null && (b.wantRevs===true || b.wantRev===true))rev=await readRev();   // (a full answer carries the revision it was read after: read before any document it is made of)
+  const revs=b.wantRevs===true && !sealing?{}:null;
+  // a sheet is read for the fields its entry and its readiness are made of (LASER_SHEET: SLIM_SHEET as the list reads it, and seq), not whole: the rest of a record
   // (its charms with their links, its placements) is most of its bytes and none of the answer; the placements only for a record with no placedCount
   for(let i=0;i<ids.length;i+=100){const docs=await db.getAll(...ids.slice(i,i+100).map(id=>col(SHEETS).doc(id)),{fieldMask:LASER_SHEET});for(const d of docs){if(revs)revs['s:'+d.id]=revOf(d);if(d.exists&&!d.data().archived)records.push({...d.data(),id:d.id});}}
   const setIds=[...new Set(records.map(s=>s.setId).concat(b.setIds || []).filter(isId))].slice(0,500),sets=[];
@@ -522,6 +556,7 @@ async function op_laserStatus(b) {
   for(let i=0;i<missing.length;i+=100){const docs=await db.getAll(...missing.slice(i,i+100).map(id=>col(SHEETS).doc(id)),{fieldMask:LASER_SHEET});for(const d of docs){if(revs)revs['s:'+d.id]=revOf(d);if(d.exists&&!d.data().archived)records.push({...d.data(),id:d.id});}}
   await withPlacements(records.map(r=>[r.id,r]));await withSources(records);
   const added=[];
+  let wrote=false;
   // Only the active production view asks to record transitions. Ordinary status reads stay read-only.
   if(b.recordSeals===true){
     const groups=new Map(records.map(s=>s.setId && !s.draft && s.solidIncluded!==false?['set:'+s.setId,{kind:'set',id:s.setId}]:['sheet:'+s.id,{kind:'sheet',id:s.id}]));
@@ -529,9 +564,12 @@ async function op_laserStatus(b) {
       const result=await recordProcessReadiness(g.kind,g.id,str(b.by,80).trim() || 'System');
       for(const p of result.records){const target=p.kind==='set'?sets.find(s=>s.setId===p.id):records.find(s=>s.id===p.id);if(target)Object.assign(target,p.patch);}
       added.push(...result.added);
+      if(result.wrote)wrote=true;
     }
   }
-  return {sheets:(await readinessRecords(records,{revs})).map(slim),sets,added,checkedAt:Date.now(),...(revs?{revs}:{})};
+  // a pass that wrote a seal or a step stamp changed documents the Library reads: the revision moves (a pass that found nothing new moves nothing)
+  if(wrote)await bumpRev();
+  return {sheets:(await readinessRecords(records,{revs})).map(slim),sets,added,checkedAt:Date.now(),...(revs?{revs}:{}),...(rev!==null?{rev}:{})};
 }
 
 // All process seals are append-only. No trimming, replacement on re-completion, or client-written history.
@@ -562,6 +600,7 @@ async function processDecisions(tx,records){await productionReadiness(records,{t
 async function recordProcessReadiness(kind,id,by){
   const at=Date.now();
   return db.runTransaction(async tx=>{
+    let wrote=false;   // (whether this pass wrote a document: the Library's revision moves only then)
     const ref=col(kind==='set'?SETS:SHEETS).doc(id),own=await tx.get(ref);
     if(!own.exists)return {records:[],added:[]};
     const d=own.data(),ids=kind==='set'?[...new Set(d.sheetIds || [])].filter(isId):[id];
@@ -584,13 +623,13 @@ async function recordProcessReadiness(kind,id,by){
       if(steps){patch.stepStamps=steps.stamps;patch.stepState=steps.state;}
       const sealed=!Array.isArray(old.processSeals) || !!old.processReady!==ready || JSON.stringify(old.processSeals)!==JSON.stringify(processSeals);
       // (a write that only notes the steps leaves updatedAt alone: the Library orders its lists by it, and seeing a sheet again is no activity of the sheet's)
-      if(sealed || steps)tx.set(col(k==='set'?SETS:SHEETS).doc(key),sealed?{...patch,updatedAt:FV.serverTimestamp()}:patch,{merge:true});
+      if(sealed || steps){wrote=true;tx.set(col(k==='set'?SETS:SHEETS).doc(key),sealed?{...patch,updatedAt:FV.serverTimestamp()}:patch,{merge:true});}
       records.push(processRecord(k,key,{...old,...patch}));
     };
     const approved=sheets.map(s=>({...s,processSeals:recovered.get('sheet:'+s.id)}));
     for(const s of sheets)save('sheet',s.id,s,!num(s.laserDoneAt) && Readiness.laserSheet(approved.find(x=>x.id===s.id)).ready);
     if(kind==='set')save('set',id,d,!num(d.laserDoneAt) && sheets.every(s=>s.setId===id) && Readiness.laserGroup(d,approved).ready);
-    return {records,added};
+    return {records,added,wrote};
   });
 }
 
@@ -3512,11 +3551,14 @@ exports.handler = async (event) => {
     const out = await fn(body);
     await bumpPlacementGen(body.op);   // (after the op's writes have landed, before the answer: whoever sees the answer then reads the new gen)
     if (DONE_TOUCH || DONE_BUMP_OPS.has(body.op)) await bumpDoneRev(body.op);
+    // the Library's revision moves after a write it reads (see readRev: the readers' one-document question); after an error too, a write may have landed before it
+    if (REV_OPS.has(body.op)) await bumpRev();
     return json(out && out.error ? (out.status || 400) : 200, out);
   } catch (e) {
     await bumpPlacementGen(body.op);   // (a failed op may have written some of what it meant to)
     if (DONE_TOUCH || DONE_BUMP_OPS.has(body.op)) await bumpDoneRev(body.op);
     console.error("[charmNestLibrary]", body.op, e);
+    if (REV_OPS.has(body.op)) await bumpRev();
     return json(500, { error: e.message || String(e) });
   }
 };

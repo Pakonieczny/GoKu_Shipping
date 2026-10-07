@@ -5920,7 +5920,7 @@ const Engrave = window.Engrave = (() => {
 
 /* ═══ 22 · Sets — production evidence and release ═══ */
 const LaserReview = window.LaserReview = (()=>{
-  const R=window.CharmNestReadiness, records=new Map(), sets=new Map();let frame=0,polling=false,lastPoll=0,sealPoll=0;
+  const R=window.CharmNestReadiness, records=new Map(), sets=new Map();let frame=0,polling=false,lastPoll=0,sealPoll=0,dirty=null,drawAll=false,paintedWhileChecking=false;
   /* One pass over the cards (batch: a refresh frame, the Library's first drawing, a Sets view) reads each sheet's projection once,
      and what every order row says about its pieces once. projected() worked both out again each time it was called, which is
      several times for each card: with a few hundred sheets and as many open orders a frame spent most of its time there (Paul,
@@ -5932,7 +5932,7 @@ const LaserReview = window.LaserReview = (()=>{
   /* The live read (below): its state. `sigs` and `shape` are what the last answers said (to redraw only what changed, and to see
      a sheet that moved to another set or was cut elsewhere); `revs` are the revisions of the documents the last full answer
      was made from, sent back so the cloud can answer "unchanged" without working anything out. */
-  const live={timer:0,second:0,reloadTimer:0,busy:false,again:false,want:false,checking:false,local:0,nudged:0,fails:0,start:0,end:0,seq:0,applied:0,revs:null,legacy:false,reload:false,seen:0,reloadAt:0,sigs:new Map(),shape:new Map()};
+  const live={timer:0,second:0,reloadTimer:0,busy:false,again:false,want:false,checking:false,local:0,nudged:0,fails:0,start:0,end:0,seq:0,applied:0,revs:null,legacy:false,reload:false,seen:0,reloadAt:0,sigs:new Map(),shape:new Map(),rev:null,polls:0,waste:0,skipRev:0,sealRev:null,sealKey:'',sealN:0,heard:0,flight:0,sync:false,view:null,viewAt:0};
   function record(s){const id=s.id || s.sheetId,old=records.get(id);if(id && (!old || (s.updatedAt || 0)>=(old.updatedAt || 0)))records.set(id,s);return s;}
   function projected(s){
     const id=s.id || s.sheetId,base=records.get(id) || s;
@@ -6253,12 +6253,19 @@ i.flowDot::before{content:"";position:absolute;inset:-7px}
     frame=0;
     if(window.Seal?.defer("laser-refresh",refresh))return;
     if(S.mode!=='library')return;   // its cards are the Library's: a closed Library has let its records go (below)
-    batch(paint);
+    /* A live read that found some cards' records different draws THOSE cards (`only`: 's:<sheet>' / 't:<set>' keys), not all fifty: the card a Complete Order moved is on
+       screen at once, not after the other forty-nine have been worked out. Anything else that asks for a drawing (changed() with no keys) draws every card, as before;
+       when both are waiting the changed cards go first and the rest follows in the next frame. */
+    const only=dirty,every=drawAll;dirty=null;drawAll=false;
+    if(only && every){batch(()=>paint(only));drawAll=true;if(!frame)frame=requestAnimationFrame(refresh);return;}
+    batch(()=>paint(only));
   }
-  function paint(){
+  function paint(only){
+    if(live.checking)paintedWhileChecking=true;
     let needsSeals=false,names=null,before=null,home=null;const lookup=()=>names || (names=R.lookup({rows:Orders.rows()})),moved=[],stepWant=[];
     document.querySelectorAll('[data-laser-card]').forEach(card=>{
       if(!card._laserSheets)return;   // (a copy of a card flying to a tab, charm-nest-motion.js, is not a card: it holds none of its records)
+      if(only && !(card._laserSet?.setId && only.has('t:'+card._laserSet.setId)) && !card._laserSheets.some(id=>only.has('s:'+id)))return;   // (a card of nothing that changed is as it was drawn)
       const sheets=(card._laserSheets || []).map(id=>records.get(id)).filter(Boolean),report=card._laserSet?group(card._laserSet,sheets):{...sheet(sheets[0] || {}),ready:canCut(sheets[0] || {})};
       if(sheets.some(s=>!s.laserDoneAt && sheet(s).ready!==!!s.processReady))needsSeals=true;
       for(const s of sheets)if(stepBehind(s)){needsSeals=true;stepWant.push(s);}   // (a step changed since the server last noted the steps: the pass records when it was completed)
@@ -6472,7 +6479,11 @@ i.flowDot::before{content:"";position:absolute;inset:-7px}
     else{box._ui=false;showPlan(box,error?null:{ok:true,auto:(res?.applied || []).map(a=>({label:a.label || a.key})),needs:[],confirm:[]},error);}
     afterApprove(box,!error);
   }
-  function changed(){if(!frame)frame=requestAnimationFrame(refresh);ensureLive();}
+  /** Cards to draw again: `only` (a Set of 's:<sheet>' / 't:<set>' keys, from a live answer) draws the cards that hold those; no argument draws them all. */
+  function changed(only){
+    if(only instanceof Set){if(!only.size)return;if(!dirty)dirty=new Set();for(const k of only)dirty.add(k);}else drawAll=true;
+    if(!frame)frame=requestAnimationFrame(refresh);ensureLive();
+  }
   /* ── The Library follows the cloud (Paul, 3 Oct 04:47: "real-time", and "I'm often wondering what is still remaining for a
      sheet or set of sheets to move to the next step"). The slow check below (poll) records process seals and runs every minute
      (and about five seconds after a saved back); this one only reads, about every three seconds, and only while the Library is
@@ -6488,7 +6499,7 @@ i.flowDot::before{content:"";position:absolute;inset:-7px}
        · an answer that changes a card draws it again (the cards in place; a card that crossed between In progress and Laser
          cutting glides there); a sheet that moved to another set, or was cut or removed on another computer, has the Library's
          list read again (once the person's own work on it, a Moving bar or a drag, is done). */
-  const LIVE={every:3000,gap:600,max:30000,old:20000,second:1500,settle:1000,reloadEvery:10000,goneEvery:2500,goneSettle:50};   // (a sheet found GONE from the cloud has the list read again sooner: its card must not stay)
+  const LIVE={every:3000,fast:2400,gap:600,max:30000,old:20000,second:1500,settle:1000,reloadEvery:10000,goneEvery:2500,goneSettle:50,verifyEvery:25,wasteMax:3,calm:20,sealVerify:10};   // (a sheet found GONE from the cloud has the list read again sooner: its card must not stay)
   const liveOn=()=>S.mode==='library' && !document.hidden && !!S.cloud.ok;
   // the sheets and sets of the cards in view
   function shown(){
@@ -6498,13 +6509,13 @@ i.flowDot::before{content:"";position:absolute;inset:-7px}
   /** An answer, taken in: only what differs from the last answer is replaced (`always`: all of it, as the slow check always did).
       True when a card has to be drawn again. */
   function applyStatus(response,ids,always){
-    let diff=!!always,shape=false;
+    let diff=!!always,shape=false;const moved=new Set();live.moved=moved;   // (moved: 's:<sheet>' / 't:<set>' of what this answer changed: the cards to draw again)
     const differs=(key,value)=>{const sig=JSON.stringify(value),was=live.sigs.get(key);live.sigs.set(key,sig);return was!==sig;};
     const shaped=(key,value)=>{const was=live.shape.get(key);live.shape.set(key,value);if(was!==undefined && was!==value)shape=true;};
     for(const set of response.sets || []){
       shaped('t:'+set.setId,(set.sheetIds || []).slice().sort().join(',')+'|'+(set.laserDoneAt?'cut':''));
       if(!differs('t:'+set.setId,set) && !always)continue;
-      diff=true;sets.set(set.setId,set);
+      diff=true;moved.add('t:'+set.setId);sets.set(set.setId,set);
       for(const card of document.querySelectorAll('[data-laser-card]'))if(card._laserSet?.setId===set.setId)card._laserSet={...card._laserSet,...set};
     }
     const found=new Set();
@@ -6512,21 +6523,21 @@ i.flowDot::before{content:"";position:absolute;inset:-7px}
       found.add(s.id);
       shaped('s:'+s.id,(!s.draft && s.solidIncluded!==false?s.setId || '':'')+'|'+(s.laserDoneAt?'cut':''));
       if(!differs('s:'+s.id,s) && !always)continue;
-      diff=true;records.set(s.id,s);patchRow(s);
+      diff=true;moved.add('s:'+s.id);records.set(s.id,s);patchRow(s);
     }
     for(const id of ids)if(!found.has(id) && records.has(id)){
       shaped('s:'+id,'gone');if(!records.get(id).archived)live.gone=true;
-      if(always || !records.get(id).archived){diff=true;records.set(id,{...records.get(id),archived:true});patchRow({id,archived:true});}
+      if(always || !records.get(id).archived){diff=true;moved.add('s:'+id);records.set(id,{...records.get(id),archived:true});patchRow({id,archived:true});}
     }
     if(shape)wantReload();
     return diff;
   }
   const arm=ms=>{clearTimeout(live.timer);live.timer=setTimeout(tick,Math.max(0,ms));};
-  function tick(){live.timer=0;if(!liveOn())return;const local=live.want;live.want=false;readLive(local).catch(e=>{console.warn('Library live read',e);live.busy=false;live.checking=false;scheduleNext();});}
+  function tick(){live.timer=0;if(!liveOn())return;const local=live.want;live.want=false;readLive(local).catch(e=>{console.warn('Library live read',e);live.flight=0;live.busy=false;live.checking=false;scheduleNext();});}
   // the next read of the loop: 3 s after the last one started, 600 ms after it ended, further out while reads fail
   function scheduleNext(){
     if(live.timer || live.busy || !liveOn())return;
-    const every=live.legacy?LIVE.old:Math.min(LIVE.max,LIVE.every*2**Math.min(live.fails,5));
+    const every=live.legacy?LIVE.old:Math.min(LIVE.max,(live.rev && live.skipRev<=0?LIVE.fast:LIVE.every)*2**Math.min(live.fails,5));   // (fast: while the cloud's one-document revision answers, a read costs one document, so a change made elsewhere is seen within 2.4 s + the read, not 3 s + the read)
     arm(Math.max(live.start+every,live.end+LIVE.gap)-Date.now());
   }
   function ensureLive(){if(!live.timer && !live.busy)scheduleNext();}
@@ -6534,10 +6545,22 @@ i.flowDot::before{content:"";position:absolute;inset:-7px}
   // another follows it
   function readSoon(local){
     if(!liveOn())return;
-    if(local)live.want=true;
+    if(local){
+      if(live.sync)return;   // (a read for a write has just left in this very turn: writes announced in the same turn are all in the cloud before it)
+      /* A person's own write (here, or in another tab of this computer): a read already out may have been asked before it, and waits for its answer (seconds, on a
+         big Library) before the one that follows it could even start. So a second read starts beside it now (never twice within 600 ms: a burst of writes is one
+         read and the one 1.5 s after the last), and the later of the two answers wins (seq). It is the read the write asks for anyway, started sooner: no extra call. */
+      if(live.busy && Date.now()-live.nudged>=LIVE.gap){live.want=false;sameTurn();readLive(true).catch(e=>console.warn('Library live read',e));return;}
+      live.want=true;
+    }
     if(live.busy){live.again=true;return;}
-    arm((local?live.nudged:live.start)+LIVE.gap-Date.now());
+    const wait=(local?live.nudged:live.start)+LIVE.gap-Date.now();
+    /* a person's write: the request leaves in THIS turn, not from a timer that runs after whatever else the write set going on this page (the order window,
+       the Review feed) has finished drawing: on a big shop that was a second and more before the cloud was even asked */
+    if(local && wait<=0){clearTimeout(live.timer);sameTurn();tick();return;}
+    arm(wait);
   }
+  const sameTurn=()=>{live.sync=true;Promise.resolve().then(()=>{live.sync=false;});};
   /** Something that changes a sheet's or a set's place or readiness was just done here: read now, and again 1.5 s after the last one. */
   function nudge(){
     if(!liveOn())return false;
@@ -6546,28 +6569,57 @@ i.flowDot::before{content:"";position:absolute;inset:-7px}
     clearTimeout(live.second);live.second=setTimeout(()=>{live.second=0;readSoon(false);},LIVE.second);
     return true;
   }
+  /* Another tab or page of THIS computer wrote to the Library (a Complete Order, a Print QR Label, a hold, an approval: any LIBRARY_WRITE through api()):
+     this page reads now, not at its next turn of the loop (Paul, 7 Oct: "all effects must take place in real-time"). The page that wrote says so on a
+     BroadcastChannel and, for a browser without one, by a storage event (a key written in this origin's storage reaches every other tab of it). Nothing
+     is read for it while the tab is hidden (the loop reads at once on return), and a message heard twice (both routes) reads once. Any page of this
+     origin may announce a write the same way (the Sorter, Design and Laser pages): { t:'write', op, at } on BroadcastChannel('cn-library'), or
+     localStorage 'cn-library-write' = the time. No cloud call is made for it beyond the one read the nudge asks for. */
+  const announce=op=>{const at=Date.now();live.heard=at;try{if(channel){channel.postMessage({t:'write',op:String(op || ''),at});return;}}catch(_){}try{localStorage.setItem('cn-library-write',String(at));}catch(_){}};   // (the storage write only where there is no BroadcastChannel: a synchronous storage write, on the page that has just pressed Complete, is time it has not got)
+  const heard=at=>{at=+at || Date.now();if(at===live.heard)return;live.heard=at;nudge();};
+  let channel=null;try{channel=typeof BroadcastChannel==='function'?new BroadcastChannel('cn-library'):null;if(channel)channel.onmessage=e=>{if(e && e.data && e.data.t==='write')heard(e.data.at);};}catch(_){channel=null;}
+  window.addEventListener?.('storage',e=>{if(e && e.key==='cn-library-write')heard(e.newValue);});
+  /** A write to the Library was made from this page (api()): announced to the other tabs of this computer, and read here now and 1.5 s after. */
+  const written=op=>{announce(op);return nudge();};
   async function readLive(local){
-    if(live.busy){live.again=true;return;}
-    if(polling){arm(400);return;}   // (the slow check is in flight with the same answer; this read follows it)
+    if(live.busy && !local){live.again=true;return;}   // (a read for a person's own write may start beside the one out: readSoon)
+    // (the slow check does not hold this read back any more: it can take many seconds on a big Library, and a read that waited for it showed a
+    //  Complete Order that late. Its answer and this one are told apart by their order, `seq`: the later read wins)
     if(!liveOn())return;
-    const {ids,setIds}=shown();
+    /* The cards in view are found by measuring them (getBoundingClientRect), which makes the browser lay the page out first: right after a Complete Order, with the order
+       window drawing, that was a third of a second and more before the request could leave. A read for a person's own write asks for the cards the loop's last read asked
+       for (the person is working on a card that is in view; the loop's next read measures again). */
+    const {ids,setIds}=(local && live.view && live.view.ids.length && Date.now()-live.viewAt<10000)?live.view:(live.view=shown(),live.viewAt=Date.now(),live.view);
     live.start=Date.now();
     if(!ids.length){live.end=live.start;scheduleNext();return;}
-    live.busy=true;live.checking=!!local;if(local)live.nudged=live.start;
+    live.flight++;live.busy=true;live.checking=live.checking || !!local;if(local)live.nudged=live.start;
     const seq=++live.seq,ask={op:'laserStatus',sheetIds:ids,setIds,recordSeals:false,wantRevs:true};
-    if(live.revs && ids.every(id=>records.has(id)))ask.ifRevs=live.revs;
+    if(live.revs && ids.every(id=>records.has(id))){
+      ask.ifRevs=live.revs;
+      /* The cloud's revision (one tiny document, charmNestLibrary.js readRev): sent back, an unchanged Library costs ONE document read instead of one per
+         document it is made of. Every verifyEvery-th read skips that shortcut and probes the documents themselves (the net for a write that did not move
+         the revision). A shop whose revision moves for other people's work, wasteMax reads in a row that found nothing of ours changed, stops asking it
+         for `calm` reads (the cost is then what it was before the revision: one read per document), so the revision can never cost more than it saves. */
+      if(live.rev && live.skipRev<=0){ask.ifRev=live.rev;if(++live.polls>=LIVE.verifyEvery){live.polls=0;ask.verify=true;}}
+      else if(live.skipRev>0)live.skipRev--;
+    }
     try{
       const r=await api('charmNestLibrary',ask,{quiet:true});
       if(!r || r.error)throw new Error((r && r.error) || 'No answer came back');
       live.fails=0;
+      // (two reads can be out at once, a person's write beside the loop's: an answer older than the one taken in last changes nothing, and never takes the revision back)
+      if(r.unchanged){
+        if(r.rev && seq>=live.applied){live.rev=r.rev;if(r.via==='docs'){if(++live.waste>=LIVE.wasteMax){live.waste=0;live.skipRev=LIVE.calm;}}else live.waste=0;}
+      }
       if(!r.unchanged){
-        live.revs=r.revs || null;live.legacy=!r.revs;   // (a cloud that does not know ifRevs answers in full every time: asked less often)
-        if(seq>live.applied){live.applied=seq;if(applyStatus(r,ids,false)){changed();try{window.SharedOrders?.refreshed?.();}catch(_){}}}   // (the shared-orders window redraws from the same read)
+        live.waste=0;live.legacy=!r.revs;   // (a cloud that does not know ifRevs answers in full every time: asked less often)
+        if(seq>live.applied){live.applied=seq;live.revs=r.revs || null;live.rev=r.rev || null;if(applyStatus(r,ids,false)){changed(live.moved);try{window.SharedOrders?.refreshed?.();}catch(_){}}}   // (the shared-orders window redraws from the same read; the cards that hold what changed are drawn first)
       }
     }catch(e){if(++live.fails===1)console.warn('Library live read',e);}
     finally{
-      live.busy=false;live.end=Date.now();
-      if(live.checking){live.checking=false;changed();}
+      live.flight=Math.max(0,live.flight-1);live.busy=live.flight>0;live.end=Date.now();
+      if(live.busy)return;   // (the other read of the pair is still out: its end takes the next turn)
+      if(live.checking){live.checking=false;if(paintedWhileChecking){paintedWhileChecking=false;changed();}}   // ('Checking…' was drawn on the waiting cards while this read was out: drawn again without it. A read nothing drew during leaves every card as it is: no pass over all of them)
       if(live.again){live.again=false;arm(live.want?0:live.start+LIVE.gap-Date.now());}else scheduleNext();   // (a change made while this read ran may have missed it: the next read is at once)
     }
   }
@@ -6596,7 +6648,16 @@ i.flowDot::before{content:"";position:absolute;inset:-7px}
     const {ids,setIds}=shown();if(!ids.length)return;
     polling=true;lastPoll=Date.now();checkingNow=force;
     const seq=++live.seq;
-    try{const response=await api('charmNestLibrary',{op:'laserStatus',sheetIds:ids,setIds,recordSeals:true,by:window.CNEmployee?.name() || undefined},{quiet:true});if(seq>live.applied){live.applied=seq;applyStatus(response,ids,true);}window.LibraryDone?.addedSeals(response.added);changed();}
+    /* The slow check records seals, which it writes only when something changed: when the cloud's revision is the one its last pass for these same cards
+       ended on, nothing can have, and it answers { unchanged: true } from one tiny read (no sheet, run or line is read, no transaction runs). Every
+       sealVerify-th pass (ten minutes) runs in full whatever the revision says. */
+    const key=ids.slice().sort().join(',')+'|'+setIds.slice().sort().join(','),ask={op:'laserStatus',sheetIds:ids,setIds,recordSeals:true,wantRev:true,by:window.CNEmployee?.name() || undefined};
+    if(live.sealRev && live.sealKey===key && ++live.sealN<LIVE.sealVerify)ask.ifRev=live.sealRev;else live.sealN=0;
+    try{
+      const response=await api('charmNestLibrary',ask,{quiet:true});
+      if(response && response.unchanged){if(response.rev)live.sealRev=response.rev;}
+      else{live.sealRev=response?.rev || null;live.sealKey=key;if(seq>live.applied){live.applied=seq;applyStatus(response,ids,true);}window.LibraryDone?.addedSeals(response.added);changed();}
+    }
     catch(e){console.warn('Production readiness refresh',e);}
     finally{polling=false;if(checkingNow){checkingNow=false;changed();}}
   }
@@ -6607,19 +6668,19 @@ i.flowDot::before{content:"";position:absolute;inset:-7px}
   }
   // Paul, 24 Sep: nothing may pile up on a page left open. The records are the Library's, read again each time it opens
   // (renderLibrary, openLibrarySheet); while it is closed they are let go at the minute's check.
-  setInterval(()=>{if(S.mode!=='library'){records.clear();sets.clear();live.revs=null;live.sigs.clear();live.shape.clear();}poll();},60000);
+  setInterval(()=>{if(S.mode!=='library'){records.clear();sets.clear();live.revs=null;live.rev=null;live.sealRev=null;live.sigs.clear();live.shape.clear();}poll();},60000);
   document.addEventListener('visibilitychange',()=>{
     if(document.hidden){for(const k of ['timer','second','reloadTimer']){clearTimeout(live[k]);live[k]=0;}}   // (nothing is read while the tab is hidden)
-    else{poll(true);readSoon(false);resumeReload();}
+    else{readSoon(false);poll(true);resumeReload();}   // (the cards' read first: the slow check no longer holds it back)
   });
   window.addEventListener?.('online',()=>{live.fails=0;readSoon(false);resumeReload();});
   /** What the live read is doing (the test reads it): reads in flight, failures in a row, whether the cloud knows ifRevs. */
-  const liveState=()=>({busy:live.busy,fails:live.fails,legacy:live.legacy,armed:!!live.timer,revs:live.revs?Object.keys(live.revs).length:0,reload:live.reload});
+  const liveState=()=>({busy:live.busy,fails:live.fails,legacy:live.legacy,armed:!!live.timer,revs:live.revs?Object.keys(live.revs).length:0,rev:live.rev,sealRev:live.sealRev,skipRev:live.skipRev,reload:live.reload});
   /** The orders of the sheet cards on screen (the placement feed reads where their pieces are, so the Library's lists and chips follow a hold or a take-off made elsewhere). */
   const shownOrders=()=>{try{if(!liveOn())return [];return [...new Set(shown().ids.flatMap(id=>(records.get(id)?.orders || []).map(String)))].filter(x=>/^\d{4,20}$/.test(x)).slice(0,24);}catch(_){return [];}};
   /** A sheet's cloud record read elsewhere (the sheet window's own follow): taken in as the live read would, the Library's list row too; rec null: the sheet is gone (id given). */
   const patch=(rec,id)=>{if(rec){record(rec);patchRow(rec);}else if(id){if(records.has(id))records.set(id,{...records.get(id),archived:true});patchRow({id,archived:true});}try{window.SharedOrders?.refreshed?.();}catch(_){}changed();};
-  return {record,sheet,group,canCut,labels,sections,place,changed,saved,poll,nudge,shownOrders,patch,liveState,projected,batch,acceptProcess,openChecklist,issuesOf,photo:photoOf,explain:(kind,id,card)=>explainOf({kind,id},card || {_laserSheets:[id]},()=>R.lookup({rows:Orders.rows()}))};
+  return {record,sheet,group,canCut,labels,sections,place,changed,saved,poll,nudge,written,shownOrders,patch,liveState,projected,batch,acceptProcess,openChecklist,issuesOf,photo:photoOf,explain:(kind,id,card)=>explainOf({kind,id},card || {_laserSheets:[id]},()=>R.lookup({rows:Orders.rows()}))};
 })();
 
 /* ═══ 22 · Sets — one run, one date, one folder, one numbering across materials ═══ */
