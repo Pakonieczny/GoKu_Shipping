@@ -190,7 +190,7 @@ async function main() {
     await tick(200);
 
     // ── 4 · the window: Options opens ONE large window (OptionsStudio: about 92vw x 90vh, 1400px at most, a full screen on a phone) holding the card's own
-    //        controls and its four cards; kept across a redraw (the same window, the same controls); Esc and × close it and the focus goes back to Options
+    //        controls and its Sheet menu; kept across a redraw (the same window, the same controls); Esc and × close it and the focus goes back to Options
     const win = () => pg.evaluate(() => {
       const d = document.querySelector('dialog.osDlg'); if (!d) return null; const r = d.getBoundingClientRect(), box = d.querySelector('.solidOptions');
       return { open: d.open, shown: r.width > 0 && getComputedStyle(d).display !== 'none', w: r.width, h: r.height, vw: innerWidth, vh: innerHeight, cards: box ? [...box.children].map(c => c.dataset.card) : [], same: window.__optDlg ? window.__optDlg === d : (window.__optDlg = d, true), inside: d.contains(document.activeElement), onBtn: false };
@@ -205,7 +205,7 @@ async function main() {
         assert(p && p.open && p.shown, `${tag}: a press on Options opens the window`);
         if (w >= 1000) { assert(Math.abs(p.w - Math.min(1400, p.vw * .92)) <= 2 && Math.abs(p.h - Math.min(1000, p.vh * .9)) <= 2, `${tag}: about 92vw x 90vh, 1400px at most (${p.w} x ${p.h} in ${p.vw} x ${p.vh})`); }
         else assert(p.w >= p.vw - 2, `${tag}: a full screen on a phone (${p.w} in ${p.vw})`);
-        assert.deepEqual(p.cards.slice(0, 1), ['sheet'], `${tag}: This sheet leads`); assert(p.cards.includes('history') && p.cards.includes('all'), `${tag}: the history and the search are on the same page (${p.cards})`);
+        assert.deepEqual(p.cards.slice(0, 1), ['sheet'], `${tag}: the Sheet menu leads`); assert(!p.cards.some(c => ['history', 'all', 'partial'].includes(c)), `${tag}: one Sheet menu, no Partial sheets / Sheet history / All partial sheets cards (${p.cards})`);
         assert.equal(p.inside, true, `${tag}: the focus is inside the window`);
         // a redraw of the card and of every card keeps the same window open
         await pg.evaluate(m => { const sh = S.sheets[m].pages[0]; renderCard(sh); refreshAllCards(); Gate.refreshMembership(); Gate.renderCard(sh); }, m); await tick(120);

@@ -167,6 +167,9 @@ function rollupPatch(FV, prev, day, person, evs, prefix) {
   if (prefix) out.sandbox = true;
   // ixv: every event of this day was counted with the x_* counters (a day that began before they existed is left without it, so the reader shows dashes, not zeros)
   if (issueKinds && (!prev.events || prev.ixv === 1)) out.ixv = 1;
+  // deskBackfilled: a rollup created by this code counts every one of its events with its desk (nothing earlier to recover), so it is born with the marker; an older one is
+  // marked by the one-time per-day backfill (_deskBackfill.js), which only reads the events of a day whose rollup lacks it
+  if (!prev.events) out.deskBackfilled = true;
   return out;
 }
 

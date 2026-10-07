@@ -36,6 +36,9 @@ let KIND = null; try { KIND = require("./_activityKinds"); } catch (_) {}
 if (!KIND) KIND = { throughput: () => true, readStationCounters: (st, v) => v, UNATTRIBUTED: "Unattributed", isMatched: () => false, echoScans: () => new Set() };
 /* Assembly 1..4 and Shipping 1..3 are desks of two stations (Paul, 7 Oct 2026): deviceNo("assembly", "assembly-2") is "assembly-2", "" for any other page (the kind alone). See _activityKinds.js. */
 const deviceNo = KIND.deviceNo || (() => ""), NUMBERED = KIND.NUMBERED || {}, NUMBERED_KEY = KIND.NUMBERED_RE || /(?!)/;
+/* The desks of days recorded before desks were told apart are recovered ONCE per day from that day's events (op deskBackfill, _deskBackfill.js); DESK.pending(rollup) is the test the overview uses to tell the console which days in view still need it */
+let DESK = null; try { DESK = require("./_deskBackfill"); } catch (_) {}
+if (!DESK) DESK = { pending: () => false, MAX_DAYS: 31, op: (ctx, body) => json(400, { ok: false, error: "unknown op" }) };
 
 const COL = { activity: "Station_Activity", rollup: "Efficiency_Daily", sessions: "Station_Sessions", seals: "Order_Timeline" };
 const STATIONS = ["sorting", "welding", "assembly", "shipping", "design", "laser", "sorter", "qr", "inbox"];   // every key a stored row may carry (history keeps "sorter" and "qr")
@@ -391,6 +394,7 @@ async function assemble(ctx, winFrom, toDay) {
       if (x.person === KIND.UNATTRIBUTED) { noteUnattributed(info, x); continue; }   // (a matched scan made with nobody in Matching: no person; the Stations board counts it, and so does the Overview's "unattributed" line, see noteUnattributed)
       const person = P.get(x.person); if (!person || !validDay(x.day)) continue;
       eventDays.add(x.day);
+      if (DESK.pending(x)) (info.deskDays || (info.deskDays = new Set())).add(x.day);                 // (a day whose rollup still has events no desk accounts for: the overview tells the console, once, see deskPending)
       const pd = P.pd(person, x.day); pd.src = "events";
       for (const [st0, v0] of Object.entries(x.stations && typeof x.stations === "object" ? x.stations : {})) {
         if (!okStation(st0) || !v0 || typeof v0 !== "object") continue;    // (a station called "constructor" is not a station)
@@ -661,7 +665,8 @@ async function buildOverview(ctx, day, days, withTrend, withRoster) {
   const unTotal = { parts: 0, scans: 0, orders: unExtraAll, matched: 0 }; for (const [st, t] of un) { unTotal.parts += t.parts; unTotal.scans += t.scans; unTotal.matched += t.matched; if (KIND.throughput(st) && st !== "inbox") unTotal.orders += t.ids.size; }
   const business = { totals, perHour, stations: stationList, trend };
   if (withRoster && (unTotal.parts > 0 || unTotal.scans > 0 || unTotal.orders > 0 || unTotal.matched > 0)) business.unattributed = unTotal;      // (the whole line nobody is credited with: the People list shows it as a row)
-  return { now: ctx.now, cursor: cursorOf(events), people, absent: withRoster ? absent : undefined, business,
+  const oldest = addDays(ctx.today, -DESK.MAX_DAYS), deskPending = [...(info.deskDays || [])].filter(d => d >= from && d <= day && d >= oldest).sort().reverse();   // (days in view that still lack their desk numbers, newest first; never one the op would refuse)
+  return { now: ctx.now, cursor: cursorOf(events), deskPending, people, absent: withRoster ? absent : undefined, business,
     feedAll: inRange.slice(0, LIM.feedDelta).map(e => { const P = asm.P.people.get(nameKeyOf(ctx, e.person)); return Object.assign({}, e, { person: P ? displayName(P) : canonOf(ctx, nameKeyOf(ctx, e.person)) || niceName(e.person) }); }), sources: src, notes, partial, errors: info.errors };
 }
 
@@ -682,6 +687,7 @@ async function opOverview(ctx, body) {
   if (withRoster) out.absent = base.absent;
   if (base.partial) out.partial = true;
   if (base.errors.length) out.errors = base.errors;
+  if (!ctx.prefix && base.deskPending && base.deskPending.length) out.deskPending = base.deskPending;   // (the real store only: the console asks for each of these days once, op deskBackfill)
   return json(200, out);
 }
 
@@ -764,6 +770,8 @@ async function opOrders(ctx, body) {
 /* ── the door ── */
 const PROFILE = require("./_employeeProfile")({ KIND, COL, LIM, ms, num, r1, zeros, digits, cleanName, okName, okStation, niceName, bestForm, nameKeyOf, canonOf, scrub, validDay, addDays, nyDay, nyMidnight, clip, covered, spanOf, cached, revDep, readRollups, readEventsStart, eventRow, col, json, safe, tmpl, KEYS });   // the employee page: ops person (with range) and personOrders
 const OPS = { overview: opOverview, person: (ctx, body) => (body.range != null || body.from || body.to ? PROFILE.opProfile(ctx, body) : opPerson(ctx, body)), orders: opOrders, personOrders: PROFILE.opOrders };
+/* op "deskBackfill" { day } (Paul, 7 Oct 2026: the desk rows must add up for days recorded before desks were told apart): recovers one day's desk counters from that day's events, once, bounded; see _deskBackfill.js */
+OPS.deskBackfill = (ctx, body) => DESK.op(ctx, body, { json, validDay, addDays });
 /* op "live": the stations board (what each station is working on right now), kept in _stationLive.js */
 OPS.live = (ctx, body) => require("./_stationLive").op(ctx, body, { json, nyMidnight, cached, revDep, display: raw => canonOf(ctx, nameKeyOf(ctx, raw)) || niceName(raw) });
 /* op "laserSheets" (R7, Paul 6 Oct): one person's cut sheets and how long each took, from the Laser_Sheet_Times records the Library's laserDone wrote (kept in _laserSheetTime.js) */
