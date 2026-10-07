@@ -2665,20 +2665,28 @@ function wakeCompletionPolling() { __completeIdle = 0; if (COMPLETE_POLL.p) COMP
    scopes writing to two different bindings, which is why the highlight never
    reflected server data. */
 
+/* FC3b (Firebase cost): mode "all" used to read every staff note on record (staffNotes=1: a billed read for each order that ever had a note, 3,372 on 7 Oct 2026
+   and growing) at every Refresh. The highlight is only ever looked up for an order this page lists, so "all" now asks (staffNotesFor, 100 ids a request, two at a
+   time) about every order the page lists and every order it already flags: the same answer for everything shown, a read per order listed. A failed ask keeps the set. */
+async function askStaffNotes(ids) {
+  const found = new Set(), parts = [];
+  for (let i = 0; i < ids.length; i += 100) parts.push(ids.slice(i, i + 100));
+  const run = makeQueue(2);
+  await Promise.all(parts.map(part => run(async () => {
+    const r = await fetch(`${FN}/firebaseOrders?staffNotesFor=${encodeURIComponent(part.join(","))}`);
+    const j = await r.json();
+    if (!r.ok || !j || j.success === false || !Array.isArray(j.orderNumbers)) throw new Error("firebaseOrders staffNotesFor: " + ((j && j.error) || "HTTP " + r.status));
+    j.orderNumbers.forEach(id => found.add(String(id)));
+  })));
+  return found;
+}
+const staffNoteAskIds = () => [...new Set([...allOpenReceipts, ...currentReceipts].map(r => String(r.receipt_id)).concat([...staffNoteIDs]))];
 async function refreshStaffNoteIDs(opts = {}) {
   const mode = opts.mode || "visible";
   try {
-    if (mode === "all") {
-      const r = await fetch(`${FN}/firebaseOrders?staffNotes=1`);
-      const j = await r.json();
-      staffNoteIDs = new Set((j.orderNumbers || []).map(String));
-      return;
-    }
-    const list = Array.isArray(opts.ids) ? opts.ids.map(String) : visibleReceiptIds();
+    const list = mode === "all" ? staffNoteAskIds() : Array.isArray(opts.ids) ? opts.ids.map(String) : visibleReceiptIds();
     if (!list.length) { staffNoteIDs = new Set(); return; }
-    const res  = await fetch(`${FN}/firebaseOrders?staffNotesFor=${encodeURIComponent(list.join(","))}`);
-    const json = await res.json();
-    staffNoteIDs = new Set((json.orderNumbers || []).map(String));
+    staffNoteIDs = await askStaffNotes(list);
   } catch (e) {
     console.warn("refreshStaffNoteIDs error", e);
   }

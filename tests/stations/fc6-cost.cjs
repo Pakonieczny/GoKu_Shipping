@@ -45,7 +45,7 @@ const slice = (src, from, to) => { const a = src.indexOf(from); assert.ok(a >= 0
       loadLocalCompleted: () => new Set(), makeQueue: max => { let a = 0; const q = []; const pump = () => { if (a >= max || !q.length) return; a++; const { fn, resolve, reject } = q.shift(); fn().then(v => { a--; pump(); resolve(v); }, e => { a--; pump(); reject(e); }); }; return fn => new Promise((res, rej) => { q.push({ fn, resolve: res, reject: rej }); pump(); }); },
       allOpenReceipts: [], updateRunId: 0, window: {}, abortAllUpdateWork() {}, resetMessageFlags() {}, fetchAllLocksOnce: async () => {}, SETTINGS: { autoHeal: false },
       repairMissingReceiptData: async () => {}, healZeroMetalRows: async () => {}, ensureSelectedPreviews: async () => {},
-      buildNewOrderList: async o => { builds.push(o); } };
+      buildNewOrderList: async o => { builds.push(o); }, sbSweep: { inc: false }, fetchLocksOnce: async () => {} };   // (sbSweep: FC9's incremental sandbox sweep state, off in a person's Refresh)
     vm.createContext(ctx);
     vm.runInContext(slice(d1, 'let __ledgerFullAt = 0;', '/** The sorter\'s sweeps ask only') .replace(/\/\*\* Ask firebaseOrders a per-order question[\s\S]*$/, '') + '\n' +
       slice(d1, '/** Ask firebaseOrders a per-order question', 'async function persistCompleted') + '\n' +
@@ -53,14 +53,14 @@ const slice = (src, from, to) => { const a = src.indexOf(from); assert.ok(a >= 0
     // first person's Refresh: the whole ledger once, the rows built from it (no dcFor)
     await ctx.refreshOrders();
     assert.equal(calls.filter(u => /designCompleted=1/.test(u)).length, 1, 'the first Refresh reads the whole ledger once');
-    assert.deepEqual(j(builds[0]), { syncCompleted: false, allNotes: true });
+    assert.deepEqual(j(builds[0]), { syncCompleted: false, allNotes: true, stream: false });
     assert.ok(ctx.ledgerAt() > 0);
     assert.deepEqual(j([...completedOrders].sort()), ['1001', '1002', '1003']);
     // another bench completes 1004 and un-completes 1002 meanwhile
     ledger.add('1004'); ledger.delete('1002');
     await ctx.refreshOrders(); await ctx.refreshOrders();
     assert.equal(calls.filter(u => /designCompleted=1/.test(u)).length, 1, 'later Refreshes do not read the whole ledger again');
-    assert.deepEqual(j(builds[1]), { syncCompleted: true, allNotes: true }, 'later Refreshes ask only about the open orders');
+    assert.deepEqual(j(builds[1]), { syncCompleted: true, allNotes: true, stream: false }, 'later Refreshes ask only about the open orders');
     // the sync itself: exact for the open orders, chunks of 100, two at a time
     const open = Array.from({ length: 230 }, (_, i) => String(1000 + i));
     calls.length = 0;
@@ -70,7 +70,7 @@ const slice = (src, from, to) => { const a = src.indexOf(from); assert.ok(a >= 0
     // the sorter's sweep (targeted) never reads the whole ledger either
     calls.length = 0; builds.length = 0;
     await ctx.refreshOrders({ heal: false, targeted: true });
-    assert.deepEqual(j(builds[0]), { syncCompleted: true, allNotes: false });
+    assert.deepEqual(j(builds[0]), { syncCompleted: true, allNotes: false, stream: false });
     assert.equal(calls.filter(u => /designCompleted=1/.test(u)).length, 0);
     ok('design-1: first Refresh reads the whole ledger once; later Refreshes and the sorter sweeps ask only about the open orders, with the same completed state for every order shown');
 

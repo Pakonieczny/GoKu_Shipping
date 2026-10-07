@@ -3094,20 +3094,15 @@ function wakeCompletionPolling() { __completeIdle = 0; }
    scopes writing to two different bindings, which is why the highlight never
    reflected server data. */
 
-/* mode "all" reads every note on record and is kept for a person's own Refresh. Sweeps ask only about the open orders
-   ({ ids }), in chunks; { merge: true } updates just those ids and keeps the rest (a search result). A failed read keeps
-   the notes already known. */
+/* mode "all" is for a person's own Refresh. It used to read every note on record (staffNotes=1: a billed read for each order that ever had a note, 3,372 on 7 Oct
+   2026 and growing; FC3b, Firebase cost). The highlight is only ever looked up for an order this page lists, so "all" now asks (staffNotesFor, in chunks) about every
+   order the page lists (the open orders, the current list, the search result) and every order it already flags: the same answer for everything shown, a read per
+   order listed. Sweeps ask only about the open orders ({ ids }), in chunks; { merge: true } updates just those ids and keeps the rest (a search result). A failed
+   read keeps the notes already known. */
 async function refreshStaffNoteIDs(opts = {}) {
   const mode = opts.mode || "visible";
   try {
-    if (mode === "all") {
-      const r = await fetch(`${FN}/firebaseOrders?staffNotes=1`);
-      const j = await r.json();
-      if (!r.ok || !j || j.success === false || !Array.isArray(j.orderNumbers)) throw new Error((j && j.error) || "HTTP " + r.status);
-      staffNoteIDs = new Set(j.orderNumbers.map(String));
-      return;
-    }
-    const list = [...new Set((Array.isArray(opts.ids) ? opts.ids : visibleReceiptIds()).map(String))];
+    const list = [...new Set((mode === "all" ? staffNoteAskIds() : Array.isArray(opts.ids) ? opts.ids : visibleReceiptIds()).map(String))];
     if (!list.length) { if (!opts.merge) staffNoteIDs = new Set(); return; }
     const found = await askFirebaseOrders("staffNotesFor", list);
     if (opts.merge) { list.forEach(id => { if (found.has(id)) staffNoteIDs.add(id); else staffNoteIDs.delete(id); }); }
@@ -3116,6 +3111,7 @@ async function refreshStaffNoteIDs(opts = {}) {
     console.warn("refreshStaffNoteIDs error", e);
   }
 }
+const staffNoteAskIds = () => [...new Set([...allOpenReceipts, ...currentReceipts, ...((searchSnapshot && searchSnapshot.receipts) || [])].map(r => String(r.receipt_id)).concat([...staffNoteIDs]))];
 
 /* === 10b · INTERNAL MESSAGE FLAGS ======================================
    Which orders carry at least one message in Brites_Orders/{rid}/messages.

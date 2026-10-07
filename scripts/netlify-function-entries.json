@@ -199,6 +199,7 @@
     "_laserSheetTime.js",
     "_stationPinLogin.js",
     "_orderCancel.js",
+    "_designCompleted.js",
     "_etsyApiMeter.js",
     "_etsyApiUsage.js",
     "_etsyImageCache.js",
