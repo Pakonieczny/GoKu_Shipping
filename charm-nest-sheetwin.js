@@ -2796,11 +2796,24 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
        here (its total, against what the whole read left out past 5000), the whole set is read again. A server that
        answers no cursor is read whole each time, as before. */
     let cursor = null, beyond = 0;
+    /* FC3b (cost): the placement feed forces this read every 2.5 s per open tab, and each one was a query plus a count() (4 to 7 reads) to
+       learn that nothing was written. Every writer of a cancel record raises ONE counter in its own commit (Charm_Nest_Rev/cancel), the
+       answer carries it (`gen`), and the next ask sends it back (`ifGen`): a counter that has not moved is `unchanged` for one read and
+       no record is read, so a cancel made anywhere shows as fast as before (the counter moved: the records written since are read at
+       once) and an idle tab costs about a fifth. A write nothing raised the counter for (an edit by hand in the console, a restore
+       made outside the app) shows at the next deep read: the ask goes without ifGen at least every GEN_DEEP, and that read counts the
+       records, which finds a restore as it always did. No gen (the sandbox, an older server, a failed read) is the read in full. */
+    const GEN_DEEP = 60000;
+    let gen = null, genAt = 0;                                      // the cloud's cancel counter at the last answer, and when the page last read in full (without ifGen)
     async function readNew() {
       let c = cursor, add = [];
       for (let i = 0; i < 5; i++) {
-        const r = await api("charmNestLibrary", { op: "cancelList", idsOnly: true, after: c, limit: 500 }, { quiet: true });
+        const ask = { op: "cancelList", idsOnly: true, after: c, limit: 500, wantGen: true };
+        if (i === 0 && gen != null && Date.now() - genAt < GEN_DEEP) ask.ifGen = gen;
+        const r = await api("charmNestLibrary", ask, { quiet: true });
         if (!r.cursor) return null;
+        if (r.unchanged && ask.ifGen != null && r.gen === ask.ifGen) return { add: [], cursor: c };   // (the counter has not moved: nothing was written, nothing was restored)
+        if (i === 0) { gen = r.gen != null ? r.gen : null; genAt = Date.now(); }                     // (a read in full: its gen is the one to send next)
         add = add.concat((r.ids || []).map(String)); c = r.cursor;
         if (!r.more) return +r.total - new Set([...ids, ...add]).size === beyond ? { add, cursor: c } : null;
       }
@@ -2811,7 +2824,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       if (!force && at && Date.now() - at < 60000) return Promise.resolve(ids);
       const t0 = Date.now();
       loading = (cursor ? readNew() : Promise.resolve(null))
-        .then(n => n || api("charmNestLibrary", { op: "cancelList", idsOnly: true, track: true }, { quiet: true }))
+        .then(n => n || api("charmNestLibrary", { op: "cancelList", idsOnly: true, track: true, wantGen: true }, { quiet: true }).then(r => { gen = r && r.gen != null ? r.gen : null; genAt = Date.now(); return r; }))
         .then(r => {
           const was = at ? ids : null;
           if (r.add) { ids = new Set(ids); for (const id of r.add) if (!(restoredAt(id) >= t0)) ids.add(id); cursor = r.cursor; }
