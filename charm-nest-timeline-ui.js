@@ -52,6 +52,7 @@
      made on it, or the tab shown again is back at 2.5 s at once. */
   const FULL_EVERY = 60000, IDLE_STEPS = [[10 * 60000, 1], [60 * 60000, 2], [Infinity, 4]];
   let lastTouch = Date.now(), touchAt = 0; const wakers = new Set();
+  const feeds = new Set();   // (the open feeds: poke(orderId) wakes the ones of that order)
   const touch = () => {
     const t = Date.now(); lastTouch = t;
     if (t - touchAt < 1000) return; touchAt = t;
@@ -1468,7 +1469,23 @@
       want();
       clearTimeout(againT); againT = setTimeout(() => { againT = 0; want(); }, POLL_AGAIN);
     };
-    F.subscribe = fn => { subs.add(fn); if (!pollT && !F.loading) arm(); return () => { subs.delete(fn); if (!subs.size) { clearTimeout(pollT); pollT = 0; clearTimeout(againT); againT = 0; } }; };
+    /** LB2 (7 Oct, Paul: every effect of Complete / QR Print / Hold / Release / Cancel shows in about 3 s on every screen, one only watched included): the page learnt from a CHEAP shared
+     *  signal (the custom records feed of Review, the placement feed's counter) that something this order's answer is made of moved. A window slowed for being unused (5 s, 10 s) asks the cheap
+     *  question NOW (a read in flight is followed by one more), and keeps the full pace from here on (F.moved). A window at the full pace has nothing to wake: its next poll is within 2.5 s.
+     *  No read of its own: the signals are the ones the page already reads; this only brings forward a probe the window would have made later. */
+    F.poke = () => {
+      if (F.dead || !subs.size) return false;
+      F.moved = Date.now();
+      if (!seen()) { F.dirty = true; return true; }   // (a hidden tab reads nothing; shown again, it reads in full)
+      if (F.loading) { F.dirty = true; return true; }
+      if (slow > 1) arm(Math.max(0, F.began + gap - Date.now()));
+      return true;
+    };
+    // the placement of this order (on a sheet, held, released, cancelled, done by hand) moved: what the page's own placement reads (the feed's counter) have just told it
+    let plSig = null, unOP = null;
+    const placeSig = () => { try { const PP = root.PiecePlacement, o = PP && typeof PP.of === "function" ? PP.of(id) : null; return o ? String(o.sig || "") : ""; } catch (_) { return ""; } };
+    const hookOP = () => { try { const OP = root.OrderPieces; if (unOP || !OP || typeof OP.subscribe !== "function") return; plSig = placeSig(); unOP = OP.subscribe(() => { const x = placeSig(); if (x !== plSig) { plSig = x; F.poke(); } }); } catch (_) {} };
+    F.subscribe = fn => { subs.add(fn); hookOP(); feeds.add(F); if (!pollT && !F.loading) arm(); return () => { subs.delete(fn); if (!subs.size) { clearTimeout(pollT); pollT = 0; clearTimeout(againT); againT = 0; feeds.delete(F); try { if (typeof unOP === "function") unOP(); } catch (_) {} unOP = null; } }; };
     const onVis = () => {
       if (F.dead || !subs.size) return;
       if (!seen()) { clearTimeout(pollT); pollT = 0; return; }
@@ -1491,7 +1508,7 @@
     doc.addEventListener("visibilitychange", onVis); root.addEventListener("online", onNet);
     try { if (root.OrderTimeline && typeof root.OrderTimeline.onRecord === "function") unrec = root.OrderTimeline.onRecord(onRec); } catch (_) {}
     F.destroy = () => {
-      if (F.dead) return; F.dead = true; clearTimeout(pollT); pollT = 0; clearTimeout(againT); againT = 0; subs.clear(); local.clear(); wakers.delete(wake);
+      if (F.dead) return; F.dead = true; clearTimeout(pollT); pollT = 0; clearTimeout(againT); againT = 0; subs.clear(); local.clear(); wakers.delete(wake); feeds.delete(F); try { if (typeof unOP === "function") unOP(); } catch (_) {} unOP = null;
       doc.removeEventListener("visibilitychange", onVis); root.removeEventListener("online", onNet);
       try { if (typeof unrec === "function") unrec(); } catch (_) {}
       unrec = null;
@@ -2314,7 +2331,9 @@
   /** The icon of the lane an event belongs to (the station badge's disc), as SVG markup; "" for no event. */
   function iconOf(x) { const e = x && norm(x); return e ? iconSvg((LANE[e.lane] || LANE.office).ic) : ""; }
 
-  root.OrderTimelineUI = { mount, feed, stampSvg, derive, stepDone, STAGES, stagesFor, ofPiece, summary, isStud, engraveOf, KIND, labelOf, nowStamps, wireNow, iconOf, sealed, sealsOf, blockerOf, requirementsOf, explainOn,
+  /** Something this order's timeline is made of moved (learnt from the page's cheap shared signals): the open feed of that order reads now, even slowed. How many feeds were woken. */
+  const poke = orderId => { const id = digits(orderId); let n = 0; for (const F of [...feeds]) if (id && F.orderId === id && F.poke()) n++; return n; };
+  root.OrderTimelineUI = { mount, feed, poke, stampSvg, derive, stepDone, STAGES, stagesFor, ofPiece, summary, isStud, engraveOf, KIND, labelOf, nowStamps, wireNow, iconOf, sealed, sealsOf, blockerOf, requirementsOf, explainOn,
     stepOf, labelStepOf, personOf, placeOf, opStepOf, whenOf, timeOf, handStepOf, handOf, handDoneOf, handLive, handSealOf, faceModel };
   root.OrderTimelineUI.pollOpenMs = POLL_OPEN;   // how often the open order view's feed reads (tests may set another before it opens)
 })(typeof window !== "undefined" ? window : globalThis);

@@ -129,6 +129,9 @@
     for (const ev of events) { try { P.remote(ev); } catch (e) { console.warn("Review feed", e); } if (ev.loud) st.loud++; }
     st.applied += changes.length;
     refresh();
+    // (LB2, 7 Oct: the open order window of such an order reads its timeline now, even when it has slowed for being unused (5 s after 10 minutes, 10 s after an hour): a screen somebody
+    // only WATCHES shows a Complete / QR Print / Reopen from another computer in about 3 s. The window brings forward a probe it would have made anyway: no read of this page's own)
+    try { const UI = root.OrderTimelineUI; if (UI && UI.poke) for (const rid of new Set(changes.map(c => String(c.key || "").split("_")[0]))) if (rid) UI.poke(rid); } catch (_) {}
     return changes.length;
   }
 
