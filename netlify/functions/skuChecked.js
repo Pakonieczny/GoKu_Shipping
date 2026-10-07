@@ -51,7 +51,8 @@ exports.handler = async (event) => {
       // The whole set in one read. A shop of this size marks thousands of
       // listings at most, and the console asks for it once per load plus on
       // refocus, so paging would cost more than it saved.
-      const snap = await db.collection(COLLECTION).where("checked", "==", true).get();
+      // Only the document ids are read (select() with no field): the answer is ids and the fields were never used. Same reads, no document bytes.
+      const snap = await db.collection(COLLECTION).where("checked", "==", true).select().get();
       const ids = [];
       snap.forEach(doc => ids.push(String(doc.id)));
       return { statusCode: 200, headers, body: JSON.stringify({ ids }) };
