@@ -57,6 +57,9 @@ for (const [sid, count] of SESS) for (let n = 1; n <= count; n++) { for (let s =
   assert(cron.d.reads <= 600 + 100 + 60, 'idle run reads only routing fields of the open records, the 100 newest session ids and three small summaries (got ' + cron.d.reads + ')');
   assert(cron.d.bytes <= 5e5, 'idle run moves under 0.5 MB (got ' + cron.d.bytes + ')');
   assert.equal(cron.d.storage.lists, 0, 'no Storage listing while every session is idle');
+  // The page's own poll (every 60 s while the Batch panel is open and a job is open): one batch_list of the newest 1000 jobs.
+  const list = await run('batch_list (page poll)', { kind: 'batch_list', limit: 1000, includeCollected: true });
+  console.log('batch_list limit 1000 (one panel poll): reads', list.d.reads, ' document bytes', list.d.bytes, ' ->  per hour at 60 s: reads', list.d.reads * 60, ' MB', (list.d.bytes * 60 / 1e6).toFixed(0));
   // A person's own sweep still checks every session, at the start and at the end (the old behaviour).
   const manual = await run('batch_sweep (manual)', { kind: 'batch_sweep' });
   assert(manual.d.reads > 3500, 'a manual sweep still re-reads the sessions (' + manual.d.reads + ' reads)');
