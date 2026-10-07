@@ -83,7 +83,7 @@ module.exports = function ({ db, col, FV, sheetLabel, setLabel, revDoc, configRe
   let stockApi = null;   // the Rose stock operations (roseClaim / roseRelease), bound by the library once both factories exist (bind below)
   const bump = tx => { const ref = revDoc && revDoc(); if (ref && FV.increment) tx.set(ref, { n: FV.increment(1), at: Date.now() }, { merge: true }); };
   // the counter's value, and whether the earlier cuts' leftovers were saved (remnantBackfill); null = the sandbox, which keeps no counter
-  const revState = async () => { const ref = revDoc && revDoc(); if (!ref) return null; const s = await ref.get(), d = s.exists ? s.data() || {} : {}; return { rev: String(Number(d.n) || 0), backfilled: !!d.backfilledAt }; };
+  const revState = async () => { const ref = revDoc && revDoc(); if (!ref) return null; const s = await ref.get(), d = s.exists ? s.data() || {} : {}; return { rev: String(Number(d.n) || 0), backfilled: !!d.backfilledAt, reconciled: !!d.reconciledAt }; };
   const ms = t => (t && typeof t.toMillis === 'function' ? t.toMillis() : typeof t === 'number' ? t : null);
   const clean = (id, d) => { const o = { id }; for (const k of FIELDS) if (d[k] !== undefined) o[k] = d[k]; o.createdAt = ms(d.createdAt); return o; };
 
@@ -294,7 +294,7 @@ module.exports = function ({ db, col, FV, sheetLabel, setLabel, revDoc, configRe
       id, metal: d.metal || 'rose', code: d.code || '', status: d.status || 'available', outline: d.rings || [], sheetWMm: d.sheetWMm, sheetHMm: d.sheetHMm, bboxMm: bb, wMm: bb.w, hMm: bb.h, areaMm2: d.areaMm2,
       sourceSheet: d.sheetName || '', sourceSet: d.setName || '', sourceSheetId: d.sheetId || '', cutAt: +d.cutAt || null, cutBy: d.by || '',
       lastUsedAt: usedAt, lastUsedBy: d.lastUsedBy != null ? d.lastUsedBy : (d.by || ''), lastUsedSheet: d.lastUsedSheet != null ? d.lastUsedSheet : (d.sheetName || ''), lastUsedSheetId: d.lastUsedSheetId != null ? d.lastUsedSheetId : (d.sheetId || ''),
-      stockId: d.stockId, revision: d.revision, estimate: null
+      stockId: d.stockId, revision: d.revision, wPt: Number.isFinite(+d.sheetWMm) ? +(d.sheetWMm / MM).toFixed(3) : null, hPt: Number.isFinite(+d.sheetHMm) ? +(d.sheetHMm / MM).toFixed(3) : null, estimate: null
     };
     if (d.status === 'inUse') Object.assign(out, { inUseBySheetId: d.inUseBySheetId || '', inUseBySheetName: d.inUseBySheetName || '', inUseAt: d.inUseAt != null ? +d.inUseAt : null });
     if (d.status === 'used') Object.assign(out, { usedBySheetId: d.usedBySheetId || '', usedBySheetName: d.usedBySheetName || '', usedAt: d.usedAt != null ? +d.usedAt : null });
@@ -323,15 +323,17 @@ module.exports = function ({ db, col, FV, sheetLabel, setLabel, revDoc, configRe
     let state = await revState(), rev = state ? state.rev : null;
     const ifRev = typeof b.ifRev === 'string' && /^[\w.-]{1,40}$/.test(b.ifRev) ? b.ifRev : null;
     if (rev !== null && ifRev !== null && ifRev === rev && b.verify !== true) return { unchanged: true, rev };
-    let backfilled = null, backfillError = null;
-    if (state && !state.backfilled && b.backfill !== false) {
-      try { const r = await remnantBackfill(); backfilled = r.created || 0; } catch (e) { backfillError = (e && e.message) || String(e); }
+    let backfilled = null, backfillError = null, reconciled = null;
+    if (state && b.backfill !== false && (!state.backfilled || !state.reconciled)) {
+      // the first list ever: the earlier cuts' leftovers are saved (create-only), and the records of stocks a sheet already holds say so; each once, then never again
+      if (!state.backfilled) { try { const r = await remnantBackfill(); backfilled = r.created || 0; } catch (e) { backfillError = (e && e.message) || String(e); } }
+      if (!backfillError) { try { const r = await remnantReconcile(); reconciled = r.changed || 0; } catch (e) { backfillError = (e && e.message) || String(e); } }
       state = await revState() || state; rev = state.rev;
     }
     const [{ items, more }, pol, stats] = await Promise.all([readCards(metal, b, null), readPolicies(), readStats()]);
     const typical = typicalOfMetal(stats, metal);
     for (const c of items) if (c.status === 'available' || c.status === 'inUse') { const e = c.outline.length ? Partial.estimateFit(c.outline, typical, { sheetWMm: c.sheetWMm, sheetHMm: c.sheetHMm }) : null; if (e) c.estimate = { pieces: e.pieces, low: e.low, high: e.high, packedPct: e.packedPct }; }
-    return { items, rev, policies: pol.policies, typical, more, ...(backfilled !== null ? { backfilled } : {}), ...(backfillError ? { backfillError } : {}) };
+    return { items, rev, policies: pol.policies, typical, more, ...(backfilled !== null ? { backfilled } : {}), ...(reconciled ? { reconciled } : {}), ...(backfillError ? { backfillError } : {}) };
   }
 
   /* partialPlan { metal, pieces: [{areaMm2, wMm?, hMm?}] | {areaMm2, count}, order }: which available partials these pieces would take, filled one after the other, and
@@ -351,7 +353,7 @@ module.exports = function ({ db, col, FV, sheetLabel, setLabel, revDoc, configRe
     const snap = await coll().doc(id).get();   // (one read to learn its physical sheet; the claim's own transaction checks everything again)
     sync.check({ exists: snap.exists, data: snap.exists ? snap.data() || {} : null }, { metal, sheetId, stockId: snap.exists ? (snap.data() || {}).stockId : '', revision: snap.exists ? (snap.data() || {}).revision : 0 });
     const r = snap.data();
-    const out = await stockApi.roseClaim({ sheetId, metal, stockId: r.stockId, revision: r.revision, wPt: r.sheetWMm / MM, hPt: r.sheetHMm / MM, exact: true, partialId: id, nesting: b.nesting !== false, by: person(b.by), sheetName: b.sheetName });
+    const out = await stockApi.roseClaim({ sheetId, metal, stockId: r.stockId, revision: r.revision, wPt: r.sheetWMm / MM, hPt: r.sheetHMm / MM, exact: true, partialId: id, nesting: b.nesting !== false, by: person(b.by), sheetName: b.sheetName, swap: b.swap === true });
     return { ...out, partial: { id, status: 'inUse', ...(out.partial || {}), inUseBySheetId: sheetId } };
   }
   async function partialRelease(b = {}) {
@@ -384,9 +386,46 @@ module.exports = function ({ db, col, FV, sheetLabel, setLabel, revDoc, configRe
       return { ok: true, partial: card(id, { ...r, ...patch }, null) };
     });
   }
+  /* partialStocks { ids: [partialId...] (at most 20) }: the physical sheets under those partials, for a trial pack or a claim (a card carries the outline; the solver packs against the
+     stock's profile). Only the ids asked: the stock documents, once each (a revision's profile never changes, so the page keeps what it read). A partial id is {stockId}-{revision}.
+     -> { stocks: { [partialId]: { stockId, revision, wPt, hPt, profileJson, metal, held, available, current } | { missing: true } } } (current: the stock is still at that revision) */
+  async function partialStocks(b = {}) {
+    const ids = [...new Set((Array.isArray(b.ids) ? b.ids : []).map(String))].filter(okId).slice(0, 20), out = {};
+    const parts = ids.map(id => { const m = /^(.+)-(\d+)$/.exec(id); return m && okId(m[1]) ? { id, stockId: m[1], revision: +m[2] } : null; });
+    const docs = await Promise.all(parts.map(x => (x ? stocks().doc(x.stockId).get() : null)));
+    ids.forEach((id, i) => {
+      const x = parts[i], d = docs[i];
+      if (!x || !d || !d.exists) { out[id] = { missing: true }; return; }
+      const s = d.data() || {};
+      out[id] = { stockId: x.stockId, revision: s.revision, wPt: s.wPt, hPt: s.hPt, profileJson: s.profileJson || null, metal: s.metal || 'rose', held: !!s.owner, available: !!s.available, current: +s.revision === x.revision };
+    });
+    return { stocks: out };
+  }
   const bind = s => { stockApi = s; };
 
-  return { recordRemnant, sync, bind, ops: { remnantList, remnantMark, remnantBackfill, partialList, partialPolicyGet, partialPolicySet, partialClaim, partialRelease, partialUse, partialPlan, partialBackfill: remnantBackfill } };
+  /* remnantReconcile {}: ONCE, for what was true before the stock's claims kept the records in step: a record that says 'available' while a sheet already holds its physical sheet
+     (every Rose Gold sheet holds one from its nest on) becomes 'inUse', so the Partial Sheet list never offers a partial a sheet is nested on. Each record is changed in a transaction
+     that reads the stock again (the stock's owner is the one truth); the marker on the counter document says it is done. Production only (the sandbox keeps no counter). */
+  async function remnantReconcile() {
+    const mark = revDoc && revDoc(); if (!mark) return { ok: true, skipped: true, changed: 0 };
+    const was = await mark.get(); if (was.exists && (was.data() || {}).reconciledAt) return { ok: true, already: true, changed: 0 };
+    const held = (await stocks().where('available', '==', false).limit(1000).get()).docs.map(d => ({ ...d.data(), id: d.id })).filter(x => x.owner && +x.revision >= 1 && okId(x.id));
+    let changed = 0;
+    for (const x of held) {
+      await db.runTransaction(async tx => {
+        const sref = stocks().doc(x.id), rref = coll().doc(`${x.id}-${+x.revision}`), st = await tx.get(sref), rd = await tx.get(rref);
+        const stock = st.exists ? st.data() || {} : null, rec = rd.exists ? rd.data() || {} : null;
+        if (!stock || !rec || !stock.owner || +stock.revision !== +x.revision || rec.status !== 'available') return;
+        const sh = await tx.get(col('Charm_Nest_Sheets').doc(String(stock.owner))), name = sh.exists && sheetLabel ? String(sheetLabel(sh.data()) || '').slice(0, 80) : '';
+        tx.update(rref, { status: 'inUse', inUseBySheetId: String(stock.owner), inUseBySheetName: name, inUseAt: Date.now(), inUseBy: '', statusAt: Date.now() });
+        changed++;
+      });
+    }
+    await mark.set({ n: FV.increment ? FV.increment(1) : 1, at: Date.now(), reconciledAt: Date.now(), reconciled: changed }, { merge: true });
+    return { ok: true, changed };
+  }
+
+  return { recordRemnant, sync, bind, ops: { remnantList, remnantMark, remnantBackfill, partialList, partialPolicyGet, partialPolicySet, partialClaim, partialRelease, partialUse, partialPlan, partialStocks, partialBackfill: remnantBackfill } };
 };
 module.exports.leftover = leftover;
 module.exports.FIELDS = FIELDS;

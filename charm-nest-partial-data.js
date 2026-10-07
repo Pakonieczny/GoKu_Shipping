@@ -6,7 +6,8 @@
      PartialSheets.cached(metal)   PartialSheets.changed()   PartialSheets.on(fn) -> off
      PartialSheets.policy(metal) -> { mode:'auto'|'new', wMm, hMm }  (sync, from the page's cache; also window.partialPolicy)
      await PartialSheets.loadPolicy({ force })   await PartialSheets.setPolicy(metal, { mode, wMm, hMm })
-     await PartialSheets.claim(metal, partialId, sheetId, { sheetName, nesting })   await PartialSheets.release(sheetId)   await PartialSheets.use(partialId, sheetId)
+     await PartialSheets.stocks([partialId...]) -> { [id]: { stockId, revision, wPt, hPt, profileJson } }   (the stock under a partial, read once per id, for a trial pack)
+     await PartialSheets.claim(metal, partialId, sheetId, { sheetName, nesting, swap })   await PartialSheets.release(sheetId)   await PartialSheets.use(partialId, sheetId)
      await PartialSheets.plan(metal, pieces, { order })  -> { fitsAll, needed, partials, needMm2, haveMm2, short, estimate:true }   (uses the cached list: no call when the panel has it)
 
    Cost (the Google bill): NO timer, NO polling. A list is asked when the panel opens, after something this page changed (changed()), on a Refresh press
@@ -68,10 +69,19 @@
     return r.policy;
   }
 
+  // swap: the sheet gives back the physical sheet it holds and takes this one in ONE server transaction (a refused claim then loses nothing)
   async function claim(metal, id, sheetId, o = {}) {
     need(metal);
-    const r = await api({ op: 'partialClaim', metal, id, sheetId, by: who(), ...(o.sheetName ? { sheetName: o.sheetName } : {}), ...(o.nesting === false ? { nesting: false } : {}) }, 'Reserving the partial sheet');
+    const r = await api({ op: 'partialClaim', metal, id, sheetId, by: who(), ...(o.sheetName ? { sheetName: o.sheetName } : {}), ...(o.nesting === false ? { nesting: false } : {}), ...(o.swap ? { swap: true } : {}) }, 'Reserving the partial sheet');
     changed(); return r;
+  }
+  /* the physical sheets under some partials (for a trial pack: the solver packs against the stock's profile). Only the ids not read yet are asked; a revision's profile never changes. */
+  const stockCache = new Map();
+  async function stocks(ids) {
+    const want = [...new Set((ids || []).map(String))], miss = want.filter(id => !stockCache.has(id));
+    if (miss.length) { const r = await api({ op: 'partialStocks', ids: miss.slice(0, 20) }, 'Reading the partial sheets'); for (const [id, v] of Object.entries(r.stocks || {})) if (v && !v.missing && v.current) stockCache.set(id, v); }
+    const out = {}; for (const id of want) if (stockCache.has(id)) out[id] = stockCache.get(id);
+    return out;
   }
   async function release(sheetId) { const r = await api({ op: 'partialRelease', sheetId, by: who() }, 'Giving the partial sheet back'); changed(); return r; }
   async function use(id, sheetId, o = {}) { const r = await api({ op: 'partialUse', id, sheetId, by: who(), ...(o.sheetName ? { sheetName: o.sheetName } : {}) }, 'Marking the partial sheet used'); changed(); return r; }
@@ -85,6 +95,6 @@
   // the tab is looked at again after a minute: the panel (if open) asks again, with its revision
   try { document.addEventListener('visibilitychange', () => { if (document.visibilityState !== 'visible') return; const t = Object.values(lists); if (t.length && t.some(l => Date.now() - l.at > STALE_MS)) { changed(); emit({ metal: '*', reason: 'visible' }); } }); } catch (_) {}
 
-  window.PartialSheets = { list, cached, changed, on, policy, loadPolicy, setPolicy, claim, release, use, plan, estimateFit: P.estimateFit, METALS, DEFAULT_POLICY };
+  window.PartialSheets = { list, cached, changed, on, policy, loadPolicy, setPolicy, claim, release, use, plan, stocks, estimateFit: P.estimateFit, METALS, DEFAULT_POLICY };
   window.partialPolicy = metal => window.PartialSheets.policy(metal);
 })();
