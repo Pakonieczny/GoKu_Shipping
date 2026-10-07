@@ -58,20 +58,21 @@
   function create(options){
     options=options||{};var now=typeof options.now==='function'?options.now:function(){return Date.now();};
     var onExpression=typeof options.onExpression==='function'?options.onExpression:function(){},onEvent=typeof options.onEvent==='function'?options.onEvent:function(){};
-    var active=false,paused=false,reduced=false,destroyed=false,listening=false,playing=false,turnId='',responseId='',itemId='',context='ordinary',assistantText='',userText='',phrases=[],clock=0,lastTick=now(),lastOutputAt=-Infinity,lastInputAt=-Infinity,inputRunAt=null,lastBackchannel=-Infinity,inputObservedMs=0,lastLevelAt=now(),listenCueAt=null,listenKind='attentive',output=0,input=0,index=-1,current=null,transitions=0,mediaAt=null,mediaPositive=false,mediaDriven=false,closedResponses=new Set();
+    var active=false,paused=false,reduced=false,destroyed=false,listening=false,playing=false,playbackHeld=false,awaitingRecoveryOutput=false,turnId='',turnVersion=null,responseId='',itemId='',context='ordinary',assistantText='',userText='',phrases=[],clock=0,lastTick=now(),lastOutputAt=-Infinity,lastInputAt=-Infinity,inputRunAt=null,lastBackchannel=-Infinity,inputObservedMs=0,lastLevelAt=now(),listenCueAt=null,listenKind='attentive',output=0,input=0,index=-1,current=null,transitions=0,mediaAt=null,mediaPositive=false,mediaDriven=false,closedResponses=new Set();
     function retire(id){if(!id)return;closedResponses.add(id);if(closedResponses.size>24)closedResponses.delete(closedResponses.values().next().value);}
     function emit(kind,intensity){var value=kind?{kind:kind,intensity:clamp(intensity,0,1)}:null;if(current?.kind===value?.kind&&Math.abs((current?.intensity||0)-(value?.intensity||0))<.002)return;current=value;try{onExpression(value);}catch(e){}}
-    function clear(){playing=false;listening=false;assistantText=userText='';phrases=[];clock=0;output=input=0;mediaAt=null;mediaPositive=mediaDriven=false;inputRunAt=null;inputObservedMs=0;lastLevelAt=now();listenCueAt=null;index=-1;lastOutputAt=lastInputAt=-Infinity;lastTick=now();emit(null,0);}
-    function beginTurn(value){if(destroyed||paused||reduced)return false;value=value||{};if(responseId)retire(responseId);clear();active=true;turnId=clean(String(value.id||'')).slice(0,200);responseId=itemId='';context=['ordinary','support','repair'].includes(value.context)?value.context:contextFor(value.context||'',null);lastBackchannel=-Infinity;return true;}
+    function clear(){playing=false;listening=false;playbackHeld=awaitingRecoveryOutput=false;assistantText=userText='';phrases=[];clock=0;output=input=0;mediaAt=null;mediaPositive=mediaDriven=false;inputRunAt=null;inputObservedMs=0;lastLevelAt=now();listenCueAt=null;index=-1;lastOutputAt=lastInputAt=-Infinity;lastTick=now();emit(null,0);}
+    function beginTurn(value){if(destroyed||paused||reduced)return false;value=value||{};if(responseId)retire(responseId);clear();active=true;turnId=clean(String(value.id||'')).slice(0,200);turnVersion=Number.isInteger(value.turnVersion)?value.turnVersion:null;responseId=itemId='';context=['ordinary','support','repair'].includes(value.context)?value.context:contextFor(value.context||'',null);lastBackchannel=-Infinity;return true;}
+    function qualified(value){return !!value&&value.currentTurn!==false&&!(value.inputItemId&&turnId&&value.inputItemId!==turnId)&&!(Number.isInteger(value.turnVersion)&&Number.isInteger(turnVersion)&&value.turnVersion!==turnVersion);}
     function transcript(value){
-      if(!active||paused||reduced||destroyed||!value||value.currentTurn===false||value.inputItemId&&turnId&&value.inputItemId!==turnId)return false;
+      if(!active||paused||reduced||destroyed||!qualified(value))return false;
       if(value.role==='user'){
         if(value.itemId&&turnId&&value.itemId!==turnId)return false;
         userText=typeof value.text==='string'?clean(value.text):clean(userText+clean(value.delta));context=contextFor(userText,context);
         var signal=intent(userText,context,'user');listenKind=signal.kind;
         // Transcript may arrive only after a committed turn. Never pretend it was
         // understood earlier. No assent nod or automatic spoken backchannel.
-        if(listening&&userText.trim()){listenCueAt=now();emit(listenKind,Math.min(.5,signal.intensity));}return true;
+        if(listening&&!playbackHeld&&userText.trim()){listenCueAt=now();emit(listenKind,Math.min(.5,signal.intensity));}return true;
       }
       if(value.role!=='assistant')return false;
       var nextId=clean(value.responseId||value.itemId||'').slice(0,200);
@@ -85,23 +86,42 @@
       var next=plan(tail,{context:context}).map(function(p,i){return Object.assign({},p,{index:locked.length+i,startMs:base+p.startMs,startWord:wordEnd+p.startWord});});phrases=locked.concat(next).slice(0,24);return true;
     }
     function playback(value){
-      if(!active||paused||reduced||destroyed||!value||value.currentTurn===false||value.inputItemId&&turnId&&value.inputItemId!==turnId)return false;var id=clean(value.responseId||'').slice(0,200);
+      if(!active||paused||reduced||destroyed||!qualified(value))return false;var id=clean(value.responseId||'').slice(0,200);
       if(id&&closedResponses.has(id))return false;
       if(id&&responseId&&id!==responseId){if(playing)return false;assistantText='';phrases=[];clock=0;index=-1;itemId='';}if(id)responseId=id;
       if(value.cleared){cancel();return true;}
       var starting=!playing&&value.playing===true;playing=value.playing===true;if(starting){mediaAt=null;mediaPositive=mediaDriven=false;if(Number.isInteger(value.startOffsetMs)&&value.startOffsetMs>=0&&value.startOffsetMs<=60000)clock=value.startOffsetMs;}lastTick=now();if(playing){listening=false;listenCueAt=null;}else{if(responseId){retire(responseId);}output=0;mediaAt=null;mediaPositive=mediaDriven=false;emit(null,0);}return true;
     }
-    function level(value){if(!active||paused||reduced||destroyed)return;value=value||{};if(value.currentTurn===false||value.inputItemId&&turnId&&value.inputItemId!==turnId||value.responseId&&(closedResponses.has(value.responseId)||responseId&&value.responseId!==responseId))return false;var time=now();output=clamp(value.output,0,1);input=clamp(value.input,0,1);
+    function level(value){if(!active||paused||reduced||destroyed)return;value=value||{};if(!qualified(value)||value.responseId&&(closedResponses.has(value.responseId)||responseId&&value.responseId!==responseId))return false;if(playbackHeld)return false;var time=now();output=clamp(value.output,0,1);input=clamp(value.input,0,1);
       // A local media clock avoids stretching speech when rendering callbacks
       // are sparse. It is still an estimate: no provider word timestamps exist.
       // Only adjacent positive output samples admit a bounded media interval.
       var media=typeof value.outputTimeMs==='number'&&Number.isFinite(value.outputTimeMs)&&value.outputTimeMs>=0&&value.outputTimeMs<=86400000?value.outputTimeMs:null;
       if(playing&&media!==null){var delta=mediaAt===null?0:media-mediaAt;if(mediaAt!==null&&mediaPositive&&output>.015&&delta>=0&&delta<=2000)clock+=delta;mediaAt=media;mediaPositive=output>.015;mediaDriven=true;}else{mediaAt=null;mediaPositive=false;if(playing&&Object.prototype.hasOwnProperty.call(value,'outputTimeMs'))mediaDriven=true;}
-      if(playing&&output>.015)lastOutputAt=time;if(listening&&input>.025){lastInputAt=time;if(inputRunAt===null)inputRunAt=time;inputObservedMs+=clamp(time-lastLevelAt,0,100);}lastLevelAt=time;tick();}
-    function setListening(value){if(!active||paused||reduced||destroyed||listening===(value===true))return;listening=value===true;if(listening){playing=false;output=0;lastTick=now();emit(context==='support'||context==='repair'?'support':'attentive',context==='ordinary'?.28:.25);}else if(!playing)emit(null,0);}
+      if(playing&&output>.015){lastOutputAt=time;awaitingRecoveryOutput=false;}if(listening&&input>.025){lastInputAt=time;if(inputRunAt===null)inputRunAt=time;inputObservedMs+=clamp(time-lastLevelAt,0,100);}lastLevelAt=time;tick();}
+    function setListening(value){if(!active||paused||reduced||destroyed||listening===(value===true))return;listening=value===true;if(listening){playing=false;output=0;lastTick=now();if(!playbackHeld)emit(context==='support'||context==='repair'?'support':'attentive',context==='ordinary'?.28:.25);}else if(!playing)emit(null,0);}
+    function resetActivity(){output=input=0;mediaAt=null;mediaPositive=false;lastOutputAt=lastInputAt=-Infinity;inputRunAt=null;inputObservedMs=0;listenCueAt=null;lastTick=lastLevelAt=now();}
+    function qualifiedRecovery(value){return qualified(value)&&value.currentTurn===true&&(!Number.isInteger(turnVersion)||Number.isInteger(value.turnVersion))&&(!value.itemId||!itemId||value.itemId===itemId)&&(!Object.prototype.hasOwnProperty.call(value,'responseId')||typeof value.responseId==='string');}
+    function holdPlayback(value){
+      if(!active||paused||reduced||destroyed||!qualifiedRecovery(value))return false;
+      if(value.responseId&&(closedResponses.has(value.responseId)||responseId&&value.responseId!==responseId))return false;
+      // Autoplay is recoverable within the same native session. Retain only
+      // its text/consumed estimate; never retain a waveform or a clock anchor.
+      playbackHeld=awaitingRecoveryOutput=true;resetActivity();emit(null,0);return true;
+    }
+    function recoverPlayback(value){
+      if(!active||!playbackHeld||paused||reduced||destroyed||!qualifiedRecovery(value))return false;
+      if(value.responseId&&(closedResponses.has(value.responseId)||responseId&&value.responseId!==responseId))return false;
+      // A live buffer must rejoin its exact response. A waiting turn can be
+      // enabled before its first buffer arrives, without creating playback.
+      if(playing&&(value.playing!==true||!value.responseId||value.responseId!==responseId))return false;
+      if(value.playing===true&&(!value.responseId||!responseId||value.responseId!==responseId))return false;
+      playbackHeld=false;resetActivity();return true;
+    }
     function tick(){
-      var time=now(),dt=clamp(time-lastTick,0,100);lastTick=time;if(!active||paused||reduced||destroyed)return snapshot();
+      var time=now(),dt=clamp(time-lastTick,0,100);lastTick=time;if(!active||paused||reduced||destroyed||playbackHeld)return snapshot();
       if(playing){
+        if(awaitingRecoveryOutput){emit(null,0);return snapshot();}
         if(!mediaDriven&&time-lastOutputAt<220&&phrases.length)clock+=dt;
         var cue=phrases.find(function(p){return clock>=p.startMs&&clock<p.startMs+p.durationMs;});
         if(!cue){emit(null,0);index=-1;return snapshot();}
@@ -114,11 +134,11 @@
         emit(age<1100?listenKind:context==='ordinary'?'attentive':'support',(context==='ordinary'?.26:.22)+pulse*.18);
       }return snapshot();
     }
-    function cancel(){if(responseId)retire(responseId);active=false;clear();responseId=itemId='';}
+    function cancel(){if(responseId)retire(responseId);active=false;clear();responseId=itemId='';turnVersion=null;}
     function setPaused(value){paused=value===true;if(paused)cancel();}
     function setReducedMotion(value){reduced=value===true;if(reduced)cancel();}
-    function snapshot(){return {active:active,playing:playing,listening:listening,paused:paused,reducedMotion:reduced,turnId:turnId,responseId:responseId,itemId:itemId,context:context,cue:current?Object.assign({},current):null,currentPhrase:index,phraseCount:phrases.length,clockMs:Math.round(clock),transitions:transitions,timing:'estimated-audio-activity',diagnosis:false};}
-    return {beginTurn:beginTurn,transcript:transcript,playback:playback,level:level,setListening:setListening,tick:tick,cancel:cancel,setPaused:setPaused,setReducedMotion:setReducedMotion,snapshot:snapshot,destroy:function(){cancel();destroyed=true;}};
+    function snapshot(){return {active:active,playing:playing,listening:listening,playbackHeld:playbackHeld,awaitingRecoveryOutput:awaitingRecoveryOutput,paused:paused,reducedMotion:reduced,turnId:turnId,turnVersion:turnVersion,responseId:responseId,itemId:itemId,context:context,cue:current?Object.assign({},current):null,currentPhrase:index,phraseCount:phrases.length,clockMs:Math.round(clock),transitions:transitions,timing:'estimated-audio-activity',diagnosis:false};}
+    return {beginTurn:beginTurn,transcript:transcript,playback:playback,level:level,setListening:setListening,holdPlayback:holdPlayback,recoverPlayback:recoverPlayback,tick:tick,cancel:cancel,setPaused:setPaused,setReducedMotion:setReducedMotion,snapshot:snapshot,destroy:function(){cancel();destroyed=true;}};
   }
   var api={KINDS:KINDS,plan:plan,envelope:envelope,contextFor:contextFor,create:create};if(typeof module==='object'&&module.exports)module.exports=api;scope.BritesConciergeExpression=api;
 })(typeof window!=='undefined'?window:globalThis);

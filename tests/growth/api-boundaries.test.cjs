@@ -1,6 +1,7 @@
 'use strict';
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path');
 const core=require('../../netlify/functions/_britesGrowth');
+const keywordRevision=require('../../netlify/functions/_britesGrowthKeywordRevision');
 const source=fs.readFileSync(path.join(__dirname,'../../netlify/functions/britesGrowthApi.js'),'utf8')
   .replace("import core from './_britesGrowth.js';",'')
   .replace("import demandStore from './_britesGrowthDemandStore.js';",'')
@@ -9,6 +10,7 @@ const source=fs.readFileSync(path.join(__dirname,'../../netlify/functions/brites
   .replace("import historicalLookup from './_britesGrowthHistoricalLookup.js';",'')
   .replace("import conciergeDiagnostics from './_britesConciergeDiagnostics.js';",'')
   .replace("import controllerStore from './_britesGrowthController.js';",'')
+  .replace("import keywordRevision from './_britesGrowthKeywordRevision.js';",'')
   .replace('export default async (req,context) => {','return async (req,context) => {')
   .replace(/export const config = [\s\S]*$/, '');
 const product={id:'gid://shopify/Product/301',handle:'verified-bunny',url:'https://britesjewelry.com/products/verified-bunny',title:'Bunny necklace',type:'Necklace',description:'Pendant and chain included.',currency:'USD',options:[{name:'Necklace Length',values:['18 inches']}],variants:[{id:'gid://shopify/ProductVariant/302',numericId:'302',price:54,available:true,title:'18 inches',sku:'Bunny301',options:[]}],variantsComplete:true,checkedAt:Date.now()};
@@ -19,7 +21,7 @@ function fixture(namespace){
   const db={collection:()=>({doc:()=>({get:async()=>({exists:true,data:()=>({passcode:'owner-code'})})})}),runTransaction:async fn=>fn({get:async()=>({exists:true,data:()=>row}),update:(_r,value)=>{write=value;}})};
   const service={namespace,rateLimit:async()=>true,saveProducts:async()=>{},getProduct:async id=>id===product.id?product:null,productIssues:async()=>[issue],research:async()=>[],recordProductIssue:async value=>{savedIssue=value;return{ok:true,productId:value.productId};},rebuildMilestoneIndex:async()=>({schema:1,builtAt:Date.now(),approvedCount:0,supplementCount:0,counts:{}}),col:()=>({doc:()=>({})})};
   const injected={...core,makeDb:()=>db,createShopify:()=>({byHandle:async()=>product,search:async()=>({products:[product],pageInfo:{}})}),createGrowthService:()=>service};
-  const handler=new Function('core','demandStore','controllerStore','receiptSandboxCheck','etsyCacheReadOnly','historicalLookup','conciergeDiagnostics','Netlify',source)(injected,require('../../netlify/functions/_britesGrowthDemandStore'),require('../../netlify/functions/_britesGrowthController'),require('../../netlify/functions/_britesGrowthReceiptSandboxCheck'),require('../../netlify/functions/_britesGrowthEtsyCacheReadOnly'),{createHistoricalLookup:()=>({read:async()=>({readOnly:true,identityBindingPerformed:false})})},{read:async()=>({private:true,diagnostics:[]})},{env:{get:k=>k==='BRITES_GROWTH_ADMIN_KEY'?'operator-key':undefined}});
+  const handler=new Function('core','demandStore','controllerStore','receiptSandboxCheck','etsyCacheReadOnly','historicalLookup','conciergeDiagnostics','keywordRevision','Netlify',source)(injected,require('../../netlify/functions/_britesGrowthDemandStore'),require('../../netlify/functions/_britesGrowthController'),require('../../netlify/functions/_britesGrowthReceiptSandboxCheck'),require('../../netlify/functions/_britesGrowthEtsyCacheReadOnly'),{createHistoricalLookup:()=>({read:async()=>({readOnly:true,identityBindingPerformed:false})})},{read:async()=>({private:true,diagnostics:[]})},keywordRevision,{env:{get:k=>k==='BRITES_GROWTH_ADMIN_KEY'?'operator-key':undefined}});
   return{handler,getSaved:()=>savedIssue,getWrite:()=>write};
 }
 async function call(f,op,{method='GET',body,key,query=''}={}){

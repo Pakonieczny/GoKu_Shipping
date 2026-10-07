@@ -1,6 +1,6 @@
 'use strict';
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path');
-const core=require('../../netlify/functions/_britesGrowth'),policy=require('../../netlify/functions/_britesConcierge'),diagnostics=require('../../netlify/functions/_britesConciergeDiagnostics');
+const core=require('../../netlify/functions/_britesGrowth'),policy=require('../../netlify/functions/_britesConcierge'),diagnostics=require('../../netlify/functions/_britesConciergeDiagnostics'),storefront=require('../../netlify/functions/_britesStorefront');
 const source=fs.readFileSync(path.join(__dirname,'../../netlify/functions/britesConcierge.js'),'utf8')
   .replace(/^import (?:core|claude|policy|diagnostics) from .*;\s*$/gm,'')
   .replace('export default async (req,context) => {','return async (req,context) => {')
@@ -11,10 +11,11 @@ const html=blocks=>'<div class="shopify-policy__body"><div>'+blocks.map(x=>'<p>'
 function product(id){return {id:'gid://shopify/Product/'+id,handle:'bunny-'+id,url:'https://britesjewelry.com/products/bunny-'+id,title:'Bunny Necklace',description:'Includes a sterling silver chain.',type:'Necklace',tags:['bunny'],currency:'USD',options:[{name:'Necklace Length',values:['18 Inches']}],variants:[{id:'gid://shopify/ProductVariant/'+(id+100),numericId:String(id+100),title:'Sterling Silver / 18 Inches',price:54,available:true,options:[{name:'Metal',value:'Sterling Silver'}]}],variantsComplete:true,checkedAt:Date.now()};}
 function fixture({failGuide=false,failMessageEvent=false,allowed=true,policyAnswer,conciergeAnswer}={}){
   let catalogueResolve;const catalogueStarted=new Promise(resolve=>catalogueResolve=resolve);
-  const calls={policy:[],catalogue:0,byHandle:[],concierge:0,setup:0,model:0,events:[],rates:[],diagnostics:[]},products=[product(1),product(2)];
+  const calls={policy:[],services:0,catalogue:0,byHandle:[],concierge:0,setup:0,model:0,events:[],rates:[],diagnostics:[]},products=[product(1),product(2)];
   const service={namespace:'Brites_Growth_Sandbox',col:suffix=>{assert.equal(suffix,'ConciergeDiagnostics');return {doc:id=>({set:async record=>calls.diagnostics.push({id,record})})};},rateLimit:async(key,limit)=>{calls.rates.push({key,limit});return allowed;},event:async(name)=>{calls.events.push(name);if(failMessageEvent&&name==='message')throw Error('PRIVATE_EVENT_ERROR');return {ok:true};},setup:async()=>{calls.setup++;return {aiEnabled:false};},saveProducts:async()=>{},productIssues:async()=>[],research:async()=>[]};
   const shopify={search:async()=>{calls.catalogue++;catalogueResolve();return {products};},byHandle:async h=>{calls.byHandle.push(h);return products.find(x=>x.handle===h)||null;}};
-  const injectedCore={...core,makeDb:()=>({}),createShopify:()=>shopify,createGrowthService:()=>service,concierge:async args=>{calls.concierge++;return conciergeAnswer?conciergeAnswer(args):core.concierge(args);}};
+  const checkedServices=storefront.createStorefrontServices({fetch:async url=>new Response(url===storefront.HOME?'<p>Materials sourced in the United States.</p>':html(shipping),{headers:{'content-type':'text/html'}})});
+  const injectedCore={...core,makeDb:()=>({}),createShopify:()=>shopify,createGrowthService:()=>service,readStorefrontServices:async()=>{calls.services++;return checkedServices.read();},concierge:async args=>{calls.concierge++;return conciergeAnswer?conciergeAnswer(args):core.concierge(args);}};
   const injectedPolicy={...policy,createPolicyGuide:()=>policyAnswer?{answer:policyAnswer}:failGuide?{answer:async()=>{throw Error('PRIVATE_POLICY_ERROR');}}:policy.createPolicyGuide({fetch:async url=>{calls.policy.push(url);return new Response(html(url===policy.POLICIES.shipping.url?shipping:refund),{headers:{'content-type':'text/html'}});}})};
   const handler=new Function('core','claude','policy','diagnostics','Netlify',source)(injectedCore,{createClaudeClient:()=>{calls.model++;throw Error('Paid model must not be called.');}},injectedPolicy,diagnostics,{env:{get:()=>undefined}});
   return {handler,calls,products,catalogueStarted};
@@ -27,6 +28,7 @@ test('policy-only answer uses live own policy and avoids catalogue, runtime AI a
   const f=fixture(),r=await call(f,{message:'Delivery timing to Canada?',preferences:{query:'bunny',budget:60,budgetCurrency:'USD',privateOwnerKey:'DO_NOT_EXPOSE'}});
   assert.equal(r.status,200);assert.match(r.body.reply,/6–10 business days/);assert.equal(r.body.policyOnly,true);assert.equal(r.body.policyKnowledge.status,'verified');assert.equal(r.body.live,true);assert.equal(r.body.aiUsed,false);assert.equal(r.body.preferences.query,'bunny');assert.deepEqual(r.body.products,[]);assert.deepEqual(r.body.meanings,[]);assert.deepEqual(r.body.actions,[]);
   assert.deepEqual(f.calls.policy,[policy.POLICIES.shipping.url]);assert.equal(f.calls.catalogue,0);assert.equal(f.calls.concierge,0);assert.equal(f.calls.setup,0);assert.equal(f.calls.model,0);assert.deepEqual(f.calls.events,['message']);assert.ok(!JSON.stringify(r.body).includes('DO_NOT_EXPOSE'));
+  assert.equal(f.calls.services,1);assert.match(r.body.reply,/studio says production takes 2–3 days/);assert.match(r.body.reply,/checked published policy states/);assert.match(r.body.reply,/confirm this difference/);assert.equal(r.body.serviceKnowledge.independentlyVerified,false);
 });
 test('policy-only response preserves observed shopper currency without converting prices',async()=>{
   const f=fixture(),r=await call(f,{message:'Can I return these earrings?',context:{currency:'CAD'}});assert.equal(r.body.preferences.currency,'CAD');assert.match(r.body.reply,/Earrings are excluded/);assert.ok(!/converted|exchange rate/.test(r.body.reply));assert.equal(f.calls.catalogue,0);

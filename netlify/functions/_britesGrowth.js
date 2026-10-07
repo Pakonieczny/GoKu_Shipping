@@ -14,6 +14,16 @@ function publicUrl(v,storeOnly=false){try{const u=new URL(String(v));if(u.protoc
 function sameSecret(a,b){if(!a||!b)return false;return crypto.timingSafeEqual(Buffer.from(hash(String(a))),Buffer.from(hash(String(b))));}
 function catalogueImageUrl(value){const normalized=typeof value==='string'&&value.startsWith('//')?'https:'+value:value,url=publicUrl(normalized);if(!url)return null;const u=new URL(url);return ['britesjewelry.com','www.britesjewelry.com','cdn.shopify.com'].includes(u.hostname)?url:null;}
 function catalogueImages(value,fallback=null){const rows=Array.isArray(value)?value:[],images=[],seen=new Set();for(const raw of [...(fallback?[fallback]:[]),...rows].slice(0,40)){const url=catalogueImageUrl(typeof raw==='string'?raw:raw?.url||raw?.src);if(!url||seen.has(url))continue;seen.add(url);images.push({url,altText:shopperCatalogueText(raw?.altText||raw?.alt||'',300)||null});if(images.length>=16)break;}return images;}
+function isStorefrontDiscoveryProduct(product){
+  if(storefront.isStudioCreditProduct(product))return false;
+  const description=textOf(product?.description||product?.body_html||product?.descriptionHtml);
+  // A studio category, utility-like title or missing image alone cannot hide
+  // physical custom jewellery. Require both the explicit published visibility
+  // statement and the studio-managed SKU to exclude a backstage component.
+  const hiddenStudio=/\badded by custom charm studio\b/i.test(description)&&/\bhidden from all collections and search\b/i.test(description);
+  const variants=Array.isArray(product?.variants)?product.variants:product?.variants?.nodes||[];
+  return !(hiddenStudio&&variants.length&&variants.every(variant=>/^STUDIO-[A-Z0-9_-]+$/i.test(clean(variant?.sku,200))));
+}
 function namespace(env){const n=env.BRITES_GROWTH_NAMESPACE||'Brites_Growth_Sandbox';if(!/^Brites_Growth_(Sandbox|Live)$/.test(n))throw Error('Invalid research namespace.');return n;}
 function makeDb(env){const {Firestore}=require('@google-cloud/firestore');if(!env.FIREBASE_PROJECT_ID||!env.FIREBASE_CLIENT_EMAIL||!env.FIREBASE_PRIVATE_KEY)throw Error('Research storage is not configured.');return new Firestore({projectId:env.FIREBASE_PROJECT_ID,credentials:{client_email:env.FIREBASE_CLIENT_EMAIL,private_key:env.FIREBASE_PRIVATE_KEY.replace(/\\n/g,'\n')}});}
 function normalizeProduct(p,currency='USD',now=Date.now()){
@@ -148,12 +158,12 @@ function createShopify({env,fetch=globalThis.fetch,now=Date.now}){
     const page=cursor?Number(String(cursor).slice(11)):1;if(page<1||page>200)throw Error('Invalid storefront catalogue cursor.');
     const limit=60,[data,currency]=await Promise.all([publicJson('/products.json?limit='+limit+'&page='+page),storefrontCurrency()]);
     if(!Array.isArray(data?.products)||data.products.length>limit)throw Error('Published storefront pagination is unavailable.');
-    const products=data.products.map(p=>fromPublic(p,currency,false)).filter(p=>!storefront.isStudioCreditProduct(p)),hasNextPage=data.products.length===limit&&page<200;
+    const products=data.products.map(p=>fromPublic(p,currency,false)).filter(isStorefrontDiscoveryProduct),hasNextPage=data.products.length===limit&&page<200;
     return {products,pageInfo:{hasNextPage,endCursor:hasNextPage?'storefront:'+(page+1):null},access:'public_catalogue',checkedAt:now()};
   }
   async function token(){if(access&&now()<expires-60000)return access;const store=env.SHOPIFY_STORE;if(!/^[a-z0-9-]+\.myshopify\.com$/.test(store||'')||!env.SHOPIFY_CLIENT_ID||!env.SHOPIFY_CLIENT_SECRET)throw Error('Live Shopify catalogue access is not configured.');const r=await fetch('https://'+store+'/admin/oauth/access_token',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({grant_type:'client_credentials',client_id:env.SHOPIFY_CLIENT_ID,client_secret:env.SHOPIFY_CLIENT_SECRET}),signal:AbortSignal.timeout(12000)});const d=await r.json();if(!r.ok||!d.access_token)throw Error('Shopify authorization failed; queue reconnection and continue independent work.');access=d.access_token;expires=now()+Number(d.expires_in||86400)*1000;return access;}
   async function products(query,after=null){if(!adminConfigured()||String(after||'').startsWith('public:'))return publicProducts(query,after);try{const r=await fetch('https://'+env.SHOPIFY_STORE+'/admin/api/2026-07/graphql.json',{method:'POST',headers:{'Content-Type':'application/json','X-Shopify-Access-Token':await token()},body:JSON.stringify({query:CATALOG_QUERY,variables:{query:'status:active AND published_status:published'+(query?' AND ('+query+')':''),after}}),signal:AbortSignal.timeout(20000)});const d=await r.json();if(!r.ok||d.errors?.length)throw Error('Live catalogue query failed.');return {products:d.data.products.nodes.map(p=>normalizeProduct(p,d.data.shop.currencyCode,now())),pageInfo:d.data.products.pageInfo,access:'admin'};}catch{return publicProducts(query,null);}}
-  async function search(terms){let result;if(!adminConfigured())result=await publicSearch(terms);else{const tokens=clean(terms,250).toLowerCase().match(/[\p{L}\p{N}-]+/gu)||[];const stems=[...new Set(tokens.slice(0,8).map(t=>t.length>4&&t.endsWith('s')&&!t.endsWith('ss')?t.slice(0,-1):t))];const query=stems.flatMap(t=>['title:'+t+'*','tag:'+t+'*']).join(' OR ');result=await products(query);}return {...result,products:result.products.filter(p=>!storefront.isStudioCreditProduct(p))};}
+  async function search(terms){let result;if(!adminConfigured())result=await publicSearch(terms);else{const tokens=clean(terms,250).toLowerCase().match(/[\p{L}\p{N}-]+/gu)||[];const stems=[...new Set(tokens.slice(0,8).map(t=>t.length>4&&t.endsWith('s')&&!t.endsWith('ss')?t.slice(0,-1):t))];const query=stems.flatMap(t=>['title:'+t+'*','tag:'+t+'*']).join(' OR ');result=await products(query);}return {...result,products:result.products.filter(isStorefrontDiscoveryProduct)};}
   async function byHandle(handle){if(!/^[a-z0-9_-]{1,180}$/.test(handle||''))throw Error('Invalid product handle.');const r=await products('handle:'+handle);return r.products.find(p=>p.handle===handle)||null;}
   return {products,search,byHandle,browse};
 }
@@ -189,7 +199,26 @@ function createGrowthService({db,env={},shopify,now=Date.now}){
       tx.update(ref,p);return {ok:true};
     });
   }
-  async function saveDossier(d){const product=await getProduct(d.productId);const v=validateDossier(d,product,now());if(!v.ok)return {validation:v};const record={...d,validation:v,status:v.status,version:hash(d),savedAt:now()};const ref=col('Research').doc(pid(d.productId));await db.runTransaction(async tx=>{const prior=await tx.get(ref);if(prior.exists&&prior.data().status==='approved'&&v.status!=='approved')throw Error('A partial draft cannot overwrite approved research.');if(prior.exists)tx.set(col('ResearchVersions').doc(pid(d.productId)+'-'+prior.data().version),prior.data());tx.set(ref,record);});if(v.status==='approved'){const q=await col('Queue').where('productId','==',d.productId).get();const b=db.batch();for(const x of q.docs)b.update(x.ref,{status:'complete',dossierVersion:record.version,completedAt:now(),leaseToken:null,leaseUntil:0});await b.commit();}return {ok:true,productId:d.productId,version:record.version,validation:v};}
+  async function saveDossier(d,{expectedVersion}={}){
+    if(expectedVersion!==undefined&&!/^[a-f0-9]{64}$/.test(expectedVersion))throw Error('A valid current approved research version is required.');
+    const product=await getProduct(d.productId),v=validateDossier(d,product,now());if(!v.ok)return {validation:v};
+    const record={...d,validation:v,status:v.status,version:hash(d),savedAt:now()},ref=col('Research').doc(pid(d.productId));
+    await db.runTransaction(async tx=>{
+      const prior=await tx.get(ref);
+      if(expectedVersion!==undefined&&(!prior.exists||prior.data().status!=='approved'||prior.data().version!==expectedVersion))throw Object.assign(Error('Approved research changed; read the current version before applying a revision.'),{code:'RESEARCH_VERSION_CHANGED'});
+      if(expectedVersion!==undefined){
+        const [story,issue]=await Promise.all([tx.get(col('StorySupplements').doc(pid(d.productId))),tx.get(col('ProductIssues').doc(pid(d.productId)))]);
+        if(story.exists&&story.data().status==='approved'&&story.data().baseDossierVersion===expectedVersion)throw Object.assign(Error('A reviewed story rebind is required before changing its base research version.'),{code:'STORY_REBIND_REQUIRED'});
+        const holds=issue.exists?productIssueHolds(issue.data()):null;
+        if(holds&&(holds.cartHold||holds.recommendationHold||holds.meaningHold))throw Object.assign(Error('An unresolved product hold prevents this research revision.'),{code:'PRODUCT_HOLD'});
+      }
+      if(prior.exists&&prior.data().status==='approved'&&v.status!=='approved')throw Error('A partial draft cannot overwrite approved research.');
+      if(prior.exists)tx.set(col('ResearchVersions').doc(pid(d.productId)+'-'+prior.data().version),prior.data());
+      tx.set(ref,record);
+    });
+    if(v.status==='approved'){const q=await col('Queue').where('productId','==',d.productId).get(),b=db.batch();for(const x of q.docs)b.update(x.ref,{status:'complete',dossierVersion:record.version,completedAt:now(),leaseToken:null,leaseUntil:0});await b.commit();}
+    return {ok:true,productId:d.productId,version:record.version,validation:v};
+  }
   async function readProductRecords(suffix,ids,limit){
     // These independent document reads have no write dependencies. Keep the
     // original deduplication/limit order and wait for each bounded chunk before
@@ -485,7 +514,8 @@ function applyPreferenceMessage(before,message) {
       else {p[field]=hit.value;if(excluded)p[excluded]=p[excluded].filter(x=>x!==hit.value);}
     }
   }
-  if(/\b(?:gift|present)\b/.test(text)){p.gifting=true;p.giftDiscovery=true;}
+  const giftIntentText=text.replace(/\bgift\s+(?:wrap(?:ping)?|notes?|packages?|packaging|boxes|box)\b/g,' ');
+  if(/\b(?:gift|present)\b/.test(giftIntentText)){p.gifting=true;p.giftDiscovery=true;}
   else if(newRecipient&&newRecipient!=='myself')p.gifting=true;
   if(newRecipient==='myself'||/\b(?:for myself|shopping for myself|this is for me)\b/.test(text)){p.gifting=false;p.giftDiscovery=false;p.recipient='myself';p.occasion=null;}
   if(/\b(?:skip|pass on|prefer not to give|rather not say)\b[^.!?]{0,35}\b(?:recipient|who (?:it is|this is) for|gift details?)\b|\bskip (?:the )?gift details?\b/.test(text))p.recipientSkipped=true;
@@ -600,7 +630,7 @@ function rankProducts(items,intent,now=Date.now()) {
   const p=shopperPreferences(intent),wanted=p.interests.length?p.interests:p.query.split(/\s+/).filter(Boolean);
   const matches=[];
   for(const product of Array.isArray(items)?items:[]) {
-    if(storefront.isStudioCreditProduct(product))continue;
+    if(!isStorefrontDiscoveryProduct(product))continue;
     if(product?.recommendationHold===true)continue;
     if(!validIdentity(product?.id)||!publicUrl(product.url,true)||!Number.isFinite(product.checkedAt)||now-product.checkedAt>5*60000||product.checkedAt>now+60000)continue;
     if(!shopperCatalogueField(product.title,300)||!shopperCatalogueField(product.type,100))continue;
@@ -905,4 +935,4 @@ async function concierge({service,shopify,message,history=[],preferences={},cont
   if(ai&&!milestonePlan){try{const chosen=await ai({message:text,history:history.slice(-6).map(r=>({role:r.role,content:clean(r.content,1500)})),preferences:intent,products:products.map(p=>({id:p.id,title:p.title})),question:result.question});if(chosen&&['gift','self','comparison','meaning','shipping','engraving','discovery'].includes(chosen.intent)){result.intent=chosen.intent;result.aiUsed=true;const refined=result.question&&safeQuestionRefinement(result.question,chosen.question);if(refined&&!(intent.unlimitedBudget&&/\b(?:budget|spend(?:ing)?|price|cost|afford(?:able)?|how much)\b/i.test(refined)))result.question=refined;}}catch{result.aiUsed=false;result.providerUnavailable=true;}}
   return result;
 }
-module.exports={CATALOG_QUERY,STOP_AT,clean,hash,textOf,publicUrl,sameSecret,namespace,makeDb,normalizeProduct,productProjection,validateDossier,validateStorySupplement,createShopify,createGrowthService,productIssueHolds,applyProductIssues,shopperPreferences,negatedAt,conversationReply,intentFrom,rankProducts,publicMeaningText,mergeStorySupplements,publicMeanings,shopperAction,concierge,catalogueImageUrl,catalogueImages,merchantGuidance:storefront.merchantGuidance,readStorefrontServices:storefront.readServices};
+module.exports={CATALOG_QUERY,STOP_AT,clean,hash,textOf,publicUrl,sameSecret,namespace,makeDb,normalizeProduct,productProjection,validateDossier,validateStorySupplement,createShopify,createGrowthService,productIssueHolds,applyProductIssues,shopperPreferences,negatedAt,conversationReply,intentFrom,rankProducts,publicMeaningText,mergeStorySupplements,publicMeanings,shopperAction,concierge,catalogueImageUrl,catalogueImages,isStorefrontDiscoveryProduct,merchantGuidance:storefront.merchantGuidance,readStorefrontServices:storefront.readServices,createStorefrontGuide:storefront.createStorefrontGuide};

@@ -29,6 +29,33 @@ test('parallel workers receive distinct transactional work leases',async()=>{con
 test('expired writer cannot release or overwrite a reassigned rank',async()=>{const f=fixture();await seed(f);const a=await f.service.claim();f.advance(46*60000);await assert.rejects(f.service.release(a.id,a.leaseToken,{error:'old worker'}),/lease|expired/i);const b=await f.service.claim('research','replacement');assert.equal(b.id,a.id);await assert.rejects(f.service.release(a.id,a.leaseToken,{error:'old worker'}),/lease|writer/i);assert.equal((await f.service.status()).queue[0].leaseToken,b.leaseToken);});
 test('a match needs the current exact product and inspected evidence',async()=>{const f=fixture();await seed(f);const a=await f.service.claim();await assert.rejects(f.service.release(a.id,a.leaseToken,{productId:product.id,handle:'wrong',match:{method:'manual',evidence:'Checked the current product',checkedAt:f.now()}}),/match|product|handle/i);await assert.rejects(f.service.release(a.id,a.leaseToken,{productId:product.id,handle:product.handle,match:{private:'arbitrary'}}),/match|evidence/i);await f.service.release(a.id,a.leaseToken,{productId:product.id,handle:product.handle,match:{method:'exact_sku',evidence:'Current published variant retains Bunny5 SKU and necklace type.',checkedAt:f.now()}});assert.equal((await f.service.status()).counts.matched,1);});
 test('approved research survives partial rewrites and keeps version history',async()=>{const f=fixture();await seed(f);const a=dossier();const saved=await f.service.saveDossier(a);assert.equal(saved.validation.status,'approved');const draft={...a,competitors:[]};await assert.rejects(f.service.saveDossier(draft),/partial draft/i);assert.equal((await f.service.research([product.id]))[0].version,saved.version);const b={...a,buyerIntents:[{intent:'Birthday gift for a bunny owner'}]};const next=await f.service.saveDossier(b);assert.notEqual(next.version,saved.version);assert.equal((await f.service.col('ResearchVersions').get()).size,1);});
+test('concurrent reviewed revisions admit one current-version writer and preserve its predecessor',async()=>{
+  const f=fixture();await seed(f);const saved=await f.service.saveDossier(dossier());
+  const results=await Promise.allSettled(['Birthday gift','Pet keepsake'].map(intent=>f.service.saveDossier({...dossier(),buyerIntents:[{intent}]},{expectedVersion:saved.version})));
+  assert.equal(results.filter(r=>r.status==='fulfilled').length,1);assert.equal(results.filter(r=>r.status==='rejected').length,1);
+  assert.match(results.find(r=>r.status==='rejected').reason.message,/research changed/);
+  const winner=results.find(r=>r.status==='fulfilled').value;assert.equal((await f.service.research([product.id]))[0].version,winner.version);
+  const history=await f.service.col('ResearchVersions').get();assert.equal(history.size,1);assert.equal(history.docs[0].data().version,saved.version);
+});
+test('missing, stale and malformed base versions cannot archive research or change linked ranks',async()=>{
+  const f=fixture();await seed(f);const d=dossier();
+  await assert.rejects(f.service.saveDossier(d,{expectedVersion:'f'.repeat(64)}),/research changed/);
+  assert.equal((await f.service.research([product.id])).length,0);assert.equal((await f.service.col('ResearchVersions').get()).size,0);
+  const saved=await f.service.saveDossier(d),before=JSON.stringify((await f.service.status()).queue);
+  for(const version of ['f'.repeat(64),'',123,saved.version.toUpperCase()])await assert.rejects(f.service.saveDossier({...d,buyerIntents:[{intent:'Revised'}]},{expectedVersion:version}),/research changed|valid current/);
+  assert.equal((await f.service.research([product.id]))[0].version,saved.version);assert.equal((await f.service.col('ResearchVersions').get()).size,0);
+  assert.equal(JSON.stringify((await f.service.status()).queue),before);
+});
+test('a story or product hold appearing before the atomic revision prevents both writes',async()=>{
+  for(const kind of ['story','hold']){
+    const f=fixture();await seed(f);const saved=await f.service.saveDossier(dossier()),id=core.hash(product.id).slice(0,40);
+    if(kind==='story')await f.service.col('StorySupplements').doc(id).set({productId:product.id,status:'approved',baseDossierVersion:saved.version});
+    else await f.service.col('ProductIssues').doc(id).set({productId:product.id,issues:[{id:'test-hold',kind:'history',status:'open',blocks:['meaning']}]});
+    const before=JSON.stringify([...f.db.docs]);
+    await assert.rejects(f.service.saveDossier({...dossier(),buyerIntents:[{intent:'New reviewed seeds'}]},{expectedVersion:saved.version}),e=>e.code===(kind==='story'?'STORY_REBIND_REQUIRED':'PRODUCT_HOLD'));
+    assert.equal(JSON.stringify([...f.db.docs]),before);
+  }
+});
 test('commercial facts cannot use a competitor quote and unreviewed/stale evidence fails',()=>{const bad=dossier();bad.facts=[{productId:product.id,claim:'Rabbit pendant',quote:'rabbit pendant',sourceIds:['offer']}];assert.equal(core.validateDossier(bad,product,product.checkedAt).ok,false);const stale=dossier();stale.sources[0].checkedAt-=31*86400000;assert.equal(core.validateDossier(stale,product,product.checkedAt).ok,false);const unseen=dossier();unseen.sources[0].reviewed=false;assert.equal(core.validateDossier(unseen,product,product.checkedAt).ok,false);});
 test('arbitrary competitor spending states are rejected',()=>{const value=dossier();value.competitors[0].spend={status:'fabricated'};const checked=core.validateDossier(value,product,product.checkedAt);assert.equal(checked.ok,false);assert.match(checked.errors.join(' '),/explicitly labelled unknown, known or estimate/);});
 test('foreign product knowledge and private fields never appear in public interpretations',()=>{const a={...dossier(),status:'approved',orders:999,meanings:[{text:'A personal interpretation',context:'Individual preference',kind:'interpretation',sourceIds:['product'],privateNote:'owner-only'}]};const projected=JSON.stringify(core.publicMeanings([a],[product.id],product.checkedAt));assert(!projected.includes('999'));assert(!projected.includes('owner-only'));assert.deepEqual(core.publicMeanings([a],['gid://shopify/Product/999'],product.checkedAt),[]);});

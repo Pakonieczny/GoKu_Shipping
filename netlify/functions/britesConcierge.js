@@ -4,6 +4,7 @@ import policy from './_britesConcierge.js';
 import diagnostics from './_britesConciergeDiagnostics.js';
 
 const policyGuide=policy.createPolicyGuide();
+const storefrontGuide=core.createStorefrontGuide({policyGuide,readServices:()=>core.readStorefrontServices()});
 
 function environment(){return Object.fromEntries(['FIREBASE_PROJECT_ID','FIREBASE_CLIENT_EMAIL','FIREBASE_PRIVATE_KEY','SHOPIFY_STORE','SHOPIFY_CLIENT_ID','SHOPIFY_CLIENT_SECRET','BRITES_GROWTH_NAMESPACE','ANTHROPIC_API_KEY'].map(k=>[k,Netlify.env.get(k)]));}
 function allowedOrigin(req){const origin=req.headers.get('Origin');return !origin||['https://britesjewelry.com','https://www.britesjewelry.com',new URL(req.url).origin].includes(origin);}
@@ -40,9 +41,9 @@ export default async (req,context) => {
     // Social dialogue never waits for catalogue, knowledge, policy or model
     // work. Keep the same request validation, origin and public rate limiter.
     if(core.conversationReply(body.message)){const answer=await recorder.run('conversation',()=>core.concierge({service,shopify,message:body.message,history,preferences,context:shopperContext,env}));await messageEvent();return await respond(answer);}
-    const policyClassification=policy.classify(body.message,history);
-    const policyTask=policyClassification.topics.length?recorder.run('policy_read',()=>policyGuide.answer({message:body.message,history})).then(guidance=>{if(guidance?.policyUnavailable)recorder.degraded('policy_read','policy_unverified');return guidance;}).catch(()=>policy.unavailableAnswer({message:body.message,history})):Promise.resolve(null);
-    if(policyClassification.policyOnly){const guidance=await policyTask||policy.unavailableAnswer({message:body.message,history});const answer={schema:1,...guidance,preferences:core.shopperPreferences({...preferences,...(!preferences.currency&&shopperContext.currency?{currency:shopperContext.currency}:{})}),products:[],meanings:[],actions:[],checkedAt:Date.now(),live:guidance?.policyKnowledge?.status==='verified',aiUsed:false};await messageEvent();return await respond(answer);}
+    const policyClassification=storefrontGuide.classify(body.message,history);
+    const policyTask=policyClassification.topics.length?recorder.run('policy_read',()=>storefrontGuide.answer({message:body.message,history})).then(guidance=>{if(guidance?.policyUnavailable)recorder.degraded('policy_read','policy_unverified');return guidance;}).catch(()=>storefrontGuide.unavailableAnswer({message:body.message,history})):Promise.resolve(null);
+    if(policyClassification.policyOnly){const guidance=await policyTask||storefrontGuide.unavailableAnswer({message:body.message,history});const answer={schema:1,...guidance,preferences:core.shopperPreferences({...preferences,...(!preferences.currency&&shopperContext.currency?{currency:shopperContext.currency}:{})}),products:[],meanings:[],actions:[],checkedAt:Date.now(),live:guidance?.policyKnowledge?.status==='verified',aiUsed:false};await messageEvent();return await respond(answer);}
     const ai=await runtimeAI(service,env);
     const [answer,guidance]=await Promise.all([recorder.run('conversation',()=>core.concierge({service,shopify,message:body.message,history,preferences,context:shopperContext,env,ai})),policyTask]);
     if(guidance){
@@ -54,7 +55,7 @@ export default async (req,context) => {
       answer.reply=(prior?prior+'\n\n':'')+guidance.reply;
       answer.question=answer.requestedAction?null:guidance.question;
       answer.policyOnly=false;
-      answer.policyLinks=guidance.policyLinks;answer.policyKnowledge=guidance.policyKnowledge;answer.policyUnavailable=guidance.policyUnavailable;
+      answer.policyLinks=guidance.policyLinks;answer.policyKnowledge=guidance.policyKnowledge;answer.policyUnavailable=guidance.policyUnavailable;if(guidance.serviceKnowledge)answer.serviceKnowledge=guidance.serviceKnowledge;
     }
     await messageEvent();return await respond(answer);
   }catch(error){await recorder.flush({outcome:'failed',statusCode:503,error});return json({error:'I couldn’t check the live selection just now. Please try again or browse the shop.',retryable:true,reference:recorder.reference},503);}

@@ -5,6 +5,8 @@
 @media(max-width:470px){.collection-intro{grid-template-columns:1fr .63fr;gap:8px}.intro-copy h1{font-size:36px}.intro-copy p{font-size:11px}.intro-art{min-height:230px}.intro-photo{width:130px;height:190px}.intro-orbit{width:155px;height:155px}.orbit-two{width:190px;height:104px}.intro-initial{font-size:95px}.intro-star{font-size:25px;top:8%}.shop-head nav button:nth-child(2){display:none}.shop-head nav{gap:0}.live-label{display:none}.collection-heading h2{font-size:30px}.service-strip{grid-template-columns:1fr;gap:22px}.service-strip article,.service-strip article:first-child{border-left:0;padding-left:0}.service-strip .service-icon{float:left;margin-right:14px}.service-strip p{margin-left:37px;max-width:300px}.service-strip button{margin-left:37px}.service-forms,.checkout-grid{grid-template-columns:1fr}.shop-footer p{font-size:10px}.bag-item h3{font-size:19px}.zoom-content{padding:32px 12px 15px}.bag-total{font-size:14px}.product-copy h1{font-size:35px}}
 /* The integrated desktop guide gets its own lane. Closed and overlay guides
    reserve no page space; the existing shop/voice DOM stays mounted. */
+/* Keep rotated decorative orbits inside the narrow hero, without page overflow. */
+@media(max-width:760px){.intro-art{min-width:0;overflow:hidden}}
 @media(min-width:1100px){
   body.shop-demo[data-storefront="expanded"]:has(brites-concierge[data-storefront-docked="true"][data-open="true"]){padding-right:392px}
   body:has(brites-concierge[data-storefront-docked="true"][data-open="true"]) .shop-head{padding:22px clamp(24px,3vw,52px);gap:18px}

@@ -14,6 +14,8 @@ const CLOUD_SCOPE = 'https://www.googleapis.com/auth/cloud-platform';
 const MAX_SCAN = 500, MAX_BATCH = 25, MAX_MS = 30000, MAX_CONCURRENCY = 5;
 const ALLOWED_OPTIONS = new Set(['limit', 'maxMs']);
 const STATES = new Set(['SUCCESS', 'FAILED', 'FAILURE', 'PARTIAL_SUCCESS', 'PROCESSING', 'REQUEST_STATUS_UNSPECIFIED']);
+const object = value => !!value && typeof value === 'object' && !Array.isArray(value);
+const ATTRIBUTION_CLAIMS = ['individualOrderConfirmed', 'dmIndividualOrderConfirmed', 'attributionConfirmed', 'orderAttributionConfirmed'];
 
 function observerError(code, message, httpStatus = null) {return Object.assign(Error(message), {code, httpStatus});}
 function numericCount(value) {
@@ -21,9 +23,15 @@ function numericCount(value) {
   const number = Number(value); return Number.isSafeInteger(number) && number >= 0 ? number : null;
 }
 function canonicalDestination(value) {
-  const account = value?.operatingAccount, type = account?.accountType || account?.product;
-  const accountId = String(account?.accountId || ''), actionId = String(value?.productDestinationId || '');
-  return type === 'GOOGLE_ADS' && /^\d+$/.test(accountId) && /^\d+$/.test(actionId) ? {type, accountId, actionId} : null;
+  if (!object(value) || !object(value.operatingAccount)) return null;
+  const account = value.operatingAccount, type = account.accountType ?? account.product;
+  // These are exact string identities, not numeric inputs to normalize. The
+  // deprecated product spelling remains supported only when it agrees with
+  // an explicitly present accountType.
+  if (type !== 'GOOGLE_ADS' || account.accountType !== undefined && account.product !== undefined && account.accountType !== account.product) return null;
+  const accountId = account.accountId, actionId = value.productDestinationId;
+  return typeof accountId === 'string' && typeof actionId === 'string' && /^\d+$/.test(accountId) && /^\d+$/.test(actionId)
+    ? {type, accountId, actionId} : null;
 }
 function configuredDestination(env) {
   const match = /^customers\/(\d+)\/conversionActions\/(\d+)$/.exec(String(env.GADS_CONVERSION_ACTION || ''));
@@ -37,6 +45,13 @@ function reasonCounts(info) {
     recordCount: numericCount(value?.recordCount ?? value?.count)
   }));
 }
+function summaryShapeProblem(info, field, code) {
+  if (info === undefined || info === null) return null;
+  if (!object(info) || Object.keys(info).some(key => key !== field)
+      || info[field] !== undefined && !Array.isArray(info[field])) return code;
+  const counts = info[field] || [];
+  return counts.some(value => !object(value)) ? code : null;
+}
 function receiptEvidence(data, original, storedRows) {
   const target = canonicalDestination(original), rows = Array.isArray(data?.requestStatusPerDestination) ? data.requestStatusPerDestination : [];
   const matches = target ? rows.filter(row => sameDestination(canonicalDestination(row?.destination), target)) : [];
@@ -47,7 +62,21 @@ function receiptEvidence(data, original, storedRows) {
   const row = matches[0], raw = String(row.requestStatus || ''), status = STATES.has(raw) ? raw : raw ? 'UNRECOGNIZED_STATUS' : null;
   const recordCount = numericCount(row.eventsIngestionStatus?.recordCount), errors = reasonCounts(row.errorInfo), warnings = reasonCounts(row.warningInfo);
   const evidence = {...base, providerDestinationVerified: true, requestStatus: status, recordCount, errors, warnings};
-  if (status === 'SUCCESS' && !errors.length && recordCount === 1 && storedRows === 1) return {...evidence,
+  // The REST status field is a union. An audience/removal status cannot also
+  // attest one uploaded conversion, even if an events count is present.
+  let problem = ['audienceMembersIngestionStatus', 'audienceMembersRemovalStatus', 'removeAllAudienceMembersStatus']
+    .some(field => row[field] !== undefined && row[field] !== null) ? 'UNSUPPORTED_RECEIPT_STATUS_KIND' : null;
+  problem ||= summaryShapeProblem(row.errorInfo, 'errorCounts', 'ERROR_DIAGNOSTICS_UNCONFIRMED');
+  problem ||= summaryShapeProblem(row.warningInfo, 'warningCounts', 'WARNING_DIAGNOSTICS_UNCONFIRMED');
+  // A malformed warning is uncertainty, not proof of either success or
+  // failure. Safe enum-shaped future warning reasons remain observable.
+  if (!problem && row.warningInfo?.warningCounts?.length > 20) problem = 'WARNING_DIAGNOSTICS_UNCONFIRMED';
+  if (!problem && row.warningInfo?.warningCounts?.some(value => !/^[A-Z][A-Z0-9_]{0,179}$/.test(String(value.reason || '')))) problem = 'WARNING_DIAGNOSTICS_UNCONFIRMED';
+  if (!problem && ATTRIBUTION_CLAIMS.some(field => data?.[field] !== undefined && data[field] !== false)) problem = 'ATTRIBUTION_CLAIM_UNSUPPORTED';
+  if (problem) return {...evidence, outcome: 'unconfirmed', code: problem};
+  const exactOneRecord = ['number', 'string'].includes(typeof row.eventsIngestionStatus?.recordCount)
+    && String(row.eventsIngestionStatus.recordCount) === '1';
+  if (status === 'SUCCESS' && !errors.length && exactOneRecord && storedRows === 1) return {...evidence,
     outcome: 'confirmed', code: 'EXACT_DESTINATION_ONE_RECORD_SUCCESS', providerReceiptConfirmed: true};
   if (status === 'SUCCESS') return {...evidence, outcome: 'unconfirmed', code: errors.length ? 'SUCCESS_WITH_ERRORS' : storedRows > 1 ? 'SHARED_RECEIPT_REQUIRES_REVIEW' : 'RECORD_COUNT_UNCONFIRMED'};
   if (status === 'FAILED' || status === 'FAILURE') return {...evidence, outcome: 'rejected', code: 'PROVIDER_RECEIPT_REJECTED'};

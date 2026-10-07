@@ -186,6 +186,7 @@
     "_britesGrowthAdsReadOnly.js",
     "_britesGrowthDemand.js",
     "_britesGrowthDemandStore.js",
+    "_britesGrowthKeywordRevision.js",
     "_britesGrowthController.js",
     "_britesGrowthConversionTagEvidence.js",
     "_britesGrowthTransactionContinuity.js",

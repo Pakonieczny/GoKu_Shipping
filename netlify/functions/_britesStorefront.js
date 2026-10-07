@@ -171,5 +171,111 @@ function createStorefrontServices({fetch = globalThis.fetch, now = Date.now, ttl
 }
 
 const publicServices = createStorefrontServices();
+
+const PRIVATE_SERVICE_REQUEST = /\b(?:api keys?|credentials?|passwords?|system prompt|private (?:records|data)|owner data|repository|source code|sales history|customer (?:records|data))\b/i;
+const SERVICE_PHRASES = '(?:gift\\s+(?:wrapp?ing|wrap|notes?|messages?|packages?|packaging|boxes?)|(?:custom(?:ization|isation|izing|ising)?|personalization|personalisation)\\s*(?:options?|help|services?)?|engraving(?:\\s+(?:options?|help|services?))?|(?:published|current|available)\\s+(?:offers?|discounts?|codes?)|discount\\s+codes?|coupons?|promo(?:tional)?\\s+codes?|(?:material\\s+)?sourcing(?:\\s+(?:help|guidance|information))?)';
+
+function classifyStorefrontServices(message, history = []) {
+  const text = tidy(message, 2000).replace(/[‘’]/g, "'");
+  const base = policy.classify(text, history);
+  if (PRIVATE_SERVICE_REQUEST.test(text)) return {...base, serviceTopics: []};
+  const scoped = text.replace(/\b(?:skip|forget|don't discuss|do not discuss|not asking about|no need (?:to discuss|for))\s+(?:the\s+)?(?:gift\s+(?:wrapping|wrap|notes?|packages?|packaging)|sourcing|customization|customisation|engraving|discounts?|offers?|coupons?)/gi, '');
+  const serviceTopics = [];
+  if (base.topics.includes('shipping')) serviceTopics.push('shipping');
+  if (/\b(?:ethic(?:al|ally)?(?:ly)?\s+sourc\w*|sourc(?:ed|ing)|material\s+origins?|where\s+(?:your|the|these)\s+materials?\s+(?:come|are)\s+from)\b/i.test(scoped)) serviceTopics.push('sourcing');
+  if (/\bgift\s+(?:wrapping|wrap|notes?|messages?|packages?|packaging|boxes?)\b|\b(?:include|add|write)\s+(?:a\s+)?(?:personal\s+)?(?:gift\s+)?(?:note|message)\b/i.test(scoped)) serviceTopics.push('gifts');
+  if (/\b(?:customization|customisation|customiz\w*|customis\w*|engrave|engraving|personaliz\w*|personalis\w*|custom\s+(?:options?|designs?|pieces?)|(?:my|own|customer'?s?)\s+design|(?:brand\s+new|new)\s+piece\s+(?:from|based on))\b/i.test(scoped)) serviceTopics.push('customization');
+  if (/\b(?:discounts?|coupons?|promo(?:tional)?\s+codes?|promotion(?:al)?\s+(?:codes?|offers?)|(?:published|current|available)\s+offers?|(?:what|any|which)\s+offers?)\b/i.test(scoped)) serviceTopics.push('offers');
+  const topics = [...new Set([...base.topics, ...serviceTopics])];
+  // Asking to see service help is not a request for catalogue discovery. A
+  // separate piece, preference or navigation request still takes the mixed path.
+  const selection = text.replace(new RegExp('\\b(?:show|find|view|open|recommend|suggest|choose|browse|looking for|want|need|buy)\\s+(?:me\\s+)?(?:(?:a|an|the|your|my)\\s+)?' + SERVICE_PHRASES, 'gi'), '');
+  const adjusted = policy.classify(selection, history);
+  const discovery = /\b(?:find|show|recommend|suggest|choose|browse|looking for|want|buy|shopping for|need\s+(?:a|an|some))\b/i.test(selection) && /\b(?:necklaces?|earrings?|bracelets?|rings?|charms?|pendants?|jewelry|jewellery|pieces?|gifts?)\b/i.test(selection);
+  const action = /\b(?:open|take me to|go to|view|add|put)\b[^.!?]{0,100}\b(?:first|second|third|fourth|fifth|sixth|piece|one|bag|cart|page)\b/i.test(selection);
+  const checkoutAction = /\b(?:open|help with|complete|submit|place|pay|buy|purchase|use|charge|retrieve)\b[^.!?]{0,80}\b(?:checkout|check out|order|payment|saved (?:credit )?cards?|card details)\b/i.test(selection);
+  const meaning = /\b(?:meanings?|symbolism|symbolic|stories|story|history)\b/i.test(selection) && !/\b(?:production|shipping|sourcing)\s+history\b/i.test(selection);
+  const itemPreference = /\b(?:under|below|up to|at most|within|max(?:imum)?|budget|instead|rather than)\b/i.test(selection) && /\b(?:silver|gold|each|per (?:piece|item|necklace|pair))\b/i.test(selection);
+  const mixed = discovery || action || checkoutAction || meaning || itemPreference || adjusted.topics.length > 0 && !adjusted.policyOnly;
+  return {...base, topics, serviceTopics: [...new Set(serviceTopics)], policyOnly: topics.length > 0 && !mixed};
+}
+
+function checkedServiceSource(value, now) {
+  const known = new Map([[HOME, 'Brites storefront'], ...Object.values(policy.POLICIES).map(item => [item.url, item.title])]);
+  if (!value || !known.has(value.url) || !Number.isFinite(value.checkedAt) || value.checkedAt > now + 60000 || now - value.checkedAt > 5 * 60000) return null;
+  return {url: value.url, title: known.get(value.url), checkedAt: value.checkedAt};
+}
+function safeServiceText(value, max = 1500) {
+  const text = tidy(value, max);
+  return text && !unsafeText.test(text) && !/<[^>]*>|https?:\/\//i.test(text) ? text : '';
+}
+function serviceAnswer({message, history = [], services = null, published = null, now = Date.now(), failed = false} = {}) {
+  const classification = classifyStorefrontServices(message, history), wanted = new Set(classification.serviceTopics);
+  if (!wanted.size) return published;
+  const guidance = merchantGuidance(), parts = [], sources = [], conflicts = [];
+  const fresh = services?.schema === 1 && Number.isFinite(services.checkedAt) && services.checkedAt <= now + 60000 && now - services.checkedAt <= 5 * 60000;
+  if (wanted.has('shipping')) parts.push(guidance.production.summary + ' ' + guidance.shipping.summary);
+  if (wanted.has('sourcing')) parts.push(guidance.sourcing.summary + ' This is merchant-provided guidance, not independent sourcing certification.');
+  if (wanted.has('gifts')) parts.push(guidance.gifts.summary);
+  if (wanted.has('customization')) parts.push(guidance.customization.summary);
+  if (wanted.has('offers')) parts.push('Checkout confirms eligibility, currency, any minimum spend, expiry and whether offers can be combined. A published code is not a promise that it applies to your order.');
+  if (published?.reply) parts.push('The checked published policy states: ' + published.reply);
+  for (const item of fresh && Array.isArray(services.conflicts) ? services.conflicts.slice(0, 4) : []) {
+    if (!(item.topic === 'production' && wanted.has('shipping') || item.topic === 'sourcing' && wanted.has('sourcing'))) continue;
+    const bound = checkedServiceSource(item.source, now), merchantSummary = safeServiceText(item.merchantSummary), publishedSummary = safeServiceText(item.publishedSummary);
+    if (!bound || !merchantSummary || !publishedSummary) continue;
+    conflicts.push({topic: item.topic, merchantSummary, publishedSummary, source: bound, needsConfirmation: true});
+    parts.push('Please confirm this difference with the studio: ' + publishedSummary);sources.push(bound);
+  }
+  const offers = fresh ? services.offers : null;
+  const offerSources = (Array.isArray(offers?.sources) ? offers.sources : []).map(item => checkedServiceSource(item, now)).filter(Boolean);
+  const safeOffers = [];
+  if (wanted.has('offers')) {
+    for (const item of Array.isArray(offers?.items) ? offers.items.slice(0, 8) : []) {
+      const bound = checkedServiceSource(item?.source, now);
+      if (!bound || item.checkoutValidated !== false || item.eligibility !== 'confirm_at_checkout') continue;
+      if (item.kind === 'code' && /^[A-Z0-9][A-Z0-9_-]{2,31}$/.test(item.code || '') && Number.isInteger(item.percent) && item.percent > 0 && item.percent <= 100) {
+        const requirements = item.newsletterSignupRequired === true ? ' through the published newsletter signup offer for a first order' : item.firstOrderRequired === true ? ' for a first order' : '';
+        const summary = 'The storefront publishes code ' + item.code + ' for ' + item.percent + '% off' + requirements + '.';
+        safeOffers.push({kind: 'code', code: item.code, percent: item.percent, firstOrderRequired: item.firstOrderRequired === true ? true : null, newsletterSignupRequired: item.newsletterSignupRequired === true ? true : null, source: bound, checkoutValidated: false});parts.push(summary);sources.push(bound);
+      } else if (item.kind === 'shipping' && ['over', 'above', 'at least'].includes(item.comparison) && /^[$€£]\d+(?:\.\d{1,2})?$/.test(item.thresholdDisplay || '')) {
+        safeOffers.push({kind: 'shipping', comparison: item.comparison, thresholdDisplay: item.thresholdDisplay, source: bound, checkoutValidated: false});parts.push('The published shipping offer is free standard shipping on orders ' + item.comparison + ' ' + item.thresholdDisplay + '.');sources.push(bound);
+      }
+    }
+    if (!safeOffers.length) parts.push(offers?.status === 'none_observed' && offers.partial !== true && offerSources.length ? 'No published offer was observed in the checked public sources.' : 'Current published offers could not be verified just now; ask the shop before using a code.');
+    if (offers?.partial === true && safeOffers.length) parts.push('Some offer sources could not be checked.');
+  }
+  const publishedSources = (Array.isArray(published?.policyKnowledge?.sources) ? published.policyKnowledge.sources : []).map(item => checkedServiceSource(item, now)).filter(Boolean);
+  sources.push(...publishedSources);
+  const missingPublished = failed || !fresh || wanted.has('shipping') && published?.policyKnowledge?.status !== 'verified' || wanted.has('sourcing') && !offerSources.some(item => item.url === HOME) || wanted.has('offers') && (!offers || offers.status === 'unavailable' || offers.partial === true);
+  if (missingPublished && !wanted.has('offers')) parts.push('Current public policy details could not be fully checked. Confirm the selected piece, charges and timing with the studio before ordering.');
+  const uniqueSources = [...new Map(sources.map(item => [item.url, item])).values()];
+  const links = (Array.isArray(published?.policyLinks) ? published.policyLinks : []).filter(item => Object.values(policy.POLICIES).some(known => item.url === known.url));
+  if (wanted.has('shipping')) links.push({label: policy.POLICIES.shipping.title, url: policy.POLICIES.shipping.url});
+  if (wanted.has('sourcing') || wanted.has('offers')) links.push({label: 'Brites storefront', url: HOME});
+  const onlyMerchant = !wanted.has('shipping') && !wanted.has('offers') && !published;
+  const productionOnly = /\b(?:production|turnaround)\b/i.test(message || '') && !/\b(?:shipping|delivery|deliver|arrive|arrival|transit|postage)\b/i.test(message || '') && !classification.country;
+  return {reply: tidy(parts.join('\n\n'), 5000), question: productionOnly ? null : published?.question || null, policyOnly: classification.policyOnly,
+    policyLinks: [...new Map(links.map(item => [item.url, {label: item.label, url: item.url}])).values()],
+    policyKnowledge: {status: missingPublished ? 'partial' : onlyMerchant ? 'merchant_guidance' : 'verified', sources: uniqueSources, checkedAt: uniqueSources.length ? Math.min(...uniqueSources.map(item => item.checkedAt)) : null},
+    policyUnavailable: missingPublished,
+    serviceKnowledge: {schema: 1, readCompleted: !failed && fresh, checkedAt: fresh ? services.checkedAt : now, status: 'merchant_provided', independentlyVerified: false, source: guidance.source,
+      topics: classification.serviceTopics, conflicts, offers: safeOffers, publishedStatus: missingPublished ? 'partial' : 'checked'}};
+}
+function createStorefrontGuide({readServices = () => publicServices.read(), policyGuide = policy.createPolicyGuide(), now = Date.now} = {}) {
+  async function answer({message, history = []} = {}) {
+    const classification = classifyStorefrontServices(message, history);
+    if (!classification.topics.length) return null;
+    if (!classification.serviceTopics.length) return policyGuide.answer({message, history});
+    const existing = policy.classify(message, history);
+    const checks = await Promise.allSettled([readServices(), existing.topics.length ? policyGuide.answer({message, history}) : Promise.resolve(null)]);
+    const failed = checks.find(item => item.status === 'rejected');if (failed) throw failed.reason;
+    return serviceAnswer({message, history, services: checks[0].value, published: checks[1].value, now: now()});
+  }
+  return {classify: classifyStorefrontServices, answer, unavailableAnswer: args => {
+    const classification = classifyStorefrontServices(args?.message, args?.history);
+    return classification.serviceTopics.length ? serviceAnswer({...args, published: policy.unavailableAnswer(args), failed: true, now: now()}) : policy.unavailableAnswer(args);
+  }};
+}
 module.exports = {HOME, MAX_HTML_BYTES, merchantGuidance, visibleBlocks, parsePublishedOffers, createStorefrontServices, isStudioCreditProduct,
-  readServices: () => publicServices.read()};
+  classifyStorefrontServices, serviceAnswer, createStorefrontGuide, readServices: () => publicServices.read()};

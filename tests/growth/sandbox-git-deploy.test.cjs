@@ -89,6 +89,10 @@ test('the actual Git build removes stale output and retains only the complete is
       || fs.readFileSync(path.join(out, 'netlify/production-functions', file), 'utf8').includes('schedule: ' + schedule));
   }
   assert.equal(fs.existsSync(path.join(out, 'public-site/netlify')), false);
+  const revisionModule = path.join(out, 'netlify/functions/_britesGrowthKeywordRevision.js');
+  assert.equal(typeof require(revisionModule).createKeywordRevision, 'function',
+    'the protected revision route needs its runtime dependency in the deployed stage');
+  assert.equal(fs.existsSync(path.join(out, 'public-site/_britesGrowthKeywordRevision.js')), false);
   assert.equal(fs.existsSync(path.join(out, 'public-site/growth/README.md')), false);
   assert.deepEqual(fs.readFileSync(path.join(root, 'netlify.toml')), rootConfig);
 });

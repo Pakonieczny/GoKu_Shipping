@@ -73,6 +73,21 @@
     const identities=[...pieces,...visible],safeText=v=>typeof v==='string'?v.replace(/[\u0000-\u001f\u007f]/g,' ').slice(0,180):'';
     return {pageKind:['home','product','collection','bag','checkout','other'].includes(value.pageKind)?value.pageKind:'other',currentHandle:handle(value.currentHandle),focusedHandle:identities.some(p=>p.handle===value.focusedHandle)?value.focusedHandle:'',selectedHandle:identities.some(p=>p.handle===value.selectedHandle)?value.selectedHandle:'',displayedPieces:pieces,...(Array.isArray(value.visiblePieces)?{visiblePieces:visible}:{}),...(Number.isSafeInteger(value.contextRevision)&&value.contextRevision>=0?{contextRevision:value.contextRevision}:{}),...(typeof value.search==='string'?{search:safeText(value.search)}:{}),...(['featured','price-asc','price-desc','title-asc','title-desc'].includes(value.sort)?{sort:value.sort}:{}),...(['all','necklaces','earrings','bracelets','rings','charms','available'].includes(value.filter)?{filter:value.filter}:{}),...(typeof value.loading==='boolean'?{loading:value.loading}:{}),...(['price','details','options','story','shipping','gifts','customize','catalogue','image','bag','checkout','offers'].includes(value.activeSection)?{activeSection:value.activeSection}:{}),...(['none','selection-shown','options-shown','review-ready','cart-confirmed','needs-help'].includes(value.progress)?{progress:value.progress}:{})};
   }
+  function serviceGuidanceResult(result,now=Date.now()){
+    // A completed merchant-guidance read can support attributed narration. It
+    // never becomes independently verified policy or product/action authority.
+    const value=result?.serviceKnowledge,age=now-value?.checkedAt;
+    if(result?.verified!==false||result.guidanceReadCompleted!==true||result.error||value?.schema!==1||value.readCompleted!==true||value.status!=='merchant_provided'||value.independentlyVerified!==false||value.publishedStatus!=='checked'||value.pieceSpecificOptionsConfirmed!==false||!Number.isSafeInteger(value.checkedAt)||value.checkedAt<=0||age < -60000||age > 300000||value.source?.kind!=='merchant_statement'||!/^\d{4}-\d{2}-\d{2}$/.test(value.source?.statedAt||''))return null;
+    const text=(v,max)=>typeof v==='string'?v.replace(/[\u0000-\u001f\u007f]/g,' ').trim().slice(0,max):'';
+    const source=(v,own)=>{try{const url=new URL(v?.url);if(url.protocol!=='https:'||url.username||url.password||url.port||url.href.length>1000||own&&!['britesjewelry.com','www.britesjewelry.com'].includes(url.hostname)||/\/(?:admin|account|checkout|cart|private)(?:\/|$)/i.test(url.pathname))return null;return {title:text(v.title,80)||'Published reference',url:url.href};}catch{return null;}};
+    const title=text(value.source.title,80),reply=text(result.reply,3500),topics=(Array.isArray(value.topics)?value.topics:[]).filter(topic=>['production','shipping','sourcing','gifts','customization','offers'].includes(topic)).slice(0,6);
+    if(!title||!reply||!topics.length)return null;
+    const conflicts=(Array.isArray(value.conflicts)?value.conflicts:[]).slice(0,4).flatMap(c=>{const citation=source(c?.source,true),merchantSummary=text(c?.merchantSummary,800),publishedSummary=text(c?.publishedSummary,800);return citation&&merchantSummary&&publishedSummary&&['production','sourcing'].includes(c?.topic)?[{topic:c.topic,merchantSummary,publishedSummary,source:citation,needsConfirmation:true}]:[];});
+    const products=result.productsVerified===true?(Array.isArray(result.products)?result.products:[]).slice(0,6).flatMap(p=>{const citation=source(p,true);if(!citation||!/^gid:\/\/shopify\/Product\/[1-9][0-9]{0,19}$/.test(p.id||'')||typeof p.handle!=='string'||!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(p.handle)||new URL(citation.url).pathname!=='/products/'+p.handle||!Number.isFinite(p.minPrice)||p.minPrice<0||!/^[A-Z]{3}$/.test(p.currency||'')||!text(p.title,300))return [];return [{id:p.id,handle:p.handle,title:text(p.title,300),type:text(p.type,100),url:citation.url,currency:p.currency,minPrice:p.minPrice,why:text(p.why,500),variantsComplete:p.variantsComplete===true,cartHold:p.cartHold===true,recommendationHold:p.recommendationHold===true,partsOnly:p.partsOnly===true}];}):[];
+    const ids=new Set(products.map(p=>p.id)),meanings=(Array.isArray(result.meanings)?result.meanings:[]).slice(0,6).flatMap(m=>{const body=text(m?.text,800);return ids.has(m?.productId)&&body?[{productId:m.productId,text:body,context:text(m.context,300),sources:(Array.isArray(m.sources)?m.sources:[]).slice(0,4).map(v=>source(v,false)).filter(Boolean)}]:[];});
+    const displayedPieces=publicContext({displayedPieces:result.displayedPieces})?.displayedPieces||[];
+    return {verified:false,guidanceReadCompleted:true,serviceKnowledge:{schema:1,readCompleted:true,checkedAt:value.checkedAt,status:'merchant_provided',independentlyVerified:false,source:{kind:'merchant_statement',title,statedAt:value.source.statedAt},topics,conflicts,publishedStatus:'checked',pieceSpecificOptionsConfirmed:false},productsVerified:products.length>0,reply,question:text(result.question,250)||null,products,meanings,displayedPieces,actions:[]};
+  }
   const MESSAGES=Object.freeze({
     unavailable:'OpenAI voice could not connect. You can still type.',
     micDenied:'Microphone permission was not granted. Allow microphone access in your browser, or type here.',
@@ -329,7 +344,7 @@
       toolCalls.add(callId);if(toolCalls.size>100){await stop('limit');return;}
       const responseId=eventId(event.response_id),bound=responseId?responseTurns.get(responseId):null;
       const performance=performanceResponses.get(responseId);if(performance)performance.otherTool=true;
-      const version=responseId?(bound?.turnVersion??null):turnVersion,controller=new rt.AbortController();toolControllers.add(controller);settleState();let result,checkedRead=false;
+      const version=responseId?(bound?.turnVersion??null):turnVersion,controller=new rt.AbortController();toolControllers.add(controller);settleState();let result,checkedRead=false,attributedRead=false;
       try{
         const actionTool=['prepare_jewellery_action','control_storefront'].includes(event.name);
         if(version===turnVersion){turnTools++;if(actionTool)turnChainClosed=true;if(turnTools>3)throw Error('Turn tool limit reached.');}
@@ -345,7 +360,13 @@
         // Only the existing public, current, checked catalogue projection is
         // supplied by the host. Operator dossiers and credentials stay private.
         if(!result||typeof result!=='object'||Array.isArray(result))throw Error('Catalogue answer unavailable.');
-        checkedRead=!result.error&&(event.name==='read_storefront_services'?result.readCompleted===true&&result.schema===1&&Number.isSafeInteger(result.checkedAt)&&result.checkedAt>0:['find_jewellery','inspect_jewellery'].includes(event.name)&&(result.verified===true||result.live===true));
+        if(event.name==='find_jewellery'&&(Object.hasOwn(result,'guidanceReadCompleted')||Object.hasOwn(result,'serviceKnowledge'))){
+          const guidance=serviceGuidanceResult(result);
+          if(guidance){if(!bound||bound.turnVersion!==turnVersion||!bound.inputItemId||bound.inputItemId!==activeInputItemId||!activeInputCommitted||doc?.hidden)throw Error('Guidance turn unavailable.');result=guidance;attributedRead=true;turnChainClosed=true;bound.toolsDisabled=true;}
+          else if(result.verified!==true&&result.live!==true)throw Error('Studio guidance unavailable.');
+          else{const {guidanceReadCompleted,serviceKnowledge,productsVerified,...ordinary}=result;result=ordinary;}
+        }
+        checkedRead=!result.error&&(attributedRead||(event.name==='read_storefront_services'?result.readCompleted===true&&result.schema===1&&Number.isSafeInteger(result.checkedAt)&&result.checkedAt>0:['find_jewellery','inspect_jewellery'].includes(event.name)&&(result.verified===true||result.live===true)));
         if(version===turnVersion&&!checkedRead)turnChainClosed=true;
         const text=JSON.stringify(result);if(new TextEncoder().encode(text).length>30000)throw Error('Catalogue result too large.');result=text;
       }catch{
@@ -360,7 +381,7 @@
       // a preparation that a later response could mistake for a current action.
       if(version===turnVersion&&!inputSpeaking&&!toolControllers.size){
         const mayContinue=checkedRead&&!turnChainClosed&&turnTools<3&&activeInputCommitted&&activeInputItemId&&bound?.inputItemId===activeInputItemId;
-        requestResponse({tool_choice:mayContinue?'auto':'none'},version,bound?.inputItemId||activeInputItemId);
+        requestResponse(attributedRead?{tool_choice:'none',instructions:'Answer the current shopper using the completed studio-guidance read. Attribute merchant-provided information to the studio; it is not independently verified policy or a product-specific promise. Explain any published discrepancy. Confirm piece-specific options, availability, charges, timing and offer eligibility with the studio or checkout. Only products marked productsVerified were freshly checked. Do not claim an order, discount, page control or cart change. Do not call tools in this reply.'}:{tool_choice:mayContinue?'auto':'none'},version,bound?.inputItemId||activeInputItemId);
       }settleState();
     }
     function receive(raw,current){
@@ -488,5 +509,5 @@
     async function dispose(){disposed=true;doc?.removeEventListener('visibilitychange',onHidden);rt.removeEventListener?.('pagehide',onPageHide);await stop('disposed');}
     return {start,stop,cancel:stop,interrupt,dispose,updateContext,resumeAudio,get currentOutput(){return nativeOutput();},get state(){return state;},get lastError(){return lastError;},get playbackBlocked(){return playbackBlocked;},get outputMeterState(){return outputMeterState;}};
   }
-  return {create,rms,measureOutputSignal,hasVoiceNetworkRoute,validateToolArguments,publicContext,MESSAGES,publicFailure};
+  return {create,rms,measureOutputSignal,hasVoiceNetworkRoute,validateToolArguments,publicContext,serviceGuidanceResult,MESSAGES,publicFailure};
 });

@@ -5,6 +5,7 @@ import receiptSandboxCheck from './_britesGrowthReceiptSandboxCheck.js';
 import etsyCacheReadOnly from './_britesGrowthEtsyCacheReadOnly.js';
 import historicalLookup from './_britesGrowthHistoricalLookup.js';
 import conciergeDiagnostics from './_britesConciergeDiagnostics.js';
+import keywordRevision from './_britesGrowthKeywordRevision.js';
 
 function environment(){const names=['FIREBASE_PROJECT_ID','FIREBASE_CLIENT_EMAIL','FIREBASE_PRIVATE_KEY','SHOPIFY_STORE','SHOPIFY_CLIENT_ID','SHOPIFY_CLIENT_SECRET','BRITES_GROWTH_NAMESPACE','BRITES_GROWTH_ADMIN_KEY'];return Object.fromEntries(names.map(k=>[k,Netlify.env.get(k)]));}
 function headers(req){const origin=req.headers.get('Origin');const allowed=origin&&(/https:\/\/(?:www\.)?britesjewelry\.com$/.test(origin)||origin===new URL(req.url).origin);return {'Content-Type':'application/json','Cache-Control':'no-store','Vary':'Origin',...(allowed?{'Access-Control-Allow-Origin':origin,'Access-Control-Allow-Headers':'Content-Type, X-Growth-Key, X-Edit-Passcode','Access-Control-Allow-Methods':'GET, POST, OPTIONS'}:{})};}
@@ -21,6 +22,7 @@ export default async (req,context) => {
     if(!publicOps.has(op)&&!await auth(req,env,db))return json({error:'Operator sign-in required.'},401);
     if(publicOps.has(op)&&!await service.rateLimit(context.ip||'public-api',60))return json({error:'Please wait a moment before trying again.'},429);
     if(publicOps.has(op)&&req.method!=='GET')return json({error:'Use GET for public shop reads.'},405);
+    if(op==='story-supplements'&&req.method!=='GET')return json({error:'Use GET for the private stored story read.'},405);
     if(req.method==='GET'){
       if(op==='status')return json(await service.status());
       if(op==='etsy-cache-state')return json(await etsyCacheReadOnly.read({db}));
@@ -31,6 +33,14 @@ export default async (req,context) => {
       if(op==='receipt-sandbox-check')return json({error:'Use POST for the isolated storage check.'},405);
       if(op==='historical-lookup')return json({error:'Use POST for the bounded historical lookup.'},405);
       if(op==='story-supplement')return json({error:'Use POST for story supplements.'},405);
+      if(op==='keyword-revision')return json({error:'Use POST for the private keyword revision.'},405);
+      if(op==='story-supplements'){
+        if(service.namespace!=='Brites_Growth_Sandbox')return json({error:'The isolated sandbox namespace is required.'},403);
+        const ids=(url.searchParams.get('ids')||'').split(',');
+        if(ids.length<1||ids.length>20||ids.some(id=>!/^gid:\/\/shopify\/Product\/[1-9]\d{0,19}$/.test(id)))return json({error:'Provide 1–20 exact product IDs for the private story read.'},400);
+        try{return json({supplements:await service.storySupplements([...new Set(ids)])});}
+        catch{return json({error:'The stored story supplements could not be read. Please try again.'},503);}
+      }
       if(op==='milestone-index')return json({error:'Use POST to rebuild the private milestone index.'},405);
       if(op==='catalogue-export'){const cursor=url.searchParams.get('after')||'';if(cursor&&!/^[a-f0-9]{40}$/.test(cursor))return json({error:'Invalid catalogue cursor.'},400);let query=service.col('Products').orderBy('__name__').limit(200);if(cursor)query=query.startAfter(cursor);const snap=await query.get();return json({products:snap.docs.map(d=>d.data()),after:snap.size===200?snap.docs[snap.docs.length-1].id:null});}
       if(op==='catalogue'){
@@ -55,6 +65,10 @@ export default async (req,context) => {
     if(req.method!=='POST')return json({error:'Method not allowed.'},405);
     const raw=await req.text();if(raw.length>900000)return json({error:'Request is too large.'},413);const body=JSON.parse(raw||'{}');
     if(!body||typeof body!=='object'||Array.isArray(body))return json({error:'Send a JSON object.'},400);
+    if(op==='keyword-revision'){
+      if(service.namespace!=='Brites_Growth_Sandbox')return json({error:'The isolated sandbox namespace is required.'},403);
+      return json(await keywordRevision.createKeywordRevision({service}).revise(body));
+    }
     if(op==='historical-lookup'){
       if(service.namespace!=='Brites_Growth_Sandbox')return json({error:'The isolated sandbox namespace is required.'},403);
       if(Date.now()>=core.STOP_AT)return json({stopped:true},410);

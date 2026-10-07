@@ -6,6 +6,40 @@
   function sourceLinks(dossier,ids){return (ids||[]).map(id=>(dossier.sources||[]).find(s=>s.id===id)).filter(s=>s&&safeLink(s.url));}
   function selectProductIssues(result,product){const id=productId(product.productId),records=(result.productIssues||[]).filter(record=>id&&productId(record.productId)===id);return {productId:id,issues:records.flatMap(record=>Array.isArray(record.issues)?record.issues:[])};}
   function issueHolds(record){const open=(record?.issues||[]).filter(issue=>issue&&issue.status!=='resolved'),blocks=new Set(open.flatMap(issue=>Array.isArray(issue.blocks)?issue.blocks:[]));if(open.some(issue=>['identity','style','options','material','matching'].includes(issue.kind))){blocks.add('recommendation');blocks.add('cart');}if(open.some(issue=>['history','content'].includes(issue.kind)))blocks.add('meaning');return {recommendationHold:blocks.has('recommendation'),cartHold:blocks.has('cart'),meaningHold:blocks.has('meaning')};}
+  function shopperKnowledgeDiagnosticsFor(product,reads,at=Date.now()){
+    const id=productId(product?.productId),handle=typeof product?.handle==='string'&&/^[a-z0-9_-]{1,180}$/.test(product.handle)?product.handle:null;
+    if(!id||!handle)throw Error('Choose one exact catalogue product.');
+    const read=name=>reads?.[name]?.status==='fulfilled'?reads[name].value:null;
+    const short=(value,limit)=>typeof value==='string'?value.replace(/\s+/g,' ').trim().slice(0,limit):null;
+    const version=value=>typeof value==='string'&&/^[a-f0-9]{64}$/i.test(value)?value:null;
+    const timestamp=value=>Number.isFinite(value)&&value>0?value:null;
+    const sources=value=>(Array.isArray(value)?value:[]).slice(0,40).map(source=>({id:short(source?.id,100),reviewed:source?.reviewed===true,checkedAt:timestamp(source?.checkedAt),ageState:!timestamp(source?.checkedAt)?'unavailable':source.checkedAt>at+60000?'future':at-source.checkedAt>30*86400000?'stale':'fresh'}));
+    const research=read('research'),current=(research?.dossiers||[]).find(dossier=>dossier?.productId===id&&dossier.handle===handle),liveRead=read('product'),live=liveRead?.live===true&&liveRead.product?.id===id&&liveRead.product.handle===handle?liveRead.product:null;
+    const issueState=research?.productIssueState||(Array.isArray(research?.productIssues)?'available':'unavailable'),holds=issueHolds(selectProductIssues(research||{},product));
+    for(const name of ['recommendationHold','cartHold','meaningHold'])holds[name]=holds[name]||live?.[name]===true||current?.evidenceHolds?.[name]===true;
+    const stored=read('supplements'),storedRecords=Array.isArray(stored?.supplements)?stored.supplements:[],storedBound=!!stored&&Array.isArray(stored.supplements)&&storedRecords.every(value=>value?.productId===id&&value.handle===handle),supplements=storedRecords.filter(value=>value?.productId===id&&value.handle===handle);
+    const supplemental=supplements.slice(0,1).map(value=>({productId:id,handle,status:short(value.status,30),version:version(value.version),baseDossierVersion:version(value.baseDossierVersion),currentBaseVersionMatches:!!current&&value.baseDossierVersion===current.version,savedAt:timestamp(value.savedAt),productCheckedAt:timestamp(value.productCheckedAt),meaningCount:Array.isArray(value.meanings)?value.meanings.length:0,sourceCount:Array.isArray(value.sources)?value.sources.length:0,sources:sources(value.sources)}));
+    const internal=/\b(?:system|developer|author|hidden|internal)\s+(?:prompt|message|instructions?)\b|\b(?:assistant|model|concierge)\s+(?:must|should|shall|needs? to)\b/i;
+    const competitorHosts=(current?.competitors||[]).flatMap(value=>{const url=safeLink(value?.url);return url?[new URL(url).hostname.replace(/^www\./,'')]:[];});
+    const neutral=value=>{const url=safeLink(value);if(!url)return null;const host=new URL(url).hostname.replace(/^www\./,'');if(host==='britesjewelry.com')return url;if(competitorHosts.some(other=>host===other||host.endsWith('.'+other)||other.endsWith('.'+host))||/(?:^|\.)(?:etsy|amazon|ebay|walmart)\./i.test(host)||/(?:^|[.-])(?:retailer|shop|store|boutique|marketplace|jewelry|jewellery|gifts)(?:[.-]|$)/i.test(host))return null;return url.length<=1200?url:null;};
+    const projected=(read('knowledge')?.products||[]).filter(value=>value?.productId===id),meanings=[];
+    for(const meaning of projected.slice(0,2)){
+      const text=short(meaning.text,1500),context=short(meaning.context,300),citations=Array.isArray(meaning.sources)?meaning.sources:[];
+      if(meaning.kind!=='interpretation'||!text||!context||internal.test(text+' '+context)||!citations.length||citations.some(source=>!neutral(source?.url)))continue;
+      meanings.push({text,context,kind:'interpretation',sources:citations.slice(0,4).map(source=>({title:short(source.title,200),url:neutral(source.url),checkedAt:timestamp(source.checkedAt)}))});
+    }
+    const keywordRecommendations=(current?.recommendations||[]).flatMap((value,index)=>value?.channel==='keywords'&&value.basis==='hypothesis'?[{recommendationIndex:index,sourceIds:(value.sourceIds||[]).slice(0,12).map(id=>short(id,100)),keywordCount:Array.isArray(value.keywords)?value.keywords.length:0}]:[]).slice(0,8);
+    return {readOnly:true,authoringWrites:false,approvals:false,checkedAt:at,selection:{productId:id,handle,queueDossierVersion:version(product.dossierVersion)},reads:Object.fromEntries(['research','product','supplements','knowledge'].map(name=>[name,reads?.[name]?.status==='fulfilled'?'available':'unavailable'])),product:{identityVerified:!!live,live:!!live,productId:live?id:null,handle:live?handle:null,checkedAt:timestamp(live?.checkedAt)},issues:{state:issueState,...holds},dossier:current?{productId:id,handle,status:short(current.status,30),version:version(current.version),queueVersionMatches:current.version===product.dossierVersion,savedAt:timestamp(current.savedAt),sourceCount:Array.isArray(current.sources)?current.sources.length:0,sources:sources(current.sources),meaningCount:Array.isArray(current.meanings)?current.meanings.length:0,meaningSourceIds:(current.meanings||[]).slice(0,12).map(value=>(value.sourceIds||[]).slice(0,12).map(id=>short(id,100))),keywordRecommendations}:null,supplements:{readState:!stored?'unavailable':storedBound?'available':'identity_unverified',absent:storedBound?supplements.length===0:null,count:supplements.length,records:supplemental},publicKnowledge:{readState:read('knowledge')?'available':'unavailable',meaningCount:projected.length,shownMeaningCount:meanings.length,rejectedOrOmittedCount:projected.length-meanings.length,meanings},limits:'One selected product; at most one supplement, 40 source summaries, eight keyword recommendation bindings and two public interpretations. Empty public knowledge alone does not establish a missing dossier or supplement.'};
+  }
+  function keywordRevisionFor(value,product,dossier){
+    const fields=['productId','baseDossierVersion','recommendationIndex','sourceIds','keywords','reviewed'];
+    const exact=value&&typeof value==='object'&&!Array.isArray(value)&&Object.keys(value).length===fields.length&&fields.every(key=>Object.hasOwn(value,key));
+    const id=productId(product?.productId),index=value?.recommendationIndex,rec=Number.isInteger(index)&&index>=0?dossier?.recommendations?.[index]:null;
+    if(!exact||!id||dossier?.status!=='approved'||dossier.productId!==id||dossier.handle!==product.handle||product.dossierVersion!==dossier.version||value.productId!==id||value.baseDossierVersion!==dossier.version||!(/^[a-f0-9]{64}$/i.test(dossier.version||''))||value.reviewed!==true||rec?.channel!=='keywords'||rec.basis!=='hypothesis')throw Error('Revision does not match the selected approved research.');
+    const sourceIds=value.sourceIds,keywords=value.keywords,key=term=>String(term).normalize('NFKC').replace(/\s+/g,' ').trim().toLowerCase();
+    if(!Array.isArray(sourceIds)||!sourceIds.length||sourceIds.length>12||new Set(sourceIds).size!==sourceIds.length||sourceIds.some(id=>typeof id!=='string'||!/^[a-zA-Z0-9:_-]{1,100}$/.test(id))||!Array.isArray(rec.sourceIds)||JSON.stringify([...sourceIds].sort())!==JSON.stringify([...rec.sourceIds].sort())||!Array.isArray(keywords)||!keywords.length||keywords.length>8||keywords.some(term=>typeof term!=='string'||!term.trim()||term.length>120)||new Set(keywords.map(key)).size!==keywords.length)throw Error('Revision terms or existing source bindings are invalid.');
+    return {productId:id,baseDossierVersion:dossier.version,recommendationIndex:index,sourceIds:[...sourceIds],keywords:keywords.map(term=>term.trim()),reviewed:true};
+  }
   function briefFor(dossier,title,issues=null,issueState='available'){return [title,'CORRECTIVE RESEARCH ONLY \xb7 Context notes. A fresh, exact-version operator-review packet is required before using any advertising proposals.','Product: '+dossier.handle,'Research status: '+dossier.status,'Research version: '+(dossier.version||'unavailable'),...((Object.values(issueHolds(issues)).some(Boolean)||issueState!=='available')?['Product holds or issue evidence require review.']:[]),...(issues?.issues||[]).filter(issue=>issue.status!=='resolved').map(issue=>'Open product issue \xb7 '+issue.kind+': '+issue.detail),'Research recommendations (hypotheses; context only):',...(dossier.recommendations||[]).map(r=>r.channel+': '+r.action+'\nMeasure: '+r.measure+'\nSources: '+sourceLinks(dossier,r.sourceIds).map(s=>s.url).join(', '))].join('\n\n');}
   function demandBriefFor(dossier,title,entry,issues=null,issueState='available',now=Date.now(),reviewContext=null){
     const e=entry?.evidence,id=productId(dossier?.productId);
@@ -145,6 +179,13 @@
       }
       const r=await fetch(url,{method:body?'POST':'GET',credentials:'same-origin',headers:{'Content-Type':'application/json','X-Growth-Key':key},...(body?{body:JSON.stringify(body)}:{})});const v=await r.json();if(!r.ok)throw Object.assign(Error(v.error||'Request failed.'),{status:r.status});return v;
     }
+    async function readSavedReceipts(action){
+      if(opts.request||!['receiptDiagnostics','receiptReconciliationPreview'].includes(action))throw Error('A private receipt reader is required.');
+      const response=await fetch('/api/growth-ads',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json','X-Growth-Key':key},body:JSON.stringify({action,limit:20,maxMs:12000})});
+      const value=await response.json();if(!response.ok)throw Error('The private receipt check is unavailable.');return value;
+    }
+    const receiptReader=typeof opts.receiptReader==='function'?opts.receiptReader:!opts.request?()=>readSavedReceipts('receiptDiagnostics'):null;
+    const receiptPreviewReader=typeof opts.receiptPreviewReader==='function'?opts.receiptPreviewReader:!opts.request?()=>readSavedReceipts('receiptReconciliationPreview'):null;
     async function correctionRequest(body,{signal}={}){if(typeof opts.correctionRequest==='function')return opts.correctionRequest(body,{signal});if(opts.request)throw Error('An owner-authenticated correction reader is required.');const r=await fetch('/api/growth-corrections',{method:'POST',signal,headers:{'Content-Type':'application/json','X-Growth-Key':key},body:JSON.stringify(body)}),v=await r.json();if(!r.ok)throw Object.assign(Error(v.error||'Correction review is unavailable.'),{status:r.status});return v;}
     function clearCorrection(){correctionPanel?.destroy?.();correctionPanel=null;}
     const auth=node('form',null,'box auth'),pass=node('input');pass.type='password';pass.autocomplete='off';pass.placeholder='Operator access key';pass.setAttribute('aria-label','Operator access key');const sign=node('button','Open workspace','btn primary');sign.type='submit';auth.append(node('h2','Private research workspace'),node('p','Use the sandbox operator key to see saved research and sales evidence.','sub'),pass,sign);auth.hidden=!!opts.request;workspace.appendChild(auth);
@@ -173,24 +214,24 @@
       save.onclick=()=>run(async()=>{if(!repairLease||!note.value.trim()){show({error:'A repair lease and checkpoint note are required.'});return;}const current=await readCoordination();if(current.controller?.owner!==repairLease.owner||!current.controller.active){show({error:'The repair lease is unavailable. Reread coordination before saving.'});return;}const result=await request('checkpoint',{...repairLease,expectedUpdatedAt:Number(repairCheckpoint?.updatedAt||0),value:{...(repairCheckpoint||{}),manualConciergeRepair:{at:Date.now(),note:note.value.trim().slice(0,4000)}}});show(result);});
       release.onclick=()=>run(async()=>{if(!repairLease){show({error:'No repair lease is held by this workspace.'});return;}const result=await request('controller',{action:'release',...repairLease});if(result.ok){repairLease=null;repairOwner=null;}show(result);});
     }
-    if(typeof opts.receiptReader==='function'){
+    if(receiptReader){
       const check=node('button','Check saved conversion receipts','btn');check.type='button';controls.appendChild(check);
       const report=node('section',null,'box');report.hidden=true;report.setAttribute('aria-label','Read-only receipt diagnostics');workspace.appendChild(report);
       check.onclick=async()=>{check.disabled=true;report.hidden=false;report.replaceChildren(node('h2','Saved receipt diagnostics'),node('p','Checking existing request receipts\u2026','status'));
-        try{const result=await opts.receiptReader();if(result?.readOnly!==true||result.receiptOnly!==true||result.queueUpdated!==false||result.individualOrdersUpdated!==0)throw Error('A read-only receipt result could not be verified.');
+        try{const result=await receiptReader();if(result?.readOnly!==true||result.receiptOnly!==true||result.queueUpdated!==false||result.individualOrdersUpdated!==0)throw Error('A read-only receipt result could not be verified.');
           const count=value=>Number.isSafeInteger(value)&&value>=0?String(value):'unavailable';
           report.replaceChildren(node('h2','Saved receipt diagnostics'),node('p','Provider request evidence only. Order records remain unchanged; this does not verify attribution, deduplication or bidding goals.','sub'));
           for(const [label,field]of [['Saved receipt rows','savedReceiptRows'],['Unique receipts','uniqueReceipts'],['Provider receipts confirmed','confirmed'],['Rejected receipts','rejected'],['Still processing','processing'],['Unconfirmed receipts','unconfirmed'],['Unavailable receipt checks','unavailable']])report.appendChild(node('p',label+': '+count(result[field])));
           if(result.blocked||result.stopped)report.appendChild(node('p','Observation '+(result.blocked?'blocked':'bounded')+': '+(result.code||result.stopped||'unavailable')+'.','status'));
           for(const receipt of result.receipts||[])report.appendChild(node('p','Receipt '+receipt.receiptKey+' \xb7 '+receipt.outcome+' \xb7 '+receipt.code,'sub'));
-        }catch(error){report.replaceChildren(node('h2','Saved receipt diagnostics'),node('p','Receipt diagnostics are unavailable: '+error.message,'error'));}finally{check.disabled=false;}
+        }catch{report.replaceChildren(node('h2','Saved receipt diagnostics'),node('p','A read-only receipt result could not be verified. No conversion or order records were changed.','error'));}finally{check.disabled=false;}
       };
     }
-    if(typeof opts.receiptPreviewReader==='function'){
+    if(receiptPreviewReader){
       const check=node('button','Preview receipt status repairs','btn');check.type='button';controls.appendChild(check);
       const report=node('section',null,'box');report.hidden=true;report.setAttribute('aria-label','Read-only receipt repair preview');workspace.appendChild(report);
       check.onclick=async()=>{check.disabled=true;report.hidden=false;report.replaceChildren(node('h2','Receipt status repair preview'),node('p','Checking fresh receipts and saved-row consistency\u2026','status'));
-        try{const result=await opts.receiptPreviewReader(),summary=receiptPreviewFor(result);
+        try{const result=await receiptPreviewReader(),summary=receiptPreviewFor(result);
           report.replaceChildren(node('h2','Receipt status repair preview'),node('p','Preview only. No conversion or order records were changed. Provider receipt confirmation does not verify purchase attribution, deduplication or bidding goals.','sub'));
           for(const [label,field]of [['Saved rows inspected','scannedRows'],['Unique receipts checked','selectedReceipts'],['Provider receipts confirmed','providerReceiptsConfirmed'],['Proposed status repairs','proposedRepairs'],['Rows requiring further evidence','blockedRows']])report.appendChild(node('p',label+': '+(summary[field]??'unavailable')));
           report.appendChild(node('p','Fresh receipts and unchanged rows must be checked again before any status repair is applied.','status'));
@@ -212,6 +253,68 @@
         if(!dossier){detail.appendChild(node('p','Matched to the live catalogue. Approved research for this exact product is not available yet; deep competitor and buyer research is queued.','empty'));return;}
         detail.append(node('span',dossier.status==='approved'?'Approved research':'Partial research \xb7 needs more evidence','tag '+dossier.status),node('p','Last saved '+new Date(dossier.savedAt).toLocaleString(),'status'));
         if(dossier.status!=='approved')detail.appendChild(node('p','This dossier is still being completed. Its recommendations are held out of automated ad-design evidence until validation approves it.','status'));
+        if(dossier.status==='approved'&&(!opts.request||opts.operatorTools===true)&&/^[a-z0-9_-]{1,180}$/.test(r.handle||'')){
+          const knowledgeBox=node('section',null,'recommendation'),readKnowledge=node('button','Read shopper knowledge diagnostics','btn'),knowledgeState=node('p','Read-only check of this exact approved product, stored story supplement and current public projection. No authoring or approval action.','status'),knowledgeReport=node('pre');
+          readKnowledge.type='button';knowledgeReport.setAttribute('aria-label','Private shopper knowledge diagnostics');knowledgeReport.style.cssText='white-space:pre-wrap;overflow-wrap:anywhere;max-height:560px;overflow:auto';
+          knowledgeBox.append(readKnowledge,knowledgeState,knowledgeReport);detail.appendChild(knowledgeBox);
+          readKnowledge.onclick=async()=>{
+            readKnowledge.disabled=true;knowledgeState.textContent='Reading the selected product and current shopper projection\u2026';knowledgeReport.textContent='';
+            try{
+              const names=['research','product','supplements','knowledge'],ids=encodeURIComponent(productId(r.productId));
+              const responses=await Promise.allSettled([request('research?ids='+ids),request('product?handle='+encodeURIComponent(r.handle)),request('story-supplements?ids='+ids),request('knowledge?ids='+ids)]);
+              if(seq!==detailRequest||selected!==r.id||!knowledgeReport.isConnected)return;
+              const result=shopperKnowledgeDiagnosticsFor(r,Object.fromEntries(names.map((name,index)=>[name,responses[index]]))),text=JSON.stringify(result,null,2);
+              if(text.length>48000)throw Error('Selected diagnostic exceeded its bound.');
+              knowledgeReport.textContent=text;knowledgeState.textContent=result.reads.research==='available'&&result.reads.product==='available'&&result.reads.supplements==='available'&&result.reads.knowledge==='available'?'Current selected-product reads completed. Empty public knowledge does not establish missing saved research.':'Some current reads are unavailable. Unavailable evidence is not treated as missing or approved.';
+            }catch{if(seq===detailRequest&&selected===r.id&&knowledgeReport.isConnected){knowledgeReport.textContent='';knowledgeState.textContent='Current selected-product diagnostics could not be verified. No saved research was changed.';}}
+            finally{if(readKnowledge.isConnected)readKnowledge.disabled=false;}
+          };
+          const revisionInput=node('input'),revisionLabel=node('label','Reviewed keyword revision JSON'),revisionPreview=node('pre'),applyRevision=node('button','Apply reviewed keyword revision','btn'),revisionState=node('p','Optional: load a reviewed, exact-version keyword revision file to preview it before applying. This does not regenerate the approved dossier or refresh Demand.','status');
+          let revision=null;
+          revisionInput.type='file';revisionInput.accept='.json,application/json';revisionInput.setAttribute('aria-label','Reviewed keyword revision JSON');revisionPreview.setAttribute('aria-label','Reviewed keyword revision preview');revisionPreview.style.cssText=knowledgeReport.style.cssText;applyRevision.type='button';applyRevision.disabled=true;
+          revisionLabel.appendChild(revisionInput);knowledgeBox.append(revisionLabel,revisionPreview,applyRevision,revisionState);
+          revisionInput.onchange=async()=>{
+            revision=null;applyRevision.disabled=true;revisionPreview.textContent='';
+            const file=revisionInput.files?.[0];if(!file){revisionState.textContent='No reviewed keyword revision is loaded.';return;}
+            try{
+              if(!Number.isSafeInteger(file.size)||file.size<=0||file.size>=32768||!file.name.toLowerCase().endsWith('.json'))throw Error('Use one bounded JSON file.');
+              const proposal=keywordRevisionFor(JSON.parse(await file.text()),r,dossier);
+              if(seq!==detailRequest||selected!==r.id||!revisionInput.isConnected)return;
+              revision=proposal;revisionPreview.textContent=JSON.stringify(proposal,null,2);applyRevision.disabled=false;revisionState.textContent='Reviewed terms are previewed above. A separate Apply click rechecks the current approved version and existing source bindings.';
+            }catch{if(seq===detailRequest&&selected===r.id&&revisionInput.isConnected)revisionState.textContent='This file is invalid, too large or bound to different research. No revision was sent.';}
+          };
+          applyRevision.onclick=async()=>{
+            if(!revision||applyRevision.disabled)return;
+            const proposal=revision;applyRevision.disabled=true;revisionInput.disabled=true;revisionState.textContent='Rechecking current approved research before the reviewed revision\u2026';
+            try{
+              const fresh=await request('research?ids='+encodeURIComponent(productId(r.productId)));
+              if(seq!==detailRequest||selected!==r.id||!applyRevision.isConnected)return;
+              const current=selectDossier(fresh,r),currentHolds=issueHolds(selectProductIssues(fresh,r)),currentIssueState=fresh.productIssueState||(Array.isArray(fresh.productIssues)?'available':'unavailable');
+              if(currentIssueState!=='available'||Object.values(currentHolds).some(Boolean))throw Error('Current issue checks are held or unavailable.');
+              const checked=keywordRevisionFor(proposal,r,current);
+              const before=current.recommendations[checked.recommendationIndex],existing=before.keywords==null?[]:before.keywords;
+              if(!Array.isArray(existing))throw Error('Current keyword seeds could not be verified.');
+              const expectedKeywords=[...existing,...checked.keywords];
+              if(seq!==detailRequest||selected!==r.id||!applyRevision.isConnected)return;
+              const saved=await request('keyword-revision',checked);
+              if(seq!==detailRequest||selected!==r.id||!applyRevision.isConnected)return;
+              if(saved?.ok!==true){
+                const messages={RESEARCH_VERSION_CHANGED:'The approved research version changed. Refresh this product and prepare a revision for its current version.',STORY_REBIND_REQUIRED:'An approved story is bound to this research version. Preserve its exact binding before revising the base dossier.',PRODUCT_HOLD:'A current product hold blocked the revision. Refresh this exact product and preserve its holds before retrying.',KEYWORDS_ALREADY_PRESENT:'These reviewed terms are already present. No keyword revision was applied.'};
+                revisionState.textContent=saved?.changed===null||saved?.researchWriteAttempted===true?'The storage outcome is uncertain. Reread this exact product before any retry; do not assume the revision was saved or refused.':saved?.changed===false?messages[saved?.code]||'The reviewed keyword revision was refused by the sandbox checks. Refresh this exact product before retrying.':'The revision outcome could not be verified. Reread this exact product before any retry; do not assume it was saved or refused.';
+                return;
+              }
+              if(saved?.ok!==true||saved.changed!==true||saved.sandboxOnly!==true||saved.productId!==checked.productId||saved.baseDossierVersion!==checked.baseDossierVersion||saved.recommendationIndex!==checked.recommendationIndex||saved.keywordCount!==expectedKeywords.length||saved.version===checked.baseDossierVersion||!(/^[a-f0-9]{64}$/i.test(saved.version||''))||['providerCalls','inferenceCalls','campaignWrites','budgetWrites'].some(name=>saved[name]!==0))throw Error('Revision outcome could not be verified.');
+              const readback=await request('research?ids='+encodeURIComponent(productId(r.productId)));
+              if(seq!==detailRequest||selected!==r.id||!applyRevision.isConnected)return;
+              const approved=selectDossier(readback,r);
+              const revised=approved?.recommendations?.[checked.recommendationIndex];
+              if(approved?.status!=='approved'||approved.version!==saved.version||revised?.channel!=='keywords'||revised.basis!=='hypothesis'||JSON.stringify(revised.sourceIds)!==JSON.stringify(before.sourceIds)||JSON.stringify(revised.keywords)!==JSON.stringify(expectedKeywords))throw Error('Current revision readback could not be verified.');
+              r.dossierVersion=approved.version;revision=null;await show(r);
+              if(selected===r.id)status.textContent='Reviewed keyword revision saved and read back for '+r.handle+' \xb7 approved version '+approved.version+'. Existing Demand retains its previous version and must be rechecked before reuse.';
+            }catch{if(seq===detailRequest&&selected===r.id&&applyRevision.isConnected)revisionState.textContent='The reviewed revision or its current readback could not be verified. Refresh this product before retrying; no older research is used as a fallback.';}
+            finally{if(revisionInput.isConnected)revisionInput.disabled=false;if(applyRevision.isConnected)applyRevision.disabled=true;}
+          };
+        }
         if(openIssues.length&&global.BritesGrowthCorrections?.mount){const host=node('div');detail.appendChild(host);correctionPanel=global.BritesGrowthCorrections.mount(host,{productId:productId(r.productId),handle:r.handle,dossier,issues,request:correctionRequest});}
         detail.appendChild(node('h3','Product facts with cited sources'));
         if(!(dossier.facts||[]).length)detail.appendChild(node('p','Product facts have not been saved in this dossier yet.','sub'));
@@ -266,5 +369,5 @@
     auth.onsubmit=async e=>{e.preventDefault();key=pass.value.trim();pass.value='';try{sessionStorage.setItem('brites-growth-key',key);}catch(x){}await load();};refresh.onclick=load;if(opts.request||key)await load();else{status.textContent='Sign in to see private progress.';refresh.disabled=true;}
     return {refresh:load};
   }
-  global.BritesGrowth={operatorReviewFor,operatorBriefFor,renderOperatorReview,mount,parseCsv,productId,selectDossier,selectProductIssues,issueHolds,briefFor,demandBriefFor,receiptPreviewFor,safeLink};if(document.querySelector('#growth-root'))mount(document.querySelector('#growth-root'));
+  global.BritesGrowth={operatorReviewFor,operatorBriefFor,renderOperatorReview,mount,parseCsv,productId,selectDossier,selectProductIssues,issueHolds,briefFor,demandBriefFor,receiptPreviewFor,safeLink,shopperKnowledgeDiagnosticsFor,keywordRevisionFor};if(document.querySelector('#growth-root'))mount(document.querySelector('#growth-root'));
 })(window);
