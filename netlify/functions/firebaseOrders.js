@@ -176,7 +176,7 @@ async function sessionWrite(s) {
     if (lastInput > 0) doc.lastInputAt = lastInput;
     if (prev && computerLabel && computerLabel !== prev.computerLabel) doc.computerLabel = computerLabel;
     tx.set(ref, doc, { merge: true });
-    return [200, { success: true, id, startAt, lastSeenAt, endAt, endReason, minutes, ended: endAt != null }];
+    return [200, { success: true, id, startAt, lastSeenAt, endAt, endReason, minutes, ended: endAt != null }, { created: !prev }];   // (the third part is for the door only, never sent: a beat that makes the document is a sign-in the console must hear of, RV1)
   });
 }
 
@@ -236,9 +236,9 @@ exports.handler = async (event) => {
       if (body.session && typeof body.session === "object" && !Array.isArray(body.session)) {
         if (String(event.body || "").length > 4096) return { statusCode: 413, headers: CORS, body: JSON.stringify({ error: "session event too large" }) };
         if (!flood.allow(event, 1)) return { statusCode: 429, headers: CORS, body: JSON.stringify({ error: "too many requests, try again in a minute" }) };
-        const [statusCode, out] = await sessionWrite(body.session);
+        const [statusCode, out, made] = await sessionWrite(body.session);
         // a start, an end, or a beat that ended the session is a change the console's readers look for (a plain beat only moves lastSeenAt: not counted; FC5, _employeeRev.js; production only, never throws)
-        if (statusCode === 200 && out && (body.session.event !== "beat" || (out.ended && out.startAt != null))) await require("./_employeeRev").afterWrite(db, PREFIX, ["ses"], admin.firestore.FieldValue);
+        if (statusCode === 200 && out && (body.session.event !== "beat" || (out.ended && out.startAt != null) || (made && made.created))) await require("./_employeeRev").afterWrite(db, PREFIX, ["ses"], admin.firestore.FieldValue);
         return { statusCode, headers: CORS, body: JSON.stringify(out) };
       }
       /* what a person did at a station (station-activity.js): a batch of small events, each created once, with the person's

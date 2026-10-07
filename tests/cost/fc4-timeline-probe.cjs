@@ -24,6 +24,8 @@ seed[`Charm_Nest_Arrivals/${O}`] = { firstSeenAt: NOW - 7200e3, createTs: NOW - 
 seed[`Design_Order_Archive/${O}`] = { completedAtMs: NOW - 900e3, completedBy: "Ana", setId: "set-1", sheetIds: ["sheet-A"], status: { createdTs: NOW - 7300e3 }, big: pad(8000) };
 seed[`EtsyMail_Receipts/${O}`] = { created_timestamp: Math.round((NOW - 7300e3) / 1000), updated_timestamp: Math.round((NOW - 100e3) / 1000), status: "paid", is_shipped: false, raw: { shipments: [], transactions: pad(12000) } };
 for (let i = 0; i < 5; i++) seed[`Charm_Pool_Back/${O}_9${i}_1`] = { poolId: `${O}_9${i}_1`, sheetId: "sheet-A", setId: "set-1", approvedAt: NOW - 800e3, approvedBy: "Ana", text: "Love you", preview: pad(5000, "b") };
+// a cancel's step on a sheet (cancelSteps writes it, and later rewrites it IN PLACE under the same key as the step goes on: RV2)
+seed[`Order_Timeline/${O}~cancelStep~cx-1700000000000-GF_Sheet_1`] = { orderId: O, type: "cancelStep", at: NOW - 600e3, by: "Tess", source: "sorter", station: "sorter", sheet: "GF Sheet 1", text: "On a cut sheet: set aside (GF Sheet 1)", data: { outcome: "setAside", done: false, sheet: "GF Sheet 1" }, createdAt: meter.Timestamp.fromMillis(NOW - 600e3) };
 db.seed(seed);
 
 const run = (name, opts) => m.op(name, () => Timeline.get(db, O, Object.assign({ prefix: "", sandboxed: Timeline.SANDBOXED_DEFAULT }, opts)));
@@ -77,6 +79,7 @@ const mut = async (label, fn, expect = true) => {
   await mut("a Rose Gold sheet's cut", async () => { await db.collection("Charm_Nest_Sheets").doc("sheet-R").set({ id: "sheet-R", metal: "rose", orders: [O], rosePlanHash: "h", roseCutAt: Date.now(), roseStockId: "stock-1", poolIds: [] }); }, true);
   await mut("the cut's own record (who cut it)", () => db.collection("Charm_Nest_Rose_Stock").doc("stock-1").collection("cuts").doc("sheet-R").set({ at: Date.now(), by: "Tess" }));
   await mut("another order's records (must NOT move this order)", async () => { await db.collection("Order_Timeline").doc("999~note~z").set({ orderId: "999", type: "note", at: Date.now() }); await db.collection("Charm_Pool").doc("999_1_1").set({ poolId: "999_1_1", orderId: "999" }); await db.collection("Charm_Nest_Sheets").doc("sheet-Z").set({ id: "sheet-Z", orders: ["999"] }); }, false);
+  await mut("a cancel's step rewritten in place (same key: set aside, then done)", () => db.collection("Order_Timeline").doc(`${O}~cancelStep~cx-1700000000000-GF_Sheet_1`).set({ at: Date.now(), text: "On a cut sheet: set aside by Tess (GF Sheet 1)", data: { outcome: "setAside", done: true } }, { merge: true }));
   await mut("a recorded event rewritten in place", () => db.collection("Order_Timeline").doc(`${O}~scan~k2`).set({ text: "changed" }, { merge: true }), false);
 
   // sandbox: the same order's sandbox records are separate, and the Etsy mirror is not read
