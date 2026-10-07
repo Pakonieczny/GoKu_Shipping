@@ -7974,12 +7974,7 @@ const CustomPrint = window.CustomPrint = (() => {
   }
   /** What the cloud record of one line says about it. */
   const targetOf = (r, rec, it) => ({ key: r.key, receiptId: String(r.order.receiptId), transactionId: String(r.line.transactionId || ""), sku: (r.spec && r.spec.designSku) || r.line.sku || "", title: r.line.title || "", category: (r.spec && r.spec.special && r.spec.special.label) || (rec && rec.category) || (it && it.category) || "Custom order", kind: (r.spec && r.spec.special && r.spec.special.kind) || (rec && rec.kind) || "" });
-  function settle() {
-    Orders.interpretAll(); Orders.render(); try { renderRail(); updateTopSub(); } catch (_) {} try { if (OrderWin.isOpen()) OrderWin.paint(); } catch (_) {} RunCtl.poke();
-    // (LB2, 7 Oct: a piece completed by hand is told to everything that listens to where pieces are: the order window's Sheet tab, the search box, the Orders list and the Hold buttons
-    // read OrderPieces, which a completion by hand did not tell; they said "on a sheet / open" until the next placement read. No read: it only has them draw again from what is held)
-    try { if (window.OrderPieces && OrderPieces.notify) OrderPieces.notify(); } catch (_) {}
-  }
+  function settle() { Orders.interpretAll(); Orders.render(); try { renderRail(); updateTopSub(); } catch (_) {} try { if (OrderWin.isOpen()) OrderWin.paint(); } catch (_) {} RunCtl.poke(); }
   /* A cancelled order is never printed or completed silently (Paul, 28 Sep): the first press turns the button clay,
      "Cancelled order: print anyway?", for 4 s, with no pop-up; a second press meanwhile goes ahead, and the order's
      timeline says so. Returns null (not cancelled), false (asked now) or the order's number (go ahead anyway). */

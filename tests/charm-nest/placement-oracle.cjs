@@ -207,7 +207,7 @@ async function backend() {
 // opts.ctx: a browser context already made here (a second tab of the same computer: shared storage and BroadcastChannel; its routes and init script are set once)
 // opts.motion: true keeps the app's real motion (stamps and flights delay the page's own redraws, as they do for a person); the default is reduced motion
 // opts.employee: the name the context signs in with (the owner's is Paul, a viewer's is Viewer)   opts.latency: ms added to every call to a Netlify function (a real call is never instant)
-async function openPage(browser, srv, { owner, name, ctx: shared, motion, employee, latency }) {
+async function openPage(browser, srv, { owner, name, ctx: shared, motion, employee, latency, before }) {
   const fresh = !shared, ctx = shared || await browser.newContext({ viewport: { width: 1500, height: 950 }, reducedMotion: motion ? 'no-preference' : 'reduce' });
   if (fresh) await ctx.route(url => !/^https?:\/\/(127\.0\.0\.1|localhost)[:/]/.test(url.href), r => {
     const u = r.request().url();
@@ -258,6 +258,7 @@ async function openPage(browser, srv, { owner, name, ctx: shared, motion, employ
       stubNest.__stub = true; window.startNest = stubNest; clearInterval(iv);
     }, 0);
   }, { owner, employee });
+  if (fresh && before) await before(ctx);   // (routes of a test that must be there when the page first loads: the stations' door answers the quiet Admin question at load)
   const page = await ctx.newPage(), errors = [];
   page.setDefaultTimeout(20000);
   page.on('pageerror', e => errors.push('page: ' + e.message));

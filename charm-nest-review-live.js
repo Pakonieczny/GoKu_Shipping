@@ -107,6 +107,10 @@
     const P = root.CustomPrint;
     if (P && P.settle) P.settle();
     else { try { Orders.interpretAll(); Orders.render(); } catch (_) {} try { if (root.OrderWin && OrderWin.isOpen()) OrderWin.paint(); } catch (_) {} }
+    // (LB2, 7 Oct: a piece completed, printed or reopened on another computer or in another tab is told to everything that listens to where pieces are, as a placement read would: the order window's
+    // Sheet tab, the search box, the lists and the Hold buttons read OrderPieces, which a change of the custom records did not tell, so the Sheet tab kept "not on a sheet yet" until the window was
+    // reopened. Only on the page that LEARNED of the change: the page that pressed has drawn it already, and a redraw of its Review list there would be 0.1 s more of the press. No read.)
+    try { if (root.OrderPieces && root.OrderPieces.notify) root.OrderPieces.notify(); } catch (_) {}
     try { if (modeOf() === "library" && root.LaserReview && LaserReview.changed) LaserReview.changed(); } catch (_) {}
   }
   function apply(records, began, quiet, serverAt) {

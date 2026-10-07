@@ -2,6 +2,7 @@
 // is not confused while waiting for the updates to take hold"). The Library is LB1's; this measures and asserts every OTHER surface, and what the cloud is asked.
 //
 //   node tests/charm-nest/complete-realtime.cjs                  both presses, three cases, the table, the assertions (exit 1 when a surface is late or the cost grew)
+//   --nopoll     the Review feed's read answers "nothing changed" everywhere: shows what an EVENT alone tells (the other tab of the pressing computer), whatever the load of the machine
 //   --only complete|print        one press         --dump   print every reading      --latency 120   ms added to every call to a Netlify function
 //   --reduced   reduced motion (the default keeps the app's real stamps and flights, which hold the page's own redraws)      --idle 30   seconds of the idle-cost count
 //   --json <file>  write the table      PW_DIR=/opt/node22/lib/node_modules/playwright/node_modules
@@ -22,7 +23,7 @@ process.env.CHARM_NEST_DELETE_CODE = 'rt-' + Math.random().toString(36).slice(2,
 const O = require('./placement-oracle.cjs'), SHOP = require('./complete-realtime-shop.cjs');
 const argv = process.argv.slice(2), flag = n => argv.includes('--' + n), opt = (n, d) => { const i = argv.indexOf('--' + n); return i >= 0 ? argv[i + 1] : d; };
 const { sleep } = O;
-const LATENCY = +opt('latency', 120), ONLY = opt('only', process.env.RT_ONLY || ''), DUMP = flag('dump'), MOTION = !flag('reduced'), IDLE = +opt('idle', 24);
+const NOPOLL = flag('nopoll'), LATENCY = +opt('latency', 120), ONLY = opt('only', process.env.RT_ONLY || ''), DUMP = flag('dump'), MOTION = !flag('reduced'), IDLE = +opt('idle', 24);
 const SAME = 1000, FAR = 3000;   // Paul's targets: the same computer within 1 s, another computer within about 3 s
 const PDFMAKE = `window.pdfMake = { createPdf(dd) { return { getBlob(cb) { cb(new Blob(['<!doctype html><title>label</title><script>window.print = () => { window.parent.parent.__printed = (window.parent.parent.__printed || 0) + 1; };<\\/script>'], { type: 'text/html' })); } }; } };`;
 const js = body => ({ status: 200, contentType: 'text/javascript', headers: { 'Cross-Origin-Resource-Policy': 'cross-origin', 'Access-Control-Allow-Origin': '*' }, body });
@@ -125,28 +126,34 @@ async function run(browser, action, role, activityWait) {
   { const set = srv.st.docs.set; srv.st.docs.set = (k, v) => { if (k === `Charm_Custom_Orders/${subj.chainKey}`) writeAt.push(Date.now()); return set.call(srv.st.docs, k, v); }; }
   const M = meter(srv), errors = [], ctxs = [];
   try {
+    // the stations' door: Paul is the Admin (the sorter's own station, no role question); the efficiency feed's posts are answered and written down with the time they arrive.
+    // (registered before the page loads: the page asks the door quietly once, at load)
+    const wire = cn => async ctx => {
+      await ctx.route(/pdfmake@[^/]+\/build\/pdfmake/, r => r.fulfill(js(PDFMAKE))); await ctx.route(/pdfmake@[^/]+\/build\/vfs_fonts/, r => r.fulfill(js('')));
+      // --nopoll: the Review feed's read of what changed is answered "nothing changed" on every page, whatever the cloud holds: only an event on the pressing computer can still tell a tab of it
+      // (the load of the machine does not enter: the other tab follows, or it never does)
+      if (NOPOLL) await ctx.route(/\/\.netlify\/functions\/charmNestLibrary/, async r => {
+        let b = {}; try { b = JSON.parse(r.request().postData() || '{}'); } catch (_) {}
+        if (r.request().method() === 'POST' && b.op === 'customGet' && b.since !== undefined) return r.fulfill({ status: 200, contentType: 'application/json', headers: { 'Access-Control-Allow-Origin': '*' }, body: JSON.stringify({ records: {}, at: Date.now() }) });
+        return r.fallback();
+      });
+      await ctx.route(u => /\/\.netlify\/functions\/firebaseOrders/.test(u.pathname), async r => {
+        let j = null; try { j = JSON.parse(r.request().postData() || 'null'); } catch (_) {}
+        const ok = body => r.fulfill({ status: 200, contentType: 'application/json', headers: { 'Access-Control-Allow-Origin': '*' }, body: JSON.stringify(body) });
+        if (r.request().method() === 'POST' && j && typeof j.stationAdmin === 'string') return ok({ ok: true, admin: /^paul$/i.test(j.stationAdmin) });
+        if (r.request().method() === 'POST' && j && (Array.isArray(j.activity) || j.session || j.live)) { if (j.activity) activity.push({ at: Date.now(), computer: cn, activity: j.activity }); return ok({ success: true, written: 1 }); }
+        return r.fallback();
+      });
+    };
     const open = async (cn, ctx, rl) => {
-      const p = await O.openPage(browser, srv, { owner: false, name: `${cn}.${rl}`, ctx, motion: MOTION, employee: cn === 'A' ? 'Paul' : 'Maria', latency: LATENCY });
-      if (!ctx) {
-        ctx = p.ctx; ctxs.push(ctx);
-        await ctx.route(/pdfmake@[^/]+\/build\/pdfmake/, r => r.fulfill(js(PDFMAKE))); await ctx.route(/pdfmake@[^/]+\/build\/vfs_fonts/, r => r.fulfill(js('')));
-        // the stations' door: Paul is the Admin (the sorter's own station, no role question); the efficiency feed's posts are answered and written down with the time they arrive
-        await ctx.route(u => /\/\.netlify\/functions\/firebaseOrders/.test(u.pathname), async r => {
-          let j = null; try { j = JSON.parse(r.request().postData() || 'null'); } catch (_) {}
-          const ok = body => r.fulfill({ status: 200, contentType: 'application/json', headers: { 'Access-Control-Allow-Origin': '*' }, body: JSON.stringify(body) });
-          if (r.request().method() === 'POST' && j && typeof j.stationAdmin === 'string') return ok({ ok: true, admin: /^paul$/i.test(j.stationAdmin) });
-          if (r.request().method() === 'POST' && j && (Array.isArray(j.activity) || j.session || j.live)) { activity.push({ at: Date.now(), computer: cn, activity: j.activity || null }); return ok({ success: true, written: 1 }); }
-          return r.fallback();
-        });
-      }
+      const p = await O.openPage(browser, srv, { owner: false, name: `${cn}.${rl}`, ctx, motion: MOTION, employee: cn === 'A' ? 'Paul' : 'Maria', latency: LATENCY, before: wire(cn) });
+      if (!ctx) ctxs.push(p.ctx);
       p.page.on('pageerror', e => errors.push(`${cn}.${rl}: ${e.message}`));
       await seedPage(p.page, shop);
       return p;
     };
     const press = await open('A', null, 'press');
-    // Paul is signed in at the sorter (the name bar, the Admin door answers yes): what he does is recorded for the Employee efficiency board, as in the shop
-    await press.page.evaluate(() => CNEmployee.edit({})); await press.page.waitForSelector('.cnNameBar[data-kind="edit"] input', { timeout: 20000 });
-    await press.page.fill('.cnNameBar input', 'Paul'); await press.page.press('.cnNameBar input', 'Enter');
+    // Paul is signed in at the sorter: what he does is recorded for the Employee efficiency board, as in the shop
     await press.page.waitForFunction(() => window.CNRole && CNRole.state() === 'admin' && StationActivity.who(), null, { timeout: 30000 });
     const targets = [{ id: 'A.press', page: press.page, role: 'press', case: 'same tab' }];
     if (role !== 'press') {
@@ -178,6 +185,7 @@ async function run(browser, action, role, activityWait) {
     // the efficiency feed sends in batches (every 10 s): wait for it, on the first run of a press
     for (const t1 = Date.now(); Date.now() - t1 < activityWait && !activity.some(x => x.activity && x.at >= tp);) await sleep(250);
     const act = activity.filter(x => x.activity && x.at >= tp); writer.activity = act.length ? act[0].at - tp : null; writer.kinds = act.flatMap(x => x.activity.map(a => `${a.action}@${x.at - tp}ms`));
+    { const rep = all['A.press'].hits['rv.card'] || all['A.press'].hits['ow.row']; writer.afterRepaint = act.length && rep ? act[0].at - rep : null; }   // (the efficiency feed's request, counted from the moment the pressing page showed the completion)
     // a quiet stretch: what these pages ask of the database while nothing happens
     await sleep(2500); M.reset(); const t1 = Date.now(); await sleep(IDLE * 1000);
     const idle = { seconds: (Date.now() - t1) / 1000, pages: targets.length, ops: JSON.parse(JSON.stringify(M.ops)) };
@@ -212,7 +220,7 @@ function report(runs, shop) {
   const all = runs.flatMap(r => r.out), fmt = v => v == null ? '>12' : (v / 1000).toFixed(1), key = v => v == null ? 1e9 : v, med = a => a.slice().sort((x, y) => key(x) - key(y))[Math.floor(a.length / 2)];
   console.log(`\n══ Complete / QR Print: seconds from the press to each surface showing it ══   (large shop: ${shop.counts.orders} orders, ${shop.counts.review} Review, ${shop.counts.sheets} sheets; ${LATENCY} ms per call; ${MOTION ? 'real motion' : 'reduced motion'}; machine load at the presses ${runs.map(r => r.load.toFixed(0)).join('/')})`);
   let bad = 0;
-  const cell = (rows, lim, by) => { if (!rows.length) return '    -'; const v = rows.map(x => x.ms), m = med(v), ok = m != null && m <= lim, w = Math.max(...v.map(key)); if (!ok && !by) bad++; return fmt(m) + (v.length > 1 ? ` (${fmt(w >= 1e9 ? null : w)})` : '') + (by ? ' ·' : ok ? ' ' : '*'); };
+  const cell = (rows, lim, by) => { if (!rows.length) return '    -'; const v = rows.map(x => x.ms), m = med(v), ok = m != null && m <= lim, w = Math.max(...v.map(key)); if (!ok && !by && !(NOPOLL && lim === FAR)) bad++; return fmt(m) + (v.length > 1 ? ` (${fmt(w >= 1e9 ? null : w)})` : '') + (by ? ' ·' : ok ? ' ' : '*'); };
   console.log('  surface (where it is looked at)'.padEnd(78) + 'press'.padEnd(10) + 'seconds'.padStart(12));
   // the page that pressed (same tab): the middle of the runs
   for (const action of ['complete', 'print']) {
@@ -229,7 +237,13 @@ function report(runs, shop) {
     }
   }
   console.log(`  (the middle number of the runs, the slowest in brackets; * = slower than the target: ${SAME / 1000} s on the same computer, ${FAR / 1000} s on another; · = not read there by design: no page on that tab asks the cloud for changes, which would cost a read every 2 s)`);
-  for (const r of runs.filter(r => r.writer.activity != null || r.writer.cloudWrite != null).slice(0, 4)) console.log(`  writer (${r.action}, ${r.role}): cloud write ${r.writer.cloudWrite} ms after the press · order timeline write ${r.writer.timeline} ms · efficiency activity ${r.writer.activity == null ? 'not seen' : r.writer.activity + ' ms'} ${r.writer.kinds.join(' ')}`);
+  // the efficiency board's feed: the request that carries the completion leaves within 3 s of the page showing it (it went at the next 10 s beat: anywhere up to 10 s)
+  const acts = runs.filter(r => r.writer.activity != null), firsts = ['complete', 'print'].filter(a => !ONLY || ONLY === a).map(a => runs.find(r => r.action === a)).filter(Boolean), unseen = firsts.filter(r => r.writer.activity == null);
+  const slowAct = runs.filter(r => r.writer.activity != null && !(r.writer.afterRepaint != null && r.writer.afterRepaint <= 3000));
+  if (acts.length) console.log(`  efficiency feed: the completion's request leaves ${acts.map(r => (r.writer.afterRepaint == null ? '?' : (r.writer.afterRepaint / 1000).toFixed(1)) + ' s').join(', ')} after the pressing page showed it (limit 3 s)`);
+  if (unseen.length) console.log(`  efficiency feed: no request carried the ${unseen.map(r => r.action).join(' / ')} within 13 s`);
+  bad += slowAct.length + unseen.length;
+  for (const r of runs.filter(r => r.writer.activity != null || r.writer.cloudWrite != null).slice(0, 4)) console.log(`  writer (${r.action}, ${r.role}): cloud write ${r.writer.cloudWrite} ms after the press · order timeline write ${r.writer.timeline} ms · efficiency activity ${r.writer.activity == null ? 'not seen' : r.writer.activity + ' ms'} ${(r.writer.kinds || []).join(' ')}`);
   console.log('\n══ what the database is asked ══');
   const tot = {}, idleTot = {};
   for (const r of runs) for (const [op, o] of Object.entries(r.idle.ops)) { const t = idleTot[op] || (idleTot[op] = { calls: 0, reads: 0, bytes: 0 }); t.calls += o.calls; t.reads += o.reads; t.bytes += o.bytes; }
