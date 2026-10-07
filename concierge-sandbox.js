@@ -35,6 +35,15 @@
     const seen=new Set();
     return (Array.isArray(data?.products)?data.products:[]).slice(0,250).filter(p=>validProduct(p,p?.handle)&&!seen.has(p.id)&&seen.add(p.id)).map(remember);
   }
+  function checkedPageInfo(data,requestedCursor=null){
+    // Returned rows may exclude studio-only listings. Only the upstream
+    // continuation says whether another public catalogue page is available.
+    const info=data?.pageInfo||{},hasNextPage=info.hasNextPage===true;
+    if(!hasNextPage)return {hasNextPage:false,endCursor:null};
+    const cursor=info.endCursor;
+    if(typeof cursor!=='string'||!cursor.trim()||cursor.length>2048||/[\u0000-\u001f]/.test(cursor)||cursor===requestedCursor)throw Error('The next collection page could not be confirmed.');
+    return {hasNextPage:true,endCursor:cursor};
+  }
   function minimum(p){const available=p.variants.filter(v=>v.available);return available.length?Math.min(...available.map(v=>v.price)):null;}
   function projection(p){const available=p.variants.filter(v=>v.available);return {...p,minPrice:minimum(p),suggestedVariantId:available[0]?.id||null};}
   function filtered(){
@@ -55,11 +64,12 @@
   }
   function snapshot(){
     const pieces=state.pageKind==='product'&&state.current?[state.current]:state.pageKind==='catalogue'?filtered().slice(0,state.limit):[];
-    const inView=new Set();main.querySelectorAll('[data-product-handle]').forEach(card=>{const r=card.getBoundingClientRect();if(r.height>0&&r.bottom>0&&r.top<(window.innerHeight||800))inView.add(card.dataset.productHandle);});
-    const chosen=(inView.size?pieces.filter(p=>inView.has(p.handle)):pieces).slice(0,24);
-    [state.currentHandle,state.focusedHandle].filter(Boolean).forEach(handle=>{const p=known.get(handle);if(p&&!chosen.some(v=>v.handle===handle)){if(chosen.length>=24)chosen.pop();chosen.push(p);}});
+    const rendered=new Set(),inView=new Set();main.querySelectorAll('[data-product-handle]').forEach(card=>{rendered.add(card.dataset.productHandle);const r=card.getBoundingClientRect();if(r.height>0&&r.bottom>0&&r.top<(window.innerHeight||800))inView.add(card.dataset.productHandle);});
+    const actual=pieces.filter(p=>rendered.has(p.handle)),currentHandle=state.pageKind==='product'&&actual.some(p=>p.handle===state.currentHandle)?state.currentHandle:'',focusedHandle=actual.some(p=>p.handle===state.focusedHandle)?state.focusedHandle:'';
+    const chosen=(inView.size?actual.filter(p=>inView.has(p.handle)):actual).slice(0,24);
+    [currentHandle,focusedHandle].filter(Boolean).forEach(handle=>{const p=actual.find(p=>p.handle===handle);if(p&&!chosen.some(v=>v.handle===handle)){if(chosen.length>=24)chosen.pop();chosen.push(p);}});
     const visiblePieces=chosen.map(p=>({id:p.id,handle:p.handle,title:clean(p.title,300)}));
-    return {pageKind:state.pageKind==='catalogue'?'collection':state.pageKind,currentHandle:state.currentHandle,focusedHandle:state.focusedHandle,visiblePieces,search:state.search,sort:state.sort,filter:state.filter,contextRevision:state.contextRevision,activeSection:state.activeSection,loading:state.loading};
+    return {pageKind:state.pageKind==='catalogue'?'collection':state.pageKind,currentHandle,focusedHandle,visiblePieces,search:state.search,sort:state.sort,filter:state.filter,contextRevision:state.contextRevision,activeSection:state.activeSection,loading:state.loading};
   }
   function publish(){state.contextRevision++;document.dispatchEvent(new CustomEvent('brites-storefront:context',{detail:snapshot()}));}
   function status(message){notice.textContent=clean(message,300);notice.dataset.visible=message?'true':'false';clearTimeout(noticeTimer);if(message)noticeTimer=setTimeout(()=>{notice.dataset.visible='false';},3600);}
@@ -112,6 +122,9 @@
   }
   function drawGrid(){
     const grid=main.querySelector('#demo-products');if(!grid)return;
+    // A replaced card is no longer attended, even when a stationary pointer
+    // happens to occupy the new card's position. Wait for real new attention.
+    clearTimeout(focusTimer);focusTimer=0;state.focusedHandle='';
     grid.replaceChildren();const pieces=filtered(),shown=pieces.slice(0,state.limit);
     shown.forEach(p=>{
       const card=node('article',null,'piece-card card-enter');card.dataset.productHandle=p.handle;card.dataset.productId=p.id;
@@ -136,16 +149,16 @@
     try{
       const data=await get('/api/growth/catalogue'+(state.search?'?q='+encodeURIComponent(state.search):'?browse=1'),record.controller.signal);
       if(!current(record))return {ok:false,action:'search',message:'The earlier search was cancelled.'};
-      state.products=checkedProducts(data);state.pageInfo={hasNextPage:data.pageInfo?.hasNextPage===true,endCursor:typeof data.pageInfo?.endCursor==='string'?data.pageInfo.endCursor.slice(0,2048):null};
+      const pageInfo=checkedPageInfo(data);state.products=checkedProducts(data);state.pageInfo=pageInfo;
       if(!state.search)state.browse=state.products.slice();state.verifiedAt=Date.now();state.loading=false;drawGrid();publish();focusSection('catalogue',false);status(filtered().length?'Your checked pieces are ready.':'No checked matches yet. Try another symbol or style.');
-      return {ok:true,action:'search',live:data.live!==false,checkedAt:state.verifiedAt,products:filtered().slice(0,state.limit).map(projection),snapshot:snapshot(),message:'The collection now shows '+filtered().length+' loaded checked pieces'+(state.search?' for '+state.search:'')+'.'};
+      return {ok:true,action:'search',live:data.live!==false,checkedAt:state.verifiedAt,products:filtered().slice(0,state.limit).map(projection),snapshot:snapshot(),message:filtered().length?'Your checked matches are ready on the page.':'I couldn’t find a checked match for that search. Try a different symbol or style.'};
     }catch{if(current(record)){state.loading=false;drawGrid();publish();status('The live selection is temporarily unavailable. Your existing view is preserved.');}return {ok:false,action:'search',message:'The live selection could not be checked. Please try again.'};}
   }
   async function loadMore(){
     const available=filtered();if(available.length>state.limit){state.limit=Math.min(MAX_PIECES,state.limit+PAGE_SIZE);drawGrid();publish();return;}
     if(!state.pageInfo.hasNextPage||!state.pageInfo.endCursor||state.search||state.browse.length>=MAX_PIECES)return;
     const cursor=state.pageInfo.endCursor,record=begin();status('Opening the next collection page…');
-    try{const data=await get('/api/growth/catalogue?browse=1&cursor='+encodeURIComponent(cursor),record.controller.signal);if(!current(record))return;const additional=checkedProducts(data);const ids=new Set(state.browse.map(p=>p.id));state.browse=state.browse.concat(additional.filter(p=>!ids.has(p.id))).slice(0,MAX_PIECES);state.products=state.browse.slice();state.limit=Math.min(MAX_PIECES,state.limit+PAGE_SIZE);state.pageInfo={hasNextPage:data.pageInfo?.hasNextPage===true&&data.pageInfo.endCursor!==cursor,endCursor:typeof data.pageInfo?.endCursor==='string'?data.pageInfo.endCursor.slice(0,2048):null};state.loading=false;state.verifiedAt=Date.now();drawGrid();publish();status('More live pieces are ready.');}catch{if(current(record)){state.loading=false;publish();status('That collection page could not be checked. Try Explore more pieces again.');}}
+    try{const data=await get('/api/growth/catalogue?browse=1&cursor='+encodeURIComponent(cursor),record.controller.signal);if(!current(record))return;const pageInfo=checkedPageInfo(data,cursor),additional=checkedProducts(data);const ids=new Set(state.browse.map(p=>p.id));state.browse=state.browse.concat(additional.filter(p=>!ids.has(p.id))).slice(0,MAX_PIECES);state.products=state.browse.slice();state.limit=Math.min(MAX_PIECES,state.limit+PAGE_SIZE);state.pageInfo=pageInfo;state.loading=false;state.verifiedAt=Date.now();drawGrid();publish();status(additional.length?'More live pieces are ready.':pageInfo.hasNextPage?'This page has no additional matching pieces. Continue to the next public collection page.':'You have reached the end of the checked public collection.');}catch{if(current(record)){state.loading=false;publish();status('That collection page could not be checked. Try Explore more pieces again.');}}
   }
   async function openProduct(handle,{push=true,signal,section}={}){
     if(!validHandle(handle))return false;
@@ -295,7 +308,7 @@
     if(type==='open'){const opened=await openProduct(action.handle,{signal:options.signal,section:SECTIONS.has(action.section)?action.section:undefined}),ok=opened&&state.current?.handle===action.handle;return {ok,action:type,...(ok?{live:true,checkedAt:state.verifiedAt,products:[projection(state.current)],snapshot:snapshot()}:{}),message:ok?'The checked product details are open.':'That piece could not be checked.'};}
     if(type==='highlight'||type==='scroll'||type==='zoom'){
       const section=type==='zoom'?'image':action.section;if(!SECTIONS.has(section))return {ok:false,action:type,message:'That page section is unavailable.'};
-      if(action.handle&&(type==='zoom'||action.handle!==state.currentHandle)){if(!await openProduct(action.handle,{signal:options.signal}))return {ok:false,action:type,message:'That piece could not be checked.'};}
+      if(action.handle&&(action.handle!==state.currentHandle||!state.current)){if(!await openProduct(action.handle,{signal:options.signal}))return {ok:false,action:type,message:'That piece could not be checked.'};}
       if(section==='shipping'||section==='gifts'||section==='customize'||section==='offers'){await showService(section);return {ok:true,action:type,snapshot:snapshot(),message:'The '+section+' section is open.'};}
       if(type==='zoom'){const ok=state.current?zoomImage(state.current):false;return {ok,action:type,snapshot:snapshot(),message:ok?'The live product image is enlarged.':'Open a piece with a published image first.'};}
       const ok=focusSection(section,type==='highlight');return {ok,action:type,snapshot:snapshot(),message:ok?'The '+section+' section is highlighted and in view.':'That section is not on the current page.'};
@@ -319,7 +332,7 @@
     const anchor=event.target.closest?.('a[href]');if(!anchor||event.defaultPrevented||event.button!==0||event.ctrlKey||event.metaKey||event.shiftKey||event.altKey||anchor.target==='_blank')return;
     const target=new URL(anchor.href,location.href);if(target.origin!==location.origin||target.pathname!=='/concierge-sandbox.html')return;const handle=target.searchParams.get('product');if(!handle)return;event.preventDefault();void openProduct(handle);
   });
-  function attended(target){const card=target?.closest?.('[data-product-handle]'),handle=card?.dataset.productHandle;return validHandle(handle)&&known.has(handle)?handle:'';}
+  function attended(target){const card=target?.closest?.('[data-product-handle]'),handle=card?.dataset.productHandle;return main.contains(card)&&validHandle(handle)&&known.has(handle)?handle:'';}
   function focus(handle){if(state.focusedHandle===handle)return;state.focusedHandle=handle;publish();}
   function releaseFocus(){if(focusTimer||!state.focusedHandle)return;focusTimer=setTimeout(()=>{focusTimer=0;focus('');},90);}
   document.addEventListener('pointerover',event=>{const next=attended(event.target);if(next){clearTimeout(focusTimer);focusTimer=0;focus(next);}else releaseFocus();});
@@ -337,6 +350,6 @@
   const initialVersion=navigationVersion;
   try{
     const data=await get('/api/growth/catalogue?browse=1');if(state.pageKind!=='catalogue'||navigationVersion!==initialVersion)return;
-    state.products=checkedProducts(data);state.browse=state.products.slice();state.pageInfo={hasNextPage:data.pageInfo?.hasNextPage===true,endCursor:typeof data.pageInfo?.endCursor==='string'?data.pageInfo.endCursor.slice(0,2048):null};state.verifiedAt=Date.now();drawGrid();publish();if(full){renderServiceStrip();void loadServices();}
+    const pageInfo=checkedPageInfo(data);state.products=checkedProducts(data);state.browse=state.products.slice();state.pageInfo=pageInfo;state.verifiedAt=Date.now();drawGrid();publish();if(full){renderServiceStrip();void loadServices();}
   }catch{const summary=main.querySelector('#result-summary');if(summary)summary.textContent='The live selection is temporarily unavailable. Try Search again.';else main.append(node('p','The live selection is temporarily unavailable. You can still explore the shop.'));}
 })();

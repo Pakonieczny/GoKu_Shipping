@@ -12,7 +12,7 @@
 <main>
   <div class="eyebrow">BRITES · ISOLATED TEST STOREFRONT</div>
   <h1>The guide and the page, together.</h1>
-  <p class="intro">This check uses the actual test storefront and its actual guide. It sends a repeatable pointer path between two neighboring product cards, then records visible eye and head movement, immediate product context and new resource requests. It starts no voice session and places no order.</p>
+  <p class="intro">This check uses the actual test storefront and its actual guide. A separate timer sends a repeatable pointer path between two neighboring product cards and checks immediate product context. The browser’s native rendered frames independently supply eye and head observations. It starts no voice session and places no order.</p>
   <div class="controls">
     <button id="prepare-storefront" type="button">Prepare real storefront</button>
     <button id="run-gaze" type="button">Run adjacent-card gaze check</button>
@@ -22,7 +22,7 @@
   </div>
   <p id="storefront-check-status" class="status" role="status">Prepare the preview before starting the movement check.</p>
   <iframe id="storefront-preview" title="Actual Brites test storefront" src="/concierge-sandbox.html?qa=storefront30"></iframe>
-  <p class="note">The pointer path is an authored test stimulus. A rendered 2-D result does not certify WebGL, lighting, shadows, GPU frame rate or audible voice. Your saved test bag and manual motion preferences are preserved.</p>
+  <p class="note">The pointer path is an authored test stimulus. Sparse rendered frames leave movement continuity unverified even when product awareness works. Context observation gaps over 250 ms are reported explicitly. A rendered 2-D result does not certify WebGL, lighting, shadows, GPU frame rate or audible voice. Your saved test bag and manual motion preferences are preserved.</p>
   <details open><summary>Movement and connection evidence</summary><pre id="storefront-check-evidence" aria-label="Storefront connection diagnostics">{"status":"not_run"}</pre></details>
 </main>
 <script src="/concierge-storefront-qa.js"></script>

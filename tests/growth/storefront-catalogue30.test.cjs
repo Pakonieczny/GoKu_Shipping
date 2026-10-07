@@ -1,6 +1,7 @@
 'use strict';
 const test = require('node:test'), assert = require('node:assert/strict'), fs = require('node:fs'), path = require('node:path');
 const core = require('../../netlify/functions/_britesGrowth');
+const storefront = require('../../netlify/functions/_britesStorefront');
 const NOW = Date.parse('2026-10-07T05:00:00Z');
 const reply = (data, status = 200) => ({ok: status >= 200 && status < 300, status, json: async () => data});
 function row(id = 1) {
@@ -103,4 +104,73 @@ test('bad API cursors and public limits fail before browsing or writes', async (
 test('failed hold checks cannot downgrade a held piece to public availability', async () => {
   const f = apiFixture({failHolds: true}), result = await call(f, '?browse=1');assert.notEqual(result.status, 200);
   assert.doesNotMatch(JSON.stringify(result.body), /PRIVATE_/);assert.equal(result.body.products, undefined);
+});
+
+function studioRow(id = 2, overrides = {}) {
+  return {...row(id), title: 'Studio Membership — Designer (150 credits / month)', product_type: 'Custom Charm Studio',
+    handle: 'studio-plan-designer', body_html: '<p>A studio membership for design credits.</p>', ...overrides};
+}
+test('explicit studio memberships and design-credit packs are recognized from published metadata', () => {
+  for (const p of [studioRow(), studioRow(3, {title: 'Studio Design Pack — Creator (40 credits)', handle: 'studio-pack-40'}),
+    studioRow(4, {title: 'Studio Credit Pack — 20 credits', handle: 'studio-pack-20'}),
+    studioRow(5, {title: 'Studio Membership — Atelier', handle: 'studio-plan-atelier'})]) assert.equal(storefront.isStudioCreditProduct(p), true, p.title);
+});
+test('a studio category, handle or credit description alone cannot exclude a physical custom piece', () => {
+  for (const p of [studioRow(3, {title: 'Chain extender — tiny heart', handle: 'chain-extender-tiny-heart'}),
+    studioRow(4, {title: 'Engraving on your custom charm', handle: 'custom-charm-engraving'}),
+    studioRow(5, {title: 'Custom Charm Pendant Necklace', handle: 'custom-pendant'}),
+    studioRow(6, {title: 'Studio Membership Necklace', product_type: 'Necklace'}),
+    studioRow(7, {title: 'Studio Design Pack — Three Charms', handle: 'studio-pack-3'}),
+    studioRow(8, {title: 'Moon Necklace', body_html: '<p>Custom studio credit member pricing applies.</p>'})]) assert.equal(storefront.isStudioCreditProduct(p), false, p.title);
+});
+test('studio classification never changes identity, price, gallery, source fields or the input record', () => {
+  const original = studioRow(), before = JSON.stringify(original);Object.freeze(original);
+  assert.equal(storefront.isStudioCreditProduct(original), true);assert.equal(JSON.stringify(original), before);
+});
+test('a short filtered browse page retains continuation from the full upstream page', async () => {
+  const rows = Array.from({length: 60}, (_, i) => i < 11 ? studioRow(i + 1, {handle: 'studio-pack-' + (i + 1), title: 'Studio Design Pack — ' + (i + 1) + ' credits'}) : row(i + 1));
+  const f = adapter({rows}), result = await f.shop.browse();assert.equal(result.products.length, 49);
+  assert.deepEqual(result.pageInfo, {hasNextPage: true, endCursor: 'storefront:2'});
+  assert.equal(result.products[0].id, 'gid://shopify/Product/12');assert.equal(result.products[0].variants[0].id, 'gid://shopify/ProductVariant/1012');
+  assert.equal(result.products[0].variants[0].price, 54);assert.equal(result.products[0].checkedAt, NOW);
+  assert.equal(result.products[0].images[1].url, 'https://cdn.shopify.com/piece-12-detail.jpg');
+  assert.equal(result.products[0].source, 'published_catalogue_json');
+});
+test('an all-credit page can be empty without ending the published catalogue early', async () => {
+  const f = adapter({rows: Array.from({length: 60}, (_, i) => studioRow(i + 1))}), result = await f.shop.browse();
+  assert.deepEqual(result.products, []);assert.deepEqual(result.pageInfo, {hasNextPage: true, endCursor: 'storefront:2'});
+  const last = await adapter({rows: [studioRow()]}).shop.browse('storefront:2');
+  assert.deepEqual(last.products, []);assert.deepEqual(last.pageInfo, {hasNextPage: false, endCursor: null});
+});
+test('catalogue mirrors and exact credit-product routes remain intact outside jewellery browsing', async () => {
+  const mirror = adapter({rows: [studioRow()]}), result = await mirror.shop.products('');assert.equal(result.products.length, 1);
+  assert.equal(result.products[0].handle, 'studio-plan-designer');assert.equal(result.products[0].id, 'gid://shopify/Product/2');
+  const shop = core.createShopify({env: {}, now: () => NOW, fetch: async url => reply(url.endsWith('/cart.js') ? {currency: 'USD'} : {...studioRow(), variants: [{...studioRow().variants[0], price: 5400}]})});
+  assert.equal((await shop.byHandle('studio-plan-designer')).id, 'gid://shopify/Product/2');
+});
+test('public jewellery search removes credits but retains exact custom physical results', async () => {
+  const physical = row(3), digital = studioRow(2), rows = [digital, physical];
+  const shop = core.createShopify({env: {}, now: () => NOW, fetch: async url => {
+    const u = new URL(url);if (u.pathname === '/search/suggest.json') return reply({resources: {results: {products: rows.map(p => ({handle: p.handle}))}}});
+    if (u.pathname === '/cart.js') return reply({currency: 'USD'});
+    const p = rows.find(p => u.pathname === '/products/' + p.handle + '.js');return reply({...p, variants: p.variants.map(v => ({...v, price: 5400}))});
+  }});
+  const result = await shop.search('custom');assert.equal(result.products.length, 1);assert.equal(result.products[0].id, 'gid://shopify/Product/3');
+  assert.equal(result.products[0].variants[0].price, 54);assert.equal(result.products[0].source, 'published_product_ajax');
+});
+test('Admin jewellery search applies the same narrow filter without changing query or pagination metadata', async () => {
+  const nodes = [studioRow(2), row(3)].map(p => ({id: 'gid://shopify/Product/' + p.id, handle: p.handle, title: p.title, productType: p.product_type,
+    status: 'ACTIVE', onlineStoreUrl: 'https://britesjewelry.com/products/' + p.handle, descriptionHtml: p.body_html,
+    options: [], images: {nodes: p.images.map(image => ({url: image.src.startsWith('//') ? 'https:' + image.src : image.src, altText: image.alt}))},
+    variants: {nodes: p.variants.map(v => ({id: 'gid://shopify/ProductVariant/' + v.id, title: v.title, price: v.price, availableForSale: true, selectedOptions: []})), pageInfo: {hasNextPage: false}}}));
+  const calls = [], shop = core.createShopify({env: {SHOPIFY_STORE: 'synthetic.myshopify.com', SHOPIFY_CLIENT_ID: 'SYNTHETIC', SHOPIFY_CLIENT_SECRET: 'SYNTHETIC_TEST_SECRET'}, now: () => NOW,
+    fetch: async (url, options) => {calls.push({url, options});return reply(url.includes('/oauth/') ? {access_token: 'SYNTHETIC_ACCESS', expires_in: 3600} : {data: {products: {nodes, pageInfo: {hasNextPage: true, endCursor: 'upstream-admin-cursor'}}, shop: {currencyCode: 'CAD'}}});}});
+  const result = await shop.search('custom');assert.equal(result.products.length, 1);assert.equal(result.products[0].id, 'gid://shopify/Product/3');
+  assert.deepEqual(result.pageInfo, {hasNextPage: true, endCursor: 'upstream-admin-cursor'});assert.equal(result.products[0].currency, 'CAD');
+  assert.match(JSON.parse(calls[1].options.body).variables.query, /title:custom\*/);
+});
+test('exact recall ranking cannot bring a studio credit product back into jewellery recommendations', async () => {
+  const rows = [studioRow(2), {...row(3), title: 'Custom Silver Necklace'}], products = (await adapter({rows}).shop.products('')).products;
+  const ranked = core.rankProducts(products, {...core.intentFrom('custom'), query: '', interests: []}, NOW);
+  assert.equal(ranked.length, 1);assert.equal(ranked[0].id, 'gid://shopify/Product/3');
 });

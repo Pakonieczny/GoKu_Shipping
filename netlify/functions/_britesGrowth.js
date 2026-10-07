@@ -148,12 +148,12 @@ function createShopify({env,fetch=globalThis.fetch,now=Date.now}){
     const page=cursor?Number(String(cursor).slice(11)):1;if(page<1||page>200)throw Error('Invalid storefront catalogue cursor.');
     const limit=60,[data,currency]=await Promise.all([publicJson('/products.json?limit='+limit+'&page='+page),storefrontCurrency()]);
     if(!Array.isArray(data?.products)||data.products.length>limit)throw Error('Published storefront pagination is unavailable.');
-    const products=data.products.map(p=>fromPublic(p,currency,false)),hasNextPage=data.products.length===limit&&page<200;
+    const products=data.products.map(p=>fromPublic(p,currency,false)).filter(p=>!storefront.isStudioCreditProduct(p)),hasNextPage=data.products.length===limit&&page<200;
     return {products,pageInfo:{hasNextPage,endCursor:hasNextPage?'storefront:'+(page+1):null},access:'public_catalogue',checkedAt:now()};
   }
   async function token(){if(access&&now()<expires-60000)return access;const store=env.SHOPIFY_STORE;if(!/^[a-z0-9-]+\.myshopify\.com$/.test(store||'')||!env.SHOPIFY_CLIENT_ID||!env.SHOPIFY_CLIENT_SECRET)throw Error('Live Shopify catalogue access is not configured.');const r=await fetch('https://'+store+'/admin/oauth/access_token',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({grant_type:'client_credentials',client_id:env.SHOPIFY_CLIENT_ID,client_secret:env.SHOPIFY_CLIENT_SECRET}),signal:AbortSignal.timeout(12000)});const d=await r.json();if(!r.ok||!d.access_token)throw Error('Shopify authorization failed; queue reconnection and continue independent work.');access=d.access_token;expires=now()+Number(d.expires_in||86400)*1000;return access;}
   async function products(query,after=null){if(!adminConfigured()||String(after||'').startsWith('public:'))return publicProducts(query,after);try{const r=await fetch('https://'+env.SHOPIFY_STORE+'/admin/api/2026-07/graphql.json',{method:'POST',headers:{'Content-Type':'application/json','X-Shopify-Access-Token':await token()},body:JSON.stringify({query:CATALOG_QUERY,variables:{query:'status:active AND published_status:published'+(query?' AND ('+query+')':''),after}}),signal:AbortSignal.timeout(20000)});const d=await r.json();if(!r.ok||d.errors?.length)throw Error('Live catalogue query failed.');return {products:d.data.products.nodes.map(p=>normalizeProduct(p,d.data.shop.currencyCode,now())),pageInfo:d.data.products.pageInfo,access:'admin'};}catch{return publicProducts(query,null);}}
-  async function search(terms){if(!adminConfigured())return publicSearch(terms);const tokens=clean(terms,250).toLowerCase().match(/[\p{L}\p{N}-]+/gu)||[];const stems=[...new Set(tokens.slice(0,8).map(t=>t.length>4&&t.endsWith('s')&&!t.endsWith('ss')?t.slice(0,-1):t))];const query=stems.flatMap(t=>['title:'+t+'*','tag:'+t+'*']).join(' OR ');return products(query);}
+  async function search(terms){let result;if(!adminConfigured())result=await publicSearch(terms);else{const tokens=clean(terms,250).toLowerCase().match(/[\p{L}\p{N}-]+/gu)||[];const stems=[...new Set(tokens.slice(0,8).map(t=>t.length>4&&t.endsWith('s')&&!t.endsWith('ss')?t.slice(0,-1):t))];const query=stems.flatMap(t=>['title:'+t+'*','tag:'+t+'*']).join(' OR ');result=await products(query);}return {...result,products:result.products.filter(p=>!storefront.isStudioCreditProduct(p))};}
   async function byHandle(handle){if(!/^[a-z0-9_-]{1,180}$/.test(handle||''))throw Error('Invalid product handle.');const r=await products('handle:'+handle);return r.products.find(p=>p.handle===handle)||null;}
   return {products,search,byHandle,browse};
 }
@@ -600,6 +600,7 @@ function rankProducts(items,intent,now=Date.now()) {
   const p=shopperPreferences(intent),wanted=p.interests.length?p.interests:p.query.split(/\s+/).filter(Boolean);
   const matches=[];
   for(const product of Array.isArray(items)?items:[]) {
+    if(storefront.isStudioCreditProduct(product))continue;
     if(product?.recommendationHold===true)continue;
     if(!validIdentity(product?.id)||!publicUrl(product.url,true)||!Number.isFinite(product.checkedAt)||now-product.checkedAt>5*60000||product.checkedAt>now+60000)continue;
     if(!shopperCatalogueField(product.title,300)||!shopperCatalogueField(product.type,100))continue;

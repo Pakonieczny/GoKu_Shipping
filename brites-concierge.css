@@ -15,3 +15,41 @@
 .voice-recovery:hover{background:#e6f2ee}.voice-recovery:disabled{opacity:.65}
 .panel[data-voice=audio-paused] .voice-state:before{background:#aa823e}
 .storefront-presence{flex:0 0 auto;display:flex;align-items:center;gap:9px;margin:0 18px 11px;padding:9px 12px;border:1px solid #dbe8e2;border-radius:13px;background:#eff6f2;color:#476f73;min-width:0}.storefront-presence-label{font-size:8px;font-weight:750;letter-spacing:1.4px;white-space:nowrap;padding:4px 6px;border-radius:6px;background:#d9eae4;color:#3f746d}.storefront-presence-text{flex:1;min-width:0;font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.storefront-presence .quiet-control{font-size:10px;padding:4px 7px;white-space:nowrap}.service-source{display:inline-block;margin:0 7px 10px 0;color:#356e86;font-size:11px;text-decoration:underline;text-underline-offset:3px}.storefront-presence:empty{display:none}@media(max-width:680px){.storefront-presence{margin:0 12px 9px;padding:8px 9px;gap:6px}.storefront-presence-label{font-size:7px;letter-spacing:.9px}.storefront-presence .quiet-control{font-size:9px}}
+/* The test storefront reserves a separate guide column. These rules activate
+   only through its explicit host contract, leaving other embedded apps intact. */
+:host([data-storefront-connected="true"]) .bar{position:sticky;top:0;z-index:3}
+@media(min-width:1100px){
+  :host([data-storefront-docked="true"]) .panel{top:12px;right:12px;bottom:12px;width:360px;height:calc(100dvh - 24px);border-radius:22px;box-shadow:0 10px 35px #203c491c}
+  :host([data-storefront-docked="true"][data-open="true"]) .launcher{display:none}
+  :host([data-storefront-docked="true"]) .bar{padding:11px 15px;gap:8px}
+  :host([data-storefront-docked="true"]) .bar h2{font-size:17px}
+  :host([data-storefront-docked="true"]) .brand{font-size:9px;letter-spacing:2px}
+  :host([data-storefront-docked="true"]) .concierge-avatar-stage{flex:1 1 220px;min-height:175px;max-height:280px}
+  :host([data-storefront-docked="true"]) .panel.text-open .concierge-avatar-stage,:host([data-storefront-docked="true"]) .panel.history-open .concierge-avatar-stage{flex-basis:190px;min-height:160px}
+  :host([data-storefront-docked="true"]) .captions{padding:10px 14px;min-height:74px}
+  :host([data-storefront-docked="true"]) .caption-text{font-size:14px;max-height:96px;line-height:1.45}
+  :host([data-storefront-docked="true"]) .avatar-controls{padding:4px 12px 9px;gap:5px}
+  :host([data-storefront-docked="true"]) .voice-actions{gap:6px;min-height:42px;flex-wrap:wrap}
+  :host([data-storefront-docked="true"]) .voice-button{min-width:142px;padding:10px 18px;font-size:13px}
+  :host([data-storefront-docked="true"]) .interrupt-button,:host([data-storefront-docked="true"]) .voice-recovery{padding:9px 11px;font-size:12px}
+  :host([data-storefront-docked="true"]) .utility-controls{padding:0 8px 9px;gap:1px}
+  :host([data-storefront-docked="true"]) .quiet-control{padding:6px 7px;font-size:11px}
+  :host([data-storefront-docked="true"]) .storefront-presence{margin:0 12px 9px;padding:8px;gap:6px;flex-wrap:wrap}
+  :host([data-storefront-docked="true"]) .storefront-presence-text{font-size:10px}
+  :host([data-storefront-docked="true"]) .storefront-presence .quiet-control{padding:3px 6px;font-size:10px}
+  :host([data-storefront-docked="true"]) .status{padding:0 14px 8px}
+  :host([data-storefront-docked="true"]) .status[data-voice-error=true],:host([data-storefront-docked="true"]) .status[data-voice-notice=true]{margin:0 12px 10px;padding:10px 12px;font-size:12px}
+  :host([data-storefront-docked="true"]) .product-tray{min-height:155px;max-height:255px}
+  :host([data-storefront-docked="true"]) .product-tray.has-options{min-height:225px;max-height:335px}
+  :host([data-storefront-docked="true"]) .product-tray.minimized{min-height:44px;max-height:44px}
+  :host([data-storefront-docked="true"]) .tray-header{padding:8px 14px 4px}
+  :host([data-storefront-docked="true"]) .selection-scroll{padding:5px 14px 11px}
+  :host([data-storefront-docked="true"]) .card{flex-basis:286px;width:286px;grid-template-columns:54px minmax(0,1fr);padding:10px;gap:9px}
+  :host([data-storefront-docked="true"]) .card img{width:54px;height:67px}
+  :host([data-storefront-docked="true"]) .has-options .card:has(.options){flex-basis:302px;width:302px}
+  :host([data-storefront-docked="true"]) .messages{flex-basis:170px;padding:12px 14px}
+  :host([data-storefront-docked="true"]) .composer{padding:10px 13px}
+  :host([data-storefront-docked="true"]) .composer input{font-size:13px;padding:9px 10px}
+  :host([data-storefront-docked="true"]) .send{padding:9px 12px;font-size:12px}
+  :host([data-storefront-docked="true"]) .foot span{font-size:9px}
+}

@@ -14,7 +14,6 @@
   const EMOTIONS = Object.freeze(['calm', 'curious', 'celebrate', 'reassuring', 'warm', 'appreciated']);
   const validEmotion = emotion => EMOTIONS.includes(emotion) ? emotion : null;
   const MANNERISMS = Object.freeze({greet: 1.12, acknowledge: .9, focus: .86, explain: 1.05, confirm: 1.2, reassure: 1.05});
-  // Irregular blinks avoid a perpetual attention animation.
   const BLINK_EVENTS = Object.freeze([
     Object.freeze({at: 3.3, duration: .2}),
     Object.freeze({at: 12.7, duration: .19}),
@@ -63,7 +62,6 @@
       return {id: value.id, handle: value.handle, title: String(value.title || 'Selected jewellery').replace(/[\u0000-\u001f]/g, '').slice(0, 140), image: url.href};} catch {return null;}
   }
   const PERFORMANCE_GESTURES = Object.freeze(['none', 'greet', 'acknowledge', 'focus', 'explain', 'present', 'reassure', 'confirm']);
-  // Graphic expressions change geometry and paths.
   const FACE_EXPRESSIONS = Object.freeze({
     neutral: Object.freeze({faceBrowLift: .15, faceBrowTilt: 0, eyeSmile: .08, cheekGlow: .2, smileCurve: .34, faceSignal: .12}),
     attentive: Object.freeze({faceBrowLift: .7, faceBrowTilt: 0, eyeSmile: .02, cheekGlow: .3, smileCurve: .32, faceSignal: .9}),
@@ -121,14 +119,12 @@
     let position = clamp(Number.isFinite(channel?.position) ? channel.position : 0, min, max), velocity = clamp(Number.isFinite(channel?.velocity) ? channel.velocity : 0, -profile.velocity, profile.velocity);
     if (!Number.isFinite(target) || !Number.isFinite(seconds) || seconds <= 0) return {position, velocity};
     target = clamp(target, min, max);
-    // Substeps bound integration error across frame rates.
     const steps = Math.max(1, Math.ceil(Math.min(seconds, GAZE_MOTION.maxFrameSeconds) * 240)), dt = Math.min(seconds, GAZE_MOTION.maxFrameSeconds) / steps;
     for (let index = 0; index < steps; index++) {
       const error = target - position;
       const acceleration = clamp(profile.frequency ** 2 * error - 2 * profile.frequency * velocity, -profile.acceleration, profile.acceleration);
       velocity = clamp(velocity + acceleration * dt, -profile.velocity, profile.velocity);
       const next = position + velocity * dt;
-      // The physical travel boundary is a final hard guard.
       position = clamp(next, min, max);
       if (position !== next) velocity = 0;
     }
@@ -349,7 +345,6 @@
         quality: {...quality}, declarations: declarations ? {schema: declarations.schema, source: declarations.source, textures: declarations.textures.map(value => ({...value}))} : null};
     }
     function syncLayers() {
-      // Keep exactly one visible representation even without its stylesheet.
       const webgl = hasWebglFrame(), showFallback = fallbackPresented && !webgl;
       frame.dataset.rendering = webgl ? 'webgl' : failed ? 'fallback' : loading || engine ? 'loading' : 'pending';
       surface.style.visibility = webgl ? 'visible' : 'hidden';
@@ -534,13 +529,15 @@
     };
     const resetGaze = () => {if (canDisplay() && !paused) {lastPointer = lastPointerBox = null; lookAt(0, 0);}};
     const leavePage = event => {if (event.relatedTarget == null) resetGaze();};
-    let observer = null;
+    const geometry = () => {if (lastPointer && canDisplay() && !paused) syncFallback();};
+    let observer = null, geometryObserver = null;
     constructionCleanup = destroy;
     doc.addEventListener('visibilitychange', visibility); media?.addEventListener?.('change', motion);
     doc.addEventListener('pointermove', pointer, {passive: true, capture: true}); doc.addEventListener('pointerout', leavePage, {passive: true}); win.addEventListener('blur', resetGaze);
     observer = win.IntersectionObserver ? new win.IntersectionObserver(entries => {intersecting = entries.some(entry => entry.isIntersecting); sync();}, {threshold: 0}) : null;
     observer?.observe(frame);
-    function destroy() {if (destroyed) return; destroyed = true; expression = null; clearSpeechSignal(); stopPointerFrame(); stopBlink(); cancelPerformance(); clearProduct(); cancelAppreciation(); cancelMannerism(); observer?.disconnect(); doc.removeEventListener('visibilitychange', visibility); media?.removeEventListener?.('change', motion); doc.removeEventListener('pointermove', pointer, true); doc.removeEventListener('pointerout', leavePage); win.removeEventListener('blur', resetGaze); try {engine?.destroy();} catch {} engine = null; frame.remove(); readyResolve(snapshot());}
+    geometryObserver = win.ResizeObserver ? new win.ResizeObserver(geometry) : null; geometryObserver?.observe(container); win.addEventListener('resize', geometry);
+    function destroy() {if (destroyed) return; destroyed = true; expression = null; clearSpeechSignal(); stopPointerFrame(); stopBlink(); cancelPerformance(); clearProduct(); cancelAppreciation(); cancelMannerism(); observer?.disconnect(); geometryObserver?.disconnect(); win.removeEventListener('resize', geometry); doc.removeEventListener('visibilitychange', visibility); media?.removeEventListener?.('change', motion); doc.removeEventListener('pointermove', pointer, true); doc.removeEventListener('pointerout', leavePage); win.removeEventListener('blur', resetGaze); try {engine?.destroy();} catch {} engine = null; frame.remove(); readyResolve(snapshot());}
     if (visible && options.greetingOnOpen !== false) triggerGreeting();
     sync(); if (options.emotion === 'appreciated') setEmotion('appreciated');
     return {ready, triggerGreeting, setState, setVisible, setPaused, setReducedMotion, setEmotion, setExpression, retry, setLevel, setSpeechSignal, lookAt, focusProduct, clearFocus, showProduct, clearProduct, setFloating, perform, cancelPerformance: () => {if (destroyed) return; cancelPerformance(); sync();}, cue, snapshot, destroy, element: frame};

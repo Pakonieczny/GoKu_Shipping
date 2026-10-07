@@ -8,6 +8,22 @@ const MAX_HTML_BYTES = 1024 * 1024;
 const tidy = (value, max = 3000) => String(value ?? '').replace(/\u0000/g, '').trim().slice(0, max);
 const unsafeText = /(?:system|developer|assistant|author|internal|hidden)\s+(?:prompt|message|instructions?)|\bignore (?:all |any )?(?:prior|previous|system|developer) instructions?\b|\b(?:assistant|concierge|model)\s+(?:must|should|shall|needs? to)\b/i;
 
+function isStudioCreditProduct(product) {
+  const title = tidy(product?.title, 300).toLowerCase(), type = tidy(product?.type || product?.productType || product?.product_type, 100).toLowerCase();
+  // "Custom Charm Studio" is also used for physical custom pieces and
+  // engraving. Neither that category nor the hidden-collection description
+  // alone establishes a credit product, and neither is a blanket exclusion.
+  if (/^(?:custom\s+)?(?:necklaces?|earrings?|bracelets?|rings?|charms?|pendants?|chain extenders?)$/.test(type)) return false;
+  const serviceTitle = /^(?:custom\s+charm\s+)?studio\s+(?:membership|(?:design\s+)?credit\s+packs?|design\s+packs?)\b/i.exec(title);
+  if (!serviceTitle) return false;
+  const remainder = title.slice(serviceTitle[0].length);
+  if (/\b(?:necklaces?|earrings?|bracelets?|rings?|charms?|pendants?|chain extenders?|engraving)\b/.test(remainder)) return false;
+  const statedCredits = /\b\d[\d,]*\s+(?:design\s+)?credits?\b|\b(?:monthly|subscription|per month)\b/.test(remainder);
+  const studioCategory = /^(?:custom\s+charm\s+)?studio(?:\s+(?:membership|design\s+packs?|credits?))?$/.test(type);
+  const studioPlanHandle = /^studio-(?:plan-[a-z0-9-]+|pack-\d+)$/.test(tidy(product?.handle, 180));
+  return statedCredits || studioCategory && studioPlanHandle;
+}
+
 function merchantGuidance() {
   return {
     source: {kind: 'merchant_statement', title: 'Brites studio guidance', statedAt: '2026-10-07'},
@@ -155,5 +171,5 @@ function createStorefrontServices({fetch = globalThis.fetch, now = Date.now, ttl
 }
 
 const publicServices = createStorefrontServices();
-module.exports = {HOME, MAX_HTML_BYTES, merchantGuidance, visibleBlocks, parsePublishedOffers, createStorefrontServices,
+module.exports = {HOME, MAX_HTML_BYTES, merchantGuidance, visibleBlocks, parsePublishedOffers, createStorefrontServices, isStudioCreditProduct,
   readServices: () => publicServices.read()};
