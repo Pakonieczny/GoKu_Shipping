@@ -4171,22 +4171,31 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
      what the window shows: the pieces it lists, its orders, its set, its cut mark. A difference reads the sheet again in place (open with keepWork), never while a person is
      placing by hand, adding, filling, taking off or while anything is flying. The orders it shows are also in PlacementFeed's watch, so the cancelled marks and the
      other sheets of each piece follow too. ── */
-  const FOLLOW = { id: null, revs: null, busy: false, fails: 0, at: 0 };
+  const FOLLOW = { id: null, revs: null, busy: false, fails: 0, at: 0, moved: Date.now(), touch: Date.now() };
+  /* Firebase cost (7 Oct 2026): this probe watched every document the sheet's full answer was made of (the set, every other sheet of the set, the runs, the sheets
+     that carry its orders, the hand-completed records): dozens of reads every 2 s while the window was open, to decide whether ONE sheet record changed (memberSig
+     reads fields of that record alone). It now watches that record alone (one small read); when it moves, the answer is read in full as before. And the beat slows
+     while the window sits unused: 2 s while a person touches the page or the sheet moved in the last 3 minutes, then 4 s, after 10 minutes 8 s, after an hour 28 s;
+     a touch is back at 2 s at the next beat. */
+  for (const ev of ["pointerdown", "pointermove", "keydown", "wheel", "touchstart"]) document.addEventListener(ev, () => { FOLLOW.touch = Date.now(); }, { capture: true, passive: true });
+  const followGap = () => { const idle = Date.now() - Math.max(FOLLOW.touch, FOLLOW.moved); return idle < 180000 ? 0 : idle < 600000 ? 3500 : idle < 3600000 ? 7500 : 27500; };
   const memberSig = r => !r ? "gone" : JSON.stringify([(r.poolIds || []).map(String).sort(), (r.orders || []).map(String).sort(), r.setId || "", +r.laserDoneAt || 0, r.archived ? 1 : 0]);
   const followBusy = () => !!(W.hand || W.add || W.fill || W.flow || W.flying || W.leaving || W.folding || W.away || W.coming || (W.going && W.going.size) || (W.landing && W.landing.length));
-  async function follow() {
+  async function follow(now) {
     if (!W.dlg || !W.dlg.open || !W.rec || !W.id || document.hidden || FOLLOW.busy || followBusy()) return;
-    if (FOLLOW.id !== W.id) { FOLLOW.id = W.id; FOLLOW.revs = null; FOLLOW.fails = 0; }
+    if (FOLLOW.id !== W.id) { FOLLOW.id = W.id; FOLLOW.revs = null; FOLLOW.fails = 0; FOLLOW.moved = Date.now(); }
     if (FOLLOW.fails && Date.now() - FOLLOW.at < 3000 * 2 ** Math.min(FOLLOW.fails, 4)) return;
-    const id = W.id, tok = W.token, setId = W.rec.setId || "", ask = { op: "laserStatus", sheetIds: [id], setIds: setId ? [setId] : [], recordSeals: false, wantRevs: true };
-    if (FOLLOW.revs) ask.ifRevs = FOLLOW.revs;
+    if (now !== true && Date.now() - FOLLOW.at < followGap()) return;   // (unused for a while: a slower beat; a placement read that moved a piece of its orders asks at once)
+    const id = W.id, tok = W.token, setId = W.rec.setId || "", key = "s:" + id, ask = { op: "laserStatus", sheetIds: [id], setIds: setId ? [setId] : [], recordSeals: false, wantRevs: true };
+    if (FOLLOW.revs) { ask.ifRevs = FOLLOW.revs; ask.setIds = []; }   // (the probe asks after the sheet record alone: see above)
     FOLLOW.busy = true; FOLLOW.at = Date.now();
     try {
       const r = await api("charmNestLibrary", ask, { quiet: true, timeoutMs: 12000 });
       if (!r || r.error) throw new Error((r && r.error) || "no answer");
       FOLLOW.fails = 0;
       if (r.unchanged || id !== W.id || tok !== W.token || !W.dlg.open || followBusy()) return;
-      FOLLOW.revs = r.revs || null;
+      FOLLOW.revs = r.revs && r.revs[key] != null ? { [key]: r.revs[key] } : null;
+      FOLLOW.moved = Date.now();
       const live = (r.sheets || []).find(s => s.id === id) || null;
       if (memberSig(live) === memberSig(W.rec) || (!live && W.rec.archived)) return;   // (an archived sheet the window shows as archived is what the cloud says too)
       const sig = memberSig(live);   // (an answer that still differs after the window was read for it is not read again for 30 s: no loop on a record the two reads spell differently, or a sheet that cannot be opened.
@@ -4200,7 +4209,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   }
   setInterval(follow, 2000);
   // a read that moved a piece of one of the orders this window shows (the placement feed's, or any other) asks for the sheet's own read at once, not at the next beat
-  const followHook = () => { try { const OP = window.OrderPieces; if (!OP || !OP.subscribe || followHook.on) return; followHook.on = true; OP.subscribe(() => { if (W.dlg && W.dlg.open) { clearTimeout(followHook.t); followHook.t = setTimeout(follow, 80); } }); } catch (_) {} };
+  const followHook = () => { try { const OP = window.OrderPieces; if (!OP || !OP.subscribe || followHook.on) return; followHook.on = true; OP.subscribe(() => { if (W.dlg && W.dlg.open) { clearTimeout(followHook.t); followHook.t = setTimeout(() => follow(true), 80); } }); } catch (_) {} };
   setInterval(followHook, 2000);
   // what the window shows is on the placement feed's screen (the cancelled marks, the pieces' other sheets)
   const feedWatch = () => { try { if (window.PlacementFeed && !feedWatch.on) { feedWatch.on = true; PlacementFeed.watch("sheetwin", () => (W.dlg && W.dlg.open ? [...W.orders.keys()].filter(k => /^\d+$/.test(k)) : [])); } } catch (_) {} };

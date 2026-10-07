@@ -365,6 +365,28 @@ function mergeParts(parts, orders) {
   }
   return lines;
 }
+/* A part of a run's lines (Charm_Nest_Run_Live, Charm_Nest_Run_Lines) is named by its content (…~sha256 of its JSON text): the text of a part
+   of one name never changes, and it is most of a run's bytes (a part holds up to 900 KB). A function instance keeps the text it has read
+   (48 MB at most, the least used first out), so the Library's full read of a run — made again whenever anything it watches changed, by every
+   open page — reads a part once per instance and not once per call. What can change (an archive part's at and seq) is always read. */
+const PART_KEEP_BYTES = process.env.CHARM_NEST_PARTS_KEEP === "0" ? 0 : 48e6, partKeep = new Map();
+let partKeepBytes = 0;
+const partKey = (coll, id) => PREFIX + coll + "|" + id;
+function partKept(coll, id) { const k = partKey(coll, id), v = partKeep.get(k); if (v !== undefined) { partKeep.delete(k); partKeep.set(k, v); } return v; }
+function keepPart(coll, id, json) {
+  const k = partKey(coll, id); if (typeof json !== "string" || !json || json.length > PART_KEEP_BYTES / 4 || partKeep.has(k)) return;
+  partKeep.set(k, json); partKeepBytes += json.length;
+  while (partKeepBytes > PART_KEEP_BYTES && partKeep.size) { const [first, v] = partKeep.entries().next().value; partKeep.delete(first); partKeepBytes -= v.length; }
+}
+/** The archive parts at refs, as { id, …fields of mask }: a part whose text this instance holds is read without it. */
+async function readRunParts(refs, mask) {
+  const wantJson = mask.includes("json"), rest = mask.filter(f => f !== "json"), kept = new Map(), out = [];
+  const cheap = [], whole = [];
+  for (const r of refs) { const j = wantJson ? partKept(RUN_LINES, r.id) : undefined; if (j !== undefined) { kept.set(r.id, j); cheap.push(r); } else whole.push(r); }
+  for (let i = 0; i < whole.length; i += 100) for (const d of await db.getAll(...whole.slice(i, i + 100), { fieldMask: mask })) if (d.exists) { const x = d.data(); if (wantJson) keepPart(RUN_LINES, d.id, x.json); out.push({ id: d.id, ...x }); }
+  for (let i = 0; i < cheap.length; i += 100) for (const d of await db.getAll(...cheap.slice(i, i + 100), { fieldMask: rest })) if (d.exists) out.push({ id: d.id, ...d.data(), json: kept.get(d.id) });
+  return out;
+}
 /** A run's archive parts with the fields named (and at, seq), oldest first: every part, or — given [field, values] —
     those whose list (keys or orders) names a value, found 30 values to a query (50 queries at a time) and each part
     then read once. */
@@ -377,8 +399,7 @@ async function partsOfRun(runId, fields, want = null) {
     const snaps = await Promise.all(groups.slice(i, i + 50).map(g => col(RUN_LINES).where(field, "array-contains-any", g).select("runId").get()));
     for (const s of snaps) for (const d of s.docs) if (d.data().runId === runId) refs.set(d.id, d.ref);
   }
-  const list = [...refs.values()];
-  for (let i = 0; i < list.length; i += 100) for (const d of await db.getAll(...list.slice(i, i + 100), { fieldMask: mask })) if (d.exists) parts.push({ id: d.id, ...d.data() });
+  parts.push(...await readRunParts([...refs.values()], mask));
   return parts.sort(partOrder);
 }
 /** Archived lines for a reader that shows them: those of the orders named, or the newest maxBytes of them (always the
@@ -388,8 +409,7 @@ async function archivedLines(runId, { orders = null, maxBytes = 1000000 } = {}) 
   const all = await partsOfRun(runId, ["bytes"]);
   let total = 0, from = all.length;
   while (from > 0 && (from === all.length || total + num(all[from - 1].bytes) <= maxBytes)) total += num(all[--from].bytes);
-  const newest = all.slice(from).map(p => col(RUN_LINES).doc(p.id)), parts = [];
-  for (let i = 0; i < newest.length; i += 100) for (const d of await db.getAll(...newest.slice(i, i + 100), { fieldMask: ["json", "at", "seq"] })) if (d.exists) parts.push({ id: d.id, ...d.data() });
+  const parts = await readRunParts(all.slice(from).map(p => col(RUN_LINES).doc(p.id)), ["json", "at", "seq"]);
   return { lines: mergeParts(parts), truncated: from > 0 };
 }
 /* A run's orders still in progress were kept in its record as fields, some sixty index entries a line, and one document
@@ -416,10 +436,13 @@ function liveParts(runId, lines) {
     record is read then, with its parts. */
 async function withLiveLines(runId, run) {
   for (let tries = 0; run && run.liveLines && Array.isArray(run.liveLines.ids) && isId(runId); tries++) {
-    const ids = run.liveLines.ids, docs = ids.length ? await db.getAll(...ids.map(x => col(RUN_LIVE).doc(x))) : [];
+    const ids = run.liveLines.ids, texts = new Map(), need = [];
+    for (const x of ids) { const j = partKept(RUN_LIVE, x); if (j !== undefined) texts.set(x, j); else need.push(x); }   // (a part of one name never changes: see keepPart)
+    const docs = need.length ? await db.getAll(...need.map(x => col(RUN_LIVE).doc(x))) : [];
     if (tries < 3 && docs.some(d => !d.exists)) { const s = await col(RUNS).doc(runId).get(); run = s.exists ? s.data() : null; continue; }
+    for (const d of docs) if (d.exists) { const j = d.data().json; keepPart(RUN_LIVE, d.id, j); texts.set(d.id, j); }
     const lines = {};
-    for (const d of docs) if (d.exists) { try { Object.assign(lines, JSON.parse(d.data().json || "{}")); } catch (_) { /* unreadable: its lines are left out */ } }
+    for (const x of ids) if (texts.has(x)) { try { Object.assign(lines, JSON.parse(texts.get(x) || "{}")); } catch (_) { /* unreadable: its lines are left out */ } }
     return Object.assign({}, run, { lines });
   }
   return run;
@@ -3029,7 +3052,7 @@ async function cancelSteps(b) {
 /* ── the order timeline (_orderTimeline.js): the sorter's own events, and the whole timeline of one order ── */
 const Timeline = require("./_orderTimeline");
 async function op_timelineAdd(b) { return Timeline.add(db, FV, b.events, { prefix: PREFIX, source: "sorter" }); }
-async function op_timelineGet(b) { return Timeline.get(db, b.orderId, { prefix: PREFIX, sandboxed: SANDBOXED, derive: b.derive !== false }); }   // recorded + derived from the records already kept
+async function op_timelineGet(b) { return Timeline.get(db, b.orderId, { prefix: PREFIX, sandboxed: SANDBOXED, derive: b.derive !== false, ifRev: typeof b.ifRev === "string" && /^[0-9a-f]{12}$/.test(b.ifRev) ? b.ifRev : "", wantRev: b.wantRev === true }); }   // recorded + derived from the records already kept
 // (full: each whole record, its lines, fates and removals, for an order read long after it left the pull)
 async function op_cancelCheck(b) { return Timeline.cancelCheck(db, b.orderIds || b.orderId, { prefix: PREFIX, full: b.full === true }); }
 /* Restoring a cancelled order deletes its cancel record; the timeline keeps it first: the cancelRestored event carries the
