@@ -9,6 +9,14 @@
   // keep saying "Rose Gold" (its first metal); the rules are the same for all three.
   const CUT_METALS=['rose','gold10k','gold14k'], CUT_CODE={rose:'RG',gold10k:'10K',gold14k:'14K'}, CUT_WORD={rose:'Rose Gold',gold10k:'10K Gold',gold14k:'14K Gold'};
   const cuts=metal=>CUT_METALS.includes(metal), cutCode=metal=>CUT_CODE[metal]||'', cutWord=metal=>CUT_WORD[metal]||'Rose Gold';
+  // The ONE test for "this sheet still owes its green dash line" (GF1, Paul 7 Oct: a 14K sheet moved to Laser cutting without being asked for its
+  // line, then blocked on it). Readiness (a sheet that holds its line is held back from Laser cutting: holdsLine), the Library flow (a move
+  // asks for the line: owesLine) and the checks all ask these two, so they can never disagree about what a record says.
+  //   owesLine: a sheet of a metal that has a green line, not cut, with no saved line (the plan hash the Cut Sheet press saves).
+  //   holdsLine: it owes its line AND already holds its physical sheet (roseStockId; a 10K/14K sheet takes it when it needs a line, Rose Gold
+  //              at nest): readiness holds it on "Green line needed" from then on. A full sheet takes the rest of the metal whole and holds none.
+  const owesLine=s=>!!s&&cuts(s.metal)&&!s.roseCutAt&&!s.rosePlanHash;
+  const holdsLine=s=>owesLine(s)&&!!s.roseStockId;
   // Saved cut outlines are simplified once, so a full sheet fits one saved
   // record. Every dropped point stays within OUTLINE_PT (plus 3-decimal
   // rounding) of the kept outline, and contours add that distance back.
@@ -182,5 +190,5 @@
     }
     return {charms,job:{sheet:{wPt:100/MM,hPt:50/MM,insetPt:1.5,remnant:prior},pieces,angles:Array.from({length:36},(_,i)=>i*10),clearancePt:.6,fineRes:2,coarseRes:.5,maxFill:.95,maxTrials:3,timeBudgetMs:2500,seed:41+batch,verifyResult:true}};
   }
-  return {flatten,shapes,slimShape,simplify,validate,area,frontier,intersects,stamp,plan,lines,room,tidy,MM,EDGE_PT,POCKET_PT,demoBatch,CUT_METALS,cuts,cutCode,cutWord};
+  return {flatten,shapes,slimShape,simplify,validate,area,frontier,intersects,stamp,plan,lines,room,tidy,MM,EDGE_PT,POCKET_PT,demoBatch,CUT_METALS,cuts,cutCode,cutWord,owesLine,holdsLine};
 });
