@@ -82,9 +82,9 @@ const { start } = require('./bridge-server.cjs');
 
     /* ── 1 · Move all onto Sheet 1: only the orders that landed ── */
     {
-      if (!(await page.isVisible(`${card} [data-solid="merge-move"]`))) await page.click(`${card} .sheetOptions > summary`);
-      await page.click(`${card} [data-solid="merge-move"]`);
-      await page.click(`${card} [data-solid="merge-go"]`);
+      if (!(await page.isVisible(`dialog.osDlg [data-solid="merge-move"]`))) await page.click(`${card} .sheetOptionsBtn`);
+      await page.click(`dialog.osDlg [data-solid="merge-move"]`);
+      await page.click(`dialog.osDlg [data-solid="merge-go"]`);
       await page.waitForFunction(() => { const [a, b] = CN.pagesOf('gold14k'); return a && b && a.placements.length === 8 && b.placements.length === 2 && a.persistedDone && b.persistedDone && !Gate.mergeFx().live; }, null, { timeout: 20000 });
       const where = await page.evaluate(() => CN.pagesOf('gold14k').map(p => p.charms.map(c => c.order)));
       assert.deepEqual(where[1].sort(), ['4170000202', '4170000203'], 'two orders did not fit and stayed on Sheet 2: ' + JSON.stringify(where));
@@ -101,12 +101,12 @@ const { start } = require('./bridge-server.cjs');
     /* ── 2 · Apply size with Sheet 2 cut (laser done, its set not committed) ── */
     {
       const before = await page.evaluate(() => { const p2 = CN.pagesOf('gold14k')[1]; p2.laserDoneAt = Date.now() - 60000; window.__nests.length = 0; return JSON.stringify(p2.placements); });
-      if (!(await page.isVisible(`${card} [data-solid="w"]`))) await page.click(`${card} .sheetOptions > summary`);
-      await page.fill(`${card} [data-solid="w"]`, '120');
-      await page.click(`${card} [data-solid="size"]`);
+      if (!(await page.isVisible(`dialog.osDlg [data-solid="w"]`))) await page.click(`${card} .sheetOptionsBtn`);
+      await page.fill(`dialog.osDlg [data-solid="w"]`, '120');
+      await page.click(`dialog.osDlg [data-solid="size"]`);
       await page.waitForFunction(() => Math.abs(CN.S.settings.stock.gold14k[0] * 25.4 - 120) < 1e-6, null, { timeout: 5000 });
       await page.waitForTimeout(1200);
-      const after = await page.evaluate(() => { const p2 = CN.pagesOf('gold14k')[1]; return { placements: JSON.stringify(p2.placements), dirty: !!p2.dirty, status: p2.status, nests: window.__nests.slice(), help: document.querySelector('.sheetCard[data-m="gold14k"] [data-solid="size-help"]').textContent }; });
+      const after = await page.evaluate(() => { const p2 = CN.pagesOf('gold14k')[1]; return { placements: JSON.stringify(p2.placements), dirty: !!p2.dirty, status: p2.status, nests: window.__nests.slice(), help: (document.querySelector('dialog.osDlg [data-solid="size-help"]') || document.querySelector('.sheetCard[data-m="gold14k"] [data-solid="size-help"]')).textContent }; });
       assert.equal(after.placements, before, 'the cut sheet keeps its layout');
       assert(!after.dirty && after.status === 'complete' && !after.nests.includes(2), 'the cut sheet is not nested again: ' + JSON.stringify(after));
       const size = await events('sizeChanged');

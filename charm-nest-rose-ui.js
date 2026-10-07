@@ -224,11 +224,12 @@
     // a failure is shown once, where it happened (the alert under the button); a pop-up used to repeat it
     const invoke=fn=>async()=>{if(sh._roseAction)return;sh._roseAction=true;sh._roseError=null;refresh(sh);try{await fn();}catch(e){sh._roseError=e.message;}finally{sh._roseAction=false;refresh(sh);C.flushManualIntake?.(sh.metal);}};
     slot.querySelector('[data-rose="cut"]')?.addEventListener('click',invoke(()=>record(sh)));
-    const menu=sh.el.querySelector('.solidOptions');
+    // (the Options window's controls: the box the Gate draws in this card's gate node; the window mounts the same box while it is open)
+    const gate=sh.el.querySelector('.shGate'),menu=(gate&&gate._optBox)||sh.el.querySelector('.solidOptions');
     if(menu&&!menu.querySelector('[data-rose-options]')){
       const options=document.createElement('div');options.dataset.roseOptions='';options.className='roseStockOptions';
       options.innerHTML=`<h4>Cut contour</h4><label class="roseAllowance">Contour allowance <span>mm</span><input type="number" min="0.05" max="2" step="0.05" value="${sh.roseAllowanceMm||.2}" data-rose-allowance></label><p class="help">Space around the combined charm outline.</p><div data-rose-stock-choice><button type="button" class="btn ghost xs" data-rose-choose>Choose remnant or new sheet</button><span data-rose-picker></span></div>`;
-      menu.append(options);
+      (menu.querySelector('.osSheetGrid')||menu).append(options);   // (one more block of the This sheet card)
       options.querySelector('[data-rose-choose]')?.addEventListener('click',async e=>{
         e.target.disabled=true;try{const result=await api('roseList',{metal:sh.metal}),st=C.stockFor(sh.metal),pick=options.querySelector('[data-rose-picker]');
           const stocks=result.stocks.filter(s=>Math.abs(s.wPt-st.wPt)<.01&&Math.abs(s.hPt-st.hPt)<.01);
